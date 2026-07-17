@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv python install 3.12
+      - run: uv sync --all-extras --dev
+      - name: ruff
+        run: uv run ruff check .
+      - name: pytest
+        run: uv run pytest -q
+
+  # 打包路径必须每次 PR 都验证，不能等到发版当天才发现 uvx 装不上。
+  packaging:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build
+      - name: uvx 冒烟（从 wheel 装进隔离环境）
+        run: |
+          uvx --from ./dist/novel_harness-*.whl novel-harness --version
+          uvx --from ./dist/novel_harness-*.whl nh version

@@ -1,0 +1,49 @@
+[project]
+name = "novel-harness"
+version = "0.0.1"
+description = "唯一一个知道「谁在第几章还不该知道什么」的中文长篇写作引擎"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.12"
+keywords = ["novel", "writing", "story-graph", "chinese", "llm"]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: End Users/Desktop",
+    "Natural Language :: Chinese (Simplified)",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Text Processing :: Linguistic",
+]
+dependencies = [
+    "anthropic>=0.116.0",
+    "fastapi>=0.139.2",
+    "jieba>=0.42.1",
+    "pydantic>=2.13.4",
+    "python-ulid>=3.1.0",
+    "typer>=0.27.0",
+    "uvicorn[standard]>=0.51.0",
+    "watchdog>=6.0.0",
+]
+
+[project.scripts]
+nh = "novel_harness.cli:app"
+novel-harness = "novel_harness.__main__:main"
+
+[build-system]
+requires = ["uv_build>=0.11.7,<0.12.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.15.22",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+# bench/ 是 ADR 0001 的实测证据，不是产品代码。它应当保持跑出那些数字时的原样，
+# 而不是为了过 lint 被重排——改写证据是在改写论证。
+extend-exclude = ["docs/adr/bench"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

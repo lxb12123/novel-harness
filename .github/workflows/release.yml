@@ -1,0 +1,25 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+# PyPI trusted publishing：不用 API token，走 OIDC。
+# 首次发版前需在 https://pypi.org/manage/account/publishing/ 登记：
+#   PyPI Project Name: novel-harness
+#   Owner / Repository: <your-gh-user> / novel-harness
+#   Workflow name: release.yml
+#   Environment name: pypi
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: uv build
+      - name: 发版前先自检 wheel 能装能跑
+        run: uvx --from ./dist/novel_harness-*.whl novel-harness --version
+      - uses: pypa/gh-action-pypi-publish@release/v1

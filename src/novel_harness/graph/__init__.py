@@ -1,0 +1,96 @@
+"""图层 —— 故事图谱的类型与接口。
+
+`graph/` 是**全系统唯一允许 import sqlite3 的目录**（§5.5 的架构守卫，
+`tests/test_arch_guard.py` 强制）。守卫拦的是 import，不是纪律。
+
+这个 `__init__` 只再出口 `models` 和 `store`。`sqlite_store` / `queries` 故意不在这里：
+它们是实现，从包门面导出实现等于邀请别人绕过 Protocol 去调 `queries.state_at`。
+"""
+
+from __future__ import annotations
+
+from .models import (
+    HEALTH_DIM_KEY,
+    UNDIRECTED_EDGE_TYPES,
+    AliasHit,
+    AliasKind,
+    AuditPointer,
+    Edge,
+    EdgeProps,
+    EdgeSource,
+    EdgeSpec,
+    EdgeStatus,
+    EdgeType,
+    Evidence,
+    EvidenceStatus,
+    Exclusivity,
+    GraphVersion,
+    HealthValue,
+    InformationScope,
+    KnowledgeCell,
+    KnowledgeMatrix,
+    KnowledgeState,
+    Node,
+    NodeLabel,
+    NodeProps,
+    NodeRef,
+    RelocatePointer,
+    Resolution,
+    StateSnapshot,
+    StateValue,
+    Subgraph,
+    TextAnchor,
+    UpsertResult,
+)
+from .store import (
+    HOP2_EDGE_TYPES,
+    MAX_HOPS,
+    MAX_SUBGRAPH_NODES,
+    QUERYABLE_SCOPES,
+    NodeNotFound,
+    StoreError,
+    StoryGraph,
+    SupersedeConflict,
+)
+
+__all__ = [
+    "HEALTH_DIM_KEY",
+    "HOP2_EDGE_TYPES",
+    "MAX_HOPS",
+    "MAX_SUBGRAPH_NODES",
+    "QUERYABLE_SCOPES",
+    "UNDIRECTED_EDGE_TYPES",
+    "AliasHit",
+    "AliasKind",
+    "AuditPointer",
+    "Edge",
+    "EdgeProps",
+    "EdgeSource",
+    "EdgeSpec",
+    "EdgeStatus",
+    "EdgeType",
+    "Evidence",
+    "EvidenceStatus",
+    "Exclusivity",
+    "GraphVersion",
+    "HealthValue",
+    "InformationScope",
+    "KnowledgeCell",
+    "KnowledgeMatrix",
+    "KnowledgeState",
+    "Node",
+    "NodeLabel",
+    "NodeNotFound",
+    "NodeProps",
+    "NodeRef",
+    "RelocatePointer",
+    "Resolution",
+    "StateSnapshot",
+    "StateValue",
+    "StoreError",
+    "StoryGraph",
+    "Subgraph",
+    "SupersedeConflict",
+    "TextAnchor",
+    "UpsertResult",
+]

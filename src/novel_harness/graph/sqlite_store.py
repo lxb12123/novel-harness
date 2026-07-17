@@ -1,0 +1,453 @@
+"""`StoryGraph` 的 SQLite 实现（PLAN §8 Day 4）。
+
+分工：**SQL 在 `queries.py`，编排在这里。** 这个文件里一条时态过滤都没有——
+它只做四件 SQL 做不了的事：入参校验（scope / hops / NodeNotFound）、事务边界、
+supersede 的分支决定、以及把边投影成 `StateSnapshot` / `KnowledgeMatrix` / `Subgraph`。
+
+`graph/` 是全系统唯一允许 import sqlite3 的目录（`tests/test_arch_guard.py` 拦 import，
+不靠纪律）。
+"""
+
+from __future__ import annotations
+
+import sqlite3
+from collections.abc import Callable, Collection, Iterator, Sequence
+from contextlib import contextmanager
+
+from ulid import ULID
+
+from . import queries
+from .models import (
+    AliasHit,
+    Edge,
+    EdgeSpec,
+    EdgeType,
+    EvidenceStatus,
+    InformationScope,
+    KnowledgeCell,
+    KnowledgeMatrix,
+    KnowledgeState,
+    Node,
+    NodeLabel,
+    NodeRef,
+    Resolution,
+    StateSnapshot,
+    StateValue,
+    Subgraph,
+    UpsertResult,
+)
+from .store import (
+    HOP2_EDGE_TYPES,
+    MAX_HOPS,
+    MAX_SUBGRAPH_NODES,
+    QUERYABLE_SCOPES,
+    NodeNotFound,
+    StoreError,
+    SupersedeConflict,
+)
+
+
+def _default_edge_id(project_id: str) -> str:
+    """**临时的**。ADR 0003 的 ID 归 `ids.py`（§8 Day 3，含 10 个 golden 值测试）。
+
+    那个文件还不存在，而这里必须能生成 id。构造函数收 `edge_id_factory` 就是为了让
+    `ids.py` 落地后一行接上（`lambda pid: ids.new_id(EntityType.EDGE, pid)`），
+    而不是让「ID 怎么生成」这件 golden test 钉死的事在本文件里长出第二份定义。
+    """
+    return f"edge:{project_id.split(':')[-1][:8]}:{ULID()}"
+
+
+@contextmanager
+def _transaction(conn: sqlite3.Connection) -> Iterator[None]:
+    """一个方法一个事务（`store.StoryGraph` 的实现约束 2）。
+
+    显式 BEGIN IMMEDIATE 而不是 `with conn:`：后者在 db.py 把 `isolation_level` 设成
+    None（autocommit）时**什么都不做**，于是 supersede 的「闭合旧边 + 插新边」会变成
+    两个独立事务——中间崩一次就留下重叠区间。已经在事务里则不嵌套（SQLite 无嵌套事务）。
+    """
+    if conn.in_transaction:
+        yield
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        yield
+    except BaseException:
+        conn.rollback()
+        raise
+    conn.commit()
+
+
+class SqliteStoryGraph:
+    """`StoryGraph` 的唯一实现。
+
+    Args:
+        conn: 已经 `migrate()` 过、且 `PRAGMA foreign_keys=ON` 的连接（db.py 的活）。
+            本类**不碰** `row_factory` 等连接配置——那是 `connect()` 的所有物，
+            在这里改会让别的消费者拿到意料之外的行类型。
+        edge_id_factory: 见 `_default_edge_id`。
+    """
+
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        edge_id_factory: Callable[[str], str] = _default_edge_id,
+    ) -> None:
+        self._conn = conn
+        self._new_edge_id = edge_id_factory
+
+    # ── 内部校验 ──────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _check_scope(scope: InformationScope) -> None:
+        if scope not in QUERYABLE_SCOPES:
+            # PLANNED 可写不可读是改 7 的要求：硬约束下沉为 filter，泄漏在**物理上**
+            # 不可能发生。这一行就是「未来剧情泄漏率结构上恒为 0」的全部实现。
+            raise ValueError(
+                f"scope={scope} 不可读。只允许 {sorted(s.value for s in QUERYABLE_SCOPES)}："
+                "PLANNED 的唯一出口是 panel/constraints.py 转译成 must_not_reveal / "
+                "forbidden_entities，REJECTED 只是防重抽的坟场"
+            )
+
+    @staticmethod
+    def _check_chapter(chapter: int) -> None:
+        """章号从 1 起。**读路径也要校验，不能只校验写路径。**
+
+        写侧这条不变量是硬的（`EdgeSpec.valid_from_chapter` 是 `Field(ge=1)`，chapter 表是
+        `CHECK(number >= 1)`），读侧却收 0 / 负数照单全收，然后静默返回一个语义上不可能
+        存在的答案：`knowledge_matrix(pid, 0, cast)` 给出一个格格 UNKNOWN 的**完整**矩阵，
+        而闭世界推导下 UNKNOWN 是一个**断言**（models.py：「这不是「查不到」，是一个断言」）——
+        于是面板理直气壮地告诉作者「在场三个人对全部秘密一无所知」，而不是承认这个问题问错了。
+
+        触发形态是任何一次 off-by-one：0-based 的场景索引、「上一章」在第 1 章时算成 0
+        （§5.2 的 F 分区就是 `WHERE chapter = N-1`）。它把调用方的一个 off-by-one 放大成
+        头牌面板上一个看起来完全正常的错误答案——本模块处处「让它响亮地死」，唯独章号
+        这一个入口曾经是静默的。
+
+        **上界不管**：超过全书章数返回「最新状态」是闭开区间的正确语义，不是 bug。
+        """
+        if chapter < 1:
+            raise ValueError(
+                f"章号从 1 起（chapter 表 CHECK(number >= 1)），得到 {chapter}；"
+                "第 0 章不存在，静默返回全 UNKNOWN 会把一个 off-by-one 变成面板上的错误答案"
+            )
+
+    def _require_node(self, project_id: str, node_id: str, *, what: str) -> Node:
+        node = queries.fetch_node(self._conn, project_id, node_id)
+        if node is None:
+            raise NodeNotFound(f"{what} 不在项目 {project_id} 里：{node_id}")
+        return node
+
+    # ── resolve ───────────────────────────────────────────────────────────
+
+    def resolve(
+        self,
+        project_id: str,
+        surfaces: Sequence[str] | None = None,
+        *,
+        rules_only: bool = False,
+    ) -> list[Resolution]:
+        rows = queries.alias_rows(self._conn, project_id, surfaces)
+        by_surface: dict[str, list[AliasHit]] = {}
+        for r in rows:
+            by_surface.setdefault(r["surface"], []).append(
+                AliasHit(
+                    node=queries.to_node(r),
+                    kind=r["kind"],
+                    usable_for_rules=bool(r["usable_for_rules"]),
+                )
+            )
+
+        if surfaces is None:
+            # 花名册：SQL 已按长度降序排好，直接可喂 alternation 编译。
+            ordered = [Resolution(surface=s, hits=h) for s, h in by_surface.items()]
+        else:
+            # 与入参**一一对应且同序**，重复的 surface 也各返回一条。解析不到的返回
+            # hits=[]，不许静默丢——否则调用方分不清「没这个人」和「我没问过这个人」。
+            ordered = [Resolution(surface=s, hits=by_surface.get(s, [])) for s in surfaces]
+
+        if rules_only:
+            return [r for r in ordered if r.usable_for_rules]
+        return ordered
+
+    # ── state_at ──────────────────────────────────────────────────────────
+
+    def state_at(
+        self,
+        project_id: str,
+        node_id: str,
+        chapter: int,
+        *,
+        scope: InformationScope = InformationScope.CANON,
+    ) -> StateSnapshot:
+        self._check_scope(scope)
+        self._check_chapter(chapter)
+        node = self._require_node(project_id, node_id, what="node_id")
+        edges = queries.out_edges_at(self._conn, project_id, node_id, chapter, scope)
+        dsts = queries.fetch_nodes(self._conn, project_id, [e.dst for e in edges])
+
+        def _dst(edge: Edge) -> Node:
+            n = dsts.get(edge.dst)
+            if n is None:
+                # 跨项目误引用。ULID 的 project_short 前缀就是为了让它在日志里一眼可见。
+                raise StoreError(f"边 {edge.id} 的 dst {edge.dst} 不在项目 {project_id} 里")
+            return n
+
+        located = [e for e in edges if e.type is EdgeType.LOCATED_AT]
+        if len(located) > 1:
+            # LOCATED_AT 的 exclusivity=single_per_src 保证至多一条。出现两条 =
+            # supersede 漏了，而下一步就是 R4 误报。**不许悄悄取第一条。**
+            raise StoreError(
+                f"{node_id} 在第 {chapter} 章有 {len(located)} 条 LOCATED_AT "
+                f"（{[e.id for e in located]}）：supersede 漏了，不是渲染问题"
+            )
+
+        states = [
+            StateValue(
+                dim=_dst(e),
+                dim_key=_dst(e).props.dim_key,
+                value=e.props.value,
+                value_key=e.props.value_key,
+                since_chapter=e.valid_from_chapter,
+                evidence_id=e.evidence_id,
+            )
+            for e in edges
+            if e.type is EdgeType.HAS_STATE
+        ]
+        self._check_one_value_per_dim(node_id, chapter, states)
+        return StateSnapshot(
+            node=node,
+            chapter=chapter,
+            scope=scope,
+            edges=edges,
+            location=_dst(located[0]) if located else None,
+            states=states,
+        )
+
+    @staticmethod
+    def _check_one_value_per_dim(node_id: str, chapter: int, states: list[StateValue]) -> None:
+        """对齐上面 LOCATED_AT 那道守卫，接的是 HAS_STATE 那条漏网。
+
+        `HAS_STATE` 的 exclusivity 是 single_per_src_dst——但**语义上的维度键是
+        `dst.props.dim_key`，不是 dst 的节点 id**。两个 StateDim 节点共享 dim_key
+        （「健康」和「生死」）时，supersede 认为它们是两个不同的维度，一条都不闭合，
+        于是一个 ch89 死、ch100 复活的人物在 ch152 同时挂着 dead 和 alive 两条有效边，
+        而 `StateSnapshot.is_dead` 的 `any()` 让 dead 永远压过 alive → R3 对全书每一句
+        「萧决道：」报死人说话 → M3 的「误报 <1 条/章」当场崩。
+
+        schema 的 `idx_state_dim_key` 已经让那种数据进不来。这道守卫是第二层，接的是
+        它建立之前就已经在库里的行、以及任何绕开它的写入路径——**只做一层的话，M4 的
+        抽取器将来仍能绕开**。（反过来只做这一层也不行：作者会在面板上撞见一个自己
+        修不了的异常。）
+
+        `dim_key` 为 None 的维度按 dst 节点 id 分组：那类维度没有规则消费（ADR 0005 的
+        增长规则说它就不该有键），但同一个节点上出现两条边同样是 supersede 漏了。
+        """
+        seen: dict[tuple[str, str], StateValue] = {}
+        for s in states:
+            key = ("dim_key", s.dim_key) if s.dim_key is not None else ("dim_node", s.dim.id)
+            first = seen.get(key)
+            if first is not None:
+                raise StoreError(
+                    f"{node_id} 在第 {chapter} 章的「{key[1]}」维度上有两个互斥值"
+                    f"（{first.dim.name}={first.value_key or first.value} / "
+                    f"{s.dim.name}={s.value_key or s.value}）：supersede 漏了，不是渲染问题"
+                )
+            seen[key] = s
+
+    # ── knowledge_matrix ──────────────────────────────────────────────────
+
+    def knowledge_matrix(
+        self,
+        project_id: str,
+        chapter: int,
+        cast: Sequence[str],
+        *,
+        secrets: Sequence[str] | None = None,
+        scope: InformationScope = InformationScope.CANON,
+    ) -> KnowledgeMatrix:
+        self._check_scope(scope)
+        self._check_chapter(chapter)
+        _reject_dups(cast, "cast")
+        characters = [self._require_node(project_id, cid, what="cast") for cid in cast]
+
+        if secrets is None:
+            secret_list = queries.secret_ids(self._conn, project_id)
+        else:
+            _reject_dups(secrets, "secrets")
+            secret_list = list(secrets)
+        secret_nodes = [self._require_node(project_id, sid, what="secret") for sid in secret_list]
+        for n in secret_nodes:
+            if n.label is not NodeLabel.SECRET:
+                raise ValueError(f"secrets 只接受 label=Secret 的节点：{n.id} 是 {n.label}")
+
+        edges = queries.knowledge_edges_at(
+            self._conn, project_id, [n.id for n in characters], secret_list, chapter, scope
+        )
+        found: dict[tuple[str, str, EdgeType], Edge] = {}
+        for e in edges:
+            key = (e.src, e.dst, e.type)
+            if key in found:
+                # (人, 秘密) 的 exclusivity 是 single_per_src_dst，同一章两条 = supersede
+                # 漏了。面板上「他既知道又不知道」是错误答案，让它炸。
+                raise StoreError(
+                    f"({e.src}, {e.dst}, {e.type}) 在第 {chapter} 章有两条有效边"
+                    f"（{found[key].id} / {e.id}）：supersede 漏了"
+                )
+            found[key] = e
+
+        cells: list[KnowledgeCell] = []
+        for c in characters:
+            for s in secret_nodes:
+                # KNOWS 压 BELIEVES（§8 Day 5 的 CASE WHEN 顺序）：真知道了就不再是错误认知。
+                k = found.get((c.id, s.id, EdgeType.KNOWS))
+                b = found.get((c.id, s.id, EdgeType.BELIEVES))
+                hit = k or b
+                if hit is None:
+                    # 闭世界：无边 ⇒ 不知道。UNKNOWN 格**必须物化**——「没有这一格」和
+                    # 「他不知道」是两个意思，面板上少一格 = 作者以为系统没意见 = 说漏嘴。
+                    cells.append(
+                        KnowledgeCell(
+                            character_id=c.id, secret_id=s.id, state=KnowledgeState.UNKNOWN
+                        )
+                    )
+                    continue
+                cells.append(
+                    KnowledgeCell(
+                        character_id=c.id,
+                        secret_id=s.id,
+                        state=(
+                            KnowledgeState.KNOWS if hit is k else KnowledgeState.BELIEVES
+                        ),
+                        since_chapter=hit.valid_from_chapter,
+                        believed_value=hit.props.believed_value if hit is b else None,
+                        evidence_id=hit.evidence_id,
+                    )
+                )
+        return KnowledgeMatrix(
+            project_id=project_id,
+            chapter=chapter,
+            scope=scope,
+            # 窄引用：矩阵是 D 分区的料，整份序列化进 prompt，而 Secret 节点的 props 里
+            # 装的就是秘密的内容（见 NodeRef 的论证）。这里传 Node 会被 pydantic 拒——
+            # 那是故意的：忘记收窄要当场炸，不能靠纪律。
+            characters=[NodeRef.of(n) for n in characters],
+            secrets=[NodeRef.of(n) for n in secret_nodes],
+            cells=cells,
+        )
+
+    # ── subgraph ──────────────────────────────────────────────────────────
+
+    def subgraph(
+        self,
+        project_id: str,
+        center: str,
+        chapter: int,
+        *,
+        hops: int = 1,
+        edge_types: Collection[EdgeType] | None = None,
+        scope: InformationScope = InformationScope.CANON,
+    ) -> Subgraph:
+        self._check_scope(scope)
+        self._check_chapter(chapter)
+        if not 1 <= hops <= MAX_HOPS:
+            # 不许静默截断成 2——那会让调用方以为自己拿到了 3 跳。
+            raise ValueError(f"hops 必须在 1..{MAX_HOPS}（实测 3 跳 = 30 倍爆炸且信息量不增），得到 {hops}")
+        center_node = self._require_node(project_id, center, what="center")
+
+        # 两层显式 JOIN，**不用递归 CTE**（§5.5）：hops≤2 时它更快更好读，且 UNION 版
+        # 会把同一节点在 hop=1 和 hop=2 各返回一行（Subgraph 的 validator 抓这个）。
+        hop1 = queries.incident_edges_at(
+            self._conn, project_id, [center], chapter, scope, edge_types
+        )
+        seen_ids: list[str] = [center]
+        for e in hop1:
+            for nid in (e.src, e.dst):
+                if nid not in seen_ids:
+                    seen_ids.append(nid)
+
+        found_edges: dict[str, Edge] = {e.id: e for e in hop1}
+        if hops == 2:
+            frontier = [nid for nid in seen_ids if nid != center]
+            # 第 2 跳**必须**带类型过滤：调用方没指定时用 HOP2_EDGE_TYPES。放开
+            # HAS_STATE / MEMBER_OF / LOCATED_AT 任一条 = 2 跳返回全书。
+            hop2_types = edge_types if edge_types is not None else HOP2_EDGE_TYPES
+            for e in queries.incident_edges_at(
+                self._conn, project_id, frontier, chapter, scope, hop2_types
+            ):
+                found_edges.setdefault(e.id, e)
+                for nid in (e.src, e.dst):
+                    if nid not in seen_ids:
+                        seen_ids.append(nid)
+
+        truncated = len(seen_ids) > MAX_SUBGRAPH_NODES
+        kept_ids = seen_ids[:MAX_SUBGRAPH_NODES]  # center 永远在第 0 位
+        kept = set(kept_ids)
+        nodes_by_id = queries.fetch_nodes(self._conn, project_id, kept_ids)
+        missing = kept - nodes_by_id.keys()
+        if missing:
+            raise StoreError(f"子图里的节点不在项目 {project_id} 里（跨项目引用？）：{sorted(missing)}")
+        return Subgraph(
+            center=center_node,
+            chapter=chapter,
+            hops=hops,
+            scope=scope,
+            nodes=[nodes_by_id[i] for i in kept_ids],
+            edges=[e for e in found_edges.values() if e.src in kept and e.dst in kept],
+            truncated=truncated,
+        )
+
+    # ── upsert_edge ───────────────────────────────────────────────────────
+
+    def upsert_edge(self, spec: EdgeSpec) -> UpsertResult:
+        # evidence_id 与 evidence_status 两列同生同死（DB 的 CHECK 强制），所以
+        # EdgeSpec 里没有 evidence_status——它在这里由 evidence_id 推导，只此一处。
+        evs = EvidenceStatus.NONE if spec.evidence_id is None else EvidenceStatus.FRESH
+        with _transaction(self._conn):
+            self._require_node(spec.project_id, spec.src, what="src")
+            self._require_node(spec.project_id, spec.dst, what="dst")
+
+            existing = queries.find_by_identity(self._conn, spec)
+            if existing is not None:
+                # 撞幂等键 = 重跑。**只**更新 props 类字段，不跑 supersede、不碰
+                # valid_to_chapter、不碰 status（理由见 store.upsert_edge 的契约：
+                # 碰了会让 M4 断点续跑时复活已闭合的边 → 重叠区间 → 两条互斥边）。
+                edge = queries.update_edge_facets(self._conn, existing.id, spec, evs)
+                return UpsertResult(edge=edge, created=False)
+
+            exclusivity = queries.exclusivity_of(self._conn, spec.type)
+            conflicts = queries.find_conflicts(self._conn, spec, exclusivity)
+
+            # 先把乱序全部检出来再动手：事务回滚兜得住，但「先炸再改」让失败路径
+            # 不依赖回滚的正确性。
+            for old in conflicts:
+                if old.valid_from_chapter > spec.valid_from_chapter:
+                    raise SupersedeConflict(
+                        f"乱序插入：已有 {old.type} 边 {old.id} 的 valid_from="
+                        f"{old.valid_from_chapter} 晚于新边的 {spec.valid_from_chapter}。"
+                        "v1 的 supersede 只进不退（§5.9：valid_from 由证据决定、证据按章推进），"
+                        "正确处理它得先回答「先前那条事实在后一条结束后要不要恢复」——"
+                        "猜错的产物是重叠区间，所以宁可抛"
+                    )
+
+            edge = queries.insert_edge(self._conn, self._new_edge_id(spec.project_id), spec, evs)
+            closed: list[Edge] = []
+            retracted: list[Edge] = []
+            for old in conflicts:
+                if old.valid_from_chapter < spec.valid_from_chapter:
+                    closed.append(
+                        queries.close_edge(self._conn, old.id, spec.valid_from_chapter)
+                    )
+                else:
+                    # ==：同章更正（「他在青云城…然后去了北荒」都在 ch151）。闭合成
+                    # [151,151) 是空区间，DB 的 CHECK 会拒——正确表达只能是撤回。
+                    retracted.append(queries.retract_edge(self._conn, old.id))
+            return UpsertResult(edge=edge, created=True, closed=closed, retracted=retracted)
+
+
+def _reject_dups(ids: Sequence[str], what: str) -> None:
+    """重复 id 会让 KnowledgeMatrix 的笛卡尔积 validator 报一个读不懂的错
+    （want 去重了、got 没有）。在这里拦，给调用方一句人话。"""
+    if len(set(ids)) != len(ids):
+        dup = sorted({i for i in ids if list(ids).count(i) > 1})
+        raise ValueError(f"{what} 有重复 id：{dup}")
