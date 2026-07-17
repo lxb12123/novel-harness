@@ -1,8 +1,14 @@
-"""`StoryGraph` 的 SQLite 实现（PLAN §8 Day 4）。
+"""`GraphStore`（= `StoryGraph` + `CanonWriter`）的 SQLite 实现（PLAN §8 Day 4）。
 
 分工：**SQL 在 `queries.py`，编排在这里。** 这个文件里一条时态过滤都没有——
-它只做四件 SQL 做不了的事：入参校验（scope / hops / NodeNotFound）、事务边界、
-supersede 的分支决定、以及把边投影成 `StateSnapshot` / `KnowledgeMatrix` / `Subgraph`。
+它只做五件 SQL 做不了的事：入参校验（scope / hops / NodeNotFound）、事务边界、
+supersede 的分支决定、把边投影成 `StateSnapshot` / `KnowledgeMatrix` / `Subgraph`，
+以及写入侧那些「必须同生」的组合（节点 + canonical 别名 + secret 行 / 章节 + 快照）。
+
+`quote_hash` 从 `decisions.py` import，**不在这里重新实现**（那份 docstring 立过
+「别在别处再实现一遍」）：`evidence.quote_sha256` 和 `chapter.text_sha256` 是它仅有的
+两个消费者，而两份实现里只要有一份哪天加了 `.strip()`，快照去重和证据锚就在那一刻
+各说各话。`graph/ → decisions → db` 无环（decisions 不 import graph）。
 
 `graph/` 是全系统唯一允许 import sqlite3 的目录（`tests/test_arch_guard.py` 拦 import，
 不靠纪律）。
@@ -12,16 +18,25 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable, Collection, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import AbstractContextManager, contextmanager
+from typing import Final
 
-from ulid import ULID
-
+from ..decisions import quote_hash
+from ..ids import EntityType, new_id
+from ..text import anchor
 from . import queries
 from .models import (
+    CANONICAL_ALIAS_LABELS,
     AliasHit,
+    AliasKind,
+    AliasSpec,
+    ChapterSpec,
+    ChapterText,
     Edge,
     EdgeSpec,
     EdgeType,
+    Evidence,
+    EvidenceSpec,
     EvidenceStatus,
     InformationScope,
     KnowledgeCell,
@@ -29,10 +44,14 @@ from .models import (
     KnowledgeState,
     Node,
     NodeLabel,
+    NodeProps,
     NodeRef,
+    NodeSpec,
     Resolution,
     StateSnapshot,
     StateValue,
+    StoredAlias,
+    StoredChapter,
     Subgraph,
     UpsertResult,
 )
@@ -42,19 +61,24 @@ from .store import (
     MAX_SUBGRAPH_NODES,
     QUERYABLE_SCOPES,
     NodeNotFound,
+    QuoteMismatch,
     StoreError,
     SupersedeConflict,
 )
 
+MIN_RULE_SURFACE_LEN: Final = 2
+"""canonical 别名的 `usable_for_rules` 阈值 —— `alias` 表那条
+`CHECK (usable_for_rules = 0 OR length(surface) >= 2)` 在应用层的同一个数。
+
+它在这里的**唯一**用途是让 1 字名的人物（真书里有）建得出节点：不判这一下，
+`upsert_node` 会拿 `usable_for_rules=1` 去撞那条 CHECK，于是**建节点整个失败**。
+schema 的立场是「短 surface 可以存在，只是不许被规则拿去匹配正文」（ADR 0004：
+「音」「决」去正文里匹配 = 满篇误报），不是「1 字名的人不许进这本书」。
+"""
+
 
 def _default_edge_id(project_id: str) -> str:
-    """**临时的**。ADR 0003 的 ID 归 `ids.py`（§8 Day 3，含 10 个 golden 值测试）。
-
-    那个文件还不存在，而这里必须能生成 id。构造函数收 `edge_id_factory` 就是为了让
-    `ids.py` 落地后一行接上（`lambda pid: ids.new_id(EntityType.EDGE, pid)`），
-    而不是让「ID 怎么生成」这件 golden test 钉死的事在本文件里长出第二份定义。
-    """
-    return f"edge:{project_id.split(':')[-1][:8]}:{ULID()}"
+    return new_id(EntityType.EDGE, project_id)
 
 
 @contextmanager
@@ -78,13 +102,18 @@ def _transaction(conn: sqlite3.Connection) -> Iterator[None]:
 
 
 class SqliteStoryGraph:
-    """`StoryGraph` 的唯一实现。
+    """`GraphStore` 的唯一实现 —— 即 `StoryGraph`（读 + upsert_edge）与 `CanonWriter`
+    （建节点 / 别名 / 秘密 / 章节 / 快照 / 证据）两个 Protocol 的并集。
+
+    **一个对象一条连接**，这是 `transaction()` 能罩住 `upsert_edge` 的前提
+    （见 `store.GraphStore` 的论证）。
 
     Args:
         conn: 已经 `migrate()` 过、且 `PRAGMA foreign_keys=ON` 的连接（db.py 的活）。
             本类**不碰** `row_factory` 等连接配置——那是 `connect()` 的所有物，
             在这里改会让别的消费者拿到意料之外的行类型。
-        edge_id_factory: 见 `_default_edge_id`。
+        edge_id_factory: 只为测试留的缝。默认走 `ids.new_id`——ID 的形状由 ADR 0003
+            定死、由 `tests/test_ids.py` 的 golden 值钉住，本文件不该有第二份定义。
     """
 
     def __init__(
@@ -443,6 +472,159 @@ class SqliteStoryGraph:
                     # [151,151) 是空区间，DB 的 CHECK 会拒——正确表达只能是撤回。
                     retracted.append(queries.retract_edge(self._conn, old.id))
             return UpsertResult(edge=edge, created=True, closed=closed, retracted=retracted)
+
+    # ── CanonWriter ───────────────────────────────────────────────────────
+
+    def transaction(self) -> AbstractContextManager[None]:
+        return _transaction(self._conn)
+
+    def upsert_node(self, spec: NodeSpec) -> Node:
+        with _transaction(self._conn):
+            found = queries.find_node_by_name(self._conn, spec.project_id, spec.label, spec.name)
+            if len(found) > 1:
+                # 只有本方法建得出节点，而它是幂等的——所以这个状态不该存在。
+                # 它若存在，resolve(name) 会返回 2 个 hit → ambiguous →
+                # usable_for_rules 为假 → 面板上整行消失，且没有一步会报错。
+                raise StoreError(
+                    f"项目 {spec.project_id} 里有 {len(found)} 个 label={spec.label} 的"
+                    f"「{spec.name}」（{[n.id for n in found]}）：幂等键撞出多行，"
+                    "resolve 会把它读成歧义称呼，而歧义称呼在面板上是整行消失"
+                )
+            if found:
+                # 重复声明 = 更 props。**不重写 secret 行**：description / sub_of 的
+                # 修改是一次独立的编辑，不是「再声明一次」的副作用。
+                return queries.update_node_props(self._conn, found[0].id, spec.props)
+
+            node_id = new_id(EntityType.for_node_label(spec.label), spec.project_id)
+            node = queries.insert_node(
+                self._conn,
+                node_id,
+                project_id=spec.project_id,
+                label=spec.label,
+                name=spec.name,
+                props=spec.props,
+            )
+            if spec.label in CANONICAL_ALIAS_LABELS:
+                queries.insert_alias(
+                    self._conn,
+                    new_id(EntityType.ALIAS, spec.project_id),
+                    project_id=spec.project_id,
+                    node_id=node.id,
+                    surface=spec.name,
+                    kind=AliasKind.CANONICAL,
+                    usable_for_rules=len(spec.name) >= MIN_RULE_SURFACE_LEN,
+                )
+            if spec.secret is not None:
+                queries.insert_secret(self._conn, node.id, spec.project_id, spec.secret)
+            return node
+
+    def add_alias(self, spec: AliasSpec) -> StoredAlias:
+        with _transaction(self._conn):
+            self._require_node(spec.project_id, spec.node_id, what="node_id")
+            return queries.insert_alias(
+                self._conn,
+                new_id(EntityType.ALIAS, spec.project_id),
+                project_id=spec.project_id,
+                node_id=spec.node_id,
+                surface=spec.surface,
+                kind=spec.kind,
+                usable_for_rules=spec.usable_for_rules,
+            )
+
+    def put_chapter(self, spec: ChapterSpec) -> StoredChapter:
+        sha = quote_hash(spec.text)
+        with _transaction(self._conn):
+            row = queries.find_chapter_by_number(self._conn, spec.project_id, spec.number)
+            if row is None:
+                chapter_id = new_id(EntityType.CHAPTER, spec.project_id)
+                # Chapter 节点和 chapter 行**同生**，而且没有 canonical 别名
+                # （CANONICAL_ALIAS_LABELS 里没有它）：300 章 = 300 条章标进花名册。
+                queries.insert_node(
+                    self._conn,
+                    chapter_id,
+                    project_id=spec.project_id,
+                    label=NodeLabel.CHAPTER,
+                    name=spec.heading,
+                    props=NodeProps(),
+                )
+                queries.insert_chapter(self._conn, chapter_id, spec, sha)
+                created = True
+            else:
+                chapter_id = row.id
+                node = self._require_node(spec.project_id, chapter_id, what="chapter 节点")
+                if node.name != spec.heading:
+                    queries.update_node_name(self._conn, chapter_id, spec.heading)
+                queries.update_chapter(self._conn, chapter_id, spec, sha)
+                created = False
+
+            snapshot_id = queries.find_snapshot(self._conn, chapter_id, sha)
+            snapshot_created = snapshot_id is None
+            if snapshot_id is None:
+                snapshot_id = queries.insert_snapshot(
+                    self._conn,
+                    new_id(EntityType.SNAPSHOT, spec.project_id),
+                    chapter_id,
+                    spec.text,
+                    sha,
+                )
+            return StoredChapter(
+                id=chapter_id,
+                project_id=spec.project_id,
+                number=spec.number,
+                title=spec.title,
+                path=spec.path,
+                text_sha256=sha,
+                snapshot_id=snapshot_id,
+                created=created,
+                snapshot_created=snapshot_created,
+            )
+
+    def current_snapshots(self, project_id: str) -> list[ChapterText]:
+        return queries.current_snapshots(self._conn, project_id)
+
+    def put_evidence(self, spec: EvidenceSpec) -> Evidence:
+        with _transaction(self._conn):
+            ctx = queries.snapshot_context(self._conn, spec.chapter_snapshot_id)
+            if ctx is None:
+                raise StoreError(f"快照不存在：{spec.chapter_snapshot_id}")
+            if ctx.project_id != spec.project_id:
+                # 跨项目引用。evidence 的两个指针分别外键到 chapter_snapshot 和 chapter，
+                # 两条都不带 project_id，所以 schema 拦不住这一条。
+                raise StoreError(
+                    f"快照 {spec.chapter_snapshot_id} 属于项目 {ctx.project_id}，"
+                    f"不是 {spec.project_id}"
+                )
+
+            paras = anchor.paragraphs(ctx.text)
+            sliced = (
+                anchor.find_one(paras[spec.para_index], spec.quote_text, spec.occurrence_k)
+                if spec.para_index < len(paras)
+                else None
+            )
+            if sliced is None:
+                # 段号越界 / 第 k 次不存在 / 那个位置上是别的字——三者是同一种失败：
+                # 这个锚在这份快照上定位不到，于是没有子串可以取哈希。
+                raise QuoteMismatch(
+                    f"引语在第 {ctx.chapter_number} 章第 {spec.para_index} 段第 "
+                    f"{spec.occurrence_k} 次的位置上不是逐字原文："
+                    f"「{spec.quote_text}」。这份快照共 {len(paras)} 段。"
+                    "证据的哈希只能对「从快照里切出来的那个子串」取（ADR 0006 配套第 3 条），"
+                    "切不出来就不该有 evidence 行"
+                )
+
+            return queries.insert_evidence(
+                self._conn,
+                new_id(EntityType.EVIDENCE, spec.project_id),
+                project_id=spec.project_id,
+                chapter_snapshot_id=spec.chapter_snapshot_id,
+                chapter_id=ctx.chapter_id,
+                para_index=spec.para_index,
+                occurrence_k=spec.occurrence_k,
+                # 切出来的子串，**不是 spec.quote_text**。M1 精确匹配下两者逐字节相等，
+                # M4 的模糊路径上不等——形状今天就对，那天才是加法。
+                quote_text=sliced,
+                quote_sha256=quote_hash(sliced),
+            )
 
 
 def _reject_dups(ids: Sequence[str], what: str) -> None:

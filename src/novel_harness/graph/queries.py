@@ -14,20 +14,29 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Collection, Sequence
-from typing import Any, Final
+from typing import Any, Final, NamedTuple
 
 from .models import (
     UNDIRECTED_EDGE_TYPES,
+    AliasKind,
+    AuditPointer,
+    ChapterSpec,
+    ChapterText,
     Edge,
     EdgeProps,
     EdgeSpec,
     EdgeStatus,
     EdgeType,
+    Evidence,
     EvidenceStatus,
     Exclusivity,
     InformationScope,
     Node,
+    NodeLabel,
     NodeProps,
+    RelocatePointer,
+    SecretDetail,
+    StoredAlias,
 )
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -139,6 +148,127 @@ def fetch_nodes(
         {"pid": project_id, **params},
     )
     return {r["id"]: to_node(r) for r in _rows(cur)}
+
+
+def find_node_by_name(
+    conn: sqlite3.Connection, project_id: str, label: NodeLabel, name: str
+) -> list[Node]:
+    """`upsert_node` 的幂等键 `(project_id, label, name)`。
+
+    返回 `list` 而不是 `Node | None`：`idx_node_name` 是普通 INDEX 不是 UNIQUE，所以
+    「撞出两行」在物理上是可能的，而调用方必须能把那种情况和「没找到」分开处理
+    （它是个 StoreError，不是「那就再建一个」）。
+    """
+    cur = conn.execute(
+        f"""
+        SELECT {_NODE_COLS} FROM node
+        WHERE project_id = :pid AND label = :label AND name = :name
+        ORDER BY id
+        """,
+        {"pid": project_id, "label": label.value, "name": name},
+    )
+    return [to_node(r) for r in _rows(cur)]
+
+
+def insert_node(
+    conn: sqlite3.Connection,
+    node_id: str,
+    *,
+    project_id: str,
+    label: NodeLabel,
+    name: str,
+    props: NodeProps,
+) -> Node:
+    """收散参数而不是 `NodeSpec`：Chapter 节点（`put_chapter` 建的那个）在 `NodeSpec`
+    里根本构造不出来——那条 validator 是故意的，见它的理由。"""
+    cur = conn.execute(
+        f"""
+        INSERT INTO node (id, project_id, label, name, props_json)
+        VALUES (:id, :pid, :label, :name, :props)
+        RETURNING {_NODE_COLS}
+        """,
+        {
+            "id": node_id,
+            "pid": project_id,
+            "label": label.value,
+            "name": name,
+            "props": props.model_dump_json(),
+        },
+    )
+    return to_node(_rows(cur)[0])
+
+
+def update_node_props(conn: sqlite3.Connection, node_id: str, props: NodeProps) -> Node:
+    cur = conn.execute(
+        f"UPDATE node SET props_json = :props WHERE id = :id RETURNING {_NODE_COLS}",
+        {"id": node_id, "props": props.model_dump_json()},
+    )
+    return to_node(_rows(cur)[0])
+
+
+def update_node_name(conn: sqlite3.Connection, node_id: str, name: str) -> Node:
+    """改显示名。**canonical 别名不跟着改**（`put_chapter` 是唯一调用方，而 Chapter
+    节点没有 canonical 别名）。真要给人物改名，那是 M4 的别名合并，不是这里。"""
+    cur = conn.execute(
+        f"UPDATE node SET name = :name WHERE id = :id RETURNING {_NODE_COLS}",
+        {"id": node_id, "name": name},
+    )
+    return to_node(_rows(cur)[0])
+
+
+def insert_alias(
+    conn: sqlite3.Connection,
+    alias_id: str,
+    *,
+    project_id: str,
+    node_id: str,
+    surface: str,
+    kind: AliasKind,
+    usable_for_rules: bool,
+) -> StoredAlias:
+    """收散参数而不是 `AliasSpec`：canonical 别名（`upsert_node` 建的那条）在
+    `AliasSpec` 里根本构造不出来——那条 validator 是故意的。"""
+    conn.execute(
+        """
+        INSERT INTO alias (id, project_id, node_id, surface, kind, usable_for_rules)
+        VALUES (:id, :pid, :nid, :surface, :kind, :usable)
+        """,
+        {
+            "id": alias_id,
+            "pid": project_id,
+            "nid": node_id,
+            "surface": surface,
+            "kind": kind.value,
+            "usable": int(usable_for_rules),
+        },
+    )
+    return StoredAlias(
+        id=alias_id,
+        project_id=project_id,
+        node_id=node_id,
+        surface=surface,
+        kind=kind,
+        usable_for_rules=usable_for_rules,
+    )
+
+
+def insert_secret(
+    conn: sqlite3.Connection, node_id: str, project_id: str, detail: SecretDetail
+) -> None:
+    """`secret` 扩展表那一行。`label` 列不传：它有 DEFAULT 'Secret' + CHECK，
+    存在的唯一理由是给复合外键当锚（见 001_init.sql）。"""
+    conn.execute(
+        """
+        INSERT INTO secret (id, project_id, description, sub_of)
+        VALUES (:id, :pid, :desc, :sub_of)
+        """,
+        {
+            "id": node_id,
+            "pid": project_id,
+            "desc": detail.description,
+            "sub_of": detail.sub_of,
+        },
+    )
 
 
 def secret_ids(conn: sqlite3.Connection, project_id: str) -> list[str]:
@@ -475,3 +605,243 @@ def fetch_edge(conn: sqlite3.Connection, edge_id: str) -> Edge:
     if not rows:
         raise LookupError(f"edge 不存在：{edge_id}")
     return to_edge(rows[0])
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 章节 / 快照 / 证据
+#
+# 这三张表**不在** tests/test_arch_guard.py 的 GRAPH_TABLES 名单里，也就是说守卫
+# 允许在 graph/ 之外对它们写 SQL。它们仍然放在这里，理由与守卫无关：
+#   chapter.id 走 `REFERENCES node(id, project_id, label)` 复合外键 ⇒ 落一章 = 先建一个
+#   Chapter 节点 ⇒ 两者必须在**一个事务**里。把它放到 graph/ 外面，就把「Chapter 节点和
+#   chapter 行同生」变成了调用方的纪律——而一个没有 chapter 行的 Chapter 节点没有
+#   number，number 是 state_at 的全序键。
+#   且 `secret` 在名单里、`chapter` 不在，而两者的 schema 形状一模一样（扩展表、
+#   主键 = node.id、复合外键连 label）。两个同形的东西走两条规矩 = 下一个贡献者只能靠猜。
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class ChapterRow(NamedTuple):
+    """`chapter` 表那一行（不含快照）。
+
+    NamedTuple 而不是 Pydantic：它**不越过 StoryGraph 接口**（`put_chapter` 出的是
+    `StoredChapter`），是 graph/ 内部的中间量。「dict / sqlite3.Row 禁止越界」那条
+    在这里已经满足了——行在这个文件里就死掉了。
+    """
+
+    id: str
+    number: int
+    title: str
+    path: str
+    text_sha256: str
+
+
+class SnapshotContext(NamedTuple):
+    """一条快照连它所属章节的身份。`put_evidence` 靠它把两个指针钉在同一章上。"""
+
+    text: str
+    chapter_id: str
+    chapter_number: int
+    project_id: str
+
+
+def find_chapter_by_number(
+    conn: sqlite3.Connection, project_id: str, number: int
+) -> ChapterRow | None:
+    """`put_chapter` 的幂等键 `(project_id, number)` —— schema 的 UNIQUE。"""
+    cur = conn.execute(
+        """
+        SELECT id, number, title, path, text_sha256 FROM chapter
+        WHERE project_id = :pid AND number = :number
+        """,
+        {"pid": project_id, "number": number},
+    )
+    rows = _rows(cur)
+    return ChapterRow(**rows[0]) if rows else None
+
+
+def insert_chapter(conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec, sha: str) -> None:
+    """`sha` 由调用方现算（`put_chapter` 用 `decisions.quote_hash(spec.text)`）——
+    `ChapterSpec` 里没有这个字段，见那份 docstring。"""
+    conn.execute(
+        """
+        INSERT INTO chapter (id, project_id, number, title, path, text_sha256)
+        VALUES (:id, :pid, :number, :title, :path, :sha)
+        """,
+        {
+            "id": chapter_id,
+            "pid": spec.project_id,
+            "number": spec.number,
+            "title": spec.title,
+            "path": spec.path,
+            "sha": sha,
+        },
+    )
+
+
+def update_chapter(conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec, sha: str) -> None:
+    """`nh sync` 的落点：作者在自己的编辑器里改了这一章。
+
+    `number` 不在这里——它是幂等键，改它就是换一章。`updated_at` 显式重写：它的
+    DEFAULT 只在 INSERT 时生效。
+    """
+    conn.execute(
+        """
+        UPDATE chapter
+           SET title = :title, path = :path, text_sha256 = :sha,
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE id = :id
+        """,
+        {"id": chapter_id, "title": spec.title, "path": spec.path, "sha": sha},
+    )
+
+
+def find_snapshot(conn: sqlite3.Connection, chapter_id: str, sha: str) -> str | None:
+    """按 `UNIQUE(chapter_id, text_sha256)` 去重：快照是证据的锚，不是版本历史，
+    同内容只需要存在一次。"""
+    cur = conn.execute(
+        "SELECT id FROM chapter_snapshot WHERE chapter_id = :cid AND text_sha256 = :sha",
+        {"cid": chapter_id, "sha": sha},
+    )
+    rows = _rows(cur)
+    return str(rows[0]["id"]) if rows else None
+
+
+def insert_snapshot(
+    conn: sqlite3.Connection, snapshot_id: str, chapter_id: str, text: str, sha: str
+) -> str:
+    conn.execute(
+        """
+        INSERT INTO chapter_snapshot (id, chapter_id, text, text_sha256)
+        VALUES (:id, :cid, :text, :sha)
+        """,
+        {"id": snapshot_id, "cid": chapter_id, "text": text, "sha": sha},
+    )
+    return snapshot_id
+
+
+def current_snapshots(conn: sqlite3.Connection, project_id: str) -> list[ChapterText]:
+    """每一章的**当前**快照，按章号升序。
+
+    判据是 `s.text_sha256 = c.text_sha256` 的**精确等值**。写成
+    `ORDER BY s.created_at DESC LIMIT 1` 是错的：那是在「哪条快照是当前的」这件事上猜，
+    而 `chapter.text_sha256` 已经把答案写在那儿了。两者在正常路径上恰好同解，所以猜错
+    不会有任何症状——直到作者把一章改回它上一个版本（快照按内容去重、不新建，于是
+    「最新的那条」指向的是那份已经被改掉的正文），此时定位出来的证据锚在旧文本上。
+    """
+    cur = conn.execute(
+        """
+        SELECT c.id AS chapter_id, c.number AS number, s.id AS snapshot_id, s.text AS text
+        FROM chapter c
+        JOIN chapter_snapshot s
+          ON s.chapter_id = c.id AND s.text_sha256 = c.text_sha256
+        WHERE c.project_id = :pid
+        ORDER BY c.number
+        """,
+        {"pid": project_id},
+    )
+    return [ChapterText(**r) for r in _rows(cur)]
+
+
+def snapshot_context(conn: sqlite3.Connection, snapshot_id: str) -> SnapshotContext | None:
+    cur = conn.execute(
+        """
+        SELECT s.text AS text, c.id AS chapter_id, c.number AS chapter_number,
+               c.project_id AS project_id
+        FROM chapter_snapshot s JOIN chapter c ON c.id = s.chapter_id
+        WHERE s.id = :sid
+        """,
+        {"sid": snapshot_id},
+    )
+    rows = _rows(cur)
+    return SnapshotContext(**rows[0]) if rows else None
+
+
+_EVIDENCE_COLS: Final = (
+    "e.id AS id, e.project_id AS project_id, "
+    "e.chapter_snapshot_id AS chapter_snapshot_id, e.para_index AS para_index, "
+    "e.quote_text AS quote_text, e.quote_sha256 AS quote_sha256, "
+    "e.chapter_id AS chapter_id, e.para_index_hint AS para_index_hint, "
+    "e.occurrence_k AS occurrence_k, c.number AS chapter_number"
+)
+
+
+def to_evidence(row: dict[str, Any]) -> Evidence:
+    """`chapter_number` 在 evidence 表里**没有对应列**——它由 JOIN chapter 填。
+
+    这不是遗漏：它是 `Evidence` 作为出参对调用方的承诺，而声明层正是靠 `ev.chapter_number`
+    写 `valid_from`（§5.9：作者永不填章号，章号由证据决定）。存一份在 evidence 行里
+    则是把 `chapter.number` 抄第二遍——同名字段存两处就需要一个同步器。
+    """
+    return Evidence(
+        id=row["id"],
+        project_id=row["project_id"],
+        chapter_number=row["chapter_number"],
+        audit=AuditPointer(
+            chapter_snapshot_id=row["chapter_snapshot_id"],
+            para_index=row["para_index"],
+            quote_text=row["quote_text"],
+            quote_sha256=row["quote_sha256"],
+        ),
+        relocate=RelocatePointer(
+            chapter_id=row["chapter_id"],
+            quote_sha256=row["quote_sha256"],
+            para_index_hint=row["para_index_hint"],
+            occurrence_k=row["occurrence_k"],
+        ),
+    )
+
+
+def insert_evidence(
+    conn: sqlite3.Connection,
+    evidence_id: str,
+    *,
+    project_id: str,
+    chapter_snapshot_id: str,
+    chapter_id: str,
+    para_index: int,
+    occurrence_k: int,
+    quote_text: str,
+    quote_sha256: str,
+) -> Evidence:
+    """两个指针一次落下。**写入这一刻 `para_index_hint == para_index`**：审计的那个
+    指向不可变快照、永不更新；重定位的那个跟着作者改稿漂（M4 的 relocate 就地更新它）。
+
+    `quote_text` / `quote_sha256` 收的必须是**从快照里切出来的那个子串**和它的哈希，
+    不是调用方传进来的串（ADR 0006 配套第 3 条）——`put_evidence` 是唯一的调用方，
+    这条在那里被 `EvidenceSpec` 的形状钉死。
+    """
+    conn.execute(
+        """
+        INSERT INTO evidence (id, project_id, chapter_snapshot_id, para_index,
+                              quote_text, quote_sha256,
+                              chapter_id, para_index_hint, occurrence_k)
+        VALUES (:id, :pid, :sid, :para, :quote, :sha, :cid, :para, :k)
+        """,
+        {
+            "id": evidence_id,
+            "pid": project_id,
+            "sid": chapter_snapshot_id,
+            "para": para_index,
+            "quote": quote_text,
+            "sha": quote_sha256,
+            "cid": chapter_id,
+            "k": occurrence_k,
+        },
+    )
+    return fetch_evidence(conn, evidence_id)
+
+
+def fetch_evidence(conn: sqlite3.Connection, evidence_id: str) -> Evidence:
+    cur = conn.execute(
+        f"""
+        SELECT {_EVIDENCE_COLS}
+        FROM evidence e JOIN chapter c ON c.id = e.chapter_id
+        WHERE e.id = :id
+        """,
+        {"id": evidence_id},
+    )
+    rows = _rows(cur)
+    if not rows:
+        raise LookupError(f"evidence 不存在：{evidence_id}")
+    return to_evidence(rows[0])

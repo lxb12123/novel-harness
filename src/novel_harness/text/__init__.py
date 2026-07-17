@@ -5,6 +5,7 @@
 
 | 模块 | 内容 |
 |---|---|
+| `anchor` | 「什么是一段」+「这段引语在哪」—— `para_index` 的唯一定义 |
 | `chapterize` | 切章 —— `Chapter.index` 是全书全序键，`state_at` 的那个 `:ch` 的产地 |
 | `scenes` | `## 场景 N` + `<!-- nh: ... -->` 的解析与写回 —— `Scene` 的唯一生产者 |
 
@@ -31,6 +32,12 @@ M3 真被绊倒时的正确修法**不是**把这里的再出口删掉（那只�
 
 from __future__ import annotations
 
+from .anchor import (
+    Located,
+    find_all,
+    find_one,
+    paragraphs,
+)
 from .chapterize import (
     CHAPTER_RE,
     Chapter,
@@ -56,13 +63,17 @@ __all__ = [
     "AmbiguousScene",
     "Chapter",
     "Chapterization",
+    "Located",
     "MalformedDirective",
     "SceneNotFound",
     "SceneWriteRefused",
     "UnwritableValue",
     "chapterize",
     "chapters",
+    "find_all",
+    "find_one",
     "normalize",
+    "paragraphs",
     "parse_scenes",
     "write_scene_directive",
 ]

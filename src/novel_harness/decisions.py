@@ -65,8 +65,15 @@ class DecisionKind(StrEnum):
     """
 
     ALIAS_MERGE = "alias_merge"
+    NODE_DECLARE = "node_declare"
+    """建一个 Character / Location / Faction / Foreshadow / Object 节点。
+    Secret 走 `SECRET_DECLARE`（§5.7 的原文单列了它）。"""
+
     SECRET_DECLARE = "secret_declare"
     KNOWS_DECLARE = "knows_declare"
+    """KNOWS 和 BELIEVES 共用这一个：哪一条在 `payload["edge_type"]` 里。"""
+
+    LOCATED_DECLARE = "located_declare"
     PROPOSAL_REVIEW = "proposal_review"
 
 

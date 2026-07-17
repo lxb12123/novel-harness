@@ -1,22 +1,29 @@
 """给心跳铺一个库：README:20-31 那个世界，逐格照抄。用法 `seed_demo.py <db>`，stdout 出 project_id。
 
-**这个文件是 M1 声明层的替身，不是它的雏形。** 作者声明秘密与认知的正路是 M1 的声明层，
-而今天它不存在——`StoryGraph` 的五个方法一个都建不出节点，`nh import` 落不了库是同一个
-原因（见 `cli.py::import_` 末尾那段）。所以这里直接写 SQL，理由和 `tests/test_cli.py::_seed`
-一模一样：`tests/test_arch_guard.py` 只扫 `src/`，而生产侧根本没有那条写路径。
+**这个文件是 M1 声明层的替身，不是它的雏形。**
+
+节点 / 别名 / 秘密那一半现在**真的走声明层**（`project.create` + `Ledger.declare_node` /
+`declare_alias`）：M1 落地之后生产侧有这条路径了，这里再手写第二份写路径就等于把被测物
+换成了自己。裸 SQL 从 5 条降到 0 条。
+
+**证据 → valid_from 那一半，它仍然是替身。** 下面那四个章号字面量绕过了
+「引语 → 章号 → valid_from」那条链——本文件**没有一本书可以指**（`declare_knows` 要求
+引语在正文里真的存在，而这里没有第 88 章的正文）。那条链由 `scripts/demo.sh` 的
+**第二条泳道**每天量一遍：它 `nh init` → `nh import` 一本 3 章的 fixture → `nh declare
+knows --quote …` → 断言 stdout 上的 `valid_from = ch3`。两条泳道各证一件事，谁都不替代谁。
 
 ⚠️ **别把守卫扫不到这里读成「这里可以查图」。** 那道守卫拦的是「第二份时态过滤」，
-而本文件一行读查询都没有：它只往 node / alias / secret / edge 里填作者本该亲手声明的东西，
-读那一侧全部由 `nh panel` / `nh check` 走 StoryGraph 完成——**心跳要量的正是那条读路径，
-在这里自己 SELECT 一次等于把被测物换成了自己。**
-M1 的建节点方法落地那天，本文件应该缩成对它的一次调用。
+而本文件一行读查询都没有：它只往图里填作者本该亲手声明的东西，读那一侧全部由
+`nh panel` / `nh check` 走 StoryGraph 完成——**心跳要量的正是那条读路径，
+在这里自己写一句 SQL 查一遍等于把被测物换成了自己。**
 
 ── 那几个章号（88 / 103 / 120 / 150）─────────────────────────────────────
 
 它们在真实流程里是**证据的产物**，不是谁填进去的：作者看着第 88 章的原文点确认，系统
 自己写 `valid_from=88`（ADR 0006 / §10 约束 10）。本文件是「作者已经确认过了」这个状态的
-替身，所以它有资格直接写这些数字——**而 `nh panel` 至今没有、也不许有一个填章号的旗标。**
-这两件事不矛盾：一个是已确认状态的 fixture，一个是作者的输入面。
+替身，所以它有资格直接写这些数字——约束 10 管的是**作者的输入面**，不是 store 的写接口
+（`EdgeSpec.valid_from_chapter` 一直是公开的、`ge=1` 的字段）。**而 `nh panel` 至今没有、
+也不许有一个填章号的旗标。** 这两件事不矛盾：一个是已确认状态的 fixture，一个是作者的输入面。
 """
 
 from __future__ import annotations
@@ -24,36 +31,39 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from novel_harness.db import Connection, connect, migrate
-from novel_harness.ids import EntityType, new_id, new_project_id
+from novel_harness import project
+from novel_harness.db import connect, migrate
+from novel_harness.declare import Ledger
+from novel_harness.graph import (
+    AliasKind,
+    EdgeProps,
+    EdgeSpec,
+    EdgeType,
+    InformationScope,
+    NodeLabel,
+    SecretDetail,
+)
+from novel_harness.graph.sqlite_store import SqliteStoryGraph
 
-# (label, name)。README 的框里出现的每一个人和每一条秘密，外加 R4 要的两个地点。
-_NODES: list[tuple[str, str]] = [
-    ("Character", "萧决"),
-    ("Character", "顾清音"),
-    ("Character", "李管家"),
-    ("Secret", "血脉秘密"),
-    ("Secret", "玄铁令下落"),
-    ("Location", "青云城主府"),
-    ("Location", "北荒"),
+# (label, name, secret)。README 的框里出现的每一个人和每一条秘密，外加 R4 要的两个地点。
+# 两条秘密带着 `SecretDetail()`：`NodeSpec` 的 validator 要求 label 与 secret 同生同死
+# （没有 secret 行的 Secret 节点在认知矩阵的默认列序里根本不成列）。
+_NODES: list[tuple[NodeLabel, str, SecretDetail | None]] = [
+    (NodeLabel.CHARACTER, "萧决", None),
+    (NodeLabel.CHARACTER, "顾清音", None),
+    (NodeLabel.CHARACTER, "李管家", None),
+    (NodeLabel.SECRET, "血脉秘密", SecretDetail()),
+    (NodeLabel.SECRET, "玄铁令下落", SecretDetail()),
+    (NodeLabel.LOCATION, "青云城主府", None),
+    (NodeLabel.LOCATION, "北荒", None),
 ]
 
-
-def _insert_node(conn: Connection, pid: str, label: str, name: str) -> str:
-    node_id = new_id(EntityType.for_node_label(label), pid)
-    conn.execute(
-        "INSERT INTO node (id, project_id, label, name) VALUES (?,?,?,?)",
-        (node_id, pid, label, name),
-    )
-    _insert_alias(conn, pid, node_id, name, "canonical")
-    return node_id
-
-
-def _insert_alias(conn: Connection, pid: str, node_id: str, surface: str, kind: str) -> None:
-    conn.execute(
-        "INSERT INTO alias (id, project_id, node_id, surface, kind) VALUES (?,?,?,?,?)",
-        (new_id(EntityType.ALIAS, pid), pid, node_id, surface, kind),
-    )
+_EDGES: list[tuple[str, str, EdgeType, int, EdgeProps]] = [
+    ("萧决", "血脉秘密", EdgeType.KNOWS, 88, EdgeProps()),
+    ("萧决", "玄铁令下落", EdgeType.KNOWS, 120, EdgeProps()),
+    ("李管家", "血脉秘密", EdgeType.BELIEVES, 103, EdgeProps(believed_value="已泄露")),
+    ("萧决", "北荒", EdgeType.LOCATED_AT, 150, EdgeProps()),
+]
 
 
 def seed(path: Path) -> str:
@@ -61,30 +71,34 @@ def seed(path: Path) -> str:
     conn = connect(path)
     migrate(conn)
 
-    pid = new_project_id()
-    conn.execute("INSERT INTO project (id, name, root_path) VALUES (?,?,?)", (pid, "青云记", "."))
+    pid = project.create(conn, name="青云记", root_path=".").id
+    store = SqliteStoryGraph(conn)
+    ledger = Ledger(store, conn, pid)
 
-    ids = {name: _insert_node(conn, pid, label, name) for label, name in _NODES}
-    for name in ("血脉秘密", "玄铁令下落"):
-        conn.execute("INSERT INTO secret (id, project_id) VALUES (?,?)", (ids[name], pid))
+    # canonical 别名由 `upsert_node` 自动建，且比原来那两行手写 SQL 对：1 字名会撞
+    # `CHECK (usable_for_rules = 0 OR length(surface) >= 2)`，而 upsert_node 会替它算。
+    ids = {
+        name: ledger.declare_node(label, name, secret=secret).id
+        for label, name, secret in _NODES
+    }
 
     # 「师兄」→ 2 个人。§3.1 点名的那个场景（一章里 8 个角色都叫「师兄」）的最小形态。
     # 歧义是**跨行**事实：两行各自完全合法，只有查询时才算得出来它指不到唯一的人。
     # 心跳靠它量 fail-closed 那一段还活着——没有这两行，那段断言测不到。
     for name in ("萧决", "李管家"):
-        _insert_alias(conn, pid, ids[name], "师兄", "title")
+        ledger.declare_alias(of=name, surface="师兄", kind=AliasKind.TITLE)
 
-    edges = [
-        ("萧决", "血脉秘密", "KNOWS", 88, "{}"),
-        ("萧决", "玄铁令下落", "KNOWS", 120, "{}"),
-        ("李管家", "血脉秘密", "BELIEVES", 103, '{"believed_value":"已泄露"}'),
-        ("萧决", "北荒", "LOCATED_AT", 150, "{}"),
-    ]
-    for src, dst, edge_type, valid_from, props in edges:
-        conn.execute(
-            "INSERT INTO edge (id, project_id, src, dst, type, props_json,"
-            " valid_from_chapter, information_scope) VALUES (?,?,?,?,?,?,?,'CANON')",
-            (new_id(EntityType.EDGE, pid), pid, ids[src], ids[dst], edge_type, props, valid_from),
+    for src, dst, edge_type, valid_from, props in _EDGES:
+        store.upsert_edge(
+            EdgeSpec(
+                project_id=pid,
+                src=ids[src],
+                dst=ids[dst],
+                type=edge_type,
+                props=props,
+                valid_from_chapter=valid_from,
+                information_scope=InformationScope.CANON,
+            )
         )
 
     conn.commit()

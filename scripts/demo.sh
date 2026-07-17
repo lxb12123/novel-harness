@@ -9,12 +9,24 @@
 # 单测量的是每一层自己对不对，而 M0/M1/M2 是**按层划分**的里程碑——层与层的接缝
 # （作者声明的 cast 能不能被 knowledge_matrix 消费、state_at 返回的边能不能被规则消费）
 # 按计划要到 M3 才第一次接上。接缝正是最容易崩、且崩了最久没人知道的地方。
-# 所以下面走的是一条完整的真链路：
 #
-#   作者声明（seed_demo.py，M1 声明层的替身）
-#     → 真的 SQLite 文件 → SqliteStoryGraph → resolve_cast → knowledge_matrix
-#     → 终端上那个框                                       ← README:20-31 逐格
+# ── 两条泳道，各证一件事，谁都不替代谁 ────────────────────────────────────
+#
+# **泳道 1（第 1–3 节）：README:20-31 那个 ch88 世界。** 起点是 `seed_demo.py`——它是
+# 「作者已经确认过了」这个状态的**替身**（那四个章号是字面量，它没有一本书可指）。
+# 它量的是替身之后的全部接缝：
+#
+#   已确认的声明 → 真的 SQLite 文件 → SqliteStoryGraph → resolve_cast → knowledge_matrix
+#     → 终端上那个框                                      ← README:20-31 逐格
 #   同一个库 → parse_scenes → run_checks → Issue + (para_index, quote_text, k)
+#
+# 时态下界（ch87/ch88）、fail-closed 的两面、「师兄」→2 人、R4 开火与闭嘴——全在这条。
+#
+# **泳道 2（第 4 节）：「引语 → 章号 → valid_from」那条链本身。** 泳道 1 量的是它的替身，
+# 这条量的是它：nh init → nh import 一本 3 章的 fixture → nh declare knows --quote →
+# 断言 stdout 上的 `valid_from = ch3`。**那个 3 是算出来的**——整条泳道的命令行里
+# 没有任何一个章号入参，也没有任何一个旗标能让它有（§5.9 / §10 约束 10）。
+# 这是这个项目全部差异化的地基，在此之前它每天只由单测量，心跳量的是它的替身。
 #
 # **每一步都断言输出。** 只跑命令、只看退出码是不够的：这条链路上大多数失败形态的
 # 自然产物是「一张漂亮的空表 + exit 0」（§10 约束 8）。一个打印空面板然后 exit 0 的
@@ -77,24 +89,14 @@ exits_zero() { [ "$STATUS" -eq 0 ] || fail "$1 应当成功，实得退出码 $S
 exits_nonzero() { [ "$STATUS" -ne 0 ] || fail "$1 应当非 0 退出，实得 0"; }
 
 # ══════════════════════════════════════════════════════════════════════════
-# 1. 切章
+# 1. 声明（M1 声明层的替身）
 # ══════════════════════════════════════════════════════════════════════════
-
-step "nh import —— 切章 + 对账"
-_run uv run nh import "$BOOK"
-has "切出 $CHAPTERS 章"
-
-# ⚠️ **这里在钉一个「还没做」，而不是一个 bug。** `nh import` 今天必须非 0 退出：
-# 图层没有建节点的路径，chapter 表的主键又是 node.id，所以它落不了库；一个安静地
-# 不落库的 import 会让后面 panel 的「没有花名册」看起来像 panel 的错。
-# **M1 的建节点方法落地那天，这三行会红——那正是它该做的事**（PLAN §8：
-# 「一开始全是 stub，之后每做完一块换掉一个 stub」）。届时把它换成断言库里真有 N 章。
-exits_nonzero "nh import（落库未实现）"
-has "落库没做"
-
-# ══════════════════════════════════════════════════════════════════════════
-# 2. 声明（M1 声明层的替身）
-# ══════════════════════════════════════════════════════════════════════════
+#
+# `nh import` 曾经在这个位置，断言的是「非 0 退出 + 『落库没做』」。**M1 的建节点方法
+# 落地了，那三行如期红了——那正是它们该做的事**（PLAN §8：「一开始全是 stub，之后每做完
+# 一块换掉一个 stub」）。它搬去了第 4 节的真链路泳道，且断言反了过来：exit 0 + 库里真有
+# N 章。放在那儿而不是这儿，是因为 `nh import` 现在要一个 project 和一个 db——而那正是
+# 那条泳道的开头两步。
 
 step "seed_demo.py —— 作者声明 3 个人 / 2 条秘密 / 4 条边"
 printf '  $ uv run python scripts/seed_demo.py %s\n' "$DB"
@@ -107,7 +109,7 @@ fi
 printf '  project_id = %s\n' "$PID"
 
 # ══════════════════════════════════════════════════════════════════════════
-# 3. 头牌：认知边界面板
+# 2. 头牌：认知边界面板
 # ══════════════════════════════════════════════════════════════════════════
 
 panel() { _run uv run nh panel --db "$DB" -p "$PID" "$@"; }
@@ -163,7 +165,7 @@ exits_nonzero "nh panel --cast 张三,李四"
 has "一个都没解析出唯一角色"
 
 # ══════════════════════════════════════════════════════════════════════════
-# 4. 规则：同一个库喂进 run_checks
+# 3. 规则：同一个库喂进 run_checks
 # ══════════════════════════════════════════════════════════════════════════
 
 check() { _run uv run nh check --db "$DB" -p "$PID" --chapter 151 -f "$1"; }
@@ -205,5 +207,73 @@ has "0 条 issue"
 has "跑了 1 条规则"
 has "location_conflict"
 
-printf '\n✓ 心跳正常：声明 → SqliteStoryGraph → knowledge_matrix → 面板，以及 → run_checks → issue。\n'
-printf '  （量的是接缝，不是真书。上面 import 那一步用的是手写的 3 章 fixture。）\n'
+# ══════════════════════════════════════════════════════════════════════════
+# 4. 泳道 2：引语 → 章号 → valid_from（作者一次都没输过章号）
+# ══════════════════════════════════════════════════════════════════════════
+#
+# 上面三节量的是 seed_demo.py 之后的接缝，而 seed_demo.py 里那四个章号是**字面量**——
+# 它是「作者已经确认过了」的替身。这一节量的是被替掉的那半：一句从正文里复制的引语
+# 怎么变成一个章号。**它是这个项目全部差异化的地基**（§5.9 / §10 约束 10）。
+#
+# 整条泳道的命令行里**没有一个章号入参**。下面那个 `valid_from = ch3` 里的 3 是系统
+# 算出来的：那句引语落在 fixture 的第三章。`tests/test_no_chapter_input.py` 从静态那侧
+# 钉同一条（declare 的命令面里没有任何 int 型参数）；这里从动态那侧钉——一条只有静态
+# 守卫的约束，绕过它只需要一个新的旗标名。
+
+DB2="$TMP/real.db"
+ROOT2="$TMP/qingyun"
+
+step "真链路 —— nh init"
+printf '  $ uv run nh init --name 青云记 --root %s --db %s\n' "$ROOT2" "$DB2"
+if ! PID2="$(uv run nh init --name 青云记 --root "$ROOT2" --db "$DB2" 2>/dev/null)"; then
+  OUT="（诊断在上面的 stderr 里）"
+  fail "nh init 建不出项目"
+fi
+# stdout 只出 project_id 一行——多一个字这里就死（欢迎语走 stderr，见 cli.py::init）。
+[ -n "$PID2" ] || fail "nh init 没往 stdout 吐 project_id"
+case "$PID2" in project:*) ;; *) fail "nh init 的 stdout 不是一个干净的 project_id：$PID2" ;; esac
+printf '  project_id = %s\n' "$PID2"
+
+nh2() { _run uv run nh "$@" --db "$DB2" -p "$PID2"; }
+
+step "真链路 —— nh import（切章 + 写盘 + 落库）"
+_run uv run nh import "$BOOK" --db "$DB2" -p "$PID2"
+exits_zero "nh import（落库）"
+has "切出 $CHAPTERS 章"
+# 「落库了几章」必须印出来：一个切了章、写了盘、却没落库的 import 在终端上跟成功
+# 长得一模一样，而它的代价是下面每一条 declare 都报「引语找不到」——作者会去查引语。
+has "库里现在 $CHAPTERS 章"
+
+step "真链路 —— 声明一个人和一条秘密"
+nh2 declare character 萧决
+exits_zero "nh declare character"
+nh2 declare secret 血脉秘密
+exits_zero "nh declare secret"
+
+# ── 这一步是全脚本的头等断言 ─────────────────────────────────────────────
+# 作者敲的只有一句从正文里复制的话。他没有输入 3，也没有任何一个旗标能让他输入 3。
+step "真链路 —— nh declare knows：章号由引语算出来"
+nh2 declare knows --who 萧决 --secret 血脉秘密 --quote "你身上流的不是萧家的血"
+exits_zero "nh declare knows"
+has "valid_from = ch3" # ← 3 是**算出来的**：这句话落在 fixture 的第三章。
+has "第 3 章"          #   上面那条命令行里没有 3，整条泳道里也没有任何一个章号入参。
+printf '%s\n' "$OUT"
+
+# 同一条闭开区间下界，这次穿过的是**真实的声明链路**而不是替身。ch87/ch88 那一格证明
+# 时态过滤在 seed 出来的边上活着；这一格证明它在一条 valid_from 由引语算出来的边上
+# 也活着——两者之间隔着 evidence 表和整条 put_evidence → upsert_edge 的血统。
+step "真链路 —— AS OF：ch3 知道 / ch2 还不知道"
+nh2 panel --chapter 3 --cast 萧决
+exits_zero "nh panel -c 3（真链路）"
+has "✓ 知道 (ch3)"
+nh2 panel --chapter 2 --cast 萧决
+exits_zero "nh panel -c 2（真链路）"
+has "✗ 不知道"
+lacks "✓ 知道 (ch3)"
+
+printf '\n✓ 心跳正常。两条泳道：\n'
+printf '  1. 已确认的声明（seed_demo.py）→ SqliteStoryGraph → knowledge_matrix → 面板，\n'
+printf '     以及 → run_checks → issue。量的是替身之后的接缝。\n'
+printf '  2. nh init → nh import → nh declare knows --quote → valid_from = ch3 → 面板。\n'
+printf '     量的是「引语 → 章号」那条链本身，而那个 3 作者一次都没输过。\n'
+printf '  （量的是接缝，不是真书：import 用的是手写的 3 章 fixture。）\n'

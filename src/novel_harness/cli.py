@@ -14,7 +14,9 @@
 
 2. **`--chapter N` 是查询参数，不是声明。** 「把第 152 章的面板画给我看」里的 152 不进
    任何一行数据，`valid_from` 仍然只由证据决定（§10 约束 10）。所以这里没有、也不许有
-   任何一个能让作者写 `valid_from` 的旗标。
+   任何一个能让作者写 `valid_from` 的旗标——`nh declare` 的七条子命令里连一个 int 型
+   参数都没有，而 `tests/test_no_chapter_input.py` 把这条从「读代码看得出来」变成
+   一条 CI 断言。它拦的不是笔误，是那个「加个 --chapter 让作者自己挑不就完了」的下午。
 
 3. **静默的零和真的零不许长得一样**（§10 约束 8 / `checks/__init__.py:29`）。
    一张零行的矩阵、一个没有秘密的项目、一个空库——在终端上全都长得像「一切正常」。
@@ -26,17 +28,44 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Sequence
+from enum import StrEnum
 from pathlib import Path
 from typing import NoReturn
 
 import typer
+from pydantic import ValidationError
 
 from . import __version__
 from .checks import ALL_CHECKS, CheckContext, Issue, run_checks
-from .db import connect
-from .graph import InformationScope, KnowledgeCell, KnowledgeMatrix, KnowledgeState, StoreError
+from .db import Connection, connect, migrate
+from .declare import (
+    AmbiguousName,
+    AmbiguousQuote,
+    Declaration,
+    DeclarationRefused,
+    Ledger,
+    QuoteCandidate,
+    UnknownName,
+    WrongLabel,
+)
+from .graph import (
+    AliasKind,
+    InformationScope,
+    KnowledgeCell,
+    KnowledgeMatrix,
+    KnowledgeState,
+    NodeLabel,
+    NodeRef,
+    SecretDetail,
+    StoreError,
+)
 from .graph.sqlite_store import SqliteStoryGraph
+from .importer import ImportRefused, SyncRefused, import_book
+from .importer import sync as sync_chapters
 from .panel import SceneConstraints, knowledge_matrix, resolve_cast, scene_constraints
+from .project import Project
+from .project import create as create_project
+from .project import get as get_project
 from .text import chapterize, parse_scenes
 
 app = typer.Typer(
@@ -44,6 +73,15 @@ app = typer.Typer(
     no_args_is_help=True,
     help="Novel Harness — 知道谁在第几章还不该知道什么。",
 )
+
+declare_app = typer.Typer(
+    no_args_is_help=True,
+    help=(
+        "声明：告诉系统「这条事实在这段原文里出现过」。"
+        "章号由引语算出来——这里没有任何一个旗标能让你填它。"
+    ),
+)
+app.add_typer(declare_app, name="declare")
 
 _CAST_SEP_RE = re.compile(r"[,，、]")
 """`--cast 萧决,顾清音、李管家` 的分隔符：半角逗号 / 全角逗号 / 顿号。
@@ -179,41 +217,211 @@ def _unresolved_lines(unresolved: Sequence[str]) -> list[str]:
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def _open_store(db: Path, project: str) -> SqliteStoryGraph:
-    """开库 + 组装 + **确认这个项目真的有东西**。
+def _connect_existing(db: Path) -> Connection:
+    """开一个**已经存在**的库。不存在就死，不替你建。
 
-    两道闸门，都在拆「静默的零 == 真的零」那个等号：
+    `connect()` 会把它建出来（还顺手 mkdir 父目录），于是一个敲错的路径会得到一个空库，
+    然后面板理直气壮地画出一张「在场三个人对全部秘密一无所知」——闭世界推导下 UNKNOWN 是
+    **断言**不是「查不到」。打错一个字母的代价不该是一个看起来完全正常的错误答案。
 
-    1. **库文件不存在就死。** `connect()` 会把它**建出来**（还顺手 mkdir 父目录），
-       于是一个敲错的路径会得到一个空库，然后面板理直气壮地画出一张「在场三个人对
-       全部秘密一无所知」——闭世界推导下 UNKNOWN 是**断言**不是「查不到」。
-       打错一个字母的代价不该是一个看起来完全正常的错误答案。
-    2. **花名册为空就死。** 走 `resolve(project)`（`surfaces=None` = 全项目花名册）——
-       它是 `StoryGraph` 五个方法里唯一能回答「这个项目里有东西吗」的那个，而
-       「查一下 project 表」在这里是不许的（本文件不写 SQL）。空花名册 = 项目号打错了
-       或者一条声明都没有，两者都不该画面板。
+    唯一有资格建库的是 `nh init`：那条命令里「这个文件不存在」正是作者的意图。
     """
     if not db.exists():
         _die(
             f"库不存在：{db}\n"
             "不替你建：connect() 建得出一个空库，而空库上的面板会画出一张「谁都不知道」的\n"
             "矩阵——闭世界推导下那是一个**断言**，不是一个空结果。一个敲错的路径不该长得\n"
-            "像一个正确的答案。"
+            "像一个正确的答案。\n"
+            "新开一本书走 nh init。"
         )
-    store = SqliteStoryGraph(connect(db))
+    return connect(db)
+
+
+def _open_store(db: Path, project: str) -> SqliteStoryGraph:
+    """**读路径**的装配（`nh panel` / `nh check`）：开库 + 组装 + 确认这个项目真的有东西。
+
+    两道闸门，都在拆「静默的零 == 真的零」那个等号。第二道是**花名册为空就死**：
+    走 `resolve(project)`（`surfaces=None` = 全项目花名册）——它是 `StoryGraph` 五个方法里
+    唯一能回答「这个项目里有东西吗」的那个。空花名册 = 项目号打错了或者一条声明都没有，
+    两者都不该画面板。
+
+    **写路径不能用这道闸门，用 `_open_project`**：`nh init` 之后、第一条 `nh declare` 之前，
+    空花名册是正确且必然的状态。拿读路径的闸门去关写路径，等于让作者永远迈不出第一步。
+    """
+    store = SqliteStoryGraph(_connect_existing(db))
     if not store.resolve(project):
         _die(
             f"项目 {project} 在 {db} 里没有任何花名册行。\n"
-            "要么 project_id 打错了，要么这本书还一条声明都没有（那是 M1 的声明层，"
-            "还不存在）。\n"
+            "要么 project_id 打错了，要么这本书还一条声明都没有"
+            "（先 nh import 落章，再 nh declare character / secret）。\n"
             "无论哪种，画出来的都会是一张零行矩阵——它长得像「没问题」，其实是「没数据」。"
         )
     return store
 
 
+def _open_project(db: Path, project: str) -> tuple[SqliteStoryGraph, Connection, Project]:
+    """**写路径**的装配（`nh import` / `nh sync` / `nh locate` / `nh declare *`）。
+
+    闸门是「`project` 表里有没有这一行」，不是花名册——理由见 `_open_store`。这道闸门
+    今天才可能存在：`project.get()` 是 M1 才有的（在那之前 `_open_store` 的 docstring
+    只能拿花名册当项目存在性的替身）。它比花名册准：**它分得开「项目号打错了」和
+    「这本书还没开始写」**，而那两件事的正确处置完全相反。
+
+    同时返回 store 和 conn，因为 `Ledger` 要两个：图和 `decision_log` 是两条被刻意做成
+    不同生命周期的日志（见 `declare.py`）。**一条连接**——两条会让 `store.transaction()`
+    罩不住它该罩的东西。
+    """
+    conn = _connect_existing(db)
+    proj = get_project(conn, project)
+    if proj is None:
+        _die(
+            f"项目 {project} 不在 {db} 里。\n"
+            "要么 project_id 打错了，要么这个库是别本书的。nh init 会吐出一个新的。\n"
+            "不替你建：一个凭空建出来的项目，它的 root_path 只能是猜的，而 chapters/ 找错\n"
+            "地方的产物是一本永远定位不到任何引语的书。"
+        )
+    return SqliteStoryGraph(conn), conn, proj
+
+
 def _split_cast(raw: str) -> list[str]:
     """`--cast` 原文 → 称呼列表。**只切分，不解析**（§10.5 第 1 条）。"""
     return [name.strip() for name in _CAST_SEP_RE.split(raw) if name.strip()]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 声明的渲染：拒绝与回执
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _die_refused(exc: DeclarationRefused) -> NoReturn:
+    """一次被拒绝的声明。**exit 1**，消息进 stderr。
+
+    异常自己的消息已经把「拒绝的理由 + 候选」说完了（`declare.py` 那五个类）。这里只加
+    一条**属于命令行这一层**的尾巴：作者刚敲完一条命令，他此刻的下一个念头是「那给我
+    一个旗标让我自己挑」——回答那个念头的地方是这里，不是那个不知道自己被谁调用的异常。
+
+    这不违反约束 8：约束 8 治的是**系统主动推队列给作者**；这里是作者按了按钮而系统
+    不肯替他猜，方向相反。**但绝不许挑一个。**
+    """
+    _die(f"✗ 拒绝：{exc}{_refusal_tail(exc)}")
+
+
+def _refusal_tail(exc: DeclarationRefused) -> str:
+    match exc:
+        case AmbiguousQuote():
+            return (
+                "\n  （没有 --pick，也没有 --chapter 让你直接指定第几章。那个旗标就是章号\n"
+                "    输入框换了个变量名——挑错的产物是一条 valid_from 错了的 CANON 边，\n"
+                "    而它在面板上长得完全正常：没有任何一条规则、任何一个面板分区、\n"
+                "    任何一次 review 会发现它。）"
+            )
+        case AmbiguousName():
+            return (
+                "\n  系统不替你挑——挑错的产物是一条本该保密的秘密从 must_not_reveal 里消失，\n"
+                "  而那一格在面板上长得跟「他确实不知道」一模一样。\n"
+                "  用具体的名字，或者先 nh declare alias 把这个称呼指定给一个人。"
+            )
+        case UnknownName():
+            return "\n  先声明它：nh declare character / place / secret。"
+        case _:
+            # `QuoteNotFound` / `WrongLabel` 及将来的新拒绝类型：异常自己的消息已经把
+            # 「怎么办」说完了（QuoteNotFound 连「先跑 nh sync」都说了）。**不硬凑一条
+            # 尾巴**——把同一句话说两遍会教作者跳过整段，包括他真正需要读的那半句。
+            return ""
+
+
+def _reason(exc: Exception) -> str:
+    """把一个异常压成作者读得下去的一句话。
+
+    pydantic 的 `ValidationError` 的 `str` 是 4 行给开发者看的东西（`[type=value_error,
+    input_value={'project_id': 'project:0...}]` 加一条 errors.pydantic.dev 的链接），
+    而它包着的 `Value error, ...` 那半句，正是 `AliasSpec` / `NodeSpec` 的 validator
+    专门写给作者的话（「别名「音」只有 1 个字…要留着它就传 usable_for_rules=False」）。
+    原样打出来，作者会跳过整段——**包括那半句**，也就是唯一告诉他该怎么办的那半句。
+    """
+    if isinstance(exc, ValidationError):
+        return "；".join(e["msg"].removeprefix("Value error, ") for e in exc.errors())
+    return str(exc)
+
+
+def _node_names(store: SqliteStoryGraph, project_id: str) -> dict[str, str]:
+    """node_id → name，从全项目花名册建。
+
+    supersede 闭合掉的那条旧边的 dst 是作者这次**没有敲过**的节点（他上一次在哪儿），
+    所以「自动闭合：萧决 LOCATED_AT **青云城主府**」里的名字只能从库里来。走
+    `resolve(project)` 而不是加一个查询：它是 `StoryGraph` 五个方法里唯一能给出
+    「这个项目里有哪些节点」的那个，而本文件不写 SQL。
+
+    Chapter 节点不在花名册里（`CANONICAL_ALIAS_LABELS` 排除了它），这里也不需要它们。
+    """
+    out: dict[str, str] = {}
+    for resolution in store.resolve(project_id):
+        for hit in resolution.hits:
+            out[hit.node.id] = hit.node.name
+    return out
+
+
+def _declaration_lines(decl: Declaration, names: dict[str, str]) -> list[str]:
+    """一次成功的声明的回执。
+
+    **最后那两行不是装饰。** 「这个数字你没有输入过」是这个项目全部差异化的地基
+    （§5.9 / 约束 10）在终端上唯一露头的地方：作者看见 ch88，他会以为是自己填的，
+    然后下一次他会想去改它——除非这里当场告诉他那是算出来的。
+    """
+    edge = decl.edge
+    anchor = decl.evidence.anchor()
+    src = names.get(edge.src, edge.src)
+    dst = names.get(edge.dst, edge.dst)
+    out = [
+        f"✓ {src} {edge.type.value} {dst}    valid_from = ch{decl.valid_from}",
+        f"  依据：第 {decl.evidence.chapter_number} 章 · 第 {anchor.para_index} 段 · "
+        f"第 {anchor.occurrence_k} 次",
+        f"        「{anchor.quote_text}」",
+        f"  ↑ {decl.valid_from} 是**算出来的**：这句话落在第 {decl.valid_from} 章。"
+        "你没有输入过这个数字，",
+        "    也没有任何一个旗标能让你输入它（PLAN §5.9 / 约束 10）。",
+        f"  已记入 decision_log：{decl.decision_id}",
+    ]
+    out += _supersede_lines(decl, names)
+    return out
+
+
+def _supersede_lines(decl: Declaration, names: dict[str, str]) -> list[str]:
+    """自动闭合 / 撤回。**这是这个产品的招牌动作，不印出来等于没做。**
+
+    作者敲的是「他到了北荒」，系统顺手把「他在青云城主府」那条边闭合到 `[88, 150)`。
+    那个 150 同样是算出来的（= 新边的 valid_from）。不印的话，作者永远不知道系统替他
+    维护了一条时间线——而他不知道的功能等于不存在的功能。
+    """
+    out: list[str] = []
+    for old in decl.closed:
+        src = names.get(old.src, old.src)
+        dst = names.get(old.dst, old.dst)
+        out.append(
+            f"  ↳ 自动闭合：{src} {old.type.value} {dst} "
+            f"[{old.valid_from_chapter}, {old.valid_to_chapter})"
+        )
+        out.append(
+            f"    （{old.type.value} 的 exclusivity 是 single_per_src：一个人同时只能在"
+            "一个地方。"
+        )
+        out.append(f"      {old.valid_to_chapter} 这个数字同样是算出来的。）")
+    for old in decl.retracted:
+        src = names.get(old.src, old.src)
+        dst = names.get(old.dst, old.dst)
+        out.append(
+            f"  ↳ 已撤回：{src} {old.type.value} {dst}（同章更正——这条事实从未成立过，"
+            "不是「后来变了」）"
+        )
+    return out
+
+
+def _candidate_lines(candidates: Sequence[QuoteCandidate]) -> list[str]:
+    return [
+        f"    第 {c.chapter_number:>3} 章 · 第 {c.para_index:>3} 段 · 第 {c.occurrence_k} 次"
+        f"   {c.context}"
+        for c in candidates
+    ]
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -227,18 +435,65 @@ def version() -> None:
     typer.echo(__version__)
 
 
+@app.command()
+def init(
+    name: str = typer.Option(..., "--name", help="书名"),
+    root: Path = typer.Option(..., "--root", help="稿子目录（chapters/*.md 会落在这儿）"),
+    db: Path = typer.Option(..., "--db", help="SQLite 库（不存在就建）"),
+) -> None:
+    """新开一本书。**stdout 只出 project_id 一行**，别的话一律 stderr。
+
+    那一行是给 `PID=$(nh init ...)` 吃的（同 `scripts/seed_demo.py` 的 main）：一个往
+    stdout 打欢迎语的 init 会让每一个用它的脚本拿到一个带着「✓ 建好了」的 project_id。
+
+    `root` 存的是 `resolve()` 之后的**绝对路径**，于是**这个库不可搬家**：把 db 和稿子
+    一起挪到另一台机器上，`nh sync` 会去找一个不存在的目录。v1 是单机的（ADR 0007：
+    作者用 VSCode 写磁盘上的 md），这条限制写在这里而不是假装它可搬——存相对路径的话
+    「相对谁」的答案是 cwd，而 cwd 是作者敲命令时碰巧在哪儿。
+    """
+    resolved_root = root.resolve()
+    resolved_root.mkdir(parents=True, exist_ok=True)
+
+    conn = connect(db)
+    migrate(conn)
+    proj = create_project(conn, name=name, root_path=str(resolved_root))
+
+    typer.echo(proj.id)  # ← stdout 的全部内容。下面每一行都是 err=True。
+    typer.secho(
+        f"✓ 《{name}》建好了\n"
+        f"  库：{db.resolve()}\n"
+        f"  稿子：{resolved_root}（章节文件会落在 {resolved_root / 'chapters'}）\n"
+        f"  下一步：nh import <book.txt> --db {db} -p {proj.id}\n"
+        "  （或者直接往 chapters/ 里写 0001.md 然后 nh sync。那个目录就是稿子，不是导出物。）",
+        fg=typer.colors.GREEN,
+        err=True,
+    )
+
+
 @app.command("import")
 def import_(
     path: Path = typer.Argument(..., help="小说 TXT"),
+    db: Path = typer.Option(..., "--db", help="SQLite 库"),
+    project: str = typer.Option(..., "--project", "-p", help="project_id"),
 ) -> None:
-    """切章并**对账**：切出来几章、每章的标题行长什么样。
+    """**一次性播种**：切章 → 写成 `{root}/chapters/NNNN.md` → 落库。日常回路用 `nh sync`。
 
-    ⚠️ **它现在还落不了库，而且这不是「没写完」，是一条不存在的写路径。** 详见下面
-    那段 `_die`——把它做成一个安静地不落库的命令是这里最坏的选择。
+    先**对账**（切出来几章、每章的标题行长什么样）再落库：章数对不上目录时，作者要看的
+    是那份对账，而它必须在库被写脏之前印出来。
+
+    这里没有 `--chapter`、没有 `--valid-from`：章号是 `chapterize` 的文本顺序，作者的输入
+    进不到那条链上（§5.9 / 约束 10）。也没有 `--force`：覆盖作者的稿子是这个项目最不能犯
+    的错（见 `importer.explode`）。
     """
     if not path.exists():
         _die(f"文件不存在：{path}")
+    store, _conn, proj = _open_project(db, project)
 
+    # 这一份切章**只为了下面那张对账表**；落库的那一份由 `importer.import_book` 自己切
+    # （它是 `chapter.number` 的产地）。同一份字节切两次是确定性的，浪费的是毫秒；
+    # 而把 book 递进去省掉这一次的代价是 `import_book` 从「给它一个 TXT」变成「给它一个
+    # 你已经切好的东西」——那时切歪的责任就从导入器挪到了每一个调用方身上。
+    #
     # utf-8-sig 而不是 utf-8：`utf-8` 解 utf-8-sig 的文件**会成功**并把 BOM 原样留在
     # 串里（chapterize.normalize 的实测记录）。normalize() 会兜住它，这里多一道是因为
     # 装配层本来就该负责「把磁盘上的字节变成干净的 str」，而不是让下游每个人都记得兜。
@@ -267,17 +522,124 @@ def import_(
         fg=typer.colors.CYAN,
         err=True,
     )
-    _die(
-        "\n落库没做，而且它不是「没写完」——图层没有写节点的路径。\n"
-        "  `StoryGraph` 只有五个方法（resolve / state_at / knowledge_matrix / subgraph /\n"
-        "  upsert_edge），一个都建不出 Chapter 节点；而 chapter 表的主键就是那个节点的 id，\n"
-        "  所以落一章 = 先建一个节点。cli.py 自己往图表里插行是被\n"
-        "  `tests/test_arch_guard.py` 明确拦掉的（它是装配层，不是图层），\n"
-        "  而把 cli.py 加进 GRAPH_TABLE_OWNERS 就是把守卫变成许可证。\n"
-        "  正确的下一步是给图层加一个建节点的方法（M1 的声明层要它，不止导入器要它），\n"
-        "  不是在这里绕过守卫。\n"
-        "  在那之前，上面那份对账是这个命令能诚实给出的全部东西。"
+
+    root = Path(proj.root_path)
+    try:
+        report = import_book(store, project, txt=path, root=root)
+    except ImportRefused as exc:
+        # 一个字节都没写（`explode` 是两阶段的）。冲突文件逐条列出来——「拒绝导入」
+        # 而不说是哪几个文件，作者唯一的下一步就是删掉整个目录重来。
+        _die(f"✗ {exc}")
+    except SyncRefused as exc:
+        _die(f"✗ {exc}\n  出问题的文件：{exc.path}")
+
+    synced = report.synced
+    in_db = len(synced.added) + len(synced.refreshed) + synced.unchanged_count
+    typer.echo(
+        f"✓ 落库：新建 {len(report.written)} 个章节文件，"
+        f"复用 {len(report.unchanged)} 个（内容一字不差，跳过），库里现在 {in_db} 章。\n"
+        f"  稿子在：{root / 'chapters'}"
     )
+    if synced.ignored_files:
+        # 不是错误：那个目录是作者的工作区（`notes.md` / `大纲.md` / 编辑器的临时文件）。
+        # 但要报数——一个被静默忽略的 `0004.txt`（后缀打错）长得就像「这一章导进去了」。
+        typer.echo(f"  忽略了 {len(synced.ignored_files)} 个不叫 NNNN.md 的文件：")
+        for rel in synced.ignored_files:
+            typer.echo(f"    {rel}")
+    typer.secho(
+        "  chapters/*.md 从现在起就是稿子（ADR 0007）：直接用你的编辑器改它，\n"
+        "  改完跑 nh sync。别再改那份 TXT——import 不覆盖已存在且内容不同的文件。",
+        fg=typer.colors.CYAN,
+        err=True,
+    )
+
+
+@app.command()
+def sync(
+    db: Path = typer.Option(..., "--db", help="SQLite 库"),
+    project: str = typer.Option(..., "--project", "-p", help="project_id"),
+) -> None:
+    """把 `{root}/chapters/*.md` 的**现状**读进库。**日常回路。**
+
+    没有它，`nh import` 就是一次性播种，而「我刚写完的第 301 章里那句话」永远定位不到
+    ——`nh declare` 搜的是库里的快照，快照只有这里落得下。
+
+    ⚠️ **它不做 STALE / relocate / revalidate（那是 M4）**：改过第 88 章之后，锚在旧快照上
+    的证据可能已经指不准了，而这条命令不声称它们仍然准。它只让新写的正文可被定位。
+    """
+    store, _conn, proj = _open_project(db, project)
+    root = Path(proj.root_path)
+    try:
+        report = sync_chapters(store, project, root)
+    except SyncRefused as exc:
+        _die(f"✗ {exc}\n  出问题的文件：{exc.path}")
+
+    total = len(report.added) + len(report.refreshed) + report.unchanged_count
+    if total == 0:
+        # 真的零 vs 静默的零：`{root}/chapters/` 不存在、或者里面一个 NNNN.md 都没有，
+        # 两者的自然产物都是「✓ 同步完成」+ exit 0，而作者的下一步 declare 会因为
+        # 「引语找不到」被拒——他会去查引语，而问题在这里。
+        _die(
+            f"{root / 'chapters'} 里一个 NNNN.md 都没有，库里一章都没落。\n"
+            "  这不是「没有变化」，是「没有稿子」——认的是四位起补零的纯数字文件名"
+            "（0001.md），\n"
+            "  数字来自章的顺序位置，不是正文里印的那个章号。\n"
+            f"  先跑 nh import <book.txt> --db {db} -p {project}，或者自己往那个目录里写 0001.md。"
+        )
+
+    typer.echo(
+        f"✓ 同步完成：新增 {len(report.added)} 章，"
+        f"更新 {len(report.refreshed)} 章，{report.unchanged_count} 章没变（库里共 {total} 章）。"
+    )
+    for stored in report.added:
+        typer.echo(f"  + 第 {stored.number} 章  {stored.title or '（无标题）'}  {stored.path}")
+    for stored in report.refreshed:
+        # 「多了一条快照」而不是「改了那一章」：旧快照永不删（审计指针指着它，ADR 0006）。
+        typer.echo(
+            f"  ~ 第 {stored.number} 章  {stored.title or '（无标题）'}  {stored.path}"
+            "  → 新快照（旧的还在，旧证据的引语仍指得回原文）"
+        )
+    if report.ignored_files:
+        typer.echo(f"  忽略了 {len(report.ignored_files)} 个不叫 NNNN.md 的文件：")
+        for rel in report.ignored_files:
+            typer.echo(f"    {rel}")
+
+
+@app.command()
+def locate(
+    quote: str = typer.Option(..., "--quote", help="从你的正文里**复制**的一句话"),
+    db: Path = typer.Option(..., "--db", help="SQLite 库"),
+    project: str = typer.Option(..., "--project", "-p", help="project_id"),
+) -> None:
+    """这句引语在当前正文里的全部命中。**只读预览**：库里一个字节都不会变。
+
+    它存在的理由是 `nh declare` 的那条拒绝：「这句话在 3 处都能定位到，系统不替你挑」。
+    作者复制短句时会被拒好几次，而每次重试都要重敲整条 declare 命令——这条让他先便宜地
+    试出一句只匹配一处的引语。
+
+    **零命中非 0 退出**：这条命令的问题是「我这句引语能用吗」，而零命中的答案是「不能」。
+    印一行「命中 0 处」然后 exit 0，跟印「命中 1 处」在 `set -e` 的脚本眼里一模一样。
+    """
+    store, conn, _proj = _open_project(db, project)
+    candidates = Ledger(store, conn, project).locate(quote)
+
+    if not candidates:
+        _die(
+            f"这句话在当前正文里一处都找不到：「{quote}」\n"
+            "  M1 只做逐字精确匹配（标点、空格、全半角都算）——从稿子里复制粘贴，别手打。\n"
+            "  也可能是这一章还没进库：先跑 nh sync。"
+        )
+
+    typer.echo(f"「{quote}」：命中 {len(candidates)} 处")
+    for line in _candidate_lines(candidates):
+        typer.echo(line)
+    if len(candidates) > 1:
+        typer.secho(
+            "  ↑ 多于一处 → nh declare 会拒绝，且不会替你挑。\n"
+            "    把引语加长到只匹配一处（前后各多复制半句通常就够）。",
+            fg=typer.colors.YELLOW,
+            err=True,
+        )
 
 
 @app.command()
@@ -360,9 +722,12 @@ def check(
 ) -> None:
     """跑一致性规则，打印 issue + 证据锚。
 
-    `--file` 而不是「从库里取第 N 章的正文」：正文在磁盘上（ADR 0007），而把章号映射到
-    路径要 `chapter.path`——那是导入器落的库，`nh import` 现在落不了（见它的输出）。
-    所以这里让作者直接指稿子，这条链路今天就能通。
+    `--file` 而不是「从库里取第 N 章的正文」：正文在磁盘上，而 `chapters/*.md` **就是稿子**
+    （ADR 0007），库里那份是快照。作者刚在编辑器里敲完的那一段还没进库（要跑 `nh sync`），
+    而他要体检的正是那一段——从库里取会让这条命令永远晚一步。
+
+    `--chapter` 是「这份稿子是第几章」，是查询参数：它决定拿哪一章的图去比对，不写进
+    任何一行数据（§10 约束 10）。
     """
     if not file.exists():
         _die(f"稿子不存在：{file}")
@@ -424,6 +789,259 @@ def _issue_text(issue: Issue) -> str:
         # 建议由规则确定性产出（PLAN 改 13）——在一个已知答案的地方引入 LLM 是净损失。
         out.append(f"  建议：{issue.suggested_action}")
     return "\n".join(out)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# nh declare —— 作者的声明入口
+# ══════════════════════════════════════════════════════════════════════════
+#
+# **这七条子命令里没有一个 `--chapter` / `--valid-from` / `--since` / `--at`，
+# 一个 int 型参数都没有。** 作者敲的只有一句引语；章号是「这句引语落在哪一章」的产物
+# （§5.9 / 约束 10）。`tests/test_no_chapter_input.py` 把这条钉成 CI 断言——它拦的不是
+# 笔误，是那个「加个 --chapter 让作者自己挑不就完了」的下午。
+#
+# `--who` / `--of` / `--secret` / `--loc` 收的**全是作者写的称呼原文，本文件一次都不解析**
+# （§10.5 第 1 条，同 `--cast`）：解析在 `Ledger` 里走 `store.resolve()`，于是 CLI
+# **没有机会**把歧义的「师兄」偷偷解析成第一个候选——它根本拿不到候选。
+
+
+class AliasKindOption(StrEnum):
+    """`--kind` 的合法值。**没有 canonical**，这是本地枚举而不是直接用 `AliasKind` 的
+    全部理由：canonical 是 `upsert_node` 的独占物（节点的 name 就是它），从命令行递一个
+    进去撞的是 `idx_alias_canonical` 给的那条读不懂的 IntegrityError。
+    """
+
+    ALIAS = "alias"
+    NICKNAME = "nickname"
+    TITLE = "title"
+
+
+def _ledger(db: Path, project: str) -> tuple[Ledger, SqliteStoryGraph]:
+    store, conn, _proj = _open_project(db, project)
+    return Ledger(store, conn, project), store
+
+
+def _echo_declaration(decl: Declaration, store: SqliteStoryGraph, project: str) -> None:
+    for line in _declaration_lines(decl, _node_names(store, project)):
+        typer.echo(line)
+
+
+@declare_app.command("character")
+def declare_character(
+    name: str = typer.Argument(..., help="本名（显示用的那个名字）"),
+    alias: list[str] = typer.Option([], "--alias", help="别名，可重复"),
+    db: Path = typer.Option(..., "--db", help="SQLite 库"),
+    project: str = typer.Option(..., "--project", "-p", help="project_id"),
+) -> None:
+    """声明一个人物。幂等（再声明一次 = 更新属性，不会建出第二个）。
+
+    别名**永不合并实体**（ADR 0004）：「顾姑娘 / 清音 / 魔尊」的差异编码的正是关系阶段
+    和认知边界，是 canon 不是噪声。
+    """
+    _declare_node(NodeLabel.CHARACTER, name, aliases=alias, db=db, project=project)
+
+
+@declare_app.command("place")
+def declare_place(
+    name: str = typer.Argument(..., help="地点名"),
+    alias: list[str] = typer.Option([], "--alias", help="别名，可重复"),
+    db: Path = typer.Option(..., "--db", help="SQLite 库"),
+    project: str = typer.Option(..., "--project", "-p", help="project_id"),
+) -> None:
+    """声明一个地点。`nh declare where` 的 `--loc` 认的就是它。"""
+    _declare_node(NodeLabel.LOCATION, name, aliases=alias, db=db, project=project)
+
+
+@declare_app.command("secret")
+def declare_secret(
+    name: str = typer.Argument(..., help="秘密的称呼（面板上那一列的表头）"),
+    description: str = typer.Option("", "--description", help="这个秘密到底是什么"),
+    sub_of: str = typer.Option("", "--sub-of", help="父秘密的**称呼**（拆子事实用）"),
+    db: Path = typer.Option(..., "--db", help="SQLite 库"),
+    project: str = typer.Option(..., "--project", "-p", help="project_id"),
+) -> None:
+    """声明一个秘密。**秘密是作者的意图，不是文本特征**（ADR 0004：抽取器只能猜）。
+
+    `--sub-of` 把它挂成另一个秘密的子事实。子事实是 ADR 0005 删掉 `PARTIALLY_KNOWS`
+    之后「部分知道」的唯一表达法：秘密拆子事实、每子事实一条 KNOWS。表达力相同，
+    零新增边类型。
+    """
+    ledger, store = _ledger(db, project)
+    try:
+        parent_id = _resolve_parent_secret(store, project, sub_of) if sub_of else None
+        node = ledger.declare_node(
+            NodeLabel.SECRET,
+            name,
+            secret=SecretDetail(description=description, sub_of=parent_id),
+        )
+    except DeclarationRefused as exc:
+        _die_refused(exc)
+    except (ValueError, StoreError) as exc:
+        _die(f"✗ 拒绝：{_reason(exc)}")
+    typer.echo(f"✓ 秘密「{node.name}」已声明（{node.id}）")
+    if parent_id is not None:
+        typer.echo(f"  ↳ 是「{sub_of}」的子事实")
+    typer.secho(
+        "  它现在是认知矩阵的一列，默认全员 UNKNOWN——**闭世界推导下那是一个断言**，\n"
+        "  不是「查不到」。谁知道它由 nh declare knows 说，而章号由引语算。",
+        fg=typer.colors.CYAN,
+        err=True,
+    )
+
+
+def _resolve_parent_secret(store: SqliteStoryGraph, project: str, surface: str) -> str:
+    """`--sub-of` 的称呼 → 父秘密的 node_id。
+
+    ⚠️ **这是本文件唯一一处解析称呼，它是一个已知的破例。** `Ledger.declare_node` 收的
+    `SecretDetail.sub_of` 是一个 node_id（扩展表的外键），而 `Ledger` 今天没有一个收
+    「父秘密的称呼」的入口——于是解析只能发生在这里，也就是 §10.5 第 1 条点名说
+    「会顺手挑第一个候选」的那一层。
+
+    所以这里**逐字复刻 `Ledger._resolve_one` 的拒绝形态**（三个异常类直接从 `declare.py`
+    import，不自己造），绝不挑第一个。正确的修法是给 `Ledger.declare_node` 加一个收称呼
+    的 `sub_of` 参数、把这个函数删掉——那是 `declare.py` 的改动，不在本包的归属里。
+    在那之前，这段代码的存在本身就是那条 TODO。
+    """
+    resolution = store.resolve(project, [surface])[0]
+    node = resolution.unique_node
+    if node is None:
+        if not resolution.hits:
+            raise UnknownName(surface)
+        raise AmbiguousName(surface, [NodeRef.of(hit.node) for hit in resolution.hits])
+    if node.label is not NodeLabel.SECRET:
+        raise WrongLabel(surface, node.label, NodeLabel.SECRET)
+    return node.id
+
+
+def _declare_node(
+    label: NodeLabel,
+    name: str,
+    *,
+    aliases: Sequence[str],
+    db: Path,
+    project: str,
+) -> None:
+    ledger, _store = _ledger(db, project)
+    try:
+        node = ledger.declare_node(label, name, aliases=aliases)
+    except DeclarationRefused as exc:
+        _die_refused(exc)
+    except (ValueError, StoreError) as exc:
+        _die(f"✗ 拒绝：{_reason(exc)}")
+    typer.echo(f"✓ {label.value}「{node.name}」已声明（{node.id}）")
+    if aliases:
+        typer.echo(f"  别名：{'、'.join(aliases)}")
+
+
+@declare_app.command("alias")
+def declare_alias(
+    of: str = typer.Option(..., "--of", help="已有节点的**称呼**（本名或任一别名）"),
+    surface: str = typer.Option(..., "--surface", help="要加的称呼"),
+    kind: AliasKindOption = typer.Option(AliasKindOption.ALIAS, "--kind", help="别名的种类"),
+    not_for_rules: bool = typer.Option(
+        False, "--not-for-rules", help="规则不许拿这个称呼去正文里匹配"
+    ),
+    db: Path = typer.Option(..., "--db", help="SQLite 库"),
+    project: str = typer.Option(..., "--project", "-p", help="project_id"),
+) -> None:
+    """给一个已有的节点加一个称呼。
+
+    单字别名（「音」「决」）必须带 `--not-for-rules`：拿一个字去 200 万字里做子串匹配是
+    ADR 0004 点名的灾难——它会在「音信全无」「决心」上开火，而那是每章几十条误报。
+    """
+    ledger, _store = _ledger(db, project)
+    try:
+        stored = ledger.declare_alias(
+            of=of,
+            surface=surface,
+            kind=AliasKind(kind.value),
+            usable_for_rules=not not_for_rules,
+        )
+    except DeclarationRefused as exc:
+        _die_refused(exc)
+    except (ValueError, StoreError) as exc:
+        _die(
+            f"✗ 拒绝：{_reason(exc)}\n"
+            "  单字别名要规则可用是不行的（ADR 0004）：一个字在 200 万字里到处都是。\n"
+            "  加 --not-for-rules 就能声明它——它进花名册、面板认得它，只是规则不拿它去匹配正文。"
+        )
+    typer.echo(f"✓ 「{stored.surface}」（{stored.kind.value}）→ 「{of}」")
+    if not stored.usable_for_rules:
+        # 不印的话，`--not-for-rules` 和忘了加它长得一模一样，而两者的规则行为完全相反。
+        typer.echo("  规则不会拿这个称呼去正文里匹配（--not-for-rules）。")
+
+
+@declare_app.command("knows")
+def declare_knows(
+    who: str = typer.Option(..., "--who", help="谁（称呼原文）"),
+    secret: str = typer.Option(..., "--secret", help="哪个秘密（称呼原文）"),
+    quote: str = typer.Option(..., "--quote", help="从正文里**复制**的、他知道了的那句话"),
+    db: Path = typer.Option(..., "--db", help="SQLite 库"),
+    project: str = typer.Option(..., "--project", "-p", help="project_id"),
+) -> None:
+    """「他在这段原文里知道了这个秘密」。
+
+    **章号由这句引语算出来，你没有输入过它，也没有任何一个旗标能让你输入它**
+    （§5.9 / 约束 10）。你确认的是「这条事实在这段原文里出现过」——看着原文点，
+    零记忆负担；「那是第几章」是系统的活。
+    """
+    ledger, store = _ledger(db, project)
+    try:
+        decl = ledger.declare_knows(who=who, secret=secret, quote=quote)
+    except DeclarationRefused as exc:
+        _die_refused(exc)
+    except (ValueError, StoreError) as exc:
+        _die(f"✗ 拒绝：{_reason(exc)}")
+    _echo_declaration(decl, store, project)
+
+
+@declare_app.command("believes")
+def declare_believes(
+    who: str = typer.Option(..., "--who", help="谁（称呼原文）"),
+    secret: str = typer.Option(..., "--secret", help="哪个秘密（称呼原文）"),
+    believed: str = typer.Option(..., "--as", help="他**以为**的那个版本"),
+    quote: str = typer.Option(..., "--quote", help="从正文里**复制**的那句话"),
+    db: Path = typer.Option(..., "--db", help="SQLite 库"),
+    project: str = typer.Option(..., "--project", "-p", help="project_id"),
+) -> None:
+    """「他以为的是另一个版本」——错误认知，面板上那个 ⚠。
+
+    `--as` 是他以为的内容，面板直接渲染它（「ch103 起以为『已泄露』」）。只画一个 ⚠
+    而不说他以为的是什么，等于没说。
+    """
+    ledger, store = _ledger(db, project)
+    try:
+        decl = ledger.declare_believes(who=who, secret=secret, believed_value=believed, quote=quote)
+    except DeclarationRefused as exc:
+        _die_refused(exc)
+    except (ValueError, StoreError) as exc:
+        _die(f"✗ 拒绝：{_reason(exc)}")
+    _echo_declaration(decl, store, project)
+    typer.echo(f"  他以为的是：「{believed}」")
+
+
+@declare_app.command("where")
+def declare_where(
+    who: str = typer.Option(..., "--who", help="谁（称呼原文）"),
+    loc: str = typer.Option(..., "--loc", help="哪儿（称呼原文）"),
+    quote: str = typer.Option(..., "--quote", help="从正文里**复制**的、他到了那儿的那句话"),
+    db: Path = typer.Option(..., "--db", help="SQLite 库"),
+    project: str = typer.Option(..., "--project", "-p", help="project_id"),
+) -> None:
+    """「他在这段原文里到了这个地方」。
+
+    `LOCATED_AT` 的 exclusivity 是 `single_per_src`（一个人同时只能在一个地方），所以这
+    一条会**自动闭合他上一个位置**——闭到哪一章同样是算出来的（= 这条新边的 valid_from）。
+    那是这个产品的招牌动作，回执里印着。
+    """
+    ledger, store = _ledger(db, project)
+    try:
+        decl = ledger.declare_where(who=who, loc=loc, quote=quote)
+    except DeclarationRefused as exc:
+        _die_refused(exc)
+    except (ValueError, StoreError) as exc:
+        _die(f"✗ 拒绝：{_reason(exc)}")
+    _echo_declaration(decl, store, project)
 
 
 if __name__ == "__main__":

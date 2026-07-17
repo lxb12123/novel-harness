@@ -201,6 +201,30 @@ A 和 B 处在「断绝」阶段，B 和 A 就处在「断绝」阶段。value �
 而不是把 RELATED_TO 掰成有向——按 ADR 0005 的增长规则，那时才会有一个真实的查询要它。
 """
 
+CANONICAL_ALIAS_LABELS: Final[frozenset[NodeLabel]] = frozenset(
+    {
+        NodeLabel.CHARACTER,
+        NodeLabel.LOCATION,
+        NodeLabel.FACTION,
+        NodeLabel.SECRET,
+        NodeLabel.FORESHADOW,
+        NodeLabel.OBJECT,
+    }
+)
+"""`upsert_node` 会**自动建一条 canonical 别名**（surface == node.name）的 label。8 类减 2。
+
+canonical 别名不是 node.name 的副本（那份论证在 001_init.sql 的 `idx_alias_canonical`
+上）：它是**索引项**，没有它 mentions.py 编的那条 alternation 匹配不到本名。所以「要不要
+建」这个问题等价于「这个东西会不会被人在正文里叫」。
+
+**StateDim 不在**：`resolve(pid, None)` 是全项目花名册，mentions.py 拿它编译 alternation——
+一条 surface=「健康」的 canonical 行会让 alternation 去正文里匹配每一个「健康」，
+而 StateDim 是维度名不是称呼，没有人在对白里叫它。
+
+**Chapter 不在**：300 章 = 300 条章标进花名册（「第一百零八章 血脉」），而 cli._open_store
+用 `resolve(project)` 判「这个项目有东西吗」。章节不是一个被人叫的东西。
+"""
+
 HEALTH_DIM_KEY: Final = "health"
 """R3 DEAD_SPEAKS 认的那个 StateDim 的 `props.dim_key`。
 
@@ -809,3 +833,210 @@ class UpsertResult(BaseModel):
 
     retracted: list[Edge] = Field(default_factory=list)
     """被撤回的旧边（同章更正），已是更新后的值。"""
+
+
+class SecretDetail(BaseModel):
+    """`secret` 扩展表那一行。**只在 `NodeSpec.label is SECRET` 时存在。**
+
+    显示名不在这里：它是 `NodeSpec.name` → `node.name`（001_init.sql：node.name 是
+    显示真相，扩展表不再存一份——同名字段存两处就需要一个同步器）。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    description: str = ""
+
+    sub_of: str | None = None
+    """父秘密的 **node id**（= `secret.id`，扩展表主键就是 node.id）。
+
+    子事实是 ADR 0005 删掉 `PARTIALLY_KNOWS` 之后「部分知道」的唯一表达法：
+    秘密拆子事实、每子事实一条 KNOWS。表达力相同，零新增边类型。
+    """
+
+
+class NodeSpec(BaseModel):
+    """`upsert_node` 的入参。幂等键 `(project_id, label, name)`。
+
+    `extra="forbid"` 的理由同 `EdgeSpec`：静默忽略多余字段 = 一个以为自己写了什么、
+    实际什么都没写的调用方。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    project_id: str
+    label: NodeLabel
+    name: str = Field(min_length=1)
+    props: NodeProps = Field(default_factory=NodeProps)
+    secret: SecretDetail | None = None
+
+    @model_validator(mode="after")
+    def _chapter_nodes_are_born_with_their_row(self) -> NodeSpec:
+        if self.label is NodeLabel.CHAPTER:
+            raise ValueError(
+                "Chapter 节点只能由 put_chapter 建：它必须和 chapter 行同生。"
+                "没有 chapter 行就没有 number，而 number 是 state_at 的全序键"
+                "（`valid_from_chapter <= :ch`），且它是 PLANTED_IN 的 dst"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _secret_row_and_label_live_and_die_together(self) -> NodeSpec:
+        if (self.label is NodeLabel.SECRET) != (self.secret is not None):
+            # 一个没有 secret 行的 Secret 节点在认知矩阵的默认列序里**根本不成列**
+            # （queries.secret_ids 走 `FROM secret`，而 secrets=None 是面板的唯一路径）：
+            # 作者看见的是「系统对这个秘密没意见」，实际是「系统不知道有这个秘密」。
+            # 那正是头牌面板最怕的那种沉默。反过来，一个带 secret 行的 Character 会被
+            # schema 的复合外键当场拒——但抛在这里才说得出人话。
+            raise ValueError(
+                f"label 与 secret 必须同生同死：label={self.label}、"
+                f"secret={'有' if self.secret else '无'}。"
+                "Secret 节点必须带 SecretDetail（否则它在认知矩阵的列序里不成列，"
+                "面板会把「不知道有这个秘密」显示成「对这个秘密没意见」）；"
+                "别的 label 不许带"
+            )
+        return self
+
+
+class AliasSpec(BaseModel):
+    """`add_alias` 的入参。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    project_id: str
+    node_id: str
+    surface: str = Field(min_length=1)
+    kind: AliasKind = AliasKind.ALIAS
+    usable_for_rules: bool = True
+
+    @model_validator(mode="after")
+    def _canonical_belongs_to_upsert_node(self) -> AliasSpec:
+        if self.kind is AliasKind.CANONICAL:
+            # canonical 的 surface 必须 == node.name（001_init.sql 的约定），而这里够不到
+            # node.name。从这条路放进来撞的是 idx_alias_canonical，给调用方一个读不懂的
+            # IntegrityError。
+            raise ValueError(
+                "canonical 别名由 upsert_node 独占（它的 surface 必须 == node.name）："
+                f"add_alias 只收 {sorted(k.value for k in AliasKind if k is not AliasKind.CANONICAL)}"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _short_surfaces_never_match_prose(self) -> AliasSpec:
+        if len(self.surface) < 2 and self.usable_for_rules:
+            # ADR 0004：「音」「决」是灾难。alias 表的 CHECK 拦得住这条，但它抛的是
+            # IntegrityError——而这不是一个数据完整性错误，是作者需要一句人话的地方。
+            # 注意拒的是 usable_for_rules，不是 surface 本身：1 字别名可以存在
+            # （真书里有 1 字名的人物），只是不许被规则拿去匹配正文。
+            raise ValueError(
+                f"别名「{self.surface}」只有 {len(self.surface)} 个字，不能 usable_for_rules"
+                "（ADR 0004：短别名去正文里匹配 = 满篇误报）。"
+                "要留着它就传 usable_for_rules=False——存得下，只是规则不拿它开火"
+            )
+        return self
+
+
+class StoredAlias(BaseModel):
+    """`add_alias` 的出参：`alias` 表里那一行。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    project_id: str
+    node_id: str
+    surface: str
+    kind: AliasKind
+    usable_for_rules: bool
+
+
+class ChapterSpec(BaseModel):
+    """`put_chapter` 的入参。幂等键 `(project_id, number)`（schema 的 UNIQUE）。
+
+    **没有 valid_from，也没有任何作者填的号**（§5.9 / 约束 10）：`number` 是
+    `text/chapterize.py` 的文本顺序 index，即「这一章在全书里排第几」，不是正文里印的
+    章号（分卷重启和番外会让后者重复，而 state_at 要求全序）。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    project_id: str
+    number: int = Field(ge=1)
+
+    heading: str = Field(min_length=1)
+    """整行标题（「第一百零八章 血脉」）→ `node.name`。"""
+
+    title: str = ""
+    """标题**部分**（「血脉」）→ `chapter.title`。
+
+    与 `heading` 不重复：node.name 是显示真相（001_init.sql），而 title 存的是那一行里
+    去掉「第一百零八章」之后剩下的东西——`CHAPTER_RE` 的 group(2)。
+    """
+
+    path: str = Field(min_length=1)
+    text: str
+    # text_sha256 **不是字段**：由 text 现算。开着这个口子迟早有调用方传一个跟 text 不符的
+    # 哈希进来，而快照去重（UNIQUE(chapter_id, text_sha256)）会照单全收，且没有任何东西
+    # 会报错——同 decisions.append() 没有 quote_sha256 参数，同一条理由。
+
+
+class StoredChapter(BaseModel):
+    """`put_chapter` 的出参。
+
+    **不叫 `Chapter`**：`text/chapterize.py` 已经有一个 `Chapter`，它的 docstring 逐字
+    写着「跟库里的 chapter 表不是一回事」——同名两个类会把那句话变成一个 import 陷阱。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    """== 那个 Chapter 节点的 `node.id`（扩展表主键 = node.id）。"""
+
+    project_id: str
+    number: int
+    title: str
+    path: str
+    text_sha256: str
+    snapshot_id: str
+    """**当前**快照，即 `text_sha256` 对得上的那一条。"""
+
+    created: bool
+    """True = 这一章的节点和 chapter 行是这次建的。"""
+
+    snapshot_created: bool
+    """True = 这次新落了一条快照（正文与上次不同）。False = 同内容，按
+    `UNIQUE(chapter_id, text_sha256)` 复用了旧的——快照是证据的锚，不是版本历史。"""
+
+
+class ChapterText(BaseModel):
+    """一章的**当前**快照连正文。`current_snapshots` 的出参，定位引语的料。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    chapter_id: str
+    number: int
+    snapshot_id: str
+    text: str
+
+
+class EvidenceSpec(BaseModel):
+    """`put_evidence` 的入参。**证据的锚在类型层面就坏不了。**
+
+    **没有 `quote_sha256`**：实现会从快照里按 `(para_index, occurrence_k)` 切出原文子串、
+    核对它逐字等于 `quote_text`、再对**那个子串**取哈希（ADR 0006 配套第 3 条）。开着这个
+    参数，迟早有调用方把「LLM 返回的那个字符串」的哈希传进来——而它有 10–30% 不是逐字
+    原文，于是锚从写下去的那一刻起就是坏的，且没有任何东西会报错。同
+    `decisions.append()` 和 `ChapterSpec.text_sha256`，同一条理由。
+
+    **没有 `chapter_id`**：由 `chapter_snapshot_id` 反查。两个指针必须指向同一章，
+    而让调用方分别传两个 id 就是给它一个传成两章的机会。
+
+    **没有 `para_index_hint`**：初次落库时它恒等于 `para_index`（双指针在写入这一刻
+    重合，此后审计那个永不动、重定位那个跟着作者改稿漂）。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    project_id: str
+    chapter_snapshot_id: str
+    para_index: int = Field(ge=0)
+    occurrence_k: int = Field(default=0, ge=0)
+    quote_text: str = Field(min_length=1)

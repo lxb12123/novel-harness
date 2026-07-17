@@ -31,15 +31,25 @@ KnowledgeMatrix / Resolution 一起出来），最后一个会让上面那条守
 from __future__ import annotations
 
 from collections.abc import Collection, Sequence
+from contextlib import AbstractContextManager
 from typing import Final, Protocol, runtime_checkable
 
 from .models import (
+    AliasSpec,
+    ChapterSpec,
+    ChapterText,
     EdgeSpec,
     EdgeType,
+    Evidence,
+    EvidenceSpec,
     InformationScope,
     KnowledgeMatrix,
+    Node,
+    NodeSpec,
     Resolution,
     StateSnapshot,
+    StoredAlias,
+    StoredChapter,
     Subgraph,
     UpsertResult,
 )
@@ -109,6 +119,18 @@ class SupersedeConflict(StoreError):
     **必须抛，不许猜。** 猜错的产物是 `state_at` 同时返回「在青云城」和「在北荒」，
     那正是 §5.5 点名的死法：两条互斥边 → 规则误报 → M3 的「误报 <1 条/章」生死线崩。
     宁可让调用方看见一个异常。
+    """
+
+
+class QuoteMismatch(StoreError):
+    """`EvidenceSpec.quote_text` 在快照的那个 `(para_index, occurrence_k)` 上不是逐字原文
+    （段号越界、第 k 次不存在、那个位置上是别的字，三者同一种失败）。
+
+    ADR 0006 配套第 3 条的那句「反过来做的话，锚从第一天起就是坏的」在这里被变成
+    **不可能**，不是被检测：`EvidenceSpec` 里没有 `quote_sha256`，哈希只可能对
+    「从快照里切出来的那个子串」取；而如果切不出来，就没有 evidence 行。
+    一条锚错了的证据是查不出来的——它的产物是一条 `valid_from` 错了的 CANON 边，
+    而它在面板上长得完全正常。
     """
 
 
@@ -352,3 +374,143 @@ class StoryGraph(Protocol):
             届时加第 6 个方法，别在这里加 scope 参数。
         """
         ...
+
+
+@runtime_checkable
+class CanonWriter(Protocol):
+    """建节点 / 别名 / 秘密 / 章节 / 快照 / 证据 —— **图的写入面**。
+
+    ── 为什么它不是 `StoryGraph` 的六个新方法 ────────────────────────────
+
+    `StoryGraph` 的五个方法**一个字都不动**，理由是它有两个 Fake 实现
+    （`tests/test_knowledge.py` / `tests/test_checks.py`）和一份刚把它们从漂移里拽
+    回来的一致性规格（`tests/test_store_conformance.py`）。往 Protocol 上加一个方法
+    = 两个 Fake 各长一个存根，而 `@runtime_checkable` 只查方法**存在**——那些存根
+    会照样让 `isinstance(fake, StoryGraph)` 为真，却什么都不做。
+
+    更根本的：`checks/base.py` 收的是 `store: StoryGraph`。规则**只读**。把写入面塞进
+    它们看得见的类型里，等于邀请第 5 条社区贡献的规则去建节点。
+
+    ── 每个方法一个事务，且它们各自是原子的 ───────────────────────────────
+
+    `upsert_node` 要落 node + canonical 别名 (+ secret 行)，`put_chapter` 要落
+    node + chapter 行 + 快照。**同生**不是风格问题：一个没有 chapter 行的 Chapter 节点
+    没有 `number`，而 `number` 是 `state_at` 的全序键。跨方法的「记得按顺序调」是纪律，
+    纪律会在某个赶时间的下午被绕过。
+    """
+
+    def transaction(self) -> AbstractContextManager[None]:
+        """把多个写方法罩进**一个**事务。已经在事务里则不嵌套（SQLite 无嵌套事务）。
+
+        它存在的理由只有一个具体的调用方：声明层的「先落证据、再落边」必须原子——
+        一条 `evidence_id` 指向不存在的证据的边会让 `state_at` 的 STALE 过滤对着一条
+        不存在的依据放行。
+
+        **`decisions.append()` 不许进这个事务**：它自己 `conn.commit()`，会把外层事务
+        提前提交掉。日志本来就该在事务之后写（写边失败是**预期异常**——乱序声明、
+        引语有歧义——而 `decision_log` 的三个触发器封死了 INSERT/UPDATE/DELETE，
+        在事务里先写日志 = 每一次拒绝都在那张不可变的表里留一条假的 accept，删不掉）。
+        """
+        ...
+
+    def upsert_node(self, spec: NodeSpec) -> Node:
+        """建一个节点，或拿回那个已经存在的。**建节点的唯一入口。**
+
+        幂等键 `(project_id, label, name)`——应用层的，不是唯一索引
+        （`idx_node_name` 只是普通 INDEX：真书里同名人物是存在的，schema 不该替作者
+        判定「两个『萧决』是同一个人」）。撞上了就更 props 返回，`secret` 行不重写。
+
+        建新节点时**在同一个事务里**还会落：
+
+        - `label in CANONICAL_ALIAS_LABELS` 时一条 canonical 别名（`surface = name`）。
+          它的 `usable_for_rules` 是 `len(name) >= 2`——1 字名的人物真书里有，而
+          `CHECK (usable_for_rules = 0 OR length(surface) >= 2)` 会让**建节点整个失败**。
+          schema 的立场是「短 surface 可以存在，只是不许被规则拿去匹配正文」，不是
+          「1 字名的人不许进这本书」。
+        - `label is SECRET` 时一条 `secret` 行（`NodeSpec` 的 validator 保证两者同生）。
+
+        幂等顺手关掉了「第二个『萧决』」那条路：那会让 `resolve('萧决')` 返回 2 个 hit
+        → `Resolution.ambiguous` → `usable_for_rules` 为假 → **面板上整行消失**，
+        而没有任何一步会报错。
+
+        Returns:
+            落库后的节点。
+
+        Raises:
+            StoreError: 幂等键撞出 >1 行（只有本方法建得出节点，那个状态不该存在）。
+            ValueError: `spec` 自身非法（`NodeSpec` 的 validator 已挡掉 Chapter 和
+                「Secret 却没有 secret 行」）。
+        """
+        ...
+
+    def add_alias(self, spec: AliasSpec) -> StoredAlias:
+        """给一个节点加一个称呼。**canonical 不走这里**（见 `AliasSpec` 的 validator）。
+
+        别名故意**不做实体消解**（ADR 0004）：「顾姑娘 / 清音 / 魔尊」的差异编码的正是
+        关系阶段和认知边界，是 canon 不是噪声。所以这里只是往表里加一行，永不合并。
+        """
+        ...
+
+    def put_chapter(self, spec: ChapterSpec) -> StoredChapter:
+        """落一章：Chapter 节点 + `chapter` 行 + 一条快照，**一个事务**。
+
+        幂等键 `(project_id, number)`（schema 的 UNIQUE）。已存在时**不抛异常**——
+        `nh sync` 靠这条把作者在自己编辑器里改过的章读进来：heading / title / path /
+        text_sha256 就地更新，正文变了就多一条快照（按 `UNIQUE(chapter_id, text_sha256)`
+        去重：快照是证据的锚，不是版本历史，同内容只需要存在一次）。
+
+        **旧快照永不删**：审计指针指着它，而那个指针的承诺是「永不失效」。
+
+        Chapter 节点**没有** canonical 别名（`CANONICAL_ALIAS_LABELS` 里没有它）。
+
+        Notes:
+            `spec.number` 是全书顺序位置，由 `text/chapterize.py` 的 index 决定，
+            **不是作者填的**，也不是正文里印的章号（分卷重启和番外会让后者重复，
+            而 `state_at` 的 `valid_from_chapter <= :ch` 要求它是全序键）。
+        """
+        ...
+
+    def current_snapshots(self, project_id: str) -> list[ChapterText]:
+        """每一章的**当前**快照连正文，按章号升序。定位引语的料。
+
+        判据是 `chapter_snapshot.text_sha256 == chapter.text_sha256` 的**精确等值**，
+        不是「这一章最新的那条快照」：后者要在「哪个快照是当前的」这件事上猜，而
+        `chapter.text_sha256` 已经把答案写在那儿了。猜错的产物是一条锚在旧正文上的证据。
+        """
+        ...
+
+    def put_evidence(self, spec: EvidenceSpec) -> Evidence:
+        """落一条双指针证据（ADR 0006）。**`evidence` 行的唯一产地。**
+
+        实现必须按这个顺序，它就是 ADR 0006 配套第 3 条：
+        从快照里按 `(para_index, occurrence_k)` **切出原文子串** → 核对它逐字等于
+        `spec.quote_text` → 对**那个子串**取哈希。`EvidenceSpec` 里没有 `quote_sha256`，
+        所以反过来做在类型层面就不可能。
+
+        两个指针同时落，写入这一刻 `para_index == para_index_hint`：审计的那个指向
+        不可变快照、永不更新；重定位的那个跟着作者改稿漂，relocate 成功可就地更新（M4）。
+
+        Returns:
+            `Evidence.audit.quote_text` 是**切出来的子串**，不是调用方传进来的那个串
+            （M1 精确匹配下两者逐字节相等；M4 的模糊路径上不等）。
+            `Evidence.chapter_number` 由 JOIN `chapter` 填——evidence 表里没有这一列，
+            但它是本方法对调用方的承诺：声明层正是靠它写 `valid_from`（§5.9）。
+
+        Raises:
+            QuoteMismatch: 引语在那个锚上不是逐字原文（含段号 / k 越界）。
+            StoreError: `chapter_snapshot_id` 不存在，或它属于别的项目。
+        """
+        ...
+
+
+@runtime_checkable
+class GraphStore(StoryGraph, CanonWriter, Protocol):
+    """读写交集。`SqliteStoryGraph` 实现它；声明层和导入器收它。
+
+    **为什么是一个交集而不是两个对象**：`transaction()` 在 writer 上、`upsert_edge` 在
+    `StoryGraph` 上，而声明层要把「落证据」和「落边」罩进同一个事务。两个对象 =
+    两条连接的可能 = 那个事务**静默地罩不住 `upsert_edge`**，于是一条边可以在证据回滚
+    之后独自留在库里。一个对象一条连接，那个 bug 不存在。
+
+    `checks/` 和 `panel/` 看见的仍然只有 `StoryGraph` 的五个方法：规则只读。
+    """
