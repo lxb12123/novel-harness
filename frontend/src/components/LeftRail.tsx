@@ -11,7 +11,7 @@ const LABEL_ZH: Record<string, string> = {
 };
 
 export function LeftRail({ onOpenChapter }: { onOpenChapter: (n: number) => void }) {
-  const { projectId, chapter } = useCoords();
+  const { projectId, chapter, selectedNodeId, focusNode } = useCoords();
   const chapters = useChapters(projectId);
   const roster = useRoster(projectId);
 
@@ -44,7 +44,12 @@ export function LeftRail({ onOpenChapter }: { onOpenChapter: (n: number) => void
             <div className="grp" key={lab}>
               <div className="lab">{LABEL_ZH[lab] ?? lab}</div>
               {groups[lab].map((n) => (
-                <div className="item" key={n.id}>
+                <div
+                  className={"item" + (n.id === selectedNodeId ? " on" : "")}
+                  key={n.id}
+                  onClick={() => focusNode(n.id)}
+                  title="看它的局部关系图"
+                >
                   {n.name}
                 </div>
               ))}

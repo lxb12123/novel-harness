@@ -11,8 +11,10 @@ import type {
   KnowledgeMatrix,
   Project,
   QuoteCandidate,
+  ResolveResult,
   SceneConstraints,
   StateSnapshot,
+  Subgraph,
 } from "./types";
 
 // 服务端状态全进 TanStack Query（§2.3）：queryKey = [端点, pid, chapter, cast]，
@@ -119,5 +121,27 @@ export function useDeclare(pid: string) {
 export function useCheck(pid: string) {
   return useMutation({
     mutationFn: (chapter: number) => api.post<CheckResult>(proj(pid, `/chapters/${chapter}/check`)),
+  });
+}
+
+export function useSubgraph(
+  pid: string | null,
+  center: string | null,
+  chapter: number,
+  hops: number,
+) {
+  return useQuery({
+    queryKey: q(["subgraph", pid, center, chapter, hops]),
+    queryFn: () =>
+      api.get<Subgraph>(proj(pid!, `/subgraph?center=${encodeURIComponent(center!)}&chapter=${chapter}&hops=${hops}`)),
+    enabled: !!pid && !!center,
+  });
+}
+
+/** 称呼 → 候选节点。选区查图谱用：唯一则直接 focus，歧义弹候选让作者挑。 */
+export function useResolve(pid: string) {
+  return useMutation({
+    mutationFn: (surface: string) =>
+      api.get<ResolveResult>(proj(pid, `/resolve?surface=${encodeURIComponent(surface)}`)),
   });
 }

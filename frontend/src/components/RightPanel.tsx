@@ -1,12 +1,14 @@
 import { useConstraints, useMatrix, useStates, useCheck } from "../api/hooks";
 import { useCoords, type Tab } from "../store";
 import { MatrixView } from "./KnowledgeMatrix";
+import { LocalGraph } from "./LocalGraph";
 import type { CheckResult, StateSnapshot } from "../api/types";
 import { useState } from "react";
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "matrix", label: "认知矩阵" },
   { key: "state", label: "当前状态" },
+  { key: "graph", label: "局部图" },
   { key: "constraints", label: "约束" },
   { key: "check", label: "一致性(R4)" },
 ];
@@ -131,10 +133,9 @@ export function RightPanel() {
       </div>
       {activeTab === "matrix" && <MatrixView matrix={matrix.data} constraints={constraints.data} />}
       {activeTab === "state" && <StateCards states={states.data} />}
+      {activeTab === "graph" && <LocalGraph />}
       {activeTab === "constraints" && <ConstraintsView />}
       {activeTab === "check" && <CheckView />}
-      <h2 style={{ marginTop: 22 }}>局部关系图 (Tab2)</h2>
-      <div className="empty">React Flow 子图 · 下一轮（引擎 /subgraph 已就绪）</div>
     </section>
   );
 }

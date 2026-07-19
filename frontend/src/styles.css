@@ -57,7 +57,7 @@ main { flex: 1; display: grid; grid-template-columns: 210px 1fr 400px; min-heigh
 /* 左栏 */
 .ch, .item { padding: 3px 6px; border-radius: 4px; cursor: pointer; }
 .ch:hover, .item:hover { background: var(--panel); }
-.ch.on { background: var(--sel); color: var(--accent); font-weight: 600; }
+.ch.on, .item.on { background: var(--sel); color: var(--accent); font-weight: 600; }
 .ch .n { color: var(--dim); font-family: ui-monospace, monospace; font-size: 11px; margin-right: 6px; }
 .grp .lab { color: var(--dim); font-size: 11px; margin: 8px 0 3px; }
 

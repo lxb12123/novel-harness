@@ -127,6 +127,21 @@ export interface Declaration {
   retracted: Edge[];
 }
 
+// subgraph 的节点：present 节点是完整 Node，Secret/未来节点被 _narrow 成 NodeRef。
+// 前端只读 id/label/name，按 NodeRef 用即可。
+export type SubgraphNode = NodeRef & { props?: unknown };
+
+export interface Subgraph {
+  center: SubgraphNode;
+  chapter: number;
+  hops: number;
+  scope: string;
+  nodes: SubgraphNode[];
+  edges: Edge[];
+  /** 节点数超上限被折叠过（hops≤2 硬上限，3 跳数学上坏）。 */
+  truncated: boolean;
+}
+
 export interface ResolveHit {
   node: NodeRef;
   kind: string;
