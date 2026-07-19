@@ -8,16 +8,23 @@
 两个进程：后端 uvicorn + 前端 Vite（Vite 把 `/api` 代理到 uvicorn）。
 
 ```bash
-# 1) 后端：指一个已 nh init / seed 好的库
+# 0) 造一个空库（唯一一步命令行；之后建书/导入都在浏览器里做）
 cd ..
-NH_DB=path/to/book.db uv run uvicorn novel_harness.api.app:app --port 8000 --reload
-# 还没有库？uv run python scripts/seed_demo.py /tmp/demo.db  （stdout 出 project_id）
+uv run python -c "from novel_harness.db import connect, migrate; migrate(connect('book.db'))"
+
+# 1) 后端（NH_BOOKS_DIR 可选：新书的稿子目录基址，默认 <库同级>/books）
+NH_DB=book.db uv run uvicorn novel_harness.api.app:app --port 8000 --reload
 
 # 2) 前端
 cd frontend
 npm install
 npm run dev        # http://localhost:5173
 ```
+
+打开后：库是空的 → 首屏就是「开始一本书」——填书名建书、选一个 TXT 导入（切章落库），
+然后进工作台。已有项目时，顶栏「＋新书 / 导入」随时再建一本或往当前书补导入。
+（想要现成 demo 数据：`uv run python scripts/seed_demo.py /tmp/demo.db` 出一个 project_id，
+用 `NH_DB=/tmp/demo.db` 起后端即可。）
 
 ## 构建（生产）
 
@@ -41,6 +48,7 @@ response schema，生成的响应类型很薄。**`src/api/types.ts` 是这些�
 
 ## 现在做到哪（骨架 + declare 写闭环）
 
+- ✅ **上手不碰命令行**：浏览器里建书 + 导入 TXT（GBK 老稿前端自动兜底解码），多项目切换
 - ✅ 三栏工作台：左栏章目录/花名册、中栏正文编辑器、右栏智能面板
 - ✅ 认知矩阵头牌（三态 ✓/⚠/✗ + since_chapter）、当前状态卡、约束、R4 check
 - ✅ **declare 写闭环**：编辑器选一句原文 → 抽屉里选类型 + 填称呼 → `测这条引语`

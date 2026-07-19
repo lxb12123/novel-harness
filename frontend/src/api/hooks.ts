@@ -8,6 +8,7 @@ import type {
   DeclareBelieves,
   DeclareKnows,
   DeclareWhere,
+  ImportReport,
   KnowledgeMatrix,
   Project,
   QuoteCandidate,
@@ -24,6 +25,26 @@ const q = (parts: unknown[]) => parts;
 
 export function useProjects() {
   return useQuery({ queryKey: q(["projects"]), queryFn: () => api.get<Project[]>("/api/projects") });
+}
+
+export function useCreateProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) => api.post<Project>("/api/projects", { name }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["projects"] }),
+  });
+}
+
+/** 导入整本 TXT（浏览器已把文件解码成文本）。成功后刷章目录 + 花名册 + 面板。 */
+export function useImportBook(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (text: string) => api.post<ImportReport>(proj(pid, "/import"), { text }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["chapters", pid] });
+      qc.invalidateQueries({ queryKey: ["roster", pid] });
+    },
+  });
 }
 
 export function useChapters(pid: string | null) {

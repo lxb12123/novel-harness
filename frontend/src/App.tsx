@@ -5,6 +5,7 @@ import { TopBar } from "./components/TopBar";
 import { LeftRail } from "./components/LeftRail";
 import { CenterEditor } from "./components/CenterEditor";
 import { RightPanel } from "./components/RightPanel";
+import { Setup } from "./components/Setup";
 
 export default function App() {
   const projects = useProjects();
@@ -25,12 +26,7 @@ export default function App() {
         连不上后端。先启动 uvicorn：<code>NH_DB=book.db uvicorn novel_harness.api.app:app</code>
       </div>
     );
-  if (!projects.data || projects.data.length === 0)
-    return (
-      <div style={{ padding: 24 }}>
-        这个库里没有项目。先 <code>nh init</code> 建一本书，再 <code>nh import</code> 一本 TXT。
-      </div>
-    );
+  if (!projects.data || projects.data.length === 0) return <Setup />;
 
   return (
     <div className="app">

@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import re
+import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -55,9 +56,10 @@ from ..panel import (
 )
 from ..text import parse_scenes
 from ..text import paragraphs as split_paragraphs
-from .deps import ensure_schema, get_conn, get_ledger, get_store, load_project
+from .deps import books_root, ensure_schema, get_conn, get_ledger, get_store, load_project
 
 _STATIC = Path(__file__).resolve().parent / "static"
+_UNSAFE_PATH = re.compile(r'[/\\:*?"<>|]')  # 书名里不能进目录名的字符
 # React 工作台的构建产物（frontend/dist）。存在就服务它，否则降级到 static/ 的原生原型。
 # repo_root = api → novel_harness → src → root（parents[3]）。dist 不入库（frontend/.gitignore）。
 _DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
@@ -285,6 +287,69 @@ async def index() -> FileResponse:
 @app.get("/api/projects")
 def projects(conn: Any = Depends(get_conn)) -> Any:
     return project_mod.list_all(conn)
+
+
+# ── 上手：建书 / 导入 TXT / 同步（让非程序员不碰命令行也能起步）──────────────
+
+
+class CreateProject(BaseModel):
+    name: str
+
+
+class ImportText(BaseModel):
+    text: str
+    """整本 TXT 的正文。**由浏览器读文件解码后作为文本发来**（避开 python-multipart，
+    也把编码难题交给浏览器：GBK 的老稿子前端用 TextDecoder 兜）。"""
+
+
+def _new_book_root(name: str) -> Path:
+    """给新书在 books_root 下开一个稿子目录。作者从不敲路径——按书名派生，撞了就加序号。"""
+    base = books_root()
+    slug = _UNSAFE_PATH.sub("", name).strip() or "book"
+    root = base / slug
+    n = 2
+    while root.exists() and any(root.iterdir()):
+        root = base / f"{slug}-{n}"
+        n += 1
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+@app.post("/api/projects")
+def create_project(body: CreateProject, conn: Any = Depends(get_conn)) -> Any:
+    """新建一本书。root_path 由服务器在 books_root 下派生（§ADR 0007：那目录就是稿子）。
+
+    空名 → project.create 抛 ValueError → 422。project.create 自己 commit。
+    """
+    root = _new_book_root(body.name)
+    return project_mod.create(conn, name=body.name, root_path=str(root))
+
+
+@app.post("/api/projects/{project_id}/import")
+def import_book(
+    body: ImportText,
+    store: Any = Depends(get_store),
+    proj: Any = Depends(load_project),
+) -> Any:
+    """把一本 TXT 切章 → 写成 {root}/chapters/NNNN.md → 落库。一次性播种，日常回路用 sync。
+
+    零章 → ImportRefused → 409（切章器没认出这本书的章标写法，不是「书是空的」）；
+    已存在且内容不同 → ImportRefused 带 conflicts → 409；某文件切出 0/>1 章 → SyncRefused
+    → 422。三者都走全局 handler，前端据 error 码提示作者。
+    """
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", encoding="utf-8", delete=False) as fh:
+        fh.write(body.text)
+        tmp = Path(fh.name)
+    try:
+        return importer.import_book(store, proj.id, txt=tmp, root=Path(proj.root_path))
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+@app.post("/api/projects/{project_id}/sync")
+def sync_project(store: Any = Depends(get_store), proj: Any = Depends(load_project)) -> Any:
+    """把 {root}/chapters/*.md 的现状读进库（作者在别的编辑器改了稿之后走这条）。"""
+    return importer.sync(store, proj.id, Path(proj.root_path))
 
 
 @app.get("/api/projects/{project_id}")

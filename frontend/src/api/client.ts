@@ -54,3 +54,16 @@ export const api = {
 };
 
 export const proj = (pid: string, tail = "") => `/api/projects/${encodeURIComponent(pid)}${tail}`;
+
+/** 读一个 TXT 文件成文本。中文老稿常是 GBK：先按 UTF-8 解，出现替换符 � 就改判 GBK。
+ *  编码难题交给浏览器（后端只收解好的文本），避开服务端 chardet 那一坨。 */
+export async function readTextFile(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  const utf8 = new TextDecoder("utf-8").decode(buf);
+  if (!utf8.includes("�")) return utf8;
+  try {
+    return new TextDecoder("gbk").decode(buf);
+  } catch {
+    return utf8; // 浏览器不支持 gbk 解码器时退回 UTF-8（至少不炸）
+  }
+}

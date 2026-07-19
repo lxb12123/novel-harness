@@ -31,6 +31,15 @@ def _db_path() -> Path:
     return path
 
 
+def books_root() -> Path:
+    """新书的稿子目录落在哪儿。作者从 UI 建书时不该、也不用敲文件系统路径（非程序员）——
+    服务器在这个基目录下按书名给它开一个子目录。默认 `<NH_DB 同级>/books`，可用
+    `NH_BOOKS_DIR` 覆盖。正文在磁盘（ADR 0007），所以这个目录**是稿子，不是导出物**。
+    """
+    raw = os.environ.get("NH_BOOKS_DIR")
+    return Path(raw) if raw else _db_path().parent / "books"
+
+
 def ensure_schema() -> None:
     """启动时跑一次：确认库在、schema 到位（migrate 幂等）。"""
     conn = connect(_db_path())

@@ -155,6 +155,14 @@ export interface ResolveResult {
   hits: ResolveHit[];
 }
 
+export interface ImportReport {
+  chapter_count: number;
+  preamble_chars: number;
+  written: string[];
+  unchanged: string[];
+  synced: { added: unknown[]; refreshed: unknown[]; unchanged_count: number; ignored_files: string[] };
+}
+
 export interface CheckResult {
   chapter: number;
   scene_count: number;

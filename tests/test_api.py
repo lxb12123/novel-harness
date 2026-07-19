@@ -404,6 +404,35 @@ def test_roster_and_chapters(client: TestClient, book: dict[str, str]) -> None:
     assert {1, 2, 3} <= numbers
 
 
+def test_create_project_then_import(client: TestClient) -> None:
+    # 非程序员的起步路径：建书 → 导入 TXT → 章节出现，全程不碰命令行。
+    made = client.post("/api/projects", json={"name": "新书"})
+    assert made.status_code == 200, made.text
+    pid = made.json()["id"]
+
+    imported = client.post(f"/api/projects/{pid}/import", json={"text": BOOK})
+    assert imported.status_code == 200, imported.text
+    assert imported.json()["chapter_count"] == 2  # BOOK 是两章
+
+    chapters = client.get(f"/api/projects/{pid}/chapters")
+    assert {c["number"] for c in chapters.json()} == {1, 2}
+
+
+def test_create_project_empty_name_422(client: TestClient) -> None:
+    r = client.post("/api/projects", json={"name": ""})
+    assert r.status_code == 422
+    assert r.json()["error"] == "bad_request"
+
+
+def test_import_zero_chapters_refused_409(client: TestClient) -> None:
+    # 零章不是「书是空的」，是「章标没认出来」——ImportRefused → 409，别当导入成功。
+    made = client.post("/api/projects", json={"name": "无章标"})
+    pid = made.json()["id"]
+    r = client.post(f"/api/projects/{pid}/import", json={"text": "没有任何章标的一段散文。\n就这些。\n"})
+    assert r.status_code == 409
+    assert r.json()["error"] == "import_refused"
+
+
 def test_openapi_schema_builds(client: TestClient) -> None:
     # 壳能生成 openapi（P0 前端要拿它跑 openapi-typescript）。
     r = client.get("/openapi.json")
