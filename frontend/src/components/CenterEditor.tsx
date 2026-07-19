@@ -3,6 +3,7 @@ import { useChapterText, useResolve, useSaveChapter } from "../api/hooks";
 import { useCoords } from "../store";
 import { ApiError } from "../api/client";
 import { DeclareDrawer } from "./DeclareDrawer";
+import { SceneBar } from "./SceneBar";
 
 // 中栏正文编辑器。
 // **骨架阶段用 textarea**：CM6（§2.4）是文档定的 P1 升级，它换来的是富文本 + 段落级
@@ -72,6 +73,8 @@ export function CenterEditor() {
           保存
         </button>
       </div>
+
+      <SceneBar />
 
       <textarea
         ref={ref}

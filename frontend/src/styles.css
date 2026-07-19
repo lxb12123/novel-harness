@@ -71,6 +71,19 @@ main { flex: 1; display: grid; grid-template-columns: 210px 1fr 400px; min-heigh
 .selbar { padding: 6px 14px; border-top: 1px solid var(--line); background: var(--panel); display: flex; gap: 8px; align-items: center; font-size: 12px; }
 .selbar .q { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 
+/* 场景块条 */
+.scenebar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 6px 14px; border-bottom: 1px solid var(--line); background: var(--panel); font-size: 12px; }
+.scenebar.empty { color: var(--dim); font-style: italic; }
+.scenebar code { background: var(--bg); padding: 0 3px; border-radius: 3px; }
+.scene-pill { padding: 3px 9px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg); cursor: pointer; }
+.scene-pill.on { border-color: var(--accent); color: var(--accent); background: var(--sel); }
+.scene-pill .pc { color: var(--dim); } .scene-pill .pl { color: var(--k); }
+.scene-pill .pe { margin-left: 6px; padding-left: 6px; border-left: 1px solid var(--line); color: var(--dim); }
+.scene-pill .pe:hover { color: var(--accent); }
+.scene-edit { display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
+.scene-edit .lab { color: var(--dim); } .scene-edit input { width: 150px; }
+.scene-edit .err { color: var(--warn); }
+
 /* 右栏 tabs */
 .tabs { display: flex; gap: 4px; margin-bottom: 10px; }
 .tabs button.on { border-color: var(--accent); color: var(--accent); background: var(--sel); }

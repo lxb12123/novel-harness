@@ -13,6 +13,7 @@ import type {
   Project,
   QuoteCandidate,
   ResolveResult,
+  Scene,
   SceneConstraints,
   StateSnapshot,
   Subgraph,
@@ -156,6 +157,26 @@ export function useSubgraph(
     queryFn: () =>
       api.get<Subgraph>(proj(pid!, `/subgraph?center=${encodeURIComponent(center!)}&chapter=${chapter}&hops=${hops}`)),
     enabled: !!pid && !!center,
+  });
+}
+
+export function useScenes(pid: string | null, chapter: number) {
+  return useQuery({
+    queryKey: q(["scenes", pid, chapter]),
+    queryFn: () => api.get<Scene[]>(proj(pid!, `/chapters/${chapter}/scenes`)),
+    enabled: !!pid,
+  });
+}
+
+export function useWriteScene(pid: string, chapter: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { number: number; cast: string[]; loc: string | null; goal: string | null }) =>
+      api.put<Scene[]>(proj(pid, `/chapters/${chapter}/scenes`), body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["scenes", pid, chapter] });
+      invalidatePanels(qc, pid); // cast/loc 变 → 矩阵/约束/state 跟着变
+    },
   });
 }
 

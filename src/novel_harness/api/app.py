@@ -54,7 +54,13 @@ from ..panel import (
     resolve_cast,
     scene_constraints,
 )
-from ..text import parse_scenes
+from ..text import (
+    AmbiguousScene,
+    SceneNotFound,
+    SceneWriteRefused,
+    parse_scenes,
+    write_scene_directive,
+)
 from ..text import paragraphs as split_paragraphs
 from .deps import books_root, ensure_schema, get_conn, get_ledger, get_store, load_project
 
@@ -258,6 +264,25 @@ async def _import_refused(_: Request, exc: importer.ImportRefused) -> JSONRespon
 async def _sync_refused(_: Request, exc: importer.SyncRefused) -> JSONResponse:
     # 某个 NNNN.md 切出 0 或 >1 章。正文可能已写进磁盘，但 sync 拒绝落库。
     return _err(422, {"error": "sync_refused", "path": exc.path, "message": str(exc)})
+
+
+@app.exception_handler(SceneNotFound)
+async def _scene_not_found(_: Request, exc: SceneNotFound) -> JSONResponse:
+    # 面板点了「写进场景 N」，但这一章没有那个场景号——什么都不发生比报错更糟（作者以为写了）。
+    return _err(404, {"error": "scene_not_found", "message": str(exc)})
+
+
+@app.exception_handler(AmbiguousScene)
+async def _ambiguous_scene(_: Request, exc: AmbiguousScene) -> JSONResponse:
+    # 同章两个同号 ## 场景 N，写哪个都是猜。
+    return _err(409, {"error": "ambiguous_scene", "message": str(exc)})
+
+
+@app.exception_handler(SceneWriteRefused)
+async def _scene_write_refused(_: Request, exc: SceneWriteRefused) -> JSONResponse:
+    # MalformedDirective（key 有两份）/ UnwritableValue（值里有表达不了的字符，回读发现）。
+    # 系统看不懂作者的文件时的唯一正确动作：原样交还 + 说清哪里看不懂，绝不写坏它。
+    return _err(422, {"error": "scene_write_refused", "message": str(exc)})
 
 
 @app.exception_handler(ValidationError)
@@ -523,6 +548,62 @@ def save_chapter(
         raise HTTPException(404, {"error": "chapter_not_found", "chapter": chapter})
     file.write_text(body.markdown, encoding="utf-8")
     return importer.sync(store, proj.id, Path(proj.root_path))
+
+
+# ── 场景块：## 场景 N + <!-- nh: cast=… loc=… goal=… -->（面板的「在场是谁」的来源）──
+
+
+class SceneWrite(BaseModel):
+    """回写一个场景块的 cast/loc/goal。**三个都发**：这一场的期望全态，不做 KEEP 增量——
+    前端场景条是「读出当前值 → 改 → 存全部」，所以每次写的是完整意图。空 cast / 空 loc /
+    空 goal = 删掉那个 key（write_scene_directive 的 None 语义）。
+    """
+
+    number: int
+    cast: list[str] = []
+    loc: str | None = None
+    goal: str | None = None
+
+
+@app.get("/api/projects/{project_id}/chapters/{chapter}/scenes")
+def scenes(chapter: int, proj: Any = Depends(load_project)) -> Any:
+    """这一章磁盘正文里的场景块（cast/loc/goal 全是称呼原文，不解析）。切段走 text.paragraphs()。"""
+    file = _chapter_file(proj, chapter)
+    if not file.exists():
+        raise HTTPException(404, {"error": "chapter_not_found", "chapter": chapter})
+    paras = split_paragraphs(file.read_text(encoding="utf-8-sig"))
+    return [s.model_dump(mode="json") for s in parse_scenes(paras)]
+
+
+@app.put("/api/projects/{project_id}/chapters/{chapter}/scenes")
+def write_scene(
+    chapter: int,
+    body: SceneWrite,
+    store: Any = Depends(get_store),
+    proj: Any = Depends(load_project),
+) -> Any:
+    """把 cast/loc/goal 无损写进第 chapter 章的场景 N，再 sync。**只动它拥有的那几个字符**
+    （缩进/行尾/未知 key 逐字节保留，ADR 0007：正文是作者的文件）。写完回读验尸——
+    值里有表达不了的字符 → UnwritableValue → 422，不写坏文件。
+
+    返回回写后重新解析的场景列表，让前端拿到「系统看到的」而不是「它以为写进去的」。
+    """
+    file = _chapter_file(proj, chapter)
+    if not file.exists():
+        raise HTTPException(404, {"error": "chapter_not_found", "chapter": chapter})
+    text = file.read_text(encoding="utf-8-sig")
+    # 空 = 删该 key（None 语义）；非空原样写。三个都传 = 这一场的完整意图，不用 KEEP 哨兵。
+    new_text = write_scene_directive(
+        text,
+        body.number,
+        cast=body.cast,
+        loc=body.loc or None,
+        goal=body.goal or None,
+    )
+    file.write_text(new_text, encoding="utf-8")
+    importer.sync(store, proj.id, Path(proj.root_path))
+    paras = split_paragraphs(new_text)
+    return [s.model_dump(mode="json") for s in parse_scenes(paras)]
 
 
 # ══════════════════════════════════════════════════════════════════════════

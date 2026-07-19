@@ -404,6 +404,40 @@ def test_roster_and_chapters(client: TestClient, book: dict[str, str]) -> None:
     assert {1, 2, 3} <= numbers
 
 
+def test_scenes_read(client: TestClient, book: dict[str, str]) -> None:
+    # 第 3 章磁盘正文有 `## 场景 1` + cast=萧决 loc=北荒。
+    r = client.get(f"/api/projects/{_pid(book)}/chapters/3/scenes")
+    assert r.status_code == 200, r.text
+    scenes = r.json()
+    assert len(scenes) == 1
+    assert scenes[0]["number"] == 1
+    assert scenes[0]["cast"] == ["萧决"]
+    assert scenes[0]["loc"] == "北荒"
+
+
+def test_scenes_write_updates_cast(client: TestClient, book: dict[str, str]) -> None:
+    r = client.put(
+        f"/api/projects/{_pid(book)}/chapters/3/scenes",
+        json={"number": 1, "cast": ["萧决", "李管家"], "loc": "北荒", "goal": "对峙"},
+    )
+    assert r.status_code == 200, r.text
+    scenes = r.json()
+    assert scenes[0]["cast"] == ["萧决", "李管家"]
+    assert scenes[0]["goal"] == "对峙"
+    # 再读一次磁盘确认落盘了（不是只在响应里）。
+    again = client.get(f"/api/projects/{_pid(book)}/chapters/3/scenes")
+    assert again.json()[0]["cast"] == ["萧决", "李管家"]
+
+
+def test_scene_write_missing_number_404(client: TestClient, book: dict[str, str]) -> None:
+    r = client.put(
+        f"/api/projects/{_pid(book)}/chapters/3/scenes",
+        json={"number": 99, "cast": ["萧决"]},
+    )
+    assert r.status_code == 404
+    assert r.json()["error"] == "scene_not_found"
+
+
 def test_create_project_then_import(client: TestClient) -> None:
     # 非程序员的起步路径：建书 → 导入 TXT → 章节出现，全程不碰命令行。
     made = client.post("/api/projects", json={"name": "新书"})

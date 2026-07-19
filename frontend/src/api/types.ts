@@ -98,6 +98,15 @@ export interface StateSnapshot {
   is_dead: boolean;
 }
 
+export interface Scene {
+  number: number;
+  cast: string[];
+  loc: string | null;
+  goal: string | null;
+  para_index: number;
+  decl_text: string;
+}
+
 export interface QuoteCandidate {
   chapter_id: string;
   chapter_number: number;
