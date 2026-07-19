@@ -76,7 +76,7 @@ function ConstraintsView() {
 }
 
 function CheckView() {
-  const { projectId, chapter } = useCoords();
+  const { projectId, chapter, setHighlight } = useCoords();
   const check = useCheck(projectId!);
   const [result, setResult] = useState<CheckResult | null>(null);
   return (
@@ -99,12 +99,17 @@ function CheckView() {
             <div className="warn">没有场景块 = R4 无事可做 = 必然零 issue，这不是「这章没问题」。</div>
           )}
           {result.issues.map((iss, i) => (
-            <div className="statecard" key={i}>
+            <div
+              className="statecard clickable"
+              key={i}
+              title="点击 → 跳到正文那一段并高亮"
+              onClick={() => setHighlight(iss.anchor)}
+            >
               <div className="nm">
                 [{iss.rule}] {iss.issue_type}
               </div>
               <div className="row">
-                第 {iss.chapter} 章 · 第 {iss.anchor.para_index} 段
+                第 {iss.chapter} 章 · 第 {iss.anchor.para_index} 段 → 点我回正文
               </div>
               <div className="row">{iss.message}</div>
               {iss.suggested_action && <div className="row">建议：{iss.suggested_action}</div>}

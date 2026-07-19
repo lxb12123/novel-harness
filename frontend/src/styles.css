@@ -101,6 +101,8 @@ table.mx thead th { color: var(--dim); font-weight: 600; }
 /* 状态卡 */
 .statecard { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
 .statecard .nm { font-weight: 600; } .statecard .dead { color: var(--warn); font-weight: 400; }
+.statecard.clickable { cursor: pointer; }
+.statecard.clickable:hover { border-color: var(--accent); }
 .statecard .row { color: var(--dim); font-size: 12px; }
 
 /* declare 抽屉 */

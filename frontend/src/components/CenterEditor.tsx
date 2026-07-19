@@ -4,13 +4,15 @@ import { useCoords } from "../store";
 import { ApiError } from "../api/client";
 import { DeclareDrawer } from "./DeclareDrawer";
 import { SceneBar } from "./SceneBar";
+import { locate } from "../anchor";
 
 // 中栏正文编辑器。
 // **骨架阶段用 textarea**：CM6（§2.4）是文档定的 P1 升级，它换来的是富文本 + 段落级
 // 高亮，但写闭环不需要它——declare 只要一段选中的引语当 quote，后端 locate 自己算章号。
 // 正文仍是磁盘的（ADR 0007）：读 = GET text，存 = PUT → sync，DB 永不是正文真相源。
 export function CenterEditor() {
-  const { projectId, chapter, setSelection, selection, focusNode } = useCoords();
+  const { projectId, chapter, setSelection, selection, focusNode, highlight, setHighlight } =
+    useCoords();
   const [open, setOpen] = useState(false); // 这一章是否已打开进编辑器
   const { data } = useChapterText(projectId, chapter, open);
   const save = useSaveChapter(projectId ?? "", chapter);
@@ -19,7 +21,27 @@ export function CenterEditor() {
   const [doc, setDoc] = useState("");
   const [dirty, setDirty] = useState(false);
   const [drawer, setDrawer] = useState(false);
+  const [locateMiss, setLocateMiss] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+
+  // R4 冲突回跳（§2.6 方向二）：点 issue 设 highlight → 这里按 quote 重寻并选中，然后清掉。
+  useEffect(() => {
+    if (!highlight || !ref.current) return;
+    const hit = locate(doc, highlight);
+    setHighlight(null);
+    if (!hit) {
+      setLocateMiss(true);
+      return;
+    }
+    setLocateMiss(false);
+    const el = ref.current;
+    el.focus();
+    el.setSelectionRange(hit.start, hit.end);
+    // 粗略把选区滚进视野：按行高估算 scrollTop（textarea 没有 scrollIntoView 选区的原生 API）。
+    const before = doc.slice(0, hit.start).split("\n").length - 1;
+    const lh = parseFloat(getComputedStyle(el).lineHeight) || 22;
+    el.scrollTop = Math.max(0, before * lh - el.clientHeight / 2);
+  }, [highlight, doc, setHighlight]);
 
   // 方向一（§2.6）：选区 → resolve → 唯一直接 focus 图谱；歧义弹候选让作者挑，不猜。
   function lookup() {
@@ -75,6 +97,12 @@ export function CenterEditor() {
       </div>
 
       <SceneBar />
+
+      {locateMiss && (
+        <div className="selbar" style={{ borderTop: 0, color: "var(--warn)" }}>
+          定位不到那句话——正文可能改过了（存盘后重跑检查），或它锚在别的章。
+        </div>
+      )}
 
       <textarea
         ref={ref}
