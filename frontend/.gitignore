@@ -1,0 +1,7 @@
+node_modules/
+dist/
+openapi.json
+*.tsbuildinfo
+# openapi-typescript 的产物：当前收窄端点是 `-> Any`，生成的响应类型很薄，且没被 import
+# （types.ts 是手写真相源）。`npm run gen:types` 随时重生成，不入库免得躺一份陈旧的。
+src/api/schema.ts

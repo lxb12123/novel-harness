@@ -1,0 +1,110 @@
+/* 调色板移植自原生原型 static/index.html —— 暗色/亮色自适应。
+   Tailwind/shadcn 是 §2.7 列的样式系统，留作后续；骨架阶段用手写 CSS 变量，零构建风险。 */
+:root {
+  --bg: #ffffff; --panel: #f7f7f6; --line: #dddcd8; --ink: #1c1c1e; --dim: #6b6b70;
+  --k: #167a52; --b: #9a6212; --u: #999; --warnbg: #fbecec; --warn: #a23b3b;
+  --accent: #3a3ab0; --sel: #ececf8; --okbg: #e8f5ee; --ok: #167a52;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #16161a; --panel: #1e1e24; --line: #2f2f38; --ink: #e8e8ec; --dim: #8a8a93;
+    --k: #4bbd8b; --b: #d3a24f; --u: #777; --warnbg: #2a1818; --warn: #e08585;
+    --accent: #9a98ee; --sel: #26263a; --okbg: #16281f; --ok: #4bbd8b;
+  }
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 13px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+}
+.app { height: 100%; display: flex; flex-direction: column; }
+code, .mono, small, textarea { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+button {
+  font: inherit; padding: 3px 12px; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--bg); color: var(--ink); cursor: pointer;
+}
+button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+button:disabled { opacity: .5; cursor: default; }
+input, select, textarea {
+  font: inherit; padding: 3px 7px; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--bg); color: var(--ink);
+}
+
+/* 顶栏 */
+header {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 7px 12px; border-bottom: 1px solid var(--line); background: var(--panel);
+}
+header .title { font-weight: 600; } header .title b { color: var(--accent); }
+header label { color: var(--dim); font-size: 12px; }
+header input.ch { width: 56px; text-align: right; }
+header input.cast { width: 220px; }
+header .spacer { flex: 1; }
+header .hint { color: var(--dim); font-size: 11px; }
+
+/* 三栏 */
+main { flex: 1; display: grid; grid-template-columns: 210px 1fr 400px; min-height: 0; }
+.pane { overflow: auto; padding: 12px 14px; }
+.pane + .pane { border-left: 1px solid var(--line); }
+.pane h2 {
+  margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--dim);
+}
+.pane h2:not(:first-child) { margin-top: 18px; }
+.empty { color: var(--dim); font-style: italic; }
+
+/* 左栏 */
+.ch, .item { padding: 3px 6px; border-radius: 4px; cursor: pointer; }
+.ch:hover, .item:hover { background: var(--panel); }
+.ch.on { background: var(--sel); color: var(--accent); font-weight: 600; }
+.ch .n { color: var(--dim); font-family: ui-monospace, monospace; font-size: 11px; margin-right: 6px; }
+.grp .lab { color: var(--dim); font-size: 11px; margin: 8px 0 3px; }
+
+/* 中栏编辑器 */
+.editor { display: flex; flex-direction: column; padding: 0; }
+.edbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.edbar .who { font-weight: 600; } .edbar .spacer { flex: 1; }
+.edbar .status { font-size: 12px; color: var(--dim); }
+.edbar .status.err { color: var(--warn); } .edbar .status.ok { color: var(--ok); }
+.editor textarea { flex: 1; border: 0; border-radius: 0; padding: 14px 16px; resize: none; line-height: 1.8; outline: none; }
+.selbar { padding: 6px 14px; border-top: 1px solid var(--line); background: var(--panel); display: flex; gap: 8px; align-items: center; font-size: 12px; }
+.selbar .q { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+
+/* 右栏 tabs */
+.tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+.tabs button.on { border-color: var(--accent); color: var(--accent); background: var(--sel); }
+
+/* 矩阵 */
+table.mx { border-collapse: collapse; font-size: 12px; }
+table.mx th, table.mx td { border: 1px solid var(--line); padding: 4px 8px; text-align: left; vertical-align: top; }
+table.mx thead th { color: var(--dim); font-weight: 600; }
+.cell .k { color: var(--k); } .cell .b { color: var(--b); } .cell .u { color: var(--u); }
+.cell small { display: block; color: var(--dim); font-size: 10px; }
+.warn { margin-top: 8px; padding: 6px 8px; background: var(--warnbg); color: var(--warn); border-radius: 4px; font-size: 12px; }
+.tag { display: inline-block; padding: 1px 7px; margin: 2px 4px 2px 0; background: var(--sel); border-radius: 10px; font-size: 12px; }
+.mnr .lab { color: var(--dim); font-size: 11px; margin: 10px 0 4px; }
+
+/* 状态卡 */
+.statecard { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; margin-bottom: 8px; }
+.statecard .nm { font-weight: 600; } .statecard .dead { color: var(--warn); font-weight: 400; }
+.statecard .row { color: var(--dim); font-size: 12px; }
+
+/* declare 抽屉 */
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: 460px; background: var(--bg); border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(0,0,0,.15); padding: 16px 18px; overflow: auto; z-index: 20; }
+.drawer h3 { margin: 0 0 4px; }
+.drawer .sub { color: var(--dim); font-size: 12px; margin-bottom: 14px; }
+.drawer .field { margin-bottom: 10px; display: flex; flex-direction: column; gap: 3px; }
+.drawer .field > span { font-size: 12px; color: var(--dim); }
+.drawer .row { display: flex; gap: 8px; align-items: center; }
+.drawer .quotebox { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 8px; font-family: ui-monospace, monospace; font-size: 12px; }
+.receipt { margin-top: 14px; padding: 10px 12px; background: var(--okbg); border: 1px solid var(--ok); border-radius: 6px; }
+.receipt .vf { font-weight: 600; color: var(--ok); }
+.receipt .note { color: var(--dim); font-size: 12px; margin-top: 4px; }
+.receipt .closed { color: var(--b); font-size: 12px; margin-top: 6px; }
+.candidates { margin-top: 6px; }
+.candidates .cand { padding: 5px 8px; border: 1px solid var(--line); border-radius: 4px; margin-bottom: 4px; font-size: 12px; }
+.err-box { margin-top: 10px; padding: 8px 10px; background: var(--warnbg); color: var(--warn); border-radius: 4px; font-size: 12px; }
+.locate-hits { margin-top: 6px; font-size: 12px; }
+.locate-hits .hit { color: var(--dim); }
+.backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.25); z-index: 15; }

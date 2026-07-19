@@ -1,0 +1,56 @@
+# Novel Harness 工作台（React 前端）
+
+给不写代码的小说作者用的浏览器工作台，落在精简 SQLite 引擎 + FastAPI 薄壳上。
+方案见 [`../docs/UI_ARCHITECTURE.md`](../docs/UI_ARCHITECTURE.md)。
+
+## 跑起来（开发）
+
+两个进程：后端 uvicorn + 前端 Vite（Vite 把 `/api` 代理到 uvicorn）。
+
+```bash
+# 1) 后端：指一个已 nh init / seed 好的库
+cd ..
+NH_DB=path/to/book.db uv run uvicorn novel_harness.api.app:app --port 8000 --reload
+# 还没有库？uv run python scripts/seed_demo.py /tmp/demo.db  （stdout 出 project_id）
+
+# 2) 前端
+cd frontend
+npm install
+npm run dev        # http://localhost:5173
+```
+
+## 构建（生产）
+
+```bash
+npm run build      # tsc -b && vite build → dist/
+```
+
+`dist/` 存在时，FastAPI 的 `/` 直接服务它、`/assets/*` 也由它挂载（见 `api/app.py`）。
+所以生产只跑一个进程：`NH_DB=book.db uv run uvicorn novel_harness.api.app:app`。
+`dist/` 不在时降级到 `api/static/index.html` 那个原生 JS 原型（只读也能用）。
+
+## 类型
+
+```bash
+npm run gen:types  # 从 FastAPI 的 openapi.json 生成 src/api/schema.ts
+```
+
+⚠️ 当前收窄端点（resolve / subgraph / state / nodes）签名是 `-> Any`，openapi 里没有
+response schema，生成的响应类型很薄。**`src/api/types.ts` 是这些形状的手写真相源**。
+让 `gen:types` 真正兑现 = 给后端收窄端点补 `response_model`——那是后续。
+
+## 现在做到哪（骨架 + declare 写闭环）
+
+- ✅ 三栏工作台：左栏章目录/花名册、中栏正文编辑器、右栏智能面板
+- ✅ 认知矩阵头牌（三态 ✓/⚠/✗ + since_chapter）、当前状态卡、约束、R4 check
+- ✅ **declare 写闭环**：编辑器选一句原文 → 抽屉里选类型 + 填称呼 → `测这条引语`
+  （locate 预览唯一性）→ 声明 → 回执展示**系统算出的 valid_from + 自动闭合的旧边**。
+  **全程没有章号输入框**（约束 10）。歧义弹候选，服务端绝不替作者挑。
+- ✅ TanStack Query（服务端状态唯一缓存）+ Zustand（只放坐标）
+
+### 有意留到下一轮
+
+- **CM6 编辑器**（§2.4）：现在中栏是 textarea。写闭环只要选区文本当引语，textarea 够用；
+  CM6 换来的段落级高亮 + 富文本是 P1 升级。
+- **局部关系图 Tab2**（React Flow）：引擎 `/subgraph` 已就绪，前端只差渲染层。
+- **消歧选择器复用 `/resolve`**：现在消歧走 declare 的 `ambiguous_name` 候选。

@@ -28,6 +28,7 @@ from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
 from .. import importer
@@ -57,6 +58,9 @@ from ..text import paragraphs as split_paragraphs
 from .deps import ensure_schema, get_conn, get_ledger, get_store, load_project
 
 _STATIC = Path(__file__).resolve().parent / "static"
+# React 工作台的构建产物（frontend/dist）。存在就服务它，否则降级到 static/ 的原生原型。
+# repo_root = api → novel_harness → src → root（parents[3]）。dist 不入库（frontend/.gitignore）。
+_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
 _CAST_SEP = re.compile(r"[,，、]")  # 半角逗号 / 全角逗号 / 顿号
 _CHAPTER_FILE = re.compile(r"^(\d{4,})\.md$")
 
@@ -141,6 +145,11 @@ async def _lifespan(_: FastAPI) -> Any:
 
 
 app = FastAPI(title="Novel Harness 工作台", lifespan=_lifespan)
+
+# 构建产物的静态资源（/assets/index-xxxx.js）。只有 dist 真的构建出来才挂载——
+# 挂一个不存在的目录会在启动时炸，而测试套件不构建前端（那时走 static/ 原型兜底）。
+if (_DIST / "assets").is_dir():
+    app.mount("/assets", StaticFiles(directory=_DIST / "assets"), name="assets")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -265,7 +274,9 @@ async def _value_error(_: Request, exc: ValueError) -> JSONResponse:
 
 @app.get("/")
 async def index() -> FileResponse:
-    return FileResponse(_STATIC / "index.html")
+    """SPA 入口。构建产物在就发 React 工作台，否则降级到 static/ 的原生原型（只读也能用）。"""
+    built = _DIST / "index.html"
+    return FileResponse(built if built.exists() else _STATIC / "index.html")
 
 
 # ── 项目 / 花名册 / 面板（只读）─────────────────────────────────────────────
