@@ -5,6 +5,7 @@ import { TopBar } from "./components/TopBar";
 import { LeftRail } from "./components/LeftRail";
 import { CenterEditor } from "./components/CenterEditor";
 import { RightPanel } from "./components/RightPanel";
+import { BottomBar } from "./components/BottomBar";
 import { Setup } from "./components/Setup";
 
 export default function App() {
@@ -36,6 +37,7 @@ export default function App() {
         <CenterEditor />
         <RightPanel />
       </main>
+      <BottomBar />
     </div>
   );
 }

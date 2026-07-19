@@ -124,6 +124,25 @@ table.mx thead th { color: var(--dim); font-weight: 600; }
 .locate-hits .hit { color: var(--dim); }
 .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.25); z-index: 15; }
 
+/* 底栏时间线 */
+.bottombar { display: flex; border-top: 1px solid var(--line); background: var(--panel); height: 110px; }
+.tl-col { padding: 6px 12px; overflow: auto; }
+.tl-col-scenes { flex: 0 0 42%; border-right: 1px solid var(--line); }
+.tl-col-intervals { flex: 1; }
+.tl-title { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
+.tl-empty { color: var(--dim); font-style: italic; font-size: 12px; }
+.tl-scenes { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.tl-scene { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); cursor: pointer; font-size: 12px; }
+.tl-scene.on { border-color: var(--accent); color: var(--accent); background: var(--sel); }
+.tl-scene .tl-loc { color: var(--k); }
+.tl-arrow { color: var(--dim); margin: 0 2px; }
+.tl-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--dim); margin-bottom: 4px; }
+.tl-axis .tl-node { color: var(--ink); }
+.tl-row { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+.tl-label { flex: 0 0 130px; font-size: 12px; text-align: right; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-track { position: relative; flex: 1; height: 16px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
+.tl-bar { position: absolute; top: 0; height: 100%; background: var(--sel); border: 1px solid var(--accent); border-radius: 4px; font-size: 10px; color: var(--accent); display: flex; align-items: center; padding: 0 3px; box-sizing: border-box; }
+
 /* 上手 */
 .setup-full { height: 100%; display: flex; align-items: center; justify-content: center; }
 .setup-card { width: 460px; max-width: 92vw; }
