@@ -1,0 +1,243 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Novel Harness 工作台</title>
+<style>
+  :root {
+    --bg: #ffffff; --panel: #f7f7f6; --line: #dddcd8; --ink: #1c1c1e; --dim: #6b6b70;
+    --k: #167a52; --b: #9a6212; --u: #999; --warnbg: #fbecec; --warn: #a23b3b; --accent: #3a3ab0; --sel: #ececf8;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16161a; --panel: #1e1e24; --line: #2f2f38; --ink: #e8e8ec; --dim: #8a8a93;
+      --k: #4bbd8b; --b: #d3a24f; --u: #777; --warnbg: #2a1818; --warn: #e08585; --accent: #9a98ee; --sel: #26263a;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 13px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+    display: flex; flex-direction: column;
+  }
+  code, .mono, .cell small, th.chap, textarea { font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+
+  header {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    padding: 7px 12px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  header .title { font-weight: 600; } header .title b { color: var(--accent); }
+  header label { color: var(--dim); font-size: 12px; }
+  header input { font: inherit; padding: 3px 7px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--ink); }
+  header input.ch { width: 56px; text-align: right; font-family: ui-monospace, monospace; }
+  header input.cast { width: 220px; }
+  header button { font: inherit; padding: 3px 12px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--ink); cursor: pointer; }
+  header button:hover { border-color: var(--accent); color: var(--accent); }
+  header .spacer { flex: 1; }
+  header .hint { color: var(--dim); font-size: 11px; }
+
+  main { flex: 1; display: grid; grid-template-columns: 200px 1fr 400px; min-height: 0; }
+  .pane { overflow: auto; padding: 12px 14px; }
+  .pane + .pane { border-left: 1px solid var(--line); }
+  .pane > h2 { margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+  .pane > h2:not(:first-child) { margin-top: 18px; }
+
+  #chapters .ch, #roster .item { padding: 3px 6px; border-radius: 4px; cursor: pointer; }
+  #chapters .ch:hover, #roster .item:hover { background: var(--panel); }
+  #chapters .ch.on { background: var(--sel); color: var(--accent); font-weight: 600; }
+  #chapters .ch .n { color: var(--dim); font-family: ui-monospace, monospace; font-size: 11px; margin-right: 6px; }
+  .grp .lab { color: var(--dim); font-size: 11px; margin: 8px 0 3px; }
+
+  /* 中栏编辑器 */
+  #editorPane { display: flex; flex-direction: column; padding: 0; }
+  .edbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+  .edbar .who { font-weight: 600; } .edbar .spacer { flex: 1; }
+  .edbar button { font: inherit; padding: 3px 14px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--ink); cursor: pointer; }
+  .edbar button:hover { border-color: var(--accent); color: var(--accent); }
+  .edbar .status { font-size: 12px; color: var(--dim); }
+  .edbar .status.err { color: var(--warn); }
+  .edbar .status.ok { color: var(--k); }
+  textarea#doc { flex: 1; width: 100%; border: 0; outline: none; resize: none; padding: 14px 16px; background: var(--bg); color: var(--ink); font-size: 13px; line-height: 1.7; }
+  .noch { padding: 20px; color: var(--dim); }
+
+  /* 右栏矩阵 */
+  table.mx { border-collapse: collapse; width: 100%; }
+  table.mx th, table.mx td { border: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+  table.mx thead th, table.mx tbody th { background: var(--panel); font-weight: 600; }
+  table.mx thead th { font-size: 12px; } table.mx tbody th { white-space: nowrap; }
+  .cell .k { color: var(--k); font-weight: 600; } .cell .b { color: var(--b); font-weight: 600; } .cell .u { color: var(--u); }
+  .cell small { display: block; color: var(--dim); font-size: 11px; margin-top: 1px; }
+  .mnr { margin-top: 12px; border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; background: var(--panel); }
+  .mnr .lab { color: var(--dim); font-size: 11px; margin-bottom: 4px; }
+  .mnr .tag { display: inline-block; border: 1px solid var(--warn); color: var(--warn); border-radius: 4px; padding: 1px 7px; margin: 2px 4px 2px 0; font-size: 12px; }
+  .warn { margin-top: 10px; background: var(--warnbg); color: var(--warn); border-radius: 6px; padding: 7px 10px; font-size: 12px; }
+  .statecard { border: 1px solid var(--line); border-radius: 6px; padding: 7px 10px; margin-top: 8px; background: var(--panel); }
+  .statecard .nm { font-weight: 600; } .statecard .row { color: var(--dim); font-size: 12px; margin-top: 2px; } .statecard .dead { color: var(--warn); }
+  .empty { color: var(--dim); font-size: 12px; }
+</style>
+</head>
+<body>
+  <header>
+    <span class="title">Novel Harness · <b id="proj">…</b></span>
+    <label>章 <input class="ch" id="ch" type="number" min="1" value="152"></label>
+    <label>在场 <input class="cast" id="cast" type="text" value="萧决,顾清音,李管家"></label>
+    <button id="go">刷新面板</button>
+    <span class="spacer"></span>
+    <span class="hint">正文在磁盘 · 面板不读正文只做集合查询</span>
+  </header>
+
+  <main>
+    <section class="pane" id="navPane">
+      <h2>章节</h2><div id="chapters" class="empty">…</div>
+      <h2>花名册</h2><div id="roster" class="empty">…</div>
+    </section>
+
+    <section class="pane" id="editorPane">
+      <div class="edbar">
+        <span class="who" id="edtitle">未打开章节</span>
+        <span class="spacer"></span>
+        <span class="status" id="edstatus"></span>
+        <button id="save" disabled>保存</button>
+      </div>
+      <textarea id="doc" spellcheck="false" placeholder="从左边点一章打开正文…"></textarea>
+    </section>
+
+    <section class="pane" id="matrixPane">
+      <h2>认知边界矩阵</h2><div id="matrix" class="empty">…</div>
+      <h2>当前状态</h2><div id="state" class="empty">…</div>
+    </section>
+  </main>
+
+<script>
+const j = (p, o) => fetch(p, o).then(async r => ({ ok: r.ok, status: r.status, body: await r.json().catch(() => null) }));
+let PID = null, OPEN = null, DIRTY = false;
+const esc = (s) => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+// FastAPI 的 HTTPException 把详情放在 .detail；自定义 ValueError 处理器放顶层。两种都认。
+const errMsg = (r) => { const d = (r.body && (r.body.detail || r.body)) || {}; return d.message || d.error || ('HTTP ' + r.status); };
+
+async function boot() {
+  const r = await j('/api/projects');
+  if (!r.ok || !r.body.length) { document.getElementById('proj').textContent = '（没有项目）'; return; }
+  PID = r.body[0].id;
+  document.getElementById('proj').textContent = r.body[0].name;
+  await Promise.all([loadChapters(), loadRoster()]);
+  refreshPanels();
+}
+
+async function loadChapters() {
+  const r = await j(`/api/projects/${PID}/chapters`);
+  const list = r.ok ? r.body : [];
+  const el = document.getElementById('chapters');
+  if (!list.length) { el.innerHTML = '<div class="empty">还没有章节（先 nh import 一本书）</div>'; return; }
+  el.innerHTML = list.map(c =>
+    `<div class="ch" data-n="${c.number}"><span class="n">${String(c.number).padStart(3,'0')}</span>${esc(c.title || '（无题）')}</div>`
+  ).join('');
+  el.querySelectorAll('.ch').forEach(d => d.addEventListener('click', () => openChapter(+d.dataset.n)));
+}
+
+async function loadRoster() {
+  const r = await j(`/api/projects/${PID}/roster`);
+  const nodes = r.ok ? r.body : [];
+  const LAB = { Character:'人物', Location:'地点', Faction:'势力', Object:'物品', Secret:'秘密', Foreshadow:'伏笔' };
+  const groups = {};
+  nodes.forEach(n => (groups[n.label] = groups[n.label] || []).push(n));
+  let h = '';
+  Object.keys(groups).sort().forEach(lab => {
+    h += `<div class="grp"><div class="lab">${LAB[lab]||lab}</div>`;
+    groups[lab].forEach(n => h += `<div class="item">${esc(n.name)}</div>`);
+    h += '</div>';
+  });
+  document.getElementById('roster').innerHTML = h || '<div class="empty">空</div>';
+}
+
+async function openChapter(n) {
+  if (DIRTY && !confirm('当前章节未保存，放弃改动？')) return;
+  const r = await j(`/api/projects/${PID}/chapters/${n}/text`);
+  if (!r.ok) { setStatus('打不开：' + errMsg(r), true); return; }
+  OPEN = n; DIRTY = false;
+  document.getElementById('doc').value = r.body.markdown;
+  document.getElementById('doc').disabled = false;
+  document.getElementById('save').disabled = true;
+  document.getElementById('edtitle').textContent = '第 ' + n + ' 章';
+  setStatus('');
+  document.querySelectorAll('#chapters .ch').forEach(d => d.classList.toggle('on', +d.dataset.n === n));
+  document.getElementById('ch').value = n;
+  refreshPanels();
+}
+
+async function save() {
+  if (OPEN == null) return;
+  setStatus('保存中…');
+  const r = await j(`/api/projects/${PID}/chapters/${OPEN}/text`, {
+    method: 'PUT', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ markdown: document.getElementById('doc').value }),
+  });
+  if (!r.ok) { setStatus('保存被拒：' + errMsg(r), true); return; }
+  DIRTY = false; document.getElementById('save').disabled = true;
+  setStatus('已保存并同步', false, true);
+  loadChapters();
+}
+
+function setStatus(t, err, ok) {
+  const el = document.getElementById('edstatus');
+  el.textContent = t; el.className = 'status' + (err ? ' err' : ok ? ' ok' : '');
+}
+
+async function refreshPanels() {
+  if (!PID) return;
+  const ch = parseInt(document.getElementById('ch').value, 10) || 1;
+  const cast = encodeURIComponent(document.getElementById('cast').value);
+  const base = `/api/projects/${PID}/chapters/${ch}`;
+  const [m, c, s] = await Promise.all([j(`${base}/matrix?cast=${cast}`), j(`${base}/constraints?cast=${cast}`), j(`${base}/state?cast=${cast}`)]);
+  renderMatrix(m.ok ? m.body : null, c.ok ? c.body : null);
+  renderStates(s.ok ? s.body : null);
+}
+
+function cellHtml(c) {
+  if (!c) return '<span class="u">·</span>';
+  if (c.state === 'KNOWS') return `<span class="k">✓ 知道</span><small>ch${c.since_chapter}</small>`;
+  if (c.state === 'BELIEVES') return `<span class="b">⚠ ${esc(c.believed_value || '错误认知')}</span><small>ch${c.since_chapter}</small>`;
+  return '<span class="u">✗ 不知道</span>';
+}
+function renderMatrix(m, cons) {
+  const box = document.getElementById('matrix');
+  if (!m) { box.innerHTML = '<div class="empty">—</div>'; return; }
+  const map = {}; (m.cells || []).forEach(c => map[c.character_id + '|' + c.secret_id] = c);
+  let h;
+  if (!m.characters.length || !m.secrets.length) {
+    h = '<div class="empty">这一章没有可显示的在场角色或秘密。</div>';
+  } else {
+    h = '<table class="mx"><thead><tr><th></th>' + m.secrets.map(s => `<th class="chap">${esc(s.name)}</th>`).join('') + '</tr></thead><tbody>';
+    m.characters.forEach(ch => {
+      h += `<tr><th>${esc(ch.name)}</th>` + m.secrets.map(s => `<td class="cell">${cellHtml(map[ch.id + '|' + s.id])}</td>`).join('') + '</tr>';
+    });
+    h += '</tbody></table>';
+  }
+  if (m.unresolved_cast && m.unresolved_cast.length)
+    h += `<div class="warn">无法解析：${m.unresolved_cast.map(esc).join('、')}（指向多人或查无此人，需消歧）</div>`;
+  const mnr = (cons && cons.must_not_reveal) || [];
+  h += '<div class="mnr"><div class="lab">本场景 must_not_reveal</div>' +
+       (mnr.length ? mnr.map(n => `<span class="tag">${esc(n.name)}</span>`).join('') : '<span class="empty">（无）</span>') + '</div>';
+  box.innerHTML = h;
+}
+function renderStates(states) {
+  const box = document.getElementById('state');
+  if (!states || !states.length) { box.innerHTML = '<div class="empty">无在场角色。</div>'; return; }
+  box.innerHTML = states.map(s => {
+    const loc = s.location ? esc(s.location.name) : '<span class="empty">未声明</span>';
+    let h = `<div class="statecard"><div class="nm">${esc(s.node.name)}${s.is_dead ? ' <span class="dead">· 已亡</span>' : ''}</div><div class="row">所在地：${loc}</div>`;
+    (s.states || []).forEach(v => h += `<div class="row">${esc(v.dim ? v.dim.name : '')}：${esc(v.value || '')}</div>`);
+    return h + '</div>';
+  }).join('');
+}
+
+document.getElementById('go').addEventListener('click', refreshPanels);
+document.getElementById('save').addEventListener('click', save);
+document.getElementById('doc').addEventListener('input', () => { DIRTY = true; document.getElementById('save').disabled = false; setStatus('未保存'); });
+['cast','ch'].forEach(id => document.getElementById(id).addEventListener('keydown', e => { if (e.key === 'Enter') refreshPanels(); }));
+boot();
+</script>
+</body>
+</html>

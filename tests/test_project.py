@@ -39,7 +39,8 @@ def test_module_exposes_no_mutation_entry_point() -> None:
         and inspect.isfunction(obj)
         and obj.__module__ == project.__name__
     ]
-    assert sorted(public) == ["create", "get"]
+    # create（唯一写入口）+ get / list_all（只读）。守的是「没有修改入口」——见下面的前缀循环。
+    assert sorted(public) == ["create", "get", "list_all"]
     for name in public:
         assert not name.startswith(_MUTATION_PREFIXES), f"project.{name} 是个修改入口"
 

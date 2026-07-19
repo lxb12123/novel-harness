@@ -72,6 +72,14 @@ def get(conn: Connection, project_id: str) -> Project | None:
     return None if row is None else _row_to_project(row)
 
 
+def list_all(conn: Connection) -> list[Project]:
+    """列出全部项目（按 name）。装配层/API 壳用它挑当前书；`project` 不是图表，读它无需走 StoryGraph。"""
+    rows = conn.execute(
+        "SELECT id, name, root_path, canon_version FROM project ORDER BY name"
+    ).fetchall()
+    return [_row_to_project(r) for r in rows]
+
+
 def _row_to_project(row: Any) -> Project:
     # sqlite3.Row 到此为止——出参是 Pydantic 才换得掉实现（同 graph/models.py 的规矩）。
     return Project(
