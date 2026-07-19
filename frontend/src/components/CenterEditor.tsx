@@ -4,6 +4,7 @@ import { useCoords } from "../store";
 import { ApiError } from "../api/client";
 import { DeclareDrawer } from "./DeclareDrawer";
 import { SceneBar } from "./SceneBar";
+import { HistoryDrawer } from "./HistoryDrawer";
 import { locate } from "../anchor";
 
 // 中栏正文编辑器。
@@ -21,6 +22,7 @@ export function CenterEditor() {
   const [doc, setDoc] = useState("");
   const [dirty, setDirty] = useState(false);
   const [drawer, setDrawer] = useState(false);
+  const [history, setHistory] = useState(false);
   const [locateMiss, setLocateMiss] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
 
@@ -88,6 +90,9 @@ export function CenterEditor() {
                   ? "已保存并同步"
                   : ""}
         </span>
+        <button onClick={() => setHistory(true)} title="这一章改过什么">
+          历史
+        </button>
         <button
           disabled={!dirty || save.isPending}
           onClick={() => save.mutate(doc, { onSuccess: () => setDirty(false) })}
@@ -148,6 +153,9 @@ export function CenterEditor() {
 
       {drawer && projectId && (
         <DeclareDrawer pid={projectId} quote={selection} onClose={() => setDrawer(false)} />
+      )}
+      {history && projectId && (
+        <HistoryDrawer pid={projectId} chapter={chapter} onClose={() => setHistory(false)} />
       )}
     </section>
   );

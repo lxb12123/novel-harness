@@ -143,6 +143,21 @@ table.mx thead th { color: var(--dim); font-weight: 600; }
 .tl-track { position: relative; flex: 1; height: 16px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
 .tl-bar { position: absolute; top: 0; height: 100%; background: var(--sel); border: 1px solid var(--accent); border-radius: 4px; font-size: 10px; color: var(--accent); display: flex; align-items: center; padding: 0 3px; box-sizing: border-box; }
 
+/* 版本对比 */
+.drawer.wide { width: 720px; max-width: 96vw; }
+.hist { display: flex; gap: 12px; margin-top: 8px; }
+.hist-list { flex: 0 0 190px; display: flex; flex-direction: column; gap: 4px; max-height: 60vh; overflow: auto; }
+.hist-item { text-align: left; display: flex; align-items: center; gap: 6px; font-family: ui-monospace, monospace; font-size: 12px; }
+.hist-item.on { border-color: var(--accent); color: var(--accent); background: var(--sel); }
+.hist-item .cur { background: var(--k); color: #fff; border-radius: 8px; padding: 0 6px; font-size: 10px; }
+.hist-item .len { color: var(--dim); margin-left: auto; }
+.hist-diff { flex: 1; min-width: 0; }
+pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font-size: 12px; line-height: 1.5; }
+.diff .dl { display: flex; padding: 0 6px; white-space: pre-wrap; word-break: break-word; }
+.diff .dl .sign { flex: 0 0 14px; color: var(--dim); user-select: none; }
+.diff .dl.add { background: var(--okbg); } .diff .dl.add .sign { color: var(--k); }
+.diff .dl.del { background: var(--warnbg); } .diff .dl.del .sign { color: var(--warn); }
+
 /* 上手 */
 .setup-full { height: 100%; display: flex; align-items: center; justify-content: center; }
 .setup-card { width: 460px; max-width: 92vw; }

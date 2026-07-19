@@ -37,6 +37,7 @@ from typing import Final, Protocol, runtime_checkable
 from .models import (
     AliasSpec,
     ChapterSpec,
+    ChapterSnapshot,
     ChapterText,
     EdgeSpec,
     EdgeType,
@@ -485,6 +486,15 @@ class CanonWriter(Protocol):
         矩阵格 / 状态边只带 `evidence_id`——要把「✓知道 ch88」还原成当年那句原文，
         得有这个 reader。它是 ADR 0005 增长规则的一次合法加法：Tab3 是真实消费者。
         跨项目当不存在（evidence 两个指针都不带 project_id，这里收口，别泄漏别项目的原文）。
+        """
+        ...
+
+    def chapter_snapshots(self, project_id: str, number: int) -> list[ChapterSnapshot]:
+        """某章的全部快照（内容去重后的历史版本），按 created_at 升序。章不存在 → `[]`。
+
+        版本对比的读端。**快照按内容去重、不是全量版本史**（同内容只存一次）——它的第一
+        身份是证据的锚，版本对比是白捡的副产物。`is_current` 判据是 `text_sha256` 精确
+        等值（同 `current_snapshots`），不是「最新那条」：作者改回旧版时当前指向旧快照。
         """
         ...
 

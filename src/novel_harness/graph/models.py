@@ -1017,6 +1017,24 @@ class ChapterText(BaseModel):
     text: str
 
 
+class ChapterSnapshot(BaseModel):
+    """一章的一条**历史**快照。`chapter_snapshots` 的出参，版本对比的料。
+
+    **快照按内容去重，不是全量版本史**（001_init.sql：UNIQUE(chapter_id, text_sha256)，
+    同内容只存一次）。它存在的第一理由是证据的锚（旧证据的引语指得回原文），版本对比
+    是白捡的副产物——所以这里诚实地叫「内容不同的历史版本」，不叫「编辑历史」。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    snapshot_id: str
+    text_sha256: str
+    text: str
+    created_at: str
+    is_current: bool
+    """== `chapter.text_sha256`，即磁盘正文当前对应的那条。"""
+
+
 class EvidenceSpec(BaseModel):
     """`put_evidence` 的入参。**证据的锚在类型层面就坏不了。**
 

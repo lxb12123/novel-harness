@@ -20,6 +20,7 @@ from .models import (
     UNDIRECTED_EDGE_TYPES,
     AliasKind,
     AuditPointer,
+    ChapterSnapshot,
     ChapterSpec,
     ChapterText,
     Edge,
@@ -741,6 +742,31 @@ def current_snapshots(conn: sqlite3.Connection, project_id: str) -> list[Chapter
         {"pid": project_id},
     )
     return [ChapterText(**r) for r in _rows(cur)]
+
+
+def chapter_snapshots(
+    conn: sqlite3.Connection, project_id: str, number: int
+) -> list[ChapterSnapshot]:
+    """某章的**全部**快照（内容去重后的历史版本），按 created_at 升序。章不存在 → `[]`。
+
+    `is_current` 判据同 `current_snapshots`：`s.text_sha256 = c.text_sha256` 的精确等值，
+    不是「最新那条」——作者把一章改回旧版时，当前指向的是那条旧快照，不是时间上最新的。
+    """
+    ch = find_chapter_by_number(conn, project_id, number)
+    if ch is None:
+        return []
+    cur = conn.execute(
+        """
+        SELECT id AS snapshot_id, text_sha256, text, created_at
+        FROM chapter_snapshot
+        WHERE chapter_id = :cid
+        ORDER BY created_at
+        """,
+        {"cid": ch.id},
+    )
+    return [
+        ChapterSnapshot(**r, is_current=(r["text_sha256"] == ch.text_sha256)) for r in _rows(cur)
+    ]
 
 
 def snapshot_context(conn: sqlite3.Connection, snapshot_id: str) -> SnapshotContext | None:

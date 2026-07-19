@@ -31,6 +31,7 @@ from .models import (
     AliasKind,
     AliasSpec,
     ChapterSpec,
+    ChapterSnapshot,
     ChapterText,
     Edge,
     EdgeSpec,
@@ -581,6 +582,9 @@ class SqliteStoryGraph:
 
     def current_snapshots(self, project_id: str) -> list[ChapterText]:
         return queries.current_snapshots(self._conn, project_id)
+
+    def chapter_snapshots(self, project_id: str, number: int) -> list[ChapterSnapshot]:
+        return queries.chapter_snapshots(self._conn, project_id, number)
 
     def get_evidence(self, project_id: str, evidence_id: str) -> Evidence | None:
         try:

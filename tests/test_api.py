@@ -371,6 +371,37 @@ def test_declare_node_secret_is_narrowed(client: TestClient, book: dict[str, str
 # ══════════════════════════════════════════════════════════════════════════
 
 
+def test_chapter_history_grows_on_edit(client: TestClient, book: dict[str, str]) -> None:
+    pid = _pid(book)
+    h0 = client.get(f"/api/projects/{pid}/chapters/1/history").json()
+    assert len(h0) == 1
+    assert h0[0]["is_current"] is True
+
+    # 改正文 → sync 落一条新快照，旧的还在（证据锚指着它）。
+    r = client.put(
+        f"/api/projects/{pid}/chapters/1/text",
+        json={"markdown": "第一章 血脉\n\n改了的正文在这里。\n"},
+    )
+    assert r.status_code == 200, r.text
+
+    h1 = client.get(f"/api/projects/{pid}/chapters/1/history").json()
+    assert len(h1) == 2  # 内容去重：两份不同内容 = 两条
+    current = [s for s in h1 if s["is_current"]]
+    assert len(current) == 1  # 恰好一条是当前
+    assert "改了的正文" in current[0]["text"]
+
+
+def test_chapter_history_dedupes_identical_content(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    pid = _pid(book)
+    # 存成与当前一字不差的内容 → 不新建快照（UNIQUE(chapter_id, text_sha256)）。
+    same = client.get(f"/api/projects/{pid}/chapters/2/text").json()["markdown"]
+    client.put(f"/api/projects/{pid}/chapters/2/text", json={"markdown": same})
+    h = client.get(f"/api/projects/{pid}/chapters/2/history").json()
+    assert len(h) == 1  # 同内容只存一次
+
+
 def test_evidence_roundtrip(client: TestClient, book: dict[str, str]) -> None:
     # 声明产生证据 → 按 id 取回「来源章 + 当年那句原文」，且明确不含 score。
     q = "萧决在青云城主府第一次听说了血脉秘密的真相。"

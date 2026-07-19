@@ -544,6 +544,20 @@ def chapters(proj: Any = Depends(load_project)) -> Any:
     return out
 
 
+@app.get("/api/projects/{project_id}/chapters/{chapter}/history")
+def chapter_history(
+    chapter: int,
+    store: Any = Depends(get_store),
+    proj: Any = Depends(load_project),
+) -> Any:
+    """这一章的历史快照（版本对比的料）。**内容去重、非全量版本史**——同内容只存一次。
+
+    正文可能不小，逐条带 text 是给前端做 diff 用的（一章几十 KB，可接受）。空 = 这一章
+    还没进过库（先 sync/import）。
+    """
+    return [s.model_dump(mode="json") for s in store.chapter_snapshots(proj.id, chapter)]
+
+
 @app.get("/api/projects/{project_id}/chapters/{chapter}/text")
 def chapter_text(chapter: int, proj: Any = Depends(load_project)) -> Any:
     """读磁盘 md（不是 DB 快照——那是给证据锚用的冻结版，不是可编辑的正文）。"""

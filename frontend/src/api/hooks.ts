@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, proj } from "./client";
 import type {
   ChapterRow,
+  ChapterSnapshot,
   ChapterText,
   CheckResult,
   Declaration,
@@ -61,6 +62,14 @@ export function useRoster(pid: string | null) {
     queryKey: q(["roster", pid]),
     queryFn: () => api.get<{ id: string; label: string; name: string }[]>(proj(pid!, "/roster")),
     enabled: !!pid,
+  });
+}
+
+export function useHistory(pid: string | null, chapter: number, enabled: boolean) {
+  return useQuery({
+    queryKey: q(["history", pid, chapter]),
+    queryFn: () => api.get<ChapterSnapshot[]>(proj(pid!, `/chapters/${chapter}/history`)),
+    enabled: !!pid && enabled,
   });
 }
 

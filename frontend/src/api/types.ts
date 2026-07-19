@@ -37,6 +37,14 @@ export interface ChapterText {
   markdown: string;
 }
 
+export interface ChapterSnapshot {
+  snapshot_id: string;
+  text_sha256: string;
+  text: string;
+  created_at: string;
+  is_current: boolean;
+}
+
 /** 收窄后的窄引用：Secret / 未来节点只剩这三键（props 被 _narrow 摘掉了）。 */
 export interface NodeRef {
   id: string;
