@@ -79,7 +79,9 @@ main { flex: 1; display: grid; grid-template-columns: 210px 1fr 400px; min-heigh
 .edbar .who { font-weight: 600; } .edbar .spacer { flex: 1; }
 .edbar .status { font-size: 12px; color: var(--dim); }
 .edbar .status.err { color: var(--warn); } .edbar .status.ok { color: var(--ok); }
-.editor textarea { flex: 1; border: 0; border-radius: 0; padding: 14px 16px; resize: none; line-height: 1.8; outline: none; }
+.cm-wrap { flex: 1; min-height: 0; display: flex; }
+.cm-host { flex: 1; min-height: 0; overflow: hidden; }
+.cm-host .cm-editor { height: 100%; }
 .selbar { padding: 6px 14px; border-top: 1px solid var(--line); background: var(--panel); display: flex; gap: 8px; align-items: center; font-size: 12px; }
 .selbar .q { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 

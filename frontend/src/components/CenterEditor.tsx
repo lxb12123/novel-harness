@@ -5,12 +5,13 @@ import { ApiError } from "../api/client";
 import { DeclareDrawer } from "./DeclareDrawer";
 import { SceneBar } from "./SceneBar";
 import { HistoryDrawer } from "./HistoryDrawer";
+import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
 import { locate } from "../anchor";
 
-// 中栏正文编辑器。
-// **骨架阶段用 textarea**：CM6（§2.4）是文档定的 P1 升级，它换来的是富文本 + 段落级
-// 高亮，但写闭环不需要它——declare 只要一段选中的引语当 quote，后端 locate 自己算章号。
-// 正文仍是磁盘的（ADR 0007）：读 = GET text，存 = PUT → sync，DB 永不是正文真相源。
+// 中栏正文编辑器（CodeMirror 6，§2.4——不是 TipTap）。
+// CM6 只是磁盘 chapters/NNNN.md 的便利视图：读 = GET text，存 = PUT → sync，DB 永不是
+// 正文真相源（ADR 0007）。CM6 停在平铺文本心智，doc 位置 == JS 字符串下标，和 anchor.locate()
+// 直接对齐，不需要 pos↔锚 映射层（那是 ProseMirror 才会买来的 offset 地狱，ADR 0006）。
 export function CenterEditor() {
   const { projectId, chapter, setSelection, selection, focusNode, highlight, setHighlight } =
     useCoords();
@@ -24,11 +25,11 @@ export function CenterEditor() {
   const [drawer, setDrawer] = useState(false);
   const [history, setHistory] = useState(false);
   const [locateMiss, setLocateMiss] = useState(false);
-  const ref = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<CodeEditorHandle>(null);
 
-  // R4 冲突回跳（§2.6 方向二）：点 issue 设 highlight → 这里按 quote 重寻并选中，然后清掉。
+  // R4 冲突回跳（§2.6 方向二）：点 issue 设 highlight → 按 quote 重寻 → 命令 CM6 选中并滚进视野。
   useEffect(() => {
-    if (!highlight || !ref.current) return;
+    if (!highlight) return;
     const hit = locate(doc, highlight);
     setHighlight(null);
     if (!hit) {
@@ -36,13 +37,7 @@ export function CenterEditor() {
       return;
     }
     setLocateMiss(false);
-    const el = ref.current;
-    el.focus();
-    el.setSelectionRange(hit.start, hit.end);
-    // 粗略把选区滚进视野：按行高估算 scrollTop（textarea 没有 scrollIntoView 选区的原生 API）。
-    const before = doc.slice(0, hit.start).split("\n").length - 1;
-    const lh = parseFloat(getComputedStyle(el).lineHeight) || 22;
-    el.scrollTop = Math.max(0, before * lh - el.clientHeight / 2);
+    editorRef.current?.select(hit.start, hit.end); // CM6 位置 == 字符串下标，无需换算
   }, [highlight, doc, setHighlight]);
 
   // 方向一（§2.6）：选区 → resolve → 唯一直接 focus 图谱；歧义弹候选让作者挑，不猜。
@@ -64,13 +59,6 @@ export function CenterEditor() {
   useEffect(() => {
     if (data) setDoc(data.markdown);
   }, [data]);
-
-  function captureSelection() {
-    const el = ref.current;
-    if (!el) return;
-    const sel = el.value.slice(el.selectionStart, el.selectionEnd).trim();
-    setSelection(sel);
-  }
 
   const saveErr = save.error instanceof ApiError ? save.error : null;
 
@@ -109,17 +97,16 @@ export function CenterEditor() {
         </div>
       )}
 
-      <textarea
-        ref={ref}
-        value={doc}
-        spellCheck={false}
-        placeholder="从左边点一章打开正文…"
-        onChange={(e) => {
-          setDoc(e.target.value);
-          setDirty(true);
-        }}
-        onSelect={captureSelection}
-      />
+      <div className="cm-wrap">
+        <CodeEditor
+          value={doc}
+          onChange={(v) => {
+            setDoc(v);
+            setDirty(true);
+          }}
+          onSelectionText={setSelection}
+        />
+      </div>
 
       <div className="selbar">
         <span className="q">

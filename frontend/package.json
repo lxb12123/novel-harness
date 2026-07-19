@@ -10,6 +10,10 @@
     "gen:types": "(cd .. && uv run python -c \"import json; from novel_harness.api.app import app; open('frontend/openapi.json','w').write(json.dumps(app.openapi()))\") && openapi-typescript openapi.json -o src/api/schema.ts"
   },
   "dependencies": {
+    "@codemirror/commands": "^6.10.4",
+    "@codemirror/lang-markdown": "^6.5.1",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.6",
     "@tanstack/react-query": "^5.62.0",
     "@xyflow/react": "^12.11.2",
     "react": "^18.3.1",
