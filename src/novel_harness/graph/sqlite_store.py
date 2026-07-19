@@ -582,6 +582,15 @@ class SqliteStoryGraph:
     def current_snapshots(self, project_id: str) -> list[ChapterText]:
         return queries.current_snapshots(self._conn, project_id)
 
+    def get_evidence(self, project_id: str, evidence_id: str) -> Evidence | None:
+        try:
+            ev = queries.fetch_evidence(self._conn, evidence_id)
+        except LookupError:
+            return None
+        # 跨项目引用当作不存在：evidence 的两个指针都不带 project_id（见 fetch_evidence），
+        # 这一层是唯一能收口的地方——别把别的项目的原文片段发出去。
+        return ev if ev.project_id == project_id else None
+
     def put_evidence(self, spec: EvidenceSpec) -> Evidence:
         with _transaction(self._conn):
             ctx = queries.snapshot_context(self._conn, spec.chapter_snapshot_id)

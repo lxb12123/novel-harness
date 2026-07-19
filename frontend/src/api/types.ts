@@ -95,6 +95,7 @@ export interface StateSnapshot {
   scope: string;
   location: (NodeRef & { props?: unknown }) | null;
   states: StateValue[];
+  edges: Edge[];
   is_dead: boolean;
 }
 
@@ -124,6 +125,7 @@ export interface Edge {
   type: string;
   valid_from_chapter: number;
   valid_to_chapter: number | null;
+  evidence_id: string | null;
   props: { believed_value?: string | null; value?: string | null };
 }
 

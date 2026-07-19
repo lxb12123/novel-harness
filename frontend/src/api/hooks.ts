@@ -146,6 +146,30 @@ export function useCheck(pid: string) {
   });
 }
 
+export function useCharacterState(pid: string | null, nodeId: string | null, chapter: number) {
+  return useQuery({
+    queryKey: q(["charstate", pid, nodeId, chapter]),
+    queryFn: () => api.get<StateSnapshot>(proj(pid!, `/characters/${nodeId}/state?chapter=${chapter}`)),
+    enabled: !!pid && !!nodeId,
+  });
+}
+
+export interface EvidenceView {
+  id: string;
+  chapter_number: number;
+  quote_text: string;
+  anchor: { para_index: number; quote_text: string; occurrence_k: number };
+}
+
+export function useEvidence(pid: string | null, evidenceId: string | null) {
+  return useQuery({
+    queryKey: q(["evidence", pid, evidenceId]),
+    queryFn: () => api.get<EvidenceView>(proj(pid!, `/evidence/${evidenceId}`)),
+    enabled: !!pid && !!evidenceId,
+    staleTime: Infinity, // 证据是不可变的（锚在冻结快照），拉一次就够
+  });
+}
+
 export function useSubgraph(
   pid: string | null,
   center: string | null,

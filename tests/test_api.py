@@ -371,6 +371,30 @@ def test_declare_node_secret_is_narrowed(client: TestClient, book: dict[str, str
 # ══════════════════════════════════════════════════════════════════════════
 
 
+def test_evidence_roundtrip(client: TestClient, book: dict[str, str]) -> None:
+    # 声明产生证据 → 按 id 取回「来源章 + 当年那句原文」，且明确不含 score。
+    q = "萧决在青云城主府第一次听说了血脉秘密的真相。"
+    decl = client.post(
+        f"/api/projects/{_pid(book)}/declare/knows",
+        json={"who": "萧决", "secret": "血脉秘密", "quote": q},
+    ).json()
+    ev_id = decl["evidence"]["id"]
+
+    r = client.get(f"/api/projects/{_pid(book)}/evidence/{ev_id}")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["chapter_number"] == 1
+    assert body["quote_text"] == q
+    assert body["anchor"]["quote_text"] == q
+    assert "score" not in body  # v1 无向量，出分数就是编的
+
+
+def test_evidence_not_found_404(client: TestClient, book: dict[str, str]) -> None:
+    r = client.get(f"/api/projects/{_pid(book)}/evidence/evidence:zzzz:doesnotexist")
+    assert r.status_code == 404
+    assert r.json()["detail"]["error"] == "evidence_not_found"
+
+
 def test_check_reports_rules_and_scene_count(client: TestClient, book: dict[str, str]) -> None:
     r = client.post(f"/api/projects/{_pid(book)}/chapters/3/check")
     assert r.status_code == 200, r.text

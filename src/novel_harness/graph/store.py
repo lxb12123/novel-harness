@@ -479,6 +479,15 @@ class CanonWriter(Protocol):
         """
         ...
 
+    def get_evidence(self, project_id: str, evidence_id: str) -> Evidence | None:
+        """按 id 取一条证据（面板 Tab3「确定性证据」的读端）。不存在或跨项目 → `None`。
+
+        矩阵格 / 状态边只带 `evidence_id`——要把「✓知道 ch88」还原成当年那句原文，
+        得有这个 reader。它是 ADR 0005 增长规则的一次合法加法：Tab3 是真实消费者。
+        跨项目当不存在（evidence 两个指针都不带 project_id，这里收口，别泄漏别项目的原文）。
+        """
+        ...
+
     def put_evidence(self, spec: EvidenceSpec) -> Evidence:
         """落一条双指针证据（ADR 0006）。**`evidence` 行的唯一产地。**
 

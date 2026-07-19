@@ -496,6 +496,28 @@ def subgraph(
     return _narrowed(graph, chapter)
 
 
+@app.get("/api/projects/{project_id}/evidence/{evidence_id}")
+def evidence(
+    evidence_id: str,
+    store: Any = Depends(get_store),
+    proj: Any = Depends(load_project),
+) -> Any:
+    """Tab3 确定性证据：把矩阵格/状态边的 evidence_id 还原成「来源章 + 当年那句原文」。
+
+    **不给分数**（v1 没有向量，出任何 score = 编的，§1.2）。出扁平视图 + anchor 三元组
+    （前端能拿它回跳）。Evidence 不含 Node，无需收窄。不存在/跨项目 → 404。
+    """
+    ev = store.get_evidence(proj.id, evidence_id)
+    if ev is None:
+        raise HTTPException(404, {"error": "evidence_not_found", "evidence_id": evidence_id})
+    return {
+        "id": ev.id,
+        "chapter_number": ev.chapter_number,
+        "quote_text": ev.audit.quote_text,
+        "anchor": ev.anchor().model_dump(mode="json"),
+    }
+
+
 # ── 编辑器：正文在磁盘（ADR 0007），DB 只是派生索引 ──────────────────────────
 
 

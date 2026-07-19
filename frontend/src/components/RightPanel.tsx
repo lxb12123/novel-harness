@@ -2,6 +2,7 @@ import { useConstraints, useMatrix, useStates, useCheck } from "../api/hooks";
 import { useCoords, type Tab } from "../store";
 import { MatrixView } from "./KnowledgeMatrix";
 import { LocalGraph } from "./LocalGraph";
+import { EvidenceTab } from "./EvidenceTab";
 import type { CheckResult, StateSnapshot } from "../api/types";
 import { useState } from "react";
 
@@ -9,6 +10,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "matrix", label: "认知矩阵" },
   { key: "state", label: "当前状态" },
   { key: "graph", label: "局部图" },
+  { key: "evidence", label: "证据" },
   { key: "constraints", label: "约束" },
   { key: "check", label: "一致性(R4)" },
 ];
@@ -139,6 +141,7 @@ export function RightPanel() {
       {activeTab === "matrix" && <MatrixView matrix={matrix.data} constraints={constraints.data} />}
       {activeTab === "state" && <StateCards states={states.data} />}
       {activeTab === "graph" && <LocalGraph />}
+      {activeTab === "evidence" && <EvidenceTab />}
       {activeTab === "constraints" && <ConstraintsView />}
       {activeTab === "check" && <CheckView />}
     </section>
