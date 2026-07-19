@@ -7,7 +7,7 @@ import { Setup } from "./Setup";
 // **章号是查询参数「看第几章的面板」，不是声明**——它不写进任何数据（约束 10）。
 export function TopBar() {
   const projects = useProjects();
-  const { projectId, chapter, cast, setProject, setChapter, setCast } = useCoords();
+  const { projectId, chapter, cast, page, setProject, setChapter, setCast, setPage } = useCoords();
   const [setupOpen, setSetupOpen] = useState(false);
   const list = projects.data ?? [];
 
@@ -29,6 +29,14 @@ export function TopBar() {
         <span className="hint">{list[0]?.name ?? "（没有项目）"}</span>
       )}
       <button onClick={() => setSetupOpen(true)}>＋新书 / 导入</button>
+
+      <span style={{ width: 8 }} />
+      <button className={page === "workbench" ? "on" : ""} onClick={() => setPage("workbench")}>
+        工作台
+      </button>
+      <button className={page === "prep" ? "on" : ""} onClick={() => setPage("prep")}>
+        章节准备
+      </button>
 
       <span className="spacer" />
       <label>看第</label>

@@ -6,11 +6,12 @@ import { LeftRail } from "./components/LeftRail";
 import { CenterEditor } from "./components/CenterEditor";
 import { RightPanel } from "./components/RightPanel";
 import { BottomBar } from "./components/BottomBar";
+import { ChapterPrepPage } from "./components/ChapterPrepPage";
 import { Setup } from "./components/Setup";
 
 export default function App() {
   const projects = useProjects();
-  const { projectId, setProject, setChapter } = useCoords();
+  const { projectId, page, setProject, setChapter } = useCoords();
 
   // v1 单机单库（ADR 0007）：默认打开第一个项目。换项目 = 整棵 query 树失效（store 里
   // projectId 是所有 queryKey 的第一坐标）。
@@ -32,12 +33,18 @@ export default function App() {
   return (
     <div className="app">
       <TopBar />
-      <main>
-        <LeftRail onOpenChapter={setChapter} />
-        <CenterEditor />
-        <RightPanel />
-      </main>
-      <BottomBar />
+      {page === "prep" ? (
+        <ChapterPrepPage />
+      ) : (
+        <>
+          <main>
+            <LeftRail onOpenChapter={setChapter} />
+            <CenterEditor />
+            <RightPanel />
+          </main>
+          <BottomBar />
+        </>
+      )}
     </div>
   );
 }

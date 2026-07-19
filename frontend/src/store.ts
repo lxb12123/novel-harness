@@ -12,6 +12,7 @@ export interface Anchor {
 // cast 存的是作者写的称呼原文（不是 node_id），原样透传给后端的 resolve_cast。
 
 export type Tab = "matrix" | "state" | "constraints" | "graph" | "evidence" | "check";
+export type Page = "workbench" | "prep";
 
 interface Coords {
   projectId: string | null;
@@ -25,6 +26,8 @@ interface Coords {
   selectedNodeId: string | null;
   /** 待跳转高亮的锚：点 R4 issue 时设，编辑器消费后清。**按 quote 重寻，不存 offset。** */
   highlight: Anchor | null;
+  /** 当前页：工作台 / 章节准备（写第 N 章前的确定性简报）。 */
+  page: Page;
 
   setProject: (id: string) => void;
   setChapter: (n: number) => void;
@@ -34,6 +37,7 @@ interface Coords {
   /** 设中心节点并跳到局部图 tab（点一个人就想看他的图，是同一个动作）。 */
   focusNode: (id: string) => void;
   setHighlight: (a: Anchor | null) => void;
+  setPage: (p: Page) => void;
 }
 
 export const useCoords = create<Coords>((set) => ({
@@ -44,6 +48,7 @@ export const useCoords = create<Coords>((set) => ({
   selection: "",
   selectedNodeId: null,
   highlight: null,
+  page: "workbench",
 
   setProject: (projectId) => set({ projectId }),
   setChapter: (chapter) => set({ chapter }),
@@ -52,4 +57,5 @@ export const useCoords = create<Coords>((set) => ({
   setSelection: (selection) => set({ selection }),
   focusNode: (selectedNodeId) => set({ selectedNodeId, activeTab: "graph" }),
   setHighlight: (highlight) => set({ highlight }),
+  setPage: (page) => set({ page }),
 }));

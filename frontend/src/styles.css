@@ -42,6 +42,18 @@ header input.ch { width: 56px; text-align: right; }
 header input.cast { width: 220px; }
 header .spacer { flex: 1; }
 header .hint { color: var(--dim); font-size: 11px; }
+header button.on { border-color: var(--accent); color: var(--accent); background: var(--sel); }
+
+/* 章节准备页 */
+.prep { flex: 1; overflow: auto; padding: 16px 20px; }
+.prep-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
+.prep-head label { color: var(--dim); font-size: 12px; }
+.prep-head .spacer { flex: 1; }
+.prep-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+.prep-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; background: var(--panel); }
+.prep-card h3 { margin: 0 0 10px; font-size: 13px; }
+.prep-card.prep-wide { grid-column: 1 / -1; }
+.prep .brief { width: 100%; min-height: 120px; resize: vertical; line-height: 1.7; }
 
 /* 三栏 */
 main { flex: 1; display: grid; grid-template-columns: 210px 1fr 400px; min-height: 0; }
