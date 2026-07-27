@@ -527,3 +527,70 @@ def test_openapi_schema_builds(client: TestClient) -> None:
     r = client.get("/openapi.json")
     assert r.status_code == 200
     json.loads(r.text)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# M2 / M4 的 stub —— 501 而不是 404（UI_ARCHITECTURE §1.2 第 48 行）
+#
+# 这组断言钉的不是「有 5 个还没写的功能」，是**前端能把「还没做」和「路径写错」分开**：
+# 分不开 → 按钮只能藏起来 → 作者在界面上看不到路线图。
+# ══════════════════════════════════════════════════════════════════════════
+
+# (HTTP 方法, 项目前缀之后的路径, 里程碑)。3 条 M2 起草 + 2 条 M4 抽取。
+STUBS = [
+    ("post", "/chapters/7/draft", "M2"),
+    ("post", "/chapters/7/plan", "M2"),
+    ("get", "/runs", "M2"),
+    ("get", "/chapters/7/proposals", "M4"),
+    ("post", "/proposals/proposal_set:01JQZ/accept", "M4"),
+]
+
+
+@pytest.mark.parametrize(("method", "path", "milestone"), STUBS)
+def test_stub_returns_501_with_milestone(
+    client: TestClient, book: dict[str, str], method: str, path: str, milestone: str
+) -> None:
+    r = getattr(client, method)(f"/api/projects/{_pid(book)}{path}")
+    assert r.status_code == 501, r.text
+    # 形状写死：前端据 milestone 印「M2 才有」，硬编码在前端的那张表会和后端漂移。
+    assert r.json() == {"status": "not_implemented", "milestone": milestone}
+
+
+def test_stub_501_is_distinguishable_from_a_typo_404(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """同一个前缀下，拼错的路径仍然是 404——这条对比就是这 5 条 stub 存在的全部理由。
+
+    两者都返 404 的话，前端收到 404 时不知道该渲染灰按钮还是该报自己的 bug。
+    """
+    pid = _pid(book)
+    assert client.post(f"/api/projects/{pid}/chapters/7/drafts").status_code == 404
+    assert client.post(f"/api/projects/{pid}/chapters/7/draft").status_code == 501
+
+
+def test_stub_501_does_not_depend_on_project_state(client: TestClient) -> None:
+    """项目不存在也返 501，不返 404。
+
+    「这个能力还没实现」不取决于库里有什么。stub 若接了 load_project，按钮的灰与亮就
+    被「项目在不在」决定——那是另一个问题的答案。
+    """
+    r = client.post("/api/projects/project:does-not-exist/chapters/1/draft")
+    assert r.status_code == 501
+    assert r.json()["status"] == "not_implemented"
+
+
+def test_openapi_declares_exactly_the_five_stubs(client: TestClient) -> None:
+    """501 进 openapi（前端从 schema 就看得见），且**恰好 5 条**。
+
+    多出第 6 条 = 有人把一个能力悄悄降级成 stub；少一条 = 有人把 stub 删了而不是实现它。
+    两种都该在这里响。
+    """
+    spec = client.get("/openapi.json").json()
+    stubbed = {
+        (path, method)
+        for path, ops in spec["paths"].items()
+        for method, op in ops.items()
+        if "501" in op.get("responses", {})
+    }
+    assert len(stubbed) == 5, sorted(stubbed)
+    assert ("/api/projects/{project_id}/chapters/{chapter}/draft", "post") in stubbed

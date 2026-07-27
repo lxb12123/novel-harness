@@ -3,7 +3,7 @@
 只读面板：项目 / 花名册 / 认知矩阵（头牌）/ 场景约束 / 当前状态 / 局部子图。
 编辑器（P1）：列章 / 读章正文 / 存盘 → sync（正文在磁盘，ADR 0007）。
 写图谱（declare）+ 定位 + R4 check（P2）：作者敲称呼原文 + 引语，系统算章号。
-起草/抽取是 M2/M4——见 docs/UI_ARCHITECTURE.md。
+起草/抽取是 M2/M4——本文件末尾 5 条 stub 稳定返 501（见 docs/UI_ARCHITECTURE.md §1.2）。
 
 ── 两条贯穿本文件的纪律 ───────────────────────────────────────────────────
 
@@ -851,3 +851,85 @@ def check(
         "rules_run": [c.__module__.rsplit(".", 1)[-1] for c in ALL_CHECKS],
         "issues": [i.model_dump(mode="json") for i in issues],
     }
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# M2 / M4 的 stub —— 稳定的 501，**不是 404**（UI_ARCHITECTURE §1.2 第 48 行）
+#
+# 这 5 条（3 条 M2 起草 + 2 条 M4 抽取）背后的引擎一个字都还没写。它们今天存在的
+# 理由只有一个：**让前端把按钮画成灰的，而不是把按钮藏起来。**
+#
+# 为什么必须是 501 而不是 404：404 在这个壳里已经有确切含义——「你要的那个东西不在」
+# （项目/章/节点/证据查无此物）。让「这个能力还没做」也返 404，前端就**分不出**
+# 「M2 才有」和「我把路径拼错了」：一个是要渲染灰按钮 + 里程碑提示，另一个是前端
+# 自己的 bug 该报错。分不出时前端只有一条保守路可走——干脆不画那个按钮，于是作者
+# 在界面上永远看不到「这里将来会有什么」。501 + milestone 把两件事分开，并且**把
+# 里程碑名当数据发过去**，而不是让前端硬编码一张「路径 → 里程碑」表（那张表会和
+# 后端漂移，且漂移的时候没有任何东西会红）。
+#
+# 这些路由**一个 Depends 都不接、一个路径参数都不声明**：「这个能力还没实现」这个
+# 答案不取决于库里有什么。接了 load_project/get_store，答案就变成取决于项目在不在、
+# 库连不连得上——前端拿到 404/500，按钮的灰与亮被无关的东西决定了。
+#
+# 实现的时候换掉的是**函数体**：路径不动、前端调用不动，501 消失那一刻灰按钮自然变亮。
+# ══════════════════════════════════════════════════════════════════════════
+
+_NOT_IMPLEMENTED = "not_implemented"
+
+
+def _stub(milestone: str) -> dict[str, str]:
+    """501 的响应体。形状由 UI_ARCHITECTURE §1.2 定死：`{status, milestone}`。
+
+    `status_code=501` 写在装饰器上（而不是这里返 JSONResponse），是为了让它进 openapi
+    ——前端从 schema 就能看见这条路由今天只会 501，不必等运行时撞上。
+    """
+    return {"status": _NOT_IMPLEMENTED, "milestone": milestone}
+
+
+@app.post("/api/projects/{project_id}/chapters/{chapter}/draft", status_code=501)
+def draft_stub() -> dict[str, str]:
+    """AI 起草第 N 章（M2）。
+
+    **这条 stub 是 kill-gate 的 KILL 分支能被执行的前提**（EVAL_PROTOCOL 修正案 1 的
+    「修正 2」）：冻结的裁决表里，KILL 那一格的动作逐字写着「`/draft` 冻在 501」——
+    而在这条路由存在之前，那个动作指向一个不存在的端点，即**裁决表里有一格是不可执行的**。
+    补上它，KILL 那天的动作就是逐字可做的：把它留在 501、不往前走。
+
+    修正案同时说清了为什么不把那句话改成「不建路由」：一条摆在那儿的 501 是对作者和
+    后来者的公开承诺，撤销它需要一次显式的 commit；而「没建」是默认状态，任何人任何
+    时候悄悄加回来都不会有人注意到。KILL 是那份协议里唯一「杀掉一条产品线」的动作，
+    它需要的正是那种撤销起来有声音的形式。
+    """
+    return _stub("M2")
+
+
+@app.post("/api/projects/{project_id}/chapters/{chapter}/plan", status_code=501)
+def plan_stub() -> dict[str, str]:
+    """AI 规划第 N 章的场景骨架（M2）。v1 的替代是作者手拖手填场景块（§2 表）。"""
+    return _stub("M2")
+
+
+@app.get("/api/projects/{project_id}/runs", status_code=501)
+def runs_stub() -> dict[str, str]:
+    """底栏「最近运行 / Token / 成本」（M2）。`model_call` 表今天是空的——
+
+    返空列表比 501 更糟：一张空表长得像「你还没跑过」，而事实是「这个能力还没有」。
+    这正是 §10 约束 8 说的那种失败形态（漂亮的空结果 + 200）。
+    """
+    return _stub("M2")
+
+
+@app.get("/api/projects/{project_id}/chapters/{chapter}/proposals", status_code=501)
+def proposals_stub() -> dict[str, str]:
+    """变更确认页的提案列表（M4）。`extract/` 未建、`proposal_set` 表空。
+
+    同上：空列表会被读成「这一章没有待确认的变更」，而真相是没有任何东西在生产提案。
+    v1 用「作者手动 declare」替代整套「系统抽 → 作者审」的心智。
+    """
+    return _stub("M4")
+
+
+@app.post("/api/projects/{project_id}/proposals/{proposal_id}/accept", status_code=501)
+def accept_proposal_stub() -> dict[str, str]:
+    """接受一条提案 → 落成边（M4）。`upsert_edge` 早就就绪，缺的是提案的生产者。"""
+    return _stub("M4")
