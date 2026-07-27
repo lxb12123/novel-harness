@@ -37,11 +37,13 @@
 
 ## 4. 分层
 
-> **这是目标形态，不是现状。** 今天存在的是标 ▓ 的两层加下面的 SQLite，出口是终端里的 `nh`；
-> 浏览器面板和 FastAPI 壳还没写，`draft/` `extract/` 也还没有。逐项见[当前状态](#当前状态)。
+> **这张图今天基本是现状了，只剩两处不是。** 标 ▓ 的两层、SQLite、终端里的 `nh`、FastAPI 壳、
+> 浏览器面板都已存在；**图里写「只读，无编辑器」的那一格已经不准**——应用内 CodeMirror 6 编辑器
+> 进了 v1（ADR 0007 的时机松动，见该 ADR 的「修订」）。仍不存在的是：`draft/` 只有 `provider.py`
+> （三臂本体 `assemble.py` 未建），`extract/` 整个没有。逐项见[当前状态](#当前状态)。
 
 ```
-┌─ 浏览器面板（只读，无编辑器）────────────── Vite + React
+┌─ 浏览器面板（CodeMirror 6 编辑器，读写磁盘 md）── Vite + React
 │  正文不在这里。作者用 VSCode/Obsidian 写磁盘上的 Markdown。
 ├─ FastAPI ─────────────────────────────────── 薄壳，不装业务
 ├─ 能力层 ▓ ────────────────────────────────── 纯函数，可换/可测/可贡献
@@ -270,15 +272,22 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 
 ## 当前状态
 
-**M0 的数据层、图层、能力层、CLI 已落地**（406 个测试全绿，`uvx` 装机路径每次 PR 都验，`.sql` 在 wheel 里）：
+**M0 + M1 + M1.5 已落地，M2 进行中**（609 个 pytest + 18 个 vitest 全绿，`uvx` 装机路径每次 PR 都验，`.sql` 和前端产物都在 wheel 里）：
 
 ```
-db.py  ids.py  decisions.py  migrations/001_init.sql（13 张表）
+db.py  ids.py  decisions.py  project.py  migrations/001_init.sql（13 张表）
 graph/{models,store,sqlite_store,queries}.py    ← state_at / supersede / subgraph
-panel/{knowledge,state,constraints}.py          ← 认知矩阵（头牌）
-checks/{base,location_conflict}.py              ← R4
-text/{chapterize,scenes}.py                     ← 切章（CHAPTER_RE 唯一真相）/ 场景块解析
-cli.py  __main__.py                             ← nh version / import / panel / check
+panel/{knowledge,state,constraints}.py          ← 认知矩阵（头牌）+ PLANNED 进 prompt 的唯一闸门
+checks/{base,location_conflict}.py              ← R4（`ALL_CHECKS` 至今只有这一条）
+text/{anchor,chapterize,scenes}.py              ← (para_index,quote,k) 唯一定义 / 切章 / 场景块
+declare.py  importer.py                         ← M1 声明层：引语定章号 + 证据链 + CanonWriter
+cli.py                                          ← nh 的 15 个子命令（含 `nh serve`）
+api/{app,deps}.py                               ← M1.5 FastAPI 壳：27 条路由 + 17 个错误映射
+frontend/src/                                   ← React 工作台：28 个手写源文件、2857 行 TS/TSX（278 行测试）
+frontend/src/__fixtures__/api.json              ← 从真 app dump 的 21 个端点出参（契约测试两头共用）
+novel_harness/webui/                            ← ↑ 的构建产物（生成物，不入库；随 wheel 分发）
+draft/provider.py                               ← M2：统一模型出口（OpenAI 兼容，三臂与生产共用）
+eval/{leak,score}.py                            ← M2：泄漏集合判断 + 精确 McNemar / Holm
 ```
 
 **「全绿」这句话曾经比它听起来的弱，现在不了。** 此前 `knowledge_matrix` 与 R4 的全部断言只跑在
@@ -287,18 +296,81 @@ KNOWS 压 BELIEVES、STALE 停火、跨项目隔离）一条都没被执行过�
 场景降解成纯数据再参数化成两个后端，**同一份断言 24 条 × {fake, real} 各跑一遍**，另有 6 条
 Fake 够不着的（label 校验 / 重复边 StoreError / `secret_ids` 默认列序）只打真库。Fake 从此漂不动。
 
-`cli.py` / `__main__.py` 在此之前是**只有 `--version` 的空壳**；现在 `nh panel` 渲染的就是本文档
-开头那个框，走的是真 SqliteStoryGraph。
+`cli.py` 在此之前是**只有 `--version` 的空壳**；现在 `nh panel` 渲染的就是本文档
+开头那个框，走的是真 SqliteStoryGraph。面板不再只在终端里存在——同一个矩阵在浏览器工作台的右栏
+第一个 tab 里（`api/app.py` 的 27 条路由 + `frontend/src/components/KnowledgeMatrix.tsx`）。
 
-**M0 剩余，且都卡在同一件东西上——一本真实中文小说 TXT：**
-- `text/chapterize.py` 已存在并被 17 个测试钉住（脏数据：卷标题 / 番外 / 作者的话），但 M0 验收那条
-  「真书切章数 = 目录数」**一次都没验过**——手上只有 `tests/fixtures/demo_novel.txt` 那份 46 行 5 章的手写 fixture。
+### M2 的当前形状：判分器先于被判者
+
+已落地并有测试：`eval/leak.py`（草稿泄漏 = 纯集合判断，禁忌集只经 `panel/constraints`）、
+`eval/score.py`（`majority` / 精确 McNemar / `compare_arms` / Holm，零重依赖）、
+`draft/provider.py`（`ProviderConfig` frozen，三臂与生产共用同一次调用）、
+`panel/constraints.secret_surfaces`（秘密的**内容 tell**，排除进 prompt 的显示名标签）。
+
+**还一个字符都没有的**：`draft/assemble.py`（三臂 `PromptForm` 本体）、`draft/context.py`、
+`confound_lint`、整个 `synth/`（合成小册子 + 自检）、runner（`runs/*.jsonl` 的产出者）、
+`score.decide()`（FLOOR/CEILING 门 + 符号稳定 + `MIN_DISCORDANT` 的完整裁决表）、
+第 4 道 arch-guard `tests/test_draft_boundary.py`（`eval/leak.py:11` 已经在宣称它钉死了边界，
+**但它不存在**——按本仓库自己的判据，一个不存在的守卫比一个永远绿的守卫更糟）、ADR 0009 / 0010。
+
+协议冻在 [`EVAL_PROTOCOL.md`](EVAL_PROTOCOL.md)，**已于 2026-07-25 单独提交进 git（`0393088`,
+`2026-07-25T16:19:00-04:00`）——预注册到此成立**。它第 11 行把「先 commit 的 git 时间戳」定义成
+预注册成立的**唯一**证据，那条 commit 就是它；提交时 `runs/` 不存在、一次生成都没跑过，
+所以之后任何 `runs/*.jsonl` 都晚于它、都算数。**这条 commit 之后再改协议就等于改卷子**——
+真要改，开一份新的、说明改了什么和为什么，别覆盖。
+
+### 三条真书验收，一条都没验（同一个原因：手上没有真书 TXT）
+
+- `text/chapterize.py` 被 17 个测试钉住（脏数据：卷标题 / 番外 / 作者的话），但「真书切章数 = 目录数」
+  **一次都没验过**——手上只有 `tests/fixtures/demo_novel.txt` 那份 46 行 5 章的手写 fixture。
 - `scripts/probe_speaker_tags.py` 已能跑（从 `chapterize` import 正则，不留第二份副本），
   但 R5 的生死数（显式说话人标签覆盖率 ≥10%？）**仍未测量**，ADR 0005 的「实测结果」一节还是空的。
+- M1 的花名册 90% 提及、M3 的误报 < 1 条/章，同理欠着。
 
-**M0 不剩、但 §4 画着的**：前端面板（Vite + React）和 FastAPI 壳**一行都还没有**（`fastapi` /
-`uvicorn` 只是 `pyproject.toml` 里的依赖声明，没有对应模块）。§4 那张图是**目标形态**，不是现状。
-面板今天只在终端里存在。
+**合成小册子不能顶替它们中的任何一条**：它有强制说话人标签、强制唯一 tell，测的是注入机制不是真书行为
+（EVAL_PROTOCOL.md §7 已把这条免责一并预注册）。
+
+### 工作台的已知洞
+
+**本节是这份清单的唯一副本。** `README.md` / `CLAUDE.md` / `frontend/README.md` 都只留钩子指到这儿。
+它曾经有三处拷贝：补掉一个洞要记得改三处，改漏了就有一份文档在骗人——
+**而骗人的文档比没有文档更糟，它还提供安全感**（同 `demo.sh` 注释里那条道理）。
+
+1. ~~**浏览器里建不了人物/别名**~~ —— **2026-07-25 已补。** 左栏「花名册」旁的 ＋ 打开
+   `RosterDrawer`：建 6 类节点（`AUTHORED_LABELS`，**故意不含 `StateDim` / `Chapter`**——
+   前者是引擎内部的状态维度，后者由 import 生成，把它们放进「新建」菜单等于邀请作者手工
+   造出引擎的内部结构）+ 加称呼（`canonical` 不在选项里，它是 `upsert_node` 的独占物；
+   1 字别名 + `usable_for_rules` 在**按下按钮之前**就提示，不替作者改）。
+   空花名册的文案也从中性的「空」改成「导入只切章、不认人 —— 建第一个」：
+   那不是一个中性状态，是作者会卡死在那儿的地方。
+   端到端验过（纯 HTTP，不碰终端）：建书 → 导入 → 花名册 `[]` → 建人物/秘密/别名 →
+   用别名「魔尊」声明 → `valid_from = ch1` 由引语算出 → 矩阵 `KNOWS (ch1)`。
+   **但要记着**：这条 UI 只过了 `tsc` + 构建 + 后端 HTTP 验证，**没有人在浏览器里点过**——
+   ——不过 `RosterDrawer` 本身已经有 7 条 vitest（第 3 条），渲染层至少不再是全裸的。
+2. ~~**没有一条命令的入口**~~ —— **2026-07-25 已补。** `nh serve --db book.db` = 建库 + 起服务 +
+   挑端口 + 开浏览器；`npm run build` 的产物落在**包内** `src/novel_harness/webui/`（`uv_build`
+   自动打包模块目录下的非 `.py` 文件，实测），于是 `uv build` 天然带上前端。ADR 0007 的
+   「一条命令，不装 Docker」到此兑现。守卫：`tests/test_serve.py` 的两条打包路径断言 +
+   `ci.yml` packaging job 的三级验证（wheel 里有产物 / 包装得上 / 装完之后 `webui_built()` 为真）。
+   **剩下半个洞**：`uvx novel-harness` 仍是 stub——它不带 `--db`，而**「作者的库默认放哪」还没定**。
+   那个默认位置一旦发出去就很难改（同 ADR 0007 里 `root_path` 存绝对路径的教训：路径进了库，库就不可搬家）。
+3. ~~**前端没有运行时测试**~~ —— **2026-07-25 已补，且补法是钉这条缝的两头。**
+   前端 ↔ 后端契约是这个仓库**唯一真正的双份维护成本**（引擎 → CLI/HTTP 两个薄壳是加法，
+   前端 ↔ 后端才是乘法），而它坏起来是无声的：`tsc` 看不见后端，而 `api/types.ts`
+   自称「手写真相源」——手写的东西和后端一致只是**当时**一致。
+
+   关键决定是 **fixture 不手写**：`tests/test_frontend_contract.py` 从真 app（`TestClient`
+   + 真 SQLite）dump 21 个端点的真响应，规范化掉 ULID/时间戳/路径后冻在
+   `frontend/src/__fixtures__/api.json`；组件测试吃的就是这一份。于是两头各有守卫——
+   **后端出参一改 pytest 先红**（逐字节比对重新 dump 的结果），**形状变了没人改组件 vitest 红**。
+   用手写 fixture 做前端测试等于两份手写的东西互相验证，那正是这条缝原本的病。
+
+   实测两侧都会红（把 `since_chapter` 改名一试：pytest 报「出参对不上」+ 指向
+   `NH_UPDATE_FIXTURES=1` 和 git diff，vitest 报组件渲不出那一格）。
+   规模：vitest 18 条（认知矩阵三态 / 左栏空态 / 花名册抽屉的 ADR 0004 提示与拒绝形态）。
+   **剩下的**：只有 3 个组件有测试，`CenterEditor` / `LocalGraph` / `BottomBar` 等仍是零。
+
+**仍完全不存在的**：`extract/`（M4）。
 
 `scripts/demo.sh` 心跳已经在跑，绿的。但它量的是接缝，喂的是手写 fixture——**它不替代上面任何一条真书验收**。
 

@@ -12,7 +12,7 @@ v1 的完整实施计划见 [`../PLAN.md`](../PLAN.md)。
 | [0004](0004-declaration-over-extraction.md) | 声明优于抽取 | 第 22 节第 2 项、第 17 节 | 已接受（最重要的单点改动） |
 | [0005](0005-set-judgment-only.md) | 只做集合判断，不做语义判断 | 第 13 节 Validator | 已接受（**R5 覆盖率待 Day 1 实测填入**） |
 | [0006](0006-evidence-double-pointer.md) | Evidence 双指针 + STALE 不进队列 | 第 7/14 节的 offset 方案 | 已接受（Day 2 契约） |
-| [0007](0007-manuscript-lives-on-disk.md) | 正文在磁盘上，v1 不做编辑器 | 第 4/17 节、第 22 节第 12 项 | 已接受 |
+| [0007](0007-manuscript-lives-on-disk.md) | 正文在磁盘上，v1 不做编辑器 | 第 4/17 节、第 22 节第 12 项 | 已接受（**2026-07-19 时机松动**：应用内 CM6 进 v1，正文真相源仍在磁盘） |
 | [0008](0008-related-to-is-undirected.md) | `RELATED_TO` 无向，存储时规范化 | —（补 PLAN **从没回答过**的问题） | 已接受（M1 写关系边之前必须定死） |
 
 ## 为什么这些 ADR 是公开的
