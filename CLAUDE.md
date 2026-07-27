@@ -104,7 +104,7 @@ Vite 的 `outDir` 和 `api/app.py` 的 `_DIST` 是**两个必须同时改的字�
 
 ## 现在做到哪
 
-见 [`README.md`](README.md) 的路线图和 [`ARCHITECTURE.md` 的「当前状态」](docs/ARCHITECTURE.md#当前状态)（**那一节是权威，本节只是索引**）。**M2 进行中，609 个 pytest + 18 个 vitest 全绿。**
+见 [`README.md`](README.md) 的路线图和 [`ARCHITECTURE.md` 的「当前状态」](docs/ARCHITECTURE.md#当前状态)（**那一节是权威，本节只是索引**）。**M2 进行中，620 个 pytest + 18 个 vitest 全绿。**
 
 已落地：数据层 / 图层 / panel / R4 / `text/{anchor,chapterize,scenes}` / 声明层 `declare.py` / `nh` 的 15 个子命令（M0+M1），
 FastAPI 壳（`api/`，27 条路由 + 32 个真库测试）+ React 工作台（`frontend/`，2857 行手写 TS/TSX，其中 278 行是测试）（M1.5）。`demo.sh` 心跳绿着。

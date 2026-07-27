@@ -272,7 +272,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 
 ## 当前状态
 
-**M0 + M1 + M1.5 已落地，M2 进行中**（609 个 pytest + 18 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
+**M0 + M1 + M1.5 已落地，M2 进行中**（620 个 pytest + 18 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
 
 > ⚠️ **「全绿」目前只在本机成立。本仓库还没有 git remote，`ci.yml` / `release.yml` 一次都没执行过。**
 > 那三个 job（test / frontend / packaging）写好了、本机逐条手跑过，但**它们至今没有拦住过任何东西**。
@@ -310,13 +310,23 @@ Fake 够不着的（label 校验 / 重复边 StoreError / `secret_ids` 默认列
 已落地并有测试：`eval/leak.py`（草稿泄漏 = 纯集合判断，禁忌集只经 `panel/constraints`）、
 `eval/score.py`（`majority` / 精确 McNemar / `compare_arms` / Holm，零重依赖）、
 `draft/provider.py`（`ProviderConfig` frozen，三臂与生产共用同一次调用）、
-`panel/constraints.secret_surfaces`（秘密的**内容 tell**，排除进 prompt 的显示名标签）。
+`panel/constraints.secret_surfaces`（秘密的**内容 tell**，排除进 prompt 的显示名标签）、
+**第 4 道 arch-guard `tests/test_draft_boundary.py`**（2026-07-27 补，11 条）。
+
+第 4 道守卫钉的是**起草层与判分层之间那堵墙的两面**，两面都成立 kill-gate 才有意义：
+① `eval/` 不许自建禁忌集（EVAL_PROTOCOL §3 点名要的那条）；② **`draft/` 永不拿 tell**——
+这一面才是主要理由：`assemble.py` 顺手调一次 `secret_surfaces()` 就会让 X1/X2 命中自己
+写进 prompt 的词，Δ 翻负，裁决表读出**一个假的 KILL**，而全程没有任何东西会红。
+预注册管的是「不能事后挪及格线」，管不了「仪器接反」；这道守卫管后者。
+两侧规则**故意不对称**（`draft/` 能看矩阵不能看 tell，`eval/` 反之）——不对称正是
+「检测器命中的 tell」与「prompt 里的标签」两集合天然不相交的机械保证。
+实弹验过：往真目录种三个违规文件，三条守卫分别红并指到行，删掉回绿。
 
 **还一个字符都没有的**：`draft/assemble.py`（三臂 `PromptForm` 本体）、`draft/context.py`、
 `confound_lint`、整个 `synth/`（合成小册子 + 自检）、runner（`runs/*.jsonl` 的产出者）、
 `score.decide()`（FLOOR/CEILING 门 + 符号稳定 + `MIN_DISCORDANT` 的完整裁决表）、
-第 4 道 arch-guard `tests/test_draft_boundary.py`（`eval/leak.py:11` 已经在宣称它钉死了边界，
-**但它不存在**——按本仓库自己的判据，一个不存在的守卫比一个永远绿的守卫更糟）、ADR 0009 / 0010。
+UI_ARCHITECTURE §48 要求的 5 条 501 stub 路由（其中 `/draft` 是 KILL 分支动作的前提）、
+ADR 0009 / 0010。
 
 协议冻在 [`EVAL_PROTOCOL.md`](EVAL_PROTOCOL.md)，**已于 2026-07-25 单独提交进 git（`0393088`,
 `2026-07-25T16:19:00-04:00`）——预注册到此成立**。它第 11 行把「先 commit 的 git 时间戳」定义成
