@@ -8,7 +8,12 @@
 - KNOWS（秘密）走 `secret_surfaces`（内容 tell，**排除**显示名标签）；
 - FUTURE（未登场实体）走 `SceneConstraints.forbidden_entities[*].surfaces`。
 本模块**不自己调 `store.resolve` / `knowledge_matrix`**——那会绕开闸门另立一份禁忌集，
-让「判分器 == Validator」名存实亡。由 `tests/test_draft_boundary.py` 的第 4 道 arch-guard 钉死。
+让「判分器 == Validator」名存实亡。
+
+⚠️ **这条纪律今天只靠 review 守着。** 本该钉死它的第 4 道 arch-guard
+（`tests/test_draft_boundary.py`）**还没写**——这行注释此前宣称它「钉死」了，那是假的。
+写 runner / `assemble.py` 的人别读到这儿就以为有守卫罩着：按本仓库自己的判据，
+**一个不存在的守卫比一个永远绿的守卫更糟**，它还提供安全感。
 
 两类分开记（`LeakResult.knows_violation` vs `future_leak`）：kill-gate 的裁决**由 KNOWS
 主导**（paraphrase-hard、echo-immune、产品相关）；FUTURE_LEAK 只作描述性地板——因为
@@ -52,7 +57,10 @@ def score_against(
     draft: str,
 ) -> LeakResult:
     """对一份**已经算好的**约束打分。kill-gate 的 runner 走这条：约束在 freeze 时定死，
-    跑的时候不再重算，避免 `resolve()` 在 freeze 与 run 之间漂移（EVAL_PROTOCOL.md §6 双打分器）。
+    跑的时候不再重算，避免 `resolve()` 在 freeze 与 run 之间漂移。
+
+    （此处原本引「EVAL_PROTOCOL.md §6 双打分器」——**协议里没有这一节**，§6 是预注册裁决表。
+    协议根本没写过 freeze 语义，所以这条约束的落点是还没写的 runner：写它的人得自己守。）
     """
     paras = anchor.paragraphs(draft)
     knows_map = secret_surfaces(store, project_id, constraints.must_not_reveal)
