@@ -50,7 +50,8 @@ uv run nh serve --db book.db     # 一个进程，自动开浏览器
 - `tests/test_serve.py::test_webui_lives_inside_the_package` —— 产物必须在包内
 - `tests/test_serve.py::test_vite_outdir_and_dist_agree` —— **Vite 写到哪**和
   **FastAPI 从哪读**是两个分处 ts / py 的字面量，改一个忘一个不会有任何东西红
-- `ci.yml` 的 packaging job —— 每次 PR 验「wheel 里有没有 webui」+「装完之后找不找得到」
+- `ci.yml` 的 packaging job —— 验「wheel 里有没有 webui」+「装完之后找不找得到」。
+  ⚠️ **它至今一次都没跑过**：这个仓库还没有 git remote。上面两条 pytest 是今天唯一真在跑的守卫。
 
 ## 测试
 
