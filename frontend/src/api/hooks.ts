@@ -6,17 +6,21 @@ import type {
   ChapterText,
   CheckResult,
   Declaration,
+  DeclareAlias,
   DeclareBelieves,
   DeclareKnows,
+  DeclareNode,
   DeclareWhere,
   ImportReport,
   KnowledgeMatrix,
+  NodeRef,
   Project,
   QuoteCandidate,
   ResolveResult,
   Scene,
   SceneConstraints,
   StateSnapshot,
+  StoredAlias,
   Subgraph,
 } from "./types";
 
@@ -145,6 +149,33 @@ export function useDeclare(pid: string) {
   return useMutation({
     mutationFn: ({ kind, body }: DeclareBody) =>
       api.post<Declaration>(proj(pid, `/declare/${kind}`), body),
+    onSuccess: () => invalidatePanels(qc, pid),
+  });
+}
+
+/** 建一个节点（人物 / 地点 / 秘密 …）。幂等：键是 name，重复提交同一个名字不会建出两个。
+ *
+ * 这条路径是**整个工作台的起点**：import 只切章、不抽实体（ADR 0004 有意的），
+ * 所以在花名册里有第一个人之前，认知矩阵 / 约束 / declare 三样头牌全都无从算起
+ * （declare 的「填称呼」会必然 UnknownName 404）。成功后走 invalidatePanels——
+ * 花名册从空变非空的那一刻，那三样才第一次有得算。
+ */
+export function useCreateNode(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    // 出参过 `_narrow`：Secret 收窄成 {id,label,name}，其余回完整 Node（带 props）。
+    // 所以按 NodeRef + 可选 props 收（同 SubgraphNode 的处理）——UI 只读 label/name。
+    mutationFn: (body: DeclareNode) =>
+      api.post<NodeRef & { props?: unknown }>(proj(pid, "/nodes"), body),
+    onSuccess: () => invalidatePanels(qc, pid),
+  });
+}
+
+/** 给已有节点加一个称呼。**别名永不合并实体**（ADR 0004）。 */
+export function useCreateAlias(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: DeclareAlias) => api.post<StoredAlias>(proj(pid, "/aliases"), body),
     onSuccess: () => invalidatePanels(qc, pid),
   });
 }

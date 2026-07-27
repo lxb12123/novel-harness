@@ -137,6 +137,17 @@ table.mx thead th { color: var(--dim); font-weight: 600; }
 .locate-hits { margin-top: 6px; font-size: 12px; }
 .locate-hits .hit { color: var(--dim); }
 .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.25); z-index: 15; }
+/* 花名册抽屉：label / alias-kind 的按钮组要能换行（6 个中文按钮塞不进 460px 一行） */
+.drawer .row.wrap { flex-wrap: wrap; }
+.drawer .hint { color: var(--dim); font-size: 11px; line-height: 1.5; }
+.drawer .hint.warn { color: var(--warn); }
+/* 左栏「＋」：贴在 h2 右边，平时淡，hover 才亮——它是入口不是号召 */
+.pane h2 .add {
+  float: right; padding: 0 6px; line-height: 1.4; font-size: 13px;
+  border-color: transparent; color: var(--dim);
+}
+/* 空花名册里的「建第一个」是行内链接：它是那一句话的出口，不该长成一个抢眼的按钮 */
+.empty a { color: var(--accent); cursor: pointer; text-decoration: underline; font-style: normal; }
 
 /* 底栏时间线 */
 .bottombar { display: flex; border-top: 1px solid var(--line); background: var(--panel); height: 110px; }

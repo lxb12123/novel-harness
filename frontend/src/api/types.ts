@@ -20,6 +20,33 @@ export type NodeLabel =
   | "StateDim"
   | "Chapter";
 
+/** label → 中文。**8 类全列**：花名册里也会出现引擎自己建的节点（Chapter 由 import 生成）。 */
+export const LABEL_ZH: Record<NodeLabel, string> = {
+  Character: "人物",
+  Location: "地点",
+  Faction: "势力",
+  Object: "物品",
+  Secret: "秘密",
+  Foreshadow: "伏笔",
+  StateDim: "状态维度",
+  Chapter: "章",
+};
+
+/** 作者能自己建的 6 类，附一句「什么时候用它」。
+ *
+ * **故意不含 `StateDim` 和 `Chapter`**：前者是引擎内部的状态维度，后者由 import 生成——
+ * 把它们放进「新建」菜单等于邀请作者手工造出引擎的内部结构。上面的 `LABEL_ZH` 仍要认它们
+ * （花名册会显示），两张表的差集就是这条区分本身，别合并。
+ */
+export const AUTHORED_LABELS: { label: NodeLabel; hint: string }[] = [
+  { label: "Character", hint: "会出现在认知矩阵行上的人" },
+  { label: "Location", hint: "「他在哪」的那个哪" },
+  { label: "Secret", hint: "认知矩阵的列。声明谁知道它之前，得先有它" },
+  { label: "Faction", hint: "门派 / 家族 / 组织" },
+  { label: "Object", hint: "玄铁令这类会易主的东西" },
+  { label: "Foreshadow", hint: "你打算在后面回收的那把枪" },
+];
+
 export interface Project {
   id: string;
   name: string;
@@ -214,4 +241,35 @@ export interface DeclareWhere {
   who: string;
   loc: string;
   quote: string;
+}
+
+// 建节点 / 加称呼 —— 同样没有章号，但理由不同：上面那三条是**边**，边才是时态的；
+// 节点不在时间轴上（一个人不会「从第 88 章起是人物」），所以这里天然无从填起。
+export interface DeclareNode {
+  label: NodeLabel;
+  name: string;
+  aliases?: string[];
+  /** 仅 Secret：秘密的内容，进 secret 扩展表（不进 node.props）。 */
+  description?: string;
+  /** 仅 Secret：父秘密的**称呼原文**（拆子事实用）。解析不出 / 歧义 → 服务端拒绝，不替你挑。 */
+  sub_of?: string | null;
+}
+
+export type AliasKind = "canonical" | "alias" | "nickname" | "title";
+
+export interface DeclareAlias {
+  of: string;
+  surface: string;
+  /** `canonical` 会被服务端拒——它是 upsert_node 的独占物，改本名请改节点本身。 */
+  kind?: AliasKind;
+  usable_for_rules?: boolean;
+}
+
+export interface StoredAlias {
+  id: string;
+  project_id: string;
+  node_id: string;
+  surface: string;
+  kind: AliasKind;
+  usable_for_rules: boolean;
 }
