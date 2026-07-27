@@ -8,12 +8,12 @@
 - KNOWS（秘密）走 `secret_surfaces`（内容 tell，**排除**显示名标签）；
 - FUTURE（未登场实体）走 `SceneConstraints.forbidden_entities[*].surfaces`。
 本模块**不自己调 `store.resolve` / `knowledge_matrix`**——那会绕开闸门另立一份禁忌集，
-让「判分器 == Validator」名存实亡。
+让「判分器 == Validator」名存实亡。由 `tests/test_draft_boundary.py` 的第 4 道 arch-guard 钉死
+（`test_the_scorer_never_builds_its_own_view` / `test_neither_side_resolves_on_its_own`）。
 
-⚠️ **这条纪律今天只靠 review 守着。** 本该钉死它的第 4 道 arch-guard
-（`tests/test_draft_boundary.py`）**还没写**——这行注释此前宣称它「钉死」了，那是假的。
-写 runner / `assemble.py` 的人别读到这儿就以为有守卫罩着：按本仓库自己的判据，
-**一个不存在的守卫比一个永远绿的守卫更糟**，它还提供安全感。
+那道守卫此前**只是这行注释在宣称**、文件并不存在，2026-07-27 才补上并做过实弹测试
+（往 `eval/` 里种一个自己 `store.resolve()` 的文件，守卫红，删掉回绿）。它守的是墙的这一面；
+另一面（`draft/` 永不拿 tell）在同一个文件里，**那一面坏掉的后果更重**：会读出一个假的 KILL。
 
 两类分开记（`LeakResult.knows_violation` vs `future_leak`）：kill-gate 的裁决**由 KNOWS
 主导**（paraphrase-hard、echo-immune、产品相关）；FUTURE_LEAK 只作描述性地板——因为

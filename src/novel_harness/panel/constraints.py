@@ -304,8 +304,9 @@ def secret_surfaces(
     **本函数为合成小册子的「唯一专名 tell」而生。** 真书里秘密内容散在语义里，集合判断
     够不着（ADR 0005）——那正是 kill-gate 要先在合成小册子上验证的东西。`eval/leak.py`
     只经本函数取 must_not_reveal 的 tell，不自己走 `store.resolve`
-    （⚠️ 此前写「第 4 道 arch-guard 钉死」——那道守卫 `tests/test_draft_boundary.py` **还没写**，
-    这条今天只靠 review 守着）。
+    （由 `tests/test_draft_boundary.py` 的第 4 道 arch-guard 钉死——那道守卫 2026-07-27 才真的
+    写出来，在此之前这句话是空头支票）。**同一道守卫还禁止 `draft/` 引用本函数**：
+    tell 是判分器那一侧的东西，进了 prompt 就是 echo 假阳性。
     """
     wanted = {s.id for s in secrets}
     if not wanted:
