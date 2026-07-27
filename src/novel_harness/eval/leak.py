@@ -27,7 +27,12 @@ from collections.abc import Sequence
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..graph import StoryGraph
-from ..panel.constraints import SceneConstraints, scene_constraints, secret_surfaces
+from ..panel.constraints import (
+    SceneConstraints,
+    UnresolvedCast,
+    scene_constraints,
+    secret_surfaces,
+)
 from ..text import anchor
 
 
@@ -88,10 +93,27 @@ def score_draft(
 ) -> LeakResult:
     """从场景现算约束再打分（`cast` 是称呼原文，同 `scene_constraints`）。
 
-    **先 `require_resolved_cast()`**：cast 有歧义时 must_not_reveal 退化成全部秘密
-    （fail-closed）——拿退化约束去判泄漏会把「全禁」当基线，污染 kill-gate 的臂间比较，
-    所以这里把歧义弹给作者，不静默用退化值。
+    **退化的约束一律弹回，不静默用**：`must_not_reveal` 退化成「全部秘密」时，
+    拿它去判泄漏等于把「全禁」当基线，污染 kill-gate 的臂间比较。
+
+    退化有**两条**路径（`ResolvedCast.complete` 是 `not unresolved and bool(ids)`），
+    而 `require_resolved_cast()` **只看得见第一条**：
+
+    1. 有称呼解析不出唯一角色（「师兄」→ 8 个人）—— 它读 `unresolved_cast`，看得见；
+    2. **作者根本没写 `cast=`**（`Scene.cast` 默认就是 `[]`）—— `unresolved_cast` 也是空，
+       于是这一条**安静地穿过那道断言**。出参上「一个人都没有」和「这一场的人全都知道」
+       完全不可区分，两者都产出零约束，而第二条实际拿到的是全部秘密。
+
+    所以这里两条都拦。同一个道理已经在 `draft/context.py` 的 `ResolvedConstraints`
+    上做过一遍（那边用 `cast` 的 `min_length=1`），**判分侧和起草侧必须同时堵**——
+    只堵一侧，kill-gate 的两端就会对同一个场景给出不同的约束。
     """
+    if not list(cast):
+        raise UnresolvedCast(
+            f"第 {chapter} 章的这一场没有声明在场角色（`cast=`）。没有在场的人就没有"
+            "「谁还不知道什么」，约束会退化成「全部秘密」——拿它判泄漏等于给这一臂换了"
+            "一份更严的卷子，臂间比较当场失效"
+        )
     constraints = scene_constraints(store, project_id, chapter, cast, secrets=secrets)
     constraints.require_resolved_cast()
     return score_against(store, project_id, constraints, draft)

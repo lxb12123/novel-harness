@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from novel_harness.eval.leak import score_against
+import pytest
+
+from novel_harness.eval.leak import score_against, score_draft
 from novel_harness.graph import (
     AliasHit,
     AliasKind,
@@ -18,7 +20,12 @@ from novel_harness.graph import (
     NodeRef,
     Resolution,
 )
-from novel_harness.panel.constraints import ForbiddenEntity, SceneConstraints, secret_surfaces
+from novel_harness.panel.constraints import (
+    ForbiddenEntity,
+    SceneConstraints,
+    UnresolvedCast,
+    secret_surfaces,
+)
 
 PID = "project:demo:01J0"
 
@@ -156,3 +163,19 @@ def test_scoring_never_calls_semantic_paths() -> None:
     专名 tell 把「说破」变成一次可判定的集合命中。这条 pin 住那个诚实的假阴性。"""
     res = score_against(_Store(ALIASES), PID, _con(5, [NodeRef.of(BLOODLINE)], []), "他其实是魔尊之子，这事没人知道。")
     assert res.knows_violation is False  # 没写 tell「玄血蛊」→ 集合判断判它安全
+
+
+def test_score_draft_rejects_an_empty_cast() -> None:
+    """空 cast 会安静穿过 `require_resolved_cast()`——判分侧必须自己拦。
+
+    `ResolvedCast.complete` 是 `not unresolved and bool(ids)`，也就是说退化有两条路径，
+    而那道断言只读 `unresolved_cast`、只看得见第一条。第二条（作者没写 `cast=`，
+    `Scene.cast` 默认 `[]`）产出的约束是「全部秘密」，拿它判泄漏等于给这一臂换了一份
+    更严的卷子，kill-gate 的臂间比较当场失效。
+
+    起草侧同一个洞由 `draft/context.py` 的 `ResolvedConstraints` 堵（`cast` 的
+    `min_length=1`）。**两侧必须同时堵**：只堵一侧，判分器和起草器就会对同一个场景
+    算出不同的禁忌集，而那正是「判分器 == Validator」要防的事。
+    """
+    with pytest.raises(UnresolvedCast, match="没有声明在场角色"):
+        score_draft(_Store({}), "p", 152, [], "随便一段草稿")

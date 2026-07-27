@@ -39,7 +39,7 @@ from collections.abc import Sequence
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..graph import AliasKind, InformationScope, KnowledgeState, Node, NodeRef, StoryGraph
-from .knowledge import knowledge_matrix
+from .knowledge import KnowledgeMatrix, knowledge_matrix
 
 
 class UnresolvedCast(Exception):
@@ -213,6 +213,44 @@ def scene_constraints(
         秘密」会进 prompt），而 PROVISIONAL 是抽取器猜的、未确认的——拿它去约束
         Writer 就是让 Agent 的猜测变成了 Canon 的效力，原则 5 破在一个没人会看的地方。
     """
+    return scene_view(store, project_id, chapter, cast, secrets=secrets).constraints
+
+
+class SceneView(BaseModel):
+    """`scene_constraints()` 内部本来就算了两样东西，这个类型把第二样也交出来。
+
+    **为什么值得为它多一个类型：反混淆铁律**（EVAL_PROTOCOL §2）要求 kill-gate 的
+    X1 与 X2 从**同一个 `knowledge_matrix` 对象**渲染，除「清单 vs 散文」外不许有第二处差异。
+    如果矩阵由调用方各自去算，这条铁律就只能靠 runner 的自觉；而把矩阵和约束绑在同一个
+    frozen 对象里，`assemble(view, form=X1)` 和 `assemble(view, form=X2)` 拿的**必然**是
+    同一份——铁律从纪律变成类型保证。这和 `draft/context.py` 用类型编码「cast 已解析」
+    是同一招。
+
+    另一半理由是它本来就在那儿：矩阵是 `must_not_reveal` 的**中间结果**，
+    让 `draft/` 再算一遍等于制造第二份可能漂移的真相（而且 `draft/` 也算不了——
+    矩阵要 node_id，`resolve_cast` 在第 4 道 arch-guard 的 `WRITER_BANNED` 里）。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    constraints: SceneConstraints
+    matrix: KnowledgeMatrix
+    """算 `must_not_reveal` 用的**就是这一份**。X1 的「认知矩阵要点」也渲染它。"""
+
+
+def scene_view(
+    store: StoryGraph,
+    project_id: str,
+    chapter: int,
+    cast: Sequence[str],
+    *,
+    secrets: Sequence[str] | None = None,
+) -> SceneView:
+    """`scene_constraints()` 的完整出参：约束 + 算它用的那份矩阵。参数语义完全相同。
+
+    面板（R1）和判分器只要约束，走 `scene_constraints()`；起草层要矩阵，走这条。
+    **两条路算的是同一次**——`scene_constraints()` 现在就是这个函数的一行封装。
+    """
     resolved = resolve_cast(store, project_id, cast)
     matrix = knowledge_matrix(
         store,
@@ -235,11 +273,14 @@ def scene_constraints(
     else:
         # fail-closed：在场的人我没数全，就没资格说哪条秘密是安全的。
         must_not_reveal = list(matrix.secrets)
-    return SceneConstraints(
-        chapter=chapter,
-        unresolved_cast=resolved.unresolved,
-        must_not_reveal=must_not_reveal,
-        forbidden_entities=forbidden_entities(store, project_id, chapter),
+    return SceneView(
+        constraints=SceneConstraints(
+            chapter=chapter,
+            unresolved_cast=resolved.unresolved,
+            must_not_reveal=must_not_reveal,
+            forbidden_entities=forbidden_entities(store, project_id, chapter),
+        ),
+        matrix=matrix,
     )
 
 
