@@ -20,14 +20,64 @@ jobs:
       - name: pytest
         run: uv run pytest -q
 
+  # 前端 ↔ 后端契约是这个仓库**唯一真正的双份维护成本**，而且它坏起来是无声的：
+  # `tsc` 看不见后端，`frontend/src/api/types.ts` 又是手写的，改了后端不会有任何东西红。
+  # 所以这条缝两头各跑一半，缺一半都拦不住：
+  #   · pytest 那半在上面的 test job 里（test_frontend_contract.py 重新 dump 真出参，
+  #     和冻在 frontend/src/__fixtures__/api.json 的逐字节比对）
+  #   · vitest 这半在这儿（组件吃**同一份** fixture 渲染 → 形状变了但没人改组件就红）
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+        working-directory: frontend
+      # build 里含 `tsc -b`（类型错），test 是 vitest（渲染错）。两个都要。
+      - run: npm run build
+        working-directory: frontend
+      - run: npm test
+        working-directory: frontend
+
   # 打包路径必须每次 PR 都验证，不能等到发版当天才发现 uvx 装不上。
   packaging:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # 前端必须先构建：产物落在 Python 包内（frontend/vite.config.ts 的 outDir），
+      # `uv build` 才带得上它。**忘了这一步，wheel 照样构建成功**，只是装出来没有工作台。
+      # 顺带白捡一层保护：`npm run build` 会先跑 `tsc -b`，于是 TS 类型错从今天起会红。
+      - name: 构建前端（产物落进包里）
+        run: npm ci && npm run build
+        working-directory: frontend
+
       - run: uv build
-      - name: uvx 冒烟（从 wheel 装进隔离环境）
+
+      # 下面三条是递进的，缺一条就有一种坏法能溜过去：
+      #   ① 产物在不在 wheel 里  ② 包装不装得上  ③ 装完之后代码找不找得到产物
+      # ③ 是 `_DIST` 那个 bug 的原形：①② 全绿，而作者打开是一张只读原型。
+      - name: ① wheel 里必须有前端产物
+        run: |
+          unzip -l dist/*.whl | grep -q 'novel_harness/webui/index.html' \
+            || { echo '✗ wheel 里没有 webui/ —— 装出来的包会静默降级成只读原型'; exit 1; }
+
+      - name: ② uvx 冒烟（从 wheel 装进隔离环境）
         run: |
           uvx --from ./dist/novel_harness-*.whl novel-harness --version
           uvx --from ./dist/novel_harness-*.whl nh version
+
+      - name: ③ 装进 site-packages 之后，代码还找得到工作台吗
+        run: >
+          uvx --from ./dist/novel_harness-*.whl python -c
+          "import novel_harness.api.app as m; assert m.webui_built(), m._DIST; print('✓', m._DIST)"

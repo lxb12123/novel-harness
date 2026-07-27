@@ -66,11 +66,27 @@ from .deps import books_root, ensure_schema, get_conn, get_ledger, get_store, lo
 
 _STATIC = Path(__file__).resolve().parent / "static"
 _UNSAFE_PATH = re.compile(r'[/\\:*?"<>|]')  # 书名里不能进目录名的字符
-# React 工作台的构建产物（frontend/dist）。存在就服务它，否则降级到 static/ 的原生原型。
-# repo_root = api → novel_harness → src → root（parents[3]）。dist 不入库（frontend/.gitignore）。
-_DIST = Path(__file__).resolve().parents[3] / "frontend" / "dist"
+# React 工作台的构建产物。存在就服务它，否则降级到 static/ 的原生原型。
+#
+# **包内路径**（api → novel_harness → webui/），不是源码树里的 frontend/dist。
+# 上一版指的是 `parents[3]/"frontend"/"dist"`，即仓库根下面——在源码树里跑得好好的，
+# 可一旦 `pip install` 进了 site-packages，`parents[3]` 指向的是 site-packages 的上一层，
+# 那儿没有 frontend/。于是装出来的包**静默**降级成 static/ 原型：不报错、不红、CI 全绿，
+# 只是作者永远看不到工作台。这正是 §10 约束 8 说的那种失败形态——漂亮的空结果 + exit 0。
+# Vite 的 outDir 已经改成直接往这儿输出（frontend/vite.config.ts 有为什么）。
+_DIST = Path(__file__).resolve().parent.parent / "webui"
 _CAST_SEP = re.compile(r"[,，、]")  # 半角逗号 / 全角逗号 / 顿号
 _CHAPTER_FILE = re.compile(r"^(\d{4,})\.md$")
+
+
+def webui_built() -> bool:
+    """React 工作台的构建产物在不在。
+
+    `nh serve` 用它决定要不要提醒作者「你现在看到的是降级原型」。这个提醒是必需的：
+    没构建时 `/` 照样返回 200（`api/static/index.html` 那个只读原型），页面能开、
+    功能少一半——**一个不报错的降级是最难自查的故障**，得由起服务的那一刻说出来。
+    """
+    return (_DIST / "index.html").exists()
 
 
 def _split_cast(cast: str) -> list[str]:

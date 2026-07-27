@@ -4,9 +4,14 @@ on:
   push:
     tags: ["v*"]
 
+# ⚠️ 这个 workflow 现在打任何 `v*` tag 都会在最后一步红 —— **有意的，不是坏了。**
+# `novel-harness` 至今没在 PyPI 注册（2026-07-25 实测 404），而**名字还没最终定**。
+# PyPI 的名字先到先得、且不能改也不能转让，所以在名字定下来之前注册反而是给自己上枷锁。
+# 在此之前发版走 GitHub Release 附 wheel，别打 tag 触发这条。
+#
 # PyPI trusted publishing：不用 API token，走 OIDC。
-# 首次发版前需在 https://pypi.org/manage/account/publishing/ 登记：
-#   PyPI Project Name: novel-harness
+# 名字定了、要首次发版时，在 https://pypi.org/manage/account/publishing/ 登记：
+#   PyPI Project Name: <定下来的名字>
 #   Owner / Repository: <your-gh-user> / novel-harness
 #   Workflow name: release.yml
 #   Environment name: pypi
@@ -19,7 +24,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # 和 ci.yml 的 packaging job 同一件事、同一个理由：产物落在 Python 包内，
+      # 漏了这步就会发一个「装得上、跑得起来、但没有工作台」的版本上 PyPI ——
+      # 而那种版本 `--version` 照样打印得好好的，自检看不出来。
+      - name: 构建前端（产物落进包里）
+        run: npm ci && npm run build
+        working-directory: frontend
+
       - run: uv build
-      - name: 发版前先自检 wheel 能装能跑
-        run: uvx --from ./dist/novel_harness-*.whl novel-harness --version
+
+      - name: 发版前自检：装得上 + 真的带着工作台
+        run: |
+          uvx --from ./dist/novel_harness-*.whl novel-harness --version
+          uvx --from ./dist/novel_harness-*.whl python -c \
+            "import novel_harness.api.app as m; assert m.webui_built(), m._DIST"
+
       - uses: pypa/gh-action-pypi-publish@release/v1

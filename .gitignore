@@ -1,5 +1,14 @@
-# bench 生成物（可由 scale_bench.py 重建）
-docs/adr/bench/novel.db
+# 任何 SQLite 库。两个理由，第二个更重要：
+# ① bench 生成物（docs/adr/bench/novel.db，可由 scale_bench.py 重建）；
+# ② **作者的库里是他没发表的小说**。`start.command` 会在仓库根建 book.db，
+#    一个 clone 了仓库来写书的人很容易连稿子一起 commit 上去。宁可宽一点。
+*.db
+books/
+
+# 前端构建产物（`npm run build` 落在包内，好让 uv_build 自动打进 wheel）。
+# 是生成物，不入库——但**它必须在 `uv build` 之前构建出来**，否则装出来的包没有工作台。
+# CI 的 packaging job 会验 wheel 里有没有它。
+src/novel_harness/webui/
 
 __pycache__/
 *.py[cod]

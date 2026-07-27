@@ -1,0 +1,417 @@
+{
+  "chapterHistory": [
+    {
+      "created_at": "<ts>",
+      "is_current": true,
+      "snapshot_id": "snapshot:ID8",
+      "text": "第一章 血脉\n\n萧决在青云城主府第一次听说了血脉秘密的真相。\n李管家什么也没说。\n",
+      "text_sha256": "<sha>"
+    }
+  ],
+  "chapterText": {
+    "markdown": "第一章 血脉\n\n萧决在青云城主府第一次听说了血脉秘密的真相。\n李管家什么也没说。\n",
+    "number": 1
+  },
+  "chapters": [
+    {
+      "number": 1,
+      "title": "第一章 血脉"
+    },
+    {
+      "number": 2,
+      "title": "第二章 试探"
+    },
+    {
+      "number": 3,
+      "title": "第三章 对峙"
+    }
+  ],
+  "characterState": {
+    "chapter": 2,
+    "edges": [],
+    "location": null,
+    "node": {
+      "id": "character:ID7",
+      "label": "Character",
+      "name": "萧决",
+      "project_id": "project:ID1",
+      "props": {
+        "dim_key": null,
+        "first_appears_chapter": null
+      }
+    },
+    "scope": "CANON",
+    "states": []
+  },
+  "check": {
+    "chapter": 3,
+    "issues": [],
+    "rules_run": [
+      "location_conflict"
+    ],
+    "scene_count": 1
+  },
+  "constraints": {
+    "chapter": 2,
+    "forbidden_entities": [
+      {
+        "first_appears_chapter": 200,
+        "node": {
+          "id": "character:ID3",
+          "label": "Character",
+          "name": "未来大能"
+        },
+        "surfaces": [
+          "未来大能"
+        ]
+      }
+    ],
+    "must_not_reveal": [
+      {
+        "id": "secret:ID4",
+        "label": "Secret",
+        "name": "血脉秘密"
+      },
+      {
+        "id": "secret:ID11",
+        "label": "Secret",
+        "name": "玄铁令下落"
+      }
+    ],
+    "unresolved_cast": []
+  },
+  "createAlias": {
+    "id": "alias:ID12",
+    "kind": "alias",
+    "node_id": "character:ID10",
+    "project_id": "project:ID1",
+    "surface": "顾姑娘",
+    "usable_for_rules": true
+  },
+  "createNode": {
+    "id": "character:ID10",
+    "label": "Character",
+    "name": "顾清音",
+    "project_id": "project:ID1",
+    "props": {
+      "dim_key": null,
+      "first_appears_chapter": null
+    }
+  },
+  "createSecret": {
+    "id": "secret:ID11",
+    "label": "Secret",
+    "name": "玄铁令下落"
+  },
+  "declareKnows": {
+    "closed": [],
+    "decision_id": "decision:ID15",
+    "edge": {
+      "confidence": 1.0,
+      "dst": "secret:ID4",
+      "evidence_id": "evidence:ID14",
+      "evidence_status": "FRESH",
+      "id": "edge:ID13",
+      "information_scope": "CANON",
+      "project_id": "project:ID1",
+      "props": {
+        "believed_value": null,
+        "value": null,
+        "value_key": null
+      },
+      "source": "author",
+      "src": "character:ID7",
+      "status": "ACTIVE",
+      "type": "KNOWS",
+      "valid_from_chapter": 1,
+      "valid_to_chapter": null
+    },
+    "evidence": {
+      "audit": {
+        "chapter_snapshot_id": "snapshot:ID8",
+        "para_index": 2,
+        "quote_sha256": "<sha>",
+        "quote_text": "萧决在青云城主府第一次听说了血脉秘密的真相。"
+      },
+      "chapter_number": 1,
+      "id": "evidence:ID14",
+      "project_id": "project:ID1",
+      "relocate": {
+        "chapter_id": "chapter:ID9",
+        "occurrence_k": 0,
+        "para_index_hint": 2,
+        "quote_sha256": "<sha>"
+      }
+    },
+    "retracted": []
+  },
+  "errorAmbiguousName": {
+    "candidates": [
+      {
+        "id": "character:ID7",
+        "label": "Character",
+        "name": "萧决"
+      },
+      {
+        "id": "character:ID5",
+        "label": "Character",
+        "name": "李管家"
+      }
+    ],
+    "error": "ambiguous_name",
+    "message": "「师兄」在这个项目里指 2 个东西（萧决(Character)、李管家(Character)），系统不替你挑。用本名或者一个只属于一个人的称呼",
+    "surface": "师兄"
+  },
+  "errorShortAlias": {
+    "error": "invalid",
+    "message": "别名「决」只有 1 个字，不能 usable_for_rules（ADR 0004：短别名去正文里匹配 = 满篇误报）。要留着它就传 usable_for_rules=False——存得下，只是规则不拿它开火"
+  },
+  "locate": [
+    {
+      "chapter_id": "chapter:ID9",
+      "chapter_number": 1,
+      "context": "萧决在青云城主府第一次听说了血脉秘密的真相。",
+      "matched_text": "萧决在青云城主府",
+      "occurrence_k": 0,
+      "para_index": 2,
+      "snapshot_id": "snapshot:ID8"
+    }
+  ],
+  "matrix": {
+    "cells": [
+      {
+        "believed_value": null,
+        "character_id": "character:ID7",
+        "evidence_id": "evidence:ID14",
+        "secret_id": "secret:ID4",
+        "since_chapter": 1,
+        "state": "KNOWS"
+      },
+      {
+        "believed_value": null,
+        "character_id": "character:ID7",
+        "evidence_id": null,
+        "secret_id": "secret:ID11",
+        "since_chapter": null,
+        "state": "UNKNOWN"
+      },
+      {
+        "believed_value": null,
+        "character_id": "character:ID5",
+        "evidence_id": null,
+        "secret_id": "secret:ID4",
+        "since_chapter": null,
+        "state": "UNKNOWN"
+      },
+      {
+        "believed_value": null,
+        "character_id": "character:ID5",
+        "evidence_id": null,
+        "secret_id": "secret:ID11",
+        "since_chapter": null,
+        "state": "UNKNOWN"
+      }
+    ],
+    "chapter": 2,
+    "characters": [
+      {
+        "id": "character:ID7",
+        "label": "Character",
+        "name": "萧决"
+      },
+      {
+        "id": "character:ID5",
+        "label": "Character",
+        "name": "李管家"
+      }
+    ],
+    "project_id": "project:ID1",
+    "scope": "CANON",
+    "secrets": [
+      {
+        "id": "secret:ID4",
+        "label": "Secret",
+        "name": "血脉秘密"
+      },
+      {
+        "id": "secret:ID11",
+        "label": "Secret",
+        "name": "玄铁令下落"
+      }
+    ],
+    "unresolved_cast": [],
+    "version": {
+      "canon_version": 0,
+      "indexed_version": 0,
+      "staleness": 0
+    }
+  },
+  "projects": [
+    {
+      "canon_version": 0,
+      "id": "project:ID1",
+      "name": "青云记",
+      "root_path": "<root>/book"
+    }
+  ],
+  "resolve": {
+    "ambiguous": false,
+    "hits": [
+      {
+        "kind": "canonical",
+        "node": {
+          "id": "character:ID7",
+          "label": "Character",
+          "name": "萧决"
+        },
+        "usable_for_rules": true
+      }
+    ],
+    "surface": "萧决",
+    "unique_id": "character:ID7"
+  },
+  "resolveAmbiguous": {
+    "ambiguous": true,
+    "hits": [
+      {
+        "kind": "title",
+        "node": {
+          "id": "character:ID7",
+          "label": "Character",
+          "name": "萧决"
+        },
+        "usable_for_rules": true
+      },
+      {
+        "kind": "title",
+        "node": {
+          "id": "character:ID5",
+          "label": "Character",
+          "name": "李管家"
+        },
+        "usable_for_rules": true
+      }
+    ],
+    "surface": "师兄",
+    "unique_id": null
+  },
+  "roster": [
+    {
+      "id": "location:ID2",
+      "label": "Location",
+      "name": "青云城主府"
+    },
+    {
+      "id": "character:ID3",
+      "label": "Character",
+      "name": "未来大能"
+    },
+    {
+      "id": "secret:ID4",
+      "label": "Secret",
+      "name": "血脉秘密"
+    },
+    {
+      "id": "character:ID5",
+      "label": "Character",
+      "name": "李管家"
+    },
+    {
+      "id": "location:ID6",
+      "label": "Location",
+      "name": "北荒"
+    },
+    {
+      "id": "character:ID7",
+      "label": "Character",
+      "name": "萧决"
+    }
+  ],
+  "scenes": [],
+  "states": [
+    {
+      "chapter": 2,
+      "edges": [
+        {
+          "confidence": 1.0,
+          "dst": "secret:ID4",
+          "evidence_id": "evidence:ID14",
+          "evidence_status": "FRESH",
+          "id": "edge:ID13",
+          "information_scope": "CANON",
+          "project_id": "project:ID1",
+          "props": {
+            "believed_value": null,
+            "value": null,
+            "value_key": null
+          },
+          "source": "author",
+          "src": "character:ID7",
+          "status": "ACTIVE",
+          "type": "KNOWS",
+          "valid_from_chapter": 1,
+          "valid_to_chapter": null
+        }
+      ],
+      "location": null,
+      "node": {
+        "id": "character:ID7",
+        "label": "Character",
+        "name": "萧决",
+        "project_id": "project:ID1",
+        "props": {
+          "dim_key": null,
+          "first_appears_chapter": null
+        }
+      },
+      "scope": "CANON",
+      "states": []
+    },
+    {
+      "chapter": 2,
+      "edges": [],
+      "location": null,
+      "node": {
+        "id": "character:ID5",
+        "label": "Character",
+        "name": "李管家",
+        "project_id": "project:ID1",
+        "props": {
+          "dim_key": null,
+          "first_appears_chapter": null
+        }
+      },
+      "scope": "CANON",
+      "states": []
+    }
+  ],
+  "subgraph": {
+    "center": {
+      "id": "character:ID7",
+      "label": "Character",
+      "name": "萧决",
+      "project_id": "project:ID1",
+      "props": {
+        "dim_key": null,
+        "first_appears_chapter": null
+      }
+    },
+    "chapter": 2,
+    "edges": [],
+    "hops": 1,
+    "nodes": [
+      {
+        "id": "character:ID7",
+        "label": "Character",
+        "name": "萧决",
+        "project_id": "project:ID1",
+        "props": {
+          "dim_key": null,
+          "first_appears_chapter": null
+        }
+      }
+    ],
+    "scope": "CANON",
+    "truncated": false
+  }
+}

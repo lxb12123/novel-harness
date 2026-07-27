@@ -1,7 +1,11 @@
-"""`uvx novel-harness` 的入口：起本地 API + 开浏览器。
+"""`uvx novel-harness` 的入口。
 
-v1 的分发叙事（ADR 0007）：一条命令，不装 Docker。目前是 stub——
-Day 1 只验证打包路径通不通，不验证它有没有用。
+v1 的分发叙事（ADR 0007）：一条命令，不装 Docker。**那条命令今天是 `nh serve`**——
+起服务 / 建库 / 开浏览器都在那儿（cli.py），前端产物随 wheel 分发。
+
+这里还没接上去，缺的不是代码而是一个决定：`novel-harness` 不带参数，
+所以它得**自己知道作者的库放在哪**。那个默认位置一旦发出去就很难改（同 ADR 0007
+里 `root_path` 存绝对路径的教训：路径进了库，库就不可搬家）。定了再接。
 """
 
 from __future__ import annotations
@@ -16,7 +20,8 @@ def main() -> None:
         print(__version__)
         return
     print(f"novel-harness {__version__}")
-    print("Web 面板尚未实现（M0 后半）。命令行请用 `nh --help`。")
+    print("起工作台：nh serve --db <你的库.db>")
+    print("（本命令不带参数，还不知道该开哪个库；命令行全貌见 `nh --help`。）")
 
 
 if __name__ == "__main__":
