@@ -127,7 +127,8 @@ FastAPI 壳（`api/`）+ React 工作台（`frontend/`，手写 TS/TSX）（M1.5
 被判侧（`draft/{provider,context,assemble}.py`）、产出侧（`eval/runner.py` + `nh gate` + `synth/`）
 都已落地并有测试。**建造顺序「判分器先于被判者」是有意的**：先有卷子和判分口径再有被判的东西，
 「看到结果再定及格线」在结构上就做不到。
-**剩下的唯一一件事是接上真模型跑第一轮**（要一个 endpoint 和一笔预算），跑完才写 ADR 0009。
+**修正案 5 与 ADR 0011 已预注册，长度/provider/续写实现仍待落地**；全量离线验证后才冻结
+endpoint/profile 跑第一轮，跑完且检查 JSONL 才写 ADR 0009。
 **差集和依赖顺序以 [`ARCHITECTURE.md` 的「当前状态」](docs/ARCHITECTURE.md#当前状态)为准，那儿是唯一副本**——
 这份清单在 2026-07-30 之前两处拷贝一起过期，把三样已经写完、被 60 条测试覆盖着的东西说成「一个字符都没有」，
 照它排期的人会去重写已完成的工作。**「已做完文档说没做」比反过来更贵。**
@@ -135,10 +136,11 @@ FastAPI 壳（`api/`）+ React 工作台（`frontend/`，手写 TS/TSX）（M1.5
 协议冻在 [`docs/EVAL_PROTOCOL.md`](docs/EVAL_PROTOCOL.md)，**2026-07-25 已单独提交（`0393088`），预注册成立**——
 它自称「先 commit 的 git 时间戳」是唯一证据，那条 commit 就是它（当时 `runs/` 还不存在）。
 **此后再改协议 = 改卷子**：真要改就开新的一份并说明改了什么，别覆盖那条 commit 的内容。
-**这件事已经做过四次**：`docs/EVAL_PROTOCOL_AMENDMENT_{1,2,3,4}.md`
-（口径不自洽 / 裁决表重叠 / 措辞歧义 / **`prior` 不许含 tell 让 gate 恒判 INVALID**），
-都另开文件、冻结正文一字未动、写下时 `runs/` 仍不存在，所以仍属预注册。
-**动 `eval/` 或 `draft/` 之前必读的是「协议 + 这四份修正案 + [ADR 0010](docs/adr/0010-writer-boundary.md)」，不是协议一份。**
+**这件事已经做过五次**：`docs/EVAL_PROTOCOL_AMENDMENT_{1,2,3,4,5}.md`
+（口径不自洽 / 裁决表重叠 / 措辞歧义 / **`prior` 不许含 tell 让 gate 恒判 INVALID** /
+长度、续写与通用 provider 档）。都另开文件、冻结正文一字未动；1–4 早于 `synth/`，
+第 5 份晚于 `synth/`，但五份都早于真实推理，所以仍属预注册。
+**动 `eval/` 或 `draft/` 之前必读的是「协议 + 这五份修正案 + [ADR 0010](docs/adr/0010-writer-boundary.md) + [ADR 0011](docs/adr/0011-bilingual-draft-length.md)」，不是协议一份。**
 
 **四条真书验收，一条都没验。但堵点不一样，别用一句「缺一本书」盖过去**——其中两条**同时还缺代码**，
 书到手也验不了。在验之前这些数字都是未知，别在文档里替它们编一个：

@@ -284,30 +284,22 @@ R3 的形态值得单独说：`萧决道：「……」`，而萧决在第 89 �
 | LLM | `def complete(messages, *, schema) -> Any` 一个函数 | Provider 全家桶（接口存在就够了；多接一家是接口定好后的一个下午） |
 | ID | ULID：`{type}:{project_short}:{ulid}` | slug（`character:gu-qingyin` 在别名合并那天全线断链，见 §5.3） |
 
-### 5.2 Provider 与模型（已核对官方 API 文档，2026-07）
+### 5.2 Provider 与模型（由修正案 5 / ADR 0011 取代原 Claude-native 假设）
 
-```python
-# src/novel_harness/draft/provider.py
-def complete(messages: list[dict], *, schema: type[BaseModel] | None = None) -> Any:
-    ...
-```
+唯一 SDK 边界是 OpenAI Python client。`base_url`、`model`、`api_key` 选择 OpenAI、DeepSeek、
+Claude-compatible、OpenRouter 或本地兼容端点；OpenRouter 只是可选 endpoint，不是产品依赖，
+仓库不改回单供应商 SDK。
 
-v1 只实现 Anthropic + 自定义 `base_url`（OpenAI-compatible 中转 / 本地 ollama）。
+作者选择的是人类长度（首批只支持 `zh` characters / `en` words），不是 `max_tokens`。
+内部 planner 按所选 endpoint/model 的**显式能力**生成 frozen call plan：operator override → 精确
+registry → endpoint metadata → unknown。不能从模型名前缀或大 context window 猜 output 上限、
+reasoning 字段或 streaming 支持；能力不足就预检失败，不静默 clamp。
 
-**已核对的硬约束（这几条直接决定了 kill-gate 的设计，不能凭记忆写）：**
-
-| 事实 | 影响 |
-|---|---|
-| `claude-opus-4-8` / `claude-sonnet-5` **拒绝非默认 `temperature`/`top_p`/`top_k`（400）** | **运行间方差是结构性的、无法消除。** 任何声称「temperature=0 所以结果确定」的评测设计在当前模型上都是错的。→ kill-gate 必须配对设计 + 每条跑 3 次 + McNemar |
-| `budget_tokens` 已移除（400），只有 `thinking={"type":"adaptive"}` | 三臂统一显式设 adaptive |
-| **Opus 4.8 省略 `thinking` = 不思考；Sonnet 5 省略 = adaptive** | **跨臂必须显式统一设置，否则不可比。这是个静默陷阱。** |
-| `output_config={"effort": "low"\|"medium"\|"high"\|"xhigh"\|"max"}`，默认 `high` | 三臂统一显式设 `high` |
-| assistant prefill 已移除（400） | 抽取器不能用 prefill 强制 JSON，必须走结构化输出 |
-| 结构化输出：`client.messages.parse(..., output_format=PydanticModel)` → `.parsed_output` | 抽取器的正确写法；`output_format` 顶层参数在 `create()` 上已废弃，用 `output_config.format` |
-| `max_tokens > ~16000` 必须 stream | 整章生成走 `messages.stream()` |
-| Prompt caching 最小可缓存前缀：**Opus 4.8 = 4096 tokens，Sonnet 5 = 2048** | v1 的 prompt < 4k，**缓存对 v1 无效**——别写进 README 当卖点 |
-
-**选型：** 起草和抽取默认 `claude-opus-4-8`（1M 上下文，$5/$25）；`claude-sonnet-5` 作为配置项（1M，$3/$15，intro $2/$10 到 2026-08-31）供高频/省钱场景。合成书渲染用 `claude-opus-4-8`。**三臂 kill-gate 必须同模型同参数**——换模型会彻底破坏归因。
+产品 reasoning 默认 off；M2 固定 provider-neutral high，由 adapter 映射为该兼容 route 支持的
+wire shape。M2 三臂仍必须同 endpoint、同 model、同 frozen plan。可见预算使用版本化公式
+`ceil(max_units * 2.0) + 1024`，reasoning 与 completion 共池时另留 capability 声明的比例；
+请求预算超过 16,000 只在明确支持时走 streaming。实际 endpoint/model/capability/request budget
+在首个推理前写入不含 key 的 profile 并单独提交。
 
 **纯本地模式开关（几乎免费，但它是 §6 S12 隐私问题的唯一解）：** `complete()` 在本地模式下抛 `LocalOnlyMode`。面板（R1/R4）和规则（R2/R3/R5）本来就是纯函数、本来就不调它，所以关掉后工具**依然完整可用**，只是不能自动抽取和起草。
 
@@ -536,7 +528,7 @@ CREATE TABLE alias (
 |---|---|---|---|---|
 | **M0** | 骨架 + 打包链路 + 数据层 | **2 周** | 2 | ① 一个陌生人在另一台机器执行 `uvx novel-harness` 能跑起来（不是 `uv run`——Day 1 就验证过打包路径）；② 导入一本真实的 200+ 章 TXT，切出章数与该书目录数**完全一致**；③ `pytest` 全绿，含时态闭开区间边界、supersede 互斥、ULID golden 值、架构守卫四组；④ `scripts/demo.sh` 绿 |
 | **M1** | 声明层 + 认知边界面板 ← **首个可发布物** | **3 周** | **5** | **在你自己 200+ 章的真书上**：① 30 分钟内声明完 10 个秘密 + 持有者集合，**全程没有输入过一次章号**；② 花名册自动抽 + 聚类确认在 30 分钟内覆盖全书 **90% 的人物提及**；③ 在第 151 章的 3 个不同场景上，面板给出的认知矩阵**逐格核对全对**；④ 面板对 cast 变更的响应 < 200ms |
-| **M2** | 合成小册子 + 起草 + **kill-gate** ← **最早的证伪点** | **4 周** | **9** | ① 合成小册子：12 章 / 6 人物 / **25 个植入的认知陷阱**，`replay()` 出 ground truth，`leak_selfcheck` 12 章全过，专名两两互不为子串；② 起草：给一行场景目标 + cast，生成约 800 字；③ **kill-gate 跑完**：X0/X1/X2 三臂 × 25 陷阱 × 3 次 = 225 次生成，McNemar 出 p 值；④ `EVAL_PROTOCOL.md` 的 git 时间戳**早于**第一个 `runs/*.jsonl` |
+| **M2** | 合成小册子 + 起草 + **kill-gate** ← **最早的证伪点** | **4 周** | **9** | ① 合成小册子：12 章 / 6 人物 / **25 个植入的认知陷阱**，`replay()` 出 ground truth，`leak_selfcheck` 12 章全过，专名两两互不为子串；② 起草：给一行场景目标 + cast，最终生成 2,000–3,000 个非空白中文 code point；③ **kill-gate 跑完**：X0/X1/X2 × 25 陷阱 × 3 次 = 225 个 final cell，每份不足 2,000 时最多续写一次，因此成功轮为 225–450 次 transport call，McNemar 出 p 值；④ 协议正文及修正案 1–5 的 git 时间戳**早于**第一个 `runs/*.jsonl` |
 | **M3** | 规则检测（R2/R3/R4[/R5]） | **2 周** | 11 | **双边门槛**：真书连续 20 章，**误报 < 1 条/章**（人工判定，⚠️ **定义至今未预注册**——2026-07-27 核实：全仓没有任何地方定义「什么算误报」，`EVAL_PROTOCOL.md` 只冻了 M2，M3 这条生死线现在是裸奔的；本文 §12 自己说这是「整份计划里最便宜的一条纪律」）**且**合成小册子上真阳性 ≥ 22/25。任一不达标不许进 M4 |
 | **M4** | 增量抽取 + 三层图谱 + exception-driven | **3 周** | 14 | 真书连续 3 章增量抽取：① 后台批跑不阻塞面板；② 弹给作者的冲突 ≤ 2 条/章；③ 弹出的冲突接受率 > 60%（低于 60% 说明 prompt 或 schema 有问题，返工而非放行）；④ 别名合并后**所有旧引用仍能解析**（ULID 的验收）；⑤ 每条 proposal 的 evidence 都能反查回原文并逐字节匹配（`ratio<0.9` 的已被丢弃） |
 | **M5** | 局部图 + 打磨 + v1.0 发布 | **2 周** | **16** | ① 选中人名 → 1 跳图 ≤12 节点，2 跳 + 类型过滤 ≤30 节点、<300ms；② 点事件节点跳章并高亮证据；③ **你自己用它连续写完 10 章，一次都没关掉面板**；④ 干净机器 `uvx novel-harness --demo` 60 秒内复现 README 的 GIF |
@@ -551,7 +543,7 @@ CREATE TABLE alias (
 ### kill-gate 的完整设计（M2）
 
 ```
-X0（对照）：上一场景末尾 800 字 + 场景目标一行
+X0（对照）：上一场景末尾最多 800 个输入 code point + 场景目标一行
 X1（事实清单）：X0 + 图谱约束以项目符号事实块注入（分区 A–D + must_not_reveal + forbidden_entities）
 X2（叙事化）：X0 + 同样的约束，但改写成叙事性提示
         「李管家至今以为血脉秘密已经泄露；他会用这个误解去解读萧决的每一句话。」
@@ -565,7 +557,10 @@ X2（叙事化）：X0 + 同样的约束，但改写成叙事性提示
 
 **诚实说明仪器的边界（这是评测方案 biggest_risk 的量化版）：** 强制显式说话人标签让合成书在文体上不像真实网文。**它测的是「约束注入是否降低违规」这个机制问题，不是「生成的小说好不好看」。它是仪器，不是产品。** 这句话写进 `EVAL_PROTOCOL.md` 的适用范围声明。
 
-**统计：** temperature 不可设（Sonnet 5 / Opus 4.8 对非默认采样参数直接 400）→ **运行间方差是结构性的、无法消除** → 每条陷阱每臂跑 3 次，配对设计，McNemar 检验。三臂统一显式设 `thinking={"type":"adaptive"}` + `output_config={"effort":"high"}`——**因为 Opus 4.8 省略 thinking 是不思考、Sonnet 5 省略是 adaptive，不显式设置跨臂就不可比。这是个静默陷阱。**
+**统计与调用：** 每条陷阱每臂跑 3 次，配对设计，McNemar 检验。三臂统一使用一份
+provider-neutral `reasoning=high` call plan；adapter 只向已确认支持的 route 发送对应字段，能力未知
+或不支持时在创建 run 与推理前失败。每个 final cell 初始一次调用，仅首次不足 2,000 时固定续写
+一次；续写不是按内容挑样本。具体规则与 INVALID 边界见修正案 5。
 
 **预注册（`EVAL_PROTOCOL.md`，git commit 时间戳早于第一个结果）：**
 

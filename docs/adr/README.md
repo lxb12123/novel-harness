@@ -16,6 +16,7 @@ v1 的完整实施计划见 [`../PLAN.md`](../PLAN.md)。
 | [0008](0008-related-to-is-undirected.md) | `RELATED_TO` 无向，存储时规范化 | —（补 PLAN **从没回答过**的问题） | 已接受（M1 写关系边之前必须定死） |
 | 0009 | M2 kill-gate 的裁决 | — | **未写，且现在不该写**——协议 §8 定死它「跑完写」。在有 `runs/*.jsonl` 之前写裁决，正是预注册要防的那件事 |
 | [0010](0010-writer-boundary.md) | Writer 边界：`assemble()` 能看见什么 | —（补 `EVAL_PROTOCOL.md` §8 点名要的那份） | 已接受（**`draft/assemble.py` 存在之前必须定死**：第 4 道守卫明说拦不住「完整 PLANNED 进 prompt」，那一格只有它和 review 守得住） |
+| [0011](0011-bilingual-draft-length.md) | 双语长度契约与通用模型调用计划 | 固定中文短输出 / Claude 原生调用假设 | 已接受（修正案 5 的产品边界；先于第一份 `runs/*.jsonl`） |
 
 ## 为什么这些 ADR 是公开的
 
