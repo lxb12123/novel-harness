@@ -975,7 +975,7 @@ def gate(
 
     try:
         config = ProviderConfig.from_env()
-    except ValidationError as exc:
+    except (ValidationError, ValueError) as exc:
         _die(
             f"✗ 模型没配好：{_reason(exc)}\n"
             "  gate 要真的调模型。三个环境变量：\n"

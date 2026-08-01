@@ -498,7 +498,11 @@ DEEPSEEK: max_tokens=plan.request_token_budget, reasoning_effort="high",
 ANTHROPIC_COMPAT: max_tokens=plan.request_token_budget,
                   extra_body={"thinking": {"type": "adaptive"},
                               "output_config": {"effort": "high"}}
-OFF: no reasoning_effort and no reasoning/thinking object
+OFF is semantic, not always omission:
+  OPENAI: reasoning_effort="none" (GPT-5.6 omission defaults to medium)
+  OPENROUTER: extra_body={"reasoning": {"effort": "none", "exclude": True}}
+  DEEPSEEK: extra_body={"thinking": {"type": "disabled"}} (omission defaults to high)
+  ANTHROPIC_COMPAT Opus 4.8 / NONE: omit reasoning fields (omission is off)
 ```
 
 Add an actual OpenAI SDK + `httpx.MockTransport` test proving `extra_body` reaches JSON. Add fake streaming chunks where reasoning deltas are ignored, visible content concatenates, final usage is captured, and `finish_reason="stop"` survives.

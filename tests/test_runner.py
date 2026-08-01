@@ -34,9 +34,16 @@ from novel_harness import db, project
 from novel_harness.cli import app
 from novel_harness.declare import Ledger
 from novel_harness.draft.assemble import assemble
+from novel_harness.draft.capabilities import (
+    ProviderCapabilities,
+    ReasoningDialect,
+    ReasoningEffort,
+    ResolvedCallPlan,
+    plan_call,
+)
 from novel_harness.draft.context import resolve_constraints
 from novel_harness.draft.length import M2_LENGTH_SPEC
-from novel_harness.draft.provider import ProviderConfig
+from novel_harness.draft.provider import ProviderConfig, complete as provider_complete
 from novel_harness.eval import runner as runner_mod
 from novel_harness.eval.runner import (
     ARMS,
@@ -143,7 +150,30 @@ def store(book: Seeded) -> SqliteStoryGraph:
 
 def _config() -> ProviderConfig:
     """一份合法的冻结 config。**默认模型在 `SAMPLING_STRICT_MODELS` 里，所以温度只能是 None。**"""
-    return ProviderConfig(base_url=LOCAL, api_key="not-needed", max_tokens=256)
+    return ProviderConfig(
+        base_url=LOCAL,
+        model="claude-opus-4-8",
+        api_key="not-needed",
+    )
+
+
+def _call_plan(config: ProviderConfig) -> ResolvedCallPlan:
+    """旧 runner 测试在 Task 7 前用的有界 off plan;真 runner 仍被修正案 5 守卫关闭。"""
+    capability = ProviderCapabilities(
+        base_url=config.base_url,
+        model=config.model,
+        source="operator-test",
+        source_urls=("https://example.test/capability",),
+        max_context_tokens=128_000,
+        max_output_tokens=16_000,
+        max_tokens_field="max_tokens",
+        reasoning_levels=frozenset({ReasoningEffort.OFF}),
+        reasoning_dialect=ReasoningDialect.NONE,
+        reasoning_shares_output=False,
+        supports_streaming=True,
+        supports_stream_usage=False,
+    )
+    return plan_call(M2_LENGTH_SPEC, ReasoningEffort.OFF, capability)
 
 
 def _client(responder: Callable[[list[dict[str, str]], int], str]) -> tuple[Any, list[dict]]:
@@ -265,7 +295,11 @@ def test_the_header_does_not_write_the_api_key(
     """
     out = tmp_path / "a.jsonl"
     client, _ = _client(_by_arm(CLEAN, CLEAN, CLEAN))
-    cfg = ProviderConfig(base_url=LOCAL, api_key="sk-绝密-不许落盘")
+    cfg = ProviderConfig(
+        base_url=LOCAL,
+        model="claude-opus-4-8",
+        api_key="sk-绝密-不许落盘",
+    )
     run_gate(store, book.pid, [KNOWS_TRAP], config=cfg, out_path=out, client=client)
 
     assert "sk-绝密-不许落盘" not in out.read_text(encoding="utf-8")
@@ -539,7 +573,7 @@ def test_every_call_carries_the_same_frozen_config(
     assert len(calls) == 9
     for kwargs in calls:
         assert kwargs["model"] == cfg.model
-        assert kwargs["max_tokens"] == cfg.max_tokens
+        assert kwargs["max_tokens"] == _call_plan(cfg).request_token_budget
         # 默认模型拒绝非默认采样参数 → temperature 是 None → 这个字段根本不发。
         assert "temperature" not in kwargs
 
@@ -904,6 +938,21 @@ def amendment_5_runner_ready(monkeypatch: pytest.MonkeyPatch) -> None:
         "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5 + ADR 0010/0011",
     )
 
+    def planned_complete(
+        messages: Any,
+        *,
+        config: ProviderConfig,
+        client: Any = None,
+    ) -> Any:
+        return provider_complete(
+            messages,
+            config=config,
+            plan=_call_plan(config),
+            client=client,
+        )
+
+    monkeypatch.setattr(runner_mod, "complete", planned_complete)
+
 
 def _stub_complete(monkeypatch: pytest.MonkeyPatch, texts: Sequence[str]) -> list[dict]:
     """把 `runner.complete` 换成一个按调用序号发稿的桩。
@@ -968,6 +1017,27 @@ def test_gate_without_an_endpoint_gives_chinese_instructions(
 
     assert result.exit_code != 0
     assert "NH_LLM_BASE_URL" in result.output
+    assert "Traceback" not in result.output
+
+
+def test_gate_rejects_legacy_global_token_env_without_a_traceback(
+    book: Seeded,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    llm_env: None,
+    amendment_5_runner_ready: None,
+) -> None:
+    monkeypatch.setenv("NH_LLM_MAX_TOKENS", "4096")
+    gt = _write_ground_truth(tmp_path / "gt.json", book.pid, [_row("K01", "KNOWS")])
+
+    result = runner.invoke(
+        app,
+        ["gate", "--db", str(book.path), "-p", book.pid, "--ground-truth", str(gt)],
+    )
+
+    assert result.exit_code != 0
+    assert "NH_LLM_MAX_TOKENS" in result.output
+    assert "call plan" in result.output
     assert "Traceback" not in result.output
 
 

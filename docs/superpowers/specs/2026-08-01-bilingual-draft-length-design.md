@@ -395,7 +395,8 @@ Implementation follows test-driven development. Required regression coverage inc
 ### Provider and capacity
 
 - capability override/registry/unknown precedence;
-- reasoning omitted when off and correctly mapped for each supported adapter;
+- neutral `off` produces provider-effective off: omit only where omission is documented
+  to disable thinking, otherwise send that dialect's explicit `none`/`disabled` value;
 - M2 high reasoning rejected when unsupported;
 - visible and shared-reasoning budget formulas, rounding, and model-limit failures;
 - non-streaming and streaming aggregation produce the same result contract;

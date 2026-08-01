@@ -39,7 +39,17 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from novel_harness.db import connect  # noqa: E402
-from novel_harness.draft.provider import ProviderConfig  # noqa: E402
+from novel_harness.draft.capabilities import (  # noqa: E402
+    ProviderCapabilities,
+    ReasoningDialect,
+    ReasoningEffort,
+    plan_call,
+)
+from novel_harness.draft.length import M2_LENGTH_SPEC  # noqa: E402
+from novel_harness.draft.provider import (  # noqa: E402
+    ProviderConfig,
+    complete as provider_complete,
+)
 import novel_harness.eval.runner as runner_mod  # noqa: E402
 from novel_harness.eval.runner import load_traps, run_gate  # noqa: E402
 from novel_harness.graph.sqlite_store import SqliteStoryGraph  # noqa: E402
@@ -187,6 +197,31 @@ def test_a_full_dry_run_of_the_gate_survives_the_real_booklet(
     client = types.SimpleNamespace(
         chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create))
     )
+    config = ProviderConfig(
+        base_url="http://127.0.0.1:1/v1",
+        model="test-model",
+        api_key="not-needed",
+    )
+    capability = ProviderCapabilities(
+        base_url=config.base_url,
+        model=config.model,
+        source="operator-test",
+        source_urls=("https://example.test/capability",),
+        max_context_tokens=128_000,
+        max_output_tokens=16_000,
+        max_tokens_field="max_tokens",
+        reasoning_levels=frozenset({ReasoningEffort.OFF}),
+        reasoning_dialect=ReasoningDialect.NONE,
+        reasoning_shares_output=False,
+        supports_streaming=True,
+        supports_stream_usage=False,
+    )
+    plan = plan_call(M2_LENGTH_SPEC, ReasoningEffort.OFF, capability)
+
+    def planned_complete(messages: Any, *, config: ProviderConfig, client: Any) -> Any:
+        return provider_complete(messages, config=config, plan=plan, client=client)
+
+    monkeypatch.setattr(runner_mod, "complete", planned_complete)
 
     with connect(db) as conn:
         store = SqliteStoryGraph(conn)
@@ -194,9 +229,7 @@ def test_a_full_dry_run_of_the_gate_survives_the_real_booklet(
             store,
             gt["project_id"],
             traps,
-            config=ProviderConfig(
-                base_url="http://127.0.0.1:1/v1", api_key="not-needed", max_tokens=64
-            ),
+            config=config,
             repeats=3,
             out_path=tmp_path / "dry.jsonl",
             client=client,

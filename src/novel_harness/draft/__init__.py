@@ -29,6 +29,16 @@ sqlite3、永不 connect、永不碰图表 SQL**(它不在 test_arch_guard 的�
 from __future__ import annotations
 
 from .assemble import DEFAULT_HOUSE_STYLE, PromptForm, graph_section
+from .capabilities import (
+    CapabilityError,
+    ProviderCapabilities,
+    ProviderRuntimeOptions,
+    ReasoningDialect,
+    ReasoningEffort,
+    ResolvedCallPlan,
+    plan_call,
+    resolve_capabilities,
+)
 from .context import ResolvedConstraints, resolve_constraints
 from .length import (
     COUNTING_RULE_VERSION,
@@ -43,7 +53,6 @@ from .length import (
     measure,
 )
 from .provider import (
-    DEFAULT_MODEL,
     DEFAULT_TEMPERATURE,
     SAMPLING_STRICT_MODELS,
     CompletionResult,
@@ -56,8 +65,8 @@ __all__ = [
     "DEFAULT_HOUSE_STYLE",
     "COUNTING_RULE_VERSION",
     "DEFAULT_LENGTH_POLICY",
-    "DEFAULT_MODEL",
     "DEFAULT_TEMPERATURE",
+    "CapabilityError",
     "DraftLanguage",
     "LengthMeasurement",
     "LengthPolicy",
@@ -68,11 +77,18 @@ __all__ = [
     "CompletionResult",
     "PromptForm",
     "ProviderConfig",
+    "ProviderCapabilities",
     "ProviderError",
+    "ProviderRuntimeOptions",
+    "ReasoningDialect",
+    "ReasoningEffort",
+    "ResolvedCallPlan",
     "ResolvedConstraints",
     "complete",
     "count_units",
     "graph_section",
     "measure",
+    "plan_call",
     "resolve_constraints",
+    "resolve_capabilities",
 ]

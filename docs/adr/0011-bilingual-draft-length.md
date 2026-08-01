@@ -52,6 +52,8 @@ OpenRouter 或本地兼容端点。OpenRouter 不被写成必选依赖。
 能力解析优先级固定为：operator override → 精确 endpoint/model registry → endpoint metadata →
 `unknown`。禁止从模型名前缀猜能力。产品 reasoning 默认 `off`；M2 请求 `high`。adapter 只向明确
 支持的 route 发送对应 wire 字段；unknown 或不支持的非 off 请求预检失败，不静默降级。
+`off` 指实际关闭语义，不一律等于省略字段：省略会默认开启的 endpoint 必须发它明确
+支持的 `none` / `disabled`；只有文档声明省略即关闭时才省略。
 
 ### D5 人类长度到 token capacity 的版本化计划
 

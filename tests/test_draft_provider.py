@@ -2,8 +2,8 @@
 
 两条核心不变式:
 
-1. 调用参数(model/temperature/max_tokens)全从 `ProviderConfig` 来,原样传到统一出口 ——
-   这是 kill-gate 三臂与生产共用一份参数的基础。
+1. 连接/采样参数(model/base_url/temperature)全从 `ProviderConfig` 来。输出预算
+   属于单独的 resolved call plan，不再是连接配置里的 4096 默认值。
 2. **配置不自洽在构造时就红,不留到发请求。** 这一条是后加的:默认值曾经是一组自相矛盾的
    取值(`claude-opus-4-8` + 空 base_url + `temperature=0.7`),开箱即失败,而失败发生在
    第一次真发请求时 —— 对 kill-gate 是最坏的时机(跑到一半死,不是启动就红)。
@@ -14,14 +14,23 @@
 
 from __future__ import annotations
 
+import json
 import sys
 import types
 
+import httpx
 import pytest
 from pydantic import ValidationError
 
+from novel_harness.draft.capabilities import (
+    ProviderCapabilities,
+    ReasoningDialect,
+    ReasoningEffort,
+    ResolvedCallPlan,
+    plan_call,
+)
+from novel_harness.draft.length import M2_LENGTH_SPEC, LengthSpec
 from novel_harness.draft.provider import (
-    DEFAULT_MODEL,
     DEFAULT_TEMPERATURE,
     SAMPLING_STRICT_MODELS,
     CompletionResult,
@@ -29,6 +38,7 @@ from novel_harness.draft.provider import (
     ProviderError,
     _build_client,
     _model_family,
+    _wire_kwargs,
     complete,
 )
 
@@ -60,32 +70,82 @@ def _fake_client(content: str = "草稿正文", *, raise_exc: Exception | None =
     return client, calls
 
 
+TEST_LENGTH = LengthSpec(language="zh", min_units=100, target_units=200, max_units=300)
+
+
+def _plan(
+    dialect: ReasoningDialect = ReasoningDialect.NONE,
+    effort: ReasoningEffort = ReasoningEffort.OFF,
+    *,
+    base_url: str = LOCAL,
+    model: str = "test-model",
+    length: LengthSpec = TEST_LENGTH,
+    request_token_budget: int | None = None,
+    supports_stream_usage: bool | None = None,
+) -> ResolvedCallPlan:
+    reasoning = (
+        frozenset({ReasoningEffort.OFF})
+        if dialect is ReasoningDialect.NONE
+        else frozenset({ReasoningEffort.OFF, ReasoningEffort.HIGH})
+    )
+    capability = ProviderCapabilities(
+        base_url=base_url,
+        model=model,
+        source="operator-test",
+        source_urls=("https://example.test/capability",),
+        max_context_tokens=1_000_000,
+        max_output_tokens=128_000,
+        max_tokens_field=(
+            "max_completion_tokens"
+            if dialect is ReasoningDialect.OPENAI
+            else "max_tokens"
+        ),
+        reasoning_levels=reasoning,
+        reasoning_dialect=dialect,
+        reasoning_shares_output=dialect is not ReasoningDialect.NONE,
+        reserve_ratio_high=0.8 if dialect is not ReasoningDialect.NONE else None,
+        supports_streaming=True,
+        supports_stream_usage=supports_stream_usage,
+    )
+    return plan_call(
+        length,
+        effort,
+        capability,
+        request_token_budget=request_token_budget,
+    )
+
+
 # ── 默认值是一对自洽的取值 ────────────────────────────────────────────────
 
 
-def test_the_two_defaults_are_a_matching_pair() -> None:
-    """**这条是这个文件最重要的一条。**
-
-    `DEFAULT_MODEL` 和 `DEFAULT_TEMPERATURE` 不是两个独立常量,是一对:默认模型在
-    「拒绝非默认采样参数」的表里,所以默认温度只能是 None。谁把 temperature 改回 0.7、
-    或把模型换成表里另一个而没动温度,这条就红 —— 而不是等到 kill-gate 跑起来吃 400。
-    """
-    assert DEFAULT_MODEL in SAMPLING_STRICT_MODELS
+def test_connection_config_has_no_default_provider_or_model() -> None:
+    """ProviderConfig 不猜供应商,也不偷塞一个模型。"""
     assert DEFAULT_TEMPERATURE is None
-    # 而且这一对真的构造得出来(只差一个端点)。
-    cfg = ProviderConfig(base_url=LOCAL)
-    assert cfg.model == DEFAULT_MODEL
-    assert cfg.temperature is None
+    with pytest.raises(ValidationError):
+        ProviderConfig()
+    with pytest.raises(ValidationError):
+        ProviderConfig(base_url=LOCAL)
+    with pytest.raises(ValidationError):
+        ProviderConfig(model="qwen2.5")
 
 
-def test_defaults_plus_an_endpoint_construct_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
-    """只填一个 NH_LLM_BASE_URL,其余全走默认 —— 这是作者最小配置的样子,必须是通的。"""
-    for key in ("NH_LLM_MODEL", "NH_LLM_TEMPERATURE", "NH_LLM_MAX_TOKENS", "NH_LLM_API_KEY"):
+def test_explicit_endpoint_and_model_construct_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """最小配置是显式 endpoint + model;输出预算不属于连接配置。"""
+    for key in ("NH_LLM_TEMPERATURE", "NH_LLM_MAX_TOKENS", "NH_LLM_API_KEY"):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("NH_LLM_BASE_URL", "https://openrouter.ai/api/v1")
+    monkeypatch.setenv("NH_LLM_MODEL", "anthropic/claude-opus-4.8")
     cfg = ProviderConfig.from_env()
-    assert (cfg.model, cfg.temperature) == (DEFAULT_MODEL, None)
-    assert cfg.max_tokens == 4096
+    assert (cfg.model, cfg.temperature) == ("anthropic/claude-opus-4.8", None)
+    assert "max_tokens" not in ProviderConfig.model_fields
+
+
+def test_direct_connection_config_strips_transport_whitespace() -> None:
+    cfg = ProviderConfig(model="  qwen2.5  ", base_url=f"  {LOCAL}/  ")
+    assert cfg.model == "qwen2.5"
+    assert cfg.base_url == LOCAL
 
 
 # ── 不自洽的配置在构造时就报错 ────────────────────────────────────────────
@@ -95,11 +155,12 @@ def test_missing_base_url_is_rejected_at_construction(monkeypatch: pytest.Monkey
     """空 base_url 曾经默默指向 OpenAI 官方(而那儿没有默认模型)。现在它是个构造期错误。"""
     for key in ("NH_LLM_MODEL", "NH_LLM_BASE_URL", "NH_LLM_TEMPERATURE", "NH_LLM_MAX_TOKENS"):
         monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("NH_LLM_MODEL", "qwen2.5")
     with pytest.raises(ValidationError, match="NH_LLM_BASE_URL"):
         ProviderConfig.from_env()
     # 直接构造也一样,不能只在 from_env 那条路上拦。
     with pytest.raises(ValidationError, match="NH_LLM_BASE_URL"):
-        ProviderConfig()
+        ProviderConfig(model="qwen2.5", base_url="")
 
 
 def test_strict_model_with_a_temperature_is_rejected_at_construction() -> None:
@@ -150,13 +211,27 @@ def test_env_temperature_conflicting_with_env_model_is_rejected(
 
 
 def test_config_from_env_reads_the_three_knobs(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("NH_LLM_MODEL", "deepseek-chat")
-    monkeypatch.setenv("NH_LLM_BASE_URL", "https://api.deepseek.com/v1")
+    monkeypatch.setenv("NH_LLM_MODEL", "deepseek-v4-pro")
+    monkeypatch.setenv("NH_LLM_BASE_URL", "https://api.deepseek.com")
     monkeypatch.setenv("NH_LLM_API_KEY", "sk-xxx")
     cfg = ProviderConfig.from_env()
-    assert cfg.model == "deepseek-chat"
-    assert cfg.base_url == "https://api.deepseek.com/v1"
+    assert cfg.model == "deepseek-v4-pro"
+    assert cfg.base_url == "https://api.deepseek.com"
     assert cfg.api_key == "sk-xxx"
+
+
+def test_removed_global_max_tokens_is_rejected_not_silently_ignored(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """4096 旧阀门不能悄悄污染新调用;请求预算必须走 call plan。"""
+    with pytest.raises(ValidationError, match="max_tokens"):
+        ProviderConfig(model="qwen2.5", base_url=LOCAL, max_tokens=4096)
+
+    monkeypatch.setenv("NH_LLM_MODEL", "qwen2.5")
+    monkeypatch.setenv("NH_LLM_BASE_URL", LOCAL)
+    monkeypatch.setenv("NH_LLM_MAX_TOKENS", "4096")
+    with pytest.raises(ValueError, match="NH_LLM_MAX_TOKENS.*call plan"):
+        ProviderConfig.from_env()
 
 
 def test_temperature_can_be_omitted_via_env(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -166,13 +241,121 @@ def test_temperature_can_be_omitted_via_env(monkeypatch: pytest.MonkeyPatch) -> 
     assert ProviderConfig.from_env().temperature is None
 
 
+def test_api_key_is_excluded_from_repr_dump_and_validation_errors() -> None:
+    secret = "sk-不许出现"
+    cfg = ProviderConfig(model="test-model", base_url=LOCAL, api_key=secret)
+    assert secret not in repr(cfg)
+    assert "api_key" not in cfg.model_dump()
+
+    with pytest.raises(ValidationError) as caught:
+        ProviderConfig(
+            model="claude-opus-4-8",
+            base_url="https://api.openai.com/v1",
+            api_key=secret,
+        )
+    assert secret not in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("dialect", "expected"),
+    [
+        (ReasoningDialect.OPENAI, {"reasoning_effort": "high"}),
+        (
+            ReasoningDialect.OPENROUTER,
+            {"extra_body": {"reasoning": {"effort": "high", "exclude": True}}},
+        ),
+        (
+            ReasoningDialect.DEEPSEEK,
+            {
+                "reasoning_effort": "high",
+                "extra_body": {"thinking": {"type": "enabled"}},
+            },
+        ),
+        (
+            ReasoningDialect.ANTHROPIC_COMPAT,
+            {
+                "extra_body": {
+                    "thinking": {"type": "adaptive"},
+                    "output_config": {"effort": "high"},
+                }
+            },
+        ),
+    ],
+)
+def test_high_reasoning_maps_to_each_compatible_wire_dialect(
+    dialect: ReasoningDialect,
+    expected: dict[str, object],
+) -> None:
+    plan = _plan(
+        dialect,
+        ReasoningEffort.HIGH,
+        length=M2_LENGTH_SPEC,
+        request_token_budget=40_000,
+        supports_stream_usage=dialect is ReasoningDialect.OPENAI,
+    )
+    config = ProviderConfig(model=plan.model, base_url=plan.base_url)
+    kwargs = _wire_kwargs(config, plan, [{"role": "user", "content": "x"}])
+
+    assert kwargs[plan.max_tokens_field] == 40_000
+    assert kwargs["stream"] is True
+    assert ("stream_options" in kwargs) is (dialect is ReasoningDialect.OPENAI)
+    for key, value in expected.items():
+        assert kwargs[key] == value
+
+
+@pytest.mark.parametrize(
+    ("dialect", "expected"),
+    [
+        (ReasoningDialect.NONE, {}),
+        (ReasoningDialect.OPENAI, {"reasoning_effort": "none"}),
+        (
+            ReasoningDialect.OPENROUTER,
+            {"extra_body": {"reasoning": {"effort": "none", "exclude": True}}},
+        ),
+        (
+            ReasoningDialect.DEEPSEEK,
+            {"extra_body": {"thinking": {"type": "disabled"}}},
+        ),
+        (ReasoningDialect.ANTHROPIC_COMPAT, {}),
+    ],
+)
+def test_off_reasoning_is_effectively_off_for_each_dialect(
+    dialect: ReasoningDialect,
+    expected: dict[str, object],
+) -> None:
+    plan = _plan(dialect)
+    config = ProviderConfig(model=plan.model, base_url=plan.base_url)
+    kwargs = _wire_kwargs(config, plan, [{"role": "user", "content": "x"}])
+
+    assert kwargs[plan.max_tokens_field] == plan.request_token_budget
+    assert kwargs["stream"] is False
+    reasoning_keys = {"reasoning_effort", "extra_body"}
+    assert {key: kwargs[key] for key in reasoning_keys & kwargs.keys()} == expected
+
+
+def test_wire_rejects_a_plan_for_a_different_route() -> None:
+    plan = _plan()
+    with pytest.raises(ProviderError, match="route"):
+        _wire_kwargs(
+            ProviderConfig(model="other-model", base_url=LOCAL),
+            plan,
+            [{"role": "user", "content": "x"}],
+        )
+
+
 # ── complete():参数冻结、结果映射、错误收口 ──────────────────────────────
 
 
 def test_complete_freezes_params_from_config() -> None:
     client, calls = _fake_client("这一场,他终究没有提起那件事。")
-    cfg = ProviderConfig(base_url=LOCAL, model="qwen2.5", temperature=0.3, max_tokens=1024)
-    res = complete([{"role": "user", "content": "写一段"}], config=cfg, client=client)
+    cfg = ProviderConfig(base_url=LOCAL, model="qwen2.5", temperature=0.3)
+    plan = _plan(model="qwen2.5")
+    res = complete(
+        [{"role": "user", "content": "写一段"}],
+        config=cfg,
+        plan=plan,
+        client=client,
+    )
 
     assert isinstance(res, CompletionResult)
     assert res.text.startswith("这一场")
@@ -182,14 +365,29 @@ def test_complete_freezes_params_from_config() -> None:
     # 参数原样传到统一出口 —— kill-gate 三臂共用这一份
     assert calls["kwargs"]["model"] == "qwen2.5"
     assert calls["kwargs"]["temperature"] == 0.3
-    assert calls["kwargs"]["max_tokens"] == 1024
+    assert calls["kwargs"]["max_tokens"] == plan.request_token_budget
 
 
 def test_complete_omits_temperature_when_none() -> None:
     client, calls = _fake_client()
-    cfg = ProviderConfig(base_url=LOCAL, temperature=None)
-    complete([{"role": "user", "content": "x"}], config=cfg, client=client)
+    cfg = ProviderConfig(base_url=LOCAL, model="qwen2.5", temperature=None)
+    complete(
+        [{"role": "user", "content": "x"}],
+        config=cfg,
+        plan=_plan(model="qwen2.5"),
+        client=client,
+    )
     assert "temperature" not in calls["kwargs"]
+
+
+def test_complete_requires_a_resolved_call_plan() -> None:
+    client, _ = _fake_client()
+    with pytest.raises(TypeError, match="plan"):
+        complete(  # type: ignore[call-arg]
+            [{"role": "user", "content": "x"}],
+            config=ProviderConfig(base_url=LOCAL, model="qwen2.5"),
+            client=client,
+        )
 
 
 def test_complete_wraps_transport_errors() -> None:
@@ -197,9 +395,138 @@ def test_complete_wraps_transport_errors() -> None:
     with pytest.raises(ProviderError, match="模型调用失败"):
         complete(
             [{"role": "user", "content": "x"}],
-            config=ProviderConfig(base_url=LOCAL),
+            config=ProviderConfig(base_url=LOCAL, model="qwen2.5"),
+            plan=_plan(model="qwen2.5"),
             client=client,
         )
+
+
+def test_streaming_ignores_reasoning_and_aggregates_visible_text_and_usage() -> None:
+    plan = _plan(
+        ReasoningDialect.OPENROUTER,
+        ReasoningEffort.HIGH,
+        length=M2_LENGTH_SPEC,
+        request_token_budget=40_000,
+    )
+    chunks = iter(
+        [
+            types.SimpleNamespace(
+                model="stream-model",
+                choices=[
+                    types.SimpleNamespace(
+                        delta=types.SimpleNamespace(
+                            content=None,
+                            reasoning="不得进入正文",
+                            reasoning_content="也不得进入",
+                        ),
+                        finish_reason=None,
+                    )
+                ],
+                usage=None,
+            ),
+            types.SimpleNamespace(
+                model="stream-model",
+                choices=[
+                    types.SimpleNamespace(
+                        delta=types.SimpleNamespace(content="可见"),
+                        finish_reason=None,
+                    )
+                ],
+                usage=None,
+            ),
+            types.SimpleNamespace(
+                model="stream-model",
+                choices=[
+                    types.SimpleNamespace(
+                        delta=types.SimpleNamespace(content="正文"),
+                        finish_reason="stop",
+                    )
+                ],
+                usage=None,
+            ),
+            types.SimpleNamespace(
+                model="stream-model",
+                choices=[],
+                usage=types.SimpleNamespace(prompt_tokens=101, completion_tokens=202),
+            ),
+        ]
+    )
+    calls: dict[str, object] = {}
+
+    def create(**kwargs: object) -> object:
+        calls.update(kwargs)
+        return chunks
+
+    client = types.SimpleNamespace(
+        chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create))
+    )
+    result = complete(
+        [{"role": "user", "content": "x"}],
+        config=ProviderConfig(model=plan.model, base_url=plan.base_url),
+        plan=plan,
+        client=client,
+    )
+
+    assert result == CompletionResult(
+        text="可见正文",
+        model="stream-model",
+        finish_reason="stop",
+        prompt_tokens=101,
+        completion_tokens=202,
+    )
+    assert calls["stream"] is True
+
+
+def test_openai_sdk_serializes_extra_body_into_the_actual_json_request() -> None:
+    from openai import OpenAI
+
+    captured: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "id": "chatcmpl-test",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "test-model",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 1,
+                    "completion_tokens": 2,
+                    "total_tokens": 3,
+                },
+            },
+        )
+
+    sdk_client = OpenAI(
+        api_key="not-needed",
+        base_url="https://example.test/v1",
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    plan = _plan(
+        ReasoningDialect.ANTHROPIC_COMPAT,
+        ReasoningEffort.HIGH,
+        base_url="https://example.test/v1",
+    )
+    result = complete(
+        [{"role": "user", "content": "x"}],
+        config=ProviderConfig(model=plan.model, base_url=plan.base_url),
+        plan=plan,
+        client=sdk_client,
+    )
+
+    assert result.text == "ok"
+    assert captured["thinking"] == {"type": "adaptive"}
+    assert captured["output_config"] == {"effort": "high"}
 
 
 # ── _build_client():真的建一个客户端,但**不发任何请求** ──────────────────

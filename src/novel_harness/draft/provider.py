@@ -6,13 +6,14 @@
 
 ── 为什么参数集中在一处(load-bearing) ──────────────────────────────────
 M2 kill-gate 的三臂 X0/X1/X2 和产品起草**共用这一个 `complete()`**:它们只在「往 prompt 里
-塞什么」上不同,`model` / `temperature` / `max_tokens` 全从同一个 `ProviderConfig` 来。若哪一处
+塞什么」上不同;连接/采样来自同一个 `ProviderConfig`,输出/reasoning 来自同一个
+已验证 `ResolvedCallPlan`。若哪一处
 自己另起一个调用、另设一套参数,gate 测的就不再是产品会发的东西(EVAL_PROTOCOL.md §2）。
 所以调用参数只在这里定义一次。
 
-**用 OpenAI 兼容而非 Anthropic 原生 SDK 是作者的显式决定**:通用性 > Claude 原生的
-thinking / prompt-caching 小功能(起草 prose 用不上;Claude 仍可经 OpenRouter / 兼容端点接入）。
-别「顺手」换回 anthropic 原生 SDK —— 那会把这一层锁死在单一闭源供应商上。
+**用 OpenAI 兼容而非 Anthropic 原生 SDK 是作者的显式决定**:同一客户端可接
+OpenAI / DeepSeek / Claude 兼容端点 / OpenRouter / 本地模型。这不等于放弃 thinking:
+能力已确认的端点由适配层发它支持的 reasoning 字段,未知端点则失败关闭。
 
 ── 配置的自洽性在构造时检查,不留到发请求 ──────────────────────────────
 `base_url` / `model` / `temperature` 三者不是独立旋钮,它们必须**互相匹配**。曾经的默认值是
@@ -29,23 +30,18 @@ from collections.abc import Sequence
 from typing import Any
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-DEFAULT_MODEL = "claude-opus-4-8"
-"""缺省模型。来自 `docs/PLAN.md` §5.2 的显式选型(起草和抽取默认 opus-4-8)。
-
-**改它必须同时看 `DEFAULT_TEMPERATURE`** —— 它在 `SAMPLING_STRICT_MODELS` 里,
-换成一个不在那张表里的模型时,默认 temperature 才有可能重新变成一个数字。
-"""
+from .capabilities import (
+    ReasoningDialect,
+    ReasoningEffort,
+    ResolvedCallPlan,
+    normalize_base_url,
+    normalize_model,
+)
 
 DEFAULT_TEMPERATURE: float | None = None
-"""缺省采样温度。**`None` 不是「随便」,是被 `DEFAULT_MODEL` 逼出来的唯一合法取值。**
-
-`claude-opus-4-8` 拒绝非默认 `temperature`/`top_p`/`top_k`(400,`docs/PLAN.md` 第 301 行的
-已核对硬约束)。所以「默认模型 + 默认温度」这一对里,温度只能是 None(= 不发这个字段)。
-这两个常量**必须一起看**:任何一个单独改动都会让默认配置重新变回自相矛盾的一对。
-`test_draft_provider.py::test_the_two_defaults_are_a_matching_pair` 就是钉这条缝的。
-"""
+"""缺省不发 temperature,使兼容层不猜模型的采样语义。"""
 
 SAMPLING_STRICT_MODELS = frozenset(
     {
@@ -92,7 +88,7 @@ def _model_family(model: str) -> str:
 
 
 class ProviderConfig(BaseModel):
-    """一次调用的全部旋钮。**frozen**:kill-gate 里冻结它,三臂逐字节共用同一份参数。
+    """连接与采样参数。**frozen**:kill-gate 三臂逐字节共用同一份配置。
 
     Raises:
         pydantic.ValidationError: 构造时配置不自洽(缺 base_url、模型与温度打架、
@@ -100,10 +96,14 @@ class ProviderConfig(BaseModel):
             不能留到 kill-gate 跑到一半才 400。
     """
 
-    model_config = ConfigDict(frozen=True)
+    model_config = ConfigDict(
+        frozen=True,
+        extra="forbid",
+        hide_input_in_errors=True,
+    )
 
-    model: str = DEFAULT_MODEL
-    base_url: str = ""
+    model: str
+    base_url: str
     """端点,**必填,没有缺省值**。本地 Ollama 填 http://localhost:11434/v1;中转填 OpenRouter 等。
 
     **这里曾经有个缺省语义「空 = OpenAI 官方」,它就是那个 bug 的来源** —— 默认模型是
@@ -111,7 +111,7 @@ class ProviderConfig(BaseModel):
     「猜一个供应商」没有对的猜法,所以现在不猜:空值在构造时报错,并告诉作者去填
     `NH_LLM_BASE_URL`。要打 OpenAI 官方就显式写 https://api.openai.com/v1 。
     """
-    api_key: str = ""
+    api_key: str = Field(default="", exclude=True, repr=False)
     """本地 Ollama 之类不校验 key,可随便填(如 "ollama");闭源填真实 key。
 
     **故意不在构造时校验非空**:本地端点合法地不需要 key,而「哪些端点需要 key」不可判定。
@@ -120,8 +120,17 @@ class ProviderConfig(BaseModel):
     temperature: float | None = DEFAULT_TEMPERATURE
     """None = **不发** temperature 字段,走供应商默认。见 `DEFAULT_TEMPERATURE` 与
     `SAMPLING_STRICT_MODELS`:对表里的模型,None 是唯一合法取值。"""
-    max_tokens: int = 4096
     timeout: float = 600.0
+
+    @field_validator("model")
+    @classmethod
+    def _normalize_config_model(cls, value: str) -> str:
+        return normalize_model(value) if value.strip() else value
+
+    @field_validator("base_url")
+    @classmethod
+    def _normalize_config_base_url(cls, value: str) -> str:
+        return normalize_base_url(value) if value.strip() else value
 
     @model_validator(mode="after")
     def _reject_self_contradictory_config(self) -> ProviderConfig:
@@ -133,7 +142,7 @@ class ProviderConfig(BaseModel):
             raise ValueError(
                 "NH_LLM_BASE_URL 是空的:必须显式指定模型端点,本层不替你猜供应商。\n"
                 "例:本地 Ollama = http://localhost:11434/v1;"
-                "DeepSeek = https://api.deepseek.com/v1;OpenAI 官方 = https://api.openai.com/v1 。\n"
+                "DeepSeek = https://api.deepseek.com;OpenAI 官方 = https://api.openai.com/v1 。\n"
                 f"它必须和 NH_LLM_MODEL(当前 {self.model!r})是**匹配的一对** —— "
                 "端点上没有这个模型名,发出去就是 404。"
             )
@@ -165,6 +174,12 @@ class ProviderConfig(BaseModel):
 
         缺失/矛盾的组合在这里就抛 `ValidationError`(带中文修复指引),不会带着一份坏配置往下走。
         """
+        if "NH_LLM_MAX_TOKENS" in os.environ:
+            raise ValueError(
+                "NH_LLM_MAX_TOKENS 已移除:输出预算必须来自已验证的 resolved call plan,"
+                "不再使用全局 4096 阀门。"
+            )
+
         temp_raw = os.environ.get("NH_LLM_TEMPERATURE")
         if temp_raw is None:
             temperature: float | None = DEFAULT_TEMPERATURE
@@ -173,11 +188,10 @@ class ProviderConfig(BaseModel):
         else:
             temperature = float(temp_raw)
         return cls(
-            model=os.environ.get("NH_LLM_MODEL", DEFAULT_MODEL),
+            model=os.environ.get("NH_LLM_MODEL", "").strip(),
             base_url=os.environ.get("NH_LLM_BASE_URL", "").strip(),
             api_key=os.environ.get("NH_LLM_API_KEY", ""),
             temperature=temperature,
-            max_tokens=int(os.environ.get("NH_LLM_MAX_TOKENS", "4096")),
         )
 
 
@@ -213,49 +227,130 @@ def _build_client(config: ProviderConfig) -> Any:
     )
 
 
-def complete(
+def _wire_kwargs(
+    config: ProviderConfig,
+    plan: ResolvedCallPlan,
     messages: Sequence[dict[str, Any]],
-    *,
-    config: ProviderConfig | None = None,
-    client: Any = None,
-) -> CompletionResult:
-    """一次非流式补全。kill-gate 的 runner 走这条(三臂各自把 messages 换成 X0/X1/X2)。
-
-    Args:
-        messages: OpenAI 兼容的 `[{"role": "system"/"user"/"assistant", "content": ...}]`。
-        config: None = 从 `NH_LLM_*` 环境变量读(`ProviderConfig.from_env`)。
-        client: 注入一个鸭子类型的 OpenAI 客户端(测试用);None = 按 config 现建一个真的。
-
-    Raises:
-        ProviderError: 调用失败(网络/鉴权/供应商错误),统一收敛,不外泄 openai 的异常类型。
-        pydantic.ValidationError: config 为 None 且环境变量里的配置不自洽(见 ProviderConfig)。
-    """
-    config = config or ProviderConfig.from_env()
-    client = client or _build_client(config)
+) -> dict[str, Any]:
+    """把中立 plan 序列化成某一个 OpenAI-compatible endpoint 的精确 wire shape。"""
+    route = normalize_base_url(config.base_url), normalize_model(config.model)
+    if route != (plan.base_url, plan.model):
+        raise ProviderError(
+            "ProviderConfig route does not match ResolvedCallPlan route: "
+            f"config={route!r}, plan={(plan.base_url, plan.model)!r}"
+        )
 
     kwargs: dict[str, Any] = {
         "model": config.model,
         "messages": list(messages),
-        "max_tokens": config.max_tokens,
+        plan.max_tokens_field: plan.request_token_budget,
+        "stream": plan.stream,
     }
     if config.temperature is not None:
         kwargs["temperature"] = config.temperature
+    if plan.stream and plan.capability.supports_stream_usage is True:
+        kwargs["stream_options"] = {"include_usage": True}
 
-    try:
-        resp = client.chat.completions.create(**kwargs)
-    except ProviderError:
-        raise
-    except Exception as exc:  # 供应商/网络异常五花八门,统一收口成 ProviderError
+    effort = plan.reasoning_effective
+    dialect = plan.reasoning_dialect
+    if effort is ReasoningEffort.OFF:
+        # "off" 是产品语义,不等于所有 provider 都能靠省略字段实现。
+        # OpenAI GPT-5.6 省略后默认 medium;DeepSeek V4 省略后默认 high。
+        if dialect is ReasoningDialect.OPENAI:
+            kwargs["reasoning_effort"] = "none"
+        elif dialect is ReasoningDialect.OPENROUTER:
+            kwargs["extra_body"] = {
+                "reasoning": {"effort": "none", "exclude": True}
+            }
+        elif dialect is ReasoningDialect.DEEPSEEK:
+            kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+        return kwargs
+
+    value = effort.value
+    if dialect is ReasoningDialect.OPENAI:
+        kwargs["reasoning_effort"] = value
+    elif dialect is ReasoningDialect.OPENROUTER:
+        kwargs["extra_body"] = {
+            "reasoning": {"effort": value, "exclude": True}
+        }
+    elif dialect is ReasoningDialect.DEEPSEEK:
+        kwargs["reasoning_effort"] = value
+        kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
+    elif dialect is ReasoningDialect.ANTHROPIC_COMPAT:
+        kwargs["extra_body"] = {
+            "thinking": {"type": "adaptive"},
+            "output_config": {"effort": value},
+        }
+    else:  # ProviderCapabilities 应已拦住;交通层仍不冒险发请求。
         raise ProviderError(
-            f"模型调用失败(model={config.model}, base_url={config.base_url}):{exc}"
-        ) from exc
+            f"reasoning={value} has no compatible wire dialect for {plan.model!r}"
+        )
+    return kwargs
 
+
+def _from_non_streaming(resp: Any, fallback_model: str) -> CompletionResult:
     choice = resp.choices[0]
     usage = getattr(resp, "usage", None)
     return CompletionResult(
         text=getattr(choice.message, "content", None) or "",
-        model=getattr(resp, "model", config.model),
+        model=getattr(resp, "model", fallback_model),
         finish_reason=getattr(choice, "finish_reason", None),
         prompt_tokens=getattr(usage, "prompt_tokens", None),
         completion_tokens=getattr(usage, "completion_tokens", None),
     )
+
+
+def _from_stream(chunks: Any, fallback_model: str) -> CompletionResult:
+    visible: list[str] = []
+    model = fallback_model
+    finish_reason: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+
+    for chunk in chunks:
+        chunk_model = getattr(chunk, "model", None)
+        if chunk_model:
+            model = chunk_model
+        usage = getattr(chunk, "usage", None)
+        if usage is not None:
+            prompt_tokens = getattr(usage, "prompt_tokens", prompt_tokens)
+            completion_tokens = getattr(usage, "completion_tokens", completion_tokens)
+        for choice in getattr(chunk, "choices", ()) or ():
+            content = getattr(getattr(choice, "delta", None), "content", None)
+            if isinstance(content, str):
+                visible.append(content)
+            stopped = getattr(choice, "finish_reason", None)
+            if stopped is not None:
+                finish_reason = stopped
+
+    return CompletionResult(
+        text="".join(visible),
+        model=model,
+        finish_reason=finish_reason,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+    )
+
+
+def complete(
+    messages: Sequence[dict[str, Any]],
+    *,
+    config: ProviderConfig,
+    plan: ResolvedCallPlan,
+    client: Any = None,
+) -> CompletionResult:
+    """按已验证 plan 执行一次补全;大预算 stream 与非 stream 返回同一结果契约。"""
+    kwargs = _wire_kwargs(config, plan, messages)
+    client = client or _build_client(config)
+
+    try:
+        response = client.chat.completions.create(**kwargs)
+        if plan.stream:
+            return _from_stream(response, config.model)
+        return _from_non_streaming(response, config.model)
+    except ProviderError:
+        raise
+    except Exception as exc:  # 运输及流式迭代异常统一收口
+        raise ProviderError(
+            f"模型调用失败(model={config.model}, base_url={config.base_url}):{exc}"
+        ) from exc
