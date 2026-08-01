@@ -30,6 +30,18 @@ from __future__ import annotations
 
 from .assemble import DEFAULT_HOUSE_STYLE, PromptForm, graph_section
 from .context import ResolvedConstraints, resolve_constraints
+from .length import (
+    COUNTING_RULE_VERSION,
+    DEFAULT_LENGTH_POLICY,
+    M2_LENGTH_SPEC,
+    DraftLanguage,
+    LengthMeasurement,
+    LengthPolicy,
+    LengthSpec,
+    LengthStatus,
+    count_units,
+    measure,
+)
 from .provider import (
     DEFAULT_MODEL,
     DEFAULT_TEMPERATURE,
@@ -42,8 +54,16 @@ from .provider import (
 
 __all__ = [
     "DEFAULT_HOUSE_STYLE",
+    "COUNTING_RULE_VERSION",
+    "DEFAULT_LENGTH_POLICY",
     "DEFAULT_MODEL",
     "DEFAULT_TEMPERATURE",
+    "DraftLanguage",
+    "LengthMeasurement",
+    "LengthPolicy",
+    "LengthSpec",
+    "LengthStatus",
+    "M2_LENGTH_SPEC",
     "SAMPLING_STRICT_MODELS",
     "CompletionResult",
     "PromptForm",
@@ -51,6 +71,8 @@ __all__ = [
     "ProviderError",
     "ResolvedConstraints",
     "complete",
+    "count_units",
     "graph_section",
+    "measure",
     "resolve_constraints",
 ]
