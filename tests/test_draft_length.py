@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import importlib
+import os
+import subprocess
+import sys
 
 import pytest
 from pydantic import ValidationError
@@ -11,7 +14,6 @@ from novel_harness import draft
 from novel_harness.draft.length import (
     COUNTING_RULE_VERSION,
     DEFAULT_LENGTH_POLICY,
-    M2_LENGTH_SPEC,
     DraftLanguage,
     LengthMeasurement,
     LengthPolicy,
@@ -125,6 +127,16 @@ def test_default_policy_has_exact_defaults_and_enforces_hard_maximums() -> None:
     with pytest.raises(ValueError, match="hard maximum"):
         policy.validate_spec(too_long)
 
+    en_at_limit = LengthSpec(
+        language=DraftLanguage.EN, min_units=1, target_units=6000, max_units=12000
+    )
+    assert policy.validate_spec(en_at_limit) is en_at_limit
+    en_too_long = LengthSpec(
+        language=DraftLanguage.EN, min_units=1, target_units=6000, max_units=12001
+    )
+    with pytest.raises(ValueError, match="hard maximum"):
+        policy.validate_spec(en_too_long)
+
 
 def test_policy_rejects_defaults_of_the_wrong_language_or_above_hard_maximum() -> None:
     english = LengthSpec(language=DraftLanguage.EN, min_units=1, target_units=2, max_units=3)
@@ -181,14 +193,30 @@ def test_policy_from_env_fails_as_a_whole_for_invalid_configuration(
         LengthPolicy.from_env()
 
 
-def test_m2_length_spec_never_reads_product_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("NH_DRAFT_ZH_DEFAULT_MIN_CHARS", "20")
-    monkeypatch.setenv("NH_DRAFT_ZH_DEFAULT_TARGET_CHARS", "25")
-    monkeypatch.setenv("NH_DRAFT_ZH_DEFAULT_MAX_CHARS", "30")
-
-    assert M2_LENGTH_SPEC == LengthSpec(
-        language=DraftLanguage.ZH, min_units=2000, target_units=2500, max_units=3000
+def test_m2_length_spec_never_reads_product_environment_on_first_import() -> None:
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "NH_DRAFT_ZH_DEFAULT_MIN_CHARS": "20",
+            "NH_DRAFT_ZH_DEFAULT_TARGET_CHARS": "25",
+            "NH_DRAFT_ZH_DEFAULT_MAX_CHARS": "30",
+            "NH_DRAFT_ZH_HARD_MAX_CHARS": "300",
+        }
     )
+    script = (
+        "from novel_harness.draft.length import M2_LENGTH_SPEC as spec; "
+        "print(spec.language.value, spec.min_units, spec.target_units, spec.max_units)"
+    )
+
+    result = subprocess.run(
+        [sys.executable, "-c", script],
+        check=True,
+        capture_output=True,
+        env=environment,
+        text=True,
+    )
+
+    assert result.stdout.strip() == "zh 2000 2500 3000"
     assert COUNTING_RULE_VERSION == "nh-length-v1"
 
 
