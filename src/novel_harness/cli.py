@@ -940,8 +940,15 @@ def gate(
     # 同 `nh serve` 对 uvicorn 的处理：`nh declare` 一天敲几十次，不该为一个它永远不跑的
     # 实验装置买单。
     from .draft.provider import ProviderConfig, ProviderError
-    from .eval.runner import load_traps, run_gate, stamped_path
+    from .eval.runner import PROTOCOL_VERSION, load_traps, run_gate, stamped_path
     from .eval.score import Verdict, decide
+
+    if "修正案 1/2/3/4/5" not in PROTOCOL_VERSION:
+        _die(
+            "✗ nh gate 已暂停：修正案 5 要求的长度、续写、reasoning 与证据格式尚未实现。\n"
+            "  当前 runner 仍是旧协议；现在运行会花钱并产出不能用于 ADR 0009 的 JSONL。\n"
+            "  等 runner.PROTOCOL_VERSION 原子升级到修正案 1/2/3/4/5 后，命令才会重新放行。"
+        )
 
     if not ground_truth.exists():
         _die(

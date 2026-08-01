@@ -864,6 +864,16 @@ def llm_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NH_LLM_MAX_TOKENS", raising=False)
 
 
+@pytest.fixture
+def amendment_5_runner_ready(monkeypatch: pytest.MonkeyPatch) -> None:
+    """让旧 CLI 分支测试继续覆盖它们负责的错误；真实常量在 Task 7 前仍必须 fail-closed。"""
+    monkeypatch.setattr(
+        runner_mod,
+        "PROTOCOL_VERSION",
+        "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5 + ADR 0010/0011",
+    )
+
+
 def _stub_complete(monkeypatch: pytest.MonkeyPatch, texts: Sequence[str]) -> list[dict]:
     """把 `runner.complete` 换成一个按调用序号发稿的桩。
 
@@ -883,8 +893,30 @@ def _stub_complete(monkeypatch: pytest.MonkeyPatch, texts: Sequence[str]) -> lis
     return calls
 
 
+def test_gate_fails_closed_until_amendment_5_runner_is_implemented(tmp_path: Path) -> None:
+    out = tmp_path / "must-not-exist.jsonl"
+    result = runner.invoke(
+        app,
+        [
+            "gate",
+            "--db", str(tmp_path / "missing.db"),
+            "--project", "project:test",
+            "--ground-truth", str(tmp_path / "missing.json"),
+            "--out", str(out),
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "修正案 5" in result.output
+    assert "尚未实现" in result.output
+    assert not out.exists()
+
+
 def test_gate_without_an_endpoint_gives_chinese_instructions(
-    book: Seeded, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    book: Seeded,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    amendment_5_runner_ready: None,
 ) -> None:
     """没配 `NH_LLM_BASE_URL` 时给修复指引再退出，**不抛 traceback**。
 
@@ -906,7 +938,11 @@ def test_gate_without_an_endpoint_gives_chinese_instructions(
 
 
 def test_gate_prints_how_many_traps_and_generations(
-    book: Seeded, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, llm_env: None
+    book: Seeded,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    llm_env: None,
+    amendment_5_runner_ready: None,
 ) -> None:
     """「跑了几条陷阱、几次生成」是这条命令的成功输出本身（同 `nh check` 的「跑了几条规则」）。
 
@@ -937,7 +973,11 @@ def test_gate_prints_how_many_traps_and_generations(
 
 
 def test_gate_exits_zero_on_a_real_verdict(
-    book: Seeded, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, llm_env: None
+    book: Seeded,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    llm_env: None,
+    amendment_5_runner_ready: None,
 ) -> None:
     """越过地板门之后的裁决（这里是 INCONCLUSIVE）退出码 0。
 
@@ -969,7 +1009,7 @@ def test_gate_exits_zero_on_a_real_verdict(
 
 
 def test_gate_refuses_a_ground_truth_from_another_project(
-    book: Seeded, tmp_path: Path, llm_env: None
+    book: Seeded, tmp_path: Path, llm_env: None, amendment_5_runner_ready: None
 ) -> None:
     """拿 A 书的 ground truth 跑 B 书的库：约束照样算得出来，只是算的不是这些陷阱瞄的那些。
 
@@ -986,7 +1026,9 @@ def test_gate_refuses_a_ground_truth_from_another_project(
     assert "别的书" in result.output
 
 
-def test_gate_refuses_an_illegal_repeats(book: Seeded, tmp_path: Path, llm_env: None) -> None:
+def test_gate_refuses_an_illegal_repeats(
+    book: Seeded, tmp_path: Path, llm_env: None, amendment_5_runner_ready: None
+) -> None:
     gt = _write_ground_truth(tmp_path / "gt.json", book.pid, [_row("K01", "KNOWS")])
 
     result = runner.invoke(
@@ -1004,7 +1046,9 @@ def test_gate_refuses_an_illegal_repeats(book: Seeded, tmp_path: Path, llm_env: 
     assert "重复" in result.output and "Traceback" not in result.output
 
 
-def test_gate_refuses_a_missing_ground_truth(book: Seeded, tmp_path: Path) -> None:
+def test_gate_refuses_a_missing_ground_truth(
+    book: Seeded, tmp_path: Path, amendment_5_runner_ready: None
+) -> None:
     result = runner.invoke(
         app,
         [

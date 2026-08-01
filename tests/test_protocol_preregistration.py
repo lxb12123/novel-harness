@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+from hashlib import sha256
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 PROTOCOL = ROOT / "docs" / "EVAL_PROTOCOL.md"
 MARKER = "## 1. 被证伪的命题\n".encode()
+FROZEN_BODY_SHA256 = "4977beeda66f1efb370f9a28a6c6dce43e37c3ccc8fc2fdd10d1b82cf9e4ac85"
 
 
 def _body(data: bytes) -> bytes:
@@ -26,10 +28,20 @@ def _body(data: bytes) -> bytes:
 
 
 def test_frozen_protocol_body_still_matches_0393088() -> None:
-    baseline = subprocess.check_output(
-        ["git", "show", "0393088:docs/EVAL_PROTOCOL.md"], cwd=ROOT
-    )
-    assert _body(PROTOCOL.read_bytes()) == _body(baseline)
+    current_body = _body(PROTOCOL.read_bytes())
+    assert sha256(current_body).hexdigest() == FROZEN_BODY_SHA256
+
+    # 本地完整 clone 再对一次原 commit；CI/源码包可能是 shallow clone 或没有 .git，
+    # 那时上面的内容寻址 hash 仍是独立、可移植的冻结证据。
+    try:
+        baseline = subprocess.check_output(
+            ["git", "show", "0393088:docs/EVAL_PROTOCOL.md"],
+            cwd=ROOT,
+            stderr=subprocess.DEVNULL,
+        )
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        return
+    assert current_body == _body(baseline)
 
 
 def test_protocol_indexes_exactly_five_amendments() -> None:
