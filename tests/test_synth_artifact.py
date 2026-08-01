@@ -40,6 +40,7 @@ if str(ROOT) not in sys.path:
 
 from novel_harness.db import connect  # noqa: E402
 from novel_harness.draft.provider import ProviderConfig  # noqa: E402
+import novel_harness.eval.runner as runner_mod  # noqa: E402
 from novel_harness.eval.runner import load_traps, run_gate  # noqa: E402
 from novel_harness.graph.sqlite_store import SqliteStoryGraph  # noqa: E402
 from synth.build import BuildResult, GroundTruth, build, load_booklet  # noqa: E402
@@ -137,7 +138,9 @@ def test_no_trap_derives_an_empty_forbidden_set(
 
 
 def test_a_full_dry_run_of_the_gate_survives_the_real_booklet(
-    built: tuple[BuildResult, Path, Path], tmp_path: Path
+    built: tuple[BuildResult, Path, Path],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """**25 条陷阱 × 3 臂 × 3 次，走真 runner、真 assemble、真判分，只把模型换成桩。**
 
@@ -154,6 +157,11 @@ def test_a_full_dry_run_of_the_gate_survives_the_real_booklet(
     那是要真模型才有意义的数字，在这儿断言它等于把仪器读数写死。
     """
     _, db, out = built
+    monkeypatch.setattr(
+        runner_mod,
+        "PROTOCOL_VERSION",
+        "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5 + ADR 0010/0011",
+    )
     gt = json.loads(out.read_text(encoding="utf-8"))
     traps = load_traps(gt)
     assert len(traps) == KNOWS_TRAPS + FUTURE_TRAPS

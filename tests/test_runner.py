@@ -248,7 +248,7 @@ def test_the_header_is_the_first_line_and_pins_the_protocol(
 
     head = _records(out)[0]
     assert head["kind"] == "header"
-    assert head["protocol"] == PROTOCOL_VERSION
+    assert head["protocol"] == runner_mod.PROTOCOL_VERSION
     assert head["repeats"] == 3 and head["n_traps"] == 1
     assert head["project_id"] == book.pid
     assert head["config"]["model"] == _config().model
@@ -555,6 +555,32 @@ def test_config_none_is_refused(store: SqliteStoryGraph, book: Seeded, tmp_path:
     with pytest.raises(ValueError, match="ProviderConfig"):
         run_gate(store, book.pid, [KNOWS_TRAP], config=None, out_path=out, client=client)
     assert not calls and not out.exists(), "该在开跑之前就红，不该留下半份 jsonl"
+
+
+def test_run_gate_itself_fails_closed_until_amendment_5_is_implemented(
+    store: SqliteStoryGraph,
+    book: Seeded,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Public library callers cannot bypass the CLI's preregistration guard."""
+    monkeypatch.setattr(runner_mod, "PROTOCOL_VERSION", PROTOCOL_VERSION)
+    out = tmp_path / "runs" / "must-not-exist.jsonl"
+    client, calls = _client(_by_arm(CLEAN, CLEAN, CLEAN))
+
+    with pytest.raises(ValueError, match="修正案 5"):
+        run_gate(
+            store,
+            book.pid,
+            [KNOWS_TRAP],
+            config=_config(),
+            out_path=out,
+            client=client,
+        )
+
+    assert calls == [], "协议未实现时不得发出模型请求"
+    assert not out.exists(), "协议未实现时不得创建证据文件"
+    assert not out.parent.exists(), "协议 guard 必须早于证据目录创建"
 
 
 def test_run_gate_refuses_to_overwrite_existing_evidence(
@@ -869,7 +895,7 @@ def llm_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NH_LLM_MAX_TOKENS", raising=False)
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def amendment_5_runner_ready(monkeypatch: pytest.MonkeyPatch) -> None:
     """让旧 CLI 分支测试继续覆盖它们负责的错误；真实常量在 Task 7 前仍必须 fail-closed。"""
     monkeypatch.setattr(
@@ -898,7 +924,10 @@ def _stub_complete(monkeypatch: pytest.MonkeyPatch, texts: Sequence[str]) -> lis
     return calls
 
 
-def test_gate_fails_closed_until_amendment_5_runner_is_implemented(tmp_path: Path) -> None:
+def test_gate_fails_closed_until_amendment_5_runner_is_implemented(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner_mod, "PROTOCOL_VERSION", PROTOCOL_VERSION)
     out = tmp_path / "must-not-exist.jsonl"
     result = runner.invoke(
         app,

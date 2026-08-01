@@ -86,6 +86,8 @@ PROTOCOL_VERSION = "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4 + ADR 0010"
 改协议 = 改卷子，所以这个字符串变了就意味着此后的 run 和此前的不可比。
 """
 
+_AMENDMENT_5_PROTOCOL_MARKER = "修正案 1/2/3/4/5"
+
 ARMS: tuple[tuple[str, PromptForm], ...] = (
     ("x0", PromptForm.X0),
     ("x1", PromptForm.X1),
@@ -236,6 +238,13 @@ def _config_for_record(config: ProviderConfig) -> dict[str, Any]:
 
 def _validate(traps: Sequence[TrapSpec], config: ProviderConfig | None, repeats: int) -> None:
     """跑之前把三件事判死。**每一条错了都会让整轮白跑，所以在烧第一个 token 之前红。**"""
+    if _AMENDMENT_5_PROTOCOL_MARKER not in PROTOCOL_VERSION:
+        raise ValueError(
+            "M2 runner 已暂停：修正案 5 要求的长度、续写、reasoning 与证据格式"
+            "尚未完整实现。\n"
+            "等 PROTOCOL_VERSION 原子升级到修正案 1/2/3/4/5 后才能运行；"
+            "本拒绝早于建立目录、证据文件和任何模型请求。"
+        )
     if config is None:
         # 类型标注写着 `ProviderConfig`，但 Python 不检查它。这一条不是防御性编程：
         # `complete(config=None)` 会现读环境变量（ADR 0010 D5 点名的那个洞）。
