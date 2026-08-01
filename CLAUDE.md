@@ -11,7 +11,7 @@
 
 **按你要动的东西再补一份：**
 
-3. [`docs/UI_ARCHITECTURE.md`](docs/UI_ARCHITECTURE.md) —— **动 `frontend/` 或 `src/novel_harness/api/` 之前必读。** 把作者的 UI 设计稿（画的是 Neo4j + Qdrant + TipTap 的原始大架构）逐项落到现有 SQLite 引擎上的方案：四栏布局、27 条路由的契约、哪些能力要等 M2/M4。冲突以 ARCHITECTURE.md 为准。
+3. [`docs/UI_ARCHITECTURE.md`](docs/UI_ARCHITECTURE.md) —— **动 `frontend/` 或 `src/novel_harness/api/` 之前必读。** 把作者的 UI 设计稿（画的是 Neo4j + Qdrant + TipTap 的原始大架构）逐项落到现有 SQLite 引擎上的方案：**三栏**布局（顶栏 + 左 210px + 中 flex + 右 400px + 底栏）、路由契约表、哪些能力要等 M2/M4。冲突以 ARCHITECTURE.md 为准。
 4. [`docs/EVAL_PROTOCOL.md`](docs/EVAL_PROTOCOL.md) —— **动 `eval/` 或 `draft/` 之前必读。** M2 kill-gate 的预注册：三臂设计、判分口径、什么结果算项目核心主张成立、什么结果算它不成立。**看到结果再定及格线 = 作弊**，所以这份必须先于任何 `runs/*.jsonl` 存在。
 5. [`docs/PLAN.md`](docs/PLAN.md) —— 92KB 完整实施计划。**不要整份读**，按需 Grep（§5 技术裁决 / §7 里程碑 / §8 开工清单 / §9 骨架）。
 
@@ -72,6 +72,13 @@ uv run ruff check .
 uv run nh --help
 bash scripts/demo.sh                                                        # 心跳：端到端还通着吗
 
+# ── M2 kill-gate 的合成小册子（`synth/`，仪器不是产品，不进 wheel）────────────
+uv run python synth/build.py                # booklet.toml + booklet.txt → 库 + ground_truth.json
+uv run python -m synth.leak_selfcheck       # ⚠️ 必须 -m：它和 build.py 共用一份 schema，
+                                            #    `python synth/leak_selfcheck.py` 会 ImportError
+# 真跑一轮（**会调模型、会花钱**：25 陷阱 × 3 臂 × 3 次 = 225 次生成）。作者永远不敲这条。
+uv run nh gate --db synth/gate.db -p <pid> --ground-truth synth/ground_truth.json
+
 # ── 工作台的三层，别混 ──────────────────────────────────────────────────────
 # L1 日常开发（每分钟）：两个进程，热更新。改代码就走这条，不走 L2。
 uv run nh serve --db book.db --no-open                     # 只为建库，看到 URL 就 Ctrl-C
@@ -104,19 +111,34 @@ Vite 的 `outDir` 和 `api/app.py` 的 `_DIST` 是**两个必须同时改的字�
 
 ## 现在做到哪
 
-见 [`README.md`](README.md) 的路线图和 [`ARCHITECTURE.md` 的「当前状态」](docs/ARCHITECTURE.md#当前状态)（**那一节是权威，本节只是索引**）。**M2 进行中，620 个 pytest + 18 个 vitest 全绿。**
+见 [`README.md`](README.md) 的路线图和 [`ARCHITECTURE.md` 的「当前状态」](docs/ARCHITECTURE.md#当前状态)（**那一节是权威，本节只是索引**）。**M2 进行中，pytest + vitest 全绿。**
 
-已落地：数据层 / 图层 / panel / R4 / `text/{anchor,chapterize,scenes}` / 声明层 `declare.py` / `nh` 的 15 个子命令（M0+M1），
-FastAPI 壳（`api/`，27 条路由 + 32 个真库测试）+ React 工作台（`frontend/`，2857 行手写 TS/TSX，其中 278 行是测试）（M1.5）。`demo.sh` 心跳绿着。
-**前端 ↔ 后端契约由两头钉住**：`tests/test_frontend_contract.py` 从真 app dump 21 个端点的真出参冻成 `frontend/src/__fixtures__/api.json`（出参一改 pytest 红），组件测试吃**同一份** fixture（形状变了没改组件 vitest 红）。**别手写前端 fixture**——两份手写的东西互相验证正是这条缝原本的病。改了后端出参跑 `NH_UPDATE_FIXTURES=1 uv run pytest tests/test_frontend_contract.py` 然后看 git diff。
+> **本节不写数字。** 测试条数、路由条数、子命令数这类会随每次改动漂的量，
+> **唯一副本在 `ARCHITECTURE.md` 的「当前状态」**，这儿只留指针。
+> 2026-07-30 的审计发现「620 个 pytest」在三处、「27 条路由」在七处各躺一份拷贝，而真值早就变了——
+> 同「工作台的已知洞」那条规矩，且 `tests/test_doc_numbers.py` 现在会拦住重新抄一份的行为
+> （它钉运行时数得出来的那些；pytest / vitest 两个数它罩不住，仍靠人手改那一处）。
 
-**M2 kill-gate 的当前形状是「判分器先于被判者」**：`eval/{leak,score}.py`（集合判断泄漏 + 精确 McNemar/Holm）、
-`draft/provider.py`（统一模型出口）、`panel/constraints.secret_surfaces` 已落地并有测试；
-而 `draft/assemble.py`（三臂 `PromptForm` 本体）、`draft/context.py`、`confound_lint`、整个 `synth/`、runner、
-`score.decide()`（裁决表）、ADR 0009/0010 **一个字符都还没有**。在它们补齐前 kill-gate 跑不起来。
+已落地：数据层 / 图层 / panel / R4 / `text/{anchor,chapterize,scenes}` / 声明层 `declare.py` / `nh` 的子命令（M0+M1），
+FastAPI 壳（`api/`）+ React 工作台（`frontend/`，手写 TS/TSX）（M1.5）。`demo.sh` 心跳绿着。
+**前端 ↔ 后端契约由两头钉住**：`tests/test_frontend_contract.py` 从真 app dump 一批端点的真出参冻成 `frontend/src/__fixtures__/api.json`（出参一改 pytest 红），组件测试吃**同一份** fixture（形状变了没改组件 vitest 红）。**别手写前端 fixture**——两份手写的东西互相验证正是这条缝原本的病。改了后端出参跑 `NH_UPDATE_FIXTURES=1 uv run pytest tests/test_frontend_contract.py` 然后看 git diff。
+
+**M2 kill-gate 的链已经合拢，但还没通电。** 判分侧（`eval/{leak,score,confound_lint}.py`）、
+被判侧（`draft/{provider,context,assemble}.py`）、产出侧（`eval/runner.py` + `nh gate` + `synth/`）
+都已落地并有测试。**建造顺序「判分器先于被判者」是有意的**：先有卷子和判分口径再有被判的东西，
+「看到结果再定及格线」在结构上就做不到。
+**剩下的唯一一件事是接上真模型跑第一轮**（要一个 endpoint 和一笔预算），跑完才写 ADR 0009。
+**差集和依赖顺序以 [`ARCHITECTURE.md` 的「当前状态」](docs/ARCHITECTURE.md#当前状态)为准，那儿是唯一副本**——
+这份清单在 2026-07-30 之前两处拷贝一起过期，把三样已经写完、被 60 条测试覆盖着的东西说成「一个字符都没有」，
+照它排期的人会去重写已完成的工作。**「已做完文档说没做」比反过来更贵。**
+
 协议冻在 [`docs/EVAL_PROTOCOL.md`](docs/EVAL_PROTOCOL.md)，**2026-07-25 已单独提交（`0393088`），预注册成立**——
 它自称「先 commit 的 git 时间戳」是唯一证据，那条 commit 就是它（当时 `runs/` 还不存在）。
 **此后再改协议 = 改卷子**：真要改就开新的一份并说明改了什么，别覆盖那条 commit 的内容。
+**这件事已经做过四次**：`docs/EVAL_PROTOCOL_AMENDMENT_{1,2,3,4}.md`
+（口径不自洽 / 裁决表重叠 / 措辞歧义 / **`prior` 不许含 tell 让 gate 恒判 INVALID**），
+都另开文件、冻结正文一字未动、写下时 `runs/` 仍不存在，所以仍属预注册。
+**动 `eval/` 或 `draft/` 之前必读的是「协议 + 这四份修正案 + [ADR 0010](docs/adr/0010-writer-boundary.md)」，不是协议一份。**
 
 **四条真书验收，一条都没验。但堵点不一样，别用一句「缺一本书」盖过去**——其中两条**同时还缺代码**，
 书到手也验不了。在验之前这些数字都是未知，别在文档里替它们编一个：

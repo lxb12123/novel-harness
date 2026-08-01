@@ -806,7 +806,7 @@ novel-harness/
 │   └── leak_selfcheck.py
 ├── eval/
 │   ├── probe_gen.py
-│   ├── runner.py                  # 三臂 × 25 陷阱 × 3 次，断点续跑
+│   ├── runner.py                  # 三臂 × 25 陷阱 × 3 次，逐条 flush；旧 run 拒绝覆盖
 │   └── score.py                   # DuckDB + McNemar (statsmodels)
 ├── data/demo/                     # 随包分发的 12 章合成书（无版权）
 ├── tests/

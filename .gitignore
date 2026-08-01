@@ -5,6 +5,20 @@
 *.db
 books/
 
+# M2 kill-gate 的合成小册子（`synth/`）的**生成物**。TOML + TXT 入库，派生物不入库。
+# ground_truth.json 由 `synth/build.py` 走真实写入链从 booklet.toml 派生（协议 §4）——
+# commit 一份进来，`leak_selfcheck.py` 第 2 条就会去验一份和库无关的文件，
+# 而「派生对不对」正是它唯一在验的东西。
+# gate 用的临时库归上面那条 `*.db` 管；chapters/ 是 import_book 落盘的正文副本。
+synth/ground_truth.json
+synth/chapters/
+
+# ── `runs/` **故意不在这份名单里** ────────────────────────────────────────────
+# kill-gate 的 jsonl 是这个项目最核心的可查证物：预注册说「协议先于结果 commit」，
+# 而那句话只有在结果**也** commit 了的时候才可验证。不入库 = 读者只能听维护者转述裁决。
+# 体量算过：25 陷阱 × 3 臂 × 3 次 = 225 条生成记录（含完整 messages），单轮 MB 级，能入库。
+# 真到了大得离谱的那天，正确做法是**改成按轮归档**，不是悄悄 ignore 掉。
+
 # 前端构建产物（`npm run build` 落在包内，好让 uv_build 自动打进 wheel）。
 # 是生成物，不入库——但**它必须在 `uv build` 之前构建出来**，否则装出来的包没有工作台。
 # CI 的 packaging job 会验 wheel 里有没有它。

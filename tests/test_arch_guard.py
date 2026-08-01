@@ -262,6 +262,58 @@ def test_allowlist_stays_small() -> None:
     assert GRAPH_TABLE_OWNERS == frozenset({"db.py"})
     # api/deps.py 是 FastAPI 壳的装配层（唯一开连接处），与 cli.py 同性质。
     assert CONNECTION_OPENERS == frozenset({"db.py", "cli.py", "__main__.py", "api/deps.py"})
+    # 同理：遮蔽豁免名单长一个，就多一个「模块取不到」的地方。
+    assert SHADOW_GRANDFATHERED == frozenset({"novel_harness.text.chapterize"})
+
+
+SHADOW_GRANDFATHERED = frozenset({"novel_harness.text.chapterize"})
+"""下面那条守卫的既有例外。**只有一个成员，加第二个要在 PR 里回答「为什么不能改名」。**
+
+`chapterize` 这个函数名比包早：`importer.py` / `cli.py` / `test_importer.py` 都在用
+`from .text import chapterize`，改成模块优先要动三处调用方，而收益是零——
+`text/__init__` 已经把 `CHAPTER_RE` / `normalize` / `Chapter` 全部再出口了，
+`scripts/probe_speaker_tags.py` 走的又是 `from novel_harness.text.chapterize import ...`
+（这个写法不吃包属性，走 `sys.modules` 的尾模块，不受遮蔽影响）。
+**也就是说这一处遮蔽今天没有让任何东西取不到。** 新写的模块不许再进这份名单。
+"""
+
+
+def test_no_package_export_shadows_a_submodule() -> None:
+    """包级导出不许和子模块**同名**——同名会把那个子模块彻底遮死。
+
+    `eval/__init__.py` 里一句 `from .confound_lint import confound_lint` 就够：
+    import 机制先把子模块挂成包属性，紧接着这条 from-import 用函数覆盖掉它，此后
+
+        from novel_harness.eval import confound_lint      # → 函数
+        import novel_harness.eval.confound_lint as mod    # → 也是函数（3.7+ 先走 getattr）
+        mod.LEN_TOLERANCE                                 # → AttributeError
+
+    模块从此**没有任何一种写法拿得到**。这个坑实际踩过一次（2026-07-30 加包级导出时，
+    `tests/test_confound_lint.py` 当场红），`draft/assemble.py` 的 `assemble` 是同一个形状。
+    规矩因此是：与子模块同名的可调用对象一律不上包级，要它就从子模块直接 import。
+    """
+    import importlib
+    import types
+
+    offenders: list[str] = []
+    for init in sorted(SRC.rglob("__init__.py")):
+        pkg_dir = init.parent
+        dotted = "novel_harness" + "".join(f".{p}" for p in pkg_dir.relative_to(SRC).parts)
+        pkg = importlib.import_module(dotted)
+        for child in sorted(pkg_dir.glob("*.py")):
+            if child.stem == "__init__":
+                continue
+            full = f"{dotted}.{child.stem}"
+            if full in SHADOW_GRANDFATHERED:
+                continue
+            bound = getattr(pkg, child.stem, None)
+            if bound is not None and not isinstance(bound, types.ModuleType):
+                offenders.append(f"{full} 被 {type(bound).__name__} 遮住了")
+    assert not offenders, (
+        "包级导出遮住了同名子模块，那个子模块从此取不到：\n  "
+        + "\n  ".join(offenders)
+        + "\n改 __init__.py 把这个名字从导出里拿掉（子模块名优先），别改这条断言。"
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════

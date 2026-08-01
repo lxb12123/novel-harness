@@ -172,7 +172,9 @@ class TrapRuns(BaseModel):
 
     `leaked` 里存的是**这条陷阱所针对的那一类**泄漏（`kind='KNOWS'` 存
     `LeakResult.knows_violation`，`kind='FUTURE'` 存 `future_leak`）——协议 §4 的分层
-    「15 条 KNOWS / 10 条 FUTURE」说的就是每条陷阱各自瞄准一类。
+    说的就是每条陷阱各自瞄准一类。**具体数字以修正案 1 为准**：§4 冻结正文写的是
+    「约 15 条 KNOWS / 约 8 条 FUTURE」，而 15+8 ≠ §5 的 n=25，
+    `EVAL_PROTOCOL_AMENDMENT_1.md` 裁定为 **KNOWS 15 / FUTURE 10**。
     """
 
     model_config = ConfigDict(frozen=True)

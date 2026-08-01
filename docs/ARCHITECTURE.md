@@ -37,10 +37,10 @@
 
 ## 4. 分层
 
-> **这张图今天基本是现状了，只剩两处不是。** 标 ▓ 的两层、SQLite、终端里的 `nh`、FastAPI 壳、
+> **这张图今天基本是现状了，只剩一处不是。** 标 ▓ 的两层、SQLite、终端里的 `nh`、FastAPI 壳、
 > 浏览器面板都已存在；**图里写「只读，无编辑器」的那一格已经不准**——应用内 CodeMirror 6 编辑器
-> 进了 v1（ADR 0007 的时机松动，见该 ADR 的「修订」）。仍不存在的是：`draft/` 只有 `provider.py`
-> （三臂本体 `assemble.py` 未建），`extract/` 整个没有。逐项见[当前状态](#当前状态)。
+> 进了 v1（ADR 0007 的时机松动，见该 ADR 的「修订」）。`draft/` 三块（`provider` / `context` /
+> `assemble`）已齐；**仍完全不存在的只剩 `extract/`**。逐项见[当前状态](#当前状态)。
 
 ```
 ┌─ 浏览器面板（CodeMirror 6 编辑器，读写磁盘 md）── Vite + React
@@ -272,7 +272,22 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 
 ## 当前状态
 
-**M0 + M1 + M1.5 已落地，M2 进行中**（620 个 pytest + 18 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
+**M0 + M1 + M1.5 已落地，M2 代码已合拢等第一轮真模型**（806 个 pytest + 18 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
+
+> **本节的数字是全仓唯一副本，且 `tests/test_doc_numbers.py` 会拦住第二份。**
+> `README.md` / `CLAUDE.md` / `frontend/README.md` 里只留指针，不许再抄一份数字过去。
+> 这不是洁癖：2026-07-30 的审计发现「620 个 pytest」在三份文档里各躺一份、「27 条路由」躺了七份，
+> 而真值早已是 690 和 32——**改代码的人没有义务记得去改七个地方，所以这个病只能靠「只有一处」治**。
+> 同一次审计还发现更糟的一类：本节曾把三样**已经写完、且被 60 条测试覆盖着**的东西
+> （`test_draft_context.py` 12 + `test_eval_score.py` 40 + `test_api.py` 的 8 条 stub 断言）
+> 列在「还一个字符都没有」里——照它排期的人会去重写已完成的工作。
+> 同「工作台的已知洞」那节，唯一副本 + 别处指针。
+>
+> 守卫钉住的是**能在运行时数出来**的那些（路由 32 / `/api` 31 / 501 stub 5 / 错误映射 17 /
+> CLI 叶子 16 / 建表 13 / fixture 端点 21 / `ALL_CHECKS` 1），改错必红、**删掉也必红**（不静默 skip）。
+> **它罩不住 pytest / vitest 这两个数**——在 pytest 里数 pytest 要递归，
+> 所以「806」和「18」仍然只靠人手改，改代码后请顺手跑一次 `uv run pytest -q` 更新这一处。
+> （2026-07-30 那天这个数从 690 走到 801，中途在文档里错过一次——**这条盲区是真的，不是假想的**。）
 
 > ⚠️ **「全绿」目前只在本机成立。本仓库还没有 git remote，`ci.yml` / `release.yml` 一次都没执行过。**
 > 那三个 job（test / frontend / packaging）写好了、本机逐条手跑过，但**它们至今没有拦住过任何东西**。
@@ -286,13 +301,20 @@ panel/{knowledge,state,constraints}.py          ← 认知矩阵（头牌）+ PL
 checks/{base,location_conflict}.py              ← R4（`ALL_CHECKS` 至今只有这一条）
 text/{anchor,chapterize,scenes}.py              ← (para_index,quote,k) 唯一定义 / 切章 / 场景块
 declare.py  importer.py                         ← M1 声明层：引语定章号 + 证据链 + CanonWriter
-cli.py                                          ← nh 的 15 个子命令（含 `nh serve`）
-api/{app,deps}.py                               ← M1.5 FastAPI 壳：27 条路由 + 17 个错误映射
+cli.py                                          ← nh 的 16 个子命令（含 `nh serve` / `nh gate`）
+api/{app,deps}.py                               ← M1.5 FastAPI 壳：32 条自建路由 + 17 个错误映射
+                                                  （31 条 /api + 1 条 `GET /`；其中 5 条是 501 stub）
 frontend/src/                                   ← React 工作台：28 个手写源文件、2857 行 TS/TSX（278 行测试）
 frontend/src/__fixtures__/api.json              ← 从真 app dump 的 21 个端点出参（契约测试两头共用）
 novel_harness/webui/                            ← ↑ 的构建产物（生成物，不入库；随 wheel 分发）
 draft/provider.py                               ← M2：统一模型出口（OpenAI 兼容，三臂与生产共用）
-eval/{leak,score}.py                            ← M2：泄漏集合判断 + 精确 McNemar / Holm
+draft/context.py                                ← M2：`ResolvedConstraints`（cast 已解析 / X1X2 同一份矩阵，编码进类型）
+draft/assemble.py                               ← M2：三臂 `PromptForm` 本体（X0 是 X1/X2 的严格前缀，ADR 0010）
+eval/{leak,score}.py                            ← M2：泄漏集合判断 + 精确 McNemar / Holm + `decide()` 裁决表
+eval/confound_lint.py                           ← M2：X1 vs X2 除 form 外不许有第二处差异（§2 反混淆铁律）
+eval/runner.py                                  ← M2：三臂 × N 次 → 独占新建 `out_path` → `GateInput`
+                                                  （`nh gate` 默认写 `runs/`；全仓唯一同时碰两侧的代码）
+synth/                                          ← M2：合成小册子（12 章正文 + booklet.toml + build + selfcheck）；**不进 wheel**
 ```
 
 **「全绿」这句话曾经比它听起来的弱，现在不了。** 此前 `knowledge_matrix` 与 R4 的全部断言只跑在
@@ -303,15 +325,41 @@ Fake 够不着的（label 校验 / 重复边 StoreError / `secret_ids` 默认列
 
 `cli.py` 在此之前是**只有 `--version` 的空壳**；现在 `nh panel` 渲染的就是本文档
 开头那个框，走的是真 SqliteStoryGraph。面板不再只在终端里存在——同一个矩阵在浏览器工作台的右栏
-第一个 tab 里（`api/app.py` 的 27 条路由 + `frontend/src/components/KnowledgeMatrix.tsx`）。
+第一个 tab 里（`api/app.py` 的 32 条自建路由 + `frontend/src/components/KnowledgeMatrix.tsx`）。
 
-### M2 的当前形状：判分器先于被判者
+### M2 的当前形状：整条链已合拢，还没通电
+
+**判分器先于被判者**是这条链的建造顺序，不是偷懒：先有卷子和判分口径，再有被判的东西，
+「看到结果再定及格线」在结构上就做不到。到 2026-07-30 两侧都齐了，
+**剩下的唯一一件事是接上真模型跑第一轮**（那需要一个 endpoint 和一笔预算，见下）。
 
 已落地并有测试：`eval/leak.py`（草稿泄漏 = 纯集合判断，禁忌集只经 `panel/constraints`）、
 `eval/score.py`（`majority` / 精确 McNemar / `compare_arms` / Holm，零重依赖）、
+**`eval/score.decide()`**（FLOOR/CEILING 门 + 符号稳定 + `MIN_DISCORDANT` 的完整预注册裁决表，
+2026-07-27 补，`tests/test_eval_score.py` 40 条）、
 `draft/provider.py`（`ProviderConfig` frozen，三臂与生产共用同一次调用）、
+**`draft/context.py`**（`ResolvedConstraints`：把「cast 已解析」和「X1/X2 吃同一份矩阵」两条纪律
+从「runner 记得调 `require_resolved_cast`」升级成类型层强制，2026-07-27 补，12 条）、
 `panel/constraints.secret_surfaces`（秘密的**内容 tell**，排除进 prompt 的显示名标签）、
-**第 4 道 arch-guard `tests/test_draft_boundary.py`**（2026-07-27 补，11 条）。
+**第 4 道 arch-guard `tests/test_draft_boundary.py`**（2026-07-27 补，11 条）、
+**5 条 501 stub 路由**（UI_ARCHITECTURE §48 要的那 5 条，2026-07-27 补，`test_api.py` 8 条断言含
+「恰好 5 条」；`/draft` 是 EVAL_PROTOCOL 修正案 1 给 KILL 分支定的动作前提——**该前提现已满足**，
+修正案里那句「/draft 路由不存在」是写它那天的事实，兜底分支不再触发）、
+**`draft/assemble.py`**（三臂本体，2026-07-30 补，17 条：X0 是 X1/X2 的**严格前缀**由
+`x1[:-1] == x0[:-1]` 加一条尾部拼接断言钉死，不是一句自觉；`DEFAULT_HOUSE_STYLE` 三臂共用，
+里面**不许出现「秘密 / 不知道 / 泄露 / 剧透 / 伏笔 / 设定」**，另有一条关键词集合测试守着）、
+**`eval/confound_lint.py`**（2026-07-30 补，25 条：X1/X2 的人名集合差 + 可见字符长度比
+`max/min ≤ 1.15`；纯集合判断无分词器，空态一律判 `ok=False`）、
+**`eval/runner.py` + `nh gate`**（2026-08-01 收口，40 条：一条陷阱只调**一次** `scene_view()`
+喂两侧，`repeats ∈ {3,5}`，`config=None` 显式判死，完整 `messages` 原样进 `runs/*.jsonl`，
+结果文件独占新建、已存在则在第一次模型调用前拒绝且原样保留）、
+**[ADR 0010](adr/0010-writer-boundary.md)**（Writer 边界 D1–D6，**先于 `assemble.py` 定形**）、
+**[EVAL_PROTOCOL 修正案 4](EVAL_PROTOCOL_AMENDMENT_4.md)**（先于 `synth/` 定形，见下）。
+
+> ⚠️ **但 5 条 stub 只做完了一半。** 它们存在的唯一理由是 `app.py:857-874` 写的
+> 「让前端把按钮画成灰的，而不是把按钮藏起来」——而 `frontend/src` 对这 5 条端点**零调用、零按钮**，
+> `TopBar.tsx` 里没有 UI_ARCHITECTURE §152-153 要的 `<AIPlanBtn disabled>` / `<AIDraftBtn disabled>`。
+> 后端资产已就位，作者在界面上仍然看不见 M2/M4 的存在。
 
 第 4 道守卫钉的是**起草层与判分层之间那堵墙的两面**，两面都成立 kill-gate 才有意义：
 ① `eval/` 不许自建禁忌集（EVAL_PROTOCOL §3 点名要的那条）；② **`draft/` 永不拿 tell**——
@@ -322,17 +370,62 @@ Fake 够不着的（label 校验 / 重复边 StoreError / `secret_ids` 默认列
 「检测器命中的 tell」与「prompt 里的标签」两集合天然不相交的机械保证。
 实弹验过：往真目录种三个违规文件，三条守卫分别红并指到行，删掉回绿。
 
-**还一个字符都没有的**：`draft/assemble.py`（三臂 `PromptForm` 本体）、`draft/context.py`、
-`confound_lint`、整个 `synth/`（合成小册子 + 自检）、runner（`runs/*.jsonl` 的产出者）、
-`score.decide()`（FLOOR/CEILING 门 + 符号稳定 + `MIN_DISCORDANT` 的完整裁决表）、
-UI_ARCHITECTURE §48 要求的 5 条 501 stub 路由（其中 `/draft` 是 KILL 分支动作的前提）、
-ADR 0009 / 0010。
+**合成小册子 `synth/` 也已落地**（2026-07-30）：`booklet.txt`（12 章 / 每章 851–1114 字）、
+`booklet.toml`（6 人 / 5 个秘密共 **8 条知识边界** / 3 个未来实体 / **25 条陷阱 = 15 KNOWS + 10 FUTURE**，
+分层按修正案 1）、`build.py`（TOML → 走**真实写入链**落库 + 派生 `ground_truth.json`）、
+`leak_selfcheck.py`（§4 的放行条件 + 修正案 4 的裁定 B/C，全是精确比较，零语义判断；
+还逐项核对 TOML 与 ground truth 的 kind/chapter/cast/target/goal/prior/reference，旧派生物不能混过关）。
+**它不进 wheel**（顶层目录，`uv_build` 只打包 `src/novel_harness/`），派生物 `ground_truth.json`
+和 `chapters/` 在 `.gitignore` 里——`build.py` 重跑得出来，commit 一份进来反而会让自检
+去验一份和库无关的文件，而「派生对不对」正是它唯一在验的东西。
+
+`tests/test_synth.py`（28 条）测的是**机制**，用它自带的 3 章小号 fixture，故意不碰真小册子；
+`tests/test_synth_artifact.py`（5 条）测的是**那本书本身**——章数/边界数/陷阱分层对不对协议、
+`tell_aliases == secrets`、自检全绿、没有一条陷阱派生出空禁忌集，
+最后**把 25 条陷阱 × 3 臂 × 3 次整轮跑一遍**（真 runner、真 `assemble`、真判分，只把模型换成桩）。
+最后这条一次覆盖三件别处验不到的事：每条陷阱都走得通 `scene_view()`、`assemble()` 在真数据上
+渲染得出三臂、**`confound_ok` 是 True**。第三件尤其：它若为 False，§6 第 3 行摘掉 FORM-PIVOT，
+**决策 A 照评、结论照出**，只是少一个维度，而读结果的人不会知道它被摘过。
+
+**依赖顺序不是随便排的**（记在这儿是给以后重跑的人看）：ADR 0010 先于 `assemble.py` 定形——
+第 4 道守卫自己承认它拦不住「完整 PLANNED 进 prompt」（那要语义判断，ADR 0005 禁止），
+那条只有 review 和 ADR 0010 守得住。修正案 4 先于 `synth/booklet.toml`——`prior` 怎么造是它裁的。
+`synth/` 是最贵的一块且**一半不是写代码**：`declare_knows(quote=...)` 靠引语在正文里唯一命中派生
+`valid_from`，所以 12 章正文得先被人写出来、每条声明的引语在全书恰好命中一次。
+runner 的落点有硬约束：`tests/test_draft_boundary.py` 写明它必须落进 `eval/`，
+落到 `cli.py` 或顶层 `synth/` 就绕过整堵墙——它是**同时碰两侧的唯一一段代码**。
+`out_path` 同样是硬边界：runner 用独占新建而不是 `exists()` 后再写，两个进程撞名也只有一个能创建；
+旧 run 存在时早于 `scene_view()` 和第一次模型调用判死，原字节不变。这里没有覆盖、追加或断点续跑。
+
+**真正还没有的只剩一件：把 `nh gate` 接上一个真模型跑第一轮。** 它需要两样代码给不了的东西——
+一个 endpoint 和一笔预算（25 × 3 × 3 = 225 次生成）。跑完之前，
+`runs/` 不存在、ADR 0009 不写（协议 §8 定死它「跑完写」）、任何地方都不会出现泄漏率数字。
+**`runs/` 故意不在 `.gitignore` 里**：预注册说「协议先于结果 commit」，
+而那句话只有在结果**也** commit 了的时候才可验证。
 
 协议冻在 [`EVAL_PROTOCOL.md`](EVAL_PROTOCOL.md)，**已于 2026-07-25 单独提交进 git（`0393088`,
 `2026-07-25T16:19:00-04:00`）——预注册到此成立**。它第 11 行把「先 commit 的 git 时间戳」定义成
 预注册成立的**唯一**证据，那条 commit 就是它；提交时 `runs/` 不存在、一次生成都没跑过，
 所以之后任何 `runs/*.jsonl` 都晚于它、都算数。**这条 commit 之后再改协议就等于改卷子**——
 真要改，开一份新的、说明改了什么和为什么，别覆盖。
+
+**它此后已经被改过四次，改法合规但你必须知道它们存在**：
+[`EVAL_PROTOCOL_AMENDMENT_1.md`](EVAL_PROTOCOL_AMENDMENT_1.md)（两处口径不自洽）、
+[`_2`](EVAL_PROTOCOL_AMENDMENT_2.md) / [`_3`](EVAL_PROTOCOL_AMENDMENT_3.md)（裁决表重叠 + 三处措辞歧义）、
+[`_4`](EVAL_PROTOCOL_AMENDMENT_4.md)（**§4 的「`prior` 不许含 tell」让整台仪器不通电**）。
+四份都是**另开文件**、冻结正文逐字节未动（`git diff 0393088 HEAD -- EVAL_PROTOCOL.md` 只有索引头那几行），
+且写下时 `runs/` 仍不存在——所以仍属预注册。
+**动 `eval/` 或 `draft/` 之前要读的是「协议 + 这四份修正案」，不是协议一份。**
+
+> 第 4 份值得单独说一句，因为它是**第一份往对本项目有利的方向裁的**（前三份里修正案 1 明确
+> 选了对自己更不利的 15/10）。它发现的是：tell 是唯一生造的专名，而 X0 的 prompt 里只有
+> house-style + `prior` + `goal`、零图谱事实——若 `prior` 一个字不许提 tell，
+> **X0 物理上够不着那个字符串**，泄漏率恒 ≈ 0，撞 §6 第一行的地板 → 永远 INVALID。
+> 「一个永远判 INVALID 的 kill-gate 不是严格，是坏了」。
+> 裁定把禁令改读成「不许让**目标角色**已经知道它」（叙述层可以出现），
+> 并把「`goal` 一律不许含 tell」升级成 `synth/leak_selfcheck.py` 的机器判据。
+> **它没有碰 §6 的任何阈值**——[0.50, 0.90] 那两道门本来就是为「陷阱强度」设的，
+> 而陷阱强度正是这条裁定动的旋钮，协议早就规定了它的合法区间。
 
 ### 四条真书验收，一条都没验（**堵点不是同一个**）
 
@@ -362,8 +455,9 @@ ADR 0009 / 0010。
   而 R4 是「作者声明 vs 作者声明，不读正文，零 FP」。真书一到手就跑 `nh check`，
   输出接近 0 条 issue，于是**自动「通过」这条门槛**——一张漂亮的空表 + exit 0，
   正是 `demo.sh` 注释里点名要防的那种坏法。要先有 R2/R3 在跑，这条门槛才承载得起它的意思。
-  顺带：M3 的「什么算误报」**至今没有预注册**（`PLAN.md` 自称「定义已预注册」，那个定义不存在），
+  顺带：M3 的「什么算误报」**至今没有预注册**——全仓没有任何地方定义「什么算误报」，
   而 M2 花了整整一条 commit 建立的就是这条纪律。
+  （`PLAN.md` 曾自称「定义已预注册」，2026-07-27 它自己改口了，本节此前一直在批评一句已经不存在的话。）
 
 **合成小册子不能顶替它们中的任何一条**：它有强制说话人标签、强制唯一 tell，测的是注入机制不是真书行为
 （EVAL_PROTOCOL.md §7 已把这条免责一并预注册）。
@@ -408,7 +502,9 @@ ADR 0009 / 0010。
    规模：vitest 18 条（认知矩阵三态 / 左栏空态 / 花名册抽屉的 ADR 0004 提示与拒绝形态）。
    **剩下的**：只有 3 个组件有测试，`CenterEditor` / `LocalGraph` / `BottomBar` 等仍是零。
 
-**仍完全不存在的**：`extract/`（M4）。
+**仍完全不存在的**：`extract/`（M4）、`text/mentions.py`（R2/R3/R5 与花名册验收的共同前置）。
+（这一行 2026-07-30 之前还挂着 `synth/` 和 `draft/assemble.py`，那天两样都落地了。
+留个记号：这一行**只列代码**——「代码有了但没跑过」是另一回事，见上面 M2 那节最后一段。）
 
 `scripts/demo.sh` 心跳已经在跑，绿的。但它量的是接缝，喂的是手写 fixture——**它不替代上面任何一条真书验收**。
 

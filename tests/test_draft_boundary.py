@@ -62,8 +62,8 @@ WRITER_DIRS = frozenset({"draft"})
 SCORER_DIRS = frozenset({"eval"})
 """判分层：泄漏检测 + 统计。**它是「判分的那个」。**
 
-runner（`runs/*.jsonl` 的产出者）今天还不存在。它落在这儿最合适——落进来就自动被罩住，
-而落在 `cli.py` 或顶层 `synth/` 就绕过了整堵墙。这不是风格问题：runner 是**同时**碰
+runner（`runs/*.jsonl` 的产出者）已经落在这里，因此自动被本守卫罩住；若把它移到
+`cli.py` 或顶层 `synth/` 就会绕过整堵墙。这不是风格问题：runner 是**同时**碰
 两侧的唯一一段代码，它在墙外意味着墙的两面都可以被它一个人破掉。
 """
 
@@ -275,9 +275,9 @@ def test_the_banned_sets_stay_put() -> None:
 # 守卫自己的守卫
 # ══════════════════════════════════════════════════════════════════════════
 #
-# 这道守卫今天扫的两个目录**几乎是空的**（`draft/` 只有 provider.py，`eval/` 只有
-# leak.py + score.py），所以「五条全绿」这件事本身几乎不携带信息量——真正要证明的是
-# **扫描器看得见违规**。下面把每一种会真的发生的绕法作为 fixture 喂进去。
+# 这道守卫最初落地时扫的两个目录几乎是空的；今天 `assemble.py`、`confound_lint.py`、runner
+# 都已进入扫描面。无论目录大小，「五条全绿」仍不足以证明扫描器有效，所以继续用下面的
+# 违规 fixture 证明它确实看得见每一种绕法。
 
 ECHO_PROBE = '''
 from __future__ import annotations

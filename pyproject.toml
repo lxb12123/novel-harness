@@ -14,7 +14,11 @@ classifiers = [
     "Topic :: Text Processing :: Linguistic",
 ]
 dependencies = [
-    "anthropic>=0.116.0",
+    # ⚠️ 这份清单会原样装进小说作者的机器。加之前先问：有代码 import 它吗？
+    # 2026-07-30 删掉了 `anthropic>=0.116.0`——全仓零 import，而 draft/provider.py
+    # 顶上明写着「别「顺手」换回 anthropic 原生 SDK」（统一走 OpenAI 兼容出口，
+    # 换供应商只改 base_url，三臂与生产才可能是同一次调用）。留着它等于一边写这条纪律、
+    # 一边把违反它需要的包预装好。
     "fastapi>=0.139.2",
     "jieba>=0.42.1",
     "openai>=2.47.0",

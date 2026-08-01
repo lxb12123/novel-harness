@@ -9,7 +9,7 @@
 **改 `.tsx` 浏览器 0.1 秒自己刷新，改 `.py` 后端自己重启**——这是热更新，`nh serve` 没有。
 
 ```bash
-# 0) 造一个空库（只要一次。建书/导入之后都在浏览器里做；但**建人物/别名今天还必须回终端**）
+# 0) 造一个空库（只要一次。建书/导入/建人物/别名都在浏览器里做，见下面「现在做到哪」）
 cd ..
 uv run nh serve --db book.db --no-open   # 建库 + 起服务，看到 URL 就 Ctrl-C；库留下了
 
@@ -61,8 +61,10 @@ npm run test:watch
 ```
 
 **fixture 不是手写的，别手写。** `src/__fixtures__/api.json` 由
-`tests/test_frontend_contract.py` 从真 app（`TestClient` + 真 SQLite）dump 21 个端点的
+`tests/test_frontend_contract.py` 从真 app（`TestClient` + 真 SQLite）dump 一批端点的
 真响应，规范化掉 ULID / 时间戳 / 路径之后冻住；组件测试吃的就是这一份。
+（**端点条数不在这儿写**——那类会漂的数字唯一副本在
+[ARCHITECTURE 的「当前状态」](../docs/ARCHITECTURE.md#当前状态)，`tests/test_doc_numbers.py` 拦第二份。）
 
 这条缝两头各有守卫，缺一头都拦不住「后端改了、前端没跟上、还没人发现」：
 

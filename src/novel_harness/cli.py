@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import socket
@@ -35,7 +36,7 @@ import webbrowser
 from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 
 import typer
 from pydantic import ValidationError
@@ -67,11 +68,21 @@ from .graph import (
 from .graph.sqlite_store import SqliteStoryGraph
 from .importer import ImportRefused, SyncRefused, import_book
 from .importer import sync as sync_chapters
-from .panel import SceneConstraints, knowledge_matrix, resolve_cast, scene_constraints
+from .panel import (
+    SceneConstraints,
+    UnresolvedCast,
+    knowledge_matrix,
+    resolve_cast,
+    scene_constraints,
+)
 from .project import Project
 from .project import create as create_project
 from .project import get as get_project
 from .text import chapterize, parse_scenes
+from .text import paragraphs as split_paragraphs
+
+if TYPE_CHECKING:  # `nh gate` 的裁决类型。**运行期不 import**——见 `gate()` 里那段
+    from .eval.score import GateDecision  # 「不为一个永远不跑的实验装置买单」的理由。
 
 app = typer.Typer(
     add_completion=False,
@@ -856,11 +867,13 @@ def check(
     # 一份 list，两个消费者（parse_scenes 的 para_index 和 CheckContext.paragraphs），
     # 于是 para_index 在这个进程里**只有一个含义**——这正是 parse_scenes 那句
     # 「本函数不收裸文本，只收段落」要的东西。
-    # ⚠️ 但「什么是一段」在本仓库还没有唯一定义：chapterize.py 提到的 text/anchor.py
-    # 尚不存在。M3 它落地时，这一行必须换成调它，**且两个消费者要一起换**——只换一个，
-    # R4 的 Issue 就会锚到隔壁段落，且是「偶尔差一两段」那种查两周的形态（ADR 0006 对
-    # offset 的判词，一字不差地适用于 para_index 的两份定义）。
-    paragraphs = file.read_text(encoding="utf-8-sig").splitlines()
+    # 走 anchor.paragraphs() 而不是裸 splitlines()：那个函数存在的全部理由就是让
+    # 「什么是一段」只有一处定义（它的 docstring 点名的两个消费者就是这儿和证据锚）。
+    # 这两者今天逐字节同解，所以这一行换过来时行为零变化——**换的是「改一处就全改」这个性质**：
+    # 从前 api/app.py 走它、这儿不走，paragraphs() 一改（比如改成按空行分段）就会静默分叉，
+    # R4 的 Issue 锚到隔壁段落，且是「偶尔差一两段」那种查两周的形态
+    # （ADR 0006 判 offset 的那段话，一字不差地适用于 para_index 的两份定义）。
+    paragraphs = split_paragraphs(file.read_text(encoding="utf-8-sig"))
     scenes = parse_scenes(paragraphs)
     if not scenes:
         _die(
@@ -894,6 +907,158 @@ def check(
         typer.echo("")
         typer.echo(_issue_text(issue))
     raise typer.Exit(1)
+
+
+@app.command()
+def gate(
+    db: Path = typer.Option(..., "--db", help="SQLite 库（合成小册子那本）"),
+    project: str = typer.Option(..., "--project", "-p", help="project_id"),
+    ground_truth: Path = typer.Option(
+        ..., "--ground-truth", help="synth/build.py 生成的 ground_truth.json"
+    ),
+    repeats: int = typer.Option(3, "--repeats", help="每条陷阱每臂跑几次。**只接受 3 或 5**"),
+    out: Path | None = typer.Option(
+        None,
+        "--out",
+        help="jsonl 落盘路径。默认 runs/<时间戳>.jsonl；已有文件拒绝覆盖",
+    ),
+) -> None:
+    """跑一轮 M2 kill-gate：三臂 × N 次 → 落盘 → 打印预注册裁决表的结论。
+
+    **这条命令会真的调模型、真的花钱**（25 条陷阱 × 3 臂 × 3 次 = 225 次生成）。
+    它是仪器不是产品：小说作者永远不需要敲它，敲它的是维护者。
+
+    裁决表冻在 `docs/EVAL_PROTOCOL.md` §6（+ 四份修正案），**跑之前就定死了**。
+    这条命令不解释结果、不挑分支——它只把 `score.decide()` 的出参印出来。
+
+    **INVALID 退出码非 0**：那一档的含义是「仪器坏了，重造陷阱重跑」，这一轮没有
+    产出任何关于命题的证据。PASS / KILL / INCONCLUSIVE 都是一次有效实验的合法结论，
+    退出码 0——把 KILL 判成「命令失败」等于说「结论不合我意就是出错」。
+    """
+    # 只有这条命令会用到起草层和判分层（`draft/assemble` + 整个 `eval/`）。放在函数体里，
+    # 同 `nh serve` 对 uvicorn 的处理：`nh declare` 一天敲几十次，不该为一个它永远不跑的
+    # 实验装置买单。
+    from .draft.provider import ProviderConfig, ProviderError
+    from .eval.runner import load_traps, run_gate, stamped_path
+    from .eval.score import Verdict, decide
+
+    if not ground_truth.exists():
+        _die(
+            f"ground truth 不存在：{ground_truth}\n"
+            "它是 synth/build.py 的生成物（不入库），先造小册子再跑 gate。"
+        )
+    store = _open_store(db, project)
+
+    try:
+        data = json.loads(ground_truth.read_text(encoding="utf-8"))
+        stated = data.get("project_id")
+        if stated and stated != project:
+            # 拿 A 书的 ground truth 去跑 B 书的库，`scene_view` 多半照样算得出约束
+            # （另一本书里也有秘密），只是算的不是这些陷阱瞄的那些——一整轮的数字会
+            # 看起来很正常，而它们不说明任何事。
+            _die(
+                f"ground truth 是给项目 {stated} 造的，而 --project 是 {project}。\n"
+                "对不上就不跑：陷阱瞄的那些边界在另一个项目里不存在，算出来的约束是别的东西，\n"
+                "而那一轮的数字看起来会完全正常。"
+            )
+        traps = load_traps(data)
+    except (ValueError, OSError) as exc:
+        _die(f"✗ 读不了 {ground_truth}：{_reason(exc)}")
+
+    try:
+        config = ProviderConfig.from_env()
+    except ValidationError as exc:
+        _die(
+            f"✗ 模型没配好：{_reason(exc)}\n"
+            "  gate 要真的调模型。三个环境变量：\n"
+            "    export NH_LLM_BASE_URL=http://localhost:11434/v1   # 本地 Ollama\n"
+            "    export NH_LLM_MODEL=deepseek-chat                  # 端点上真有的模型名\n"
+            "    export NH_LLM_API_KEY=...                          # 本地端点可以随便填\n"
+            "  base_url 和 model 必须是**匹配的一对**——端点上没有这个模型名，发出去就是 404。"
+        )
+
+    out_path = out if out is not None else stamped_path(Path("runs"))
+    try:
+        gate_input = run_gate(
+            store,
+            project,
+            traps,
+            config=config,
+            repeats=repeats,
+            out_path=out_path,
+        )
+        decision = decide(gate_input)
+    except ProviderError as exc:
+        _die(f"✗ 模型调用失败，这一轮没跑完：{exc}\n  已经烧掉的那些生成在 {out_path} 里。")
+    except (ValueError, StoreError, UnresolvedCast) as exc:
+        _die(f"✗ {_reason(exc)}")
+
+    # 「跑了几条陷阱、几次生成」是这条命令的**成功输出本身**，不是装饰（同 `nh check` 的
+    # 「跑了几条规则」）。一份零陷阱的 run 会打印一张漂亮的裁决表 + exit 0，而
+    # `decide()` 那边的空集断言只在陷阱集为空时才拦得住——数字印出来，人一眼看得见。
+    generations = len(gate_input.traps) * len(("x0", "x1", "x2")) * repeats
+    lines_on_disk = sum(1 for _ in out_path.open(encoding="utf-8"))
+    typer.echo(
+        f"✓ 跑完：{len(gate_input.traps)} 条陷阱 × 3 臂 × {repeats} 次 = {generations} 次生成"
+        f"（另 {len(gate_input.traps)} 次 reference 判分）。\n"
+        f"  落盘 {lines_on_disk} 行：{out_path}\n"
+        f"  每一次生成的**完整 prompt** 都在里面——「tell 漏进 prompt」这个最贵的错误，"
+        "唯一的发现办法是人去读它（ADR 0010）。"
+    )
+    typer.echo(_box(f"kill-gate 裁决 · {decision.verdict.value}", _gate_lines(decision, repeats)))
+    if decision.verdict is Verdict.INVALID:
+        raise typer.Exit(1)
+
+
+def _gate_lines(decision: GateDecision, repeats: int) -> list[str]:
+    """裁决的全部依据，**逐条印出来**。
+
+    ADR 0009 直接抄这几行，所以这里不许只印一个 verdict：一份说不出自己怎么来的裁决，
+    读者没法复算，而「任何人拿同一份 runs/*.jsonl 都能重算出同一个结论」正是
+    `decide()` 被写成纯函数的理由。
+    """
+    out = [
+        f"命中规则：{decision.rule}",
+        f"动作：{decision.action}",
+        "",
+        f"n(KNOWS)={decision.n_knows}  n(FUTURE)={decision.n_future}  重复={repeats}",
+        f"X0 的 KNOWS 泄漏率：{decision.x0_knows_leak:.2f}"
+        "（地板 0.50 / 天花板 0.90，落在区间外判 INVALID）",
+        "",
+    ]
+    out += _table(
+        ["比较", "n", "leak(a)", "leak(b)", "Δ", "b_only", "c_only", "p", "Holm p", "符号稳定"],
+        [
+            [
+                c.name,
+                str(c.n),
+                f"{c.leak_a:.2f}",
+                f"{c.leak_b:.2f}",
+                f"{c.delta:+.2f}",
+                str(c.b_only),
+                str(c.c_only),
+                f"{c.p_exact:.4f}",
+                f"{decision.holm_p.get(c.name, float('nan')):.4f}",
+                "✓" if decision.sign_stable.get(c.name) else "✗",
+            ]
+            for c in decision.comparisons
+        ],
+    )
+    if decision.eligible_arms:
+        out += ["", f"「该臂」（取到 max Δ）：{'、'.join(decision.eligible_arms)}"]
+    for arm, checks in decision.pass_checks.items():
+        flags = "  ".join(f"{k}={'✓' if v else '✗'}" for k, v in checks.items())
+        out.append(f"  {arm}：{flags}")
+    if decision.future_floor:
+        floor = "  ".join(f"{k}={v:.2f}" for k, v in decision.future_floor.items())
+        # FUTURE 只作**描述性地板**（§3 / 修正案 4 裁定 C 的 echo 探针），不参与裁决。
+        # 不写这句话，下一个读者会拿它当第二个 kill-gate。
+        out += ["", f"FUTURE 泄漏率（描述性，不参与裁决）：{floor}"]
+    if decision.form_pivot:
+        out += ["", "FORM 重要：X2 显著优于 X1 → 生产默认翻成 NH_DRAFT_FORM=X2，重跑确认。"]
+    for note in decision.notes:
+        out.append(f"⚠ {note}")
+    return out
 
 
 def _issue_text(issue: Issue) -> str:

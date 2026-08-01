@@ -1,10 +1,11 @@
 # Novel Harness UI 架构：写作工作台（落在精简引擎上）
 
-> **这份文档回答一件事：怎么把「给不会写代码的小说作者用的可视化工作台」做出来，而不推翻 [ARCHITECTURE.md](ARCHITECTURE.md) 和 8 份 ADR。**
+> **这份文档回答一件事：怎么把「给不会写代码的小说作者用的可视化工作台」做出来，而不推翻 [ARCHITECTURE.md](ARCHITECTURE.md) 和现有 ADR。**
 >
 > 它把作者的 UI 设计文档（`~/Downloads/Novel Harness UI Design.docx`，写的是原始大架构：Neo4j + Qdrant + PostgreSQL + Harness Kernel + 全书抽取 + Validator + TipTap）**逐项落到现有 SQLite 引擎上**。凡是要靠 M2 起草 / M4 抽取 / 向量检索才有的，明确标「后续」，不画饼。
 >
-> 与 ARCHITECTURE.md 的关系：那份画的是**目标形态**（§4 就写了「浏览器面板 + FastAPI 壳还没写」）。这份是把那两层**具体设计出来**的第一版方案。冲突以 ARCHITECTURE.md 为准。
+> 与 ARCHITECTURE.md 的关系：那份同时记录**目标形态与当前状态**，本文件是 UI 两层的具体方案。
+> 实现推进后这里可能落后；冲突一律以 ARCHITECTURE.md 的「当前状态」为准。
 
 ## 0. 为什么是这份，不是那份大架构
 
@@ -17,7 +18,7 @@
 | 状态 | 数量 | 含义 |
 |---|---|---|
 | 🟢 **现在能做** | ~35 | 现有引擎直接供数据，只差 HTTP 壳 + React |
-| 🟡 **M2（起草）** | 7 | AI 规划/起草/生成/接受，`draft/` 未建，过 kill-gate 才验证留存 |
+| 🟡 **M2（起草）** | 7 | AI 规划/起草/生成/接受；三臂、runner 与 `nh gate` 已落地，但真模型 kill-gate 尚未运行，产品 UI 仍保持 501/灰置语义 |
 | 🟠 **M4（抽取）** | 4 | 变更确认页、自动提取变化，`extract/` 未建，`proposal_set` 表空 |
 | 🔵 **v1.1（向量）** | 1 | Tab3 检索分数/语义检索，ADR 0002 触发条件制 |
 | ⚫ **永久砍** | 2 | 事件因果图 + 「新增事件」，无 Event 节点、无 CAUSES 边（ADR 0005） |
@@ -33,7 +34,9 @@
 
 ## 1. 后端：FastAPI 薄壳（不装业务）
 
-原则（ARCHITECTURE §4）：**壳只把现有引擎函数暴露成 HTTP，不写业务。** 出参已经全是 Pydantic（`KnowledgeMatrix` / `StateSnapshot` / `Subgraph` / `SceneConstraints` / `Issue` / `Declaration`…），**直接当 API response schema**，用 `openapi-typescript` 生成前端类型，两端零手写 DTO。
+原则（ARCHITECTURE §4）：**壳只把现有引擎函数暴露成 HTTP，不写业务。** 出参大半是 Pydantic（`KnowledgeMatrix` / `StateSnapshot` / `Subgraph` / `SceneConstraints` / `Issue` / `Declaration`…），**直接当 API response schema**。
+
+⚠️ **「用 `openapi-typescript` 生成、两端零手写 DTO」是原计划，今天没兑现，而且方向是反的**：收窄端点（`resolve` / `subgraph` / `state` / `nodes`）为了 `_narrow` 出 dict、签名是 `-> Any`，openapi 里没有 response schema，生成出来是 `unknown`。生成物 `frontend/src/api/schema.ts` 落后于壳（漏掉 `evidence` / `history` / `scenes` / 5 条 stub 等一批路径）、**全仓零 import**，而且它在 `frontend/.gitignore` 里——是个没人用的本地生成物。真正被前端消费的是**手写**的 `frontend/src/api/types.ts`（文件头自陈了原因，`frontend/README.md` 也记了）。要兑现得先给收窄端点补 `response_model`。
 
 ### 1.1 装配与项目隔离
 
@@ -46,25 +49,31 @@
 ### 1.2 端点清单
 
 > `status`：🟢=BACKED_NOW（现在能做）· 🟡=STUB_M2 · 🟠=STUB_M4。所有 🟡🟠 端点返回稳定的 `501 {status:'not_implemented', milestone}`，让前端**灰置**按钮而不是 404。
+>
+> 读这张表的两个前提：**Path 一律省了 `/api` 前缀**（真实路径是 `/api/projects/…`），表里也不列 `GET /`（SPA 入口，不是 API）。**5 条 🟡🟠 stub 今天是真实存在的端点**（`api/app.py`，commit `9f12fab`）——后端那一半兑现了，前端灰按钮那一半还没做（§2.2 末的现状标注）。
 
-| Method | Path | 调哪个引擎函数 | 响应（Pydantic） | 状态 |
+| Method | Path | 调哪个引擎函数 | 响应（Pydantic 或收窄后的 dict） | 状态 |
 |---|---|---|---|---|
 | POST | `/projects` | `project.create` | `Project` | 🟢 |
-| GET | `/projects` | `project.list`（**需新增 1 行**，非图表不违反守卫） | `list[Project]` | 🟢 |
+| GET | `/projects` | `project.list_all`（非图表不违反守卫） | `list[Project]` | 🟢 |
 | GET | `/projects/{pid}` | `project.get` | `Project`（None→404） | 🟢 |
 | POST | `/projects/{pid}/import` | `importer.import_book` | `ImportReport` | 🟢 |
 | POST | `/projects/{pid}/sync` | `importer.sync` | `SyncReport` | 🟢 |
-| GET | `/projects/{pid}/chapters` | 读 `chapter` 表 / `current_snapshots` | `list[ChapterText]` | 🟢 |
-| GET | `/projects/{pid}/chapters/{n}/text` | **读磁盘** `{root}/chapters/{n:04d}.md` | raw markdown | 🟢 |
+| GET | `/projects/{pid}/chapters` | **扫磁盘** `{root}/chapters/*.md` | `list[{number,title}]`（title=首个非空行） | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/text` | **读磁盘** `{root}/chapters/{n:04d}.md` | `{number, markdown}` | 🟢 |
 | PUT | `/projects/{pid}/chapters/{n}/text` | **写磁盘** → `importer.sync` | `SyncReport` | 🟢 |
-| GET | `/projects/{pid}/roster?label=` | `store.resolve(surfaces=None)` | `list[Resolution]` | 🟢 |
-| GET | `/projects/{pid}/resolve?surface=` | `store.resolve([surface])` | `list[Resolution]` | 🟢 |
-| GET | `/projects/{pid}/chapters/{n}/matrix?cast=&scope=` | `resolve_cast` → `panel.knowledge_matrix` | `KnowledgeMatrix` | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/history` | `store.chapter_snapshots` | `list[ChapterSnapshot]`（带 text 供前端 diff；**内容去重、非全量版本史**） | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/scenes` | `text.paragraphs` → `parse_scenes` | `list[Scene]`（cast/loc/goal 全是称呼原文，不解析） | 🟢 |
+| PUT | `/projects/{pid}/chapters/{n}/scenes` | `write_scene_directive` → `importer.sync` | `list[Scene]`（回写后**重新解析**的，不是前端以为写进去的） | 🟢 |
+| GET | `/projects/{pid}/roster` | `store.resolve(surfaces=None)` | `list[{id,label,name}]`（**不整体序列化 `Node.props`**）·⚠️设计里的 `?label=` **后端没实现**：出全项目，按 label 分组是前端 `LeftRail` 做的 | 🟢 |
+| GET | `/projects/{pid}/resolve?surface=` | `store.resolve([surface])` | `{surface, ambiguous, unique_id, hits[]}`（hits 一律收窄成 `NodeRef`） | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/matrix?cast=` | `resolve_cast` → `panel.knowledge_matrix` | `KnowledgeMatrix`·⚠️设计里还有 `&scope=`，**后端没实现**（见末条陷阱） | 🟢 |
 | GET | `/projects/{pid}/chapters/{n}/constraints?cast=` | `panel.scene_constraints`（收原始称呼） | `SceneConstraints` | 🟢 |
-| GET | `/projects/{pid}/chapters/{n}/state?cast=&scope=` | `resolve_cast` → `panel.cast_states` | `list[StateSnapshot]` | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/state?cast=` | `resolve_cast` → `panel.cast_states` | `list[StateSnapshot]`·⚠️设计里还有 `&scope=`，**后端没实现**（见末条陷阱） | 🟢 |
 | GET | `/projects/{pid}/characters/{node_id}/state?chapter=` | `panel.character_state` | `StateSnapshot` | 🟢 |
 | GET | `/projects/{pid}/subgraph?center=&chapter=&hops=&edge_types=` | `store.subgraph`（hops≤2） | `Subgraph` | 🟢 |
-| POST | `/projects/{pid}/chapters/{n}/check` | `parse_scenes` → `run_checks` | `list[Issue]` | 🟢 |
+| GET | `/projects/{pid}/evidence/{evidence_id}` | `store.get_evidence` | `{id, chapter_number, quote_text, anchor}`（扁平；**不给 score**，v1 没有向量） | 🟢 |
+| POST | `/projects/{pid}/chapters/{n}/check` | `parse_scenes` → `run_checks` | `{chapter, scene_count, rules_run, issues}`——**不是裸 `list[Issue]`**：静默的零和真的零不许长得一样（0 个场景块 = R4 无事可做 = 必然零 issue，那个零不是「这章没问题」） | 🟢 |
 | POST | `/projects/{pid}/locate` | `Ledger.locate` | `list[QuoteCandidate]` | 🟢 |
 | POST | `/projects/{pid}/nodes` | `Ledger.declare_node` | `Node` | 🟢 |
 | POST | `/projects/{pid}/aliases` | `Ledger.declare_alias` | `StoredAlias` | 🟢 |
@@ -82,7 +91,7 @@
 - **`/matrix` 必须走 `panel.knowledge_matrix` 不是 `store.knowledge_matrix`**——只有 panel 包装器挂 `unresolved_cast`。直调 store 会**静默丢掉「作者声明了但解析不出的人」那一行**，正是本项目要防的漏洞。
 - **原始称呼 vs node_id 是故意不一致的**：`scene_constraints` + 全部 `/declare/*` 收**作者原始称呼**（内部自解析，调用方没机会弄丢人）；`knowledge_matrix` / `character_state` / `cast_states` 收**已解析的 node_id**。`/matrix` 和 `/state` 先调 `resolve_cast` 喂 `.ids` + `.unresolved`；`/constraints` 把 `?cast=` 原样透传。
 - **出参收窄防泄密**：`resolve`（roster）和 `subgraph` 出**完整 `Node`**，而 `NodeProps` 是 `extra="allow"`——一个 Secret/未来节点会把作者写的 `props.twist`/`plot_note` 序列化出去。壳必须把任何 `label=Secret` 或 `first_appears>chapter` 的节点**收窄成 `NodeRef.of(node)`** 再 JSON（矩阵/约束/forbidden 已经是 `NodeRef`，安全）。
-- **PROVISIONAL 灰显是独立第二次调用**（`scope=PROVISIONAL`），永不混进 CANON 响应（§5.4：PROVISIONAL 永不断言为真）。`PLANNED`/`REJECTED` 被 `require_queryable_scope` 拒 → 422。
+- **PROVISIONAL 灰显设计成独立第二次调用**（`scope=PROVISIONAL`），永不混进 CANON 响应（§5.4：PROVISIONAL 永不断言为真）；兑现时 `PLANNED`/`REJECTED` 要被 `require_queryable_scope` 拒 → 422。**但今天没有这个入口**：`/matrix` 和 `/state` 里 scope 硬编码 `InformationScope.CANON`，`?scope=` 一个字符都没实现，所以 v1 的界面上根本没有灰显那一层。设计留着不删——它是那条能力的载体，删了下次就得重新想一遍为什么要分两次调用。
 
 ### 1.3 错误映射
 
@@ -154,7 +163,7 @@
 │  │  └─ <RunChecksButton>        ▶ POST /chapters/{n}/check
 │  ├─ <LeftRail>
 │  │  ├─ <ChapterTree>            ◀ GET /chapters（无卷分组）
-│  │  ├─ <RosterSection label=…>  ◀ GET /roster?label=（resolve 过滤）
+│  │  ├─ <RosterSection label=…>  ◀ GET /roster（出全项目，按 label 分组在前端做）
 │  │  ├─ <DocLinks 大纲/世界观>    ◀ 磁盘 md（无图谱背书）
 │  │  └─ <RecentRuns hidden>      ◀ M2 model_call（v1 空）
 │  ├─ <CenterEditor>
@@ -195,12 +204,14 @@
    └─ <KnowledgeMatrixMode>      ◀ GET /matrix（模式5 全屏）
 ```
 
+⚠️ **这棵树里有 4 个组件今天不存在**：`<AIPlanBtn disabled>` / `<AIDraftBtn disabled>` / `<RecentRuns hidden>` / `<RunTelemetry collapsed>`——前端对那 5 条 501 stub **零调用**（2026-07-30 grep 核实）。这条别用「反正 M2 才有」盖过去：**那 5 条 stub 存在的唯一理由就是让前端把按钮画成灰的、而不是把按钮藏起来**（`api/app.py` 那段注释写得很清楚）。后端那一半已经落地，前端这一半没做 = 这个理由今天没兑现，作者在界面上依然看不见「这里将来会有什么」。
+
 ### 2.3 状态管理：坐标进 Zustand，数据进 react-query
 
 **铁律：能从 API 拉的绝不进全局 store。**
 
 - **全局 store（Zustand）只放坐标**：`projectId`（换项目=整棵 query 树失效）、`chapter`、`sceneCast: string[]`（作者原始称呼，不是 node_id，从选中场景块的 `nh:` 注释解析）、`selectedNodeId`、`textAnchor`（编辑器选区派生，禁 offset）、`scope`、`activeTab`。
-- **服务端状态（TanStack Query）装一切可拉数据**：`queryKey = [端点, projectId, chapter, cast/nodeId, scope]`，坐标一变自动重取。全是 Pydantic 出参，`openapi-typescript` 生成 TS 类型，零手写 DTO。
+- **服务端状态（TanStack Query）装一切可拉数据**：`queryKey = [端点, projectId, chapter, cast/nodeId, scope]`，坐标一变自动重取。出参形状今天由**手写**的 `src/api/types.ts` 定义（原计划的「`openapi-typescript` 生成、零手写 DTO」没兑现，为什么见 §1 开头）。
 - **为什么这样分**：`KnowledgeMatrix`/`StateSnapshot` 是对给定坐标的确定性投影，react-query 的 staleness/refetch 免费搞定失效，且天然支持 ADR 0007 的两条实时路径：**面板**（场景元数据变→invalidate matrix/constraints，本机 2–5ms 瞬时）+ **规则**（正文变→debounce 2s→invalidate `/check`）。写路径（`declare_*`/`sync`）成功后精确 invalidate 受影响 key（如 `declare_where` 改了地点→失效该章 state/matrix/subgraph）。
 - **唯一的本地可变状态**：CM6 编辑器 doc 自持，保存时才 PUT + sync，脏态用 `isDirty` 标记不进 react-query。
 
