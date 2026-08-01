@@ -585,7 +585,7 @@ mkdir -p /Users/lixibin/Desktop/novel-harness && cd /Users/lixibin/Desktop/novel
 git init
 uv init --package --name novel-harness
 uv python pin 3.12
-uv add fastapi "uvicorn[standard]" pydantic python-ulid jieba typer watchdog anthropic
+uv add fastapi "uvicorn[standard]" pydantic python-ulid jieba typer watchdog openai
 uv add --dev pytest ruff
 ```
 

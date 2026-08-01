@@ -76,7 +76,7 @@ bash scripts/demo.sh                                                        # �
 uv run python synth/build.py                # booklet.toml + booklet.txt → 库 + ground_truth.json
 uv run python -m synth.leak_selfcheck       # ⚠️ 必须 -m：它和 build.py 共用一份 schema，
                                             #    `python synth/leak_selfcheck.py` 会 ImportError
-# 真跑一轮（**会调模型、会花钱**：25 陷阱 × 3 臂 × 3 次 = 225 次生成）。作者永远不敲这条。
+# 真跑一轮（**会调模型、会花钱**：225 个 final cell；每份最多一次长度续写，成功轮为 225–450 次 transport call）。作者永远不敲这条。
 uv run nh gate --db synth/gate.db -p <pid> --ground-truth synth/ground_truth.json
 
 # ── 工作台的三层，别混 ──────────────────────────────────────────────────────
@@ -123,7 +123,7 @@ Vite 的 `outDir` 和 `api/app.py` 的 `_DIST` 是**两个必须同时改的字�
 FastAPI 壳（`api/`）+ React 工作台（`frontend/`，手写 TS/TSX）（M1.5）。`demo.sh` 心跳绿着。
 **前端 ↔ 后端契约由两头钉住**：`tests/test_frontend_contract.py` 从真 app dump 一批端点的真出参冻成 `frontend/src/__fixtures__/api.json`（出参一改 pytest 红），组件测试吃**同一份** fixture（形状变了没改组件 vitest 红）。**别手写前端 fixture**——两份手写的东西互相验证正是这条缝原本的病。改了后端出参跑 `NH_UPDATE_FIXTURES=1 uv run pytest tests/test_frontend_contract.py` 然后看 git diff。
 
-**M2 kill-gate 的链已经合拢，但还没通电。** 判分侧（`eval/{leak,score,confound_lint}.py`）、
+**M2 的旧短输出链在，但修正案 5 的链还没合拢，也没通电。** 判分侧（`eval/{leak,score,confound_lint}.py`）、
 被判侧（`draft/{provider,context,assemble}.py`）、产出侧（`eval/runner.py` + `nh gate` + `synth/`）
 都已落地并有测试。**建造顺序「判分器先于被判者」是有意的**：先有卷子和判分口径再有被判的东西，
 「看到结果再定及格线」在结构上就做不到。
