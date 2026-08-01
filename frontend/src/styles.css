@@ -54,6 +54,21 @@ header button.on { border-color: var(--accent); color: var(--accent); background
 .prep-card h3 { margin: 0 0 10px; font-size: 13px; }
 .prep-card.prep-wide { grid-column: 1 / -1; }
 .prep .brief { width: 100%; min-height: 120px; resize: vertical; line-height: 1.7; }
+.draft-length-controls { border-style: dashed; color: var(--dim); }
+.draft-length-head, .draft-length-row, .draft-length-lock {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+}
+.draft-length-head { justify-content: space-between; margin-bottom: 10px; }
+.draft-length-head h3 { color: var(--ink); }
+.draft-length-note { font-size: 12px; }
+.draft-language, .draft-length-field { display: flex; align-items: center; gap: 6px; }
+.draft-language > span, .draft-length-field > span { font-size: 12px; }
+.draft-length-field input { width: 96px; text-align: right; }
+.draft-length-field input[aria-invalid="true"] { border-color: var(--warn); }
+.draft-length-unit { min-width: 42px; color: var(--ink); }
+.draft-length-error { margin-top: 8px; color: var(--warn); font-size: 12px; }
+.draft-length-lock { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+.draft-length-lock span { font-size: 12px; }
 
 /* 三栏 */
 main { flex: 1; display: grid; grid-template-columns: 210px 1fr 400px; min-height: 0; }

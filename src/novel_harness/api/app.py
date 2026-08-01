@@ -25,12 +25,12 @@ import re
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ValidationError
+from pydantic import AfterValidator, BaseModel, ValidationError
 
 from .. import importer
 from .. import project as project_mod
@@ -44,6 +44,7 @@ from ..declare import (
     UnknownName,
     WrongLabel,
 )
+from ..draft.length import DEFAULT_LENGTH_POLICY, LengthSpec
 from ..graph import AliasKind, EdgeType, InformationScope, NodeLabel, NodeRef, SecretDetail
 from ..graph.store import NodeNotFound, StoreError, SupersedeConflict
 from ..panel import (
@@ -875,6 +876,10 @@ def check(
 # ══════════════════════════════════════════════════════════════════════════
 
 _NOT_IMPLEMENTED = "not_implemented"
+_DraftLengthBody = Annotated[
+    LengthSpec,
+    AfterValidator(DEFAULT_LENGTH_POLICY.validate_spec),
+]
 
 
 def _stub(milestone: str) -> dict[str, str]:
@@ -887,13 +892,16 @@ def _stub(milestone: str) -> dict[str, str]:
 
 
 @app.post("/api/projects/{project_id}/chapters/{chapter}/draft", status_code=501)
-def draft_stub() -> dict[str, str]:
+def draft_stub(length: _DraftLengthBody | None = None) -> dict[str, str]:
     """AI 起草第 N 章（M2）。
 
     **这条 stub 是 kill-gate 的 KILL 分支能被执行的前提**（EVAL_PROTOCOL 修正案 1 的
     「修正 2」）：冻结的裁决表里，KILL 那一格的动作逐字写着「`/draft` 冻在 501」——
     而在这条路由存在之前，那个动作指向一个不存在的端点，即**裁决表里有一格是不可执行的**。
     补上它，KILL 那天的动作就是逐字可做的：把它留在 501、不往前走。
+
+    `length` 只把未来的中英长度契约发布进 OpenAPI；合法 body 和无 body 都仍逐字返回
+    同一份 501。参数不接项目/store，也不触发任何模型调用。
 
     修正案同时说清了为什么不把那句话改成「不建路由」：一条摆在那儿的 501 是对作者和
     后来者的公开承诺，撤销它需要一次显式的 commit；而「没建」是默认状态，任何人任何

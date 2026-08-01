@@ -3,6 +3,7 @@ import { useConstraints, useMatrix, useStates } from "../api/hooks";
 import { useCoords } from "../store";
 import { MatrixView } from "./KnowledgeMatrix";
 import type { StateSnapshot } from "../api/types";
+import { DraftLengthControls } from "./DraftLengthControls";
 
 // 章节准备页（P2/P3）：写第 N 章之前的**确定性简报**。全部由现有读端拼出，纯聚合。
 // 一页回答三件事：上一章结束时是什么局面、这一章不能说破/不能提前出现什么、现在谁知道什么。
@@ -55,6 +56,8 @@ export function ChapterPrepPage() {
       </div>
 
       <div className="prep-grid">
+        <DraftLengthControls />
+
         <section className="prep-card">
           <h3>本章目标（你的笔记 · 引擎不背书）</h3>
           <textarea

@@ -594,3 +594,71 @@ def test_openapi_declares_exactly_the_five_stubs(client: TestClient) -> None:
     }
     assert len(stubbed) == 5, sorted(stubbed)
     assert ("/api/projects/{project_id}/chapters/{chapter}/draft", "post") in stubbed
+
+
+def test_draft_openapi_publishes_optional_bilingual_length_body(client: TestClient) -> None:
+    """The future paid route publishes its input contract without becoming runnable."""
+    spec = client.get("/openapi.json").json()
+    operation = spec["paths"]["/api/projects/{project_id}/chapters/{chapter}/draft"]["post"]
+    request_body = operation["requestBody"]
+
+    assert request_body.get("required", False) is False
+    body_schema = request_body["content"]["application/json"]["schema"]
+    candidates = body_schema.get("anyOf", [body_schema])
+    length_ref = next(candidate["$ref"] for candidate in candidates if "$ref" in candidate)
+    length_schema = spec["components"]["schemas"][length_ref.rsplit("/", 1)[-1]]
+
+    assert set(length_schema["properties"]) == {
+        "language",
+        "min_units",
+        "target_units",
+        "max_units",
+    }
+    assert set(length_schema["required"]) == {
+        "language",
+        "min_units",
+        "target_units",
+        "max_units",
+    }
+    language_ref = length_schema["properties"]["language"]["$ref"]
+    language_schema = spec["components"]["schemas"][language_ref.rsplit("/", 1)[-1]]
+    assert language_schema["enum"] == ["zh", "en"]
+
+
+@pytest.mark.parametrize(
+    "length",
+    [
+        {"language": "zh", "min_units": 2000, "target_units": 2500, "max_units": 3000},
+        {"language": "en", "min_units": 1200, "target_units": 1500, "max_units": 1800},
+    ],
+)
+def test_draft_stub_with_valid_length_body_stays_exact_501(
+    client: TestClient, book: dict[str, str], length: dict[str, int | str]
+) -> None:
+    r = client.post(
+        f"/api/projects/{_pid(book)}/chapters/7/draft",
+        json=length,
+    )
+    assert r.status_code == 501, r.text
+    assert r.json() == {"status": "not_implemented", "milestone": "M2"}
+
+
+@pytest.mark.parametrize(
+    "length",
+    [
+        {"language": "fr", "min_units": 2000, "target_units": 2500, "max_units": 3000},
+        {"language": "zh", "min_units": 0, "target_units": 2500, "max_units": 3000},
+        {"language": "en", "min_units": 1800, "target_units": 1500, "max_units": 1200},
+        {"language": "zh", "min_units": 2000, "target_units": 2500, "max_units": 20001},
+        {"language": "en", "min_units": 1200, "target_units": 1500, "max_units": 12001},
+    ],
+)
+def test_draft_stub_rejects_invalid_length_body_before_501(
+    client: TestClient, book: dict[str, str], length: dict[str, int | str]
+) -> None:
+    r = client.post(
+        f"/api/projects/{_pid(book)}/chapters/7/draft",
+        json=length,
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]

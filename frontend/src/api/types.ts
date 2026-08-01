@@ -10,6 +10,16 @@
 // （Edge / KnowledgeCell），是系统算出来的产物；declare 的入参类型（DeclareKnows…）
 // 一个 chapter 字段都没有（约束 10）。
 
+export type DraftLanguage = "zh" | "en";
+
+/** 用户选择的人类长度单位；zh 计非空白字符，en 计 words。 */
+export interface DraftLengthSpec {
+  language: DraftLanguage;
+  min_units: number;
+  target_units: number;
+  max_units: number;
+}
+
 export type NodeLabel =
   | "Character"
   | "Location"
