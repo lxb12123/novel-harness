@@ -29,6 +29,7 @@ import inspect
 import re
 
 import pytest
+import novel_harness.draft.assemble as assemble_module
 from test_knowledge import (
     BLOODLINE,
     GU_QINGYIN,
@@ -47,10 +48,14 @@ from novel_harness.draft.assemble import (
     graph_section,
 )
 from novel_harness.draft.context import ResolvedConstraints, resolve_constraints
+from novel_harness.draft.length import DraftLanguage, LengthSpec, M2_LENGTH_SPEC
 from novel_harness.graph import EdgeType, NodeLabel
 
 GOAL = "顾清音在书房追问萧决那晚到底发生了什么，萧决避而不答。"
 TAIL = "廊下的灯笼灭了最后一盏，风里有股铁锈味。"
+EN_LENGTH = LengthSpec(
+    language=DraftLanguage.EN, min_units=1200, target_units=1500, max_units=1800
+)
 
 TELL = "玄血蛊"
 """血脉秘密的**内容 tell**（EVAL_PROTOCOL §4 第 1 条边界）。它是判分器那一侧的词。"""
@@ -87,7 +92,7 @@ def _full_ctx(*, with_tell: bool = False) -> ResolvedConstraints:
 
 def _arm(ctx: ResolvedConstraints, form: PromptForm) -> list[dict[str, str]]:
     """同一份 goal / previous_tail 喂三臂 —— 臂间**唯一**允许变的是 `form`。"""
-    return assemble(ctx, form=form, goal=GOAL, previous_tail=TAIL)
+    return assemble(ctx, form=form, goal=GOAL, length=M2_LENGTH_SPEC, previous_tail=TAIL)
 
 
 def _text(messages: list[dict[str, str]]) -> str:
@@ -157,7 +162,7 @@ def test_the_previous_tail_is_optional_and_leaves_no_empty_heading() -> None:
     """开篇（`previous_tail=""`）不该在 prompt 里留一个空的「上文」标题。"""
     ctx = _full_ctx()
     with_tail = _arm(ctx, PromptForm.X0)
-    without = assemble(ctx, form=PromptForm.X0, goal=GOAL)
+    without = assemble(ctx, form=PromptForm.X0, goal=GOAL, length=M2_LENGTH_SPEC)
 
     assert TAIL in with_tail[-1]["content"]
     assert "【上文】" in with_tail[-1]["content"]
@@ -254,6 +259,7 @@ def test_the_house_style_names_nobody_and_hints_at_no_constraint() -> None:
         assert name not in DEFAULT_HOUSE_STYLE
     for hint in ("秘密", "不知道", "泄露", "剧透", "伏笔", "设定"):
         assert hint not in DEFAULT_HOUSE_STYLE, f"house style 里出现了 {hint!r} —— 它三臂共用"
+    assert "600–1000" not in DEFAULT_HOUSE_STYLE
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -319,18 +325,20 @@ def test_form_accepts_the_string_that_comes_from_the_environment() -> None:
     （那会让一整臂变成对照组，Δ 恒为 0，裁决表读出 KILL）。
     """
     ctx = _full_ctx()
-    assert assemble(ctx, form="X2", goal=GOAL) == assemble(ctx, form=PromptForm.X2, goal=GOAL)
+    assert assemble(ctx, form="X2", goal=GOAL, length=M2_LENGTH_SPEC) == assemble(
+        ctx, form=PromptForm.X2, goal=GOAL, length=M2_LENGTH_SPEC
+    )
     with pytest.raises(ValueError):
-        assemble(ctx, form="x2", goal=GOAL)  # 大小写不同 = 不是那个取值
+        assemble(ctx, form="x2", goal=GOAL, length=M2_LENGTH_SPEC)  # 大小写不同 = 不是那个取值
     with pytest.raises(ValueError):
-        assemble(ctx, form="X3", goal=GOAL)
+        assemble(ctx, form="X3", goal=GOAL, length=M2_LENGTH_SPEC)
 
 
 def test_a_blank_goal_is_rejected_at_render_time() -> None:
     """空 goal 让三臂各写各的：那条陷阱只往 Δ 里加方差，而事后看 `runs/*.jsonl` 看不出异常。"""
     ctx = _full_ctx()
     with pytest.raises(ValueError, match="goal"):
-        assemble(ctx, form=PromptForm.X1, goal="   ")
+        assemble(ctx, form=PromptForm.X1, goal="   ", length=M2_LENGTH_SPEC)
 
 
 def test_assemble_needs_no_store_at_all() -> None:
@@ -341,4 +349,61 @@ def test_assemble_needs_no_store_at_all() -> None:
     gate 测的不再是产品会发的东西。
     """
     params = set(inspect.signature(assemble).parameters)
-    assert params == {"ctx", "form", "goal", "previous_tail", "house_style"}
+    assert params == {"ctx", "form", "goal", "length", "previous_tail", "house_style"}
+    assert inspect.signature(assemble).parameters["length"].default is inspect.Parameter.empty
+
+
+def test_length_instruction_is_explicit_in_chinese_system_prompt() -> None:
+    assert hasattr(assemble_module, "system_prompt")
+    prompt = assemble_module.system_prompt(M2_LENGTH_SPEC)
+
+    assert "中文" in prompt
+    assert "2000–3000 字" in prompt
+    assert "2500 字" in prompt
+    assert "600–1000" not in prompt
+
+
+def test_length_instruction_is_explicit_in_english_system_prompt() -> None:
+    assert hasattr(assemble_module, "system_prompt")
+    prompt = assemble_module.system_prompt(EN_LENGTH)
+
+    assert "English" in prompt
+    assert "1200–1800 words" in prompt
+    assert "1500 words" in prompt
+
+
+def test_custom_house_style_cannot_bypass_the_length_instruction() -> None:
+    assert hasattr(assemble_module, "system_prompt")
+    prompt = assemble_module.system_prompt(EN_LENGTH, house_style="  Keep the prose spare.  ")
+
+    assert prompt.startswith("Keep the prose spare.\n\n")
+    assert "1200–1800 words" in prompt
+    assert "1500 words" in prompt
+
+
+def test_all_arms_share_the_exact_same_bilingual_system_prompt() -> None:
+    ctx = _full_ctx()
+    arms = [_arm(ctx, form) for form in PromptForm]
+
+    assert [arm[0] for arm in arms] == [arms[0][0]] * 3
+    assert "2000–3000 字" in arms[0][0]["content"]
+    assert graph_section(ctx, PromptForm.X1) not in arms[1][0]["content"]
+    assert graph_section(ctx, PromptForm.X2) not in arms[2][0]["content"]
+
+
+def test_previous_tail_is_stripped_and_limited_to_its_last_800_code_points() -> None:
+    ctx = _full_ctx()
+    tail = "  " + "甲" * 100 + "🙂" * 800 + "  "
+    expected = ("甲" * 100 + "🙂" * 800)[-800:]
+
+    for form in PromptForm:
+        prompt = assemble(
+            ctx, form=form, goal=GOAL, length=M2_LENGTH_SPEC, previous_tail=tail
+        )
+        assert "【上文】\n" + expected in prompt[-1]["content"]
+        assert "甲" not in prompt[-1]["content"]
+
+
+def test_length_instruction_uses_human_units_not_tokens() -> None:
+    assert hasattr(assemble_module, "length_instruction")
+    assert "token" not in assemble_module.length_instruction(M2_LENGTH_SPEC).lower()

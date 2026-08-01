@@ -50,6 +50,7 @@ from enum import StrEnum
 
 from ..graph import KnowledgeCell, KnowledgeState
 from .context import ResolvedConstraints
+from .length import DraftLanguage, LengthSpec
 
 
 class PromptForm(StrEnum):
@@ -65,23 +66,49 @@ class PromptForm(StrEnum):
     """叙事化臂：X0 + **同一份矩阵**改写成散文。与 X1 只差「清单 vs 散文」这一个变量。"""
 
 
-DEFAULT_HOUSE_STYLE = """你是一位中文长篇小说的写作搭档。作者给你上文和这一场要写的内容，你把这一场的正文写出来。
+ZH_HOUSE_STYLE = """你是一位中文长篇小说的写作搭档。根据作者提供的上文和本场目标，写出这一场的正文。
 
 - 只输出正文：不写标题、章节号、小标题、创作说明，也不用 Markdown 标记。
-- 第三人称，贴着场上人物的动作、对白和感受写；对白要像人说出来的话，符合各自的身份与场合。
-- 场景要往前走——有动作、有交锋、有环境，别停在心理独白和背景交代里。
-- 承接上文的语气和称呼，不重写上文已经写过的段落。
-- 篇幅 600–1000 字，一次写完这一场，写完即止。"""
-"""三臂**逐字节共用**的系统提示。两条硬约束，都不是文风偏好：
+- 使用第三人称，贴着场上人物的动作、对白和环境来写。
+- 承接上文的语气和称呼，不重写已经写过的段落。
+- 不要凭空加入材料中没有出现的人物、地点或关键信息。
+- 一次写完这一场，并让结尾自然收束。"""
+"""中文草稿的共享文风要求；长度由 ``length_instruction()`` 单独提供。"""
 
-① **不许提任何具体人物、地点、秘密。** 它进 X0，而 X0 按定义是零图谱事实的对照臂。
 
-② **不许写「不要写出角色还不知道的事」这类通用版约束。** 这一条比 ① 更容易被好心人破坏，
-   后果也更重：那等于把处理组的东西发一份给对照组，X0 的泄漏率被自己压低，`Δ` 跟着塌，
-   实验读出「注入没用」——而真实原因是 house style 里替它做了一半。
-   `tests/test_draft_assemble.py` 用一张**关键词网**兜这条（`秘密`/`不知道`/`泄露`/`伏笔`…）；
-   那是集合判断，抓得住顺手写出来的那一种，抓不住换个说法的那一种。剩下的靠 review。
-"""
+EN_HOUSE_STYLE = """You are a long-form fiction writing partner. Using the supplied prior text and scene goal, write the scene's prose.
+
+- Output prose only: no title, chapter label, heading, writing notes, or Markdown.
+- Write in third person through the characters' actions, dialogue, and surroundings.
+- Continue the voice and names used in the prior text; do not rewrite material already written.
+- Do not invent people, places, or material information absent from the supplied material.
+- Complete the scene in one pass and bring it to a natural close."""
+"""English draft's shared style requirements; length is supplied separately."""
+
+
+DEFAULT_HOUSE_STYLE = ZH_HOUSE_STYLE
+"""Backward-compatible export for callers that previously selected the Chinese house style."""
+
+
+def length_instruction(spec: LengthSpec) -> str:
+    """Render the language-specific output length request in reader-facing units."""
+    if spec.language is DraftLanguage.ZH:
+        return (
+            f"请用中文写作，篇幅精确控制在 {spec.min_units}–{spec.max_units} 字，"
+            f"目标约 {spec.target_units} 字。"
+        )
+    return (
+        f"Write in English. Keep the length precisely within {spec.min_units}–{spec.max_units} "
+        f"words, targeting about {spec.target_units} words."
+    )
+
+
+def system_prompt(spec: LengthSpec, house_style: str | None = None) -> str:
+    """Combine the selected language's shared style with its required length instruction."""
+    style = house_style
+    if style is None:
+        style = ZH_HOUSE_STYLE if spec.language is DraftLanguage.ZH else EN_HOUSE_STYLE
+    return style.strip() + "\n\n" + length_instruction(spec)
 
 
 def assemble(
@@ -89,8 +116,9 @@ def assemble(
     *,
     form: PromptForm,
     goal: str,
+    length: LengthSpec,
     previous_tail: str = "",
-    house_style: str = DEFAULT_HOUSE_STYLE,
+    house_style: str | None = None,
 ) -> list[dict[str, str]]:
     """把一个场景的约束渲染成 OpenAI 兼容的 `messages`。
 
@@ -102,7 +130,8 @@ def assemble(
             分支说生产默认翻成 `NH_DRAFT_FORM=X2`，那个值从环境变量上来时是 `str`。
         goal: 这一场要写什么。**自由文本入口，本层看不见它有没有剧透**——见模块 docstring 第四节。
         previous_tail: 上文。空串 = 开篇，整个「上文」块不出现（不留一个空标题）。
-        house_style: 文风系统提示。三臂共用同一份，见 `DEFAULT_HOUSE_STYLE` 的两条硬约束。
+        length: 已合法的输出篇幅与语言。调用边界已验证，本函数不再做 hard-max 校验。
+        house_style: 可选文风系统提示；为空时按 ``length.language`` 选择中英文默认文风。
 
     Returns:
         `[{"role": ..., "content": ...}]`。**本仓库少见的非 Pydantic 出参**，理由是它要原样
@@ -122,7 +151,12 @@ def assemble(
             "空 goal 让三臂各写各的，那条陷阱只往 Δ 里加方差，且事后从 runs/*.jsonl 看不出来。"
         )
 
-    messages = _base(ctx, goal=goal, previous_tail=previous_tail, house_style=house_style)
+    messages = _base(
+        ctx,
+        goal=goal,
+        previous_tail=previous_tail,
+        house_style=system_prompt(length, house_style),
+    )
     section = graph_section(ctx, form)
     if section:
         # **只追加，不重排、不改写前面任何一个字节**——D4 的严格前缀性质就是这一行。
@@ -178,8 +212,9 @@ def _base(
     是最坏的失败时机（同 `provider.py` 对配置自洽性的那条理由）。
     """
     parts: list[str] = []
-    if previous_tail.strip():
-        parts.append("【上文】\n" + previous_tail.strip())
+    tail = previous_tail.strip()[-800:]
+    if tail:
+        parts.append("【上文】\n" + tail)
     # cast 在 X0 里也有 —— ADR 0010 D6，它是作者的输入不是图谱查询的结果。
     parts.append("【在场】\n" + "、".join(ctx.cast))
     parts.append("【这一场要写】\n" + goal.strip())

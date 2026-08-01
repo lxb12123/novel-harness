@@ -35,6 +35,7 @@ from novel_harness.cli import app
 from novel_harness.declare import Ledger
 from novel_harness.draft.assemble import assemble
 from novel_harness.draft.context import resolve_constraints
+from novel_harness.draft.length import M2_LENGTH_SPEC
 from novel_harness.draft.provider import ProviderConfig
 from novel_harness.eval import runner as runner_mod
 from novel_harness.eval.runner import (
@@ -316,7 +317,11 @@ def test_the_prompts_are_exactly_what_assemble_produces(
     ctx = resolve_constraints(store, book.pid, CHAPTER, CAST)
     expected = {
         arm: assemble(
-            ctx, form=form, goal=KNOWS_TRAP.goal, previous_tail=KNOWS_TRAP.prior
+            ctx,
+            form=form,
+            goal=KNOWS_TRAP.goal,
+            length=M2_LENGTH_SPEC,
+            previous_tail=KNOWS_TRAP.prior,
         )
         for arm, form in ARMS
     }

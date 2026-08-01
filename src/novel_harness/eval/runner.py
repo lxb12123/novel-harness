@@ -70,6 +70,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..draft.assemble import PromptForm, assemble
 from ..draft.context import ResolvedConstraints
+from ..draft.length import M2_LENGTH_SPEC
 from ..draft.provider import ProviderConfig, complete
 from ..graph import StoryGraph
 from ..panel.constraints import UnresolvedCast, scene_view
@@ -364,6 +365,7 @@ def run_gate(
                     ctx,
                     form=form,
                     goal=trap.goal,
+                    length=M2_LENGTH_SPEC,
                     previous_tail=trap.prior,
                 )
                 arm_prompts[arm] = messages
