@@ -43,7 +43,9 @@ from test_knowledge import (
 
 from novel_harness.draft.assemble import (
     DEFAULT_HOUSE_STYLE,
+    EN_HOUSE_STYLE,
     PromptForm,
+    ZH_HOUSE_STYLE,
     assemble,
     graph_section,
 )
@@ -260,6 +262,13 @@ def test_the_house_style_names_nobody_and_hints_at_no_constraint() -> None:
     for hint in ("秘密", "不知道", "泄露", "剧透", "伏笔", "设定"):
         assert hint not in DEFAULT_HOUSE_STYLE, f"house style 里出现了 {hint!r} —— 它三臂共用"
     assert "600–1000" not in DEFAULT_HOUSE_STYLE
+
+
+def test_default_styles_do_not_constrain_control_arm_content() -> None:
+    assert "凭空" not in DEFAULT_HOUSE_STYLE
+    assert "凭空" not in ZH_HOUSE_STYLE
+    assert "invent" not in EN_HOUSE_STYLE.lower()
+    assert "absent" not in EN_HOUSE_STYLE.lower()
 
 
 # ══════════════════════════════════════════════════════════════════════════
