@@ -93,11 +93,13 @@ def length_instruction(spec: LengthSpec) -> str:
     if spec.language is DraftLanguage.ZH:
         return (
             f"请用中文写作，篇幅精确控制在 {spec.min_units}–{spec.max_units} 字，"
-            f"目标约 {spec.target_units} 字。"
+            f"目标约 {spec.target_units} 字。宁可比目标略短，绝不要超过 {spec.max_units} 字"
+            "——一旦超过，整份草稿作废。"
         )
     return (
         f"Write in English. Keep the length precisely within {spec.min_units}–{spec.max_units} "
-        f"words, targeting about {spec.target_units} words."
+        f"words, targeting about {spec.target_units} words. Prefer slightly under the target "
+        f"rather than ever exceeding {spec.max_units} words — an over-length draft is discarded."
     )
 
 

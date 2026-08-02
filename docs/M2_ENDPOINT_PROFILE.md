@@ -64,6 +64,13 @@ continuation 预检：prompt + (request + overhead) + request ≤ 1M ✓
       cumulative_units)` 把「已写 N 字、续写约 M 字、总字数区间、续写段上限」一次给足；
       N 只来自确定性长度测量（修正案 5 裁定 2 允许续写只读长度计数），模板恒定、原文
       随每条 attempt 落盘可审计。旧 run 原样保留，不覆盖、不续跑。
+- [x] 第三轮（`runs/20260802T062657Z.jsonl`）—— **仍 INVALID**：K01/x0 repeat 0
+      首段 2,442 字（达标，无续写），repeat 1 首段 3,067 字 → over_max。根因：首段
+      一次性长度控制有方差，而超长没有补救手段（续写只允许 under-min）。
+- [x] 修复 3（同日，**协议阈值零改动**）：base 长度指令加硬性警告
+      「宁可比目标略短，绝不要超过 3,000 字——一旦超过，整份草稿作废」
+      （`draft/assemble.py::length_instruction()`）；短了有续写兜底，超了没有，
+      所以指令明确偏向略短。原文随证据落盘。
 - [ ] 修复后完整一轮 225 final cells / 225–450 transport calls
 
 跑完之前 `runs/` 不存在、ADR 0009 不写；本 profile 的 commit 时间戳先于
