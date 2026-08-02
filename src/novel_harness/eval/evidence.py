@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from ..draft.assemble import PromptForm, assemble
 from ..draft.capabilities import ReasoningEffort, ResolvedCallPlan
 from ..draft.context import ResolvedConstraints
-from ..draft.generate import ZH_CONTINUATION_INSTRUCTION
+from ..draft.generate import continuation_instruction
 from ..draft.length import (
     COUNTING_RULE_VERSION,
     M2_LENGTH_SPEC,
@@ -526,7 +526,7 @@ def inspect_run(
                     expected_second = [
                         *expected_initial,
                         {"role": "assistant", "content": first_output},
-                        {"role": "user", "content": ZH_CONTINUATION_INSTRUCTION},
+                        {"role": "user", "content": continuation_instruction(M2_LENGTH_SPEC)},
                     ]
                     second_output, second_need, last_finish_reason = _validate_attempt(
                         second,

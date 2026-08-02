@@ -21,7 +21,7 @@ from novel_harness.draft.capabilities import (
     plan_call,
 )
 from novel_harness.draft.context import ResolvedConstraints
-from novel_harness.draft.generate import ZH_CONTINUATION_INSTRUCTION
+from novel_harness.draft.generate import continuation_instruction
 from novel_harness.draft.length import COUNTING_RULE_VERSION, M2_LENGTH_SPEC, measure
 from novel_harness.eval.confound_lint import LEN_TOLERANCE, confound_lint
 from novel_harness.eval.evidence import EvidenceError, inspect_run
@@ -311,7 +311,7 @@ def _write_valid_run(path: Path, seeded: Seeded) -> tuple[list[dict[str, object]
                     continuation_messages = [
                         *messages,
                         {"role": "assistant", "content": first},
-                        {"role": "user", "content": ZH_CONTINUATION_INSTRUCTION},
+                        {"role": "user", "content": continuation_instruction(M2_LENGTH_SPEC)},
                     ]
                     records.append(
                         _attempt(

@@ -26,14 +26,33 @@ from .length import (
 from .provider import CompletionResult, ProviderConfig, complete
 
 
-ZH_CONTINUATION_INSTRUCTION = (
-    "请直接接着上文续写，不要重新开始，不要概括上文，也不要评论这项请求。"
-)
-EN_CONTINUATION_INSTRUCTION = (
-    "Continue directly from the preceding text without restarting, recapping, "
-    "or commenting on the request."
-)
-CONTINUATION_CONTEXT_VERSION = "nh-continuation-context-v1"
+def continuation_instruction(length: LengthSpec) -> str:
+    """固定续写指令 + 该 ``LengthSpec`` 的长度档（同一轮内恒定，原文随证据落盘）。
+
+    2026-08-02 修：旧指令不带任何长度目标，第二次调用盲目续写，累计总长可能冲破
+    ``max_units`` → 修正案 5 裁定 3 判整轮 INVALID（第一份真实 run 就是这么死的：
+    `runs/20260802T061952Z.jsonl`，K01/x0 累计 3,325 > 3,000）。
+    协议只冻结「续写一次、under-min-only 触发、最多 2 次 attempt、同配置」，
+    没冻结措辞；长度档来自 frozen ``LengthSpec``，指令原文写进每条 attempt 的证据，
+    可审计。
+    """
+    if length.language is DraftLanguage.ZH:
+        return (
+            "请直接接着上文续写，不要重新开始，不要概括上文，也不要评论这项请求。"
+            f"全文总字数（含已写部分）必须落在 {length.min_units}–{length.max_units} 字之间，"
+            f"目标约 {length.target_units} 字；续写后的总字数不得超过 {length.max_units} 字。"
+        )
+    return (
+        "Continue directly from the preceding text without restarting, recapping, "
+        "or commenting on the request. "
+        f"The complete draft (including what is already written) must stay within "
+        f"{length.min_units}–{length.max_units} words, targeting about "
+        f"{length.target_units} words; after continuing, the total must not exceed "
+        f"{length.max_units} words."
+    )
+
+
+CONTINUATION_CONTEXT_VERSION = "nh-continuation-context-v2"
 CONTINUATION_PROMPT_OVERHEAD_TOKENS = 1_024
 
 
@@ -227,12 +246,6 @@ class DraftResult(BaseModel):
         return sum(values) if values else None
 
 
-def _continuation_instruction(language: DraftLanguage) -> str:
-    if language is DraftLanguage.ZH:
-        return ZH_CONTINUATION_INSTRUCTION
-    return EN_CONTINUATION_INSTRUCTION
-
-
 def generate_draft(
     messages: Sequence[dict[str, Any]],
     *,
@@ -270,7 +283,7 @@ def generate_draft(
                 {"role": "assistant", "content": initial_result.text},
                 {
                     "role": "user",
-                    "content": _continuation_instruction(length.language),
+                    "content": continuation_instruction(length),
                 },
             )
         )
@@ -303,8 +316,7 @@ def generate_draft(
 __all__ = [
     "CONTINUATION_CONTEXT_VERSION",
     "CONTINUATION_PROMPT_OVERHEAD_TOKENS",
-    "EN_CONTINUATION_INSTRUCTION",
-    "ZH_CONTINUATION_INSTRUCTION",
+    "continuation_instruction",
     "DraftAttempt",
     "DraftResult",
     "continuation_prompt_reserve",

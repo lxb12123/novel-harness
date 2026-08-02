@@ -15,14 +15,13 @@ from novel_harness.draft.capabilities import (
     plan_call,
 )
 from novel_harness.draft.generate import (
-    EN_CONTINUATION_INSTRUCTION,
-    ZH_CONTINUATION_INSTRUCTION,
     DraftAttempt,
     DraftResult,
+    continuation_instruction,
     generate_draft,
     validate_generation_plan,
 )
-from novel_harness.draft.length import DraftLanguage, LengthSpec, LengthStatus
+from novel_harness.draft.length import DraftLanguage, LengthSpec, LengthStatus, M2_LENGTH_SPEC
 from novel_harness.draft.provider import CompletionResult, ProviderConfig, ProviderError
 
 
@@ -412,7 +411,7 @@ def test_continuation_capacity_is_checked_before_the_first_paid_call(
 
 
 @pytest.mark.parametrize(
-    ("length", "first", "second", "instruction", "expected_text"),
+    ("length", "first", "second", "expected_text"),
     [
         (
             LengthSpec(
@@ -423,7 +422,6 @@ def test_continuation_capacity_is_checked_before_the_first_paid_call(
             ),
             "甲",
             "乙丙",
-            ZH_CONTINUATION_INSTRUCTION,
             "甲乙丙",
         ),
         (
@@ -435,7 +433,6 @@ def test_continuation_capacity_is_checked_before_the_first_paid_call(
             ),
             "One",
             " two three",
-            EN_CONTINUATION_INSTRUCTION,
             "One two three",
         ),
     ],
@@ -446,7 +443,6 @@ def test_under_length_uses_one_fixed_language_specific_continuation(
     length: LengthSpec,
     first: str,
     second: str,
-    instruction: str,
     expected_text: str,
 ) -> None:
     plan = _plan(length)
@@ -471,7 +467,7 @@ def test_under_length_uses_one_fixed_language_specific_continuation(
 
     expected_continuation = original + (
         {"role": "assistant", "content": first},
-        {"role": "user", "content": instruction},
+        {"role": "user", "content": continuation_instruction(length)},
     )
     assert len(scripted.calls) == 2
     assert scripted.calls[0]["messages"] == original
@@ -489,6 +485,29 @@ def test_under_length_uses_one_fixed_language_specific_continuation(
     assert result.text == expected_text
     assert result.length.status is LengthStatus.WITHIN
     assert result.truncated is False
+
+
+def test_continuation_instruction_embeds_the_frozen_length_band() -> None:
+    """2026-08-02 修：续写指令必须带长度档与硬上限，否则第二次调用会盲目续写、
+    累计总长冲破 max_units（第一份真实 run 因此 INVALID）。"""
+    zh = continuation_instruction(M2_LENGTH_SPEC)
+    assert "2000–3000" in zh
+    assert "目标约 2500" in zh
+    assert "不得超过 3000" in zh
+    assert "不要重新开始" in zh
+    # 同一份 spec → 恒定文本；M2 整轮 225 个 cell 用的都是这一份。
+    assert continuation_instruction(M2_LENGTH_SPEC) == zh
+
+    en = continuation_instruction(
+        LengthSpec(
+            language=DraftLanguage.EN,
+            min_units=1200,
+            target_units=1500,
+            max_units=1800,
+        )
+    )
+    assert "1200" in en and "1800" in en
+    assert "must not exceed 1800" in en
 
 
 def test_final_under_length_never_makes_a_third_call(

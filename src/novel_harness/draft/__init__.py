@@ -41,10 +41,9 @@ from .capabilities import (
 )
 from .context import ResolvedConstraints, resolve_constraints
 from .generate import (
-    EN_CONTINUATION_INSTRUCTION,
-    ZH_CONTINUATION_INSTRUCTION,
     DraftAttempt,
     DraftResult,
+    continuation_instruction,
     generate_draft,
     validate_generation_plan,
 )
@@ -74,7 +73,7 @@ __all__ = [
     "COUNTING_RULE_VERSION",
     "DEFAULT_LENGTH_POLICY",
     "DEFAULT_TEMPERATURE",
-    "EN_CONTINUATION_INSTRUCTION",
+    "continuation_instruction",
     "CapabilityError",
     "DraftLanguage",
     "DraftAttempt",
@@ -95,7 +94,6 @@ __all__ = [
     "ReasoningEffort",
     "ResolvedCallPlan",
     "ResolvedConstraints",
-    "ZH_CONTINUATION_INSTRUCTION",
     "complete",
     "count_units",
     "graph_section",

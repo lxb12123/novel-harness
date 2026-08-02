@@ -53,7 +53,13 @@ continuation 预检：prompt + (request + overhead) + request ≤ 1M ✓
 - [x] 真实 smoke call —— **2026-08-02 完成**：`reasoning_effort=high` + thinking enabled +
       `max_tokens=40000` + stream 全被接受；`finish_reason=stop`，usage 正常返回
       （prompt 89 / completion 16），文本原样回传。
-- [ ] 完整一轮 225 final cells / 225–450 transport calls
+- [x] 首轮（`runs/20260802T061952Z.jsonl`）—— **2026-08-02 按协议终态 INVALID**：
+      K01/x0 首次生成 1,560 字（under，正确触发续写），续写段 1,765 字，累计 3,325 >
+      3,000 → 修正案 5 裁定 3 判死整轮。根因：旧续写指令不含任何长度目标，第二次调用
+      盲目续写。修复（同日，**协议阈值零改动**）：续写指令改为嵌入 frozen `LengthSpec`
+      的长度档与硬上限（`draft/generate.py::continuation_instruction()`），指令原文随每条
+      attempt 落盘可审计。旧 run 原样保留，不覆盖、不续跑。
+- [ ] 修复后完整一轮 225 final cells / 225–450 transport calls
 
 跑完之前 `runs/` 不存在、ADR 0009 不写；本 profile 的 commit 时间戳先于
 第一份 `runs/*.jsonl` 是「先定卷子再答卷」的证据链最后一环。
