@@ -300,7 +300,7 @@ graph/{models,store,sqlite_store,queries}.py    ← state_at / supersede / subgr
 panel/{knowledge,state,constraints}.py          ← 认知矩阵（头牌）+ PLANNED 进 prompt 的唯一闸门
 checks/{base,location_conflict,future_leak,dead_speaks}.py
                                                   ← R2/R3/R4（R5 待覆盖率实测；`ALL_CHECKS` 共三条）
-text/{anchor,chapterize,scenes}.py              ← (para_index,quote,k) 唯一定义 / 切章 / 场景块
+text/{anchor,chapterize,scenes,mentions}.py     ← (para_index,quote,k) 唯一定义 / 切章 / 场景块 / 称呼匹配
 declare.py  importer.py                         ← M1 声明层：引语定章号 + 证据链 + CanonWriter
 cli.py                                          ← nh 的 16 个子命令（含 `nh serve` / `nh gate`）
 api/{app,deps}.py                               ← M1.5 FastAPI 壳：32 条自建路由 + 17 个错误映射
@@ -320,6 +320,7 @@ eval/runner.py                                  ← M2：三臂 × N 次 → 独
                                                   （`nh gate` 默认写 `runs/`；全仓唯一同时碰两侧的代码）
 eval/evidence.py                                ← M2：JSONL 证据重建器（离线重算每个记录，key 拒入）
 synth/                                          ← M2：合成小册子（12 章正文 + booklet.toml + build + selfcheck）；**不进 wheel**
+                                                  （M3：m3_ground_truth.json 考卷 + m3_replay.py 量具，同不进 wheel）
 ```
 
 **「全绿」这句话曾经比它听起来的弱，现在不了。** 此前 `knowledge_matrix` 与 R4 的全部断言只跑在
@@ -485,12 +486,12 @@ ADR 0009 不写（协议 §8 定死它「跑完写」）、任何地方都不会
   已于 2026-08-02 落地（R2/R3/R5 的共同前置），但「90% 提及」的度量器、gold 口径
   仍然没有执行体。M1 已被标「已落地」，而这条验收从来没有过执行体。
 
-**M3 的误报 < 1 条/章** —— **代码已就绪（2026-08-02：R2/R3/R4 在跑），生死数仍未测量。**
+**M3 的误报 < 1 条/章** —— **代码已就绪、合成门槛已过（2026-08-02），真书生死数仍未测量。**
 R4 之外，R2（未来实体提前出现）和 R3（死人/未登场角色开口说话）已落地，各自带
 闭嘴条件测试；真书一到手就能跑 `nh check` 量误报率，不再有「空表自动通过」的假绿。
-但两件事仍欠着：① **「什么算误报」至今没有预注册**——全仓没有任何地方定义
-「什么算误报」（M2 花了整整一条 commit 建立的就是这条纪律，M3 还没建；
-先定义、后测量，顺序不能反）；② 真书连续 20 章的人工判定还没做。
+门槛已预注册（[M3_GATE_PROTOCOL.md](M3_GATE_PROTOCOL.md) + `synth/m3_ground_truth.json`，
+2026-08-02：25 道正题 25/25、干净对照 0 误报、干净正文 0 issue）。
+还欠的只剩一条：**真书连续 20 章的人工误报判定**（判定人 = 想进 M4 的那个人）。
 
 **合成小册子不能顶替它们中的任何一条**：它有强制说话人标签、强制唯一 tell，测的是注入机制不是真书行为
 （EVAL_PROTOCOL.md §7 已把这条免责一并预注册）。
