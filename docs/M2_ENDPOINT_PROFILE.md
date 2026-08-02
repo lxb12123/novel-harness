@@ -1,7 +1,7 @@
 # M2 Endpoint Profile：deepseek-v4-flash @ api.deepseek.com
 
 - 状态：**已冻结**（2026-08-02），首次推理前单独 commit，**不含 key**
-- 依据：`EVAL_PROTOCOL.md@0393088` + 修正案 1/2/3/4/5 + ADR 0010/0011
+- 依据：`EVAL_PROTOCOL.md@0393088` + 修正案 1/2/3/4/5/6 + ADR 0010/0011
 - 用途：本轮 225 个 final cell（25 陷阱 × 3 臂 × 3 次）的唯一调用配置；换配置 = 换卷子，
   必须另开 profile 并在推理前 commit。
 
@@ -29,22 +29,24 @@
 - streaming：支持；`supports_stream_usage` 未声明 → **不发** `stream_options`
 - temperature：`None`（不发该字段，走供应商默认）
 
-## 共享输出预留（reserve_ratio_high = 0.8）
+## 共享输出预留（reserve_ratio_high = 0.95）
 
 DeepSeek V4 thinking 模式下 `reasoning_content` 与 `content` **共享输出预算**
-（官方 thinking_mode 文档），但官方未公布 thinking 占比。按与 OpenRouter 一致的
-**保守 80%** 预留，写进 `draft/capabilities.py` 注册表并有一条精确数学测试钉住。
-若真实 smoke 出现截断/空答案，按 ADR 0011 的修复路径调整并**重跑预检**，不许运行中改。
+（官方 thinking_mode 文档），但官方未公布 thinking 占比。2026-08-02 实测右尾：
+单个 cell thinking+content 达 40,000 tokens（`K02/x2/r0`，`finish_reason=length`），
+0.8 不够。按 **0.95** 预留，写进 `draft/capabilities.py` 注册表并有一条精确数学
+测试钉住。若真实 run 再出现截断/空答案，按 ADR 0011 的修复路径调整并**重跑预检**，
+不许运行中改。
 
 ## 冻结的预算（版本化公式，全部确定值）
 
 ```text
 M2_LENGTH_SPEC            = zh 2,000 / 2,500 / 3,100（非空白 code point；修正案 6）
 visible = ceil(3100 × 2) + 1024            = 7,224
-required = ceil(7224 ÷ (1 − 0.8))          = 36,120
-request = 向上取整到万位                    = 40,000
+required = ceil(7224 ÷ (1 − 0.95))         = 144,480
+request = 向上取整到万位                    = 150,000
 stream：request > 16,000 → True
-continuation 预检：prompt + (request + overhead) + request ≤ 1M ✓
+continuation 预检：prompt + (request + overhead) + request ≈ 302K ≤ 1M ✓
 ```
 
 每个 cell：先调用一次；首段不足 2,000 时追加原文 + 固定续写指令再调用一次
@@ -82,8 +84,12 @@ continuation 预检：prompt + (request + overhead) + request ≤ 1M ✓
       （M2 即 2,250–2,550 字）自然收束，仍在冻结的 2,000–3,100 带内。
 - [x] **修正案 6（2026-08-02，维护者裁定）**：超长 ≤100 字不是内容问题，
       上限 3,000 → 3,100（`docs/EVAL_PROTOCOL_AMENDMENT_6.md`），>3,100 才 INVALID。
-      预算随 spec 更新（visible 7,224 / required 36,120 / request 40,000 不变）。
-- [ ] 探针：先跑 2 条陷阱（18 cells）实测新配置的超长率，再开完整一轮
+      预算随 spec 更新（visible 7,224）。
+- [x] 探针 —— **2026-08-02 完成**：18/18 全部落在带内、0 超长、0 截断（temp 0.3）。
+- [x] 第五轮（`runs/20260802T073534Z.jsonl`）—— **仍 INVALID**：前 15 格全部达标，
+      K02/x2/r0 文本 2,514 字（在带内）但 `finish_reason=length`：该 cell thinking+content
+      恰好烧光 40,000 预算。修：reserve 0.8 → 0.95（request 40,000 → 150,000），
+      协议阈值零改动。
 - [ ] 修复后完整一轮 225 final cells / 225–450 transport calls
 
 跑完之前 `runs/` 不存在、ADR 0009 不写；本 profile 的 commit 时间戳先于

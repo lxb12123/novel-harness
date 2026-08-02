@@ -343,8 +343,8 @@ Fake 够不着的（label 校验 / 重复边 StoreError / `secret_ids` 默认列
 见 [M2_ENDPOINT_PROFILE.md](M2_ENDPOINT_PROFILE.md)，不含 key、单独 commit）。
 length/capability/streaming/continuation/JSONL 实现与回归测试已于 2026-08-01 全部落地并离线验证
 （977 个 pytest / 22 个 vitest 全绿，见下）；2026-08-02 又补了两件事：DeepSeek 共享输出预留
-按 0.8 审计入册（thinking 与正文共池、官方无占比，按保守值），`nh gate` 按 env 从注册表解析并
-冻结 plan（high reasoning、request 40,000、streaming）。
+按 0.95 审计入册（thinking 与正文共池、官方无占比；实测右尾单 cell 达 40,000 tokens），
+`nh gate` 按 env 从注册表解析并冻结 plan（high reasoning、request 150,000、streaming）。
 
 已落地并有测试：`eval/leak.py`（草稿泄漏 = 纯集合判断，禁忌集只经 `panel/constraints`）、
 `eval/score.py`（`majority` / 精确 McNemar / `compare_arms` / Holm，零重依赖）、

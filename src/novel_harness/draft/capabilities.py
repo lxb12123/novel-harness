@@ -438,9 +438,11 @@ def _build_registry() -> Mapping[tuple[str, str], ProviderCapabilities]:
                 reasoning_levels=levels,
                 reasoning_dialect=ReasoningDialect.DEEPSEEK,
                 # 审计过的共享输出预留：DeepSeek V4 thinking 的 reasoning_content 与
-                # content 共用输出预算且无官方占比，按保守 80% 预留，证据见
-                # docs/M2_ENDPOINT_PROFILE.md（2026-08-02 冻结，profile 不含 key）。
-                reserve_ratio_high=0.8,
+                # content 共用输出预算且无官方占比。2026-08-02 实测右尾：单个 cell
+                # thinking+content 达 40,000 tokens（K02/x2/r0 finish_reason=length），
+                # 0.8 不够；按 0.95 预留（request 150,000），证据见
+                # docs/M2_ENDPOINT_PROFILE.md（profile 不含 key）。
+                reserve_ratio_high=0.95,
             )
         )
     entries.append(

@@ -456,19 +456,19 @@ def test_registry_is_immutable_and_does_not_fabricate_unpublished_reserve_ratios
 
 
 def test_deepseek_v4_high_uses_the_audited_shared_reserve_math() -> None:
-    """2026-08-02 冻结：DeepSeek V4 的 thinking 与正文共享输出预算，按 0.8 预留。
+    """2026-08-02 冻结：DeepSeek V4 的 thinking 与正文共享输出预算，按 0.95 预留。
 
     visible = ceil(3100*2) + 1024 = 7224；
-    required = ceil(7224 / (1-0.8)) = 36120；
-    request 向上取整到 40000 > 16000，必须走 streaming。
+    required = ceil(7224 / (1-0.95)) = 144480；
+    request 向上取整到 150000 > 16000，必须走 streaming。
     证据见 docs/M2_ENDPOINT_PROFILE.md。
     """
     capability = resolve_capabilities("https://api.deepseek.com", "deepseek-v4-flash")
-    assert capability.reserve_ratio_high == 0.8
+    assert capability.reserve_ratio_high == 0.95
     plan = plan_call(M2_LENGTH_SPEC, ReasoningEffort.HIGH, capability)
     assert plan.visible_token_budget == 7_224
-    assert plan.required_token_budget == 36_120
-    assert plan.request_token_budget == 40_000
+    assert plan.required_token_budget == 144_480
+    assert plan.request_token_budget == 150_000
     assert plan.stream is True
     assert plan.reasoning_dialect is ReasoningDialect.DEEPSEEK
 
