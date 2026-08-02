@@ -124,8 +124,8 @@ class CheckContext:
     面板路径（不读正文，2–5ms）和规则路径（debounce 2s）是两条链路（§6 serious #3）。
 
     R2 FUTURE_LEAK / R3 DEAD_SPEAKS 的唯一数据源（2026-08-02 已落地）。
-    R5 ADDRESS_CONFLICT 不在 v1：它的生死等 Day 1 下午的说话人标签覆盖率实测
-    （ADR 0005，≥10% 才进 v1）。
+    R5 ADDRESS_CONFLICT 不在 v1：2026-08-02 已按 ADR 0005 判据砍掉
+    （真书样本显式标签覆盖率 8.2% < 10%，[ADR 0014]）。
     """
 
 

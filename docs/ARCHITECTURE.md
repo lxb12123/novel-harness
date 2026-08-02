@@ -139,7 +139,7 @@ WHERE valid_from_chapter <= 151
 | **R2** | `FUTURE_LEAK` | 唯一专名精确匹配 | 是 | 极低（专名作者亲选） |
 | **R3** | `DEAD_SPEAKS` | `(全名)(道\|说道)` × 图上 status | 是 | **零歧义——死人没有对话标签** |
 | **R4** | `LOCATION_CONFLICT` | 作者声明 vs 作者声明 | **否** | 零 |
-| **R5** | `ADDRESS_CONFLICT` | 仅显式说话人标签内 | 是 | **待 Day 1 探针判生死** |
+| ~~**R5**~~ | ~~`ADDRESS_CONFLICT`~~ | ~~仅显式说话人标签内~~ | 是 | **已砍**：2026-08-02 实测 8.2% < 10%（[ADR 0014](adr/0014-r5-cut-by-quote-coverage.md)） |
 
 R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。**
 
@@ -175,7 +175,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 | **M0** 2周 | 骨架 + 打包链路 + 数据层 | 陌生机器 `uvx novel-harness` 能跑；真书切章数 = 目录数；时态边界/supersede/ULID/架构守卫四组测试全绿 | 一个能用的中文小说数据层 |
 | **M1** 3周 | 声明层 + **认知边界面板** ← 首个可发布物 | 真书上 30 分钟声明完 10 个秘密**且全程没输过一次章号**；花名册覆盖 90% 提及；第 151 章 3 个场景的矩阵逐格全对 | **一个认知边界记忆外挂（有用、可发布）** |
 | **M2** 4周 | 合成小册子 + 起草 + **kill-gate** ← 最早证伪点 | 12 章 / 25 个认知陷阱；三臂 × 25 × 3 = 225 个 final cell、成功轮 225–450 次 transport call；McNemar 出 p 值；协议及五份修正案早于第一个结果 | + 带数字的起草器 |
-| **M3** 2周 | 规则 R2/R3/R4[/R5] | **双边门槛**：真书 20 章误报 < 1 条/章 **且** 合成书真阳性 ≥ 22/25 | + 一致性检查 |
+| **M3** 2周 | 规则 R2/R3/R4（R5 已砍） | **双边门槛**：真书 20 章误报 < 1 条/章 **且** 合成书真阳性 ≥ 22/25 | + 一致性检查 |
 | **M4** 3周 | 增量抽取 + 三层图谱 + exception-driven | 弹给作者的冲突 ≤ 2 条/章；接受率 > 60%；别名合并后旧引用仍能解析 | + 半自动图谱 |
 | **M5** 2周 | 局部图 + v1.0 | 2 跳 + 类型过滤 ≤ 30 节点 < 300ms；**你自己用它连续写完 10 章且一次没关掉面板** | v1.0 |
 
@@ -299,7 +299,7 @@ db.py  ids.py  decisions.py  project.py  migrations/001_init.sql（13 张表）
 graph/{models,store,sqlite_store,queries}.py    ← state_at / supersede / subgraph
 panel/{knowledge,state,constraints}.py          ← 认知矩阵（头牌）+ PLANNED 进 prompt 的唯一闸门
 checks/{base,location_conflict,future_leak,dead_speaks}.py
-                                                  ← R2/R3/R4（R5 待覆盖率实测；`ALL_CHECKS` 共三条）
+                                                  ← R2/R3/R4（R5 已砍；`ALL_CHECKS` 共三条）
 text/{anchor,chapterize,scenes,mentions}.py     ← (para_index,quote,k) 唯一定义 / 切章 / 场景块 / 称呼匹配
 declare.py  importer.py                         ← M1 声明层：引语定章号 + 证据链 + CanonWriter
 cli.py                                          ← nh 的 17 个子命令（含 `nh serve` / `nh gate` / `nh draft`）
@@ -476,12 +476,10 @@ ADR 0009 不写（协议 §8 定死它「跑完写」）、任何地方都不会
   （文件里有 5 个 `第…` 开头的标题，但「第一卷 / 第二卷」**不该**被切成章，`卷` 不在 `CHAPTER_RE` 里；
   那正是 `test_importer.py` 单独钉住的一条，别把它数进章数里）。
   真书那边还欠一个小口子：**目录数得人肉数**，仓库里没有 TOC 解析器（`NH_DEMO_CHAPTERS` 手填）。
-- `scripts/probe_speaker_tags.py` 已能跑（`CHAPTER_RE` 从 `chapterize` import，不留第二份副本；
-  `SPEAKER_RE` / `QUOTE_RE` 是脚本自己定义的），但 R5 的生死数（显式说话人标签覆盖率 ≥10%？）
-  **仍未测量**，ADR 0005 的「实测结果」一节还是空的。
-  ⚠️ **填进去之前先对齐口径**：探针算的分母和 ADR 0005 判据表里的分母不是同一个，
-  直接填等于用 A 的数字触发 B 的阈值，R5 的生死裁决会不可信。ADR 0005 里还留着**第二份 SPEAKER 正则**且已漂移。
-  另外探针的 `QUOTE_RE` 只认 `「」` 和 `“”`——真书若用 `『』` 会报「找不到引语」并退出码 1（不是静默失败，但要认得出来）。
+- ~~R5 的生死数~~ —— **2026-08-02 已测，R5 已砍**：真书样本 3 章（`187817.txt`，
+  红楼梦同人）引语 97 条、带显式标签 8 条 = **8.2% < 10%**。口径先由
+  [ADR 0014](adr/0014-r5-cut-by-quote-coverage.md) 统一为「引语条数」，
+  ADR 0005 的「实测结果」一节已填。M3 规则集 = R2/R3/R4。
 
 **同时缺代码（书到手也验不了，别排进「等书」那一栏）：**
 

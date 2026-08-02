@@ -5,7 +5,8 @@
 这是 v1 现在就能做的**唯一**一条规则：
 
 - R2 FUTURE_LEAK / R3 DEAD_SPEAKS 要读正文，等 `text/mentions.py`（M3）
-- R5 ADDRESS_CONFLICT 的生死要等 Day 1 下午的覆盖率实测（ADR 0005）
+- R5 ADDRESS_CONFLICT 已砍（2026-08-02：真书样本显式标签覆盖率 8.2% < 10%，
+  ADR 0014）
 - R1 认知边界不是规则，是面板（`panel/knowledge.py`）
 
 零 FP 的来源不是「调得准」，是**两侧都是作者自己敲进去的字**：一侧是他此刻写在场景块

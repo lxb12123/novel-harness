@@ -6,7 +6,7 @@
 | **R2 FUTURE_LEAK** | **2026-08-02 落地**：`text/mentions.py` + `first_appears_chapter` |
 | **R3 DEAD_SPEAKS** | **2026-08-02 落地**：说话人标签位置 × `is_dead` / `has_appeared()` |
 | **R4 LOCATION_CONFLICT** | v1 最早的一条：不读正文，零 FP |
-| R5 ADDRESS_CONFLICT | 生死取决于 Day 1 下午的覆盖率实测（≥10% 才进 v1） |
+| ~~R5 ADDRESS_CONFLICT~~ | **已砍**（2026-08-02：真书样本 8.2% < 10%，[ADR 0014](../docs/adr/0014-r5-cut-by-quote-coverage.md)） |
 
 M3 的生死线是「真书连续 20 章误报 < 1 条/章 **且** 合成小册子真阳性 ≥ 22/25」。
 双边门槛的存在理由：**沉默的工具死得比吵闹的工具更快，只是死得更安静，而且指标
