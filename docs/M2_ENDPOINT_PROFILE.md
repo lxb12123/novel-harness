@@ -50,7 +50,9 @@ continuation 预检：prompt + (request + overhead) + request ≤ 1M ✓
 
 ## 验证记录
 
-- [ ] 真实 smoke call（离线预检之外的第一枚付费 token；验证 wire shape 被接受）
+- [x] 真实 smoke call —— **2026-08-02 完成**：`reasoning_effort=high` + thinking enabled +
+      `max_tokens=40000` + stream 全被接受；`finish_reason=stop`，usage 正常返回
+      （prompt 89 / completion 16），文本原样回传。
 - [ ] 完整一轮 225 final cells / 225–450 transport calls
 
 跑完之前 `runs/` 不存在、ADR 0009 不写；本 profile 的 commit 时间戳先于
