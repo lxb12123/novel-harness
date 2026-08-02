@@ -311,7 +311,13 @@ def _write_valid_run(path: Path, seeded: Seeded) -> tuple[list[dict[str, object]
                     continuation_messages = [
                         *messages,
                         {"role": "assistant", "content": first},
-                        {"role": "user", "content": continuation_instruction(M2_LENGTH_SPEC)},
+                        {
+                            "role": "user",
+                            "content": continuation_instruction(
+                                M2_LENGTH_SPEC,
+                                measure(first, M2_LENGTH_SPEC).actual_units,
+                            ),
+                        },
                     ]
                     records.append(
                         _attempt(

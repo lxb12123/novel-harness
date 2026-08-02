@@ -56,9 +56,14 @@ continuation 预检：prompt + (request + overhead) + request ≤ 1M ✓
 - [x] 首轮（`runs/20260802T061952Z.jsonl`）—— **2026-08-02 按协议终态 INVALID**：
       K01/x0 首次生成 1,560 字（under，正确触发续写），续写段 1,765 字，累计 3,325 >
       3,000 → 修正案 5 裁定 3 判死整轮。根因：旧续写指令不含任何长度目标，第二次调用
-      盲目续写。修复（同日，**协议阈值零改动**）：续写指令改为嵌入 frozen `LengthSpec`
-      的长度档与硬上限（`draft/generate.py::continuation_instruction()`），指令原文随每条
-      attempt 落盘可审计。旧 run 原样保留，不覆盖、不续跑。
+      盲目续写。
+- [x] 次轮（`runs/20260802T062425Z.jsonl`）—— **同样 INVALID**：首段 1,798 字，
+      续写段 1,800 字、累计 3,598。修复 1（只给长度档与硬上限、不给已写数）不够——
+      模型不自己数数。
+- [x] 修复 2（同日，**协议阈值零改动**）：`continuation_instruction(length,
+      cumulative_units)` 把「已写 N 字、续写约 M 字、总字数区间、续写段上限」一次给足；
+      N 只来自确定性长度测量（修正案 5 裁定 2 允许续写只读长度计数），模板恒定、原文
+      随每条 attempt 落盘可审计。旧 run 原样保留，不覆盖、不续跑。
 - [ ] 修复后完整一轮 225 final cells / 225–450 transport calls
 
 跑完之前 `runs/` 不存在、ADR 0009 不写；本 profile 的 commit 时间戳先于

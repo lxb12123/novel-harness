@@ -526,7 +526,13 @@ def inspect_run(
                     expected_second = [
                         *expected_initial,
                         {"role": "assistant", "content": first_output},
-                        {"role": "user", "content": continuation_instruction(M2_LENGTH_SPEC)},
+                        {
+                            "role": "user",
+                            "content": continuation_instruction(
+                                M2_LENGTH_SPEC,
+                                measure(first_output, M2_LENGTH_SPEC).actual_units,
+                            ),
+                        },
                     ]
                     second_output, second_need, last_finish_reason = _validate_attempt(
                         second,

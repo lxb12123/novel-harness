@@ -26,33 +26,37 @@ from .length import (
 from .provider import CompletionResult, ProviderConfig, complete
 
 
-def continuation_instruction(length: LengthSpec) -> str:
-    """固定续写指令 + 该 ``LengthSpec`` 的长度档（同一轮内恒定，原文随证据落盘）。
+def continuation_instruction(length: LengthSpec, cumulative_units: int) -> str:
+    """固定模板续写指令：语言 + ``LengthSpec`` + 已写实测字数。
 
-    2026-08-02 修：旧指令不带任何长度目标，第二次调用盲目续写，累计总长可能冲破
-    ``max_units`` → 修正案 5 裁定 3 判整轮 INVALID（第一份真实 run 就是这么死的：
-    `runs/20260802T061952Z.jsonl`，K01/x0 累计 3,325 > 3,000）。
-    协议只冻结「续写一次、under-min-only 触发、最多 2 次 attempt、同配置」，
-    没冻结措辞；长度档来自 frozen ``LengthSpec``，指令原文写进每条 attempt 的证据，
-    可审计。
+    2026-08-02 两连修（两次真实 run 都死在 K01/x0 的续写段）：
+    1. 旧指令没有长度目标 → 续写 1,765 字、累计 3,325 → INVALID；
+    2. 只给「总字数不得超过上限」不给已写数 → 模型不自己数数，续写 1,800 字、
+       累计 3,598 → 仍 INVALID。
+    现在把「已写 N 字、再写约 M 字、总字数区间」一次给足。``N`` 只来自确定性长度
+    测量（修正案 5 裁定 2 允许续写只读长度计数），与 tell / 泄漏 / 文风 / 臂无关；
+    模板恒定，指令原文随每条 attempt 落盘，可审计。
     """
+    remaining_target = max(length.target_units - cumulative_units, 0)
+    remaining_max = max(length.max_units - cumulative_units, 0)
     if length.language is DraftLanguage.ZH:
         return (
             "请直接接着上文续写，不要重新开始，不要概括上文，也不要评论这项请求。"
-            f"全文总字数（含已写部分）必须落在 {length.min_units}–{length.max_units} 字之间，"
-            f"目标约 {length.target_units} 字；续写后的总字数不得超过 {length.max_units} 字。"
+            f"目前已写 {cumulative_units} 字；请续写约 {remaining_target} 字，"
+            f"使全文总字数落在 {length.min_units}–{length.max_units} 字之间，"
+            f"续写段最多 {remaining_max} 字，不要超出。"
         )
     return (
         "Continue directly from the preceding text without restarting, recapping, "
         "or commenting on the request. "
-        f"The complete draft (including what is already written) must stay within "
-        f"{length.min_units}–{length.max_units} words, targeting about "
-        f"{length.target_units} words; after continuing, the total must not exceed "
-        f"{length.max_units} words."
+        f"{cumulative_units} units are already written; continue for about "
+        f"{remaining_target} more, keeping the complete draft within "
+        f"{length.min_units}–{length.max_units} units and the continuation itself "
+        f"under {remaining_max} units."
     )
 
 
-CONTINUATION_CONTEXT_VERSION = "nh-continuation-context-v2"
+CONTINUATION_CONTEXT_VERSION = "nh-continuation-context-v3"
 CONTINUATION_PROMPT_OVERHEAD_TOKENS = 1_024
 
 
@@ -283,7 +287,9 @@ def generate_draft(
                 {"role": "assistant", "content": initial_result.text},
                 {
                     "role": "user",
-                    "content": continuation_instruction(length),
+                    "content": continuation_instruction(
+                        length, initial_measurement.actual_units
+                    ),
                 },
             )
         )
