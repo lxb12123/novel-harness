@@ -284,7 +284,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
 > 守卫钉住的是**能在运行时数出来**的那些（路由 32 / `/api` 31 / 501 stub 5 / 错误映射 17 /
-> CLI 叶子 16 / 建表 13 / fixture 端点 21 / `ALL_CHECKS` 3），改错必红、**删掉也必红**（不静默 skip）。
+> CLI 叶子 17 / 建表 13 / fixture 端点 23 / `ALL_CHECKS` 3），改错必红、**删掉也必红**（不静默 skip）。
 > **它罩不住 pytest / vitest 这两个数**——在 pytest 里数 pytest 要递归，
 > 所以「1021」和「32」仍然只靠人手改，改代码后请顺手跑一次 `uv run pytest -q` 更新这一处。
 > （2026-07-30 那天这个数从 690 走到 801，中途在文档里错过一次——**这条盲区是真的，不是假想的**。）
@@ -302,7 +302,7 @@ checks/{base,location_conflict,future_leak,dead_speaks}.py
                                                   ← R2/R3/R4（R5 待覆盖率实测；`ALL_CHECKS` 共三条）
 text/{anchor,chapterize,scenes,mentions}.py     ← (para_index,quote,k) 唯一定义 / 切章 / 场景块 / 称呼匹配
 declare.py  importer.py                         ← M1 声明层：引语定章号 + 证据链 + CanonWriter
-cli.py                                          ← nh 的 16 个子命令（含 `nh serve` / `nh gate`）
+cli.py                                          ← nh 的 17 个子命令（含 `nh serve` / `nh gate` / `nh draft`）
 api/{app,deps}.py                               ← M1.5 FastAPI 壳：34 条自建路由 + 17 个错误映射
                                                   （33 条 /api + 1 条 `GET /`；其中 5 条是 501 stub）
 frontend/src/                                   ← React 工作台：28 个手写源文件、2857 行 TS/TSX（278 行测试）

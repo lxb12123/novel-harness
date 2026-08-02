@@ -910,6 +910,108 @@ def check(
 
 
 @app.command()
+def draft(
+    goal: str = typer.Option(..., "--goal", "-g", help="这一场要写什么"),
+    cast: str = typer.Option(..., "--cast", help="在场角色称呼，逗号分隔"),
+    chapter: int = typer.Option(..., "--chapter", "-c", help="第几章（查询参数，不写进数据）"),
+    db: Path = typer.Option(..., "--db", help="SQLite 库"),
+    project: str = typer.Option(..., "--project", "-p", help="project_id"),
+    file: Path | None = typer.Option(
+        None, "--file", "-f", help="可选：上文/prior（最多 800 code points）"
+    ),
+    length: str = typer.Option(
+        "2000-2500-3000", "--length", help="min-target-max（中文），如 2000-2500-3000"
+    ),
+    arm: str = typer.Option(
+        "X1", "--arm", help="X0（零图谱）/ X1（事实清单）/ X2（叙事提示）"
+    ),
+) -> None:
+    """实验通道：跑一次 AI 起草（**不走 kill-gate、不写证据**）。
+
+    给维护者亲手看模型行为用的（调 prompt / 长度 / 温度时几秒一轮）。
+    **它不是开闸**：公开 `/draft` 仍 501，kill-gate 协议原封不动，
+    M2 的正式裁决仍走 `nh gate`；这条命令的输出不做任何判分。
+    """
+    from .draft.assemble import PromptForm, assemble
+    from .draft.capabilities import (
+        CapabilityError,
+        ReasoningEffort,
+        plan_call,
+        resolve_capabilities,
+    )
+    from .draft.context import ResolvedConstraints
+    from .draft.generate import generate_draft
+    from .draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage, LengthSpec
+    from .draft.provider import ProviderConfig, ProviderError
+    from .panel.constraints import UnresolvedCast, scene_view
+
+    try:
+        parts = [int(p) for p in length.split("-")]
+        if len(parts) != 3:
+            raise ValueError("格式是 min-target-max，如 2000-2500-3000")
+        spec = DEFAULT_LENGTH_POLICY.validate_spec(
+            LengthSpec(
+                language=DraftLanguage.ZH,
+                min_units=parts[0],
+                target_units=parts[1],
+                max_units=parts[2],
+            )
+        )
+    except (ValidationError, ValueError) as exc:
+        _die(f"✗ 长度档不合法：{_reason(exc)}")
+
+    try:
+        form = PromptForm[arm.strip().upper()]
+    except KeyError:
+        _die(f"✗ arm 只能是 X0 / X1 / X2，收到 {arm!r}")
+
+    prior = ""
+    if file is not None:
+        if not file.exists():
+            _die(f"✗ 上文文件不存在：{file}")
+        prior = file.read_text(encoding="utf-8-sig")
+
+    surfaces = [c.strip() for c in cast.split(",") if c.strip()]
+    store = _open_store(db, project)
+    try:
+        view = scene_view(store, project, chapter, surfaces)
+        ctx = ResolvedConstraints.of(view, surfaces)
+        messages = assemble(
+            ctx, form=form, goal=goal, length=spec, previous_tail=prior
+        )
+    except UnresolvedCast as exc:
+        _die(f"✗ 在场角色解析不了：{_reason(exc)}")
+
+    try:
+        config = ProviderConfig.from_env()
+        capability = resolve_capabilities(config.base_url, config.model)
+        plan = plan_call(spec, ReasoningEffort.HIGH, capability)
+    except (ValidationError, ValueError, CapabilityError) as exc:
+        _die(
+            f"✗ 模型没配好：{_reason(exc)}\n"
+            "    export NH_LLM_BASE_URL=https://api.deepseek.com\n"
+            "    export NH_LLM_MODEL=deepseek-v4-flash\n"
+            "    export NH_LLM_API_KEY=...   # 只从环境注入\n"
+            "    export NH_LLM_TEMPERATURE=0.3"
+        )
+
+    try:
+        result = generate_draft(
+            messages, length=spec, config=config, plan=plan
+        )
+    except ProviderError as exc:
+        _die(f"✗ 模型调用失败：{exc}")
+
+    typer.echo(result.text)
+    last = result.attempts[-1].result
+    typer.echo(
+        f"\n── {result.length.actual_units} {result.length.unit}"
+        f"（{result.length.status.value}）· finish={last.finish_reason}"
+        f" · attempts={len(result.attempts)} · tokens={result.completion_tokens}"
+    )
+
+
+@app.command()
 def gate(
     db: Path = typer.Option(..., "--db", help="SQLite 库（合成小册子那本）"),
     project: str = typer.Option(..., "--project", "-p", help="project_id"),

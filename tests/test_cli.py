@@ -451,6 +451,50 @@ def test_check_says_how_many_rules_it_ran(book: Seeded, tmp_path: Path) -> None:
     assert "0 条 issue" in result.output
 
 
+def test_draft_is_an_experimental_channel_that_prints_text(
+    book: Seeded, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """实验通道：不走 kill-gate、不写证据，纯打印草稿给维护者看行为。"""
+    import novel_harness.draft.generate as generate_mod
+    from novel_harness.draft.provider import CompletionResult
+
+    calls: list[dict] = []
+
+    def fake(
+        messages,
+        *,
+        config=None,
+        plan=None,
+        client=None,
+    ) -> CompletionResult:
+        del client
+        calls.append({"config": config, "plan": plan})
+        return CompletionResult(
+            text="萧决道：「此剑无名。」", model="fake", finish_reason="stop"
+        )
+
+    monkeypatch.setattr(generate_mod, "complete", fake)
+    monkeypatch.setenv("NH_LLM_BASE_URL", "https://api.deepseek.com")
+    monkeypatch.setenv("NH_LLM_MODEL", "deepseek-v4-flash")
+    monkeypatch.setenv("NH_LLM_API_KEY", "not-needed")
+    monkeypatch.setenv("NH_LLM_TEMPERATURE", "0.3")
+
+    result = runner.invoke(
+        app,
+        [
+            "draft",
+            "--goal", "萧决看剑。",
+            "--cast", "萧决",
+            "--chapter", "1",
+            "--db", str(book.path),
+            "-p", book.pid,
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "萧决道：「此剑无名。」" in result.output
+    assert calls and calls[0]["plan"] is not None
+
+
 def test_check_with_no_scene_blocks_dies(book: Seeded, tmp_path: Path) -> None:
     """没有场景块 = R4 无事可做 = 必然零 issue。不让那个零冒充体检报告。"""
     manuscript = _chapter_file(tmp_path, "萧决站在城头上，看着北荒的方向。\n")
