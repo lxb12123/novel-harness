@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useProjects } from "../api/hooks";
 import { useCoords } from "../store";
+import { SettingsDrawer } from "./SettingsDrawer";
 import { Setup } from "./Setup";
 
 // 顶栏：项目切换 + ＋新书/导入 + AS OF 章号 + 在场 cast（称呼原文）。
@@ -9,6 +10,7 @@ export function TopBar() {
   const projects = useProjects();
   const { projectId, chapter, cast, page, setProject, setChapter, setCast, setPage } = useCoords();
   const [setupOpen, setSetupOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const list = projects.data ?? [];
 
   return (
@@ -47,6 +49,9 @@ export function TopBar() {
       <button disabled title="M2 能力尚未开放（起草）">
         AI 起草
       </button>
+      <button title="AI 设置" onClick={() => setSettingsOpen(true)}>
+        ⚙
+      </button>
 
       <span className="spacer" />
       <label>看第</label>
@@ -67,6 +72,7 @@ export function TopBar() {
       <span className="hint">章号是「看第几章」，系统从不让你填 valid_from</span>
 
       {setupOpen && <Setup onClose={() => setSetupOpen(false)} />}
+      {settingsOpen && <SettingsDrawer onClose={() => setSettingsOpen(false)} />}
     </header>
   );
 }

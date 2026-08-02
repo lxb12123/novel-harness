@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, proj } from "./client";
 import type {
+  AiSettings,
+  AiSettingsInput,
   ChapterRow,
   ChapterSnapshot,
   ChapterText,
@@ -28,6 +30,22 @@ import type {
 // 坐标一变自动重取。写路径（save / declare）成功后**精确** invalidate 受影响的 key。
 
 const q = (parts: unknown[]) => parts;
+
+export function useAiSettings() {
+  return useQuery({
+    queryKey: q(["settings"]),
+    queryFn: () => api.get<AiSettings>("/api/settings"),
+  });
+}
+
+export function useSaveAiSettings() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: AiSettingsInput) =>
+      api.put<AiSettings>("/api/settings", input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
+  });
+}
 
 export function useProjects() {
   return useQuery({ queryKey: q(["projects"]), queryFn: () => api.get<Project[]>("/api/projects") });

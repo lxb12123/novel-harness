@@ -35,6 +35,9 @@ from pydantic import AfterValidator, BaseModel, ValidationError
 from .. import importer
 from .. import project as project_mod
 from ..checks import ALL_CHECKS, CheckContext, run_checks
+from ..settings import Settings as UserSettings
+from ..settings import load as load_user_settings
+from ..settings import save as save_user_settings
 from ..declare import (
     AmbiguousName,
     AmbiguousQuote,
@@ -329,6 +332,44 @@ async def index() -> FileResponse:
 @app.get("/api/projects")
 def projects(conn: Any = Depends(get_conn)) -> Any:
     return project_mod.list_all(conn)
+
+
+class SettingsBody(BaseModel):
+    """设置请求体。`api_key` 为空 = 保持原值（改地址/模型时不用重粘钥匙）。"""
+
+    base_url: str = ""
+    model: str = ""
+    api_key: str = ""
+
+
+def _settings_response(settings: UserSettings) -> dict[str, Any]:
+    """**永不回吐完整 key**——前端只需要「设没设」和「后四位」。
+    完整 key 只在本机文件里，不出 HTTP（本地环回也算出口）。"""
+    return {
+        "base_url": settings.base_url,
+        "model": settings.model,
+        "api_key_set": settings.api_key_set,
+        "api_key_preview": settings.api_key_preview,
+    }
+
+
+@app.get("/api/settings")
+def get_settings() -> dict[str, Any]:
+    """读 AI 设置（BYOK）。不含完整 key。"""
+    return _settings_response(load_user_settings())
+
+
+@app.put("/api/settings")
+def put_settings(body: SettingsBody) -> dict[str, Any]:
+    """写 AI 设置到本机（`~/.config/novel-harness/settings.json`，0600）。"""
+    current = load_user_settings()
+    merged = UserSettings(
+        base_url=body.base_url.strip() or current.base_url,
+        model=body.model.strip() or current.model,
+        api_key=body.api_key or current.api_key,
+    )
+    save_user_settings(merged)
+    return _settings_response(merged)
 
 
 # ── 上手：建书 / 导入 TXT / 同步（让非程序员不碰命令行也能起步）──────────────

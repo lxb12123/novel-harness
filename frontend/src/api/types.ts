@@ -20,6 +20,20 @@ export interface DraftLengthSpec {
   max_units: number;
 }
 
+export interface AiSettings {
+  base_url: string;
+  model: string;
+  api_key_set: boolean;
+  api_key_preview: string;
+}
+
+export interface AiSettingsInput {
+  base_url: string;
+  model: string;
+  /** 空 = 保持原钥匙（改地址/模型不用重粘）。 */
+  api_key?: string;
+}
+
 export type NodeLabel =
   | "Character"
   | "Location"

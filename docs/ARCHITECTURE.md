@@ -303,10 +303,10 @@ checks/{base,location_conflict,future_leak,dead_speaks}.py
 text/{anchor,chapterize,scenes,mentions}.py     ← (para_index,quote,k) 唯一定义 / 切章 / 场景块 / 称呼匹配
 declare.py  importer.py                         ← M1 声明层：引语定章号 + 证据链 + CanonWriter
 cli.py                                          ← nh 的 16 个子命令（含 `nh serve` / `nh gate`）
-api/{app,deps}.py                               ← M1.5 FastAPI 壳：32 条自建路由 + 17 个错误映射
-                                                  （31 条 /api + 1 条 `GET /`；其中 5 条是 501 stub）
+api/{app,deps}.py                               ← M1.5 FastAPI 壳：34 条自建路由 + 17 个错误映射
+                                                  （33 条 /api + 1 条 `GET /`；其中 5 条是 501 stub）
 frontend/src/                                   ← React 工作台：28 个手写源文件、2857 行 TS/TSX（278 行测试）
-frontend/src/__fixtures__/api.json              ← 从真 app dump 的 21 个端点出参（契约测试两头共用）
+frontend/src/__fixtures__/api.json              ← 从真 app dump 的 23 个端点出参（契约测试两头共用）
 novel_harness/webui/                            ← ↑ 的构建产物（生成物，不入库；随 wheel 分发）
 draft/provider.py                               ← M2：统一模型出口（OpenAI 兼容，三臂与生产共用）
 draft/context.py                                ← M2：`ResolvedConstraints`（cast 已解析 / X1X2 同一份矩阵，编码进类型）
@@ -331,7 +331,7 @@ Fake 够不着的（label 校验 / 重复边 StoreError / `secret_ids` 默认列
 
 `cli.py` 在此之前是**只有 `--version` 的空壳**；现在 `nh panel` 渲染的就是本文档
 开头那个框，走的是真 SqliteStoryGraph。面板不再只在终端里存在——同一个矩阵在浏览器工作台的右栏
-第一个 tab 里（`api/app.py` 的 32 条自建路由 + `frontend/src/components/KnowledgeMatrix.tsx`）。
+第一个 tab 里（`api/app.py` 的 34 条自建路由 + `frontend/src/components/KnowledgeMatrix.tsx`）。
 
 ### M2 的当前形状：修正案 5/6 / ADR 0011 已冻结，实现与 endpoint/profile 已落地，剩第一轮有效真模型
 
@@ -528,7 +528,7 @@ R4 之外，R2（未来实体提前出现）和 R3（死人/未登场角色开�
    自称「手写真相源」——手写的东西和后端一致只是**当时**一致。
 
    关键决定是 **fixture 不手写**：`tests/test_frontend_contract.py` 从真 app（`TestClient`
-   + 真 SQLite）dump 21 个端点的真响应，规范化掉 ULID/时间戳/路径后冻在
+   + 真 SQLite）dump 23 个端点的真响应，规范化掉 ULID/时间戳/路径后冻在
    `frontend/src/__fixtures__/api.json`；组件测试吃的就是这一份。于是两头各有守卫——
    **后端出参一改 pytest 先红**（逐字节比对重新 dump 的结果），**形状变了没人改组件 vitest 红**。
    用手写 fixture 做前端测试等于两份手写的东西互相验证，那正是这条缝原本的病。

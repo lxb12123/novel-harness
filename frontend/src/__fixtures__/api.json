@@ -330,6 +330,18 @@
     }
   ],
   "scenes": [],
+  "settings": {
+    "api_key_preview": "",
+    "api_key_set": false,
+    "base_url": "",
+    "model": ""
+  },
+  "settingsSaved": {
+    "api_key_preview": "***********-key",
+    "api_key_set": true,
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-v4-flash"
+  },
   "states": [
     {
       "chapter": 2,

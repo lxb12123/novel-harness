@@ -28,6 +28,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 
 FIXTURE = Path(__file__).resolve().parents[1] / "frontend" / "src" / "__fixtures__" / "api.json"
@@ -73,7 +74,10 @@ class _Normalizer:
 
 
 def test_frontend_fixture_matches_the_real_api(
-    client: TestClient, book: dict[str, str], tmp_path: Path
+    client: TestClient,
+    book: dict[str, str],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """前端吃的那份 fixture 必须还等于真后端今天吐的东西。
 
@@ -83,6 +87,8 @@ def test_frontend_fixture_matches_the_real_api(
     """
     pid = book["pid"]
     base = f"/api/projects/{pid}"
+    # 设置会写本机文件——测试必须指到临时路径，不许碰真实用户目录。
+    monkeypatch.setenv("NH_SETTINGS_PATH", str(tmp_path / "settings.json"))
     norm = _Normalizer(str(tmp_path))
     dump: dict[str, Any] = {}
 
@@ -90,6 +96,19 @@ def test_frontend_fixture_matches_the_real_api(
         assert response.status_code == 200, f"{key} → {response.status_code} {response.text}"
         dump[key] = norm.walk(response.json())
         return dump[key]
+
+    # ── AI 设置（BYOK）：GET 遮蔽 / PUT 合并回执 ──────────────────────────
+    grab("settings", client.get("/api/settings"))
+    saved = client.put(
+        "/api/settings",
+        json={
+            "base_url": "https://api.deepseek.com",
+            "model": "deepseek-v4-flash",
+            "api_key": "sk-contract-key",
+        },
+    )
+    assert saved.status_code == 200, saved.text
+    grab("settingsSaved", saved)
 
     # ── 读路径（声明之前的状态）────────────────────────────────────────────
     grab("projects", client.get("/api/projects"))
