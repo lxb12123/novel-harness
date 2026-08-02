@@ -272,7 +272,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 
 ## 当前状态
 
-**M0 + M1 + M1.5 已落地；M2 的修正案 5/6 / ADR 0011 已预注册，配套实现与 endpoint/profile 已冻结，剩第一轮有效真模型运行**（1021 个 pytest + 32 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
+**M0 + M1 + M1.5 已落地；M2 的修正案 5/6/7 / ADR 0011 已预注册，配套实现与 endpoint/profile 已冻结，剩第一轮有效真模型运行**（1023 个 pytest + 33 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
 
 > **本节的数字是全仓唯一副本，且 `tests/test_doc_numbers.py` 会拦住第二份。**
 > `README.md` / `CLAUDE.md` / `frontend/README.md` 里只留指针，不许再抄一份数字过去。
@@ -283,10 +283,10 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 > 列在「还一个字符都没有」里——照它排期的人会去重写已完成的工作。
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
-> 守卫钉住的是**能在运行时数出来**的那些（路由 32 / `/api` 31 / 501 stub 5 / 错误映射 17 /
+> 守卫钉住的是**能在运行时数出来**的那些（路由 34 / `/api` 33 / 501 stub 4 / 错误映射 17 /
 > CLI 叶子 17 / 建表 13 / fixture 端点 23 / `ALL_CHECKS` 3），改错必红、**删掉也必红**（不静默 skip）。
 > **它罩不住 pytest / vitest 这两个数**——在 pytest 里数 pytest 要递归，
-> 所以「1021」和「32」仍然只靠人手改，改代码后请顺手跑一次 `uv run pytest -q` 更新这一处。
+> 所以「1023」和「33」仍然只靠人手改，改代码后请顺手跑一次 `uv run pytest -q` 更新这一处。
 > （2026-07-30 那天这个数从 690 走到 801，中途在文档里错过一次——**这条盲区是真的，不是假想的**。）
 
 > ⚠️ **「全绿」目前只在本机成立。本仓库还没有 git remote，`ci.yml` / `release.yml` 一次都没执行过。**
@@ -304,7 +304,7 @@ text/{anchor,chapterize,scenes,mentions}.py     ← (para_index,quote,k) 唯一�
 declare.py  importer.py                         ← M1 声明层：引语定章号 + 证据链 + CanonWriter
 cli.py                                          ← nh 的 17 个子命令（含 `nh serve` / `nh gate` / `nh draft`）
 api/{app,deps}.py                               ← M1.5 FastAPI 壳：34 条自建路由 + 17 个错误映射
-                                                  （33 条 /api + 1 条 `GET /`；其中 5 条是 501 stub）
+                                                  （33 条 /api + 1 条 `GET /`；其中 4 条是 501 stub）
 frontend/src/                                   ← React 工作台：28 个手写源文件、2857 行 TS/TSX（278 行测试）
 frontend/src/__fixtures__/api.json              ← 从真 app dump 的 23 个端点出参（契约测试两头共用）
 novel_harness/webui/                            ← ↑ 的构建产物（生成物，不入库；随 wheel 分发）
@@ -344,7 +344,7 @@ Fake 够不着的（label 校验 / 重复边 StoreError / `secret_ids` 默认列
 **endpoint/profile 已于 2026-08-02 冻结**（`deepseek-v4-flash` @ `https://api.deepseek.com`，
 见 [M2_ENDPOINT_PROFILE.md](M2_ENDPOINT_PROFILE.md)，不含 key、单独 commit）。
 length/capability/streaming/continuation/JSONL 实现与回归测试已于 2026-08-01 全部落地并离线验证
-（1021 个 pytest / 32 个 vitest 全绿，见下）；2026-08-02 又补了两件事：DeepSeek 共享输出预留
+（1023 个 pytest / 33 个 vitest 全绿，见下）；2026-08-02 又补了两件事：DeepSeek 共享输出预留
 按 0.95 审计入册（thinking 与正文共池、官方无占比；实测右尾单 cell 达 40,000 tokens），
 `nh gate` 按 env 从注册表解析并冻结 plan（high reasoning、request 150,000、streaming）。
 
@@ -357,9 +357,10 @@ length/capability/streaming/continuation/JSONL 实现与回归测试已于 2026-
 从「runner 记得调 `require_resolved_cast`」升级成类型层强制，2026-07-27 补，12 条）、
 `panel/constraints.secret_surfaces`（秘密的**内容 tell**，排除进 prompt 的显示名标签）、
 **第 4 道 arch-guard `tests/test_draft_boundary.py`**（2026-07-27 补，11 条）、
-**5 条 501 stub 路由**（UI_ARCHITECTURE §48 要的那 5 条，2026-07-27 补，`test_api.py` 8 条断言含
-「恰好 5 条」；`/draft` 是 EVAL_PROTOCOL 修正案 1 给 KILL 分支定的动作前提——**该前提现已满足**，
-修正案里那句「/draft 路由不存在」是写它那天的事实，兜底分支不再触发）、
+**4 条 501 stub 路由**（UI_ARCHITECTURE §48 要的那批，2026-07-27 补；`/draft` 已于
+2026-08-02 按修正案 7 开放为真实起草接口，其余 4 条——规划/最近运行/提案×2——保持 501。
+`/draft` 曾是 EVAL_PROTOCOL 修正案 1 给 KILL 分支定的动作前提，该前提现已满足且被
+修正案 7 改为「实验开放，裁决 KILL 时按修正案撤销」）、
 **`draft/assemble.py`**（三臂本体，2026-07-30 补，17 条：X0 是 X1/X2 的**严格前缀**由
 `x1[:-1] == x0[:-1]` 加一条尾部拼接断言钉死，不是一句自觉；`DEFAULT_HOUSE_STYLE` 三臂共用，
 里面**不许出现「秘密 / 不知道 / 泄露 / 剧透 / 伏笔 / 设定」**，另有一条关键词集合测试守着）、
@@ -382,11 +383,11 @@ provider-neutral `high` 映射到各兼容端点的 wire shape，未知路由 fa
 **[ADR 0010](adr/0010-writer-boundary.md)**（Writer 边界 D1–D6，**先于 `assemble.py` 定形**）、
 **[EVAL_PROTOCOL 修正案 4](EVAL_PROTOCOL_AMENDMENT_4.md)**（先于 `synth/` 定形，见下）。
 
-> ~~**但 5 条 stub 只做完了一半。**~~ —— **2026-08-02 已补另一半。** 它们存在的唯一理由
-> 是 `app.py:857-874` 写的「让前端把按钮画成灰的，而不是把按钮藏起来」；现在
-> `TopBar.tsx` 渲染两个 disabled 的「AI 规划 / AI 起草」按钮（title 注明 M2 未开放，
-> `TopBar.test.tsx` 钉住它们必须存在、必须灰、不能触发任何动作）。M2 PASS 后把按钮
-> 接上真实端点即可，路径不动。
+> ~~**但 5 条 stub 只做完了一半。**~~ —— **2026-08-02 两侧兑现，且起草已实验开放。**
+> 「AI 规划」仍是灰置 stub（规划未开放）；「AI 起草」已按
+> [修正案 7](EVAL_PROTOCOL_AMENDMENT_7.md) 点亮，`/draft` 换成真实实现
+> （连接参数走 AI 设置页 BYOK，响应带「实验状态」标注）。M2 有效裁决后再决定
+> 是否去掉实验标注；裁决若 KILL，按修正案 7 撤销（一次显式 commit）。
 
 第 4 道守卫钉的是**起草层与判分层之间那堵墙的两面**，两面都成立 kill-gate 才有意义：
 ① `eval/` 不许自建禁忌集（EVAL_PROTOCOL §3 点名要的那条）；② **`draft/` 永不拿 tell**——
@@ -438,15 +439,17 @@ ADR 0009 不写（协议 §8 定死它「跑完写」）、任何地方都不会
 所以之后任何 `runs/*.jsonl` 都晚于它、都算数。**这条 commit 之后再改协议就等于改卷子**——
 真要改，开一份新的、说明改了什么和为什么，别覆盖。
 
-**它此后已经被改过六次，改法合规但你必须知道它们存在**：
+**它此后已经被改过七次，改法合规但你必须知道它们存在**：
 [`EVAL_PROTOCOL_AMENDMENT_1.md`](EVAL_PROTOCOL_AMENDMENT_1.md)（两处口径不自洽）、
 [`_2`](EVAL_PROTOCOL_AMENDMENT_2.md) / [`_3`](EVAL_PROTOCOL_AMENDMENT_3.md)（裁决表重叠 + 三处措辞歧义）、
 [`_4`](EVAL_PROTOCOL_AMENDMENT_4.md)（**§4 的「`prior` 不许含 tell」让整台仪器不通电**）、
 [`_5`](EVAL_PROTOCOL_AMENDMENT_5.md)（中文 2,000–3,000 字、一次长度续写、225 final cells /
 225–450 calls、通用 high-reasoning 能力档与 JSONL 证据形状）、
 [`_6`](EVAL_PROTOCOL_AMENDMENT_6.md)（**超长 ≤100 宽容**：上限 3,000 → 3,100；
-2026-08-02 在四轮 INVALID 之后裁定，§6 及格线一个数字没动）。
-六份都是**另开文件**、冻结正文逐字节未动（从 `## 1.` 起与 `0393088` byte-exact）。
+2026-08-02 在四轮 INVALID 之后裁定，§6 及格线一个数字没动）、
+[`_7`](EVAL_PROTOCOL_AMENDMENT_7.md)（**起草先行开放（实验状态）**：
+产品放行决定，考试 `PROTOCOL_VERSION` 与裁决表原样）。
+七份都是**另开文件**、冻结正文逐字节未动（从 `## 1.` 起与 `0393088` byte-exact）。
 1–4 写下时 `synth/` 尚不存在；第 5 份晚于 `synth/`，但五份都早于真实推理与 `runs/`，所以仍属预注册。
 **动 `eval/` 或 `draft/` 之前要读的是「协议 + 这五份修正案 + ADR 0010/0011」，不是协议一份。**
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -538,7 +539,6 @@ def test_openapi_schema_builds(client: TestClient) -> None:
 
 # (HTTP 方法, 项目前缀之后的路径, 里程碑)。3 条 M2 起草 + 2 条 M4 抽取。
 STUBS = [
-    ("post", "/chapters/7/draft", "M2"),
     ("post", "/chapters/7/plan", "M2"),
     ("get", "/runs", "M2"),
     ("get", "/chapters/7/proposals", "M4"),
@@ -559,13 +559,13 @@ def test_stub_returns_501_with_milestone(
 def test_stub_501_is_distinguishable_from_a_typo_404(
     client: TestClient, book: dict[str, str]
 ) -> None:
-    """同一个前缀下，拼错的路径仍然是 404——这条对比就是这 5 条 stub 存在的全部理由。
+    """同一个前缀下，拼错的路径仍然是 404——这条对比就是 stub 存在的全部理由。
 
     两者都返 404 的话，前端收到 404 时不知道该渲染灰按钮还是该报自己的 bug。
     """
     pid = _pid(book)
     assert client.post(f"/api/projects/{pid}/chapters/7/drafts").status_code == 404
-    assert client.post(f"/api/projects/{pid}/chapters/7/draft").status_code == 501
+    assert client.post(f"/api/projects/{pid}/chapters/7/plan").status_code == 501
 
 
 def test_stub_501_does_not_depend_on_project_state(client: TestClient) -> None:
@@ -574,16 +574,17 @@ def test_stub_501_does_not_depend_on_project_state(client: TestClient) -> None:
     「这个能力还没实现」不取决于库里有什么。stub 若接了 load_project，按钮的灰与亮就
     被「项目在不在」决定——那是另一个问题的答案。
     """
-    r = client.post("/api/projects/project:does-not-exist/chapters/1/draft")
+    r = client.post("/api/projects/project:does-not-exist/chapters/1/plan")
     assert r.status_code == 501
     assert r.json()["status"] == "not_implemented"
 
 
-def test_openapi_declares_exactly_the_five_stubs(client: TestClient) -> None:
-    """501 进 openapi（前端从 schema 就看得见），且**恰好 5 条**。
+def test_openapi_declares_exactly_the_four_stubs(client: TestClient) -> None:
+    """501 进 openapi（前端从 schema 就看得见），且**恰好 4 条**。
 
-    多出第 6 条 = 有人把一个能力悄悄降级成 stub；少一条 = 有人把 stub 删了而不是实现它。
+    多出第 5 条 = 有人把一个能力悄悄降级成 stub；少一条 = 有人把 stub 删了而不是实现它。
     两种都该在这里响。
+    `/draft` 已于修正案 7 开放，必须不在 stub 列表里。
     """
     spec = client.get("/openapi.json").json()
     stubbed = {
@@ -592,21 +593,37 @@ def test_openapi_declares_exactly_the_five_stubs(client: TestClient) -> None:
         for method, op in ops.items()
         if "501" in op.get("responses", {})
     }
-    assert len(stubbed) == 5, sorted(stubbed)
-    assert ("/api/projects/{project_id}/chapters/{chapter}/draft", "post") in stubbed
+    assert len(stubbed) == 4, sorted(stubbed)
+    assert ("/api/projects/{project_id}/chapters/{chapter}/plan", "post") in stubbed
+    assert ("/api/projects/{project_id}/chapters/{chapter}/draft", "post") not in stubbed
 
 
-def test_draft_openapi_publishes_optional_bilingual_length_body(client: TestClient) -> None:
-    """The future paid route publishes its input contract without becoming runnable."""
+def test_draft_openapi_publishes_its_request_contract(client: TestClient) -> None:
+    """真实 /draft 的请求契约发布进 OpenAPI：goal/cast/length/form，length 带校验。"""
     spec = client.get("/openapi.json").json()
     operation = spec["paths"]["/api/projects/{project_id}/chapters/{chapter}/draft"]["post"]
     request_body = operation["requestBody"]
 
-    assert request_body.get("required", False) is False
+    assert request_body.get("required", False) is True
     body_schema = request_body["content"]["application/json"]["schema"]
-    candidates = body_schema.get("anyOf", [body_schema])
-    length_ref = next(candidate["$ref"] for candidate in candidates if "$ref" in candidate)
-    length_schema = spec["components"]["schemas"][length_ref.rsplit("/", 1)[-1]]
+    while "$ref" in body_schema:
+        body_schema = spec["components"]["schemas"][body_schema["$ref"].rsplit("/", 1)[-1]]
+    if "allOf" in body_schema:
+        merged: dict[str, Any] = {}
+        for part in body_schema["allOf"]:
+            merged.update(part)
+        body_schema = merged
+    assert {"goal", "cast", "length"} <= set(body_schema["properties"])
+    length_schema = body_schema["properties"]["length"]
+    while "$ref" in length_schema:
+        length_schema = spec["components"]["schemas"][
+            length_schema["$ref"].rsplit("/", 1)[-1]
+        ]
+    if "allOf" in length_schema:
+        merged_len: dict[str, Any] = {}
+        for part in length_schema["allOf"]:
+            merged_len.update(part)
+        length_schema = merged_len
 
     assert set(length_schema["properties"]) == {
         "language",
@@ -628,24 +645,6 @@ def test_draft_openapi_publishes_optional_bilingual_length_body(client: TestClie
 @pytest.mark.parametrize(
     "length",
     [
-        {"language": "zh", "min_units": 2000, "target_units": 2500, "max_units": 3000},
-        {"language": "en", "min_units": 1200, "target_units": 1500, "max_units": 1800},
-    ],
-)
-def test_draft_stub_with_valid_length_body_stays_exact_501(
-    client: TestClient, book: dict[str, str], length: dict[str, int | str]
-) -> None:
-    r = client.post(
-        f"/api/projects/{_pid(book)}/chapters/7/draft",
-        json=length,
-    )
-    assert r.status_code == 501, r.text
-    assert r.json() == {"status": "not_implemented", "milestone": "M2"}
-
-
-@pytest.mark.parametrize(
-    "length",
-    [
         {"language": "fr", "min_units": 2000, "target_units": 2500, "max_units": 3000},
         {"language": "zh", "min_units": 0, "target_units": 2500, "max_units": 3000},
         {"language": "en", "min_units": 1800, "target_units": 1500, "max_units": 1200},
@@ -653,12 +652,12 @@ def test_draft_stub_with_valid_length_body_stays_exact_501(
         {"language": "en", "min_units": 1200, "target_units": 1500, "max_units": 12001},
     ],
 )
-def test_draft_stub_rejects_invalid_length_body_before_501(
+def test_draft_rejects_invalid_length_body(
     client: TestClient, book: dict[str, str], length: dict[str, int | str]
 ) -> None:
     r = client.post(
         f"/api/projects/{_pid(book)}/chapters/7/draft",
-        json=length,
+        json={"goal": "x", "cast": ["萧决"], "length": length},
     )
     assert r.status_code == 422, r.text
     assert r.json()["detail"]

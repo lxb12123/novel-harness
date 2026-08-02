@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import re
+import os
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -30,7 +31,7 @@ from typing import Annotated, Any
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import AfterValidator, BaseModel, ValidationError
+from pydantic import AfterValidator, BaseModel, Field, ValidationError
 
 from .. import importer
 from .. import project as project_mod
@@ -932,24 +933,111 @@ def _stub(milestone: str) -> dict[str, str]:
     return {"status": _NOT_IMPLEMENTED, "milestone": milestone}
 
 
-@app.post("/api/projects/{project_id}/chapters/{chapter}/draft", status_code=501)
-def draft_stub(length: _DraftLengthBody | None = None) -> dict[str, str]:
-    """AI 起草第 N 章（M2）。
+class DraftRequest(BaseModel):
+    """AI 起草请求体（修正案 7，实验状态）。长度按 ADR 0013 随请求走。"""
 
-    **这条 stub 是 kill-gate 的 KILL 分支能被执行的前提**（EVAL_PROTOCOL 修正案 1 的
-    「修正 2」）：冻结的裁决表里，KILL 那一格的动作逐字写着「`/draft` 冻在 501」——
-    而在这条路由存在之前，那个动作指向一个不存在的端点，即**裁决表里有一格是不可执行的**。
-    补上它，KILL 那天的动作就是逐字可做的：把它留在 501、不往前走。
+    goal: str = Field(min_length=1)
+    cast: list[str] = Field(min_length=1)
+    length: _DraftLengthBody
+    form: str = "X1"
+    previous_tail: str = ""
 
-    `length` 只把未来的中英长度契约发布进 OpenAPI；合法 body 和无 body 都仍逐字返回
-    同一份 501。参数不接项目/store，也不触发任何模型调用。
 
-    修正案同时说清了为什么不把那句话改成「不建路由」：一条摆在那儿的 501 是对作者和
-    后来者的公开承诺，撤销它需要一次显式的 commit；而「没建」是默认状态，任何人任何
-    时候悄悄加回来都不会有人注意到。KILL 是那份协议里唯一「杀掉一条产品线」的动作，
-    它需要的正是那种撤销起来有声音的形式。
+def _draft_provider_config():
+    """产品起草的连接参数：AI 设置页（BYOK）优先，环境变量兜底。
+
+    ADR 0013 / 分发文档点名的「配置优先」路径：桌面作者没有环境变量，
+    钥匙在设置页里（`settings.py`，本机 0600）。
     """
-    return _stub("M2")
+    from ..draft.provider import ProviderConfig
+    from ..settings import load as load_user_settings
+
+    user = load_user_settings()
+    return ProviderConfig(
+        base_url=user.base_url or os.environ.get("NH_LLM_BASE_URL", ""),
+        model=user.model or os.environ.get("NH_LLM_MODEL", ""),
+        api_key=user.api_key or os.environ.get("NH_LLM_API_KEY", ""),
+        temperature=None,
+    )
+
+
+@app.post("/api/projects/{project_id}/chapters/{chapter}/draft")
+def draft(
+    body: DraftRequest,
+    chapter: int,
+    project_id: str,
+    store: Any = Depends(get_store),
+    proj: Any = Depends(load_project),
+) -> dict[str, Any]:
+    """AI 起草第 N 章（**实验状态**，修正案 7）。
+
+    放行 ≠ 验证：响应带 ``experimental`` 标注，kill-gate 裁决前不声称图谱约束有效。
+    若将来裁决 KILL，撤销本路由 = 一次显式 commit（修正案 7 原文）。
+    """
+    from ..draft.assemble import PromptForm, assemble
+    from ..draft.capabilities import (
+        CapabilityError,
+        ReasoningEffort,
+        plan_call,
+        resolve_capabilities,
+    )
+    from ..draft.context import ResolvedConstraints
+    from ..draft.generate import generate_draft
+    from ..draft.provider import ProviderError
+    from ..panel.constraints import UnresolvedCast, scene_view
+
+    try:
+        form = PromptForm[body.form.strip().upper()]
+    except KeyError:
+        raise HTTPException(
+            status_code=422, detail=f"form 只能是 X0 / X1 / X2，收到 {body.form!r}"
+        )
+
+    try:
+        view = scene_view(store, project_id, chapter, body.cast)
+        ctx = ResolvedConstraints.of(view, body.cast)
+        messages = assemble(
+            ctx,
+            form=form,
+            goal=body.goal,
+            length=body.length,
+            previous_tail=body.previous_tail,
+        )
+    except UnresolvedCast as exc:
+        raise HTTPException(status_code=422, detail=f"在场角色解析不了：{exc}")
+
+    try:
+        config = _draft_provider_config()
+        capability = resolve_capabilities(config.base_url, config.model)
+        plan = plan_call(body.length, ReasoningEffort.HIGH, capability)
+    except (ValidationError, ValueError, CapabilityError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"模型没配好：{exc} —— 先去顶栏 ⚙「AI 设置」填服务地址/模型/钥匙，"
+                "或设 NH_LLM_BASE_URL / NH_LLM_MODEL / NH_LLM_API_KEY。"
+            ),
+        )
+
+    try:
+        result = generate_draft(
+            messages, length=body.length, config=config, plan=plan
+        )
+    except ProviderError as exc:
+        raise HTTPException(status_code=502, detail=f"模型调用失败：{exc}")
+
+    last = result.attempts[-1].result
+    return {
+        "experimental": True,
+        "note": "实验状态：未经 kill-gate 裁决，图谱约束是否有效尚未证实（修正案 7）。",
+        "text": result.text,
+        "length": result.length.model_dump(mode="json"),
+        "attempts": len(result.attempts),
+        "model": last.model,
+        "finish_reason": last.finish_reason,
+        "prompt_tokens": result.prompt_tokens,
+        "completion_tokens": result.completion_tokens,
+    }
 
 
 @app.post("/api/projects/{project_id}/chapters/{chapter}/plan", status_code=501)

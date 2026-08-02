@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useProjects } from "../api/hooks";
 import { useCoords } from "../store";
+import { DraftDrawer } from "./DraftDrawer";
 import { SettingsDrawer } from "./SettingsDrawer";
 import { Setup } from "./Setup";
 
@@ -11,6 +12,7 @@ export function TopBar() {
   const { projectId, chapter, cast, page, setProject, setChapter, setCast, setPage } = useCoords();
   const [setupOpen, setSetupOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [draftOpen, setDraftOpen] = useState(false);
   const list = projects.data ?? [];
 
   return (
@@ -40,13 +42,12 @@ export function TopBar() {
         章节准备
       </button>
 
-      {/* M2 stub：后端 5 条 501 存在的唯一理由就是让这两个按钮**灰着**而不是藏起来
-          （UI_ARCHITECTURE §2.2）。M2 PASS 后换成真调用，路径不动、灰按钮自然变亮。 */}
+      {/* AI 规划仍是 M2 stub（灰着）；AI 起草已于 2026-08-02 按修正案 7 开放（实验状态）。 */}
       <span className="hint">AI</span>
       <button disabled title="M2 能力尚未开放（规划）">
         AI 规划
       </button>
-      <button disabled title="M2 能力尚未开放（起草）">
+      <button title="AI 起草（实验状态，修正案 7）" onClick={() => setDraftOpen(true)}>
         AI 起草
       </button>
       <button title="AI 设置" onClick={() => setSettingsOpen(true)}>
@@ -73,6 +74,7 @@ export function TopBar() {
 
       {setupOpen && <Setup onClose={() => setSetupOpen(false)} />}
       {settingsOpen && <SettingsDrawer onClose={() => setSettingsOpen(false)} />}
+      {draftOpen && <DraftDrawer onClose={() => setDraftOpen(false)} />}
     </header>
   );
 }

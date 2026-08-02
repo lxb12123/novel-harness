@@ -74,37 +74,37 @@ def test_adr_index_lists_0011() -> None:
     [
         (
             "README.md",
+            "协议本体之外还有七份修正案",
             "协议本体之外还有六份修正案",
-            "协议本体之外还有五份修正案",
         ),
         (
             "CLAUDE.md",
+            "这件事已经做过七次",
             "这件事已经做过六次",
-            "这件事已经做过五次",
         ),
         (
             "docs/ARCHITECTURE.md",
+            "它此后已经被改过七次",
             "它此后已经被改过六次",
-            "它此后已经被改过五次",
         ),
         (
             "src/novel_harness/eval/__init__.py",
+            "加七份修正案",
             "加六份修正案",
-            "加五份修正案",
         ),
         (
             "src/novel_harness/cli.py",
+            "+ 七份修正案",
             "+ 六份修正案",
-            "+ 五份修正案",
         ),
         (
             "synth/booklet.toml",
+            "七份修正案一个字都没碰",
             "六份修正案一个字都没碰",
-            "五份修正案一个字都没碰",
         ),
     ],
 )
-def test_current_references_name_six_amendments(
+def test_current_references_name_seven_amendments(
     relative_path: str, current: str, stale: str
 ) -> None:
     text = (ROOT / relative_path).read_text(encoding="utf-8")

@@ -13,6 +13,8 @@ import type {
   DeclareKnows,
   DeclareNode,
   DeclareWhere,
+  DraftRequest,
+  DraftResult,
   ImportReport,
   KnowledgeMatrix,
   NodeRef,
@@ -44,6 +46,14 @@ export function useSaveAiSettings() {
     mutationFn: (input: AiSettingsInput) =>
       api.put<AiSettings>("/api/settings", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
+  });
+}
+
+/** AI 起草（实验状态，修正案 7）：POST /draft。 */
+export function useDraft(pid: string, chapter: number) {
+  return useMutation({
+    mutationFn: (input: DraftRequest) =>
+      api.post<DraftResult>(proj(pid, `/chapters/${chapter}/draft`), input),
   });
 }
 

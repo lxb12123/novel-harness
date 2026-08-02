@@ -34,6 +34,31 @@ export interface AiSettingsInput {
   api_key?: string;
 }
 
+export interface DraftRequest {
+  goal: string;
+  cast: string[];
+  length: DraftLengthSpec;
+  form?: string;
+  previous_tail?: string;
+}
+
+export interface DraftResult {
+  experimental: boolean;
+  note: string;
+  text: string;
+  length: {
+    language: string;
+    unit: string;
+    actual_units: number;
+    status: string;
+  };
+  attempts: number;
+  model: string;
+  finish_reason: string | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+}
+
 export type NodeLabel =
   | "Character"
   | "Location"

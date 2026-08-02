@@ -18,7 +18,7 @@
 | 状态 | 数量 | 含义 |
 |---|---|---|
 | 🟢 **现在能做** | ~35 | 现有引擎直接供数据，只差 HTTP 壳 + React |
-| 🟡 **M2（起草）** | 7 | AI 规划/起草/生成/接受；三臂、runner 与 `nh gate` 已落地，但真模型 kill-gate 尚未运行，产品 UI 仍保持 501/灰置语义 |
+| 🟡 **M2（起草）** | 7 | AI 起草已按 **修正案 7 实验开放**（2026-08-02，带实验标注）；AI 规划仍 501/灰置。三臂、runner 与 `nh gate` 已落地，真模型 kill-gate 尚未出有效裁决 |
 | 🟠 **M4（抽取）** | 4 | 变更确认页、自动提取变化，`extract/` 未建，`proposal_set` 表空 |
 | 🔵 **v1.1（向量）** | 1 | Tab3 检索分数/语义检索，ADR 0002 触发条件制 |
 | ⚫ **永久砍** | 2 | 事件因果图 + 「新增事件」，无 Event 节点、无 CAUSES 边（ADR 0005） |
@@ -204,7 +204,7 @@
    └─ <KnowledgeMatrixMode>      ◀ GET /matrix（模式5 全屏）
 ```
 
-⚠️ **这棵树里有 2 个组件今天不存在**：`<RecentRuns hidden>` / `<RunTelemetry collapsed>`（都是 M2 的隐藏/折叠态，v1 本来就不显示）。`<AIPlanBtn disabled>` / `<AIDraftBtn disabled>` 已于 **2026-08-02 落地**（`TopBar.tsx` 两个灰置按钮 + `TopBar.test.tsx` 钉住「必须存在、必须灰、不能触发动作」）——**那 5 条 501 stub 存在的理由（让前端把按钮画成灰的、而不是藏起来）至此两侧兑现**。M2 PASS 后把按钮接上真实端点，路径不动。
+⚠️ **这棵树里有 2 个组件今天不存在**：`<RecentRuns hidden>` / `<RunTelemetry collapsed>`（都是 M2 的隐藏/折叠态，v1 本来就不显示）。`<AIPlanBtn disabled>` 仍是灰置 stub（规划未开放）；`<AIDraftBtn>` 已按 **修正案 7** 点亮并接上真实 `/draft`（实验状态，2026-08-02）——响应与 UI 都带「未经 kill-gate 裁决」标注。M2 有效裁决后再决定是否去掉实验标注。
 
 ### 2.3 状态管理：坐标进 Zustand，数据进 react-query
 

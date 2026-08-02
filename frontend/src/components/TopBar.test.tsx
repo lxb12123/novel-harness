@@ -9,20 +9,21 @@ beforeEach(() => {
 });
 
 describe("顶栏", () => {
-  it("M2 的 AI 规划/起草按钮是灰置 stub，不是被藏起来", async () => {
-    // UI_ARCHITECTURE §2.2：5 条 501 stub 存在的唯一理由就是让作者看见
-    // 「这里将来会有什么」。按钮必须渲染、必须 disabled、必须说明是 M2 未开放。
+  it("AI 规划灰置；AI 起草已按修正案 7 开放（实验状态）", async () => {
+    // 2026-08-02 修正案 7：起草先行开放（实验状态），规划仍是 M2 stub。
     renderWithApi(<TopBar />);
 
     const plan = await screen.findByRole("button", { name: "AI 规划" });
     const draft = await screen.findByRole("button", { name: "AI 起草" });
     expect(plan).toBeDisabled();
-    expect(draft).toBeDisabled();
+    expect(draft).toBeEnabled();
     expect(plan).toHaveAttribute("title", expect.stringContaining("M2"));
-    expect(draft).toHaveAttribute("title", expect.stringContaining("M2"));
-    // 点击灰按钮不该触发任何东西（比如开抽屉、切页面）。
+    expect(draft).toHaveAttribute("title", expect.stringContaining("实验状态"));
+    // 点起草 = 打开起草抽屉；点灰按钮不该触发任何东西。
     plan.click();
     draft.click();
-    expect(await screen.findByRole("button", { name: "AI 规划" })).toBeDisabled();
+    expect(
+      await screen.findByRole("heading", { name: /AI 起草 · 第 1 章/ })
+    ).toBeInTheDocument();
   });
 });
