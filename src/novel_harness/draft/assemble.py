@@ -90,16 +90,19 @@ DEFAULT_HOUSE_STYLE = ZH_HOUSE_STYLE
 
 def length_instruction(spec: LengthSpec) -> str:
     """Render the language-specific output length request in reader-facing units."""
+    lower = (spec.min_units + spec.target_units) // 2
+    upper = (spec.min_units + spec.max_units) // 2
     if spec.language is DraftLanguage.ZH:
         return (
             f"请用中文写作，篇幅精确控制在 {spec.min_units}–{spec.max_units} 字，"
-            f"目标约 {spec.target_units} 字。宁可比目标略短，绝不要超过 {spec.max_units} 字"
-            "——一旦超过，整份草稿作废。"
+            f"目标约 {spec.target_units} 字。请在 {lower}–{upper} 字之间自然收束，"
+            f"绝不要超过 {spec.max_units} 字——一旦超过，整份草稿作废。"
         )
     return (
         f"Write in English. Keep the length precisely within {spec.min_units}–{spec.max_units} "
-        f"words, targeting about {spec.target_units} words. Prefer slightly under the target "
-        f"rather than ever exceeding {spec.max_units} words — an over-length draft is discarded."
+        f"words, targeting about {spec.target_units} words. Aim to end naturally around "
+        f"{lower}–{upper} words and never exceed {spec.max_units} words — an over-length draft "
+        "is discarded."
     )
 
 

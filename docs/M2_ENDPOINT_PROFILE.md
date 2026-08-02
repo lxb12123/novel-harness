@@ -12,6 +12,8 @@
 | `NH_LLM_BASE_URL` | `https://api.deepseek.com` |
 | `NH_LLM_MODEL` | `deepseek-v4-flash` |
 | `NH_LLM_API_KEY` | **只从运行环境注入**，不进本文件、不进 commit、不进 `runs/*.jsonl` |
+| `NH_LLM_TEMPERATURE` | `0.3`（2026-08-02 冻结：首段超长率 ~7%，右尾会判死整轮；
+  降低采样方差是协议内可调参数；`deepseek-v4-flash` 不在 `SAMPLING_STRICT_MODELS` 里） |
 
 ## 能力证据（冻结时从官方文档核对）
 
@@ -71,6 +73,14 @@ continuation 预检：prompt + (request + overhead) + request ≤ 1M ✓
       「宁可比目标略短，绝不要超过 3,000 字——一旦超过，整份草稿作废」
       （`draft/assemble.py::length_instruction()`）；短了有续写兜底，超了没有，
       所以指令明确偏向略短。原文随证据落盘。
+- [x] 第四轮（`runs/20260802T063003Z.jsonl`）—— **仍 INVALID**：K01、K02 全部 18 个 cell
+      达标，K03/x1/repeat=1 首段 3,016 字（超 16 字）判死。汇总 27 次首段生成：
+      12 under / 13 within / **2 over（≈7.4%）** → 按此方差，225 个 cell 整轮成功概率
+      数学上接近零。
+- [x] 修复 4（同日，**协议阈值零改动**）：① `NH_LLM_TEMPERATURE=0.3` 降采样方差；
+      ② base 指令可见目标区间收窄到 spec 推导的 `(min+target)/2 – (min+max)/2`
+      （M2 即 2,250–2,500 字）自然收束，仍在冻结的 2,000–3,000 带内。
+- [ ] 探针：先跑 2 条陷阱（18 cells）实测新配置的超长率，再开完整一轮
 - [ ] 修复后完整一轮 225 final cells / 225–450 transport calls
 
 跑完之前 `runs/` 不存在、ADR 0009 不写；本 profile 的 commit 时间戳先于
