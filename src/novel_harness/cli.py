@@ -979,10 +979,32 @@ def gate(
         _die(
             f"✗ 模型没配好：{_reason(exc)}\n"
             "  gate 要真的调模型。三个环境变量：\n"
-            "    export NH_LLM_BASE_URL=http://localhost:11434/v1   # 本地 Ollama\n"
-            "    export NH_LLM_MODEL=deepseek-chat                  # 端点上真有的模型名\n"
-            "    export NH_LLM_API_KEY=...                          # 本地端点可以随便填\n"
+            "    export NH_LLM_BASE_URL=https://api.deepseek.com    # DeepSeek V4\n"
+            "    export NH_LLM_MODEL=deepseek-v4-flash              # flash / pro\n"
+            "    export NH_LLM_API_KEY=...                          # 只从环境注入，不进 profile/JSONL\n"
             "  base_url 和 model 必须是**匹配的一对**——端点上没有这个模型名，发出去就是 404。"
+        )
+
+    try:
+        from .draft.capabilities import (
+            CapabilityError,
+            ReasoningEffort,
+            plan_call,
+            resolve_capabilities,
+        )
+        from .draft.length import M2_LENGTH_SPEC
+
+        capability = resolve_capabilities(config.base_url, config.model)
+        plan = plan_call(M2_LENGTH_SPEC, ReasoningEffort.HIGH, capability)
+    except CapabilityError as exc:
+        _die(
+            f"✗ M2 的能力计划配不起来：{_reason(exc)}\n"
+            "  M2 固定请求 high reasoning，而这对 route 没有审计过的能力声明"
+            "（或 high 不受支持）。\n"
+            "  已冻结的 profile：deepseek-v4-flash @ https://api.deepseek.com"
+            "（docs/M2_ENDPOINT_PROFILE.md，2026-08-02，不含 key）。\n"
+            "  换模型就换 NH_LLM_BASE_URL / NH_LLM_MODEL 为一对**已登记**的 route；"
+            "未知 route 预检失败，不静默降级。"
         )
 
     out_path = out if out is not None else stamped_path(Path("runs"))
@@ -992,6 +1014,7 @@ def gate(
             project,
             traps,
             config=config,
+            plan=plan,
             repeats=repeats,
             out_path=out_path,
         )

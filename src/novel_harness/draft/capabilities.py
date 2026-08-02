@@ -437,6 +437,10 @@ def _build_registry() -> Mapping[tuple[str, str], ProviderCapabilities]:
                 max_tokens_field="max_tokens",
                 reasoning_levels=levels,
                 reasoning_dialect=ReasoningDialect.DEEPSEEK,
+                # 审计过的共享输出预留：DeepSeek V4 thinking 的 reasoning_content 与
+                # content 共用输出预算且无官方占比，按保守 80% 预留，证据见
+                # docs/M2_ENDPOINT_PROFILE.md（2026-08-02 冻结，profile 不含 key）。
+                reserve_ratio_high=0.8,
             )
         )
     entries.append(

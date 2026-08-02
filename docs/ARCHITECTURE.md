@@ -272,7 +272,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 
 ## 当前状态
 
-**M0 + M1 + M1.5 已落地；M2 的修正案 5 / ADR 0011 已预注册，配套实现已落地，剩 endpoint/profile 冻结与第一轮真模型运行**（977 个 pytest + 22 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
+**M0 + M1 + M1.5 已落地；M2 的修正案 5 / ADR 0011 已预注册，配套实现与 endpoint/profile 已冻结，剩第一轮真模型运行**（977 个 pytest + 22 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
 
 > **本节的数字是全仓唯一副本，且 `tests/test_doc_numbers.py` 会拦住第二份。**
 > `README.md` / `CLAUDE.md` / `frontend/README.md` 里只留指针，不许再抄一份数字过去。
@@ -331,17 +331,19 @@ Fake 够不着的（label 校验 / 重复边 StoreError / `secret_ids` 默认列
 开头那个框，走的是真 SqliteStoryGraph。面板不再只在终端里存在——同一个矩阵在浏览器工作台的右栏
 第一个 tab 里（`api/app.py` 的 32 条自建路由 + `frontend/src/components/KnowledgeMatrix.tsx`）。
 
-### M2 的当前形状：修正案 5 / ADR 0011 已冻结，实现已落地，剩 endpoint/profile 冻结与第一轮真模型
+### M2 的当前形状：修正案 5 / ADR 0011 已冻结，实现与 endpoint/profile 已落地，剩第一轮真模型
 
 **判分器先于被判者**是这条链的建造顺序，不是偷懒：先有卷子和判分口径，再有被判的东西，
 「看到结果再定及格线」在结构上就做不到。原有短输出链在 2026-07-30 两侧齐了；2026-08-01
 又在第一次真实推理前冻结了[修正案 5](EVAL_PROTOCOL_AMENDMENT_5.md)与
 [ADR 0011](adr/0011-bilingual-draft-length.md)：中文 M2 改为 2,000–3,000 字，225 指 final cell，
 每份长度不足最多续写一次，provider 继续走通用 OpenAI-compatible client 并按能力映射 high reasoning。
-**当前下一步是冻结 endpoint/profile，然后通电。** length/capability/streaming/continuation/JSONL
-实现与回归测试已于 2026-08-01 全部落地并离线验证（977 个 pytest / 22 个 vitest 全绿，见下）；
-修正案 5 裁定 4 要求在首次推理前把实际 endpoint/model/capability/request budget 以一份不含 key
-的 profile 单独 commit。
+**endpoint/profile 已于 2026-08-02 冻结**（`deepseek-v4-flash` @ `https://api.deepseek.com`，
+见 [M2_ENDPOINT_PROFILE.md](M2_ENDPOINT_PROFILE.md)，不含 key、单独 commit）。
+length/capability/streaming/continuation/JSONL 实现与回归测试已于 2026-08-01 全部落地并离线验证
+（977 个 pytest / 22 个 vitest 全绿，见下）；2026-08-02 又补了两件事：DeepSeek 共享输出预留
+按 0.8 审计入册（thinking 与正文共池、官方无占比，按保守值），`nh gate` 按 env 从注册表解析并
+冻结 plan（high reasoning、request 40,000、streaming）。
 
 已落地并有测试：`eval/leak.py`（草稿泄漏 = 纯集合判断，禁忌集只经 `panel/constraints`）、
 `eval/score.py`（`majority` / 精确 McNemar / `compare_arms` / Holm，零重依赖）、
@@ -418,7 +420,7 @@ runner 的落点有硬约束：`tests/test_draft_boundary.py` 写明它必须落
 `out_path` 同样是硬边界：runner 用独占新建而不是 `exists()` 后再写，两个进程撞名也只有一个能创建；
 旧 run 存在时早于 `scene_view()` 和第一次模型调用判死，原字节不变。这里没有覆盖、追加或断点续跑。
 
-**真正还没有的是实际 endpoint/profile 的冻结与第一轮真模型结果。** 基准轮仍是
+**真正还没有的是第一轮真模型结果（smoke 验证 + 完整一轮）。** 基准轮仍是
 25 × 3 × 3 = 225 个 final cell；每份不足 2,000 字最多续写一次，
 所以成功完成需 225–450 次 transport call。跑完之前，
 `runs/` 不存在、ADR 0009 不写（协议 §8 定死它「跑完写」）、任何地方都不会出现泄漏率数字。

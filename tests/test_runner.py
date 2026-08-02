@@ -1176,8 +1176,10 @@ def _row(trap_id: str, kind: str) -> dict:
 
 @pytest.fixture
 def llm_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("NH_LLM_BASE_URL", LOCAL)
-    monkeypatch.setenv("NH_LLM_MODEL", "deepseek-chat")
+    # 2026-08-02 起 CLI gate 会按 env 里的 route 从注册表解析能力并冻结 plan；
+    # 测试环境用已登记的 DeepSeek V4 路由，plan 构建才走真实路径（complete 仍被桩替换）。
+    monkeypatch.setenv("NH_LLM_BASE_URL", "https://api.deepseek.com")
+    monkeypatch.setenv("NH_LLM_MODEL", "deepseek-v4-flash")
     monkeypatch.setenv("NH_LLM_API_KEY", "not-needed")
     monkeypatch.delenv("NH_LLM_TEMPERATURE", raising=False)
     monkeypatch.delenv("NH_LLM_MAX_TOKENS", raising=False)
@@ -1185,15 +1187,8 @@ def llm_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def amendment_5_runner_ready(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Compatibility name retained until Task 8 replaces env-only CLI setup."""
-
-    real_run_gate = runner_mod.run_gate
-
-    def planned_run_gate(*args: Any, config: ProviderConfig, **kwargs: Any) -> Any:
-        kwargs.setdefault("plan", _call_plan(config))
-        return real_run_gate(*args, config=config, **kwargs)
-
-    monkeypatch.setattr(runner_mod, "run_gate", planned_run_gate)
+    """CLI gate 自 2026-08-02 起自带 plan 构建，不再注入（保留名字兼容旧测试）。"""
+    return None
 
 
 def _stub_complete(monkeypatch: pytest.MonkeyPatch, texts: Sequence[str]) -> list[dict]:
