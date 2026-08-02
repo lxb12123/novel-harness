@@ -123,9 +123,9 @@ class CheckContext:
     `None` = 调用方没提供正文，**读正文的规则必须直接返回 `[]`，不许报错**——
     面板路径（不读正文，2–5ms）和规则路径（debounce 2s）是两条链路（§6 serious #3）。
 
-    TODO(M3)：R2 FUTURE_LEAK / R3 DEAD_SPEAKS / R5 ADDRESS_CONFLICT 的唯一数据源。
-    它们不属于 M0：R2/R3 要等 `text/mentions.py` 的正则 alternation，R5 的生死要等
-    Day 1 下午的说话人标签覆盖率实测（ADR 0005，≥10% 才进 v1）。
+    R2 FUTURE_LEAK / R3 DEAD_SPEAKS 的唯一数据源（2026-08-02 已落地）。
+    R5 ADDRESS_CONFLICT 不在 v1：它的生死等 Day 1 下午的说话人标签覆盖率实测
+    （ADR 0005，≥10% 才进 v1）。
     """
 
 

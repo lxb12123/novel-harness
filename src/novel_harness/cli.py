@@ -945,9 +945,9 @@ def gate(
 
     if "修正案 1/2/3/4/5/6" not in PROTOCOL_VERSION:
         _die(
-            "✗ nh gate 已暂停：修正案 5 要求的长度、续写、reasoning 与证据格式尚未实现。\n"
-            "  当前 runner 仍是旧协议；现在运行会花钱并产出不能用于 ADR 0009 的 JSONL。\n"
-            "  等 runner.PROTOCOL_VERSION 原子升级到修正案 1/2/3/4/5/6 后，命令才会重新放行。"
+            "✗ nh gate 已暂停：当前 runner 的 PROTOCOL_VERSION 不含修正案 1/2/3/4/5/6。\n"
+            "  旧协议跑出来的 JSONL 不能用于 ADR 0009，还白花钱；"
+            "等 PROTOCOL_VERSION 原子升级后再放行。"
         )
 
     if not ground_truth.exists():

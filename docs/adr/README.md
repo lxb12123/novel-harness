@@ -17,6 +17,7 @@ v1 的完整实施计划见 [`../PLAN.md`](../PLAN.md)。
 | 0009 | M2 kill-gate 的裁决 | — | **未写，且现在不该写**——协议 §8 定死它「跑完写」。在有 `runs/*.jsonl` 之前写裁决，正是预注册要防的那件事 |
 | [0010](0010-writer-boundary.md) | Writer 边界：`assemble()` 能看见什么 | —（补 `EVAL_PROTOCOL.md` §8 点名要的那份） | 已接受（**`draft/assemble.py` 存在之前必须定死**：第 4 道守卫明说拦不住「完整 PLANNED 进 prompt」，那一格只有它和 review 守得住） |
 | [0011](0011-bilingual-draft-length.md) | 双语长度契约与通用模型调用计划 | 固定中文短输出 / Claude 原生调用假设 | 已接受（修正案 5 的产品边界；先于第一份 `runs/*.jsonl`） |
+| [0012](0012-book-owns-its-db.md) | 库跟着书走：没有全局默认位置 | —（补 `__main__.py` 一直空着的那个决定） | 已接受（2026-08-02；`novel-harness` 不带参数 = 向上找最近的 `book.db`） |
 
 ## 为什么这些 ADR 是公开的
 

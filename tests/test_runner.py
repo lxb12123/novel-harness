@@ -1240,8 +1240,8 @@ def test_gate_fails_closed_until_amendment_5_runner_is_implemented(
     )
 
     assert result.exit_code != 0
-    assert "修正案 5" in result.output
-    assert "尚未实现" in result.output
+    assert "已暂停" in result.output
+    assert "1/2/3/4/5/6" in result.output
     assert not out.exists()
 
 
