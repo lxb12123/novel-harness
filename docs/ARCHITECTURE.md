@@ -380,10 +380,11 @@ provider-neutral `high` 映射到各兼容端点的 wire shape，未知路由 fa
 **[ADR 0010](adr/0010-writer-boundary.md)**（Writer 边界 D1–D6，**先于 `assemble.py` 定形**）、
 **[EVAL_PROTOCOL 修正案 4](EVAL_PROTOCOL_AMENDMENT_4.md)**（先于 `synth/` 定形，见下）。
 
-> ⚠️ **但 5 条 stub 只做完了一半。** 它们存在的唯一理由是 `app.py:857-874` 写的
-> 「让前端把按钮画成灰的，而不是把按钮藏起来」——而 `frontend/src` 对这 5 条端点**零调用、零按钮**，
-> `TopBar.tsx` 里没有 UI_ARCHITECTURE §152-153 要的 `<AIPlanBtn disabled>` / `<AIDraftBtn disabled>`。
-> 后端资产已就位，作者在界面上仍然看不见 M2/M4 的存在。
+> ~~**但 5 条 stub 只做完了一半。**~~ —— **2026-08-02 已补另一半。** 它们存在的唯一理由
+> 是 `app.py:857-874` 写的「让前端把按钮画成灰的，而不是把按钮藏起来」；现在
+> `TopBar.tsx` 渲染两个 disabled 的「AI 规划 / AI 起草」按钮（title 注明 M2 未开放，
+> `TopBar.test.tsx` 钉住它们必须存在、必须灰、不能触发任何动作）。M2 PASS 后把按钮
+> 接上真实端点即可，路径不动。
 
 第 4 道守卫钉的是**起草层与判分层之间那堵墙的两面**，两面都成立 kill-gate 才有意义：
 ① `eval/` 不许自建禁忌集（EVAL_PROTOCOL §3 点名要的那条）；② **`draft/` 永不拿 tell**——

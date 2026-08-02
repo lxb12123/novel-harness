@@ -204,7 +204,7 @@
    └─ <KnowledgeMatrixMode>      ◀ GET /matrix（模式5 全屏）
 ```
 
-⚠️ **这棵树里有 4 个组件今天不存在**：`<AIPlanBtn disabled>` / `<AIDraftBtn disabled>` / `<RecentRuns hidden>` / `<RunTelemetry collapsed>`——前端对那 5 条 501 stub **零调用**（2026-07-30 grep 核实）。这条别用「反正 M2 才有」盖过去：**那 5 条 stub 存在的唯一理由就是让前端把按钮画成灰的、而不是把按钮藏起来**（`api/app.py` 那段注释写得很清楚）。后端那一半已经落地，前端这一半没做 = 这个理由今天没兑现，作者在界面上依然看不见「这里将来会有什么」。
+⚠️ **这棵树里有 2 个组件今天不存在**：`<RecentRuns hidden>` / `<RunTelemetry collapsed>`（都是 M2 的隐藏/折叠态，v1 本来就不显示）。`<AIPlanBtn disabled>` / `<AIDraftBtn disabled>` 已于 **2026-08-02 落地**（`TopBar.tsx` 两个灰置按钮 + `TopBar.test.tsx` 钉住「必须存在、必须灰、不能触发动作」）——**那 5 条 501 stub 存在的理由（让前端把按钮画成灰的、而不是藏起来）至此两侧兑现**。M2 PASS 后把按钮接上真实端点，路径不动。
 
 ### 2.3 状态管理：坐标进 Zustand，数据进 react-query
 

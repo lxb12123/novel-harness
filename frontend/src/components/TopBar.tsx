@@ -38,6 +38,16 @@ export function TopBar() {
         章节准备
       </button>
 
+      {/* M2 stub：后端 5 条 501 存在的唯一理由就是让这两个按钮**灰着**而不是藏起来
+          （UI_ARCHITECTURE §2.2）。M2 PASS 后换成真调用，路径不动、灰按钮自然变亮。 */}
+      <span className="hint">AI</span>
+      <button disabled title="M2 能力尚未开放（规划）">
+        AI 规划
+      </button>
+      <button disabled title="M2 能力尚未开放（起草）">
+        AI 起草
+      </button>
+
       <span className="spacer" />
       <label>看第</label>
       <input
