@@ -61,6 +61,7 @@ pydantic 默认忽略多余键，`TrapSpec(**item)` 会静默地把这条纪律�
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -69,9 +70,17 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..draft.assemble import PromptForm, assemble
+from ..draft.capabilities import ReasoningEffort, ResolvedCallPlan
 from ..draft.context import ResolvedConstraints
-from ..draft.length import M2_LENGTH_SPEC
-from ..draft.provider import ProviderConfig, complete
+from ..draft.generate import DraftAttempt, generate_draft, validate_generation_plan
+from ..draft.length import (
+    COUNTING_RULE_VERSION,
+    M2_LENGTH_SPEC,
+    LengthMeasurement,
+    LengthStatus,
+    measure,
+)
+from ..draft.provider import ProviderConfig
 from ..graph import StoryGraph
 from ..panel.constraints import UnresolvedCast, scene_view
 from .leak import LeakResult, score_against
@@ -80,7 +89,9 @@ from .score import BASE_REPEATS, ESCALATED_REPEATS, GateInput, TrapKind, TrapRun
 from .confound_lint import LEN_TOLERANCE, confound_lint
 
 
-PROTOCOL_VERSION = "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4 + ADR 0010"
+PROTOCOL_VERSION = (
+    "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5 + ADR 0010/0011"
+)
 """这一轮按哪份卷子跑的。**原样进 jsonl 头**，ADR 0009 要能指名道姓引用它。
 
 改协议 = 改卷子，所以这个字符串变了就意味着此后的 run 和此前的不可比。
@@ -129,6 +140,33 @@ class TrapSpec(BaseModel):
     reference: str
     """一个**不泄漏**的人工完成。它被判泄漏 = 检测器在本该干净的文本上开了火
     = 天花板门触发（§6 第 2 行），这一轮的数字不可信。"""
+
+
+class LengthInvalidError(ValueError):
+    """Terminal Amendment-5 INVALID result for one fully persisted cell."""
+
+    def __init__(
+        self,
+        *,
+        trap_id: str,
+        arm: str,
+        repeat: int,
+        measurement: LengthMeasurement,
+        truncated: bool,
+        reasons: tuple[str, ...],
+    ) -> None:
+        self.trap_id = trap_id
+        self.arm = arm
+        self.repeat = repeat
+        self.measurement = measurement
+        self.truncated = truncated
+        self.reasons = reasons
+        detail = ", ".join(reasons)
+        super().__init__(
+            f"M2 length INVALID at {trap_id}/{arm}/repeat={repeat}: "
+            f"{measurement.actual_units} {measurement.unit} ({measurement.status.value}); "
+            f"{detail}"
+        )
 
 
 def stamped_path(runs_dir: Path) -> Path:
@@ -236,7 +274,21 @@ def _config_for_record(config: ProviderConfig) -> dict[str, Any]:
     return dumped
 
 
-def _validate(traps: Sequence[TrapSpec], config: ProviderConfig | None, repeats: int) -> None:
+def _plan_for_record(plan: ResolvedCallPlan) -> dict[str, Any]:
+    """Return the full secret-free plan with set-valued evidence in stable order."""
+    dumped = plan.model_dump(mode="json")
+    dumped["capability"]["reasoning_levels"] = sorted(
+        dumped["capability"]["reasoning_levels"]
+    )
+    return dumped
+
+
+def _validate(
+    traps: Sequence[TrapSpec],
+    config: ProviderConfig | None,
+    plan: ResolvedCallPlan,
+    repeats: int,
+) -> None:
     """跑之前把三件事判死。**每一条错了都会让整轮白跑，所以在烧第一个 token 之前红。**"""
     if _AMENDMENT_5_PROTOCOL_MARKER not in PROTOCOL_VERSION:
         raise ValueError(
@@ -253,6 +305,14 @@ def _validate(traps: Sequence[TrapSpec], config: ProviderConfig | None, repeats:
             "config=None 会让每一次 complete() 现读 NH_LLM_* 环境变量——中途谁 export 一下，\n"
             "这一轮的三臂就不再是同一次调用的三个取值了，而没有任何东西会红。"
         )
+    if not isinstance(plan, ResolvedCallPlan):
+        raise ValueError("run_gate() 必须收一份冻结的 ResolvedCallPlan")
+    validate_generation_plan(length=M2_LENGTH_SPEC, config=config, plan=plan)
+    if (
+        plan.reasoning_requested is not ReasoningEffort.HIGH
+        or plan.reasoning_effective is not ReasoningEffort.HIGH
+    ):
+        raise ValueError("M2 requires requested and effective reasoning=high")
     if repeats not in (BASE_REPEATS, ESCALATED_REPEATS):
         # 与 `score._validate` 同一条白名单（修正案 3 裁定 3）。在这里也判一次，是因为
         # 跑完再红意味着白烧一整轮的 token；而 repeats=1 会让符号稳定性过滤退化成恒真。
@@ -278,6 +338,7 @@ def run_gate(
     traps: Sequence[TrapSpec],
     *,
     config: ProviderConfig,
+    plan: ResolvedCallPlan,
     repeats: int = BASE_REPEATS,
     out_path: Path,
     client: Any = None,
@@ -288,6 +349,7 @@ def run_gate(
         store: 只读图。runner 不写图——Writer 的输出永远不是 canon（ADR 0010 D1）。
         traps: `load_traps()` 的产物。
         config: **冻结的一份**，三臂共用（ADR 0010 D5）。`None` 直接抛。
+        plan: 预运行冻结的 M2 high-reasoning 预算与精确 route；没有默认值。
         repeats: 只接受 3（首轮）或 5（缓刑轮）。
         out_path: `runs/<stamp>.jsonl`。父目录自动建；目标已存在则拒绝覆盖。
         client: 注入一个鸭子类型的 OpenAI 客户端（测试用）；None = 按 config 现建。
@@ -297,12 +359,13 @@ def run_gate(
         没有文件名），所以 ADR 0009 的结论任何人都能拿同一份 jsonl 重算。
 
     Raises:
-        ValueError: config 为 None / repeats 不合法 / 陷阱集为空或 id 重复 / 结果文件已存在。
+        ValueError: config/plan 不匹配 / repeats 不合法 / 陷阱集为空或 id 重复 / 文件已存在。
+        LengthInvalidError: cell 的最终长度或末次 finish reason 使整轮终态 INVALID。
         UnresolvedCast: 某条陷阱的 cast 解析不出唯一角色（消息里带陷阱 id）。
         ProviderError: 模型调用失败。**不吞**：跑到一半的一轮不是一轮，
             而已经烧掉的那些生成都已经在 jsonl 里了。
     """
-    _validate(traps, config, repeats)
+    _validate(traps, config, plan, repeats)
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     runs: list[TrapRuns] = []
@@ -323,6 +386,7 @@ def run_gate(
             # 那是「tell 漏进 prompt」唯一的可发现路径（ADR 0010 末尾），不能等到收尾才写。
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
             fh.flush()
+            os.fsync(fh.fileno())
 
         emit(
             {
@@ -333,6 +397,13 @@ def run_gate(
                 "n_traps": len(traps),
                 "arms": [name for name, _ in ARMS],
                 "config": _config_for_record(config),
+                "length_profile": M2_LENGTH_SPEC.model_dump(mode="json"),
+                "counting_rule": COUNTING_RULE_VERSION,
+                "continuation": {
+                    "max_attempts": 2,
+                    "trigger": "under_min_only",
+                },
+                "call_plan": _plan_for_record(plan),
                 # 记的是**旋钮的取值**，不是「检查跑了没有」。后者恒真，写进去只会变成
                 # 一个永远绿的字段；而长度容差是 ADR 0009 读 FORM-PIVOT 时必须知道的那个数。
                 "confound_len_tolerance": LEN_TOLERANCE,
@@ -380,7 +451,79 @@ def run_gate(
                 arm_prompts[arm] = messages
                 votes: list[bool] = []
                 for repeat in range(repeats):
-                    result = complete(messages, config=config, client=client)
+                    cumulative_parts: list[str] = []
+
+                    def record_attempt(attempt: DraftAttempt) -> None:
+                        cumulative_parts.append(attempt.result.text)
+                        cumulative = measure("".join(cumulative_parts), M2_LENGTH_SPEC)
+                        emit(
+                            {
+                                "kind": "generation_attempt",
+                                "trap_id": trap.id,
+                                "trap_kind": trap.kind,
+                                "chapter": trap.chapter,
+                                "cast": list(trap.cast),
+                                "arm": arm,
+                                "form": form.value,
+                                "repeat": repeat,
+                                "attempt": attempt.number,
+                                "messages": attempt.model_dump(mode="json")["messages"],
+                                "output": attempt.result.text,
+                                "segment_length": attempt.measurement.model_dump(mode="json"),
+                                "cumulative_length": cumulative.model_dump(mode="json"),
+                                "model": attempt.result.model,
+                                "finish_reason": attempt.result.finish_reason,
+                                "prompt_tokens": attempt.result.prompt_tokens,
+                                "completion_tokens": attempt.result.completion_tokens,
+                                "needs_continuation": (
+                                    attempt.number == 1
+                                    and cumulative.status is LengthStatus.UNDER
+                                ),
+                            }
+                        )
+
+                    result = generate_draft(
+                        messages,
+                        length=M2_LENGTH_SPEC,
+                        config=config,
+                        plan=plan,
+                        client=client,
+                        on_attempt=record_attempt,
+                    )
+                    invalid_reasons: list[str] = []
+                    if result.length.status is LengthStatus.UNDER:
+                        invalid_reasons.append("under_min")
+                    elif result.length.status is LengthStatus.OVER:
+                        invalid_reasons.append("over_max")
+                    if result.truncated:
+                        invalid_reasons.append("finish_reason_length")
+                    if invalid_reasons:
+                        emit(
+                            {
+                                "kind": "length_invalid",
+                                "trap_id": trap.id,
+                                "trap_kind": trap.kind,
+                                "chapter": trap.chapter,
+                                "cast": list(trap.cast),
+                                "arm": arm,
+                                "form": form.value,
+                                "repeat": repeat,
+                                "output": result.text,
+                                "length": result.length.model_dump(mode="json"),
+                                "attempt_count": len(result.attempts),
+                                "truncated": result.truncated,
+                                "reasons": invalid_reasons,
+                            }
+                        )
+                        raise LengthInvalidError(
+                            trap_id=trap.id,
+                            arm=arm,
+                            repeat=repeat,
+                            measurement=result.length,
+                            truncated=result.truncated,
+                            reasons=tuple(invalid_reasons),
+                        )
+
                     leak = score_against(store, project_id, constraints, result.text)
                     votes.append(_leaked(trap.kind, leak))
                     emit(
@@ -393,11 +536,10 @@ def run_gate(
                             "arm": arm,
                             "form": form.value,
                             "repeat": repeat,
-                            # ↓ 这一行是 ADR 0010 末尾那条「唯一可发现路径」本身。
-                            "messages": messages,
                             "output": result.text,
-                            "model": result.model,
-                            "finish_reason": result.finish_reason,
+                            "length": result.length.model_dump(mode="json"),
+                            "attempt_count": len(result.attempts),
+                            "truncated": result.truncated,
                             "prompt_tokens": result.prompt_tokens,
                             "completion_tokens": result.completion_tokens,
                             "leak": leak.model_dump(),

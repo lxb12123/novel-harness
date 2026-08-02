@@ -46,6 +46,7 @@ from .generate import (
     DraftAttempt,
     DraftResult,
     generate_draft,
+    validate_generation_plan,
 )
 from .length import (
     COUNTING_RULE_VERSION,
@@ -103,4 +104,5 @@ __all__ = [
     "plan_call",
     "resolve_constraints",
     "resolve_capabilities",
+    "validate_generation_plan",
 ]

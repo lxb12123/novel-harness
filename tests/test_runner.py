@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import re
 import types
 from collections.abc import Callable, Sequence
@@ -42,12 +43,11 @@ from novel_harness.draft.capabilities import (
     plan_call,
 )
 from novel_harness.draft.context import resolve_constraints
-from novel_harness.draft.length import M2_LENGTH_SPEC
-from novel_harness.draft.provider import ProviderConfig, complete as provider_complete
+from novel_harness.draft.length import M2_LENGTH_SPEC, DraftLanguage, count_units
+from novel_harness.draft.provider import ProviderConfig, ProviderError
 from novel_harness.eval import runner as runner_mod
 from novel_harness.eval.runner import (
     ARMS,
-    PROTOCOL_VERSION,
     TrapSpec,
     load_traps,
     run_gate,
@@ -78,9 +78,16 @@ LOCAL = "http://localhost:11434/v1"
 CAST = ["苏挽", "萧决"]
 CHAPTER = 5
 
-CLEAN = "苏挽把茶盏推过去，没有接话。窗外的雨停了。"
-KNOWS_LEAK = f"苏挽压低声音：「那是{TELL}的痕迹。」"
-FUTURE_LEAK = f"远处传来消息，{FUTURE_TELL}的人已经动身。"
+def _m2_valid(text: str) -> str:
+    """Pad a fixture to 2,100 frozen Chinese units without changing its tell."""
+    units = count_units(text, DraftLanguage.ZH)
+    assert units <= 2_100
+    return text + "静" * (2_100 - units)
+
+
+CLEAN = _m2_valid("苏挽把茶盏推过去，没有接话。窗外的雨停了。")
+KNOWS_LEAK = _m2_valid(f"苏挽压低声音：「那是{TELL}的痕迹。」")
+FUTURE_LEAK = _m2_valid(f"远处传来消息，{FUTURE_TELL}的人已经动身。")
 
 runner = CliRunner()
 
@@ -158,7 +165,7 @@ def _config() -> ProviderConfig:
 
 
 def _call_plan(config: ProviderConfig) -> ResolvedCallPlan:
-    """旧 runner 测试在 Task 7 前用的有界 off plan;真 runner 仍被修正案 5 守卫关闭。"""
+    """A frozen high-reasoning plan large enough for both M2 attempts."""
     capability = ProviderCapabilities(
         base_url=config.base_url,
         model=config.model,
@@ -167,27 +174,43 @@ def _call_plan(config: ProviderConfig) -> ResolvedCallPlan:
         max_context_tokens=128_000,
         max_output_tokens=16_000,
         max_tokens_field="max_tokens",
-        reasoning_levels=frozenset({ReasoningEffort.OFF}),
-        reasoning_dialect=ReasoningDialect.NONE,
+        reasoning_levels=frozenset({ReasoningEffort.OFF, ReasoningEffort.HIGH}),
+        reasoning_dialect=ReasoningDialect.ANTHROPIC_COMPAT,
         reasoning_shares_output=False,
         supports_streaming=True,
         supports_stream_usage=False,
     )
-    return plan_call(M2_LENGTH_SPEC, ReasoningEffort.OFF, capability)
+    return plan_call(M2_LENGTH_SPEC, ReasoningEffort.HIGH, capability)
 
 
-def _client(responder: Callable[[list[dict[str, str]], int], str]) -> tuple[Any, list[dict]]:
+_raw_run_gate = run_gate
+
+
+def run_gate(*args: Any, **kwargs: Any) -> Any:
+    """Keep legacy assertions concise while the public function still requires a plan."""
+    config = kwargs.get("config")
+    if config is not None:
+        kwargs.setdefault("plan", _call_plan(config))
+    else:
+        kwargs.setdefault("plan", _call_plan(_config()))
+    return _raw_run_gate(*args, **kwargs)
+
+
+def _client(
+    responder: Callable[[list[dict[str, str]], int], str | tuple[str, str | None]],
+) -> tuple[Any, list[dict]]:
     """鸭子类型的 OpenAI 客户端。`responder(messages, call_index) -> 模型输出`。"""
     calls: list[dict] = []
 
     def create(**kwargs: Any) -> Any:
         calls.append(kwargs)
-        text = responder(kwargs["messages"], len(calls) - 1)
+        response = responder(kwargs["messages"], len(calls) - 1)
+        text, finish_reason = response if isinstance(response, tuple) else (response, "stop")
         return types.SimpleNamespace(
             model="fake",
             choices=[
                 types.SimpleNamespace(
-                    message=types.SimpleNamespace(content=text), finish_reason="stop"
+                    message=types.SimpleNamespace(content=text), finish_reason=finish_reason
                 )
             ],
             usage=types.SimpleNamespace(prompt_tokens=11, completion_tokens=22),
@@ -264,8 +287,8 @@ def test_one_full_round(store: SqliteStoryGraph, book: Seeded, tmp_path: Path) -
     assert len(calls) == 2 * 3 * 3
     for trap in gi.traps:
         assert len(trap.x0) == len(trap.x1) == len(trap.x2) == 3
-    # 1 头 + 2×(1 reference + 1 confound) + 18 生成
-    assert len(_records(out)) == 1 + 2 * 2 + 18
+    # 1 头 + 2×(1 reference + 1 confound) + 18 attempt + 18 final
+    assert len(_records(out)) == 1 + 2 * 2 + 18 * 2
 
 
 def test_the_header_is_the_first_line_and_pins_the_protocol(
@@ -308,6 +331,233 @@ def test_the_header_does_not_write_the_api_key(
     assert head["config"]["api_key_set"] is True
 
 
+def test_public_runner_requires_an_explicit_resolved_call_plan(
+    store: SqliteStoryGraph,
+    book: Seeded,
+    tmp_path: Path,
+) -> None:
+    parameter = inspect.signature(runner_mod.run_gate).parameters["plan"]
+    assert parameter.default is inspect.Parameter.empty
+
+    out = tmp_path / "must-not-exist.jsonl"
+    client, calls = _client(_by_arm(CLEAN, CLEAN, CLEAN))
+    with pytest.raises(TypeError, match="plan"):
+        runner_mod.run_gate(
+            store,
+            book.pid,
+            [KNOWS_TRAP],
+            config=_config(),
+            out_path=out,
+            client=client,
+        )
+    assert calls == []
+    assert not out.exists()
+
+
+def test_header_and_cell_records_pin_amendment_5_evidence(
+    store: SqliteStoryGraph,
+    book: Seeded,
+    tmp_path: Path,
+) -> None:
+    out = tmp_path / "run.jsonl"
+    config = _config()
+    plan = _call_plan(config)
+    client, _ = _client(_by_arm(CLEAN, CLEAN, CLEAN))
+
+    _raw_run_gate(
+        store,
+        book.pid,
+        [KNOWS_TRAP],
+        config=config,
+        plan=plan,
+        out_path=out,
+        client=client,
+    )
+
+    records = _records(out)
+    head = records[0]
+    assert head["protocol"] == (
+        "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5 + ADR 0010/0011"
+    )
+    assert head["length_profile"] == M2_LENGTH_SPEC.model_dump(mode="json")
+    assert head["counting_rule"] == "nh-length-v1"
+    assert head["continuation"] == {
+        "max_attempts": 2,
+        "trigger": "under_min_only",
+    }
+    assert head["call_plan"]["reasoning_requested"] == "high"
+    assert head["call_plan"]["reasoning_effective"] == "high"
+    levels = head["call_plan"]["capability"]["reasoning_levels"]
+    assert levels == sorted(levels)
+
+    attempts = [record for record in records if record["kind"] == "generation_attempt"]
+    finals = [record for record in records if record["kind"] == "generation"]
+    assert len(attempts) == len(finals) == 9
+    for attempt in attempts:
+        assert attempt["attempt"] == 1
+        assert attempt["messages"]
+        assert attempt["segment_length"]["actual_units"] == 2_100
+        assert attempt["cumulative_length"]["actual_units"] == 2_100
+        assert attempt["needs_continuation"] is False
+    for final in finals:
+        assert final["length"]["actual_units"] == 2_100
+        assert final["attempt_count"] == 1
+        assert final["output"] == CLEAN
+
+    cell_kinds = [
+        record["kind"]
+        for record in records
+        if record.get("trap_id") == "K01" and "arm" in record
+    ]
+    assert cell_kinds == ["generation_attempt", "generation"] * 9
+
+
+def test_non_high_or_mismatched_plan_fails_before_any_evidence_or_query(
+    store: SqliteStoryGraph,
+    book: Seeded,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = _config()
+    high = _call_plan(config)
+    off = plan_call(M2_LENGTH_SPEC, ReasoningEffort.OFF, high.capability)
+    plans = (
+        off,
+        high.model_copy(update={"model": "wrong-model"}),
+    )
+
+    for index, plan in enumerate(plans):
+        out = tmp_path / f"preflight-{index}" / "run.jsonl"
+        client, calls = _client(_by_arm(CLEAN, CLEAN, CLEAN))
+        scene_calls: list[tuple[Any, ...]] = []
+
+        def forbidden_scene_view(*args: Any, **kwargs: Any) -> Any:
+            scene_calls.append((*args, kwargs))
+            raise AssertionError("plan preflight must precede scene_view")
+
+        monkeypatch.setattr(runner_mod, "scene_view", forbidden_scene_view)
+        with pytest.raises(ValueError, match="high|route"):
+            _raw_run_gate(
+                store,
+                book.pid,
+                [KNOWS_TRAP],
+                config=config,
+                plan=plan,
+                out_path=out,
+                client=client,
+            )
+        assert calls == []
+        assert scene_calls == []
+        assert not out.exists() and not out.parent.exists()
+
+
+@pytest.mark.parametrize(
+    ("responses", "expected_status", "expected_attempts"),
+    [
+        (("甲", "乙"), "under", 2),
+        ((("甲" * 3_001),), "over", 1),
+        (((CLEAN, "length"),), "within", 1),
+    ],
+)
+def test_length_invalid_is_terminal_and_never_scored(
+    store: SqliteStoryGraph,
+    book: Seeded,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    responses: tuple[str | tuple[str, str | None], ...],
+    expected_status: str,
+    expected_attempts: int,
+) -> None:
+    out = tmp_path / "invalid.jsonl"
+    scripted = list(responses)
+
+    def responder(
+        messages: list[dict[str, str]], index: int
+    ) -> str | tuple[str, str | None]:
+        del messages
+        return scripted[index]
+
+    client, calls = _client(responder)
+    score_calls: list[str] = []
+    real_score = runner_mod.score_against
+
+    def score_spy(*args: Any, **kwargs: Any) -> Any:
+        text = args[-1]
+        score_calls.append(text)
+        return real_score(*args, **kwargs)
+
+    monkeypatch.setattr(runner_mod, "score_against", score_spy)
+
+    with pytest.raises(runner_mod.LengthInvalidError) as caught:
+        _raw_run_gate(
+            store,
+            book.pid,
+            [KNOWS_TRAP],
+            config=_config(),
+            plan=_call_plan(_config()),
+            out_path=out,
+            client=client,
+        )
+
+    assert caught.value.trap_id == "K01"
+    assert caught.value.arm == "x0"
+    assert caught.value.repeat == 0
+    assert caught.value.measurement.status == expected_status
+    assert len(calls) == expected_attempts
+    assert score_calls == [KNOWS_TRAP.reference], "invalid final must not reach scorer"
+    records = _records(out)
+    assert [record["kind"] for record in records[-expected_attempts - 1 :]] == [
+        *("generation_attempt" for _ in range(expected_attempts)),
+        "length_invalid",
+    ]
+    assert not _of_kind(out, "generation")
+
+
+def test_first_attempt_is_synced_before_a_continuation_transport_failure(
+    store: SqliteStoryGraph,
+    book: Seeded,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out = tmp_path / "partial.jsonl"
+    client, calls = _client(lambda messages, index: "甲")
+    create = client.chat.completions.create
+
+    def fail_second(**kwargs: Any) -> Any:
+        if len(calls) == 1:
+            raise RuntimeError("second transport exploded")
+        return create(**kwargs)
+
+    client.chat.completions.create = fail_second
+    syncs: list[int] = []
+    real_fsync = runner_mod.os.fsync
+
+    def fsync_spy(fd: int) -> None:
+        syncs.append(fd)
+        real_fsync(fd)
+
+    monkeypatch.setattr(runner_mod.os, "fsync", fsync_spy)
+
+    with pytest.raises(ProviderError, match="second transport exploded"):
+        _raw_run_gate(
+            store,
+            book.pid,
+            [KNOWS_TRAP],
+            config=_config(),
+            plan=_call_plan(_config()),
+            out_path=out,
+            client=client,
+        )
+
+    assert len(calls) == 1
+    assert syncs, "flush without fsync is not durable attempt evidence"
+    attempts = _of_kind(out, "generation_attempt")
+    assert len(attempts) == 1 and attempts[0]["attempt"] == 1
+    assert attempts[0]["output"] == "甲"
+    assert not _of_kind(out, "generation")
+    assert not _of_kind(out, "length_invalid"), "transport failure is incomplete, not INVALID"
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # ② messages 必须原样落盘（ADR 0010 末尾那条「唯一可发现路径」）
 # ══════════════════════════════════════════════════════════════════════════
@@ -330,7 +580,7 @@ def test_the_full_messages_land_on_disk(
     assert "血脉秘密" in raw, "秘密的显示名该在 prompt 里（X1/X2 注入的就是标签）"
     assert "\\u" not in raw, "ensure_ascii=False —— 一份人读不了的审计记录等于没有审计记录"
 
-    for rec in _of_kind(out, "generation"):
+    for rec in _of_kind(out, "generation_attempt"):
         assert rec["messages"], "空 messages = 这条记录证明不了 prompt 里有没有 tell"
         assert all({"role", "content"} <= set(m) for m in rec["messages"])
 
@@ -359,7 +609,7 @@ def test_the_prompts_are_exactly_what_assemble_produces(
         )
         for arm, form in ARMS
     }
-    for rec in _of_kind(out, "generation"):
+    for rec in _of_kind(out, "generation_attempt"):
         assert rec["messages"] == expected[rec["arm"]], f"{rec['arm']} 的 prompt 不是 assemble 出的"
 
 
@@ -377,7 +627,7 @@ def test_the_tell_never_reaches_the_prompt(
     client, _ = _client(_by_arm(CLEAN, CLEAN, CLEAN))
     run_gate(store, book.pid, [KNOWS_TRAP], config=_config(), out_path=out, client=client)
 
-    for rec in _of_kind(out, "generation"):
+    for rec in _of_kind(out, "generation_attempt"):
         prompt = "\n".join(m["content"] for m in rec["messages"])
         assert TELL not in prompt, f"{rec['arm']} 的 prompt 里出现了内容 tell —— 仪器接反了"
 
@@ -598,7 +848,11 @@ def test_run_gate_itself_fails_closed_until_amendment_5_is_implemented(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Public library callers cannot bypass the CLI's preregistration guard."""
-    monkeypatch.setattr(runner_mod, "PROTOCOL_VERSION", PROTOCOL_VERSION)
+    monkeypatch.setattr(
+        runner_mod,
+        "PROTOCOL_VERSION",
+        "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4 + ADR 0010",
+    )
     out = tmp_path / "runs" / "must-not-exist.jsonl"
     client, calls = _client(_by_arm(CLEAN, CLEAN, CLEAN))
 
@@ -929,29 +1183,17 @@ def llm_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("NH_LLM_MAX_TOKENS", raising=False)
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def amendment_5_runner_ready(monkeypatch: pytest.MonkeyPatch) -> None:
-    """让旧 CLI 分支测试继续覆盖它们负责的错误；真实常量在 Task 7 前仍必须 fail-closed。"""
-    monkeypatch.setattr(
-        runner_mod,
-        "PROTOCOL_VERSION",
-        "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5 + ADR 0010/0011",
-    )
+    """Compatibility name retained until Task 8 replaces env-only CLI setup."""
 
-    def planned_complete(
-        messages: Any,
-        *,
-        config: ProviderConfig,
-        client: Any = None,
-    ) -> Any:
-        return provider_complete(
-            messages,
-            config=config,
-            plan=_call_plan(config),
-            client=client,
-        )
+    real_run_gate = runner_mod.run_gate
 
-    monkeypatch.setattr(runner_mod, "complete", planned_complete)
+    def planned_run_gate(*args: Any, config: ProviderConfig, **kwargs: Any) -> Any:
+        kwargs.setdefault("plan", _call_plan(config))
+        return real_run_gate(*args, config=config, **kwargs)
+
+    monkeypatch.setattr(runner_mod, "run_gate", planned_run_gate)
 
 
 def _stub_complete(monkeypatch: pytest.MonkeyPatch, texts: Sequence[str]) -> list[dict]:
@@ -965,18 +1207,31 @@ def _stub_complete(monkeypatch: pytest.MonkeyPatch, texts: Sequence[str]) -> lis
 
     calls: list[dict] = []
 
-    def fake(messages: Any, *, config: Any = None, client: Any = None) -> CompletionResult:
-        calls.append({"messages": messages, "config": config})
+    def fake(
+        messages: Any,
+        *,
+        config: Any = None,
+        plan: Any = None,
+        client: Any = None,
+    ) -> CompletionResult:
+        del client
+        calls.append({"messages": messages, "config": config, "plan": plan})
         return CompletionResult(text=texts[(len(calls) - 1) % len(texts)], model="fake")
 
-    monkeypatch.setattr(runner_mod, "complete", fake)
+    from novel_harness.draft import generate as generate_module
+
+    monkeypatch.setattr(generate_module, "complete", fake)
     return calls
 
 
 def test_gate_fails_closed_until_amendment_5_runner_is_implemented(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(runner_mod, "PROTOCOL_VERSION", PROTOCOL_VERSION)
+    monkeypatch.setattr(
+        runner_mod,
+        "PROTOCOL_VERSION",
+        "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4 + ADR 0010",
+    )
     out = tmp_path / "must-not-exist.jsonl"
     result = runner.invoke(
         app,
@@ -1073,7 +1328,7 @@ def test_gate_prints_how_many_traps_and_generations(
     assert result.exit_code == 1, result.output  # 全干净 → X0 泄漏 0.00 → 地板 → INVALID
     assert "2 条陷阱 × 3 臂 × 3 次 = 18 次生成" in result.output
     assert "INVALID" in result.output
-    assert out.exists() and len(_records(out)) == 1 + 2 * 2 + 18
+    assert out.exists() and len(_records(out)) == 1 + 2 * 2 + 18 * 2
 
 
 def test_gate_exits_zero_on_a_real_verdict(

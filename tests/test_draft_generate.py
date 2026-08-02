@@ -20,9 +20,10 @@ from novel_harness.draft.generate import (
     DraftAttempt,
     DraftResult,
     generate_draft,
+    validate_generation_plan,
 )
 from novel_harness.draft.length import DraftLanguage, LengthSpec, LengthStatus
-from novel_harness.draft.provider import CompletionResult, ProviderConfig
+from novel_harness.draft.provider import CompletionResult, ProviderConfig, ProviderError
 
 
 @pytest.fixture
@@ -164,6 +165,39 @@ def test_mismatched_length_plan_is_rejected_before_any_provider_call(
     assert scripted.calls == []
 
 
+def test_generation_plan_route_must_match_config_before_any_provider_call(
+    monkeypatch: pytest.MonkeyPatch,
+    config: ProviderConfig,
+) -> None:
+    length = LengthSpec(
+        language=DraftLanguage.ZH,
+        min_units=3,
+        target_units=4,
+        max_units=5,
+    )
+    wrong_config = config.model_copy(update={"model": "another-model"})
+    scripted = _install(
+        monkeypatch,
+        CompletionResult(text="不应调用", model="test-model"),
+    )
+
+    with pytest.raises(ValueError, match="route.*config"):
+        validate_generation_plan(
+            length=length,
+            config=wrong_config,
+            plan=_plan(length),
+        )
+
+    with pytest.raises(ValueError, match="route.*config"):
+        generate_draft(
+            [{"role": "user", "content": "写。"}],
+            length=length,
+            config=wrong_config,
+            plan=_plan(length),
+        )
+    assert scripted.calls == []
+
+
 def test_attempt_messages_are_recursively_immutable_and_json_serializable(
     monkeypatch: pytest.MonkeyPatch,
     config: ProviderConfig,
@@ -249,6 +283,84 @@ def test_transport_cannot_mutate_the_audit_snapshot(
     )
 
     assert result.attempts[0].messages[0]["content"][0]["text"] == "写。"
+
+
+def test_attempt_observer_receives_the_first_attempt_before_continuation_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    config: ProviderConfig,
+) -> None:
+    from novel_harness.draft import generate as generate_module
+
+    length = LengthSpec(
+        language=DraftLanguage.ZH,
+        min_units=3,
+        target_units=4,
+        max_units=5,
+    )
+    observed: list[DraftAttempt] = []
+    calls = 0
+
+    def failing_second_complete(
+        messages: Sequence[dict[str, Any]],
+        *,
+        config: ProviderConfig,
+        plan: ResolvedCallPlan,
+        client: Any = None,
+    ) -> CompletionResult:
+        nonlocal calls
+        del messages, config, plan, client
+        calls += 1
+        if calls == 1:
+            return CompletionResult(text="甲", model="test-model")
+        assert [attempt.number for attempt in observed] == [1]
+        raise ProviderError("continuation transport failed")
+
+    monkeypatch.setattr(generate_module, "complete", failing_second_complete)
+
+    with pytest.raises(ProviderError, match="continuation transport failed"):
+        generate_draft(
+            [{"role": "user", "content": "写。"}],
+            length=length,
+            config=config,
+            plan=_plan(length),
+            on_attempt=observed.append,
+        )
+
+    assert calls == 2
+    assert [attempt.number for attempt in observed] == [1]
+    assert observed[0].result.text == "甲"
+
+
+def test_attempt_observer_failure_prevents_a_continuation_call(
+    monkeypatch: pytest.MonkeyPatch,
+    config: ProviderConfig,
+) -> None:
+    length = LengthSpec(
+        language=DraftLanguage.ZH,
+        min_units=3,
+        target_units=4,
+        max_units=5,
+    )
+    scripted = _install(
+        monkeypatch,
+        CompletionResult(text="甲", model="test-model"),
+        CompletionResult(text="不应调用", model="test-model"),
+    )
+
+    def persistence_failure(attempt: DraftAttempt) -> None:
+        assert attempt.number == 1
+        raise OSError("disk full")
+
+    with pytest.raises(OSError, match="disk full"):
+        generate_draft(
+            [{"role": "user", "content": "写。"}],
+            length=length,
+            config=config,
+            plan=_plan(length),
+            on_attempt=persistence_failure,
+        )
+
+    assert len(scripted.calls) == 1
 
 
 def test_continuation_capacity_is_checked_before_the_first_paid_call(

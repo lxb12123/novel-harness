@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 import math
 from typing import Any
 
@@ -156,6 +156,20 @@ def _preflight_continuation_context(plan: ResolvedCallPlan) -> None:
         )
 
 
+def validate_generation_plan(
+    *,
+    length: LengthSpec,
+    config: ProviderConfig,
+    plan: ResolvedCallPlan,
+) -> None:
+    """Validate every deterministic generation branch without a provider call."""
+    if plan.length != length:
+        raise ValueError("length spec does not match the resolved call plan")
+    if (plan.base_url, plan.model) != (config.base_url, config.model):
+        raise ValueError("resolved call plan route does not match provider config route")
+    _preflight_continuation_context(plan)
+
+
 class DraftAttempt(BaseModel):
     """One provider call together with the exact request and segment measurement."""
 
@@ -226,11 +240,10 @@ def generate_draft(
     config: ProviderConfig,
     plan: ResolvedCallPlan,
     client: Any = None,
+    on_attempt: Callable[[DraftAttempt], None] | None = None,
 ) -> DraftResult:
     """Generate once and perform exactly one length-only continuation when under minimum."""
-    if plan.length != length:
-        raise ValueError("length spec does not match the resolved call plan")
-    _preflight_continuation_context(plan)
+    validate_generation_plan(length=length, config=config, plan=plan)
 
     initial_messages = _freeze_messages(messages)
     initial_result = complete(
@@ -240,14 +253,15 @@ def generate_draft(
         client=client,
     )
     initial_measurement = measure(initial_result.text, length)
-    attempts = [
-        DraftAttempt(
-            number=1,
-            messages=initial_messages,
-            result=initial_result,
-            measurement=initial_measurement,
-        )
-    ]
+    initial_attempt = DraftAttempt(
+        number=1,
+        messages=initial_messages,
+        result=initial_result,
+        measurement=initial_measurement,
+    )
+    if on_attempt is not None:
+        on_attempt(initial_attempt)
+    attempts = [initial_attempt]
     final_text = initial_result.text
 
     if initial_measurement.status is LengthStatus.UNDER:
@@ -266,14 +280,15 @@ def generate_draft(
             plan=plan,
             client=client,
         )
-        attempts.append(
-            DraftAttempt(
-                number=2,
-                messages=continuation_messages,
-                result=continuation_result,
-                measurement=measure(continuation_result.text, length),
-            )
+        continuation_attempt = DraftAttempt(
+            number=2,
+            messages=continuation_messages,
+            result=continuation_result,
+            measurement=measure(continuation_result.text, length),
         )
+        if on_attempt is not None:
+            on_attempt(continuation_attempt)
+        attempts.append(continuation_attempt)
         final_text += continuation_result.text
 
     frozen_attempts = tuple(attempts)
@@ -294,4 +309,5 @@ __all__ = [
     "DraftResult",
     "continuation_prompt_reserve",
     "generate_draft",
+    "validate_generation_plan",
 ]

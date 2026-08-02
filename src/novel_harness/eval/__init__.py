@@ -30,7 +30,15 @@ from __future__ import annotations
 
 from .confound_lint import LEN_TOLERANCE, ConfoundReport, visible_len
 from .leak import LeakResult, score_against, score_draft
-from .runner import ARMS, PROTOCOL_VERSION, TrapSpec, load_traps, run_gate, stamped_path
+from .runner import (
+    ARMS,
+    PROTOCOL_VERSION,
+    LengthInvalidError,
+    TrapSpec,
+    load_traps,
+    run_gate,
+    stamped_path,
+)
 from .score import (
     ALPHA,
     BASE_REPEATS,
@@ -67,6 +75,7 @@ __all__ = [
     "GateDecision",
     "GateInput",
     "LeakResult",
+    "LengthInvalidError",
     "TrapKind",
     "TrapRuns",
     "TrapSpec",
