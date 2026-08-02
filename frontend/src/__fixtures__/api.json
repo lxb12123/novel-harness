@@ -47,7 +47,9 @@
     "chapter": 3,
     "issues": [],
     "rules_run": [
-      "location_conflict"
+      "location_conflict",
+      "future_leak",
+      "dead_speaks"
     ],
     "scene_count": 1
   },

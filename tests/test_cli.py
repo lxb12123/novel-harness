@@ -423,8 +423,9 @@ def test_check_prints_the_anchor_triple_and_never_an_offset(book: Seeded, tmp_pa
 def test_check_says_how_many_rules_it_ran(book: Seeded, tmp_path: Path) -> None:
     """**零 issue 必须带着「跑了几条规则」一起出现**（§10 约束 8 / `checks/__init__.py:29`）。
 
-    v1 的 `ALL_CHECKS` 只有 R4，所以「无 issue」的真实含义是「R4 没意见」，不是
-    「这一章没问题」——沉默的工具死得比吵闹的工具更快，只是死得更安静。
+    2026-08-02 起 `ALL_CHECKS` 是 R2/R3/R4；「无 issue」的真实含义是
+    「三条规则都没意见」，不是「这一章没问题」——沉默的工具死得比吵闹的工具更快，
+    只是死得更安静。
     """
     manuscript = _chapter_file(tmp_path, "## 场景 1\n<!-- nh: cast=萧决 loc=北荒 -->\n")
     result = runner.invoke(
@@ -443,8 +444,10 @@ def test_check_says_how_many_rules_it_ran(book: Seeded, tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    assert "跑了 1 条规则" in result.output
+    assert "跑了 3 条规则" in result.output
     assert "location_conflict" in result.output
+    assert "future_leak" in result.output
+    assert "dead_speaks" in result.output
     assert "0 条 issue" in result.output
 
 

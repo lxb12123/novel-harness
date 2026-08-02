@@ -17,15 +17,19 @@ from collections.abc import Collection, Sequence
 import pytest
 
 from novel_harness.checks import ALL_CHECKS, CheckContext, Issue, Scene, run_checks
+from novel_harness.checks.dead_speaks import check as dead_speaks_check
+from novel_harness.checks.future_leak import check as future_leak_check
 from novel_harness.checks.location_conflict import check
 from novel_harness.graph import (
     AliasHit,
     AliasKind,
     Edge,
+    EdgeProps,
     EdgeSpec,
     EdgeStatus,
     EdgeType,
     EvidenceStatus,
+    HealthValue,
     InformationScope,
     KnowledgeMatrix,
     Node,
@@ -42,16 +46,37 @@ from novel_harness.graph import (
 PID = "project:demo:01J0"
 
 
-def node(node_id: str, label: NodeLabel, name: str) -> Node:
-    return Node(id=node_id, project_id=PID, label=label, name=name, props=NodeProps())
+def node(
+    node_id: str,
+    label: NodeLabel,
+    name: str,
+    *,
+    first_appears: int | None = None,
+    dim_key: str | None = None,
+) -> Node:
+    return Node(
+        id=node_id,
+        project_id=PID,
+        label=label,
+        name=name,
+        props=NodeProps(first_appears_chapter=first_appears, dim_key=dim_key),
+    )
 
 
 XIAO_JUE = node("character:demo:01J1", NodeLabel.CHARACTER, "萧决")
-GU_QINGYIN = node("character:demo:01J2", NodeLabel.CHARACTER, "顾清音")
+GU_QINGYIN = node("character:demo:01J2", NodeLabel.CHARACTER, "顾清音", first_appears=200)
 QINGYUN = node("location:demo:01J3", NodeLabel.LOCATION, "青云城主府")
 BEIHUANG = node("location:demo:01J4", NodeLabel.LOCATION, "北荒")
 BEIHUANG_2 = node("location:demo:01J5", NodeLabel.LOCATION, "北荒")
 """同名的第二个地点——「北荒」这个 surface 于是有歧义。"""
+
+YOUQUANKU = node("location:demo:01J6", NodeLabel.LOCATION, "幽泉窟", first_appears=200)
+"""未来实体：第 200 章才首现。R2 FUTURE_LEAK 的判据。"""
+
+YOUQUANKU_2 = node("location:demo:01J8", NodeLabel.LOCATION, "幽泉窟", first_appears=200)
+"""同名的第二个未来实体——「幽泉窟」这个 surface 于是有歧义，R2 必须闭嘴。"""
+
+HEALTH_DIM = node("state:demo:01J7", NodeLabel.STATE_DIM, "健康", dim_key="health")
 
 
 def located_at(
@@ -98,7 +123,10 @@ class FakeGraph:
         rules_only: bool = False,
     ) -> list[Resolution]:
         del project_id
-        assert surfaces is not None, "R4 只按 surface 查，不要花名册"
+        if surfaces is None:
+            # store.py 契约：None = 全项目花名册，按 surface 长度降序，
+            # 直接可喂 alternation（text/mentions.py 靠它）。
+            surfaces = sorted(self._aliases, key=lambda s: (-len(s), s))
         out = []
         for surface in surfaces:
             hits = [
@@ -134,7 +162,18 @@ class FakeGraph:
         if len(locations) > 1:
             # exclusivity=single_per_src 保证至多一条。两条 = supersede 漏了，让它炸。
             raise AssertionError(f"{node_id} 在第 {chapter} 章有 {len(locations)} 条 LOCATED_AT")
-        states: list[StateValue] = []
+        states: list[StateValue] = [
+            StateValue(
+                dim=self._nodes[e.dst],
+                dim_key=self._nodes[e.dst].props.dim_key,
+                value=e.props.value,
+                value_key=e.props.value_key,
+                since_chapter=e.valid_from_chapter,
+                evidence_id=None,
+            )
+            for e in edges
+            if e.type is EdgeType.HAS_STATE
+        ]
         return StateSnapshot(
             node=self._nodes[node_id],
             chapter=chapter,
@@ -186,6 +225,7 @@ def ctx(
     loc: str | None = "北荒",
     cast: list[str] | None = None,
     aliases: dict[str, list[Node]] | None = None,
+    paragraphs: Sequence[str] | None = None,
 ) -> CheckContext:
     scene = Scene(
         number=3,
@@ -200,6 +240,7 @@ def ctx(
         project_id=PID,
         chapter=chapter,
         scenes=[scene],
+        paragraphs=paragraphs,
     )
 
 
@@ -395,7 +436,7 @@ def test_check_does_not_read_the_manuscript() -> None:
 
 
 def test_run_checks_runs_the_registry() -> None:
-    assert ALL_CHECKS == (check,)
+    assert set(ALL_CHECKS) == {check, future_leak_check, dead_speaks_check}
     assert len(run_checks(ctx([located_at(XIAO_JUE.id, QINGYUN.id, 10)]))) == 1
 
 
@@ -405,3 +446,149 @@ def test_check_is_a_pure_function_of_ctx() -> None:
     context = ctx([located_at(XIAO_JUE.id, QINGYUN.id, 10)])
 
     assert check(context) == check(context)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# R2 FUTURE_LEAK（2026-08-02）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def has_state(
+    src: str,
+    dst: str,
+    value_key: str,
+    valid_from: int,
+    *,
+    valid_to: int | None = None,
+) -> Edge:
+    return Edge(
+        id=f"edge:demo:{src}-{dst}-{valid_from}",
+        project_id=PID,
+        src=src,
+        dst=dst,
+        type=EdgeType.HAS_STATE,
+        valid_from_chapter=valid_from,
+        valid_to_chapter=valid_to,
+        information_scope=InformationScope.CANON,
+        status=EdgeStatus.ACTIVE,
+        evidence_status=EvidenceStatus.NONE,
+        props=EdgeProps(value_key=value_key),
+    )
+
+
+def test_r2_fires_when_a_future_entity_is_mentioned_early() -> None:
+    issues = future_leak_check(
+        ctx([], aliases={**ALIASES, "幽泉窟": [YOUQUANKU]}, paragraphs=["幽泉窟塌了一角。"])
+    )
+    assert len(issues) == 1
+    issue = issues[0]
+    assert issue.rule == "R2"
+    assert issue.issue_type == "FUTURE_LEAK"
+    assert issue.chapter == 151
+    assert "幽泉窟" in issue.message and "200" in issue.message
+    assert (issue.anchor.para_index, issue.anchor.quote_text) == (0, "幽泉窟")
+
+
+def test_r2_does_not_fire_after_first_appearance() -> None:
+    assert (
+        future_leak_check(
+            ctx(
+                [],
+                chapter=250,
+                aliases={**ALIASES, "幽泉窟": [YOUQUANKU]},
+                paragraphs=["幽泉窟塌了一角。"],
+            )
+        )
+        == []
+    )
+
+
+def test_r2_never_fires_for_characters() -> None:
+    """角色归 R3（高信号位置），R2 不碰角色——否则「未登场角色被叙述提起」会开火。"""
+    assert future_leak_check(ctx([], paragraphs=["顾清音道：「……」"])) == []
+
+
+def test_r2_silent_without_paragraphs() -> None:
+    assert future_leak_check(ctx([])) == []
+
+
+def test_r2_silent_for_ambiguous_future_surface() -> None:
+    issues = future_leak_check(
+        ctx(
+            [],
+            aliases={"幽泉窟": [YOUQUANKU, YOUQUANKU_2]},
+            paragraphs=["幽泉窟塌了一角。"],
+        )
+    )
+    assert issues == []
+
+
+def test_r2_counts_each_mention_within_a_paragraph() -> None:
+    issues = future_leak_check(
+        ctx(
+            [],
+            aliases={**ALIASES, "幽泉窟": [YOUQUANKU]},
+            paragraphs=["幽泉窟塌了，幽泉窟又塌了。"],
+        )
+    )
+    assert len(issues) == 2
+    assert [i.anchor.occurrence_k for i in issues] == [0, 1]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# R3 DEAD_SPEAKS（2026-08-02）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_r3_fires_when_a_dead_character_speaks() -> None:
+    edges = [has_state(XIAO_JUE.id, HEALTH_DIM.id, HealthValue.DEAD, 89)]
+    issues = dead_speaks_check(
+        ctx(edges, aliases={**ALIASES, "健康": [HEALTH_DIM]}, paragraphs=["萧决道：「……」"])
+    )
+    assert len(issues) == 1
+    issue = issues[0]
+    assert issue.rule == "R3"
+    assert issue.issue_type == "DEAD_SPEAKS"
+    assert "死" in issue.message and "萧决" in issue.message
+    assert issue.anchor.quote_text == "萧决"
+
+
+def test_r3_fires_when_a_not_yet_appeared_character_speaks() -> None:
+    issues = dead_speaks_check(ctx([], paragraphs=["顾清音道：「……」"]))
+    assert len(issues) == 1
+    assert "200" in issues[0].message and "登场" in issues[0].message
+
+
+def test_r3_silent_for_living_appeared_character() -> None:
+    assert dead_speaks_check(ctx([], paragraphs=["萧决道：「……」"])) == []
+
+
+def test_r3_silent_before_the_death_chapter() -> None:
+    edges = [has_state(XIAO_JUE.id, HEALTH_DIM.id, HealthValue.DEAD, 89)]
+    assert (
+        dead_speaks_check(
+            ctx(
+                edges,
+                chapter=50,
+                aliases={**ALIASES, "健康": [HEALTH_DIM]},
+                paragraphs=["萧决道：「……」"],
+            )
+        )
+        == []
+    )
+
+
+def test_r3_silent_when_the_name_is_not_a_speaker_tag() -> None:
+    """「萧决当年……」是别人提到死者，不在标签位置——ADR 0005 的 R3 注释原样测试。"""
+    assert dead_speaks_check(ctx([], paragraphs=["萧决当年……"])) == []
+
+
+def test_r3_silent_without_paragraphs() -> None:
+    assert dead_speaks_check(ctx([])) == []
+
+
+def test_r3_longest_surface_wins_before_the_verb() -> None:
+    aliases = {"顾清音": [GU_QINGYIN], "清音": [GU_QINGYIN]}
+    issues = dead_speaks_check(ctx([], aliases=aliases, paragraphs=["顾清音道：「……」"]))
+    assert len(issues) == 1
+    assert issues[0].anchor.quote_text == "顾清音"

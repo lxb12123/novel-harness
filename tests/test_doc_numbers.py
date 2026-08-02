@@ -234,11 +234,10 @@ def test_architecture_numbers_match_the_code() -> None:
 
 
 def test_all_checks_wording_stays_honest() -> None:
-    """`ALL_CHECKS` 只有一条这件事是**措辞**不是数字，所以单独钉。
+    """`ALL_CHECKS` 的「有几条」这件事是**措辞**不是数字，所以单独钉。
 
-    文档里写的是「`ALL_CHECKS` 至今只有 R4」。R2/R3 一落地，这句话就变成假话，
-    而它恰好是 M3 那条「误报 < 1 条/章 会假绿」论证的前提——前提悄悄失效，
-    整段推理就从「诚实的自我警告」退化成「过时的自嘲」。
+    文档说「只有一条」当且仅当代码里真只有一条；R2/R3 落地后文档已改成
+    「R2/R3/R4 在跑」，M3 那段论证也同步从「会假绿」改成了「代码就绪、等真书」。
     """
     body = section_of(ARCHITECTURE.read_text(encoding="utf-8"), SECTION)
     says_only_one = re.search(r"`ALL_CHECKS`[^\n]{0,8}只有", body) is not None

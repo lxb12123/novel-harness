@@ -284,7 +284,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
 > 守卫钉住的是**能在运行时数出来**的那些（路由 32 / `/api` 31 / 501 stub 5 / 错误映射 17 /
-> CLI 叶子 16 / 建表 13 / fixture 端点 21 / `ALL_CHECKS` 1），改错必红、**删掉也必红**（不静默 skip）。
+> CLI 叶子 16 / 建表 13 / fixture 端点 21 / `ALL_CHECKS` 3），改错必红、**删掉也必红**（不静默 skip）。
 > **它罩不住 pytest / vitest 这两个数**——在 pytest 里数 pytest 要递归，
 > 所以「977」和「22」仍然只靠人手改，改代码后请顺手跑一次 `uv run pytest -q` 更新这一处。
 > （2026-07-30 那天这个数从 690 走到 801，中途在文档里错过一次——**这条盲区是真的，不是假想的**。）
@@ -298,7 +298,8 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 db.py  ids.py  decisions.py  project.py  migrations/001_init.sql（13 张表）
 graph/{models,store,sqlite_store,queries}.py    ← state_at / supersede / subgraph
 panel/{knowledge,state,constraints}.py          ← 认知矩阵（头牌）+ PLANNED 进 prompt 的唯一闸门
-checks/{base,location_conflict}.py              ← R4（`ALL_CHECKS` 至今只有这一条）
+checks/{base,location_conflict,future_leak,dead_speaks}.py
+                                                  ← R2/R3/R4（R5 待覆盖率实测；`ALL_CHECKS` 共三条）
 text/{anchor,chapterize,scenes}.py              ← (para_index,quote,k) 唯一定义 / 切章 / 场景块
 declare.py  importer.py                         ← M1 声明层：引语定章号 + 证据链 + CanonWriter
 cli.py                                          ← nh 的 16 个子命令（含 `nh serve` / `nh gate`）
@@ -480,15 +481,16 @@ ADR 0009 不写（协议 §8 定死它「跑完写」）、任何地方都不会
 
 **同时缺代码（书到手也验不了，别排进「等书」那一栏）：**
 
-- **M1 的花名册 90% 提及** —— 缺 `text/mentions.py`（R2/R3/R5 的共同前置），也缺度量代码和 gold 标注口径。
-  M1 已被标「已落地」，而这条验收从来没有过执行体。
-- **M3 的误报 < 1 条/章** —— **今天不可测，而且会假绿。** `ALL_CHECKS` 至今只有 R4，
-  而 R4 是「作者声明 vs 作者声明，不读正文，零 FP」。真书一到手就跑 `nh check`，
-  输出接近 0 条 issue，于是**自动「通过」这条门槛**——一张漂亮的空表 + exit 0，
-  正是 `demo.sh` 注释里点名要防的那种坏法。要先有 R2/R3 在跑，这条门槛才承载得起它的意思。
-  顺带：M3 的「什么算误报」**至今没有预注册**——全仓没有任何地方定义「什么算误报」，
-  而 M2 花了整整一条 commit 建立的就是这条纪律。
-  （`PLAN.md` 曾自称「定义已预注册」，2026-07-27 它自己改口了，本节此前一直在批评一句已经不存在的话。）
+- **M1 的花名册 90% 提及** —— **度量代码与 gold 标注口径仍缺**。`text/mentions.py`
+  已于 2026-08-02 落地（R2/R3/R5 的共同前置），但「90% 提及」的度量器、gold 口径
+  仍然没有执行体。M1 已被标「已落地」，而这条验收从来没有过执行体。
+
+**M3 的误报 < 1 条/章** —— **代码已就绪（2026-08-02：R2/R3/R4 在跑），生死数仍未测量。**
+R4 之外，R2（未来实体提前出现）和 R3（死人/未登场角色开口说话）已落地，各自带
+闭嘴条件测试；真书一到手就能跑 `nh check` 量误报率，不再有「空表自动通过」的假绿。
+但两件事仍欠着：① **「什么算误报」至今没有预注册**——全仓没有任何地方定义
+「什么算误报」（M2 花了整整一条 commit 建立的就是这条纪律，M3 还没建；
+先定义、后测量，顺序不能反）；② 真书连续 20 章的人工判定还没做。
 
 **合成小册子不能顶替它们中的任何一条**：它有强制说话人标签、强制唯一 tell，测的是注入机制不是真书行为
 （EVAL_PROTOCOL.md §7 已把这条免责一并预注册）。
@@ -533,7 +535,8 @@ ADR 0009 不写（协议 §8 定死它「跑完写」）、任何地方都不会
    规模：vitest 18 条（认知矩阵三态 / 左栏空态 / 花名册抽屉的 ADR 0004 提示与拒绝形态）。
    **剩下的**：只有 3 个组件有测试，`CenterEditor` / `LocalGraph` / `BottomBar` 等仍是零。
 
-**仍完全不存在的**：`extract/`（M4）、`text/mentions.py`（R2/R3/R5 与花名册验收的共同前置）。
+**仍完全不存在的**：`extract/`（M4）。`text/mentions.py` 已于 2026-08-02 落地，
+R2/R3 已在 `ALL_CHECKS` 里跑（R5 仍等覆盖率实测）。
 （这一行 2026-07-30 之前还挂着 `synth/` 和 `draft/assemble.py`，那天两样都落地了。
 留个记号：这一行**只列代码**——「代码有了但没跑过」是另一回事，见上面 M2 那节最后一段。）
 

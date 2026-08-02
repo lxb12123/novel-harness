@@ -1,14 +1,12 @@
 """硬规则 —— 判分器与 Validator 的同一份实现（PLAN §9）。
 
-`ALL_CHECKS` 现在只有一条。这不是进度落后，是 ADR 0005 的铁律划完之后剩下的：
-
 | 规则 | 状态 |
 |---|---|
 | R1 认知边界 | 不在这里——它是面板不是规则（`panel/knowledge.py`） |
-| R2 FUTURE_LEAK | TODO(M3)：要 `text/mentions.py` 的正则 alternation |
-| R3 DEAD_SPEAKS | TODO(M3)：同上；判据是 `StateSnapshot.is_dead` / `has_appeared()` |
-| **R4 LOCATION_CONFLICT** | **v1 现在就能做的唯一一条：不读正文，零 FP** |
-| R5 ADDRESS_CONFLICT | TODO(M3)：生死取决于 Day 1 下午的覆盖率实测（≥10% 才进 v1） |
+| **R2 FUTURE_LEAK** | **2026-08-02 落地**：`text/mentions.py` + `first_appears_chapter` |
+| **R3 DEAD_SPEAKS** | **2026-08-02 落地**：说话人标签位置 × `is_dead` / `has_appeared()` |
+| **R4 LOCATION_CONFLICT** | v1 最早的一条：不读正文，零 FP |
+| R5 ADDRESS_CONFLICT | 生死取决于 Day 1 下午的覆盖率实测（≥10% 才进 v1） |
 
 M3 的生死线是「真书连续 20 章误报 < 1 条/章 **且** 合成小册子真阳性 ≥ 22/25」。
 双边门槛的存在理由：**沉默的工具死得比吵闹的工具更快，只是死得更安静，而且指标
@@ -17,10 +15,14 @@ M3 的生死线是「真书连续 20 章误报 < 1 条/章 **且** 合成小册�
 
 from __future__ import annotations
 
-from . import location_conflict
+from . import dead_speaks, future_leak, location_conflict
 from .base import FIRE_SCOPE, Check, CheckContext, Issue, Scene
 
-ALL_CHECKS: tuple[Check, ...] = (location_conflict.check,)
+ALL_CHECKS: tuple[Check, ...] = (
+    location_conflict.check,
+    future_leak.check,
+    dead_speaks.check,
+)
 """按声明顺序跑。加一条规则 = 加一个文件 + 在这里加一项。"""
 
 
