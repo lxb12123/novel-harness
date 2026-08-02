@@ -279,17 +279,17 @@ def test_direct_call_plan_enforces_exact_shared_high_reserve_math() -> None:
     )
     shared_values: dict[str, object] = {
         "length": M2_LENGTH_SPEC,
-        "visible_token_budget": 7_024,
+        "visible_token_budget": 7_224,
         "request_token_budget": 40_000,
         "reasoning_requested": ReasoningEffort.HIGH,
         "reasoning_effective": ReasoningEffort.HIGH,
         "stream": True,
     }
-    exact = _direct_plan(caps, required_token_budget=35_120, **shared_values)
-    assert exact.required_token_budget == 35_120
+    exact = _direct_plan(caps, required_token_budget=36_120, **shared_values)
+    assert exact.required_token_budget == 36_120
 
     with pytest.raises(ValidationError, match="required token budget"):
-        _direct_plan(caps, required_token_budget=35_121, **shared_values)
+        _direct_plan(caps, required_token_budget=36_121, **shared_values)
 
 
 def test_direct_call_plan_rejects_shared_reasoning_without_audited_ratio() -> None:
@@ -355,34 +355,34 @@ def test_openrouter_opus_high_uses_exact_shared_reserve_math() -> None:
         request_token_budget=40_000,
         prompt_token_budget=2_000,
     )
-    assert plan.visible_token_budget == 7_024
-    assert plan.required_token_budget == 35_120
+    assert plan.visible_token_budget == 7_224
+    assert plan.required_token_budget == 36_120
     assert plan.request_token_budget == 40_000
     assert plan.reasoning_effective is ReasoningEffort.HIGH
     assert plan.reasoning_dialect is ReasoningDialect.OPENROUTER
     assert plan.stream is True
 
     automatic = plan_call(M2_LENGTH_SPEC, ReasoningEffort.HIGH, caps)
-    assert automatic.required_token_budget == 35_120
+    assert automatic.required_token_budget == 36_120
     assert automatic.request_token_budget == 40_000
 
 
 def test_unknown_allows_off_but_rejects_requested_reasoning() -> None:
     caps = resolve_capabilities("http://localhost:11434/v1", "custom-model")
     off = plan_call(M2_LENGTH_SPEC, ReasoningEffort.OFF, caps)
-    assert off.request_token_budget == 7_024
+    assert off.request_token_budget == 7_224
     assert off.max_tokens_field == "max_tokens"
     with pytest.raises(CapabilityError, match="reasoning"):
         plan_call(M2_LENGTH_SPEC, ReasoningEffort.HIGH, caps)
 
 
 def test_explicit_budget_and_model_limit_are_never_silently_clamped() -> None:
-    with pytest.raises(CapabilityError, match="required.*7024"):
+    with pytest.raises(CapabilityError, match="required.*7224"):
         plan_call(
             M2_LENGTH_SPEC,
             ReasoningEffort.OFF,
             _caps(),
-            request_token_budget=7_023,
+            request_token_budget=7_223,
         )
     with pytest.raises(CapabilityError, match="4096"):
         plan_call(
@@ -458,16 +458,16 @@ def test_registry_is_immutable_and_does_not_fabricate_unpublished_reserve_ratios
 def test_deepseek_v4_high_uses_the_audited_shared_reserve_math() -> None:
     """2026-08-02 冻结：DeepSeek V4 的 thinking 与正文共享输出预算，按 0.8 预留。
 
-    visible = ceil(3000*2) + 1024 = 7024；
-    required = ceil(7024 / (1-0.8)) = 35120；
+    visible = ceil(3100*2) + 1024 = 7224；
+    required = ceil(7224 / (1-0.8)) = 36120；
     request 向上取整到 40000 > 16000，必须走 streaming。
     证据见 docs/M2_ENDPOINT_PROFILE.md。
     """
     capability = resolve_capabilities("https://api.deepseek.com", "deepseek-v4-flash")
     assert capability.reserve_ratio_high == 0.8
     plan = plan_call(M2_LENGTH_SPEC, ReasoningEffort.HIGH, capability)
-    assert plan.visible_token_budget == 7_024
-    assert plan.required_token_budget == 35_120
+    assert plan.visible_token_budget == 7_224
+    assert plan.required_token_budget == 36_120
     assert plan.request_token_budget == 40_000
     assert plan.stream is True
     assert plan.reasoning_dialect is ReasoningDialect.DEEPSEEK

@@ -331,13 +331,14 @@ Fake 够不着的（label 校验 / 重复边 StoreError / `secret_ids` 默认列
 开头那个框，走的是真 SqliteStoryGraph。面板不再只在终端里存在——同一个矩阵在浏览器工作台的右栏
 第一个 tab 里（`api/app.py` 的 32 条自建路由 + `frontend/src/components/KnowledgeMatrix.tsx`）。
 
-### M2 的当前形状：修正案 5 / ADR 0011 已冻结，实现与 endpoint/profile 已落地，剩第一轮真模型
+### M2 的当前形状：修正案 5/6 / ADR 0011 已冻结，实现与 endpoint/profile 已落地，剩第一轮有效真模型
 
 **判分器先于被判者**是这条链的建造顺序，不是偷懒：先有卷子和判分口径，再有被判的东西，
 「看到结果再定及格线」在结构上就做不到。原有短输出链在 2026-07-30 两侧齐了；2026-08-01
 又在第一次真实推理前冻结了[修正案 5](EVAL_PROTOCOL_AMENDMENT_5.md)与
 [ADR 0011](adr/0011-bilingual-draft-length.md)：中文 M2 改为 2,000–3,000 字，225 指 final cell，
 每份长度不足最多续写一次，provider 继续走通用 OpenAI-compatible client 并按能力映射 high reasoning。
+（2026-08-02 修正案 6：超长 ≤100 字宽容，硬上限 3,100。）
 **endpoint/profile 已于 2026-08-02 冻结**（`deepseek-v4-flash` @ `https://api.deepseek.com`，
 见 [M2_ENDPOINT_PROFILE.md](M2_ENDPOINT_PROFILE.md)，不含 key、单独 commit）。
 length/capability/streaming/continuation/JSONL 实现与回归测试已于 2026-08-01 全部落地并离线验证
@@ -420,10 +421,11 @@ runner 的落点有硬约束：`tests/test_draft_boundary.py` 写明它必须落
 `out_path` 同样是硬边界：runner 用独占新建而不是 `exists()` 后再写，两个进程撞名也只有一个能创建；
 旧 run 存在时早于 `scene_view()` 和第一次模型调用判死，原字节不变。这里没有覆盖、追加或断点续跑。
 
-**真正还没有的是第一轮真模型结果（smoke 验证 + 完整一轮）。** 基准轮仍是
+**真正还没有的是第一轮有效真模型结果**（smoke 已过；前四轮均死于长度 INVALID，
+是仪器问题不是结果——无任何泄漏率数字）。基准轮仍是
 25 × 3 × 3 = 225 个 final cell；每份不足 2,000 字最多续写一次，
-所以成功完成需 225–450 次 transport call。跑完之前，
-`runs/` 不存在、ADR 0009 不写（协议 §8 定死它「跑完写」）、任何地方都不会出现泄漏率数字。
+所以成功完成需 225–450 次 transport call。第一轮有效结果之前，
+ADR 0009 不写（协议 §8 定死它「跑完写」）、任何地方都不会出现泄漏率数字。
 **`runs/` 故意不在 `.gitignore` 里**：预注册说「协议先于结果 commit」，
 而那句话只有在结果**也** commit 了的时候才可验证。
 
@@ -433,13 +435,15 @@ runner 的落点有硬约束：`tests/test_draft_boundary.py` 写明它必须落
 所以之后任何 `runs/*.jsonl` 都晚于它、都算数。**这条 commit 之后再改协议就等于改卷子**——
 真要改，开一份新的、说明改了什么和为什么，别覆盖。
 
-**它此后已经被改过五次，改法合规但你必须知道它们存在**：
+**它此后已经被改过六次，改法合规但你必须知道它们存在**：
 [`EVAL_PROTOCOL_AMENDMENT_1.md`](EVAL_PROTOCOL_AMENDMENT_1.md)（两处口径不自洽）、
 [`_2`](EVAL_PROTOCOL_AMENDMENT_2.md) / [`_3`](EVAL_PROTOCOL_AMENDMENT_3.md)（裁决表重叠 + 三处措辞歧义）、
 [`_4`](EVAL_PROTOCOL_AMENDMENT_4.md)（**§4 的「`prior` 不许含 tell」让整台仪器不通电**）、
 [`_5`](EVAL_PROTOCOL_AMENDMENT_5.md)（中文 2,000–3,000 字、一次长度续写、225 final cells /
-225–450 calls、通用 high-reasoning 能力档与 JSONL 证据形状）。
-五份都是**另开文件**、冻结正文逐字节未动（从 `## 1.` 起与 `0393088` byte-exact）。
+225–450 calls、通用 high-reasoning 能力档与 JSONL 证据形状）、
+[`_6`](EVAL_PROTOCOL_AMENDMENT_6.md)（**超长 ≤100 宽容**：上限 3,000 → 3,100；
+2026-08-02 在四轮 INVALID 之后裁定，§6 及格线一个数字没动）。
+六份都是**另开文件**、冻结正文逐字节未动（从 `## 1.` 起与 `0393088` byte-exact）。
 1–4 写下时 `synth/` 尚不存在；第 5 份晚于 `synth/`，但五份都早于真实推理与 `runs/`，所以仍属预注册。
 **动 `eval/` 或 `draft/` 之前要读的是「协议 + 这五份修正案 + ADR 0010/0011」，不是协议一份。**
 

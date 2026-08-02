@@ -167,7 +167,7 @@ def test_a_full_dry_run_of_the_gate_survives_the_real_booklet(
     monkeypatch.setattr(
         runner_mod,
         "PROTOCOL_VERSION",
-        "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5 + ADR 0010/0011",
+        "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5/6 + ADR 0010/0011",
     )
     gt = json.loads(out.read_text(encoding="utf-8"))
     traps = load_traps(gt)

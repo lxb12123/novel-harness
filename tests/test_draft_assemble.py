@@ -367,10 +367,10 @@ def test_length_instruction_is_explicit_in_chinese_system_prompt() -> None:
     prompt = assemble_module.system_prompt(M2_LENGTH_SPEC)
 
     assert "中文" in prompt
-    assert "2000–3000 字" in prompt
+    assert "2000–3100 字" in prompt
     assert "2500 字" in prompt
-    assert "2250–2500 字之间自然收束" in prompt
-    assert "绝不要超过 3000 字" in prompt
+    assert "2250–2550 字之间自然收束" in prompt
+    assert "绝不要超过 3100 字" in prompt
     assert "作废" in prompt
     assert "600–1000" not in prompt
 
@@ -400,7 +400,7 @@ def test_all_arms_share_the_exact_same_bilingual_system_prompt() -> None:
     arms = [_arm(ctx, form) for form in PromptForm]
 
     assert [arm[0] for arm in arms] == [arms[0][0]] * 3
-    assert "2000–3000 字" in arms[0][0]["content"]
+    assert "2000–3100 字" in arms[0][0]["content"]
     assert graph_section(ctx, PromptForm.X1) not in arms[1][0]["content"]
     assert graph_section(ctx, PromptForm.X2) not in arms[2][0]["content"]
 

@@ -90,14 +90,14 @@ from .confound_lint import LEN_TOLERANCE, confound_lint
 
 
 PROTOCOL_VERSION = (
-    "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5 + ADR 0010/0011"
+    "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5/6 + ADR 0010/0011"
 )
 """这一轮按哪份卷子跑的。**原样进 jsonl 头**，ADR 0009 要能指名道姓引用它。
 
 改协议 = 改卷子，所以这个字符串变了就意味着此后的 run 和此前的不可比。
 """
 
-_AMENDMENT_5_PROTOCOL_MARKER = "修正案 1/2/3/4/5"
+_AMENDMENT_5_PROTOCOL_MARKER = "修正案 1/2/3/4/5/6"
 
 ARMS: tuple[tuple[str, PromptForm], ...] = (
     ("x0", PromptForm.X0),
@@ -294,7 +294,7 @@ def _validate(
         raise ValueError(
             "M2 runner 已暂停：修正案 5 要求的长度、续写、reasoning 与证据格式"
             "尚未完整实现。\n"
-            "等 PROTOCOL_VERSION 原子升级到修正案 1/2/3/4/5 后才能运行；"
+            "等 PROTOCOL_VERSION 原子升级到修正案 1/2/3/4/5/6 后才能运行；"
             "本拒绝早于建立目录、证据文件和任何模型请求。"
         )
     if config is None:

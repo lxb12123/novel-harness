@@ -377,7 +377,7 @@ def test_header_and_cell_records_pin_amendment_5_evidence(
     records = _records(out)
     head = records[0]
     assert head["protocol"] == (
-        "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5 + ADR 0010/0011"
+        "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5/6 + ADR 0010/0011"
     )
     assert head["length_profile"] == M2_LENGTH_SPEC.model_dump(mode="json")
     assert head["counting_rule"] == "nh-length-v1"
@@ -455,7 +455,7 @@ def test_non_high_or_mismatched_plan_fails_before_any_evidence_or_query(
     ("responses", "expected_status", "expected_attempts"),
     [
         (("甲", "乙"), "under", 2),
-        ((("甲" * 3_001),), "over", 1),
+        ((("甲" * 3_101),), "over", 1),
         (((CLEAN, "length"),), "within", 1),
     ],
 )

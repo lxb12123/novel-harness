@@ -43,7 +43,7 @@ from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.panel.constraints import scene_view
 
 
-PROTOCOL = "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5 + ADR 0010/0011"
+PROTOCOL = "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5/6 + ADR 0010/0011"
 LOCAL = "http://localhost:11434/v1"
 MODEL = "fixture-high-model"
 TELL = "玄血蛊"

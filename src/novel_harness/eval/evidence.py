@@ -42,7 +42,7 @@ from .score import (
 
 
 EXPECTED_PROTOCOL_VERSION = (
-    "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5 + ADR 0010/0011"
+    "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5/6 + ADR 0010/0011"
 )
 CONTINUATION_POLICY = {"max_attempts": 2, "trigger": "under_min_only"}
 

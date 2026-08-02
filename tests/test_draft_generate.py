@@ -502,10 +502,10 @@ def test_continuation_instruction_embeds_the_frozen_length_band() -> None:
     """2026-08-02 修：续写指令必须带长度档与硬上限，否则第二次调用会盲目续写、
     累计总长冲破 max_units（第一份真实 run 因此 INVALID）。"""
     zh = continuation_instruction(M2_LENGTH_SPEC, cumulative_units=1_500)
-    assert "2000–3000" in zh
+    assert "2000–3100" in zh
     assert "目前已写 1500 字" in zh
     assert "续写约 1000 字" in zh
-    assert "续写段最多 1500 字" in zh
+    assert "续写段最多 1600 字" in zh
     assert "不要重新开始" in zh
     # 模板恒定：同一个 (spec, 实测字数) 永远给出同一句；字数只来自确定性长度测量。
     assert continuation_instruction(M2_LENGTH_SPEC, cumulative_units=1_500) == zh

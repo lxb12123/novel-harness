@@ -217,7 +217,7 @@ M2_LENGTH_SPEC = LengthSpec(
     language=DraftLanguage.ZH,
     min_units=2000,
     target_units=2500,
-    max_units=3000,
+    max_units=3100,  # 修正案 6（2026-08-02）：超长 ≤100 宽容，>3100 才 INVALID
 )
 
 

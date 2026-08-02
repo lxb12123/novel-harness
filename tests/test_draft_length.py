@@ -216,7 +216,7 @@ def test_m2_length_spec_never_reads_product_environment_on_first_import() -> Non
         text=True,
     )
 
-    assert result.stdout.strip() == "zh 2000 2500 3000"
+    assert result.stdout.strip() == "zh 2000 2500 3100"
     assert COUNTING_RULE_VERSION == "nh-length-v1"
 
 

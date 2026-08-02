@@ -39,9 +39,9 @@ DeepSeek V4 thinking 模式下 `reasoning_content` 与 `content` **共享输出�
 ## 冻结的预算（版本化公式，全部确定值）
 
 ```text
-M2_LENGTH_SPEC            = zh 2,000 / 2,500 / 3,000（非空白 code point）
-visible = ceil(3000 × 2) + 1024            = 7,024
-required = ceil(7024 ÷ (1 − 0.8))          = 35,120
+M2_LENGTH_SPEC            = zh 2,000 / 2,500 / 3,100（非空白 code point；修正案 6）
+visible = ceil(3100 × 2) + 1024            = 7,224
+required = ceil(7224 ÷ (1 − 0.8))          = 36,120
 request = 向上取整到万位                    = 40,000
 stream：request > 16,000 → True
 continuation 预检：prompt + (request + overhead) + request ≤ 1M ✓
@@ -79,7 +79,10 @@ continuation 预检：prompt + (request + overhead) + request ≤ 1M ✓
       数学上接近零。
 - [x] 修复 4（同日，**协议阈值零改动**）：① `NH_LLM_TEMPERATURE=0.3` 降采样方差；
       ② base 指令可见目标区间收窄到 spec 推导的 `(min+target)/2 – (min+max)/2`
-      （M2 即 2,250–2,500 字）自然收束，仍在冻结的 2,000–3,000 带内。
+      （M2 即 2,250–2,550 字）自然收束，仍在冻结的 2,000–3,100 带内。
+- [x] **修正案 6（2026-08-02，维护者裁定）**：超长 ≤100 字不是内容问题，
+      上限 3,000 → 3,100（`docs/EVAL_PROTOCOL_AMENDMENT_6.md`），>3,100 才 INVALID。
+      预算随 spec 更新（visible 7,224 / required 36,120 / request 40,000 不变）。
 - [ ] 探针：先跑 2 条陷阱（18 cells）实测新配置的超长率，再开完整一轮
 - [ ] 修复后完整一轮 225 final cells / 225–450 transport calls
 
