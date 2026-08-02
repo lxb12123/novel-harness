@@ -30,7 +30,7 @@ const LABEL_ZH: Record<string, string> = {
   Chapter: "章",
 };
 
-function toFlow(g: Subgraph): { nodes: RFNode[]; edges: RFEdge[] } {
+export function toFlow(g: Subgraph): { nodes: RFNode[]; edges: RFEdge[] } {
   const others = g.nodes.filter((n) => n.id !== g.center.id);
   const R = 190;
   const nodes: RFNode[] = g.nodes.map((n) => {
