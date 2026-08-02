@@ -90,6 +90,12 @@ continuation 预检：prompt + (request + overhead) + request ≈ 302K ≤ 1M �
       K02/x2/r0 文本 2,514 字（在带内）但 `finish_reason=length`：该 cell thinking+content
       恰好烧光 40,000 预算。修：reserve 0.8 → 0.95（request 40,000 → 150,000），
       协议阈值零改动。
+- [x] 第六轮（`runs/20260802T080231Z.jsonl`）—— **仍 INVALID**：84 格全部达标，
+      K10/x1/r0 **首段一次生成 3,158 字**（finish=stop，非截断），超 3,100 上限 58 字。
+      实测首段超长率 ≈ 1/85 ≈ 1.2% → 225 格整轮存活率 ≈ 6%：温度 0.3 + 2,250–2,550
+      收束区间压不住右尾。
+- [ ] 修复 5（待定）：可见目标继续下调（约 2,200 字自然收束，续写兜底），
+      先探针验证再开完整轮；协议阈值零改动。
 - [ ] 修复后完整一轮 225 final cells / 225–450 transport calls
 
 跑完之前 `runs/` 不存在、ADR 0009 不写；本 profile 的 commit 时间戳先于
