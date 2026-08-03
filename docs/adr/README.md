@@ -14,7 +14,7 @@ v1 的完整实施计划见 [`../PLAN.md`](../PLAN.md)。
 | [0006](0006-evidence-double-pointer.md) | Evidence 双指针 + STALE 不进队列 | 第 7/14 节的 offset 方案 | 已接受（Day 2 契约） |
 | [0007](0007-manuscript-lives-on-disk.md) | 正文在磁盘上，v1 不做编辑器 | 第 4/17 节、第 22 节第 12 项 | 已接受（**2026-07-19 时机松动**：应用内 CM6 进 v1，正文真相源仍在磁盘） |
 | [0008](0008-related-to-is-undirected.md) | `RELATED_TO` 无向，存储时规范化 | —（补 PLAN **从没回答过**的问题） | 已接受（M1 写关系边之前必须定死） |
-| 0009 | M2 kill-gate 的裁决 | — | **未写，且现在不该写**——协议 §8 定死它「跑完写」。在有 `runs/*.jsonl` 之前写裁决，正是预注册要防的那件事 |
+| [0009](0009-m2-verdict.md) | M2 kill-gate 的裁决 | —（协议 §8 的时序被维护者裁定显式改变） | **已写（2026-08-03，维护者裁定）**——**非数据裁决**：泄漏统计未产出，「图谱约束有效」未证明；`nh gate` 保留可补跑 |
 | [0010](0010-writer-boundary.md) | Writer 边界：`assemble()` 能看见什么 | —（补 `EVAL_PROTOCOL.md` §8 点名要的那份） | 已接受（**`draft/assemble.py` 存在之前必须定死**：第 4 道守卫明说拦不住「完整 PLANNED 进 prompt」，那一格只有它和 review 守得住） |
 | [0011](0011-bilingual-draft-length.md) | 双语长度契约与通用模型调用计划 | 固定中文短输出 / Claude 原生调用假设 | 已接受（修正案 5 的产品边界；先于第一份 `runs/*.jsonl`） |
 | [0012](0012-book-owns-its-db.md) | 库跟着书走：没有全局默认位置 | —（补 `__main__.py` 一直空着的那个决定） | 已接受（2026-08-02；`novel-harness` 不带参数 = 向上找最近的 `book.db`） |
