@@ -11,6 +11,7 @@ import json
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, computed_field, model_validator
 
+from ..decisions import quote_hash
 from ..graph.models import (
     EdgeSource,
     EdgeStatus,
@@ -18,6 +19,7 @@ from ..graph.models import (
     InformationScope,
     NodeRef,
 )
+from ..json_contract import strict_json_dumps
 
 
 class EventCharacterRole(StrEnum):
@@ -125,6 +127,26 @@ class ProposalAuditSnapshot(BaseModel):
     quote_sha256: str | None = Field(default=None, min_length=64, max_length=64)
     chapter_number: int | None = Field(default=None, ge=1)
     para_index: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _quote_hash_matches_text(self) -> ProposalAuditSnapshot:
+        try:
+            strict_json_dumps(self.model_dump(mode="json"))
+        except (TypeError, ValueError, UnicodeError, OverflowError) as exc:
+            raise ValueError(
+                "proposal audit snapshot must be finite int64 strict UTF-8 JSON"
+            ) from exc
+        if self.quote_text is None:
+            if self.quote_sha256 is not None:
+                raise ValueError("quote_sha256 requires quote_text")
+            return self
+        try:
+            expected = quote_hash(self.quote_text)
+        except UnicodeError as exc:
+            raise ValueError("quote_text must be valid UTF-8") from exc
+        if self.quote_sha256 != expected:
+            raise ValueError("quote_sha256 must exactly match quote_text")
+        return self
 
 
 class ProposalRecord(ProposalCreate):

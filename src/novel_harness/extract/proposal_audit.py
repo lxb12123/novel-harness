@@ -194,6 +194,37 @@ def _validate_decision(
         raise ProposalShapeError(
             f"proposal {proposal.id} 缺少 durable audit metadata；拒绝推断历史动作"
         )
+    expected_status = {
+        "accept": "ACCEPTED",
+        "edit": "EDITED",
+        "reject": "REJECTED",
+        "bystander": "REJECTED",
+    }[action.value]
+    expected_canon_version = proposal.base_canon_version + (
+        1 if action.value in {"accept", "edit"} else 0
+    )
+    expected_headers: dict[str, str] = {
+        "proposal_id": proposal.id,
+        "action": action.value,
+        "status": expected_status,
+        "kind": proposal.kind,
+    }
+    payload = snapshot.payload
+    headers_match = all(
+        type(payload.get(key)) is str and payload.get(key) == value
+        for key, value in expected_headers.items()
+    )
+    if (
+        not headers_match
+        or type(payload.get("canon_version")) is not int
+        or payload.get("canon_version") != expected_canon_version
+        or proposal.status.value != expected_status
+        or proposal.resolved_canon_version != expected_canon_version
+        or (action.value == "bystander" and proposal.kind != "new_character")
+    ):
+        raise ProposalShapeError(
+            f"proposal {proposal.id} 的 durable audit 头字段与 terminal proposal 不一致"
+        )
     expected_verdict = {
         "accept": decisions.Verdict.ACCEPT,
         "edit": decisions.Verdict.EDIT,
@@ -240,6 +271,12 @@ def ensure_proposal_audit(
             f"proposal {proposal.id} 缺少 durable audit metadata；拒绝推断历史动作"
         )
 
+    matches = _proposal_decisions(conn, proposal)
+    if len(matches) > 1:
+        raise ProposalShapeError(
+            f"proposal {proposal.id} 对应 {len(matches)} 条决策日志，拒绝猜测"
+        )
+
     if proposal.decision_log_id is not None:
         attached = next(
             (
@@ -256,11 +293,6 @@ def ensure_proposal_audit(
         _validate_decision(proposal, attached)
         return attached, proposal
 
-    matches = _proposal_decisions(conn, proposal)
-    if len(matches) > 1:
-        raise ProposalShapeError(
-            f"proposal {proposal.id} 对应 {len(matches)} 条决策日志，拒绝猜测"
-        )
     decision = matches[0] if matches else None
     if decision is None:
         action = ProposalAction(proposal.resolution_action.value)

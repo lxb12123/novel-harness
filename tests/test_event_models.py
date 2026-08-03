@@ -8,6 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 import novel_harness.events as event_contracts
+from novel_harness.decisions import quote_hash
 from novel_harness.events import (
     CharacterProfilePatch,
     EventCharacterRole,
@@ -228,6 +229,56 @@ def test_proposal_resolution_mark_accepts_only_terminal_statuses(status: str) ->
 
     assert mark.status.value == status
     assert isinstance(mark.status, event_contracts.ProposalResolutionStatus)
+
+
+@pytest.mark.parametrize(
+    ("quote_text", "quote_sha256"),
+    [
+        ("abc", None),
+        (None, "0" * 64),
+        ("abc", "0" * 64),
+    ],
+)
+def test_proposal_audit_snapshot_requires_exact_quote_hash(
+    quote_text: str | None,
+    quote_sha256: str | None,
+) -> None:
+    with pytest.raises(ValidationError, match="quote_sha256"):
+        ProposalAuditSnapshot(
+            payload={"proposal_id": "proposal:test"},
+            quote_text=quote_text,
+            quote_sha256=quote_sha256,
+        )
+
+    valid = ProposalAuditSnapshot(
+        payload={"proposal_id": "proposal:test"},
+        quote_text="abc",
+        quote_sha256=quote_hash("abc"),
+    )
+    assert valid.quote_sha256 == quote_hash("abc")
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("payload", {"number": float("nan")}),
+        ("payload", {"number": float("inf")}),
+        ("payload", {"number": float("-inf")}),
+        ("payload", {"number": 2**63}),
+        ("payload", {"text": "bad\ud800text"}),
+        ("subject_name", "bad\ud800name"),
+    ],
+    ids=["nan", "positive-infinity", "negative-infinity", "int64", "payload-utf8", "subject-utf8"],
+)
+def test_proposal_audit_snapshot_uses_sqlites_strict_json_domain(
+    field: str,
+    value: object,
+) -> None:
+    kwargs: dict[str, object] = {"payload": {"proposal_id": "proposal:test"}}
+    kwargs[field] = value
+
+    with pytest.raises(ValidationError, match="finite int64 strict UTF-8 JSON"):
+        ProposalAuditSnapshot(**kwargs)
 
 
 def test_proposal_resolution_mark_rejects_pending_status() -> None:

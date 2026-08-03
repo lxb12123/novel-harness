@@ -19,6 +19,7 @@ from ..events.store import (
     ProposalValidationError,
 )
 from ..ids import EntityType, new_id
+from ..json_contract import strict_json_dumps
 from .sqlite_store import _transaction
 
 
@@ -297,13 +298,14 @@ class SqliteProposalStore:
                         f"decision_log {resolution.decision_log_id} 不存在或不属于项目 "
                         f"{row['project_id']}"
                     )
-            envelope_json = json.dumps(
-                resolution.audit_envelope.model_dump(mode="json"),
-                ensure_ascii=False,
-                allow_nan=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
+            try:
+                envelope_json = strict_json_dumps(
+                    resolution.audit_envelope.model_dump(mode="json")
+                )
+            except (TypeError, ValueError, UnicodeError, OverflowError) as exc:
+                raise ProposalValidationError(
+                    f"proposal {proposal_id} audit envelope 不是 strict JSON"
+                ) from exc
             try:
                 self._conn.execute(
                     """

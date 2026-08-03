@@ -581,7 +581,6 @@ def test_mark_resolved_is_one_way_and_distinguishes_missing_from_terminal(
         )
     )
     mark = _resolution_mark(pending, "ACCEPTED")
-    decision = _append_mark_decision(conn, project_id, mark)
     canon_before = conn.execute(
         "SELECT canon_version FROM project WHERE id = ?", (project_id,)
     ).fetchone()[0]
@@ -591,10 +590,9 @@ def test_mark_resolved_is_one_way_and_distinguishes_missing_from_terminal(
             "proposal:missing",
             mark,
         )
-    resolved = store.mark_resolved(
-        pending.id,
-        mark.model_copy(update={"decision_log_id": decision.id}),
-    )
+    resolved = store.mark_resolved(pending.id, mark)
+    decision = _append_mark_decision(conn, project_id, mark)
+    resolved = store.attach_decision(pending.id, decision.id)
 
     assert resolved.status is ProposalStatus.ACCEPTED
     assert resolved.resolved_at is not None and resolved.resolved_at.endswith("Z")
@@ -642,7 +640,6 @@ def test_mark_resolved_rejects_an_invalid_decision_reference_atomically(
 
 def test_attach_decision_is_terminal_only_same_project_and_idempotent(conn: Connection) -> None:
     project_id = create_project(conn, name="青云记-attach", root_path=".").id
-    other_id = create_project(conn, name="别书-attach", root_path=".").id
     store = SqliteProposalStore(
         conn, proposal_id_factory=lambda _project_id: "proposal:attach"
     )
@@ -650,26 +647,29 @@ def test_attach_decision_is_terminal_only_same_project_and_idempotent(conn: Conn
         ProposalCreate(project_id=project_id, kind="review", items=[{"item": "review"}])
     )
     mark = _resolution_mark(pending, "ACCEPTED")
-    decision = _append_mark_decision(conn, project_id, mark)
-    _append_mark_decision(
-        conn,
-        project_id=other_id,
-        mark=mark,
-    )
-    different_decision = _append_mark_decision(
+    preterminal = append_decision(
         conn,
         project_id=project_id,
-        mark=mark,
-        payload={**mark.audit_envelope.payload, "proposal_id": "proposal:different"},
+        kind=DecisionKind.NODE_DECLARE,
+        decision=Verdict.ACCEPT,
+        payload={"proposal_id": pending.id},
     )
 
     with pytest.raises(ProposalValidationError, match="terminal|PENDING"):
-        store.attach_decision(pending.id, decision.id)
+        store.attach_decision(pending.id, preterminal.id)
     store.mark_resolved(pending.id, mark)
+    decision = _append_mark_decision(conn, project_id, mark)
     attached = store.attach_decision(pending.id, decision.id)
     assert attached.decision_log_id == decision.id
     assert store.attach_decision(pending.id, decision.id) == attached
 
+    different_decision = append_decision(
+        conn,
+        project_id=project_id,
+        kind=DecisionKind.NODE_DECLARE,
+        decision=Verdict.ACCEPT,
+        payload={"proposal_id": "proposal:different"},
+    )
     with pytest.raises(ProposalValidationError, match="already|different|已|匹配"):
         store.attach_decision(pending.id, different_decision.id)
     assert store.get(project_id, pending.id) == attached
@@ -695,10 +695,12 @@ def test_attach_decision_rejects_cross_project_and_unaudited_lists_only_holes(
     audited_mark = _resolution_mark(audited, "ACCEPTED")
     store.mark_resolved(hole.id, hole_mark)
     store.mark_resolved(audited.id, audited_mark)
-    wrong = _append_mark_decision(
+    wrong = append_decision(
         conn,
         project_id=other_id,
-        mark=audited_mark,
+        kind=DecisionKind.NODE_DECLARE,
+        decision=Verdict.ACCEPT,
+        payload=audited_mark.audit_envelope.payload,
     )
     with pytest.raises(ProposalValidationError, match="项目|project"):
         store.attach_decision(audited.id, wrong.id)

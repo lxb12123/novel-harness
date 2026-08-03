@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+import sqlite3
 import threading
 
 from pydantic import ValidationError
@@ -1031,7 +1032,7 @@ def test_terminal_proposal_rejects_an_unrelated_same_project_decision(
     assert world.proposals.unaudited(world.project_id)[0].id == proposal.id
 
 
-def test_recovery_refuses_a_forged_proposal_review_for_the_same_proposal(
+def test_forged_proposal_review_cannot_poison_recovery_for_the_same_proposal(
     world: ReviewWorld,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1051,15 +1052,54 @@ def test_recovery_refuses_a_forged_proposal_review_for_the_same_proposal(
     forged = dict(terminal.audit_envelope.payload)
     forged["action"] = "reject"
     forged["canon_version"] = 777
-    decisions.append(
-        world.conn,
-        project_id=world.project_id,
-        kind=DecisionKind.PROPOSAL_REVIEW,
-        decision=decisions.Verdict.REJECT,
-        payload=forged,
-    )
+    with pytest.raises(sqlite3.IntegrityError, match="durable audit envelope"):
+        decisions.append(
+            world.conn,
+            project_id=world.project_id,
+            kind=DecisionKind.PROPOSAL_REVIEW,
+            decision=decisions.Verdict.REJECT,
+            payload=forged,
+        )
+    if world.conn.in_transaction:
+        world.conn.rollback()
 
-    with pytest.raises(ProposalShapeError, match="durable audit 不一致"):
+    recovered = recover_proposal_audit(
+        world.conn,
+        world.graph,
+        world.events,
+        proposal.id,
+        proposal_store=world.proposals,
+        edge_review_store=world.edge_reviews,
+    )
+    assert recovered.decision_id is not None
+    assert world.proposals.unaudited(world.project_id) == []
+
+
+def test_recovery_refuses_duplicate_history_even_when_one_decision_is_attached(
+    world: ReviewWorld,
+) -> None:
+    proposal = _make_proposal(
+        world, items=[_event_item(world)], event_ids=[world.event_id]
+    )
+    reviewed = _review(world, proposal.id, ProposalAction.ACCEPT)
+    assert reviewed.decision_id is not None
+    world.conn.execute("DROP TRIGGER decision_log_one_proposal_review_insert")
+    world.conn.execute(
+        """
+        INSERT INTO decision_log (
+            id, project_id, kind, subject_name, quote_text, quote_sha256,
+            chapter_number, para_index, payload_json, decision, actor
+        )
+        SELECT 'decision:duplicate-history', project_id, kind, subject_name,
+               quote_text, quote_sha256, chapter_number, para_index,
+               payload_json, decision, actor
+        FROM decision_log WHERE id = ?
+        """,
+        (reviewed.decision_id,),
+    )
+    world.conn.commit()
+
+    with pytest.raises(ProposalShapeError, match="2 条决策日志"):
         recover_proposal_audit(
             world.conn,
             world.graph,
@@ -1068,7 +1108,91 @@ def test_recovery_refuses_a_forged_proposal_review_for_the_same_proposal(
             proposal_store=world.proposals,
             edge_review_store=world.edge_reviews,
         )
-    assert world.proposals.unaudited(world.project_id)[0].id == proposal.id
+
+
+def test_recovery_revalidates_audit_headers_against_terminal_proposal(
+    world: ReviewWorld,
+) -> None:
+    profile = RawCharacterProfile(surface="陆青禾", confidence=0.8)
+    proposal = _make_proposal(
+        world,
+        kind="new_character",
+        items=[
+            {
+                "surface": profile.surface,
+                "profile": profile.model_dump(mode="json"),
+                "confidence": profile.confidence,
+            }
+        ],
+    )
+    _review(world, proposal.id, ProposalAction.REJECT)
+    changed_id = "proposal:tampered-terminal-id"
+    world.conn.execute("DROP TRIGGER proposal_resolution_metadata_immutable")
+    world.conn.execute("DROP TRIGGER proposal_resolution_metadata_update")
+    world.conn.execute(
+        "UPDATE proposal_set SET id = ? WHERE id = ?",
+        (changed_id, proposal.id),
+    )
+    world.conn.commit()
+
+    with pytest.raises(ProposalShapeError, match="audit.*proposal|header|头字段"):
+        recover_proposal_audit(
+            world.conn,
+            world.graph,
+            world.events,
+            changed_id,
+            proposal_store=world.proposals,
+            edge_review_store=world.edge_reviews,
+        )
+
+
+def test_recovery_attaches_semantically_equal_unsorted_audit_payload(
+    world: ReviewWorld,
+) -> None:
+    profile = RawCharacterProfile(surface="陆青禾", confidence=0.8)
+    proposal = _make_proposal(
+        world,
+        kind="new_character",
+        items=[
+            {
+                "surface": profile.surface,
+                "profile": profile.model_dump(mode="json"),
+                "confidence": profile.confidence,
+            }
+        ],
+    )
+    payload_json = (
+        '{"status":"REJECTED","proposal_id":"'
+        + proposal.id
+        + '","kind":"new_character","events":[{"z":1,"a":2}],"edges":[],'
+        '"characters":[],"canon_version":0,"action":"reject"}'
+    )
+    world.conn.execute(
+        """
+        UPDATE proposal_set
+        SET status = 'REJECTED', resolution_action = 'reject',
+            resolved_canon_version = 0,
+            audit_envelope_json = json_object('payload', json(?)),
+            resolved_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        WHERE id = ?
+        """,
+        (payload_json, proposal.id),
+    )
+    world.conn.commit()
+
+    recovered = recover_proposal_audit(
+        world.conn,
+        world.graph,
+        world.events,
+        proposal.id,
+        proposal_store=world.proposals,
+        edge_review_store=world.edge_reviews,
+    )
+
+    assert recovered.status == "REJECTED"
+    assert recovered.decision_id is not None
+    stored = world.proposals.get(world.project_id, proposal.id)
+    assert stored is not None and stored.decision_log_id == recovered.decision_id
 
 
 def test_two_connections_compete_and_only_one_resolves_and_bumps(tmp_path: Path) -> None:

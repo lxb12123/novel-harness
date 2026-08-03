@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from novel_harness.db import IN_MEMORY, MigrationError, connect, migrate, user_version
+from novel_harness.decisions import DecisionKind, quote_hash, read as read_decisions
 from novel_harness.ids import EntityType, new_id, new_project_id
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -278,6 +279,553 @@ def test_populated_v2_database_backfills_attached_proposal_audit(tmp_path: Path)
     c.close()
 
 
+def test_v2_migration_attaches_one_matching_proposal_review_gap(tmp_path: Path) -> None:
+    from importlib.resources import files
+
+    c = connect(tmp_path / "v2-attach-gap.db")
+    root = files("novel_harness") / "migrations"
+    c.executescript((root / "001_init.sql").read_text(encoding="utf-8"))
+    c.executescript((root / "002_m4_events.sql").read_text(encoding="utf-8"))
+    project_id = "project:v2-attach-gap"
+    proposal_id = "proposal:v2-attach-gap"
+    decision_id = "decision:v2-attach-gap"
+    payload = {
+        "proposal_id": proposal_id,
+        "action": "accept",
+        "status": "ACCEPTED",
+        "canon_version": 5,
+        "kind": "low_confidence_main",
+        "events": [],
+        "edges": [],
+        "characters": [],
+    }
+    c.execute(
+        "INSERT INTO project (id, name, root_path, canon_version) VALUES (?,?,?,?)",
+        (project_id, "v2 审计挂接空洞", "/old", 5),
+    )
+    c.execute(
+        """
+        INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
+        VALUES (?, ?, 'proposal_review', ?, 'accept')
+        """,
+        (decision_id, project_id, json.dumps(payload, sort_keys=True)),
+    )
+    c.execute(
+        """
+        INSERT INTO proposal_set (
+            id, project_id, kind, items_json, status, base_canon_version
+        ) VALUES (?, ?, 'low_confidence_main', '[{}]', 'ACCEPTED', 4)
+        """,
+        (proposal_id, project_id),
+    )
+    c.commit()
+
+    assert migrate(c) == 3
+    row = c.execute(
+        """
+        SELECT decision_log_id, resolution_action, resolved_canon_version,
+               audit_envelope_json
+        FROM proposal_set WHERE id = ?
+        """,
+        (proposal_id,),
+    ).fetchone()
+    assert row["decision_log_id"] == decision_id
+    assert row["resolution_action"] == "accept"
+    assert row["resolved_canon_version"] == 5
+    assert json.loads(row["audit_envelope_json"])["payload"] == payload
+    c.close()
+
+
+def test_v2_migration_refuses_duplicate_matching_proposal_reviews(tmp_path: Path) -> None:
+    from importlib.resources import files
+
+    c = connect(tmp_path / "v2-duplicate-audit.db")
+    root = files("novel_harness") / "migrations"
+    c.executescript((root / "001_init.sql").read_text(encoding="utf-8"))
+    c.executescript((root / "002_m4_events.sql").read_text(encoding="utf-8"))
+    project_id = "project:v2-duplicate-audit"
+    proposal_id = "proposal:v2-duplicate-audit"
+    payload = {
+        "proposal_id": proposal_id,
+        "action": "reject",
+        "status": "REJECTED",
+        "canon_version": 4,
+        "kind": "low_confidence_main",
+        "events": [],
+        "edges": [],
+        "characters": [],
+    }
+    c.execute(
+        "INSERT INTO project (id, name, root_path, canon_version) VALUES (?,?,?,?)",
+        (project_id, "v2 重复审计", "/old", 4),
+    )
+    for decision_id in ("decision:v2-duplicate-one", "decision:v2-duplicate-two"):
+        c.execute(
+            """
+            INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
+            VALUES (?, ?, 'proposal_review', ?, 'reject')
+            """,
+            (decision_id, project_id, json.dumps(payload, sort_keys=True)),
+        )
+    c.execute(
+        """
+        INSERT INTO proposal_set (
+            id, project_id, kind, items_json, status, decision_log_id,
+            base_canon_version
+        ) VALUES (?, ?, 'low_confidence_main', '[{}]', 'REJECTED', ?, 4)
+        """,
+        (proposal_id, project_id, "decision:v2-duplicate-one"),
+    )
+    c.commit()
+
+    assert migrate(c) == 3
+    row = c.execute(
+        """
+        SELECT decision_log_id, resolution_action, resolved_canon_version,
+               audit_envelope_json
+        FROM proposal_set WHERE id = ?
+        """,
+        (proposal_id,),
+    ).fetchone()
+    assert row["decision_log_id"] == "decision:v2-duplicate-one"
+    assert tuple(row)[1:] == (None, None, None)
+    c.close()
+
+
+def test_v2_migration_quarantines_utf8_blob_kind_duplicate_history(
+    tmp_path: Path,
+) -> None:
+    from importlib.resources import files
+
+    c = connect(tmp_path / "v2-blob-kind-duplicate.db")
+    root = files("novel_harness") / "migrations"
+    c.executescript((root / "001_init.sql").read_text(encoding="utf-8"))
+    c.executescript((root / "002_m4_events.sql").read_text(encoding="utf-8"))
+    project_id = "project:v2-blob-kind-duplicate"
+    proposal_id = "proposal:v2-blob-kind-duplicate"
+    payload = json.dumps(
+        {
+            "proposal_id": proposal_id,
+            "action": "accept",
+            "status": "ACCEPTED",
+            "kind": "low_confidence_main",
+            "canon_version": 1,
+        },
+        sort_keys=True,
+    )
+    c.execute(
+        "INSERT INTO project (id, name, root_path, canon_version) VALUES (?,?,?,1)",
+        (project_id, "v2 BLOB kind 重复审计", "/old"),
+    )
+    c.execute(
+        """
+        INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
+        VALUES (?, ?, 'proposal_review', ?, 'accept')
+        """,
+        ("decision:v2-text-kind", project_id, payload),
+    )
+    c.execute(
+        """
+        INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
+        VALUES (?, ?, CAST(? AS BLOB), ?, 'accept')
+        """,
+        ("decision:v2-blob-kind", project_id, b"proposal_review", payload),
+    )
+    c.execute(
+        """
+        INSERT INTO proposal_set (
+            id, project_id, kind, items_json, status, base_canon_version
+        ) VALUES (?, ?, 'low_confidence_main', '[{}]', 'ACCEPTED', 0)
+        """,
+        (proposal_id, project_id),
+    )
+    c.commit()
+
+    assert migrate(c) == 3
+    row = c.execute(
+        """
+        SELECT decision_log_id, resolution_action, resolved_canon_version,
+               audit_envelope_json
+        FROM proposal_set WHERE id = ?
+        """,
+        (proposal_id,),
+    ).fetchone()
+    assert tuple(row) == (None, None, None, None)
+    assert len(
+        read_decisions(c, project_id, kind=DecisionKind.PROPOSAL_REVIEW)
+    ) == 2
+    c.close()
+
+
+def test_v2_migration_quarantines_shared_decision_attachment(tmp_path: Path) -> None:
+    from importlib.resources import files
+
+    c = connect(tmp_path / "v2-shared-attachment.db")
+    root = files("novel_harness") / "migrations"
+    c.executescript((root / "001_init.sql").read_text(encoding="utf-8"))
+    c.executescript((root / "002_m4_events.sql").read_text(encoding="utf-8"))
+    project_id = "project:v2-shared-attachment"
+    first_id = "proposal:v2-shared-first"
+    second_id = "proposal:v2-shared-second"
+    decision_id = "decision:v2-shared"
+    payload = {
+        "proposal_id": first_id,
+        "action": "accept",
+        "status": "ACCEPTED",
+        "canon_version": 5,
+        "kind": "low_confidence_main",
+        "events": [],
+        "edges": [],
+        "characters": [],
+    }
+    c.execute(
+        "INSERT INTO project (id, name, root_path, canon_version) VALUES (?,?,?,?)",
+        (project_id, "v2 共享挂接", "/old", 5),
+    )
+    c.execute(
+        """
+        INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
+        VALUES (?, ?, 'proposal_review', ?, 'accept')
+        """,
+        (decision_id, project_id, json.dumps(payload, sort_keys=True)),
+    )
+    for proposal_id in (first_id, second_id):
+        c.execute(
+            """
+            INSERT INTO proposal_set (
+                id, project_id, kind, items_json, status, decision_log_id,
+                base_canon_version
+            ) VALUES (?, ?, 'low_confidence_main', '[{}]', 'ACCEPTED', ?, 4)
+            """,
+            (proposal_id, project_id, decision_id),
+        )
+    c.commit()
+
+    assert migrate(c) == 3
+    rows = c.execute(
+        """
+        SELECT id, resolution_action, resolved_canon_version, audit_envelope_json
+        FROM proposal_set WHERE project_id = ? ORDER BY id
+        """,
+        (project_id,),
+    ).fetchall()
+    assert [row["id"] for row in rows] == sorted((first_id, second_id))
+    assert all(tuple(row)[1:] == (None, None, None) for row in rows)
+    triggers = {
+        row[0]
+        for row in c.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'trigger'"
+        ).fetchall()
+    }
+    assert {
+        "proposal_decision_once_insert",
+        "proposal_decision_once_update",
+    } <= triggers
+    c.close()
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "duplicate-key",
+        "duplicate-nested",
+        "escaped-key",
+        "lone-surrogate",
+        "overflow-integer",
+        "boolean-version",
+    ],
+)
+def test_v2_migration_quarantines_ambiguous_audit_payload(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    from importlib.resources import files
+
+    c = connect(tmp_path / f"v2-ambiguous-{corruption}.db")
+    root = files("novel_harness") / "migrations"
+    c.executescript((root / "001_init.sql").read_text(encoding="utf-8"))
+    c.executescript((root / "002_m4_events.sql").read_text(encoding="utf-8"))
+    project_id = f"project:v2-ambiguous-{corruption}"
+    proposal_id = f"proposal:v2-ambiguous-{corruption}"
+    if corruption == "duplicate-key":
+        payload_json = (
+            '{"proposal_id":"'
+            + proposal_id
+            + '","proposal_id":"proposal:other","action":"accept",'
+            '"status":"ACCEPTED","kind":"low_confidence_main",'
+            '"canon_version":1}'
+        )
+    elif corruption == "duplicate-nested":
+        payload_json = (
+            '{"proposal_id":"'
+            + proposal_id
+            + '","action":"accept","status":"ACCEPTED",'
+            '"kind":"low_confidence_main","canon_version":1,'
+            '"events":[{"summary":"first","summary":"last"}]}'
+        )
+    elif corruption == "escaped-key":
+        payload_json = (
+            '{"proposal_id":"'
+            + proposal_id
+            + '","\\u0061ction":"accept","status":"ACCEPTED",'
+            '"kind":"low_confidence_main","canon_version":1}'
+        )
+    elif corruption == "lone-surrogate":
+        payload_json = (
+            '{"proposal_id":"'
+            + proposal_id
+            + '","action":"accept","status":"ACCEPTED",'
+            '"kind":"low_confidence_main","canon_version":1,'
+            '"events":[{"summary":"\\ud800"}]}'
+        )
+    elif corruption == "overflow-integer":
+        payload_json = (
+            '{"proposal_id":"'
+            + proposal_id
+            + '","action":"accept","status":"ACCEPTED",'
+            '"kind":"low_confidence_main","canon_version":1,'
+            '"events":[{"x":9223372036854775808}]}'
+        )
+    else:
+        payload_json = json.dumps(
+            {
+                "proposal_id": proposal_id,
+                "action": "accept",
+                "status": "ACCEPTED",
+                "kind": "low_confidence_main",
+                "canon_version": True,
+            },
+            sort_keys=True,
+        )
+    c.execute(
+        "INSERT INTO project (id, name, root_path, canon_version) VALUES (?,?,?,1)",
+        (project_id, "v2 歧义审计", "/old"),
+    )
+    c.execute(
+        """
+        INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
+        VALUES (?, ?, 'proposal_review', ?, 'accept')
+        """,
+        (f"decision:v2-ambiguous-{corruption}", project_id, payload_json),
+    )
+    c.execute(
+        """
+        INSERT INTO proposal_set (
+            id, project_id, kind, items_json, status, base_canon_version
+        ) VALUES (?, ?, 'low_confidence_main', '[{}]', 'ACCEPTED', 0)
+        """,
+        (proposal_id, project_id),
+    )
+    c.commit()
+
+    assert migrate(c) == 3
+    row = c.execute(
+        """
+        SELECT decision_log_id, resolution_action, resolved_canon_version,
+               audit_envelope_json
+        FROM proposal_set WHERE id = ?
+        """,
+        (proposal_id,),
+    ).fetchone()
+    assert tuple(row) == (None, None, None, None)
+    c.close()
+
+
+def test_v2_migration_quarantines_invalid_utf8_payload_without_stalling(
+    tmp_path: Path,
+) -> None:
+    from importlib.resources import files
+
+    c = connect(tmp_path / "v2-invalid-utf8-payload.db")
+    root = files("novel_harness") / "migrations"
+    c.executescript((root / "001_init.sql").read_text(encoding="utf-8"))
+    c.executescript((root / "002_m4_events.sql").read_text(encoding="utf-8"))
+    project_id = "project:v2-invalid-utf8-payload"
+    proposal_id = "proposal:v2-invalid-utf8-payload"
+    payload = (
+        b'{"proposal_id":"proposal:v2-invalid-utf8-payload",'
+        b'"action":"accept","status":"ACCEPTED",'
+        b'"kind":"low_confidence_main","canon_version":1,"note":"\xff"}'
+    )
+    assert c.execute(
+        "SELECT json_valid(CAST(? AS TEXT))", (payload,)
+    ).fetchone()[0] == 1
+    c.execute(
+        "INSERT INTO project (id, name, root_path, canon_version) VALUES (?,?,?,1)",
+        (project_id, "v2 非法 UTF-8 payload", "/old"),
+    )
+    c.execute(
+        """
+        INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
+        VALUES (?, ?, 'proposal_review', CAST(? AS TEXT), 'accept')
+        """,
+        ("decision:v2-invalid-utf8-payload", project_id, payload),
+    )
+    c.execute(
+        """
+        INSERT INTO proposal_set (
+            id, project_id, kind, items_json, status, base_canon_version
+        ) VALUES (?, ?, 'low_confidence_main', '[{}]', 'ACCEPTED', 0)
+        """,
+        (proposal_id, project_id),
+    )
+    c.commit()
+
+    assert migrate(c) == 3
+    row = c.execute(
+        """
+        SELECT decision_log_id, resolution_action, resolved_canon_version,
+               audit_envelope_json
+        FROM proposal_set WHERE id = ?
+        """,
+        (proposal_id,),
+    ).fetchone()
+    assert tuple(row) == (None, None, None, None)
+    c.close()
+
+
+@pytest.mark.parametrize("column", ["id", "ts", "subject_name", "actor"])
+def test_v2_migration_quarantines_invalid_utf8_decision_fields(
+    tmp_path: Path,
+    column: str,
+) -> None:
+    from importlib.resources import files
+
+    c = connect(tmp_path / f"v2-invalid-utf8-{column}.db")
+    root = files("novel_harness") / "migrations"
+    c.executescript((root / "001_init.sql").read_text(encoding="utf-8"))
+    c.executescript((root / "002_m4_events.sql").read_text(encoding="utf-8"))
+    project_id = f"project:v2-invalid-utf8-{column}"
+    proposal_id = f"proposal:v2-invalid-utf8-{column}"
+    payload = json.dumps(
+        {
+            "proposal_id": proposal_id,
+            "action": "accept",
+            "status": "ACCEPTED",
+            "kind": "low_confidence_main",
+            "canon_version": 1,
+        },
+        sort_keys=True,
+    )
+    values: dict[str, object] = {
+        "id": f"decision:v2-invalid-utf8-{column}",
+        "ts": "2026-08-03T12:00:00.000Z",
+        "subject_name": "顾清音",
+        "actor": "author",
+    }
+    values[column] = b"\xff"
+    field_names = tuple(values)
+    placeholders = [
+        "CAST(? AS TEXT)" if field == column else "?" for field in field_names
+    ]
+    c.execute(
+        "INSERT INTO project (id, name, root_path, canon_version) VALUES (?,?,?,1)",
+        (project_id, "v2 非法 UTF-8 decision", "/old"),
+    )
+    c.execute(
+        f"""
+        INSERT INTO decision_log (
+            {", ".join(field_names)}, project_id, kind, payload_json, decision
+        ) VALUES (
+            {", ".join(placeholders)}, ?, 'proposal_review', ?, 'accept'
+        )
+        """,
+        (*values.values(), project_id, payload),
+    )
+    c.execute(
+        """
+        INSERT INTO proposal_set (
+            id, project_id, kind, items_json, status, base_canon_version
+        ) VALUES (?, ?, 'low_confidence_main', '[{}]', 'ACCEPTED', 0)
+        """,
+        (proposal_id, project_id),
+    )
+    c.commit()
+
+    assert migrate(c) == 3
+    row = c.execute(
+        """
+        SELECT decision_log_id, resolution_action, resolved_canon_version,
+               audit_envelope_json
+        FROM proposal_set WHERE id = ?
+        """,
+        (proposal_id,),
+    ).fetchone()
+    assert tuple(row) == (None, None, None, None)
+    c.close()
+
+
+@pytest.mark.parametrize("corruption", ["bad-hash", "bad-chapter", "bad-para"])
+def test_v2_migration_quarantines_invalid_decision_audit_fields(
+    tmp_path: Path,
+    corruption: str,
+) -> None:
+    from importlib.resources import files
+
+    c = connect(tmp_path / f"v2-invalid-audit-{corruption}.db")
+    root = files("novel_harness") / "migrations"
+    c.executescript((root / "001_init.sql").read_text(encoding="utf-8"))
+    c.executescript((root / "002_m4_events.sql").read_text(encoding="utf-8"))
+    project_id = f"project:v2-invalid-audit-{corruption}"
+    proposal_id = f"proposal:v2-invalid-audit-{corruption}"
+    payload = json.dumps(
+        {
+            "proposal_id": proposal_id,
+            "action": "accept",
+            "status": "ACCEPTED",
+            "kind": "low_confidence_main",
+            "canon_version": 1,
+        },
+        sort_keys=True,
+    )
+    quote_text = "abc" if corruption == "bad-hash" else None
+    quote_sha256 = "0" * 64 if corruption == "bad-hash" else None
+    chapter_number = 0 if corruption == "bad-chapter" else None
+    para_index = -1 if corruption == "bad-para" else None
+    c.execute(
+        "INSERT INTO project (id, name, root_path, canon_version) VALUES (?,?,?,1)",
+        (project_id, "v2 非法审计字段", "/old"),
+    )
+    c.execute(
+        """
+        INSERT INTO decision_log (
+            id, project_id, kind, payload_json, decision, quote_text,
+            quote_sha256, chapter_number, para_index
+        ) VALUES (?, ?, 'proposal_review', ?, 'accept', ?, ?, ?, ?)
+        """,
+        (
+            f"decision:v2-invalid-audit-{corruption}",
+            project_id,
+            payload,
+            quote_text,
+            quote_sha256,
+            chapter_number,
+            para_index,
+        ),
+    )
+    c.execute(
+        """
+        INSERT INTO proposal_set (
+            id, project_id, kind, items_json, status, base_canon_version
+        ) VALUES (?, ?, 'low_confidence_main', '[{}]', 'ACCEPTED', 0)
+        """,
+        (proposal_id, project_id),
+    )
+    c.commit()
+
+    assert migrate(c) == 3
+    row = c.execute(
+        """
+        SELECT decision_log_id, resolution_action, resolved_canon_version,
+               audit_envelope_json
+        FROM proposal_set WHERE id = ?
+        """,
+        (proposal_id,),
+    ).fetchone()
+    assert tuple(row) == (None, None, None, None)
+    c.close()
+
+
 def test_proposal_audit_triggers_reject_incomplete_or_duplicate_history(
     conn: sqlite3.Connection,
     project: str,
@@ -293,7 +841,23 @@ def test_proposal_audit_triggers_reject_incomplete_or_duplicate_history(
             (proposal_id,),
         )
 
-    payload = json.dumps({"proposal_id": proposal_id}, sort_keys=True)
+    payload_data = {
+        "proposal_id": proposal_id,
+        "action": "accept",
+        "status": "ACCEPTED",
+        "kind": "low_confidence_main",
+        "canon_version": 1,
+    }
+    payload = json.dumps(payload_data, sort_keys=True)
+    conn.execute(
+        """
+        UPDATE proposal_set
+        SET status = 'ACCEPTED', resolution_action = 'accept',
+            resolved_canon_version = 1, audit_envelope_json = ?
+        WHERE id = ?
+        """,
+        (json.dumps({"payload": payload_data}, sort_keys=True), proposal_id),
+    )
     conn.execute(
         """
         INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
@@ -309,6 +873,530 @@ def test_proposal_audit_triggers_reject_incomplete_or_duplicate_history(
             """,
             (project, payload),
         )
+    with pytest.raises(sqlite3.IntegrityError, match="ambiguous"):
+        conn.execute(
+            """
+            INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
+            VALUES ('decision:audit-ambiguous', ?, 'proposal_review', ?, 'reject')
+            """,
+            (
+                project,
+                '{"proposal_id":"proposal:first","proposal_id":"proposal:last"}',
+            ),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="ambiguous"):
+        conn.execute(
+            """
+            INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
+            VALUES ('decision:audit-nested-ambiguous', ?, 'proposal_review', ?, 'reject')
+            """,
+            (
+                project,
+                '{"proposal_id":"proposal:nested","kind":"low_confidence_main",'
+                '"events":[{"summary":"first","summary":"last"}]}',
+            ),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="ambiguous"):
+        conn.execute(
+            """
+            INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
+            VALUES ('decision:audit-escaped-key', ?, 'proposal_review', ?, 'reject')
+            """,
+            (
+                project,
+                '{"\\u0070roposal_id":"proposal:escaped",'
+                '"kind":"low_confidence_main"}',
+            ),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="ambiguous"):
+        conn.execute(
+            """
+            INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
+            VALUES ('decision:audit-overflow', ?, 'proposal_review', ?, 'reject')
+            """,
+            (
+                project,
+                '{"proposal_id":"proposal:overflow",'
+                '"kind":"low_confidence_main",'
+                '"events":[{"x":9223372036854775808}]}',
+            ),
+        )
+    with pytest.raises(sqlite3.IntegrityError, match="ambiguous"):
+        conn.execute(
+            """
+            INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
+            VALUES ('decision:audit-surrogate', ?, 'proposal_review', ?, 'reject')
+            """,
+            (
+                project,
+                '{"proposal_id":"proposal:surrogate",'
+                '"kind":"low_confidence_main",'
+                '"events":[{"summary":"\\ud800"}]}',
+            ),
+        )
+    conn.rollback()
+
+
+def test_proposal_audit_trigger_rejects_missing_required_payload_key(
+    conn: sqlite3.Connection,
+    project: str,
+) -> None:
+    proposal_id = "proposal:audit-null-guard"
+    conn.execute(
+        "INSERT INTO proposal_set (id, project_id, kind, items_json) VALUES (?,?,?,?)",
+        (proposal_id, project, "low_confidence_main", "[{}]"),
+    )
+    envelope = json.dumps(
+        {
+            "payload": {
+                "action": "accept",
+                "status": "ACCEPTED",
+                "kind": "low_confidence_main",
+                "canon_version": 1,
+            }
+        },
+        sort_keys=True,
+    )
+
+    with pytest.raises(sqlite3.IntegrityError, match="metadata"):
+        conn.execute(
+            """
+            UPDATE proposal_set
+            SET status = 'ACCEPTED',
+                resolution_action = 'accept',
+                resolved_canon_version = 1,
+                audit_envelope_json = ?
+            WHERE id = ?
+            """,
+            (envelope, proposal_id),
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="metadata"):
+        conn.execute(
+            """
+            INSERT INTO proposal_set (
+                id, project_id, kind, items_json, status, resolution_action,
+                resolved_canon_version, audit_envelope_json
+            ) VALUES (?, ?, 'low_confidence_main', '[{}]', 'ACCEPTED', 'accept', 1, ?)
+            """,
+            ("proposal:audit-null-guard-insert", project, envelope),
+        )
+    conn.rollback()
+
+
+@pytest.mark.parametrize("column", ["id", "ts", "subject_name", "actor"])
+def test_proposal_review_trigger_rejects_invalid_utf8_decision_fields(
+    conn: sqlite3.Connection,
+    project: str,
+    column: str,
+) -> None:
+    proposal_id = f"proposal:future-invalid-utf8-{column}"
+    payload = json.dumps(
+        {
+            "proposal_id": proposal_id,
+            "action": "reject",
+            "status": "REJECTED",
+            "kind": "low_confidence_main",
+            "canon_version": 0,
+        },
+        sort_keys=True,
+    )
+    values: dict[str, object] = {
+        "id": f"decision:future-invalid-utf8-{column}",
+        "ts": "2026-08-03T12:00:00.000Z",
+        "subject_name": "顾清音",
+        "actor": "author",
+    }
+    values[column] = b"\xff"
+    field_names = tuple(values)
+    placeholders = [
+        "CAST(? AS TEXT)" if field == column else "?" for field in field_names
+    ]
+
+    with pytest.raises(sqlite3.IntegrityError, match="metadata is invalid"):
+        conn.execute(
+            f"""
+            INSERT INTO decision_log (
+                {", ".join(field_names)}, project_id, kind, payload_json, decision
+            ) VALUES (
+                {", ".join(placeholders)}, ?, 'proposal_review', ?, 'reject'
+            )
+            """,
+            (*values.values(), project, payload),
+        )
+    conn.rollback()
+
+
+def test_decision_kind_must_be_real_utf8_text_not_a_blob_discriminator(
+    conn: sqlite3.Connection,
+    project: str,
+) -> None:
+    payload = json.dumps(
+        {
+            "proposal_id": "proposal:blob-kind",
+            "action": "reject",
+            "status": "REJECTED",
+            "kind": "low_confidence_main",
+            "canon_version": 0,
+        },
+        sort_keys=True,
+    )
+
+    with pytest.raises(sqlite3.IntegrityError, match="kind must be UTF-8 TEXT"):
+        conn.execute(
+            """
+            INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
+            VALUES (?, ?, CAST(? AS BLOB), ?, 'reject')
+            """,
+            ("decision:blob-kind", project, b"proposal_review", payload),
+        )
+    conn.rollback()
+
+
+def test_legacy_utf8_blob_kind_occupies_the_proposal_history_slot(
+    conn: sqlite3.Connection,
+    project: str,
+) -> None:
+    proposal_id = "proposal:legacy-blob-kind-slot"
+    payload_data = {
+        "proposal_id": proposal_id,
+        "action": "reject",
+        "status": "REJECTED",
+        "kind": "low_confidence_main",
+        "canon_version": 0,
+    }
+    payload = json.dumps(payload_data, sort_keys=True)
+    conn.execute(
+        "INSERT INTO proposal_set (id, project_id, kind, items_json) VALUES (?,?,?,?)",
+        (proposal_id, project, "low_confidence_main", "[{}]"),
+    )
+    conn.execute("DROP TRIGGER decision_log_kind_text_insert")
+    conn.execute(
+        """
+        INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
+        VALUES (?, ?, CAST(? AS BLOB), ?, 'reject')
+        """,
+        ("decision:legacy-blob-kind-slot", project, b"proposal_review", payload),
+    )
+    conn.execute(
+        """
+        UPDATE proposal_set
+        SET status = 'REJECTED', resolution_action = 'reject',
+            resolved_canon_version = 0, audit_envelope_json = ?
+        WHERE id = ?
+        """,
+        (json.dumps({"payload": payload_data}, sort_keys=True), proposal_id),
+    )
+
+    with pytest.raises(sqlite3.IntegrityError, match="already exists"):
+        conn.execute(
+            """
+            INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
+            VALUES (?, ?, 'proposal_review', ?, 'reject')
+            """,
+            ("decision:text-kind-must-not-duplicate", project, payload),
+        )
+    assert conn.execute(
+        "SELECT COUNT(*) FROM decision_log WHERE project_id = ?", (project,)
+    ).fetchone()[0] == 1
+    conn.rollback()
+
+
+@pytest.mark.parametrize("corruption", ["bad-hash", "bad-chapter", "bad-para"])
+def test_proposal_review_trigger_rejects_invalid_anchor_fields(
+    conn: sqlite3.Connection,
+    project: str,
+    corruption: str,
+) -> None:
+    proposal_id = f"proposal:future-invalid-anchor-{corruption}"
+    payload = json.dumps(
+        {
+            "proposal_id": proposal_id,
+            "action": "reject",
+            "status": "REJECTED",
+            "kind": "low_confidence_main",
+            "canon_version": 0,
+        },
+        sort_keys=True,
+    )
+    quote_text = "abc" if corruption == "bad-hash" else None
+    quote_sha256 = "0" * 64 if corruption == "bad-hash" else None
+    chapter_number = 0 if corruption == "bad-chapter" else None
+    para_index = -1 if corruption == "bad-para" else None
+
+    with pytest.raises(sqlite3.IntegrityError, match="metadata is invalid"):
+        conn.execute(
+            """
+            INSERT INTO decision_log (
+                id, project_id, kind, payload_json, decision, quote_text,
+                quote_sha256, chapter_number, para_index
+            ) VALUES (?, ?, 'proposal_review', ?, 'reject', ?, ?, ?, ?)
+            """,
+            (
+                f"decision:future-invalid-anchor-{corruption}",
+                project,
+                payload,
+                quote_text,
+                quote_sha256,
+                chapter_number,
+                para_index,
+            ),
+        )
+    conn.rollback()
+
+
+def test_proposal_audit_trigger_rejects_forged_attachment_on_insert(
+    conn: sqlite3.Connection,
+    project: str,
+) -> None:
+    decision_payload = {
+        "proposal_id": "proposal:real-audit-owner",
+        "action": "reject",
+        "status": "REJECTED",
+        "kind": "low_confidence_main",
+        "canon_version": 0,
+    }
+    conn.execute(
+        """
+        INSERT INTO proposal_set (
+            id, project_id, kind, items_json, status, resolution_action,
+            resolved_canon_version, audit_envelope_json
+        ) VALUES (
+            'proposal:real-audit-owner', ?, 'low_confidence_main', '[{}]',
+            'REJECTED', 'reject', 0, ?
+        )
+        """,
+        (project, json.dumps({"payload": decision_payload}, sort_keys=True)),
+    )
+    conn.execute(
+        """
+        INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
+        VALUES ('decision:forged-insert', ?, 'proposal_review', ?, 'reject')
+        """,
+        (project, json.dumps(decision_payload, sort_keys=True)),
+    )
+    forged_payload = {**decision_payload, "proposal_id": "proposal:forged-insert"}
+    envelope = json.dumps({"payload": forged_payload}, sort_keys=True)
+
+    with pytest.raises(sqlite3.IntegrityError, match="durable audit envelope"):
+        conn.execute(
+            """
+            INSERT INTO proposal_set (
+                id, project_id, kind, items_json, status, resolution_action,
+                resolved_canon_version, audit_envelope_json, decision_log_id
+            ) VALUES (
+                'proposal:forged-insert', ?, 'low_confidence_main', '[{}]',
+                'REJECTED', 'reject', 0, ?, 'decision:forged-insert'
+            )
+            """,
+            (project, envelope),
+        )
+    conn.rollback()
+
+
+@pytest.mark.parametrize(
+    "corruption",
+    [
+        "duplicate-key",
+        "duplicate-envelope",
+        "duplicate-nested",
+        "duplicate-top-field",
+        "escaped-key",
+        "lone-surrogate",
+        "overflow-integer",
+        "boolean-version",
+    ],
+)
+def test_proposal_audit_trigger_rejects_ambiguous_payload(
+    conn: sqlite3.Connection,
+    project: str,
+    corruption: str,
+) -> None:
+    proposal_id = f"proposal:audit-ambiguous-{corruption}"
+    conn.execute(
+        "INSERT INTO proposal_set (id, project_id, kind, items_json) VALUES (?,?,?,?)",
+        (proposal_id, project, "low_confidence_main", "[{}]"),
+    )
+    if corruption == "duplicate-key":
+        envelope = (
+            '{"payload":{"proposal_id":"'
+            + proposal_id
+            + '","proposal_id":"proposal:other","action":"accept",'
+            '"status":"ACCEPTED","kind":"low_confidence_main",'
+            '"canon_version":1}}'
+        )
+    elif corruption == "boolean-version":
+        envelope = json.dumps(
+            {
+                "payload": {
+                    "proposal_id": proposal_id,
+                    "action": "accept",
+                    "status": "ACCEPTED",
+                    "kind": "low_confidence_main",
+                    "canon_version": True,
+                }
+            },
+            sort_keys=True,
+        )
+    elif corruption == "duplicate-envelope":
+        valid_payload = json.dumps(
+            {
+                "proposal_id": proposal_id,
+                "action": "accept",
+                "status": "ACCEPTED",
+                "kind": "low_confidence_main",
+                "canon_version": 1,
+            },
+            sort_keys=True,
+        )
+        envelope = (
+            '{"payload":'
+            + valid_payload
+            + ',"payload":{"proposal_id":"proposal:other"}}'
+        )
+    elif corruption == "duplicate-nested":
+        envelope = (
+            '{"payload":{"proposal_id":"'
+            + proposal_id
+            + '","action":"accept","status":"ACCEPTED",'
+            '"kind":"low_confidence_main","canon_version":1,'
+            '"events":[{"summary":"first","summary":"last"}]}}'
+        )
+    elif corruption == "duplicate-top-field":
+        envelope = (
+            '{"payload":{"proposal_id":"'
+            + proposal_id
+            + '","action":"accept","status":"ACCEPTED",'
+            '"kind":"low_confidence_main","canon_version":1},'
+            '"subject_name":"first","subject_name":"last"}'
+        )
+    elif corruption == "escaped-key":
+        envelope = (
+            '{"payload":{"proposal_id":"'
+            + proposal_id
+            + '","\\u0061ction":"accept","status":"ACCEPTED",'
+            '"kind":"low_confidence_main","canon_version":1}}'
+        )
+    elif corruption == "overflow-integer":
+        envelope = (
+            '{"payload":{"proposal_id":"'
+            + proposal_id
+            + '","action":"accept","status":"ACCEPTED",'
+            '"kind":"low_confidence_main","canon_version":1,'
+            '"events":[{"x":9223372036854775808}]}}'
+        )
+    else:
+        envelope = (
+            '{"payload":{"proposal_id":"'
+            + proposal_id
+            + '","action":"accept","status":"ACCEPTED",'
+            '"kind":"low_confidence_main","canon_version":1,'
+            '"events":[{"summary":"\\ud800"}]}}'
+        )
+
+    with pytest.raises(sqlite3.IntegrityError, match="metadata"):
+        conn.execute(
+            """
+            UPDATE proposal_set
+            SET status = 'ACCEPTED', resolution_action = 'accept',
+                resolved_canon_version = 1, audit_envelope_json = ?
+            WHERE id = ?
+            """,
+            (envelope, proposal_id),
+        )
+    conn.rollback()
+
+
+@pytest.mark.parametrize("corruption", ["unexpected", "bad-hash", "bad-chapter"])
+def test_proposal_audit_trigger_rejects_invalid_top_envelope(
+    conn: sqlite3.Connection,
+    project: str,
+    corruption: str,
+) -> None:
+    proposal_id = f"proposal:audit-top-{corruption}"
+    conn.execute(
+        "INSERT INTO proposal_set (id, project_id, kind, items_json) VALUES (?,?,?,?)",
+        (proposal_id, project, "low_confidence_main", "[{}]"),
+    )
+    envelope: dict[str, object] = {
+        "payload": {
+            "proposal_id": proposal_id,
+            "action": "accept",
+            "status": "ACCEPTED",
+            "kind": "low_confidence_main",
+            "canon_version": 1,
+        }
+    }
+    if corruption == "unexpected":
+        envelope["unexpected"] = 1
+    elif corruption == "bad-hash":
+        envelope["quote_text"] = "abc"
+        envelope["quote_sha256"] = "0" * 64
+    else:
+        envelope["chapter_number"] = 0
+
+    with pytest.raises(sqlite3.IntegrityError, match="metadata"):
+        conn.execute(
+            """
+            UPDATE proposal_set
+            SET status = 'ACCEPTED', resolution_action = 'accept',
+                resolved_canon_version = 1, audit_envelope_json = ?
+            WHERE id = ?
+            """,
+            (json.dumps(envelope, sort_keys=True), proposal_id),
+        )
+    conn.rollback()
+
+
+@pytest.mark.parametrize("column", ["id", "project_id"])
+def test_terminal_proposal_identity_is_immutable(
+    conn: sqlite3.Connection,
+    project: str,
+    column: str,
+) -> None:
+    proposal_id = f"proposal:immutable-{column}"
+    payload = {
+        "proposal_id": proposal_id,
+        "action": "reject",
+        "status": "REJECTED",
+        "kind": "low_confidence_main",
+        "canon_version": 0,
+    }
+    conn.execute(
+        """
+        INSERT INTO proposal_set (
+            id, project_id, kind, items_json, status, resolution_action,
+            resolved_canon_version, audit_envelope_json
+        ) VALUES (?, ?, 'low_confidence_main', '[{}]', 'REJECTED', 'reject', 0, ?)
+        """,
+        (proposal_id, project, json.dumps({"payload": payload}, sort_keys=True)),
+    )
+    if column == "project_id":
+        new_value = "project:immutable-other"
+        conn.execute(
+            "INSERT INTO project (id, name, root_path) VALUES (?, '另一本书', '/other')",
+            (new_value,),
+        )
+    else:
+        new_value = "proposal:immutable-renamed"
+
+    with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        conn.execute(
+            f"UPDATE proposal_set SET {column} = ? WHERE id = ?",
+            (new_value, proposal_id),
+        )
+    conn.rollback()
+
+
+def test_proposal_audit_trigger_rejects_null_id(
+    conn: sqlite3.Connection,
+    project: str,
+) -> None:
+    with pytest.raises(sqlite3.IntegrityError, match="metadata"):
+        conn.execute(
+            "INSERT INTO proposal_set (id, project_id, kind, items_json) VALUES (NULL,?,?,?)",
+            (project, "low_confidence_main", "[{}]"),
+        )
     conn.rollback()
 
 
@@ -320,6 +1408,44 @@ def test_proposal_audit_triggers_reject_incomplete_or_duplicate_history(
 def test_connect_enables_foreign_keys(conn: sqlite3.Connection) -> None:
     # SQLite 默认**关闭**外键。不设它，001_init.sql 里每一条 REFERENCES 都只是注释。
     assert conn.execute("PRAGMA foreign_keys").fetchone()[0] == 1
+
+
+def test_connect_registers_strict_json_canonicalizer(conn: sqlite3.Connection) -> None:
+    canonical = conn.execute(
+        "SELECT nh_json_canonical(?)",
+        ('{"z":{"b":2,"a":1},"a":"青云"}',),
+    ).fetchone()[0]
+    assert canonical == '{"a":"青云","z":{"a":1,"b":2}}'
+    unsafe = (
+        '{"x":1,"x":2}',
+        '{"x":9223372036854775808}',
+        '{"x":"\\ud800"}',
+        '{"x":1e999}',
+    )
+    assert all(
+        conn.execute("SELECT nh_json_canonical(?)", (raw,)).fetchone()[0] is None
+        for raw in unsafe
+    )
+    canonical_blob = conn.execute(
+        "SELECT nh_json_canonical(CAST(? AS BLOB))",
+        (b'{"z":2,"a":1}',),
+    ).fetchone()[0]
+    assert canonical_blob == '{"a":1,"z":2}'
+    assert conn.execute(
+        "SELECT nh_json_canonical(CAST(? AS BLOB))", (b'{"x":"\xff"}',)
+    ).fetchone()[0] is None
+    assert conn.execute(
+        "SELECT nh_sha256_text(CAST(? AS BLOB))", ("原文".encode(),)
+    ).fetchone()[0] == quote_hash("原文")
+    assert conn.execute(
+        "SELECT nh_sha256_text(CAST(? AS BLOB))", (b"\xff",)
+    ).fetchone()[0] is None
+    assert conn.execute(
+        "SELECT nh_utf8_text(CAST(? AS BLOB))", ("顾清音".encode(),)
+    ).fetchone()[0] == 1
+    assert conn.execute(
+        "SELECT nh_utf8_text(CAST(? AS BLOB))", (b"\xff",)
+    ).fetchone()[0] == 0
 
 
 def test_connect_sets_wal(tmp_path: Path) -> None:

@@ -190,8 +190,14 @@ def read(
     sql = "SELECT * FROM decision_log WHERE project_id = ?"
     args: list[Any] = [project_id]
     if kind is not None:
-        sql += " AND kind = ?"
-        args.append(kind)
+        # v1/v2 allowed a UTF-8 BLOB in this TEXT column.  Treat that legacy storage
+        # representation as the same discriminator so duplicate proposal history cannot hide
+        # from filtered recovery reads.  Migration 003 rejects every future non-TEXT kind.
+        sql += (
+            " AND ((typeof(kind) = 'text' AND kind = ?)"
+            " OR (typeof(kind) = 'blob' AND CAST(kind AS TEXT) = ?))"
+        )
+        args.extend((kind, kind))
     sql += " ORDER BY ts ASC, id ASC"
     if limit is not None:
         sql += " LIMIT ?"
