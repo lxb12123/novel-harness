@@ -91,7 +91,19 @@ docstring 那个问题：它是要**开连接**（装配），不是要**查图*
 `Connection`（只做类型标注）不受这条限制：`decisions.py` 就该那么写。
 """
 
-GRAPH_TABLES = ("edge_type", "edge", "node", "alias", "secret")
+GRAPH_TABLES = (
+    "event_participant",
+    "event_knower",
+    "event_reveal",
+    "proposal_event",
+    "proposal_edge",
+    "story_event",
+    "edge_type",
+    "edge",
+    "node",
+    "alias",
+    "secret",
+)
 """时态过滤碰得到的表。`edge_type` 排在 `edge` 前面：交替是 leftmost-first，
 `edge` 会先匹配上 `edge_type` 的前 4 个字符——同 mentions.py 那条长度降序的理由。
 
@@ -266,6 +278,46 @@ def test_allowlist_stays_small() -> None:
     assert SHADOW_GRANDFATHERED == frozenset({"novel_harness.text.chapterize"})
 
 
+def test_event_hyperedge_tables_are_inside_the_graph_sql_boundary() -> None:
+    expected = {
+        "story_event",
+        "event_participant",
+        "event_knower",
+        "event_reveal",
+        "proposal_event",
+        "proposal_edge",
+    }
+    assert expected <= set(GRAPH_TABLES)
+    for table in expected:
+        assert graph_table_sql(f'sql = "SELECT * FROM {table}"') == [1]
+
+
+def test_story_graph_method_set_remains_frozen() -> None:
+    from novel_harness.graph.store import StoryGraph
+
+    methods = {
+        name
+        for name, value in StoryGraph.__dict__.items()
+        if not name.startswith("_") and callable(value)
+    }
+    assert methods == {
+        "resolve",
+        "state_at",
+        "knowledge_matrix",
+        "subgraph",
+        "upsert_edge",
+    }
+
+
+def test_graph_package_exports_the_concrete_event_repositories() -> None:
+    from novel_harness import graph
+    from novel_harness.graph.sqlite_events import SqliteEventStore
+    from novel_harness.graph.sqlite_proposals import SqliteProposalStore
+
+    assert graph.SqliteEventStore is SqliteEventStore
+    assert graph.SqliteProposalStore is SqliteProposalStore
+
+
 SHADOW_GRANDFATHERED = frozenset({"novel_harness.text.chapterize"})
 """下面那条守卫的既有例外。**只有一个成员，加第二个要在 PR 里回答「为什么不能改名」。**
 
@@ -324,11 +376,11 @@ def test_no_package_export_shadows_a_submodule() -> None:
 # 「扫描器找得到 graph/ 里的 import」——它没验证「扫描器看得见绕法」，而绕法正是
 # 实际发生的那一种。所以下面把那个真实的绕法作为 fixture 喂进扫描器。
 
-NAIVE_PROBE = '''
+NAIVE_PROBE = """
 from __future__ import annotations
 import sqlite3
 def x(c: sqlite3.Connection) -> None: ...
-'''
+"""
 
 BYPASS_PROBE = '''
 from __future__ import annotations
@@ -345,13 +397,13 @@ def open_my_own(path: str) -> Connection:
     return connect(path)
 '''
 
-TYPE_ONLY_PROBE = '''
+TYPE_ONLY_PROBE = """
 from __future__ import annotations
 from .db import Connection
 
 def read(conn: Connection) -> list:
     return conn.execute("SELECT * FROM decision_log WHERE project_id = ?", ("p",)).fetchall()
-'''
+"""
 
 
 def test_the_guard_can_actually_see_the_offenders() -> None:

@@ -15,13 +15,28 @@ from .models import (
     ProvisionalEventSpec,
     StoryEvent,
 )
-from .store import EventStore, ProposalStore
+from .store import (
+    EventNotFound,
+    EventReferenceError,
+    EventScopeError,
+    EventStore,
+    EventStoreError,
+    ProposalAlreadyResolved,
+    ProposalNotFound,
+    ProposalStore,
+    ProposalStoreError,
+    ProposalValidationError,
+)
 
 __all__ = [
     "CharacterProfilePatch",
     "CharacterProfileView",
     "EventCharacterRole",
     "EventStore",
+    "EventStoreError",
+    "EventReferenceError",
+    "EventNotFound",
+    "EventScopeError",
     "EventView",
     "ProposalCreate",
     "ProposalRecord",
@@ -29,6 +44,10 @@ __all__ = [
     "ProposalResolutionStatus",
     "ProposalStatus",
     "ProposalStore",
+    "ProposalAlreadyResolved",
+    "ProposalNotFound",
+    "ProposalStoreError",
+    "ProposalValidationError",
     "ProvisionalEventSpec",
     "StoryEvent",
 ]

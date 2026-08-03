@@ -3,8 +3,8 @@
 `graph/` 是**全系统唯一允许 import sqlite3 的目录**（§5.5 的架构守卫，
 `tests/test_arch_guard.py` 强制）。守卫拦的是 import，不是纪律。
 
-这个 `__init__` 只再出口 `models` 和 `store`。`sqlite_store` / `queries` 故意不在这里：
-它们是实现，从包门面导出实现等于邀请别人绕过 Protocol 去调 `queries.state_at`。
+这个门面出口领域契约与具体仓储装配类型；底层 `queries` 仍不出口，避免调用方绕过
+Pydantic 仓储边界直接依赖 SQL 形状。
 """
 
 from __future__ import annotations
@@ -64,6 +64,8 @@ from .store import (
     StoryGraph,
     SupersedeConflict,
 )
+from .sqlite_events import SqliteEventStore
+from .sqlite_proposals import SqliteProposalStore
 
 __all__ = [
     "CANONICAL_ALIAS_LABELS",
@@ -110,6 +112,8 @@ __all__ = [
     "StateSnapshot",
     "StateValue",
     "StoreError",
+    "SqliteEventStore",
+    "SqliteProposalStore",
     "StoredAlias",
     "StoredChapter",
     "StoryGraph",

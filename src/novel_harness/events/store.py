@@ -17,6 +17,38 @@ from .models import (
 )
 
 
+class EventStoreError(Exception):
+    """Base class for concrete event-repository failures."""
+
+
+class EventReferenceError(EventStoreError):
+    """An evidence or incidence reference is missing, cross-project, or the wrong label."""
+
+
+class EventNotFound(EventStoreError):
+    """An event id does not identify a stored event."""
+
+
+class EventScopeError(EventStoreError, ValueError):
+    """An event operation was requested for a disallowed information scope."""
+
+
+class ProposalStoreError(Exception):
+    """Base class for concrete proposal-repository failures."""
+
+
+class ProposalValidationError(ProposalStoreError):
+    """A proposal references storage state that cannot form a coherent cluster."""
+
+
+class ProposalNotFound(ProposalStoreError):
+    """A proposal id does not identify a stored proposal."""
+
+
+class ProposalAlreadyResolved(ProposalStoreError):
+    """A terminal proposal cannot be resolved a second time."""
+
+
 @runtime_checkable
 class EventStore(Protocol):
     def put_provisional(self, spec: ProvisionalEventSpec) -> EventView: ...

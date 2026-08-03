@@ -16,6 +16,7 @@ import sqlite3
 from collections.abc import Collection, Sequence
 from typing import Any, Final, NamedTuple
 
+from ..events.models import EventView, StoryEvent
 from .models import (
     UNDIRECTED_EDGE_TYPES,
     AliasKind,
@@ -35,6 +36,7 @@ from .models import (
     Node,
     NodeLabel,
     NodeProps,
+    NodeRef,
     RelocatePointer,
     SecretDetail,
     StoredAlias,
@@ -67,6 +69,11 @@ _EDGE_COLS: Final = (
 )
 
 _NODE_COLS: Final = "id, project_id, label, name, props_json"
+
+_EVENT_COLS: Final = (
+    "id, project_id, chapter_number, summary, information_scope, status, confidence, "
+    "source, evidence_id, evidence_status, derived_from_event_id"
+)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -112,6 +119,22 @@ def to_edge(row: dict[str, Any]) -> Edge:
     )
 
 
+def to_story_event(row: dict[str, Any]) -> StoryEvent:
+    return StoryEvent(
+        id=row["id"],
+        project_id=row["project_id"],
+        chapter_number=row["chapter_number"],
+        summary=row["summary"],
+        information_scope=row["information_scope"],
+        status=row["status"],
+        confidence=row["confidence"],
+        source=row["source"],
+        evidence_id=row["evidence_id"],
+        evidence_status=row["evidence_status"],
+        derived_from_event_id=row["derived_from_event_id"],
+    )
+
+
 def _in_clause(prefix: str, values: Sequence[str]) -> tuple[str, dict[str, str]]:
     """IN (...) 的具名参数展开。
 
@@ -121,6 +144,191 @@ def _in_clause(prefix: str, values: Sequence[str]) -> tuple[str, dict[str, str]]
     keys = [f"{prefix}{i}" for i in range(len(values))]
     sql = ", ".join(f":{k}" for k in keys)
     return sql, dict(zip(keys, values, strict=True))
+
+
+class EventLocator(NamedTuple):
+    chapter_number: int
+    information_scope: InformationScope
+
+
+def event_locator(
+    conn: sqlite3.Connection,
+    project_id: str,
+    event_id: str,
+) -> EventLocator | None:
+    cur = conn.execute(
+        """
+        SELECT chapter_number, information_scope
+        FROM story_event
+        WHERE project_id = :pid AND id = :eid
+        """,
+        {"pid": project_id, "eid": event_id},
+    )
+    rows = _rows(cur)
+    if not rows:
+        return None
+    return EventLocator(
+        chapter_number=rows[0]["chapter_number"],
+        information_scope=InformationScope(rows[0]["information_scope"]),
+    )
+
+
+def event_id_by_anchor(
+    conn: sqlite3.Connection,
+    project_id: str,
+    evidence_id: str,
+    scope: InformationScope,
+) -> str | None:
+    cur = conn.execute(
+        """
+        SELECT id FROM story_event
+        WHERE project_id = :pid AND evidence_id = :evidence_id
+          AND information_scope = :scope
+        """,
+        {"pid": project_id, "evidence_id": evidence_id, "scope": scope.value},
+    )
+    rows = _rows(cur)
+    return str(rows[0]["id"]) if rows else None
+
+
+def event_ids_at(
+    conn: sqlite3.Connection,
+    project_id: str,
+    chapter: int,
+    scope: InformationScope,
+) -> list[str]:
+    cur = conn.execute(
+        f"""
+        SELECT id FROM story_event
+        WHERE project_id = :pid AND {TEMPORAL_WHERE}
+        ORDER BY chapter_number, id
+        """,
+        {"pid": project_id, "ch": chapter, "scope": scope.value},
+    )
+    return [str(row["id"]) for row in _rows(cur)]
+
+
+def event_ids_for_characters_at(
+    conn: sqlite3.Connection,
+    project_id: str,
+    character_ids: Collection[str],
+    chapter: int,
+    scope: InformationScope,
+) -> list[str]:
+    ids = sorted(set(character_ids))
+    if not ids:
+        return []
+    placeholders, id_params = _in_clause("character", ids)
+    cur = conn.execute(
+        f"""
+        WITH visible_event AS (
+            SELECT * FROM story_event
+            WHERE project_id = :pid AND {TEMPORAL_WHERE}
+        ),
+        visible_knower AS (
+            SELECT * FROM event_knower
+            WHERE project_id = :pid AND {TEMPORAL_WHERE}
+        )
+        SELECT event.id AS id
+        FROM visible_event AS event
+        WHERE EXISTS (
+            SELECT 1 FROM event_participant AS participant
+            WHERE participant.event_id = event.id
+              AND participant.character_id IN ({placeholders})
+        ) OR EXISTS (
+            SELECT 1 FROM visible_knower AS knower
+            WHERE knower.event_id = event.id
+              AND knower.character_id IN ({placeholders})
+        )
+        ORDER BY event.chapter_number, event.id
+        """,
+        {"pid": project_id, "ch": chapter, "scope": scope.value, **id_params},
+    )
+    return [str(row["id"]) for row in _rows(cur)]
+
+
+def event_views_at(
+    conn: sqlite3.Connection,
+    project_id: str,
+    event_ids: Collection[str],
+    chapter: int,
+    scope: InformationScope,
+) -> list[EventView]:
+    """Hydrate visible event hyperedges and their incidence into typed views."""
+    ids = sorted(set(event_ids))
+    if not ids:
+        return []
+    placeholders, id_params = _in_clause("event", ids)
+    params = {"pid": project_id, "ch": chapter, "scope": scope.value, **id_params}
+    event_rows = _rows(
+        conn.execute(
+            f"""
+            SELECT {_EVENT_COLS}
+            FROM story_event
+            WHERE project_id = :pid
+              AND {TEMPORAL_WHERE}
+              AND id IN ({placeholders})
+            ORDER BY chapter_number, id
+            """,
+            params,
+        )
+    )
+    visible_ids = [row["id"] for row in event_rows]
+    if not visible_ids:
+        return []
+    visible_placeholders, visible_params = _in_clause("visible", visible_ids)
+    incidence_params = {
+        "pid": project_id,
+        "ch": chapter,
+        "scope": scope.value,
+        **visible_params,
+    }
+    incidence_rows = _rows(
+        conn.execute(
+            f"""
+            WITH visible_knower AS (
+                SELECT * FROM event_knower
+                WHERE project_id = :pid AND {TEMPORAL_WHERE}
+            )
+            SELECT ep.event_id AS event_id, 'participant' AS role,
+                   n.id AS node_id, n.label AS label, n.name AS name
+            FROM event_participant AS ep
+            JOIN node AS n ON n.id = ep.character_id AND n.project_id = ep.project_id
+            WHERE ep.project_id = :pid AND ep.event_id IN ({visible_placeholders})
+            UNION ALL
+            SELECT ek.event_id AS event_id, 'knower' AS role,
+                   n.id AS node_id, n.label AS label, n.name AS name
+            FROM visible_knower AS ek
+            JOIN node AS n ON n.id = ek.character_id AND n.project_id = ek.project_id
+            WHERE ek.event_id IN ({visible_placeholders})
+            UNION ALL
+            SELECT er.event_id AS event_id, 'reveal' AS role,
+                   n.id AS node_id, n.label AS label, n.name AS name
+            FROM event_reveal AS er
+            JOIN node AS n ON n.id = er.secret_id AND n.project_id = er.project_id
+            WHERE er.project_id = :pid AND er.event_id IN ({visible_placeholders})
+            ORDER BY event_id, role, node_id
+            """,
+            incidence_params,
+        )
+    )
+    incidence: dict[str, dict[str, dict[str, NodeRef]]] = {}
+    for row in incidence_rows:
+        ref = NodeRef(id=row["node_id"], label=row["label"], name=row["name"])
+        incidence.setdefault(row["event_id"], {}).setdefault(row["role"], {})[ref.id] = ref
+
+    views: list[EventView] = []
+    for row in event_rows:
+        roles = incidence.get(row["id"], {})
+        views.append(
+            EventView(
+                event=to_story_event(row),
+                participants=list(roles.get("participant", {}).values()),
+                knowers=list(roles.get("knower", {}).values()),
+                revealed_facts=list(roles.get("reveal", {}).values()),
+            )
+        )
+    return views
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -205,6 +413,16 @@ def update_node_props(conn: sqlite3.Connection, node_id: str, props: NodeProps) 
         {"id": node_id, "props": props.model_dump_json()},
     )
     return to_node(_rows(cur)[0])
+
+
+def merge_node_props(
+    conn: sqlite3.Connection,
+    node: Node,
+    patch: dict[str, Any],
+) -> Node:
+    values = node.props.model_dump()
+    values.update(patch)
+    return update_node_props(conn, node.id, NodeProps.model_validate(values))
 
 
 def update_node_name(conn: sqlite3.Connection, node_id: str, name: str) -> Node:
@@ -445,9 +663,7 @@ def alias_rows(
 
 
 def exclusivity_of(conn: sqlite3.Connection, edge_type: EdgeType) -> Exclusivity:
-    cur = conn.execute(
-        "SELECT exclusivity FROM edge_type WHERE type = :t", {"t": edge_type.value}
-    )
+    cur = conn.execute("SELECT exclusivity FROM edge_type WHERE type = :t", {"t": edge_type.value})
     rows = _rows(cur)
     if not rows:
         # edge.type 对 edge_type 建的是外键，所以正常路径下这里不可能空。
