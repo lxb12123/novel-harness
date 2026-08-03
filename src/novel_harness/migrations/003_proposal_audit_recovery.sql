@@ -11,6 +11,19 @@ ALTER TABLE proposal_set ADD COLUMN resolved_canon_version INTEGER
   CHECK (resolved_canon_version IS NULL OR resolved_canon_version >= 0);
 ALTER TABLE proposal_set ADD COLUMN audit_envelope_json TEXT
   CHECK (audit_envelope_json IS NULL OR json_valid(audit_envelope_json));
+ALTER TABLE proposal_set ADD COLUMN confirmation_fact_kind TEXT
+  CHECK (
+    confirmation_fact_kind IS NULL
+    OR confirmation_fact_kind IN ('event','edge')
+  );
+ALTER TABLE proposal_set ADD COLUMN confirmation_request_hash TEXT
+  CHECK (
+    confirmation_request_hash IS NULL
+    OR (
+      length(confirmation_request_hash) = 64
+      AND confirmation_request_hash NOT GLOB '*[^0-9a-f]*'
+    )
+  );
 
 -- Select a v2 audit decision only when the entire history is unambiguous: exactly one review log
 -- names the proposal, its payload/verdict agrees with the terminal row, and an unattached log is
@@ -211,6 +224,10 @@ CREATE INDEX idx_proposal_set_decision_once
   ON proposal_set(decision_log_id)
   WHERE decision_log_id IS NOT NULL;
 
+CREATE UNIQUE INDEX idx_provisional_confirmation_request
+  ON proposal_set(project_id, confirmation_fact_kind, confirmation_request_hash)
+  WHERE kind = 'provisional_confirm';
+
 CREATE TRIGGER proposal_decision_once_insert
 BEFORE INSERT ON proposal_set
 WHEN NEW.decision_log_id IS NOT NULL
@@ -315,10 +332,10 @@ BEGIN
   );
 END;
 
--- Actual proposal decisions are business-result outbox deliveries, never free-standing writes.
+-- Actual proposal/confirmation decisions are business-result outbox deliveries, never
+-- free-standing writes.
 -- Requiring an exact terminal row prevents one forged immutable log from occupying the proposal's
--- unique history slot before recovery can append the real author decision.  Passive confirmation
--- has proposal_id:null and deliberately does not enter this trigger.
+-- unique history slot before recovery can append the real author decision.
 CREATE TRIGGER decision_log_proposal_review_matches_outbox_insert
 BEFORE INSERT ON decision_log
 WHEN NEW.kind = 'proposal_review'
@@ -407,19 +424,6 @@ END;
 CREATE TRIGGER decision_log_one_proposal_review_insert
 BEFORE INSERT ON decision_log
 WHEN NEW.kind = 'proposal_review'
-  AND (
-    json_type(NEW.payload_json, '$.proposal_id') IS NOT 'null'
-    OR json_type(NEW.payload_json, '$.kind') IS NOT 'text'
-    OR json_extract(NEW.payload_json, '$.kind') IS NOT 'provisional_confirm'
-    OR (
-      SELECT COUNT(*) FROM json_each(NEW.payload_json)
-      WHERE json_each.key = 'proposal_id'
-    ) <> 1
-    OR (
-      SELECT COUNT(*) FROM json_each(NEW.payload_json)
-      WHERE json_each.key = 'kind'
-    ) <> 1
-  )
 BEGIN
   SELECT RAISE(ABORT, 'proposal review decision payload is ambiguous')
   WHERE json_type(NEW.payload_json) IS NOT 'object'
@@ -448,6 +452,159 @@ BEGIN
           AND json_each.value = json_extract(NEW.payload_json, '$.proposal_id')
       )
   );
+END;
+
+-- Passive confirmation receipts are invisible terminal proposal rows.  They reuse the same
+-- immutable outbox and attachment machinery without entering the PENDING review queue.
+CREATE TRIGGER proposal_confirmation_metadata_insert
+BEFORE INSERT ON proposal_set
+WHEN NOT (
+  (
+    NEW.kind IS 'provisional_confirm'
+    AND NEW.confirmation_fact_kind IS NOT NULL
+    AND NEW.confirmation_request_hash IS NOT NULL
+    AND NEW.status IS 'ACCEPTED'
+    AND NEW.resolution_action IS 'accept'
+    AND NEW.resolved_canon_version IS NEW.base_canon_version + 1
+    AND json_type(NEW.items_json) IS 'array'
+    AND nh_json_canonical(CAST(NEW.items_json AS BLOB)) IS NOT NULL
+    AND json_array_length(NEW.items_json) > 0
+    AND json_array_length(NEW.items_json) IS NEW.item_count
+  )
+  OR (
+    NEW.kind IS NOT 'provisional_confirm'
+    AND NEW.confirmation_fact_kind IS NULL
+    AND NEW.confirmation_request_hash IS NULL
+  )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'proposal confirmation receipt metadata is invalid');
+END;
+
+CREATE TRIGGER proposal_confirmation_metadata_update
+BEFORE UPDATE OF kind, confirmation_fact_kind, confirmation_request_hash, status,
+                 resolution_action, base_canon_version, resolved_canon_version,
+                 items_json, item_count
+ON proposal_set
+WHEN NOT (
+  (
+    NEW.kind IS 'provisional_confirm'
+    AND NEW.confirmation_fact_kind IS NOT NULL
+    AND NEW.confirmation_request_hash IS NOT NULL
+    AND NEW.status IS 'ACCEPTED'
+    AND NEW.resolution_action IS 'accept'
+    AND NEW.resolved_canon_version IS NEW.base_canon_version + 1
+    AND json_type(NEW.items_json) IS 'array'
+    AND nh_json_canonical(CAST(NEW.items_json AS BLOB)) IS NOT NULL
+    AND json_array_length(NEW.items_json) > 0
+    AND json_array_length(NEW.items_json) IS NEW.item_count
+  )
+  OR (
+    NEW.kind IS NOT 'provisional_confirm'
+    AND NEW.confirmation_fact_kind IS NULL
+    AND NEW.confirmation_request_hash IS NULL
+  )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'proposal confirmation receipt metadata is invalid');
+END;
+
+CREATE TRIGGER proposal_confirmation_receipt_immutable
+BEFORE UPDATE OF confirmation_fact_kind, confirmation_request_hash, items_json, item_count
+ON proposal_set
+WHEN OLD.kind IS 'provisional_confirm'
+  AND (
+    NEW.confirmation_fact_kind IS NOT OLD.confirmation_fact_kind
+    OR NEW.confirmation_request_hash IS NOT OLD.confirmation_request_hash
+    OR NEW.items_json IS NOT OLD.items_json
+    OR NEW.item_count IS NOT OLD.item_count
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'proposal confirmation receipt is immutable');
+END;
+
+CREATE TRIGGER proposal_confirmation_event_link_insert
+BEFORE INSERT ON proposal_event
+WHEN (
+  SELECT kind FROM proposal_set WHERE id = NEW.proposal_id
+) IS 'provisional_confirm'
+BEGIN
+  SELECT RAISE(ABORT, 'confirmation receipt fact kind does not match event link')
+  WHERE (
+    SELECT confirmation_fact_kind FROM proposal_set WHERE id = NEW.proposal_id
+  ) IS NOT 'event';
+  SELECT RAISE(ABORT, 'provisional event is already confirmed')
+  WHERE EXISTS (
+    SELECT 1
+    FROM proposal_event AS existing
+    JOIN proposal_set AS owner ON owner.id = existing.proposal_id
+    WHERE owner.kind = 'provisional_confirm'
+      AND existing.event_id = NEW.event_id
+      AND existing.proposal_id <> NEW.proposal_id
+  );
+END;
+
+CREATE TRIGGER proposal_confirmation_edge_link_insert
+BEFORE INSERT ON proposal_edge
+WHEN (
+  SELECT kind FROM proposal_set WHERE id = NEW.proposal_id
+) IS 'provisional_confirm'
+BEGIN
+  SELECT RAISE(ABORT, 'confirmation receipt fact kind does not match edge link')
+  WHERE (
+    SELECT confirmation_fact_kind FROM proposal_set WHERE id = NEW.proposal_id
+  ) IS NOT 'edge';
+  SELECT RAISE(ABORT, 'provisional edge is already confirmed')
+  WHERE EXISTS (
+    SELECT 1
+    FROM proposal_edge AS existing
+    JOIN proposal_set AS owner ON owner.id = existing.proposal_id
+    WHERE owner.kind = 'provisional_confirm'
+      AND existing.edge_id = NEW.edge_id
+      AND existing.proposal_id <> NEW.proposal_id
+  );
+END;
+
+CREATE TRIGGER proposal_confirmation_event_link_immutable
+BEFORE UPDATE ON proposal_event
+WHEN (
+  SELECT kind FROM proposal_set WHERE id = OLD.proposal_id
+) IS 'provisional_confirm'
+  OR (
+    SELECT kind FROM proposal_set WHERE id = NEW.proposal_id
+  ) IS 'provisional_confirm'
+BEGIN
+  SELECT RAISE(ABORT, 'proposal confirmation source links are immutable');
+END;
+
+CREATE TRIGGER proposal_confirmation_event_link_delete
+BEFORE DELETE ON proposal_event
+WHEN (
+  SELECT kind FROM proposal_set WHERE id = OLD.proposal_id
+) IS 'provisional_confirm'
+BEGIN
+  SELECT RAISE(ABORT, 'proposal confirmation source links are immutable');
+END;
+
+CREATE TRIGGER proposal_confirmation_edge_link_immutable
+BEFORE UPDATE ON proposal_edge
+WHEN (
+  SELECT kind FROM proposal_set WHERE id = OLD.proposal_id
+) IS 'provisional_confirm'
+  OR (
+    SELECT kind FROM proposal_set WHERE id = NEW.proposal_id
+  ) IS 'provisional_confirm'
+BEGIN
+  SELECT RAISE(ABORT, 'proposal confirmation source links are immutable');
+END;
+
+CREATE TRIGGER proposal_confirmation_edge_link_delete
+BEFORE DELETE ON proposal_edge
+WHEN (
+  SELECT kind FROM proposal_set WHERE id = OLD.proposal_id
+) IS 'provisional_confirm'
+BEGIN
+  SELECT RAISE(ABORT, 'proposal confirmation source links are immutable');
 END;
 
 -- New writes must make the proposal row a complete, self-consistent outbox record.

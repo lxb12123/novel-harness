@@ -38,6 +38,7 @@ from ..graph.sqlite_proposals import SqliteProposalStore
 from ..graph.sqlite_review import SqliteEdgeReviewStore
 from .proposal_audit import build_audit_envelope, ensure_proposal_audit
 from .proposal_models import (
+    ConfirmationConflict,
     DecisionAuditError,
     EdgeConflictItem,
     NewCharacterItem,
@@ -57,6 +58,7 @@ from .proposal_validation import (
 )
 
 __all__ = [
+    "ConfirmationConflict",
     "DecisionAuditError",
     "ProposalAction",
     "ProposalActionError",

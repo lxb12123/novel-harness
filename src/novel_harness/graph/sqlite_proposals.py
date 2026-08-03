@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
+from dataclasses import dataclass
 import json
 import sqlite3
+from typing import Any
 
 from ..db import Connection
 from ..events.models import (
@@ -21,6 +23,28 @@ from ..events.store import (
 from ..ids import EntityType, new_id
 from ..json_contract import strict_json_dumps
 from .sqlite_store import _transaction
+
+
+@dataclass(frozen=True)
+class ConfirmationReceipt:
+    """Durable outbox row for an explicit passive confirmation batch.
+
+    ``event_ids`` / ``edge_ids`` are the PROVISIONAL source facts in original request
+    order (link rowid order); the CANON projections are recorded inside the audit
+    envelope payload.
+    """
+
+    id: str
+    project_id: str
+    fact_kind: str
+    request_hash: str
+    base_canon_version: int
+    resolved_canon_version: int
+    decision_log_id: str | None
+    event_ids: tuple[str, ...]
+    edge_ids: tuple[str, ...]
+    envelope: dict[str, Any]
+    items: list[Any]
 
 
 def _default_proposal_id(project_id: str) -> str:
@@ -528,3 +552,189 @@ class SqliteProposalStore:
                     raise RuntimeError(f"unaudited proposal 不可读：{row[0]}")
                 records.append(record)
             return records
+
+    # ══════════════════════════════════════════════════════════════════════
+    # Passive confirmation receipts (durable outbox rows, kind='provisional_confirm')
+    # ══════════════════════════════════════════════════════════════════════
+
+    def _read_receipt(self, receipt_id: str) -> ConfirmationReceipt | None:
+        row = self._conn.execute(
+            """
+            SELECT id, project_id, kind, confirmation_fact_kind, confirmation_request_hash,
+                   base_canon_version, resolved_canon_version, decision_log_id,
+                   audit_envelope_json, items_json
+            FROM proposal_set WHERE id = ?
+            """,
+            (receipt_id,),
+        ).fetchone()
+        if row is None or row["kind"] != "provisional_confirm":
+            return None
+        event_ids = [
+            str(link[0])
+            for link in self._conn.execute(
+                "SELECT event_id FROM proposal_event WHERE proposal_id = ? ORDER BY rowid",
+                (receipt_id,),
+            ).fetchall()
+        ]
+        edge_ids = [
+            str(link[0])
+            for link in self._conn.execute(
+                "SELECT edge_id FROM proposal_edge WHERE proposal_id = ? ORDER BY rowid",
+                (receipt_id,),
+            ).fetchall()
+        ]
+        return ConfirmationReceipt(
+            id=str(row["id"]),
+            project_id=str(row["project_id"]),
+            fact_kind=str(row["confirmation_fact_kind"]),
+            request_hash=str(row["confirmation_request_hash"]),
+            base_canon_version=int(row["base_canon_version"]),
+            resolved_canon_version=int(row["resolved_canon_version"]),
+            decision_log_id=(
+                None if row["decision_log_id"] is None else str(row["decision_log_id"])
+            ),
+            event_ids=tuple(event_ids),
+            edge_ids=tuple(edge_ids),
+            envelope=json.loads(row["audit_envelope_json"]),
+            items=json.loads(row["items_json"]),
+        )
+
+    def confirmation_receipt(
+        self,
+        project_id: str,
+        *,
+        fact_kind: str,
+        request_hash: str,
+    ) -> ConfirmationReceipt | None:
+        """Idempotency lookup for an exact confirmation request."""
+        if fact_kind not in {"event", "edge"}:
+            raise ProposalValidationError(f"confirmation fact_kind 不合法：{fact_kind}")
+        with _read_snapshot(self._conn):
+            row = self._conn.execute(
+                """
+                SELECT id FROM proposal_set
+                WHERE project_id = ? AND kind = 'provisional_confirm'
+                  AND confirmation_fact_kind = ? AND confirmation_request_hash = ?
+                """,
+                (project_id, fact_kind, request_hash),
+            ).fetchone()
+            if row is None:
+                return None
+            return self._read_receipt(str(row["id"]))
+
+    def confirmation_conflicts(
+        self,
+        project_id: str,
+        *,
+        fact_kind: str,
+        fact_ids: Sequence[str],
+    ) -> tuple[str, ...]:
+        """Which requested PROVISIONAL facts already belong to a durable receipt."""
+        if fact_kind not in {"event", "edge"}:
+            raise ProposalValidationError(f"confirmation fact_kind 不合法：{fact_kind}")
+        wanted = tuple(sorted(set(fact_ids)))
+        if not wanted:
+            return ()
+        markers = ", ".join("?" for _ in wanted)
+        with _read_snapshot(self._conn):
+            if fact_kind == "event":
+                rows = self._conn.execute(
+                    f"""
+                    SELECT link.event_id
+                    FROM proposal_event AS link
+                    JOIN proposal_set AS owner ON owner.id = link.proposal_id
+                    WHERE owner.project_id = ? AND owner.kind = 'provisional_confirm'
+                      AND link.event_id IN ({markers})
+                    """,
+                    (project_id, *wanted),
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    f"""
+                    SELECT link.edge_id
+                    FROM proposal_edge AS link
+                    JOIN proposal_set AS owner ON owner.id = link.proposal_id
+                    WHERE owner.project_id = ? AND owner.kind = 'provisional_confirm'
+                      AND link.edge_id IN ({markers})
+                    """,
+                    (project_id, *wanted),
+                ).fetchall()
+        return tuple(str(row[0]) for row in rows)
+
+    def create_confirmation_receipt(
+        self,
+        *,
+        receipt_id: str,
+        project_id: str,
+        fact_kind: str,
+        request_hash: str,
+        base_canon_version: int,
+        resolved_canon_version: int,
+        items: list[Any],
+        event_ids: Sequence[str],
+        edge_ids: Sequence[str],
+        envelope: dict[str, Any],
+        summary: str,
+        chapter_number: int | None,
+    ) -> ConfirmationReceipt:
+        """Insert the terminal outbox row plus PROVISIONAL fact links in one transaction."""
+        if fact_kind not in {"event", "edge"}:
+            raise ProposalValidationError(f"confirmation fact_kind 不合法：{fact_kind}")
+        if resolved_canon_version != base_canon_version + 1:
+            raise ProposalValidationError(
+                "confirmation receipt 必须对应一次 one-version Canon bump"
+            )
+        try:
+            items_json = strict_json_dumps(items)
+            envelope_json = strict_json_dumps(envelope)
+        except (TypeError, ValueError, UnicodeError, OverflowError) as exc:
+            raise ProposalValidationError(
+                f"confirmation receipt 不是 strict JSON：{exc}"
+            ) from exc
+        with _transaction(self._conn):
+            self._conn.execute(
+                """
+                INSERT INTO proposal_set (
+                    id, project_id, kind, summary, item_count, items_json, confidence,
+                    status, chapter_number, snapshot_id, base_canon_version,
+                    schema_version, prompt_hash, resolution_action, resolved_canon_version,
+                    audit_envelope_json, confirmation_fact_kind, confirmation_request_hash
+                ) VALUES (
+                    ?, ?, 'provisional_confirm', ?, ?, ?, NULL, 'ACCEPTED', ?, NULL,
+                    ?, NULL, NULL, 'accept', ?, ?, ?, ?
+                )
+                """,
+                (
+                    receipt_id,
+                    project_id,
+                    summary,
+                    len(items),
+                    items_json,
+                    chapter_number,
+                    base_canon_version,
+                    resolved_canon_version,
+                    envelope_json,
+                    fact_kind,
+                    request_hash,
+                ),
+            )
+            for event_id in event_ids:
+                self._conn.execute(
+                    """
+                    INSERT INTO proposal_event (proposal_id, project_id, event_id)
+                    VALUES (?, ?, ?)
+                    """,
+                    (receipt_id, project_id, event_id),
+                )
+            for edge_id in edge_ids:
+                self._conn.execute(
+                    """
+                    INSERT INTO proposal_edge (proposal_id, project_id, edge_id)
+                    VALUES (?, ?, ?)
+                    """,
+                    (receipt_id, project_id, edge_id),
+                )
+            created = self._read_receipt(receipt_id)
+            if created is None:
+                raise RuntimeError(f"confirmation receipt 插入后不可读：{receipt_id}")
+            return created

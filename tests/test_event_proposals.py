@@ -22,6 +22,7 @@ from novel_harness.events import (
 )
 from novel_harness.extract.models import RawCharacterProfile
 from novel_harness.extract.proposals import (
+    ConfirmationConflict,
     DecisionAuditError,
     ProposalAction,
     ProposalReview,
@@ -1760,6 +1761,106 @@ def test_confirm_event_batch_clones_all_selected_and_bumps_once(world: ReviewWor
     (decision,) = read_decisions(world.conn, world.project_id)
     assert decision.payload["kind"] == "provisional_confirm"
     assert len(decision.payload["events"]) == 2
+    assert decision.payload["proposal_id"] == confirmation.confirmation_id
+
+
+def test_confirm_event_retry_returns_the_same_receipt_version_and_decision(
+    world: ReviewWorld,
+) -> None:
+    first = confirm_provisional_event(
+        world.conn,
+        world.graph,
+        world.events,
+        world.project_id,
+        world.event_id,
+        expected_canon_version=0,
+    )
+
+    retry = confirm_provisional_event(
+        world.conn,
+        world.graph,
+        world.events,
+        world.project_id,
+        world.event_id,
+        expected_canon_version=0,
+    )
+
+    assert retry == first
+    assert first.confirmation_id
+    assert first.canon_version == 1
+    assert require_canon_version(world.conn, world.project_id) == 1
+    assert len(read_decisions(world.conn, world.project_id)) == 1
+    assert world.conn.execute(
+        "SELECT COUNT(*) FROM story_event WHERE information_scope = 'CANON'"
+    ).fetchone()[0] == 1
+
+
+def test_confirm_edge_reordered_retry_is_idempotent_and_overlap_conflicts(
+    world: ReviewWorld,
+) -> None:
+    first = confirm_provisional_edges(
+        world.conn,
+        world.graph,
+        world.project_id,
+        [world.location_edge_id, world.relation_edge_id],
+        expected_canon_version=0,
+        edge_review_store=world.edge_reviews,
+    )
+    retry = confirm_provisional_edges(
+        world.conn,
+        world.graph,
+        world.project_id,
+        [world.relation_edge_id, world.location_edge_id],
+        expected_canon_version=0,
+        edge_review_store=world.edge_reviews,
+    )
+
+    assert retry == first
+    with pytest.raises(ConfirmationConflict, match="already|已确认|overlap"):
+        confirm_provisional_edges(
+            world.conn,
+            world.graph,
+            world.project_id,
+            [world.location_edge_id],
+            expected_canon_version=1,
+            edge_review_store=world.edge_reviews,
+        )
+    assert require_canon_version(world.conn, world.project_id) == 1
+    assert len(read_decisions(world.conn, world.project_id)) == 1
+
+
+def test_completed_confirmation_retry_ignores_later_canon_bumps(
+    world: ReviewWorld,
+) -> None:
+    original = confirm_provisional_event(
+        world.conn,
+        world.graph,
+        world.events,
+        world.project_id,
+        world.event_id,
+        expected_canon_version=0,
+    )
+    confirm_provisional_edges(
+        world.conn,
+        world.graph,
+        world.project_id,
+        [world.relation_edge_id],
+        expected_canon_version=1,
+        edge_review_store=world.edge_reviews,
+    )
+
+    retry = confirm_provisional_event(
+        world.conn,
+        world.graph,
+        world.events,
+        world.project_id,
+        world.event_id,
+        expected_canon_version=0,
+    )
+
+    assert retry == original
+    assert require_canon_version(world.conn, world.project_id) == 2
+    assert len(read_decisions(world.conn, world.project_id)) == 2
 
 
 def test_confirm_single_event_and_edge_subset_are_explicit_author_actions(
@@ -1832,7 +1933,7 @@ def test_confirm_edge_batch_failure_is_atomic_and_audit_failure_keeps_canon(
             expected_canon_version=0,
             edge_review_store=world.edge_reviews,
         )
-    assert exc_info.value.proposal_id is None
+    assert exc_info.value.proposal_id is not None
     assert exc_info.value.canon_version == 1
     assert exc_info.value.fact_ids == (
         world.location_edge_id,
@@ -1842,6 +1943,28 @@ def test_confirm_edge_batch_failure_is_atomic_and_audit_failure_keeps_canon(
     assert world.conn.execute(
         "SELECT COUNT(*) FROM edge WHERE information_scope = 'CANON'"
     ).fetchone()[0] == 2
+    receipt_id = exc_info.value.proposal_id
+    receipt = world.conn.execute(
+        """
+        SELECT kind, status, decision_log_id FROM proposal_set WHERE id = ?
+        """,
+        (receipt_id,),
+    ).fetchone()
+    assert tuple(receipt) == ("provisional_confirm", "ACCEPTED", None)
+
+    monkeypatch.undo()
+    recovered = confirm_provisional_edges(
+        world.conn,
+        world.graph,
+        world.project_id,
+        [world.relation_edge_id, world.location_edge_id],
+        expected_canon_version=0,
+        edge_review_store=world.edge_reviews,
+    )
+    assert recovered.confirmation_id == receipt_id
+    assert recovered.canon_version == 1
+    assert require_canon_version(world.conn, world.project_id) == 1
+    assert len(read_decisions(world.conn, world.project_id)) == 1
 
 
 @pytest.mark.parametrize("selection", [[], ["duplicate", "duplicate"]])

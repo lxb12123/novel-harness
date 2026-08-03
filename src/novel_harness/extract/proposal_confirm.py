@@ -4,17 +4,27 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from contextlib import contextmanager
+import hashlib
+import json
 from typing import Iterator
 
 from .. import project
 from ..db import Connection
 from ..events import EventStore, EventStoreError, EventView
-from ..graph import EdgeStatus, EvidenceStatus, GraphStore, InformationScope
+from ..graph import (
+    EdgeStatus,
+    EdgeType,
+    EvidenceStatus,
+    GraphStore,
+    InformationScope,
+)
 from ..graph.review_store import EdgeReviewStore, EdgeReviewValidationError
+from ..graph.sqlite_proposals import ConfirmationReceipt, SqliteProposalStore
 from ..graph.sqlite_review import SqliteEdgeReviewStore
-from .proposal_audit import append_audit, build_audit_envelope
+from ..ids import EntityType, new_id
+from .proposal_audit import build_audit_envelope, ensure_proposal_audit
 from .proposal_models import (
-    DecisionAuditError,
+    ConfirmationConflict,
     ProposalAction,
     ProposalShapeError,
     ProvisionalConfirmation,
@@ -50,6 +60,15 @@ def _version(conn: Connection, project_id: str, expected: int) -> int:
     return current
 
 
+def _request_hash(fact_kind: str, fact_ids: tuple[str, ...]) -> str:
+    canonical = json.dumps(
+        [fact_kind, *sorted(fact_ids)],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _event_sources(
     events: EventStore,
     evidence_store: EdgeReviewStore,
@@ -73,38 +92,163 @@ def _event_sources(
     return tuple(views), tuple(evidence)
 
 
-def _append_confirmation(
-    conn: Connection,
-    *,
+def _event_items(pairs) -> list[dict]:
+    return [
+        {
+            "source_kind": "event",
+            "event_id": view.event.id,
+            "summary": view.event.summary,
+            "confidence": view.event.confidence,
+            "quote": evidence.audit.quote_text,
+        }
+        for view, evidence in pairs
+    ]
+
+
+def _edge_items(pairs) -> list[dict]:
+    items = []
+    for item, evidence in pairs:
+        kind = "relationship" if item.edge.type is EdgeType.RELATED_TO else "location"
+        items.append(
+            {
+                "source_kind": "state_update",
+                "update_kind": kind,
+                "confidence": item.edge.confidence,
+                "proposed": {
+                    "edge_id": item.edge.id,
+                    "subject_id": item.edge.src,
+                    "target_id": item.edge.dst,
+                    "value": item.edge.props.value,
+                    "quote": evidence.audit.quote_text,
+                },
+            }
+        )
+    return items
+
+
+def _create_event_receipt(
+    proposals: SqliteProposalStore,
     project_id: str,
-    canon_version: int,
-    events,
-    edges,
-    fact_ids: tuple[str, ...],
-) -> str:
+    *,
+    request_hash: str,
+    base_canon_version: int,
+    resolved_canon_version: int,
+    pairs,
+    selected: tuple[str, ...],
+    chapter_number: int,
+) -> ConfirmationReceipt:
+    confirmation_id = new_id(EntityType.PROPOSAL, project_id)
     envelope = build_audit_envelope(
-        proposal_id=None,
+        proposal_id=confirmation_id,
         action=ProposalAction.ACCEPT,
         status="ACCEPTED",
-        canon_version=canon_version,
+        canon_version=resolved_canon_version,
         kind="provisional_confirm",
-        events=events,
+        events=pairs,
+    )
+    return proposals.create_confirmation_receipt(
+        receipt_id=confirmation_id,
+        project_id=project_id,
+        fact_kind="event",
+        request_hash=request_hash,
+        base_canon_version=base_canon_version,
+        resolved_canon_version=resolved_canon_version,
+        items=_event_items(pairs),
+        event_ids=selected,
+        edge_ids=(),
+        envelope=envelope.snapshot().model_dump(mode="json"),
+        summary="作者确认的被动事件回执",
+        chapter_number=chapter_number,
+    )
+
+
+def _create_edge_receipt(
+    proposals: SqliteProposalStore,
+    project_id: str,
+    *,
+    request_hash: str,
+    base_canon_version: int,
+    resolved_canon_version: int,
+    pairs,
+    selected: tuple[str, ...],
+    chapter_number: int,
+) -> ConfirmationReceipt:
+    confirmation_id = new_id(EntityType.PROPOSAL, project_id)
+    envelope = build_audit_envelope(
+        proposal_id=confirmation_id,
+        action=ProposalAction.ACCEPT,
+        status="ACCEPTED",
+        canon_version=resolved_canon_version,
+        kind="provisional_confirm",
+        edges=pairs,
+    )
+    return proposals.create_confirmation_receipt(
+        receipt_id=confirmation_id,
+        project_id=project_id,
+        fact_kind="edge",
+        request_hash=request_hash,
+        base_canon_version=base_canon_version,
+        resolved_canon_version=resolved_canon_version,
+        items=_edge_items(pairs),
+        event_ids=(),
+        edge_ids=selected,
+        envelope=envelope.snapshot().model_dump(mode="json"),
+        summary="作者确认的被动关系回执",
+        chapter_number=chapter_number,
+    )
+
+
+def _receipt_confirmation(
+    events: EventStore | None,
+    evidence_store: EdgeReviewStore,
+    project_id: str,
+    receipt: ConfirmationReceipt,
+    decision_id: str,
+) -> ProvisionalConfirmation:
+    payload = receipt.envelope["payload"]
+    if receipt.fact_kind == "event":
+        views: list[EventView] = []
+        for item in payload["events"]:
+            view = events.event(project_id, item["event_id"])
+            if view is None:
+                raise ProposalShapeError(
+                    f"确认回执 {receipt.id} 的 CANON 事件不可读：{item['event_id']}"
+                )
+            views.append(view)
+        return ProvisionalConfirmation(
+            confirmation_id=receipt.id,
+            project_id=project_id,
+            canon_version=receipt.resolved_canon_version,
+            decision_id=decision_id,
+            events=tuple(views),
+        )
+    edge_ids = [item["edge_id"] for item in payload["edges"]]
+    edges = evidence_store.hydrate_current_canon(project_id, edge_ids)
+    return ProvisionalConfirmation(
+        confirmation_id=receipt.id,
+        project_id=project_id,
+        canon_version=receipt.resolved_canon_version,
+        decision_id=decision_id,
         edges=edges,
     )
-    try:
-        return append_audit(
-            conn,
-            project_id=project_id,
-            action=ProposalAction.ACCEPT,
-            envelope=envelope,
-        ).id
-    except Exception as exc:
-        raise DecisionAuditError(
-            "provisional confirmation 已提交，但决策日志写入失败",
-            proposal_id=None,
-            canon_version=canon_version,
-            fact_ids=fact_ids,
-        ) from exc
+
+
+def _resolve_receipt(
+    conn: Connection,
+    proposals: SqliteProposalStore,
+    events: EventStore | None,
+    evidence_store: EdgeReviewStore,
+    project_id: str,
+    receipt: ConfirmationReceipt,
+) -> ProvisionalConfirmation:
+    if receipt.decision_log_id is None:
+        decision, _ = ensure_proposal_audit(conn, proposals, receipt.id)
+        decision_id = decision.id
+    else:
+        decision_id = receipt.decision_log_id
+    return _receipt_confirmation(
+        events, evidence_store, project_id, receipt, decision_id
+    )
 
 
 def confirm_provisional_events(
@@ -119,32 +263,51 @@ def confirm_provisional_events(
 ) -> ProvisionalConfirmation:
     selected = _ids(event_ids, "event")
     evidence_store = edge_review_store or SqliteEdgeReviewStore(conn, graph)
+    proposals = SqliteProposalStore(conn)
+    request_hash = _request_hash("event", selected)
+    existing = proposals.confirmation_receipt(
+        project_id, fact_kind="event", request_hash=request_hash
+    )
+    if existing is not None:
+        return _resolve_receipt(
+            conn, proposals, events, evidence_store, project_id, existing
+        )
     with _transaction(conn):
         current = _version(conn, project_id, expected_canon_version)
+        conflicts = proposals.confirmation_conflicts(
+            project_id, fact_kind="event", fact_ids=selected
+        )
+        if conflicts:
+            raise ConfirmationConflict(
+                f"事件已确认并归属其他回执：{', '.join(conflicts)}"
+            )
         _sources, evidence = _event_sources(
             events, evidence_store, project_id, selected
         )
-        promoted: list[EventView] = []
         try:
-            for event_id in selected:
-                promoted.append(events.clone_to_scope(event_id, InformationScope.CANON))
+            promoted = tuple(
+                events.clone_to_scope(event_id, InformationScope.CANON)
+                for event_id in selected
+            )
         except EventStoreError as exc:
             raise ProposalShapeError(str(exc)) from exc
-        canon_version = project.compare_and_bump_canon_version(conn, project_id, current)
-    pairs = tuple(zip(promoted, evidence, strict=True))
-    decision_id = _append_confirmation(
-        conn,
-        project_id=project_id,
-        canon_version=canon_version,
-        events=pairs,
-        edges=(),
-        fact_ids=selected,
-    )
-    return ProvisionalConfirmation(
-        project_id=project_id,
-        canon_version=canon_version,
-        decision_id=decision_id,
-        events=tuple(promoted),
+        canon_version = project.compare_and_bump_canon_version(
+            conn, project_id, current
+        )
+        pairs = tuple(zip(promoted, evidence, strict=True))
+        receipt = _create_event_receipt(
+            proposals,
+            project_id,
+            request_hash=request_hash,
+            base_canon_version=current,
+            resolved_canon_version=canon_version,
+            pairs=pairs,
+            selected=selected,
+            chapter_number=evidence[0].chapter_number,
+        )
+    decision, _ = ensure_proposal_audit(conn, proposals, receipt.id)
+    return _receipt_confirmation(
+        events, evidence_store, project_id, receipt, decision.id
     )
 
 
@@ -180,8 +343,25 @@ def confirm_provisional_edges(
 ) -> ProvisionalConfirmation:
     selected = _ids(edge_ids, "edge")
     edge_store = edge_review_store or SqliteEdgeReviewStore(conn, graph)
+    proposals = SqliteProposalStore(conn)
+    request_hash = _request_hash("edge", selected)
+    existing = proposals.confirmation_receipt(
+        project_id, fact_kind="edge", request_hash=request_hash
+    )
+    if existing is not None:
+        return _resolve_receipt(
+            conn, proposals, events=None, evidence_store=edge_store,
+            project_id=project_id, receipt=existing,
+        )
     with _transaction(conn):
         current = _version(conn, project_id, expected_canon_version)
+        conflicts = proposals.confirmation_conflicts(
+            project_id, fact_kind="edge", fact_ids=selected
+        )
+        if conflicts:
+            raise ConfirmationConflict(
+                f"关系已确认并归属其他回执：{', '.join(conflicts)}"
+            )
         try:
             sources = edge_store.hydrate_provisional(project_id, selected)
             evidence = tuple(
@@ -191,21 +371,24 @@ def confirm_provisional_edges(
             promoted = edge_store.clone_to_canon(project_id, selected)
         except EdgeReviewValidationError as exc:
             raise ProposalShapeError(str(exc)) from exc
-        canon_version = project.compare_and_bump_canon_version(conn, project_id, current)
-    pairs = tuple((item, ev) for item, ev in zip(promoted, evidence, strict=True))
-    decision_id = _append_confirmation(
-        conn,
-        project_id=project_id,
-        canon_version=canon_version,
-        events=(),
-        edges=pairs,
-        fact_ids=selected,
-    )
-    return ProvisionalConfirmation(
-        project_id=project_id,
-        canon_version=canon_version,
-        decision_id=decision_id,
-        edges=promoted,
+        canon_version = project.compare_and_bump_canon_version(
+            conn, project_id, current
+        )
+        pairs = tuple(zip(promoted, evidence, strict=True))
+        receipt = _create_edge_receipt(
+            proposals,
+            project_id,
+            request_hash=request_hash,
+            base_canon_version=current,
+            resolved_canon_version=canon_version,
+            pairs=pairs,
+            selected=selected,
+            chapter_number=evidence[0].chapter_number,
+        )
+    decision, _ = ensure_proposal_audit(conn, proposals, receipt.id)
+    return _receipt_confirmation(
+        events=None, evidence_store=edge_store, project_id=project_id,
+        receipt=receipt, decision_id=decision.id,
     )
 
 

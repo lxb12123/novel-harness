@@ -213,6 +213,8 @@ def test_m4_tables_and_proposal_columns_are_present(conn: sqlite3.Connection) ->
         "resolution_action",
         "resolved_canon_version",
         "audit_envelope_json",
+        "confirmation_fact_kind",
+        "confirmation_request_hash",
     } <= proposal_columns
 
 

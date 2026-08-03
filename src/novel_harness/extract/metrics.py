@@ -112,6 +112,7 @@ def metrics_for_range(
                 AS rejected_reviews
             FROM proposal_set
             WHERE project_id = ? AND chapter_number BETWEEN ? AND ?
+              AND kind <> 'provisional_confirm'
             """,
             (project_id, first, last),
         ).fetchone()

@@ -58,6 +58,7 @@ class ProposalResolution(BaseModel):
 class ProvisionalConfirmation(BaseModel):
     model_config = _STRICT
 
+    confirmation_id: str
     project_id: str
     canon_version: StrictVersion
     decision_id: str
@@ -75,6 +76,10 @@ class ProposalShapeError(ProposalReviewError, ValueError):
 
 class ProposalActionError(ProposalShapeError):
     """An action is not legal for the proposal's validated shape."""
+
+
+class ConfirmationConflict(ProposalReviewError):
+    """A passive fact already belongs to another durable confirmation receipt."""
 
 
 class DecisionAuditError(ProposalReviewError):
@@ -166,4 +171,3 @@ class ValidatedProposal(BaseModel):
     event_items: tuple[LowConfidenceEventItem, ...] = ()
     edge_items: tuple[LowConfidenceStateItem | EdgeConflictItem, ...] = ()
     characters: tuple[NewCharacterItem, ...] = ()
-
