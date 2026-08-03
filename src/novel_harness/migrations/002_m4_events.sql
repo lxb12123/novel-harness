@@ -279,6 +279,40 @@ END;
 CREATE INDEX idx_extraction_run_status
   ON extraction_run(project_id, status, created_at);
 
+-- REPLACE 走 INSERT + 隐式 DELETE，不会触发下面的 UPDATE 守卫；只在同 ID 已有消费者时校验。
+CREATE TRIGGER chapter_snapshot_children_coherent_insert
+BEFORE INSERT ON chapter_snapshot
+WHEN EXISTS (
+  SELECT 1
+  FROM proposal_set
+  WHERE snapshot_id = NEW.id
+    AND NOT EXISTS (
+      SELECT 1
+      FROM chapter
+      WHERE id = NEW.chapter_id
+        AND project_id = proposal_set.project_id
+        AND (
+          proposal_set.chapter_number IS NULL
+          OR number = proposal_set.chapter_number
+        )
+    )
+)
+OR EXISTS (
+  SELECT 1
+  FROM extraction_run
+  WHERE snapshot_id = NEW.id
+    AND NOT EXISTS (
+      SELECT 1
+      FROM chapter
+      WHERE id = NEW.chapter_id
+        AND project_id = extraction_run.project_id
+        AND number = extraction_run.chapter_number
+    )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'chapter_snapshot replacement would break extraction coherence');
+END;
+
 -- 快照改挂到另一章时，只拦会让现有提案/抽取运行失去项目或章节一致性的更新。
 CREATE TRIGGER chapter_snapshot_children_coherent_update
 BEFORE UPDATE OF chapter_id ON chapter_snapshot

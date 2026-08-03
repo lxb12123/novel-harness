@@ -989,6 +989,36 @@ def test_snapshot_coherence_survives_parent_updates(
             conn.execute("UPDATE chapter SET number = 144 WHERE id = ?", (chapter_id,))
 
 
+def test_snapshot_replace_preserves_referencing_child_coherence(
+    conn: sqlite3.Connection, project: str
+) -> None:
+    evidence_id = _evidence(conn, project, "unused")
+    snapshot_id, chapter_id = conn.execute(
+        "SELECT chapter_snapshot_id, chapter_id FROM evidence WHERE id = ?", (evidence_id,)
+    ).fetchone()
+    conn.execute(
+        "INSERT INTO proposal_set "
+        "(id, project_id, kind, chapter_number, snapshot_id) VALUES (?,?,?,?,?)",
+        ("proposal:replace", project, "edge_conflict", 143, snapshot_id),
+    )
+    conn.execute(
+        "INSERT INTO extraction_run "
+        "(id, project_id, chapter_number, snapshot_id, schema_version, prompt_hash) "
+        "VALUES (?,?,?,?,?,?)",
+        ("run:replace", project, 143, snapshot_id, "m4.v1", "prompt-a"),
+    )
+
+    replace_sql = (
+        "INSERT OR REPLACE INTO chapter_snapshot (id, chapter_id, text, text_sha256) "
+        "VALUES (?,?,?,?)"
+    )
+    conn.execute(replace_sql, (snapshot_id, chapter_id, "他死了。", "d" * 64))
+
+    later_chapter_id = _chapter(conn, project, 144)
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(replace_sql, (snapshot_id, later_chapter_id, "后来得知。", "f" * 64))
+
+
 def test_proposal_links_only_reference_provisional_rows(
     conn: sqlite3.Connection, project: str
 ) -> None:
