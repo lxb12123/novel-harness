@@ -22,7 +22,13 @@ from novel_harness.draft.capabilities import (
 )
 from novel_harness.draft.context import ResolvedConstraints
 from novel_harness.draft.generate import continuation_instruction
-from novel_harness.draft.length import COUNTING_RULE_VERSION, M2_LENGTH_SPEC, measure
+from novel_harness.draft.length import (
+    COUNTING_RULE_VERSION,
+    M2_LENGTH_SPEC,
+    LengthStatus,
+    length_within_tolerance,
+    measure,
+)
 from novel_harness.eval.confound_lint import LEN_TOLERANCE, confound_lint
 from novel_harness.eval.evidence import EvidenceError, inspect_run
 from novel_harness.eval.leak import LeakResult, score_against
@@ -43,7 +49,7 @@ from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.panel.constraints import scene_view
 
 
-PROTOCOL = "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5/6 + ADR 0010/0011"
+PROTOCOL = "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5/6/7/8 + ADR 0010/0011"
 LOCAL = "http://localhost:11434/v1"
 MODEL = "fixture-high-model"
 TELL = "玄血蛊"
@@ -216,12 +222,19 @@ def _final(
     ).constraints
     leak = score_against(seeded.store, seeded.project_id, constraints, output)
     leaked = _leaked(trap.kind, leak)
+    measurement = measure(output, M2_LENGTH_SPEC)
     return (
         {
             "kind": "generation",
             **_identity(trap, arm, form, repeat),
             "output": output,
-            "length": measure(output, M2_LENGTH_SPEC).model_dump(mode="json"),
+            "length": measurement.model_dump(mode="json"),
+            "length_tolerated": (
+                measurement.status is not LengthStatus.WITHIN
+                and length_within_tolerance(
+                    M2_LENGTH_SPEC, measurement.actual_units
+                )
+            ),
             "attempt_count": attempts,
             "leak": leak.model_dump(mode="json"),
             "leaked": leaked,

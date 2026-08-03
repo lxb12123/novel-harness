@@ -1047,7 +1047,7 @@ def gate(
     225–450 次 transport call）。
     它是仪器不是产品：小说作者永远不需要敲它，敲它的是维护者。
 
-    裁决表冻在 `docs/EVAL_PROTOCOL.md` §6（+ 七份修正案），**跑之前就定死了**。
+    裁决表冻在 `docs/EVAL_PROTOCOL.md` §6（+ 八份修正案），**跑之前就定死了**。
     这条命令不解释结果、不挑分支——它只把 `score.decide()` 的出参印出来。
 
     **INVALID 退出码非 0**：那一档的含义是「仪器坏了，重造陷阱重跑」，这一轮没有
@@ -1061,9 +1061,9 @@ def gate(
     from .eval.runner import PROTOCOL_VERSION, load_traps, run_gate, stamped_path
     from .eval.score import Verdict, decide
 
-    if "修正案 1/2/3/4/5/6" not in PROTOCOL_VERSION:
+    if "修正案 1/2/3/4/5/6/7/8" not in PROTOCOL_VERSION:
         _die(
-            "✗ nh gate 已暂停：当前 runner 的 PROTOCOL_VERSION 不含修正案 1/2/3/4/5/6。\n"
+            "✗ nh gate 已暂停：当前 runner 的 PROTOCOL_VERSION 不含修正案 1/2/3/4/5/6/7/8。\n"
             "  旧协议跑出来的 JSONL 不能用于 ADR 0009，还白花钱；"
             "等 PROTOCOL_VERSION 原子升级后再放行。"
         )

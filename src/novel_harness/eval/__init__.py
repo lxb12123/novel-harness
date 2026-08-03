@@ -5,7 +5,7 @@
 （`checks/base.py`：判分器 == Validator，同一份代码）。
 
 **这一层不做语义判断**（ADR 0005）：泄漏 = 集合判断（正文命中禁忌 tell），裁决 = 精确检验。
-完整协议见 `docs/EVAL_PROTOCOL.md` **加七份修正案**（读协议一份不够）。
+完整协议见 `docs/EVAL_PROTOCOL.md` **加八份修正案**（读协议一份不够）。
 
 四块：
 - `leak.py` —— 一次生成漏没漏。禁忌集只经 `panel/constraints`，本层不许自建（§3）。

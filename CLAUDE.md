@@ -136,13 +136,15 @@ endpoint/profile 跑第一轮，跑完且检查 JSONL 才写 ADR 0009。
 协议冻在 [`docs/EVAL_PROTOCOL.md`](docs/EVAL_PROTOCOL.md)，**2026-07-25 已单独提交（`0393088`），预注册成立**——
 它自称「先 commit 的 git 时间戳」是唯一证据，那条 commit 就是它（当时 `runs/` 还不存在）。
 **此后再改协议 = 改卷子**：真要改就开新的一份并说明改了什么，别覆盖那条 commit 的内容。
-**这件事已经做过七次**：`docs/EVAL_PROTOCOL_AMENDMENT_{1,2,3,4,5,6,7}.md`
+**这件事已经做过八次**：`docs/EVAL_PROTOCOL_AMENDMENT_{1,2,3,4,5,6,7,8}.md`
 （口径不自洽 / 裁决表重叠 / 措辞歧义 / **`prior` 不许含 tell 让 gate 恒判 INVALID** /
-长度、续写与通用 provider 档 / **超长 ≤100 宽容，上限 3,100** / **起草先行开放（实验状态）**）。
+长度、续写与通用 provider 档 / **超长 ≤100 宽容，上限 3,100** / **起草先行开放（实验状态）** /
+**长度降权：±10% 宽容带，带外才 INVALID**）。
 都另开文件、冻结正文一字未动；1–4 早于 `synth/`，第 5 份晚于 `synth/`，前五份早于任何真实推理；
 第 6 份在四轮 INVALID（无泄漏率数字、无裁决）之后、任何有效轮之前；第 7 份是产品放行决定
-（考试本身不动），所以全部仍属预注册。
-**动 `eval/` 或 `draft/` 之前必读的是「协议 + 这七份修正案 + [ADR 0010](docs/adr/0010-writer-boundary.md) + [ADR 0011](docs/adr/0011-bilingual-draft-length.md)」，不是协议一份。**
+（考试本身不动）；第 8 份在七轮 INVALID（全部死于长度）之后，把长度这一小题降权——
+所以全部仍属预注册。
+**动 `eval/` 或 `draft/` 之前必读的是「协议 + 这八份修正案 + [ADR 0010](docs/adr/0010-writer-boundary.md) + [ADR 0011](docs/adr/0011-bilingual-draft-length.md)」，不是协议一份。**
 
 **四条真书验收，一条都没验。但堵点不一样，别用一句「缺一本书」盖过去**——其中两条**同时还缺代码**，
 书到手也验不了。在验之前这些数字都是未知，别在文档里替它们编一个：

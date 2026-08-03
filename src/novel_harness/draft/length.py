@@ -217,13 +217,29 @@ M2_LENGTH_SPEC = LengthSpec(
     language=DraftLanguage.ZH,
     min_units=2000,
     target_units=2500,
-    max_units=3100,  # 修正案 6（2026-08-02）：超长 ≤100 宽容，>3100 才 INVALID
+    max_units=3100,  # 修正案 8 起：宽容带 [1800, 3410]，带外才 INVALID
 )
+
+LENGTH_TOLERANCE = 0.10
+"""修正案 8（2026-08-03）：长度按权重比例看待。
+
+长度是仪器卫生，不是考试的核心问题（核心 = 图谱约束对泄漏率的影响）。
+±10% 内的小偏差**记录不判死**（M2：1,800–3,410），只有带外才 INVALID。
+取代修正案 6 的固定 ≤100 宽容（并补了下限侧）。
+"""
+
+
+def length_within_tolerance(spec: LengthSpec, actual_units: int) -> bool:
+    """修正案 8 的宽容带判定：``[min×0.9, max×1.1]`` 闭区间。"""
+    floor = int(spec.min_units * (1 - LENGTH_TOLERANCE))
+    ceiling = int(spec.max_units * (1 + LENGTH_TOLERANCE))
+    return floor <= actual_units <= ceiling
 
 
 __all__ = [
     "COUNTING_RULE_VERSION",
     "DEFAULT_LENGTH_POLICY",
+    "LENGTH_TOLERANCE",
     "M2_LENGTH_SPEC",
     "DraftLanguage",
     "LengthMeasurement",
@@ -231,5 +247,6 @@ __all__ = [
     "LengthSpec",
     "LengthStatus",
     "count_units",
+    "length_within_tolerance",
     "measure",
 ]

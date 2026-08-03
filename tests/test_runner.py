@@ -377,7 +377,7 @@ def test_header_and_cell_records_pin_amendment_5_evidence(
     records = _records(out)
     head = records[0]
     assert head["protocol"] == (
-        "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5/6 + ADR 0010/0011"
+        "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5/6/7/8 + ADR 0010/0011"
     )
     assert head["length_profile"] == M2_LENGTH_SPEC.model_dump(mode="json")
     assert head["counting_rule"] == "nh-length-v1"
@@ -455,7 +455,7 @@ def test_non_high_or_mismatched_plan_fails_before_any_evidence_or_query(
     ("responses", "expected_status", "expected_attempts"),
     [
         (("甲", "乙"), "under", 2),
-        ((("甲" * 3_101),), "over", 1),
+        ((("甲" * 3_411),), "over", 1),
         (((CLEAN, "length"),), "within", 1),
     ],
 )
@@ -511,6 +511,37 @@ def test_length_invalid_is_terminal_and_never_scored(
         "length_invalid",
     ]
     assert not _of_kind(out, "generation")
+
+
+def test_over_within_tolerance_completes_and_is_flagged(
+    store: SqliteStoryGraph,
+    book: Seeded,
+    tmp_path: Path,
+) -> None:
+    """修正案 8：3,300 字（≤3,410 宽容带）是有效 cell，不判死、带标记。"""
+    out = tmp_path / "tolerated.jsonl"
+    long_text = "甲" * 3_300
+
+    def responder(messages: list[dict[str, str]], index: int) -> str:
+        del messages, index
+        return long_text
+
+    client, calls = _client(responder)
+    _raw_run_gate(
+        store,
+        book.pid,
+        [KNOWS_TRAP],
+        config=_config(),
+        plan=_call_plan(_config()),
+        repeats=3,
+        out_path=out,
+        client=client,
+    )
+    records = _records(out)
+    generations = [r for r in records if r["kind"] == "generation"]
+    assert len(generations) == 9  # 3 臂 × 3 次
+    assert all(r["length_tolerated"] is True for r in generations)
+    assert all(r["length"]["actual_units"] == 3_300 for r in generations)
 
 
 def test_first_attempt_is_synced_before_a_continuation_transport_failure(

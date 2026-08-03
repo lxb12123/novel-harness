@@ -78,6 +78,7 @@ from ..draft.length import (
     M2_LENGTH_SPEC,
     LengthMeasurement,
     LengthStatus,
+    length_within_tolerance,
     measure,
 )
 from ..draft.provider import ProviderConfig
@@ -90,14 +91,14 @@ from .confound_lint import LEN_TOLERANCE, confound_lint
 
 
 PROTOCOL_VERSION = (
-    "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5/6 + ADR 0010/0011"
+    "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5/6/7/8 + ADR 0010/0011"
 )
 """这一轮按哪份卷子跑的。**原样进 jsonl 头**，ADR 0009 要能指名道姓引用它。
 
 改协议 = 改卷子，所以这个字符串变了就意味着此后的 run 和此前的不可比。
 """
 
-_AMENDMENT_5_PROTOCOL_MARKER = "修正案 1/2/3/4/5/6"
+_AMENDMENT_5_PROTOCOL_MARKER = "修正案 1/2/3/4/5/6/7/8"
 
 ARMS: tuple[tuple[str, PromptForm], ...] = (
     ("x0", PromptForm.X0),
@@ -294,7 +295,7 @@ def _validate(
         raise ValueError(
             "M2 runner 已暂停：修正案 5 要求的长度、续写、reasoning 与证据格式"
             "尚未完整实现。\n"
-            "等 PROTOCOL_VERSION 原子升级到修正案 1/2/3/4/5/6 后才能运行；"
+            "等 PROTOCOL_VERSION 原子升级到修正案 1/2/3/4/5/6/7/8 后才能运行；"
             "本拒绝早于建立目录、证据文件和任何模型请求。"
         )
     if config is None:
@@ -491,10 +492,15 @@ def run_gate(
                         on_attempt=record_attempt,
                     )
                     invalid_reasons: list[str] = []
-                    if result.length.status is LengthStatus.UNDER:
-                        invalid_reasons.append("under_min")
-                    elif result.length.status is LengthStatus.OVER:
-                        invalid_reasons.append("over_max")
+                    # 修正案 8：±10% 宽容带内的小偏差记录不判死（长度是低权重维度），
+                    # 只有带外（M2：<1800 或 >3410）才算仪器坏。
+                    if not length_within_tolerance(
+                        M2_LENGTH_SPEC, result.length.actual_units
+                    ):
+                        if result.length.actual_units < M2_LENGTH_SPEC.min_units:
+                            invalid_reasons.append("under_min")
+                        else:
+                            invalid_reasons.append("over_max")
                     if result.truncated:
                         invalid_reasons.append("finish_reason_length")
                     if invalid_reasons:
@@ -538,6 +544,12 @@ def run_gate(
                             "repeat": repeat,
                             "output": result.text,
                             "length": result.length.model_dump(mode="json"),
+                            "length_tolerated": (
+                                result.length.status is not LengthStatus.WITHIN
+                                and length_within_tolerance(
+                                    M2_LENGTH_SPEC, result.length.actual_units
+                                )
+                            ),
                             "attempt_count": len(result.attempts),
                             "truncated": result.truncated,
                             "prompt_tokens": result.prompt_tokens,

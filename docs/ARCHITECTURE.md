@@ -272,7 +272,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 
 ## 当前状态
 
-**M0 + M1 + M1.5 已落地；M2 的修正案 5/6/7 / ADR 0011 已预注册，配套实现与 endpoint/profile 已冻结，剩第一轮有效真模型运行**（1033 个 pytest + 33 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
+**M0 + M1 + M1.5 已落地；M2 的修正案 5/6/7/8 / ADR 0011 已预注册，配套实现与 endpoint/profile 已冻结，剩第一轮有效真模型运行**（1034 个 pytest + 33 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
 
 > **本节的数字是全仓唯一副本，且 `tests/test_doc_numbers.py` 会拦住第二份。**
 > `README.md` / `CLAUDE.md` / `frontend/README.md` 里只留指针，不许再抄一份数字过去。
@@ -286,7 +286,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 > 守卫钉住的是**能在运行时数出来**的那些（路由 34 / `/api` 33 / 501 stub 4 / 错误映射 17 /
 > CLI 叶子 17 / 建表 13 / fixture 端点 23 / `ALL_CHECKS` 3），改错必红、**删掉也必红**（不静默 skip）。
 > **它罩不住 pytest / vitest 这两个数**——在 pytest 里数 pytest 要递归，
-> 所以「1033」和「33」仍然只靠人手改，改代码后请顺手跑一次 `uv run pytest -q` 更新这一处。
+> 所以「1034」和「33」仍然只靠人手改，改代码后请顺手跑一次 `uv run pytest -q` 更新这一处。
 > （2026-07-30 那天这个数从 690 走到 801，中途在文档里错过一次——**这条盲区是真的，不是假想的**。）
 
 > ⚠️ **「全绿」目前只在本机成立。本仓库还没有 git remote，`ci.yml` / `release.yml` 一次都没执行过。**
@@ -344,7 +344,7 @@ Fake 够不着的（label 校验 / 重复边 StoreError / `secret_ids` 默认列
 **endpoint/profile 已于 2026-08-02 冻结**（`deepseek-v4-flash` @ `https://api.deepseek.com`，
 见 [M2_ENDPOINT_PROFILE.md](M2_ENDPOINT_PROFILE.md)，不含 key、单独 commit）。
 length/capability/streaming/continuation/JSONL 实现与回归测试已于 2026-08-01 全部落地并离线验证
-（1033 个 pytest / 33 个 vitest 全绿，见下）；2026-08-02 又补了两件事：DeepSeek 共享输出预留
+（1034 个 pytest / 33 个 vitest 全绿，见下）；2026-08-02 又补了两件事：DeepSeek 共享输出预留
 按 0.95 审计入册（thinking 与正文共池、官方无占比；实测右尾单 cell 达 40,000 tokens），
 `nh gate` 按 env 从注册表解析并冻结 plan（high reasoning、request 150,000、streaming）。
 
@@ -439,7 +439,7 @@ ADR 0009 不写（协议 §8 定死它「跑完写」）、任何地方都不会
 所以之后任何 `runs/*.jsonl` 都晚于它、都算数。**这条 commit 之后再改协议就等于改卷子**——
 真要改，开一份新的、说明改了什么和为什么，别覆盖。
 
-**它此后已经被改过七次，改法合规但你必须知道它们存在**：
+**它此后已经被改过八次，改法合规但你必须知道它们存在**：
 [`EVAL_PROTOCOL_AMENDMENT_1.md`](EVAL_PROTOCOL_AMENDMENT_1.md)（两处口径不自洽）、
 [`_2`](EVAL_PROTOCOL_AMENDMENT_2.md) / [`_3`](EVAL_PROTOCOL_AMENDMENT_3.md)（裁决表重叠 + 三处措辞歧义）、
 [`_4`](EVAL_PROTOCOL_AMENDMENT_4.md)（**§4 的「`prior` 不许含 tell」让整台仪器不通电**）、
@@ -448,8 +448,10 @@ ADR 0009 不写（协议 §8 定死它「跑完写」）、任何地方都不会
 [`_6`](EVAL_PROTOCOL_AMENDMENT_6.md)（**超长 ≤100 宽容**：上限 3,000 → 3,100；
 2026-08-02 在四轮 INVALID 之后裁定，§6 及格线一个数字没动）、
 [`_7`](EVAL_PROTOCOL_AMENDMENT_7.md)（**起草先行开放（实验状态）**：
-产品放行决定，考试 `PROTOCOL_VERSION` 与裁决表原样）。
-七份都是**另开文件**、冻结正文逐字节未动（从 `## 1.` 起与 `0393088` byte-exact）。
+产品放行决定，考试 `PROTOCOL_VERSION` 与裁决表原样）、
+[`_8`](EVAL_PROTOCOL_AMENDMENT_8.md)（**长度降权**：±10% 宽容带 1,800–3,410，
+带内记录不判死、带外才 INVALID；七轮全死于长度之后裁定）。
+八份都是**另开文件**、冻结正文逐字节未动（从 `## 1.` 起与 `0393088` byte-exact）。
 1–4 写下时 `synth/` 尚不存在；第 5 份晚于 `synth/`，但五份都早于真实推理与 `runs/`，所以仍属预注册。
 **动 `eval/` 或 `draft/` 之前要读的是「协议 + 这五份修正案 + ADR 0010/0011」，不是协议一份。**
 

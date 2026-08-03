@@ -24,6 +24,7 @@ from ..draft.length import (
     M2_LENGTH_SPEC,
     LengthMeasurement,
     LengthStatus,
+    length_within_tolerance,
     measure,
 )
 from ..graph import StoryGraph
@@ -42,7 +43,7 @@ from .score import (
 
 
 EXPECTED_PROTOCOL_VERSION = (
-    "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5/6 + ADR 0010/0011"
+    "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4/5/6/7/8 + ADR 0010/0011"
 )
 CONTINUATION_POLICY = {"max_attempts": 2, "trigger": "under_min_only"}
 
@@ -563,9 +564,22 @@ def inspect_run(
                 final_measurement = measure(final_output, M2_LENGTH_SPEC)
                 if _measurement(final, "length") != final_measurement:
                     raise EvidenceError(f"line {final.line}: recorded final length/count is incorrect")
-                if final_measurement.status is not LengthStatus.WITHIN:
+                if not length_within_tolerance(
+                    M2_LENGTH_SPEC, final_measurement.actual_units
+                ):
                     raise EvidenceError(
                         f"line {final.line}: out-of-range final was recorded as a generation"
+                    )
+                expected_tolerated = (
+                    final_measurement.status is not LengthStatus.WITHIN
+                    and length_within_tolerance(
+                        M2_LENGTH_SPEC, final_measurement.actual_units
+                    )
+                )
+                if _boolean(final, "length_tolerated") is not expected_tolerated:
+                    raise EvidenceError(
+                        f"line {final.line}: length_tolerated flag disagrees with the "
+                        "recomputed measurement"
                     )
                 if last_finish_reason == "length":
                     raise EvidenceError(
