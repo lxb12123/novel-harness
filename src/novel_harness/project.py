@@ -9,12 +9,11 @@
 opens_connections` 明文允许的那一个。**别把这个文件当模板复制到 `checks/`**：
 规则收 `CheckContext`，收连接的规则不是纯函数。
 
-── 没有 bump_canon_version，也没有任何 setter ────────────────────────────
-这不是遗漏。`canon_version` 今天**零读者**（全仓库只有 SQL 的 DEFAULT 和
-`graph/models.py` 的默认值 0 在提它），第一个读者是 M4 的 STALE_BASE_VERSION 冲突检测。
-按 ADR 0005 的增长规则：没有消费者就不长出来——一个没人读的计数器只会在它第一次
-被读的那天暴露出「这三年它一直是 0」，而那时候已经没人记得该在哪些写路径上 +1 了。
-到 M4 真的要它时，连同它的读者一起加。
+── M4 唯一的版本写入是 compare-and-bump ──────────────────────────────────
+M4 的第一个读者是 STALE_BASE_VERSION 冲突检测。因此这里只提供
+一个严格 compare-and-bump：比较成功才 +1，不暴露 setter，也不替
+业务层 commit。调用方必须把它放在写 CANON 和终态 proposal 的同一个
+`BEGIN IMMEDIATE` 里，三者才能在失败时一起回滚。
 """
 
 from __future__ import annotations
@@ -38,13 +37,34 @@ class Project(BaseModel):
     canon_version: int = 0
 
 
+class ProjectNotFound(LookupError):
+    """A project-scoped operation named a project that does not exist."""
+
+    def __init__(self, project_id: str) -> None:
+        self.project_id = project_id
+        super().__init__(f"项目不存在：{project_id}")
+
+
+class StaleBaseVersion(RuntimeError):
+    """The caller reviewed an older canon base than the locked project row."""
+
+    def __init__(self, project_id: str, *, expected: int, current: int) -> None:
+        self.project_id = project_id
+        self.expected = expected
+        self.current = current
+        super().__init__(
+            f"STALE_BASE_VERSION: project={project_id}, expected={expected}, current={current}"
+        )
+
+
 def create(conn: Connection, *, name: str, root_path: str) -> Project:
     """建一个项目。**本模块唯一的写入口。**
 
     id 走 `ids.new_project_id()`（两段不是三段）——`new_id(EntityType.PROJECT, ...)`
     会抛，项目无法以自身为作用域。
 
-    没有 `canon_version` 参数：它由 SQL 的 DEFAULT 起于 0，且此后无人写它（见模块 docstring）。
+    没有 `canon_version` 参数：它由 SQL 的 DEFAULT 起于 0，之后只能由
+    `compare_and_bump_canon_version()` 在审阅事务中 CAS 递增。
     """
     if not name:
         raise ValueError("name 不能为空：它是作者在 nh init 之后唯一认得出这个库的东西")
@@ -78,6 +98,42 @@ def list_all(conn: Connection) -> list[Project]:
         "SELECT id, name, root_path, canon_version FROM project ORDER BY name"
     ).fetchall()
     return [_row_to_project(r) for r in rows]
+
+
+def require_canon_version(conn: Connection, project_id: str) -> int:
+    """Return the current canon version or fail loudly for an unknown project."""
+    row = conn.execute(
+        "SELECT canon_version FROM project WHERE id = ?",
+        (project_id,),
+    ).fetchone()
+    if row is None:
+        raise ProjectNotFound(project_id)
+    return int(row[0])
+
+
+def compare_and_bump_canon_version(
+    conn: Connection,
+    project_id: str,
+    expected: int,
+) -> int:
+    """Atomically bump exactly one version, without beginning or committing a transaction."""
+    if type(expected) is not int:
+        raise TypeError("expected canon_version 必须是严格 int（bool 也不接受）")
+    if expected < 0:
+        raise ValueError("expected canon_version 不能为负数")
+    row = conn.execute(
+        """
+        UPDATE project
+        SET canon_version = canon_version + 1
+        WHERE id = ? AND canon_version = ?
+        RETURNING canon_version
+        """,
+        (project_id, expected),
+    ).fetchone()
+    if row is not None:
+        return int(row[0])
+    current = require_canon_version(conn, project_id)
+    raise StaleBaseVersion(project_id, expected=expected, current=current)
 
 
 def _row_to_project(row: Any) -> Project:

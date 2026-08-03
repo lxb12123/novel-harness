@@ -1,9 +1,4 @@
-"""project.py —— `project` 表的唯一拥有者。
-
-这里测的和 test_decisions.py 一样，一半是「不存在」：没有 setter、没有
-bump_canon_version。`canon_version` 今天零读者，一个没人读的计数器长出写入口，
-到 M4 才会暴露出「它一直是 0」——那时候已经没人记得该在哪些路径上 +1 了。
-"""
+"""project.py —— `project` 表的唯一拥有者。"""
 
 from __future__ import annotations
 
@@ -13,7 +8,15 @@ import pytest
 
 from novel_harness import project
 from novel_harness.db import IN_MEMORY, connect, migrate
-from novel_harness.project import Project, create, get
+from novel_harness.project import (
+    Project,
+    ProjectNotFound,
+    StaleBaseVersion,
+    compare_and_bump_canon_version,
+    create,
+    get,
+    require_canon_version,
+)
 
 
 @pytest.fixture
@@ -31,7 +34,7 @@ def conn():
 _MUTATION_PREFIXES = ("update", "delete", "remove", "edit", "set_", "patch", "drop", "purge", "bump")
 
 
-def test_module_exposes_no_mutation_entry_point() -> None:
+def test_module_exposes_only_the_m4_compare_and_bump_mutation() -> None:
     public = [
         name
         for name, obj in vars(project).items()
@@ -39,10 +42,15 @@ def test_module_exposes_no_mutation_entry_point() -> None:
         and inspect.isfunction(obj)
         and obj.__module__ == project.__name__
     ]
-    # create（唯一写入口）+ get / list_all（只读）。守的是「没有修改入口」——见下面的前缀循环。
-    assert sorted(public) == ["create", "get", "list_all"]
-    for name in public:
-        assert not name.startswith(_MUTATION_PREFIXES), f"project.{name} 是个修改入口"
+    assert sorted(public) == [
+        "compare_and_bump_canon_version",
+        "create",
+        "get",
+        "list_all",
+        "require_canon_version",
+    ]
+    mutations = [name for name in public if name.startswith(_MUTATION_PREFIXES)]
+    assert mutations == []
 
 
 def test_project_model_is_frozen() -> None:
@@ -114,3 +122,38 @@ def test_create_has_no_id_parameter() -> None:
     # 而 project_short() 对任何形状都给得出短指纹，于是错不会当场报，只会在
     # 「这个 node 属于哪个项目」上静默地永远返 False。
     assert "id" not in inspect.signature(create).parameters
+
+
+def test_require_and_compare_bump_are_strict_and_do_not_commit(conn) -> None:
+    made = create(conn, name="青云记-CAS", root_path=".")
+
+    conn.execute("BEGIN IMMEDIATE")
+    assert require_canon_version(conn, made.id) == 0
+    assert compare_and_bump_canon_version(conn, made.id, 0) == 1
+    assert require_canon_version(conn, made.id) == 1
+    assert conn.in_transaction
+    conn.rollback()
+
+    assert require_canon_version(conn, made.id) == 0
+
+
+@pytest.mark.parametrize("expected", [True, -1, 1.0, "0", None])
+def test_compare_bump_rejects_non_strict_versions(conn, expected: object) -> None:
+    made = create(conn, name="青云记-strict", root_path=".")
+    with pytest.raises((TypeError, ValueError)):
+        compare_and_bump_canon_version(conn, made.id, expected)  # type: ignore[arg-type]
+    assert require_canon_version(conn, made.id) == 0
+
+
+def test_compare_bump_distinguishes_missing_and_stale(conn) -> None:
+    made = create(conn, name="青云记-stale", root_path=".")
+    with pytest.raises(ProjectNotFound, match="project:missing"):
+        require_canon_version(conn, "project:missing")
+    with pytest.raises(ProjectNotFound, match="project:missing"):
+        compare_and_bump_canon_version(conn, "project:missing", 0)
+    with pytest.raises(StaleBaseVersion) as exc_info:
+        compare_and_bump_canon_version(conn, made.id, 1)
+    assert exc_info.value.project_id == made.id
+    assert exc_info.value.expected == 1
+    assert exc_info.value.current == 0
+    assert require_canon_version(conn, made.id) == 0

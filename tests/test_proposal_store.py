@@ -10,6 +10,7 @@ import threading
 import pytest
 
 from novel_harness.db import IN_MEMORY, Connection, connect, migrate
+from novel_harness.decisions import DecisionKind, Verdict, append as append_decision
 from novel_harness.events import (
     ProposalCreate,
     ProposalAlreadyResolved,
@@ -588,4 +589,82 @@ def test_mark_resolved_rejects_an_invalid_decision_reference_atomically(
             ),
         )
 
+    assert store.get(project_id, pending.id) == pending
+
+
+def test_attach_decision_is_terminal_only_same_project_and_idempotent(conn: Connection) -> None:
+    project_id = create_project(conn, name="青云记-attach", root_path=".").id
+    other_id = create_project(conn, name="别书-attach", root_path=".").id
+    store = SqliteProposalStore(
+        conn, proposal_id_factory=lambda _project_id: "proposal:attach"
+    )
+    pending = store.create(
+        ProposalCreate(project_id=project_id, kind="review", items=[{"item": "review"}])
+    )
+    decision = append_decision(
+        conn,
+        project_id=project_id,
+        kind=DecisionKind.PROPOSAL_REVIEW,
+        decision=Verdict.ACCEPT,
+    )
+    append_decision(
+        conn,
+        project_id=other_id,
+        kind=DecisionKind.PROPOSAL_REVIEW,
+        decision=Verdict.ACCEPT,
+    )
+    different_decision = append_decision(
+        conn,
+        project_id=project_id,
+        kind=DecisionKind.PROPOSAL_REVIEW,
+        decision=Verdict.ACCEPT,
+    )
+
+    with pytest.raises(ProposalValidationError, match="terminal|PENDING"):
+        store.attach_decision(pending.id, decision.id)
+    store.mark_resolved(pending.id, ProposalResolutionMark(status="ACCEPTED"))
+    attached = store.attach_decision(pending.id, decision.id)
+    assert attached.decision_log_id == decision.id
+    assert store.attach_decision(pending.id, decision.id) == attached
+
+    with pytest.raises(ProposalValidationError, match="already|different|已"):
+        store.attach_decision(pending.id, different_decision.id)
+    assert store.get(project_id, pending.id) == attached
+
+
+def test_attach_decision_rejects_cross_project_and_unaudited_lists_only_holes(
+    conn: Connection,
+) -> None:
+    project_id = create_project(conn, name="青云记-holes", root_path=".").id
+    other_id = create_project(conn, name="别书-holes", root_path=".").id
+    generated = iter(["proposal:hole", "proposal:audited", "proposal:pending"])
+    store = SqliteProposalStore(conn, proposal_id_factory=lambda _pid: next(generated))
+    hole = store.create(
+        ProposalCreate(project_id=project_id, kind="review", items=[{"n": 1}])
+    )
+    audited = store.create(
+        ProposalCreate(project_id=project_id, kind="review", items=[{"n": 2}])
+    )
+    pending = store.create(
+        ProposalCreate(project_id=project_id, kind="review", items=[{"n": 3}])
+    )
+    store.mark_resolved(hole.id, ProposalResolutionMark(status="REJECTED"))
+    store.mark_resolved(audited.id, ProposalResolutionMark(status="ACCEPTED"))
+    wrong = append_decision(
+        conn,
+        project_id=other_id,
+        kind=DecisionKind.PROPOSAL_REVIEW,
+        decision=Verdict.ACCEPT,
+    )
+    with pytest.raises(ProposalValidationError, match="项目|project"):
+        store.attach_decision(audited.id, wrong.id)
+    right = append_decision(
+        conn,
+        project_id=project_id,
+        kind=DecisionKind.PROPOSAL_REVIEW,
+        decision=Verdict.ACCEPT,
+    )
+    store.attach_decision(audited.id, right.id)
+
+    assert [record.id for record in store.unaudited(project_id)] == [hole.id]
     assert store.get(project_id, pending.id) == pending

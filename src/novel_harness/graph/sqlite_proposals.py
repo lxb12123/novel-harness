@@ -235,6 +235,13 @@ class SqliteProposalStore:
             decision_log_id=row["decision_log_id"],
         )
 
+    def get_by_id(self, proposal_id: str) -> ProposalRecord | None:
+        row = self._conn.execute(
+            "SELECT project_id FROM proposal_set WHERE id = ?",
+            (proposal_id,),
+        ).fetchone()
+        return None if row is None else self.get(str(row[0]), proposal_id)
+
     def mark_resolved(
         self,
         proposal_id: str,
@@ -275,3 +282,79 @@ class SqliteProposalStore:
             if record is None:
                 raise RuntimeError(f"resolved proposal 更新后不可读：{proposal_id}")
             return record
+
+    def attach_decision(self, proposal_id: str, decision_id: str) -> ProposalRecord:
+        """Attach audit only after terminal business state has committed.
+
+        Retrying the same attachment is idempotent.  A different decision id is never allowed to
+        overwrite history, and the decision must belong to the proposal's project.
+        """
+        if not decision_id:
+            raise ProposalValidationError("decision_id 不能为空")
+        with _transaction(self._conn):
+            row = self._conn.execute(
+                """
+                SELECT project_id, status, decision_log_id
+                FROM proposal_set WHERE id = ?
+                """,
+                (proposal_id,),
+            ).fetchone()
+            if row is None:
+                raise ProposalNotFound(f"proposal 不存在：{proposal_id}")
+            if row["status"] == "PENDING":
+                raise ProposalValidationError(
+                    f"proposal {proposal_id} 仍是 PENDING，只能给 terminal proposal 附审计"
+                )
+            decision = self._conn.execute(
+                "SELECT project_id FROM decision_log WHERE id = ?",
+                (decision_id,),
+            ).fetchone()
+            if decision is None or decision["project_id"] != row["project_id"]:
+                raise ProposalValidationError(
+                    f"decision_log {decision_id} 不存在或不属于 proposal 项目 "
+                    f"{row['project_id']}"
+                )
+            attached = row["decision_log_id"]
+            if attached == decision_id:
+                record = self.get(str(row["project_id"]), proposal_id)
+                if record is None:
+                    raise RuntimeError(f"proposal 附审计后不可读：{proposal_id}")
+                return record
+            if attached is not None:
+                raise ProposalValidationError(
+                    f"proposal {proposal_id} 已附审计 {attached}，不能换成 {decision_id}"
+                )
+            updated = self._conn.execute(
+                """
+                UPDATE proposal_set SET decision_log_id = ?
+                WHERE id = ? AND status <> 'PENDING' AND decision_log_id IS NULL
+                """,
+                (decision_id, proposal_id),
+            )
+            if updated.rowcount != 1:
+                raise ProposalValidationError(
+                    f"proposal {proposal_id} 审计附加 CAS 失败"
+                )
+            record = self.get(str(row["project_id"]), proposal_id)
+            if record is None:
+                raise RuntimeError(f"proposal 附审计后不可读：{proposal_id}")
+            return record
+
+    def unaudited(self, project_id: str) -> list[ProposalRecord]:
+        """List terminal proposals whose post-commit decision attachment is missing."""
+        with _read_snapshot(self._conn):
+            rows = self._conn.execute(
+                """
+                SELECT id FROM proposal_set
+                WHERE project_id = ? AND status <> 'PENDING' AND decision_log_id IS NULL
+                ORDER BY resolved_at, id
+                """,
+                (project_id,),
+            ).fetchall()
+            records: list[ProposalRecord] = []
+            for row in rows:
+                record = self.get(project_id, str(row[0]))
+                if record is None:
+                    raise RuntimeError(f"unaudited proposal 不可读：{row[0]}")
+                records.append(record)
+            return records

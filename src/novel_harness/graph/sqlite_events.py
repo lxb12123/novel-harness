@@ -194,7 +194,7 @@ class SqliteEventStore:
             source = self._conn.execute(
                 """
                 SELECT project_id, chapter_number, summary, information_scope, status,
-                       evidence_id, evidence_status
+                       valid_to_chapter, evidence_id, evidence_status
                 FROM story_event
                 WHERE id = ?
                 """,
@@ -210,10 +210,12 @@ class SqliteEventStore:
             if (
                 source["status"] != EdgeStatus.ACTIVE.value
                 or source["evidence_status"] != EvidenceStatus.FRESH.value
+                or source["valid_to_chapter"] is not None
             ):
                 raise EventStoreError(
-                    f"clone_to_scope 的源必须是 ACTIVE / FRESH，{event_id} 是 "
-                    f"{source['status']} / {source['evidence_status']}"
+                    f"clone_to_scope 的源必须是 ACTIVE / FRESH / 未闭合，"
+                    f"{event_id} 是 {source['status']} / {source['evidence_status']} / "
+                    f"valid_to={source['valid_to_chapter']}"
                 )
             project_id = str(source["project_id"])
             chapter_number = int(source["chapter_number"])
