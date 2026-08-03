@@ -321,3 +321,9 @@ def test_proposal_store_protocol_uses_concrete_proposal_contracts() -> None:
         "resolution": ProposalResolutionMark,
         "return": ProposalRecord,
     }
+    assert get_type_hints(ProposalStore.rebase_pending_cohort) == {
+        "resolved_proposal_id": str,
+        "from_canon_version": int,
+        "to_canon_version": int,
+        "return": int,
+    }

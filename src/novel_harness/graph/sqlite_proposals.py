@@ -336,6 +336,82 @@ class SqliteProposalStore:
                 raise RuntimeError(f"resolved proposal 更新后不可读：{proposal_id}")
             return record
 
+    def rebase_pending_cohort(
+        self,
+        resolved_proposal_id: str,
+        from_canon_version: int,
+        to_canon_version: int,
+    ) -> int:
+        """Advance only pending siblings emitted by the exact same extraction run.
+
+        The selected proposal must already prove a real one-version Canon mutation.  Rebased
+        siblings still undergo full fact/current-Canon validation when they are reviewed later.
+        """
+        if from_canon_version < 0 or to_canon_version != from_canon_version + 1:
+            raise ProposalValidationError("cohort rebase 必须对应一次 one-version Canon bump")
+        with _transaction(self._conn):
+            row = self._conn.execute(
+                """
+                SELECT proposal_set.project_id, proposal_set.status,
+                       proposal_set.resolution_action,
+                       proposal_set.base_canon_version,
+                       proposal_set.resolved_canon_version,
+                       proposal_set.chapter_number, proposal_set.snapshot_id,
+                       proposal_set.schema_version, proposal_set.prompt_hash,
+                       project.canon_version AS project_canon_version
+                FROM proposal_set
+                JOIN project ON project.id = proposal_set.project_id
+                WHERE proposal_set.id = ?
+                """,
+                (resolved_proposal_id,),
+            ).fetchone()
+            if row is None:
+                raise ProposalNotFound(f"proposal 不存在：{resolved_proposal_id}")
+            expected_status = {
+                "accept": "ACCEPTED",
+                "edit": "EDITED",
+            }.get(row["resolution_action"])
+            if (
+                expected_status is None
+                or row["status"] != expected_status
+                or int(row["base_canon_version"]) != from_canon_version
+                or row["resolved_canon_version"] != to_canon_version
+                or row["project_canon_version"] != to_canon_version
+            ):
+                raise ProposalValidationError(
+                    "cohort rebase 需要已提交且匹配 watermark 的 terminal Canon bump"
+                )
+            identity = (
+                row["chapter_number"],
+                row["snapshot_id"],
+                row["schema_version"],
+                row["prompt_hash"],
+            )
+            if any(value is None for value in identity):
+                return 0
+            updated = self._conn.execute(
+                """
+                UPDATE proposal_set
+                SET base_canon_version = ?
+                WHERE id <> ?
+                  AND project_id = ?
+                  AND status = 'PENDING'
+                  AND base_canon_version = ?
+                  AND chapter_number = ?
+                  AND snapshot_id = ?
+                  AND schema_version = ?
+                  AND prompt_hash = ?
+                """,
+                (
+                    to_canon_version,
+                    resolved_proposal_id,
+                    row["project_id"],
+                    from_canon_version,
+                    *identity,
+                ),
+            )
+            return updated.rowcount
+
     def attach_decision(self, proposal_id: str, decision_id: str) -> ProposalRecord:
         """Attach audit only after terminal business state has committed.
 

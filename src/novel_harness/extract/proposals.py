@@ -361,6 +361,12 @@ def review_proposal(
                 audit_envelope=envelope.snapshot(),
             ),
         )
+        if review.action in {ProposalAction.ACCEPT, ProposalAction.EDIT}:
+            proposals.rebase_pending_cohort(
+                proposal.id,
+                current,
+                canon_version,
+            )
 
     decision, _audited = ensure_proposal_audit(conn, proposals, proposal.id)
     return _resolution(

@@ -638,6 +638,57 @@ def test_mark_resolved_rejects_an_invalid_decision_reference_atomically(
     assert store.get(project_id, pending.id) == pending
 
 
+def test_rebase_pending_cohort_requires_a_real_terminal_canon_bump(
+    conn: Connection,
+) -> None:
+    project_id, _event_id, _edge_id, snapshot_id = _seed_link_targets(conn)
+    generated = iter(["proposal:selected", "proposal:sibling", "proposal:rejected"])
+    store = SqliteProposalStore(conn, proposal_id_factory=lambda _pid: next(generated))
+
+    def create():
+        return store.create(
+            ProposalCreate(
+                project_id=project_id,
+                kind="review",
+                items=[{"item": "review"}],
+                chapter_number=1,
+                snapshot_id=snapshot_id,
+                schema_version="m4.analysis.v1",
+                prompt_hash="prompt:test",
+            )
+        )
+
+    selected = create()
+    sibling = create()
+    rejected = create()
+    with pytest.raises(ProposalValidationError, match="terminal|bump"):
+        store.rebase_pending_cohort(
+            selected.id,
+            from_canon_version=0,
+            to_canon_version=1,
+        )
+
+    store.mark_resolved(selected.id, _resolution_mark(selected, "ACCEPTED"))
+    with pytest.raises(ProposalValidationError, match="version|bump"):
+        store.rebase_pending_cohort(
+            selected.id,
+            from_canon_version=0,
+            to_canon_version=2,
+        )
+
+    conn.execute(
+        "UPDATE project SET canon_version = 1 WHERE id = ?",
+        (project_id,),
+    )
+    assert store.rebase_pending_cohort(
+        selected.id,
+        from_canon_version=0,
+        to_canon_version=1,
+    ) == 2
+    assert store.get(project_id, sibling.id).base_canon_version == 1
+    assert store.get(project_id, rejected.id).base_canon_version == 1
+
+
 def test_attach_decision_is_terminal_only_same_project_and_idempotent(conn: Connection) -> None:
     project_id = create_project(conn, name="青云记-attach", root_path=".").id
     store = SqliteProposalStore(

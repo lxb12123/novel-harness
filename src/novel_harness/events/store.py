@@ -110,6 +110,13 @@ class ProposalStore(Protocol):
         resolution: ProposalResolutionMark,
     ) -> ProposalRecord: ...
 
+    def rebase_pending_cohort(
+        self,
+        resolved_proposal_id: str,
+        from_canon_version: int,
+        to_canon_version: int,
+    ) -> int: ...
+
     def attach_decision(self, proposal_id: str, decision_id: str) -> ProposalRecord: ...
 
     def unaudited(self, project_id: str) -> list[ProposalRecord]: ...

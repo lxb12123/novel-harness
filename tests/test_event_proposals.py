@@ -637,6 +637,181 @@ def test_proposal_base_stale_after_another_canon_change(world: ReviewWorld) -> N
     ).fetchone()[0] == 0
 
 
+def test_accept_rebases_pending_siblings_from_the_same_extraction_cohort(
+    world: ReviewWorld,
+) -> None:
+    first = _make_proposal(
+        world,
+        items=[_event_item(world)],
+        event_ids=[world.event_id],
+    )
+    sibling = _make_proposal(
+        world,
+        items=[_edge_item(world, world.location_edge_id, world.location_quote)],
+        edge_ids=[world.location_edge_id],
+    )
+    final_sibling = _make_proposal(
+        world,
+        items=[_edge_item(world, world.relation_edge_id, world.relation_quote)],
+        edge_ids=[world.relation_edge_id],
+    )
+
+    assert _review(world, first.id, ProposalAction.ACCEPT).canon_version == 1
+    rebased = world.proposals.get(world.project_id, sibling.id)
+    assert rebased is not None
+    assert rebased.status.value == "PENDING"
+    assert rebased.base_canon_version == 1
+    assert world.proposals.get(
+        world.project_id, final_sibling.id
+    ).base_canon_version == 1
+
+    assert _review(world, sibling.id, ProposalAction.ACCEPT).canon_version == 2
+    assert world.proposals.get(
+        world.project_id, final_sibling.id
+    ).base_canon_version == 2
+    assert _review(world, final_sibling.id, ProposalAction.ACCEPT).canon_version == 3
+    assert require_canon_version(world.conn, world.project_id) == 3
+    assert len(read_decisions(world.conn, world.project_id)) == 3
+
+
+def test_edit_rebases_pending_siblings_from_the_same_extraction_cohort(
+    world: ReviewWorld,
+) -> None:
+    edited = _make_proposal(
+        world,
+        items=[_event_item(world)],
+        event_ids=[world.event_id],
+    )
+    sibling = _make_proposal(
+        world,
+        items=[_edge_item(world, world.location_edge_id, world.location_quote)],
+        edge_ids=[world.location_edge_id],
+    )
+
+    result = _review(
+        world,
+        edited.id,
+        ProposalAction.EDIT,
+        edited_summary="顾清音在风雪中救下萧决。",
+    )
+
+    assert result.canon_version == 1
+    assert world.proposals.get(world.project_id, sibling.id).base_canon_version == 1
+
+
+def test_accept_rebases_only_the_exact_non_null_extraction_cohort(
+    world: ReviewWorld,
+) -> None:
+    selected = _make_proposal(
+        world,
+        items=[_event_item(world)],
+        event_ids=[world.event_id],
+    )
+    same_cohort = _make_proposal(
+        world,
+        items=[_edge_item(world, world.location_edge_id, world.location_quote)],
+        edge_ids=[world.location_edge_id],
+    )
+    different_prompt = world.proposals.create(
+        ProposalCreate(
+            project_id=world.project_id,
+            kind="low_confidence_main",
+            items=[_edge_item(world, world.relation_edge_id, world.relation_quote)],
+            chapter_number=world.chapter_number,
+            snapshot_id=world.snapshot_id,
+            base_canon_version=0,
+            schema_version="m4.analysis.v1",
+            prompt_hash="prompt:other",
+            edge_ids=[world.relation_edge_id],
+        )
+    )
+    incomplete_identity = world.proposals.create(
+        ProposalCreate(
+            project_id=world.project_id,
+            kind="new_character",
+            items=[{"surface": "陆青禾", "profile": {"confidence": 0.8}}],
+            chapter_number=world.chapter_number,
+            base_canon_version=0,
+            schema_version="m4.analysis.v1",
+            prompt_hash="prompt:test",
+        )
+    )
+
+    _review(world, selected.id, ProposalAction.ACCEPT)
+
+    assert world.proposals.get(
+        world.project_id, same_cohort.id
+    ).base_canon_version == 1
+    assert world.proposals.get(
+        world.project_id, different_prompt.id
+    ).base_canon_version == 0
+    assert world.proposals.get(
+        world.project_id, incomplete_identity.id
+    ).base_canon_version == 0
+
+
+def test_reject_does_not_rebase_same_cohort_siblings(world: ReviewWorld) -> None:
+    rejected = _make_proposal(
+        world,
+        items=[_event_item(world)],
+        event_ids=[world.event_id],
+    )
+    sibling = _make_proposal(
+        world,
+        items=[_edge_item(world, world.location_edge_id, world.location_quote)],
+        edge_ids=[world.location_edge_id],
+    )
+
+    result = _review(world, rejected.id, ProposalAction.REJECT)
+
+    assert result.canon_version == 0
+    assert world.proposals.get(world.project_id, sibling.id).base_canon_version == 0
+
+
+class _RebaseFailingStore:
+    def __init__(self, real: SqliteProposalStore) -> None:
+        self.real = real
+
+    def __getattr__(self, name: str):
+        return getattr(self.real, name)
+
+    def rebase_pending_cohort(self, *_args, **_kwargs):
+        raise RuntimeError("rebase injection")
+
+
+def test_rebase_failure_rolls_back_canon_resolution_and_siblings(
+    world: ReviewWorld,
+) -> None:
+    selected = _make_proposal(
+        world,
+        items=[_event_item(world)],
+        event_ids=[world.event_id],
+    )
+    sibling = _make_proposal(
+        world,
+        items=[_edge_item(world, world.location_edge_id, world.location_quote)],
+        edge_ids=[world.location_edge_id],
+    )
+
+    with pytest.raises(RuntimeError, match="rebase injection"):
+        review_proposal(
+            world.conn,
+            world.graph,
+            world.events,
+            selected.id,
+            ProposalReview(action="accept", expected_canon_version=0),
+            proposal_store=_RebaseFailingStore(world.proposals),
+            edge_review_store=world.edge_reviews,
+        )
+
+    assert require_canon_version(world.conn, world.project_id) == 0
+    assert world.proposals.get(world.project_id, selected.id).status.value == "PENDING"
+    assert world.proposals.get(world.project_id, sibling.id).base_canon_version == 0
+    assert world.conn.execute(
+        "SELECT COUNT(*) FROM story_event WHERE information_scope = 'CANON'"
+    ).fetchone()[0] == 0
+
+
 def test_review_accepts_edge_conflict_while_current_canon_still_matches(
     world: ReviewWorld,
 ) -> None:
@@ -672,6 +847,65 @@ def test_review_accepts_edge_conflict_while_current_canon_still_matches(
     assert result.status == "ACCEPTED"
     assert result.canon_version == 1
     assert result.edges[0].edge.dst == north.id
+
+
+def test_rebased_edge_conflict_still_revalidates_current_canon(
+    world: ReviewWorld,
+) -> None:
+    old_place = world.graph.upsert_node(
+        NodeSpec(
+            project_id=world.project_id,
+            label=NodeLabel.LOCATION,
+            name="青云城",
+        )
+    )
+    north = world.graph.resolve(world.project_id, ["北荒"])[0].unique_node
+    assert north is not None
+    current = world.graph.upsert_edge(
+        EdgeSpec(
+            project_id=world.project_id,
+            src=world.hero_id,
+            dst=old_place.id,
+            type=EdgeType.LOCATED_AT,
+            valid_from_chapter=world.chapter_number,
+            information_scope=InformationScope.CANON,
+        )
+    ).edge
+    selected = _make_proposal(
+        world,
+        items=[_event_item(world)],
+        event_ids=[world.event_id],
+    )
+    conflict = _make_edge_conflict_proposal(
+        world,
+        update_kind="location",
+        current=current,
+        proposed_edge_id=world.location_edge_id,
+        quote=world.location_quote,
+    )
+
+    _review(world, selected.id, ProposalAction.ACCEPT)
+    assert world.proposals.get(
+        world.project_id, conflict.id
+    ).base_canon_version == 1
+    world.graph.upsert_edge(
+        EdgeSpec(
+            project_id=world.project_id,
+            src=world.hero_id,
+            dst=north.id,
+            type=EdgeType.LOCATED_AT,
+            valid_from_chapter=world.chapter_number,
+            information_scope=InformationScope.CANON,
+        )
+    )
+
+    with pytest.raises(ProposalShapeError, match="current|Canon"):
+        _review(world, conflict.id, ProposalAction.ACCEPT)
+
+    assert require_canon_version(world.conn, world.project_id) == 1
+    still_pending = world.proposals.get(world.project_id, conflict.id)
+    assert still_pending.status.value == "PENDING"
+    assert still_pending.base_canon_version == 1
 
 
 def test_review_rejects_replaced_current_edge_when_graph_write_bypasses_ledger(
