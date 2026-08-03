@@ -8,7 +8,11 @@ import pytest
 
 from novel_harness import project
 from novel_harness.db import IN_MEMORY, Connection, connect, migrate
-from novel_harness.events import ProposalCreate, ProposalResolutionMark
+from novel_harness.events import (
+    ProposalAuditSnapshot,
+    ProposalCreate,
+    ProposalResolutionMark,
+)
 from novel_harness.graph import ChapterSpec
 from novel_harness.graph.sqlite_proposals import SqliteProposalStore
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
@@ -88,7 +92,34 @@ def _proposal(
         )
     )
     if status is not None:
-        store.mark_resolved(created.id, ProposalResolutionMark(status=status))
+        action = {
+            "ACCEPTED": "accept",
+            "EDITED": "edit",
+            "REJECTED": "reject",
+        }[status]
+        canon_version = created.base_canon_version + (
+            1 if action in {"accept", "edit"} else 0
+        )
+        store.mark_resolved(
+            created.id,
+            ProposalResolutionMark(
+                status=status,
+                action=action,
+                canon_version=canon_version,
+                audit_envelope=ProposalAuditSnapshot(
+                    payload={
+                        "proposal_id": created.id,
+                        "action": action,
+                        "status": status,
+                        "canon_version": canon_version,
+                        "kind": created.kind,
+                        "events": [],
+                        "edges": [],
+                        "characters": [],
+                    }
+                ),
+            ),
+        )
 
 
 def test_metrics_for_three_chapters_compute_the_locked_acceptance_gate(

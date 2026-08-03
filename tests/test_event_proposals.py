@@ -16,6 +16,7 @@ from novel_harness.decisions import DecisionKind, read as read_decisions
 from novel_harness.events import (
     ProposalAlreadyResolved,
     ProposalCreate,
+    ProposalValidationError,
     ProvisionalEventSpec,
 )
 from novel_harness.extract.models import RawCharacterProfile
@@ -725,6 +726,29 @@ def test_append_failure_leaves_auditable_hole_and_recovery_appends_once(
     assert len(read_decisions(world.conn, world.project_id)) == 1
 
 
+def test_append_that_commits_then_raises_is_reconciled_without_a_duplicate(
+    world: ReviewWorld,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proposal = _make_proposal(
+        world, items=[_event_item(world)], event_ids=[world.event_id]
+    )
+    real_append = decisions.append
+
+    def append_then_raise(*args, **kwargs):
+        real_append(*args, **kwargs)
+        raise OSError("transport reported failure after commit")
+
+    monkeypatch.setattr(decisions, "append", append_then_raise)
+
+    reviewed = _review(world, proposal.id, ProposalAction.ACCEPT)
+
+    assert reviewed.status == "ACCEPTED"
+    (decision,) = read_decisions(world.conn, world.project_id)
+    assert reviewed.decision_id == decision.id
+    assert world.proposals.unaudited(world.project_id) == []
+
+
 class _AttachFailingStore:
     def __init__(self, real: SqliteProposalStore) -> None:
         self.real = real
@@ -768,6 +792,283 @@ def test_attach_failure_preserves_log_and_recovery_does_not_duplicate_it(
     )
     assert recovered.decision_id == decision_id
     assert len(read_decisions(world.conn, world.project_id)) == 1
+
+
+@pytest.mark.parametrize(
+    "action",
+    [ProposalAction.REJECT, ProposalAction.BYSTANDER],
+)
+def test_recovery_preserves_the_exact_new_character_action(
+    world: ReviewWorld,
+    monkeypatch: pytest.MonkeyPatch,
+    action: ProposalAction,
+) -> None:
+    profile = RawCharacterProfile(surface="陆青禾", confidence=0.8)
+    proposal = _make_proposal(
+        world,
+        kind="new_character",
+        items=[
+            {
+                "surface": profile.surface,
+                "profile": profile.model_dump(mode="json"),
+                "confidence": profile.confidence,
+            }
+        ],
+    )
+    real_append = decisions.append
+
+    def fail_append(*_args, **_kwargs):
+        raise OSError("audit unavailable")
+
+    monkeypatch.setattr(decisions, "append", fail_append)
+    with pytest.raises(DecisionAuditError):
+        _review(world, proposal.id, action)
+
+    monkeypatch.setattr(decisions, "append", real_append)
+    recovered = recover_proposal_audit(
+        world.conn,
+        world.graph,
+        world.events,
+        proposal.id,
+        proposal_store=world.proposals,
+        edge_review_store=world.edge_reviews,
+    )
+
+    assert recovered.status == "REJECTED"
+    (decision,) = read_decisions(world.conn, world.project_id)
+    assert decision.payload["action"] == action.value
+
+
+def test_recovery_uses_the_committed_audit_snapshot_after_sources_go_stale(
+    world: ReviewWorld,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proposal = _make_proposal(
+        world, items=[_event_item(world)], event_ids=[world.event_id]
+    )
+    real_append = decisions.append
+
+    def fail_append(*_args, **_kwargs):
+        raise OSError("audit unavailable")
+
+    monkeypatch.setattr(decisions, "append", fail_append)
+    with pytest.raises(DecisionAuditError):
+        _review(world, proposal.id, ProposalAction.ACCEPT)
+    world.conn.execute(
+        "UPDATE story_event SET evidence_status = 'STALE' WHERE id = ?",
+        (world.event_id,),
+    )
+    world.conn.commit()
+
+    monkeypatch.setattr(decisions, "append", real_append)
+    recovered = recover_proposal_audit(
+        world.conn,
+        world.graph,
+        world.events,
+        proposal.id,
+        proposal_store=world.proposals,
+        edge_review_store=world.edge_reviews,
+    )
+
+    assert recovered.canon_version == 1
+    (decision,) = read_decisions(world.conn, world.project_id)
+    assert decision.payload["events"][0]["evidence"]["quote"] == world.event_quote
+
+
+def test_recovery_rejects_a_caller_owned_transaction_without_committing_it(
+    world: ReviewWorld,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proposal = _make_proposal(
+        world, items=[_event_item(world)], event_ids=[world.event_id]
+    )
+    real_append = decisions.append
+
+    def fail_append(*_args, **_kwargs):
+        raise OSError("audit unavailable")
+
+    monkeypatch.setattr(decisions, "append", fail_append)
+    with pytest.raises(DecisionAuditError):
+        _review(world, proposal.id, ProposalAction.ACCEPT)
+    monkeypatch.setattr(decisions, "append", real_append)
+
+    world.conn.execute(
+        "UPDATE project SET name = '不应被恢复提交' WHERE id = ?",
+        (world.project_id,),
+    )
+    assert world.conn.in_transaction
+    with pytest.raises(RuntimeError, match="外层事务|caller-owned|没有外层事务"):
+        recover_proposal_audit(
+            world.conn,
+            world.graph,
+            world.events,
+            proposal.id,
+            proposal_store=world.proposals,
+            edge_review_store=world.edge_reviews,
+        )
+    assert world.conn.in_transaction
+    world.conn.rollback()
+    assert (
+        world.conn.execute(
+            "SELECT name FROM project WHERE id = ?", (world.project_id,)
+        ).fetchone()[0]
+        == "青云记-review"
+    )
+
+
+def test_concurrent_audit_recovery_appends_exactly_one_decision(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = tmp_path / "audit-recovery-race.sqlite"
+    seed = connect(database)
+    migrate(seed)
+    project_id = create_project(seed, name="青云记-audit-race", root_path=".").id
+    profile = RawCharacterProfile(surface="陆青禾", confidence=0.8)
+    proposal = SqliteProposalStore(seed).create(
+        ProposalCreate(
+            project_id=project_id,
+            kind="new_character",
+            items=[
+                {
+                    "surface": profile.surface,
+                    "profile": profile.model_dump(mode="json"),
+                    "confidence": profile.confidence,
+                }
+            ],
+        )
+    )
+    real_append = decisions.append
+
+    def fail_append(*_args, **_kwargs):
+        raise OSError("audit unavailable")
+
+    monkeypatch.setattr(decisions, "append", fail_append)
+    with pytest.raises(DecisionAuditError):
+        review_proposal(
+            seed,
+            SqliteStoryGraph(seed),
+            SqliteEventStore(seed),
+            proposal.id,
+            ProposalReview(action="reject", expected_canon_version=0),
+        )
+    monkeypatch.setattr(decisions, "append", real_append)
+    seed.close()
+
+    import novel_harness.extract.proposal_audit as audit_module
+
+    real_audit = audit_module.append_audit
+    barrier = threading.Barrier(2)
+
+    def racing_audit(*args, **kwargs):
+        barrier.wait(timeout=5)
+        return real_audit(*args, **kwargs)
+
+    monkeypatch.setattr(audit_module, "append_audit", racing_audit)
+    results = []
+    errors: list[BaseException] = []
+    guard = threading.Lock()
+
+    def worker() -> None:
+        worker_conn = connect(database)
+        try:
+            result = recover_proposal_audit(
+                worker_conn,
+                SqliteStoryGraph(worker_conn),
+                SqliteEventStore(worker_conn),
+                proposal.id,
+            )
+            with guard:
+                results.append(result)
+        except BaseException as exc:
+            with guard:
+                errors.append(exc)
+        finally:
+            worker_conn.close()
+
+    threads = [threading.Thread(target=worker) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=10)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert errors == []
+    assert len(results) == 2
+    assert len({result.decision_id for result in results}) == 1
+    verify = connect(database)
+    try:
+        assert len(read_decisions(verify, project_id)) == 1
+    finally:
+        verify.close()
+
+
+def test_terminal_proposal_rejects_an_unrelated_same_project_decision(
+    world: ReviewWorld,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proposal = _make_proposal(
+        world, items=[_event_item(world)], event_ids=[world.event_id]
+    )
+
+    def fail_append(*_args, **_kwargs):
+        raise OSError("audit unavailable")
+
+    monkeypatch.setattr(decisions, "append", fail_append)
+    with pytest.raises(DecisionAuditError):
+        _review(world, proposal.id, ProposalAction.ACCEPT)
+    monkeypatch.undo()
+    unrelated = decisions.append(
+        world.conn,
+        project_id=world.project_id,
+        kind=DecisionKind.NODE_DECLARE,
+        decision=decisions.Verdict.ACCEPT,
+        payload={"proposal_id": proposal.id},
+    )
+
+    with pytest.raises(ProposalValidationError, match="proposal_review|payload|审计"):
+        world.proposals.attach_decision(proposal.id, unrelated.id)
+    assert world.proposals.unaudited(world.project_id)[0].id == proposal.id
+
+
+def test_recovery_refuses_a_forged_proposal_review_for_the_same_proposal(
+    world: ReviewWorld,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proposal = _make_proposal(
+        world, items=[_event_item(world)], event_ids=[world.event_id]
+    )
+
+    def fail_append(*_args, **_kwargs):
+        raise OSError("audit unavailable")
+
+    monkeypatch.setattr(decisions, "append", fail_append)
+    with pytest.raises(DecisionAuditError):
+        _review(world, proposal.id, ProposalAction.ACCEPT)
+    monkeypatch.undo()
+    terminal = world.proposals.get(world.project_id, proposal.id)
+    assert terminal is not None and terminal.audit_envelope is not None
+    forged = dict(terminal.audit_envelope.payload)
+    forged["action"] = "reject"
+    forged["canon_version"] = 777
+    decisions.append(
+        world.conn,
+        project_id=world.project_id,
+        kind=DecisionKind.PROPOSAL_REVIEW,
+        decision=decisions.Verdict.REJECT,
+        payload=forged,
+    )
+
+    with pytest.raises(ProposalShapeError, match="durable audit 不一致"):
+        recover_proposal_audit(
+            world.conn,
+            world.graph,
+            world.events,
+            proposal.id,
+            proposal_store=world.proposals,
+            edge_review_store=world.edge_reviews,
+        )
+    assert world.proposals.unaudited(world.project_id)[0].id == proposal.id
 
 
 def test_two_connections_compete_and_only_one_resolves_and_bumps(tmp_path: Path) -> None:

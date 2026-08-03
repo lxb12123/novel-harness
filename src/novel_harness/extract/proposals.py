@@ -36,7 +36,7 @@ from ..graph.review_store import (
 )
 from ..graph.sqlite_proposals import SqliteProposalStore
 from ..graph.sqlite_review import SqliteEdgeReviewStore
-from .proposal_audit import append_audit, build_audit_envelope
+from .proposal_audit import build_audit_envelope, ensure_proposal_audit
 from .proposal_models import (
     DecisionAuditError,
     NewCharacterItem,
@@ -297,57 +297,38 @@ def review_proposal(
             ProposalAction.REJECT: "REJECTED",
             ProposalAction.BYSTANDER: "REJECTED",
         }[review.action]
-        proposals.mark_resolved(
-            proposal.id,
-            ProposalResolutionMark(status=status),
-        )
         if review.action in {ProposalAction.ACCEPT, ProposalAction.EDIT}:
             canon_version = project.compare_and_bump_canon_version(
                 conn, proposal.project_id, current
             )
         else:
             canon_version = current
-
-    audit_events = canon_events or source_events
-    audit_edges = canon_edges or source_edges
-    envelope = build_audit_envelope(
-        proposal_id=proposal.id,
-        action=review.action,
-        status=status,
-        canon_version=canon_version,
-        kind=proposal.kind,
-        events=_audit_pairs(audit_events, proposal.event_ids, event_evidence),
-        edges=_audit_pairs(audit_edges, proposal.edge_ids, edge_evidence),
-        characters=tuple(
-            (candidate, characters[index] if characters else None)
-            for index, candidate in enumerate(validated.characters)
-        ),
-    )
-    fact_ids = (*proposal.event_ids, *proposal.edge_ids)
-    try:
-        decision = append_audit(
-            conn,
-            project_id=proposal.project_id,
+        audit_events = canon_events or source_events
+        audit_edges = canon_edges or source_edges
+        envelope = build_audit_envelope(
+            proposal_id=proposal.id,
             action=review.action,
-            envelope=envelope,
+            status=status,
+            canon_version=canon_version,
+            kind=proposal.kind,
+            events=_audit_pairs(audit_events, proposal.event_ids, event_evidence),
+            edges=_audit_pairs(audit_edges, proposal.edge_ids, edge_evidence),
+            characters=tuple(
+                (candidate, characters[index] if characters else None)
+                for index, candidate in enumerate(validated.characters)
+            ),
         )
-    except Exception as exc:
-        raise DecisionAuditError(
-            f"proposal {proposal.id} 业务已提交，但决策日志写入失败",
-            proposal_id=proposal.id,
-            canon_version=canon_version,
-            fact_ids=tuple(fact_ids),
-        ) from exc
-    try:
-        proposals.attach_decision(proposal.id, decision.id)
-    except Exception as exc:
-        raise DecisionAuditError(
-            f"proposal {proposal.id} 业务与日志已提交，但审计附加失败",
-            proposal_id=proposal.id,
-            canon_version=canon_version,
-            decision_id=decision.id,
-            fact_ids=tuple(fact_ids),
-        ) from exc
+        proposals.mark_resolved(
+            proposal.id,
+            ProposalResolutionMark(
+                status=status,
+                action=review.action.value,
+                canon_version=canon_version,
+                audit_envelope=envelope.snapshot(),
+            ),
+        )
+
+    decision, _audited = ensure_proposal_audit(conn, proposals, proposal.id)
     return _resolution(
         proposal,
         status=status,

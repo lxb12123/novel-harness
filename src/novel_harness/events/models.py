@@ -38,6 +38,13 @@ class ProposalResolutionStatus(StrEnum):
     EDITED = "EDITED"
 
 
+class ProposalResolutionAction(StrEnum):
+    ACCEPT = "accept"
+    REJECT = "reject"
+    EDIT = "edit"
+    BYSTANDER = "bystander"
+
+
 class StoryEvent(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -107,6 +114,19 @@ class ProposalCreate(BaseModel):
         return len(self.items)
 
 
+class ProposalAuditSnapshot(BaseModel):
+    """Exact append-only decision material committed with the business result."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    payload: dict[str, JsonValue]
+    subject_name: str | None = None
+    quote_text: str | None = None
+    quote_sha256: str | None = Field(default=None, min_length=64, max_length=64)
+    chapter_number: int | None = Field(default=None, ge=1)
+    para_index: int | None = Field(default=None, ge=0)
+
+
 class ProposalRecord(ProposalCreate):
     """``proposal_set`` 及其关联表读出的不可变记录。"""
 
@@ -115,15 +135,35 @@ class ProposalRecord(ProposalCreate):
     created_at: str
     resolved_at: str | None = None
     decision_log_id: str | None = None
+    resolution_action: ProposalResolutionAction | None = None
+    resolved_canon_version: int | None = Field(default=None, ge=0)
+    audit_envelope: ProposalAuditSnapshot | None = None
 
 
 class ProposalResolutionMark(BaseModel):
-    """仓储层完成一次提案状态落盘所需的最小字段。"""
+    """Business result plus the durable audit outbox committed in the same transaction."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     status: ProposalResolutionStatus
+    action: ProposalResolutionAction
+    canon_version: int = Field(ge=0)
+    audit_envelope: ProposalAuditSnapshot
     decision_log_id: str | None = None
+
+    @model_validator(mode="after")
+    def _status_matches_action(self) -> ProposalResolutionMark:
+        expected = {
+            ProposalResolutionAction.ACCEPT: ProposalResolutionStatus.ACCEPTED,
+            ProposalResolutionAction.EDIT: ProposalResolutionStatus.EDITED,
+            ProposalResolutionAction.REJECT: ProposalResolutionStatus.REJECTED,
+            ProposalResolutionAction.BYSTANDER: ProposalResolutionStatus.REJECTED,
+        }[self.action]
+        if self.status is not expected:
+            raise ValueError(
+                f"proposal status {self.status.value} 与 action {self.action.value} 不一致"
+            )
+        return self
 
 
 class CharacterProfilePatch(BaseModel):

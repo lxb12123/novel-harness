@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from pathlib import Path
@@ -77,9 +78,9 @@ def test_migrate_twice_is_idempotent(tmp_path: Path) -> None:
     闸门拦住了它。"""
     c = connect(tmp_path / "nh.db")
     assert user_version(c) == 0
-    assert migrate(c) == 2
-    assert migrate(c) == 2  # 不抛
-    assert user_version(c) == 2
+    assert migrate(c) == 3
+    assert migrate(c) == 3  # 不抛
+    assert user_version(c) == 3
     c.close()
 
 
@@ -90,8 +91,8 @@ def test_migrate_twice_on_fresh_connections(tmp_path: Path) -> None:
     migrate(c1)
     c1.close()
     c2 = connect(path)
-    assert migrate(c2) == 2
-    assert user_version(c2) == 2
+    assert migrate(c2) == 3
+    assert user_version(c2) == 3
     c2.close()
 
 
@@ -109,7 +110,7 @@ def test_migrate_is_not_self_idempotent_without_the_gate(conn: sqlite3.Connectio
 
 
 def test_migrate_refuses_newer_database(conn: sqlite3.Connection) -> None:
-    # 用 v1 的代码往一个 v2 的库里写 = 按老 schema 的假设改新数据。只能拒绝。
+    # 用旧代码往一个更新 schema 的库里写 = 按老假设改新数据。只能拒绝。
     conn.execute("PRAGMA user_version = 99")
     with pytest.raises(MigrationError, match="99"):
         migrate(conn)
@@ -122,9 +123,16 @@ def test_migration_files_are_readable_from_package() -> None:
 
     root = files("novel_harness") / "migrations"
     names = sorted(e.name for e in root.iterdir() if e.name.endswith(".sql"))
-    assert names == ["001_init.sql", "002_m4_events.sql"]
+    assert names == [
+        "001_init.sql",
+        "002_m4_events.sql",
+        "003_proposal_audit_recovery.sql",
+    ]
     assert "PRAGMA user_version = 1" in (root / "001_init.sql").read_text(encoding="utf-8")
     assert "PRAGMA user_version = 2" in (root / "002_m4_events.sql").read_text(encoding="utf-8")
+    assert "PRAGMA user_version = 3" in (
+        root / "003_proposal_audit_recovery.sql"
+    ).read_text(encoding="utf-8")
 
 
 def test_populated_v1_database_migrates_without_changing_existing_rows(tmp_path: Path) -> None:
@@ -158,8 +166,8 @@ def test_populated_v1_database_migrates_without_changing_existing_rows(tmp_path:
         ).fetchone()
     )
 
-    assert migrate(c) == 2
-    assert migrate(c) == 2
+    assert migrate(c) == 3
+    assert migrate(c) == 3
     assert tuple(c.execute("SELECT * FROM project WHERE id = ?", (project_id,)).fetchone()) == before_project
     assert tuple(c.execute("SELECT * FROM node WHERE id = ?", (character_id,)).fetchone()) == before_node
     assert (
@@ -201,7 +209,107 @@ def test_m4_tables_and_proposal_columns_are_present(conn: sqlite3.Connection) ->
         "base_canon_version",
         "schema_version",
         "prompt_hash",
+        "resolution_action",
+        "resolved_canon_version",
+        "audit_envelope_json",
     } <= proposal_columns
+
+
+def test_populated_v2_database_backfills_attached_proposal_audit(tmp_path: Path) -> None:
+    from importlib.resources import files
+
+    c = connect(tmp_path / "v2.db")
+    root = files("novel_harness") / "migrations"
+    c.executescript((root / "001_init.sql").read_text(encoding="utf-8"))
+    c.executescript((root / "002_m4_events.sql").read_text(encoding="utf-8"))
+    assert user_version(c) == 2
+    project_id = "project:v2-audit"
+    proposal_id = "proposal:v2-audit"
+    decision_id = "decision:v2-audit"
+    payload = {
+        "proposal_id": proposal_id,
+        "action": "accept",
+        "status": "ACCEPTED",
+        "canon_version": 5,
+        "kind": "low_confidence_main",
+        "events": [],
+        "edges": [],
+        "characters": [],
+    }
+    c.execute(
+        "INSERT INTO project (id, name, root_path, canon_version) VALUES (?,?,?,?)",
+        (project_id, "v2 旧书", "/old", 5),
+    )
+    c.execute(
+        """
+        INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
+        VALUES (?, ?, 'proposal_review', ?, 'accept')
+        """,
+        (decision_id, project_id, json.dumps(payload, sort_keys=True)),
+    )
+    c.execute(
+        """
+        INSERT INTO proposal_set (
+            id, project_id, kind, items_json, status, decision_log_id,
+            base_canon_version
+        ) VALUES (?, ?, 'low_confidence_main', '[{}]', 'ACCEPTED', ?, 4)
+        """,
+        (proposal_id, project_id, decision_id),
+    )
+    c.commit()
+
+    assert migrate(c) == 3
+    row = c.execute(
+        """
+        SELECT resolution_action, resolved_canon_version, audit_envelope_json
+        FROM proposal_set WHERE id = ?
+        """,
+        (proposal_id,),
+    ).fetchone()
+    assert row["resolution_action"] == "accept"
+    assert row["resolved_canon_version"] == 5
+    assert json.loads(row["audit_envelope_json"])["payload"] == payload
+    with pytest.raises(sqlite3.IntegrityError, match="immutable"):
+        c.execute(
+            "UPDATE proposal_set SET resolution_action = 'reject' WHERE id = ?",
+            (proposal_id,),
+        )
+    c.rollback()
+    c.close()
+
+
+def test_proposal_audit_triggers_reject_incomplete_or_duplicate_history(
+    conn: sqlite3.Connection,
+    project: str,
+) -> None:
+    proposal_id = "proposal:audit-guard"
+    conn.execute(
+        "INSERT INTO proposal_set (id, project_id, kind, items_json) VALUES (?,?,?,?)",
+        (proposal_id, project, "low_confidence_main", "[{}]"),
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="metadata"):
+        conn.execute(
+            "UPDATE proposal_set SET status = 'ACCEPTED' WHERE id = ?",
+            (proposal_id,),
+        )
+
+    payload = json.dumps({"proposal_id": proposal_id}, sort_keys=True)
+    conn.execute(
+        """
+        INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
+        VALUES ('decision:audit-one', ?, 'proposal_review', ?, 'accept')
+        """,
+        (project, payload),
+    )
+    with pytest.raises(sqlite3.IntegrityError, match="already exists"):
+        conn.execute(
+            """
+            INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
+            VALUES ('decision:audit-two', ?, 'proposal_review', ?, 'accept')
+            """,
+            (project, payload),
+        )
+    conn.rollback()
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -282,9 +390,9 @@ def test_concurrent_first_migrate_does_not_race(tmp_path: Path) -> None:
     for t in threads:
         t.join()
 
-    assert results == [2] * n, f"并发首跑必须全部成功，实得 {results}"
+    assert results == [3] * n, f"并发首跑必须全部成功，实得 {results}"
     c = connect(path)
-    assert user_version(c) == 2
+    assert user_version(c) == 3
     assert c.execute("SELECT COUNT(*) FROM edge_type").fetchone()[0] == 9
     c.close()
 
@@ -293,14 +401,14 @@ def test_connect_in_memory_works(tmp_path: Path) -> None:
     # 内存库不支持 WAL，会静默停在 memory 模式。这没关系（没有并发读者），
     # 但 connect() 不能因此炸——测试和 CLI 的 --dry-run 都走这条。
     c = connect(IN_MEMORY)
-    assert migrate(c) == 2
+    assert migrate(c) == 3
     assert c.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     c.close()
 
 
 def test_connect_creates_parent_dirs(tmp_path: Path) -> None:
     c = connect(tmp_path / "a" / "b" / "nh.db")
-    assert migrate(c) == 2
+    assert migrate(c) == 3
     c.close()
 
 

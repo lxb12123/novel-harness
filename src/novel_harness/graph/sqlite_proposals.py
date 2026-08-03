@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 import json
+import sqlite3
 
 from ..db import Connection
 from ..events.models import (
@@ -194,7 +195,8 @@ class SqliteProposalStore:
             """
             SELECT id, project_id, kind, summary, items_json, confidence, status,
                    created_at, resolved_at, decision_log_id, chapter_number, snapshot_id,
-                   base_canon_version, schema_version, prompt_hash
+                   base_canon_version, schema_version, prompt_hash, resolution_action,
+                   resolved_canon_version, audit_envelope_json
             FROM proposal_set WHERE project_id = ? AND id = ?
             """,
             (project_id, proposal_id),
@@ -233,6 +235,13 @@ class SqliteProposalStore:
             created_at=row["created_at"],
             resolved_at=row["resolved_at"],
             decision_log_id=row["decision_log_id"],
+            resolution_action=row["resolution_action"],
+            resolved_canon_version=row["resolved_canon_version"],
+            audit_envelope=(
+                None
+                if row["audit_envelope_json"] is None
+                else json.loads(row["audit_envelope_json"])
+            ),
         )
 
     def get_by_id(self, proposal_id: str) -> ProposalRecord | None:
@@ -249,7 +258,8 @@ class SqliteProposalStore:
     ) -> ProposalRecord:
         with _transaction(self._conn):
             row = self._conn.execute(
-                "SELECT project_id, status FROM proposal_set WHERE id = ?",
+                "SELECT project_id, kind, status, base_canon_version "
+                "FROM proposal_set WHERE id = ?",
                 (proposal_id,),
             ).fetchone()
             if row is None:
@@ -258,6 +268,25 @@ class SqliteProposalStore:
                 raise ProposalAlreadyResolved(
                     f"proposal {proposal_id} 已是 {row['status']}，不能再次处理"
                 )
+            expected_version = int(row["base_canon_version"]) + (
+                1 if resolution.action.value in {"accept", "edit"} else 0
+            )
+            payload = resolution.audit_envelope.payload
+            expected_payload = {
+                "proposal_id": proposal_id,
+                "action": resolution.action.value,
+                "status": resolution.status.value,
+                "canon_version": resolution.canon_version,
+                "kind": str(row["kind"]),
+            }
+            if resolution.canon_version != expected_version or any(
+                payload.get(key) != value for key, value in expected_payload.items()
+            ):
+                raise ProposalValidationError(
+                    f"proposal {proposal_id} resolution/audit metadata 不一致"
+                )
+            if resolution.action.value == "bystander" and row["kind"] != "new_character":
+                raise ProposalValidationError("bystander 只允许 new_character proposal")
             if resolution.decision_log_id is not None:
                 decision = self._conn.execute(
                     "SELECT project_id FROM decision_log WHERE id = ?",
@@ -268,16 +297,38 @@ class SqliteProposalStore:
                         f"decision_log {resolution.decision_log_id} 不存在或不属于项目 "
                         f"{row['project_id']}"
                     )
-            self._conn.execute(
-                """
-                UPDATE proposal_set
-                SET status = ?,
-                    resolved_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
-                    decision_log_id = ?
-                WHERE id = ? AND status = 'PENDING'
-                """,
-                (resolution.status.value, resolution.decision_log_id, proposal_id),
+            envelope_json = json.dumps(
+                resolution.audit_envelope.model_dump(mode="json"),
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
             )
+            try:
+                self._conn.execute(
+                    """
+                    UPDATE proposal_set
+                    SET status = ?,
+                        resolved_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+                        resolution_action = ?,
+                        resolved_canon_version = ?,
+                        audit_envelope_json = ?,
+                        decision_log_id = ?
+                    WHERE id = ? AND status = 'PENDING'
+                    """,
+                    (
+                        resolution.status.value,
+                        resolution.action.value,
+                        resolution.canon_version,
+                        envelope_json,
+                        resolution.decision_log_id,
+                        proposal_id,
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ProposalValidationError(
+                    f"proposal {proposal_id} resolution/audit metadata 被数据库拒绝"
+                ) from exc
             record = self.get(str(row["project_id"]), proposal_id)
             if record is None:
                 raise RuntimeError(f"resolved proposal 更新后不可读：{proposal_id}")
@@ -306,13 +357,49 @@ class SqliteProposalStore:
                     f"proposal {proposal_id} 仍是 PENDING，只能给 terminal proposal 附审计"
                 )
             decision = self._conn.execute(
-                "SELECT project_id FROM decision_log WHERE id = ?",
+                """
+                SELECT project_id, kind, subject_name, quote_text, quote_sha256,
+                       chapter_number, para_index, payload_json, decision
+                FROM decision_log WHERE id = ?
+                """,
                 (decision_id,),
             ).fetchone()
             if decision is None or decision["project_id"] != row["project_id"]:
                 raise ProposalValidationError(
                     f"decision_log {decision_id} 不存在或不属于 proposal 项目 "
                     f"{row['project_id']}"
+                )
+            record = self.get(str(row["project_id"]), proposal_id)
+            if (
+                record is None
+                or record.audit_envelope is None
+                or record.resolution_action is None
+            ):
+                raise ProposalValidationError(
+                    f"proposal {proposal_id} 没有完整 durable audit metadata"
+                )
+            audit = record.audit_envelope
+            expected_verdict = {
+                "accept": "accept",
+                "edit": "edit",
+                "reject": "reject",
+                "bystander": "reject",
+            }[record.resolution_action.value]
+            actual = {
+                "payload": json.loads(decision["payload_json"]),
+                "subject_name": decision["subject_name"],
+                "quote_text": decision["quote_text"],
+                "quote_sha256": decision["quote_sha256"],
+                "chapter_number": decision["chapter_number"],
+                "para_index": decision["para_index"],
+            }
+            if (
+                decision["kind"] != "proposal_review"
+                or decision["decision"] != expected_verdict
+                or actual != audit.model_dump(mode="json")
+            ):
+                raise ProposalValidationError(
+                    f"decision_log {decision_id} 不是 proposal {proposal_id} 的匹配审计"
                 )
             attached = row["decision_log_id"]
             if attached == decision_id:
@@ -324,13 +411,18 @@ class SqliteProposalStore:
                 raise ProposalValidationError(
                     f"proposal {proposal_id} 已附审计 {attached}，不能换成 {decision_id}"
                 )
-            updated = self._conn.execute(
-                """
-                UPDATE proposal_set SET decision_log_id = ?
-                WHERE id = ? AND status <> 'PENDING' AND decision_log_id IS NULL
-                """,
-                (decision_id, proposal_id),
-            )
+            try:
+                updated = self._conn.execute(
+                    """
+                    UPDATE proposal_set SET decision_log_id = ?
+                    WHERE id = ? AND status <> 'PENDING' AND decision_log_id IS NULL
+                    """,
+                    (decision_id, proposal_id),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ProposalValidationError(
+                    f"proposal {proposal_id} 审计附加被数据库拒绝"
+                ) from exc
             if updated.rowcount != 1:
                 raise ProposalValidationError(
                     f"proposal {proposal_id} 审计附加 CAS 失败"

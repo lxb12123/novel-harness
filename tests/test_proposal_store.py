@@ -12,6 +12,7 @@ import pytest
 from novel_harness.db import IN_MEMORY, Connection, connect, migrate
 from novel_harness.decisions import DecisionKind, Verdict, append as append_decision
 from novel_harness.events import (
+    ProposalAuditSnapshot,
     ProposalCreate,
     ProposalAlreadyResolved,
     ProposalNotFound,
@@ -85,6 +86,60 @@ def _seed_link_targets(conn: Connection) -> tuple[str, str, str, str]:
         )
     )
     return project_id, event.event.id, edge.id, chapter.snapshot_id
+
+
+def _resolution_mark(
+    proposal,
+    status: str,
+    *,
+    action: str | None = None,
+    decision_log_id: str | None = None,
+) -> ProposalResolutionMark:
+    resolved_action = action or {
+        "ACCEPTED": "accept",
+        "EDITED": "edit",
+        "REJECTED": "reject",
+    }[status]
+    canon_version = proposal.base_canon_version + (
+        1 if resolved_action in {"accept", "edit"} else 0
+    )
+    return ProposalResolutionMark(
+        status=status,
+        action=resolved_action,
+        canon_version=canon_version,
+        audit_envelope=ProposalAuditSnapshot(
+            payload={
+                "proposal_id": proposal.id,
+                "action": resolved_action,
+                "status": status,
+                "canon_version": canon_version,
+                "kind": proposal.kind,
+                "events": [],
+                "edges": [],
+                "characters": [],
+            }
+        ),
+        decision_log_id=decision_log_id,
+    )
+
+
+def _append_mark_decision(
+    conn: Connection,
+    project_id: str,
+    mark: ProposalResolutionMark,
+    *,
+    payload: dict | None = None,
+):
+    verdict = Verdict.EDIT if mark.action.value == "edit" else (
+        Verdict.ACCEPT if mark.action.value == "accept" else Verdict.REJECT
+    )
+    return append_decision(
+        conn,
+        project_id=project_id,
+        kind=DecisionKind.PROPOSAL_REVIEW,
+        decision=verdict,
+        payload=mark.audit_envelope.payload if payload is None else payload,
+    )
 
 
 @pytest.fixture
@@ -462,7 +517,7 @@ def test_pending_hydrates_every_record_from_one_wal_snapshot(tmp_path: Path) -> 
         try:
             SqliteProposalStore(writer_conn).mark_resolved(
                 created.id,
-                ProposalResolutionMark(status="ACCEPTED"),
+                _resolution_mark(created, "ACCEPTED"),
             )
         except BaseException as exc:
             with failures_lock:
@@ -525,13 +580,8 @@ def test_mark_resolved_is_one_way_and_distinguishes_missing_from_terminal(
             items=[{"item": "review"}],
         )
     )
-    conn.execute(
-        """
-        INSERT INTO decision_log (id, project_id, kind, payload_json, decision)
-        VALUES (?, ?, ?, ?, ?)
-        """,
-        ("decision:review", project_id, "proposal_review", "{}", "accept"),
-    )
+    mark = _resolution_mark(pending, "ACCEPTED")
+    decision = _append_mark_decision(conn, project_id, mark)
     canon_before = conn.execute(
         "SELECT canon_version FROM project WHERE id = ?", (project_id,)
     ).fetchone()[0]
@@ -539,19 +589,16 @@ def test_mark_resolved_is_one_way_and_distinguishes_missing_from_terminal(
     with pytest.raises(ProposalNotFound, match="proposal:missing"):
         store.mark_resolved(
             "proposal:missing",
-            ProposalResolutionMark(status="ACCEPTED"),
+            mark,
         )
     resolved = store.mark_resolved(
         pending.id,
-        ProposalResolutionMark(
-            status="ACCEPTED",
-            decision_log_id="decision:review",
-        ),
+        mark.model_copy(update={"decision_log_id": decision.id}),
     )
 
     assert resolved.status is ProposalStatus.ACCEPTED
     assert resolved.resolved_at is not None and resolved.resolved_at.endswith("Z")
-    assert resolved.decision_log_id == "decision:review"
+    assert resolved.decision_log_id == decision.id
     assert store.pending(project_id) == []
     assert (
         conn.execute("SELECT canon_version FROM project WHERE id = ?", (project_id,)).fetchone()[0]
@@ -560,7 +607,7 @@ def test_mark_resolved_is_one_way_and_distinguishes_missing_from_terminal(
     with pytest.raises(ProposalAlreadyResolved, match="ACCEPTED"):
         store.mark_resolved(
             pending.id,
-            ProposalResolutionMark(status="REJECTED"),
+            _resolution_mark(pending, "REJECTED"),
         )
 
 
@@ -583,8 +630,9 @@ def test_mark_resolved_rejects_an_invalid_decision_reference_atomically(
     with pytest.raises(ProposalValidationError, match="decision_log"):
         store.mark_resolved(
             pending.id,
-            ProposalResolutionMark(
-                status="ACCEPTED",
+            _resolution_mark(
+                pending,
+                "ACCEPTED",
                 decision_log_id="decision:missing",
             ),
         )
@@ -601,33 +649,28 @@ def test_attach_decision_is_terminal_only_same_project_and_idempotent(conn: Conn
     pending = store.create(
         ProposalCreate(project_id=project_id, kind="review", items=[{"item": "review"}])
     )
-    decision = append_decision(
-        conn,
-        project_id=project_id,
-        kind=DecisionKind.PROPOSAL_REVIEW,
-        decision=Verdict.ACCEPT,
-    )
-    append_decision(
+    mark = _resolution_mark(pending, "ACCEPTED")
+    decision = _append_mark_decision(conn, project_id, mark)
+    _append_mark_decision(
         conn,
         project_id=other_id,
-        kind=DecisionKind.PROPOSAL_REVIEW,
-        decision=Verdict.ACCEPT,
+        mark=mark,
     )
-    different_decision = append_decision(
+    different_decision = _append_mark_decision(
         conn,
         project_id=project_id,
-        kind=DecisionKind.PROPOSAL_REVIEW,
-        decision=Verdict.ACCEPT,
+        mark=mark,
+        payload={**mark.audit_envelope.payload, "proposal_id": "proposal:different"},
     )
 
     with pytest.raises(ProposalValidationError, match="terminal|PENDING"):
         store.attach_decision(pending.id, decision.id)
-    store.mark_resolved(pending.id, ProposalResolutionMark(status="ACCEPTED"))
+    store.mark_resolved(pending.id, mark)
     attached = store.attach_decision(pending.id, decision.id)
     assert attached.decision_log_id == decision.id
     assert store.attach_decision(pending.id, decision.id) == attached
 
-    with pytest.raises(ProposalValidationError, match="already|different|已"):
+    with pytest.raises(ProposalValidationError, match="already|different|已|匹配"):
         store.attach_decision(pending.id, different_decision.id)
     assert store.get(project_id, pending.id) == attached
 
@@ -648,21 +691,21 @@ def test_attach_decision_rejects_cross_project_and_unaudited_lists_only_holes(
     pending = store.create(
         ProposalCreate(project_id=project_id, kind="review", items=[{"n": 3}])
     )
-    store.mark_resolved(hole.id, ProposalResolutionMark(status="REJECTED"))
-    store.mark_resolved(audited.id, ProposalResolutionMark(status="ACCEPTED"))
-    wrong = append_decision(
+    hole_mark = _resolution_mark(hole, "REJECTED")
+    audited_mark = _resolution_mark(audited, "ACCEPTED")
+    store.mark_resolved(hole.id, hole_mark)
+    store.mark_resolved(audited.id, audited_mark)
+    wrong = _append_mark_decision(
         conn,
         project_id=other_id,
-        kind=DecisionKind.PROPOSAL_REVIEW,
-        decision=Verdict.ACCEPT,
+        mark=audited_mark,
     )
     with pytest.raises(ProposalValidationError, match="项目|project"):
         store.attach_decision(audited.id, wrong.id)
-    right = append_decision(
+    right = _append_mark_decision(
         conn,
         project_id=project_id,
-        kind=DecisionKind.PROPOSAL_REVIEW,
-        decision=Verdict.ACCEPT,
+        mark=audited_mark,
     )
     store.attach_decision(audited.id, right.id)
 

@@ -12,6 +12,7 @@ from novel_harness.events import (
     CharacterProfilePatch,
     EventCharacterRole,
     EventView,
+    ProposalAuditSnapshot,
     ProposalCreate,
     ProposalRecord,
     ProposalResolutionMark,
@@ -208,7 +209,22 @@ def test_proposal_record_exposes_structured_items_for_every_lifecycle_status(
 
 @pytest.mark.parametrize("status", ["ACCEPTED", "REJECTED", "EDITED"])
 def test_proposal_resolution_mark_accepts_only_terminal_statuses(status: str) -> None:
-    mark = ProposalResolutionMark(status=status)
+    action = {"ACCEPTED": "accept", "REJECTED": "reject", "EDITED": "edit"}[status]
+    canon_version = 1 if status in {"ACCEPTED", "EDITED"} else 0
+    mark = ProposalResolutionMark(
+        status=status,
+        action=action,
+        canon_version=canon_version,
+        audit_envelope=ProposalAuditSnapshot(
+            payload={
+                "proposal_id": "proposal:test",
+                "action": action,
+                "status": status,
+                "canon_version": canon_version,
+                "kind": "test",
+            }
+        ),
+    )
 
     assert mark.status.value == status
     assert isinstance(mark.status, event_contracts.ProposalResolutionStatus)
@@ -216,7 +232,22 @@ def test_proposal_resolution_mark_accepts_only_terminal_statuses(status: str) ->
 
 def test_proposal_resolution_mark_rejects_pending_status() -> None:
     with pytest.raises(ValidationError, match="status"):
-        ProposalResolutionMark(status=ProposalStatus.PENDING)
+        ProposalResolutionMark(
+            status=ProposalStatus.PENDING,
+            action="reject",
+            canon_version=0,
+            audit_envelope=ProposalAuditSnapshot(payload={}),
+        )
+
+
+def test_proposal_resolution_mark_rejects_action_status_mismatch() -> None:
+    with pytest.raises(ValidationError, match="不一致"):
+        ProposalResolutionMark(
+            status="ACCEPTED",
+            action="reject",
+            canon_version=0,
+            audit_envelope=ProposalAuditSnapshot(payload={}),
+        )
 
 
 def test_proposal_store_protocol_uses_concrete_proposal_contracts() -> None:
