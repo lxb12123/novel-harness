@@ -30,13 +30,16 @@ from __future__ import annotations
 
 from .assemble import DEFAULT_HOUSE_STYLE, PromptForm, graph_section
 from .capabilities import (
+    CallPlan,
     CapabilityError,
     ProviderCapabilities,
     ProviderRuntimeOptions,
     ReasoningDialect,
     ReasoningEffort,
     ResolvedCallPlan,
+    StructuredCallPlan,
     plan_call,
+    plan_structured_call,
     resolve_capabilities,
 )
 from .context import ResolvedConstraints, resolve_constraints
@@ -74,6 +77,7 @@ __all__ = [
     "DEFAULT_LENGTH_POLICY",
     "DEFAULT_TEMPERATURE",
     "continuation_instruction",
+    "CallPlan",
     "CapabilityError",
     "DraftLanguage",
     "DraftAttempt",
@@ -93,6 +97,7 @@ __all__ = [
     "ReasoningDialect",
     "ReasoningEffort",
     "ResolvedCallPlan",
+    "StructuredCallPlan",
     "ResolvedConstraints",
     "complete",
     "count_units",
@@ -100,6 +105,7 @@ __all__ = [
     "generate_draft",
     "measure",
     "plan_call",
+    "plan_structured_call",
     "resolve_constraints",
     "resolve_capabilities",
     "validate_generation_plan",

@@ -33,9 +33,10 @@ from urllib.parse import urlsplit
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .capabilities import (
+    CallPlan,
     ReasoningDialect,
     ReasoningEffort,
-    ResolvedCallPlan,
+    StructuredCallPlan,
     normalize_base_url,
     normalize_model,
 )
@@ -229,10 +230,15 @@ def _build_client(config: ProviderConfig) -> Any:
 
 def _wire_kwargs(
     config: ProviderConfig,
-    plan: ResolvedCallPlan,
+    plan: CallPlan,
     messages: Sequence[dict[str, Any]],
 ) -> dict[str, Any]:
     """把中立 plan 序列化成某一个 OpenAI-compatible endpoint 的精确 wire shape。"""
+    if isinstance(plan, StructuredCallPlan):
+        # ``model_copy(update=...)`` intentionally skips Pydantic validation.  This is
+        # the last boundary before transport, so rebuild caller-budgeted plans from
+        # their public payload rather than trusting an instance that may be forged.
+        plan = StructuredCallPlan.model_validate(plan.model_dump(mode="python"))
     route = normalize_base_url(config.base_url), normalize_model(config.model)
     if route != (plan.base_url, plan.model):
         raise ProviderError(
@@ -259,9 +265,7 @@ def _wire_kwargs(
         if dialect is ReasoningDialect.OPENAI:
             kwargs["reasoning_effort"] = "none"
         elif dialect is ReasoningDialect.OPENROUTER:
-            kwargs["extra_body"] = {
-                "reasoning": {"effort": "none", "exclude": True}
-            }
+            kwargs["extra_body"] = {"reasoning": {"effort": "none", "exclude": True}}
         elif dialect is ReasoningDialect.DEEPSEEK:
             kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
         return kwargs
@@ -270,9 +274,7 @@ def _wire_kwargs(
     if dialect is ReasoningDialect.OPENAI:
         kwargs["reasoning_effort"] = value
     elif dialect is ReasoningDialect.OPENROUTER:
-        kwargs["extra_body"] = {
-            "reasoning": {"effort": value, "exclude": True}
-        }
+        kwargs["extra_body"] = {"reasoning": {"effort": value, "exclude": True}}
     elif dialect is ReasoningDialect.DEEPSEEK:
         kwargs["reasoning_effort"] = value
         kwargs["extra_body"] = {"thinking": {"type": "enabled"}}
@@ -282,9 +284,7 @@ def _wire_kwargs(
             "output_config": {"effort": value},
         }
     else:  # ProviderCapabilities 应已拦住;交通层仍不冒险发请求。
-        raise ProviderError(
-            f"reasoning={value} has no compatible wire dialect for {plan.model!r}"
-        )
+        raise ProviderError(f"reasoning={value} has no compatible wire dialect for {plan.model!r}")
     return kwargs
 
 
@@ -336,7 +336,7 @@ def complete(
     messages: Sequence[dict[str, Any]],
     *,
     config: ProviderConfig,
-    plan: ResolvedCallPlan,
+    plan: CallPlan,
     client: Any = None,
 ) -> CompletionResult:
     """按已验证 plan 执行一次补全;大预算 stream 与非 stream 返回同一结果契约。"""

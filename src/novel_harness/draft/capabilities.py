@@ -34,19 +34,13 @@ OPENAI_CHAT_URL = (
 )
 DEEPSEEK_MODELS_URL = "https://api-docs.deepseek.com/quick_start/pricing/"
 DEEPSEEK_THINKING_URL = "https://api-docs.deepseek.com/guides/thinking_mode"
-ANTHROPIC_OPUS_URL = (
-    "https://platform.claude.com/docs/en/about-claude/models/whats-new-claude-4-8"
-)
-ANTHROPIC_COMPAT_URL = (
-    "https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk"
-)
+ANTHROPIC_OPUS_URL = "https://platform.claude.com/docs/en/about-claude/models/whats-new-claude-4-8"
+ANTHROPIC_COMPAT_URL = "https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk"
 ANTHROPIC_THINKING_URL = (
     "https://platform.claude.com/docs/en/about-claude/models/extended-thinking-models"
 )
 OPENROUTER_MODEL_URL = "https://openrouter.ai/anthropic/claude-opus-4.8"
-OPENROUTER_REASONING_URL = (
-    "https://openrouter.ai/docs/guides/best-practices/reasoning-tokens"
-)
+OPENROUTER_REASONING_URL = "https://openrouter.ai/docs/guides/best-practices/reasoning-tokens"
 
 
 class CapabilityError(ValueError):
@@ -122,12 +116,8 @@ class ProviderRuntimeOptions(BaseModel):
     def from_env(cls) -> Self:
         return cls(
             reasoning_effort=_reasoning_effort_from_env(),
-            max_context_tokens=_optional_positive_env_integer(
-                "NH_LLM_MAX_CONTEXT_TOKENS"
-            ),
-            max_output_tokens=_optional_positive_env_integer(
-                "NH_LLM_MAX_OUTPUT_TOKENS"
-            ),
+            max_context_tokens=_optional_positive_env_integer("NH_LLM_MAX_CONTEXT_TOKENS"),
+            max_output_tokens=_optional_positive_env_integer("NH_LLM_MAX_OUTPUT_TOKENS"),
             reasoning_dialect=_reasoning_dialect_from_env(),
         )
 
@@ -152,9 +142,7 @@ def normalize_base_url(value: str) -> str:
 
     host = parts.hostname.lower()
     rendered_host = f"[{host}]" if ":" in host else host
-    is_default_port = (scheme == "https" and port == 443) or (
-        scheme == "http" and port == 80
-    )
+    is_default_port = (scheme == "https" and port == 443) or (scheme == "http" and port == 80)
     netloc = rendered_host if port is None or is_default_port else f"{rendered_host}:{port}"
     return urlunsplit((scheme, netloc, parts.path.rstrip("/"), "", ""))
 
@@ -262,12 +250,9 @@ class ProviderCapabilities(BaseModel):
         if not non_off and self.reasoning_shares_output:
             raise ValueError("off-only capabilities cannot share output with reasoning")
         if self.reserve_ratio_high is not None and (
-            ReasoningEffort.HIGH not in self.reasoning_levels
-            or not self.reasoning_shares_output
+            ReasoningEffort.HIGH not in self.reasoning_levels or not self.reasoning_shares_output
         ):
-            raise ValueError(
-                "reserve_ratio_high requires high reasoning in a shared output pool"
-            )
+            raise ValueError("reserve_ratio_high requires high reasoning in a shared output pool")
         if self.supports_stream_usage is True and self.supports_streaming is not True:
             raise ValueError("stream usage support requires streaming support")
         return self
@@ -329,9 +314,7 @@ class ResolvedCallPlan(BaseModel):
                     "shared reasoning requires an audited reserve ratio for its effort"
                 )
             ratio = Fraction(str(self.capability.reserve_ratio_high))
-            expected_required = _ceil_fraction(
-                Fraction(expected_visible, 1) / (1 - ratio)
-            )
+            expected_required = _ceil_fraction(Fraction(expected_visible, 1) / (1 - ratio))
         if self.required_token_budget != expected_required:
             raise ValueError(
                 f"required token budget must equal {expected_required} for the frozen plan"
@@ -359,11 +342,113 @@ class ResolvedCallPlan(BaseModel):
         if self.stream != (self.request_token_budget > STREAM_THRESHOLD_TOKENS):
             raise ValueError("stream must follow the versioned token threshold")
         if self.stream and self.capability.supports_streaming is not True:
-            state = (
-                "unknown" if self.capability.supports_streaming is None else "false"
-            )
+            state = "unknown" if self.capability.supports_streaming is None else "false"
             raise ValueError(f"streaming is required, but capability support is {state}")
         return self
+
+
+class StructuredCallPlan(BaseModel):
+    """One validated provider plan for caller-budgeted structured output.
+
+    Unlike :class:`ResolvedCallPlan`, this plan has no prose ``LengthSpec``.  The
+    caller declares the maximum visible JSON budget directly, while the same
+    capability evidence still determines reasoning reserve, request size, and
+    streaming.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    base_url: str
+    model: str
+    prompt_token_budget: int = Field(ge=0)
+    visible_token_budget: int = Field(ge=1)
+    required_token_budget: int = Field(ge=1)
+    request_token_budget: int = Field(ge=1)
+    max_tokens_field: Literal["max_tokens", "max_completion_tokens"]
+    reasoning_requested: ReasoningEffort
+    reasoning_effective: ReasoningEffort
+    reasoning_dialect: ReasoningDialect
+    stream: bool = Field(strict=True)
+    budget_formula_version: str = BUDGET_FORMULA_VERSION
+    capability: ProviderCapabilities
+
+    @field_validator(
+        "prompt_token_budget",
+        "visible_token_budget",
+        "required_token_budget",
+        "request_token_budget",
+        mode="before",
+    )
+    @classmethod
+    def _budgets_are_strict_integers(cls, value: object) -> object:
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("token budgets must be integers, not bools or coerced values")
+        return value
+
+    @model_validator(mode="after")
+    def _matches_capability(self) -> Self:
+        if self.budget_formula_version != BUDGET_FORMULA_VERSION:
+            raise ValueError("call plan budget formula version is not supported")
+        if self.capability.source == "unknown":
+            raise ValueError("structured calls require known capability evidence")
+        if (self.base_url, self.model) != self.capability.route:
+            raise ValueError("call plan route must match its capability")
+        if self.max_tokens_field != self.capability.max_tokens_field:
+            raise ValueError("call plan token field must match its capability")
+        if self.reasoning_dialect is not self.capability.reasoning_dialect:
+            raise ValueError("call plan reasoning dialect must match its capability")
+        if self.reasoning_requested not in self.capability.reasoning_levels:
+            raise ValueError("call plan reasoning is not supported by its capability")
+        if self.reasoning_effective is not self.reasoning_requested:
+            raise ValueError("reasoning may not be silently downgraded")
+
+        expected_required = self.visible_token_budget
+        if (
+            self.reasoning_requested is not ReasoningEffort.OFF
+            and self.capability.reasoning_shares_output
+        ):
+            if (
+                self.reasoning_requested is not ReasoningEffort.HIGH
+                or self.capability.reserve_ratio_high is None
+            ):
+                raise ValueError(
+                    "shared reasoning requires an audited reserve ratio for its effort"
+                )
+            ratio = Fraction(str(self.capability.reserve_ratio_high))
+            expected_required = _ceil_fraction(Fraction(self.visible_token_budget, 1) / (1 - ratio))
+        if self.required_token_budget != expected_required:
+            raise ValueError(
+                f"required token budget must equal {expected_required} for the frozen plan"
+            )
+        if not self.visible_token_budget <= self.required_token_budget <= self.request_token_budget:
+            raise ValueError("visible <= required <= request token budgets is required")
+        if (
+            self.capability.max_output_tokens is not None
+            and self.request_token_budget > self.capability.max_output_tokens
+        ):
+            raise ValueError(
+                f"request token budget {self.request_token_budget} exceeds model max output "
+                f"{self.capability.max_output_tokens}"
+            )
+        if (
+            self.capability.max_context_tokens is not None
+            and self.prompt_token_budget + self.request_token_budget
+            > self.capability.max_context_tokens
+        ):
+            raise ValueError(
+                f"prompt ({self.prompt_token_budget}) + request "
+                f"({self.request_token_budget}) exceeds context window "
+                f"{self.capability.max_context_tokens}"
+            )
+        if self.stream != (self.request_token_budget > STREAM_THRESHOLD_TOKENS):
+            raise ValueError("stream must follow the versioned token threshold")
+        if self.stream and self.capability.supports_streaming is not True:
+            state = "unknown" if self.capability.supports_streaming is None else "false"
+            raise ValueError(f"streaming is required, but capability support is {state}")
+        return self
+
+
+type CallPlan = ResolvedCallPlan | StructuredCallPlan
 
 
 def _known_capability(
@@ -616,6 +701,94 @@ def plan_call(
     )
 
 
+def plan_structured_call(
+    visible_token_budget: int,
+    reasoning: ReasoningEffort | str,
+    capability: ProviderCapabilities,
+    *,
+    prompt_token_budget: int = 0,
+    request_token_budget: int | None = None,
+) -> StructuredCallPlan:
+    """Resolve a structured-output plan without inventing a prose length."""
+    if capability.source == "unknown":
+        raise CapabilityError(
+            f"unknown capability for exact route {capability.route!r}; refusing structured call"
+        )
+    try:
+        effort = ReasoningEffort(reasoning)
+    except (TypeError, ValueError) as exc:
+        raise CapabilityError(f"unsupported reasoning effort: {reasoning!r}") from exc
+    if effort not in capability.reasoning_levels:
+        raise CapabilityError(
+            f"reasoning={effort.value} is not supported for exact route {capability.route!r}"
+        )
+
+    visible = _positive_integer(visible_token_budget, "visible_token_budget")
+    prompt = _positive_integer(prompt_token_budget, "prompt_token_budget", allow_zero=True)
+    required = visible
+    if effort is not ReasoningEffort.OFF and capability.reasoning_shares_output:
+        if effort is not ReasoningEffort.HIGH or capability.reserve_ratio_high is None:
+            raise CapabilityError(
+                f"reasoning={effort.value} shares output but has no audited reserve ratio"
+            )
+        ratio = Fraction(str(capability.reserve_ratio_high))
+        required = _ceil_fraction(Fraction(visible, 1) / (1 - ratio))
+
+    if capability.max_output_tokens is not None and required > capability.max_output_tokens:
+        raise CapabilityError(
+            f"required token budget {required} exceeds model max output "
+            f"{capability.max_output_tokens}; refusing to clamp"
+        )
+
+    if request_token_budget is None:
+        request = (
+            ((required + 9_999) // 10_000) * 10_000
+            if effort is ReasoningEffort.HIGH and capability.reasoning_shares_output
+            else required
+        )
+    else:
+        request = _positive_integer(request_token_budget, "request_token_budget")
+        if request < required:
+            raise CapabilityError(
+                f"request token budget {request} is below required budget {required}"
+            )
+    if capability.max_output_tokens is not None and request > capability.max_output_tokens:
+        raise CapabilityError(
+            f"request token budget {request} exceeds model max output "
+            f"{capability.max_output_tokens}; refusing to clamp"
+        )
+    if (
+        capability.max_context_tokens is not None
+        and prompt + request > capability.max_context_tokens
+    ):
+        raise CapabilityError(
+            f"prompt ({prompt}) + request ({request}) exceeds context window "
+            f"{capability.max_context_tokens}"
+        )
+
+    stream = request > STREAM_THRESHOLD_TOKENS
+    if stream and capability.supports_streaming is not True:
+        state = "unknown" if capability.supports_streaming is None else "false"
+        raise CapabilityError(
+            f"request budget {request} requires streaming, but support is {state}"
+        )
+
+    return StructuredCallPlan(
+        base_url=capability.base_url,
+        model=capability.model,
+        prompt_token_budget=prompt,
+        visible_token_budget=visible,
+        required_token_budget=required,
+        request_token_budget=request,
+        max_tokens_field=capability.max_tokens_field,
+        reasoning_requested=effort,
+        reasoning_effective=effort,
+        reasoning_dialect=capability.reasoning_dialect,
+        stream=stream,
+        capability=capability,
+    )
+
+
 __all__ = [
     "ADAPTER_VERSION",
     "BUDGET_FORMULA_VERSION",
@@ -626,13 +799,16 @@ __all__ = [
     "STREAM_THRESHOLD_TOKENS",
     "TOKEN_PLAN_VERSION",
     "CapabilityError",
+    "CallPlan",
     "ProviderCapabilities",
     "ProviderRuntimeOptions",
     "ReasoningDialect",
     "ReasoningEffort",
     "ResolvedCallPlan",
+    "StructuredCallPlan",
     "normalize_base_url",
     "normalize_model",
     "plan_call",
+    "plan_structured_call",
     "resolve_capabilities",
 ]
