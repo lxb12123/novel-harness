@@ -64,6 +64,14 @@ class SqliteEventStore:
                 raise EventReferenceError(
                     f"evidence {evidence.id} 属于项目 {evidence.project_id}，不是 {spec.project_id}"
                 )
+            try:
+                event_chapter = queries.event_chapter_from_evidence_audit(
+                    self._conn,
+                    spec.project_id,
+                    evidence.id,
+                )
+            except LookupError as exc:
+                raise EventReferenceError(str(exc)) from exc
             nodes = queries.fetch_nodes(
                 self._conn,
                 spec.project_id,
@@ -107,9 +115,9 @@ class SqliteEventStore:
                 (
                     event_id,
                     spec.project_id,
-                    evidence.chapter_number,
+                    event_chapter,
                     spec.summary,
-                    evidence.chapter_number,
+                    event_chapter,
                     InformationScope.PROVISIONAL.value,
                     EdgeStatus.ACTIVE.value,
                     spec.confidence,
@@ -139,7 +147,7 @@ class SqliteEventStore:
                         event_id,
                         spec.project_id,
                         character_id,
-                        evidence.chapter_number,
+                        event_chapter,
                         InformationScope.PROVISIONAL.value,
                         evidence.id,
                         EvidenceStatus.FRESH.value,
@@ -155,7 +163,7 @@ class SqliteEventStore:
             event=StoryEvent(
                 id=event_id,
                 project_id=spec.project_id,
-                chapter_number=evidence.chapter_number,
+                chapter_number=event_chapter,
                 summary=spec.summary,
                 information_scope=InformationScope.PROVISIONAL,
                 status=EdgeStatus.ACTIVE,

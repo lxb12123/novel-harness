@@ -159,6 +159,43 @@ def test_put_provisional_derives_time_and_fixed_repository_fields(conn: Connecti
     assert [node.id for node in view.revealed_facts] == [seeded.secret_id]
 
 
+def test_put_provisional_uses_the_immutable_audit_snapshot_chapter(
+    conn: Connection,
+) -> None:
+    seeded = _seed_event(conn, chapter_number=10)
+    relocation_target = seeded.graph.put_chapter(
+        ChapterSpec(
+            project_id=seeded.project_id,
+            number=11,
+            heading="第11章 新渡口",
+            path="chapters/0011.md",
+            text="顾清音带着玄铁令去了新渡口。\n",
+        )
+    )
+    conn.execute(
+        "UPDATE evidence SET chapter_id = ? WHERE id = ?",
+        (relocation_target.id, seeded.evidence_id),
+    )
+    store = SqliteEventStore(conn, event_id_factory=lambda _project_id: "event:audit-chapter")
+
+    view = store.put_provisional(
+        ProvisionalEventSpec(
+            project_id=seeded.project_id,
+            summary="顾清音交出玄铁令。",
+            evidence_id=seeded.evidence_id,
+            knower_ids=[seeded.character_id],
+            confidence=0.91,
+        )
+    )
+
+    assert view.event.chapter_number == 10
+    knower_chapter = conn.execute(
+        "SELECT valid_from_chapter FROM event_knower WHERE event_id = ?",
+        (view.event.id,),
+    ).fetchone()[0]
+    assert knower_chapter == 10
+
+
 def test_put_provisional_rejects_a_non_character_participant_atomically(
     conn: Connection,
 ) -> None:

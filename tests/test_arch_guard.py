@@ -42,7 +42,10 @@ Connection` 然后 `conn.execute(...)`。它本身完全正当（decision_log �
 from __future__ import annotations
 
 import ast
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "novel_harness"
@@ -309,13 +312,19 @@ def test_story_graph_method_set_remains_frozen() -> None:
     }
 
 
-def test_graph_package_exports_the_concrete_event_repositories() -> None:
-    from novel_harness import graph
-    from novel_harness.graph.sqlite_events import SqliteEventStore
-    from novel_harness.graph.sqlite_proposals import SqliteProposalStore
+def test_events_package_imports_in_a_cold_interpreter() -> None:
+    env = os.environ.copy()
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    result = subprocess.run(
+        [sys.executable, "-c", "import novel_harness.events"],
+        cwd=SRC.parents[1],
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
-    assert graph.SqliteEventStore is SqliteEventStore
-    assert graph.SqliteProposalStore is SqliteProposalStore
+    assert result.returncode == 0, result.stderr
 
 
 SHADOW_GRANDFATHERED = frozenset({"novel_harness.text.chapterize"})

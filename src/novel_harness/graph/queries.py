@@ -191,6 +191,33 @@ def event_id_by_anchor(
     return str(rows[0]["id"]) if rows else None
 
 
+def event_chapter_from_evidence_audit(
+    conn: sqlite3.Connection,
+    project_id: str,
+    evidence_id: str,
+) -> int:
+    """Derive immutable event time from evidence's audit snapshot, never relocation state."""
+    cur = conn.execute(
+        """
+        SELECT chapter.number AS chapter_number
+        FROM evidence
+        JOIN chapter_snapshot AS snapshot
+          ON snapshot.id = evidence.chapter_snapshot_id
+        JOIN chapter ON chapter.id = snapshot.chapter_id
+        WHERE evidence.id = :evidence_id
+          AND evidence.project_id = :pid
+          AND chapter.project_id = :pid
+        """,
+        {"pid": project_id, "evidence_id": evidence_id},
+    )
+    rows = _rows(cur)
+    if not rows:
+        raise LookupError(
+            f"evidence audit 不存在或不属于项目：project={project_id}, evidence={evidence_id}"
+        )
+    return int(rows[0]["chapter_number"])
+
+
 def event_ids_at(
     conn: sqlite3.Connection,
     project_id: str,
