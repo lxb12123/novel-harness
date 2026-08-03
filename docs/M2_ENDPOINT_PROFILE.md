@@ -105,7 +105,11 @@ continuation 预检：prompt + (request + overhead) + request ≈ 302K ≤ 1M �
 - [x] **修正案 8（2026-08-03，维护者按「权重比例」裁定）**：长度降权——±10%
       宽容带（1,800–3,410），带内小偏差记录不判死、带外才 INVALID；
       取代修正案 6 的固定 ≤100。长度是小题，泄漏统计才是大题。
-- [ ] 修复后完整一轮 225 final cells / 225–450 transport calls
+- [x] 第八轮（`runs/20260803T032951Z.jsonl`）—— **运行未完成（计费，非仪器）**：
+      44/225 格全部落在宽容带内、0 INVALID——修正案 8 + 降低目标生效，长度判死
+      一次没触发；随后 DeepSeek 返回 402 Insufficient Balance，账户余额耗尽。
+      按协议这是「运行未完成」，与 INVALID 分开报告；44 格证据原样保留。
+- [ ] 充值后续跑完整一轮 225 final cells / 225–450 transport calls
 
 跑完之前 `runs/` 不存在、ADR 0009 不写；本 profile 的 commit 时间戳先于
 第一份 `runs/*.jsonl` 是「先定卷子再答卷」的证据链最后一环。
