@@ -221,6 +221,38 @@ def test_provider_rejects_a_structured_plan_tampered_after_construction() -> Non
         _wire_kwargs(config, plan, [{"role": "user", "content": "JSON only"}])
 
 
+def test_complete_rejects_a_tampered_resolved_plan_before_calling_the_client() -> None:
+    calls: list[dict[str, object]] = []
+
+    def create(**kwargs: object) -> object:
+        calls.append(kwargs)
+        return types.SimpleNamespace(
+            model="must-not-be-called",
+            choices=[
+                types.SimpleNamespace(
+                    message=types.SimpleNamespace(content="unsafe"),
+                    finish_reason="stop",
+                )
+            ],
+            usage=None,
+        )
+
+    client = types.SimpleNamespace(
+        chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create))
+    )
+    valid = plan_call(M2_LENGTH_SPEC, ReasoningEffort.OFF, _caps())
+    tampered = valid.model_copy(update={"request_token_budget": 1})
+
+    with pytest.raises(ValidationError, match="visible.*required.*request"):
+        complete(
+            [{"role": "user", "content": "must not leave the process"}],
+            config=ProviderConfig(base_url=valid.base_url, model=valid.model),
+            plan=tampered,
+            client=client,
+        )
+    assert calls == []
+
+
 def test_complete_accepts_a_structured_plan() -> None:
     calls: dict[str, object] = {}
 

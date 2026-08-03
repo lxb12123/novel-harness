@@ -36,6 +36,7 @@ from .capabilities import (
     CallPlan,
     ReasoningDialect,
     ReasoningEffort,
+    ResolvedCallPlan,
     StructuredCallPlan,
     normalize_base_url,
     normalize_model,
@@ -234,11 +235,15 @@ def _wire_kwargs(
     messages: Sequence[dict[str, Any]],
 ) -> dict[str, Any]:
     """把中立 plan 序列化成某一个 OpenAI-compatible endpoint 的精确 wire shape。"""
-    if isinstance(plan, StructuredCallPlan):
-        # ``model_copy(update=...)`` intentionally skips Pydantic validation.  This is
-        # the last boundary before transport, so rebuild caller-budgeted plans from
-        # their public payload rather than trusting an instance that may be forged.
+    # ``model_copy(update=...)`` intentionally skips Pydantic validation.  This is the
+    # last boundary before transport, so rebuild either supported plan from its public
+    # payload rather than trusting an instance that may have been forged after planning.
+    if isinstance(plan, ResolvedCallPlan):
+        plan = ResolvedCallPlan.model_validate(plan.model_dump(mode="python"))
+    elif isinstance(plan, StructuredCallPlan):
         plan = StructuredCallPlan.model_validate(plan.model_dump(mode="python"))
+    else:
+        raise TypeError("plan must be a ResolvedCallPlan or StructuredCallPlan")
     route = normalize_base_url(config.base_url), normalize_model(config.model)
     if route != (plan.base_url, plan.model):
         raise ProviderError(
