@@ -118,7 +118,14 @@ def test_create_serializes_structured_items_and_round_trips_a_record(
         project_id=project_id,
         kind="entity_resolution",
         summary="顾姑娘可能指向顾清音。",
-        items=[{"surface": "顾姑娘", "confidence": 0.6, "aliases": ["清音"]}],
+        items=[
+            {
+                "surface": "顾姑娘",
+                "confidence": 0.6,
+                "aliases": ["清音", "グー・チンイン", "🙂"],
+                "meta": {"语言": "中文", "confirmed": False},
+            }
+        ],
         confidence=0.6,
         base_canon_version=3,
         schema_version="m4.v1",
@@ -169,10 +176,45 @@ def test_create_defensively_rejects_non_finite_constructed_payloads(
         edge_ids=[],
     )
 
-    with pytest.raises(ValueError, match="Out of range"):
+    with pytest.raises(ProposalValidationError, match="strict UTF-8 JSON"):
         store.create(bypassed_validation)
 
     assert conn.execute("SELECT COUNT(*) FROM proposal_set").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(
+    "mutated_value",
+    [float("nan"), "顾\ud800姑娘"],
+    ids=["nan", "lone-surrogate"],
+)
+def test_create_rejects_mutated_nested_items_before_any_sql_writes(
+    conn: Connection,
+    mutated_value: object,
+) -> None:
+    project_id, event_id, edge_id, _snapshot_id = _seed_link_targets(conn)
+    store = SqliteProposalStore(
+        conn,
+        proposal_id_factory=lambda _project_id: "proposal:mutated-json",
+    )
+    proposal = ProposalCreate(
+        project_id=project_id,
+        kind="mutated_json",
+        items=[{"nested": {"value": "valid"}}],
+        event_ids=[event_id],
+        edge_ids=[edge_id],
+    )
+    root = proposal.items[0]
+    assert isinstance(root, dict)
+    nested = root["nested"]
+    assert isinstance(nested, dict)
+    nested["value"] = mutated_value
+
+    with pytest.raises(ProposalValidationError, match="strict UTF-8 JSON"):
+        store.create(proposal)
+
+    assert conn.execute("SELECT COUNT(*) FROM proposal_set").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM proposal_event").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM proposal_edge").fetchone()[0] == 0
 
 
 def test_create_links_provisional_events_and_edges_atomically(conn: Connection) -> None:

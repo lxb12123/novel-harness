@@ -51,13 +51,19 @@ class SqliteProposalStore:
 
     def create(self, proposal: ProposalCreate) -> ProposalRecord:
         proposal_id = self._new_proposal_id(proposal.project_id)
-        items_json = json.dumps(
-            proposal.items,
-            ensure_ascii=False,
-            allow_nan=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
+        try:
+            items_json = json.dumps(
+                proposal.items,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            items_json.encode("utf-8")
+        except (UnicodeEncodeError, ValueError) as exc:
+            raise ProposalValidationError(
+                f"proposal items 必须是 strict UTF-8 JSON：{exc}"
+            ) from exc
         with _transaction(self._conn):
             self._validate_context(proposal)
             self._validate_links(proposal)
