@@ -541,8 +541,8 @@ R4 之外，R2（未来实体提前出现）和 R3（死人/未登场角色开�
    规模：vitest 18 条（认知矩阵三态 / 左栏空态 / 花名册抽屉的 ADR 0004 提示与拒绝形态）。
    **剩下的**：只有 3 个组件有测试，`CenterEditor` / `LocalGraph` / `BottomBar` 等仍是零。
 
-**仍完全不存在的**：`extract/`（M4）。`text/mentions.py` 已于 2026-08-02 落地，
-R2/R3 已在 `ALL_CHECKS` 里跑（R5 仍等覆盖率实测）。
+**仍完全不存在的**：`extract/`（M4，设计草案见 [M4_DESIGN.md](M4_DESIGN.md)）。
+`text/mentions.py` 已于 2026-08-02 落地，R2/R3 已在 `ALL_CHECKS` 里跑（R5 已砍）。
 （这一行 2026-07-30 之前还挂着 `synth/` 和 `draft/assemble.py`，那天两样都落地了。
 留个记号：这一行**只列代码**——「代码有了但没跑过」是另一回事，见上面 M2 那节最后一段。）
 
