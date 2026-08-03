@@ -24,9 +24,9 @@ class RawEvent(BaseModel):
 
     summary: str = Field(min_length=1)
     quote: str = Field(min_length=10, max_length=120)
-    participants: list[str] = Field(default_factory=list)
-    knowers: list[str] = Field(default_factory=list)
-    revealed_facts: list[str] = Field(default_factory=list)
+    participants: tuple[str, ...]
+    knowers: tuple[str, ...]
+    revealed_facts: tuple[str, ...]
     confidence: float = Field(ge=0, le=1)
 
 
@@ -74,6 +74,6 @@ class RawChapterAnalysis(BaseModel):
 
     model_config = _UNTRUSTED_CONFIG
 
-    events: list[RawEvent] = Field(default_factory=list, max_length=12)
-    state_updates: list[RawStateUpdate] = Field(default_factory=list, max_length=24)
-    character_profiles: list[RawCharacterProfile] = Field(default_factory=list)
+    events: tuple[RawEvent, ...] = Field(min_length=1, max_length=12)
+    state_updates: tuple[RawStateUpdate, ...] = Field(max_length=24)
+    character_profiles: tuple[RawCharacterProfile, ...]

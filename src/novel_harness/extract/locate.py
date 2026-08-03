@@ -127,44 +127,42 @@ def locate_quote(paragraphs: Sequence[str], quote: str, min_ratio: float = 0.90)
     if len(exact) > 1:
         return LocateResult(outcome=LocateOutcome.AMBIGUOUS, ratio=1.0)
 
-    best_ratio = -1.0
-    best: list[tuple[_Candidate, int]] = []
-    occurrence_cache: dict[tuple[int, str], dict[int, int]] = {}
+    ratio_cache: dict[str, float] = {}
+    candidates_by_ratio: dict[float, list[_Candidate]] = {}
     for candidate in _fuzzy_candidates(paragraphs, len(quote)):
-        ratio = SequenceMatcher(None, quote, candidate.text).ratio()
-        if ratio < best_ratio:
-            continue
-        occurrence_key = (candidate.para_index, candidate.text)
-        occurrences = occurrence_cache.get(occurrence_key)
-        if occurrences is None:
-            occurrences = _occurrences_by_start(paragraphs[candidate.para_index], candidate.text)
-            occurrence_cache[occurrence_key] = occurrences
-        occurrence_k = occurrences.get(candidate.start)
+        ratio = ratio_cache.get(candidate.text)
+        if ratio is None:
+            ratio = SequenceMatcher(None, quote, candidate.text).ratio()
+            ratio_cache[candidate.text] = ratio
+        candidates_by_ratio.setdefault(ratio, []).append(candidate)
+
+    if not candidates_by_ratio:
+        return LocateResult(outcome=LocateOutcome.NOT_FOUND, ratio=0.0)
+
+    for best_ratio in sorted(candidates_by_ratio, reverse=True):
+        best = candidates_by_ratio[best_ratio]
+        if best_ratio < min_ratio:
+            return LocateResult(
+                outcome=LocateOutcome.BELOW_THRESHOLD,
+                ratio=best_ratio,
+            )
+        if len(best) > 1:
+            return LocateResult(outcome=LocateOutcome.AMBIGUOUS, ratio=best_ratio)
+
+        candidate = best[0]
+        occurrence_k = _occurrences_by_start(paragraphs[candidate.para_index], candidate.text).get(
+            candidate.start
+        )
         if occurrence_k is None:
             continue
-        if ratio > best_ratio:
-            best_ratio = ratio
-            best = [(candidate, occurrence_k)]
-        elif ratio == best_ratio:
-            best.append((candidate, occurrence_k))
-
-    if not best:
-        return LocateResult(outcome=LocateOutcome.NOT_FOUND, ratio=0.0)
-    if len(best) > 1:
-        return LocateResult(outcome=LocateOutcome.AMBIGUOUS, ratio=best_ratio)
-    if best_ratio < min_ratio:
         return LocateResult(
-            outcome=LocateOutcome.BELOW_THRESHOLD,
+            outcome=LocateOutcome.FUZZY,
+            located=Located(
+                para_index=candidate.para_index,
+                occurrence_k=occurrence_k,
+                matched_text=candidate.text,
+            ),
             ratio=best_ratio,
         )
 
-    candidate, occurrence_k = best[0]
-    return LocateResult(
-        outcome=LocateOutcome.FUZZY,
-        located=Located(
-            para_index=candidate.para_index,
-            occurrence_k=occurrence_k,
-            matched_text=candidate.text,
-        ),
-        ratio=best_ratio,
-    )
+    return LocateResult(outcome=LocateOutcome.NOT_FOUND, ratio=0.0)

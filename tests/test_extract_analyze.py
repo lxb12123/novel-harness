@@ -8,6 +8,8 @@ from pydantic import ValidationError
 from novel_harness.extract.analyze import (
     AnalysisFormatError,
     ResolvedAnalysis,
+    ResolutionContractError,
+    SurfaceResolution,
     resolve_surfaces,
     parse_analysis,
 )
@@ -17,14 +19,20 @@ from novel_harness.extract.prompt import (
     ANALYSIS_SCHEMA_VERSION,
     build_analysis_messages,
 )
-from novel_harness.graph import AliasHit, AliasKind, Node, NodeLabel, Resolution
+from novel_harness.graph import AliasHit, AliasKind, Node, NodeLabel, NodeRef, Resolution
 
 
-def _hit(node_id: str, name: str, *, usable: bool = True) -> AliasHit:
+def _hit(
+    node_id: str,
+    name: str,
+    *,
+    usable: bool = True,
+    project_id: str = "project-1",
+) -> AliasHit:
     return AliasHit(
         node=Node(
             id=node_id,
-            project_id="project-1",
+            project_id=project_id,
             label=NodeLabel.CHARACTER,
             name=name,
         ),
@@ -51,6 +59,20 @@ class FakeStoryGraph:
             Resolution(surface=surface, hits=self.by_surface.get(surface, []))
             for surface in surfaces
         ]
+
+
+class FixedResolutionGraph:
+    def __init__(self, resolutions: list[Resolution]) -> None:
+        self.resolutions = resolutions
+
+    def resolve(
+        self,
+        project_id: str,
+        surfaces: list[str] | tuple[str, ...] | None = None,
+        *,
+        rules_only: bool = False,
+    ) -> list[Resolution]:
+        return self.resolutions
 
 
 def _valid_json() -> str:
@@ -146,6 +168,7 @@ def test_resolve_surfaces_preserves_order_candidates_and_unknowns() -> None:
     )
 
     assert isinstance(result, ResolvedAnalysis)
+    assert isinstance(result.resolutions, tuple)
     assert [item.surface for item in result.resolutions] == [
         "顾姑娘",
         "师兄",
@@ -165,10 +188,18 @@ def test_resolve_surfaces_preserves_order_candidates_and_unknowns() -> None:
     assert result.resolutions[1].unknown is False
 
     assert result.resolutions[2].unique_id is None
-    assert result.resolutions[2].candidates == []
+    assert result.resolutions[2].candidates == ()
     assert result.resolutions[2].ambiguous is False
     assert result.resolutions[2].unknown is True
     assert graph.calls == [("project-1", ("顾姑娘", "师兄", "陌生人"), False)]
+
+    assert isinstance(result.resolutions[1].candidates, tuple)
+    with pytest.raises(AttributeError):
+        result.resolutions.append(result.resolutions[0])  # type: ignore[attr-defined]
+    with pytest.raises(AttributeError):
+        result.resolutions[1].candidates.append(  # type: ignore[attr-defined]
+            result.resolutions[1].candidates[0]
+        )
 
 
 def test_resolve_surfaces_uses_unique_unusable_alias_without_rules_filtering() -> None:
@@ -182,3 +213,68 @@ def test_resolve_surfaces_uses_unique_unusable_alias_without_rules_filtering() -
         "label": NodeLabel.CHARACTER,
         "name": "顾清音",
     }
+
+
+@pytest.mark.parametrize(
+    ("candidates", "unique_id"),
+    [
+        ((), "character-1"),
+        ((NodeRef(id="character-1", label=NodeLabel.CHARACTER, name="顾清音"),), None),
+        ((NodeRef(id="character-1", label=NodeLabel.CHARACTER, name="顾清音"),), "wrong"),
+        (
+            (
+                NodeRef(id="character-1", label=NodeLabel.CHARACTER, name="顾清音"),
+                NodeRef(id="character-2", label=NodeLabel.CHARACTER, name="萧决"),
+            ),
+            "character-1",
+        ),
+    ],
+)
+def test_surface_resolution_rejects_illegal_unique_id_states(
+    candidates: tuple[NodeRef, ...], unique_id: str | None
+) -> None:
+    with pytest.raises(ValidationError, match="unique_id"):
+        SurfaceResolution(
+            surface="称呼",
+            candidates=candidates,
+            unique_id=unique_id,
+        )
+
+
+@pytest.mark.parametrize(
+    "returned_surfaces",
+    [
+        ("顾姑娘",),
+        ("顾姑娘", "师兄", "额外"),
+        ("顾姑娘", "顾姑娘"),
+        ("师兄", "顾姑娘"),
+    ],
+)
+def test_resolve_surfaces_rejects_misaligned_graph_results(
+    returned_surfaces: tuple[str, ...],
+) -> None:
+    graph = FixedResolutionGraph(
+        [Resolution(surface=surface, hits=[]) for surface in returned_surfaces]
+    )
+
+    with pytest.raises(ResolutionContractError, match="StoryGraph.resolve"):
+        resolve_surfaces(
+            graph,  # type: ignore[arg-type]
+            "project-1",
+            ["顾姑娘", "师兄", "顾姑娘"],
+        )
+
+
+def test_resolve_surfaces_rejects_foreign_project_candidates() -> None:
+    graph = FakeStoryGraph({"顾姑娘": [_hit("character-1", "顾清音", project_id="project-2")]})
+
+    with pytest.raises(ResolutionContractError, match="project"):
+        resolve_surfaces(graph, "project-1", ["顾姑娘"])  # type: ignore[arg-type]
+
+
+def test_resolve_surfaces_rejects_duplicate_candidate_node_ids() -> None:
+    duplicate = _hit("character-1", "顾清音")
+    graph = FakeStoryGraph({"顾姑娘": [duplicate, duplicate]})
+
+    with pytest.raises(ResolutionContractError, match="duplicate"):
+        resolve_surfaces(graph, "project-1", ["顾姑娘"])  # type: ignore[arg-type]

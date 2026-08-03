@@ -5,6 +5,7 @@ from __future__ import annotations
 from .analyze import (
     AnalysisFormatError,
     ResolvedAnalysis,
+    ResolutionContractError,
     SurfaceResolution,
     parse_analysis,
     resolve_surfaces,
@@ -35,6 +36,7 @@ __all__ = [
     "RawEvent",
     "RawStateUpdate",
     "ResolvedAnalysis",
+    "ResolutionContractError",
     "SurfaceResolution",
     "build_analysis_messages",
     "locate_quote",

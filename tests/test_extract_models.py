@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 
 import pytest
@@ -38,13 +39,23 @@ def _state(**overrides: object) -> dict[str, object]:
     return data
 
 
+def _analysis(**overrides: object) -> dict[str, object]:
+    data: dict[str, object] = {
+        "events": [_event()],
+        "state_updates": [],
+        "character_profiles": [],
+    }
+    data.update(overrides)
+    return data
+
+
 @pytest.mark.parametrize(
     "model",
     [
         RawEvent.model_validate(_event()),
         RawCharacterProfile(surface="顾清音", confidence=0.8),
         RawStateUpdate.model_validate(_state()),
-        RawChapterAnalysis(events=[_event()]),
+        RawChapterAnalysis.model_validate(_analysis()),
     ],
 )
 def test_raw_models_are_frozen_and_forbid_unknown_fields(model: object) -> None:
@@ -52,6 +63,54 @@ def test_raw_models_are_frozen_and_forbid_unknown_fields(model: object) -> None:
     assert model.__class__.model_config["extra"] == "forbid"
     with pytest.raises(ValidationError, match="frozen"):
         model.confidence = 0.1  # type: ignore[attr-defined]
+
+
+def test_raw_collection_fields_are_deeply_immutable_tuples() -> None:
+    analysis = RawChapterAnalysis.model_validate(
+        _analysis(
+            state_updates=[_state()],
+            character_profiles=[{"surface": "顾清音", "confidence": 0.8}],
+        )
+    )
+
+    assert isinstance(analysis.events, tuple)
+    assert isinstance(analysis.state_updates, tuple)
+    assert isinstance(analysis.character_profiles, tuple)
+    assert isinstance(analysis.events[0].participants, tuple)
+    assert isinstance(analysis.events[0].knowers, tuple)
+    assert isinstance(analysis.events[0].revealed_facts, tuple)
+    serialized = json.loads(analysis.model_dump_json())
+    assert isinstance(serialized["events"], list)
+    assert isinstance(serialized["state_updates"], list)
+    assert isinstance(serialized["character_profiles"], list)
+    assert isinstance(serialized["events"][0]["participants"], list)
+    with pytest.raises(AttributeError):
+        analysis.events.append(analysis.events[0])  # type: ignore[attr-defined]
+    with pytest.raises(TypeError):
+        analysis.events[0].participants[0] = "被篡改"  # type: ignore[index]
+
+
+@pytest.mark.parametrize("missing", ["events", "state_updates", "character_profiles"])
+def test_chapter_analysis_requires_every_top_level_collection(missing: str) -> None:
+    payload = _analysis()
+    payload.pop(missing)
+
+    with pytest.raises(ValidationError, match=missing):
+        RawChapterAnalysis.model_validate(payload)
+
+
+def test_chapter_analysis_requires_at_least_one_event() -> None:
+    with pytest.raises(ValidationError, match="events"):
+        RawChapterAnalysis.model_validate(_analysis(events=[]))
+
+
+@pytest.mark.parametrize("missing", ["participants", "knowers", "revealed_facts"])
+def test_event_requires_every_surface_collection(missing: str) -> None:
+    payload = _event()
+    payload.pop(missing)
+
+    with pytest.raises(ValidationError, match=missing):
+        RawEvent.model_validate(payload)
 
 
 @pytest.mark.parametrize("confidence", [math.nan, math.inf, -math.inf])
@@ -67,12 +126,14 @@ def test_raw_models_reject_nonfinite_confidence(confidence: float) -> None:
 @pytest.mark.parametrize(
     ("payload", "forbidden_field"),
     [
-        ({"events": [], "chapter": 12}, "chapter"),
-        ({"events": [_event(id="evt-1")]}, "id"),
-        ({"events": [_event(scope="CANON")]}, "scope"),
-        ({"events": [_event(status="ACTIVE")]}, "status"),
+        (_analysis(chapter=12), "chapter"),
+        (_analysis(events=[_event(id="evt-1")]), "id"),
+        (_analysis(events=[_event(scope="CANON")]), "scope"),
+        (_analysis(events=[_event(status="ACTIVE")]), "status"),
         (
-            {"character_profiles": [{"surface": "顾清音", "confidence": 0.8, "node_id": "node-1"}]},
+            _analysis(
+                character_profiles=[{"surface": "顾清音", "confidence": 0.8, "node_id": "node-1"}]
+            ),
             "node_id",
         ),
     ],
@@ -118,13 +179,13 @@ def test_state_update_accepts_each_exact_shape(payload: dict[str, object]) -> No
 
 
 def test_chapter_analysis_caps_events_and_state_updates() -> None:
-    RawChapterAnalysis(events=[_event() for _ in range(12)])
-    RawChapterAnalysis(state_updates=[_state() for _ in range(24)])
+    RawChapterAnalysis.model_validate(_analysis(events=[_event() for _ in range(12)]))
+    RawChapterAnalysis.model_validate(_analysis(state_updates=[_state() for _ in range(24)]))
 
     with pytest.raises(ValidationError):
-        RawChapterAnalysis(events=[_event() for _ in range(13)])
+        RawChapterAnalysis.model_validate(_analysis(events=[_event() for _ in range(13)]))
     with pytest.raises(ValidationError):
-        RawChapterAnalysis(state_updates=[_state() for _ in range(25)])
+        RawChapterAnalysis.model_validate(_analysis(state_updates=[_state() for _ in range(25)]))
 
 
 def test_raw_field_length_boundaries_are_enforced() -> None:

@@ -5,6 +5,7 @@ import math
 
 import pytest
 
+import novel_harness.extract.locate as locate_module
 from novel_harness.extract.locate import LocateOutcome, locate_quote
 from novel_harness.text.anchor import find_one
 
@@ -72,6 +73,17 @@ def test_equal_best_fuzzy_locations_are_ambiguous() -> None:
 
     assert result.outcome is LocateOutcome.AMBIGUOUS
     assert result.ratio == pytest.approx(0.90)
+    assert result.located is None
+
+
+def test_equal_best_locations_below_threshold_report_threshold_rejection() -> None:
+    source = "a" * 199
+    quote = "a" * 179 + "b" * 20
+
+    result = locate_quote([source, source], quote)
+
+    assert result.outcome is LocateOutcome.BELOW_THRESHOLD
+    assert 0.899 < result.ratio < 0.90
     assert result.located is None
 
 
@@ -144,3 +156,33 @@ def test_moderate_chapter_location_is_deterministic() -> None:
     second = locate_quote(paragraphs, quote)
 
     assert first == second
+
+
+def test_repeated_candidate_text_is_scored_once_without_anchor_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = "abcdefghijklmnopqrst"
+    quote = "abcdeXghijklmnoYqrst"
+    sequence_matcher_calls = 0
+    occurrence_calls = 0
+    real_sequence_matcher = locate_module.SequenceMatcher
+    real_occurrences = locate_module._occurrences_by_start
+
+    def counted_sequence_matcher(*args: object, **kwargs: object):
+        nonlocal sequence_matcher_calls
+        sequence_matcher_calls += 1
+        return real_sequence_matcher(*args, **kwargs)
+
+    def counted_occurrences(para: str, text: str) -> dict[int, int]:
+        nonlocal occurrence_calls
+        occurrence_calls += 1
+        return real_occurrences(para, text)
+
+    monkeypatch.setattr(locate_module, "SequenceMatcher", counted_sequence_matcher)
+    monkeypatch.setattr(locate_module, "_occurrences_by_start", counted_occurrences)
+
+    result = locate_quote([source] * 10_000, quote)
+
+    assert result.outcome is LocateOutcome.AMBIGUOUS
+    assert sequence_matcher_calls == 1
+    assert occurrence_calls == 0

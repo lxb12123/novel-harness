@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
 from ..graph.models import NodeRef
 from ..graph.store import StoryGraph
@@ -14,6 +14,7 @@ from .models import RawChapterAnalysis
 __all__ = [
     "AnalysisFormatError",
     "ResolvedAnalysis",
+    "ResolutionContractError",
     "SurfaceResolution",
     "parse_analysis",
     "resolve_surfaces",
@@ -22,6 +23,10 @@ __all__ = [
 
 class AnalysisFormatError(ValueError):
     """The model response was not exactly the expected analysis JSON."""
+
+
+class ResolutionContractError(ValueError):
+    """StoryGraph.resolve returned data that violates its alignment contract."""
 
 
 def parse_analysis(text: str) -> RawChapterAnalysis:
@@ -38,7 +43,7 @@ class SurfaceResolution(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     surface: str
-    candidates: list[NodeRef] = Field(default_factory=list)
+    candidates: tuple[NodeRef, ...] = ()
     unique_id: str | None = None
 
     @model_validator(mode="after")
@@ -62,7 +67,7 @@ class ResolvedAnalysis(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    resolutions: list[SurfaceResolution] = Field(default_factory=list)
+    resolutions: tuple[SurfaceResolution, ...] = ()
 
 
 def resolve_surfaces(
@@ -77,19 +82,37 @@ def resolve_surfaces(
         ordered_surfaces,
         rules_only=False,
     )
-    by_surface = {resolution.surface: resolution for resolution in graph_resolutions}
+    expected_surfaces = tuple(ordered_surfaces)
+    actual_surfaces = tuple(resolution.surface for resolution in graph_resolutions)
+    if actual_surfaces != expected_surfaces:
+        raise ResolutionContractError(
+            "StoryGraph.resolve must return exactly one same-order result per surface: "
+            f"expected {expected_surfaces!r}, got {actual_surfaces!r}"
+        )
 
     resolved: list[SurfaceResolution] = []
-    for surface in ordered_surfaces:
-        resolution = by_surface.get(surface)
-        candidates = (
-            [NodeRef.of(hit.node) for hit in resolution.hits] if resolution is not None else []
-        )
+    for surface, resolution in zip(ordered_surfaces, graph_resolutions, strict=True):
+        candidates: list[NodeRef] = []
+        candidate_ids: set[str] = set()
+        for hit in resolution.hits:
+            if hit.node.project_id != project_id:
+                raise ResolutionContractError(
+                    "StoryGraph.resolve returned a candidate from another project: "
+                    f"surface={surface!r}, node={hit.node.id!r}"
+                )
+            if hit.node.id in candidate_ids:
+                raise ResolutionContractError(
+                    "StoryGraph.resolve returned a duplicate candidate node id: "
+                    f"surface={surface!r}, node={hit.node.id!r}"
+                )
+            candidate_ids.add(hit.node.id)
+            candidates.append(NodeRef.of(hit.node))
+        candidate_tuple = tuple(candidates)
         resolved.append(
             SurfaceResolution(
                 surface=surface,
-                candidates=candidates,
-                unique_id=candidates[0].id if len(candidates) == 1 else None,
+                candidates=candidate_tuple,
+                unique_id=candidate_tuple[0].id if len(candidate_tuple) == 1 else None,
             )
         )
-    return ResolvedAnalysis(resolutions=resolved)
+    return ResolvedAnalysis(resolutions=tuple(resolved))
