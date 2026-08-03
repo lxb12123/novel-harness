@@ -351,7 +351,12 @@ class ExtractionService:
             )
             edge_links["edge_conflict"].append(result.edge.id)
             confidences["edge_conflict"].append(raw.confidence)
-        if raw.confidence < 0.70 and self._any_main(project_id, (subject_id,)):
+        main_candidates = (
+            (subject_id, target_id)
+            if raw.kind == "relationship"
+            else (subject_id,)
+        )
+        if raw.confidence < 0.70 and self._any_main(project_id, main_candidates):
             buckets["low_confidence_main"].append(
                 {
                     "source_kind": "state_update",

@@ -343,6 +343,30 @@ def test_low_confidence_main_character_items_cluster_and_point_seven_is_not_low(
     assert boundary.proposal_count == 0
 
 
+def test_low_confidence_relationship_checks_main_character_at_either_end(
+    seed: Seed, conn: Connection
+) -> None:
+    relationship = RawStateUpdate(
+        kind="relationship",
+        subject="萧决",
+        object="顾清音",
+        value="生死盟友",
+        quote=RELATION_QUOTE,
+        confidence=0.69,
+    )
+
+    report = _service(conn, seed).ingest(
+        seed.project_id,
+        seed.chapter,
+        _analysis(states=(relationship,)),
+        prompt_hash="prompt:relationship-main-object",
+    )
+
+    proposal = SqliteProposalStore(conn).pending(seed.project_id)[0]
+    assert proposal.kind == "low_confidence_main"
+    assert proposal.edge_ids == list(report.edge_ids)
+
+
 def test_profile_and_incidental_surface_policy_never_guesses_or_creates_nodes(
     seed: Seed, conn: Connection
 ) -> None:
