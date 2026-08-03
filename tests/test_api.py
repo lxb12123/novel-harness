@@ -25,11 +25,15 @@ from novel_harness.db import connect, migrate
 from novel_harness.declare import Ledger
 from novel_harness.graph import (
     AliasKind,
+    EvidenceSpec,
     NodeLabel,
     NodeProps,
     NodeSpec,
     SecretDetail,
 )
+from novel_harness.events import ProposalCreate, ProvisionalEventSpec
+from novel_harness.graph.sqlite_events import SqliteEventStore
+from novel_harness.graph.sqlite_proposals import SqliteProposalStore
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 
 # 泄漏物：这两个字符串是「作者写在节点 props 上、绝不该出接口」的东西（NodeRef docstring
@@ -129,6 +133,12 @@ def client(book: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> Iterator[Te
 
 def _pid(book: dict[str, str]) -> str:
     return book["pid"]
+
+
+def _error(response: Any) -> dict[str, Any]:
+    """测试侧的归一化：自定义 handler 的 error 在顶层，HTTPException 在 .detail。"""
+    body = response.json()
+    return body.get("detail", body) if isinstance(body.get("detail"), dict) else body
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -537,12 +547,11 @@ def test_openapi_schema_builds(client: TestClient) -> None:
 # 分不开 → 按钮只能藏起来 → 作者在界面上看不到路线图。
 # ══════════════════════════════════════════════════════════════════════════
 
-# (HTTP 方法, 项目前缀之后的路径, 里程碑)。3 条 M2 起草 + 2 条 M4 抽取。
+# (HTTP 方法, 项目前缀之后的路径, 里程碑)。M4 的抽取/审阅路由已经点亮；
+# 这里只剩 M2 起草线还没开放。
 STUBS = [
     ("post", "/chapters/7/plan", "M2"),
     ("get", "/runs", "M2"),
-    ("get", "/chapters/7/proposals", "M4"),
-    ("post", "/proposals/proposal_set:01JQZ/accept", "M4"),
 ]
 
 
@@ -568,6 +577,252 @@ def test_stub_501_is_distinguishable_from_a_typo_404(
     assert client.post(f"/api/projects/{pid}/chapters/7/plan").status_code == 501
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# M4 提案审阅 / 被动确认 —— 真库 + 真 app，seed 走存储层（提案的生产者是抽取
+# 后台，不是 HTTP 壳；HTTP 壳只负责审阅动作本身）。
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _seed_provisional_event(book: dict[str, str], *, confidence: float = 0.6) -> str:
+    """Chapter 1 上放一条 PROVISIONAL 事件，返回其 id。"""
+    conn = connect(book["db"])
+    try:
+        graph = SqliteStoryGraph(conn)
+        events = SqliteEventStore(conn)
+        pid = book["pid"]
+        snapshot_id = graph.chapter_snapshots(pid, 1)[0].snapshot_id
+        quote = "萧决在青云城主府第一次听说了血脉秘密的真相。"
+        evidence = graph.put_evidence(
+            EvidenceSpec(
+                project_id=pid,
+                chapter_snapshot_id=snapshot_id,
+                para_index=2,
+                quote_text=quote,
+            )
+        )
+        event = events.put_provisional(
+            ProvisionalEventSpec(
+                project_id=pid,
+                summary="萧决得知血脉秘密。",
+                evidence_id=evidence.id,
+                participant_ids=[book["萧决"], book["李管家"]],
+                knower_ids=[book["萧决"], book["李管家"]],
+                confidence=confidence,
+            )
+        )
+        return event.event.id
+    finally:
+        conn.close()
+
+
+def _seed_low_confidence_proposal(book: dict[str, str]) -> tuple[str, str, int]:
+    """一条 PENDING low_confidence_main 事件提案；返回 (proposal_id, event_id, base)。"""
+    conn = connect(book["db"])
+    try:
+        graph = SqliteStoryGraph(conn)
+        pid = book["pid"]
+        event_id = _seed_provisional_event(book)
+        event = SqliteEventStore(conn).event(pid, event_id)
+        assert event is not None
+        snapshot_id = graph.chapter_snapshots(pid, 1)[0].snapshot_id
+        base = project.require_canon_version(conn, pid)
+        proposal = SqliteProposalStore(conn).create(
+            ProposalCreate(
+                project_id=pid,
+                kind="low_confidence_main",
+                items=[
+                    {
+                        "source_kind": "event",
+                        "event_id": event_id,
+                        "summary": event.event.summary,
+                        "confidence": event.event.confidence,
+                        "quote": "萧决在青云城主府第一次听说了血脉秘密的真相。",
+                    }
+                ],
+                chapter_number=1,
+                snapshot_id=snapshot_id,
+                base_canon_version=base,
+                schema_version="m4.analysis.v1",
+                prompt_hash="prompt:api-test",
+                event_ids=[event_id],
+            )
+        )
+        return proposal.id, event_id, base
+    finally:
+        conn.close()
+
+
+def test_proposals_pending_list_and_status_validation(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    proposal_id, _proposal_event, base = _seed_low_confidence_proposal(book)
+    pid = _pid(book)
+
+    r = client.get(f"/api/projects/{pid}/chapters/1/proposals")
+    assert r.status_code == 200, r.text
+    items = r.json()
+    assert [item["id"] for item in items] == [proposal_id]
+    assert items[0]["status"] == "PENDING"
+    assert items[0]["kind"] == "low_confidence_main"
+    assert items[0]["base_canon_version"] == base
+
+    r = client.get(f"/api/projects/{pid}/chapters/1/proposals", params={"status": "PENDING"})
+    assert r.status_code == 200, r.text
+    assert r.json()[0]["id"] == proposal_id
+
+    r = client.get(
+        f"/api/projects/{pid}/chapters/1/proposals", params={"status": "ACCEPTED"}
+    )
+    assert r.status_code == 422, r.text
+
+
+def test_accept_proposal_endpoint_then_double_review_conflicts(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    proposal_id, event_id, base = _seed_low_confidence_proposal(book)
+    pid = _pid(book)
+
+    r = client.post(
+        f"/api/projects/{pid}/proposals/{proposal_id}/accept",
+        json={"expected_canon_version": base},
+    )
+    assert r.status_code == 200, r.text
+    resolution = r.json()
+    assert resolution["proposal_id"] == proposal_id
+    assert resolution["status"] == "ACCEPTED"
+    assert resolution["canon_version"] == base + 1
+    assert resolution["decision_id"]
+    assert resolution["event"]["event"]["information_scope"] == "CANON"
+    assert resolution["event"]["event"]["derived_from_event_id"] == event_id
+
+    # 同一提案二次审阅 → 409（不是幂等 200：它已经是 terminal）。
+    r = client.post(
+        f"/api/projects/{pid}/proposals/{proposal_id}/accept",
+        json={"expected_canon_version": base + 1},
+    )
+    assert r.status_code == 409, r.text
+    assert _error(r)["error"] == "proposal_already_resolved"
+
+    # 项目 canon 已推进到 1，拿旧的 0 再来 → stale_base_version。
+    other_id, _other_event, _other_base = _seed_low_confidence_proposal(book)
+    r = client.post(
+        f"/api/projects/{pid}/proposals/{other_id}/accept",
+        json={"expected_canon_version": base},
+    )
+    assert r.status_code == 409, r.text
+    assert _error(r)["error"] == "stale_base_version"
+    assert _error(r)["current"] == base + 1
+
+
+def test_reject_proposal_endpoint(book: dict[str, str], client: TestClient) -> None:
+    proposal_id, _proposal_event, base = _seed_low_confidence_proposal(book)
+    pid = _pid(book)
+
+    r = client.post(
+        f"/api/projects/{pid}/proposals/{proposal_id}/reject",
+        json={"action": "reject", "expected_canon_version": base},
+    )
+    assert r.status_code == 200, r.text
+    resolution = r.json()
+    assert resolution["status"] == "REJECTED"
+    assert resolution["canon_version"] == base
+
+    # 已 REJECTED 的提案不能再 accept。
+    r = client.post(
+        f"/api/projects/{pid}/proposals/{proposal_id}/accept",
+        json={"expected_canon_version": base},
+    )
+    assert r.status_code == 409, r.text
+    assert _error(r)["error"] == "proposal_already_resolved"
+
+
+def test_review_unknown_proposal_404_and_bad_bodies_422(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    pid = _pid(book)
+    r = client.post(
+        f"/api/projects/{pid}/proposals/proposal:missing/accept",
+        json={"expected_canon_version": 0},
+    )
+    assert r.status_code == 404, r.text
+    assert _error(r)["error"] == "proposal_not_found"
+
+    r = client.post(
+        f"/api/projects/{pid}/proposals/proposal:missing/accept",
+        json={"expected_canon_version": -1},
+    )
+    assert r.status_code == 422, r.text
+
+    r = client.post(
+        f"/api/projects/{pid}/proposals/proposal:missing/reject",
+        json={"action": "delete", "expected_canon_version": 0},
+    )
+    assert r.status_code == 422, r.text
+
+
+def test_provisional_confirm_endpoint_is_idempotent_and_conflict_detected(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    event_id = _seed_provisional_event(book)
+    pid = _pid(book)
+    url = f"/api/projects/{pid}/chapters/1/provisional/confirm"
+    conn = connect(book["db"])
+    try:
+        base = project.require_canon_version(conn, pid)
+    finally:
+        conn.close()
+
+    first = client.post(
+        url,
+        json={
+            "fact_kind": "event",
+            "fact_ids": [event_id],
+            "expected_canon_version": base,
+        },
+    )
+    assert first.status_code == 200, first.text
+    confirmation = first.json()
+    assert confirmation["confirmation_id"]
+    assert confirmation["canon_version"] == base + 1
+    assert confirmation["decision_id"]
+    assert confirmation["events"][0]["event"]["information_scope"] == "CANON"
+
+    retry = client.post(
+        url,
+        json={
+            "fact_kind": "event",
+            "fact_ids": [event_id],
+            "expected_canon_version": base,
+        },
+    )
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["confirmation_id"] == confirmation["confirmation_id"]
+    assert retry.json()["canon_version"] == base + 1
+
+    # 新请求与已有回执重叠（第二个事件 + 已确认事件）但哈希不同 → 冲突。
+    second_id = _seed_provisional_event(book)
+    conflict = client.post(
+        url,
+        json={
+            "fact_kind": "event",
+            "fact_ids": [event_id, second_id],
+            "expected_canon_version": base + 1,
+        },
+    )
+    assert conflict.status_code == 409, conflict.text
+    assert _error(conflict)["error"] == "confirmation_conflict"
+
+    bad = client.post(
+        url,
+        json={
+            "fact_kind": "secret",
+            "fact_ids": [event_id],
+            "expected_canon_version": base,
+        },
+    )
+    assert bad.status_code == 422, bad.text
+
+
 def test_stub_501_does_not_depend_on_project_state(client: TestClient) -> None:
     """项目不存在也返 501，不返 404。
 
@@ -579,12 +834,12 @@ def test_stub_501_does_not_depend_on_project_state(client: TestClient) -> None:
     assert r.json()["status"] == "not_implemented"
 
 
-def test_openapi_declares_exactly_the_four_stubs(client: TestClient) -> None:
-    """501 进 openapi（前端从 schema 就看得见），且**恰好 4 条**。
+def test_openapi_declares_exactly_the_two_stubs(client: TestClient) -> None:
+    """501 进 openapi（前端从 schema 就看得见），且**恰好 2 条**。
 
-    多出第 5 条 = 有人把一个能力悄悄降级成 stub；少一条 = 有人把 stub 删了而不是实现它。
+    多出第 3 条 = 有人把一个能力悄悄降级成 stub；少一条 = 有人把 stub 删了而不是实现它。
     两种都该在这里响。
-    `/draft` 已于修正案 7 开放，必须不在 stub 列表里。
+    `/draft` 与 M4 审阅/被动确认已开放，必须不在 stub 列表里。
     """
     spec = client.get("/openapi.json").json()
     stubbed = {
@@ -593,9 +848,17 @@ def test_openapi_declares_exactly_the_four_stubs(client: TestClient) -> None:
         for method, op in ops.items()
         if "501" in op.get("responses", {})
     }
-    assert len(stubbed) == 4, sorted(stubbed)
+    assert len(stubbed) == 2, sorted(stubbed)
     assert ("/api/projects/{project_id}/chapters/{chapter}/plan", "post") in stubbed
     assert ("/api/projects/{project_id}/chapters/{chapter}/draft", "post") not in stubbed
+    assert (
+        "/api/projects/{project_id}/chapters/{chapter}/proposals",
+        "get",
+    ) not in stubbed
+    assert (
+        "/api/projects/{project_id}/proposals/{proposal_id}/accept",
+        "post",
+    ) not in stubbed
 
 
 def test_draft_openapi_publishes_its_request_contract(client: TestClient) -> None:

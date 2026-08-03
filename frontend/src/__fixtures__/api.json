@@ -178,6 +178,88 @@
     "error": "invalid",
     "message": "别名「决」只有 1 个字，不能 usable_for_rules（ADR 0004：短别名去正文里匹配 = 满篇误报）。要留着它就传 usable_for_rules=False——存得下，只是规则不拿它开火"
   },
+  "eventsProvisional": [
+    {
+      "event": {
+        "chapter_number": 1,
+        "confidence": 0.6,
+        "derived_from_event_id": null,
+        "evidence_id": "evidence:ID18",
+        "evidence_status": "FRESH",
+        "id": "event:ID16",
+        "information_scope": "PROVISIONAL",
+        "project_id": "project:ID1",
+        "source": "extractor",
+        "status": "ACTIVE",
+        "summary": "萧决得知血脉秘密。"
+      },
+      "knowers": [
+        {
+          "id": "character:ID7",
+          "label": "Character",
+          "name": "萧决"
+        },
+        {
+          "id": "character:ID5",
+          "label": "Character",
+          "name": "李管家"
+        }
+      ],
+      "participants": [
+        {
+          "id": "character:ID7",
+          "label": "Character",
+          "name": "萧决"
+        },
+        {
+          "id": "character:ID5",
+          "label": "Character",
+          "name": "李管家"
+        }
+      ],
+      "revealed_facts": []
+    },
+    {
+      "event": {
+        "chapter_number": 1,
+        "confidence": 0.6,
+        "derived_from_event_id": null,
+        "evidence_id": "evidence:ID20",
+        "evidence_status": "FRESH",
+        "id": "event:ID19",
+        "information_scope": "PROVISIONAL",
+        "project_id": "project:ID1",
+        "source": "extractor",
+        "status": "ACTIVE",
+        "summary": "萧决得知血脉秘密。"
+      },
+      "knowers": [
+        {
+          "id": "character:ID7",
+          "label": "Character",
+          "name": "萧决"
+        },
+        {
+          "id": "character:ID5",
+          "label": "Character",
+          "name": "李管家"
+        }
+      ],
+      "participants": [
+        {
+          "id": "character:ID7",
+          "label": "Character",
+          "name": "萧决"
+        },
+        {
+          "id": "character:ID5",
+          "label": "Character",
+          "name": "李管家"
+        }
+      ],
+      "revealed_facts": []
+    }
+  ],
   "locate": [
     {
       "chapter_id": "chapter:ID9",
@@ -266,6 +348,192 @@
       "root_path": "<root>/book"
     }
   ],
+  "proposalAccept": {
+    "canon_version": 11,
+    "character": null,
+    "characters": [],
+    "decision_id": "decision:ID21",
+    "edges": [],
+    "event": {
+      "event": {
+        "chapter_number": 1,
+        "confidence": 0.6,
+        "derived_from_event_id": "event:ID16",
+        "evidence_id": "evidence:ID18",
+        "evidence_status": "FRESH",
+        "id": "event:ID22",
+        "information_scope": "CANON",
+        "project_id": "project:ID1",
+        "source": "extractor",
+        "status": "ACTIVE",
+        "summary": "萧决得知血脉秘密。"
+      },
+      "knowers": [
+        {
+          "id": "character:ID7",
+          "label": "Character",
+          "name": "萧决"
+        },
+        {
+          "id": "character:ID5",
+          "label": "Character",
+          "name": "李管家"
+        }
+      ],
+      "participants": [
+        {
+          "id": "character:ID7",
+          "label": "Character",
+          "name": "萧决"
+        },
+        {
+          "id": "character:ID5",
+          "label": "Character",
+          "name": "李管家"
+        }
+      ],
+      "revealed_facts": []
+    },
+    "events": [
+      {
+        "event": {
+          "chapter_number": 1,
+          "confidence": 0.6,
+          "derived_from_event_id": "event:ID16",
+          "evidence_id": "evidence:ID18",
+          "evidence_status": "FRESH",
+          "id": "event:ID22",
+          "information_scope": "CANON",
+          "project_id": "project:ID1",
+          "source": "extractor",
+          "status": "ACTIVE",
+          "summary": "萧决得知血脉秘密。"
+        },
+        "knowers": [
+          {
+            "id": "character:ID7",
+            "label": "Character",
+            "name": "萧决"
+          },
+          {
+            "id": "character:ID5",
+            "label": "Character",
+            "name": "李管家"
+          }
+        ],
+        "participants": [
+          {
+            "id": "character:ID7",
+            "label": "Character",
+            "name": "萧决"
+          },
+          {
+            "id": "character:ID5",
+            "label": "Character",
+            "name": "李管家"
+          }
+        ],
+        "revealed_facts": []
+      }
+    ],
+    "proposal_id": "proposal:ID17",
+    "status": "ACCEPTED"
+  },
+  "proposalReject": {
+    "canon_version": 11,
+    "character": null,
+    "characters": [],
+    "decision_id": "decision:ID24",
+    "edges": [],
+    "event": null,
+    "events": [],
+    "proposal_id": "proposal:ID23",
+    "status": "REJECTED"
+  },
+  "proposals": [
+    {
+      "audit_envelope": null,
+      "base_canon_version": 10,
+      "chapter_number": 1,
+      "confidence": null,
+      "created_at": "<ts>",
+      "decision_log_id": null,
+      "edge_ids": [],
+      "event_ids": [
+        "event:ID16"
+      ],
+      "id": "proposal:ID17",
+      "item_count": 1,
+      "items": [
+        {
+          "confidence": 0.6,
+          "event_id": "event:ID16",
+          "quote": "萧决在青云城主府第一次听说了血脉秘密的真相。",
+          "source_kind": "event",
+          "summary": "萧决得知血脉秘密。"
+        }
+      ],
+      "kind": "low_confidence_main",
+      "project_id": "project:ID1",
+      "prompt_hash": "prompt:api-test",
+      "resolution_action": null,
+      "resolved_at": null,
+      "resolved_canon_version": null,
+      "schema_version": "m4.analysis.v1",
+      "snapshot_id": "snapshot:ID8",
+      "status": "PENDING",
+      "summary": ""
+    }
+  ],
+  "provisionalConfirm": {
+    "canon_version": 12,
+    "confirmation_id": "proposal:ID25",
+    "decision_id": "decision:ID26",
+    "edges": [],
+    "events": [
+      {
+        "event": {
+          "chapter_number": 1,
+          "confidence": 0.6,
+          "derived_from_event_id": "event:ID19",
+          "evidence_id": "evidence:ID20",
+          "evidence_status": "FRESH",
+          "id": "event:ID27",
+          "information_scope": "CANON",
+          "project_id": "project:ID1",
+          "source": "extractor",
+          "status": "ACTIVE",
+          "summary": "萧决得知血脉秘密。"
+        },
+        "knowers": [
+          {
+            "id": "character:ID7",
+            "label": "Character",
+            "name": "萧决"
+          },
+          {
+            "id": "character:ID5",
+            "label": "Character",
+            "name": "李管家"
+          }
+        ],
+        "participants": [
+          {
+            "id": "character:ID7",
+            "label": "Character",
+            "name": "萧决"
+          },
+          {
+            "id": "character:ID5",
+            "label": "Character",
+            "name": "李管家"
+          }
+        ],
+        "revealed_facts": []
+      }
+    ],
+    "project_id": "project:ID1"
+  },
   "resolve": {
     "ambiguous": false,
     "hits": [

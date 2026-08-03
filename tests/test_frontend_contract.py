@@ -31,6 +31,11 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from test_api import (
+    _seed_low_confidence_proposal,
+    _seed_provisional_event,
+)
+
 FIXTURE = Path(__file__).resolve().parents[1] / "frontend" / "src" / "__fixtures__" / "api.json"
 
 # 每次跑都不一样的东西。留着它们，这份 fixture 每次 dump 都是新的 diff，等于没有守卫。
@@ -163,6 +168,41 @@ def test_frontend_fixture_matches_the_real_api(
     grab("constraints", client.get(f"{base}/chapters/2/constraints", params=cast))
     grab("states", client.get(f"{base}/chapters/2/state", params=cast))
     grab("check", client.post(f"{base}/chapters/3/check"))
+
+    # ── M4：提案审阅 / 被动确认（seed 走存储层，审阅动作走真 API）─────────────
+    m4_proposal_id, m4_event_id, m4_base = _seed_low_confidence_proposal(book)
+    m4_confirm_event = _seed_provisional_event(book)
+    grab("proposals", client.get(f"{base}/chapters/1/proposals"))
+    grab(
+        "eventsProvisional",
+        client.get(f"{base}/chapters/1/events", params={"scope": "PROVISIONAL"}),
+    )
+    grab(
+        "proposalAccept",
+        client.post(
+            f"{base}/proposals/{m4_proposal_id}/accept",
+            json={"expected_canon_version": m4_base},
+        ),
+    )
+    m4_reject_id, _reject_event, m4_reject_base = _seed_low_confidence_proposal(book)
+    grab(
+        "proposalReject",
+        client.post(
+            f"{base}/proposals/{m4_reject_id}/reject",
+            json={"action": "reject", "expected_canon_version": m4_reject_base},
+        ),
+    )
+    grab(
+        "provisionalConfirm",
+        client.post(
+            f"{base}/chapters/1/provisional/confirm",
+            json={
+                "fact_kind": "event",
+                "fact_ids": [m4_confirm_event],
+                "expected_canon_version": m4_reject_base,
+            },
+        ),
+    )
 
     # ── 拒绝形态：前端有专门分支渲染它们，同样是契约 ────────────────────────
     ambiguous = client.post(

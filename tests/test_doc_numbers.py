@@ -63,8 +63,20 @@ def _routes() -> list[APIRoute]:
     过滤 `APIRoute` 就把 FastAPI 白送的 `/openapi.json` / `/docs` / `/redoc`
     （它们是 `starlette.routing.Route`）挡在外面了——数它们等于让「换个 FastAPI 版本」
     也能把文档判红。
+
+    新版 FastAPI 把 `include_router` 挂载成 `_IncludedRouter` 占位而不是展开成
+    `APIRoute`；不穿透它，`api/extraction.py` / `api/review.py` 的子路由就永远不在
+    守卫视野里——「删掉一个真实路由」都不会红。
     """
-    return [r for r in api_app.routes if isinstance(r, APIRoute)]
+    routes: list[APIRoute] = []
+    for route in api_app.routes:
+        if isinstance(route, APIRoute):
+            routes.append(route)
+            continue
+        original = getattr(route, "original_router", None)
+        if original is not None:
+            routes.extend(r for r in original.routes if isinstance(r, APIRoute))
+    return routes
 
 
 def route_count() -> int:

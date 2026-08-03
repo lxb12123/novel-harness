@@ -69,6 +69,7 @@ from ..text import (
 from ..text import paragraphs as split_paragraphs
 from .deps import books_root, ensure_schema, get_conn, get_ledger, get_store, load_project
 from .extraction import router as extraction_router
+from .review import router as review_router
 
 _STATIC = Path(__file__).resolve().parent / "static"
 _UNSAFE_PATH = re.compile(r'[/\\:*?"<>|]')  # 书名里不能进目录名的字符
@@ -176,6 +177,7 @@ async def _lifespan(_: FastAPI) -> Any:
 
 app = FastAPI(title="Novel Harness 工作台", lifespan=_lifespan)
 app.include_router(extraction_router)
+app.include_router(review_router)
 
 # 构建产物的静态资源（/assets/index-xxxx.js）。只有 dist 真的构建出来才挂载——
 # 挂一个不存在的目录会在启动时炸，而测试套件不构建前端（那时走 static/ 原型兜底）。
@@ -1094,18 +1096,3 @@ def runs_stub() -> dict[str, str]:
     """
     return _stub("M2")
 
-
-@app.get("/api/projects/{project_id}/chapters/{chapter}/proposals", status_code=501)
-def proposals_stub() -> dict[str, str]:
-    """变更确认页的提案列表（M4）。`extract/` 未建、`proposal_set` 表空。
-
-    同上：空列表会被读成「这一章没有待确认的变更」，而真相是没有任何东西在生产提案。
-    v1 用「作者手动 declare」替代整套「系统抽 → 作者审」的心智。
-    """
-    return _stub("M4")
-
-
-@app.post("/api/projects/{project_id}/proposals/{proposal_id}/accept", status_code=501)
-def accept_proposal_stub() -> dict[str, str]:
-    """接受一条提案 → 落成边（M4）。`upsert_edge` 早就就绪，缺的是提案的生产者。"""
-    return _stub("M4")
