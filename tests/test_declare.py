@@ -32,6 +32,7 @@ from novel_harness.declare import (
 )
 from novel_harness.graph import (
     AliasKind,
+    EdgeStatus,
     EdgeType,
     KnowledgeState,
     NodeLabel,
@@ -197,6 +198,148 @@ def test_declare_alias_logs_alias_merge(led: Ledger, conn: Connection, pid: str)
     assert entry.subject_name == "萧决"
     assert entry.payload["surface"] == "决哥"
     assert entry.payload["typed_surface"] == "萧决"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Canon 版本：作者声明与图事实必须同事务提交
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_successful_node_alias_and_edge_declarations_bump_only_for_canon_changes(
+    led: Ledger,
+    conn: Connection,
+    pid: str,
+) -> None:
+    version = project.require_canon_version(conn, pid)
+
+    led.declare_node(NodeLabel.CHARACTER, "陆青禾")
+    version += 1
+    assert project.require_canon_version(conn, pid) == version
+
+    # `declare_node` 和 `upsert_edge` 都是幂等入口；重放完全相同的事实不应制造新版本。
+    led.declare_node(NodeLabel.CHARACTER, "陆青禾")
+    assert project.require_canon_version(conn, pid) == version
+
+    led.declare_alias(of="陆青禾", surface="陆医师")
+    version += 1
+    assert project.require_canon_version(conn, pid) == version
+
+    first = led.declare_where(
+        who="萧决",
+        loc="青云城",
+        quote="青云城的雨下了一夜",
+    )
+    version += 1
+    assert project.require_canon_version(conn, pid) == version
+    evidence_rows = conn.execute(
+        "SELECT COUNT(*) FROM evidence WHERE project_id = ?",
+        (pid,),
+    ).fetchone()[0]
+
+    repeated = led.declare_where(
+        who="萧决",
+        loc="青云城",
+        quote="青云城的雨下了一夜",
+    )
+    assert project.require_canon_version(conn, pid) == version
+    assert repeated.edge.id == first.edge.id
+    assert repeated.evidence.id == first.evidence.id
+    assert conn.execute(
+        "SELECT COUNT(*) FROM evidence WHERE project_id = ?",
+        (pid,),
+    ).fetchone()[0] == evidence_rows
+
+
+@pytest.mark.parametrize("mutation", ["node", "alias", "edge"])
+def test_canon_version_failure_rolls_back_the_ledger_graph_mutation(
+    led: Ledger,
+    store: SqliteStoryGraph,
+    conn: Connection,
+    pid: str,
+    monkeypatch: pytest.MonkeyPatch,
+    mutation: str,
+) -> None:
+    before_version = project.require_canon_version(conn, pid)
+    before_counts = _counts(conn, pid)
+
+    def fail_cas(*_args, **_kwargs):
+        raise RuntimeError("CAS injection")
+
+    monkeypatch.setattr(project, "compare_and_bump_canon_version", fail_cas)
+    with pytest.raises(RuntimeError, match="CAS injection"):
+        if mutation == "node":
+            led.declare_node(NodeLabel.CHARACTER, "陆青禾")
+        elif mutation == "alias":
+            led.declare_alias(of="萧决", surface="决少")
+        else:
+            led.declare_where(
+                who="萧决",
+                loc="青云城",
+                quote="青云城的雨下了一夜",
+            )
+
+    assert project.require_canon_version(conn, pid) == before_version
+    assert _counts(conn, pid) == before_counts
+    if mutation == "node":
+        assert store.resolve(pid, ["陆青禾"])[0].hits == []
+    elif mutation == "alias":
+        assert store.resolve(pid, ["决少"])[0].hits == []
+
+
+def test_replaying_a_retracted_edge_is_a_storage_and_version_noop(
+    led: Ledger,
+    conn: Connection,
+    pid: str,
+) -> None:
+    first = led.declare_where(
+        who="萧决",
+        loc="青云城",
+        quote="青云城的雨下了一夜",
+    )
+    replacement = led.declare_where(
+        who="萧决",
+        loc="北荒",
+        quote="你身上流的不是萧家的血",
+    )
+    assert [edge.id for edge in replacement.retracted] == [first.edge.id]
+    version = project.require_canon_version(conn, pid)
+    evidence_rows = conn.execute(
+        "SELECT COUNT(*) FROM evidence WHERE project_id = ?",
+        (pid,),
+    ).fetchone()[0]
+
+    repeated = led.declare_where(
+        who="萧决",
+        loc="青云城",
+        quote="青云城的雨下了一夜",
+    )
+
+    assert repeated.edge.id == first.edge.id
+    assert repeated.edge.status is EdgeStatus.RETRACTED
+    assert repeated.evidence.id == first.evidence.id
+    assert project.require_canon_version(conn, pid) == version
+    assert conn.execute(
+        "SELECT COUNT(*) FROM evidence WHERE project_id = ?",
+        (pid,),
+    ).fetchone()[0] == evidence_rows
+
+
+def test_ledger_rejects_an_outer_transaction_before_any_canon_write(
+    led: Ledger,
+    store: SqliteStoryGraph,
+    conn: Connection,
+    pid: str,
+) -> None:
+    version = project.require_canon_version(conn, pid)
+    conn.execute("BEGIN IMMEDIATE")
+
+    with pytest.raises(RuntimeError, match="外层事务"):
+        led.declare_node(NodeLabel.CHARACTER, "陆青禾")
+    # 模拟调用方吞掉异常并提交自己的事务；Ledger 仍不得留下半笔事实。
+    conn.commit()
+
+    assert project.require_canon_version(conn, pid) == version
+    assert store.resolve(pid, ["陆青禾"])[0].hits == []
 
 
 # ══════════════════════════════════════════════════════════════════════════

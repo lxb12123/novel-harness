@@ -64,7 +64,7 @@ def create(conn: Connection, *, name: str, root_path: str) -> Project:
     会抛，项目无法以自身为作用域。
 
     没有 `canon_version` 参数：它由 SQL 的 DEFAULT 起于 0，之后只能由
-    `compare_and_bump_canon_version()` 在审阅事务中 CAS 递增。
+    `compare_and_bump_canon_version()` 在同一笔 Canon 写事务中 CAS 递增。
     """
     if not name:
         raise ValueError("name 不能为空：它是作者在 nh init 之后唯一认得出这个库的东西")

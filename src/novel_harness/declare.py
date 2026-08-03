@@ -41,11 +41,12 @@ God object 里——那个 God object 的下一步就是「顺手让 decision_lo
 from __future__ import annotations
 
 from collections.abc import Sequence
+from contextlib import AbstractContextManager
 from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from . import decisions
+from . import decisions, project
 from .db import Connection
 from .decisions import DecisionKind, Verdict
 from .graph import (
@@ -258,6 +259,50 @@ class Ledger:
             raise WrongLabel(surface, node.label, want)
         return node
 
+    def _declared_node(self, label: NodeLabel, name: str) -> Node | None:
+        """Return the existing declaration target without reaching through the graph boundary."""
+        resolution = self._store.resolve(self._project_id, [name])[0]
+        matches = {
+            hit.node.id: hit.node
+            for hit in resolution.hits
+            if hit.node.label is label and hit.node.name == name
+        }
+        return next(iter(matches.values())) if len(matches) == 1 else None
+
+    def _edge_by_identity(self, spec: EdgeSpec) -> Edge | None:
+        """Find the stored Canon edge an idempotent upsert would update, lifecycle included."""
+        return self._store.find_edge_by_identity(spec)
+
+    @staticmethod
+    def _evidence_matches_candidate(
+        evidence: Evidence,
+        candidate: QuoteCandidate,
+    ) -> bool:
+        return (
+            evidence.chapter_number == candidate.chapter_number
+            and evidence.audit.chapter_snapshot_id == candidate.snapshot_id
+            and evidence.audit.para_index == candidate.para_index
+            and evidence.audit.quote_text == candidate.matched_text
+            and evidence.relocate.chapter_id == candidate.chapter_id
+            and evidence.relocate.occurrence_k == candidate.occurrence_k
+        )
+
+    def _bump_canon(self, expected_version: int) -> None:
+        project.compare_and_bump_canon_version(
+            self._conn,
+            self._project_id,
+            expected_version,
+        )
+
+    def _canon_transaction(self) -> AbstractContextManager[None]:
+        """Require Ledger to own the transaction that couples a Canon write to its CAS."""
+        if self._conn.in_transaction:
+            raise RuntimeError(
+                "Ledger 作者声明不允许已有外层事务：必须独占图事务，"
+                "才能让 Canon 写入与版本 CAS 同成同败"
+            )
+        return self._store.transaction()
+
     # ── 定位（只读）────────────────────────────────────────────────────────
 
     def locate(self, quote: str) -> list[QuoteCandidate]:
@@ -300,7 +345,11 @@ class Ledger:
         `label is SECRET` 时 `secret` 必须给（`NodeSpec` 的 validator 强制：没有 secret 行
         的 Secret 节点在认知矩阵的默认列序里不成列）。
         """
-        with self._store.transaction():
+        with self._canon_transaction():
+            current_version = project.require_canon_version(
+                self._conn, self._project_id
+            )
+            previous = self._declared_node(label, name)
             node = self._store.upsert_node(
                 NodeSpec(
                     project_id=self._project_id,
@@ -316,6 +365,8 @@ class Ledger:
                 )
                 for surface in aliases
             ]
+            if previous != node or stored:
+                self._bump_canon(current_version)
         # 日志在事务之后（理由见 `_declare_edge`）。节点侧没有引语：节点不是时态的。
         decisions.append(
             self._conn,
@@ -349,16 +400,21 @@ class Ledger:
         阶段和认知边界，是 canon 不是噪声。`kind=canonical` 会被 `AliasSpec` 拒——
         canonical 是 `upsert_node` 的独占物。
         """
-        node = self._resolve_one(of)
-        stored = self._store.add_alias(
-            AliasSpec(
-                project_id=self._project_id,
-                node_id=node.id,
-                surface=surface,
-                kind=kind,
-                usable_for_rules=usable_for_rules,
+        with self._canon_transaction():
+            current_version = project.require_canon_version(
+                self._conn, self._project_id
             )
-        )
+            node = self._resolve_one(of)
+            stored = self._store.add_alias(
+                AliasSpec(
+                    project_id=self._project_id,
+                    node_id=node.id,
+                    surface=surface,
+                    kind=kind,
+                    usable_for_rules=usable_for_rules,
+                )
+            )
+            self._bump_canon(current_version)
         decisions.append(
             self._conn,
             project_id=self._project_id,
@@ -453,32 +509,55 @@ class Ledger:
         cand = self._one_candidate(quote)
         # 到这一行为止库里一个字节都没变：歧义和找不到的代价是「什么都没发生」，
         # 不是「一条半成品」。
-        with self._store.transaction():
-            ev = self._store.put_evidence(
-                EvidenceSpec(
-                    project_id=self._project_id,
-                    chapter_snapshot_id=cand.snapshot_id,
-                    para_index=cand.para_index,
-                    occurrence_k=cand.occurrence_k,
-                    quote_text=cand.matched_text,
+        with self._canon_transaction():
+            current_version = project.require_canon_version(
+                self._conn, self._project_id
+            )
+            identity = EdgeSpec(
+                project_id=self._project_id,
+                src=src.id,
+                dst=dst.id,
+                type=type,
+                props=props,
+                # 先用定位结果找到可能幂等的旧边；最终 spec 会再从 evidence 取这个值。
+                valid_from_chapter=cand.chapter_number,
+                information_scope=InformationScope.CANON,
+                source=EdgeSource.AUTHOR,
+            )
+            previous = self._edge_by_identity(identity)
+            previous_evidence = (
+                self._store.get_evidence(
+                    self._project_id,
+                    previous.evidence_id,
+                )
+                if previous is not None and previous.evidence_id is not None
+                else None
+            )
+            ev = (
+                previous_evidence
+                if previous_evidence is not None
+                and self._evidence_matches_candidate(previous_evidence, cand)
+                else self._store.put_evidence(
+                    EvidenceSpec(
+                        project_id=self._project_id,
+                        chapter_snapshot_id=cand.snapshot_id,
+                        para_index=cand.para_index,
+                        occurrence_k=cand.occurrence_k,
+                        quote_text=cand.matched_text,
+                    )
                 )
             )
-            result = self._store.upsert_edge(
-                EdgeSpec(
-                    project_id=self._project_id,
-                    src=src.id,
-                    dst=dst.id,
-                    type=type,
-                    props=props,
+            spec = identity.model_copy(
+                update={
                     # ★ 全系统作者路径上唯一一次给 valid_from 赋值的地方（§5.9 / 约束 10）。
-                    #   它的值只可能是证据的章号——`Ledger` 的签名里没有一个位置能让
-                    #   作者的输入进到这一行。
-                    valid_from_chapter=ev.chapter_number,
-                    information_scope=InformationScope.CANON,
-                    source=EdgeSource.AUTHOR,
-                    evidence_id=ev.id,
-                )
+                    #   它只可能来自证据；作者输入进不到这一行。
+                    "valid_from_chapter": ev.chapter_number,
+                    "evidence_id": ev.id,
+                }
             )
+            result = self._store.upsert_edge(spec)
+            if result.created or previous != result.edge:
+                self._bump_canon(current_version)
 
         decision = decisions.append(
             self._conn,

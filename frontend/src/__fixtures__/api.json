@@ -260,7 +260,7 @@
   },
   "projects": [
     {
-      "canon_version": 0,
+      "canon_version": 6,
       "id": "project:ID1",
       "name": "青云记",
       "root_path": "<root>/book"

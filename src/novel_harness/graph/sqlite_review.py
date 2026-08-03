@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from ..db import Connection
 from . import queries
 from .models import (
+    Edge,
     EdgeSpec,
     EdgeStatus,
     Evidence,
@@ -27,12 +28,35 @@ class SqliteEdgeReviewStore:
     def _selection(edge_ids: Sequence[str]) -> tuple[str, ...]:
         ids = tuple(edge_ids)
         if not ids:
-            raise EdgeReviewValidationError("提升边集合不能为空")
+            raise EdgeReviewValidationError("边集合不能为空")
         if any(not edge_id for edge_id in ids):
-            raise EdgeReviewValidationError("提升边 ID 不能为空")
+            raise EdgeReviewValidationError("边 ID 不能为空")
         if len(ids) != len(set(ids)):
-            raise EdgeReviewValidationError("提升边集合不能含重复 ID")
+            raise EdgeReviewValidationError("边集合不能含重复 ID")
         return ids
+
+    def _with_nodes(
+        self,
+        project_id: str,
+        edges: Sequence[Edge],
+    ) -> tuple[ReviewableEdge, ...]:
+        nodes = queries.fetch_nodes(
+            self._conn,
+            project_id,
+            {node_id for edge in edges for node_id in (edge.src, edge.dst)},
+        )
+        out: list[ReviewableEdge] = []
+        for edge in edges:
+            src = nodes.get(edge.src)
+            dst = nodes.get(edge.dst)
+            if src is None or dst is None:
+                raise EdgeReviewValidationError(
+                    f"边 {edge.id} 的端点缺失或跨项目：{edge.src}/{edge.dst}"
+                )
+            out.append(
+                ReviewableEdge(edge=edge, src=NodeRef.of(src), dst=NodeRef.of(dst))
+            )
+        return tuple(out)
 
     def hydrate_provisional(
         self,
@@ -40,7 +64,7 @@ class SqliteEdgeReviewStore:
         edge_ids: Sequence[str],
     ) -> tuple[ReviewableEdge, ...]:
         ids = self._selection(edge_ids)
-        edges = []
+        edges: list[Edge] = []
         for edge_id in ids:
             try:
                 edge = queries.fetch_edge(self._conn, edge_id)
@@ -70,23 +94,33 @@ class SqliteEdgeReviewStore:
                 )
             edges.append(edge)
 
-        nodes = queries.fetch_nodes(
-            self._conn,
-            project_id,
-            {node_id for edge in edges for node_id in (edge.src, edge.dst)},
-        )
-        out: list[ReviewableEdge] = []
-        for edge in edges:
-            src = nodes.get(edge.src)
-            dst = nodes.get(edge.dst)
-            if src is None or dst is None:
+        return self._with_nodes(project_id, edges)
+
+    def hydrate_current_canon(
+        self,
+        project_id: str,
+        edge_ids: Sequence[str],
+    ) -> tuple[ReviewableEdge, ...]:
+        ids = self._selection(edge_ids)
+        edges: list[Edge] = []
+        for edge_id in ids:
+            try:
+                edge = queries.fetch_edge(self._conn, edge_id)
+            except LookupError as exc:
                 raise EdgeReviewValidationError(
-                    f"边 {edge.id} 的端点缺失或跨项目：{edge.src}/{edge.dst}"
+                    f"current Canon 边不存在：{edge_id}"
+                ) from exc
+            if edge.project_id != project_id:
+                raise EdgeReviewValidationError(
+                    f"current Canon 边 {edge_id} 属于项目 {edge.project_id}，"
+                    f"不是 {project_id}"
                 )
-            out.append(
-                ReviewableEdge(edge=edge, src=NodeRef.of(src), dst=NodeRef.of(dst))
-            )
-        return tuple(out)
+            if not edge.is_current or edge.evidence_status is EvidenceStatus.STALE:
+                raise EdgeReviewValidationError(
+                    f"边 {edge_id} 已不是 ACTIVE、未闭合、非 STALE 的 current Canon"
+                )
+            edges.append(edge)
+        return self._with_nodes(project_id, edges)
 
     def clone_to_canon(
         self,

@@ -39,6 +39,7 @@ from ..graph.sqlite_review import SqliteEdgeReviewStore
 from .proposal_audit import build_audit_envelope, ensure_proposal_audit
 from .proposal_models import (
     DecisionAuditError,
+    EdgeConflictItem,
     NewCharacterItem,
     ProposalAction,
     ProposalActionError,
@@ -49,7 +50,11 @@ from .proposal_models import (
     ProvisionalConfirmation,
     ValidatedProposal,
 )
-from .proposal_validation import validate_hydrated_facts, validate_proposal_shape
+from .proposal_validation import (
+    validate_current_canon_facts,
+    validate_hydrated_facts,
+    validate_proposal_shape,
+)
 
 __all__ = [
     "DecisionAuditError",
@@ -145,6 +150,29 @@ def _hydrate_cluster(
         edge_evidence,
     )
     return validated, events, event_evidence, edges, edge_evidence
+
+
+def _validate_current_canon(
+    proposal: ProposalRecord,
+    validated: ValidatedProposal,
+    proposed_edges: Sequence[ReviewableEdge],
+    edge_store: EdgeReviewStore,
+) -> None:
+    current_ids = tuple(
+        item.current.edge_id
+        for item in validated.edge_items
+        if isinstance(item, EdgeConflictItem)
+    )
+    if not current_ids:
+        return
+    try:
+        current_edges = edge_store.hydrate_current_canon(
+            proposal.project_id,
+            current_ids,
+        )
+    except EdgeReviewValidationError as exc:
+        raise ProposalShapeError(f"current Canon 复核失败：{exc}") from exc
+    validate_current_canon_facts(validated, proposed_edges, current_edges)
 
 
 def _create_characters(
@@ -270,6 +298,12 @@ def review_proposal(
             )
         validated, source_events, event_evidence, source_edges, edge_evidence = (
             _hydrate_cluster(proposal, review, events, edge_reviews)
+        )
+        _validate_current_canon(
+            proposal,
+            validated,
+            source_edges,
+            edge_reviews,
         )
         canon_events: tuple[EventView, ...] = ()
         canon_edges: tuple[ReviewableEdge, ...] = ()

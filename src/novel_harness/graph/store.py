@@ -23,9 +23,9 @@
     | `subgraph`        | 局部关系图（M5）                                    |
     | `upsert_edge`     | canon/commit.py、extract/incremental.py（M4）       |
 
-没有 `get_node` / `get_edge` / 裸 `query`：前两个没有消费者（节点都随 StateSnapshot /
-KnowledgeMatrix / Resolution 一起出来），最后一个会让上面那条守卫失去意义——
-开一个通用查询口子，等于把 SQL 换个地方泄漏出去。
+没有 `get_node` / 按 ID 的通用 `get_edge` / 裸 `query`：节点和可查询边都随
+StateSnapshot / KnowledgeMatrix / Resolution 一起出来。`CanonWriter` 只有一个按完整
+幂等键读取边的窄口子，专供作者重放判定；开通用查询口子仍等于把 SQL 换个地方泄漏出去。
 """
 
 from __future__ import annotations
@@ -39,6 +39,7 @@ from .models import (
     ChapterSpec,
     ChapterSnapshot,
     ChapterText,
+    Edge,
     EdgeSpec,
     EdgeType,
     Evidence,
@@ -411,6 +412,14 @@ class CanonWriter(Protocol):
         提前提交掉。日志本来就该在事务之后写（写边失败是**预期异常**——乱序声明、
         引语有歧义——而 `decision_log` 的三个触发器封死了 INSERT/UPDATE/DELETE，
         在事务里先写日志 = 每一次拒绝都在那张不可变的表里留一条假的 accept，删不掉）。
+        """
+        ...
+
+    def find_edge_by_identity(self, spec: EdgeSpec) -> Edge | None:
+        """Return the exact idempotency-key match, including closed/retracted edges.
+
+        This is deliberately narrower than a general ``get_edge``: the author declaration
+        path needs the pre-upsert value to distinguish a real Canon facet change from a replay.
         """
         ...
 

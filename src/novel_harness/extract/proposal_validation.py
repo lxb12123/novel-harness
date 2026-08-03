@@ -22,6 +22,23 @@ from .proposal_models import (
 )
 
 
+_EXPECTED_EDGE_TYPE = {
+    "location": EdgeType.LOCATED_AT,
+    "state": EdgeType.HAS_STATE,
+    "relationship": EdgeType.RELATED_TO,
+}
+
+
+def _endpoints_match(
+    edge: ReviewableEdge,
+    subject_id: str,
+    target_id: str,
+) -> bool:
+    if edge.edge.type is EdgeType.RELATED_TO:
+        return {subject_id, target_id} == {edge.edge.src, edge.edge.dst}
+    return subject_id == edge.edge.src and target_id == edge.edge.dst
+
+
 def validate_proposal_shape(
     proposal: ProposalRecord,
     review: ProposalReview,
@@ -106,28 +123,19 @@ def validate_hydrated_facts(
             raise ProposalShapeError(f"event {item.event_id} quote 与原文证据不一致")
 
     edge_by_id = {item.edge.id: item for item in edges}
-    expected_type = {
-        "location": EdgeType.LOCATED_AT,
-        "state": EdgeType.HAS_STATE,
-        "relationship": EdgeType.RELATED_TO,
-    }
     for item in validated.edge_items:
         proposed = item.proposed
         hydrated = edge_by_id.get(proposed.edge_id)
         if hydrated is None:
             raise ProposalShapeError(f"edge item 没有对应 link：{proposed.edge_id}")
         edge = hydrated.edge
-        if edge.type is not expected_type[item.update_kind]:
+        if edge.type is not _EXPECTED_EDGE_TYPE[item.update_kind]:
             raise ProposalShapeError(f"edge {edge.id} type/update_kind 不一致")
-        if edge.type is EdgeType.RELATED_TO:
-            endpoints_match = {proposed.subject_id, proposed.target_id} == {
-                edge.src,
-                edge.dst,
-            }
-        else:
-            endpoints_match = (
-                proposed.subject_id == edge.src and proposed.target_id == edge.dst
-            )
+        endpoints_match = _endpoints_match(
+            hydrated,
+            proposed.subject_id,
+            proposed.target_id,
+        )
         if not endpoints_match or proposed.value != edge.props.value:
             raise ProposalShapeError(f"edge {edge.id} proposed 文本与存储事实不一致")
         if isinstance(item, LowConfidenceStateItem) and item.confidence != edge.confidence:
@@ -135,3 +143,43 @@ def validate_hydrated_facts(
         if proposed.quote != edge_evidence[edge.id].audit.quote_text:
             raise ProposalShapeError(f"edge {edge.id} quote 与原文证据不一致")
 
+
+def validate_current_canon_facts(
+    validated: ValidatedProposal,
+    proposed_edges: Sequence[ReviewableEdge],
+    current_edges: Sequence[ReviewableEdge],
+) -> None:
+    proposed_by_id = {item.edge.id: item for item in proposed_edges}
+    current_by_id = {item.edge.id: item for item in current_edges}
+    for item in validated.edge_items:
+        if not isinstance(item, EdgeConflictItem):
+            continue
+        claimed = item.current
+        current = current_by_id.get(claimed.edge_id)
+        proposed = proposed_by_id.get(item.proposed.edge_id)
+        if current is None or proposed is None:
+            raise ProposalShapeError("edge_conflict current/proposed 没有对应存储事实")
+        edge = current.edge
+        if edge.type is not _EXPECTED_EDGE_TYPE[item.update_kind]:
+            raise ProposalShapeError(
+                f"current Canon edge {edge.id} type/update_kind 不一致"
+            )
+        if not edge.holds_at(proposed.edge.valid_from_chapter):
+            raise ProposalShapeError(
+                f"current Canon edge {edge.id} 在提案章节并不成立"
+            )
+        if not _endpoints_match(current, claimed.subject_id, claimed.target_id):
+            raise ProposalShapeError(
+                f"current Canon edge {edge.id} endpoints 与提案记录不一致"
+            )
+        if claimed.value != edge.props.value:
+            raise ProposalShapeError(
+                f"current Canon edge {edge.id} value 与提案记录不一致"
+            )
+        if claimed.subject_id != item.proposed.subject_id:
+            raise ProposalShapeError("edge_conflict current/proposed subject 不一致")
+        if (
+            item.update_kind != "location"
+            and claimed.target_id != item.proposed.target_id
+        ):
+            raise ProposalShapeError("edge_conflict current/proposed target 不一致")

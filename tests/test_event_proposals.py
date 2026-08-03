@@ -34,6 +34,7 @@ from novel_harness.extract.proposals import (
 )
 from novel_harness.graph import (
     ChapterSpec,
+    Edge,
     EdgeProps,
     EdgeSource,
     EdgeSpec,
@@ -234,6 +235,52 @@ def _make_proposal(
             event_ids=event_ids or [],
             edge_ids=edge_ids or [],
         )
+    )
+
+
+def _make_edge_conflict_proposal(
+    world: ReviewWorld,
+    *,
+    update_kind: str,
+    current: Edge,
+    proposed_edge_id: str,
+    quote: str,
+):
+    proposed = world.edge_reviews.hydrate_provisional(
+        world.project_id, [proposed_edge_id]
+    )[0].edge
+    current_target = (
+        current.peer_of(world.hero_id)
+        if current.type is EdgeType.RELATED_TO
+        else current.dst
+    )
+    proposed_target = (
+        proposed.peer_of(world.hero_id)
+        if proposed.type is EdgeType.RELATED_TO
+        else proposed.dst
+    )
+    return _make_proposal(
+        world,
+        kind="edge_conflict",
+        items=[
+            {
+                "update_kind": update_kind,
+                "current": {
+                    "edge_id": current.id,
+                    "subject_id": world.hero_id,
+                    "target_id": current_target,
+                    "value": None if update_kind == "location" else current.props.value,
+                },
+                "proposed": {
+                    "edge_id": proposed.id,
+                    "subject_id": world.hero_id,
+                    "target_id": proposed_target,
+                    "value": proposed.props.value,
+                    "quote": quote,
+                },
+            }
+        ],
+        edge_ids=[proposed.id],
     )
 
 
@@ -588,6 +635,187 @@ def test_proposal_base_stale_after_another_canon_change(world: ReviewWorld) -> N
     assert world.conn.execute(
         "SELECT COUNT(*) FROM story_event WHERE information_scope = 'CANON'"
     ).fetchone()[0] == 0
+
+
+def test_review_accepts_edge_conflict_while_current_canon_still_matches(
+    world: ReviewWorld,
+) -> None:
+    old_place = world.graph.upsert_node(
+        NodeSpec(
+            project_id=world.project_id,
+            label=NodeLabel.LOCATION,
+            name="青云城",
+        )
+    )
+    north = world.graph.resolve(world.project_id, ["北荒"])[0].unique_node
+    assert north is not None
+    current = world.graph.upsert_edge(
+        EdgeSpec(
+            project_id=world.project_id,
+            src=world.hero_id,
+            dst=old_place.id,
+            type=EdgeType.LOCATED_AT,
+            valid_from_chapter=world.chapter_number,
+            information_scope=InformationScope.CANON,
+        )
+    ).edge
+    proposal = _make_edge_conflict_proposal(
+        world,
+        update_kind="location",
+        current=current,
+        proposed_edge_id=world.location_edge_id,
+        quote=world.location_quote,
+    )
+
+    result = _review(world, proposal.id, ProposalAction.ACCEPT)
+
+    assert result.status == "ACCEPTED"
+    assert result.canon_version == 1
+    assert result.edges[0].edge.dst == north.id
+
+
+def test_review_rejects_replaced_current_edge_when_graph_write_bypasses_ledger(
+    world: ReviewWorld,
+) -> None:
+    old_place = world.graph.upsert_node(
+        NodeSpec(
+            project_id=world.project_id,
+            label=NodeLabel.LOCATION,
+            name="青云城",
+        )
+    )
+    north = world.graph.resolve(world.project_id, ["北荒"])[0].unique_node
+    assert north is not None
+    current = world.graph.upsert_edge(
+        EdgeSpec(
+            project_id=world.project_id,
+            src=world.hero_id,
+            dst=old_place.id,
+            type=EdgeType.LOCATED_AT,
+            valid_from_chapter=world.chapter_number,
+            information_scope=InformationScope.CANON,
+        )
+    ).edge
+    proposal = _make_edge_conflict_proposal(
+        world,
+        update_kind="location",
+        current=current,
+        proposed_edge_id=world.location_edge_id,
+        quote=world.location_quote,
+    )
+
+    # 防御性回归：绕过 Ledger 写 Canon 不会 bump 版本，但锁内事实复核仍必须挡住旧 proposal。
+    replacement = world.graph.upsert_edge(
+        EdgeSpec(
+            project_id=world.project_id,
+            src=world.hero_id,
+            dst=north.id,
+            type=EdgeType.LOCATED_AT,
+            valid_from_chapter=world.chapter_number,
+            information_scope=InformationScope.CANON,
+        )
+    ).edge
+    assert replacement.id != current.id
+    assert require_canon_version(world.conn, world.project_id) == 0
+
+    with pytest.raises(ProposalShapeError, match="current|Canon"):
+        _review(world, proposal.id, ProposalAction.ACCEPT)
+
+    assert require_canon_version(world.conn, world.project_id) == 0
+    assert world.proposals.get(world.project_id, proposal.id).status.value == "PENDING"
+    assert read_decisions(world.conn, world.project_id) == []
+
+
+def test_review_rejects_changed_current_value_even_when_edge_id_is_unchanged(
+    world: ReviewWorld,
+) -> None:
+    current = world.graph.upsert_edge(
+        EdgeSpec(
+            project_id=world.project_id,
+            src=world.hero_id,
+            dst=world.peer_id,
+            type=EdgeType.RELATED_TO,
+            props=EdgeProps(value="盟友"),
+            valid_from_chapter=world.chapter_number,
+            information_scope=InformationScope.CANON,
+        )
+    ).edge
+    proposal = _make_edge_conflict_proposal(
+        world,
+        update_kind="relationship",
+        current=current,
+        proposed_edge_id=world.relation_edge_id,
+        quote=world.relation_quote,
+    )
+
+    changed = world.graph.upsert_edge(
+        EdgeSpec(
+            project_id=world.project_id,
+            src=world.hero_id,
+            dst=world.peer_id,
+            type=EdgeType.RELATED_TO,
+            props=EdgeProps(value="故交"),
+            valid_from_chapter=world.chapter_number,
+            information_scope=InformationScope.CANON,
+        )
+    ).edge
+    assert changed.id == current.id
+    assert require_canon_version(world.conn, world.project_id) == 0
+
+    with pytest.raises(ProposalShapeError, match="current|Canon"):
+        _review(world, proposal.id, ProposalAction.ACCEPT)
+
+    assert require_canon_version(world.conn, world.project_id) == 0
+    assert world.proposals.get(world.project_id, proposal.id).status.value == "PENDING"
+
+
+def test_review_rejects_changed_current_location_value_with_the_same_edge_id(
+    world: ReviewWorld,
+) -> None:
+    old_place = world.graph.upsert_node(
+        NodeSpec(
+            project_id=world.project_id,
+            label=NodeLabel.LOCATION,
+            name="青云城",
+        )
+    )
+    current = world.graph.upsert_edge(
+        EdgeSpec(
+            project_id=world.project_id,
+            src=world.hero_id,
+            dst=old_place.id,
+            type=EdgeType.LOCATED_AT,
+            valid_from_chapter=world.chapter_number,
+            information_scope=InformationScope.CANON,
+        )
+    ).edge
+    proposal = _make_edge_conflict_proposal(
+        world,
+        update_kind="location",
+        current=current,
+        proposed_edge_id=world.location_edge_id,
+        quote=world.location_quote,
+    )
+
+    changed = world.graph.upsert_edge(
+        EdgeSpec(
+            project_id=world.project_id,
+            src=world.hero_id,
+            dst=old_place.id,
+            type=EdgeType.LOCATED_AT,
+            props=EdgeProps(value="DRIFTED"),
+            valid_from_chapter=world.chapter_number,
+            information_scope=InformationScope.CANON,
+        )
+    ).edge
+    assert changed.id == current.id
+    assert require_canon_version(world.conn, world.project_id) == 0
+
+    with pytest.raises(ProposalShapeError, match="value"):
+        _review(world, proposal.id, ProposalAction.ACCEPT)
+
+    assert require_canon_version(world.conn, world.project_id) == 0
+    assert world.proposals.get(world.project_id, proposal.id).status.value == "PENDING"
 
 
 def test_second_invalid_link_rolls_back_first_clone_and_resolution(world: ReviewWorld) -> None:

@@ -479,6 +479,9 @@ class SqliteStoryGraph:
     def transaction(self) -> AbstractContextManager[None]:
         return _transaction(self._conn)
 
+    def find_edge_by_identity(self, spec: EdgeSpec) -> Edge | None:
+        return queries.find_by_identity(self._conn, spec)
+
     def upsert_node(self, spec: NodeSpec) -> Node:
         with _transaction(self._conn):
             found = queries.find_node_by_name(self._conn, spec.project_id, spec.label, spec.name)

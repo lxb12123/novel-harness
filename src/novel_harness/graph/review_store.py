@@ -36,6 +36,12 @@ class EdgeReviewStore(Protocol):
         edge_ids: Sequence[str],
     ) -> tuple[ReviewableEdge, ...]: ...
 
+    def hydrate_current_canon(
+        self,
+        project_id: str,
+        edge_ids: Sequence[str],
+    ) -> tuple[ReviewableEdge, ...]: ...
+
     def clone_to_canon(
         self,
         project_id: str,
@@ -43,4 +49,3 @@ class EdgeReviewStore(Protocol):
     ) -> tuple[ReviewableEdge, ...]: ...
 
     def evidence(self, project_id: str, evidence_id: str) -> Evidence: ...
-
