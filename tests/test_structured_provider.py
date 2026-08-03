@@ -253,6 +253,53 @@ def test_complete_rejects_a_tampered_resolved_plan_before_calling_the_client() -
     assert calls == []
 
 
+@pytest.mark.parametrize("plan_kind", ["resolved", "structured"])
+@pytest.mark.parametrize(
+    ("field", "tampered_value"),
+    [
+        ("stream", "false"),
+        ("stream", 0),
+        ("request_token_budget", "7224"),
+    ],
+)
+def test_complete_strictly_rejects_coercible_plan_tampering_before_client_call(
+    plan_kind: str, field: str, tampered_value: object
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    def create(**kwargs: object) -> object:
+        calls.append(kwargs)
+        return types.SimpleNamespace(
+            model="must-not-be-called",
+            choices=[
+                types.SimpleNamespace(
+                    message=types.SimpleNamespace(content="unsafe"),
+                    finish_reason="stop",
+                )
+            ],
+            usage=None,
+        )
+
+    client = types.SimpleNamespace(
+        chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create))
+    )
+    valid = (
+        plan_call(M2_LENGTH_SPEC, ReasoningEffort.OFF, _caps())
+        if plan_kind == "resolved"
+        else _plan()
+    )
+    tampered = valid.model_copy(update={field: tampered_value})
+
+    with pytest.raises(ValidationError, match="valid (boolean|integer)|must be integers"):
+        complete(
+            [{"role": "user", "content": "must not leave the process"}],
+            config=ProviderConfig(base_url=valid.base_url, model=valid.model),
+            plan=tampered,
+            client=client,
+        )
+    assert calls == []
+
+
 def test_complete_accepts_a_structured_plan() -> None:
     calls: dict[str, object] = {}
 

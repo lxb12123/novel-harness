@@ -96,9 +96,7 @@ def _plan(
         max_context_tokens=1_000_000,
         max_output_tokens=128_000,
         max_tokens_field=(
-            "max_completion_tokens"
-            if dialect is ReasoningDialect.OPENAI
-            else "max_tokens"
+            "max_completion_tokens" if dialect is ReasoningDialect.OPENAI else "max_tokens"
         ),
         reasoning_levels=reasoning,
         reasoning_dialect=dialect,
@@ -335,7 +333,7 @@ def test_off_reasoning_is_effectively_off_for_each_dialect(
 
 def test_wire_rejects_a_plan_for_a_different_route() -> None:
     plan = _plan()
-    with pytest.raises(ProviderError, match="route"):
+    with pytest.raises(ProviderError, match="CallPlan route"):
         _wire_kwargs(
             ProviderConfig(model="other-model", base_url=LOCAL),
             plan,

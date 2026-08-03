@@ -229,25 +229,29 @@ def _build_client(config: ProviderConfig) -> Any:
     )
 
 
-def _wire_kwargs(
+def _validate_call_plan(plan: CallPlan) -> CallPlan:
+    """Strictly rebuild a plan that may have bypassed validation via ``model_copy``."""
+    if isinstance(plan, ResolvedCallPlan):
+        return ResolvedCallPlan.model_validate(
+            plan.model_dump(mode="python", warnings=False), strict=True
+        )
+    if isinstance(plan, StructuredCallPlan):
+        return StructuredCallPlan.model_validate(
+            plan.model_dump(mode="python", warnings=False), strict=True
+        )
+    raise TypeError("plan must be a ResolvedCallPlan or StructuredCallPlan")
+
+
+def _wire_kwargs_from_validated(
     config: ProviderConfig,
     plan: CallPlan,
     messages: Sequence[dict[str, Any]],
 ) -> dict[str, Any]:
     """把中立 plan 序列化成某一个 OpenAI-compatible endpoint 的精确 wire shape。"""
-    # ``model_copy(update=...)`` intentionally skips Pydantic validation.  This is the
-    # last boundary before transport, so rebuild either supported plan from its public
-    # payload rather than trusting an instance that may have been forged after planning.
-    if isinstance(plan, ResolvedCallPlan):
-        plan = ResolvedCallPlan.model_validate(plan.model_dump(mode="python"))
-    elif isinstance(plan, StructuredCallPlan):
-        plan = StructuredCallPlan.model_validate(plan.model_dump(mode="python"))
-    else:
-        raise TypeError("plan must be a ResolvedCallPlan or StructuredCallPlan")
     route = normalize_base_url(config.base_url), normalize_model(config.model)
     if route != (plan.base_url, plan.model):
         raise ProviderError(
-            "ProviderConfig route does not match ResolvedCallPlan route: "
+            "ProviderConfig route does not match CallPlan route: "
             f"config={route!r}, plan={(plan.base_url, plan.model)!r}"
         )
 
@@ -291,6 +295,25 @@ def _wire_kwargs(
     else:  # ProviderCapabilities 应已拦住;交通层仍不冒险发请求。
         raise ProviderError(f"reasoning={value} has no compatible wire dialect for {plan.model!r}")
     return kwargs
+
+
+def _prepare_call(
+    config: ProviderConfig,
+    plan: CallPlan,
+    messages: Sequence[dict[str, Any]],
+) -> tuple[CallPlan, dict[str, Any]]:
+    """Return one strict plan and the wire shape derived from that same instance."""
+    validated = _validate_call_plan(plan)
+    return validated, _wire_kwargs_from_validated(config, validated, messages)
+
+
+def _wire_kwargs(
+    config: ProviderConfig,
+    plan: CallPlan,
+    messages: Sequence[dict[str, Any]],
+) -> dict[str, Any]:
+    """Keep the existing test/debug surface while enforcing transport validation."""
+    return _prepare_call(config, plan, messages)[1]
 
 
 def _from_non_streaming(resp: Any, fallback_model: str) -> CompletionResult:
@@ -345,12 +368,12 @@ def complete(
     client: Any = None,
 ) -> CompletionResult:
     """按已验证 plan 执行一次补全;大预算 stream 与非 stream 返回同一结果契约。"""
-    kwargs = _wire_kwargs(config, plan, messages)
+    validated_plan, kwargs = _prepare_call(config, plan, messages)
     client = client or _build_client(config)
 
     try:
         response = client.chat.completions.create(**kwargs)
-        if plan.stream:
+        if validated_plan.stream:
             return _from_stream(response, config.model)
         return _from_non_streaming(response, config.model)
     except ProviderError:
