@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+from typing import get_type_hints
+
 import pytest
 from pydantic import ValidationError
 
+import novel_harness.events as event_contracts
 from novel_harness.events import (
     CharacterProfilePatch,
     EventCharacterRole,
     EventView,
+    ProposalCreate,
+    ProposalRecord,
+    ProposalResolutionMark,
+    ProposalStatus,
+    ProposalStore,
     ProvisionalEventSpec,
     StoryEvent,
 )
@@ -35,6 +43,17 @@ def _provisional_event(**overrides: object) -> ProvisionalEventSpec:
     }
     values.update(overrides)
     return ProvisionalEventSpec.model_validate(values)
+
+
+def _proposal_create(**overrides: object) -> ProposalCreate:
+    values: dict[str, object] = {
+        "project_id": "project:01JZ0000000000000000000000",
+        "kind": "entity_resolution",
+        "summary": "顾姑娘可能指向顾清音。",
+        "items": [{"surface": "顾姑娘", "confidence": 0.6}],
+    }
+    values.update(overrides)
+    return ProposalCreate.model_validate(values)
 
 
 def test_provisional_event_spec_is_frozen_and_forbids_scope() -> None:
@@ -96,3 +115,98 @@ def test_story_event_and_event_view_are_immutable_pydantic_outputs() -> None:
 def test_provisional_event_confidence_is_bounded(confidence: float) -> None:
     with pytest.raises(ValidationError, match="confidence"):
         _provisional_event(confidence=confidence)
+
+
+def test_proposal_create_exposes_structured_items_and_derived_count() -> None:
+    items = [{"surface": "顾姑娘", "confidence": 0.6}]
+
+    proposal = _proposal_create(items=items)
+
+    assert proposal.items == items
+    assert proposal.item_count == len(items)
+    dumped = proposal.model_dump(mode="json")
+    assert dumped["items"] == items
+    assert dumped["item_count"] == len(items)
+    assert "items_json" not in dumped
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("items_json", '[{"surface": "顾姑娘"}]'),
+        ("item_count", 99),
+    ],
+)
+def test_proposal_create_rejects_storage_shaped_or_caller_derived_fields(
+    field: str,
+    value: object,
+) -> None:
+    with pytest.raises(ValidationError, match=field):
+        _proposal_create(**{field: value})
+
+
+def test_proposal_create_requires_at_least_one_clustered_item() -> None:
+    with pytest.raises(ValidationError, match="items"):
+        _proposal_create(items=[])
+
+
+def test_proposal_create_rejects_non_json_item_values() -> None:
+    class ArbitraryValue:
+        pass
+
+    with pytest.raises(ValidationError, match="items"):
+        _proposal_create(items=[{"surface": ArbitraryValue()}])
+
+
+@pytest.mark.parametrize("status", list(ProposalStatus))
+def test_proposal_record_exposes_structured_items_for_every_lifecycle_status(
+    status: ProposalStatus,
+) -> None:
+    items = [{"surface": "顾姑娘", "confidence": 0.6}]
+
+    record = ProposalRecord(
+        id="proposal:4956977b:01JZ0000000000000000000004",
+        created_at="2026-08-03T12:00:00Z",
+        status=status,
+        **_proposal_create(items=items).model_dump(exclude={"item_count"}),
+    )
+
+    assert record.status is status
+    assert record.items == items
+    assert record.item_count == len(items)
+    assert record.model_dump(mode="json")["item_count"] == len(items)
+
+
+@pytest.mark.parametrize("status", ["ACCEPTED", "REJECTED", "EDITED"])
+def test_proposal_resolution_mark_accepts_only_terminal_statuses(status: str) -> None:
+    mark = ProposalResolutionMark(status=status)
+
+    assert mark.status.value == status
+    assert isinstance(mark.status, event_contracts.ProposalResolutionStatus)
+
+
+def test_proposal_resolution_mark_rejects_pending_status() -> None:
+    with pytest.raises(ValidationError, match="status"):
+        ProposalResolutionMark(status=ProposalStatus.PENDING)
+
+
+def test_proposal_store_protocol_uses_concrete_proposal_contracts() -> None:
+    assert get_type_hints(ProposalStore.create) == {
+        "proposal": ProposalCreate,
+        "return": ProposalRecord,
+    }
+    assert get_type_hints(ProposalStore.pending) == {
+        "project_id": str,
+        "chapter_number": int | None,
+        "return": list[ProposalRecord],
+    }
+    assert get_type_hints(ProposalStore.get) == {
+        "project_id": str,
+        "proposal_id": str,
+        "return": ProposalRecord | None,
+    }
+    assert get_type_hints(ProposalStore.mark_resolved) == {
+        "proposal_id": str,
+        "resolution": ProposalResolutionMark,
+        "return": ProposalRecord,
+    }

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, computed_field
 
 from ..graph.models import (
     EdgeSource,
@@ -26,6 +26,12 @@ class EventCharacterRole(StrEnum):
 
 class ProposalStatus(StrEnum):
     PENDING = "PENDING"
+    ACCEPTED = "ACCEPTED"
+    REJECTED = "REJECTED"
+    EDITED = "EDITED"
+
+
+class ProposalResolutionStatus(StrEnum):
     ACCEPTED = "ACCEPTED"
     REJECTED = "REJECTED"
     EDITED = "EDITED"
@@ -69,15 +75,14 @@ class ProvisionalEventSpec(BaseModel):
 
 
 class ProposalCreate(BaseModel):
-    """待确认聚类的窄存储输入；审核语义由后续服务层负责。"""
+    """待确认聚类的公开输入；存储序列化由仓储实现负责。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     project_id: str
     kind: str = Field(min_length=1)
     summary: str = ""
-    item_count: int = Field(default=1, ge=1)
-    items_json: str = "[]"
+    items: list[JsonValue] = Field(min_length=1)
     confidence: float | None = Field(default=None, ge=0, le=1)
     chapter_number: int | None = Field(default=None, ge=1)
     snapshot_id: str | None = None
@@ -86,6 +91,11 @@ class ProposalCreate(BaseModel):
     prompt_hash: str | None = None
     event_ids: list[str] = Field(default_factory=list)
     edge_ids: list[str] = Field(default_factory=list)
+
+    @computed_field
+    @property
+    def item_count(self) -> int:
+        return len(self.items)
 
 
 class ProposalRecord(ProposalCreate):
@@ -103,7 +113,7 @@ class ProposalResolutionMark(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    status: ProposalStatus
+    status: ProposalResolutionStatus
     decision_log_id: str | None = None
 
 
