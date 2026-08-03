@@ -369,7 +369,7 @@ def test_length_instruction_is_explicit_in_chinese_system_prompt() -> None:
     assert "中文" in prompt
     assert "2000–3100 字" in prompt
     assert "2500 字" in prompt
-    assert "2250–2550 字之间自然收束" in prompt
+    assert "2000–2250 字之间自然收束" in prompt
     assert "绝不要超过 3100 字" in prompt
     assert "作废" in prompt
     assert "600–1000" not in prompt
@@ -382,7 +382,7 @@ def test_length_instruction_is_explicit_in_english_system_prompt() -> None:
     assert "English" in prompt
     assert "1200–1800 words" in prompt
     assert "1500 words" in prompt
-    assert "1350–1500 words" in prompt
+    assert "1200–1350 words" in prompt
     assert "over-length draft is discarded" in prompt
 
 

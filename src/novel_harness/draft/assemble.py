@@ -90,8 +90,11 @@ DEFAULT_HOUSE_STYLE = ZH_HOUSE_STYLE
 
 def length_instruction(spec: LengthSpec) -> str:
     """Render the language-specific output length request in reader-facing units."""
-    lower = (spec.min_units + spec.target_units) // 2
-    upper = (spec.min_units + spec.max_units) // 2
+    # 2026-08-02 修复 5：可见目标下压到 (min)–(min+target)/2。
+    # 模型首段长度有右尾（实测 3016–3158），超长没有补救手段（续写只允许
+    # under-min），所以提示词让模型**宁短**：短了续写兜底，长了整轮判死。
+    lower = spec.min_units
+    upper = (spec.min_units + spec.target_units) // 2
     if spec.language is DraftLanguage.ZH:
         return (
             f"请用中文写作，篇幅精确控制在 {spec.min_units}–{spec.max_units} 字，"
