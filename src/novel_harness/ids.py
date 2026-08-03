@@ -39,6 +39,19 @@ node / edge / evidence / alias 的主键里都印着这 8 个字符，而 decisi
 确认是靠文本引语重放的、不认 ID——也就是说，改了它，能救回来的只有 decision_log。
 """
 
+_NODE_ENTITY_VALUES: Final[frozenset[str]] = frozenset(
+    {
+        "character",
+        "location",
+        "faction",
+        "secret",
+        "foreshadow",
+        "object",
+        "statedim",
+        "chapter",
+    }
+)
+
 
 class EntityType(StrEnum):
     """ID 第一段。**每个值对应一张实际有主键的表**（ADR 0005 的增长规则：没有表就没有值）。
@@ -62,6 +75,7 @@ class EntityType(StrEnum):
 
     ALIAS = "alias"
     EDGE = "edge"
+    EVENT = "event"
     EVIDENCE = "evidence"
     SNAPSHOT = "snapshot"
     DECISION = "decision"
@@ -79,7 +93,10 @@ class EntityType(StrEnum):
         入参是 `str` 而不是 `NodeLabel`，只为了不 import graph；`NodeLabel` 是 StrEnum，
         直接传成员即可。
         """
-        return cls(label.lower())
+        value = label.lower()
+        if value not in _NODE_ENTITY_VALUES:
+            raise ValueError(f"不是 NodeLabel 对应的实体类型：{label}")
+        return cls(value)
 
 
 ARTIFACT_PREFIX: Final = "artifact:sha256:"

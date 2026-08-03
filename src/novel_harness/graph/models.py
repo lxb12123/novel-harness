@@ -270,6 +270,12 @@ class NodeProps(BaseModel):
     会在那一刻静默失效。
     """
 
+    gender: str | None = None
+    personality: str | None = None
+    background: str | None = None
+    character_notes: str | None = None
+    main_character: bool | None = None
+
 
 class EdgeProps(BaseModel):
     """`edge.props_json` 解出来的东西。"""

@@ -1,4 +1,4 @@
-"""db.py + 001_init.sql（PLAN §8 Day 2 的验收：连跑两次 migrate 不报错）。
+"""db.py + numbered SQL migrations（PLAN §8 Day 2：连跑两次 migrate 不报错）。
 
 本文件测两件事：
 
@@ -77,9 +77,9 @@ def test_migrate_twice_is_idempotent(tmp_path: Path) -> None:
     闸门拦住了它。"""
     c = connect(tmp_path / "nh.db")
     assert user_version(c) == 0
-    assert migrate(c) == 1
-    assert migrate(c) == 1  # 不抛
-    assert user_version(c) == 1
+    assert migrate(c) == 2
+    assert migrate(c) == 2  # 不抛
+    assert user_version(c) == 2
     c.close()
 
 
@@ -90,8 +90,8 @@ def test_migrate_twice_on_fresh_connections(tmp_path: Path) -> None:
     migrate(c1)
     c1.close()
     c2 = connect(path)
-    assert migrate(c2) == 1
-    assert user_version(c2) == 1
+    assert migrate(c2) == 2
+    assert user_version(c2) == 2
     c2.close()
 
 
@@ -122,8 +122,86 @@ def test_migration_files_are_readable_from_package() -> None:
 
     root = files("novel_harness") / "migrations"
     names = sorted(e.name for e in root.iterdir() if e.name.endswith(".sql"))
-    assert names == ["001_init.sql"]
+    assert names == ["001_init.sql", "002_m4_events.sql"]
     assert "PRAGMA user_version = 1" in (root / "001_init.sql").read_text(encoding="utf-8")
+    assert "PRAGMA user_version = 2" in (root / "002_m4_events.sql").read_text(encoding="utf-8")
+
+
+def test_populated_v1_database_migrates_without_changing_existing_rows(tmp_path: Path) -> None:
+    from importlib.resources import files
+
+    c = connect(tmp_path / "v1.db")
+    v1_sql = (files("novel_harness") / "migrations" / "001_init.sql").read_text(
+        encoding="utf-8"
+    )
+    c.executescript(v1_sql)
+    assert user_version(c) == 1
+
+    project_id = "project:v1-existing"
+    c.execute(
+        "INSERT INTO project (id, name, root_path, canon_version) VALUES (?,?,?,?)",
+        (project_id, "旧书", "/old", 7),
+    )
+    character_id = _node(c, project_id, "Character", "旧人物")
+    c.execute(
+        "INSERT INTO proposal_set "
+        "(id, project_id, kind, summary, item_count, items_json, confidence, status) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        ("proposal:v1", project_id, "alias_cluster", "旧提案", 2, '["a","b"]', 0.8, "PENDING"),
+    )
+    before_project = tuple(c.execute("SELECT * FROM project WHERE id = ?", (project_id,)).fetchone())
+    before_node = tuple(c.execute("SELECT * FROM node WHERE id = ?", (character_id,)).fetchone())
+    before_proposal = tuple(
+        c.execute(
+            "SELECT id, project_id, kind, summary, item_count, items_json, confidence, status, "
+            "created_at, resolved_at, decision_log_id FROM proposal_set WHERE id = 'proposal:v1'"
+        ).fetchone()
+    )
+
+    assert migrate(c) == 2
+    assert migrate(c) == 2
+    assert tuple(c.execute("SELECT * FROM project WHERE id = ?", (project_id,)).fetchone()) == before_project
+    assert tuple(c.execute("SELECT * FROM node WHERE id = ?", (character_id,)).fetchone()) == before_node
+    assert (
+        tuple(
+            c.execute(
+                "SELECT id, project_id, kind, summary, item_count, items_json, confidence, status, "
+                "created_at, resolved_at, decision_log_id FROM proposal_set WHERE id = 'proposal:v1'"
+            ).fetchone()
+        )
+        == before_proposal
+    )
+    added = c.execute(
+        "SELECT chapter_number, snapshot_id, base_canon_version, schema_version, prompt_hash "
+        "FROM proposal_set WHERE id = 'proposal:v1'"
+    ).fetchone()
+    assert tuple(added) == (None, None, 0, None, None)
+    c.close()
+
+
+def test_m4_tables_and_proposal_columns_are_present(conn: sqlite3.Connection) -> None:
+    tables = {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()
+    }
+    assert {
+        "story_event",
+        "event_participant",
+        "event_knower",
+        "event_reveal",
+        "proposal_event",
+        "proposal_edge",
+        "extraction_run",
+    } <= tables
+
+    proposal_columns = {row[1] for row in conn.execute("PRAGMA table_info(proposal_set)")}
+    assert {
+        "chapter_number",
+        "snapshot_id",
+        "base_canon_version",
+        "schema_version",
+        "prompt_hash",
+    } <= proposal_columns
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -204,9 +282,9 @@ def test_concurrent_first_migrate_does_not_race(tmp_path: Path) -> None:
     for t in threads:
         t.join()
 
-    assert results == [1] * n, f"并发首跑必须全部成功，实得 {results}"
+    assert results == [2] * n, f"并发首跑必须全部成功，实得 {results}"
     c = connect(path)
-    assert user_version(c) == 1
+    assert user_version(c) == 2
     assert c.execute("SELECT COUNT(*) FROM edge_type").fetchone()[0] == 9
     c.close()
 
@@ -215,14 +293,14 @@ def test_connect_in_memory_works(tmp_path: Path) -> None:
     # 内存库不支持 WAL，会静默停在 memory 模式。这没关系（没有并发读者），
     # 但 connect() 不能因此炸——测试和 CLI 的 --dry-run 都走这条。
     c = connect(IN_MEMORY)
-    assert migrate(c) == 1
+    assert migrate(c) == 2
     assert c.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     c.close()
 
 
 def test_connect_creates_parent_dirs(tmp_path: Path) -> None:
     c = connect(tmp_path / "a" / "b" / "nh.db")
-    assert migrate(c) == 1
+    assert migrate(c) == 2
     c.close()
 
 
@@ -717,6 +795,237 @@ def test_evidence_cannot_be_deleted_while_referenced(
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# M4：事件超边 / 提案关联 / 后台抽取
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_story_event_copies_the_temporal_graph_checks(
+    conn: sqlite3.Connection, project: str
+) -> None:
+    evidence_id = _evidence(conn, project, "unused")
+    _story_event(conn, project, "event:valid", evidence_id)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        _story_event(conn, project, "event:empty", evidence_id, summary="", information_scope="CANON")
+    with pytest.raises(sqlite3.IntegrityError):
+        _story_event(conn, project, "event:scope", evidence_id, information_scope="DRAFT")
+    with pytest.raises(sqlite3.IntegrityError):
+        _story_event(
+            conn,
+            project,
+            "event:interval",
+            evidence_id,
+            information_scope="CANON",
+            valid_to_chapter=143,
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        _story_event(
+            conn,
+            project,
+            "event:status",
+            evidence_id,
+            information_scope="CANON",
+            status="SUPERSEDED",
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        _story_event(
+            conn,
+            project,
+            "event:confidence",
+            evidence_id,
+            information_scope="CANON",
+            confidence=1.01,
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        _story_event(
+            conn,
+            project,
+            "event:evidence",
+            evidence_id,
+            information_scope="CANON",
+            evidence_status="NONE",
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        _story_event(conn, project, "event:duplicate-anchor", evidence_id)
+
+
+def test_event_incidence_requires_same_project_and_expected_labels(
+    conn: sqlite3.Connection, project: str
+) -> None:
+    evidence_id = _evidence(conn, project, "unused")
+    event_id = "event:incidence"
+    _story_event(conn, project, event_id, evidence_id)
+    character_id = _node(conn, project, "Character", "顾清音")
+    other_character_id = _node(conn, project, "Character", "萧决")
+    secret_id = _node(conn, project, "Secret", "玄铁令的来历")
+
+    conn.execute(
+        "INSERT INTO event_participant (event_id, project_id, character_id) VALUES (?,?,?)",
+        (event_id, project, character_id),
+    )
+    conn.execute(
+        "INSERT INTO event_reveal (event_id, project_id, secret_id) VALUES (?,?,?)",
+        (event_id, project, secret_id),
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO event_participant (event_id, project_id, character_id) VALUES (?,?,?)",
+            (event_id, project, character_id),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO event_participant (event_id, project_id, character_id) VALUES (?,?,?)",
+            (event_id, project, secret_id),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO event_reveal (event_id, project_id, secret_id) VALUES (?,?,?)",
+            (event_id, project, character_id),
+        )
+
+    other_project = new_project_id()
+    conn.execute(
+        "INSERT INTO project (id, name, root_path) VALUES (?,?,?)", (other_project, "别书", "/other")
+    )
+    foreign_character = _node(conn, other_project, "Character", "别书人物")
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO event_participant (event_id, project_id, character_id) VALUES (?,?,?)",
+            (event_id, project, foreign_character),
+        )
+
+    conn.execute(
+        "INSERT INTO event_knower "
+        "(event_id, project_id, character_id, valid_from_chapter, valid_to_chapter, "
+        "information_scope, evidence_id, evidence_status) VALUES (?,?,?,?,?,?,?,?)",
+        (event_id, project, other_character_id, 143, 200, "PROVISIONAL", evidence_id, "FRESH"),
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO event_knower "
+            "(event_id, project_id, character_id, valid_from_chapter, valid_to_chapter, "
+            "information_scope, evidence_id, evidence_status) VALUES (?,?,?,?,?,?,?,?)",
+            (event_id, project, character_id, 143, 143, "PROVISIONAL", evidence_id, "FRESH"),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO event_knower "
+            "(event_id, project_id, character_id, valid_from_chapter, information_scope, "
+            "evidence_id, evidence_status) VALUES (?,?,?,?,?,?,?)",
+            (event_id, project, character_id, 142, "CANON", evidence_id, "FRESH"),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO event_knower "
+            "(event_id, project_id, character_id, valid_from_chapter, information_scope, "
+            "evidence_status) VALUES (?,?,?,?,?,?)",
+            (event_id, project, character_id, 143, "PROVISIONAL", "FRESH"),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO event_knower "
+            "(event_id, project_id, character_id, valid_from_chapter, information_scope, "
+            "evidence_id, evidence_status) VALUES (?,?,?,?,?,?,?)",
+            (event_id, project, character_id, 143, "DRAFT", evidence_id, "FRESH"),
+        )
+
+
+def test_proposal_links_only_reference_provisional_rows(
+    conn: sqlite3.Connection, project: str
+) -> None:
+    evidence_id = _evidence(conn, project, "unused")
+    provisional_event = "event:proposal-provisional"
+    canon_event = "event:proposal-canon"
+    _story_event(conn, project, provisional_event, evidence_id)
+    _story_event(conn, project, canon_event, evidence_id, information_scope="CANON")
+    character_id = _node(conn, project, "Character", "顾清音")
+    location_id = _node(conn, project, "Location", "渡口")
+    provisional_edge = _edge(
+        conn,
+        project,
+        character_id,
+        location_id,
+        information_scope="PROVISIONAL",
+    )
+    canon_edge = _edge(conn, project, character_id, location_id, information_scope="CANON")
+    conn.execute(
+        "INSERT INTO proposal_set (id, project_id, kind, status) VALUES (?,?,?,?)",
+        ("proposal:m4", project, "edge_conflict", "PENDING"),
+    )
+
+    conn.execute(
+        "INSERT INTO proposal_event (proposal_id, project_id, event_id) VALUES (?,?,?)",
+        ("proposal:m4", project, provisional_event),
+    )
+    conn.execute(
+        "INSERT INTO proposal_edge (proposal_id, project_id, edge_id) VALUES (?,?,?)",
+        ("proposal:m4", project, provisional_edge),
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO proposal_event (proposal_id, project_id, event_id) VALUES (?,?,?)",
+            ("proposal:m4", project, canon_event),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO proposal_edge (proposal_id, project_id, edge_id) VALUES (?,?,?)",
+            ("proposal:m4", project, canon_edge),
+        )
+
+
+def test_extraction_run_checks_status_counters_and_idempotency(
+    conn: sqlite3.Connection, project: str
+) -> None:
+    evidence_id = _evidence(conn, project, "unused")
+    snapshot_id = conn.execute(
+        "SELECT chapter_snapshot_id FROM evidence WHERE id = ?", (evidence_id,)
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO extraction_run "
+        "(id, project_id, chapter_number, snapshot_id, schema_version, prompt_hash) "
+        "VALUES (?,?,?,?,?,?)",
+        ("run:one", project, 143, snapshot_id, "m4.v1", "prompt-a"),
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO extraction_run "
+            "(id, project_id, chapter_number, snapshot_id, schema_version, prompt_hash, status) "
+            "VALUES (?,?,?,?,?,?,?)",
+            ("run:bad-status", project, 143, snapshot_id, "m4.v2", "prompt-a", "DONE"),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO extraction_run "
+            "(id, project_id, chapter_number, snapshot_id, schema_version, prompt_hash) "
+            "VALUES (?,?,?,?,?,?)",
+            ("run:duplicate", project, 143, snapshot_id, "m4.v1", "prompt-a"),
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO extraction_run "
+            "(id, project_id, chapter_number, snapshot_id, schema_version, prompt_hash, "
+            "valid_event_count) VALUES (?,?,?,?,?,?,?)",
+            ("run:negative", project, 143, snapshot_id, "m4.v2", "prompt-b", -1),
+        )
+
+    other_project = new_project_id()
+    conn.execute(
+        "INSERT INTO project (id, name, root_path) VALUES (?,?,?)", (other_project, "别书", "/other")
+    )
+    foreign_evidence = _evidence(conn, other_project, "unused")
+    foreign_snapshot = conn.execute(
+        "SELECT chapter_snapshot_id FROM evidence WHERE id = ?", (foreign_evidence,)
+    ).fetchone()[0]
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO extraction_run "
+            "(id, project_id, chapter_number, snapshot_id, schema_version, prompt_hash) "
+            "VALUES (?,?,?,?,?,?)",
+            ("run:foreign", project, 143, foreign_snapshot, "m4.v2", "prompt-c"),
+        )
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # 约束电池：**必须被允许**的（这一组比上面那组更容易在改 schema 时被误伤）
 # ══════════════════════════════════════════════════════════════════════════
 
@@ -853,3 +1162,31 @@ def _evidence(conn: sqlite3.Connection, project_id: str, _src: str) -> str:
         (eid, project_id, snap, 0, "他死了。", "e" * 64, ch, 0),
     )
     return eid
+
+
+def _story_event(
+    conn: sqlite3.Connection,
+    project_id: str,
+    event_id: str,
+    evidence_id: str,
+    **overrides: object,
+) -> None:
+    values: dict[str, object] = {
+        "id": event_id,
+        "project_id": project_id,
+        "chapter_number": 143,
+        "summary": "顾清音在渡口交给萧决一枚玄铁令。",
+        "valid_from_chapter": 143,
+        "information_scope": "PROVISIONAL",
+        "status": "ACTIVE",
+        "confidence": 0.9,
+        "source": "extractor",
+        "evidence_id": evidence_id,
+        "evidence_status": "FRESH",
+    }
+    values.update(overrides)
+    columns = ", ".join(values)
+    markers = ", ".join("?" for _ in values)
+    conn.execute(
+        f"INSERT INTO story_event ({columns}) VALUES ({markers})", tuple(values.values())
+    )

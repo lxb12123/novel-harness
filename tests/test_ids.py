@@ -101,6 +101,15 @@ def test_shape_is_three_segments() -> None:
     assert str(ULID.from_str(parts[2])) == parts[2]
 
 
+def test_event_id_uses_independent_hyperedge_prefix() -> None:
+    project_id = "project:01JZ0000000000000000000000"
+    got = new_id(EntityType.EVENT, project_id)
+
+    assert got.startswith(f"event:{project_short(project_id)}:")
+    assert ULID_RE.fullmatch(got.rsplit(":", 1)[1])
+    assert "Event" not in {label.value for label in NodeLabel}
+
+
 def test_ids_are_unique() -> None:
     pid = "project:01JZ0000000000000000000000"
     ids = {new_id(EntityType.EDGE, pid) for _ in range(1000)}
@@ -205,6 +214,7 @@ def test_node_labels_and_entity_types_agree() -> None:
     assert len(from_labels) == 8  # §5.8 的 8 类，一个不多一个不少
 
 
-def test_for_node_label_rejects_unknown() -> None:
+@pytest.mark.parametrize("label", ["Volume", "Event"])
+def test_for_node_label_rejects_non_node_entity_types(label: str) -> None:
     with pytest.raises(ValueError):
-        EntityType.for_node_label("Volume")  # §5.8 明令不存在的那类节点
+        EntityType.for_node_label(label)  # Event 是独立超边，不能借 ID 类型混进 NodeLabel。
