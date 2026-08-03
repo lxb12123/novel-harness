@@ -110,6 +110,15 @@ def test_event_id_uses_independent_hyperedge_prefix() -> None:
     assert "Event" not in {label.value for label in NodeLabel}
 
 
+def test_extraction_run_id_uses_its_persisted_table_prefix() -> None:
+    project_id = "project:01JZ0000000000000000000000"
+
+    got = new_id(EntityType.EXTRACTION_RUN, project_id)
+
+    assert got.startswith(f"extraction_run:{project_short(project_id)}:")
+    assert ULID_RE.fullmatch(got.rsplit(":", 1)[1])
+
+
 def test_ids_are_unique() -> None:
     pid = "project:01JZ0000000000000000000000"
     ids = {new_id(EntityType.EDGE, pid) for _ in range(1000)}

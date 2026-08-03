@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal
 
@@ -28,6 +29,7 @@ class DiscardOutcome(StrEnum):
     UNKNOWN_SURFACE = "UNKNOWN_SURFACE"
     AMBIGUOUS_SURFACE = "AMBIGUOUS_SURFACE"
     WRONG_LABEL = "WRONG_LABEL"
+    SUPERSEDED_IN_ANALYSIS = "SUPERSEDED_IN_ANALYSIS"
 
 
 class DiscardReason(BaseModel):
@@ -52,6 +54,18 @@ class ExtractionReport(BaseModel):
     edge_ids: tuple[str, ...] = ()
     proposal_ids: tuple[str, ...] = ()
     proposal_count: int = Field(ge=0)
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedStateUpdate:
+    """A fully resolved and located state update that has not written anything yet."""
+
+    index: int
+    raw: RawStateUpdate
+    subject_id: str
+    target_id: str
+    located: Located
+    graph_key: tuple[str, ...]
 
 
 def resolution_map(
@@ -132,6 +146,79 @@ def locate_evidence(
         outcome=DiscardOutcome(result.outcome.value),
         detail=f"quote location failed with ratio={result.ratio:.6f}",
     )
+
+
+def prepare_state_update(
+    index: int,
+    raw: RawStateUpdate,
+    paras: Sequence[str],
+    resolutions: dict[str, SurfaceResolution],
+) -> tuple[PreparedStateUpdate, None] | tuple[None, DiscardReason]:
+    subjects, reason = resolve_ids(
+        "state_update", index, (raw.subject,), NodeLabel.CHARACTER, resolutions
+    )
+    if reason is not None:
+        return None, reason
+    target_surface = raw.dimension if raw.kind == "state" else raw.object
+    expected = (
+        NodeLabel.STATE_DIM
+        if raw.kind == "state"
+        else NodeLabel.LOCATION
+        if raw.kind == "location"
+        else NodeLabel.CHARACTER
+    )
+    targets, reason = resolve_ids(
+        "state_update", index, (target_surface or "",), expected, resolutions
+    )
+    if reason is not None:
+        return None, reason
+    located, reason = locate_evidence("state_update", index, paras, raw.quote)
+    if reason is not None:
+        return None, reason
+    subject_id, target_id = subjects[0], targets[0]
+    edge_type = {
+        "location": EdgeType.LOCATED_AT,
+        "state": EdgeType.HAS_STATE,
+        "relationship": EdgeType.RELATED_TO,
+    }[raw.kind]
+    if raw.kind == "location":
+        graph_key = (edge_type.value, subject_id)
+    elif raw.kind == "state":
+        graph_key = (edge_type.value, subject_id, target_id)
+    else:
+        graph_key = (edge_type.value, *sorted((subject_id, target_id)))
+    return PreparedStateUpdate(
+        index=index,
+        raw=raw,
+        subject_id=subject_id,
+        target_id=target_id,
+        located=located,
+        graph_key=graph_key,
+    ), None
+
+
+def keep_last_state_updates(
+    prepared: Sequence[PreparedStateUpdate],
+) -> tuple[list[PreparedStateUpdate], list[DiscardReason]]:
+    """Keep only the final resolved update for each semantic graph key."""
+
+    final_index = {item.graph_key: item.index for item in prepared}
+    retained: list[PreparedStateUpdate] = []
+    discarded: list[DiscardReason] = []
+    for item in prepared:
+        winner = final_index[item.graph_key]
+        if item.index == winner:
+            retained.append(item)
+            continue
+        discarded.append(
+            DiscardReason(
+                kind="state_update",
+                index=item.index,
+                outcome=DiscardOutcome.SUPERSEDED_IN_ANALYSIS,
+                detail=f"superseded by state_update[{winner}] for {item.graph_key!r}",
+            )
+        )
+    return retained, discarded
 
 
 def find_conflict(

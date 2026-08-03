@@ -80,6 +80,7 @@ class EntityType(StrEnum):
     SNAPSHOT = "snapshot"
     DECISION = "decision"
     CALL = "call"
+    EXTRACTION_RUN = "extraction_run"
     REPORT = "report"
     PROPOSAL = "proposal"
 

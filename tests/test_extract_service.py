@@ -38,15 +38,21 @@ from novel_harness.project import create as create_project
 
 EVENT_QUOTE = "顾清音在渡口把玄铁令交给萧决。"
 LOCATION_QUOTE = "萧决看见顾清音仍然停留在渡口。"
+LOCATION_SUPERSEDED_QUOTE = "顾清音先在北荒雪原短暂停留片刻。"
 STATE_QUOTE = "顾清音的修为终于突破到了金丹境界。"
+STATE_FINAL_QUOTE = "此战之后，顾清音的修为已稳固在元婴境界。"
 RELATION_QUOTE = "顾清音与萧决正式结成了生死盟友。"
+RELATION_FINAL_QUOTE = "翌日清晨，萧决与顾清音彻底决裂成了宿敌。"
 REPEATED_QUOTE = "夜风吹过空无一人的青石长街。"
 CHAPTER_TEXT = "\n".join(
     (
         EVENT_QUOTE,
+        LOCATION_SUPERSEDED_QUOTE,
         LOCATION_QUOTE,
         STATE_QUOTE,
+        STATE_FINAL_QUOTE,
         RELATION_QUOTE,
+        RELATION_FINAL_QUOTE,
         REPEATED_QUOTE,
         REPEATED_QUOTE,
     )
@@ -296,6 +302,119 @@ def test_canon_state_conflicts_cluster_into_one_linked_proposal(
     canon = seed.graph.state_at(seed.project_id, seed.hero_id, seed.chapter.number)
     assert canon.location is not None and canon.location.id == seed.mountain_id
     assert canon.states[0].value == "筑基"
+
+
+@pytest.mark.parametrize("kind", ["location", "state", "relationship"])
+def test_same_graph_key_keeps_only_last_located_state_update(
+    kind: str, seed: Seed, conn: Connection
+) -> None:
+    if kind == "location":
+        seed.graph.upsert_edge(EdgeSpec(
+            project_id=seed.project_id, src=seed.hero_id, dst=seed.mountain_id,
+            type=EdgeType.LOCATED_AT, valid_from_chapter=1,
+            information_scope=InformationScope.CANON,
+        ))
+        states = (
+            RawStateUpdate(
+                kind="location", subject="顾清音", object="北荒",
+                quote=LOCATION_SUPERSEDED_QUOTE, confidence=0.91,
+            ),
+            RawStateUpdate(
+                kind="location", subject="顾清音", object="渡口",
+                quote=LOCATION_QUOTE, confidence=0.92,
+            ),
+        )
+        expected_subject = seed.hero_id
+        expected_target = seed.harbor_id
+        expected_value = None
+        expected_quote = LOCATION_QUOTE
+    elif kind == "state":
+        seed.graph.upsert_edge(EdgeSpec(
+            project_id=seed.project_id, src=seed.hero_id, dst=seed.dimension_id,
+            type=EdgeType.HAS_STATE, props=EdgeProps(value="筑基"),
+            valid_from_chapter=1, information_scope=InformationScope.CANON,
+        ))
+        states = (
+            RawStateUpdate(
+                kind="state", subject="顾清音", dimension="修为", value="金丹",
+                quote=STATE_QUOTE, confidence=0.91,
+            ),
+            RawStateUpdate(
+                kind="state", subject="顾清音", dimension="修为", value="元婴",
+                quote=STATE_FINAL_QUOTE, confidence=0.92,
+            ),
+        )
+        expected_subject = seed.hero_id
+        expected_target = seed.dimension_id
+        expected_value = "元婴"
+        expected_quote = STATE_FINAL_QUOTE
+    else:
+        seed.graph.upsert_edge(EdgeSpec(
+            project_id=seed.project_id, src=seed.hero_id, dst=seed.sidekick_id,
+            type=EdgeType.RELATED_TO, props=EdgeProps(value="陌路"),
+            valid_from_chapter=1, information_scope=InformationScope.CANON,
+        ))
+        states = (
+            RawStateUpdate(
+                kind="relationship", subject="顾清音", object="萧决", value="生死盟友",
+                quote=RELATION_QUOTE, confidence=0.91,
+            ),
+            RawStateUpdate(
+                kind="relationship", subject="萧决", object="顾清音", value="宿敌",
+                quote=RELATION_FINAL_QUOTE, confidence=0.92,
+            ),
+        )
+        expected_subject = seed.sidekick_id
+        expected_target = seed.hero_id
+        expected_value = "宿敌"
+        expected_quote = RELATION_FINAL_QUOTE
+
+    report = _service(conn, seed).ingest(
+        seed.project_id,
+        seed.chapter,
+        _analysis(states=states),
+        prompt_hash=f"prompt:last-{kind}",
+    )
+
+    assert report.valid_state_update_count == 1
+    assert [(reason.index, reason.outcome) for reason in report.discarded] == [
+        (0, DiscardOutcome.SUPERSEDED_IN_ANALYSIS)
+    ]
+    rows = conn.execute(
+        """
+        SELECT id, status, evidence_id FROM edge
+        WHERE project_id = ? AND information_scope = 'PROVISIONAL'
+        """,
+        (seed.project_id,),
+    ).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["status"] == "ACTIVE"
+    assert report.edge_ids == (rows[0]["id"],)
+    linked = next(
+        edge for edge in seed.graph.state_at(
+            seed.project_id, seed.hero_id, seed.chapter.number,
+            scope=InformationScope.PROVISIONAL,
+        ).edges
+        if edge.id == rows[0]["id"]
+    )
+    assert linked.props.value == expected_value
+    assert {linked.src, linked.dst} == {expected_subject, expected_target}
+    evidence = seed.graph.get_evidence(seed.project_id, linked.evidence_id or "")
+    assert evidence is not None and evidence.audit.quote_text == expected_quote
+    assert conn.execute("SELECT COUNT(*) FROM evidence").fetchone()[0] == 2
+
+    proposal = SqliteProposalStore(conn).pending(seed.project_id)[0]
+    assert proposal.kind == "edge_conflict"
+    assert proposal.edge_ids == [linked.id]
+    assert proposal.item_count == 1
+    proposed = proposal.items[0]["proposed"]
+    assert proposed == {
+        "edge_id": linked.id,
+        "subject_id": expected_subject,
+        "target_id": expected_target,
+        "value": expected_value,
+        "quote": expected_quote,
+    }
 
 
 def test_low_confidence_main_character_items_cluster_and_point_seven_is_not_low(

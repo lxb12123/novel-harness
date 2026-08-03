@@ -24,13 +24,16 @@ from .ingest_helpers import (
     DiscardReason,
     ExtractionContextError,
     ExtractionReport,
+    PreparedStateUpdate,
     find_conflict,
+    keep_last_state_updates,
     locate_evidence,
+    prepare_state_update,
     resolution_map,
     resolve_ids,
     surface_reason,
 )
-from .models import RawChapterAnalysis, RawEvent, RawStateUpdate
+from .models import RawChapterAnalysis, RawEvent
 from .prompt import ANALYSIS_SCHEMA_VERSION
 
 __all__ = [
@@ -103,24 +106,23 @@ class ExtractionService:
                 if reason is not None:
                     discarded.append(reason)
 
-            valid_states = 0
+            prepared_states: list[PreparedStateUpdate] = []
+            state_discards: list[DiscardReason] = []
             for index, raw in enumerate(analysis.state_updates):
-                reason = self._ingest_state(
-                    project_id,
-                    chapter,
-                    paras,
-                    resolutions,
-                    raw,
-                    index,
-                    edge_ids,
-                    buckets,
-                    edge_links,
-                    confidences,
+                prepared, reason = prepare_state_update(
+                    index, raw, paras, resolutions
                 )
-                if reason is None:
-                    valid_states += 1
-                else:
-                    discarded.append(reason)
+                if reason is not None:
+                    state_discards.append(reason)
+                elif prepared is not None:
+                    prepared_states.append(prepared)
+            retained_states, superseded = keep_last_state_updates(prepared_states)
+            discarded.extend(sorted((*state_discards, *superseded), key=lambda item: item.index))
+            for prepared in retained_states:
+                self._write_state(
+                    project_id, chapter, prepared, edge_ids,
+                    buckets, edge_links, confidences,
+                )
 
             for index, profile in enumerate(analysis.character_profiles):
                 resolution = resolutions[profile.surface]
@@ -187,7 +189,7 @@ class ExtractionService:
             return ExtractionReport(
                 valid_event_count=len(event_ids),
                 discarded_event_count=discarded_events,
-                valid_state_update_count=valid_states,
+                valid_state_update_count=len(retained_states),
                 discarded=tuple(discarded),
                 event_ids=tuple(event_ids),
                 edge_ids=tuple(edge_ids),
@@ -278,37 +280,19 @@ class ExtractionService:
             confidences["low_confidence_main"].append(raw.confidence)
         return None
 
-    def _ingest_state(
+    def _write_state(
         self,
         project_id: str,
         chapter: ChapterText,
-        paras: Sequence[str],
-        resolutions: dict[str, SurfaceResolution],
-        raw: RawStateUpdate,
-        index: int,
+        prepared: PreparedStateUpdate,
         edge_ids: list[str],
         buckets: dict[str, list[dict[str, object]]],
         edge_links: dict[str, list[str]],
         confidences: dict[str, list[float]],
-    ) -> DiscardReason | None:
-        subjects, reason = resolve_ids(
-            "state_update", index, (raw.subject,), NodeLabel.CHARACTER, resolutions
-        )
-        if reason is not None:
-            return reason
-        target_surface = raw.dimension if raw.kind == "state" else raw.object
-        expected = NodeLabel.STATE_DIM if raw.kind == "state" else (
-            NodeLabel.LOCATION if raw.kind == "location" else NodeLabel.CHARACTER
-        )
-        targets, reason = resolve_ids(
-            "state_update", index, (target_surface or "",), expected, resolutions
-        )
-        if reason is not None:
-            return reason
-        located, reason = locate_evidence("state_update", index, paras, raw.quote)
-        if reason is not None:
-            return reason
-        subject_id, target_id = subjects[0], targets[0]
+    ) -> None:
+        raw = prepared.raw
+        subject_id, target_id = prepared.subject_id, prepared.target_id
+        located = prepared.located
         canon = self._graph.state_at(
             project_id, subject_id, chapter.number, scope=InformationScope.CANON
         )
@@ -367,7 +351,6 @@ class ExtractionService:
             )
             edge_links["low_confidence_main"].append(result.edge.id)
             confidences["low_confidence_main"].append(raw.confidence)
-        return None
 
     def _put_evidence(
         self, project_id: str, chapter: ChapterText, located: Located

@@ -13,10 +13,13 @@ from ..graph import ChapterText
 from ..graph.sqlite_events import SqliteEventStore
 from ..graph.sqlite_proposals import SqliteProposalStore
 from ..graph.sqlite_store import SqliteStoryGraph
-from ..ids import EntityType, artifact_id, new_id
+from ..ids import EntityType, new_id
 from .analyze import parse_analysis
+from .call_audit import record_model_call
 from .control import (
     RUN_COLUMNS,
+    AnalysisRequest,
+    AuditedCompletion,
     ExtractionChapterNotFound,
     ExtractionRun,
     ExtractionRunError,
@@ -44,8 +47,7 @@ __all__ = [
 
 
 def _default_run_id(project_id: str) -> str:
-    # extraction_run is the persisted report of a background execution.
-    return new_id(EntityType.REPORT, project_id)
+    return new_id(EntityType.EXTRACTION_RUN, project_id)
 
 
 def _default_call_id(project_id: str) -> str:
@@ -58,7 +60,7 @@ class ExtractionRunner:
     def __init__(
         self,
         connection_factory: Callable[[], Connection],
-        analyzer: Callable[[ChapterText], CompletionResult],
+        analyzer: Callable[[AnalysisRequest], CompletionResult],
         *,
         parser: Callable[[str], RawChapterAnalysis] = parse_analysis,
         run_id_factory: Callable[[str], str] = _default_run_id,
@@ -71,6 +73,10 @@ class ExtractionRunner:
         self._new_call_id = call_id_factory
 
     def enqueue(self, project_id: str, chapter_number: int) -> ExtractionRun:
+        if isinstance(chapter_number, bool) or not isinstance(chapter_number, int):
+            raise TypeError("chapter_number must be an integer")
+        if chapter_number < 1:
+            raise ValueError("chapter_number must be at least 1")
         conn = self._connections()
         try:
             conn.execute("BEGIN IMMEDIATE")
@@ -139,10 +145,19 @@ class ExtractionRunner:
             if not claimed_here:
                 return claimed
             chapter = self._immutable_chapter(conn, claimed)
-            encoded_prompt = prompt_bytes(chapter.text)
+            request = AnalysisRequest(chapter)
+            if request.prompt_hash != claimed.prompt_hash:
+                return self._mark_failed(
+                    conn,
+                    run_id,
+                    ExtractionRunError(
+                        code="prompt_drift",
+                        message="chapter analysis prompt no longer matches the queued run",
+                    ),
+                )
             started = perf_counter()
             try:
-                completion = self._analyzer(chapter)
+                completion = self._analyzer(request)
                 if not isinstance(completion, CompletionResult):
                     raise TypeError("analyzer must return CompletionResult")
             except Exception:
@@ -155,15 +170,27 @@ class ExtractionRunner:
                     ),
                 )
             elapsed_ms = max(0, int((perf_counter() - started) * 1_000))
-            call_id = self._record_call(
-                conn,
-                claimed,
-                completion,
-                prompt_bytes=encoded_prompt,
-                elapsed_ms=elapsed_ms,
-            )
             try:
-                analysis = self._parser(completion.text)
+                audited = AuditedCompletion.from_result(completion)
+                call_id = record_model_call(
+                    conn,
+                    claimed,
+                    request,
+                    audited,
+                    elapsed_ms=elapsed_ms,
+                    call_id_factory=self._new_call_id,
+                )
+            except Exception:
+                return self._mark_failed(
+                    conn,
+                    run_id,
+                    ExtractionRunError(
+                        code="call_record_failure",
+                        message="chapter analysis call could not be audited",
+                    ),
+                )
+            try:
+                analysis = self._parser(audited.text)
                 if not isinstance(analysis, RawChapterAnalysis):
                     raise TypeError("parser must return RawChapterAnalysis")
             except Exception:
@@ -246,64 +273,6 @@ class ExtractionRunner:
             snapshot_id=run.snapshot_id,
             text=row["text"],
         )
-
-    def _record_call(
-        self,
-        conn: Connection,
-        run: ExtractionRun,
-        completion: CompletionResult,
-        *,
-        prompt_bytes: bytes,
-        elapsed_ms: int,
-    ) -> str:
-        call_id = self._new_call_id(run.project_id)
-        params_json = json.dumps(
-            {
-                "finish_reason": completion.finish_reason,
-                "schema_version": run.schema_version,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        out_bytes = completion.text.encode("utf-8", errors="surrogatepass")
-        try:
-            conn.execute("BEGIN IMMEDIATE")
-            conn.execute(
-                """
-                INSERT INTO model_call (
-                    id, project_id, capability, model, params_json, prompt_hash,
-                    in_artifact, out_artifact, tokens_in, tokens_out, ms
-                ) VALUES (?, ?, 'extractor', ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    call_id,
-                    run.project_id,
-                    completion.model or "unknown",
-                    params_json,
-                    run.prompt_hash,
-                    artifact_id(prompt_bytes),
-                    artifact_id(out_bytes),
-                    completion.prompt_tokens,
-                    completion.completion_tokens,
-                    elapsed_ms,
-                ),
-            )
-            changed = conn.execute(
-                """
-                UPDATE extraction_run SET model_call_id = ?
-                WHERE id = ? AND status = 'RUNNING' AND model_call_id IS NULL
-                """,
-                (call_id, run.id),
-            )
-            if changed.rowcount != 1:
-                raise ExtractionRunStateError(
-                    f"run stopped being RUNNING while recording call: {run.id}"
-                )
-            conn.commit()
-            return call_id
-        except BaseException:
-            conn.rollback()
-            raise
 
     def _ingest_success(
         self,

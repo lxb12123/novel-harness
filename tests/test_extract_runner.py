@@ -92,7 +92,7 @@ def _analysis_json(*, confidence: float = 0.92, quote: str = QUOTE) -> str:
 class Analyzer:
     def __init__(self, result: CompletionResult | None = None) -> None:
         self.calls = 0
-        self.chapters = []
+        self.requests = []
         self.result = result or CompletionResult(
             text=_analysis_json(),
             model="extractor-test-model",
@@ -101,9 +101,9 @@ class Analyzer:
             completion_tokens=45,
         )
 
-    def __call__(self, chapter):
+    def __call__(self, request):
         self.calls += 1
-        self.chapters.append(chapter)
+        self.requests.append(request)
         return self.result
 
 
@@ -142,6 +142,46 @@ def test_enqueue_is_immediate_content_addressed_and_reuses_the_same_run(seed: Se
     ).encode()
     assert first.prompt_hash == sha256(canonical).hexdigest()
     assert first.schema_version == ANALYSIS_SCHEMA_VERSION
+
+
+@pytest.mark.parametrize(
+    ("chapter_number", "error_type"),
+    [
+        (True, TypeError),
+        (False, TypeError),
+        (3.0, TypeError),
+        ("3", TypeError),
+        (None, TypeError),
+        (0, ValueError),
+        (-1, ValueError),
+    ],
+)
+def test_enqueue_rejects_invalid_chapter_number_before_opening_a_connection(
+    seed: Seed,
+    chapter_number: object,
+    error_type: type[Exception],
+) -> None:
+    opened = 0
+
+    def connection() -> Connection:
+        nonlocal opened
+        opened += 1
+        return seed.connection()
+
+    runner = ExtractionRunner(connection, Analyzer())
+
+    with pytest.raises(error_type):
+        runner.enqueue(seed.project_id, chapter_number)  # type: ignore[arg-type]
+
+    assert opened == 0
+
+
+def test_default_run_id_uses_the_extraction_run_entity_type(seed: Seed) -> None:
+    runner = ExtractionRunner(seed.connection, Analyzer())
+
+    queued = runner.enqueue(seed.project_id, 3)
+
+    assert queued.id.startswith("extraction_run:")
 
 
 def test_success_records_extractor_call_and_second_run_never_pays_again(seed: Seed) -> None:
@@ -206,8 +246,8 @@ def test_run_uses_the_immutable_enqueued_snapshot_after_current_text_changes(see
     result = runner.run(queued.id)
 
     assert result.status is ExtractionRunStatus.SUCCEEDED
-    assert analyzer.chapters[0].text == QUOTE + "\n"
-    assert analyzer.chapters[0].snapshot_id == queued.snapshot_id
+    assert analyzer.requests[0].chapter.text == QUOTE + "\n"
+    assert analyzer.requests[0].chapter.snapshot_id == queued.snapshot_id
     assert queued.snapshot_id != current_snapshot
 
 
@@ -349,3 +389,202 @@ def test_process_interrupt_is_not_swallowed_as_a_provider_failure(seed: Seed) ->
 
     with pytest.raises(KeyboardInterrupt):
         runner.run(queued.id)
+
+
+def test_analyzer_input_and_audit_artifact_share_one_prompt_bound_request(seed: Seed) -> None:
+    received = []
+
+    def analyze(request):
+        received.append(request)
+        return CompletionResult(text=_analysis_json(), model="request-model")
+
+    runner = _runner(seed, analyze)
+    queued = runner.enqueue(seed.project_id, 3)
+    result = runner.run(queued.id)
+
+    request = received[0]
+    assert result.status is ExtractionRunStatus.SUCCEEDED
+    assert request.chapter.snapshot_id == queued.snapshot_id
+    assert request.wire_messages() == build_analysis_messages(request.chapter.text)
+    assert request.prompt_hash == queued.prompt_hash
+    conn = seed.connection()
+    in_artifact = conn.execute(
+        "SELECT in_artifact FROM model_call WHERE id = ?",
+        (result.model_call_id,),
+    ).fetchone()[0]
+    conn.close()
+    assert in_artifact == artifact_id(request.prompt_bytes)
+
+
+def test_prompt_drift_fails_before_the_paid_call_and_never_retries(seed: Seed) -> None:
+    analyzer = Analyzer()
+    runner = _runner(seed, analyzer)
+    queued = runner.enqueue(seed.project_id, 3)
+    conn = seed.connection()
+    conn.execute(
+        "UPDATE extraction_run SET prompt_hash = ? WHERE id = ?",
+        ("0" * 64, queued.id),
+    )
+    conn.commit()
+    conn.close()
+
+    failed = runner.run(queued.id)
+    again = runner.run(queued.id)
+
+    assert failed.status is ExtractionRunStatus.FAILED
+    assert again == failed
+    assert failed.errors[0].code == "prompt_drift"
+    assert analyzer.calls == 0
+
+
+@pytest.mark.parametrize(
+    "completion",
+    [
+        CompletionResult.model_construct(
+            text=_analysis_json(),
+            model="bad\ud800model",
+            finish_reason="stop",
+            prompt_tokens=1,
+            completion_tokens=1,
+        ),
+        CompletionResult.model_construct(
+            text="bad\ud800text",
+            model="model",
+            finish_reason="stop",
+            prompt_tokens=1,
+            completion_tokens=1,
+        ),
+        CompletionResult.model_construct(
+            text=_analysis_json(),
+            model="model",
+            finish_reason="bad\ud800finish",
+            prompt_tokens=1,
+            completion_tokens=1,
+        ),
+        CompletionResult.model_construct(
+            text=_analysis_json(),
+            model="model",
+            finish_reason="stop",
+            prompt_tokens=-1,
+            completion_tokens=1,
+        ),
+        CompletionResult.model_construct(
+            text=_analysis_json(),
+            model="model",
+            finish_reason="stop",
+            prompt_tokens=True,
+            completion_tokens=1,
+        ),
+        CompletionResult.model_construct(
+            text=_analysis_json(),
+            model="model",
+            finish_reason="stop",
+            prompt_tokens=1,
+            completion_tokens=1.5,
+        ),
+    ],
+    ids=[
+        "surrogate-model",
+        "surrogate-text",
+        "surrogate-finish-reason",
+        "negative-token",
+        "bool-token",
+        "non-integer-token",
+    ],
+)
+def test_invalid_completion_audit_fails_terminally_without_retry(
+    seed: Seed,
+    completion: CompletionResult,
+) -> None:
+    analyzer = Analyzer(completion)
+    runner = _runner(seed, analyzer)
+    queued = runner.enqueue(seed.project_id, 3)
+
+    failed = runner.run(queued.id)
+    again = runner.run(queued.id)
+
+    assert failed.status is ExtractionRunStatus.FAILED
+    assert again == failed
+    assert failed.errors[0].code == "call_record_failure"
+    assert failed.model_call_id is None
+    assert analyzer.calls == 1
+
+
+def test_none_token_counts_are_valid_audit_values(seed: Seed) -> None:
+    analyzer = Analyzer(CompletionResult(
+        text=_analysis_json(),
+        model="tokenless-model",
+        prompt_tokens=None,
+        completion_tokens=None,
+    ))
+    runner = _runner(seed, analyzer)
+
+    result = runner.run(runner.enqueue(seed.project_id, 3).id)
+
+    assert result.status is ExtractionRunStatus.SUCCEEDED
+    conn = seed.connection()
+    tokens = conn.execute(
+        "SELECT tokens_in, tokens_out FROM model_call WHERE id = ?",
+        (result.model_call_id,),
+    ).fetchone()
+    conn.close()
+    assert tuple(tokens) == (None, None)
+
+
+def test_call_id_failure_after_paid_call_is_terminal_and_not_retried(seed: Seed) -> None:
+    analyzer = Analyzer()
+
+    def fail_call_id(_project_id: str) -> str:
+        raise RuntimeError("call id unavailable")
+
+    runner = _runner(seed, analyzer, call_id_factory=fail_call_id)
+    queued = runner.enqueue(seed.project_id, 3)
+
+    failed = runner.run(queued.id)
+    again = runner.run(queued.id)
+
+    assert failed.status is ExtractionRunStatus.FAILED
+    assert again == failed
+    assert failed.errors[0].code == "call_record_failure"
+    assert "call id unavailable" not in failed.errors[0].message
+    assert analyzer.calls == 1
+
+
+def test_sql_failure_while_recording_a_paid_call_is_terminal(seed: Seed) -> None:
+    conn = seed.connection()
+    conn.execute(
+        """
+        INSERT INTO model_call (id, project_id, capability, model, prompt_hash)
+        VALUES ('call:fixed', ?, 'fixture', 'fixture-model', 'fixture-hash')
+        """,
+        (seed.project_id,),
+    )
+    conn.commit()
+    conn.close()
+    analyzer = Analyzer()
+    runner = _runner(seed, analyzer)
+    queued = runner.enqueue(seed.project_id, 3)
+
+    failed = runner.run(queued.id)
+    again = runner.run(queued.id)
+
+    assert failed.status is ExtractionRunStatus.FAILED
+    assert again == failed
+    assert failed.errors[0].code == "call_record_failure"
+    assert failed.model_call_id is None
+    assert analyzer.calls == 1
+
+
+def test_recording_interrupt_is_not_swallowed_as_an_audit_failure(seed: Seed) -> None:
+    analyzer = Analyzer()
+
+    def interrupt_call_id(_project_id: str) -> str:
+        raise KeyboardInterrupt
+
+    runner = _runner(seed, analyzer, call_id_factory=interrupt_call_id)
+    queued = runner.enqueue(seed.project_id, 3)
+
+    with pytest.raises(KeyboardInterrupt):
+        runner.run(queued.id)
+
+    assert analyzer.calls == 1

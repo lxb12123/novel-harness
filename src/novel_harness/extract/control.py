@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from enum import StrEnum
+from hashlib import sha256
 import json
-from typing import Any, Final
+from typing import Any, Final, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .prompt import build_analysis_messages
+from ..draft.provider import CompletionResult
+from ..graph import ChapterText
+from .prompt import AnalysisMessage, build_analysis_messages
 
 
 class ExtractionRunnerError(RuntimeError):
@@ -61,6 +65,82 @@ class ExtractionRun(BaseModel):
     finished_at: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class ImmutableAnalysisMessage:
+    """One deeply immutable member of the exact provider message sequence."""
+
+    role: Literal["system", "user"]
+    content: str
+
+    def wire(self) -> AnalysisMessage:
+        return {"role": self.role, "content": self.content}
+
+
+@dataclass(frozen=True, slots=True)
+class AnalysisRequest:
+    """One prompt-bound analyzer request; derived fields cannot be supplied independently."""
+
+    chapter: ChapterText
+    messages: tuple[ImmutableAnalysisMessage, ...] = field(init=False)
+    prompt_bytes: bytes = field(init=False, repr=False)
+    prompt_hash: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        messages = tuple(
+            ImmutableAnalysisMessage(role=message["role"], content=message["content"])
+            for message in build_analysis_messages(self.chapter.text)
+        )
+        encoded = _encode_messages(messages)
+        object.__setattr__(self, "messages", messages)
+        object.__setattr__(self, "prompt_bytes", encoded)
+        object.__setattr__(self, "prompt_hash", sha256(encoded).hexdigest())
+
+    def wire_messages(self) -> list[AnalysisMessage]:
+        """Return a fresh mutable wire copy without exposing the immutable audit source."""
+        return [message.wire() for message in self.messages]
+
+
+class AuditedCompletion(BaseModel):
+    """Strict, UTF-8-safe copy of a provider result used for persistence and parsing."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
+
+    text: str
+    model: str
+    finish_reason: str | None = None
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+
+    @field_validator("text", "model", "finish_reason")
+    @classmethod
+    def strict_utf8(cls, value: str | None) -> str | None:
+        if value is not None:
+            value.encode("utf-8")
+        return value
+
+    @field_validator("prompt_tokens", "completion_tokens", mode="before")
+    @classmethod
+    def non_negative_strict_int(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError("token counts must be non-negative strict integers or None")
+        return value
+
+    @classmethod
+    def from_result(cls, result: CompletionResult) -> AuditedCompletion:
+        return cls.model_validate(
+            {
+                "text": result.text,
+                "model": result.model,
+                "finish_reason": result.finish_reason,
+                "prompt_tokens": result.prompt_tokens,
+                "completion_tokens": result.completion_tokens,
+            },
+            strict=True,
+        )
+
+
 RUN_COLUMNS: Final = """
 id, project_id, chapter_number, snapshot_id, status, errors_json,
 valid_event_count, discarded_event_count, proposal_count, model_call_id,
@@ -69,8 +149,16 @@ schema_version, prompt_hash, created_at, started_at, finished_at
 
 
 def prompt_bytes(text: str) -> bytes:
+    messages = tuple(
+        ImmutableAnalysisMessage(role=message["role"], content=message["content"])
+        for message in build_analysis_messages(text)
+    )
+    return _encode_messages(messages)
+
+
+def _encode_messages(messages: tuple[ImmutableAnalysisMessage, ...]) -> bytes:
     return json.dumps(
-        build_analysis_messages(text),
+        [message.wire() for message in messages],
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
