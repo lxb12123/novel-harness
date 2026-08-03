@@ -193,7 +193,8 @@ class SqliteEventStore:
         with _transaction(self._conn):
             source = self._conn.execute(
                 """
-                SELECT project_id, chapter_number, summary, information_scope, evidence_id
+                SELECT project_id, chapter_number, summary, information_scope, status,
+                       evidence_id, evidence_status
                 FROM story_event
                 WHERE id = ?
                 """,
@@ -205,6 +206,14 @@ class SqliteEventStore:
                 raise EventScopeError(
                     f"clone_to_scope 的源必须是 PROVISIONAL，{event_id} 是 "
                     f"{source['information_scope']}"
+                )
+            if (
+                source["status"] != EdgeStatus.ACTIVE.value
+                or source["evidence_status"] != EvidenceStatus.FRESH.value
+            ):
+                raise EventStoreError(
+                    f"clone_to_scope 的源必须是 ACTIVE / FRESH，{event_id} 是 "
+                    f"{source['status']} / {source['evidence_status']}"
                 )
             project_id = str(source["project_id"])
             chapter_number = int(source["chapter_number"])
@@ -271,14 +280,18 @@ class SqliteEventStore:
                 """,
                 (clone_id, event_id),
             )
-        views = queries.event_views_at(
-            self._conn,
-            project_id,
-            [clone_id],
-            chapter_number,
-            scope,
-        )
-        return views[0]
+            views = queries.event_views_at(
+                self._conn,
+                project_id,
+                [clone_id],
+                chapter_number,
+                scope,
+            )
+            if not views:
+                raise EventStoreError(
+                    f"新 clone 插入后不可读：project={project_id}, event={clone_id}"
+                )
+            return views[0]
 
     def events_for_characters(
         self,
@@ -352,8 +365,8 @@ class SqliteEventStore:
         character_id: str,
         patch: CharacterProfilePatch,
     ) -> CharacterProfileView:
-        node = self._character(project_id, character_id)
         with _transaction(self._conn):
+            node = self._character(project_id, character_id)
             updated = queries.merge_node_props(
                 self._conn,
                 node,

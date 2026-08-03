@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
+import threading
 from typing import NamedTuple
 
 import pytest
@@ -14,6 +16,7 @@ from novel_harness.events import (
     EventReferenceError,
     EventScopeError,
     EventStore,
+    EventStoreError,
     ProvisionalEventSpec,
 )
 from novel_harness.graph import (
@@ -32,6 +35,7 @@ from novel_harness.graph import (
 )
 from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
+import novel_harness.graph.queries as graph_queries
 from novel_harness.project import create as create_project
 
 
@@ -453,6 +457,74 @@ def test_clone_to_canon_copies_the_hyperedge_and_preserves_the_source(
     assert [row[0] for row in scopes] == ["CANON", "PROVISIONAL"]
 
 
+@pytest.mark.parametrize(
+    ("column", "invalid_value"),
+    [("evidence_status", "STALE"), ("status", "RETRACTED")],
+)
+@pytest.mark.parametrize("target_scope", [InformationScope.CANON, InformationScope.REJECTED])
+def test_clone_to_scope_rejects_unavailable_sources_without_writes(
+    conn: Connection,
+    column: str,
+    invalid_value: str,
+    target_scope: InformationScope,
+) -> None:
+    seeded = _seed_event(conn)
+    generated = iter(["event:source", "event:must-not-exist"])
+    store = SqliteEventStore(conn, event_id_factory=lambda _project_id: next(generated))
+    source = store.put_provisional(
+        ProvisionalEventSpec(
+            project_id=seeded.project_id,
+            summary="不可克隆的抽取摘要。",
+            evidence_id=seeded.evidence_id,
+            participant_ids=[seeded.character_id],
+            knower_ids=[seeded.character_id],
+            revealed_fact_ids=[seeded.secret_id],
+            confidence=0.9,
+        )
+    )
+    conn.execute(
+        f"UPDATE story_event SET {column} = ? WHERE id = ?",
+        (invalid_value, source.event.id),
+    )
+
+    with pytest.raises(EventStoreError):
+        store.clone_to_scope(source.event.id, target_scope)
+
+    assert conn.execute("SELECT COUNT(*) FROM story_event").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM event_participant").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM event_knower").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM event_reveal").fetchone()[0] == 1
+
+
+def test_clone_to_scope_rolls_back_when_inserted_clone_cannot_be_hydrated(
+    conn: Connection,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seeded = _seed_event(conn)
+    generated = iter(["event:source", "event:must-roll-back"])
+    store = SqliteEventStore(conn, event_id_factory=lambda _project_id: next(generated))
+    source = store.put_provisional(
+        ProvisionalEventSpec(
+            project_id=seeded.project_id,
+            summary="抽取摘要。",
+            evidence_id=seeded.evidence_id,
+            participant_ids=[seeded.character_id],
+            knower_ids=[seeded.character_id],
+            revealed_fact_ids=[seeded.secret_id],
+            confidence=0.9,
+        )
+    )
+    monkeypatch.setattr(graph_queries, "event_views_at", lambda *_args, **_kwargs: [])
+
+    with pytest.raises(EventStoreError, match="不可读"):
+        store.clone_to_scope(source.event.id, InformationScope.CANON)
+
+    assert conn.execute("SELECT COUNT(*) FROM story_event").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM event_participant").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM event_knower").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM event_reveal").fetchone()[0] == 1
+
+
 def test_clone_to_scope_rejects_missing_or_non_provisional_sources(conn: Connection) -> None:
     seeded = _seed_event(conn)
     generated = iter(["event:source", "event:canon", "event:unused"])
@@ -823,6 +895,63 @@ def test_update_profile_merges_unset_and_explicit_none_without_touching_identity
         (seeded.character_id,),
     ).fetchall()
     assert [tuple(row) for row in aliases_after] == [tuple(row) for row in aliases_before]
+
+
+def test_update_profile_serializes_concurrent_disjoint_patches(tmp_path: Path) -> None:
+    database = tmp_path / "profile-concurrency.sqlite"
+    setup = connect(database)
+    migrate(setup)
+    seeded = _seed_event(setup)
+    project_id = seeded.project_id
+    character_id = seeded.character_id
+    setup.close()
+
+    before_write = threading.Barrier(2)
+    failures: list[BaseException] = []
+    failures_lock = threading.Lock()
+
+    def apply_patch(patch: CharacterProfilePatch) -> None:
+        worker_conn = connect(database)
+
+        def coordinate(statement: str) -> None:
+            if statement.strip().upper() == "BEGIN IMMEDIATE":
+                before_write.wait(timeout=5)
+
+        worker_conn.set_trace_callback(coordinate)
+        try:
+            SqliteEventStore(worker_conn).update_profile(project_id, character_id, patch)
+        except BaseException as exc:
+            with failures_lock:
+                failures.append(exc)
+        finally:
+            worker_conn.close()
+
+    workers = [
+        threading.Thread(
+            target=apply_patch,
+            args=(CharacterProfilePatch(gender="女"),),
+            daemon=True,
+        ),
+        threading.Thread(
+            target=apply_patch,
+            args=(CharacterProfilePatch(personality="果断"),),
+            daemon=True,
+        ),
+    ]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(timeout=10)
+
+    assert not any(worker.is_alive() for worker in workers)
+    assert not failures
+    verify_conn = connect(database)
+    try:
+        profile = SqliteEventStore(verify_conn).profile(project_id, character_id)
+    finally:
+        verify_conn.close()
+    assert profile.gender == "女"
+    assert profile.personality == "果断"
 
 
 def test_profile_requires_a_same_project_character(conn: Connection) -> None:

@@ -158,6 +158,35 @@ def test_proposal_create_rejects_non_json_item_values() -> None:
         _proposal_create(items=[{"surface": ArbitraryValue()}])
 
 
+@pytest.mark.parametrize(
+    "invalid_number",
+    [float("nan"), float("inf"), float("-inf")],
+    ids=["nan", "positive-infinity", "negative-infinity"],
+)
+def test_proposal_create_rejects_nested_non_finite_numbers(invalid_number: float) -> None:
+    with pytest.raises(ValidationError, match="strict UTF-8 JSON"):
+        _proposal_create(items=[{"nested": {"numbers": [1, invalid_number]}}])
+
+
+def test_proposal_create_rejects_lone_surrogate_strings() -> None:
+    with pytest.raises(ValidationError, match="strict UTF-8 JSON"):
+        _proposal_create(items=[{"surface": "顾\ud800姑娘"}])
+
+
+def test_proposal_create_accepts_multilingual_structured_json() -> None:
+    items = [
+        {
+            "人物": "顾清音",
+            "称呼": ["顾姑娘", "Gu Qingyin", "グー・チンイン", "🙂"],
+            "meta": {"章节": 10, "已确认": False, "备注": None},
+        }
+    ]
+
+    proposal = _proposal_create(items=items)
+
+    assert proposal.items == items
+
+
 @pytest.mark.parametrize("status", list(ProposalStatus))
 def test_proposal_record_exposes_structured_items_for_every_lifecycle_status(
     status: ProposalStatus,

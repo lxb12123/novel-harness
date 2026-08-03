@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 import json
 
 from ..db import Connection
@@ -24,6 +25,20 @@ def _default_proposal_id(project_id: str) -> str:
     return new_id(EntityType.PROPOSAL, project_id)
 
 
+@contextmanager
+def _read_snapshot(conn: Connection) -> Iterator[None]:
+    if conn.in_transaction:
+        yield
+        return
+    conn.execute("BEGIN")
+    try:
+        yield
+    except BaseException:
+        conn.rollback()
+        raise
+    conn.commit()
+
+
 class SqliteProposalStore:
     def __init__(
         self,
@@ -39,6 +54,7 @@ class SqliteProposalStore:
         items_json = json.dumps(
             proposal.items,
             ensure_ascii=False,
+            allow_nan=False,
             sort_keys=True,
             separators=(",", ":"),
         )
@@ -149,22 +165,23 @@ class SqliteProposalStore:
         project_id: str,
         chapter_number: int | None = None,
     ) -> list[ProposalRecord]:
-        clause = "" if chapter_number is None else " AND chapter_number = ?"
-        params: tuple[object, ...] = (
-            (project_id,) if chapter_number is None else (project_id, chapter_number)
-        )
-        rows = self._conn.execute(
-            "SELECT id FROM proposal_set WHERE project_id = ? AND status = 'PENDING'"
-            f"{clause} ORDER BY created_at, id",
-            params,
-        ).fetchall()
-        records: list[ProposalRecord] = []
-        for row in rows:
-            record = self.get(project_id, str(row[0]))
-            if record is None:
-                raise RuntimeError(f"pending proposal 插入后不可读：{row[0]}")
-            records.append(record)
-        return records
+        with _read_snapshot(self._conn):
+            clause = "" if chapter_number is None else " AND chapter_number = ?"
+            params: tuple[object, ...] = (
+                (project_id,) if chapter_number is None else (project_id, chapter_number)
+            )
+            rows = self._conn.execute(
+                "SELECT id FROM proposal_set WHERE project_id = ? AND status = 'PENDING'"
+                f"{clause} ORDER BY created_at, id",
+                params,
+            ).fetchall()
+            records: list[ProposalRecord] = []
+            for row in rows:
+                record = self.get(project_id, str(row[0]))
+                if record is None:
+                    raise RuntimeError(f"pending proposal 插入后不可读：{row[0]}")
+                records.append(record)
+            return records
 
     def get(self, project_id: str, proposal_id: str) -> ProposalRecord | None:
         row = self._conn.execute(

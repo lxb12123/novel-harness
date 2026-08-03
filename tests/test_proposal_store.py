@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 import json
+from pathlib import Path
+import threading
 
 import pytest
 
@@ -142,6 +144,35 @@ def test_create_serializes_structured_items_and_round_trips_a_record(
         separators=(",", ":"),
     )
     assert row["item_count"] == proposal.item_count
+
+
+def test_create_defensively_rejects_non_finite_constructed_payloads(
+    conn: Connection,
+) -> None:
+    project_id = create_project(conn, name="青云记-strict-json", root_path=".").id
+    store = SqliteProposalStore(
+        conn,
+        proposal_id_factory=lambda _project_id: "proposal:invalid-json",
+    )
+    bypassed_validation = ProposalCreate.model_construct(
+        project_id=project_id,
+        kind="invalid_json",
+        summary="",
+        items=[{"nested": [float("nan")]}],
+        confidence=None,
+        chapter_number=None,
+        snapshot_id=None,
+        base_canon_version=0,
+        schema_version=None,
+        prompt_hash=None,
+        event_ids=[],
+        edge_ids=[],
+    )
+
+    with pytest.raises(ValueError, match="Out of range"):
+        store.create(bypassed_validation)
+
+    assert conn.execute("SELECT COUNT(*) FROM proposal_set").fetchone()[0] == 0
 
 
 def test_create_links_provisional_events_and_edges_atomically(conn: Connection) -> None:
@@ -338,6 +369,102 @@ def test_pending_is_stably_ordered_and_isolated_by_project_and_chapter(
     assert [record.id for record in chapter_pending] == [chapter_record.id]
     assert unscoped_record.id not in {record.id for record in chapter_pending}
     assert [record.id for record in store.pending(other_project)] == ["proposal:other"]
+
+
+def test_pending_hydrates_every_record_from_one_wal_snapshot(tmp_path: Path) -> None:
+    database = tmp_path / "pending-snapshot.sqlite"
+    reader_conn = connect(database)
+    migrate(reader_conn)
+    project_id = create_project(reader_conn, name="青云记-pending-snapshot", root_path=".").id
+    reader_store = SqliteProposalStore(
+        reader_conn,
+        proposal_id_factory=lambda _project_id: "proposal:snapshot",
+    )
+    created = reader_store.create(
+        ProposalCreate(
+            project_id=project_id,
+            kind="snapshot",
+            items=[{"item": "pending"}],
+        )
+    )
+    hydration_started = threading.Event()
+    resolution_done = threading.Event()
+    failures: list[BaseException] = []
+    failures_lock = threading.Lock()
+    hydration_seen = False
+
+    def coordinate(statement: str) -> None:
+        nonlocal hydration_seen
+        normalized = " ".join(statement.upper().split())
+        if (
+            not hydration_seen
+            and normalized.startswith("SELECT ID, PROJECT_ID, KIND")
+            and "FROM PROPOSAL_SET" in normalized
+        ):
+            hydration_seen = True
+            hydration_started.set()
+            if not resolution_done.wait(timeout=5):
+                with failures_lock:
+                    failures.append(TimeoutError("writer did not resolve proposal"))
+
+    reader_conn.set_trace_callback(coordinate)
+
+    def resolve() -> None:
+        if not hydration_started.wait(timeout=5):
+            with failures_lock:
+                failures.append(TimeoutError("reader did not begin hydration"))
+            resolution_done.set()
+            return
+        writer_conn = connect(database)
+        try:
+            SqliteProposalStore(writer_conn).mark_resolved(
+                created.id,
+                ProposalResolutionMark(status="ACCEPTED"),
+            )
+        except BaseException as exc:
+            with failures_lock:
+                failures.append(exc)
+        finally:
+            writer_conn.close()
+            resolution_done.set()
+
+    writer = threading.Thread(target=resolve, daemon=True)
+    writer.start()
+    try:
+        pending = reader_store.pending(project_id)
+    finally:
+        reader_conn.set_trace_callback(None)
+    writer.join(timeout=10)
+
+    assert not writer.is_alive()
+    assert hydration_seen
+    assert not failures
+    assert [record.id for record in pending] == [created.id]
+    assert all(record.status is ProposalStatus.PENDING for record in pending)
+    final = reader_store.get(project_id, created.id)
+    assert final is not None and final.status is ProposalStatus.ACCEPTED
+    reader_conn.close()
+
+
+def test_pending_does_not_commit_a_caller_owned_transaction(conn: Connection) -> None:
+    project_id = create_project(conn, name="青云记-caller-transaction", root_path=".").id
+    store = SqliteProposalStore(
+        conn,
+        proposal_id_factory=lambda _project_id: "proposal:uncommitted",
+    )
+    conn.execute("BEGIN IMMEDIATE")
+    created = store.create(
+        ProposalCreate(
+            project_id=project_id,
+            kind="caller_transaction",
+            items=[{"item": "uncommitted"}],
+        )
+    )
+
+    assert store.pending(project_id) == [created]
+    assert conn.in_transaction
+    conn.rollback()
+    assert store.get(project_id, created.id) is None
 
 
 def test_mark_resolved_is_one_way_and_distinguishes_missing_from_terminal(

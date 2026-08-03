@@ -7,8 +7,9 @@ extend the frozen ``NodeLabel`` / ``EdgeType`` schema.
 from __future__ import annotations
 
 from enum import StrEnum
+import json
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, computed_field
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, computed_field, model_validator
 
 from ..graph.models import (
     EdgeSource,
@@ -91,6 +92,14 @@ class ProposalCreate(BaseModel):
     prompt_hash: str | None = None
     event_ids: list[str] = Field(default_factory=list)
     edge_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _items_are_strict_utf8_json(self) -> ProposalCreate:
+        try:
+            json.dumps(self.items, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        except (UnicodeEncodeError, ValueError) as exc:
+            raise ValueError("items must be strict UTF-8 JSON") from exc
+        return self
 
     @computed_field
     @property
