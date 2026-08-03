@@ -40,6 +40,8 @@ export interface DraftRequest {
   length: DraftLengthSpec;
   form?: string;
   previous_tail?: string;
+  /** 自定义文风，留空 = 默认。三臂共用，禁词由后端校验。 */
+  house_style?: string;
 }
 
 export interface DraftResult {

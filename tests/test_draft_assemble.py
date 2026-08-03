@@ -44,6 +44,7 @@ from test_knowledge import (
 from novel_harness.draft.assemble import (
     DEFAULT_HOUSE_STYLE,
     EN_HOUSE_STYLE,
+    HOUSE_STYLE_FORBIDDEN_HINTS,
     PromptForm,
     ZH_HOUSE_STYLE,
     assemble,
@@ -259,7 +260,7 @@ def test_the_house_style_names_nobody_and_hints_at_no_constraint() -> None:
     """
     for name in ("萧决", "顾清音", "李管家", "血脉秘密", "血枭盟", "幽泉窟", TELL):
         assert name not in DEFAULT_HOUSE_STYLE
-    for hint in ("秘密", "不知道", "泄露", "剧透", "伏笔", "设定"):
+    for hint in HOUSE_STYLE_FORBIDDEN_HINTS:
         assert hint not in DEFAULT_HOUSE_STYLE, f"house style 里出现了 {hint!r} —— 它三臂共用"
     assert "600–1000" not in DEFAULT_HOUSE_STYLE
 

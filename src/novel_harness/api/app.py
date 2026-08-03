@@ -941,6 +941,7 @@ class DraftRequest(BaseModel):
     length: _DraftLengthBody
     form: str = "X1"
     previous_tail: str = ""
+    house_style: str = ""
 
 
 def _draft_provider_config():
@@ -975,6 +976,7 @@ def draft(
     若将来裁决 KILL，撤销本路由 = 一次显式 commit（修正案 7 原文）。
     """
     from ..draft.assemble import PromptForm, assemble
+    from ..draft.assemble import HOUSE_STYLE_FORBIDDEN_HINTS
     from ..draft.capabilities import (
         CapabilityError,
         ReasoningEffort,
@@ -993,6 +995,19 @@ def draft(
             status_code=422, detail=f"form 只能是 X0 / X1 / X2，收到 {body.form!r}"
         )
 
+    house_style = body.house_style.strip()
+    if house_style:
+        hits = [w for w in HOUSE_STYLE_FORBIDDEN_HINTS if w in house_style]
+        if hits:
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "自定义文风里不能出现这些词："
+                    + " / ".join(hits)
+                    + "——文风三臂共用，写进去等于给对照组也上了约束。"
+                ),
+            )
+
     try:
         view = scene_view(store, project_id, chapter, body.cast)
         ctx = ResolvedConstraints.of(view, body.cast)
@@ -1002,6 +1017,7 @@ def draft(
             goal=body.goal,
             length=body.length,
             previous_tail=body.previous_tail,
+            house_style=house_style or None,
         )
     except UnresolvedCast as exc:
         raise HTTPException(status_code=422, detail=f"在场角色解析不了：{exc}")

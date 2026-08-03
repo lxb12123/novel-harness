@@ -925,6 +925,9 @@ def draft(
     arm: str = typer.Option(
         "X1", "--arm", help="X0（零图谱）/ X1（事实清单）/ X2（叙事提示）"
     ),
+    style: str = typer.Option(
+        "", "--style", help="自定义文风（可选；留空 = 默认文风）"
+    ),
 ) -> None:
     """实验通道：跑一次 AI 起草（**不走 kill-gate、不写证据**）。
 
@@ -932,7 +935,7 @@ def draft(
     **它不是开闸**：公开 `/draft` 仍 501，kill-gate 协议原封不动，
     M2 的正式裁决仍走 `nh gate`；这条命令的输出不做任何判分。
     """
-    from .draft.assemble import PromptForm, assemble
+    from .draft.assemble import HOUSE_STYLE_FORBIDDEN_HINTS, PromptForm, assemble
     from .draft.capabilities import (
         CapabilityError,
         ReasoningEffort,
@@ -965,6 +968,14 @@ def draft(
     except KeyError:
         _die(f"✗ arm 只能是 X0 / X1 / X2，收到 {arm!r}")
 
+    if style.strip():
+        hits = [w for w in HOUSE_STYLE_FORBIDDEN_HINTS if w in style]
+        if hits:
+            _die(
+                f"✗ 自定义文风里不能出现这些词：{' / '.join(hits)}"
+                "——文风三臂共用，写进去等于给对照组也上了约束。"
+            )
+
     prior = ""
     if file is not None:
         if not file.exists():
@@ -977,7 +988,12 @@ def draft(
         view = scene_view(store, project, chapter, surfaces)
         ctx = ResolvedConstraints.of(view, surfaces)
         messages = assemble(
-            ctx, form=form, goal=goal, length=spec, previous_tail=prior
+            ctx,
+            form=form,
+            goal=goal,
+            length=spec,
+            previous_tail=prior,
+            house_style=style.strip() or None,
         )
     except UnresolvedCast as exc:
         _die(f"✗ 在场角色解析不了：{_reason(exc)}")

@@ -87,6 +87,14 @@ EN_HOUSE_STYLE = """You are a long-form fiction writing partner. Using the suppl
 DEFAULT_HOUSE_STYLE = ZH_HOUSE_STYLE
 """Backward-compatible export for callers that previously selected the Chinese house style."""
 
+HOUSE_STYLE_FORBIDDEN_HINTS = ("秘密", "不知道", "泄露", "剧透", "伏笔", "设定")
+"""文风提示（**三臂共用**）里的禁词：出现任何一个 = 把约束漏给 X0，Δ 塌掉。
+
+这是**关键词网**不是语义检查（ADR 0005）：抓得住顺手写出来的那一种，抓不住
+换个说法的那一种。入口（/draft、nh draft）用它拒绝自定义文风；`assemble()` 本身
+保持宽松（测试要用自己的文风），中性由入口守。
+"""
+
 
 def length_instruction(spec: LengthSpec) -> str:
     """Render the language-specific output length request in reader-facing units."""

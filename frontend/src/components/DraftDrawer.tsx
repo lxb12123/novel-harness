@@ -34,6 +34,7 @@ export function DraftDrawer({ onClose }: { onClose: () => void }) {
   const [goal, setGoal] = useState("");
   const [castText, setCastText] = useState(cast);
   const [form, setForm] = useState("X1");
+  const [style, setStyle] = useState("");
   const err = draft.error instanceof ApiError ? draft.error : null;
   const result = draft.data;
 
@@ -46,6 +47,7 @@ export function DraftDrawer({ onClose }: { onClose: () => void }) {
         .filter(Boolean),
       length: loadLength(),
       form,
+      ...(style.trim() ? { house_style: style.trim() } : {}),
     });
   }
 
@@ -82,6 +84,19 @@ export function DraftDrawer({ onClose }: { onClose: () => void }) {
           <option value="X2">X2 · 叙事提示（图谱约束）</option>
         </select>
         <div className="note">字数在「起草长度」里设置（本机保存，默认 2,000–3,000 字）。</div>
+      </div>
+      <div className="field">
+        <span>文风（可选）</span>
+        <textarea
+          rows={2}
+          value={style}
+          placeholder="留空 = 默认文风。例如：文白夹杂，多用短句，对白简洁。"
+          onChange={(e) => setStyle(e.target.value)}
+          style={{ width: "100%", fontFamily: "inherit" }}
+        />
+        <div className="note">
+          三臂共用，不许出现「秘密 / 不知道 / 泄露 / 剧透 / 伏笔 / 设定」。
+        </div>
       </div>
 
       {err && <div className="err-box">{err.message}</div>}

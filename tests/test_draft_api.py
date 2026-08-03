@@ -150,3 +150,38 @@ def test_draft_bad_form_is_422(
     )
     assert r.status_code == 422
     assert "X0" in r.text
+
+
+def test_draft_custom_house_style_is_accepted(
+    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _configure(client)
+    _stub_complete(monkeypatch)
+    r = client.post(
+        _url(book),
+        json={
+            "goal": "x",
+            "cast": ["萧决"],
+            "length": ZH_LENGTH,
+            "house_style": "文白夹杂，多用短句，对白简洁。",
+        },
+    )
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.parametrize("word", ["秘密", "不知道", "泄露", "剧透", "伏笔", "设定"])
+def test_draft_house_style_forbidden_hints_are_422(
+    client: TestClient, book: dict[str, str], word: str
+) -> None:
+    _configure(client)
+    r = client.post(
+        _url(book),
+        json={
+            "goal": "x",
+            "cast": ["萧决"],
+            "length": ZH_LENGTH,
+            "house_style": f"写的时候{f'不要{word}'}任何情节。",
+        },
+    )
+    assert r.status_code == 422
+    assert "三臂共用" in r.text

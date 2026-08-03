@@ -36,6 +36,7 @@ describe("AI 起草（实验状态）", () => {
       { method: "POST", match: /\/draft$/, body: DRAFT_BODY },
     ]);
     expect(screen.getAllByText(/实验状态/).length).toBeGreaterThan(0);
+    expect(screen.getByPlaceholderText(/文白夹杂/)).toBeInTheDocument();
 
     fireEvent.change(screen.getByPlaceholderText(/写苏挽回府/), {
       target: { value: "萧决看剑。" },
