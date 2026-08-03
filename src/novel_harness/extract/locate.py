@@ -139,22 +139,38 @@ def locate_quote(paragraphs: Sequence[str], quote: str, min_ratio: float = 0.90)
     if not candidates_by_ratio:
         return LocateResult(outcome=LocateOutcome.NOT_FOUND, ratio=0.0)
 
+    occurrence_cache: dict[tuple[int, str], dict[int, int]] = {}
     for best_ratio in sorted(candidates_by_ratio, reverse=True):
         best = candidates_by_ratio[best_ratio]
+        verified_by_anchor: dict[tuple[int, str, int], tuple[_Candidate, int]] = {}
+        for candidate in best:
+            if candidate.start == 0:
+                occurrence_k = 0
+            else:
+                occurrence_key = (candidate.para_index, candidate.text)
+                occurrences = occurrence_cache.get(occurrence_key)
+                if occurrences is None:
+                    occurrences = _occurrences_by_start(
+                        paragraphs[candidate.para_index], candidate.text
+                    )
+                    occurrence_cache[occurrence_key] = occurrences
+                occurrence_k = occurrences.get(candidate.start)
+                if occurrence_k is None:
+                    continue
+            anchor_key = (candidate.para_index, candidate.text, occurrence_k)
+            verified_by_anchor.setdefault(anchor_key, (candidate, occurrence_k))
+
+        if not verified_by_anchor:
+            continue
         if best_ratio < min_ratio:
             return LocateResult(
                 outcome=LocateOutcome.BELOW_THRESHOLD,
                 ratio=best_ratio,
             )
-        if len(best) > 1:
+        if len(verified_by_anchor) > 1:
             return LocateResult(outcome=LocateOutcome.AMBIGUOUS, ratio=best_ratio)
 
-        candidate = best[0]
-        occurrence_k = _occurrences_by_start(paragraphs[candidate.para_index], candidate.text).get(
-            candidate.start
-        )
-        if occurrence_k is None:
-            continue
+        candidate, occurrence_k = next(iter(verified_by_anchor.values()))
         return LocateResult(
             outcome=LocateOutcome.FUZZY,
             located=Located(

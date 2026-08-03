@@ -42,6 +42,17 @@ def test_unique_fuzzy_match_at_threshold_is_accepted_inclusively() -> None:
     assert result.located.matched_text == source
 
 
+def test_overlapping_windows_do_not_create_a_false_ambiguity() -> None:
+    result = locate_quote(["a" * 11], "a" * 9 + "b")
+
+    assert result.outcome is LocateOutcome.FUZZY
+    assert result.ratio == pytest.approx(0.90)
+    assert result.located is not None
+    assert result.located.para_index == 0
+    assert result.located.matched_text == "a" * 10
+    assert result.located.occurrence_k == 0
+
+
 def test_same_length_window_finds_quote_inside_a_long_sentence() -> None:
     source = "abcdefghijklmnopqrst"
     quote = "abcdeXghijklmnoYqrst"
