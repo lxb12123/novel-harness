@@ -9,6 +9,7 @@ CREATE UNIQUE INDEX idx_evidence_id_project ON evidence(id, project_id);
 CREATE UNIQUE INDEX idx_edge_id_project_scope
   ON edge(id, project_id, information_scope);
 CREATE UNIQUE INDEX idx_proposal_set_id_project ON proposal_set(id, project_id);
+CREATE UNIQUE INDEX idx_model_call_id_project ON model_call(id, project_id);
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -56,14 +57,64 @@ CREATE INDEX idx_story_event_chapter
 CREATE INDEX idx_story_event_derived
   ON story_event(derived_from_event_id) WHERE derived_from_event_id IS NOT NULL;
 
+-- REPLACE may resolve the anchor UNIQUE by deleting a different event.  That is
+-- never an idempotent update: event identity belongs to the existing row.
+CREATE TRIGGER story_event_anchor_identity_insert
+BEFORE INSERT ON story_event
+WHEN EXISTS (
+  SELECT 1
+  FROM story_event
+  WHERE project_id = NEW.project_id
+    AND evidence_id = NEW.evidence_id
+    AND information_scope = NEW.information_scope
+    AND id <> NEW.id
+)
+BEGIN
+  SELECT RAISE(ABORT, 'story_event anchor already belongs to another event');
+END;
+
+CREATE TRIGGER story_event_evidence_chapter_insert
+BEFORE INSERT ON story_event
+WHEN NOT EXISTS (
+  SELECT 1
+  FROM evidence
+  JOIN chapter_snapshot ON chapter_snapshot.id = evidence.chapter_snapshot_id
+  JOIN chapter ON chapter.id = chapter_snapshot.chapter_id
+  WHERE evidence.id = NEW.evidence_id
+    AND evidence.project_id = NEW.project_id
+    AND chapter.project_id = NEW.project_id
+    AND chapter.number = NEW.chapter_number
+    AND chapter.number = NEW.valid_from_chapter
+)
+BEGIN
+  SELECT RAISE(ABORT, 'story_event chapter must match its evidence');
+END;
+
+CREATE TRIGGER story_event_evidence_chapter_update
+BEFORE UPDATE OF project_id, chapter_number, valid_from_chapter, evidence_id ON story_event
+WHEN NOT EXISTS (
+  SELECT 1
+  FROM evidence
+  JOIN chapter_snapshot ON chapter_snapshot.id = evidence.chapter_snapshot_id
+  JOIN chapter ON chapter.id = chapter_snapshot.chapter_id
+  WHERE evidence.id = NEW.evidence_id
+    AND evidence.project_id = NEW.project_id
+    AND chapter.project_id = NEW.project_id
+    AND chapter.number = NEW.chapter_number
+    AND chapter.number = NEW.valid_from_chapter
+)
+BEGIN
+  SELECT RAISE(ABORT, 'story_event chapter must match its evidence');
+END;
+
 CREATE TABLE event_participant (
   event_id       TEXT NOT NULL,
-  project_id     TEXT NOT NULL,
+  project_id     TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
   character_id   TEXT NOT NULL,
   character_label TEXT NOT NULL DEFAULT 'Character' CHECK (character_label = 'Character'),
   PRIMARY KEY (event_id, character_id),
   FOREIGN KEY (event_id, project_id)
-    REFERENCES story_event(id, project_id) ON DELETE CASCADE,
+    REFERENCES story_event(id, project_id),
   FOREIGN KEY (character_id, project_id, character_label)
     REFERENCES node(id, project_id, label) ON DELETE CASCADE
 );
@@ -73,7 +124,7 @@ CREATE INDEX idx_event_participant_character
 
 CREATE TABLE event_knower (
   event_id             TEXT NOT NULL,
-  project_id           TEXT NOT NULL,
+  project_id           TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
   character_id         TEXT NOT NULL,
   character_label      TEXT NOT NULL DEFAULT 'Character' CHECK (character_label = 'Character'),
   valid_from_chapter   INTEGER NOT NULL,
@@ -89,13 +140,45 @@ CREATE TABLE event_knower (
   CHECK (information_scope IN ('CANON','PROVISIONAL','PLANNED','REJECTED')),
   CHECK (status IN ('ACTIVE','RETRACTED')),
   CHECK (evidence_status IN ('FRESH','STALE')),
-  FOREIGN KEY (event_id, project_id)
-    REFERENCES story_event(id, project_id) ON DELETE CASCADE,
+  FOREIGN KEY (event_id, project_id, information_scope)
+    REFERENCES story_event(id, project_id, information_scope),
   FOREIGN KEY (character_id, project_id, character_label)
     REFERENCES node(id, project_id, label) ON DELETE CASCADE,
   FOREIGN KEY (evidence_id, project_id)
     REFERENCES evidence(id, project_id)
 );
+
+CREATE TRIGGER event_knower_evidence_chapter_insert
+BEFORE INSERT ON event_knower
+WHEN NOT EXISTS (
+  SELECT 1
+  FROM evidence
+  JOIN chapter_snapshot ON chapter_snapshot.id = evidence.chapter_snapshot_id
+  JOIN chapter ON chapter.id = chapter_snapshot.chapter_id
+  WHERE evidence.id = NEW.evidence_id
+    AND evidence.project_id = NEW.project_id
+    AND chapter.project_id = NEW.project_id
+    AND chapter.number = NEW.valid_from_chapter
+)
+BEGIN
+  SELECT RAISE(ABORT, 'event_knower chapter must match its evidence');
+END;
+
+CREATE TRIGGER event_knower_evidence_chapter_update
+BEFORE UPDATE OF project_id, valid_from_chapter, evidence_id ON event_knower
+WHEN NOT EXISTS (
+  SELECT 1
+  FROM evidence
+  JOIN chapter_snapshot ON chapter_snapshot.id = evidence.chapter_snapshot_id
+  JOIN chapter ON chapter.id = chapter_snapshot.chapter_id
+  WHERE evidence.id = NEW.evidence_id
+    AND evidence.project_id = NEW.project_id
+    AND chapter.project_id = NEW.project_id
+    AND chapter.number = NEW.valid_from_chapter
+)
+BEGIN
+  SELECT RAISE(ABORT, 'event_knower chapter must match its evidence');
+END;
 
 -- Knowledge of an event can be learned later and from different evidence; the
 -- only temporal relationship is that it cannot begin before the event itself.
@@ -140,15 +223,96 @@ CREATE INDEX idx_event_knower_character
 
 CREATE TABLE event_reveal (
   event_id     TEXT NOT NULL,
-  project_id   TEXT NOT NULL,
+  project_id   TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
   secret_id    TEXT NOT NULL,
   secret_label TEXT NOT NULL DEFAULT 'Secret' CHECK (secret_label = 'Secret'),
   PRIMARY KEY (event_id, secret_id),
   FOREIGN KEY (event_id, project_id)
-    REFERENCES story_event(id, project_id) ON DELETE CASCADE,
+    REFERENCES story_event(id, project_id),
   FOREIGN KEY (secret_id, project_id, secret_label)
     REFERENCES node(id, project_id, label) ON DELETE CASCADE
 );
+
+-- Evidence's audit pointer determines event time.  INSERT guards REPLACE of an
+-- existing evidence id; UPDATE guards only the audit/project fields, leaving
+-- relocation hints and the current-chapter pointer free to move.
+CREATE TRIGGER evidence_event_consumers_coherent_insert
+BEFORE INSERT ON evidence
+WHEN EXISTS (
+  SELECT 1
+  FROM story_event
+  WHERE evidence_id = NEW.id
+    AND (
+      project_id <> NEW.project_id
+      OR NOT EXISTS (
+        SELECT 1
+        FROM chapter_snapshot
+        JOIN chapter ON chapter.id = chapter_snapshot.chapter_id
+        WHERE chapter_snapshot.id = NEW.chapter_snapshot_id
+          AND chapter.project_id = NEW.project_id
+          AND chapter.number = story_event.chapter_number
+          AND chapter.number = story_event.valid_from_chapter
+      )
+    )
+)
+OR EXISTS (
+  SELECT 1
+  FROM event_knower
+  WHERE evidence_id = NEW.id
+    AND (
+      project_id <> NEW.project_id
+      OR NOT EXISTS (
+        SELECT 1
+        FROM chapter_snapshot
+        JOIN chapter ON chapter.id = chapter_snapshot.chapter_id
+        WHERE chapter_snapshot.id = NEW.chapter_snapshot_id
+          AND chapter.project_id = NEW.project_id
+          AND chapter.number = event_knower.valid_from_chapter
+      )
+    )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'evidence change would break event chapter coherence');
+END;
+
+CREATE TRIGGER evidence_event_consumers_coherent_update
+BEFORE UPDATE OF project_id, chapter_snapshot_id ON evidence
+WHEN EXISTS (
+  SELECT 1
+  FROM story_event
+  WHERE evidence_id = OLD.id
+    AND (
+      project_id <> NEW.project_id
+      OR NOT EXISTS (
+        SELECT 1
+        FROM chapter_snapshot
+        JOIN chapter ON chapter.id = chapter_snapshot.chapter_id
+        WHERE chapter_snapshot.id = NEW.chapter_snapshot_id
+          AND chapter.project_id = NEW.project_id
+          AND chapter.number = story_event.chapter_number
+          AND chapter.number = story_event.valid_from_chapter
+      )
+    )
+)
+OR EXISTS (
+  SELECT 1
+  FROM event_knower
+  WHERE evidence_id = OLD.id
+    AND (
+      project_id <> NEW.project_id
+      OR NOT EXISTS (
+        SELECT 1
+        FROM chapter_snapshot
+        JOIN chapter ON chapter.id = chapter_snapshot.chapter_id
+        WHERE chapter_snapshot.id = NEW.chapter_snapshot_id
+          AND chapter.project_id = NEW.project_id
+          AND chapter.number = event_knower.valid_from_chapter
+      )
+    )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'evidence change would break event chapter coherence');
+END;
 
 
 -- ═══════════════════════════════════════════════════════════════════════════
@@ -194,7 +358,7 @@ END;
 
 CREATE TABLE proposal_event (
   proposal_id      TEXT NOT NULL,
-  project_id       TEXT NOT NULL,
+  project_id       TEXT NOT NULL REFERENCES project(id) ON DELETE CASCADE,
   event_id         TEXT NOT NULL,
   information_scope TEXT NOT NULL DEFAULT 'PROVISIONAL'
     CHECK (information_scope = 'PROVISIONAL'),
@@ -202,7 +366,7 @@ CREATE TABLE proposal_event (
   FOREIGN KEY (proposal_id, project_id)
     REFERENCES proposal_set(id, project_id) ON DELETE CASCADE,
   FOREIGN KEY (event_id, project_id, information_scope)
-    REFERENCES story_event(id, project_id, information_scope) ON DELETE CASCADE
+    REFERENCES story_event(id, project_id, information_scope)
 );
 
 CREATE TABLE proposal_edge (
@@ -233,7 +397,7 @@ CREATE TABLE extraction_run (
   valid_event_count     INTEGER NOT NULL DEFAULT 0,
   discarded_event_count INTEGER NOT NULL DEFAULT 0,
   proposal_count        INTEGER NOT NULL DEFAULT 0,
-  model_call_id         TEXT REFERENCES model_call(id) ON DELETE SET NULL,
+  model_call_id         TEXT,
   schema_version        TEXT NOT NULL,
   prompt_hash           TEXT NOT NULL,
   created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
@@ -245,7 +409,9 @@ CREATE TABLE extraction_run (
   CHECK (json_valid(errors_json)),
   CHECK (valid_event_count >= 0),
   CHECK (discarded_event_count >= 0),
-  CHECK (proposal_count >= 0)
+  CHECK (proposal_count >= 0),
+  FOREIGN KEY (model_call_id, project_id)
+    REFERENCES model_call(id, project_id)
 );
 
 CREATE TRIGGER extraction_run_snapshot_coherent_insert
@@ -278,6 +444,76 @@ END;
 
 CREATE INDEX idx_extraction_run_status
   ON extraction_run(project_id, status, created_at);
+
+CREATE TRIGGER chapter_snapshot_event_consumers_coherent_insert
+BEFORE INSERT ON chapter_snapshot
+WHEN EXISTS (
+  SELECT 1
+  FROM evidence
+  JOIN story_event ON story_event.evidence_id = evidence.id
+  WHERE evidence.chapter_snapshot_id = NEW.id
+    AND NOT EXISTS (
+      SELECT 1
+      FROM chapter
+      WHERE id = NEW.chapter_id
+        AND project_id = evidence.project_id
+        AND project_id = story_event.project_id
+        AND number = story_event.chapter_number
+        AND number = story_event.valid_from_chapter
+    )
+)
+OR EXISTS (
+  SELECT 1
+  FROM evidence
+  JOIN event_knower ON event_knower.evidence_id = evidence.id
+  WHERE evidence.chapter_snapshot_id = NEW.id
+    AND NOT EXISTS (
+      SELECT 1
+      FROM chapter
+      WHERE id = NEW.chapter_id
+        AND project_id = evidence.project_id
+        AND project_id = event_knower.project_id
+        AND number = event_knower.valid_from_chapter
+    )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'chapter_snapshot change would break event chapter coherence');
+END;
+
+CREATE TRIGGER chapter_snapshot_event_consumers_coherent_update
+BEFORE UPDATE OF chapter_id ON chapter_snapshot
+WHEN EXISTS (
+  SELECT 1
+  FROM evidence
+  JOIN story_event ON story_event.evidence_id = evidence.id
+  WHERE evidence.chapter_snapshot_id = OLD.id
+    AND NOT EXISTS (
+      SELECT 1
+      FROM chapter
+      WHERE id = NEW.chapter_id
+        AND project_id = evidence.project_id
+        AND project_id = story_event.project_id
+        AND number = story_event.chapter_number
+        AND number = story_event.valid_from_chapter
+    )
+)
+OR EXISTS (
+  SELECT 1
+  FROM evidence
+  JOIN event_knower ON event_knower.evidence_id = evidence.id
+  WHERE evidence.chapter_snapshot_id = OLD.id
+    AND NOT EXISTS (
+      SELECT 1
+      FROM chapter
+      WHERE id = NEW.chapter_id
+        AND project_id = evidence.project_id
+        AND project_id = event_knower.project_id
+        AND number = event_knower.valid_from_chapter
+    )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'chapter_snapshot change would break event chapter coherence');
+END;
 
 -- REPLACE 走 INSERT + 隐式 DELETE，不会触发下面的 UPDATE 守卫；只在同 ID 已有消费者时校验。
 CREATE TRIGGER chapter_snapshot_children_coherent_insert
@@ -375,6 +611,37 @@ OR EXISTS (
 )
 BEGIN
   SELECT RAISE(ABORT, 'chapter update would break extraction coherence');
+END;
+
+CREATE TRIGGER chapter_event_consumers_coherent_update
+BEFORE UPDATE OF number, project_id ON chapter
+WHEN EXISTS (
+  SELECT 1
+  FROM chapter_snapshot
+  JOIN evidence ON evidence.chapter_snapshot_id = chapter_snapshot.id
+  JOIN story_event ON story_event.evidence_id = evidence.id
+  WHERE chapter_snapshot.chapter_id = OLD.id
+    AND (
+      evidence.project_id <> NEW.project_id
+      OR story_event.project_id <> NEW.project_id
+      OR story_event.chapter_number <> NEW.number
+      OR story_event.valid_from_chapter <> NEW.number
+    )
+)
+OR EXISTS (
+  SELECT 1
+  FROM chapter_snapshot
+  JOIN evidence ON evidence.chapter_snapshot_id = chapter_snapshot.id
+  JOIN event_knower ON event_knower.evidence_id = evidence.id
+  WHERE chapter_snapshot.chapter_id = OLD.id
+    AND (
+      evidence.project_id <> NEW.project_id
+      OR event_knower.project_id <> NEW.project_id
+      OR event_knower.valid_from_chapter <> NEW.number
+    )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'chapter update would break event chapter coherence');
 END;
 
 

@@ -847,6 +847,83 @@ def test_story_event_copies_the_temporal_graph_checks(
         )
     with pytest.raises(sqlite3.IntegrityError):
         _story_event(conn, project, "event:duplicate-anchor", evidence_id)
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT OR REPLACE INTO story_event "
+            "(id, project_id, chapter_number, summary, valid_from_chapter, "
+            "information_scope, evidence_id) VALUES (?,?,?,?,?,?,?)",
+            (
+                "event:anchor-replacement",
+                project,
+                143,
+                "另一条事件。",
+                143,
+                "PROVISIONAL",
+                evidence_id,
+            ),
+        )
+    assert conn.execute(
+        "SELECT COUNT(*) FROM story_event WHERE id = 'event:valid'"
+    ).fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("mutation", ["insert", "update"])
+def test_story_event_chapter_must_match_its_evidence(
+    conn: sqlite3.Connection, project: str, mutation: str
+) -> None:
+    evidence_id = _evidence(conn, project, "unused")
+
+    with pytest.raises(sqlite3.IntegrityError):
+        if mutation == "insert":
+            _story_event(
+                conn,
+                project,
+                "event:evidence-chapter-insert",
+                evidence_id,
+                chapter_number=144,
+                valid_from_chapter=144,
+            )
+        else:
+            event_id = "event:evidence-chapter-update"
+            _story_event(conn, project, event_id, evidence_id)
+            conn.execute(
+                "UPDATE story_event SET chapter_number = 144, valid_from_chapter = 144 "
+                "WHERE id = ?",
+                (event_id,),
+            )
+
+
+@pytest.mark.parametrize("mutation", ["insert", "update"])
+def test_event_knower_chapter_must_match_its_evidence(
+    conn: sqlite3.Connection, project: str, mutation: str
+) -> None:
+    event_evidence = _evidence(conn, project, "unused")
+    later_evidence = _evidence(conn, project, "unused", chapter_number=144)
+    event_id = "event:knower-evidence-chapter"
+    _story_event(conn, project, event_id, event_evidence)
+    character_id = _node(conn, project, "Character", "顾清音")
+
+    if mutation == "update":
+        conn.execute(
+            "INSERT INTO event_knower "
+            "(event_id, project_id, character_id, valid_from_chapter, information_scope, "
+            "evidence_id, evidence_status) VALUES (?,?,?,?,?,?,?)",
+            (event_id, project, character_id, 143, "PROVISIONAL", event_evidence, "FRESH"),
+        )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        if mutation == "insert":
+            conn.execute(
+                "INSERT INTO event_knower "
+                "(event_id, project_id, character_id, valid_from_chapter, information_scope, "
+                "evidence_id, evidence_status) VALUES (?,?,?,?,?,?,?)",
+                (event_id, project, character_id, 143, "PROVISIONAL", later_evidence, "FRESH"),
+            )
+        else:
+            conn.execute(
+                "UPDATE event_knower SET evidence_id = ? WHERE event_id = ?",
+                (later_evidence, event_id),
+            )
 
 
 def test_event_incidence_requires_same_project_and_expected_labels(
@@ -929,6 +1006,80 @@ def test_event_incidence_requires_same_project_and_expected_labels(
             (event_id, project, character_id, 143, "DRAFT", evidence_id, "FRESH"),
         )
 
+    conn.execute(
+        "INSERT INTO proposal_set (id, project_id, kind) VALUES (?,?,?)",
+        ("proposal:event-replace", project, "edge_conflict"),
+    )
+    conn.execute(
+        "INSERT INTO proposal_event (proposal_id, project_id, event_id) VALUES (?,?,?)",
+        ("proposal:event-replace", project, event_id),
+    )
+    conn.execute(
+        "INSERT OR REPLACE INTO story_event SELECT * FROM story_event WHERE id = ?",
+        (event_id,),
+    )
+    for table in ("event_participant", "event_knower", "event_reveal", "proposal_event"):
+        assert conn.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE event_id = ?", (event_id,)
+        ).fetchone()[0] == 1
+
+    snapshot_id = conn.execute(
+        "SELECT chapter_snapshot_id FROM evidence WHERE id = ?", (evidence_id,)
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO extraction_run "
+        "(id, project_id, chapter_number, snapshot_id, schema_version, prompt_hash) "
+        "VALUES (?,?,?,?,?,?)",
+        ("run:project-delete", project, 143, snapshot_id, "m4.v1", "prompt-delete"),
+    )
+    conn.execute("DELETE FROM project WHERE id = ?", (project,))
+    for table in (
+        "story_event",
+        "event_participant",
+        "event_knower",
+        "event_reveal",
+        "proposal_set",
+        "proposal_event",
+        "extraction_run",
+    ):
+        assert conn.execute(
+            f"SELECT COUNT(*) FROM {table} WHERE project_id = ?", (project,)
+        ).fetchone()[0] == 0
+    assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+def test_story_event_delete_is_blocked_while_referenced(
+    conn: sqlite3.Connection, project: str
+) -> None:
+    evidence_id = _evidence(conn, project, "unused")
+    event_id = "event:delete-blocked"
+    _story_event(conn, project, event_id, evidence_id)
+    character_id = _node(conn, project, "Character", "顾清音")
+    conn.execute(
+        "INSERT INTO event_participant (event_id, project_id, character_id) VALUES (?,?,?)",
+        (event_id, project, character_id),
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("DELETE FROM story_event WHERE id = ?", (event_id,))
+
+
+def test_event_knower_scope_must_match_its_story_event(
+    conn: sqlite3.Connection, project: str
+) -> None:
+    evidence_id = _evidence(conn, project, "unused")
+    event_id = "event:provisional-scope"
+    _story_event(conn, project, event_id, evidence_id)
+    character_id = _node(conn, project, "Character", "顾清音")
+
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO event_knower "
+            "(event_id, project_id, character_id, valid_from_chapter, information_scope, "
+            "evidence_id, evidence_status) VALUES (?,?,?,?,?,?,?)",
+            (event_id, project, character_id, 143, "CANON", evidence_id, "FRESH"),
+        )
+
 
 def test_story_event_cannot_move_after_a_knower_depends_on_its_chapter(
     conn: sqlite3.Connection, project: str
@@ -949,6 +1100,131 @@ def test_story_event_cannot_move_after_a_knower_depends_on_its_chapter(
             "UPDATE story_event SET chapter_number = 144, valid_from_chapter = 144 WHERE id = ?",
             (event_id,),
         )
+
+
+@pytest.mark.parametrize("consumer", ["story_event", "event_knower"])
+@pytest.mark.parametrize(
+    "mutation", ["update_snapshot", "replace_snapshot", "update_project", "replace_project"]
+)
+def test_event_temporal_coherence_survives_evidence_parent_mutations(
+    conn: sqlite3.Connection,
+    project: str,
+    consumer: str,
+    mutation: str,
+) -> None:
+    evidence_id, _, _ = _event_evidence_consumer(conn, project, consumer)
+
+    if mutation.endswith("snapshot"):
+        replacement_evidence = _evidence(conn, project, "unused", chapter_number=144)
+    else:
+        other_project = new_project_id()
+        conn.execute(
+            "INSERT INTO project (id, name, root_path) VALUES (?,?,?)",
+            (other_project, "别书", "/other-evidence-parent"),
+        )
+        replacement_evidence = _evidence(conn, other_project, "unused", chapter_number=143)
+    replacement_snapshot, replacement_chapter = conn.execute(
+        "SELECT chapter_snapshot_id, chapter_id FROM evidence WHERE id = ?",
+        (replacement_evidence,),
+    ).fetchone()
+
+    with pytest.raises(sqlite3.IntegrityError):
+        if mutation == "update_snapshot":
+            conn.execute(
+                "UPDATE evidence SET chapter_snapshot_id = ? WHERE id = ?",
+                (replacement_snapshot, evidence_id),
+            )
+        elif mutation == "update_project":
+            conn.execute(
+                "UPDATE evidence SET project_id = ? WHERE id = ?",
+                (other_project, evidence_id),
+            )
+        else:
+            replacement_project = other_project if mutation == "replace_project" else project
+            conn.execute(
+                "INSERT OR REPLACE INTO evidence "
+                "(id, project_id, chapter_snapshot_id, para_index, quote_text, quote_sha256, "
+                "chapter_id, para_index_hint, occurrence_k) VALUES (?,?,?,?,?,?,?,?,?)",
+                (
+                    evidence_id,
+                    replacement_project,
+                    replacement_snapshot,
+                    0,
+                    "后来得知。",
+                    "f" * 64,
+                    replacement_chapter,
+                    0,
+                    0,
+                ),
+            )
+
+
+@pytest.mark.parametrize("consumer", ["story_event", "event_knower"])
+@pytest.mark.parametrize("mutation", ["update", "replace"])
+def test_event_temporal_coherence_survives_snapshot_parent_mutations(
+    conn: sqlite3.Connection,
+    project: str,
+    consumer: str,
+    mutation: str,
+) -> None:
+    _, snapshot_id, _ = _event_evidence_consumer(conn, project, consumer)
+    later_chapter_id = _chapter(conn, project, 144)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        if mutation == "update":
+            conn.execute(
+                "UPDATE chapter_snapshot SET chapter_id = ? WHERE id = ?",
+                (later_chapter_id, snapshot_id),
+            )
+        else:
+            conn.execute(
+                "INSERT OR REPLACE INTO chapter_snapshot (id, chapter_id, text, text_sha256) "
+                "VALUES (?,?,?,?)",
+                (snapshot_id, later_chapter_id, "后来得知。", "f" * 64),
+            )
+
+
+@pytest.mark.parametrize("consumer", ["story_event", "event_knower"])
+@pytest.mark.parametrize("field", ["number", "project_id"])
+def test_event_temporal_coherence_survives_chapter_parent_updates(
+    conn: sqlite3.Connection,
+    project: str,
+    consumer: str,
+    field: str,
+) -> None:
+    _, _, chapter_id = _event_evidence_consumer(conn, project, consumer)
+
+    with pytest.raises(sqlite3.IntegrityError):
+        if field == "number":
+            conn.execute("UPDATE chapter SET number = 144 WHERE id = ?", (chapter_id,))
+        else:
+            other_project = new_project_id()
+            conn.execute(
+                "INSERT INTO project (id, name, root_path) VALUES (?,?,?)",
+                (other_project, "别书", "/other-chapter-parent"),
+            )
+            conn.execute(
+                "UPDATE chapter SET project_id = ? WHERE id = ?", (other_project, chapter_id)
+            )
+
+
+def test_story_event_allows_evidence_relocation_fields_to_change(
+    conn: sqlite3.Connection, project: str
+) -> None:
+    evidence_id, _, _ = _event_evidence_consumer(conn, project, "story_event")
+    relocated_chapter = _chapter(conn, project, 144)
+
+    conn.execute(
+        "UPDATE evidence SET chapter_id = ?, para_index_hint = 7, occurrence_k = 2 "
+        "WHERE id = ?",
+        (relocated_chapter, evidence_id),
+    )
+
+    row = conn.execute(
+        "SELECT chapter_id, para_index_hint, occurrence_k FROM evidence WHERE id = ?",
+        (evidence_id,),
+    ).fetchone()
+    assert tuple(row) == (relocated_chapter, 7, 2)
 
 
 @pytest.mark.parametrize("child_kind", ["proposal", "extraction"])
@@ -989,24 +1265,27 @@ def test_snapshot_coherence_survives_parent_updates(
             conn.execute("UPDATE chapter SET number = 144 WHERE id = ?", (chapter_id,))
 
 
+@pytest.mark.parametrize("consumer", ["proposal", "extraction"])
 def test_snapshot_replace_preserves_referencing_child_coherence(
-    conn: sqlite3.Connection, project: str
+    conn: sqlite3.Connection, project: str, consumer: str
 ) -> None:
     evidence_id = _evidence(conn, project, "unused")
     snapshot_id, chapter_id = conn.execute(
         "SELECT chapter_snapshot_id, chapter_id FROM evidence WHERE id = ?", (evidence_id,)
     ).fetchone()
-    conn.execute(
-        "INSERT INTO proposal_set "
-        "(id, project_id, kind, chapter_number, snapshot_id) VALUES (?,?,?,?,?)",
-        ("proposal:replace", project, "edge_conflict", 143, snapshot_id),
-    )
-    conn.execute(
-        "INSERT INTO extraction_run "
-        "(id, project_id, chapter_number, snapshot_id, schema_version, prompt_hash) "
-        "VALUES (?,?,?,?,?,?)",
-        ("run:replace", project, 143, snapshot_id, "m4.v1", "prompt-a"),
-    )
+    if consumer == "proposal":
+        conn.execute(
+            "INSERT INTO proposal_set "
+            "(id, project_id, kind, chapter_number, snapshot_id) VALUES (?,?,?,?,?)",
+            ("proposal:replace", project, "edge_conflict", 143, snapshot_id),
+        )
+    else:
+        conn.execute(
+            "INSERT INTO extraction_run "
+            "(id, project_id, chapter_number, snapshot_id, schema_version, prompt_hash) "
+            "VALUES (?,?,?,?,?,?)",
+            ("run:replace", project, 143, snapshot_id, "m4.v1", "prompt-a"),
+        )
 
     replace_sql = (
         "INSERT OR REPLACE INTO chapter_snapshot (id, chapter_id, text, text_sha256) "
@@ -1111,6 +1390,55 @@ def test_extraction_run_checks_status_counters_and_idempotency(
             "(id, project_id, chapter_number, snapshot_id, schema_version, prompt_hash) "
             "VALUES (?,?,?,?,?,?)",
             ("run:foreign", project, 143, foreign_snapshot, "m4.v2", "prompt-c"),
+        )
+
+    conn.execute(
+        "INSERT INTO model_call (id, project_id, capability, model, prompt_hash) "
+        "VALUES (?,?,?,?,?)",
+        ("call:referenced", project, "extractor", "test-model", "prompt-model"),
+    )
+    conn.execute(
+        "INSERT INTO extraction_run "
+        "(id, project_id, chapter_number, snapshot_id, model_call_id, schema_version, "
+        "prompt_hash) VALUES (?,?,?,?,?,?,?)",
+        (
+            "run:referenced-call",
+            project,
+            143,
+            snapshot_id,
+            "call:referenced",
+            "m4.v2",
+            "prompt-model",
+        ),
+    )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute("DELETE FROM model_call WHERE id = 'call:referenced'")
+
+
+def test_extraction_run_model_call_requires_the_same_project(
+    conn: sqlite3.Connection, project: str
+) -> None:
+    evidence_id = _evidence(conn, project, "unused")
+    snapshot_id = conn.execute(
+        "SELECT chapter_snapshot_id FROM evidence WHERE id = ?", (evidence_id,)
+    ).fetchone()[0]
+    other_project = new_project_id()
+    conn.execute(
+        "INSERT INTO project (id, name, root_path) VALUES (?,?,?)",
+        (other_project, "别书", "/other-model-call"),
+    )
+    conn.execute(
+        "INSERT INTO model_call (id, project_id, capability, model, prompt_hash) "
+        "VALUES (?,?,?,?,?)",
+        ("call:foreign", other_project, "extractor", "test-model", "prompt-a"),
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "INSERT INTO extraction_run "
+            "(id, project_id, chapter_number, snapshot_id, model_call_id, schema_version, "
+            "prompt_hash) VALUES (?,?,?,?,?,?,?)",
+            ("run:foreign-call", project, 143, snapshot_id, "call:foreign", "m4.v1", "prompt-a"),
         )
 
 
@@ -1237,8 +1565,14 @@ def _chapter(conn: sqlite3.Connection, project_id: str, number: int) -> str:
     return cid
 
 
-def _evidence(conn: sqlite3.Connection, project_id: str, _src: str) -> str:
-    ch = _chapter(conn, project_id, 143)
+def _evidence(
+    conn: sqlite3.Connection,
+    project_id: str,
+    _src: str,
+    *,
+    chapter_number: int = 143,
+) -> str:
+    ch = _chapter(conn, project_id, chapter_number)
     snap = new_id(EntityType.SNAPSHOT, project_id)
     conn.execute(
         "INSERT INTO chapter_snapshot (id, chapter_id, text, text_sha256) VALUES (?,?,?,?)",
@@ -1251,6 +1585,38 @@ def _evidence(conn: sqlite3.Connection, project_id: str, _src: str) -> str:
         (eid, project_id, snap, 0, "他死了。", "e" * 64, ch, 0),
     )
     return eid
+
+
+def _event_evidence_consumer(
+    conn: sqlite3.Connection, project_id: str, consumer: str
+) -> tuple[str, str, str]:
+    if consumer == "story_event":
+        evidence_id = _evidence(conn, project_id, "unused")
+        _story_event(conn, project_id, "event:parent-coherence", evidence_id)
+    else:
+        event_evidence = _evidence(conn, project_id, "unused", chapter_number=142)
+        evidence_id = _evidence(conn, project_id, "unused")
+        event_id = "event:knower-parent-coherence"
+        _story_event(
+            conn,
+            project_id,
+            event_id,
+            event_evidence,
+            chapter_number=142,
+            valid_from_chapter=142,
+        )
+        character_id = _node(conn, project_id, "Character", "顾清音")
+        conn.execute(
+            "INSERT INTO event_knower "
+            "(event_id, project_id, character_id, valid_from_chapter, information_scope, "
+            "evidence_id, evidence_status) VALUES (?,?,?,?,?,?,?)",
+            (event_id, project_id, character_id, 143, "PROVISIONAL", evidence_id, "FRESH"),
+        )
+
+    snapshot_id, chapter_id = conn.execute(
+        "SELECT chapter_snapshot_id, chapter_id FROM evidence WHERE id = ?", (evidence_id,)
+    ).fetchone()
+    return evidence_id, snapshot_id, chapter_id
 
 
 def _story_event(
