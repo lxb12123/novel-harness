@@ -40,7 +40,8 @@
 > **这张图今天基本是现状了，只剩一处不是。** 标 ▓ 的两层、SQLite、终端里的 `nh`、FastAPI 壳、
 > 浏览器面板都已存在；**图里写「只读，无编辑器」的那一格已经不准**——应用内 CodeMirror 6 编辑器
 > 进了 v1（ADR 0007 的时机松动，见该 ADR 的「修订」）。`draft/` 三块（`provider` / `context` /
-> `assemble`）已齐；**仍完全不存在的只剩 `extract/`**。逐项见[当前状态](#当前状态)。
+> `assemble`）已齐；`extract/` 的纯结构化边界（schema / prompt / 锚定 / 名称解析）已落地，
+> 后台调用与提案入库仍在实现。逐项见[当前状态](#当前状态)。
 
 ```
 ┌─ 浏览器面板（CodeMirror 6 编辑器，读写磁盘 md）── Vite + React
@@ -272,7 +273,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 
 ## 当前状态
 
-**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 正在实现（尚未完成）**（1151 个 pytest + 33 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
+**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 正在实现（尚未完成）**（1205 个 pytest + 33 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
 
 > **本节的数字是全仓唯一副本，且 `tests/test_doc_numbers.py` 会拦住第二份。**
 > `README.md` / `CLAUDE.md` / `frontend/README.md` 里只留指针，不许再抄一份数字过去。
@@ -298,6 +299,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 db.py  ids.py  decisions.py  project.py  migrations/{001_init,002_m4_events}.sql（20 张表）
 graph/{models,store,sqlite_store,queries}.py    ← state_at / supersede / subgraph
 events/{models,store}.py                       ← M4 事件超边 / 角色档案 / 提案仓储契约（实现进行中）
+extract/{models,prompt,locate,analyze}.py       ← M4 严格 JSON 边界 / 确定性证据定位 / 不猜名称解析
 panel/{knowledge,state,constraints}.py          ← 认知矩阵（头牌）+ PLANNED 进 prompt 的唯一闸门
 checks/{base,location_conflict,future_leak,dead_speaks}.py
                                                   ← R2/R3/R4（R5 已砍；`ALL_CHECKS` 共三条）
@@ -546,8 +548,9 @@ R4 之外，R2（未来实体提前出现）和 R3（死人/未登场角色开�
    规模：vitest 18 条（认知矩阵三态 / 左栏空态 / 花名册抽屉的 ADR 0004 提示与拒绝形态）。
    **剩下的**：只有 3 个组件有测试，`CenterEditor` / `LocalGraph` / `BottomBar` 等仍是零。
 
-**M4 正在实现、尚未完成**：`events/` 契约与 `002_m4_events.sql` 已落地；`extract/` 仍完全不存在
-（设计草案见 [M4_DESIGN.md](M4_DESIGN.md)）。
+**M4 正在实现、尚未完成**：`events/` 契约与 `002_m4_events.sql` 已落地；`extract/` 已有纯
+结构化 schema、确定性 prompt、精确优先的模糊证据定位与不猜名称解析，后台 provider 调用和
+提案入库仍未落地（设计草案见 [M4_DESIGN.md](M4_DESIGN.md)）。
 `text/mentions.py` 已于 2026-08-02 落地，R2/R3 已在 `ALL_CHECKS` 里跑（R5 已砍）。
 （这一行 2026-07-30 之前还挂着 `synth/` 和 `draft/assemble.py`，那天两样都落地了。
 留个记号：这一行**只列代码**——「代码有了但没跑过」是另一回事，见上面 M2 那节最后一段。）
