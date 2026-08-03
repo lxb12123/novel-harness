@@ -121,6 +121,20 @@ BEGIN
   SELECT RAISE(ABORT, 'event_knower cannot predate its story_event');
 END;
 
+-- 子行与父行两侧都要守住同一不变量；否则移动事件章节会绕过上面两条触发器。
+CREATE TRIGGER story_event_not_after_existing_knower_update
+BEFORE UPDATE OF chapter_number, valid_from_chapter ON story_event
+WHEN EXISTS (
+  SELECT 1
+  FROM event_knower
+  WHERE event_id = OLD.id
+    AND project_id = OLD.project_id
+    AND valid_from_chapter < NEW.chapter_number
+)
+BEGIN
+  SELECT RAISE(ABORT, 'story_event cannot move after an existing event_knower');
+END;
+
 CREATE INDEX idx_event_knower_character
   ON event_knower(project_id, character_id, information_scope, valid_from_chapter);
 
@@ -264,6 +278,70 @@ END;
 
 CREATE INDEX idx_extraction_run_status
   ON extraction_run(project_id, status, created_at);
+
+-- 快照改挂到另一章时，只拦会让现有提案/抽取运行失去项目或章节一致性的更新。
+CREATE TRIGGER chapter_snapshot_children_coherent_update
+BEFORE UPDATE OF chapter_id ON chapter_snapshot
+WHEN EXISTS (
+  SELECT 1
+  FROM proposal_set
+  WHERE snapshot_id = OLD.id
+    AND NOT EXISTS (
+      SELECT 1
+      FROM chapter
+      WHERE id = NEW.chapter_id
+        AND project_id = proposal_set.project_id
+        AND (
+          proposal_set.chapter_number IS NULL
+          OR number = proposal_set.chapter_number
+        )
+    )
+)
+OR EXISTS (
+  SELECT 1
+  FROM extraction_run
+  WHERE snapshot_id = OLD.id
+    AND NOT EXISTS (
+      SELECT 1
+      FROM chapter
+      WHERE id = NEW.chapter_id
+        AND project_id = extraction_run.project_id
+        AND number = extraction_run.chapter_number
+    )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'chapter_snapshot update would break extraction coherence');
+END;
+
+-- 章节的顺序号或项目归属同样是快照一致性的一部分，不能从父行方向绕过。
+CREATE TRIGGER chapter_snapshot_consumers_coherent_chapter_update
+BEFORE UPDATE OF number, project_id ON chapter
+WHEN EXISTS (
+  SELECT 1
+  FROM chapter_snapshot
+  JOIN proposal_set ON proposal_set.snapshot_id = chapter_snapshot.id
+  WHERE chapter_snapshot.chapter_id = OLD.id
+    AND (
+      proposal_set.project_id <> NEW.project_id
+      OR (
+        proposal_set.chapter_number IS NOT NULL
+        AND proposal_set.chapter_number <> NEW.number
+      )
+    )
+)
+OR EXISTS (
+  SELECT 1
+  FROM chapter_snapshot
+  JOIN extraction_run ON extraction_run.snapshot_id = chapter_snapshot.id
+  WHERE chapter_snapshot.chapter_id = OLD.id
+    AND (
+      extraction_run.project_id <> NEW.project_id
+      OR extraction_run.chapter_number <> NEW.number
+    )
+)
+BEGIN
+  SELECT RAISE(ABORT, 'chapter update would break extraction coherence');
+END;
 
 
 PRAGMA user_version = 2;

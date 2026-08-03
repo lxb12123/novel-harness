@@ -36,8 +36,13 @@
       "name": "萧决",
       "project_id": "project:ID1",
       "props": {
+        "background": null,
+        "character_notes": null,
         "dim_key": null,
-        "first_appears_chapter": null
+        "first_appears_chapter": null,
+        "gender": null,
+        "main_character": null,
+        "personality": null
       }
     },
     "scope": "CANON",
@@ -96,8 +101,13 @@
     "name": "顾清音",
     "project_id": "project:ID1",
     "props": {
+      "background": null,
+      "character_notes": null,
       "dim_key": null,
-      "first_appears_chapter": null
+      "first_appears_chapter": null,
+      "gender": null,
+      "main_character": null,
+      "personality": null
     }
   },
   "createSecret": {
@@ -374,8 +384,13 @@
         "name": "萧决",
         "project_id": "project:ID1",
         "props": {
+          "background": null,
+          "character_notes": null,
           "dim_key": null,
-          "first_appears_chapter": null
+          "first_appears_chapter": null,
+          "gender": null,
+          "main_character": null,
+          "personality": null
         }
       },
       "scope": "CANON",
@@ -391,8 +406,13 @@
         "name": "李管家",
         "project_id": "project:ID1",
         "props": {
+          "background": null,
+          "character_notes": null,
           "dim_key": null,
-          "first_appears_chapter": null
+          "first_appears_chapter": null,
+          "gender": null,
+          "main_character": null,
+          "personality": null
         }
       },
       "scope": "CANON",
@@ -406,8 +426,13 @@
       "name": "萧决",
       "project_id": "project:ID1",
       "props": {
+        "background": null,
+        "character_notes": null,
         "dim_key": null,
-        "first_appears_chapter": null
+        "first_appears_chapter": null,
+        "gender": null,
+        "main_character": null,
+        "personality": null
       }
     },
     "chapter": 2,
@@ -420,8 +445,13 @@
         "name": "萧决",
         "project_id": "project:ID1",
         "props": {
+          "background": null,
+          "character_notes": null,
           "dim_key": null,
-          "first_appears_chapter": null
+          "first_appears_chapter": null,
+          "gender": null,
+          "main_character": null,
+          "personality": null
         }
       }
     ],

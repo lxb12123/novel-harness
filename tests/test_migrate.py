@@ -930,6 +930,65 @@ def test_event_incidence_requires_same_project_and_expected_labels(
         )
 
 
+def test_story_event_cannot_move_after_a_knower_depends_on_its_chapter(
+    conn: sqlite3.Connection, project: str
+) -> None:
+    evidence_id = _evidence(conn, project, "unused")
+    event_id = "event:parent-update"
+    _story_event(conn, project, event_id, evidence_id)
+    character_id = _node(conn, project, "Character", "顾清音")
+    conn.execute(
+        "INSERT INTO event_knower "
+        "(event_id, project_id, character_id, valid_from_chapter, information_scope, "
+        "evidence_id, evidence_status) VALUES (?,?,?,?,?,?,?)",
+        (event_id, project, character_id, 143, "PROVISIONAL", evidence_id, "FRESH"),
+    )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "UPDATE story_event SET chapter_number = 144, valid_from_chapter = 144 WHERE id = ?",
+            (event_id,),
+        )
+
+
+@pytest.mark.parametrize("child_kind", ["proposal", "extraction"])
+@pytest.mark.parametrize("parent_update", ["snapshot_chapter", "chapter_number"])
+def test_snapshot_coherence_survives_parent_updates(
+    conn: sqlite3.Connection,
+    project: str,
+    child_kind: str,
+    parent_update: str,
+) -> None:
+    evidence_id = _evidence(conn, project, "unused")
+    snapshot_id, chapter_id = conn.execute(
+        "SELECT chapter_snapshot_id, chapter_id FROM evidence WHERE id = ?", (evidence_id,)
+    ).fetchone()
+
+    if child_kind == "proposal":
+        conn.execute(
+            "INSERT INTO proposal_set "
+            "(id, project_id, kind, chapter_number, snapshot_id) VALUES (?,?,?,?,?)",
+            ("proposal:parent-update", project, "edge_conflict", 143, snapshot_id),
+        )
+    else:
+        conn.execute(
+            "INSERT INTO extraction_run "
+            "(id, project_id, chapter_number, snapshot_id, schema_version, prompt_hash) "
+            "VALUES (?,?,?,?,?,?)",
+            ("run:parent-update", project, 143, snapshot_id, "m4.v1", "prompt-a"),
+        )
+
+    with pytest.raises(sqlite3.IntegrityError):
+        if parent_update == "snapshot_chapter":
+            later_chapter_id = _chapter(conn, project, 144)
+            conn.execute(
+                "UPDATE chapter_snapshot SET chapter_id = ? WHERE id = ?",
+                (later_chapter_id, snapshot_id),
+            )
+        else:
+            conn.execute("UPDATE chapter SET number = 144 WHERE id = ?", (chapter_id,))
+
+
 def test_proposal_links_only_reference_provisional_rows(
     conn: sqlite3.Connection, project: str
 ) -> None:

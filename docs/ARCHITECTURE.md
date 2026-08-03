@@ -272,7 +272,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 
 ## 当前状态
 
-**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 解锁**（1034 个 pytest + 33 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
+**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 正在实现（尚未完成）**（1053 个 pytest + 33 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
 
 > **本节的数字是全仓唯一副本，且 `tests/test_doc_numbers.py` 会拦住第二份。**
 > `README.md` / `CLAUDE.md` / `frontend/README.md` 里只留指针，不许再抄一份数字过去。
@@ -284,9 +284,9 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
 > 守卫钉住的是**能在运行时数出来**的那些（路由 34 / `/api` 33 / 501 stub 4 / 错误映射 17 /
-> CLI 叶子 17 / 建表 13 / fixture 端点 23 / `ALL_CHECKS` 3），改错必红、**删掉也必红**（不静默 skip）。
+> CLI 叶子 17 / 建表 20 / fixture 端点 23 / `ALL_CHECKS` 3），改错必红、**删掉也必红**（不静默 skip）。
 > **它罩不住 pytest / vitest 这两个数**——在 pytest 里数 pytest 要递归，
-> 所以「1034」和「33」仍然只靠人手改，改代码后请顺手跑一次 `uv run pytest -q` 更新这一处。
+> 所以「1053」和「33」仍然只靠人手改，改代码后请顺手跑一次 `uv run pytest -q` 更新这一处。
 > （2026-07-30 那天这个数从 690 走到 801，中途在文档里错过一次——**这条盲区是真的，不是假想的**。）
 
 > ⚠️ **「全绿」目前只在本机成立。本仓库还没有 git remote，`ci.yml` / `release.yml` 一次都没执行过。**
@@ -295,8 +295,9 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 > 而那正是 `_DIST` 曾经真出过的 bug。在建起远端之前，别把 CI 当成既有保护。
 
 ```
-db.py  ids.py  decisions.py  project.py  migrations/001_init.sql（13 张表）
+db.py  ids.py  decisions.py  project.py  migrations/{001_init,002_m4_events}.sql（20 张表）
 graph/{models,store,sqlite_store,queries}.py    ← state_at / supersede / subgraph
+events/{models,store}.py                       ← M4 事件超边 / 角色档案 / 提案仓储契约（实现进行中）
 panel/{knowledge,state,constraints}.py          ← 认知矩阵（头牌）+ PLANNED 进 prompt 的唯一闸门
 checks/{base,location_conflict,future_leak,dead_speaks}.py
                                                   ← R2/R3/R4（R5 已砍；`ALL_CHECKS` 共三条）
@@ -344,7 +345,7 @@ Fake 够不着的（label 校验 / 重复边 StoreError / `secret_ids` 默认列
 **endpoint/profile 已于 2026-08-02 冻结**（`deepseek-v4-flash` @ `https://api.deepseek.com`，
 见 [M2_ENDPOINT_PROFILE.md](M2_ENDPOINT_PROFILE.md)，不含 key、单独 commit）。
 length/capability/streaming/continuation/JSONL 实现与回归测试已于 2026-08-01 全部落地并离线验证
-（1034 个 pytest / 33 个 vitest 全绿，见下）；2026-08-02 又补了两件事：DeepSeek 共享输出预留
+（1053 个 pytest / 33 个 vitest 全绿，见下）；2026-08-02 又补了两件事：DeepSeek 共享输出预留
 按 0.95 审计入册（thinking 与正文共池、官方无占比；实测右尾单 cell 达 40,000 tokens），
 `nh gate` 按 env 从注册表解析并冻结 plan（high reasoning、request 150,000、streaming）。
 
@@ -545,7 +546,8 @@ R4 之外，R2（未来实体提前出现）和 R3（死人/未登场角色开�
    规模：vitest 18 条（认知矩阵三态 / 左栏空态 / 花名册抽屉的 ADR 0004 提示与拒绝形态）。
    **剩下的**：只有 3 个组件有测试，`CenterEditor` / `LocalGraph` / `BottomBar` 等仍是零。
 
-**仍完全不存在的**：`extract/`（M4，设计草案见 [M4_DESIGN.md](M4_DESIGN.md)）。
+**M4 正在实现、尚未完成**：`events/` 契约与 `002_m4_events.sql` 已落地；`extract/` 仍完全不存在
+（设计草案见 [M4_DESIGN.md](M4_DESIGN.md)）。
 `text/mentions.py` 已于 2026-08-02 落地，R2/R3 已在 `ALL_CHECKS` 里跑（R5 已砍）。
 （这一行 2026-07-30 之前还挂着 `synth/` 和 `draft/assemble.py`，那天两样都落地了。
 留个记号：这一行**只列代码**——「代码有了但没跑过」是另一回事，见上面 M2 那节最后一段。）
