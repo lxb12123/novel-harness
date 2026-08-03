@@ -18,7 +18,17 @@ from fastapi import Depends, HTTPException
 from .. import project as project_mod
 from ..db import Connection, connect, migrate
 from ..declare import Ledger
+from ..draft.capabilities import ReasoningEffort, plan_structured_call, resolve_capabilities
+from ..draft.provider import CompletionResult, ProviderConfig, complete
+from ..extract.control import AnalysisRequest
+from ..extract.runner import ExtractionRunner
+from ..graph.sqlite_events import SqliteEventStore
 from ..graph.sqlite_store import SqliteStoryGraph
+from ..settings import load as load_user_settings
+
+
+EXTRACTION_VISIBLE_TOKEN_BUDGET = 8_192
+"""Maximum visible JSON output for one bounded 1-12 event chapter analysis."""
 
 
 def _db_path() -> Path:
@@ -60,6 +70,41 @@ def get_conn() -> Iterator[Connection]:
 
 def get_store(conn: Connection = Depends(get_conn)) -> SqliteStoryGraph:
     return SqliteStoryGraph(conn)
+
+
+def get_event_store(conn: Connection = Depends(get_conn)) -> SqliteEventStore:
+    """Request-scoped event reader sharing the exact connection used by load_project."""
+    return SqliteEventStore(conn)
+
+
+def _extraction_provider_config() -> ProviderConfig:
+    """Resolve BYOK settings only when the background runner actually calls the model."""
+    user = load_user_settings()
+    return ProviderConfig(
+        base_url=user.base_url or os.environ.get("NH_LLM_BASE_URL", ""),
+        model=user.model or os.environ.get("NH_LLM_MODEL", ""),
+        api_key=user.api_key or os.environ.get("NH_LLM_API_KEY", ""),
+        temperature=None,
+    )
+
+
+def _analyze_extraction(request: AnalysisRequest) -> CompletionResult:
+    """Send the request's audited wire messages through one validated structured plan."""
+    config = _extraction_provider_config()
+    capability = resolve_capabilities(config.base_url, config.model)
+    plan = plan_structured_call(
+        EXTRACTION_VISIBLE_TOKEN_BUDGET,
+        ReasoningEffort.OFF,
+        capability,
+        prompt_token_budget=len(request.prompt_bytes),
+    )
+    return complete(request.wire_messages(), config=config, plan=plan)
+
+
+def get_extraction_runner() -> ExtractionRunner:
+    """Build an overrideable runner whose paid execution owns independent connections."""
+    path = _db_path()
+    return ExtractionRunner(lambda: connect(path), _analyze_extraction)
 
 
 def load_project(project_id: str, conn: Connection = Depends(get_conn)) -> project_mod.Project:

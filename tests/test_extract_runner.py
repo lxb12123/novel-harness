@@ -144,6 +144,21 @@ def test_enqueue_is_immediate_content_addressed_and_reuses_the_same_run(seed: Se
     assert first.schema_version == ANALYSIS_SCHEMA_VERSION
 
 
+def test_get_is_a_pure_read_that_never_claims_or_calls_the_analyzer(seed: Seed) -> None:
+    analyzer = Analyzer()
+    runner = _runner(seed, analyzer)
+    queued = runner.enqueue(seed.project_id, 3)
+
+    loaded = runner.get(queued.id)
+
+    assert loaded == queued
+    assert loaded.status is ExtractionRunStatus.PENDING
+    assert analyzer.calls == 0
+    with pytest.raises(ExtractionRunNotFound):
+        runner.get("extraction_run:missing")
+    assert analyzer.calls == 0
+
+
 @pytest.mark.parametrize(
     ("chapter_number", "error_type"),
     [

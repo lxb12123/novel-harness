@@ -3,7 +3,7 @@
 只读面板：项目 / 花名册 / 认知矩阵（头牌）/ 场景约束 / 当前状态 / 局部子图。
 编辑器（P1）：列章 / 读章正文 / 存盘 → sync（正文在磁盘，ADR 0007）。
 写图谱（declare）+ 定位 + R4 check（P2）：作者敲称呼原文 + 引语，系统算章号。
-起草/抽取是 M2/M4——本文件末尾 5 条 stub 稳定返 501（见 docs/UI_ARCHITECTURE.md §1.2）。
+M4 抽取/事件读端拆在 ``api/extraction.py``；未开放的规划、运行面板和提案审阅仍返 501。
 
 ── 两条贯穿本文件的纪律 ───────────────────────────────────────────────────
 
@@ -68,6 +68,7 @@ from ..text import (
 )
 from ..text import paragraphs as split_paragraphs
 from .deps import books_root, ensure_schema, get_conn, get_ledger, get_store, load_project
+from .extraction import router as extraction_router
 
 _STATIC = Path(__file__).resolve().parent / "static"
 _UNSAFE_PATH = re.compile(r'[/\\:*?"<>|]')  # 书名里不能进目录名的字符
@@ -174,6 +175,7 @@ async def _lifespan(_: FastAPI) -> Any:
 
 
 app = FastAPI(title="Novel Harness 工作台", lifespan=_lifespan)
+app.include_router(extraction_router)
 
 # 构建产物的静态资源（/assets/index-xxxx.js）。只有 dist 真的构建出来才挂载——
 # 挂一个不存在的目录会在启动时炸，而测试套件不构建前端（那时走 static/ 原型兜底）。
@@ -897,10 +899,10 @@ def check(
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# M2 / M4 的 stub —— 稳定的 501，**不是 404**（UI_ARCHITECTURE §1.2 第 48 行）
+# M2 / M4 剩余 stub —— 稳定的 501，**不是 404**（UI_ARCHITECTURE §1.2 第 48 行）
 #
-# 这 5 条（3 条 M2 起草 + 2 条 M4 抽取）背后的引擎一个字都还没写。它们今天存在的
-# 理由只有一个：**让前端把按钮画成灰的，而不是把按钮藏起来。**
+# M4 抽取与事件读端已经在 ``api/extraction.py`` 点亮；这里保留的能力仍未开放。它们今天
+# 存在的理由只有一个：**让前端把按钮画成灰的，而不是把按钮藏起来。**
 #
 # 为什么必须是 501 而不是 404：404 在这个壳里已经有确切含义——「你要的那个东西不在」
 # （项目/章/节点/证据查无此物）。让「这个能力还没做」也返 404，前端就**分不出**

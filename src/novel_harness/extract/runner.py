@@ -138,6 +138,17 @@ class ExtractionRunner:
         finally:
             conn.close()
 
+    def get(self, run_id: str) -> ExtractionRun:
+        """Load one run without claiming it or invoking the paid analyzer."""
+        conn = self._connections()
+        try:
+            row = self._fetch_row(conn, run_id)
+            if row is None:
+                raise ExtractionRunNotFound(f"extraction run not found: {run_id}")
+            return to_run(row)
+        finally:
+            conn.close()
+
     def run(self, run_id: str) -> ExtractionRun:
         conn = self._connections()
         try:
