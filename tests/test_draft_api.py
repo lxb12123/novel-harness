@@ -88,6 +88,20 @@ def _stub_complete(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(generate_mod, "complete", fake)
 
 
+def _capture_complete(monkeypatch: pytest.MonkeyPatch) -> list[list[dict[str, str]]]:
+    import novel_harness.draft.generate as generate_mod
+    from novel_harness.draft.provider import CompletionResult
+
+    observed: list[list[dict[str, str]]] = []
+
+    def fake(messages, *, config=None, plan=None, client=None) -> CompletionResult:
+        observed.append(messages)
+        return CompletionResult(text="正文" * 1000, model="fake", finish_reason="stop")
+
+    monkeypatch.setattr(generate_mod, "complete", fake)
+    return observed
+
+
 def test_draft_returns_experimental_draft(
     client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -150,6 +164,44 @@ def test_draft_bad_form_is_422(
     )
     assert r.status_code == 422
     assert "X0" in r.text
+    assert "PRODUCT" in r.text
+
+
+def test_default_product_draft_gets_confirmed_memory_preface(
+    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _configure(client)
+    observed = _capture_complete(monkeypatch)
+
+    response = client.post(
+        _url(book),
+        json={"goal": "萧决看剑。", "cast": ["萧决"], "length": ZH_LENGTH},
+    )
+
+    assert response.status_code == 200, response.text
+    assert observed[0][0]["role"] == "system"
+    assert observed[0][0]["content"].startswith("已确认的故事记忆")
+
+
+def test_explicit_kill_gate_form_keeps_the_prior_prompt_path(
+    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _configure(client)
+    observed = _capture_complete(monkeypatch)
+
+    response = client.post(
+        _url(book),
+        json={
+            "goal": "萧决看剑。",
+            "cast": ["萧决"],
+            "length": ZH_LENGTH,
+            "form": "X0",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    rendered = "\n".join(message["content"] for message in observed[0])
+    assert "已确认的故事记忆" not in rendered
 
 
 def test_draft_custom_house_style_is_accepted(

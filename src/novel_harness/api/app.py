@@ -939,7 +939,7 @@ class DraftRequest(BaseModel):
     goal: str = Field(min_length=1)
     cast: list[str] = Field(min_length=1)
     length: _DraftLengthBody
-    form: str = "X1"
+    form: str = "PRODUCT"
     previous_tail: str = ""
     house_style: str = ""
 
@@ -968,6 +968,7 @@ def draft(
     chapter: int,
     project_id: str,
     store: Any = Depends(get_store),
+    conn: Any = Depends(get_conn),
     proj: Any = Depends(load_project),
 ) -> dict[str, Any]:
     """AI 起草第 N 章（**实验状态**，修正案 7）。
@@ -985,15 +986,26 @@ def draft(
     )
     from ..draft.context import ResolvedConstraints
     from ..draft.generate import generate_draft
+    from ..draft.product_assemble import assemble_product
+    from ..draft.product_context import build_product_context
     from ..draft.provider import ProviderError
+    from ..graph.sqlite_events import SqliteEventStore
     from ..panel.constraints import UnresolvedCast, scene_view
 
-    try:
-        form = PromptForm[body.form.strip().upper()]
-    except KeyError:
-        raise HTTPException(
-            status_code=422, detail=f"form 只能是 X0 / X1 / X2，收到 {body.form!r}"
-        )
+    requested_form = body.form.strip().upper()
+    product_form = requested_form == "PRODUCT"
+    if product_form:
+        # M2's accepted product arm remains X1; PRODUCT adds only the separately-audited Canon
+        # memory preface. Explicit X0/X1/X2 calls continue through their exact old code path.
+        form = PromptForm.X1
+    else:
+        try:
+            form = PromptForm[requested_form]
+        except KeyError:
+            raise HTTPException(
+                status_code=422,
+                detail=f"form 只能是 PRODUCT / X0 / X1 / X2，收到 {body.form!r}",
+            )
 
     house_style = body.house_style.strip()
     if house_style:
@@ -1011,14 +1023,23 @@ def draft(
     try:
         view = scene_view(store, project_id, chapter, body.cast)
         ctx = ResolvedConstraints.of(view, body.cast)
-        messages = assemble(
-            ctx,
-            form=form,
-            goal=body.goal,
-            length=body.length,
-            previous_tail=body.previous_tail,
-            house_style=house_style or None,
-        )
+        assemble_args = {
+            "form": form,
+            "goal": body.goal,
+            "length": body.length,
+            "previous_tail": body.previous_tail,
+            "house_style": house_style or None,
+        }
+        if product_form:
+            memory = build_product_context(
+                SqliteEventStore(conn),
+                project_id,
+                view.matrix.characters,
+                draft_chapter=chapter,
+            )
+            messages = assemble_product(ctx, memory, **assemble_args)
+        else:
+            messages = assemble(ctx, **assemble_args)
     except UnresolvedCast as exc:
         raise HTTPException(status_code=422, detail=f"在场角色解析不了：{exc}")
 
