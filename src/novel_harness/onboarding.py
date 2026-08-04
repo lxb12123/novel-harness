@@ -78,6 +78,34 @@ def _promote_stage(stage: Path, final_root: Path) -> None:
     stage.rmdir()
 
 
+def _cleanup_owned_paths(*paths: Path | None) -> None:
+    """Best-effort cleanup of owned paths, retrying each failed removal exactly once.
+
+    Cleanup must remain subordinate to the business failure being handled: even
+    ``KeyboardInterrupt`` or ``SystemExit`` from one removal cannot replace it or prevent the
+    other owned path from being attempted. ``FileNotFoundError`` means the goal is already met.
+    """
+    retry: list[Path] = []
+    for path in paths:
+        if path is None:
+            continue
+        try:
+            shutil.rmtree(path)
+        except FileNotFoundError:
+            pass
+        except BaseException:
+            retry.append(path)
+
+    for path in retry:
+        try:
+            shutil.rmtree(path)
+        except FileNotFoundError:
+            pass
+        except BaseException:
+            # One bounded retry is enough; cleanup can never replace the original exception.
+            pass
+
+
 def _prepared_book(*, mode: BootstrapMode, text: str | None) -> Chapterization:
     if mode == "import":
         if text is None:
@@ -151,8 +179,5 @@ def bootstrap_project(
         # Cooperative bootstrap calls never replace these reservations: they see them as occupied
         # and choose a suffix. Arbitrary hostile filesystem mutation is outside this local-service
         # boundary; within it, neither pathname can belong to a competitor.
-        if stage is not None:
-            shutil.rmtree(stage, ignore_errors=True)
-        if final_root is not None:
-            shutil.rmtree(final_root, ignore_errors=True)
+        _cleanup_owned_paths(stage, final_root)
         raise

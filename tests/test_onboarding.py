@@ -275,6 +275,42 @@ def test_failure_cleanup_uses_owned_reservations_without_stat_then_delete(
     assert _stages(books) == []
 
 
+def test_cleanup_base_exception_preserves_original_failure_and_retries_owned_paths(
+    conn: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    books = tmp_path / "books"
+    original_rmtree = onboarding.shutil.rmtree
+    cleanup_calls: list[Path] = []
+
+    def fail_sync(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("original sync failure")
+
+    def interrupt_first_cleanup(path: Path, *args: Any, **kwargs: Any) -> None:
+        cleanup_calls.append(Path(path))
+        if len(cleanup_calls) == 1:
+            raise KeyboardInterrupt
+        original_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(onboarding.importer, "sync", fail_sync)
+    monkeypatch.setattr(onboarding.shutil, "rmtree", interrupt_first_cleanup)
+
+    with pytest.raises(RuntimeError, match="original sync failure"):
+        onboarding.bootstrap_project(
+            conn,
+            books_root=books,
+            mode="import",
+            name="清理中断",
+            text="第一章\n\n正文。\n",
+        )
+
+    assert _project_rows(conn) == []
+    assert not conn.in_transaction
+    assert not (books / "清理中断").exists()
+    assert _stages(books) == []
+    assert len(cleanup_calls) == 3
+    assert cleanup_calls[0] == cleanup_calls[2]
+
+
 def test_next_book_root_sanitizes_and_never_reuses_existing_paths(tmp_path: Path) -> None:
     books = tmp_path / "books"
     books.mkdir()
