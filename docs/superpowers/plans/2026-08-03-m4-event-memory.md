@@ -17,6 +17,7 @@
 - A high-confidence, non-conflicting extraction is stored as `PROVISIONAL` without a queue item. Queue items are limited to a direct CANON conflict, confidence below `0.70` involving a main character, and a new persistent-character decision. The passive provisional list still offers explicit single/batch confirmation, so no extracted assertion becomes CANON without an author action.
 - Accept/edit creates a new CANON projection and preserves the PROVISIONAL row. Reject preserves the provisional row and records the rejected review. `bystander` is a character-candidate rejection reason and never creates a Character node.
 - Evidence is `(para_index, matched original text, occurrence_k)`. Exact location wins; fuzzy location is accepted only for a unique best match with `SequenceMatcher.ratio() >= 0.90`; the stored quote and hash always use the source substring.
+- Quotes are 4–120 characters. Quotes shorter than 10 characters are allowed for verbatim short utterances (e.g. 「卧槽，陨石！」) but capped at 20% of the chapter's quotes, with a floor of one — frequency control instead of a hard ban (2026-08-04 real-run finding; the first live chapters failed because a single 6-character verbatim quote violated the old 10-character minimum).
 - Retrieval is deterministic SQL and lexical incidence only. There is no embedding or ANN path in M4 because ADR 0002 requires a measured retrieval failure first.
 - Writer safety is initially strict: only CANON events before the current chapter that involve a current cast member and are known by every resolved cast member may enter the prompt.
 - The rolling background is a deterministic summary of accepted events: all CANON events from the previous 8 chapters plus up to 12 older cast-related events, sorted by `(chapter, event_id)`. No second summarizer call is introduced until this context shape is evaluated.
@@ -197,7 +198,7 @@
   class RawEvent(BaseModel):
       model_config = ConfigDict(frozen=True, extra="forbid")
       summary: str = Field(min_length=1)
-      quote: str = Field(min_length=10, max_length=120)
+      quote: str = Field(min_length=4, max_length=120)
       participants: list[str] = Field(default_factory=list)
       knowers: list[str] = Field(default_factory=list)
       revealed_facts: list[str] = Field(default_factory=list)
@@ -219,7 +220,7 @@
       object: str | None = None
       dimension: str | None = None
       value: str | None = None
-      quote: str = Field(min_length=10, max_length=120)
+      quote: str = Field(min_length=4, max_length=120)
       confidence: float = Field(ge=0, le=1)
 
   class RawChapterAnalysis(BaseModel):

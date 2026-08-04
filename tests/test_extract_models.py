@@ -188,11 +188,37 @@ def test_chapter_analysis_caps_events_and_state_updates() -> None:
         RawChapterAnalysis.model_validate(_analysis(state_updates=[_state() for _ in range(25)]))
 
 
+def test_short_quotes_are_ratio_capped_per_chapter() -> None:
+    """短引语（<10 字）按本章引语总数的 20% 控制，且至少放行 1 条。"""
+    short = "卧槽，陨石！"
+    # 12 条引语：20% = 2，2 条短引语合法。
+    RawChapterAnalysis.model_validate(
+        _analysis(events=[_event(quote=short)] * 2 + [_event() for _ in range(10)])
+    )
+    # 12 条引语 3 条短引语 → 超比例，整章拒收。
+    with pytest.raises(ValidationError):
+        RawChapterAnalysis.model_validate(
+            _analysis(events=[_event(quote=short)] * 3 + [_event() for _ in range(9)])
+        )
+    # 单条引语章节：比例算出来是 0，也至少放行 1 条。
+    RawChapterAnalysis.model_validate(_analysis(events=[_event(quote=short)]))
+    # 事件 + 状态更新合并计数：7 条引语允许 1 条，2 条短引语 → 拒。
+    with pytest.raises(ValidationError):
+        RawChapterAnalysis.model_validate(
+            _analysis(
+                events=[_event(quote=short)] + [_event() for _ in range(5)],
+                state_updates=[_state(quote=short)],
+            )
+        )
+
+
 def test_raw_field_length_boundaries_are_enforced() -> None:
     with pytest.raises(ValidationError):
         RawEvent.model_validate(_event(summary=""))
     with pytest.raises(ValidationError):
         RawEvent.model_validate(_event(quote="短引语"))
+    # 4–9 字的短引语在字段层合法（频率在章级控制）。
+    RawEvent.model_validate(_event(quote="卧槽，陨石！"))
     with pytest.raises(ValidationError):
         RawEvent.model_validate(_event(quote="引" * 121))
     with pytest.raises(ValidationError):

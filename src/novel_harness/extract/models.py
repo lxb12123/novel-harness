@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal, Self
+from typing import Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -16,6 +16,15 @@ __all__ = [
 
 _UNTRUSTED_CONFIG = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
+SHORT_QUOTE_LIMIT: Final = 10
+"""引语短于这个字符数算「短引语」。"""
+
+SHORT_QUOTE_RATIO: Final = 0.20
+"""短引语占本章引语总数的比例上限。"""
+
+MIN_SHORT_QUOTES_PER_CHAPTER: Final = 1
+"""比例算出来是 0 时至少放行 1 条：单事件章节不该因为唯一原话太短而整章失败。"""
+
 
 class RawEvent(BaseModel):
     """One story beat proposed by the analysis model."""
@@ -23,7 +32,7 @@ class RawEvent(BaseModel):
     model_config = _UNTRUSTED_CONFIG
 
     summary: str = Field(min_length=1)
-    quote: str = Field(min_length=10, max_length=120)
+    quote: str = Field(min_length=4, max_length=120)
     participants: tuple[str, ...]
     knowers: tuple[str, ...]
     revealed_facts: tuple[str, ...]
@@ -53,7 +62,7 @@ class RawStateUpdate(BaseModel):
     object: str | None = None
     dimension: str | None = None
     value: str | None = None
-    quote: str = Field(min_length=10, max_length=120)
+    quote: str = Field(min_length=4, max_length=120)
     confidence: float = Field(ge=0, le=1)
 
     @model_validator(mode="after")
@@ -77,3 +86,22 @@ class RawChapterAnalysis(BaseModel):
     events: tuple[RawEvent, ...] = Field(min_length=1, max_length=12)
     state_updates: tuple[RawStateUpdate, ...] = Field(max_length=24)
     character_profiles: tuple[RawCharacterProfile, ...]
+
+    @model_validator(mode="after")
+    def short_quote_frequency_capped(self) -> Self:
+        items = (*self.events, *self.state_updates)
+        short = sum(
+            1
+            for item in items
+            if len(item.quote) < SHORT_QUOTE_LIMIT
+        )
+        allowed = max(
+            MIN_SHORT_QUOTES_PER_CHAPTER,
+            int(SHORT_QUOTE_RATIO * len(items)),
+        )
+        if short > allowed:
+            raise ValueError(
+                f"short quotes {short} exceed the per-chapter allowance {allowed} "
+                f"({SHORT_QUOTE_RATIO:.0%} of {len(items)} quotes, min {MIN_SHORT_QUOTES_PER_CHAPTER})"
+            )
+        return self

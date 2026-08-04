@@ -147,10 +147,16 @@ def test_analysis_prompt_pins_safety_and_shape_rules() -> None:
     assert "story-beat" in system
     assert "1-12" in system
     assert "verbatim" in system
-    assert "10-120" in system
+    assert "4-120" in system
+    assert "20%" in system
     assert "location" in system and "object" in system
     assert "state" in system and "dimension" in system and "value" in system
     assert "relationship" in system
+    # 2026-08-04 真模型首跑回归：state update 的判别字段和 confidence 必须点名，
+    # 否则模型会自创 "shape" 或漏掉 kind，整章被严格解析拒收。
+    assert '"kind"' in system
+    assert '"kind": "location"' in system
+    assert "confidence" in system
     for forbidden in ("IDs", "chapter", "scope", "status"):
         assert forbidden in system
     assert "surface names" in system
