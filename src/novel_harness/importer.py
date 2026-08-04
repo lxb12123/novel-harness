@@ -70,6 +70,8 @@ def chapter_text(heading: str, body: str) -> str:
     行首只容得下空白，`# 第一章 少年萧决` **匹配不上**。加了 `#` 就让 `sync` 和重新
     import 把每个文件都切出零章——导出的 chapters/ 再也读不回来，而它今天看起来很漂亮。
     """
+    if not body:
+        return f"{heading}\n\n"
     return f"{heading}\n\n{body}\n"
 
 

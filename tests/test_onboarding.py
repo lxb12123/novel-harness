@@ -59,8 +59,17 @@ def test_import_bootstraps_two_chapters_and_snapshots(
 
 
 def test_blank_bootstraps_exact_first_chapter_and_snapshot(
-    conn: Connection, tmp_path: Path
+    conn: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    original_sync = onboarding.importer.sync
+    sync_calls = 0
+
+    def count_sync(*args: Any, **kwargs: Any) -> Any:
+        nonlocal sync_calls
+        sync_calls += 1
+        return original_sync(*args, **kwargs)
+
+    monkeypatch.setattr(onboarding.importer, "sync", count_sync)
     result = onboarding.bootstrap_project(
         conn,
         books_root=tmp_path / "books",
@@ -72,8 +81,17 @@ def test_blank_bootstraps_exact_first_chapter_and_snapshot(
     assert result.initial_chapter == 1
     assert result.import_report is None
     root = Path(result.project.root_path)
-    assert (root / "chapters/0001.md").read_text(encoding="utf-8") == "第一章\n\n"
-    assert _snapshot_numbers(conn, result.project.id) == [1]
+    disk_text = (root / "chapters/0001.md").read_text(encoding="utf-8")
+    store = SqliteStoryGraph(conn)
+    history = store.chapter_snapshots(result.project.id, 1)
+    current = store.current_snapshots(result.project.id)
+    assert disk_text == "第一章\n\n"
+    assert sync_calls == 1
+    assert len(history) == 1
+    assert history[0].is_current
+    assert history[0].text == disk_text
+    assert [item.number for item in current] == [1]
+    assert current[0].text == disk_text
 
 
 def test_zero_chapter_import_leaves_no_project_or_directory(
@@ -237,6 +255,35 @@ def test_concurrent_empty_candidate_is_preserved_and_bootstrap_uses_next_suffix(
     assert (books / "并发同名-2/chapters/0001.md").is_file()
 
 
+def test_legacy_allocator_cannot_reuse_an_active_bootstrap_reservation(
+    conn: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    books = tmp_path / "books"
+    original_mkdtemp = onboarding.tempfile.mkdtemp
+    legacy_roots: list[Path] = []
+
+    def allocate_stage_after_legacy_call(*args: Any, **kwargs: Any) -> str:
+        legacy_roots.append(onboarding.create_legacy_root(Path(kwargs["dir"]), "混合分配"))
+        return original_mkdtemp(*args, **kwargs)
+
+    monkeypatch.setattr(onboarding.tempfile, "mkdtemp", allocate_stage_after_legacy_call)
+
+    result = onboarding.bootstrap_project(
+        conn,
+        books_root=books,
+        mode="blank",
+        name="混合分配",
+        text=None,
+    )
+
+    final_root = Path(result.project.root_path)
+    assert final_root == books / "混合分配"
+    assert legacy_roots == [books / "混合分配-2"]
+    assert legacy_roots[0].is_dir()
+    assert sorted(path.name for path in final_root.iterdir()) == ["chapters"]
+    legacy_roots[0].rmdir()
+
+
 def test_failure_cleanup_uses_owned_reservations_without_stat_then_delete(
     conn: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -311,6 +358,81 @@ def test_cleanup_base_exception_preserves_original_failure_and_retries_owned_pat
     assert cleanup_calls[0] == cleanup_calls[2]
 
 
+def test_persistent_cleanup_failure_is_added_as_a_note_to_the_original_exception(
+    conn: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    books = tmp_path / "books"
+    original_rmtree = onboarding.shutil.rmtree
+    failed_paths: list[Path] = []
+
+    def fail_sync(*args: Any, **kwargs: Any) -> None:
+        raise RuntimeError("sync remains primary")
+
+    def always_fail_stage(path: Path, *args: Any, **kwargs: Any) -> None:
+        owned = Path(path)
+        if owned.name.startswith(".nh-bootstrap-"):
+            failed_paths.append(owned)
+            raise OSError("cleanup denied")
+        original_rmtree(path, *args, **kwargs)
+
+    monkeypatch.setattr(onboarding.importer, "sync", fail_sync)
+    monkeypatch.setattr(onboarding.shutil, "rmtree", always_fail_stage)
+
+    with pytest.raises(RuntimeError, match="sync remains primary") as excinfo:
+        onboarding.bootstrap_project(
+            conn,
+            books_root=books,
+            mode="import",
+            name="清理诊断",
+            text="第一章\n\n正文。\n",
+        )
+
+    leaked = failed_paths[0]
+    try:
+        notes = getattr(excinfo.value, "__notes__", [])
+        assert len(failed_paths) == 2
+        assert any(str(leaked) in note and "OSError: cleanup denied" in note for note in notes)
+        assert _project_rows(conn) == []
+        assert not (books / "清理诊断").exists()
+        assert leaked.is_dir()
+    finally:
+        original_rmtree(leaked)
+
+
+def test_partial_promotion_failure_rolls_back_and_cleans_stage_and_final(
+    conn: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    books = tmp_path / "books"
+    final = books / "部分晋升"
+    original_rmdir = Path.rmdir
+    failed_after_move = False
+
+    def fail_stage_rmdir_after_children_moved(path: Path) -> None:
+        nonlocal failed_after_move
+        if path.name.startswith(".nh-bootstrap-") and list(path.iterdir()) == []:
+            assert (final / "chapters/0001.md").is_file()
+            failed_after_move = True
+            raise OSError("stage rmdir failed after promotion")
+        original_rmdir(path)
+
+    monkeypatch.setattr(Path, "rmdir", fail_stage_rmdir_after_children_moved)
+
+    with pytest.raises(OSError, match="stage rmdir failed after promotion"):
+        onboarding.bootstrap_project(
+            conn,
+            books_root=books,
+            mode="import",
+            name="部分晋升",
+            text="第一章\n\n正文。\n",
+        )
+
+    assert failed_after_move
+    assert _project_rows(conn) == []
+    assert not conn.in_transaction
+    assert not final.exists()
+    assert _stages(books) == []
+
+
 def test_next_book_root_sanitizes_and_never_reuses_existing_paths(tmp_path: Path) -> None:
     books = tmp_path / "books"
     books.mkdir()
@@ -319,6 +441,16 @@ def test_next_book_root_sanitizes_and_never_reuses_existing_paths(tmp_path: Path
 
     assert onboarding.next_book_root(books, ' 坏/书:*?"名<>| ') == books / "坏书名-3"
     assert onboarding.next_book_root(books, "////") == books / "book"
+
+
+def test_next_book_root_treats_a_dangling_symlink_as_occupied(tmp_path: Path) -> None:
+    books = tmp_path / "books"
+    books.mkdir()
+    dangling = books / "悬空链接"
+    dangling.symlink_to(books / "missing-target", target_is_directory=True)
+
+    assert not dangling.exists()
+    assert onboarding.next_book_root(books, "悬空链接") == books / "悬空链接-2"
 
 
 def test_create_legacy_root_reuses_only_an_existing_empty_directory(tmp_path: Path) -> None:

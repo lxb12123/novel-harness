@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 from typing import Literal
 
@@ -29,6 +31,8 @@ class BootstrapResult(BaseModel):
 
 
 _UNSAFE_PATH = re.compile(r'[/\\:*?"<>|]')
+_RESERVATION_MARKER = ".nh-bootstrap-reserved"
+_ALLOCATOR_LOCK = threading.RLock()
 
 
 def _book_slug(name: str) -> str:
@@ -40,7 +44,7 @@ def next_book_root(base: Path, name: str) -> Path:
     slug = _book_slug(name)
     root = base / slug
     suffix = 2
-    while root.exists():
+    while os.path.lexists(root):
         root = base / f"{slug}-{suffix}"
         suffix += 1
     return root
@@ -48,27 +52,34 @@ def next_book_root(base: Path, name: str) -> Path:
 
 def create_legacy_root(base: Path, name: str) -> Path:
     """Create a root with the legacy API rule: an existing empty directory is reusable."""
-    slug = _book_slug(name)
-    root = base / slug
-    suffix = 2
-    while root.exists() and any(root.iterdir()):
-        root = base / f"{slug}-{suffix}"
-        suffix += 1
-    root.mkdir(parents=True, exist_ok=True)
-    return root
+    with _ALLOCATOR_LOCK:
+        slug = _book_slug(name)
+        root = base / slug
+        suffix = 2
+        while root.exists() and any(root.iterdir()):
+            root = base / f"{slug}-{suffix}"
+            suffix += 1
+        root.mkdir(parents=True, exist_ok=True)
+        return root
 
 
 def _reserve_book_root(base: Path, name: str) -> Path:
     """Atomically reserve a never-reused final root, retrying suffixes after races."""
-    while True:
-        candidate = next_book_root(base, name)
-        try:
-            candidate.mkdir(exist_ok=False)
-        except FileExistsError:
-            # Another bootstrap won after next_book_root() checked. Its reservation is ownership,
-            # even while empty, so retry and let the stable suffix calculation move forward.
-            continue
-        return candidate
+    with _ALLOCATOR_LOCK:
+        while True:
+            candidate = next_book_root(base, name)
+            try:
+                candidate.mkdir(exist_ok=False)
+            except FileExistsError:
+                # Another bootstrap won after next_book_root() checked. Its reservation is
+                # ownership, so retry and let stable suffix calculation move forward.
+                continue
+            try:
+                (candidate / _RESERVATION_MARKER).write_text("reserved\n", encoding="utf-8")
+            except BaseException:
+                candidate.rmdir()
+                raise
+            return candidate
 
 
 def _promote_stage(stage: Path, final_root: Path) -> None:
@@ -76,9 +87,10 @@ def _promote_stage(stage: Path, final_root: Path) -> None:
     for child in stage.iterdir():
         child.rename(final_root / child.name)
     stage.rmdir()
+    (final_root / _RESERVATION_MARKER).unlink()
 
 
-def _cleanup_owned_paths(*paths: Path | None) -> None:
+def _cleanup_owned_paths(*paths: Path | None) -> list[tuple[Path, BaseException]]:
     """Best-effort cleanup of owned paths, retrying each failed removal exactly once.
 
     Cleanup must remain subordinate to the business failure being handled: even
@@ -96,14 +108,16 @@ def _cleanup_owned_paths(*paths: Path | None) -> None:
         except BaseException:
             retry.append(path)
 
+    failures: list[tuple[Path, BaseException]] = []
     for path in retry:
         try:
             shutil.rmtree(path)
         except FileNotFoundError:
             pass
-        except BaseException:
+        except BaseException as error:
             # One bounded retry is enough; cleanup can never replace the original exception.
-            pass
+            failures.append((path, error))
+    return failures
 
 
 def _prepared_book(*, mode: BootstrapMode, text: str | None) -> Chapterization:
@@ -152,20 +166,13 @@ def bootstrap_project(
         with store.transaction():
             created = project.insert(conn, name=cleaned_name, root_path=str(final_root))
             report = importer.import_prepared(store, created.id, book=book, root=stage)
-            if mode == "blank":
-                # importer.chapter_text preserves a terminal body newline; an empty body would
-                # otherwise serialize as three newlines. Normalize the blank seed, then sync that
-                # exact manuscript byte sequence so the current snapshot still mirrors the disk.
-                first = stage / "chapters/0001.md"
-                first.write_text("第一章\n\n", encoding="utf-8")
-                importer.sync(store, created.id, stage)
             result = BootstrapResult(
                 project=created,
                 import_report=report if mode == "import" else None,
             )
             _promote_stage(stage, final_root)
         return result
-    except BaseException:
+    except BaseException as original:
         # _transaction catches failures inside its body, but commit itself happens after that
         # handler. Roll back here as well to cover a commit() exception with an open transaction.
         try:
@@ -179,5 +186,8 @@ def bootstrap_project(
         # Cooperative bootstrap calls never replace these reservations: they see them as occupied
         # and choose a suffix. Arbitrary hostile filesystem mutation is outside this local-service
         # boundary; within it, neither pathname can belong to a competitor.
-        _cleanup_owned_paths(stage, final_root)
+        for path, error in _cleanup_owned_paths(stage, final_root):
+            original.add_note(
+                f"bootstrap cleanup may have leaked {path}: {type(error).__name__}: {error}"
+            )
         raise
