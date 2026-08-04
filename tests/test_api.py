@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from novel_harness import importer, project
+from novel_harness.api.deps import get_conn
 from novel_harness.db import connect, migrate
 from novel_harness.declare import Ledger
 from novel_harness.graph import (
@@ -143,6 +145,33 @@ def _error(response: Any) -> dict[str, Any]:
     """测试侧的归一化：自定义 handler 的 error 在顶层，HTTPException 在 .detail。"""
     body = response.json()
     return body.get("detail", body) if isinstance(body.get("detail"), dict) else body
+
+
+def test_request_connection_survives_fastapi_worker_thread_handoff(
+    book: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("NH_DB", book["db"])
+    dependency = get_conn()
+    conn = next(dependency)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            name = executor.submit(
+                lambda: conn.execute(
+                    "SELECT name FROM project WHERE id = ?", (book["pid"],)
+                ).fetchone()["name"]
+            ).result()
+        assert name == "青云记"
+    finally:
+        dependency.close()
+
+
+def test_parallel_http_requests_keep_connections_request_local(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    url = f"/api/projects/{_pid(book)}/chapters"
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        responses = list(executor.map(lambda _: client.get(url), range(20)))
+    assert [response.status_code for response in responses] == [200] * 20
 
 
 # ══════════════════════════════════════════════════════════════════════════

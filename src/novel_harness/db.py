@@ -68,7 +68,7 @@ def _utf8_text(raw: object) -> int:
     return int(strict_sql_text(raw) is not None)
 
 
-def connect(path: str | Path) -> Connection:
+def connect(path: str | Path, *, check_same_thread: bool = True) -> Connection:
     """打开一个库并设好 PRAGMA/SQL 函数。**所有连接都必须从这里出来**，别自己连接。
 
     传 `IN_MEMORY`（":memory:"）拿一个临时库；内存库不支持 WAL，会静默停在 "memory"
@@ -80,7 +80,7 @@ def connect(path: str | Path) -> Connection:
         Path(target).expanduser().parent.mkdir(parents=True, exist_ok=True)
         target = str(Path(target).expanduser())
 
-    conn = sqlite3.connect(target)
+    conn = sqlite3.connect(target, check_same_thread=check_same_thread)
     conn.row_factory = sqlite3.Row
     conn.create_function("nh_json_canonical", 1, canonical_json_text, deterministic=True)
     conn.create_function("nh_sha256_text", 1, _sha256_text, deterministic=True)
