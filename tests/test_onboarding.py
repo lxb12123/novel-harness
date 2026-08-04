@@ -205,6 +205,76 @@ def test_existing_book_directory_is_never_overwritten(conn: Connection, tmp_path
     assert (books / "同名-2/chapters/0001.md").is_file()
 
 
+def test_concurrent_empty_candidate_is_preserved_and_bootstrap_uses_next_suffix(
+    conn: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    books = tmp_path / "books"
+    original_next = onboarding.next_book_root
+    raced: dict[str, int] = {}
+
+    def create_competitor_before_reservation(base: Path, name: str) -> Path:
+        candidate = original_next(base, name)
+        if not raced:
+            candidate.mkdir()
+            raced["inode"] = candidate.stat().st_ino
+        return candidate
+
+    monkeypatch.setattr(onboarding, "next_book_root", create_competitor_before_reservation)
+
+    result = onboarding.bootstrap_project(
+        conn,
+        books_root=books,
+        mode="blank",
+        name="并发同名",
+        text=None,
+    )
+
+    competitor = books / "并发同名"
+    assert competitor.is_dir()
+    assert competitor.stat().st_ino == raced["inode"]
+    assert list(competitor.iterdir()) == []
+    assert Path(result.project.root_path) == books / "并发同名-2"
+    assert (books / "并发同名-2/chapters/0001.md").is_file()
+
+
+def test_failure_cleanup_uses_owned_reservations_without_stat_then_delete(
+    conn: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    books = tmp_path / "books"
+    competitor = books / "清理竞态"
+    competitor.mkdir(parents=True)
+    competitor_inode = competitor.stat().st_ino
+    cleanup_started = False
+    original_stat = Path.stat
+
+    def fail_sync(*args: Any, **kwargs: Any) -> None:
+        nonlocal cleanup_started
+        cleanup_started = True
+        raise RuntimeError("sync failed before promotion")
+
+    def forbid_cleanup_stat(path: Path, *args: Any, **kwargs: Any) -> Any:
+        if cleanup_started and path.name.startswith(".nh-bootstrap-"):
+            raise AssertionError("cleanup must not authorize rmtree with a prior Path.stat")
+        return original_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(onboarding.importer, "sync", fail_sync)
+    monkeypatch.setattr(Path, "stat", forbid_cleanup_stat)
+
+    with pytest.raises(RuntimeError, match="sync failed before promotion"):
+        onboarding.bootstrap_project(
+            conn,
+            books_root=books,
+            mode="import",
+            name="清理竞态",
+            text="第一章\n\n正文。\n",
+        )
+
+    assert competitor.stat().st_ino == competitor_inode
+    assert list(competitor.iterdir()) == []
+    assert not (books / "清理竞态-2").exists()
+    assert _stages(books) == []
+
+
 def test_next_book_root_sanitizes_and_never_reuses_existing_paths(tmp_path: Path) -> None:
     books = tmp_path / "books"
     books.mkdir()

@@ -58,6 +58,26 @@ def create_legacy_root(base: Path, name: str) -> Path:
     return root
 
 
+def _reserve_book_root(base: Path, name: str) -> Path:
+    """Atomically reserve a never-reused final root, retrying suffixes after races."""
+    while True:
+        candidate = next_book_root(base, name)
+        try:
+            candidate.mkdir(exist_ok=False)
+        except FileExistsError:
+            # Another bootstrap won after next_book_root() checked. Its reservation is ownership,
+            # even while empty, so retry and let the stable suffix calculation move forward.
+            continue
+        return candidate
+
+
+def _promote_stage(stage: Path, final_root: Path) -> None:
+    """Move every staged top-level item into this invocation's reserved final directory."""
+    for child in stage.iterdir():
+        child.rename(final_root / child.name)
+    stage.rmdir()
+
+
 def _prepared_book(*, mode: BootstrapMode, text: str | None) -> Chapterization:
     if mode == "import":
         if text is None:
@@ -80,9 +100,9 @@ def bootstrap_project(
 ) -> BootstrapResult:
     """Atomically create one project, its manuscript directory, chapters, and snapshots.
 
-    Cleanup is deliberately bounded to paths created exclusively by this invocation: its
-    random stage directory, or the final directory only after that exact stage was promoted.
-    A pre-existing or concurrently-created candidate is never selected for cleanup.
+    Cleanup is deliberately bounded to paths created exclusively by this invocation: the stage
+    returned by ``mkdtemp`` and the final directory won by an exclusive ``mkdir``. A pre-existing
+    or concurrently-created candidate is never selected for cleanup.
     """
     cleaned_name = name.strip()
     if not cleaned_name:
@@ -92,14 +112,15 @@ def bootstrap_project(
     book = _prepared_book(mode=mode, text=text)
 
     books_root.mkdir(parents=True, exist_ok=True)
-    final_root = next_book_root(books_root, cleaned_name)
-    stage = Path(tempfile.mkdtemp(prefix=".nh-bootstrap-", dir=books_root))
-    stage_stat = stage.stat()
-    stage_identity = (stage_stat.st_dev, stage_stat.st_ino)
-    promoted = False
-    store = SqliteStoryGraph(conn)
+    final_root: Path | None = None
+    stage: Path | None = None
 
     try:
+        # mkdir(exist_ok=False) is the portable no-clobber primitive. An empty final directory is
+        # therefore an ownership reservation, never a reusable candidate for another bootstrap.
+        final_root = _reserve_book_root(books_root, cleaned_name)
+        stage = Path(tempfile.mkdtemp(prefix=".nh-bootstrap-", dir=books_root))
+        store = SqliteStoryGraph(conn)
         with store.transaction():
             created = project.insert(conn, name=cleaned_name, root_path=str(final_root))
             report = importer.import_prepared(store, created.id, book=book, root=stage)
@@ -114,8 +135,7 @@ def bootstrap_project(
                 project=created,
                 import_report=report if mode == "import" else None,
             )
-            stage.rename(final_root)
-            promoted = True
+            _promote_stage(stage, final_root)
         return result
     except BaseException:
         # _transaction catches failures inside its body, but commit itself happens after that
@@ -127,16 +147,12 @@ def bootstrap_project(
             # Cleanup errors must not replace the business/commit exception promised to callers.
             pass
 
-        # Identity closes the tiny async-exception window between rename() returning and setting
-        # promoted=True, while keeping a racing/pre-existing final directory outside our boundary.
-        candidate = final_root if promoted or not stage.exists() else stage
-        try:
-            candidate_stat = candidate.stat()
-            if (candidate_stat.st_dev, candidate_stat.st_ino) == stage_identity:
-                shutil.rmtree(candidate)
-        except FileNotFoundError:
-            pass
-        except BaseException:
-            # Preserve the original exception even if best-effort filesystem cleanup itself fails.
-            pass
+        # Ownership comes from mkdtemp and atomic mkdir, not a racy stat-before-delete check.
+        # Cooperative bootstrap calls never replace these reservations: they see them as occupied
+        # and choose a suffix. Arbitrary hostile filesystem mutation is outside this local-service
+        # boundary; within it, neither pathname can belong to a competitor.
+        if stage is not None:
+            shutil.rmtree(stage, ignore_errors=True)
+        if final_root is not None:
+            shutil.rmtree(final_root, ignore_errors=True)
         raise
