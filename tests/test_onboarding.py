@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import multiprocessing
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,46 @@ def _project_rows(conn: Any) -> list[project.Project]:
 
 def _snapshot_numbers(conn: Any, project_id: str) -> list[int]:
     return [item.number for item in SqliteStoryGraph(conn).current_snapshots(project_id)]
+
+
+def _new_allocator_process(
+    books: Path, name: str, ready: Any, release: Any, results: Any
+) -> None:
+    """Pause the new allocator after its atomic mkdir, before helper control resumes."""
+    original_mkdir = Path.mkdir
+    blocked = False
+
+    def mkdir_then_wait(path: Path, *args: Any, **kwargs: Any) -> None:
+        nonlocal blocked
+        original_mkdir(path, *args, **kwargs)
+        if not blocked and path.parent == books:
+            blocked = True
+            ready.set()
+            if not release.wait(10):
+                raise TimeoutError("legacy allocator did not reach the barrier")
+
+    Path.mkdir = mkdir_then_wait
+    try:
+        root = onboarding._reserve_book_root(books, name)
+        results.put(("new", str(root)))
+    except BaseException as error:
+        results.put(("new-error", repr(error)))
+    finally:
+        Path.mkdir = original_mkdir
+
+
+def _legacy_allocator_process(
+    books: Path, name: str, ready: Any, release: Any, results: Any
+) -> None:
+    try:
+        if not ready.wait(10):
+            raise TimeoutError("new allocator did not reach the barrier")
+        root = onboarding.create_legacy_root(books, name)
+        results.put(("legacy", str(root)))
+    except BaseException as error:
+        results.put(("legacy-error", repr(error)))
+    finally:
+        release.set()
 
 
 def test_import_bootstraps_two_chapters_and_snapshots(
@@ -284,6 +325,50 @@ def test_legacy_allocator_cannot_reuse_an_active_bootstrap_reservation(
     legacy_roots[0].rmdir()
 
 
+def test_new_and_legacy_allocators_reserve_distinct_roots_across_processes(
+    tmp_path: Path,
+) -> None:
+    books = tmp_path / "books"
+    books.mkdir()
+    context = multiprocessing.get_context("spawn")
+    ready = context.Event()
+    release = context.Event()
+    results = context.Queue()
+    processes = [
+        context.Process(
+            target=_new_allocator_process,
+            args=(books, "跨进程同名", ready, release, results),
+        ),
+        context.Process(
+            target=_legacy_allocator_process,
+            args=(books, "跨进程同名", ready, release, results),
+        ),
+    ]
+
+    for process in processes:
+        process.start()
+    try:
+        for process in processes:
+            process.join(12)
+        assert all(not process.is_alive() for process in processes)
+        assert all(process.exitcode == 0 for process in processes)
+        allocated = dict(results.get(timeout=2) for _ in processes)
+        assert set(allocated) == {"new", "legacy"}
+        roots = {Path(path) for path in allocated.values()}
+        assert roots == {books / "跨进程同名", books / "跨进程同名-2"}
+        assert all(root.is_dir() for root in roots)
+    finally:
+        release.set()
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+            process.join(2)
+        results.close()
+        results.join_thread()
+        for root in books.iterdir():
+            onboarding.shutil.rmtree(root)
+
+
 def test_failure_cleanup_uses_owned_reservations_without_stat_then_delete(
     conn: Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -453,17 +538,20 @@ def test_next_book_root_treats_a_dangling_symlink_as_occupied(tmp_path: Path) ->
     assert onboarding.next_book_root(books, "悬空链接") == books / "悬空链接-2"
 
 
-def test_create_legacy_root_reuses_only_an_existing_empty_directory(tmp_path: Path) -> None:
+def test_create_legacy_root_never_reuses_an_existing_empty_directory(tmp_path: Path) -> None:
     books = tmp_path / "books"
     empty = books / "旧接口"
     empty.mkdir(parents=True)
 
-    assert onboarding.create_legacy_root(books, "旧接口") == empty
-
-    (empty / "作者原稿.md").write_text("保留", encoding="utf-8")
     created = onboarding.create_legacy_root(books, "旧接口")
     assert created == books / "旧接口-2"
     assert created.is_dir()
+    assert list(empty.iterdir()) == []
+
+    (empty / "作者原稿.md").write_text("保留", encoding="utf-8")
+    second = onboarding.create_legacy_root(books, "旧接口")
+    assert second == books / "旧接口-3"
+    assert second.is_dir()
     assert (empty / "作者原稿.md").read_text(encoding="utf-8") == "保留"
 
 

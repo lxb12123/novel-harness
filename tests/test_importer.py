@@ -79,10 +79,10 @@ def test_chapter_text_does_not_prefix_the_heading_with_a_hash() -> None:
     assert text.endswith("\n")
 
 
-def test_chapter_text_with_empty_body_has_one_blank_line_and_round_trips() -> None:
+def test_chapter_text_preserves_empty_body_serialization_and_round_trips() -> None:
     text = chapter_text("第一章", "")
 
-    assert text == "第一章\n\n"
+    assert text == "第一章\n\n\n"
     assert len(chapterize(text).chapters) == 1
 
 

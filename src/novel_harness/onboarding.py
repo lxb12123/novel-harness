@@ -6,7 +6,6 @@ import os
 import re
 import shutil
 import tempfile
-import threading
 from pathlib import Path
 from typing import Literal
 
@@ -31,8 +30,6 @@ class BootstrapResult(BaseModel):
 
 
 _UNSAFE_PATH = re.compile(r'[/\\:*?"<>|]')
-_RESERVATION_MARKER = ".nh-bootstrap-reserved"
-_ALLOCATOR_LOCK = threading.RLock()
 
 
 def _book_slug(name: str) -> str:
@@ -51,35 +48,22 @@ def next_book_root(base: Path, name: str) -> Path:
 
 
 def create_legacy_root(base: Path, name: str) -> Path:
-    """Create a root with the legacy API rule: an existing empty directory is reusable."""
-    with _ALLOCATOR_LOCK:
-        slug = _book_slug(name)
-        root = base / slug
-        suffix = 2
-        while root.exists() and any(root.iterdir()):
-            root = base / f"{slug}-{suffix}"
-            suffix += 1
-        root.mkdir(parents=True, exist_ok=True)
-        return root
+    """Create a legacy API root without reusing any existing filesystem entry."""
+    base.mkdir(parents=True, exist_ok=True)
+    return _reserve_book_root(base, name)
 
 
 def _reserve_book_root(base: Path, name: str) -> Path:
     """Atomically reserve a never-reused final root, retrying suffixes after races."""
-    with _ALLOCATOR_LOCK:
-        while True:
-            candidate = next_book_root(base, name)
-            try:
-                candidate.mkdir(exist_ok=False)
-            except FileExistsError:
-                # Another bootstrap won after next_book_root() checked. Its reservation is
-                # ownership, so retry and let stable suffix calculation move forward.
-                continue
-            try:
-                (candidate / _RESERVATION_MARKER).write_text("reserved\n", encoding="utf-8")
-            except BaseException:
-                candidate.rmdir()
-                raise
-            return candidate
+    while True:
+        candidate = next_book_root(base, name)
+        try:
+            candidate.mkdir(exist_ok=False)
+        except FileExistsError:
+            # Another process won after next_book_root() checked. The directory itself is its
+            # reservation, even while empty, so retry and advance to the next stable suffix.
+            continue
+        return candidate
 
 
 def _promote_stage(stage: Path, final_root: Path) -> None:
@@ -87,7 +71,6 @@ def _promote_stage(stage: Path, final_root: Path) -> None:
     for child in stage.iterdir():
         child.rename(final_root / child.name)
     stage.rmdir()
-    (final_root / _RESERVATION_MARKER).unlink()
 
 
 def _cleanup_owned_paths(*paths: Path | None) -> list[tuple[Path, BaseException]]:
@@ -165,10 +148,17 @@ def bootstrap_project(
         store = SqliteStoryGraph(conn)
         with store.transaction():
             created = project.insert(conn, name=cleaned_name, root_path=str(final_root))
-            report = importer.import_prepared(store, created.id, book=book, root=stage)
+            if mode == "import":
+                report = importer.import_prepared(store, created.id, book=book, root=stage)
+            else:
+                first = stage / importer.chapter_path(1)
+                first.parent.mkdir(parents=True, exist_ok=True)
+                first.write_text("第一章\n\n", encoding="utf-8")
+                importer.sync(store, created.id, stage)
+                report = None
             result = BootstrapResult(
                 project=created,
-                import_report=report if mode == "import" else None,
+                import_report=report,
             )
             _promote_stage(stage, final_root)
         return result
