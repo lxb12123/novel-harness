@@ -265,8 +265,8 @@ export type BootstrapRequest =
   | { mode: "blank"; name: string };
 
 export interface BootstrapResult {
-  project: Project | null;
-  initial_chapter: number | null;
+  project: Project;
+  initial_chapter: number;
   import_report: ImportReport | null;
 }
 
