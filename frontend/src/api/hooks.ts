@@ -3,6 +3,8 @@ import { api, proj } from "./client";
 import type {
   AiSettings,
   AiSettingsInput,
+  BootstrapRequest,
+  BootstrapResult,
   ChapterRow,
   ChapterSnapshot,
   ChapterText,
@@ -72,6 +74,22 @@ export function useCreateProject() {
   return useMutation({
     mutationFn: (name: string) => api.post<Project>("/api/projects", { name }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["projects"] }),
+  });
+}
+
+export function useBootstrapProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: BootstrapRequest) =>
+      api.post<BootstrapResult>("/api/projects/bootstrap", body),
+    onSuccess: ({ project }) => {
+      const pid = project?.id;
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      if (pid) {
+        qc.invalidateQueries({ queryKey: ["chapters", pid] });
+        qc.invalidateQueries({ queryKey: ["roster", pid] });
+      }
+    },
   });
 }
 

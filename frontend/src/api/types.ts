@@ -260,6 +260,16 @@ export interface ImportReport {
   synced: { added: unknown[]; refreshed: unknown[]; unchanged_count: number; ignored_files: string[] };
 }
 
+export type BootstrapRequest =
+  | { mode: "import"; name: string; text: string }
+  | { mode: "blank"; name: string };
+
+export interface BootstrapResult {
+  project: Project | null;
+  initial_chapter: number | null;
+  import_report: ImportReport | null;
+}
+
 export interface CheckResult {
   chapter: number;
   scene_count: number;
