@@ -12,10 +12,15 @@ export function BlankBookForm({ name, pending, error, onNameChange, onBack, onSu
     <>
       <p className="onboarding-eyebrow">新建小说</p>
       <h1 className="onboarding-title">给这本书起个名字</h1>
-      <p className="onboarding-lead">第一章已经为你准备好了。</p>
-      <label className="onboarding-form">
+      <label className="onboarding-form onboarding-name-form">
         <span>书名</span>
-        <input autoFocus disabled={pending} value={name} onChange={(event) => onNameChange(event.target.value)} />
+        <input
+          className="onboarding-name-input"
+          autoFocus
+          disabled={pending}
+          value={name}
+          onChange={(event) => onNameChange(event.target.value)}
+        />
       </label>
       {error && <p className="onboarding-error" role="alert" aria-live="polite">{error}</p>}
       <div className="onboarding-form-actions">

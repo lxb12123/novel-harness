@@ -130,6 +130,8 @@ describe("引导建书", () => {
 
     const name = screen.getByLabelText("书名");
     expect(name).toHaveFocus();
+    expect(name).toHaveClass("onboarding-name-input");
+    expect(screen.queryByText("第一章已经为你准备好了。")).not.toBeInTheDocument();
     await user.type(name, "新手稿");
     await user.click(screen.getByRole("button", { name: /创建并进入工作台/ }));
 

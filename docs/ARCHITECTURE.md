@@ -311,7 +311,7 @@ cli.py                                          ← nh 的 17 个子命令（含
 api/{app,deps,extraction,review}.py             ← M1.5 FastAPI 壳：40 条自建路由 + 17 个错误映射
                                                   （39 条 /api + 1 条 `GET /`；其中 2 条是 501 stub；
                                                   M4 抽取/事件读端 + 提案审阅/被动确认路由）
-frontend/src/                                   ← React 工作台：34 个非测试手写源文件、4900 行 TS/TSX（993 行测试）
+frontend/src/                                   ← React 工作台：34 个非测试手写源文件、4907 行 TS/TSX（995 行测试）
                                                   （M4 审阅面板：ProposalReviewTab / StateCards / hooks）
 frontend/src/__fixtures__/api.json              ← 从真 app dump 的 29 个端点出参（契约测试两头共用）
 novel_harness/webui/                            ← ↑ 的构建产物（生成物，不入库；随 wheel 分发）
