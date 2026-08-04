@@ -17,7 +17,7 @@ function PrevStateCard({ s }: { s: StateSnapshot }) {
         {s.node.name}
         {s.is_dead && <span className="dead"> · 已亡</span>}
       </div>
-      <div className="row">所在地：{s.location ? s.location.name : "未声明"}</div>
+      <div className="row">所在地：{s.location ? s.location.name : "未记录"}</div>
       <div className="row">已知/误信秘密：{known} 条</div>
     </div>
   );

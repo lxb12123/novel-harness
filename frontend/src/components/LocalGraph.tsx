@@ -26,7 +26,7 @@ const LABEL_ZH: Record<string, string> = {
   Faction: "势力",
   Object: "物品",
   Foreshadow: "伏笔",
-  StateDim: "状态维",
+  StateDim: "状态",
   Chapter: "章",
 };
 const EDGE_ZH: Record<string, string> = {

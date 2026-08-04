@@ -95,7 +95,7 @@ export function DeclareDrawer({
 
         <div className="row" style={{ marginTop: 12 }}>
           <button disabled={!who || !target || !q || declare.isPending} onClick={submit}>
-            {declare.isPending ? "保存中…" : "保存声明"}
+            {declare.isPending ? "保存中…" : "保存记录"}
           </button>
           <button onClick={onClose}>关闭</button>
         </div>

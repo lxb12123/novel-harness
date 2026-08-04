@@ -12,7 +12,7 @@ describe("原文声明", () => {
     expect(document.body.textContent).not.toMatch(/约束 10|valid_from|decision_log|萧决|北荒|血脉秘密/);
     await user.type(screen.getByLabelText("人物"), "主角");
     await user.type(screen.getByLabelText("秘密"), "身世真相");
-    await user.click(screen.getByRole("button", { name: "保存声明" }));
+    await user.click(screen.getByRole("button", { name: "保存记录" }));
 
     expect(await screen.findByText(/已记录/)).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/valid_from|decision_log|CANON|KNOWS|ch\d+/);

@@ -79,7 +79,7 @@ export const LABEL_ZH: Record<NodeLabel, string> = {
   Object: "物品",
   Secret: "秘密",
   Foreshadow: "伏笔",
-  StateDim: "状态维度",
+  StateDim: "状态",
   Chapter: "章",
 };
 

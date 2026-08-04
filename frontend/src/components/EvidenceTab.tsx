@@ -22,7 +22,7 @@ export function EvidenceTab() {
   const roster = useRoster(projectId);
 
   if (!selectedNodeId)
-    return <div className="empty">点左栏一个人（或选区查图谱），这里列出他所有带原文证据的声明。</div>;
+    return <div className="empty">从左侧选择一个条目，这里会显示与它相关的原文依据。</div>;
 
   const nameOf = (id: string) => roster.data?.find((n) => n.id === id)?.name ?? id;
   const evidenced = (state.data?.edges ?? []).filter((e) => e.evidence_id);
@@ -32,7 +32,7 @@ export function EvidenceTab() {
     return (
       <div className="empty">
         {state.data ? state.data.node.name : "这个条目"} 在第 {chapter} 章还没有原文依据。
-        在正文里选中一句话并选择“用这句声明”即可添加。
+        在正文里选中一句话并选择“记录这句”即可添加。
       </div>
     );
 

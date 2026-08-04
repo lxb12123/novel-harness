@@ -11,7 +11,7 @@ describe("当前状态卡", () => {
     for (const s of states) {
       const card = screen.getByText(new RegExp(s.node.name)).closest(".statecard") as HTMLElement;
       expect(
-        within(card).getByText(new RegExp(s.location ? s.location.name : "未声明")),
+        within(card).getByText(new RegExp(s.location ? s.location.name : "未记录")),
       ).toBeInTheDocument();
     }
   });
