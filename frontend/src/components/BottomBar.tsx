@@ -88,6 +88,10 @@ function IntervalBars() {
 }
 
 export function BottomBar() {
+  const { projectId, chapter, selectedNodeId } = useCoords();
+  const { data: scenes } = useScenes(projectId, chapter);
+  if (!selectedNodeId && (!scenes || scenes.length === 0)) return null;
+
   return (
     <footer className="bottombar">
       <div className="tl-col tl-col-scenes">

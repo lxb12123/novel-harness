@@ -1,4 +1,4 @@
-import { useConstraints, useMatrix, useStates, useCheck, useProposals } from "../api/hooks";
+import { useConstraints, useMatrix, useStates, useCheck, useProposals, useRoster } from "../api/hooks";
 import { useCoords, type Tab } from "../store";
 import { MatrixView } from "./KnowledgeMatrix";
 import { LocalGraph } from "./LocalGraph";
@@ -110,10 +110,22 @@ export function RightPanel() {
   const constraints = useConstraints(projectId, chapter, cast);
   const states = useStates(projectId, chapter, cast);
   const proposals = useProposals(projectId, chapter);
+  const roster = useRoster(projectId);
   const pendingCount = (proposals.data ?? []).filter((p) => p.status === "PENDING").length;
   const tabs = TABS.map((t) =>
     t.key === "review" ? { ...t, label: `待确认 · ${pendingCount}` } : t,
   );
+
+  if (!roster.data?.length) {
+    return (
+      <section className="pane">
+        <div className="empty workbench-empty">
+          添加人物或设定后，这里会显示他们在当前章节知道什么、身处何处，以及需要留意的内容。
+          从左侧花名册的“＋”开始即可。
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="pane">
