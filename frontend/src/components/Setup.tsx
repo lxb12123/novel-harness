@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useBootstrapProject } from "../api/hooks";
 import { ApiError, readTextFile } from "../api/client";
 import { useCoords } from "../store";
@@ -17,17 +17,36 @@ export function Setup({ onClose }: { onClose?: () => void }) {
   const [reading, setReading] = useState(false);
   const [readingError, setReadingError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const readTokenRef = useRef(0);
   const bootstrap = useBootstrapProject();
   const { setProject, setChapter } = useCoords();
   const mutationError = bootstrap.error instanceof ApiError ? bootstrap.error.message : null;
 
+  const closeDrawer = useCallback(() => {
+    if (bootstrap.isPending) return;
+    readTokenRef.current += 1;
+    onClose?.();
+  }, [bootstrap.isPending, onClose]);
+
+  useEffect(() => {
+    if (!onClose) return;
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") closeDrawer();
+    }
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [closeDrawer, onClose]);
+
   function back() {
+    readTokenRef.current += 1;
     bootstrap.reset();
     setReadingError(null);
+    setReading(false);
     setMode("choose");
   }
 
   async function selectFile(nextFile: File) {
+    const token = ++readTokenRef.current;
     bootstrap.reset();
     setFile(nextFile);
     setText("");
@@ -36,12 +55,20 @@ export function Setup({ onClose }: { onClose?: () => void }) {
     setMode("import-review");
     setReading(true);
     try {
-      setText(await readTextFile(nextFile));
+      const nextText = await readTextFile(nextFile);
+      if (readTokenRef.current === token) setText(nextText);
     } catch {
-      setReadingError("读取 TXT 失败，请重新选择文件。");
+      if (readTokenRef.current === token) {
+        setReadingError("读取 TXT 失败，请重新选择文件。");
+      }
     } finally {
-      setReading(false);
+      if (readTokenRef.current === token) setReading(false);
     }
+  }
+
+  function changeName(nextName: string) {
+    setName(nextName);
+    bootstrap.reset();
   }
 
   function finish(result: { project: { id: string }; initial_chapter: number }) {
@@ -72,7 +99,7 @@ export function Setup({ onClose }: { onClose?: () => void }) {
           reading={reading}
           pending={bootstrap.isPending}
           error={readingError ?? mutationError}
-          onNameChange={setName}
+          onNameChange={changeName}
           onBack={back}
           onSubmit={submitImport}
         />
@@ -84,7 +111,7 @@ export function Setup({ onClose }: { onClose?: () => void }) {
           name={name}
           pending={bootstrap.isPending}
           error={mutationError}
-          onNameChange={setName}
+          onNameChange={changeName}
           onBack={back}
           onSubmit={submitBlank}
         />
@@ -95,8 +122,10 @@ export function Setup({ onClose }: { onClose?: () => void }) {
         fileInputRef={fileInputRef}
         onFile={selectFile}
         onBlank={() => {
+          readTokenRef.current += 1;
           bootstrap.reset();
           setReadingError(null);
+          setReading(false);
           setName("");
           setMode("blank-name");
         }}
@@ -108,8 +137,18 @@ export function Setup({ onClose }: { onClose?: () => void }) {
   if (!onClose) return <div className="setup-full">{shell}</div>;
   return (
     <>
-      <div className="backdrop" onClick={onClose} />
-      <div className="drawer">{shell}</div>
+      <div className="backdrop" onClick={closeDrawer} />
+      <div className="drawer" role="dialog" aria-modal="true" aria-label="新建 / 导入小说">
+        <button
+          className="onboarding-close"
+          type="button"
+          disabled={bootstrap.isPending}
+          onClick={closeDrawer}
+        >
+          关闭
+        </button>
+        {shell}
+      </div>
     </>
   );
 }
