@@ -216,8 +216,9 @@ def test_raw_field_length_boundaries_are_enforced() -> None:
     with pytest.raises(ValidationError):
         RawEvent.model_validate(_event(summary=""))
     with pytest.raises(ValidationError):
-        RawEvent.model_validate(_event(quote="短引语"))
-    # 4–9 字的短引语在字段层合法（频率在章级控制）。
+        RawEvent.model_validate(_event(quote=""))
+    # 1–9 字的短引语在字段层合法（不设字数下限；频率与歧义在章级/定位器控制）。
+    RawEvent.model_validate(_event(quote="引"))
     RawEvent.model_validate(_event(quote="卧槽，陨石！"))
     with pytest.raises(ValidationError):
         RawEvent.model_validate(_event(quote="引" * 121))

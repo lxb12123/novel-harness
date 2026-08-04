@@ -13,7 +13,7 @@ __all__ = [
 
 
 ANALYSIS_SCHEMA_VERSION: Final = "chapter-analysis-v1"
-ANALYSIS_PROMPT_VERSION: Final = "chapter-analysis-prompt-v5"
+ANALYSIS_PROMPT_VERSION: Final = "chapter-analysis-prompt-v6"
 
 _SYSTEM_PROMPT: Final = f"""You extract structured facts from one supplied novel chapter.
 Schema version: {ANALYSIS_SCHEMA_VERSION}. Prompt version: {ANALYSIS_PROMPT_VERSION}.
@@ -38,11 +38,11 @@ The "kind" field is required. Use exactly one of these three shapes:
 - "kind": "relationship": subject + object + value; dimension must be null or omitted.
 Return no more than 24 state updates.
 
-Every event and state update must include a verbatim 4-120 character quote copied from
-the supplied chapter. Never paraphrase a quote. Quotes shorter than 10 characters are
-allowed only for verbatim short utterances, and at most 30% of the chapter's quotes
-(at least one); otherwise quote a longer verbatim sentence from the chapter that
-contains the utterance.
+Every event and state update must include a verbatim quote of no more than 120
+characters copied from the supplied chapter. Never paraphrase a quote. There is no
+minimum quote length: short verbatim utterances are fine. Quotes shorter than 10
+characters may make up at most 30% of the chapter's quotes (at least one); otherwise
+quote a longer verbatim sentence from the chapter that contains the utterance.
 
 Use surface names from the chapter for participants, knowers, profile surfaces, subjects,
 and objects. Never invent or return business IDs, chapter identifiers or numbers, scope,

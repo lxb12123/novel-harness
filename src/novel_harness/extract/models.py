@@ -33,7 +33,7 @@ class RawEvent(BaseModel):
     model_config = _UNTRUSTED_CONFIG
 
     summary: str = Field(min_length=1)
-    quote: str = Field(min_length=4, max_length=120)
+    quote: str = Field(min_length=1, max_length=120)
     participants: tuple[str, ...]
     knowers: tuple[str, ...]
     revealed_facts: tuple[str, ...]
@@ -63,7 +63,7 @@ class RawStateUpdate(BaseModel):
     object: str | None = None
     dimension: str | None = None
     value: str | None = None
-    quote: str = Field(min_length=4, max_length=120)
+    quote: str = Field(min_length=1, max_length=120)
     confidence: float = Field(ge=0, le=1)
 
     @model_validator(mode="after")

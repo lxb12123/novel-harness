@@ -147,8 +147,9 @@ def test_analysis_prompt_pins_safety_and_shape_rules() -> None:
     assert "story-beat" in system
     assert "1-12" in system
     assert "verbatim" in system
-    assert "4-120" in system
+    assert "120" in system
     assert "30%" in system
+    assert "minimum quote length" in system
     assert "location" in system and "object" in system
     assert "state" in system and "dimension" in system and "value" in system
     assert "relationship" in system
