@@ -1,7 +1,6 @@
-"""Thin HTTP shell for M4 proposal review and passive confirmation.
+"""M4 提案审阅与被动确认的薄 HTTP 壳。
 
-Routes only validate/load/call the extraction services and dump Pydantic
-responses; no SQL and no business rules live here.
+路由只负责校验/装载/调用抽取服务并回吐 Pydantic 出参；这里不放 SQL 也不放业务规则。
 """
 
 from __future__ import annotations
@@ -43,7 +42,7 @@ ProposalId = Annotated[str, Path(min_length=1)]
 
 
 def get_proposal_store(conn: Connection = Depends(get_conn)) -> SqliteProposalStore:
-    """Request-scoped proposal reader sharing the exact connection of the project."""
+    """请求级提案读取器，与项目共用同一条连接。"""
     return SqliteProposalStore(conn)
 
 
@@ -144,7 +143,7 @@ def chapter_proposals(
     proj: Any = Depends(load_project),
     proposals: ProposalStore = Depends(get_proposal_store),
 ) -> list[ProposalRecord]:
-    # Only PENDING is a real queue today; anything else is a consumer bug.
+    # 今天只有 PENDING 是真实队列；其它值都是调用方的 bug。
     return proposals.pending(proj.id, chapter)
 
 

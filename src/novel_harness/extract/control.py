@@ -1,4 +1,4 @@
-"""Frozen control-plane models and deterministic extraction-run serialization."""
+"""冻结的控制面模型与确定性抽取运行序列化。"""
 
 from __future__ import annotations
 
@@ -16,19 +16,19 @@ from .prompt import AnalysisMessage, build_analysis_messages
 
 
 class ExtractionRunnerError(RuntimeError):
-    """Base class for control-plane extraction failures."""
+    """控制面抽取失败的基类。"""
 
 
 class ExtractionChapterNotFound(ExtractionRunnerError):
-    """No current immutable snapshot exists for the requested chapter."""
+    """请求的章节没有当前不可变快照。"""
 
 
 class ExtractionRunNotFound(ExtractionRunnerError):
-    """The run ID does not identify an extraction run."""
+    """该 run ID 没有对应抽取运行。"""
 
 
 class ExtractionRunStateError(ExtractionRunnerError):
-    """A compare-and-set transition could not be completed safely."""
+    """一次 compare-and-set 状态迁移未能安全完成。"""
 
 
 class ExtractionRunStatus(StrEnum):
@@ -67,7 +67,7 @@ class ExtractionRun(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class ImmutableAnalysisMessage:
-    """One deeply immutable member of the exact provider message sequence."""
+    """精确 provider 消息序列里的一个深度不可变成员。"""
 
     role: Literal["system", "user"]
     content: str
@@ -78,7 +78,7 @@ class ImmutableAnalysisMessage:
 
 @dataclass(frozen=True, slots=True)
 class AnalysisRequest:
-    """One prompt-bound analyzer request; derived fields cannot be supplied independently."""
+    """一次绑定 prompt 的分析请求；派生字段不能独立提供。"""
 
     chapter: ChapterText
     messages: tuple[ImmutableAnalysisMessage, ...] = field(init=False)
@@ -96,12 +96,12 @@ class AnalysisRequest:
         object.__setattr__(self, "prompt_hash", sha256(encoded).hexdigest())
 
     def wire_messages(self) -> list[AnalysisMessage]:
-        """Return a fresh mutable wire copy without exposing the immutable audit source."""
+        """返回一份新的可变 wire 拷贝，不暴露不可变的审计源。"""
         return [message.wire() for message in self.messages]
 
 
 class AuditedCompletion(BaseModel):
-    """Strict, UTF-8-safe copy of a provider result used for persistence and parsing."""
+    """provider 结果的严格、UTF-8 安全拷贝，用于持久化与解析。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid", strict=True)
 

@@ -1,4 +1,4 @@
-"""Stable prompt construction for structured chapter analysis."""
+"""结构化章节分析的稳定 prompt 构造。"""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ class AnalysisMessage(TypedDict):
 
 
 def build_analysis_messages(chapter_text: str) -> list[AnalysisMessage]:
-    """Return deterministic messages containing the chapter byte-for-byte as text."""
+    """返回确定性的消息序列，章节原文逐字节作为文本包含在内。"""
     return [
         {"role": "system", "content": _SYSTEM_PROMPT},
         {"role": "user", "content": chapter_text},

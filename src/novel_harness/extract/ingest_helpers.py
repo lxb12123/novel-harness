@@ -1,4 +1,4 @@
-"""Pure typed helpers shared by the transactional extraction ingestion service."""
+"""事务性抽取落库服务共用的纯类型辅助。"""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ DiscardKind = Literal["event", "state_update", "character_profile"]
 
 
 class ExtractionContextError(ValueError):
-    """The supplied chapter is not the immutable snapshot named by its IDs."""
+    """传入的章节不是其 ID 所指的那份不可变快照。"""
 
 
 class DiscardOutcome(StrEnum):
@@ -42,7 +42,7 @@ class DiscardReason(BaseModel):
 
 
 class ExtractionReport(BaseModel):
-    """Deeply immutable summary of one transactional ingestion."""
+    """一次事务性落库的深度不可变摘要。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -58,7 +58,7 @@ class ExtractionReport(BaseModel):
 
 @dataclass(frozen=True, slots=True)
 class PreparedStateUpdate:
-    """A fully resolved and located state update that has not written anything yet."""
+    """一条已解析、已定位、但尚未写入任何东西的状态更新。"""
 
     index: int
     raw: RawStateUpdate
@@ -114,13 +114,11 @@ def resolve_event_surfaces(
     expected: NodeLabel,
     resolutions: dict[str, SurfaceResolution],
 ) -> tuple[list[str], list[str], DiscardReason | None]:
-    """Resolve an event's surface list without letting bystanders kill the event.
+    """解析事件的名面列表，不让路人把整条事件拖死。
 
-    Unknown surfaces are dropped: anonymous supporting characters and undeclared
-    facts are normal in real novels, and M4_DESIGN says bystanders never enter the
-    graph.  Ambiguous or wrong-label surfaces still discard the whole item — those
-    are known entities the extractor cannot safely pick, and the product never
-    chooses for the author.  Never guesses either way.
+    未知名面直接丢弃：匿名配角与未声明事实在真书里是常态，M4_DESIGN 也规定
+    路人不进图谱。歧义或错类名面仍整条拒收——那些是抽取器无法安全挑选的已知
+    实体，产品从不替作者选择。两边都绝不猜测。
     """
     ids: list[str] = []
     dropped: list[str] = []
@@ -228,7 +226,7 @@ def prepare_state_update(
 def keep_last_state_updates(
     prepared: Sequence[PreparedStateUpdate],
 ) -> tuple[list[PreparedStateUpdate], list[DiscardReason]]:
-    """Keep only the final resolved update for each semantic graph key."""
+    """每个语义图键只保留最后一条已解析更新。"""
 
     final_index = {item.graph_key: item.index for item in prepared}
     retained: list[PreparedStateUpdate] = []

@@ -72,7 +72,7 @@ class ExtractionService:
     ) -> ExtractionReport:
         if not prompt_hash:
             raise ValueError("prompt_hash must not be empty")
-        # The service may be reused; profile review between runs must be visible.
+        # 服务可复用；跨 run 的档案审阅必须立即可见。
         self._profile_main.clear()
         with self._graph.transaction():
             canon_version = self._validate_context(project_id, chapter)
@@ -155,7 +155,7 @@ class ExtractionService:
                             resolution,
                         )
                     )
-                # Known profiles remain read-only until explicit author review.
+                # 已知档案保持只读，直到作者显式审阅。
 
             proposal_ids: list[str] = []
             summaries = {

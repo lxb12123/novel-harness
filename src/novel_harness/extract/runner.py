@@ -1,4 +1,4 @@
-"""Idempotent background execution of one paid chapter-analysis call."""
+"""一次付费章节分析调用的幂等后台执行。"""
 
 from __future__ import annotations
 
@@ -55,7 +55,7 @@ def _default_call_id(project_id: str) -> str:
 
 
 class ExtractionRunner:
-    """Own each connection and use CAS so a run can pay for at most one call."""
+    """每条连接各自持有，并用 CAS 保证一个 run 至多付一次调用。"""
 
     def __init__(
         self,
@@ -139,7 +139,7 @@ class ExtractionRunner:
             conn.close()
 
     def get(self, run_id: str) -> ExtractionRun:
-        """Load one run without claiming it or invoking the paid analyzer."""
+        """只读一个 run：不抢占、不调用付费分析器。"""
         conn = self._connections()
         try:
             row = self._fetch_row(conn, run_id)

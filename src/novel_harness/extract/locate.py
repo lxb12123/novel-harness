@@ -1,4 +1,4 @@
-"""Deterministic exact-first location of untrusted evidence quotes."""
+"""不可信证据引语的确定性定位：先精确、后唯一模糊。"""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class LocateOutcome(StrEnum):
 
 
 class LocateResult(BaseModel):
-    """A location or the explicit reason that no safe location was selected."""
+    """一个定位结果，或「没有安全候选」的显式原因。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 
@@ -68,7 +68,7 @@ def _sentence_spans(para: str) -> Iterator[tuple[int, int]]:
 
 
 def _occurrences_by_start(para: str, text: str) -> dict[int, int]:
-    """Mirror anchor.find_one's non-overlapping occurrence numbering."""
+    """与 anchor.find_one 一致的非重叠出现编号。"""
     result: dict[int, int] = {}
     pos = 0
     occurrence_k = 0
@@ -114,7 +114,7 @@ def _validate_inputs(quote: str, min_ratio: float) -> None:
 
 
 def locate_quote(paragraphs: Sequence[str], quote: str, min_ratio: float = 0.90) -> LocateResult:
-    """Locate a quote exactly, then by a unique deterministic source candidate."""
+    """先精确定位引语；不行就用唯一且确定性的原文候选做模糊匹配。"""
     _validate_inputs(quote, min_ratio)
 
     exact = find_all(paragraphs, quote)

@@ -1,4 +1,4 @@
-"""Pure structured chapter extraction contracts."""
+"""纯结构化章节抽取契约。"""
 
 from __future__ import annotations
 

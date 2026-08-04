@@ -1,4 +1,4 @@
-"""Public event-memory contracts."""
+"""事件记忆的公开契约。"""
 
 from __future__ import annotations
 

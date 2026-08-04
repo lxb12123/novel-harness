@@ -1,7 +1,7 @@
-"""Deterministic, Canon-only event memory for product drafting.
+"""产品起草用的确定性、仅 CANON 事件记忆。
 
-This module consumes the narrow ``EventStore`` contract.  It does not query SQLite directly and
-does not perform semantic retrieval: the safety boundary is an explicit cast/knower set check.
+本模块只消费窄 ``EventStore`` 契约；不直接查 SQLite、不做语义检索——
+安全边界是显式的「在场/知情者集合」检查。
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ OLDER_EVENT_LIMIT = 12
 
 
 class ResolvedProductEvent(EventView):
-    """An ``EventView`` narrowed to deeply immutable incidence collections."""
+    """把 ``EventView`` 收窄成深度不可变的参与集合。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -43,7 +43,7 @@ class ResolvedProductEvent(EventView):
 
 
 class ResolvedProductContext(BaseModel):
-    """The complete memory preface allowed to reach a product writer call."""
+    """允许进入产品写作调用的完整记忆前言。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -91,11 +91,10 @@ def build_product_context(
     *,
     draft_chapter: int,
 ) -> ResolvedProductContext:
-    """Resolve profiles and the rolling safe event window for one product draft.
+    """为一次产品起草解析档案与滚动的安全事件窗口。
 
-    The repository is asked only for ``CANON`` data.  The checks are repeated on the typed result
-    so an implementation bug cannot turn provisional, stale, same-chapter, or partially-known
-    material into a writer assertion.
+    只向仓储要 ``CANON`` 数据；并在类型化结果上重查一遍安全条件，让实现 bug
+    无法把 PROVISIONAL / STALE / 本章 / 部分知情的内容变成给写作模型的断言。
     """
 
     resolved_cast = tuple(cast)

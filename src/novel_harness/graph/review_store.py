@@ -1,4 +1,4 @@
-"""Narrow graph-boundary contracts used by M4 author review."""
+"""M4 作者审阅用的窄图边界契约。"""
 
 from __future__ import annotations
 
@@ -11,15 +11,15 @@ from .models import Edge, Evidence, NodeRef
 
 
 class EdgeReviewError(Exception):
-    """Base class for review-time edge repository failures."""
+    """审阅期边仓储失败的基类。"""
 
 
 class EdgeReviewValidationError(EdgeReviewError, ValueError):
-    """A requested edge set is not wholly promotable provisional state."""
+    """请求的边集合并非全部可提升的 PROVISIONAL 状态。"""
 
 
 class ReviewableEdge(BaseModel):
-    """A typed edge plus the display-safe names of both endpoints."""
+    """一条类型化边 + 两端可安全展示的名字。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 

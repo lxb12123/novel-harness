@@ -1,4 +1,4 @@
-"""Read-only acceptance metrics for an inclusive M4 chapter range."""
+"""M4 闭区间章段的只读接受度指标。"""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ MAX_CHAPTER_RANGE = 10_000
 
 
 class MetricsProjectNotFound(LookupError):
-    """The requested project does not exist."""
+    """请求的项目不存在。"""
 
 
 class ChapterConflictMetric(BaseModel):
@@ -22,7 +22,7 @@ class ChapterConflictMetric(BaseModel):
 
 
 class ExtractionRangeMetrics(BaseModel):
-    """The predeclared M4 signals for one inclusive chapter interval."""
+    """一个闭区间章段的预注册 M4 信号。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -60,10 +60,10 @@ def metrics_for_range(
     first_chapter: int,
     last_chapter: int,
 ) -> ExtractionRangeMetrics:
-    """Measure extraction/review outcomes without changing a caller-owned transaction.
+    """度量抽取/审阅结果，不改动调用方拥有的事务。
 
-    When the caller has no transaction, a temporary read transaction gives the three queries one
-    SQLite snapshot and is rolled back afterward.  A caller-owned transaction is left untouched.
+    调用方没有事务时，临时只读事务给三条查询一份 SQLite 快照，随后回滚；
+    调用方自有事务则原样保留。
     """
 
     first = _chapter_number(first_chapter, "first_chapter")

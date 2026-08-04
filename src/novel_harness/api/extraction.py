@@ -1,4 +1,4 @@
-"""Thin HTTP shell for explicit M4 background extraction."""
+"""显式 M4 后台抽取的薄 HTTP 壳。"""
 
 from __future__ import annotations
 

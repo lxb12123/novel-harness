@@ -1,4 +1,4 @@
-"""Repository contracts for M4 event memory and proposal clusters."""
+"""M4 事件记忆与提案聚类的仓储契约。"""
 
 from __future__ import annotations
 
@@ -18,35 +18,35 @@ from .models import (
 
 
 class EventStoreError(Exception):
-    """Base class for concrete event-repository failures."""
+    """具体事件仓储失败的基类。"""
 
 
 class EventReferenceError(EventStoreError):
-    """An evidence or incidence reference is missing, cross-project, or the wrong label."""
+    """证据或参与引用缺失、跨项目、或标签不对。"""
 
 
 class EventNotFound(EventStoreError):
-    """An event id does not identify a stored event."""
+    """该事件 id 没有对应已存储的事件。"""
 
 
 class EventScopeError(EventStoreError, ValueError):
-    """An event operation was requested for a disallowed information scope."""
+    """对不允许的 information_scope 请求了事件操作。"""
 
 
 class ProposalStoreError(Exception):
-    """Base class for concrete proposal-repository failures."""
+    """具体提案仓储失败的基类。"""
 
 
 class ProposalValidationError(ProposalStoreError):
-    """A proposal references storage state that cannot form a coherent cluster."""
+    """提案引用的存储状态无法构成自洽的聚类。"""
 
 
 class ProposalNotFound(ProposalStoreError):
-    """A proposal id does not identify a stored proposal."""
+    """该提案 id 没有对应已存储的提案。"""
 
 
 class ProposalAlreadyResolved(ProposalStoreError):
-    """A terminal proposal cannot be resolved a second time."""
+    """终态提案不能被第二次处理。"""
 
 
 @runtime_checkable
@@ -90,7 +90,7 @@ class EventStore(Protocol):
 
 @runtime_checkable
 class ProposalStore(Protocol):
-    """Storage boundary only; proposal review semantics are introduced in a later task."""
+    """仅定义存储边界；提案审阅语义在后续任务引入。"""
 
     def create(self, proposal: ProposalCreate) -> ProposalRecord: ...
 

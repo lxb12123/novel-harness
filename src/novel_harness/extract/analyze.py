@@ -1,4 +1,4 @@
-"""Pure validation and resolution helpers for chapter analysis."""
+"""章节分析的纯校验与解析辅助。"""
 
 from __future__ import annotations
 
@@ -22,15 +22,15 @@ __all__ = [
 
 
 class AnalysisFormatError(ValueError):
-    """The model response was not exactly the expected analysis JSON."""
+    """模型响应不是预期的那份分析 JSON。"""
 
 
 class ResolutionContractError(ValueError):
-    """StoryGraph.resolve returned data that violates its alignment contract."""
+    """StoryGraph.resolve 返回的数据违反了对齐契约。"""
 
 
 def parse_analysis(text: str) -> RawChapterAnalysis:
-    """Validate one model response without repair, stripping, or retry."""
+    """校验一份模型响应；不做修复、不剥壳、不重试。"""
     try:
         return RawChapterAnalysis.model_validate_json(text)
     except ValidationError as exc:
@@ -38,7 +38,7 @@ def parse_analysis(text: str) -> RawChapterAnalysis:
 
 
 class SurfaceResolution(BaseModel):
-    """All graph candidates for one surface, with uniqueness made explicit."""
+    """一个名面的全部图谱候选，并把唯一性显式化。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -63,7 +63,7 @@ class SurfaceResolution(BaseModel):
 
 
 class ResolvedAnalysis(BaseModel):
-    """Ordered, de-duplicated surface resolutions for one analysis."""
+    """一份分析的按序、去重名面解析结果。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -75,7 +75,7 @@ def resolve_surfaces(
     project_id: str,
     surfaces: Sequence[str],
 ) -> ResolvedAnalysis:
-    """Resolve names without creating nodes or choosing among ambiguous aliases."""
+    """解析名字；不创建节点、也不在歧义别名之间替作者选择。"""
     ordered_surfaces = list(dict.fromkeys(surfaces))
     graph_resolutions = graph.resolve(
         project_id,

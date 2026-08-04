@@ -1,4 +1,4 @@
-"""Atomic model-call audit persistence for extraction runs."""
+"""抽取运行的模型调用审计原子持久化。"""
 
 from __future__ import annotations
 

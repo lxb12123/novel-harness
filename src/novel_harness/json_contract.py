@@ -1,4 +1,4 @@
-"""Pure Python/SQLite shared contract for durable JSON and text values."""
+"""Python/SQLite 共享的持久 JSON 与文本严格契约。"""
 
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ def _validate_json_value(value: Any) -> None:
 
 
 def strict_json_dumps(value: Any) -> str:
-    """Serialize the finite, int64, strict-UTF-8 JSON domain SQLite can audit."""
+    """把「有限数、int64、严格 UTF-8」的 JSON 域序列化成 SQLite 能审计的字符串。"""
     _validate_json_value(value)
     canonical = json.dumps(
         value,
@@ -67,7 +67,7 @@ def strict_json_dumps(value: Any) -> str:
 
 
 def strict_sql_text(raw: object) -> str | None:
-    """Decode SQL TEXT passed as BLOB without letting sqlite3 decode invalid UTF-8 first."""
+    """解码以 BLOB 传入的 SQL TEXT；不让 sqlite3 先解码出非法 UTF-8。"""
     if isinstance(raw, str):
         return raw
     if isinstance(raw, bytes):
@@ -79,7 +79,7 @@ def strict_sql_text(raw: object) -> str | None:
 
 
 def canonical_json_text(raw: object) -> str | None:
-    """Return one duplicate-free Python/SQLite JSON representation, or ``None``."""
+    """返回一份无重复键的 Python/SQLite JSON 表示；无法解码时返回 ``None``。"""
     decoded = strict_sql_text(raw)
     if decoded is None:
         return None
