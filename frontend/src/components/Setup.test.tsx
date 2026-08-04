@@ -201,6 +201,13 @@ describe("引导建书", () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 
+  it("抽屉为紧凑引导壳保留相同流程内容", () => {
+    renderWithApi(<Setup onClose={vi.fn()} />);
+
+    expect(document.querySelector(".onboarding-shell")).toHaveClass("compact");
+    expect(screen.queryByText("Novel Harness")).not.toBeInTheDocument();
+  });
+
   it("抽屉暴露 dialog 语义，并支持关闭按钮和 Escape", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();

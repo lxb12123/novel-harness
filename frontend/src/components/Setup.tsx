@@ -138,7 +138,7 @@ export function Setup({ onClose }: { onClose?: () => void }) {
   return (
     <>
       <div className="backdrop" onClick={closeDrawer} />
-      <div className="drawer" role="dialog" aria-modal="true" aria-label="新建 / 导入小说">
+      <div className="drawer onboarding-drawer" role="dialog" aria-modal="true" aria-label="新建 / 导入小说">
         <button
           className="onboarding-close"
           type="button"

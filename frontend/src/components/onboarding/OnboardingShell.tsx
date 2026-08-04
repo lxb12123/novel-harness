@@ -2,10 +2,10 @@ import type { ReactNode } from "react";
 
 export function OnboardingShell({ compact, children }: { compact: boolean; children: ReactNode }) {
   return (
-    <main className="onboarding-shell">
+    <main className={`onboarding-shell${compact ? " compact" : ""}`}>
       {!compact && (
         <section className="onboarding-identity" aria-label="Novel Harness">
-          <div className="onboarding-logo">Novel Harness</div>
+          <div className="onboarding-logo" aria-hidden="true">NH</div>
           <h1 className="onboarding-brand">Novel Harness</h1>
           <p className="onboarding-tagline">让长篇小说中的每个人，只知道此刻该知道的事。</p>
           <ul className="onboarding-promises">
