@@ -30,7 +30,7 @@ describe("双语起草长度控件", () => {
     });
   });
 
-  it("默认给中文 2000/2500/3000 字，但 M2 PASS 前不能生成", () => {
+  it("默认给中文 2000/2500/3000 字，只展示长度设置", () => {
     render(<DraftLengthControls />);
 
     expect(screen.getByRole("combobox", { name: "写作语言" })).toHaveValue("zh");
@@ -39,8 +39,8 @@ describe("双语起草长度控件", () => {
     expect(maximum()).toHaveValue(3000);
     expect(screen.getByText("字")).toBeInTheDocument();
     expect(screen.getByText("不足时最多自动续写一次")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /M2 必须 PASS/ })).toBeDisabled();
-    expect(screen.getByText(/ADR 0009/)).toBeInTheDocument();
+    expect(screen.queryByRole("button")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/M2|ADR|PASS|实验/);
   });
 
   it("明确切到 English 后使用 1200/1500/1800 words", async () => {

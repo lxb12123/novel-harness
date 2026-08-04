@@ -47,7 +47,7 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
         />
       </div>
       <div className="field">
-        <span>模型</span>
+        <span>模型名称</span>
         <input
           value={model}
           placeholder="deepseek-v4-flash"
@@ -55,19 +55,19 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
         />
       </div>
       <div className="field">
-        <span>API 钥匙</span>
+        <span>API 密钥</span>
         <input
           type="password"
           value={apiKey}
           placeholder={
             current?.api_key_set
-              ? `已设置（${current.api_key_preview}），留空 = 不换`
-              : "粘贴你的 sk-…"
+              ? `已设置（${current.api_key_preview}），留空则保留`
+              : "粘贴 API 密钥"
           }
           onChange={(e) => setApiKey(e.target.value)}
         />
         {current?.api_key_set && (
-          <div className="note">钥匙只存在这台电脑上，不会回显。</div>
+          <div className="note">为保护安全，不会显示完整密钥。</div>
         )}
       </div>
       {err && <div className="err-box">{err.message}</div>}
@@ -78,7 +78,7 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
         </button>
       </div>
       <div className="note">
-        起草能力在 M2 通过后开放；钥匙用于调用你填的模型服务。
+        这些设置只保存在这台电脑上，用于连接你选择的模型服务。
       </div>
     </div>
   );

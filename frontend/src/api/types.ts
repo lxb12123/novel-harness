@@ -90,12 +90,12 @@ export const LABEL_ZH: Record<NodeLabel, string> = {
  * （花名册会显示），两张表的差集就是这条区分本身，别合并。
  */
 export const AUTHORED_LABELS: { label: NodeLabel; hint: string }[] = [
-  { label: "Character", hint: "会出现在认知矩阵行上的人" },
-  { label: "Location", hint: "「他在哪」的那个哪" },
-  { label: "Secret", hint: "认知矩阵的列。声明谁知道它之前，得先有它" },
-  { label: "Faction", hint: "门派 / 家族 / 组织" },
-  { label: "Object", hint: "玄铁令这类会易主的东西" },
-  { label: "Foreshadow", hint: "你打算在后面回收的那把枪" },
+  { label: "Character", hint: "故事中的人物" },
+  { label: "Location", hint: "故事发生的地点" },
+  { label: "Secret", hint: "尚未公开的信息或真相" },
+  { label: "Faction", hint: "门派、家族或组织" },
+  { label: "Object", hint: "对情节有影响的物品" },
+  { label: "Foreshadow", hint: "准备在后文回应的线索" },
 ];
 
 export interface Project {
