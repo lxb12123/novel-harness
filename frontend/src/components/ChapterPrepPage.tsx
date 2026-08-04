@@ -47,7 +47,7 @@ export function ChapterPrepPage() {
         <label>在场</label>
         <input
           className="cast"
-          placeholder="萧决,顾清音,李管家"
+          placeholder="输入本章出场人物"
           value={cast}
           onChange={(e) => setCast(e.target.value)}
         />
