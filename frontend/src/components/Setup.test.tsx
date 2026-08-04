@@ -91,6 +91,13 @@ describe("引导建书", () => {
     }
   });
 
+  it("首次欢迎页直接铺满应用窗口，不显示网页卡片外框", () => {
+    renderWithApi(<Setup />);
+
+    expect(document.querySelector(".onboarding-shell")).toHaveClass("full-bleed");
+    expect(document.querySelector(".onboarding-shell")).not.toHaveClass("compact");
+  });
+
   it("选择 TXT 后显示可编辑的推导书名，尚未设置项目", async () => {
     renderWithApi(<Setup />);
     chooseImport();
