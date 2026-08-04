@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..events import CharacterProfileView, EventStore, EventView
 from ..graph import (
@@ -18,6 +18,7 @@ from ..graph import (
     NodeLabel,
     NodeRef,
 )
+from .rolling_summary import ROLLING_WINDOW, ChapterSummary
 
 RECENT_CHAPTERS = 8
 OLDER_EVENT_LIMIT = 12
@@ -42,6 +43,15 @@ class ResolvedProductEvent(EventView):
         )
 
 
+class RollingSummaryView(BaseModel):
+    """一章的机器滚动摘要（仅背景，不是作者确认的事实）。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chapter_number: int = Field(ge=1)
+    summary: str = Field(min_length=1)
+
+
 class ResolvedProductContext(BaseModel):
     """允许进入产品写作调用的完整记忆前言。"""
 
@@ -51,6 +61,7 @@ class ResolvedProductContext(BaseModel):
     profiles: tuple[CharacterProfileView, ...]
     recent_events: tuple[ResolvedProductEvent, ...]
     background_events: tuple[ResolvedProductEvent, ...]
+    rolling_summaries: tuple[RollingSummaryView, ...] = ()
 
     @field_validator("recent_events", "background_events", mode="before")
     @classmethod
@@ -90,6 +101,7 @@ def build_product_context(
     cast: Sequence[NodeRef],
     *,
     draft_chapter: int,
+    summaries: Sequence[ChapterSummary] = (),
 ) -> ResolvedProductContext:
     """为一次产品起草解析档案与滚动的安全事件窗口。
 
@@ -137,12 +149,21 @@ def build_product_context(
     recent_start = max(1, draft_chapter - RECENT_CHAPTERS)
     recent = tuple(view for view in safe if view.event.chapter_number >= recent_start)
     older = [view for view in safe if view.event.chapter_number < recent_start]
+    rolling = tuple(
+        RollingSummaryView(
+            chapter_number=summary.chapter_number,
+            summary=summary.summary,
+        )
+        for summary in sorted(summaries, key=lambda item: item.chapter_number)
+        if summary.chapter_number < recent_start
+    )[-ROLLING_WINDOW:]
 
     return ResolvedProductContext(
         cast=resolved_cast,
         profiles=profiles,
         recent_events=recent,
         background_events=tuple(older[-OLDER_EVENT_LIMIT:]),
+        rolling_summaries=rolling,
     )
 
 
@@ -151,5 +172,6 @@ __all__ = [
     "RECENT_CHAPTERS",
     "ResolvedProductContext",
     "ResolvedProductEvent",
+    "RollingSummaryView",
     "build_product_context",
 ]

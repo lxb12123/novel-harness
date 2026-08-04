@@ -1027,6 +1027,74 @@ def draft(
     )
 
 
+@app.command("summarize")
+def summarize(
+    db: Path = typer.Option(..., "--db", help="SQLite 库"),
+    project: str = typer.Option(..., "--project", "-p", help="project_id"),
+    first: int = typer.Option(..., "--from", help="起始章号（含）"),
+    last: int = typer.Option(..., "--to", help="结束章号（含）"),
+) -> None:
+    """后台补章节滚动总结（**会调模型、会花钱**，作者不敲这条）。
+
+    为写作 LLM 的「更早章节」背景层生成机器摘要；同章幂等，重复跑不会重复付费。
+    """
+    from .draft.capabilities import (
+        CapabilityError,
+        ReasoningEffort,
+        plan_call,
+        resolve_capabilities,
+    )
+    from .draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage, LengthSpec
+    from .draft.provider import ProviderConfig, complete
+    from .draft.rolling_summary import (
+        RollingSummarizer,
+        SummaryChapterNotFound,
+        SummaryGenerationError,
+    )
+    from .draft.summarize import SUMMARY_MAX_CHARS
+
+    if first < 1 or last < first:
+        _die("✗ 章号区间不合法：--from 和 --to 必须是 1 ≤ from ≤ to")
+    summary_length = DEFAULT_LENGTH_POLICY.validate_spec(
+        LengthSpec(
+            language=DraftLanguage.ZH,
+            min_units=40,
+            target_units=80,
+            max_units=SUMMARY_MAX_CHARS,
+        )
+    )
+    try:
+        config = ProviderConfig.from_env()
+        capability = resolve_capabilities(config.base_url, config.model)
+    except (ValidationError, ValueError, CapabilityError) as exc:
+        _die(
+            f"✗ 模型没配好：{_reason(exc)}\n"
+            "    export NH_LLM_BASE_URL=https://api.deepseek.com\n"
+            "    export NH_LLM_MODEL=deepseek-v4-flash\n"
+            "    export NH_LLM_API_KEY=...   # 只从环境注入"
+        )
+
+    def analyzer(request) -> object:
+        plan = plan_call(
+            summary_length,
+            ReasoningEffort.OFF,
+            capability,
+            prompt_token_budget=len(request.prompt_bytes),
+        )
+        return complete(request.messages, config=config, plan=plan)
+
+    runner = RollingSummarizer(lambda: _connect_existing(db), analyzer)
+    for chapter in range(first, last + 1):
+        try:
+            summary = runner.ensure(project, chapter)
+            preview = summary.summary if len(summary.summary) <= 40 else summary.summary[:40] + "…"
+            typer.echo(f"ch{chapter}: {preview}")
+        except SummaryChapterNotFound:
+            typer.echo(f"ch{chapter}: 跳过（无当前快照）")
+        except SummaryGenerationError as exc:
+            typer.echo(f"ch{chapter}: 失败：{exc}")
+
+
 @app.command()
 def gate(
     db: Path = typer.Option(..., "--db", help="SQLite 库（合成小册子那本）"),

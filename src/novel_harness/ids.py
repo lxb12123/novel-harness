@@ -83,6 +83,7 @@ class EntityType(StrEnum):
     EXTRACTION_RUN = "extraction_run"
     REPORT = "report"
     PROPOSAL = "proposal"
+    SUMMARY = "summary"
 
     PROJECT = "project"
     """只由 `new_project_id()` 用。**项目 ID 不能走 `new_id()`**——见那个函数的 docstring。"""

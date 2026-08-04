@@ -593,3 +593,29 @@
 - [x] **Step 6: Request final spec and quality review**
 
   Review the complete branch against `docs/M4_DESIGN.md`, PLAN M4 acceptance criteria, ADR 0002/0004/0005/0006, and the test-first commit history. Fix every important finding, rerun the full verification block, and only then report completion.
+
+### Task 10: Rolling summary and dual-LLM drafting context (2026-08-04 follow-on slice)
+
+**Files:**
+- Create: `src/novel_harness/draft/summarize.py`
+- Create: `src/novel_harness/draft/rolling_summary.py`
+- Create: `src/novel_harness/migrations/004_chapter_summary.sql`
+- Modify: `src/novel_harness/draft/product_context.py`
+- Modify: `src/novel_harness/draft/product_assemble.py`
+- Modify: `src/novel_harness/api/app.py`
+- Modify: `src/novel_harness/cli.py`
+- Modify: `src/novel_harness/extract/call_audit.py`
+- Modify: `src/novel_harness/ids.py`
+- Create: `tests/test_rolling_summary.py`
+- Modify: `tests/test_product_context.py`, `tests/test_product_assemble.py`, `tests/test_migrate.py`
+
+- [x] **Step 1: Summarizer prompt + storage schema.** `build_summary_messages` 把章节原文压缩成
+  ≤120 字中文摘要（版本化、确定性）；`chapter_summary` 表按
+  `(project_id, chapter_number, schema_version, prompt_hash)` 唯一，同章同 prompt 只付一次。
+- [x] **Step 2: Idempotent background summarizer.** `RollingSummarizer.ensure` 幂等生成并写
+  `model_call`（capability='summarizer'）审计；`SummaryStore.for_range` 确定性读取每章最新摘要。
+- [x] **Step 3: Writer context assembly.** `ResolvedProductContext.rolling_summaries` 只取
+  「近八章事件窗口」之前的旧章节摘要（上限 30 章）；`render_product_memory` 新增
+  「更早章节滚动总结」段并明确标注「机器摘要，未经作者确认」；X0/X1/X2 kill-gate 调用不受影响。
+- [x] **Step 4: Background backfill CLI.** `nh summarize --from N --to M` 后台补档。
+- [x] **Step 5: Tests and full verification.** 1470 pytest / 42 vitest 全绿、ruff 干净、构建成功。

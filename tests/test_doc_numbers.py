@@ -263,7 +263,14 @@ def test_all_checks_wording_stays_honest() -> None:
 # 第 2 道：这些数字只许有一份
 # ══════════════════════════════════════════════════════════════════════════
 
-EXEMPT_DIRS = ("docs_dev/", "docs/adr/bench/", "frontend/node_modules/", "node_modules/", ".venv/")
+EXEMPT_DIRS = (
+    "docs_dev/",
+    "docs/adr/bench/",
+    "frontend/node_modules/",
+    "node_modules/",
+    ".venv/",
+    ".worktrees/",
+)
 """扫不到的目录，各有各的理由，别顺手往里加。
 
 - `docs_dev/` —— 维护者的私记，按定义是**当天的快照**，不是权威，本来就该会过时。

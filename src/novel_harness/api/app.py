@@ -1035,11 +1035,20 @@ def draft(
             "house_style": house_style or None,
         }
         if product_form:
+            from ..draft.product_context import RECENT_CHAPTERS
+            from ..draft.rolling_summary import SummaryStore
+
+            summaries = SummaryStore(conn).for_range(
+                project_id,
+                1,
+                max(1, chapter - RECENT_CHAPTERS - 1),
+            )
             memory = build_product_context(
                 SqliteEventStore(conn),
                 project_id,
                 view.matrix.characters,
                 draft_chapter=chapter,
+                summaries=summaries,
             )
             messages = assemble_product(ctx, memory, **assemble_args)
         else:
@@ -1095,4 +1104,3 @@ def runs_stub() -> dict[str, str]:
     这正是 §10 约束 8 说的那种失败形态（漂亮的空结果 + 200）。
     """
     return _stub("M2")
-

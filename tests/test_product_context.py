@@ -121,6 +121,50 @@ def test_product_context_uses_previous_eight_chapters_and_twelve_nearest_older_e
     )
 
 
+def test_product_context_takes_rolling_summaries_only_before_the_recent_window() -> None:
+    from novel_harness.draft.product_context import build_product_context
+    from novel_harness.draft.rolling_summary import ROLLING_WINDOW, ChapterSummary
+
+    store = FakeEventStore([_event(f"event:{chapter:02d}", chapter) for chapter in range(1, 13)])
+    summaries = [
+        ChapterSummary(
+            id=f"summary:{chapter:02d}",
+            project_id=PID,
+            chapter_number=chapter,
+            summary=f"第{chapter}章摘要",
+            schema_version="chapter-summary-v1",
+            prompt_hash="prompt:hash",
+            created_at="<ts>",
+        )
+        for chapter in range(1, 13)
+    ]
+
+    result = build_product_context(
+        store, PID, (ALICE,), draft_chapter=13, summaries=summaries
+    )
+
+    # draft ch13 的近八章是 ch5..12；滚动总结只覆盖更早的 ch1..4。
+    assert [item.chapter_number for item in result.rolling_summaries] == [1, 2, 3, 4]
+
+    # 超过 ROLLING_WINDOW 时只保留最晚的 30 章。
+    many = [
+        ChapterSummary(
+            id=f"summary:{chapter:03d}",
+            project_id=PID,
+            chapter_number=chapter,
+            summary=f"第{chapter}章摘要",
+            schema_version="chapter-summary-v1",
+            prompt_hash="prompt:hash",
+            created_at="<ts>",
+        )
+        for chapter in range(1, 40)
+    ]
+    wide = build_product_context(store, PID, (ALICE,), draft_chapter=40, summaries=many)
+    assert len(wide.rolling_summaries) == ROLLING_WINDOW
+    assert wide.rolling_summaries[0].chapter_number == 2
+    assert wide.rolling_summaries[-1].chapter_number == 31
+
+
 @pytest.mark.parametrize(
     ("cast", "chapter", "match"),
     [

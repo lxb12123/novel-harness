@@ -110,6 +110,35 @@ def test_product_assembler_prepends_narrow_canon_memory() -> None:
         assert forbidden not in memory_text
 
 
+def test_product_assembler_renders_rolling_summaries_as_background_only() -> None:
+    from novel_harness.draft.product_assemble import assemble_product
+    from novel_harness.draft.product_context import ResolvedProductContext, RollingSummaryView
+
+    memory = ResolvedProductContext(
+        cast=(ALICE, BOB),
+        profiles=(),
+        recent_events=(),
+        background_events=(),
+        rolling_summaries=(
+            RollingSummaryView(chapter_number=3, summary="第三章：顾清音救下萧决。"),
+            RollingSummaryView(chapter_number=4, summary="第四章：两人结盟北上。"),
+        ),
+    )
+    product = assemble_product(
+        _constraints(),
+        memory,
+        form=PromptForm.X1,
+        goal="两人在渡口商量下一步。",
+        length=LENGTH,
+    )
+    memory_text = product[0]["content"]
+    assert "【更早章节滚动总结】" in memory_text
+    assert "第三章：顾清音救下萧决。" in memory_text
+    assert "第四章：两人结盟北上。" in memory_text
+    # 机器摘要必须自报「未经作者确认」，不能伪装成已确认事实。
+    assert "未经作者确认" in memory_text
+
+
 def test_kill_gate_forms_never_receive_product_memory() -> None:
     ctx = _constraints()
     sentinels = ("外冷内热", "曾守过北境", "右手有旧伤", "两人共同烧毁密信")

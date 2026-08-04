@@ -56,6 +56,17 @@ def render_product_memory(memory: ResolvedProductContext) -> str:
             if memory.background_events
             else ("- 暂无",)
         ),
+        "",
+        "【更早章节滚动总结】",
+        *(
+            (
+                f"- 第 {summary.chapter_number} 章：{summary.summary}"
+                for summary in memory.rolling_summaries
+            )
+            if memory.rolling_summaries
+            else ("- 暂无",)
+        ),
+        "（滚动总结是机器压缩的背景，未经作者确认；只当线索，不当已确认事实。）",
     ]
     return "\n".join(lines)
 

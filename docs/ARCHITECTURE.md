@@ -273,7 +273,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 
 ## 当前状态
 
-**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，1458 个 pytest + 41 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
+**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收，滚动总结 + 双 LLM 起草上下文也已落地**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%；1470 个 pytest + 42 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
 
 > **本节的数字是全仓唯一副本，且 `tests/test_doc_numbers.py` 会拦住第二份。**
 > `README.md` / `CLAUDE.md` / `frontend/README.md` 里只留指针，不许再抄一份数字过去。
@@ -285,9 +285,9 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
 > 守卫钉住的是**能在运行时数出来**的那些（路由 39 / `/api` 38 / 501 stub 2 / 错误映射 17 /
-> CLI 叶子 17 / 建表 20 / fixture 端点 28 / `ALL_CHECKS` 3），改错必红、**删掉也必红**（不静默 skip）。
+> CLI 叶子 18 / 建表 21 / fixture 端点 28 / `ALL_CHECKS` 3），改错必红、**删掉也必红**（不静默 skip）。
 > **它罩不住 pytest / vitest 这两个数**——在 pytest 里数 pytest 要递归，
-> 所以「1458」和「41」仍然只靠人手改，改代码后请顺手跑一次 `uv run pytest -q` 更新这一处。
+> 所以「1470」和「42」仍然只靠人手改，改代码后请顺手跑一次 `uv run pytest -q` 更新这一处。
 > （2026-07-30 那天这个数从 690 走到 801，中途在文档里错过一次——**这条盲区是真的，不是假想的**。）
 
 > ⚠️ **「全绿」目前只在本机成立。本仓库还没有 git remote，`ci.yml` / `release.yml` 一次都没执行过。**
@@ -296,7 +296,8 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 > 而那正是 `_DIST` 曾经真出过的 bug。在建起远端之前，别把 CI 当成既有保护。
 
 ```
-db.py  ids.py  decisions.py  project.py  migrations/{001_init,002_m4_events}.sql（20 张表）
+db.py  ids.py  decisions.py  project.py
+migrations/{001_init,002_m4_events,003_proposal_audit_recovery,004_chapter_summary}.sql（21 张表）
 graph/{models,store,sqlite_store,queries}.py    ← state_at / supersede / subgraph
 events/{models,store}.py                       ← M4 事件超边 / 角色档案 / 提案仓储契约
 extract/{models,prompt,locate,analyze}.py       ← M4 严格 JSON 边界 / 确定性证据定位 / 不猜名称解析
@@ -307,7 +308,7 @@ checks/{base,location_conflict,future_leak,dead_speaks}.py
                                                   ← R2/R3/R4（R5 已砍；`ALL_CHECKS` 共三条）
 text/{anchor,chapterize,scenes,mentions}.py     ← (para_index,quote,k) 唯一定义 / 切章 / 场景块 / 称呼匹配
 declare.py  importer.py                         ← M1 声明层：引语定章号 + 证据链 + CanonWriter
-cli.py                                          ← nh 的 17 个子命令（含 `nh serve` / `nh gate` / `nh draft`）
+cli.py                                          ← nh 的 18 个子命令（含 `nh serve` / `nh gate` / `nh draft` / `nh summarize`）
 api/{app,deps,extraction,review}.py             ← M1.5 FastAPI 壳：39 条自建路由 + 17 个错误映射
                                                   （38 条 /api + 1 条 `GET /`；其中 2 条是 501 stub；
                                                   M4 抽取/事件读端 + 提案审阅/被动确认路由）
@@ -321,6 +322,10 @@ draft/assemble.py                               ← M2：三臂 `PromptForm` 本
 draft/length.py                                 ← M2：双语长度域（中文按非空白 code point / 英文按词，修正案 5 冻结档）
 draft/capabilities.py                           ← M2：能力注册表 + 版本化预算公式（精确路由，未知能力 fail-closed）
 draft/generate.py                               ← M2：续写一次（under-min-only、至多 2 次 attempt，两段原样拼接）
+draft/product_context.py                        ← M4：确定性事件记忆 → 写作上下文（近八章 + 12 旧事件）
+draft/product_assemble.py                       ← M4：已确认记忆前言（不进 X0/X1/X2 kill-gate 调用）
+draft/rolling_summary.py                        ← M4 后续切片：后台章节滚动总结（幂等、机器摘要仅背景）
+draft/summarize.py                              ← M4 后续切片：章节摘要 prompt（`nh summarize` 补档）
 eval/{leak,score}.py                            ← M2：泄漏集合判断 + 精确 McNemar / Holm + `decide()` 裁决表
 eval/confound_lint.py                           ← M2：X1 vs X2 除 form 外不许有第二处差异（§2 反混淆铁律）
 eval/runner.py                                  ← M2：三臂 × N 次 → 独占新建 `out_path` → `GateInput`
