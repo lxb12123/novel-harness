@@ -45,14 +45,18 @@ describe("局部关系图", () => {
     expect((await screen.findAllByText(/萧决/)).length).toBeGreaterThan(0);
   });
 
-  it("toFlow：中心节点加粗，邻居摊环，边带类型与章号", () => {
-    const g = fixtures.subgraph as Parameters<typeof toFlow>[0];
+  it("toFlow：中心节点加粗，关系使用自然中文和完整章名", () => {
+    const g = {
+      ...fixtures.subgraph,
+      edges: [fixtures.declareKnows.edge],
+    } as unknown as Parameters<typeof toFlow>[0];
     const { nodes, edges } = toFlow(g);
     const center = nodes.find((n) => n.id === g.center.id);
     expect(center?.style?.borderWidth).toBe(2);
     const others = nodes.filter((n) => n.id !== g.center.id);
     const distances = others.map((n) => Math.hypot(n.position.x, n.position.y));
     expect(Math.max(...distances) - Math.min(...distances)).toBeLessThan(10);
-    expect(edges.length).toBe(g.edges.length);
+    expect(edges).toHaveLength(1);
+    expect(edges[0].label).toBe("知道 · 第 1 章起");
   });
 });

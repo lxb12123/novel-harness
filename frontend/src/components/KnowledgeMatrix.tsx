@@ -7,14 +7,14 @@ function cell(c: KnowledgeCell | undefined) {
     return (
       <>
         <span className="k">✓ 知道</span>
-        <small>ch{c.since_chapter}</small>
+        <small>第 {c.since_chapter} 章起</small>
       </>
     );
   if (c.state === "BELIEVES")
     return (
       <>
         <span className="b">⚠ {c.believed_value || "错误认知"}</span>
-        <small>ch{c.since_chapter}</small>
+        <small>第 {c.since_chapter} 章起</small>
       </>
     );
   return <span className="u">✗ 不知道</span>;
@@ -60,18 +60,17 @@ export function MatrixView({
           </tbody>
         </table>
       ) : (
-        <div className="empty">这一章没有可显示的在场角色或秘密。</div>
+        <div className="empty">当前没有可比较的人物和秘密。</div>
       )}
 
       {matrix.unresolved_cast.length > 0 && (
         <div className="warn">
-          无法解析：{matrix.unresolved_cast.join("、")}
-          （指向多人或查无此人 → 面板对这些人是退化值，须消歧）
+          这些称呼未在花名册中找到：{matrix.unresolved_cast.join("、")}。请检查名称或补充称呼。
         </div>
       )}
 
       <div className="mnr">
-        <div className="lab">本场景 must_not_reveal</div>
+        <div className="lab">本场不能说破</div>
         {mnr.length ? (
           mnr.map((n) => (
             <span className="tag" key={n.id}>

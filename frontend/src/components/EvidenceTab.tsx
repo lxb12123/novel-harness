@@ -31,15 +31,15 @@ export function EvidenceTab() {
   if (evidenced.length === 0)
     return (
       <div className="empty">
-        {state.data ? state.data.node.name : "这个节点"} 在第 {chapter} 章还没有带证据的声明。
-        （在正文里选一句 →「用这句声明」，证据就来了。）
+        {state.data ? state.data.node.name : "这个条目"} 在第 {chapter} 章还没有原文依据。
+        在正文里选中一句话并选择“用这句声明”即可添加。
       </div>
     );
 
   return (
     <div>
       <div className="row" style={{ color: "var(--dim)", fontSize: 12, marginBottom: 8 }}>
-        {state.data?.node.name} · 第 {chapter} 章 · {evidenced.length} 条确定性证据（无分数，都是你写过的）
+        {state.data?.node.name} · 第 {chapter} 章 · {evidenced.length} 条原文依据
       </div>
       {evidenced.map((e) => (
         <EvidenceRow key={e.id} pid={projectId!} edge={e} dstName={nameOf(e.dst)} />
@@ -56,7 +56,7 @@ function EvidenceRow({ pid, edge, dstName }: { pid: string; edge: Edge; dstName:
       <div className="nm">
         {TYPE_ZH[edge.type] ?? edge.type} {dstName}
         {believed && <span className="pc"> —「{believed}」</span>}
-        <span style={{ color: "var(--dim)", fontWeight: 400 }}> · 自 ch{edge.valid_from_chapter}</span>
+        <span style={{ color: "var(--dim)", fontWeight: 400 }}> · 第 {edge.valid_from_chapter} 章起</span>
       </div>
       {isFetching && <div className="row">取原文中…</div>}
       {data && (

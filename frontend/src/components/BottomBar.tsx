@@ -24,7 +24,7 @@ function SceneStrip() {
   const { projectId, chapter, cast, setCast } = useCoords();
   const { data: scenes } = useScenes(projectId, chapter);
   if (!scenes || scenes.length === 0)
-    return <div className="tl-empty">第 {chapter} 章没有场景块</div>;
+    return <div className="tl-empty">第 {chapter} 章还没有场景信息</div>;
   return (
     <div className="tl-scenes">
       {scenes.map((s, i) => (
@@ -49,9 +49,9 @@ function IntervalBars() {
   const { projectId, chapter, selectedNodeId } = useCoords();
   const { data } = useCharacterState(projectId, selectedNodeId, chapter);
   const roster = useRoster(projectId);
-  if (!selectedNodeId) return <div className="tl-empty">点一个人看他的时态区间</div>;
+  if (!selectedNodeId) return <div className="tl-empty">选择一个人物查看相关变化</div>;
   const edges = (data?.edges ?? []).filter((e) => e.type !== "RELATED_TO"); // 无向边不画区间
-  if (edges.length === 0) return <div className="tl-empty">{data?.node.name ?? ""} 无有效边</div>;
+  if (edges.length === 0) return <div className="tl-empty">{data?.node.name ?? ""} 暂无可显示的变化</div>;
 
   const nameOf = (id: string) => roster.data?.find((n) => n.id === id)?.name ?? id;
   const minFrom = Math.min(...edges.map((e) => e.valid_from_chapter));
@@ -67,9 +67,9 @@ function IntervalBars() {
   return (
     <div className="tl-intervals">
       <div className="tl-axis">
-        <span>ch{minFrom}</span>
-        <span className="tl-node">{data?.node.name} 的时态区间</span>
-        <span>ch{chapter}（现在）</span>
+        <span>第 {minFrom} 章</span>
+        <span className="tl-node">{data?.node.name} 的变化</span>
+        <span>第 {chapter} 章（当前）</span>
       </div>
       {edges.map((e) => (
         <div className="tl-row" key={e.id}>
@@ -77,8 +77,12 @@ function IntervalBars() {
             {TYPE_ZH[e.type] ?? e.type} {nameOf(e.dst)}
           </span>
           <span className="tl-track">
-            <span className="tl-bar" style={bar(e)} title={`[${e.valid_from_chapter}, ${e.valid_to_chapter ?? "现在"})`}>
-              {e.valid_from_chapter}
+            <span
+              className="tl-bar"
+              style={bar(e)}
+              title={`从第 ${e.valid_from_chapter} 章${e.valid_to_chapter ? `到第 ${e.valid_to_chapter} 章前` : "起一直有效"}`}
+            >
+              第 {e.valid_from_chapter} 章
             </span>
           </span>
         </div>
@@ -95,11 +99,11 @@ export function BottomBar() {
   return (
     <footer className="bottombar">
       <div className="tl-col tl-col-scenes">
-        <div className="tl-title">场景序</div>
+        <div className="tl-title">场景顺序</div>
         <SceneStrip />
       </div>
       <div className="tl-col tl-col-intervals">
-        <div className="tl-title">时态区间（自某章一直有效到现在）</div>
+        <div className="tl-title">人物与设定变化</div>
         <IntervalBars />
       </div>
     </footer>

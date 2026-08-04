@@ -22,12 +22,12 @@ describe("认知矩阵", () => {
     expect(screen.getAllByText("✗ 不知道").length).toBeGreaterThan(0);
   });
 
-  it("KNOWS 一定带着 since_chapter —— 「他从第几章起知道」才是这个产品在卖的东西", () => {
+  it("知道状态用自然语言显示从哪一章开始", () => {
     const knows = matrix.cells.find((c) => c.state === "KNOWS");
     expect(knows, "fixture 里没有 KNOWS 单元格，这个测试就测不到东西了").toBeDefined();
 
     render(<MatrixView matrix={matrix} constraints={constraints} />);
-    expect(screen.getByText(`ch${knows!.since_chapter}`)).toBeInTheDocument();
+    expect(screen.getByText(`第 ${knows!.since_chapter} 章起`)).toBeInTheDocument();
   });
 
   it("行是人、列是秘密，一个都不能少", () => {
@@ -41,9 +41,10 @@ describe("认知矩阵", () => {
     }
   });
 
-  it("must_not_reveal 渲染的是显示名标签 —— 秘密的**内容**一个字都不该到前端", () => {
+  it("不能说破的内容只显示名称，不泄漏内部字段名或秘密正文", () => {
     render(<MatrixView matrix={matrix} constraints={constraints} />);
-    expect(screen.getByText("本场景 must_not_reveal")).toBeInTheDocument();
+    expect(screen.getByText("本场不能说破")).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("must_not_reveal");
 
     // §1.2 的收窄纪律在前端这一侧的兑现：出参里就不该有 props/description，
     // 所以渲染出来的 DOM 里也不可能有。这条在 fixture 层已经被后端测试钉了一遍，
@@ -55,12 +56,13 @@ describe("认知矩阵", () => {
   it("没有在场角色时说人话，不画一张空表", () => {
     render(<MatrixView matrix={{ ...matrix, characters: [], cells: [] }} />);
     expect(screen.queryByRole("table")).toBeNull();
-    expect(screen.getByText(/没有可显示的在场角色或秘密/)).toBeInTheDocument();
+    expect(screen.getByText(/当前没有可比较的人物和秘密/)).toBeInTheDocument();
   });
 
-  it("解析不出的称呼要说出来 —— 面板对他们是退化值，不说等于骗人", () => {
+  it("找不到的称呼用作者语言说明", () => {
     render(<MatrixView matrix={{ ...matrix, unresolved_cast: ["师兄"] }} />);
     expect(screen.getByText(/师兄/)).toBeInTheDocument();
-    expect(screen.getByText(/无法解析/)).toBeInTheDocument();
+    expect(screen.getByText(/未在花名册中找到/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("退化值");
   });
 });

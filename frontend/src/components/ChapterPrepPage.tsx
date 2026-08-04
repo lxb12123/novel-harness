@@ -59,10 +59,10 @@ export function ChapterPrepPage() {
         <DraftLengthControls />
 
         <section className="prep-card">
-          <h3>本章目标（你的笔记 · 引擎不背书）</h3>
+          <h3>本章目标（只保存在这台电脑上）</h3>
           <textarea
             className="brief"
-            placeholder="这一章要发生什么、必须承接上一章的什么…（只存在你本机浏览器）"
+            placeholder="记下这一章要发生什么，以及需要承接的情节"
             value={brief}
             onChange={(e) => {
               setBrief(e.target.value);
@@ -80,7 +80,7 @@ export function ChapterPrepPage() {
           ) : prev.data && prev.data.length ? (
             prev.data.map((s) => <PrevStateCard key={s.node.id} s={s} />)
           ) : (
-            <div className="empty">这些称呼在第 {prevCh} 章还解析不出状态。</div>
+            <div className="empty">没有找到这些人物在第 {prevCh} 章的状态。</div>
           )}
         </section>
 
@@ -89,11 +89,11 @@ export function ChapterPrepPage() {
           {forbidden.length ? (
             forbidden.map((e) => (
               <span className="tag" key={e.node.id}>
-                {e.node.name}（ch{e.first_appears_chapter} 首现）
+                {e.node.name}（第 {e.first_appears_chapter} 章登场）
               </span>
             ))
           ) : (
-            <div className="empty">（无——没有声明了 first_appears 的未来实体）</div>
+            <div className="empty">没有需要提醒的内容。</div>
           )}
           <h3 style={{ marginTop: 16 }}>本场不能说破</h3>
           {mnr.length ? (
@@ -107,14 +107,13 @@ export function ChapterPrepPage() {
           )}
           {constraints.data?.unresolved_cast.length ? (
             <div className="warn">
-              解析不出：{constraints.data.unresolved_cast.join("、")}。此时「不能说破」是退化值
-              （全部秘密，fail-closed）。
+              这些称呼未在花名册中找到：{constraints.data.unresolved_cast.join("、")}。
             </div>
           ) : null}
         </section>
 
         <section className="prep-card prep-wide">
-          <h3>当前认知矩阵（第 {chapter} 章）</h3>
+          <h3>人物认知（第 {chapter} 章）</h3>
           <MatrixView matrix={matrix.data} constraints={constraints.data} />
         </section>
       </div>

@@ -9,12 +9,12 @@ import type { CheckResult } from "../api/types";
 import { useState } from "react";
 
 const TABS: { key: Tab; label: string }[] = [
-  { key: "matrix", label: "认知矩阵" },
-  { key: "state", label: "当前状态" },
-  { key: "graph", label: "局部图" },
-  { key: "evidence", label: "证据" },
-  { key: "constraints", label: "约束" },
-  { key: "check", label: "一致性(R4)" },
+  { key: "matrix", label: "人物认知" },
+  { key: "state", label: "人物状态" },
+  { key: "graph", label: "人物关系" },
+  { key: "evidence", label: "原文依据" },
+  { key: "constraints", label: "写作提醒" },
+  { key: "check", label: "检查" },
   { key: "review", label: "待确认" },
 ];
 
@@ -25,7 +25,7 @@ function ConstraintsView() {
   return (
     <div>
       <div className="mnr">
-        <div className="lab">must_not_reveal（在场有人还不知道的秘密）</div>
+        <div className="lab">暂时不能说破</div>
         {data.must_not_reveal.length ? (
           data.must_not_reveal.map((n) => (
             <span className="tag" key={n.id}>
@@ -37,11 +37,11 @@ function ConstraintsView() {
         )}
       </div>
       <div className="mnr">
-        <div className="lab">forbidden_entities（未来才首现，本章不许出现）</div>
+        <div className="lab">本章尚未登场</div>
         {data.forbidden_entities.length ? (
           data.forbidden_entities.map((e) => (
             <span className="tag" key={e.node.id}>
-              {e.node.name}（ch{e.first_appears_chapter} 首现）
+              {e.node.name}（第 {e.first_appears_chapter} 章登场）
             </span>
           ))
         ) : (
@@ -50,8 +50,7 @@ function ConstraintsView() {
       </div>
       {data.unresolved_cast.length > 0 && (
         <div className="warn">
-          解析不出：{data.unresolved_cast.join("、")}。此时 must_not_reveal 是退化值（全部秘密，
-          fail-closed），不是算出来的答案。
+          这些称呼未在花名册中找到：{data.unresolved_cast.join("、")}。请检查名称或补充称呼。
         </div>
       )}
     </div>
@@ -68,18 +67,17 @@ function CheckView() {
         disabled={!projectId || check.isPending}
         onClick={() => check.mutate(chapter, { onSuccess: setResult })}
       >
-        {check.isPending ? "检查中…" : `对第 ${chapter} 章跑 R4`}
+        {check.isPending ? "检查中…" : "检查本章"}
       </button>
       {check.error && <div className="err-box">{(check.error as Error).message}</div>}
       {result && (
         <div style={{ marginTop: 10 }}>
-          {/* 静默的零和真的零分得开：印「几个场景块、跑了几条规则」，不只印 issue 数。 */}
           <div className="row" style={{ color: "var(--dim)", fontSize: 12 }}>
-            {result.scene_count} 个场景块 · 跑了 {result.rules_run.length} 条规则（
-            {result.rules_run.join(", ")}）· {result.issues.length} 条 issue
+            已检查 {result.scene_count} 个场景，
+            {result.issues.length ? `发现 ${result.issues.length} 处需要留意` : "没有发现需要处理的问题"}。
           </div>
           {result.scene_count === 0 && (
-            <div className="warn">没有场景块 = R4 无事可做 = 必然零 issue，这不是「这章没问题」。</div>
+            <div className="warn">这一章还没有场景信息，暂时无法进行内容检查。</div>
           )}
           {result.issues.map((iss, i) => (
             <div
@@ -88,11 +86,9 @@ function CheckView() {
               title="点击 → 跳到正文那一段并高亮"
               onClick={() => setHighlight(iss.anchor)}
             >
-              <div className="nm">
-                [{iss.rule}] {iss.issue_type}
-              </div>
+              <div className="nm">需要留意</div>
               <div className="row">
-                第 {iss.chapter} 章 · 第 {iss.anchor.para_index} 段 → 点我回正文
+                第 {iss.chapter} 章 · 第 {iss.anchor.para_index} 段 · 点击回到原文
               </div>
               <div className="row">{iss.message}</div>
               {iss.suggested_action && <div className="row">建议：{iss.suggested_action}</div>}
@@ -113,7 +109,7 @@ export function RightPanel() {
   const roster = useRoster(projectId);
   const pendingCount = (proposals.data ?? []).filter((p) => p.status === "PENDING").length;
   const tabs = TABS.map((t) =>
-    t.key === "review" ? { ...t, label: `待确认 · ${pendingCount}` } : t,
+    t.key === "review" ? { ...t, label: `待确认 ${pendingCount}` } : t,
   );
 
   if (!roster.data?.length) {

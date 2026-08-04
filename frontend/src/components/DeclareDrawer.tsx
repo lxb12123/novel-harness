@@ -46,10 +46,8 @@ export function DeclareDrawer({
     <>
       <div className="backdrop" onClick={onClose} />
       <div className="drawer">
-        <h3>声明</h3>
-        <div className="sub">
-          章号由这句引语算出来 —— 这里**没有**章号输入框，也永远不会有（约束 10）。
-        </div>
+        <h3>记录设定</h3>
+        <div className="sub">这条记录会自动关联到原文所在的章节。</div>
 
         <div className="field">
           <span>类型</span>
@@ -63,32 +61,33 @@ export function DeclareDrawer({
         </div>
 
         <div className="field">
-          <span>谁（称呼原文，系统自己解析）</span>
-          <input value={who} onChange={(e) => setWho(e.target.value)} placeholder="萧决" />
+          <span>人物</span>
+          <input aria-label="人物" value={who} onChange={(e) => setWho(e.target.value)} placeholder="输入人物名称" />
         </div>
 
         <div className="field">
-          <span>{kind === "where" ? "地点（称呼原文）" : "秘密（称呼原文）"}</span>
+          <span>{kind === "where" ? "地点" : "秘密"}</span>
           <input
+            aria-label={kind === "where" ? "地点" : "秘密"}
             value={target}
             onChange={(e) => setTarget(e.target.value)}
-            placeholder={kind === "where" ? "北荒" : "血脉秘密"}
+            placeholder={kind === "where" ? "输入地点名称" : "输入秘密名称"}
           />
         </div>
 
         {kind === "believes" && (
           <div className="field">
-            <span>他以为的是（面板直接渲染这句）</span>
-            <input value={believed} onChange={(e) => setBelieved(e.target.value)} placeholder="已泄露" />
+            <span>人物相信的内容</span>
+            <input value={believed} onChange={(e) => setBelieved(e.target.value)} placeholder="输入人物此刻相信的内容" />
           </div>
         )}
 
         <div className="field">
-          <span>引语（从正文复制，逐字精确匹配）</span>
+          <span>原文依据</span>
           <textarea className="quotebox" rows={3} value={q} onChange={(e) => setQ(e.target.value)} />
           <div className="row" style={{ marginTop: 4 }}>
             <button disabled={!q || locate.isPending} onClick={() => locate.mutate(q)}>
-              测这条引语
+              检查原文位置
             </button>
             <LocateHint pending={locate.isPending} hits={locate.data} />
           </div>
@@ -96,7 +95,7 @@ export function DeclareDrawer({
 
         <div className="row" style={{ marginTop: 12 }}>
           <button disabled={!who || !target || !q || declare.isPending} onClick={submit}>
-            {declare.isPending ? "声明中…" : "声明"}
+            {declare.isPending ? "保存中…" : "保存声明"}
           </button>
           <button onClick={onClose}>关闭</button>
         </div>
@@ -126,19 +125,20 @@ function LocateHint({ pending, hits }: { pending: boolean; hits?: QuoteCandidate
   if (pending) return <span className="locate-hits">定位中…</span>;
   if (!hits) return null;
   if (hits.length === 0)
-    return <span className="locate-hits hit">0 处：正文里没有这句（先 sync，或别手打）。</span>;
+    return <span className="locate-hits hit">正文中没有找到这句话，请重新选择。</span>;
   if (hits.length === 1)
-    return <span className="locate-hits">✓ 唯一命中：第 {hits[0].chapter_number} 章，可声明。</span>;
+    return <span className="locate-hits">✓ 已在第 {hits[0].chapter_number} 章找到</span>;
   return (
     <span className="locate-hits hit">
-      {hits.length} 处 → declare 会拒绝并不替你挑。把引语加长到只匹配一处。
+      正文中有 {hits.length} 处相同内容，请多选择一些文字以便准确定位。
     </span>
   );
 }
 
 function edgeLine(e: Edge) {
-  const to = e.valid_to_chapter ?? "∞";
-  return `${e.type} [${e.valid_from_chapter}, ${to})`;
+  const type = e.type === "KNOWS" ? "知道" : e.type === "BELIEVES" ? "以为" : e.type === "LOCATED_AT" ? "身处" : "关联";
+  const to = e.valid_to_chapter ? `至第 ${e.valid_to_chapter} 章前` : "持续有效";
+  return `${type} · 第 ${e.valid_from_chapter} 章起，${to}`;
 }
 
 // 回执 —— 招牌动作：valid_from 是系统算的（明说你没输）+ 自动闭合/撤回的旧边。
@@ -146,20 +146,19 @@ function Receipt({ decl }: { decl: Declaration }) {
   return (
     <div className="receipt">
       <div className="vf">
-        ✓ 已声明 · valid_from = ch{decl.edge.valid_from_chapter}
+        ✓ 已记录 · 第 {decl.edge.valid_from_chapter} 章起
       </div>
       <div className="note">
-        这句话落在第 {decl.evidence.chapter_number} 章 —— 这个数字是**系统算的**，你从没输入过它。
+        原文依据位于第 {decl.evidence.chapter_number} 章。
       </div>
       {decl.closed.length > 0 && (
         <div className="closed">
-          ↳ 自动闭合旧边：{decl.closed.map(edgeLine).join("；")}（那个上界同样是算出来的）
+          ↳ 已结束上一条记录：{decl.closed.map(edgeLine).join("；")}
         </div>
       )}
       {decl.retracted.length > 0 && (
-        <div className="closed">↳ 已撤回（同章更正）：{decl.retracted.map(edgeLine).join("；")}</div>
+        <div className="closed">↳ 已替换同章旧记录：{decl.retracted.map(edgeLine).join("；")}</div>
       )}
-      <div className="note">已记入 decision_log：{decl.decision_id}</div>
     </div>
   );
 }
