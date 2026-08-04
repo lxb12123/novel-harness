@@ -351,6 +351,56 @@ def test_accept_event_only_clones_derived_event_bumps_once_and_audits_text(
     assert item["evidence"]["occurrence_k"] == 0
 
 
+def test_batch_created_proposal_auto_rebases_when_reviewed_at_current(
+    world: ReviewWorld,
+) -> None:
+    """批量抽取后跨章审阅：base 落后不是错误，作者按当前版本审阅即自动 rebase。
+
+    2026-08-04 验收暴露：先抽完 1–3 章再统一审，接受第一章的提案 bump canon 后，
+    其余提案 base 落后直接 409，没有恢复路径。现在只要 expected == current，
+    审阅前把 base 推进到 current，并对当前 canon 重验事实。
+    """
+    first = _make_proposal(
+        world, items=[_event_item(world)], event_ids=[world.event_id]
+    )
+    relation = world.edge_reviews.hydrate_provisional(
+        world.project_id, [world.relation_edge_id]
+    )[0]
+    second_event = world.events.put_provisional(
+        ProvisionalEventSpec(
+            project_id=world.project_id,
+            summary="顾清音与萧决结盟。",
+            evidence_id=relation.edge.evidence_id,
+            participant_ids=[world.hero_id, world.peer_id],
+            knower_ids=[world.hero_id, world.peer_id],
+            confidence=0.92,
+        )
+    )
+    second = _make_proposal(
+        world,
+        items=[
+            {
+                "source_kind": "event",
+                "event_id": second_event.event.id,
+                "summary": second_event.event.summary,
+                "confidence": second_event.event.confidence,
+                "quote": world.relation_quote,
+            }
+        ],
+        event_ids=[second_event.event.id],
+    )
+    assert first.base_canon_version == second.base_canon_version == 0
+
+    _review(world, first.id, ProposalAction.ACCEPT)  # canon 0 -> 1
+
+    # 第二条提案 base 仍为 0，但作者按当前版本（1）明确审阅 → 自动 rebase 后接受。
+    result = _review(world, second.id, ProposalAction.ACCEPT)
+    assert result.status == "ACCEPTED"
+    assert result.canon_version == 2
+    assert require_canon_version(world.conn, world.project_id) == 2
+    assert len(read_decisions(world.conn, world.project_id)) == 2
+
+
 def test_accept_mixed_cluster_promotes_every_event_and_edge_with_one_bump(
     world: ReviewWorld,
 ) -> None:
@@ -613,29 +663,46 @@ def test_request_or_proposal_base_stale_and_duplicate_resolution_leave_zero_writ
     assert len(read_decisions(world.conn, world.project_id)) == 1
 
 
-def test_proposal_base_stale_after_another_canon_change(world: ReviewWorld) -> None:
+def test_proposal_base_rebases_when_reviewed_at_current_but_expected_lag_still_stale(
+    world: ReviewWorld,
+) -> None:
+    """批量抽取后的跨章审阅：base 落后在作者按当前版本确认时自动 rebase。
+
+    expected != current 仍是真正的 stale（作者的 UI 落后于库），照旧 409。
+    """
     proposal = _make_proposal(
         world, items=[_event_item(world)], event_ids=[world.event_id]
     )
     assert project_module.compare_and_bump_canon_version(world.conn, world.project_id, 0) == 1
     world.conn.commit()
 
+    result = review_proposal(
+        world.conn,
+        world.graph,
+        world.events,
+        proposal.id,
+        ProposalReview(action="accept", expected_canon_version=1),
+        proposal_store=world.proposals,
+        edge_review_store=world.edge_reviews,
+    )
+    assert result.status == "ACCEPTED"
+    assert result.canon_version == 2
+    assert require_canon_version(world.conn, world.project_id) == 2
+
+    second = _make_proposal(
+        world, items=[_event_item(world)], event_ids=[world.event_id]
+    )
     with pytest.raises(StaleBaseVersion):
         review_proposal(
             world.conn,
             world.graph,
             world.events,
-            proposal.id,
-            ProposalReview(action="accept", expected_canon_version=1),
+            second.id,
+            ProposalReview(action="accept", expected_canon_version=0),
             proposal_store=world.proposals,
             edge_review_store=world.edge_reviews,
         )
-
-    assert require_canon_version(world.conn, world.project_id) == 1
-    assert world.proposals.get(world.project_id, proposal.id).status.value == "PENDING"
-    assert world.conn.execute(
-        "SELECT COUNT(*) FROM story_event WHERE information_scope = 'CANON'"
-    ).fetchone()[0] == 0
+    assert world.proposals.get(world.project_id, second.id).status.value == "PENDING"
 
 
 def test_accept_rebases_pending_siblings_from_the_same_extraction_cohort(

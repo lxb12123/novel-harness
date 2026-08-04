@@ -436,6 +436,44 @@ class SqliteProposalStore:
             )
             return updated.rowcount
 
+    def rebase_to_current(
+        self,
+        proposal_id: str,
+        to_canon_version: int,
+    ) -> ProposalRecord:
+        """把一条 PENDING 提案的 base 推进到当前 canon 版本。
+
+        批量抽取后跨章审阅时，作者在「当前版本」上明确确认提案：base 落后不是
+        错误，而是批次顺序造成的。base 推进后，审阅仍会对当前 canon 重验事实
+        （同 rebase_pending_cohort 的承诺）。
+        """
+        if to_canon_version < 0:
+            raise ProposalValidationError("rebase 目标版本不能为负")
+        with _transaction(self._conn):
+            row = self._conn.execute(
+                "SELECT project_id, status, base_canon_version FROM proposal_set WHERE id = ?",
+                (proposal_id,),
+            ).fetchone()
+            if row is None:
+                raise ProposalNotFound(f"proposal 不存在：{proposal_id}")
+            if row["status"] != "PENDING":
+                raise ProposalAlreadyResolved(
+                    f"proposal {proposal_id} 已是 {row['status']}，不能 rebase"
+                )
+            changed = self._conn.execute(
+                """
+                UPDATE proposal_set SET base_canon_version = ?
+                WHERE id = ? AND status = 'PENDING' AND base_canon_version <> ?
+                """,
+                (to_canon_version, proposal_id, to_canon_version),
+            )
+            if changed.rowcount > 1:
+                raise RuntimeError("proposal rebase updated more than one row")
+            record = self.get(str(row["project_id"]), proposal_id)
+            if record is None:
+                raise RuntimeError(f"rebase 后提案不可读：{proposal_id}")
+            return record
+
     def attach_decision(self, proposal_id: str, decision_id: str) -> ProposalRecord:
         """Attach audit only after terminal business state has committed.
 

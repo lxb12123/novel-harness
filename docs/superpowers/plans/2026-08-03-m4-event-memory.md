@@ -19,6 +19,18 @@
 - Evidence is `(para_index, matched original text, occurrence_k)`. Exact location wins; fuzzy location is accepted only for a unique best match with `SequenceMatcher.ratio() >= 0.90`; the stored quote and hash always use the source substring.
 - Quotes are 1–120 characters (non-empty only): there is **no character-count minimum** — short verbatim utterances like 「卧槽，陨石！」 or 「天蝎座」 are normal, and their risk is anchor ambiguity, which the locator already handles by discarding ambiguous matches. Short quotes (<10 chars) are controlled only by frequency: at most 30% of the chapter's quotes (ceiling, floor of one) (2026-08-04 maintainer ruling, following two real-run failures: the old 10-character minimum sank whole chapters over one 6-character quote, and a 3-character quote reappeared even at a 4-character floor).
 - The extraction provider call pins `temperature=0.3` (same value the M2 draft profile froze for `deepseek-v4-flash`): structured JSON output needs low sampling variance, and the first runs with provider-default temperature failed schema parsing intermittently (2026-08-04 real-run finding).
+- Failed-run retry: `POST /extract?force=true` resets the FAILED run row back to `PENDING`
+  (same run id — the DB unique key keeps one run per chapter/prompt, and `model_call` audit rows
+  are preserved) so the author can pay for a fresh call. The default enqueue stays idempotent.
+  (2026-08-04, product gap: a transient model failure permanently blocked the chapter.)
+- Batch-extraction review: reviewing a proposal whose `base_canon_version` lags current
+  auto-rebases it to current when the author's `expected_canon_version` equals current, then
+  revalidates every fact against current Canon (same promise as `rebase_pending_cohort`).
+  `expected != current` still raises `StaleBaseVersion`. (2026-08-04, product gap: extract-then-review
+  across chapters dead-ended in 409 with no recovery.)
+- New-character proposals are one per surface: each unknown profile becomes its own
+  `new_character` proposal, so accept/bystander is per character, never a whole cluster.
+  (2026-08-04, product gap: the first live run clustered 2–3 candidates into one proposal.)
 - Retrieval is deterministic SQL and lexical incidence only. There is no embedding or ANN path in M4 because ADR 0002 requires a measured retrieval failure first.
 - Writer safety is initially strict: only CANON events before the current chapter that involve a current cast member and are known by every resolved cast member may enter the prompt.
 - The rolling background is a deterministic summary of accepted events: all CANON events from the previous 8 chapters plus up to 12 older cast-related events, sorted by `(chapter, event_id)`. No second summarizer call is introduced until this context shape is evaluated.

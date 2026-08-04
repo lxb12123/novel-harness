@@ -44,11 +44,12 @@ def _run_not_found(run_id: str) -> HTTPException:
 def extract_chapter(
     chapter: ChapterNumber,
     background_tasks: BackgroundTasks,
+    force: Annotated[bool, Query()] = False,
     proj: Any = Depends(load_project),
     runner: ExtractionRunner = Depends(get_extraction_runner),
 ) -> ExtractionRun:
     try:
-        run = runner.enqueue(proj.id, chapter)
+        run = runner.enqueue(proj.id, chapter, force=force)
     except ExtractionChapterNotFound as exc:
         raise HTTPException(
             status_code=404,

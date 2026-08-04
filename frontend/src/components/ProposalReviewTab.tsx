@@ -200,6 +200,17 @@ export function ProposalReviewTab() {
         >
           {startExtraction.isPending ? "排队中…" : `跑第 ${chapter} 章抽取`}
         </button>
+        {run.data?.status === "FAILED" && (
+          <button
+            disabled={!pid || startExtraction.isPending}
+            onClick={() => {
+              if (!pid) return;
+              startExtraction.mutate({ force: true }, { onSuccess: (r) => setRunId(r.id) });
+            }}
+          >
+            重跑本章
+          </button>
+        )}
         {run.data && (
           <span className="dim">
             抽取：{run.data.status}

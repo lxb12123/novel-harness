@@ -167,6 +167,26 @@ class ExtractionService:
                 items = buckets[kind]
                 if not items:
                     continue
+                if kind == "new_character":
+                    # 每个未知人物独立成一条提案：作者才能逐人「接受为角色 / 标为路人」，
+                    # 而不是整组一起处理。
+                    for item in items:
+                        proposal = self._proposals.create(
+                            ProposalCreate(
+                                project_id=project_id,
+                                kind=kind,
+                                summary=summaries[kind],
+                                items=[item],
+                                confidence=item["confidence"],
+                                chapter_number=chapter.number,
+                                snapshot_id=chapter.snapshot_id,
+                                base_canon_version=canon_version,
+                                schema_version=ANALYSIS_SCHEMA_VERSION,
+                                prompt_hash=prompt_hash,
+                            )
+                        )
+                        proposal_ids.append(proposal.id)
+                    continue
                 proposal = self._proposals.create(
                     ProposalCreate(
                         project_id=project_id,

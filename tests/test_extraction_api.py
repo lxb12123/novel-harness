@@ -100,6 +100,29 @@ def test_explicit_extract_returns_202_and_background_config_failure_is_queryable
     ]
 
 
+def test_extract_force_rerun_creates_a_fresh_run(
+    extraction_client: TestClient,
+    extraction_book: dict[str, str],
+) -> None:
+    pid = extraction_book["pid"]
+
+    first = extraction_client.post(f"/api/projects/{pid}/chapters/1/extract")
+    assert first.status_code == 202, first.text
+    first_id = first.json()["id"]
+
+    # 幂等：不带 force 复用同一条 run。
+    same = extraction_client.post(f"/api/projects/{pid}/chapters/1/extract")
+    assert same.json()["id"] == first_id
+
+    # 「重跑本章」：force=true 把失败的 run 重置回 PENDING（同一条 run，可再付一次调用）。
+    forced = extraction_client.post(
+        f"/api/projects/{pid}/chapters/1/extract?force=true"
+    )
+    assert forced.status_code == 202, forced.text
+    assert forced.json()["status"] == "PENDING"
+    assert forced.json()["id"] == first_id
+
+
 def _analysis_json() -> str:
     return RawChapterAnalysis(
         events=(
@@ -217,7 +240,9 @@ class _SpyRunner:
         self.enqueue_calls = 0
         self.run_calls = 0
 
-    def enqueue(self, _project_id: str, _chapter: int) -> Any:
+    def enqueue(
+        self, _project_id: str, _chapter: int, *, force: bool = False
+    ) -> Any:
         self.enqueue_calls += 1
         raise AssertionError("non-extract routes must not enqueue")
 

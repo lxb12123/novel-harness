@@ -286,18 +286,17 @@ def review_proposal(
                 f"proposal {proposal_id} 已是 {proposal.status.value}，不能再次处理"
             )
         current = project.require_canon_version(conn, proposal.project_id)
-        if proposal.base_canon_version != current:
-            raise project.StaleBaseVersion(
-                proposal.project_id,
-                expected=proposal.base_canon_version,
-                current=current,
-            )
         if review.expected_canon_version != current:
             raise project.StaleBaseVersion(
                 proposal.project_id,
                 expected=review.expected_canon_version,
                 current=current,
             )
+        if proposal.base_canon_version != current:
+            # 作者在当前版本上明确审阅：base 落后是「批量抽取后再审」的顺序产物，
+            # 不是错误。把 base 推进到 current，随后 _validate_current_canon 仍会
+            # 对当前 canon 重验全部事实（同 rebase_pending_cohort 的承诺）。
+            proposal = proposals.rebase_to_current(proposal.id, current)
         validated, source_events, event_evidence, source_edges, edge_evidence = (
             _hydrate_cluster(proposal, review, events, edge_reviews)
         )

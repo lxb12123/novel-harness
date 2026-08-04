@@ -310,7 +310,10 @@ export function useEvents(pid: string | null, chapter: number, scope: "PROVISION
 export function useStartExtraction(pid: string, chapter: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api.post<ExtractionRun>(proj(pid, `/chapters/${chapter}/extract`)),
+    mutationFn: (opts?: { force?: boolean }) =>
+      api.post<ExtractionRun>(
+        proj(pid, `/chapters/${chapter}/extract${opts?.force ? "?force=true" : ""}`),
+      ),
     onSuccess: (run) => qc.setQueryData(["extraction", pid, run.id], run),
   });
 }

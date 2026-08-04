@@ -74,4 +74,45 @@ describe("M4 提案审阅面板", () => {
     expect(text).not.toContain("items_json");
     expect(text).not.toContain("proposal_set");
   });
+
+  it("失败 run 出现「重跑本章」，点击走 force=true 拿到新 run", async () => {
+    const user = userEvent.setup();
+    useCoords.getState().setProject("project:ID1");
+    useCoords.getState().setChapter(1);
+    const base = {
+      project_id: "project:ID1",
+      chapter_number: 1,
+      snapshot_id: "snapshot:ID1",
+      errors: [],
+      valid_event_count: 0,
+      discarded_event_count: 0,
+      proposal_count: 0,
+      model_call_id: null,
+      schema_version: "chapter-analysis-v1",
+      prompt_hash: "hash",
+      created_at: "<ts>",
+      started_at: "<ts>",
+      finished_at: "<ts>",
+    };
+    const failed = {
+      ...base,
+      id: "extraction_run:ID1",
+      status: "FAILED",
+      errors: [{ code: "analysis_format", message: "格式错误" }],
+    };
+    const succeeded = { ...base, id: "extraction_run:ID2", status: "SUCCEEDED" };
+    renderWithApi(<ProposalReviewTab />, [
+      { method: "POST", match: /\/extract\?force=true/, body: succeeded },
+      { method: "POST", match: /\/extract$/, body: failed },
+      { method: "GET", match: /\/extractions\/extraction_run:ID2/, body: succeeded },
+      { method: "GET", match: /\/extractions\//, body: failed },
+    ]);
+
+    await user.click(screen.getByRole("button", { name: "跑第 1 章抽取" }));
+    const retry = await screen.findByRole("button", { name: "重跑本章" });
+    await user.click(retry);
+    // force=true 创建了新 run（ID2 成功）——文本从 FAILED 变成 SUCCEEDED。
+    expect(await screen.findByText(/抽取：SUCCEEDED/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重跑本章" })).toBeNull();
+  });
 });

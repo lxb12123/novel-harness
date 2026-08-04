@@ -72,7 +72,13 @@ class ExtractionRunner:
         self._new_run_id = run_id_factory
         self._new_call_id = call_id_factory
 
-    def enqueue(self, project_id: str, chapter_number: int) -> ExtractionRun:
+    def enqueue(
+        self,
+        project_id: str,
+        chapter_number: int,
+        *,
+        force: bool = False,
+    ) -> ExtractionRun:
         if isinstance(chapter_number, bool) or not isinstance(chapter_number, int):
             raise TypeError("chapter_number must be an integer")
         if chapter_number < 1:
@@ -103,6 +109,8 @@ class ExtractionRunner:
                 FROM extraction_run
                 WHERE project_id = ? AND snapshot_id = ?
                   AND schema_version = ? AND prompt_hash = ?
+                ORDER BY created_at DESC, id DESC
+                LIMIT 1
                 """,
                 (
                     project_id,
@@ -111,6 +119,22 @@ class ExtractionRunner:
                     prompt_hash,
                 ),
             ).fetchone()
+            if force and existing is not None and existing["status"] == "FAILED":
+                # 「重跑本章」：把失败的 run 重置回 PENDING，清掉上次调用的链接。
+                # 不删行、不新建行——DB 唯一键守住「同一章同一 prompt 一条 run」，
+                # model_call 审计记录保留，新调用会重新挂接。
+                conn.execute(
+                    """
+                    UPDATE extraction_run
+                    SET status = 'PENDING', errors_json = '[]',
+                        valid_event_count = 0, discarded_event_count = 0,
+                        proposal_count = 0, model_call_id = NULL,
+                        started_at = NULL, finished_at = NULL
+                    WHERE id = ? AND status = 'FAILED'
+                    """,
+                    (existing["id"],),
+                )
+                existing = self._fetch_row(conn, existing["id"])
             if existing is None:
                 run_id = self._new_run_id(project_id)
                 conn.execute(

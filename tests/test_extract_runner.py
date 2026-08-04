@@ -144,6 +144,30 @@ def test_enqueue_is_immediate_content_addressed_and_reuses_the_same_run(seed: Se
     assert first.schema_version == ANALYSIS_SCHEMA_VERSION
 
 
+def test_enqueue_force_resets_a_failed_run_for_a_new_paid_call(
+    seed: Seed,
+) -> None:
+    calls: list[object] = []
+
+    def failing_analyzer(request: object) -> object:
+        calls.append(request)
+        raise RuntimeError("boom")
+
+    runner = _runner(seed, failing_analyzer)
+    first = runner.enqueue(seed.project_id, 3)
+    assert runner.run(first.id).status is ExtractionRunStatus.FAILED
+
+    forced = runner.enqueue(seed.project_id, 3, force=True)
+    assert forced.id == first.id  # 同一章同一 prompt 仍是同一条 run
+    assert forced.status is ExtractionRunStatus.PENDING
+    assert forced.model_call_id is None
+    assert forced.errors == ()
+    # 不带 force 的幂等复用返回重置后的 PENDING run，不会重复付费调用。
+    again = runner.enqueue(seed.project_id, 3)
+    assert again == forced
+    assert len(calls) == 1
+
+
 def test_get_is_a_pure_read_that_never_claims_or_calls_the_analyzer(seed: Seed) -> None:
     analyzer = Analyzer()
     runner = _runner(seed, analyzer)

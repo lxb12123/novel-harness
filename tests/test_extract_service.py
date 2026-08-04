@@ -565,6 +565,39 @@ def test_unknown_incidental_surfaces_are_dropped_not_guessed(
     assert [node.id for node in view.revealed_facts] == [seed.secret_id]
 
 
+def test_new_character_proposals_are_split_per_surface(
+    seed: Seed, conn: Connection
+) -> None:
+    """每个未知人物独立成一条提案：作者才能逐人「接受为角色 / 标为路人」。"""
+    report = _service(conn, seed).ingest(
+        seed.project_id,
+        seed.chapter,
+        _analysis(
+            profiles=(
+                RawCharacterProfile(
+                    surface="陆青禾", gender="女", personality="隐忍", confidence=0.8
+                ),
+                RawCharacterProfile(
+                    surface="白峰", gender="男", personality="沮丧", confidence=0.7
+                ),
+            )
+        ),
+        prompt_hash="prompt:split-new-characters",
+    )
+
+    assert report.proposal_count == 2
+    proposals = SqliteProposalStore(conn).pending(seed.project_id)
+    assert [proposal.kind for proposal in proposals] == [
+        "new_character",
+        "new_character",
+    ]
+    assert all(proposal.item_count == 1 for proposal in proposals)
+    assert {proposal.items[0]["surface"] for proposal in proposals} == {
+        "陆青禾",
+        "白峰",
+    }
+
+
 class _ExplodingProposalStore:
     def create(self, proposal: ProposalCreate):
         raise RuntimeError(f"proposal write failed: {proposal.kind}")
