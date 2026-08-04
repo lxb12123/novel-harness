@@ -532,6 +532,39 @@ def test_profile_and_incidental_surface_policy_never_guesses_or_creates_nodes(
     assert (profile.gender, profile.personality) == ("女", None)
 
 
+def test_unknown_incidental_surfaces_are_dropped_not_guessed(
+    seed: Seed, conn: Connection
+) -> None:
+    """匿名配角与未声明事实是常态：未知面丢弃，事件保留已知参与者。
+
+    2026-08-04 真书首跑发现：整章事件因「相亲小姐姐/服务员/路人」这类匿名
+    配角全部被弃。路人不进图谱（M4_DESIGN），但也不该整条事件陪葬——
+    未知面丢弃、歧义/错类仍整条拒收（绝不替作者猜）。
+    """
+    report = _service(conn, seed).ingest(
+        seed.project_id,
+        seed.chapter,
+        _analysis(
+            events=(
+                _event(
+                    participants=("顾清音", "不存在的路人"),
+                    knowers=("顾清音", "服务员", "全体师生"),
+                    revealed_facts=("玄铁令来历", "模型生成的未声明事实句"),
+                ),
+            )
+        ),
+        prompt_hash="prompt:bystanders",
+    )
+
+    assert (report.valid_event_count, report.discarded_event_count) == (1, 0)
+    (event_id,) = report.event_ids
+    view = SqliteEventStore(conn).event(seed.project_id, event_id)
+    assert view is not None
+    assert [node.id for node in view.participants] == [seed.hero_id]
+    assert [node.id for node in view.knowers] == [seed.hero_id]
+    assert [node.id for node in view.revealed_facts] == [seed.secret_id]
+
+
 class _ExplodingProposalStore:
     def create(self, proposal: ProposalCreate):
         raise RuntimeError(f"proposal write failed: {proposal.kind}")

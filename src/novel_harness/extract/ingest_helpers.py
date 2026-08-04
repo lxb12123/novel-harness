@@ -107,6 +107,34 @@ def resolve_ids(
     return ids, None
 
 
+def resolve_event_surfaces(
+    kind: DiscardKind,
+    index: int,
+    surfaces: Sequence[str],
+    expected: NodeLabel,
+    resolutions: dict[str, SurfaceResolution],
+) -> tuple[list[str], list[str], DiscardReason | None]:
+    """Resolve an event's surface list without letting bystanders kill the event.
+
+    Unknown surfaces are dropped: anonymous supporting characters and undeclared
+    facts are normal in real novels, and M4_DESIGN says bystanders never enter the
+    graph.  Ambiguous or wrong-label surfaces still discard the whole item — those
+    are known entities the extractor cannot safely pick, and the product never
+    chooses for the author.  Never guesses either way.
+    """
+    ids: list[str] = []
+    dropped: list[str] = []
+    for surface in surfaces:
+        resolution = resolutions[surface]
+        if resolution.unknown:
+            dropped.append(surface)
+            continue
+        if resolution.ambiguous or resolution.candidates[0].label is not expected:
+            return [], dropped, surface_reason(kind, index, surface, expected, resolution)
+        ids.append(resolution.candidates[0].id)
+    return ids, dropped, None
+
+
 def surface_reason(
     kind: DiscardKind,
     index: int,

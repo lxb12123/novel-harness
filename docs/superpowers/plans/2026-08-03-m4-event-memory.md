@@ -278,7 +278,11 @@
   - an exclusive state update that disagrees with current CANON → one `edge_conflict` proposal linked through `proposal_edge`;
   - confidence `<0.70` and a profile-marked main character → one `low_confidence_main` proposal;
   - unknown profile surface → one `new_character` proposal, no node created;
-  - unknown incidental surface in an event → event discarded, never guessed;
+  - unknown incidental surfaces in an event are dropped, never guessed — bystanders
+    (anonymous supporting characters, undeclared facts) are normal in real novels and
+    never enter the graph, but must not sink the whole event. An event is discarded
+    only when no participant resolves, any surface is ambiguous, or its quote cannot
+    be located (2026-08-04 maintainer ruling after the first real-book run);
   - high-confidence non-conflict → no proposal row;
   - rerun of the same `(snapshot, schema version, prompt hash)` → same run/no second paid call;
   - model response is parsed once; malformed JSON marks run FAILED and performs no graph writes.

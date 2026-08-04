@@ -30,7 +30,7 @@ from .ingest_helpers import (
     locate_evidence,
     prepare_state_update,
     resolution_map,
-    resolve_ids,
+    resolve_event_surfaces,
     surface_reason,
 )
 from .models import RawChapterAnalysis, RawEvent
@@ -233,17 +233,24 @@ class ExtractionService:
         event_links: dict[str, list[str]],
         confidences: dict[str, list[float]],
     ) -> DiscardReason | None:
-        participants, reason = resolve_ids(
+        participants, _dropped_participants, reason = resolve_event_surfaces(
             "event", index, raw.participants, NodeLabel.CHARACTER, resolutions
         )
         if reason is not None:
             return reason
-        knowers, reason = resolve_ids(
+        if not participants:
+            return DiscardReason(
+                kind="event",
+                index=index,
+                outcome=DiscardOutcome.UNKNOWN_SURFACE,
+                detail="event has no resolvable participants",
+            )
+        knowers, _dropped_knowers, reason = resolve_event_surfaces(
             "event", index, raw.knowers, NodeLabel.CHARACTER, resolutions
         )
         if reason is not None:
             return reason
-        facts, reason = resolve_ids(
+        facts, _dropped_facts, reason = resolve_event_surfaces(
             "event", index, raw.revealed_facts, NodeLabel.SECRET, resolutions
         )
         if reason is not None:
