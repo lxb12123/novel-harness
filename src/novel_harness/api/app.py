@@ -26,14 +26,15 @@ import os
 import tempfile
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import AfterValidator, BaseModel, Field, ValidationError
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError
 
 from .. import importer
+from .. import onboarding
 from .. import project as project_mod
 from ..checks import ALL_CHECKS, CheckContext, run_checks
 from ..settings import Settings as UserSettings
@@ -72,7 +73,6 @@ from .extraction import router as extraction_router
 from .review import router as review_router
 
 _STATIC = Path(__file__).resolve().parent / "static"
-_UNSAFE_PATH = re.compile(r'[/\\:*?"<>|]')  # 书名里不能进目录名的字符
 # React 工作台的构建产物。存在就服务它，否则降级到 static/ 的原生原型。
 #
 # **包内路径**（api → novel_harness → webui/），不是源码树里的 frontend/dist。
@@ -384,23 +384,28 @@ class CreateProject(BaseModel):
     name: str
 
 
+class ImportBootstrap(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["import"]
+    name: str
+    text: str
+
+
+class BlankBootstrap(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mode: Literal["blank"]
+    name: str
+
+
+BootstrapBody = Annotated[ImportBootstrap | BlankBootstrap, Field(discriminator="mode")]
+
+
 class ImportText(BaseModel):
     text: str
     """整本 TXT 的正文。**由浏览器读文件解码后作为文本发来**（避开 python-multipart，
     也把编码难题交给浏览器：GBK 的老稿子前端用 TextDecoder 兜）。"""
-
-
-def _new_book_root(name: str) -> Path:
-    """给新书在 books_root 下开一个稿子目录。作者从不敲路径——按书名派生，撞了就加序号。"""
-    base = books_root()
-    slug = _UNSAFE_PATH.sub("", name).strip() or "book"
-    root = base / slug
-    n = 2
-    while root.exists() and any(root.iterdir()):
-        root = base / f"{slug}-{n}"
-        n += 1
-    root.mkdir(parents=True, exist_ok=True)
-    return root
 
 
 @app.post("/api/projects")
@@ -409,8 +414,22 @@ def create_project(body: CreateProject, conn: Any = Depends(get_conn)) -> Any:
 
     空名 → project.create 抛 ValueError → 422。project.create 自己 commit。
     """
-    root = _new_book_root(body.name)
+    root = onboarding.create_legacy_root(books_root(), body.name)
     return project_mod.create(conn, name=body.name, root_path=str(root))
+
+
+@app.post("/api/projects/bootstrap", response_model=onboarding.BootstrapResult)
+def bootstrap_project(
+    body: BootstrapBody, conn: Any = Depends(get_conn)
+) -> onboarding.BootstrapResult:
+    """原子创建新书：项目、首章、快照与导入报告一起成功或一起消失。"""
+    return onboarding.bootstrap_project(
+        conn,
+        books_root=books_root(),
+        mode=body.mode,
+        name=body.name,
+        text=body.text if isinstance(body, ImportBootstrap) else None,
+    )
 
 
 @app.post("/api/projects/{project_id}/import")
@@ -1095,4 +1114,3 @@ def runs_stub() -> dict[str, str]:
     这正是 §10 约束 8 说的那种失败形态（漂亮的空结果 + 200）。
     """
     return _stub("M2")
-
