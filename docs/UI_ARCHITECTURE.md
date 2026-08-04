@@ -19,7 +19,7 @@
 |---|---|---|
 | 🟢 **现在能做** | ~35 | 现有引擎直接供数据，只差 HTTP 壳 + React |
 | 🟡 **M2（起草）** | 7 | AI 起草已按 **修正案 7 实验开放**（2026-08-02，带实验标注）；AI 规划仍 501/灰置。三臂、runner 与 `nh gate` 已落地，真模型 kill-gate 尚未出有效裁决 |
-| 🟠 **M4（抽取）** | 4 | 变更确认页、自动提取变化，`extract/` 未建，`proposal_set` 表空 |
+| 🟢 **M4（抽取）** | 4 | 事件记忆切片已落地（2026-08-03）：显式后台抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文；`extract/` / `proposal_set` / 右栏「待确认」tab 均已实现。真书三章接受度验收待跑 |
 | 🔵 **v1.1（向量）** | 1 | Tab3 检索分数/语义检索，ADR 0002 触发条件制 |
 | ⚫ **永久砍** | 2 | 事件因果图 + 「新增事件」，无 Event 节点、无 CAUSES 边（ADR 0005） |
 | ⚪ **纯前端** | ~5 | 大纲/世界观/批注/置信度显示等，无引擎背书，降级为磁盘 markdown |
@@ -48,9 +48,9 @@
 
 ### 1.2 端点清单
 
-> `status`：🟢=BACKED_NOW（现在能做）· 🟡=STUB_M2 · 🟠=STUB_M4。所有 🟡🟠 端点返回稳定的 `501 {status:'not_implemented', milestone}`，让前端**灰置**按钮而不是 404。
+> `status`：🟢=BACKED_NOW（现在能做）· 🟡=STUB_M2。M4 的抽取/审阅端点已点亮；余下 🟡 端点返回稳定的 `501 {status:'not_implemented', milestone}`，让前端**灰置**按钮而不是 404。
 >
-> 读这张表的两个前提：**Path 一律省了 `/api` 前缀**（真实路径是 `/api/projects/…`），表里也不列 `GET /`（SPA 入口，不是 API）。**5 条 🟡🟠 stub 今天是真实存在的端点**（`api/app.py`，commit `9f12fab`）——后端那一半兑现了，前端灰按钮那一半还没做（§2.2 末的现状标注）。
+> 读这张表的两个前提：**Path 一律省了 `/api` 前缀**（真实路径是 `/api/projects/…`），表里也不列 `GET /`（SPA 入口，不是 API）。**2 条 🟡 stub 今天是真实存在的端点**（`api/app.py`，commit `9f12fab`）——后端那一半兑现了，前端灰按钮那一半还没做（§2.2 末的现状标注）。
 
 | Method | Path | 调哪个引擎函数 | 响应（Pydantic 或收窄后的 dict） | 状态 |
 |---|---|---|---|---|
@@ -83,8 +83,13 @@
 | POST | `/projects/{pid}/chapters/{n}/draft` | — | 501 | 🟡 |
 | POST | `/projects/{pid}/chapters/{n}/plan` | — | 501 | 🟡 |
 | GET | `/projects/{pid}/runs` | —（`model_call` 空） | 501 | 🟡 |
-| GET | `/projects/{pid}/chapters/{n}/proposals` | —（`proposal_set` 空） | 501 | 🟠 |
-| POST | `/projects/{pid}/proposals/{id}/accept` | `upsert_edge` 就绪但无提案生产者 | 501 | 🟠 |
+| GET | `/projects/{pid}/chapters/{n}/proposals` | `proposals.pending` | `list[ProposalRecord]` | 🟢 |
+| POST | `/projects/{pid}/proposals/{id}/accept` | `review_proposal`（accept） | `ProposalResolution` | 🟢 |
+| POST | `/projects/{pid}/proposals/{id}/reject` | `review_proposal`（reject/bystander） | `ProposalResolution` | 🟢 |
+| POST | `/projects/{pid}/chapters/{n}/provisional/confirm` | `confirm_provisional_*`（幂等回执） | `ProvisionalConfirmation` | 🟢 |
+| POST | `/projects/{pid}/chapters/{n}/extract` | `runner.enqueue`（后台执行） | `ExtractionRun`（202） | 🟢 |
+| GET | `/projects/{pid}/extractions/{run_id}` | `runner.get` | `ExtractionRun` | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/events?scope=` | `events_for_chapter` | `list[EventView]` | 🟢 |
 
 **关键陷阱（壳写错就退化成 fail-open）：**
 
@@ -183,6 +188,8 @@
 │  │  ├─ Tab4 <ConstraintsBox>    ◀ GET /constraints（must_not_reveal / forbidden）
 │  │  │       <KnowledgeMatrix>   ◀ GET /matrix（cast×secret 头牌）
 │  │  └─ Tab5 <IssueList>         ◀ POST /check（Issue+anchor+evidence；显示「确定性」）
+│  │      Tab6 <ProposalReviewTab> ◀ GET /proposals + /events?scope=PROVISIONAL
+│  │         ▶ POST accept|reject|bystander · provisional/confirm · extract
 │  └─ <BottomBar>
 │     ├─ <SceneTimeline>          ◀ parse_scenes 序 + edge.valid_from/valid_to
 │     └─ <RunTelemetry collapsed> ◀ M2 model_call（v1 空）
@@ -204,7 +211,7 @@
    └─ <KnowledgeMatrixMode>      ◀ GET /matrix（模式5 全屏）
 ```
 
-⚠️ **这棵树里有 2 个组件今天不存在**：`<RecentRuns hidden>` / `<RunTelemetry collapsed>`（都是 M2 的隐藏/折叠态，v1 本来就不显示）。`<AIPlanBtn disabled>` 仍是灰置 stub（规划未开放）；`<AIDraftBtn>` 已按 **修正案 7** 点亮并接上真实 `/draft`（实验状态，2026-08-02）——响应与 UI 都带「未经 kill-gate 裁决」标注。M2 有效裁决后再决定是否去掉实验标注。
+⚠️ **这棵树里有 2 个组件今天不存在**：`<RecentRuns hidden>` / `<RunTelemetry collapsed>`（都是 M2 的隐藏/折叠态，v1 本来就不显示）。`<AIPlanBtn disabled>` 仍是灰置 stub（规划未开放）；`<AIDraftBtn>` 已按 **修正案 7** 点亮并接上真实 `/draft`（实验状态，2026-08-02）——响应与 UI 都带「未经 kill-gate 裁决」标注。M2 有效裁决后再决定是否去掉实验标注。**Tab6 `<ProposalReviewTab>`（M4 审阅）已落地（2026-08-03）**：冲突/低置信/新人物卡 + 被动事件批量确认 + 显式抽取按钮。
 
 ### 2.3 状态管理：坐标进 Zustand，数据进 react-query
 
@@ -286,8 +293,8 @@ React 18 + TS（桌面优先）· Vite · **TanStack Query**（服务端状态�
 | 模式3 伏笔图 | `Foreshadow`/`PLANTED_IN` schema 就绪 | 🟢 需补 declare foreshadow；PLANNED 未来侧不进读路径 |
 | **模式2 事件因果图** | — | ⚫ **永久砍，从 UI 删除** |
 | 全屏 1–3 跳 Explorer | `subgraph` | v2（3 跳数学上坏）；v1 只交付 hops≤2 局部漫游 |
-| 联动 AI 生成后自动提取变化 | — | 🟠 M4（`extract/` 未建）；v1 替代=手动 declare |
-| **变更确认页（整页）** | `proposal_set`（空） | 🟠 **M4**；v1 用「作者手动 declare」替代整套「系统抽→作者审」心智 |
+| 联动 AI 生成后自动提取变化 | — | 🟢 M4 已落地：`POST /extract` 显式后台抽取 + 运行状态轮询；抽取结果进 PROVISIONAL |
+| **变更确认页（整页）** | `proposal_set` | 🟢 M4 已落地：右栏「待确认 · N」tab（冲突/低置信/新人物卡 + 被动事件批量确认）；进 CANON 必有作者动作 |
 | 变更类型「新增事件」 | — | ⚫ 永久砍 |
 
 ---
@@ -346,7 +353,7 @@ React 18 + TS（桌面优先）· Vite · **TanStack Query**（服务端状态�
 | 0001 无 Neo4j | ✅ 守住。图谱全走 SQLite `subgraph`，前端只是渲染层 |
 | 0002 无向量 | ✅ 守住。Tab3 只给确定性证据；检索分数砍到 v1.1 |
 | 0003 ULID | ✅ 守住。node_id 全程 ULID，前端不解析语义 |
-| 0004 声明优于抽取 | ✅ 守住。变更页 = 作者手动 declare，不做「系统抽→作者审」直到 M4 |
+| 0004 声明优于抽取 | ✅ 守住。M4 落地后「系统抽→作者审」仍逐条经作者确认（抽取只进 PROVISIONAL，进 CANON 必有一次作者动作；被动确认也走显式回执） |
 | 0005 只做集合判断 | ✅ 守住。Tab5 只有确定性 R4；事件因果图永久删除 |
 | 0006 禁 offset | ✅ 守住。编辑器↔图谱桥只有 `(para_index, quote, k)` |
 | **0007 正文在磁盘 / v1 不做编辑器** | ⚠️ **实质守住，时机松动**：应用内 CM6 编辑器进 v1（作者选定的非程序员 GUI 方向的直接推论），但只读写磁盘 markdown，DB 永不是正文真相源。TipTap 富文本仍 v1.1 |

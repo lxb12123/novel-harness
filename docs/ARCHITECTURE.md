@@ -273,7 +273,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 
 ## 当前状态
 
-**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 正在实现（尚未完成）**（1249 个 pytest + 33 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
+**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；真书三章接受度验收待跑，1456 个 pytest + 41 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
 
 > **本节的数字是全仓唯一副本，且 `tests/test_doc_numbers.py` 会拦住第二份。**
 > `README.md` / `CLAUDE.md` / `frontend/README.md` 里只留指针，不许再抄一份数字过去。
@@ -287,7 +287,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 > 守卫钉住的是**能在运行时数出来**的那些（路由 39 / `/api` 38 / 501 stub 2 / 错误映射 17 /
 > CLI 叶子 17 / 建表 20 / fixture 端点 28 / `ALL_CHECKS` 3），改错必红、**删掉也必红**（不静默 skip）。
 > **它罩不住 pytest / vitest 这两个数**——在 pytest 里数 pytest 要递归，
-> 所以「1249」和「33」仍然只靠人手改，改代码后请顺手跑一次 `uv run pytest -q` 更新这一处。
+> 所以「1456」和「41」仍然只靠人手改，改代码后请顺手跑一次 `uv run pytest -q` 更新这一处。
 > （2026-07-30 那天这个数从 690 走到 801，中途在文档里错过一次——**这条盲区是真的，不是假想的**。）
 
 > ⚠️ **「全绿」目前只在本机成立。本仓库还没有 git remote，`ci.yml` / `release.yml` 一次都没执行过。**
@@ -298,17 +298,21 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 ```
 db.py  ids.py  decisions.py  project.py  migrations/{001_init,002_m4_events}.sql（20 张表）
 graph/{models,store,sqlite_store,queries}.py    ← state_at / supersede / subgraph
-events/{models,store}.py                       ← M4 事件超边 / 角色档案 / 提案仓储契约（实现进行中）
+events/{models,store}.py                       ← M4 事件超边 / 角色档案 / 提案仓储契约
 extract/{models,prompt,locate,analyze}.py       ← M4 严格 JSON 边界 / 确定性证据定位 / 不猜名称解析
+extract/{service,runner,proposals,proposal_confirm,metrics}.py
+                                                  ← 后台抽取闭环 / 提案审阅 / 幂等被动确认 / 接受度指标
 panel/{knowledge,state,constraints}.py          ← 认知矩阵（头牌）+ PLANNED 进 prompt 的唯一闸门
 checks/{base,location_conflict,future_leak,dead_speaks}.py
                                                   ← R2/R3/R4（R5 已砍；`ALL_CHECKS` 共三条）
 text/{anchor,chapterize,scenes,mentions}.py     ← (para_index,quote,k) 唯一定义 / 切章 / 场景块 / 称呼匹配
 declare.py  importer.py                         ← M1 声明层：引语定章号 + 证据链 + CanonWriter
 cli.py                                          ← nh 的 17 个子命令（含 `nh serve` / `nh gate` / `nh draft`）
-api/{app,deps}.py                               ← M1.5 FastAPI 壳：39 条自建路由 + 17 个错误映射
-                                                  （38 条 /api + 1 条 `GET /`；其中 2 条是 501 stub）
-frontend/src/                                   ← React 工作台：28 个手写源文件、2857 行 TS/TSX（278 行测试）
+api/{app,deps,extraction,review}.py             ← M1.5 FastAPI 壳：39 条自建路由 + 17 个错误映射
+                                                  （38 条 /api + 1 条 `GET /`；其中 2 条是 501 stub；
+                                                  M4 抽取/事件读端 + 提案审阅/被动确认路由）
+frontend/src/                                   ← React 工作台：30 个手写源文件、3247 行 TS/TSX（378 行测试）
+                                                  （M4 审阅面板：ProposalReviewTab / StateCards / hooks）
 frontend/src/__fixtures__/api.json              ← 从真 app dump 的 28 个端点出参（契约测试两头共用）
 novel_harness/webui/                            ← ↑ 的构建产物（生成物，不入库；随 wheel 分发）
 draft/provider.py                               ← M2：统一模型出口（OpenAI 兼容，三臂与生产共用）
