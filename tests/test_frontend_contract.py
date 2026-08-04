@@ -32,7 +32,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from test_api import (
+    _seed_edge_conflict_proposal,
     _seed_low_confidence_proposal,
+    _seed_new_character_proposal,
     _seed_provisional_event,
 )
 
@@ -172,6 +174,8 @@ def test_frontend_fixture_matches_the_real_api(
     # ── M4：提案审阅 / 被动确认（seed 走存储层，审阅动作走真 API）─────────────
     m4_proposal_id, m4_event_id, m4_base = _seed_low_confidence_proposal(book)
     m4_confirm_event = _seed_provisional_event(book)
+    _m4_edge_proposal, _m4_edge_proposed = _seed_edge_conflict_proposal(book)
+    _m4_newchar_proposal, _m4_newchar_surface = _seed_new_character_proposal(book)
     grab("proposals", client.get(f"{base}/chapters/1/proposals"))
     grab(
         "eventsProvisional",

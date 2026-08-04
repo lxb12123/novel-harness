@@ -25,12 +25,17 @@ const DEFAULT: Handler[] = [
   { match: /\/chapters\/\d+\/matrix/, body: fixtures.matrix },
   { match: /\/chapters\/\d+\/constraints/, body: fixtures.constraints },
   { match: /\/chapters\/\d+\/state/, body: fixtures.states },
+  { match: /\/chapters\/\d+\/proposals/, body: fixtures.proposals },
+  { match: /\/chapters\/\d+\/events\?scope=PROVISIONAL/, body: fixtures.eventsProvisional },
   { match: /\/chapters\/\d+\/scenes/, body: fixtures.scenes },
   { match: /\/chapters\/\d+\/text/, body: fixtures.chapterText },
   { method: "POST", match: /\/nodes$/, body: fixtures.createNode },
   { method: "POST", match: /\/aliases$/, body: fixtures.createAlias },
   { method: "POST", match: /\/locate$/, body: fixtures.locate },
   { method: "POST", match: /\/declare\/knows$/, body: fixtures.declareKnows },
+  { method: "POST", match: /\/accept$/, body: fixtures.proposalAccept },
+  { method: "POST", match: /\/reject$/, body: fixtures.proposalReject },
+  { method: "POST", match: /\/provisional\/confirm$/, body: fixtures.provisionalConfirm },
 ];
 
 /** 把 fetch 换成查表。**没有匹配上就抛**——静默返回空数组会让组件渲染出一个

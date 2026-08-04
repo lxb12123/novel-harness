@@ -1,9 +1,11 @@
-import { useConstraints, useMatrix, useStates, useCheck } from "../api/hooks";
+import { useConstraints, useMatrix, useStates, useCheck, useProposals } from "../api/hooks";
 import { useCoords, type Tab } from "../store";
 import { MatrixView } from "./KnowledgeMatrix";
 import { LocalGraph } from "./LocalGraph";
 import { EvidenceTab } from "./EvidenceTab";
-import type { CheckResult, StateSnapshot } from "../api/types";
+import { StateCards } from "./StateCards";
+import { ProposalReviewTab } from "./ProposalReviewTab";
+import type { CheckResult } from "../api/types";
 import { useState } from "react";
 
 const TABS: { key: Tab; label: string }[] = [
@@ -13,29 +15,8 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "evidence", label: "证据" },
   { key: "constraints", label: "约束" },
   { key: "check", label: "一致性(R4)" },
+  { key: "review", label: "待确认" },
 ];
-
-function StateCards({ states }: { states?: StateSnapshot[] }) {
-  if (!states || states.length === 0) return <div className="empty">无在场角色。</div>;
-  return (
-    <div>
-      {states.map((s) => (
-        <div className="statecard" key={s.node.id}>
-          <div className="nm">
-            {s.node.name}
-            {s.is_dead && <span className="dead"> · 已亡</span>}
-          </div>
-          <div className="row">所在地：{s.location ? s.location.name : "未声明"}</div>
-          {s.states.map((v, i) => (
-            <div className="row" key={i}>
-              {"name" in v.dim ? v.dim.name : ""}：{v.value || ""}
-            </div>
-          ))}
-        </div>
-      ))}
-    </div>
-  );
-}
 
 function ConstraintsView() {
   const { projectId, chapter, cast } = useCoords();
@@ -128,11 +109,16 @@ export function RightPanel() {
   const matrix = useMatrix(projectId, chapter, cast);
   const constraints = useConstraints(projectId, chapter, cast);
   const states = useStates(projectId, chapter, cast);
+  const proposals = useProposals(projectId, chapter);
+  const pendingCount = (proposals.data ?? []).filter((p) => p.status === "PENDING").length;
+  const tabs = TABS.map((t) =>
+    t.key === "review" ? { ...t, label: `待确认 · ${pendingCount}` } : t,
+  );
 
   return (
     <section className="pane">
       <div className="tabs">
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button key={t.key} className={activeTab === t.key ? "on" : ""} onClick={() => setTab(t.key)}>
             {t.label}
           </button>
@@ -144,6 +130,7 @@ export function RightPanel() {
       {activeTab === "evidence" && <EvidenceTab />}
       {activeTab === "constraints" && <ConstraintsView />}
       {activeTab === "check" && <CheckView />}
+      {activeTab === "review" && <ProposalReviewTab />}
     </section>
   );
 }

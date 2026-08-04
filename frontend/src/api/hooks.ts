@@ -15,9 +15,15 @@ import type {
   DeclareWhere,
   DraftRequest,
   DraftResult,
+  EventView,
+  ExtractionRun,
   ImportReport,
   KnowledgeMatrix,
   NodeRef,
+  ProposalAction,
+  ProposalRecord,
+  ProposalResolution,
+  ProvisionalConfirmation,
   Project,
   QuoteCandidate,
   ResolveResult,
@@ -278,4 +284,91 @@ export function useResolve(pid: string) {
     mutationFn: (surface: string) =>
       api.get<ResolveResult>(proj(pid, `/resolve?surface=${encodeURIComponent(surface)}`)),
   });
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// M4：后台抽取 / 提案审阅 / 被动确认
+// ══════════════════════════════════════════════════════════════════════════
+
+export function useProposals(pid: string | null, chapter: number) {
+  return useQuery({
+    queryKey: q(["proposals", pid, chapter]),
+    queryFn: () => api.get<ProposalRecord[]>(proj(pid!, `/chapters/${chapter}/proposals`)),
+    enabled: !!pid,
+  });
+}
+
+export function useEvents(pid: string | null, chapter: number, scope: "PROVISIONAL" | "CANON") {
+  return useQuery({
+    queryKey: q(["events", pid, chapter, scope]),
+    queryFn: () => api.get<EventView[]>(proj(pid!, `/chapters/${chapter}/events?scope=${scope}`)),
+    enabled: !!pid,
+  });
+}
+
+/** 显式后台抽取：POST 后立刻拿回 PENDING run，再用 useExtractionRun 轮询。 */
+export function useStartExtraction(pid: string, chapter: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<ExtractionRun>(proj(pid, `/chapters/${chapter}/extract`)),
+    onSuccess: (run) => qc.setQueryData(["extraction", pid, run.id], run),
+  });
+}
+
+export function useExtractionRun(pid: string | null, runId: string | null) {
+  return useQuery({
+    queryKey: q(["extraction", pid, runId]),
+    queryFn: () => api.get<ExtractionRun>(proj(pid!, `/extractions/${runId}`)),
+    enabled: !!pid && !!runId,
+    refetchInterval: (query) =>
+      query.state.data?.status === "PENDING" || query.state.data?.status === "RUNNING"
+        ? 2000
+        : false,
+  });
+}
+
+/** 审阅一条提案：accept / reject / bystander。成功后刷新提案、事件、花名册与面板。 */
+export function useReviewProposal(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      proposalId: string;
+      action: ProposalAction;
+      expected_canon_version: number;
+    }) =>
+      body.action === "accept"
+        ? api.post<ProposalResolution>(proj(pid, `/proposals/${body.proposalId}/accept`), {
+            expected_canon_version: body.expected_canon_version,
+          })
+        : api.post<ProposalResolution>(proj(pid, `/proposals/${body.proposalId}/reject`), {
+            action: body.action,
+            expected_canon_version: body.expected_canon_version,
+          }),
+    onSuccess: () => invalidateReview(qc, pid),
+  });
+}
+
+/** 被动确认：把选中的 PROVISIONAL 事件/关系一次性落成 CANON（作者显式动作）。 */
+export function useConfirmProvisional(pid: string, chapter: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: {
+      fact_kind: "event" | "edge";
+      fact_ids: string[];
+      expected_canon_version: number;
+    }) =>
+      api.post<ProvisionalConfirmation>(
+        proj(pid, `/chapters/${chapter}/provisional/confirm`),
+        body,
+      ),
+    onSuccess: () => invalidateReview(qc, pid),
+  });
+}
+
+function invalidateReview(qc: ReturnType<typeof useQueryClient>, pid: string) {
+  qc.invalidateQueries({ queryKey: ["proposals", pid] });
+  qc.invalidateQueries({ queryKey: ["events", pid] });
+  qc.invalidateQueries({ queryKey: ["roster", pid] });
+  qc.invalidateQueries({ queryKey: ["state", pid] });
+  qc.invalidateQueries({ queryKey: ["matrix", pid] });
 }

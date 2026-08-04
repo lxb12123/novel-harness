@@ -25,7 +25,11 @@ from novel_harness.db import connect, migrate
 from novel_harness.declare import Ledger
 from novel_harness.graph import (
     AliasKind,
+    EdgeSource,
+    EdgeSpec,
+    EdgeType,
     EvidenceSpec,
+    InformationScope,
     NodeLabel,
     NodeProps,
     NodeSpec,
@@ -648,6 +652,125 @@ def _seed_low_confidence_proposal(book: dict[str, str]) -> tuple[str, str, int]:
             )
         )
         return proposal.id, event_id, base
+    finally:
+        conn.close()
+
+
+def _seed_edge_conflict_proposal(book: dict[str, str]) -> tuple[str, str]:
+    """一条 PENDING edge_conflict 提案；返回 (proposal_id, proposed_edge_id)。"""
+    conn = connect(book["db"])
+    try:
+        graph = SqliteStoryGraph(conn)
+        pid = book["pid"]
+        hero = book["萧决"]
+        old_place = graph.upsert_node(
+            NodeSpec(project_id=pid, label=NodeLabel.LOCATION, name="青云城")
+        ).id
+        north = graph.resolve(pid, ["北荒"])[0].unique_node.id
+        current = graph.upsert_edge(
+            EdgeSpec(
+                project_id=pid,
+                src=hero,
+                dst=old_place,
+                type=EdgeType.LOCATED_AT,
+                valid_from_chapter=1,
+                information_scope=InformationScope.CANON,
+            )
+        ).edge
+        snapshot_id = graph.chapter_snapshots(pid, 1)[0].snapshot_id
+        quote = "萧决在青云城主府第一次听说了血脉秘密的真相。"
+        evidence = graph.put_evidence(
+            EvidenceSpec(
+                project_id=pid,
+                chapter_snapshot_id=snapshot_id,
+                para_index=2,
+                quote_text=quote,
+            )
+        )
+        proposed = graph.upsert_edge(
+            EdgeSpec(
+                project_id=pid,
+                src=hero,
+                dst=north,
+                type=EdgeType.LOCATED_AT,
+                valid_from_chapter=1,
+                information_scope=InformationScope.PROVISIONAL,
+                confidence=0.8,
+                source=EdgeSource.EXTRACTOR,
+                evidence_id=evidence.id,
+            )
+        ).edge
+        base = project.require_canon_version(conn, pid)
+        proposal = SqliteProposalStore(conn).create(
+            ProposalCreate(
+                project_id=pid,
+                kind="edge_conflict",
+                items=[
+                    {
+                        "update_kind": "location",
+                        "current": {
+                            "edge_id": current.id,
+                            "subject_id": hero,
+                            "target_id": old_place,
+                            "value": None,
+                        },
+                        "proposed": {
+                            "edge_id": proposed.id,
+                            "subject_id": hero,
+                            "target_id": north,
+                            "value": None,
+                            "quote": quote,
+                        },
+                    }
+                ],
+                chapter_number=1,
+                snapshot_id=snapshot_id,
+                base_canon_version=base,
+                schema_version="m4.analysis.v1",
+                prompt_hash="prompt:api-edge-conflict",
+                edge_ids=[proposed.id],
+            )
+        )
+        return proposal.id, proposed.id
+    finally:
+        conn.close()
+
+
+def _seed_new_character_proposal(book: dict[str, str]) -> tuple[str, str]:
+    """一条 PENDING new_character 提案；返回 (proposal_id, surface)。"""
+    conn = connect(book["db"])
+    try:
+        graph = SqliteStoryGraph(conn)
+        pid = book["pid"]
+        base = project.require_canon_version(conn, pid)
+        snapshot_id = graph.chapter_snapshots(pid, 1)[0].snapshot_id
+        surface = "陆青禾"
+        proposal = SqliteProposalStore(conn).create(
+            ProposalCreate(
+                project_id=pid,
+                kind="new_character",
+                items=[
+                    {
+                        "surface": surface,
+                        "profile": {
+                            "surface": surface,
+                            "gender": "女",
+                            "personality": "隐忍",
+                            "background": "北荒旧族",
+                            "character_notes": None,
+                            "confidence": 0.8,
+                        },
+                        "confidence": 0.8,
+                    }
+                ],
+                chapter_number=1,
+                snapshot_id=snapshot_id,
+                base_canon_version=base,
+                schema_version="m4.analysis.v1",
+                prompt_hash="prompt:api-new-character",
+            )
+        )
+        return proposal.id, surface
     finally:
         conn.close()
 

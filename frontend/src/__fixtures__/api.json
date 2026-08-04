@@ -184,7 +184,7 @@
         "chapter_number": 1,
         "confidence": 0.6,
         "derived_from_event_id": null,
-        "evidence_id": "evidence:ID18",
+        "evidence_id": "evidence:ID23",
         "evidence_status": "FRESH",
         "id": "event:ID16",
         "information_scope": "PROVISIONAL",
@@ -224,9 +224,9 @@
         "chapter_number": 1,
         "confidence": 0.6,
         "derived_from_event_id": null,
-        "evidence_id": "evidence:ID20",
+        "evidence_id": "evidence:ID25",
         "evidence_status": "FRESH",
-        "id": "event:ID19",
+        "id": "event:ID24",
         "information_scope": "PROVISIONAL",
         "project_id": "project:ID1",
         "source": "extractor",
@@ -352,16 +352,16 @@
     "canon_version": 11,
     "character": null,
     "characters": [],
-    "decision_id": "decision:ID21",
+    "decision_id": "decision:ID26",
     "edges": [],
     "event": {
       "event": {
         "chapter_number": 1,
         "confidence": 0.6,
         "derived_from_event_id": "event:ID16",
-        "evidence_id": "evidence:ID18",
+        "evidence_id": "evidence:ID23",
         "evidence_status": "FRESH",
-        "id": "event:ID22",
+        "id": "event:ID27",
         "information_scope": "CANON",
         "project_id": "project:ID1",
         "source": "extractor",
@@ -400,9 +400,9 @@
           "chapter_number": 1,
           "confidence": 0.6,
           "derived_from_event_id": "event:ID16",
-          "evidence_id": "evidence:ID18",
+          "evidence_id": "evidence:ID23",
           "evidence_status": "FRESH",
-          "id": "event:ID22",
+          "id": "event:ID27",
           "information_scope": "CANON",
           "project_id": "project:ID1",
           "source": "extractor",
@@ -443,11 +443,11 @@
     "canon_version": 11,
     "character": null,
     "characters": [],
-    "decision_id": "decision:ID24",
+    "decision_id": "decision:ID29",
     "edges": [],
     "event": null,
     "events": [],
-    "proposal_id": "proposal:ID23",
+    "proposal_id": "proposal:ID28",
     "status": "REJECTED"
   },
   "proposals": [
@@ -483,22 +483,100 @@
       "snapshot_id": "snapshot:ID8",
       "status": "PENDING",
       "summary": ""
+    },
+    {
+      "audit_envelope": null,
+      "base_canon_version": 10,
+      "chapter_number": 1,
+      "confidence": null,
+      "created_at": "<ts>",
+      "decision_log_id": null,
+      "edge_ids": [
+        "edge:ID20"
+      ],
+      "event_ids": [],
+      "id": "proposal:ID21",
+      "item_count": 1,
+      "items": [
+        {
+          "current": {
+            "edge_id": "edge:ID18",
+            "subject_id": "character:ID7",
+            "target_id": "location:ID19",
+            "value": null
+          },
+          "proposed": {
+            "edge_id": "edge:ID20",
+            "quote": "萧决在青云城主府第一次听说了血脉秘密的真相。",
+            "subject_id": "character:ID7",
+            "target_id": "location:ID6",
+            "value": null
+          },
+          "update_kind": "location"
+        }
+      ],
+      "kind": "edge_conflict",
+      "project_id": "project:ID1",
+      "prompt_hash": "prompt:api-edge-conflict",
+      "resolution_action": null,
+      "resolved_at": null,
+      "resolved_canon_version": null,
+      "schema_version": "m4.analysis.v1",
+      "snapshot_id": "snapshot:ID8",
+      "status": "PENDING",
+      "summary": ""
+    },
+    {
+      "audit_envelope": null,
+      "base_canon_version": 10,
+      "chapter_number": 1,
+      "confidence": null,
+      "created_at": "<ts>",
+      "decision_log_id": null,
+      "edge_ids": [],
+      "event_ids": [],
+      "id": "proposal:ID22",
+      "item_count": 1,
+      "items": [
+        {
+          "confidence": 0.8,
+          "profile": {
+            "background": "北荒旧族",
+            "character_notes": null,
+            "confidence": 0.8,
+            "gender": "女",
+            "personality": "隐忍",
+            "surface": "陆青禾"
+          },
+          "surface": "陆青禾"
+        }
+      ],
+      "kind": "new_character",
+      "project_id": "project:ID1",
+      "prompt_hash": "prompt:api-new-character",
+      "resolution_action": null,
+      "resolved_at": null,
+      "resolved_canon_version": null,
+      "schema_version": "m4.analysis.v1",
+      "snapshot_id": "snapshot:ID8",
+      "status": "PENDING",
+      "summary": ""
     }
   ],
   "provisionalConfirm": {
     "canon_version": 12,
-    "confirmation_id": "proposal:ID25",
-    "decision_id": "decision:ID26",
+    "confirmation_id": "proposal:ID30",
+    "decision_id": "decision:ID31",
     "edges": [],
     "events": [
       {
         "event": {
           "chapter_number": 1,
           "confidence": 0.6,
-          "derived_from_event_id": "event:ID19",
-          "evidence_id": "evidence:ID20",
+          "derived_from_event_id": "event:ID24",
+          "evidence_id": "evidence:ID25",
           "evidence_status": "FRESH",
-          "id": "event:ID27",
+          "id": "event:ID32",
           "information_scope": "CANON",
           "project_id": "project:ID1",
           "source": "extractor",

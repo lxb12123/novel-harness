@@ -11,7 +11,14 @@ export interface Anchor {
 // projectId 一变 = 整棵 query 树失效；chapter / cast / activeTab / selection 都是坐标。
 // cast 存的是作者写的称呼原文（不是 node_id），原样透传给后端的 resolve_cast。
 
-export type Tab = "matrix" | "state" | "constraints" | "graph" | "evidence" | "check";
+export type Tab =
+  | "matrix"
+  | "state"
+  | "constraints"
+  | "graph"
+  | "evidence"
+  | "check"
+  | "review";
 export type Page = "workbench" | "prep";
 
 interface Coords {

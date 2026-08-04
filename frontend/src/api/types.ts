@@ -324,3 +324,125 @@ export interface StoredAlias {
   kind: AliasKind;
   usable_for_rules: boolean;
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// M4：事件超边 / 提案审阅 / 被动确认（形状来自 test_frontend_contract 的 fixture）
+// ══════════════════════════════════════════════════════════════════════════
+
+export type ProposalKind = "low_confidence_main" | "edge_conflict" | "new_character";
+export type ProposalStatus = "PENDING" | "ACCEPTED" | "REJECTED" | "EDITED";
+export type ProposalAction = "accept" | "reject" | "bystander";
+
+export interface StoryEvent {
+  id: string;
+  project_id: string;
+  chapter_number: number;
+  summary: string;
+  information_scope: string;
+  status: string;
+  confidence: number | null;
+  source: string;
+  evidence_id: string;
+  evidence_status: string;
+  derived_from_event_id: string | null;
+}
+
+/** 事件超边的一条视图：事件 + 参与者/知情者/揭晓事实（NodeRef 收窄引用）。 */
+export interface EventView {
+  event: StoryEvent;
+  participants: NodeRef[];
+  knowers: NodeRef[];
+  revealed_facts: NodeRef[];
+}
+
+export interface ProposalRecord {
+  id: string;
+  project_id: string;
+  kind: ProposalKind;
+  summary: string;
+  item_count: number;
+  /** 开放 JSON 项；组件只消费下面抽出来的具名字段，绝不直接渲染 items_json。 */
+  items: unknown[];
+  confidence: number | null;
+  status: ProposalStatus;
+  chapter_number: number | null;
+  base_canon_version: number;
+  event_ids: string[];
+  edge_ids: string[];
+}
+
+export interface ProposalResolution {
+  proposal_id: string;
+  status: "ACCEPTED" | "REJECTED" | "EDITED";
+  canon_version: number;
+  decision_id: string;
+  event: EventView | null;
+  character: NodeRef | null;
+  events: EventView[];
+  edges: unknown[];
+  characters: NodeRef[];
+}
+
+export interface ProvisionalConfirmation {
+  confirmation_id: string;
+  project_id: string;
+  canon_version: number;
+  decision_id: string;
+  events: EventView[];
+  edges: unknown[];
+}
+
+export type ExtractionRunStatus = "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED";
+
+export interface ExtractionRun {
+  id: string;
+  project_id: string;
+  chapter_number: number;
+  snapshot_id: string;
+  status: ExtractionRunStatus;
+  errors: { kind: string; message: string }[];
+  valid_event_count: number;
+  discarded_event_count: number;
+  proposal_count: number;
+  model_call_id: string | null;
+  schema_version: string;
+  prompt_hash: string;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+/** 低置信事件项（kind=low_confidence_main 且 source_kind=event）。 */
+export interface LowConfidenceEventItem {
+  source_kind: "event";
+  event_id: string;
+  summary: string;
+  confidence: number;
+  quote: string;
+}
+
+/** 冲突项（kind=edge_conflict）：当前 CANON vs 抽取器提议。 */
+export interface EdgeConflictItem {
+  update_kind: "location" | "state" | "relationship";
+  current: { edge_id: string; subject_id: string; target_id: string; value: string | null };
+  proposed: {
+    edge_id: string;
+    subject_id: string;
+    target_id: string;
+    value: string | null;
+    quote: string;
+  };
+}
+
+export interface NewCharacterItem {
+  surface: string;
+  confidence: number;
+  profile: {
+    surface: string;
+    gender: string | null;
+    personality: string | null;
+    background: string | null;
+    character_notes: string | null;
+    confidence: number;
+  };
+}
