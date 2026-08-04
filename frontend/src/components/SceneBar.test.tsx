@@ -33,11 +33,10 @@ const SCENES = [
 ];
 
 describe("场景条", () => {
-  it("空态说的是「下一步干什么」，不是空", async () => {
-    // fixtures.scenes = []：导入只切章、不认人，首次打开必然没有场景块。
+  it("空态不要求作者接触内部标记语法", async () => {
     renderWithApi(<SceneBar />);
-    expect(await screen.findByText(/这一章没有场景块/)).toBeInTheDocument();
-    expect(document.body.textContent).toContain("## 场景 1");
+    expect(await screen.findByText(/还没有场景信息/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/nh:|cast=|loc=|萧决|李管家|北荒/);
   });
 
   it("渲染场景 pill：场景号 + 在场 + 地点", async () => {

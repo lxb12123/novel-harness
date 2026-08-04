@@ -11,7 +11,7 @@ export function StateCards({ states }: { states?: StateSnapshot[] }) {
             {s.node.name}
             {s.is_dead && <span className="dead"> · 已亡</span>}
           </div>
-          <div className="row">所在地：{s.location ? s.location.name : "未声明"}</div>
+          <div className="row">所在地：{s.location ? s.location.name : "未记录"}</div>
           {s.states.map((v, i) => (
             <div className="row" key={i}>
               {"name" in v.dim ? v.dim.name : ""}：{v.value || ""}

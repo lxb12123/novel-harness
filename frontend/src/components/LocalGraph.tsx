@@ -26,8 +26,17 @@ const LABEL_ZH: Record<string, string> = {
   Faction: "势力",
   Object: "物品",
   Foreshadow: "伏笔",
-  StateDim: "状态维",
+  StateDim: "状态",
   Chapter: "章",
+};
+const EDGE_ZH: Record<string, string> = {
+  KNOWS: "知道",
+  BELIEVES: "以为",
+  LOCATED_AT: "身处",
+  HAS_STATE: "状态",
+  MEMBER_OF: "属于",
+  OWNS: "持有",
+  RELATED_TO: "关联",
 };
 
 export function toFlow(g: Subgraph): { nodes: RFNode[]; edges: RFEdge[] } {
@@ -65,7 +74,7 @@ export function toFlow(g: Subgraph): { nodes: RFNode[]; edges: RFEdge[] } {
     id: e.id,
     source: e.src,
     target: e.dst,
-    label: `${e.type}·ch${e.valid_from_chapter}`,
+    label: `${EDGE_ZH[e.type] ?? "关联"} · 第 ${e.valid_from_chapter} 章起`,
     labelStyle: { fill: "var(--dim)", fontSize: 10 },
     style: { stroke: "var(--line)" },
   }));
@@ -81,7 +90,7 @@ export function LocalGraph() {
     return (
       <div className="empty">
         点左栏花名册里的一个人，或在正文里选中一句话按「查图谱」→ 这里画出他第 {chapter} 章的
-        局部关系（≤2 跳）。
+        相关人物和设定。
       </div>
     );
   if (error) return <div className="err-box">{(error as Error).message}</div>;
@@ -102,8 +111,8 @@ export function LocalGraph() {
         </ReactFlow>
       </div>
       <div className="row" style={{ color: "var(--dim)", fontSize: 12, marginTop: 6 }}>
-        中心：{data!.center.name} · {data!.nodes.length} 节点 · {data!.edges.length} 边
-        {data!.truncated && " ·（已折叠，超上限）"} · 点邻居换中心
+        当前：{data!.center.name} · {data!.nodes.length} 个相关条目 · {data!.edges.length} 条关系
+        {data!.truncated && " · 部分内容已折叠"} · 点击其他条目继续查看
       </div>
     </div>
   );

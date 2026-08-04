@@ -33,6 +33,6 @@ describe("中栏编辑器", () => {
 
   it("嵌着的场景条为空时给出「下一步」提示", async () => {
     renderWithApi(<CenterEditor />);
-    expect(await screen.findByText(/这一章没有场景块/)).toBeInTheDocument();
+    expect(await screen.findByText(/这一章还没有场景信息/)).toBeInTheDocument();
   });
 });

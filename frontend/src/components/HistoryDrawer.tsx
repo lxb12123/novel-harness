@@ -37,7 +37,7 @@ export function HistoryDrawer({
       <div className="drawer wide">
         <h3>第 {chapter} 章 · 版本对比</h3>
         <div className="sub">
-          快照按内容去重、不是全量编辑史（同内容只存一次）。左边选一版，右边看它到「当前」改了什么。
+          这里保留已保存的正文版本。选择一个版本，查看它与当前正文的差异。
         </div>
 
         {isFetching && !data && <div className="empty">加载中…</div>}

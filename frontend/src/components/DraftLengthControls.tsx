@@ -166,12 +166,6 @@ export function DraftLengthControls() {
         </div>
       )}
 
-      <div className="draft-length-lock">
-        <button type="button" disabled>
-          AI 起草（M2 必须 PASS）
-        </button>
-        <span>M2 必须 PASS 且 ADR 0009 完成后才会开放生成；当前只保存长度选择。</span>
-      </div>
     </section>
   );
 }

@@ -23,6 +23,13 @@ function pct(value: number | null | undefined): string {
   return value == null ? "—" : `${Math.round(value * 100)}%`;
 }
 
+const RUN_STATUS_ZH = {
+  PENDING: "等待中",
+  RUNNING: "分析中",
+  SUCCEEDED: "已完成",
+  FAILED: "失败",
+} as const;
+
 function asEventItem(raw: unknown): LowConfidenceEventItem | null {
   if (typeof raw !== "object" || raw === null) return null;
   const r = raw as Record<string, unknown>;
@@ -93,7 +100,7 @@ function ProposalCard({
           <div key={i}>
             <div className="row">设定：{item.profile.gender ?? "—"} / {item.profile.personality ?? "—"}</div>
             {item.profile.background && <div className="row">背景：{item.profile.background}</div>}
-            <div className="row">置信度 {pct(item.confidence)}</div>
+            <div className="row">可信程度 {pct(item.confidence)}</div>
           </div>
         ))}
         <div className="actions">
@@ -107,7 +114,7 @@ function ProposalCard({
   const items = proposal.items.map(asEventItem).filter((x): x is LowConfidenceEventItem => !!x);
   return (
     <div className="statecard proposal-card low-confidence">
-      <div className="nm">低置信事件 · 第 {proposal.chapter_number} 章</div>
+      <div className="nm">需要确认的情节 · 第 {proposal.chapter_number} 章</div>
       {items.map((item, i) => {
         const view = eventById.get(item.event_id);
         return (
@@ -116,7 +123,7 @@ function ProposalCard({
             <div className="row dim">
               在场：{view ? view.participants.map((n) => n.name).join("、") : "—"}
             </div>
-            <div className="row dim">置信度 {pct(item.confidence)}</div>
+            <div className="row dim">可信程度 {pct(item.confidence)}</div>
             <div className="row quote">{item.quote}</div>
           </div>
         );
@@ -198,7 +205,7 @@ export function ProposalReviewTab() {
             startExtraction.mutate(undefined, { onSuccess: (r) => setRunId(r.id) });
           }}
         >
-          {startExtraction.isPending ? "排队中…" : `跑第 ${chapter} 章抽取`}
+          {startExtraction.isPending ? "提交中…" : "分析本章"}
         </button>
         {run.data?.status === "FAILED" && (
           <button
@@ -208,14 +215,14 @@ export function ProposalReviewTab() {
               startExtraction.mutate({ force: true }, { onSuccess: (r) => setRunId(r.id) });
             }}
           >
-            重跑本章
+            重新分析
           </button>
         )}
         {run.data && (
           <span className="dim">
-            抽取：{run.data.status}
-            {run.data.valid_event_count > 0 && ` · ${run.data.valid_event_count} 事件`}
-            {run.data.proposal_count > 0 && ` · ${run.data.proposal_count} 提案`}
+            分析：{RUN_STATUS_ZH[run.data.status]}
+            {run.data.valid_event_count > 0 && ` · 发现 ${run.data.valid_event_count} 条情节`}
+            {run.data.proposal_count > 0 && ` · ${run.data.proposal_count} 项待确认`}
           </span>
         )}
         {run.data?.status === "FAILED" && (
@@ -229,7 +236,7 @@ export function ProposalReviewTab() {
 
       {pending.length > 0 && (
         <div className="mnr">
-          <div className="lab">待确认提案（{pending.length}）</div>
+          <div className="lab">待确认内容（{pending.length}）</div>
           {pending.map((p) => (
             <ProposalCard
               key={p.id}
@@ -244,9 +251,9 @@ export function ProposalReviewTab() {
       {review.error && <div className="err-box">{(review.error as Error).message}</div>}
 
       <div className="mnr">
-        <div className="lab">被动事件（未确认 · 灰显，不参与规则与写作）</div>
+        <div className="lab">从正文发现的情节（确认后用于后续写作）</div>
         {(provisionalEvents.data ?? []).length === 0 ? (
-          <span className="empty">本章暂无抽取出的被动事件。</span>
+          <span className="empty">本章还没有发现需要确认的情节。</span>
         ) : (
           <div>
             {(provisionalEvents.data ?? []).map((view) => (

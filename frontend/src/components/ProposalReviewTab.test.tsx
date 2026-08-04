@@ -12,7 +12,7 @@ const open = () => {
   renderWithApi(<ProposalReviewTab />);
 };
 
-describe("M4 提案审阅面板", () => {
+describe("待确认内容", () => {
   it("渲染待确认的冲突卡：当前 vs 提议 + 引语", async () => {
     open();
     const card = (await screen.findByText(/关系冲突/)).closest(".statecard") as HTMLElement;
@@ -23,10 +23,10 @@ describe("M4 提案审阅面板", () => {
     expect(within(card).getByText(item.proposed.quote)).toBeInTheDocument();
   });
 
-  it("低置信事件卡渲染概要、在场人名、置信度与证据引语", async () => {
+  it("需要确认的情节卡渲染概要、在场人名、可信程度与证据引语", async () => {
     open();
-    const card = (await screen.findByText(/低置信事件/)).closest(".statecard") as HTMLElement;
-    expect(within(card).getByText(/置信度 60%/)).toBeInTheDocument();
+    const card = (await screen.findByText(/^需要确认的情节/)).closest(".statecard") as HTMLElement;
+    expect(within(card).getByText(/可信程度 60%/)).toBeInTheDocument();
     expect(within(card).getByText(/在场：萧决、李管家/)).toBeInTheDocument();
     expect(
       within(card).getByText(/萧决在青云城主府第一次听说了血脉秘密的真相/),
@@ -45,7 +45,7 @@ describe("M4 提案审阅面板", () => {
     const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
     const user = userEvent.setup();
     open();
-    const card = (await screen.findByText(/低置信事件/)).closest(".statecard") as HTMLElement;
+    const card = (await screen.findByText(/^需要确认的情节/)).closest(".statecard") as HTMLElement;
     await user.click(within(card).getByRole("button", { name: "接受" }));
     expect(invalidate).toHaveBeenCalled();
     const calls = invalidate.mock.calls.flatMap((c) => c as { queryKey?: unknown[] }[]);
@@ -56,7 +56,7 @@ describe("M4 提案审阅面板", () => {
     invalidate.mockRestore();
   });
 
-  it("被动事件灰显带 未确认 标记，可勾选批量确认", async () => {
+  it("从正文发现的情节带未确认标记，可勾选批量确认", async () => {
     const user = userEvent.setup();
     open();
     const checkboxes = await screen.findAllByRole("checkbox");
@@ -75,7 +75,7 @@ describe("M4 提案审阅面板", () => {
     expect(text).not.toContain("proposal_set");
   });
 
-  it("失败 run 出现「重跑本章」，点击走 force=true 拿到新 run", async () => {
+  it("分析失败后可以重新分析，且状态使用中文", async () => {
     const user = userEvent.setup();
     useCoords.getState().setProject("project:ID1");
     useCoords.getState().setChapter(1);
@@ -108,11 +108,11 @@ describe("M4 提案审阅面板", () => {
       { method: "GET", match: /\/extractions\//, body: failed },
     ]);
 
-    await user.click(screen.getByRole("button", { name: "跑第 1 章抽取" }));
-    const retry = await screen.findByRole("button", { name: "重跑本章" });
+    await user.click(screen.getByRole("button", { name: "分析本章" }));
+    const retry = await screen.findByRole("button", { name: "重新分析" });
     await user.click(retry);
-    // force=true 创建了新 run（ID2 成功）——文本从 FAILED 变成 SUCCEEDED。
-    expect(await screen.findByText(/抽取：SUCCEEDED/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "重跑本章" })).toBeNull();
+    expect(await screen.findByText(/分析：已完成/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重新分析" })).toBeNull();
+    expect(document.body.textContent).not.toMatch(/FAILED|SUCCEEDED|run|抽取|提案/);
   });
 });

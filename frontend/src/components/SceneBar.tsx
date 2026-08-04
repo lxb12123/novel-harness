@@ -18,8 +18,7 @@ export function SceneBar() {
   if (!scenes || scenes.length === 0)
     return (
       <div className="scenebar empty">
-        这一章没有场景块。在正文里写 <code>## 场景 1</code> +{" "}
-        <code>&lt;!-- nh: cast=萧决,李管家 loc=北荒 --&gt;</code>，存盘后这里就能点选/编辑。
+        这一章还没有场景信息。你可以先继续写正文。
       </div>
     );
 
@@ -84,7 +83,7 @@ function SceneEditor({
   return (
     <div className="scene-edit">
       <span className="lab">场景 {scene.number}</span>
-      <input placeholder="在场：萧决,李管家" value={cast} onChange={(e) => setCast(e.target.value)} />
+      <input placeholder="输入在场人物" value={cast} onChange={(e) => setCast(e.target.value)} />
       <input placeholder="地点" value={loc} onChange={(e) => setLoc(e.target.value)} />
       <input placeholder="本场目标" value={goal} onChange={(e) => setGoal(e.target.value)} />
       <button

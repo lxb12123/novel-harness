@@ -110,20 +110,22 @@ export function CenterEditor() {
 
       <div className="selbar">
         <span className="q">
-          {selection ? "选中：" + selection : "在正文里选一句话 → 声明「谁知道 / 在哪」，或查它是谁"}
+          {selection
+            ? "选中：" + selection
+            : "在正文里选中一句话，可以记录人物知道什么、身处何处，或查看相关内容"}
         </span>
         <button disabled={!selection || !projectId || resolve.isPending} onClick={lookup}>
-          查图谱
+          查看相关内容
         </button>
         <button disabled={!selection || !projectId} onClick={() => setDrawer(true)}>
-          用这句声明
+          记录这句
         </button>
       </div>
 
       {candidates && (
         <div className="selbar" style={{ borderTop: 0, flexWrap: "wrap" }}>
           <span className="q" style={{ flex: "0 0 auto", color: "var(--warn)" }}>
-            「{resolve.data!.surface}」指向多个，挑一个：
+            这个称呼对应多个条目，请选择：
           </span>
           {candidates.map((h) => (
             <button key={h.node.id} onClick={() => focusNode(h.node.id)}>
@@ -134,7 +136,7 @@ export function CenterEditor() {
       )}
       {resolve.data && resolve.data.hits.length === 0 && (
         <div className="selbar" style={{ borderTop: 0, color: "var(--dim)" }}>
-          「{resolve.data.surface}」不是花名册里的任何一个称呼。
+          花名册中没有找到「{resolve.data.surface}」。
         </div>
       )}
 

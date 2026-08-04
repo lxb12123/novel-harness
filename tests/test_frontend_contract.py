@@ -119,6 +119,17 @@ def test_frontend_fixture_matches_the_real_api(
 
     # ── 读路径（声明之前的状态）────────────────────────────────────────────
     grab("projects", client.get("/api/projects"))
+    grab(
+        "bootstrapImport",
+        client.post(
+            "/api/projects/bootstrap",
+            json={
+                "mode": "import",
+                "name": "契约样书",
+                "text": "第一章 契约\n\n这一章由真实 API 导入。\n",
+            },
+        ),
+    )
     grab("roster", client.get(f"{base}/roster"))
     grab("chapters", client.get(f"{base}/chapters"))
     grab("chapterText", client.get(f"{base}/chapters/1/text"))

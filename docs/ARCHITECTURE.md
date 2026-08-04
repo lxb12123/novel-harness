@@ -273,7 +273,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 
 ## 当前状态
 
-**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收，滚动总结 + 双 LLM 起草上下文也已落地**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%；1470 个 pytest + 42 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
+**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，1500 个 pytest + 62 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
 
 > **本节的数字是全仓唯一副本，且 `tests/test_doc_numbers.py` 会拦住第二份。**
 > `README.md` / `CLAUDE.md` / `frontend/README.md` 里只留指针，不许再抄一份数字过去。
@@ -284,10 +284,10 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 > 列在「还一个字符都没有」里——照它排期的人会去重写已完成的工作。
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
-> 守卫钉住的是**能在运行时数出来**的那些（路由 39 / `/api` 38 / 501 stub 2 / 错误映射 17 /
-> CLI 叶子 18 / 建表 21 / fixture 端点 28 / `ALL_CHECKS` 3），改错必红、**删掉也必红**（不静默 skip）。
+> 守卫钉住的是**能在运行时数出来**的那些（路由 40 / `/api` 39 / 501 stub 2 / 错误映射 17 /
+> CLI 叶子 18 / 建表 21 / fixture 端点 29 / `ALL_CHECKS` 3），改错必红、**删掉也必红**（不静默 skip）。
 > **它罩不住 pytest / vitest 这两个数**——在 pytest 里数 pytest 要递归，
-> 所以「1470」和「42」仍然只靠人手改，改代码后请顺手跑一次 `uv run pytest -q` 更新这一处。
+> 所以「1500」和「62」仍然只靠人手改，改代码后请顺手跑一次 `uv run pytest -q` 更新这一处。
 > （2026-07-30 那天这个数从 690 走到 801，中途在文档里错过一次——**这条盲区是真的，不是假想的**。）
 
 > ⚠️ **「全绿」目前只在本机成立。本仓库还没有 git remote，`ci.yml` / `release.yml` 一次都没执行过。**
@@ -309,12 +309,12 @@ checks/{base,location_conflict,future_leak,dead_speaks}.py
 text/{anchor,chapterize,scenes,mentions}.py     ← (para_index,quote,k) 唯一定义 / 切章 / 场景块 / 称呼匹配
 declare.py  importer.py                         ← M1 声明层：引语定章号 + 证据链 + CanonWriter
 cli.py                                          ← nh 的 18 个子命令（含 `nh serve` / `nh gate` / `nh draft` / `nh summarize`）
-api/{app,deps,extraction,review}.py             ← M1.5 FastAPI 壳：39 条自建路由 + 17 个错误映射
-                                                  （38 条 /api + 1 条 `GET /`；其中 2 条是 501 stub；
+api/{app,deps,extraction,review}.py             ← M1.5 FastAPI 壳：40 条自建路由 + 17 个错误映射
+                                                  （39 条 /api + 1 条 `GET /`；其中 2 条是 501 stub；
                                                   M4 抽取/事件读端 + 提案审阅/被动确认路由）
-frontend/src/                                   ← React 工作台：30 个手写源文件、3247 行 TS/TSX（378 行测试）
+frontend/src/                                   ← React 工作台：34 个非测试手写源文件、5023 行 TS/TSX（1110 行测试）
                                                   （M4 审阅面板：ProposalReviewTab / StateCards / hooks）
-frontend/src/__fixtures__/api.json              ← 从真 app dump 的 28 个端点出参（契约测试两头共用）
+frontend/src/__fixtures__/api.json              ← 从真 app dump 的 29 个端点出参（契约测试两头共用）
 novel_harness/webui/                            ← ↑ 的构建产物（生成物，不入库；随 wheel 分发）
 draft/provider.py                               ← M2：统一模型出口（OpenAI 兼容，三臂与生产共用）
 draft/context.py                                ← M2：`ResolvedConstraints`（cast 已解析 / X1X2 同一份矩阵，编码进类型）
@@ -343,7 +343,7 @@ Fake 够不着的（label 校验 / 重复边 StoreError / `secret_ids` 默认列
 
 `cli.py` 在此之前是**只有 `--version` 的空壳**；现在 `nh panel` 渲染的就是本文档
 开头那个框，走的是真 SqliteStoryGraph。面板不再只在终端里存在——同一个矩阵在浏览器工作台的右栏
-第一个 tab 里（`api/app.py` 的 39 条自建路由 + `frontend/src/components/KnowledgeMatrix.tsx`）。
+第一个 tab 里（`api/app.py` 的 40 条自建路由 + `frontend/src/components/KnowledgeMatrix.tsx`）。
 
 ### M2 的当前形状：修正案 5–9 / ADR 0011 已冻结，维护者裁定通过（非数据裁决）
 
@@ -548,7 +548,7 @@ R4 之外，R2（未来实体提前出现）和 R3（死人/未登场角色开�
    自称「手写真相源」——手写的东西和后端一致只是**当时**一致。
 
    关键决定是 **fixture 不手写**：`tests/test_frontend_contract.py` 从真 app（`TestClient`
-   + 真 SQLite）dump 28 个端点的真响应，规范化掉 ULID/时间戳/路径后冻在
+   + 真 SQLite）dump 29 个端点的真响应，规范化掉 ULID/时间戳/路径后冻在
    `frontend/src/__fixtures__/api.json`；组件测试吃的就是这一份。于是两头各有守卫——
    **后端出参一改 pytest 先红**（逐字节比对重新 dump 的结果），**形状变了没人改组件 vitest 红**。
    用手写 fixture 做前端测试等于两份手写的东西互相验证，那正是这条缝原本的病。

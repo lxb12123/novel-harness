@@ -41,14 +41,10 @@ export function LeftRail({ onOpenChapter }: { onOpenChapter: (n: number) => void
         )}
       </h2>
 
-      {/* 空花名册**不是**一个中性状态：导入不抽实体（ADR 0004），所以首次导入后这里必然是空的，
-          而空着的时候认知矩阵 / 约束 / declare 三样头牌全都算不起来。所以这里说的不是「空」，
-          是「下一步该干什么」——作者在这一步卡住就再也不会回来了。 */}
       {empty ? (
         <div className="empty">
-          还没有人物。导入只切章、不认人——
-          <a onClick={() => projectId && setAdding(true)}>建第一个</a>，
-          认知矩阵才有行、秘密才有列。
+          还没有人物或设定。
+          <a onClick={() => projectId && setAdding(true)}>添加第一个条目</a>
         </div>
       ) : (
         Object.keys(groups)

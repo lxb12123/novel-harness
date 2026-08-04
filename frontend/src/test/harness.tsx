@@ -19,6 +19,7 @@ type Handler = { method?: string; match: RegExp; status?: number; body: unknown 
 
 /** 默认路由表：URL → fixture。测试可以前置自己的 handler 覆盖其中任意一条。 */
 const DEFAULT: Handler[] = [
+  { method: "POST", match: /\/api\/projects\/bootstrap$/, body: fixtures.bootstrapImport },
   { match: /\/api\/projects$/, body: fixtures.projects },
   { match: /\/roster$/, body: fixtures.roster },
   { match: /\/chapters$/, body: fixtures.chapters },

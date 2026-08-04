@@ -16,22 +16,19 @@ describe("左栏", () => {
     }
   });
 
-  it("空花名册说的是「下一步干什么」，不是「空」", async () => {
-    // 这不是文案品味问题。导入只切章、不抽实体（ADR 0004），所以**首次导入一本书之后
-    // 这里必然是空的**；而空着的时候认知矩阵/约束/declare 三样头牌全都算不起来。
-    // 一个只写「空」的空态会让作者在这一步停下，然后再也不回来。
+  it("空花名册只给一个清楚的下一步，不解释内部实现", async () => {
     renderWithApi(<LeftRail onOpenChapter={vi.fn()} />, [
       { match: /\/roster$/, body: [] },
     ]);
-    expect(await screen.findByText(/建第一个/)).toBeInTheDocument();
-    expect(screen.getByText(/导入只切章、不认人/)).toBeInTheDocument();
+    expect(await screen.findByText(/添加第一个条目/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/导入只切章|认知矩阵|规则|ADR/);
   });
 
   it("点「建第一个」能开出建条目的抽屉 —— 空态那句话必须真的有出口", async () => {
     renderWithApi(<LeftRail onOpenChapter={vi.fn()} />, [
       { match: /\/roster$/, body: [] },
     ]);
-    (await screen.findByText(/建第一个/)).click();
+    (await screen.findByText(/添加第一个条目/)).click();
     expect(await screen.findByRole("heading", { name: "花名册" })).toBeInTheDocument();
   });
 

@@ -60,8 +60,12 @@ def ensure_schema() -> None:
 
 
 def get_conn() -> Iterator[Connection]:
-    """一请求一连接，请求结束即关。FastAPI 在单请求内缓存本依赖 → 全链路共用一条。"""
-    conn = connect(_db_path())
+    """一请求一连接，请求结束即关。
+
+    FastAPI 的依赖、路由和清理步骤可能在不同的线程池工作线程执行；同一请求内仍由
+    FastAPI 缓存本依赖，因此全链路共用这一条连接。
+    """
+    conn = connect(_db_path(), check_same_thread=False)
     try:
         yield conn
     finally:

@@ -503,6 +503,10 @@ def test_existing_book_directory_is_never_reused_or_changed(tmp_path: Path) -> N
     assert (books / "同名-2/chapters/0001.md").exists()
 ```
 
+The allocation contract is stronger than this non-empty example: **every existing filesystem
+entry is occupied**, including an empty directory and a dangling symlink. Neither the bootstrap
+path nor the legacy API may reuse it.
+
 - [ ] **Step 2: Run the new suite and verify it fails**
 
 Run:
@@ -520,6 +524,7 @@ Create `src/novel_harness/onboarding.py` with:
 ```python
 from __future__ import annotations
 
+import os
 import re
 import shutil
 import tempfile
@@ -547,21 +552,27 @@ def next_book_root(base: Path, name: str) -> Path:
     slug = _UNSAFE_PATH.sub("", name).strip() or "book"
     root = base / slug
     suffix = 2
-    while root.exists():
+    while os.path.lexists(root):
         root = base / f"{slug}-{suffix}"
         suffix += 1
     return root
+
+
+def _reserve_book_root(base: Path, name: str) -> Path:
+    while True:
+        candidate = next_book_root(base, name)
+        try:
+            candidate.mkdir(exist_ok=False)
+        except FileExistsError:
+            # Another process won after next_book_root() checked. The directory itself is its
+            # reservation, even while empty, so recompute and advance to a stable suffix.
+            continue
+        return candidate
 
 
 def create_legacy_root(base: Path, name: str) -> Path:
-    slug = _UNSAFE_PATH.sub("", name).strip() or "book"
-    root = base / slug
-    suffix = 2
-    while root.exists() and any(root.iterdir()):
-        root = base / f"{slug}-{suffix}"
-        suffix += 1
-    root.mkdir(parents=True, exist_ok=True)
-    return root
+    base.mkdir(parents=True, exist_ok=True)
+    return _reserve_book_root(base, name)
 
 
 def bootstrap_project(
@@ -587,9 +598,8 @@ def bootstrap_project(
         raise ValueError(f"未知的启动模式：{mode}")
 
     books_root.mkdir(parents=True, exist_ok=True)
-    final_root = next_book_root(books_root, clean_name)
+    final_root = _reserve_book_root(books_root, clean_name)
     stage = Path(tempfile.mkdtemp(prefix=".nh-bootstrap-", dir=books_root))
-    moved = False
     store = SqliteStoryGraph(conn)
     try:
         with store.transaction():
@@ -600,19 +610,22 @@ def bootstrap_project(
                 initial_chapter=1,
                 import_report=report if mode == "import" else None,
             )
-            stage.rename(final_root)
-            moved = True
+            for child in stage.iterdir():
+                child.rename(final_root / child.name)
+            stage.rmdir()
         return result
     except BaseException:
         if conn.in_transaction:
             conn.rollback()
-        target = final_root if moved else stage
-        if target.exists():
-            shutil.rmtree(target)
+        # Both paths were exclusively created by this invocation. Cleanup attempts both, so a
+        # partially promoted stage cannot strand either reservation.
+        cleanup_owned_paths(stage, final_root)
         raise
 ```
 
-Document that `stage` and `final_root` are created exclusively by this invocation, making cleanup bounded and safe.
+Document that `stage` comes from `mkdtemp` and `final_root` from a successful exclusive `mkdir`,
+making cleanup bounded. The directory itself is the cross-process reservation; there is no
+process-local lock or marker protocol.
 
 - [ ] **Step 4: Run service and architecture-guard tests**
 
@@ -747,7 +760,13 @@ def bootstrap_project(body: BootstrapBody, conn: Any = Depends(get_conn)) -> Any
     )
 ```
 
-Replace `_new_book_root()`’s private sanitization with `onboarding.create_legacy_root(books_root(), body.name)` and remove `_UNSAFE_PATH` from `app.py`; existing `POST /api/projects` keeps its response and commit behavior.
+Replace `_new_book_root()`’s private sanitization with
+`onboarding.create_legacy_root(books_root(), body.name)` and remove `_UNSAFE_PATH` from `app.py`;
+existing `POST /api/projects` keeps its response and commit behavior. This intentionally changes
+one allocator detail: the old API no longer reuses an existing empty directory. Every existing
+path—including an empty directory or dangling symlink—is occupied, and allocation uses exclusive
+`mkdir` plus a stable suffix. The shared contract prevents the legacy API and bootstrap running in
+different processes from ever sharing or overwriting one manuscript root.
 
 - [ ] **Step 4: Freeze one real bootstrap import response**
 
