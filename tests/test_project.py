@@ -80,14 +80,16 @@ def test_create_then_get_round_trip(conn) -> None:
 def test_insert_leaves_commit_to_the_caller(tmp_path) -> None:
     db_path = tmp_path / "project.db"
     conn = connect(db_path)
-    migrate(conn)
-    conn.execute("BEGIN IMMEDIATE")
+    try:
+        migrate(conn)
+        conn.execute("BEGIN IMMEDIATE")
 
-    made = project.insert(conn, name="未提交", root_path="books/未提交")
+        made = project.insert(conn, name="未提交", root_path="books/未提交")
 
-    assert get(conn, made.id) == made
-    conn.rollback()
-    conn.close()
+        assert get(conn, made.id) == made
+    finally:
+        conn.rollback()
+        conn.close()
 
     reader = connect(db_path)
     try:
@@ -99,10 +101,11 @@ def test_insert_leaves_commit_to_the_caller(tmp_path) -> None:
 def test_create_keeps_its_existing_commit_semantics(tmp_path) -> None:
     db_path = tmp_path / "project.db"
     conn = connect(db_path)
-    migrate(conn)
-
-    made = project.create(conn, name="已提交", root_path="books/已提交")
-    conn.close()
+    try:
+        migrate(conn)
+        made = project.create(conn, name="已提交", root_path="books/已提交")
+    finally:
+        conn.close()
 
     reader = connect(db_path)
     try:
