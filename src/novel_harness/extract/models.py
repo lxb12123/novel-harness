@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -19,7 +20,7 @@ _UNTRUSTED_CONFIG = ConfigDict(frozen=True, extra="forbid", allow_inf_nan=False)
 SHORT_QUOTE_LIMIT: Final = 10
 """引语短于这个字符数算「短引语」。"""
 
-SHORT_QUOTE_RATIO: Final = 0.20
+SHORT_QUOTE_RATIO: Final = 0.30
 """短引语占本章引语总数的比例上限。"""
 
 MIN_SHORT_QUOTES_PER_CHAPTER: Final = 1
@@ -97,7 +98,7 @@ class RawChapterAnalysis(BaseModel):
         )
         allowed = max(
             MIN_SHORT_QUOTES_PER_CHAPTER,
-            int(SHORT_QUOTE_RATIO * len(items)),
+            math.ceil(SHORT_QUOTE_RATIO * len(items)),
         )
         if short > allowed:
             raise ValueError(

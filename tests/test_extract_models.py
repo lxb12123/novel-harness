@@ -189,24 +189,24 @@ def test_chapter_analysis_caps_events_and_state_updates() -> None:
 
 
 def test_short_quotes_are_ratio_capped_per_chapter() -> None:
-    """短引语（<10 字）按本章引语总数的 20% 控制，且至少放行 1 条。"""
+    """短引语（<10 字）按本章引语总数的 30%（向上取整）控制，且至少放行 1 条。"""
     short = "卧槽，陨石！"
-    # 12 条引语：20% = 2，2 条短引语合法。
+    # 12 条引语：ceil(30%) = 4，4 条短引语合法。
     RawChapterAnalysis.model_validate(
-        _analysis(events=[_event(quote=short)] * 2 + [_event() for _ in range(10)])
+        _analysis(events=[_event(quote=short)] * 4 + [_event() for _ in range(8)])
     )
-    # 12 条引语 3 条短引语 → 超比例，整章拒收。
+    # 12 条引语 5 条短引语 → 超比例，整章拒收。
     with pytest.raises(ValidationError):
         RawChapterAnalysis.model_validate(
-            _analysis(events=[_event(quote=short)] * 3 + [_event() for _ in range(9)])
+            _analysis(events=[_event(quote=short)] * 5 + [_event() for _ in range(7)])
         )
     # 单条引语章节：比例算出来是 0，也至少放行 1 条。
     RawChapterAnalysis.model_validate(_analysis(events=[_event(quote=short)]))
-    # 事件 + 状态更新合并计数：7 条引语允许 1 条，2 条短引语 → 拒。
+    # 事件 + 状态更新合并计数：7 条引语允许 ceil(2.1)=3 条，4 条短引语 → 拒。
     with pytest.raises(ValidationError):
         RawChapterAnalysis.model_validate(
             _analysis(
-                events=[_event(quote=short)] + [_event() for _ in range(5)],
+                events=[_event(quote=short)] * 3 + [_event() for _ in range(3)],
                 state_updates=[_state(quote=short)],
             )
         )

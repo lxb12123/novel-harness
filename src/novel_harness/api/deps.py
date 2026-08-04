@@ -84,7 +84,7 @@ def _extraction_provider_config() -> ProviderConfig:
         base_url=user.base_url or os.environ.get("NH_LLM_BASE_URL", ""),
         model=user.model or os.environ.get("NH_LLM_MODEL", ""),
         api_key=user.api_key or os.environ.get("NH_LLM_API_KEY", ""),
-        temperature=None,
+        temperature=0.3,
     )
 
 

@@ -13,7 +13,7 @@ __all__ = [
 
 
 ANALYSIS_SCHEMA_VERSION: Final = "chapter-analysis-v1"
-ANALYSIS_PROMPT_VERSION: Final = "chapter-analysis-prompt-v4"
+ANALYSIS_PROMPT_VERSION: Final = "chapter-analysis-prompt-v5"
 
 _SYSTEM_PROMPT: Final = f"""You extract structured facts from one supplied novel chapter.
 Schema version: {ANALYSIS_SCHEMA_VERSION}. Prompt version: {ANALYSIS_PROMPT_VERSION}.
@@ -40,7 +40,7 @@ Return no more than 24 state updates.
 
 Every event and state update must include a verbatim 4-120 character quote copied from
 the supplied chapter. Never paraphrase a quote. Quotes shorter than 10 characters are
-allowed only for verbatim short utterances, and at most 20% of the chapter's quotes
+allowed only for verbatim short utterances, and at most 30% of the chapter's quotes
 (at least one); otherwise quote a longer verbatim sentence from the chapter that
 contains the utterance.
 
