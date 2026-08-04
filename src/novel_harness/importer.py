@@ -272,14 +272,35 @@ def import_book(store: GraphStore, project_id: str, *, txt: Path, root: Path) ->
     # 而 `^[ \t　]*` 后面接的是 `第`——BOM 既不是行首空白也不是「第」。
     # （chapterize.normalize 会兜住它；这里多一道是因为「把磁盘上的字节变成干净的 str」
     #  本来就是读文件这一侧的责任。）
-    book = chapterize(txt.read_text(encoding="utf-8-sig"))
+    return import_text(
+        store,
+        project_id,
+        text=txt.read_text(encoding="utf-8-sig"),
+        source=str(txt),
+        root=root,
+    )
+
+
+def prepare_text(text: str, *, source: str) -> Chapterization:
+    """切分内存中的书稿；零章在任何磁盘或数据库写入前拒绝。"""
+    book = chapterize(text.removeprefix("\ufeff"))
     if not book.chapters:
         raise ImportRefused(
-            f"{txt} 里一个章标都没切出来（认的是行首的「第N章/节/回」）。\n"
+            f"{source} 里一个章标都没切出来（认的是行首的「第N章/节/回」）。\n"
             "  零章不是「这本书是空的」，是「切章器没认出这本书的章标写法」——\n"
             "  别把它当成导入成功：落库零章的产物是一个永远定位不到任何引语的项目。"
         )
+    return book
 
+
+def import_prepared(
+    store: GraphStore,
+    project_id: str,
+    *,
+    book: Chapterization,
+    root: Path,
+) -> ImportReport:
+    """把已经验证并切好的内存书稿写盘，再将其同步进库。"""
     written, unchanged = explode(book, root)
     return ImportReport(
         chapter_count=len(book.chapters),
@@ -287,4 +308,21 @@ def import_book(store: GraphStore, project_id: str, *, txt: Path, root: Path) ->
         written=written,
         unchanged=unchanged,
         synced=sync(store, project_id, root),
+    )
+
+
+def import_text(
+    store: GraphStore,
+    project_id: str,
+    *,
+    text: str,
+    source: str,
+    root: Path,
+) -> ImportReport:
+    """导入内存中的 TXT，且不创建临时文件。"""
+    return import_prepared(
+        store,
+        project_id,
+        book=prepare_text(text, source=source),
+        root=root,
     )

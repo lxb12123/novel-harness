@@ -34,7 +34,7 @@ def conn():
 _MUTATION_PREFIXES = ("update", "delete", "remove", "edit", "set_", "patch", "drop", "purge", "bump")
 
 
-def test_module_exposes_only_the_m4_compare_and_bump_mutation() -> None:
+def test_module_exposes_only_listed_project_operations() -> None:
     public = [
         name
         for name, obj in vars(project).items()
@@ -46,6 +46,7 @@ def test_module_exposes_only_the_m4_compare_and_bump_mutation() -> None:
         "compare_and_bump_canon_version",
         "create",
         "get",
+        "insert",
         "list_all",
         "require_canon_version",
     ]
@@ -74,6 +75,40 @@ def test_create_then_get_round_trip(conn) -> None:
     assert got.root_path == "./青云记"
     assert got.canon_version == 0
     assert got == made
+
+
+def test_insert_leaves_commit_to_the_caller(tmp_path) -> None:
+    db_path = tmp_path / "project.db"
+    conn = connect(db_path)
+    migrate(conn)
+    conn.execute("BEGIN IMMEDIATE")
+
+    made = project.insert(conn, name="未提交", root_path="books/未提交")
+
+    assert get(conn, made.id) == made
+    conn.rollback()
+    conn.close()
+
+    reader = connect(db_path)
+    try:
+        assert get(reader, made.id) is None
+    finally:
+        reader.close()
+
+
+def test_create_keeps_its_existing_commit_semantics(tmp_path) -> None:
+    db_path = tmp_path / "project.db"
+    conn = connect(db_path)
+    migrate(conn)
+
+    made = project.create(conn, name="已提交", root_path="books/已提交")
+    conn.close()
+
+    reader = connect(db_path)
+    try:
+        assert get(reader, made.id) == made
+    finally:
+        reader.close()
 
 
 def test_canon_version_starts_at_zero(conn) -> None:

@@ -58,13 +58,24 @@ class StaleBaseVersion(RuntimeError):
 
 
 def create(conn: Connection, *, name: str, root_path: str) -> Project:
-    """建一个项目。**本模块唯一的写入口。**
+    """建一个项目并提交。`project` 表写入仍只属于本模块。
 
     id 走 `ids.new_project_id()`（两段不是三段）——`new_id(EntityType.PROJECT, ...)`
     会抛，项目无法以自身为作用域。
 
     没有 `canon_version` 参数：它由 SQL 的 DEFAULT 起于 0，之后只能由
     `compare_and_bump_canon_version()` 在同一笔 Canon 写事务中 CAS 递增。
+    """
+    made = insert(conn, name=name, root_path=root_path)
+    conn.commit()
+    return made
+
+
+def insert(conn: Connection, *, name: str, root_path: str) -> Project:
+    """插入一个项目，但把事务的提交或回滚留给调用方。
+
+    `project` 表仍只由本模块写；需要把项目行和其他写入放进同一事务的调用方应使用
+    这个原语，普通公开创建仍应使用会提交的 `create()`。
     """
     if not name:
         raise ValueError("name 不能为空：它是作者在 nh init 之后唯一认得出这个库的东西")
@@ -79,7 +90,6 @@ def create(conn: Connection, *, name: str, root_path: str) -> Project:
         """,
         (new_project_id(), name, root_path),
     ).fetchone()
-    conn.commit()
     return _row_to_project(row)
 
 

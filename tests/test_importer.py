@@ -204,6 +204,24 @@ def test_import_refuses_a_txt_with_zero_chapters(
     assert not (tmp_path / "chapters").exists()
 
 
+def test_prepare_text_rejects_zero_chapters_before_any_write() -> None:
+    with pytest.raises(ImportRefused, match="一个章标都没切出来"):
+        importer.prepare_text("这是没有章标的正文", source="browser.txt")
+
+
+def test_import_prepared_writes_and_syncs_without_a_temp_txt(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> None:
+    text = "第一章 初见\n\n风起。\n"
+    book = importer.prepare_text(text, source="browser.txt")
+
+    report = importer.import_prepared(store, pid, book=book, root=tmp_path)
+
+    assert report.chapter_count == 1
+    assert (tmp_path / "chapters/0001.md").read_text(encoding="utf-8") == text
+    assert [ct.number for ct in store.current_snapshots(pid)] == [1]
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # sync：日常回路
 # ══════════════════════════════════════════════════════════════════════════
