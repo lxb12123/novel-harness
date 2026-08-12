@@ -10,6 +10,7 @@ import type {
   BootstrapRequest,
   BootstrapResult,
   ChapterRow,
+  ChapterDrafts,
   ChapterSnapshot,
   ChapterSummaryStatus,
   ChapterText,
@@ -24,6 +25,7 @@ import type {
   DeclareKnows,
   DeclareNode,
   DeclareWhere,
+  DraftCandidateDetail,
   DraftRequest,
   DraftResult,
   EventCastCorrection,
@@ -721,14 +723,16 @@ export function useDeleteChat(pid: string) {
  *    日志页和底栏那份用量得跟着变——不失效它们，作者刚花的钱在界面上要等下一次
  *    刷新才出现，而 `main.tsx` 写着 `refetchOnWindowFocus: false`。
  *
- *  · **正文那一侧**（`text` / `chapters` / `history` + 右栏那几格）：**助手起草会直接
- *    写进磁盘上那一章**（[ADR 0021](docs/adr/0021-agent-writes-drafts-without-asking.md)，
+ *  · **正文那一侧**（`text` / `chapters` / `history` + 右栏那几格）：**助手可以把某一稿
+ *    写进磁盘上那一章**（[ADR 0021](docs/adr/0021-agent-writes-drafts-without-asking.md)
+ *    的精神 + [ADR 0022](docs/adr/0022-drafting-is-a-proposal-not-a-write.md) 的机制，
  *    走的是 `PUT /chapters/{n}/text` 那条**同一条**路径）。所以一轮跑完之后要失效的东西
  *    和作者自己按了保存之后是同一批——`useSaveChapter` 那张表照抄。
  *
- *    **这里没有「它到底写没写」这个信息**：`TurnReceipt` 上没有那一位（写没写只在
- *    助手回话的措辞里）。所以这一档一律重取，宁可白取一次，也不要让作者一边看着旧稿
- *    一边以为那就是磁盘上的东西——他下一步按保存就把助手写的整章盖掉了。
+ *    **「它到底写没写」现在回执上有了**（`receipt.drafts[].landed`，ADR 0022 把 3.5
+ *    那条余债还上了），**但这一档仍然一律重取**：写没写只是判据之一，而**判错的代价
+ *    不对称**——白取一次是一次本地请求，漏取一次是作者对着旧稿按保存、把助手写的
+ *    整章盖掉。省这一次请求换一个「只在某个条件下才正确」的分支，不值。
  *
  *    ⚠️ **这一行的前提是 `CenterEditor` 不会拿重取到的正文盖掉作者没保存的字**
  *    （`editorDoc.ts`）。那个前提没有的时候补这一行 = 作者一边打字一边跟助手说话，
@@ -748,6 +752,9 @@ export function useRunTurn(pid: string) {
       qc.invalidateQueries({ queryKey: ["text", pid] });
       qc.invalidateQueries({ queryKey: ["chapters", pid] });
       qc.invalidateQueries({ queryKey: ["history", pid] });
+      // 桌上摆着的那几稿（ADR 0022）：这一轮很可能又添了几份，而「这一章还摆着几稿」
+      // 那个入口是作者关掉回执之后唯一找得回它们的地方。
+      qc.invalidateQueries({ queryKey: ["drafts", pid] });
       invalidatePanels(qc, pid);
       // **把这一条 return 出去**：mutation 会等它重取完才算落地，于是「正在跑」那一段
       // 屏幕能一直挂到新消息真的到手。不等的话中间有一帧是
@@ -764,5 +771,48 @@ export function useRunTurn(pid: string) {
 export function useStopChat(pid: string) {
   return useMutation({
     mutationFn: (chatId: string) => api.post<ChatStopped>(chats(pid, `${one(chatId)}/stop`)),
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 桌上摆着的那几稿（ADR 0022）—— 两条路由：列 / 摊开一版
+// ══════════════════════════════════════════════════════════════════════════
+
+/**
+ * 助手写过、**还摆在桌上**的那几稿。最近的在前，**不带正文**。
+ *
+ * **它不是版本历史。** 版本历史（`useHistory`）里是**已经在书里**的那些；这儿是还没进书的
+ * 候选——它们在磁盘上、在快照里都不存在，**没有这条路由，作者关掉那一轮的回执就
+ * 再也找不到它们了**。所以「这一章还摆着几稿」那个入口读的就是它。
+ */
+export function useDrafts(pid: string | null, chapter: number | null) {
+  return useQuery({
+    queryKey: q(["drafts", pid, chapter]),
+    queryFn: () =>
+      api.get<ChapterDrafts>(proj(pid!, `/drafts${chapter ? `?chapter=${chapter}` : ""}`)),
+    enabled: !!pid,
+    // **全仓唯一一条开着「切回来重取」的查询**（`main.tsx` 那一行把它全局关了）。
+    // 理由是这一条读端有一个别处没有的形态：**并排比那一页开在另一个标签页里**，
+    // 而作者切走的那段时间里，工作台那边可能又写了几稿。切回来看见一份少了两稿的
+    // 桌子，而屏幕上没有任何东西说它旧了——那正是这个仓库反复在修的「看起来正常的
+    // 假页面」。代价是一次本地 SQLite 的列表查询（不带正文）。
+    refetchOnWindowFocus: true,
+  });
+}
+
+/**
+ * 摊开某一版的全文。**`open` 为假时一个字节都不取**——列表那一档一次二十稿，
+ * 而每一稿都是一整章正文（后端有意只在详情里给 `text`）。
+ *
+ * `staleTime: Infinity` 不是性能调优，是**候选按定义不可变**（ADR 0022：它既不进正文
+ * 也不进对话，写完就不再变）。重取回来的必然一模一样，而在并排比那一页上
+ * 三列同时重取 = 三章正文白走一趟。
+ */
+export function useDraftText(pid: string | null, draftId: string | null, open: boolean) {
+  return useQuery({
+    queryKey: q(["draft", pid, draftId]),
+    queryFn: () => api.get<DraftCandidateDetail>(proj(pid!, `/drafts/${encodeURIComponent(draftId!)}`)),
+    enabled: !!pid && !!draftId && open,
+    staleTime: Infinity,
   });
 }

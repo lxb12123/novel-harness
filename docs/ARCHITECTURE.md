@@ -285,7 +285,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 
 ## 当前状态
 
-**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2020 个 pytest + 365 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
+**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2102 个 pytest + 423 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
 
 > **本节的数字是全仓唯一副本，且 `tests/test_doc_numbers.py` 会拦住第二份。**
 > `README.md` / `CLAUDE.md` / `frontend/README.md` 里只留指针，不许再抄一份数字过去。
@@ -296,14 +296,14 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 > 列在「还一个字符都没有」里——照它排期的人会去重写已完成的工作。
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
-> 守卫钉住的是**能在运行时数出来**的那些（57 条路由 / 56 条 /api / 1 条 501 stub /
-> 19 个错误映射 / 18 个子命令 / 23 张表 / 54 个端点 / `ALL_CHECKS` 3），
+> 守卫钉住的是**能在运行时数出来**的那些（59 条路由 / 58 条 /api / 1 条 501 stub /
+> 19 个错误映射 / 18 个子命令 / 24 张表 / 56 个端点 / `ALL_CHECKS` 3），
 > 改错必红、**删掉也必红**（不静默 skip）。
 > （这一行 2026-08-10 之前写的是「路由 42 / fixture 端点 34」那种词序，
 > **而守卫的正则认的是「N 条路由」「N 个端点」**——于是它躺在被守卫盯着的那一节里、
 > 却一个字都没被检查，真值早已是别的数。现在改成守卫认得的写法，它才真的被钉住。）
 > **它罩不住 pytest / vitest 这两个数**——在 pytest 里数 pytest 要递归，
-> 所以「2020」和「365」仍然只靠人手改，改代码后请顺手跑一次 `uv run pytest -q` 更新这一处。
+> 所以「2102」和「423」仍然只靠人手改，改代码后请顺手跑一次 `uv run pytest -q` 更新这一处。
 > （2026-07-30 那天这个数从 690 走到 801，中途在文档里错过一次——**这条盲区是真的，不是假想的**。）
 
 > ⚠️ **「全绿」目前只在本机成立。本仓库还没有 git remote，`ci.yml` / `release.yml` 一次都没执行过。**
@@ -314,7 +314,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 ```
 db.py  ids.py  decisions.py  project.py
 migrations/{001_init,002_m4_events,003_proposal_audit_recovery,004_chapter_summary,005_fact_edit,
-            006_chat_session}.sql（23 张表）
+            006_chat_session,007_draft_candidate}.sql（24 张表）
 graph/{models,store,sqlite_store,queries}.py    ← state_at / supersede / subgraph
 events/{models,store}.py                       ← M4 事件超边 / 角色档案 / 提案仓储契约
 extract/{models,prompt,locate,analyze}.py       ← M4 严格 JSON 边界 / 确定性证据定位 / 不猜名称解析
@@ -332,8 +332,8 @@ text/{anchor,chapterize,scenes,mentions}.py     ← (para_index,quote,k) 唯一�
 declare.py  importer.py                         ← M1 声明层：引语定章号 + 证据链 + CanonWriter
 cli.py                                          ← nh 的 18 个子命令（含 `nh serve` / `nh gate` / `nh draft` / `nh summarize`）
 api/{app,deps,activity,autopilot,chat,extraction,review}.py
-                                                ← M1.5 FastAPI 壳：57 条路由 + 19 个错误映射
-                                                  （56 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
+                                                ← M1.5 FastAPI 壳：59 条路由 + 19 个错误映射
+                                                  （58 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
                                                   M4 抽取/事件读端 + 提案审阅/被动确认路由；
                                                   提案 edit + `/canon/…` 两条改正路由（corrections.py）；
                                                   活动日志两条 + `GET /runs`（2026-08-10 由 501 点亮）；
@@ -341,7 +341,10 @@ api/{app,deps,activity,autopilot,chat,extraction,review}.py
                                                   `api/chat.py`）——`agent/` 这一层在此之前在 `src/` 里
                                                   一个调用方都没有；HTTP 这一版**不流式**（内部流式，
                                                   打断才能中途生效），往浏览器流是 3.5 的决定；
-                                                  历史版本的删除——还原没有自己的路由，走 PUT text）
+                                                  历史版本的删除——还原没有自己的路由，走 PUT text；
+                                                  候选稿两条（列一章的几稿 / 摊开某一稿的全文，
+                                                  ADR 0022）——**它不是版本历史**：那儿是已经在书里的，
+                                                  这儿是还摆在桌上的）
 corrections.py                                  ← 改一条**已生效（CANON）**的事实：KNOWS↔BELIEVES /
                                                   事件的 knowers / participants（撤回 + 写新的，旧行留着）
                                                   **2026-08-11 起浏览器里有调用方**（矩阵那一格 +
@@ -360,7 +363,7 @@ frontend/src/                                   ← React 工作台：44 个非�
                                                   ADR 0020 的「可改」：KnowledgeMatrix 的 `CellEditor`
                                                   + CanonEventCast + `correctionError.ts`（409/404/422
                                                   三种拒绝三句话，**409 绝不静默重试**））
-frontend/src/__fixtures__/api.json              ← 从真 app dump 的 54 个端点出参（契约测试两头共用）
+frontend/src/__fixtures__/api.json              ← 从真 app dump 的 56 个端点出参（契约测试两头共用）
 novel_harness/webui/                            ← ↑ 的构建产物（生成物，不入库；随 wheel 分发）
 draft/provider.py                               ← M2：统一模型出口（OpenAI 兼容，三臂与生产共用）
 draft/context.py                                ← M2：`ResolvedConstraints`（cast 已解析 / X1X2 同一份矩阵，编码进类型）
@@ -386,7 +389,7 @@ draft/product_assemble.py                       ← M4：已确认记忆前言�
 draft/rolling_summary.py                        ← M4 后续切片：后台章节滚动总结（幂等、机器摘要仅背景）
                                                   + `coverage()`：窗口里每章「没写 / 写了没总结 / 有」
 draft/summarize.py                              ← M4 后续切片：章节摘要 prompt（`nh summarize` 补档，HTTP 同一条）
-agent/{ports,index,tools,loop,store,model,drafting}.py
+agent/{ports,index,tools,loop,store,model,drafting,candidates}.py
                                                 ← 模式二（ADR 0019）：**工具表就是权限边界**。
                                                   `ports.py` = 模型碰得到的全部东西（`ToolContext` +
                                                   起草接线口 + 两个**只读**窄端口：摘要 / 已确认事件；
@@ -394,7 +397,22 @@ agent/{ports,index,tools,loop,store,model,drafting}.py
                                                   `index.py` = 书内索引四层（目录 / 人物轴 / 摘要区间 /
                                                   一章正文，越往下越贵，出处一律带章号，预算从
                                                   `capability.max_context_tokens` 倒推）；
-                                                  `tools.py` = 表本身 + 派发（声明由表生成，追加不插队）；
+                                                  `tools.py` = 表本身 + 派发（声明由表生成，追加不插队）
+                                                  + `BatchRunner`：**一批之内没有副作用的那几条同时跑**
+                                                  （ADR 0022；判据是 `ToolSpec.concurrent`，默认 False，
+                                                  今天只有 `draft_chapter` 是 True，`save_draft` 是屏障）。
+                                                  **并发默认关着，只有装配层能开**——只有开连接的那一层
+                                                  知道这条连接跨不跨得了线程，而 `check_same_thread=False`
+                                                  并不让它变成线程安全的（实测：两条线程同一句 SQL 必
+                                                  `InterfaceError`），所以碰库的每一段都要过
+                                                  `ToolContext.db_lock`，慢的那一段（模型调用）在队外面；
+                                                  `candidates.py` = **候选稿的存取**（ADR 0022）：
+                                                  起草的产物落在 `draft_candidate` 表，**不落在书里、
+                                                  也不落在对话里**——无状态的 wire 每一轮重发整个消息数组，
+                                                  三稿 9,000 字进对话就是每一轮都在付它的钱。
+                                                  对话里只有 id + **定长**预览（`PREVIEW_UNITS`）+ 那一稿的
+                                                  自述；清理只清**已经进过书**的（那些在版本历史里退得回去），
+                                                  没落过盘的一行都不删；
                                                   `loop.py` = **循环归模型、停止条件归代码**：canonical 对话
                                                   （`prefix` 与 `messages` 两个字段 ⇒ 稳定前缀排在最前面是
                                                   构造不出反例，边界六）+ `project(对话, 章号, budget)`
@@ -414,12 +432,17 @@ agent/{ports,index,tools,loop,store,model,drafting}.py
                                                   （信号一亮迭代器抛出去 → `complete()` 收敛成 `ProviderError` →
                                                   loop 先问信号再判故障），且**一个非 `ProviderError` 都不许漏出去**
                                                   （漏出去 = 一次正常的网络故障在作者屏幕上是崩溃）。
-                                                  `drafting.py` = **起草工具的实现**（2026-08-11，ADR 0021）：
-                                                  调 `draft/product_draft.py` 那个唯一实现，然后**直接写进那一章**
-                                                  （`importer.save_chapter`，也就是 `PUT …/chapters/{n}/text`
-                                                  走的同一个函数：磁盘先、DB 跟）。**不弹框**，唯一的闸是
-                                                  「拒绝覆盖作者比它更晚改过的那一章」（起草前记 `text_sha256`，
-                                                  落盘前比对磁盘当前值）；只对**已经存在的章**成立
+                                                  `drafting.py` = **起草那一摊的实现**（2026-08-11 ADR 0021；
+                                                  2026-08-12 ADR 0022 把它拆成三个动作：生成（花钱、不动书）/
+                                                  落盘（不花钱、动书、**仍然不问作者**）/ 按 id 读回全文）。
+                                                  生成调 `draft/product_draft.py` 那个唯一实现，**那一稿的
+                                                  自述由写它的那个模型在同一次调用里交**（引擎不给散文打分，
+                                                  ADR 0005 一个字没破）；落盘走 `importer.save_chapter`，
+                                                  也就是 `PUT …/chapters/{n}/text` 走的同一个函数（磁盘先、
+                                                  DB 跟）。**不弹框**，唯一的闸是
+                                                  「拒绝覆盖作者比它更晚改过的那一章」（起草前记 `text_sha256`
+                                                  **跟着候选一起存**，落盘时比对磁盘当前值——不存的话闸只能
+                                                  拿「现在」跟「现在」比，也就是永远放行）；只对**已经存在的章**成立
                                                   （新建一章要起章标题，标题是切章的锚）；章标题原样保留，
                                                   切不成恰好一章、或者一稿是空的，都**写之前**拒
                                                   （空稿接上章标题照样切得出一章，形状闸拦不住它，
@@ -430,7 +453,9 @@ agent/{ports,index,tools,loop,store,model,drafting}.py
                                                   **`ToolContext` 上一个字都没多**（边界一仍是类型保证）。
                                                   起草那一次调用的回执走 `DraftProduct.calls` → loop 的
                                                   `ledger`，所以成本闸罩得住它、日志页看得见它。
-                                                  **对话面板（3.5）还没落地**；resume 已经通到 HTTP
+                                                  另一条新长出来的闸：起草那会儿这一章还不存在、落盘时它有了
+                                                  （作者刚建的），**一律拒**——`expected_sha256=None`
+                                                  会把闸整个关掉。resume 已经通到 HTTP
                                                   （执行态 = 一串 message + 缺 result 的那几个调用）。
 eval/{leak,score}.py                            ← M2：泄漏集合判断 + 精确 McNemar / Holm + `decide()` 裁决表
 eval/confound_lint.py                           ← M2：X1 vs X2 除 form 外不许有第二处差异（§2 反混淆铁律）
@@ -848,7 +873,8 @@ R4 之外，R2（未来实体提前出现）和 R3（死人/未登场角色开�
      ——长度是作者的意愿（ADR 0013），所以 `DraftAsk` 上仍然没有 `length`；
      reasoning 走 `OFF` 而不是 `/draft` 的 `HIGH`：没登记的端点只给 `OFF`，
      照 `HIGH` 发的话作者换个自建端点就是「聊天好好的，只有起草每次失败」；
-     ③ **账**：`DraftFn` 现在返回 `DraftProduct`（正文 + `calls` + `saved` + `note`），
+     ③ **账**：`DraftFn` 现在返回 `DraftProduct`（2026-08-12 起是「候选摘要 + `calls`」，
+     落盘那两个字段随 ADR 0022 搬去了 `LandingReport`），
      回执经 `ToolOutcome.calls` 交给 loop 的 `ledger`，**成本闸那一半也补上了**——
      `TurnLimits.max_calls_per_step` 只管次数（六个 `draft_chapter` 是六稿正文，
      次数上完全合法），现在每派发完一个查一次 `max_tokens`。
@@ -876,21 +902,19 @@ R4 之外，R2（未来实体提前出现）和 R3（死人/未登场角色开�
      而起草没有这样一张业务表。于是那一行是「模型调用 · 起草 · 未记录」。
      **落盘那一行有章号**（`decision_log.chapter_number`），所以作者仍然找得到现场；
      补这一条要么给 `model_call` 加一列、要么让落盘那一行指向它，**两样都改出参形状**。
-   - **对话里从此有了第二份正文，而过期判据只认第一份**（边界三的今天形状）。
-     `chapter_text` 的返回（`ChapterFullText`）和磁盘对不上时，投影会把它换成一句
-     「重新读一次」（`loop.STALE_MANUSCRIPT` / `tools.outdated_manuscript`），理由是
-     「第 N 章是什么」不许有两个答案、而**发出去的是过期那个**。`draft_chapter` 的返回里
-     同样躺着一整章正文（连同一句「已经写进第 N 章了」），同样进 `chat_message`、
-     同样会在作者改完那一章之后过期——**判据认不出它**（`ChapterFullText` 是
-     `extra="forbid"`，`DraftResult` 验不过），于是它原样发出去。
+   - ~~**对话里从此有了第二份正文，而过期判据只认第一份**~~ —— **2026-08-12 缩掉了
+     大半**（ADR 0022）：`draft_chapter` 的返回里不再有整章正文，只有 id + **定长**预览
+     （`PREVIEW_UNITS`）+ 那一稿的自述，正文落在 `draft_candidate` 表里。
+     **剩下的那一小半仍然在**，写清楚免得被当成已经解决：那 120 字预览同样会在作者改完
+     之后变旧，而 `tools.outdated_manuscript` 同样认不出它（判据是 `ChapterFullText`
+     验不验得过）。差别是代价：从「一整章过期正文每一轮重发」缩到「一段开头」。
+     `read_draft` 的返回是**候选的全文**，它按定义不过期——候选是不可变的，
+     它也不声称自己是磁盘上那一章。
      实测钉在 `tests/test_draft_landing.py::
      test_the_copy_of_the_manuscript_a_draft_leaves_in_the_conversation_is_not_checked`，
-     **带一半对照**（同一段正文经 `chapter_text` 进来就会被擦掉），所以它量的是
-     「只对一条通路做」而不是「没做过期检查」。
-     **别顺手照抄那个判据**：`DraftResult.text` 是不带章标题的一稿，而
-     `handle_chapter_text` 出的是整章、还可能被截断，直接比一定恒不相等 ⇒
-     每一稿刚写完就被自己擦掉。要补得先给它一个能比的锚（落盘那一版的 sha），
-     而那会改这两张表里存下来的东西。
+     **带一半对照**（同一段正文经 `chapter_text` 进来就会被擦掉）。
+     **别顺手照抄那个判据**：一稿不带章标题，而 `handle_chapter_text` 出的是整章、
+     还可能被截断，直接比一定恒不相等 ⇒ 每一稿刚写完就被自己擦掉。
 
 **M4 正在实现、尚未完成**：`events/` 契约与 `002_m4_events.sql` 已落地；`extract/` 已有纯
 结构化 schema、确定性 prompt、精确优先的模糊证据定位与不猜名称解析，后台 provider 调用和

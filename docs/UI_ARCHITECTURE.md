@@ -108,6 +108,15 @@
 | DELETE | `/projects/{pid}/chats/{id}` | `ChatStore.delete` | `ChatDeleted`·**不动任何一行正文**（正文在磁盘上，那两张表里没有它，[ADR 0019](adr/0019-agent-loop-not-graph.md) 边界三）。正在跑的那一段 409 带一句人话，前端原样说、**不静默重试** | 🟢 |
 | POST | `/projects/{pid}/chats/{id}/turn` | `agent.loop.run_turn` | `TurnReceipt`·`{chapter, said}`。**`chapter` 必填、无默认值**——投影在它缺席时不过滤，而那是「没接线」默认值不是安全默认值（边界五：第 90 章的禁说清单是第 40 章那份的**子集**）。`said` 留空 = resume。**这一版 HTTP 不流式**（内部流式），所以拿到的是一个跑完才回来的响应；出参是**对话的投影不是原文**（工具返回一条都不出去，只给一个 `lookups` 计数） | 🟢 |
 | POST | `/projects/{pid}/chats/{id}/stop` | `LIVE.stop` | `ChatStopped`·**`stopped=false` 不是失败**（那一刻它本来就没在跑），200 + 一句人话。它不等这一轮跑完 | 🟢 |
+| GET | `/projects/{pid}/drafts?chapter=&limit=` | `DraftCandidateStore.recent` | `{drafts: DraftCandidateView[]}`·最近的在前，**不带正文**（一次列 20 稿 = 20 章正文）。**它不是版本历史**：`/chapters/{n}/history` 里是**已经在书里**的，这儿是**还摆在桌上**的（[ADR 0022](adr/0022-drafting-is-a-proposal-not-a-write.md)——没落盘的候选在磁盘、快照里都不存在，没有这条路由作者关掉那一轮回执就再也找不到它们）。**前端调用方**（2026-08-12 起）：`ChatPanel` 头上那条「还摆着 N 稿 ↗」+ 并排比那一页 | 🟢 |
+| GET | `/projects/{pid}/drafts/{draft_id}` | `DraftCandidateStore.get` | `DraftCandidateView + {text}`·**摊开那一版读的就是它**。404 `draft_not_found`·**前端只在作者亲手点开某一稿时才打**（`useDraftText(…, open)`），入口那一档只摊开 `landed` 那一版——三稿 ≈ 9,000 字硬摊在入口上，作者要读完三章才做得了一个决定 | 🟢 |
+
+> **「推荐哪一版」不是引擎给的，前端也不许反推**（同「跳转坐标由后端给」那条禁令）。
+> 唯一的判据是 `landed`——助手把哪一版 `save_draft` 进了书，那是一个**动作**不是一句评价
+> （[ADR 0005](adr/0005-set-judgment-only.md)：引擎不给散文打分）。一批都没落盘时
+> **两边都不挑**（同 `AmbiguousName`：两个方向都贵就摊开），界面照 `ordinal` 顺序摆。
+> `note` 是**写那一稿的那个模型**自己交的一句话，**可能是空串**——空的时候界面上不许硬编一句。
+> `id`（`draft:01J…`）**一个字符都不许上屏**，屏幕上说的是「第 N 稿」（`ordinal`）。
 
 > **写作助手那六条上，措辞的唯一出处在后端。** `TurnReceipt.reason` 是 snake_case 机器码
 > （`agent.loop.StopReason`，故意的——原样上屏会被两侧的形状判据当场咬住），
@@ -297,6 +306,10 @@
 │  │  └─ <Receipt>               ◀ POST /chats/{id}/turn（`chapter` 必填 = 顶栏那一章；
 │  │                               `said` 留空 = resume。措辞出处在后端，这里只补
 │  │                               「你按过停」和「这一轮裁掉了什么」两句）
+│  │     └─ <DraftCandidates>    ◀ TurnReceipt.drafts（ADR 0022：**同一份数据三档排布**）
+│  │        │                      窄=一稿一张卡（推荐那版摊开、另两版自述+开头）；
+│  │        │                      拖宽=几列并排各自滚（判据 `drafts.ts::sideBySide`）
+│  │        └─ <DraftCard>       ◀ GET /drafts/{id}（**只在摊开时取**，不摊开零字节）
 │  └─ <BottomBar>
 │     ├─ <SceneTimeline>          ◀ parse_scenes 序 + edge.valid_from/valid_to
 │     └─ <RunTelemetry collapsed> ◀ 同上：整理次数 / token / 花费在「活动记录」页顶上
@@ -310,6 +323,16 @@
 │  │                               （`jump.endpoints` 空 ⇒ 不画编辑按钮，只带你过去；
 │  │                               坐标全来自后端的 `jump`，前端不从标题反推）
 │  └─ <LoadMore>                 ◀ next_cursor 原样回传（不透明串，前端不拼）
+│
+├─ <DraftCompare>     ◀── 2026-08-12 ADR 0022 第三档，**唯一一条哈希路由**：`#/compare/{章号}`
+│  │                      在新标签页里并排读几稿。工作台本来就是本地浏览器应用
+│  │                      （`nh serve` 开的就是 localhost），所以这是**同一个应用的另一条
+│  │                      路由，零新基础设施**——哈希不进请求行，服务端一个路径都不用多认。
+│  │                      **地址里只有章号**：书是点链接那一下留在本地存储里的
+│  │                      （`route.ts`，内部标识不进地址栏——地址栏也是屏幕）；
+│  │                      交接读不到且库里不止一本书时**说不知道，不猜**。
+│  ├─ <DraftCard ×N>              ◀ GET /drafts?chapter= + GET /drafts/{id}（默认摊开最近 3 列）
+│  └─ 只读                        ▶ 无写路由：要用哪一版回工作台跟助手说（一个功能不留两个入口）
 │
 ├─ <ChapterPrepPage>  ◀── P2 章节准备（写第 N 章前的确定性简报）
 │  ├─ <ChapterGoalCard>           ◀ 作者手填 brief（磁盘 md，无图谱背书）

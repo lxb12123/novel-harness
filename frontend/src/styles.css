@@ -633,3 +633,57 @@ header select {
 .chat button.primary { border-color: var(--accent); color: var(--accent); background: var(--sel); }
 .chat button.danger { border-color: var(--warn); color: var(--warn); }
 .chat button.danger:hover:not(:disabled) { background: var(--warnbg); }
+
+/* ── 桌上摆着的那几稿（ADR 0022）───────────────────────────────────────────
+   **同一份数据的三种排布**：窄档一张一张摞着，宽档并排各自一个滚轮，
+   新标签页是同一套卡片铺满一页（`.compare-cols`）。
+   并排的判据在 `drafts.ts::sideBySide`（量的是这一块的实际宽度，不是窗口）。 */
+.drafts { margin-top: 10px; }
+.drafts-head {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  font-size: 12px; margin-bottom: 6px;
+}
+.drafts-head .spacer { flex: 1; }
+.draft-compare { color: var(--accent); font-size: 11px; white-space: nowrap; }
+
+.draft-cards { display: flex; flex-direction: column; gap: 8px; }
+/* 宽档：几列并排，**每一列自己一个滚轮**（作者的原话：「三窗口分别对应三个原文，
+   然后一个滚轮内容」）。列宽下限交给 minmax，不够宽时上面那个判据本来就不会走到这儿。 */
+.draft-cards.wide {
+  flex-direction: row; align-items: stretch;
+  overflow-x: auto;
+}
+.draft-cards.wide .draft-card { flex: 1 1 0; min-width: 0; max-height: 52vh; overflow: auto; }
+
+.draft-card {
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--panel);
+}
+/* 摊开的那一张自己滚：一整章正文直接铺在对话里，会把回执和输入框顶出屏幕，
+   而作者接下来要做的事（跟它说「用第二版」）就在那两个地方。 */
+.draft-card.open { background: var(--bg); max-height: 42vh; overflow: auto; }
+.draft-card-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+.draft-meta { color: var(--dim); font-size: 11px; }
+.draft-badge {
+  border: 1px solid var(--ok); border-radius: 8px; padding: 0 5px;
+  color: var(--ok); font-size: 11px;
+}
+.draft-note { margin: 5px 0 0; font-size: 12px; line-height: 1.7; }
+.draft-preview, .draft-text {
+  margin: 5px 0 0; color: var(--dim); font-size: 12px; line-height: 1.8; white-space: pre-wrap;
+}
+.draft-text { color: var(--ink); }
+.draft-loading { margin: 5px 0 0; color: var(--dim); font-size: 11px; }
+.draft-toggle { margin-top: 6px; font-size: 11px; padding: 2px 9px; }
+
+/* 并排比那一页（`#/compare/{章号}`）：整窗一页，横向排列，每列各自滚。 */
+.compare-page { height: 100%; display: flex; flex-direction: column; padding: 12px 14px; gap: 8px; }
+.compare-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.compare-head .spacer { flex: 1; }
+.compare-note { color: var(--dim); font-size: 11px; }
+.compare-say { margin: 0; font-size: 12px; line-height: 1.8; max-width: 60ch; }
+.compare-say.dim { color: var(--dim); font-size: 11px; }
+.compare-cols {
+  flex: 1; min-height: 0; display: grid; grid-auto-flow: column;
+  grid-auto-columns: minmax(320px, 1fr); gap: 10px; overflow-x: auto;
+}
+.compare-cols .draft-card { min-width: 0; overflow: auto; }

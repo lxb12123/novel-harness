@@ -35,6 +35,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import novel_harness.agent.store as store_mod
+import novel_harness.agent.tools as tools_mod
 import novel_harness.api.chat as chat_mod
 from novel_harness import project
 from novel_harness.agent.loop import (
@@ -47,11 +48,14 @@ from novel_harness.agent.loop import (
     TurnLimits,
     run_turn,
 )
+from novel_harness.agent.candidates import DraftCandidate
 from novel_harness.agent.ports import DraftAsk, DraftProduct, ModelCallReceipt, ToolContext
 from novel_harness.agent.store import ChatStore
 from novel_harness.db import Connection, connect, migrate
 from novel_harness.draft.capabilities import resolve_capabilities
 from novel_harness.draft.provider import CompletionResult, ProviderConfig, ToolCall
+from novel_harness.draft.rolling_summary import SummaryStore
+from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.importer import chapter_path
 
@@ -338,7 +342,7 @@ def test_a_turn_that_dies_mid_batch_leaves_exactly_the_calls_that_never_ran(
     修之前这条是红的：库里只有作者那一句。
     """
     pid_ = book["pid"]
-    real_dispatch = chat_mod.run_turn.__globals__["dispatch"]
+    real_dispatch = tools_mod.dispatch
     done = 0
 
     def dying_dispatch(call: Any, context: Any) -> Any:
@@ -348,7 +352,7 @@ def test_a_turn_that_dies_mid_batch_leaves_exactly_the_calls_that_never_ran(
         done += 1
         return real_dispatch(call, context)
 
-    monkeypatch.setattr("novel_harness.agent.loop.dispatch", dying_dispatch)
+    monkeypatch.setattr("novel_harness.agent.tools.dispatch", dying_dispatch)
     use(
         monkeypatch,
         Scripted(
@@ -386,7 +390,7 @@ def test_only_the_calls_that_never_ran_are_replayed(
     而作者看到的说法会是「联系不上写作模型」（一个指向别处的错误说法）。
     """
     pid_ = book["pid"]
-    real_dispatch = chat_mod.run_turn.__globals__["dispatch"]
+    real_dispatch = tools_mod.dispatch
     ran: list[str] = []
 
     def dying_dispatch(call: Any, context: Any) -> Any:
@@ -395,7 +399,7 @@ def test_only_the_calls_that_never_ran_are_replayed(
         ran.append(call.name)
         return real_dispatch(call, context)
 
-    monkeypatch.setattr("novel_harness.agent.loop.dispatch", dying_dispatch)
+    monkeypatch.setattr("novel_harness.agent.tools.dispatch", dying_dispatch)
     use(
         monkeypatch,
         Scripted(
@@ -416,7 +420,7 @@ def test_only_the_calls_that_never_ran_are_replayed(
 
     # 进程重开，作者一个字都不重说（`said` 留空 = 接着上次往下跑）。
     chat_mod.LIVE.clear()
-    monkeypatch.setattr("novel_harness.agent.loop.dispatch", real_dispatch)
+    monkeypatch.setattr("novel_harness.agent.tools.dispatch", real_dispatch)
     resumed = Scripted(says("查完了，第 2 章那条先别说破。"))
     use(monkeypatch, resumed)
     turn = client.post(f"/api/projects/{pid_}/chats/{chat_id}/turn", json={"chapter": 2})
@@ -510,12 +514,12 @@ def test_a_lost_lookup_behind_a_new_sentence_still_leaves_a_wire_that_can_be_sen
     最后一道关口。这条路径在持久化之后变长了（跨了一次进程），这里重验它。
     """
     pid_ = book["pid"]
-    real_dispatch = chat_mod.run_turn.__globals__["dispatch"]
+    real_dispatch = tools_mod.dispatch
 
     def dying_dispatch(call: Any, context: Any) -> Any:
         raise ProcessDied("断电")
 
-    monkeypatch.setattr("novel_harness.agent.loop.dispatch", dying_dispatch)
+    monkeypatch.setattr("novel_harness.agent.tools.dispatch", dying_dispatch)
     use(monkeypatch, Scripted(wants(("book_index", "{}"), ("chapter_text", '{"chapter": 1}'))))
     chat_id = open_chat(client, pid_)
     with pytest.raises(ProcessDied):
@@ -527,7 +531,7 @@ def test_a_lost_lookup_behind_a_new_sentence_still_leaves_a_wire_that_can_be_sen
         "pending_lookups"
     ] == 2
 
-    monkeypatch.setattr("novel_harness.agent.loop.dispatch", real_dispatch)
+    monkeypatch.setattr("novel_harness.agent.tools.dispatch", real_dispatch)
     spoken = Scripted(says("行，那我直接说。"))
     use(monkeypatch, spoken)
     turn = client.post(
@@ -599,7 +603,7 @@ def test_two_windows_on_the_same_chapter_do_not_resume_each_other(
     读回来的——串了的话症状是「甲窗口的查询结果出现在乙窗口的历史里」，而那读起来完全正常。
     """
     pid_ = book["pid"]
-    real_dispatch = chat_mod.run_turn.__globals__["dispatch"]
+    real_dispatch = tools_mod.dispatch
 
     def die(call: Any, context: Any) -> Any:
         raise ProcessDied("断电")
@@ -607,7 +611,7 @@ def test_two_windows_on_the_same_chapter_do_not_resume_each_other(
     left = open_chat(client, pid_, title="甲")
     right = open_chat(client, pid_, title="乙")
 
-    monkeypatch.setattr("novel_harness.agent.loop.dispatch", die)
+    monkeypatch.setattr("novel_harness.agent.tools.dispatch", die)
     use(monkeypatch, Scripted(wants(("book_index", "{}"))))
     with pytest.raises(ProcessDied):
         client.post(f"/api/projects/{pid_}/chats/{left}/turn", json={"chapter": 2, "said": "甲问"})
@@ -625,7 +629,7 @@ def test_two_windows_on_the_same_chapter_do_not_resume_each_other(
     ).json()}
     assert listed == {"甲": 1, "乙": 2}
 
-    monkeypatch.setattr("novel_harness.agent.loop.dispatch", real_dispatch)
+    monkeypatch.setattr("novel_harness.agent.tools.dispatch", real_dispatch)
     use(monkeypatch, Scripted(says("甲答")))
     first = client.post(f"/api/projects/{pid_}/chats/{left}/turn", json={"chapter": 2})
     assert first.json()["lookups"] == 1, "甲补跑的条数被乙那一段污染了"
@@ -679,7 +683,7 @@ def _draft_pending(pid_: str, conn: Connection, root: Path, drafter: Any) -> Too
 def test_replaying_a_lookup_is_free_but_replaying_a_draft_is_not(
     conn: Connection, pid: str, tmp_path: Path
 ) -> None:
-    """ADR 0019 写着「T1–T5 只读或纯函数，**重放免费**」。**那句话对第七个工具不成立。**
+    """ADR 0019 写着「T1–T5 只读或纯函数，**重放免费**」。**那句话对起草那一个工具不成立。**
 
     `draft_chapter` 每跑一次是一次真的模型调用，花的是作者的钱。补跑不问「哪个工具贵」
     （那是一张会在加工具那天漂的表），所以这里把代价钉成一个数：
@@ -696,23 +700,42 @@ def test_replaying_a_lookup_is_free_but_replaying_a_draft_is_not(
     drafted: list[int] = []
     billed: list[ModelCallReceipt] = []
 
-    def drafter(ask: DraftAsk, context: Any) -> DraftProduct:
-        drafted.append(ask.chapter)
-        return DraftProduct(
-            text="一稿正文……",
-            calls=(
-                ModelCallReceipt(
-                    capability="writer",
-                    schema_version="m5.draft.v1",
-                    model="deepseek-v4-flash",
-                    prompt_hash="ph",
-                    prompt_bytes=b"{}",
-                    text="一稿正文……",
-                    prompt_tokens=900,
-                    completion_tokens=2_600,
+    class Desk:
+        """注入的那个起草台（ADR 0022 之后是三个动作）。**这一条只用得到第一个**：
+        补跑重放的是 `draft_chapter`，而它现在**不落盘**——花的钱一分没少。"""
+
+        def write(self, ask: DraftAsk, context: Any) -> DraftProduct:
+            drafted.append(ask.chapter)
+            return DraftProduct(
+                candidate=DraftCandidate(
+                    id="draft:01JTESTTESTTESTTESTTESTTEST",
+                    chapter=ask.chapter,
+                    ordinal=1,
+                    units=2_400,
+                    note="一稿。",
+                    preview="一稿正文……",
                 ),
-            ),
-        )
+                calls=(
+                    ModelCallReceipt(
+                        capability="writer",
+                        schema_version="m5.draft.v1",
+                        model="deepseek-v4-flash",
+                        prompt_hash="ph",
+                        prompt_bytes=b"{}",
+                        text="一稿正文……",
+                        prompt_tokens=900,
+                        completion_tokens=2_600,
+                    ),
+                ),
+            )
+
+        def land(self, candidate_id: str) -> Any:  # pragma: no cover - 这一条不落盘
+            raise AssertionError("补跑不该自己去落盘")
+
+        def recall(self, candidate_id: str) -> Any:  # pragma: no cover - 这一条不读回
+            raise AssertionError("补跑不该自己去读回")
+
+    drafter = Desk()
 
     live = Conversation(
         messages=(
@@ -758,22 +781,33 @@ def test_the_paid_tool_is_wired_and_a_replay_really_costs_again(
     接线了，所以它翻过来：**产品路径上真的有一个会花钱的工具**，
     而上一条钉住的「补跑 = 再花一次钱」从此不是一个假设。
 
-    这里同时钉住第二件事：`_tool_context` 交出去的仍然只是一个**可调用对象**——
-    写入面在闭包里，`ToolContext` 上没有 conn、没有 `CanonWriter`（边界一）。
+    这里同时钉住第二件事：`_tool_context` 交出去的仍然只是一个**注入进来的端口**——
+    写入面握在那个起草台里，`ToolContext` 上没有 conn、没有 `CanonWriter`（边界一）。
     """
     conn = connect(book["db"])
     try:
         proj = type("P", (), {"id": book["pid"], "root_path": str(tmp_path)})
+        capability = resolve_capabilities("https://api.deepseek.com", "deepseek-v4-flash")
+        desk = chat_mod.chapter_drafter(
+            store=SqliteStoryGraph(conn),
+            conn=conn,
+            project_id=book["pid"],
+            root=str(tmp_path),
+            config=ProviderConfig(base_url="https://api.deepseek.com", model="deepseek-v4-flash"),
+            capability=capability,
+            events=SqliteEventStore(conn),
+            summaries=SummaryStore(conn),
+        )
         context = chat_mod._tool_context(
             proj,
             SqliteStoryGraph(conn),
             conn,
             chapter=1,
-            config=ProviderConfig(base_url="https://api.deepseek.com", model="deepseek-v4-flash"),
-            capability=resolve_capabilities("https://api.deepseek.com", "deepseek-v4-flash"),
+            desk=desk,
+            capability=capability,
             plan=_plan(),
         )
-        assert callable(context.drafter), (
+        assert context.drafter is desk and hasattr(context.drafter, "write"), (
             "`draft_chapter` 又没接线了 —— 那条产品路径上的起草工具会回一句「没接线」"
         )
         assert not hasattr(context, "conn") and not hasattr(context, "writer"), (

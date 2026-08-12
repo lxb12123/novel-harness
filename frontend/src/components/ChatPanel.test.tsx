@@ -66,10 +66,11 @@ describe("对话摊在中栏右半边", () => {
     const user = userEvent.setup();
     await screen.findByText(fixtures.chatDetail.messages[0].text);
     await user.click(screen.getByRole("button", { name: "对话列表" }));
-    // 真 dump：4 条历史，2 条上得了屏。摆一个「4 条」出来就是一个看起来很正常的假数字。
-    expect(fixtures.chats[0].message_count).toBe(4);
+    // 真 dump：5 条历史，2 条上得了屏。摆一个「5 条」出来就是一个看起来很正常的假数字。
+    // （那一轮要了两个工具：查约束 + 起一稿，所以历史里有两条工具返回。）
+    expect(fixtures.chats[0].message_count).toBe(5);
     expect(fixtures.chatDetail.messages).toHaveLength(2);
-    expect(document.body.textContent).not.toMatch(/4 条/);
+    expect(document.body.textContent).not.toMatch(/5 条/);
   });
 });
 

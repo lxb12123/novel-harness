@@ -24,8 +24,9 @@
 
 `tools.dispatch()` 的 docstring 写着理由：四种失败（工具名不在表里 / 参数不是合法 JSON /
 参数不合 schema / 工具自己拒绝）**全部是 `ok=False` 的正常返回，不是异常**——抛出去只会让
-这个文件变成一串 try/except，而漏掉其中一个的后果是整个会话死掉。所以这里对 `dispatch`
-的调用是**裸调用**，一个 `except` 都不许加：加了就等于把那个设计撤销掉。
+这个文件变成一串 try/except，而漏掉其中一个的后果是整个会话死掉。所以这里对派发
+（`tools.BatchRunner`，它是 `dispatch` 唯一的调用方）的调用是**裸调用**，
+一个 `except` 都不许加：加了就等于把那个设计撤销掉。
 
 同理，**这里不校验工具名**。那道闸只在 `dispatch` 里（运输层也不认识工具表，ADR 0019
 边界一）。这个文件里唯一读 `ToolCall.name` 的地方是「无进展」的判据，它比的是**字节相同**，
@@ -64,13 +65,25 @@ BYOK 之下引擎不知道作者签的什么单价，宁可空着也不猜）。
 那个参数的话，3.4 会把它硬拧上去，而边界五**错的时候不会报错**（产出的是一段读起来
 完全正常、只是说破了不该说破的东西的正文）。
 
-剪枝顺序**写死**（ADR 0019 原文，顺序不许改）：
-老 `tool_result` → 老 `tool_call` → agent 中间推理 → **最后才碰作者说的话**。
-这一层的最后一档是**停下来**（`CONTEXT_FULL`），不是悄悄砍掉作者说的话。
+剪枝顺序**写死**，判据是**可不可重建**（ADR 0023 决策一，它把 ADR 0019 边界五那句
+「按位置」重述成了按类别）：老 `tool_result`（重查回来的**更新鲜**，丢掉是升级）→
+老 `tool_call` → agent 中间推理（能重想）→ **最后才碰作者说的话**（**全场唯一不可重建的
+东西**）。这一层的最后一档是**停下来**（`CONTEXT_FULL`），不是悄悄砍掉作者说的话。
+
+**作者定下的规矩**（`rules.py`）在这条链之外：它不按预算剪，只按章号过期
+（ADR 0023 那张表的第二行——「小、跨轮有效、丢了最气人」）。
 
 **「正文永不压缩」在这一层是白拿的**：这里只剪不压，一个字都不摘要
 （摘要是 3.4 的事，而边界四管着它：总结不许含图谱事实）。剪掉的工具返回重查一次就有，
 **而且查回来的是当前的**——这正是把 `tool_result` 排在剪枝第一位的理由。
+
+── 预算量的是**真正发出去那份 payload**，工具声明也在里面（ADR 0023「前置」）──
+
+`budget_units` 管的是 `{"messages": […], "tools": […]}` 这**整份**东西，不是只有对话。
+以前只量对话，而工具声明有近 4,000 字——**约 23% 的系统性低估，方向偏松**，
+于是「省了多少」全是估的。现在 `Projection.payload_units` 是量出来的那个数，
+`tests/test_agent_loop_budget.py` 把它和 `draft.provider._wire_kwargs()` 真的要发出去的
+那份 kwargs 对上，误差写死在 `PAYLOAD_ENVELOPE_UNITS` 里。
 
 ── 稳定前缀（边界六）：它是结构，不是纪律 ──────────────────────────────
 
@@ -101,7 +114,12 @@ from ..draft.product_context import TOKENS_PER_UNIT
 from ..draft.provider import CompletionResult, ProviderError, ToolCall
 from ..extract.call_audit import ModelCallReceipt
 from .ports import LedgerFn, ToolContext
-from .tools import ToolOutcome, dispatch, outdated_manuscript, tool_declarations
+from .tools import (
+    BatchRunner,
+    ToolOutcome,
+    outdated_manuscript,
+    tool_declarations,
+)
 
 _LANGUAGE: Final = DraftLanguage.ZH
 """预算的计数口径，和 `index.py` 同一个：中文按非空白字符数（`draft/length.py` 是唯一定义）。"""
@@ -149,10 +167,17 @@ class AgentMessage(BaseModel):
     chapter: int | None = None
     """**这条消息只对第几章成立。** `None` = 不绑章号。
 
-    只有工具返回会绑：它的取值是模型在那次调用里填的 `chapter` 参数（`ToolOutcome.chapter`），
-    不是「作者当时写到第几章」。理由是这条字段的唯一用途是投影的过滤判据——过滤的是
-    **逐章变的事实**（第 40 章的 `must_not_reveal` ⊋ 第 90 章的），而作者说的话和 agent 的
-    推理不是事实、是意图，它们**永远不因为章号被丢掉**（剪枝顺序的最后一档就是作者的话）。
+    两种消息会绑，而**它们的取值来源和过滤方向都不一样**：
+
+    | 谁 | 这个数是什么 | 投影怎么筛 |
+    |---|---|---|
+    | 工具返回 | 模型在那次调用里填的 `chapter`（`ToolOutcome.chapter`） | `> chapter` 丢（往后的清单更短 = fail-open） |
+    | 作者的规矩（`rules.py`） | **引擎手里的 `working_chapter`**，模型和作者都碰不到 | `!= chapter` 丢（拿不准就放掉） |
+
+    两个方向相反是 ADR 0023 写死的：说破一个秘密收不回来，写错一场戏改一次就好。
+
+    作者说的话和 agent 的推理**永远不绑章号**——它们不是事实、是意图，
+    也**永远不因为章号被丢掉**（剪枝顺序的最后一档就是作者的话）。
     """
 
     pruned: bool = False
@@ -279,6 +304,8 @@ AGENT_SYSTEM_PROMPT = """你是一位中文长篇小说作者的写作搭档，�
 - **不许说破的东西是逐章算的。** 你上一轮查到的清单对另一章可能已经过期了——要为哪一章
   写东西，就为哪一章重新查一次。起草工具只收章号，约束由后端当场重算，你传不进去。
 - 工具返回里带「还没查」「瞎着」「裁掉了多少条」的话，一律照它说的理解：0 不等于没有。
+- **起草和存进书是两步。** 方向清楚就写一稿、接着存进去，不用问他；方向不清楚就一次写
+  几稿、先别存，把每一稿的自述摆给他挑。稿子的编号是给工具用的，跟他说话时说「第几稿」。
 - 说话对着作者，用中文，不要把工具名和参数念给他听。"""
 """稳定前缀的正文。**跨章不变**，所以它能进前缀（边界六那张表的第一行）。
 
@@ -322,14 +349,80 @@ def _wire(message: AgentMessage) -> dict[str, Any]:
     return out
 
 
-def _cost(message: AgentMessage) -> int:
-    """这条消息进 prompt 要花多少字。**量的是序列化后的样子**（同 `index.py::_cost`）：
+def _json_units(payload: Any) -> int:
+    """序列化之后有多少字。**量的是序列化后的样子**（同 `index.py::_cost`）：
     JSON 的键名和引号也占 token，条目多的时候那部分不小。"""
-    return count_units(json.dumps(_wire(message), ensure_ascii=False), _LANGUAGE)
+    return count_units(json.dumps(payload, ensure_ascii=False), _LANGUAGE)
 
 
-def _total(messages: Sequence[AgentMessage]) -> int:
-    return sum(_cost(message) for message in messages)
+def _cost(message: AgentMessage) -> int:
+    """这条消息进 prompt 要花多少字。"""
+    return _json_units(_wire(message))
+
+
+def payload_units(
+    messages: Sequence[dict[str, Any]], tools: Sequence[dict[str, Any]]
+) -> int:
+    """这一次**真正发出去的那份 payload** 有多少字（`count_units` 口径）。
+
+    ── 为什么要有这一个函数（ADR 0023「前置：先把账算对」）────────────────
+
+    > 预算量出来的数，和**真正发出去那份 payload 的实际大小**，误差必须在一个写死的
+    > 范围内。
+
+    以前的预算只量 `messages`，而每一次调用还要带上整张工具表的声明（近 4,000 字，
+    **相对默认预算约 23%**）。那是一个方向**偏松**的系统性低估：以为发了 17,000 字，
+    实际发了 21,000。在这之上算「剪枝省了多少」，省下来的每一个数都是估的。
+
+    **它不是全部的 payload**：真正的 wire 上还有一层信封（`model` / `max_tokens` /
+    `stream` / reasoning 那几个字段，见 `draft/provider.py::_wire_kwargs`）。那一层
+    由 `ProviderConfig` + `CallPlan` 决定，而这一层**不认识它们**（`ModelPort` 的
+    存在就是为了不认识）。所以口径是「量得到的那两块」，差额由
+    `PAYLOAD_ENVELOPE_UNITS` 兜住，并且是**单向**的：信封只会让实际更大，不会更小。
+    """
+    return _json_units({"messages": list(messages), "tools": list(tools)})
+
+
+PAYLOAD_ENVELOPE_UNITS: Final = 256
+"""`payload_units()` 量不到的那一层信封，最多多少字。**这是那条断言的容差，写死的。**
+
+实测（`tests/test_agent_loop_budget.py` 逐条跑）：能力表里那五条路由 + 一个没登记的
+本地端点，信封在 **53–129 字**之间（最大的是 Anthropic 兼容那档的
+`extra_body.thinking` / `output_config`）。256 是留了一倍余量的整数。
+
+**它红的时候不许直接把数字调大**：信封变大只有两种来法——换了个名字特别长的模型
+（无害），或者 `_wire_kwargs` 开始往请求里塞新东西（**那才是要看的**，因为那意味着
+每一次调用都在多付一笔没人记账的钱）。
+"""
+
+_EMPTY_PAYLOAD_UNITS: Final = payload_units((), ())
+"""两个空数组时的信封（`{"messages": [], "tools": []}`）。**算出来的，不是抄的。**"""
+
+
+def _array_units(costs: Sequence[int]) -> int:
+    """一个 JSON 数组里，元素本身 + 分隔它们的那些逗号。**方括号已经算在信封里。**"""
+    return sum(costs) + max(0, len(costs) - 1)
+
+
+def _measured_units(message_costs: Sequence[int], tool_costs: Sequence[int]) -> int:
+    """`payload_units()` 的增量版：逐条的字数已经算好时用它。
+
+    两者**必须逐字节同解**（`tests/test_agent_loop_budget.py` 有一条对拷断言钉着）——
+    剪枝的每一步用这一个、最后报出去的用另一个的话，就会出现「剪完了但还是喊装不下」
+    那种停不下来的形态。
+    """
+    return _EMPTY_PAYLOAD_UNITS + _array_units(message_costs) + _array_units(tool_costs)
+
+
+def tool_declaration_units(tools: Sequence[dict[str, Any]] | None = None) -> int:
+    """整张工具表的声明在一次 payload 里占多少字。**剪枝一个字都动不了它，它是地板。**
+
+    有名字的地板才管得住：以前它不在账上，于是「预算 17,000」实际发出去 21,000
+    （ADR 0023「前置」）。今天它进 `Projection.tool_units`，于是「这一轮的上下文里
+    有多少是雷打不动的固定开销」是一个报得出来的数，不是一个要去读源码才知道的事。
+    """
+    declarations = tool_declarations() if tools is None else list(tools)
+    return _array_units([_json_units(declaration) for declaration in declarations])
 
 
 def _drop_calls(messages: list[AgentMessage], call_ids: set[str]) -> list[AgentMessage]:
@@ -410,11 +503,31 @@ class Projection(BaseModel):
     """canonical 里没人接住、这一次就地配了壳的 `tool_call` 条数（见 `LOST_RESULT`）。
     不为零 = 有一次派发断在半路上，而作者的下一句话把它挡在了 resume 的视野之外。"""
 
+    expired_rules: int = 0
+    """因为**切到了另一章**（或者根本没有章号坐标）而失效的作者规矩条数（ADR 0023 决策二）。
+
+    不为零 = 有几条偏好这一轮不再生效了。**方向和上面那几个字段是反的**：那几个是
+    「这条还在，只是我们没发」，这一条是「它到期了」——而偏好到期是**设计**，不是损失。
+    """
+
     stubbed_results: int = 0
     dropped_calls: int = 0
     dropped_reasoning: int = 0
     over_budget: bool = False
     """剪到只剩作者说的话，仍然装不下。**这一档不砍作者的话，由调用方停下来。**"""
+
+    budget_units: int = 0
+    """这一次的预算（整份 payload 的上限）。"""
+
+    tool_units: int = 0
+    """其中工具声明占掉的那部分。**它是一块固定的地板**——剪枝一个字都动不了它，
+    而它以前根本不在账上（ADR 0023「前置」点名的那 23%）。"""
+
+    payload_units: int = 0
+    """这一份**真正发出去**的 payload 有多少字（含工具声明，见模块级同名函数）。
+
+    `over_budget` 就是 `payload_units > budget_units`，**没有第二个口径**。
+    """
 
 
 def project(
@@ -423,18 +536,24 @@ def project(
     *,
     budget_units: int,
     stale_calls: frozenset[str] = frozenset(),
+    tools: Sequence[dict[str, Any]] | None = None,
 ) -> Projection:
     """canonical → 模型这一次看得见的那份（ADR 0019 边界五）。
 
     Args:
-        chapter: **第几章视角**。`None` = 不知道作者在写第几章 ⇒ 不按章号过滤
-            （见下面那条诚实说明）。它决定「取什么」。
-        budget_units: 这一份最多多少字。它决定「取多少」。
+        chapter: **第几章视角**。`None` = 不知道作者在写第几章 ⇒ 工具返回不按章号过滤，
+            而作者的规矩**一条都不留**（见下面那条诚实说明和「方向是反的」那一节）。
+            它决定「取什么」。
+        budget_units: **整份 payload** 最多多少字——含工具声明，见 `payload_units()`。
+            它决定「取多少」。
         stale_calls: 手里那份正文**已经和磁盘对不上**的那几个 `tool_call` 的 id
             （判据在 `tools.outdated_manuscript`，由 `run_turn` 算好交进来——
             这个函数是纯的，不碰磁盘）。它决定「哪一份不许再发出去」。
+        tools: 这一次要一起发出去的工具声明。`None` = 整张表（`tool_declarations()`），
+            那**就是**产品行为——工具表是权限边界，loop 从不发半张表。
+            `run_turn` 显式传它自己那一份，好让量的和发的是同一个对象。
 
-    ── 三段，顺序不能反 ──────────────────────────────────────────────
+    ── 四段，顺序不能反 ──────────────────────────────────────────────
 
     **一、按章号取**（`off_chapter`）：绑在**更后面**的章上的工具返回不进这一份。
     作者会从第 90 章回头改第 40 章，那时「最近」是错的坐标——对话的近端讲的是第 90 章，
@@ -459,6 +578,18 @@ def project(
     `must_not_reveal` 是「稿子崩了」，没有任何东西会报错。这条 ADR 的全部重量都在
     「它错的时候不会报错」上，所以换法是往看得见的那一侧换。
 
+    **一之二、把过期的规矩丢掉**（`expired_rules`，ADR 0023 决策二）：作者定下的规矩
+    默认**只管当前这一章**，切章自动失效。**判据是 `!=`，而且方向和上面那一档是反的**：
+
+    | | 拿不准时 | 为什么 |
+    |---|---|---|
+    | `must_not_reveal`（上一段） | **留着**（`>` 只丢往后的） | 说破了收不回来 |
+    | **作者的偏好**（这一段） | **放掉**（`!=`，换一章就没了） | 留着 = 第 200 章写不出打戏，而**作者不知道为什么** |
+
+    所以 `chapter is None` 时这一档**清空**，而上一档**全留**——同一个「不知道第几章」，
+    两个相反的动作，因为两边猜错的代价不对称。判据全在 `rules.surviving_rule_indices`，
+    这儿不写第二份。
+
     **二、把过期的正文换掉**（`stale_manuscript`）：作者在编辑器里改过的那一章，
     会话里那份快照就不再是「第 N 章是什么」的答案了——而它是**被发出去的那一份**，
     于是模型会拿一段读起来完全正常的旧正文回答他（ADR 0019 边界三 / ADR 0007）。
@@ -482,6 +613,12 @@ def project(
       （目录 / 人物同框轴 / 摘要区间），它们不带禁说清单，标的是 `future` 而不是禁令。
       这一档跟着上面那条残余代价一起被接受。
     """
+    # **函数内 import 是为了断开一条环**：`rules.py` 要用这个文件里的 `AgentMessage` /
+    # `Conversation` / `Role`（canonical 的形状住在这儿），所以它在模块级 import 本文件；
+    # 本文件反过来在模块级 import 它就是一个真的循环。同 `agent/model.py` 里那处
+    # `from ..draft.provider import _build_client`——这个包已经有这个先例。
+    from .rules import expired_rule_count, is_rule, surviving_rule_indices
+
     kept = list(conversation.messages)
     off_chapter = 0
     if chapter is not None:
@@ -495,6 +632,20 @@ def project(
         if stale:
             off_chapter = len(stale)
             kept = _drop_calls(kept, stale)
+
+    # 规矩排在按章号取那一档里（它也是「取什么」不是「取多少」），但**它是另一个方向**：
+    # 见上面那张表。整条判据在 `rules.py`，这儿只负责把过期的那几条拿掉并报个数。
+    live_rules = surviving_rule_indices(kept, chapter)
+    expired_rules = 0
+    if any(is_rule(message) for message in kept):
+        # **报的是「有几条规矩不再生效」，不是「丢了几条消息」**：同一条被记了两遍、
+        # 这儿只留最后一遍是**去重**，不是过期（见 `rules.expired_rule_count`）。
+        expired_rules = expired_rule_count(kept, live_rules)
+        kept = [
+            message
+            for index, message in enumerate(kept)
+            if not is_rule(message) or index in live_rules
+        ]
 
     # 过期的正文排在预算之前：占位比整章正文短得多，先换掉，第一、二档才知道自己
     # 到底还差多少字（反过来的话预算会照着一份已经不该发出去的正文去剪别的东西）。
@@ -513,14 +664,27 @@ def project(
     # 配壳排在预算之前：壳也是要发出去的字，让它跟别的消息一起被算、一起被剪。
     kept, filled = _fill_lost_shells(kept)
 
-    prefix_cost = _total(conversation.prefix)
-    budget = max(0, budget_units - prefix_cost)
+    declarations = tool_declarations() if tools is None else list(tools)
+    tool_costs = [_json_units(declaration) for declaration in declarations]
+    tool_side = _array_units(tool_costs)  # == `tool_declaration_units(declarations)`
+    prefix_costs = [_cost(message) for message in conversation.prefix]
     stubbed = dropped_calls = dropped_reasoning = 0
 
+    def sent() -> int:
+        """**这一刻发出去的话，那份 payload 有多大。** 剪枝的每一步问的都是这一个数。
+
+        以前这儿问的是「对话有多少字」，而工具声明也要发出去——那近 4,000 字一直不在
+        账上（ADR 0023「前置」）。现在预算和实际是同一个口径，所以
+        `over_budget` 和 `payload_units` 不可能各说各的。
+        """
+        return _measured_units(
+            [*prefix_costs, *(_cost(message) for message in kept)], tool_costs
+        )
+
     # 第一档：老 `tool_result` —— 删内容留壳。**壳不能删**，wire 上它必须接住那个 tool_call。
-    if _total(kept) > budget:
+    if sent() > budget_units:
         for index, message in enumerate(kept):
-            if _total(kept) <= budget:
+            if sent() <= budget_units:
                 break
             if message.role is not Role.TOOL or message.pruned:
                 continue
@@ -534,9 +698,9 @@ def project(
             stubbed += 1
 
     # 第二档：老 `tool_call` —— 壳和它的调用**成对**拿掉。
-    if _total(kept) > budget:
+    if sent() > budget_units:
         for message in list(kept):
-            if _total(kept) <= budget:
+            if sent() <= budget_units:
                 break
             if message.role is not Role.ASSISTANT or not message.tool_calls:
                 continue
@@ -545,26 +709,31 @@ def project(
             dropped_calls += len(ids)
 
     # 第三档：agent 的中间推理（有正文、没有工具调用的 assistant 消息）。
-    if _total(kept) > budget:
+    if sent() > budget_units:
         for message in list(kept):
-            if _total(kept) <= budget:
+            if sent() <= budget_units:
                 break
             if message.role is not Role.ASSISTANT or message.tool_calls:
                 continue
             kept.remove(message)
             dropped_reasoning += 1
 
-    # 第四档不存在：**作者说的话不砍**。
+    # 第四档不存在：**作者说的话不砍**。**规矩也不在这条链上**——它按章号过期，不按预算剪
+    # （ADR 0023 那张表：小、跨轮有效、丢了最气人）。
     return Projection(
         chapter=chapter,
         messages=[_wire(m) for m in (*conversation.prefix, *kept)],
         off_chapter=off_chapter,
         stale_manuscript=stale_manuscript,
         filled_shells=filled,
+        expired_rules=expired_rules,
         stubbed_results=stubbed,
         dropped_calls=dropped_calls,
         dropped_reasoning=dropped_reasoning,
-        over_budget=_total(kept) > budget,
+        over_budget=sent() > budget_units,
+        budget_units=budget_units,
+        tool_units=tool_side,
+        payload_units=sent(),
     )
 
 
@@ -669,8 +838,21 @@ class TurnLimits:
     进 `charged`，于是**每派发完一个就查一次 `max_tokens`**。这条必须有，因为次数闸
     在这儿是宽的：六个 `draft_chapter` 是六稿正文，次数上完全合法。
 
-    默认 6：表里七个工具，一次把索引那几层一起查了是正常行为；六个以上是「它想一口气
+    默认 6：表里九个工具，一次把索引那几层一起查了是正常行为；六个以上是「它想一口气
     做完一整章的活」，那时停下来问作者比替他花钱对。
+    """
+
+    parallel_tools: int = 1
+    """**一批之内最多几个工具同时跑**（`tools.BatchRunner`）。`1` = 一条一条跑。
+
+    ADR 0022 把落盘从起草里拆出去之后，`draft_chapter` 没有副作用了——一批三稿可以
+    同时写，作者盯着转圈的两三分钟压回一分钟。哪几条能并发由 `ToolSpec.concurrent`
+    说了算（默认 False，`save_draft` 永远是 False）。
+
+    **默认是 1，而且这个默认不是保守，是正确的**：能不能跨线程用那条 SQLite 连接，
+    **只有开它的那一层知道**（`api/deps.py::get_conn` 传的是 `check_same_thread=False`；
+    CLI 和测试里那些是默认的 `True`，跨线程碰一下就当场 `ProgrammingError`）。
+    所以放开它的动作在装配层（`api/chat.py`），不在这儿。
     """
 
     repeat_limit: int = 3
@@ -940,10 +1122,20 @@ def run_turn(
             而它是这一轮投影的坐标——见下面「作者在写第几章」那一节。
         model: 模型端口（适配器闭包里握着 config / plan）。
         ledger: **必填**。每一次拿到结果的模型调用记一笔。
-        budget_units: 这一轮每次投影最多多少字。默认取 `context.return_units`
-            ——**那个数同时是「一次工具返回的天花板」**，所以一次满额的返回就能把
-            整段对话顶满、第二步开始剪。这是今天真实的紧，不是一个安全余量，
-            调用方要更宽就显式传。
+        budget_units: 这一轮每次投影最多多少字，**口径是整份 payload**（含工具声明，
+            见 `payload_units()`）。默认是「剪枝碰不到的那一块」**加上**
+            `context.return_units`——**加，不是从里面扣**：`return_units` 至今的定义是
+            「一次工具返回的天花板」（`ports.ToolContext.return_units`），它量的是对话
+            那一侧；而工具声明 + 稳定前缀是剪枝一个字都动不了的固定开销。从对话的额度
+            里扣掉它们，对话能记住的东西就凭空少一截，而**加一条工具会再少一截**——
+            那正是 3.6 加完 `save_draft` / `read_draft` 之后发生的事（地板从约 3,900 字
+            长到 5,171 字），且没有任何东西显示这件事。最贵的那一档症状是：一条按
+            `return_units` 截好的返回在**下一次**投影里被剪成占位，而工具返回只有在下
+            一次模型调用里才会被模型看见——于是那次调用等于没发生（钱花了、那段字进了
+            持久化的对话却从没被读过），模型再查一次，三次之后撞上 `REPEATED_CALL`，
+            作者收到的说法是「它在反复查同一件事」（一个指向别处的解释）。
+            这条关系钉在 `tests/test_context_policy.py` 第七节。
+            这仍然是今天真实的紧，不是一个安全余量，调用方要更宽就显式传。
         persist: 跑到一半就把已经长出来的消息落库（见 `PersistFn`）。
             **不传 = 这一轮的执行态只活在进程内**，进程死了 resume 无事可补。
 
@@ -971,7 +1163,20 @@ def run_turn(
     signal = cancel or Cancellation()
     declarations = tool_declarations()
     chapter = context.working_chapter
-    budget = context.return_units if budget_units is None else budget_units
+    # 默认预算 = **剪枝碰不到的那一块** + `context.return_units`。两个数不是同一种量：
+    # `return_units` 量的是对话那一侧（它的定义至今是「一次工具返回最多给多少字」），
+    # 而 `budget_units` 从 2026-08-12 起管的是整份 payload。地板从对话的额度里扣掉，
+    # 就等于让「一次满额的返回」在下一轮自动失效（见上面 Args 那一段）。
+    #
+    # **地板是量出来的，不是抄的**：把历史清空再投影一次，得到的就是「工具声明 +
+    # 稳定前缀 + JSON 信封」。抄一个数下来的话，别人往 `AGENT_SYSTEM_PROMPT` 里加两行
+    # 就会静默把对话的额度切掉一块，而没有任何东西会提这件事。
+    if budget_units is None:
+        bare = conversation.model_copy(update={"messages": ()})
+        floor = project(bare, None, budget_units=0, tools=declarations).payload_units
+        budget = floor + context.return_units
+    else:
+        budget = budget_units
     stale_calls = _stale_manuscript_calls(conversation, context)
 
     live = conversation
@@ -1027,16 +1232,29 @@ def run_turn(
             + _estimate_tokens(receipt.text),
         )
 
-    def run_tool(call: ToolCall) -> ToolOutcome:
-        """派发一次工具，**并把它花掉的钱记上**（`DraftProduct.calls` → `bill`）。
+    def bill_outcome(outcome: ToolOutcome) -> ToolOutcome:
+        """一次工具调用的钱（`DraftProduct.calls` → `bill`）。**每条结果只经过它一次。**
 
-        `dispatch` 外面照旧**没有** try/except（模块 docstring 第三节）：这里加的是
-        记账，不是异常处理。
+        它和派发**分开**是因为 ADR 0022 之后派发可能发生在别的线程上（`BatchRunner`），
+        而记账必须留在 loop 这条线上：`ledger` 写的是同一条 SQLite 连接，
+        两个线程各开一个显式事务在同一条连接上是嵌不起来的。
         """
-        outcome = dispatch(call, context)
         for receipt in outcome.calls:
             bill(receipt)
         return outcome
+
+    def run_tool(call: ToolCall) -> ToolOutcome:
+        """派发一次工具，**并把它花掉的钱记上**。
+
+        外面照旧**没有** try/except（模块 docstring 第三节）：这里加的是记账，
+        不是异常处理。**补跑（resume）走这一条**，它永远是串行的——重放一次
+        `draft_chapter` 是一次真的模型调用，并发补跑只会让它更快地花钱。
+
+        **它也走 `BatchRunner`，宽度是 1。** 派发点只许有一个（同 `dispatch` 那道闸）：
+        这一层直接调 `dispatch` 的话，补跑和批派发就是两条路，而「有副作用的工具怎么排队」
+        这类规矩迟早只在其中一条上生效。
+        """
+        return bill_outcome(BatchRunner((call,), context).take(0))
 
     def finish(
         reason: StopReason, *, reply: str = "", note: str = ""
@@ -1096,8 +1314,14 @@ def run_turn(
         if signal.stopped:
             return finish(StopReason.AUTHOR_STOPPED)
 
+        # `tools=declarations` 传的是**下面那一行真的会发出去的同一个对象**：量的和发的
+        # 分成两次构造，就又有一处能漂（ADR 0023「前置：先把账算对」）。
         last_projection = project(
-            live, chapter, budget_units=budget, stale_calls=stale_calls
+            live,
+            chapter,
+            budget_units=budget,
+            stale_calls=stale_calls,
+            tools=declarations,
         )
         if last_projection.over_budget:
             return finish(StopReason.CONTEXT_FULL)
@@ -1162,9 +1386,33 @@ def run_turn(
             live = live.extended(*_unrun(calls))
             return finish(StopReason.BATCH_TOO_WIDE, reply=result.text)
 
+        # **这一批的执行器**（ADR 0022）：没有副作用的那几条同时跑，其余按序、单独跑。
+        # 它不改这儿的任何一条规矩——出来的结果与 `calls` 同序，闸门照旧逐条查。
+        batch = BatchRunner(calls, context, workers=limits.parallel_tools)
+
+        def settle(position: int) -> list[AgentMessage]:
+            """这一批**剩下那几条**的收尾：已经跑过的如实收走，没跑的配壳。
+
+            并发窗口是一次跑完的，所以闸门在批中间停下来时，后面那几条**可能已经跑完了**
+            ——`draft_chapter` 甚至已经花过钱。给它们配一个「这一轮明确决定不跑了」的壳，
+            就是一次凭空消失的花销加一句骗人的话。所以这儿把它们记上账、如实贴回去。
+            """
+            nonlocal tool_calls
+            done = dict(batch.leftovers())
+            out: list[AgentMessage] = []
+            for index in range(position, len(calls)):
+                already = done.get(index)
+                if already is None:
+                    out.append(_unrun([calls[index]])[0])
+                    continue
+                bill_outcome(already)
+                tool_calls += 1
+                out.append(_outcome_message(already))
+            return out
+
         for position, call in enumerate(calls):
             if signal.stopped:
-                live = live.extended(*_unrun(calls[position:]))
+                live = live.extended(*settle(position))
                 return finish(StopReason.AUTHOR_STOPPED, reply=result.text)
 
             # 「无进展」之一：同一个工具、**同样的参数**。判据是 `(name, arguments)`
@@ -1174,22 +1422,29 @@ def run_turn(
             signature = (call.name, call.arguments)
             seen_signatures[signature] = seen_signatures.get(signature, 0) + 1
             if seen_signatures[signature] > limits.repeat_limit:
-                live = live.extended(*_unrun(calls[position:]))
+                live = live.extended(*settle(position))
                 return finish(StopReason.REPEATED_CALL, reply=result.text)
 
             # **裸调用，外面没有 try/except**（模块 docstring 第三节）。
-            outcome = run_tool(call)
+            outcome = bill_outcome(batch.take(position))
             tool_calls += 1
             live = live.extended(_outcome_message(outcome))
             # **逐个存**：一批三个、跑完第一个就死掉时，下一次回来该补的是剩下那两个，
             # 不是整批重来。整批重来在只读工具上只是浪费，在 `draft_chapter` 上是真花钱。
+            # （并发窗口里那几条这时**已经跑完了**，落库仍然逐条——库里那串消息的形状
+            # 不该因为它们是同时跑的就变。）
             save()
 
             if charged >= limits.max_tokens:
                 # **批宽度那道闸只管次数不管钱**：六个 `draft_chapter` 是六稿正文，
                 # 次数上完全合法。所以钱这一半在这儿收——每派发完一个查一次，
                 # 而不是等下一次模型调用之前才查（那时这一批已经全跑完了）。
-                live = live.extended(*_unrun(calls[position + 1 :]))
+                #
+                # **并发之下它变松了一档，说清楚**：同一个窗口里的那几条是一起跑掉的，
+                # 所以这道闸拦得住「下一个窗口」，拦不住「这一个窗口的后半截」。
+                # 上限是 `max_calls_per_step`（6）稿，而不是无限——`settle` 会把
+                # 已经跑掉的那几条如实记上账，闸门看得见它们，只是没能拦在前面。
+                live = live.extended(*settle(position + 1))
                 save()
                 return finish(StopReason.COST_LIMIT, reply=result.text)
 
@@ -1203,7 +1458,7 @@ def run_turn(
                 failure_streak[call.name] >= limits.tool_failure_limit
                 or failures_in_a_row >= limits.tool_failure_limit
             ):
-                live = live.extended(*_unrun(calls[position + 1 :]))
+                live = live.extended(*settle(position + 1))
                 return finish(StopReason.TOOL_STUCK, reply=result.text)
 
     return finish(StopReason.STEP_LIMIT)
@@ -1219,6 +1474,7 @@ __all__ = [
     "LedgerFn",
     "ModelCallReceipt",
     "ModelPort",
+    "PAYLOAD_ENVELOPE_UNITS",
     "PersistFn",
     "Projection",
     "STALE_MANUSCRIPT",
@@ -1226,8 +1482,10 @@ __all__ = [
     "StopReason",
     "TurnLimits",
     "TurnResult",
+    "payload_units",
     "project",
     "run_turn",
     "start_conversation",
     "stop_wording",
+    "tool_declaration_units",
 ]

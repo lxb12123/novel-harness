@@ -168,17 +168,22 @@ def turn(client: TestClient, pid: str, chat_id: str, **body: Any) -> dict[str, A
 
 
 def every_column(db: str) -> str:
-    """`chat_message` 的**每一列**拼成一整块字。
+    """模式二**落盘的那几张表**的每一列，拼成一整块字。
 
     搜出参和搜这块字不是一回事：出参可以事后收窄，**这块字已经落盘了**——
     ADR 0019「若此决策错误」那一节把它写死了：「一旦某个工具把 `Node` 交出去过，
     那段秘密就已经在作者的持久化对话里了，**改代码不会把它删掉**」。
+
+    `draft_candidate` 是 2026-08-12 加进来的**第三张**（ADR 0022 把候选稿从对话里挪了
+    出去）。那份 ADR 结尾的原话：「如果候选表泄漏了秘密原文，**它是落盘的**——
+    和对话历史一样不可回收……**直接查表的每一列**搜那几种毒。这跟在出参上搜不是一回事。」
     """
     conn = connect(db)
     rows = [dict(row) for row in conn.execute("SELECT * FROM chat_message").fetchall()]
     session_rows = [dict(row) for row in conn.execute("SELECT * FROM chat_session").fetchall()]
+    drafts = [dict(row) for row in conn.execute("SELECT * FROM draft_candidate").fetchall()]
     conn.close()
-    return json.dumps([rows, session_rows], ensure_ascii=False, default=str)
+    return json.dumps([rows, session_rows, drafts], ensure_ascii=False, default=str)
 
 
 def bills(db: str) -> list[dict[str, Any]]:
@@ -432,7 +437,7 @@ def test_that_net_would_catch_a_reader_that_never_names_the_tables(tmp_path: Pat
 def test_no_poison_survives_into_the_row_that_can_never_be_taken_back(
     client: TestClient, poisoned: dict[str, str], configured: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**表里七个工具全跑一遍**，然后逐列搜四种毒。
+    """**表里那几个查询工具全跑一遍**，然后逐列搜四种毒。
 
     ADR 0019 边界一的修复成本那一条写着「最贵，而且不可回收」——这一层正是
     「持久化」这三个字第一次成真的地方，所以判据从「出参里没有」升成
@@ -442,7 +447,7 @@ def test_no_poison_survives_into_the_row_that_can_never_be_taken_back(
     use(
         monkeypatch,
         Scripted(
-            # 一批最多 6 个（`TurnLimits.max_calls_per_step`），所以分两步走完七条。
+            # 一批最多 6 个（`TurnLimits.max_calls_per_step`），所以分两步走完这几条。
             wants(
                 ("book_index", "{}"),
                 ("scene_constraints", json.dumps({"chapter": 1})),
@@ -463,7 +468,7 @@ def test_no_poison_survives_into_the_row_that_can_never_be_taken_back(
     )
     chat_id = open_chat(client, pid)
     receipt = turn(client, pid, chat_id, chapter=1, said="帮我把第 1 章的底细摸一遍")
-    assert receipt["lookups"] == 9, "七条工具没全跑到，这条断言就没覆盖到它想覆盖的面"
+    assert receipt["lookups"] == 9, "那几条工具没全跑到，这条断言就没覆盖到它想覆盖的面"
 
     stored = every_column(poisoned["db"])
     for label, poison in (

@@ -47,7 +47,8 @@
 
 from __future__ import annotations
 
-from threading import Lock
+from contextlib import AbstractContextManager
+from threading import Lock, RLock
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
@@ -68,7 +69,8 @@ from ..agent.loop import (
     run_turn,
     stop_wording,
 )
-from ..agent.drafting import chapter_drafter
+from ..agent.candidates import DraftCandidate, DraftCandidateStore
+from ..agent.drafting import ChapterDesk, chapter_drafter
 from ..agent.model import ProviderModelPort, agent_call_plan
 from ..agent.ports import ToolContext
 from ..agent.store import ChatConcurrency, ChatSessionRow, ChatStore, StoredChat
@@ -86,6 +88,20 @@ from .deps import agent_provider_config, get_conn, get_store, load_project, mode
 router = APIRouter()
 
 ChatId = Annotated[str, Path(min_length=1)]
+
+AGENT_PARALLEL_TOOLS = 3
+"""一批之内最多几个工具同时跑（`TurnLimits.parallel_tools`）。
+
+**放开它的动作只许发生在这一层**，理由是一条只有这一层知道的事实：
+`api/deps.py::get_conn` 是拿 `check_same_thread=False` 开的连接，跨线程用得了；
+CLI 和测试里那些是默认的 `True`，同一句 SQL 换条线程执行就当场 `ProgrammingError`。
+所以 `agent/loop.py` 的默认值是 1（串行），而不是「保守起见先关着」。
+
+**为什么是 3 而不是 6**（`max_calls_per_step` 那个上限）：并发的那几条今天只有起草，
+而三稿正是作者会要的那个数（ADR 0022 的例子从头到尾是「写三个版本让我挑」）。
+再往上加同时在飞的模型调用，省下来的时间越来越少、一次撞上限速的概率越来越大，
+而**撞上之后作者看到的是几稿一起失败**。
+"""
 
 TITLE_FROM_FIRST_SAID = 24
 """会话还没有名字时，拿作者第一句话的前多少个字当标题。
@@ -224,6 +240,55 @@ class ContextReceipt(BaseModel):
     """剪到只剩作者说过的话仍然装不下。**这一档不砍作者的话**，这一轮直接停。"""
 
 
+class DraftCandidateView(BaseModel):
+    """摆在界面上的一稿（ADR 0022）。**正文不在这儿**——要正文单取一次。
+
+    ── 「推荐哪一版」由谁说 ──────────────────────────────────────────────
+
+    **不是引擎**（ADR 0005：引擎不给散文打分），也不是这一层。`note` 是**写那一稿的
+    那个模型自己**在同一次调用里交的三十个字；`landed` 是助手真的做过的一个动作
+    ——「它把哪一版写进了书」就是它的推荐，而那是一个动作不是一句评价。
+
+    一批都没落盘时**后端不替作者挑**（同 `AmbiguousName`：两个方向都很贵就摆出来，
+    绝不挑）。前端照 `ordinal` 顺序摆，别自己算一个「最好的那版」。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: str
+    """取全文用它。**不上屏**——它是 `draft:01J…` 这种形状，作者认得的是「第 2 稿」。"""
+
+    chapter: int = Field(ge=1)
+    ordinal: int = Field(ge=1)
+    """这一章的第几稿。**屏幕上说的是这个数。**"""
+
+    units: int = Field(ge=0)
+    note: str = ""
+    """写它的那个模型自己那句话。**空 = 它这次没说**，界面上就别硬编一句出来。"""
+
+    preview: str = ""
+    """开头那一段，定长（`agent.candidates.PREVIEW_UNITS`）。"""
+
+    created_at: str = ""
+    landed: bool = False
+    """它进过书没有。**不是「被选中」**：作者可以在版本历史里把它退回去。"""
+
+
+class ChapterDrafts(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    drafts: tuple[DraftCandidateView, ...] = ()
+
+
+class DraftCandidateDetail(DraftCandidateView):
+    """一稿的全文（`GET …/drafts/{id}`）。**界面上摊开那一版读的就是它。**"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    text: str = ""
+    """一稿正文，**不含章标题**（那一行是切章的锚，属于作者）。"""
+
+
 class TurnReceipt(BaseModel):
     """跑完一轮的回执。**`TurnResult.maintainer_note` 不在这儿，一个字都不出去。**
 
@@ -253,6 +318,16 @@ class TurnReceipt(BaseModel):
     """有几次调用没量准。**不为零时上面那个数是低估**，界面上不许把它当全部。"""
 
     context: ContextReceipt = ContextReceipt()
+
+    drafts: tuple[DraftCandidateView, ...] = ()
+    """这一轮写出来的那几稿，**按生成顺序**（ADR 0022）。
+
+    它从起草台那儿现拿（`ChapterDesk.produced`），**不是从工具返回的 JSON 里翻出来的**
+    ——翻它就是第二处解析点，而这个仓库刚把「同一件事两处解析」清掉。
+
+    `landed=true` 的那一稿已经在书里了：**这一轮的正文变了**，界面该重取一次那一章。
+    （3.5 那条余债「回执上没有字段说哪一章被写了」由这个字段还上了：`chapter` 在每一稿上。）
+    """
 
 
 class ChatStopped(BaseModel):
@@ -348,16 +423,18 @@ def _tool_context(
     conn: Connection,
     *,
     chapter: int,
-    config: ProviderConfig,
+    desk: ChapterDesk,
     capability: ProviderCapabilities,
     plan: ResolvedCallPlan,
+    db_lock: AbstractContextManager[Any] | None = None,
 ) -> ToolContext:
     """这一轮里模型碰得到的**全部**东西（`agent/ports.py` 是那一页的规格）。
 
-    `drafter` 2026-08-11 接上了（3.6 / ADR 0021）。**它是一个闭包，不是一个新字段**：
-    写盘要 `GraphStore`（带写入面）和一条连接，而 `ToolContext` 上只有 `StoryGraph`
-    ——「模型改不了作者的 canon」是类型保证不是纪律（边界一）。写入面握在
-    `agent/drafting.py` 造出来的那个闭包里，这个 dataclass 上一个字都没多。
+    `drafter` 2026-08-11 接上了（3.6 / ADR 0021），2026-08-12 拆成三个动作
+    （ADR 0022：生成 / 落盘 / 读回）。**它是一个注入进来的对象，不是一个新字段**：
+    写盘要 `GraphStore`（带写入面）、一条连接和候选表，而 `ToolContext` 上只有
+    `StoryGraph`——「模型改不了作者的 canon」是类型保证不是纪律（边界一）。
+    写入面握在 `agent/drafting.py` 那个起草台里，这个 dataclass 上一个字都没多。
 
     **窗口那两个数从 `capability` / `plan` 现取**，不再由调用方分别传进来：它们和
     起草那条路要用的 `config` / `capability` 是同一批东西，分两处传迟早有一处漏改。
@@ -366,16 +443,10 @@ def _tool_context(
         store=store,
         project_id=proj.id,
         root_path=proj.root_path,
-        drafter=chapter_drafter(
-            store=store,
-            conn=conn,
-            project_id=proj.id,
-            root=proj.root_path,
-            config=config,
-            capability=capability,
-            events=SqliteEventStore(conn),
-            summaries=SummaryStore(conn),
-        ),
+        drafter=desk,
+        # **和起草台是同一把锁**：并发窗口里碰这条连接的每一句都要排在同一道队里
+        # （`agent/ports.py::ToolContext.db_lock` 记着为什么）。两把 = 各排各的 = 没排。
+        db_lock=db_lock,
         summaries=SummaryStore(conn),
         events=SqliteEventStore(conn),
         working_chapter=chapter,
@@ -414,6 +485,21 @@ def _session_view(
         message_count=history_count,
         running=running,
         pending_lookups=len(conversation.pending_calls),
+    )
+
+
+def _draft_view(candidate: DraftCandidate) -> DraftCandidateView:
+    """候选 → 界面上那一条。**逐字段平移，不翻译**（同 `_ledger` 那条理由：
+    翻译的地方就是能悄悄漏字段的地方）。"""
+    return DraftCandidateView(
+        id=candidate.id,
+        chapter=candidate.chapter,
+        ordinal=candidate.ordinal,
+        units=candidate.units,
+        note=candidate.note,
+        preview=candidate.preview,
+        created_at=candidate.created_at,
+        landed=candidate.landed,
     )
 
 
@@ -626,6 +712,23 @@ def run_chat(
             )
 
         keep: PersistFn = save
+        # **起草台在这儿造，不在 `_tool_context` 里造**：这一轮生成了哪几稿只有它知道
+        # （`produced`），而出参要把那几稿摆到界面上。让壳去翻工具返回的 JSON 就是
+        # 第二处解析点，而这个仓库刚把「同一件事两处解析」清掉。
+        # 这一轮碰库排的那道队。**一轮一把**（一次请求一条连接，`api/deps.py`），
+        # 交给起草台和 `ToolContext` 的是同一把。
+        db_lock = RLock()
+        desk = chapter_drafter(
+            store=store,
+            conn=conn,
+            project_id=proj.id,
+            root=proj.root_path,
+            config=config,
+            capability=capability,
+            events=SqliteEventStore(conn),
+            summaries=SummaryStore(conn),
+            db_lock=db_lock,
+        )
         result = run_turn(
             conversation,
             context=_tool_context(
@@ -633,13 +736,16 @@ def run_chat(
                 store,
                 conn,
                 chapter=body.chapter,
-                config=config,
+                desk=desk,
                 capability=capability,
                 plan=plan,
+                db_lock=db_lock,
             ),
             model=build_agent_model(config, plan),
             ledger=_ledger(conn, proj.id),
-            limits=TurnLimits(),
+            # **并发只在这一层放开**（见 `AGENT_PARALLEL_TOOLS`）：只有开连接的人知道
+            # 这条连接跨不跨得了线程。
+            limits=TurnLimits(parallel_tools=AGENT_PARALLEL_TOOLS),
             cancel=signal,
             persist=keep,
         )
@@ -663,6 +769,13 @@ def run_chat(
         tokens_reported=result.tokens_reported,
         calls_without_usage=result.calls_without_usage,
         context=_context_receipt(result.projection),
+        # **按「第几章的第几稿」排，不按它们跑完的先后。** 一批稿是同时跑的
+        # （ADR 0022），谁先回来取决于服务商那一刻的排队——照那个顺序摆，作者每次
+        # 刷新看到的次序都可能不一样，而他记的是「第 2 稿」。
+        drafts=tuple(
+            _draft_view(candidate)
+            for candidate in sorted(desk.produced, key=lambda c: (c.chapter, c.ordinal))
+        ),
     )
 
 
@@ -691,6 +804,57 @@ def stop_chat(
             if stopped
             else "这段对话这会儿没在跑，不用停。"
         ),
+    )
+
+
+@router.get("/api/projects/{project_id}/drafts", response_model=ChapterDrafts)
+def list_drafts(
+    chapter: Annotated[int | None, Query(ge=1)] = None,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    proj: Any = Depends(load_project),
+    conn: Connection = Depends(get_conn),
+) -> ChapterDrafts:
+    """助手写过的那几稿，最近的在前（ADR 0022）。
+
+    **它不是版本历史。** 版本历史（`GET …/chapters/{n}/history`）里是**已经在书里**的
+    那些；这儿是**还摆在桌上**的那些——没落盘的候选在磁盘上、在快照里都不存在，
+    没有这条路由的话，作者关掉那一轮的回执就再也看不到它们了。
+
+    `chapter` 给了就只看那一章：作者在第 12 章上问「刚才那三稿呢」，问的是那一章的三稿。
+    """
+    store = DraftCandidateStore(conn)
+    return ChapterDrafts(
+        drafts=tuple(
+            _draft_view(candidate)
+            for candidate in store.recent(proj.id, chapter=chapter, limit=limit)
+        )
+    )
+
+
+@router.get(
+    "/api/projects/{project_id}/drafts/{draft_id}", response_model=DraftCandidateDetail
+)
+def read_draft(
+    draft_id: Annotated[str, Path(min_length=1)],
+    proj: Any = Depends(load_project),
+    conn: Connection = Depends(get_conn),
+) -> DraftCandidateDetail:
+    """摊开某一稿的全文。**界面上「推荐那一版摊开」读的就是它**（ADR 0022 的入口形态）。
+
+    404 = 这本书里没有这一稿（编号对不上，或者它落过盘、又老到被清理掉了——
+    清理只清落过盘的，那些字在版本历史里还在）。
+    """
+    stored = DraftCandidateStore(conn).get(proj.id, draft_id)
+    if stored is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "draft_not_found", "draft_id": draft_id},
+        )
+    return DraftCandidateDetail(
+        **_draft_view(stored).model_dump(),
+        # **正文在这儿，也只在这儿。** 列表那条路由一个字都不给——一次列出二十稿
+        # 就是二十章正文，而作者要的只是「哪一版是哪一版」。
+        text=stored.body,
     )
 
 

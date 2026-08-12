@@ -61,7 +61,14 @@ from novel_harness.agent import (
     tool_declarations,
 )
 from novel_harness.agent import tools as agent_tools
-from novel_harness.agent.ports import DraftAsk, DraftProduct, ToolRefused
+from novel_harness.agent.candidates import DraftCandidate
+from novel_harness.agent.ports import (
+    DraftAsk,
+    DraftProduct,
+    LandingReport,
+    StoredDraft,
+    ToolRefused,
+)
 from novel_harness.agent.tools import SceneConstraintsArgs, ToolSpec
 from novel_harness.db import Connection, connect, migrate
 from novel_harness.draft.context import DraftContext
@@ -332,6 +339,20 @@ def _ok(name: str, context: ToolContext, **arguments: Any) -> str:
 # ══════════════════════════════════════════════════════════════════════════
 
 
+DRAFT_ID = "draft:01JTESTTESTTESTTESTTESTTEST"
+
+
+def _candidate(chapter: int) -> DraftCandidate:
+    return DraftCandidate(
+        id=DRAFT_ID,
+        chapter=chapter,
+        ordinal=1,
+        units=12,
+        note="这一版更冷。",
+        preview=f"（第 {chapter} 章草稿）风雪落在肩上。",
+    )
+
+
 def leaks(surface: str, blob: str) -> list[str]:
     """`blob` 里有没有毒 / 有没有 `props`。返回人读得懂的违规描述，空 = 干净。
 
@@ -348,21 +369,34 @@ def leaks(surface: str, blob: str) -> list[str]:
 def surfaces_of(book: PoisonedBook) -> dict[str, str]:
     """模型看得见的**每一处字**，全部拿到手里。
 
-    七个工具 × 成功那条路 + 索引四层各自的失败那条路 + 工具声明 + 交给起草侧的那份约束。
+    九个工具 × 成功那条路 + 索引四层各自的失败那条路 + 工具声明 + 交给起草侧的那份约束。
     索引层的失败路径单列，是因为它们是**新写的中文句子**——「第 9 章还没写，那是第 200 章
     才发生的事」这种好心的解释就是一次泄漏，而它读起来完全不像。
     """
     captured: list[DraftContext] = []
 
-    def drafter(ask: DraftAsk, ctx: DraftContext) -> DraftProduct:
-        captured.append(ctx)
-        return DraftProduct(
-            text=f"（第 {ask.chapter} 章草稿）风雪落在肩上。",
-            saved=True,
-            note=f"已经写进第 {ask.chapter} 章了（章标题保持原样）。",
-        )
+    class Desk:
+        """注入进来的起草台（ADR 0022 之后是三个动作）。三个动作各自都是一个
+        模型看得见的面，所以三个都要填满——只填一个的话另外两块屏幕没被扫过。"""
 
-    context = book.context(drafter=drafter)
+        def write(self, ask: DraftAsk, ctx: DraftContext) -> DraftProduct:
+            captured.append(ctx)
+            return DraftProduct(candidate=_candidate(ask.chapter))
+
+        def land(self, candidate_id: str) -> LandingReport:
+            return LandingReport(
+                chapter=WORKING_CHAPTER,
+                landed=True,
+                note=f"已经写进第 {WORKING_CHAPTER} 章了（章标题保持原样）。",
+            )
+
+        def recall(self, candidate_id: str) -> StoredDraft:
+            return StoredDraft(
+                **_candidate(WORKING_CHAPTER).model_dump(),
+                body=f"（第 {WORKING_CHAPTER} 章草稿）风雪落在肩上。",
+            )
+
+    context = book.context(drafter=Desk())
     outcomes = dispatch_all(
         [
             # 索引四层，成功那条路。
@@ -377,6 +411,9 @@ def surfaces_of(book: PoisonedBook) -> dict[str, str]:
             _call("scene_constraints", chapter=WORKING_CHAPTER),
             _call("character_state", chapter=WORKING_CHAPTER, character="萧决"),
             _call("draft_chapter", chapter=WORKING_CHAPTER, goal="写顾清音在藏书阁"),
+            # ADR 0022 拆出来的另外两个动作，各自一个新的返回面。
+            _call("save_draft", draft_id=DRAFT_ID),
+            _call("read_draft", draft_id=DRAFT_ID),
             # 失败那条路：拿秘密 / 未来地点 / 不存在的章去问每一层。
             #
             # **这里故意不拿内容 tell（`TELL`）去问。** 拒绝语会把称呼原样回显，而那个串是
@@ -389,7 +426,7 @@ def surfaces_of(book: PoisonedBook) -> dict[str, str]:
         ],
         context,
     )
-    assert [outcome.ok for outcome in outcomes] == [True] * 9 + [False] * 4, (
+    assert [outcome.ok for outcome in outcomes] == [True] * 11 + [False] * 4, (
         "采样计划自己漂了：成功/失败两条路的条数对不上，下面搜的可能是另一批面"
     )
     assert captured, "起草工具没把约束交给起草侧 —— 进 prompt 的那一面没被采到"

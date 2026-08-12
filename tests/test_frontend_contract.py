@@ -370,10 +370,12 @@ def test_frontend_fixture_matches_the_real_api(
     from novel_harness.draft.provider import ToolCall
 
     def scripted_agent(messages: Any, *, tools: Any, cancel: Any) -> Any:
-        # 第一步要一次工具（真的会派发、真的会绑章号），第二步说话收手。
+        # 第一步要两个工具（真的会派发、真的会绑章号），第二步说话收手。
+        # **第二个是起草**：ADR 0022 之后它不落盘，回执上多一份候选——前端那一栏
+        # （「写了两稿，挑一个」）照的就是这份 fixture，而**不落盘正是它要画的常态**。
         if any(m.get("role") == "tool" for m in messages):
             return CompletionResult(
-                text="第 2 章这一场，血脉那条先别说破。",
+                text="第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。",
                 model="deepseek-v4-flash",
                 finish_reason="stop",
                 prompt_tokens=1_200,
@@ -383,8 +385,33 @@ def test_frontend_fixture_matches_the_real_api(
             text="",
             model="deepseek-v4-flash",
             finish_reason="tool_calls",
-            tool_calls=(ToolCall(id="c1", name="scene_constraints", arguments='{"chapter": 2}'),),
+            tool_calls=(
+                ToolCall(id="c1", name="scene_constraints", arguments='{"chapter": 2}'),
+                ToolCall(
+                    id="c2",
+                    name="draft_chapter",
+                    arguments=json.dumps(
+                        {"chapter": 2, "goal": "两人在城主府对峙"}, ensure_ascii=False
+                    ),
+                ),
+            ),
         )
+
+    # 起草那一次真的模型调用也换成桩（同上面那一轮总结）：约束装配、候选表、
+    # 记账全走真代码，换的只有「模型答了什么」。
+    import novel_harness.draft.generate as generate_mod
+
+    monkeypatch.setattr(
+        generate_mod,
+        "complete",
+        lambda messages, *, config, plan, client=None: CompletionResult(
+            text="〖自述〗：这一版更冷，收在他没抬头。\n\n" + "风雪落在肩上，他终于抬起头。" * 200,
+            model="deepseek-v4-flash",
+            finish_reason="stop",
+            prompt_tokens=1_800,
+            completion_tokens=2_600,
+        ),
+    )
 
     monkeypatch.setattr(chat_mod, "build_agent_model", lambda config, plan: scripted_agent)
     created = client.post(f"{base}/chats", json={"title": "", "house_style": ""})
@@ -399,6 +426,11 @@ def test_frontend_fixture_matches_the_real_api(
         ),
     )
     grab("chatDetail", client.get(f"{base}/chats/{chat_id}"))
+    # ── 候选稿（ADR 0022）：**摆出来让作者挑的那一栏** ────────────────────────
+    # 列表不带正文（一次列二十稿就是二十章正文），要摊开那一版才单取一次。
+    grab("drafts", client.get(f"{base}/drafts"))
+    draft_id = client.get(f"{base}/drafts").json()["drafts"][0]["id"]
+    grab("draftDetail", client.get(f"{base}/drafts/{draft_id}"))
     grab("chats", client.get(f"{base}/chats"))
     # 没在跑的时候按停：`stopped=false` **不是失败**，前端有一条分支照它渲染。
     grab("chatStopped", client.post(f"{base}/chats/{chat_id}/stop"))

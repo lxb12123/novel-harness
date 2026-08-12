@@ -30,7 +30,9 @@ agent 调一次就把 PLANNED 秘密的正文读进对话历史，而对话是�
 |---|---|---|
 | `scene_constraints` | 第 N 章不许说破哪几条秘密、哪些实体还没登场 | 秘密的内容、PLANNED 边 |
 | `character_state`   | 某人第 N 章在哪、什么状态、登场没有、死没死 | `Node`（它带着 props） |
-| `draft_chapter`     | 起草第 N 章的正文，**并直接写进那一章** | —— 见下面「落盘」那一节 |
+| `draft_chapter`     | 起草第 N 章的一稿，**收进候选、不动书** | **一整章正文**（只给 id + 定长预览 + 自述） |
+| `save_draft`        | 把某一稿写进它那一章（**不问作者**） | —— 见下面「落盘」那一节 |
+| `read_draft`        | 按 id 把某一稿的全文拿回来 | —— 最贵的一条，只在要合并两版时调 |
 
 **书内索引**（`index.py`，四层，越往下越贵；那份 docstring 是它的规格）：
 
@@ -44,22 +46,25 @@ agent 调一次就把 PLANNED 秘密的正文读进对话历史，而对话是�
 **索引的四条工具全部只读、且出参里没有一条路径走得到 `props`。** 它们新加的返回面同样
 被 `tests/test_agent_tools.py` 的那张网罩着——加工具的那天先跑那张网，不是先跑功能测试。
 
-── 落盘：**有，但它不在这张表里**（ADR 0021，2026-08-11）──────────────────
+── 落盘：**是一条工具了，但它收不到一个字的正文**（ADR 0022，2026-08-12）────────
 
 ADR 0019 边界一原来的最后一条是「写正文必须作者确认，模型不能直接落盘」。
-**那一条被 ADR 0021 推翻了**：起草完直接写磁盘，不弹框；退路是版本历史 + 日志页一行；
-唯一的闸是「拒绝覆盖作者比它更晚改过的那一章」。
+**那一条被 ADR 0021 推翻了**（起草完直接写磁盘，不弹框），而 ADR 0022 又把它的**机制**
+拆成两个动作：生成（花钱、不动书）/ 落盘（不花钱、动书、**仍然不问作者**）。
+于是表里第一次有了一条会改作者的书的工具（`save_draft`）。它守的东西换了个位置，
+但一条都没松（`tests/test_agent_tools.py::test_no_tool_takes_a_paragraph_of_prose` 钉着这一节）：
 
-**但表里仍然没有一条「写正文」工具**，而这不是遗漏
-（`tests/test_agent_tools.py::test_there_is_no_tool_that_writes` 钉着这一整节）：
-
-- 写盘要 `importer.sync()`，而它收的是 `GraphStore`（**带写入面**）。`ToolContext`
-  上只有 `StoryGraph`，`CanonWriter` 在类型层就不存在（边界一）——为了落盘把它塞回来，
-  等于用一次功能换掉「模型改不了作者的 canon」这条类型保证。
-- 所以落盘发生在**注入进来的那个 `drafter` 里**（`agent/drafting.py` 造的那个闭包
-  握着 conn 和 store），这一层只把它的回执（`saved` / `note`）原样交给模型。
-- 一条推论：**模型没有「只写不草」这个动作**。它不能拿一段自己编的文本去盖某一章——
-  能写进磁盘的只有刚刚由后端按当前章约束生成的那一稿。
+- **`save_draft` 只收一个候选 id，收不到文本。** 所以**模型没有「只写不草」这个动作**：
+  它不能拿一段自己编的（或者从别处抄来的）文本去盖某一章——能写进磁盘的只有刚刚由后端
+  按那一章的约束生成出来的候选。这条以前靠「表里根本没有写工具」成立，现在靠**入参形状**
+  成立，而后者是可断言的。
+- **写入面仍然不在 `ToolContext` 上。** 写盘要 `importer.sync()`，而它收的是
+  `GraphStore`（带写入面）；这个 dataclass 上只有 `StoryGraph`，`CanonWriter` 在类型层
+  就不存在（边界一）。落盘发生在**注入进来的那个 `DraftDesk` 里**（`agent/drafting.py`
+  握着 conn 和 store），这一层只把它的回执（`landed` / `note`）原样交给模型。
+- **候选既不进正文也不进对话**：它在 `draft_candidate` 表里（ADR 0022 / 边界三）。
+  `draft_chapter` 的返回里只有 id + 定长预览 + 那一稿的自述——一整章正文进对话的话，
+  无状态的 wire 会把它**每一轮**重发一遍，直到会话结束。
 
 **`secret_surfaces` / `resolve_cast` 也不在表里**（`tests/test_draft_boundary.py`
 的 `WRITER_BANNED`）：前者是秘密的内容 tell（`玄血蛊`）——进对话就是把检测器要找的词
@@ -104,6 +109,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
@@ -135,7 +141,7 @@ from .index import (
     handle_chapter_text,
     handle_character_chapters,
 )
-from .ports import DraftAsk, ToolContext, ToolRefused
+from .ports import DraftAsk, DraftDesk, ToolContext, ToolRefused
 
 # ══════════════════════════════════════════════════════════════════════════
 # 入参：模型填的那几个格子。**每一个字段名和描述都会原样发给模型。**
@@ -249,26 +255,43 @@ class CharacterStateResult(BaseModel):
 
 
 class DraftResult(BaseModel):
-    """`draft_chapter` 的出参：一稿正文 + 它受了哪些约束 + **它落没落盘**。
+    """`draft_chapter` 的出参：**认得出是哪一稿的那几样，不是那一稿本身**（ADR 0022）。
 
-    落盘那两个字段是 [ADR 0021](../../../docs/adr/0021-agent-writes-drafts-without-asking.md)
-    的落点：起草完直接写磁盘，不弹框。**写没写成必须说出来**——「我写进第 12 章了」和
-    「你刚改过这一章，我没有覆盖它」是两句完全不同的话，而模型只能从这份返回里知道
-    是哪一句。
+    ── 为什么这里没有 `text` ────────────────────────────────────────────────
+
+    这份返回会原样变成一条 `tool` 消息进对话历史，而跟模型说话的接口是**无状态**的：
+    每一轮把整个消息数组从头重发。一整章正文从生成那一刻起**每一轮都在被重发**，
+    直到会话结束——而默认没有任何东西会去拿掉它。三稿就是 9,000 字 × 剩下的每一轮。
+
+    所以正文落在候选表里（`agent/candidates.py`），这儿给的是 id、第几稿、字数、
+    **定长预览**和**写它的那个模型自己那句自述**。要全文得再调一次 `read_draft`，
+    而那一次是模型显式决定的（作者要合并两版的时候）。
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     chapter: int
-    text: str
-    must_not_reveal: list[str] = Field(default_factory=list)
-    """秘密的**显示名**（`血脉秘密`），永远不是它的内容 tell（`玄血蛊`）。"""
+    draft_id: str
+    """把这一稿写进书里（`save_draft`）或者读全文（`read_draft`）时报这个号。
 
-    saved: bool = False
-    """这一稿写没写进磁盘上的那一章。`False` 有三种原因，都在 `note` 里说清楚了。"""
+    **别把它念给作者听**：他认得的是「第 2 稿」（`ordinal`），不是一串编号。
+    """
+
+    ordinal: int
+    """这一章的第几稿。**跟作者讲话时用这个。**"""
+
+    units: int
+    preview: str
+    """开头那一段，**定长**（`candidates.PREVIEW_UNITS`）。"""
 
     note: str = ""
-    """写进哪儿了 / 为什么没写。**空 = 起草侧没接线时的老形状。**"""
+    """**写这一稿的那个模型自己那句话**（「这一版更冷，删掉了那段回忆」）。
+
+    不是引擎给的评价——引擎不给散文打分（ADR 0005）。空 = 它这次没说，这儿不替它编。
+    """
+
+    must_not_reveal: list[str] = Field(default_factory=list)
+    """秘密的**显示名**（`血脉秘密`），永远不是它的内容 tell（`玄血蛊`）。"""
 
     calls: tuple[ModelCallReceipt, ...] = Field(default=(), exclude=True)
     """这一稿花掉的那几笔。**`exclude=True`：它一个字都不进对话历史。**
@@ -280,6 +303,58 @@ class DraftResult(BaseModel):
     它由 `dispatch()` 从这儿取走放到 `ToolOutcome.calls` 上（**结构判断，不是一张
     「哪个工具花钱」的表**，同 `_asked_chapter`），再由 loop 交给 `ledger`。
     """
+
+
+class DraftIdArgs(BaseModel):
+    """认一稿：**只有一个候选 id，没有别的**。
+
+    `save_draft` 和 `read_draft` 共用它，而这个形状本身就是那道闸：
+    **模型交不出一段正文**，它只能指着后端刚生成的某一稿说「这个」。
+    合成一个「写正文（收 text）」的工具就是把 ADR 0019 边界一最硬的那半条拆掉——
+    那时模型能拿任何一段字去盖作者的书。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    draft_id: str = Field(
+        min_length=1,
+        description="哪一稿（起草时返回的那个编号）。**不要把这个编号念给作者听。**",
+    )
+
+
+class LandingResult(BaseModel):
+    """`save_draft` 的出参：**写没写成，以及为什么**。
+
+    「我写进第 12 章了」和「你刚改过这一章，我没有覆盖它」是两句完全不同的话，
+    而模型只能从这份返回里知道是哪一句（ADR 0021 的机制照旧，只是它现在是一个动作）。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chapter: int
+    landed: bool = False
+    note: str = ""
+    """写进哪儿了 / 为什么没写。**每一种结局都说得出口。**"""
+
+
+class DraftFullText(BaseModel):
+    """`read_draft` 的出参：一稿的**全文**。
+
+    **表里最贵的一条返回**（一整章进对话，而且此后每一轮都跟着重发）。
+    它存在的理由只有一个：作者说「把第一版的开头接第二版的结尾」时，模型手上得有那两段字。
+    `draft_chapter` 的返回**不含**正文正是为了让这一次成为一个显式决定。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    draft_id: str
+    chapter: int
+    ordinal: int
+    units: int
+    note: str = ""
+    landed: bool = False
+    text: str = ""
+    """一稿正文，**不含章标题**（那一行是切章的锚，属于作者）。"""
 
 
 class ToolOutcome(BaseModel):
@@ -429,21 +504,52 @@ def _handle_character_state(
     )
 
 
-def _handle_draft_chapter(args: DraftAsk, context: ToolContext) -> DraftResult:
+def _desk(context: ToolContext) -> DraftDesk:
+    """起草那一摊，或者一句「没接线」。**不假装写了一稿。**"""
     if context.drafter is None:
         raise ToolRefused(
-            "起草能力还没接到这个会话上（工具表已经有它，实现还在 HTTP 路由里）。"
+            "起草能力还没接到这个会话上（工具表已经有它，实现还没接进来）。"
             "这一轮请改用别的方式推进，或者让作者从界面上起草。"
         )
-    ctx = _scene_context(context, args.chapter)
-    product = context.drafter(args, ctx)
+    return context.drafter
+
+
+def _handle_draft_chapter(args: DraftAsk, context: ToolContext) -> DraftResult:
+    desk = _desk(context)
+    # **算约束要碰库，而这条工具是并发跑的**（`ToolSpec.concurrent`）——同一条连接被两条
+    # 线程同时用是 `InterfaceError`，不是理论风险（`ToolContext.db_lock` 记着实测）。
+    # 锁只罩这一小段；下面那次模型调用（几十秒）在锁外面，并发的收益全在那儿。
+    with context.db_guard:
+        ctx = _scene_context(context, args.chapter)
+    product = desk.write(args, ctx)
+    candidate = product.candidate
     return DraftResult(
         chapter=args.chapter,
-        text=product.text,
+        draft_id=candidate.id,
+        ordinal=candidate.ordinal,
+        units=candidate.units,
+        preview=candidate.preview,
+        note=candidate.note,
         must_not_reveal=list(ctx.secret_labels),
-        saved=product.saved,
-        note=product.note,
         calls=product.calls,
+    )
+
+
+def _handle_save_draft(args: DraftIdArgs, context: ToolContext) -> LandingResult:
+    report = _desk(context).land(args.draft_id)
+    return LandingResult(chapter=report.chapter, landed=report.landed, note=report.note)
+
+
+def _handle_read_draft(args: DraftIdArgs, context: ToolContext) -> DraftFullText:
+    stored = _desk(context).recall(args.draft_id)
+    return DraftFullText(
+        draft_id=stored.id,
+        chapter=stored.chapter,
+        ordinal=stored.ordinal,
+        units=stored.units,
+        note=stored.note,
+        landed=stored.landed,
+        text=stored.body,
     )
 
 
@@ -461,6 +567,22 @@ class ToolSpec:
     description: str
     args: type[BaseModel]
     handler: Callable[[Any, ToolContext], BaseModel]
+
+    concurrent: bool = False
+    """这一条能不能和同一批里的别几条**同时跑**（`BatchRunner`）。**默认 False = fail-closed。**
+
+    判据**不是「它读还是写」，是两条一起**：
+
+    1. **跑一遍和跑三遍对世界的影响相同**（它不动书、不动 canon、不改任何共享状态）；
+    2. **它慢**——慢到值得为它多担一份线程的心。
+
+    今天只有 `draft_chapter` 两条都满足：ADR 0022 把落盘拆出去之后它没有副作用了，
+    而它是表里唯一一个每次要跑几十秒的（一次真的模型调用）。索引那几层是纯读，
+    但它们快，并发它们只是把线程安全的面积白白摊大。
+
+    **`save_draft` 永远是 False**：它写作者的书。它在批里是一道**屏障**——
+    前面那几条并发跑完了才轮到它，它跑完了后面的才开始（见 `BatchRunner`）。
+    """
 
 
 TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
@@ -485,16 +607,18 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
     ToolSpec(
         name="draft_chapter",
         description=(
-            "起草第 N 章的一稿正文。**写完直接存进那一章**，不用问作者——"
-            "他随时能在版本历史里退回去。"
+            "起草第 N 章的一稿。**这一步不动书**：稿子存在一边，返回里给你它的编号、"
+            "字数、开头的一段，以及写它的那个模型自己说的一句话。"
+            "方向清楚就写一稿、接着调 save_draft 存进去（不用问作者，他随时能退回去）；"
+            "方向不清楚就一次要几稿，把它们的自述摆给作者挑——**同一批里的几稿会同时写**，"
+            "不比一稿慢多少。"
             "**不要传约束**：不许说破什么由后端按这个章号当场重算，"
             "你上一轮看到的清单对这一章可能已经过期。"
-            "返回里会说清楚这一稿存没存进去：作者在你写的这段时间里改过那一章、"
-            "或者那一章还不存在（新的一章要他自己起标题），都不会覆盖，"
-            "那时把正文交给他看就行。"
         ),
         args=DraftAsk,
         handler=_handle_draft_chapter,
+        # 表里唯一一条又慢又没有副作用的工具 —— 见 `ToolSpec.concurrent`。
+        concurrent=True,
     ),
     # ── 书内索引（L0 → L3，越往下越贵）。规格在 `index.py` 的模块 docstring ──────
     #
@@ -540,6 +664,30 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=ChapterTextArgs,
         handler=handle_chapter_text,
+    ),
+    # ── 起草那一摊的另外两半（ADR 0022）。**追加在表尾，尽管它俩是 `draft_chapter` 的
+    # 同伙**：按边界六，声明是能进稳定前缀的东西之一，在中间插一条会把它后面整段的
+    # 缓存作废——那不是错误，是白付一次全量 token，而且没有任何东西会提示。
+    ToolSpec(
+        name="save_draft",
+        description=(
+            "把某一稿写进它那一章，**不用问作者**——他随时能在版本历史里退回去。"
+            "只收稿子的编号：你没法拿别的文本去盖一章。"
+            "返回里会说清楚存没存进去：作者在这中间改过那一章、或者那一章还不存在"
+            "（新的一章要他自己起标题），都不会覆盖，那时把稿子读给他听、让他决定。"
+        ),
+        args=DraftIdArgs,
+        handler=_handle_save_draft,
+    ),
+    ToolSpec(
+        name="read_draft",
+        description=(
+            "按编号把某一稿的全文读回来。**很贵**（一整章会一直留在你的上下文里），"
+            "只在真的要动那些字的时候调——比如作者说「把第一稿的开头接第二稿的结尾」。"
+            "只想知道是哪一版的话，起草时给过的那句自述和开头一段就够了。"
+        ),
+        args=DraftIdArgs,
+        handler=_handle_read_draft,
     ),
 )
 """**模式二的权限边界。这张表以外的能力，模型一律没有。**
@@ -618,6 +766,20 @@ def _asked_chapter(args: BaseModel) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 
+def _answered_chapter(payload: BaseModel) -> int | None:
+    """出参自己说的那个章号。**只在入参里没有章号时才问它**（同一条结构判断的另一半）。
+
+    ADR 0022 之后表里多了两条**入参里只有一个稿子编号**的工具（`save_draft` /
+    `read_draft`），而 `read_draft` 的返回里躺着一整章正文。只看入参的话它们的
+    `chapter` 恒为 `None` ⇒ 投影一条都不筛 ⇒ 一稿第 200 章的正文会跟着模型回头写第 40 章
+    （边界五那条「等着发生的跨章泄漏」）。所以出参上有一个叫 `chapter` 的整数就取它。
+
+    **不许反过来盖掉入参那个数**：模型点的是哪一章由它自己说了算，出参跟入参不一致的
+    那天（今天没有这样的工具）该红的是测试，不是让投影按另一个坐标去筛。
+    """
+    return _asked_chapter(payload)
+
+
 def _validation_message(exc: ValidationError) -> str:
     """把 pydantic 的报错压成一句模型读得懂的话。**只带字段名和原因，不回显入参。**
 
@@ -689,7 +851,7 @@ def dispatch(call: ToolCall, context: ToolContext) -> ToolOutcome:
         ok=True,
         # 出参一律经 Pydantic 序列化：`dict` / `sqlite3.Row` 越不过这一行（铁律 4）。
         content=payload.model_dump_json(),
-        chapter=chapter,
+        chapter=chapter if chapter is not None else _answered_chapter(payload),
         calls=_billed_calls(payload),
     )
 
@@ -743,10 +905,103 @@ def outdated_manuscript(content: str, context: ToolContext) -> bool:
     return fresh.text != payload.text
 
 
-def dispatch_all(calls: Sequence[ToolCall], context: ToolContext) -> list[ToolOutcome]:
+class BatchRunner:
+    """模型一轮要的那一批工具的执行器：**没有副作用的那几条同时跑，其余按序、单独跑。**
+
+    ── 为什么会有它（ADR 0022）────────────────────────────────────────────
+
+    起草拆成两个动作之后，`draft_chapter` 没有副作用了——**一批三稿可以同时写**，
+    作者盯着转圈的两三分钟压回一分钟。旧机制下不敢并发：三稿都要往同一个文件写。
+
+    ── 三条不许省的规矩 ──────────────────────────────────────────────────
+
+    1. **顺序不变。** 出来的结果与 `calls` 同序，`tool_result` 靠 `call_id` 认领，
+       而「哪几个 `tool_call` 还缺 result」是线性 loop 的全部执行态（ADR 0019）。
+    2. **有副作用的那几条是屏障。** `save_draft` 写作者的书：它前面那批并发的跑完了
+       才轮到它，它跑完了后面的才开始。判据是 `ToolSpec.concurrent`（**默认 False**），
+       不是一张「哪个工具危险」的表——表会在加工具的那天漂，而漂的方向是往开着的那侧。
+    3. **一个窗口一次跑完，跑完了才回到调用方。** 这不是省事：loop 拿到第一条结果之后
+       就要落库、记账（那都是同一条 SQLite 连接上的**写事务**），而两个显式事务在同一条
+       连接上嵌不起来。等整窗跑完，工作线程和 loop 线程就永远不会同时碰库。
+
+    ── 并发默认是**关的**，只有装配层能开 ────────────────────────────────
+
+    `workers=1` 就是老的串行行为。放开它的判据不在这一层：**只有开连接的那一层知道
+    这条连接是不是 `check_same_thread=False`**（`api/deps.py::get_conn` 是；CLI 和
+    测试里那些默认不是，跨线程用会当场 `ProgrammingError`）。所以 `run_turn` 的默认
+    `TurnLimits.parallel_tools` 是 1，由 `api/chat.py` 显式放开。
+    """
+
+    def __init__(
+        self, calls: Sequence[ToolCall], context: ToolContext, *, workers: int = 1
+    ) -> None:
+        self._calls = list(calls)
+        self._context = context
+        self._workers = max(1, workers)
+        self._done: dict[int, ToolOutcome] = {}
+
+    def __len__(self) -> int:
+        return len(self._calls)
+
+    def take(self, index: int) -> ToolOutcome:
+        """第 `index` 条的结果。**同一个窗口里那几条会在第一次取的时候一起跑掉。**
+
+        取走即移出（`leftovers()` 只剩没被取走的），所以一条结果**不会被记两遍账**。
+        """
+        if index not in self._done:
+            self._run_window(index)
+        return self._done.pop(index)
+
+    def leftovers(self) -> list[tuple[int, ToolOutcome]]:
+        """**已经真的跑过、但调用方还没取走**的那几条（按下标升序）。
+
+        闸门（额度到顶、反复调同一个、作者按停）会让 loop 在批的中间停下来，而并发窗口
+        里那几条**那时已经跑完了**——`draft_chapter` 甚至已经花过钱。把它们当成「没跑」
+        配一个壳，就是一次凭空消失的花销加一句骗人的话。所以它们在这儿等着被如实收走。
+        """
+        return sorted(self._done.items())
+
+    def _run_window(self, start: int) -> None:
+        end = start + 1
+        if self._workers > 1 and self._concurrent(start):
+            while end < len(self._calls) and self._concurrent(end):
+                end += 1
+        if end - start == 1:
+            # **裸调用，外面没有 try/except**（`dispatch` 的四种失败都是正常返回）。
+            self._done[start] = dispatch(self._calls[start], self._context)
+            return
+        failure: BaseException | None = None
+        with ThreadPoolExecutor(
+            max_workers=min(self._workers, end - start), thread_name_prefix="nh-tool"
+        ) as pool:
+            futures = {
+                index: pool.submit(dispatch, self._calls[index], self._context)
+                for index in range(start, end)
+            }
+        for index, future in futures.items():
+            try:
+                self._done[index] = future.result()
+            except BaseException as exc:  # noqa: BLE001 —— 见下
+                # `dispatch` 抛异常 = 一个真的 bug（四种失败它自己都收成了 `ok=False`）。
+                # **先把跑成了的那几条收进来再抛**：它们里可能有一笔已经花掉的钱，
+                # 而这一层不许让它连回执一起消失。抛出去是对的——bug 不许被吞。
+                failure = failure or exc
+        if failure is not None:
+            raise failure
+
+    def _concurrent(self, index: int) -> bool:
+        spec = TOOLS.get(self._calls[index].name)
+        # 认不出的工具名一律按「不能并发」算：它走的是 `dispatch` 里那条拒绝分支，
+        # 便宜得很，而 fail-closed 在这儿的代价是零。
+        return spec is not None and spec.concurrent
+
+
+def dispatch_all(
+    calls: Sequence[ToolCall], context: ToolContext, *, workers: int = 1
+) -> list[ToolOutcome]:
     """模型一轮发了好几个 `tool_call` 时的便利函数，**与 `calls` 同序**。
 
-    顺序即配对顺序：`tool_result` 靠 `call_id` 认领，而 resume 时「哪几个 `tool_call`
-    还缺 result」正是线性 loop 的全部执行态（ADR 0019 §为什么不是图编排）。
+    `workers=1`（默认）= 一条一条跑。放开它之前先读 `BatchRunner` 那三条规矩。
     """
-    return [dispatch(call, context) for call in calls]
+    runner = BatchRunner(calls, context, workers=workers)
+    return [runner.take(index) for index in range(len(calls))]

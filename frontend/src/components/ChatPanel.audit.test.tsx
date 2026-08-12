@@ -151,7 +151,7 @@ describe("秘密内容：带毒的会话详情", () => {
     expect(screen.queryByText(/看更早的/)).toBeNull();
   });
 
-  it("**面板不去别处捞原文** —— 它打的每一条都在 `/chats` 底下", async () => {
+  it("**面板不去别处捞原文** —— 它打的每一条都在 `/chats` 或 `/drafts` 底下", async () => {
     const user = userEvent.setup();
     const watch = renderWatched(<ChatPanel />);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
@@ -160,10 +160,20 @@ describe("秘密内容：带毒的会话详情", () => {
     await screen.findByText(fixtures.chatTurn.message);
     await settle();
 
-    const stray = watch.urls().filter((u) => !/\/chats(\/|\?|$)/.test(u));
-    // 一轮跑完要让正文那一侧失效重取（ADR 0021 起草会写磁盘），但**失效不是取**：
+    const stray = watch
+      .urls()
+      .filter((u) => !/\/chats(\/|\?|$)/.test(u) && !/\/drafts(\?|$)/.test(u));
+    // 一轮跑完要让正文那一侧失效重取（起草会写磁盘），但**失效不是取**：
     // 这块屏幕自己一条都不该去打。多出来的任何一条都要在这儿解释清楚。
+    //
+    // **`/drafts` 那一条是 2026-08-12 加的第二条，理由写在这儿**（ADR 0022）：
+    // 候选稿既不在正文里也不在对话里，「这一章还摆着几稿」是作者关掉那一轮回执之后
+    // 唯一找得回它们的地方。它给的是**列表**——`id` / `第几稿` / 自述 / 120 字预览，
+    // **没有正文**（后端有意只在详情里给 `text`）。
     expect(stray).toEqual([]);
+    // 而**详情那条一次都没打**：一整章正文只在作者亲手点开某一稿时才取。
+    // 反过来说，这一条塌了就意味着入口在替他把三章字拉下来（ADR 0022 的「代价」第三条）。
+    expect(watch.urls().some((u) => /\/drafts\/[^/?]+$/.test(u))).toBe(false);
   });
 });
 

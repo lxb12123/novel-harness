@@ -40,8 +40,9 @@ dataclass，「模型改不了 canon」当场从类型保证退回纪律。所�
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -51,6 +52,7 @@ from ..draft.rolling_summary import ChapterSummaryStatus
 from ..events import EventView
 from ..extract.call_audit import ModelCallReceipt
 from ..graph import InformationScope, StoryGraph
+from .candidates import DraftCandidate, StoredDraft
 
 
 class ToolRefused(Exception):
@@ -61,7 +63,7 @@ class ToolRefused(Exception):
 
     ── `calls`：**拒绝不等于没花钱** ────────────────────────────────────────
 
-    表里六个工具有五个是纯读，拒了确实一分钱没花。第六个不是：`draft_chapter`
+    表里九个工具有八个不花钱（七个纯读 + 落盘那个只动磁盘）。第九个不是：`draft_chapter`
     一次是一到两次真的模型调用（生成 + 至多一次续写，ADR 0011 D3），而
     **第一次答上来、续写那次断线**是一档真会发生的失败——那时钱已经付掉了。
 
@@ -99,7 +101,16 @@ class DraftAsk(BaseModel):
 
 
 class DraftProduct(BaseModel):
-    """起草侧交回来的东西：**一稿正文 + 它花了多少 + 它落没落盘**。
+    """生成一稿之后交回来的东西：**它是哪一稿 + 它花了多少**。
+
+    ── 这里**没有正文**，是有意的（ADR 0022）────────────────────────────────
+
+    正文进了这个出参，就会跟着 `ToolOutcome.content` 进对话历史，而跟模型说话的接口是
+    **无状态**的：每一轮把整个消息数组从头重发。三稿 ≈ 9,000 字从生成那一刻起
+    **每一轮都在被重发**，直到会话结束——而默认没有任何东西会去拿掉它。
+    所以正文落在候选表里（`agent/candidates.py`），这儿只带回**认得出是哪一稿**的那几样：
+    id、定长预览、那一稿的自述。要全文得按 id 单取一次（`DraftDesk.recall`），
+    而那一次是模型显式决定的。
 
     ── 为什么不是一个裸 `str`（3.4 报的那条余债）────────────────────────────
 
@@ -111,29 +122,70 @@ class DraftProduct(BaseModel):
     2. **账上没有它。** 「`/draft` 一行 `model_call` 都不写」是这个仓库记在
        `docs_dev` 里的已知病；把起草接进一个 `ledger` 必填的地方却不带回执，
        等于把那个洞原样搬进来，而且是明知故犯。
-
-    ── `saved` / `note` 为什么在这儿（ADR 0021）────────────────────────────
-
-    起草完**直接写磁盘，不弹框**。写没写成只有起草侧知道（磁盘在它手里），而模型
-    要据此决定下一句说什么——「我写进第 12 章了」和「你刚改过这一章，我没敢覆盖」
-    是两句完全不同的话。所以它是回执的一部分，不是一个副作用。
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    text: str
+    candidate: DraftCandidate
+    """这一稿的摘要行（id / 第几稿 / 字数 / 自述 / 定长预览）。**正文不在里面。**"""
+
     calls: tuple[ModelCallReceipt, ...] = ()
     """每一次真的模型调用一份（生成 + 至多一次续写）。**loop 负责落账和计闸。**"""
 
-    saved: bool = False
-    """这一稿写没写进磁盘上的那一章（ADR 0021）。"""
 
+class LandingReport(BaseModel):
+    """把某一稿写进那一章之后交回来的东西（ADR 0021 的机制，ADR 0022 把它拆成了一个动作）。
+
+    **写没写成只有落盘侧知道**（磁盘在它手里），而模型要据此决定下一句说什么——
+    「我写进第 12 章了」和「你刚改过这一章，我没敢覆盖」是两句完全不同的话。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chapter: int = Field(ge=1)
+    landed: bool = False
     note: str = ""
-    """给模型看的一句话：写进哪儿了 / 为什么没写。**空 = 没什么要交代的。**"""
+    """说给模型听的那一句：写进哪儿了 / 为什么没写。**每一种结局都要说得出口。**"""
 
 
 DraftFn = Callable[[DraftAsk, DraftContext], DraftProduct]
-"""起草的接线口。**收两件东西，而约束那件是后端算的**（边界二）。"""
+"""生成一稿的接线口。**收两件东西，而约束那件是后端算的**（边界二）。**它不落盘。**"""
+
+
+@runtime_checkable
+class DraftDesk(Protocol):
+    """起草这件事的**全部**接线口：生成 / 落盘 / 按 id 读回。
+
+    ── 为什么是三个动作而不是一个（ADR 0022）──────────────────────────────
+
+    | 动作 | 花钱 | 动书 | 谁决定 |
+    |---|---|---|---|
+    | `write` | 花 | **不动** | 模型 |
+    | `land` | 不花 | 动 | 模型（**仍然不问作者**，ADR 0021 精神不变） |
+    | `recall` | 不花 | 不动 | 模型（只在作者要合并两版时） |
+
+    方向清楚时模型「生成 + 立刻落盘」，作者的体验和 ADR 0021 一模一样；
+    方向不清楚时它生成几稿、**不落盘**，把 id + 预览 + 自述摆在对话里让作者挑。
+    合成一个动作的那一版下，一批三稿的真实行为是「第一稿落盘 ⇒ 后两稿的底稿全过期 ⇒
+    被 sha 闸拒掉」——作者要三版、拿到一版、付了三份钱。
+
+    ── 为什么是一个端口而不是三个字段 ────────────────────────────────────
+
+    三件事握着**同一批东西**（那条连接、那个 `GraphStore`、那张候选表）。拆成三个注入口，
+    装配层就能只接其中两个，而「生成得了、落不了盘」这种半接线状态没有任何东西会报错。
+    """
+
+    def write(self, ask: DraftAsk, ctx: DraftContext) -> DraftProduct:
+        """生成一稿并收进候选表。**不动书。**"""
+        ...
+
+    def land(self, candidate_id: str) -> LandingReport:
+        """把某一稿写进它那一章。**不问作者**，唯一的闸是「拒绝覆盖他更晚改过的那一章」。"""
+        ...
+
+    def recall(self, candidate_id: str) -> StoredDraft:
+        """按 id 把一稿的全文拿回来。找不到时 `raise ToolRefused`。"""
+        ...
 
 
 LedgerFn = Callable[[ModelCallReceipt], None]
@@ -195,8 +247,9 @@ class ToolContext:
     root_path: str | None = None
     """项目根目录。`None` = 读不到正文 ⇒ 在场推不出来 ⇒ 约束**退化成全禁**（fail-closed）。"""
 
-    drafter: DraftFn | None = None
-    """起草实现。`None` = `draft_chapter` 明确回一句「没接线」，而不是假装写了一稿。"""
+    drafter: DraftDesk | None = None
+    """起草那一摊（生成 / 落盘 / 读回，见 `DraftDesk`）。
+    `None` = 那三条工具各自明确回一句「没接线」，而不是假装写了一稿。"""
 
     summaries: SummaryIndex | None = None
     """滚动总结的只读端口。`None` = `chapter_summaries` 明确回一句「没接线」。"""
@@ -226,6 +279,25 @@ class ToolContext:
     所以「坐标 ≠ 模型正在写的那一章」是常态。`!=` 在那种常态下会把**正确的那份长清单**
     删掉、把过期的短清单留下（`ch40 ⊇ ch90`）；`>` 让坐标错的时候错在 fail-closed 那侧。
     实测在 `tests/test_agent_loop_projection.py` 第二节。
+    """
+
+    db_lock: AbstractContextManager[Any] | None = None
+    """**碰库要排的那道队**（ADR 0022 的批内并发）。`None` = 这一轮不并发，不用排。
+
+    ── 这不是防御性编程，是 CPython 的一条硬事实 ──────────────────────────
+
+    一批稿可以同时跑（起草没有副作用了），而它们共用装配层那**一条** SQLite 连接。
+    `check_same_thread=False` 只是把「别的线程不许碰」这个断言关掉，**它不让连接变成
+    线程安全的**：`sqlite3` 的预备语句缓存是按连接的，两条线程同时执行同一句 SQL 会拿到
+    同一个 statement，当场 `InterfaceError: bad parameter or other API misuse`。
+    实测过（4 线程 × 同一句 SELECT，几百次之内必炸），不是理论风险。
+
+    所以：**`concurrent=True` 的工具，它碰库的每一段都必须在这把锁里**。
+    慢的那一段（一次模型调用，几十秒）在锁外面——所以排队不影响并发的收益，
+    库那几毫秒排成一队，HTTP 那几十秒是并行的。
+
+    loop 那条线程不需要这把锁：批执行器**等整个并发窗口跑完**才回到串行处理
+    （落库、记账、落盘都在那之后），所以工作线程和 loop 线程永远不会同时碰库。
     """
 
     max_context_tokens: int | None = None
@@ -270,14 +342,23 @@ class ToolContext:
         """第 `chapter` 章在不在作者当前进度之后。不知道进度时一律 `False`（不标）。"""
         return self.working_chapter is not None and chapter > self.working_chapter
 
+    @property
+    def db_guard(self) -> AbstractContextManager[Any]:
+        """碰库那几行外面套的东西。没接锁时是一个空壳（不并发就不用排队）。"""
+        return nullcontext() if self.db_lock is None else self.db_lock
+
 
 __all__ = [
     "DraftAsk",
+    "DraftCandidate",
+    "DraftDesk",
     "DraftFn",
     "DraftProduct",
     "EventIndex",
+    "LandingReport",
     "LedgerFn",
     "ModelCallReceipt",
+    "StoredDraft",
     "SummaryIndex",
     "ToolContext",
     "ToolRefused",

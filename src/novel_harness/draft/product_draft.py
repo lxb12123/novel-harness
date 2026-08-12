@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Sequence
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from hashlib import sha256
 from time import perf_counter
@@ -233,6 +234,7 @@ def draft_chapter(
     events: EventStore,
     summaries: SummarySource,
     on_call: Callable[[ModelCallReceipt], None] | None = None,
+    db_lock: AbstractContextManager[Any] | None = None,
 ) -> ChapterDraft:
     """按 `ctx` 里那个章号起一稿。**`/draft` 和 agent 的起草工具共用这一个函数。**
 
@@ -248,6 +250,13 @@ def draft_chapter(
             第一次答上来了、续写那次断线（ADR 0011 D3 的第二次调用），那时钱已经付掉，
             异常一抛 `calls` 就没了。要给这一档记账的调用方传它——
             **`/draft` 不传**（它至今一行账都不写，那是另一个已知洞，这一刀不动它）。
+        db_lock: **装配那一段碰库时排的队**（ADR 0022 的批内并发）。这个函数的前半截
+            要查事件、查摘要，而模式二会**同时跑好几稿**、共用一条 SQLite 连接——
+            一条连接被两条线程同时用是 `InterfaceError`，实测过（见
+            `agent/ports.py::ToolContext.db_lock`）。锁只罩前半截，
+            后面那次模型调用（几十秒）在锁外面，所以并发的收益一点没少。
+            **`/draft` 和行内续写不传**：它们本来就一次只跑一稿，`None` = 一个空壳，
+            那条路上的行为逐字节不变。
 
     Raises:
         DraftRefused: form 不认识、或文风里写了三臂共用的禁令词。
@@ -280,27 +289,31 @@ def draft_chapter(
         "house_style": house_style or None,
     }
 
-    if continuation:
-        # 续写**不带已确认事件记忆**：那一段要查档案 + 近八章事件 + 滚动总结，
-        # 对一次「停手 400ms 就要出结果」的提示来说太贵，而 `previous_tail`
-        # 本来就是此刻最相关的上下文。记忆是整章起草的东西。
-        messages = assemble(ctx, **assemble_args)
-        memory = memory_receipt("行内续写不带已确认记忆，上文就是此刻最相关的上下文。")
-    elif product_form:
-        messages, memory = _with_memory(
-            ctx,
-            assemble_args,
-            project_id=project_id,
-            chapter=chapter,
-            language=request.length.language,
-            capability=capability,
-            plan=plan,
-            events=events,
-            summaries=summaries,
-        )
-    else:
-        messages = assemble(ctx, **assemble_args)
-        memory = memory_receipt("指定了 kill-gate 实验臂，按该臂的原样 prompt 走，不加记忆前言。")
+    # **碰库的只有这一段**（`_with_memory` 里那几次查询），所以锁只罩这一段。
+    with db_lock if db_lock is not None else nullcontext():
+        if continuation:
+            # 续写**不带已确认事件记忆**：那一段要查档案 + 近八章事件 + 滚动总结，
+            # 对一次「停手 400ms 就要出结果」的提示来说太贵，而 `previous_tail`
+            # 本来就是此刻最相关的上下文。记忆是整章起草的东西。
+            messages = assemble(ctx, **assemble_args)
+            memory = memory_receipt("行内续写不带已确认记忆，上文就是此刻最相关的上下文。")
+        elif product_form:
+            messages, memory = _with_memory(
+                ctx,
+                assemble_args,
+                project_id=project_id,
+                chapter=chapter,
+                language=request.length.language,
+                capability=capability,
+                plan=plan,
+                events=events,
+                summaries=summaries,
+            )
+        else:
+            messages = assemble(ctx, **assemble_args)
+            memory = memory_receipt(
+                "指定了 kill-gate 实验臂，按该臂的原样 prompt 走，不加记忆前言。"
+            )
 
     receipts: list[ModelCallReceipt] = []
     mark = perf_counter()

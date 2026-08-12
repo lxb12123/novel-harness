@@ -31,8 +31,9 @@ from fastapi.testclient import TestClient
 import novel_harness.agent.drafting as drafting
 import novel_harness.api.chat as chat_mod
 from novel_harness import importer
+from novel_harness.agent.candidates import DraftCandidateStore
 from novel_harness.agent.drafting import chapter_drafter
-from novel_harness.agent.ports import DraftAsk
+from novel_harness.agent.ports import DraftAsk, LandingReport, ToolRefused
 from novel_harness.db import Connection, connect
 from novel_harness.draft.capabilities import resolve_capabilities
 from novel_harness.draft.context import unknown_cast_constraints
@@ -140,6 +141,7 @@ def _drafter(
     endpoint: str = ENDPOINT,
     model: str = MODEL,
 ) -> Any:
+    """起草台（`agent.ports.DraftDesk`）：**生成 / 落盘 / 读回是三个动作**（ADR 0022）。"""
     monkeypatch.setattr(drafting, "draft_chapter", fake)
     store = SqliteStoryGraph(conn)
     return chapter_drafter(
@@ -170,6 +172,17 @@ def _ask(conn: Connection, pid: str, chapter: int) -> tuple[DraftAsk, Any]:
         DraftAsk(chapter=chapter, goal="写一场对峙"),
         unknown_cast_constraints(SqliteStoryGraph(conn), pid, chapter),
     )
+
+
+def _write_and_land(desk: Any, conn: Connection, pid: str, chapter: int) -> LandingReport:
+    """写一稿，然后把它存进那一章。
+
+    **ADR 0022 之后这是两个动作**，而这份文件量的是第二个动作那五条闸
+    （sha 闸 / 只对已存在的章 / 先 sync / 留章标题 + 验「恰好一章」/ 空稿闸）。
+    第一个动作在 `tests/test_draft_candidates.py`。
+    """
+    product = desk.write(*_ask(conn, pid, chapter))
+    return desk.land(product.candidate.id)
 
 
 def _on_disk(conn: Connection, pid: str, chapter: int) -> str:
@@ -208,18 +221,17 @@ def test_the_gate_refuses_to_overwrite_a_chapter_the_author_touched_later(
         file.write_text(AUTHORS_OWN_WORDS, encoding="utf-8")
 
     fake = FakeDrafting(during=author_types)
-    draft = _drafter(conn, pid, monkeypatch, fake)
-    ask, ctx = _ask(conn, pid, 1)
+    desk = _drafter(conn, pid, monkeypatch, fake)
+    product = desk.write(*_ask(conn, pid, 1))
+    report = desk.land(product.candidate.id)
 
-    product = draft(ask, ctx)
-
-    assert product.saved is False
+    assert report.landed is False
     assert _on_disk(conn, pid, 1) == AUTHORS_OWN_WORDS, "作者刚写的那句话被盖掉了"
     # **说得出为什么**：模型据此决定下一句跟作者说什么，而这句话最终会上屏。
-    assert "改过" in product.note and "第 1 章" in product.note
-    # 拒了不等于把这一稿扔掉（ADR：交出文本，由作者决定），**账也不许跟着丢**
+    assert "改过" in report.note and "第 1 章" in report.note
+    # 拒了不等于把这一稿扔掉（ADR：稿子还在，由作者决定），**账也不许跟着丢**
     # ——那一次调用的钱已经花掉了。
-    assert product.text == DRAFT
+    assert desk.recall(product.candidate.id).body == DRAFT
     assert [r.capability for r in product.calls] == ["writer"]
     conn.close()
 
@@ -256,15 +268,15 @@ def test_a_chapter_nobody_touched_lands(
     """闸只拦「更晚的改动」，不拦正常那一次。**磁盘先、DB 跟。**"""
     conn = connect(book["db"])
     pid = book["pid"]
-    draft = _drafter(conn, pid, monkeypatch, FakeDrafting())
+    desk = _drafter(conn, pid, monkeypatch, FakeDrafting())
 
-    product = draft(*_ask(conn, pid, 1))
+    report = _write_and_land(desk, conn, pid, 1)
 
-    assert product.saved is True
+    assert report.landed is True
     on_disk = _on_disk(conn, pid, 1)
     assert DRAFT in on_disk
     assert on_disk in _snapshots(conn, pid, 1), "磁盘写了、`sync` 没跟上 —— 版本历史里没有它"
-    assert "第 1 章" in product.note and "版本历史" in product.note
+    assert "第 1 章" in report.note and "版本历史" in report.note
     conn.close()
 
 
@@ -283,13 +295,14 @@ def test_a_chapter_that_does_not_exist_yet_is_handed_back_not_created(
     """
     conn = connect(book["db"])
     pid = book["pid"]
-    draft = _drafter(conn, pid, monkeypatch, FakeDrafting())
+    desk = _drafter(conn, pid, monkeypatch, FakeDrafting())
 
-    product = draft(*_ask(conn, pid, 8))
+    product = desk.write(*_ask(conn, pid, 8))
+    report = desk.land(product.candidate.id)
 
-    assert product.saved is False
-    assert product.text == DRAFT, "没落点不等于把这一稿扔掉"
-    assert "还不存在" in product.note and "章标题" in product.note
+    assert report.landed is False
+    assert desk.recall(product.candidate.id).body == DRAFT, "没落点不等于把这一稿扔掉"
+    assert "还不存在" in report.note and "章标题" in report.note
     assert not (_root(conn, pid) / importer.chapter_path(8)).exists(), (
         "agent 自己建了一章 —— 章标题是切章的锚，它不是模型的活（ADR 0021）"
     )
@@ -313,9 +326,9 @@ def test_the_authors_chapter_heading_survives_the_draft(
     """
     conn = connect(book["db"])
     pid = book["pid"]
-    draft = _drafter(conn, pid, monkeypatch, FakeDrafting())
+    desk = _drafter(conn, pid, monkeypatch, FakeDrafting())
 
-    assert draft(*_ask(conn, pid, 1)).saved is True
+    assert _write_and_land(desk, conn, pid, 1).landed is True
 
     on_disk = _on_disk(conn, pid, 1)
     assert on_disk.startswith("第一章 血脉"), f"章标题没了：{on_disk[:20]!r}"
@@ -333,9 +346,9 @@ def test_a_heading_the_model_invented_is_dropped_not_stacked(
     conn = connect(book["db"])
     pid = book["pid"]
     fake = FakeDrafting(text=f"第一章 换个名字\n\n{DRAFT}")
-    draft = _drafter(conn, pid, monkeypatch, fake)
+    desk = _drafter(conn, pid, monkeypatch, fake)
 
-    assert draft(*_ask(conn, pid, 1)).saved is True
+    assert _write_and_land(desk, conn, pid, 1).landed is True
 
     on_disk = _on_disk(conn, pid, 1)
     assert on_disk.startswith("第一章 血脉")
@@ -356,35 +369,69 @@ def test_a_draft_that_is_two_chapters_is_refused_before_anything_is_written(
     pid = book["pid"]
     before = _on_disk(conn, pid, 1)
     fake = FakeDrafting(text=f"第一章 甲\n\n{DRAFT}\n\n第二章 乙\n\n再来一段。")
-    draft = _drafter(conn, pid, monkeypatch, fake)
+    desk = _drafter(conn, pid, monkeypatch, fake)
 
-    product = draft(*_ask(conn, pid, 1))
+    product = desk.write(*_ask(conn, pid, 1))
+    report = desk.land(product.candidate.id)
 
-    assert product.saved is False
+    assert report.landed is False
     assert _on_disk(conn, pid, 1) == before, "切不成一章的东西被写进去了"
-    assert "切不成恰好一章" in product.note
-    assert product.text == fake.text, "拒了也要把这一稿交出去"
+    assert "切不成恰好一章" in report.note
+    assert desk.recall(product.candidate.id).body == fake.text, "拒了也要把这一稿留着"
     conn.close()
 
 
-def test_an_empty_draft_never_blanks_a_chapter(
+def test_an_empty_draft_never_becomes_a_candidate(
     book: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**空的一稿接上章标题照样切得出恰好一章**，所以上一条那道形状闸拦不住它。
+    """**「模型什么都没说」是真会发生的一档**（loop 自己就有一种停法叫 `NO_OUTPUT`）。
 
-    拦不住的后果是作者的一整章被一份空白盖掉，而「模型什么都没说」是真会发生的一档
-    （loop 自己就有一种停法叫 `NO_OUTPUT`）。
+    ADR 0022 之后这一档在**生成**那一步就被拒：一稿空白既落不了盘，也不该占一个编号
+    让模型以为手上有东西。**但钱已经花掉了**，所以回执必须跟着拒绝一起交出去
+    （`ToolRefused.calls`），否则那笔账和成本闸同时失明。
     """
     conn = connect(book["db"])
     pid = book["pid"]
     before = _on_disk(conn, pid, 1)
-    draft = _drafter(conn, pid, monkeypatch, FakeDrafting(text="   \n\n  "))
+    desk = _drafter(conn, pid, monkeypatch, FakeDrafting(text="   \n\n  "))
 
-    product = draft(*_ask(conn, pid, 1))
+    with pytest.raises(ToolRefused) as caught:
+        desk.write(*_ask(conn, pid, 1))
 
-    assert product.saved is False
+    assert "空的" in str(caught.value)
+    assert [r.capability for r in caught.value.calls] == ["writer"], (
+        "空稿把那次已经付过钱的调用连回执一起吞了"
+    )
     assert _on_disk(conn, pid, 1) == before, "作者的一章被一份空白盖掉了"
-    assert "空的" in product.note
+    assert DraftCandidateStore(conn).recent(pid) == [], "一稿空白占了一个编号"
+    conn.close()
+
+
+def test_landing_still_refuses_to_blank_a_chapter(
+    book: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**空稿闸在落盘那一侧也留着**（3.6 挖出来的那三条之一，一条都不许在重构里丢掉）。
+
+    空的一稿接上章标题**照样切得出恰好一章**，所以上一条那道形状闸拦不住它，
+    而拦不住的后果是作者的一整章被一份空白盖掉。生成那一侧已经拒过一次，
+    这儿是第二道：`_land` 收的那份 `body` 不是它自己写的，它只保证自己不清空一章。
+    """
+    conn = connect(book["db"])
+    pid = book["pid"]
+    before = _on_disk(conn, pid, 1)
+
+    landed, note = drafting._land(
+        SqliteStoryGraph(conn),
+        conn,
+        project_id=pid,
+        root=_root(conn, pid),
+        chapter=1,
+        base_sha=importer.text_digest(before),
+        body="   \n\n  ",
+    )
+
+    assert landed is False and "空的" in note
+    assert _on_disk(conn, pid, 1) == before, "作者的一章被一份空白盖掉了"
     conn.close()
 
 
@@ -410,8 +457,8 @@ def test_the_version_the_draft_replaces_is_snapshotted_first(
     (_root(conn, pid) / importer.chapter_path(1)).write_text(unsynced, encoding="utf-8")
     assert unsynced not in _snapshots(conn, pid, 1), "前提没成立：这一版已经在快照里了"
 
-    draft = _drafter(conn, pid, monkeypatch, FakeDrafting())
-    assert draft(*_ask(conn, pid, 1)).saved is True
+    desk = _drafter(conn, pid, monkeypatch, FakeDrafting())
+    assert _write_and_land(desk, conn, pid, 1).landed is True
 
     assert unsynced in _snapshots(conn, pid, 1), (
         "被盖掉那一版没进版本历史 —— ADR 0021 的退路在这种形态下是一句空话"
@@ -442,8 +489,8 @@ def test_landing_a_draft_leaves_a_line_the_author_can_read(
     """
     conn = connect(book["db"])
     pid = book["pid"]
-    draft = _drafter(conn, pid, monkeypatch, FakeDrafting())
-    assert draft(*_ask(conn, pid, 1)).saved is True
+    desk = _drafter(conn, pid, monkeypatch, FakeDrafting())
+    assert _write_and_land(desk, conn, pid, 1).landed is True
     conn.close()
 
     landed = [row for row in _rows(client, pid) if row["title"] == "系统 · 写进正文"]
@@ -471,8 +518,8 @@ def test_the_line_says_nothing_the_author_cannot_read(
 
     conn = connect(book["db"])
     pid = book["pid"]
-    draft = _drafter(conn, pid, monkeypatch, FakeDrafting())
-    draft(*_ask(conn, pid, 1))
+    desk = _drafter(conn, pid, monkeypatch, FakeDrafting())
+    _write_and_land(desk, conn, pid, 1)
     conn.close()
 
     (row,) = [r for r in _rows(client, pid) if r["title"] == "系统 · 写进正文"]
@@ -498,9 +545,9 @@ def test_the_draft_call_lands_on_the_bill(
     """
     conn = connect(book["db"])
     pid = book["pid"]
-    draft = _drafter(conn, pid, monkeypatch, FakeDrafting())
+    desk = _drafter(conn, pid, monkeypatch, FakeDrafting())
 
-    product = draft(*_ask(conn, pid, 1))
+    product = desk.write(*_ask(conn, pid, 1))
 
     assert [(r.capability, r.prompt_tokens, r.completion_tokens) for r in product.calls] == [
         ("writer", 1_200, 2_400)
@@ -528,19 +575,17 @@ def test_a_provider_failure_becomes_a_refusal_not_a_crash(
     所以一次正常的网络故障从这儿漏出去，作者看到的是一次崩溃，而不是
     「这一稿没写成，再试一次」。
     """
-    from novel_harness.agent.ports import ToolRefused
-
     conn = connect(book["db"])
     pid = book["pid"]
 
     def boom(ctx: Any, **kwargs: Any) -> ChapterDraft:
         raise ProviderError("连不上")
 
-    draft = _drafter(conn, pid, monkeypatch, FakeDrafting())
+    desk = _drafter(conn, pid, monkeypatch, FakeDrafting())
     monkeypatch.setattr(drafting, "draft_chapter", boom)
 
     with pytest.raises(ToolRefused) as caught:
-        draft(*_ask(conn, pid, 1))
+        desk.write(*_ask(conn, pid, 1))
     assert "没写成" in str(caught.value)
     conn.close()
 
@@ -559,14 +604,15 @@ def test_a_landing_that_cannot_be_logged_is_loud(
     """
     conn = connect(book["db"])
     pid = book["pid"]
-    draft = _drafter(conn, pid, monkeypatch, FakeDrafting())
+    desk = _drafter(conn, pid, monkeypatch, FakeDrafting())
+    product = desk.write(*_ask(conn, pid, 1))
 
     def boom(*args: Any, **kwargs: Any) -> Any:
         raise RuntimeError("日志表写不进去")
 
     monkeypatch.setattr(drafting.decisions, "append", boom)
     with pytest.raises(RuntimeError):
-        draft(*_ask(conn, pid, 1))
+        desk.land(product.candidate.id)
     conn.close()
 
 
@@ -581,19 +627,18 @@ def test_a_model_too_small_for_a_whole_chapter_only_breaks_the_draft_tool(
     这里用的是 reasoning 那一档（`resolve_capabilities` 对没登记的模型只给 `OFF`）：
     起草若照 `/draft` 那样请求 `HIGH`，作者换个自建端点就是每次起草必失败。
     """
-    from novel_harness.agent.ports import ToolRefused
     from novel_harness.draft.capabilities import ReasoningEffort
 
     conn = connect(book["db"])
     pid = book["pid"]
-    draft = _drafter(
+    desk = _drafter(
         conn, pid, monkeypatch, FakeDrafting(),
         endpoint="https://my-own-box.local/v1", model="my-llama",
     )
     monkeypatch.setattr(drafting, "AGENT_DRAFT_REASONING", ReasoningEffort.HIGH)
 
     with pytest.raises(ToolRefused) as caught:
-        draft(*_ask(conn, pid, 1))
+        desk.write(*_ask(conn, pid, 1))
     assert "AI 设置" in str(caught.value)
     conn.close()
 
@@ -607,11 +652,11 @@ def test_the_shipped_reasoning_level_works_on_an_unregistered_endpoint(
     """
     conn = connect(book["db"])
     pid = book["pid"]
-    draft = _drafter(
+    desk = _drafter(
         conn, pid, monkeypatch, FakeDrafting(),
         endpoint="https://my-own-box.local/v1", model="my-llama",
     )
-    assert draft(*_ask(conn, pid, 1)).saved is True
+    assert _write_and_land(desk, conn, pid, 1).landed is True
     conn.close()
 
 
@@ -626,42 +671,59 @@ def test_one_turn_from_the_browser_really_changes_the_chapter_on_disk(
     configured: None,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """**最后一厘米**：`POST …/turn` → 工具 → 起草 → 磁盘。
+    """**最后一厘米**：`POST …/turn` → 工具 → 起草 → **存进去** → 磁盘。
 
     这个仓库栽过四次「能力建好了、最后一厘米没接」，而 3.4 交付时
     `ToolContext.drafter` 还是 `None`。这一条量的就是那根线通没通。
+
+    ADR 0022 之后它多了一节：**那根线现在是两截**（`draft_chapter` → `save_draft`），
+    而中间那个编号得真的传得回来。假模型照真形态办——从上一条工具返回里读编号，
+    读不出来就传一个瞎编的，那样这条测试会以「稿子不在」收场而不是静默变绿。
     """
     monkeypatch.setattr(drafting, "draft_chapter", FakeDrafting())
     pid = book["pid"]
 
     class Scripted:
-        def __init__(self, *script: CompletionResult) -> None:
-            self.script = list(script)
+        """先要一稿，再把**那一稿**存进去，最后说话收手。"""
+
+        def __init__(self) -> None:
             self.calls = 0
 
         def __call__(self, messages: Any, *, tools: Any, cancel: Any) -> CompletionResult:
             self.calls += 1
-            return self.script[min(self.calls - 1, len(self.script) - 1)]
-
-    monkeypatch.setattr(
-        chat_mod,
-        "build_agent_model",
-        lambda config, plan: Scripted(
-            CompletionResult(
-                text="",
-                model=MODEL,
-                finish_reason="tool_calls",
-                tool_calls=(
-                    ToolCall(
-                        id="c0",
-                        name="draft_chapter",
-                        arguments=json.dumps({"chapter": 1, "goal": "写一场对峙"}),
+            if self.calls == 1:
+                return CompletionResult(
+                    text="",
+                    model=MODEL,
+                    finish_reason="tool_calls",
+                    tool_calls=(
+                        ToolCall(
+                            id="c0",
+                            name="draft_chapter",
+                            arguments=json.dumps({"chapter": 1, "goal": "写一场对峙"}),
+                        ),
                     ),
-                ),
-            ),
-            CompletionResult(text="写好了，已经存进第 1 章。", model=MODEL, finish_reason="stop"),
-        ),
-    )
+                )
+            if self.calls == 2:
+                drafted = [m for m in messages if m.get("role") == "tool"][-1]
+                draft_id = json.loads(drafted["content"]).get("draft_id", "draft:不存在")
+                return CompletionResult(
+                    text="",
+                    model=MODEL,
+                    finish_reason="tool_calls",
+                    tool_calls=(
+                        ToolCall(
+                            id="c1",
+                            name="save_draft",
+                            arguments=json.dumps({"draft_id": draft_id}),
+                        ),
+                    ),
+                )
+            return CompletionResult(
+                text="写好了，已经存进第 1 章。", model=MODEL, finish_reason="stop"
+            )
+
+    monkeypatch.setattr(chat_mod, "build_agent_model", lambda config, plan: Scripted())
 
     chat_id = client.post(f"/api/projects/{pid}/chats", json={}).json()["id"]
     turn = client.post(
@@ -669,7 +731,12 @@ def test_one_turn_from_the_browser_really_changes_the_chapter_on_disk(
         json={"chapter": 1, "said": "第 1 章重写一稿"},
     )
     assert turn.status_code == 200, turn.text
-    assert turn.json()["lookups"] == 1
+    assert turn.json()["lookups"] == 2
+
+    # 出参上那几稿：界面靠它知道「这一轮写了什么、哪一版进了书」（ADR 0022）。
+    drafts = turn.json()["drafts"]
+    assert [(d["chapter"], d["ordinal"], d["landed"]) for d in drafts] == [(1, 1, True)]
+    assert "text" not in drafts[0], "回执里带了一整章正文 —— 预览存在的意义就没了"
 
     conn = connect(book["db"])
     assert DRAFT in _on_disk(conn, pid, 1), "浏览器点完，磁盘上那一章一个字都没变"

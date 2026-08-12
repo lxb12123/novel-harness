@@ -62,6 +62,30 @@ class ReasoningDialect(StrEnum):
     ANTHROPIC_COMPAT = "anthropic_compat"
 
 
+class ServerContextManagement(StrEnum):
+    """这条路由的服务端**替我们清上下文**吗，清了会不会说（ADR 0023 决策一那一节）。
+
+    ── 为什么是三档而不是一个布尔 ────────────────────────────────────────
+
+    本层的承诺是「**裁了什么必须说出来**」（`agent.loop.Projection` 会报）。厂商在服务端
+    清掉一段而不告诉我们，那句承诺就有一段是空的——**而空在哪儿我们连说都说不出来**。
+    所以「会不会说」不是第二个能力位，它就是这一位本身的取值。
+
+    | 取值 | 含义 |
+    |---|---|
+    | `NONE` | 端点不做服务端上下文管理 |
+    | `OPAQUE` | 做，但响应里带不回「清了什么」——**有它也不许开** |
+    | `REPORTED` | 做，且响应里带得回「清了什么」——只有这一档能外包 |
+
+    字段本身还有第四种状态：`None`（**没登记**）。同 `supports_streaming`，
+    未登记一律 fail-closed 走自己的剪枝。
+    """
+
+    NONE = "none"
+    OPAQUE = "opaque"
+    REPORTED = "reported"
+
+
 def _optional_positive_env_integer(name: str) -> int | None:
     raw = os.environ.get(name)
     if raw is None:
@@ -176,6 +200,15 @@ class ProviderCapabilities(BaseModel):
     reserve_ratio_high: float | None = Field(default=None, gt=0, lt=1)
     supports_streaming: bool | None = None
     supports_stream_usage: bool | None = None
+    server_context_management: ServerContextManagement | None = None
+    """服务端替我们清上下文吗（见 `ServerContextManagement`）。`None` = **这条路由没登记过这件事**。
+
+    **今天全库没有一个消费者，这是有意的**，理由写在 `server_context_management_usable()`
+    的 docstring 里：在 chat.completions 这个**无状态**协议上，「厂商那一层只许开在我们
+    自己已经放弃的那部分上」这个 ADR 0023 给的口子是**空的**——我们放弃的那些根本不在
+    发出去的数组里。所以这一位先立着、按证据登记，等到真有一个能带回「清了什么」的
+    有状态端点时它已经在表上了，而不是那天现拍一个。
+    """
 
     @field_validator("base_url", mode="before")
     @classmethod
@@ -228,6 +261,7 @@ class ProviderCapabilities(BaseModel):
                 and self.reserve_ratio_high is None
                 and self.supports_streaming is None
                 and self.supports_stream_usage is None
+                and self.server_context_management is None
             )
             if not canonical_unknown:
                 raise ValueError("unknown capabilities must use the canonical fail-closed shape")
@@ -601,7 +635,38 @@ def resolve_capabilities(
         reserve_ratio_high=None,
         supports_streaming=None,
         supports_stream_usage=None,
+        server_context_management=None,
     )
+
+
+def server_context_management_usable(capability: ProviderCapabilities) -> bool:
+    """能不能把「清旧上下文」外包给这条路由的服务端（ADR 0023 决策一）。
+
+    **只有 `REPORTED` 一档为真**，其余（`OPAQUE` / `NONE` / 未登记）一律自己做。
+    这是那张能力表的既有立场（`supports_streaming is None` ⇒ 不许流式）换了个对象，
+    不是新机制。
+
+    ── 为什么它今天没有调用方，而这**不是**「接线还没做」──────────────────
+
+    ADR 0023 给厂商那一层留的口子写得很死：
+
+    > **厂商那一层只许开在「我们自己已经放弃」的那部分上**，或者确认它的响应能带回
+    > 「清了什么」。
+
+    在 `chat.completions` 这个**无状态**协议上，前半句那个口子是**空集**：每一轮把整个
+    消息数组从头重发（ADR 0022 §3 就是靠这条事实决定候选稿不进对话的），所以
+    「我们已经放弃的那些」压根不在发出去的 payload 里——服务端没有东西可清。
+    真正非空的形态要求端点自己存着这段会话（Responses / 有状态那一类），而那不是本仓
+    `draft/provider.py` 钉死的那个协议。
+
+    后半句（`REPORTED`）本身也不够：**服务端不知道第几章**。它把一条绑第 90 章的工具
+    返回压成散文之后，那段散文对第 40 章的投影就是一条读起来完全正常的过期事实——
+    ADR 0019 边界四点名的那个故障，只是这次发生在我们的筛子够不着的地方。所以真要开，
+    先决条件不只是「它说得出清了什么」，还得是**它清掉的那些本来就不该按章号筛**。
+
+    结论：这一位按证据登记、判据只写一次，**开关留给那一天**。
+    """
+    return capability.server_context_management is ServerContextManagement.REPORTED
 
 
 def _positive_integer(value: int, name: str, *, allow_zero: bool = False) -> int:
@@ -805,10 +870,12 @@ __all__ = [
     "ReasoningDialect",
     "ReasoningEffort",
     "ResolvedCallPlan",
+    "ServerContextManagement",
     "StructuredCallPlan",
     "normalize_base_url",
     "normalize_model",
     "plan_call",
     "plan_structured_call",
     "resolve_capabilities",
+    "server_context_management_usable",
 ]

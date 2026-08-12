@@ -183,7 +183,10 @@ def test_reported_usage_goes_on_the_bill_and_into_the_gate() -> None:
     result, _, ledger = a_turn(
         wants(("book_index", "{}"), text="查"),
         say("好了"),
-        limits=TurnLimits(max_steps=4, max_tokens=10_000),
+        # **这个数要比「两次调用的估算」宽。** 没有 usage 时闸门按字数倒推，而那份估算
+        # 里**含工具声明**——表里每多一条工具，这儿就更容易假红一次（ADR 0022 加了两条
+        # 之后 10,000 当场不够）。这条测的是「报了 usage 就照报的算」，不是闸门本身。
+        limits=TurnLimits(max_steps=4, max_tokens=60_000),
     )
     assert result.reason is StopReason.DONE
     assert result.calls_without_usage == 2
@@ -610,6 +613,21 @@ def _roles(projection: Projection) -> list[str]:
     return [message["role"] for message in projection.messages]
 
 
+def room(conversation: Conversation, units: int) -> int:
+    """留给**历史**这么多字的那个 `budget_units`。
+
+    2026-08-12（ADR 0023「前置」）起 `budget_units` 管的是**整份 payload**——工具声明
+    那几千字以前一个字都不在账上（相对默认预算约 23% 的系统性低估，方向偏松）。
+
+    **地板是量出来的，不是抄来的**：把同一段会话的历史清空再投影一次，得到的就是
+    「工具声明 + 稳定前缀 + JSON 信封」那一块。这样写的理由是它在这份文件里已经栽过一次：
+    第一版只减了工具声明，于是**别人往 `AGENT_SYSTEM_PROMPT` 里加两行**（3.6 的候选稿
+    那两句）就把这几条断言弄红了——而那两行和剪枝顺序一点关系都没有。
+    """
+    bare = conversation.model_copy(update={"messages": ()})
+    return project(bare, None, budget_units=10**9).payload_units + units
+
+
 def test_the_prune_order_is_frozen_tool_results_first() -> None:
     """老 `tool_result` → 老 `tool_call` → agent 中间推理 → **最后才碰作者说的话**。
 
@@ -619,18 +637,18 @@ def test_the_prune_order_is_frozen_tool_results_first() -> None:
     whole = project(a_long_session(), None, budget_units=100_000)
     assert (whole.stubbed_results, whole.dropped_calls, whole.dropped_reasoning) == (0, 0, 0)
 
-    tight = project(a_long_session(), None, budget_units=900)
+    tight = project(a_long_session(), None, budget_units=room(a_long_session(), 700))
     assert tight.stubbed_results == 1 and tight.dropped_calls == 0
     assert "重新查一次" in str(tight.messages)
     assert tight.dropped_reasoning == 0
     assert "tool" in _roles(tight), "第一档删的是内容、留的是壳（wire 上它必须接住那个调用）"
 
-    tighter = project(a_long_session(), None, budget_units=700)
+    tighter = project(a_long_session(), None, budget_units=room(a_long_session(), 500))
     assert tighter.dropped_calls == 1
     assert "tool" not in _roles(tighter), "壳和它的调用是成对拿掉的"
     assert "想" * 200 in str(tighter.messages), "推理排在第三档，不许被前两档顺手带走"
 
-    tightest = project(a_long_session(), None, budget_units=400)
+    tightest = project(a_long_session(), None, budget_units=room(a_long_session(), 200))
     # 两条：agent 的那段推理，加上第二档剪完剩下的那句「我先看看目录。」——
     # 调用被拿掉之后它就是一条纯粹的中间推理，排在同一档。
     assert tightest.dropped_reasoning == 2

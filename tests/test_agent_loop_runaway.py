@@ -630,7 +630,7 @@ def test_a_batch_wider_than_the_gate_spends_nothing(
 
     - `max_steps` 数的是**模型调用**，一步之内的工具调用不在它的口径里；
     - `max_tokens` 一步只查一次，**在这一批派发之前**，批内不再查；
-    - 表里七个工具有六个是只读或纯函数（ADR 0019：「重放免费」），
+    - 表里九个工具有八个是只读或纯函数（ADR 0019：「重放免费」），
       **`draft_chapter` 不是** —— 它每次是一次真的模型调用，走的是起草侧自己的账。
 
     3.4 把闸放在了 loop（`TurnLimits.max_calls_per_step`），不是放在起草那条路上：
@@ -704,7 +704,17 @@ def test_a_batch_of_paid_tools_stops_on_money_not_only_on_count(
         # **换的是实现不是声明**（同 `a_tool_that_always_works`）：这一条量的是 loop
         # 怎么对待「工具自己花了钱」，约束怎么算是 `tests/test_agent_drafting.py` 的事。
         drafted.append(args.chapter)
-        return tools_module.DraftResult(chapter=args.chapter, text="一稿正文……", calls=(spent,))
+        # **出参里没有正文**（ADR 0022）：一整章进对话会被无状态的 wire 每一轮重发一遍。
+        # 这儿给的是它的摘要行——id / 第几稿 / 字数 / 预览 / 自述。
+        return tools_module.DraftResult(
+            chapter=args.chapter,
+            draft_id=f"draft:0000000000000000000000000{len(drafted)}",
+            ordinal=len(drafted),
+            units=2_400,
+            preview="一稿正文……",
+            note="这一版更冷。",
+            calls=(spent,),
+        )
 
     original = tools_module.TOOLS["draft_chapter"]
     tools_module.TOOLS["draft_chapter"] = tools_module.ToolSpec(
@@ -739,6 +749,77 @@ def test_a_batch_of_paid_tools_stops_on_money_not_only_on_count(
     )
     assert result.tokens_reported >= 30_000
     a_sane_stop(result, model, ceiling=4)
+
+
+def test_money_already_spent_in_a_parallel_window_never_disappears() -> None:
+    """**并发窗口里那几条是一起跑掉的，所以闸在批中间停下来时它们已经花过钱了。**
+
+    ADR 0022 让一批稿同时跑（起草没有副作用了）。代价是那道额度闸从「每派发完一个查
+    一次」松成「每个**窗口**查一次」——而松了之后有一个必须守住的东西：
+    **已经跑掉的那几条要如实记上账、如实贴回对话**。给它们配一个「这一轮没跑」的壳，
+    就是一次凭空消失的花销加一句骗人的话，而这一条正是这个仓库栽过的那种病
+    （账上的数偏低，界面上却自称是全部）。
+    """
+    spent = ModelCallReceipt(
+        capability="writer",
+        schema_version="m5.draft.v1",
+        model="deepseek-v4",
+        prompt_hash="ph",
+        prompt_bytes=b"{}",
+        text="一稿正文……",
+        prompt_tokens=4_000,
+        completion_tokens=6_000,
+    )
+    drafted: list[int] = []
+
+    def handler(args: Any, context: ToolContext) -> BaseModel:
+        drafted.append(args.chapter)
+        return tools_module.DraftResult(
+            chapter=args.chapter,
+            draft_id=f"draft:0000000000000000000000000{len(drafted)}",
+            ordinal=len(drafted),
+            units=2_400,
+            preview="一稿正文……",
+            calls=(spent,),
+        )
+
+    original = tools_module.TOOLS["draft_chapter"]
+    tools_module.TOOLS["draft_chapter"] = tools_module.ToolSpec(
+        name="draft_chapter",
+        description=original.description,
+        args=original.args,
+        handler=handler,
+        concurrent=True,
+    )
+    try:
+        result, model, ledger = a_turn(
+            wants(
+                *[
+                    ("draft_chapter", json.dumps({"chapter": 7, "goal": f"第 {n} 稿"}))
+                    for n in range(1, 4)
+                ],
+                prompt_tokens=1_000,
+                completion_tokens=0,
+            ),
+            say("写完了"),
+            # 额度只够一稿 —— 但三稿是**同时**跑的，闸拦不住这一窗。
+            limits=TurnLimits(max_steps=4, max_tokens=11_000, parallel_tools=3),
+        )
+    finally:
+        tools_module.TOOLS["draft_chapter"] = original
+
+    assert result.reason is StopReason.COST_LIMIT
+    assert len(drafted) == 3, "并发窗口不是一次跑完的 —— 那 loop 那条线程会和它们抢库"
+    assert [r.capability for r in ledger.receipts].count("writer") == 3, (
+        "已经跑掉的那几稿有钱没上账 —— 闸松一档可以，账漏一笔不行"
+    )
+    assert result.conversation.pending_calls == (), "剩下那几个没配壳 —— 下一次 wire 是 400"
+    from novel_harness.agent.loop import UNRUN_CALL
+
+    assert not [m for m in result.conversation.messages if m.content == UNRUN_CALL], (
+        "跑过的那几条被当成「没跑」贴回去了 —— 那是一句骗人的话"
+    )
+    assert result.tool_calls == 3
 
 
 def test_a_crash_between_the_model_and_the_dispatch_is_representable(

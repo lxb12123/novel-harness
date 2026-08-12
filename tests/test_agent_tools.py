@@ -49,7 +49,8 @@ from pydantic import BaseModel, ConfigDict
 
 from novel_harness import project
 from novel_harness.agent import tools as agent_tools
-from novel_harness.agent.ports import DraftProduct
+from novel_harness.agent.candidates import DraftCandidate
+from novel_harness.agent.ports import DraftProduct, LandingReport, StoredDraft
 from novel_harness.agent.tools import (
     TOOL_NAMES,
     TOOL_TABLE,
@@ -184,6 +185,48 @@ def _call(name: str, **arguments: Any) -> ToolCall:
     return ToolCall(id=f"call_{name}", name=name, arguments=json.dumps(arguments))
 
 
+DRAFT_ID = "draft:01JTESTTESTTESTTESTTESTTEST"
+
+
+class FakeDesk:
+    """注入进来的那个起草台（`agent.ports.DraftDesk`）：**生成 / 落盘 / 读回**。
+
+    三个动作各自都是一个模型看得见的面，所以这个假实现三个都要填满——
+    只填一个的话，另外两块屏幕在这张网里从来没被扫过（ADR 0022 之后它们是新长出来的）。
+    """
+
+    def __init__(self) -> None:
+        self.seen: list[DraftContext] = []
+
+    def _candidate(self, chapter: int) -> DraftCandidate:
+        return DraftCandidate(
+            id=DRAFT_ID,
+            chapter=chapter,
+            ordinal=1,
+            units=12,
+            note="这一版更冷，删掉了那段回忆。",
+            preview=f"（第 {chapter} 章草稿）风雪落在肩上。",
+            created_at="2026-08-12T00:00:00.000Z",
+        )
+
+    def write(self, ask: DraftAsk, ctx: DraftContext) -> DraftProduct:
+        # 起草侧收到的这份约束**就是要进 prompt 的那一份**——第 4 个面在这里被捉住。
+        self.seen.append(ctx)
+        return DraftProduct(candidate=self._candidate(ask.chapter))
+
+    def land(self, candidate_id: str) -> LandingReport:
+        # `note` 也是模型看得见的一个面（落盘回执贴回对话里），所以它必须填上。
+        return LandingReport(
+            chapter=CHAPTER, landed=True, note=f"已经写进第 {CHAPTER} 章了（章标题保持原样）。"
+        )
+
+    def recall(self, candidate_id: str) -> StoredDraft:
+        return StoredDraft(
+            **self._candidate(CHAPTER).model_dump(),
+            body="（第 7 章草稿）风雪落在肩上。",
+        )
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 网本身
 # ══════════════════════════════════════════════════════════════════════════
@@ -207,23 +250,12 @@ def leaks(surface: str, blob: str) -> list[str]:
 
 def _surfaces_of(world: World) -> dict[str, str]:
     """模型看得见的**四个面**，全部拿到手里。见模块 docstring。"""
-    captured: list[DraftContext] = []
-
-    def drafter(ask: DraftAsk, ctx: DraftContext) -> DraftProduct:
-        # 起草侧收到的这份约束**就是要进 prompt 的那一份**——第 4 个面在这里被捉住。
-        captured.append(ctx)
-        # `note` 也是模型看得见的一个面（ADR 0021 的落盘回执贴回对话里），
-        # 所以这个假实现必须把它填上——不填的话那块屏幕根本没被扫过。
-        return DraftProduct(
-            text=f"（第 {ask.chapter} 章草稿）风雪落在肩上。",
-            saved=True,
-            note=f"已经写进第 {ask.chapter} 章了（章标题保持原样）。",
-        )
+    desk = FakeDesk()
 
     from novel_harness.draft.rolling_summary import SummaryStore
 
     context = world.context(
-        drafter=drafter,
+        drafter=desk,
         summaries=SummaryStore(world.conn),
         # **索引层要在「知道作者写到第几章」的状态下被采样**：那是它会去算未来实体、
         # 会往返回里写「这是你还没写到的」的那一档，也就是最容易把秘密带出来的那一档。
@@ -234,6 +266,9 @@ def _surfaces_of(world: World) -> dict[str, str]:
             _call("scene_constraints", chapter=CHAPTER),
             _call("character_state", chapter=CHAPTER, character="萧决"),
             _call("draft_chapter", chapter=CHAPTER, goal="写萧决独自走进北荒"),
+            # ADR 0022 拆出来的另外两个动作：它们各自是一个新的返回面。
+            _call("save_draft", draft_id=DRAFT_ID),
+            _call("read_draft", draft_id=DRAFT_ID),
             # 书内索引的四层，一层都不能漏：它们新开了四个模型看得见的面。
             _call("book_index"),
             _call("character_chapters", characters=["萧决", "顾清音"]),
@@ -247,12 +282,12 @@ def _surfaces_of(world: World) -> dict[str, str]:
         ],
         context,
     )
-    assert [o.ok for o in outcomes] == [True] * 7 + [False] * 4
-    assert captured, "起草工具没把约束交给起草侧 —— 第 4 个面没被采到，这条测试是空的"
+    assert [o.ok for o in outcomes] == [True] * 9 + [False] * 4
+    assert desk.seen, "起草工具没把约束交给起草侧 —— 第 4 个面没被采到，这条测试是空的"
 
     surfaces = {f"{o.name} 的返回（ok={o.ok}）": o.content for o in outcomes}
     surfaces["发给模型的工具声明"] = json.dumps(tool_declarations(), ensure_ascii=False)
-    surfaces["交给起草侧的约束（进 prompt 的那一份）"] = captured[0].model_dump_json()
+    surfaces["交给起草侧的约束（进 prompt 的那一份）"] = desk.seen[0].model_dump_json()
     return surfaces
 
 
@@ -361,18 +396,14 @@ def test_a_model_invented_constraint_argument_is_refused(world: World) -> None:
 
 def test_the_backend_computes_the_constraints_for_the_drafter(world: World) -> None:
     """起草侧收到的约束是**后端按章号现算的**，不是模型给的。"""
-    seen: list[DraftContext] = []
-
-    def drafter(ask: DraftAsk, ctx: DraftContext) -> DraftProduct:
-        seen.append(ctx)
-        return DraftProduct(text="一稿")
+    desk = FakeDesk()
 
     outcome = dispatch(
         _call("draft_chapter", chapter=CHAPTER, goal="写萧决独自走进北荒"),
-        world.context(drafter=drafter),
+        world.context(drafter=desk),
     )
     assert outcome.ok, outcome.content
-    ctx = seen[0]
+    ctx = desk.seen[0]
     assert isinstance(ctx, ResolvedConstraints)
     assert ctx.chapter == CHAPTER
     assert ctx.secret_labels == ["血脉秘密"], "显示名，永远不是内容 tell"
@@ -462,6 +493,9 @@ def test_the_tool_table_stays_put() -> None:
             "character_chapters",
             "chapter_summaries",
             "chapter_text",
+            # 起草那一摊的另外两个动作（ADR 0022）：生成不落盘了，落盘和读回各自是一条。
+            "save_draft",
+            "read_draft",
         }
     )
     by_name = {spec.name: spec for spec in TOOL_TABLE}
@@ -491,19 +525,45 @@ def test_the_writer_banned_symbols_are_not_tools() -> None:
     assert WRITER_BANNED, "上游集合空了 —— 这条断言会变成永远绿的"
 
 
+MANUSCRIPT_SHAPED_FIELDS = frozenset({"text", "body", "markdown", "content", "prose", "draft"})
+"""工具入参里出现任意一个 = **模型能拿一段自己编的字去盖作者的书**。
+
+ADR 0022 之前这条靠「表里根本没有写工具」成立；`save_draft` 落地之后它靠**入参形状**
+成立——那条工具只收一个候选编号，而候选只能由后端按那一章的约束生成出来。
+`draft_id` 不在这个集合里正是重点：**指着一稿说「这个」和交出一段文本是两件事。**
+"""
+
+
+def test_no_tool_takes_a_paragraph_of_prose() -> None:
+    """**模型没有「只写不草」这个动作**（ADR 0019 边界一的推论，ADR 0022 之后的落点）。
+
+    表里现在有一条会改作者的书的工具（`save_draft`），所以「表里没有写工具」这句话不再
+    成立。取代它的是一条更硬、也更可断言的：**没有一个工具收得下一段正文。**
+    能写进磁盘的只有刚刚由后端按那一章的约束生成出来的候选。
+    """
+    offenders = {
+        spec.name: sorted(set(spec.args.model_fields) & MANUSCRIPT_SHAPED_FIELDS)
+        for spec in TOOL_TABLE
+        if set(spec.args.model_fields) & MANUSCRIPT_SHAPED_FIELDS
+    }
+    assert not offenders, (
+        f"工具入参里出现了正文形状的字段：{offenders}\n"
+        "那等于给模型一条「拿任意一段字去盖某一章」的路——它可以从对话里抄一段秘密原文"
+        "写进书里，而唯一的闸（sha）只管「作者有没有更晚改过」，不管这段字是谁写的。"
+    )
+
+
 def test_there_is_no_tool_that_writes(world: World) -> None:
-    """**表里没有一条「写」工具**——正文那条落盘 2026-08-11 开了，但它不在这张表上。
+    """**表里没有一条能改 canon 的工具**——正文那条落盘 2026-08-11 开了（ADR 0021），
+    2026-08-12 成了一条工具（ADR 0022 把它从起草的副作用拆成一个动作）。
 
-    [ADR 0021](../docs/adr/0021-agent-writes-drafts-without-asking.md) 推翻的是
-    「写正文必须作者确认」；边界一的其余三条原样有效，而**「`ToolContext` 上没有写入面」
-    是其中最硬的一条**：落盘发生在注入进来的那个 `drafter` 闭包里（`agent/drafting.py`
-    握着 `GraphStore` 和一条连接），这个 dataclass 上一个字都没多。
-
-    一条推论顺带被钉住：**模型没有「只写不草」这个动作**——能写进磁盘的只有刚由后端
-    按当前章约束生成的那一稿，它拿不出一段自己编的文本去盖某一章。
+    边界一的其余三条原样有效，而**「`ToolContext` 上没有写入面」是其中最硬的一条**：
+    落盘发生在注入进来的那个起草台里（`agent/drafting.py` 握着 `GraphStore` 和一条连接），
+    这个 dataclass 上一个字都没多。
 
     这条断言有三层，因为「按名字数」拦不住一个叫 `save_scene` 的东西：
-    ① 名字白名单（上面那条）；② `ToolContext` 上没有写入面；③ 落盘的理由写在源码里。
+    ① 入参形状（上面那条：谁都收不下一段正文）；② `ToolContext` 上没有写入面；
+    ③ 那条理由写在源码里。
     """
     context = world.context()
     assert not hasattr(context, "conn")
@@ -530,9 +590,9 @@ def test_there_is_no_tool_that_writes(world: World) -> None:
         "ADR 0021 开的是「写磁盘」，不是「把 CanonWriter 交给模型」"
     )
     source = (Path(agent_tools.__file__)).read_text(encoding="utf-8")
-    assert "表里仍然没有一条「写正文」工具" in source, (
-        "模块 docstring 里那段「落盘有了，但它为什么仍然不是一条工具」不见了。"
-        "它不是注释洁癖：下一个人会把「表里没有」读成「忘了加」，然后加一条。"
+    assert "`save_draft` 只收一个候选 id，收不到文本" in source, (
+        "模块 docstring 里那段「落盘是一条工具了，但它凭什么仍然安全」不见了。"
+        "它不是注释洁癖：下一个人会把「只收 id」读成一个麻烦，然后给它加一个 text 参数。"
     )
 
 

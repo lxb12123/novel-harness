@@ -2,7 +2,9 @@ import { useEffect, useRef } from "react";
 import { useChapters, useProjects } from "./api/hooks";
 import { useOpenChapter } from "./autopilot";
 import { chapterOnOpen } from "./chapterCursor";
+import { useHashRoute } from "./route";
 import { useCoords } from "./store";
+import { DraftCompare } from "./components/DraftCompare";
 import { TopBar } from "./components/TopBar";
 import { ActivityLog } from "./components/ActivityLog";
 import { LeftRail } from "./components/LeftRail";
@@ -14,7 +16,21 @@ import { BottomBar } from "./components/BottomBar";
 import { ChapterPrepPage } from "./components/ChapterPrepPage";
 import { Setup } from "./components/Setup";
 
+/**
+ * 地址里那一条哈希决定的**只有一件事**：这个标签页是工作台，还是「并排比几稿」那一页。
+ *
+ * **别把「工作台 / 章节准备 / 活动记录」也搬进地址**：那三个是同一块屏幕的三种排布，
+ * 归 `useCoords.page`；搬过去等于让浏览器的前进后退键成为它们的入口，
+ * 而作者按后退键想回到的是**上一段正文**，不是上一个面板。
+ * 并排比那一页不一样——它开在另一个标签页里，**没有地址就没法开**（ADR 0022）。
+ */
 export default function App() {
+  const route = useHashRoute();
+  if (route.name === "compare") return <DraftCompare chapter={route.chapter} />;
+  return <Workbench />;
+}
+
+function Workbench() {
   const projects = useProjects();
   const { projectId, chapter, page, chatOpen, setProject, setChapter } = useCoords();
   const chapters = useChapters(projectId);

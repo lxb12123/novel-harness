@@ -50,6 +50,7 @@ from novel_harness.agent.loop import (
     start_conversation,
 )
 from novel_harness.agent.ports import ToolContext
+from novel_harness.agent.loop import tool_declaration_units
 from novel_harness.agent.tools import TOOL_TABLE, ToolSpec, tool_declarations
 from novel_harness.draft.provider import CompletionResult, ToolCall
 
@@ -374,6 +375,17 @@ def a_session_worth_pruning() -> Conversation:
     )
 
 
+def room(units: int) -> int:
+    """留给**对话**这么多字的那个 `budget_units`（同 `test_agent_loop.py::room`）。
+
+    2026-08-12（ADR 0023「前置」）起 `budget_units` 管的是**整份 payload**：工具声明那
+    近 4,000 字以前一个字都不在账上。它是一块剪枝动不了的地板，所以「把预算从宽扫到紧」
+    这类测试要从地板之上开始扫——否则第一个取值就已经装不下，三档剪枝一次都不会被触发，
+    而**测试仍然是绿的**（那正是这份文件最怕的那种绿）。
+    """
+    return units + tool_declaration_units()
+
+
 def _authors_lines(projection: Projection) -> list[str]:
     return [m["content"] for m in projection.messages if m["role"] == "user"]
 
@@ -395,7 +407,7 @@ def test_the_author_is_the_last_thing_standing_at_every_budget() -> None:
     saw_reasoning_dropped = False
     saw_over_budget = False
     for budget in range(2_000, 20, -20):
-        projected = project(conversation, None, budget_units=budget)
+        projected = project(conversation, None, budget_units=room(budget))
 
         assert _authors_lines(projected) == expected, f"预算 {budget}：作者的话被动了"
 
@@ -420,7 +432,7 @@ def test_the_oldest_goes_first_in_the_first_two_tiers() -> None:
     stubbed_one = next(
         p
         for budget in range(2_000, 20, -1)
-        if (p := project(conversation, None, budget_units=budget)).stubbed_results == 1
+        if (p := project(conversation, None, budget_units=room(budget))).stubbed_results == 1
     )
     blob = str(stubbed_one.messages)
     assert "老返回" not in blob and "新返回" in blob, "第一档动的必须是更早的那条返回"
@@ -428,7 +440,7 @@ def test_the_oldest_goes_first_in_the_first_two_tiers() -> None:
     dropped_one = next(
         p
         for budget in range(2_000, 20, -1)
-        if (p := project(conversation, None, budget_units=budget)).dropped_calls == 1
+        if (p := project(conversation, None, budget_units=room(budget))).dropped_calls == 1
     )
     calls = [c["id"] for m in dropped_one.messages for c in m.get("tool_calls", ())]
     assert calls == ["t2"], "第二档拿掉的必须是更早的那个调用"
@@ -457,7 +469,7 @@ def test_a_stub_that_would_make_the_prompt_bigger_is_not_a_stub() -> None:
     whole = project(conversation, None, budget_units=100_000)
     baseline = len(str(whole.messages))
 
-    tight = project(conversation, None, budget_units=1_000)
+    tight = project(conversation, None, budget_units=room(1_000))
     assert tight.stubbed_results == 0, "占位比原返回还长，第一档不该动它"
     assert len(str(tight.messages)) <= baseline, "「剪枝」把 prompt 剪大了"
 
@@ -472,7 +484,7 @@ def test_nothing_in_this_layer_compresses_the_manuscript() -> None:
     stubbed = next(
         p
         for budget in range(2_000, 20, -1)
-        if (p := project(conversation, None, budget_units=budget)).stubbed_results >= 1
+        if (p := project(conversation, None, budget_units=room(budget))).stubbed_results >= 1
     )
     survivors = [m["content"] for m in stubbed.messages if m["role"] == "tool"]
     for content in survivors:
@@ -650,5 +662,5 @@ def test_the_wire_stays_valid_through_every_stage_of_pruning() -> None:
         }
     )
     for budget in range(3_000, 20, -20):
-        projected = project(conversation, 40, budget_units=budget)
+        projected = project(conversation, 40, budget_units=room(budget))
         assert _wire_is_valid(projected), f"预算 {budget}：wire 上有对不上的调用"

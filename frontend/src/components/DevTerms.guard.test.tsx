@@ -17,6 +17,7 @@ import { ChapterPrepPage } from "./ChapterPrepPage";
 import { SceneBar } from "./SceneBar";
 import { BookShelf } from "./BookShelf";
 import { ChatPanel } from "./ChatPanel";
+import { DraftCompare } from "./DraftCompare";
 
 // **对抗性验证：那张「形状判据」的网真的比词表强吗。**
 //
@@ -85,6 +86,11 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     // （`chat_session:…`）、停止原因的机器码（`done` / `context_full`）、
     // 上下文回执那七个 snake_case 字段，全都在它手上过一遍。
     ["写作助手", <ChatPanel key="cp" />],
+    // 并排比几稿那一页（ADR 0022）。它是**开在另一个标签页里**的一整页屏幕，
+    // 而它手上全是形状可疑的东西：候选的内部标识（`draft:01J…`）、书的标识、
+    // 那一稿的自述和定长预览。没被扫到的组件等于没有守卫，这一页尤其——
+    // 作者在这儿读的是三章正文，任何一个漏出来的码都摆在正文旁边。
+    ["并排比几稿", <DraftCompare key="dc" chapter={2} />],
   ])("「%s」上一个研发术语都没有", async (_name, ui) => {
     renderWithApi(ui, stateRoute(STATE_WITH_EDGES));
     // 等第一批查询落地：扫一块还没渲染出内容的屏幕等于什么都没扫。
@@ -165,6 +171,35 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     await user.click(screen.getByRole("button", { name: "发送" }));
 
     await screen.findByText(fixtures.chatTurn.message);
+    expect(devTerms(screenText())).toEqual([]);
+  });
+
+  it("写作助手：那几稿摆出来的时候（自述 + 预览 + 摊开之后的全文）", async () => {
+    // **这一片是 2026-08-12 新长出来的屏幕**（ADR 0022），而它一次同时端着三样
+    // 形状可疑的东西：候选的内部标识（`draft:01J…`，第三张网认的就是它）、
+    // 「第几稿」这个数、以及一整章正文。真 dump 那一轮只写了一稿且没落盘——
+    // **「一稿进了书」那一档正常数据下永远不亮**，正是它躲过守卫的方式。
+    const user = userEvent.setup();
+    const one = fixtures.drafts.drafts[0];
+    const turn = {
+      ...fixtures.chatTurn,
+      drafts: [
+        { ...one, id: "draft:ID43", ordinal: 1 },
+        { ...one, id: "draft:ID44", ordinal: 2, landed: true },
+        { ...one, id: "draft:ID45", ordinal: 3, note: "" },
+      ],
+    };
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: turn }]);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "写三个版本");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await screen.findByText("第 3 稿");
+    // 摊开一版：那一条路由的返回里除了正文还有 `id` / `created_at` 这些字段，
+    // 而「摊开」是作者最常做的那个动作。
+    await user.click(screen.getByRole("button", { name: "展开第 3 稿" }));
+    // 两版摊开着：进了书的那一版（默认摊开）+ 刚点开的这一版。
+    await waitFor(() => expect(screen.getAllByText(fixtures.draftDetail.text)).toHaveLength(2));
     expect(devTerms(screenText())).toEqual([]);
   });
 

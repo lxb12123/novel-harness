@@ -3,6 +3,7 @@ import {
   useChatDetail,
   useChats,
   useCreateChat,
+  useDrafts,
   useRunTurn,
   useStopChat,
 } from "../api/hooks";
@@ -19,6 +20,7 @@ import {
 } from "../chat";
 import { useCoords } from "../store";
 import { ChatSessions } from "./ChatSessions";
+import { CompareLink, DraftCandidates } from "./DraftCandidates";
 
 // 写作助手（模式二，[ADR 0019](docs/adr/0019-agent-loop-not-graph.md)）。
 // 中栏对半分之后的右半边：左边正文、右边它。左栏书架和右栏面板一个像素不动。
@@ -104,8 +106,16 @@ function RunningStrip({ since, onStop, stopping }: {
   );
 }
 
-/** 一轮跑完之后那一条：后端那句话 + 这一轮实际发生了什么。 */
-function Receipt({ receipt, footnote }: { receipt: TurnReceipt; footnote: string | null }) {
+/** 一轮跑完之后那一条：后端那句话 + 这一轮实际发生了什么 + 这一轮写出来的那几稿。 */
+function Receipt({
+  receipt,
+  footnote,
+  pid,
+}: {
+  receipt: TurnReceipt;
+  footnote: string | null;
+  pid: string;
+}) {
   const notes = receiptNotes(receipt);
   return (
     <div className="chat-receipt">
@@ -118,6 +128,10 @@ function Receipt({ receipt, footnote }: { receipt: TurnReceipt; footnote: string
           {note}
         </p>
       ))}
+      {/* 这一轮写出来的那几稿（ADR 0022）。**它们既不在正文里也不在对话里**，
+          所以这块屏幕是作者第一次、也是当下唯一一次看见它们的地方——
+          关掉这条回执之后，靠的是上面那条「这一章还摆着几稿」。 */}
+      <DraftCandidates pid={pid} drafts={receipt.drafts} />
     </div>
   );
 }
@@ -130,6 +144,10 @@ export function ChatPanel() {
   const create = useCreateChat(pid);
   const turn = useRunTurn(pid);
   const stop = useStopChat(pid);
+  /** 这一章**还摆在桌上**的那几稿（ADR 0022）。它们不在正文里也不在对话里，所以
+   *  一旦那一轮的回执被下一轮顶掉，这条入口就是作者唯一找得回它们的地方。
+   *  **零的时候一个字都不画**：没有稿子时摆一句「还摆着 0 稿」是噪音（同回执那一条）。 */
+  const desk = useDrafts(projectId, chapter);
 
   const [listOpen, setListOpen] = useState(false);
   const [said, setSaid] = useState("");
@@ -160,6 +178,7 @@ export function ChatPanel() {
 
   const list = sessions.data ?? [];
   const current = list.find((s) => s.id === chatId) ?? null;
+  const onDesk = desk.data?.drafts.length ?? 0;
 
   // 没挑过就停在最近说过话的那一段（后端按这个顺序给），同 App 里「默认打开第一本书」。
   useEffect(() => {
@@ -261,6 +280,11 @@ export function ChatPanel() {
             **它必须显示出来**：助手回答「这儿能不能说破」时用的正是这个坐标，
             而作者看到的是一段没有坐标的对话。 */}
         <span className="chat-asof">按第 {chapter} 章回答</span>
+        {onDesk > 0 && (
+          <CompareLink pid={pid} chapter={chapter}>
+            还摆着 {onDesk} 稿 ↗
+          </CompareLink>
+        )}
         <button aria-expanded={listOpen} onClick={() => setListOpen((v) => !v)}>
           对话列表
         </button>
@@ -339,6 +363,7 @@ export function ChatPanel() {
           <Receipt
             receipt={shownReceipt}
             footnote={stopFootnote(stopLanded.current, shownReceipt)}
+            pid={pid}
           />
         )}
         {(failureHere || createFailure) && (

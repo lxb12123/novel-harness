@@ -797,6 +797,44 @@ export interface ChatContextReceipt {
   full: boolean;
 }
 
+/**
+ * 摆在桌上的一稿（[ADR 0022](docs/adr/0022-drafting-is-a-proposal-not-a-write.md)）。
+ * **正文不在这儿**——要正文单取一次（`DraftCandidateDetail`）。
+ *
+ * **「推荐哪一版」不是引擎算的，也不是这一层算的**（ADR 0005：引擎不给散文打分）：
+ * `note` 是写那一稿的那个模型自己交的一句话，`landed` 是助手真的做过的一个动作
+ * ——「它把哪一版写进了书」就是它的推荐。一批都没落盘时后端不替作者挑，
+ * **前端也不许从字里行间反推一个「最好的那版」**（同「跳转坐标由后端给」那条禁令）。
+ */
+export interface DraftCandidateView {
+  /** 取全文用它。**一个字符都不许上屏**——它是 `draft:01J…` 这种形状，
+   *  `src/test/screenGuard.ts` 第三张网认的就是它。作者认得的是「第 2 稿」。 */
+  id: string;
+  chapter: number;
+  /** 这一章的第几稿。**屏幕上说的是这个数。** */
+  ordinal: number;
+  /** 字数。**今天恒是中文口径**（起草台只用中文档，见 `drafts.ts::unitsLabel`）。 */
+  units: number;
+  /** 写它的那个模型自己那句话。**可能是空串**（它这次没说）——空的时候界面上别硬编一句，
+   *  后端没有替它编（ADR 0005）。 */
+  note: string;
+  /** 开头一段，定长（后端 `agent.candidates.PREVIEW_UNITS` + `……`）。 */
+  preview: string;
+  created_at: string;
+  /** 它进过书没有。**不是「被选中」**：作者可以在版本历史里把它退回去。 */
+  landed: boolean;
+}
+
+/** 一稿的全文。**摊开那一版读的就是它。** */
+export interface DraftCandidateDetail extends DraftCandidateView {
+  /** 一稿正文，**不含章标题**（那一行是切章的锚，属于作者）。 */
+  text: string;
+}
+
+export interface ChapterDrafts {
+  drafts: DraftCandidateView[];
+}
+
 /** 停法的机器码。**一个都不许上屏**——它是 snake_case，形状判据会当场咬住它。
  *  给作者看的那句话是 `TurnReceipt.message`（后端 `stop_wording()` 写好的）。 */
 export type ChatStopReason =
@@ -827,6 +865,13 @@ export interface TurnReceipt {
   /** 有几次调用没量准。**不为零时上面那个数是低估**，界面上不许把它当全部。 */
   calls_without_usage: number;
   context: ChatContextReceipt;
+  /** 这一轮写出来的那几稿，后端已按「第几章 + 第几稿」排好序（ADR 0022）。
+   *
+   *  **界面照这个顺序摆，不许自己再排一遍**：并发跑的稿子谁先回来是随机的，
+   *  按别的口径重排会让作者每次刷新看到的次序都不一样。
+   *
+   *  `landed=true` 的那一稿已经在书里了 ⇒ **那一章的正文变了**，该重取一次。 */
+  drafts: DraftCandidateView[];
 }
 
 export interface ChatStopped {

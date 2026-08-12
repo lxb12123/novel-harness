@@ -87,6 +87,10 @@ const DEFAULT: Handler[] = [
   { method: "POST", match: /\/chats\/[^/]+\/stop$/, body: fixtures.chatStopped },
   { method: "DELETE", match: /\/chats\/[^/]+$/, body: fixtures.chatDeleted },
   { match: /\/chats\/[^/]+$/, body: fixtures.chatDetail },
+  // 桌上摆着的那几稿（ADR 0022）。两条**形状上不重叠**：详情那条要求 `/drafts/` 后面
+  // 还有一段，列表那条要求 `/drafts` 之后直接是查询串或结尾。
+  { match: /\/drafts\/[^/]+$/, body: fixtures.draftDetail },
+  { match: /\/drafts(\?|$)/, body: fixtures.drafts },
 ];
 
 /** 把 fetch 换成查表。**没有匹配上就抛**——静默返回空数组会让组件渲染出一个
