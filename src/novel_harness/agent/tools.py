@@ -33,6 +33,7 @@ agent 调一次就把 PLANNED 秘密的正文读进对话历史，而对话是�
 | `draft_chapter`     | 起草第 N 章的一稿，**收进候选、不动书** | **一整章正文**（只给 id + 定长预览 + 自述） |
 | `save_draft`        | 把某一稿写进它那一章（**不问作者**） | —— 见下面「落盘」那一节 |
 | `read_draft`        | 按 id 把某一稿的全文拿回来 | —— 最贵的一条，只在要合并两版时调 |
+| `ask_author`        | 停下来问作者一句，给他几个可点的选项 | —— 见下面「问作者」那一节 |
 
 **书内索引**（`index.py`，四层，越往下越贵；那份 docstring 是它的规格）：
 
@@ -70,6 +71,24 @@ ADR 0019 边界一原来的最后一条是「写正文必须作者确认，模�
 的 `WRITER_BANNED`）：前者是秘密的内容 tell（`玄血蛊`）——进对话就是把检测器要找的词
 自己写进去；后者会给「第二份约束推导」开门，而约束集只许有一个入口
 （`panel/constraints.py`）。
+
+── 问作者：**模型决定什么时候问，作者决定答什么**（ADR 0024，2026-08-12）────────
+
+`ask_author` 是表里第一条**不查东西、也不做东西**的工具：它把一句问话和几个可点的选项
+交出去，然后这一轮就结束了。三条边界：
+
+- **它不碰 `ToolContext`。** handler 里一个 `context.` 都没有，出参逐字段就是入参——
+  **引擎往问句里加不了一个字**。这不是纪律，是这条工具的实现里根本没有数据来源。
+  「问句里不许夹带秘密」（ADR 0024）在引擎这一侧只能做到这一步：**判断一句话是不是
+  说破了秘密要回答「这句话是什么意思」，那是语义判断**（ADR 0005 禁止 v1 长出这种能力）。
+  能做到的是「引擎不给它任何新料」，而模型手上本来就只有显示名。
+- **入参形状就是「这是个问题」。** 至少两个选项、每个都短到能摆成一颗按钮
+  （`ASK_OPTION_UNITS`）——**一段散文进不来**。一个问句混在普通回话里，作者会当成
+  陈述句翻过去，而「我在等你」必须在结构上分得开。
+- **什么时候该问写在 `description` 里，不写成代码里的判据。** 「不问就得猜、而猜错了
+  作者看不出来」是语义判断，那是**模型**的活（ADR 0005 禁的是引擎）。
+
+**它结束这一轮**：判据是出参的**类型**（`AuthorQuestion`），见 `ToolOutcome.asked`。
 
 ── 边界二在这里的落点：**没有一个工具收约束** ──────────────────────────
 
@@ -114,13 +133,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 from ..draft.context import (
     DraftContext,
     ResolvedConstraints,
     unknown_cast_constraints,
 )
+from ..draft.length import DraftLanguage, count_units
 from ..draft.provider import ToolCall
 from ..extract.call_audit import ModelCallReceipt
 from ..graph import NodeLabel, NodeRef
@@ -176,6 +196,59 @@ class CharacterStateArgs(BaseModel):
 
 # `DraftAsk` 在 `ports.py`——它是**注入契约的一半**（`DraftFn` 收的就是它），
 # 和起草那个接线口放在一起才看得出「起草侧拿不到模型给的约束」是结构而不是纪律。
+
+
+ASK_QUESTION_UNITS: Final = 60
+"""问句最多多少字（`count_units` 口径）。**一句话，不是一段。**"""
+
+ASK_OPTION_UNITS: Final = 24
+"""一个选项最多多少字。**它要摆成一颗按钮**——摆不下的就不是选项，是散文。"""
+
+ASK_MIN_OPTIONS: Final = 2
+ASK_MAX_OPTIONS: Final = 5
+"""几个选项。下限 2 是这条工具的形状本身（一个选项的「选择」不是选择）；
+上限 5 是屏幕上一眼看得完的量——再多作者只会点第一个。"""
+
+
+class AskAuthorArgs(BaseModel):
+    """停下来问作者一句。**这不是一次查询，它没有章号**（见模块 docstring「问作者」）。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    question: str = Field(
+        min_length=1,
+        description=(
+            "问他的那一句话，一句就够。用他自己的说法（人物名、场景），"
+            "不要提工具名和编号。"
+        ),
+    )
+    options: tuple[str, ...] = Field(
+        min_length=ASK_MIN_OPTIONS,
+        max_length=ASK_MAX_OPTIONS,
+        description=(
+            "几个他能直接点的答案，每个都短。**它们是几条不同的走法，不是同一条的复述。**"
+            "他也可以不点、直接说别的。"
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _short_enough_to_be_buttons(self) -> AskAuthorArgs:
+        """长度在这儿拒，不在别处被悄悄截断。**报错里不回显他/它写了什么**
+        （同 `_validation_message`：这一层是把任意字符串搬进持久化对话的通路）。"""
+        if count_units(self.question, DraftLanguage.ZH) > ASK_QUESTION_UNITS:
+            raise ValueError(
+                f"问句太长了（上限 {ASK_QUESTION_UNITS} 字）。作者要一眼看完它才答得上来，"
+                "把背景放到你正文里说，这里只留那一问。"
+            )
+        for option in self.options:
+            if not option.strip():
+                raise ValueError("有一个选项是空的：每一个都要是他点得下去的一句话。")
+            if count_units(option, DraftLanguage.ZH) > ASK_OPTION_UNITS:
+                raise ValueError(
+                    f"有选项太长了（上限 {ASK_OPTION_UNITS} 字）。选项是一颗按钮，"
+                    "不是一段解释——把解释放进问句前面那句正文里。"
+                )
+        return self
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -366,6 +439,33 @@ class DraftFullText(BaseModel):
     """
 
 
+class AuthorQuestion(BaseModel):
+    """模型停下来问作者的那一句 + 几个可点的选项（ADR 0024）。
+
+    **它是一个类型，不是一个约定的字段名**——`ToolOutcome.asked` / `TurnResult.asked` /
+    事件流三处都认这一个类型，所以「这一轮停在一个问题上」在结构上分得开，
+    而不是靠界面去猜哪一段话是问句。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    question: str
+    options: tuple[str, ...] = ()
+
+
+class AskAuthorResult(AuthorQuestion):
+    """`ask_author` 的出参：**问句原样交回来** + 一句说给模型听的话。
+
+    **出参逐字段等于入参**（`note` 除外）——引擎不往问句里加一个字，也没地方能加：
+    这条 handler 里一个 `context.` 都没有。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    note: str = ""
+    """说给**模型**听的那句：这一轮到此为止。**不是给作者的。**"""
+
+
 class ToolOutcome(BaseModel):
     """一次工具调用的结果。**`content` 就是要贴回对话里的那段字。**
 
@@ -402,6 +502,19 @@ class ToolOutcome(BaseModel):
 
     取法是**结构判断**（这个入参模型上有没有一个叫 `chapter` 的整数字段），不是一张
     「哪个工具绑章号」的表：表会在加工具的那天漂，而结构不会。
+    """
+
+    asked: AuthorQuestion | None = None
+    """模型这一次是**停下来问作者**（ADR 0024）。非空 ⇒ **这一轮到此为止**。
+
+    ── 为什么判据是出参的类型，不是工具名，也不是 `ToolSpec` 上一个开关 ──────────
+
+    「哪个工具会结束一轮」是一张会漂的表（同 `TurnLimits.max_calls_per_step` 那条
+    「按工具名给闸门」）。而**一条工具的出参是不是一句问作者的话**是它自己的类型说了算
+    （`isinstance(payload, AuthorQuestion)`）——加第二条会问的工具那天，它自动被认出来。
+
+    **只在 `ok=True` 时非空**：参数不合法的那一次不是一次提问，模型该把参数改对重发，
+    而不是让一次填错的调用替它结束这一轮。
     """
 
 
@@ -549,6 +662,29 @@ def _handle_save_draft(args: DraftIdArgs, context: ToolContext) -> LandingResult
     return LandingResult(chapter=report.chapter, landed=report.landed, note=report.note)
 
 
+ASK_ACKNOWLEDGED: Final = (
+    "这个问题已经摆到作者面前了，这一轮到此为止——他答完你会看见他那句回答，"
+    "那时再接着往下走。别在同一轮里替他先假定一个答案。"
+)
+"""`ask_author` 交回给**模型**的那句话。**它不上屏**（给作者看的那一句在 `loop.py`）。
+
+最后一句不是客套：模型在同一轮里既问又猜，作者就会同时收到一个问题和一份照猜写出来的稿子
+——而那正是 ADR 0024 要这条工具去掉的东西。**结构上也堵住了**（这一轮当场结束），
+这句话是给它的解释，免得它把「没写成」理解成一次失败去重试。
+"""
+
+
+def _handle_ask_author(args: AskAuthorArgs, context: ToolContext) -> AskAuthorResult:
+    """把问句原样交回来。**这里一个 `context.` 都没有，所以引擎加不进一个字。**
+
+    参数 `context` 收着不用是有意的：工具表的形状是 `(args, context)`，为这一条破例
+    会让 `ToolSpec.handler` 的类型分叉。**它不被用到本身就是那条边界的执行者**。
+    """
+    return AskAuthorResult(
+        question=args.question, options=args.options, note=ASK_ACKNOWLEDGED
+    )
+
+
 def _handle_read_draft(args: DraftIdArgs, context: ToolContext) -> DraftFullText:
     stored = _desk(context).recall(args.draft_id)
     return DraftFullText(
@@ -580,6 +716,20 @@ class ToolSpec:
     args: type[BaseModel]
     handler: Callable[[Any, ToolContext], BaseModel]
 
+    label: str = ""
+    """**说给小说作者听的那半句**（「读一章正文」），事件流拿它拼「正在……」。
+
+    ── 为什么它在这张表上，而不在事件那一层的一张对照表里 ────────────────────
+
+    对照表会在加工具的那天漂，而漂掉的形态是**作者的屏幕上出现一个工具名**
+    （`character_chapters`）——snake_case 摆在「用 WPS 不想碰命令行」的人脸上。
+    写在这一行，加工具的人就在同一个地方被问到「这件事怎么跟他说」。
+
+    **空 = 没写**，`tool_label()` 那时给一句不认字的通用说法，**绝不原样回吐工具名**
+    （同 `stop_wording()` / `activity._kind_label`）。空着不是一个可选项：
+    `tests/test_agent_events.py` 会红。
+    """
+
     concurrent: bool = False
     """这一条能不能和同一批里的别几条**同时跑**（`BatchRunner`）。**默认 False = fail-closed。**
 
@@ -607,6 +757,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=SceneConstraintsArgs,
         handler=_handle_scene_constraints,
+        label="查这一章不许说破什么",
     ),
     ToolSpec(
         name="character_state",
@@ -615,6 +766,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=CharacterStateArgs,
         handler=_handle_character_state,
+        label="查一个人此刻的处境",
     ),
     ToolSpec(
         name="draft_chapter",
@@ -629,6 +781,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=DraftAsk,
         handler=_handle_draft_chapter,
+        label="写一稿",
         # 表里唯一一条又慢又没有副作用的工具 —— 见 `ToolSpec.concurrent`。
         concurrent=True,
     ),
@@ -645,6 +798,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=BookIndexArgs,
         handler=handle_book_index,
+        label="翻这本书的目录",
     ),
     ToolSpec(
         name="character_chapters",
@@ -656,6 +810,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=CharacterChaptersArgs,
         handler=handle_character_chapters,
+        label="找这几个人同时出现的章",
     ),
     ToolSpec(
         name="chapter_summaries",
@@ -667,6 +822,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=ChapterSummariesArgs,
         handler=handle_chapter_summaries,
+        label="读这几章的摘要",
     ),
     ToolSpec(
         name="chapter_text",
@@ -676,6 +832,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=ChapterTextArgs,
         handler=handle_chapter_text,
+        label="读一章正文",
     ),
     # ── 起草那一摊的另外两半（ADR 0022）。**追加在表尾，尽管它俩是 `draft_chapter` 的
     # 同伙**：按边界六，声明是能进稳定前缀的东西之一，在中间插一条会把它后面整段的
@@ -690,6 +847,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=DraftIdArgs,
         handler=_handle_save_draft,
+        label="把稿子存进那一章",
     ),
     ToolSpec(
         name="read_draft",
@@ -700,6 +858,26 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=DraftIdArgs,
         handler=_handle_read_draft,
+        label="把那一稿的全文取回来",
+    ),
+    # ── 问作者（ADR 0024）。**追加在表尾**，理由同上面那两条。
+    ToolSpec(
+        name="ask_author",
+        description=(
+            "停下来问作者一句，给他几个能直接点的选项。**说完这一句你这一轮就结束了**，"
+            "他答完你会看见他的回答——所以别在同一轮里又问又猜。\n"
+            "**什么时候问**：只在「不问就得猜，而猜错了他看不出来」的时候。"
+            "那种事只有一类——答案在他脑子里，书里查不到："
+            "这一场他想不想让某个人知道那件事、这条线往哪个方向收、两个版本里他要哪一个。\n"
+            "**什么时候不问**：书里查得到的（谁在哪、哪章说过什么、上一章怎么写的）自己去查；"
+            "改一改就能重来的小事（语气、长短）自己定，写完他看得见。"
+            "每一轮都问他一句，等于把想事情这件事退回给他。\n"
+            "**叫这个工具的同一步里，先用一句话交代背景**（你查到了什么、卡在哪儿）："
+            "那句话进对话记录，问句和选项另外摆成一张卡。"
+        ),
+        args=AskAuthorArgs,
+        handler=_handle_ask_author,
+        label="问你一句",
     ),
 )
 """**模式二的权限边界。这张表以外的能力，模型一律没有。**
@@ -712,6 +890,20 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
 TOOLS: Final[dict[str, ToolSpec]] = {spec.name: spec for spec in TOOL_TABLE}
 
 TOOL_NAMES: Final[frozenset[str]] = frozenset(TOOLS)
+
+UNNAMED_TOOL_LABEL: Final = "查一样东西"
+"""表里认不出的那个名字，跟作者怎么说。**认不出的绝不原样回吐**（同 `stop_wording()`）。
+
+这一条不是防御性编程，它堵的是一个真的通路：**工具名是模型打进来的字**
+（`dispatch` 的第一种失败就是「模型幻想出来的名字」）。原样摆上屏 = 屏幕上出现一串
+snake_case，往坏里说 = 模型编的任意一段话直接进了作者的界面。
+"""
+
+
+def tool_label(name: str) -> str:
+    """这次调用跟**小说作者**怎么说。**措辞的唯一出处**，事件那一层不许再翻一遍。"""
+    spec = TOOLS.get(name)
+    return spec.label if spec is not None and spec.label else UNNAMED_TOOL_LABEL
 
 
 def tool_declarations() -> list[dict[str, Any]]:
@@ -792,6 +984,22 @@ def _answered_chapter(payload: BaseModel) -> int | None:
     return _asked_chapter(payload)
 
 
+def _asked_question(payload: BaseModel) -> AuthorQuestion | None:
+    """这次调用是不是**停下来问作者**（ADR 0024）。**判据是类型，不是字段名。**
+
+    和 `_billed_calls` 那条鸭子判断有意不同：一个恰好有 `question` 字段的出参（比如
+    以后某个「他问过什么」的查询）不该被当成一次提问——那会让这一轮凭空结束，
+    而作者看到的是「它问了你一句」却没有问题。类型判断没有这个歧义，
+    而且加第二条会问的工具那天它自动被认出来（`AuthorQuestion` 的子类）。
+
+    **收窄成 `AuthorQuestion` 再交出去**：`AskAuthorResult` 上还有一句给模型的话
+    （`note`），那句不该跟着问题摆到作者面前。
+    """
+    if not isinstance(payload, AuthorQuestion):
+        return None
+    return AuthorQuestion(question=payload.question, options=payload.options)
+
+
 def _validation_message(exc: ValidationError) -> str:
     """把 pydantic 的报错压成一句模型读得懂的话。**只带字段名和原因，不回显入参。**
 
@@ -865,6 +1073,9 @@ def dispatch(call: ToolCall, context: ToolContext) -> ToolOutcome:
         content=payload.model_dump_json(),
         chapter=chapter if chapter is not None else _answered_chapter(payload),
         calls=_billed_calls(payload),
+        # **只有成功这一条路带得出提问**（见 `ToolOutcome.asked`）：一次参数填错的
+        # `ask_author` 不是一次提问，模型该把它改对重发。
+        asked=_asked_question(payload),
     )
 
 
@@ -945,11 +1156,31 @@ class BatchRunner:
     """
 
     def __init__(
-        self, calls: Sequence[ToolCall], context: ToolContext, *, workers: int = 1
+        self,
+        calls: Sequence[ToolCall],
+        context: ToolContext,
+        *,
+        workers: int = 1,
+        on_start: Callable[[int], None] | None = None,
     ) -> None:
+        """`on_start(下标)`：**这一条真的开跑了**（ADR 0024 的事件流要说「正在查什么」）。
+
+        ── 为什么这一声必须由这一层喊 ────────────────────────────────────────
+
+        调用方（`agent/loop.py`）是一条一条 `take()` 的，但**一个并发窗口是一次跑完的**。
+        在 `take(i)` 之前自己喊一声，并发那一档喊出来的顺序就是
+        「第 1 稿开始 → 第 1 稿好了 → 第 2 稿开始」——而实际上三稿是同时在写、同时写完的。
+        那是一句**读起来完全正常的假话**，而这个仓库最贵的错误正是那一种。
+
+        窗口的边界是这一层的私有逻辑（`_concurrent`），在外面重算一份就是第二处会漂的
+        实现。所以这一声在 `_run_window` 里喊，一个窗口里那几条一起喊。
+
+        它跑在**调用方那条线**上（提交给线程池之前），所以不需要线程安全。
+        """
         self._calls = list(calls)
         self._context = context
         self._workers = max(1, workers)
+        self._on_start = on_start
         self._done: dict[int, ToolOutcome] = {}
 
     def __len__(self) -> int:
@@ -978,6 +1209,9 @@ class BatchRunner:
         if self._workers > 1 and self._concurrent(start):
             while end < len(self._calls) and self._concurrent(end):
                 end += 1
+        if self._on_start is not None:
+            for index in range(start, end):
+                self._on_start(index)
         if end - start == 1:
             # **裸调用，外面没有 try/except**（`dispatch` 的四种失败都是正常返回）。
             self._done[start] = dispatch(self._calls[start], self._context)

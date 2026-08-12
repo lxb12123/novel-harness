@@ -52,6 +52,7 @@ from ..draft.capabilities import (
     CapabilityError,
     ProviderCapabilities,
     ReasoningEffort,
+    ResolvedCallPlan,
     plan_call,
 )
 from ..draft.context import DraftContext
@@ -68,7 +69,7 @@ from ..events import EventStore
 from ..extract.call_audit import ModelCallReceipt
 from ..graph import GraphStore
 from .candidates import DraftCandidate, DraftCandidateStore, StoredDraft
-from .loop import Cancellation
+from .loop import Cancellation, EventFn, TurnEvent, safe_emitter
 from .model import cancellable_client
 from .ports import DraftAsk, DraftProduct, LandingReport, ToolRefused
 
@@ -228,6 +229,7 @@ class ChapterDesk:
         length: LengthSpec = AGENT_DRAFT_LENGTH,
         db_lock: AbstractContextManager[Any] | None = None,
         cancel: Cancellation | None = None,
+        on_event: EventFn | None = None,
     ) -> None:
         self._store = store
         self._conn = conn
@@ -243,6 +245,43 @@ class ChapterDesk:
 
         `None` = 这一轮没接停止信号 ⇒ 起草不走流式 ⇒ 打断退化成「这一稿写完才停」。
         那不是坏了，那是没接线的那一档（CLI / 测试里的那些形态）。
+        """
+        self._emit = safe_emitter(on_event)
+        self._listening = on_event is not None
+        """这一轮的事件接线口（ADR 0024）。**和 `run_turn` 拿的必须是同一个**。
+
+        ── 一条连带的事实，写在这儿免得下一个人当成 bug ────────────────────────
+
+        **没有停止信号就没有流，也就没有「边写边看」**：`interruptible` 决定流式
+        （`plan_call`），而它今天等于「接没接停止信号」。所以这两件事在产品上是**捆着的**
+        ——作者能看见它写字，就一定能按停它。反过来说，`cancel=None` 而 `on_event` 接了的
+        那一档（CLI）只会看见「开始写」和「写好了」两声，中间没有字。那不是坏了。
+        """
+        self._streams = 0
+        self._stream_lock = threading.Lock()
+        """这一轮开过几条字流。**同一章的三稿连章号都一样**（ADR 0022 的一批三稿），
+        没有这个数就没法把三条同时到达的流分开摆（见 `TurnEvent.stream`）。
+
+        **它必须加锁**，而且正是因为它存在的理由：`write()` 在一批并发起草里跑在
+        **工作线程**上（`BatchRunner` 的线程池），`+= 1` 不是原子的——两条流拿到同一个号，
+        界面就会把两稿的字拼成一段，而那正是这个数要防的事。
+        """
+        self._open_streams: set[int] = set()
+        """已经喊过「正在写」、**还没喊过结局**的那几条流（用上面那把锁）。
+
+        ── 一条开了口的流必须有人给它收尾 ────────────────────────────────────
+
+        「正在写第 N 章的一稿」是在真的去调模型**之前**喊的（得先拿到流号）。那次调用
+        失败的路有四条（发出去之前被拒 / 联系不上模型 / 客户端建不起来 / 写手交回来是空的），
+        它们全都 `raise ToolRefused` ——**一条带这个流号的事件都不再有**。
+
+        界面按 `TurnEvent.stream` 分组（一批三稿连章号都一样，没有它就分不开），
+        于是那一格是一个**永远转下去的图标**——ADR 0024 要治的正是那个东西，
+        这一刀不该顺手造一个新的。上层那条 `tool_finished(ok=False)` 补不上：
+        它身上 `stream` 是 0，三稿同框时说不出死的是哪一条。
+
+        **判据做成集合而不是一串 except**：`write()` 出口有五个（一个成功、四个抛），
+        照着列会在加第五条失败路径的那天漏掉一个，而漏掉的症状不是报错，是一个转圈的图标。
         """
         # **碰库要排的那道队**，和 `ToolContext.db_lock` 必须是**同一把**
         # （见 `agent/ports.py` 上那段实测）。装配层不给就自己造一把——那是
@@ -294,6 +333,34 @@ class ChapterDesk:
         current = importer.read_chapter(self._root, ask.chapter)
         base_sha = None if current is None else importer.text_digest(current)
 
+        # **流号在这儿发，不在事件里数**：一批三稿是同时在飞的，事件那一层数不出
+        # 「这一片属于哪一稿」。`_streams` 只增不减，所以同一轮里三条流永远不撞号。
+        with self._stream_lock:
+            self._streams += 1
+            stream = self._streams
+            self._open_streams.add(stream)
+        self._emit(TurnEvent.draft_started(ask.chapter, stream=stream))
+
+        # **`finally` 不是防御性编程，它是「一条流只有一个终点、而且一定有一个」**
+        # （见 `_open_streams`）：下面五个出口里有四个是抛出去的，照着列 except 会在
+        # 加第五条失败路径的那天漏掉一个，而漏掉的症状是一个永远转下去的图标。
+        try:
+            return self._write_the_open_stream(
+                ask, ctx, plan, base_sha=base_sha, stream=stream
+            )
+        finally:
+            self._close_stream(ask.chapter, stream)
+
+    def _write_the_open_stream(
+        self,
+        ask: DraftAsk,
+        ctx: DraftContext,
+        plan: ResolvedCallPlan,
+        *,
+        base_sha: str | None,
+        stream: int,
+    ) -> DraftProduct:
+        """`write()` 里**「正在写」已经喊出去之后**的那一段。见那儿的 `finally`。"""
         request = ChapterDraftRequest(
             goal=ask.goal + _SELF_NOTE_ASK,
             length=self._length,
@@ -321,7 +388,11 @@ class ChapterDesk:
                 # 把作者的「停」带进那一次调用里。**这是既有那三样的最后一段线**
                 # （`complete(client=…)` 收 client、`_CancellableClient` 就是那个包装、
                 # `generate_draft` 已经把 client 往下透传）——**没有第二个取消机制**。
-                client=self._client(),
+                #
+                # **边写边看走的是同一段线**（ADR 0024）：那些片本来就从
+                # `_CancellableClient` 过，这儿只是多递一个「这一片叫什么」的闭包。
+                # `draft/` 那一侧一个字都没动——`provider.py` 是 M2 判分链的运输层。
+                client=self._client(ask.chapter, stream),
             )
         except DraftRefused as exc:
             # 发出去之前就被拒了 ⇒ 一分钱没花 ⇒ 这一档可以裸抛（`dispatch` 变成 ok=False）。
@@ -329,7 +400,9 @@ class ChapterDesk:
         except CallInterrupted as exc:
             # **必须排在 `ProviderError` 前面**：它是那个的子类，顺序反了半截的正文
             # 就被当成一次「联系不上模型」扔掉了。
-            raise self._stopped(ask.chapter, exc, spent, base_sha=base_sha) from exc
+            raise self._stopped(
+                ask.chapter, exc, spent, base_sha=base_sha, stream=stream
+            ) from exc
         except ProviderError as exc:
             # **不许让它逃出 `dispatch`**：`run_turn` 外面没有 try/except，漏出去
             # 作者看到的是一次崩溃，而不是「这一稿没写成，再试一次」。
@@ -348,10 +421,28 @@ class ChapterDesk:
                 calls=tuple(drafted.calls),
             )
 
-        candidate = self._keep(ask.chapter, body=body, note=note, base_sha=base_sha)
+        candidate = self._keep(
+            ask.chapter, body=body, note=note, base_sha=base_sha, stream=stream
+        )
         return DraftProduct(candidate=candidate, calls=drafted.calls)
 
-    def _client(self) -> Any:
+    def _close_stream(self, chapter: int, stream: int) -> None:
+        """这条流还没喊过结局的话，**喊一声「这一稿没写成」**（ADR 0024）。
+
+        写成了的那一档由 `_keep` 收尾（它才知道这是第几稿、多少字），所以这儿是
+        no-op；剩下的四条路都是抛出去的，它们的结局只有这一声。
+
+        **为什么这一声里没有「为什么没成」**：那是工具返回，`tool_finished(ok=False)`
+        已经替它说了「它看得见为什么，会自己换个法子」。原因原文里有端点地址和模型名
+        （`ProviderError`），那是写给维护者的，同 `TurnResult.maintainer_note`。
+        """
+        with self._stream_lock:
+            if stream not in self._open_streams:
+                return
+            self._open_streams.discard(stream)
+        self._emit(TurnEvent.draft_failed(chapter, stream=stream))
+
+    def _client(self, chapter: int, stream: int) -> Any:
         """这一次起草调用要用的客户端。**没接停止信号就是 `None`**（走默认那条路）。
 
         Raises:
@@ -361,16 +452,35 @@ class ChapterDesk:
         """
         if self._cancel is None:
             return None
+        # **没人听的时候连闭包都不造**（同 `ProviderModelPort`）：这条路上一次生成有
+        # 上千片，每片造一个 `TurnEvent` 再扔掉是白付的钱。`None` 走的是 `_watch` 里
+        # 那条老路径，一个多余的动作都没有。
+        on_text = (
+            (lambda piece: self._emit(TurnEvent.draft_delta(chapter, piece, stream=stream)))
+            if self._listening
+            else None
+        )
         try:
-            return cancellable_client(self._config, self._cancel)
+            return cancellable_client(self._config, self._cancel, on_text)
         except ProviderError as exc:
             raise ToolRefused(f"这一稿没写成，联系不上写作模型：{exc}") from exc
 
     def _keep(
-        self, chapter: int, *, body: str, note: str, base_sha: str | None, stopped: str = ""
+        self,
+        chapter: int,
+        *,
+        body: str,
+        note: str,
+        base_sha: str | None,
+        stopped: str = "",
+        stream: int = 0,
     ) -> DraftCandidate:
         """把一稿收进候选表，并记在这一轮的产出里。**写完的和半截的走同一条路**——
         两条路的那一天，「半截那一份忘了进 `produced`」就是屏幕上少一稿而不报错。
+
+        **「第几稿写好了」那一声也在这儿喊**，同一条理由：喊在两个地方就会漏掉半截那一档，
+        而那一档在屏幕上必须说自己没写完（`TurnEvent.draft_kept`）。**第几稿这个数只有
+        这一层知道**——它是候选表现算的，上面那层要拿到它就得去解析工具返回的 JSON。
         """
         candidate = self._candidates.put(
             self._project_id,
@@ -381,6 +491,20 @@ class ChapterDesk:
             stopped_reason=stopped,
         )
         self.produced.append(candidate)
+        # **这一声就是那条流的结局**，所以先把它从「还开着」里划掉：`write()` 的
+        # `finally` 随后看到它已经收过尾，不会再喊一声「没写成」（见 `_open_streams`）。
+        # 半截那一档也走这儿——它收进表了，说的是「停在这儿了」，不是「没写成」。
+        with self._stream_lock:
+            self._open_streams.discard(stream)
+        self._emit(
+            TurnEvent.draft_kept(
+                chapter,
+                ordinal=candidate.ordinal,
+                units=candidate.units,
+                stream=stream,
+                stopped=bool(stopped),
+            )
+        )
         return candidate
 
     def _stopped(
@@ -390,6 +514,7 @@ class ChapterDesk:
         spent: list[ModelCallReceipt],
         *,
         base_sha: str | None,
+        stream: int = 0,
     ) -> ToolRefused:
         """作者按停时这一稿的归宿：**存下来、标上、把已经花的钱带走。**
 
@@ -429,7 +554,12 @@ class ChapterDesk:
         # （`DraftFullText.stopped_reason`），作者在版本历史里退得回去——ADR 0022 的
         # 立场原样成立：这一层只负责让**它是半截**这件事没人能不知道。
         candidate = self._keep(
-            chapter, body=body, note=note, base_sha=base_sha, stopped=AUTHOR_STOPPED_NOTE
+            chapter,
+            body=body,
+            note=note,
+            base_sha=base_sha,
+            stopped=AUTHOR_STOPPED_NOTE,
+            stream=stream,
         )
         return ToolRefused(
             f"第 {chapter} 章这一稿按作者的意思停下了。已经写出来的那部分留下来了"
@@ -497,6 +627,7 @@ def chapter_drafter(
     length: LengthSpec = AGENT_DRAFT_LENGTH,
     db_lock: AbstractContextManager[Any] | None = None,
     cancel: Cancellation | None = None,
+    on_event: EventFn | None = None,
 ) -> ChapterDesk:
     """造一个起草台（生成 / 落盘 / 读回）。**装配层调它**（`api/chat.py`）。
 
@@ -512,6 +643,9 @@ def chapter_drafter(
             （`api/chat.py` 从 `LIVE.begin()` 拿到之后两处都传它）：两个信号 =
             按停只停住其中一半，而作者看到的是「按了停，那一稿还在写」。
             `None` = 这一轮停不了起草（退化成「这一稿写完才停」）。
+        on_event: 边写边往外喊（ADR 0024）。**同样要和这一轮 `run_turn` 拿的是同一个**
+            ——两个接线口 = 一半的事件到了界面、另一半掉在地上，而作者看到的是
+            「它说在写，然后什么都没有，然后突然写完了」。`None` = 起草这一档不喊。
     """
     return ChapterDesk(
         store=store,
@@ -525,6 +659,7 @@ def chapter_drafter(
         length=length,
         db_lock=db_lock,
         cancel=cancel,
+        on_event=on_event,
     )
 
 

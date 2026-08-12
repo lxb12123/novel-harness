@@ -708,7 +708,7 @@ def run_chat(
     # 不进 `ToolContext`（边界一，见 `_tool_context`）。
     store: GraphStore = Depends(get_store),
 ) -> TurnReceipt:
-    """跑一轮：模型说话、叫工具，直到它收手或者代码把它停下来（九种停法）。
+    """跑一轮：模型说话、叫工具，直到它收手或者代码把它停下来（十一种停法）。
 
     **这一版 HTTP 不流式**（内部是流式的，打断才能中途生效）。往浏览器流是 3.5 的决定，
     这儿不替它定。

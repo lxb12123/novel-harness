@@ -36,11 +36,19 @@
 **起草那一档 2026-08-12 起走的是另一条**：`plan_call(..., interruptible=True)`
 （`ResolvedCallPlan.interruptible`）—— 显式说出「这次要能中途停」，能力表照旧说了算
 （未登记 ⇒ 仍然不流式 ⇒ 仍然退化成「这一稿写完才停」）。抬预算那条路一步没走。
+
+**这条落差直接决定了 ADR 0024 的「边写边看」今天落在哪一档**（2026-08-12 加）：
+那份 ADR 说的是「那些片本来就在我们手里，只是没往外递」——**在手里的是起草那一档的片**。
+对话回复走非流式的一次往返，里面没有「写到一半」这个时刻可以插进去，所以
+`REPLY_DELTA` 在产品上今天基本不响，响的是 `DRAFT_DELTA`。而那正是 ADR 0024 §2
+举的那个例子要的东西（「读到第三行发现语气不对 ⇒ 第 5 秒按停」——他读的是**稿子**）。
+`tests/test_chat_boundary.py::test_todays_agent_call_is_not_streaming_…` 钉着这条落差，
+**别为了让回复也流式去抬输出预算**（上一段写着那样会让没登记的端点整个用不了）。
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any, Final
 
 from ..draft.capabilities import (
@@ -53,7 +61,7 @@ from ..draft.capabilities import (
 from ..draft.generate import CallInterrupted
 from ..draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage, LengthSpec
 from ..draft.provider import CompletionResult, ProviderConfig, ProviderError, complete
-from .loop import Cancellation
+from .loop import Cancellation, EventFn, TurnEvent, safe_emitter
 
 AGENT_REPLY_LENGTH: Final = DEFAULT_LENGTH_POLICY.validate_spec(
     LengthSpec(
@@ -116,8 +124,12 @@ def _visible_text(chunk: Any) -> str:
     return "".join(out)
 
 
-def _watch(chunks: Any, cancel: Cancellation) -> Iterator[Any]:
-    """把一条流包成「每一片都先问一次信号」的流。
+TextSink = Callable[[str], None]
+"""流上每收到一片可见正文就叫一次。**它不是 `EventFn`**，理由在 `_watch` 的 docstring。"""
+
+
+def _watch(chunks: Any, cancel: Cancellation, on_text: TextSink | None = None) -> Iterator[Any]:
+    """把一条流包成「每一片都先问一次信号」的流，**顺手把那一片字递出去**（ADR 0024）。
 
     `finally` 里关掉上游：作者按了停，那条 HTTP 连接就该断掉，而不是留着让服务端
     继续把整份输出生成完。**但别把这句话说成省钱**——断开连接 ≠ 停止生成 ≠ 停止计费，
@@ -125,6 +137,17 @@ def _watch(chunks: Any, cancel: Cancellation) -> Iterator[Any]:
     把这条诚实话摆给了上面那层）。
 
     停下来时抛的那一份**带着已经收到的正文**（`partial_text`），理由见 `_visible_text`。
+
+    ── `on_text` 为什么是 `Callable[[str], None]` 而不是 `EventFn` ──────────────
+
+    **这一层不知道自己在为谁数字。** 同一个包装同时给两条路用：对话回复（`REPLY_DELTA`）
+    和起草（`DRAFT_DELTA`，带章号和流号）。让它认得事件类型，就等于让它认得
+    「这是第几章的第几稿」——那是上面那层的事。所以它只管把字递上去，
+    **由持有者决定这一片叫什么**（`ProviderModelPort` / `ChapterDesk`）。
+
+    **发不出去不许拿走这一次调用**：一个掉线的界面不该让作者已经付过钱的那一段字连同
+    这次调用一起没掉。包安全的那一层在 `loop.safe_emitter`，这里再兜一次是因为
+    **这一处是在 `provider.complete()` 的 try 之外**（同 `_real_client` 那条理由）。
     """
     seen: list[str] = []
     try:
@@ -132,7 +155,13 @@ def _watch(chunks: Any, cancel: Cancellation) -> Iterator[Any]:
             # **先收下这一片，再问信号。** 顺序反过来会把已经到手的那一片扔掉——
             # 它已经生成、已经付过钱了，而这一层存在的全部理由就是别让那些字白花。
             # 抛的位置一点没变（仍然是同一次迭代，仍然在 `yield` 之前）。
-            seen.append(_visible_text(chunk))
+            visible = _visible_text(chunk)
+            seen.append(visible)
+            if on_text is not None and visible:
+                try:
+                    on_text(visible)
+                except Exception:  # noqa: BLE001 —— 见 docstring 最后一段
+                    pass
             if cancel.stopped:
                 raise AgentCancelled("作者中止了这一次调用", partial_text="".join(seen))
             yield chunk
@@ -143,9 +172,10 @@ def _watch(chunks: Any, cancel: Cancellation) -> Iterator[Any]:
 
 
 class _Completions:
-    def __init__(self, real: Any, cancel: Cancellation) -> None:
+    def __init__(self, real: Any, cancel: Cancellation, on_text: TextSink | None = None) -> None:
         self._real = real
         self._cancel = cancel
+        self._on_text = on_text
 
     def create(self, **kwargs: Any) -> Any:
         if self._cancel.stopped:
@@ -156,13 +186,17 @@ class _Completions:
         if not kwargs.get("stream"):
             # 非流式：整份响应已经回来了，钱已经花掉。**这里不抛**——抛掉等于把一次
             # 已经付过费的调用从账上抹掉，而 loop 下一次检查信号照样会停。
+            #
+            # **这一档也没有片可以往外递**：一次阻塞往返里没有「写到一半」这个时刻。
+            # 对话那一档今天走的就是这条路（见模块 docstring 那段诚实交代）——
+            # 也就是说边写边看今天只在**起草**那一档是真的。
             return response
-        return _watch(response, self._cancel)
+        return _watch(response, self._cancel, self._on_text)
 
 
 class _Chat:
-    def __init__(self, real: Any, cancel: Cancellation) -> None:
-        self.completions = _Completions(real, cancel)
+    def __init__(self, real: Any, cancel: Cancellation, on_text: TextSink | None = None) -> None:
+        self.completions = _Completions(real, cancel, on_text)
 
 
 class _CancellableClient:
@@ -171,10 +205,13 @@ class _CancellableClient:
     包客户端而不是改 `provider.py`，理由有两条且都是硬的：`draft/provider.py` 是 M2
     判分链的运输层（冻结），而且**取消是编排层的概念**——运输层认得它，就等于运输层
     知道有个「作者」和一个「停」按钮，那和「运输层不认识工具表」是同一条边界。
+
+    **「边写边看」走的是同一条缝**，理由一模一样：那些片本来就从这儿过（ADR 0024
+    「缺的是最后一厘米」），而 `provider.py` 的 wire 一个字节都不许动（M2 判分链）。
     """
 
-    def __init__(self, real: Any, cancel: Cancellation) -> None:
-        self.chat = _Chat(real, cancel)
+    def __init__(self, real: Any, cancel: Cancellation, on_text: TextSink | None = None) -> None:
+        self.chat = _Chat(real, cancel, on_text)
 
 
 def _real_client(config: ProviderConfig) -> Any:
@@ -199,18 +236,30 @@ def _real_client(config: ProviderConfig) -> Any:
         raise ProviderError(f"模型客户端建不起来（base_url={config.base_url}）：{exc}") from exc
 
 
-def cancellable_client(config: ProviderConfig, cancel: Cancellation) -> Any:
+def cancellable_client(
+    config: ProviderConfig, cancel: Cancellation, on_text: TextSink | None = None
+) -> Any:
     """一个**把作者的「停」包在里面**的 OpenAI 兼容客户端。
 
     **对话和起草共用这一个包装**（`ChapterDesk` 拿它去起草那一次调用）。
     在别处再写一遍 `_CancellableClient(_real_client(...))` 就是第二个取消机制的开头，
     而我们已经选定了「信号对象 + 协作轮询」那一种（`loop.Cancellation`）。
+
+    `on_text`：每收到一片可见正文叫一次（ADR 0024）。`None` = 不递，行为逐字节同以前。
     """
-    return _CancellableClient(_real_client(config), cancel)
+    return _CancellableClient(_real_client(config), cancel, on_text)
 
 
 class ProviderModelPort:
-    """`loop.ModelPort` 的实现。**`tools` 和 `cancel` 由 loop 给，这里不替换。**"""
+    """`loop.ModelPort` 的实现。**`tools` 和 `cancel` 由 loop 给，这里不替换。**
+
+    `on_event` 是**这一轮**的事件接线口（ADR 0024）。它在构造时进来，不在 `__call__` 里
+    ——`ModelPort` 那个协议一个参数都没多，所以**别的 `ModelPort` 实现（测试里那些剧本
+    模型）一个字都不用改**，而「不传 = 逐字节不变」在这条路上是构造出来的，不是测出来的。
+
+    它和 `cancel` 是同一种东西：**一轮一个，装配层要把同一个交给 `run_turn`、这个端口和
+    起草台**（`chapter_drafter` 那段 docstring 写着两个信号会怎么坏）。
+    """
 
     def __init__(
         self,
@@ -218,10 +267,13 @@ class ProviderModelPort:
         plan: ResolvedCallPlan,
         *,
         client: Any = None,
+        on_event: EventFn | None = None,
     ) -> None:
         self._config = config
         self._plan = plan
         self._client = client
+        self._emit = safe_emitter(on_event)
+        self._streaming = on_event is not None
 
     def __call__(
         self,
@@ -231,11 +283,18 @@ class ProviderModelPort:
         cancel: Cancellation,
     ) -> CompletionResult:
         client = self._client if self._client is not None else _real_client(self._config)
+        # **没人听的时候连闭包都不造**：`on_text=None` 走的是 `_watch` 里那条老路径，
+        # 一个 `if` 都不多。有人听的时候这一片字才被复制一份递上去。
+        on_text = (
+            (lambda piece: self._emit(TurnEvent.reply_delta(piece)))
+            if self._streaming
+            else None
+        )
         return complete(
             messages,
             config=self._config,
             plan=self._plan,
-            client=_CancellableClient(client, cancel),
+            client=_CancellableClient(client, cancel, on_text),
             tools=tools,
         )
 
@@ -256,6 +315,7 @@ __all__ = [
     "AGENT_REPLY_LENGTH",
     "AgentCancelled",
     "ProviderModelPort",
+    "TextSink",
     "agent_call_plan",
     "cancellable_client",
 ]

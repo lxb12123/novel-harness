@@ -11,9 +11,10 @@
 
 1. 把工具声明发出去（`tool_declarations()`，由表生成，这儿不写第二份）；
 2. 把 `tool_call` 交给 `dispatch`，把 `tool_result` 贴回去；
-3. **在该停的时候停得下来**（九种停法，每一种都说得出自己为什么停）；
+3. **在该停的时候停得下来**（十一种停法，每一种都说得出自己为什么停）；
 4. **每一次模型调用都记一笔账**（`ledger`，见下）；
-5. **每长出一条消息就交给调用方落一次库**（`persist`，见下）。
+5. **每长出一条消息就交给调用方落一次库**（`persist`，见下）；
+6. **在每一步的边界上往外喊一声**（`on_event`，ADR 0024 —— 见下）。
 
 第 5 条不是「顺手也存一下」：**没有它，`pending_calls` 在产品里恒为空**。一轮的产物只在
 返回之后整批落库的话，进程死在中途 = 这一轮一条都没进库 = 尾巴上根本没有那条带
@@ -56,6 +57,21 @@ agent loop 是第二个会大量花钱的地方。给 `ledger` 一个 `None` 默
 就没有 token 数，而这一层不许替它编一个（`model_call.cost` 那一列至今空着，正是同一条纪律：
 BYOK 之下引擎不知道作者签的什么单价，宁可空着也不猜）。已经发出去、生成到一半被作者掐掉的
 那些 token 因此不在账上——这是今天真实的漏账口，写在这儿是为了它别被当成不存在。
+
+── 边跑边说话：**一条回调，不认识任何传输**（ADR 0024）──────────────────
+
+第 6 条只有一个函数（`EventFn`），loop 在自己**已经知道**的那几个边界上叫它：
+在查什么 / 查完了成没成 / 它这一步说了什么 / 它停下来问了作者 / 为什么停。
+WebSocket、SSE、终端刷屏都是**适配器**的事——扔掉适配器、`on_event` 空着不叫，
+就是 2026-08-12 之前那个「三分钟的黑箱」，逐字节相同。
+
+**模型吐字那两条流不在这个文件里**：它们从 `_CancellableClient` 那层流过
+（`agent/model.py` / `agent/drafting.py`），因为 loop 按定义不认识运输——
+`ModelPort` 那个协议的存在就是为了不认识。装配层把**同一个** `on_event` 交给三处，
+同 `cancel`（两个信号 = 按停只停住一半）。
+
+**事件里没有工具查到了什么**（边界一）：一轮的返回一直是投影过的，事件流不许把它摊开。
+判据在 `TurnEvent` 的类 docstring，网在 `tests/test_agent_events.py`。
 
 ── 投影：**按章号参数化，不按时间近**（边界五）────────────────────────
 
@@ -115,10 +131,13 @@ from ..draft.provider import CompletionResult, ProviderError, ToolCall
 from ..extract.call_audit import ModelCallReceipt
 from .ports import LedgerFn, ToolContext
 from .tools import (
+    TOOL_NAMES,
+    AuthorQuestion,
     BatchRunner,
     ToolOutcome,
     outdated_manuscript,
     tool_declarations,
+    tool_label,
 )
 
 _LANGUAGE: Final = DraftLanguage.ZH
@@ -751,6 +770,7 @@ class StopReason(StrEnum):
     """
 
     DONE = "done"
+    ASKED_AUTHOR = "asked_author"
     STEP_LIMIT = "step_limit"
     COST_LIMIT = "cost_limit"
     BATCH_TOO_WIDE = "batch_too_wide"
@@ -764,6 +784,7 @@ class StopReason(StrEnum):
 
 _STOP_WORDING: Final[dict[StopReason, str]] = {
     StopReason.DONE: "说完了。",
+    StopReason.ASKED_AUTHOR: "它有件事拿不准，问了你一句，正等着你答。",
     StopReason.STEP_LIMIT: (
         "这一轮它来回查了太多次，先停下来了。上面查到的东西还在，"
         "你可以看一眼，再告诉它接下来往哪儿走。"
@@ -803,6 +824,294 @@ def stop_wording(reason: StopReason) -> str:
     return _STOP_WORDING.get(reason, "这一轮先停下来了。")
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# 事件流：一轮不是黑箱（ADR 0024）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class TurnEventKind(StrEnum):
+    """这一轮跑到哪儿了。**取值是机器码**，理由同 `StopReason`：snake_case 一旦被原样
+    摆上屏，`frontend/src/test/screenGuard.ts` 和 `tests/test_wording_guard.py` 的形状
+    判据会当场咬住它。给作者看的那句话在 `TurnEvent.said_to_author`。
+    """
+
+    TOOL_STARTED = "tool_started"
+    TOOL_FINISHED = "tool_finished"
+    REPLY_TEXT = "reply_text"
+    REPLY_DELTA = "reply_delta"
+    DRAFT_STARTED = "draft_started"
+    DRAFT_DELTA = "draft_delta"
+    DRAFT_KEPT = "draft_kept"
+    DRAFT_FAILED = "draft_failed"
+    ASKED_AUTHOR = "asked_author"
+    TURN_STOPPED = "turn_stopped"
+
+
+class TurnEvent(BaseModel):
+    """一轮跑到一半时往外喊的一声（ADR 0024 决策一）。
+
+    ── 它是给谁看的：**只有界面，最终是作者** ────────────────────────────────
+
+    **模型看不见它**——模型只看得见 `project()` 出来的那份 message 数组，事件一条都不在
+    里面。所以这一层的措辞标准和 `stop_wording()` 完全一样，而不是「给日志看的」：
+    每一条要么带一句**中文的、说给小说作者听的话**（`said_to_author`），要么带一段
+    **模型自己写的字**（`text`）。两样都空的事件构造不出来（见校验器）。
+
+    ── 措辞在后端，不在界面（先例：`stop_wording()`）────────────────────────
+
+    界面拿到 `kind` 之后自己翻一遍中文 = 措辞有了第二个出处，而两份迟早漂。所以：
+
+    | 字段 | 谁写的 | 上屏吗 |
+    |---|---|---|
+    | `said_to_author` | **引擎**（这个类 + `ToolSpec.label` + `stop_wording()`） | 上 |
+    | `text` | **模型**（回话的字 / 稿子的字） | 上 |
+    | `kind` / `tool` | 机器码 | **一个字都不许上** |
+
+    ── 这里**没有**工具查到了什么（边界一，不可回收）──────────────────────
+
+    ADR 0024 自己把这一条列成最贵的代价：一轮的返回是**投影过的**（工具查到了什么根本
+    不上屏，只有一个「查了 3 次」的数），而事件流会把中间过程摊开。所以这个类上
+    **没有一个字段装得下 `ToolOutcome.content`**：查完了那一声只有「成没成」和「第几章」。
+
+    同理 `tool` 只可能是工具表里的名字，认不出的一律空——**工具名是模型打进来的字**
+    （它会幻想工具名），原样带出去等于给了它一条把任意字符串推上作者屏幕的路。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: TurnEventKind
+
+    said_to_author: str = ""
+    """说给**小说作者**听的那一句。**措辞的唯一出处就是这个类**，界面不许再翻一遍。"""
+
+    text: str = ""
+    """**模型自己写的字**，原样。回话的一片 / 一稿的一片。引擎一个字都不加。"""
+
+    tool: str = ""
+    """这一次动的是表里哪一条（机器码）。**认不出的是空的**，见类 docstring。"""
+
+    ok: bool | None = None
+    """`tool_finished` 专用：这一次成没成。**为什么没成不在这儿**（那是工具返回）。"""
+
+    chapter: int | None = None
+    index: int = 0
+    total: int = 0
+    """这一批里的第几件 / 一共几件。`total <= 1` = 这一批就一件，界面不用说这半句。"""
+
+    stream: int = 0
+    """**同一条字流的片归到一起。** 一批三稿是同时在写的（ADR 0022），三条流的片会交错
+    着到达；同一章的三稿连 `chapter` 都一样，没有这个数就没法把它们分开摆。
+    `0` = 这一轮只有一条流（回话）。**它不上屏**，它是界面分组用的钥匙。
+    """
+
+    ordinal: int = 0
+    units: int = 0
+    """第几稿 / 多少字（`draft_kept`）。**跟作者说话时说「第几稿」**，不说稿子的编号。"""
+
+    reason: StopReason | None = None
+    asked: AuthorQuestion | None = None
+    """它停下来问作者的那一句 + 几个可点的选项（ADR 0024）。"""
+
+    @model_validator(mode="after")
+    def _says_something(self) -> TurnEvent:
+        if not self.said_to_author and not self.text:
+            raise ValueError(
+                "这条事件既没有说给作者听的话，也没有模型写的字——界面拿它没法渲染，"
+                "而一条渲染不出来的事件只会变成一个转圈的图标（ADR 0024 要治的正是那个）。"
+            )
+        return self
+
+    # ── 构造口。**措辞全在这几个方法里**，别在别处拼第二句 ────────────────────
+
+    @classmethod
+    def tool_started(cls, name: str, *, index: int = 0, total: int = 0) -> TurnEvent:
+        label = tool_label(name)
+        where = f"（这一批 {total} 件里的第 {index} 件）" if total > 1 else ""
+        return cls(
+            kind=TurnEventKind.TOOL_STARTED,
+            said_to_author=f"正在{label}{where}。",
+            tool=name if name in TOOL_NAMES else "",
+            index=index,
+            total=total,
+        )
+
+    @classmethod
+    def tool_finished(cls, outcome: ToolOutcome, *, index: int = 0, total: int = 0) -> TurnEvent:
+        """**只收成没成和第几章**：`outcome.content` 一个字都不进来（见类 docstring）。
+
+        **章号是在这一声里第一次说得出口的**：开跑那一声只有工具名——参数还是一串没解析过
+        的字符串，而解析点只许有一个（`dispatch`，`ToolOutcome.chapter` 的 docstring 写着
+        为什么 loop 不许自己再解析一遍）。所以 ADR 0024 举例的那句「正在查第 40 章的约束」
+        在开跑那一刻**说不出来**，能说的是「查完了第 40 章的约束」。
+        """
+        label = tool_label(outcome.name)
+        which = "" if outcome.chapter is None else f"（第 {outcome.chapter} 章）"
+        said = (
+            f"{label}{which}，好了。"
+            if outcome.ok
+            else f"{label}{which}，这一次没成——它看得见为什么，会自己换个法子。"
+        )
+        return cls(
+            kind=TurnEventKind.TOOL_FINISHED,
+            said_to_author=said,
+            tool=outcome.name if outcome.name in TOOL_NAMES else "",
+            ok=outcome.ok,
+            chapter=outcome.chapter,
+            index=index,
+            total=total,
+        )
+
+    @classmethod
+    def reply_text(cls, text: str) -> TurnEvent:
+        """这一步它说完的那一整段。**流式那一档它和 `reply_delta` 说的是同一段字**
+        （界面二选一渲染）——非流式的时候只有这一条，而对话这一档今天多半非流式
+        （`agent/model.py` 那段诚实交代）。"""
+        return cls(kind=TurnEventKind.REPLY_TEXT, text=text)
+
+    @classmethod
+    def reply_delta(cls, text: str) -> TurnEvent:
+        return cls(kind=TurnEventKind.REPLY_DELTA, text=text)
+
+    @classmethod
+    def draft_started(cls, chapter: int, *, stream: int = 0) -> TurnEvent:
+        return cls(
+            kind=TurnEventKind.DRAFT_STARTED,
+            said_to_author=f"正在写第 {chapter} 章的一稿。",
+            chapter=chapter,
+            stream=stream,
+        )
+
+    @classmethod
+    def draft_delta(cls, chapter: int, text: str, *, stream: int = 0) -> TurnEvent:
+        return cls(
+            kind=TurnEventKind.DRAFT_DELTA, text=text, chapter=chapter, stream=stream
+        )
+
+    @classmethod
+    def draft_kept(
+        cls,
+        chapter: int,
+        *,
+        ordinal: int,
+        units: int,
+        stream: int = 0,
+        stopped: bool = False,
+    ) -> TurnEvent:
+        """**半截的那一稿不许说成写好了。** 一段断在半句的正文，作者若不知道它是被砍断的，
+        会把那个断口当成一种有意的写法（同 `DraftFullText.stopped_reason`）。"""
+        said = (
+            f"第 {chapter} 章的第 {ordinal} 稿停在这儿了，{units} 字，没写完。"
+            if stopped
+            else f"第 {chapter} 章的第 {ordinal} 稿写好了，{units} 字。"
+        )
+        return cls(
+            kind=TurnEventKind.DRAFT_KEPT,
+            said_to_author=said,
+            chapter=chapter,
+            ordinal=ordinal,
+            units=units,
+            stream=stream,
+        )
+
+    @classmethod
+    def draft_failed(cls, chapter: int, *, stream: int = 0) -> TurnEvent:
+        """**开了口的那条流的另一个结局。** 判据和措辞都在 `drafting.ChapterDesk`
+        那边（`_open_streams` / `_close_stream`），这儿只提供句式。
+
+        「正在写第 N 章的一稿」是在真的去调模型**之前**喊的，而那次调用有四条失败的路。
+        少了这一声，界面上按 `stream` 分的那一格就是一个**永远转下去的图标**——
+        ADR 0024 要治的正是那个。上层那条 `tool_finished(ok=False)` 补不上：
+        它身上 `stream` 是 0，一批三稿同框时说不出死的是哪一条。
+
+        **这儿没有「为什么没成」**：原因原文里有端点地址和模型名，那是写给维护者的
+        （同 `TurnResult.maintainer_note`），而模型看得见它、会自己换个法子。
+        """
+        return cls(
+            kind=TurnEventKind.DRAFT_FAILED,
+            said_to_author=f"第 {chapter} 章那一稿没写成，这一条先停在这儿了。",
+            chapter=chapter,
+            stream=stream,
+        )
+
+    @classmethod
+    def asked_author(cls, question: AuthorQuestion) -> TurnEvent:
+        """它停下来问了一句。**问句本身是模型的字，所以它在 `asked` 里原样带着**，
+        引擎那半句只说「有人在等你」。"""
+        return cls(
+            kind=TurnEventKind.ASKED_AUTHOR,
+            said_to_author="它有件事拿不准，问了你一句，正等着你答。",
+            asked=question,
+        )
+
+    @classmethod
+    def stopped(cls, reason: StopReason) -> TurnEvent:
+        """**措辞走 `stop_wording()`，这儿不写第二份**——同一种停法在回执上和事件流上
+        说两句不一样的话，作者会以为发生了两件事。"""
+        return cls(
+            kind=TurnEventKind.TURN_STOPPED,
+            said_to_author=stop_wording(reason),
+            reason=reason,
+        )
+
+
+EventFn = Callable[[TurnEvent], None]
+"""**一轮边跑边往外喊**的接线口（ADR 0024 决策一）。形状同 `PersistFn` / `LedgerFn`。
+
+`None` = 不喊。**不传这个参数，这一轮的行为和 2026-08-12 之前逐字节相同**
+（`tests/test_agent_events.py` 有一条把两次跑的模型入参、账单原料、落库的历史和
+最终回执逐字节对拷的断言钉着它）。
+
+── 引擎不认识传输（ADR 0024 决策二）────────────────────────────────────
+
+这里没有 WebSocket、没有 SSE、没有队列，只有一个函数。要把它接到长连接上是**适配器**
+的活，而适配器扔掉之后 `on_event` 空着不叫就是今天的行为——**这条纪律让回退很便宜**，
+那也正是它值得守的理由。
+
+── 三件调用方必须知道的事 ──────────────────────────────────────────────
+
+1. **它是同步的，跑在调用它的那条线上。** 所以同一条线上的事件严格有序，
+   而**慢的消费者会拖慢这一轮**——引擎不替它缓冲。要缓冲、要丢弃、要合并，
+   在适配器里做（那儿才知道对面是一个掉了线的浏览器还是一个终端）。
+2. **它可能被别的线程叫。** 一批稿是同时在写的（ADR 0022），那几条流的片从工作线程
+   上来。所以实现必须线程安全，而且**跨流的先后顺序不作数**——同一条流内有序，
+   靠 `TurnEvent.stream` 分组。
+3. **它抛异常会被吞掉。** 见下。
+
+── 为什么发不出去要吞，而记账和落库不吞 ────────────────────────────────
+
+| | 坏掉的后果 | 所以 |
+|---|---|---|
+| `ledger` / `persist` | 钱花了没记上 / 历史丢了 | **响**（继续跑只会让作者付第二次钱） |
+| `on_event` | 一个界面少看见一行字 | **吞** |
+
+作者已经为这一轮付过钱了。一个掉线的浏览器不该把它弄崩——而「弄崩」的形态是
+`run_turn` 外面没有 try/except（那是有意的），异常会一路穿到 HTTP 壳变成一次崩溃。
+这跟 `_stale_manuscript_calls` 那处吞是同一条理由：**那是让屏幕更好看的东西，不是一道闸。**
+"""
+
+
+def safe_emitter(on_event: EventFn | None) -> Callable[[TurnEvent], None]:
+    """把接线口包成「发不出去就算了」的那一个。**三个发事件的地方共用这一份**
+    （`run_turn` / `agent/model.py` / `agent/drafting.py`）——各写各的 try/except，
+    迟早有一处漏掉，而漏掉的那一处会在浏览器关掉的那一刻让作者的一轮崩掉。
+    """
+    if on_event is None:
+        return _no_events
+
+    def emit(event: TurnEvent) -> None:
+        try:
+            on_event(event)
+        except Exception:  # noqa: BLE001 —— 见 `EventFn`：界面掉线不许拿走这一轮
+            return
+
+    return emit
+
+
+def _no_events(event: TurnEvent) -> None:
+    """没人听的时候。**一条分支都不留在热路径上**：不传回调时这个函数什么都不做，
+    而「行为逐字节不变」的断言量的就是这条路。"""
+
+
 @dataclass(frozen=True)
 class TurnLimits:
     """**代码这一侧的全部权力。** 循环归模型，但停不下来的循环归代码。"""
@@ -838,7 +1147,7 @@ class TurnLimits:
     进 `charged`，于是**每派发完一个就查一次 `max_tokens`**。这条必须有，因为次数闸
     在这儿是宽的：六个 `draft_chapter` 是六稿正文，次数上完全合法。
 
-    默认 6：表里九个工具，一次把索引那几层一起查了是正常行为；六个以上是「它想一口气
+    默认 6：表里十个工具，一次把索引那几层一起查了是正常行为；六个以上是「它想一口气
     做完一整章的活」，那时停下来问作者比替他花钱对。
     """
 
@@ -1000,6 +1309,18 @@ class TurnResult(BaseModel):
     """闸门实际用的口径：量准了的用报的，**没量准的取「报的」和「估的」里更大的那个**。
     **它不进账**（见 `_estimate_tokens`）。"""
 
+    asked: AuthorQuestion | None = None
+    """它停下来问作者的那一句 + 几个可点的选项（ADR 0024）。
+
+    **非空 ⇔ `reason is StopReason.ASKED_AUTHOR`。** 这一轮的收场只是「说完了」的一种：
+    在对话里，停下来问就等于这一轮说完了——作者答一句，下一轮接着跑，
+    挂起/恢复那套机制一行都不用写（ADR 0024「为什么不需要 interrupt/resume」）。
+
+    **它必须在这儿，不能只在事件流里。** 事件是「跑的过程」，而作者可能是在这一轮
+    结束之后才打开那段对话（换台机器、刷新页面、三个月后回来）——那时唯一还说得出
+    「它当时问了你什么」的是这个字段和会话历史。
+    """
+
     projection: Projection | None = None
     """最后一次投影的回执（裁了什么）。`None` = 一次都没投影成（第一步就停了）。"""
 
@@ -1111,6 +1432,7 @@ def run_turn(
     cancel: Cancellation | None = None,
     budget_units: int | None = None,
     persist: PersistFn | None = None,
+    on_event: EventFn | None = None,
 ) -> TurnResult:
     """跑一轮：模型说话、叫工具，直到它收手或者代码把它停下来。
 
@@ -1138,9 +1460,15 @@ def run_turn(
             这仍然是今天真实的紧，不是一个安全余量，调用方要更宽就显式传。
         persist: 跑到一半就把已经长出来的消息落库（见 `PersistFn`）。
             **不传 = 这一轮的执行态只活在进程内**，进程死了 resume 无事可补。
+        on_event: 边跑边往外喊（见 `EventFn`，ADR 0024）。**不传 = 一声不喊，
+            而且这一轮的行为逐字节不变**——`run_turn` 只在自己已经知道的那几个
+            边界上多叫一个函数，一条判断都不因为有没有人听而改变。
+            **模型吐字那两条流不在这儿**：它们发生在 `ModelPort` 和起草台内部
+            （见 `agent/model.py` / `agent/drafting.py`），装配层把同一个 `on_event`
+            也交给它们——同 `cancel`，两个接线口给了不同的对象就等于只接了一半。
 
     Returns:
-        `TurnResult`。**九种停法各有各的判据**，措辞一律走 `stop_wording()`。
+        `TurnResult`。**十一种停法各有各的判据**，措辞一律走 `stop_wording()`。
 
     ── 「作者在写第几章」怎么进来的，以及它一轮之内变不变 ──────────────────
 
@@ -1161,6 +1489,7 @@ def run_turn(
         raise ValueError("这段对话里作者一句话都还没说，没有可跑的一轮。")
 
     signal = cancel or Cancellation()
+    emit = safe_emitter(on_event)
     declarations = tool_declarations()
     chapter = context.working_chapter
     # 默认预算 = **剪枝碰不到的那一块** + `context.return_units`。两个数不是同一种量：
@@ -1243,7 +1572,7 @@ def run_turn(
             bill(receipt)
         return outcome
 
-    def run_tool(call: ToolCall) -> ToolOutcome:
+    def run_tool(call: ToolCall, *, index: int = 0, total: int = 0) -> ToolOutcome:
         """派发一次工具，**并把它花掉的钱记上**。
 
         外面照旧**没有** try/except（模块 docstring 第三节）：这里加的是记账，
@@ -1252,13 +1581,30 @@ def run_turn(
 
         **它也走 `BatchRunner`，宽度是 1。** 派发点只许有一个（同 `dispatch` 那道闸）：
         这一层直接调 `dispatch` 的话，补跑和批派发就是两条路，而「有副作用的工具怎么排队」
-        这类规矩迟早只在其中一条上生效。
+        这类规矩迟早只在其中一条上生效。**「正在查什么」那一声也归它喊**，理由同上。
         """
-        return bill_outcome(BatchRunner((call,), context).take(0))
+        runner = BatchRunner(
+            (call,),
+            context,
+            on_start=lambda _index: emit(
+                TurnEvent.tool_started(call.name, index=index, total=total)
+            ),
+        )
+        outcome = bill_outcome(runner.take(0))
+        emit(TurnEvent.tool_finished(outcome, index=index, total=total))
+        return outcome
 
     def finish(
-        reason: StopReason, *, reply: str = "", note: str = ""
+        reason: StopReason,
+        *,
+        reply: str = "",
+        note: str = "",
+        asked: AuthorQuestion | None = None,
     ) -> TurnResult:
+        """收场。**「为什么停」那一声在这儿喊，一条出口都绕不过去**——
+        `finish` 是这个函数唯一的 return 形状，所以「停了却没人说为什么」构造不出来。
+        """
+        emit(TurnEvent.stopped(reason))
         return TurnResult(
             conversation=live,
             reason=reason,
@@ -1269,6 +1615,7 @@ def run_turn(
             tokens_reported=reported,
             calls_without_usage=unmetered,
             tokens_charged=charged,
+            asked=asked,
             projection=last_projection,
             maintainer_note=note,
         )
@@ -1295,11 +1642,21 @@ def run_turn(
             live = live.extended(*_unrun(pending[position:]))
             save()
             return finish(StopReason.AUTHOR_STOPPED)
-        live = live.extended(_outcome_message(run_tool(call)))
+        outcome = run_tool(call, index=position + 1, total=len(pending))
+        live = live.extended(_outcome_message(outcome))
         tool_calls += 1
         # **每补跑一个存一次**，而不是补完整批再存：否则死在补跑中间的下一次 resume
         # 又从整批的第一个开始，而「重放免费」对表里的 `draft_chapter` 不成立。
         save()
+        if outcome.asked is not None:
+            # 补跑出来的一次提问和现跑的一模一样地结束这一轮（ADR 0024）。**不能少这一支**：
+            # 进程死在「模型要求问一句」和「派发」之间是真会发生的一档，那时问题会以
+            # `pending` 的身份回来——少了它，这一轮会带着一个没人答的问题接着往下跑，
+            # 而那正是这条工具要去掉的东西。
+            live = live.extended(*_unrun(pending[position + 1 :]))
+            save()
+            emit(TurnEvent.asked_author(outcome.asked))
+            return finish(StopReason.ASKED_AUTHOR, asked=outcome.asked)
         if charged >= limits.max_tokens:
             # 补跑本身能烧完整轮额度（一个 `draft_chapter` 就是一稿正文）。
             # 剩下那几个配壳停下来，**不是接着补**——不然这一轮在跑第一次模型调用
@@ -1372,6 +1729,12 @@ def run_turn(
         # （尾巴上根本没有那条 assistant），而作者重开之后看到的是「什么都没发生」。
         save()
 
+        # 它这一步说的那段话。**排在停止分支之前**：只叫工具时它也会说一句
+        # （「我先查一下第 40 章」），而那句话今天只活在对话历史里——事件流不喊它，
+        # 界面上就是一段几十秒的空白配一个转圈的图标。
+        if result.text.strip():
+            emit(TurnEvent.reply_text(result.text))
+
         if not calls:
             # 既不叫工具也不说话 = 这一步什么都没发生。**再来一次是拿作者的钱赌**，
             # 所以这儿停，并且说的是「再说一遍试试」——重试的决定权在作者手上。
@@ -1392,7 +1755,17 @@ def run_turn(
 
         # **这一批的执行器**（ADR 0022）：没有副作用的那几条同时跑，其余按序、单独跑。
         # 它不改这儿的任何一条规矩——出来的结果与 `calls` 同序，闸门照旧逐条查。
-        batch = BatchRunner(calls, context, workers=limits.parallel_tools)
+        batch = BatchRunner(
+            calls,
+            context,
+            workers=limits.parallel_tools,
+            # **一个并发窗口是一次跑完的**，所以「正在查什么」那一声由执行器喊：
+            # 在这儿按 `take()` 的顺序喊，并发那一档喊出来的是一句读起来很正常的假话
+            # （见 `BatchRunner.__init__`）。
+            on_start=lambda index: emit(
+                TurnEvent.tool_started(calls[index].name, index=index + 1, total=len(calls))
+            ),
+        )
 
         def settle(position: int) -> list[AgentMessage]:
             """这一批**剩下那几条**的收尾：已经跑过的如实收走，没跑的配壳。
@@ -1407,10 +1780,13 @@ def run_turn(
             for index in range(position, len(calls)):
                 already = done.get(index)
                 if already is None:
+                    # 没跑的那几条**不喊「查完了」**：它们连「正在查」都没喊过
+                    # （`on_start` 只在窗口真的开跑时才响）。为什么停由停止那一声说。
                     out.append(_unrun([calls[index]])[0])
                     continue
                 bill_outcome(already)
                 tool_calls += 1
+                emit(TurnEvent.tool_finished(already, index=index + 1, total=len(calls)))
                 out.append(_outcome_message(already))
             return out
 
@@ -1432,6 +1808,7 @@ def run_turn(
             # **裸调用，外面没有 try/except**（模块 docstring 第三节）。
             outcome = bill_outcome(batch.take(position))
             tool_calls += 1
+            emit(TurnEvent.tool_finished(outcome, index=position + 1, total=len(calls)))
             live = live.extended(_outcome_message(outcome))
             # **逐个存**：一批三个、跑完第一个就死掉时，下一次回来该补的是剩下那两个，
             # 不是整批重来。整批重来在只读工具上只是浪费，在 `draft_chapter` 上是真花钱。
@@ -1451,6 +1828,24 @@ def run_turn(
                 live = live.extended(*settle(position + 1))
                 save()
                 return finish(StopReason.COST_LIMIT, reply=result.text)
+
+            if outcome.asked is not None:
+                # ── **停下来问 = 这一轮说完了**（ADR 0024）────────────────────────
+                #
+                # ADR 那句「模型不再叫工具，loop 自己就停」**在这一层不是自动成立的**：
+                # 这个 for 之后还有下一次模型调用，所以模型完全可以问一句、然后在同一轮
+                # 里接着 `draft_chapter` ——作者会同时收到一个问题和一份照猜写出来的稿子，
+                # 而那正是这条工具要去掉的东西（**钱也已经花掉了**）。
+                #
+                # 所以收场是**代码的事**，和别的那几种停法一样（「循环归模型，停止条件归代码」）。
+                # 判据是 `outcome.asked`（出参的类型），不是工具名——见 `ToolOutcome.asked`。
+                # 剩下那几条走 `settle`：已经跑掉的如实收走，没跑的配壳。
+                live = live.extended(*settle(position + 1))
+                save()
+                emit(TurnEvent.asked_author(outcome.asked))
+                return finish(
+                    StopReason.ASKED_AUTHOR, reply=result.text, asked=outcome.asked
+                )
 
             if outcome.ok:
                 failure_streak.pop(call.name, None)
@@ -1475,6 +1870,7 @@ __all__ = [
     "AgentMessage",
     "Cancellation",
     "Conversation",
+    "EventFn",
     "LedgerFn",
     "ModelCallReceipt",
     "ModelPort",
@@ -1484,11 +1880,14 @@ __all__ = [
     "STALE_MANUSCRIPT",
     "Role",
     "StopReason",
+    "TurnEvent",
+    "TurnEventKind",
     "TurnLimits",
     "TurnResult",
     "payload_units",
     "project",
     "run_turn",
+    "safe_emitter",
     "start_conversation",
     "stop_wording",
     "tool_declaration_units",

@@ -379,7 +379,7 @@ def test_the_half_draft_is_kept_and_says_it_is_a_half_draft(
     pid = book["pid"]
     cancel = Cancellation()
     endpoint = FakeEndpoint([["风雪落在肩上，", "他终于抬起", "头。"]], cancel, stop_at=(0, 1))
-    monkeypatch.setattr(drafting, "cancellable_client", lambda config, signal: _client(
+    monkeypatch.setattr(drafting, "cancellable_client", lambda config, signal, on_text=None: _client(
         endpoint, signal
     ))
     desk = _desk(conn, pid, cancel, endpoint)
@@ -424,7 +424,7 @@ def test_the_annotation_comes_back_with_the_text_when_the_model_reads_it(
     pid = book["pid"]
     cancel = Cancellation()
     endpoint = FakeEndpoint([["他缓缓抬起手，", "然后——", "尾巴"]], cancel, stop_at=(0, 1))
-    monkeypatch.setattr(drafting, "cancellable_client", lambda config, signal: _client(
+    monkeypatch.setattr(drafting, "cancellable_client", lambda config, signal, on_text=None: _client(
         endpoint, signal
     ))
     desk = _desk(conn, pid, cancel, endpoint)
@@ -462,7 +462,7 @@ def test_a_finished_draft_carries_no_annotation(
     pid = book["pid"]
     cancel = Cancellation()
     endpoint = FakeEndpoint([["写完了。" * 700]], cancel)
-    monkeypatch.setattr(drafting, "cancellable_client", lambda config, signal: _client(
+    monkeypatch.setattr(drafting, "cancellable_client", lambda config, signal, on_text=None: _client(
         endpoint, signal
     ))
     desk = _desk(conn, pid, cancel, endpoint)
@@ -487,7 +487,7 @@ def test_nothing_written_before_the_stop_leaves_no_candidate_but_still_leaves_a_
     cancel = Cancellation()
     # 第一片就是空的（端点开了个头就被掐了），**但请求已经发出去了**。
     endpoint = FakeEndpoint([[""]], cancel, stop_at=(0, 0))
-    monkeypatch.setattr(drafting, "cancellable_client", lambda config, signal: _client(
+    monkeypatch.setattr(drafting, "cancellable_client", lambda config, signal, on_text=None: _client(
         endpoint, signal
     ))
     desk = _desk(conn, pid, cancel, endpoint)

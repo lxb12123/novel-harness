@@ -369,7 +369,7 @@ def leaks(surface: str, blob: str) -> list[str]:
 def surfaces_of(book: PoisonedBook) -> dict[str, str]:
     """模型看得见的**每一处字**，全部拿到手里。
 
-    九个工具 × 成功那条路 + 索引四层各自的失败那条路 + 工具声明 + 交给起草侧的那份约束。
+    十个工具 × 成功那条路 + 索引四层各自的失败那条路 + 工具声明 + 交给起草侧的那份约束。
     索引层的失败路径单列，是因为它们是**新写的中文句子**——「第 9 章还没写，那是第 200 章
     才发生的事」这种好心的解释就是一次泄漏，而它读起来完全不像。
     """
@@ -414,6 +414,12 @@ def surfaces_of(book: PoisonedBook) -> dict[str, str]:
             # ADR 0022 拆出来的另外两个动作，各自一个新的返回面。
             _call("save_draft", draft_id=DRAFT_ID),
             _call("read_draft", draft_id=DRAFT_ID),
+            # ADR 0024 的问作者：出参直接摆到作者面前，所以它也是一个面。
+            _call(
+                "ask_author",
+                question="这一场你想让顾清音看见那封信吗？",
+                options=["让她看见", "先不给她"],
+            ),
             # 失败那条路：拿秘密 / 未来地点 / 不存在的章去问每一层。
             #
             # **这里故意不拿内容 tell（`TELL`）去问。** 拒绝语会把称呼原样回显，而那个串是
@@ -426,7 +432,7 @@ def surfaces_of(book: PoisonedBook) -> dict[str, str]:
         ],
         context,
     )
-    assert [outcome.ok for outcome in outcomes] == [True] * 11 + [False] * 4, (
+    assert [outcome.ok for outcome in outcomes] == [True] * 12 + [False] * 4, (
         "采样计划自己漂了：成功/失败两条路的条数对不上，下面搜的可能是另一批面"
     )
     assert captured, "起草工具没把约束交给起草侧 —— 进 prompt 的那一面没被采到"

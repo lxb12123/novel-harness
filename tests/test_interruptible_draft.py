@@ -422,7 +422,7 @@ def _stop_a_draft(
     endpoint = _Pieces(script, cancel, stop_at=stop_at)
     monkeypatch.setattr(
         drafting, "cancellable_client",
-        lambda config, signal: _CancellableClient(endpoint, signal),
+        lambda config, signal, on_text=None: _CancellableClient(endpoint, signal, on_text),
     )
     desk = _desk(conn, pid, cancel)
     with pytest.raises(ToolRefused) as caught:
@@ -553,7 +553,7 @@ def test_the_cancelled_call_is_on_the_bill_and_the_two_columns_stay_empty(
     cancel_box: list[Cancellation] = []
     endpoint_box: list[_Pieces] = []
 
-    def fake_client(config: Any, signal: Cancellation) -> Any:
+    def fake_client(config: Any, signal: Cancellation, on_text: Any = None) -> Any:
         cancel_box.append(signal)
         endpoint = _Pieces([["雪落在肩上，", "他抬起", "头。"]], signal, stop_at=(0, 1))
         endpoint_box.append(endpoint)
@@ -603,7 +603,7 @@ def test_a_stop_before_the_request_leaves_no_bill_at_all(
     """
     pid = book["pid"]
 
-    def fake_client(config: Any, signal: Cancellation) -> Any:
+    def fake_client(config: Any, signal: Cancellation, on_text: Any = None) -> Any:
         signal.stop()  # 作者在这一次发出去之前就按了停
         return _CancellableClient(_Pieces([["不该发出去"]], signal, stop_at=None), signal)
 

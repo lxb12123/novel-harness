@@ -269,6 +269,14 @@ def _surfaces_of(world: World) -> dict[str, str]:
             # ADR 0022 拆出来的另外两个动作：它们各自是一个新的返回面。
             _call("save_draft", draft_id=DRAFT_ID),
             _call("read_draft", draft_id=DRAFT_ID),
+            # ADR 0024 的问作者：出参会被界面直接摆成一张卡，**它也是一个面**。
+            # 这里问的是一句干净的话——它测的不是「模型会不会说破」（那是语义判断，
+            # 引擎判不了），是**引擎会不会往问句里加料**（handler 里一个 context 都没有）。
+            _call(
+                "ask_author",
+                question="这一场你想让萧决知道那件事吗？",
+                options=["让他知道", "先瞒着他"],
+            ),
             # 书内索引的四层，一层都不能漏：它们新开了四个模型看得见的面。
             _call("book_index"),
             _call("character_chapters", characters=["萧决", "顾清音"]),
@@ -282,7 +290,7 @@ def _surfaces_of(world: World) -> dict[str, str]:
         ],
         context,
     )
-    assert [o.ok for o in outcomes] == [True] * 9 + [False] * 4
+    assert [o.ok for o in outcomes] == [True] * 10 + [False] * 4
     assert desk.seen, "起草工具没把约束交给起草侧 —— 第 4 个面没被采到，这条测试是空的"
 
     surfaces = {f"{o.name} 的返回（ok={o.ok}）": o.content for o in outcomes}
@@ -496,6 +504,9 @@ def test_the_tool_table_stays_put() -> None:
             # 起草那一摊的另外两个动作（ADR 0022）：生成不落盘了，落盘和读回各自是一条。
             "save_draft",
             "read_draft",
+            # 问作者（ADR 0024）：表里第一条**不查东西也不做东西**的工具，
+            # 它把一句问话交出去，然后这一轮就结束了。
+            "ask_author",
         }
     )
     by_name = {spec.name: spec for spec in TOOL_TABLE}
