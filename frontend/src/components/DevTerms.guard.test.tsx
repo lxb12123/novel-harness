@@ -5,6 +5,7 @@ import { fixtures, renderWithApi } from "../test/harness";
 import { devTerms, engineWords, machineWords, rawIds, screenText } from "../test/screenGuard";
 import { EDGE_ZH, type EdgeType } from "../api/types";
 import { useCoords } from "../store";
+import { ActivityLog } from "./ActivityLog";
 import { BottomBar } from "./BottomBar";
 import { RightPanel } from "./RightPanel";
 import { TopBar } from "./TopBar";
@@ -115,6 +116,24 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     renderWithApi(<RightPanel />, stateRoute(STATE_WITH_EDGES));
     await screen.findAllByText(marker);
     await new Promise((r) => setTimeout(r, 60));
+    expect(devTerms(screenText())).toEqual([]);
+  });
+
+  it.each([
+    ["全报了", "runsAllReported"],
+    ["报了一部分", "runs"],
+    ["一次都没报", "runsUnreported"],
+  ] as const)("用量条「%s」那一档上一个研发术语都没有", async (_name, key) => {
+    // **2026-08-12 新长出来的两句话**（「另有 N 次没报，实际更多」/「用量未记录」+
+    // 两句 title）。它们要说的正是引擎内部那件事——供应商没回报 usage——而那个词
+    // 一旦漏出来就是 `stream_options` / `tokens_in` 摆到作者脸上。
+    //
+    // 三档各扫一遍，三份都是**真 dump**（`tests/test_frontend_contract.py` 在三个不同
+    // 的时刻抓的）：只喂一种形状的样本，这条断言扫的就是一块永远长一个样的屏幕，
+    // 而屏幕上那两句新话一次都不会被渲染到。
+    useCoords.setState({ page: "log" });
+    renderWithApi(<ActivityLog />, [{ match: /\/runs(\?|$)/, body: fixtures[key] }]);
+    await screen.findByText(/模型调用 \d+ 次/);
     expect(devTerms(screenText())).toEqual([]);
   });
 

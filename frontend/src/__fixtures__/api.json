@@ -1657,10 +1657,37 @@
     "totals": {
       "calls": 2,
       "cost": null,
+      "metered_calls": 1,
       "ms": 900,
       "priced_calls": 0,
       "tokens_in": 1200,
       "tokens_out": 400
+    }
+  },
+  "runsAllReported": {
+    "entries": [],
+    "run_count": 0,
+    "totals": {
+      "calls": 1,
+      "cost": null,
+      "metered_calls": 1,
+      "ms": 900,
+      "priced_calls": 0,
+      "tokens_in": 1200,
+      "tokens_out": 400
+    }
+  },
+  "runsUnreported": {
+    "entries": [],
+    "run_count": 0,
+    "totals": {
+      "calls": 1,
+      "cost": null,
+      "metered_calls": 0,
+      "ms": 0,
+      "priced_calls": 0,
+      "tokens_in": null,
+      "tokens_out": null
     }
   },
   "scenes": [],

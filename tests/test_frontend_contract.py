@@ -120,17 +120,18 @@ def test_frontend_fixture_matches_the_real_api(
 
     # ── 读路径（声明之前的状态）────────────────────────────────────────────
     grab("projects", client.get("/api/projects"))
-    grab(
-        "bootstrapImport",
-        client.post(
-            "/api/projects/bootstrap",
-            json={
-                "mode": "import",
-                "name": "契约样书",
-                "text": "第一章 契约\n\n这一章由真实 API 导入。\n",
-            },
-        ),
+    imported = client.post(
+        "/api/projects/bootstrap",
+        json={
+            "mode": "import",
+            "name": "契约样书",
+            "text": "第一章 契约\n\n这一章由真实 API 导入。\n",
+        },
     )
+    grab("bootstrapImport", imported)
+    # 第二本书的 id。**用量条那三档里的「全报了」要靠它**：第一本书从这一步之后就一直
+    # 躺着一次不报 usage 的调用（下面那次总结），再也回不到「全报了」那一档。
+    second_pid = imported.json()["project"]["id"]
     grab("roster", client.get(f"{base}/roster"))
     grab("chapters", client.get(f"{base}/chapters"))
     grab("chapterText", client.get(f"{base}/chapters/1/text"))
@@ -239,6 +240,13 @@ def test_frontend_fixture_matches_the_real_api(
         ),
     )
     grab("summaryGenerated", client.post(f"{base}/chapters/1/summary"))
+    # ── 用量条第三档：**这本书唯一一次模型调用，供应商没报 usage** ──────────────
+    # 桩返回的 `CompletionResult` 不带 `prompt_tokens`，也就是流式下 DeepSeek 的真实
+    # 形状（`supports_stream_usage` 不是 True ⇒ 不加 `stream_options` ⇒ 两个数都 NULL）。
+    # **这一档必须是真 dump 而不是在前端拼一个**：它正是作者按 README 默认配置写书时
+    # 天天看见的那一屏，而底栏原来在这一屏上说「读入 0 token」。
+    # 抓在这里是因为再往下那次 `seed_call` 就把这本书推进「报了一部分」那一档了。
+    grab("runsUnreported", client.get(f"{base}/runs"))
     # 第 12 章 → 窗口是第 1–3 章：**三种状态一次到齐**（已生成 / 有正文没生成 /
     # 根本没写）。少一种，前端就有一条分支是照着想象写的。
     grab("summaries", client.get(f"{base}/chapters/12/summaries"))
@@ -285,6 +293,9 @@ def test_frontend_fixture_matches_the_real_api(
         "activityDecisionDetail",
         client.get(f"{base}/activity/{corrected.json()['decision_id']}"),
     )
+    # 用量条第二档：**这本书两次调用，一次报了 usage（上面 seed 的）一次没报**
+    # （那次总结走的是真 `record_call`，桩没给 token 数）。也就是「合计只算得上一半」
+    # 那一屏——它是默认路由下最常见的一档，所以给它主名字。
     grab("runs", client.get(f"{base}/runs"))
 
     # ── 已生效事件 + 改它的知情/在场名单（1.1 的另一半）──────────────────────
@@ -457,6 +468,14 @@ def test_frontend_fixture_matches_the_real_api(
     # `projects` 那份是**建第二本之前**的状态，只有一本；侧栏的书架、切书弹窗、
     # 「从侧栏移除」全都只在两本以上时才存在形态，照一本写的界面等于没验过。
     grab("projectsTwo", client.get("/api/projects"))
+
+    # ── 用量条第一档：**这本书每一次调用供应商都报了 usage** ────────────────────
+    # 三档一次到齐（同上面 `summaries` 那一轮的理由）：夹具里只躺一种形状的样本，
+    # 屏幕守卫扫的就是一块永远长一个样的屏幕。这一档落在第二本书上不是取巧——
+    # 第一本从那次总结起就再也回不到「全报了」，而作者接 OpenAI 那四条路由时
+    # 天天看见的正是这一屏。
+    seed_call({**book, "pid": second_pid}, capability="summarizer")
+    grab("runsAllReported", client.get(f"/api/projects/{second_pid}/runs"))
 
     frozen = json.dumps(dump, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 

@@ -8,6 +8,7 @@ import type {
   ActivityEntry,
   ActivityJump,
   ActorTally,
+  CostTotals,
   JumpTarget,
 } from "../api/types";
 
@@ -105,6 +106,42 @@ function jumpNote(entry: ActivityEntry, jump: ActivityJump): string | null {
 /** 数字。**null 是「没记」不是 0**（§10 约束 8）：一张写着 0 的账单是假的。 */
 const num = (value: number | null): string => (value === null ? "未记录" : String(value));
 
+/** 用量那一格 —— **「已经知道的那些的合计」和「全部的合计」不是一回事**。
+ *
+ *  供应商不报 usage 时后端给的是 null（`record_call` 照抄，绝不估算），而 2026-08-12
+ *  起草改成可中断之后这一档成了常态：README 教作者填的 DeepSeek 就不报。所以这一格
+ *  分三档说三句不同的话，判据是 `metered_calls`（同旁边那格的 `priced_calls`）：
+ *
+ *  | 报了几次 | 屏幕上 |
+ *  |---|---|
+ *  | 全报了 | 读入 1200 / 生成 400 token |
+ *  | 报了一部分 | 读入 1200 / 生成 400 token（另有 1 次没报，实际更多） |
+ *  | 一次都没报 | 用量未记录 |
+ *
+ *  **「这个数不是全部」必须写在屏幕上，不能只挂在 title 里**：作者要判断的正是这件事，
+ *  title 是补一句为什么，不是藏一半真相的地方。 */
+function TokenCell({ t }: { t: CostTotals }) {
+  const unreported = t.calls - t.metered_calls;
+  if (t.metered_calls === 0)
+    return (
+      <span title="这几次模型服务商都没有回报用量 —— 是这个数拿不到，不是没有用。">
+        用量未记录
+      </span>
+    );
+  return (
+    <span
+      title={
+        unreported > 0
+          ? `另外 ${unreported} 次模型服务商没有回报用量，所以这里只是其余几次的合计。`
+          : undefined
+      }
+    >
+      读入 {num(t.tokens_in)} / 生成 {num(t.tokens_out)} token
+      {unreported > 0 ? `（另有 ${unreported} 次没报，实际更多）` : ""}
+    </span>
+  );
+}
+
 /** 这本书到今天为止用掉多少。
  *
  *  **金额今天恒为「未记录」**，而且要说得出为什么：引擎不知道作者和模型服务商谈的价钱
@@ -123,9 +160,7 @@ function UsageStrip() {
     <div className="log-usage">
       <span>已整理 {data.run_count} 次</span>
       <span>模型调用 {t.calls} 次</span>
-      <span>
-        读入 {t.tokens_in} / 生成 {t.tokens_out} token
-      </span>
+      <TokenCell t={t} />
       <span title="这台电脑上没有记价格：钥匙是你自己的，引擎不知道你和模型服务商谈的是多少钱。">
         花费 {num(t.cost)}
       </span>

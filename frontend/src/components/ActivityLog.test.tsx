@@ -269,6 +269,53 @@ describe("活动记录", () => {
     expect(await collapsed()).toHaveLength(ALL); // 已经读到的那些还在
   });
 
+  // ── 用量条：那个数是不是全部 ──────────────────────────────────────────────
+  //
+  // 这一格 2026-08-12 之前是 `读入 {t.tokens_in} / 生成 {t.tokens_out} token`，
+  // 而后端那侧是 `COALESCE(SUM(tokens_in), 0)`——**供应商不报 usage 的调用被当成 0
+  // 加了进去**，于是屏幕上出现一个看起来确定、其实是「我们不知道」的数字。
+  // 同一条上的 `cost` 那一格早就渲染成「未记录」还带一句为什么，两种口径并排摆了一轮。
+  //
+  // 三档各吃一份**真 dump**（`runsAllReported` / `runs` / `runsUnreported`，
+  // 由 `tests/test_frontend_contract.py` 在三个不同的时刻从真 app 抓的）：
+  // 夹具里只躺一种形状的样本，这几条断言扫的就是一块永远长一个样的屏幕。
+
+  const RUNS = (body: unknown) => [{ match: /\/runs(\?|$)/, body }];
+
+  it("全报了：直接给数", async () => {
+    const t = fixtures.runsAllReported.totals;
+    // 先验夹具真的是这一档 —— 否则下面那句断言测的是我以为的形状，不是后端给的。
+    expect(t.metered_calls).toBe(t.calls);
+    renderWithApi(<ActivityLog />, RUNS(fixtures.runsAllReported));
+
+    expect(await screen.findByText(/读入 1200 \/ 生成 400 token/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/没报/);
+  });
+
+  it("报了一部分：合计照给，**同时说清它不是全部**", async () => {
+    const t = fixtures.runs.totals;
+    expect(t.metered_calls).toBeGreaterThan(0);
+    expect(t.metered_calls).toBeLessThan(t.calls);
+    renderWithApi(<ActivityLog />, RUNS(fixtures.runs));
+
+    // 报了的那次的 1200 是真信息 —— 丢掉它是同一种假话的另一个方向。
+    expect(await screen.findByText(/读入 1200 \/ 生成 400 token/)).toBeInTheDocument();
+    // 而「这个数不是全部」必须在屏幕上，不是只挂在 title 里。
+    expect(screen.getByText(/另有 1 次没报，实际更多/)).toBeInTheDocument();
+  });
+
+  it("一次都没报：说「未记录」，**绝不说 0**", async () => {
+    const t = fixtures.runsUnreported.totals;
+    expect(t.metered_calls).toBe(0);
+    expect(t.tokens_in).toBeNull();
+    renderWithApi(<ActivityLog />, RUNS(fixtures.runsUnreported));
+
+    expect(await screen.findByText("用量未记录")).toBeInTheDocument();
+    // **这就是被修掉的那句话**：作者按 README 的默认配置（DeepSeek）写书、花着真钱，
+    // 而这条用量条告诉他「读入 0 token」。
+    expect(document.body.textContent).not.toMatch(/读入 0|生成 0 token/);
+  });
+
   it("还没有记录时说人话，不摆一张空表", async () => {
     renderWithApi(<ActivityLog />, [
       {

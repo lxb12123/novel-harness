@@ -730,9 +730,14 @@ export interface ActivityPage {
 
 export interface CostTotals {
   calls: number;
-  tokens_in: number;
-  tokens_out: number;
-  ms: number;
+  /** 其中**供应商报了 token 用量的**有几条。`calls - metered_calls` = 一个数都没给的那几次。
+   *  和 `priced_calls` 是同一对形状（计数 + 可空的合计），界面上照同一种方式说。 */
+  metered_calls: number;
+  /** **只是报了的那几次的合计**；一次都没报是 null（不是 0）。
+   *  供应商不报 usage 时后端就是 null —— 而可中断起草开了之后这一档是常态，不是边角。 */
+  tokens_in: number | null;
+  tokens_out: number | null;
+  ms: number | null;
   /** 其中填了金额的有几条。今天恒为 0，所以 `cost` 恒为 null。 */
   priced_calls: number;
   cost: number | null;

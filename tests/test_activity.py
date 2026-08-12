@@ -112,6 +112,7 @@ def seed_call(
     *,
     capability: str = "extractor",
     tokens_in: int | None = 1200,
+    tokens_out: int | None = 400,
     cost: float | None = None,
     cache_read_tokens: int | None = None,
     cache_write_tokens: int | None = None,
@@ -123,6 +124,10 @@ def seed_call(
     `tests/test_cache_usage.py` 和契约夹具都这么做：**夹具里只躺着一种形状的样本，
     等于那条屏幕守卫扫的是一块永远长一个样的屏幕**（`_RUN_ERROR_LABEL` 那一节记着
     这个仓库上一次栽在这上面的现场）。
+
+    `tokens_out` 2026-08-12 从写死的 `400` 变成入参：**「供应商一个用量数都没给」
+    那一档在此之前根本 seed 不出来**（`tokens_in=None` 只造得出「给了一半」），
+    而那一档正是流式起草打开之后 DeepSeek 的常态形状。
     """
     conn = connect(book["db"])
     try:
@@ -134,13 +139,14 @@ def seed_call(
                 in_artifact, out_artifact, tokens_in, tokens_out, ms, cost,
                 cache_read_tokens, cache_write_tokens
             ) VALUES (?, ?, ?, 'deepseek-v4', '{"finish_reason":"stop"}',
-                      'ph', 'a', 'b', ?, 400, 900, ?, ?, ?)
+                      'ph', 'a', 'b', ?, ?, 900, ?, ?, ?)
             """,
             (
                 call_id,
                 book["pid"],
                 capability,
                 tokens_in,
+                tokens_out,
                 cost,
                 cache_read_tokens,
                 cache_write_tokens,
@@ -1108,6 +1114,108 @@ def test_a_priced_call_does_get_summed(client: TestClient, book: dict[str, str])
     totals = client.get(f"/api/projects/{book['pid']}/runs").json()["totals"]
     assert totals["priced_calls"] == 2
     assert totals["cost"] == pytest.approx(1.0)
+
+
+def test_a_call_the_vendor_never_metered_is_not_worth_zero_tokens(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """**这是这一刀修的那条病。** 供应商不报 usage ⇒ 那一行是 NULL ⇒ 汇总必须说
+    「不知道」，不是「0」。
+
+    它 2026-08-12 之前是 `COALESCE(SUM(tokens_in), 0)`，于是作者按 README 的默认配置
+    （DeepSeek 两条路由都不是 `supports_stream_usage is True`）写书、真花着钱，
+    底栏却写着「读入 0 token」。**同一条用量条上 `cost` 那一格早就做对了**，
+    两种口径并排摆着。
+    """
+    seed_call(book, tokens_in=None, tokens_out=None)
+    totals = client.get(f"/api/projects/{book['pid']}/runs").json()["totals"]
+    assert totals["calls"] == 1
+    assert totals["metered_calls"] == 0, "两个 token 数都是 NULL 的一行不算「报了」"
+    assert totals["tokens_in"] is None and totals["tokens_out"] is None
+
+
+def test_half_a_measurement_still_counts_as_measured(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """只给了一个数的那一行**算「报了」**，而少掉的那半仍然说「不知道」。
+
+    判据写死在 SQL 里（`tokens_in IS NULL AND tokens_out IS NULL` 才算没报），
+    所以 `metered_calls` 回答的是「有几次一个数都没给」，不是「有几次给全了」。
+    这一档今天没有已知的生产者（两个数一起来自同一个 usage 对象），
+    钉住它是因为**判据一旦反过来，屏幕上那句「另有 N 次没报」会数错**。
+    """
+    seed_call(book, tokens_in=1_000, tokens_out=None)
+    totals = client.get(f"/api/projects/{book['pid']}/runs").json()["totals"]
+    assert totals["calls"] == 1 and totals["metered_calls"] == 1
+    assert totals["tokens_in"] == 1_000 and totals["tokens_out"] is None
+
+
+def test_the_ones_that_did_report_still_get_summed(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """**另一个方向的假话也不许说。** 90 次报了、10 次没报时，那 90 次的合计是真信息。
+
+    整个改成「不知道」和把 NULL 折成 0 是同一种病的两头，所以出参是
+    「已知的那些的合计 + 有几次没报」，两个数一起才是一句真话。
+    """
+    seed_call(book, tokens_in=1_000)
+    seed_call(book, tokens_in=200)
+    seed_call(book, tokens_in=None, tokens_out=None)
+    totals = client.get(f"/api/projects/{book['pid']}/runs").json()["totals"]
+    assert totals["calls"] == 3 and totals["metered_calls"] == 2
+    # 报了的那两行 tokens_out 都是默认的 400。
+    assert totals["tokens_in"] == 1_200 and totals["tokens_out"] == 800
+
+
+def test_a_book_where_every_call_was_metered_says_so(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """全报了那一档：`metered_calls == calls`，界面照此不说「另有几次没报」。"""
+    seed_call(book, tokens_in=1_000)
+    seed_call(book, tokens_in=200)
+    totals = client.get(f"/api/projects/{book['pid']}/runs").json()["totals"]
+    assert totals["calls"] == totals["metered_calls"] == 2
+    assert totals["tokens_in"] == 1_200
+
+
+def test_an_empty_book_owes_no_numbers_at_all(client: TestClient, book: dict[str, str]) -> None:
+    """一次都没调过 ⇒ 四个可空的数全是 None，两个计数全是 0。
+
+    **`calls == 0` 时说「读入 0 token」在字面上碰巧不假，但它和「问了没人答」
+    长得一模一样**——两种情形指向的动作完全不同（去用一下 / 去查端点报不报 usage），
+    所以这一档也走同一条口径，不给它开特例。
+    """
+    totals = client.get(f"/api/projects/{book['pid']}/runs").json()["totals"]
+    assert totals["calls"] == 0 and totals["metered_calls"] == 0
+    assert totals["tokens_in"] is None and totals["tokens_out"] is None
+    assert totals["ms"] is None and totals["cost"] is None
+
+
+def test_the_stopwatch_is_ours_so_a_real_call_always_carries_it(
+    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`ms` 为什么没有自己的计数：它是**我们自己掐的表**，不是供应商报的。
+
+    走真 `record_call`（`elapsed_ms: int` 非空，全库唯一写入口）落一行**不报 usage**
+    的账：token 那两个是 None，耗时照样是个数。**这就是那个不对称的证据**——
+    哪天真长出一个不掐表的写入方，这条会红，那时才该给 `ms` 补一个计数。
+    """
+    import novel_harness.api.deps as deps_mod
+    from novel_harness.draft.provider import CompletionResult
+
+    monkeypatch.setattr(
+        deps_mod,
+        "complete",
+        lambda messages, *, config=None, plan=None, client=None: CompletionResult(
+            text="萧决在青云城主府听说了血脉秘密。", model="deepseek-v4-flash", finish_reason="stop"
+        ),
+    )
+    made = client.post(f"/api/projects/{book['pid']}/chapters/1/summary")
+    assert made.status_code == 200, made.text
+    totals = client.get(f"/api/projects/{book['pid']}/runs").json()["totals"]
+    assert totals["calls"] == 1 and totals["metered_calls"] == 0
+    assert totals["tokens_in"] is None, "桩没给 token 数，那就是 NULL"
+    assert isinstance(totals["ms"], int), "耗时是我们自己掐的，不该跟着 token 一起消失"
 
 
 _STALE_EMPTY = re.compile(r"`?model_call`?\s*(?:表)?\s*(?:今天是空的|空)")

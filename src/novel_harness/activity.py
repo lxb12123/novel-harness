@@ -276,29 +276,66 @@ class ActivityPage(BaseModel):
 class CostTotals(BaseModel):
     """整本书到今天为止的模型账。
 
-    ── 这儿**故意没有**缓存命中的合计，理由有三条 ────────────────────────────
+    **这张表上每一个可空的合计都配一个计数**（`tokens_in/out` ↔ `metered_calls`、
+    `cost` ↔ `priced_calls`）。一个合计不说清「它是不是全部」就是一句看起来确定的假话，
+    而这张汇总同时端着两种假话的可能：**把不知道说成 0**，和**把知道的说成不知道**。
+    两个数一起才躲得开这两边。
 
-    1. **这张汇总本身正躺在一条已知病里。** `tokens_in/out/ms` 是 `COALESCE(…, 0)` 的
-       非空 int，而同名字段在 `ActivityCost` 上可空、渲染成「未记录」——provider 不报
-       usage 的书，底栏现在就在显示「入 0 / 出 0 token」。往一张已经在说假话的汇总里
-       再加一个数，只是把假话说得更长；先修那条，再谈加。
-    2. **命中率的分母仍然是残的，只是残得少了一块。** `/draft` 那条路径 2026-08-12 起
-       落账了（`api/app.py::draft` 的 `on_call=bill`），但**写作助手起的那些稿**走的是
-       另一条线（`api/chat.py::_ledger`），而没报 usage 的那些调用在这张表上是 NULL。
-       一个分子分母都缺同一批行的比值，看起来像全书命中率，其实谁也解读不了。
-    3. **这一刀要回答的三个问题，两个只有逐次才看得见。**「忽高忽低 ⇒ 前缀被弄脏了」
+    ── 这儿**仍然没有**缓存命中的合计，理由从三条剩下两条 ──────────────────
+
+    原来的第 ① 条（「这张汇总本身正躺在一条已知病里」——`tokens_in/out/ms` 是
+    `COALESCE(…, 0)` 的非空 int，于是不报 usage 的书底栏写着「读入 0 token」，
+    而同一条用量条上的 `cost` 早就渲染成「未记录」）**2026-08-12 修掉了**，
+    修法就是上面那对计数。剩下两条今天还成立，而且头一条被这次改动**加强**了：
+
+    1. **分子和分母各缺一批行，而且不是同一批。** `tokens_in` 今天只覆盖
+       `metered_calls` 那几次；缓存那两列的 NULL 又是另一个子集（一条路由完全可以报了
+       usage 却不报缓存量——那几家各自报什么只有 `draft/provider.py` 认得）。两个覆盖面
+       不同的数相除，得到的不是全书命中率，是一个谁也解读不了的比值——要出这个数就得
+       再配第三个计数，那时作者要在同一条上读三次「这是不是全部」。
+    2. **这一刀要回答的三个问题，两个只有逐次才看得见。**「忽高忽低 ⇒ 前缀被弄脏了」
        按定义是**逐次之间**的方差；一个全书标量恰好把它平掉。所以测量点放在展开详情
        那一行（`_cache_text`），不放这儿。
 
-    等到 ① 被修好，这儿再加也不迟——那时它才是个能读的数。
+    **加它的先决条件因此不再是「等 ① 被修好」**（已经修好了），
+    而是「有人真的要读一个全书标量，且说得清它缺了哪几行」。
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     calls: int = Field(default=0, ge=0)
-    tokens_in: int = Field(default=0, ge=0)
-    tokens_out: int = Field(default=0, ge=0)
-    ms: int = Field(default=0, ge=0)
+
+    metered_calls: int = Field(default=0, ge=0)
+    """其中**供应商报了 token 用量的**有几条（两个数至少给了一个）。
+    `calls - metered_calls` 就是一个数都没给的那几次。
+
+    它和 `priced_calls` 是同一对形状（计数 + 可空的合计），**照那一对长的，不是第二种**。
+    """
+
+    tokens_in: int | None = None
+    tokens_out: int | None = None
+    """**只是报了的那几次的合计**；一次都没报时是 None，不是 0。
+
+    ── 为什么不能 `COALESCE(…, 0)` ────────────────────────────────────────
+    供应商不报 usage 时 `model_call.tokens_in` 就是 NULL（`record_call` 照抄，
+    绝不估算）。2026-08-12 起草改成可中断之后这一档从边角变成了常态：流式下只有
+    `supports_stream_usage is True` 的路由才会被要 usage，而注册表 8 条里只有 OpenAI
+    那 4 条是 True——**README 教作者填的 DeepSeek 两条都不是**。折成 0 的后果是
+    作者花着真钱、屏幕上写着「读入 0 token」。
+
+    ── 为什么也不能整个改成「不知道」 ──────────────────────────────────
+    90 次报了、10 次没报时，那 90 次的合计**是真信息**，丢掉它是同一种假话的另一个方向。
+    """
+
+    ms: int | None = None
+    """记下了耗时的那几次之和；一条都没记 → None。
+
+    **它没有自己的计数，这不是漏了**：耗时是我们自己掐的表
+    （`record_call(elapsed_ms: int)` 非空，而那是全库唯一的写入口），不是供应商报的——
+    真书里每一行都有，「只记了一部分」这一档只可能来自手写行。哪天真长出一个不掐表的
+    写入方，这儿要跟着补一个计数，**别改回 `COALESCE`**。
+    """
+
     priced_calls: int = Field(default=0, ge=0)
     """其中**填了 `cost` 的**有几条。今天恒为 0，见 `ActivityCost.cost`。"""
 
@@ -1093,12 +1130,17 @@ def read_runs(
     run_count = conn.execute(
         "SELECT COUNT(*) FROM extraction_run WHERE project_id = ?", (project_id,)
     ).fetchone()[0]
+    # **一个 `COALESCE` 都没有，那是有意的。** `SUM` 在「一行都没有」和「全是 NULL」
+    # 两种情形上都返回 NULL，而那正好就是「不知道」——补成 0 就是把不知道说成零，
+    # 也就是 `CostTotals.tokens_in` 记着的那条已知病。缺了几行由 `metered` 说出来。
     totals = conn.execute(
         """
         SELECT COUNT(*)                                        AS calls,
-               COALESCE(SUM(tokens_in), 0)                     AS tokens_in,
-               COALESCE(SUM(tokens_out), 0)                    AS tokens_out,
-               COALESCE(SUM(ms), 0)                            AS ms,
+               SUM(CASE WHEN tokens_in IS NULL
+                         AND tokens_out IS NULL THEN 0 ELSE 1 END) AS metered,
+               SUM(tokens_in)                                  AS tokens_in,
+               SUM(tokens_out)                                 AS tokens_out,
+               SUM(ms)                                         AS ms,
                SUM(CASE WHEN cost IS NULL THEN 0 ELSE 1 END)   AS priced,
                SUM(cost)                                       AS cost
         FROM model_call WHERE project_id = ?
@@ -1111,9 +1153,10 @@ def read_runs(
         run_count=int(run_count),
         totals=CostTotals(
             calls=int(totals["calls"]),
-            tokens_in=int(totals["tokens_in"]),
-            tokens_out=int(totals["tokens_out"]),
-            ms=int(totals["ms"]),
+            metered_calls=int(totals["metered"] or 0),
+            tokens_in=_int(totals["tokens_in"]),
+            tokens_out=_int(totals["tokens_out"]),
+            ms=_int(totals["ms"]),
             priced_calls=priced,
             # 一条都没定过价 ⇒ None（「没记账」），**不是 0.0**（「一分钱没花」）。
             cost=None if priced == 0 else float(totals["cost"]),
