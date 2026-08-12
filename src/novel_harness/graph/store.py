@@ -49,6 +49,7 @@ from .models import (
     Node,
     NodeSpec,
     Resolution,
+    SnapshotUsage,
     StateSnapshot,
     StoredAlias,
     StoredChapter,
@@ -122,6 +123,30 @@ class SupersedeConflict(StoreError):
     那正是 §5.5 点名的死法：两条互斥边 → 规则误报 → M3 的「误报 <1 条/章」生死线崩。
     宁可让调用方看见一个异常。
     """
+
+
+class SnapshotIsCurrent(StoreError):
+    """要删的那条快照就是这一章**当前**正文对应的那条。
+
+    删了它，`current_snapshots` / `chapter_snapshots(is_current)` 会查不到这一章的当前
+    快照，`rolling_summary` 直接抛「has no current snapshot」。作者想丢掉的是「现在这一版」
+    时，正确的动作是**先还原到别的版本**（那会把 current 移过去），再删这一条。
+    """
+
+
+class SnapshotInUse(StoreError):
+    """要删的那条快照被证据 / 抽取记录 / 提案引着（`SnapshotUsage.total > 0`）。
+
+    三条外键都没有 ON DELETE CASCADE，是有意的：一条证据的价值全在「那句话当年在这儿」，
+    锚没了它就只是一句无出处的断言。**所以这里拒绝，而不是连带删除。**
+    """
+
+    def __init__(self, usage: SnapshotUsage) -> None:
+        self.usage = usage
+        super().__init__(
+            f"快照 {usage.snapshot_id} 还被引用着"
+            f"（证据 {usage.evidence} / 抽取 {usage.extraction_runs} / 提案 {usage.proposal_sets}）"
+        )
 
 
 class QuoteMismatch(StoreError):
@@ -504,6 +529,27 @@ class CanonWriter(Protocol):
         版本对比的读端。**快照按内容去重、不是全量版本史**（同内容只存一次）——它的第一
         身份是证据的锚，版本对比是白捡的副产物。`is_current` 判据是 `text_sha256` 精确
         等值（同 `current_snapshots`），不是「最新那条」：作者改回旧版时当前指向旧快照。
+        """
+        ...
+
+    def delete_chapter_snapshot(self, project_id: str, number: int, snapshot_id: str) -> None:
+        """删掉这一章的一条历史快照。**只删真的没人引的那种。**
+
+        快照的第一身份是证据的锚，版本历史是白捡的副产物——所以这个删除是**给作者清理
+        版本列表用的**，不是给引擎回收空间用的，三条不变式都必须先过：
+
+        Args:
+            number: 快照必须属于这一章。**收 `number` 不是为了查得更快**，是为了让
+                「章 + 快照」这对坐标由一个地方校验：调用方分别传两个 id 就是给它一个
+                传成两章的机会（同 `EvidenceSpec` 不收 `chapter_id` 的理由）。
+
+        Raises:
+            StoreError: `snapshot_id` 不存在、属于别的项目，或不属于第 `number` 章。
+            SnapshotIsCurrent: 它是这一章当前正文对应的那条（先还原到别的版本再删）。
+            SnapshotInUse: 有证据 / 抽取 / 提案引着它（异常里带 `SnapshotUsage` 明细）。
+
+        实现必须把「查引用」和「删」罩进同一个事务：中间隔着一次声明的话，检查过的
+        `usage=0` 会在 DELETE 执行时已经不成立，而外键会在那一刻才炸出来。
         """
         ...
 

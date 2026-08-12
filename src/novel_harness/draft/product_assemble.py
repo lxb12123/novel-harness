@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ..events import CharacterProfileView, EventView
-from .assemble import PromptForm, assemble
+from .assemble import GATE_TAIL_CODE_POINTS, PromptForm, assemble
 from .context import ResolvedConstraints
 from .length import LengthSpec
 from .product_context import ResolvedProductContext
@@ -79,21 +79,45 @@ def assemble_product(
     goal: str,
     length: LengthSpec,
     previous_tail: str = "",
+    previous_tail_limit: int = GATE_TAIL_CODE_POINTS,
     house_style: str | None = None,
 ) -> list[dict[str, str]]:
-    """Prepend safe memory while forwarding the prior assembler arguments unchanged."""
+    """Insert safe memory after the stable style block, forwarding assembler args unchanged.
 
+    ── 顺序是 `[文风][记忆][用户]`，不是 `[记忆][文风][用户]`（ADR 0019 边界六）──────
+
+    记忆前言**逐章变**（人物档案 + 近期事件 + 滚动总结），文风**跨章不变**。记忆排在前面
+    时，唯一稳定的那块被夹在中间，**前缀缓存价值为零**——每一章都得重付一次文风段的输入
+    token，而那一段每次逐字节相同。
+
+    **这不是给 kill-gate 改考卷**：三臂（X0/X1/X2）走的是 `assemble()`，从来不经过本函数。
+    实测证据在 `tests/test_product_assemble.py::test_the_gate_never_reaches_this_module`
+    ——`eval/runner.py` 和 `eval/evidence.py` 直接 import `assemble`，`assemble_product`
+    在整个 `src/` 里只有一个调用方（`api/app.py` 的 `/draft`，且只在 `PRODUCT` 那一支）。
+    `assemble()` 本身一个字都没动。
+
+    切的是「前导 system 段」而不是写死 `base[0]`：`assemble()` 今天只发一条 system 消息，
+    但**把「它只有一条」写进这儿就是第二处依赖它的地方**，而那是三臂那侧的形状，不是这儿的。
+    """
+
+    # `previous_tail_limit` 只是**透传**：默认值仍是三臂那个冻结值，放大它的决定在调用点
+    # （`api/app.py` 的 `/draft`），不在这儿——本模块加长上文等于替 kill-gate 改了考卷。
     base = assemble(
         ctx,
         form=form,
         goal=goal,
         length=length,
         previous_tail=previous_tail,
+        previous_tail_limit=previous_tail_limit,
         house_style=house_style,
     )
+    stable = 0
+    while stable < len(base) and base[stable]["role"] == "system":
+        stable += 1
     return [
+        *base[:stable],
         {"role": "system", "content": render_product_memory(memory)},
-        *base,
+        *base[stable:],
     ]
 
 

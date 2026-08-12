@@ -31,6 +31,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from test_activity import seed_call, seed_run
 from test_api import (
     _seed_edge_conflict_proposal,
     _seed_low_confidence_proposal,
@@ -181,6 +182,10 @@ def test_frontend_fixture_matches_the_real_api(
     grab("constraints", client.get(f"{base}/chapters/2/constraints", params=cast))
     grab("states", client.get(f"{base}/chapters/2/state", params=cast))
     grab("check", client.post(f"{base}/chapters/3/check"))
+    # 在场是推出来的，不是作者填的：右栏靠这个显示「这一章提到了谁」。
+    # 第 1 章有正文（has_text=true），第 99 章没有——两者出参必须长得不一样。
+    grab("mentioned", client.get(f"{base}/chapters/1/mentioned"))
+    grab("mentionedEmpty", client.get(f"{base}/chapters/99/mentioned"))
 
     # ── M4：提案审阅 / 被动确认（seed 走存储层，审阅动作走真 API）─────────────
     m4_proposal_id, m4_event_id, m4_base = _seed_low_confidence_proposal(book)
@@ -219,6 +224,89 @@ def test_frontend_fixture_matches_the_real_api(
         ),
     )
 
+    # ── 章节滚动总结：生成一次，再看窗口 ──────────────────────────────────
+    # **只把模型换成桩**（同 `test_synth_artifact` 那一轮），库、幂等键、审计写入全走真代码。
+    # 不换的话这个端点没法进 fixture，而没进 fixture 的端点就能悄悄改出参——
+    # 它恰好是本轮补的洞，别让它一出生就在守卫视野外。
+    import novel_harness.api.deps as deps_mod
+    from novel_harness.draft.provider import CompletionResult
+
+    monkeypatch.setattr(
+        deps_mod,
+        "complete",
+        lambda messages, *, config=None, plan=None, client=None: CompletionResult(
+            text="萧决在青云城主府听说了血脉秘密。", model="deepseek-v4-flash", finish_reason="stop"
+        ),
+    )
+    grab("summaryGenerated", client.post(f"{base}/chapters/1/summary"))
+    # 第 12 章 → 窗口是第 1–3 章：**三种状态一次到齐**（已生成 / 有正文没生成 /
+    # 根本没写）。少一种，前端就有一条分支是照着想象写的。
+    grab("summaries", client.get(f"{base}/chapters/12/summaries"))
+
+    # ── 改一条**已经生效**的事实（1.1）+ 活动日志（2.1）─────────────────────
+    # 顺序是硬的：`/canon/knowledge` 要先跑，日志里才有一条**带真跳转坐标**的
+    # `knowledge_edit`。没有它，这份 fixture 里全是 `endpoints: []` 的兜底坐标，
+    # 而前端要照着写的恰恰是「点这里去改」那条分支。
+    version = client.get(f"{base}").json()["canon_version"]
+    corrected = client.post(
+        f"{base}/canon/knowledge",
+        json={
+            "character_id": book["萧决"],
+            "secret_id": book["血脉秘密"],
+            "to_type": "BELIEVES",
+            "believed_value": "他以为那只是个传闻",
+            "expected_canon_version": version,
+        },
+    )
+    grab("canonKnowledge", corrected)
+
+    # 上面 `summaryGenerated` 已经写了一条**真的** `model_call`（capability=summarizer，
+    # 走 `record_call`）。抽取运行和 extractor 调用走桩：跑一次真抽取要模型、要钱。
+    activity_call = seed_call(book)
+    activity_run = seed_run(book, 1, proposals=2, call_id=activity_call)
+    grab("activity", client.get(f"{base}/activity", params={"limit": 8}))
+    # 按 actor 过滤 —— ADR 0020 点名的那件事（作者点过的会被 system 行淹没）。
+    # `actors[]` 的计数**不跟着过滤走**，这份 fixture 冻的就是这个差别。
+    grab(
+        "activityAuthorOnly",
+        client.get(f"{base}/activity", params={"actor": "author", "limit": 4}),
+    )
+    grab("activityRunDetail", client.get(f"{base}/activity/{activity_run}"))
+    # 三个 source 的展开层各冻一份。**少一份就有一整块屏幕没被守卫看过**：
+    # 「界面上不摆研发术语」那条断言只能扫它真的渲染出来的东西，而这一份里曾经躺着
+    # prompt 指纹、两个 `artifact:sha256:…` 和一整段 `params_json`。
+    grab("activityCallDetail", client.get(f"{base}/activity/{activity_call}"))
+    # 展开一条作者亲手点过的确认：`payload` 是这一层唯一的泄漏面，前端照它渲染信封。
+    grab(
+        "activityDecisionDetail",
+        client.get(f"{base}/activity/{corrected.json()['decision_id']}"),
+    )
+    grab("runs", client.get(f"{base}/runs"))
+
+    # ── 已生效事件 + 改它的知情/在场名单（1.1 的另一半）──────────────────────
+    # **放在活动日志之后是有意的**：这次编辑会多写一条 `decision_log`，冻在上面那份
+    # `activity` 里会让日志页那几条按 id 认行的测试跟着这一步的实现细节漂。
+    # 前端要的是两个形状：能看的那张单子（`eventsCanon`）和改完的回执（`canonEventCast`）。
+    canon_events = client.get(f"{base}/chapters/1/events", params={"scope": "CANON"})
+    grab("eventsCanon", canon_events)
+    views = canon_events.json()
+    assert views, "第 1 章一条已生效事件都没有——名单那一格的夹具会变成空壳"
+    target = views[0]
+    # 去掉一个知情人：`knowers` 是抽取里唯一靠推断得来的一维，也是最需要改的一维
+    # （ADR 0020 的代价那节点名了它）。**绝对集合**，所以这里发的是「改完之后是这些人」。
+    kept = [k["id"] for k in target["knowers"]][:-1]
+    assert len(kept) < len(target["knowers"]), "这条事件没有知情人可去掉，编辑会被后端判空"
+    grab(
+        "canonEventCast",
+        client.post(
+            f"{base}/canon/events/{target['event']['id']}/cast",
+            json={
+                "knower_ids": kept,
+                "expected_canon_version": client.get(f"{base}").json()["canon_version"],
+            },
+        ),
+    )
+
     # ── 拒绝形态：前端有专门分支渲染它们，同样是契约 ────────────────────────
     ambiguous = client.post(
         f"{base}/declare/knows", json={"who": "师兄", "secret": "血脉秘密", "quote": "萧决"}
@@ -229,6 +317,110 @@ def test_frontend_fixture_matches_the_real_api(
     short = client.post(f"{base}/aliases", json={"of": "萧决", "surface": "决"})
     assert short.status_code == 422, short.text
     dump["errorShortAlias"] = norm.walk(short.json())
+
+    # ── 改一条已生效事实的三种拒绝 ────────────────────────────────────────
+    # 三种含义完全不同，界面上必须说三句不同的话，所以三种形状都得是契约的一部分：
+    # 409 = 这本书在别处刚被改过（**不许静默重试**）；404 = 他点的那条今天不在了；
+    # 422 = 这次改动本身讲不通。手写这三份等于两份手写的东西互相验证。
+    fresh = client.get(f"{base}").json()["canon_version"]
+    stale = client.post(
+        f"{base}/canon/knowledge",
+        json={
+            "character_id": book["萧决"],
+            "secret_id": book["血脉秘密"],
+            "to_type": "KNOWS",
+            "expected_canon_version": 0,  # 作者手上那份是很久以前的
+        },
+    )
+    assert stale.status_code == 409, stale.text
+    dump["errorStaleCanon"] = norm.walk(stale.json())
+
+    absent = client.post(
+        f"{base}/canon/knowledge",
+        json={
+            # 这一格今天是「不知道」——没有可改的事实（界面上这一格根本不该能点，
+            # 这份夹具冻的是「他还是点到了」那条退路）。
+            "character_id": book["李管家"],
+            "secret_id": book["血脉秘密"],
+            "to_type": "BELIEVES",
+            "believed_value": "以为是假的",
+            "expected_canon_version": fresh,
+        },
+    )
+    assert absent.status_code == 404, absent.text
+    dump["errorFactNotFound"] = norm.walk(absent.json())
+
+    refused = client.post(
+        f"{base}/canon/knowledge",
+        json={
+            "character_id": book["萧决"],
+            "secret_id": book["血脉秘密"],
+            "to_type": "BELIEVES",  # 上面那次改正之后它已经是这一种了
+            "believed_value": "还是那句传闻",
+            "expected_canon_version": fresh,
+        },
+    )
+    assert refused.status_code == 422, refused.text
+    dump["errorKnowledgeRefused"] = norm.walk(refused.json())
+
+    # ── 写作助手的会话（模式二，ADR 0019）──────────────────────────────────
+    # **只把模型换成桩**（同上面那一轮总结）：库、工具派发、记账、会话表全走真代码。
+    # 换的那一处是 `build_agent_model`——它就是壳里那个注入点。
+    import novel_harness.api.chat as chat_mod
+    from novel_harness.draft.provider import ToolCall
+
+    def scripted_agent(messages: Any, *, tools: Any, cancel: Any) -> Any:
+        # 第一步要一次工具（真的会派发、真的会绑章号），第二步说话收手。
+        if any(m.get("role") == "tool" for m in messages):
+            return CompletionResult(
+                text="第 2 章这一场，血脉那条先别说破。",
+                model="deepseek-v4-flash",
+                finish_reason="stop",
+                prompt_tokens=1_200,
+                completion_tokens=64,
+            )
+        return CompletionResult(
+            text="",
+            model="deepseek-v4-flash",
+            finish_reason="tool_calls",
+            tool_calls=(ToolCall(id="c1", name="scene_constraints", arguments='{"chapter": 2}'),),
+        )
+
+    monkeypatch.setattr(chat_mod, "build_agent_model", lambda config, plan: scripted_agent)
+    created = client.post(f"{base}/chats", json={"title": "", "house_style": ""})
+    assert created.status_code == 201, created.text
+    dump["chatCreated"] = norm.walk(created.json())
+    chat_id = created.json()["id"]
+    grab(
+        "chatTurn",
+        client.post(
+            f"{base}/chats/{chat_id}/turn",
+            json={"chapter": 2, "said": "第 2 章能说破血脉的事吗？"},
+        ),
+    )
+    grab("chatDetail", client.get(f"{base}/chats/{chat_id}"))
+    grab("chats", client.get(f"{base}/chats"))
+    # 没在跑的时候按停：`stopped=false` **不是失败**，前端有一条分支照它渲染。
+    grab("chatStopped", client.post(f"{base}/chats/{chat_id}/stop"))
+    doomed = client.post(f"{base}/chats", json={"title": "删掉它"})
+    grab("chatDeleted", client.delete(f"{base}/chats/{doomed.json()['id']}"))
+
+    # ── 多版本的一章：版本抽屉的「还原 / 删除」只在有第二版时才存在 ──────────
+    # **放在最后**：这一步会改第 2 章的正文，前面每一个 grab 都不该看见它。
+    # `chapterHistory` 那份只有一版（导入即当前），照它写出来的界面在真实的两版面前
+    # 是没被验过的——所以这里真存一次，冻的是「有历史可还原」那个形态。
+    two_versions = client.get(f"{base}/chapters/2/text").json()["markdown"]
+    saved_again = client.put(
+        f"{base}/chapters/2/text", json={"markdown": two_versions + "\n后来又添了一段。\n"}
+    )
+    # 保存的回执也冻住：还原走的就是这条 PUT，测试桩得照它的真形状答话。
+    grab("chapterSaved", saved_again)
+    grab("chapterHistoryTwo", client.get(f"{base}/chapters/2/history"))
+
+    # ── 书架：一个库里可以有多本书（`bootstrap` 往当前库里加项目）───────────
+    # `projects` 那份是**建第二本之前**的状态，只有一本；侧栏的书架、切书弹窗、
+    # 「从侧栏移除」全都只在两本以上时才存在形态，照一本写的界面等于没验过。
+    grab("projectsTwo", client.get("/api/projects"))
 
     frozen = json.dumps(dump, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 

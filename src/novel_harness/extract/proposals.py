@@ -9,6 +9,7 @@ from typing import Iterator
 from .. import project
 from ..db import Connection
 from ..events import (
+    EventCastStore,
     EventStore,
     EventStoreError,
     EventView,
@@ -52,6 +53,7 @@ from .proposal_models import (
     ValidatedProposal,
 )
 from .proposal_validation import (
+    referenced_node_ids,
     validate_current_canon_facts,
     validate_hydrated_facts,
     validate_proposal_shape,
@@ -71,9 +73,73 @@ __all__ = [
     "confirm_provisional_edges",
     "confirm_provisional_event",
     "confirm_provisional_events",
+    "hydrate_proposal_names",
     "recover_proposal_audit",
     "review_proposal",
 ]
+
+
+def hydrate_proposal_names(
+    review_store: EdgeReviewStore,
+    project_id: str,
+    proposals: Sequence[ProposalRecord],
+) -> tuple[ProposalRecord, ...]:
+    """给每条提案补上 `node_refs`：`items` 里的裸 id → 显示名。
+
+    ── 为什么这件事必须在后端做 ─────────────────────────────────────────
+    在这个函数存在之前，界面拿 `subject_id` / `target_id` 去**花名册**里查名字，
+    查不到就把 id 截断了摆上屏（`n:ID22`）。**缝在两次查询的时间差**：花名册和提案
+    队列在浏览器里是两条独立缓存，而后台抽取 / 自动升 CANON 会造出新节点——没有任何
+    一条路径保证花名册那份在提案那份之后重取过。（花名册本身不挑 label：它走
+    `resolve(pid, None)`，而每个节点建出来就带一条 canonical 别名。）
+
+    出参自足 ⇒ 这一整类失败在结构上不存在，也不必再给一条「什么时候该重取花名册」的纪律。
+
+    ── 认不出的 id 不进这份名单 ──────────────────────────────────────────
+    `node_refs` 对不存在 / 跨项目的 id 会抛（写路径要的就是这个）。这里是**读端**：
+    一条引用了幽灵 id 的提案不该把整页队列一起打不开，所以整批失败时逐个再试一遍，
+    认不出的那个**直接不出现**——绝不编一个名字出来（§10 约束 8：静默的假名比空更贵）。
+    """
+    ids = tuple(
+        dict.fromkeys(
+            node_id
+            for proposal in proposals
+            for node_id in referenced_node_ids(proposal.items)
+        )
+    )
+    if not ids:
+        return tuple(proposals)
+    by_id = {ref.id: ref for ref in _known_node_refs(review_store, project_id, ids)}
+    return tuple(
+        proposal.model_copy(
+            update={
+                "node_refs": tuple(
+                    by_id[node_id]
+                    for node_id in referenced_node_ids(proposal.items)
+                    if node_id in by_id
+                )
+            }
+        )
+        for proposal in proposals
+    )
+
+
+def _known_node_refs(
+    review_store: EdgeReviewStore,
+    project_id: str,
+    ids: Sequence[str],
+) -> tuple[NodeRef, ...]:
+    """认得出的那些。一次批量，失败了才逐个——**只有坏数据会走第二条路**。"""
+    try:
+        return review_store.node_refs(project_id, ids)
+    except EdgeReviewValidationError:
+        out: list[NodeRef] = []
+        for node_id in ids:
+            try:
+                out.extend(review_store.node_refs(project_id, [node_id]))
+            except EdgeReviewValidationError:
+                continue
+        return tuple(out)
 
 
 @contextmanager
@@ -231,6 +297,34 @@ def _clone_events(
     return tuple(out)
 
 
+def _edit_cast(
+    event_store: EventStore,
+    project_id: str,
+    events: tuple[EventView, ...],
+    review: ProposalReview,
+) -> tuple[EventView, ...]:
+    """把 `edit` 里的名单改动落到**刚克隆出来的那条 CANON 事件**上。
+
+    顺序是「先克隆再改」而不是「改完再克隆」：源事件是 PROVISIONAL，它不该被作者的
+    审阅动作改写（`test_edit_is_event_only...` 断言的就是源事件一个字节没动）。
+    """
+    if review.edited_knower_ids is None and review.edited_participant_ids is None:
+        return events
+    if not isinstance(event_store, EventCastStore):
+        raise ProposalActionError("这个事件仓储改不了名单：没有 edit_cast")
+    (view,) = events  # validate_proposal_shape 已保证 edit 恰好 1 个 event
+    try:
+        edited = event_store.edit_cast(
+            project_id,
+            view.event.id,
+            knower_ids=review.edited_knower_ids,
+            participant_ids=review.edited_participant_ids,
+        )
+    except EventStoreError as exc:
+        raise ProposalShapeError(str(exc)) from exc
+    return (edited.event,)
+
+
 def _audit_pairs(
     facts: Sequence,
     source_ids: Sequence[str],
@@ -310,10 +404,15 @@ def review_proposal(
         canon_edges: tuple[ReviewableEdge, ...] = ()
         characters: tuple[NodeRef, ...] = ()
         if review.action in {ProposalAction.ACCEPT, ProposalAction.EDIT}:
-            canon_events = _clone_events(
+            canon_events = _edit_cast(
                 events,
-                proposal.event_ids,
-                edited_summary=review.edited_summary,
+                proposal.project_id,
+                _clone_events(
+                    events,
+                    proposal.event_ids,
+                    edited_summary=review.edited_summary,
+                ),
+                review,
             )
             if proposal.edge_ids:
                 try:

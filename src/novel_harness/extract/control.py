@@ -38,11 +38,31 @@ class ExtractionRunStatus(StrEnum):
     FAILED = "FAILED"
 
 
+class ExtractionErrorCode(StrEnum):
+    """一次抽取能失败的全部方式。**封闭枚举，不是开放字符串。**
+
+    这一列会走到小说作者的屏幕上（活动记录里那一行失败的抽取），而
+    `activity._RUN_ERROR_LABEL` 要把它翻成中文。开放字符串的话那张表就没法被
+    「枚举驱动」的守卫罩住——`tests/test_wording_guard.py` 正是拿这个枚举当判据的。
+    """
+
+    PROMPT_DRIFT = "prompt_drift"
+    PROVIDER_FAILURE = "provider_failure"
+    CALL_RECORD_FAILURE = "call_record_failure"
+    ANALYSIS_FORMAT = "analysis_format"
+    INGEST_FAILURE = "ingest_failure"
+
+
 class ExtractionRunError(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     code: str = Field(min_length=1)
+    """`ExtractionErrorCode` 的值。**类型留 `str`**：这一列是 append-only 的审计资产，
+    旧库里可能躺着今天已经删掉的码，收窄成枚举会让老行读不回来。"""
+
     message: str = Field(min_length=1)
+    """写给**维护者**的一句诊断，英文。**它永远不上作者的屏幕**——
+    读端（`activity._run_errors`）只翻 `code`，见那儿的说明。"""
 
 
 class ExtractionRun(BaseModel):

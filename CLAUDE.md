@@ -119,8 +119,13 @@ Vite 的 `outDir` 和 `api/app.py` 的 `_DIST` 是**两个必须同时改的字�
 > 同「工作台的已知洞」那条规矩，且 `tests/test_doc_numbers.py` 现在会拦住重新抄一份的行为
 > （它钉运行时数得出来的那些；pytest / vitest 两个数它罩不住，仍靠人手改那一处）。
 
-已落地：数据层 / 图层 / panel / R4 / `text/{anchor,chapterize,scenes}` / 声明层 `declare.py` / `nh` 的子命令（M0+M1），
-FastAPI 壳（`api/`）+ React 工作台（`frontend/`，手写 TS/TSX）（M1.5）。`demo.sh` 心跳绿着。
+已落地：数据层 / 图层 / panel / 规则 R2·R3·R4 / `text/{anchor,chapterize,mentions,scenes}` / 声明层 `declare.py` /
+`nh` 的子命令（M0+M1），FastAPI 壳（`api/`）+ React 工作台（`frontend/`，手写 TS/TSX）（M1.5）。
+**`demo.sh` 心跳绿着（2026-08-06 复核）——但这句话没有任何东西自动验证它**：
+没有一个 pytest 会跑 demo.sh，所以它红了也只有人肉执行才看得见。
+它上一次断是 2026-08-02（R2/R3 进 `ALL_CHECKS`，而 demo.sh 还在等「跑了 1 条规则」），
+**四天没人发现**。那一种断法现在被 `tests/test_doc_numbers.py::test_demo_pins_the_real_rule_count`
+拦住了，**别的断法仍然只能靠你手跑。**
 **前端 ↔ 后端契约由两头钉住**：`tests/test_frontend_contract.py` 从真 app dump 一批端点的真出参冻成 `frontend/src/__fixtures__/api.json`（出参一改 pytest 红），组件测试吃**同一份** fixture（形状变了没改组件 vitest 红）。**别手写前端 fixture**——两份手写的东西互相验证正是这条缝原本的病。改了后端出参跑 `NH_UPDATE_FIXTURES=1 uv run pytest tests/test_frontend_contract.py` 然后看 git diff。
 
 **M2 的旧短输出链在，但修正案 5 的链还没合拢，也没通电。** 判分侧（`eval/{leak,score,confound_lint}.py`）、
@@ -147,25 +152,18 @@ endpoint/profile 跑第一轮，跑完且检查 JSONL 才写 ADR 0009。
 预注册动作：改的是时序，换的是证据类型，见 ADR 0009）。
 **动 `eval/` 或 `draft/` 之前必读的是「协议 + 这九份修正案 + [ADR 0010](docs/adr/0010-writer-boundary.md) + [ADR 0011](docs/adr/0011-bilingual-draft-length.md)」，不是协议一份。**
 
-**四条真书验收，一条都没验。但堵点不一样，别用一句「缺一本书」盖过去**——其中两条**同时还缺代码**，
-书到手也验不了。在验之前这些数字都是未知，别在文档里替它们编一个：
+**真书验收还剩哪几条没验**——**唯一副本在 [`ARCHITECTURE.md` 的「当前状态」](docs/ARCHITECTURE.md#当前状态)，
+别在这儿写第二份。** 只留两条不随进度漂的规矩：
 
-**纯缺书（测量代码齐全）：**
-- `scripts/probe_speaker_tags.py` 能跑了（`CHAPTER_RE` 从 `text/chapterize.py` import，不留第二份副本；
-  `SPEAKER_RE` / `QUOTE_RE` 是脚本自己的），但**覆盖率仍未测量**。≥10% 则 R5 进 v1，<10% 当场砍。
-  结果填进 ADR 0005 的「实测结果」一节——**那节现在还是空的**。
-  ⚠️ 填之前先对齐口径：**探针算的分母和 ADR 0005 判据表里的分母不是同一个**，直接填等于用 A 的数字触发 B 的阈值。
-  （ADR 0005 里还留着**第二份 SPEAKER 正则**且已和脚本漂移。）
-- `text/chapterize.py` 的验收「真书切章数 = 目录数」**一次都没验过**（fixture 是手写的 46 行 **3 章**——
-  「第一卷 / 第二卷」不算章，`卷` 不在 `CHAPTER_RE` 里，那是故意的）。
+- **在验之前那些数字都是未知，别在文档里替它们编一个。**
+- **合成小册子有强制说话人标签、强制唯一 tell，测的是注入机制不是真书行为**——
+  不得拿 M2 的实验冒充任何一条真书验收（EVAL_PROTOCOL §7 已把这条免责一并预注册）。
 
-**同时缺代码（书到手也验不了）：**
-- M1 的花名册 90% 提及 —— 缺 `text/mentions.py`，也缺度量代码。M1 已被标「已落地」，这条从没测过。
-- M3 的误报 < 1 条/章 —— **今天不可测，而且会假绿**：`ALL_CHECKS` 只有 R4，R4 不读正文、零 FP，
-  真书一到手跑 `nh check` 会输出接近 0 条 issue，**自动「通过」这条门槛**。
-  那正是 `demo.sh` 自己警告的「一张漂亮的空表 + exit 0」。要先有 R2/R3，这条才有意义。
-
-（合成小册子有强制说话人标签，**不得拿 M2 的实验冒充它们中的任何一条**。）
+> 这儿原本有一份手抄的四条清单，**它是「拷贝会骗人」的第二个受害者**，而且一次烂了四处：
+> R5 说「覆盖率仍未测量」（2026-08-02 已测 8.2%，R5 已砍，ADR 0014，ADR 0005 那节也已填）、
+> `text/mentions.py` 说「缺」（同日已落地）、`ALL_CHECKS` 说「只有 R4」（实际 R2/R3/R4 三条）、
+> M3 说「今天不可测而且会假绿」（2026-08-03 双边门槛已过、M4 已解锁）。
+> **照它排期的人会去重写三样已经写完的工作。** 所以现在这儿只留指针，不留内容。
 
 **工作台已知的洞**——**唯一副本在 [`ARCHITECTURE.md` 的「工作台的已知洞」](docs/ARCHITECTURE.md#工作台的已知洞)，
 别在这儿写第二份**（它曾经有三处拷贝，补掉一个洞要记得改三处，改漏了就有一份文档在骗人）。

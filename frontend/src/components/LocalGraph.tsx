@@ -3,7 +3,7 @@ import { ReactFlow, Background, Controls, type Edge as RFEdge, type Node as RFNo
 import "@xyflow/react/dist/style.css";
 import { useSubgraph } from "../api/hooks";
 import { useCoords } from "../store";
-import type { Subgraph } from "../api/types";
+import { LABEL_ZH, edgeName, type NodeLabel, type Subgraph } from "../api/types";
 
 // 局部关系图（Tab2）—— React Flow（§2.5：DOM/SVG 原生，十几个节点的小图，和编辑器同一套
 // React 心智）。中心 = selectedNodeId，hops≤2 硬上限（3 跳数学上坏，引擎直接拒）。
@@ -19,25 +19,10 @@ const LABEL_COLOR: Record<string, string> = {
   Object: "#5c8ac0",
   Foreshadow: "#c05c93",
 };
-const LABEL_ZH: Record<string, string> = {
-  Character: "人物",
-  Location: "地点",
-  Secret: "秘密",
-  Faction: "势力",
-  Object: "物品",
-  Foreshadow: "伏笔",
-  StateDim: "状态",
-  Chapter: "章",
-};
-const EDGE_ZH: Record<string, string> = {
-  KNOWS: "知道",
-  BELIEVES: "以为",
-  LOCATED_AT: "身处",
-  HAS_STATE: "状态",
-  MEMBER_OF: "属于",
-  OWNS: "持有",
-  RELATED_TO: "关联",
-};
+// 类别 / 关系 → 中文的两张表都在 `api/types.ts`（`LABEL_ZH` / `EDGE_ZH`，
+// 全前端各一份，成员由 `tests/test_wording_guard.py` 拿 Python 枚举逐个比）。
+// 这儿原来那份 `EDGE_ZH` 只有 7 行——`PLANTED_IN` / `RESOLVED_IN` 一律显示成「关联」，
+// 而伏笔的「埋在 / 回应于」正是那两类边存在的全部理由。
 
 export function toFlow(g: Subgraph): { nodes: RFNode[]; edges: RFEdge[] } {
   const others = g.nodes.filter((n) => n.id !== g.center.id);
@@ -55,7 +40,7 @@ export function toFlow(g: Subgraph): { nodes: RFNode[]; edges: RFEdge[] } {
     return {
       id: n.id,
       position: { x, y },
-      data: { label: `${n.name}\n${LABEL_ZH[n.label] ?? n.label}` },
+      data: { label: `${n.name}\n${LABEL_ZH[n.label as NodeLabel] ?? "条目"}` },
       style: {
         border: `1px solid ${LABEL_COLOR[n.label] ?? "var(--line)"}`,
         borderWidth: isCenter ? 2 : 1,
@@ -74,7 +59,7 @@ export function toFlow(g: Subgraph): { nodes: RFNode[]; edges: RFEdge[] } {
     id: e.id,
     source: e.src,
     target: e.dst,
-    label: `${EDGE_ZH[e.type] ?? "关联"} · 第 ${e.valid_from_chapter} 章起`,
+    label: `${edgeName(e.type)} · 第 ${e.valid_from_chapter} 章起`,
     labelStyle: { fill: "var(--dim)", fontSize: 10 },
     style: { stroke: "var(--line)" },
   }));

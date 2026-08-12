@@ -30,9 +30,11 @@ from novel_harness.extract.proposals import (
     confirm_provisional_edges,
     confirm_provisional_event,
     confirm_provisional_events,
+    hydrate_proposal_names,
     recover_proposal_audit,
     review_proposal,
 )
+from novel_harness.extract.proposal_validation import endpoint_key_names, referenced_node_ids
 from novel_harness.graph import (
     ChapterSpec,
     Edge,
@@ -475,6 +477,97 @@ def test_edit_is_event_only_and_changes_only_the_canon_summary(world: ReviewWorl
     (decision,) = read_decisions(world.conn, world.project_id)
     assert decision.payload["action"] == "edit"
     assert decision.payload["events"][0]["summary"] == result.event.event.summary
+
+
+def test_edit_can_fix_the_knowers_the_extractor_guessed(world: ReviewWorld) -> None:
+    """**`edit` 不能只改一句话。**
+
+    `knowers` 是抽取里唯一靠推断得来的那一维（谁在场是文本里写着的，谁因此知道了是猜的）。
+    只能改 summary 的时候，作者面对一条 knowers 抽错的事件只有两个选择：整条 reject
+    （丢掉一条真实存在的事实，连证据链一起丢），或者 accept 一条错的。
+
+    队列这条路必须和「改一条已经生效的事实」（`corrections.py`）能力一致——否则作者会
+    学会先 reject 再重来。
+    """
+    proposal = _make_proposal(
+        world, items=[_event_item(world)], event_ids=[world.event_id]
+    )
+    source_before = world.events.event(world.project_id, world.event_id)
+
+    result = _review(
+        world,
+        proposal.id,
+        ProposalAction.EDIT,
+        edited_knower_ids=(world.hero_id,),
+    )
+
+    assert result.status == "EDITED"
+    assert result.event is not None
+    assert [ref.id for ref in result.event.knowers] == [world.hero_id]
+    assert {ref.id for ref in result.event.participants} == {world.hero_id, world.peer_id}
+    assert result.event.event.summary == source_before.event.summary, "没改的那一维不许动"
+    # 源是 PROVISIONAL，作者的审阅动作不该改写它（改的是克隆出来的那条 CANON）。
+    assert world.events.event(world.project_id, world.event_id) == source_before
+
+    (decision,) = read_decisions(world.conn, world.project_id)
+    assert decision.decision is decisions.Verdict.EDIT
+    assert decision.payload["events"][0]["knowers"] == ["顾清音"]
+
+
+def test_edit_can_fix_participants_and_the_summary_in_one_go(world: ReviewWorld) -> None:
+    third = world.graph.upsert_node(
+        NodeSpec(project_id=world.project_id, label=NodeLabel.CHARACTER, name="李管家")
+    )
+    proposal = _make_proposal(
+        world, items=[_event_item(world)], event_ids=[world.event_id]
+    )
+
+    result = _review(
+        world,
+        proposal.id,
+        ProposalAction.EDIT,
+        edited_summary="顾清音救下萧决，李管家在旁看着。",
+        edited_participant_ids=(world.hero_id, world.peer_id, third.id),
+    )
+
+    assert result.event.event.summary == "顾清音救下萧决，李管家在旁看着。"
+    assert {ref.name for ref in result.event.participants} == {"顾清音", "萧决", "李管家"}
+    (decision,) = read_decisions(world.conn, world.project_id)
+    assert set(decision.payload["events"][0]["participants"]) == {"顾清音", "萧决", "李管家"}
+
+
+def test_edit_refuses_a_cast_member_that_is_not_a_character(world: ReviewWorld) -> None:
+    place = world.graph.upsert_node(
+        NodeSpec(project_id=world.project_id, label=NodeLabel.LOCATION, name="青云城")
+    )
+    proposal = _make_proposal(
+        world, items=[_event_item(world)], event_ids=[world.event_id]
+    )
+    with pytest.raises(ProposalShapeError):
+        _review(
+            world,
+            proposal.id,
+            ProposalAction.EDIT,
+            edited_knower_ids=(world.hero_id, place.id),
+        )
+    assert require_canon_version(world.conn, world.project_id) == 0
+    assert world.proposals.get(world.project_id, proposal.id).status.value == "PENDING"
+
+
+def test_edit_shape_accepts_a_lone_cast_change_and_rejects_junk() -> None:
+    assert ProposalReview(
+        action="edit", expected_canon_version=0, edited_knower_ids=("a",)
+    ).edited_summary is None
+    with pytest.raises(ValidationError):
+        ProposalReview(action="edit", expected_canon_version=0, edited_knower_ids=("a", "a"))
+    with pytest.raises(ValidationError):
+        ProposalReview(action="edit", expected_canon_version=0, edited_participant_ids=("",))
+    with pytest.raises(ValidationError):
+        ProposalReview(action="accept", expected_canon_version=0, edited_knower_ids=("a",))
+    # 空集合是合法的一次编辑（「这件事其实没人知道」），不是「没改」。
+    assert ProposalReview(
+        action="edit", expected_canon_version=0, edited_knower_ids=()
+    ).edited_knower_ids == ()
 
 
 def test_edit_rejects_edge_or_multi_event_shapes_before_writes(world: ReviewWorld) -> None:
@@ -2071,3 +2164,134 @@ def test_confirm_rejects_closed_event_without_partial_canon(world: ReviewWorld) 
     assert world.conn.execute(
         "SELECT COUNT(*) FROM story_event WHERE information_scope = 'CANON'"
     ).fetchone()[0] == 0
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 队列的**读端**：id → 显示名归后端，界面不拿 id 去查
+# ══════════════════════════════════════════════════════════════════════════
+#
+# 病历：`ProposalReviewTab` 曾经写 `rosterMap.get(id) ?? id.slice(-6)`，
+# 花名册认不出时屏幕上是 `n:ID22`（`"location:ID22"` 的后六位）。
+# **那条兜底不是边角**——理由见 `test_the_queue_answer_is_self_sufficient`。
+
+
+def test_the_queue_carries_display_names_for_the_bare_ids_in_its_items(
+    world: ReviewWorld,
+) -> None:
+    """`node_refs` 覆盖 items 里的每一个裸 id，且**只出窄引用**。"""
+    proposal = _make_edge_conflict_proposal(
+        world,
+        update_kind="location",
+        current=world.edge_reviews.hydrate_provisional(
+            world.project_id, [world.location_edge_id]
+        )[0].edge,
+        proposed_edge_id=world.location_edge_id,
+        quote=world.location_quote,
+    )
+    hydrated = hydrate_proposal_names(world.edge_reviews, world.project_id, [proposal])[0]
+
+    wanted = set(referenced_node_ids(proposal.items))
+    assert wanted, "这条提案的 items 里一个节点 id 都没有 —— 样本坏了"
+    assert {ref.id for ref in hydrated.node_refs} == wanted
+    # 出的是 `{id,label,name}`，不是 `Node`：这些 id 里可能有 Secret，而 props 装的
+    # 正是秘密的内容（ARCHITECTURE §10.3 / `graph.models.NodeRef`）。
+    assert all(set(ref.model_dump()) == {"id", "label", "name"} for ref in hydrated.node_refs)
+    assert {ref.name for ref in hydrated.node_refs} == {"顾清音", "北荒"}
+    # `items` 一个字节都没动 —— 它是落库的那份，审阅要拿它和存储事实逐字比对。
+    assert hydrated.items == proposal.items
+
+
+def test_the_queue_answer_is_self_sufficient(world: ReviewWorld) -> None:
+    """**一条提案自己就说得出它提到的每一个名字，不需要第二次查询。**
+
+    这才是 `n:ID22` 的真身。花名册（`/roster`）**不是**「只收人物」——它走
+    `resolve(pid, None)`，而 `upsert_node` 每建一个节点都会写一条 canonical 别名，
+    所以任何 label 的节点都在里面。真正的缝在**两次查询的时间差**：
+    `["roster", pid]` 和 `["proposals", pid, chapter]` 是两条独立缓存，
+    后台抽取（autopilot / 自动升 CANON）会造出新节点，而没有任何一条路径保证
+    花名册那份在提案那份之后重取过。差一拍，屏幕上就是一串截断的内部编号。
+
+    自足的出参让这一整类失败在结构上不存在：名字和 id 在**同一个响应**里。
+    """
+    proposal = _make_edge_conflict_proposal(
+        world,
+        update_kind="relationship",
+        current=world.edge_reviews.hydrate_provisional(
+            world.project_id, [world.relation_edge_id]
+        )[0].edge,
+        proposed_edge_id=world.relation_edge_id,
+        quote=world.relation_quote,
+    )
+    hydrated = hydrate_proposal_names(world.edge_reviews, world.project_id, [proposal])[0]
+    named = {ref.id for ref in hydrated.node_refs}
+    assert set(referenced_node_ids(hydrated.items)) <= named, (
+        "items 里有 id 在这份响应里查不到名字 —— 界面又得去查花名册了"
+    )
+
+
+def test_an_id_the_engine_cannot_recognise_gets_no_invented_name(
+    world: ReviewWorld,
+) -> None:
+    """认不出的 id **不出现在名单里**，而且不许把整页队列一起打不开。
+
+    `node_refs` 对幽灵 id 会抛（写路径要的就是这个）；读端逐个再试一遍，
+    认得出的照给。前端那边渲染成「—」——绝不编一个名字出来。
+    """
+    proposal = _make_proposal(
+        world,
+        kind="edge_conflict",
+        items=[
+            {
+                "update_kind": "location",
+                "current": {
+                    "edge_id": world.location_edge_id,
+                    "subject_id": world.hero_id,
+                    "target_id": "location:ghost:01KZZZ",
+                    "value": None,
+                },
+                "proposed": {
+                    "edge_id": world.location_edge_id,
+                    "subject_id": world.hero_id,
+                    "target_id": world.peer_id,
+                    "value": None,
+                    "quote": world.location_quote,
+                },
+            }
+        ],
+        edge_ids=[world.location_edge_id],
+    )
+    hydrated = hydrate_proposal_names(world.edge_reviews, world.project_id, [proposal])[0]
+    known = {ref.id for ref in hydrated.node_refs}
+    assert "location:ghost:01KZZZ" not in known
+    assert {world.hero_id, world.peer_id} <= known
+
+
+def test_the_endpoint_key_names_still_match_the_item_models() -> None:
+    """**守卫**：`referenced_node_ids` 认的那两个键必须真的是 edge item 上的字段。
+
+    它读的是**存进 `items_json` 的那份 JSON**，所以只能抄字面量。模型改名而这里
+    没跟上的后果是：一个 id 都收集不到 ⇒ `node_refs` 空 ⇒ 界面整片「—」，
+    **而没有任何东西会报错**。
+    """
+    mine, real = endpoint_key_names()
+    assert mine <= real, f"这两个键不在 edge item 模型上了：{sorted(mine - real)}"
+    assert mine == {"subject_id", "target_id"}
+    assert "edge_id" not in mine, "edge_id 是边的主键，不是它指向的节点"
+
+
+def test_referenced_node_ids_skips_what_it_cannot_read() -> None:
+    """读不懂的 item 静默跳过 —— 这是读端，一条坏 item 不该让整页队列打不开。
+
+    （形状不合法该在 `validate_proposal_shape` 那里被拦住并说清楚，不在这里。）
+    """
+    assert referenced_node_ids(["不是 object", 7, None]) == ()
+    assert referenced_node_ids([{"current": "也不是 object"}]) == ()
+    # 顺序 = 出现顺序，且去重（同一个人同时是 current 和 proposed 的 subject 是常态）。
+    assert referenced_node_ids(
+        [
+            {
+                "current": {"subject_id": "character:a", "target_id": "location:b"},
+                "proposed": {"subject_id": "character:a", "target_id": "location:c"},
+            }
+        ]
+    ) == ("character:a", "location:b", "location:c")

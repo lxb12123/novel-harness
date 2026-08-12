@@ -6,7 +6,6 @@ import {
   useProposals,
   useProjects,
   useReviewProposal,
-  useRoster,
   useStartExtraction,
 } from "../api/hooks";
 import type {
@@ -18,6 +17,33 @@ import type {
   ProposalRecord,
 } from "../api/types";
 import { useCoords } from "../store";
+import { readCorrectionError } from "../correctionError";
+import { CanonEventCast } from "./CanonEventCast";
+
+/** 这一格里每一次被拒绝的动作共用同一句话。
+ *
+ *  **为什么不直接渲染 `(error as Error).message`**（这儿原先就是那么写的）：
+ *  `ApiError` 在后端没写 `message` 时会退回 `body.error`，而这一格上三种拒绝都只有码
+ *  没有话——`stale_base_version` / `proposal_not_found` / `proposal_already_resolved`。
+ *  于是错误框里摆给小说作者的是一串下划线英文。
+ *
+ *  这条缝在「已确认的情节」搬进本格之后从罕见路变成常态路：**改一次名单就把 canon
+ *  版本推高一格**，紧接着按「确认所选」用的还是缓存里的旧数字 → 409（后台自动升
+ *  CANON 跑完时同理，而那是 ADR 0020 的常态）。
+ *  `readCorrectionError` 是那两个编辑器已经在用的同一份判断，不是第二份措辞源。 */
+function Refusal({ error, onStale }: { error: unknown; onStale: () => void }) {
+  const failure = readCorrectionError(error);
+  return (
+    <div className="err-box">
+      <div>{failure.message}</div>
+      {failure.kind === "stale" && (
+        <button className="link" onClick={onStale}>
+          看看最新的
+        </button>
+      )}
+    </div>
+  );
+}
 
 function pct(value: number | null | undefined): string {
   return value == null ? "—" : `${Math.round(value * 100)}%`;
@@ -48,17 +74,32 @@ function asNewCharacterItem(raw: unknown): NewCharacterItem | null {
   return "profile" in r ? (r as unknown as NewCharacterItem) : null;
 }
 
+/** 一条提案里那些 id 在屏幕上叫什么。
+ *
+ *  **名字是后端连着提案一起给的**（`proposal.node_refs`，§10.3「闸门只出 `NodeRef`」）。
+ *  这儿原先是 `rosterMap.get(id) ?? id.slice(-6)`——拿 id 去花名册里查，查不到就把
+ *  内部编号截断了摆上屏（`n:ID22`）。**那条兜底不是边角**：花名册（`["roster", pid]`）
+ *  和队列（`["proposals", pid, chapter]`）是两条独立缓存，后台整理造出的新节点会在
+ *  前者里缺席一拍——而没有任何一条路径保证那一拍不会被作者看见。
+ *  出参自足之后，这一整类失败在结构上就不存在了。
+ *
+ *  认不出的 id **不会**出现在 `node_refs` 里（后端不编假名字），那时说「—」——
+ *  和这一格里「没有在场的人」「没有可信程度」用的是同一个说法。 */
+function nameLookup(proposal: ProposalRecord): (id: string) => string {
+  const byId = new Map(proposal.node_refs.map((ref) => [ref.id, ref.name]));
+  return (id) => byId.get(id) ?? "—";
+}
+
 function ProposalCard({
   proposal,
-  nameOf,
   eventById,
   onReview,
 }: {
   proposal: ProposalRecord;
-  nameOf: (id: string) => string;
   eventById: Map<string, EventView>;
   onReview: (action: ProposalAction) => void;
 }) {
+  const nameOf = nameLookup(proposal);
   if (proposal.kind === "edge_conflict") {
     const items = proposal.items.map(asConflictItem).filter((x): x is EdgeConflictItem => !!x);
     return (
@@ -143,7 +184,6 @@ export function ProposalReviewTab() {
   const proposals = useProposals(pid, chapter);
   const provisionalEvents = useEvents(pid, chapter, "PROVISIONAL");
   const projects = useProjects();
-  const roster = useRoster(pid);
   const review = useReviewProposal(pid!);
   const confirm = useConfirmProvisional(pid!, chapter);
   const startExtraction = useStartExtraction(pid!, chapter);
@@ -152,13 +192,6 @@ export function ProposalReviewTab() {
 
   const canonVersion =
     projects.data?.find((p) => p.id === pid)?.canon_version ?? 0;
-
-  const rosterMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const n of roster.data ?? []) map.set(n.id, n.name);
-    return map;
-  }, [roster.data]);
-  const nameOf = (id: string) => rosterMap.get(id) ?? id.slice(-6);
 
   const eventById = useMemo(() => {
     const map = new Map<string, EventView>();
@@ -241,14 +274,13 @@ export function ProposalReviewTab() {
             <ProposalCard
               key={p.id}
               proposal={p}
-              nameOf={nameOf}
               eventById={eventById}
               onReview={(action) => onReview(p.id, action)}
             />
           ))}
         </div>
       )}
-      {review.error && <div className="err-box">{(review.error as Error).message}</div>}
+      {review.error && <Refusal error={review.error} onStale={() => projects.refetch()} />}
 
       <div className="mnr">
         <div className="lab">从正文发现的情节（确认后用于后续写作）</div>
@@ -275,10 +307,16 @@ export function ProposalReviewTab() {
             <button disabled={selected.size === 0 || confirm.isPending} onClick={confirmSelected}>
               {confirm.isPending ? "确认中…" : `确认所选（${selected.size}）`}
             </button>
-            {confirm.error && <div className="err-box">{(confirm.error as Error).message}</div>}
+            {confirm.error && (
+              <Refusal error={confirm.error} onStale={() => projects.refetch()} />
+            )}
           </div>
         )}
       </div>
+
+      {/* 确认过的那些**还能再改**（ADR 0020 的「可改」）：干净的抽取结果如今直接生效，
+          作者第一次看见它时它已经生效了，所以退路必须落在这儿，而不是只在队列里。 */}
+      <CanonEventCast canonVersion={canonVersion} />
     </div>
   );
 }

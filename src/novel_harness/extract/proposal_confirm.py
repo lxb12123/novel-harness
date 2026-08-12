@@ -10,6 +10,7 @@ from typing import Iterator
 
 from .. import project
 from ..db import Connection
+from ..decisions import DEFAULT_ACTOR
 from ..events import EventStore, EventStoreError, EventView
 from ..graph import (
     EdgeStatus,
@@ -58,6 +59,12 @@ def _version(conn: Connection, project_id: str, expected: int) -> int:
     if current != expected:
         raise project.StaleBaseVersion(project_id, expected=expected, current=current)
     return current
+
+
+def _receipt_summary(actor: str, what: str) -> str:
+    """回执摘要按 actor 分岔——「作者确认的」印在系统自己升上去的那条上就是假话。"""
+    who = "作者确认的被动" if actor == DEFAULT_ACTOR else "系统自动生效的"
+    return f"{who}{what}回执"
 
 
 def _request_hash(fact_kind: str, fact_ids: tuple[str, ...]) -> str:
@@ -136,6 +143,7 @@ def _create_event_receipt(
     pairs,
     selected: tuple[str, ...],
     chapter_number: int,
+    actor: str,
 ) -> ConfirmationReceipt:
     confirmation_id = new_id(EntityType.PROPOSAL, project_id)
     envelope = build_audit_envelope(
@@ -145,6 +153,7 @@ def _create_event_receipt(
         canon_version=resolved_canon_version,
         kind="provisional_confirm",
         events=pairs,
+        actor=actor,
     )
     return proposals.create_confirmation_receipt(
         receipt_id=confirmation_id,
@@ -157,7 +166,7 @@ def _create_event_receipt(
         event_ids=selected,
         edge_ids=(),
         envelope=envelope.snapshot().model_dump(mode="json"),
-        summary="作者确认的被动事件回执",
+        summary=_receipt_summary(actor, "事件"),
         chapter_number=chapter_number,
     )
 
@@ -172,6 +181,7 @@ def _create_edge_receipt(
     pairs,
     selected: tuple[str, ...],
     chapter_number: int,
+    actor: str,
 ) -> ConfirmationReceipt:
     confirmation_id = new_id(EntityType.PROPOSAL, project_id)
     envelope = build_audit_envelope(
@@ -181,6 +191,7 @@ def _create_edge_receipt(
         canon_version=resolved_canon_version,
         kind="provisional_confirm",
         edges=pairs,
+        actor=actor,
     )
     return proposals.create_confirmation_receipt(
         receipt_id=confirmation_id,
@@ -193,7 +204,7 @@ def _create_edge_receipt(
         event_ids=(),
         edge_ids=selected,
         envelope=envelope.snapshot().model_dump(mode="json"),
-        summary="作者确认的被动关系回执",
+        summary=_receipt_summary(actor, "关系"),
         chapter_number=chapter_number,
     )
 
@@ -260,6 +271,7 @@ def confirm_provisional_events(
     *,
     expected_canon_version: int,
     edge_review_store: EdgeReviewStore | None = None,
+    actor: str = DEFAULT_ACTOR,
 ) -> ProvisionalConfirmation:
     selected = _ids(event_ids, "event")
     evidence_store = edge_review_store or SqliteEdgeReviewStore(conn, graph)
@@ -304,6 +316,7 @@ def confirm_provisional_events(
             pairs=pairs,
             selected=selected,
             chapter_number=evidence[0].chapter_number,
+            actor=actor,
         )
     decision, _ = ensure_proposal_audit(conn, proposals, receipt.id)
     return _receipt_confirmation(
@@ -320,6 +333,7 @@ def confirm_provisional_event(
     *,
     expected_canon_version: int,
     edge_review_store: EdgeReviewStore | None = None,
+    actor: str = DEFAULT_ACTOR,
 ) -> ProvisionalConfirmation:
     return confirm_provisional_events(
         conn,
@@ -329,6 +343,7 @@ def confirm_provisional_event(
         [event_id],
         expected_canon_version=expected_canon_version,
         edge_review_store=edge_review_store,
+        actor=actor,
     )
 
 
@@ -340,6 +355,7 @@ def confirm_provisional_edges(
     *,
     expected_canon_version: int,
     edge_review_store: EdgeReviewStore | None = None,
+    actor: str = DEFAULT_ACTOR,
 ) -> ProvisionalConfirmation:
     selected = _ids(edge_ids, "edge")
     edge_store = edge_review_store or SqliteEdgeReviewStore(conn, graph)
@@ -384,6 +400,7 @@ def confirm_provisional_edges(
             pairs=pairs,
             selected=selected,
             chapter_number=evidence[0].chapter_number,
+            actor=actor,
         )
     decision, _ = ensure_proposal_audit(conn, proposals, receipt.id)
     return _receipt_confirmation(
@@ -400,6 +417,7 @@ def confirm_provisional_edge(
     *,
     expected_canon_version: int,
     edge_review_store: EdgeReviewStore | None = None,
+    actor: str = DEFAULT_ACTOR,
 ) -> ProvisionalConfirmation:
     return confirm_provisional_edges(
         conn,
@@ -408,4 +426,5 @@ def confirm_provisional_edge(
         [edge_id],
         expected_canon_version=expected_canon_version,
         edge_review_store=edge_review_store,
+        actor=actor,
     )

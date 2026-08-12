@@ -39,6 +39,7 @@ from .models import (
     NodeRef,
     RelocatePointer,
     SecretDetail,
+    SnapshotUsage,
     StoredAlias,
 )
 
@@ -261,6 +262,7 @@ def event_ids_for_characters_at(
         WHERE EXISTS (
             SELECT 1 FROM event_participant AS participant
             WHERE participant.event_id = event.id
+              AND participant.status = 'ACTIVE'
               AND participant.character_id IN ({placeholders})
         ) OR EXISTS (
             SELECT 1 FROM visible_knower AS knower
@@ -321,7 +323,8 @@ def event_views_at(
                    n.id AS node_id, n.label AS label, n.name AS name
             FROM event_participant AS ep
             JOIN node AS n ON n.id = ep.character_id AND n.project_id = ep.project_id
-            WHERE ep.project_id = :pid AND ep.event_id IN ({visible_placeholders})
+            WHERE ep.project_id = :pid AND ep.status = 'ACTIVE'
+              AND ep.event_id IN ({visible_placeholders})
             UNION ALL
             SELECT ek.event_id AS event_id, 'knower' AS role,
                    n.id AS node_id, n.label AS label, n.name AS name
@@ -610,6 +613,40 @@ def knowledge_edges_at(
     return [to_edge(r) for r in _rows(cur)]
 
 
+def current_knowledge_edges(
+    conn: sqlite3.Connection,
+    project_id: str,
+    character_id: str,
+    secret_id: str,
+) -> list[Edge]:
+    """(角色, 秘密) 这一格上**此刻**有效的 KNOWS / BELIEVES 边。作者改错的入口。
+
+    **这不是时态查询，所以它没有、也不该有 `TEMPORAL_WHERE`。** 判据是
+    `valid_to_chapter IS NULL`——`Edge.is_current` 那份推导的 SQL 形态（§5.4：
+    CURRENT 是推导不是存储）。区别在入参上看得见：那边收 `:ch`，这边一个章号都不收。
+
+    这条查询存在的理由就是约束 10：作者要改的是「这一格现在说错了」，而不是
+    「第 N 章的那一条」——他不知道那是第几章，也不该被问。章号从这里读出来
+    （`edge.valid_from_chapter`，血统一路回到证据），不从入参进来。
+
+    至多返回两条（KNOWS 和 BELIEVES 各一条）：两者的 exclusivity 都是
+    `single_per_src_dst`，同类型的第二条 ACTIVE 边会被 supersede 闭合掉。
+    """
+    cur = conn.execute(
+        f"""
+        SELECT {_EDGE_COLS} FROM edge
+        WHERE project_id = :pid AND src = :src AND dst = :dst
+          AND type IN ('KNOWS', 'BELIEVES')
+          AND information_scope = 'CANON'
+          AND status = 'ACTIVE'
+          AND valid_to_chapter IS NULL
+        ORDER BY type, valid_from_chapter, id
+        """,
+        {"pid": project_id, "src": character_id, "dst": secret_id},
+    )
+    return [to_edge(r) for r in _rows(cur)]
+
+
 def incident_edges_at(
     conn: sqlite3.Connection,
     project_id: str,
@@ -843,6 +880,26 @@ def retract_edge(conn: sqlite3.Connection, edge_id: str) -> Edge:
     return fetch_edge(conn, edge_id)
 
 
+def activate_edge(conn: sqlite3.Connection, edge_id: str) -> Edge:
+    """把一条 RETRACTED 的边改回 ACTIVE。**唯一的消费者是「作者又改回来了」。**
+
+    `store.upsert_edge` 的契约里写着「把一条 RETRACTED 的事实重新声明回来在 v1 不生效」，
+    并说要它时加一个 `revive`，别去动 conflict 分支——这就是那个 revive 的零件。
+    它必须存在的理由是一个具体的静默数据丢失：作者把 KNOWS 改成 BELIEVES（旧 KNOWS 行
+    被 RETRACTED），再改回 KNOWS 时新边撞的是**那一行的幂等键**，upsert 会把它当重跑、
+    只更 props、`status` 一个字节不动——于是两条边都是 RETRACTED，**这一格凭空消失，
+    而没有任何一步会报错**。
+
+    调用方（`sqlite_review.restore_canon`）必须先确认没有别的 ACTIVE 边与它区间重叠——
+    复活一条边和插一条边一样会制造重叠区间，而重叠区间的产物是规则误报。
+    """
+    conn.execute(
+        "UPDATE edge SET status = :st WHERE id = :id",
+        {"id": edge_id, "st": EdgeStatus.ACTIVE.value},
+    )
+    return fetch_edge(conn, edge_id)
+
+
 def fetch_edge(conn: sqlite3.Connection, edge_id: str) -> Edge:
     cur = conn.execute(f"SELECT {_EDGE_COLS} FROM edge WHERE id = :id", {"id": edge_id})
     rows = _rows(cur)
@@ -1010,6 +1067,36 @@ def chapter_snapshots(
     return [
         ChapterSnapshot(**r, is_current=(r["text_sha256"] == ch.text_sha256)) for r in _rows(cur)
     ]
+
+
+def snapshot_usage(conn: sqlite3.Connection, snapshot_id: str) -> SnapshotUsage:
+    """这条快照被多少条记录引着。**删之前问这个。**
+
+    三个计数各对应一张外键到 `chapter_snapshot` 且**没有 CASCADE** 的表。写死这三张
+    是有意的：新增第四个引用方时这里不会自动跟上，但那时 `delete_snapshot` 会撞外键
+    直接抛——**宁可炸也不要静默删掉别人的出处**（这正是不加 CASCADE 的理由）。
+    """
+    cur = conn.execute(
+        """
+        SELECT
+          (SELECT COUNT(*) FROM evidence       WHERE chapter_snapshot_id = :sid) AS evidence,
+          (SELECT COUNT(*) FROM extraction_run WHERE snapshot_id         = :sid) AS extraction_runs,
+          (SELECT COUNT(*) FROM proposal_set   WHERE snapshot_id         = :sid) AS proposal_sets
+        """,
+        {"sid": snapshot_id},
+    )
+    return SnapshotUsage(snapshot_id=snapshot_id, **_rows(cur)[0])
+
+
+def delete_snapshot(conn: sqlite3.Connection, snapshot_id: str) -> int:
+    """删掉一条快照，返回删掉的行数（0 = 本来就不存在）。
+
+    **不检查引用**——那是调用方（`sqlite_store.delete_chapter_snapshot`）的活，它要在
+    同一个事务里先问 `snapshot_usage`。这里真被引着的话 `PRAGMA foreign_keys=ON`
+    会抛 IntegrityError，那是最后一道，不是第一道。
+    """
+    cur = conn.execute("DELETE FROM chapter_snapshot WHERE id = :sid", {"sid": snapshot_id})
+    return int(cur.rowcount)
 
 
 def snapshot_context(conn: sqlite3.Connection, snapshot_id: str) -> SnapshotContext | None:

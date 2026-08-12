@@ -1,0 +1,675 @@
+"""模式二（agent harness）的**工具表 —— 它就是权限边界**（ADR 0019 边界一）。
+
+规格书是 [`docs/adr/0019-agent-loop-not-graph.md`](../../../docs/adr/0019-agent-loop-not-graph.md)，
+这个文件是它六条边界里第一条和第二条的实现。
+
+Claude Code 给模型一个通用的 `Read` 是安全的。**这里给一个通用的「读图谱节点」工具就是泄漏**：
+agent 调一次就把 PLANNED 秘密的正文读进对话历史，而对话是持久化且会累积的，之后每一轮
+起草它都还在上下文里。原则 11 / 铁律 5 破功，**而且是我们自己递过去的**。
+
+所以这个文件的形状是被那一条决定的：
+
+1. **一张表，一处闸。** 模型能做的事 = `TOOL_TABLE` 里的那几条，多一条都没有。
+   发给模型的 function schema **由这张表生成**（`tool_declarations()`），不许在别处
+   手写第二份——两份迟早漂，而漂的方向没人看得见。
+2. **出参一律收窄成本模块自己的 Pydantic 类型。** 全库最不该被完整序列化的两批节点
+   （秘密本身、`first_appears_chapter > 本章` 的未来实体）恰好就是约束工具要谈论的那两批，
+   而 `NodeProps` 是 `extra="allow"`——作者写在秘密节点上的 `twist` 会原样穿过任何一次
+   `model_dump_json()`。因此这里**只出 `NodeRef`（id/label/name）和纯量**，
+   `Node` / `StateSnapshot` / `KnowledgeMatrix` 一个都不出。
+3. **`json.loads` 在这一层做，不在运输层。** `draft/provider.py` 的 `ToolCall.arguments`
+   是模型生成的原始字符串，运输层不解析、也不校验工具名（认得工具名就等于有第二份工具表）。
+   「解析失败算什么」是编排层的判断，所以它是 `dispatch()` 的一个分支，返回一条
+   模型读得懂的中文错误，而不是一个异常。
+
+── 这一版有哪几条工具，以及**没有**哪一条 ──────────────────────────────
+
+**约束与起草**（`tools.py` 自己实现）：
+
+| 工具 | 它回答什么 | 它绝不返回什么 |
+|---|---|---|
+| `scene_constraints` | 第 N 章不许说破哪几条秘密、哪些实体还没登场 | 秘密的内容、PLANNED 边 |
+| `character_state`   | 某人第 N 章在哪、什么状态、登场没有、死没死 | `Node`（它带着 props） |
+| `draft_chapter`     | 起草第 N 章的正文，**回到对话里** | —— 它不落盘，见下 |
+
+**书内索引**（`index.py`，四层，越往下越贵；那份 docstring 是它的规格）：
+
+| 工具 | 层 | 它回答什么 |
+|---|---|---|
+| `book_index`         | L0 | 全书章标题 + 花名册（秘密只给**显示名**） |
+| `character_chapters` | L1 | 某几个人**同时**出现在哪些章（正文命中 / 已确认事件，两条轴分开） |
+| `chapter_summaries`  | L2 | 指定区间的滚动总结 + **哪几章有正文却没摘要** |
+| `chapter_text`       | L3 | 一章正文（从磁盘读，ADR 0007） |
+
+**索引的四条工具全部只读、且出参里没有一条路径走得到 `props`。** 它们新加的返回面同样
+被 `tests/test_agent_tools.py` 的那张网罩着——加工具的那天先跑那张网，不是先跑功能测试。
+
+**没有写正文工具，这是有意的。** ADR 0019 边界一的最后一条是「写正文必须作者确认，
+模型不能直接落盘」，边界三补的是「正文的真相源在磁盘上，DB 永远不是」（ADR 0007）。
+两条合起来意味着落盘那一步必须是**一次同步的人工确认**，而这一版还没有 agent loop
+（3.3）、也没有会话表（3.4）——**没有循环就没有「作者在循环里点确认」这个位置**。
+在那个位置存在之前给出写工具，等于让模型在一个没有确认点的系统里覆盖作者的稿子。
+所以它不在表里，而且加它的那天要一起加的是确认的 UI，不是一行 `Path.write_text`。
+
+**`secret_surfaces` / `resolve_cast` 也不在表里**（`tests/test_draft_boundary.py`
+的 `WRITER_BANNED`）：前者是秘密的内容 tell（`玄血蛊`）——进对话就是把检测器要找的词
+自己写进去；后者会给「第二份约束推导」开门，而约束集只许有一个入口
+（`panel/constraints.py`）。
+
+── 边界二在这里的落点：**没有一个工具收约束** ──────────────────────────
+
+约束是逐章算的，而对话跨章累积（能隔三个月回来）。`ch40 的 must_not_reveal ⊇ ch90 的`
+——陈旧的约束躺在 context 里，方向是 fail-open 的最坏那侧。解法不是清理历史，是让
+**模型没有机会把约束当参数传进来**：`DraftAsk` 上没有约束字段，`SceneConstraintsArgs`
+上也没有，两个模型都是 `extra="forbid"`，模型幻想出一个 `must_not_reveal` 参数会被
+当场拒掉。约束由 `_scene_context()` 当场从 `scene_view(chapter)` 算，**全模块只此一处**。
+
+── 入参里唯一的时间坐标是章号，而它是 AS OF 不是声明（约束 10）────────────
+
+`chapter` 在这里的语义与 `nh panel --chapter` 完全相同：**查询坐标**，不写进任何一行数据。
+作者永远不填 `valid_from`——那个数只由证据决定（ADR 0006 / §5.9）。这条差别在工具表上
+之所以还成立，是因为表里**一条写图谱的工具都没有**：没有写路径，就没有地方能把这个数
+存成一条边的 `valid_from`。
+
+── 还没接线的那几个缝（诚实说明）──────────────────────────────────────
+
+`ToolContext` 上那几个 `None` 不是可选功能，是**故意留在外面的接线口**，完整清单和
+每一个的退化方向在 `ports.py`。这里只说与本文件直接相关的两个：
+
+- `root_path` 缺席时「谁在场」推不出来（ADR 0018：在场从正文数，不是作者填的），
+  约束退化成**全禁**（`unknown_cast_constraints`）。方向是 fail-closed 的那一侧
+  ——多禁一条的代价是少写一段，漏禁一条的代价是崩人设。
+- `drafter` 缺席时 `draft_chapter` 返回一条明确的「没接线」而不是假装起草。
+  它是注入而不是在这里再实现一遍，因为今天「章号 → 一稿正文」的完整实现只存在于
+  `api/app.py` 的路由体里（记忆层预算、capability 探测、长度策略全在那儿）。
+  **把它抄进工具表 = 第二条会漂的起草路径**，而这个仓库刚把「同一份东西三处拷贝」的病清掉。
+  3.3 落地时正确的动作是先把那段提成 `draft/` 里的一个函数，再让这里收它。
+
+**注入的形状本身也在守边界二**：`drafter` 收的是 `(DraftAsk, DraftContext)` 两件东西，
+而 `DraftAsk` 里没有约束字段、`DraftContext` 由后端算——起草侧拿不到模型给的约束，
+不是靠纪律，是没有那个参数。
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Final
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from ..draft.context import (
+    DraftContext,
+    ResolvedConstraints,
+    unknown_cast_constraints,
+)
+from ..draft.provider import ToolCall
+from ..graph import NodeLabel, NodeRef
+from ..graph.store import StoreError
+from ..importer import chapter_path
+from ..mentioned import mentioned_cast
+from ..panel.constraints import UnresolvedCast, scene_view
+from ..panel.state import character_state as _state_at
+from ..text import paragraphs as split_paragraphs
+from .index import (
+    BookIndexArgs,
+    ChapterFullText,
+    ChapterSummariesArgs,
+    ChapterTextArgs,
+    CharacterChaptersArgs,
+    handle_book_index,
+    handle_chapter_summaries,
+    handle_chapter_text,
+    handle_character_chapters,
+)
+from .ports import DraftAsk, ToolContext, ToolRefused
+
+# ══════════════════════════════════════════════════════════════════════════
+# 入参：模型填的那几个格子。**每一个字段名和描述都会原样发给模型。**
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class SceneConstraintsArgs(BaseModel):
+    """查「第 N 章不许说破什么」。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chapter: int = Field(
+        ge=1,
+        description="要查第几章（AS OF 第几章，纯查询坐标，不会写进任何数据）。",
+    )
+
+
+class CharacterStateArgs(BaseModel):
+    """查「某个人在第 N 章的处境」。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chapter: int = Field(
+        ge=1,
+        description="要查第几章（AS OF 第几章，纯查询坐标）。",
+    )
+    character: str = Field(
+        min_length=1,
+        description="人物的称呼，用作者在正文里的那个叫法。有歧义的叫法会被拒绝。",
+    )
+
+
+# `DraftAsk` 在 `ports.py`——它是**注入契约的一半**（`DraftFn` 收的就是它），
+# 和起草那个接线口放在一起才看得出「起草侧拿不到模型给的约束」是结构而不是纪律。
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 出参：**只有 NodeRef 和纯量**。`Node` / `props` 一个都不出去。
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class ForbiddenName(BaseModel):
+    """一个「第 K 章才首现」而当前 N < K 的实体：**只有名字和章号**。
+
+    它比 `panel.constraints.ForbiddenEntity` 还窄一档——那个类型带着 `surfaces`
+    （拿去和正文做正则匹配的全部别名，R2 的料）。规则要它，模型不要：多给一串别名
+    只是把「这个东西还没登场」这件事说了 N 遍，而每一遍都是一次可以说漏嘴的机会。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str
+    first_appears_chapter: int
+
+
+class ConstraintsResult(BaseModel):
+    """`scene_constraints` 的出参：**转译后的约束，不是原件**。
+
+    `must_not_reveal` 是 `NodeRef`（id/label/name），**不是 `Node`**。这条不是洁癖：
+    `NodeProps` 是 `extra="allow"`，作者写在秘密节点上的 `{"twist": "…第 200 章揭晓"}`
+    会原样穿过 `model_dump_json()` 进对话——**保密清单自己泄密**，而且泄完就删不掉了
+    （对话是持久化的）。完整论证在 `graph.models.NodeRef`。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chapter: int
+
+    cast: list[str] = Field(default_factory=list)
+    """本章正文里被提到的花名册称呼（ADR 0018：在场是数出来的，不是作者填的）。"""
+
+    cast_derived: bool = False
+    """`False` = 这一章的正文还读不到，`must_not_reveal` 是**退化值（全部秘密）**。
+
+    **零必须带着理由一起出现**（约束 8）：「一条都不用瞒」和「我没数出这一场有谁」
+    在清单上长得一模一样，而它们对作者是完全相反的两件事。
+    """
+
+    must_not_reveal: list[NodeRef] = Field(default_factory=list)
+    """在场的人里至少有一个还不知道（或持错误认知）的秘密。**显示名在 `name` 上。**"""
+
+    forbidden_entities: list[ForbiddenName] = Field(default_factory=list)
+
+
+class StateFact(BaseModel):
+    """一条 `HAS_STATE`：维度显示名 + 值 + 从第几章起。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    dimension: str
+    value: str | None = None
+    since_chapter: int
+
+
+class CharacterStateResult(BaseModel):
+    """`character_state` 的出参。**`StateSnapshot` 在这里被收窄。**
+
+    `StateSnapshot.node` 和 `.location` 都是完整的 `Node`——直接交出去，人物 props 里的
+    `character_notes` 和地点 props 里实测过的 `{"plot_note": "萧决在此被顾清音所杀"}`
+    就一起进对话了。所以两者都收成 `NodeRef`。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chapter: int
+    character: NodeRef
+    location: NodeRef | None = None
+    states: list[StateFact] = Field(default_factory=list)
+    is_dead: bool = False
+    has_appeared: bool = True
+
+
+class DraftResult(BaseModel):
+    """`draft_chapter` 的出参：一稿正文 + 它受了哪些约束的回执。
+
+    **正文只回到对话里，不落盘**（模块 docstring 的「没有写正文工具」那一节）。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chapter: int
+    text: str
+    must_not_reveal: list[str] = Field(default_factory=list)
+    """秘密的**显示名**（`血脉秘密`），永远不是它的内容 tell（`玄血蛊`）。"""
+
+
+class ToolOutcome(BaseModel):
+    """一次工具调用的结果。**`content` 就是要贴回对话里的那段字。**
+
+    成功时它是出参模型的 `model_dump_json()`；失败时它是一句中文，说清楚为什么以及
+    可以怎么改。两种情况都由这里生成——**运输层不认识工具，也不该认识**。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    call_id: str
+    name: str
+    ok: bool
+    content: str
+
+    chapter: int | None = None
+    """模型在这次调用里点的那个章号。`None` = 这个工具压根不收章号，或者参数没过校验。
+
+    **它是 agent loop 投影的过滤判据**（ADR 0019 边界五：绑在第 90 章的返回不许出现在
+    第 40 章的投影里）。放在这儿而不是让 loop 自己去解析 `call.arguments`，是因为参数
+    在这一层已经过了 `model_validate`——让 loop 再解析一遍就是第二处解析点，而这个仓库
+    刚把「同一件事两处解析」清掉。
+
+    取法是**结构判断**（这个入参模型上有没有一个叫 `chapter` 的整数字段），不是一张
+    「哪个工具绑章号」的表：表会在加工具的那天漂，而结构不会。
+    """
+
+
+# 上下文（`ToolContext` / `DraftFn` / 两个只读端口）在 `ports.py`：
+# **工具能碰到的东西集中在一页**，而那一页不许认识任何一个工具（否则和 `index.py` 成环）。
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 约束：**全模块唯一一处算它的地方**（边界二）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _derived_cast(context: ToolContext, chapter: int) -> list[str]:
+    """本章正文里提到的花名册称呼（ADR 0018）。读不到正文就是空的。
+
+    走的是 `mentioned_cast` 那条既有实现（和 R2 FUTURE_LEAK 同一条正则 alternation，
+    一个语义判断都没有）。**不在这里重新数一遍**：数出来的人多一个 ⇒ 禁的秘密多一条
+    ⇒ fail-closed，少一个则相反，而这个方向的对错全靠那份实现，不该有第二份。
+    """
+    if context.root_path is None:
+        return []
+    file = Path(context.root_path) / chapter_path(chapter)
+    if not file.exists():
+        return []
+    paras = split_paragraphs(file.read_text(encoding="utf-8-sig"))
+    return mentioned_cast(context.store, context.project_id, paras)
+
+
+def _scene_context(context: ToolContext, chapter: int) -> DraftContext:
+    """第 `chapter` 章的约束。**模型没有机会影响这个函数的任何一个入参**（边界二）。
+
+    出参的类型本身就是「这份约束退没退化」的答案（`draft/context.py`）：
+    `ResolvedConstraints` = 数出来的人全都解析成了唯一角色；
+    `UnknownCastConstraints` = 不知道这一场有谁，全禁。
+
+    `UnresolvedCast` 在这里被接住而不是抛出去，理由是这条路径上它**不是**作者要回答的
+    问题：cast 不是他填的，是引擎从正文里数的（数出来的都过了 `rules_only`，理论上不会
+    有歧义），所以能做的只有退回全禁那一侧——而那正是 `panel/constraints.py` 的
+    「算不准就多禁」。作者要修的是别名表，不是这一次工具调用。
+    """
+    cast = _derived_cast(context, chapter)
+    if cast:
+        try:
+            view = scene_view(context.store, context.project_id, chapter, cast)
+            return ResolvedConstraints.of(view, cast)
+        except UnresolvedCast:
+            pass
+    return unknown_cast_constraints(context.store, context.project_id, chapter)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 三个处理函数
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _handle_scene_constraints(
+    args: SceneConstraintsArgs, context: ToolContext
+) -> ConstraintsResult:
+    ctx = _scene_context(context, args.chapter)
+    # 类型本身就是「这份约束退没退化」的答案（`draft/context.py`），所以这里问的是类型，
+    # 不是某个字段——`UnknownCastConstraints` 上根本没有 `cast` 可读，退化态表示不出来。
+    resolved = isinstance(ctx, ResolvedConstraints)
+    return ConstraintsResult(
+        chapter=args.chapter,
+        cast=list(ctx.cast) if resolved else [],
+        cast_derived=resolved,
+        # 收窄发生在 `panel/constraints.py`（`NodeRef.of`），这里只是不要把它加回来。
+        must_not_reveal=list(ctx.must_not_reveal),
+        forbidden_entities=[
+            ForbiddenName(
+                name=entity.node.name,
+                first_appears_chapter=entity.first_appears_chapter,
+            )
+            for entity in ctx.forbidden_entities
+        ],
+    )
+
+
+def _handle_character_state(
+    args: CharacterStateArgs, context: ToolContext
+) -> CharacterStateResult:
+    resolutions = context.store.resolve(context.project_id, [args.character])
+    node = resolutions[0].unique_node if resolutions else None
+    if node is None:
+        raise ToolRefused(
+            f"「{args.character}」在这本书里解析不出唯一一个人（查无此人，或者这个叫法"
+            "同时指向好几个人）。换一个更具体的称呼，或者先在人物卡上把别名理清楚。"
+        )
+    if node.label is not NodeLabel.CHARACTER:
+        # 集合判断，不是语义判断：秘密 / 地点 / 物件也在花名册里，拿它们去查「状态」
+        # 会返回一份看起来正常、实际上没有意义的快照（秘密没有处境）。
+        raise ToolRefused(f"「{args.character}」不是人物（它是 {node.label}），没有「处境」可查。")
+
+    snapshot = _state_at(context.store, context.project_id, node.id, args.chapter)
+    return CharacterStateResult(
+        chapter=args.chapter,
+        character=NodeRef.of(snapshot.node),
+        location=NodeRef.of(snapshot.location) if snapshot.location is not None else None,
+        states=[
+            StateFact(
+                dimension=state.dim.name,
+                value=state.value,
+                since_chapter=state.since_chapter,
+            )
+            for state in snapshot.states
+        ],
+        is_dead=snapshot.is_dead,
+        has_appeared=snapshot.has_appeared(),
+    )
+
+
+def _handle_draft_chapter(args: DraftAsk, context: ToolContext) -> DraftResult:
+    if context.drafter is None:
+        raise ToolRefused(
+            "起草能力还没接到这个会话上（工具表已经有它，实现还在 HTTP 路由里）。"
+            "这一轮请改用别的方式推进，或者让作者从界面上起草。"
+        )
+    ctx = _scene_context(context, args.chapter)
+    return DraftResult(
+        chapter=args.chapter,
+        text=context.drafter(args, ctx),
+        must_not_reveal=list(ctx.secret_labels),
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 工具表本身
+# ══════════════════════════════════════════════════════════════════════════
+
+
+@dataclass(frozen=True)
+class ToolSpec:
+    """表里的一行。`args` 同时是**校验器**和**发给模型的 schema 的来源**——
+    两个身份一份定义，所以「声明说收 A、实现却读 B」在结构上不可能。"""
+
+    name: str
+    description: str
+    args: type[BaseModel]
+    handler: Callable[[Any, ToolContext], BaseModel]
+
+
+TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
+    ToolSpec(
+        name="scene_constraints",
+        description=(
+            "查第 N 章不许说破哪几条秘密、哪些实体还没登场。"
+            "返回的是秘密的显示名和实体的首现章号，**不含秘密的内容**——"
+            "你不会、也不该从这里知道秘密到底是什么。"
+        ),
+        args=SceneConstraintsArgs,
+        handler=_handle_scene_constraints,
+    ),
+    ToolSpec(
+        name="character_state",
+        description=(
+            "查某个人在第 N 章的处境：在哪、各状态维度的值、登场了没有、是不是已经死了。"
+        ),
+        args=CharacterStateArgs,
+        handler=_handle_character_state,
+    ),
+    ToolSpec(
+        name="draft_chapter",
+        description=(
+            "起草第 N 章的一稿正文，结果回到对话里给作者看。"
+            "**不要传约束**：不许说破什么由后端按这个章号当场重算，"
+            "你上一轮看到的清单对这一章可能已经过期。这个工具不会写进作者的稿子，"
+            "落盘要作者自己点。"
+        ),
+        args=DraftAsk,
+        handler=_handle_draft_chapter,
+    ),
+    # ── 书内索引（L0 → L3，越往下越贵）。规格在 `index.py` 的模块 docstring ──────
+    #
+    # **追加在表尾，不插在前面。** `tool_declarations()` 按表序生成，而按边界六它是少数
+    # 几个能进稳定前缀的东西之一——在中间插一条会把整段前缀的缓存作废。
+    ToolSpec(
+        name="book_index",
+        description=(
+            "全书目录：章标题一览 + 花名册（人物 / 地点 / 门派 / 物件 / 秘密的**显示名**）。"
+            "**先调这个再往下钻**，它是最便宜的一层。"
+            "秘密只有名字，任何工具都拿不到秘密的内容。"
+        ),
+        args=BookIndexArgs,
+        handler=handle_book_index,
+    ),
+    ToolSpec(
+        name="character_chapters",
+        description=(
+            "某几个人出现在哪些章。给两个人就是求交集——「他第一次见她是哪章」问的就是这个，"
+            "而这是一次确定性的集合运算，不是搜索。返回两条分开的轴："
+            "正文里同时被提到的章、以及同一条已确认事件里同时在场/知情的章。"
+            "**每条轴会自己说它瞎没瞎**（读不到正文 / 抽取没跑过），别把 0 当成「没发生过」。"
+        ),
+        args=CharacterChaptersArgs,
+        handler=handle_character_chapters,
+    ),
+    ToolSpec(
+        name="chapter_summaries",
+        description=(
+            "指定章号区间的章节摘要（每章一段，机器生成的背景，不是作者确认的事实）。"
+            "区间由你给——先用 book_index / character_chapters 定位到大概哪一段，再拉这一段。"
+            "返回会明说**哪几章有正文却没生成过摘要**（索引在那几章是瞎的），"
+            "以及区间太长时哪一段没给。"
+        ),
+        args=ChapterSummariesArgs,
+        handler=handle_chapter_summaries,
+    ),
+    ToolSpec(
+        name="chapter_text",
+        description=(
+            "读一整章的正文原文，**最贵的一层**，确定要看哪一章之后再调。"
+            "正文从磁盘上的稿子读，也就是作者此刻看见的那一份。"
+        ),
+        args=ChapterTextArgs,
+        handler=handle_chapter_text,
+    ),
+)
+"""**模式二的权限边界。这张表以外的能力，模型一律没有。**
+
+加一条之前先回答 ADR 0019 边界一那个问题：它的出参里有没有任何一条路径能走到
+`Node` / `node.props` / PLANNED 边的内容？有就不许加——工具一旦把秘密交出去过，
+那段话已经在作者的持久化对话里了，**改代码删不掉**。
+"""
+
+TOOLS: Final[dict[str, ToolSpec]] = {spec.name: spec for spec in TOOL_TABLE}
+
+TOOL_NAMES: Final[frozenset[str]] = frozenset(TOOLS)
+
+
+def tool_declarations() -> list[dict[str, Any]]:
+    """OpenAI 兼容的 function schema，**由 `TOOL_TABLE` 生成**。
+
+    直接喂 `draft.provider.complete(..., tools=...)`。手写第二份的诱惑在于「schema 里
+    想多写两句提示」——那两句会和 `ToolSpec.description` 各自演化，而**模型只看得见
+    发出去的那一份**，于是表变成了一份没人执行的文档。要改提示就改表。
+
+    这份声明是**跨章不变**的，因此它是 ADR 0019 边界六里少数几个能进稳定前缀的东西之一
+    （约束不能进——它逐章变，缓存它就是把一条过期的禁令钉死在 context 里）。
+    """
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": spec.name,
+                "description": spec.description,
+                "parameters": spec.args.model_json_schema(),
+            },
+        }
+        for spec in TOOL_TABLE
+    ]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 派发：**`json.loads` 在这里，闸也在这里**
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _refused(call: ToolCall, message: str, chapter: int | None = None) -> ToolOutcome:
+    return ToolOutcome(
+        call_id=call.id, name=call.name, ok=False, content=message, chapter=chapter
+    )
+
+
+def _asked_chapter(args: BaseModel) -> int | None:
+    """这次调用点的是第几章。**结构判断，不是一张表**（见 `ToolOutcome.chapter`）。
+
+    `bool` 是 `int` 的子类，所以显式排掉——一个叫 `chapter` 的布尔字段会被当成第 1 章，
+    而那是一个看起来完全正常的错误答案。
+    """
+    value = getattr(args, "chapter", None)
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _validation_message(exc: ValidationError) -> str:
+    """把 pydantic 的报错压成一句模型读得懂的话。**只带字段名和原因，不回显入参。**
+
+    回显入参在别处是好心（看得见自己填错了什么），在这里是一条把任意字符串搬进
+    对话历史的通路——而对话历史正是这个模块全部小心翼翼在保护的地方。
+    """
+    parts = [
+        f"{'.'.join(str(x) for x in err['loc']) or '(整体)'}: {err['msg']}"
+        for err in exc.errors()
+    ]
+    return "参数不合法 —— " + "；".join(parts)
+
+
+def dispatch(call: ToolCall, context: ToolContext) -> ToolOutcome:
+    """执行模型请求的一次工具调用。**这是工具表这道闸唯一的执行点。**
+
+    四种失败各有各的出口，而**四种都是 `ok=False` 的正常返回，不是异常**：
+    编排层要把它们贴回对话让模型自己改，抛出去只会让 agent loop 变成一串
+    try/except（而漏掉其中一个的后果是整个会话死掉）。
+
+    1. **工具名不在表里** —— 包括模型幻想出来的名字。运输层故意不校验这个
+       （校验就等于那儿有第二份工具表），所以这一处是唯一的拦截点。
+    2. **参数不是合法 JSON** —— 流式下 `arguments` 是一串 delta 拼起来的，
+       截断是真实会发生的事。
+    3. **参数不合 schema** —— 含「模型自作主张多传了一个 `must_not_reveal`」
+       （`extra="forbid"` 当场拒，边界二）。
+    4. **工具自己拒绝** —— 称呼有歧义、能力没接线。
+
+    Args:
+        call: `draft.provider` 原样带回来的那个请求，`arguments` 还是字符串。
+    """
+    spec = TOOLS.get(call.name)
+    if spec is None:
+        return _refused(
+            call,
+            f"没有名为「{call.name}」的工具。可用的是：{'、'.join(sorted(TOOL_NAMES))}。",
+        )
+
+    try:
+        raw = json.loads(call.arguments or "{}")
+    except json.JSONDecodeError as exc:
+        return _refused(call, f"参数不是合法的 JSON（{exc.msg}）。请把整个参数对象重发一次。")
+    if not isinstance(raw, dict):
+        return _refused(call, "参数必须是一个 JSON 对象，比如 {\"chapter\": 40}。")
+
+    try:
+        args = spec.args.model_validate(raw)
+    except ValidationError as exc:
+        return _refused(call, _validation_message(exc))
+
+    # 章号在校验之后才作数：没过校验的参数里那个数是模型随手写的，拿它去绑投影
+    # 等于让一次失败的调用替 loop 决定「这条属于第几章」。
+    chapter = _asked_chapter(args)
+
+    try:
+        payload = spec.handler(args, context)
+    except (ToolRefused, UnresolvedCast, StoreError, ValueError) as exc:
+        return _refused(call, str(exc), chapter)
+
+    return ToolOutcome(
+        call_id=call.id,
+        name=call.name,
+        ok=True,
+        # 出参一律经 Pydantic 序列化：`dict` / `sqlite3.Row` 越不过这一行（铁律 4）。
+        content=payload.model_dump_json(),
+        chapter=chapter,
+    )
+
+
+def outdated_manuscript(content: str, context: ToolContext) -> bool:
+    """这条已经躺在对话里的工具返回，装的是不是一份**和磁盘对不上的正文**。
+
+    ── 它堵的是边界三真正的那个形态 ──────────────────────────────────────
+
+    ADR 0019 边界三只说了「正文的中间产物不许写进会话表当第二个答案」，而
+    `chapter_text` 按定义就要把一整章正文给模型看，那条返回也必须原样存下来
+    （否则 resume 之后模型看到的是另一段历史）。**于是第二份正文一定存在**，
+    问题不在它存不存在，在**它过期之后还发不发得出去**：
+
+    - 对作者：磁盘那份赢（编辑器、版本抽屉、`GET …/text` 全都读磁盘，ADR 0007）；
+    - 对模型：会话里那份赢，因为它是**被发出去的那一份**。
+
+    两份不一致的时候「第 N 章是什么」就有了两个答案，而模型给的是过期那个——
+    一段读起来完全正常、只是说错了的话，**没有任何东西会报错**。这个仓库在
+    `index.py` 里已经把同一条论证写死过一次（L1 不缓存的理由）：
+
+    > 一份缓存的命中表会在他保存的那一刻变成一个**看起来正常的错误答案**……
+    > 而这一层全部的价值就是「确定性、当场算、答案永远是当前的」。
+
+    对话就是这样一份缓存，**而且它是持久化的**。所以投影在发出去之前把过期的那份
+    换成一句「重新读一次」——ADR 0019 把 `tool_result` 排在剪枝第一位，用的正是
+    这条理由：**丢掉的工具返回重查一次就有，而且查回来的是当前的。**
+
+    ── 三条必须这么写的细节 ──────────────────────────────────────────────
+
+    1. **只认正文那一种返回。** 判据是 `ChapterFullText`（`extra="forbid"`）验不验得过，
+       不是一张「哪个工具的返回带正文」的表——表会在加工具那天漂。约束/摘要那几条
+       返回也会过期，但它们的当前值不在磁盘上，拿磁盘去判它们是用一个答不了的问题
+       删有用的东西。
+    2. **比的是重跑一次同一个处理函数的出参**，不是自己再读一遍文件：截断长度、
+       未来标记、注记全都跟着 `context` 走，自己拼一份就是第二处会漂的实现。
+    3. **读不到磁盘时一律 `False`。** 「我看不见」和「它变了」是两件事，
+       按后者办等于每一轮都把读过的正文清空一次，而那是拿作者的钱买一个没发生的问题。
+    """
+    try:
+        payload = ChapterFullText.model_validate_json(content)
+    except ValidationError:
+        return False
+    if context.root_path is None:
+        return False
+    try:
+        fresh = handle_chapter_text(ChapterTextArgs(chapter=payload.chapter), context)
+    except ToolRefused:
+        # 那一章从磁盘上没了（作者删了文件、或者章号被重排）。手里这份**更加**不是当前的。
+        return True
+    return fresh.text != payload.text
+
+
+def dispatch_all(calls: Sequence[ToolCall], context: ToolContext) -> list[ToolOutcome]:
+    """模型一轮发了好几个 `tool_call` 时的便利函数，**与 `calls` 同序**。
+
+    顺序即配对顺序：`tool_result` 靠 `call_id` 认领，而 resume 时「哪几个 `tool_call`
+    还缺 result」正是线性 loop 的全部执行态（ADR 0019 §为什么不是图编排）。
+    """
+    return [dispatch(call, context) for call in calls]

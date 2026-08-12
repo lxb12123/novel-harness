@@ -9,6 +9,7 @@ from ..graph.models import InformationScope
 from .models import (
     CharacterProfilePatch,
     CharacterProfileView,
+    EventCastEdit,
     EventView,
     ProposalCreate,
     ProposalRecord,
@@ -86,6 +87,36 @@ class EventStore(Protocol):
         character_id: str,
         patch: CharacterProfilePatch,
     ) -> CharacterProfileView: ...
+
+
+class EventCastError(EventStoreError):
+    """请求改的名单里有解析不了、跨项目、或者不是 Character 的东西。"""
+
+
+@runtime_checkable
+class EventCastStore(Protocol):
+    """改一条**已经生效（CANON）**的事件的在场/知情名单。
+
+    **它故意不是 `EventStore` 的第 8 个方法。** `EventStore` 有一个测试用的 Fake
+    （`tests/test_product_context.py`），而 `@runtime_checkable` 只查方法**存在**——
+    往 Protocol 上加方法只会逼那个 Fake 长一个什么都不做的存根，然后
+    `isinstance(fake, EventStore)` 照样为真。窄接口另开一个，同 `EdgeReviewStore`。
+
+    **入参收的是绝对集合，不是增删两个列表**：作者在 UI 上勾的是「这件事谁在场」，
+    发回来的就该是勾完的结果。差集由实现算（它才知道库里现在是什么），于是
+    「重发一次同样的请求」天然是个空操作，而不是把同一个人加两遍。
+    """
+
+    def edit_cast(
+        self,
+        project_id: str,
+        event_id: str,
+        *,
+        knower_ids: Sequence[str] | None = None,
+        participant_ids: Sequence[str] | None = None,
+    ) -> EventCastEdit:
+        """`None` = 这一维不动（不是「清空」）。两维都是 `None` 时抛 `ValueError`。"""
+        ...
 
 
 @runtime_checkable

@@ -893,9 +893,9 @@ def check(
     issues = run_checks(ctx)
 
     # 「跑了几条规则」必须印出来，且这是本命令唯一的成功输出。§10 约束 8 /
-    # checks/__init__.py:29：静默的零和真的零不许长得一样。v1 的 ALL_CHECKS 只有 R4
-    # （R2/R3/R5 在 M3），所以「无 issue」的真实含义是「R4 没意见」，不是「这章没问题」——
-    # 沉默的工具死得比吵闹的工具更快，只是死得更安静。
+    # checks/__init__.py:29：静默的零和真的零不许长得一样。「无 issue」的真实含义是
+    # 「跑过的这几条没意见」，不是「这章没问题」——沉默的工具死得比吵闹的工具更快，
+    # 只是死得更安静。**所以这里印的是 `len(ALL_CHECKS)` 和规则名，不是写死的数字。**
     typer.echo(
         f"第 {chapter} 章：{len(scenes)} 个场景块，跑了 {len(ALL_CHECKS)} 条规则"
         f"（{', '.join(c.__module__.rsplit('.', 1)[-1] for c in ALL_CHECKS)}），"
@@ -1044,25 +1044,17 @@ def summarize(
         plan_call,
         resolve_capabilities,
     )
-    from .draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage, LengthSpec
     from .draft.provider import ProviderConfig, complete
     from .draft.rolling_summary import (
         RollingSummarizer,
         SummaryChapterNotFound,
         SummaryGenerationError,
     )
-    from .draft.summarize import SUMMARY_MAX_CHARS
+    # 长度档和 prompt 同住 `draft/summarize.py`：HTTP 的 `POST /summary` 读的是同一个常量。
+    from .draft.summarize import SUMMARY_LENGTH as summary_length
 
     if first < 1 or last < first:
         _die("✗ 章号区间不合法：--from 和 --to 必须是 1 ≤ from ≤ to")
-    summary_length = DEFAULT_LENGTH_POLICY.validate_spec(
-        LengthSpec(
-            language=DraftLanguage.ZH,
-            min_units=40,
-            target_units=80,
-            max_units=SUMMARY_MAX_CHARS,
-        )
-    )
     try:
         config = ProviderConfig.from_env()
         capability = resolve_capabilities(config.base_url, config.model)

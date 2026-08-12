@@ -25,19 +25,50 @@ class ProposalAction(StrEnum):
 
 
 class ProposalReview(BaseModel):
+    """审阅队列里作者对一个聚类的裁决。
+
+    ── `edit` 能改三样，不是一样 ─────────────────────────────────────────────
+
+    只能改 `edited_summary` 的时候，作者面对一条 knowers 抽错了的事件只有两个选择：
+    整条 reject（丢掉一条真实存在的事实，再自己重新声明一遍），或者 accept 一条错的。
+    **而 `knowers` 恰好是抽取里唯一靠推断得来的那一维**（谁在场是文本里写着的，
+    谁因此知道了是猜的），也就是最需要改的那一维。
+
+    队列这条路和「改一条已经生效的事实」（`corrections.py`）能力必须一致：
+    两条路能力不一致的时候，作者会学会先 reject 再重来，而那正好丢掉了证据链。
+
+    `edited_*_ids` 收的是**绝对集合**（改完之后是这些人），不是增删列表——同
+    `EventCastStore.edit_cast`，重发一次是空操作。`None` = 这一维不动。
+    """
+
     model_config = _STRICT
 
     action: ProposalAction
     expected_canon_version: StrictVersion
     edited_summary: str | None = None
+    edited_knower_ids: tuple[str, ...] | None = None
+    edited_participant_ids: tuple[str, ...] | None = None
 
     @model_validator(mode="after")
     def _edit_shape(self) -> Self:
+        edits = (self.edited_summary, self.edited_knower_ids, self.edited_participant_ids)
         if self.action is ProposalAction.EDIT:
-            if self.edited_summary is None or not self.edited_summary.strip():
-                raise ValueError("edit 必须提供非空 edited_summary")
-        elif self.edited_summary is not None:
-            raise ValueError("只有 edit 允许 edited_summary")
+            if all(value is None for value in edits):
+                raise ValueError(
+                    "edit 必须至少改一样：edited_summary / edited_knower_ids / "
+                    "edited_participant_ids"
+                )
+            if self.edited_summary is not None and not self.edited_summary.strip():
+                raise ValueError("edited_summary 给了就不能是空白")
+        elif any(value is not None for value in edits):
+            raise ValueError("只有 edit 允许 edited_summary / edited_*_ids")
+        for ids in (self.edited_knower_ids, self.edited_participant_ids):
+            if ids is None:
+                continue
+            if any(not node_id for node_id in ids):
+                raise ValueError("名单里的 id 不能为空")
+            if len(ids) != len(set(ids)):
+                raise ValueError("名单里的 id 不能重复")
         return self
 
 

@@ -3,6 +3,8 @@ import { EditorView, keymap, drawSelection, placeholder as cmPlaceholder } from 
 import { history, defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { Annotation } from "@codemirror/state";
+import { ghostText, setSuggestion, suggestionField } from "./ghostText";
+import { IDLE_MS, tailBefore } from "../continuation";
 
 // 标记「外部灌入」的事务（换章时替换整篇 doc）。用它把外部替换和用户输入分开——
 // 否则换章那次 docChanged 会 onChange 回去，把新打开的章误标成「未保存」。
@@ -18,6 +20,10 @@ const External = Annotation.define<boolean>();
 export interface CodeEditorHandle {
   /** 选中 [from, to) 并滚进视野（R4 冲突回跳、证据回跳用）。位置是字符串 code unit 下标。 */
   select: (from: number, to: number) => void;
+  /** 在 `pos` 处挂一条灰字建议（ADR 0015）。**不写进 doc**——作者按 Tab 才落字。 */
+  showSuggestion: (text: string, pos: number) => void;
+  /** 丢掉当前建议。作者一敲键 CM6 自己也会丢，这个给「请求失败/换章」用。 */
+  clearSuggestion: () => void;
 }
 
 const theme = EditorView.theme({
@@ -40,13 +46,21 @@ const theme = EditorView.theme({
 
 export const CodeEditor = forwardRef<
   CodeEditorHandle,
-  { value: string; onChange: (v: string) => void; onSelectionText: (t: string) => void }
->(function CodeEditor({ value, onChange, onSelectionText }, ref) {
+  {
+    value: string;
+    onChange: (v: string) => void;
+    onSelectionText: (t: string) => void;
+    /** 停手 `IDLE_MS` 之后触发一次，带上光标前的正文。**取消由调用方负责**：
+     *  作者一敲键这个计时器就重置，在飞的那次请求该被丢弃。 */
+    onIdle?: (ctx: { before: string; pos: number; hasSelection: boolean }) => void;
+  }
+>(function CodeEditor({ value, onChange, onSelectionText, onIdle }, ref) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   // 回调放 ref，避免把它们进 mount 的 deps（否则每次 render 重建整个编辑器）。
-  const cb = useRef({ onChange, onSelectionText });
-  cb.current = { onChange, onSelectionText };
+  const cb = useRef({ onChange, onSelectionText, onIdle });
+  cb.current = { onChange, onSelectionText, onIdle };
+  const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!host.current) return;
@@ -58,6 +72,9 @@ export const CodeEditor = forwardRef<
         drawSelection(),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         markdown(),
+        // **排在 defaultKeymap 之后但优先级更高**：CM6 的 keymap 后注册者先响应，
+        // 所以这一行必须在上面那行 keymap 之后，Tab/Esc 才轮得到建议先处理。
+        ghostText(),
         EditorView.lineWrapping,
         cmPlaceholder("从左边点一章打开正文…"),
         theme,
@@ -69,11 +86,29 @@ export const CodeEditor = forwardRef<
             const { from, to } = u.state.selection.main;
             cb.current.onSelectionText(u.state.sliceDoc(from, to).trim());
           }
+          // 停手计时：任何编辑或移动光标都重来一次。**这就是「取消」**——
+          // 续写不需要增量失效，只需要过期的那次别落地（ghostText 的 field 会丢掉它）。
+          if (u.docChanged || u.selectionSet) {
+            if (idleTimer.current) clearTimeout(idleTimer.current);
+            const fire = cb.current.onIdle;
+            if (fire) {
+              const state = u.state;
+              idleTimer.current = setTimeout(() => {
+                const { from, to } = state.selection.main;
+                fire({
+                  before: tailBefore(state.doc.toString(), from),
+                  pos: from,
+                  hasSelection: from !== to,
+                });
+              }, IDLE_MS);
+            }
+          }
         }),
       ],
     });
     viewRef.current = view;
     return () => {
+      if (idleTimer.current) clearTimeout(idleTimer.current);
       view.destroy();
       viewRef.current = null;
     };
@@ -97,6 +132,18 @@ export const CodeEditor = forwardRef<
   useImperativeHandle(
     ref,
     () => ({
+      showSuggestion(text, pos) {
+        const view = viewRef.current;
+        if (!view) return;
+        // 位置越界 = 这条建议是对着旧文本算的，丢掉。作者删字比模型返回快是常态。
+        if (pos > view.state.doc.length) return;
+        view.dispatch({ effects: setSuggestion.of({ text, pos }) });
+      },
+      clearSuggestion() {
+        const view = viewRef.current;
+        if (!view || !view.state.field(suggestionField, false)) return;
+        view.dispatch({ effects: setSuggestion.of(null) });
+      },
       select(from, to) {
         const view = viewRef.current;
         if (!view) return;

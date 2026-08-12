@@ -3,7 +3,10 @@
 只读面板：项目 / 花名册 / 认知矩阵（头牌）/ 场景约束 / 当前状态 / 局部子图。
 编辑器（P1）：列章 / 读章正文 / 存盘 → sync（正文在磁盘，ADR 0007）。
 写图谱（declare）+ 定位 + R4 check（P2）：作者敲称呼原文 + 引语，系统算章号。
-M4 抽取/事件读端拆在 ``api/extraction.py``；未开放的规划、运行面板和提案审阅仍返 501。
+M4 抽取/事件读端拆在 ``api/extraction.py``，提案审阅与改正在 ``api/review.py``，
+活动日志（跑了什么 / 花了多少 / 谁改了什么）在 ``api/activity.py``，
+写作助手的会话（模式二，ADR 0019）在 ``api/chat.py``；
+只有 AI 规划这一条能力仍未开放，仍返 501。
 
 ── 两条贯穿本文件的纪律 ───────────────────────────────────────────────────
 
@@ -31,7 +34,14 @@ from typing import Annotated, Any, Literal
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, ValidationError
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    model_validator,
+)
 
 from .. import importer
 from .. import onboarding
@@ -50,8 +60,23 @@ from ..declare import (
     WrongLabel,
 )
 from ..draft.length import DEFAULT_LENGTH_POLICY, LengthSpec
-from ..graph import AliasKind, EdgeType, InformationScope, NodeLabel, NodeRef, SecretDetail
-from ..graph.store import NodeNotFound, StoreError, SupersedeConflict
+from ..graph import (
+    AliasKind,
+    EdgeType,
+    GraphVersion,
+    InformationScope,
+    NodeLabel,
+    NodeRef,
+    SecretDetail,
+)
+from ..graph.store import (
+    NodeNotFound,
+    SnapshotInUse,
+    SnapshotIsCurrent,
+    StoreError,
+    SupersedeConflict,
+)
+from ..mentioned import mentioned_cast
 from ..panel import (
     UnresolvedCast,
     cast_states,
@@ -68,7 +93,18 @@ from ..text import (
     write_scene_directive,
 )
 from ..text import paragraphs as split_paragraphs
-from .deps import books_root, ensure_schema, get_conn, get_ledger, get_store, load_project
+from .deps import (
+    books_root,
+    ensure_schema,
+    get_conn,
+    get_ledger,
+    get_store,
+    get_summarizer,
+    load_project,
+)
+from .activity import router as activity_router
+from .autopilot import router as autopilot_router
+from .chat import router as chat_router
 from .extraction import router as extraction_router
 from .review import router as review_router
 
@@ -83,7 +119,6 @@ _STATIC = Path(__file__).resolve().parent / "static"
 # Vite 的 outDir 已经改成直接往这儿输出（frontend/vite.config.ts 有为什么）。
 _DIST = Path(__file__).resolve().parent.parent / "webui"
 _CAST_SEP = re.compile(r"[,，、]")  # 半角逗号 / 全角逗号 / 顿号
-_CHAPTER_FILE = re.compile(r"^(\d{4,})\.md$")
 
 
 def webui_built() -> bool:
@@ -169,6 +204,71 @@ def _chapter_file(proj: Any, chapter: int) -> Path:
     return _chapters_dir(proj) / f"{chapter:04d}.md"
 
 
+def _chapter_mentions(proj: Any, store: Any, chapter: int) -> list[str] | None:
+    """本章正文里提到的花名册称呼。`None` = 这一章磁盘上没有正文（**不是「没提到人」**）。
+
+    两者长得一样是这个仓库反复修的病（§10 约束 8：静默的零和真的零不许长得一样）——
+    「章还没写」和「写了但一个花名册里的人都没提到」对作者是完全不同的两件事。
+    """
+    file = _chapter_file(proj, chapter)
+    if not file.exists():
+        return None
+    paras = split_paragraphs(file.read_text(encoding="utf-8-sig"))
+    return mentioned_cast(store, proj.id, paras)
+
+
+def _effective_cast(proj: Any, store: Any, chapter: int, cast: str, include: str = "") -> list[str]:
+    """面板要用的在场：**作者传了就听作者的，没传就从本章正文推**；`include` 只往里加人。
+
+    这条是「在场人物不该是写之前填的表单」的落点：作者写完，引擎自己去正文里数
+    花名册命中了谁。推导的方向是 fail-closed 的那一侧（`mentioned.py` 讲了为什么
+    多算比少算安全），所以「不填」不再等于「面板全禁到没东西看」。
+
+    **不传和传空串是同一件事。** 区分它们只会让调用方靠一个看不见的差别改变语义；
+    真要全禁的调用方（M2 判分链）走的是 Python 里的 `scene_constraints`，不经过这里。
+
+    正文不存在 → 推不出东西 → 空 cast → `scene_constraints` 照旧退化成全禁。
+
+    ── `include` 为什么必须是另一个参数，不能塞进 `cast` ──────────────────────
+    `cast` 的语义是**过滤**（「只看这几个人」），而它今天只有一个来源：作者亲手标的
+    场景块。收窄是他自己要的，所以那个方向合法。
+
+    活动日志的跳转坐标（`ActivityJump.cast`）是**系统自己**给的，而它按定义只知道一个人。
+    把它塞进 `cast` 就是让系统替作者做了一次收窄，而
+
+        must_not_reveal 的判据 = 「在场的人里**至少有一个**还不知道」
+
+    少一个人 = 少一批禁令 = **fail-open**，正是 ADR 0018 §3 那条方向。
+    实测形态：一章里萧决知道、李管家不知道 ⇒ 推导下这条秘密被禁；坐标把在场换成
+    「只有萧决」之后它从 `must_not_reveal` 里消失了——`panel/constraints.py` 那段
+    「李管家静默地从 cast 里消失」记的就是这种病，这个仓库修过一次。
+
+    所以坐标走这一条：**它只能让在场变大，永远不能让它变小**。
+
+    **空推导那一档一律不加人**（`if not base`）：一个人都没数出来的含义是「不知道谁
+    在场」，`ResolvedCast.complete` 据此全禁。这时把坐标加进去会让在场从空变成一个人，
+    `complete` 成立，全禁塌成「只按他一个人算」——同一种 fail-open，而且恰好发生在
+    系统对这一章一无所知的时候。代价是那一章的跳转退回今天的行为（矩阵那边照旧说
+    「没有在这一章找到刚才那一格」），**那是安全的那一侧**。
+    """
+    base = _split_cast(cast) or (_chapter_mentions(proj, store, chapter) or [])
+    if not base:
+        return []
+    # 去重按称呼原文即可：同一个人的两个称呼由 `resolve_cast` 按 node_id 并成一行。
+    return base + [surface for surface in _split_cast(include) if surface not in base]
+
+
+INCLUDE = Query(
+    "",
+    description="一定要出现在这份在场里的称呼原文（跳转坐标用）。**只加不减**，不替换推导。",
+)
+"""三条读端共用同一份措辞和同一个默认值。
+
+**一份**是有意的：这个参数的全部安全性在于「只加不减」，而三处各写一遍
+description 的下一步就是三处开始说不一样的话，然后有人照着其中一句改成过滤。
+"""
+
+
 @asynccontextmanager
 async def _lifespan(_: FastAPI) -> Any:
     ensure_schema()  # 启动即验库在、schema 到位；库不存在直接炸，不建空库
@@ -176,6 +276,9 @@ async def _lifespan(_: FastAPI) -> Any:
 
 
 app = FastAPI(title="Novel Harness 工作台", lifespan=_lifespan)
+app.include_router(activity_router)
+app.include_router(autopilot_router)
+app.include_router(chat_router)
 app.include_router(extraction_router)
 app.include_router(review_router)
 
@@ -265,6 +368,25 @@ async def _supersede_conflict(_: Request, exc: SupersedeConflict) -> JSONRespons
 async def _node_not_found(_: Request, exc: NodeNotFound) -> JSONResponse:
     # subgraph 的 center / state 的 node_id 不在本项目（含跨项目误引用）。
     return _err(404, {"error": "node_not_found", "message": str(exc)})
+
+
+@app.exception_handler(SnapshotIsCurrent)
+async def _snapshot_is_current(_: Request, exc: SnapshotIsCurrent) -> JSONResponse:
+    # 想删「现在这一版」：先还原到别的版本（current 会跟着移过去），再删这一条。
+    return _err(409, {"error": "snapshot_is_current", "message": str(exc)})
+
+
+@app.exception_handler(SnapshotInUse)
+async def _snapshot_in_use(_: Request, exc: SnapshotInUse) -> JSONResponse:
+    # 明细一起给：界面要说得出「被几条什么引着」，不是只说一句「删不掉」。
+    return _err(
+        409,
+        {
+            "error": "snapshot_in_use",
+            "usage": exc.usage.model_dump(mode="json"),
+            "message": str(exc),
+        },
+    )
 
 
 @app.exception_handler(StoreError)
@@ -475,33 +597,70 @@ def roster(store: Any = Depends(get_store), proj: Any = Depends(load_project)) -
     return list(seen.values())
 
 
-@app.get("/api/projects/{project_id}/chapters/{chapter}/matrix")
-def matrix(
+@app.get("/api/projects/{project_id}/chapters/{chapter}/mentioned")
+def mentioned(
     chapter: int,
-    cast: str = Query("", description="在场称呼原文，逗号/顿号分隔"),
     store: Any = Depends(get_store),
     proj: Any = Depends(load_project),
 ) -> Any:
-    """★ 认知边界矩阵（头牌）。必须经 resolve_cast，才挂得上 unresolved_cast（store 自己不知道）。"""
-    resolved = resolve_cast(store, proj.id, _split_cast(cast))
-    return knowledge_matrix(store, proj.id, chapter, resolved.ids, unresolved=resolved.unresolved)
+    """本章正文提到了花名册里的哪些称呼。**这不是「在场」**——见 `mentioned.py` 的模块说明。
+
+    右栏靠它显示「这一章提到：…」，作者因此不必在写之前先填一遍出场人物。
+    `has_text=false` 与 `surfaces=[]` 是两件事：前者是「这一章还没写」，后者是
+    「写了，但一个花名册里的人都没被提到」。
+    """
+    surfaces = _chapter_mentions(proj, store, chapter)
+    return {
+        "chapter": chapter,
+        "has_text": surfaces is not None,
+        "surfaces": surfaces or [],
+    }
+
+
+@app.get("/api/projects/{project_id}/chapters/{chapter}/matrix")
+def matrix(
+    chapter: int,
+    cast: str = Query("", description="在场称呼原文，逗号/顿号分隔；留空 = 由本章正文推"),
+    include: str = INCLUDE,
+    store: Any = Depends(get_store),
+    proj: Any = Depends(load_project),
+) -> Any:
+    """★ 认知边界矩阵（头牌）。必须经 resolve_cast，才挂得上 unresolved_cast（store 自己不知道）。
+
+    **`version` 在这里才填得上，图层填不了**：canon 版本住在 `project` 行上，不在图表里
+    （`graph/sqlite_store.py` 建这个模型时用的是 `GraphVersion()` 默认值，于是它一直是 0）。
+    而这一格现在是可改的（`POST /canon/knowledge` 收 `expected_canon_version`），
+    那个数**必须是作者看到这张表那一刻的版本**：从别的读端另取一次就是第二个会漂的源，
+    中间要是有人升过 CANON，CAS 会放过一次它本该拦下的改动。
+    """
+    resolved = resolve_cast(store, proj.id, _effective_cast(proj, store, chapter, cast, include))
+    view = knowledge_matrix(store, proj.id, chapter, resolved.ids, unresolved=resolved.unresolved)
+    return view.model_copy(update={"version": GraphVersion(canon_version=proj.canon_version)})
 
 
 @app.get("/api/projects/{project_id}/chapters/{chapter}/constraints")
 def constraints(
     chapter: int,
     cast: str = Query(""),
+    include: str = INCLUDE,
     store: Any = Depends(get_store),
     proj: Any = Depends(load_project),
 ) -> Any:
-    """场景约束盒：scene_constraints 收原始称呼、内部自解析、fail-closed。"""
-    return scene_constraints(store, proj.id, chapter, _split_cast(cast))
+    """场景约束盒：scene_constraints 收原始称呼、内部自解析、fail-closed。
+
+    **`include` 在这一条上才是要命的**：它多一个人只会多一条禁令（安全），
+    少一个人就是泄漏。`_effective_cast` 保证它只加不减，`tests/test_jump_cast.py` 钉着。
+    """
+    return scene_constraints(
+        store, proj.id, chapter, _effective_cast(proj, store, chapter, cast, include)
+    )
 
 
 @app.get("/api/projects/{project_id}/chapters/{chapter}/state")
 def state(
     chapter: int,
     cast: str = Query(""),
+    include: str = INCLUDE,
     store: Any = Depends(get_store),
     proj: Any = Depends(load_project),
 ) -> Any:
@@ -510,7 +669,7 @@ def state(
     出参含完整 Node（node/location/states[].dim）→ 过 `_narrow`：这一章视角下的 Secret
     和未来节点收窄。unresolved 由前端另走 `/matrix` 的 `unresolved_cast` 拿。
     """
-    resolved = resolve_cast(store, proj.id, _split_cast(cast))
+    resolved = resolve_cast(store, proj.id, _effective_cast(proj, store, chapter, cast, include))
     snapshots = cast_states(store, proj.id, chapter, resolved.ids)
     return _narrow([s.model_dump(mode="json") for s in snapshots], chapter)
 
@@ -609,21 +768,15 @@ class ChapterSave(BaseModel):
 
 @app.get("/api/projects/{project_id}/chapters")
 def chapters(proj: Any = Depends(load_project)) -> Any:
-    """列章：直接扫磁盘 {root}/chapters/NNNN.md（磁盘是正文真相源）。title = 首个非空行。"""
-    out: list[dict[str, Any]] = []
-    cdir = _chapters_dir(proj)
-    if cdir.is_dir():
-        for file in sorted(cdir.glob("*.md")):
-            m = _CHAPTER_FILE.match(file.name)
-            if not m:
-                continue
-            title = ""
-            for line in file.read_text(encoding="utf-8-sig").splitlines():
-                if line.strip():
-                    title = line.strip()
-                    break
-            out.append({"number": int(m.group(1)), "title": title})
-    return out
+    """列章：直接扫磁盘 {root}/chapters/NNNN.md（磁盘是正文真相源）。title = 首个非空行。
+
+    文件名解读走 `importer.chapter_files()`——**它和 `chapter_path()` 必须同解**，
+    这里曾经抄着第二份 `^(\\d{4,})\\.md$`。
+    """
+    return [
+        {"number": entry.number, "title": entry.title}
+        for entry in importer.chapter_files(Path(proj.root_path))
+    ]
 
 
 @app.get("/api/projects/{project_id}/chapters/{chapter}/history")
@@ -638,6 +791,24 @@ def chapter_history(
     还没进过库（先 sync/import）。
     """
     return [s.model_dump(mode="json") for s in store.chapter_snapshots(proj.id, chapter)]
+
+
+@app.delete("/api/projects/{project_id}/chapters/{chapter}/snapshots/{snapshot_id}")
+def delete_chapter_snapshot(
+    chapter: int,
+    snapshot_id: str,
+    store: Any = Depends(get_store),
+    proj: Any = Depends(load_project),
+) -> Any:
+    """删掉一条历史版本。**只删真的没人引的那种**（图层的两条不变式，见
+    `GraphStore.delete_chapter_snapshot`）：当前那条 → 409 `snapshot_is_current`；
+    被证据/抽取/提案引着 → 409 `snapshot_in_use` 带明细；不存在/跨项目 → 422 `store_error`。
+
+    **没有「还原」这条路由**：还原就是把旧正文写回磁盘，走 `PUT .../text` 那条——
+    快照按内容去重，写回去 sha 命中已有那条，于是 `is_current` 移过去、不新增一行。
+    """
+    store.delete_chapter_snapshot(proj.id, chapter, snapshot_id)
+    return {"deleted": True, "snapshot_id": snapshot_id}
 
 
 @app.get("/api/projects/{project_id}/chapters/{chapter}/text")
@@ -889,7 +1060,7 @@ def check(
     store: Any = Depends(get_store),
     proj: Any = Depends(load_project),
 ) -> Any:
-    """对第 chapter 章的磁盘正文跑一致性规则（v1 仅 R4 LOCATION_CONFLICT）。
+    """对第 chapter 章的磁盘正文跑一致性规则（M3 规则集 = R2 / R3 / R4，R5 已按 ADR 0014 砍掉）。
 
     切段和 parse_scenes 都走 `text.paragraphs()`（全库唯一定义，§1.4）——路由里**不许**
     自己写 `.splitlines()`，否则 anchor 一改，Issue 锚就和别处「差一段」。
@@ -957,14 +1128,73 @@ def _stub(milestone: str) -> dict[str, str]:
 
 
 class DraftRequest(BaseModel):
-    """AI 起草请求体（修正案 7，实验状态）。长度按 ADR 0013 随请求走。"""
+    """AI 起草请求体（修正案 7，实验状态）。长度按 ADR 0013 随请求走。
 
-    goal: str = Field(min_length=1)
-    cast: list[str] = Field(min_length=1)
+    **两种形状，由 `mode` 区分**（ADR 0015）。它们的差别不是「参数可不可选」，
+    而是「哪些东西允许由作者控制」——所以用校验器把两种形状分别钉死，而不是把
+    `goal` / `cast` 一起放宽成可选，那样两种模式的约束就都没人守了。
+    """
+
+    mode: Literal["chapter", "continuation"] = "chapter"
+    """`chapter` = 起草一整章（原行为）；`continuation` = 行内续写一两段（ADR 0015）。"""
+
+    goal: str = ""
+    """本场目标。**`chapter` 必填；`continuation` 必须为空**——续写的 `goal` 是后端常量
+    （ADR 0015 D3：前端能传的东西作者就能改，而这是 ADR 0010 点名的泄漏入口之一）。"""
+
+    cast: list[str] = []
+    """在场称呼原文。**`chapter` 必填；`continuation` 可空**。
+
+    续写留空 = 「不知道谁在场」→ 走全禁退化态（ADR 0015 D4）。填了则收紧到精确约束——
+    **它是让续写写得更准的奖励，不是不填就不给用的门槛。**"""
+
     length: _DraftLengthBody
     form: str = "PRODUCT"
     previous_tail: str = ""
     house_style: str = ""
+
+    @model_validator(mode="after")
+    def _check_mode_shape(self) -> DraftRequest:
+        if self.mode == "continuation":
+            if self.goal.strip():
+                raise ValueError(
+                    "续写模式不接受 goal：这一段要写什么由上文决定，"
+                    "提示语是后端常量（ADR 0015 D3）"
+                )
+            return self
+        if not self.goal.strip():
+            raise ValueError("起草一整章必须说清这一场要写什么（goal）")
+        if not self.cast:
+            raise ValueError("起草一整章必须声明在场角色（cast）")
+        return self
+
+
+def _memory_receipt(
+    note: str,
+    *,
+    assembled: bool = False,
+    profiles: int = 0,
+    recent_events: int = 0,
+    background_events: int = 0,
+    rolling_summaries: int = 0,
+    unsummarized_chapters: list[int] | None = None,
+) -> dict[str, Any]:
+    """起草响应里的「记忆层这一稿到底装了什么」回执。
+
+    **零必须带着理由一起出现**（ARCHITECTURE §10 约束 8，同 `/check` 的 `rules_run`）：
+    「0 条滚动总结」既可能是「这本书还没写到第 10 章，那一层本来就是空的」，也可能是
+    「有 12 章该总结而一条都没生成」。两者在界面上长成同一个「- 暂无」，作者就永远不会
+    知道自己少喂了什么给模型——这正是 2026-08-06 盘点里那条「没有任何东西提示作者」。
+    """
+    return {
+        "assembled": assembled,
+        "note": note,
+        "profiles": profiles,
+        "recent_events": recent_events,
+        "background_events": background_events,
+        "rolling_summaries": rolling_summaries,
+        "unsummarized_chapters": list(unsummarized_chapters or []),
+    }
 
 
 def _draft_provider_config():
@@ -1000,22 +1230,47 @@ def draft(
     若将来裁决 KILL，撤销本路由 = 一次显式 commit（修正案 7 原文）。
     """
     from ..draft.assemble import PromptForm, assemble
-    from ..draft.assemble import HOUSE_STYLE_FORBIDDEN_HINTS
+    from ..draft.assemble import (
+        GATE_TAIL_CODE_POINTS,
+        HOUSE_STYLE_FORBIDDEN_HINTS,
+        product_tail_limit,
+    )
     from ..draft.capabilities import (
         CapabilityError,
         ReasoningEffort,
         plan_call,
         resolve_capabilities,
     )
-    from ..draft.context import ResolvedConstraints
+    from ..draft.assemble import CONTINUATION_GOAL
+    from ..draft.context import ResolvedConstraints, unknown_cast_constraints
     from ..draft.generate import generate_draft
     from ..draft.product_assemble import assemble_product
-    from ..draft.product_context import build_product_context
+    from ..draft.product_context import (
+        MemoryBudget,
+        build_product_context,
+        memory_units_available,
+    )
     from ..draft.provider import ProviderError
     from ..graph.sqlite_events import SqliteEventStore
     from ..panel.constraints import UnresolvedCast, scene_view
 
     requested_form = body.form.strip().upper()
+    try:
+        config = _draft_provider_config()
+        capability = resolve_capabilities(config.base_url, config.model)
+        plan = plan_call(body.length, ReasoningEffort.HIGH, capability)
+    except (ValidationError, ValueError, CapabilityError) as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"模型没配好：{exc} —— 先去顶栏 ⚙「AI 设置」填服务地址/模型/钥匙，"
+                "或设 NH_LLM_BASE_URL / NH_LLM_MODEL / NH_LLM_API_KEY。"
+            ),
+        )
+
+    # **plan 提前到装配之前**：记忆层的预算要从 `capability.max_context_tokens` 倒推
+    # （`memory_units_available`），所以得先知道模型是谁。它不依赖 messages，提前无副作用；
+    # 而且「模型没配好」这种错在这儿就报出来，比装配完一大堆上下文再报便宜。
     product_form = requested_form == "PRODUCT"
     if product_form:
         # M2's accepted product arm remains X1; PRODUCT adds only the separately-audited Canon
@@ -1043,50 +1298,111 @@ def draft(
                 ),
             )
 
+    continuation = body.mode == "continuation"
     try:
-        view = scene_view(store, project_id, chapter, body.cast)
-        ctx = ResolvedConstraints.of(view, body.cast)
+        # 两条构造路径，**类型不同**（ADR 0015 D4）：拿到 `ResolvedConstraints` 就等于
+        # 「cast 已解析且非空」，拿到 `UnknownCastConstraints` 就等于「不知道谁在场，全禁」。
+        # 退化态只可能从这一支来，kill-gate 走不到——臂间比较不会被更严的卷子污染。
+        view = None
+        if body.cast:
+            view = scene_view(store, project_id, chapter, body.cast)
+            ctx = ResolvedConstraints.of(view, body.cast)
+        else:
+            ctx = unknown_cast_constraints(store, project_id, chapter)
         assemble_args = {
             "form": form,
-            "goal": body.goal,
+            # D3：续写的 goal 是后端常量，请求体里那个已被校验器强制为空。
+            "goal": CONTINUATION_GOAL if continuation else body.goal,
             "length": body.length,
             "previous_tail": body.previous_tail,
+            # **逐字上文的长度只有产品路径放长**（ADR 0019 边界五）。`GATE_TAIL_CODE_POINTS`
+            # 是 X0 对照臂的定义，它存在是为了证明「给得少会崩」——产品继承它 = 产品拿
+            # 对照组的预算跑，而作者只会看到「AI 写出来的东西前言不搭后语」。
+            # 反过来：请求里点名了 X0/X1/X2 就是 kill-gate 的臂，必须原样拿冻结值，
+            # 否则就是改考卷（EVAL_PROTOCOL §2）。`product_form` 正好等于「没点名臂」。
+            "previous_tail_limit": (
+                product_tail_limit(capability.max_context_tokens, plan.request_token_budget)
+                if product_form
+                else GATE_TAIL_CODE_POINTS
+            ),
             "house_style": house_style or None,
         }
-        if product_form:
-            from ..draft.product_context import RECENT_CHAPTERS
+        if continuation:
+            # 续写**不带已确认事件记忆**：那一段要查档案 + 近八章事件 + 滚动总结，
+            # 对一次「停手 400ms 就要出结果」的提示来说太贵，而 `previous_tail`
+            # 本来就是此刻最相关的上下文。记忆是整章起草的东西。
+            messages = assemble(ctx, **assemble_args)
+            memory = _memory_receipt("行内续写不带已确认记忆，上文就是此刻最相关的上下文。")
+        elif product_form:
             from ..draft.rolling_summary import SummaryStore
 
-            summaries = SummaryStore(conn).for_range(
-                project_id,
-                1,
-                max(1, chapter - RECENT_CHAPTERS - 1),
-            )
-            memory = build_product_context(
-                SqliteEventStore(conn),
-                project_id,
-                view.matrix.characters,
-                draft_chapter=chapter,
-                summaries=summaries,
-            )
-            messages = assemble_product(ctx, memory, **assemble_args)
+            assert view is not None  # `chapter` 模式 cast 必填（校验器），走不到 None
+            # **必须过滤 label。** `resolve_cast` 认的是花名册里的全部称呼，不只人物：
+            # 作者在「在场角色」里写一个地点名（「青云城主府」），它会唯一解析成 Location
+            # 节点、穿过 `require_resolved_cast()`，然后在 `build_product_context` 的
+            # 「cast must contain only Character references」上炸成 500。
+            # ADR 0018 之后这条路更容易走到——在场是从正文里数出来的，数出来的是称呼。
+            characters = [
+                ref for ref in view.matrix.characters if ref.label is NodeLabel.CHARACTER
+            ]
+            if characters:
+                summary_store = SummaryStore(conn)
+                # **先装配，再算覆盖率**，顺序不能反：窗口边界现在由字数预算倒推
+                # （`recent_event_boundary`），不再是写死的「近八章」，所以在
+                # `build_product_context` 跑完之前没人知道边界在哪。
+                # 总结行很短（单章 ≤120 字），整本取回来也就几十 KB，让引擎去筛比
+                # 在这儿先算一遍边界安全——**边界只许有一处**。
+                # **预算从模型的真实窗口倒推，不是写死的字数。**
+                # 「近八章」的老毛病是绝对量：1M 窗口和 32k 窗口拿同一个数。换成字数只是
+                # 换了单位，没治病。真正会缩放的是「占可用上下文的几分之几」——
+                # `MEMORY_CONTEXT_SHARE`（比例）+ `MEMORY_UNITS_CEILING`（成本闸）。
+                budget = MemoryBudget.for_context(
+                    memory_units_available(
+                        capability.max_context_tokens, plan.request_token_budget
+                    )
+                )
+                product = build_product_context(
+                    SqliteEventStore(conn),
+                    project_id,
+                    characters,
+                    draft_chapter=chapter,
+                    summaries=summary_store.for_range(project_id, 1, chapter - 1),
+                    budget=budget,
+                    language=body.length.language,
+                )
+                coverage = summary_store.coverage(
+                    project_id, 1, product.recent_from_chapter - 1
+                )
+                messages = assemble_product(ctx, product, **assemble_args)
+                memory = _memory_receipt(
+                    "已确认记忆前言已装配（人物档案 + 近期事件 + 更早章节滚动总结）。",
+                    assembled=True,
+                    profiles=len(product.profiles),
+                    recent_events=len(product.recent_events),
+                    background_events=len(product.background_events),
+                    rolling_summaries=len(product.rolling_summaries),
+                    unsummarized_chapters=[
+                        row.chapter_number
+                        for row in coverage
+                        if row.has_text and row.summary is None
+                    ],
+                )
+            else:
+                # 退化不是错误（约束照常生效，禁令一条不少），但**不许静默**：
+                # 少了记忆前言的稿子和多了记忆前言的稿子长得不一样，作者有权知道是哪一种。
+                messages = assemble(ctx, **assemble_args)
+                memory = _memory_receipt(
+                    "这一稿没有记忆前言：在场称呼里没有一个解析成人物，"
+                    "档案与事件记忆无从查起（约束和禁令照常生效）。"
+                )
         else:
             messages = assemble(ctx, **assemble_args)
+            memory = _memory_receipt(
+                "指定了 kill-gate 实验臂，按该臂的原样 prompt 走，不加记忆前言。"
+            )
     except UnresolvedCast as exc:
         raise HTTPException(status_code=422, detail=f"在场角色解析不了：{exc}")
 
-    try:
-        config = _draft_provider_config()
-        capability = resolve_capabilities(config.base_url, config.model)
-        plan = plan_call(body.length, ReasoningEffort.HIGH, capability)
-    except (ValidationError, ValueError, CapabilityError) as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=(
-                f"模型没配好：{exc} —— 先去顶栏 ⚙「AI 设置」填服务地址/模型/钥匙，"
-                "或设 NH_LLM_BASE_URL / NH_LLM_MODEL / NH_LLM_API_KEY。"
-            ),
-        )
 
     try:
         result = generate_draft(
@@ -1100,6 +1416,7 @@ def draft(
         "experimental": True,
         "note": "实验状态：未经 kill-gate 裁决，图谱约束是否有效尚未证实（修正案 7）。",
         "text": result.text,
+        "memory": memory,
         "length": result.length.model_dump(mode="json"),
         "attempts": len(result.attempts),
         "model": last.model,
@@ -1109,17 +1426,93 @@ def draft(
     }
 
 
+# ── 章节滚动总结（M4 后续切片）──────────────────────────────────────────────
+#
+# 在这两条路由之前，滚动总结**只有 `nh summarize` 一个入口**（会调模型、会花钱），
+# 于是任何一个从浏览器建起来的库里 `chapter_summary` 表恒为空，写作 prompt 的
+# 【更早章节滚动总结】永远渲染成「- 暂无」，而作者看不到任何提示。2026-08-06 的
+# 「最后一厘米」盘点把这条记成了三个洞里的第三个。
+#
+# **故意不做「保存章节后自动生成」**：那是一次作者没按过的付费调用，属于产品决策，
+# 不该由一次保存顺手替他决定。只做显式触发。
+
+
+@app.get("/api/projects/{project_id}/chapters/{chapter}/summaries")
+def chapter_summaries(
+    chapter: int,
+    conn: Any = Depends(get_conn),
+    proj: Any = Depends(load_project),
+) -> dict[str, Any]:
+    """起草第 chapter 章时，滚动总结那一层覆盖的区间里每一章的状态。
+
+    窗口就是「本章之前的全部章」，**不再由事件窗口倒推**。那个耦合曾经存在，方向是坏的：
+    事件稀疏时事件边界一路退到第 1 章，滚动总结就一条都进不去——静默地退回「没有记忆」。
+    事件和总结是互补的（一件事 vs 一整章讲了什么），各有各的预算，见 `MemoryBudget`。
+
+    真正进 prompt 的是这个区间里**最近的、预算装得下的那些**（`build_product_context`
+    从最新一端往回收）。这里报的是**覆盖率**，所以给全区间：作者要看的是「哪几章还没总结」，
+    不是「这一稿用了哪几章」——后者在起草回执里。
+
+    `missing` 是「有正文、但没生成过总结」的章号，**这才是要提示作者的那一种零**；
+    没有正文的章在 `chapters[].has_text=false` 里，是另一件事，别合并显示。
+    """
+    from ..draft.rolling_summary import SummaryStore
+
+    first, last = 1, chapter - 1
+    rows = SummaryStore(conn).coverage(proj.id, first, last)
+    return {
+        "chapter": chapter,
+        "window_first": first,
+        "window_last": last,
+        "chapters": [row.model_dump(mode="json") for row in rows],
+        "summarized": len([row for row in rows if row.summary is not None]),
+        "missing": [row.chapter_number for row in rows if row.has_text and row.summary is None],
+    }
+
+
+@app.post("/api/projects/{project_id}/chapters/{chapter}/summary")
+def generate_chapter_summary(
+    chapter: int,
+    proj: Any = Depends(load_project),
+    summarizer: Any = Depends(get_summarizer),
+) -> dict[str, Any]:
+    """**显式**为第 chapter 章生成滚动总结（会调模型、会花钱）。
+
+    幂等由 `RollingSummarizer.ensure` 保证：同一章 + 同一 `schema_version` + 同一
+    `prompt_hash` 已经有了就直接返回，重复点不会重复付费。所以前端可以放心地
+    「把缺的那几章挨个补一遍」而不必自己记住哪些补过。
+    """
+    from ..draft.provider import ProviderError
+    from ..draft.rolling_summary import SummaryChapterNotFound, SummaryGenerationError
+
+    if chapter < 1:
+        raise HTTPException(status_code=422, detail="章号至少是 1")
+    try:
+        summary = summarizer.ensure(proj.id, chapter)
+    except SummaryChapterNotFound:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "chapter_not_found", "chapter": chapter},
+        )
+    except SummaryGenerationError as exc:
+        raise HTTPException(status_code=502, detail=f"总结器返回了空文本：{exc}")
+    except ProviderError as exc:
+        raise HTTPException(status_code=502, detail=f"模型调用失败：{exc}")
+    return {
+        "chapter_number": summary.chapter_number,
+        "has_text": True,
+        "summary": summary.summary,
+        "created_at": summary.created_at,
+    }
+
+
 @app.post("/api/projects/{project_id}/chapters/{chapter}/plan", status_code=501)
 def plan_stub() -> dict[str, str]:
     """AI 规划第 N 章的场景骨架（M2）。v1 的替代是作者手拖手填场景块（§2 表）。"""
     return _stub("M2")
 
 
-@app.get("/api/projects/{project_id}/runs", status_code=501)
-def runs_stub() -> dict[str, str]:
-    """底栏「最近运行 / Token / 成本」（M2）。`model_call` 表今天是空的——
-
-    返空列表比 501 更糟：一张空表长得像「你还没跑过」，而事实是「这个能力还没有」。
-    这正是 §10 约束 8 说的那种失败形态（漂亮的空结果 + 200）。
-    """
-    return _stub("M2")
+# `GET /runs` 曾经也是这里的一条 501，理由写着「`model_call` 表今天是空的」。
+# **那句话在 M4 落地那天就过期了**（抽取和滚动总结都在记账，见 `extract/call_audit.py`），
+# 而一条声称「这个能力还没有」的 501 挡在一张真有数据的表前面，比空列表更能骗人。
+# 2026-08-10 起它是一条真路由，搬去了 `api/activity.py`（和日志读端同一摊）。

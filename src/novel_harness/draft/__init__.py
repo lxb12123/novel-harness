@@ -68,6 +68,7 @@ from .provider import (
     CompletionResult,
     ProviderConfig,
     ProviderError,
+    ToolCall,
     complete,
 )
 
@@ -99,6 +100,7 @@ __all__ = [
     "ResolvedCallPlan",
     "StructuredCallPlan",
     "ResolvedConstraints",
+    "ToolCall",
     "complete",
     "count_units",
     "graph_section",

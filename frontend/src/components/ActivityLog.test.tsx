@@ -1,0 +1,313 @@
+import { screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fixtures, renderWithApi } from "../test/harness";
+import { devTerms, screenText } from "../test/screenGuard";
+import { useCoords } from "../store";
+import { ActivityLog } from "./ActivityLog";
+
+// 喂进来的每一个字节都来自 `api.json`（真 app dump，`tests/test_frontend_contract.py` 冻的）。
+// 下面几处「派生」的响应（空页、翻页的第二页、换一行的详情）也全是从那份 dump 拼的，
+// **没有一个字段是手写的**——手写夹具等于两份手写的东西互相验证。
+
+const ALL = fixtures.activity.entries.length;
+const AUTHOR_ONLY = fixtures.activityAuthorOnly.entries.length;
+
+/** 更正认知类型那一条：唯一一条 `jump` 指到认知矩阵某一格的行。 */
+const KNOWLEDGE_ROW = /更正认知类型/;
+/** 抽取那一条：展开层里有「跑了什么 + 花了多少」。 */
+const RUN_ROW = /第 1 章抽取/;
+/** 一次模型调用：第三种展开层（能力 / 模型 / 为哪一章 / token）。 */
+const CALL_ROW = /模型调用 · 抽取/;
+
+beforeEach(() => {
+  useCoords.setState({
+    projectId: "project:ID1",
+    chapter: 1,
+    cast: "",
+    activeTab: "roster",
+    page: "log",
+    focusCell: null,
+    focusEventId: null,
+  });
+});
+
+/** 折叠着的那些行（`aria-expanded="false"`）——筛选按钮没有这个属性，不会混进来。 */
+const collapsed = () => screen.findAllByRole("button", { expanded: false });
+
+describe("活动记录", () => {
+  it("一行一条折叠着，**点开才去取那一条的详情**", async () => {
+    // 详情里带着 `decision_log` 的审计信封。跟着列表一起拉 = 打开日志页就把全库
+    // 审计内容搬进浏览器，而后端把 payload 排除在折叠层之外正是为了避免这件事。
+    const user = userEvent.setup();
+    const detailCalls: number[] = [];
+    renderWithApi(<ActivityLog />, [
+      {
+        match: /\/activity\/extraction_run/,
+        body: () => {
+          detailCalls.push(1);
+          return fixtures.activityRunDetail;
+        },
+      },
+    ]);
+
+    expect(await collapsed()).toHaveLength(ALL);
+    expect(detailCalls).toHaveLength(0);
+
+    await user.click(await screen.findByRole("button", { name: RUN_ROW }));
+    await waitFor(() => expect(detailCalls).toHaveLength(1));
+    expect(await screen.findByRole("button", { name: RUN_ROW, expanded: true })).toBeInTheDocument();
+  });
+
+  it("展开看得到「跑了什么、结果是什么、花了多少」", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<ActivityLog />);
+    await user.click(await screen.findByRole("button", { name: RUN_ROW }));
+
+    // rows 的措辞全在后端（前端不写文案分支），这里只验它真的渲染成了定义列表。
+    expect(await screen.findByText("有效事件")).toBeInTheDocument();
+    expect(screen.getByText("待审提案")).toBeInTheDocument();
+    // 花销：token 数是真的，钱是「未记录」——**不许渲染成 0**（§10 约束 8）。
+    // 顶上那条总账也写着同样的数字，所以这里连模型名一起认，认的是这一步的那一条。
+    expect(screen.getByText(/deepseek-v4 · 读入 1200 \/ 生成 400 token/)).toBeInTheDocument();
+    expect(screen.getAllByText(/花费 未记录/).length).toBeGreaterThan(0);
+    expect(document.body.textContent).not.toMatch(/花费 0|¥0|0 元/);
+  });
+
+  it("**审计信封一个字都不上屏** —— 作者看的是 rows，不是给机器重放用的那份", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<ActivityLog />);
+    await user.click(await screen.findByRole("button", { name: KNOWLEDGE_ROW }));
+
+    expect(await screen.findByText("依据引语")).toBeInTheDocument();
+    // payload 里真有这些键/值（见 api.json 的 activityDecisionDetail），一个都不许露出来：
+    // 它们是引擎内部的东西，而且日志出参本来就是一个全新的泄漏面。
+    const shown = document.body.textContent ?? "";
+    for (const leak of ["canon_version", "retracted_edge_ids", "edge:ID37", "information_scope"]) {
+      expect(shown).not.toContain(leak);
+    }
+  });
+
+  it("作者做的和系统做的一眼分得开，而且能只看其中一种", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<ActivityLog />);
+    await collapsed();
+
+    // 两种标记同时在场（ADR 0020：系统开始自动往书里写东西了，这件事必须看得见）
+    expect(screen.getAllByText("作者").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("系统").length).toBeGreaterThan(0);
+
+    const spy = vi.spyOn(globalThis, "fetch");
+    await user.click(screen.getByRole("button", { name: /作者做的/ }));
+
+    await waitFor(() => expect(collapsed()).resolves.toHaveLength(AUTHOR_ONLY));
+    expect(spy.mock.calls.some(([url]) => String(url).includes("actor=author"))).toBe(true);
+    expect(screen.queryByRole("button", { name: RUN_ROW })).toBeNull();
+  });
+
+  it("筛掉的那些**还算数**：计数不跟着过滤一起缩", async () => {
+    // 这是 ADR 0020 点名要的：自动升 CANON 开了之后 system 行会长得飞快，
+    // 作者自己点过的那几十次会被淹没。计数要回答的是「我筛掉了多少」，
+    // 跟着过滤一起变就什么都说明不了。
+    const user = userEvent.setup();
+    renderWithApi(<ActivityLog />);
+    await user.click(await screen.findByRole("button", { name: /作者做的/ }));
+
+    await waitFor(() => expect(collapsed()).resolves.toHaveLength(AUTHOR_ONLY));
+    for (const tally of fixtures.activityAuthorOnly.actors) {
+      expect(
+        screen.getByRole("button", { name: new RegExp(`${tally.count}$`) }),
+      ).toBeInTheDocument();
+    }
+    // 过滤之后列表里只剩 4 行，而「系统」那颗按钮上的数字还是全量的 3。
+    expect(screen.getByRole("button", { name: /系统做的 3/ })).toBeInTheDocument();
+  });
+
+  it("跳转用的是**后端给的坐标**，不是从标题里认出来的名字", async () => {
+    const user = userEvent.setup();
+    useCoords.setState({ chapter: 5 }); // 作者正在写第 5 章，日志那一条是第 1 章的事
+    renderWithApi(<ActivityLog />);
+    await user.click(await screen.findByRole("button", { name: KNOWLEDGE_ROW }));
+
+    // 按钮上的字是后端写的（`jump.label`），前端不编第二份措辞。
+    const jump = fixtures.activityDecisionDetail.entry.jump;
+    const go = await screen.findByRole("button", { name: `${jump.label} →` });
+    await user.click(go);
+
+    const s = useCoords.getState();
+    expect(s.page).toBe("workbench"); // 中栏换回正文，右栏那一格就在旁边
+    expect(s.activeTab).toBe("matrix");
+    expect(s.chapter).toBe(jump.chapter_number);
+    expect(s.focusCell).toEqual({
+      character_id: jump.character_id,
+      secret_id: jump.secret_id,
+    });
+    // 在场坐标也是后端给的（`jump.cast`），**不是从副标题里那个人名认出来的**。
+    // 认知矩阵的行由本章正文推（ADR 0018），日志里那个人可能一次都没被点名——
+    // 不带这个坐标，跳过去那一行根本不在表上，高亮和编辑入口一起落空。
+    //
+    // **它落进 `castInclude`（只加不减），不是 `cast`（过滤）。** 右栏三格吃同一份在场，
+    // 写作提醒少一个人就少一批禁令（ADR 0018 §3）；方向那条钉在 `JumpCast.coord.test.tsx`。
+    expect(jump.cast.length).toBeGreaterThan(0);
+    expect(s.castInclude).toBe(jump.cast.join("、"));
+    expect(s.cast).toBe("");
+  });
+
+  it("后端给不出不含歧义的称呼时，前端**不自己凑一个**", async () => {
+    // 空 `cast` 是一个断言：那个人的称呼指向不止一个人（或者根本没登记过称呼），
+    // 后端于是什么都不给——绝不替作者挑（ADR 0004）。前端这时退回看整章，
+    // 那一格没画出来的话，矩阵那边照旧说「没有在这一章找到刚才那一格」。
+    const user = userEvent.setup();
+    useCoords.setState({ cast: "上一场留下的" });
+    const row = fixtures.activityDecisionDetail.entry;
+    renderWithApi(<ActivityLog />, [
+      {
+        match: /\/activity\/decision/,
+        body: {
+          ...fixtures.activityDecisionDetail,
+          entry: { ...row, jump: { ...row.jump!, cast: [] } },
+        },
+      },
+    ]);
+    await user.click(await screen.findByRole("button", { name: KNOWLEDGE_ROW }));
+    await user.click(await screen.findByRole("button", { name: `${row.jump!.label} →` }));
+
+    // 上一次留下的过滤仍然被清掉：留着它，要看的那一格可能根本不在里面。
+    expect(useCoords.getState().cast).toBe("");
+  });
+
+  it("引擎能改、工作台也能改的那一档，不再挂「入口还没做」那句话", async () => {
+    // 这一句 2026-08-10 是诚实的（那两条改正路由在浏览器里零调用方），2026-08-11 起
+    // 不是了：矩阵那一格点得开、已确认情节的名单也改得动。**留着它就变成骗人的文案。**
+    const user = userEvent.setup();
+    renderWithApi(<ActivityLog />);
+    await user.click(await screen.findByRole("button", { name: KNOWLEDGE_ROW }));
+
+    await screen.findByText("依据引语");
+    expect(screen.queryByText(/只能看这一格|入口还没做/)).toBeNull();
+  });
+
+  it("改事件名单那一行，跳过去带的是**后端给的那条事件**", async () => {
+    // 名单编辑器按 `jump.event_id` 展开那一条。夹具里同一章的两条情节概要一模一样，
+    // 从标题反推必然认错，而认错的产物是作者改了另一条情节的名单。
+    const user = userEvent.setup();
+    // 同标题同副标题的行不止一条（一次确认接受了一条事件），所以按**行序**取那一条，
+    // 不按文字找——这一页的第一条禁令就是「别从字面反推」。
+    const at = fixtures.activity.entries.findIndex((e) => e.jump?.target === "event_cast");
+    const row = fixtures.activity.entries[at];
+    renderWithApi(<ActivityLog />, [
+      { match: /\/activity\/decision/, body: { ...fixtures.activityDecisionDetail, entry: row } },
+    ]);
+
+    await user.click((await collapsed())[at]);
+    await user.click(await screen.findByRole("button", { name: `${row.jump!.label} →` }));
+
+    const s = useCoords.getState();
+    expect(s.page).toBe("workbench");
+    expect(s.activeTab).toBe("review"); // 已确认情节的名单就在这一格里
+    expect(s.focusEventId).toBe(row.jump!.event_id);
+    expect(s.focusCell).toBeNull();
+    // **这一档不带在场坐标。** 它跳的是「已确认情节」那一格里的一份名单，不是矩阵的
+    // 一行；给了 cast 只会顺手把右栏别的几格一起过滤掉。后端那边也不给（`_cast`）。
+    expect(row.jump!.cast).toEqual([]);
+    expect(s.cast).toBe("");
+  });
+
+  it("`endpoints` 为空时说的是「从这儿点不到某一处」，**不是「改不了」**", async () => {
+    // 空 `endpoints` 今天有两个意思，而它们在出参形状上长得一模一样：
+    // ① 真的没有路由能改（自动升上去的位置/状态边）；
+    // ② 有好几条、后端不替作者挑是哪一条（一次升掉一整章的干净事件）——那几条**改得掉**。
+    // 从 label 的措辞去分辨就是「从字符串反推」，这一页的第一条禁令。所以措辞必须
+    // 两种都成立：说成「改不了」会把 ② 说成没救了，而 ADR 0020 的整条退路就是「改得掉」。
+    const user = userEvent.setup();
+    // 真 dump 里那一行（`decision:ID32`，endpoints 是空的）+ 真 dump 的详情主体。
+    // 夹具只 dump 了两条详情，所以这里把「哪一行」换掉——两半都来自 api.json。
+    //
+    // **2026-08-11 换过一次样本**：原本用的是「声明认知」那一行，而它其实**改得掉**
+    //（`/canon/knowledge` 改的就是这一格上已经存在的那条边，不管当初是声明进来的还是
+    // 确认进来的）——它被错归进空 bucket，`tests/test_canon_edit_loop.py::
+    // test_the_authors_own_knowledge_declaration_is_not_filed_as_unfixable` 修掉了那一条。
+    // 现在用「否决」那一行：被驳回的提案从来没升上 CANON，所以它是①的最硬形态。
+    const emptyEndpoints = fixtures.activity.entries.find((e) => e.id === "decision:ID32")!;
+    expect(emptyEndpoints.jump?.endpoints).toEqual([]);
+    renderWithApi(<ActivityLog />, [
+      {
+        match: /\/activity\/decision/,
+        body: { ...fixtures.activityDecisionDetail, entry: emptyEndpoints },
+      },
+    ]);
+
+    await user.click(await screen.findByRole("button", { name: /否决/ }));
+    const note = await screen.findByText(/从这里点不到具体的某一处/);
+    expect(note).toBeInTheDocument();
+    expect(note.textContent).not.toMatch(/改不了|没救|无法修改|不能改/);
+    // 「去第 1 章」仍然点得动（定位是有用的），只是它没有假装自己能改什么。
+    expect(screen.getByRole("button", { name: `${emptyEndpoints.jump!.label} →` })).toBeEnabled();
+  });
+
+  it("「看更早的」把后端那个游标**原样**回传，不自己拼", async () => {
+    const user = userEvent.setup();
+    const cursor = fixtures.activity.next_cursor!;
+    renderWithApi(<ActivityLog />, [
+      // 第二页：真 dump 的形状，entries 空 —— 翻到底就是这样。
+      { match: /cursor=/, body: { ...fixtures.activity, entries: [], next_cursor: null } },
+    ]);
+    await collapsed();
+
+    const spy = vi.spyOn(globalThis, "fetch");
+    await user.click(screen.getByRole("button", { name: "看更早的" }));
+
+    await waitFor(() =>
+      expect(
+        spy.mock.calls.some(([url]) =>
+          String(url).includes(`cursor=${encodeURIComponent(cursor)}`),
+        ),
+      ).toBe(true),
+    );
+    // 到底了就不再摆一个点了没反应的按钮
+    await waitFor(() => expect(screen.queryByRole("button", { name: "看更早的" })).toBeNull());
+    expect(await collapsed()).toHaveLength(ALL); // 已经读到的那些还在
+  });
+
+  it("还没有记录时说人话，不摆一张空表", async () => {
+    renderWithApi(<ActivityLog />, [
+      {
+        match: /\/activity(\?|$)/,
+        body: { ...fixtures.activity, entries: [], next_cursor: null, actors: [] },
+      },
+    ]);
+    expect(await screen.findByText(/系统整理过这本书之后/)).toBeInTheDocument();
+  });
+
+  // ── 界面上不摆研发术语 ────────────────────────────────────────────────
+  //
+  // **这条断言原本是一张词表**（`valid_from|canon_version|PROVISIONAL|endpoints|
+  // payload|decision_log`），而后端当时正把 `萧决 对「血脉秘密」：KNOWS → BELIEVES`
+  // 印在这一页上——**那两个词恰好不在表里，于是它绿了一整轮**。补两个词进去只会让
+  // 下一个词接着漏，所以判据换成了形状，且那套判据全仓只有一份
+  //（`src/test/screenGuard.ts`，自守卫钉着五个真的上过屏的违规）。
+  //
+  // 三档展开层各验一遍：**少一档就有一整块屏幕没人看过**。这不是假想——
+  // 「跑了什么」那一档 2026-08-11 之前印着 `snapshot:ID11` 和一段 prompt 指纹，
+  // 「花了多少」那一档印着两个 `artifact:sha256:…` 和一整段 `params_json`。
+
+  it("折叠着的那一页上，一个研发术语都没有", async () => {
+    renderWithApi(<ActivityLog />);
+    await collapsed();
+    expect(devTerms(screenText())).toEqual([]);
+    // 反面也得成立：这一页**说得出**发生过什么（过度收窄一样是 bug）。
+    expect(document.body.textContent).toContain("血脉秘密");
+  });
+
+  it.each([
+    ["改了什么（确认那一档）", KNOWLEDGE_ROW, "依据引语"],
+    ["跑了什么（整理那一档）", RUN_ROW, "有效事件"],
+    ["花了多少（模型调用那一档）", CALL_ROW, "第几次尝试"],
+  ])("展开「%s」也一样", async (_label, row, marker) => {
+    const user = userEvent.setup();
+    renderWithApi(<ActivityLog />);
+    await user.click(await screen.findByRole("button", { name: row }));
+    await screen.findByText(marker);
+    expect(devTerms(screenText())).toEqual([]);
+  });
+});

@@ -15,12 +15,14 @@ from ..graph.sqlite_proposals import SqliteProposalStore
 from ..graph.sqlite_store import SqliteStoryGraph
 from ..ids import EntityType, new_id
 from .analyze import parse_analysis
+from .auto_canon import promote_clean_facts
 from .call_audit import record_model_call
 from .control import (
     RUN_COLUMNS,
     AnalysisRequest,
     AuditedCompletion,
     ExtractionChapterNotFound,
+    ExtractionErrorCode,
     ExtractionRun,
     ExtractionRunError,
     ExtractionRunnerError,
@@ -186,7 +188,7 @@ class ExtractionRunner:
                     conn,
                     run_id,
                     ExtractionRunError(
-                        code="prompt_drift",
+                        code=ExtractionErrorCode.PROMPT_DRIFT,
                         message="chapter analysis prompt no longer matches the queued run",
                     ),
                 )
@@ -200,7 +202,7 @@ class ExtractionRunner:
                     conn,
                     run_id,
                     ExtractionRunError(
-                        code="provider_failure",
+                        code=ExtractionErrorCode.PROVIDER_FAILURE,
                         message="chapter analysis provider failed",
                     ),
                 )
@@ -220,7 +222,7 @@ class ExtractionRunner:
                     conn,
                     run_id,
                     ExtractionRunError(
-                        code="call_record_failure",
+                        code=ExtractionErrorCode.CALL_RECORD_FAILURE,
                         message="chapter analysis call could not be audited",
                     ),
                 )
@@ -233,12 +235,12 @@ class ExtractionRunner:
                     conn,
                     run_id,
                     ExtractionRunError(
-                        code="analysis_format",
+                        code=ExtractionErrorCode.ANALYSIS_FORMAT,
                         message="chapter analysis was not valid schema JSON",
                     ),
                 )
             try:
-                return self._ingest_success(
+                succeeded, report = self._ingest_success(
                     conn,
                     claimed,
                     chapter,
@@ -251,10 +253,15 @@ class ExtractionRunner:
                     conn,
                     run_id,
                     ExtractionRunError(
-                        code="ingest_failure",
+                        code=ExtractionErrorCode.INGEST_FAILURE,
                         message="chapter analysis could not be ingested",
                     ),
                 )
+            # 自动升 CANON 在业务事务 commit **之后**，且**在上面那个 try 之外**：
+            # `_transaction` 要求无外层事务，而升不上去绝不该把已经抽完、已经付过钱的
+            # run 标成 FAILED（`promote_clean_facts` 自己 fail-safe，见该模块 docstring）。
+            promote_clean_facts(conn, claimed.project_id, report)
+            return succeeded
         finally:
             conn.close()
 
@@ -317,7 +324,7 @@ class ExtractionRunner:
         analysis: RawChapterAnalysis,
         *,
         call_id: str,
-    ) -> ExtractionRun:
+    ) -> tuple[ExtractionRun, ExtractionReport]:
         conn.execute("BEGIN IMMEDIATE")
         graph = SqliteStoryGraph(conn)
         report = ExtractionService(
@@ -334,7 +341,7 @@ class ExtractionRunner:
         self._mark_succeeded(conn, run.id, call_id, report)
         row = self._fetch_row(conn, run.id)
         conn.commit()
-        return to_run(row)
+        return to_run(row), report
 
     @staticmethod
     def _mark_succeeded(

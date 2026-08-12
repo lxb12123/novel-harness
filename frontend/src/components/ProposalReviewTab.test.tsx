@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { fixtures, renderWithApi } from "../test/harness";
+import { devTerms } from "../test/screenGuard";
 import { useCoords } from "../store";
 import { ProposalReviewTab } from "./ProposalReviewTab";
 
@@ -65,6 +66,33 @@ describe("待确认内容", () => {
     expect(labels.length).toBeGreaterThan(0);
     await user.click(checkboxes[0]);
     expect(screen.getByRole("button", { name: /确认所选（1）/ })).toBeEnabled();
+  });
+
+  it("冲突卡上的**名字是后端给的**，不是拿 id 去花名册里查出来的", async () => {
+    // 夹具里 `/roster` 是**在这个地点被建出来之前** dump 的，所以 `location:ID22`
+    // 不在里面——而这正是真实失败的形状：花名册（`["roster", pid]`）和队列
+    // （`["proposals", pid, chapter]`）是两条独立缓存，后台整理造出的新节点会在
+    // 前者里缺席一拍。当时的兜底是 `id.slice(-6)` → 屏幕上一个 `n:ID22`。
+    open();
+    await screen.findByText(/关系冲突/);
+    const rosterIds = new Set(fixtures.roster.map((n) => n.id));
+    expect(rosterIds.has("location:ID22")).toBe(false); // 自守卫：这个样本还差着那一拍
+    expect(document.body.textContent).toContain("青云城");
+  });
+
+  it("后端认不出的那个 id 说「—」，**不许把内部编号截短了摆上屏**", async () => {
+    // `node_refs` 里没有它 = 后端认不出（不存在 / 跨项目）。这不是「后端忘了给」，
+    // 后端不编假名字；界面这时也不许自己编一个「看起来像名字」的东西出来。
+    const conflict = fixtures.proposals.find((p) => p.kind === "edge_conflict")!;
+    renderWithApi(<ProposalReviewTab />, [
+      {
+        match: /\/chapters\/\d+\/proposals/,
+        body: [{ ...conflict, node_refs: [] }],
+      },
+    ]);
+    const card = (await screen.findByText(/关系冲突/)).closest(".statecard") as HTMLElement;
+    expect(within(card).getByText(/当前：—/)).toBeInTheDocument();
+    expect(devTerms(card.textContent ?? "")).toEqual([]);
   });
 
   it("不展示任何原始 items_json 或 item_count 字段", async () => {

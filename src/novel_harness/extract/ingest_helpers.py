@@ -55,6 +55,16 @@ class ExtractionReport(BaseModel):
     proposal_ids: tuple[str, ...] = ()
     proposal_count: int = Field(ge=0)
 
+    clean_event_ids: tuple[str, ...] = ()
+    """一条例外 bucket 都没进的事件 —— 自动升 CANON 的入口（1.2）。
+
+    **是 `event_ids` 的子集，不是另一份来源。** 有默认值是为了老调用方；空元组的语义是
+    「这次没有干净的」，与「这次没算」在这里刻意不区分：两者的安全动作都是不升。
+    """
+
+    clean_edge_ids: tuple[str, ...] = ()
+    """同上，关系侧。"""
+
 
 @dataclass(frozen=True, slots=True)
 class PreparedStateUpdate:

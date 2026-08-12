@@ -43,7 +43,6 @@ header {
 header .title { font-weight: 600; } header .title b { color: var(--accent); }
 header label { color: var(--dim); font-size: 12px; }
 header input.ch { width: 56px; text-align: right; }
-header input.cast { width: 220px; }
 header .spacer { flex: 1; }
 header .hint { color: var(--dim); font-size: 11px; }
 header button.on { border-color: var(--accent); color: var(--accent); background: var(--sel); }
@@ -74,16 +73,122 @@ header button.on { border-color: var(--accent); color: var(--accent); background
 .draft-length-lock { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
 .draft-length-lock span { font-size: 12px; }
 
-/* 三栏 */
-main { flex: 1; display: grid; grid-template-columns: 210px 1fr 400px; min-height: 0; }
-.pane { overflow: auto; padding: 12px 14px; }
-.pane + .pane { border-left: 1px solid var(--line); }
+/* 三栏 —— 列宽由 SplitPanes 内联给（作者拖出来的），这儿只留一份兜底。
+   中栏是 minmax(0,1fr) 不是 1fr：裸 1fr 的下限是 min-content，编辑器会撑住不让拖窄。 */
+main {
+  flex: 1; display: grid; min-height: 0;
+  grid-template-columns: 240px 6px minmax(0, 1fr) 6px 400px;
+}
+.pane { overflow: auto; padding: 12px 14px; min-width: 0; }
+/* 栏间那条线原来是 `.pane + .pane` 的 border——它画得出线但抓不住，
+   现在改由分隔条自己画：整列 6px 可抓，只显中间 1px，视觉上还是原来那条线。 */
+.pane-divider { position: relative; cursor: col-resize; touch-action: none; background: transparent; }
+.pane-divider::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 50%;
+  width: 1px; margin-left: -.5px; background: var(--line);
+}
+.pane-divider:hover::after,
+.pane-divider:focus-visible::after,
+.pane-divider[data-dragging="true"]::after { width: 3px; margin-left: -1.5px; background: var(--accent); }
+.pane-divider:focus-visible { outline: none; }  /* 焦点靠那条线变粗表示，不再套一圈虚线 */
+/* 拖动中：光标整屏统一，并禁掉选中——否则横着拖会顺手把正文选中一大片 */
+body.resizing { cursor: col-resize; -webkit-user-select: none; user-select: none; }
 .pane h2 {
   margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .08em;
   text-transform: uppercase; color: var(--dim);
 }
 .pane h2:not(:first-child) { margin-top: 18px; }
 .empty { color: var(--dim); font-style: italic; }
+
+/* 左栏 · 书架 */
+.shelf-add { width: 100%; margin-bottom: 10px; padding: 5px 8px; }
+.shelf-hidden { margin-top: 12px; color: var(--dim); font-size: 11px; }
+.shelf-hidden a { color: var(--accent); cursor: pointer; text-decoration: underline; }
+.book + .book { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
+/* 悬浮底色挂在整行上，所以右边那个 ⋯ 也在里面——底色不会在 ⋯ 前面断掉一截。 */
+.book-head {
+  display: flex; flex-wrap: nowrap; align-items: center; gap: 2px;
+  margin-bottom: 6px; padding-right: 2px; border-radius: 4px;
+}
+/* 底色**只跟着鼠标**。当前是哪一本，靠书名的强调色说（`.book.on .book-name`）——
+   两者都用底色的话，鼠标移走之后那条紫底还留着，看起来像鼠标还停在那儿。 */
+.book-head:hover { background: var(--panel); }
+/* **整行是命中区**（同 Cursor 的侧栏）：图标/箭头、书名、「章目录」都在这一个按钮里。
+   书名 max-width:70% + min-width:0、其余 flex-shrink:0、nowrap：书名再长也只变省略号，
+   不会把「章目录」挤到第二行。栏窄到 70% 都放不下时书名会更早截断——
+   那是唯一可能的行为，总好过换行。 */
+.book-row {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px;
+  padding: 3px 6px; border: 0; border-radius: 4px;
+  background: transparent; color: var(--ink); text-align: left;
+}
+.book-row:hover:not(:disabled) { color: var(--ink); }
+.book-row > *:not(.book-name) { flex: 0 0 auto; }
+.book-act {
+  padding: 0 4px; border-color: transparent; background: transparent;
+  color: var(--dim); line-height: 1.4;
+}
+.book-act:hover { color: var(--accent); border-color: var(--line); }
+
+/* 左边那一格：图标和箭头**叠在同一个 13px 方框里**（grid 同格），所以互换时行不会跳。
+   平时是书的图标；鼠标移到这一行、或者章目录已经展开着，才换成箭头。 */
+.book-mark { display: grid; place-items: center; width: 14px; height: 15px; }
+.book-mark > * { grid-area: 1 / 1; }
+/* 箭头：CSS 画的实心三角，收起时朝右、展开时转 90° 朝下。
+   用 ▸/▾ 那两个字符的话，10px 下根本看不出朝哪边（作者的原话）。 */
+.book-fold {
+  width: 0; height: 0; opacity: 0;
+  border-left: 7px solid var(--dim);
+  border-top: 5px solid transparent;
+  border-bottom: 5px solid transparent;
+  transform-origin: 40% 50%;
+  transition: transform .12s ease;
+}
+.book.open .book-fold { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .book-fold { transition: none; } }
+.book-icon { opacity: 1; }
+.book-head:hover .book-fold, .book.open .book-fold { opacity: 1; }
+.book-head:hover .book-icon, .book.open .book-icon { opacity: 0; }
+/* 「书」的图标：一本书的侧影（书脊 + 页）。用 CSS 画，省掉一个图标依赖。 */
+.book-icon {
+  display: block; width: 11px; height: 13px;
+  border: 1px solid currentColor; border-left-width: 2.5px; border-radius: 1px 2px 2px 1px;
+}
+.book-name {
+  flex: 0 1 auto; min-width: 0; max-width: 70%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-weight: 600;
+}
+.book.on .book-name { color: var(--accent); }
+.book-kind {
+  font-size: 11px; font-weight: 600; letter-spacing: .08em; color: var(--dim);
+  text-transform: uppercase;
+}
+.book-more { position: relative; margin-left: auto; }
+.book-menu {
+  position: absolute; top: 100%; right: 0; z-index: 25; width: 180px; padding: 6px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
+  box-shadow: 0 8px 24px rgba(0,0,0,.18);
+}
+.book-menu button { width: 100%; text-align: left; }
+.book-menu-note { margin-top: 6px; color: var(--dim); font-size: 11px; line-height: 1.5; }
+.book-idle { font-size: 12px; }
+
+/* 切书弹窗：居中的方框（抽屉贴边，这个不贴——它是「换一本」这种全局动作） */
+.modal {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 20;
+  width: min(420px, 92vw); max-height: 80vh; overflow: auto; padding: 18px 20px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
+  box-shadow: 0 24px 64px rgba(0,0,0,.28);
+}
+.modal h3 { margin: 0 0 4px; }
+.modal .sub { color: var(--dim); font-size: 12px; margin-bottom: 14px; }
+.book-choices { display: flex; flex-direction: column; gap: 6px; }
+.book-choice { display: flex; align-items: center; gap: 8px; text-align: left; padding: 8px 10px; }
+.book-choice.on { border-color: var(--accent); color: var(--accent); background: var(--sel); }
+.book-choice-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.book-choice-note { flex: 0 0 auto; color: var(--dim); font-size: 11px; }
+.book-choice .cur { flex: 0 0 auto; background: var(--k); color: #fff; border-radius: 8px; padding: 0 6px; font-size: 10px; }
 
 /* 左栏 */
 .ch, .item { padding: 3px 6px; border-radius: 4px; cursor: pointer; }
@@ -101,6 +206,16 @@ main { flex: 1; display: grid; grid-template-columns: 210px 1fr 400px; min-heigh
 .cm-wrap { flex: 1; min-height: 0; display: flex; }
 .cm-host { flex: 1; min-height: 0; overflow: hidden; }
 .cm-host .cm-editor { height: 100%; }
+/* 行内续写的灰字（ADR 0015）。它是装饰不是文档内容——按 Tab 才落进正文。
+   `user-select: none`：作者拖选一段去「记录这句」时，不该把还没接受的建议选进去。 */
+.cm-ghost { color: var(--dim); opacity: .75; font-style: italic; -webkit-user-select: none; user-select: none; }
+
+/* 右栏「这一章提到：…」——引擎数出来的在场，不是作者填的表单 */
+.castline { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; padding: 7px 12px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.castline .lab { color: var(--dim); flex: 0 0 auto; }
+.castline .who { color: var(--ink); }
+.castline.dim { color: var(--dim); line-height: 1.6; }
+.castline button.link { background: none; border: 0; padding: 0; color: var(--accent); font-size: 12px; cursor: pointer; }
 .selbar { padding: 6px 14px; border-top: 1px solid var(--line); background: var(--panel); display: flex; gap: 8px; align-items: center; font-size: 12px; }
 .selbar .q { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 
@@ -117,8 +232,10 @@ main { flex: 1; display: grid; grid-template-columns: 210px 1fr 400px; min-heigh
 .scene-edit .lab { color: var(--dim); } .scene-edit input { width: 150px; }
 .scene-edit .err { color: var(--warn); }
 
-/* 右栏 tabs */
-.tabs { display: flex; gap: 4px; margin-bottom: 10px; }
+/* 右栏 tabs —— 必须能换行。7 个中文标签挤在一行里会被压成一列一列的竖排字
+   （右栏一变窄就发生），换行才是「窄了少放几个」而不是「窄了都看不清」。 */
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+.tabs button { white-space: nowrap; }
 .tabs button.on { border-color: var(--accent); color: var(--accent); background: var(--sel); }
 
 /* 矩阵 */
@@ -127,6 +244,34 @@ table.mx th, table.mx td { border: 1px solid var(--line); padding: 4px 8px; text
 table.mx thead th { color: var(--dim); font-weight: 600; }
 .cell .k { color: var(--k); } .cell .b { color: var(--b); } .cell .u { color: var(--u); }
 .cell small { display: block; color: var(--dim); font-size: 10px; }
+/* 可改的那些格子（「知道」/「以为」）是按钮；「不知道」不是——那一格上没有可改的事实，
+   点了必然 404，所以它连长得都不能像能点（`corrections.py` 的 FactNotFound）。 */
+td.cell.editable { padding: 0; }
+.cell-open {
+  display: block; width: 100%; padding: 4px 8px; border: 0; border-radius: 0;
+  background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.cell-open:hover:not(:disabled) { background: var(--sel); color: inherit; border-color: transparent; }
+td.cell.editing { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* 改这一格：表下面一张小卡，不是弹窗——右栏只有 400px，弹窗会把它盖掉 */
+.cell-editor { margin-top: 8px; border: 1px solid var(--accent); border-radius: 6px; padding: 8px 10px; }
+.cell-editor .lab { font-weight: 600; font-size: 12px; }
+.cell-editor .row { font-size: 12px; margin-top: 4px; }
+.cell-editor .row.dim { color: var(--dim); font-size: 11px; }
+.cell-editor .actions { margin-top: 8px; display: flex; align-items: center; gap: 8px; }
+.cell-believed { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+.cell-believed > span { flex: 0 0 auto; color: var(--dim); font-size: 11px; }
+.cell-believed input { flex: 1; min-width: 0; }
+/* 已确认情节的名单编辑（右栏「待确认」那一格的下半截） */
+.event-card.canon { display: block; }
+.event-card.canon.focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+.event-card .event-head .row { color: var(--dim); font-size: 11px; margin-top: 2px; }
+.cast-editor { margin-top: 8px; border-top: 1px solid var(--line); padding-top: 8px; }
+.cast-dim { border: 1px solid var(--line); border-radius: 4px; padding: 4px 8px 6px; margin: 0 0 6px; }
+.cast-dim legend { color: var(--dim); font-size: 11px; padding: 0 4px; }
+.cast-pick { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; font-size: 12px; }
+.cast-editor .row.dim { color: var(--dim); font-size: 11px; }
+.cast-editor .actions { margin-top: 8px; display: flex; align-items: center; gap: 8px; }
 .warn { margin-top: 8px; padding: 6px 8px; background: var(--warnbg); color: var(--warn); border-radius: 4px; font-size: 12px; }
 .tag { display: inline-block; padding: 1px 7px; margin: 2px 4px 2px 0; background: var(--sel); border-radius: 10px; font-size: 12px; }
 .mnr .lab { color: var(--dim); font-size: 11px; margin: 10px 0 4px; }
@@ -149,6 +294,61 @@ table.mx thead th { color: var(--dim); font-weight: 600; }
 .event-card { display: flex; align-items: flex-start; gap: 8px; padding: 6px 8px; margin-bottom: 4px; border: 1px solid var(--line); border-radius: 4px; }
 .event-card.provisional { background: var(--panel); color: var(--dim); }
 .event-card .unconfirmed { color: var(--dim); font-size: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 0 5px; margin-right: 4px; }
+
+/* 活动记录（中栏）—— 一行一条折叠，点开看跑了什么。
+   行本身是一个 button（整行命中），所以里面**不能再套 button**：跳转那一颗在展开区里。 */
+.pane.log { padding: 0; display: flex; flex-direction: column; }
+.log-head { padding: 12px 14px 10px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.log-head h2 { margin: 0 0 4px; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); }
+.log-lead { margin: 0 0 10px; color: var(--dim); font-size: 12px; line-height: 1.6; }
+.log-usage { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 10px; color: var(--dim); font-size: 11px; }
+.log-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.log-filters button { font-size: 12px; padding: 2px 9px; }
+.log-filters button.on { border-color: var(--accent); color: var(--accent); background: var(--sel); }
+.log-list { list-style: none; margin: 0; padding: 0; flex: 1; overflow: auto; }
+.log .empty { padding: 14px; }
+.log-item { border-bottom: 1px solid var(--line); }
+.log-line {
+  width: 100%; display: flex; align-items: baseline; gap: 8px; padding: 7px 12px;
+  border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit;
+  text-align: left; cursor: pointer;
+}
+.log-line:hover:not(:disabled) { background: var(--panel); color: inherit; border-color: transparent; }
+/* 折叠箭头：收起朝右、展开朝下（同书架那一颗）。 */
+.log-fold {
+  flex: 0 0 auto; width: 0; height: 0; margin-top: 4px;
+  border-left: 4px solid var(--dim); border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent;
+  transition: transform .12s ease;
+}
+.log-item.open .log-fold { transform: rotate(90deg); }
+/* 「谁做的」必须一眼分得开 —— 系统自动写进书里的东西和作者亲手点的不是一回事（ADR 0020）。 */
+.log-actor {
+  flex: 0 0 auto; padding: 0 6px; border-radius: 8px; font-size: 10px; line-height: 1.7;
+  border: 1px solid var(--line); color: var(--dim);
+}
+.log-actor.author { border-color: var(--accent); color: var(--accent); background: var(--sel); }
+.log-actor.system { border-color: var(--line); color: var(--dim); background: var(--panel); }
+.log-actor-btn.system { color: var(--dim); }
+.log-title { flex: 0 0 auto; font-size: 12px; }
+.log-sub { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); font-size: 12px; }
+.log-status { flex: 0 0 auto; font-size: 11px; color: var(--b); }
+.log-status.failed { color: var(--warn); }
+.log-time { flex: 0 0 auto; color: var(--dim); font-family: ui-monospace, monospace; font-size: 10px; }
+.log-detail { padding: 2px 12px 12px 26px; background: var(--panel); }
+.log-detail.dim { color: var(--dim); font-size: 12px; }
+.log-rows { margin: 0 0 8px; font-size: 12px; }
+.log-rows-line { display: flex; gap: 8px; padding: 2px 0; }
+.log-rows dt { flex: 0 0 88px; color: var(--dim); }
+.log-rows dd { flex: 1; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.log-cost { margin-bottom: 8px; color: var(--dim); font-size: 11px; }
+.log-jump { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.log-go { font-size: 12px; padding: 3px 10px; }
+/* 「跳过去只能看」不是提示语气，是一条事实：后端说了今天没有入口能改它（ADR 0020 的
+   推翻条件之一）。所以它跟着按钮一起出现，不藏在 title 里。 */
+.log-jump-note { color: var(--dim); font-size: 11px; }
+.log-more { margin: 10px 12px 16px; font-size: 12px; }
+/* 从活动记录跳过来的那一格 */
+table.mx td.cell.focus { outline: 2px solid var(--accent); outline-offset: -2px; background: var(--sel); }
 
 /* declare 抽屉 */
 .drawer { position: fixed; top: 0; right: 0; bottom: 0; width: 460px; background: var(--bg); border-left: 1px solid var(--line); box-shadow: -8px 0 24px rgba(0,0,0,.15); padding: 16px 18px; overflow: auto; z-index: 20; }
@@ -202,11 +402,37 @@ table.mx thead th { color: var(--dim); font-weight: 600; }
 /* 版本对比 */
 .drawer.wide { width: 720px; max-width: 96vw; }
 .hist { display: flex; gap: 12px; margin-top: 8px; }
-.hist-list { flex: 0 0 190px; display: flex; flex-direction: column; gap: 4px; max-height: 60vh; overflow: auto; }
-.hist-item { text-align: left; display: flex; align-items: center; gap: 6px; font-family: ui-monospace, monospace; font-size: 12px; }
+.hist-list { flex: 0 0 230px; display: flex; flex-direction: column; gap: 4px; max-height: 60vh; overflow: auto; }
+/* 一行 = 选中区（挑哪一版看 diff）+ 动作区（还原 / 删除）。
+   行本身不再是 button：按钮不能套按钮，套了浏览器会把内层丢出去或吞掉点击。 */
+.hist-item {
+  display: flex; align-items: center; gap: 4px; padding: 0 4px 0 0;
+  border: 1px solid var(--line); border-radius: 4px;
+  font-family: ui-monospace, monospace; font-size: 12px;
+}
 .hist-item.on { border-color: var(--accent); color: var(--accent); background: var(--sel); }
 .hist-item .cur { background: var(--k); color: #fff; border-radius: 8px; padding: 0 6px; font-size: 10px; }
 .hist-item .len { color: var(--dim); margin-left: auto; }
+.hist-pick {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px;
+  padding: 3px 8px; border: 0; border-radius: 4px; background: transparent;
+  color: inherit; font: inherit; text-align: left;
+}
+.hist-pick:hover:not(:disabled) { color: inherit; }
+/* 动作平时不占视线，鼠标移上去（或键盘 Tab 进这一行）才出现。
+   :focus-within 那半条不是可选的——只做 :hover 的话，这两个按钮对键盘用户等于不存在。 */
+.hist-actions { display: flex; gap: 4px; opacity: 0; transition: opacity .12s ease; }
+.hist-item:hover .hist-actions, .hist-item:focus-within .hist-actions { opacity: 1; }
+.hist-act { padding: 1px 7px; font-size: 11px; border-radius: 3px; }
+@media (prefers-reduced-motion: reduce) { .hist-actions { transition: none; } }
+
+/* 还原 / 删除的确认条：两者都改得动作者的稿子，点一下就执行太快了。 */
+.hist-confirm {
+  display: flex; align-items: center; gap: 8px; margin: 8px 0;
+  padding: 8px 10px; border: 1px solid var(--accent); border-radius: 6px; background: var(--sel);
+}
+.hist-confirm.danger { border-color: var(--warn); background: var(--warnbg); color: var(--warn); }
+.hist-confirm .q { flex: 1; min-width: 0; }
 .hist-diff { flex: 1; min-width: 0; }
 pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font-size: 12px; line-height: 1.5; }
 .diff .dl { display: flex; padding: 0 6px; white-space: pre-wrap; word-break: break-word; }
@@ -312,4 +538,13 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
 .setup-card { width: 460px; max-width: 92vw; }
 .setup-card h3 { margin: 0 0 14px; }
 .setup-card .note { color: var(--dim); font-size: 12px; margin-top: 4px; }
-header select { font: inherit; padding: 3px 7px; border: 1px solid var(--line); border-radius: 4px; background: var(--bg); color: var(--ink); max-width: 160px; }
+/* 章节选择器。中文章标经常写成「第722章 从昴日星官开始（大结局）」，160px 装不下，
+   而 <select> 默认是**硬切**——切在半个字上，看起来像标题本身就是坏的。
+   `text-overflow: ellipsis` 让它收成「…」，一眼看出是「还有」不是「没了」；
+   全名走 title 悬浮看（同书名行）。
+   220px 是顶栏腾出来的：书名下拉和「＋新书/导入」都搬去左栏书架了。 */
+header select {
+  font: inherit; padding: 3px 7px; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--bg); color: var(--ink);
+  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}

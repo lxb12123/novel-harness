@@ -1,52 +1,33 @@
-import { useEffect, useState } from "react";
-import { useChapters, useProjects } from "../api/hooks";
+import { useState } from "react";
+import { useChapters } from "../api/hooks";
+import { useOpenChapter } from "../autopilot";
 import { useCoords } from "../store";
-import { DraftDrawer } from "./DraftDrawer";
 import { SettingsDrawer } from "./SettingsDrawer";
-import { Setup } from "./Setup";
 
-// 顶栏：项目切换 + ＋新书/导入 + AS OF 章号 + 在场 cast（称呼原文）。
+// 顶栏：页面切换 + AI 设置 + AS OF 章号。
 // **章号是查询参数「看第几章的面板」，不是声明**——它不写进任何数据（约束 10）。
+//
+// 书名和「＋ 新书 / 导入」不在这儿：它们搬进左栏书架了（一个库可以有多本书，
+// 那是一份**列表**，顶栏塞不下，也不该和「看第几章」抢同一行）。
+//
+// **「出场人物」也不在这儿了。** 它曾经是顶栏第一等公民，等于对作者说「写之前先填这个」——
+// 而在场人物是**写出来的结果**，不是写之前的输入：没名字的配角进不了花名册，
+// 新人物是写到那儿才需要的。现在引擎在写完之后自己去正文里数（`mentioned.py`），
+// 右栏显示数出来的结果。作者要覆盖就点场景块，那是他在正文里亲手标的。
 export function TopBar() {
-  const projects = useProjects();
-  const { projectId, chapter, cast, page, setProject, setChapter, setCast, setPage } = useCoords();
+  const { projectId, chapter, page, setPage } = useCoords();
   const chapters = useChapters(projectId);
-  const [setupOpen, setSetupOpen] = useState(false);
+  // 换章走 `useOpenChapter`，不是裸 setChapter：离开一章 = 那一章写完了，
+  // 要把它交给后台整理（`autopilot.ts`）。作者看不到这件事，也不该看到。
+  const openChapter = useOpenChapter();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [draftOpen, setDraftOpen] = useState(false);
-  const list = projects.data ?? [];
   const chapterList = chapters.data ?? [];
-
-  useEffect(() => {
-    if (chapterList.length > 0 && !chapterList.some((item) => item.number === chapter)) {
-      setChapter(chapterList[0].number);
-    }
-  }, [chapter, chapterList, setChapter]);
 
   return (
     <header>
       <span className="title">
         <b>Novel Harness</b> 工作台
       </span>
-
-      {list.length > 1 ? (
-        <select
-          value={projectId ?? ""}
-          onChange={(e) => {
-            setProject(e.target.value);
-            setChapter(1);
-          }}
-        >
-          {list.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.name}
-            </option>
-          ))}
-        </select>
-      ) : (
-        <span className="hint">{list[0]?.name ?? "（没有项目）"}</span>
-      )}
-      <button onClick={() => setSetupOpen(true)}>＋新书 / 导入</button>
 
       <span style={{ width: 8 }} />
       <button className={page === "workbench" ? "on" : ""} onClick={() => setPage("workbench")}>
@@ -55,11 +36,17 @@ export function TopBar() {
       <button className={page === "prep" ? "on" : ""} onClick={() => setPage("prep")}>
         章节准备
       </button>
-
-      <span className="hint">AI</span>
-      <button title="使用 AI 辅助起草本章" onClick={() => setDraftOpen(true)}>
-        AI 起草
+      {/* 活动记录只换中栏（左栏书架、右栏面板不动）。**它是入口不是通知**：系统自己整理
+          这本书的每一步都记在那儿，作者想看的时候去看——不弹、不红点、不推给他（约束 8）。 */}
+      <button className={page === "log" ? "on" : ""} onClick={() => setPage("log")}>
+        活动记录
       </button>
+
+      {/* 「AI 起草」那个抽屉 2026-08-10 删了：它是**填表式**的（先填「这一场要写什么」+
+          在场角色，再点按钮出一整章），而在场人物是写出来的结果不是写之前的输入（ADR 0018），
+          「接下来写什么」也不该由一个表单承载。起草这件事归模式二的 agent 面板——
+          在那儿它是一次工具调用，不是一个界面。**一个功能不留两个入口。**
+          后端 `/draft` 一个字没动：它现在是 agent 的起草工具。 */}
       <button title="AI 设置" onClick={() => setSettingsOpen(true)}>
         ⚙
       </button>
@@ -69,9 +56,11 @@ export function TopBar() {
       <select
         id="chapter-picker"
         aria-label="当前章节"
+        // 收成「…」之后，这是作者唯一能读到完整章标的地方（同左栏书名行）。
+        title={chapterList.find((item) => item.number === chapter)?.title || undefined}
         value={chapterList.some((item) => item.number === chapter) ? String(chapter) : ""}
         disabled={chapterList.length === 0}
-        onChange={(e) => setChapter(Number(e.target.value))}
+        onChange={(e) => openChapter(Number(e.target.value))}
       >
         {chapterList.length === 0 && <option value="">暂无章节</option>}
         {chapterList.map((item) => (
@@ -80,20 +69,8 @@ export function TopBar() {
           </option>
         ))}
       </select>
-      <label htmlFor="chapter-cast">出场人物</label>
-      <input
-        id="chapter-cast"
-        aria-label="本章出场人物"
-        className="cast"
-        placeholder="输入本章出场人物"
-        value={cast}
-        onChange={(e) => setCast(e.target.value)}
-      />
-      <span className="hint">用逗号或顿号分隔</span>
 
-      {setupOpen && <Setup onClose={() => setSetupOpen(false)} />}
       {settingsOpen && <SettingsDrawer onClose={() => setSettingsOpen(false)} />}
-      {draftOpen && <DraftDrawer onClose={() => setDraftOpen(false)} />}
     </header>
   );
 }

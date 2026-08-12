@@ -49,6 +49,23 @@ class ChapterSummary(BaseModel):
     created_at: str
 
 
+class ChapterSummaryStatus(BaseModel):
+    """一章在滚动总结上的状态。**三种「没有」必须分得开**（ARCHITECTURE §10 约束 8）。
+
+    ``has_text=False`` = 这一章还没有正文快照，压根没得总结；
+    ``has_text=True`` 且 ``summary is None`` = 有正文、**没生成过**（要花钱，只由作者显式触发）；
+    两者在界面上长成同一个「- 暂无」，作者就永远不知道自己少喂了什么给写作模型——
+    而那正是 2026-08-06 盘点出来的病（`chapter_summary` 表恒空且没有任何东西提示）。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chapter_number: int = Field(ge=1)
+    has_text: bool
+    summary: str | None = None
+    created_at: str | None = None
+
+
 class SummaryStore:
     """chapter_summary 的只读仓储。"""
 
@@ -94,6 +111,56 @@ class SummaryStore:
             (project_id, first_chapter, last_chapter),
         ).fetchall()
         return [_row_to_summary(row) for row in rows]
+
+    def coverage(
+        self,
+        project_id: str,
+        first_chapter: int,
+        last_chapter: int,
+    ) -> list[ChapterSummaryStatus]:
+        """闭区间内**每一章**的总结状态，按章号升序。
+
+        和 ``for_range`` 的差别就是这个模块存在的理由：``for_range`` 只返回有的那些，
+        「缺哪几章」得靠调用方自己拿区间去减——而没人会记得减。这里把缺的那些也物化出来，
+        且分得开「没写」和「写了没总结」（见 ``ChapterSummaryStatus``）。
+
+        ``last_chapter < first_chapter`` 返回空表而不是报错：写第 3 章时滚动总结窗口
+        本来就是空的（近八章走事件记忆），那是**正常态**，不是作者输错了。
+        """
+        if first_chapter < 1:
+            raise ValueError("章号区间的下界至少是 1")
+        if last_chapter < first_chapter:
+            return []
+        rows = self._conn.execute(
+            """
+            SELECT chapter.number AS number
+            FROM chapter
+            JOIN chapter_snapshot
+              ON chapter_snapshot.chapter_id = chapter.id
+             AND chapter_snapshot.text_sha256 = chapter.text_sha256
+            WHERE chapter.project_id = ? AND chapter.number BETWEEN ? AND ?
+            """,
+            (project_id, first_chapter, last_chapter),
+        ).fetchall()
+        # 判据和 `RollingSummarizer._chapter` 是同一条（当前快照存在才总结得了），
+        # 否则界面会请作者去生成一份引擎当场会拒的东西。
+        with_text = {int(row["number"]) for row in rows}
+        summaries = {
+            summary.chapter_number: summary
+            for summary in self.for_range(project_id, first_chapter, last_chapter)
+        }
+        out: list[ChapterSummaryStatus] = []
+        for number in range(first_chapter, last_chapter + 1):
+            summary = summaries.get(number)
+            out.append(
+                ChapterSummaryStatus(
+                    chapter_number=number,
+                    has_text=number in with_text,
+                    summary=None if summary is None else summary.summary,
+                    created_at=None if summary is None else summary.created_at,
+                )
+            )
+        return out
 
 
 def _row_to_summary(row: Any) -> ChapterSummary:
@@ -283,6 +350,7 @@ class RollingSummarizer:
 
 __all__ = [
     "ChapterSummary",
+    "ChapterSummaryStatus",
     "ROLLING_WINDOW",
     "RollingSummarizer",
     "SummaryChapterNotFound",

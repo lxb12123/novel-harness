@@ -47,6 +47,13 @@
   这堵墙就绕过去了。所以 `WRITER_DIRS` / `SCORER_DIRS` **必须跟着 runner 落在哪一起更新**——
   下面 `test_the_scanned_dirs_are_the_ones_that_matter` 会在目录消失时红，但它没法知道
   你又在第三个地方新建了一个 runner。
+
+  **`agent/`（模式二的工具表）2026-08-10 就是那第三个地方**，它也在拼要进 prompt 的东西。
+  它**没有**被折进 `WRITER_DIRS`，而是在 `tests/test_agent_tools.py` 里复用本文件的
+  `banned_symbols` / `props_reads` 单独扫（**不抄第二份扫描器**）。分开的理由是
+  `raw_resolve_calls`：`draft/` 里裸调 `store.resolve(...)` 是绕过闸门，
+  而 `agent/` 合法地要把作者打字说的称呼解析成节点——折进来会假红，
+  而一道会假红的守卫的下场是被人加豁免，然后豁免被拓宽。
 """
 
 from __future__ import annotations

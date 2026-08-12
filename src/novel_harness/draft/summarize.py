@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Final, Literal, TypedDict
 
+from .length import DEFAULT_LENGTH_POLICY, DraftLanguage, LengthSpec
+
 __all__ = [
+    "SUMMARY_LENGTH",
     "SUMMARY_MAX_CHARS",
     "SUMMARY_VERSION",
     "SummaryMessage",
@@ -14,6 +17,19 @@ __all__ = [
 
 SUMMARY_VERSION: Final = "chapter-summary-v1"
 SUMMARY_MAX_CHARS: Final = 120
+
+SUMMARY_LENGTH: Final = DEFAULT_LENGTH_POLICY.validate_spec(
+    LengthSpec(
+        language=DraftLanguage.ZH,
+        min_units=40,
+        target_units=80,
+        max_units=SUMMARY_MAX_CHARS,
+    )
+)
+"""总结调用的长度档。**和 prompt 放在同一个文件里**是因为它们必须一起改：
+上面那句 system prompt 写死了「不超过 {SUMMARY_MAX_CHARS} 个中文字符」，预算档要是
+另在别处写一份，两边就能各自漂。`nh summarize`（CLI）和 `POST /summary`（HTTP）
+读的是这一个常量——两条入口给同一章算出不同的预算，是那种「只在长章上才犯」的 bug。"""
 
 
 _SYSTEM_PROMPT: Final = f"""你是中文长篇小说的后台背景总结器。

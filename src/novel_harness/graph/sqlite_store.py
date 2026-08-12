@@ -63,6 +63,8 @@ from .store import (
     QUERYABLE_SCOPES,
     NodeNotFound,
     QuoteMismatch,
+    SnapshotInUse,
+    SnapshotIsCurrent,
     StoreError,
     SupersedeConflict,
 )
@@ -588,6 +590,34 @@ class SqliteStoryGraph:
 
     def chapter_snapshots(self, project_id: str, number: int) -> list[ChapterSnapshot]:
         return queries.chapter_snapshots(self._conn, project_id, number)
+
+    def delete_chapter_snapshot(self, project_id: str, number: int, snapshot_id: str) -> None:
+        # 查引用和删必须在同一个事务里：中间隔着一次声明的话，检查过的 usage=0 到 DELETE
+        # 那一刻已经不成立，于是外键在最后一步才炸——报出来的是 IntegrityError 不是 SnapshotInUse。
+        with _transaction(self._conn):
+            ctx = queries.snapshot_context(self._conn, snapshot_id)
+            if ctx is None:
+                raise StoreError(f"快照不存在：{snapshot_id}")
+            if ctx.project_id != project_id:
+                # `chapter_snapshot` 表里没有 project_id 列，schema 拦不住跨项目引用
+                # （同 put_evidence），只能在这一层收口。
+                raise StoreError(
+                    f"快照 {snapshot_id} 属于项目 {ctx.project_id}，不是 {project_id}"
+                )
+            if ctx.chapter_number != number:
+                raise StoreError(
+                    f"快照 {snapshot_id} 属于第 {ctx.chapter_number} 章，不是第 {number} 章"
+                )
+            # 「是不是当前那条」问 chapter_snapshots，不在这儿重算一遍 sha 等值：
+            # 那个判据（`s.text_sha256 = c.text_sha256` 精确等值，不是「最新那条」）
+            # 全系统只有它一处定义，抄第二份就迟早和它漂开。
+            snaps = queries.chapter_snapshots(self._conn, project_id, number)
+            if any(s.snapshot_id == snapshot_id and s.is_current for s in snaps):
+                raise SnapshotIsCurrent(f"快照 {snapshot_id} 是第 {number} 章当前正文对应的那条")
+            usage = queries.snapshot_usage(self._conn, snapshot_id)
+            if not usage.is_free():
+                raise SnapshotInUse(usage)
+            queries.delete_snapshot(self._conn, snapshot_id)
 
     def get_evidence(self, project_id: str, evidence_id: str) -> Evidence | None:
         try:

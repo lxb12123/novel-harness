@@ -1,6 +1,6 @@
 import { useCharacterState, useRoster, useScenes } from "../api/hooks";
 import { useCoords } from "../store";
-import type { Edge } from "../api/types";
+import { edgeName, type Edge } from "../api/types";
 
 // 底栏时间线（§2.2）：左半 = 本章场景序（parse_scenes），右半 = 选中节点的边闭开区间。
 // 两半都用现成端点，零新引擎。
@@ -10,15 +10,9 @@ import type { Edge } from "../api/types";
 // 「青云城[88,150) 然后 北荒[150,∞)」那种收口，得有一个「取节点全历史边」的 reader，
 // 那是后续。现在这条时间线回答的是「这些事从第几章起一直成立到现在」。
 
-const TYPE_ZH: Record<string, string> = {
-  KNOWS: "知道",
-  BELIEVES: "以为",
-  LOCATED_AT: "在",
-  HAS_STATE: "状态",
-  MEMBER_OF: "属于",
-  OWNS: "持有",
-  RELATED_TO: "关系",
-};
+// 关系类型 → 中文的那张表**搬去了 `api/types.ts::EDGE_ZH`**（全前端一份，9 类全列）。
+// 这儿原来有一份 7 行的拷贝，兜底写的是 `?? e.type`——`PLANTED_IN` / `RESOLVED_IN`
+// 一旦被写出来，屏幕上就是四个大写字母。
 
 function SceneStrip() {
   const { projectId, chapter, cast, setCast } = useCoords();
@@ -53,7 +47,10 @@ function IntervalBars() {
   const edges = (data?.edges ?? []).filter((e) => e.type !== "RELATED_TO"); // 无向边不画区间
   if (edges.length === 0) return <div className="tl-empty">{data?.node.name ?? ""} 暂无可显示的变化</div>;
 
-  const nameOf = (id: string) => roster.data?.find((n) => n.id === id)?.name ?? id;
+  // 花名册里查不到就说「—」，**绝不 `?? id`**：花名册和这份快照是两条独立缓存，
+  // 后台整理刚建出来的节点会在前者里缺席一拍，而那一拍上作者看到的会是
+  // `location:01J8XK…`。同 `ProposalReviewTab` 上修掉的那条 `id.slice(-6)`。
+  const nameOf = (id: string) => roster.data?.find((n) => n.id === id)?.name ?? "—";
   const minFrom = Math.min(...edges.map((e) => e.valid_from_chapter));
   const span = Math.max(1, chapter - minFrom);
 
@@ -74,7 +71,7 @@ function IntervalBars() {
       {edges.map((e) => (
         <div className="tl-row" key={e.id}>
           <span className="tl-label">
-            {TYPE_ZH[e.type] ?? e.type} {nameOf(e.dst)}
+            {edgeName(e.type)} {nameOf(e.dst)}
           </span>
           <span className="tl-track">
             <span

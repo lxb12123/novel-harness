@@ -8,8 +8,12 @@
 就会在 v2 发布当天流失掉全部早期用户，而这些人恰恰是唯一会写 issue 和 PR 的人。
 
 ── 本模块的 API 面上没有 update / delete，一个都没有 ─────────────────────
-这不是「暂时还没写」。**`append()` 是唯一的写入口**，读只有 `read()`。
+这不是「暂时还没写」。**`append()` 是唯一的写入口**；读有四个（`read` 重放序 /
+`read_page` 日志页序 / `read_one` 取一条 / `tally_by_actor` 计数），**但一个都不改**。
 `tests/test_decisions.py` 有一条测试在扫本模块的公开名字，看到修改类的入口就红。
+
+读入口全在这里也是有意的：`decision_log` 的 SQL 只从本模块出去，别的模块（比如
+`activity.py` 的日志读端）要它就调这几个函数，不自己写第二份 SELECT。
 
 纪律会在某个赶时间的下午被绕过，所以同一条约束在三层上都成立：
   1. 本模块没有那个函数（API 层）
@@ -76,8 +80,26 @@ class DecisionKind(StrEnum):
     LOCATED_DECLARE = "located_declare"
     PROPOSAL_REVIEW = "proposal_review"
 
+    KNOWLEDGE_EDIT = "knowledge_edit"
+    """作者把一条**已经生效**的 KNOWS 改成了 BELIEVES（或反过来）。`corrections.py`。
+
+    和 `KNOWS_DECLARE` 分开是因为重放时它们不是一回事：那边是「新增一条事实」，
+    这边是「把已经写下的那条读错了」——payload 里有 `from` 和 `to` 两侧。
+    """
+
+    EVENT_EDIT = "event_edit"
+    """作者改了一条已生效事件的知情 / 在场名单。`corrections.py`。"""
+
 
 DEFAULT_ACTOR: Final = "author"
+
+SYSTEM_ACTOR: Final = "system"
+"""引擎自己做的改动（没经作者的手）。
+
+2026-08-10 作者推翻「事前逐条确认」之后，抽取的干净结果直接升 CANON，日志里那一行没有
+任何人点过。**它和作者亲手点的必须在日志里长得不一样**——否则「事后可查」查出来的是一份
+分不清谁改的历史，而作者要跳去改的恰恰是系统改错的那几条。
+"""
 
 
 def quote_hash(quote_text: str) -> str:
@@ -203,6 +225,67 @@ def read(
         sql += " LIMIT ?"
         args.append(int(limit))
     return [_row_to_decision(r) for r in conn.execute(sql, args).fetchall()]
+
+
+def read_one(conn: Connection, project_id: str, decision_id: str) -> Decision | None:
+    """按 id 取一条（日志页展开详情用）。不存在或不属于这个项目 → None。
+
+    **`project_id` 是过滤条件不是装饰**：这张表没有任何外键（连 project_id 都没有，
+    见模块 docstring），所以「这条确认是不是这本书的」只有这一个判据。
+    """
+    row = conn.execute(
+        "SELECT * FROM decision_log WHERE project_id = ? AND id = ?",
+        (project_id, decision_id),
+    ).fetchone()
+    return None if row is None else _row_to_decision(row)
+
+
+def read_page(
+    conn: Connection,
+    project_id: str,
+    *,
+    actor: str | None = None,
+    before_ts: str | None = None,
+    before_id: str | None = None,
+    limit: int,
+) -> list[Decision]:
+    """**新的在前**的一页，可按 actor 过滤（日志页用）。
+
+    ── 为什么不给 `read()` 加一个 `newest_first` 开关 ────────────────────
+    `read()` 的 ASC 是**重放序**，顺序错了「先合并别名再声明 KNOWS」会重放成
+    「先声明 KNOWS 再合并别名」——后者指向一个还不存在的节点。一个能被调用方翻转的
+    开关迟早会让某次重放按倒序跑，而那种错**不报错**，只是重建出一张错的图。
+    两个函数、两个方向、各自的 docstring，翻不错。
+
+    `actor` 是等值过滤（那一列是开放字符串，同 `kind`）。`before_ts` / `before_id`
+    是复合游标：ts 只有毫秒精度，同毫秒的两条靠 ULID 的单调前缀断平。
+    """
+    sql = "SELECT * FROM decision_log WHERE project_id = ?"
+    args: list[Any] = [project_id]
+    if actor is not None:
+        sql += " AND actor = ?"
+        args.append(actor)
+    if before_ts is not None and before_id is not None:
+        sql += " AND (ts < ? OR (ts = ? AND id < ?))"
+        args.extend((before_ts, before_ts, before_id))
+    sql += " ORDER BY ts DESC, id DESC LIMIT ?"
+    args.append(int(limit))
+    return [_row_to_decision(r) for r in conn.execute(sql, args).fetchall()]
+
+
+def tally_by_actor(conn: Connection, project_id: str) -> dict[str, int]:
+    """每个 actor 一共留了多少条确认。
+
+    ADR 0020 点名要它：自动升 CANON 开了之后 system 行会长得快得多，作者自己点过的
+    那几十次确认会被淹没——日志页要说得出「被藏起来的有多少」，光有过滤器不够。
+
+    **这个 dict 不出接口**：`activity.py` 把它折进 `ActorTally` 才上 HTTP（铁律 4）。
+    """
+    rows = conn.execute(
+        "SELECT actor, COUNT(*) AS n FROM decision_log WHERE project_id = ? GROUP BY actor",
+        (project_id,),
+    ).fetchall()
+    return {str(row["actor"]): int(row["n"]) for row in rows}
 
 
 def _row_to_decision(row: Any) -> Decision:

@@ -8,11 +8,13 @@ from ..db import Connection
 from ..events.models import (
     CharacterProfilePatch,
     CharacterProfileView,
+    EventCastEdit,
     EventView,
     ProvisionalEventSpec,
     StoryEvent,
 )
 from ..events.store import (
+    EventCastError,
     EventNotFound,
     EventReferenceError,
     EventScopeError,
@@ -256,8 +258,8 @@ class SqliteEventStore:
             )
             self._conn.execute(
                 """
-                INSERT INTO event_participant (event_id, project_id, character_id)
-                SELECT ?, project_id, character_id
+                INSERT INTO event_participant (event_id, project_id, character_id, status)
+                SELECT ?, project_id, character_id, status
                 FROM event_participant WHERE event_id = ?
                 """,
                 (clone_id, event_id),
@@ -294,6 +296,223 @@ class SqliteEventStore:
                     f"新 clone 插入后不可读：project={project_id}, event={clone_id}"
                 )
             return views[0]
+
+    # ── 作者事后改一条已生效事件的名单（EventCastStore）────────────────────────
+
+    def edit_cast(
+        self,
+        project_id: str,
+        event_id: str,
+        *,
+        knower_ids: Sequence[str] | None = None,
+        participant_ids: Sequence[str] | None = None,
+    ) -> EventCastEdit:
+        """把这条 CANON 事件的知情/在场名单改成给定的**绝对集合**。
+
+        ── 两条纪律，都是「别让它变成删除」──────────────────────────────────
+
+        1. **删一个人 = 那一行 status 改成 RETRACTED，行留着。** 两张表的语义在这里是
+           一样的：这条事实（他知道 / 他在场）从未成立过，抽错了。`event_knower` 从 002
+           起就有 status；`event_participant` 的那一列是 005 补的，理由写在那份迁移里。
+        2. **加一个人先看有没有那一行**：改回来（RETRACTED → ACTIVE）而不是插第二行。
+           插第二行在 `event_knower` 上会直接撞主键，在 `event_participant` 上也会——
+           两张表的主键都不含 status。
+
+        **入参里没有章号**（约束 10）。新加的 knower 行的 `valid_from_chapter` 只能是
+        事件自己的章号，而那个数一路回到证据（002 的两个触发器把这条钉死：
+        `event_knower` 的章必须等于它那条证据的章，且不得早于事件本身）。
+        """
+        if knower_ids is None and participant_ids is None:
+            raise ValueError("edit_cast 至少要给 knower_ids / participant_ids 之一")
+        with _transaction(self._conn):
+            view = self.event(project_id, event_id)
+            if view is None:
+                raise EventNotFound(f"event 不存在或跨项目：{event_id}")
+            event = view.event
+            if event.information_scope is not InformationScope.CANON:
+                raise EventScopeError(
+                    f"只能改已生效（CANON）的事件，{event_id} 是 {event.information_scope.value}"
+                    "——PROVISIONAL 的那条走审阅队列的 edit"
+                )
+            if (
+                event.status is not EdgeStatus.ACTIVE
+                or event.evidence_status is not EvidenceStatus.FRESH
+            ):
+                raise EventStoreError(
+                    f"event {event_id} 是 {event.status.value} / {event.evidence_status.value}，"
+                    "不是一条还成立、依据也还在的事实"
+                )
+
+            current_knowers = {ref.id: ref for ref in view.knowers}
+            current_participants = {ref.id: ref for ref in view.participants}
+            want_knowers = (
+                set(current_knowers) if knower_ids is None else set(knower_ids)
+            )
+            want_participants = (
+                set(current_participants) if participant_ids is None else set(participant_ids)
+            )
+            refs = self._character_refs(project_id, want_knowers | want_participants)
+
+            knowers_added = sorted(want_knowers - set(current_knowers))
+            knowers_removed = sorted(set(current_knowers) - want_knowers)
+            participants_added = sorted(want_participants - set(current_participants))
+            participants_removed = sorted(set(current_participants) - want_participants)
+
+            for character_id in knowers_added:
+                self._add_knower(project_id, event, character_id)
+            for character_id in knowers_removed:
+                self._retract_knower(project_id, event_id, character_id)
+            for character_id in participants_added:
+                self._add_participant(project_id, event_id, character_id)
+            for character_id in participants_removed:
+                self._retract_participant(project_id, event_id, character_id)
+
+            after = queries.event_views_at(
+                self._conn,
+                project_id,
+                [event_id],
+                event.chapter_number,
+                InformationScope.CANON,
+            )
+            if not after:
+                raise EventStoreError(f"改完之后事件读不回来：{event_id}")
+            return EventCastEdit(
+                event=after[0],
+                knowers_added=tuple(refs[i] for i in knowers_added),
+                knowers_removed=tuple(current_knowers[i] for i in knowers_removed),
+                participants_added=tuple(refs[i] for i in participants_added),
+                participants_removed=tuple(
+                    current_participants[i] for i in participants_removed
+                ),
+            )
+
+    def _character_refs(
+        self, project_id: str, node_ids: set[str]
+    ) -> dict[str, NodeRef]:
+        """名单里的每一个 id 都必须是本项目的 Character，否则整次编辑判死。
+
+        不猜、不跳过：一个悄悄被忽略的 id 的产物是「作者以为他把某人加进去了」，
+        而认知矩阵上那一格看起来完全正常。
+        """
+        if not node_ids:
+            return {}
+        nodes = queries.fetch_nodes(self._conn, project_id, node_ids)
+        out: dict[str, NodeRef] = {}
+        for node_id in sorted(node_ids):
+            node = nodes.get(node_id)
+            if node is None:
+                raise EventCastError(f"{node_id} 不在项目 {project_id} 里")
+            if node.label is not NodeLabel.CHARACTER:
+                raise EventCastError(
+                    f"名单里只能是 Character，{node_id} 是 {node.label.value}"
+                )
+            out[node_id] = NodeRef.of(node)
+        return out
+
+    def _add_knower(self, project_id: str, event: StoryEvent, character_id: str) -> None:
+        existing = self._conn.execute(
+            """
+            SELECT status FROM event_knower
+            WHERE event_id = ? AND project_id = ? AND character_id = ?
+              AND valid_from_chapter = ? AND information_scope = ?
+            """,
+            (
+                event.id,
+                project_id,
+                character_id,
+                event.chapter_number,
+                InformationScope.CANON.value,
+            ),
+        ).fetchone()
+        if existing is not None:
+            self._conn.execute(
+                """
+                UPDATE event_knower SET status = ?
+                WHERE event_id = ? AND project_id = ? AND character_id = ?
+                  AND valid_from_chapter = ? AND information_scope = ?
+                """,
+                (
+                    EdgeStatus.ACTIVE.value,
+                    event.id,
+                    project_id,
+                    character_id,
+                    event.chapter_number,
+                    InformationScope.CANON.value,
+                ),
+            )
+            return
+        self._conn.execute(
+            """
+            INSERT INTO event_knower (
+                event_id, project_id, character_id, valid_from_chapter,
+                information_scope, status, evidence_id, evidence_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                event.id,
+                project_id,
+                character_id,
+                # ★ 章号只可能是事件自己的章（= 它那条证据的章）。作者的输入到不了这一行。
+                event.chapter_number,
+                InformationScope.CANON.value,
+                EdgeStatus.ACTIVE.value,
+                event.evidence_id,
+                EvidenceStatus.FRESH.value,
+            ),
+        )
+
+    def _retract_knower(self, project_id: str, event_id: str, character_id: str) -> None:
+        # 不带任何区间条件：作者说的是「他根本不知道这件事」，不是「他到第 N 章才不知道」。
+        # 也因此这里没有第二份时态过滤——`TEMPORAL_WHERE` 仍然只有 queries.py 那一份。
+        self._conn.execute(
+            """
+            UPDATE event_knower SET status = ?
+            WHERE event_id = ? AND project_id = ? AND character_id = ?
+              AND information_scope = ? AND status = ?
+            """,
+            (
+                EdgeStatus.RETRACTED.value,
+                event_id,
+                project_id,
+                character_id,
+                InformationScope.CANON.value,
+                EdgeStatus.ACTIVE.value,
+            ),
+        )
+
+    def _add_participant(self, project_id: str, event_id: str, character_id: str) -> None:
+        existing = self._conn.execute(
+            "SELECT status FROM event_participant "
+            "WHERE event_id = ? AND project_id = ? AND character_id = ?",
+            (event_id, project_id, character_id),
+        ).fetchone()
+        if existing is not None:
+            self._conn.execute(
+                "UPDATE event_participant SET status = ? "
+                "WHERE event_id = ? AND project_id = ? AND character_id = ?",
+                (EdgeStatus.ACTIVE.value, event_id, project_id, character_id),
+            )
+            return
+        self._conn.execute(
+            "INSERT INTO event_participant (event_id, project_id, character_id, status) "
+            "VALUES (?, ?, ?, ?)",
+            (event_id, project_id, character_id, EdgeStatus.ACTIVE.value),
+        )
+
+    def _retract_participant(
+        self, project_id: str, event_id: str, character_id: str
+    ) -> None:
+        self._conn.execute(
+            "UPDATE event_participant SET status = ? "
+            "WHERE event_id = ? AND project_id = ? AND character_id = ? AND status = ?",
+            (
+                EdgeStatus.RETRACTED.value,
+                event_id,
+                project_id,
+                character_id,
+                EdgeStatus.ACTIVE.value,
+            ),
+        )
 
     def events_for_characters(
         self,

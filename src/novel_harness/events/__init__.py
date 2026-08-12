@@ -5,6 +5,7 @@ from __future__ import annotations
 from .models import (
     CharacterProfilePatch,
     CharacterProfileView,
+    EventCastEdit,
     EventCharacterRole,
     EventView,
     ProposalAuditSnapshot,
@@ -18,6 +19,8 @@ from .models import (
     StoryEvent,
 )
 from .store import (
+    EventCastError,
+    EventCastStore,
     EventNotFound,
     EventReferenceError,
     EventScopeError,
@@ -33,6 +36,9 @@ from .store import (
 __all__ = [
     "CharacterProfilePatch",
     "CharacterProfileView",
+    "EventCastEdit",
+    "EventCastError",
+    "EventCastStore",
     "EventCharacterRole",
     "EventStore",
     "EventStoreError",

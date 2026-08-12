@@ -63,6 +63,61 @@ def chapter_path(index: int) -> str:
     return f"{CHAPTER_DIR}/{index:04d}.md"
 
 
+class ChapterFile(BaseModel):
+    """磁盘上的一个章节文件。**`chapters/NNNN.md` → (章号, 标题) 的唯一解读处。**
+
+    标题取的是**首个非空行**，不是库里 `chapter.title` 那一列。两者平时同解，不同解的
+    那一刻恰恰是要相信磁盘的那一刻：作者在自己的编辑器里改了标题还没 `sync`，库里那份
+    就是旧的（ADR 0007：正文的真相源在磁盘上，DB 永远不是）。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    number: int = Field(ge=1)
+    title: str = ""
+    path: str
+    """相对 `root` 的 posix 路径，和 `chapter_path(number)` 同形。"""
+
+
+def chapter_files(root: Path) -> list[ChapterFile]:
+    """`{root}/chapters/` 里的章节文件，按章号升序。目录不存在 → `[]`（不是错误）。
+
+    **它是「这本书有哪些章」的唯一读法**，`chapter_path()` 写下去的东西由它读回来。
+    在此之前 `api/app.py` 自己抄了一份文件名正则 + 一份「首个非空行就是标题」，
+    而那份正则必须与 `{index:04d}.md` 保持同解——两份会漂，且漂掉的那天症状是
+    「章列表少了 1000 章之后的那些」，没有任何测试会红。
+
+    只读到首个非空行为止，不整份读进内存：全书 722 章一次列举要开 722 个文件，
+    而调用方（目录、索引）要的只有标题。
+    """
+    directory = root / CHAPTER_DIR
+    if not directory.is_dir():
+        return []
+    out: list[ChapterFile] = []
+    for file in sorted(directory.iterdir()):
+        if not file.is_file():
+            continue
+        matched = _CHAPTER_FILE_RE.match(file.name)
+        if matched is None:
+            # 不匹配的文件是作者的东西，不是错误（同 `SyncReport.ignored_files`）。
+            continue
+        title = ""
+        with file.open(encoding="utf-8-sig") as handle:
+            for line in handle:
+                if line.strip():
+                    title = line.strip()
+                    break
+        out.append(
+            ChapterFile(
+                number=int(matched.group(1)),
+                title=title,
+                path=f"{CHAPTER_DIR}/{file.name}",
+            )
+        )
+    # 按章号排，不按文件名字典序：两者今天同解（补零），1000 章之后不同解（同 `sync`）。
+    return sorted(out, key=lambda entry: entry.number)
+
+
 def chapter_text(heading: str, body: str) -> str:
     """一个章节文件的全部内容。
 

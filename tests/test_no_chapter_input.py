@@ -313,3 +313,89 @@ def test_the_ast_guard_can_see_a_hand_typed_chapter() -> None:
     # docstring 里引着它的地方不是赋值。误报会让人把守卫关掉，而 declare.py 的
     # docstring 到处在讲 valid_from。
     assert valid_from_assignments(DOCSTRING_PROBE) == [(4, "Attribute", "ev.chapter_number")]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 第四道：**改**一条已生效事实的入参里也没有章号
+# ══════════════════════════════════════════════════════════════════════════
+#
+# 前三道盯的是「新增」那条路（`nh declare *` / `declare.py`）。作者推翻「事前逐条确认」
+# 之后多出来一条路：抽取直接生效，作者事后**改**（`corrections.py` + `/canon/…`）。
+# 那条路上「改一条 CANON 事实」离「顺手也让他改一下这条事实从第几章开始成立」只有一个
+# 字段的距离，而那个字段一旦有了，作者填的就是他不记得的那个数（§5.9）。
+#
+# 判据换了（这里没有 typer 命令可扫）：扫 **Pydantic 入参模型的字段名** 和
+# **改正层函数的参数名**。出参不扫——`KnowledgeCorrection.since_chapter` 是一个**产物**，
+# 它必须在（面板要渲染「✓ 知道 (ch88)」），扫它等于要求这个产品别告诉作者章号。
+
+
+def model_chapter_fields(model: Any) -> list[str]:
+    """一个 Pydantic 模型上撞了章号的字段名。"""
+    return [name for name in model.model_fields if BANNED.search(name)]
+
+
+def callable_chapter_params(func: Any) -> list[str]:
+    import inspect
+
+    return [name for name in inspect.signature(func).parameters if BANNED.search(name)]
+
+
+def test_fact_edit_request_schemas_have_no_chapter_field() -> None:
+    """三个改正入参模型（两条 `/canon/…` + 提案 `edit`）里一个章号字段都没有。"""
+    from novel_harness.api.review import (
+        EventCastEditRequest,
+        KnowledgeEditRequest,
+        ProposalEditRequest,
+    )
+    from novel_harness.extract.proposal_models import ProposalReview
+
+    offenders = {
+        model.__name__: model_chapter_fields(model)
+        for model in (
+            KnowledgeEditRequest,
+            EventCastEditRequest,
+            ProposalEditRequest,
+            ProposalReview,
+        )
+        if model_chapter_fields(model)
+    }
+    assert not offenders, (
+        f"改正入参里出现了章号字段：{offenders}。\n"
+        "改一条事实**说错了**和改它**从第几章开始成立**是两件事：后者只由证据决定，\n"
+        "新事实的 valid_from 只能从被改的那条上继承（约束 10 / ADR 0006）。"
+    )
+
+
+def test_the_correction_layer_takes_no_chapter_argument() -> None:
+    from novel_harness.corrections import correct_event_cast, correct_knowledge
+    from novel_harness.graph.sqlite_events import SqliteEventStore
+
+    offenders = {
+        func.__qualname__: callable_chapter_params(func)
+        for func in (correct_knowledge, correct_event_cast, SqliteEventStore.edit_cast)
+        if callable_chapter_params(func)
+    }
+    assert not offenders, f"改正层长出了章号参数：{offenders}"
+
+
+def test_the_schema_guard_can_see_a_chapter_field() -> None:
+    """**守卫的自守卫**：喂一个真带章号的模型/函数进去，它必须红。
+
+    没有这一条，上面两条在 `model_fields` 换形状（pydantic 升级）的那天会安静地全绿。
+    """
+    from pydantic import BaseModel
+
+    class _Probe(BaseModel):
+        character_id: str
+        since_chapter: int
+
+    def _probe(who: str, valid_from: int) -> None: ...
+
+    assert model_chapter_fields(_Probe) == ["since_chapter"]
+    assert callable_chapter_params(_probe) == ["valid_from"]
+
+    class _Clean(BaseModel):
+        character_id: str
+        believed_value: str
+
+    assert model_chapter_fields(_Clean) == [], "干净的模型不许被咬——假红会让人关掉守卫"

@@ -1,35 +1,15 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { DraftLengthControls } from "./DraftLengthControls";
 
 const minimum = () => screen.getByRole("spinbutton", { name: "最少" });
 const target = () => screen.getByRole("spinbutton", { name: "目标" });
 const maximum = () => screen.getByRole("spinbutton", { name: "最多" });
 
-function memoryStorage(): Storage {
-  const values = new Map<string, string>();
-  return {
-    get length() {
-      return values.size;
-    },
-    clear: () => values.clear(),
-    getItem: (key) => values.get(key) ?? null,
-    key: (index) => [...values.keys()][index] ?? null,
-    removeItem: (key) => values.delete(key),
-    setItem: (key, value) => values.set(key, value),
-  };
-}
+// 可用的 localStorage（Node 那个空壳的替身）和每个 test 前的清空都在 src/test/setup.ts。
 
 describe("双语起草长度控件", () => {
-  beforeEach(() => {
-    // The desktop test host exposes an incomplete Node localStorage; install the browser contract.
-    Object.defineProperty(window, "localStorage", {
-      configurable: true,
-      value: memoryStorage(),
-    });
-  });
-
   it("默认给中文 2000/2500/3000 字，只展示长度设置", () => {
     render(<DraftLengthControls />);
 

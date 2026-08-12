@@ -1,0 +1,879 @@
+"""agent loop：**循环归模型，停止条件归代码**（ADR 0019）。
+
+这份文件量三件事，一件比一件贵：
+
+1. **九种停法都停得下来，而且每一种都说得出自己为什么停** —— 且那句话是说给
+   小说作者听的，不是说给维护者听的（判据借 `tests/test_wording_guard.py` 的形状网，
+   全仓只有那一份）。
+2. **每一次模型调用都记一笔账** —— 板子上已经记着一个同样的洞（`/draft` 一行
+   `model_call` 都不写，于是日志页显示的是真实花销的一小部分，看起来却像全部）。
+   agent loop 是第二个会大量花钱的地方，所以这里有一条断言：**能不记账的路径一条都没有**。
+3. **投影按章号参数化**（边界五）—— ADR 自己点名要的那个场景：
+   「先聊第 90 章再回头写第 40 章，断言第 40 章的投影里不含第 90 章的禁说清单」。
+   这一条**错的时候不会报错**（产出的是一段读起来完全正常、只是说破了不该说破的正文），
+   所以它必须有测试。
+
+── 这里为什么不接真库、真模型 ────────────────────────────────────────────
+
+边界一那张网在 `tests/test_agent_tools.py`（真库、真秘密、四个面），这儿不重复它。
+本文件的被测对象是**停与不停、记账与不记账、投影取什么**，它们都不需要真数据——
+需要的是一个能按剧本回答的模型和一个会数数的账本。
+"""
+
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass, field
+from typing import Any
+
+import pytest
+
+from test_wording_guard import dev_shapes
+
+from novel_harness.agent.loop import (
+    AGENT_CAPABILITY,
+    AGENT_SYSTEM_PROMPT,
+    AgentMessage,
+    Cancellation,
+    Conversation,
+    ModelCallReceipt,
+    Projection,
+    Role,
+    StopReason,
+    TurnLimits,
+    project,
+    run_turn,
+    start_conversation,
+    stop_wording,
+)
+from novel_harness.agent.ports import ToolContext, ToolRefused
+from novel_harness.agent.tools import ToolSpec, dispatch
+from novel_harness.draft.provider import CompletionResult, ProviderError, ToolCall
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 剧本模型 + 会数数的账本
+# ══════════════════════════════════════════════════════════════════════════
+
+
+@dataclass
+class ScriptedModel:
+    """按剧本一句一句回答。**剧本用完就一直重复最后一条**——那正是「模型不肯收手」。"""
+
+    script: list[CompletionResult]
+    calls: list[list[dict[str, Any]]] = field(default_factory=list)
+    tool_names: list[str] = field(default_factory=list)
+    on_call: Any = None
+
+    def __call__(
+        self,
+        messages: Any,
+        *,
+        tools: Any,
+        cancel: Cancellation,
+    ) -> CompletionResult:
+        self.calls.append(list(messages))
+        self.tool_names = [t["function"]["name"] for t in tools]
+        if self.on_call is not None:
+            self.on_call(cancel)
+        index = min(len(self.calls) - 1, len(self.script) - 1)
+        return self.script[index]
+
+
+@dataclass
+class Ledger:
+    """账本：`record_call()` 那一层的替身。**只数数，不落库**（这一层没有 conn）。"""
+
+    receipts: list[ModelCallReceipt] = field(default_factory=list)
+    explode: bool = False
+
+    def __call__(self, receipt: ModelCallReceipt) -> None:
+        if self.explode:
+            raise RuntimeError("账本坏了")
+        self.receipts.append(receipt)
+
+
+def say(text: str = "写完了。", **kwargs: Any) -> CompletionResult:
+    return CompletionResult(text=text, model="deepseek-v4", finish_reason="stop", **kwargs)
+
+
+def wants(*calls: tuple[str, str], text: str = "") -> CompletionResult:
+    return CompletionResult(
+        text=text,
+        model="deepseek-v4",
+        finish_reason="tool_calls",
+        tool_calls=tuple(
+            ToolCall(id=f"call-{i}", name=name, arguments=args)
+            for i, (name, args) in enumerate(calls)
+        ),
+    )
+
+
+class FakeStore:
+    """`StoryGraph` 的最小替身：这份文件里没有一个断言碰得到图。"""
+
+    def resolve(self, *args: Any, **kwargs: Any) -> list[Any]:
+        return []
+
+
+def a_context(**overrides: Any) -> ToolContext:
+    base: dict[str, Any] = {"store": FakeStore(), "project_id": "project:loop"}
+    base.update(overrides)
+    return ToolContext(**base)  # type: ignore[arg-type]
+
+
+def a_turn(*script: CompletionResult, **kwargs: Any):
+    """跑一轮，返回 `(结果, 模型, 账本)`。"""
+    model = ScriptedModel(script=list(script))
+    ledger = Ledger()
+    conversation = kwargs.pop("conversation", None) or start_conversation().with_author("写第 7 章")
+    context = kwargs.pop("context", None) or a_context()
+    result = run_turn(
+        conversation,
+        context=context,
+        model=model,
+        ledger=ledger,
+        **kwargs,
+    )
+    return result, model, ledger
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 一、九种停法
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_the_model_decides_when_to_stop_talking() -> None:
+    """正常出口：模型不再叫工具就是它说完了。**这一条是「循环归模型」的全部内容。**"""
+    result, model, _ = a_turn(say("这一场我这样写：……"))
+    assert result.reason is StopReason.DONE
+    assert result.reply == "这一场我这样写：……"
+    assert result.steps == 1
+    assert len(model.calls) == 1
+
+
+def test_a_model_that_never_finishes_hits_the_step_ceiling() -> None:
+    """剧本只有一条「再查一次」，模型永远不收手 —— 代码要接得住。"""
+    result, model, ledger = a_turn(
+        wants(("book_index", "{}")),
+        limits=TurnLimits(max_steps=3),
+    )
+    assert result.reason is StopReason.STEP_LIMIT
+    assert result.steps == 3
+    assert len(model.calls) == 3
+    # **步数上限不是「少记几笔账」的借口**：三次调用三笔。
+    assert len(ledger.receipts) == 3
+
+
+def test_the_cost_gate_counts_tokens_because_nobody_knows_the_price() -> None:
+    """花费上限只能按 token —— `model_call.cost` 那一列至今没有写入方（BYOK）。"""
+    result, _, ledger = a_turn(
+        wants(("book_index", "{}"), text="再查一次"),
+        limits=TurnLimits(max_steps=10, max_tokens=100),
+    )
+    assert result.reason is StopReason.COST_LIMIT
+    assert result.tokens_reported == 0 and result.calls_without_usage == 1
+    assert result.tokens_charged >= 100, "供应商不报 usage 时闸门不许失效"
+    assert len(ledger.receipts) == 1
+    # 没报的那次**账上仍然是 None**：闸门用估算，账本不许编数。
+    assert ledger.receipts[0].prompt_tokens is None
+
+
+def test_reported_usage_goes_on_the_bill_and_into_the_gate() -> None:
+    result, _, ledger = a_turn(
+        wants(("book_index", "{}"), text="查"),
+        say("好了"),
+        limits=TurnLimits(max_steps=4, max_tokens=10_000),
+    )
+    assert result.reason is StopReason.DONE
+    assert result.calls_without_usage == 2
+
+    result, _, ledger = a_turn(
+        say("好了", prompt_tokens=1200, completion_tokens=300),
+    )
+    assert result.tokens_reported == 1500
+    assert result.tokens_charged == 1500
+    assert result.calls_without_usage == 0
+    assert ledger.receipts[0].prompt_tokens == 1200
+
+
+def test_the_author_can_stop_it_in_the_middle_of_a_model_call() -> None:
+    """**不是「等这一轮跑完才发现该停了」。**
+
+    真实形态：作者在浏览器上点「停」，那是另一条线；信号一亮，适配器让流式迭代器抛出去，
+    `provider.complete()` 把它收敛成 `ProviderError`——loop 看见信号就知道那不是故障。
+    """
+    cancel = Cancellation()
+
+    def press_stop_mid_call(signal: Cancellation) -> None:
+        signal.stop()
+        raise ProviderError("stream aborted by caller")
+
+    model = ScriptedModel(script=[say("永远到不了这儿")], on_call=press_stop_mid_call)
+    result = run_turn(
+        start_conversation().with_author("写第 7 章"),
+        context=a_context(),
+        model=model,
+        ledger=Ledger(),
+        cancel=cancel,
+    )
+    assert result.reason is StopReason.AUTHOR_STOPPED
+    assert result.maintainer_note == "", "作者停的不是故障，别把它记成一次报错"
+
+
+def test_a_provider_failure_is_not_the_same_as_the_author_stopping() -> None:
+    """同一个异常类型，两种含义。**判据是信号亮没亮，不是异常长什么样。**"""
+
+    def blow_up(signal: Cancellation) -> None:
+        raise ProviderError("模型调用失败(model=deepseek-v4, base_url=https://api.deepseek.com)")
+
+    model = ScriptedModel(script=[say()], on_call=blow_up)
+    result = run_turn(
+        start_conversation().with_author("写第 7 章"),
+        context=a_context(),
+        model=model,
+        ledger=Ledger(),
+    )
+    assert result.reason is StopReason.MODEL_UNREACHABLE
+    assert "base_url" in result.maintainer_note, "维护者那份诊断要留着"
+
+
+def test_the_stop_signal_is_seen_between_tool_calls_too() -> None:
+    """适配器不理取消信号时的退化：**这一次调用跑完就停**，而不是不停。"""
+    cancel = Cancellation()
+    model = ScriptedModel(
+        script=[wants(("book_index", "{}"), ("book_index", '{"from_chapter": 2}'))],
+        on_call=lambda signal: signal.stop(),
+    )
+    result = run_turn(
+        start_conversation().with_author("写第 7 章"),
+        context=a_context(),
+        model=model,
+        ledger=Ledger(),
+        cancel=cancel,
+    )
+    assert result.reason is StopReason.AUTHOR_STOPPED
+    assert result.tool_calls == 0, "停下来之后不许再花时间去跑工具"
+    assert result.conversation.pending_calls == (), (
+        "停在一批工具中间时每个没跑的调用都要配一个壳 —— "
+        "wire 上一条带 tool_calls 的 assistant 消息必须被同样多条 tool 消息接住"
+    )
+
+
+def test_going_round_in_circles_is_a_stop_not_a_feature() -> None:
+    """无进展之一：同一个工具、**同样的参数**。判据是字节相同，一个语义判断都没有。"""
+    result, _, _ = a_turn(
+        wants(("book_index", "{}"), text="再看一眼"),
+        limits=TurnLimits(max_steps=10, repeat_limit=2),
+    )
+    assert result.reason is StopReason.REPEATED_CALL
+
+
+def test_the_same_tool_with_different_arguments_is_progress() -> None:
+    """**反向断言**：换了参数就不是打转，不许误判（误判会让这个闸被关掉）。"""
+    result, _, _ = a_turn(
+        wants(("book_index", "{}")),
+        wants(("book_index", '{"from_chapter": 5}')),
+        wants(("book_index", '{"from_chapter": 9}')),
+        say("找到了"),
+        limits=TurnLimits(max_steps=6, repeat_limit=2),
+    )
+    assert result.reason is StopReason.DONE
+
+
+def test_saying_nothing_and_doing_nothing_is_a_stop() -> None:
+    """无进展之二：既不叫工具也不出正文。**再来一次是拿作者的钱赌**，所以停。"""
+    result, model, ledger = a_turn(say(""))
+    assert result.reason is StopReason.NO_OUTPUT
+    assert len(model.calls) == 1, "什么都没说的一次不许自动重试"
+    assert len(ledger.receipts) == 1, "它照样花了钱，照样要记账"
+
+
+def test_one_tool_failure_goes_back_to_the_model_but_three_stop_the_turn() -> None:
+    """**一次失败必须贴回去**——那正是 `dispatch` 把四种失败做成正常返回的理由。"""
+    one_bad_then_fine = ScriptedModel(
+        script=[
+            wants(("没有这个工具", "{}")),
+            say("好，那我换个说法"),
+        ]
+    )
+    result = run_turn(
+        start_conversation().with_author("写第 7 章"),
+        context=a_context(),
+        model=one_bad_then_fine,
+        ledger=Ledger(),
+    )
+    assert result.reason is StopReason.DONE
+    assert len(one_bad_then_fine.calls) == 2
+    fed_back = one_bad_then_fine.calls[-1][-1]
+    assert fed_back["role"] == "tool" and "没有名为" in fed_back["content"]
+
+    stuck, _, _ = a_turn(
+        wants(("没有这个工具", "{}")),
+        limits=TurnLimits(max_steps=10, tool_failure_limit=3),
+    )
+    assert stuck.reason is StopReason.TOOL_STUCK
+
+
+def test_a_success_in_between_clears_the_failure_streak() -> None:
+    """**连续**才算卡住：同一个工具中间成功过一次，计数归零。"""
+    bad = '{"labels": ["根本不是一类东西"]}'
+    result, _, _ = a_turn(
+        wants(("book_index", bad), ("book_index", "{}"), ("book_index", bad)),
+        say("行了"),
+        limits=TurnLimits(max_steps=4, tool_failure_limit=2),
+    )
+    assert result.reason is StopReason.DONE
+
+
+def test_three_different_hallucinated_tool_names_are_also_stuck() -> None:
+    """**只按工具名数会漏掉这一种，而它是最典型的翻车方式。**
+
+    每个瞎编的名字都是一个新的 key，只按名字数的话「三个不同的错名字」永远是三条
+    1 次的记录——闸门一次都不响，作者眼看着它一步一步烧到步数上限。
+    """
+    result, _, _ = a_turn(
+        wants(("查一下人物", "{}"), ("读正文", "{}"), ("看看设定", "{}")),
+        limits=TurnLimits(max_steps=5, tool_failure_limit=3),
+    )
+    assert result.reason is StopReason.TOOL_STUCK
+
+
+def test_a_conversation_that_cannot_be_pruned_any_further_stops_instead_of_eating_the_author(
+) -> None:
+    """剪枝顺序的最后一档是**不碰**：作者说过的话一句都不删，停下来说人话。"""
+    conversation = start_conversation().with_author("写第 7 章，" + "把这一段改得再冷一点，" * 200)
+    result, model, _ = a_turn(say("好"), conversation=conversation, budget_units=50)
+    assert result.reason is StopReason.CONTEXT_FULL
+    assert model.calls == [], "装不下就不该把它发出去"
+    assert result.conversation.messages[-1].role is Role.USER
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 二、措辞：说给作者的那句话
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_every_stop_reason_can_say_why_it_stopped_in_the_authors_language() -> None:
+    """**判据借 `tests/test_wording_guard.py` 的形状网**（全仓只有那一份，别在这儿抄第二份）。
+
+    这一层的读者是「用 WPS 不想碰命令行」的小说作者。`step_limit` 摆到他脸上和
+    `provider_failure：chapter analysis provider failed` 是同一种错。
+    """
+    offenders: dict[str, list[str]] = {}
+    for reason in StopReason:
+        text = stop_wording(reason)
+        assert text and re.search(r"[一-鿿]", text), f"{reason} 没有一句中文的说法"
+        if found := dev_shapes(text):
+            offenders[str(reason)] = found
+    assert not offenders, f"停下来那句话里有研发术语：{offenders}"
+
+    # 封闭枚举认不出只可能是表漏了行，而漏掉的那一行不该由作者来读。
+    assert not dev_shapes(stop_wording("some_brand_new_reason"))  # type: ignore[arg-type]
+
+
+def test_the_reason_code_itself_would_be_caught_if_it_ever_reached_the_screen() -> None:
+    """**守卫的自守卫**：措辞表干净不代表码不会漏上屏，所以码本身要长成会被咬住的形状。"""
+    escaped = [str(r.value) for r in StopReason if r is not StopReason.DONE and not dev_shapes(r)]
+    assert not escaped, (
+        f"这些停止码一旦被原样摆上屏，形状守卫看不见：{escaped}\n"
+        "取值要保持 snake_case —— 那正是 `screenGuard.ts` 第一张网认的形状。"
+    )
+
+
+def test_the_maintainers_diagnosis_never_rides_along_with_the_authors_sentence() -> None:
+    """`maintainer_note` 里有端点地址和模型名。**它和给作者的那句话是两个字段。**
+
+    同 `ExtractionRunError.message`（`test_wording_guard.py` 那条钉着它不上屏）。
+    """
+    model = ScriptedModel(
+        script=[say()],
+        on_call=lambda _s: (_ for _ in ()).throw(
+            ProviderError("failed to connect to https://api.deepseek.com/v1 for deepseek-v4")
+        ),
+    )
+    result = run_turn(
+        start_conversation().with_author("写第 7 章"),
+        context=a_context(),
+        model=model,
+        ledger=Ledger(),
+    )
+    assert dev_shapes(result.maintainer_note), "样本不带研发术语的话下面那条是空转的"
+    assert not dev_shapes(result.said_to_author)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 三、记账
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_there_is_no_path_that_calls_the_model_without_writing_a_receipt() -> None:
+    """**这一条是这份文件最硬的一条。**
+
+    板子上记着：`/draft` 一行 `model_call` 都不写，于是日志页显示的是真实花销的一小部分，
+    看起来却像全部。agent loop 是第二个会大量花钱的地方——每一种停法都要验一遍
+    「模型调了几次，账上就有几笔」。
+    """
+    cases: dict[str, tuple[tuple[CompletionResult, ...], dict[str, Any]]] = {
+        "done": ((say("好"),), {}),
+        "step_limit": ((wants(("book_index", "{}")),), {"limits": TurnLimits(max_steps=2)}),
+        "no_output": ((say(""),), {}),
+        "cost_limit": (
+            (wants(("book_index", "{}")),),
+            {"limits": TurnLimits(max_steps=5, max_tokens=1)},
+        ),
+        "tool_stuck": (
+            (wants(("没有这个工具", "{}")),),
+            {"limits": TurnLimits(max_steps=5, tool_failure_limit=1)},
+        ),
+        "repeated_call": (
+            (wants(("book_index", "{}")),),
+            {"limits": TurnLimits(max_steps=5, repeat_limit=1)},
+        ),
+    }
+    for name, (script, kwargs) in cases.items():
+        result, model, ledger = a_turn(*script, **kwargs)
+        assert len(ledger.receipts) == len(model.calls) > 0, f"{name} 这条路径漏账了"
+        assert result.steps == len(ledger.receipts)
+        assert all(r.capability == AGENT_CAPABILITY for r in ledger.receipts)
+        assert all(r.prompt_hash and r.prompt_bytes for r in ledger.receipts)
+
+
+def test_the_capability_has_a_chinese_name_on_the_log_page() -> None:
+    """`model_call.capability` 认不出的是**原样回吐**的 —— 新长出一种花钱的动作就要补一行。"""
+    from novel_harness import activity
+
+    assert AGENT_CAPABILITY in activity._CAPABILITY_LABEL
+    label = activity._capability_label(AGENT_CAPABILITY)
+    assert re.search(r"[一-鿿]", label) and not dev_shapes(label)
+
+
+def test_a_broken_ledger_is_loud() -> None:
+    """账记不上不许吞：那一次调用**已经花过钱了**，静默吞掉正是 `/draft` 那个洞的形状。"""
+    with pytest.raises(RuntimeError):
+        run_turn(
+            start_conversation().with_author("写第 7 章"),
+            context=a_context(),
+            model=ScriptedModel(script=[say()]),
+            ledger=Ledger(explode=True),
+        )
+
+
+def test_the_receipt_carries_the_tool_table_into_the_hash() -> None:
+    """同一段对话配不同的工具表是两次不同的调用 —— 事后能回答这个的只有那个哈希。"""
+    _, _, ledger = a_turn(say("好"))
+    receipt = ledger.receipts[0]
+    assert b"scene_constraints" in receipt.prompt_bytes
+    assert len(receipt.prompt_hash) == 64
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 四、投影按章号（边界五）—— ADR 自己点名要的那个测试
+# ══════════════════════════════════════════════════════════════════════════
+
+CH90_LIST = '{"chapter": 90, "must_not_reveal": ["血脉秘密"]}'
+CH40_LIST = '{"chapter": 40, "must_not_reveal": ["血脉秘密", "玄铁令下落", "换子"]}'
+
+
+def a_session_that_wandered() -> Conversation:
+    """先聊第 90 章，再回头写第 40 章。**ADR 0019「若此决策错误」那一节点名的场景。**"""
+    return start_conversation().model_copy(
+        update={
+            "messages": (
+                AgentMessage(role=Role.USER, content="第 90 章这里怎么收？"),
+                AgentMessage(
+                    role=Role.ASSISTANT,
+                    content="我查一下这一章不能说破什么。",
+                    tool_calls=(ToolCall(id="c90", name="scene_constraints", arguments="{}"),),
+                ),
+                AgentMessage(role=Role.TOOL, content=CH90_LIST, tool_call_id="c90", chapter=90),
+                AgentMessage(role=Role.USER, content="先回去改第 40 章"),
+                AgentMessage(
+                    role=Role.ASSISTANT,
+                    content="好，我重新查第 40 章。",
+                    tool_calls=(ToolCall(id="c40", name="scene_constraints", arguments="{}"),),
+                ),
+                AgentMessage(role=Role.TOOL, content=CH40_LIST, tool_call_id="c40", chapter=40),
+            )
+        }
+    )
+
+
+def test_chapter_forty_never_sees_chapter_ninetys_shorter_forbidden_list() -> None:
+    """**边界五的那条断言。**
+
+    `ch40 的 must_not_reveal ⊇ ch90 的`——到第 90 章更多人已经知道了，清单更短。
+    那份更短的清单留在 context 里，模型就会以为「只有这两条不能说」，
+    而这个方向是 fail-open 的最坏那侧。
+    """
+    projected = project(a_session_that_wandered(), 40, budget_units=100_000)
+    blob = str(projected.messages)
+    assert CH40_LIST in blob
+    assert CH90_LIST not in blob
+    assert projected.off_chapter == 1
+
+    # **反过来不成立，这个泄漏是有方向的。** 回到第 90 章时第 40 章那份**留着**：
+    # 它是超集（`ch40 ⊇ ch90`），留着最多让模型多禁一条，作者看得见；丢掉它才是
+    # fail-open。这条判据从 `!=` 收成 `>` 的完整论证 + 那个曾经的红
+    # 在 `tests/test_agent_loop_projection.py` 的第二节。
+    back = project(a_session_that_wandered(), 90, budget_units=100_000)
+    assert CH90_LIST in str(back.messages) and CH40_LIST in str(back.messages)
+    assert back.off_chapter == 0
+
+
+def test_dropping_a_tool_result_drops_its_call_so_the_wire_stays_valid() -> None:
+    """**一条带 `tool_calls` 的 assistant 消息必须被同样多条 `tool` 消息接住**，
+    少一条就是 400。所以按章号丢返回时，那个 `tool_call` 得跟着走。"""
+    projected = project(a_session_that_wandered(), 40, budget_units=100_000)
+    asked = {
+        call["id"]
+        for message in projected.messages
+        for call in message.get("tool_calls", ())
+    }
+    answered = {
+        message["tool_call_id"] for message in projected.messages if message["role"] == "tool"
+    }
+    assert asked == answered
+    assert "c90" not in asked
+
+
+def test_the_authors_words_survive_the_chapter_filter() -> None:
+    """作者说的话和 agent 的推理**不因为章号被丢掉**：它们是意图，不是绑章号的事实。
+
+    ADR 0019 边界二把「模型的推理被陈旧认知污染」列成**接受**的残余代价——
+    保的是起草 prompt（按章号参数化的投影），不是聊天。这条断言在描述那个裁定，
+    不是在放松它。
+    """
+    projected = project(a_session_that_wandered(), 40, budget_units=100_000)
+    blob = str(projected.messages)
+    assert "第 90 章这里怎么收？" in blob
+    assert "我查一下这一章不能说破什么。" in blob
+
+
+def test_a_chapter_free_projection_filters_nothing_and_that_is_the_unwired_default() -> None:
+    """`working_chapter` 没接上时按任何一章去筛都是替作者猜 —— 所以不筛，**并且说得出来**。"""
+    projected = project(a_session_that_wandered(), None, budget_units=100_000)
+    assert projected.off_chapter == 0
+    assert CH90_LIST in str(projected.messages) and CH40_LIST in str(projected.messages)
+
+
+def test_the_working_chapter_is_where_the_projection_coordinate_comes_from() -> None:
+    """**`working_chapter` 的第一个持有者就是 loop**（3.2 留的接线口，那时哪儿都不来）。"""
+    model = ScriptedModel(script=[say("好")])
+    run_turn(
+        a_session_that_wandered(),
+        context=a_context(working_chapter=40),
+        model=model,
+        ledger=Ledger(),
+    )
+    sent = str(model.calls[0])
+    assert CH40_LIST in sent and CH90_LIST not in sent
+
+
+def test_the_working_chapter_cannot_change_inside_one_turn() -> None:
+    """一轮之内不变**是类型不是纪律**：`ToolContext` 是 frozen dataclass。
+
+    中途变的话，同一轮里前后半截的工具返回绑的是两个章号，而投影按章号筛——
+    筛出来的东西就没有一个自洽的读法了。跨轮要换章：造一个新的 `ToolContext` 再跑一轮。
+    """
+    import dataclasses
+
+    context = a_context(working_chapter=40)
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        context.working_chapter = 90  # type: ignore[misc]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 五、剪枝顺序写死（边界五后半）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def a_long_session() -> Conversation:
+    return start_conversation().model_copy(
+        update={
+            "messages": (
+                AgentMessage(role=Role.USER, content="写第 7 章"),
+                AgentMessage(
+                    role=Role.ASSISTANT,
+                    content="我先看看目录。",
+                    tool_calls=(ToolCall(id="a", name="book_index", arguments="{}"),),
+                ),
+                AgentMessage(role=Role.TOOL, content="目" * 400, tool_call_id="a"),
+                AgentMessage(role=Role.ASSISTANT, content="想" * 200),
+                AgentMessage(role=Role.USER, content="接着写"),
+            )
+        }
+    )
+
+
+def _roles(projection: Projection) -> list[str]:
+    return [message["role"] for message in projection.messages]
+
+
+def test_the_prune_order_is_frozen_tool_results_first() -> None:
+    """老 `tool_result` → 老 `tool_call` → agent 中间推理 → **最后才碰作者说的话**。
+
+    第一档在这个项目里零损失且更优：**丢掉的工具返回重查一次就有，
+    而且查回来的是当前的。**
+    """
+    whole = project(a_long_session(), None, budget_units=100_000)
+    assert (whole.stubbed_results, whole.dropped_calls, whole.dropped_reasoning) == (0, 0, 0)
+
+    tight = project(a_long_session(), None, budget_units=900)
+    assert tight.stubbed_results == 1 and tight.dropped_calls == 0
+    assert "重新查一次" in str(tight.messages)
+    assert tight.dropped_reasoning == 0
+    assert "tool" in _roles(tight), "第一档删的是内容、留的是壳（wire 上它必须接住那个调用）"
+
+    tighter = project(a_long_session(), None, budget_units=700)
+    assert tighter.dropped_calls == 1
+    assert "tool" not in _roles(tighter), "壳和它的调用是成对拿掉的"
+    assert "想" * 200 in str(tighter.messages), "推理排在第三档，不许被前两档顺手带走"
+
+    tightest = project(a_long_session(), None, budget_units=400)
+    # 两条：agent 的那段推理，加上第二档剪完剩下的那句「我先看看目录。」——
+    # 调用被拿掉之后它就是一条纯粹的中间推理，排在同一档。
+    assert tightest.dropped_reasoning == 2
+    assert _roles(tightest) == ["system", "user", "user"]
+    assert not tightest.over_budget
+
+
+def test_the_stable_prefix_is_never_pruned_and_never_carries_a_chapter() -> None:
+    """稳定前缀（边界六）在这一层是**构造不出反例**，不是一句自觉。"""
+    assert _roles(project(a_long_session(), None, budget_units=1))[0] == "system"
+
+    with pytest.raises(ValueError):
+        Conversation(prefix=(AgentMessage(role=Role.SYSTEM, content="x", chapter=40),))
+    with pytest.raises(ValueError):
+        Conversation(prefix=(AgentMessage(role=Role.USER, content="x"),))
+
+
+def test_the_stable_prefix_holds_no_forbidden_list() -> None:
+    """一份被缓存住的禁说清单 = 一条被钉死在 context 里的过期约束（边界六）。"""
+    prefix = "\n".join(m.content for m in start_conversation("我的文风").prefix)
+    assert "我的文风" in prefix and AGENT_SYSTEM_PROMPT in prefix
+    for word in ("must_not_reveal", "不得说破", "禁说", "第 40 章", "血脉秘密"):
+        assert word not in prefix
+
+
+def loop_code() -> str:
+    """`loop.py` 里**真的会执行的那些字**：注释和 docstring 全部剥掉。
+
+    **必须剥**（同 `test_wording_guard._without_comments` 的理由）：下面两条守卫扫的是
+    「代码里写了什么」，而解释这两条守卫的 docstring 本身就带着它们要拦的那些词
+    （「`book_index` 也不该把它的账清零」）——不剥，一句解释就能让守卫红，
+    而假红的下场是被人把守卫删掉。
+    """
+    import ast
+    from pathlib import Path
+
+    import novel_harness.agent.loop as loop_module
+
+    tree = ast.parse(Path(loop_module.__file__).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        body = getattr(node, "body", None)
+        if not isinstance(body, list) or not body:
+            continue
+        first = body[0]
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+            if isinstance(first.value.value, str):
+                body.pop(0)
+        # 属性上的「裸字符串文档」（`x: int = 1` 后面那种）在 AST 里是独立的 Expr，
+        # 一并剥掉——否则模块层那些字段说明会漏进来。
+        node.body = [  # type: ignore[attr-defined]
+            stmt
+            for stmt in body
+            if not (
+                isinstance(stmt, ast.Expr)
+                and isinstance(stmt.value, ast.Constant)
+                and isinstance(stmt.value.value, str)
+            )
+        ]
+    return ast.unparse(tree)
+
+
+def test_the_code_scanner_really_strips_the_prose() -> None:
+    """**守卫的自守卫**：剥错了的话下面两条要么永远绿、要么永远红。"""
+    code = loop_code()
+    assert "def run_turn" in code and "StopReason.DONE" in code
+    # 这两句只在 docstring 里出现过。**别拿「ADR 0019」当探针**：它同时躺在一条真的
+    # `raise ValueError(...)` 里，而报错的正文是代码不是文档——那样的探针在描述一个假故障。
+    assert "循环归模型" not in code, "docstring 没剥干净 —— 下面两条会对着文档开火"
+    assert "空转" not in code
+
+
+def test_nothing_in_this_layer_summarises_anything() -> None:
+    """**「正文永不压缩」在这一层是白拿的**：只剪不压，一个字都不摘要。
+
+    摘要是 3.4 的事，而边界四管着它（总结不许含图谱事实）。这条断言在这儿是为了
+    那一天有人往这个文件里加压缩时，先被问一次「边界四怎么办」。
+    """
+    code = loop_code()
+    for banned in ("summarize", "summarise", "SummaryIndex", "build_summary_messages"):
+        assert banned not in code, f"loop 里长出了压缩：{banned} —— 先回答 ADR 0019 边界四"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 六、resume：执行态就是「一串 message + 哪几个 tool_call 还缺 tool_result」
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_resume_is_look_at_the_tail_and_rerun_what_is_missing() -> None:
+    """LangGraph 的 Checkpoint 贵在图有东西要快照。**线性 loop 没有这些。**
+
+    T1–T5 只读或纯函数，重放免费——所以补跑缺的那几个就是 resume 的全部。
+    """
+    crashed = start_conversation().model_copy(
+        update={
+            "messages": (
+                AgentMessage(role=Role.USER, content="写第 7 章"),
+                AgentMessage(
+                    role=Role.ASSISTANT,
+                    content="",
+                    tool_calls=(ToolCall(id="orphan", name="book_index", arguments="{}"),),
+                ),
+            )
+        }
+    )
+    assert [c.id for c in crashed.pending_calls] == ["orphan"]
+
+    result, model, _ = a_turn(say("接着说"), conversation=crashed)
+    assert result.reason is StopReason.DONE
+    assert result.conversation.pending_calls == ()
+    first_sent = model.calls[0]
+    assert first_sent[-1]["role"] == "tool" and first_sent[-1]["tool_call_id"] == "orphan"
+
+
+def test_a_turn_needs_something_to_run_on() -> None:
+    with pytest.raises(ValueError):
+        run_turn(
+            start_conversation(),
+            context=a_context(),
+            model=ScriptedModel(script=[say()]),
+            ledger=Ledger(),
+        )
+    with pytest.raises(ValueError):
+        start_conversation().with_author("   ")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 七、章号从哪儿来：`dispatch` 已经校验过参数，loop 不再解析第二遍
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_the_outcome_carries_the_chapter_the_model_asked_about() -> None:
+    """投影的过滤判据来自 `ToolOutcome.chapter`，而它由**已校验的入参**结构性地取出。
+
+    让 loop 自己去 `json.loads(call.arguments)` 就是第二处解析点，而这个仓库刚把
+    「同一件事两处解析」清掉。
+    """
+    context = a_context()
+    hit = dispatch(ToolCall(id="x", name="chapter_text", arguments='{"chapter": 88}'), context)
+    assert hit.ok is False and hit.chapter == 88, "被拒的调用也绑章号：拒绝理由里就写着章号"
+
+    free = dispatch(ToolCall(id="y", name="book_index", arguments="{}"), context)
+    assert free.chapter is None, "不收章号的工具不许被绑上一个"
+
+    broken = dispatch(ToolCall(id="z", name="chapter_text", arguments="{"), context)
+    assert broken.chapter is None, "没过校验的参数里那个数是模型随手写的"
+
+
+def test_the_chapter_is_read_by_shape_not_by_a_second_tool_table() -> None:
+    """判据是「入参模型上有没有一个叫 `chapter` 的整数字段」，**不是一张表**。
+
+    表会在加工具的那天漂；结构不会。这条断言直接量那个取法，包括 `bool` 的坑
+    （`bool` 是 `int` 的子类，一个叫 `chapter` 的布尔会被当成第 1 章）。
+    """
+    from pydantic import BaseModel
+
+    from novel_harness.agent.tools import _asked_chapter
+
+    class Whatever(BaseModel):
+        chapter: bool = True
+
+    assert _asked_chapter(Whatever()) is None
+
+    tools_with_chapter = {
+        spec.name
+        for spec in __import__(
+            "novel_harness.agent.tools", fromlist=["TOOL_TABLE"]
+        ).TOOL_TABLE
+        if "chapter" in spec.args.model_fields
+        and spec.args.model_fields["chapter"].annotation is int
+    }
+    assert tools_with_chapter == {"scene_constraints", "character_state", "draft_chapter",
+                                  "chapter_text"}
+
+
+def test_the_tool_table_is_what_gets_declared_and_the_loop_writes_no_second_copy() -> None:
+    """**工具表就是权限边界。** loop 把表原样发出去，它自己不认识任何一个工具名。"""
+    from novel_harness.agent.tools import TOOL_NAMES
+
+    _, model, _ = a_turn(say("好"))
+    assert set(model.tool_names) == TOOL_NAMES
+
+    code = loop_code()
+    for name in TOOL_NAMES:
+        assert name not in code, (
+            f"loop 里出现了工具名 {name!r} —— 那就是第二份工具表，两份迟早漂。\n"
+            "工具名的唯一校验点在 `dispatch`（运输层也不认识它，ADR 0019 边界一）。"
+        )
+
+
+def test_dispatch_is_called_bare_because_it_never_raises() -> None:
+    """**`dispatch` 外面不许套 try/except**（它的 docstring 明写了理由）。
+
+    四种失败都是 `ok=False` 的正常返回；抛出去只会让 loop 变成一串 try/except，
+    而漏掉其中一个的后果是整个会话死掉。这里量的是**行为**：喂四种失败进去，
+    一次异常都不许出来。
+    """
+    context = a_context()
+    calls = [
+        ToolCall(id="1", name="根本没有这个工具", arguments="{}"),
+        ToolCall(id="2", name="book_index", arguments="{截断的"),
+        ToolCall(id="3", name="scene_constraints", arguments='{"must_not_reveal": ["x"]}'),
+        ToolCall(id="4", name="character_state", arguments='{"chapter": 1, "character": "无此人"}'),
+    ]
+    outcomes = [dispatch(call, context) for call in calls]
+    assert [o.ok for o in outcomes] == [False, False, False, False]
+    assert all(o.content for o in outcomes)
+
+
+def test_a_tool_that_raises_something_unexpected_still_kills_the_turn() -> None:
+    """**诚实交代这道闸的边界**：`dispatch` 只收敛它认识的那四类。
+
+    工具实现里冒出一个 `KeyError`，loop 不接——那不是「模型该改的问法」，是 bug，
+    而吞掉 bug 换来的是一次看起来正常的空回答。
+    """
+    import novel_harness.agent.tools as tools_module
+
+    def explode(args: Any, context: ToolContext) -> Any:
+        raise KeyError("库里少了一列")
+
+    broken = ToolSpec(name="book_index", description="", args=tools_module.BookIndexArgs,
+                      handler=explode)
+    original = tools_module.TOOLS["book_index"]
+    tools_module.TOOLS["book_index"] = broken
+    try:
+        with pytest.raises(KeyError):
+            run_turn(
+                start_conversation().with_author("写第 7 章"),
+                context=a_context(),
+                model=ScriptedModel(script=[wants(("book_index", "{}"))]),
+                ledger=Ledger(),
+            )
+    finally:
+        tools_module.TOOLS["book_index"] = original
+
+    # 自守卫：`ToolRefused` 那一类**是**被收敛的，两者别混。
+    def refuse(args: Any, context: ToolContext) -> Any:
+        raise ToolRefused("换个说法")
+
+    tools_module.TOOLS["book_index"] = ToolSpec(
+        name="book_index", description="", args=tools_module.BookIndexArgs, handler=refuse
+    )
+    try:
+        outcome = dispatch(ToolCall(id="k", name="book_index", arguments="{}"), a_context())
+        assert outcome.ok is False and outcome.content == "换个说法"
+    finally:
+        tools_module.TOOLS["book_index"] = original

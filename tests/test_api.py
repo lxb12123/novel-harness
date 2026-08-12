@@ -245,6 +245,78 @@ def test_matrix_never_leaks_secret_props(client: TestClient, book: dict[str, str
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# 在场从正文推，不从作者的表单来
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_mentioned_reads_the_manuscript(client: TestClient, book: dict[str, str]) -> None:
+    """第 1 章正文里有萧决和李管家，还有一个地点和一个秘密——只有人进 cast。"""
+    r = client.get(f"/api/projects/{_pid(book)}/chapters/1/mentioned")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["has_text"] is True
+    assert body["surfaces"] == ["萧决", "李管家"]
+    # 「青云城主府」是地点、「血脉秘密」是秘密，两个都在那句话里，都不许进来。
+    assert "青云城主府" not in body["surfaces"]
+    assert "血脉秘密" not in body["surfaces"]
+
+
+def test_mentioned_separates_no_chapter_from_no_one(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """**静默的零和真的零不许长得一样**（§10 约束 8）。
+
+    「这一章还没写」和「写了但没提到花名册里的人」对作者是两件事：前者该说「去写」，
+    后者该说「补花名册」。只看 `surfaces: []` 分不出来，所以有 `has_text`。
+    """
+    written = client.get(f"/api/projects/{_pid(book)}/chapters/2/mentioned").json()
+    assert written["has_text"] is True  # 第 2 章有正文，但里面一个名字都没有
+    assert written["surfaces"] == []
+
+    missing = client.get(f"/api/projects/{_pid(book)}/chapters/99/mentioned").json()
+    assert missing["has_text"] is False
+    assert missing["surfaces"] == []
+
+
+def test_panels_derive_cast_when_the_author_did_not_type_one(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """不传 cast 的面板不再是空的——它从这一章的正文里自己数出来。
+
+    这一条是「在场人物不该是写之前填的表单」在 HTTP 边界上的兑现。
+    """
+    pid = _pid(book)
+    derived = client.get(f"/api/projects/{pid}/chapters/1/matrix").json()
+    assert [c["name"] for c in derived["characters"]] == ["萧决", "李管家"]
+
+    # 显式传 cast 仍然优先：作者说了算，推导只在他没说时接手。
+    explicit = client.get(f"/api/projects/{pid}/chapters/1/matrix", params={"cast": "萧决"}).json()
+    assert [c["name"] for c in explicit["characters"]] == ["萧决"]
+
+
+def test_derived_cast_still_fails_closed_on_an_unwritten_chapter(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """推不出人 → 空 cast → 全禁。退化路径和作者什么都没填时**完全一样**。
+
+    方向别搞反：这里多禁一条的代价是「少写一段」，漏禁一条的代价是「崩人设」。
+    """
+    pid = _pid(book)
+    unwritten = client.get(f"/api/projects/{pid}/chapters/99/constraints").json()
+    assert [n["name"] for n in unwritten["must_not_reveal"]] == ["血脉秘密"]
+
+
+def test_derived_cast_never_leaks_secret_props(client: TestClient, book: dict[str, str]) -> None:
+    """推导多走了一趟磁盘正文，收窄不许因此松掉——它才是产品的核心主张。"""
+    pid = _pid(book)
+    for path in ("matrix", "constraints", "state"):
+        r = client.get(f"/api/projects/{pid}/chapters/1/{path}")
+        assert r.status_code == 200, r.text
+        assert TWIST not in r.text, path
+        assert PLOT_NOTE not in r.text, path
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # 错误映射（§1.3）
 # ══════════════════════════════════════════════════════════════════════════
 
@@ -446,6 +518,121 @@ def test_chapter_history_dedupes_identical_content(
     assert len(h) == 1  # 同内容只存一次
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# 版本还原 / 删除 —— 快照是证据的锚，所以「删」有前提，「还原」没有新表
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _history(client: TestClient, pid: str, chapter: int = 1) -> list[dict[str, Any]]:
+    return list(client.get(f"/api/projects/{pid}/chapters/{chapter}/history").json())
+
+
+def _save(client: TestClient, pid: str, chapter: int, markdown: str) -> None:
+    r = client.put(f"/api/projects/{pid}/chapters/{chapter}/text", json={"markdown": markdown})
+    assert r.status_code == 200, r.text
+
+
+def test_restoring_an_old_version_moves_current_without_adding_a_row(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """还原 = 把旧正文写回磁盘。**没有第二条写路径，也不长出第三个版本。**
+
+    这是「还原」在本仓库不需要新端点的全部理由：快照按内容去重，写回去 sha 命中已有那条，
+    于是 `is_current` 移回去、总数不变。要是它每还原一次就多一版，版本列表会越理越乱。
+    """
+    pid = _pid(book)
+    original = client.get(f"/api/projects/{pid}/chapters/1/text").json()["markdown"]
+    v1 = _history(client, pid)[0]["snapshot_id"]
+
+    _save(client, pid, 1, "第一章 血脉\n\n改坏了的一版。\n")
+    assert len(_history(client, pid)) == 2
+    assert [s["snapshot_id"] for s in _history(client, pid) if s["is_current"]] != [v1]
+
+    _save(client, pid, 1, original)  # 还原
+    after = _history(client, pid)
+    assert len(after) == 2, "还原不该新增版本——同内容的快照只存在一次"
+    assert [s["snapshot_id"] for s in after if s["is_current"]] == [v1]
+    assert client.get(f"/api/projects/{pid}/chapters/1/text").json()["markdown"] == original
+
+
+def test_deleting_an_unused_old_version_removes_it(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    pid = _pid(book)
+    v1 = _history(client, pid)[0]["snapshot_id"]
+    _save(client, pid, 1, "第一章 血脉\n\n第二版。\n")
+
+    r = client.delete(f"/api/projects/{pid}/chapters/1/snapshots/{v1}")
+    assert r.status_code == 200, r.text
+    assert r.json() == {"deleted": True, "snapshot_id": v1}
+    left = _history(client, pid)
+    assert [s["snapshot_id"] for s in left] == [s["snapshot_id"] for s in left if s["is_current"]]
+    assert v1 not in [s["snapshot_id"] for s in left]
+
+
+def test_deleting_the_current_version_is_refused(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """删「现在这一版」= 让这一章没有当前快照。`rolling_summary` 会直接抛，而作者
+    在界面上看不到任何原因——所以在这里拒绝，并告诉他先还原到别的版本。"""
+    pid = _pid(book)
+    current = next(s for s in _history(client, pid) if s["is_current"])["snapshot_id"]
+    r = client.delete(f"/api/projects/{pid}/chapters/1/snapshots/{current}")
+    assert r.status_code == 409
+    assert _error(r)["error"] == "snapshot_is_current"
+    assert len(_history(client, pid)) == 1  # 没删掉
+
+
+def test_deleting_a_version_that_backs_evidence_is_refused(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """被证据引着的那一版删不掉，且回执里带得出「被几条什么引着」。
+
+    三条外键都没有 ON DELETE CASCADE 是有意的：证据的价值全在「那句话当年在这儿」，
+    锚没了它就只是一句无出处的断言。
+    """
+    pid = _pid(book)
+    decl = client.post(
+        f"/api/projects/{pid}/declare/knows",
+        json={
+            "who": "萧决",
+            "secret": "血脉秘密",
+            "quote": "萧决在青云城主府第一次听说了血脉秘密的真相。",
+        },
+    )
+    assert decl.status_code == 200, decl.text
+    anchored = next(s for s in _history(client, pid) if s["is_current"])["snapshot_id"]
+
+    _save(client, pid, 1, "第一章 血脉\n\n改过之后那句话没了。\n")  # 让它不再是当前那条
+
+    r = client.delete(f"/api/projects/{pid}/chapters/1/snapshots/{anchored}")
+    assert r.status_code == 409
+    body = _error(r)
+    assert body["error"] == "snapshot_in_use"
+    assert body["usage"]["evidence"] >= 1
+    assert anchored in [s["snapshot_id"] for s in _history(client, pid)]
+
+
+def test_deleting_a_version_of_another_chapter_is_refused(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """章号和快照 id 是一对坐标。对不上就拒绝——否则第 2 章的界面能删掉第 1 章的版本。"""
+    pid = _pid(book)
+    v1 = _history(client, pid, 1)[0]["snapshot_id"]
+    _save(client, pid, 1, "第一章 血脉\n\n第二版。\n")
+
+    r = client.delete(f"/api/projects/{pid}/chapters/2/snapshots/{v1}")
+    assert r.status_code == 422
+    assert _error(r)["error"] == "store_error"
+    assert v1 in [s["snapshot_id"] for s in _history(client, pid, 1)]
+
+
+def test_deleting_an_unknown_snapshot_is_refused(client: TestClient, book: dict[str, str]) -> None:
+    r = client.delete(f"/api/projects/{_pid(book)}/chapters/1/snapshots/snapshot:NOPE")
+    assert r.status_code == 422
+    assert _error(r)["error"] == "store_error"
+
+
 def test_evidence_roundtrip(client: TestClient, book: dict[str, str]) -> None:
     # 声明产生证据 → 按 id 取回「来源章 + 当年那句原文」，且明确不含 score。
     q = "萧决在青云城主府第一次听说了血脉秘密的真相。"
@@ -581,10 +768,11 @@ def test_openapi_schema_builds(client: TestClient) -> None:
 # ══════════════════════════════════════════════════════════════════════════
 
 # (HTTP 方法, 项目前缀之后的路径, 里程碑)。M4 的抽取/审阅路由已经点亮；
-# 这里只剩 M2 起草线还没开放。
+# `GET /runs` 2026-08-10 也点亮了（`api/activity.py`）——它当年 501 的理由是
+# 「`model_call` 表今天是空的」，而那句在 M4 落地那天就过期了。
+# 这里只剩 AI 规划一条还没开放。
 STUBS = [
     ("post", "/chapters/7/plan", "M2"),
-    ("get", "/runs", "M2"),
 ]
 
 
@@ -986,12 +1174,13 @@ def test_stub_501_does_not_depend_on_project_state(client: TestClient) -> None:
     assert r.json()["status"] == "not_implemented"
 
 
-def test_openapi_declares_exactly_the_two_stubs(client: TestClient) -> None:
-    """501 进 openapi（前端从 schema 就看得见），且**恰好 2 条**。
+def test_openapi_declares_exactly_the_remaining_stub(client: TestClient) -> None:
+    """501 进 openapi（前端从 schema 就看得见），且**恰好 1 条**。
 
-    多出第 3 条 = 有人把一个能力悄悄降级成 stub；少一条 = 有人把 stub 删了而不是实现它。
+    多出第 2 条 = 有人把一个能力悄悄降级成 stub；少一条 = 有人把 stub 删了而不是实现它。
     两种都该在这里响。
-    `/draft` 与 M4 审阅/被动确认已开放，必须不在 stub 列表里。
+    `/draft`、M4 审阅/被动确认、以及 2026-08-10 点亮的 `GET /runs` 都必须不在 stub 列表里
+    ——`/runs` 那条 501 的理由写着「`model_call` 表今天是空的」，而那句在 M4 落地那天就过期了。
     """
     spec = client.get("/openapi.json").json()
     stubbed = {
@@ -1000,8 +1189,9 @@ def test_openapi_declares_exactly_the_two_stubs(client: TestClient) -> None:
         for method, op in ops.items()
         if "501" in op.get("responses", {})
     }
-    assert len(stubbed) == 2, sorted(stubbed)
+    assert len(stubbed) == 1, sorted(stubbed)
     assert ("/api/projects/{project_id}/chapters/{chapter}/plan", "post") in stubbed
+    assert ("/api/projects/{project_id}/runs", "get") not in stubbed
     assert ("/api/projects/{project_id}/chapters/{chapter}/draft", "post") not in stubbed
     assert (
         "/api/projects/{project_id}/chapters/{chapter}/proposals",

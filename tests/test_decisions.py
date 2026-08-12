@@ -55,7 +55,18 @@ def test_module_exposes_no_mutation_entry_point() -> None:
         and inspect.isfunction(obj)
         and obj.__module__ == decisions.__name__
     ]
-    assert sorted(public) == ["append", "quote_hash", "read"]
+    # 2026-08-10 长了三个**读**入口（日志页要按 actor 过滤 + 翻页 + 取单条，
+    # ADR 0020）。名单长了不等于这条守卫松了：它管的是**动词**，
+    # 下面那行 `_MUTATION_PREFIXES` 才是判据，读多少个都不碰那张表。
+    # 读全在本模块也是有意的：`decision_log` 的 SQL 不许在别处出现第二份。
+    assert sorted(public) == [
+        "append",
+        "quote_hash",
+        "read",
+        "read_one",
+        "read_page",
+        "tally_by_actor",
+    ]
     for name in public:
         assert not name.startswith(_MUTATION_PREFIXES), f"decisions.{name} 是个修改入口"
 

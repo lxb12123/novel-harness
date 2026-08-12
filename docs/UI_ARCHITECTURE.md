@@ -18,7 +18,7 @@
 | 状态 | 数量 | 含义 |
 |---|---|---|
 | 🟢 **现在能做** | ~35 | 现有引擎直接供数据，只差 HTTP 壳 + React |
-| 🟡 **M2（起草）** | 7 | AI 起草已按 **修正案 7 实验开放**（2026-08-02，带实验标注）；AI 规划仍 501/灰置。三臂、runner 与 `nh gate` 已落地，真模型 kill-gate 尚未出有效裁决 |
+| 🟡 **M2（起草）** | 7 | 后端 `/draft` 已按 **修正案 7 实验开放**（2026-08-02）。**但「AI 起草」那个抽屉 2026-08-10 删了**：填表式起草（先填「这一场要写什么」+ 在场角色再点按钮）与 ADR 0018「在场是写出来的结果」冲突，且一个功能不留两个入口——起草归模式二的 agent 面板，在那儿它是一次**工具调用**不是一个界面。`/draft` 端点一个字没动。AI 规划仍 501/灰置 |
 | 🟢 **M4（抽取）** | 4 | 事件记忆切片已落地（2026-08-03）：显式后台抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文；`extract/` / `proposal_set` / 右栏「待确认」tab 均已实现。真书三章接受度验收待跑 |
 | 🔵 **v1.1（向量）** | 1 | Tab3 检索分数/语义检索，ADR 0002 触发条件制 |
 | ⚫ **永久砍** | 2 | 事件因果图 + 「新增事件」，无 Event 节点、无 CAUSES 边（ADR 0005） |
@@ -50,7 +50,7 @@
 
 > `status`：🟢=BACKED_NOW（现在能做）· 🟡=STUB_M2。M4 的抽取/审阅端点已点亮；余下 🟡 端点返回稳定的 `501 {status:'not_implemented', milestone}`，让前端**灰置**按钮而不是 404。
 >
-> 读这张表的两个前提：**Path 一律省了 `/api` 前缀**（真实路径是 `/api/projects/…`），表里也不列 `GET /`（SPA 入口，不是 API）。**2 条 🟡 stub 今天是真实存在的端点**（`api/app.py`，commit `9f12fab`）——后端那一半兑现了，前端灰按钮那一半还没做（§2.2 末的现状标注）。
+> 读这张表的两个前提：**Path 一律省了 `/api` 前缀**（真实路径是 `/api/projects/…`），表里也不列 `GET /`（SPA 入口，不是 API）。**剩下的 🟡 stub 今天是真实存在的端点**（`api/app.py`）——后端那一半兑现了，前端灰按钮那一半还没做（§2.2 末的现状标注）。份数是会漂的量，唯一副本在 [`ARCHITECTURE.md` 的「当前状态」](ARCHITECTURE.md#当前状态)。
 
 | Method | Path | 调哪个引擎函数 | 响应（Pydantic 或收窄后的 dict） | 状态 |
 |---|---|---|---|---|
@@ -63,13 +63,16 @@
 | GET | `/projects/{pid}/chapters/{n}/text` | **读磁盘** `{root}/chapters/{n:04d}.md` | `{number, markdown}` | 🟢 |
 | PUT | `/projects/{pid}/chapters/{n}/text` | **写磁盘** → `importer.sync` | `SyncReport` | 🟢 |
 | GET | `/projects/{pid}/chapters/{n}/history` | `store.chapter_snapshots` | `list[ChapterSnapshot]`（带 text 供前端 diff；**内容去重、非全量版本史**） | 🟢 |
+| DELETE | `/projects/{pid}/chapters/{n}/snapshots/{sid}` | `store.delete_chapter_snapshot` | `{deleted, snapshot_id}`·**当前那条 409 / 被证据引着 409**（三条外键都没有 CASCADE，快照是审计锚） | 🟢 |
+| — | **还原到某一版没有自己的路由** | 走上面那条 `PUT .../text` | 快照按内容去重 → 写回旧正文正好命中已有那条 → `is_current` 移回去、不新增一版 | 🟢 |
 | GET | `/projects/{pid}/chapters/{n}/scenes` | `text.paragraphs` → `parse_scenes` | `list[Scene]`（cast/loc/goal 全是称呼原文，不解析） | 🟢 |
 | PUT | `/projects/{pid}/chapters/{n}/scenes` | `write_scene_directive` → `importer.sync` | `list[Scene]`（回写后**重新解析**的，不是前端以为写进去的） | 🟢 |
 | GET | `/projects/{pid}/roster` | `store.resolve(surfaces=None)` | `list[{id,label,name}]`（**不整体序列化 `Node.props`**）·⚠️设计里的 `?label=` **后端没实现**：出全项目，按 label 分组是前端 `LeftRail` 做的 | 🟢 |
 | GET | `/projects/{pid}/resolve?surface=` | `store.resolve([surface])` | `{surface, ambiguous, unique_id, hits[]}`（hits 一律收窄成 `NodeRef`） | 🟢 |
-| GET | `/projects/{pid}/chapters/{n}/matrix?cast=` | `resolve_cast` → `panel.knowledge_matrix` | `KnowledgeMatrix`·⚠️设计里还有 `&scope=`，**后端没实现**（见末条陷阱） | 🟢 |
-| GET | `/projects/{pid}/chapters/{n}/constraints?cast=` | `panel.scene_constraints`（收原始称呼） | `SceneConstraints` | 🟢 |
-| GET | `/projects/{pid}/chapters/{n}/state?cast=` | `resolve_cast` → `panel.cast_states` | `list[StateSnapshot]`·⚠️设计里还有 `&scope=`，**后端没实现**（见末条陷阱） | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/mentioned` | `mentioned.mentioned_cast`（读磁盘正文） | `{chapter, has_text, surfaces[]}`·**`has_text=false`（章还没写）和 `surfaces=[]`（写了但没提到人）是两件事，别合并显示** | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/matrix?cast=&include=` | `resolve_cast` → `panel.knowledge_matrix` | `KnowledgeMatrix`·⚠️设计里还有 `&scope=`，**后端没实现**（见末条陷阱）·**`version.canon_version` 由这条壳填**（2026-08-11 起）：图层填不了它（canon 版本住在 `project` 行上，不在图表里），此前它一直是模型默认的 0，而改这一格要拿它当 `expected_canon_version` —— 照原样发是每次必撞 409 | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/constraints?cast=&include=` | `panel.scene_constraints`（收原始称呼） | `SceneConstraints` | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/state?cast=&include=` | `resolve_cast` → `panel.cast_states` | `list[StateSnapshot]`·⚠️设计里还有 `&scope=`，**后端没实现**（见末条陷阱） | 🟢 |
 | GET | `/projects/{pid}/characters/{node_id}/state?chapter=` | `panel.character_state` | `StateSnapshot` | 🟢 |
 | GET | `/projects/{pid}/subgraph?center=&chapter=&hops=&edge_types=` | `store.subgraph`（hops≤2） | `Subgraph` | 🟢 |
 | GET | `/projects/{pid}/evidence/{evidence_id}` | `store.get_evidence` | `{id, chapter_number, quote_text, anchor}`（扁平；**不给 score**，v1 没有向量） | 🟢 |
@@ -80,16 +83,51 @@
 | POST | `/projects/{pid}/declare/knows` | `Ledger.declare_knows` | `Declaration` | 🟢 |
 | POST | `/projects/{pid}/declare/believes` | `Ledger.declare_believes` | `Declaration` | 🟢 |
 | POST | `/projects/{pid}/declare/where` | `Ledger.declare_where` | `Declaration` | 🟢 |
-| POST | `/projects/{pid}/chapters/{n}/draft` | — | 501 | 🟡 |
+| POST | `/projects/{pid}/chapters/{n}/draft` | `scene_view` → `assemble`（X0/X1/X2）或 `build_product_context` → `assemble_product`（PRODUCT，默认） | `{experimental, note, text, memory, length, …}`·**这一行 2026-08-02 起就不是 501 了**（修正案 7 实验开放）；`memory` 是记忆层回执，**零带着理由**（装了几份档案/事件/总结、哪几章缺总结）；`previous_tail` 的截断长度**分档**——PRODUCT 从模型窗口倒推（`product_tail_limit()`，2026-08-10 起），点名 X0/X1/X2 则原样拿冻结的 800（那是考卷，见 ADR 0019 边界五） | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/summaries` | `SummaryStore.coverage`（窗口边界由 `rolling_summary_window` 算） | `{chapter, window_first, window_last, chapters[], summarized, missing[]}`·**窗口不是全书**（近八章走事件记忆）；`missing` = 有正文没总结，`has_text=false` = 还没写，两者别合并 | 🟢 |
+| POST | `/projects/{pid}/chapters/{n}/summary` | `RollingSummarizer.ensure` | `{chapter_number, has_text, summary, created_at}`·**会调模型、会花钱**，幂等（同章同 prompt 只付一次）；**故意没有「保存后自动生成」**，自动那条走下面的 `autopilot` | 🟢 |
+| POST | `/projects/{pid}/chapters/{n}/autopilot` | `RollingSummarizer.ensure` + `runner.enqueue`（都进 `BackgroundTasks`） | 202 `{chapter, summary, extraction, extraction_run_id, errors[]}`·两个状态字取值 `queued`/`skipped`/`no_text`/`running`/`failed`/`unconfigured` | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/autopilot` | `SummaryStore.get` + `extract.metrics.metrics_for_range` | `{chapter, summary_ready, extraction_ready, running, summary_state, extraction_state, errors[]}`·**只读，不排队不花钱** | 🟢 |
 | POST | `/projects/{pid}/chapters/{n}/plan` | — | 501 | 🟡 |
-| GET | `/projects/{pid}/runs` | —（`model_call` 空） | 501 | 🟡 |
+| GET | `/projects/{pid}/activity?actor=&limit=&cursor=` | `activity.read_activity`（`extraction_run` + `model_call` + `decision_log` 归并） | `{entries[], next_cursor, actors[]}`·**折叠层**：一行 = `{id, source, ts, actor, status, title, subtitle, chapter_number, jump}`，**payload 不在这一层**（那是泄漏面，按需取）。`actors[]` 的计数**不受 `actor` 过滤影响**——它要回答的正是「我筛掉了多少」（[ADR 0020](adr/0020-clean-extraction-auto-canon.md)） | 🟢 |
+| GET | `/projects/{pid}/activity/{entry_id}` | `activity.read_entry`（按 id 前缀分派到三张表） | `{entry, rows[], cost, errors[], payload}`·**展开层**：`rows[]` 是「标签→值」的定义列表（措辞归后端，前端不写文案分支）；`payload` 只有 `source=decision` 才有，且过 `narrow_payload`（Node 形状收窄 + `props` 一律丢掉，比 `_narrow` 严——日志行没有「当前章」可比）。查无此条/跨项目 → 404 | 🟢 |
+| GET | `/projects/{pid}/runs` | `activity.read_runs` | `{entries[], run_count, totals}`·**这一行 2026-08-10 起不是 501 了**：它当年的理由「`model_call` 表今天是空的」在 M4 落地那天就过期了（抽取和滚动总结都在记账）。`totals.cost` 恒为 `null` 而不是 `0.0`——`model_call.cost` 至今没有写入方，`priced_calls` 把这个零的理由一起发出去 | 🟢 |
 | GET | `/projects/{pid}/chapters/{n}/proposals` | `proposals.pending` | `list[ProposalRecord]` | 🟢 |
 | POST | `/projects/{pid}/proposals/{id}/accept` | `review_proposal`（accept） | `ProposalResolution` | 🟢 |
 | POST | `/projects/{pid}/proposals/{id}/reject` | `review_proposal`（reject/bystander） | `ProposalResolution` | 🟢 |
+| POST | `/projects/{pid}/proposals/{id}/edit` | `review_proposal`（edit） | `ProposalResolution`·**按作者改过的样子落进 CANON**：`edited_summary` / `knower_ids` / `participant_ids` 至少给一样（后两个是**绝对集合**，`null`=这一维不动）。此前 `edit` 只存在于库里、没有路由，于是浏览器里只有 accept / reject 两个按钮 | 🟢 |
+| POST | `/projects/{pid}/canon/knowledge` | `corrections.correct_knowledge` | `KnowledgeCorrection`·**改一条已生效的事实**：`{character_id, secret_id, to_type: KNOWS\|BELIEVES, believed_value?, expected_canon_version}`。机制是**撤回旧边 + 写新边**（旧行留着，`status=RETRACTED`），`valid_from` 从旧边继承——**入参里没有章号**（约束 10）。404=这一格今天是 UNKNOWN / 422=已经是那个类型或 `believed_value` 形状不对 / 409=`stale_base_version`·**前端调用方**（2026-08-11 起）：右栏「人物认知」那一格 → `KnowledgeMatrix.tsx` 的 `CellEditor`，版本取自同一张矩阵的 `version.canon_version`。**同一个编辑器挂在两处**（右栏 + 章节核对页），所以撞 409 之后的重取归编辑器自己管（`useRefreshPanels`），不靠挂载点传 `onRefresh` —— 少传一个可选 prop 就让退路死在一块屏幕上，那是已经发生过一次的形态 | 🟢 |
+| POST | `/projects/{pid}/canon/events/{event_id}/cast` | `corrections.correct_event_cast` | `EventCastCorrection`·改一条已生效**事件**的知情/在场名单：`{knower_ids?, participant_ids?, expected_canon_version}`，绝对集合、`null`=不动。删一个人 = 那一行 `status=RETRACTED`（行留着，读路径看不见）。空编辑 422·**前端调用方**（2026-08-11 起）：右栏「待确认」那一格下半截 → `CanonEventCast.tsx`，勾选框即绝对集合，**只发作者动过的那一维** | 🟢 |
 | POST | `/projects/{pid}/chapters/{n}/provisional/confirm` | `confirm_provisional_*`（幂等回执） | `ProvisionalConfirmation` | 🟢 |
 | POST | `/projects/{pid}/chapters/{n}/extract` | `runner.enqueue`（后台执行） | `ExtractionRun`（202） | 🟢 |
 | GET | `/projects/{pid}/extractions/{run_id}` | `runner.get` | `ExtractionRun` | 🟢 |
-| GET | `/projects/{pid}/chapters/{n}/events?scope=` | `events_for_chapter` | `list[EventView]` | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/events?scope=` | `events_for_chapter` | `list[EventView]`·**两个 scope 前端都在用**（2026-08-11 起）：`PROVISIONAL` 是「待确认的情节」，`CANON` 是「已确认的情节」（改名单的那一半）。此前 `CANON` 在浏览器里一个字都没露过面 | 🟢 |
+
+> **`/matrix` `/constraints` `/state` 的 `?cast=` 留空不再等于「一个人都没有」，而是「你自己去正文里数」**
+> （[ADR 0018](adr/0018-cast-is-derived-not-declared.md)）。作者传了就听作者的；空着走 `mentioned_cast`；
+> 正文不存在 → 推不出人 → 空 cast → `scene_constraints` 照旧退化成全禁。
+> **顶栏那个「出场人物」输入框已经删掉**——在场人物是写出来的结果，不是写之前的输入。
+
+> **`?include=` 和 `?cast=` 方向相反，不许混用**（2026-08-11 起）。`cast` 是**过滤**
+> （「只看这几个人」），唯一来源是作者亲手标的场景块；`include` 是**只加不减**
+> （「这几个人也要算进来」），给的是日志页那个由**系统**算出来的跳转坐标（`ActivityJump.cast`）。
+> 三条读端共用同一份在场，而 `must_not_reveal` 的判据是「在场的人里至少有一个还不知道」——
+> 把一个只知道一个人的坐标塞进 `cast`，禁令会**少一批**（fail-open，ADR 0018 §3）。
+> 推导为空那一档 `include` 一律不加人：那时的含义是「不知道谁在场 ⇒ 全禁」，加人会把它撬开。
+> 前端 store 里因此是两个字段（`cast` / `castInclude`），`jumpFromActivity` 只写后一个。
+
+> **`autopilot` 的触发点是「离开某一章」，不是「保存某一章」。** 这不是实现偏好，是成本事实：
+> 滚动总结的幂等键是**正文的**哈希（`sha256(build_summary_messages(text))`），所以「保存后自动总结」
+> 会在作者写一章的过程中每存一次就换一次哈希、重新付一次费——写一小时存 30 次 = 30 次调用。
+> 作者说的是「**写完后**」，而机器能识别的最接近的信号是**换章**。所以前端在切章时打这条，
+> **不许**把它挂到保存键上。它幂等（总结走 `ensure`、抽取走 `enqueue`），来回切章不重复付费。
+>
+> 三件事写死在 `api/autopilot.py` 里，改之前先读那份 docstring：**① 总是 202**（换章是无人值守的
+> 动作，模型没配好就弹 4xx = 每换一章骂作者一次，真相放在回执体里）；**② 自动链路不自动重试**
+> 失败的抽取（重试要再付一次钱，得作者点 `/extract?force=true`）；**③ 失败不许静默**——
+> `chapter_summary` 表只记成功，所以后台总结炸掉在库里一个字节都没有，那条留痕是进程内的
+> （重启即失，GET 会退回说「还没生成」）。**改过正文的章不会被自动重新总结**（已有一条就判
+> `skipped`，同 `coverage()` 只问「有没有」不问「新不新」），显式那条按钮仍会按新哈希重生成。
 
 **关键陷阱（壳写错就退化成 fail-open）：**
 
@@ -170,7 +208,7 @@
 │  │  ├─ <ChapterTree>            ◀ GET /chapters（无卷分组）
 │  │  ├─ <RosterSection label=…>  ◀ GET /roster（出全项目，按 label 分组在前端做）
 │  │  ├─ <DocLinks 大纲/世界观>    ◀ 磁盘 md（无图谱背书）
-│  │  └─ <RecentRuns hidden>      ◀ M2 model_call（v1 空）
+│  │  └─ <RecentRuns hidden>      ◀ 用量搬去「活动记录」页顶上了（GET /runs，2026-08-10）
 │  ├─ <CenterEditor>
 │  │  ├─ <ChapterHeading>         ◀ GET /chapters/{n}/text
 │  │  ├─ <SceneBlockBar>          ◀ parse_scenes；cast 多选 ▶ PUT /scenes 回写注释
@@ -187,12 +225,28 @@
 │  │  ├─ Tab3 <DeterministicEvidence> ◀ Evidence 双指针 + state_at(N-1)（无 score）
 │  │  ├─ Tab4 <ConstraintsBox>    ◀ GET /constraints（must_not_reveal / forbidden）
 │  │  │       <KnowledgeMatrix>   ◀ GET /matrix（cast×secret 头牌）
+│  │  │        └─ <CellEditor>    ▶ POST /canon/knowledge（「知道」↔「以为」；
+│  │  │                             **「不知道」的格子没有入口**——那儿没有可改的事实，
+│  │  │                             新增认知走 DeclareDrawer，一个功能不留两个入口）
 │  │  └─ Tab5 <IssueList>         ◀ POST /check（Issue+anchor+evidence；显示「确定性」）
 │  │      Tab6 <ProposalReviewTab> ◀ GET /proposals + /events?scope=PROVISIONAL
 │  │         ▶ POST accept|reject|bystander · provisional/confirm · extract
+│  │         └─ <CanonEventCast>  ◀ GET /events?scope=CANON
+│  │                              ▶ POST /canon/events/{id}/cast（勾选框=绝对集合，
+│  │                                只发动过的那一维；日志页跳过来时按 `jump.event_id` 展开）
 │  └─ <BottomBar>
 │     ├─ <SceneTimeline>          ◀ parse_scenes 序 + edge.valid_from/valid_to
-│     └─ <RunTelemetry collapsed> ◀ M2 model_call（v1 空）
+│     └─ <RunTelemetry collapsed> ◀ 同上：整理次数 / token / 花费在「活动记录」页顶上
+│
+├─ <ActivityLog>      ◀── 2026-08-10 ADR 0020 的「可查」，**换的是中栏**（左右两栏不动）
+│  ├─ <UsageStrip>               ◀ GET /runs（花费恒「未记录」——`model_call.cost` 没有写入方）
+│  ├─ <ActorFilter>              ◀ ActivityPage.actors（计数全量，**不随过滤缩**）
+│  ├─ <EntryRow ×N>              ◀ GET /activity?actor=&limit=&cursor=（折叠层，无 payload）
+│  │  └─ <EntryDetail>           ◀ GET /activity/{id}（rows / cost / errors；**payload 不上屏**）
+│  │     └─ <JumpRow>            ▶ 只换坐标：chapter + 右栏 tab + 高亮那一格 / 展开那条情节
+│  │                               （`jump.endpoints` 空 ⇒ 不画编辑按钮，只带你过去；
+│  │                               坐标全来自后端的 `jump`，前端不从标题反推）
+│  └─ <LoadMore>                 ◀ next_cursor 原样回传（不透明串，前端不拼）
 │
 ├─ <ChapterPrepPage>  ◀── P2 章节准备（写第 N 章前的确定性简报）
 │  ├─ <ChapterGoalCard>           ◀ 作者手填 brief（磁盘 md，无图谱背书）
@@ -212,6 +266,7 @@
 ```
 
 ⚠️ **这棵树里有 2 个组件今天不存在**：`<RecentRuns hidden>` / `<RunTelemetry collapsed>`（都是 M2 的隐藏/折叠态，v1 本来就不显示）。`<AIPlanBtn disabled>` 仍是灰置 stub（规划未开放）；`<AIDraftBtn>` 已按 **修正案 7** 点亮并接上真实 `/draft`（实验状态，2026-08-02）——响应与 UI 都带「未经 kill-gate 裁决」标注。M2 有效裁决后再决定是否去掉实验标注。**Tab6 `<ProposalReviewTab>`（M4 审阅）已落地（2026-08-03）**：冲突/低置信/新人物卡 + 被动事件批量确认 + 显式抽取按钮。
+**`<ActivityLog>`（ADR 0020 的「可查」）已落地（2026-08-10）。** 它当天只有 Tab6 那一格真能动手，1.1 的两条改正路由在浏览器里还没有调用方，日志页在那一行明说了这件事——**2026-08-11 那句话被改掉了，因为它不再成立**：`POST /canon/knowledge` 的调用方是 Tab4 矩阵里的 `<CellEditor>`，`POST /canon/events/{id}/cast` 的调用方是 Tab6 下半截的 `<CanonEventCast>`。日志页的 `CAN_EDIT_HERE` 里 `knowledge_cell` / `event_cast` 因此翻成 `true`，`chapter` 那一档**仍是 `false`**——自动升上去的位置/状态边今天真的没有编辑入口，那是 ADR 0020 自己写下的推翻条件之一，把它一起翻掉等于关掉观测点。
 
 ### 2.3 状态管理：坐标进 Zustand，数据进 react-query
 
@@ -258,8 +313,9 @@ React 18 + TS（桌面优先）· Vite · **TanStack Query**（服务端状态�
 | UI 元素 | 背书 | 判定 |
 |---|---|---|
 | 项目名 / 当前章 / 保存 | `Project` / `chapter` 表 / `sync` | 🟢（卷非节点类型，只能 heading 推断，不做卷导航） |
-| 一致性检查 | `run_checks` / R4 | 🟢（v1 仅 R4，印「跑了几条规则」避免静默零） |
-| AI 规划 / AI 起草 | — | 🟡 M2（灰置 stub） |
+| 一致性检查 | `run_checks` / R2·R3·R4 | 🟢（印「跑了几条规则」+ 规则名避免静默零；R5 已按 ADR 0014 砍掉） |
+| AI 规划 | — | 🟡 M2（灰置 stub） |
+| ~~AI 起草（抽屉）~~ | ~~`/draft`~~ | **2026-08-10 删掉界面**，端点保留给模式二 agent 当工具 |
 | 左栏 人物/地点/势力/物品/伏笔 | `resolve` 按 label 过滤 | 🟢 读端就绪；⚠️ 势力/物品/伏笔 **M1 无 declare 写路径**，v1 初期空 |
 | 左栏 大纲 / 世界观 | — | ⚪ 降级为磁盘 markdown，无图谱背书 |
 | 中栏 正文 / 场景块 | 磁盘 md + `parse_scenes` | 🟢 |
@@ -274,7 +330,7 @@ React 18 + TS（桌面优先）· Vite · **TanStack Query**（服务端状态�
 | Tab4 必须/可以发生·文风·字数 | — | ⚪ 作者手填 brief，引擎不背书 |
 | Tab5 问题/位置/事实来源/建议 | `Issue` + `TextAnchor` + evidence | 🟢 精确到段 |
 | **Tab5 置信度** | — | ⚪ **v1 无此字段，只显示「确定性」不显示 %** |
-| 底栏 Harness 10 步 / Token / 成本 | `model_call`（空） | 🟡 M2（v1 是单次调用不是 10 步 Kernel） |
+| 底栏 Harness 10 步 / Token / 成本 | `model_call` + `GET /runs` | 🟡 数据和读端 2026-08-10 都有了，**底栏那一格仍未画**——用量显示在「活动记录」页顶上（v1 是单次调用不是 10 步 Kernel） |
 
 ### 页面二 · 章节准备
 
@@ -294,7 +350,8 @@ React 18 + TS（桌面优先）· Vite · **TanStack Query**（服务端状态�
 | **模式2 事件因果图** | — | ⚫ **永久砍，从 UI 删除** |
 | 全屏 1–3 跳 Explorer | `subgraph` | v2（3 跳数学上坏）；v1 只交付 hops≤2 局部漫游 |
 | 联动 AI 生成后自动提取变化 | — | 🟢 M4 已落地：`POST /extract` 显式后台抽取 + 运行状态轮询；抽取结果进 PROVISIONAL |
-| **变更确认页（整页）** | `proposal_set` | 🟢 M4 已落地：右栏「待确认 · N」tab（冲突/低置信/新人物卡 + 被动事件批量确认）；进 CANON 必有作者动作 |
+| **变更确认页（整页）** | `proposal_set` | 🟢 M4 已落地：右栏「待确认 · N」tab（冲突/低置信/新人物卡 + 被动事件批量确认）；~~进 CANON 必有作者动作~~ **[ADR 0020](adr/0020-clean-extraction-auto-canon.md) 已推翻后半句**：干净的抽取结果自动升 CANON，退路是「可查 + 可改」 |
+| **改一条已经生效的事实** | `corrections.py` + 两条 `/canon/…` | 🟢 2026-08-11 已落地：矩阵那一格改「知道」↔「以为」、「待确认」那一格下半截改已确认情节的知情/在场名单。**没有章号输入框**（约束 10），**「不知道」的格子不给入口**（那儿没有可改的事实，新增走声明） |
 | 变更类型「新增事件」 | — | ⚫ 永久砍 |
 
 ---
@@ -329,7 +386,7 @@ React 18 + TS（桌面优先）· Vite · **TanStack Query**（服务端状态�
 - [BE] 每请求构造 `Ledger`（唯一同时持 store+conn，一条共享连接）
 - [BE] `POST /nodes`（全 8 label）· `/aliases` · `/declare/{knows,believes,where}`（入参=称呼+引语，永不 node_id、永不章号）
 - [BE] 返回 `Declaration` 收据（`valid_from` 标注「系统算的」+ closed/retracted 边）
-- [BE] `POST /locate` · `GET /resolve` · `POST /check`（仅 R4）· `GET /subgraph`（hops>2→422）
+- [BE] `POST /locate` · `GET /resolve` · `POST /check`（R2/R3/R4）· `GET /subgraph`（hops>2→422）
 - [FE] declare 表单：**坚决无章号输入框**；「测这条引语」调 locate；提交后显示「valid_from=chN（你没填）」+ 自动关闭的边
 - [FE] 消歧选择器（复用于 cast 输入/declare 目标/名字搜索）
 - [FE] Tab2 局部图（点节点展开≤2 跳；`RELATED_TO` 用 `peer_of` 不用 `e.dst`）

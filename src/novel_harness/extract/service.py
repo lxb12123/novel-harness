@@ -205,6 +205,10 @@ class ExtractionService:
                 )
                 proposal_ids.append(proposal.id)
 
+            # 干净集合 = 这次落库的 − 进了任何一个例外 bucket 的。**只能这么减**：
+            # 反过来（「置信度够高就算干净」）会在下一个 bucket 加进来的那天静默漏掉它。
+            bucketed_events = {item for ids in event_links.values() for item in ids}
+            bucketed_edges = {item for ids in edge_links.values() for item in ids}
             discarded_events = sum(reason.kind == "event" for reason in discarded)
             return ExtractionReport(
                 valid_event_count=len(event_ids),
@@ -215,6 +219,19 @@ class ExtractionService:
                 edge_ids=tuple(edge_ids),
                 proposal_ids=tuple(proposal_ids),
                 proposal_count=len(proposal_ids),
+                # `dict.fromkeys` 去重：两条 raw 落在同一条引语上时会拿回同一个 id，
+                # 而 `confirm_provisional_*` 对重复 id 是整批拒收——那会让一次本可以
+                # 部分成功的自动升变成什么都不升。
+                clean_event_ids=tuple(
+                    dict.fromkeys(
+                        item for item in event_ids if item not in bucketed_events
+                    )
+                ),
+                clean_edge_ids=tuple(
+                    dict.fromkeys(
+                        item for item in edge_ids if item not in bucketed_edges
+                    )
+                ),
             )
 
     def _validate_context(self, project_id: str, chapter: ChapterText) -> int:

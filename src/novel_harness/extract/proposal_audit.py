@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -34,6 +34,16 @@ class AuditEnvelope:
     quote_sha256: str | None
     chapter_number: int | None
     para_index: int | None
+    actor: str = decisions.DEFAULT_ACTOR
+    """**谁做的这次改动。它是落在回执上的持久事实，不是调用时的参数。**
+
+    审计行可以晚于业务提交才补出来（`proposal_recovery.py` 就是那条路）。actor 只活在
+    调用栈里的话，恢复时补出来的那一行会写成默认的 `author`——于是「系统自动升上去的」
+    和「作者亲手点的」在 `decision_log` 里长得一模一样，而这恰好是日志页要区分的第一件事。
+
+    存的地方是 `payload["actor"]`（见 `ProposalAuditSnapshot` 上的注释），本字段只是它在
+    Python 侧的投影：`snapshot()` 不带它，`from_snapshot()` 从 payload 里读回来。
+    """
 
     def snapshot(self) -> ProposalAuditSnapshot:
         return ProposalAuditSnapshot(
@@ -47,7 +57,14 @@ class AuditEnvelope:
 
     @classmethod
     def from_snapshot(cls, snapshot: ProposalAuditSnapshot) -> AuditEnvelope:
-        return cls(**snapshot.model_dump(mode="python"))
+        data = snapshot.model_dump(mode="python")
+        return cls(**data, actor=payload_actor(data["payload"]))
+
+
+def payload_actor(payload: Mapping[str, Any]) -> str:
+    """信封 payload 里记着的 actor。缺键 = 这条是 1.2 之前落库的，那时只有作者点得动。"""
+    value = payload.get("actor")
+    return value if isinstance(value, str) and value else decisions.DEFAULT_ACTOR
 
 
 def _evidence_payload(evidence: Evidence) -> dict[str, Any]:
@@ -107,6 +124,7 @@ def build_audit_envelope(
     events: Sequence[tuple[EventView, Evidence]] = (),
     edges: Sequence[tuple[ReviewableEdge, Evidence]] = (),
     characters: Sequence[tuple[NewCharacterItem, NodeRef | None]] = (),
+    actor: str = decisions.DEFAULT_ACTOR,
 ) -> AuditEnvelope:
     event_payloads = [_event_payload(view, evidence) for view, evidence in events]
     edge_payloads = [_edge_payload(item, evidence) for item, evidence in edges]
@@ -122,6 +140,7 @@ def build_audit_envelope(
         "events": event_payloads,
         "edges": edge_payloads,
         "characters": character_payloads,
+        "actor": actor,
     }
     if events:
         first_view, first_evidence = events[0]
@@ -140,6 +159,7 @@ def build_audit_envelope(
         quote_sha256=None if quote_text is None else decisions.quote_hash(quote_text),
         chapter_number=None if first_evidence is None else first_evidence.chapter_number,
         para_index=None if first_evidence is None else first_evidence.audit.para_index,
+        actor=actor,
     )
 
 
@@ -166,6 +186,7 @@ def append_audit(
         quote_text=envelope.quote_text,
         chapter_number=envelope.chapter_number,
         para_index=envelope.para_index,
+        actor=envelope.actor,
     )
 
 
@@ -243,6 +264,9 @@ def _validate_decision(
         decision.kind != decisions.DecisionKind.PROPOSAL_REVIEW
         or decision.decision is not expected_verdict
         or actual != snapshot.model_dump(mode="python")
+        # 日志行的 actor 列必须和信封里记的那个是同一个人：回执上写着「系统改的」而
+        # 日志行写着「作者改的」是一种会骗人的不一致，且它正是日志页第一眼要看的那一列。
+        or decision.actor != payload_actor(payload)
     ):
         raise ProposalShapeError(
             f"decision {decision.id} 与 proposal {proposal.id} 的 durable audit 不一致"

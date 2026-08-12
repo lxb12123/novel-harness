@@ -259,6 +259,107 @@ def test_all_checks_wording_stays_honest() -> None:
     )
 
 
+# 「v1 只有 R4」这句话曾经在**六个地方**各躺一份：ARCHITECTURE.md（当天就被上面那条守卫改对了）、
+# CLAUDE.md、`cli.py`、`api/app.py`、`UI_ARCHITECTURE.md`、`demo.sh`。R2/R3 在 2026-08-02 落地，
+# 只有被守卫盯着的那一份跟着改了，另外五份烂到 2026-08-06 才被发现——**其中 `demo.sh` 是真的坏了**
+# （它断言「跑了 1 条规则」，而 `nh check` 印的是 3），心跳红了四天没人看见。
+# 上面那条守卫只扫 ARCHITECTURE.md，所以它拦不住这件事。下面两条补的就是那个缺口。
+ONLY_R4_CLAIM = re.compile(r"(仅|只有|只上)\s*R4")
+QUOTED = re.compile(r"「[^」]*」")
+
+
+def _asserts_only_r4(line: str) -> bool:
+    """这一行是不是在**断言**「v1 只有 R4」（而不是引用这段病史）。
+
+    豁免必须精确到**这次命中本身**落在 `「…」` 里，不能「整行有引号就放过」——
+    第一版就是那么写的，于是漏掉了两行：它们的引号包着「跑了几条规则」，
+    而 R4 那句话大喇喇露在外面。**一条会漏的守卫比没有守卫更坏**，
+    因为它让人以为这件事有人管着。
+    """
+    spans = [m.span() for m in QUOTED.finditer(line)]
+    for hit in ONLY_R4_CLAIM.finditer(line):
+        start, end = hit.span()
+        if not any(lo < start and end <= hi for lo, hi in spans):
+            return True
+    return False
+
+CLAIM_FILES = (
+    "CLAUDE.md",
+    "README.md",
+    "docs/ARCHITECTURE.md",
+    "docs/UI_ARCHITECTURE.md",
+    "scripts/demo.sh",
+    "src/novel_harness/cli.py",
+    "src/novel_harness/api/app.py",
+)
+
+
+def test_nobody_still_says_v1_only_has_r4() -> None:
+    """**「v1 仅 R4」这句话只有在 `ALL_CHECKS` 真的只有 R4 时才许出现。**
+
+    这是一条**措辞**守卫，不是数字守卫——所以它不受「数字只许有一份」那条约束，
+    也不能靠那条治：那句话里根本没有数字。
+    """
+    if len(ALL_CHECKS) == 1:
+        return  # 真只剩一条时这句话是对的，不该拦
+    offenders = []
+    for rel in CLAIM_FILES:
+        path = REPO_ROOT / rel
+        if not path.exists():
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if _asserts_only_r4(line):
+                offenders.append(f"{rel}:{lineno}: {line.strip()[:70]}")
+    assert not offenders, (
+        "这些地方还写着「v1 只有 R4」，而实际 len(ALL_CHECKS) = "
+        f"{len(ALL_CHECKS)}（{', '.join(c.__module__.rsplit('.', 1)[-1] for c in ALL_CHECKS)}）：\n  "
+        + "\n  ".join(offenders)
+        + "\n改文档不是改代码。这句话在 2026-08-02 之后就是假的，"
+        "而按它排期的人会去重写已经写完的 R2/R3。"
+    )
+
+
+def test_the_r4_guard_would_have_caught_all_five() -> None:
+    """**守卫的自守卫**：拿 2026-08-06 真实找到的那五行当 probe。
+
+    第一版守卫只咬住三行——它把「整行含引号」当豁免，而其中两行的引号包的是
+    「跑了几条规则」，R4 那句露在外面。`test_nobody_still_says_v1_only_has_r4`
+    自己是永远绿的（真值已经改对了），**没有这条 probe，它退化回半瞎也不会有人知道**。
+    """
+    caught = [
+        "- M3 的误报 < 1 条/章 —— 今天不可测：`ALL_CHECKS` 只有 R4，R4 不读正文、零 FP，",
+        '    """对第 chapter 章的磁盘正文跑一致性规则（v1 仅 R4 LOCATION_CONFLICT）。',
+        "| 一致性检查 | `run_checks` / R4 | 🟢（v1 仅 R4，印「跑了几条规则」避免静默零） |",
+        "# 零 issue 必须带着「跑了几条规则」一起出现（§10 约束 8）：v1 的 ALL_CHECKS 只有 R4，",
+        "- [BE] `POST /check`（仅 R4）· `GET /subgraph`（hops>2→422）",
+    ]
+    assert [line for line in caught if not _asserts_only_r4(line)] == []
+
+    # 反向：讲病史的那种写法不许被咬，否则这份文档没法记录自己修过什么
+    history = [
+        "> 这儿原本写着「ALL_CHECKS 只有 R4」，那是 2026-08-02 之前的事",
+        "所以「先只上 R4」在 M0 是对的，在 M3 不是。",
+    ]
+    assert [line for line in history if _asserts_only_r4(line)] == []
+
+
+def test_demo_pins_the_real_rule_count() -> None:
+    """`demo.sh` 断言的「跑了 N 条规则」必须等于 `len(ALL_CHECKS)`。
+
+    **这条是补一次真实故障，不是防御性编程。** demo.sh 是 CLAUDE.md 点名的「心跳」，
+    而它在 2026-08-02 到 08-06 之间一直是红的：R2/R3 进了 `ALL_CHECKS`，`nh check` 开始印
+    「跑了 3 条规则」，而 demo.sh 还在等「跑了 1 条规则」。没有任何 pytest 会跑 demo.sh，
+    所以这个红只有人肉执行才看得见——**于是四天没人看见**。
+    """
+    demo = (REPO_ROOT / "scripts" / "demo.sh").read_text(encoding="utf-8")
+    claimed = re.findall(r"跑了 (\d+) 条规则", demo)
+    assert claimed, "demo.sh 不再断言「跑了 N 条规则」了——§10 约束 8 靠它，别删"
+    assert set(claimed) == {str(len(ALL_CHECKS))}, (
+        f"demo.sh 断言「跑了 {set(claimed)} 条规则」，实际 len(ALL_CHECKS) = {len(ALL_CHECKS)}。\n"
+        "加规则时要一起改 demo.sh——没有别的东西会告诉你心跳断了。"
+    )
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 第 2 道：这些数字只许有一份
 # ══════════════════════════════════════════════════════════════════════════

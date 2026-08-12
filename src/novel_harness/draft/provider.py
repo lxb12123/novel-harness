@@ -197,6 +197,26 @@ class ProviderConfig(BaseModel):
         )
 
 
+class ToolCall(BaseModel):
+    """模型要求调用一个工具。**运输层不解析 `arguments`,原样交出去。**
+
+    参数是模型生成的 JSON 字符串,它可以是残缺的、可以带模型幻想出来的字段。
+    在这里 `json.loads` 等于让运输层替调用方决定「解析失败算什么」——
+    而那是编排层的判断(重试?回一条错给模型?终止?),不是发请求这一层的。
+    同理不校验 `name` 在不在工具表里:**工具表是权限边界,那道闸在编排层**,
+    运输层认得它就等于有第二份工具表,两份迟早漂。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    """`tool_result` 要用它配对。resume 时「哪几个 tool_call 还缺 result」也靠它。"""
+
+    name: str
+    arguments: str = ""
+    """**原始 JSON 字符串,未解析。** 流式下它是若干个 delta 拼起来的。"""
+
+
 class CompletionResult(BaseModel):
     """一次调用的结果。文本 + 溯源(哪个模型、为什么停、花了多少 token)。frozen。"""
 
@@ -207,6 +227,13 @@ class CompletionResult(BaseModel):
     finish_reason: str | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+
+    tool_calls: tuple[ToolCall, ...] = ()
+    """模型这一轮要调的工具。**空 = 它要说话了**,那就是 agent loop 的退出条件。
+
+    默认空所以 M2 判分链和产品起草一个字都不用改:它们不传 `tools`,
+    端点也就不会返回 `tool_calls`。
+    """
 
 
 def _build_client(config: ProviderConfig) -> Any:
@@ -246,8 +273,19 @@ def _wire_kwargs_from_validated(
     config: ProviderConfig,
     plan: CallPlan,
     messages: Sequence[dict[str, Any]],
+    tools: Sequence[dict[str, Any]] | None = None,
+    tool_choice: str | None = None,
 ) -> dict[str, Any]:
-    """把中立 plan 序列化成某一个 OpenAI-compatible endpoint 的精确 wire shape。"""
+    """把中立 plan 序列化成某一个 OpenAI-compatible endpoint 的精确 wire shape。
+
+    `tools` 为空(默认)时**一个字段都不加**——这是 M2 判分链和产品起草的路径,
+    它们发出去的东西必须和长出工具调用之前一模一样(`EVAL_PROTOCOL.md` §2:
+    gate 测的必须是产品会发的东西)。`test_provider_tools.py` 钉住了这一条。
+
+    **不查「这个模型支不支持工具调用」。** 那和 `SAMPLING_STRICT_MODELS` 那张表
+    面对的是同一类问题:从名字推不出来,任何中转都能转任何东西。不支持的端点会 400,
+    统一收敛成 `ProviderError`——和这个文件对待未知模型的既有立场一致。
+    """
     route = normalize_base_url(config.base_url), normalize_model(config.model)
     if route != (plan.base_url, plan.model):
         raise ProviderError(
@@ -265,6 +303,14 @@ def _wire_kwargs_from_validated(
         kwargs["temperature"] = config.temperature
     if plan.stream and plan.capability.supports_stream_usage is True:
         kwargs["stream_options"] = {"include_usage": True}
+    if tools:
+        kwargs["tools"] = list(tools)
+        if tool_choice is not None:
+            kwargs["tool_choice"] = tool_choice
+    elif tool_choice is not None:
+        # 没给工具却指定「必须调工具」= 一个必然失败的请求。在发出去之前拦住,
+        # 别让它变成一条要从供应商 4xx 里反推的错误。
+        raise ProviderError("tool_choice 需要同时提供 tools")
 
     effort = plan.reasoning_effective
     dialect = plan.reasoning_dialect
@@ -301,19 +347,47 @@ def _prepare_call(
     config: ProviderConfig,
     plan: CallPlan,
     messages: Sequence[dict[str, Any]],
+    tools: Sequence[dict[str, Any]] | None = None,
+    tool_choice: str | None = None,
 ) -> tuple[CallPlan, dict[str, Any]]:
     """Return one strict plan and the wire shape derived from that same instance."""
     validated = _validate_call_plan(plan)
-    return validated, _wire_kwargs_from_validated(config, validated, messages)
+    return validated, _wire_kwargs_from_validated(config, validated, messages, tools, tool_choice)
 
 
 def _wire_kwargs(
     config: ProviderConfig,
     plan: CallPlan,
     messages: Sequence[dict[str, Any]],
+    tools: Sequence[dict[str, Any]] | None = None,
+    tool_choice: str | None = None,
 ) -> dict[str, Any]:
     """Keep the existing test/debug surface while enforcing transport validation."""
-    return _prepare_call(config, plan, messages)[1]
+    return _prepare_call(config, plan, messages, tools, tool_choice)[1]
+
+
+def _tool_calls_from_message(message: Any) -> tuple[ToolCall, ...]:
+    """从一条非流式 message 上摘 `tool_calls`。
+
+    全程 `getattr`:兼容层的响应对象形状各家不一(有的是 pydantic,有的是 dict-like,
+    本地端点可能干脆没有这个字段)。缺字段返回空元组,**不抛**——
+    「模型没要调工具」是最常见的正常情况。
+    """
+    raw = getattr(message, "tool_calls", None) or ()
+    calls: list[ToolCall] = []
+    for item in raw:
+        fn = getattr(item, "function", None)
+        name = getattr(fn, "name", None) or ""
+        if not name:
+            continue  # 没有函数名的条目无法派发,丢掉比造一个空名字安全
+        calls.append(
+            ToolCall(
+                id=getattr(item, "id", None) or "",
+                name=name,
+                arguments=getattr(fn, "arguments", None) or "",
+            )
+        )
+    return tuple(calls)
 
 
 def _from_non_streaming(resp: Any, fallback_model: str) -> CompletionResult:
@@ -325,6 +399,7 @@ def _from_non_streaming(resp: Any, fallback_model: str) -> CompletionResult:
         finish_reason=getattr(choice, "finish_reason", None),
         prompt_tokens=getattr(usage, "prompt_tokens", None),
         completion_tokens=getattr(usage, "completion_tokens", None),
+        tool_calls=_tool_calls_from_message(choice.message),
     )
 
 
@@ -334,6 +409,10 @@ def _from_stream(chunks: Any, fallback_model: str) -> CompletionResult:
     finish_reason: str | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    # 流式工具调用**按 index 累积**:`id` 和 `name` 通常只在第一个 delta 出现,
+    # 而 `arguments` 是一串碎片(`{"cha` / `pter":` / ` 89}`)。
+    # 用 dict 而不是 list:index 不保证从 0 连续,也不保证按序到达。
+    partial: dict[int, dict[str, str]] = {}
 
     for chunk in chunks:
         chunk_model = getattr(chunk, "model", None)
@@ -344,9 +423,24 @@ def _from_stream(chunks: Any, fallback_model: str) -> CompletionResult:
             prompt_tokens = getattr(usage, "prompt_tokens", prompt_tokens)
             completion_tokens = getattr(usage, "completion_tokens", completion_tokens)
         for choice in getattr(chunk, "choices", ()) or ():
-            content = getattr(getattr(choice, "delta", None), "content", None)
+            delta = getattr(choice, "delta", None)
+            content = getattr(delta, "content", None)
             if isinstance(content, str):
                 visible.append(content)
+            for item in getattr(delta, "tool_calls", None) or ():
+                slot = partial.setdefault(
+                    getattr(item, "index", 0) or 0, {"id": "", "name": "", "arguments": ""}
+                )
+                call_id = getattr(item, "id", None)
+                if call_id:
+                    slot["id"] = call_id
+                fn = getattr(item, "function", None)
+                name = getattr(fn, "name", None)
+                if name:
+                    slot["name"] = name
+                args = getattr(fn, "arguments", None)
+                if isinstance(args, str):
+                    slot["arguments"] += args  # 只能拼,不能覆盖——覆盖会丢掉前面的碎片
             stopped = getattr(choice, "finish_reason", None)
             if stopped is not None:
                 finish_reason = stopped
@@ -357,6 +451,11 @@ def _from_stream(chunks: Any, fallback_model: str) -> CompletionResult:
         finish_reason=finish_reason,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
+        tool_calls=tuple(
+            ToolCall(id=slot["id"], name=slot["name"], arguments=slot["arguments"])
+            for _, slot in sorted(partial.items())  # 按 index 还原模型给的顺序
+            if slot["name"]
+        ),
     )
 
 
@@ -366,9 +465,22 @@ def complete(
     config: ProviderConfig,
     plan: CallPlan,
     client: Any = None,
+    tools: Sequence[dict[str, Any]] | None = None,
+    tool_choice: str | None = None,
 ) -> CompletionResult:
-    """按已验证 plan 执行一次补全;大预算 stream 与非 stream 返回同一结果契约。"""
-    validated_plan, kwargs = _prepare_call(config, plan, messages)
+    """按已验证 plan 执行一次补全;大预算 stream 与非 stream 返回同一结果契约。
+
+    Args:
+        tools: OpenAI 兼容的工具声明。**不传(默认)时这个函数的行为一字不变**——
+            M2 判分链和产品起草走的就是那条路。
+        tool_choice: `"auto"` / `"none"` / `"required"`。**必须和 `tools` 一起给。**
+
+    Notes:
+        **这里不认识工具表,也不该认识。** 派发、权限、停止条件全在编排层;
+        运输层只负责把声明发出去、把模型的请求原样带回来。
+        工具表是权限边界(铁律 5),那道闸只许有一处。
+    """
+    validated_plan, kwargs = _prepare_call(config, plan, messages, tools, tool_choice)
     client = client or _build_client(config)
 
     try:

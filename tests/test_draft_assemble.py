@@ -359,7 +359,15 @@ def test_assemble_needs_no_store_at_all() -> None:
     gate 测的不再是产品会发的东西。
     """
     params = set(inspect.signature(assemble).parameters)
-    assert params == {"ctx", "form", "goal", "length", "previous_tail", "house_style"}
+    assert params == {
+        "ctx",
+        "form",
+        "goal",
+        "length",
+        "previous_tail",
+        "previous_tail_limit",
+        "house_style",
+    }
     assert inspect.signature(assemble).parameters["length"].default is inspect.Parameter.empty
 
 
@@ -419,6 +427,147 @@ def test_previous_tail_is_stripped_and_limited_to_its_last_800_code_points() -> 
         assert "甲" not in prompt[-1]["content"]
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# ⑤ 逐字上文的长度：默认值是考卷，产品档才放长（ADR 0019 边界五）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_the_default_tail_limit_is_the_frozen_x0_definition() -> None:
+    """**默认值 = X0 对照臂的定义**（ARCHITECTURE §9：「最多 800 个输入 code point」）。
+
+    这条红了不是「一个常量变了」，是**考卷变了**：三臂共用 `assemble()`，`eval/runner.py`
+    一个字都不传就吃这个默认值，改大它 = X0 不再是那个「证明给得少会崩」的对照臂，
+    而 `runs/*.jsonl` 里看不出任何异常。
+    """
+    assert assemble_module.GATE_TAIL_CODE_POINTS == 800
+    assert (
+        inspect.signature(assemble).parameters["previous_tail_limit"].default
+        == assemble_module.GATE_TAIL_CODE_POINTS
+    )
+
+
+def test_no_kill_gate_call_site_ever_passes_a_tail_limit() -> None:
+    """判分侧的三个调用点**必须一个字都不传**——传了就是那一臂单独换了预算。
+
+    源码扫描而不是行为断言：`runner.py` 真跑一轮要花钱，而这里要拦的正是「有人顺手在
+    那儿加一个参数」。同 `tests/test_arch_guard.py` 的判据形状（谁在碰什么，不是谁 import 了什么）。
+    """
+    from pathlib import Path
+
+    root = Path(assemble_module.__file__).resolve().parent.parent
+    for relative in ("eval/runner.py", "eval/evidence.py", "cli.py"):
+        source = (root / relative).read_text(encoding="utf-8")
+        assert "previous_tail_limit" not in source, (
+            f"{relative} 传了 previous_tail_limit：三臂和 `nh draft` 必须用冻结的默认值，"
+            "改它 = 改考卷（EVAL_PROTOCOL §2）"
+        )
+
+
+def test_a_longer_limit_keeps_more_of_the_tail_verbatim() -> None:
+    """产品档要的就是这条：同一段上文，限额大 ⇒ 逐字进 prompt 的更多。"""
+    ctx = _full_ctx()
+    tail = "甲" * 5_000
+
+    long_prompt = assemble(
+        ctx,
+        form=PromptForm.X1,
+        goal=GOAL,
+        length=M2_LENGTH_SPEC,
+        previous_tail=tail,
+        previous_tail_limit=4_000,
+    )
+    assert "【上文】\n" + "甲" * 4_000 in long_prompt[-1]["content"]
+    assert "甲" * 4_001 not in long_prompt[-1]["content"]
+
+
+def test_a_non_positive_limit_drops_the_tail_instead_of_keeping_all_of_it() -> None:
+    """`"abc"[-0:] == "abc"`。这条钉的就是那个陷阱：0 必须是「不给」，不是「全给」。"""
+    ctx = _full_ctx()
+    prompt = assemble(
+        ctx,
+        form=PromptForm.X0,
+        goal=GOAL,
+        length=M2_LENGTH_SPEC,
+        previous_tail=TAIL,
+        previous_tail_limit=0,
+    )
+    assert "【上文】" not in prompt[-1]["content"]
+
+
+def test_product_tail_limit_scales_with_the_real_context_window() -> None:
+    """比例不是绝对量：窗口大一个量级，上文就长一截（到成本闸为止）。"""
+    from novel_harness.draft.assemble import (
+        TAIL_UNITS_CEILING,
+        GATE_TAIL_CODE_POINTS,
+        product_tail_limit,
+    )
+
+    small = product_tail_limit(32_000, 8_000)
+    large = product_tail_limit(200_000, 8_000)
+
+    assert GATE_TAIL_CODE_POINTS < small < large <= TAIL_UNITS_CEILING
+    # 成本闸：1M 窗口不等于每次起草都塞 1M。
+    assert product_tail_limit(1_000_000, 8_000) == TAIL_UNITS_CEILING
+    assert product_tail_limit(10_000_000, 8_000) == TAIL_UNITS_CEILING
+
+
+def test_product_tail_limit_never_goes_below_the_frozen_default() -> None:
+    """**只许变长，不许变短。** 变短了没人会发现，只会觉得模型忽然变笨了。"""
+    from novel_harness.draft.assemble import GATE_TAIL_CODE_POINTS, product_tail_limit
+
+    # 能力表没登记这个模型 → 不猜一个大窗口（同 `memory_units_available`）。
+    assert product_tail_limit(None, 8_000) == GATE_TAIL_CODE_POINTS
+    # 输出预留比整个窗口还大 → 余量为 0，仍然保持今天的行为。
+    assert product_tail_limit(4_000, 8_000) == GATE_TAIL_CODE_POINTS
+
+
+def test_the_tail_budget_reuses_the_one_token_conversion() -> None:
+    """换算只许有一处（`product_context.TOKENS_PER_UNIT`），别在这儿另定一个。"""
+    from novel_harness.draft.assemble import (
+        TAIL_CONTEXT_SHARE,
+        TAIL_UNITS_CEILING,
+        product_tail_limit,
+    )
+    from novel_harness.draft.product_context import TOKENS_PER_UNIT
+
+    headroom = 120_000 - 8_000
+    expected = int(headroom / TOKENS_PER_UNIT * TAIL_CONTEXT_SHARE)
+    assert product_tail_limit(120_000, 8_000) == min(expected, TAIL_UNITS_CEILING)
+
+
 def test_length_instruction_uses_human_units_not_tokens() -> None:
     assert hasattr(assemble_module, "length_instruction")
     assert "token" not in assemble_module.length_instruction(M2_LENGTH_SPEC).lower()
+
+
+def test_a_chapter_that_fits_is_never_cut() -> None:
+    """**常态下起作用的是「这一章有多长」，不是那个上限常量。**
+
+    上一版 `TAIL_UNITS_CEILING` 标定成 12,000，于是 1M 窗口的模型 + 13,000 字的一章
+    会被砍掉 1,000 字——而且**砍在句子中间**。上文这一层的全部意义是接住语气和情绪，
+    切在半句上正好毁掉它要的那个东西；而那一章占 1M 窗口不到 3%，砍它省不下什么。
+
+    这条钉住「装得下就整篇给，一个字不切」。
+    """
+    from novel_harness.draft.assemble import product_tail_limit
+
+    chapter = "字" * 13_000
+    limit = product_tail_limit(1_000_000, 150_000)
+
+    assert limit >= len(chapter), "1M 窗口下一章 13,000 字必须装得下"
+    assert chapter[-limit:] == chapter, "装得下就不许切"
+
+
+def test_the_ceiling_only_catches_a_broken_upstream() -> None:
+    """闸门该拦的是**病态输入**，不是一章正常的长文。
+
+    `previous_tail` 是调用方给什么就是什么。切章一旦出错（整本书成了一「章」），
+    没有这道闸就是把整本书按 token 计费发出去一次。
+    所以上限要高到「正常的一章永远撞不到」，低到「一整本书一定撞到」。
+    """
+    from novel_harness.draft.assemble import TAIL_UNITS_CEILING
+
+    longest_real_chapter = 20_000  # 网文里已经算很长的一章
+    a_whole_book = 500_000
+
+    assert longest_real_chapter < TAIL_UNITS_CEILING < a_whole_book

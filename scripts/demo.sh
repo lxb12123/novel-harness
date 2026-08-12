@@ -202,10 +202,15 @@ EOF
 check "$TMP/ch151_clean.md"
 exits_zero "nh check（无冲突）"
 has "0 条 issue"
-# 零 issue 必须带着「跑了几条规则」一起出现（§10 约束 8）：v1 的 ALL_CHECKS 只有 R4，
-# 所以「无 issue」的真实含义是「R4 没意见」，不是「这一章没问题」。
-has "跑了 1 条规则"
+# 零 issue 必须带着「跑了几条规则」一起出现（§10 约束 8）：「无 issue」的真实含义是
+# 「这 3 条规则没意见」，不是「这一章没问题」。
+# ⚠️ 这个 3 = `len(ALL_CHECKS)`。**加规则时要改这儿**——
+# `tests/test_doc_numbers.py::test_demo_pins_the_real_rule_count` 会拦住忘了改的那一次
+# （这一行曾经写着「1」，R2/R3 在 2026-08-02 落地后心跳断了四天没人发现）。
+has "跑了 3 条规则"
 has "location_conflict"
+has "future_leak"
+has "dead_speaks"
 
 # ══════════════════════════════════════════════════════════════════════════
 # 4. 泳道 2：引语 → 章号 → valid_from（作者一次都没输过章号）

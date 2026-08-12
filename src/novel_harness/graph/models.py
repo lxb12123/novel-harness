@@ -1041,6 +1041,32 @@ class ChapterSnapshot(BaseModel):
     """== `chapter.text_sha256`，即磁盘正文当前对应的那条。"""
 
 
+class SnapshotUsage(BaseModel):
+    """一条快照**被谁引着**。删之前必须先问它。
+
+    三张表外键到 `chapter_snapshot` 且**都没有 ON DELETE CASCADE**（evidence /
+    extraction_run / proposal_set）——那不是遗漏，是 001_init.sql 那行注释写死的
+    「审计指针指向不可变快照，永不失效」。所以「删一条快照」不是一句 DELETE：
+    删掉被引的那条，要么撞外键报错，要么（真让它级联）把一条证据的出处凭空抹掉。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    snapshot_id: str
+    evidence: int = Field(ge=0)
+    """引这条快照当审计锚的证据数。"""
+    extraction_runs: int = Field(ge=0)
+    proposal_sets: int = Field(ge=0)
+
+    @property
+    def total(self) -> int:
+        return self.evidence + self.extraction_runs + self.proposal_sets
+
+    def is_free(self) -> bool:
+        """没有任何东西引着 = 删了不会让谁失去出处。"""
+        return self.total == 0
+
+
 class EvidenceSpec(BaseModel):
     """`put_evidence` 的入参。**证据的锚在类型层面就坏不了。**
 

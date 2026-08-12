@@ -32,10 +32,16 @@ God object 里——那个 God object 的下一步就是「顺手让 decision_lo
 - `declare_state`（HAS_STATE / StateDim）：读者是 R3，R3 在 M3。
 - `declare_related`（RELATED_TO）：读者是局部图（M5）和 R5，而 R5 的生死还压在
   `scripts/probe_speaker_tags.py` 那条探针上。
-- `nh declare foreshadow` / PLANNED 边（PLANTED_IN / RESOLVED_IN）：M1 没有消费者
-  （ADR 0005 增长规则），**而且它会给约束 10 的守卫开第一个例外**——PLANNED 的
-  `valid_from` 确实是作者填的（001_init.sql 逐字写了「那不是回忆是决定」）。
-  例外会被拓宽。M1 结束时那条守卫零 carve-out。
+- `nh declare foreshadow` / PLANNED 边（PLANTED_IN / RESOLVED_IN）：**两条理由，
+  2026-08-06 只剩一条。**
+
+  ① ~~M1 没有消费者（ADR 0005 增长规则）~~ —— **已作废。** 模式二的推进侧要的正是
+     「哪些伏笔埋了还没收」，那就是消费者。增长规则的触发条件已满足，
+     **别再拿这条挡人**（它挡了一次就够了）。
+
+  ② **它会给约束 10 的守卫开第一个例外，这条仍然成立**——PLANNED 的 `valid_from`
+     确实是作者填的（001_init.sql 逐字写了「那不是回忆是决定」）。例外会被拓宽。
+     所以要做 foreshadow，**先拿一份 ADR 裁掉这个例外的边界**，别直接加方法。
 """
 
 from __future__ import annotations
@@ -231,7 +237,13 @@ def _context(para: str, quote: str, occurrence_k: int) -> str:
 
 
 class Ledger:
-    """作者的声明入口。**全仓库唯一同时拿 `store` 和 `conn` 的地方**（理由见模块 docstring）。
+    """作者的声明入口。同时拿 `store` 和 `conn`（理由见模块 docstring）。
+
+    这句原本写的是「**全仓库唯一**同时拿两个 handle 的地方」，**2026-08-10 删掉了「唯一」**：
+    它早就不成立了（`extract/proposals.py::review_proposal` 一直是第二处），
+    而 `corrections.py` 是第三处。三处的理由是同一条——图和 `decision_log`
+    生命周期不同——所以要守的从来不是「只有一处」，是「**凡是改图的入口都必须同时写日志**」。
+    真要钉，钉的是后者，而今天没有守卫钉它。
 
     入参里的 `who` / `secret` / `loc` / `of` **全是作者写的称呼原文，不是 node_id**
     ——同 `panel.constraints.resolve_cast` 收 `cast` 的形状（ARCHITECTURE §10.5 第 1 条）：
@@ -578,6 +590,18 @@ class Ledger:
                 "edge_type": type.value,
                 "scope": InformationScope.CANON.value,
                 "object_name": dst.name,
+                # ★ 两端的 id 和名字**一起**记（不是取代名字，§5.7 那条仍然成立）。
+                #   名字是给重放用的，id 是给「跳回去改这一格」用的：一条声明错了的
+                #   「知道 / 以为」改得掉（`corrections.correct_knowledge` 就是为它写的），
+                #   而 `activity._decision_jump` 只能从这两个 id 拼出那个坐标——从
+                #   `subject_name` / `object_name` 反查是「按人名认」，歧义时必然认错人
+                #   （「师兄」在一章里可能指 8 个人），而认错的产物是改了另一个人的认知。
+                #   缺了它们，这一行会退到兜底坐标，于是 `endpoints` 空 ——
+                #   而那个空元组在本仓的意思是「今天没有任何路由能改这个」，是假话。
+                #   **旧库里的行没有这两个键**（`decision_log` 只增不改，重写不了），
+                #   那些行照旧退到兜底坐标：老书降级成「只能跳到那一章」，不报错。
+                "subject_id": src.id,
+                "object_id": dst.id,
                 "typed_surface": typed_surface,
                 "evidence_id": ev.id,
                 "occurrence_k": ev.relocate.occurrence_k,

@@ -1,4 +1,516 @@
 {
+  "activity": {
+    "actors": [
+      {
+        "actor": "author",
+        "count": 14
+      },
+      {
+        "actor": "system",
+        "count": 3
+      }
+    ],
+    "entries": [
+      {
+        "actor": "system",
+        "chapter_number": 1,
+        "id": "extraction_run:ID38",
+        "jump": {
+          "cast": [],
+          "chapter_number": 1,
+          "character_id": null,
+          "endpoints": [],
+          "event_id": null,
+          "label": "第 1 章还有 2 条待审",
+          "proposal_id": null,
+          "secret_id": null,
+          "target": "proposal"
+        },
+        "source": "extraction",
+        "status": "succeeded",
+        "subtitle": "有效事件 3 条 · 丢弃 1 条 · 待审提案 2 条",
+        "title": "第 1 章抽取",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "system",
+        "chapter_number": 1,
+        "id": "call:ID39",
+        "jump": {
+          "cast": [],
+          "chapter_number": 1,
+          "character_id": null,
+          "endpoints": [],
+          "event_id": null,
+          "label": "去第 1 章",
+          "proposal_id": null,
+          "secret_id": null,
+          "target": "chapter"
+        },
+        "source": "model_call",
+        "status": "succeeded",
+        "subtitle": "deepseek-v4 · 入 1200 / 出 400 token · 900 ms",
+        "title": "模型调用 · 抽取",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "author",
+        "chapter_number": 1,
+        "id": "decision:ID36",
+        "jump": {
+          "cast": [
+            "萧决"
+          ],
+          "chapter_number": 1,
+          "character_id": "character:ID10",
+          "endpoints": [
+            "/api/projects/project:ID1/canon/knowledge"
+          ],
+          "event_id": null,
+          "label": "去认知矩阵改这一格",
+          "proposal_id": null,
+          "secret_id": "secret:ID7",
+          "target": "knowledge_cell"
+        },
+        "source": "decision",
+        "status": "succeeded",
+        "subtitle": "萧决 对「血脉秘密」：知道 → 以为",
+        "title": "作者 · 更正认知类型",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "system",
+        "chapter_number": 1,
+        "id": "call:ID40",
+        "jump": {
+          "cast": [],
+          "chapter_number": 1,
+          "character_id": null,
+          "endpoints": [],
+          "event_id": null,
+          "label": "去第 1 章",
+          "proposal_id": null,
+          "secret_id": null,
+          "target": "chapter"
+        },
+        "source": "model_call",
+        "status": "succeeded",
+        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
+        "title": "模型调用 · 章节总结",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "author",
+        "chapter_number": 1,
+        "id": "decision:ID34",
+        "jump": {
+          "cast": [],
+          "chapter_number": 1,
+          "character_id": null,
+          "endpoints": [
+            "/api/projects/project:ID1/canon/events/event:ID35/cast"
+          ],
+          "event_id": "event:ID35",
+          "label": "去改这条事件的知情 / 在场名单",
+          "proposal_id": null,
+          "secret_id": null,
+          "target": "event_cast"
+        },
+        "source": "decision",
+        "status": "succeeded",
+        "subtitle": "接受：事件 1 条 · 关系 0 条",
+        "title": "作者 · 抽取结果审阅",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "author",
+        "chapter_number": 1,
+        "id": "decision:ID32",
+        "jump": {
+          "cast": [],
+          "chapter_number": 1,
+          "character_id": null,
+          "endpoints": [],
+          "event_id": null,
+          "label": "去第 1 章",
+          "proposal_id": null,
+          "secret_id": null,
+          "target": "chapter"
+        },
+        "source": "decision",
+        "status": "succeeded",
+        "subtitle": "否决：事件 1 条 · 关系 0 条",
+        "title": "作者 · 抽取结果审阅",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "author",
+        "chapter_number": 1,
+        "id": "decision:ID29",
+        "jump": {
+          "cast": [],
+          "chapter_number": 1,
+          "character_id": null,
+          "endpoints": [
+            "/api/projects/project:ID1/canon/events/event:ID30/cast"
+          ],
+          "event_id": "event:ID30",
+          "label": "去改这条事件的知情 / 在场名单",
+          "proposal_id": null,
+          "secret_id": null,
+          "target": "event_cast"
+        },
+        "source": "decision",
+        "status": "succeeded",
+        "subtitle": "接受：事件 1 条 · 关系 0 条",
+        "title": "作者 · 抽取结果审阅",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "author",
+        "chapter_number": 1,
+        "id": "decision:ID18",
+        "jump": {
+          "cast": [
+            "萧决"
+          ],
+          "chapter_number": 1,
+          "character_id": "character:ID10",
+          "endpoints": [
+            "/api/projects/project:ID1/canon/knowledge"
+          ],
+          "event_id": null,
+          "label": "去认知矩阵改这一格",
+          "proposal_id": null,
+          "secret_id": "secret:ID7",
+          "target": "knowledge_cell"
+        },
+        "source": "decision",
+        "status": "succeeded",
+        "subtitle": "萧决 知道 血脉秘密",
+        "title": "作者 · 声明认知",
+        "ts": "<ts>"
+      }
+    ],
+    "next_cursor": "<ts>|decision:ID18"
+  },
+  "activityAuthorOnly": {
+    "actors": [
+      {
+        "actor": "author",
+        "count": 14
+      },
+      {
+        "actor": "system",
+        "count": 3
+      }
+    ],
+    "entries": [
+      {
+        "actor": "author",
+        "chapter_number": 1,
+        "id": "decision:ID36",
+        "jump": {
+          "cast": [
+            "萧决"
+          ],
+          "chapter_number": 1,
+          "character_id": "character:ID10",
+          "endpoints": [
+            "/api/projects/project:ID1/canon/knowledge"
+          ],
+          "event_id": null,
+          "label": "去认知矩阵改这一格",
+          "proposal_id": null,
+          "secret_id": "secret:ID7",
+          "target": "knowledge_cell"
+        },
+        "source": "decision",
+        "status": "succeeded",
+        "subtitle": "萧决 对「血脉秘密」：知道 → 以为",
+        "title": "作者 · 更正认知类型",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "author",
+        "chapter_number": 1,
+        "id": "decision:ID34",
+        "jump": {
+          "cast": [],
+          "chapter_number": 1,
+          "character_id": null,
+          "endpoints": [
+            "/api/projects/project:ID1/canon/events/event:ID35/cast"
+          ],
+          "event_id": "event:ID35",
+          "label": "去改这条事件的知情 / 在场名单",
+          "proposal_id": null,
+          "secret_id": null,
+          "target": "event_cast"
+        },
+        "source": "decision",
+        "status": "succeeded",
+        "subtitle": "接受：事件 1 条 · 关系 0 条",
+        "title": "作者 · 抽取结果审阅",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "author",
+        "chapter_number": 1,
+        "id": "decision:ID32",
+        "jump": {
+          "cast": [],
+          "chapter_number": 1,
+          "character_id": null,
+          "endpoints": [],
+          "event_id": null,
+          "label": "去第 1 章",
+          "proposal_id": null,
+          "secret_id": null,
+          "target": "chapter"
+        },
+        "source": "decision",
+        "status": "succeeded",
+        "subtitle": "否决：事件 1 条 · 关系 0 条",
+        "title": "作者 · 抽取结果审阅",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "author",
+        "chapter_number": 1,
+        "id": "decision:ID29",
+        "jump": {
+          "cast": [],
+          "chapter_number": 1,
+          "character_id": null,
+          "endpoints": [
+            "/api/projects/project:ID1/canon/events/event:ID30/cast"
+          ],
+          "event_id": "event:ID30",
+          "label": "去改这条事件的知情 / 在场名单",
+          "proposal_id": null,
+          "secret_id": null,
+          "target": "event_cast"
+        },
+        "source": "decision",
+        "status": "succeeded",
+        "subtitle": "接受：事件 1 条 · 关系 0 条",
+        "title": "作者 · 抽取结果审阅",
+        "ts": "<ts>"
+      }
+    ],
+    "next_cursor": "<ts>|decision:ID29"
+  },
+  "activityCallDetail": {
+    "cost": {
+      "call_id": "call:ID39",
+      "capability": "extractor",
+      "cost": null,
+      "model": "deepseek-v4",
+      "ms": 900,
+      "tokens_in": 1200,
+      "tokens_out": 400
+    },
+    "entry": {
+      "actor": "system",
+      "chapter_number": 1,
+      "id": "call:ID39",
+      "jump": {
+        "cast": [],
+        "chapter_number": 1,
+        "character_id": null,
+        "endpoints": [],
+        "event_id": null,
+        "label": "去第 1 章",
+        "proposal_id": null,
+        "secret_id": null,
+        "target": "chapter"
+      },
+      "source": "model_call",
+      "status": "succeeded",
+      "subtitle": "deepseek-v4 · 入 1200 / 出 400 token · 900 ms",
+      "title": "模型调用 · 抽取",
+      "ts": "<ts>"
+    },
+    "errors": [],
+    "payload": null,
+    "rows": [
+      {
+        "label": "能力",
+        "value": "抽取"
+      },
+      {
+        "label": "模型",
+        "value": "deepseek-v4"
+      },
+      {
+        "label": "为哪一章",
+        "value": "第 1 章"
+      },
+      {
+        "label": "入参 token",
+        "value": "1200"
+      },
+      {
+        "label": "出参 token",
+        "value": "400"
+      },
+      {
+        "label": "耗时",
+        "value": "900 ms"
+      },
+      {
+        "label": "第几次尝试",
+        "value": "1"
+      }
+    ]
+  },
+  "activityDecisionDetail": {
+    "cost": null,
+    "entry": {
+      "actor": "author",
+      "chapter_number": 1,
+      "id": "decision:ID36",
+      "jump": {
+        "cast": [
+          "萧决"
+        ],
+        "chapter_number": 1,
+        "character_id": "character:ID10",
+        "endpoints": [
+          "/api/projects/project:ID1/canon/knowledge"
+        ],
+        "event_id": null,
+        "label": "去认知矩阵改这一格",
+        "proposal_id": null,
+        "secret_id": "secret:ID7",
+        "target": "knowledge_cell"
+      },
+      "source": "decision",
+      "status": "succeeded",
+      "subtitle": "萧决 对「血脉秘密」：知道 → 以为",
+      "title": "作者 · 更正认知类型",
+      "ts": "<ts>"
+    },
+    "errors": [],
+    "payload": {
+      "canon_version": 13,
+      "character": {
+        "id": "character:ID10",
+        "label": "Character",
+        "name": "萧决"
+      },
+      "closed_edge_ids": [],
+      "evidence_id": "evidence:ID17",
+      "from": {
+        "believed_value": null,
+        "edge_id": "edge:ID16",
+        "edge_type": "KNOWS"
+      },
+      "retracted_edge_ids": [
+        "edge:ID16"
+      ],
+      "scope": "CANON",
+      "secret": {
+        "id": "secret:ID7",
+        "label": "Secret",
+        "name": "血脉秘密"
+      },
+      "target": "knowledge",
+      "to": {
+        "believed_value": "他以为那只是个传闻",
+        "edge_id": "edge:ID37",
+        "edge_type": "BELIEVES"
+      },
+      "valid_from_chapter": 1
+    },
+    "rows": [
+      {
+        "label": "类型",
+        "value": "更正认知类型"
+      },
+      {
+        "label": "裁决",
+        "value": "改过之后接受"
+      },
+      {
+        "label": "谁改的",
+        "value": "作者"
+      },
+      {
+        "label": "对象",
+        "value": "萧决"
+      },
+      {
+        "label": "章节",
+        "value": "第 1 章"
+      },
+      {
+        "label": "段落",
+        "value": "2"
+      },
+      {
+        "label": "依据引语",
+        "value": "萧决在青云城主府第一次听说了血脉秘密的真相。"
+      }
+    ]
+  },
+  "activityRunDetail": {
+    "cost": {
+      "call_id": "call:ID39",
+      "capability": "extractor",
+      "cost": null,
+      "model": "deepseek-v4",
+      "ms": 900,
+      "tokens_in": 1200,
+      "tokens_out": 400
+    },
+    "entry": {
+      "actor": "system",
+      "chapter_number": 1,
+      "id": "extraction_run:ID38",
+      "jump": {
+        "cast": [],
+        "chapter_number": 1,
+        "character_id": null,
+        "endpoints": [],
+        "event_id": null,
+        "label": "第 1 章还有 2 条待审",
+        "proposal_id": null,
+        "secret_id": null,
+        "target": "proposal"
+      },
+      "source": "extraction",
+      "status": "succeeded",
+      "subtitle": "有效事件 3 条 · 丢弃 1 条 · 待审提案 2 条",
+      "title": "第 1 章抽取",
+      "ts": "<ts>"
+    },
+    "errors": [],
+    "payload": null,
+    "rows": [
+      {
+        "label": "章节",
+        "value": "第 1 章"
+      },
+      {
+        "label": "有效事件",
+        "value": "3"
+      },
+      {
+        "label": "丢弃事件",
+        "value": "1"
+      },
+      {
+        "label": "待审提案",
+        "value": "2"
+      },
+      {
+        "label": "用时",
+        "value": "1.0 秒"
+      }
+    ]
+  },
   "bootstrapImport": {
     "import_report": {
       "chapter_count": 1,
@@ -34,6 +546,78 @@
       "root_path": "<root>/books/契约样书"
     }
   },
+  "canonEventCast": {
+    "canon_version": 14,
+    "decision_id": "decision:ID41",
+    "event": {
+      "event": {
+        "chapter_number": 1,
+        "confidence": 0.6,
+        "derived_from_event_id": "event:ID19",
+        "evidence_id": "evidence:ID26",
+        "evidence_status": "FRESH",
+        "id": "event:ID30",
+        "information_scope": "CANON",
+        "project_id": "project:ID1",
+        "source": "extractor",
+        "status": "ACTIVE",
+        "summary": "萧决得知血脉秘密。"
+      },
+      "knowers": [
+        {
+          "id": "character:ID10",
+          "label": "Character",
+          "name": "萧决"
+        }
+      ],
+      "participants": [
+        {
+          "id": "character:ID10",
+          "label": "Character",
+          "name": "萧决"
+        },
+        {
+          "id": "character:ID8",
+          "label": "Character",
+          "name": "李管家"
+        }
+      ],
+      "revealed_facts": []
+    },
+    "knowers_added": [],
+    "knowers_removed": [
+      {
+        "id": "character:ID8",
+        "label": "Character",
+        "name": "李管家"
+      }
+    ],
+    "participants_added": [],
+    "participants_removed": [],
+    "project_id": "project:ID1"
+  },
+  "canonKnowledge": {
+    "believed_value": "他以为那只是个传闻",
+    "canon_version": 13,
+    "character": {
+      "id": "character:ID10",
+      "label": "Character",
+      "name": "萧决"
+    },
+    "closed_edge_ids": [],
+    "decision_id": "decision:ID36",
+    "edge_id": "edge:ID37",
+    "from_type": "KNOWS",
+    "project_id": "project:ID1",
+    "retracted_edge_id": "edge:ID16",
+    "secret": {
+      "id": "secret:ID7",
+      "label": "Secret",
+      "name": "血脉秘密"
+    },
+    "since_chapter": 1,
+    "to_type": "BELIEVES"
+  },
   "chapterHistory": [
     {
       "created_at": "<ts>",
@@ -43,6 +627,52 @@
       "text_sha256": "<sha>"
     }
   ],
+  "chapterHistoryTwo": [
+    {
+      "created_at": "<ts>",
+      "is_current": false,
+      "snapshot_id": "snapshot:ID48",
+      "text": "第二章 试探\n\n他终于明白了。\n风起。他终于明白了。\n",
+      "text_sha256": "<sha>"
+    },
+    {
+      "created_at": "<ts>",
+      "is_current": true,
+      "snapshot_id": "snapshot:ID47",
+      "text": "第二章 试探\n\n他终于明白了。\n风起。他终于明白了。\n\n后来又添了一段。\n",
+      "text_sha256": "<sha>"
+    }
+  ],
+  "chapterSaved": {
+    "added": [
+      {
+        "created": true,
+        "id": "chapter:ID44",
+        "number": 3,
+        "path": "chapters/0003.md",
+        "project_id": "project:ID1",
+        "snapshot_created": true,
+        "snapshot_id": "snapshot:ID45",
+        "text_sha256": "<sha>",
+        "title": "对峙"
+      }
+    ],
+    "ignored_files": [],
+    "refreshed": [
+      {
+        "created": false,
+        "id": "chapter:ID46",
+        "number": 2,
+        "path": "chapters/0002.md",
+        "project_id": "project:ID1",
+        "snapshot_created": true,
+        "snapshot_id": "snapshot:ID47",
+        "text_sha256": "<sha>",
+        "title": "试探"
+      }
+    ],
+    "unchanged_count": 1
+  },
   "chapterText": {
     "markdown": "第一章 血脉\n\n萧决在青云城主府第一次听说了血脉秘密的真相。\n李管家什么也没说。\n",
     "number": 1
@@ -83,6 +713,93 @@
     "scope": "CANON",
     "states": []
   },
+  "chatCreated": {
+    "created_at": "<ts>",
+    "id": "chat_session:ID42",
+    "message_count": 0,
+    "pending_lookups": 0,
+    "running": false,
+    "title": "",
+    "updated_at": "<ts>"
+  },
+  "chatDeleted": {
+    "chat_id": "chat_session:ID43",
+    "deleted": true
+  },
+  "chatDetail": {
+    "messages": [
+      {
+        "seq": 0,
+        "speaker": "author",
+        "text": "第 2 章能说破血脉的事吗？"
+      },
+      {
+        "seq": 3,
+        "speaker": "assistant",
+        "text": "第 2 章这一场，血脉那条先别说破。"
+      }
+    ],
+    "session": {
+      "created_at": "<ts>",
+      "id": "chat_session:ID42",
+      "message_count": 4,
+      "pending_lookups": 0,
+      "running": false,
+      "title": "第 2 章能说破血脉的事吗？",
+      "updated_at": "<ts>"
+    }
+  },
+  "chatStopped": {
+    "chat_id": "chat_session:ID42",
+    "message": "这段对话这会儿没在跑，不用停。",
+    "stopped": false
+  },
+  "chatTurn": {
+    "calls_without_usage": 1,
+    "chapter": 2,
+    "context": {
+      "dropped_lookups": 0,
+      "dropped_reasoning": 0,
+      "full": false,
+      "lost_lookups": 0,
+      "off_chapter": 0,
+      "stale_lookups": 0,
+      "trimmed_results": 0
+    },
+    "lookups": 1,
+    "message": "说完了。",
+    "messages": [
+      {
+        "seq": 3,
+        "speaker": "assistant",
+        "text": "第 2 章这一场，血脉那条先别说破。"
+      }
+    ],
+    "reason": "done",
+    "reply": "第 2 章这一场，血脉那条先别说破。",
+    "session": {
+      "created_at": "<ts>",
+      "id": "chat_session:ID42",
+      "message_count": 4,
+      "pending_lookups": 0,
+      "running": false,
+      "title": "第 2 章能说破血脉的事吗？",
+      "updated_at": "<ts>"
+    },
+    "steps": 2,
+    "tokens_reported": 1264
+  },
+  "chats": [
+    {
+      "created_at": "<ts>",
+      "id": "chat_session:ID42",
+      "message_count": 4,
+      "pending_lookups": 0,
+      "running": false,
+      "title": "第 2 章能说破血脉的事吗？",
+      "updated_at": "<ts>"
+    }
+  ],
   "check": {
     "chapter": 3,
     "issues": [],
@@ -209,10 +926,112 @@
     "message": "「师兄」在这个项目里指 2 个东西（萧决(Character)、李管家(Character)），系统不替你挑。用本名或者一个只属于一个人的称呼",
     "surface": "师兄"
   },
+  "errorFactNotFound": {
+    "detail": {
+      "error": "fact_not_found",
+      "message": "「李管家」对「血脉秘密」现在是「不知道」 —— 这一格上没有可改的事实。要新添一条，请去那句原文上声明（章号由那句话定，不用你填）"
+    }
+  },
+  "errorKnowledgeRefused": {
+    "detail": {
+      "error": "bad_request",
+      "message": "「萧决」对「血脉秘密」现在就是你要改成的那一种，不用再改一次"
+    }
+  },
   "errorShortAlias": {
     "error": "invalid",
     "message": "别名「决」只有 1 个字，不能 usable_for_rules（ADR 0004：短别名去正文里匹配 = 满篇误报）。要留着它就传 usable_for_rules=False——存得下，只是规则不拿它开火"
   },
+  "errorStaleCanon": {
+    "detail": {
+      "current": 14,
+      "error": "stale_base_version",
+      "expected": 0,
+      "project_id": "project:ID1"
+    }
+  },
+  "eventsCanon": [
+    {
+      "event": {
+        "chapter_number": 1,
+        "confidence": 0.6,
+        "derived_from_event_id": "event:ID19",
+        "evidence_id": "evidence:ID26",
+        "evidence_status": "FRESH",
+        "id": "event:ID30",
+        "information_scope": "CANON",
+        "project_id": "project:ID1",
+        "source": "extractor",
+        "status": "ACTIVE",
+        "summary": "萧决得知血脉秘密。"
+      },
+      "knowers": [
+        {
+          "id": "character:ID10",
+          "label": "Character",
+          "name": "萧决"
+        },
+        {
+          "id": "character:ID8",
+          "label": "Character",
+          "name": "李管家"
+        }
+      ],
+      "participants": [
+        {
+          "id": "character:ID10",
+          "label": "Character",
+          "name": "萧决"
+        },
+        {
+          "id": "character:ID8",
+          "label": "Character",
+          "name": "李管家"
+        }
+      ],
+      "revealed_facts": []
+    },
+    {
+      "event": {
+        "chapter_number": 1,
+        "confidence": 0.6,
+        "derived_from_event_id": "event:ID27",
+        "evidence_id": "evidence:ID28",
+        "evidence_status": "FRESH",
+        "id": "event:ID35",
+        "information_scope": "CANON",
+        "project_id": "project:ID1",
+        "source": "extractor",
+        "status": "ACTIVE",
+        "summary": "萧决得知血脉秘密。"
+      },
+      "knowers": [
+        {
+          "id": "character:ID10",
+          "label": "Character",
+          "name": "萧决"
+        },
+        {
+          "id": "character:ID8",
+          "label": "Character",
+          "name": "李管家"
+        }
+      ],
+      "participants": [
+        {
+          "id": "character:ID10",
+          "label": "Character",
+          "name": "萧决"
+        },
+        {
+          "id": "character:ID8",
+          "label": "Character",
+          "name": "李管家"
+        }
+      ],
+      "revealed_facts": []
+    }
+  ],
   "eventsProvisional": [
     {
       "event": {
@@ -370,14 +1189,41 @@
     ],
     "unresolved_cast": [],
     "version": {
-      "canon_version": 0,
+      "canon_version": 10,
       "indexed_version": 0,
       "staleness": 0
     }
   },
+  "mentioned": {
+    "chapter": 1,
+    "has_text": true,
+    "surfaces": [
+      "萧决",
+      "李管家"
+    ]
+  },
+  "mentionedEmpty": {
+    "chapter": 99,
+    "has_text": false,
+    "surfaces": []
+  },
   "projects": [
     {
       "canon_version": 6,
+      "id": "project:ID1",
+      "name": "青云记",
+      "root_path": "<root>/book"
+    }
+  ],
+  "projectsTwo": [
+    {
+      "canon_version": 0,
+      "id": "project:ID2",
+      "name": "契约样书",
+      "root_path": "<root>/books/契约样书"
+    },
+    {
+      "canon_version": 14,
       "id": "project:ID1",
       "name": "青云记",
       "root_path": "<root>/book"
@@ -509,6 +1355,7 @@
         }
       ],
       "kind": "low_confidence_main",
+      "node_refs": [],
       "project_id": "project:ID1",
       "prompt_hash": "prompt:api-test",
       "resolution_action": null,
@@ -551,6 +1398,23 @@
         }
       ],
       "kind": "edge_conflict",
+      "node_refs": [
+        {
+          "id": "character:ID10",
+          "label": "Character",
+          "name": "萧决"
+        },
+        {
+          "id": "location:ID22",
+          "label": "Location",
+          "name": "青云城"
+        },
+        {
+          "id": "location:ID9",
+          "label": "Location",
+          "name": "北荒"
+        }
+      ],
       "project_id": "project:ID1",
       "prompt_hash": "prompt:api-edge-conflict",
       "resolution_action": null,
@@ -587,6 +1451,7 @@
         }
       ],
       "kind": "new_character",
+      "node_refs": [],
       "project_id": "project:ID1",
       "prompt_hash": "prompt:api-new-character",
       "resolution_action": null,
@@ -720,6 +1585,40 @@
       "name": "萧决"
     }
   ],
+  "runs": {
+    "entries": [
+      {
+        "actor": "system",
+        "chapter_number": 1,
+        "id": "extraction_run:ID38",
+        "jump": {
+          "cast": [],
+          "chapter_number": 1,
+          "character_id": null,
+          "endpoints": [],
+          "event_id": null,
+          "label": "第 1 章还有 2 条待审",
+          "proposal_id": null,
+          "secret_id": null,
+          "target": "proposal"
+        },
+        "source": "extraction",
+        "status": "succeeded",
+        "subtitle": "有效事件 3 条 · 丢弃 1 条 · 待审提案 2 条",
+        "title": "第 1 章抽取",
+        "ts": "<ts>"
+      }
+    ],
+    "run_count": 1,
+    "totals": {
+      "calls": 2,
+      "cost": null,
+      "ms": 900,
+      "priced_calls": 0,
+      "tokens_in": 1200,
+      "tokens_out": 400
+    }
+  },
   "scenes": [],
   "settings": {
     "api_key_preview": "",
@@ -838,5 +1737,88 @@
     ],
     "scope": "CANON",
     "truncated": false
+  },
+  "summaries": {
+    "chapter": 12,
+    "chapters": [
+      {
+        "chapter_number": 1,
+        "created_at": "<ts>",
+        "has_text": true,
+        "summary": "萧决在青云城主府听说了血脉秘密。"
+      },
+      {
+        "chapter_number": 2,
+        "created_at": null,
+        "has_text": true,
+        "summary": null
+      },
+      {
+        "chapter_number": 3,
+        "created_at": null,
+        "has_text": false,
+        "summary": null
+      },
+      {
+        "chapter_number": 4,
+        "created_at": null,
+        "has_text": false,
+        "summary": null
+      },
+      {
+        "chapter_number": 5,
+        "created_at": null,
+        "has_text": false,
+        "summary": null
+      },
+      {
+        "chapter_number": 6,
+        "created_at": null,
+        "has_text": false,
+        "summary": null
+      },
+      {
+        "chapter_number": 7,
+        "created_at": null,
+        "has_text": false,
+        "summary": null
+      },
+      {
+        "chapter_number": 8,
+        "created_at": null,
+        "has_text": false,
+        "summary": null
+      },
+      {
+        "chapter_number": 9,
+        "created_at": null,
+        "has_text": false,
+        "summary": null
+      },
+      {
+        "chapter_number": 10,
+        "created_at": null,
+        "has_text": false,
+        "summary": null
+      },
+      {
+        "chapter_number": 11,
+        "created_at": null,
+        "has_text": false,
+        "summary": null
+      }
+    ],
+    "missing": [
+      2
+    ],
+    "summarized": 1,
+    "window_first": 1,
+    "window_last": 11
+  },
+  "summaryGenerated": {
+    "chapter_number": 1,
+    "created_at": "<ts>",
+    "has_text": true,
+    "summary": "萧决在青云城主府听说了血脉秘密。"
   }
 }

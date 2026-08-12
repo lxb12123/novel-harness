@@ -47,10 +47,105 @@ tell 一旦进了 X1/X2 的 prompt，两臂 100% 命中自己写进去的词，`
 from __future__ import annotations
 
 from enum import StrEnum
+from fractions import Fraction
 
 from ..graph import KnowledgeCell, KnowledgeState
-from .context import ResolvedConstraints
+from .context import DraftContext, ResolvedConstraints
 from .length import DraftLanguage, LengthSpec
+
+
+CONTINUATION_GOAL = "顺着上文往下写，接住作者已经起的头，不要另起一段新情节。"
+"""续写模式的 `goal`（[ADR 0015](../../../docs/adr/0015-inline-continuation-is-a-short-draft.md) D3）。
+
+**它是常量、住在后端，而不是前端传一个默认值**——`goal` 是 ADR 0010 点名的三个自由文本
+入口之一（作者能把伏笔用自然语言写进去，本层看不见）。续写模式把这个入口**关掉**换成
+这一句，是在缩小那个洞。前端能传的东西作者就能改，所以它不能住在前端。"""
+
+UNKNOWN_CAST_LINE = "【在场】\n未知。因此这一段不得说破任何尚未公开的秘密。"
+"""退化态的「在场」块（ADR 0015 D4）。**它同时说了两件事**：不知道谁在场，以及
+由此推出的约束。分开说会让模型只读到前半句，而前半句单独出现时最自然的反应是自己猜一个。
+
+常量在这儿而不是拼在 `_base()` 里，是为了让「续写到底给模型看了什么」可以被逐字节测。"""
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 逐字上文的截断长度 —— 默认值是考卷，产品档要显式加长（ADR 0019 边界五）
+# ══════════════════════════════════════════════════════════════════════════
+
+GATE_TAIL_CODE_POINTS = 800
+"""`previous_tail` 的默认截断长度（code point）。**这个数是 X0 对照臂的定义，不是产品参数。**
+
+ARCHITECTURE §9 / PLAN §551：「X0（只给上一场景最多 800 个输入 code point）」。
+X0 存在的目的是**证明给得少会崩**，而三臂共用 `assemble()`——于是默认值一改就是改考卷
+（EVAL_PROTOCOL §2 冻结，且反混淆铁律要求三臂只在图谱段上有差异）。
+
+**因此：`eval/runner.py`、`eval/evidence.py`、`nh gate`、`nh draft` 一个字都不传，自动拿它。
+想要更长的上文只能在调用点显式传 `previous_tail_limit=`**——让「谁把预算放大了」在
+调用点看得见，而不是藏在一个所有人共享的常量里。
+"""
+
+TAIL_CONTEXT_SHARE = Fraction(1, 6)
+"""逐字上文最多占「窗口减去输出预留」的几分之几。
+
+**是比例不是绝对量**，理由同 `product_context.MEMORY_CONTEXT_SHARE`：换个模型自动缩放，
+1M 窗口和 32k 窗口不该拿同一个数字。取 1/6 而不是取满：记忆层已经拿走 1/3
+（`MEMORY_CONTEXT_SHARE`），两者加起来占一半，剩下的一半留给约束段、图谱段和余量。
+
+**上文的优先级高于记忆层**（ADR 0019 边界五：Prune Before Summarize，逐字上文永不许被
+记忆挤掉），但「优先级高」说的是砍的顺序，不是份额大——它只需要够长到接住语气和情绪。
+"""
+
+TAIL_UNITS_CEILING = 40_000
+"""逐字上文的**失控闸**——正常情况下它不该起作用。
+
+── 为什么它不是「每次都砍到这么长」──────────────────────────────────────
+
+真正决定上文多长的是 `min(上一章实际有多长, 这里算出来的额度)`：截断走的是
+`previous_tail[-limit:]`，**上一章不到 limit 就整篇原样进 prompt，一个字不切**。
+所以常态下起作用的是「你那一章写了多少字」，不是这个常量。
+
+这个数上一版是 12,000，**标定错了**：1M 窗口的模型 + 13,000 字的一章，那一章占窗口不到
+3%，其余开销也绰绰有余——却因为撞上这个闸被砍掉 1,000 字，**而且砍在句子中间**。
+上文这一层的全部意义是接住语气和情绪，切在半句上正好毁掉它要的那个东西。
+闸门该拦的是病态输入（切章切错了、一「章」是一整卷），不是一章正常的长文。
+
+── 那为什么还留着它 ──────────────────────────────────────────────────
+
+因为 `previous_tail` 是**调用方给什么就是什么**。切章一旦出错（`CHAPTER_RE` 没匹配上，
+整本书成了一「章」），没有这道闸就是把整本书按 token 计费发出去一次。
+40,000 字已经不是一章是一卷，撞到它说明**上游坏了**，不是作者写得多。
+
+要真的放开就调这一个数——它是一个数，不是散落各处的常量。
+"""
+
+
+def product_tail_limit(
+    max_context_tokens: int | None,
+    reserved_output_tokens: int,
+) -> int:
+    """产品档的逐字上文能有多长（code point），从模型的真实上下文窗口倒推。
+
+    `max_context_tokens is None`（能力表没登记这个模型）→ 回落到 `GATE_TAIL_CODE_POINTS`。
+    **不猜一个大窗口**：猜大了的后果是发出去被供应商拒（同 `provider.py` 那条理由）。
+
+    下限也是 `GATE_TAIL_CODE_POINTS`：窗口小到算出来比它还短时保持今天的行为，
+    **这条函数只许把上文变长，不许变短**——变短了没人会发现，只会觉得模型忽然变笨。
+
+    Note:
+        预算是按「字」算的（`TOKENS_PER_UNIT` 的口径），截断是按 code point 做的。
+        同一段文本 code point ≥ 字（多出来的是空白），所以按 code point 截等于**少给**，
+        方向偏保守；而 `TOKENS_PER_UNIT=2` 对中文本来就是往贵了算，余量足够吸收它。
+    """
+    # 局部导入：本模块是三臂共用的渲染器，**模块层不许依赖记忆层**——`product_context`
+    # 会把 EventStore / db 一并拖进来，而「拿不到 store 就查不了第二遍」（ADR 0010 D2）
+    # 靠的正是这条边界，不只是签名里没有 store。这里只借它那一个换算常量。
+    from .product_context import TOKENS_PER_UNIT
+
+    if max_context_tokens is None:
+        return GATE_TAIL_CODE_POINTS
+    headroom = max(0, max_context_tokens - max(0, reserved_output_tokens))
+    units = int(Fraction(headroom, TOKENS_PER_UNIT) * TAIL_CONTEXT_SHARE)
+    return max(GATE_TAIL_CODE_POINTS, min(units, TAIL_UNITS_CEILING))
 
 
 class PromptForm(StrEnum):
@@ -126,12 +221,13 @@ def system_prompt(spec: LengthSpec, house_style: str | None = None) -> str:
 
 
 def assemble(
-    ctx: ResolvedConstraints,
+    ctx: DraftContext,
     *,
     form: PromptForm,
     goal: str,
     length: LengthSpec,
     previous_tail: str = "",
+    previous_tail_limit: int = GATE_TAIL_CODE_POINTS,
     house_style: str | None = None,
 ) -> list[dict[str, str]]:
     """把一个场景的约束渲染成 OpenAI 兼容的 `messages`。
@@ -144,6 +240,9 @@ def assemble(
             分支说生产默认翻成 `NH_DRAFT_FORM=X2`，那个值从环境变量上来时是 `str`。
         goal: 这一场要写什么。**自由文本入口，本层看不见它有没有剧透**——见模块 docstring 第四节。
         previous_tail: 上文。空串 = 开篇，整个「上文」块不出现（不留一个空标题）。
+        previous_tail_limit: 上文最多保留末尾多少个 code point。**默认值是 X0 对照臂的定义
+            （`GATE_TAIL_CODE_POINTS`），三臂必须用这个默认值**；产品档显式传
+            `product_tail_limit(...)` 算出来的值。`<= 0` = 完全不给上文。
         length: 已合法的输出篇幅与语言。调用边界已验证，本函数不再做 hard-max 校验。
         house_style: 可选文风系统提示；为空时按 ``length.language`` 选择中英文默认文风。
 
@@ -169,6 +268,7 @@ def assemble(
         ctx,
         goal=goal,
         previous_tail=previous_tail,
+        previous_tail_limit=previous_tail_limit,
         house_style=system_prompt(length, house_style),
     )
     section = graph_section(ctx, form)
@@ -178,7 +278,7 @@ def assemble(
     return messages
 
 
-def graph_section(ctx: ResolvedConstraints, form: PromptForm) -> str:
+def graph_section(ctx: DraftContext, form: PromptForm) -> str:
     """X1/X2 相对 X0 多出来的那一段，**X0 恒为空串**。
 
     公开出来是为了让「X0 是前缀」这条性质可以被**逐字节**验证（测试拿它重建 X1 的内容），
@@ -213,10 +313,11 @@ def graph_section(ctx: ResolvedConstraints, form: PromptForm) -> str:
 
 
 def _base(
-    ctx: ResolvedConstraints,
+    ctx: DraftContext,
     *,
     goal: str,
     previous_tail: str,
+    previous_tail_limit: int,
     house_style: str,
 ) -> list[dict[str, str]]:
     """house-style + 上文 + 在场 + 本场目标。**图谱事实一个字都不在这儿。**
@@ -226,11 +327,16 @@ def _base(
     是最坏的失败时机（同 `provider.py` 对配置自洽性的那条理由）。
     """
     parts: list[str] = []
-    tail = previous_tail.strip()[-800:]
+    # `[-0:]` 是整串不是空串，所以 `<= 0` 必须单独分支——否则「不给上文」会变成「全给」。
+    tail = previous_tail.strip()[-previous_tail_limit:] if previous_tail_limit > 0 else ""
     if tail:
         parts.append("【上文】\n" + tail)
     # cast 在 X0 里也有 —— ADR 0010 D6，它是作者的输入不是图谱查询的结果。
-    parts.append("【在场】\n" + "、".join(ctx.cast))
+    # 退化态（ADR 0015 D4）没有 cast：**明说「未知」**，不拿空串冒充一份精确清单。
+    if isinstance(ctx, ResolvedConstraints):
+        parts.append("【在场】\n" + "、".join(ctx.cast))
+    else:
+        parts.append(UNKNOWN_CAST_LINE)
     parts.append("【这一场要写】\n" + goal.strip())
     return [
         {"role": "system", "content": house_style},
@@ -255,7 +361,11 @@ def _panel_order(ctx: ResolvedConstraints) -> list[tuple[str, str, KnowledgeCell
     ]
 
 
-def _matrix_block(ctx: ResolvedConstraints, form: PromptForm) -> str:
+def _matrix_block(ctx: DraftContext, form: PromptForm) -> str:
+    # 退化态没有矩阵：行就是 cast，没有 cast 就没有行。给一个空矩阵会让下游
+    # 以为「查过了，确实没人知道任何事」——那是另一句话，而且是假的。
+    if not isinstance(ctx, ResolvedConstraints):
+        return ""
     cells = _panel_order(ctx)
     if not cells:
         return ""
@@ -290,7 +400,7 @@ def _x2_cell(who: str, secret: str, cell: KnowledgeCell) -> str:
     return f"{who}到现在还不知道「{secret}」。"
 
 
-def _secrets_block(ctx: ResolvedConstraints, form: PromptForm) -> str:
+def _secrets_block(ctx: DraftContext, form: PromptForm) -> str:
     labels = ctx.secret_labels
     if not labels:
         return ""
@@ -301,7 +411,7 @@ def _secrets_block(ctx: ResolvedConstraints, form: PromptForm) -> str:
     return f"{joined}{quantifier}，这一场还写不得。"
 
 
-def _forbidden_block(ctx: ResolvedConstraints, form: PromptForm) -> str:
+def _forbidden_block(ctx: DraftContext, form: PromptForm) -> str:
     """未来实体的名字 + 首现章。**这一侧「标签 ⟂ tell」不成立**：`血枭盟` 自身即检测词，
     X1/X2 必然点它的名 → echo 风险 → 协议让 `future_leak` 只作描述性地板、不主导裁决
     （`draft/context.py` 第三节说的就是这条）。这里照写不误，读结果的人要知道这一点。

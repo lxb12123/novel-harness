@@ -180,6 +180,77 @@ class ResolvedConstraints(BaseModel):
         return [e.node.name for e in self.forbidden_entities]
 
 
+class UnknownCastConstraints(BaseModel):
+    """**不知道在场是谁**时的约束集 —— fail-closed 的退化值，而且它明说自己是。
+
+    行内续写用它（[ADR 0015](../../../docs/adr/0015-inline-continuation-is-a-short-draft.md) D4）：
+    作者边写边要提示，此刻「谁在场」还没有答案——**它是被这一段写出来的结果，不是前提**。
+    无名配角（「掌柜的」「一个小厮」）更是永远进不了花名册。
+
+    ── 为什么是第二个类型，而不是把 `ResolvedConstraints.cast` 的 `min_length=1` 放宽 ──
+
+    那个类型存在的**全部意义**就是「`must_not_reveal` 是算出来的答案，不是退化值」。
+    一旦空 cast 能穿过去，`panel/constraints.py` 记的那次病史（人静默消失 → 秘密从清单里
+    消失 → Writer 收到「无需保密」）立刻能重演，**而且没有任何东西会红**。
+
+    两个类型 ⇒ `assemble()` **知道自己拿的是哪一种**，渲染「在场：未知」而不是伪装成一份
+    精确清单；也 ⇒ **kill-gate 永远拿不到本类型**（它走 `resolve_constraints()`），
+    臂间比较不会被「更严的卷子」污染（模块 docstring 第二节点名的那种失效）。
+
+    **没有 `cast`**：不知道就是不知道，不许用空列表冒充「这一场没有人」。
+    **没有 `matrix`**：矩阵的行就是 cast，没有 cast 就没有行——给一个空矩阵只会让
+    下游以为「查过了，确实没人知道任何事」。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    chapter: int
+
+    must_not_reveal: list[NodeRef] = Field(default_factory=list)
+    """**全书尚未被所有人知道的秘密**（`scene_constraints` 空 cast 时的退化值）。窄引用，无 props。"""
+
+    forbidden_entities: list[ForbiddenEntity] = Field(default_factory=list)
+    """首现章号在本章之后的实体。**这一项本来就与 cast 无关**（按章号算），所以退化态里它是精确的。"""
+
+    @property
+    def secret_labels(self) -> list[str]:
+        """同 `ResolvedConstraints.secret_labels`：显示名，**永不是内容 tell**。"""
+        return [s.name for s in self.must_not_reveal]
+
+    @property
+    def forbidden_names(self) -> list[str]:
+        return [e.node.name for e in self.forbidden_entities]
+
+
+DraftContext = ResolvedConstraints | UnknownCastConstraints
+"""`assemble()` 收的两种约束集。**类型本身就是「这份约束退化了没有」的答案。**"""
+
+
+def unknown_cast_constraints(
+    store: StoryGraph,
+    project_id: str,
+    chapter: int,
+    *,
+    secrets: Sequence[str] | None = None,
+) -> UnknownCastConstraints:
+    """算出「不知道谁在场」时的全禁约束（ADR 0015 D4）。
+
+    **它故意不调 `require_resolved_cast()`。** 那道守卫的作用是拦住「起草侧拿到退化值
+    却以为拿到了精确值」；这里的调用方**明确要的就是退化值**，而它拿到的类型也明说了
+    这一点，所以守卫在这条路径上没有对象可守。
+
+    空 cast 喂给 `scene_view()` 得到的正是 `resolved.complete == False` 那一支：
+    `must_not_reveal` = 全部秘密（`panel/constraints.py`：「算不准就多禁」）。
+    """
+    view = scene_view(store, project_id, chapter, (), secrets=secrets)
+    constraints = view.constraints
+    return UnknownCastConstraints(
+        chapter=constraints.chapter,
+        must_not_reveal=list(constraints.must_not_reveal),
+        forbidden_entities=list(constraints.forbidden_entities),
+    )
+
+
 def resolve_constraints(
     store: StoryGraph,
     project_id: str,

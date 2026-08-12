@@ -72,6 +72,34 @@ class EventView(BaseModel):
     revealed_facts: list[NodeRef] = Field(default_factory=list)
 
 
+class EventCastEdit(BaseModel):
+    """作者改完一条已生效事件的在场/知情名单之后，**改成了什么**。
+
+    出参是 `NodeRef` 不是 `Node`（见 `graph.models.NodeRef` 的实测泄漏形态）：
+    这份东西会整份进 `decision_log.payload_json`，而 `NodeProps` 是 `extra="allow"` 的。
+
+    `event` 是改完之后重新读出来的那一份，不是调用方拼的——「我以为我改成了什么」
+    和「库里现在是什么」必须由同一次读回答。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    event: EventView
+    knowers_added: tuple[NodeRef, ...] = ()
+    knowers_removed: tuple[NodeRef, ...] = ()
+    participants_added: tuple[NodeRef, ...] = ()
+    participants_removed: tuple[NodeRef, ...] = ()
+
+    @property
+    def changed(self) -> bool:
+        return bool(
+            self.knowers_added
+            or self.knowers_removed
+            or self.participants_added
+            or self.participants_removed
+        )
+
+
 class ProvisionalEventSpec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -127,6 +155,10 @@ class ProposalAuditSnapshot(BaseModel):
     quote_sha256: str | None = Field(default=None, min_length=64, max_length=64)
     chapter_number: int | None = Field(default=None, ge=1)
     para_index: int | None = Field(default=None, ge=0)
+    # actor 不在这一层，它在 `payload["actor"]` 里 —— 003 的
+    # `proposal_resolution_metadata_*` 触发器把本模型的**顶层键集合**逐字写死了
+    # （payload / subject_name / quote_text / quote_sha256 / chapter_number / para_index），
+    # 多一个顶层键就是 `RAISE(ABORT)`。payload 内部没有这条白名单。
 
     @model_validator(mode="after")
     def _quote_hash_matches_text(self) -> ProposalAuditSnapshot:
@@ -160,6 +192,30 @@ class ProposalRecord(ProposalCreate):
     resolution_action: ProposalResolutionAction | None = None
     resolved_canon_version: int | None = Field(default=None, ge=0)
     audit_envelope: ProposalAuditSnapshot | None = None
+
+    node_refs: tuple[NodeRef, ...] = ()
+    """`items` 里那些**裸 id** 对应的显示名（id / label / name）。
+
+    ── 它为什么必须存在 ─────────────────────────────────────────────────
+    `items` 是开放 JSON，里面装的是 `subject_id` / `target_id` 这种引擎内部主键。
+    在它存在之前，界面被迫自己拿 id 去花名册里查名字，查不到就**把 id 截断了摆上屏**
+    （`n:ID22`，`"location:ID22".slice(-6)`）。
+
+    **失败的机制是两次查询的时间差，不是「花名册只收人物」**（它走
+    `resolve(pid, None)`，而 `upsert_node` 每建一个节点都写一条 canonical 别名，
+    所以什么 label 都在里面）：花名册和提案队列在浏览器里是两条独立缓存，
+    后台抽取和自动升 CANON 会造出新节点，而没有任何一条路径保证前者在后者之后重取过。
+    差一拍，屏幕上就是一串截断的内部编号。
+
+    **出参自足**让这一整类失败在结构上不存在：名字和 id 在同一个响应里。
+    ARCHITECTURE §10.3 的原话是「闸门只出 `NodeRef`（id/label/name），不出 `Node`」。
+
+    **不是 `Node`**：这些 id 里可能有 Secret，而 `Node.props` 装的正是秘密的内容
+    （见 `graph.models.NodeRef` 的两种实测泄漏形态）。
+
+    存储层不填它（它不落库，`items_json` 一个字节没变）：由读端在出接口前补上。
+    认不出来的 id **不在这里出现**（不编一个假名字），界面那边说「—」。
+    """
 
 
 class ProposalResolutionMark(BaseModel):

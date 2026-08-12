@@ -1,20 +1,13 @@
 import { useCharacterState, useEvidence, useRoster } from "../api/hooks";
 import { useCoords } from "../store";
-import type { Edge } from "../api/types";
+import { edgeName, type Edge } from "../api/types";
 
 // Tab3 确定性证据 —— 把「✓知道 ch88」还原成当年那句原文。
 // **明确不给分数**（v1 没有向量，出任何 score = 编的，§1.2）。声明产生的边带 evidence_id，
 // 逐条取回「来源章 + 原文片段」。作者看到的不是「系统觉得」，是「你自己写过的那句」。
 
-const TYPE_ZH: Record<string, string> = {
-  KNOWS: "知道",
-  BELIEVES: "以为（错误认知）",
-  LOCATED_AT: "在",
-  HAS_STATE: "状态",
-  MEMBER_OF: "属于",
-  OWNS: "持有",
-  RELATED_TO: "关系",
-};
+// 关系类型 → 中文在 `api/types.ts::EDGE_ZH`（全前端一份，9 类全列，兜底是中文）。
+// 这儿原来那份拷贝只有 7 行且 `?? edge.type` 原样回吐。
 
 export function EvidenceTab() {
   const { projectId, chapter, selectedNodeId } = useCoords();
@@ -24,7 +17,8 @@ export function EvidenceTab() {
   if (!selectedNodeId)
     return <div className="empty">从左侧选择一个条目，这里会显示与它相关的原文依据。</div>;
 
-  const nameOf = (id: string) => roster.data?.find((n) => n.id === id)?.name ?? id;
+  // 查不到就说「—」，**绝不 `?? id`**（同 `BottomBar`：两条独立缓存差一拍）。
+  const nameOf = (id: string) => roster.data?.find((n) => n.id === id)?.name ?? "—";
   const evidenced = (state.data?.edges ?? []).filter((e) => e.evidence_id);
 
   if (state.isFetching && !state.data) return <div className="empty">加载中…</div>;
@@ -54,7 +48,7 @@ function EvidenceRow({ pid, edge, dstName }: { pid: string; edge: Edge; dstName:
   return (
     <div className="statecard">
       <div className="nm">
-        {TYPE_ZH[edge.type] ?? edge.type} {dstName}
+        {edgeName(edge.type)} {dstName}
         {believed && <span className="pc"> —「{believed}」</span>}
         <span style={{ color: "var(--dim)", fontWeight: 400 }}> · 第 {edge.valid_from_chapter} 章起</span>
       </div>

@@ -1,13 +1,17 @@
 import { useEffect, useState } from "react";
-import { useConstraints, useMatrix, useStates } from "../api/hooks";
+import { useConstraints, useMatrix, useMentioned, useStates } from "../api/hooks";
 import { useCoords } from "../store";
 import { MatrixView } from "./KnowledgeMatrix";
 import type { StateSnapshot } from "../api/types";
 import { DraftLengthControls } from "./DraftLengthControls";
 
-// 章节准备页（P2/P3）：写第 N 章之前的**确定性简报**。全部由现有读端拼出，纯聚合。
+// 章节核对页（P2/P3）：第 N 章的**确定性简报**。全部由现有读端拼出，纯聚合。
 // 一页回答三件事：上一章结束时是什么局面、这一章不能说破/不能提前出现什么、现在谁知道什么。
 // 「本章目标」是作者的笔记——**引擎不背书**，v1 存浏览器本地（无笔记落盘端点，诚实降级）。
+//
+// **它原本叫「写作前简报」，还带一个「在场」输入框。** 两样都拿掉了：在场人物是写出来的
+// 结果，不是写之前填的表单。现在 cast 空着，后端从这一章的正文里自己数（`mentioned.py`），
+// 这一页因此从「写之前先准备」变成「写完回头核对」。
 
 function PrevStateCard({ s }: { s: StateSnapshot }) {
   const known = s.edges.filter((e) => e.type === "KNOWS" || e.type === "BELIEVES").length;
@@ -24,11 +28,12 @@ function PrevStateCard({ s }: { s: StateSnapshot }) {
 }
 
 export function ChapterPrepPage() {
-  const { projectId, chapter, cast, setCast, setPage } = useCoords();
+  const { projectId, chapter, cast, setPage } = useCoords();
   const prevCh = Math.max(1, chapter - 1);
   const prev = useStates(projectId, prevCh, cast);
   const matrix = useMatrix(projectId, chapter, cast);
   const constraints = useConstraints(projectId, chapter, cast);
+  const mentioned = useMentioned(projectId, chapter);
 
   // 本章目标 brief：localStorage，按 项目+章 存。引擎不背书，纯作者笔记。
   const briefKey = `nh-brief:${projectId}:${chapter}`;
@@ -43,14 +48,14 @@ export function ChapterPrepPage() {
   return (
     <div className="prep">
       <div className="prep-head">
-        <h2 style={{ margin: 0 }}>第 {chapter} 章 · 写作前简报</h2>
-        <label>在场</label>
-        <input
-          className="cast"
-          placeholder="输入本章出场人物"
-          value={cast}
-          onChange={(e) => setCast(e.target.value)}
-        />
+        <h2 style={{ margin: 0 }}>第 {chapter} 章 · 核对</h2>
+        <span className="hint">
+          {cast ? `按「${cast}」` : mentioned.data?.has_text
+            ? mentioned.data.surfaces.length
+              ? `按这一章提到的：${mentioned.data.surfaces.join("、")}`
+              : "这一章还没提到花名册里的人"
+            : "这一章还没有正文"}
+        </span>
         <span className="spacer" />
         <button onClick={() => setPage("workbench")}>← 回工作台写正文</button>
       </div>
@@ -75,8 +80,6 @@ export function ChapterPrepPage() {
           <h3>上一章（第 {prevCh} 章）结束时</h3>
           {chapter <= 1 ? (
             <div className="empty">这是第一章，没有上一章。</div>
-          ) : !cast ? (
-            <div className="empty">填「在场」后，这里显示他们上一章结束时的所在地与已知秘密。</div>
           ) : prev.data && prev.data.length ? (
             prev.data.map((s) => <PrevStateCard key={s.node.id} s={s} />)
           ) : (

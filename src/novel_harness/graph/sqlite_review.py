@@ -8,6 +8,7 @@ from ..db import Connection
 from . import queries
 from .models import (
     Edge,
+    EdgeProps,
     EdgeSpec,
     EdgeStatus,
     Evidence,
@@ -149,6 +150,107 @@ class SqliteEdgeReviewStore:
                     ReviewableEdge(edge=edge, src=item.src, dst=item.dst)
                 )
             return tuple(promoted)
+
+    # ── 作者事后改一条已生效事实（corrections.py 的四个零件）──────────────────
+
+    def node_refs(
+        self,
+        project_id: str,
+        node_ids: Sequence[str],
+    ) -> tuple[NodeRef, ...]:
+        ids = self._selection(node_ids)
+        nodes = queries.fetch_nodes(self._conn, project_id, set(ids))
+        out: list[NodeRef] = []
+        for node_id in ids:
+            node = nodes.get(node_id)
+            if node is None:
+                raise EdgeReviewValidationError(f"节点不存在或跨项目：{node_id}")
+            out.append(NodeRef.of(node))
+        return tuple(out)
+
+    def current_knowledge(
+        self,
+        project_id: str,
+        character_id: str,
+        secret_id: str,
+    ) -> tuple[ReviewableEdge, ...]:
+        edges = queries.current_knowledge_edges(
+            self._conn, project_id, character_id, secret_id
+        )
+        return self._with_nodes(project_id, edges) if edges else ()
+
+    def retract_canon(
+        self,
+        project_id: str,
+        edge_ids: Sequence[str],
+    ) -> tuple[ReviewableEdge, ...]:
+        with self._graph.transaction():
+            sources = self.hydrate_current_canon(project_id, edge_ids)
+            return tuple(
+                ReviewableEdge(
+                    edge=queries.retract_edge(self._conn, item.edge.id),
+                    src=item.src,
+                    dst=item.dst,
+                )
+                for item in sources
+            )
+
+    def restore_canon(
+        self,
+        project_id: str,
+        edge_id: str,
+        *,
+        props: EdgeProps,
+    ) -> ReviewableEdge:
+        with self._graph.transaction():
+            try:
+                edge = queries.fetch_edge(self._conn, edge_id)
+            except LookupError as exc:
+                raise EdgeReviewValidationError(f"边不存在：{edge_id}") from exc
+            if edge.project_id != project_id:
+                raise EdgeReviewValidationError(
+                    f"边 {edge_id} 属于项目 {edge.project_id}，不是 {project_id}"
+                )
+            if (
+                edge.information_scope is not InformationScope.CANON
+                or edge.status is not EdgeStatus.RETRACTED
+                or edge.valid_to_chapter is not None
+            ):
+                raise EdgeReviewValidationError(
+                    f"边 {edge_id} 不是一条未闭合的 RETRACTED CANON 边，不能改回来"
+                )
+            if edge.evidence_status is EvidenceStatus.STALE:
+                raise EdgeReviewValidationError(f"边 {edge_id} 的依据已变更（STALE），不能改回来")
+            spec = EdgeSpec(
+                project_id=project_id,
+                src=edge.src,
+                dst=edge.dst,
+                type=edge.type,
+                props=props,
+                valid_from_chapter=edge.valid_from_chapter,
+                information_scope=InformationScope.CANON,
+                confidence=edge.confidence,
+                source=edge.source,
+                evidence_id=edge.evidence_id,
+            )
+            # 复活一条边和插一条边一样会制造重叠区间，所以走的是 supersede 用的**同一个**
+            # 冲突搜索（find_conflicts 只看 ACTIVE，所以它自己不会出现在结果里）。
+            # 这里故意不闭合任何东西：作者的动作是「改回来」，不是「从今天起换一个值」。
+            conflicts = queries.find_conflicts(
+                self._conn, spec, queries.exclusivity_of(self._conn, edge.type)
+            )
+            if conflicts:
+                raise EdgeReviewValidationError(
+                    f"边 {edge_id} 改不回来：{[c.id for c in conflicts]} 已经占着同一段区间"
+                )
+            queries.update_edge_facets(
+                self._conn,
+                edge.id,
+                spec,
+                EvidenceStatus.NONE if spec.evidence_id is None else EvidenceStatus.FRESH,
+            )
+            restored = queries.activate_edge(self._conn, edge.id)
+            return self._with_nodes(project_id, [restored])[0]
 
     def evidence(self, project_id: str, evidence_id: str) -> Evidence:
         try:

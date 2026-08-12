@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { useChapterText, useResolve, useSaveChapter } from "../api/hooks";
+import {
+  useChapters,
+  useChapterText,
+  useContinuation,
+  useResolve,
+  useSaveChapter,
+} from "../api/hooks";
 import { useCoords } from "../store";
 import { ApiError } from "../api/client";
 import { DeclareDrawer } from "./DeclareDrawer";
@@ -7,6 +13,7 @@ import { SceneBar } from "./SceneBar";
 import { HistoryDrawer } from "./HistoryDrawer";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
 import { locate } from "../anchor";
+import { cleanSuggestion, shouldSuggest } from "../continuation";
 
 // 中栏正文编辑器（CodeMirror 6，§2.4——不是 TipTap）。
 // CM6 只是磁盘 chapters/NNNN.md 的便利视图：读 = GET text，存 = PUT → sync，DB 永不是
@@ -16,9 +23,14 @@ export function CenterEditor() {
   const { projectId, chapter, setSelection, selection, focusNode, highlight, setHighlight } =
     useCoords();
   const [open, setOpen] = useState(false); // 这一章是否已打开进编辑器
+  const chapters = useChapters(projectId);
   const { data } = useChapterText(projectId, chapter, open);
   const save = useSaveChapter(projectId ?? "", chapter);
   const resolve = useResolve(projectId ?? "");
+  const continuation = useContinuation(projectId ?? "", chapter);
+  // 每次请求发出前 +1。回来时对不上 = 作者在这期间又敲了字，这一条作废。
+  // **这就是「取消」**：续写不需要增量失效，只需要过期的那次别落地（ADR 0015）。
+  const askRef = useRef(0);
 
   const [doc, setDoc] = useState("");
   const [dirty, setDirty] = useState(false);
@@ -62,6 +74,23 @@ export function CenterEditor() {
 
   const saveErr = save.error instanceof ApiError ? save.error : null;
 
+  // 一章都没有的书（刚建的空书、或稿子被从文件夹里删光了）：不进编辑器。
+  // 不拦的话这儿会渲染一个**空白但完全正常**的编辑器——作者会以为自己打开了第 1 章，
+  // 打上字、按保存，然后撞上一个 404。空状态说清楚比一张漂亮的空表安全。
+  if (chapters.data?.length === 0) {
+    return (
+      <section className="pane editor">
+        <div className="edbar">
+          <span className="who">还没有章节</span>
+        </div>
+        <div className="empty" style={{ padding: 16 }}>
+          这本书还是空的。用左边的「＋ 新书 / 导入」导入一份 TXT，
+          导入完这里就会打开最后一章。
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="pane editor">
       <div className="edbar">
@@ -99,12 +128,28 @@ export function CenterEditor() {
 
       <div className="cm-wrap">
         <CodeEditor
+          ref={editorRef}
           value={doc}
           onChange={(v) => {
             setDoc(v);
             setDirty(true);
           }}
           onSelectionText={setSelection}
+          onIdle={({ before, pos, hasSelection }) => {
+            if (!projectId) return;
+            if (!shouldSuggest({ before, hasSelection, hasSuggestion: false, loading: !data })) {
+              return;
+            }
+            const ask = ++askRef.current;
+            continuation.mutate(before, {
+              onSuccess: (r) => {
+                // 作者在等待期间又动过 → 这条是对着旧文本算的，丢掉。
+                if (ask !== askRef.current) return;
+                const text = cleanSuggestion(r.text);
+                if (text) editorRef.current?.showSuggestion(text, pos);
+              },
+            });
+          }}
         />
       </div>
 
@@ -144,7 +189,15 @@ export function CenterEditor() {
         <DeclareDrawer pid={projectId} quote={selection} onClose={() => setDrawer(false)} />
       )}
       {history && projectId && (
-        <HistoryDrawer pid={projectId} chapter={chapter} onClose={() => setHistory(false)} />
+        <HistoryDrawer
+          pid={projectId}
+          chapter={chapter}
+          dirty={dirty}
+          // 还原写的是磁盘，编辑器里那份要跟着回到「和磁盘一致」——不清脏态，
+          // 顶栏会一直挂着「未保存」，而作者其实什么都没改。
+          onRestored={() => setDirty(false)}
+          onClose={() => setHistory(false)}
+        />
       )}
     </section>
   );
