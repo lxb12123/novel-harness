@@ -406,6 +406,8 @@ def _ledger(conn: Connection, project_id: str) -> LedgerFn:
                 text=receipt.text,
                 prompt_tokens=receipt.prompt_tokens,
                 completion_tokens=receipt.completion_tokens,
+                cache_read_tokens=receipt.cache_read_tokens,
+                cache_write_tokens=receipt.cache_write_tokens,
                 elapsed_ms=receipt.elapsed_ms,
                 call_id_factory=lambda pid: new_id(EntityType.CALL, pid),
             )

@@ -45,6 +45,17 @@ class ModelCallReceipt(BaseModel):
     账上的零和「没报」是两件事（`CostTotals` 把 `NULL` 折成 0 那条已知病就是这么来的）。
     闸门那一侧另算（`agent/loop.py` 的 `charged`），两个消费者两套规矩。"""
 
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    """输入里有多少不用重新算 / 有多少为下次存了起来（`draft/provider.py::CacheUsage`）。
+
+    **同上一条的规矩：没报就是 `None`，不是 0**，而这两个数糊错的代价更大——
+    「这条端点不支持缓存」和「这次一次都没命中」指向两个相反的动作（去查怎么开启 /
+    去查前缀被谁弄脏了）。这里默认 `None` 是照着上面两个 token 数的形状长的：
+    一个忘了传的生产者只会**少报**，不会**报错**。真正钉住「有没有传」的是端到端那条测试
+    （`tests/test_cache_usage.py`），不是这个默认值。
+    """
+
     elapsed_ms: int = 0
 
 
@@ -61,10 +72,18 @@ def record_call(
     text: str,
     prompt_tokens: int | None,
     completion_tokens: int | None,
+    cache_read_tokens: int | None,
+    cache_write_tokens: int | None,
     elapsed_ms: int,
     call_id_factory: Callable[[str], str],
 ) -> str:
-    """写入一条 model_call 审计行并返回 call id（调用方负责自己的业务表）。"""
+    """写入一条 model_call 审计行并返回 call id（调用方负责自己的业务表）。
+
+    两个缓存参数**没有默认值**，和这个签名上的其它入参一致：这是全库唯一的写入口，
+    每一条路径都必须把自己那个答案说出来，包括「我这条路不知道」（显式传 `None`）。
+    给了默认值就等于让一条新长出来的路径**静默**地不报——而不报和报 0 在这两列上
+    是两个相反的结论（见 `008_cache_usage.sql`）。
+    """
     call_id = call_id_factory(project_id)
     if not isinstance(call_id, str) or not call_id:
         raise ValueError("call id factory must return a non-empty string")
@@ -82,8 +101,9 @@ def record_call(
         """
         INSERT INTO model_call (
             id, project_id, capability, model, params_json, prompt_hash,
-            in_artifact, out_artifact, tokens_in, tokens_out, ms
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            in_artifact, out_artifact, tokens_in, tokens_out, ms,
+            cache_read_tokens, cache_write_tokens
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             call_id,
@@ -97,6 +117,8 @@ def record_call(
             prompt_tokens,
             completion_tokens,
             elapsed_ms,
+            cache_read_tokens,
+            cache_write_tokens,
         ),
     )
     return call_id
@@ -124,6 +146,8 @@ def record_model_call(
             text=completion.text,
             prompt_tokens=completion.prompt_tokens,
             completion_tokens=completion.completion_tokens,
+            cache_read_tokens=completion.cache_read_tokens,
+            cache_write_tokens=completion.cache_write_tokens,
             elapsed_ms=elapsed_ms,
             call_id_factory=call_id_factory,
         )

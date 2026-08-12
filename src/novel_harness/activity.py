@@ -274,7 +274,23 @@ class ActivityPage(BaseModel):
 
 
 class CostTotals(BaseModel):
-    """整本书到今天为止的模型账。"""
+    """整本书到今天为止的模型账。
+
+    ── 这儿**故意没有**缓存命中的合计，理由有三条 ────────────────────────────
+
+    1. **这张汇总本身正躺在一条已知病里。** `tokens_in/out/ms` 是 `COALESCE(…, 0)` 的
+       非空 int，而同名字段在 `ActivityCost` 上可空、渲染成「未记录」——provider 不报
+       usage 的书，底栏现在就在显示「入 0 / 出 0 token」。往一张已经在说假话的汇总里
+       再加一个数，只是把假话说得更长；先修那条，再谈加。
+    2. **命中率的分母今天是残的。** `/draft` 那条路径至今一行 `model_call` 都不写
+       （`api/app.py` 里那段注释写着），所以全书合计漏掉了作者花钱最多的一类调用。
+       一个分子分母都缺同一批行的比值，看起来像全书命中率，其实谁也解读不了。
+    3. **这一刀要回答的三个问题，两个只有逐次才看得见。**「忽高忽低 ⇒ 前缀被弄脏了」
+       按定义是**逐次之间**的方差；一个全书标量恰好把它平掉。所以测量点放在展开详情
+       那一行（`_cache_text`），不放这儿。
+
+    等到 ① 被修好、② `/draft` 记上账，这儿再加也不迟——那时它才是个能读的数。
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -546,6 +562,41 @@ def _elapsed_text(started: Any, finished: Any) -> str:
 def _num(value: Any) -> str:
     """数字字段的显示。**None 是「没记」不是 0**（§10 约束 8）。"""
     return _UNRECORDED if value is None else str(value)
+
+
+def _cache_text(read: Any, written: Any) -> str:
+    """这一次调用里，输入有多少是**不用重新算**的。
+
+    ── 屏幕上为什么不出现「缓存命中」这四个字 ──────────────────────────────
+    作者关心的不是缓存这个机制，是「这次比原价省了多少」。「命中」是研发的说法
+    （它甚至是 `screenGuard` 那条「小写裸枚举」盲区里的同类——收不住但不该上屏），
+    所以这一行说的是**结果**：接着上次的那部分没有重新算。
+
+    ── 三档必须分得开（§10 约束 8：零要带着理由一起出现）──────────────────
+    | 库里 | 屏幕上 | 意思 |
+    |---|---|---|
+    | `NULL` | 「未记录」 | 端点根本没报这件事（或这行早于这两列） |
+    | `0` | 「这次没接上……」 | 端点报了，真的一次都没命中 |
+    | `>0` | 「N token 接着上次」 | 省下的那部分 |
+
+    **这三档指向三个不同的动作**（去查端点支不支持 / 去查前缀被谁弄脏了 / 什么都不用做），
+    所以把 `NULL` 渲染成 0 不是「显示得难看一点」，是把作者指向错误的一件事。
+
+    写入那一档（只有 Anthropic 兼容端点报）**报了才说**：在 DeepSeek / OpenAI 上它恒为
+    `None`，凭空多一行永远「未记录」只是噪音；而它一旦有数，那是作者真花掉的钱。
+    """
+    parts: list[str] = []
+    if read is None:
+        parts.append(_UNRECORDED)
+    elif read == 0:
+        parts.append("这次没接上，整段输入都重新算了")
+    else:
+        parts.append(f"{read} token 接着上次，没有重新算")
+    if written == 0:
+        parts.append("这次没有新存下内容")
+    elif written is not None:
+        parts.append(f"另存下 {written} token 供下次接")
+    return " · ".join(parts)
 
 
 def _text(value: Any) -> str | None:
@@ -923,6 +974,7 @@ WHERE project_id = ?
 _CALL_SELECT: Final = """
 SELECT id, ts, capability, model,
        tokens_in, tokens_out, ms, cost, attempt,
+       cache_read_tokens, cache_write_tokens,
        (SELECT r.chapter_number FROM extraction_run r WHERE r.model_call_id = model_call.id)
          AS run_chapter,
        (SELECT s.chapter_number FROM chapter_summary s WHERE s.model_call_id = model_call.id)
@@ -1152,6 +1204,10 @@ def _call_detail(conn: Connection, project_id: str, entry_id: str) -> ActivityDe
         DetailRow(label="为哪一章", value=_chapter_text(chapter)),
         DetailRow(label="入参 token", value=_num(row["tokens_in"])),
         DetailRow(label="出参 token", value=_num(row["tokens_out"])),
+        DetailRow(
+            label="接着上次的输入",
+            value=_cache_text(_int(row["cache_read_tokens"]), _int(row["cache_write_tokens"])),
+        ),
         DetailRow(label="耗时", value=_UNRECORDED if row["ms"] is None else f"{row['ms']} ms"),
         DetailRow(label="第几次尝试", value=str(row["attempt"])),
     )

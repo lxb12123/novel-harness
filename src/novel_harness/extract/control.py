@@ -130,6 +130,14 @@ class AuditedCompletion(BaseModel):
     finish_reason: str | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    cache_read_tokens: int | None = None
+    cache_write_tokens: int | None = None
+    """输入里有多少不用重新算 / 为下次存了多少（`draft/provider.py::CacheUsage`）。
+
+    **这一层把 `CacheUsage` 拍平成两个纯量**：审计拷贝按定义只装能落库的标量，
+    而形状标签（认出的是哪一家）是诊断，不进账（同 `008_cache_usage.sql` 那一节）。
+    没报就是 `None`，**不是 0**。
+    """
 
     @field_validator("text", "model", "finish_reason")
     @classmethod
@@ -138,7 +146,13 @@ class AuditedCompletion(BaseModel):
             value.encode("utf-8")
         return value
 
-    @field_validator("prompt_tokens", "completion_tokens", mode="before")
+    @field_validator(
+        "prompt_tokens",
+        "completion_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        mode="before",
+    )
     @classmethod
     def non_negative_strict_int(cls, value: object) -> object:
         if value is None:
@@ -149,6 +163,7 @@ class AuditedCompletion(BaseModel):
 
     @classmethod
     def from_result(cls, result: CompletionResult) -> AuditedCompletion:
+        cache = result.cache
         return cls.model_validate(
             {
                 "text": result.text,
@@ -156,6 +171,8 @@ class AuditedCompletion(BaseModel):
                 "finish_reason": result.finish_reason,
                 "prompt_tokens": result.prompt_tokens,
                 "completion_tokens": result.completion_tokens,
+                "cache_read_tokens": None if cache is None else cache.read_tokens,
+                "cache_write_tokens": None if cache is None else cache.written_tokens,
             },
             strict=True,
         )

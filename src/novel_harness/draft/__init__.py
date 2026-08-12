@@ -65,6 +65,8 @@ from .length import (
 from .provider import (
     DEFAULT_TEMPERATURE,
     SAMPLING_STRICT_MODELS,
+    CacheShape,
+    CacheUsage,
     CompletionResult,
     ProviderConfig,
     ProviderError,
@@ -89,6 +91,8 @@ __all__ = [
     "LengthStatus",
     "M2_LENGTH_SPEC",
     "SAMPLING_STRICT_MODELS",
+    "CacheShape",
+    "CacheUsage",
     "CompletionResult",
     "PromptForm",
     "ProviderConfig",

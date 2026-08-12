@@ -1351,6 +1351,10 @@ def run_turn(
                 text=result.text,
                 prompt_tokens=result.prompt_tokens,
                 completion_tokens=result.completion_tokens,
+                # 缓存命中量只读取、不参与任何闸门：`charged` 那一侧算的是花掉的总量，
+                # 而命中只让它更便宜、不让它更少。**账照抄，闸不动。**
+                cache_read_tokens=None if result.cache is None else result.cache.read_tokens,
+                cache_write_tokens=None if result.cache is None else result.cache.written_tokens,
                 elapsed_ms=elapsed_ms,
             )
         )

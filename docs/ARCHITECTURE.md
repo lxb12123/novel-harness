@@ -285,7 +285,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 
 ## 当前状态
 
-**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2102 个 pytest + 423 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
+**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2176 个 pytest + 423 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
 
 > **本节的数字是全仓唯一副本，且 `tests/test_doc_numbers.py` 会拦住第二份。**
 > `README.md` / `CLAUDE.md` / `frontend/README.md` 里只留指针，不许再抄一份数字过去。
@@ -303,7 +303,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 > **而守卫的正则认的是「N 条路由」「N 个端点」**——于是它躺在被守卫盯着的那一节里、
 > 却一个字都没被检查，真值早已是别的数。现在改成守卫认得的写法，它才真的被钉住。）
 > **它罩不住 pytest / vitest 这两个数**——在 pytest 里数 pytest 要递归，
-> 所以「2102」和「423」仍然只靠人手改，改代码后请顺手跑一次 `uv run pytest -q` 更新这一处。
+> 所以「2176」和「423」仍然只靠人手改，改代码后请顺手跑一次 `uv run pytest -q` 更新这一处。
 > （2026-07-30 那天这个数从 690 走到 801，中途在文档里错过一次——**这条盲区是真的，不是假想的**。）
 
 > ⚠️ **「全绿」目前只在本机成立。本仓库还没有 git remote，`ci.yml` / `release.yml` 一次都没执行过。**
@@ -314,7 +314,20 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 ```
 db.py  ids.py  decisions.py  project.py
 migrations/{001_init,002_m4_events,003_proposal_audit_recovery,004_chapter_summary,005_fact_edit,
-            006_chat_session,007_draft_candidate}.sql（24 张表）
+            006_chat_session,007_draft_candidate,008_cache_usage}.sql（24 张表）
+                                                ← 008 是 ALTER 不建表：`model_call` 多两列
+                                                  （`cache_read_tokens` / `cache_write_tokens`）。
+                                                  **它不是一个功能，是一次测量**：三家三个字段名
+                                                  （DeepSeek `prompt_cache_hit_tokens` / OpenAI
+                                                  `prompt_tokens_details.cached_tokens` / Anthropic
+                                                  `cache_read_input_tokens` + `cache_creation_input_tokens`）
+                                                  在 `draft/provider.py` 归一成一份 `CacheUsage`，
+                                                  下游不许再认第二遍。**只改读取侧，请求一个字节没动**
+                                                  （DeepSeek 的前缀缓存全自动）。两列可空且**没有
+                                                  DEFAULT 0**：NULL=端点没报、0=真的一次都没命中，
+                                                  两者指向相反的动作（去查怎么开启 / 去查前缀被谁弄脏了）。
+                                                  日志页展开层多一行「接着上次的输入」；
+                                                  `/runs` 的全书汇总**有意不加**（理由在 `CostTotals`）
 graph/{models,store,sqlite_store,queries}.py    ← state_at / supersede / subgraph
 events/{models,store}.py                       ← M4 事件超边 / 角色档案 / 提案仓储契约
 extract/{models,prompt,locate,analyze}.py       ← M4 严格 JSON 边界 / 确定性证据定位 / 不猜名称解析

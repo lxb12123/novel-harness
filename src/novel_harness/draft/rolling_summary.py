@@ -274,6 +274,8 @@ class RollingSummarizer:
                     text=audited.text,
                     prompt_tokens=audited.prompt_tokens,
                     completion_tokens=audited.completion_tokens,
+                    cache_read_tokens=audited.cache_read_tokens,
+                    cache_write_tokens=audited.cache_write_tokens,
                     elapsed_ms=elapsed_ms,
                     call_id_factory=self._new_call_id,
                 )

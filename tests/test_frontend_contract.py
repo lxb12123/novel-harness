@@ -262,7 +262,11 @@ def test_frontend_fixture_matches_the_real_api(
 
     # 上面 `summaryGenerated` 已经写了一条**真的** `model_call`（capability=summarizer，
     # 走 `record_call`）。抽取运行和 extractor 调用走桩：跑一次真抽取要模型、要钱。
-    activity_call = seed_call(book)
+    # 缓存那两个数**给的是「报了」那一档**：夹具里只躺一种形状的样本，等于那条
+    # 「屏幕上不摆研发术语」的断言扫的是一块永远长一个样的屏幕（`_RUN_ERROR_LABEL`
+    # 记着这个仓库上一次栽在这上面的现场——三条 run 全是成功的，失败那条文案没人看过）。
+    # 这里冻的是 DeepSeek 的真实形状：报了命中量、不报写入量。
+    activity_call = seed_call(book, cache_read_tokens=960, cache_write_tokens=None)
     activity_run = seed_run(book, 1, proposals=2, call_id=activity_call)
     grab("activity", client.get(f"{base}/activity", params={"limit": 8}))
     # 按 actor 过滤 —— ADR 0020 点名的那件事（作者点过的会被 system 行淹没）。

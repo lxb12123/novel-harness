@@ -27,7 +27,8 @@ from __future__ import annotations
 
 import os
 from collections.abc import Sequence
-from typing import Any
+from enum import StrEnum
+from typing import Any, Final
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -217,6 +218,118 @@ class ToolCall(BaseModel):
     """**原始 JSON 字符串,未解析。** 流式下它是若干个 delta 拼起来的。"""
 
 
+class CacheShape(StrEnum):
+    """这次的 `usage` 是**按哪一家的写法**报缓存的。
+
+    只是一个诊断标签(「我认出来的是这一种」),**下游不许拿它做分支** —— 归一化已经在
+    `CacheUsage` 上做完了,再认第二遍就是第二张会漂的映射表。
+    """
+
+    DEEPSEEK = "deepseek"
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+
+
+class CacheUsage(BaseModel):
+    """这一次调用里,输入 token 有多少是**不用重新算**的(即前缀缓存命中)。
+
+    ── 这两个数是拿来回答什么问题的 ────────────────────────────────────────
+    **它不是一个功能,是一次测量。** 加完之后作者照常用工作台,数据自己就出来,
+    而三种走势各指向一个完全不同的动作:
+
+    * **命中率高** ⇒ 他的端点已经在自动缓存了,**什么都不用做**;
+    * **恒为 0**(注意:是报了 0,不是没报) ⇒ 要么这条路由不支持,要么它要显式标记,
+      那时才轮到去调查「怎么标」——在此之前调查等于凭空猜;
+    * **忽高忽低** ⇒ **前缀被什么东西弄脏了,那是个 bug**(缓存按前缀逐字节匹配,
+      稳定块前面混进一个逐次变的东西就会整段失效,ADR 0019 边界六换序过一次的正是这个)。
+      它以前不可观测,现在看得见。
+
+    ── 为什么「没报」必须是整个 `CompletionResult.cache is None` ──────────────
+    端点根本不提这件事,和端点说「这次一次都没命中」,是两个不同的事实,而它们会导出
+    两个相反的动作(去查怎么开启 / 去查前缀被谁弄脏了)。本仓已经在四个地方栽过把两者
+    糊成 0 的跟头,所以这里:**认不出的形状 ⇒ `None`,不是 0**。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    shape: CacheShape
+    read_tokens: int | None = None
+    """这次输入里从缓存直接拿到的 token 数。`None` = 这一家的写法里没有这个数。"""
+
+    written_tokens: int | None = None
+    """这次**为了下次能命中**而写进缓存的 token 数(Anthropic 为它单独计费)。
+
+    `None` = 这一家根本不报这件事(DeepSeek / OpenAI 都不报),**不是 0**。
+
+    ⚠️ **DeepSeek 的 `prompt_cache_miss_tokens` 不是这个数,别往这儿映。** 那是「这次没命中
+    的那部分输入」,它 = `prompt_tokens - prompt_cache_hit_tokens`,是个派生量;把它当成
+    「写了多少」会让 DeepSeek 看起来每次都在写缓存,**恰好污染上面那条「恒为 0」的判读**。
+    """
+
+
+_CACHE_SHAPES: Final[tuple[tuple[CacheShape, tuple[str, ...], tuple[str, ...]], ...]] = (
+    (CacheShape.DEEPSEEK, ("prompt_cache_hit_tokens",), ()),
+    (CacheShape.ANTHROPIC, ("cache_read_input_tokens",), ("cache_creation_input_tokens",)),
+    (CacheShape.OPENAI, ("prompt_tokens_details", "cached_tokens"), ()),
+)
+"""字段名是各家自己定的,所以这张小映射躲不掉 —— 但它**只在这儿有一份**。
+
+三家的写法(实测/官方文档):
+
+| 家 | 读了多少 | 写了多少 |
+|---|---|---|
+| DeepSeek | `usage.prompt_cache_hit_tokens` | 不报 |
+| Anthropic | `usage.cache_read_input_tokens` | `usage.cache_creation_input_tokens` |
+| OpenAI | `usage.prompt_tokens_details.cached_tokens` | 不报 |
+
+**顺序即优先级**,第一个认出来的赢。中转(OpenRouter 之类)转发时会带上被转发那一家的
+形状,所以判据必须是「响应里有哪个字段」,不是「我配的是哪个供应商」—— 后者一换中转就错。
+"""
+
+
+def _usage_count(value: Any) -> int | None:
+    """一个 usage 数字,读得懂才算数。
+
+    非整数 / 布尔 / 负数一律 `None`(**不是 0**):读不懂就是不知道。这一层永远不抛 ——
+    一次已经生成完、已经花过钱的调用,不该因为 usage 里多了个怪值就变成 `ProviderError`。
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return None
+    return value
+
+
+def _usage_at(usage: Any, path: tuple[str, ...]) -> int | None:
+    """顺着字段路径取一个 usage 数字。
+
+    全程 `getattr`,和隔壁读 `prompt_tokens` 的那两行**同一种读法** —— 不为缓存这两个数
+    单开一条更宽的读法(比如同时试 `dict.get`),否则会造出「token 数没读到、缓存数读到了」
+    的半截状态,而那种状态在日志页上看起来像一次真实的测量。
+    """
+    cursor: Any = usage
+    for name in path:
+        cursor = getattr(cursor, name, None)
+        if cursor is None:
+            return None
+    return _usage_count(cursor)
+
+
+def _cache_usage(usage: Any) -> CacheUsage | None:
+    """从一个 `usage` 上认出缓存命中量,认不出返回 `None`(见 `CacheUsage`)。
+
+    「认出来了」的判据是**至少读到一个能用的数**:字段在但值读不懂,等于没读到,继续试
+    下一家。三家都没读到 ⇒ `None` —— 那句话的意思是「这个端点没报」,不是「一次都没命中」。
+    """
+    if usage is None:
+        return None
+    for shape, read_path, write_path in _CACHE_SHAPES:
+        read = _usage_at(usage, read_path)
+        written = _usage_at(usage, write_path) if write_path else None
+        if read is None and written is None:
+            continue
+        return CacheUsage(shape=shape, read_tokens=read, written_tokens=written)
+    return None
+
+
 class CompletionResult(BaseModel):
     """一次调用的结果。文本 + 溯源(哪个模型、为什么停、花了多少 token)。frozen。"""
 
@@ -227,6 +340,15 @@ class CompletionResult(BaseModel):
     finish_reason: str | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+
+    cache: CacheUsage | None = None
+    """输入里有多少不用重新算(见 `CacheUsage`)。**`None` = 这个端点没报这件事。**
+
+    读它是**纯读取侧**的:发送侧一个字节都没变。DeepSeek 的前缀缓存是全自动的
+    (不需要在请求里标任何东西),所以「读到了」这件事本身不构成一次行为改变 ——
+    `tests/test_draft_boundary.py` 和 M2 判分链靠 wire shape 逐字节稳定,而这一刀碰不到
+    `_wire_kwargs*` 里的任何一行。
+    """
 
     tool_calls: tuple[ToolCall, ...] = ()
     """模型这一轮要调的工具。**空 = 它要说话了**,那就是 agent loop 的退出条件。
@@ -399,6 +521,7 @@ def _from_non_streaming(resp: Any, fallback_model: str) -> CompletionResult:
         finish_reason=getattr(choice, "finish_reason", None),
         prompt_tokens=getattr(usage, "prompt_tokens", None),
         completion_tokens=getattr(usage, "completion_tokens", None),
+        cache=_cache_usage(usage),
         tool_calls=_tool_calls_from_message(choice.message),
     )
 
@@ -409,6 +532,10 @@ def _from_stream(chunks: Any, fallback_model: str) -> CompletionResult:
     finish_reason: str | None = None
     prompt_tokens: int | None = None
     completion_tokens: int | None = None
+    # 缓存命中量和上面两个数走同一条路(都在 usage 上),所以**两条路都要读**——
+    # 只补非流式那一条,长稿(>16k 预算,走流式)就会永远说「不知道」,
+    # 而长稿恰恰是最该看缓存的那一档。
+    cache: CacheUsage | None = None
     # 流式工具调用**按 index 累积**:`id` 和 `name` 通常只在第一个 delta 出现,
     # 而 `arguments` 是一串碎片(`{"cha` / `pter":` / ` 89}`)。
     # 用 dict 而不是 list:index 不保证从 0 连续,也不保证按序到达。
@@ -422,6 +549,11 @@ def _from_stream(chunks: Any, fallback_model: str) -> CompletionResult:
         if usage is not None:
             prompt_tokens = getattr(usage, "prompt_tokens", prompt_tokens)
             completion_tokens = getattr(usage, "completion_tokens", completion_tokens)
+            # 认出来了才覆盖:有的端点每个 chunk 都挂一个 usage,只有最后那个填满。
+            # 用「认出的最后一次」而不是「最后一次」,免得一个空 usage 把已经读到的数抹掉。
+            parsed = _cache_usage(usage)
+            if parsed is not None:
+                cache = parsed
         for choice in getattr(chunk, "choices", ()) or ():
             delta = getattr(choice, "delta", None)
             content = getattr(delta, "content", None)
@@ -451,6 +583,7 @@ def _from_stream(chunks: Any, fallback_model: str) -> CompletionResult:
         finish_reason=finish_reason,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
+        cache=cache,
         tool_calls=tuple(
             ToolCall(id=slot["id"], name=slot["name"], arguments=slot["arguments"])
             for _, slot in sorted(partial.items())  # 按 index 还原模型给的顺序

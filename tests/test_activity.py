@@ -113,8 +113,17 @@ def seed_call(
     capability: str = "extractor",
     tokens_in: int | None = 1200,
     cost: float | None = None,
+    cache_read_tokens: int | None = None,
+    cache_write_tokens: int | None = None,
 ) -> str:
-    """一条 `model_call` 审计行。"""
+    """一条 `model_call` 审计行。
+
+    两个缓存参数**默认 None**，也就是「这条端点没报」那一档——它是今天绝大多数样本的
+    真实形状。要验另外两档（报了 0 / 报了正数）的调用方显式传，
+    `tests/test_cache_usage.py` 和契约夹具都这么做：**夹具里只躺着一种形状的样本，
+    等于那条屏幕守卫扫的是一块永远长一个样的屏幕**（`_RUN_ERROR_LABEL` 那一节记着
+    这个仓库上一次栽在这上面的现场）。
+    """
     conn = connect(book["db"])
     try:
         call_id = new_id(EntityType.CALL, book["pid"])
@@ -122,11 +131,20 @@ def seed_call(
             """
             INSERT INTO model_call (
                 id, project_id, capability, model, params_json, prompt_hash,
-                in_artifact, out_artifact, tokens_in, tokens_out, ms, cost
+                in_artifact, out_artifact, tokens_in, tokens_out, ms, cost,
+                cache_read_tokens, cache_write_tokens
             ) VALUES (?, ?, ?, 'deepseek-v4', '{"finish_reason":"stop"}',
-                      'ph', 'a', 'b', ?, 400, 900, ?)
+                      'ph', 'a', 'b', ?, 400, 900, ?, ?, ?)
             """,
-            (call_id, book["pid"], capability, tokens_in, cost),
+            (
+                call_id,
+                book["pid"],
+                capability,
+                tokens_in,
+                cost,
+                cache_read_tokens,
+                cache_write_tokens,
+            ),
         )
         conn.commit()
         return call_id
@@ -931,6 +949,8 @@ def test_the_call_audit_records_what_it_cost_not_what_it_said(
             text=output,
             prompt_tokens=1200,
             completion_tokens=400,
+            cache_read_tokens=960,
+            cache_write_tokens=None,
             elapsed_ms=900,
             call_id_factory=lambda project_id: new_id(EntityType.CALL, project_id),
         )
