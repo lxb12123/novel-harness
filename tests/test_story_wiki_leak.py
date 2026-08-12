@@ -61,7 +61,7 @@ from novel_harness.agent import (
     tool_declarations,
 )
 from novel_harness.agent import tools as agent_tools
-from novel_harness.agent.ports import DraftAsk, ToolRefused
+from novel_harness.agent.ports import DraftAsk, DraftProduct, ToolRefused
 from novel_harness.agent.tools import SceneConstraintsArgs, ToolSpec
 from novel_harness.db import Connection, connect, migrate
 from novel_harness.draft.context import DraftContext
@@ -354,9 +354,13 @@ def surfaces_of(book: PoisonedBook) -> dict[str, str]:
     """
     captured: list[DraftContext] = []
 
-    def drafter(ask: DraftAsk, ctx: DraftContext) -> str:
+    def drafter(ask: DraftAsk, ctx: DraftContext) -> DraftProduct:
         captured.append(ctx)
-        return f"（第 {ask.chapter} 章草稿）风雪落在肩上。"
+        return DraftProduct(
+            text=f"（第 {ask.chapter} 章草稿）风雪落在肩上。",
+            saved=True,
+            note=f"已经写进第 {ask.chapter} 章了（章标题保持原样）。",
+        )
 
     context = book.context(drafter=drafter)
     outcomes = dispatch_all(

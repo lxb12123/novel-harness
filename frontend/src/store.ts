@@ -56,6 +56,16 @@ interface Coords {
   /** 日志页跳过来要打开的那条**已生效事件**（改它的知情 / 在场名单）。
    *  同 `focusCell`：id 来自后端的 `jump.event_id`，不是从那行字里认出来的。 */
   focusEventId: string | null;
+  /** 中栏右半边的写作助手开着没有。**默认关着**——它是作者要的时候才展开的一块屏幕，
+   *  不是常驻的（同「活动记录」那条：入口不是通知）。
+   *
+   *  **它是坐标不是偏好**，所以在这儿而不在 `SplitPanes` 的 localStorage 里：
+   *  开合由顶栏那颗按钮切、由中栏读，两处隔着整棵组件树。那一半**多宽**才是偏好，
+   *  留在 `layout.ts`。 */
+  chatOpen: boolean;
+  /** 现在摊开的是哪一段对话。作者可以同时留着好几段，各自 resume（ADR 0019）。
+   *  `null` = 还没挑（面板会自己停在最近说过话的那一段）。 */
+  chatId: string | null;
 
   setProject: (id: string) => void;
   setChapter: (n: number) => void;
@@ -66,6 +76,8 @@ interface Coords {
   focusNode: (id: string) => void;
   setHighlight: (a: Anchor | null) => void;
   setPage: (p: Page) => void;
+  toggleChat: () => void;
+  setChat: (id: string | null) => void;
   /** 从活动记录跳去某个模块：中栏回工作台、右栏切到那一格、高亮那一格 / 打开那条事件。
    *
    *  **章号不在这里换**：换章要走 `useOpenChapter`（离开的那一章交后台整理），
@@ -94,8 +106,13 @@ export const useCoords = create<Coords>((set) => ({
   page: "workbench",
   focusCell: null,
   focusEventId: null,
+  chatOpen: false,
+  chatId: null,
 
-  setProject: (projectId) => set({ projectId }),
+  // 换书要**把摊开的那段对话一起放下**：`chat_session` 是按书存的，
+  // 留着上一本书的 id 就是一次必然 404 的详情请求，而屏幕上会是一句
+  // 「这段对话不在了」——一句完全对不上作者刚做的事的话。
+  setProject: (projectId) => set({ projectId, chatId: null }),
   // 换章 / 换 tab 都会让「刚才跳过来的是这一格」失效，留着它就是在别的章上画一个假高亮。
   // `castInclude` 跟着一起清：它是那次跳转的余温（把那一行推回表上），
   // 换了章之后它指的是另一章的表，留着只会凭空多出一行谁也没要求过的人。
@@ -109,6 +126,16 @@ export const useCoords = create<Coords>((set) => ({
   focusNode: (selectedNodeId) => set({ selectedNodeId, activeTab: "graph" }),
   setHighlight: (highlight) => set({ highlight }),
   setPage: (page) => set({ page }),
+  // 关掉不清 `chatId`：再打开时回到刚才那一段，作者不用重找。
+  //
+  // **打开时如果人在章节准备页，顺手回工作台**：那一页换掉的是整块中栏（不像活动记录
+  // 只换左半边），写作助手在那儿没有位置。不这么做的话那颗按钮在那一页上按下去
+  // **什么都不会发生**——一颗读起来像坏了的按钮，比一次页面切换糟。
+  toggleChat: () =>
+    set((s) =>
+      s.chatOpen ? { chatOpen: false } : { chatOpen: true, page: s.page === "prep" ? "workbench" : s.page },
+    ),
+  setChat: (chatId) => set({ chatId }),
   jumpFromActivity: ({ tab, cell, eventId, include }) =>
     set((s) => ({
       page: "workbench",

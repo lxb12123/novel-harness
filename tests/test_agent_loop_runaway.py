@@ -674,6 +674,73 @@ def test_a_batch_the_gate_allows_still_fans_out(
     assert len(model.calls) == 2, "步数闸只数模型调用 —— 这一批工具它一次都没数"
 
 
+def test_a_batch_of_paid_tools_stops_on_money_not_only_on_count(
+    a_tool_that_always_works: list[str],
+) -> None:
+    """**批宽度那道闸只管次数不管钱**，而 3.6 之后表里那个不免费的工具真的接线了。
+
+    六个 `draft_chapter` 在次数上完全合法（`max_calls_per_step = 6`），
+    而每一个都是一稿正文。所以钱这一半必须在**批内**收：每派发完一个查一次
+    `max_tokens`，而不是等下一次模型调用之前才查——那时这一批已经全跑完了。
+
+    量三件事：
+    ① 真的在中途停了（不是六个全跑完）；
+    ② 剩下那几个配了壳（悬空的 `tool_call` = 下一次 wire 400）；
+    ③ 起草花掉的钱进了这一轮的 `ledger` 和汇总——不进的话上面那道闸拿什么判。
+    """
+    spent = ModelCallReceipt(
+        capability="writer",
+        schema_version="m5.draft.v1",
+        model="deepseek-v4",
+        prompt_hash="ph",
+        prompt_bytes=b"{}",
+        text="一稿正文……",
+        prompt_tokens=4_000,
+        completion_tokens=6_000,
+    )
+    drafted: list[int] = []
+
+    def handler(args: Any, context: ToolContext) -> BaseModel:
+        # **换的是实现不是声明**（同 `a_tool_that_always_works`）：这一条量的是 loop
+        # 怎么对待「工具自己花了钱」，约束怎么算是 `tests/test_agent_drafting.py` 的事。
+        drafted.append(args.chapter)
+        return tools_module.DraftResult(chapter=args.chapter, text="一稿正文……", calls=(spent,))
+
+    original = tools_module.TOOLS["draft_chapter"]
+    tools_module.TOOLS["draft_chapter"] = tools_module.ToolSpec(
+        name="draft_chapter",
+        description=original.description,
+        args=original.args,
+        handler=handler,
+    )
+    try:
+        result, model, ledger = a_turn(
+            wants(
+                *[
+                    ("draft_chapter", json.dumps({"chapter": 7, "goal": f"第 {n} 稿"}))
+                    for n in range(1, 7)
+                ],
+                # 对话那一次也报 usage —— 不报的话闸门用估算，这条断言的算术就不确定了。
+                prompt_tokens=1_000,
+                completion_tokens=0,
+            ),
+            say("写完了"),
+            # 1,000（对话那次）+ 一稿一万 —— 额度只够三稿。
+            limits=TurnLimits(max_steps=4, max_tokens=25_000),
+        )
+    finally:
+        tools_module.TOOLS["draft_chapter"] = original
+
+    assert result.reason is StopReason.COST_LIMIT
+    assert len(drafted) == 3, f"批内没查额度（跑了 {len(drafted)} 稿）"
+    assert result.conversation.pending_calls == (), "剩下那几个没配壳 —— 下一次 wire 是 400"
+    assert [r.capability for r in ledger.receipts].count("writer") == 3, (
+        "起草花掉的钱没进 `ledger` —— 那道闸判的就是这几笔"
+    )
+    assert result.tokens_reported >= 30_000
+    a_sane_stop(result, model, ceiling=4)
+
+
 def test_a_crash_between_the_model_and_the_dispatch_is_representable(
     a_tool_that_always_works: list[str],
 ) -> None:

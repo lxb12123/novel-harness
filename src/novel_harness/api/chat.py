@@ -34,11 +34,15 @@
 
 `chat_session` / `chat_message` 里**没有一列是正文的落点**，也没有任何读路径拿它们
 回答「第 N 章是什么」——正文的真相源在磁盘上（ADR 0007），版本锚在 `chapter_snapshot`。
-一稿还没被作者接受的草稿就是**助手说过的一段话**，它留在对话里；接受它 = 写进磁盘，
-走既有的 `PUT …/chapters/{n}/text`（`chapter_snapshot` 的 `UNIQUE (chapter_id,
-text_sha256)` 让那一步天然幂等）。**反过来是错的**：把没被接受的草稿写进
-`chapter_snapshot`，它当场出现在版本抽屉里，「哪一份正文是真的」就有了第二个答案，
-而且是作者在界面上看得见的那一个。
+
+**2026-08-11（ADR 0021）起草那一稿直接写磁盘**，走的仍然是那条既有路径
+（`importer.save_chapter`，也就是 `PUT …/chapters/{n}/text` 调的同一个函数：
+磁盘先、DB 跟）。落盘的动作在 `agent/drafting.py` 造的那个闭包里，**这两张表一列都没多**。
+唯一的闸是「拒绝覆盖作者比它更晚改过的那一章」，不是「问一句可以吗」。
+
+**反过来仍然是错的**：把助手说过的话写进 `chapter_snapshot`，「哪一份正文是真的」
+就有了第二个答案，而且是作者在界面上看得见的那一个。落盘之所以不违反这一条，
+是因为写的是**磁盘**，快照是 `sync` 从磁盘读回来的结果——方向没有反。
 """
 
 from __future__ import annotations
@@ -64,6 +68,7 @@ from ..agent.loop import (
     run_turn,
     stop_wording,
 )
+from ..agent.drafting import chapter_drafter
 from ..agent.model import ProviderModelPort, agent_call_plan
 from ..agent.ports import ToolContext
 from ..agent.store import ChatConcurrency, ChatSessionRow, ChatStore, StoredChat
@@ -73,7 +78,7 @@ from ..draft.provider import ProviderConfig
 from ..draft.rolling_summary import SummaryStore
 from ..extract.call_audit import record_call
 from ..graph.sqlite_events import SqliteEventStore
-from ..graph.store import StoryGraph
+from ..graph.store import GraphStore
 from ..ids import EntityType, new_id
 from .deps import agent_provider_config, get_conn, get_store, load_project, model_configuration_error
 
@@ -339,30 +344,46 @@ def _ledger(conn: Connection, project_id: str) -> LedgerFn:
 
 def _tool_context(
     proj: Any,
-    store: StoryGraph,
+    store: GraphStore,
     conn: Connection,
     *,
     chapter: int,
-    max_context_tokens: int | None,
-    reserved_output_tokens: int,
+    config: ProviderConfig,
+    capability: ProviderCapabilities,
+    plan: ResolvedCallPlan,
 ) -> ToolContext:
     """这一轮里模型碰得到的**全部**东西（`agent/ports.py` 是那一页的规格）。
 
-    `drafter` 仍然是 `None`，**这是显式的缺席不是遗漏**：把「章号 → 一稿正文」抄进这儿
-    等于第二条会漂的起草路径（`agent/tools.py` 写着那条理由），而正确的顺序是先把
-    `api/app.py::draft` 那段提成 `draft/` 里的一个函数。工具在没接线时会明说自己没接线，
-    不假装写了一稿。
+    `drafter` 2026-08-11 接上了（3.6 / ADR 0021）。**它是一个闭包，不是一个新字段**：
+    写盘要 `GraphStore`（带写入面）和一条连接，而 `ToolContext` 上只有 `StoryGraph`
+    ——「模型改不了作者的 canon」是类型保证不是纪律（边界一）。写入面握在
+    `agent/drafting.py` 造出来的那个闭包里，这个 dataclass 上一个字都没多。
+
+    **窗口那两个数从 `capability` / `plan` 现取**，不再由调用方分别传进来：它们和
+    起草那条路要用的 `config` / `capability` 是同一批东西，分两处传迟早有一处漏改。
     """
     return ToolContext(
         store=store,
         project_id=proj.id,
         root_path=proj.root_path,
-        drafter=None,
+        drafter=chapter_drafter(
+            store=store,
+            conn=conn,
+            project_id=proj.id,
+            root=proj.root_path,
+            config=config,
+            capability=capability,
+            events=SqliteEventStore(conn),
+            summaries=SummaryStore(conn),
+        ),
         summaries=SummaryStore(conn),
         events=SqliteEventStore(conn),
         working_chapter=chapter,
-        max_context_tokens=max_context_tokens,
-        reserved_output_tokens=reserved_output_tokens,
+        max_context_tokens=capability.max_context_tokens,
+        # **对话那一档的输出预算**（`AGENT_REPLY_LENGTH` 倒推的），用来算「一次工具返回
+        # 最多给多少字」。起草那一次调用的预算是另一个数，由 `chapter_drafter` 自己算
+        # ——两档长度不同，共用一个 plan 会让工具返回的天花板跟着起草的输出预算走。
+        reserved_output_tokens=plan.request_token_budget,
     )
 
 
@@ -530,7 +551,10 @@ def run_chat(
     body: TurnBody,
     proj: Any = Depends(load_project),
     conn: Connection = Depends(get_conn),
-    store: StoryGraph = Depends(get_store),
+    # **收的是读写交集，不是只读的 `StoryGraph`**：起草落盘走 `importer.save_chapter`，
+    # 而它要 `put_chapter`（ADR 0021）。写入面到此为止——它进的是起草那个闭包，
+    # 不进 `ToolContext`（边界一，见 `_tool_context`）。
+    store: GraphStore = Depends(get_store),
 ) -> TurnReceipt:
     """跑一轮：模型说话、叫工具，直到它收手或者代码把它停下来（九种停法）。
 
@@ -609,8 +633,9 @@ def run_chat(
                 store,
                 conn,
                 chapter=body.chapter,
-                max_context_tokens=capability.max_context_tokens,
-                reserved_output_tokens=plan.request_token_budget,
+                config=config,
+                capability=capability,
+                plan=plan,
             ),
             model=build_agent_model(config, plan),
             ledger=_ledger(conn, proj.id),

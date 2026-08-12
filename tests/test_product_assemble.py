@@ -210,8 +210,12 @@ def test_the_gate_never_reaches_this_module() -> None:
 
     1. **`eval/` 和 `cli.py` 里 `product_assemble` 三个字都不出现** —— kill-gate 的三臂
        （`eval/runner.py`）和它的离线重算器（`eval/evidence.py`）直接 import `assemble`；
-    2. **整个 `src/` 里 `assemble_product` 只有一个调用方** —— `api/app.py` 的 `/draft`，
-       而它只在 `PRODUCT` 那一支走这条路（点名 X0/X1/X2 的请求原样走 `assemble()`）。
+    2. **整个 `src/` 里 `assemble_product` 只有一个调用方** —— `draft/product_draft.py`
+       里那个「章号 → 一稿正文」的函数，而它只在 `PRODUCT` 那一支走这条路
+       （点名 X0/X1/X2 的请求原样走 `assemble()`）。
+       **2026-08-11 之前那个调用方是 `api/app.py` 的 `/draft` 路由体**；那 120 行被提到
+       `draft/` 里，是因为 agent 的起草工具要调同一个函数（3.6 / ADR 0021）——
+       **提出来之后调用方仍然只有一个，这条断言的全部重量就在这个「一个」上**。
 
     判据是 AST 的 import 图不是 grep：那几个名字在注释和 docstring 里也有
     （本文件自己就写了好几遍）。
@@ -249,7 +253,7 @@ def test_the_gate_never_reaches_this_module() -> None:
         for path in src.rglob("*.py")
         if "assemble_product" in imported_names(path)
     }
-    assert callers == {"api/app.py"}, (
+    assert callers == {"draft/product_draft.py"}, (
         f"`assemble_product` 的调用方变了：{sorted(callers)}\n"
         "多一个调用方就要重新回答一次「三臂受不受影响」——上面那条换序的全部安全性押在这儿。"
     )

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useActivity, useActivityDetail, useRuns } from "../api/hooks";
 import { useOpenChapter } from "../autopilot";
 import { useCoords, type Tab } from "../store";
+import { shownTime } from "../time";
 import type {
   ActivityCost,
   ActivityEntry,
@@ -103,14 +104,6 @@ function jumpNote(entry: ActivityEntry, jump: ActivityJump): string | null {
 
 /** 数字。**null 是「没记」不是 0**（§10 约束 8）：一张写着 0 的账单是假的。 */
 const num = (value: number | null): string => (value === null ? "未记录" : String(value));
-
-/** 时间。**认不出来就不显示**：契约夹具里时间戳被规范化成占位串，
- *  硬渲染会在界面上摆出一个看起来很正常的假日期。 */
-function shownTime(ts: string): string {
-  const at = Date.parse(ts);
-  if (Number.isNaN(at)) return "";
-  return new Date(at).toLocaleString("zh-CN", { hour12: false });
-}
 
 /** 这本书到今天为止用掉多少。
  *

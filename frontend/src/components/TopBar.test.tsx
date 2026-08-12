@@ -6,7 +6,14 @@ import { useCoords } from "../store";
 import { TopBar } from "./TopBar";
 
 beforeEach(() => {
-  useCoords.setState({ projectId: "project:ID1", chapter: 1, selectedNodeId: null, page: "workbench" });
+  // `chatOpen` 也要归位：store 是模块单例，上一条 test 开着它，下一条「默认关着」就假绿。
+  useCoords.setState({
+    projectId: "project:ID1",
+    chapter: 1,
+    selectedNodeId: null,
+    page: "workbench",
+    chatOpen: false,
+  });
 });
 
 describe("顶栏", () => {
@@ -87,6 +94,30 @@ describe("顶栏", () => {
     await user.click(screen.getByRole("button", { name: "活动记录" }));
     expect(useCoords.getState().page).toBe("log");
     expect(document.body.textContent).not.toMatch(/条新|待处理|未读/);
+  });
+
+  it("写作助手是一颗开合按钮，**默认关着** —— 同活动记录那条：入口不是通知", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<TopBar />);
+    await screen.findByRole("combobox", { name: "当前章节" });
+
+    expect(useCoords.getState().chatOpen).toBe(false);
+    await user.click(screen.getByRole("button", { name: "写作助手" }));
+    expect(useCoords.getState().chatOpen).toBe(true);
+    // 它开的是**中栏的右半边**，不换页：日志页那一档也留着它。
+    expect(useCoords.getState().page).toBe("workbench");
+    await user.click(screen.getByRole("button", { name: "写作助手" }));
+    expect(useCoords.getState().chatOpen).toBe(false);
+  });
+
+  it("**在章节准备页上按它会回工作台** —— 那一页换掉整块中栏，不回去就是一颗死按钮", async () => {
+    const user = userEvent.setup();
+    useCoords.setState({ page: "prep", chatOpen: false });
+    renderWithApi(<TopBar />);
+    await screen.findByRole("combobox", { name: "当前章节" });
+
+    await user.click(screen.getByRole("button", { name: "写作助手" }));
+    expect(useCoords.getState()).toMatchObject({ chatOpen: true, page: "workbench" });
   });
 
   it("**顶栏不再要作者填出场人物** —— 那是写出来的结果，不是写之前的输入", async () => {

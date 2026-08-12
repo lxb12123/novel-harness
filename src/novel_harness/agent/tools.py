@@ -30,7 +30,7 @@ agent 调一次就把 PLANNED 秘密的正文读进对话历史，而对话是�
 |---|---|---|
 | `scene_constraints` | 第 N 章不许说破哪几条秘密、哪些实体还没登场 | 秘密的内容、PLANNED 边 |
 | `character_state`   | 某人第 N 章在哪、什么状态、登场没有、死没死 | `Node`（它带着 props） |
-| `draft_chapter`     | 起草第 N 章的正文，**回到对话里** | —— 它不落盘，见下 |
+| `draft_chapter`     | 起草第 N 章的正文，**并直接写进那一章** | —— 见下面「落盘」那一节 |
 
 **书内索引**（`index.py`，四层，越往下越贵；那份 docstring 是它的规格）：
 
@@ -44,12 +44,22 @@ agent 调一次就把 PLANNED 秘密的正文读进对话历史，而对话是�
 **索引的四条工具全部只读、且出参里没有一条路径走得到 `props`。** 它们新加的返回面同样
 被 `tests/test_agent_tools.py` 的那张网罩着——加工具的那天先跑那张网，不是先跑功能测试。
 
-**没有写正文工具，这是有意的。** ADR 0019 边界一的最后一条是「写正文必须作者确认，
-模型不能直接落盘」，边界三补的是「正文的真相源在磁盘上，DB 永远不是」（ADR 0007）。
-两条合起来意味着落盘那一步必须是**一次同步的人工确认**，而这一版还没有 agent loop
-（3.3）、也没有会话表（3.4）——**没有循环就没有「作者在循环里点确认」这个位置**。
-在那个位置存在之前给出写工具，等于让模型在一个没有确认点的系统里覆盖作者的稿子。
-所以它不在表里，而且加它的那天要一起加的是确认的 UI，不是一行 `Path.write_text`。
+── 落盘：**有，但它不在这张表里**（ADR 0021，2026-08-11）──────────────────
+
+ADR 0019 边界一原来的最后一条是「写正文必须作者确认，模型不能直接落盘」。
+**那一条被 ADR 0021 推翻了**：起草完直接写磁盘，不弹框；退路是版本历史 + 日志页一行；
+唯一的闸是「拒绝覆盖作者比它更晚改过的那一章」。
+
+**但表里仍然没有一条「写正文」工具**，而这不是遗漏
+（`tests/test_agent_tools.py::test_there_is_no_tool_that_writes` 钉着这一整节）：
+
+- 写盘要 `importer.sync()`，而它收的是 `GraphStore`（**带写入面**）。`ToolContext`
+  上只有 `StoryGraph`，`CanonWriter` 在类型层就不存在（边界一）——为了落盘把它塞回来，
+  等于用一次功能换掉「模型改不了作者的 canon」这条类型保证。
+- 所以落盘发生在**注入进来的那个 `drafter` 里**（`agent/drafting.py` 造的那个闭包
+  握着 conn 和 store），这一层只把它的回执（`saved` / `note`）原样交给模型。
+- 一条推论：**模型没有「只写不草」这个动作**。它不能拿一段自己编的文本去盖某一章——
+  能写进磁盘的只有刚刚由后端按当前章约束生成的那一稿。
 
 **`secret_surfaces` / `resolve_cast` 也不在表里**（`tests/test_draft_boundary.py`
 的 `WRITER_BANNED`）：前者是秘密的内容 tell（`玄血蛊`）——进对话就是把检测器要找的词
@@ -80,10 +90,10 @@ agent 调一次就把 PLANNED 秘密的正文读进对话历史，而对话是�
   约束退化成**全禁**（`unknown_cast_constraints`）。方向是 fail-closed 的那一侧
   ——多禁一条的代价是少写一段，漏禁一条的代价是崩人设。
 - `drafter` 缺席时 `draft_chapter` 返回一条明确的「没接线」而不是假装起草。
-  它是注入而不是在这里再实现一遍，因为今天「章号 → 一稿正文」的完整实现只存在于
-  `api/app.py` 的路由体里（记忆层预算、capability 探测、长度策略全在那儿）。
-  **把它抄进工具表 = 第二条会漂的起草路径**，而这个仓库刚把「同一份东西三处拷贝」的病清掉。
-  3.3 落地时正确的动作是先把那段提成 `draft/` 里的一个函数，再让这里收它。
+  它是注入而不是在这里再实现一遍：「章号 → 一稿正文」的实现在
+  `draft/product_draft.py::draft_chapter()`，**HTTP 的 `/draft` 和这个工具调的是同一个函数**
+  （2026-08-11 从 `api/app.py` 的路由体里提出来的，提之前那 120 行只存在于那儿）。
+  在这里抄一份 = 第二条会漂的起草路径，而这个仓库刚把「同一份东西三处拷贝」的病清掉。
 
 **注入的形状本身也在守边界二**：`drafter` 收的是 `(DraftAsk, DraftContext)` 两件东西，
 而 `DraftAsk` 里没有约束字段、`DraftContext` 由后端算——起草侧拿不到模型给的约束，
@@ -106,6 +116,7 @@ from ..draft.context import (
     unknown_cast_constraints,
 )
 from ..draft.provider import ToolCall
+from ..extract.call_audit import ModelCallReceipt
 from ..graph import NodeLabel, NodeRef
 from ..graph.store import StoreError
 from ..importer import chapter_path
@@ -238,9 +249,12 @@ class CharacterStateResult(BaseModel):
 
 
 class DraftResult(BaseModel):
-    """`draft_chapter` 的出参：一稿正文 + 它受了哪些约束的回执。
+    """`draft_chapter` 的出参：一稿正文 + 它受了哪些约束 + **它落没落盘**。
 
-    **正文只回到对话里，不落盘**（模块 docstring 的「没有写正文工具」那一节）。
+    落盘那两个字段是 [ADR 0021](../../../docs/adr/0021-agent-writes-drafts-without-asking.md)
+    的落点：起草完直接写磁盘，不弹框。**写没写成必须说出来**——「我写进第 12 章了」和
+    「你刚改过这一章，我没有覆盖它」是两句完全不同的话，而模型只能从这份返回里知道
+    是哪一句。
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -249,6 +263,23 @@ class DraftResult(BaseModel):
     text: str
     must_not_reveal: list[str] = Field(default_factory=list)
     """秘密的**显示名**（`血脉秘密`），永远不是它的内容 tell（`玄血蛊`）。"""
+
+    saved: bool = False
+    """这一稿写没写进磁盘上的那一章。`False` 有三种原因，都在 `note` 里说清楚了。"""
+
+    note: str = ""
+    """写进哪儿了 / 为什么没写。**空 = 起草侧没接线时的老形状。**"""
+
+    calls: tuple[ModelCallReceipt, ...] = Field(default=(), exclude=True)
+    """这一稿花掉的那几笔。**`exclude=True`：它一个字都不进对话历史。**
+
+    这不是省 token，是边界三：账单原料里躺着 `prompt_bytes`——**那是整份 prompt 的原文**，
+    含约束段。把它序列化进 `tool_result` 等于把一份逐章变的约束钉进持久化的对话，
+    正是边界二/六在防的东西，而且是我们自己递过去的。
+
+    它由 `dispatch()` 从这儿取走放到 `ToolOutcome.calls` 上（**结构判断，不是一张
+    「哪个工具花钱」的表**，同 `_asked_chapter`），再由 loop 交给 `ledger`。
+    """
 
 
 class ToolOutcome(BaseModel):
@@ -264,6 +295,18 @@ class ToolOutcome(BaseModel):
     name: str
     ok: bool
     content: str
+
+    calls: tuple[ModelCallReceipt, ...] = ()
+    """这次工具调用**自己花掉的**那几笔（今天只有 `draft_chapter` 会非空）。
+
+    **它不进 `content`，也就是不进对话历史**——账单原料是给 `agent/loop.py` 的
+    `ledger` 和成本闸看的，模型看见它只会浪费 token。这是「同一次调用两个消费者、
+    两套规矩」的老形状（同 `ModelCallReceipt.completion_tokens` 那条）。
+
+    为什么必须走出参而不是让起草侧自己记账：`ToolContext` 上没有 conn（边界一），
+    起草侧自己记就得把 conn 塞回去；而且**它自己记的账 loop 看不见**，
+    `TurnLimits.max_tokens` 那道闸就罩不住表里唯一一个花钱的工具。
+    """
 
     chapter: int | None = None
     """模型在这次调用里点的那个章号。`None` = 这个工具压根不收章号，或者参数没过校验。
@@ -393,10 +436,14 @@ def _handle_draft_chapter(args: DraftAsk, context: ToolContext) -> DraftResult:
             "这一轮请改用别的方式推进，或者让作者从界面上起草。"
         )
     ctx = _scene_context(context, args.chapter)
+    product = context.drafter(args, ctx)
     return DraftResult(
         chapter=args.chapter,
-        text=context.drafter(args, ctx),
+        text=product.text,
         must_not_reveal=list(ctx.secret_labels),
+        saved=product.saved,
+        note=product.note,
+        calls=product.calls,
     )
 
 
@@ -438,10 +485,13 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
     ToolSpec(
         name="draft_chapter",
         description=(
-            "起草第 N 章的一稿正文，结果回到对话里给作者看。"
+            "起草第 N 章的一稿正文。**写完直接存进那一章**，不用问作者——"
+            "他随时能在版本历史里退回去。"
             "**不要传约束**：不许说破什么由后端按这个章号当场重算，"
-            "你上一轮看到的清单对这一章可能已经过期。这个工具不会写进作者的稿子，"
-            "落盘要作者自己点。"
+            "你上一轮看到的清单对这一章可能已经过期。"
+            "返回里会说清楚这一稿存没存进去：作者在你写的这段时间里改过那一章、"
+            "或者那一章还不存在（新的一章要他自己起标题），都不会覆盖，"
+            "那时把正文交给他看就行。"
         ),
         args=DraftAsk,
         handler=_handle_draft_chapter,
@@ -532,10 +582,30 @@ def tool_declarations() -> list[dict[str, Any]]:
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def _refused(call: ToolCall, message: str, chapter: int | None = None) -> ToolOutcome:
+def _refused(
+    call: ToolCall,
+    message: str,
+    chapter: int | None = None,
+    calls: tuple[ModelCallReceipt, ...] = (),
+) -> ToolOutcome:
+    """一条 `ok=False` 的返回。**`calls` 默认空，但不许写死成空**——见 `ToolRefused.calls`：
+    起草那一档可以在「已经花过一次钱」之后才拒。"""
     return ToolOutcome(
-        call_id=call.id, name=call.name, ok=False, content=message, chapter=chapter
+        call_id=call.id, name=call.name, ok=False, content=message, chapter=chapter, calls=calls
     )
+
+
+def _billed_calls(payload: BaseModel) -> tuple[ModelCallReceipt, ...]:
+    """这次工具调用自己花掉的那几笔。**结构判断，不是一张表**（同 `_asked_chapter`）。
+
+    出参上有一个叫 `calls` 的 `ModelCallReceipt` 元组就取走它，没有就是没花钱。
+    一张「哪个工具花钱」的表会在加工具的那天漂，而漂掉的症状是**一笔账凭空消失**、
+    成本闸同时失明——两个都不会有任何东西报错。
+    """
+    value = getattr(payload, "calls", ())
+    if isinstance(value, tuple) and all(isinstance(item, ModelCallReceipt) for item in value):
+        return value
+    return ()
 
 
 def _asked_chapter(args: BaseModel) -> int | None:
@@ -604,7 +674,13 @@ def dispatch(call: ToolCall, context: ToolContext) -> ToolOutcome:
 
     try:
         payload = spec.handler(args, context)
-    except (ToolRefused, UnresolvedCast, StoreError, ValueError) as exc:
+    except ToolRefused as exc:
+        # **拒绝也可能是花过钱的**（`ToolRefused.calls`）：起草的第一次调用答上来了、
+        # 续写那次断线，这一档拒得对，但那笔钱得跟着回执一起交出去。
+        return _refused(call, str(exc), chapter, exc.calls)
+    except (UnresolvedCast, StoreError, ValueError) as exc:
+        # 这三种都是**在发出去之前**判出来的（称呼解析不了 / 图层拒绝 / 参数不合法），
+        # 一分钱没花，所以这一支没有回执可交。
         return _refused(call, str(exc), chapter)
 
     return ToolOutcome(
@@ -614,6 +690,7 @@ def dispatch(call: ToolCall, context: ToolContext) -> ToolOutcome:
         # 出参一律经 Pydantic 序列化：`dict` / `sqlite3.Row` 越不过这一行（铁律 4）。
         content=payload.model_dump_json(),
         chapter=chapter,
+        calls=_billed_calls(payload),
     )
 
 

@@ -36,8 +36,9 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .decisions import quote_hash
 from .graph import ChapterSpec, GraphStore, StoredChapter
-from .text import Chapterization, chapterize
+from .text import Chapter, Chapterization, chapterize
 
 CHAPTER_DIR: Final = "chapters"
 """相对 `project.root_path`。ADR 0007：这个目录里的 .md **就是稿子**，不是导出物。"""
@@ -146,6 +147,28 @@ class SyncRefused(Exception):
     def __init__(self, message: str, path: str) -> None:
         super().__init__(message)
         self.path: Final = path
+
+
+class ChapterMissing(Exception):
+    """磁盘上没有这一章。**新建一章不走这条路**（见 `save_chapter`）。"""
+
+    def __init__(self, message: str, chapter: int) -> None:
+        super().__init__(message)
+        self.chapter: Final = chapter
+
+
+class ChapterChanged(Exception):
+    """磁盘上那一章**已经不是**调用方依据的那一份了（ADR 0021 的那道乐观闸）。
+
+    `expected` / `actual` 是两个 `text_sha256`，给调用方拼话用——**它们不上屏**
+    （屏幕上那句话是「你刚改过这一章，所以没有覆盖它」）。
+    """
+
+    def __init__(self, message: str, chapter: int, *, expected: str, actual: str) -> None:
+        super().__init__(message)
+        self.chapter: Final = chapter
+        self.expected: Final = expected
+        self.actual: Final = actual
 
 
 class SyncReport(BaseModel):
@@ -312,6 +335,95 @@ def sync(store: GraphStore, project_id: str, root: Path) -> SyncReport:
         unchanged_count=unchanged_count,
         ignored_files=ignored,
     )
+
+
+def read_chapter(root: Path, chapter: int) -> str | None:
+    """磁盘上第 `chapter` 章的正文。`None` = 那个文件不存在。
+
+    **`utf-8-sig`**：和 `sync`、`explode`、`api/app.py` 的读法同解。差一个 BOM，
+    `text_digest()` 就会给出两个不同的哈希，而那道乐观闸会在作者什么都没做的时候拦下来。
+    """
+    file = root / chapter_path(chapter)
+    if not file.exists():
+        return None
+    return file.read_text(encoding="utf-8-sig")
+
+
+def single_chapter(text: str) -> Chapter | None:
+    """`text` 恰好是**一个章节文件**时返回切出来的那一章，否则 `None`。
+
+    **切章只有 `chapterize()` 这一份实现**（同 `sync` 的那句话）——调用方不许自己写
+    第二份「首行是不是章标」的判断，两份漂掉的那天，一边说这份稿子能存、另一边把
+    整本书的章号切歪。
+
+    **比 `sync` 严一格**：它还要求章标之前一个字都没有。`sync` 落库的是**文件全文**，
+    preamble 丢不掉；而这个函数的调用方要拿 `body` 去**重拼**一份文件
+    （`chapter_text(raw_heading, body)`），preamble 会在那次重拼里被静默丢掉——
+    那是作者写在章标前面的字，不该由一次自动落盘吃掉。
+    """
+    book = chapterize(text)
+    if len(book.chapters) != 1 or book.preamble.strip():
+        return None
+    return book.chapters[0]
+
+
+def text_digest(text: str) -> str:
+    """一段章节正文的 `text_sha256`。**和 `chapter_snapshot` 那一列同解。**
+
+    直接借 `decisions.quote_hash`（sha256 / UTF-8 原始字节 / 不做任何归一化），
+    理由写在它自己的 docstring 里：**别在别处再实现一遍**——两份实现里只要有一份
+    哪天加了 `.strip()`，快照去重和这道乐观闸就在那一刻各说各话。
+    """
+    return quote_hash(text)
+
+
+def save_chapter(
+    store: GraphStore,
+    project_id: str,
+    root: Path,
+    chapter: int,
+    markdown: str,
+    *,
+    expected_sha256: str | None = None,
+) -> SyncReport:
+    """把一章正文写进磁盘，再 `sync` 落快照。**磁盘先、DB 跟**（ADR 0007）。
+
+    保存这条路只有这一个实现：作者按 Ctrl-S 走它（`PUT …/chapters/{n}/text`），
+    agent 起草完落盘也走它（ADR 0021）。**一个功能不留两个入口**，也不给
+    「哪份正文是真的」第二个答案。
+
+    Args:
+        expected_sha256: 调用方**依据的那一份**正文的哈希。给了就先比对磁盘当前值，
+            不一致 → `ChapterChanged`，**一个字节都不写**。
+
+            `None` = 不比对，也就是作者自己按保存那一档：他改的就是他眼前那份，
+            没有第三方能在中间插一脚。**agent 那条路必须给**——它从起草到落盘之间隔着
+            一次几十秒的模型调用，而作者就在旁边打字。
+
+    Raises:
+        ChapterMissing: 那一章的文件不存在。**这条 404 不许为 agent 放开**（ADR 0021）：
+            新建一章要起章标题，而标题是切章的锚（`chapterize` 认「首个非空行」），
+            起错了整本书的章号会漂；`chapter_snapshot.chapter_id` 也没有落点。
+        ChapterChanged: 磁盘上那份已经比 `expected_sha256` 新。
+        SyncRefused: 写进去的东西切不出恰好一章（正文**已经**落盘，作者要修章标题再存一次）。
+    """
+    file = root / chapter_path(chapter)
+    if not file.exists():
+        raise ChapterMissing(f"第 {chapter} 章在磁盘上不存在", chapter)
+    if expected_sha256 is not None:
+        # **读了立刻比、比完立刻写**：中间不夹任何一次模型调用或事务。窗口关不死
+        # （没有文件锁，作者的编辑器随时可能在这两行之间落盘），但它从「几十秒」
+        # 缩到「几毫秒」，而剩下那点窗口和作者的两个编辑器互相覆盖是同一种东西。
+        actual = text_digest(file.read_text(encoding="utf-8-sig"))
+        if actual != expected_sha256:
+            raise ChapterChanged(
+                f"第 {chapter} 章在磁盘上已经变了",
+                chapter,
+                expected=expected_sha256,
+                actual=actual,
+            )
+    file.write_text(markdown, encoding="utf-8")
+    return sync(store, project_id, root)
 
 
 def import_book(store: GraphStore, project_id: str, *, txt: Path, root: Path) -> ImportReport:

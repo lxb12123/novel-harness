@@ -49,6 +49,7 @@ from ..draft.context import DraftContext
 from ..draft.product_context import memory_units_available
 from ..draft.rolling_summary import ChapterSummaryStatus
 from ..events import EventView
+from ..extract.call_audit import ModelCallReceipt
 from ..graph import InformationScope, StoryGraph
 
 
@@ -57,7 +58,22 @@ class ToolRefused(Exception):
 
     它不是 bug 的信号，是编排层的一个正常出口：`dispatch()` 把它变成一条
     `ok=False` 的 `ToolOutcome` 交回对话，模型据此换个问法重来。
+
+    ── `calls`：**拒绝不等于没花钱** ────────────────────────────────────────
+
+    表里六个工具有五个是纯读，拒了确实一分钱没花。第六个不是：`draft_chapter`
+    一次是一到两次真的模型调用（生成 + 至多一次续写，ADR 0011 D3），而
+    **第一次答上来、续写那次断线**是一档真会发生的失败——那时钱已经付掉了。
+
+    这些回执必须跟着拒绝一起交回 `dispatch`，否则它们连同 `ToolOutcome.calls`
+    一起消失，而**账本和成本闸同时失明**（`agent/loop.py::bill` 是同一个入口）。
+    方向和 `/draft` 那个已知洞一样是偏低，而偏低的数在界面上自称是全部。
     """
+
+    def __init__(self, message: str, *, calls: tuple[ModelCallReceipt, ...] = ()) -> None:
+        super().__init__(message)
+        self.calls: tuple[ModelCallReceipt, ...] = calls
+        """拒之前**已经真的发生过**的那几次模型调用。默认空 = 这次拒绝没花钱。"""
 
 
 class DraftAsk(BaseModel):
@@ -82,8 +98,53 @@ class DraftAsk(BaseModel):
     )
 
 
-DraftFn = Callable[[DraftAsk, DraftContext], str]
+class DraftProduct(BaseModel):
+    """起草侧交回来的东西：**一稿正文 + 它花了多少 + 它落没落盘**。
+
+    ── 为什么不是一个裸 `str`（3.4 报的那条余债）────────────────────────────
+
+    裸 `str` 那一版有两个洞，而它们都不是「以后再说」那一档：
+
+    1. **loop 的成本闸看不见起草。** `TurnLimits.max_calls_per_step` 只管次数不管钱，
+       而表里恰恰有一个工具每次是一次真的模型调用。回执带回 `calls` 之后，那几笔钱
+       进 `charged`，`max_tokens` 那道闸才罩得住它。
+    2. **账上没有它。** 「`/draft` 一行 `model_call` 都不写」是这个仓库记在
+       `docs_dev` 里的已知病；把起草接进一个 `ledger` 必填的地方却不带回执，
+       等于把那个洞原样搬进来，而且是明知故犯。
+
+    ── `saved` / `note` 为什么在这儿（ADR 0021）────────────────────────────
+
+    起草完**直接写磁盘，不弹框**。写没写成只有起草侧知道（磁盘在它手里），而模型
+    要据此决定下一句说什么——「我写进第 12 章了」和「你刚改过这一章，我没敢覆盖」
+    是两句完全不同的话。所以它是回执的一部分，不是一个副作用。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    text: str
+    calls: tuple[ModelCallReceipt, ...] = ()
+    """每一次真的模型调用一份（生成 + 至多一次续写）。**loop 负责落账和计闸。**"""
+
+    saved: bool = False
+    """这一稿写没写进磁盘上的那一章（ADR 0021）。"""
+
+    note: str = ""
+    """给模型看的一句话：写进哪儿了 / 为什么没写。**空 = 没什么要交代的。**"""
+
+
+DraftFn = Callable[[DraftAsk, DraftContext], DraftProduct]
 """起草的接线口。**收两件东西，而约束那件是后端算的**（边界二）。"""
+
+
+LedgerFn = Callable[[ModelCallReceipt], None]
+"""记账的接线口。**必填，没有 `None` 这个取值**（`run_turn` 的参数）。
+
+它收一份原料就落一行 `model_call`。持有 conn 的那一层去实现它——
+`ToolContext` 上没有 conn 是边界一的一部分（见模块 docstring），别为了记账把它塞回去。
+
+**它不在 `ToolContext` 上**，也不该在：工具不记账，工具只把自己花掉的那几笔
+（`DraftProduct.calls`）交回给 loop，由 loop 交给这个函数。
+"""
 
 
 @runtime_checkable
@@ -213,7 +274,10 @@ class ToolContext:
 __all__ = [
     "DraftAsk",
     "DraftFn",
+    "DraftProduct",
     "EventIndex",
+    "LedgerFn",
+    "ModelCallReceipt",
     "SummaryIndex",
     "ToolContext",
     "ToolRefused",

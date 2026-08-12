@@ -548,3 +548,88 @@ header select {
   background: var(--bg); color: var(--ink);
   max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+
+/* ── 中栏对半分：左边正文、右边写作助手（模式二）─────────────────────────────
+   两个 fr 因子由 SplitPanes 内联给（作者拖出来的，加起来正好 100），
+   像素下限在 minmax 的第一个参数里——JS 那侧不再算第二遍。 */
+.center-split { display: grid; min-width: 0; overflow: hidden; }
+
+/* 写作助手面板 */
+.pane.chat { padding: 0; display: flex; flex-direction: column; border-left: 0; }
+.chat-head {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  border-bottom: 1px solid var(--line); background: var(--panel);
+}
+.chat-head .spacer { flex: 1; }
+.chat-head-title {
+  font-weight: 600; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.chat-asof { color: var(--dim); font-size: 11px; flex: 0 0 auto; }
+
+/* 会话列表：**盖住对话区**而不是切一条侧栏出来 —— 这一半窄到放不下两列
+   （理由写在 ChatSessions.tsx 顶上）。 */
+.chat-sessions { padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.chat-new { width: 100%; margin-bottom: 8px; padding: 5px 8px; }
+.chat-sessions-empty { margin: 4px 0 0; font-size: 12px; line-height: 1.7; }
+.chat-session-list { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow: auto; }
+.chat-session { display: flex; align-items: flex-start; gap: 4px; }
+.chat-session + .chat-session { border-top: 1px solid var(--line); }
+.chat-session-pick {
+  flex: 1; min-width: 0; display: block; text-align: left; padding: 6px 8px;
+  border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; cursor: pointer;
+}
+.chat-session-pick:hover { background: var(--sel); color: inherit; border-color: transparent; }
+.chat-session.on .chat-session-pick { background: var(--sel); color: var(--accent); font-weight: 600; }
+.chat-session-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-session-meta {
+  display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 2px;
+  color: var(--dim); font-size: 11px; font-weight: 400;
+}
+.chat-badge { border: 1px solid var(--line); border-radius: 8px; padding: 0 5px; }
+.chat-badge.half { color: var(--warn); border-color: var(--warn); }
+.chat-badge.run { color: var(--accent); border-color: var(--accent); }
+.chat-session-del { flex: 0 0 auto; padding: 2px 7px; }
+.chat-session-confirm { flex: 0 0 auto; display: flex; gap: 4px; }
+
+/* 对话区 */
+.chat-log { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
+.chat-log .empty { font-size: 12px; line-height: 1.8; }
+.chat-earlier { width: 100%; margin-bottom: 10px; font-size: 12px; }
+.chat-msg + .chat-msg { margin-top: 12px; }
+.chat-who { display: block; color: var(--dim); font-size: 11px; margin-bottom: 3px; }
+.chat-text { margin: 0; white-space: pre-wrap; line-height: 1.75; }
+.chat-msg.author .chat-text {
+  padding: 7px 10px; border-radius: 8px; background: var(--sel);
+}
+
+/* 还在跑的那一段。**没有打字机动画**：这一版 HTTP 不流式，装成在逐字吐是骗人的
+   （ChatPanel.tsx 顶上第 1 条）。唯一会动的是那颗点和真实的秒表。 */
+.chat-running {
+  display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; padding: 9px 10px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+}
+.chat-running-dot {
+  flex: 0 0 auto; width: 7px; height: 7px; margin-top: 5px; border-radius: 50%;
+  background: var(--accent); animation: chat-pulse 1.4s ease-in-out infinite;
+}
+@keyframes chat-pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
+.chat-running-say { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; line-height: 1.7; }
+.chat-running-say span { color: var(--dim); }
+
+.chat-receipt { margin-top: 12px; padding-top: 8px; border-top: 1px dashed var(--line); }
+.chat-receipt-say { margin: 0 0 4px; font-size: 12px; line-height: 1.7; }
+.chat-receipt-note { margin: 0 0 4px; color: var(--dim); font-size: 11px; line-height: 1.7; }
+
+/* 输入 */
+.chat-say { border-top: 1px solid var(--line); padding: 8px 12px 10px; background: var(--panel); }
+.chat-say textarea { width: 100%; resize: vertical; font: inherit; line-height: 1.7; }
+.chat-say-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.chat-say-row .spacer { flex: 1; }
+.chat-say-note { margin: 6px 0 0; color: var(--dim); font-size: 11px; line-height: 1.7; }
+
+/* 这两个类只有写作助手在用（工作台其余地方按钮一律同一副长相）。
+   「发送」和「停」是这一块屏幕上唯二会花钱 / 会中断花钱的动作，所以给它们分出来。 */
+.chat button.primary { border-color: var(--accent); color: var(--accent); background: var(--sel); }
+.chat button.danger { border-color: var(--warn); color: var(--warn); }
+.chat button.danger:hover:not(:disabled) { background: var(--warnbg); }

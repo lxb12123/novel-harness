@@ -46,6 +46,11 @@
 agent loop 是第二个会大量花钱的地方。给 `ledger` 一个 `None` 默认值 = 日志页第二次骗人，
 而且这一次是明知故犯。**记账失败也不吞**：账记不上的那一次调用已经花过钱了。
 
+**工具花掉的钱走同一个入口**（`run_tool` → `bill`）：`draft_chapter` 每跑一次是一次真的
+模型调用，起草侧把回执（`DraftProduct.calls`）交回来，这一层记账 + 计闸。3.3 那一版没有
+这条线，于是 `max_tokens` 罩不住表里唯一一个不免费的工具——那正是上面引的那句话的形状，
+只是换了个地方发生。
+
 **诚实说明**：`ProviderError`（网络断了、供应商 4xx）那一路**没有账**——没有 `CompletionResult`
 就没有 token 数，而这一层不许替它编一个（`model_call.cost` 那一列至今空着，正是同一条纪律：
 BYOK 之下引擎不知道作者签的什么单价，宁可空着也不猜）。已经发出去、生成到一半被作者掐掉的
@@ -94,7 +99,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from ..draft.length import DraftLanguage, count_units
 from ..draft.product_context import TOKENS_PER_UNIT
 from ..draft.provider import CompletionResult, ProviderError, ToolCall
-from .ports import ToolContext
+from ..extract.call_audit import ModelCallReceipt
+from .ports import LedgerFn, ToolContext
 from .tools import ToolOutcome, dispatch, outdated_manuscript, tool_declarations
 
 _LANGUAGE: Final = DraftLanguage.ZH
@@ -646,19 +652,22 @@ class TurnLimits:
     """
 
     max_calls_per_step: int = 6
-    """**一步之内最多派发几个工具。** 上面两条闸都拦不住这一档，而它是会真的花钱的那一档。
+    """**一步之内最多派发几个工具。** 它拦的是「次数」，不是「钱」——两半都要有。
 
     形态（3.3 实测）：模型一次发 50 个 `tool_call`，`max_steps` 数的是**模型调用**、
-    这一批只算一步；`max_tokens` 在批派发**之前**查一次、批内不再查。于是 50 次派发
-    全跑完，而表里有一个工具（`draft_chapter`）每次是一次真的模型调用，走的是起草侧
-    自己的账——**这一层的成本闸看不见它**。
+    这一批只算一步；`max_tokens` 那时在批派发**之前**查一次、批内不再查，于是 50 次
+    派发全跑完。
 
     闸放在 loop 而不是放在起草那条路上，理由和「连续失败要数两个数」同源：
 
-    - **起草是注入的**（`ToolContext.drafter`），它的闸这一层看不见也报不出来——
+    - **起草是注入的**（`ToolContext.drafter`），它自己的闸这一层看不见也报不出来——
       作者会拿到一个 `done`，而钱已经花掉了；
     - **按工具名给闸门 = 一张会漂的表。** 今天只有一个不免费的工具，加第二个的那天
       没有任何东西会提醒谁去补它的闸。批宽度不认名字，所以它罩得住还没写出来的工具。
+
+    **钱那一半在 3.6 补上了**（`run_tool` → `bill`）：起草的回执（`DraftProduct.calls`）
+    进 `charged`，于是**每派发完一个就查一次 `max_tokens`**。这条必须有，因为次数闸
+    在这儿是宽的：六个 `draft_chapter` 是六稿正文，次数上完全合法。
 
     默认 6：表里七个工具，一次把索引那几层一起查了是正常行为；六个以上是「它想一口气
     做完一整章的活」，那时停下来问作者比替他花钱对。
@@ -721,38 +730,10 @@ class Cancellation:
 # ══════════════════════════════════════════════════════════════════════════
 
 
-class ModelCallReceipt(BaseModel):
-    """一次模型调用的**账单原料**：`record_call()` 除 conn / project_id / id 工厂之外的全部入参。
-
-    形状照着 `extract/call_audit.py::record_call` 的签名长，是为了让 3.4 那一层的适配器
-    是一次**平移**而不是一次翻译——翻译的地方就是能悄悄漏字段的地方，而漏掉的那个字段
-    会让日志页少算一笔钱。
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    capability: str = AGENT_CAPABILITY
-    schema_version: str = AGENT_SCHEMA_VERSION
-    model: str
-    finish_reason: str | None = None
-    prompt_hash: str
-    prompt_bytes: bytes
-    text: str
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    """**供应商报的那个数，没报就是 `None`。** 这一层不许替它补一个估算值：
-    账上的零和「没报」是两件事（`CostTotals` 把 `NULL` 折成 0 那条已知病就是这么来的）。
-    闸门那一侧另算（`_charged`），两个消费者两套规矩。"""
-
-    elapsed_ms: int = 0
-
-
-LedgerFn = Callable[[ModelCallReceipt], None]
-"""记账的接线口。**必填，没有 `None` 这个取值。**
-
-它收一份原料就落一行 `model_call`。持有 conn 的那一层去实现它——
-`ToolContext` 上没有 conn 是边界一的一部分（`ports.py`），别为了记账把它塞回去。
-"""
+# `ModelCallReceipt` / `LedgerFn` 住在 `extract/call_audit.py`（`record_call` 的隔壁）
+# 和 `ports.py`。**2026-08-11 从这个文件搬走**，理由是起草侧（`draft/product_draft.py`）
+# 也要产出同一种原料，而 `draft/` 不许 import `agent/`（方向反了就成环）。
+# 搬走之后这里仍然 re-export，所以 `from ..agent.loop import ModelCallReceipt` 照旧成立。
 
 
 PersistFn = Callable[[Conversation], None]
@@ -1013,6 +994,50 @@ def run_turn(
         if persist is not None:
             persist(live)
 
+    def bill(receipt: ModelCallReceipt) -> None:
+        """一次模型调用：**记一笔账 + 计一次闸**。两件事必须同时发生，所以只有这一个入口。
+
+        **它也收工具花掉的那几笔**（`draft_chapter` 每次是一次真的模型调用）。3.3 那一版
+        只有对话自己那次调用走这儿，于是「一步之内派发几个工具」是唯一罩得住起草的闸——
+        而那道闸只管次数不管钱：六个 `draft_chapter` 是六稿正文，次数上完全合法。
+
+        「报了 usage」的判据是**两半都在、而且入方向不是 0**，不是「不是 None」。
+        少这两档的话闸门能被供应商关掉，而且是静默地关掉：
+        ① 中转在流式下常给半份（入有数、出没有）；
+        ② 本地端点（llama.cpp 等）给一份恒 0 的 usage。
+        照 0 累加的话额度永远到不了顶，剩下的只有步数闸——而那是另一个闸，拦的是别的东西。
+        **一个能被对方报低到失效的成本闸等于没有闸**，所以不可用时退回估算（偏紧）。
+        """
+        nonlocal reported, charged, unmetered
+        ledger(receipt)
+        spent = (receipt.prompt_tokens or 0) + (receipt.completion_tokens or 0)
+        reported += spent
+        if (
+            receipt.prompt_tokens is not None
+            and receipt.completion_tokens is not None
+            and receipt.prompt_tokens > 0
+        ):
+            charged += spent
+            return
+        # 账上仍然照抄供应商报的（含 `None`、含 0）——闸门用估算，**账本不许编数**。
+        unmetered += 1
+        charged += max(
+            spent,
+            _estimate_tokens(receipt.prompt_bytes.decode("utf-8", errors="replace"))
+            + _estimate_tokens(receipt.text),
+        )
+
+    def run_tool(call: ToolCall) -> ToolOutcome:
+        """派发一次工具，**并把它花掉的钱记上**（`DraftProduct.calls` → `bill`）。
+
+        `dispatch` 外面照旧**没有** try/except（模块 docstring 第三节）：这里加的是
+        记账，不是异常处理。
+        """
+        outcome = dispatch(call, context)
+        for receipt in outcome.calls:
+            bill(receipt)
+        return outcome
+
     def finish(
         reason: StopReason, *, reply: str = "", note: str = ""
     ) -> TurnResult:
@@ -1034,7 +1059,8 @@ def run_turn(
     # 这就是 ADR 0019 说的「看尾巴、补跑缺的、继续」。T1–T5 只读或纯函数，重放免费。
     #
     # **但补跑之前先问信号。** ADR 那句「重放免费」对表里的一个工具不成立：`draft_chapter`
-    # 重放一次是一次真的模型调用，花的是作者的钱，而且它不走这一层的 `ledger`（起草侧自己记）。
+    # 重放一次是一次真的模型调用，花的是作者的钱（2026-08-11 起它至少记得上账了——
+    # `run_tool` 把回执交给 `bill`——但记上账不等于没花）。
     # 判据不是「哪个工具贵」——那是一张会在加工具的那天漂的表——是**信号亮着就不动手**。
     # 停下来时给剩下那几个补壳（同 `UNRUN_CALL`：这一档表示「这一轮明确决定不跑了」），
     # 否则 `pending_calls` 那句「从界面上停下来的会话在这儿是空的」当场变成假话。
@@ -1051,11 +1077,18 @@ def run_turn(
             live = live.extended(*_unrun(pending[position:]))
             save()
             return finish(StopReason.AUTHOR_STOPPED)
-        live = live.extended(_outcome_message(dispatch(call, context)))
+        live = live.extended(_outcome_message(run_tool(call)))
         tool_calls += 1
         # **每补跑一个存一次**，而不是补完整批再存：否则死在补跑中间的下一次 resume
         # 又从整批的第一个开始，而「重放免费」对表里的 `draft_chapter` 不成立。
         save()
+        if charged >= limits.max_tokens:
+            # 补跑本身能烧完整轮额度（一个 `draft_chapter` 就是一稿正文）。
+            # 剩下那几个配壳停下来，**不是接着补**——不然这一轮在跑第一次模型调用
+            # 之前就已经超了。
+            live = live.extended(*_unrun(pending[position + 1 :]))
+            save()
+            return finish(StopReason.COST_LIMIT)
 
     taken_ids = _taken_ids(live)
 
@@ -1083,8 +1116,10 @@ def run_turn(
 
         # ── 记账。**在任何一条停止分支之前**：钱已经花掉了，停下来不会把它退回来 ──
         prompt_bytes, prompt_hash = _prompt_digest(last_projection.messages, declarations)
-        ledger(
+        bill(
             ModelCallReceipt(
+                capability=AGENT_CAPABILITY,
+                schema_version=AGENT_SCHEMA_VERSION,
                 model=result.model,
                 finish_reason=result.finish_reason,
                 prompt_hash=prompt_hash,
@@ -1095,28 +1130,6 @@ def run_turn(
                 elapsed_ms=elapsed_ms,
             )
         )
-        # 「报了 usage」的判据是**两半都在、而且入方向不是 0**，不是「不是 None」。
-        # 少这两档的话闸门能被供应商关掉，而且是静默地关掉：
-        # ① 中转在流式下常给半份（入有数、出没有）；
-        # ② 本地端点（llama.cpp 等）给一份恒 0 的 usage。
-        # 照 0 累加的话额度永远到不了顶，剩下的只有步数闸——而那是另一个闸，拦的是别的东西。
-        # **一个能被对方报低到失效的成本闸等于没有闸**，所以不可用时退回估算（偏紧）。
-        spent = (result.prompt_tokens or 0) + (result.completion_tokens or 0)
-        reported += spent
-        if (
-            result.prompt_tokens is not None
-            and result.completion_tokens is not None
-            and result.prompt_tokens > 0
-        ):
-            charged += spent
-        else:
-            # 账上仍然照抄供应商报的（含 `None`、含 0）——闸门用估算，**账本不许编数**。
-            unmetered += 1
-            charged += max(
-                spent,
-                _estimate_tokens(prompt_bytes.decode("utf-8"))
-                + _estimate_tokens(result.text),
-            )
 
         calls = _addressable(result.tool_calls, taken_ids)
         live = live.extended(
@@ -1165,12 +1178,20 @@ def run_turn(
                 return finish(StopReason.REPEATED_CALL, reply=result.text)
 
             # **裸调用，外面没有 try/except**（模块 docstring 第三节）。
-            outcome = dispatch(call, context)
+            outcome = run_tool(call)
             tool_calls += 1
             live = live.extended(_outcome_message(outcome))
             # **逐个存**：一批三个、跑完第一个就死掉时，下一次回来该补的是剩下那两个，
             # 不是整批重来。整批重来在只读工具上只是浪费，在 `draft_chapter` 上是真花钱。
             save()
+
+            if charged >= limits.max_tokens:
+                # **批宽度那道闸只管次数不管钱**：六个 `draft_chapter` 是六稿正文，
+                # 次数上完全合法。所以钱这一半在这儿收——每派发完一个查一次，
+                # 而不是等下一次模型调用之前才查（那时这一批已经全跑完了）。
+                live = live.extended(*_unrun(calls[position + 1 :]))
+                save()
+                return finish(StopReason.COST_LIMIT, reply=result.text)
 
             if outcome.ok:
                 failure_streak.pop(call.name, None)

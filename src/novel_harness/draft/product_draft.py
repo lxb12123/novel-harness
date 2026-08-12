@@ -1,0 +1,409 @@
+"""「章号 + 目标 → 一稿正文」的**唯一实现**（产品档；kill-gate 三臂走 `assemble()`）。
+
+在这个文件存在之前，这条路径整个内联在 `api/api/app.py` 的 `/draft` 路由体里（约 120 行：
+capability 探测 → 记忆预算 → 长度策略 → form 选择 → 三条装配分支 → `generate_draft`）。
+3.1 落地工具表时就报过它：
+
+> 今天没有任何后端函数能收「章号 → 一稿正文」……**把它抄进工具表 = 第二条会漂的起草路径**。
+
+所以模式二接起草的第一刀不是「在 `agent/` 里再写一份」，是把那 120 行提到这儿，
+让 HTTP 壳和 agent 的起草工具**调同一个函数**。
+
+── 这一层收什么、不收什么 ────────────────────────────────────────────────
+
+**收一份算好的 `DraftContext`，不收 cast、不收 store。** 约束由调用方从
+`panel/constraints.py` 那个唯一闸门算好再递进来（HTTP 那边从作者填的在场名单算，
+agent 那边从正文推，ADR 0018）。这条分工不是洁癖：
+
+- 约束集只许有一个入口（`tests/test_draft_boundary.py` 的 `WRITER_BANNED` 把
+  `resolve_cast` 钉在墙外），这一层自己解析 cast 就是给第二份推导开门；
+- agent 那条路上 `_scene_context()` **已经**算过一次（工具要拿 `must_not_reveal`
+  当回执），再算一次就是同一份约束的两次查询——中间图变了的话两份还会不一样。
+
+**它也不落盘。** 写不写进第 N 章是 ADR 0021 的事，发生在拿到这一稿之后，
+走 `importer.save_chapter()` 那条既有路径（磁盘先、DB 跟）；行内续写（ADR 0015）
+按定义就不该落盘。一个函数只回答「写出来是什么」。
+
+── 账单原料在出参里，但这一层不记账 ──────────────────────────────────────
+
+`ChapterDraft.calls` 是 1–2 份 `ModelCallReceipt`（一次生成 + 至多一次续写，ADR 0011 D3），
+**记账的动作留给持有 conn 的那一层**（同 `agent/loop.py` 的 `ledger`：
+「`ToolContext` 上没有 conn」是边界一的一部分）。
+
+出参里带着它，是因为**不带就没人记得补**：`/draft` 那条路今天一行 `model_call` 都不写，
+于是日志页显示的是真实花销的一小部分、看起来却像全部（`docs_dev` 的「已知限制」第一条）。
+agent 那条路的 `ledger` 是必填参数，接上这一层之后那笔钱才真的落到账上。
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
+from hashlib import sha256
+from time import perf_counter
+from typing import Any, Final, Literal, Protocol, runtime_checkable
+
+from ..events import EventStore
+from ..extract.call_audit import ModelCallReceipt
+from ..graph import NodeLabel
+from .assemble import (
+    CONTINUATION_GOAL,
+    GATE_TAIL_CODE_POINTS,
+    HOUSE_STYLE_FORBIDDEN_HINTS,
+    PromptForm,
+    assemble,
+    product_tail_limit,
+)
+from .capabilities import ProviderCapabilities, ResolvedCallPlan
+from .context import DraftContext, ResolvedConstraints
+from .generate import DraftAttempt, DraftResult, generate_draft
+from .length import DraftLanguage, LengthSpec
+from .product_assemble import assemble_product
+from .product_context import MemoryBudget, build_product_context, memory_units_available
+from .provider import ProviderConfig
+from .rolling_summary import ChapterSummary, ChapterSummaryStatus
+
+WRITER_CAPABILITY: Final = "writer"
+"""`model_call.capability` 这一列的取值。**`activity._CAPABILITY_LABEL` 里已经有它**
+（`writer → 起草`）——那一行在此之前是死的，因为起草从来没写过账。"""
+
+PRODUCT_DRAFT_SCHEMA_VERSION: Final = "m5.draft.v1"
+"""这一稿的 prompt 结构版本，进 `model_call.params_json`。
+
+**改了装配形状就要改这个数**：账上那一行是事后唯一能回答「当时发出去的是什么形状」的
+东西，而 `in_artifact` 只存哈希、不存原文。
+"""
+
+
+class DraftRefused(Exception):
+    """这一稿在**发出去之前**被拒了，理由说得出口（form 不认识、文风里写了禁令词）。
+
+    不继承 `ValueError`：那样它会被 `api/app.py` 的全局 `ValueError` handler 兜住，
+    而两个调用方要给作者的话不一样（HTTP 那边是 422，agent 那边是一条贴回对话的
+    `ok=False`）。异常类型分得开，两边的措辞才分得开。
+    """
+
+
+@runtime_checkable
+class SummarySource(Protocol):
+    """滚动总结的只读端口（`draft.rolling_summary.SummaryStore` 结构上满足它）。
+
+    **比 `agent.ports.SummaryIndex` 多一个 `for_range`**，因为起草要的是内容
+    （装进记忆前言），索引要的只是「有没有」。两个协议各自只收自己用得到的方法，
+    这样「谁能拿到什么」在类型上就是准的。
+    """
+
+    def for_range(
+        self, project_id: str, first_chapter: int, last_chapter: int
+    ) -> list[ChapterSummary]: ...
+
+    def coverage(
+        self, project_id: str, first_chapter: int, last_chapter: int
+    ) -> list[ChapterSummaryStatus]: ...
+
+
+@dataclass(frozen=True)
+class ChapterDraftRequest:
+    """作者这一次想要什么样的一稿。**没有一个字段装得下约束**（ADR 0019 边界二）。
+
+    长度是**请求参数**不是后端设置（[ADR 0013](../../../docs/adr/0013-draft-length-is-a-request-parameter.md)）：
+    「这一次想写多少」是意愿，不是书的数据。
+    """
+
+    goal: str
+    length: LengthSpec
+    mode: Literal["chapter", "continuation"] = "chapter"
+    form: str = "PRODUCT"
+    previous_tail: str = ""
+    house_style: str = ""
+
+
+@dataclass(frozen=True)
+class ChapterDraft:
+    """一稿正文 + 它的两份回执（记忆层装了什么 / 花了多少）。"""
+
+    result: DraftResult
+    memory: dict[str, Any]
+    calls: tuple[ModelCallReceipt, ...] = field(default_factory=tuple)
+    """每一次真的模型调用一份（生成 1 次 + 续写至多 1 次）。**调用方负责落账。**"""
+
+
+def memory_receipt(
+    note: str,
+    *,
+    assembled: bool = False,
+    profiles: int = 0,
+    recent_events: int = 0,
+    background_events: int = 0,
+    rolling_summaries: int = 0,
+    unsummarized_chapters: list[int] | None = None,
+) -> dict[str, Any]:
+    """起草响应里的「记忆层这一稿到底装了什么」回执。
+
+    **零必须带着理由一起出现**（ARCHITECTURE §10 约束 8，同 `/check` 的 `rules_run`）：
+    「0 条滚动总结」既可能是「这本书还没写到第 10 章，那一层本来就是空的」，也可能是
+    「有 12 章该总结而一条都没生成」。两者在界面上长成同一个「- 暂无」，作者就永远不会
+    知道自己少喂了什么给模型——这正是 2026-08-06 盘点里那条「没有任何东西提示作者」。
+    """
+    return {
+        "assembled": assembled,
+        "note": note,
+        "profiles": profiles,
+        "recent_events": recent_events,
+        "background_events": background_events,
+        "rolling_summaries": rolling_summaries,
+        "unsummarized_chapters": list(unsummarized_chapters or []),
+    }
+
+
+def check_request(request: ChapterDraftRequest) -> PromptForm:
+    """把请求里那两个自由字符串验掉，返回它点的那一臂。**纯函数，重复调用无副作用。**
+
+    `draft_chapter()` 自己会调它；HTTP 壳**在算约束之前**也调一次，为的是保住
+    422 的先后顺序（form 写错和在场角色解析不了同时发生时，作者收到的仍然是
+    form 那一句）。两次调用一份实现，重复的是执行不是代码。
+    """
+    requested = request.form.strip().upper()
+    if requested == "PRODUCT":
+        # M2 认可的产品臂仍然是 X1；PRODUCT 只多一段单独审计过的已确认记忆前言。
+        # 显式点名 X0/X1/X2 的请求走它们各自原样的老代码路径。
+        form = PromptForm.X1
+    else:
+        try:
+            form = PromptForm[requested]
+        except KeyError:
+            raise DraftRefused(f"form 只能是 PRODUCT / X0 / X1 / X2，收到 {request.form!r}")
+
+    house_style = request.house_style.strip()
+    if house_style:
+        hits = [w for w in HOUSE_STYLE_FORBIDDEN_HINTS if w in house_style]
+        if hits:
+            raise DraftRefused(
+                "自定义文风里不能出现这些词："
+                + " / ".join(hits)
+                + "——文风三臂共用，写进去等于给对照组也上了约束。"
+            )
+    return form
+
+
+def _prompt_digest(messages: Sequence[Any]) -> tuple[bytes, str]:
+    """账上那一行的 `in_artifact` / `prompt_hash`。
+
+    编码口径和另外两个花钱的能力一致（`extract/control.py::_encode_messages`、
+    `agent/loop.py::_prompt_digest`）：`ensure_ascii=False` + `sort_keys=True` +
+    紧凑分隔符。**三处独立编码是今天的形状**，各自只要自己前后一致就能回答
+    「这两次调用发出去的是不是同一份」——但谁把其中一处改了，跨能力的比较就不成立了。
+    """
+    encoded = json.dumps(
+        [dict(message) for message in messages],
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return encoded, sha256(encoded).hexdigest()
+
+
+def _receipt(attempt: DraftAttempt, elapsed_ms: int) -> ModelCallReceipt:
+    prompt_bytes, prompt_hash = _prompt_digest(attempt.messages)
+    return ModelCallReceipt(
+        capability=WRITER_CAPABILITY,
+        schema_version=PRODUCT_DRAFT_SCHEMA_VERSION,
+        model=attempt.result.model,
+        finish_reason=attempt.result.finish_reason,
+        prompt_hash=prompt_hash,
+        prompt_bytes=prompt_bytes,
+        text=attempt.result.text,
+        # 供应商报的那个数，没报就是 `None`。**这一层不替它补一个估算值**
+        # （账上的零和「没报」是两件事）。
+        prompt_tokens=attempt.result.prompt_tokens,
+        completion_tokens=attempt.result.completion_tokens,
+        elapsed_ms=elapsed_ms,
+    )
+
+
+def draft_chapter(
+    ctx: DraftContext,
+    *,
+    request: ChapterDraftRequest,
+    project_id: str,
+    config: ProviderConfig,
+    capability: ProviderCapabilities,
+    plan: ResolvedCallPlan,
+    events: EventStore,
+    summaries: SummarySource,
+    on_call: Callable[[ModelCallReceipt], None] | None = None,
+) -> ChapterDraft:
+    """按 `ctx` 里那个章号起一稿。**`/draft` 和 agent 的起草工具共用这一个函数。**
+
+    Args:
+        ctx: 已经算好的约束。**类型本身就是「这份约束退没退化」的答案**
+            （`ResolvedConstraints` = 在场都解析成功；`UnknownCastConstraints` = 全禁）。
+            章号从它身上取，**不另收一个 `chapter` 参数**——两个来源必须相等的东西，
+            迟早有一天不相等。
+        events / summaries: 记忆前言的两个只读来源。**只在 PRODUCT 且在场里有人物时**
+            被碰到（行内续写和三臂都不装记忆）。
+        on_call: **每一次真的模型调用一落地就叫一次**，不等整份 `ChapterDraft` 拼好。
+            出参上的 `calls` 只在**成功**那条路上交得出去，而这条路会在中途失败：
+            第一次答上来了、续写那次断线（ADR 0011 D3 的第二次调用），那时钱已经付掉，
+            异常一抛 `calls` 就没了。要给这一档记账的调用方传它——
+            **`/draft` 不传**（它至今一行账都不写，那是另一个已知洞，这一刀不动它）。
+
+    Raises:
+        DraftRefused: form 不认识、或文风里写了三臂共用的禁令词。
+        panel.constraints.UnresolvedCast: 由 `build_product_context` 的 label 校验转成
+            的输入错误（调用方映成给作者的话）。
+        provider.ProviderError: 模型这一次没答上来。
+    """
+    form = check_request(request)
+    product_form = request.form.strip().upper() == "PRODUCT"
+    house_style = request.house_style.strip()
+    chapter = ctx.chapter
+    continuation = request.mode == "continuation"
+
+    assemble_args = {
+        "form": form,
+        # ADR 0015 D3：续写的 goal 是后端常量，请求里那个已被调用方校验为空。
+        "goal": CONTINUATION_GOAL if continuation else request.goal,
+        "length": request.length,
+        "previous_tail": request.previous_tail,
+        # **逐字上文的长度只有产品路径放长**（ADR 0019 边界五）。`GATE_TAIL_CODE_POINTS`
+        # 是 X0 对照臂的定义，它存在是为了证明「给得少会崩」——产品继承它 = 产品拿
+        # 对照组的预算跑，而作者只会看到「AI 写出来的东西前言不搭后语」。
+        # 反过来：请求里点名了 X0/X1/X2 就是 kill-gate 的臂，必须原样拿冻结值，
+        # 否则就是改考卷（EVAL_PROTOCOL §2）。`product_form` 正好等于「没点名臂」。
+        "previous_tail_limit": (
+            product_tail_limit(capability.max_context_tokens, plan.request_token_budget)
+            if product_form
+            else GATE_TAIL_CODE_POINTS
+        ),
+        "house_style": house_style or None,
+    }
+
+    if continuation:
+        # 续写**不带已确认事件记忆**：那一段要查档案 + 近八章事件 + 滚动总结，
+        # 对一次「停手 400ms 就要出结果」的提示来说太贵，而 `previous_tail`
+        # 本来就是此刻最相关的上下文。记忆是整章起草的东西。
+        messages = assemble(ctx, **assemble_args)
+        memory = memory_receipt("行内续写不带已确认记忆，上文就是此刻最相关的上下文。")
+    elif product_form:
+        messages, memory = _with_memory(
+            ctx,
+            assemble_args,
+            project_id=project_id,
+            chapter=chapter,
+            language=request.length.language,
+            capability=capability,
+            plan=plan,
+            events=events,
+            summaries=summaries,
+        )
+    else:
+        messages = assemble(ctx, **assemble_args)
+        memory = memory_receipt("指定了 kill-gate 实验臂，按该臂的原样 prompt 走，不加记忆前言。")
+
+    receipts: list[ModelCallReceipt] = []
+    mark = perf_counter()
+
+    def bill(attempt: DraftAttempt) -> None:
+        """一次真的模型调用 = 一份账单原料。**逐次计时**，不是整段除以二：
+        续写那一次通常比第一次短，把两次摊平会让日志页上的「耗时」两行都是假的。
+
+        **当场交给 `on_call`**，不攒到最后：攒到最后的那一份只在成功那条路上交得出去，
+        而「第一次成了、续写断线」是一档真会发生的失败——那时钱已经付掉了。
+        """
+        nonlocal mark
+        now = perf_counter()
+        receipt = _receipt(attempt, max(0, int((now - mark) * 1_000)))
+        receipts.append(receipt)
+        if on_call is not None:
+            on_call(receipt)
+        mark = now
+
+    result = generate_draft(
+        messages, length=request.length, config=config, plan=plan, on_attempt=bill
+    )
+    return ChapterDraft(result=result, memory=memory, calls=tuple(receipts))
+
+
+def _with_memory(
+    ctx: DraftContext,
+    assemble_args: dict[str, Any],
+    *,
+    project_id: str,
+    chapter: int,
+    language: DraftLanguage | str,
+    capability: ProviderCapabilities,
+    plan: ResolvedCallPlan,
+    events: EventStore,
+    summaries: SummarySource,
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    """产品档：已确认记忆前言 + 它的回执。装不上就说出来，不静默退化。"""
+    if not isinstance(ctx, ResolvedConstraints):
+        # 不知道谁在场 ⇒ 没有「谁的档案」可查（`UnknownCastConstraints` 上没有 cast，
+        # 那是有意的：空列表会让下游以为「查过了，确实没人」）。
+        return assemble(ctx, **assemble_args), memory_receipt(
+            "这一稿没有记忆前言：不知道这一场有谁在，档案与事件记忆无从查起"
+            "（约束和禁令照常生效，而且是全禁那一侧）。"
+        )
+
+    # **必须过滤 label。** `resolve_cast` 认的是花名册里的全部称呼，不只人物：
+    # 作者在「在场角色」里写一个地点名（「青云城主府」），它会唯一解析成 Location
+    # 节点、穿过 `require_resolved_cast()`，然后在 `build_product_context` 的
+    # 「cast must contain only Character references」上炸成 500。
+    # ADR 0018 之后这条路更容易走到——在场是从正文里数出来的，数出来的是称呼。
+    characters = [ref for ref in ctx.matrix.characters if ref.label is NodeLabel.CHARACTER]
+    if not characters:
+        # 退化不是错误（约束照常生效，禁令一条不少），但**不许静默**：
+        # 少了记忆前言的稿子和多了记忆前言的稿子长得不一样，作者有权知道是哪一种。
+        return assemble(ctx, **assemble_args), memory_receipt(
+            "这一稿没有记忆前言：在场称呼里没有一个解析成人物，"
+            "档案与事件记忆无从查起（约束和禁令照常生效）。"
+        )
+
+    # **先装配，再算覆盖率**，顺序不能反：窗口边界现在由字数预算倒推
+    # （`recent_event_boundary`），不再是写死的「近八章」，所以在
+    # `build_product_context` 跑完之前没人知道边界在哪。
+    # 总结行很短（单章 ≤120 字），整本取回来也就几十 KB，让引擎去筛比
+    # 在这儿先算一遍边界安全——**边界只许有一处**。
+    # **预算从模型的真实窗口倒推，不是写死的字数。**
+    # 「近八章」的老毛病是绝对量：1M 窗口和 32k 窗口拿同一个数。换成字数只是
+    # 换了单位，没治病。真正会缩放的是「占可用上下文的几分之几」——
+    # `MEMORY_CONTEXT_SHARE`（比例）+ `MEMORY_UNITS_CEILING`（成本闸）。
+    budget = MemoryBudget.for_context(
+        memory_units_available(capability.max_context_tokens, plan.request_token_budget)
+    )
+    product = build_product_context(
+        events,
+        project_id,
+        characters,
+        draft_chapter=chapter,
+        summaries=summaries.for_range(project_id, 1, chapter - 1),
+        budget=budget,
+        language=language,
+    )
+    coverage = summaries.coverage(project_id, 1, product.recent_from_chapter - 1)
+    return assemble_product(ctx, product, **assemble_args), memory_receipt(
+        "已确认记忆前言已装配（人物档案 + 近期事件 + 更早章节滚动总结）。",
+        assembled=True,
+        profiles=len(product.profiles),
+        recent_events=len(product.recent_events),
+        background_events=len(product.background_events),
+        rolling_summaries=len(product.rolling_summaries),
+        unsummarized_chapters=[
+            row.chapter_number for row in coverage if row.has_text and row.summary is None
+        ],
+    )
+
+
+__all__ = [
+    "PRODUCT_DRAFT_SCHEMA_VERSION",
+    "WRITER_CAPABILITY",
+    "ChapterDraft",
+    "ChapterDraftRequest",
+    "DraftRefused",
+    "SummarySource",
+    "check_request",
+    "draft_chapter",
+    "memory_receipt",
+]

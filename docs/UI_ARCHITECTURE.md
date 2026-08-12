@@ -102,6 +102,23 @@
 | POST | `/projects/{pid}/chapters/{n}/extract` | `runner.enqueue`（后台执行） | `ExtractionRun`（202） | 🟢 |
 | GET | `/projects/{pid}/extractions/{run_id}` | `runner.get` | `ExtractionRun` | 🟢 |
 | GET | `/projects/{pid}/chapters/{n}/events?scope=` | `events_for_chapter` | `list[EventView]`·**两个 scope 前端都在用**（2026-08-11 起）：`PROVISIONAL` 是「待确认的情节」，`CANON` 是「已确认的情节」（改名单的那一半）。此前 `CANON` 在浏览器里一个字都没露过面 | 🟢 |
+| POST | `/projects/{pid}/chats` | `ChatStore.create` | `ChatSessionView`（201）·**作者可以同时开好几段**，每段各自 resume。入参 `{title?, house_style?}`——`house_style` 进稳定前缀，**所以它必须跨章不变**（[ADR 0019](adr/0019-agent-loop-not-graph.md) 边界六）；工作台今天不给它输入框，一律发空串 | 🟢 |
+| GET | `/projects/{pid}/chats` | `ChatStore.list` + 两次聚合 | `list[ChatSessionView]`·最近说过话的在前。**`pending_lookups` 在这条路由上是真算的**（不是吃默认值 0）：断在半路的那一段和跑完的那一段下一步动作不同，而这一页是作者唯一一次看得见全部会话的地方。**`message_count` 含不上屏的那些**（工具往返），所以界面上不许把它当「你们说了几句」显示 | 🟢 |
+| GET | `/projects/{pid}/chats/{id}` | `ChatStore.load` | `ChatDetail`·**给的是整段**（canonical 只增不改，没有分页端点）。超长时的处置在前端：`chat.ts::tailWindow` 只渲染尾巴，早先那些点一下就全在——**一条都不许真丢** | 🟢 |
+| DELETE | `/projects/{pid}/chats/{id}` | `ChatStore.delete` | `ChatDeleted`·**不动任何一行正文**（正文在磁盘上，那两张表里没有它，[ADR 0019](adr/0019-agent-loop-not-graph.md) 边界三）。正在跑的那一段 409 带一句人话，前端原样说、**不静默重试** | 🟢 |
+| POST | `/projects/{pid}/chats/{id}/turn` | `agent.loop.run_turn` | `TurnReceipt`·`{chapter, said}`。**`chapter` 必填、无默认值**——投影在它缺席时不过滤，而那是「没接线」默认值不是安全默认值（边界五：第 90 章的禁说清单是第 40 章那份的**子集**）。`said` 留空 = resume。**这一版 HTTP 不流式**（内部流式），所以拿到的是一个跑完才回来的响应；出参是**对话的投影不是原文**（工具返回一条都不出去，只给一个 `lookups` 计数） | 🟢 |
+| POST | `/projects/{pid}/chats/{id}/stop` | `LIVE.stop` | `ChatStopped`·**`stopped=false` 不是失败**（那一刻它本来就没在跑），200 + 一句人话。它不等这一轮跑完 | 🟢 |
+
+> **写作助手那六条上，措辞的唯一出处在后端。** `TurnReceipt.reason` 是 snake_case 机器码
+> （`agent.loop.StopReason`，故意的——原样上屏会被两侧的形状判据当场咬住），
+> 说给作者的那一句是 `TurnReceipt.message`（`stop_wording()`）。**前端不许再翻一遍**，
+> 只补后端说不出来的那两句：作者按过停没有（`chat.ts::stopFootnote`——它那一轮跑到最后
+> 一步才收到停，报 `done` 是对的，但屏幕上写「说完了」读起来像按钮坏了），
+> 以及这一轮的上下文裁掉了什么（`receiptNotes`，零不写、非零必须带理由）。
+>
+> **`**` 那一对是重音不是星号。** `stop_wording(CONTEXT_FULL)` 里有一对字面量 `**`；
+> 前端把它渲染成强调（`chat.ts::emphasize`）——**那不是第二份措辞源**，一个字都没换。
+> 改那句话本身才是。
 
 > **`/matrix` `/constraints` `/state` 的 `?cast=` 留空不再等于「一个人都没有」，而是「你自己去正文里数」**
 > （[ADR 0018](adr/0018-cast-is-derived-not-declared.md)）。作者传了就听作者的；空着走 `mentioned_cast`；
@@ -188,6 +205,43 @@
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
+#### 2.1.1 中栏对半分：左边正文、右边写作助手（模式二，2026-08-11）
+
+作者的原话是「**文章那块对半分，左边是文章右边是 agent**」——所以切的是**中栏这一块**，
+不是整行：顶栏一颗「写作助手」开合，**左栏书架和右栏面板一个像素不动**
+（他一边跟它说话，一边看得见这一章谁还不知道什么）。默认关着，关的时候连那根分隔条都不渲染。
+
+```
+├──────────────┬───────────────────┬───┬──────────────┬───────────────────┤
+│ 左栏 240px   │ 正文（≥320px）     │ ⇔ │ 写作助手     │ 右栏 400px         │
+│ **不动**     │                   │   │ （≥280px）   │ **不动**           │
+```
+
+三件这块布局自己要守的事，都在 `frontend/src/layout.ts`：
+
+- **那根分隔条存的是百分比，不是像素**（`nh.chat-pane.v1`，和左右两栏那个键分开）。
+  「对半分」是一个比例：存成像素的话窗口一变宽它就不再是一半，而首帧量不到容器宽
+  （jsdom 里恒为 0）时根本算不出「一半是多少像素」。白捡的一件事是方向键那条交互
+  **不需要量任何东西**，于是它在 jsdom 里真的可测。
+- **中栏的下限跟着开合变**（`centerFloor()`）：开着的时候要同时装下正文和它。
+  少算这一段，作者一开面板正文就被挤成一条缝——他连拖都没拖。
+- **「作者拖成什么样」和「这一刻画成什么样」是两个数**：state 存意图，渲染前才按当前
+  容器宽夹一遍。存夹完的结果 = **开一次写作助手就把他拖好的左右两栏永久压到下限**，
+  关掉也回不来（窗口拖窄再拖宽是同一个故障）。
+
+面板本身（`ChatPanel.tsx` / `ChatSessions.tsx`）守的四条，判据都在测试里：
+
+1. **不许假装在逐字吐。** 这一版 HTTP 不流式（内部流式），拿到的是一个跑完才回来的响应。
+   诚实的形态只有两样：**一个还在跑的信号 + 一个真实的秒表**，外加一句「跑完才会一次性
+   出现整段回话」。编一个打字机动画出来，作者会按那个编的节奏判断它是不是卡住了。
+2. **工具返回不上屏，前端也不许自己去把它捞回来补上**——后端出参已经是投影不是原文，
+   那里头是 `NodeRef` 的裸标识。能说的只有一个数：这一轮查了几次。
+3. **一轮钉在它自己那一段对话上。** 一轮跑好几分钟，而作者可以同时留着好几段：
+   秒表和回执必须记着自己属于哪一段，否则它们会画在他此刻看着的那一段上，
+   而那一段什么都没发生。
+4. **断在半路的那一段在列表上看得出来**（`pending_lookups`），但**不画「恢复」按钮**——
+   接着说一句（或者「接着往下」发一句空话）就会自动把缺的那几步补上。
+
 ### 2.2 组件树
 
 ```
@@ -234,6 +288,15 @@
 │  │         └─ <CanonEventCast>  ◀ GET /events?scope=CANON
 │  │                              ▶ POST /canon/events/{id}/cast（勾选框=绝对集合，
 │  │                                只发动过的那一维；日志页跳过来时按 `jump.event_id` 展开）
+│  ├─ <ChatPanel>     ◀── 2026-08-11 模式二（ADR 0019）：中栏右半边，顶栏开合，默认关
+│  │  ├─ <ChatSessions>          ◀ GET /chats（多段并存，各自 resume）
+│  │  │                          ▶ POST /chats · DELETE /chats/{id}（正在跑 ⇒ 409，原样说）
+│  │  ├─ <Bubble ×N>             ◀ GET /chats/{id}（整段；长了只渲染尾巴，早先那些点一下全在）
+│  │  ├─ <RunningStrip>          ▶ POST /chats/{id}/stop（`stopped=false` **不是失败**）
+│  │  │                            **真秒表，无打字机**——这一版 HTTP 不流式
+│  │  └─ <Receipt>               ◀ POST /chats/{id}/turn（`chapter` 必填 = 顶栏那一章；
+│  │                               `said` 留空 = resume。措辞出处在后端，这里只补
+│  │                               「你按过停」和「这一轮裁掉了什么」两句）
 │  └─ <BottomBar>
 │     ├─ <SceneTimeline>          ◀ parse_scenes 序 + edge.valid_from/valid_to
 │     └─ <RunTelemetry collapsed> ◀ 同上：整理次数 / token / 花费在「活动记录」页顶上
@@ -276,6 +339,15 @@
 - **服务端状态（TanStack Query）装一切可拉数据**：`queryKey = [端点, projectId, chapter, cast/nodeId, scope]`，坐标一变自动重取。出参形状今天由**手写**的 `src/api/types.ts` 定义（原计划的「`openapi-typescript` 生成、零手写 DTO」没兑现，为什么见 §1 开头）。
 - **为什么这样分**：`KnowledgeMatrix`/`StateSnapshot` 是对给定坐标的确定性投影，react-query 的 staleness/refetch 免费搞定失效，且天然支持 ADR 0007 的两条实时路径：**面板**（场景元数据变→invalidate matrix/constraints，本机 2–5ms 瞬时）+ **规则**（正文变→debounce 2s→invalidate `/check`）。写路径（`declare_*`/`sync`）成功后精确 invalidate 受影响 key（如 `declare_where` 改了地点→失效该章 state/matrix/subgraph）。
 - **唯一的本地可变状态**：CM6 编辑器 doc 自持，保存时才 PUT + sync，脏态用 `isDirty` 标记不进 react-query。
+- **写作助手跑完一轮之后，正文那一侧一律重取**（`text` / `chapters` / `history` + 那五格面板，
+  和作者自己按保存之后是同一批）。理由不是显示滞后：**助手起草直接写进磁盘上那一章**
+  （ADR 0021，走的是 `PUT /chapters/{n}/text` 那条同一条路径），而 `TurnReceipt` 上
+  **没有「它到底写没写」这一位**，所以只能一律重取——否则作者对着一份旧稿按保存，
+  盖掉的是助手写的一整章。
+  ⚠️ **这条的前提是编辑器不会拿重取到的正文盖掉他没保存的字**（`editorDoc.ts`：
+  先比出处再看脏态，脏着就只说一句、一个字不动）。**两件事必须一起在**——
+  只补前者 = 他一边打字一边跟助手说话，刚打的半段被静默吃掉，
+  而**没保存过的东西哪儿都找不回来**（版本历史只存保存过的）。
 
 ### 2.4 编辑器：CodeMirror 6，不是 TipTap
 

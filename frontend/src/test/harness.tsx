@@ -79,6 +79,14 @@ const DEFAULT: Handler[] = [
   { match: /\/activity\?.*actor=author/, body: fixtures.activityAuthorOnly },
   { match: /\/activity(\?|$)/, body: fixtures.activity },
   { match: /\/runs(\?|$)/, body: fixtures.runs },
+  // 写作助手（模式二）的六条。**顺序有意义**：`/chats` 那两条要排在 `/chats/…`
+  // 前面，否则列表和详情会互相顶掉。
+  { method: "POST", match: /\/chats$/, body: fixtures.chatCreated },
+  { match: /\/chats$/, body: fixtures.chats },
+  { method: "POST", match: /\/chats\/[^/]+\/turn$/, body: fixtures.chatTurn },
+  { method: "POST", match: /\/chats\/[^/]+\/stop$/, body: fixtures.chatStopped },
+  { method: "DELETE", match: /\/chats\/[^/]+$/, body: fixtures.chatDeleted },
+  { match: /\/chats\/[^/]+$/, body: fixtures.chatDetail },
 ];
 
 /** 把 fetch 换成查表。**没有匹配上就抛**——静默返回空数组会让组件渲染出一个

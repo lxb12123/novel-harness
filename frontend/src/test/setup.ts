@@ -37,3 +37,15 @@ if (typeof globalThis.localStorage?.getItem !== "function") {
 // 每个 test 从空存储开始：不清的话「没存过应该给默认值」这类断言会被上一个 test 写进去的
 // 值染绿/染红，而且测试顺序一换结论就变。
 beforeEach(() => localStorage.clear());
+
+// ── CodeMirror 6 要量字，而 jsdom 的 `Range` 上没有那两个测量方法 ──────────────
+// 少了它们，CM6 的一次 measure 会在 `requestAnimationFrame` 里抛 TypeError。那个抛
+// **发生在断言之外**：轻则一屏和被测行为毫无关系的 stderr，重则被 vitest 记成一条
+// unhandled error 让整轮红——而红的原因是「jsdom 不排版」，不是代码错了。
+// 补一个量到零的空实现：jsdom 里本来就没有排版，**量到零是诚实的，抛出去不是**。
+// 同上面 localStorage 那段：**一份就够，别往单个测试文件里拷第二份。**
+if (typeof Range.prototype.getClientRects !== "function") {
+  const empty = () => Object.assign([] as DOMRect[], { item: () => null }) as unknown as DOMRectList;
+  Range.prototype.getClientRects = empty;
+  Range.prototype.getBoundingClientRect = () => new DOMRect();
+}

@@ -47,10 +47,11 @@ from novel_harness.agent.loop import (
     TurnLimits,
     run_turn,
 )
-from novel_harness.agent.ports import DraftAsk, ToolContext
+from novel_harness.agent.ports import DraftAsk, DraftProduct, ModelCallReceipt, ToolContext
 from novel_harness.agent.store import ChatStore
 from novel_harness.db import Connection, connect, migrate
-from novel_harness.draft.provider import CompletionResult, ToolCall
+from novel_harness.draft.capabilities import resolve_capabilities
+from novel_harness.draft.provider import CompletionResult, ProviderConfig, ToolCall
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.importer import chapter_path
 
@@ -680,18 +681,38 @@ def test_replaying_a_lookup_is_free_but_replaying_a_draft_is_not(
 ) -> None:
     """ADR 0019 写着「T1–T5 只读或纯函数，**重放免费**」。**那句话对第七个工具不成立。**
 
-    `draft_chapter` 每跑一次是一次真的模型调用，花的是作者的钱，而且它走起草侧自己的账
-    ——**loop 的成本闸看不见它**。补跑不问「哪个工具贵」（那是一张会在加工具那天漂的表），
-    所以这里把代价钉成一个数：**补跑一个 `draft_chapter` = 一次起草**。
+    `draft_chapter` 每跑一次是一次真的模型调用，花的是作者的钱。补跑不问「哪个工具贵」
+    （那是一张会在加工具那天漂的表），所以这里把代价钉成一个数：
+    **补跑一个 `draft_chapter` = 一次起草**。
+
+    **2026-08-11（3.6）改了后半句**：起草的回执现在跟着 `DraftProduct.calls` 回到
+    `run_turn`，由 `bill()` 记账 + 计闸。所以这一条现在同时钉两件事——补跑真的又起了
+    一次草（`drafted == [2]`），而且**那一次花的钱真的落在了这一轮的账上**。
+    以前它走起草侧自己的账，loop 的成本闸看不见它。
 
     这条不是在要求改行为（信号亮着就不动手那一档已经在 loop 里了），它是在把
     「重放免费」这句 ADR 原文的**适用范围**钉住：加第八个会花钱的工具时它会红。
     """
     drafted: list[int] = []
+    billed: list[ModelCallReceipt] = []
 
-    def drafter(ask: DraftAsk, context: Any) -> str:
+    def drafter(ask: DraftAsk, context: Any) -> DraftProduct:
         drafted.append(ask.chapter)
-        return "一稿正文……"
+        return DraftProduct(
+            text="一稿正文……",
+            calls=(
+                ModelCallReceipt(
+                    capability="writer",
+                    schema_version="m5.draft.v1",
+                    model="deepseek-v4-flash",
+                    prompt_hash="ph",
+                    prompt_bytes=b"{}",
+                    text="一稿正文……",
+                    prompt_tokens=900,
+                    completion_tokens=2_600,
+                ),
+            ),
+        )
 
     live = Conversation(
         messages=(
@@ -714,36 +735,62 @@ def test_replaying_a_lookup_is_free_but_replaying_a_draft_is_not(
         live,
         context=_draft_pending(pid, conn, tmp_path / "book", drafter),
         model=lambda messages, *, tools, cancel: says("写好了"),
-        ledger=lambda receipt: None,
+        ledger=billed.append,
     )
     assert result.tool_calls == 2
     assert drafted == [2], "补跑没有重跑 `draft_chapter`（或者跑了不止一次）"
-    # 只读那一层一次调用都没花钱：账上一行都没有（`ledger` 一次都没被叫）。
-    assert result.tokens_reported == 0
+    # 只读那一层一次调用都没花钱；起草那一次花了，**而且它进了这一轮的账**。
+    assert [r.capability for r in billed] == ["writer", "agent"], (
+        "起草那一次没进 `ledger` —— 补跑一个断在半路的起草是真花钱，账上却看不见它"
+    )
+    assert result.tokens_reported == 900 + 2_600, (
+        "工具花掉的 token 没进这一轮的汇总 —— 界面上那个数会低估，看起来却像全部"
+    )
 
 
-def test_the_paid_tool_is_not_wired_into_the_product_path_yet(
+def test_the_paid_tool_is_wired_and_a_replay_really_costs_again(
     book: dict[str, str], tmp_path: Path
 ) -> None:
-    """**上一条的代价今天在产品里是零，只因为那个工具没接线。**
+    """**上一条量的代价，2026-08-11 起在产品里是真的**（3.6 / ADR 0021）。
 
-    这条断言在接线那天会红，而红的时候要一起想清楚的是上一条量出来的那件事：
-    补跑会**再起一次草**。写在这儿而不是写在注释里，是因为注释拦不住任何人。
+    这条以前断言的是 `drafter is None`（「那个工具还没接线，所以代价是零」），
+    它自带一句「接线那天会红，而红的时候要一起想清楚补跑会再起一次草」。
+    接线了，所以它翻过来：**产品路径上真的有一个会花钱的工具**，
+    而上一条钉住的「补跑 = 再花一次钱」从此不是一个假设。
+
+    这里同时钉住第二件事：`_tool_context` 交出去的仍然只是一个**可调用对象**——
+    写入面在闭包里，`ToolContext` 上没有 conn、没有 `CanonWriter`（边界一）。
     """
     conn = connect(book["db"])
     try:
         proj = type("P", (), {"id": book["pid"], "root_path": str(tmp_path)})
         context = chat_mod._tool_context(
-            proj, SqliteStoryGraph(conn), conn, chapter=1,
-            max_context_tokens=None, reserved_output_tokens=0,
+            proj,
+            SqliteStoryGraph(conn),
+            conn,
+            chapter=1,
+            config=ProviderConfig(base_url="https://api.deepseek.com", model="deepseek-v4-flash"),
+            capability=resolve_capabilities("https://api.deepseek.com", "deepseek-v4-flash"),
+            plan=_plan(),
         )
-        assert context.drafter is None, (
-            "`draft_chapter` 接线了 —— 去看 "
-            "`test_replaying_a_lookup_is_free_but_replaying_a_draft_is_not`："
-            "补跑一个断在半路的起草 = 再花一次钱"
+        assert callable(context.drafter), (
+            "`draft_chapter` 又没接线了 —— 那条产品路径上的起草工具会回一句「没接线」"
+        )
+        assert not hasattr(context, "conn") and not hasattr(context, "writer"), (
+            "写入面爬回了 `ToolContext` —— 边界一那条类型保证是靠这个 dataclass 上没有它"
         )
     finally:
         conn.close()
+
+
+def _plan() -> Any:
+    """对话那一档的调用计划（`agent_call_plan` 的第二个产物）。"""
+    from novel_harness.agent.model import agent_call_plan
+
+    _, plan = agent_call_plan(
+        ProviderConfig(base_url="https://api.deepseek.com", model="deepseek-v4-flash")
+    )
+    return plan
 
 
 def test_replaying_the_read_only_tools_changes_nothing_in_the_book(

@@ -743,3 +743,100 @@ export interface RunsPanel {
   run_count: number;
   totals: CostTotals;
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// 写作助手（模式二，ADR 0019）：会话 / 一轮的回执
+// ══════════════════════════════════════════════════════════════════════════
+//
+// **这几个形状是「对话的投影」，不是对话的原文**（`api/chat.py` 的模块 docstring 第三条）。
+// 工具返回和「只叫工具没说话」的那几条后端根本没发出来——它们是内部模型，里头躺着
+// `NodeRef` 的裸 id。**前端不许自己去别处把它们捞回来补上**：收窄的最强形态是根本没到手，
+// 而把它捞回来渲染当场就是屏幕上的研发术语（`src/test/screenGuard.ts` 第三张网）。
+
+/** 屏幕上只有两种说话人。少掉的那一部分有一个数（`TurnReceipt.lookups`），
+ *  查了几次说得出来，查到了什么不上屏。 */
+export type ChatSpeaker = "author" | "assistant";
+
+export interface ChatMessageView {
+  /** 在这段对话历史里的位置。**当 key 用，不是业务标识。** */
+  seq: number;
+  speaker: ChatSpeaker;
+  text: string;
+}
+
+export interface ChatSessionView {
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  /** 历史有多少条，**含不上屏的那些**。所以它和屏幕上的气泡数对不上，
+   *  界面上不许把它当「你们说了几句」显示出来。 */
+  message_count: number;
+  /** 这一刻正在跑一轮。**进程内事实**，后端一重启就恒为 false。 */
+  running: boolean;
+  /** 上一轮**断在半路**、还缺结果的那几步。不为零 = 进程死在了模型调用和派发之间；
+   *  下一轮会先把它们补跑掉（ADR 0019 的 resume），所以这儿不需要一颗「恢复」按钮，
+   *  但侧栏上必须看得出来——断掉的和跑完的长得一样，作者就无从知道该不该接着说。 */
+  pending_lookups: number;
+}
+
+export interface ChatDetail {
+  session: ChatSessionView;
+  messages: ChatMessageView[];
+}
+
+/** 这一轮发给模型的那份上下文**裁掉了什么**。零不写，非零必须说得出理由（§10 约束 8）。 */
+export interface ChatContextReceipt {
+  off_chapter: number;
+  stale_lookups: number;
+  trimmed_results: number;
+  dropped_lookups: number;
+  dropped_reasoning: number;
+  lost_lookups: number;
+  /** 剪到只剩作者说过的话仍然装不下。**这一档不砍作者的话**，这一轮直接停。 */
+  full: boolean;
+}
+
+/** 停法的机器码。**一个都不许上屏**——它是 snake_case，形状判据会当场咬住它。
+ *  给作者看的那句话是 `TurnReceipt.message`（后端 `stop_wording()` 写好的）。 */
+export type ChatStopReason =
+  | "done"
+  | "step_limit"
+  | "cost_limit"
+  | "batch_too_wide"
+  | "author_stopped"
+  | "repeated_call"
+  | "no_output"
+  | "tool_stuck"
+  | "context_full"
+  | "model_unreachable";
+
+export interface TurnReceipt {
+  session: ChatSessionView;
+  chapter: number;
+  reason: ChatStopReason;
+  /** 说给作者的那一句。**措辞的唯一出处在后端**，前端不许再翻一遍。 */
+  message: string;
+  reply: string;
+  /** 这一轮新长出来、上得了屏的那几条。 */
+  messages: ChatMessageView[];
+  steps: number;
+  /** 这一轮查了几次资料（工具调用次数）。**查到了什么不上屏。** */
+  lookups: number;
+  tokens_reported: number;
+  /** 有几次调用没量准。**不为零时上面那个数是低估**，界面上不许把它当全部。 */
+  calls_without_usage: number;
+  context: ChatContextReceipt;
+}
+
+export interface ChatStopped {
+  chat_id: string;
+  /** `false` = 这一刻它本来就没在跑。**不是失败。** */
+  stopped: boolean;
+  message: string;
+}
+
+export interface ChatDeleted {
+  chat_id: string;
+  deleted: boolean;
+}

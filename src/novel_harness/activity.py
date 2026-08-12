@@ -400,6 +400,7 @@ _KIND_LABEL: Final[dict[str, str]] = {
     "proposal_review": "抽取结果审阅",
     "knowledge_edit": "更正认知类型",
     "event_edit": "更正事件名单",
+    "chapter_draft": "写进正文",
 }
 
 _VERDICT_LABEL: Final[dict[str, str]] = {
@@ -870,6 +871,13 @@ def _decision_subtitle(decision: decisions.Decision) -> str:
             f"知情 +{_count(knowers.get('added'))} −{_count(knowers.get('removed'))} · "
             f"在场 +{_count(cast.get('added'))} −{_count(cast.get('removed'))}"
         )
+    if kind == decisions.DecisionKind.CHAPTER_DRAFT:
+        # **这一行说的是「你的正文被改了」**，所以它只报作者当场能核对的两个量：
+        # 哪一章、多长。落盘那一版的 `text_sha256` 在 payload 里（版本抽屉靠它对号），
+        # 但那是个作者认不得的东西，不上副标题（同 `_run_detail` 去掉指纹那条判据）。
+        where = _chapter_text(_int(payload.get("chapter_number")) or decision.chapter_number)
+        units = _int(payload.get("units"))
+        return where if units is None else f"{where} · 约 {units} 字"
     if kind == decisions.DecisionKind.ALIAS_MERGE:
         surface = _text(payload.get("surface")) or "—"
         return f"{subject} ← 「{surface}」"

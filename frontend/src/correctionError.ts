@@ -62,8 +62,13 @@ const OFFLINE = "没能保存这次改动，请稍后再试。";
  *
  *  只认 `message`，故意不读 `error.message`：`ApiError` 的 `.message` 会在没有
  *  `message` 时退回 `body.error`，而 `error` 是给代码分支用的码，不是话。
- *  这一行就是这条缝的补丁位置。 */
-function saidToTheAuthor(error: ApiError): string | null {
+ *  这一行就是这条缝的补丁位置。
+ *
+ *  **导出是因为它有第二个消费者**（写作助手面板，`chat.ts::refusalText`）：
+ *  那几条路由的 404 同样只有码没有话（`{"error":"chat_not_found",…}`）。
+ *  判据只许有一处——在那边照抄一份 `error.body.message` 的读法，
+ *  就是这个仓库反复在清的「同一条规矩两份拷贝」。 */
+export function saidToTheAuthor(error: ApiError): string | null {
   const text = error.body.message;
   return typeof text === "string" && text.trim() ? text : null;
 }

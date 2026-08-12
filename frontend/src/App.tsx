@@ -9,13 +9,14 @@ import { LeftRail } from "./components/LeftRail";
 import { CenterEditor } from "./components/CenterEditor";
 import { RightPanel } from "./components/RightPanel";
 import { SplitPanes } from "./components/SplitPanes";
+import { ChatPanel } from "./components/ChatPanel";
 import { BottomBar } from "./components/BottomBar";
 import { ChapterPrepPage } from "./components/ChapterPrepPage";
 import { Setup } from "./components/Setup";
 
 export default function App() {
   const projects = useProjects();
-  const { projectId, chapter, page, setProject, setChapter } = useCoords();
+  const { projectId, chapter, page, chatOpen, setProject, setChapter } = useCoords();
   const chapters = useChapters(projectId);
   // 作者点开另一章 = 他离开了当前这一章 = 那一章写完了 → 交给后台整理（`autopilot.ts`）。
   // **下面那个 `chapterOnOpen` 的 setChapter 故意不走它**：开书时把光标放到该停的那一章
@@ -62,10 +63,16 @@ export default function App() {
       ) : (
         <>
           {/* 活动记录换掉的是**中栏**：左栏书架和右栏面板照旧在原地——日志里点「去改这一格」
-              跳的就是右边那一栏，两栏一起消失的话作者就得先跳一次再自己找回来。 */}
+              跳的就是右边那一栏，两栏一起消失的话作者就得先跳一次再自己找回来。
+
+              写作助手（模式二）也只吃中栏，而且是**对半分**（作者的原话：「文章那块对半分，
+              左边是文章右边是 agent」）。它切的是中栏这一块，不是整行——所以它开着的时候
+              左栏书架和右栏面板也照旧在原地：作者一边跟它说话，一边看得见这一章谁还不知道什么。
+              日志页那一档也留着它：换去看记录不该把说到一半的对话收走。 */}
           <SplitPanes
             left={<LeftRail onOpenChapter={openChapter} />}
             center={page === "log" ? <ActivityLog /> : <CenterEditor />}
+            chat={chatOpen ? <ChatPanel /> : undefined}
             right={<RightPanel />}
           />
           <BottomBar />

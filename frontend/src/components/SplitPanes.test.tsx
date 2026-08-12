@@ -1,6 +1,15 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_LEFT, DEFAULT_RIGHT, KEY_STEP, MIN_LEFT, MIN_RIGHT } from "../layout";
+import {
+  DEFAULT_CHAT_PCT,
+  DEFAULT_LEFT,
+  DEFAULT_RIGHT,
+  KEY_PCT_STEP,
+  KEY_STEP,
+  MIN_CENTER,
+  MIN_LEFT,
+  MIN_RIGHT,
+} from "../layout";
 import { SplitPanes } from "./SplitPanes";
 
 // jsdom 不做排版，clientWidth 恒为 0 —— 所以这儿验的是**规则和交互**（方向、下限、复位、
@@ -94,5 +103,79 @@ describe("可拖三栏", () => {
     expect(document.body.classList.contains("resizing")).toBe(true);
     fireEvent.pointerUp(window);
     expect(document.body.classList.contains("resizing")).toBe(false);
+  });
+});
+
+// ── 中栏对半分（写作助手开着的时候）──────────────────────────────────────────
+//
+// jsdom 里 clientWidth 恒为 0，所以**拖动那一条在这儿测不出来**（它要把像素换算成
+// 百分比，而换算要量中栏）。那部分的判据在 `layout.test.ts::chatPctAfterDrag` 上，
+// 而方向键这一条**按百分点走、不需要量任何东西**，所以它在这儿是真的可测。
+
+const withChat = () => (
+  <SplitPanes
+    left={<div>左栏</div>}
+    center={<div>中栏</div>}
+    chat={<div>写作助手</div>}
+    right={<div>右栏</div>}
+  />
+);
+const chatBar = () => screen.getByRole("separator", { name: "调整正文和写作助手的分界" });
+
+describe("中栏对半分", () => {
+  it("不给 chat 就完全是原来那三栏 —— 连那根分隔条都不渲染", () => {
+    render(panes());
+    expect(screen.getAllByRole("separator")).toHaveLength(2);
+    expect(document.querySelector(".center-split")).toBeNull();
+  });
+
+  it("给了就多一根，而且默认对半分", () => {
+    render(withChat());
+    expect(screen.getAllByRole("separator")).toHaveLength(3);
+    expect(widthOf(chatBar())).toBe(DEFAULT_CHAT_PCT);
+    // 两个 fr 因子加起来正好 100 —— 50/50 就是真的一半一半。
+    const split = document.querySelector(".center-split") as HTMLElement;
+    expect(split.style.gridTemplateColumns).toContain("50fr");
+  });
+
+  it("**左栏书架和右栏面板一个像素不动**（作者只要求对半分中间那块）", () => {
+    render(panes());
+    const before = screen.getByRole("main").style.gridTemplateColumns;
+    cleanup();
+    render(withChat());
+    expect(screen.getByRole("main").style.gridTemplateColumns).toBe(before);
+  });
+
+  it("方向键调得动：往左 = 写作助手变宽", () => {
+    render(withChat());
+    fireEvent.keyDown(chatBar(), { key: "ArrowLeft" });
+    expect(widthOf(chatBar())).toBe(DEFAULT_CHAT_PCT + KEY_PCT_STEP);
+    fireEvent.keyDown(chatBar(), { key: "ArrowRight" });
+    expect(widthOf(chatBar())).toBe(DEFAULT_CHAT_PCT);
+  });
+
+  it("按到底停在两端，两边都还在（下限由 grid 的 minmax 兜）", () => {
+    render(withChat());
+    for (let i = 0; i < 200; i++) fireEvent.keyDown(chatBar(), { key: "ArrowLeft" });
+    expect(widthOf(chatBar())).toBe(100);
+    const split = document.querySelector(".center-split") as HTMLElement;
+    // 拖到底 = 正文那半停在它的下限，不是消失。
+    expect(split.style.gridTemplateColumns).toContain(`minmax(${MIN_CENTER}px, 0fr)`);
+    expect(screen.getByText("中栏")).toBeInTheDocument();
+  });
+
+  it("双击复位回对半分", () => {
+    render(withChat());
+    fireEvent.keyDown(chatBar(), { key: "ArrowLeft" });
+    fireEvent.doubleClick(chatBar());
+    expect(widthOf(chatBar())).toBe(DEFAULT_CHAT_PCT);
+  });
+
+  it("拖完记住：关掉再打开还是那个比例", () => {
+    const { unmount } = render(withChat());
+    fireEvent.keyDown(chatBar(), { key: "ArrowLeft" });
+    unmount();
+    render(withChat());
+    expect(widthOf(chatBar())).toBe(DEFAULT_CHAT_PCT + KEY_PCT_STEP);
   });
 });

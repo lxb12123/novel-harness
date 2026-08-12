@@ -14,6 +14,7 @@ import { HistoryDrawer } from "./HistoryDrawer";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
 import { locate } from "../anchor";
 import { cleanSuggestion, shouldSuggest } from "../continuation";
+import { diskChange } from "../editorDoc";
 
 // 中栏正文编辑器（CodeMirror 6，§2.4——不是 TipTap）。
 // CM6 只是磁盘 chapters/NNNN.md 的便利视图：读 = GET text，存 = PUT → sync，DB 永不是
@@ -34,6 +35,14 @@ export function CenterEditor() {
 
   const [doc, setDoc] = useState("");
   const [dirty, setDirty] = useState(false);
+  /** 编辑器手上这份的**出处**（上一次采纳的磁盘正文）。判「别处改过没有」拿它比，
+   *  拿 `doc` 比会把作者自己敲的每一个字都算成别人改的（`editorDoc.ts` 第三条）。 */
+  const loadedRef = useRef<string | null>(null);
+  // 下面那个 effect 只在 `data` 变时跑，闭包里的 `dirty` 会是旧的 —— 用 ref 兜住最新值。
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  /** 磁盘上这一章被别处改过，而作者手上有没保存的字。 */
+  const [diskAhead, setDiskAhead] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const [history, setHistory] = useState(false);
   const [locateMiss, setLocateMiss] = useState(false);
@@ -66,10 +75,20 @@ export function CenterEditor() {
   useEffect(() => {
     setOpen(true);
     setDirty(false);
+    loadedRef.current = null;
+    setDiskAhead(false);
   }, [chapter, projectId]);
 
+  // **重取到什么就装进去**这条老规矩，在写作助手会直接往这一章写字之后不再安全
+  // （ADR 0021；判断本身在 `editorDoc.ts`，那儿写着两种错的代价为什么不对称）。
   useEffect(() => {
-    if (data) setDoc(data.markdown);
+    if (!data) return;
+    const what = diskChange(data.markdown, loadedRef.current, dirtyRef.current);
+    if (what === "same") return;
+    if (what === "warn") return setDiskAhead(true);
+    loadedRef.current = data.markdown;
+    setDoc(data.markdown);
+    setDiskAhead(false);
   }, [data]);
 
   const saveErr = save.error instanceof ApiError ? save.error : null;
@@ -119,6 +138,15 @@ export function CenterEditor() {
       </div>
 
       <SceneBar />
+
+      {/* 别处改过、而作者手上有没保存的字。**不替他挑**：盖掉他没保存的那半段是找不回来的，
+          盖掉磁盘上那一版是找得回来的（历史里那一条），所以这儿只说一句、不动他的字。 */}
+      {diskAhead && (
+        <div className="selbar" style={{ borderTop: 0, color: "var(--warn)" }}>
+          这一章在别处变过了（写作助手起草会直接写进这一章，另一个窗口保存也会）。
+          你手上这份还没保存——现在按保存会盖过它，被盖的那一版在「历史」里找得回来。
+        </div>
+      )}
 
       {locateMiss && (
         <div className="selbar" style={{ borderTop: 0, color: "var(--warn)" }}>

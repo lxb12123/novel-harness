@@ -16,6 +16,7 @@ import { DeclareDrawer } from "./DeclareDrawer";
 import { ChapterPrepPage } from "./ChapterPrepPage";
 import { SceneBar } from "./SceneBar";
 import { BookShelf } from "./BookShelf";
+import { ChatPanel } from "./ChatPanel";
 
 // **对抗性验证：那张「形状判据」的网真的比词表强吗。**
 //
@@ -53,6 +54,7 @@ beforeEach(() => {
     highlight: null,
     focusCell: null,
     focusEventId: null,
+    chatId: null,
   });
 });
 
@@ -79,6 +81,10 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     ["设置抽屉", <SettingsDrawer key="sd" onClose={() => {}} />],
     ["历史抽屉", <HistoryDrawer key="hd" pid="project:ID1" chapter={1} onClose={() => {}} />],
     ["声明抽屉", <DeclareDrawer key="dd" pid="project:ID1" quote="萧决在青云城主府" onClose={() => {}} />],
+    // 写作助手（模式二）。它是这块网上**风险最高**的一格：会话的内部标识
+    // （`chat_session:…`）、停止原因的机器码（`done` / `context_full`）、
+    // 上下文回执那七个 snake_case 字段，全都在它手上过一遍。
+    ["写作助手", <ChatPanel key="cp" />],
   ])("「%s」上一个研发术语都没有", async (_name, ui) => {
     renderWithApi(ui, stateRoute(STATE_WITH_EDGES));
     // 等第一批查询落地：扫一块还没渲染出内容的屏幕等于什么都没扫。
@@ -124,6 +130,62 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     expect(devTerms(screenText())).toEqual([]);
     // 后端那句话确实脏 —— 探针过期了这条会红，那时说明后端改干净了，可以删掉它。
     expect(machineWords(fixtures.errorShortAlias.message)).toContain("usable_for_rules");
+  });
+
+  it("写作助手：会话列表摊开的时候（那儿每一行都挂着一个内部标识）", async () => {
+    const user = userEvent.setup();
+    // 断在半路那一档也一起扫：它的徽标只有 `pending_lookups` 非零时才出现，
+    // 而真 dump 里那个数是 0 —— 正常数据下这条分支永远不亮，正是它躲过守卫的方式。
+    renderWithApi(<ChatPanel />, [
+      { match: /\/chats$/, body: [{ ...fixtures.chats[0], pending_lookups: 3, running: true }] },
+    ]);
+    await user.click(await screen.findByRole("button", { name: "对话列表" }));
+    await screen.findByText(/上次断在半路/);
+    expect(devTerms(screenText())).toEqual([]);
+  });
+
+  it("写作助手：一轮跑完之后那一片（后端那句话 + 这一轮裁掉了什么）", async () => {
+    const user = userEvent.setup();
+    // 上下文回执那七个字段全非零 —— 真 dump 里它们全是 0，于是**那几句话一次都没被扫过**。
+    const noisy = {
+      ...fixtures.chatTurn,
+      context: {
+        off_chapter: 2,
+        stale_lookups: 1,
+        trimmed_results: 3,
+        dropped_lookups: 1,
+        dropped_reasoning: 1,
+        lost_lookups: 1,
+        full: true,
+      },
+    };
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: noisy }]);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "问一句");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await screen.findByText(fixtures.chatTurn.message);
+    expect(devTerms(screenText())).toEqual([]);
+  });
+
+  it("写作助手：后端那句话里的 `**` 是重音，不是两颗星号", async () => {
+    // `stop_wording(CONTEXT_FULL)` 里就有这么一对。不渲染 = 作者看见两颗星号；
+    // 改那句话 = 第二份措辞源。所以这一层只负责把它画出来。
+    const user = userEvent.setup();
+    const full = {
+      ...fixtures.chatTurn,
+      reason: "context_full",
+      message: "这段对话说得太长，装不下了。开一段新的对话——**你说过的话一句都没被删掉**。",
+    };
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: full }]);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "问一句");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await screen.findByText("你说过的话一句都没被删掉");
+    expect(document.body.textContent).not.toContain("**");
+    // 停止原因是机器码，它一个字都不该跟着那句话上屏。
+    expect(devTerms(screenText())).toEqual([]);
   });
 });
 

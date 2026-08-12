@@ -49,6 +49,7 @@ from pydantic import BaseModel, ConfigDict
 
 from novel_harness import project
 from novel_harness.agent import tools as agent_tools
+from novel_harness.agent.ports import DraftProduct
 from novel_harness.agent.tools import (
     TOOL_NAMES,
     TOOL_TABLE,
@@ -208,10 +209,16 @@ def _surfaces_of(world: World) -> dict[str, str]:
     """模型看得见的**四个面**，全部拿到手里。见模块 docstring。"""
     captured: list[DraftContext] = []
 
-    def drafter(ask: DraftAsk, ctx: DraftContext) -> str:
+    def drafter(ask: DraftAsk, ctx: DraftContext) -> DraftProduct:
         # 起草侧收到的这份约束**就是要进 prompt 的那一份**——第 4 个面在这里被捉住。
         captured.append(ctx)
-        return f"（第 {ask.chapter} 章草稿）风雪落在肩上。"
+        # `note` 也是模型看得见的一个面（ADR 0021 的落盘回执贴回对话里），
+        # 所以这个假实现必须把它填上——不填的话那块屏幕根本没被扫过。
+        return DraftProduct(
+            text=f"（第 {ask.chapter} 章草稿）风雪落在肩上。",
+            saved=True,
+            note=f"已经写进第 {ask.chapter} 章了（章标题保持原样）。",
+        )
 
     from novel_harness.draft.rolling_summary import SummaryStore
 
@@ -356,9 +363,9 @@ def test_the_backend_computes_the_constraints_for_the_drafter(world: World) -> N
     """起草侧收到的约束是**后端按章号现算的**，不是模型给的。"""
     seen: list[DraftContext] = []
 
-    def drafter(ask: DraftAsk, ctx: DraftContext) -> str:
+    def drafter(ask: DraftAsk, ctx: DraftContext) -> DraftProduct:
         seen.append(ctx)
-        return "一稿"
+        return DraftProduct(text="一稿")
 
     outcome = dispatch(
         _call("draft_chapter", chapter=CHAPTER, goal="写萧决独自走进北荒"),
@@ -485,14 +492,18 @@ def test_the_writer_banned_symbols_are_not_tools() -> None:
 
 
 def test_there_is_no_tool_that_writes(world: World) -> None:
-    """**没有写正文工具，也没有写图谱工具**，这一版是有意的。
+    """**表里没有一条「写」工具**——正文那条落盘 2026-08-11 开了，但它不在这张表上。
 
-    写正文必须作者确认（边界一最后一条），而确认那个位置今天还不存在——没有 agent loop
-    （3.3）就没有「作者在循环里点确认」。在那之前给出写工具 = 让模型在一个没有确认点的
-    系统里覆盖作者的稿子，而正文的真相源在磁盘上（ADR 0007 / 边界三）。
+    [ADR 0021](../docs/adr/0021-agent-writes-drafts-without-asking.md) 推翻的是
+    「写正文必须作者确认」；边界一的其余三条原样有效，而**「`ToolContext` 上没有写入面」
+    是其中最硬的一条**：落盘发生在注入进来的那个 `drafter` 闭包里（`agent/drafting.py`
+    握着 `GraphStore` 和一条连接），这个 dataclass 上一个字都没多。
 
-    这条断言有两层，因为「按名字数」拦不住一个叫 `save_scene` 的东西：
-    ① 名字白名单（上面那条）；② `ToolContext` 上根本没有写入面。
+    一条推论顺带被钉住：**模型没有「只写不草」这个动作**——能写进磁盘的只有刚由后端
+    按当前章约束生成的那一稿，它拿不出一段自己编的文本去盖某一章。
+
+    这条断言有三层，因为「按名字数」拦不住一个叫 `save_scene` 的东西：
+    ① 名字白名单（上面那条）；② `ToolContext` 上没有写入面；③ 落盘的理由写在源码里。
     """
     context = world.context()
     assert not hasattr(context, "conn")
@@ -500,6 +511,7 @@ def test_there_is_no_tool_that_writes(world: World) -> None:
     # StoryGraph 的五个方法里唯一能写的是 upsert_edge，而没有一个 handler 碰它。
     # **扫整个 `agent/`，不只是 tools.py**：索引层落地那天工具的实现第一次住在了别的文件里，
     # 只扫一个文件的守卫会在那一刻静默失效（同 test_draft_boundary 自己那条诚实说明）。
+    # 落盘那个模块也在扫描范围里：它可以写**磁盘**（ADR 0021），不许写**图**。
     for name, agent_source in _agent_sources():
         assert "upsert_edge" not in agent_source, (
             f"agent/{name} 碰了写入面 —— 模型不许改作者的 canon"
@@ -510,10 +522,17 @@ def test_there_is_no_tool_that_writes(world: World) -> None:
         assert f"def {writer}" not in ports_source, (
             f"`EventIndex` 上长出了 {writer} —— 那是写入面，收窄的意义就没了"
         )
+    # `ToolContext` 上的字段名单是**类型层**的那道闸：写入面一旦被塞回来，上面两条
+    # 按符号扫的断言仍然是绿的（`save_chapter` 里一个 `upsert_edge` 都没有）。
+    fields = set(ToolContext.__dataclass_fields__)
+    assert not (fields & {"conn", "writer", "canon", "graph_store"}), (
+        f"`ToolContext` 上长出了写入面：{sorted(fields)} —— "
+        "ADR 0021 开的是「写磁盘」，不是「把 CanonWriter 交给模型」"
+    )
     source = (Path(agent_tools.__file__)).read_text(encoding="utf-8")
-    assert "没有写正文工具" in source, (
-        "模块 docstring 里那段「为什么这一版不给写正文工具」不见了。"
-        "它不是注释洁癖：下一个人会把「表里没有」读成「忘了加」。"
+    assert "表里仍然没有一条「写正文」工具" in source, (
+        "模块 docstring 里那段「落盘有了，但它为什么仍然不是一条工具」不见了。"
+        "它不是注释洁癖：下一个人会把「表里没有」读成「忘了加」，然后加一条。"
     )
 
 

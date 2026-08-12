@@ -15,7 +15,7 @@ import { SettingsDrawer } from "./SettingsDrawer";
 // 新人物是写到那儿才需要的。现在引擎在写完之后自己去正文里数（`mentioned.py`），
 // 右栏显示数出来的结果。作者要覆盖就点场景块，那是他在正文里亲手标的。
 export function TopBar() {
-  const { projectId, chapter, page, setPage } = useCoords();
+  const { projectId, chapter, page, chatOpen, setPage, toggleChat } = useCoords();
   const chapters = useChapters(projectId);
   // 换章走 `useOpenChapter`，不是裸 setChapter：离开一章 = 那一章写完了，
   // 要把它交给后台整理（`autopilot.ts`）。作者看不到这件事，也不该看到。
@@ -40,6 +40,13 @@ export function TopBar() {
           这本书的每一步都记在那儿，作者想看的时候去看——不弹、不红点、不推给他（约束 8）。 */}
       <button className={page === "log" ? "on" : ""} onClick={() => setPage("log")}>
         活动记录
+      </button>
+
+      {/* 写作助手（模式二）开合。**默认关着**，而且它开的是中栏的右半边——
+          左栏书架和右栏面板不动（`App.tsx` 那段注释写着理由）。
+          同「活动记录」那条：这是**入口不是通知**，不弹、不红点、不替作者打开。 */}
+      <button className={chatOpen ? "on" : ""} onClick={toggleChat}>
+        写作助手
       </button>
 
       {/* 「AI 起草」那个抽屉 2026-08-10 删了：它是**填表式**的（先填「这一场要写什么」+

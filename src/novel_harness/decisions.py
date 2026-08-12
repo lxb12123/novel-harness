@@ -90,6 +90,19 @@ class DecisionKind(StrEnum):
     EVENT_EDIT = "event_edit"
     """作者改了一条已生效事件的知情 / 在场名单。`corrections.py`。"""
 
+    CHAPTER_DRAFT = "chapter_draft"
+    """写作助手起草完**直接把一稿写进了某一章**（[ADR 0021](../docs/adr/0021-agent-writes-drafts-without-asking.md)）。
+
+    它和别的 kind 有一处根本不同：**这一行不是「往图里放了一条事实」，是「改了作者的
+    正文」**。放进这张表的唯一理由是 ADR 0021 承诺的那条退路——「不挡，但每步留痕」，
+    而这条时间线是作者唯一看得见「系统动过什么」的地方（`activity.py`），
+    `actor` 那一列把它和作者自己按的保存分得开。
+
+    **重放不看它**：正文的真相源在磁盘上（ADR 0007），退回上一版走的是
+    `chapter_snapshot`，不是重放这条日志。所以 payload 里只有坐标（章号 / 字数 /
+    落盘那一版的 `text_sha256`），没有正文本身。
+    """
+
 
 DEFAULT_ACTOR: Final = "author"
 

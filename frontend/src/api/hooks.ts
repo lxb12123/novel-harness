@@ -13,6 +13,10 @@ import type {
   ChapterSnapshot,
   ChapterSummaryStatus,
   ChapterText,
+  ChatDeleted,
+  ChatDetail,
+  ChatSessionView,
+  ChatStopped,
   CheckResult,
   Declaration,
   DeclareAlias,
@@ -46,6 +50,7 @@ import type {
   StoredAlias,
   Subgraph,
   SummaryWindow,
+  TurnReceipt,
 } from "./types";
 
 // 服务端状态全进 TanStack Query（§2.3）：queryKey = [端点, pid, chapter, cast]，
@@ -652,5 +657,112 @@ export function useCorrectEventCast(pid: string) {
       invalidateReview(qc, pid);
       qc.invalidateQueries({ queryKey: ["activity", pid] });
     },
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 写作助手（模式二，ADR 0019）—— 六条路由：开 / 列 / 看 / 删 / 跑一轮 / 停
+// ══════════════════════════════════════════════════════════════════════════
+
+const chats = (pid: string, tail = "") => proj(pid, `/chats${tail}`);
+const one = (id: string) => `/${encodeURIComponent(id)}`;
+
+/** 侧栏那一列。**不轮询**：`running` 是后端**进程内**的事实，只有另一个标签页
+ *  正在跑同一本书时它才会自己变——而那时那边一停，这边下一次动作就会看到。
+ *  为了那一档每隔几秒打一次库，换来的是电池和噪音。 */
+export function useChats(pid: string | null) {
+  return useQuery({
+    queryKey: q(["chats", pid]),
+    queryFn: () => api.get<ChatSessionView[]>(chats(pid!)),
+    enabled: !!pid,
+  });
+}
+
+/** 一段对话的全部（后端给的就是全部，没有分页端点）。
+ *  **超长时的处置在前端**：`chat.ts::tailWindow` 只渲染尾巴，早先那些点一下才展开。 */
+export function useChatDetail(pid: string | null, chatId: string | null) {
+  return useQuery({
+    queryKey: q(["chat", pid, chatId]),
+    queryFn: () => api.get<ChatDetail>(chats(pid!, one(chatId!))),
+    enabled: !!pid && !!chatId,
+  });
+}
+
+export function useCreateChat(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    // 后端的入参模型每个字段都有默认值，但**请求体本身是必需的**：不发 body 是 422。
+    mutationFn: () => api.post<ChatSessionView>(chats(pid), { title: "" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["chats", pid] }),
+  });
+}
+
+/** 删一段对话。**它不会动到任何一行正文**（正文在磁盘上，那两张表里没有它）。
+ *  正在跑的那一段后端会先拒（409，带一句人话），这里不做静默重试。 */
+export function useDeleteChat(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (chatId: string) => api.del<ChatDeleted>(chats(pid, one(chatId))),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["chats", pid] }),
+  });
+}
+
+/** 跑一轮。`said` 留空 = 接着上次往下跑（resume，或者上一轮撞了闸之后继续）。
+ *
+ *  **`chapter` 是必填的，而且必须是作者此刻在写的那一章。** 后端故意没给它默认值：
+ *  投影在 `chapter` 缺席时**不过滤**，而那不是安全默认值是「没接线」默认值——
+ *  第 90 章的禁说清单是第 40 章那份的**子集**，留着它模型就以为只有那两条不能说
+ *  （ADR 0019 边界五）。
+ *
+ *  ── 跑完之后哪些面板该失效重取 ────────────────────────────────────────────
+ *
+ *  · `chats` / `chat`：这一轮长出来的话要落到侧栏和正文旁边。
+ *  · `activity` / `runs`：**每一次模型调用都记了账**（`api/chat.py::_ledger`），
+ *    日志页和底栏那份用量得跟着变——不失效它们，作者刚花的钱在界面上要等下一次
+ *    刷新才出现，而 `main.tsx` 写着 `refetchOnWindowFocus: false`。
+ *
+ *  · **正文那一侧**（`text` / `chapters` / `history` + 右栏那几格）：**助手起草会直接
+ *    写进磁盘上那一章**（[ADR 0021](docs/adr/0021-agent-writes-drafts-without-asking.md)，
+ *    走的是 `PUT /chapters/{n}/text` 那条**同一条**路径）。所以一轮跑完之后要失效的东西
+ *    和作者自己按了保存之后是同一批——`useSaveChapter` 那张表照抄。
+ *
+ *    **这里没有「它到底写没写」这个信息**：`TurnReceipt` 上没有那一位（写没写只在
+ *    助手回话的措辞里）。所以这一档一律重取，宁可白取一次，也不要让作者一边看着旧稿
+ *    一边以为那就是磁盘上的东西——他下一步按保存就把助手写的整章盖掉了。
+ *
+ *    ⚠️ **这一行的前提是 `CenterEditor` 不会拿重取到的正文盖掉作者没保存的字**
+ *    （`editorDoc.ts`）。那个前提没有的时候补这一行 = 作者一边打字一边跟助手说话，
+ *    刚打的半段被静默吃掉，**而没保存过的东西哪儿都找不回来**。两件事必须一起在。 */
+export function useRunTurn(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { chatId: string; chapter: number; said: string }) =>
+      api.post<TurnReceipt>(chats(pid, `${one(v.chatId)}/turn`), {
+        chapter: v.chapter,
+        said: v.said,
+      }),
+    onSuccess: (_receipt, v) => {
+      qc.invalidateQueries({ queryKey: ["chats", pid] });
+      qc.invalidateQueries({ queryKey: ["activity", pid] });
+      qc.invalidateQueries({ queryKey: ["runs", pid] });
+      qc.invalidateQueries({ queryKey: ["text", pid] });
+      qc.invalidateQueries({ queryKey: ["chapters", pid] });
+      qc.invalidateQueries({ queryKey: ["history", pid] });
+      invalidatePanels(qc, pid);
+      // **把这一条 return 出去**：mutation 会等它重取完才算落地，于是「正在跑」那一段
+      // 屏幕能一直挂到新消息真的到手。不等的话中间有一帧是
+      // 「作者刚说的那句话不见了、助手的回话还没到」——一块空白的对话。
+      return qc.invalidateQueries({ queryKey: ["chat", pid, v.chatId] });
+    },
+  });
+}
+
+/** 按下「停」。它**不等这一轮跑完**：信号交给正在跑的那一轮，那个请求会自己收尾。
+ *
+ *  **`stopped=false` 不是失败**（那一刻它本来就没在跑），所以这里没有 `onError` 分支
+ *  要处理那一档——它是一个 200，界面照着后端那句 `message` 说。 */
+export function useStopChat(pid: string) {
+  return useMutation({
+    mutationFn: (chatId: string) => api.post<ChatStopped>(chats(pid, `${one(chatId)}/stop`)),
   });
 }
