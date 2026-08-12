@@ -314,7 +314,8 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 ```
 db.py  ids.py  decisions.py  project.py
 migrations/{001_init,002_m4_events,003_proposal_audit_recovery,004_chapter_summary,005_fact_edit,
-            006_chat_session,007_draft_candidate,008_cache_usage}.sql（24 张表）
+            006_chat_session,007_draft_candidate,008_cache_usage,
+            009_call_chapter,010_candidate_stopped,011_rule_revocation}.sql（24 张表）
                                                 ← 008 是 ALTER 不建表：`model_call` 多两列
                                                   （`cache_read_tokens` / `cache_write_tokens`）。
                                                   **它不是一个功能，是一次测量**：三家三个字段名
