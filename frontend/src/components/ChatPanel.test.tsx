@@ -87,7 +87,11 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
     await waitFor(() => {
       const call = spy.mock.calls.find(([url]) => String(url).endsWith("/turn"));
       expect(call).toBeTruthy();
-      expect(JSON.parse(String((call![1] as RequestInit).body))).toEqual({
+      const sent = JSON.parse(String((call![1] as RequestInit).body));
+      // `run_id` 每一轮都不一样（`chat.ts::newRunId`），所以这儿只能断言它**在**、
+      // 而且不空——写死一个值就是把那条「每一轮换一个」的规矩反过来钉住了。
+      expect(sent.run_id).toBeTruthy();
+      expect({ chapter: sent.chapter, said: sent.said }).toEqual({
         chapter: 2,
         said: "这一章能说破血脉吗",
       });
@@ -211,6 +215,38 @@ describe("「停」", () => {
     );
     turn.release();
     await screen.findByText(fixtures.chatTurn.message);
+  });
+
+  it("**「停」报的是这一轮的标识** —— 跑和停必须是同一个，而且每一轮都换", async () => {
+    // 不报的话，一次迟到的「停」会掐掉作者刚发出去的下一轮（`chat.ts::newRunId`
+    // 写着那个序列）。这块屏幕这一侧的活儿只有一件：两个请求报同一个数。
+    const user = userEvent.setup();
+    const first = gated(fixtures.chatTurn);
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: first.handler }]);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    const spy = vi.spyOn(globalThis, "fetch");
+
+    await user.type(say(), "跑一个");
+    await user.click(sendBtn());
+    await screen.findByRole("status");
+    await user.click(screen.getByRole("button", { name: "停" }));
+
+    const sent = (suffix: string) =>
+      spy.mock.calls
+        .filter(([url]) => String(url).endsWith(suffix))
+        .map(([, init]) => JSON.parse(String((init as RequestInit).body)).run_id);
+    await waitFor(() => expect(sent("/stop")).toHaveLength(1));
+    expect(sent("/turn")[0]).toBeTruthy();
+    expect(sent("/stop")[0]).toBe(sent("/turn")[0]);
+
+    first.release();
+    await screen.findByText(fixtures.chatTurn.message);
+
+    // **下一轮换一个新的**：上一轮那个还在的话，迟到的「停」就会认成这一轮。
+    await user.type(say(), "再跑一个");
+    await user.click(sendBtn());
+    await waitFor(() => expect(sent("/turn")).toHaveLength(2));
+    expect(sent("/turn")[1]).not.toBe(sent("/turn")[0]);
   });
 
   it("**`stopped=false` 不是失败** —— 那一刻它本来就没在跑，照后端那句话说", async () => {

@@ -71,6 +71,12 @@ export function DraftCard({
         {/* 「推荐位」就是它 —— 一个动作，不是一句评价（ADR 0022）。 */}
         {draft.landed && <span className="draft-badge">已经写进这一章</span>}
       </div>
+      {/* **这一稿被砍断过。** 画在自述和正文**前面**，因为它改变的是后面那两样该怎么读：
+          底下那段字断在半句上是**它没写完**，不是写作模型的写法。
+          措辞照抄后端那一句（`stopped_reason`），这一层不翻译、不缩写。 */}
+      {draft.stopped_reason.trim() !== "" && (
+        <p className="draft-stopped">{draft.stopped_reason}</p>
+      )}
       {/* **自述可能是空的**（写它的那个模型这次没说）。空的时候这儿什么都不画——
           替它编一句「这一版更冷」正是 ADR 0005 拦的那种事。 */}
       {draft.note.trim() !== "" && <p className="draft-note">{draft.note}</p>}

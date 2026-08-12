@@ -277,6 +277,9 @@ class RollingSummarizer:
                     cache_read_tokens=audited.cache_read_tokens,
                     cache_write_tokens=audited.cache_write_tokens,
                     elapsed_ms=elapsed_ms,
+                    # 总结的是这一章，账也记在这一章上。反查（`chapter_summary`）照旧
+                    # 兜着旧行，两条路都留着——见 `009_call_chapter.sql`。
+                    chapter_number=chapter_number,
                     call_id_factory=self._new_call_id,
                 )
                 summary_id = self._new_summary_id(project_id)

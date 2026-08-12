@@ -161,6 +161,44 @@ describe("窄档（默认）：一稿一张卡", () => {
   });
 });
 
+describe("被砍断的那一稿：屏幕必须说它没写完", () => {
+  // 作者按「停」时已经写出来的那部分留了下来（迁移 010）。**它和一份写完的稿子在这块
+  // 屏幕上长得一模一样**：预览一样、全文一样、字数只是少一点。不说的话，作者会以为
+  // 写作模型就写成了这样——而这一整条链上没有第二个地方能告诉他。
+  const STOPPED = "按「停」中断了，这一稿只写到这里，后面没有写完。";
+
+  it("**那句标注画出来了**，而且照抄后端那一句", async () => {
+    const user = userEvent.setup();
+    const half = [variant({ id: "draft:ID46", ordinal: 1, stopped_reason: STOPPED })];
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: turnWith(half) }]);
+    await runTurn(user);
+
+    expect(screen.getByText(STOPPED)).toBeInTheDocument();
+    // **措辞的唯一出处在后端**：这一层不许按 `stopped_reason` 非空自己造一句。
+    expect(document.querySelector(".draft-stopped")?.textContent).toBe(STOPPED);
+  });
+
+  it("**写完的那几稿身上一个字都不多**（自守卫：恒画等于没画）", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: turnWith(THREE) }]);
+    await runTurn(user);
+
+    expect(THREE.every((d) => d.stopped_reason === "")).toBe(true); // 探针：真 dump 就是空的
+    expect(document.querySelector(".draft-stopped")).toBeNull();
+  });
+
+  it("它画在正文**前面** —— 它改变的是后面那段字该怎么读", async () => {
+    const user = userEvent.setup();
+    const half = [variant({ id: "draft:ID47", ordinal: 1, stopped_reason: STOPPED })];
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: turnWith(half) }]);
+    await runTurn(user);
+
+    const card = document.querySelector(".draft-card")!;
+    const order = [...card.children].map((el) => el.className);
+    expect(order.indexOf("draft-stopped")).toBeLessThan(order.indexOf("draft-preview"));
+  });
+});
+
 describe("宽档：拖到一定宽度就并排", () => {
   it("三列并排、各自一个滚轮，全文都摊着 —— **拖到这个宽度就是他要并排读**", async () => {
     widthIs(3 * COLUMN_MIN_PX + 40);

@@ -667,6 +667,12 @@ header select {
   border: 1px solid var(--ok); border-radius: 8px; padding: 0 5px;
   color: var(--ok); font-size: 11px;
 }
+/* 「这一稿没写完」。**比自述显眼**：它改变的是底下那段字该怎么读
+   （断在半句上是它没写完，不是写作模型的写法），所以它不是一句附注。 */
+.draft-stopped {
+  margin: 5px 0 0; padding: 3px 7px; border-radius: 6px;
+  background: var(--warnbg); color: var(--warn); font-size: 12px; line-height: 1.6;
+}
 .draft-note { margin: 5px 0 0; font-size: 12px; line-height: 1.7; }
 .draft-preview, .draft-text {
   margin: 5px 0 0; color: var(--dim); font-size: 12px; line-height: 1.8; white-space: pre-wrap;

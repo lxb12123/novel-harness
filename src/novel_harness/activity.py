@@ -282,14 +282,15 @@ class CostTotals(BaseModel):
        非空 int，而同名字段在 `ActivityCost` 上可空、渲染成「未记录」——provider 不报
        usage 的书，底栏现在就在显示「入 0 / 出 0 token」。往一张已经在说假话的汇总里
        再加一个数，只是把假话说得更长；先修那条，再谈加。
-    2. **命中率的分母今天是残的。** `/draft` 那条路径至今一行 `model_call` 都不写
-       （`api/app.py` 里那段注释写着），所以全书合计漏掉了作者花钱最多的一类调用。
+    2. **命中率的分母仍然是残的，只是残得少了一块。** `/draft` 那条路径 2026-08-12 起
+       落账了（`api/app.py::draft` 的 `on_call=bill`），但**写作助手起的那些稿**走的是
+       另一条线（`api/chat.py::_ledger`），而没报 usage 的那些调用在这张表上是 NULL。
        一个分子分母都缺同一批行的比值，看起来像全书命中率，其实谁也解读不了。
     3. **这一刀要回答的三个问题，两个只有逐次才看得见。**「忽高忽低 ⇒ 前缀被弄脏了」
        按定义是**逐次之间**的方差；一个全书标量恰好把它平掉。所以测量点放在展开详情
        那一行（`_cache_text`），不放这儿。
 
-    等到 ① 被修好、② `/draft` 记上账，这儿再加也不迟——那时它才是个能读的数。
+    等到 ① 被修好，这儿再加也不迟——那时它才是个能读的数。
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -761,12 +762,20 @@ def _run_entry(row: Any, pending: dict[str, list[str]]) -> ActivityEntry:
 
 
 def _call_chapter(row: Any) -> int | None:
-    """这次调用是为哪一章花的。
+    """这次调用是为哪一章花的。**先看它自己那一列，答不上来再反查。**
 
-    `model_call` 自己没有章号列（它是通用的调用审计），章号只能从消费它的那张业务表
-    反查。**不反查的话这一行就是「一次 extractor 调用，1234 token」——作者看得见花了钱，
-    看不见花在哪儿**，那种日志等于没有。
+    ── 反查为什么必须留着 ────────────────────────────────────────────────
+    `model_call.chapter_number` 是 2026-08-12 才加的（`009_call_chapter.sql`）。
+    作者库里已经躺着上百行**这一列是 NULL** 的旧账，它们的章号只有反查拿得到——
+    改成只读这一列，那些行的章号会**当场消失而且不报错**。
+    （新行两条路都答得出，答案相同；旧行只有反查；起草那条路只有这一列，
+    因为它没有一张可反查的业务表——那正是加这一列的理由。）
+
+    `or` 在这儿是安全的：三处章号都有 `>= 1` 的 CHECK，不存在会被当成假的 0。
     """
+    own = _int(row["own_chapter"])
+    if own is not None:
+        return own
     return _int(row["run_chapter"]) or _int(row["summary_chapter"])
 
 
@@ -975,6 +984,7 @@ _CALL_SELECT: Final = """
 SELECT id, ts, capability, model,
        tokens_in, tokens_out, ms, cost, attempt,
        cache_read_tokens, cache_write_tokens,
+       chapter_number AS own_chapter,
        (SELECT r.chapter_number FROM extraction_run r WHERE r.model_call_id = model_call.id)
          AS run_chapter,
        (SELECT s.chapter_number FROM chapter_summary s WHERE s.model_call_id = model_call.id)

@@ -115,6 +115,17 @@ class ChatBusy(RuntimeError):
     """这段对话正在跑一轮。"""
 
 
+StopVerdict = Literal["stopped", "idle", "stale"]
+"""一次「停」的三种结局。**机器码，一个字都不上屏**（措辞在 `_STOP_WORDING`）。
+
+| 取值 | 意思 |
+|---|---|
+| `stopped` | 信号送到了正在跑的那一轮 |
+| `idle` | 这一刻本来就没在跑 —— **不是失败** |
+| `stale` | 在跑，但**不是它想停的那一轮** —— 忽略掉，也不是失败 |
+"""
+
+
 class _Running:
     """**正在跑的那几轮**，进程内。键是 `(项目, 会话)`。
 
@@ -124,31 +135,52 @@ class _Running:
 
     **不落库**也是有意的：一个存在库里的 `status='RUNNING'` 会在进程崩掉之后永远
     卡在那儿，而清它需要一个没人会写的看门狗。
+
+    ── 为什么每一轮还带一个标识（2026-08-12）────────────────────────────────
+
+    `begin` 在已经有一轮活着时抛 `ChatBusy`，所以同一段对话不可能同时有两轮——
+    大部分场景天然安全。**但这个序列会出事**：
+
+        作者按停 → 请求在路上 → 上一轮自己跑完了 → 作者又发一句
+        → 新一轮开始 → 停止请求到达 → **杀掉新的那一轮**
+
+    作者看到的是「我刚发出去的那句话，它自己停了」，而他按的那一下是给上一轮的。
+    所以 `stop` 要比对**它想停的是哪一轮**，对不上就忽略（Vercel AI SDK 文档里
+    那条「track which stream is active，stale stop 要忽略」是同一件事）。
     """
 
     def __init__(self) -> None:
         self._lock = Lock()
-        self._live: dict[tuple[str, str], Cancellation] = {}
+        self._live: dict[tuple[str, str], tuple[str, Cancellation]] = {}
 
-    def begin(self, key: tuple[str, str]) -> Cancellation:
+    def begin(self, key: tuple[str, str], run_id: str = "") -> Cancellation:
         with self._lock:
             if key in self._live:
                 raise ChatBusy("这段对话正在跑上一轮")
             signal = Cancellation()
-            self._live[key] = signal
+            self._live[key] = (run_id, signal)
             return signal
 
     def end(self, key: tuple[str, str]) -> None:
         with self._lock:
             self._live.pop(key, None)
 
-    def stop(self, key: tuple[str, str]) -> bool:
+    def stop(self, key: tuple[str, str], run_id: str = "") -> StopVerdict:
+        """把信号交给它想停的那一轮。**对不上就一个字都不动。**
+
+        `run_id` 两边**任一为空就不比对**：老客户端（和 `curl`）不报标识，那时的行为
+        和 2026-08-12 之前一模一样。**新前端每一轮都报**，所以那条竞态在产品上是关着的。
+        比对不上不是失败，也不是「没在跑」——它是第三档（见 `StopVerdict`）。
+        """
         with self._lock:
-            signal = self._live.get(key)
-        if signal is None:
-            return False
+            live = self._live.get(key)
+        if live is None:
+            return "idle"
+        running_id, signal = live
+        if run_id and running_id and run_id != running_id:
+            return "stale"
         signal.stop()
-        return True
+        return "stopped"
 
     def running(self, key: tuple[str, str]) -> bool:
         with self._lock:
@@ -273,6 +305,15 @@ class DraftCandidateView(BaseModel):
     landed: bool = False
     """它进过书没有。**不是「被选中」**：作者可以在版本历史里把它退回去。"""
 
+    stopped_reason: str = ""
+    """**空 = 这一稿写完了**；非空 = 它被砍断了，这句话说明为什么（作者按了「停」）。
+
+    **它必须上屏。** 一稿断在半句上而屏幕不说，作者会以为写作模型就写成了这样——
+    而这块屏幕上另外两样（`preview` / 全文）都长得和一份写完的稿子一模一样。
+    措辞的唯一出处是库里那一列（`agent/drafting.py::AUTHOR_STOPPED_NOTE`），
+    **前端不许按这一位自己再造一句**。
+    """
+
 
 class ChapterDrafts(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -372,6 +413,28 @@ class TurnBody(BaseModel):
 
     said: str = ""
     """作者这一轮说的话。**留空 = 接着上次往下跑**（resume，或者上一轮撞了闸之后继续）。"""
+
+    run_id: str = Field(default="", max_length=64)
+    """**这一轮的标识，由发起的那个界面自己造。** 「停」拿它认出要停的是哪一轮。
+
+    ── 为什么是客户端造的，不是后端发的 ────────────────────────────────────
+
+    后端发不了：`POST …/turn` 是**跑完才回来**的（这一版 HTTP 不流式），而「停」必须
+    在那之前就能按。所以标识只能由按下发送的那一边生成，跟着两个请求一起走。
+
+    留空 = 不比对（`curl` / 老界面）。**它不进任何一行数据**，只活在进程内的 `LIVE` 里。
+    """
+
+
+class StopBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    run_id: str = Field(default="", max_length=64)
+    """**想停的是哪一轮**（跑那一轮时报的那个 `TurnBody.run_id`）。
+
+    对不上就忽略——见 `_Running` 那段「作者按停 → 上一轮自己跑完 → 新一轮开始」的序列。
+    留空 = 不比对（今天的行为）。
+    """
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -502,6 +565,7 @@ def _draft_view(candidate: DraftCandidate) -> DraftCandidateView:
         preview=candidate.preview,
         created_at=candidate.created_at,
         landed=candidate.landed,
+        stopped_reason=candidate.stopped_reason,
     )
 
 
@@ -668,7 +732,7 @@ def run_chat(
     # 「刷新一下再说」，而他什么都没做错。占住之后第二个窗口拿到的是「正在跑上一轮」，
     # 那句话是对的，而且它在写库之前就发生了。
     try:
-        signal = LIVE.begin(key)
+        signal = LIVE.begin(key, body.run_id)
     except ChatBusy:
         raise HTTPException(
             status_code=409,
@@ -730,6 +794,10 @@ def run_chat(
             events=SqliteEventStore(conn),
             summaries=SummaryStore(conn),
             db_lock=db_lock,
+            # **和 `run_turn` 拿的是同一个信号对象。** 两个信号 = 按停只停住其中一半，
+            # 而作者看到的是「按了停，那一稿还在写」——起草那一次调用是这一轮里最长的
+            # 一段（几十秒），停不住它等于没停。
+            cancel=signal,
         )
         result = run_turn(
             conversation,
@@ -781,31 +849,43 @@ def run_chat(
     )
 
 
+_STOP_WORDING: dict[StopVerdict, str] = {
+    "stopped": stop_wording(StopReason.AUTHOR_STOPPED),
+    "idle": "这段对话这会儿没在跑，不用停。",
+    # **这一句不许说成失败**（同上一句）：作者按的那一下是对的，只是它想停的那一轮
+    # 在这几百毫秒里自己跑完了。说「按钮没反应」会让他再按一次，而再按一次就会
+    # 停掉他刚发出去的那一句——正是这道比对要防的事。
+    "stale": "你按的是上一轮的「停」，那一轮已经自己跑完了。这会儿跑的是新的一轮，没有动它。",
+}
+"""三档结局各自那一句。**措辞只有这一份**，前端照抄 `message`。"""
+
+
 @router.post("/api/projects/{project_id}/chats/{chat_id}/stop", response_model=ChatStopped)
 def stop_chat(
     chat_id: ChatId,
+    body: StopBody | None = None,
     proj: Any = Depends(load_project),
     conn: Connection = Depends(get_conn),
 ) -> ChatStopped:
     """按下「停」。**它不等这一轮跑完**——信号交给正在跑的那一轮，跑一轮的那个请求
     会以「按你的意思停下了」收尾，已经查到的东西留着。
 
-    `stopped=false` 不是失败：那一刻它本来就没在跑（跑完了、或者从来没开始）。
+    `stopped=false` 不是失败，而且它有**两种**：那一刻本来就没在跑（跑完了、或者从来
+    没开始），或者在跑的是**另一轮**（`run_id` 对不上，见 `_Running`）。
+    两种都是 200，两种的措辞不一样。
+
+    `body` 可以整个不给（`curl` / 老界面）：那时不比对，行为和 2026-08-12 之前一样。
     """
     if ChatStore(conn).get(proj.id, chat_id) is None:
         raise HTTPException(
             status_code=404,
             detail={"error": "chat_not_found", "chat_id": chat_id},
         )
-    stopped = LIVE.stop((proj.id, chat_id))
+    verdict = LIVE.stop((proj.id, chat_id), (body.run_id if body else ""))
     return ChatStopped(
         chat_id=chat_id,
-        stopped=stopped,
-        message=(
-            stop_wording(StopReason.AUTHOR_STOPPED)
-            if stopped
-            else "这段对话这会儿没在跑，不用停。"
-        ),
+        stopped=verdict == "stopped",
+        message=_STOP_WORDING[verdict],
     )
 
 

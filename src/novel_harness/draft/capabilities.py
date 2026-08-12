@@ -296,6 +296,27 @@ class ProviderCapabilities(BaseModel):
         return self.base_url, self.model
 
 
+def _streams(
+    request_token_budget: int,
+    capability: ProviderCapabilities,
+    *,
+    interruptible: bool = False,
+) -> bool:
+    """这一次调用走不走流式。**两个理由，任一成立即为真；判据只有这一处。**
+
+    1. **预算够大**（`request > STREAM_THRESHOLD_TOKENS`）—— 一次阻塞往返会超时；
+    2. **这次要可中断，且这条路由确认支持流式** —— 见 `ResolvedCallPlan.interruptible`。
+
+    第二条**必须带着 `supports_streaming is True` 一起看**：未登记的端点
+    （`None`）在这儿就落回不流式，而不是走到下面那道 fail-closed 上被拒掉——
+    「作者接了个自建端点 ⇒ 起草整个不能用」和「作者接了个自建端点 ⇒ 起草停不下来、
+    但写得出稿」之间，本仓选后者（同 `AGENT_REASONING` 为什么是 `OFF`）。
+    """
+    if request_token_budget > STREAM_THRESHOLD_TOKENS:
+        return True
+    return interruptible and capability.supports_streaming is True
+
+
 class ResolvedCallPlan(BaseModel):
     """One secret-free plan resolved and validated before a transport call."""
 
@@ -313,6 +334,26 @@ class ResolvedCallPlan(BaseModel):
     reasoning_effective: ReasoningEffort
     reasoning_dialect: ReasoningDialect
     stream: bool
+    interruptible: bool = False
+    """这一次调用**要不要能在生成到一半时停下来**（作者按「停」）。
+
+    ── 为什么它是第二个开流式的理由，而不是把 16k 那个阈值调小 ────────────────
+
+    `STREAM_THRESHOLD_TOKENS` 编码的是**「会不会超时」**：输出预算大到一次阻塞往返扛不住
+    才走流式。**「可中断」是另一件事**，而它从来没被写进那个式子——于是
+    `agent/model.py` 那个取消适配器（它包的是**流**）在起草这条路上一次都没生效过：
+    起草的输出预算 7,024 远在阈值之下，`plan.stream` 恒 `False`，作者按「停」只能等
+    这一稿写完（30–60 秒）。
+
+    **不许改用「把输出预算抬到 16k 以上」来开流式**：那样判据就从「输出多大」变成了
+    「谁想要流式」，而抬上去之后**能力表没登记的端点**（`supports_streaming is None`）
+    会被 `plan_call` 当场 fail-closed 拒掉——作者接一个自建端点，症状是
+    **聊天好好的、只有起草每次失败**。所以是这一位显式说出意图，能力表照旧说了算。
+
+    **默认 `False`，而且 M2 三臂 / `nh gate` 永不设它** ⇒ 那条路的 wire shape 逐字节不变
+    （同 `previous_tail_limit` 那个既有形状：三臂不传、产品传）。
+    """
+
     budget_formula_version: str = BUDGET_FORMULA_VERSION
     capability: ProviderCapabilities
 
@@ -373,7 +414,9 @@ class ResolvedCallPlan(BaseModel):
                 f"({self.request_token_budget}) exceeds context window "
                 f"{self.capability.max_context_tokens}"
             )
-        if self.stream != (self.request_token_budget > STREAM_THRESHOLD_TOKENS):
+        if self.stream != _streams(
+            self.request_token_budget, self.capability, interruptible=self.interruptible
+        ):
             raise ValueError("stream must follow the versioned token threshold")
         if self.stream and self.capability.supports_streaming is not True:
             state = "unknown" if self.capability.supports_streaming is None else "false"
@@ -474,6 +517,10 @@ class StructuredCallPlan(BaseModel):
                 f"({self.request_token_budget}) exceeds context window "
                 f"{self.capability.max_context_tokens}"
             )
+        # **这一档没有 `interruptible`，是有意的不对称**：结构化输出的两个消费者
+        # （抽取、滚动总结）没有「作者按停」这个动作——它们由作者显式触发、几秒回来，
+        # 而且中途停下来交出半份 JSON 没有任何意义（散文的半截还是字，JSON 的半截是垃圾）。
+        # 哪天它们真长出一颗停止按钮，照 `ResolvedCallPlan` 那条加，别在这儿先摆一个空位。
         if self.stream != (self.request_token_budget > STREAM_THRESHOLD_TOKENS):
             raise ValueError("stream must follow the versioned token threshold")
         if self.stream and self.capability.supports_streaming is not True:
@@ -688,8 +735,23 @@ def plan_call(
     *,
     prompt_token_budget: int = 0,
     request_token_budget: int | None = None,
+    interruptible: bool = False,
 ) -> ResolvedCallPlan:
-    """Resolve a capacity plan without probing, downgrading, or clamping."""
+    """Resolve a capacity plan without probing, downgrading, or clamping.
+
+    Args:
+        interruptible: 这一次要不要能在生成到一半时停下来（见
+            `ResolvedCallPlan.interruptible`）。**默认 `False`，M2 三臂 / `nh gate`
+            永不设它** —— 那条路发出去的东西因此逐字节不变。
+
+    Notes:
+        **开着它有一笔账上的代价，说在这儿免得以后当成 bug 查**：流式下 usage 只有在
+        `supports_stream_usage is True` 的路由上才要得回来（`provider.py` 只对那一档加
+        `stream_options`）。今天注册表里只有 OpenAI 那四条是 `True`，所以 DeepSeek /
+        Anthropic 兼容 / OpenRouter 上一开可中断，那一稿的 token 数就从「供应商报的」
+        退成 `None`（账上「未记录」、闸门走 `_estimate_tokens` 的估算）。
+        **方向是对的**（不报数就说不知道，绝不编一个），但那是一次真实的精度损失。
+    """
     try:
         effort = ReasoningEffort(reasoning)
     except ValueError as exc:
@@ -742,7 +804,7 @@ def plan_call(
             f"{capability.max_context_tokens}"
         )
 
-    stream = request > STREAM_THRESHOLD_TOKENS
+    stream = _streams(request, capability, interruptible=interruptible)
     if stream and capability.supports_streaming is not True:
         state = "unknown" if capability.supports_streaming is None else "false"
         raise CapabilityError(
@@ -762,6 +824,7 @@ def plan_call(
         reasoning_effective=effort,
         reasoning_dialect=capability.reasoning_dialect,
         stream=stream,
+        interruptible=interruptible,
         capability=capability,
     )
 

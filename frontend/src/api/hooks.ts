@@ -740,10 +740,13 @@ export function useDeleteChat(pid: string) {
 export function useRunTurn(pid: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { chatId: string; chapter: number; said: string }) =>
+    mutationFn: (v: { chatId: string; chapter: number; said: string; runId: string }) =>
       api.post<TurnReceipt>(chats(pid, `${one(v.chatId)}/turn`), {
         chapter: v.chapter,
         said: v.said,
+        // 这一轮的标识。**「停」要报同一个**，否则它会停到别的轮上去
+        // （`chat.ts::newRunId` 写着那个坏序列）。
+        run_id: v.runId,
       }),
     onSuccess: (_receipt, v) => {
       qc.invalidateQueries({ queryKey: ["chats", pid] });
@@ -766,11 +769,15 @@ export function useRunTurn(pid: string) {
 
 /** 按下「停」。它**不等这一轮跑完**：信号交给正在跑的那一轮，那个请求会自己收尾。
  *
- *  **`stopped=false` 不是失败**（那一刻它本来就没在跑），所以这里没有 `onError` 分支
- *  要处理那一档——它是一个 200，界面照着后端那句 `message` 说。 */
+ *  **`stopped=false` 不是失败**，而且它有两种（本来就没在跑 / 在跑的是**另一轮**），
+ *  所以这里没有 `onError` 分支要处理它们——两种都是 200，界面照着后端那句 `message` 说。
+ *
+ *  **`runId` 必须是发起那一轮时报的那个**：不报的话后端不比对，于是一次迟到的「停」
+ *  会掐掉作者刚发出去的新一轮（`chat.ts::newRunId` 写着那个序列）。 */
 export function useStopChat(pid: string) {
   return useMutation({
-    mutationFn: (chatId: string) => api.post<ChatStopped>(chats(pid, `${one(chatId)}/stop`)),
+    mutationFn: (v: { chatId: string; runId: string }) =>
+      api.post<ChatStopped>(chats(pid, `${one(v.chatId)}/stop`), { run_id: v.runId }),
   });
 }
 

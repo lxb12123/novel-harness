@@ -108,6 +108,26 @@ class DraftCandidate(BaseModel):
     landed: bool = False
     """它进过书没有。**不是「被选中」**：作者可以在版本历史里把它退回去。"""
 
+    stopped_reason: str = ""
+    """**空 = 它写完了**；非空 = 没写完，这句话说明为什么（`migrations/010`）。
+
+    ── 它不是元数据，是语义的一部分 ──────────────────────────────────────────
+
+    对作者，显然。**真正要命的是对模型那一半**：一段断在半句的正文，模型下次读到它、
+    若不知道那是被砍断的，**会把那个断口当成一种有意的写法去模仿**。
+    「他缓缓抬起手，然后——」在代码里一眼就是坏的，在小说里它读起来像一个刻意的悬停。
+    所以**它跟着这一行的每一个读端走**：摘要行（列表 / 对话回执）、全文（`read_draft`）、
+    界面上那张卡，一个都不许漏。
+
+    ── 为什么存的是一句中文，不是一个枚举码 ────────────────────────────────
+
+    它同时要给**模型**和**作者**看，而这两个读者读的是同一种话。存机器码就要在两个出口
+    各写一次映射，而那是两份会漂的措辞；更糟的是漏掉一处的形态——
+    屏幕上一个 `author_stopped`（屏幕守卫罩不住小写裸枚举值，那个洞是写在判据文件里的）。
+    库里那一列**不参与任何过滤分支**（迁移 010 那句「开放字符串，不 CHECK」），
+    所以它没有第二个身份要守。
+    """
+
 
 class StoredDraft(DraftCandidate):
     """一稿的全文。**只有按 id 单取才拿得到。**"""
@@ -134,6 +154,9 @@ def _row_kwargs(row: Any) -> dict[str, Any]:
         "note": str(row["note"]),
         "created_at": str(row["created_at"]),
         "landed": row["landed_at"] is not None,
+        # **库里的 `NULL` 就是「它写完了」**（迁移 010 那一行注释），迁移之前的旧行
+        # 也落在这一档上——那时还没有任何东西能把一稿砍断，所以那句话对它们是真的。
+        "stopped_reason": "" if row["stopped_reason"] is None else str(row["stopped_reason"]),
     }
 
 
@@ -167,10 +190,17 @@ class DraftCandidateStore:
         body: str,
         note: str = "",
         base_sha256: str | None = None,
+        stopped_reason: str = "",
     ) -> DraftCandidate:
         """收一稿。**不动书、不动对话**，只多这一行。
 
         `ordinal` 在同一个事务里取 `MAX+1`，所以并发的三稿拿到的是 1/2/3，不会撞号。
+
+        Args:
+            stopped_reason: 这一稿**没写完**时说明为什么（见 `DraftCandidate.stopped_reason`）。
+                默认空 = 它写完了。**半截的一稿照旧收**：按停那一刻已经生成的 token 是
+                付过钱的信息，扔掉 = 钱花了字没了；而 ADR 0022 之后一稿本来就只是「提议」，
+                半截只是**短一点的提议**，它不会自动进书。
         """
         candidate_id = new_id(EntityType.DRAFT_CANDIDATE, project_id)
         units = count_units(body, DraftLanguage.ZH)
@@ -185,8 +215,9 @@ class DraftCandidateStore:
                 ordinal = int(row["top"]) + 1
                 self._conn.execute(
                     "INSERT INTO draft_candidate"
-                    " (id, project_id, chapter_number, ordinal, body, note, units, base_sha256)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    " (id, project_id, chapter_number, ordinal, body, note, units, base_sha256,"
+                    "  stopped_reason)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         candidate_id,
                         project_id,
@@ -196,6 +227,10 @@ class DraftCandidateStore:
                         note,
                         units,
                         base_sha256,
+                        # **空串写成 `NULL`**：库里那一列的两态是「NULL = 写完了」，
+                        # 一行空串会变成第三态，而它和 NULL 长得一模一样、意思却要靠
+                        # 读端去猜（`_row_kwargs` 只认 NULL）。
+                        stopped_reason or None,
                     ),
                 )
                 # `created_at` 是列默认值（库里那只钟），**读回来而不是在这儿再算一次**：
@@ -217,6 +252,7 @@ class DraftCandidateStore:
             preview=preview_of(body),
             created_at=str(written["created_at"]),
             landed=False,
+            stopped_reason=stopped_reason,
         )
 
     def mark_landed(self, project_id: str, candidate_id: str) -> None:
@@ -270,7 +306,7 @@ class DraftCandidateStore:
     def _read_one(self, project_id: str, candidate_id: str) -> Any:
         return self._conn.execute(
             "SELECT id, chapter_number, ordinal, body, note, units, base_sha256,"
-            "       created_at, landed_at"
+            "       created_at, landed_at, stopped_reason"
             " FROM draft_candidate WHERE project_id = ? AND id = ?",
             (project_id, candidate_id),
         ).fetchone()
@@ -280,7 +316,8 @@ class DraftCandidateStore:
     ) -> list[DraftCandidate]:
         """最近这几稿的摘要行（**不带正文**）。`chapter` 给了就只看那一章。"""
         sql = (
-            "SELECT id, chapter_number, ordinal, body, note, units, created_at, landed_at"
+            "SELECT id, chapter_number, ordinal, body, note, units, created_at, landed_at,"
+            "       stopped_reason"
             " FROM draft_candidate WHERE project_id = ?"
         )
         params: list[Any] = [project_id]

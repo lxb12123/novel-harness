@@ -241,10 +241,13 @@ def test_success_records_extractor_call_and_second_run_never_pays_again(seed: Se
     conn = seed.connection()
     row = conn.execute(
         "SELECT capability, model, params_json, prompt_hash, in_artifact, out_artifact, "
-        "tokens_in, tokens_out, ms FROM model_call WHERE id = ?",
+        "tokens_in, tokens_out, ms, chapter_number FROM model_call WHERE id = ?",
         ("call:fixed",),
     ).fetchone()
     assert row["capability"] == "extractor"
+    # 「这一次是为哪一章花的」由账自己答（迁移 009）。反查（`extraction_run.model_call_id`）
+    # 照旧兜着这一列出现之前的旧行，两条路都在，见 `activity._call_chapter`。
+    assert row["chapter_number"] == 3
     assert row["model"] == "extractor-test-model"
     assert row["prompt_hash"] == queued.prompt_hash
     assert json.loads(row["params_json"]) == {

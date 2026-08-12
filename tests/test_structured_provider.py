@@ -353,6 +353,12 @@ def test_existing_resolved_call_plan_serialization_is_unchanged() -> None:
         "reasoning_effective",
         "reasoning_dialect",
         "stream",
+        # 2026-08-12 多出来的一位（`ResolvedCallPlan.interruptible`）。
+        # **它进的是 `runs/*.jsonl` 里那份 plan 记录，不是 wire**——`_wire_kwargs` 里
+        # 一个字段都没多，三臂发出去的东西逐字节不变（`_streams` 的第二个理由默认关着）。
+        # 记录里多一位「这一次要不要能中途停」是**多一条审计事实**，不是少一条；
+        # 旧记录读回来时它取默认 `False`，也就是当时的真实情况。
+        "interruptible",
         "budget_formula_version",
         "capability",
     ]
@@ -374,5 +380,6 @@ def test_existing_resolved_call_plan_serialization_is_unchanged() -> None:
         "reasoning_effective": "off",
         "reasoning_dialect": "openai",
         "stream": False,
+        "interruptible": False,
         "budget_formula_version": BUDGET_FORMULA_VERSION,
     }

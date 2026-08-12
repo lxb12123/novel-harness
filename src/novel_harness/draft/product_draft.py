@@ -244,6 +244,7 @@ def draft_chapter(
     summaries: SummarySource,
     on_call: Callable[[ModelCallReceipt], None] | None = None,
     db_lock: AbstractContextManager[Any] | None = None,
+    client: Any = None,
 ) -> ChapterDraft:
     """按 `ctx` 里那个章号起一稿。**`/draft` 和 agent 的起草工具共用这一个函数。**
 
@@ -266,11 +267,26 @@ def draft_chapter(
             后面那次模型调用（几十秒）在锁外面，所以并发的收益一点没少。
             **`/draft` 和行内续写不传**：它们本来就一次只跑一稿，`None` = 一个空壳，
             那条路上的行为逐字节不变。
+        client: **作者按「停」要能中途生效时**，传一个把信号包在里面的客户端
+            （`agent/model.py::cancellable_client`）。原样透传给 `generate_draft` →
+            `complete()`，这一层自己不认识「取消」。
+
+            ⚠️ **「能停下来」是确定的，「省钱」不是。** 停下来做的两件事是：不再收后面的
+            片、把那条 HTTP 连接关掉。**断开连接 ≠ 停止生成 ≠ 停止计费**——服务端要不要
+            跟着停由供应商决定，这一层管不着，所以别把这颗按钮说成省钱按钮。
+            它确定省下的是**时间**（作者不用干等一稿写完）和**后面那几次调用**
+            （信号亮着 loop 就不再动手）。
+
+            **`None`（默认）= 停不下来**，退化成「这一稿写完才停」——那不是坏了，
+            那是没接线的那一档（`/draft` 和三臂都在这一档上）。
 
     Raises:
         DraftRefused: form 不认识、或文风里写了三臂共用的禁令词。
         panel.constraints.UnresolvedCast: 由 `build_product_context` 的 label 校验转成
             的输入错误（调用方映成给作者的话）。
+        generate.CallInterrupted: 作者在生成到一半时按了停。**它是 `ProviderError` 的
+            子类**，所以只关心「这一稿没写成」的调用方一个字都不用改；要接住那半截的
+            （`agent/drafting.py`）先捕它。已经发出去的每一次调用都进过 `on_call`。
         provider.ProviderError: 模型这一次没答上来。
     """
     form = check_request(request)
@@ -343,7 +359,7 @@ def draft_chapter(
         mark = now
 
     result = generate_draft(
-        messages, length=request.length, config=config, plan=plan, on_attempt=bill
+        messages, length=request.length, config=config, plan=plan, client=client, on_attempt=bill
     )
     return ChapterDraft(result=result, memory=memory, calls=tuple(receipts))
 

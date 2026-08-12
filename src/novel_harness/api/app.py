@@ -1227,7 +1227,9 @@ def draft(
     from ..draft.product_draft import draft_chapter as run_draft
     from ..draft.provider import ProviderError
     from ..draft.rolling_summary import SummaryStore
+    from ..extract.call_audit import ModelCallReceipt, record_receipt
     from ..graph.sqlite_events import SqliteEventStore
+    from ..ids import EntityType, new_id
     from ..panel.constraints import UnresolvedCast, scene_view
 
     try:
@@ -1275,6 +1277,22 @@ def draft(
     except UnresolvedCast as exc:
         raise HTTPException(status_code=422, detail=f"在场角色解析不了：{exc}")
 
+    def bill(receipt: ModelCallReceipt) -> None:
+        """一次真的模型调用 = 一行 `model_call`。**当场落，不等这一稿拼完。**
+
+        `draft_chapter` 一落地就叫这个（`on_call`），而「第一次答上来了、续写那次断线」
+        是一档真会发生的失败——攒到最后记账的话，那时钱已经付掉、`calls` 却随异常没了。
+        章号由这一层说：`ctx.chapter` 就是这一稿写的那一章（`draft_chapter` 也从它取，
+        所以不存在两个来源对不上的可能）。
+        """
+        record_receipt(
+            conn,
+            receipt,
+            project_id=project_id,
+            chapter_number=ctx.chapter,
+            call_id_factory=lambda pid: new_id(EntityType.CALL, pid),
+        )
+
     try:
         drafted = run_draft(
             ctx,
@@ -1285,6 +1303,7 @@ def draft(
             plan=plan,
             events=SqliteEventStore(conn),
             summaries=SummaryStore(conn),
+            on_call=bill,
         )
     except DraftRefused as exc:
         raise HTTPException(status_code=422, detail=str(exc))
@@ -1293,10 +1312,9 @@ def draft(
     except ProviderError as exc:
         raise HTTPException(status_code=502, detail=f"模型调用失败：{exc}")
 
-    # **这条路由至今一行 `model_call` 都不写**（`drafted.calls` 里躺着 1–2 份账单原料，
-    # 这儿没人收）。它是 `docs_dev` 记着的那个已知洞：底栏的花销汇总因此系统性偏低，
-    # 而且看起来像全部。补它 = 在这儿调一次 `record_call`，**但那是一次行为改变**
-    # （日志页会多出几行），不在这一刀的范围里。agent 那条路的账已经落上了。
+    # 账在上面那个 `bill` 里已经落了（2026-08-12）。**这儿一个字节都不许多**：
+    # 这个响应体是前端契约的一部分，「账记上了」是库里多几行，不是出参多一个键。
+    # （`drafted.calls` 仍然带着那 1–2 份原料，是留给不走 `on_call` 的调用方的。）
     result = drafted.result
     last = result.attempts[-1].result
     return {

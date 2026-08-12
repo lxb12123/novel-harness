@@ -389,6 +389,117 @@ def test_stopping_a_conversation_that_is_not_running_is_not_a_failure(
     assert client.post(f"/api/projects/{pid}/chats/chat_session:nope/stop").status_code == 404
 
 
+def test_a_stop_meant_for_the_previous_turn_does_not_kill_the_new_one(
+    client: TestClient, book: dict[str, str], configured: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**过期的「停」要被忽略。**
+
+    `_Running.begin` 保证同一段对话不会同时有两轮，所以大部分场景天然安全。
+    **但这个序列会出事**：
+
+        作者按停 → 请求在路上 → 上一轮自己跑完了 → 作者又发一句
+        → 新一轮开始 → 停止请求到达 → **杀掉新的那一轮**
+
+    作者看到的是「我刚发出去的那句话，它自己停了」。修法是让「停」报出它想停的是
+    哪一轮，比对不上就不动——而**这一档不许说成失败**（同上一条：他按的那一下是对的）。
+    """
+    pid = book["pid"]
+    entered, release = Event(), Event()
+
+    def blocking(cancel: Any) -> None:
+        if not entered.is_set():
+            entered.set()
+            release.wait(timeout=5)
+
+    use(monkeypatch, Scripted(wants(("book_index", "{}")), says("好"), before=blocking))
+    chat_id = open_chat(client, pid)
+    url = f"/api/projects/{pid}/chats/{chat_id}"
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        running = pool.submit(
+            lambda: client.post(f"{url}/turn", json={"chapter": 2, "said": "新的一轮", "run_id": "b"})
+        )
+        assert entered.wait(timeout=5), "这一轮没跑起来"
+        # 作者按的是**上一轮**那颗停（`run_id="a"`），而这会儿跑的是 `"b"`。
+        stale = client.post(f"{url}/stop", json={"run_id": "a"})
+        assert stale.status_code == 200, stale.text
+        assert stale.json()["stopped"] is False
+        assert "上一轮" in stale.json()["message"]
+        assert "失败" not in stale.json()["message"]
+        release.set()
+        turn = running.result(timeout=10)
+
+    # **新的那一轮一点没被动过**：它照旧跑完、照旧叫了那个工具。
+    assert turn.status_code == 200, turn.text
+    assert turn.json()["reason"] == StopReason.DONE.value
+    assert turn.json()["lookups"] == 1
+
+
+def test_a_stop_that_names_the_running_turn_still_lands(
+    client: TestClient, book: dict[str, str], configured: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**报对了标识的那一下照旧生效**（上一条的自守卫）。
+
+    没有它，上面那句 `stopped is False` 可能只是因为比对把所有「停」都挡掉了——
+    一颗永远不生效的停止按钮同样能让那条断言变绿。
+    """
+    pid = book["pid"]
+    entered, release = Event(), Event()
+
+    def blocking(cancel: Any) -> None:
+        if not entered.is_set():
+            entered.set()
+            release.wait(timeout=5)
+
+    use(monkeypatch, Scripted(wants(("book_index", "{}")), says("好"), before=blocking))
+    chat_id = open_chat(client, pid)
+    url = f"/api/projects/{pid}/chats/{chat_id}"
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        running = pool.submit(
+            lambda: client.post(f"{url}/turn", json={"chapter": 2, "said": "这一轮", "run_id": "b"})
+        )
+        assert entered.wait(timeout=5), "这一轮没跑起来"
+        stopped = client.post(f"{url}/stop", json={"run_id": "b"})
+        assert stopped.json()["stopped"] is True
+        release.set()
+        turn = running.result(timeout=10)
+
+    assert turn.json()["reason"] == StopReason.AUTHOR_STOPPED.value
+
+
+def test_a_client_that_reports_no_turn_id_keeps_the_old_behaviour(
+    client: TestClient, book: dict[str, str], configured: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`curl` 和老界面不报标识 ⇒ **不比对**，行为和 2026-08-12 之前一模一样。
+
+    这不是留后门：报不出标识的那一边**本来就没有**「上一轮」和「这一轮」的概念
+    （它一次只按一下），而让 `POST /stop` 变成必须带 body 会把一条既有的路当场打断。
+    """
+    pid = book["pid"]
+    entered, release = Event(), Event()
+
+    def blocking(cancel: Any) -> None:
+        if not entered.is_set():
+            entered.set()
+            release.wait(timeout=5)
+
+    use(monkeypatch, Scripted(wants(("book_index", "{}")), says("好"), before=blocking))
+    chat_id = open_chat(client, pid)
+    url = f"/api/projects/{pid}/chats/{chat_id}"
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        running = pool.submit(
+            lambda: client.post(f"{url}/turn", json={"chapter": 2, "said": "写一段", "run_id": "b"})
+        )
+        assert entered.wait(timeout=5), "这一轮没跑起来"
+        assert client.post(f"{url}/stop").json()["stopped"] is True
+        release.set()
+        turn = running.result(timeout=10)
+
+    assert turn.json()["reason"] == StopReason.AUTHOR_STOPPED.value
+
+
 def test_deleting_a_conversation_that_is_running_says_so_instead_of_confusing_him(
     client: TestClient, book: dict[str, str], configured: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:

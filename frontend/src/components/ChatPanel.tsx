@@ -11,6 +11,7 @@ import type { ChatMessageView, TurnReceipt } from "../api/types";
 import {
   elapsedText,
   emphasize,
+  newRunId,
   receiptNotes,
   refusalText,
   stopFootnote,
@@ -161,6 +162,9 @@ export function ChatPanel() {
    *  是常态不是边角。不记这个 id 的话，「正在跑」那一条和跑完的回执会画在他此刻看着的
    *  那一段上，而那一段什么都没发生：屏幕上是一句关于别处的话，却长得像这儿的事实。 */
   const [runFor, setRunFor] = useState<string | null>(null);
+  /** 这一轮的标识（`chat.ts::newRunId`）。**「跑」和「停」报的必须是同一个**——
+   *  用 ref 是因为它在一次点击里被写、在另一次点击的回调里被读，而它一个像素都不上屏。 */
+  const runId = useRef("");
   /** 回执连同**它属于哪一段**一起存。同上：切走之后到手的那一份不许落到别人头上。 */
   const [receipt, setReceipt] = useState<{ chat: string; turn: TurnReceipt } | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -215,8 +219,10 @@ export function ChatPanel() {
     setPendingSaid(text || null);
     setRunFor(id);
     setStartedAt(Date.now());
+    // **每一轮换一个新的**：上一轮那个还在的话，一次迟到的「停」就会认成这一轮。
+    runId.current = newRunId();
     turn.mutate(
-      { chatId: id, chapter, said: text },
+      { chatId: id, chapter, said: text, runId: runId.current },
       {
         onSuccess: (r) => {
           setPendingSaid(null);
@@ -338,7 +344,10 @@ export function ChatPanel() {
             stopping={stop.isPending}
             onStop={() => {
               if (!chatId) return;
-              stop.mutate(chatId, {
+              // **报的是这一轮的标识**，不是「停这段对话」：一次迟到的「停」
+              // 到达时，正在跑的可能已经是作者刚发起的下一轮了
+              // （`chat.ts::newRunId` 写着那个序列）。后端比对不上就忽略。
+              stop.mutate({ chatId, runId: runId.current }, {
                 onSuccess: (r) => {
                   stopLanded.current = r.stopped;
                   // `stopped=false` 不是失败：那一刻它本来就没在跑。

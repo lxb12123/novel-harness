@@ -159,6 +159,29 @@ export function stopFootnote(stopped: boolean, receipt: TurnReceipt): string | n
   return "你按下停的时候，这一轮已经跑到最后一步了，所以它还是把话说完了。";
 }
 
+/**
+ * 这一轮的标识。**「停」拿它认出自己要停的是哪一轮**（后端 `TurnBody.run_id`）。
+ *
+ * ── 为什么由这一边造 ──────────────────────────────────────────────────────
+ *
+ * 后端造不了：`POST …/turn` 是**跑完才回来**的，而「停」必须在那之前就能按。
+ * 不比对的那一版有一个实测得出的坏序列：
+ *
+ *     按停 → 请求在路上 → 上一轮自己跑完了 → 作者又发一句 → 新一轮开始
+ *     → 停止请求到达 → **杀掉新的那一轮**
+ *
+ * 于是作者看到「我刚发出去的那句话，它自己停了」，而他按的那一下是给上一轮的。
+ *
+ * `crypto.randomUUID` 不在的环境（老浏览器、某些 jsdom）走后面那条：**唯一性够用就行**
+ * ——它只在一个进程内的一张表里比对，而同一段对话同时只可能有一轮
+ * （后端 `_Running.begin` 拦着）。它**不进任何一行数据**。
+ */
+export function newRunId(): string {
+  const uuid = globalThis.crypto?.randomUUID;
+  if (typeof uuid === "function") return globalThis.crypto.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 export interface Emphasis {
   text: string;
   strong: boolean;

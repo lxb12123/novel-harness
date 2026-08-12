@@ -124,11 +124,13 @@ def test_ensure_generates_once_and_reuses_without_another_call(seed: Seed) -> No
     try:
         row = conn.execute(
             """
-            SELECT capability, params_json, prompt_hash FROM model_call
+            SELECT capability, params_json, prompt_hash, chapter_number FROM model_call
             WHERE id = 'call:1'
             """
         ).fetchone()
         assert row["capability"] == "summarizer"
+        # 总结的是第 1 章，账也记在第 1 章上（迁移 009）。反查照旧兜着旧行。
+        assert row["chapter_number"] == 1
         assert json.loads(row["params_json"])["schema_version"] == SUMMARY_VERSION
         summary = SummaryStore(conn).get(seed.project_id, 1)
         assert summary is not None and summary.summary == SUMMARY_TEXT

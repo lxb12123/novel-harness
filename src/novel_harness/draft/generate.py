@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
 import math
-from typing import Any
+from typing import Any, NoReturn
 
 from pydantic import (
     BaseModel,
@@ -23,7 +23,47 @@ from .length import (
     LengthStatus,
     measure,
 )
-from .provider import CompletionResult, ProviderConfig, complete
+from .provider import CompletionResult, ProviderConfig, ProviderError, complete
+
+
+class CallInterrupted(ProviderError):
+    """一次调用被**从外面**掐断（今天唯一的来源是作者按「停」）。
+
+    ── 它为什么在这一层，而不是在运输层或者 `agent/` ────────────────────────
+
+    `draft/provider.py` 是 M2 判分链的运输层（冻结），而**取消是编排层的概念**——
+    运输层认得它就等于运输层知道有个「作者」和一个「停」按钮
+    （`agent/model.py::_CancellableClient` 的 docstring 写着同一条理由）。
+    反过来它也不能住在 `agent/`：`draft/` 不许 import `agent/`（方向反了就成环），
+    而**接住半截那一稿的是这个文件**——它是唯一知道「整章起草是一到两次调用」的地方。
+
+    所以：`agent/model.py::AgentCancelled` 继承它，这一层只认这个基类。
+
+    ── `partial_text` 在两层上是同一句话，不是两个意思 ──────────────────────
+
+    「**到此为止已经拿到手的正文**」。适配器那一层只有一次调用，所以它就是那一次收到的
+    那几片；`generate_draft` 那一层是「第一次的全文 + 续写那次的半截」（ADR 0011 D3
+    的第二次调用停在半路时，第一段是完整的）。两层同解，所以调用方不用问「哪一层抛的」。
+
+    **它可能是空串**，而空串不等于「没花钱」：见 `sent`。
+    """
+
+    def __init__(self, message: str, *, partial_text: str = "", sent: bool = True) -> None:
+        super().__init__(message)
+        self.partial_text = partial_text
+        """到此为止已经拿到手的正文。**空串 = 一个字都没收到**，不是「没这回事」。"""
+
+        self.sent = sent
+        """这次请求**发出去了没有**。
+
+        `False` 只有一种来源：信号在发之前就亮了（`_CancellableClient` 的入口检查），
+        那一次一分钱没花，**不许为它记一行账**。
+        `True` 时哪怕 `partial_text` 是空的**也必须记一行账**——
+        断开连接 ≠ 停止生成 ≠ 停止计费，服务端那边可能已经把整份稿子生成完了。
+
+        **只有紧挨着适配器的这一层读它**（`generate_draft` 用它决定记不记账）；
+        再往上（`agent/drafting.py`）看的是回执，不是这一位。
+        """
 
 
 def continuation_instruction(length: LengthSpec, cumulative_units: int) -> str:
@@ -259,55 +299,90 @@ def generate_draft(
     client: Any = None,
     on_attempt: Callable[[DraftAttempt], None] | None = None,
 ) -> DraftResult:
-    """Generate once and perform exactly one length-only continuation when under minimum."""
+    """Generate once and perform exactly one length-only continuation when under minimum.
+
+    Raises:
+        CallInterrupted: 作者在生成到一半时按了停（只有 `client` 是那个取消包装时才可能
+            发生，见 `agent/model.py`）。**已经拿到的正文在 `partial_text` 上**，
+            已经发出去的每一次调用**照旧走了一遍 `on_attempt`** —— 记账的路只有那一条
+            （`ToolRefused.calls` 那条教训：一次已付费调用不许从账上和成本闸上同时消失）。
+    """
     validate_generation_plan(length=length, config=config, plan=plan)
 
+    attempts: list[DraftAttempt] = []
+
+    def record(
+        number: int, wire: tuple[_FrozenDict, ...], result: CompletionResult
+    ) -> DraftAttempt:
+        attempt = DraftAttempt(
+            number=number,
+            messages=wire,
+            result=result,
+            measurement=measure(result.text, length),
+        )
+        if on_attempt is not None:
+            on_attempt(attempt)
+        attempts.append(attempt)
+        return attempt
+
+    def interrupted(
+        number: int,
+        wire: tuple[_FrozenDict, ...],
+        exc: CallInterrupted,
+        *,
+        done: str,
+    ) -> NoReturn:
+        """作者停在第 `number` 次调用上。**先记账，再把到手的正文往上抛。**
+
+        `CompletionResult` 是这一层**替一次没跑完的调用补的一份**：`text` 是真收到的
+        那几片，`model` 是发出去时点的那个，**token 数一律留空**——供应商没报，
+        这一层不许替它编（账本只照抄，`ModelCallReceipt.completion_tokens` 的规矩）。
+        `finish_reason` 同理留 `None`：**没停在供应商说的任何一种理由上**，
+        写一个 `"cancelled"` 进去就是把我们自己的话冒充成它报的。
+        """
+        if exc.sent:
+            record(number, wire, CompletionResult(text=exc.partial_text, model=config.model))
+        raise CallInterrupted(
+            str(exc), partial_text=done + exc.partial_text, sent=exc.sent
+        ) from exc
+
     initial_messages = _freeze_messages(messages)
-    initial_result = complete(
-        _wire_messages(initial_messages),
-        config=config,
-        plan=plan,
-        client=client,
-    )
-    initial_measurement = measure(initial_result.text, length)
-    initial_attempt = DraftAttempt(
-        number=1,
-        messages=initial_messages,
-        result=initial_result,
-        measurement=initial_measurement,
-    )
-    if on_attempt is not None:
-        on_attempt(initial_attempt)
-    attempts = [initial_attempt]
+    try:
+        initial_result = complete(
+            _wire_messages(initial_messages),
+            config=config,
+            plan=plan,
+            client=client,
+        )
+    except CallInterrupted as exc:
+        interrupted(1, initial_messages, exc, done="")
+    initial_attempt = record(1, initial_messages, initial_result)
     final_text = initial_result.text
 
-    if initial_measurement.status is LengthStatus.UNDER:
+    if initial_attempt.measurement.status is LengthStatus.UNDER:
         continuation_messages = initial_messages + _freeze_messages(
             (
                 {"role": "assistant", "content": initial_result.text},
                 {
                     "role": "user",
                     "content": continuation_instruction(
-                        length, initial_measurement.actual_units
+                        length, initial_attempt.measurement.actual_units
                     ),
                 },
             )
         )
-        continuation_result = complete(
-            _wire_messages(continuation_messages),
-            config=config,
-            plan=plan,
-            client=client,
-        )
-        continuation_attempt = DraftAttempt(
-            number=2,
-            messages=continuation_messages,
-            result=continuation_result,
-            measurement=measure(continuation_result.text, length),
-        )
-        if on_attempt is not None:
-            on_attempt(continuation_attempt)
-        attempts.append(continuation_attempt)
+        try:
+            continuation_result = complete(
+                _wire_messages(continuation_messages),
+                config=config,
+                plan=plan,
+                client=client,
+            )
+        except CallInterrupted as exc:
+            # **停在续写这一次时，第一段是完整的**——扔掉它等于把一次已经收全的调用
+            # 连同它的钱一起丢掉。所以往上抛的是「第一次的全文 + 这一次的半截」。
+            interrupted(2, continuation_messages, exc, done=final_text)
+        record(2, continuation_messages, continuation_result)
         final_text += continuation_result.text
 
     frozen_attempts = tuple(attempts)
@@ -323,6 +398,7 @@ __all__ = [
     "CONTINUATION_CONTEXT_VERSION",
     "CONTINUATION_PROMPT_OVERHEAD_TOKENS",
     "continuation_instruction",
+    "CallInterrupted",
     "DraftAttempt",
     "DraftResult",
     "continuation_prompt_reserve",

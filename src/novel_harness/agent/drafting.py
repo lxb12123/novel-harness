@@ -55,6 +55,7 @@ from ..draft.capabilities import (
     plan_call,
 )
 from ..draft.context import DraftContext
+from ..draft.generate import CallInterrupted
 from ..draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage, LengthSpec, count_units
 from ..draft.product_draft import (
     ChapterDraftRequest,
@@ -67,6 +68,8 @@ from ..events import EventStore
 from ..extract.call_audit import ModelCallReceipt
 from ..graph import GraphStore
 from .candidates import DraftCandidate, DraftCandidateStore, StoredDraft
+from .loop import Cancellation
+from .model import cancellable_client
 from .ports import DraftAsk, DraftProduct, LandingReport, ToolRefused
 
 AGENT_DRAFT_LENGTH: Final[LengthSpec] = DEFAULT_LENGTH_POLICY.default_for(DraftLanguage.ZH)
@@ -123,6 +126,22 @@ SELF_NOTE_UNITS: Final = 60
 """自述最多留多少字。**它每一轮都会跟着预览一起重发**，所以它也要有硬上限
 （同 `PREVIEW_UNITS` 那条理由）。模型写长了就截断，不是拒绝——那是它的散文，不是参数。
 """
+
+AUTHOR_STOPPED_NOTE: Final = "按「停」中断了，这一稿只写到这里，后面没有写完。"
+"""半截那一稿身上带的那句话（`draft_candidate.stopped_reason`，迁移 010）。
+
+**它同时说给作者和模型听**，而后者才是这一列存在的硬理由：一段断在半句的正文，
+模型下次读到它、若不知道那是被砍断的，**会把那个断口当成一种有意的写法去模仿**
+（`agent/candidates.py::DraftCandidate.stopped_reason` 写着完整的那一段）。
+
+措辞只有这一份：屏幕上那张卡、`read_draft` 交回给模型的那一份、列表里的那一行，
+读的都是库里这同一句。**别在任何一个出口再翻一遍。**
+
+**一个 markdown 记号都不许有。** 这句话原样落到屏幕上那张卡里，而那块屏幕不渲染
+markdown——`stop_wording(CONTEXT_FULL)` 里那一对 `**` 就是这么变成两颗星号摆在作者脸上的
+（进度板「已知限制」记着它）。这一句更硬：它进的是**库**，改措辞救不回已经写下去的那些行。
+"""
+
 
 _SELF_NOTE_ASK: Final = (
     f"\n\n另外：**正文第一行**先写一句 `{SELF_NOTE_MARK}`，用不超过三十个字说这一版你是"
@@ -208,6 +227,7 @@ class ChapterDesk:
         summaries: SummarySource,
         length: LengthSpec = AGENT_DRAFT_LENGTH,
         db_lock: AbstractContextManager[Any] | None = None,
+        cancel: Cancellation | None = None,
     ) -> None:
         self._store = store
         self._conn = conn
@@ -218,6 +238,12 @@ class ChapterDesk:
         self._events = events
         self._summaries = summaries
         self._length = length
+        self._cancel = cancel
+        """作者按下的那个「停」（`loop.Cancellation`，**和这一轮 loop 拿的是同一个对象**）。
+
+        `None` = 这一轮没接停止信号 ⇒ 起草不走流式 ⇒ 打断退化成「这一稿写完才停」。
+        那不是坏了，那是没接线的那一档（CLI / 测试里的那些形态）。
+        """
         # **碰库要排的那道队**，和 `ToolContext.db_lock` 必须是**同一把**
         # （见 `agent/ports.py` 上那段实测）。装配层不给就自己造一把——那是
         # 「这一轮不并发」的形态，锁本身几乎不要钱。
@@ -238,13 +264,24 @@ class ChapterDesk:
 
         Raises:
             ToolRefused: 模型撑不起一次整章起草 / 发出去之前就被拒 / 联系不上模型 /
-                写手交回来的是空的。
+                写手交回来的是空的 / **作者按了停**（那一档半截的正文照旧收进候选表，
+                见 `AUTHOR_STOPPED_NOTE`）。
         """
         # **`plan_call` 在这儿算，不在构造函数里算。** 放在构造里的话，一个撑不起整章
         # 起草预算的模型会让 `POST …/turn` 整个 422——聊天本来是能用的，作者只会看到
         # 「写作助手用不了」。放在这儿，坏的只有起草这一个工具，而它说得出原因。
+        #
+        # **`interruptible` 只在真接了停止信号时才为真**，而且它**不保证**流式：
+        # 能力表没登记这个端点（`supports_streaming is None`）时 `plan_call` 照旧
+        # 算出非流式的一份 plan，不会 fail-closed 把整个起草拒掉（`_streams` 的
+        # docstring 写着为什么必须是这个方向）。
         try:
-            plan = plan_call(self._length, AGENT_DRAFT_REASONING, self._capability)
+            plan = plan_call(
+                self._length,
+                AGENT_DRAFT_REASONING,
+                self._capability,
+                interruptible=self._cancel is not None,
+            )
         except (CapabilityError, ValueError) as exc:
             raise ToolRefused(
                 f"这个模型撑不起一次整章起草（{exc}）。"
@@ -281,10 +318,18 @@ class ChapterDesk:
                 # 那一层自己只把**装配**（要查事件、查摘要）圈进锁里；
                 # 后面那次模型调用在锁外面，所以一批稿是真的同时在飞。
                 db_lock=self._db_lock,
+                # 把作者的「停」带进那一次调用里。**这是既有那三样的最后一段线**
+                # （`complete(client=…)` 收 client、`_CancellableClient` 就是那个包装、
+                # `generate_draft` 已经把 client 往下透传）——**没有第二个取消机制**。
+                client=self._client(),
             )
         except DraftRefused as exc:
             # 发出去之前就被拒了 ⇒ 一分钱没花 ⇒ 这一档可以裸抛（`dispatch` 变成 ok=False）。
             raise ToolRefused(str(exc)) from exc
+        except CallInterrupted as exc:
+            # **必须排在 `ProviderError` 前面**：它是那个的子类，顺序反了半截的正文
+            # 就被当成一次「联系不上模型」扔掉了。
+            raise self._stopped(ask.chapter, exc, spent, base_sha=base_sha) from exc
         except ProviderError as exc:
             # **不许让它逃出 `dispatch`**：`run_turn` 外面没有 try/except，漏出去
             # 作者看到的是一次崩溃，而不是「这一稿没写成，再试一次」。
@@ -303,15 +348,96 @@ class ChapterDesk:
                 calls=tuple(drafted.calls),
             )
 
+        candidate = self._keep(ask.chapter, body=body, note=note, base_sha=base_sha)
+        return DraftProduct(candidate=candidate, calls=drafted.calls)
+
+    def _client(self) -> Any:
+        """这一次起草调用要用的客户端。**没接停止信号就是 `None`**（走默认那条路）。
+
+        Raises:
+            ToolRefused: 客户端建不起来（openai 库没装、base_url 不合法）。
+                **不许让它逃出去**：`run_turn` 外面没有 try/except，漏出去作者看到的
+                是一次崩溃（同 `_real_client` 的 docstring）。
+        """
+        if self._cancel is None:
+            return None
+        try:
+            return cancellable_client(self._config, self._cancel)
+        except ProviderError as exc:
+            raise ToolRefused(f"这一稿没写成，联系不上写作模型：{exc}") from exc
+
+    def _keep(
+        self, chapter: int, *, body: str, note: str, base_sha: str | None, stopped: str = ""
+    ) -> DraftCandidate:
+        """把一稿收进候选表，并记在这一轮的产出里。**写完的和半截的走同一条路**——
+        两条路的那一天，「半截那一份忘了进 `produced`」就是屏幕上少一稿而不报错。
+        """
         candidate = self._candidates.put(
             self._project_id,
-            chapter=ask.chapter,
+            chapter=chapter,
             body=body,
             note=note,
             base_sha256=base_sha,
+            stopped_reason=stopped,
         )
         self.produced.append(candidate)
-        return DraftProduct(candidate=candidate, calls=drafted.calls)
+        return candidate
+
+    def _stopped(
+        self,
+        chapter: int,
+        exc: CallInterrupted,
+        spent: list[ModelCallReceipt],
+        *,
+        base_sha: str | None,
+    ) -> ToolRefused:
+        """作者按停时这一稿的归宿：**存下来、标上、把已经花的钱带走。**
+
+        ── 为什么存 ────────────────────────────────────────────────────────
+
+        按停那一刻已经生成的 token 是**付过钱的信息**，扔掉 = 钱花了字没了。
+        而 ADR 0022 让起草本来就是「提议」而不是「落盘」，所以半截的一稿只是
+        **短一点的提议**——它不会自动进书，留着零风险。
+
+        **续写那一档存的是两段拼起来的**（第一次的全文 + 这一次的半截，
+        `generate.CallInterrupted.partial_text` 已经拼好）：第一段是完整的、
+        钱也付过，跟着半截一起扔掉是同一个错误的更贵版本。
+
+        ── 为什么是 `ToolRefused` 而不是一份正常的 `DraftProduct` ──────────────
+
+        这一次工具**没干完它的活**。给它一个 ok=True 的返回，模型（和下一轮的它自己）
+        看到的就是「第 3 稿写好了」，而那一稿断在半句上。拒绝那条路上
+        `ToolRefused.calls` 正是 3.6 定下的那条记账路，**取消不许另开一条**。
+        """
+        body, note = split_self_note(exc.partial_text)
+        calls = tuple(spent)
+        if not body.strip():
+            # 一个字都没收到 ⇒ 没有「短一点的提议」可留（同空稿那一档：收进表只会占一个
+            # id，让模型以为手上有东西）。**账照记**——`sent=True` 的那一次已经付过钱了。
+            return ToolRefused(
+                f"第 {chapter} 章这一稿按作者的意思停下了，一个字都还没写出来，"
+                "所以没有稿子留下。",
+                calls=calls,
+            )
+        # **底稿哈希照记，和一份写完的稿子一样。**
+        #
+        # 试过反过来（存 `None` 让落盘闸一律拒），错在两处：① `_land` 对
+        # `base_sha is None` 那句话是「写这一稿的时候那一章还不存在」——对半截这一稿
+        # 是**假的**，而这个仓库最贵的错误就是一句听起来很正常的假话；② 半截能不能进书
+        # **本来就不该由这一层裁**：唯一走得到落盘的路是**下一轮作者自己说**「就用刚才
+        # 那半截，我自己接着写」，那时拒掉的是他明确要的东西。模型读回时看得见标注
+        # （`DraftFullText.stopped_reason`），作者在版本历史里退得回去——ADR 0022 的
+        # 立场原样成立：这一层只负责让**它是半截**这件事没人能不知道。
+        candidate = self._keep(
+            chapter, body=body, note=note, base_sha=base_sha, stopped=AUTHOR_STOPPED_NOTE
+        )
+        return ToolRefused(
+            f"第 {chapter} 章这一稿按作者的意思停下了。已经写出来的那部分留下来了"
+            f"（第 {candidate.ordinal} 稿，{candidate.units} 字）——"
+            "它没写完，多半断在半句上，别把那个断口当成一种写法。"
+            "要用的话让作者自己接着写，或者他再说一次时重写一稿。",
+            calls=calls,
+        )
 
     # ── 落盘：不花钱，动书，**仍然不问作者** ──────────────────────────────
 
@@ -370,6 +496,7 @@ def chapter_drafter(
     summaries: SummarySource,
     length: LengthSpec = AGENT_DRAFT_LENGTH,
     db_lock: AbstractContextManager[Any] | None = None,
+    cancel: Cancellation | None = None,
 ) -> ChapterDesk:
     """造一个起草台（生成 / 落盘 / 读回）。**装配层调它**（`api/chat.py`）。
 
@@ -381,6 +508,10 @@ def chapter_drafter(
         capability: 已经解析好的能力证据。`plan` 不在这儿算——见 `ChapterDesk.write`。
         db_lock: 碰库排的那道队。**要和 `ToolContext.db_lock` 是同一把**（批内并发，
             ADR 0022）：两把锁 = 各排各的队 = 没排。
+        cancel: 作者按下的那个「停」。**要和这一轮 `run_turn` 拿的是同一个对象**
+            （`api/chat.py` 从 `LIVE.begin()` 拿到之后两处都传它）：两个信号 =
+            按停只停住其中一半，而作者看到的是「按了停，那一稿还在写」。
+            `None` = 这一轮停不了起草（退化成「这一稿写完才停」）。
     """
     return ChapterDesk(
         store=store,
@@ -393,6 +524,7 @@ def chapter_drafter(
         summaries=summaries,
         length=length,
         db_lock=db_lock,
+        cancel=cancel,
     )
 
 
@@ -543,6 +675,7 @@ def _log_landing(conn: Connection, *, project_id: str, chapter: int, candidate: 
 __all__ = [
     "AGENT_DRAFT_LENGTH",
     "AGENT_DRAFT_REASONING",
+    "AUTHOR_STOPPED_NOTE",
     "SELF_NOTE_MARK",
     "SELF_NOTE_UNITS",
     "ChapterDesk",

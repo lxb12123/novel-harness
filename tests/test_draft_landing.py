@@ -772,7 +772,7 @@ def test_a_refusal_that_cost_nothing_still_reports_nothing(
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_the_browser_draft_route_still_writes_nothing(
+def test_the_browser_draft_route_writes_no_chapter_but_bills_the_call(
     client: TestClient,
     book: dict[str, str],
     configured: None,
@@ -785,7 +785,12 @@ def test_the_browser_draft_route_still_writes_nothing(
     是这一刀最容易走错的一步 —— 走错的症状是「点一下 AI 起草，那一章当场被换掉」，
     而作者只会以为编辑器抽风了。
 
-    所以这里量三样：磁盘、版本历史、日志页，**一样都不许动**。
+    ── 2026-08-12：第三条断言**反过来了** ────────────────────────────────
+    这条测试原来量三样「一样都不许动」：磁盘、版本历史、**日志页**。前两样是
+    「不落盘」的定义，第三样不是——它把「不动作者的书」和「不记账」混成了一件事，
+    于是这条路上**作者花钱最多的动作在账上是零，而且看起来像全部**
+    （`docs_dev` 的「已知限制」第一条）。**账那几行本来就该在**，所以这里现在量的是：
+    磁盘和版本历史一个字节不动，日志页**恰好多出这一次调用**。
     """
     import novel_harness.draft.generate as generate
 
@@ -827,7 +832,13 @@ def test_the_browser_draft_route_still_writes_nothing(
         assert _snapshots(conn, pid, 1) == before_snapshots, "`/draft` 多落了一条版本"
     finally:
         conn.close()
-    assert len(_rows(client, pid)) == before_rows, "`/draft` 在日志页上多了一行"
+
+    after = _rows(client, pid)
+    assert len(after) == before_rows + 1, "`/draft` 花掉的那一次调用又没记账"
+    billed = after[0]
+    assert billed["source"] == "model_call"
+    # 起草没有一张可反查的业务表，所以「为哪一章」只能由这一列答（迁移 009）。
+    assert billed["chapter_number"] == 1
 
 
 # ══════════════════════════════════════════════════════════════════════════

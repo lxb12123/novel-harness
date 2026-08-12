@@ -21,8 +21,11 @@ import 的具身。为了不让这个例外扩散，它导出 `Connection` 别�
 
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
+from contextlib import suppress
+from datetime import date
 from importlib.resources import files
 from pathlib import Path
 from typing import Final
@@ -47,7 +50,23 @@ _MIGRATION_NAME_RE: Final = re.compile(r"^(\d{3})_[a-z0-9_]+\.sql$")
 
 
 class MigrationError(RuntimeError):
-    """迁移目录本身不合法，或库的版本比代码新。"""
+    """迁移目录本身不合法、库的版本比代码新，或升级前那份备份拷不成。"""
+
+
+BACKUP_LABEL: Final = "升级前备份"
+"""备份文件名里那句人话。**作者会在自己的文件夹里看见这个文件**，所以名字要自己解释自己。
+
+完整形状：`book.db.升级前备份-2026-08-12-第7版.db`
+
+- 前缀是**那本书的库的全名**（`book.db.…`）⇒ 一眼看出它属于哪本书，排序也挨着它；
+- 中间是**哪一天** + **从第几版升上来之前**的那一份；
+- 结尾仍是 `.db` ⇒ 真要回退时，改个名字就能用，不必懂任何工具。
+
+**它和正在用的那个不会认错**：正在用的那个的名字**恰好**是 `book.db`
+（`start.command` 写死这一个名字，`nh serve --db` 是显式路径，全仓没有一处
+按 `*.db` 通配找库）——所以这份备份永远不会被当成书打开，作者也不会为了「清掉多余的库」
+而删错那一个。
+"""
 
 
 def _sha256_text(raw: object) -> str | None:
@@ -129,11 +148,114 @@ def user_version(conn: Connection) -> int:
     return int(row[0])
 
 
+def backup_path(db_file: Path, *, from_version: int, today: date | None = None) -> Path:
+    """升级前那份备份该叫什么、放哪儿。**和库同一个目录**（见 `BACKUP_LABEL`）。
+
+    同一个目录是有意的：跨盘拷贝会在磁盘满或权限不对时**部分成功**，而作者也不会
+    去别处找他的备份。代价是它占的空间和库一样大——12MB 一份，可以忽略。
+    """
+    stamp = (today or date.today()).isoformat()
+    return db_file.with_name(f"{db_file.name}.{BACKUP_LABEL}-{stamp}-第{from_version}版.db")
+
+
+def _main_db_file(conn: Connection) -> Path | None:
+    """这条连接背后的那个文件。内存库 / 临时库返回 `None`（没有东西可丢，也没处可放）。"""
+    for row in conn.execute("PRAGMA database_list"):
+        if str(row[1]) != "main":
+            continue
+        target = str(row[2] or "")
+        return Path(target) if target else None
+    return None
+
+
+def backup_before_migration(conn: Connection, *, from_version: int) -> Path | None:
+    """迁移动手之前，给这个库拷一份完整的副本。返回备份路径；内存库返回 `None`。
+
+    ── 为什么这件事必须由机器做 ──────────────────────────────────────────
+    「写迁移之前先把 dev server 停掉」这条**规矩失败过两次**（005 / 008 两次都真的把
+    作者那本 722 章的书自动升了级，没有备份也没有确认）。第三次不该再靠记性。
+    它同时是给真作者的保险：一次坏迁移落在那本书上不可恢复，而作者不会手动备份。
+
+    ── ⚠️ 为什么不是 `shutil.copyfile` ──────────────────────────────────
+    库是 WAL 模式（作者目录里真的躺着 `book.db-wal`）。**刚提交、还没 checkpoint 的
+    那些事务只在 `-wal` 里**，只拷主文件会得到一份少了最近改动、甚至根本打不开的备份
+    ——而它看起来一切正常，等到真要用的那天才发现。所以走 SQLite 自己的通路
+    （`VACUUM INTO`：它是引擎按当前快照读出来的一份完整库，WAL 里那部分自然在内）。
+    `tests/test_migration_backup.py` 用「先写未 checkpoint 的行再备份」钉住这一条，
+    并且顺手证明**朴素拷贝真的会丢**（不证明陷阱是真的，守卫就只是句口号）。
+
+    ── 先写临时名、再原子改名 ────────────────────────────────────────────
+    磁盘写满时 `VACUUM INTO` 可能留下一个**半截**的文件。它要是直接顶着最终的名字，
+    下一次启动会看见「今天这一版已经备份过了」而跳过——一份残缺的备份冒充好的，
+    比没有备份更糟。改名是原子的，所以最终那个名字只可能是拷完了的。
+
+    ── 拷不成 = 拒绝迁移（不是「照迁但吵一声」）──────────────────────────
+    吵一声会被无视（终端上那行黄字，双击起服务的作者根本不会读），而这条路上
+    唯一能救命的东西恰好就是这份备份。拒绝的代价小得多：**正文在磁盘上**（ADR 0007），
+    书今天照样写；库里那些不可重建的东西（`decision_log`，§10 约束 7）反而因此没被动过。
+    何况「拷不成」的两个原因（磁盘满 / 目录不可写）本来也会让迁移自己失败，
+    只是失败得更晚、更难看。
+    """
+    db_file = _main_db_file(conn)
+    if db_file is None:
+        return None
+
+    dest = backup_path(db_file, from_version=from_version)
+    # 同一天、同一个版本上已经拷过一份了（迁移失败后重启就是这一档）。
+    # **不覆盖**：那一份要么和现在这份一样，要么比现在这份更早——更早的更值钱。
+    # 判据是 `is_file()` 不是 `exists()`：那个位置上要是坐着一个**目录**（或别的什么东西），
+    # `exists()` 会把它读成「今天已经备份过了」而放行迁移——一次静默跳过。走下面这条路
+    # 的话它会在改名那一步炸出来，也就是拒绝迁移。**实测过这个分支**（写这份代码时
+    # 第一版就是 `exists()`，是测试把它挖出来的）。
+    if dest.is_file():
+        return dest
+
+    if conn.in_transaction:
+        # **VACUUM 不能在事务里跑**（`cannot VACUUM from within a transaction`），
+        # 而 `migrate()` 收到一条**正开着写事务**的连接是既有形状（`tests/test_migrate.py`
+        # 的 v1 那条就是先 INSERT 再 migrate）。这里替它提交**不是新增的副作用**：
+        # 下面 `_apply` 的 `executescript` 本来就会先隐式 COMMIT 掉外面这个事务
+        # （见那个函数的注释），我们只是把同一件事提前了一毫秒。
+        # 反过来（另开一条连接去拷）会拿到一份**看不见这些行**的备份——
+        # 它们随后就被迁移一起提交进库了，于是备份从落地那一刻起就是残的。
+        conn.commit()
+
+    staging = dest.with_name(f"{dest.name}.拷贝中-{os.getpid()}")
+    try:
+        # 上一次拷到一半就崩了的残留（同一个 pid 才可能撞上，那就是我们自己的）。
+        staging.unlink(missing_ok=True)
+        conn.execute("VACUUM INTO ?", (str(staging),))
+        os.replace(staging, dest)
+    except (sqlite3.Error, OSError) as exc:
+        # 清理本身再失败也不许盖掉上面那个真正的原因（作者要看的是「磁盘满了」，
+        # 不是「删不掉一个临时文件」）。
+        with suppress(OSError):
+            staging.unlink(missing_ok=True)
+        raise MigrationError(
+            f"要升级这本书的数据（第 {from_version} 版 → 更新的版本），"
+            f"按规矩得先拷一份备份放在旁边，但没拷成：{exc}\n"
+            f"  想拷成：{dest}\n"
+            "  没有备份就不动你的书，所以这次升级停下了 —— 库里一个字都没改，"
+            "章节文件也在原处。\n"
+            "  多半是磁盘满了（备份和库一样大），或者这个文件夹不让写。"
+            "腾出空间之后重新打开一次就好。"
+        ) from exc
+    return dest
+
+
 def migrate(conn: Connection) -> int:
     """把库跑到最新版本，返回迁移后的版本号。**连跑两次不报错**（PLAN §8 Day 2 的验收）。
 
     幂等由 `PRAGMA user_version` 闸门提供，不由 DDL 提供（001_init.sql 里没有一个
     IF NOT EXISTS，那是故意的）。并发首跑的正确性见 `_apply`。
+
+    ── 真的要改 schema 时（且只在那时）先备份 ────────────────────────────
+    闸门放行 = 这一次真的会跑 DDL，那就是唯一需要保险的时刻。两头都不拷：
+    **版本已经到位**（日常那千百次重启，包括开着 `--reload` 的 dev server）一份都不拷；
+    **`current == 0`** 是一个刚建出来的空库，里面还没有任何东西可丢。
+    钩子挂在这儿而不是 `api/deps.py::ensure_schema()`：出事的那两次确实走的是那条路，
+    但作者自己走的是 `nh serve`/`nh init`（`cli.py` 也调 `migrate`）——
+    只保护出过事的那一条，等于把作者留在外面。
     """
     migrations = _migrations()
     latest = migrations[-1][0] if migrations else 0
@@ -146,6 +268,11 @@ def migrate(conn: Connection) -> int:
             f"库的 schema 版本（{current}）比本代码知道的最新版本（{latest}）新；"
             f"请升级 novel-harness，不要用旧版本写这个库"
         )
+
+    if 0 < current < latest:
+        # 两条都要：`< latest` = 这一次真的会跑 DDL（版本已到位的那千百次重启一份都不拷）；
+        # `> 0` = 库里已经有东西可丢（刚建出来的空库不拷）。
+        backup_before_migration(conn, from_version=current)
 
     for version, _name, sql in migrations:
         if version <= current:

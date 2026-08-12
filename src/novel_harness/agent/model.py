@@ -22,18 +22,20 @@
    同一个函数的不传 `tools` 那条路（EVAL_PROTOCOL §2），它必须继续和长出工具调用之前
    逐字节相同。
 
-── 一处诚实交代：**今天这条路多半不是流式的** ────────────────────────────
+── 一处诚实交代：**对话那一档今天多半不是流式的** ─────────────────────────
 
-`stream` 不是这儿定的，是 `plan_call` 按**冻结的**阈值（`STREAM_THRESHOLD_TOKENS`，
-16k）从 `request_token_budget` 推出来的。一次对话回复的输出预算远在阈值之下，所以
-`plan.stream` 通常是 `False`，而非流式的一次 HTTP 往返**没有可以插进去的位置**——
+`stream` 不是这儿定的，是 `plan_call` 推出来的。一次**对话回复**的输出预算
+（`AGENT_REPLY_LENGTH` 倒推的 4,024）远在 16k 阈值之下，所以那条路上 `plan.stream`
+通常是 `False`，而非流式的一次 HTTP 往返**没有可以插进去的位置**——
 打断在那种形态下确实退化成「这一次调用跑完就停」。
 
 **不许为了让它变成流式去抬输出预算**：那样 `stream` 的判据就从「输出多大」变成了
 「谁想要流式」，而抬上去之后对**能力表没登记的模型**（`supports_streaming is None`）
 `plan_call` 会 fail-closed 直接拒——作者换个自建端点，写作助手整个不能用。
-所以这里的实现按流式写、按流式测，真到了流式那一档就真的生效；到不了的那一档，
-`loop` 的每步检查仍然在。
+
+**起草那一档 2026-08-12 起走的是另一条**：`plan_call(..., interruptible=True)`
+（`ResolvedCallPlan.interruptible`）—— 显式说出「这次要能中途停」，能力表照旧说了算
+（未登记 ⇒ 仍然不流式 ⇒ 仍然退化成「这一稿写完才停」）。抬预算那条路一步没走。
 """
 
 from __future__ import annotations
@@ -48,6 +50,7 @@ from ..draft.capabilities import (
     plan_call,
     resolve_capabilities,
 )
+from ..draft.generate import CallInterrupted
 from ..draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage, LengthSpec
 from ..draft.provider import CompletionResult, ProviderConfig, ProviderError, complete
 from .loop import Cancellation
@@ -78,25 +81,60 @@ AGENT_REASONING: Final = ReasoningEffort.OFF
 """
 
 
-class AgentCancelled(ProviderError):
+class AgentCancelled(CallInterrupted):
     """作者在一次**进行中**的调用里按了停。
 
-    继承 `ProviderError` 是为了穿过 `complete()` 的 `except ProviderError: raise`
-    原样出来（不被重新包成一句「模型调用失败」）。而 `run_turn` 在 `except ProviderError`
-    里**先问信号再判故障**，所以它落在 `AUTHOR_STOPPED` 而不是 `MODEL_UNREACHABLE`。
+    继承链是 `CallInterrupted` → `ProviderError`，两截各管一件事：
+
+    * `ProviderError` 让它穿过 `complete()` 的 `except ProviderError: raise` 原样出来
+      （不被重新包成一句「模型调用失败」）。`run_turn` 在 `except ProviderError` 里
+      **先问信号再判故障**，所以它落在 `AUTHOR_STOPPED` 而不是 `MODEL_UNREACHABLE`。
+    * `CallInterrupted`（`draft/generate.py`）让**起草那一层认得出它**，从而把已经
+      到手的半截正文接住。对话那条路一个字都没变：`run_turn` 只看 `ProviderError`。
     """
+
+
+def _visible_text(chunk: Any) -> str:
+    """从一片 chunk 上取可见正文。**这是第二个读它的人**，第一个是
+    `draft/provider.py::_from_stream`。
+
+    ── 为什么必须在这儿再读一遍 ──────────────────────────────────────────────
+
+    信号一亮，这条流就抛出去了，于是 `_from_stream` 那个累加器**连同它累到的字一起
+    被丢掉**（异常从它中间穿过去）。而那些字是**付过钱的信息**。要么让运输层认得
+    「取消」（那是 M2 冻结的那个文件，且取消是编排层的概念），要么在这儿自己数一份——
+    选后者。
+
+    **代价是一处必须跟着漂的重复**：那边认 `choices[].delta.content`，这边也只能认它。
+    `tests/test_agent_model.py` 拿同一片 chunk 同时喂给两边，钉住它们读出同一段字。
+    """
+    out: list[str] = []
+    for choice in getattr(chunk, "choices", ()) or ():
+        content = getattr(getattr(choice, "delta", None), "content", None)
+        if isinstance(content, str):
+            out.append(content)
+    return "".join(out)
 
 
 def _watch(chunks: Any, cancel: Cancellation) -> Iterator[Any]:
     """把一条流包成「每一片都先问一次信号」的流。
 
     `finally` 里关掉上游：作者按了停，那条 HTTP 连接就该断掉，而不是留着让服务端
-    继续把整份输出生成完（**钱是按生成的 token 算的，不是按收到的**）。
+    继续把整份输出生成完。**但别把这句话说成省钱**——断开连接 ≠ 停止生成 ≠ 停止计费，
+    服务端会不会跟着停由供应商决定，这一层管不着（`ChapterDesk.write` 的 docstring
+    把这条诚实话摆给了上面那层）。
+
+    停下来时抛的那一份**带着已经收到的正文**（`partial_text`），理由见 `_visible_text`。
     """
+    seen: list[str] = []
     try:
         for chunk in chunks:
+            # **先收下这一片，再问信号。** 顺序反过来会把已经到手的那一片扔掉——
+            # 它已经生成、已经付过钱了，而这一层存在的全部理由就是别让那些字白花。
+            # 抛的位置一点没变（仍然是同一次迭代，仍然在 `yield` 之前）。
+            seen.append(_visible_text(chunk))
             if cancel.stopped:
-                raise AgentCancelled("作者中止了这一次调用")
+                raise AgentCancelled("作者中止了这一次调用", partial_text="".join(seen))
             yield chunk
     finally:
         close = getattr(chunks, "close", None)
@@ -111,7 +149,9 @@ class _Completions:
 
     def create(self, **kwargs: Any) -> Any:
         if self._cancel.stopped:
-            raise AgentCancelled("作者中止了这一次调用")
+            # **一个字节都还没发出去** ⇒ `sent=False` ⇒ 上面那层不许为它记一行账
+            # （见 `CallInterrupted.sent`：记了就是账上凭空多一次没发生过的调用）。
+            raise AgentCancelled("作者中止了这一次调用", sent=False)
         response = self._real.chat.completions.create(**kwargs)
         if not kwargs.get("stream"):
             # 非流式：整份响应已经回来了，钱已经花掉。**这里不抛**——抛掉等于把一次
@@ -157,6 +197,16 @@ def _real_client(config: ProviderConfig) -> Any:
         raise
     except Exception as exc:  # noqa: BLE001 —— 见 docstring：漏出去 = 作者看到崩溃
         raise ProviderError(f"模型客户端建不起来（base_url={config.base_url}）：{exc}") from exc
+
+
+def cancellable_client(config: ProviderConfig, cancel: Cancellation) -> Any:
+    """一个**把作者的「停」包在里面**的 OpenAI 兼容客户端。
+
+    **对话和起草共用这一个包装**（`ChapterDesk` 拿它去起草那一次调用）。
+    在别处再写一遍 `_CancellableClient(_real_client(...))` 就是第二个取消机制的开头，
+    而我们已经选定了「信号对象 + 协作轮询」那一种（`loop.Cancellation`）。
+    """
+    return _CancellableClient(_real_client(config), cancel)
 
 
 class ProviderModelPort:
@@ -207,4 +257,5 @@ __all__ = [
     "AgentCancelled",
     "ProviderModelPort",
     "agent_call_plan",
+    "cancellable_client",
 ]

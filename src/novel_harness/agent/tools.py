@@ -356,6 +356,15 @@ class DraftFullText(BaseModel):
     text: str = ""
     """一稿正文，**不含章标题**（那一行是切章的锚，属于作者）。"""
 
+    stopped_reason: str = ""
+    """**空 = 这一稿写完了**；非空 = 它被砍断了，这句话说明为什么。
+
+    **这一位必须跟着正文一起回来，它不是元数据**（迁移 010 的注释写死了理由）：
+    一段断在半句的正文，你读到它、若不知道那是被砍断的，
+    **会把那个断口当成一种有意的写法去模仿**。
+    「他缓缓抬起手，然后——」在小说里读起来像一个刻意的悬停。
+    """
+
 
 class ToolOutcome(BaseModel):
     """一次工具调用的结果。**`content` 就是要贴回对话里的那段字。**
@@ -550,6 +559,9 @@ def _handle_read_draft(args: DraftIdArgs, context: ToolContext) -> DraftFullText
         note=stored.note,
         landed=stored.landed,
         text=stored.body,
+        # **一稿被砍断过这件事跟着正文一起回来。** 漏掉它的形态不是报错，
+        # 是模型照着那个断口继续写（见 `DraftFullText.stopped_reason`）。
+        stopped_reason=stored.stopped_reason,
     )
 
 
