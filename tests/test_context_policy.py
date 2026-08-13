@@ -134,8 +134,8 @@ def answered(call_id: str, content: str, chapter: int | None = None) -> AgentMes
     )
 
 
-def a_session(*messages: AgentMessage, house_style: str | None = None) -> Conversation:
-    return start_conversation(house_style).model_copy(
+def a_session(*messages: AgentMessage, write_rule: str | None = None) -> Conversation:
+    return start_conversation(write_rule).model_copy(
         update={"messages": tuple(messages)}
     )
 
@@ -166,7 +166,7 @@ def a_session_worth_pruning() -> Conversation:
         rule_message("别写打斗", chapter=40),
         reasoned("这一段的节奏是这样的。" + "念" * 300),
         said(AUTHOR_LINES[2]),
-        house_style="冷一点，少用形容词。",
+        write_rule="冷一点，少用形容词。",
     )
 
 

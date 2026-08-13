@@ -33,7 +33,7 @@ tell 一旦进了 X1/X2 的 prompt，两臂 100% 命中自己写进去的词，`
 
 ── 四、它拦不住什么（诚实交代）─────────────────────────────────────────────
 
-- **`goal` / `previous_tail` / `house_style` 是三个自由文本入口。** 有人把 PLANNED 的内容
+- **`goal` / `previous_tail` / `write_rule` 是三个自由文本入口。** 有人把 PLANNED 的内容
   用自然语言写进 `goal`（「写萧决发现自己血脉有异——他还不知道那是家族封印的反噬」），
   本模块、第 4 道 arch-guard、类型系统**全都看不见**：判它需要回答「这句话是不是把伏笔说破了」，
   那是语义判断，ADR 0005 在 v1 里禁止本仓库长出这种能力。守它的是 ADR 0010 D3 末尾那条
@@ -182,7 +182,7 @@ EN_HOUSE_STYLE = """You are a long-form fiction writing partner. Using the suppl
 DEFAULT_HOUSE_STYLE = ZH_HOUSE_STYLE
 """Backward-compatible export for callers that previously selected the Chinese house style."""
 
-HOUSE_STYLE_FORBIDDEN_HINTS = ("秘密", "不知道", "泄露", "剧透", "伏笔", "设定")
+WRITE_RULE_FORBIDDEN_HINTS = ("秘密", "不知道", "泄露", "剧透", "伏笔", "设定")
 """文风提示（**三臂共用**）里的禁词：出现任何一个 = 把约束漏给 X0，Δ 塌掉。
 
 这是**关键词网**不是语义检查（ADR 0005）：抓得住顺手写出来的那一种，抓不住
@@ -212,9 +212,9 @@ def length_instruction(spec: LengthSpec) -> str:
     )
 
 
-def system_prompt(spec: LengthSpec, house_style: str | None = None) -> str:
+def system_prompt(spec: LengthSpec, write_rule: str | None = None) -> str:
     """Combine the selected language's shared style with its required length instruction."""
-    style = house_style
+    style = write_rule
     if style is None:
         style = ZH_HOUSE_STYLE if spec.language is DraftLanguage.ZH else EN_HOUSE_STYLE
     return style.strip() + "\n\n" + length_instruction(spec)
@@ -228,7 +228,7 @@ def assemble(
     length: LengthSpec,
     previous_tail: str = "",
     previous_tail_limit: int = GATE_TAIL_CODE_POINTS,
-    house_style: str | None = None,
+    write_rule: str | None = None,
 ) -> list[dict[str, str]]:
     """把一个场景的约束渲染成 OpenAI 兼容的 `messages`。
 
@@ -244,7 +244,7 @@ def assemble(
             （`GATE_TAIL_CODE_POINTS`），三臂必须用这个默认值**；产品档显式传
             `product_tail_limit(...)` 算出来的值。`<= 0` = 完全不给上文。
         length: 已合法的输出篇幅与语言。调用边界已验证，本函数不再做 hard-max 校验。
-        house_style: 可选文风系统提示；为空时按 ``length.language`` 选择中英文默认文风。
+        write_rule: 可选文风系统提示；为空时按 ``length.language`` 选择中英文默认文风。
 
     Returns:
         `[{"role": ..., "content": ...}]`。**本仓库少见的非 Pydantic 出参**，理由是它要原样
@@ -269,7 +269,7 @@ def assemble(
         goal=goal,
         previous_tail=previous_tail,
         previous_tail_limit=previous_tail_limit,
-        house_style=system_prompt(length, house_style),
+        write_rule=system_prompt(length, write_rule),
     )
     section = graph_section(ctx, form)
     if section:
@@ -318,7 +318,7 @@ def _base(
     goal: str,
     previous_tail: str,
     previous_tail_limit: int,
-    house_style: str,
+    write_rule: str,
 ) -> list[dict[str, str]]:
     """house-style + 上文 + 在场 + 本场目标。**图谱事实一个字都不在这儿。**
 
@@ -339,7 +339,7 @@ def _base(
         parts.append(UNKNOWN_CAST_LINE)
     parts.append("【这一场要写】\n" + goal.strip())
     return [
-        {"role": "system", "content": house_style},
+        {"role": "system", "content": write_rule},
         {"role": "user", "content": "\n\n".join(parts)},
     ]
 

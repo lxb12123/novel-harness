@@ -110,7 +110,7 @@ WebSocket、SSE、终端刷屏都是**适配器**的事——扔掉适配器、`
 而 `prefix` 的校验器拒收任何带章号的消息。于是「跨章不变的那块排在最前面」不是一句自觉，
 是构造不出反例。能进前缀的只有文风和工具表声明（后者走 `tools=` 参数，本来就在最前面）。
 
-**它拦不住什么（诚实交代）**：`house_style` 是自由文本入口，作者把一条 `must_not_reveal`
+**它拦不住什么（诚实交代）**：`write_rule` 是自由文本入口，作者把一条 `must_not_reveal`
 用自然语言写进文风里，这一层看不见——判它要回答「这句话是不是把伏笔说破了」，
 那是语义判断（ADR 0005 在 v1 里禁止本仓库长出这种能力）。同 `assemble()` 的 `goal`。
 """
@@ -361,12 +361,31 @@ AGENT_SYSTEM_PROMPT = """你是一位中文长篇小说作者的写作搭档，�
 """
 
 
-def start_conversation(house_style: str | None = None) -> Conversation:
-    """开一段新会话。`house_style` 是作者的文风偏好，**跨章不变才配进前缀**。"""
+def start_conversation(write_rule: str | None = None) -> Conversation:
+    """开一段新会话。`write_rule` 是作者定下的**一条一直挂着的要求**，跨章不变才配进前缀。
+
+    ⚠️ **它比名字大。** 2026-08-13 之前这一位叫 `house_style`（文风），
+    可它是个自由文本入口：真的文风、格式规则（「每段用叠词开头」）、
+    「主角不许叫小名」……什么都塞得进去。**名字比东西窄，用的人会低估它**，
+    于是没人想到往里放别的，也没人意识到它有多大（下面那段「它拦不住什么」
+    说的就是它能有多大）。
+    """
     prefix = [AgentMessage(role=Role.SYSTEM, content=AGENT_SYSTEM_PROMPT)]
-    if house_style and house_style.strip():
-        prefix.append(AgentMessage(role=Role.SYSTEM, content=house_style.strip()))
+    if write_rule and write_rule.strip():
+        prefix.append(AgentMessage(role=Role.SYSTEM, content=write_rule.strip()))
     return Conversation(prefix=tuple(prefix))
+
+
+def write_rule_of(conversation: Conversation) -> str:
+    """这段对话的那条一直挂着的要求。**没有就是空串。**
+
+    判据是「前缀里第一条 SYSTEM 消息**之后**的那条」——前缀由
+    `start_conversation` 造，第一条永远是引擎自己的系统提示词。
+    **这条判据必须和那个函数长在一起**：分开写两处，改一处就会静默错位，
+    而错位的症状是把引擎的系统提示词当成作者的要求送去起草。
+    """
+    extra = [m for m in conversation.prefix if m.role is Role.SYSTEM][1:]
+    return extra[0].content.strip() if extra else ""
 
 
 # ══════════════════════════════════════════════════════════════════════════

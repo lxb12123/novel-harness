@@ -80,7 +80,7 @@ def assemble_product(
     length: LengthSpec,
     previous_tail: str = "",
     previous_tail_limit: int = GATE_TAIL_CODE_POINTS,
-    house_style: str | None = None,
+    write_rule: str | None = None,
 ) -> list[dict[str, str]]:
     """Insert safe memory after the stable style block, forwarding assembler args unchanged.
 
@@ -109,7 +109,7 @@ def assemble_product(
         length=length,
         previous_tail=previous_tail,
         previous_tail_limit=previous_tail_limit,
-        house_style=house_style,
+        write_rule=write_rule,
     )
     stable = 0
     while stable < len(base) and base[stable]["role"] == "system":

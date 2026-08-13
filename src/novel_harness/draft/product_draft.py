@@ -51,7 +51,7 @@ from ..graph import NodeLabel
 from .assemble import (
     CONTINUATION_GOAL,
     GATE_TAIL_CODE_POINTS,
-    HOUSE_STYLE_FORBIDDEN_HINTS,
+    WRITE_RULE_FORBIDDEN_HINTS,
     PromptForm,
     assemble,
     product_tail_limit,
@@ -117,7 +117,7 @@ class ChapterDraftRequest:
     mode: Literal["chapter", "continuation"] = "chapter"
     form: str = "PRODUCT"
     previous_tail: str = ""
-    house_style: str = ""
+    write_rule: str = ""
 
 
 @dataclass(frozen=True)
@@ -176,9 +176,9 @@ def check_request(request: ChapterDraftRequest) -> PromptForm:
         except KeyError:
             raise DraftRefused(f"form 只能是 PRODUCT / X0 / X1 / X2，收到 {request.form!r}")
 
-    house_style = request.house_style.strip()
-    if house_style:
-        hits = [w for w in HOUSE_STYLE_FORBIDDEN_HINTS if w in house_style]
+    write_rule = request.write_rule.strip()
+    if write_rule:
+        hits = [w for w in WRITE_RULE_FORBIDDEN_HINTS if w in write_rule]
         if hits:
             raise DraftRefused(
                 "自定义文风里不能出现这些词："
@@ -294,7 +294,7 @@ def draft_chapter(
     """
     form = check_request(request)
     product_form = request.form.strip().upper() == "PRODUCT"
-    house_style = request.house_style.strip()
+    write_rule = request.write_rule.strip()
     chapter = ctx.chapter
     continuation = request.mode == "continuation"
 
@@ -314,7 +314,7 @@ def draft_chapter(
             if product_form
             else GATE_TAIL_CODE_POINTS
         ),
-        "house_style": house_style or None,
+        "write_rule": write_rule or None,
     }
 
     # **碰库的只有这一段**（`_with_memory` 里那几次查询），所以锁只罩这一段。

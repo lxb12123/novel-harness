@@ -248,7 +248,7 @@ def test_every_message_shape_comes_back_byte_for_byte(conn: Connection, pid: str
     """**这一层唯一真正的正确性判据。** 不相同 = resume 之后模型看到的是另一段历史，
     而没有任何东西会报错。"""
     store = ChatStore(conn)
-    session = store.create(pid, title="第 40 章", house_style="写得冷一点。")
+    session = store.create(pid, title="第 40 章", write_rule="写得冷一点。")
     before = store.load(pid, session.id)
     assert before is not None
     wanted = before.conversation.model_copy(update={"messages": EXHAUSTIVE})

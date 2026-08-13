@@ -104,6 +104,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..agent.loop import (
+    write_rule_of,
     AgentMessage,
     Cancellation,
     Conversation,
@@ -545,7 +546,7 @@ class NewChat(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str = ""
-    house_style: str = ""
+    write_rule: str = ""
     """作者的文风偏好。**进稳定前缀，所以它必须跨章不变**（ADR 0019 边界六）。
 
     它是自由文本，这一层看不出作者有没有把一条禁令写进去——判它要回答「这句话是不是
@@ -779,7 +780,7 @@ def create_chat(
 ) -> ChatSessionView:
     """开一段新的对话。**作者可以同时开好几段**，每一段各自 resume。"""
     store = ChatStore(conn)
-    session = store.create(proj.id, title=body.title, house_style=body.house_style or None)
+    session = store.create(proj.id, title=body.title, write_rule=body.write_rule or None)
     stored = store.load(proj.id, session.id)
     assert stored is not None  # 刚建好
     return _session_view(session, stored.conversation, 0, running=False)
@@ -983,6 +984,11 @@ class _TurnRun:
             capability=self._capability,
             events=SqliteEventStore(self._conn),
             summaries=SummaryStore(self._conn),
+            # **作者那条一直挂着的要求要再送一遍。** 它已经在对话前缀里了，
+            # 但起草是另一次调用，那份 prompt 从零拼、和对话一个字都不共享 ——
+            # 不送就是「助手听见了、写手没听见」，而且不报错
+            # （2026-08-13 在真书上实测：五稿二十五段一段都没照做）。
+            write_rule=write_rule_of(self._conversation),
             db_lock=db_lock,
             # **和 `run_turn` 拿的是同一个信号对象。** 两个信号 = 按停只停住其中一半，
             # 而作者看到的是「按了停，那一稿还在写」——起草那一次调用是这一轮里最长的

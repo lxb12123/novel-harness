@@ -44,7 +44,7 @@ from test_knowledge import (
 from novel_harness.draft.assemble import (
     DEFAULT_HOUSE_STYLE,
     EN_HOUSE_STYLE,
-    HOUSE_STYLE_FORBIDDEN_HINTS,
+    WRITE_RULE_FORBIDDEN_HINTS,
     PromptForm,
     ZH_HOUSE_STYLE,
     assemble,
@@ -260,7 +260,7 @@ def test_the_house_style_names_nobody_and_hints_at_no_constraint() -> None:
     """
     for name in ("萧决", "顾清音", "李管家", "血脉秘密", "血枭盟", "幽泉窟", TELL):
         assert name not in DEFAULT_HOUSE_STYLE
-    for hint in HOUSE_STYLE_FORBIDDEN_HINTS:
+    for hint in WRITE_RULE_FORBIDDEN_HINTS:
         assert hint not in DEFAULT_HOUSE_STYLE, f"house style 里出现了 {hint!r} —— 它三臂共用"
     assert "600–1000" not in DEFAULT_HOUSE_STYLE
 
@@ -366,7 +366,7 @@ def test_assemble_needs_no_store_at_all() -> None:
         "length",
         "previous_tail",
         "previous_tail_limit",
-        "house_style",
+        "write_rule",
     }
     assert inspect.signature(assemble).parameters["length"].default is inspect.Parameter.empty
 
@@ -397,7 +397,7 @@ def test_length_instruction_is_explicit_in_english_system_prompt() -> None:
 
 def test_custom_house_style_cannot_bypass_the_length_instruction() -> None:
     assert hasattr(assemble_module, "system_prompt")
-    prompt = assemble_module.system_prompt(EN_LENGTH, house_style="  Keep the prose spare.  ")
+    prompt = assemble_module.system_prompt(EN_LENGTH, write_rule="  Keep the prose spare.  ")
 
     assert prompt.startswith("Keep the prose spare.\n\n")
     assert "1200–1800 words" in prompt

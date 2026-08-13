@@ -94,8 +94,8 @@ def rule(text: str, chapter: int) -> AgentMessage:
     return rule_message(text, chapter=chapter)
 
 
-def a_conversation(*messages: AgentMessage, house_style: str | None = None) -> Conversation:
-    return start_conversation(house_style).model_copy(update={"messages": tuple(messages)})
+def a_conversation(*messages: AgentMessage, write_rule: str | None = None) -> Conversation:
+    return start_conversation(write_rule).model_copy(update={"messages": tuple(messages)})
 
 
 def a_turn(*script: Any, chapter: int | None = 40, conversation: Conversation | None = None):
@@ -172,14 +172,14 @@ SHAPES: tuple[AgentMessage, ...] = (
 
 
 def roundtrip(
-    store: ChatStore, project_id: str, messages: Sequence[AgentMessage], *, house_style: str | None
+    store: ChatStore, project_id: str, messages: Sequence[AgentMessage], *, write_rule: str | None
 ) -> Conversation:
     """存进去再读回来。**判据两条一起**：模型相等 **且** `model_dump_json()` 逐字节相等。
 
     第二条不是第一条的复述：一个被顺手 `strip()` 掉的空白、一个被 `int()` 成 `0` 的
     `None`，都能在第一条上蒙混过去。
     """
-    session = store.create(project_id, house_style=house_style)
+    session = store.create(project_id, write_rule=write_rule)
     if messages:
         store.append(project_id, session.id, base_count=0, messages=list(messages))
     got = store.load(project_id, session.id)
@@ -200,10 +200,10 @@ def test_every_shape_a_message_can_take_comes_back_byte_for_byte(
     只有前缀长度变了，一次「把 `revokes_seq` 当成本表 seq」的换算才会露出来。
     """
     store = ChatStore(conn)
-    for house_style in (None, "写得冷一点，少用形容词。"):
+    for write_rule in (None, "写得冷一点，少用形容词。"):
         for shape in SHAPES:
-            roundtrip(store, pid, [shape], house_style=house_style)
-        roundtrip(store, pid, SHAPES, house_style=house_style)
+            roundtrip(store, pid, [shape], write_rule=write_rule)
+        roundtrip(store, pid, SHAPES, write_rule=write_rule)
 
 
 def test_the_cancel_still_points_at_the_same_message_after_a_reload(
@@ -219,8 +219,8 @@ def test_the_cancel_still_points_at_the_same_message_after_a_reload(
     """
     store = ChatStore(conn)
     history = [said("别写打斗。"), rule("别写打斗", 40), AgentMessage(role=Role.SYSTEM, revokes_seq=1)]
-    for house_style in (None, "冷一点"):
-        back = roundtrip(store, pid, history, house_style=house_style)
+    for write_rule in (None, "冷一点"):
+        back = roundtrip(store, pid, history, write_rule=write_rule)
         assert is_rule(back.messages[1]), "样本里那条规矩没了 —— 下面这句是空的"
         assert back.messages[2].revokes_seq == 1
         assert live_rules(back, 40) == (), (
@@ -244,7 +244,7 @@ def test_a_read_that_drops_the_cancel_turns_this_net_red(
     monkeypatch.setattr(store_mod, "_to_message", lossy)
     store = ChatStore(conn)
     with pytest.raises(AssertionError):
-        roundtrip(store, pid, [AgentMessage(role=Role.SYSTEM, revokes_seq=0)], house_style=None)
+        roundtrip(store, pid, [AgentMessage(role=Role.SYSTEM, revokes_seq=0)], write_rule=None)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -716,3 +716,34 @@ def test_a_rule_with_real_words_is_still_taken() -> None:
     assert normalized_rule("keep it cold") == "keep it cold"
     assert normalized_rule("第 3 幕慢一点") == "第 3 幕慢一点"
     assert rule_message("😀 少用形容词", chapter=1).content == "😀 少用形容词"
+
+
+def test_the_write_rule_reaches_the_drafting_call_not_just_the_conversation() -> None:
+    """**这一条钉的是 2026-08-13 在作者真书上实测出来的那个断口。**
+
+    作者定的那条一直挂着的要求进了**对话**前缀（`start_conversation`），
+    可**起草是另一次调用** —— `draft_chapter` 派出去的 prompt 由 `draft/assemble.py`
+    从零拼，和对话一个字都不共享。于是：**助手听见了，写手没听见**，而且不报错。
+
+    实测（722 章的真书，要求「每段以叠词开头」）：
+
+        接线前   5 稿   叠词开头 0/6 段 × 5     ← 一段都没照做
+        接线后   7 稿   6/6 · 6/6 · 4/6 · 4/6 …
+
+    判据分两半，缺一半这条就是空转：
+    ① `write_rule_of` 从会话前缀里挑得出那条（**跳过引擎自己的系统提示词**）；
+    ② 挑出来的那个值真的进了 `ChapterDraftRequest`。
+    """
+    from novel_harness.agent.loop import start_conversation, write_rule_of
+
+    rule = "每一段都以叠词开头。"
+    conversation = start_conversation(rule)
+    assert write_rule_of(conversation) == rule
+
+    # **不许把引擎的系统提示词当成作者的要求送出去** —— 那是这个判据唯一会错的方向。
+    assert write_rule_of(start_conversation()) == ""
+    assert write_rule_of(start_conversation("   ")) == ""
+
+    # 前缀第一条永远是引擎自己的，作者那条排第二 —— 判据依赖这个顺序。
+    assert len(conversation.prefix) == 2
+    assert conversation.prefix[1].content == rule

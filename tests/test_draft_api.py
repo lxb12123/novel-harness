@@ -259,7 +259,7 @@ def test_draft_custom_house_style_is_accepted(
             "goal": "x",
             "cast": ["萧决"],
             "length": ZH_LENGTH,
-            "house_style": "文白夹杂，多用短句，对白简洁。",
+            "write_rule": "文白夹杂，多用短句，对白简洁。",
         },
     )
     assert r.status_code == 200, r.text
@@ -276,7 +276,7 @@ def test_draft_house_style_forbidden_hints_are_422(
             "goal": "x",
             "cast": ["萧决"],
             "length": ZH_LENGTH,
-            "house_style": f"写的时候{f'不要{word}'}任何情节。",
+            "write_rule": f"写的时候{f'不要{word}'}任何情节。",
         },
     )
     assert r.status_code == 422

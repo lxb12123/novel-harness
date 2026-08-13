@@ -935,7 +935,7 @@ def draft(
     **它不是开闸**：公开 `/draft` 仍 501，kill-gate 协议原封不动，
     M2 的正式裁决仍走 `nh gate`；这条命令的输出不做任何判分。
     """
-    from .draft.assemble import HOUSE_STYLE_FORBIDDEN_HINTS, PromptForm, assemble
+    from .draft.assemble import WRITE_RULE_FORBIDDEN_HINTS, PromptForm, assemble
     from .draft.capabilities import (
         CapabilityError,
         ReasoningEffort,
@@ -969,7 +969,7 @@ def draft(
         _die(f"✗ arm 只能是 X0 / X1 / X2，收到 {arm!r}")
 
     if style.strip():
-        hits = [w for w in HOUSE_STYLE_FORBIDDEN_HINTS if w in style]
+        hits = [w for w in WRITE_RULE_FORBIDDEN_HINTS if w in style]
         if hits:
             _die(
                 f"✗ 自定义文风里不能出现这些词：{' / '.join(hits)}"
@@ -993,7 +993,7 @@ def draft(
             goal=goal,
             length=spec,
             previous_tail=prior,
-            house_style=style.strip() or None,
+            write_rule=style.strip() or None,
         )
     except UnresolvedCast as exc:
         _die(f"✗ 在场角色解析不了：{_reason(exc)}")

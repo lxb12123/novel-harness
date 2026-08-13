@@ -429,7 +429,7 @@ def test_frontend_fixture_matches_the_real_api(
     )
 
     monkeypatch.setattr(chat_mod, "build_agent_model", lambda config, plan: scripted_agent)
-    created = client.post(f"{base}/chats", json={"title": "", "house_style": ""})
+    created = client.post(f"{base}/chats", json={"title": "", "write_rule": ""})
     assert created.status_code == 201, created.text
     dump["chatCreated"] = norm.walk(created.json())
     chat_id = created.json()["id"]

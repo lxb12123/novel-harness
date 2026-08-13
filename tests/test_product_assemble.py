@@ -180,7 +180,7 @@ def test_product_assembler_calls_the_existing_assembler_unchanged(monkeypatch) -
         goal="继续交谈。",
         length=LENGTH,
         previous_tail="上文",
-        house_style="自定义文风",
+        write_rule="自定义文风",
     )
 
     assert observed == [
@@ -193,7 +193,7 @@ def test_product_assembler_calls_the_existing_assembler_unchanged(monkeypatch) -
                 "previous_tail": "上文",
                 # 透传，且默认值仍是三臂那个冻结值——放大它的决定在 `/draft`，不在这一层。
                 "previous_tail_limit": GATE_TAIL_CODE_POINTS,
-                "house_style": "自定义文风",
+                "write_rule": "自定义文风",
             },
         )
     ]

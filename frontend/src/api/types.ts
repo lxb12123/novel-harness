@@ -41,7 +41,7 @@ export interface DraftRequest {
   form?: string;
   previous_tail?: string;
   /** 自定义文风，留空 = 默认。三臂共用，禁词由后端校验。 */
-  house_style?: string;
+  write_rule?: string;
 }
 
 /** 这一稿的记忆层到底装了什么。**零永远带着一句理由**（§10 约束 8）。

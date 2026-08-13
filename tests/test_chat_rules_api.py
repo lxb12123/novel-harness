@@ -190,7 +190,7 @@ def said_three_times_then_listed(
     三遍才让「按钮按了、规矩还在」这个形态真的出现（同 `test_author_rules.py` 那个样本）。
     """
     pid = book["pid"]
-    chat_id = open_chat(client, pid, house_style="冷峻、克制")
+    chat_id = open_chat(client, pid, write_rule="冷峻、克制")
     history: list[AgentMessage] = []
     for _ in range(3):
         history.append(said("我说真的，这一章别写打斗。"))
@@ -264,7 +264,7 @@ def test_the_seq_the_screen_reports_is_the_one_the_engine_means(
     """界面回传的那个数是**历史下标**，不是会话表里那一列 `seq`（两者差一个前缀长度）。
 
     拿库里那一列去撤销，撞上的是另一条消息：轻则 422「那一条不是你定下的规矩」，
-    重则划掉一条别的。所以这条样本**故意带一段稳定前缀**（`house_style`），
+    重则划掉一条别的。所以这条样本**故意带一段稳定前缀**（`write_rule`），
     让两个坐标错开——不错开的话这条断言是空转的。
     """
     chat_id, listed = said_three_times_then_listed(client, book)

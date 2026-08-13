@@ -90,7 +90,7 @@ def test_a_conversation_comes_back_byte_for_byte(conn: Connection, pid: str) -> 
     （一个被顺手 `strip()` 掉的空白、一个被 `int()` 成 0 的 `None` 都躲不过第二条）。
     """
     store = ChatStore(conn)
-    session = store.create(pid, title="第 40 章", house_style="写得冷一点，少用形容词。")
+    session = store.create(pid, title="第 40 章", write_rule="写得冷一点，少用形容词。")
     original = store.load(pid, session.id)
     assert original is not None
     wanted = original.conversation.model_copy(update={"messages": tuple(NASTY)})
@@ -118,7 +118,7 @@ def test_a_rule_the_author_took_back_does_not_come_back_alive(
     症状：作者按过的那个「取消」失效，那条规矩活过来，而没有任何东西会报错。
     """
     store = ChatStore(conn)
-    session = store.create(pid, house_style="写得冷一点")  # ← 前缀两行，历史下标从这儿错开
+    session = store.create(pid, write_rule="写得冷一点")  # ← 前缀两行，历史下标从这儿错开
     store.append(pid, session.id, base_count=0, messages=NASTY)
     got = store.load(pid, session.id)
     assert got is not None
@@ -139,7 +139,7 @@ def test_the_stable_prefix_is_stored_not_regenerated(conn: Connection, pid: str)
     这里把库里的那一行改掉，然后断言读回来的是**库里那一份**，不是代码里那一份。
     """
     store = ChatStore(conn)
-    session = store.create(pid, house_style="冷一点")
+    session = store.create(pid, write_rule="冷一点")
     assert store.load(pid, session.id).conversation.prefix[0].content == AGENT_SYSTEM_PROMPT
 
     conn.execute(

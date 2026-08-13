@@ -1204,7 +1204,7 @@ class DraftRequest(BaseModel):
     length: _DraftLengthBody
     form: str = "PRODUCT"
     previous_tail: str = ""
-    house_style: str = ""
+    write_rule: str = ""
 
     @model_validator(mode="after")
     def _check_mode_shape(self) -> DraftRequest:
@@ -1302,7 +1302,7 @@ def draft(
         mode=body.mode,
         form=body.form,
         previous_tail=body.previous_tail,
-        house_style=body.house_style,
+        write_rule=body.write_rule,
     )
     try:
         # **在算约束之前先验一次 form / 文风。** `draft_chapter()` 自己也会验（agent 那条路

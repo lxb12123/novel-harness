@@ -124,16 +124,16 @@ class ChatStore:
     # ── 会话 ──────────────────────────────────────────────────────────────
 
     def create(
-        self, project_id: str, *, title: str = "", house_style: str | None = None
+        self, project_id: str, *, title: str = "", write_rule: str | None = None
     ) -> ChatSessionRow:
         """开一段新会话，并把稳定前缀落盘。
 
-        `house_style` 是作者的文风偏好。**它进前缀，所以它必须跨章不变**（边界六）——
+        `write_rule` 是作者的文风偏好。**它进前缀，所以它必须跨章不变**（边界六）——
         `start_conversation` 造出来的 `Conversation` 上那条校验器是这件事的执行者，
         这里只是把它的产物原样写下去。
         """
         session_id = new_id(EntityType.CHAT_SESSION, project_id)
-        conversation = start_conversation(house_style)
+        conversation = start_conversation(write_rule)
 
         def run() -> None:
             self._conn.execute(

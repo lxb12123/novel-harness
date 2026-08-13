@@ -227,6 +227,7 @@ class ChapterDesk:
         events: EventStore,
         summaries: SummarySource,
         length: LengthSpec = AGENT_DRAFT_LENGTH,
+        write_rule: str = "",
         db_lock: AbstractContextManager[Any] | None = None,
         cancel: Cancellation | None = None,
         on_event: EventFn | None = None,
@@ -238,6 +239,24 @@ class ChapterDesk:
         self._config = config
         self._capability = capability
         self._events = events
+        self._write_rule = write_rule.strip()
+        """作者在这段对话开头定下的那条一直挂着的要求。**装配层送进来，这一层不去取。**
+
+        ⚠️ 它是**值**不是入口：这个模块够不着会话那几张表，也不该够得着
+        （`tests/test_chat_boundary.py` 按「文件里出没出现那几个名字」判，
+        连 docstring 里提一句都会红 —— 那道判据故意比真实访问宽，
+        因为「多一条读会话的路径」正是它要防的）。
+
+        ── 为什么它必须**再**送一遍 ──────────────────────────────────────────
+
+        它已经在**对话**的前缀里了（`loop.start_conversation`），可**起草是另一次调用**：
+        `draft_chapter` 派出去的那份 prompt 由 `draft/assemble.py` 从零拼，
+        和对话那边一个字都不共享。于是作者说了「每段用叠词开头」，
+        **助手听见了，写手没听见** —— 而且不报错，看起来只是模型不听话。
+
+        2026-08-13 在作者的真书上实测过：会话上设了这条要求，五稿二十五段
+        **一段都没照做**。那次实测就是这一位存在的全部理由。
+        """
         self._summaries = summaries
         self._length = length
         self._cancel = cancel
@@ -365,6 +384,8 @@ class ChapterDesk:
             goal=ask.goal + _SELF_NOTE_ASK,
             length=self._length,
             previous_tail=_previous_tail(self._root, ask.chapter),
+            # **这一行 2026-08-13 之前是缺的**，见 `self._write_rule` 那段。
+            write_rule=self._write_rule,
         )
         # **逐次收回执，不等整份出参。** 整章起草是一到两次调用（生成 + 至多一次续写，
         # ADR 0011 D3），而「第一次答上来了、续写那次断线」是真会发生的一档——那时
@@ -625,6 +646,7 @@ def chapter_drafter(
     events: EventStore,
     summaries: SummarySource,
     length: LengthSpec = AGENT_DRAFT_LENGTH,
+    write_rule: str = "",
     db_lock: AbstractContextManager[Any] | None = None,
     cancel: Cancellation | None = None,
     on_event: EventFn | None = None,
@@ -637,6 +659,9 @@ def chapter_drafter(
         root: 项目根目录。收 `str` 是为了和 `ToolContext.root_path` 同形——
             装配层手里那个就是 `project.root_path`。
         capability: 已经解析好的能力证据。`plan` 不在这儿算——见 `ChapterDesk.write`。
+        write_rule: 作者在这段对话开头定下的那条一直挂着的要求。**装配层要从会话上取，
+            不能想当然地留空**：起草是另一次调用，对话前缀里那份到不了它手上
+            （见 `ChapterDesk._write_rule`，那儿记着实测）。
         db_lock: 碰库排的那道队。**要和 `ToolContext.db_lock` 是同一把**（批内并发，
             ADR 0022）：两把锁 = 各排各的队 = 没排。
         cancel: 作者按下的那个「停」。**要和这一轮 `run_turn` 拿的是同一个对象**
@@ -648,6 +673,7 @@ def chapter_drafter(
             「它说在写，然后什么都没有，然后突然写完了」。`None` = 起草这一档不喊。
     """
     return ChapterDesk(
+        write_rule=write_rule,
         store=store,
         conn=conn,
         project_id=project_id,
