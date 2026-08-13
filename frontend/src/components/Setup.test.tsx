@@ -181,7 +181,7 @@ describe("引导建书", () => {
     const alarm = await screen.findByRole("alert");
     expect(alarm).toHaveClass("import-warning");
     // 三件必须说到的事：看得见的事实 / 它意味着什么 / 下一步。
-    expect(alarm).toHaveTextContent("3200 个字");
+    expect(alarm).toHaveTextContent(`${IMPORT_SUMMARY_ALARM.preamble_chars} 个字`);
     expect(alarm).toHaveTextContent("整本书的章号会集体差一章");
     expect(alarm).toHaveTextContent("再重新导入一次");
     // 后端那句话里的 `**` 是重音，不是两颗星号（同写作助手那条）。

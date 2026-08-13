@@ -228,9 +228,7 @@ const mentionsRoute = (body: unknown) => [
 
 /** 芯片上会写哪几个名字 —— **从同一份 dump 里读**，不在这儿抄一遍。
  *  抄一遍就是又一份手写夹具，而这份文件正是为了不那么干才存在的。 */
-const NAMED = ["Character", "Location", "Secret"].map(
-  (label) => fixtures.roster.find((node) => node.label === label)!.name,
-);
+const NAMED = fixtures.summaryMentions.mentions.map((m) => m.node.name);
 const [WHO] = NAMED;
 
 describe("总结下面那排记忆点", () => {
@@ -307,7 +305,7 @@ describe("总结下面那排记忆点", () => {
     renderSpying(<SummaryTab />, [
       {
         match: /\/summary-mentions$/,
-        body: { node: fixtures.roster.find((n) => n.name === WHO), chapters: [] },
+        body: { node: fixtures.summaryMentions.mentions[0].node, chapters: [] },
       },
     ]);
     await user.click(await screen.findByRole("button", { name: new RegExp(WHO) }));

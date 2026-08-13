@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fixtures, renderWithApi } from "../test/harness";
 import { devTerms, screenText } from "../test/screenGuard";
 import { useCoords } from "../store";
-import type { ActivityDetail, ActivityPage, RunsPanel } from "../api/types";
 import { ActivityLog, money } from "./ActivityLog";
 
 // 喂进来的每一个字节都来自 `api.json`（真 app dump，`tests/test_frontend_contract.py` 冻的）。
@@ -13,31 +12,6 @@ import { ActivityLog, money } from "./ActivityLog";
 
 const ALL = fixtures.activity.entries.length;
 const AUTHOR_ONLY = fixtures.activityAuthorOnly.entries.length;
-
-// ⚠️ **这四个键 `api.json` 里还没有，而它们已经在被 dump 了。**
-// `tests/test_frontend_contract.py` 这一轮多抓了四个端点（没跑成的那一页 + 它的详情 /
-// 一次章节总结的详情 / 一份「价钱只算得出一部分」的用量），但**这份夹具由维护者统一重生成**
-// （四个 agent 并行，谁都不许自己跑 `NH_UPDATE_FIXTURES=1`，否则四份 json 互相打架）。
-//
-// 所以这里按**手写真相源里的类型**（`api/types.ts`，也就是后端出参该长的样子）声明它们，
-// 重生成之前吃到 `undefined` 的那几条会红在 `fresh()` 那一句上，**而不是整份文件炸掉**
-// —— 一个 module 级的 `.entries` 会连着把这一页另外 20 多条断言一起带走。
-// **重生成之后把这一段删掉**，直接写 `fixtures.activityFailed`。
-const pending = fixtures as unknown as {
-  activityFailed: ActivityPage;
-  activityFailedDetail: ActivityDetail;
-  activitySummaryDetail: ActivityDetail;
-  runsPartlyPriced: RunsPanel;
-};
-
-/** 拿一份**还没进这份 json** 的真 dump；没有就当场说清楚是哪一个键缺了。 */
-function fresh<T>(value: T | undefined, key: string): T {
-  expect(
-    value,
-    `夹具里还没有 \`${key}\` —— 跑一次 NH_UPDATE_FIXTURES=1 uv run pytest tests/test_frontend_contract.py`,
-  ).toBeDefined();
-  return value as T;
-}
 
 /** 更正认知类型那一条：唯一一条 `jump` 指到认知矩阵某一格的行。 */
 const KNOWLEDGE_ROW = /更正认知类型/;
@@ -281,7 +255,7 @@ describe("活动记录", () => {
     // 在这之前它和跑成了的那些长得一模一样：后端 `_run_jump` 一眼都不看成没成，
     // 于是屏幕上那句红字只配着一颗「去第 N 章 →」——**而重跑的能力后端一直都在**。
     const user = userEvent.setup();
-    const page = fresh(pending.activityFailed, "activityFailed");
+    const page = fixtures.activityFailed;
     const at = page.entries.findIndex((e) => e.jump?.target === "extraction_retry");
     expect(at, "这份 dump 里没有一条没跑成的整理 —— 下面全是空转").toBeGreaterThanOrEqual(0);
     const posts: string[] = [];
@@ -289,7 +263,7 @@ describe("活动记录", () => {
       { match: /\/activity(\?|$)/, body: page },
       {
         match: /\/activity\/extraction_run/,
-        body: fresh(pending.activityFailedDetail, "activityFailedDetail"),
+        body: fixtures.activityFailedDetail,
       },
       {
         method: "POST",
@@ -352,7 +326,7 @@ describe("活动记录", () => {
     const { at, row } = summaryRow();
     useCoords.setState({ chapter: 5, activeTab: "roster" });
     renderWithApi(<ActivityLog />, [
-      { match: /\/activity\/call/, body: fresh(pending.activitySummaryDetail, "activitySummaryDetail") },
+      { match: /\/activity\/call/, body: fixtures.activitySummaryDetail },
     ]);
 
     await user.click((await collapsed())[at]);
@@ -372,7 +346,7 @@ describe("活动记录", () => {
     // 花出来的东西一个字都没有。正文走投影层（`rows`），**不是把审计信封摊开**。
     const user = userEvent.setup();
     const { at } = summaryRow();
-    const detail = fresh(pending.activitySummaryDetail, "activitySummaryDetail");
+    const detail = fixtures.activitySummaryDetail;
     renderWithApi(<ActivityLog />, [{ match: /\/activity\/call/, body: detail }]);
 
     await user.click((await collapsed())[at]);
@@ -477,7 +451,7 @@ describe("活动记录", () => {
   });
 
   it("只算得出一部分：合计照给，**同时说清它不是全部**", async () => {
-    const panel = fresh(pending.runsPartlyPriced, "runsPartlyPriced");
+    const panel = fixtures.runsPartlyPriced;
     const t = panel.totals;
     expect(t.priced_calls).toBeGreaterThan(0);
     expect(t.priced_calls).toBeLessThan(t.calls);

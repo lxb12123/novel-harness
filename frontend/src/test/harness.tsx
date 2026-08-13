@@ -66,97 +66,29 @@ const AUTOPILOT_IDLE = {
   running: false,
 };
 
-// 总结 = 可反查的记忆点（T6）。**这两份是从真 dump 派生的，不是手写一个形状**——
-// 同上面撤回那一档的理由，用的也是同一条路子：节点整个取自 `fixtures.roster`（真 dump 的
-// `{id,label,name}`），那一段总结原文取自 `fixtures.summaryGenerated`。
-//
-// ⚠️ `tests/test_frontend_contract.py` **已经在抓它们了**（`summaryMentions` /
-// `summaryMentionTrail`），只是这一轮四个 agent 并行、夹具由上游统一重生成，
-// 所以 `api.json` 里还没有那两个键。**重生成之后把下面两行换成那两个 fixture。**
-//
-// 取节点**按 label 不按名字**，那一段字也整段取自 dump：这份文件受
-// `tests/test_frontend_product_language.py` 罩着，样书里的人名一个都不许写在这儿
-// （那道守卫拦的正是「演示数据混进产品代码」）。
-const pick = (label: string) => fixtures.roster.find((node) => node.label === label)!;
-const MEMORY_NODES = [pick("Character"), pick("Location"), pick("Secret")];
-const SUMMARY_MENTIONS = {
-  chapter: 1,
-  mentions: MEMORY_NODES.map((node) => ({ node, surfaces: [node.name] })),
-};
+// 反查那一份**多加一章**：真 dump 只有一章（第 2 章那段刚被撤回，它冻的正是
+// 「撤回过的章不在名单里」——这一层最贵的断言）。而「点开看还有哪几章」那条分支
+// 一章验不出来，所以在真 dump 之上**派生**出第二章，不手写一个形状。
+// `author_written` 反过来：「模型压的」那句免责只该贴在模型写的那一行上。
 const SUMMARY_TRAIL = {
-  node: MEMORY_NODES[0],
-  // **两章**：只有一章的话，「点开看还有哪几章」那条分支等于没验过
-  // （同上面 `chapterHistoryTwo` 那条理由）。第二行的 `author_written` 反过来，
-  // 因为「模型压的」那句免责只该贴在模型写的那一行上。
-  chapters: [1, 7].map((chapter_number) => ({
-    chapter_number,
-    summary: fixtures.summaryGenerated.summary,
-    surfaces: [MEMORY_NODES[0].name],
-    author_written: chapter_number !== 1,
-  })),
-};
-
-// ⚠️ **手写 stub，2026-08-13 新长出来的两处**（同上面 autopilot 那两条的理由）：
-// `POST …/sync` 的出参和导入回执里的 `summary` 都是这一轮才有的东西，而这一轮
-// 不许跑 `NH_UPDATE_FIXTURES=1`（几份改动并行，夹具由维护者统一重生成）。
-// `tests/test_frontend_contract.py` **已经在抓它们了**（`sync` / `syncUnchanged` /
-// `bootstrapPreamble`，且 `bootstrapImport` 会多出 `summary`）——
-// **重生成之后把下面这三个常量删掉，换成 `fixtures.sync` / `fixtures.syncUnchanged` /
-// `fixtures.bootstrapImport`。** 在那之前它们是两份手写的东西互相验证，正是这条缝的病。
-const SYNC_CHANGED = {
-  added_chapters: [3],
-  updated_chapters: [2],
-  unchanged_count: 1,
-  chapter_count: 3,
-  ignored_files: ["chapters/大纲.md"],
-  headline: "读回来了：1 章有新内容、1 章是新写的（这本书现在共 3 章）。",
-  notes: [
-    "内容变了：第 2 章。之前那一版还在「历史」里。",
-    "新读到：第 3 章。",
-    "这些文件不是章节，没有动它们：chapters/大纲.md。",
+  ...fixtures.summaryMentionTrail,
+  chapters: [
+    fixtures.summaryMentionTrail.chapters[0],
+    { ...fixtures.summaryMentionTrail.chapters[0], chapter_number: 7, author_written: true },
   ],
 };
 
-/** 导入回执。**`preamble_chars` 正常那一档**——警告那一档由要验它的测试自己前置。 */
-const IMPORT_SUMMARY = {
-  chapter_count: 1,
-  written_count: 1,
-  unchanged_count: 0,
-  landed_count: 1,
-  ignored_files: [],
-  preamble_chars: 0,
-  headline: "《契约样书》切成了 1 章，已经建好了。",
-  lines: ["切出了 1 章，其中 1 章已经可以被引用。", "新建了 1 个章节文件。"],
-  warning: null,
-};
+/** 章标之前躺着一整章那一档：**全书章号可能集体错一位**，而界面上看不出任何异常。
+ *  真 dump 出来的（`preamble_chars: 1104` 越过后端 1000 的门槛，警告那段字是后端写的）。 */
+export const IMPORT_SUMMARY_ALARM = fixtures.bootstrapPreamble.summary;
 
-/** 章标之前躺着一整章那一档：**全书章号可能集体错一位**，而界面上看不出任何异常。 */
-export const IMPORT_SUMMARY_ALARM = {
-  ...IMPORT_SUMMARY,
-  chapter_count: 300,
-  landed_count: 300,
-  written_count: 300,
-  preamble_chars: 3200,
-  headline: "《青云记》切成了 300 章，已经建好了。",
-  lines: ["切出了 300 章，其中 300 章已经可以被引用。", "新建了 300 个章节文件。"],
-  warning:
-    "⚠️ 第一章的标题之前还有 3200 个字，它们不属于任何一章。\n" +
-    "最常见的原因是**第一章的标题没有被认出来**（比如它写成「楔子」「序章」，" +
-    "或者标题那一行前面还有别的字）。真是这样的话，整本书的章号会集体差一章：" +
-    "你在第 24 章记下的事，系统会记成第 23 章，而这件事在界面上看不出任何异常。\n" +
-    "先打开这份 TXT 看一眼开头：如果那段字确实是第一章的正文，" +
-    "把它的标题改成「第一章 ……」再重新导入一次（导入不会覆盖已经建好的书，" +
-    "请新建一本）。如果那本来就是简介或者楔子，它不属于任何一章是对的，可以不管。",
-};
-
-/** 真 dump 那一份 + 上面那个 `summary`。**导入档后端一定会给它**，
- *  不给的话作者点完导入看到的还是那块「一个数字都没有」的屏幕。 */
-export const BOOTSTRAP_IMPORT = { ...fixtures.bootstrapImport, summary: IMPORT_SUMMARY };
+/** 导入回执正常那一档（`preamble_chars: 0`，无警告）。 */
+export const BOOTSTRAP_IMPORT = fixtures.bootstrapImport;
 
 /** 默认路由表：URL → fixture。测试可以前置自己的 handler 覆盖其中任意一条。 */
 const DEFAULT: Handler[] = [
   { method: "POST", match: /\/api\/projects\/bootstrap$/, body: BOOTSTRAP_IMPORT },
-  { method: "POST", match: /\/sync$/, body: SYNC_CHANGED },
+  { method: "POST", match: /\/sync$/, body: fixtures.sync },
   { match: /\/api\/projects$/, body: fixtures.projects },
   { match: /\/roster$/, body: fixtures.roster },
   { match: /\/chapters$/, body: fixtures.chapters },
@@ -177,7 +109,7 @@ const DEFAULT: Handler[] = [
   // 下一次重生成夹具之后把这一行换成那个键。
   // 倒排那两条排在 `…/summary$` 前面：那条正则要求 `summary` 结尾，
   // `…/summary/mentions` 不会被它咬到，但顺序摆对了看得更清楚。
-  { match: /\/chapters\/\d+\/summary\/mentions$/, body: SUMMARY_MENTIONS },
+  { match: /\/chapters\/\d+\/summary\/mentions$/, body: fixtures.summaryMentions },
   { match: /\/nodes\/[^/]+\/summary-mentions$/, body: SUMMARY_TRAIL },
   { match: /\/chapters\/\d+\/summary$/, body: fixtures.summaryGenerated },
   { method: "POST", match: /\/chapters\/\d+\/summary$/, body: fixtures.summaryGenerated },
