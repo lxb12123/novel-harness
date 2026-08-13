@@ -80,7 +80,21 @@ const DEFAULT: Handler[] = [
   { match: /\/chapters\/\d+\/events\?scope=PROVISIONAL/, body: fixtures.eventsProvisional },
   { match: /\/chapters\/\d+\/events\?scope=CANON/, body: fixtures.eventsCanon },
   { match: /\/chapters\/\d+\/summaries$/, body: fixtures.summaries },
+  // 章节总结那一格的四条（读 / 生成 / 改 / 撤回）。**四条出参是同一个形状**，
+  // 所以前三条吃的都是同一份真 dump（`summaryGenerated`）——不是三份手写的东西。
+  //
+  // ⚠️ 撤回那一档是**从真 dump 派生**的（把 `summary` / `created_at` 置空 +
+  // `retracted`），因为一份「刚被撤回」的回执在契约夹具里还没有。
+  // `tests/test_frontend_contract.py` 已经在抓它了（`summaryRetracted`），
+  // 下一次重生成夹具之后把这一行换成那个键。
+  { match: /\/chapters\/\d+\/summary$/, body: fixtures.summaryGenerated },
   { method: "POST", match: /\/chapters\/\d+\/summary$/, body: fixtures.summaryGenerated },
+  { method: "PATCH", match: /\/chapters\/\d+\/summary$/, body: fixtures.summaryGenerated },
+  {
+    method: "DELETE",
+    match: /\/chapters\/\d+\/summary$/,
+    body: { ...fixtures.summaryGenerated, summary: null, created_at: null, retracted: true },
+  },
   { method: "POST", match: /\/chapters\/\d+\/autopilot$/, body: AUTOPILOT_ACK },
   { match: /\/chapters\/\d+\/autopilot$/, body: AUTOPILOT_IDLE },
   { match: /\/chapters\/\d+\/scenes/, body: fixtures.scenes },

@@ -14,6 +14,7 @@ import { EvidenceTab } from "./EvidenceTab";
 import { StateCards } from "./StateCards";
 import { ProposalReviewTab } from "./ProposalReviewTab";
 import { RosterTab } from "./RosterTab";
+import { SummaryTab } from "./SummaryTab";
 import type { CheckResult } from "../api/types";
 import { useState } from "react";
 
@@ -30,7 +31,15 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "constraints", label: "写作提醒" },
   { key: "check", label: "检查" },
   { key: "review", label: "待确认" },
+  { key: "summary", label: "章节总结" },
 ];
+
+/** 花名册空着的时候仍然有话可说的那几格。
+ *
+ *  其余每一格都是「其中某个人怎么样」，没有人就没有料。**章节总结不是**：它是这一章
+ *  正文压出来的一段字，和花名册里有没有人一点关系都没有。把它一起藏进那句「先去加人」
+ *  里，作者就会对着一个能用的功能读到一句不相干的话。 */
+const ROSTER_FREE_TABS = new Set<Tab>(["roster", "summary"]);
 
 function ConstraintsView() {
   const { projectId, chapter, cast, castInclude } = useCoords();
@@ -190,7 +199,8 @@ export function RightPanel() {
       </div>
       {!bare && CAST_TABS.has(activeTab) && <CastLine />}
       {activeTab === "roster" && <RosterTab />}
-      {bare && activeTab !== "roster" && (
+      {activeTab === "summary" && <SummaryTab />}
+      {bare && !ROSTER_FREE_TABS.has(activeTab) && (
         <div className="empty workbench-empty">
           添加人物或设定后，这里会显示他们在当前章节知道什么、身处何处，以及需要留意的内容。
           回到「花名册」那一格，点“＋”开始。

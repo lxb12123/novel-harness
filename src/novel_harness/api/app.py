@@ -1496,6 +1496,21 @@ def draft(
 #
 # **故意不做「保存章节后自动生成」**：那是一次作者没按过的付费调用，属于产品决策，
 # 不该由一次保存顺手替他决定。只做显式触发。
+#
+# ── 2026-08-13：这一摊补齐成四条（GET / POST / PATCH / DELETE，同一个资源）─────
+#
+# 上面那两条落地之后，滚动总结**真的在花作者的钱、真的在影响每一稿**，而他在整个
+# 工作台里看不见它、改不了它、删不掉它——链路通了，断在最后一格。而且「改」和「删」
+# 在这一层压根不存在（只有 GET 和「重新生成」）。
+#
+# 四条共用一个路径 `…/chapters/{n}/summary`，因为它们是同一个东西的四个动作：
+#
+#   GET     这一章现在的总结（**没有的时候说清是哪一种没有**）
+#   POST    重新生成（**会花钱**，只由作者显式按）
+#   PATCH   换成作者自己写的那一段（不花钱）
+#   DELETE  撤回（不花钱；**库里一行都不少**，见迁移 013）
+#
+# `…/summaries`（复数）是另一件事，别合并：它回答「起草这一章时那一层覆盖成什么样」。
 
 
 @app.get("/api/projects/{project_id}/chapters/{chapter}/summaries")
@@ -1531,17 +1546,51 @@ def chapter_summaries(
     }
 
 
+def _summary_state(conn: Any, project_id: str, chapter: int) -> dict[str, Any]:
+    """第 chapter 章现在的总结状态。**四条路由共用同一个出参形状。**
+
+    形状就是 `…/summaries` 里那一行（`ChapterSummaryStatus`）：一个动作做完之后，
+    界面拿到的和它重新读一遍拿到的**逐字节相同**——两个形状的话，「改完之后屏幕上
+    显示的」和「刷新之后显示的」就有机会不一样，而那种不一样没有任何东西会报错。
+    """
+    from ..draft.rolling_summary import SummaryStore
+
+    if chapter < 1:
+        raise HTTPException(status_code=422, detail="章号至少是 1")
+    rows = SummaryStore(conn).coverage(project_id, chapter, chapter)
+    return rows[0].model_dump(mode="json")
+
+
+@app.get("/api/projects/{project_id}/chapters/{chapter}/summary")
+def chapter_summary(
+    chapter: int,
+    conn: Any = Depends(get_conn),
+    proj: Any = Depends(load_project),
+) -> dict[str, Any]:
+    """这一章现在的总结。**没有的时候不许只回一个 null**（§10 约束 8）。
+
+    三种「没有」在出参里分得开，因为它们的下一步动作完全不同：
+    `has_text=false`（这一章还没写，没得总结）/ `retracted=true`（作者亲手撤掉的，
+    别催他去补一件他刚做的事）/ 两者都不是（有正文、没生成过——那是要花钱的那一步）。
+    """
+    return _summary_state(conn, proj.id, chapter)
+
+
 @app.post("/api/projects/{project_id}/chapters/{chapter}/summary")
 def generate_chapter_summary(
     chapter: int,
+    conn: Any = Depends(get_conn),
     proj: Any = Depends(load_project),
     summarizer: Any = Depends(get_summarizer),
 ) -> dict[str, Any]:
     """**显式**为第 chapter 章生成滚动总结（会调模型、会花钱）。
 
-    幂等由 `RollingSummarizer.ensure` 保证：同一章 + 同一 `schema_version` + 同一
-    `prompt_hash` 已经有了就直接返回，重复点不会重复付费。所以前端可以放心地
-    「把缺的那几章挨个补一遍」而不必自己记住哪些补过。
+    幂等由 `RollingSummarizer.ensure` 保证：这一章最新那一行就是这份 prompt 产出的
+    就直接返回，重复点不会重复付费。所以前端可以放心地「把缺的那几章挨个补一遍」
+    而不必自己记住哪些补过。
+
+    **撤回过的章按下这里会真的重新生成**（付一次钱）——那是撤回语义里写死的那条退路
+    （「想重来就再点生成」），也是「删了重来」不必做成两套的原因。
     """
     from ..draft.provider import ProviderError
     from ..draft.rolling_summary import SummaryChapterNotFound, SummaryGenerationError
@@ -1549,7 +1598,7 @@ def generate_chapter_summary(
     if chapter < 1:
         raise HTTPException(status_code=422, detail="章号至少是 1")
     try:
-        summary = summarizer.ensure(proj.id, chapter)
+        summarizer.ensure(proj.id, chapter)
     except SummaryChapterNotFound:
         raise HTTPException(
             status_code=404,
@@ -1559,12 +1608,75 @@ def generate_chapter_summary(
         raise HTTPException(status_code=502, detail=f"总结器返回了空文本：{exc}")
     except ProviderError as exc:
         raise HTTPException(status_code=502, detail=f"模型调用失败：{exc}")
-    return {
-        "chapter_number": summary.chapter_number,
-        "has_text": True,
-        "summary": summary.summary,
-        "created_at": summary.created_at,
-    }
+    # 出参从库里重读一遍，不拿 `ensure` 的返回自己拼：`RollingSummarizer` 用的是它
+    # 自己那条连接，而这一条是请求的连接——两边各拼一份的话，「刚生成完」和「刷新一下」
+    # 有机会长得不一样。
+    return _summary_state(conn, proj.id, chapter)
+
+
+class SummaryEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str
+    """作者自己写的那一段。空串走 422 而不是「等于撤回」——**两个动作不许共用一个入口**：
+    清空输入框然后保存，和按下「撤回」，在作者脑子里不是一件事。"""
+
+
+@app.patch("/api/projects/{project_id}/chapters/{chapter}/summary")
+def edit_chapter_summary(
+    chapter: int,
+    body: SummaryEdit,
+    conn: Any = Depends(get_conn),
+    proj: Any = Depends(load_project),
+) -> dict[str, Any]:
+    """把这一章的总结换成作者自己写的这一段。**不花钱**，模型写的那一行留在库里。
+
+    幂等：交上来的就是屏幕上那一段时一行都不追加（见 `save_author_summary`）。
+    这一章还没有总结时也收——手写一份比先付一次钱再改要合理。
+    """
+    from ..draft.rolling_summary import (
+        SummaryChapterNotFound,
+        SummaryTextRejected,
+        save_author_summary,
+    )
+
+    if chapter < 1:
+        raise HTTPException(status_code=422, detail="章号至少是 1")
+    try:
+        save_author_summary(
+            conn,
+            project_id=proj.id,
+            chapter_number=chapter,
+            text=body.summary,
+        )
+    except SummaryTextRejected as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except SummaryChapterNotFound:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "chapter_not_found", "chapter": chapter},
+        )
+    return _summary_state(conn, proj.id, chapter)
+
+
+@app.delete("/api/projects/{project_id}/chapters/{chapter}/summary")
+def retract_chapter_summary(
+    chapter: int,
+    conn: Any = Depends(get_conn),
+    proj: Any = Depends(load_project),
+) -> dict[str, Any]:
+    """撤回这一章的总结。**库里一行都不少**（迁移 013：追加一行标记撤回）。
+
+    撤回之后这一章「当作没总结」：起草时不带它、覆盖率里算作缺。
+    本来就没有总结、或者已经撤回过，都原样回一个 200 —— 这个动作没有失败的形态，
+    而一个 404 只会让作者以为自己弄坏了什么。
+    """
+    from ..draft.rolling_summary import retract_summary
+
+    if chapter < 1:
+        raise HTTPException(status_code=422, detail="章号至少是 1")
+    retract_summary(conn, project_id=proj.id, chapter_number=chapter)
+    return _summary_state(conn, proj.id, chapter)
 
 
 @app.post("/api/projects/{project_id}/chapters/{chapter}/plan", status_code=501)

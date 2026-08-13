@@ -254,6 +254,19 @@ def test_frontend_fixture_matches_the_real_api(
     # 根本没写）。少一种，前端就有一条分支是照着想象写的。
     grab("summaries", client.get(f"{base}/chapters/12/summaries"))
 
+    # ── 作者改得动它（迁移 013）：单章读端 + 改 + 撤回 ──────────────────────
+    # **改和撤回落在第 2 章上**，不落在第 1 章：上面那份 `summaries` 里第 1 章是
+    # 「已生成」那一档的唯一样本，动了它前端就少一种长相。
+    grab("summaryChapter", client.get(f"{base}/chapters/1/summary"))
+    grab(
+        "summaryEdited",
+        client.patch(
+            f"{base}/chapters/2/summary",
+            json={"summary": "萧决把玄铁令收进袖中，谁也没告诉。"},
+        ),
+    )
+    grab("summaryRetracted", client.delete(f"{base}/chapters/2/summary"))
+
     # ── 改一条**已经生效**的事实（1.1）+ 活动日志（2.1）─────────────────────
     # 顺序是硬的：`/canon/knowledge` 要先跑，日志里才有一条**带真跳转坐标**的
     # `knowledge_edit`。没有它，这份 fixture 里全是 `endpoints: []` 的兜底坐标，

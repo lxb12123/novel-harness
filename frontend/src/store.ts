@@ -18,6 +18,7 @@ export type Tab =
   | "constraints"
   | "graph"
   | "evidence"
+  | "summary"
   | "check"
   | "review";
 export type Page = "workbench" | "prep" | "log";
