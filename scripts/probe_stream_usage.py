@@ -80,15 +80,31 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-url", default="")
     parser.add_argument("--model", default="")
+    parser.add_argument(
+        "--provider",
+        default="",
+        help=(
+            "OpenRouter 专用：把上游锁死在这一家（如 deepseek）。"
+            "**产品今天不发这个字段** —— 探针锁得住，`nh` 锁不住，见脚本头部。"
+        ),
+    )
     args = parser.parse_args()
 
     saved = _settings()
     base_url = args.base_url or saved.get("base_url") or os.environ.get("NH_LLM_BASE_URL", "")
     model = args.model or saved.get("model") or os.environ.get("NH_LLM_MODEL", "")
-    key = saved.get("api_key") or os.environ.get("NH_LLM_API_KEY", "")
+
+    # **钥匙必须属于这条路由。** 指到别家去审计时（`--base-url`），设置页那把是上一家的，
+    # 拿它发过去只会换回一个 401 —— 而 401 在这个脚本的三臂里长得和「不报 usage」
+    # 一模一样（对照组也失败），读的人会以为审计做完了。所以这一档只认环境变量。
+    same_route = not args.base_url or args.base_url == saved.get("base_url")
+    key = (saved.get("api_key") if same_route else "") or os.environ.get("NH_LLM_API_KEY", "")
     if not (base_url and model and key):
         print("设置不全（base_url / model / api_key 缺一），审计不了。")
-        print("去顶栏「AI 设置」填，或者给 NH_LLM_BASE_URL / NH_LLM_MODEL / NH_LLM_API_KEY。")
+        if not same_route:
+            print("换路由审计时钥匙只从 NH_LLM_API_KEY 读 —— 设置页那把属于另一家。")
+        else:
+            print("去顶栏「AI 设置」填，或者给 NH_LLM_BASE_URL / NH_LLM_MODEL / NH_LLM_API_KEY。")
         return 2
 
     print(f"路由：{base_url}  /  {model}")
@@ -97,15 +113,27 @@ def main() -> int:
 
     config = prov.ProviderConfig(base_url=base_url, model=model, api_key=key)
     client = prov._build_client(config)
-    # 和 `_wire_kwargs` 对 OFF 档做的一样：别让 thinking 把一次审计变贵。
-    # **只对 DeepSeek 方言成立**，换家时这一行要跟着换（探针，不是产品路径）。
     base: dict[str, Any] = {
         "model": model,
         "messages": PROMPT,
         "max_tokens": MAX_TOKENS,
     }
-    if "deepseek" in base_url:
-        base["extra_body"] = {"thinking": {"type": "disabled"}}
+    # 关掉思考：别让一次审计变贵。方言照抄 `_wire_kwargs` 的 OFF 分支，
+    # **不在这儿发明第三种写法**（探针发的东西越像产品，结论越能当数）。
+    extra: dict[str, Any] = {}
+    if "openrouter" in base_url:
+        extra["reasoning"] = {"effort": "none", "exclude": True}
+    elif "deepseek" in base_url:
+        extra["thinking"] = {"type": "disabled"}
+    if args.provider:
+        # ⚠️ **产品今天不发这个。** 锁上游是 OpenRouter 的扩展字段，而 `_wire_kwargs`
+        # 的 OPENROUTER 分支只写 `reasoning`。所以这条探针问出来的是「官方上游怎么答」，
+        # 不是「作者今天配上去会怎样」—— 后者是 19 家里随机挑一家。
+        # 要让产品也锁得住，那是一次 wire 改动 + 一条新的注册表登记。
+        extra["provider"] = {"order": [args.provider], "allow_fallbacks": False}
+        print(f"上游已锁：{args.provider}（探针专用，产品不发这个字段）\n")
+    if extra:
+        base["extra_body"] = extra
 
     arms: list[tuple[str, str, dict[str, Any], bool]] = [
         (
