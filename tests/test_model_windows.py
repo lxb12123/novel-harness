@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 import pytest
 
@@ -180,3 +181,26 @@ def test_a_broken_snapshot_only_costs_us_the_number(
     capability = resolve_capabilities("https://api.deepseek.com", "deepseek-chat")
     assert capability.source == "unknown"
     windows._snapshot.cache_clear()
+
+
+def test_the_snapshot_says_how_old_it_is_and_carries_no_junk() -> None:
+    """**两件运维上的事，钉在这儿因为别处没人管。**
+
+    ① `fetched` —— 「这份数据有多旧」是唯一能让人决定「该不该重跑一次」的信息。
+       它由维护者在命令行给（`--fetched`），**不是脚本读时钟**：同一天跑两次要产出
+       同一个文件，否则 git diff 上永远多一行噪音，而那一行会把真正的数据变化淹掉。
+    ② `mode == "chat"` —— 公共表里混着 209 条图片、124 条嵌入、66 条语音模型，
+       它们**也有** `max_input_tokens`（`1024-x-1024/...` 那条是 77）。留着既没用，
+       又多出一批能被误命中的键。
+    """
+    payload = json.loads(windows.SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", payload["fetched"]), "拉取日期要能读"
+
+    # ⚠️ **判据不是「窗口小就是垃圾」** —— 第一版这么写，红在了三条
+    # `watsonx/ibm/granite-ttm-*` 上，而它们的 512 是**真实窗口**（IBM 的时序模型，
+    # 公共表把它们标成了 chat）。小窗口是事实，不是脏数据；照它算出来的
+    # 「上文只能给这么多」也是对的。
+    #
+    # 真正该消失的是图片/嵌入那一档 —— 它们的键长得都不像模型名。
+    assert not [name for name in payload["windows"] if "1024-x-1024" in name]
+    assert len(payload["windows"]) < 2_400, "只留 chat 之后条数该明显少于原表"

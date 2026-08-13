@@ -24,7 +24,7 @@
 
 ## 用法（维护者，不是作者）
 
-    uv run python scripts/refresh_model_windows.py
+    uv run python scripts/refresh_model_windows.py --fetched 2026-08-13
 
 写到 `src/novel_harness/draft/model_windows.json`（**包内**，`uv build` 自动带上）。
 跑完请看 `git diff`：这是别人的数据进我们的包，**别闭眼提交**。
@@ -34,6 +34,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import urllib.request
 from pathlib import Path
@@ -47,6 +48,14 @@ SCHEMA = "nh-model-windows-v1"
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--fetched",
+        required=True,
+        help="今天的日期（YYYY-MM-DD）。写进快照，用来回答「这份数据有多旧」。",
+    )
+    fetched = parser.parse_args().fetched
+
     print(f"拉取 {SOURCE_URL}")
     with urllib.request.urlopen(SOURCE_URL, timeout=60) as response:  # noqa: S310
         raw: dict[str, Any] = json.loads(response.read().decode("utf-8"))
@@ -55,6 +64,11 @@ def main() -> int:
     for name, entry in raw.items():
         if not isinstance(entry, dict):
             continue  # `sample_spec` 那种模板行
+        # **只收对话模型。** 公共表里混着 209 条图片、124 条嵌入、66 条语音——
+        # 它们也有 `max_input_tokens`（`1024-x-1024/...` 那条是 77），
+        # 留着既没用又多一批能被误命中的键。
+        if entry.get("mode") != "chat":
+            continue
         value = entry.get("max_input_tokens")
         # **只收读得懂的正整数**（同 `provider._usage_count` 的立场）：
         # 表里混着 `null`、字符串、还有 `sample_spec` 那种模板行。
@@ -64,6 +78,10 @@ def main() -> int:
 
     payload = {
         "schema": SCHEMA,
+        # **拉取日期由维护者在命令行给，不由脚本读时钟。**
+        # 读时钟会让「同一天跑两次」产出不同的文件，git diff 上多一行噪音；
+        # 更要紧的是这个数是给人看的「这份数据有多旧」，它该跟着那次决定走。
+        "fetched": fetched,
         "source_url": SOURCE_URL,
         "source_license": "MIT (BerriAI/litellm)",
         "note": (
