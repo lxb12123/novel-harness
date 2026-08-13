@@ -267,6 +267,20 @@ def test_frontend_fixture_matches_the_real_api(
     )
     grab("summaryRetracted", client.delete(f"{base}/chapters/2/summary"))
 
+    # ── 总结 = 可反查的记忆点（T6）：这一段提到了什么 + 还有哪几章提到它 ────────
+    # **抓在这儿是有先后的**：上面第 1 章刚生成过一段总结（内容是
+    # 「萧决在青云城主府听说了血脉秘密。」），三个 label 一次到齐（人物 / 地点 / 秘密）。
+    # 少一种，前端就有一档芯片是照着想象画的——而秘密那一档正是「只出 NodeRef」
+    # 那条纪律唯一验得出来的地方。
+    #
+    # 反查那一份**故意落在萧决身上**：第 1 章提到他，第 2 章那一段刚被撤回，
+    # 于是它冻住的是「撤回过的章不在名单里」——这一层最贵的那条断言（索引跟着总结走）。
+    grab("summaryMentions", client.get(f"{base}/chapters/1/summary/mentions"))
+    grab(
+        "summaryMentionTrail",
+        client.get(f"{base}/nodes/{book['萧决']}/summary-mentions"),
+    )
+
     # ── 改一条**已经生效**的事实（1.1）+ 活动日志（2.1）─────────────────────
     # 顺序是硬的：`/canon/knowledge` 要先跑，日志里才有一条**带真跳转坐标**的
     # `knowledge_edit`。没有它，这份 fixture 里全是 `endpoints: []` 的兜底坐标，

@@ -211,3 +211,122 @@ describe("章节总结这一格", () => {
     expect(devTerms(screenText())).toEqual([]);
   });
 });
+
+// ── 总结 = 可反查的记忆点（T6）────────────────────────────────────────────────
+//
+// 作者要的是「迅速找到相关章节的总结，然后引用、对比、调研，再顺下去看全文」，
+// 且明说**不用 RAG**。所以这里钉的四件事全是「它没有变成一个假的检索器」：
+//
+// 1. 芯片摆的是**这一段真提到的东西**，点得动。
+// 2. 点下去列的是**别的章**，按章号排，带原文——不是一句「找到 3 条」。
+// 3. **零带着理由**：一段谁也没提到、和一个人只出现在这一章，说两句不一样的话。
+// 4. 屏幕上**一个「相关度」都没有**，一颗会花钱的按钮都没有。
+
+const mentionsRoute = (body: unknown) => [
+  { match: /\/chapters\/\d+\/summary\/mentions$/, body },
+];
+
+/** 芯片上会写哪几个名字 —— **从同一份 dump 里读**，不在这儿抄一遍。
+ *  抄一遍就是又一份手写夹具，而这份文件正是为了不那么干才存在的。 */
+const NAMED = ["Character", "Location", "Secret"].map(
+  (label) => fixtures.roster.find((node) => node.label === label)!.name,
+);
+const [WHO] = NAMED;
+
+describe("总结下面那排记忆点", () => {
+  it("摆的是这一段真提到的东西，每一个都点得动", async () => {
+    renderSpying(<SummaryTab />);
+    for (const name of NAMED) {
+      expect(await screen.findByRole("button", { name: new RegExp(name) })).toBeInTheDocument();
+    }
+  });
+
+  it("点一个 → 列出还有哪几章的总结提到它，按章号排，带原文", async () => {
+    const user = userEvent.setup();
+    const { calls } = renderSpying(<SummaryTab />);
+    await user.click(await screen.findByRole("button", { name: new RegExp(WHO) }));
+
+    // **反查是一次 SQL，不是一次模型调用**：这一层从头到尾没有 POST。
+    await waitFor(() =>
+      expect(calls.some((c) => /\/summary-mentions$/.test(c.url))).toBe(true),
+    );
+    expect(calls.every((c) => c.method === "GET")).toBe(true);
+
+    // 当前这一章不再重复列一遍（它就摊在上面那个框里）。
+    expect(await screen.findByRole("button", { name: "第 7 章" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "第 1 章" })).toBeNull();
+    // 原文摆在名单里：作者点开是为了读它、比它、引它，不是为了知道它存在。
+    expect(screen.getAllByText(HAVE.summary!).length).toBeGreaterThan(1);
+  });
+
+  it("点章号 = 换到那一章，并把中栏换回正文", async () => {
+    const user = userEvent.setup();
+    useCoords.setState({ page: "log" });
+    renderSpying(<SummaryTab />);
+    await user.click(await screen.findByRole("button", { name: new RegExp(WHO) }));
+    await user.click(await screen.findByRole("button", { name: "第 7 章" }));
+
+    expect(useCoords.getState().chapter).toBe(7);
+    expect(useCoords.getState().page).toBe("workbench");
+  });
+
+  it("再点一次收起来 —— 不至于点错了就没法退出", async () => {
+    const user = userEvent.setup();
+    renderSpying(<SummaryTab />);
+    const chip = await screen.findByRole("button", { name: new RegExp(WHO) });
+    await user.click(chip);
+    expect(await screen.findByRole("button", { name: "第 7 章" })).toBeInTheDocument();
+    await user.click(chip);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "第 7 章" })).toBeNull());
+  });
+
+  it("一个都没提到时说清为什么，而不是留一片空白", async () => {
+    // 空白会被读成「引擎没在干活」；而这一档的下一步是去花名册把那个称呼建上。
+    renderSpying(<SummaryTab />, mentionsRoute({ chapter: 1, mentions: [] }));
+    expect(await screen.findByText(/没出现花名册上的任何人或东西/)).toBeInTheDocument();
+  });
+
+  it.each([
+    ["还没生成", NONE],
+    ["撤回过", RETRACTED],
+  ])("这一章**没有总结**（%s）时整层不出现", async (_name, body) => {
+    // 那时后端回的也是空表，可「这一段里没出现花名册上的任何人」在没有「这一段」的
+    // 时候是一句假话 —— 它会让作者以为自己写的那一章里一个人都没有。
+    renderSpying(<SummaryTab />, summaryRoute(body));
+    await screen.findByRole("textbox");
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.queryByText(/没出现花名册上的任何人或东西/)).toBeNull();
+    for (const name of NAMED) {
+      expect(screen.queryByRole("button", { name: new RegExp(name) })).toBeNull();
+    }
+  });
+
+  it("只有这一章提到他的时候，说清「这里翻的是总结不是正文」", async () => {
+    // 不说这句的话，「全书只有这一章提到他」会被读成一句关于**正文**的断言 —— 而它不是。
+    const user = userEvent.setup();
+    renderSpying(<SummaryTab />, [
+      {
+        match: /\/summary-mentions$/,
+        body: { node: fixtures.roster.find((n) => n.name === WHO), chapters: [] },
+      },
+    ]);
+    await user.click(await screen.findByRole("button", { name: new RegExp(WHO) }));
+    expect(await screen.findByText(/这里翻的是总结，不是正文/)).toBeInTheDocument();
+  });
+
+  it("查不出来 ≠ 它谁也没提到", async () => {
+    renderSpying(<SummaryTab />, [
+      { match: /\/chapters\/\d+\/summary\/mentions$/, status: 500, body: {} },
+    ]);
+    expect(await screen.findByText(/下面空着不代表/)).toBeInTheDocument();
+  });
+
+  it("摊开之后屏幕上一个研发术语都没有（节点 id、Character、相关度都不许上屏）", async () => {
+    const user = userEvent.setup();
+    renderSpying(<SummaryTab />);
+    await user.click(await screen.findByRole("button", { name: new RegExp(WHO) }));
+    await screen.findByRole("button", { name: "第 7 章" });
+    expect(devTerms(screenText())).toEqual([]);
+    expect(screenText()).not.toMatch(/相关度|匹配度|相似/);
+  });
+});

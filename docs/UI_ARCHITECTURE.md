@@ -89,6 +89,8 @@
 | GET | `/projects/{pid}/chapters/{n}/summary` | `SummaryStore.coverage`（单章） | `{chapter_number, has_text, summary, created_at, retracted, author_written}`·这一章现在的总结。**没有的时候不许只回一个 null**：`has_text=false`（还没写）/ `retracted`（作者亲手撤的）/ 两者都不是（有正文没生成过）三种零分得开，因为下一步动作完全不同 | 🟢 |
 | PATCH | `/projects/{pid}/chapters/{n}/summary` | `save_author_summary` | `{chapter_number, has_text, summary, created_at, retracted, author_written}`·换成作者自己写的那一段，**不花钱**。库里追加一行（迁移 013），模型写的那一行留着；交上来的就是屏幕上那一段时一行都不追加。空串 422（清空≠撤回，两个动作不共用入口）、超过 1000 字 422 | 🟢 |
 | DELETE | `/projects/{pid}/chapters/{n}/summary` | `retract_summary` | `{chapter_number, has_text, summary, created_at, retracted, author_written}`·撤回，**不花钱、库里一行都不少**。语义定死为「这一章当作没总结」——起草不带它、覆盖率算作缺、想重来就再点生成。本来就没有 / 已经撤过都回 200（这个动作没有失败的形态） | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/summary/mentions` | `summary_index.mentions_in_chapter` | `{chapter, mentions[{node:{id,label,name}, surfaces[]}]}`·这一段总结提到了花名册里的哪些东西。**只做集合判断**（这个称呼出现了没有，`text/mentions.py` 那条 alternation + `rules_only`），不做任何相似度——找相似要向量 + 语义，那是被砍掉的 Qdrant 和 ADR 0005。出参**只有 `NodeRef`**：这批命中里按定义就有 Secret。**不并进 `…/summary`**（那个形状是四条动作共用的，也是 `…/summaries` 里的一行，每章挂芯片 = 一次覆盖率查询变成一次全书反查） | 🟢 |
+| GET | `/projects/{pid}/nodes/{node_id}/summary-mentions` | `summary_index.chapters_mentioning` | `{node, chapters[{chapter_number, summary, surfaces[], author_written}]}`·**还有哪几章的总结提到它**，按章号升序，带那几段原文（作者点开是为了读它、比它、引它）。一次 SQL，**不调模型、不花钱**。`node_id` 不在本项目 → 404（`NodeNotFound`），**不回空表**：「他没在任何总结里出现过」和「这个 id 根本不存在」下一步动作完全不同。索引什么时候重建见 `summary_index.py` | 🟢 |
 | POST | `/projects/{pid}/chapters/{n}/autopilot` | `RollingSummarizer.ensure` + `runner.enqueue`（都进 `BackgroundTasks`） | 202 `{chapter, summary, extraction, extraction_run_id, errors[]}`·两个状态字取值 `queued`/`skipped`/`no_text`/`running`/`failed`/`retracted`/`unconfigured`·**作者撤回过的章一律不派**（判据是 `SummaryStore.latest()` 不是 `get()`：后者对撤回过的章回 None，于是他撤掉、切走一章，后台立刻替他买一份回来） | 🟢 |
 | GET | `/projects/{pid}/chapters/{n}/autopilot` | `SummaryStore.latest` + `extract.metrics.metrics_for_range` | `{chapter, summary_ready, extraction_ready, running, summary_state, extraction_state, errors[]}`·**只读，不排队不花钱** | 🟢 |
 | POST | `/projects/{pid}/chapters/{n}/plan` | — | 501 | 🟡 |
@@ -308,6 +310,12 @@
 │  │                                无关，所以花名册空着时它照常显示（右栏别的格全靠人）。
 │  │                                「你撤回的」和「还没生成」说两句话——起草那边它们同义，
 │  │                                下一步动作却相反
+│  │         └─ <Memories>/<Trail>  ◀ 2026-08-13 下半：**每一段总结 = 一个可反查的记忆点**
+│  │                                GET /chapters/{n}/summary/mentions（一排芯片）→ 点一个 →
+│  │                                GET /nodes/{id}/summary-mentions（别的章按章号摊开，带原文，
+│  │                                点章号 = setChapter + 回工作台）。**这一层没有会花钱的按钮**，
+│  │                                也**不许出现「相关度 / 匹配度 / 相似」**——引擎在数字符串，
+│  │                                写个百分比等于向作者承诺它读懂了剧情
 │  ├─ <ChatPanel>     ◀── 2026-08-11 模式二（ADR 0019）：中栏右半边，顶栏开合，默认关
 │  │  ├─ <ChatSessions>          ◀ GET /chats（多段并存，各自 resume）
 │  │  │                          ▶ POST /chats · DELETE /chats/{id}（正在跑 ⇒ 409，原样说）

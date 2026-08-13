@@ -3,9 +3,13 @@ import {
   useChapterSummary,
   useEditSummary,
   useGenerateSummary,
+  useNodeSummaryMentions,
   useRetractSummary,
+  useSummaryMentions,
   useSummaryWindow,
 } from "../api/hooks";
+import { LABEL_ZH } from "../api/types";
+import type { NodeSummaryMentions, SummaryMention } from "../api/types";
 import { refusalText } from "../chat";
 import { useCoords } from "../store";
 
@@ -27,6 +31,21 @@ import { useCoords } from "../store";
 //    催他去补一件刚做完的事，是这块面板最容易说出口的那句假话。
 // 3. **第二份措辞。** 拒绝的话由后端写（`refusalText`），这儿只在后端一个字都没说的
 //    时候才补一句，而那一句不解释「为什么」（§10 约束 8：不知道就说不知道）。
+//
+// ── 2026-08-13 下半：每一段总结变成一个**能反查的记忆点**（T6）────────────────
+//
+// 作者的原话：「每一个总结就相当于一本书的一个记忆点。我想迅速找到需要的内容或相关章节的
+// 总结，然后引用、对比、调研，再顺下去看全文。**我不想用 RAG。**」
+//
+// 所以这一格下面多了两层：**这一段提到了什么**（一排芯片）→ 点一个 →
+// **还有哪几章的总结提到它**（按章号排，带原文，点章号跳过去）。
+//
+// 这块屏幕上同样不许出现的东西：
+//
+// 4. **任何「相关度 / 匹配度 / 相似」的说法。** 后端一个语义判断都没做（判据只有
+//    「这个称呼出现了没有」）。写一个百分比等于向作者承诺引擎读懂了剧情——它在数字符串。
+// 5. **任何会花钱的按钮。** 反查是一次 SQL，所以这一层可以随便点，而「随便点」这件事
+//    本身要靠「这儿一颗付费按钮都没有」保证，不是靠一句提示。
 
 /** 后端一句话都没写时才轮到的那几句。 */
 const GENERATE_FAILED =
@@ -36,8 +55,12 @@ const RETRACT_FAILED = "没能撤回这一章的总结，而系统没能说清�
 const READ_FAILED =
   "这一章的总结这会儿没读出来。上面空着不代表没有总结 —— 刷新一下再看。";
 
+const MENTIONS_FAILED =
+  "这一段提到了什么，这会儿没查出来。下面空着不代表它谁也没提到 —— 刷新一下再看。";
+const TRAIL_FAILED = "别的章有没有提到它，这会儿没查出来。过一会儿再试一次。";
+
 export function SummaryTab() {
-  const { projectId, chapter, setPage } = useCoords();
+  const { projectId, chapter, setChapter, setPage } = useCoords();
   const status = useChapterSummary(projectId, chapter);
   const covered = useSummaryWindow(projectId, chapter);
   const generate = useGenerateSummary(projectId ?? "");
@@ -49,6 +72,12 @@ export function SummaryTab() {
   // 而**没保存过的字哪儿都找不回来**——跟着重取一起刷掉就是静默吃掉他打的字。
   const [typed, setTyped] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  // 他点开的那个记忆点。**换章时不清**由 `key` 兜着（这一格整块跟着章号重挂），
+  // 所以这儿不写第二份清理逻辑。
+  const [opened, setOpened] = useState<string | null>(null);
+
+  const mentions = useSummaryMentions(projectId, chapter);
+  const trail = useNodeSummaryMentions(projectId, opened);
 
   const data = status.data;
   const stored = data?.summary ?? "";
@@ -178,6 +207,115 @@ export function SummaryTab() {
       </div>
 
       {refused && <div className="err-box">{refused}</div>}
+
+      {/* **这一章根本没有总结时，下面这一整层不出现。** 后端那时回的是空表，
+          而「这一段里没出现花名册上的任何人」在没有「这一段」的时候是一句假话——
+          它会让作者以为他写的那一章里一个人都没有。 */}
+      {data.summary !== null && (
+        <Memories
+          hits={mentions.data?.mentions}
+          failed={mentions.isError}
+          opened={opened}
+          onOpen={(id) => setOpened(id === opened ? null : id)}
+        />
+      )}
+
+      {opened && data.summary !== null && (
+        <Trail
+          here={chapter}
+          data={trail.data}
+          loading={trail.isLoading}
+          failed={trail.isError}
+          onGo={(n) => {
+            setChapter(n);
+            setPage("workbench");
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/** 这一段总结提到了什么 —— **一排可点的记忆点**。
+ *
+ *  芯片上写的是**显示名**，不是 id，也不是 label 的英文值：`LABEL_ZH` 是一张
+ *  「类型上全列」的表（同 `ActivityLog.ACTOR_ZH`），少一项 `tsc` 就红。 */
+function Memories(props: {
+  hits: SummaryMention[] | undefined;
+  failed: boolean;
+  opened: string | null;
+  onOpen: (id: string) => void;
+}) {
+  if (props.failed) return <div className="err-box">{MENTIONS_FAILED}</div>;
+  if (props.hits === undefined) return null;
+  if (props.hits.length === 0) {
+    // **零带着理由**（§10 约束 8）：一排空白会被读成「引擎没在干活」。
+    return (
+      <p className="empty chsum-why">
+        这一段里没出现花名册上的任何人或东西 —— 所以没有可以顺过去的地方。
+        写进去一个名字（或者去花名册把那个称呼建上），这里就有得点了。
+      </p>
+    );
+  }
+  return (
+    <div className="chsum-mentions">
+      <p className="chsum-why">这一段提到了 —— 点一个，看还有哪几章的总结也提到它：</p>
+      <div className="chip-row">
+        {props.hits.map((hit) => (
+          <button
+            key={hit.node.id}
+            className={"chip" + (hit.node.id === props.opened ? " on" : "")}
+            // 命中的称呼原文摆在 title 上：屏幕上显示的是正式名，而这一段里写的
+            // 可能是「魔尊」——两者不一样时作者有权知道（ADR 0004）。
+            title={`这一段里写的是「${hit.surfaces.join("」「")}」`}
+            onClick={() => props.onOpen(hit.node.id)}
+          >
+            {hit.node.name}
+            <span className="chip-kind">{LABEL_ZH[hit.node.label]}</span>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** 还有哪几章的总结提到它。**按章号排**，带那一段原文，点章号跳过去。 */
+function Trail(props: {
+  here: number;
+  data: NodeSummaryMentions | undefined;
+  loading: boolean;
+  failed: boolean;
+  onGo: (chapter: number) => void;
+}) {
+  if (props.failed) return <div className="err-box">{TRAIL_FAILED}</div>;
+  if (props.loading || !props.data) return <p className="empty chsum-why">正在翻…</p>;
+
+  const others = props.data.chapters.filter((row) => row.chapter_number !== props.here);
+  const name = props.data.node.name;
+  if (others.length === 0) {
+    return (
+      <p className="empty chsum-why">
+        全书只有这一章的总结提到了{name}。别的章可能写到过，只是那几章还没有总结 ——
+        这里翻的是总结，不是正文。
+      </p>
+    );
+  }
+  return (
+    <div className="chsum-trail">
+      <p className="chsum-why">
+        {name}还出现在这 {others.length} 章的总结里（按顺序）：
+      </p>
+      {others.map((row) => (
+        <div className="trail-row" key={row.chapter_number}>
+          <button className="trail-go" onClick={() => props.onGo(row.chapter_number)}>
+            第 {row.chapter_number} 章
+          </button>
+          <p className="trail-text">{row.summary}</p>
+          {!row.author_written && (
+            <p className="trail-why">这一段是模型压出来的，没经过你确认。</p>
+          )}
+        </div>
+      ))}
     </div>
   );
 }

@@ -95,6 +95,38 @@ export interface SummaryWindow {
   missing: number[];
 }
 
+// ── 总结 = 可反查的记忆点（T6）────────────────────────────────────────────────
+//
+// **不是「找相似」，是「找相关」。** 后端一个语义判断都不做：判据只有「这个称呼在这段
+// 字里出现了没有」（`summary_index.py`）。前端这一侧因此也不许出现任何「相关度」
+// 「匹配度」之类的数字——那种数字会让作者以为引擎读懂了剧情，而它在数字符串。
+
+/** 一段总结提到的一个东西。**只有 `NodeRef`，没有 props**（秘密的内容不出接口）。 */
+export interface SummaryMention {
+  node: NodeRef;
+  /** 这一段里真正出现的那几个称呼。「魔尊」还是「萧决」是作者自己的信息，别合并。 */
+  surfaces: string[];
+}
+
+export interface ChapterSummaryMentions {
+  chapter: number;
+  mentions: SummaryMention[];
+}
+
+/** 反查的一行：**哪一章的总结也提到了它**，连那一段原文一起。 */
+export interface ChapterSummaryMention {
+  chapter_number: number;
+  summary: string;
+  surfaces: string[];
+  author_written: boolean;
+}
+
+/** 「还有哪几章的总结提到它」。`node` 由**后端**给：换一条进入路径时前端手上只有 id。 */
+export interface NodeSummaryMentions {
+  node: NodeRef;
+  chapters: ChapterSummaryMention[];
+}
+
 /** 后台整理某一章时，单件活的去向：排上了 / 不用做（已经有了）/ 那一章还没正文。 */
 export type AutopilotTask = "queued" | "skipped" | "no_text";
 
