@@ -219,11 +219,18 @@ class ActivityCost(BaseModel):
     tokens_out: int | None = None
     ms: int | None = None
     cost: float | None = None
-    """**今天恒为 None**：`model_call.cost` 这一列至今没有任何写入方
-    （`extract/call_audit.py::record_call` 不写它，因为单价是 provider 的事、
-    BYOK 之下引擎不知道作者签的是什么价）。
+    """这一次花了多少**美元**。`None` = 算不出来（**不是 0**）。
 
-    前端必须把 None 渲染成「未记录」而不是「¥0.00」——一张写着 0 元的账单
+    ⚠️ **它是标价估算，不是账单。** 单价来自一份公开表（`draft/windows.py`），
+    而作者可能有折扣、走中转、用免费额度。**屏幕上必须带「约」字**
+    （`frontend` 那侧有测试钉着）。供应商自己报了花费时（OpenRouter 的 usage 里有）
+    走的是真数——但今天两者在屏幕上一视同仁地写「约」，那是**少说**，不是骗人。
+
+    🔴 **2026-08-13 之前这儿写着「今天恒为 None，因为 BYOK 之下引擎不知道作者签的是
+    什么价」。** 那句话半对半错：签的什么价确实不知道，但**标价是公开的**，
+    而「约 ¥0.01」比「未记录」有用得多。现在 `record_call` 写这一列了。
+
+    前端仍然必须把 `None` 渲染成「未记录」而不是「¥0.00」——一张写着 0 元的账单
     是本仓库反复在修的那种失败形态（漂亮的空结果 + 200）。
     """
 
@@ -337,7 +344,11 @@ class CostTotals(BaseModel):
     """
 
     priced_calls: int = Field(default=0, ge=0)
-    """其中**填了 `cost` 的**有几条。今天恒为 0，见 `ActivityCost.cost`。"""
+    """其中**填了 `cost` 的**有几条。
+
+    **2026-08-13 起不再恒为 0**（那一列有写入方了）。但它照旧可能小于总数：
+    自建端点、公共表里没有的模型、供应商没报 token 数的那几次，都算不出钱。
+    合计和「其中几条算得出」必须一起摆，否则那个合计是一句看起来确定的假话。"""
 
     cost: float | None = None
     """`priced_calls == 0` 时是 None 而不是 0.0（§10 约束 8）。"""

@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fixtures, renderWithApi } from "../test/harness";
 import { devTerms, screenText } from "../test/screenGuard";
 import { useCoords } from "../store";
-import { ActivityLog } from "./ActivityLog";
+import { ActivityLog, money } from "./ActivityLog";
 
 // 喂进来的每一个字节都来自 `api.json`（真 app dump，`tests/test_frontend_contract.py` 冻的）。
 // 下面几处「派生」的响应（空页、翻页的第二页、换一行的详情）也全是从那份 dump 拼的，
@@ -356,5 +356,22 @@ describe("活动记录", () => {
     await user.click(await screen.findByRole("button", { name: row }));
     await screen.findByText(marker);
     expect(devTerms(screenText())).toEqual([]);
+  });
+});
+
+describe("钱那一格 —— 它是估算，不是账单", () => {
+  it("算得出时必须带「约」字", () => {
+    expect(money(0.34)).toBe("约 $0.34");
+  });
+
+  it("小到显示不出来时说「不到」，不说「约 $0.00」", () => {
+    // 「约 $0.00」读起来像免费，而它不是 —— 一次起草大约就是这个量级。
+    expect(money(0.0012)).toBe("不到 $0.01");
+  });
+
+  it("算不出来时是「未记录」，**绝不是 0**", () => {
+    // 一张写着 0 元的账单是本仓反复在修的那种失败形态（漂亮的空结果 + 200）。
+    expect(money(null)).toBe("未记录");
+    expect(money(null)).not.toContain("0");
   });
 });

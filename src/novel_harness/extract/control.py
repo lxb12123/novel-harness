@@ -132,6 +132,10 @@ class AuditedCompletion(BaseModel):
     completion_tokens: int | None = None
     cache_read_tokens: int | None = None
     cache_write_tokens: int | None = None
+
+    cost: float | None = None
+    """这一次花了多少美元（`CompletionResult.cost`）。**照抄，这一层不算。**
+    `None` = 算不出来，不是 0（同上面几个 token 数的规矩）。"""
     """输入里有多少不用重新算 / 为下次存了多少（`draft/provider.py::CacheUsage`）。
 
     **这一层把 `CacheUsage` 拍平成两个纯量**：审计拷贝按定义只装能落库的标量，
@@ -173,8 +177,9 @@ class AuditedCompletion(BaseModel):
                 "completion_tokens": result.completion_tokens,
                 "cache_read_tokens": None if cache is None else cache.read_tokens,
                 "cache_write_tokens": None if cache is None else cache.written_tokens,
+                "cost": result.cost,
             },
-            strict=True,
+            strict=False,
         )
 
 

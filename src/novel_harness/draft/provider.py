@@ -334,6 +334,26 @@ _NO_STREAM_OPTIONS: set[tuple[str, str]] = set()
 """
 
 
+def _priced(result: CompletionResult, config: ProviderConfig) -> CompletionResult:
+    """供应商没报花费时，按公共表的标价估一个。**报了就不动**（真账优先于估算）。
+
+    局部导入 `windows`：那个模块要读 `settings`（作者的配置目录），
+    而运输层的模块层不该拖上装配层。
+    """
+    if result.cost is not None:
+        return result
+    from .windows import estimate_cost
+
+    estimated = estimate_cost(
+        config.base_url,
+        config.model,
+        prompt_tokens=result.prompt_tokens,
+        completion_tokens=result.completion_tokens,
+        cache_read_tokens=None if result.cache is None else result.cache.read_tokens,
+    )
+    return result if estimated is None else result.model_copy(update={"cost": estimated})
+
+
 def _one_shot_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
     """把一份流式请求改成一次性的。**`stream_options` 必须跟着走**——
     它是流式的附属字段，留着发给一个非流式请求，换来的是第二种 400。"""
@@ -422,6 +442,22 @@ class CompletionResult(BaseModel):
 
     默认空所以 M2 判分链和产品起草一个字都不用改:它们不传 `tools`,
     端点也就不会返回 `tool_calls`。
+    """
+
+    cost: float | None = None
+    """这一次花了多少**美元**。`None` = 算不出来（不是 0）。
+
+    两个来源，**供应商自己报的优先**：
+
+    1. **供应商报的**（OpenRouter 的 usage 里就有 `cost`）—— 那是真账，不是估算；
+    2. **按公共表的标价估**（`draft/windows.py::estimate_cost`）—— 作者可能有折扣、
+       走中转、用免费额度，所以它只配写成「约 ¥x」。
+
+    ⚠️ **屏幕上今天对两者一视同仁地写「约」** —— 对第 1 种是**少说**了（它其实是真的），
+    而少说不会骗人。要把两者分开显示得先在账上多一列，那是另一次改动。
+
+    为什么在这一层算：单价要按 `(base_url, model)` 查，而 `base_url` 只有 `config`
+    有 —— 上面那两个造回执的地方（`product_draft` / `agent/loop`）手上只有 `model`。
     """
 
     fell_back_to_one_shot: bool = False
@@ -630,10 +666,25 @@ def _tool_calls_from_message(message: Any) -> tuple[ToolCall, ...]:
     return tuple(calls)
 
 
+def _vendor_cost(usage: Any) -> float | None:
+    """供应商自己报的花费（OpenRouter 的 usage 里有 `cost`）。**读不懂就是没报。**
+
+    判据同 `_usage_count`：非数字、布尔、负数一律 `None` —— **不是 0**。
+    一次真的免费调用报 0，和一次没报，指向两件不同的事。
+    """
+    value = getattr(usage, "cost", None)
+    if value is None and isinstance(usage, dict):
+        value = usage.get("cost")
+    if isinstance(value, bool) or not isinstance(value, int | float) or value < 0:
+        return None
+    return float(value)
+
+
 def _from_non_streaming(resp: Any, fallback_model: str) -> CompletionResult:
     choice = resp.choices[0]
     usage = getattr(resp, "usage", None)
     return CompletionResult(
+        cost=_vendor_cost(usage),
         text=getattr(choice.message, "content", None) or "",
         model=getattr(resp, "model", fallback_model),
         finish_reason=getattr(choice, "finish_reason", None),
@@ -654,6 +705,7 @@ def _from_stream(chunks: Any, fallback_model: str) -> CompletionResult:
     # 只补非流式那一条,长稿(>16k 预算,走流式)就会永远说「不知道」,
     # 而长稿恰恰是最该看缓存的那一档。
     cache: CacheUsage | None = None
+    vendor_cost: float | None = None
     # 流式工具调用**按 index 累积**:`id` 和 `name` 通常只在第一个 delta 出现,
     # 而 `arguments` 是一串碎片(`{"cha` / `pter":` / ` 89}`)。
     # 用 dict 而不是 list:index 不保证从 0 连续,也不保证按序到达。
@@ -672,6 +724,9 @@ def _from_stream(chunks: Any, fallback_model: str) -> CompletionResult:
             parsed = _cache_usage(usage)
             if parsed is not None:
                 cache = parsed
+            reported = _vendor_cost(usage)
+            if reported is not None:
+                vendor_cost = reported
         for choice in getattr(chunk, "choices", ()) or ():
             delta = getattr(choice, "delta", None)
             content = getattr(delta, "content", None)
@@ -696,6 +751,7 @@ def _from_stream(chunks: Any, fallback_model: str) -> CompletionResult:
                 finish_reason = stopped
 
     return CompletionResult(
+        cost=vendor_cost,
         text="".join(visible),
         model=model,
         finish_reason=finish_reason,
@@ -746,12 +802,13 @@ def complete(
             # **端点收下了 `stream: true`，回来的却是一份普通响应。** 不用重发，
             # 当场按非流式读——但这一次同样没有「写到一半」那个时刻，所以照样算降级。
             _NO_STREAM.add(route)
-            return _from_non_streaming(raw, config.model).model_copy(
+            return _priced(_from_non_streaming(raw, config.model), config).model_copy(
                 update={"fell_back_to_one_shot": True}
             )
         result = _from_stream(raw, config.model) if streamed else _from_non_streaming(
             raw, config.model
         )
+        result = _priced(result, config)
         return result.model_copy(update={"fell_back_to_one_shot": True}) if fell_back else result
 
     def retry(without: str, *, streamed: bool, fell_back: bool) -> CompletionResult:

@@ -60,13 +60,13 @@ def main() -> int:
     # **裁剪和渲染都借库里那一份**（`draft/windows.py`）。设置页那颗「更新」按钮走的
     # 是同一个函数 —— 两处各写一遍的话，作者点出来的快照和维护者提交的会慢慢分家，
     # 而那种分家只有在「同一个模型两边窗口不一样」的时候才被发现。
-    windows = trim(raw)
+    windows, prices = trim(raw)
     if not windows:
         print("裁完一个对话模型都不剩 —— 没有覆盖原来那份。")
         return 1
-    OUT.write_text(render(windows, fetched=fetched), encoding="utf-8")
+    OUT.write_text(render(windows, prices, fetched=fetched), encoding="utf-8")
     size = OUT.stat().st_size / 1024
-    print(f"写出 {OUT.relative_to(Path.cwd())}：{len(windows)} 个模型，{size:.0f} KB")
+    print(f"写出 {OUT.relative_to(Path.cwd())}：{len(windows)} 个窗口 + {len(prices)} 个单价，{size:.0f} KB")
     print("**看一眼 git diff** —— 这是别人的数据进我们的包。")
     return 0
 

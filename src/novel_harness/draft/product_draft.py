@@ -219,6 +219,9 @@ def _receipt(attempt: DraftAttempt, elapsed_ms: int) -> ModelCallReceipt:
         # （账上的零和「没报」是两件事）。
         prompt_tokens=attempt.result.prompt_tokens,
         completion_tokens=attempt.result.completion_tokens,
+        # **钱照抄，不在这儿算**（`provider._priced` 已经填好，理由见
+        # `ModelCallReceipt.cost`：单价要按 base_url 查，而这一层只有 model）。
+        cost=attempt.result.cost,
         # 同上一条：缓存命中量也是照抄。**一份回执 = 一次调用**（续写是第二次调用、
         # 第二份回执），所以这里取的是这一次 attempt 自己的数，不是整稿的合计——
         # 「前缀被弄脏了」正是要逐次看才看得出来的。

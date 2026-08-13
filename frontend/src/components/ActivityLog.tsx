@@ -106,6 +106,22 @@ function jumpNote(entry: ActivityEntry, jump: ActivityJump): string | null {
 /** 数字。**null 是「没记」不是 0**（§10 约束 8）：一张写着 0 的账单是假的。 */
 const num = (value: number | null): string => (value === null ? "未记录" : String(value));
 
+/** 一笔钱。**后端给的是美元，而且是标价估算，不是账单。**
+ *
+ *  两条规矩，各防一种假话：
+ *  1. `null` ⇒ 「未记录」，**绝不渲染成 0** —— 一张写着 0 元的账单是本仓反复在修的
+ *     那种失败形态（漂亮的空结果 + 200）。算不出来有好几种真实原因：自建端点、
+ *     公共表里没这个模型、供应商没报 token 数。
+ *  2. 算得出时**必须带「约」字**。单价来自一份公开的标价表，而作者可能有折扣、
+ *     走中转、用免费额度 —— 把估算摆成账单，比不摆更坏。
+ *
+ *  小到显示不出来的那些不写「约 $0.00」（那读起来像免费），写「不到 $0.01」。 */
+export const money = (value: number | null): string => {
+  if (value === null) return "未记录";
+  if (value > 0 && value < 0.01) return "不到 $0.01";
+  return `约 $${value.toFixed(2)}`;
+};
+
 /** 用量那一格 —— **「已经知道的那些的合计」和「全部的合计」不是一回事**。
  *
  *  供应商不报 usage 时后端给的是 null（`record_call` 照抄，绝不估算），而 2026-08-12
@@ -161,8 +177,8 @@ function UsageStrip() {
       <span>已整理 {data.run_count} 次</span>
       <span>模型调用 {t.calls} 次</span>
       <TokenCell t={t} />
-      <span title="这台电脑上没有记价格：钥匙是你自己的，引擎不知道你和模型服务商谈的是多少钱。">
-        花费 {num(t.cost)}
+      <span title="按各家的公开标价估的。你的实际账单可能不一样——有折扣、走中转、或者用的是免费额度。">
+        花费 {money(t.cost)}
       </span>
     </div>
   );
@@ -205,7 +221,7 @@ function CostLine({ cost }: { cost: ActivityCost }) {
   return (
     <div className="log-cost">
       {cost.model} · 读入 {num(cost.tokens_in)} / 生成 {num(cost.tokens_out)} token · 用时{" "}
-      {cost.ms === null ? "未记录" : `${cost.ms} 毫秒`} · 花费 {num(cost.cost)}
+      {cost.ms === null ? "未记录" : `${cost.ms} 毫秒`} · 花费 {money(cost.cost)}
     </div>
   );
 }

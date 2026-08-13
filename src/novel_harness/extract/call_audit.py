@@ -58,6 +58,24 @@ class ModelCallReceipt(BaseModel):
 
     elapsed_ms: int = 0
 
+    cost: float | None = None
+    """这一次**大概**花了多少美元（`draft/windows.py::estimate_cost`）。
+
+    **`None` = 算不出来**，不是 0 —— 同上面几个 token 数的规矩。算不出来有三种：
+    供应商没报 token 数、公共表里没这个模型的单价、或者这条路由的主机名我们不认识
+    （自建端点：那儿的「标价」是一句关于作者钱包的假话）。
+
+    ── 为什么这个数在**调用方**算，不在 `record_call` 里算 ────────────────
+
+    单价要按 `(base_url, model)` 查（主机名是那道闸），而 `record_call` 只拿得到
+    `model`。更要紧的是 `activity.py` 那条既有规矩：**账本只照抄**。
+    让写库那一层做乘法，等于把 `_estimate_tokens` 那种东西请进这两列 ——
+    而一笔用估算 token 乘出来的钱，在屏幕上和一笔真钱长得一模一样。
+
+    ⚠️ **它是标价估算，不是账单。** 作者可能有折扣、走中转、用免费额度。
+    屏幕上必须带那个「约」字（`frontend` 那侧钉着）。
+    """
+
 
 def record_call(
     conn: Connection,
@@ -75,6 +93,7 @@ def record_call(
     cache_read_tokens: int | None,
     cache_write_tokens: int | None,
     elapsed_ms: int,
+    cost: float | None = None,
     chapter_number: int | None = None,
     call_id_factory: Callable[[str], str],
 ) -> str:
@@ -119,8 +138,8 @@ def record_call(
         INSERT INTO model_call (
             id, project_id, capability, model, params_json, prompt_hash,
             in_artifact, out_artifact, tokens_in, tokens_out, ms,
-            cache_read_tokens, cache_write_tokens, chapter_number
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            cache_read_tokens, cache_write_tokens, chapter_number, cost
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             call_id,
@@ -137,6 +156,7 @@ def record_call(
             cache_read_tokens,
             cache_write_tokens,
             chapter_number,
+            cost,
         ),
     )
     return call_id
@@ -183,6 +203,7 @@ def record_receipt(
             completion_tokens=receipt.completion_tokens,
             cache_read_tokens=receipt.cache_read_tokens,
             cache_write_tokens=receipt.cache_write_tokens,
+            cost=receipt.cost,
             elapsed_ms=receipt.elapsed_ms,
             chapter_number=chapter_number,
             call_id_factory=call_id_factory,
@@ -218,6 +239,7 @@ def record_model_call(
             completion_tokens=completion.completion_tokens,
             cache_read_tokens=completion.cache_read_tokens,
             cache_write_tokens=completion.cache_write_tokens,
+            cost=completion.cost,
             elapsed_ms=elapsed_ms,
             # 这一次抽取是为哪一章花的。**反查那条路照旧成立**（`extraction_run` 就在
             # 下面这条 UPDATE 里指回来），这一列是给「新行不必反查」用的——

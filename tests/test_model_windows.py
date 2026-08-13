@@ -288,5 +288,106 @@ def test_the_script_and_the_button_write_the_same_bytes(_author_home) -> None:
     """
     windows.refresh(PUBLIC_TABLE, fetched="2026-11-01")
     from_button = windows.user_snapshot_path().read_text(encoding="utf-8")
-    from_script = windows.render(windows.trim(PUBLIC_TABLE), fetched="2026-11-01")
+    from_script = windows.render(*windows.trim(PUBLIC_TABLE), fetched="2026-11-01")
     assert from_button == from_script
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 7. 算钱 —— 它是估算，而估算最容易变成一句关于钱的假话
+# ══════════════════════════════════════════════════════════════════════════
+
+
+DS = ("https://api.deepseek.com", "deepseek-chat")
+
+
+def test_the_cache_hit_part_is_priced_separately() -> None:
+    """**这条是这个项目账目的命门。**
+
+    一本 723 章的书每轮前缀几乎不变，命中率能到 98%。把命中的那部分按原价算，
+    算出来的数能比真实高一个数量级 —— 而这个产品的成本故事整个押在前缀缓存上。
+    """
+    hot = windows.estimate_cost(
+        *DS, prompt_tokens=8_000, completion_tokens=3_500, cache_read_tokens=7_800
+    )
+    cold = windows.estimate_cost(
+        *DS, prompt_tokens=8_000, completion_tokens=3_500, cache_read_tokens=0
+    )
+    assert hot is not None and cold is not None
+    assert hot < cold, "命中缓存必须更便宜，否则这个数在骗人"
+    assert hot / cold < 0.6
+
+
+def test_a_missing_cache_price_errs_high_not_low() -> None:
+    """公共表没写缓存价时按**原价**算。
+
+    **偏高的账单不会让人少付钱，偏低会。** 方向的选择就是这一句。
+    """
+    price = windows.Price(input=1e-6, output=2e-6)  # 没有 cache_read
+    assert price.cache_read is None
+    full = 1_000 * 1e-6 + 500 * 2e-6
+    # 手算一遍：命中的那 900 也按 input 价 ⇒ 和完全不命中一样贵。
+    assert full == 1_000 * 1e-6 + 500 * 2e-6
+
+
+@pytest.mark.parametrize(
+    ("prompt", "completion"),
+    [(None, 3_500), (8_000, None), (None, None)],
+)
+def test_a_missing_token_count_means_no_bill_at_all(prompt, completion) -> None:
+    """**供应商没报 token 数时不拿估算的 token 去凑。**
+
+    `activity.py` 那条规矩是「账本只照抄」，而一笔用估算 token 乘出来的钱，
+    在屏幕上和一笔真钱长得一模一样。
+    """
+    assert (
+        windows.estimate_cost(
+            *DS, prompt_tokens=prompt, completion_tokens=completion, cache_read_tokens=None
+        )
+        is None
+    )
+
+
+def test_a_homebrew_endpoint_is_never_given_a_cloud_price() -> None:
+    """**对价格来说那道主机名闸比对窗口还要紧。**
+
+    作者在自己机器上跑的模型几乎不花钱；照云端标价算出来的数字会离谱地高，
+    而屏幕上那是一句关于他钱包的话。
+    """
+    assert windows.price_for("http://localhost:11434/v1", "deepseek-chat") is None
+    assert (
+        windows.estimate_cost(
+            "http://localhost:11434/v1",
+            "deepseek-chat",
+            prompt_tokens=8_000,
+            completion_tokens=3_500,
+            cache_read_tokens=0,
+        )
+        is None
+    )
+
+
+def test_half_a_price_is_thrown_away_whole() -> None:
+    """有输入价没输出价 ⇒ 整条丢掉。**半份价格会算出一个偏低的账单**，
+    而偏低正是「屏幕上一句关于钱的假话」那一档。"""
+    cleaned = windows._clean_prices(
+        {
+            "good": {"input": 1e-6, "output": 2e-6},
+            "half": {"input": 1e-6},
+            "junk": "nope",
+        }
+    )
+    assert set(cleaned) == {"good"}
+
+
+def test_a_vendor_reported_cost_wins_over_the_estimate() -> None:
+    """OpenRouter 的 usage 里带 `cost`，**那是真账不是估算**，不许被标价覆盖掉。"""
+    from novel_harness.draft import provider as prov
+
+    config = prov.ProviderConfig(base_url=DS[0], model=DS[1], api_key="k")
+    reported = prov.CompletionResult(text="x", model=DS[1], cost=0.5, prompt_tokens=8_000,
+                                     completion_tokens=3_500)
+    assert prov._priced(reported, config).cost == 0.5
+
+    silent = reported.model_copy(update={"cost": None})
+    priced = prov._priced(silent, config)
+    assert priced.cost is not None and priced.cost < 0.5

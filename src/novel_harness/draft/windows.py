@@ -68,11 +68,54 @@ from .capabilities import (
 )
 
 SNAPSHOT_PATH: Final = Path(__file__).with_name("model_windows.json")
-SNAPSHOT_SCHEMA: Final = "nh-model-windows-v1"
+SNAPSHOT_SCHEMA: Final = "nh-model-windows-v2"
+"""v2 起多带一张单价表。**版本一变，作者手上那份 v1 就整份作废**（`_read` 的
+schema 判据），退回包里带的 v2 —— 半新半旧地混用两份表是唯一不能接受的结局。"""
 SOURCE_URL: Final = (
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
 )
 SOURCE_LICENSE: Final = "MIT (BerriAI/litellm)"
+
+
+class Price(BaseModel):
+    """一个模型的单价，**美元 / 每 token**（公共表就是这个量纲，不换算）。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    input: float
+    output: float
+    cache_read: float | None = None
+    """命中缓存的那部分输入按这个价。**`None` = 公共表没写**，那时按原价算 ——
+    方向是**偏高**，而偏高的账单不会让人少付钱，偏低会。"""
+
+
+class Snapshot(BaseModel):
+    """当前生效的那份公共数据。"""
+
+    model_config = ConfigDict(frozen=True)
+
+    windows: dict[str, int] = {}
+    prices: dict[str, Price] = {}
+    source: str = ""
+
+
+def _clean_prices(raw: object) -> dict[str, Price]:
+    """把快照里的单价读成 `Price`。**读不懂的整条丢掉**，不许留半份。
+
+    半份价格（有输入价没输出价）会算出一个**偏低**的账单，而偏低的账单
+    正是「屏幕上一句关于钱的假话」——比不显示坏。
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, Price] = {}
+    for name, entry in raw.items():
+        if not isinstance(name, str) or not isinstance(entry, dict):
+            continue
+        try:
+            out[name] = Price.model_validate(entry)
+        except ValueError:
+            continue
+    return out
 
 
 def user_snapshot_path() -> Path:
@@ -88,7 +131,7 @@ def user_snapshot_path() -> Path:
     return home / "model_windows.json"
 
 
-def _read(path: Path) -> tuple[dict[str, int], str] | None:
+def _read(path: Path) -> Snapshot | None:
     """读一份快照。**读不出来返回 `None`**（不是空 dict —— 那两者要分得开）。"""
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -107,19 +150,20 @@ def _read(path: Path) -> tuple[dict[str, int], str] | None:
         and not isinstance(value, bool)
         and value > 0
     }
+    prices = _clean_prices(payload.get("prices"))
     source = payload.get("source_url")
-    return windows, source if isinstance(source, str) else ""
+    return Snapshot(windows=windows, prices=prices, source=source if isinstance(source, str) else "")
 
 
 @lru_cache(maxsize=1)
-def _snapshot() -> tuple[dict[str, int], str]:
+def _snapshot() -> Snapshot:
     """当前生效的那份快照。**作者刷新出来的压过包里带的**。
 
     顺序的理由：包里那份是发版时冻的，作者点过「更新」就说明他明确要更新的那一份。
     两份都读不出来 ⇒ 空 ⇒ 退回今天的 `unknown`。**这一层永不抛**：
     一个数据文件不该有能力把起草弄挂。
     """
-    return _read(user_snapshot_path()) or _read(SNAPSHOT_PATH) or ({}, "")
+    return _read(user_snapshot_path()) or _read(SNAPSHOT_PATH) or Snapshot()
 
 
 _HOST_PROVIDERS: Final[Mapping[str, str]] = {
@@ -164,9 +208,24 @@ def _keys(base_url: str, model: str) -> tuple[str, ...]:
 
 def window_for(base_url: str, model: str) -> int | None:
     """这条路由在公共快照里的上下文窗口。**认不出返回 `None`。**"""
-    windows, _ = _snapshot()
+    snapshot = _snapshot()
     for key in _keys(base_url, model):
-        found = windows.get(key)
+        found = snapshot.windows.get(key)
+        if found is not None:
+            return found
+    return None
+
+
+def price_for(base_url: str, model: str) -> Price | None:
+    """这条路由的单价（美元/token）。**认不出返回 `None`。**
+
+    走的是和窗口**完全同一道闸**（`_keys`：主机名不认识就一个键都不查）。
+    对价格来说那道闸比对窗口还要紧：作者在自己机器上跑的模型**几乎不花钱**，
+    照云端标价算出来的数字会离谱地高，而屏幕上那是一句关于他钱包的话。
+    """
+    snapshot = _snapshot()
+    for key in _keys(base_url, model):
+        found = snapshot.prices.get(key)
         if found is not None:
             return found
     return None
@@ -185,7 +244,7 @@ def capabilities_from_snapshot(base_url: str, model: str) -> ProviderCapabilitie
     context = window_for(*route)
     if context is None:
         return None
-    _, source_url = _snapshot()
+    source_url = _snapshot().source
     if not source_url:
         return None  # 没有出处的能力不许存在（`_is_coherent` 也会拒）
     try:
@@ -230,39 +289,108 @@ class RefreshReport(BaseModel):
     """写到哪儿去了（作者的配置目录，不是包里）。"""
 
 
-def trim(raw: object) -> dict[str, int]:
-    """把公共表裁成「模型名 → 上下文窗口」。**脚本和设置页那颗按钮共用这一份。**
+def _rate(value: object) -> float | None:
+    """一个单价，读得懂才算数。**0 是合法的**（免费档），负数和非数字不是。"""
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value) if value >= 0 else None
+
+
+def trim(raw: object) -> tuple[dict[str, int], dict[str, Price]]:
+    """把公共表裁成「模型名 → 窗口」和「模型名 → 单价」。**脚本和那颗按钮共用这一份。**
 
     两条过滤，理由都在 `scripts/refresh_model_windows.py` 的 docstring 里：
-    只收 `mode == "chat"`（否则混进图片/嵌入/语音），只收读得懂的正整数。
+    只收 `mode == "chat"`（否则混进图片/嵌入/语音），只收读得懂的数。
+
+    ⚠️ **窗口和单价是分开收的**：一个模型可能有窗口没价（自建/免费档），
+    也可能有价没窗口。绑成一条会让「少一样就两样都丢」。
+
+    ⚠️ **`output_cost_per_token` 是取的，而 `max_output_tokens` 不取** —— 看着矛盾，
+    其实是两回事：**上限**那一列实测滞后一整代（deepseek-v4 写 8,192，官方 384,000），
+    而**单价**那一列是这个表被维护得最勤的部分（它是 litellm 的主业）。
     """
     if not isinstance(raw, dict):
-        return {}
-    out: dict[str, int] = {}
+        return {}, {}
+    windows: dict[str, int] = {}
+    prices: dict[str, Price] = {}
     for name, entry in raw.items():
         if not isinstance(name, str) or not isinstance(entry, dict):
             continue
         if entry.get("mode") != "chat":
             continue
         value = entry.get("max_input_tokens")
-        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-            continue
-        out[name] = value
-    return out
+        if not isinstance(value, bool) and isinstance(value, int) and value >= 1:
+            windows[name] = value
+        in_rate = _rate(entry.get("input_cost_per_token"))
+        out_rate = _rate(entry.get("output_cost_per_token"))
+        if in_rate is not None and out_rate is not None:
+            prices[name] = Price(
+                input=in_rate,
+                output=out_rate,
+                cache_read=_rate(entry.get("cache_read_input_token_cost")),
+            )
+    return windows, prices
 
 
-def render(windows: dict[str, int], *, fetched: str) -> str:
-    """裁好的那份表写成快照文件的内容。**脚本和按钮写出的字节完全一样。**"""
+def estimate_cost(
+    base_url: str,
+    model: str,
+    *,
+    prompt_tokens: int | None,
+    completion_tokens: int | None,
+    cache_read_tokens: int | None,
+) -> float | None:
+    """这一次调用**大概**花了多少美元。**算不出来返回 `None`，绝不返回 0。**
+
+    ── 这是估算，不是账单 ──────────────────────────────────────────────────
+
+    单价来自公共表的**标价**。作者可能有折扣、走中转、或者用的是免费额度，
+    所以这个数**只配写成「约 ¥x」**，屏幕上必须带那个「约」字。
+    真账单只有供应商自己给得出（OpenRouter 的响应里就带 `cost`，今天还没接）。
+
+    ── 缓存那一段单独算，否则这个项目的账会系统性偏高 ──────────────────────
+
+    一本 723 章的书每轮前缀几乎不变，命中率能到 98%。把命中的那部分按原价算，
+    算出来的数能比真实高一个数量级 —— 而这个产品的成本故事整个押在前缀缓存上。
+
+        cost = (输入 − 命中) × 输入价 + 命中 × 缓存价 + 输出 × 输出价
+
+    公共表没写缓存价时按原价算（**偏高**）：偏高的账单不会让人少付钱，偏低会。
+
+    ── 少一个数就整笔不算 ──────────────────────────────────────────────────
+
+    供应商没报 token 数时（`None`），这里**不拿估算的 token 去凑**。
+    `activity.py` 那条规矩是「账本只照抄」，而一笔用估算 token 乘出来的钱，
+    在屏幕上和一笔真钱长得一模一样。
+    """
+    if prompt_tokens is None or completion_tokens is None:
+        return None
+    price = price_for(base_url, model)
+    if price is None:
+        return None
+    cached = cache_read_tokens or 0
+    fresh = max(0, prompt_tokens - cached)
+    cache_rate = price.cache_read if price.cache_read is not None else price.input
+    return fresh * price.input + cached * cache_rate + completion_tokens * price.output
+
+
+def render(windows: dict[str, int], prices: dict[str, Price], *, fetched: str) -> str:
+    """裁好的那两张表写成快照文件的内容。**脚本和按钮写出的字节完全一样。**"""
     payload = {
         "schema": SNAPSHOT_SCHEMA,
         "fetched": fetched,
         "source_url": SOURCE_URL,
         "source_license": SOURCE_LICENSE,
         "note": (
-            "只裁了 max_input_tokens 一列。输出上限有意不取 —— 实测 deepseek-v4 那一档"
-            "公共表写的是 8,192，而官方文档是 384,000（差 47 倍）。"
+            "裁了两列：max_input_tokens（上下文窗口）和单价。**输出上限有意不取** —— "
+            "实测 deepseek-v4 那一档公共表写的是 8,192，而官方文档是 384,000（差 47 倍）。"
+            "单价那一列不同：它是这个表被维护得最勤的部分。"
         ),
         "windows": dict(sorted(windows.items())),
+        "prices": {
+            name: price.model_dump(exclude_none=True)
+            for name, price in sorted(prices.items())
+        },
     }
     return json.dumps(payload, ensure_ascii=False, indent=1, sort_keys=False) + "\n"
 
@@ -274,14 +402,14 @@ def refresh(raw: object, *, fetched: str) -> RefreshReport:
         ValueError: 裁完一个模型都不剩。**这时绝不覆盖旧的那份**——
             一次拉到半截的响应不该把作者手上能用的数据换成空的。
     """
-    windows = trim(raw)
+    windows, prices = trim(raw)
     if not windows:
         raise ValueError("拉回来的内容里一个对话模型都没有，没有覆盖原来那份。")
 
-    before = (_read(user_snapshot_path()) or _read(SNAPSHOT_PATH) or ({}, ""))[0]
+    before = (_read(user_snapshot_path()) or _read(SNAPSHOT_PATH) or Snapshot()).windows
     target = user_snapshot_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(render(windows, fetched=fetched), encoding="utf-8")
+    target.write_text(render(windows, prices, fetched=fetched), encoding="utf-8")
     _snapshot.cache_clear()
 
     return RefreshReport(
@@ -299,8 +427,11 @@ def refresh(raw: object, *, fetched: str) -> RefreshReport:
 __all__ = [
     "SNAPSHOT_PATH",
     "SOURCE_URL",
+    "Price",
     "RefreshReport",
     "capabilities_from_snapshot",
+    "estimate_cost",
+    "price_for",
     "refresh",
     "render",
     "trim",

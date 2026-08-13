@@ -1775,6 +1775,9 @@ def run_turn(
                 text=result.text,
                 prompt_tokens=result.prompt_tokens,
                 completion_tokens=result.completion_tokens,
+                # **钱照抄，不在这儿算**（`provider._priced` 已经填好，理由见
+                # `ModelCallReceipt.cost`：单价要按 base_url 查，而这一层只有 model）。
+                cost=result.cost,
                 # 缓存命中量只读取、不参与任何闸门：`charged` 那一侧算的是花掉的总量，
                 # 而命中只让它更便宜、不让它更少。**账照抄，闸不动。**
                 cache_read_tokens=None if result.cache is None else result.cache.read_tokens,
