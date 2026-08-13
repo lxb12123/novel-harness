@@ -128,7 +128,7 @@ describe("三档：同一份数据的三种排布", () => {
 
   it("窄档（默认）：一稿一张卡，逐条、按后端的次序", async () => {
     renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn$/, body: turnWith(THREE) },
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
       ...draftRoutes(THREE),
     ]);
     await runTurn();
@@ -140,7 +140,7 @@ describe("三档：同一份数据的三种排布", () => {
   it("宽档（作者把中栏拖开了）：还是那几稿，还是那个次序，只有排布变了", async () => {
     widthIs(3 * 400);
     renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn$/, body: turnWith(THREE) },
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
       ...draftRoutes(THREE),
     ]);
     await runTurn();
@@ -164,7 +164,7 @@ describe("三档：同一份数据的三种排布", () => {
 describe("推荐位", () => {
   it("摊开的是**进过书的那一版**，哪怕它又短、编号又小、还夹在中间", async () => {
     renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn$/, body: turnWith(THREE) },
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
       ...draftRoutes(THREE),
     ]);
     const spy = vi.spyOn(globalThis, "fetch");
@@ -191,7 +191,7 @@ describe("推荐位", () => {
       variant({ id: "draft:ID73", ordinal: 5, units: 2600, landed: true }),
     ];
     renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn$/, body: turnWith(moved) },
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(moved) },
       ...draftRoutes(moved),
     ]);
     await runTurn();
@@ -204,7 +204,7 @@ describe("推荐位", () => {
     // 一批都没落盘时两边都不挑（同 `AmbiguousName`：两个方向都贵就摊开，绝不挑）。
     const none = THREE.map((d) => ({ ...d, landed: false }));
     renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn$/, body: turnWith(none) },
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(none) },
       ...draftRoutes(none),
     ]);
     const spy = vi.spyOn(globalThis, "fetch");
@@ -235,7 +235,7 @@ describe("兜底那几支上一个研发术语都没有", () => {
     // 那条路由挂在原地不返回：这就是作者点「展开」之后看见的第一帧。
     const never = new Promise<never>(() => {});
     renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn$/, body: turnWith(THREE) },
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
       { match: /\/drafts\/[^/]+$/, body: () => never },
       { match: /\/drafts(\?|$)/, body: listOf(THREE) },
     ]);
@@ -246,7 +246,7 @@ describe("兜底那几支上一个研发术语都没有", () => {
 
   it("摊开一稿，那一整章**读不出来**的时候", async () => {
     renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn$/, body: turnWith(THREE) },
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
       // 真后端在这一档回的是 `{"detail":{"error":"draft_not_found","draft_id":…}}`
       // ——那两个词是 snake_case，形状网当场会咬住。**所以这一条同时在验
       // 「后端那句诊断没有被原样端上屏」。**
@@ -326,7 +326,7 @@ describe("三栏没被这几稿挤动", () => {
     // 「前后相等」单独一条是骗得过的：两边一起错成同一个值它也绿。所以这儿钉的是
     // `DEFAULT_LEFT` / `DEFAULT_RIGHT` 本身。
     renderWithApi(shell(), [
-      { method: "POST", match: /\/turn$/, body: turnWith(THREE) },
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
       ...draftRoutes(THREE),
     ]);
     await runTurn();
@@ -347,7 +347,7 @@ describe("三栏没被这几稿挤动", () => {
     // 这是这块屏幕**最撑**的一档：中栏里三列并排，每一列一整章。
     widthIs(3 * 400);
     renderWithApi(shell(), [
-      { method: "POST", match: /\/turn$/, body: turnWith(THREE) },
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
       ...draftRoutes(THREE),
     ]);
     await runTurn();

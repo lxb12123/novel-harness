@@ -630,7 +630,7 @@ def test_a_batch_wider_than_the_gate_spends_nothing(
 
     - `max_steps` 数的是**模型调用**，一步之内的工具调用不在它的口径里；
     - `max_tokens` 一步只查一次，**在这一批派发之前**，批内不再查；
-    - 表里十个工具有九个是只读或纯函数（ADR 0019：「重放免费」），
+    - 表里只有一个工具花钱，其余是只读或纯函数（ADR 0019：「重放免费」），
       **`draft_chapter` 不是** —— 它每次是一次真的模型调用，走的是起草侧自己的账。
 
     3.4 把闸放在了 loop（`TurnLimits.max_calls_per_step`），不是放在起草那条路上：

@@ -7,8 +7,13 @@ import {
   useRunTurn,
   useStopChat,
 } from "../api/hooks";
-import type { ChatMessageView, TurnReceipt } from "../api/types";
+import type {
+  ChatAuthorQuestion,
+  ChatMessageView,
+  TurnReceipt,
+} from "../api/types";
 import {
+  applyTurnEvent,
   elapsedText,
   emphasize,
   newRunId,
@@ -17,7 +22,10 @@ import {
   stopFootnote,
   tailWindow,
   visibleMessages,
+  NO_PROGRESS,
   SPEAKER_ZH,
+  type LiveDraft,
+  type TurnProgress,
 } from "../chat";
 import { useCoords } from "../store";
 import { ChatSessions } from "./ChatSessions";
@@ -26,17 +34,22 @@ import { CompareLink, DraftCandidates } from "./DraftCandidates";
 // 写作助手（模式二，[ADR 0019](docs/adr/0019-agent-loop-not-graph.md)）。
 // 中栏对半分之后的右半边：左边正文、右边它。左栏书架和右栏面板一个像素不动。
 //
-// ── 三件这块屏幕必须自己做对的事 ──────────────────────────────────────────
+// ── 三件这块屏幕必须自己做对的事（2026-08-12 第一条重写，ADR 0024）──────────
 //
-// 1. **它不逐字往外冒，所以界面上不许装成在逐字往外冒。** 这一版 HTTP 不流式
-//    （内部流式，打断才能中途生效——`api/chat.py` 的 3.4 余债），拿到的是一个跑完才
-//    回来的响应。假一个打字机动画出来，作者会按着它的节奏判断「它是不是卡住了」，
-//    而那个节奏是编的。诚实的形态只有两样：**一个还在跑的信号 + 一个真实的秒表**，
-//    外加一句说清「跑完才会一次性出现」。
+// 1. **逐字看得见的只有稿子，回话那一档今天不逐字 —— 所以这儿不许装成逐字。**
+//    这一轮走的是长连接了（`api/turnStream.ts`），中间过程真的一条条到手；
+//    但两条流不是一回事：起草那次调用是流式的（`interruptible`），
+//    **回话那次不是**（输出预算 4,024 远在流式阈值之下 ⇒ `plan.stream is False`，
+//    后端 `test_todays_agent_call_is_not_streaming_…` 钉着它）。
+//    所以起草区**真的**一个字一个字长出来，回话区仍然是整段一次到位——
+//    **给回话区做一个假的打字机 = 让作者按一个编出来的节奏判断它卡没卡住**，
+//    那正是这块屏幕 2026-08-12 上午拒绝过一次的东西。
 //
-// 2. **查到了什么不上屏。** 后端出参已经是投影不是原文（工具返回和「只叫工具没说话」
-//    的那几条根本没发出来），**前端也不许自己去别处把它们捞回来补上**——那里面是
-//    `NodeRef` 的裸标识，一渲染就是屏幕上的研发术语。能说的只有一个数：查了几次。
+// 2. **工具在干什么可以显示，工具查到了什么不许显示。** 后端出参和事件流都已经是
+//    投影不是原文（`TurnEvent` 上根本没有一个字段装得下工具返回），
+//    **前端也不许自己去别处把它们捞回来补上**——那里面是 `NodeRef` 的裸标识，
+//    一渲染就是屏幕上的研发术语。这一层读的只有 `said_to_author`（引擎写的中文）
+//    和 `text`（模型自己的字）；`kind` / `tool` / `reason` 一个字都不上屏。
 //
 // 3. **措辞的唯一出处在后端。** 停止原因是机器码（`reason`），一个字都不上屏；
 //    说给作者的那一句是 `receipt.message`（`agent.loop.stop_wording()` 写好的）。
@@ -77,11 +90,31 @@ function Bubble({ message }: { message: ChatMessageView }) {
   );
 }
 
-/** 还在跑的那一段屏幕。**秒表是真的，别的什么都不编。** */
-function RunningStrip({ since, onStop, stopping }: {
+/** 正在写（或者刚写完）的一稿。**这块是全屏幕唯一真的逐字长出来的东西。**
+ *
+ *  空的时候也要画出来：那一格里的「正在写第 N 章的一稿」本身就是信息——
+ *  没有它，一批三稿同时在飞的时候屏幕上只有一坨交错的字，作者分不出哪段是哪稿。 */
+function DraftingBox({ draft }: { draft: LiveDraft }) {
+  return (
+    <div className="chat-drafting">
+      <span className="chat-drafting-head">
+        {draft.done || `正在写第 ${draft.chapter} 章的一稿…`}
+      </span>
+      {draft.text ? (
+        <p className="chat-drafting-text">{draft.text}</p>
+      ) : (
+        <p className="chat-drafting-wait">还没落下第一个字。</p>
+      )}
+    </div>
+  );
+}
+
+/** 还在跑的那一段屏幕。**秒表是真的，中间那几行也是真的，别的什么都不编。** */
+function RunningStrip({ since, onStop, stopping, progress }: {
   since: number;
   onStop: () => void;
   stopping: boolean;
+  progress: TurnProgress;
 }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -94,15 +127,74 @@ function RunningStrip({ since, onStop, stopping }: {
       <span className="chat-running-dot" aria-hidden="true" />
       <div className="chat-running-say">
         <b>正在跑这一轮 · {elapsedText(now - since)}</b>
+        {/* **这句话得跟着上面那条第 1 项说准**：中间过程现在真的看得见了，
+            所以不能再说「跑完才会一次性出现」；但**回话**那一段确实仍然是整段到位，
+            所以也不能反过来说「它正在一个字一个字说给你听」。 */}
         <span>
-          它可能要来回查几次资料、想上几轮。
-          <b>这一轮跑完才会一次性出现整段回话</b>
-          ——所以这儿一直没动静不代表它停了。
+          它可能要来回查几次资料、想上几轮。下面是它这会儿在做的事；
+          <b>回话是整段一次出现的，稿子才会一个字一个字长出来</b>。
         </span>
+        {progress.steps.map((line, i) => (
+          <span key={i} className="chat-step">
+            {line}
+          </span>
+        ))}
+        {progress.said.map((text, i) => (
+          <p key={i} className="chat-text chat-step-said">
+            {text}
+          </p>
+        ))}
+        {progress.drafts.map((draft) => (
+          <DraftingBox key={draft.stream} draft={draft} />
+        ))}
       </div>
       <button className="danger" disabled={stopping} onClick={onStop}>
         停
       </button>
+    </div>
+  );
+}
+
+/**
+ * 它停下来问了作者一句（ADR 0024）。
+ *
+ * ── 为什么必须是一张卡，不能是一段话 ──────────────────────────────────────
+ *
+ * 一个问句混在散文里，作者会当陈述句翻过去——他在读的是「助手说了什么」，
+ * 不是「助手在等我」。所以这一档在**结构上**和普通回话分开：一个框、一句
+ * 「它在等你回一句」的抬头、几颗能直接点的按钮。
+ *
+ * ── 这里一个字都不许加 ────────────────────────────────────────────────────
+ *
+ * 问句和选项 100% 是模型自己的字（后端那条 handler 里连一个数据来源都没有）。
+ * 所以不排序、不加「（推荐）」、不合并、不改写。选项为空时**不编两个出来**：
+ * 那时能做的只有在下面的输入框里自己写一句，而这块屏幕会照实说。
+ */
+function AskedCard({ asked, onPick, busy }: {
+  asked: ChatAuthorQuestion;
+  onPick: (answer: string) => void;
+  busy: boolean;
+}) {
+  return (
+    <div className="chat-asked" role="group" aria-label="它在等你回一句">
+      <span className="chat-asked-head">它在等你回一句</span>
+      <p className="chat-asked-q">{asked.question}</p>
+      {asked.options.length > 0 ? (
+        <>
+          <div className="chat-asked-opts">
+            {asked.options.map((option, i) => (
+              <button key={i} disabled={busy} onClick={() => onPick(option)}>
+                {option}
+              </button>
+            ))}
+          </div>
+          <span className="chat-asked-note">
+            点一个就当你这么答了；想说别的就在下面直接写。
+          </span>
+        </>
+      ) : (
+        <span className="chat-asked-note">在下面写一句回它。</span>
+      )}
     </div>
   );
 }
@@ -156,6 +248,12 @@ export function ChatPanel() {
    *  后端做的第一件事就是把它落库（`run_chat` 的注释写着理由）。 */
   const [pendingSaid, setPendingSaid] = useState<string | null>(null);
   const [startedAt, setStartedAt] = useState(0);
+  /** 这一轮跑到这一刻做过什么（`chat.ts::applyTurnEvent`）。
+   *
+   *  **它是这一刀的产物**：以前这儿只有一个秒表，一轮三分钟的黑箱；现在长连接把
+   *  每一步的边界都送过来了。**一轮跑完不清它**——清掉的话，回执落地那一瞬间
+   *  屏幕会先空一下再长出结论，而那一闪读起来像出了什么事。下一轮开跑时才清。 */
+  const [progress, setProgress] = useState<TurnProgress>(NO_PROGRESS);
   /** 这一轮跑的是**哪一段**对话。
    *
    *  **一轮要跑好几分钟，而作者可以同时留着好几段对话**——所以「跑到一半切过去看另一段」
@@ -205,6 +303,11 @@ export function ChatPanel() {
   const runningHere = running && runFor === chatId;
   const shownReceipt = receipt && receipt.chat === chatId ? receipt.turn : null;
   const window = tailWindow(messages, expanded);
+  /** 它问的那一句。**回执优先**：回执是持久的那一份（刷新页面、换台机器、三个月后
+   *  回来，事件早就没了而这个字段还在）。事件流那一份只在**回执没到手**的时候顶上
+   *  ——流断在了「问了」和「回执」之间，屏幕上不该因此少掉一个正在等他的问题。 */
+  const asked =
+    shownReceipt?.asked ?? (runFor === chatId ? progress.asked : null);
 
   // 新消息到手就滚到底。jsdom 里 scrollHeight 恒为 0，这一句不会做任何事也不会炸。
   useEffect(() => {
@@ -216,13 +319,22 @@ export function ChatPanel() {
     stopLanded.current = false;
     setStopSaid(null);
     setReceipt(null);
+    setProgress(NO_PROGRESS);
     setPendingSaid(text || null);
     setRunFor(id);
     setStartedAt(Date.now());
     // **每一轮换一个新的**：上一轮那个还在的话，一次迟到的「停」就会认成这一轮。
     runId.current = newRunId();
     turn.mutate(
-      { chatId: id, chapter, said: text, runId: runId.current },
+      {
+        chatId: id,
+        chapter,
+        said: text,
+        runId: runId.current,
+        // 边跑边收。**归约在纯函数里**（`chat.ts`），这儿只负责把它挂上去——
+        // 「一批三稿交错着到达」那种情形鼠标点不出来，只有单测点得出来。
+        onEvent: (event) => setProgress((prev) => applyTurnEvent(prev, event)),
+      },
       {
         onSuccess: (r) => {
           setPendingSaid(null);
@@ -271,10 +383,16 @@ export function ChatPanel() {
    *  一个红框，而那一段什么都没发生——一句关于别处的话，长得像这儿的事实。 */
   const failureHere = runFor === chatId ? failure : null;
   // 上一轮没跑完（撞了闸 / 作者按了停 / 进程死在半路），接着往下才有意义。
+  //
+  // **「它问了你一句」不算没跑完**（ADR 0024）：那一轮是**说完了**的一种——
+  // 在对话里，停下来问就等于这一轮说到这儿了，下一句归作者。这时摆一颗「接着往下」
+  // 等于请他跳过那个问题往下跑，而它问的正是「不问就得猜、猜错了他看不出来」的事。
   const canResume =
     !running &&
     !!chatId &&
-    ((shownReceipt !== null && shownReceipt.reason !== "done") ||
+    ((shownReceipt !== null &&
+      shownReceipt.reason !== "done" &&
+      shownReceipt.reason !== "asked_author") ||
       (current?.pending_lookups ?? 0) > 0);
 
   return (
@@ -341,6 +459,7 @@ export function ChatPanel() {
         {runningHere && (
           <RunningStrip
             since={startedAt}
+            progress={progress}
             stopping={stop.isPending}
             onStop={() => {
               if (!chatId) return;
@@ -375,6 +494,12 @@ export function ChatPanel() {
             pid={pid}
           />
         )}
+        {/* **排在回执后面**：它是这一轮的收场，而作者的下一个动作就在它上面。
+            点一个选项 = 作者答了那一句，也就是开下一轮（`said` 就是那个选项原文）——
+            **不是把选项抄进输入框让他再按一次发送**。 */}
+        {asked && <AskedCard asked={asked} busy={running} onPick={(answer) => {
+          if (chatId && !running) runTurn(chatId, answer);
+        }} />}
         {(failureHere || createFailure) && (
           <div className="err-box">{failureHere ?? createFailure}</div>
         )}

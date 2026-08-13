@@ -509,6 +509,37 @@ def test_the_browser_side_edge_wording_lists_all_nine_kinds() -> None:
     assert len(declared) >= 5, "枚举遍历为空 —— 上面几条是永远绿的"
 
 
+def test_the_browser_knows_every_way_a_turn_can_stop_and_every_step_it_takes() -> None:
+    """**枚举驱动**：写作助手那两个封闭枚举，浏览器那两份联合类型必须**逐个**对得上。
+
+    这一条 2026-08-12 之前不存在，而代价当场兑现了：`StopReason` 加了第十一种
+    （`ASKED_AUTHOR`，ADR 0024）之后，`ChatStopReason` 那份联合类型少了一个成员，
+    **全仓只有那一处提到它、没有任何东西钉着**——于是「它停下来问了你一句」这一档
+    在浏览器的类型系统里根本不存在：后端给了，界面收不到，而 `tsc` 一声不吭
+    （多出来的字符串字面量只是不匹配任何一支，不是错误）。
+
+    事件那一份同理，而且更脏：它是这一刀新开的输出面，每一种事件都对着作者的屏幕。
+
+    **这两份不是「界面文案」**，它们是机器码（一个字都不上屏，形状网会咬住它们）。
+    钉的是「界面认不认得出这一档」，不是「界面怎么说这一档」——后者的唯一出处
+    在后端（`stop_wording()` / `TurnEvent.said_to_author`）。
+    """
+    from novel_harness.agent.loop import StopReason, TurnEventKind
+
+    source = API_TYPES.read_text(encoding="utf-8")
+    stops = [reason.value for reason in StopReason]
+    kinds = [kind.value for kind in TurnEventKind]
+    assert sorted(_ts_union_members(source, "ChatStopReason")) == sorted(stops), (
+        "浏览器那份 `ChatStopReason` 和 Python 的 `StopReason` 对不上 —— "
+        "漏掉的那一档界面在类型上根本认不出来"
+    )
+    assert sorted(_ts_union_members(source, "ChatTurnEventKind")) == sorted(kinds), (
+        "浏览器那份 `ChatTurnEventKind` 和 Python 的 `TurnEventKind` 对不上"
+    )
+    # 枚举遍历为空的话上面两条永远绿 —— 同 `EdgeType` 那条的自守卫。
+    assert len(stops) >= 10 and len(kinds) >= 8
+
+
 def test_the_browser_keeps_exactly_one_copy_of_the_edge_wording() -> None:
     """一张表一份。**第二份拷贝就是第二份措辞源**，而它们不会一起被想起来。"""
     components = REPO / "frontend" / "src" / "components"

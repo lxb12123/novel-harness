@@ -847,9 +847,15 @@ export interface ChapterDrafts {
 }
 
 /** 停法的机器码。**一个都不许上屏**——它是 snake_case，形状判据会当场咬住它。
- *  给作者看的那句话是 `TurnReceipt.message`（后端 `stop_wording()` 写好的）。 */
+ *  给作者看的那句话是 `TurnReceipt.message`（后端 `stop_wording()` 写好的）。
+ *
+ *  **十一种，而且这份清单不是手抄的**：`tests/test_wording_guard.py` 拿 Python 那边的
+ *  `StopReason` 逐个来比，少一个就红。2026-08-12 之前这儿少了 `asked_author`
+ *  （第十一种停法），而全仓没有任何东西钉着它——于是那一档在类型上根本不存在，
+ *  接口给了、界面收不到。 */
 export type ChatStopReason =
   | "done"
+  | "asked_author"
   | "step_limit"
   | "cost_limit"
   | "batch_too_wide"
@@ -859,6 +865,76 @@ export type ChatStopReason =
   | "tool_stuck"
   | "context_full"
   | "model_unreachable";
+
+/**
+ * 它停下来问作者的那一句 + 几个可点的选项（[ADR 0024](docs/adr/0024-a-turn-is-a-conversation-not-a-black-box.md)）。
+ *
+ * **两个字段全是模型自己的字**：后端那条 handler 里连一个数据来源都没有，
+ * 引擎往问句里加不了一个字。所以这一层**照样一个字都不许加**——
+ * 别在选项后面补一句「（推荐）」，那是引擎在给散文打分（ADR 0005）。
+ *
+ * `options` 可以是空的（模型只问了一句没给选项）：那时界面上就只有输入框，
+ * **不许自己编两个选项出来**。
+ */
+export interface ChatAuthorQuestion {
+  question: string;
+  options: string[];
+}
+
+/** 一轮跑到哪儿了（后端 `agent.loop.TurnEventKind`）。**机器码，一个字都不上屏。**
+ *
+ *  同 `ChatStopReason`：这份清单由 `tests/test_wording_guard.py` 拿 Python 那个枚举钉着。 */
+export type ChatTurnEventKind =
+  | "tool_started"
+  | "tool_finished"
+  | "reply_text"
+  | "reply_delta"
+  | "draft_started"
+  | "draft_delta"
+  | "draft_kept"
+  | "draft_failed"
+  | "asked_author"
+  | "turn_stopped";
+
+/**
+ * 一轮跑到一半时后端喊的那一声（ADR 0024 决策一）。长连接上的中间帧。
+ *
+ * ── 这里**没有**「工具查到了什么」，而且是类型层没有 ──────────────────────
+ *
+ * 后端那个模型上根本没有一个字段装得下工具返回（`ToolOutcome.content`）：
+ * 查完了那一声只有「成没成」和「第几章」。**这一层也不许从别处把它捞回来补上**
+ * ——那里面是 `NodeRef` 的裸 id 加作者写在秘密节点上的 `twist`，
+ * 而一条事件一旦被推上屏，那段话就在作者的持久化对话里了，改代码删不掉。
+ *
+ * ── 措辞在后端，这一层不翻第二遍 ────────────────────────────────────────
+ *
+ * | 字段 | 谁写的 | 上屏吗 |
+ * |---|---|---|
+ * | `said_to_author` | **引擎**（`TurnEvent` 那几个构造口 + `stop_wording()`） | 上 |
+ * | `text` | **模型**（回话的字 / 稿子的字） | 上 |
+ * | `kind` / `tool` / `reason` | 机器码 | **一个字都不许上** |
+ */
+export interface ChatTurnEvent {
+  kind: ChatTurnEventKind;
+  /** 说给作者听的那一句。**措辞的唯一出处在后端。** */
+  said_to_author: string;
+  /** 模型自己写的字，原样。回话的一段 / 一稿的一片。 */
+  text: string;
+  /** 动的是工具表里哪一条（机器码）。认不出的是空的。**只用来分派，不上屏。** */
+  tool: string;
+  ok: boolean | null;
+  chapter: number | null;
+  index: number;
+  total: number;
+  /** **同一条字流的片归到一起。** 一批三稿是同时在写的，三条流的片会交错着到达，
+   *  而同一章的三稿连 `chapter` 都一样——没有这个数就没法把它们分开摆。
+   *  `0` = 这一轮只有一条流。**它不上屏**，它是分组用的钥匙。 */
+  stream: number;
+  ordinal: number;
+  units: number;
+  reason: ChatStopReason | null;
+  asked: ChatAuthorQuestion | null;
+}
 
 export interface TurnReceipt {
   session: ChatSessionView;
@@ -876,6 +952,12 @@ export interface TurnReceipt {
   /** 有几次调用没量准。**不为零时上面那个数是低估**，界面上不许把它当全部。 */
   calls_without_usage: number;
   context: ChatContextReceipt;
+  /** 它停下来问了作者一句（ADR 0024）。**非空 ⇔ `reason === "asked_author"`。**
+   *
+   *  **它必须从回执上读，不能只从事件流上读**：事件是「跑的过程」，而作者可能在这一轮
+   *  结束之后才打开那段对话（刷新页面、换台机器、三个月后回来）——那时唯一还说得出
+   *  「它当时问了你什么」的就是这个字段。 */
+  asked: ChatAuthorQuestion | null;
   /** 这一轮写出来的那几稿，后端已按「第几章 + 第几稿」排好序（ADR 0022）。
    *
    *  **界面照这个顺序摆，不许自己再排一遍**：并发跑的稿子谁先回来是随机的，

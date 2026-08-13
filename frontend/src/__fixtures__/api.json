@@ -635,14 +635,14 @@
     {
       "created_at": "<ts>",
       "is_current": false,
-      "snapshot_id": "snapshot:ID49",
+      "snapshot_id": "snapshot:ID51",
       "text": "第二章 试探\n\n他终于明白了。\n风起。他终于明白了。\n",
       "text_sha256": "<sha>"
     },
     {
       "created_at": "<ts>",
       "is_current": true,
-      "snapshot_id": "snapshot:ID48",
+      "snapshot_id": "snapshot:ID50",
       "text": "第二章 试探\n\n他终于明白了。\n风起。他终于明白了。\n\n后来又添了一段。\n",
       "text_sha256": "<sha>"
     }
@@ -651,12 +651,12 @@
     "added": [
       {
         "created": true,
-        "id": "chapter:ID45",
+        "id": "chapter:ID47",
         "number": 3,
         "path": "chapters/0003.md",
         "project_id": "project:ID1",
         "snapshot_created": true,
-        "snapshot_id": "snapshot:ID46",
+        "snapshot_id": "snapshot:ID48",
         "text_sha256": "<sha>",
         "title": "对峙"
       }
@@ -665,12 +665,12 @@
     "refreshed": [
       {
         "created": false,
-        "id": "chapter:ID47",
+        "id": "chapter:ID49",
         "number": 2,
         "path": "chapters/0002.md",
         "project_id": "project:ID1",
         "snapshot_created": true,
-        "snapshot_id": "snapshot:ID48",
+        "snapshot_id": "snapshot:ID50",
         "text_sha256": "<sha>",
         "title": "试探"
       }
@@ -727,7 +727,7 @@
     "updated_at": "<ts>"
   },
   "chatDeleted": {
-    "chat_id": "chat_session:ID44",
+    "chat_id": "chat_session:ID46",
     "deleted": true
   },
   "chatDetail": {
@@ -759,6 +759,7 @@
     "stopped": false
   },
   "chatTurn": {
+    "asked": null,
     "calls_without_usage": 1,
     "chapter": 2,
     "context": {
@@ -806,6 +807,17 @@
     "steps": 2,
     "tokens_reported": 5664
   },
+  "chatTurnEvents": [
+    "event: turn\ndata: {\"kind\":\"tool_started\",\"said_to_author\":\"正在查这一章不许说破什么（这一批 2 件里的第 1 件）。\",\"text\":\"\",\"tool\":\"scene_constraints\",\"ok\":null,\"chapter\":null,\"index\":1,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"tool_finished\",\"said_to_author\":\"查这一章不许说破什么（第 2 章），好了。\",\"text\":\"\",\"tool\":\"scene_constraints\",\"ok\":true,\"chapter\":2,\"index\":1,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"tool_started\",\"said_to_author\":\"正在写一稿（这一批 2 件里的第 2 件）。\",\"text\":\"\",\"tool\":\"draft_chapter\",\"ok\":null,\"chapter\":null,\"index\":2,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"draft_started\",\"said_to_author\":\"正在写第 2 章的一稿。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":2,\"index\":0,\"total\":0,\"stream\":1,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"draft_kept\",\"said_to_author\":\"第 2 章的第 2 稿写好了，2800 字。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":2,\"index\":0,\"total\":0,\"stream\":1,\"ordinal\":2,\"units\":2800,\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"tool_finished\",\"said_to_author\":\"写一稿（第 2 章），好了。\",\"text\":\"\",\"tool\":\"draft_chapter\",\"ok\":true,\"chapter\":2,\"index\":2,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"reply_text\",\"said_to_author\":\"\",\"text\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\",\"tool\":\"\",\"ok\":null,\"chapter\":null,\"index\":0,\"total\":0,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"turn_stopped\",\"said_to_author\":\"说完了。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":null,\"index\":0,\"total\":0,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":\"done\",\"asked\":null}\n\n",
+    "event: receipt\ndata: {\"session\":{\"id\":\"chat_session:ID44\",\"title\":\"长连接那一轮\",\"created_at\":\"<ts>\",\"updated_at\":\"<ts>\",\"message_count\":5,\"running\":false,\"pending_lookups\":0},\"chapter\":2,\"reason\":\"done\",\"message\":\"说完了。\",\"reply\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\",\"messages\":[{\"seq\":4,\"speaker\":\"assistant\",\"text\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\"}],\"steps\":2,\"lookups\":2,\"tokens_reported\":5664,\"calls_without_usage\":1,\"context\":{\"off_chapter\":0,\"stale_lookups\":0,\"trimmed_results\":0,\"dropped_lookups\":0,\"dropped_reasoning\":0,\"lost_lookups\":0,\"full\":false},\"asked\":null,\"drafts\":[{\"id\":\"draft:ID45\",\"chapter\":2,\"ordinal\":2,\"units\":2800,\"note\":\"这一版更冷，收在他没抬头。\",\"preview\":\"风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他……\",\"created_at\":\"<ts>\",\"landed\":false,\"stopped_reason\":\"\"}]}\n\n"
+  ],
   "chats": [
     {
       "created_at": "<ts>",

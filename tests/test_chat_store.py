@@ -29,6 +29,7 @@ from novel_harness.agent.loop import (
     Role,
     start_conversation,
 )
+from novel_harness.agent.rules import is_revocation, is_rule, live_rules
 from novel_harness.agent.store import ChatConcurrency, ChatStore
 from novel_harness.db import Connection, connect, migrate
 from novel_harness.draft.provider import ToolCall
@@ -73,6 +74,11 @@ NASTY = [
     ),
     # 空内容 + 不绑章号：`""` 和 `None` 都是有意义的取值，不是「没填」。
     AgentMessage(role=Role.ASSISTANT, content=""),
+    # 作者定下的一条规矩（ADR 0023 决策二）+ 他随后按的那个「取消」。
+    # **撤销那条的正文是空的**，它的全部意义在 `revokes_seq` 上——丢了那一列，
+    # 读回来它就是一条普通的空消息，而**被取消掉的规矩会活过来**。
+    AgentMessage(role=Role.SYSTEM, content="别写打斗", chapter=40),
+    AgentMessage(role=Role.SYSTEM, revokes_seq=5),
     AgentMessage(role=Role.USER, content="行，那就照这个写。😀 换\n行 制表\t符 空字\x00节"),
 ]
 
@@ -96,6 +102,33 @@ def test_a_conversation_comes_back_byte_for_byte(conn: Connection, pid: str) -> 
     assert got.conversation == wanted
     assert got.conversation.model_dump_json() == wanted.model_dump_json()
     assert got.history_count == len(NASTY)
+
+
+def test_a_rule_the_author_took_back_does_not_come_back_alive(
+    conn: Connection, pid: str
+) -> None:
+    """**逐字节相等还不够，得问它一句话。**
+
+    上一条量的是「每个字段都读回来了」；这一条量的是那几列**读回来还是同一个意思**。
+    `revokes_seq` 是这里唯一一列「意思全在数字上」的：它指的是**历史的下标**
+    （`Conversation.messages` 的下标），而这张表自己的 `seq` 把稳定前缀也数在内——
+    读写任意一头做一次换算，那个数就指到别的消息上了，而**逐字节对拷照样绿**
+    （存进去 5、读回来还是 5，只是它现在指着另一条消息）。
+
+    症状：作者按过的那个「取消」失效，那条规矩活过来，而没有任何东西会报错。
+    """
+    store = ChatStore(conn)
+    session = store.create(pid, house_style="写得冷一点")  # ← 前缀两行，历史下标从这儿错开
+    store.append(pid, session.id, base_count=0, messages=NASTY)
+    got = store.load(pid, session.id)
+    assert got is not None
+
+    revoked = got.conversation.messages[6]
+    assert is_revocation(revoked) and revoked.revokes_seq == 5
+    assert is_rule(got.conversation.messages[5]), "样本里那条规矩没了 —— 下面这条是空的"
+    assert live_rules(got.conversation, 40) == (), (
+        "读回来之后那条被取消的规矩又活了 —— 多半是 `revokes_seq` 被当成了本表的 seq"
+    )
 
 
 def test_the_stable_prefix_is_stored_not_regenerated(conn: Connection, pid: str) -> None:

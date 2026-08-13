@@ -211,7 +211,11 @@ def a_wired_context(world: World, **overrides: Any) -> ToolContext:
     return world.context(**base)
 
 
-ALL_TEN = (
+MAX_CALLS_PER_STEP = 6
+"""一步之内最多发几个（`TurnLimits.max_calls_per_step` 的默认值，这儿显式写一遍是为了
+下面那个切点算得出来）。"""
+
+EVERY_TOOL = (
     ("scene_constraints", {"chapter": CHAPTER}),
     ("character_state", {"chapter": CHAPTER, "character": "萧决"}),
     ("book_index", {}),
@@ -221,11 +225,15 @@ ALL_TEN = (
     ("draft_chapter", {"chapter": CHAPTER, "goal": "写萧决独自走进北荒"}),
     ("save_draft", {"draft_id": DRAFT_ID}),
     ("read_draft", {"draft_id": DRAFT_ID}),
+    ("remember_rule", {"rule": "这一章别写打斗"}),
     ("ask_author", {"question": "这一场你想让萧决知道那件事吗？",
                     "options": ["让他知道", "先瞒着他"]}),
 )
 """**表里每一条，一条不落。** `ask_author` 排在最后是必须的：它会当场收掉这一轮
-（ADR 0024），排在中间的话它后面那几条一个都跑不到。"""
+（ADR 0024），排在中间的话它后面那几条一个都跑不到。
+
+**这里不写「几条」**：数量随表长，而它有一条自己的断言（下面那句 `called == TOOL_NAMES`）
+——写死一个数只会在加工具的那天多红一处，而那一处红的是数字不是事实。"""
 
 
 @dataclass
@@ -243,12 +251,15 @@ class WholeTable:
 
 
 def run_the_whole_table(world: World, *, screen: Screen | None = None) -> WholeTable:
-    """一次 `run_turn` 里把表里十条工具全叫一遍，**每一条都要 `ok=True`**。
+    """一次 `run_turn` 里把表里每一条工具都叫一遍，**每一条都要 `ok=True`**。
 
-    十条一次发完会撞 `max_calls_per_step`（默认 6），所以分两步——这也更接近真形态。
+    一次全发完会撞 `max_calls_per_step`（默认 6），所以分两步——这也更接近真形态。
+    **切点按批宽度算，不写死**：加一条工具就该自动落到第二批里，而不是让这一行悄悄
+    发出一批超宽的调用（那时这一轮会停在 `BATCH_TOO_WIDE` 上，一条工具都跑不到）。
     """
     board = screen if screen is not None else Screen()
-    first, second = ALL_TEN[:5], ALL_TEN[5:]
+    cut = len(EVERY_TOOL) - MAX_CALLS_PER_STEP
+    first, second = EVERY_TOOL[:cut], EVERY_TOOL[cut:]
     model = ScriptedModel(
         script=[
             wants(*[(name, json.dumps(args)) for name, args in first],
@@ -265,7 +276,7 @@ def run_the_whole_table(world: World, *, screen: Screen | None = None) -> WholeT
         model=model,
         ledger=Ledger(),
         on_event=board,
-        limits=TurnLimits(max_steps=4, max_calls_per_step=6),
+        limits=TurnLimits(max_steps=4, max_calls_per_step=MAX_CALLS_PER_STEP),
     )
     # **按 `call_id` 认领，不按下标对齐**：位置对齐在有壳（`UNRUN_CALL`）的那一轮会
     # 整体错位，而错位的症状是「某条工具的返回里没有那句话」——读起来像一个泄漏结论。
@@ -445,7 +456,7 @@ def test_the_author_can_still_tell_what_it_was_doing(world: World) -> None:
     )
     asked = ran.screen.of(TurnEventKind.ASKED_AUTHOR)
     assert asked and asked[0].asked is not None
-    assert asked[0].asked.question == ALL_TEN[-1][1]["question"]
+    assert asked[0].asked.question == EVERY_TOOL[-1][1]["question"]
 
 
 # ══════════════════════════════════════════════════════════════════════════

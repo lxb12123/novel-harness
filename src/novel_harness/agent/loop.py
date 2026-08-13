@@ -88,6 +88,9 @@ WebSocket、SSE、终端刷屏都是**适配器**的事——扔掉适配器、`
 
 **作者定下的规矩**（`rules.py`）在这条链之外：它不按预算剪，只按章号过期
 （ADR 0023 那张表的第二行——「小、跨轮有效、丢了最气人」）。
+**它进 canonical 的唯一入口也在这个文件里**：模型叫一次 `remember_rule`，
+这一层在收场时把它贴成一条 SYSTEM 消息（`finish()`）——章号来自
+`ToolContext.working_chapter`，作者和模型都碰不到它（约束 10）。
 
 **「正文永不压缩」在这一层是白拿的**：这里只剪不压，一个字都不摘要
 （摘要是 3.4 的事，而边界四管着它：总结不许含图谱事实）。剪掉的工具返回重查一次就有，
@@ -202,6 +205,26 @@ class AgentMessage(BaseModel):
     pruned: bool = False
     """这条工具返回已经被剪成一句占位。**不许把它当成「工具返回了这么一句」**。"""
 
+    revokes_seq: int | None = None
+    """这条消息**撤销的是第几条**（作者取消了一条自己定下的规矩，ADR 0023 / 迁移 011）。
+
+    坐标是**同一段历史里的下标**（`messages` 的下标，也就是 `rules.AuthorRule.seq`），
+    不是会话表里那一列 `seq`——那儿的编号把稳定前缀也数在内。
+
+    ── 为什么撤销是一条新消息，而不是把那条改掉或删掉 ──────────────────────
+
+    canonical **只增不改**：读回来重建出的 `Conversation` 必须和存进去之前逐字节相同，
+    删一行就把这条不变量拆了，而它错的时候没有任何东西会报错。
+
+    **也不能靠「再说一遍」表达撤销**：那条通路已经被「说第二遍 = 从批级升到章级」占用了
+    （`rules.REPEAT_TO_WIDEN`），作者想取消，系统会听成加强。所以撤销必须有一个**结构上
+    的槽**而不是一段字——这一位就是那个槽，整条消息的正文是空的。
+
+    **这一层不校验它指得对不对**：`Conversation` 也用来装一段**尾巴**（会话列表数
+    `pending` 时读的就是尾巴），那时它指的东西根本不在手上。判据在
+    `rules._revoked_indices`，越界一律忽略。
+    """
+
 
 PRUNED_RESULT = "（这条查询结果已经从上下文里清掉了。需要就重新查一次——重新查到的还是当前的。）"
 """被剪掉的工具返回留下的占位。
@@ -279,7 +302,7 @@ class Conversation(BaseModel):
     messages: tuple[AgentMessage, ...] = ()
 
     @model_validator(mode="after")
-    def _prefix_is_chapter_free(self) -> Conversation:
+    def _prefix_holds_nothing_that_moves(self) -> Conversation:
         for message in self.prefix:
             if message.chapter is not None:
                 raise ValueError(
@@ -288,6 +311,10 @@ class Conversation(BaseModel):
                 )
             if message.role is not Role.SYSTEM:
                 raise ValueError("稳定前缀只放 system 消息：别的角色都会随对话变。")
+            if message.revokes_seq is not None:
+                # 撤销的坐标是**历史**的下标（`AgentMessage.revokes_seq`），前缀里放一条
+                # 就是拿一个坐标系去指另一个坐标系——它指到的永远是别的消息。
+                raise ValueError("稳定前缀里放不了撤销记录：它指的是历史里的一条。")
         return self
 
     @property
@@ -574,6 +601,21 @@ def project(
 
     ── 四段，顺序不能反 ──────────────────────────────────────────────
 
+    **零、把不生效的规矩和撤销记录拿掉**（`expired_rules`，ADR 0023 决策二）：作者定下的
+    规矩默认**只管当前这一章**，切章自动失效；他取消掉的那些也在这一步没的。
+    **它必须排在所有删减之前**：撤销的坐标是 canonical 的下标
+    （`AgentMessage.revokes_seq`），下一档会从中间摘掉消息，摘完那个下标就指到别的
+    消息上了。**判据是 `!=`，而且方向和下一档是反的**：
+
+    | | 拿不准时 | 为什么 |
+    |---|---|---|
+    | `must_not_reveal`（下一档） | **留着**（`>` 只丢往后的） | 说破了收不回来 |
+    | **作者的偏好**（这一档） | **放掉**（`!=`，换一章就没了） | 留着 = 第 200 章写不出打戏，而**作者不知道为什么** |
+
+    所以 `chapter is None` 时这一档**清空**，而下一档**全留**——同一个「不知道第几章」，
+    两个相反的动作，因为两边猜错的代价不对称。判据全在 `rules.surviving_rule_indices`，
+    这儿不写第二份。
+
     **一、按章号取**（`off_chapter`）：绑在**更后面**的章上的工具返回不进这一份。
     作者会从第 90 章回头改第 40 章，那时「最近」是错的坐标——对话的近端讲的是第 90 章，
     而第 40 章的 `must_not_reveal` 是第 90 章那份的**超集**。让那份更短的清单留在
@@ -596,18 +638,6 @@ def project(
     过期（人已经死了、地方已经换了）。那是「话说错了」，作者一眼看得见；而丢掉一条
     `must_not_reveal` 是「稿子崩了」，没有任何东西会报错。这条 ADR 的全部重量都在
     「它错的时候不会报错」上，所以换法是往看得见的那一侧换。
-
-    **一之二、把过期的规矩丢掉**（`expired_rules`，ADR 0023 决策二）：作者定下的规矩
-    默认**只管当前这一章**，切章自动失效。**判据是 `!=`，而且方向和上面那一档是反的**：
-
-    | | 拿不准时 | 为什么 |
-    |---|---|---|
-    | `must_not_reveal`（上一段） | **留着**（`>` 只丢往后的） | 说破了收不回来 |
-    | **作者的偏好**（这一段） | **放掉**（`!=`，换一章就没了） | 留着 = 第 200 章写不出打戏，而**作者不知道为什么** |
-
-    所以 `chapter is None` 时这一档**清空**，而上一档**全留**——同一个「不知道第几章」，
-    两个相反的动作，因为两边猜错的代价不对称。判据全在 `rules.surviving_rule_indices`，
-    这儿不写第二份。
 
     **二、把过期的正文换掉**（`stale_manuscript`）：作者在编辑器里改过的那一章，
     会话里那份快照就不再是「第 N 章是什么」的答案了——而它是**被发出去的那一份**，
@@ -636,9 +666,28 @@ def project(
     # `Conversation` / `Role`（canonical 的形状住在这儿），所以它在模块级 import 本文件；
     # 本文件反过来在模块级 import 它就是一个真的循环。同 `agent/model.py` 里那处
     # `from ..draft.provider import _build_client`——这个包已经有这个先例。
-    from .rules import expired_rule_count, is_rule, surviving_rule_indices
+    from .rules import expired_rule_count, is_revocation, is_rule, surviving_rule_indices
 
     kept = list(conversation.messages)
+
+    # 第零档排在**最前面**（在 ADR 那张表里它属于「取什么」，和下面按章号取同一档）。
+    # **顺序不是风格问题**：撤销的坐标是 canonical 的下标（`AgentMessage.revokes_seq`），
+    # 而下面那一档会从中间摘掉消息——摘完再来解释那个下标，它指的就是别的消息了。
+    # 整条判据在 `rules.py`，这儿只负责把不生效的那几条拿掉并报个数。
+    live_rules = surviving_rule_indices(kept, chapter)
+    expired_rules = 0
+    if any(is_rule(message) for message in kept):
+        # **报的是「有几条规矩不再生效」，不是「丢了几条消息」**：同一条被记了两遍、
+        # 这儿只留最后一遍是**去重**，不是过期（见 `rules.expired_rule_count`）。
+        expired_rules = expired_rule_count(kept, live_rules)
+    kept = [
+        message
+        for index, message in enumerate(kept)
+        # 撤销记录一条都不发出去：它的意义全在结构槽上，正文是空的，而模型该看到的
+        # 结果是「那条规矩从来没被说过」——发一条空的 system 消息只是白花钱。
+        if not is_revocation(message) and (not is_rule(message) or index in live_rules)
+    ]
+
     off_chapter = 0
     if chapter is not None:
         stale = {
@@ -651,20 +700,6 @@ def project(
         if stale:
             off_chapter = len(stale)
             kept = _drop_calls(kept, stale)
-
-    # 规矩排在按章号取那一档里（它也是「取什么」不是「取多少」），但**它是另一个方向**：
-    # 见上面那张表。整条判据在 `rules.py`，这儿只负责把过期的那几条拿掉并报个数。
-    live_rules = surviving_rule_indices(kept, chapter)
-    expired_rules = 0
-    if any(is_rule(message) for message in kept):
-        # **报的是「有几条规矩不再生效」，不是「丢了几条消息」**：同一条被记了两遍、
-        # 这儿只留最后一遍是**去重**，不是过期（见 `rules.expired_rule_count`）。
-        expired_rules = expired_rule_count(kept, live_rules)
-        kept = [
-            message
-            for index, message in enumerate(kept)
-            if not is_rule(message) or index in live_rules
-        ]
 
     # 过期的正文排在预算之前：占位比整章正文短得多，先换掉，第一、二档才知道自己
     # 到底还差多少字（反过来的话预算会照着一份已经不该发出去的正文去剪别的东西）。
@@ -1147,8 +1182,8 @@ class TurnLimits:
     进 `charged`，于是**每派发完一个就查一次 `max_tokens`**。这条必须有，因为次数闸
     在这儿是宽的：六个 `draft_chapter` 是六稿正文，次数上完全合法。
 
-    默认 6：表里十个工具，一次把索引那几层一起查了是正常行为；六个以上是「它想一口气
-    做完一整章的活」，那时停下来问作者比替他花钱对。
+    默认 6：一次把索引那几层一起查了是正常行为；六个以上是「它想一口气做完一整章的活」，
+    那时停下来问作者比替他花钱对。
     """
 
     parallel_tools: int = 1
@@ -1509,6 +1544,7 @@ def run_turn(
     stale_calls = _stale_manuscript_calls(conversation, context)
 
     live = conversation
+    remembered: list[AgentMessage] = []
     steps = 0
     tool_calls = 0
     reported = 0
@@ -1561,6 +1597,27 @@ def run_turn(
             + _estimate_tokens(receipt.text),
         )
 
+    def remember(outcome: ToolOutcome) -> None:
+        """这次调用记下的那条规矩**排进队**（ADR 0023 决策二）。**不当场贴进 canonical。**
+
+        贴在这儿它就夹在同一批的两条 `tool` 消息中间，而 wire 上那一批必须是连着的
+        （同 `PRUNED_RESULT`：一条带 `tool_calls` 的 assistant 必须被同样多条 `tool` 消息
+        接住）。**挪到批尾不改变任何判据**：规矩的两条判据（作者说了几遍 / 这一批过去了
+        没有）数的都是**相对于作者那句话**的位置，而这一批里没有作者的话。
+
+        章号来自 `ToolContext.working_chapter`，在工具那一侧就已经绑好了
+        （`tools._handle_remember_rule`）——**这儿不重新取一次**，取两次就有两处会漂。
+        `rule_message` 在这儿只负责造那条消息：它的三种拒绝（没坐标 / 空 / 超长）
+        在工具那一侧已经全部发生过，走到这儿的都是过了闸的。
+        """
+        if outcome.remembered is None:
+            return
+        from .rules import rule_message  # 断环，同 `project()`
+
+        remembered.append(
+            rule_message(outcome.remembered.rule, chapter=outcome.remembered.chapter)
+        )
+
     def bill_outcome(outcome: ToolOutcome) -> ToolOutcome:
         """一次工具调用的钱（`DraftProduct.calls` → `bill`）。**每条结果只经过它一次。**
 
@@ -1603,7 +1660,16 @@ def run_turn(
     ) -> TurnResult:
         """收场。**「为什么停」那一声在这儿喊，一条出口都绕不过去**——
         `finish` 是这个函数唯一的 return 形状，所以「停了却没人说为什么」构造不出来。
+
+        **作者定下的规矩也在这儿落进 canonical**，理由是同一条：十一种停法各有各的出口，
+        逐个记得去贴的话迟早漏掉一种，而漏掉的形态是「他说了，系统答应了，下一轮它就忘了」。
+        `save()` 跟着走一次——不然那几条只活在返回值里，而调用方可能只认 `persist`。
         """
+        nonlocal live
+        if remembered:
+            live = live.extended(*remembered)
+            remembered.clear()
+            save()
         emit(TurnEvent.stopped(reason))
         return TurnResult(
             conversation=live,
@@ -1644,6 +1710,7 @@ def run_turn(
             return finish(StopReason.AUTHOR_STOPPED)
         outcome = run_tool(call, index=position + 1, total=len(pending))
         live = live.extended(_outcome_message(outcome))
+        remember(outcome)
         tool_calls += 1
         # **每补跑一个存一次**，而不是补完整批再存：否则死在补跑中间的下一次 resume
         # 又从整批的第一个开始，而「重放免费」对表里的 `draft_chapter` 不成立。
@@ -1785,6 +1852,7 @@ def run_turn(
                     out.append(_unrun([calls[index]])[0])
                     continue
                 bill_outcome(already)
+                remember(already)
                 tool_calls += 1
                 emit(TurnEvent.tool_finished(already, index=index + 1, total=len(calls)))
                 out.append(_outcome_message(already))
@@ -1807,6 +1875,7 @@ def run_turn(
 
             # **裸调用，外面没有 try/except**（模块 docstring 第三节）。
             outcome = bill_outcome(batch.take(position))
+            remember(outcome)
             tool_calls += 1
             emit(TurnEvent.tool_finished(outcome, index=position + 1, total=len(calls)))
             live = live.extended(_outcome_message(outcome))

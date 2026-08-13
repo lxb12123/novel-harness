@@ -79,7 +79,7 @@ function widthIs(px: number) {
 describe("窄档（默认）：一稿一张卡", () => {
   it("三稿都在，屏幕上说的是「第几稿」，**那一串内部标识一个字符都不上屏**", async () => {
     const user = userEvent.setup();
-    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: turnWith(THREE) }]);
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) }]);
     await runTurn(user);
 
     expect(screen.getByText("第 1 稿")).toBeInTheDocument();
@@ -92,7 +92,7 @@ describe("窄档（默认）：一稿一张卡", () => {
   it("**推荐那一版摊开，另两版只有自述 + 开头** —— 入口不许三章硬摊", async () => {
     const user = userEvent.setup();
     renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn$/, body: turnWith(THREE) },
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
       { match: /\/drafts\/[^/]+$/, body: DETAIL },
     ]);
     const spy = vi.spyOn(globalThis, "fetch");
@@ -111,7 +111,7 @@ describe("窄档（默认）：一稿一张卡", () => {
     const user = userEvent.setup();
     const none = THREE.map((d) => ({ ...d, landed: false }));
     renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn$/, body: turnWith(none) },
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(none) },
       { match: /\/drafts\/[^/]+$/, body: DETAIL },
     ]);
     const spy = vi.spyOn(globalThis, "fetch");
@@ -126,7 +126,7 @@ describe("窄档（默认）：一稿一张卡", () => {
   it("点「展开」才去取那一整章 —— 取回来的是全文，不是那段预览", async () => {
     const user = userEvent.setup();
     renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn$/, body: turnWith(THREE) },
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
       { match: /\/drafts\/[^/]+$/, body: DETAIL },
     ]);
     const spy = vi.spyOn(globalThis, "fetch");
@@ -144,7 +144,7 @@ describe("窄档（默认）：一稿一张卡", () => {
 
   it("**自述是空的就什么都不画** —— 替它编一句「这一版更冷」正是引擎不许做的事", async () => {
     const user = userEvent.setup();
-    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: turnWith(THREE) }]);
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) }]);
     await runTurn(user);
 
     expect(THREE[2].note).toBe(""); // 探针
@@ -154,7 +154,7 @@ describe("窄档（默认）：一稿一张卡", () => {
 
   it("有稿子进了书就说一句，**而且说得出怎么退**", async () => {
     const user = userEvent.setup();
-    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: turnWith(THREE) }]);
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) }]);
     await runTurn(user);
     // 落盘不问作者（ADR 0021 的核心），所以这一侧欠他「看得见 + 改得掉」。
     await screen.findByText(/已经写进书里了.*历史/);
@@ -170,7 +170,7 @@ describe("被砍断的那一稿：屏幕必须说它没写完", () => {
   it("**那句标注画出来了**，而且照抄后端那一句", async () => {
     const user = userEvent.setup();
     const half = [variant({ id: "draft:ID46", ordinal: 1, stopped_reason: STOPPED })];
-    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: turnWith(half) }]);
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(half) }]);
     await runTurn(user);
 
     expect(screen.getByText(STOPPED)).toBeInTheDocument();
@@ -180,7 +180,7 @@ describe("被砍断的那一稿：屏幕必须说它没写完", () => {
 
   it("**写完的那几稿身上一个字都不多**（自守卫：恒画等于没画）", async () => {
     const user = userEvent.setup();
-    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: turnWith(THREE) }]);
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) }]);
     await runTurn(user);
 
     expect(THREE.every((d) => d.stopped_reason === "")).toBe(true); // 探针：真 dump 就是空的
@@ -190,7 +190,7 @@ describe("被砍断的那一稿：屏幕必须说它没写完", () => {
   it("它画在正文**前面** —— 它改变的是后面那段字该怎么读", async () => {
     const user = userEvent.setup();
     const half = [variant({ id: "draft:ID47", ordinal: 1, stopped_reason: STOPPED })];
-    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: turnWith(half) }]);
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(half) }]);
     await runTurn(user);
 
     const card = document.querySelector(".draft-card")!;
@@ -204,7 +204,7 @@ describe("宽档：拖到一定宽度就并排", () => {
     widthIs(3 * COLUMN_MIN_PX + 40);
     const user = userEvent.setup();
     renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn$/, body: turnWith(THREE) },
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
       { match: /\/drafts\/[^/]+$/, body: DETAIL },
     ]);
     const spy = vi.spyOn(globalThis, "fetch");
@@ -220,7 +220,7 @@ describe("宽档：拖到一定宽度就并排", () => {
   it("宽度不够就还是窄档 —— 三条读不下去的竖缝比摞着更糟", async () => {
     widthIs(3 * COLUMN_MIN_PX - 1);
     const user = userEvent.setup();
-    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: turnWith(THREE) }]);
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) }]);
     await runTurn(user);
 
     expect(document.querySelector(".draft-cards.wide")).toBeNull();
@@ -230,7 +230,7 @@ describe("宽档：拖到一定宽度就并排", () => {
 describe("第三档的入口：那条链接", () => {
   it("链接指向同一个应用的另一条路由，**地址里只有章号**", async () => {
     const user = userEvent.setup();
-    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: turnWith(THREE) }]);
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) }]);
     await runTurn(user);
 
     const link = screen.getByRole("link", { name: /并排比第 2 章的稿子/ });
@@ -241,7 +241,7 @@ describe("第三档的入口：那条链接", () => {
 
   it("点它的时候把「哪本书的第几章」留给那个标签页（地址里没有书）", async () => {
     const user = userEvent.setup();
-    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: turnWith(THREE) }]);
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) }]);
     await runTurn(user);
     expect(readCompareHandoff()).toBeNull();
 

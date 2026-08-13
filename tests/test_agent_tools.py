@@ -277,6 +277,10 @@ def _surfaces_of(world: World) -> dict[str, str]:
                 question="这一场你想让萧决知道那件事吗？",
                 options=["让他知道", "先瞒着他"],
             ),
+            # ADR 0023 的记规矩：出参会原样带回作者那句话，**它也是一个面**。
+            # 这里记的是一句干净的偏好——测的不是「模型会不会把秘密写进规矩里」
+            # （语义判断，引擎判不了），是**引擎会不会往里加料**（handler 里只有那一句）。
+            _call("remember_rule", rule="这一章别写打斗"),
             # 书内索引的四层，一层都不能漏：它们新开了四个模型看得见的面。
             _call("book_index"),
             _call("character_chapters", characters=["萧决", "顾清音"]),
@@ -290,7 +294,7 @@ def _surfaces_of(world: World) -> dict[str, str]:
         ],
         context,
     )
-    assert [o.ok for o in outcomes] == [True] * 10 + [False] * 4
+    assert [o.ok for o in outcomes] == [True] * 11 + [False] * 4
     assert desk.seen, "起草工具没把约束交给起草侧 —— 第 4 个面没被采到，这条测试是空的"
 
     surfaces = {f"{o.name} 的返回（ok={o.ok}）": o.content for o in outcomes}
@@ -507,6 +511,9 @@ def test_the_tool_table_stays_put() -> None:
             # 问作者（ADR 0024）：表里第一条**不查东西也不做东西**的工具，
             # 它把一句问话交出去，然后这一轮就结束了。
             "ask_author",
+            # 记规矩（ADR 0023 决策二）：**入参里没有章号**，那个数只能是引擎手里的
+            # `working_chapter`（约束 10）。它也不写任何东西——贴进 canonical 的是 loop。
+            "remember_rule",
         }
     )
     by_name = {spec.name: spec for spec in TOOL_TABLE}

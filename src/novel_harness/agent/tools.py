@@ -34,6 +34,7 @@ agent 调一次就把 PLANNED 秘密的正文读进对话历史，而对话是�
 | `save_draft`        | 把某一稿写进它那一章（**不问作者**） | —— 见下面「落盘」那一节 |
 | `read_draft`        | 按 id 把某一稿的全文拿回来 | —— 最贵的一条，只在要合并两版时调 |
 | `ask_author`        | 停下来问作者一句，给他几个可点的选项 | —— 见下面「问作者」那一节 |
+| `remember_rule`     | 把作者刚定下的一条规矩记下来 | —— 见下面「记规矩」那一节 |
 
 **书内索引**（`index.py`，四层，越往下越贵；那份 docstring 是它的规格）：
 
@@ -89,6 +90,34 @@ ADR 0019 边界一原来的最后一条是「写正文必须作者确认，模�
   作者看不出来」是语义判断，那是**模型**的活（ADR 0005 禁的是引擎）。
 
 **它结束这一轮**：判据是出参的**类型**（`AuthorQuestion`），见 `ToolOutcome.asked`。
+
+── 记规矩：**入参只有那句话，章号是引擎的**（ADR 0023 决策二，2026-08-12）────────
+
+`remember_rule` 是表里第二条不查东西的工具。作者在对话里说的「别写打斗」「冷一点」
+是**偏好不是事实**——它不进 canon（没有引语、没有证据、没有一条边安放得了它），
+但它必须活过剪枝，所以它变成 canonical 历史里的一条记录（`rules.rule_message`）。
+四条边界：
+
+- **入参里没有章号，而且永远不许有。** 章号只能来自 `ToolContext.working_chapter`
+  ——作者填不了（约束 10：表单里有章号输入框 = 邀请污染），模型也传不了（给它一个
+  `chapter` 参数，它就能把一条规矩钉在第 9999 章上，而那正是「不许把有效期改成 9999」
+  要防的）。**没有坐标就拒绝记录**：一条过不了期的规矩会跟着作者走到第 200 章，
+  而他不知道它在。
+- **它不写任何东西。** handler 只造一条消息交回去，**贴进 canonical 的是 loop**
+  （`agent/loop.py::run_turn` 的 `finish()`）——同 `ToolContext` 上没有写入面那条纪律：
+  这一层碰不到会话，也就不可能改写历史。
+- **「说了几遍」是按字比的**（`rules.rule_key`：归一化之后**字节相等**），所以工具描述
+  里写死了「同一条要用一模一样的措辞」。判它「是不是一个意思」是语义判断，ADR 0005 禁。
+- **出参不回吐那句话**（`RememberRuleResult.rule` 是 `exclude` 的）：工具返回只按章号
+  **往前**筛，回吐一次就等于把一条第 40 章的规矩以「引擎确认过的」的形态钉进第 200 章的
+  prompt——那正是 ADR 0023 点名的那个故障。
+
+**残余代价（接受，同 ADR 0019 边界二那一条）**：模型这次调用的参数
+（`{"rule": "别写打斗"}`）躺在它自己那条 assistant 消息里，**它不按章号过期**——
+那条规矩到第 200 章早就不生效了，而「我当时记过这么一句」还在历史里。改写模型说过的话
+是另一种病，判它又需要读懂那句话（语义判断）。所以这一层的保证收窄成一句可断言的话：
+**引擎自己说的每一句里，都没有一条过了期的规矩**；真正生效的那一条（SYSTEM 消息）
+该没就没了。
 
 ── 边界二在这里的落点：**没有一个工具收约束** ──────────────────────────
 
@@ -249,6 +278,34 @@ class AskAuthorArgs(BaseModel):
                     "不是一段解释——把解释放进问句前面那句正文里。"
                 )
         return self
+
+
+# ── `RememberRuleArgs` 的那几条约束，写在类外面（**docstring 要花钱**）──────────
+#
+# 入参模型的 docstring 会原样进 `model_json_schema()` 的 `description`，也就是
+# **每一轮、每一次调用都重发一遍**（`tool_declarations()` 是稳定前缀的一部分，
+# 但那是省缓存不是省钱；ADR 0023「前置」量的正是这块地板）。所以给维护者看的理由留在
+# 这儿，类里只留说给模型听的那一句。
+#
+# **这里没有 `chapter`，也没有「管多久」**：两样都不是模型的。章号是引擎手里的坐标
+# （约束 10），而「管这一批还是管整章」由「作者说了几遍」决定（`REPEAT_TO_WIDEN`，
+# 一条集合判断）。给模型任何一个旋钮，它都能把一条随口的偏好变成常驻——而 ADR 0023
+# 把那一侧点名成最贵的：**一条隐形的规矩跟着作者走，他不知道它在。**
+#
+# 字段叫 `rule` 而不是 `text`：`tests/test_agent_tools.py` 那张网拦的是「正文形状的入参」
+# （模型能拿一段自己编的字去盖作者的书）。一条规矩不是正文，但**长得像正文的字段名一律
+# 不许出现在工具入参上**，那条判据认的就是名字。
+class RememberRuleArgs(BaseModel):
+    """记下作者刚定的一条规矩。**只有那句话，没有章号。**"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    rule: str = Field(
+        min_length=1,
+        description=(
+            "他要的那一句，用他自己的说法，一句话。太长会被退回来让你压短。"
+        ),
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -466,6 +523,51 @@ class AskAuthorResult(AuthorQuestion):
     """说给**模型**听的那句：这一轮到此为止。**不是给作者的。**"""
 
 
+class RememberedRule(BaseModel):
+    """作者定下的一条规矩，**已经归一化、已经绑好章号**（ADR 0023 决策二）。
+
+    **它是一个类型，不是一个约定的字段名**——`ToolOutcome.remembered` 认的是它
+    （同 `AuthorQuestion`），所以加第二条会记规矩的工具那天它自动被认出来。
+
+    `chapter` 只可能来自 `ToolContext.working_chapter`：这个类型构造不出一条没有章号的
+    规矩，而**入参上根本没有那个格子**（`RememberRuleArgs`）。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    rule: str
+    chapter: int = Field(ge=1)
+
+
+class RememberRuleResult(RememberedRule):
+    """`remember_rule` 的出参：**只说记在第几章**，不回吐那句话。
+
+    ── 那一位为什么 `exclude`（这不是洁癖，是 ADR 0023 的安全方向）────────────
+
+    出参会原样进对话历史（`ToolOutcome.content`），而工具返回只按章号**往前**筛
+    （`>`，那个方向是给 `must_not_reveal` 定的）。回吐那句话的话，一条第 40 章的规矩会
+    以「引擎确认过的一条结构化规矩」的形态留在第 200 章的 prompt 里——**正是 ADR 0023
+    点名的那个故障**（第 200 章写不出打戏，而作者不知道为什么），只是换了个地方发生。
+
+    模型不需要它：它上一句刚打进来的就是那句话。真正生效的那一条住在 canonical 的
+    SYSTEM 消息里，**它会按章号过期**，那才是这套机制唯一的出口。
+
+    **剩下的那半截说清楚**：模型自己那次调用的参数（`{"rule": …}`）躺在它自己的
+    assistant 消息里，**引擎删不掉也不该删**（改写模型说过的话是另一种病）。
+    那一档属于 ADR 0019 边界二自己列成「接受」的残余代价——是它自己的话，不是引擎的话。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    rule: str = Field(exclude=True)
+    """记下的那句话。**`exclude=True` = 它不进 `content`，也就是不进对话历史**
+    （同 `ToolOutcome.calls` 那条「账单原料不进对话」）。loop 从
+    `ToolOutcome.remembered` 拿它——那条路不经过对话。"""
+
+    note: str = ""
+    """说给**模型**听的那句：它管多久、怎么才算说了第二遍。**不是给作者的。**"""
+
+
 class ToolOutcome(BaseModel):
     """一次工具调用的结果。**`content` 就是要贴回对话里的那段字。**
 
@@ -515,6 +617,20 @@ class ToolOutcome(BaseModel):
 
     **只在 `ok=True` 时非空**：参数不合法的那一次不是一次提问，模型该把参数改对重发，
     而不是让一次填错的调用替它结束这一轮。
+    """
+
+    remembered: RememberedRule | None = None
+    """这一次记下了作者的一条规矩（ADR 0023 决策二）。非空 ⇒ **loop 要把它贴进 canonical**。
+
+    ── 为什么它在这儿，而不是让工具自己去写 ────────────────────────────────
+
+    `ToolContext` 上没有会话、没有连接（边界一），所以工具这一层**够不着** canonical——
+    「模型改写了作者的历史」在类型上不可能，不是靠纪律。它只造出那条规矩，
+    贴不贴、贴在哪儿由 `agent/loop.py` 决定（它贴在这一批工具返回**之后**，
+    因为 wire 上那一批必须连着）。
+
+    判据同 `asked`：**出参的类型**（`isinstance(payload, RememberedRule)`），不是工具名。
+    **只在 `ok=True` 时非空**——没通过校验的那一次什么都没记下。
     """
 
 
@@ -701,6 +817,40 @@ def _handle_read_draft(args: DraftIdArgs, context: ToolContext) -> DraftFullText
     )
 
 
+RULE_ACKNOWLEDGED: Final = (
+    "记下了。它只管这一章，作者切到别的章就自动没了；他要是再说一遍，你就再记一遍——"
+    "**同一条得用一模一样的措辞**（说了几遍是按字比的，换个说法就成了两条），"
+    "说到第二遍它就管住整章。"
+)
+"""`remember_rule` 交回给**模型**的那句话。**它不上屏。**
+
+最后那半句不是客套：升到章级的判据是 `rules.rule_key` 归一化之后**字节相等**
+（ADR 0005：「这两句是不是一个意思」是语义判断，引擎不做）。模型每次换个说法重述，
+计数就从头开始，那条规矩少活一段章级——方向是「放掉」那一侧，和 ADR 0023 那张表一致，
+但它是可以避免的浪费，所以这句话得说出口。
+"""
+
+
+def _handle_remember_rule(args: RememberRuleArgs, context: ToolContext) -> RememberRuleResult:
+    """把作者刚定下的那条规矩造出来。**这一层不写它**（见 `ToolOutcome.remembered`）。
+
+    **章号在这一行里被绑死**：它来自 `context.working_chapter`，模型碰不到、作者也填不了。
+    `rule_message` 的三种拒绝（没有坐标 / 空 / 超长）全是 `ValueError`，`dispatch` 会把
+    它们变成一条 `ok=False` 的返回贴回对话——那几句本来就是写给模型看的中文。
+    """
+    from .rules import rule_message  # 断环，同 `loop.project()`
+
+    message = rule_message(args.rule, chapter=context.working_chapter)
+    return RememberRuleResult(
+        rule=message.content,
+        # `rule_message` 保证它不是 `None`（没有坐标那一支已经拒了）；真漏了的话
+        # 这儿是一次 `ValidationError`（也是 `ValueError`）⇒ 同样变成一条拒绝，
+        # **而不是一条章号为空的规矩**。
+        chapter=message.chapter,
+        note=RULE_ACKNOWLEDGED,
+    )
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 工具表本身
 # ══════════════════════════════════════════════════════════════════════════
@@ -879,6 +1029,25 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         handler=_handle_ask_author,
         label="问你一句",
     ),
+    # ── 记规矩（ADR 0023 决策二）。**追加在表尾**，理由同上面那几条。
+    ToolSpec(
+        name="remember_rule",
+        description=(
+            "作者提了一条**怎么写**的要求（「别写打斗」「冷一点」「这段别太煽情」），"
+            "把它记下来。记下的那条会跟着他这一章走，下一轮你还看得见它。\n"
+            "**只记怎么写，不记书里发生了什么**：人物、关系、谁知道什么那些是书里的事实，"
+            "有它们自己的地方，从这儿进去只会变成一句谁也查不到的话。\n"
+            "**同一条要用一模一样的措辞**——他再说一遍你就再记一遍，两遍之后它管住整章；"
+            "而「说了几遍」是按字比的，你换个说法就成了两条，那条规矩就少活一段。\n"
+            "**没有章号这个参数**：记在第几章由这本书此刻打开的地方决定，你传不进来，"
+            "他也不填。他还没停在任何一章上时这一次会被退回来——那时先接着聊，别硬记。\n"
+            "**别每句话都记**：他随口的一句评价不是规矩，记多了等于给他攒了一堆他不知道"
+            "自己定过的规矩。"
+        ),
+        args=RememberRuleArgs,
+        handler=_handle_remember_rule,
+        label="记下你刚说的那条规矩",
+    ),
 )
 """**模式二的权限边界。这张表以外的能力，模型一律没有。**
 
@@ -1000,6 +1169,17 @@ def _asked_question(payload: BaseModel) -> AuthorQuestion | None:
     return AuthorQuestion(question=payload.question, options=payload.options)
 
 
+def _remembered_rule(payload: BaseModel) -> RememberedRule | None:
+    """这次调用有没有记下一条规矩（ADR 0023 决策二）。**判据是类型**，同 `_asked_question`。
+
+    **收窄成 `RememberedRule` 再交出去**：`RememberRuleResult` 上还有一句给模型的话
+    （`note`），loop 拿它去造 canonical 里那条消息时不该把那句也带上。
+    """
+    if not isinstance(payload, RememberedRule):
+        return None
+    return RememberedRule(rule=payload.rule, chapter=payload.chapter)
+
+
 def _validation_message(exc: ValidationError) -> str:
     """把 pydantic 的报错压成一句模型读得懂的话。**只带字段名和原因，不回显入参。**
 
@@ -1076,6 +1256,9 @@ def dispatch(call: ToolCall, context: ToolContext) -> ToolOutcome:
         # **只有成功这一条路带得出提问**（见 `ToolOutcome.asked`）：一次参数填错的
         # `ask_author` 不是一次提问，模型该把它改对重发。
         asked=_asked_question(payload),
+        # 同上：没通过校验的那一次什么都没记下（`remember_rule` 的三种拒绝走的是
+        # 上面那个 `ValueError` 分支，一条规矩都造不出来）。
+        remembered=_remembered_rule(payload),
     )
 
 

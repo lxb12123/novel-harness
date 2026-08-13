@@ -1,7 +1,7 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
-import { fixtures, renderWithApi } from "../test/harness";
+import { fixtures, renderWithApi, sseFrames, turnStream } from "../test/harness";
 import { devTerms, engineWords, machineWords, rawIds, screenText } from "../test/screenGuard";
 import { EDGE_ZH, type EdgeType } from "../api/types";
 import { useCoords } from "../store";
@@ -66,6 +66,10 @@ beforeEach(() => {
 const STATE_WITH_EDGES = { ...fixtures.characterState, edges: fixtures.states[0].edges };
 
 const stateRoute = (body: unknown) => [{ match: /\/characters\/.*\/state/, body }];
+
+/** 真 dump 的那一轮里**除回执以外**的那几帧（ADR 0024 第二刀）。
+ *  卡住回执就能把屏幕停在「还在跑」那一刻 —— 而那正是这三块新屏幕唯一活着的时候。 */
+const TURN_MIDDLE = fixtures.chatTurnEvents.filter((f) => !f.startsWith("event: receipt"));
 
 // ══════════════════════════════════════════════════════════════════════════
 // 1. 扫描面 —— 作者点得到的每一块屏幕
@@ -184,7 +188,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
         full: true,
       },
     };
-    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: noisy }]);
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: noisy }]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
     await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "问一句");
     await user.click(screen.getByRole("button", { name: "发送" }));
@@ -208,7 +212,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
         { ...one, id: "draft:ID45", ordinal: 3, note: "" },
       ],
     };
-    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: turn }]);
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turn }]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
     await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "写三个版本");
     await user.click(screen.getByRole("button", { name: "发送" }));
@@ -222,6 +226,128 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     expect(devTerms(screenText())).toEqual([]);
   });
 
+  // ── 一轮跑到一半那几块屏幕（ADR 0024 第二刀）─────────────────────────────
+  //
+  // **这三块是 2026-08-12 下午新长出来的**（进度行 / 逐字区 / 问题卡），而它们端着的
+  // 东西形状最可疑：事件上的 `kind` / `tool` / `reason` 全是 snake_case 机器码，
+  // 停下来问那一档还多一个 `asked_author`。没被扫到的组件等于没有守卫，这个仓库栽过。
+  //
+  // 喂的是**真 dump 的那一串帧**（`fixtures.chatTurnEvents`），不是手写的。
+
+  it("写作助手：一轮跑到一半（进度行 + 它说的那段话）", async () => {
+    const user = userEvent.setup();
+    let release!: (frame: string) => void;
+    const held = new Promise<string>((r) => (release = r));
+    renderWithApi(<ChatPanel />, [
+      {
+        method: "POST",
+        match: /\/turn\/events$/,
+        stream: [...TURN_MIDDLE, held],
+      },
+    ]);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "查一下");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    const strip = await screen.findByRole("status");
+    await waitFor(() => expect(strip.textContent).toContain("正在"));
+    expect(devTerms(screenText())).toEqual([]);
+    release(sseFrames([{ event: "receipt", data: fixtures.chatTurn }])[0]);
+    await screen.findByText(fixtures.chatTurn.message);
+  });
+
+  it("写作助手：正在逐字长出来的那一稿（含「还没落下第一个字」那一档）", async () => {
+    // **两档都要扫**：一格刚开、还没有一个字（真 dump 那一轮跑得太快，这一档从不出现），
+    // 和字已经在长。前者屏幕上只有一句引擎写的话，最容易在某次改动里变成一句英文。
+    const user = userEvent.setup();
+    const opened = JSON.parse(
+      TURN_MIDDLE.find((f) => f.includes('"kind":"draft_started"'))!.split("\ndata: ")[1],
+    );
+    let release!: (frame: string) => void;
+    const held = new Promise<string>((r) => (release = r));
+    renderWithApi(<ChatPanel />, [
+      {
+        method: "POST",
+        match: /\/turn\/events$/,
+        stream: [sseFrames([{ event: "turn", data: opened }])[0], held],
+      },
+    ]);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "写一稿");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await screen.findByText("还没落下第一个字。");
+    expect(devTerms(screenText())).toEqual([]);
+
+    release(
+      sseFrames([
+        { event: "turn", data: { ...opened, kind: "draft_delta", text: "风雪落在肩上。", said_to_author: "" } },
+      ])[0],
+    );
+    await screen.findByText("风雪落在肩上。");
+    expect(devTerms(screenText())).toEqual([]);
+  });
+
+  it("写作助手：它问了一句、作者还没答（**正常数据下这一档永远不亮**）", async () => {
+    // 第十一种停法（`asked_author`）。真 dump 那一轮是 `done`，所以这块卡片在
+    // 契约夹具里一次都不会被渲染 —— 正是它躲过守卫的方式。
+    const user = userEvent.setup();
+    const asked = {
+      ...fixtures.chatTurn,
+      reason: "asked_author",
+      message: "它有件事拿不准，问了你一句，正等着你答。",
+      asked: {
+        question: "这一场你想让萧决知道那件事吗？",
+        options: ["让他知道", "先瞒着"],
+      },
+    };
+    renderWithApi(<ChatPanel />, [
+      { method: "POST", match: /\/turn\/events$/, stream: turnStream(asked) },
+    ]);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "这一场怎么写");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await screen.findByRole("group", { name: "它在等你回一句" });
+    expect(devTerms(screenText())).toEqual([]);
+  });
+
+  it("写作助手：流断在半路那一档（屏幕上只剩那句「说不清为什么」）", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<ChatPanel />, [
+      { method: "POST", match: /\/turn\/events$/, stream: [TURN_MIDDLE[0]] },
+    ]);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "问一句");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await screen.findByText(/这一轮没跑成/);
+    expect(devTerms(screenText())).toEqual([]);
+  });
+
+  it("写作助手：作者按了停那一档（后端那句 + 半截的那一稿）", async () => {
+    // 「按了停」在回执上是 `author_stopped`，而那一稿带着 `stopped_reason`
+    // —— 两句都是后端写的中文，两句都得扫。
+    const user = userEvent.setup();
+    const one = fixtures.drafts.drafts[0];
+    const stopped = {
+      ...fixtures.chatTurn,
+      reason: "author_stopped",
+      message: "按你的意思停下了。已经查到的东西留着。",
+      drafts: [{ ...one, stopped_reason: "作者中途按了停，这一稿没写完。" }],
+    };
+    renderWithApi(<ChatPanel />, [
+      { method: "POST", match: /\/turn\/events$/, stream: turnStream(stopped) },
+    ]);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "写一稿");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await screen.findByText(stopped.message);
+    await screen.findByText(/这一稿没写完/);
+    expect(devTerms(screenText())).toEqual([]);
+  });
+
   it("写作助手：后端那句话里的 `**` 是重音，不是两颗星号", async () => {
     // `stop_wording(CONTEXT_FULL)` 里就有这么一对。不渲染 = 作者看见两颗星号；
     // 改那句话 = 第二份措辞源。所以这一层只负责把它画出来。
@@ -231,7 +357,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
       reason: "context_full",
       message: "这段对话说得太长，装不下了。开一段新的对话——**你说过的话一句都没被删掉**。",
     };
-    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: full }]);
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: full }]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
     await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "问一句");
     await user.click(screen.getByRole("button", { name: "发送" }));

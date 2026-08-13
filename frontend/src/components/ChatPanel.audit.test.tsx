@@ -231,7 +231,7 @@ describe("研发术语：整块面板的兜底分支", () => {
   it("**跑一轮被拒的时候**（真后端那一份 404 里一个 `message` 都没有）", async () => {
     const user = userEvent.setup();
     renderWatched(<ChatPanel />, [
-      { method: "POST", match: /\/turn$/, status: 404, body: CHAT_GONE },
+      { method: "POST", match: /\/turn\/events$/, status: 404, body: CHAT_GONE },
     ]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
     await user.type(say(), "问一句");
@@ -279,7 +279,7 @@ describe("研发术语：整块面板的兜底分支", () => {
   it("正在跑 + 按了停 + 删除确认摊开，三样同时在屏幕上", async () => {
     const user = userEvent.setup();
     const turn = gated(fixtures.chatTurn);
-    renderWatched(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: turn.handler }]);
+    renderWatched(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turn.handler }]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
     await user.type(say(), "跑一个");
     await user.click(sendBtn());
@@ -313,7 +313,7 @@ describe("研发术语：整块面板的兜底分支", () => {
     // 而**有话的时候前端照说，一个字不改**（这一条是纪律，不是探针）。
     const user = userEvent.setup();
     renderWatched(<ChatPanel />, [
-      { method: "POST", match: /\/turn$/, status: 422, body: { detail: said } },
+      { method: "POST", match: /\/turn\/events$/, status: 422, body: { detail: said } },
     ]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
     await user.type(say(), "问一句");
@@ -379,7 +379,7 @@ describe("「停」", () => {
   it("`stopped=false` 不许长得像失败 —— 它是「这会儿本来就没在跑」", async () => {
     const user = userEvent.setup();
     const turn = gated(fixtures.chatTurn);
-    renderWatched(<ChatPanel />, [{ method: "POST", match: /\/turn$/, body: turn.handler }]);
+    renderWatched(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turn.handler }]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
     await user.type(say(), "跑一个");
     await user.click(sendBtn());
@@ -402,7 +402,7 @@ describe("「停」", () => {
     const user = userEvent.setup();
     const turn = gated(fixtures.chatTurn);
     renderWatched(<ChatPanel />, [
-      { method: "POST", match: /\/turn$/, body: turn.handler },
+      { method: "POST", match: /\/turn\/events$/, body: turn.handler },
       { method: "POST", match: /\/stop$/, status: 404, body: CHAT_GONE },
     ]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
@@ -497,7 +497,7 @@ describe("跑着的时候切去看另一段", () => {
     const boom = gated(CHAT_GONE);
     renderWatched(<ChatPanel />, [
       { match: /\/chats$/, body: [fixtures.chats[0], other] },
-      { method: "POST", match: /\/turn$/, status: 404, body: boom.handler },
+      { method: "POST", match: /\/turn\/events$/, status: 404, body: boom.handler },
     ]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
     await user.type(say(), "跑一个");

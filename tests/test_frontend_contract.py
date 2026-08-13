@@ -449,6 +449,32 @@ def test_frontend_fixture_matches_the_real_api(
     grab("chats", client.get(f"{base}/chats"))
     # 没在跑的时候按停：`stopped=false` **不是失败**，前端有一条分支照它渲染。
     grab("chatStopped", client.post(f"{base}/chats/{chat_id}/stop"))
+
+    # ── 长连接那一轮（ADR 0024）：**冻的是原始帧，不是一份「录像」** ──────────────
+    #
+    # ADR 0024 原文说「把一整轮的事件序列冻成一份录像」，落地当天把做法更正了：
+    # **冻在 `tests/` 里的录像只是又一份手写夹具**，正是这条缝原本的病。
+    # `api.json` 的价值从来不在「冻住」，在**前端吃的是后端 dump 出来的同一份字节**。
+    # 所以这儿走的是既有那条路：多 dump 一段 `chatTurnEvents`，
+    # 让对话面板的组件测试吃**同一份**——连帧格式（`event:` / `data:` / 空行）
+    # 都是真的，于是浏览器那个解码器是在真字节上被验的。
+    #
+    # **另开一段对话**：跑在上面那段上会把 `chatDetail` / `drafts` / `chats` 三份
+    # 已经抓好的夹具全推着走，而那三份是前端好几块屏幕照着写的。
+    streamed_chat = client.post(f"{base}/chats", json={"title": "长连接那一轮"})
+    assert streamed_chat.status_code == 201, streamed_chat.text
+    events = client.post(
+        f"{base}/chats/{streamed_chat.json()['id']}/turn/events",
+        json={"chapter": 2, "said": "第 2 章这一场先写一稿看看。"},
+    )
+    assert events.status_code == 200, events.text
+    assert events.headers["content-type"].startswith("text/event-stream")
+    raw_frames = [block + "\n\n" for block in events.text.split("\n\n") if block]
+    assert "".join(raw_frames) == events.text, (
+        "拆帧和原始响应体对不上 —— 这份夹具不再是「同一份字节」了"
+    )
+    assert raw_frames[-1].startswith("event: receipt"), "最后一帧必须是回执"
+    dump["chatTurnEvents"] = norm.walk(raw_frames)
     doomed = client.post(f"{base}/chats", json={"title": "删掉它"})
     grab("chatDeleted", client.delete(f"{base}/chats/{doomed.json()['id']}"))
 

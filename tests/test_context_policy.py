@@ -7,7 +7,7 @@
 | 节 | 问的是 | 探针 |
 |---|---|---|
 | 一 | 预算量的那个数，和真发出去那份 payload，是不是**两条独立的路**算的 | 四种「会少算」的假量法，每一种都必须冲出容差带 |
-| 二 | 剪枝的类别判据是**结构**还是一张会漂的表 | 现场注册第十条工具，再拿一张按名字认的表当对照 |
+| 二 | 剪枝的类别判据是**结构**还是一张会漂的表 | 现场往表里加一条工具，再拿一张按名字认的表当对照 |
 | 三 | 极端预算下作者说的话一字不改，而且**是最后一个被动的** | 通用做法（按「新不新」剪）当对照，它会先吃掉作者的第一句 |
 | 四 | 切了章的规矩**真的失效了**吗（fail-open，跟 `must_not_reveal` 相反） | 把过滤器换成 fail-closed，断言这张网当场红 |
 | 五 | 章级规矩有没有混进稳定前缀（边界六） | 手工造一份「混进去了」的前缀，断言逐字节比对认得出来 |
@@ -342,7 +342,7 @@ def test_run_turn_still_sends_exactly_what_it_measured_when_it_had_to_prune() ->
 
 
 class MoodArgs(BaseModel):
-    """第十条工具的入参。**它有一个叫 `chapter` 的整数字段，别的什么都没有。**"""
+    """那条新工具的入参。**它有一个叫 `chapter` 的整数字段，别的什么都没有。**"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -361,7 +361,7 @@ def _handle_mood(args: MoodArgs, context: ToolContext) -> MoodResult:
 
 
 @pytest.fixture
-def a_tenth_tool(monkeypatch: pytest.MonkeyPatch) -> ToolSpec:
+def one_more_tool(monkeypatch: pytest.MonkeyPatch) -> ToolSpec:
     """**现场往表里加一条工具**，一行剪枝代码都不改。
 
     这就是「表会漂」的直接检验：判据如果是一张按名字写死的清单，新工具的返回会当场
@@ -369,7 +369,7 @@ def a_tenth_tool(monkeypatch: pytest.MonkeyPatch) -> ToolSpec:
     """
     spec = ToolSpec(
         name="chapter_mood",
-        description="查第 N 章的情绪基调（本文件现场注册的第十条工具）。",
+        description="查第 N 章的情绪基调（本文件现场往表里加的那一条）。",
         args=MoodArgs,
         handler=_handle_mood,  # type: ignore[arg-type]
     )
@@ -398,9 +398,9 @@ def _mood_turn(chapter: int) -> tuple[AgentMessage, AgentMessage]:
 
 
 def test_a_brand_new_tool_lands_in_the_right_class_with_no_code_change(
-    a_tenth_tool: ToolSpec,
+    one_more_tool: ToolSpec,
 ) -> None:
-    """第十条工具的返回，按**结构**归类：绑得上章号、进第一档、壳和调用成对拿掉。"""
+    """新工具的返回，按**结构**归类：绑得上章号、进第一档、壳和调用成对拿掉。"""
     declarations = tool_declarations()
     assert any(d["function"]["name"] == "chapter_mood" for d in declarations), (
         "声明由表生成 —— 加了一条它就该在里面"
@@ -442,9 +442,9 @@ def _chapter_by_name_table(message: AgentMessage, calls: dict[str, str]) -> int 
 
 
 def test_the_name_table_version_would_have_leaked_the_new_tools_return(
-    a_tenth_tool: ToolSpec,
+    one_more_tool: ToolSpec,
 ) -> None:
-    """自守卫：那张按名字认的表，在第十条工具上给出**不同**的答案。
+    """自守卫：那张按名字认的表，在那条新工具上给出**不同**的答案。
 
     不同在哪一侧要说清楚：它把「绑第 90 章」认成「不绑章号」⇒ 投影一条都不筛 ⇒
     第 90 章的返回跟着模型回头写第 40 章。**那正是边界五说的「一个等着发生的跨章泄漏」**，

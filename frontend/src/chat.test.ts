@@ -1,14 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { fixtures } from "./test/harness";
 import {
+  applyTurnEvent,
   CHAT_TAIL,
   elapsedText,
   emphasize,
   receiptNotes,
   stopFootnote,
   tailWindow,
+  NO_PROGRESS,
 } from "./chat";
-import type { ChatMessageView, TurnReceipt } from "./api/types";
+import type { ChatMessageView, ChatTurnEvent, TurnReceipt } from "./api/types";
 
 /** 回执的底子是**真 dump**（`fixtures.chatTurn`），只改要验的那几个字段——
  *  手写一份 `TurnReceipt` 出来就是在验一份我自己以为的形状。 */
@@ -153,5 +155,134 @@ describe("后端那句话里的重音", () => {
 
   it("一句普通的话原样出来，一段都不多切", () => {
     expect(emphasize("说完了。")).toEqual([{ text: "说完了。", strong: false }]);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 一轮跑到一半时屏幕上有什么（ADR 0024 第二刀）
+// ══════════════════════════════════════════════════════════════════════════
+
+/** 真事件的底子。**从后端 dump 的那串帧里解出来**，不是手写一个我以为的形状——
+ *  少一个字段、多一个字段，这儿立刻跟着变。 */
+const REAL: ChatTurnEvent[] = fixtures.chatTurnEvents
+  .filter((frame) => frame.startsWith("event: turn"))
+  .map((frame) => JSON.parse(frame.split("\ndata: ")[1]) as ChatTurnEvent);
+
+const real = (kind: ChatTurnEvent["kind"]): ChatTurnEvent => {
+  const found = REAL.find((e) => e.kind === kind);
+  if (!found) throw new Error(`真 dump 里没有 ${kind} —— 换个底子，别手写一个`);
+  return found;
+};
+
+/** 后端那次跑不出来的那几种（起草的桩不流式，所以 dump 里没有 `draft_delta`）。
+ *  **底子仍然是真的**：拿同一轮里那条真 `draft_started` 改 `kind` 和 `text`，
+ *  字段集合因此永远等于后端今天发出去的那一份。 */
+const from = (base: ChatTurnEvent, over: Partial<ChatTurnEvent>): ChatTurnEvent => ({
+  ...base,
+  ...over,
+});
+
+const fold = (events: ChatTurnEvent[]) => events.reduce(applyTurnEvent, NO_PROGRESS);
+
+describe("跑到一半：它在做什么", () => {
+  it("真跑的那一轮 —— 每一件事一行，**措辞全是后端那句**", () => {
+    const after = fold(REAL);
+    expect(after.steps).toEqual(
+      REAL.filter((e) => e.kind === "tool_started" || e.kind === "tool_finished").map(
+        (e) => e.said_to_author,
+      ),
+    );
+    // 它说的那整段话单独一档（不是逐字拼出来的，见下面那条）。
+    expect(after.said).toEqual([real("reply_text").text]);
+  });
+
+  it("**`reply_delta` 一个字都不拼** —— 回话那一档今天不逐字，装成逐字就是编节奏", () => {
+    // 回话的输出预算远在流式阈值之下 ⇒ `plan.stream is False` ⇒ 这条事件今天不响。
+    // 万一它响了（谁把预算抬过阈值），这块屏幕也不许拿它假装打字机：
+    // 真正到手的整段话走 `reply_text`，而那一条是真的。
+    const deltas = [
+      from(real("reply_text"), { kind: "reply_delta", text: "血" }),
+      from(real("reply_text"), { kind: "reply_delta", text: "脉" }),
+    ];
+    expect(fold(deltas)).toEqual(NO_PROGRESS);
+  });
+
+  it("**`turn_stopped` 不画** —— 那句话回执上有一份，同一个出处", () => {
+    expect(fold([real("turn_stopped")]).steps).toEqual([]);
+  });
+
+  it("工具查到了什么进不来 —— 这一层读的只有 `said_to_author` 和 `text`", () => {
+    const after = fold(REAL);
+    const screen = [...after.steps, ...after.said].join("\n");
+    // 工具名是机器码，它在事件上（界面要分派用），但一个字都不该到屏幕上。
+    expect(after.steps.join()).not.toContain("scene_constraints");
+    expect(screen).not.toContain("must_not_reveal");
+  });
+});
+
+describe("跑到一半：稿子真的一个字一个字长出来", () => {
+  const started = real("draft_started");
+  const delta = (text: string, stream = started.stream) =>
+    from(started, { kind: "draft_delta", text, stream, said_to_author: "" });
+
+  it("片接着片接上去", () => {
+    const after = fold([started, delta("风雪落在"), delta("肩上，")]);
+    expect(after.drafts).toEqual([
+      { stream: started.stream, chapter: started.chapter, text: "风雪落在肩上，", done: "" },
+    ]);
+  });
+
+  it("**一批三稿是同时在飞的，按 `stream` 分格** —— 交错到达也不许混成一坨", () => {
+    // 同一章的三稿连章号都一样：没有这个数就没法把它们分开摆（后端那个字段的
+    // docstring 写着这条）。而「交错到达」这件事鼠标点不出来，只有这儿点得出来。
+    const after = fold([
+      from(started, { stream: 1 }),
+      from(started, { stream: 2 }),
+      delta("甲一", 1),
+      delta("乙一", 2),
+      delta("甲二", 1),
+    ]);
+    expect(after.drafts.map((d) => [d.stream, d.text])).toEqual([
+      [1, "甲一甲二"],
+      [2, "乙一"],
+    ]);
+  });
+
+  it("收场那句话照抄后端 —— **半截的那一稿不许说成写好了**", () => {
+    const kept = real("draft_kept");
+    const after = fold([from(started, { stream: kept.stream }), delta("半句", kept.stream), kept]);
+    expect(after.drafts[0].done).toBe(kept.said_to_author);
+    expect(after.drafts[0].text).toBe("半句");
+  });
+
+  it("**开跑那一声掉了也要开一格** —— 少一稿而屏幕不说，是这个仓库最怕的那种", () => {
+    const after = fold([delta("凭空来的一片", 7)]);
+    expect(after.drafts).toEqual([
+      { stream: 7, chapter: started.chapter, text: "凭空来的一片", done: "" },
+    ]);
+  });
+
+  it("收尾那一声先到（开跑那声掉了）也要摆出来，而不是静静地少一格", () => {
+    const failed = from(real("draft_started"), {
+      kind: "draft_failed",
+      stream: 9,
+      said_to_author: "第 2 章那一稿没写成，这一条先停在这儿了。",
+    });
+    expect(fold([failed]).drafts[0].done).toBe(failed.said_to_author);
+  });
+});
+
+describe("它停下来问了一句", () => {
+  it("问句和选项原样收下 —— **这一层一个字都不加**", () => {
+    const asked = from(real("turn_stopped"), {
+      kind: "asked_author",
+      said_to_author: "它有件事拿不准，问了你一句，正等着你答。",
+      reason: null,
+      asked: { question: "这一场让萧决知道吗？", options: ["让他知道", "先瞒着"] },
+    });
+    const after = fold([asked]);
+    expect(after.asked).toEqual(asked.asked);
+    // 问句进的是那张卡，而「有人在等你」那半句仍然进进度行 —— 两件事。
+    expect(after.steps).toEqual([asked.said_to_author]);
   });
 });

@@ -9,7 +9,7 @@
 > 读回来重建出的 `Conversation`，必须和它存进去之前那个**逐字节相同**。
 
 不相同 = resume 之后模型看到的是另一段历史，**而没有任何东西会报错**。这条判据比
-「能存能读」严得多，它拒掉三种看起来很合理的省事做法：
+「能存能读」严得多，它拒掉四种看起来很合理的省事做法：
 
 1. **稳定前缀不许在读回时重新生成。** `AGENT_SYSTEM_PROMPT` 是一个会改的常量；
    照它重拼，改常量的那一刻全部旧会话的开头被静默换掉。所以 `prefix` 也逐行落盘
@@ -19,6 +19,14 @@
    变成「按第 0 章筛」。
 3. **`pruned` 要存。** 一条被剪成占位的工具返回读回来当成真返回，模型就以为工具
    真的回了那么一句「这条查询结果已经清掉了」。
+4. **`revokes_seq` 要存，而且它是可空的。** 作者取消一条规矩 = 历史上多一条指着它的
+   记录（ADR 0023「摆出来、能取消」的后半截）。丢了它，读回来那条撤销就成了一条
+   内容为空的普通消息，而**被取消掉的规矩会活过来**——作者按过的那个按钮变成没按过，
+   且没有任何东西会报错。
+   **它的坐标是历史的下标**（`Conversation.messages` 的下标、界面上每条消息带的那个
+   `seq`），**不是这张表的 `seq` 那一列**——那一列把稳定前缀也数在内，两者差一个前缀
+   长度。所以这一列是**原样落盘**的，读写两头都不换算：换算一次就有两个坐标系，
+   而它们指到的是两条不同的消息。
 
 ── 追加，不是覆盖 ────────────────────────────────────────────────────────
 
@@ -94,6 +102,7 @@ def _load_calls(raw: str) -> tuple[ToolCall, ...]:
 
 def _to_message(row: Any) -> AgentMessage:
     chapter = row["chapter"]
+    revokes = row["revokes_seq"]
     return AgentMessage(
         role=Role(str(row["role"])),
         content=str(row["content"]),
@@ -101,6 +110,8 @@ def _to_message(row: Any) -> AgentMessage:
         tool_call_id=str(row["tool_call_id"]),
         chapter=None if chapter is None else int(chapter),
         pruned=bool(row["pruned"]),
+        # 同 `chapter`：`None` 和 `0` 是两件事（`0` 是「撤销第 0 条」，那是一条真的消息）。
+        revokes_seq=None if revokes is None else int(revokes),
     )
 
 
@@ -189,7 +200,7 @@ class ChatStore:
         rows = self._conn.execute(
             "SELECT m.session_id AS sid, m.role AS role, m.content AS content,"
             "       m.tool_calls_json AS tool_calls_json, m.tool_call_id AS tool_call_id,"
-            "       m.chapter AS chapter, m.pruned AS pruned"
+            "       m.chapter AS chapter, m.pruned AS pruned, m.revokes_seq AS revokes_seq"
             " FROM chat_message m"
             " JOIN chat_session s ON s.id = m.session_id"
             " WHERE s.project_id = ? AND m.section = ?"
@@ -245,7 +256,8 @@ class ChatStore:
         if session is None:
             return None
         rows = self._conn.execute(
-            "SELECT section, role, content, tool_calls_json, tool_call_id, chapter, pruned"
+            "SELECT section, role, content, tool_calls_json, tool_call_id, chapter, pruned,"
+            "       revokes_seq"
             " FROM chat_message WHERE session_id = ? ORDER BY seq ASC",
             (session_id,),
         ).fetchall()
@@ -315,8 +327,8 @@ class ChatStore:
         self._conn.executemany(
             "INSERT INTO chat_message"
             " (id, session_id, seq, section, role, content, tool_calls_json,"
-            "  tool_call_id, chapter, pruned)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  tool_call_id, chapter, pruned, revokes_seq)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (
                     new_id(EntityType.CHAT_MESSAGE, project_id),
@@ -329,6 +341,8 @@ class ChatStore:
                     message.tool_call_id,
                     message.chapter,
                     int(message.pruned),
+                    # **原样写下去，不换算**：它是历史的下标，不是上面那个 `seq`（见文件头）。
+                    message.revokes_seq,
                 )
                 for offset, message in enumerate(messages)
             ],

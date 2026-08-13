@@ -17,12 +17,43 @@ export { fixtures };
 
 // `body` 可以是一个函数：测试要观察「补总结的时候界面在说什么」时，得能把那次响应
 // 卡在原地（`body: async () => { await gate; return …; }`），否则中间那一帧快到测不出来。
+//
+// `stream` 是长连接那条路（ADR 0024）：给一串**原始帧**，stub 把它们拼成一条
+// `text/event-stream` 的 body。不给 `stream` 而只给 `body` 的时候，
+// stub 会把那份 `body` 当成**最后那一帧回执**——绝大多数测试关心的正是它，
+// 而中间那些帧的真实字节由 `fixtures.chatTurnEvents` 提供（真 dump，见下）。
 type Handler = {
   method?: string;
   match: RegExp;
   status?: number;
-  body: unknown | (() => unknown | Promise<unknown>);
+  body?: unknown | (() => unknown | Promise<unknown>);
+  /** 原始 SSE 帧（含 `event:` / `data:` / 结尾那个空行）。
+   *
+   *  **单个帧可以是一个 Promise**：要观察「跑到一半屏幕上是什么」就得能把流卡在
+   *  某一帧之前（同上面 `body` 那条理由）——不卡住的话，中间那些帧快到测不出来，
+   *  而这一刀的全部主张就在那几帧上。 */
+  stream?: Frames | (() => Frames | Promise<Frames>);
 };
+
+type Frames = (string | Promise<string>)[];
+
+/** 长连接那条路由。**这个形状写在一处**：stub 靠它决定要不要发一条流。 */
+const EVENT_STREAM = /\/turn\/events$/;
+
+/**
+ * 把几条 `{帧名, 载荷}` 拼成原始帧。**这是这份文件里唯一手写 SSE 格式的地方**，
+ * 而它对不对由 `fixtures.chatTurnEvents`（从真 app dump 的原始字节）钉着：
+ * 那份夹具被同一个解码器吃过一遍，格式漂了它先红。
+ */
+export const sseFrames = (
+  frames: { event: string; data: unknown }[],
+): string[] => frames.map((f) => `event: ${f.event}\ndata: ${JSON.stringify(f.data)}\n\n`);
+
+/** 一轮跑完：中间那些帧是**真 dump 的字节**，最后一帧换成这个测试要的那份回执。 */
+export const turnStream = (receipt: unknown, events = fixtures.chatTurnEvents): string[] => [
+  ...events.filter((frame) => !frame.startsWith("event: receipt")),
+  ...sseFrames([{ event: "receipt", data: receipt }]),
+];
 
 // ⚠️ **手写 stub，全仓仅此两条**：后台整理那两条端点由后端另一条线落地中，
 // `api.json` 里还没有它们（那份 fixture 由 `tests/test_frontend_contract.py` 从真 app
@@ -83,6 +114,10 @@ const DEFAULT: Handler[] = [
   // 前面，否则列表和详情会互相顶掉。
   { method: "POST", match: /\/chats$/, body: fixtures.chatCreated },
   { match: /\/chats$/, body: fixtures.chats },
+  // 跑一轮走的是长连接（ADR 0024）。**默认给真 dump 的那一整串帧**——
+  // 组件测试因此吃的是后端真的吐出来的字节，而不是一份手写的「我以为它长这样」。
+  { method: "POST", match: EVENT_STREAM, stream: fixtures.chatTurnEvents },
+  // 不流式那条仍然在（它是「换回请求/响应」那条退路），今天浏览器不打它。
   { method: "POST", match: /\/chats\/[^/]+\/turn$/, body: fixtures.chatTurn },
   { method: "POST", match: /\/chats\/[^/]+\/stop$/, body: fixtures.chatStopped },
   { method: "DELETE", match: /\/chats\/[^/]+$/, body: fixtures.chatDeleted },
@@ -92,6 +127,29 @@ const DEFAULT: Handler[] = [
   { match: /\/drafts\/[^/]+$/, body: fixtures.draftDetail },
   { match: /\/drafts(\?|$)/, body: fixtures.drafts },
 ];
+
+/** 一串帧变成一个真的 `ReadableStream`。**一帧劈成两个 chunk 发**：
+ *  网络本来就想在哪儿切就在哪儿切，而「按 chunk 解析」在本机上几乎永远是对的、
+ *  然后在作者的机器上偶尔丢半帧。所以这儿故意切在帧中间。 */
+function streamOf(frames: Frames): ReadableStream<Uint8Array> {
+  const encoder = new TextEncoder();
+  let i = 0;
+  let tail: Uint8Array | null = null;
+  return new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      if (tail) {
+        controller.enqueue(tail);
+        tail = null;
+        return;
+      }
+      if (i >= frames.length) return controller.close();
+      const frame = await frames[i++];
+      const half = Math.max(1, Math.floor(frame.length / 2));
+      tail = encoder.encode(frame.slice(half));
+      controller.enqueue(encoder.encode(frame.slice(0, half)));
+    },
+  });
+}
 
 /** 把 fetch 换成查表。**没有匹配上就抛**——静默返回空数组会让组件渲染出一个
  *  「看起来正常的空面板」，而那正是这套测试要拦的失败形态（§10 约束 8）。 */
@@ -103,10 +161,21 @@ export function stubFetch(extra: Handler[] = []): void {
       (r) => (r.method ?? "GET") === method && r.match.test(String(url)),
     );
     if (!hit) throw new Error(`测试里没有为 ${method} ${url} 准备 handler`);
+    const status = hit.status ?? 200;
+    const ok = status < 400;
     const body = typeof hit.body === "function" ? await hit.body() : hit.body;
+    // 拒绝那一档**永远是 JSON**，就算路由是长连接那条：后端把 4xx 全抛在第一个
+    // 字节之前（`api/chat.py::_TurnRun`），前端也照 `client.ts` 那条老路拆它。
+    if (ok && EVENT_STREAM.test(String(url))) {
+      const frames =
+        typeof hit.stream === "function"
+          ? await hit.stream()
+          : (hit.stream ?? turnStream(body));
+      return { ok, status, body: streamOf(frames) } as unknown as Response;
+    }
     return {
-      ok: (hit.status ?? 200) < 400,
-      status: hit.status ?? 200,
+      ok,
+      status,
       json: async () => body,
     } as Response;
   });

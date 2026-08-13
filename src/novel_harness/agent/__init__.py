@@ -8,6 +8,7 @@
 | `candidates.py` | 候选稿的存取（ADR 0022）：起草的产物落在这儿，**不落在书里，也不落在对话里**。 |
 | `index.py` | 书内索引的四层（目录 / 人物轴 / 摘要 / 正文）。收 `ToolContext`，不碰工具表。 |
 | `tools.py` | 工具表本身 + 派发 + 约束与起草那三条。**加工具只在这儿加。** |
+| `rules.py` | **作者定下的规矩**（ADR 0023 决策二）：存一条 / 数重复 / 按章号过期 / 撤销。它不认识工具表，也不碰会话。 |
 | `loop.py` | 循环归模型、停止条件归代码 + 按章号参数化的投影（边界五）+ **边跑边发的事件**（ADR 0024）。 |
 | `store.py` | 会话表的读写。**判据只有一条：读回来的 `Conversation` 和存进去之前逐字节相同。** |
 | `model.py` | `ModelPort` 的适配器：把作者按下的「停」带进流式循环。 |
@@ -69,6 +70,9 @@ from .tools import (
     DraftResult,
     ForbiddenName,
     LandingResult,
+    RememberedRule,
+    RememberRuleArgs,
+    RememberRuleResult,
     SceneConstraintsArgs,
     StateFact,
     ToolOutcome,
@@ -80,6 +84,10 @@ from .tools import (
 )
 from .loop import EventFn, TurnEvent, TurnEventKind, safe_emitter
 
+# **摆出来 + 能取消**（ADR 0023 决策二）：这两样是 HTTP 壳要的读端和写端。
+# `rules` 排在 `loop` 后面是因为它 import 得着 `loop`（canonical 的形状住在那儿）。
+from .rules import AuthorRule, live_rules, revocation
+
 __all__ = [
     "TOOLS",
     "TOOL_NAMES",
@@ -87,6 +95,7 @@ __all__ = [
     "AskAuthorArgs",
     "AskAuthorResult",
     "AuthorQuestion",
+    "AuthorRule",
     "BatchRunner",
     "BookIndex",
     "BookIndexArgs",
@@ -120,6 +129,9 @@ __all__ = [
     "ForbiddenName",
     "LandingReport",
     "LandingResult",
+    "RememberRuleArgs",
+    "RememberRuleResult",
+    "RememberedRule",
     "RosterEntry",
     "SceneConstraintsArgs",
     "StateFact",
@@ -134,6 +146,8 @@ __all__ = [
     "TurnEventKind",
     "dispatch",
     "dispatch_all",
+    "live_rules",
+    "revocation",
     "safe_emitter",
     "tool_declarations",
     "tool_label",

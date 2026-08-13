@@ -528,18 +528,28 @@ def test_without_a_signal_drafting_behaves_exactly_as_before(
 
 
 def test_the_cancellation_reaches_the_desk_and_the_loop_as_one_object() -> None:
-    """**起草台和 loop 拿的必须是同一个信号对象。**
+    """**起草台和 loop 拿的必须是同一个信号对象**，事件接线口同理（ADR 0024）。
 
     两个信号 = 按停只停住其中一半，而作者看到的是「按了停，那一稿还在写」——
     起草那一次调用是这一轮里最长的一段。
+
+    2026-08-12 多量一样：`on_event` 也要是同一个。给了不同的对象就等于只接了一半，
+    而那一半的形态是「它说在写，然后什么都没有，然后突然写完了」。
+    （装配点当天从 `run_chat` 搬进了 `_TurnRun.go`——两条路由共用同一个跑法，
+    所以这条断言跟着搬，判据一个字没改。）
     """
     import inspect
 
     import novel_harness.api.chat as chat_mod
 
-    source = inspect.getsource(chat_mod.run_chat)
-    assert "cancel=signal" in source, "起草台没拿到这一轮的信号"
-    assert source.count("cancel=signal") == 2, "loop 和起草台必须各拿一次，且是同一个 `signal`"
+    source = inspect.getsource(chat_mod._TurnRun.go)
+    assert "cancel=self._signal" in source, "起草台没拿到这一轮的信号"
+    assert source.count("cancel=self._signal") == 2, (
+        "loop 和起草台必须各拿一次，且是同一个 `signal`"
+    )
+    assert source.count("on_event=on_event") == 2, (
+        "loop 和起草台必须拿到同一个事件接线口 —— 一半的事件掉在地上没有任何东西会报错"
+    )
 
 
 def test_the_stopped_annotation_carries_no_markdown() -> None:

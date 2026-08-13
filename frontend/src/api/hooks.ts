@@ -1,5 +1,6 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, proj } from "./client";
+import { runTurnStream } from "./turnStream";
 import type {
   ActivityDetail,
   ActivityPage,
@@ -18,6 +19,7 @@ import type {
   ChatDetail,
   ChatSessionView,
   ChatStopped,
+  ChatTurnEvent,
   CheckResult,
   Declaration,
   DeclareAlias,
@@ -52,7 +54,6 @@ import type {
   StoredAlias,
   Subgraph,
   SummaryWindow,
-  TurnReceipt,
 } from "./types";
 
 // 服务端状态全进 TanStack Query（§2.3）：queryKey = [端点, pid, chapter, cast]，
@@ -736,18 +737,41 @@ export function useDeleteChat(pid: string) {
  *
  *    ⚠️ **这一行的前提是 `CenterEditor` 不会拿重取到的正文盖掉作者没保存的字**
  *    （`editorDoc.ts`）。那个前提没有的时候补这一行 = 作者一边打字一边跟助手说话，
- *    刚打的半段被静默吃掉，**而没保存过的东西哪儿都找不回来**。两件事必须一起在。 */
+ *    刚打的半段被静默吃掉，**而没保存过的东西哪儿都找不回来**。两件事必须一起在。
+ *
+ *  ── 它走的是长连接，不是一次请求/响应（ADR 0024）─────────────────────────
+ *
+ *  `mutationFn` 里那次 `await` 从**开跑**一直挂到**跑完**，和以前一模一样——
+ *  所以 `isPending` / `onSuccess` / `onError` 和上面那整段失效表一个字都没改。
+ *  变的只有中间：`onEvent` 会被叫上几十到上千次（一稿正文是上千片）。
+ *
+ *  **`onEvent` 不进 react-query 的状态**：那些片一秒钟几十条，每条都走一次
+ *  `setState` 会把这块屏幕拖垮。调用方自己攒（`ChatPanel` 用的是 reducer + ref）。 */
 export function useRunTurn(pid: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (v: { chatId: string; chapter: number; said: string; runId: string }) =>
-      api.post<TurnReceipt>(chats(pid, `${one(v.chatId)}/turn`), {
-        chapter: v.chapter,
-        said: v.said,
-        // 这一轮的标识。**「停」要报同一个**，否则它会停到别的轮上去
-        // （`chat.ts::newRunId` 写着那个坏序列）。
-        run_id: v.runId,
-      }),
+    mutationFn: (v: {
+      chatId: string;
+      chapter: number;
+      said: string;
+      runId: string;
+      onEvent?: (event: ChatTurnEvent) => void;
+    }) =>
+      runTurnStream(
+        chats(pid, `${one(v.chatId)}/turn/events`),
+        {
+          chapter: v.chapter,
+          said: v.said,
+          // 这一轮的标识。**「停」要报同一个**，否则它会停到别的轮上去
+          // （`chat.ts::newRunId` 写着那个坏序列）。
+          //
+          // **长连接没有让它变得不必要**：这条流断掉之后那一轮还在跑，而「停」
+          // 仍然是另一个请求（`api/chat.py` 模块 docstring 那张表下面写着为什么
+          // 不把它搬到流上）。所以那个坏序列原样存在，这个标识原样要报。
+          run_id: v.runId,
+        },
+        { onEvent: v.onEvent },
+      ),
     onSuccess: (_receipt, v) => {
       qc.invalidateQueries({ queryKey: ["chats", pid] });
       qc.invalidateQueries({ queryKey: ["activity", pid] });

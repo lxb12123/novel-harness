@@ -10,7 +10,13 @@
 //    docstring 第三条），所以这里能说的只有一个**数**。
 
 import { ApiError } from "./api/client";
-import type { ChatMessageView, ChatSpeaker, TurnReceipt } from "./api/types";
+import type {
+  ChatAuthorQuestion,
+  ChatMessageView,
+  ChatSpeaker,
+  ChatTurnEvent,
+  TurnReceipt,
+} from "./api/types";
 import { saidToTheAuthor } from "./correctionError";
 
 /** 屏幕上认得的说话人**就是这张表的键**。
@@ -180,6 +186,106 @@ export function newRunId(): string {
   const uuid = globalThis.crypto?.randomUUID;
   if (typeof uuid === "function") return globalThis.crypto.randomUUID();
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 跑到一半时屏幕上有什么（ADR 0024 决策一）
+// ══════════════════════════════════════════════════════════════════════════
+
+/** 正在写的（或者刚写完的）一稿。**按 `stream` 分组**——一批三稿是同时在写的，
+ *  三条流的片会交错着到达，而同一章的三稿连章号都一样。 */
+export interface LiveDraft {
+  stream: number;
+  chapter: number;
+  /** 已经到手的字，**原样**。这是全屏幕唯一一处真的逐字长出来的东西。 */
+  text: string;
+  /** 空 = 还在写；非空 = 后端说的那句收尾（写好了 / 停在这儿了 / 没写成）。 */
+  done: string;
+}
+
+/** 一轮跑到这一刻，屏幕上该有的全部东西。 */
+export interface TurnProgress {
+  /** 它做过的每一件事，按到达顺序。**措辞全是后端的 `said_to_author`**，这里不翻。 */
+  steps: string[];
+  /** 它这一路说过的那几整段话。**不是逐字**（见 `applyTurnEvent` 里那段）。 */
+  said: string[];
+  drafts: LiveDraft[];
+  asked: ChatAuthorQuestion | null;
+}
+
+export const NO_PROGRESS: TurnProgress = { steps: [], said: [], drafts: [], asked: null };
+
+/**
+ * 收到一条事件之后，屏幕上该变成什么样。**纯函数**，这样「一批三稿交错着到达」
+ * 这种没法用鼠标复现的情形能被单测钉死。
+ *
+ * ── 三件这一层必须做对的事（ADR 0024 的三条诚实）───────────────────────────
+ *
+ * 1. **逐字的只有稿子。** `draft_delta` 一片一片接上去，作者真的看着它长。
+ * 2. **回话那一档不逐字，所以这里不装。** `reply_delta` 今天在产品上不响
+ *    （回话的输出预算远在流式阈值之下 ⇒ `plan.stream is False`，后端那条
+ *    `test_todays_agent_call_is_not_streaming_…` 钉着它），而**给它做一个假的
+ *    打字机 = 让作者按一个编出来的节奏判断它卡没卡住**。所以这条事件到手也不拼字：
+ *    真正到手的整段话走 `reply_text`。
+ * 3. **工具在干什么可以显示，工具查到了什么不许显示。** 这里读的只有
+ *    `said_to_author`（引擎写的中文）和 `text`（模型自己的字）——
+ *    `tool` / `kind` / `reason` 一个字都没往 `steps` 里放。
+ */
+export function applyTurnEvent(prev: TurnProgress, event: ChatTurnEvent): TurnProgress {
+  switch (event.kind) {
+    case "reply_delta":
+      // 见上面第 2 条。**它不是被忘了，是被拒了。**
+      return prev;
+    case "turn_stopped":
+      // 「为什么停」那句话回执上有一份，而且是同一个出处（后端 `stop_wording()`）。
+      // 在这儿再画一遍 = 同一句话在同一块屏幕上出现两次。
+      return prev;
+    case "reply_text":
+      return event.text ? { ...prev, said: [...prev.said, event.text] } : prev;
+    case "asked_author":
+      return { ...prev, asked: event.asked, steps: pushSaid(prev.steps, event) };
+    case "draft_started":
+      return { ...prev, drafts: [...prev.drafts, openDraft(event)] };
+    case "draft_delta":
+      return { ...prev, drafts: growDraft(prev.drafts, event) };
+    case "draft_kept":
+    case "draft_failed":
+      return { ...prev, drafts: closeDraft(prev.drafts, event) };
+    default:
+      return { ...prev, steps: pushSaid(prev.steps, event) };
+  }
+}
+
+function pushSaid(steps: string[], event: ChatTurnEvent): string[] {
+  return event.said_to_author ? [...steps, event.said_to_author] : steps;
+}
+
+function openDraft(event: ChatTurnEvent): LiveDraft {
+  return { stream: event.stream, chapter: event.chapter ?? 0, text: "", done: "" };
+}
+
+/** 一片字接到它那条流上。
+ *
+ *  **认不出的流也要开一格**，不许丢：`draft_started` 那一声掉了（网抖了一下、
+ *  界面挂晚了一拍）而这里按「找不到就忽略」处理的话，作者会看着一批三稿里少一稿，
+ *  而屏幕上没有任何东西说它少了。 */
+function growDraft(drafts: LiveDraft[], event: ChatTurnEvent): LiveDraft[] {
+  const found = drafts.some((d) => d.stream === event.stream);
+  const grown = drafts.map((d) =>
+    d.stream === event.stream ? { ...d, text: d.text + event.text } : d,
+  );
+  return found ? grown : [...grown, { ...openDraft(event), text: event.text }];
+}
+
+/** 一条流收场。**半截的那一稿不许说成写好了**——那句话由后端写（`draft_kept` 会说
+ *  「停在这儿了，没写完」），这里只是把它放上去。 */
+function closeDraft(drafts: LiveDraft[], event: ChatTurnEvent): LiveDraft[] {
+  const closing = event.said_to_author || "这一条停在这儿了。";
+  const found = drafts.some((d) => d.stream === event.stream);
+  const closed = drafts.map((d) =>
+    d.stream === event.stream ? { ...d, done: closing } : d,
+  );
+  return found ? closed : [...closed, { ...openDraft(event), done: closing }];
 }
 
 export interface Emphasis {

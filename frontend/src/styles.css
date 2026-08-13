@@ -603,8 +603,9 @@ header select {
   padding: 7px 10px; border-radius: 8px; background: var(--sel);
 }
 
-/* 还在跑的那一段。**没有打字机动画**：这一版 HTTP 不流式，装成在逐字吐是骗人的
-   （ChatPanel.tsx 顶上第 1 条）。唯一会动的是那颗点和真实的秒表。 */
+/* 还在跑的那一段。**回话区没有打字机动画**：回话那一档今天非流式，装成在逐字吐
+   是骗人的（ChatPanel.tsx 顶上第 1 条）。会动的是那颗点、真实的秒表、
+   真实到达的那几行进度，以及**真的在逐字长**的起草区（`.chat-drafting`）。 */
 .chat-running {
   display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; padding: 9px 10px;
   border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
@@ -616,6 +617,34 @@ header select {
 @keyframes chat-pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
 .chat-running-say { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; line-height: 1.7; }
 .chat-running-say span { color: var(--dim); }
+
+/* 它这会儿在做的那几件事。**一条一行，措辞全是后端给的。** */
+.chat-step { color: var(--dim); }
+.chat-step-said { margin: 4px 0 0; font-size: 12px; }
+
+/* 正在写的那一稿。**按 `stream` 一格**：一批三稿是同时在飞的，
+   同一章的三稿连章号都一样，不分格的话屏幕上是一坨交错的字。 */
+.chat-drafting {
+  margin-top: 6px; padding: 7px 9px; border: 1px dashed var(--line); border-radius: 6px;
+}
+.chat-drafting-head { display: block; color: var(--dim); font-size: 11px; margin-bottom: 4px; }
+/* 只留一屏高：一稿是几千字，让它把整块面板顶开的话，「停」那颗按钮会被挤出视野——
+   而那正是作者读到第三行发现语气不对时唯一要按的东西。 */
+.chat-drafting-text {
+  margin: 0; max-height: 148px; overflow: auto; white-space: pre-wrap;
+  font-size: 12px; line-height: 1.75;
+}
+.chat-drafting-wait { margin: 0; color: var(--dim); font-size: 11px; }
+
+/* 它在等你回一句（ADR 0024）。**结构上必须和普通回话分得开**：
+   一个问句混在散文里，作者会当陈述句翻过去。 */
+.chat-asked {
+  margin-top: 12px; padding: 9px 10px; border: 1px solid var(--accent); border-radius: 8px;
+}
+.chat-asked-head { display: block; color: var(--accent); font-size: 11px; margin-bottom: 4px; }
+.chat-asked-q { margin: 0 0 8px; line-height: 1.75; }
+.chat-asked-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+.chat-asked-note { display: block; margin-top: 7px; color: var(--dim); font-size: 11px; }
 
 .chat-receipt { margin-top: 12px; padding-top: 8px; border-top: 1px dashed var(--line); }
 .chat-receipt-say { margin: 0 0 4px; font-size: 12px; line-height: 1.7; }
