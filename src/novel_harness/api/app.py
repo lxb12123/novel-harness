@@ -66,6 +66,7 @@ from ..graph import (
     GraphVersion,
     InformationScope,
     NodeLabel,
+    NodeProps,
     NodeRef,
     SecretDetail,
 )
@@ -103,6 +104,7 @@ from .deps import (
     load_project,
     resolve_route_capabilities,
 )
+from . import manuscript
 from .activity import router as activity_router
 from .autopilot import router as autopilot_router
 from .chat import router as chat_router
@@ -610,17 +612,25 @@ def create_project(body: CreateProject, conn: Any = Depends(get_conn)) -> Any:
     return project_mod.create(conn, name=body.name, root_path=str(root))
 
 
-@app.post("/api/projects/bootstrap", response_model=onboarding.BootstrapResult)
+@app.post("/api/projects/bootstrap", response_model=manuscript.BootstrapView)
 def bootstrap_project(
     body: BootstrapBody, conn: Any = Depends(get_conn)
-) -> onboarding.BootstrapResult:
-    """原子创建新书：项目、首章、快照与导入报告一起成功或一起消失。"""
-    return onboarding.bootstrap_project(
-        conn,
-        books_root=books_root(),
-        mode=body.mode,
-        name=body.name,
-        text=body.text if isinstance(body, ImportBootstrap) else None,
+) -> manuscript.BootstrapView:
+    """原子创建新书：项目、首章、快照与导入报告一起成功或一起消失。
+
+    出参多一份 `summary`（`api/manuscript.py`）：**导入回执的措辞归后端**。
+    在它出现之前整份 `import_report` 被前端丢在地上，而里面躺着唯一一个**全书性**的
+    信号——`preamble_chars` 异常 = 第一章的章标很可能没被认出来 = 全书 `valid_from`
+    集体错一章，且界面上看不出任何异常。
+    """
+    return manuscript.bootstrap_view(
+        onboarding.bootstrap_project(
+            conn,
+            books_root=books_root(),
+            mode=body.mode,
+            name=body.name,
+            text=body.text if isinstance(body, ImportBootstrap) else None,
+        )
     )
 
 
@@ -645,10 +655,22 @@ def import_book(
         tmp.unlink(missing_ok=True)
 
 
-@app.post("/api/projects/{project_id}/sync")
-def sync_project(store: Any = Depends(get_store), proj: Any = Depends(load_project)) -> Any:
-    """把 {root}/chapters/*.md 的现状读进库（作者在别的编辑器改了稿之后走这条）。"""
-    return importer.sync(store, proj.id, Path(proj.root_path))
+@app.post("/api/projects/{project_id}/sync", response_model=manuscript.SyncOutcome)
+def sync_project(
+    store: Any = Depends(get_store), proj: Any = Depends(load_project)
+) -> manuscript.SyncOutcome:
+    """把 {root}/chapters/*.md 的现状读进库（作者在别的软件里改了稿之后走这条）。
+
+    **它是「正文看得见」和「这句话记得下」之间那半条回路。** 章列表和正文都直接扫磁盘，
+    所以作者在 WPS 里改完回来，屏幕上立刻是新的；而 `locate` 搜的是**库里的快照**，
+    快照只有这条路落得下——不跑它，他刚写的那句话选中之后会被告知「找不到」。
+
+    **不花钱**（没有任何模型调用），但仍然只由作者显式触发：它往库里写快照，
+    而「磁盘先、DB 跟」的那一下是作者的动作（ADR 0007），不是后台的。
+
+    出参是 `SyncOutcome` 不是 `SyncReport`：屏幕上那句话由 `api/manuscript.py` 写。
+    """
+    return manuscript.sync_outcome(importer.sync(store, proj.id, Path(proj.root_path)))
 
 
 @app.get("/api/projects/{project_id}")
@@ -993,6 +1015,39 @@ class DeclareNodeBody(BaseModel):
     sub_of: str | None = None
     """仅 label=Secret：父秘密的**称呼原文**（拆子事实用）。"""
 
+    first_appears_chapter: int | None = Field(default=None, ge=1)
+    """**「还没写到」的那一半**：这个东西要到第 K 章才头一回出现（R2 FUTURE_LEAK 读它）。
+
+    ── 这一个数为什么是作者填的，而约束 10 说他永不填章号 ────────────────────
+
+    两者不冲突，因为它们是两类数：
+
+    - `valid_from` 是**回忆**（「这条关系从第几章开始有效」）。他不记得，会填 1，
+      而填错的产物是一条在面板上长得完全正常的坏边——所以它只由证据决定（约束 10）。
+    - 首现章是**决定**（「幽泉窟我打算第 200 章才让它出场」）。这个信息**物理上不在
+      已写文本里**（ADR 0004：墙上那把枪是不是伏笔，取决于他第 200 章打不打算开枪），
+      没有任何证据推得出它。同 PLANNED 边的 `valid_from`——001_init.sql 那句
+      「那不是回忆是决定」说的就是这类。`NodeProps.first_appears_chapter` 和
+      `ForbiddenEntity.first_appears_chapter` 两处 docstring 都写着「作者声明的」。
+
+    **已经写到了的那一半不走这里**：`POST …/declare/first-appearance` 收一句引语、
+    自己算出那是第几章（`Ledger.declare_first_appearance`）。**能由证据决定的，
+    一律由证据决定**——这个字段只接它够不着的那部分。
+
+    ⚠️ **浏览器上永远不会有它的输入框——2026-08-13 维护者裁定，不是漏掉。**
+    `tests/test_canon_edit_boundary.py::test_no_screen_in_the_whole_workbench_posts_a_chapter`
+    是一条**零基线**守卫：全前端一个 `<input type="number">` 都不许多、请求体里一个
+    撞 `chapter` 的键都不许有。**那条零基线不变，`EXEMPT` 里一个键都不加。**
+
+    理由：「还没写到」的东西按定义没有证据可指，那个数只能是作者拍的；而约束 6 的整条
+    立场是「章号只由证据决定」。为这一个**边缘用法**开口，等于在唯一一条挡污染的线上
+    开第一个洞——而常见那一半（已经写到了的）走上面那条引语路径，零输入。
+    真要支持「预先声明一个还没写的东西在第几章出现」，那是 PLANNED / 伏笔性质的能力，
+    该跟 foreshadow 一起走一份 ADR，不是在花名册抽屉里加个框。
+
+    所以这个字段只有 HTTP / CLI 调用方能用，**这是终态不是过渡态**。
+    """
+
 
 class DeclareAliasBody(BaseModel):
     of: str
@@ -1017,6 +1072,16 @@ class DeclareBelievesBody(BaseModel):
 class DeclareWhereBody(BaseModel):
     who: str
     loc: str
+    quote: str
+
+
+class DeclareDeadBody(BaseModel):
+    who: str
+    quote: str
+
+
+class DeclareFirstAppearanceBody(BaseModel):
+    of: str
     quote: str
 
 
@@ -1050,7 +1115,20 @@ def declare_node(
     if body.label is NodeLabel.SECRET:
         parent_id = _resolve_parent_secret(store, proj.id, body.sub_of) if body.sub_of else None
         secret = SecretDetail(description=body.description, sub_of=parent_id)
-    node = ledger.declare_node(body.label, body.name, aliases=body.aliases, secret=secret)
+    node = ledger.declare_node(
+        body.label,
+        body.name,
+        aliases=body.aliases,
+        # `declare_node` 的 props 是 patch（`exclude_unset`）：`None` = 一个字段都不动，
+        # 给了这一个 = 只盖这一个。别在这里传 `NodeProps()` ——那读起来像「没给」，
+        # 但它会被当成一次显式的空 patch。
+        props=(
+            NodeProps(first_appears_chapter=body.first_appears_chapter)
+            if body.first_appears_chapter is not None
+            else None
+        ),
+        secret=secret,
+    )
     return _narrowed(node, None)
 
 
@@ -1127,6 +1205,40 @@ def declare_where(
     return ledger.declare_where(who=body.who, loc=body.loc, quote=body.quote).model_dump(
         mode="json"
     )
+
+
+@app.post("/api/projects/{project_id}/declare/death")
+def declare_dead(
+    body: DeclareDeadBody,
+    ledger: Ledger = Depends(get_ledger),
+) -> Any:
+    """「他在这段原文里死了」。**R3 DEAD_SPEAKS 的唯一生产写入方。**
+
+    这条路由之前，`StateSnapshot.is_dead` 在生产上恒为 False：`EdgeProps.value_key`
+    零写入方、`StateDim` 零创建路径，于是「死人还在说话」结构上永远查不出来。
+
+    章号照旧由引语算（`Declaration.valid_from`）。生死这个维度由引擎自己建
+    （`ensure_state_dim`），请求体里没有它——它是引擎的内部结构，不该出现在作者填的表单里
+    （同 `AUTHORED_LABELS` 有意不含 StateDim 的那条理由）。
+    """
+    return ledger.declare_dead(who=body.who, quote=body.quote).model_dump(mode="json")
+
+
+@app.post("/api/projects/{project_id}/declare/first-appearance")
+def declare_first_appearance(
+    body: DeclareFirstAppearanceBody,
+    ledger: Ledger = Depends(get_ledger),
+) -> Any:
+    """「他/它在这段原文里头一回露面」→ 首现章。**R2 FUTURE_LEAK 的作者入口。**
+
+    **请求体里没有章号，也不该有**：首现章 = 这句引语落在哪一章，系统自己算
+    （约束 10 在这条路由上和 `declare/knows` 是同一套）。已经写到了的东西一律走这条；
+    还没写到的（「第 200 章才出场」）没有引语可指，那一半在 `POST /nodes` 的
+    `first_appears_chapter` 字段上，见那儿的说明。
+
+    出参是 `FirstAppearance`：节点已是窄引用（`NodeRef`），不含 props，无需再收窄。
+    """
+    return ledger.declare_first_appearance(of=body.of, quote=body.quote).model_dump(mode="json")
 
 
 @app.post("/api/projects/{project_id}/chapters/{chapter}/check")
@@ -1411,6 +1523,21 @@ def draft(
 #
 # **故意不做「保存章节后自动生成」**：那是一次作者没按过的付费调用，属于产品决策，
 # 不该由一次保存顺手替他决定。只做显式触发。
+#
+# ── 2026-08-13：这一摊补齐成四条（GET / POST / PATCH / DELETE，同一个资源）─────
+#
+# 上面那两条落地之后，滚动总结**真的在花作者的钱、真的在影响每一稿**，而他在整个
+# 工作台里看不见它、改不了它、删不掉它——链路通了，断在最后一格。而且「改」和「删」
+# 在这一层压根不存在（只有 GET 和「重新生成」）。
+#
+# 四条共用一个路径 `…/chapters/{n}/summary`，因为它们是同一个东西的四个动作：
+#
+#   GET     这一章现在的总结（**没有的时候说清是哪一种没有**）
+#   POST    重新生成（**会花钱**，只由作者显式按）
+#   PATCH   换成作者自己写的那一段（不花钱）
+#   DELETE  撤回（不花钱；**库里一行都不少**，见迁移 013）
+#
+# `…/summaries`（复数）是另一件事，别合并：它回答「起草这一章时那一层覆盖成什么样」。
 
 
 @app.get("/api/projects/{project_id}/chapters/{chapter}/summaries")
@@ -1446,17 +1573,51 @@ def chapter_summaries(
     }
 
 
+def _summary_state(conn: Any, project_id: str, chapter: int) -> dict[str, Any]:
+    """第 chapter 章现在的总结状态。**四条路由共用同一个出参形状。**
+
+    形状就是 `…/summaries` 里那一行（`ChapterSummaryStatus`）：一个动作做完之后，
+    界面拿到的和它重新读一遍拿到的**逐字节相同**——两个形状的话，「改完之后屏幕上
+    显示的」和「刷新之后显示的」就有机会不一样，而那种不一样没有任何东西会报错。
+    """
+    from ..draft.rolling_summary import SummaryStore
+
+    if chapter < 1:
+        raise HTTPException(status_code=422, detail="章号至少是 1")
+    rows = SummaryStore(conn).coverage(project_id, chapter, chapter)
+    return rows[0].model_dump(mode="json")
+
+
+@app.get("/api/projects/{project_id}/chapters/{chapter}/summary")
+def chapter_summary(
+    chapter: int,
+    conn: Any = Depends(get_conn),
+    proj: Any = Depends(load_project),
+) -> dict[str, Any]:
+    """这一章现在的总结。**没有的时候不许只回一个 null**（§10 约束 8）。
+
+    三种「没有」在出参里分得开，因为它们的下一步动作完全不同：
+    `has_text=false`（这一章还没写，没得总结）/ `retracted=true`（作者亲手撤掉的，
+    别催他去补一件他刚做的事）/ 两者都不是（有正文、没生成过——那是要花钱的那一步）。
+    """
+    return _summary_state(conn, proj.id, chapter)
+
+
 @app.post("/api/projects/{project_id}/chapters/{chapter}/summary")
 def generate_chapter_summary(
     chapter: int,
+    conn: Any = Depends(get_conn),
     proj: Any = Depends(load_project),
     summarizer: Any = Depends(get_summarizer),
 ) -> dict[str, Any]:
     """**显式**为第 chapter 章生成滚动总结（会调模型、会花钱）。
 
-    幂等由 `RollingSummarizer.ensure` 保证：同一章 + 同一 `schema_version` + 同一
-    `prompt_hash` 已经有了就直接返回，重复点不会重复付费。所以前端可以放心地
-    「把缺的那几章挨个补一遍」而不必自己记住哪些补过。
+    幂等由 `RollingSummarizer.ensure` 保证：这一章最新那一行就是这份 prompt 产出的
+    就直接返回，重复点不会重复付费。所以前端可以放心地「把缺的那几章挨个补一遍」
+    而不必自己记住哪些补过。
+
+    **撤回过的章按下这里会真的重新生成**（付一次钱）——那是撤回语义里写死的那条退路
+    （「想重来就再点生成」），也是「删了重来」不必做成两套的原因。
     """
     from ..draft.provider import ProviderError
     from ..draft.rolling_summary import SummaryChapterNotFound, SummaryGenerationError
@@ -1464,7 +1625,7 @@ def generate_chapter_summary(
     if chapter < 1:
         raise HTTPException(status_code=422, detail="章号至少是 1")
     try:
-        summary = summarizer.ensure(proj.id, chapter)
+        summarizer.ensure(proj.id, chapter)
     except SummaryChapterNotFound:
         raise HTTPException(
             status_code=404,
@@ -1474,12 +1635,144 @@ def generate_chapter_summary(
         raise HTTPException(status_code=502, detail=f"总结器返回了空文本：{exc}")
     except ProviderError as exc:
         raise HTTPException(status_code=502, detail=f"模型调用失败：{exc}")
+    # 出参从库里重读一遍，不拿 `ensure` 的返回自己拼：`RollingSummarizer` 用的是它
+    # 自己那条连接，而这一条是请求的连接——两边各拼一份的话，「刚生成完」和「刷新一下」
+    # 有机会长得不一样。
+    return _summary_state(conn, proj.id, chapter)
+
+
+class SummaryEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str
+    """作者自己写的那一段。空串走 422 而不是「等于撤回」——**两个动作不许共用一个入口**：
+    清空输入框然后保存，和按下「撤回」，在作者脑子里不是一件事。"""
+
+
+@app.patch("/api/projects/{project_id}/chapters/{chapter}/summary")
+def edit_chapter_summary(
+    chapter: int,
+    body: SummaryEdit,
+    conn: Any = Depends(get_conn),
+    proj: Any = Depends(load_project),
+) -> dict[str, Any]:
+    """把这一章的总结换成作者自己写的这一段。**不花钱**，模型写的那一行留在库里。
+
+    幂等：交上来的就是屏幕上那一段时一行都不追加（见 `save_author_summary`）。
+    这一章还没有总结时也收——手写一份比先付一次钱再改要合理。
+    """
+    from ..draft.rolling_summary import (
+        SummaryChapterNotFound,
+        SummaryTextRejected,
+        save_author_summary,
+    )
+
+    if chapter < 1:
+        raise HTTPException(status_code=422, detail="章号至少是 1")
+    try:
+        save_author_summary(
+            conn,
+            project_id=proj.id,
+            chapter_number=chapter,
+            text=body.summary,
+        )
+    except SummaryTextRejected as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+    except SummaryChapterNotFound:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "chapter_not_found", "chapter": chapter},
+        )
+    return _summary_state(conn, proj.id, chapter)
+
+
+@app.delete("/api/projects/{project_id}/chapters/{chapter}/summary")
+def retract_chapter_summary(
+    chapter: int,
+    conn: Any = Depends(get_conn),
+    proj: Any = Depends(load_project),
+) -> dict[str, Any]:
+    """撤回这一章的总结。**库里一行都不少**（迁移 013：追加一行标记撤回）。
+
+    撤回之后这一章「当作没总结」：起草时不带它、覆盖率里算作缺。
+    本来就没有总结、或者已经撤回过，都原样回一个 200 —— 这个动作没有失败的形态，
+    而一个 404 只会让作者以为自己弄坏了什么。
+    """
+    from ..draft.rolling_summary import retract_summary
+
+    if chapter < 1:
+        raise HTTPException(status_code=422, detail="章号至少是 1")
+    retract_summary(conn, project_id=proj.id, chapter_number=chapter)
+    return _summary_state(conn, proj.id, chapter)
+
+
+# ── 总结 = 可反查的记忆点（T6）───────────────────────────────────────────────
+#
+# 作者的原话：「每一个总结就相当于一本书的一个记忆点。我想迅速找到需要的内容或相关章节的
+# 总结，然后引用、对比、调研，再顺下去看全文。**我不想用 RAG。**」
+#
+# 这两条路由就是那件事，而且它**不是找相似，是找相关**（判据只有「这个称呼出现了没有」，
+# 一个语义判断都没有——完整论证在 `summary_index.py` 的模块 docstring 和迁移 014）。
+#
+#   GET …/chapters/{n}/summary/mentions   这一章的总结提到了哪些东西
+#   GET …/nodes/{node_id}/summary-mentions  还有哪几章的总结提到它（按章号排）
+#
+# 两条都**不调模型、不花钱**，所以界面上可以随便点。
+
+
+@app.get("/api/projects/{project_id}/chapters/{chapter}/summary/mentions")
+def chapter_summary_mentions(
+    chapter: int,
+    conn: Any = Depends(get_conn),
+    store: Any = Depends(get_store),
+    proj: Any = Depends(load_project),
+) -> dict[str, Any]:
+    """这一章**现在算数**的那段总结里，花名册的哪些东西被提到了。
+
+    **为什么不并进 `GET …/summary` 的出参**：那个形状是四条动作路由共用的
+    （`_summary_state`，「一个动作做完之后界面拿到的和它重新读一遍拿到的逐字节相同」），
+    而它同时也是 `…/summaries` 里的一行——那一条要报整个窗口，每一章都挂一串芯片
+    会让一次覆盖率查询变成一次全书反查。两件事，两个资源。
+
+    出参里**只有 `NodeRef`**（id/label/name）。这批命中里按定义就有 Secret，
+    而 `Node.props` 装的正是秘密内容（§10.5 第 3 条）。
+
+    这一章没有总结（没写 / 没生成 / 撤回过）→ `mentions: []`。**三种「没有」的区分
+    不在这儿再答一遍**：屏幕上那一格读的是 `GET …/summary`，那儿已经在说那句话了，
+    这儿再说一遍就是第二份措辞。
+    """
+    from ..summary_index import mentions_in_chapter
+
+    if chapter < 1:
+        raise HTTPException(status_code=422, detail="章号至少是 1")
+    hits = mentions_in_chapter(conn, store, proj.id, chapter)
     return {
-        "chapter_number": summary.chapter_number,
-        "has_text": True,
-        "summary": summary.summary,
-        "created_at": summary.created_at,
+        "chapter": chapter,
+        "mentions": [hit.model_dump(mode="json") for hit in hits],
     }
+
+
+@app.get("/api/projects/{project_id}/nodes/{node_id}/summary-mentions")
+def node_summary_mentions(
+    node_id: str,
+    conn: Any = Depends(get_conn),
+    store: Any = Depends(get_store),
+    proj: Any = Depends(load_project),
+) -> dict[str, Any]:
+    """**还有哪几章的总结提到它**，按章号升序。一次 SQL，不调模型、不花钱。
+
+    `node_id` 不在本项目 → `NodeNotFound` → 404（那张错误映射表接的）。
+    **不返回空表**：「他没在任何总结里出现过」和「这个 id 根本不存在」是两件事，
+    下一步动作也完全不同（§10 约束 8）。
+
+    出参带每一章那段总结的**原文**：作者点开是为了读它、比它、引它，
+    再要一次往返只是让他多等一轮。
+    """
+    from ..summary_index import chapters_mentioning
+
+    # 出参里的 `node` 是**后端给的**，不是前端把刚点的那个芯片回填一遍：换一条进入路径
+    # （从花名册、从活动日志点过来）时它手上只有一个 id，没有那个名字。
+    return chapters_mentioning(conn, store, proj.id, node_id).model_dump(mode="json")
 
 
 @app.post("/api/projects/{project_id}/chapters/{chapter}/plan", status_code=501)

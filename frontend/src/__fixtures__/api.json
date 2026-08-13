@@ -86,12 +86,14 @@
           "cast": [],
           "chapter_number": 1,
           "character_id": null,
-          "endpoints": [],
+          "endpoints": [
+            "/api/projects/project:ID1/chapters/1/summary"
+          ],
           "event_id": null,
-          "label": "去第 1 章",
+          "label": "去看第 1 章的总结",
           "proposal_id": null,
           "secret_id": null,
-          "target": "chapter"
+          "target": "summary"
         },
         "source": "model_call",
         "status": "succeeded",
@@ -459,6 +461,173 @@
       }
     ]
   },
+  "activityFailed": {
+    "actors": [
+      {
+        "actor": "author",
+        "count": 15
+      },
+      {
+        "actor": "system",
+        "count": 14
+      }
+    ],
+    "entries": [
+      {
+        "actor": "system",
+        "chapter_number": 3,
+        "id": "extraction_run:ID54",
+        "jump": {
+          "cast": [],
+          "chapter_number": 3,
+          "character_id": null,
+          "endpoints": [
+            "/api/projects/project:ID1/chapters/3/extract"
+          ],
+          "event_id": null,
+          "label": "再整理一次第 3 章",
+          "proposal_id": null,
+          "secret_id": null,
+          "target": "extraction_retry"
+        },
+        "source": "extraction",
+        "status": "failed",
+        "subtitle": "没能连上你配置的模型服务",
+        "title": "第 3 章抽取",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "system",
+        "chapter_number": null,
+        "id": "call:ID55",
+        "jump": null,
+        "source": "model_call",
+        "status": "succeeded",
+        "subtitle": "deepseek-v4-flash · 入 900 / 出 12 token · 0 ms",
+        "title": "模型调用 · 写作助手",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "system",
+        "chapter_number": null,
+        "id": "call:ID56",
+        "jump": null,
+        "source": "model_call",
+        "status": "succeeded",
+        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
+        "title": "模型调用 · 写作助手",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "system",
+        "chapter_number": null,
+        "id": "call:ID57",
+        "jump": null,
+        "source": "model_call",
+        "status": "succeeded",
+        "subtitle": "deepseek-v4-flash · 入 900 / 出 12 token · 0 ms",
+        "title": "模型调用 · 写作助手",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "system",
+        "chapter_number": null,
+        "id": "call:ID58",
+        "jump": null,
+        "source": "model_call",
+        "status": "succeeded",
+        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
+        "title": "模型调用 · 写作助手",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "system",
+        "chapter_number": null,
+        "id": "call:ID59",
+        "jump": null,
+        "source": "model_call",
+        "status": "succeeded",
+        "subtitle": "deepseek-v4-flash · 入 1200 / 出 64 token · 0 ms",
+        "title": "模型调用 · 写作助手",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "system",
+        "chapter_number": null,
+        "id": "call:ID60",
+        "jump": null,
+        "source": "model_call",
+        "status": "succeeded",
+        "subtitle": "deepseek-v4-flash · 入 1800 / 出 2600 token · 0 ms",
+        "title": "模型调用 · 起草",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "system",
+        "chapter_number": null,
+        "id": "call:ID61",
+        "jump": null,
+        "source": "model_call",
+        "status": "succeeded",
+        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
+        "title": "模型调用 · 写作助手",
+        "ts": "<ts>"
+      }
+    ],
+    "next_cursor": "<ts>|call:ID61"
+  },
+  "activityFailedDetail": {
+    "cost": null,
+    "entry": {
+      "actor": "system",
+      "chapter_number": 3,
+      "id": "extraction_run:ID54",
+      "jump": {
+        "cast": [],
+        "chapter_number": 3,
+        "character_id": null,
+        "endpoints": [
+          "/api/projects/project:ID1/chapters/3/extract"
+        ],
+        "event_id": null,
+        "label": "再整理一次第 3 章",
+        "proposal_id": null,
+        "secret_id": null,
+        "target": "extraction_retry"
+      },
+      "source": "extraction",
+      "status": "failed",
+      "subtitle": "没能连上你配置的模型服务",
+      "title": "第 3 章抽取",
+      "ts": "<ts>"
+    },
+    "errors": [
+      "没能连上你配置的模型服务"
+    ],
+    "payload": null,
+    "rows": [
+      {
+        "label": "章节",
+        "value": "第 3 章"
+      },
+      {
+        "label": "有效事件",
+        "value": "3"
+      },
+      {
+        "label": "丢弃事件",
+        "value": "1"
+      },
+      {
+        "label": "待审提案",
+        "value": "0"
+      },
+      {
+        "label": "用时",
+        "value": "1.0 秒"
+      }
+    ]
+  },
   "activityRunDetail": {
     "cost": {
       "call_id": "call:ID39",
@@ -515,6 +684,80 @@
       }
     ]
   },
+  "activitySummaryDetail": {
+    "cost": {
+      "call_id": "call:ID40",
+      "capability": "summarizer",
+      "cost": null,
+      "model": "deepseek-v4-flash",
+      "ms": 0,
+      "tokens_in": null,
+      "tokens_out": null
+    },
+    "entry": {
+      "actor": "system",
+      "chapter_number": 1,
+      "id": "call:ID40",
+      "jump": {
+        "cast": [],
+        "chapter_number": 1,
+        "character_id": null,
+        "endpoints": [
+          "/api/projects/project:ID1/chapters/1/summary"
+        ],
+        "event_id": null,
+        "label": "去看第 1 章的总结",
+        "proposal_id": null,
+        "secret_id": null,
+        "target": "summary"
+      },
+      "source": "model_call",
+      "status": "succeeded",
+      "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
+      "title": "模型调用 · 章节总结",
+      "ts": "<ts>"
+    },
+    "errors": [],
+    "payload": null,
+    "rows": [
+      {
+        "label": "能力",
+        "value": "章节总结"
+      },
+      {
+        "label": "模型",
+        "value": "deepseek-v4-flash"
+      },
+      {
+        "label": "为哪一章",
+        "value": "第 1 章"
+      },
+      {
+        "label": "这次写出来的总结",
+        "value": "萧决在青云城主府听说了血脉秘密。"
+      },
+      {
+        "label": "入参 token",
+        "value": "未记录"
+      },
+      {
+        "label": "出参 token",
+        "value": "未记录"
+      },
+      {
+        "label": "接着上次的输入",
+        "value": "未记录"
+      },
+      {
+        "label": "耗时",
+        "value": "0 ms"
+      },
+      {
+        "label": "第几次尝试",
+        "value": "1"
+      }
+    ]
+  },
   "bootstrapImport": {
     "import_report": {
       "chapter_count": 1,
@@ -548,6 +791,69 @@
       "id": "project:ID2",
       "name": "契约样书",
       "root_path": "<root>/books/契约样书"
+    },
+    "summary": {
+      "chapter_count": 1,
+      "headline": "《契约样书》切成了 1 章，已经建好了。",
+      "ignored_files": [],
+      "landed_count": 1,
+      "lines": [
+        "切出了 1 章，其中 1 章已经可以被引用。",
+        "新建了 1 个章节文件。"
+      ],
+      "preamble_chars": 0,
+      "unchanged_count": 0,
+      "warning": null,
+      "written_count": 1
+    }
+  },
+  "bootstrapPreamble": {
+    "import_report": {
+      "chapter_count": 1,
+      "preamble_chars": 1104,
+      "synced": {
+        "added": [
+          {
+            "created": true,
+            "id": "chapter:ID63",
+            "number": 1,
+            "path": "chapters/0001.md",
+            "project_id": "project:ID62",
+            "snapshot_created": true,
+            "snapshot_id": "snapshot:ID64",
+            "text_sha256": "<sha>",
+            "title": "起"
+          }
+        ],
+        "ignored_files": [],
+        "refreshed": [],
+        "unchanged_count": 0
+      },
+      "unchanged": [],
+      "written": [
+        "chapters/0001.md"
+      ]
+    },
+    "initial_chapter": 1,
+    "project": {
+      "canon_version": 0,
+      "id": "project:ID62",
+      "name": "序章样书",
+      "root_path": "<root>/books/序章样书"
+    },
+    "summary": {
+      "chapter_count": 1,
+      "headline": "《序章样书》切成了 1 章，已经建好了。",
+      "ignored_files": [],
+      "landed_count": 1,
+      "lines": [
+        "切出了 1 章，其中 1 章已经可以被引用。",
+        "新建了 1 个章节文件。"
+      ],
+      "preamble_chars": 1104,
+      "unchanged_count": 0,
+      "warning": "⚠️ 第一章的标题之前还有 1104 个字，它们不属于任何一章。\n最常见的原因是**第一章的标题没有被认出来**（比如它写成「楔子」「序章」，或者标题那一行前面还有别的字）。真是这样的话，整本书的章号会集体差一章：你在第 24 章记下的事，系统会记成第 23 章，而这件事在界面上看不出任何异常。\n先打开这份 TXT 看一眼开头：如果那段字确实是第一章的正文，把它的标题改成「第一章 ……」再重新导入一次（导入不会覆盖已经建好的书，请新建一本）。如果那本来就是简介或者楔子，它不属于任何一章是对的，可以不管。",
+      "written_count": 1
     }
   },
   "canonEventCast": {
@@ -698,6 +1004,7 @@
   "characterState": {
     "chapter": 2,
     "edges": [],
+    "is_dead": false,
     "location": null,
     "node": {
       "id": "character:ID10",
@@ -1234,6 +1541,42 @@
       "revealed_facts": []
     }
   ],
+  "extractionFailed": {
+    "chapter_number": 3,
+    "created_at": "<ts>",
+    "discarded_event_count": 1,
+    "errors": [
+      "没能连上你配置的模型服务"
+    ],
+    "finished_at": "<ts>",
+    "id": "extraction_run:ID54",
+    "model_call_id": null,
+    "project_id": "project:ID1",
+    "prompt_hash": "prompt:3",
+    "proposal_count": 0,
+    "schema_version": "m4.analysis.v1",
+    "snapshot_id": "snapshot:ID49",
+    "started_at": "<ts>",
+    "status": "FAILED",
+    "valid_event_count": 3
+  },
+  "extractionRun": {
+    "chapter_number": 1,
+    "created_at": "<ts>",
+    "discarded_event_count": 1,
+    "errors": [],
+    "finished_at": "<ts>",
+    "id": "extraction_run:ID38",
+    "model_call_id": "call:ID39",
+    "project_id": "project:ID1",
+    "prompt_hash": "prompt:1",
+    "proposal_count": 2,
+    "schema_version": "m4.analysis.v1",
+    "snapshot_id": "snapshot:ID11",
+    "started_at": "<ts>",
+    "status": "SUCCEEDED",
+    "valid_event_count": 3
+  },
   "locate": [
     {
       "chapter_id": "chapter:ID12",
@@ -1561,7 +1904,7 @@
           "confidence": 0.8,
           "profile": {
             "background": "北荒旧族",
-            "character_notes": null,
+            "character_notes": "说话总带三分敬意，从不主动提北荒",
             "confidence": 0.8,
             "gender": "女",
             "personality": "隐忍",
@@ -1745,12 +2088,68 @@
     "run_count": 0,
     "totals": {
       "calls": 1,
-      "cost": null,
+      "cost": 0.34,
       "metered_calls": 1,
       "ms": 900,
-      "priced_calls": 0,
+      "priced_calls": 1,
       "tokens_in": 1200,
       "tokens_out": 400
+    }
+  },
+  "runsPartlyPriced": {
+    "entries": [
+      {
+        "actor": "system",
+        "chapter_number": 3,
+        "id": "extraction_run:ID54",
+        "jump": {
+          "cast": [],
+          "chapter_number": 3,
+          "character_id": null,
+          "endpoints": [],
+          "event_id": null,
+          "label": "再整理一次第 3 章",
+          "proposal_id": null,
+          "secret_id": null,
+          "target": "extraction_retry"
+        },
+        "source": "extraction",
+        "status": "failed",
+        "subtitle": "没能连上你配置的模型服务",
+        "title": "第 3 章抽取",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "system",
+        "chapter_number": 1,
+        "id": "extraction_run:ID38",
+        "jump": {
+          "cast": [],
+          "chapter_number": 1,
+          "character_id": null,
+          "endpoints": [],
+          "event_id": null,
+          "label": "第 1 章还有 2 条待审",
+          "proposal_id": null,
+          "secret_id": null,
+          "target": "proposal"
+        },
+        "source": "extraction",
+        "status": "succeeded",
+        "subtitle": "有效事件 3 条 · 丢弃 1 条 · 待审提案 2 条",
+        "title": "第 1 章抽取",
+        "ts": "<ts>"
+      }
+    ],
+    "run_count": 2,
+    "totals": {
+      "calls": 13,
+      "cost": 0.34,
+      "metered_calls": 8,
+      "ms": 1800,
+      "priced_calls": 1,
+      "tokens_in": 10200,
+      "tokens_out": 6152
     }
   },
   "runsUnreported": {
@@ -1806,6 +2205,7 @@
           "valid_to_chapter": null
         }
       ],
+      "is_dead": false,
       "location": null,
       "node": {
         "id": "character:ID10",
@@ -1828,6 +2228,7 @@
     {
       "chapter": 2,
       "edges": [],
+      "is_dead": false,
       "location": null,
       "node": {
         "id": "character:ID8",
@@ -1891,69 +2292,91 @@
     "chapter": 12,
     "chapters": [
       {
+        "author_written": false,
         "chapter_number": 1,
         "created_at": "<ts>",
         "has_text": true,
+        "retracted": false,
         "summary": "萧决在青云城主府听说了血脉秘密。"
       },
       {
+        "author_written": false,
         "chapter_number": 2,
         "created_at": null,
         "has_text": true,
+        "retracted": false,
         "summary": null
       },
       {
+        "author_written": false,
         "chapter_number": 3,
         "created_at": null,
         "has_text": false,
+        "retracted": false,
         "summary": null
       },
       {
+        "author_written": false,
         "chapter_number": 4,
         "created_at": null,
         "has_text": false,
+        "retracted": false,
         "summary": null
       },
       {
+        "author_written": false,
         "chapter_number": 5,
         "created_at": null,
         "has_text": false,
+        "retracted": false,
         "summary": null
       },
       {
+        "author_written": false,
         "chapter_number": 6,
         "created_at": null,
         "has_text": false,
+        "retracted": false,
         "summary": null
       },
       {
+        "author_written": false,
         "chapter_number": 7,
         "created_at": null,
         "has_text": false,
+        "retracted": false,
         "summary": null
       },
       {
+        "author_written": false,
         "chapter_number": 8,
         "created_at": null,
         "has_text": false,
+        "retracted": false,
         "summary": null
       },
       {
+        "author_written": false,
         "chapter_number": 9,
         "created_at": null,
         "has_text": false,
+        "retracted": false,
         "summary": null
       },
       {
+        "author_written": false,
         "chapter_number": 10,
         "created_at": null,
         "has_text": false,
+        "retracted": false,
         "summary": null
       },
       {
+        "author_written": false,
         "chapter_number": 11,
         "created_at": null,
         "has_text": false,
+        "retracted": false,
         "summary": null
       }
     ],
@@ -1964,10 +2387,117 @@
     "window_first": 1,
     "window_last": 11
   },
-  "summaryGenerated": {
+  "summaryChapter": {
+    "author_written": false,
     "chapter_number": 1,
     "created_at": "<ts>",
     "has_text": true,
+    "retracted": false,
     "summary": "萧决在青云城主府听说了血脉秘密。"
+  },
+  "summaryEdited": {
+    "author_written": true,
+    "chapter_number": 2,
+    "created_at": "<ts>",
+    "has_text": true,
+    "retracted": false,
+    "summary": "萧决把玄铁令收进袖中，谁也没告诉。"
+  },
+  "summaryGenerated": {
+    "author_written": false,
+    "chapter_number": 1,
+    "created_at": "<ts>",
+    "has_text": true,
+    "retracted": false,
+    "summary": "萧决在青云城主府听说了血脉秘密。"
+  },
+  "summaryMentionTrail": {
+    "chapters": [
+      {
+        "author_written": false,
+        "chapter_number": 1,
+        "summary": "萧决在青云城主府听说了血脉秘密。",
+        "surfaces": [
+          "萧决"
+        ]
+      }
+    ],
+    "node": {
+      "id": "character:ID10",
+      "label": "Character",
+      "name": "萧决"
+    }
+  },
+  "summaryMentions": {
+    "chapter": 1,
+    "mentions": [
+      {
+        "node": {
+          "id": "character:ID10",
+          "label": "Character",
+          "name": "萧决"
+        },
+        "surfaces": [
+          "萧决"
+        ]
+      },
+      {
+        "node": {
+          "id": "location:ID5",
+          "label": "Location",
+          "name": "青云城主府"
+        },
+        "surfaces": [
+          "青云城主府"
+        ]
+      },
+      {
+        "node": {
+          "id": "secret:ID7",
+          "label": "Secret",
+          "name": "血脉秘密"
+        },
+        "surfaces": [
+          "血脉秘密"
+        ]
+      }
+    ]
+  },
+  "summaryRetracted": {
+    "author_written": false,
+    "chapter_number": 2,
+    "created_at": null,
+    "has_text": true,
+    "retracted": true,
+    "summary": null
+  },
+  "sync": {
+    "added_chapters": [],
+    "chapter_count": 3,
+    "headline": "读回来了：1 章有新内容（这本书现在共 3 章）。",
+    "ignored_files": [
+      "chapters/大纲.md"
+    ],
+    "notes": [
+      "内容变了：第 2 章。之前那一版还在「历史」里。",
+      "这些文件不是章节，没有动它们：chapters/大纲.md。"
+    ],
+    "unchanged_count": 2,
+    "updated_chapters": [
+      2
+    ]
+  },
+  "syncUnchanged": {
+    "added_chapters": [],
+    "chapter_count": 3,
+    "headline": "读了一遍：稿子和这边记着的一样，没有变化（共 3 章）。",
+    "ignored_files": [
+      "chapters/大纲.md"
+    ],
+    "notes": [
+      "这些文件不是章节，没有动它们：chapters/大纲.md。"
+    ],
+    "unchanged_count": 3,
+    "updated_chapters": []
   }
 }

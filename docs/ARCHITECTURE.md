@@ -285,7 +285,24 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 
 ## 当前状态
 
-**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2570 个 pytest + 558 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
+**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2652 个 pytest + 640 个 vitest，`.sql` 和前端产物都在 wheel 里）：
+
+> ⚠️ **「全绿」这个词 2026-08-13 从上面那句话里拿掉了，因为它在一台干净机器上不成立。**
+> `tests/test_m3_replay.py::test_replay_passes_the_preregistered_gate` 在**新克隆 /
+> 新 worktree 上必红，而且重新生成也救不回来**：它读 `synth/gate.db`（`*.db` 在
+> `.gitignore` 里，所以那个文件从不进版本库），配的却是**committed 的**
+> `synth/m3_ground_truth.json` —— 那份 json 里写着上一次 build 的 `project_id`（ULID），
+> 而重跑 `synth/build.py` 必然给出另一个 id，于是命中 0/25。
+> 头一次跑还会踩一个更迷惑的形态：测试自己把空的 `synth/gate.db` 建出来
+> （报「no such table: alias」），而 `build.py` **有意不覆盖已存在的库**，
+> 于是不先 `rm` 它就连 build 都跑不了。
+>
+> **这是 2026-08-13 之前就存在的状态，不是哪一次改动带进来的**（在 `integration/wave-1`
+> 上 stash 掉全部改动复验过）。写在这儿是因为它已经骗过一次：一份说「全绿」的文档 +
+> 一条在干净机器上必红的测试 = 下一个人会以为是自己弄坏了什么。
+> **怎么修是 M3 证据那一侧的事**（要么把 `gate.db` 的生成和 ground truth 绑成一步，
+> 要么让 replay 按项目名而不是 ULID 找），**别顺手改 `m3_ground_truth.json`
+> ——那是 M3 门槛的证据**。
 
 > **本节的数字是全仓唯一副本，且 `tests/test_doc_numbers.py` 会拦住第二份。**
 > `README.md` / `CLAUDE.md` / `frontend/README.md` 里只留指针，不许再抄一份数字过去。
@@ -296,8 +313,8 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 > 列在「还一个字符都没有」里——照它排期的人会去重写已完成的工作。
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
-> 守卫钉住的是**能在运行时数出来**的那些（63 条路由 / 62 条 /api / 1 条 501 stub /
-> 19 个错误映射 / 18 个子命令 / 24 张表 / 64 个端点 / `ALL_CHECKS` 3），
+> 守卫钉住的是**能在运行时数出来**的那些（70 条路由 / 69 条 /api / 1 条 501 stub /
+> 19 个错误映射 / 20 个子命令 / 26 张表 / 78 个端点 / `ALL_CHECKS` 3），
 > 改错必红、**删掉也必红**（不静默 skip）。
 > （这一行 2026-08-10 之前写的是「路由 42 / fixture 端点 34」那种词序，
 > **而守卫的正则认的是「N 条路由」「N 个端点」**——于是它躺在被守卫盯着的那一节里、
@@ -318,7 +335,31 @@ db.py  ids.py  decisions.py  project.py
 migrations/{001_init,002_m4_events,003_proposal_audit_recovery,004_chapter_summary,005_fact_edit,
             006_chat_session,007_draft_candidate,008_cache_usage,
             009_call_chapter,010_candidate_stopped,011_rule_revocation,
-            012_chat_notice}.sql（24 张表）
+            012_chat_notice,013_summary_edit,014_summary_mentions}.sql（26 张表）
+                                                ← 013 也是 ALTER 不建表：`chapter_summary`
+                                                  多两列（`source` / `status`），照 005 的先例。
+                                                  **作者改一条滚动总结时不许有一行凭空消失**：
+                                                  改 = 追加一行作者版，撤回 = 追加一行标记撤回，
+                                                  模型写的那一行留着。唯一键那一关不用重建表——
+                                                  它本来就是内容寻址的，新长出来的两种行各有各的
+                                                  地址（`draft/rolling_summary.py::_address`）。
+                                                  **「它是第几次改」也算进地址里**：只哈希文字的话，
+                                                  「改成 A → 改成 B → 改回 A」会撞上第一步那一行的键，
+                                                  而库里那一行是旧的 —— 屏幕上作者刚做的修改什么都
+                                                  没发生，且不报错。同一个形状在「撤回之后再点重新
+                                                  生成」上会再犯一次（同一章正文 = 同一份 prompt）
+                                                ← 014 建两张：`summary_index`（覆盖标记 + `roster_hash`）
+                                                  和 `summary_mention`（倒排本体）。**分两张不是洁癖**：
+                                                  「扫过了但一个人都没提到」和「根本没扫过」在倒排表里
+                                                  长得一模一样（两种都是零行），合成一张的话零命中的
+                                                  总结每次读都被重扫一遍，而且没地方记得住
+                                                  「它是拿哪一版花名册扫的」。
+                                                  **两张都不存章号**：「现在算数的是哪一行」的判据只有
+                                                  一处（`SummaryStore._latest_per_chapter`，013 那轮刚把
+                                                  两份合成一份），存一份章号进来就是第二个会漂的判据 ——
+                                                  漂开的表现是「起草带进 prompt 的那几章」和
+                                                  「界面上说提到过的那几章」不是同一批。判据见
+                                                  `summary_index.py`
                                                 ← 008 是 ALTER 不建表：`model_call` 多两列
                                                   （`cache_read_tokens` / `cache_write_tokens`）。
                                                   **它不是一个功能，是一次测量**：三家三个字段名
@@ -365,15 +406,112 @@ extract/auto_canon.py                             ← 没进三个例外 bucket 
 panel/{knowledge,state,constraints}.py          ← 认知矩阵（头牌）+ PLANNED 进 prompt 的唯一闸门
 checks/{base,location_conflict,future_leak,dead_speaks}.py
                                                   ← R2/R3/R4（R5 已砍；`ALL_CHECKS` 共三条）
+                                                  ⚠️ **R2/R3 在 2026-08-13 之前生产上开不了火**：
+                                                  它们读的三样东西（`first_appears_chapter` /
+                                                  `EdgeProps.value_key` / `StateDim` 节点）
+                                                  **写入方全为零**，于是 `is_dead` 恒 False、
+                                                  「本章尚未登场」恒空——作者点「检查本章」
+                                                  只可能查出 R4。规则本身没错也没改；
+                                                  缺的是入口。M3 那次门槛量的是
+                                                  `synth/m3_replay.py` 在**内存里**叠加的
+                                                  边界数据，没穿过写路径。
+                                                  现在两条规则各有一次真开火，钉在
+                                                  `tests/test_rules_fire.py`（全程走 HTTP）
 text/{anchor,chapterize,scenes,mentions}.py     ← (para_index,quote,k) 唯一定义 / 切章 / 场景块 / 称呼匹配
+summary_index.py                                ← **每一段章节总结 = 一个可反查的记忆点**（2026-08-13）。
+                                                  作者的原话：「迅速找到需要的内容或相关章节的总结，
+                                                  然后引用、对比、调研」+「**我不想用 RAG**」。
+                                                  两句话不冲突：他要的**不是找相似，是找相关**。
+                                                  找相似要向量 + 语义（被砍掉的 Qdrant + 撞 ADR 0005），
+                                                  找相关只要连线——而 PLAN 技术裁决表「全文检索」那一行
+                                                  早就定过这条路（「不做。**mention 索引即检索**」），
+                                                  只是它此前只跑在正文上（`mentioned.py` /
+                                                  `agent/index.py` 的人物轴），没跑在总结上。
+                                                  用的是 `text/mentions.py` 那条 alternation +
+                                                  `resolve(rules_only=True)`，和 R2 同一份实现，
+                                                  **一个语义判断都没有**。出参只 `NodeRef`
+                                                  （这批命中里按定义就有 Secret，§10.5 第 3 条）。
+                                                  ── **索引什么时候重建**：两个内容地址的**相等判断**，
+                                                  没有一个「要记得调」的钩子（§10.5 说过那是本层最弱的一环）。
+                                                  ① 总结那一行——`chapter_summary` 是 append-only（013），
+                                                  改 / 撤回 / 重生成都产出**新 id 的新行**，
+                                                  于是「这一行的字变了」在库里不可能发生，变的只是
+                                                  「哪一行现在算数」⇒ 新行没索引就补扫、旧行不算数就删掉，
+                                                  **三条写路径一个字都不用改，也没得忘**；
+                                                  ② 花名册那一版——`roster_hash` 一变，全书索引全对不上，
+                                                  整本重扫。写穿（插总结时顺手建索引）**做不到第二条**：
+                                                  `POST /nodes` 和 `/aliases` 各要记得去重扫全书，
+                                                  忘了不报错，表现只是「那个新人物在总结里永远搜不到」。
+                                                  ── 敢在读路径上全量重扫，是因为它便宜：722 章 ×
+                                                  作者档 1,000 字上限 = **54 ms**（实测，300 个 surface）；
+                                                  已经对上时**一条写语句都不发**（两条 SELECT，~5 ms）。
+                                                  正文那一侧（每章几千字）才需要心疼，而这张表不碰正文
 declare.py  importer.py                         ← M1 声明层：引语定章号 + 证据链 + CanonWriter
-cli.py                                          ← nh 的 18 个子命令（含 `nh serve` / `nh gate` / `nh draft` / `nh summarize`）
-api/{app,deps,activity,autopilot,chat,extraction,review}.py
-                                                ← M1.5 FastAPI 壳：63 条路由 + 19 个错误映射
-                                                  （62 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
+                                                  2026-08-13 多两个动词，**都只收称呼 + 引语**：
+                                                  `declare_dead`（HAS_STATE → 生死维度，
+                                                  维度由 `ensure_state_dim` 按 `dim_key` 建，
+                                                  `value_key` 由引擎写死——R3 因此永远不必去解析
+                                                  「陨落 / 坐化 / 兵解」，ADR 0005 铁律不破）+
+                                                  `declare_first_appearance`（写
+                                                  `node.props.first_appears_chapter`，
+                                                  **章号照旧由引语算**：它不是边，所以没有
+                                                  evidence 行，依据在 `decision_log` 上）。
+                                                  `declare_node` 的 `props` 同日改成 patch
+                                                  （`exclude_unset`）——原来是整列覆盖，
+                                                  「再声明一次顺便标个首现章」会把抽取写进去的
+                                                  人物档案静默抹掉
+                                                  **同日拒绝消息里的命令行清干净了**：三个类
+                                                  （`UnknownName` / `QuoteNotFound` /
+                                                  `AmbiguousQuote`）此前写着「先跑 nh sync」
+                                                  「用 nh locate 先试」「先 nh declare character」，
+                                                  而这些字符串经 `api/app.py` 原样进 `message`、
+                                                  由 `DeclareDrawer` 逐字渲染给一位**用 WPS、
+                                                  不想碰命令行**的作者。现在这一层只说产品无关的
+                                                  那半句（「让系统重新读一遍稿子」），
+                                                  终端那半句归 `cli.py::_refusal_tail()`，
+                                                  浏览器那半句归抽屉上那颗「读回改动」。
+                                                  守卫两侧：`screenGuard.ts::SHELL_LINE`（第五张网）
+                                                  + `test_wording_guard.py` 拿每一个拒绝类的
+                                                  **真实消息**去扫（新增一个子类也罩得住）
+cli.py                                          ← nh 的 20 个子命令（含 `nh serve` / `nh gate` / `nh draft` / `nh summarize`；
+                                                  2026-08-13 多两条**声明**：`nh declare dead` /
+                                                  `nh declare appears`，都只收称呼 + 引语，
+                                                  一个 int 型参数都没有）。
+                                                  同日 `nh check` **不再因为「这一章没有场景块」
+                                                  整条拒绝**：那句 `_die` 的理由（「没有场景块 =
+                                                  R4 无事可做 = 必然零 issue」）在 R2/R3 进表之后
+                                                  就不成立了，而真书里没人手写 `<!-- nh: -->`，
+                                                  于是它的实际效果是在整本真书上把 R2/R3 挡在
+                                                  门外。约束 8 那一半换了形态：照跑，
+                                                  **把那个零的成色说出来**（哪一条今天没东西可查）
+api/{app,deps,activity,autopilot,chat,extraction,manuscript,review}.py
+                                                ← M1.5 FastAPI 壳：70 条路由 + 19 个错误映射
+                                                  （69 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
                                                   M4 抽取/事件读端 + 提案审阅/被动确认路由；
+                                                  抽取那两条的出参 2026-08-13 换成 `ExtractionRunView`：
+                                                  `errors` 是**已经翻好的中文**（措辞唯一出处仍是
+                                                  `activity._RUN_ERROR_LABEL`），写给维护者的那句英文
+                                                  `ExtractionRunError.message` **不出这道门**——
+                                                  在此之前它原样发给浏览器，审阅面板渲染的就是它；
                                                   提案 edit + `/canon/…` 两条改正路由（corrections.py）；
                                                   活动日志两条 + `GET /runs`（2026-08-10 由 501 点亮）；
+                                                  **章节总结那一摊 2026-08-13 补齐成四个动作**
+                                                  （读 / 生成 / 改 / 撤回，同一个路径
+                                                  `…/chapters/{n}/summary`，**出参一个形状**——
+                                                  做完之后拿到的和重新读一遍拿到的逐字节相同）：
+                                                  在那之前只有「读窗口」和「重新生成」，
+                                                  作者改不了也删不掉；
+                                                  **总结的反查两条**（同日，`summary_index.py`）：
+                                                  `GET …/chapters/{n}/summary/mentions`（这一段提到了什么）+
+                                                  `GET …/nodes/{node_id}/summary-mentions`
+                                                  （还有哪几章的总结提到它，按章号排，带那几段原文）。
+                                                  **不并进 `…/summary` 的出参**：那个形状是四条动作共用的，
+                                                  而它同时也是 `…/summaries` 窗口里的一行——每一章都挂
+                                                  一串芯片会让一次覆盖率查询变成一次全书反查。
+                                                  两条都不调模型、不花钱，所以界面上可以随便点；
+                                                  `node_id` 不在本项目走既有的 `NodeNotFound` → 404，
+                                                  **不返回空表**（§10 约束 8：「他没在任何总结里出现过」
+                                                  和「这个 id 根本不存在」下一步动作完全不同）；
                                                   写作助手会话九条（开 / 列 / 看 / 删 / **跑一轮**（两种收法）/
                                                   **停** / **作者的规矩两条**，`api/chat.py`）——`agent/` 这一层
                                                   在此之前在 `src/` 里一个调用方都没有；
@@ -399,6 +537,17 @@ api/{app,deps,activity,autopilot,chat,extraction,review}.py
                                                   候选稿两条（列一章的几稿 / 摊开某一稿的全文，
                                                   ADR 0022）——**它不是版本历史**：那儿是已经在书里的，
                                                   这儿是还摆在桌上的）
+api/manuscript.py                               ← **稿子回流那一层的措辞**（2026-08-13）：
+                                                  `SyncOutcome`（`POST …/sync` 的出参）+
+                                                  `ImportSummary` / `BootstrapView`（导入回执）。
+                                                  这一层不干活，只把回执翻成作者读得懂的话
+                                                  （同 `ExtractionRunView` 那条纪律：措辞归后端，
+                                                  前端一个字都不拼）。**`PREAMBLE_ALARM_CHARS`
+                                                  住在这儿**——「章标之前多长算不对劲」是产品判断，
+                                                  1,000 落在「卷首材料几百字」和「一整章 2,000 字
+                                                  以上」中间，两侧都有余量；越过它就明说
+                                                  **整本书的章号可能集体错一位**（低于门槛照样有
+                                                  一行中性说明，零带着理由）
 corrections.py                                  ← 改一条**已生效（CANON）**的事实：KNOWS↔BELIEVES /
                                                   事件的 knowers / participants（撤回 + 写新的，旧行留着）
                                                   **2026-08-11 起浏览器里有调用方**（矩阵那一格 +
@@ -409,15 +558,49 @@ activity.py                                     ← 「事后可查」（ADR 002
                                                   每条带一个结构化 `jump`——**跳去哪个模块改由后端算**，
                                                   且只落在今天真存在的编辑入口上；`narrow_payload()`
                                                   是这一层的收窄点（比 `_narrow` 严：日志行没有当前章）
-frontend/src/                                   ← React 工作台：58 个非测试手写源文件、9181 行 TS/TSX（7615 行测试）——数法：`frontend/src` 下 `*.ts|*.tsx`，排除 `*.test.*` 与生成物 `api/schema.ts`。**没有守卫罩着这三个数**：`test_doc_numbers` 只钉运行时数得出来的那些，所以它们从 2026-07-25 写下之后烂到 2026-08-12 才被发现，测试那个数当时差了 2.75 倍
+frontend/src/                                   ← React 工作台：62 个非测试手写源文件、10320 行 TS/TSX（9046 行测试）——数法：`frontend/src` 下 `*.ts|*.tsx`，排除 `*.test.*` 与生成物 `api/schema.ts`。**没有守卫罩着这三个数**：`test_doc_numbers` 只钉运行时数得出来的那些，所以它们从 2026-07-25 写下之后烂到 2026-08-12 才被发现，测试那个数当时差了 2.75 倍（2026-08-13 复测又发现文件数已经漂了 3 个——**这条盲区不是历史，它一直在漏**）
                                                   （数法：`frontend/src` 下的 `.ts/.tsx`，不含生成物 `api/schema.ts`）
                                                   （M4 审阅面板：ProposalReviewTab / StateCards / hooks；
                                                   ADR 0020 的「可查」页：ActivityLog —— 顶栏一个入口、
                                                   换的是**中栏**，跳转坐标一律吃后端的 `jump`；
                                                   ADR 0020 的「可改」：KnowledgeMatrix 的 `CellEditor`
                                                   + CanonEventCast + `correctionError.ts`（409/404/422
-                                                  三种拒绝三句话，**409 绝不静默重试**））
-frontend/src/__fixtures__/api.json              ← 从真 app dump 的 64 个端点出参（契约测试两头共用）
+                                                  三种拒绝三句话，**409 绝不静默重试**）；
+                                                  `CastPicker.tsx` = 「谁在场 / 谁知道了」这两维名单的
+                                                  **唯一一份画法**（2026-08-13）——审阅那一格的
+                                                  「改一改再收下」和已确认那一格的「保存名单」是同一件事的
+                                                  前后两步，各画一遍迟早有一遍会改成别的说法，
+                                                  而「＋加一个人」和勾选框对**绝对集合**语义的暗示是相反的；
+                                                  `StateCards.tsx::StateTab` = **时态查询第一次交到作者手上**
+                                                  （2026-08-13）：右栏「人物状态」多一个「看上一章结束时」
+                                                  的开关。`[valid_from, valid_to)` 那台时光机整个建好着，
+                                                  而右栏此前**永远只问「当前章」**——它一直停在一个刻度上。
+                                                  **后端一个字都没改**（`chapter` 本来就是路径参数，
+                                                  `/characters/{id}/state` 那条注着「AS OF，不写进任何数据」），
+                                                  换的只是请求里那个数。三条纪律：
+                                                  ① **不是本章要一眼看得出**——整块换底换框 + 横幅同时说出
+                                                  两个章号 + 那一格的标签改成「人物状态 · 第 N 章」
+                                                  （横幅滚下去就没了，标签还在）；照着上一章的局面改本章的
+                                                  事实，造出来的是一条 `valid_from` 错了的 CANON 边，
+                                                  而它在面板上长得完全正常；
+                                                  ② **只有「本章 / 上一章」两个位置，没有输入框**——
+                                                  「上一章」是当前章减一推出来的，作者敲不进任何数字
+                                                  （约束 10 的零基线守卫不动，`EXEMPT` 里一个键都没加）；
+                                                  ③ 第 1 章那一档**零带着理由**（「第 1 章是全书的开头，
+                                                  它前面没有一章可看」）。开关存的是**「他在第几章上按下的」
+                                                  而不是一个布尔**，换来的性质只有一条：**没在那一章上按过，
+                                                  就永远不会落在上一章模式里**——存布尔的话第 1 章会长出一个
+                                                  说谎的控件（按钮画成没按下、心里那个 `true` 还留着，
+                                                  翻到第 5 章面板自己跳进去）。
+                                                  在场跟着那一章走（`_effective_cast` 数的是**路径上那一章**
+                                                  的正文），所以 `CastLine` 那一行也跟着说「第 N 章提到：」）
+frontend/src/__fixtures__/api.json              ← 从真 app dump 的 78 个端点出参（契约测试两头共用）
+                                                  其中 `extractionFailed` 是**一次没跑成的整理**
+                                                  （2026-08-13 补）：在它之前这份夹具里三条 run
+                                                  全是成功的，于是「失败了屏幕上说什么」这条路径
+                                                  在 pytest 和 vitest 两侧都扫的是一块永远干净的
+                                                  屏幕——而它真出过事两次（日志页一次、审阅面板
+                                                  一次，见 `activity._RUN_ERROR_LABEL`）
                                                   其中 `chatTurnEvents` 是**长连接那一轮的原始帧**
                                                   （`event:` / `data:` / 空行都是真的）：ADR 0024 原文说
                                                   「冻成一份录像」，落地当天更正了——冻在 `tests/` 里的
@@ -446,7 +629,19 @@ draft/product_assemble.py                       ← M4：已确认记忆前言�
                                                   三臂走的不是这个函数（`test_product_assemble.py::
                                                   test_the_gate_never_reaches_this_module` 量的就是这条）
 draft/rolling_summary.py                        ← M4 后续切片：后台章节滚动总结（幂等、机器摘要仅背景）
-                                                  + `coverage()`：窗口里每章「没写 / 写了没总结 / 有」
+                                                  + `coverage()`：窗口里每章「没写 / 写了没总结 /
+                                                  **作者撤回过** / 有」
+                                                  **2026-08-13 起作者改得动它**（迁移 013）：
+                                                  `save_author_summary` / `retract_summary`，
+                                                  两个都不花钱、两个都不删行。读端跟着认 `status`：
+                                                  **最新那一行是撤回就当这一章没有**（起草不带它、
+                                                  覆盖率算作缺、想重来就再点生成——「删了重来」因此
+                                                  顺带覆盖，不用做两套）。
+                                                  `get()` / `latest()` 的差别是钱：后台整理
+                                                  （`api/autopilot.py`）拿 `latest()` 判「要不要派活」，
+                                                  用 `get()` 的话作者撤掉的那一章会在他切走的下一秒
+                                                  被自动买回来 —— 一次他没按过的付费调用，
+                                                  顺带抹掉他刚做的动作
 draft/summarize.py                              ← M4 后续切片：章节摘要 prompt（`nh summarize` 补档，HTTP 同一条）
 agent/{ports,index,tools,loop,store,model,drafting,candidates,rules}.py
                                                 ← 模式二（ADR 0019）：**工具表就是权限边界**。
@@ -780,7 +975,38 @@ R4 之外，R2（未来实体提前出现）和 R3（死人/未登场角色开�
    规模：vitest 18 条（认知矩阵三态 / 左栏空态 / 花名册抽屉的 ADR 0004 提示与拒绝形态）。
    **剩下的**：只有 3 个组件有测试，`CenterEditor` / `LocalGraph` / `BottomBar` 等仍是零。
 
-4. ~~**「AI 起草」在界面上拿不到记忆层**~~ —— **2026-08-10 已补。** 病史留着（三个洞叠加，
+4. ~~**「AI 起草」在界面上拿不到记忆层**~~ —— **2026-08-10 补过一次，而它当天又空了；
+   2026-08-13 才真的补上。**
+
+   > ⚠️ **这一条自己当过一次骗人的文档。** 下面那张表的 c 行写着「滚动总结现在有 HTTP
+   > 端点了」，读起来像是这个洞已经填平——**可那两条端点在浏览器里当天就零调用方**：
+   > 加端点的那一轮里「AI 起草」抽屉被删掉，把唯一的读端一起带走了
+   > （`frontend/src/api/hooks.ts` 上自己挂着「⚠️ 2026-08-10 起零调用方」）。
+   > 于是滚动总结**一直在花作者的钱、一直在影响每一稿**（`draft/product_assemble.py`
+   > 把它们一行行拼进起草 prompt，写作助手也能主动查它），而他在整个工作台里
+   > **看不见它、改不了它、删不掉它**。而且「改」和「删」后端也根本不存在。
+   >
+   > **2026-08-13 补法**：迁移 013（`chapter_summary` 加 `source` / `status`，改和撤回都
+   > 追加行、不删行）+ 后端补齐 `GET` / `PATCH` / `DELETE`（和原有的 `POST` 同一个路径、
+   > 同一个出参形状）+ 右栏第九格「章节总结」（`frontend/src/components/SummaryTab.tsx`，
+   > 跟着左栏选中的那一章走）：正文可编辑 · 撤回 · 重新生成 · 跳到原文。
+   > **撤回的语义定死为「这一章当作没总结」**——起草不带它、覆盖率算作缺、想重来就再点
+   > 生成，所以「删了重来」顺带覆盖，不用做两套；后台整理**不许替他重来**
+   > （`Dispatch.RETRACTED`，判据是 `SummaryStore.latest()` 不是 `get()`）。
+   > 那一格上「你撤回的」和「还没生成」说两句不一样的话：起草那边它们完全同义，
+   > 可下一步动作正好相反，而催作者去补一件他半秒钟前刚做完的事是这块面板最容易
+   > 说出口的那句假话。
+   >
+   > **同日下半：那一格里的每一段总结变成了一个能反查的记忆点**（`summary_index.py`
+   > + 迁移 014 + 两条 GET）。作者的原话是「每一个总结就相当于一本书的一个记忆点，
+   > 我想迅速找到需要的内容或相关章节的总结，然后引用、对比、调研，再顺下去看全文」，
+   > 紧跟着一句「**我不想用 RAG**」——而这两句不冲突：他要的**不是找相似，是找相关**。
+   > 屏幕上多了两层：总结下面一排芯片（这一段提到了谁 / 哪儿 / 哪个秘密）→ 点一个 →
+   > 别的章的总结按章号摊开，带原文，点章号跳过去。**这一层一颗会花钱的按钮都没有**
+   > （反查是一次 SQL），也**一个「相关度」都不许写**——引擎在数字符串，写个百分比
+   > 等于向作者承诺它读懂了剧情。索引什么时候重建见上面 `summary_index.py` 那几行。
+
+   病史留着（三个洞叠加，
    每一个单看都像小事，合起来就是「点 AI 起草走不到 `build_product_context`」，模型只拿到
    「上文 800 字 + 在场名单 + goal + 一串禁令」）：
 
@@ -788,14 +1014,15 @@ R4 之外，R2（未来实体提前出现）和 R3（死人/未登场角色开�
    |---|---|---|
    | a | 事件记忆 + 人物档案 + 滚动总结**只在 `form=PRODUCT` 时装配** | 不变，这一条本来就是对的 |
    | b | **前端硬编码发 `form: "X1"`**，测试还钉住了 | `DraftDrawer.tsx` 改发 `PRODUCT`；那条 vitest 反过来钉住 `PRODUCT`，并把「X0/X1/X2 是考卷、产品不该发」写进注释 |
-   | c | 滚动总结**没有任何 HTTP 端点**，唯一入口是 `nh summarize` CLI（会花钱） | `GET  /chapters/{n}/summaries`（窗口覆盖率）+ `POST /chapters/{n}/summary`（显式生成，幂等） |
+   | c | 滚动总结**没有任何 HTTP 端点**，唯一入口是 `nh summarize` CLI（会花钱） | `GET  /chapters/{n}/summaries`（窗口覆盖率）+ `POST /chapters/{n}/summary`（显式生成，幂等）——**但这两条在浏览器里零调用方，直到 2026-08-13 才真的接上，见上面那段** |
 
    补法里有三件事值得记住：
 
    - **「保存章节后自动生成」是明确不做的**，不是漏了：那会替作者按下一次他没按过的付费调用。
      只做显式触发（同 M4 抽取那条：后台跑，但由作者点）。
    - **空总结不再静默**（§10 约束 8）。`SummaryStore.coverage()` 把窗口里每一章分成三态
-     ——没写 / 写了没总结 / 有——起草抽屉在**花钱之前**就说「第 N 章还没生成总结，
+     ——没写 / 写了没总结 / 有（2026-08-13 起是四态，多一个「作者撤回过」）——起草抽屉在
+     **花钱之前**就说「第 N 章还没生成总结，
      这不是那几章没内容」，并给一个当场补的按钮；`/draft` 的响应也多了一个 `memory` 回执
      （装了几份档案、几条事件、几段总结、哪几章缺）。**零永远带着一句理由**。
    - **顺手补掉一个从没被发现的 bug**：PRODUCT 分支拿 `view.matrix.characters` 直接喂
@@ -928,6 +1155,33 @@ R4 之外，R2（未来实体提前出现）和 R3（死人/未登场角色开�
      `frontend/src/components/JumpCast.coord.test.tsx`（浏览器里真点一次，扫的是请求 URL
      落在哪个参数上）两头钉着。
      `event_cast` 那一档**不给**这个坐标：它跳的是一份名单，不是矩阵的一行。
+
+   > **2026-08-13：兜底那一档里躺着两样不该在那儿的东西，而且它们都是「目标后来才长出来」。**
+   > `JumpTarget.CHAPTER` 的含义是「只能定位到这一章，没有更细的目标」——**它是一句断言**，
+   > 混进「其实有目标，只是这张表没跟着改」的行，那一档就从诚实话变成骗人的话，
+   > 顺带把 ADR 0020 拿它当观测点的那条推翻条件一起关掉。搬出来的两类：
+   >
+   > - **没跑成的整理**（`EXTRACTION_RETRY`）。`_run_jump` 此前**一眼都不看跑成没成**：
+   >   成功和失败走同一条路径，于是作者屏幕上那句红字（「没能连上你配置的模型服务 · 失败」）
+   >   只配着一颗「去第 N 章 →」，而**重跑的能力后端一直都在**
+   >   （`POST …/chapters/{n}/extract?force=true` 把同一行 run 原地重置回排队，不新建行）。
+   >   `endpoints` 出的是**路径**，`force` 由调用方带：不带它，接口照样 202、那一行照旧红着
+   >   ——`tests/test_activity.py` 里有一个「不带 force」的探针钉住这件事，
+   >   浏览器那侧扫的是请求 URL（`ActivityLog.tsx::RetryRow`）。
+   > - **写章节总结那次模型调用**（`SUMMARY`）。右栏第九格是当天才长出来的（见第 4 条），
+   >   而这一条照旧退在兜底坐标上。**判据是「库里有没有一行 `chapter_summary` 指着这次调用」，
+   >   不是 `capability == "summarizer"`**：按结构判，一次没能写出总结的调用不会假装
+   >   那儿有东西可看，换个能力名也不会让这颗按钮静默消失。
+   >
+   > 同一条记录的展开层也多了一行**它到底总结了什么**（走投影层 `rows`，
+   > 不是把 `payload` 那个审计信封摊开——信封是给机器重放用的）。它给的是**这次调用产出的
+   > 那一段**，不是这一章此刻生效的那一段：作者后来改过 / 撤回过的话，最新那行是他自己的字，
+   > 而这条日志说的是当时买到了什么。
+   >
+   > **底栏那条用量条上，「花费」那一半也补齐了**：`CostTotals.cost` 只算得上
+   > `priced_calls` 那几次（自建端点 / 公开标价表里没有的模型 / 没报 token 数的那几次都算不出），
+   > 而屏幕上只有一句 `花费 …`。紧挨着的 token 那一格早就照「合计 + 其中几条算得出」写了，
+   > **只有这一格没跟上**——一个不说自己缺了几行的合计，是一句看起来确定的假话。
 
 7. ~~**写作助手（模式二）在浏览器里还没有界面**~~ —— **2026-08-12 已画完**
    （3.5 `002f46b` 中栏对半分 + 3.6 起草落盘 + ADR 0024 两刀：事件流上屏、问题卡）。
@@ -1105,6 +1359,145 @@ R4 之外，R2（未来实体提前出现）和 R3（死人/未登场角色开�
      **带一半对照**（同一段正文经 `chapter_text` 进来就会被擦掉）。
      **别顺手照抄那个判据**：一稿不带章标题，而 `handle_chapter_text` 出的是整章、
      还可能被截断，直接比一定恒不相等 ⇒ 每一稿刚写完就被自己擦掉。
+
+8. ~~**「检查本章」只可能查出一种问题**~~ —— **2026-08-13 补上了三个入口，但留下一个
+   待裁决的半条。** 病史值得留全，因为它是本仓「最后一厘米没接」里**最安静**的一次：
+   R2 `FUTURE_LEAK` 和 R3 `DEAD_SPEAKS` 从 2026-08-02 起代码齐、测试绿、进了
+   `ALL_CHECKS`，而它们读的三样东西在生产上**写入方全为零**——
+   `NodeProps.first_appears_chapter`（`POST /nodes` 的请求体里没有它、
+   `cli._declare_node` 不传 props）、`EdgeProps.value_key`（于是
+   `StateSnapshot.is_dead` **恒为 False**）、`NodeLabel.STATE_DIM`（零创建路径：
+   `RosterDrawer` 的 `AUTHORED_LABELS` 有意排除它、迁移不种子、抽取只
+   `resolve_ids(...)` 要求它已存在）。
+   **后果是结构性的**：作者点「检查本章」永远只可能查出 R4「同一章两个地点」，
+   右栏「本章尚未登场」和 `ChapterPrepPage` 的「不能提前出现」恒显示「（无）」
+   ——**不是书干净，是没有入口能填那个字段**。而 M3 那次「双边门槛已过」量的是
+   `synth/m3_replay.py` 的 `OverlayGraph`，它在**内存里**叠加这些边界数据，
+   一条都没穿过写路径，所以那次通过与这个洞完全不矛盾。
+
+   补法是三条**作者入口**，判据是「能由证据决定的，一律由证据决定」：
+
+   | 缺的东西 | 补的入口 | 章号从哪来 |
+   |---|---|---|
+   | `first_appears_chapter`（已经写到了的） | `POST …/declare/first-appearance` + `nh declare appears` | **引语**（约束 10 原样成立） |
+   | `first_appears_chapter`（还没写到的） | `POST /nodes` 的 `first_appears_chapter` | 作者的**决定**（同 PLANNED 的 `valid_from`，「那不是回忆是决定」） |
+   | `value_key` + `StateDim` | `POST …/declare/death` + `nh declare dead` | **引语** |
+
+   同批挖出**第四个断点，而且它在前三个下游**：`StateSnapshot.is_dead` 是一个
+   `@property`，而 `model_dump()` **从不输出 property**——`frontend/src/api/types.ts`
+   里早写着 `is_dead: boolean`、`StateCards.tsx` / `ChapterPrepPage.tsx` 也早在渲染
+   那个「· 已亡」，可那个键在浏览器里恒为 `undefined`，角标一次都没画出来过。
+   `tsc` 和 vitest 都看不见它：契约夹具是从真 app dump 的，**真 app 就没发过这个键，
+   两头一致地缺**。~~改成 `computed_field` 之后夹具要重新生成。~~ —— **已改、已重生成，
+   而且两头各补了一道守卫**（2026-08-13）：`tests/test_rules_fire.py::
+   test_the_route_the_right_column_actually_calls_carries_is_dead` 走
+   **右栏真的在读的那一条**（`/chapters/{n}/state`，比上面那条按人查的多一层 `_narrow`，
+   而 `_narrow` 递归重建 dict、漏一个键不会有任何东西报错）；
+   vitest 侧两条——夹具里那个键**在不在**、以及它为真时角标真的画得出来
+   （真夹具里两个人都活着，所以那一档正常数据下永远不亮，正是它躲过守卫的方式）。
+   **实测退回 `@property` 那条 pytest 当场红**，所以这两条不是空转的。
+
+   ⚠️ **留下的半条已裁定：不画那个框（2026-08-13，维护者）。**
+   「还没写到的那一半」在浏览器里**永远不会有输入框**，只有 HTTP / CLI 够得到。
+
+   `tests/test_canon_edit_boundary.py::test_no_screen_in_the_whole_workbench_posts_a_chapter`
+   是一条**零基线**守卫——全前端只许有一个 `<input type="number">`（起草长度那个），
+   请求体里一个撞 `chapter` 的键都不许有，而 `first_appears_chapter` 两条都撞。
+   那份文件的原话是「真出现一个正当的例外时，该做的是把那一个具体的键写进那段话里
+   说明为什么它正当，**不是**加一个开口」。
+
+   **裁决的理由**：「还没写到」的东西**按定义没有证据可指**，所以那个数只能是作者拍的。
+   而约束 6 的整条立场是「章号只由证据决定」——为这一个字段开一个数字框，
+   等于在唯一一条把污染挡在外面的线上开第一个口子，而它换来的是一个**边缘用法**
+   （已经写到了的一律走 `declare/first-appearance`，收引语、章号系统算，零输入）。
+   真要支持「预先声明一个还没写的东西在第几章出现」，那是 PLANNED / 伏笔性质的能力，
+   **该跟 foreshadow 一起走一份 ADR**（同 `declare.py` 里那条「先拿一份 ADR 裁掉
+   约束 10 例外的边界」），不是在花名册抽屉里加个框。
+
+   **所以这条守卫的零基线不变**，`EXEMPT` 里一个键都不加。
+
+9. ~~**提案审阅那道闸门上只有「全收」和「全扔」**~~ —— **2026-08-13 已补，四个洞一起。**
+
+   这块屏幕是作者的**审批闸门**：抽取器从正文里抽出「谁知道什么事」，作者在这儿决定收不收。
+   闸门漏一格，假事实就进了这个产品唯一在卖的那张表。四个洞里前两个是「作者做不了 / 看不见」，
+   后两个是同一件事的病根和它为什么活了这么久。
+
+   | | 当时的事实 | 现在 |
+   |---|---|---|
+   | a | 界面上只有 accept / reject（`ProposalAction` 联合里没有 `"edit"`，`useReviewProposal` 是个二分支）。**引擎和路由一直是通的** | 低置信情节卡上第三颗按钮「改一改」→ `ProposalReviewTab.tsx::ProposalEditor`：概要 + 在场 + 知情三样，勾选框和「已确认的情节」那一格共用 `CastPicker.tsx` |
+   | b | 审阅时看不见 `character_notes`，而它接受之后会进写作 prompt（`draft/product_assemble.py`） | 新人物卡多一行「备注」+ 一句「收下之后，这些设定会跟着这个人进写作提示」 |
+   | c | `GET …/extractions/{id}` 把 `ExtractionRunError` 原样发出去，界面渲染 `message` = **写给维护者的英文** | 出参换成 `ExtractionRunView`：`errors` 是已经翻好的中文，`code`/`message` 都不出这道门 |
+   | d | 夹具里**从来没有一条失败的抽取**，组件测试喂的是手写的 `{code:"analysis_format", message:"格式错误"}`（真码配中文）——测试绿着，屏幕是英文 | 契约夹具多两个端点（`extractionRun` / `extractionFailed`，后者是真的没跑成），组件测试吃真夹具 |
+
+   四件值得记住的事：
+
+   - **c 的根因在类型层，不在渲染那一行。** `frontend/src/api/types.ts` 把字段名抄成了
+     `{ kind, message }`，而后端那一列叫 `code` —— **可翻译的那个值在类型里根本够不着，
+     组件是被结构性地逼上 `message` 的**。所以修法是让那句英文**够不着**（后端出门前就翻好），
+     不是「前端记得别渲染」。
+   - **措辞仍然只有一份**：`activity._RUN_ERROR_LABEL`（`run_error_label()` 是它的读口）。
+     日志页那条读端 2026-08-11 就翻对了，而两条读端读的是**同一批 `extraction_run` 行**——
+     同一个 bug 在第二条路径上又活了两天。别在前端补第二张表，也别在 `extract/` 里补第三张。
+   - **d 比前三条都重要**：没有它，这条路径过两个月会原样回来。现在两侧各有守卫——
+     pytest 侧 `test_wording_guard.py::test_the_review_panels_run_endpoint_speaks_the_authors_language`
+     （**枚举驱动**，`ExtractionErrorCode` 每加一种失败方式自动多跑一遍），
+     vitest 侧组件真渲染一次那条失败并整屏扫 `devTerms`。
+   - **`screenGuard.ts` 多了第四张网**（`ENGLISH_PROSE`：一连三个小写英文单词）。
+     它罩的正是那句 `chapter analysis provider failed` —— 前三张网只咬到了前面那个
+     snake_case，后面整句英文一个字都没被咬，而那一整句就摆在小说作者的屏幕上。
+     **门槛是三个词不是两个**：中文界面上合法的英文全是单个 token（`token` / `ms` /
+     `deepseek-v4-flash`），假红会让下一个人把守卫关掉。小写**单词**那一半仍然是已知盲区，
+     判据文件里照旧写着这件事。
+
+   **剩下的**：`edge_conflict` 和 `new_character` 两种提案仍然只有全收 / 全扔——
+   后端就只对「恰好 1 个 event」开放 edit（`extract/proposal_validation.py`），
+   **条件不成立不画那颗按钮**（同日志页「`endpoints` 空就不画编辑入口」那条纪律）。
+   要放开得先动引擎，不是先动界面。
+
+10. ~~**他在外面改的稿子回不来，而系统还说是他选错了**~~ —— **2026-08-13 已补，三处一起。**
+
+    这是本仓「最后一厘米没接」的又一次，而它落在**产品的核心动作**上：作者在 WPS 里改完
+    第 23 章回到工作台，**正文他看得见**（章目录和正文都直接扫磁盘，ADR 0007），可他想拿
+    新写的那句话去声明「谁在这时候知道了什么」，系统说找不到——因为 `locate` 搜的是
+    **库里的快照**，而快照只有 `sync` 落得下。`POST …/projects/{pid}/sync` 从 M1.5 起就在
+    后端、**浏览器里零调用方**，也没有 file-watch；`UI_ARCHITECTURE.md` 把它标成 🟢
+    还承诺过「外部改动经 file-watch → sync 回流」——**回流那一半从来没建**。
+
+    | | 当时的事实 | 现在 |
+    |---|---|---|
+    | a | `/sync` 零调用方，回流那半条路没有任何入口 | `SyncButton.tsx`（**一个组件，两处挂载**：中栏工具条 + 声明抽屉「找不到」那一档）；出参换成 `SyncOutcome`，屏幕上那句话由 `api/manuscript.py` 写 |
+    | b | 定位不到时屏幕上是「正文中没有找到这句话，**请重新选择**」——**甩锅**：他的选择没问题，是库还没读过那一版 | 只说事实（「在系统读到的那一版正文里没找到」），那颗按钮就在下面 |
+    | c | 导完 300 章屏幕上一个数字都没有：`BootstrapResult.import_report` 整份被 `Setup.tsx` 丢掉 | 导完先摆回执（`onboarding/ImportReceipt.tsx`）；`preamble_chars` 越过门槛就**明说全书章号可能错一位** |
+
+    四件值得记住的事：
+
+    - **为什么是按钮不是 file-watch**（**这是一个决定，不是没做完**）：sync 是**写路径**
+      ——每次外部保存落一条快照，而快照是证据的锚；ADR 0007「磁盘先、DB 跟」里的那个
+      「跟」是**作者的动作**。一个跟着磁盘自动写库的后台线程 = 他按不停、也看不见的
+      写入面，还要往 wheel 里加一个平台相关的监听依赖（分发叙事是「一条命令，不装别的」）。
+      它防的事一次点击补得回来，它引入的事补不回来。要加先有触发条件（同 v1.1 那张表）。
+      `CenterEditor.test.tsx` 有一条断言钉着「光是打开一章，一次 sync 都不会自己发出去」。
+    - **`preamble_chars` 是全书唯一一个「整本都错了」的早期信号**，而它此前被丢在地上。
+      门槛 1,000（`api/manuscript.py::PREAMBLE_ALARM_CHARS`）落在「卷首材料几百字」和
+      「一整章 2,000 字以上」中间。**宁可漏报不许假报**——假报一次会让作者下次跳过整段，
+      包括真出事的那一次；漏的那一半由「低于门槛也说一行中性说明」兜着。
+      **它不是「一定错了」的判据**（书里真有楔子 / 长简介是同一个形状），所以警告先说
+      看得见的事实，再说两种解释。
+    - **契约夹具补了三个端点**（`sync` / `syncUnchanged` / `bootstrapPreamble`）。
+      理由同 `extractionFailed`：在它们之前，「有变化 / 没变化」和「章标之前躺着一整章」
+      三条路径在 pytest 和 vitest 两侧扫的都是永远不亮的分支。
+    - **`screenGuard.ts` 多了第五张网**（`SHELL_LINE`：`--开关`，或者「命令名 + 一个
+      ASCII 词」）。它罩的是 `declare.py` 里那三句「先跑 nh sync」——**前四张网一张都咬不住**
+      （没有下划线 / 不是大写 / 没有冒号 / 只有两个词）。命令名那半张表**不是手抄的**：
+      `test_wording_guard.py` 拿 `pyproject.toml` 的 `[project.scripts]` + `cli.py` 里
+      typer 注册的每一个子命令来比。**门槛是「命令名 + 空格 + 一个词」**，孤零零一个 `nh`
+      放过去——假红会让下一个人把守卫关掉。**明确不收**：裸路径（`chapters/0001.md`，
+      同步回执就在摆这些名字）、通配符路径、孤零零一个命令名。
+
+    **剩下的**：`WrongLabel` 的消息里仍然带着 `NodeLabel` 的值（`Character` / `Secret`），
+    浏览器那侧的 `ENGINE_ENUM` 咬得住它，而引擎这一侧今天没有一份「节点类别 → 中文」的
+    唯一表可用（`api/types.ts::LABEL_ZH` 和 `activity.py` 各有一份，**两份都在展示层**）。
+    修它要先决定那张表住哪儿，不是在 `declare.py` 里再抄第三份。
 
 **M4 正在实现、尚未完成**：`events/` 契约与 `002_m4_events.sql` 已落地；`extract/` 已有纯
 结构化 schema、确定性 prompt、精确优先的模糊证据定位与不猜名称解析，后台 provider 调用和

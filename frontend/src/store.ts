@@ -18,6 +18,7 @@ export type Tab =
   | "constraints"
   | "graph"
   | "evidence"
+  | "summary"
   | "check"
   | "review";
 /** 当前页：工作台 / 活动记录。

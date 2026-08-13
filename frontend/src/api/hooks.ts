@@ -14,6 +14,7 @@ import type {
   ChapterRow,
   ChapterDrafts,
   ChapterSnapshot,
+  ChapterSummaryMentions,
   ChapterSummaryStatus,
   ChapterText,
   ChatDeleted,
@@ -43,7 +44,9 @@ import type {
   KnowledgeMatrix,
   Mentioned,
   NodeRef,
+  NodeSummaryMentions,
   ProposalAction,
+  ProposalEditInput,
   ProposalRecord,
   ProposalResolution,
   ProvisionalConfirmation,
@@ -57,6 +60,7 @@ import type {
   StoredAlias,
   Subgraph,
   SummaryWindow,
+  SyncOutcome,
 } from "./types";
 
 // 服务端状态全进 TanStack Query（§2.3）：queryKey = [端点, pid, chapter, cast]，
@@ -99,8 +103,12 @@ export function useRefreshModelWindows() {
 /** AI 起草（实验状态，修正案 7）：POST /draft。 */
 /** ⚠️ **2026-08-10 起零调用方**（同 `summaryPrep.ts`）：「AI 起草」抽屉当天删了。
  *  留着是因为**后端 `/draft` 一个字没动**——它现在是模式二 agent 的起草工具，
- *  接面板时直接用。同理下面的 `useSummaryWindow` / `useGenerateSummary` /
- *  `fetchAutopilotStatus`（`useRunAutopilot` 仍在用：换章后台整理走它）。 */
+ *  接面板时直接用。同理 `fetchAutopilotStatus`（`useRunAutopilot` 仍在用：换章
+ *  后台整理走它）。
+ *
+ *  **`useSummaryWindow` / `useGenerateSummary` 2026-08-13 接上了**（右栏「章节总结」
+ *  那一格）：那两条在这儿零调用方地躺了三天，而它们背后的东西**一直在花作者的钱、
+ *  一直在影响每一稿**——链路通着，断在最后一格。 */
 export function useDraft(pid: string, chapter: number) {
   return useMutation({
     mutationFn: (input: DraftRequest) =>
@@ -121,15 +129,110 @@ export function useSummaryWindow(pid: string | null, chapter: number) {
   });
 }
 
+/** 这一章现在的总结（`GET …/chapters/{n}/summary`，单章）。
+ *
+ *  **和 `useSummaryWindow` 是两件事，别拿一个去凑另一个。** 那一条回答「起草这一章时
+ *  滚动总结那一层覆盖成什么样」（一整个区间），这一条回答「这一章自己有没有总结」。
+ *  拿窗口端点传 `chapter + 1` 去凑出本章那一行，就是在前端算一次后端的偏移——
+ *  而那种偏移改起来只会有一头跟着改。 */
+export function useChapterSummary(pid: string | null, chapter: number) {
+  return useQuery({
+    queryKey: q(["summary", pid, chapter]),
+    queryFn: () =>
+      api.get<ChapterSummaryStatus>(proj(pid!, `/chapters/${chapter}/summary`)),
+    enabled: !!pid,
+  });
+}
+
+/** 改动这一章的总结之后，哪几处读端要重取。
+ *
+ *  **窗口那一份必须一起失效**：右栏那句「写这一章时带得上几段」读的是它，
+ *  而作者刚撤掉的那一章正在里面算作「有」。不失效它，屏幕上会同时出现
+ *  「这一章的总结已撤回」和「前面 N 章里有 M 段总结（含这一章）」两句互相打架的话。
+ *
+ *  **倒排那两条也一起**（T6）：总结里的字一变，「这一段提到了谁」和「还有哪几章提到他」
+ *  两个答案都变了。漏掉它们的话，作者刚把「萧决」改成「魔尊」，下面那排芯片还挂着萧决——
+ *  一块看起来完全正常、内容已经过期的屏幕。**反查那条按 pid 整片失效**：改一章总结会
+ *  同时影响别的章的反查结果（那一章从某个人的名单里进来或出去），按 node_id 精确失效
+ *  等于要在前端算一遍后端刚算完的差集。 */
+function invalidateSummaries(qc: ReturnType<typeof useQueryClient>, pid: string) {
+  qc.invalidateQueries({ queryKey: ["summary", pid] });
+  qc.invalidateQueries({ queryKey: ["summaries", pid] });
+  qc.invalidateQueries({ queryKey: ["summaryMentions", pid] });
+  qc.invalidateQueries({ queryKey: ["nodeSummaryMentions", pid] });
+}
+
+/** 这一章的总结提到了花名册里的哪些东西（T6）。
+ *
+ *  **和 `useChapterSummary` 分成两条**，不是并进那一份出参：那个形状是四条动作路由
+ *  共用的，而它同时也是 `…/summaries` 窗口里的一行——每一章都挂一串芯片会让一次
+ *  覆盖率查询变成一次全书反查。 */
+export function useSummaryMentions(pid: string | null, chapter: number) {
+  return useQuery({
+    queryKey: q(["summaryMentions", pid, chapter]),
+    queryFn: () =>
+      api.get<ChapterSummaryMentions>(proj(pid!, `/chapters/${chapter}/summary/mentions`)),
+    enabled: !!pid,
+  });
+}
+
+/** 还有哪几章的总结提到它（T6）。**不调模型、不花钱**，所以点着玩没有代价。
+ *
+ *  `nodeId` 为空 = 作者还没点任何一个芯片，这条不发。 */
+export function useNodeSummaryMentions(pid: string | null, nodeId: string | null) {
+  return useQuery({
+    queryKey: q(["nodeSummaryMentions", pid, nodeId]),
+    queryFn: () =>
+      api.get<NodeSummaryMentions>(proj(pid!, `/nodes/${encodeURIComponent(nodeId!)}/summary-mentions`)),
+    enabled: !!pid && !!nodeId,
+  });
+}
+
 /** 为某一章生成滚动总结。**会调模型、会花钱，所以只由作者显式触发**——
  *  没有「保存章节后自动生成」那条路（那是一次他没按过的付费调用）。
- *  后端幂等，所以补一批的时候不必自己记住哪些补过。 */
+ *  后端幂等，所以补一批的时候不必自己记住哪些补过。
+ *
+ *  撤回过的章按这里会**真的重新生成**（付一次钱）——那是撤回语义里写死的退路。 */
 export function useGenerateSummary(pid: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (chapter: number) =>
       api.post<ChapterSummaryStatus>(proj(pid, `/chapters/${chapter}/summary`)),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["summaries", pid] }),
+    onSuccess: () => {
+      invalidateSummaries(qc, pid);
+      // 这一次是花了钱的（`model_call` 多一行），日志页和底栏那份用量得跟着变。
+      qc.invalidateQueries({ queryKey: ["activity", pid] });
+      qc.invalidateQueries({ queryKey: ["runs", pid] });
+    },
+  });
+}
+
+/** 把这一章的总结换成作者自己写的那一段。**不花钱。**
+ *
+ *  库里是追加一行，模型写的那一行留着（迁移 013）——所以这里没有「撤销」这颗按钮，
+ *  他随时可以再改回去。 */
+export function useEditSummary(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { chapter: number; summary: string }) =>
+      api.patch<ChapterSummaryStatus>(proj(pid, `/chapters/${v.chapter}/summary`), {
+        summary: v.summary,
+      }),
+    onSuccess: () => invalidateSummaries(qc, pid),
+  });
+}
+
+/** 撤回这一章的总结。**不花钱，库里也一行都不少。**
+ *
+ *  **不做乐观更新**：撤回在库里是追加一条指着它的记录，屏幕上却是「这一段没了」——
+ *  两者之间的差别作者永远看不到。先把那一行抹掉的话，界面自己伪造了一次成功
+ *  （同 `useRevokeRule` 那条道理）。 */
+export function useRetractSummary(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (chapter: number) =>
+      api.del<ChapterSummaryStatus>(proj(pid, `/chapters/${chapter}/summary`)),
+    onSuccess: () => invalidateSummaries(qc, pid),
   });
 }
 
@@ -147,7 +250,12 @@ export function useRunAutopilot(pid: string) {
     mutationFn: (chapter: number) =>
       api.post<AutopilotAck>(proj(pid, `/chapters/${chapter}/autopilot`)),
     // 后台补完一章总结，起草前那次「缺不缺」的检查就该看到新结果。
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["summaries", pid] }),
+    // 单章那一份也要（右栏「章节总结」读的是它）：作者刚离开的那一章，后台正是在
+    // 给它生成总结，而他一翻回去看到的会是「还没生成」。
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["summaries", pid] });
+      qc.invalidateQueries({ queryKey: ["summary", pid] });
+    },
   });
 }
 
@@ -195,6 +303,35 @@ export function useImportBook(pid: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["chapters", pid] });
       qc.invalidateQueries({ queryKey: ["roster", pid] });
+    },
+  });
+}
+
+/** **把作者在别的软件里改过的稿子读回库。**
+ *
+ *  这条路由（`POST …/sync`）从 M1.5 建好起在浏览器里**零调用方**，而它是
+ *  「正文看得见」和「这句话记得下」之间那半条回路：章列表和正文直接扫磁盘，所以
+ *  作者在 WPS 里改完回来屏幕上立刻是新的；而 `locate` 搜的是**库里的快照**——
+ *  不跑这一下，他刚写的那句话选中之后会被告知「找不到」，而他的选择没有任何问题。
+ *
+ *  **不花钱**（一次模型调用都没有），但仍然只由作者按一下：它往库里写快照，
+ *  而「磁盘先、DB 跟」的那一下是作者的动作（ADR 0007），不是后台的。
+ *  **也没有 file-watch**：一个自动跟着磁盘写库的后台线程是一条作者按不停的写路径，
+ *  而它防的那件事一次点击就能补回来。
+ *
+ *  成功后失效的东西按「这一下真的改了什么」来挑：库里的快照变了 ⇒ 历史、面板；
+ *  文件本身没被动过，但章列表可能多出新写的那一章 ⇒ 章目录。
+ *  **正文（`text`）不失效**——那一份直接读磁盘，和这次同步无关，
+ *  而作者手上可能有没保存的字（`CenterEditor` 的 `diskAhead` 那条）。 */
+export function useSyncManuscript(pid: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<SyncOutcome>(proj(pid!, "/sync"), {}),
+    onSuccess: () => {
+      if (!pid) return;
+      qc.invalidateQueries({ queryKey: ["chapters", pid] });
+      qc.invalidateQueries({ queryKey: ["history", pid] });
+      invalidatePanels(qc, pid);
     },
   });
 }
@@ -513,7 +650,14 @@ export function useEvents(pid: string | null, chapter: number, scope: "PROVISION
   });
 }
 
-/** 显式后台抽取：POST 后立刻拿回 PENDING run，再用 useExtractionRun 轮询。 */
+/** 显式后台抽取：POST 后立刻拿回 PENDING run，再用 useExtractionRun 轮询。
+ *
+ *  **`force` 那一档是「把没跑成的那一次再跑一遍」**：后端见到已经失败的同一条 run
+ *  会把它**原地重置**回排队（不删行、不新建行），所以日志上那一行不会变成两行。
+ *  不带 `force` 的话它原样还回那条失败的 run —— 接口 202、屏幕上什么都不会发生。
+ *
+ *  时间线和底栏那份用量跟着变：重跑会改写同一条 `extraction_run`，跑完还会多一次
+ *  `model_call`。不失效它们，日志页上那一行会一直红着，而作者刚刚才按过按钮。 */
 export function useStartExtraction(pid: string, chapter: number) {
   const qc = useQueryClient();
   return useMutation({
@@ -521,7 +665,12 @@ export function useStartExtraction(pid: string, chapter: number) {
       api.post<ExtractionRun>(
         proj(pid, `/chapters/${chapter}/extract${opts?.force ? "?force=true" : ""}`),
       ),
-    onSuccess: (run) => qc.setQueryData(["extraction", pid, run.id], run),
+    onSuccess: (run) => {
+      qc.setQueryData(["extraction", pid, run.id], run);
+      qc.invalidateQueries({ queryKey: ["activity", pid] });
+      qc.invalidateQueries({ queryKey: ["activity-detail", pid] });
+      qc.invalidateQueries({ queryKey: ["runs", pid] });
+    },
   });
 }
 
@@ -537,7 +686,15 @@ export function useExtractionRun(pid: string | null, runId: string | null) {
   });
 }
 
-/** 审阅一条提案：accept / reject / bystander。成功后刷新提案、事件、花名册与面板。 */
+/** 审阅一条提案：accept / reject / bystander / **edit**。
+ *
+ *  三条路由，不是两条。**`edit` 那条在此之前没有调用方**——引擎和路由都通着，
+ *  而这个 hook 是个二分支（`action === "accept" ? /accept : /reject`），于是
+ *  「改一改再收下」在浏览器里到不了。缺的那一档正好是最需要的那一档：`knowers`
+ *  是抽取里唯一靠推断得来的一维（谁在场是文本里写着的，谁**因此知道了**是猜的）。
+ *
+ *  成功后刷新提案、事件、花名册与面板（`edit` 同样把 canon 版本推高一格，所以它
+ *  和 accept 走同一条失效）。 */
 export function useReviewProposal(pid: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -545,15 +702,26 @@ export function useReviewProposal(pid: string) {
       proposalId: string;
       action: ProposalAction;
       expected_canon_version: number;
-    }) =>
-      body.action === "accept"
-        ? api.post<ProposalResolution>(proj(pid, `/proposals/${body.proposalId}/accept`), {
-            expected_canon_version: body.expected_canon_version,
-          })
-        : api.post<ProposalResolution>(proj(pid, `/proposals/${body.proposalId}/reject`), {
-            action: body.action,
-            expected_canon_version: body.expected_canon_version,
-          }),
+      /** 只有 `action === "edit"` 才带；后端对别的动作带编辑字段是 422。 */
+      edit?: ProposalEditInput;
+    }) => {
+      const path = (verb: string) => proj(pid, `/proposals/${body.proposalId}/${verb}`);
+      if (body.action === "accept") {
+        return api.post<ProposalResolution>(path("accept"), {
+          expected_canon_version: body.expected_canon_version,
+        });
+      }
+      if (body.action === "edit") {
+        return api.post<ProposalResolution>(path("edit"), {
+          ...body.edit,
+          expected_canon_version: body.expected_canon_version,
+        });
+      }
+      return api.post<ProposalResolution>(path("reject"), {
+        action: body.action,
+        expected_canon_version: body.expected_canon_version,
+      });
+    },
     onSuccess: () => invalidateReview(qc, pid),
   });
 }

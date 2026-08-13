@@ -74,6 +74,7 @@ __all__ = [
     "read_activity",
     "read_entry",
     "read_runs",
+    "run_error_label",
 ]
 
 
@@ -102,13 +103,34 @@ class ActivityStatus(StrEnum):
 class JumpTarget(StrEnum):
     """跳去哪一类目标。
 
-    前三个各自对应一个**今天真的存在**的编辑入口；`CHAPTER` 是兜底——它明说
-    「只能定位到这一章，没有更细的编辑目标」，而不是假装有一个。
+    除最后一档外，每一档都对应一个**今天真的存在**的入口（四个能改、一个能重来）；
+    `CHAPTER` 是兜底——它明说「只能定位到这一章，没有更细的编辑目标」，
+    而不是假装有一个。
+
+    ── 兜底那一档只装「今天真的没有更细目标」的东西 ──────────────────────────
+    2026-08-13 从里面搬走了两类，**它们当初落进兜底都不是因为没有目标**：
+
+    - `SUMMARY`：右栏「章节总结」那一格（读 / 改 / 撤回 / 重新生成）当天才长出来，
+      而写总结那次模型调用照旧退到「去第 N 章」——目标后来才有，这张表没跟着改。
+    - `EXTRACTION_RETRY`：重跑一直在后端（`POST …/chapters/{n}/extract`），
+      只是日志上没有那颗按钮。
+
+    留在兜底里，那一档就从一句诚实话（「今天真的改不了」，ADR 0020 拿它当自己的
+    推翻条件的观测点）变成一句骗人的话，而**骗人的那一句会把观测点一起关掉**。
     """
 
     KNOWLEDGE_CELL = "knowledge_cell"
     EVENT_CAST = "event_cast"
     PROPOSAL = "proposal"
+    SUMMARY = "summary"
+    EXTRACTION_RETRY = "extraction_retry"
+    """**它不是一个编辑入口，是一个「再来一次」。**
+
+    别的几档跳过去之后作者动手改一样东西；这一档是一次没跑成的整理，
+    作者要的是让它重跑（那条路由把那一行原地重置回排队，不新建行）。
+    共用 `endpoints` 是因为它回答的是同一个问题：**今天有没有一条路能让这件事不一样。**
+    """
+
     CHAPTER = "chapter"
 
 
@@ -462,6 +484,8 @@ _KIND_LABEL: Final[dict[str, str]] = {
     "secret_declare": "登记秘密",
     "knows_declare": "声明认知",
     "located_declare": "声明位置",
+    "state_declare": "声明生死",
+    "first_appearance_declare": "声明首次登场",
     "proposal_review": "抽取结果审阅",
     "knowledge_edit": "更正认知类型",
     "event_edit": "更正事件名单",
@@ -512,7 +536,7 @@ _RUN_ERROR_LABEL: Final[dict[str, str]] = {
     ExtractionErrorCode.ANALYSIS_FORMAT: "模型这次答的东西读不出来",
     ExtractionErrorCode.INGEST_FAILURE: "整理结果没能写进这本书，这一章维持原样",
 }
-"""抽取失败的原因 → 作者的说法。
+"""抽取失败的原因 → 作者的说法。**全仓唯一一份**（`run_error_label` 是它的读口）。
 
 **这一节原来根本不存在**，`_run_errors` 直接把 `f"{code}：{message}"` 摆上屏，于是
 一次 provider 抖动在小说作者的日志页上长这样：
@@ -525,6 +549,15 @@ _RUN_ERROR_LABEL: Final[dict[str, str]] = {
 
 `ExtractionRunError.message` 是写给维护者的英文诊断，**永不上屏**：库就在维护者手上，
 而作者读不懂它。所以这里只翻 `code`，不拼 `message`。
+
+⚠️ **2026-08-13：同一个 bug 在另一条路径上还活着，被这张表治好了第二次。**
+日志页那条翻对了，可**审阅面板**（`ProposalReviewTab`）读的是另一条端点
+（`GET …/extractions/{run_id}`），而那条端点当时把 `ExtractionRunError` 原样发出去，
+界面渲染的就是 `message`——于是同一句英文绕开这张表又上了一次屏。根因在类型层：
+前端的 `ExtractionRun.errors` 把字段名抄成了 `kind`/`message`，**可翻译的那个
+`code` 在类型里根本够不着**。现在 `api/extraction.py` 在出门前就把这张表用上，
+那句英文**不再出现在任何一条 HTTP 出参里**——不是「前端记得别渲染」，是它拿不到。
+**别在前端补第二张表，也别在 `extract/` 里补第三张。**
 """
 
 _ACTOR_LABEL: Final[dict[str, str]] = {
@@ -575,11 +608,15 @@ def _node_label(label: str) -> str:
     return _NODE_LABEL.get(label, "条目")
 
 
-def _run_error_label(code: str) -> str:
+def run_error_label(code: str) -> str:
     """同 `_edge_label`：认不出的**不原样回吐**，退到一句中文。
 
     `errors_json` 是 append-only 的审计资产，旧库里可能躺着今天已经删掉的码——
     那种行照样要显示成人话，而不是把 `provider_failure` 摆给作者。
+
+    **公开（同 `actor_label`）**：日志页和审阅面板是两条读端，读的是同一批
+    `extraction_run` 行。第二条（`api/extraction.py`）2026-08-13 接上来之前，
+    它自己把那句英文发给了浏览器——见 `_RUN_ERROR_LABEL` 末尾那段。
     """
     return _RUN_ERROR_LABEL.get(code, "整理没有跑完（没有留下能看懂的原因）")
 
@@ -737,6 +774,22 @@ def _pending_by_snapshot(conn: Connection, project_id: str) -> dict[str, list[st
 
 def _run_jump(row: Any, pending: dict[str, list[str]]) -> ActivityJump:
     chapter = _int(row["chapter_number"])
+    if str(row["status"]) == ExtractionRunStatus.FAILED:
+        # ── 没跑成的那一条，作者要的不是「去第 N 章」，是「再来一次」 ──────────
+        # **这个函数以前一眼都不看 status**：成功和失败走同一条路径（有待审就说去审阅，
+        # 否则去第 N 章）。而重跑的能力后端一直都在——`POST …/chapters/{n}/extract`
+        # 把那一行**原地重置**回排队（不删行、不新建行，`runner.enqueue` 的 force 分支）。
+        # 于是屏幕上那句红字（「没能连上你配置的模型服务 · 失败」）是个死胡同，
+        # 而它恰好是这一页上**唯一需要作者动手**的那一行。
+        #
+        # **status 排在待审提案前面**：同一份快照上可能躺着更早那次成功整理留下的提案，
+        # 但这一行说的是「这一次没跑成」，它自己的下一步就是重来一次。那批提案在
+        # 它们自己那一行上照旧点得到。
+        return ActivityJump(
+            target=JumpTarget.EXTRACTION_RETRY,
+            label=f"再整理一次第 {chapter} 章",
+            chapter_number=chapter,
+        )
     waiting = pending.get(str(row["snapshot_id"]), [])
     if len(waiting) == 1:
         return ActivityJump(
@@ -771,7 +824,7 @@ def _run_errors(row: Any) -> tuple[str, ...]:
     if not isinstance(parsed, list):
         return ()
     return tuple(
-        _run_error_label(_text(item.get("code")) or "")
+        run_error_label(_text(item.get("code")) or "")
         for item in parsed
         if isinstance(item, dict)
     )
@@ -827,6 +880,34 @@ def _call_chapter(row: Any) -> int | None:
     return _int(row["run_chapter"]) or _int(row["summary_chapter"])
 
 
+def _call_jump(row: Any, chapter: int | None) -> ActivityJump | None:
+    """这一次调用，跳去哪儿。
+
+    ── 判据是**这次调用留下了什么**，不是 capability 那个字符串 ────────────────
+    「它是不是一次章节总结」这里问的是「库里有没有一行 `chapter_summary` 指着它」
+    ——那是写入方留下的结构，而 `capability == "summarizer"` 是一份要两处一起改的
+    字符串约定（写在 `draft/rolling_summary.py`，认在这儿）。按结构判，
+    换个能力名不会让这颗按钮静默消失；而一次**没能写出总结**的调用（模型答了空文本）
+    也不会假装那儿有一段总结可看。
+
+    在这一档存在之前，写总结那次调用退到兜底坐标「去第 N 章」——而右栏那一格
+    （`SummaryTab`）读改撤回都在，只是日志上没人指过去。
+    """
+    if chapter is None:
+        return None
+    if _text(row["summary_text"]) is not None:
+        return ActivityJump(
+            target=JumpTarget.SUMMARY,
+            label=f"去看第 {chapter} 章的总结",
+            chapter_number=chapter,
+        )
+    return ActivityJump(
+        target=JumpTarget.CHAPTER,
+        label=f"去第 {chapter} 章",
+        chapter_number=chapter,
+    )
+
+
 def _call_entry(row: Any) -> ActivityEntry:
     label = _capability_label(str(row["capability"]))
     chapter = _call_chapter(row)
@@ -841,15 +922,7 @@ def _call_entry(row: Any) -> ActivityEntry:
         title=f"模型调用 · {label}",
         subtitle=f"{row['model']} · {tokens} · {elapsed}",
         chapter_number=chapter,
-        jump=(
-            None
-            if chapter is None
-            else ActivityJump(
-                target=JumpTarget.CHAPTER,
-                label=f"去第 {chapter} 章",
-                chapter_number=chapter,
-            )
-        ),
+        jump=_call_jump(row, chapter),
     )
 
 
@@ -1036,7 +1109,17 @@ SELECT id, ts, capability, model,
        (SELECT r.chapter_number FROM extraction_run r WHERE r.model_call_id = model_call.id)
          AS run_chapter,
        (SELECT s.chapter_number FROM chapter_summary s WHERE s.model_call_id = model_call.id)
-         AS summary_chapter
+         AS summary_chapter,
+       -- **这次调用写出来的那段总结正文。** 它是这条日志唯一说得出「它到底总结了什么」
+       -- 的东西：展开层原来只有能力 / 模型 / token / 耗时，作者看得见花了钱，
+       -- 看不见买到了什么。
+       --
+       -- 取的是**这一行调用产出的那一段**（`model_call_id` 是它的地址），不是这一章
+       -- 此刻生效的那一段：作者后来改过 / 撤回过的话，最新那一行是他自己的字
+       -- （`source='author'`，`model_call_id` 为空），而这条日志说的是当时买到了什么。
+       -- 想看现在算数的那一段，跳过去（`_call_jump`）。
+       (SELECT s.summary FROM chapter_summary s WHERE s.model_call_id = model_call.id)
+         AS summary_text
 FROM model_call
 WHERE project_id = ?
 """
@@ -1245,6 +1328,22 @@ def _run_detail(conn: Connection, project_id: str, entry_id: str) -> ActivityDet
     )
 
 
+def _summary_rows(row: Any) -> tuple[DetailRow, ...]:
+    """这一次调用**买到了什么**（今天只有章节总结这一档说得出来）。
+
+    没写出总结的调用（抽取 / 起草 / 写作助手）**一行都不加**，而不是加一行「未记录」：
+    那不是一个缺失的值，是这一档调用本来就没有这个字段——凭空多一行永远「未记录」
+    只是噪音（同 `_cache_text` 里「写入那一档报了才说」的取舍）。
+
+    **「总结跑了但没留下正文」这一档不存在，所以这儿没有它的分支**：
+    `RollingSummarizer.ensure` 先判空文本（空就抛，一行都不记），再把
+    `model_call` 和 `chapter_summary` 写在**同一个事务**里——两者要么都在，要么都不在。
+    哪天那两步被拆开，这里就要跟着长出一句「这次没留下正文」。
+    """
+    text = _text(row["summary_text"])
+    return () if text is None else (DetailRow(label="这次写出来的总结", value=text),)
+
+
 def _call_detail(conn: Connection, project_id: str, entry_id: str) -> ActivityDetail | None:
     """这一次调用花了多少。
 
@@ -1257,6 +1356,11 @@ def _call_detail(conn: Connection, project_id: str, entry_id: str) -> ActivityDe
 
     同理去掉的还有 prompt 指纹和两个 artifact 指纹（`artifact:sha256:…`）——
     见 `_run_detail` 的说明，判据是「作者认不认得」。
+
+    ── 「这次写出来的总结」为什么在 `rows` 里，不在 `payload` 里 ──────────────
+    `payload` 是审计信封（引擎内部字段，`ActivityDetail` 那条注释写着它一个字都不该
+    渲染），而这一段是**作者自己的书**里的字——它属于「后端已经写成人话的那一份」。
+    所以它走投影层，和别的行一样是一对「标签 → 值」，前端不必为它写一行文案分支。
     """
     row = conn.execute(_CALL_SELECT + " AND id = ?", (project_id, entry_id)).fetchone()
     if row is None:
@@ -1266,6 +1370,7 @@ def _call_detail(conn: Connection, project_id: str, entry_id: str) -> ActivityDe
         DetailRow(label="能力", value=_capability_label(str(row["capability"]))),
         DetailRow(label="模型", value=str(row["model"])),
         DetailRow(label="为哪一章", value=_chapter_text(chapter)),
+        *_summary_rows(row),
         DetailRow(label="入参 token", value=_num(row["tokens_in"])),
         DetailRow(label="出参 token", value=_num(row["tokens_out"])),
         DetailRow(

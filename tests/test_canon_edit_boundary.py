@@ -52,7 +52,22 @@ FRONTEND = ROOT / "frontend" / "src"
 EDITORS = (
     FRONTEND / "components" / "KnowledgeMatrix.tsx",
     FRONTEND / "components" / "CanonEventCast.tsx",
+    # 2026-08-13：「改一改再收下」（`POST …/proposals/{id}/edit`）。改的是一条**还没
+    # 生效**的事实，但作者面对的表单形状和上面两个一模一样——「顺手让他确认一下生效章」
+    # 那个下午在这一格同样会来，而它同样没有第二个东西拦得住。
+    FRONTEND / "components" / "ProposalReviewTab.tsx",
 )
+"""**发出编辑请求**的那几处（判据是「作者的输入进了哪个请求体」）。"""
+
+EDIT_CONTROLS = EDITORS + (FRONTEND / "components" / "CastPicker.tsx",)
+"""再加上**只画控件、不发请求**的那一份。
+
+名单勾选框 2026-08-13 从 `CanonEventCast.tsx` 提进了 `CastPicker.tsx`（提案那一格要用
+同一份控件和同一句「勾上的就是改完之后的名单」）。**这一行是那次搬家当场红出来的**：
+只扫 `EDITORS` 的话，全部勾选框一次搬家就整体离开了守卫的视野，而扫描器不会喊一声——
+`test_neither_editor_draws_a_box_that_asks_for_a_number` 末尾那条 `total >=` 自守卫
+就是为这种失败准备的，它真的响了。
+"""
 CORRECTIONS_PY = ROOT / "src" / "novel_harness" / "corrections.py"
 
 
@@ -300,21 +315,21 @@ def test_the_two_editors_post_no_chapter_field() -> None:
 
 
 def test_neither_editor_draws_a_box_that_asks_for_a_number() -> None:
-    """两个编辑器里没有一个数字输入框，也没有一句话在问「第几章」。
+    """编辑器里没有一个数字输入框，也没有一句话在问「第几章」。
 
     `--chapter` 那种形态在前端长成 `<input type="number">`，而它在截图里长得
     非常合理——「让作者顺手确认一下生效章」，正是 §5.9 那个下午会写出来的东西。
     """
-    for path in EDITORS:
+    for path in EDIT_CONTROLS:
         tags = input_tags(path.read_text(encoding="utf-8"))
         for tag in tags:
             flat = " ".join(tag.split())
             assert 'type="number"' not in flat, f"{path.name} 画了数字输入框：{flat}"
             assert "numeric" not in flat, f"{path.name} 的输入框在要数字：{flat}"
             assert "章" not in flat, f"{path.name} 的输入框在问章号：{flat}"
-    # 两个编辑器加起来至少有两个框（「他以为的是」+ 名单勾选），一个都扫不到 = 永远绿。
-    total = sum(len(input_tags(path.read_text(encoding="utf-8"))) for path in EDITORS)
-    assert total >= 2, f"只扫到 {total} 个 <input>，扫描器多半没读到 JSX"
+    # 至少三个框（「他以为的是」+ 名单勾选 + 「这件事怎么说」），一个都扫不到 = 永远绿。
+    total = sum(len(input_tags(path.read_text(encoding="utf-8"))) for path in EDIT_CONTROLS)
+    assert total >= 3, f"只扫到 {total} 个 <input>，扫描器多半没读到 JSX"
 
 
 def test_the_request_schemas_still_take_no_chapter() -> None:

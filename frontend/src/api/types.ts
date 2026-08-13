@@ -65,12 +65,20 @@ export interface DraftMemory {
   unsummarized_chapters: number[];
 }
 
-/** 一章在滚动总结上的状态。三种「没有」分得开：没写 / 写了没生成 / 有。 */
+/** 一章在滚动总结上的状态。几种「没有」分得开：没写 / 写了没生成 / **作者撤回过**。
+ *
+ *  `…/chapters/{n}/summary` 那四条路由（读 / 生成 / 改 / 撤回）**共用这一个出参形状**，
+ *  所以一个动作做完之后界面拿到的，和它重新读一遍拿到的，逐字节相同。 */
 export interface ChapterSummaryStatus {
   chapter_number: number;
   has_text: boolean;
   summary: string | null;
   created_at: string | null;
+  /** 最新那一行是「撤回」。**和「还没生成」分开**：下一步动作相反——那一种要去生成，
+   *  这一种是作者刚做完的事，界面不许回头催他补。 */
+  retracted: boolean;
+  /** 现在这一段是作者自己写的。机器写的那一段才带「未经确认，只当线索」的免责。 */
+  author_written: boolean;
 }
 
 /** 起草第 `chapter` 章时，滚动总结覆盖的那个区间。
@@ -85,6 +93,38 @@ export interface SummaryWindow {
   summarized: number;
   /** 有正文、还没生成总结的章号。**这才是要提示作者的那一种零。** */
   missing: number[];
+}
+
+// ── 总结 = 可反查的记忆点（T6）────────────────────────────────────────────────
+//
+// **不是「找相似」，是「找相关」。** 后端一个语义判断都不做：判据只有「这个称呼在这段
+// 字里出现了没有」（`summary_index.py`）。前端这一侧因此也不许出现任何「相关度」
+// 「匹配度」之类的数字——那种数字会让作者以为引擎读懂了剧情，而它在数字符串。
+
+/** 一段总结提到的一个东西。**只有 `NodeRef`，没有 props**（秘密的内容不出接口）。 */
+export interface SummaryMention {
+  node: NodeRef;
+  /** 这一段里真正出现的那几个称呼。「魔尊」还是「萧决」是作者自己的信息，别合并。 */
+  surfaces: string[];
+}
+
+export interface ChapterSummaryMentions {
+  chapter: number;
+  mentions: SummaryMention[];
+}
+
+/** 反查的一行：**哪一章的总结也提到了它**，连那一段原文一起。 */
+export interface ChapterSummaryMention {
+  chapter_number: number;
+  summary: string;
+  surfaces: string[];
+  author_written: boolean;
+}
+
+/** 「还有哪几章的总结提到它」。`node` 由**后端**给：换一条进入路径时前端手上只有 id。 */
+export interface NodeSummaryMentions {
+  node: NodeRef;
+  chapters: ChapterSummaryMention[];
 }
 
 /** 后台整理某一章时，单件活的去向：排上了 / 不用做（已经有了）/ 那一章还没正文。 */
@@ -375,6 +415,24 @@ export interface ImportReport {
   synced: { added: unknown[]; refreshed: unknown[]; unchanged_count: number; ignored_files: string[] };
 }
 
+/** 一次导入**摆给作者看的那份回执**（后端 `api/manuscript.py::ImportSummary`）。
+ *
+ *  **`headline` / `lines` / `warning` 里的每一个字都是后端写的**，这一层一句都不拼：
+ *  「切了多少章算好、算不好」是产品判断，两份判断迟早会互相说反话。
+ *  `warning` 非空 = `preamble_chars` 越过了门槛 = **全书章号可能集体错一位**，
+ *  而那件事在界面上看不出任何异常（`api/manuscript.py::PREAMBLE_ALARM_CHARS` 写着门槛和理由）。 */
+export interface ImportSummary {
+  chapter_count: number;
+  written_count: number;
+  unchanged_count: number;
+  landed_count: number;
+  ignored_files: string[];
+  preamble_chars: number;
+  headline: string;
+  lines: string[];
+  warning: string | null;
+}
+
 export type BootstrapRequest =
   | { mode: "import"; name: string; text: string }
   | { mode: "blank"; name: string };
@@ -383,6 +441,22 @@ export interface BootstrapResult {
   project: Project;
   initial_chapter: number;
   import_report: ImportReport | null;
+  /** 空白建书档是 `null`：那时没有任何东西被切、被写、被忽略。 */
+  summary: ImportSummary | null;
+}
+
+/** 「读回我在别的软件里改过的稿子」的回执（后端 `api/manuscript.py::SyncOutcome`）。
+ *
+ *  `headline` 是屏幕上那句话，**后端写的**。零也带着一句理由（约束 8）：
+ *  「一个章节都没有」和「读了一遍没有变化」是两句不同的话，而它们的下一步动作相反。 */
+export interface SyncOutcome {
+  added_chapters: number[];
+  updated_chapters: number[];
+  unchanged_count: number;
+  chapter_count: number;
+  ignored_files: string[];
+  headline: string;
+  notes: string[];
 }
 
 export interface CheckResult {
@@ -464,7 +538,25 @@ export interface StoredAlias {
 
 export type ProposalKind = "low_confidence_main" | "edge_conflict" | "new_character";
 export type ProposalStatus = "PENDING" | "ACCEPTED" | "REJECTED" | "EDITED";
-export type ProposalAction = "accept" | "reject" | "bystander";
+/** 四个动作，和后端 `ProposalAction` 枚举一一对应。
+ *
+ *  **`edit` 曾经不在这个联合里**，于是「改一改再收下」这条退路在浏览器里根本表示不出来：
+ *  引擎支持、路由通着（`POST …/proposals/{id}/edit`），而作者面对一条 knowers 抽错的
+ *  事件只有「整条收下（把假的放进图）」和「整条丢掉（这一章的情节记录就空了）」。
+ *  少一个字面量，闸门就只有开和关两档。 */
+export type ProposalAction = "accept" | "reject" | "bystander" | "edit";
+
+/** 「按作者改过的样子收下」的入参。三样至少给一样（都不给 → 后端 422）。
+ *
+ *  两个名单是**绝对集合**（改完之后是这些人），`null` = 这一维不动 ——
+ *  和 `EventCastEditInput`（改一条已生效事件）收的是同一种东西。**这条纪律必须一致**：
+ *  两条路能力不一样的时候，作者会学会先驳回再重来，而那正好丢掉了证据链。
+ *  同样**没有章号字段**（约束 10）。 */
+export interface ProposalEditInput {
+  edited_summary?: string | null;
+  knower_ids?: string[] | null;
+  participant_ids?: string[] | null;
+}
 
 export interface StoryEvent {
   id: string;
@@ -537,7 +629,20 @@ export interface ExtractionRun {
   chapter_number: number;
   snapshot_id: string;
   status: ExtractionRunStatus;
-  errors: { kind: string; message: string }[];
+  /** **已经翻好的中文**，一条一句（同 `ActivityDetail.errors`）。
+   *
+   *  ── 这个字段是一次真实事故的现场 ────────────────────────────────────────
+   *
+   *  它原来写的是 `{ kind: string; message: string }[]` —— 而后端那两列叫
+   *  `code` / `message`：**字段名抄错了一个**，于是唯一可翻译的那个值在类型里
+   *  根本够不着，组件被结构性地逼上了 `message`。而 `message` 是写给**维护者**的
+   *  英文诊断（`extract/control.py` 明写「它永远不上作者的屏幕」），于是小说作者
+   *  在审阅面板上看到的是 `chapter analysis provider failed`。
+   *
+   *  现在后端在出门前就翻好（`api/extraction.py::ExtractionRunView`，措辞的唯一
+   *  出处是 `activity._RUN_ERROR_LABEL`），那句英文**不再存在于任何 HTTP 出参里**。
+   *  **别在这儿写第二张翻译表**——`correctionError.ts` 那张已经删过一次了。 */
+  errors: string[];
   valid_event_count: number;
   discarded_event_count: number;
   proposal_count: number;
@@ -648,7 +753,18 @@ export interface EventCastCorrection {
 
 export type ActivitySource = "extraction" | "model_call" | "decision";
 export type ActivityStatus = "succeeded" | "failed" | "running" | "pending";
-export type JumpTarget = "knowledge_cell" | "event_cast" | "proposal" | "chapter";
+/** 跳去哪一类目标。**`chapter` 是兜底**（「只能定位到这一章，没有更细的目标」）。
+ *
+ *  `summary`（右栏「章节总结」那一格）和 `extraction_retry`（把没跑成的那次整理再跑一遍）
+ *  是 2026-08-13 从兜底那一档里搬出来的：它们当初落在那儿**不是因为没有目标**，
+ *  是目标后来才长出来、而后端那张表没跟着改。 */
+export type JumpTarget =
+  | "knowledge_cell"
+  | "event_cast"
+  | "proposal"
+  | "summary"
+  | "extraction_retry"
+  | "chapter";
 
 /** 这一条记录改的东西能从哪儿改回去。**坐标和措辞全由后端给**——
  *  前端不许从 title / source 反推跳哪儿去，那就是第二份路由表。 */
@@ -696,8 +812,11 @@ export interface DetailRow {
   value: string;
 }
 
-/** 这一步花了多少。**null 是「没记」不是 0**（§10 约束 8）：`model_call.cost`
- *  至今没有写入方（BYOK 之下引擎不知道作者签的什么单价）。 */
+/** 这一步花了多少。**null 是「没记」不是 0**（§10 约束 8）。
+ *
+ *  `cost` **2026-08-13 起有写入方**（按公开标价估的），但它照旧可能是 null：
+ *  自建端点、公开表里没有的模型、供应商没报 token 数的那几次都算不出钱。
+ *  **算得出的时候屏幕上必须带「约」字**（`ActivityLog.money`）——它是标价估算不是账单。 */
 export interface ActivityCost {
   call_id: string;
   capability: string;
@@ -745,7 +864,13 @@ export interface CostTotals {
   tokens_in: number | null;
   tokens_out: number | null;
   ms: number | null;
-  /** 其中填了金额的有几条。今天恒为 0，所以 `cost` 恒为 null。 */
+  /** 其中**算得出价钱的**有几条。`calls - priced_calls` = 算不出的那几次
+   *  （自建端点 / 公开标价表里没有的模型 / 供应商没报 token 数）。
+   *
+   *  **2026-08-13 起不再恒为 0**（`model_call.cost` 有写入方了）。这一行以前写的是
+   *  「今天恒为 0，所以 `cost` 恒为 null」——那句话过期之后，界面上那句
+   *  `花费 {money(cost)}` 就变成了一个**不说自己缺了几行**的合计，也就是一句
+   *  看起来确定的假话。合计和这个计数必须一起摆，同旁边的 `metered_calls`。 */
   priced_calls: number;
   cost: number | null;
 }

@@ -6,6 +6,7 @@ import {
   useProposals,
   useProjects,
   useReviewProposal,
+  useRoster,
   useStartExtraction,
 } from "../api/hooks";
 import type {
@@ -13,12 +14,16 @@ import type {
   EventView,
   LowConfidenceEventItem,
   NewCharacterItem,
+  NodeRef,
   ProposalAction,
+  ProposalEditInput,
   ProposalRecord,
 } from "../api/types";
 import { useCoords } from "../store";
 import { readCorrectionError } from "../correctionError";
 import { CanonEventCast } from "./CanonEventCast";
+import { CastPicker, DIMENSIONS, candidates, idsOf, same } from "./CastPicker";
+import type { Dimension } from "./CastPicker";
 
 /** 这一格里每一次被拒绝的动作共用同一句话。
  *
@@ -90,16 +95,108 @@ function nameLookup(proposal: ProposalRecord): (id: string) => string {
   return (id) => byId.get(id) ?? "—";
 }
 
+/** 「改一改再收下」那一格。**它改的是一条还没生效的事实**（提案），所以它和
+ *  `CanonEventCast` 的编辑器是同一件事的前后两步，用的也是同一份控件（`CastPicker`）。
+ *
+ *  ── 为什么这一格必须存在 ──────────────────────────────────────────────────
+ *
+ *  抽取说「这场戏里李管家也知情」，其实他不知情。在这一格出现之前，作者只有两个动作：
+ *  **整条驳回**（这一章的情节记录就空了，他得自己重新声明一遍，而证据链跟着丢）或者
+ *  **整条收下**（把一条假事实放进这个产品唯一在卖的那张表）。**「就把李管家去掉」
+ *  说不出口**——而 `knowers` 恰好是抽取里唯一靠推断得来的一维。
+ *
+ *  ── 三样至少改一样，且只发动过的那一维 ────────────────────────────────────
+ *
+ *  和 `CanonEventCast` 同一条纪律：名单是绝对集合，`null` = 这一维不动。没动过的
+ *  也发过去，`decision_log` 里就多一条「改了在场」而其实一个人都没变——而它只增不改。 */
+function ProposalEditor({
+  item,
+  view,
+  people,
+  pending,
+  onCancel,
+  onSubmit,
+}: {
+  item: LowConfidenceEventItem;
+  view: EventView;
+  people: NodeRef[];
+  pending: boolean;
+  onCancel: () => void;
+  onSubmit: (edit: ProposalEditInput) => void;
+}) {
+  const [summary, setSummary] = useState(item.summary);
+  const [picked, setPicked] = useState<Record<Dimension, string[]>>({
+    knowers: idsOf(view.knowers),
+    participants: idsOf(view.participants),
+  });
+
+  const toggle = (dim: Dimension, id: string) =>
+    setPicked((prev) => ({
+      ...prev,
+      [dim]: prev[dim].includes(id) ? prev[dim].filter((x) => x !== id) : [...prev[dim], id],
+    }));
+
+  const changed: Dimension[] = DIMENSIONS.filter((dim) =>
+    dim === "knowers"
+      ? !same(picked.knowers, idsOf(view.knowers))
+      : !same(picked.participants, idsOf(view.participants)),
+  );
+  const blank = summary.trim() === "";
+  const summaryChanged = !blank && summary.trim() !== item.summary;
+  const nothing = !summaryChanged && changed.length === 0;
+
+  const submit = () => {
+    if (blank || nothing || pending) return;
+    onSubmit({
+      edited_summary: summaryChanged ? summary.trim() : null,
+      knower_ids: changed.includes("knowers") ? picked.knowers : null,
+      participant_ids: changed.includes("participants") ? picked.participants : null,
+    });
+  };
+
+  return (
+    <div className="cast-editor">
+      <label className="row cast-summary">
+        <span>这件事怎么说</span>
+        <input value={summary} onChange={(e) => setSummary(e.target.value)} />
+      </label>
+      {/* 空概要后端会拒（422）。**在按下按钮之前就说**，别让作者去撞一次拒绝
+          （同花名册抽屉里 1 字别名那条）。 */}
+      {blank && (
+        <div className="row dim">
+          这件事总得有句话 —— 整条不要的话用「驳回」。
+        </div>
+      )}
+
+      <CastPicker people={people} picked={picked} onToggle={toggle} />
+
+      <div className="actions">
+        <button disabled={blank || nothing || pending} onClick={submit}>
+          {pending ? "收下中…" : "改完收下"}
+        </button>
+        <button className="link" onClick={onCancel}>
+          不改了
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function ProposalCard({
   proposal,
   eventById,
+  roster,
+  pending,
   onReview,
 }: {
   proposal: ProposalRecord;
   eventById: Map<string, EventView>;
-  onReview: (action: ProposalAction) => void;
+  roster: NodeRef[];
+  pending: boolean;
+  onReview: (action: ProposalAction, edit?: ProposalEditInput) => void;
 }) {
   const nameOf = nameLookup(proposal);
+  const [editing, setEditing] = useState(false);
   if (proposal.kind === "edge_conflict") {
     const items = proposal.items.map(asConflictItem).filter((x): x is EdgeConflictItem => !!x);
     return (
@@ -141,9 +238,16 @@ function ProposalCard({
           <div key={i}>
             <div className="row">设定：{item.profile.gender ?? "—"} / {item.profile.personality ?? "—"}</div>
             {item.profile.background && <div className="row">背景：{item.profile.background}</div>}
+            {/* 「备注」这一行在这儿曾经**根本没画**，而它接受之后会跟着这个人进写作提示
+                （`draft/product_assemble.py::_PROFILE_LABELS`，那儿的标签也是「备注」）
+                ——也就是说作者在这道闸门上批准了一条他从没看见的东西。 */}
+            {item.profile.character_notes && (
+              <div className="row">备注：{item.profile.character_notes}</div>
+            )}
             <div className="row">可信程度 {pct(item.confidence)}</div>
           </div>
         ))}
+        <div className="row dim">收下之后，这些设定会跟着这个人进写作提示。</div>
         <div className="actions">
           <button onClick={() => onReview("accept")}>接受为角色</button>
           <button onClick={() => onReview("bystander")}>标为路人</button>
@@ -153,26 +257,51 @@ function ProposalCard({
   }
 
   const items = proposal.items.map(asEventItem).filter((x): x is LowConfidenceEventItem => !!x);
+  // 后端只对「恰好 1 个 event、没有 edge、没有新人物」的提案开放 edit
+  // （`extract/proposal_validation.py`）。**条件不成立就不画那颗按钮**——同日志页
+  // 「`endpoints` 空就不画编辑入口」那条：一个点下去只会撞 422 的按钮比没有按钮更糟。
+  // `view` 也是硬条件：改名单得先知道现在名单是谁，猜一份出来会让作者按下保存的那一刻
+  // 悄悄删掉几个人。
+  const only = items.length === 1 ? items[0] : null;
+  const view = only ? eventById.get(only.event_id) : undefined;
+  const editable =
+    !!only && !!view && proposal.event_ids.length === 1 && proposal.edge_ids.length === 0;
+
   return (
     <div className="statecard proposal-card low-confidence">
       <div className="nm">需要确认的情节 · 第 {proposal.chapter_number} 章</div>
       {items.map((item, i) => {
-        const view = eventById.get(item.event_id);
+        const each = eventById.get(item.event_id);
         return (
           <div key={i}>
             <div className="row">{item.summary}</div>
             <div className="row dim">
-              在场：{view ? view.participants.map((n) => n.name).join("、") : "—"}
+              在场：{each ? each.participants.map((n) => n.name).join("、") : "—"}
+            </div>
+            <div className="row dim">
+              知道这件事的：{each ? each.knowers.map((n) => n.name).join("、") || "—" : "—"}
             </div>
             <div className="row dim">可信程度 {pct(item.confidence)}</div>
             <div className="row quote">{item.quote}</div>
           </div>
         );
       })}
-      <div className="actions">
-        <button onClick={() => onReview("accept")}>接受</button>
-        <button onClick={() => onReview("reject")}>驳回</button>
-      </div>
+      {editing && only && view ? (
+        <ProposalEditor
+          item={only}
+          view={view}
+          people={candidates(roster, view)}
+          pending={pending}
+          onCancel={() => setEditing(false)}
+          onSubmit={(edit) => onReview("edit", edit)}
+        />
+      ) : (
+        <div className="actions">
+          <button onClick={() => onReview("accept")}>接受</button>
+          {editable && <button onClick={() => setEditing(true)}>改一改</button>}
+          <button onClick={() => onReview("reject")}>驳回</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -184,6 +313,9 @@ export function ProposalReviewTab() {
   const proposals = useProposals(pid, chapter);
   const provisionalEvents = useEvents(pid, chapter, "PROVISIONAL");
   const projects = useProjects();
+  // 「改一改再收下」要摆一份候选人名单。**和已确认那一格读的是同一份花名册缓存**
+  // （queryKey 相同），不另开第二个读源。
+  const roster = useRoster(pid);
   const review = useReviewProposal(pid!);
   const confirm = useConfirmProvisional(pid!, chapter);
   const startExtraction = useStartExtraction(pid!, chapter);
@@ -198,6 +330,10 @@ export function ProposalReviewTab() {
     for (const view of provisionalEvents.data ?? []) map.set(view.event.id, view);
     return map;
   }, [provisionalEvents.data]);
+
+  // 花名册出参的 label 是开放字符串（后端 `_narrow` 之后的 dict）；按 label 过滤那一步
+  // 在 `candidates()` 里，同 `CanonEventCast`。
+  const roll = useMemo(() => (roster.data ?? []) as NodeRef[], [roster.data]);
 
   const pending = (proposals.data ?? []).filter((p) => p.status === "PENDING");
   const run = useExtractionRun(pid, runId);
@@ -223,9 +359,9 @@ export function ProposalReviewTab() {
     );
   };
 
-  const onReview = (proposalId: string, action: ProposalAction) => {
+  const onReview = (proposalId: string, action: ProposalAction, edit?: ProposalEditInput) => {
     if (!pid) return;
-    review.mutate({ proposalId, action, expected_canon_version: canonVersion });
+    review.mutate({ proposalId, action, expected_canon_version: canonVersion, edit });
   };
 
   return (
@@ -258,10 +394,15 @@ export function ProposalReviewTab() {
             {run.data.proposal_count > 0 && ` · ${run.data.proposal_count} 项待确认`}
           </span>
         )}
+        {/* **一句已经翻好的中文，前端一个字都不拼**（`api/extraction.py::ExtractionRunView`
+            ← `activity._RUN_ERROR_LABEL`）。这儿原先渲染的是 `e.message` —— 那是写给
+            维护者的英文诊断，于是屏幕上是 `chapter analysis provider failed`。
+            根因在类型层：`ExtractionRun.errors` 把字段名抄成了 `kind`/`message`，
+            可翻译的那个 `code` 够不着。现在那句英文不出后端的门。 */}
         {run.data?.status === "FAILED" && (
           <div className="err-box">
-            {run.data.errors.map((e, i) => (
-              <div key={i}>{e.message}</div>
+            {run.data.errors.map((line, i) => (
+              <div key={i}>{line}</div>
             ))}
           </div>
         )}
@@ -275,7 +416,9 @@ export function ProposalReviewTab() {
               key={p.id}
               proposal={p}
               eventById={eventById}
-              onReview={(action) => onReview(p.id, action)}
+              roster={roll}
+              pending={review.isPending}
+              onReview={(action, edit) => onReview(p.id, action, edit)}
             />
           ))}
         </div>

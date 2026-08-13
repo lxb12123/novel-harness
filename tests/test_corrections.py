@@ -654,8 +654,13 @@ def test_http_proposal_edit_route_exists_and_fixes_the_knowers(
 ) -> None:
     """**审阅队列这条路在此之前根本到不了 `edit`**：库里有这个动作，路由表里没有。
 
-    于是浏览器里的作者面对一条 knowers 抽错的事件只有 accept 和 reject 两个按钮——
-    「改」这条退路在 UI 上不存在。两条路能力不一致，作者会学会先 reject 再重来。
+    「改」这条退路在 UI 上不存在时，作者面对一条 knowers 抽错的事件只有整条收下或整条丢掉。
+    两条路能力不一致，他会学会先 reject 再重来，而那正好丢掉了证据链。
+
+    ⚠️ **这条测试绿了两天，而屏幕上仍然只有两个按钮**：前端的 `ProposalAction` 联合里
+    没有 `"edit"`，这条路由一个调用方都没有。**「路由通了」不等于「作者做得到」**——
+    浏览器那一侧归 `frontend/src/components/ProposalReviewTab.test.tsx`
+    （「改一改再收下」那一组，2026-08-13 补），两条一起才算这个洞补上了。
     """
     from test_api import _seed_low_confidence_proposal
 

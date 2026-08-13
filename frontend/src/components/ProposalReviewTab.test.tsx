@@ -1,9 +1,9 @@
-import { screen, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { fixtures, renderWithApi } from "../test/harness";
-import { devTerms } from "../test/screenGuard";
+import { devTerms, screenText } from "../test/screenGuard";
 import { useCoords } from "../store";
 import { ProposalReviewTab } from "./ProposalReviewTab";
 
@@ -12,6 +12,16 @@ const open = () => {
   useCoords.getState().setChapter(1);
   renderWithApi(<ProposalReviewTab />);
 };
+
+/** `vi.spyOn(globalThis, "fetch")` 的调用记录（同 `CanonEventCast.test.tsx` 那一份）。 */
+type Calls = { mock: { calls: unknown[][] } };
+
+const postsTo = (spy: Calls, tail: string) =>
+  spy.mock.calls.filter(
+    ([url, init]) =>
+      (init as RequestInit | undefined)?.method === "POST" && String(url).endsWith(tail),
+  );
+const bodyOf = (call: unknown[]) => JSON.parse(String((call[1] as RequestInit).body));
 
 describe("待确认内容", () => {
   it("渲染待确认的冲突卡：当前 vs 提议 + 引语", async () => {
@@ -40,6 +50,20 @@ describe("待确认内容", () => {
     expect(within(card).getByText(/陆青禾/)).toBeInTheDocument();
     expect(within(card).getByRole("button", { name: "接受为角色" })).toBeInTheDocument();
     expect(within(card).getByRole("button", { name: "标为路人" })).toBeInTheDocument();
+  });
+
+  it("新人物卡把 `character_notes` 也摆出来 —— **它接受之后会进写作提示**", async () => {
+    // 这一格原来只画 gender / personality / background，于是作者在这道闸门上批准了一条
+    // 他从没看见的东西：`character_notes` 会跟着这个人进写作 prompt，影响模型怎么写他
+    //（`draft/product_assemble.py::_PROFILE_LABELS`）。
+    // **判据从真夹具里取**，不抄一份字面量进来。
+    const item = fixtures.proposals.find((p) => p.kind === "new_character")!
+      .items[0] as { profile: { character_notes: string | null } };
+    expect(item.profile.character_notes).toBeTruthy(); // 自守卫：夹具里躺个 null 就永远绿
+
+    open();
+    const card = (await screen.findByText(/新人物/)).closest(".statecard") as HTMLElement;
+    expect(within(card).getByText(new RegExp(item.profile.character_notes!))).toBeInTheDocument();
   });
 
   it("审阅成功后刷新提案/事件/花名册/状态查询", async () => {
@@ -105,36 +129,10 @@ describe("待确认内容", () => {
 
   it("分析失败后可以重新分析，且状态使用中文", async () => {
     const user = userEvent.setup();
+    const { failed, succeeded } = analysisRuns();
     useCoords.getState().setProject("project:ID1");
     useCoords.getState().setChapter(1);
-    const base = {
-      project_id: "project:ID1",
-      chapter_number: 1,
-      snapshot_id: "snapshot:ID1",
-      errors: [],
-      valid_event_count: 0,
-      discarded_event_count: 0,
-      proposal_count: 0,
-      model_call_id: null,
-      schema_version: "chapter-analysis-v1",
-      prompt_hash: "hash",
-      created_at: "<ts>",
-      started_at: "<ts>",
-      finished_at: "<ts>",
-    };
-    const failed = {
-      ...base,
-      id: "extraction_run:ID1",
-      status: "FAILED",
-      errors: [{ code: "analysis_format", message: "格式错误" }],
-    };
-    const succeeded = { ...base, id: "extraction_run:ID2", status: "SUCCEEDED" };
-    renderWithApi(<ProposalReviewTab />, [
-      { method: "POST", match: /\/extract\?force=true/, body: succeeded },
-      { method: "POST", match: /\/extract$/, body: failed },
-      { method: "GET", match: /\/extractions\/extraction_run:ID2/, body: succeeded },
-      { method: "GET", match: /\/extractions\//, body: failed },
-    ]);
+    renderWithApi(<ProposalReviewTab />, extractionRoutes());
 
     await user.click(screen.getByRole("button", { name: "分析本章" }));
     const retry = await screen.findByRole("button", { name: "重新分析" });
@@ -142,5 +140,196 @@ describe("待确认内容", () => {
     expect(await screen.findByText(/分析：已完成/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "重新分析" })).toBeNull();
     expect(document.body.textContent).not.toMatch(/FAILED|SUCCEEDED|run|抽取|提案/);
+    expect(failed.status).toBe("FAILED"); // 自守卫：夹具真的是那两档
+    expect(succeeded.status).toBe("SUCCEEDED");
+  });
+
+  it("一次**没跑成**的整理：屏幕上是人话，不是英文诊断", async () => {
+    // ── 这条测试存在的理由 ──────────────────────────────────────────────────
+    //
+    // 这块屏幕上原来渲染的是 `e.message` —— `ExtractionRunError.message` 是写给
+    // **维护者**的英文诊断（`extract/control.py` 明写「它永远不上作者的屏幕」），
+    // 于是小说作者看到的是 `provider_failure: chapter analysis provider failed`。
+    //
+    // **它没被任何守卫抓到，因为这一格喂的是一份手写的失败**：
+    // `{ code: "analysis_format", message: "格式错误" }` —— 一个真码配一句**中文**。
+    // 测试绿着，屏幕是英文。现在夹具里有一条**真的**没跑成的整理
+    //（`tests/test_frontend_contract.py` 从真 app dump），这一格吃的就是它。
+    const user = userEvent.setup();
+    const { failed } = analysisRuns();
+    useCoords.getState().setProject("project:ID1");
+    useCoords.getState().setChapter(1);
+    renderWithApi(<ProposalReviewTab />, extractionRoutes());
+
+    await user.click(screen.getByRole("button", { name: "分析本章" }));
+    await screen.findByRole("button", { name: "重新分析" });
+
+    expect(failed.errors.length).toBeGreaterThan(0); // 自守卫：没有原因就没什么可验的
+    for (const line of failed.errors) {
+      expect(typeof line).toBe("string"); // `{code, message}` 回来了就红
+      expect(screen.getByText(line)).toBeInTheDocument();
+      expect(line).toMatch(/[一-鿿]/);
+    }
+    expect(devTerms(screenText())).toEqual([]);
+  });
+});
+
+/** 契约夹具里那两条真的整理运行：跑成的 / 没跑成的。**一个字节都不手写。** */
+function analysisRuns() {
+  return { failed: fixtures.extractionFailed, succeeded: fixtures.extractionRun };
+}
+
+/** 「分析本章 → 失败 → 重新分析 → 成功」这条路上的四条桩。
+ *  id 从夹具里取，所以轮询打到哪一条由真 dump 决定，不由这里编的字符串决定。 */
+function extractionRoutes() {
+  const { failed, succeeded } = analysisRuns();
+  return [
+    { method: "POST", match: /\/extract\?force=true/, body: succeeded },
+    { method: "POST", match: /\/extract$/, body: failed },
+    { method: "GET", match: new RegExp(`/extractions/${succeeded.id}`), body: succeeded },
+    { method: "GET", match: /\/extractions\//, body: failed },
+  ];
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// 「改一改再收下」（`POST …/proposals/{id}/edit`）
+// ══════════════════════════════════════════════════════════════════════════
+//
+// 在此之前这一格只有「接受」和「驳回」：抽取说「这场戏里李管家也知情」而其实他不知情时，
+// 作者只能整条丢掉（这一章的情节记录就空了，证据链跟着丢）或整条收下（把一条假事实放进
+// 这个产品唯一在卖的那张表）。**引擎和路由一直是通的**，缺的只有这一格。
+
+describe("改一改再收下", () => {
+  /** 那条低置信提案的事件视图（真夹具）：知情人有两个，正好够去掉一个。 */
+  const eventOf = () => {
+    const proposal = fixtures.proposals.find((p) => p.kind === "low_confidence_main")!;
+    const view = fixtures.eventsProvisional.find(
+      (v) => v.event.id === proposal.event_ids[0],
+    )!;
+    return { proposal, view };
+  };
+
+  it("低置信情节卡上有第三个动作，而它旁边那两个还在", async () => {
+    open();
+    const card = (await screen.findByText(/^需要确认的情节/)).closest(".statecard") as HTMLElement;
+    for (const name of ["接受", "改一改", "驳回"]) {
+      expect(within(card).getByRole("button", { name })).toBeInTheDocument();
+    }
+  });
+
+  it("冲突卡和新人物卡上**没有**这个动作 —— 后端只对「恰好 1 个 event」开放", async () => {
+    // `extract/proposal_validation.py`：edit 只允许恰好 1 个 event，且不得含
+    // edge / new_character。画一颗点下去只会撞 422 的按钮，比没有按钮更糟。
+    open();
+    await screen.findByText(/关系冲突/);
+    for (const title of [/关系冲突/, /新人物/]) {
+      const card = screen.getByText(title).closest(".statecard") as HTMLElement;
+      expect(within(card).queryByRole("button", { name: "改一改" })).toBeNull();
+    }
+  });
+
+  it("勾选框里就是**现在这条提案上的名单**，花名册里的人物也在候选里", async () => {
+    const user = userEvent.setup();
+    const { view } = eventOf();
+    open();
+    const card = (await screen.findByText(/^需要确认的情节/)).closest(".statecard") as HTMLElement;
+    await user.click(within(card).getByRole("button", { name: "改一改" }));
+
+    const knowers = screen.getByRole("group", { name: "知道这件事的人" });
+    for (const n of view.knowers) {
+      expect(within(knowers).getByRole("checkbox", { name: n.name })).toBeChecked();
+    }
+    // 花名册里的人物进候选，地点 / 秘密不进（名单两维收的都是人物）。
+    expect(within(knowers).getByRole("checkbox", { name: "未来大能" })).not.toBeChecked();
+    expect(within(knowers).queryByRole("checkbox", { name: "青云城主府" })).toBeNull();
+    expect(screen.getByText(/不会把同一个人加两遍/)).toBeInTheDocument();
+  });
+
+  it("去掉一个知情人再收下：打的是 /edit，发的是**改完之后的整份名单**", async () => {
+    const user = userEvent.setup();
+    const { proposal, view } = eventOf();
+    const dropped = view.knowers[view.knowers.length - 1];
+    const kept = view.knowers.slice(0, -1).map((n) => n.id);
+    expect(kept.length).toBeGreaterThan(0); // 自守卫：这条事件得有得可去
+    open();
+    const spy = vi.spyOn(globalThis, "fetch");
+
+    const card = (await screen.findByText(/^需要确认的情节/)).closest(".statecard") as HTMLElement;
+    await user.click(within(card).getByRole("button", { name: "改一改" }));
+    const knowers = screen.getByRole("group", { name: "知道这件事的人" });
+    await user.click(within(knowers).getByRole("checkbox", { name: dropped.name }));
+    await user.click(within(card).getByRole("button", { name: "改完收下" }));
+
+    await waitFor(() => expect(postsTo(spy, "/edit")).toHaveLength(1));
+    const call = postsTo(spy, "/edit")[0];
+    expect(decodeURIComponent(String(call[0]))).toContain(`/proposals/${proposal.id}/edit`);
+    // **绝对集合**：发的是「改完之后是这些人」，不是「删掉谁」。
+    // 没动过的那两维发 `null`，否则 `decision_log` 里会多出一条什么都没改的记录。
+    expect(bodyOf(call)).toEqual({
+      edited_summary: null,
+      knower_ids: kept,
+      participant_ids: null,
+      expected_canon_version: expect.any(Number),
+    });
+  });
+
+  it("改概要也走同一条路；一个字都没动时按钮点不了", async () => {
+    const user = userEvent.setup();
+    open();
+    const spy = vi.spyOn(globalThis, "fetch");
+
+    const card = (await screen.findByText(/^需要确认的情节/)).closest(".statecard") as HTMLElement;
+    await user.click(within(card).getByRole("button", { name: "改一改" }));
+    const submit = within(card).getByRole("button", { name: "改完收下" });
+    // 什么都没改 = 不是一次编辑（后端 422）。**在按下去之前就拦住**。
+    expect(submit).toBeDisabled();
+
+    const box = within(card).getByRole("textbox", { name: "这件事怎么说" });
+    await user.clear(box);
+    // 空概要同样不是一次编辑，而且它有话说（§10 约束 8：零带着理由）。
+    expect(submit).toBeDisabled();
+    expect(within(card).getByText(/整条不要的话用「驳回」/)).toBeInTheDocument();
+
+    await user.type(box, "萧决只是听见了半句");
+    await user.click(submit);
+
+    await waitFor(() => expect(postsTo(spy, "/edit")).toHaveLength(1));
+    expect(bodyOf(postsTo(spy, "/edit")[0])).toMatchObject({
+      edited_summary: "萧决只是听见了半句",
+      knower_ids: null,
+      participant_ids: null,
+    });
+  });
+
+  it("收下之后刷新提案/事件/花名册/状态查询（同 accept：canon 版本一样往前走一格）", async () => {
+    const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
+    const user = userEvent.setup();
+    const { view } = eventOf();
+    open();
+    const card = (await screen.findByText(/^需要确认的情节/)).closest(".statecard") as HTMLElement;
+    await user.click(within(card).getByRole("button", { name: "改一改" }));
+    const knowers = screen.getByRole("group", { name: "知道这件事的人" });
+    await user.click(within(knowers).getByRole("checkbox", { name: view.knowers[0].name }));
+    await user.click(within(card).getByRole("button", { name: "改完收下" }));
+
+    await waitFor(() => {
+      const keys = invalidate.mock.calls
+        .flatMap((c) => c as { queryKey?: unknown[] }[])
+        .map((c) => c?.queryKey?.[0])
+        .filter(Boolean);
+      for (const prefix of ["proposals", "events", "roster", "state", "projects"]) {
+        expect(keys).toContain(prefix);
+      }
+    });
+    invalidate.mockRestore();
+  });
+
+  it("这一格上一个研发术语都没有（含展开的编辑器）", async () => {
+    const user = userEvent.setup();
+    open();
+    const card = (await screen.findByText(/^需要确认的情节/)).closest(".statecard") as HTMLElement;
+    await user.click(within(card).getByRole("button", { name: "改一改" }));
+    screen.getByRole("group", { name: "知道这件事的人" });
+    expect(devTerms(screenText())).toEqual([]);
   });
 });

@@ -82,11 +82,12 @@ def check(ctx: CheckContext) -> list[Issue]:
                 first = node.props.first_appears_chapter
                 message = (
                     f"「{name}」要到第 {first} 章才登场，"
-                    f"第 {ctx.chapter} 章不该有它的对话。"
+                    # 「他」不是「它」：R3 只查 Character，而这句话是印给作者看的。
+                    f"第 {ctx.chapter} 章不该有他的对话。"
                 )
                 action = (
-                    f"如果它该在此刻登场，把 first_appears_chapter 改到 ≤ {ctx.chapter}；"
-                    "否则删掉这句对白。"
+                    f"如果他本来就该在这里说话，去他头一回露面的那一段，"
+                    f"把那句原文记成他的首次登场；否则删掉第 {ctx.chapter} 章这句对白。"
                 )
             issues.append(
                 Issue(

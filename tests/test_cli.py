@@ -34,6 +34,7 @@ import pytest
 from typer.testing import CliRunner
 
 from novel_harness import db, project
+from novel_harness.checks import ALL_CHECKS
 from novel_harness.cli import app
 from novel_harness.declare import Ledger
 from novel_harness.graph import (
@@ -495,8 +496,22 @@ def test_draft_is_an_experimental_channel_that_prints_text(
     assert calls and calls[0]["plan"] is not None
 
 
-def test_check_with_no_scene_blocks_dies(book: Seeded, tmp_path: Path) -> None:
-    """没有场景块 = R4 无事可做 = 必然零 issue。不让那个零冒充体检报告。"""
+def test_check_without_scene_blocks_still_runs_the_rules_that_read_prose(
+    book: Seeded, tmp_path: Path
+) -> None:
+    """没有场景块**不再是拒绝**，是一句说明。
+
+    ── 这条测试 2026-08-13 反过来了，反的理由是它原来那句话过期了 ────────────
+
+    原来这里断言 `exit_code != 0`，理由写着「没有场景块 = R4 无事可做 = 必然零 issue，
+    不让那个零冒充体检报告」。那在 `ALL_CHECKS` 只有 R4 的那天是对的。R2/R3 在
+    2026-08-02 进表之后就不对了：**那两条读的是正文，一个场景块都不需要**。
+    而真书里没有人手写 `<!-- nh: -->`，于是那句 `_die` 的实际效果，是在整本真书上
+    把 R2/R3 全部挡在门外——一句为了防「假的零」写的话，最后造出的是「一条都跑不了」。
+
+    约束 8 那一半原样在：**那个零的成色必须说出来**，所以既印「跑了几条规则」，
+    也印「哪一条今天没东西可查、为什么」。
+    """
     manuscript = _chapter_file(tmp_path, "萧决站在城头上，看着北荒的方向。\n")
     result = runner.invoke(
         app,
@@ -513,8 +528,12 @@ def test_check_with_no_scene_blocks_dies(book: Seeded, tmp_path: Path) -> None:
         ],
     )
 
-    assert result.exit_code != 0
-    assert "一个场景块都没有" in result.output
+    assert result.exit_code == 0, result.output
+    assert "0 个场景块" in result.output
+    assert f"跑了 {len(ALL_CHECKS)} 条规则" in result.output
+    # 零必须带着理由（§10 约束 8）：不说的话，「R4 没东西可查」和「R4 查过了没意见」
+    # 在终端上一模一样，而那正是原来那句 `_die` 想防的东西。
+    assert "没东西可查" in result.output
 
 
 # ══════════════════════════════════════════════════════════════════════════

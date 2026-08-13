@@ -524,6 +524,42 @@ class SqliteStoryGraph:
                 queries.insert_secret(self._conn, node.id, spec.project_id, spec.secret)
             return node
 
+    def set_first_appearance(self, project_id: str, node_id: str, chapter: int) -> Node:
+        with _transaction(self._conn):
+            node = self._require_node(project_id, node_id, what="node_id")
+            # merge 不是 update：整列覆盖会抹掉抽取写进去的人物档案，且不报错。
+            return queries.merge_node_props(
+                self._conn, node, {"first_appears_chapter": chapter}
+            )
+
+    def ensure_state_dim(self, project_id: str, dim_key: str, name: str) -> Node:
+        with _transaction(self._conn):
+            found = queries.find_state_dim(self._conn, project_id, dim_key)
+            if len(found) > 1:
+                # idx_state_dim_key 是 UNIQUE，所以这只可能是索引建立之前进来的行。
+                # 放它过去的产物：supersede 认为那是两个维度，一条都不闭合，
+                # 而 is_dead 的 any() 让 dead 永远压过 alive → R3 对全书每一句
+                # 「萧决道：」报死人说话。
+                raise StoreError(
+                    f"项目 {project_id} 里有 {len(found)} 个 dim_key={dim_key!r} 的状态维度"
+                    f"（{[n.id for n in found]}）：supersede 会把它们当成两个维度，"
+                    "一条都不闭合，于是同一个人同时挂着两个互斥的状态"
+                )
+            if found:
+                # **不改名**：作者改过的显示名不该被一次声明悄悄改回去（see store.py）。
+                return found[0]
+            node_id = new_id(EntityType.for_node_label(NodeLabel.STATE_DIM), project_id)
+            # 走 insert_node 而不是 upsert_node：后者的幂等键是 name，而这里的身份是
+            # dim_key，两者在「作者改过名」时会分叉。到这一行时 dim_key 已经确认无主。
+            return queries.insert_node(
+                self._conn,
+                node_id,
+                project_id=project_id,
+                label=NodeLabel.STATE_DIM,
+                name=name,
+                props=NodeProps(dim_key=dim_key),
+            )
+
     def add_alias(self, spec: AliasSpec) -> StoredAlias:
         with _transaction(self._conn):
             self._require_node(spec.project_id, spec.node_id, what="node_id")

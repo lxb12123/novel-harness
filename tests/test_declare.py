@@ -145,11 +145,16 @@ def test_ledger_has_no_chapter_shaped_parameter_anywhere(led: Ledger) -> None:
     assert set(scanned) == {
         "declare_alias",
         "declare_believes",
+        "declare_dead",
+        "declare_first_appearance",
         "declare_knows",
         "declare_node",
         "declare_where",
         "locate",
     }
+    # `declare_first_appearance` 是这条守卫最该盯住的那一个：它算出来的东西**就是一个章号**
+    # （`first_appears_chapter`），而它照样只收 `of` + `quote`。上面那句 `params & banned`
+    # 对它跑过一次，才是这条断言今天的意义。
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -514,3 +519,84 @@ def test_declaration_is_frozen(led: Ledger) -> None:
     assert isinstance(d, Declaration)
     with pytest.raises(Exception):  # noqa: B017 —— 要钉的是「改不动」，不是 pydantic 的错误分类
         d.decision_id = "x"  # type: ignore[misc]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 首现章 / 生死 —— R2 与 R3 的作者入口（2026-08-13）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_first_appearance_chapter_comes_from_the_quote(led: Ledger) -> None:
+    """**首现章也是算出来的。** 签名里只有称呼和引语，同 `declare_knows`。
+
+    在这条方法之前，`node.props.first_appears_chapter` 生产上零写入方，
+    R2 FUTURE_LEAK 和 R3 的「未登场」那一半因此结构上永远不可能开火
+    （行为侧的证明在 `tests/test_rules_fire.py`，这里量的是章号的血统）。
+    """
+    first = led.declare_first_appearance(of="北荒", quote="北荒的风比刀还利")
+
+    assert first.chapter == 3
+    assert first.previous_chapter is None
+    assert first.node.name == "北荒"
+
+
+def test_declaring_a_first_appearance_again_reports_what_it_overwrote(led: Ledger) -> None:
+    """它**会覆盖**上一次的答案，而覆盖掉的那个数在库里没有第二份（节点不是时态的）。"""
+    led.declare_first_appearance(of="北荒", quote="北荒的风比刀还利")
+    again = led.declare_first_appearance(of="北荒", quote="青云城的雨下了一夜。")
+
+    assert (again.chapter, again.previous_chapter) == (1, 3)
+
+
+def test_declare_dead_writes_the_machine_key_not_the_chinese(led: Ledger) -> None:
+    """R3 的判据是 `value_key`，**不是** `value` 里那个字。
+
+    这条断言就是 ADR 0005 铁律在写入侧的具身：`value_key` 由引擎写死，所以 R3 永远
+    不必去回答「陨落 / 坐化 / 兵解 是不是死了」——那是「这句话是什么意思」。
+    """
+    from novel_harness.graph import HealthValue
+
+    decl = led.declare_dead(who="萧决", quote="青云城的雨下了一夜。")
+
+    assert decl.edge.type is EdgeType.HAS_STATE
+    assert decl.edge.props.value_key == HealthValue.DEAD
+    assert decl.valid_from == 1  # 引语落在第 1 章，没有人输过这个数
+
+
+def test_declare_dead_builds_the_dimension_it_needs(
+    led: Ledger, store: SqliteStoryGraph, pid: str
+) -> None:
+    """状态维度由引擎自己建（作者没有、也不该有建它的入口），且**按 dim_key 认身份**。
+
+    第二次声明必须落在同一个维度上：两个 StateDim 共享 `dim_key` 时 supersede 认为
+    那是两个维度，一条都不闭合，而 `is_dead` 的 `any()` 让 dead 永远压过 alive。
+    """
+    from novel_harness.graph import HEALTH_DIM_KEY
+
+    first = led.declare_dead(who="萧决", quote="青云城的雨下了一夜。")
+    second = led.declare_dead(who="李管家", quote="李管家撑着伞站在阶下。")
+
+    assert first.edge.dst == second.edge.dst
+    snapshot = store.state_at(pid, first.edge.src, 3)
+    assert snapshot.is_dead
+    assert [s.dim_key for s in snapshot.states] == [HEALTH_DIM_KEY]
+
+
+def test_declaring_a_node_again_does_not_wipe_what_someone_else_wrote(led: Ledger) -> None:
+    """`declare_node` 的 `props` 是 patch 不是替换。
+
+    **这是一次静默的数据丢失**：`upsert_node` 撞上幂等键时整列覆盖 `props_json`，
+    于是「再声明一次萧决，顺便标个首现章」会把抽取写进去的人物档案抹掉，
+    而没有任何一步会报错。
+    """
+    from novel_harness.graph import NodeProps
+
+    led.declare_node(NodeLabel.CHARACTER, "萧决", props=NodeProps(gender="男"))
+    node = led.declare_node(
+        NodeLabel.CHARACTER, "萧决", props=NodeProps(first_appears_chapter=7)
+    )
+
+    assert node.props.first_appears_chapter == 7
+    assert node.props.gender == "男", "第二次声明把第一次写的东西抹掉了"
+    # 反面：什么都不给 = 一个字段都不动（而不是「清空」）。
+    assert led.declare_node(NodeLabel.CHARACTER, "萧决").props.gender == "男"

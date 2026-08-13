@@ -254,6 +254,33 @@ def test_frontend_fixture_matches_the_real_api(
     # 根本没写）。少一种，前端就有一条分支是照着想象写的。
     grab("summaries", client.get(f"{base}/chapters/12/summaries"))
 
+    # ── 作者改得动它（迁移 013）：单章读端 + 改 + 撤回 ──────────────────────
+    # **改和撤回落在第 2 章上**，不落在第 1 章：上面那份 `summaries` 里第 1 章是
+    # 「已生成」那一档的唯一样本，动了它前端就少一种长相。
+    grab("summaryChapter", client.get(f"{base}/chapters/1/summary"))
+    grab(
+        "summaryEdited",
+        client.patch(
+            f"{base}/chapters/2/summary",
+            json={"summary": "萧决把玄铁令收进袖中，谁也没告诉。"},
+        ),
+    )
+    grab("summaryRetracted", client.delete(f"{base}/chapters/2/summary"))
+
+    # ── 总结 = 可反查的记忆点（T6）：这一段提到了什么 + 还有哪几章提到它 ────────
+    # **抓在这儿是有先后的**：上面第 1 章刚生成过一段总结（内容是
+    # 「萧决在青云城主府听说了血脉秘密。」），三个 label 一次到齐（人物 / 地点 / 秘密）。
+    # 少一种，前端就有一档芯片是照着想象画的——而秘密那一档正是「只出 NodeRef」
+    # 那条纪律唯一验得出来的地方。
+    #
+    # 反查那一份**故意落在萧决身上**：第 1 章提到他，第 2 章那一段刚被撤回，
+    # 于是它冻住的是「撤回过的章不在名单里」——这一层最贵的那条断言（索引跟着总结走）。
+    grab("summaryMentions", client.get(f"{base}/chapters/1/summary/mentions"))
+    grab(
+        "summaryMentionTrail",
+        client.get(f"{base}/nodes/{book['萧决']}/summary-mentions"),
+    )
+
     # ── 改一条**已经生效**的事实（1.1）+ 活动日志（2.1）─────────────────────
     # 顺序是硬的：`/canon/knowledge` 要先跑，日志里才有一条**带真跳转坐标**的
     # `knowledge_edit`。没有它，这份 fixture 里全是 `endpoints: []` 的兜底坐标，
@@ -279,7 +306,11 @@ def test_frontend_fixture_matches_the_real_api(
     # 这里冻的是 DeepSeek 的真实形状：报了命中量、不报写入量。
     activity_call = seed_call(book, cache_read_tokens=960, cache_write_tokens=None)
     activity_run = seed_run(book, 1, proposals=2, call_id=activity_call)
-    grab("activity", client.get(f"{base}/activity", params={"limit": 8}))
+    # 审阅面板轮询的那条端点（`GET …/extractions/{run_id}`）。**跑成了的那一份在这儿，
+    # 没跑成的那一份在文件最后**——两份都得是真 dump，理由见那儿。
+    grab("extractionRun", client.get(f"{base}/extractions/{activity_run}"))
+    activity_page = client.get(f"{base}/activity", params={"limit": 8})
+    grab("activity", activity_page)
     # 按 actor 过滤 —— ADR 0020 点名的那件事（作者点过的会被 system 行淹没）。
     # `actors[]` 的计数**不跟着过滤走**，这份 fixture 冻的就是这个差别。
     grab(
@@ -291,6 +322,19 @@ def test_frontend_fixture_matches_the_real_api(
     # 「界面上不摆研发术语」那条断言只能扫它真的渲染出来的东西，而这一份里曾经躺着
     # prompt 指纹、两个 `artifact:sha256:…` 和一整段 `params_json`。
     grab("activityCallDetail", client.get(f"{base}/activity/{activity_call}"))
+    # 花钱那一档的**第二种长相**：一次章节总结（上面 `summaryGenerated` 那次真调用）。
+    # 它和抽取那一份差两样东西，两样都是 2026-08-13 补的：跳转坐标指着右栏那一格
+    # （不再是兜底的「去第 N 章」），展开层多一行**它到底总结了什么**。
+    # 只冻抽取那一份的话，这两样在浏览器那侧一行都没被渲染过。
+    #
+    # **按结构挑那一行，不按标题**（这一页的第一条禁令就是「别从字面反推」）：
+    # 用的是**规范化之前**的响应，因为 `dump` 里的 id 已经换成 `call:IDn` 了，拿它发不出请求。
+    summary_call = next(
+        entry["id"]
+        for entry in activity_page.json()["entries"]
+        if (entry.get("jump") or {}).get("target") == "summary"
+    )
+    grab("activitySummaryDetail", client.get(f"{base}/activity/{summary_call}"))
     # 展开一条作者亲手点过的确认：`payload` 是这一层唯一的泄漏面，前端照它渲染信封。
     grab(
         "activityDecisionDetail",
@@ -573,12 +617,16 @@ def test_frontend_fixture_matches_the_real_api(
     # 「从侧栏移除」全都只在两本以上时才存在形态，照一本写的界面等于没验过。
     grab("projectsTwo", client.get("/api/projects"))
 
-    # ── 用量条第一档：**这本书每一次调用供应商都报了 usage** ────────────────────
+    # ── 用量条第一档：**这本书每一次调用，用量和价钱都算得出来** ────────────────
     # 三档一次到齐（同上面 `summaries` 那一轮的理由）：夹具里只躺一种形状的样本，
     # 屏幕守卫扫的就是一块永远长一个样的屏幕。这一档落在第二本书上不是取巧——
     # 第一本从那次总结起就再也回不到「全报了」，而作者接 OpenAI 那四条路由时
     # 天天看见的正是这一屏。
-    seed_call({**book, "pid": second_pid}, capability="summarizer")
+    #
+    # **`cost` 是 2026-08-13 加的**：在那之前这份夹具里一条带价钱的调用都没有，
+    # 于是底栏「花费」那一格只可能渲染成「未记录」——它的另外两种长相
+    # （算得出 / 只算得出一部分）在两个运行时的守卫下都没被看过。
+    seed_call({**book, "pid": second_pid}, capability="summarizer", cost=0.34)
     grab("runsAllReported", client.get(f"/api/projects/{second_pid}/runs"))
 
     # ── 一轮没跑成，那句话**留在对话里**（2026-08-13，迁移 012）───────────────
@@ -609,6 +657,84 @@ def test_frontend_fixture_matches_the_real_api(
         assert ran.status_code == 200, ran.text
         assert ran.json()["reason"] == "model_unreachable", ran.text
     grab("chatDetailFailed", client.get(f"{base}/chats/{broke_id}"))
+
+    # ── 一次**没跑成**的整理（2026-08-13）────────────────────────────────────
+    #
+    # **这份夹具里从来没有过一次失败的抽取**——三条 run 全是成功的，于是「失败了屏幕上
+    # 说什么」这条路径在两个运行时的守卫下都是绿的，而它真出过事：日志页上曾经摆着
+    # `provider_failure：chapter analysis provider failed`（`activity._RUN_ERROR_LABEL`
+    # 记着现场）。那次只补了日志页那条读端；审阅面板读的是这一条，它把整个
+    # `ExtractionRunError` 原样发出去，浏览器渲染的就是那句英文。**判据没错，样本缺了一半。**
+    #
+    # 种法走 `seed_run`（直接写表）：跑一次真抽取要模型、要钱，而它种的是**真形态**
+    # ——`ExtractionErrorCode` 的真值 + `runner.py` 真写下的那句英文诊断。
+    #
+    # **放在最后**：它会往时间线和 `/runs` 里多加一行，前面每一个 grab 都不该看见它。
+    # 落在第 3 章而不是第 1 章：一章一份快照一个 prompt 只有一条 run（库里有一条唯一约束），
+    # 而第 1 章那条已经被上面那次成功的整理占着——**两份都要**，成功和失败在屏幕上是
+    # 两块完全不同的界面。
+    failed_run = seed_run(book, 3, status="FAILED")
+    grab("extractionFailed", client.get(f"{base}/extractions/{failed_run}"))
+    # **日志页上那半块屏幕同样从来没被冻过。** 上面那份 `activity` 里三条 run 全是成功的，
+    # 而「没跑成的那一行长什么样」是这一页唯一需要作者动手的地方（2026-08-13 起它带着
+    # 一颗真能点的「再整理一次」——`jump.target = extraction_retry`）。
+    grab("activityFailed", client.get(f"{base}/activity", params={"limit": 8}))
+    grab("activityFailedDetail", client.get(f"{base}/activity/{failed_run}"))
+
+    # ── 花费那一格的第三种长相：**算得出的只有一部分** ────────────────────────
+    # 这本书此刻有三次调用（抽取的桩 / 那次真总结 / 下面这一条），只有一条填了价钱。
+    # 合计和「其中几条算得出」必须一起摆，否则那个合计是一句看起来确定的假话
+    #（`CostTotals.priced_calls` 那段注释）。**放在最后**：它会改 `/runs` 的合计，
+    # 前面每一个 grab 都不该看见它。
+    seed_call(book, cost=0.34)
+    grab("runsPartlyPriced", client.get(f"{base}/runs"))
+
+    # ── 作者在 WPS 里改完稿子，回到工作台点「读回改动」（2026-08-13）──────────
+    #
+    # `POST …/sync` 从 M1.5 起就在后端，而**浏览器里零调用方**：正文他看得见（章目录
+    # 和正文都直接扫磁盘），可 `locate` 搜的是库里的快照——不跑这一下，他刚写的那句话
+    # 选中之后会被告知「找不到」，而他的选择没有任何问题。
+    #
+    # **绕开 HTTP 直接写盘**，因为那正是作者干的事（WPS / VSCode / 手机）：
+    # 走 `PUT …/text` 的话后端自己就 sync 了，冻下来的会是「什么都没变」那一档，
+    # 而这条路由存在的全部理由就在「变了」那一档上。
+    #
+    # **放在最后**：它把第 2 章改了、把只在磁盘上的第 3 章落进库，前面每一个 grab
+    # 都不该看见这些。
+    root = Path(client.get(base).json()["root_path"])
+    (root / "chapters" / "0002.md").write_text(
+        (root / "chapters" / "0002.md").read_text(encoding="utf-8-sig") + "\n他在灯下改了这一段。\n",
+        encoding="utf-8",
+    )
+    # 作者自己的东西（大纲、笔记）**不是错误**，回执要说得出「没动它们」。
+    (root / "chapters" / "大纲.md").write_text("三卷的走向。\n", encoding="utf-8")
+    grab("sync", client.post(f"{base}/sync"))
+    # 再点一次：**「读了一遍，没有变化」和「读回来了 N 章」是两句不同的话**，
+    # 而作者按这颗按钮时绝大多数时候落在前一档上。只冻后一档等于只验了一半。
+    grab("syncUnchanged", client.post(f"{base}/sync"))
+
+    # ── 章标之前躺着一整章那一份（2026-08-13）────────────────────────────────
+    #
+    # 在它之前这份夹具里唯一一次导入的 `preamble_chars` 是 0，于是「整本书的章号可能
+    # 错一位」那块警告在 pytest 和 vitest 两侧扫的都是一块永远干净的屏幕——**而它是
+    # 全书唯一一个「整本都错了」的早期信号**（门槛和它两边的余量写在
+    # `api/manuscript.py::PREAMBLE_ALARM_CHARS`）。同 `extractionFailed` 那条的理由：
+    # 正常数据下永远不亮的分支，正是它躲过守卫的方式。
+    #
+    # **放在最后**：它会往这个库里加第三本书，`projects` / `projectsTwo` 都不该看见。
+    grab(
+        "bootstrapPreamble",
+        client.post(
+            "/api/projects/bootstrap",
+            json={
+                "mode": "import",
+                "name": "序章样书",
+                # 第一段没有章标（切章器认的是行首的「第N章/节/回」），所以它整段落在
+                # preamble 里。凑够门槛靠重复——**长度是判据，内容不是**。
+                "text": "楔子\n\n" + ("风雪压着青云城的檐角。" * 100) + "\n\n第一章 起\n\n正文。\n",
+            },
+        ),
+    )
 
     frozen = json.dumps(dump, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 

@@ -3,6 +3,8 @@ import { useCorrectEventCast, useEvents, useProjects, useRoster } from "../api/h
 import { readCorrectionError } from "../correctionError";
 import type { EventView, NodeRef } from "../api/types";
 import { useCoords } from "../store";
+import { CastPicker, DIMENSIONS, candidates, idsOf, same } from "./CastPicker";
+import type { Dimension } from "./CastPicker";
 
 // 已经生效的情节：谁在场、谁知道了 —— 以及**改它**（`POST /canon/events/{id}/cast`）。
 //
@@ -17,34 +19,10 @@ import { useCoords } from "../store";
 //
 // ── 名单是**绝对集合**，UI 必须把这件事说出来 ────────────────────────────
 //
-// `knower_ids` / `participant_ids` 传谁就是谁，`null` = 这一维不动。所以这里用勾选框
-// 而不是「＋加一个人」：勾上的那些就是**改完之后的名单**，再点一次保存不会把人加两遍。
-// 只发作者真动过的那一维——把没动过的名单也发过去，日志里就会多出一条
-// 「改了在场」而其实一个人都没变，而 `decision_log` 是只增不改的。
-
-/** 两维名单，措辞是作者的。**「知情」这一维是抽取里唯一靠推断得来的**（谁在场是文本里
- *  写着的，谁**因此知道了**是猜的），所以它也是最需要改的一维（ADR 0020 的代价那节）。 */
-const DIMENSION = {
-  knowers: "知道这件事的人",
-  participants: "在场的人",
-} as const;
-
-type Dimension = keyof typeof DIMENSION;
-
-const idsOf = (refs: NodeRef[]): string[] => refs.map((r) => r.id);
-const same = (a: string[], b: string[]): boolean =>
-  a.length === b.length && a.every((id) => b.includes(id));
-
-/** 候选人 = 花名册里的人物 ∪ 这条情节上现有的名单。
- *
- *  并集那一半不是防御性编程：名单里出现一个花名册没有的人时，只按花名册画会让他
- *  **在界面上凭空消失**，而作者一按保存就把他从这条情节上删掉了——一次他没打算做的删除。 */
-function candidates(roster: NodeRef[], view: EventView): NodeRef[] {
-  const seen = new Map<string, NodeRef>();
-  for (const n of roster) if (n.label === "Character") seen.set(n.id, n);
-  for (const n of [...view.participants, ...view.knowers]) if (!seen.has(n.id)) seen.set(n.id, n);
-  return [...seen.values()];
-}
+// `knower_ids` / `participant_ids` 传谁就是谁，`null` = 这一维不动。控件和那句说明
+// 在 `CastPicker.tsx` —— **提案那一格的「改一改再收下」用的是同一份**（同一件事的
+// 前一步：那条还没生效）。只发作者真动过的那一维——把没动过的名单也发过去，
+// 日志里就会多出一条「改了在场」而其实一个人都没变，而 `decision_log` 是只增不改的。
 
 function CastEditor({
   view,
@@ -77,7 +55,7 @@ function CastEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [signature]);
 
-  const changed: Dimension[] = (["participants", "knowers"] as Dimension[]).filter((dim) =>
+  const changed: Dimension[] = DIMENSIONS.filter((dim) =>
     dim === "knowers"
       ? !same(picked.knowers, idsOf(view.knowers))
       : !same(picked.participants, idsOf(view.participants)),
@@ -106,29 +84,7 @@ function CastEditor({
 
   return (
     <div className="cast-editor">
-      {(["participants", "knowers"] as Dimension[]).map((dim) => (
-        <fieldset className="cast-dim" key={dim}>
-          <legend>{DIMENSION[dim]}</legend>
-          {people.length === 0 ? (
-            <span className="empty">花名册里还没有人物 —— 先去「花名册」那一格加人。</span>
-          ) : (
-            people.map((p) => (
-              <label className="cast-pick" key={p.id}>
-                <input
-                  type="checkbox"
-                  checked={picked[dim].includes(p.id)}
-                  onChange={() => toggle(dim, p.id)}
-                />
-                <span>{p.name}</span>
-              </label>
-            ))
-          )}
-        </fieldset>
-      ))}
-
-      <div className="row dim">
-        勾上的就是改完之后的名单 —— 再保存一次不会把同一个人加两遍。
-      </div>
+      <CastPicker people={people} picked={picked} onToggle={toggle} />
 
       {failure && (
         <div className="err-box">

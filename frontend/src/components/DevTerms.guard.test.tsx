@@ -85,6 +85,10 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     ["花名册抽屉", <RosterDrawer key="rd" pid="project:ID1" onClose={() => {}} />],
     ["设置抽屉", <SettingsDrawer key="sd" onClose={() => {}} />],
     ["历史抽屉", <HistoryDrawer key="hd" pid="project:ID1" chapter={1} onClose={() => {}} />],
+    // ⚠️ **这儿扫的只有正常态。** 它端着后端每一句拒绝，而那些话此前有三句写着
+    // 「先跑 nh sync」——正常态下一句都不亮，正是它们躲过这张网整整一年的方式。
+    // 「定位不到」那两档（0 命中 / 后端 422）的整屏扫描在 `DeclareDrawer.test.tsx`，
+    // 和它们各自的行为断言摆在一起。**别在这儿抄第二份。**
     ["声明抽屉", <DeclareDrawer key="dd" pid="project:ID1" quote="萧决在青云城主府" onClose={() => {}} />],
     // 写作助手（模式二）。它是这块网上**风险最高**的一格：会话的内部标识
     // （`chat_session:…`）、停止原因的机器码（`done` / `context_full`）、
@@ -117,6 +121,9 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     ["写作提醒", "constraints", /不能说破/],
     ["检查", "check", /检查本章/],
     ["待确认", "review", /关系冲突/],
+    // 2026-08-13 新长出来的一格。它手上形状可疑的东西有两样：这一章总结在库里的
+    // 来源和状态（`model` / `author` / `ACTIVE` / `RETRACTED`），以及后端拒绝时那句话。
+    ["章节总结", "summary", /模型压出来的背景/],
   ] as const)("右栏「%s」那一格上一个研发术语都没有", async (_name, tab, marker) => {
     // `CanonEdit.boundary.test.tsx` 只在**两个编辑器摊开**的时候扫右栏；
     // 八格里另外六格一次都没被扫过。

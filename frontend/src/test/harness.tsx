@@ -55,7 +55,7 @@ export const turnStream = (receipt: unknown, events = fixtures.chatTurnEvents): 
   ...sseFrames([{ event: "receipt", data: receipt }]),
 ];
 
-// ⚠️ **手写 stub，全仓仅此两条**：后台整理那两条端点由后端另一条线落地中，
+// ⚠️ **纯手写 stub（一个字节都不来自真 dump），全仓仅此两条**：后台整理那两条端点由后端另一条线落地中，
 // `api.json` 里还没有它们（那份 fixture 由 `tests/test_frontend_contract.py` 从真 app
 // dump，手写它正是这条缝原本的病）。**后端落地后把这两条换成真 fixture。**
 const AUTOPILOT_ACK = { chapter: 1, summary: "queued", extraction: "queued" };
@@ -66,9 +66,29 @@ const AUTOPILOT_IDLE = {
   running: false,
 };
 
+// 反查那一份**多加一章**：真 dump 只有一章（第 2 章那段刚被撤回，它冻的正是
+// 「撤回过的章不在名单里」——这一层最贵的断言）。而「点开看还有哪几章」那条分支
+// 一章验不出来，所以在真 dump 之上**派生**出第二章，不手写一个形状。
+// `author_written` 反过来：「模型压的」那句免责只该贴在模型写的那一行上。
+const SUMMARY_TRAIL = {
+  ...fixtures.summaryMentionTrail,
+  chapters: [
+    fixtures.summaryMentionTrail.chapters[0],
+    { ...fixtures.summaryMentionTrail.chapters[0], chapter_number: 7, author_written: true },
+  ],
+};
+
+/** 章标之前躺着一整章那一档：**全书章号可能集体错一位**，而界面上看不出任何异常。
+ *  真 dump 出来的（`preamble_chars: 1104` 越过后端 1000 的门槛，警告那段字是后端写的）。 */
+export const IMPORT_SUMMARY_ALARM = fixtures.bootstrapPreamble.summary;
+
+/** 导入回执正常那一档（`preamble_chars: 0`，无警告）。 */
+export const BOOTSTRAP_IMPORT = fixtures.bootstrapImport;
+
 /** 默认路由表：URL → fixture。测试可以前置自己的 handler 覆盖其中任意一条。 */
 const DEFAULT: Handler[] = [
-  { method: "POST", match: /\/api\/projects\/bootstrap$/, body: fixtures.bootstrapImport },
+  { method: "POST", match: /\/api\/projects\/bootstrap$/, body: BOOTSTRAP_IMPORT },
+  { method: "POST", match: /\/sync$/, body: fixtures.sync },
   { match: /\/api\/projects$/, body: fixtures.projects },
   { match: /\/roster$/, body: fixtures.roster },
   { match: /\/chapters$/, body: fixtures.chapters },
@@ -80,7 +100,25 @@ const DEFAULT: Handler[] = [
   { match: /\/chapters\/\d+\/events\?scope=PROVISIONAL/, body: fixtures.eventsProvisional },
   { match: /\/chapters\/\d+\/events\?scope=CANON/, body: fixtures.eventsCanon },
   { match: /\/chapters\/\d+\/summaries$/, body: fixtures.summaries },
+  // 章节总结那一格的四条（读 / 生成 / 改 / 撤回）。**四条出参是同一个形状**，
+  // 所以前三条吃的都是同一份真 dump（`summaryGenerated`）——不是三份手写的东西。
+  //
+  // ⚠️ 撤回那一档是**从真 dump 派生**的（把 `summary` / `created_at` 置空 +
+  // `retracted`），因为一份「刚被撤回」的回执在契约夹具里还没有。
+  // `tests/test_frontend_contract.py` 已经在抓它了（`summaryRetracted`），
+  // 下一次重生成夹具之后把这一行换成那个键。
+  // 倒排那两条排在 `…/summary$` 前面：那条正则要求 `summary` 结尾，
+  // `…/summary/mentions` 不会被它咬到，但顺序摆对了看得更清楚。
+  { match: /\/chapters\/\d+\/summary\/mentions$/, body: fixtures.summaryMentions },
+  { match: /\/nodes\/[^/]+\/summary-mentions$/, body: SUMMARY_TRAIL },
+  { match: /\/chapters\/\d+\/summary$/, body: fixtures.summaryGenerated },
   { method: "POST", match: /\/chapters\/\d+\/summary$/, body: fixtures.summaryGenerated },
+  { method: "PATCH", match: /\/chapters\/\d+\/summary$/, body: fixtures.summaryGenerated },
+  {
+    method: "DELETE",
+    match: /\/chapters\/\d+\/summary$/,
+    body: { ...fixtures.summaryGenerated, summary: null, created_at: null, retracted: true },
+  },
   { method: "POST", match: /\/chapters\/\d+\/autopilot$/, body: AUTOPILOT_ACK },
   { match: /\/chapters\/\d+\/autopilot$/, body: AUTOPILOT_IDLE },
   { match: /\/chapters\/\d+\/scenes/, body: fixtures.scenes },
@@ -95,6 +133,17 @@ const DEFAULT: Handler[] = [
   { method: "POST", match: /\/declare\/knows$/, body: fixtures.declareKnows },
   { method: "POST", match: /\/accept$/, body: fixtures.proposalAccept },
   { method: "POST", match: /\/reject$/, body: fixtures.proposalReject },
+  // 「改一改再收下」。回执和 accept 同型（`ProposalResolution`），差别在 `status`——
+  // 后端真 dump 的那两份分别是 `ACCEPTED` / `REJECTED`，这条路由要的是 `EDITED`。
+  // **不手写一份**：拿真回执改一个字段，比编一个 27 字段的对象离真形状近得多。
+  {
+    method: "POST",
+    match: /\/edit$/,
+    body: { ...fixtures.proposalAccept, status: "EDITED" },
+  },
+  // 一次整理跑完了长什么样（真 dump）。**没跑成那一份不做默认**：要验它的测试自己前置，
+  // 免得每一块屏幕都莫名其妙挂着一条失败。
+  { match: /\/extractions\//, body: fixtures.extractionRun },
   { method: "POST", match: /\/provisional\/confirm$/, body: fixtures.provisionalConfirm },
   // 改一条**已经生效**的事实（ADR 0020 的「可改」）。两条都是真 dump 的回执。
   { method: "POST", match: /\/canon\/knowledge$/, body: fixtures.canonKnowledge },

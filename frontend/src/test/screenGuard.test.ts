@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { devTerms, engineWords, machineWords, rawIds } from "./screenGuard";
+import {
+  devTerms,
+  englishProse,
+  engineWords,
+  machineWords,
+  rawIds,
+  shellLines,
+} from "./screenGuard";
 
 // **守卫的自守卫。**
 //
@@ -11,7 +18,7 @@ import { devTerms, engineWords, machineWords, rawIds } from "./screenGuard";
 // `tests/test_doc_numbers.py` 里那个「五条历史违规」探针：探针过期了要么删要么换，
 // 但不许悄悄变成空集。
 
-/** 五个探针，每一个都在某一轮里真的被小说作者看到过（或者当场就会被看到）。 */
+/** 八个探针，每一个都在某一轮里真的被小说作者看到过（或者当场就会被看到）。 */
 const HISTORICAL: ReadonlyArray<{ shown: string; term: string; why: string }> = [
   {
     shown: "萧决 对「血脉秘密」：KNOWS → BELIEVES",
@@ -38,6 +45,25 @@ const HISTORICAL: ReadonlyArray<{ shown: string; term: string; why: string }> = 
     term: "n:ID22",
     why: "ProposalReviewTab 的 `rosterMap.get(id) ?? id.slice(-6)`；截断后逃掉了 `node:` 那条守卫",
   },
+  {
+    shown: "provider_failure: chapter analysis provider failed",
+    term: "chapter analysis provider failed",
+    why:
+      "审阅面板渲染 `ExtractionRunError.message`（写给维护者的英文）；" +
+      "前三张网只咬到了前面那个 snake_case，后面整句英文一个字都没被咬",
+  },
+  {
+    shown: "也可能是这一章还没进库：先跑 nh sync。",
+    term: "nh sync",
+    why:
+      "declare.py::QuoteNotFound 经 api/app.py 原样进 message，DeclareDrawer 逐字渲染；" +
+      "对着一位「用 WPS、不想碰命令行」的作者，这句话是一条死路",
+  },
+  {
+    shown: "把引语加长到只匹配一处（前后各多复制半句通常就够）。用 nh locate 先试。",
+    term: "nh locate",
+    why: "declare.py::AmbiguousQuote 同上；前四张网一张都咬不住两个小写词",
+  },
 ];
 
 describe("屏幕守卫的自守卫", () => {
@@ -45,12 +71,12 @@ describe("屏幕守卫的自守卫", () => {
     expect(devTerms(shown)).toContain(term);
   });
 
-  it("五个探针**一个不漏**（少一个就说明这张网被谁改窄了）", () => {
+  it("八个探针**一个不漏**（少一个就说明这张网被谁改窄了）", () => {
     const caught = HISTORICAL.filter(({ shown, term }) => devTerms(shown).includes(term));
     expect(caught).toHaveLength(HISTORICAL.length);
   });
 
-  it("三张网各自罩住它该罩的那一类", () => {
+  it("五张网各自罩住它该罩的那一类", () => {
     expect(machineWords("stale_base_version project_not_found valid_from")).toEqual([
       "stale_base_version",
       "project_not_found",
@@ -64,6 +90,32 @@ describe("屏幕守卫的自守卫", () => {
     ]);
     // **截断过的也算。** 前缀白名单（`node:` / `edge:` …）在这一条上会当场漏掉。
     expect(rawIds("边 edge:01J8XK 已撤回 · 当前：n:ID22")).toEqual(["edge:01J8XK", "n:ID22"]);
+    // 一连三个小写英文单词 = 一句写给维护者的话。**两个不算**（模型名 + 单位）。
+    expect(englishProse("整理没跑成 chapter analysis provider failed")).toEqual([
+      "chapter analysis provider failed",
+    ]);
+    expect(englishProse("读入 1200 token · 900 ms · deepseek-v4-flash")).toEqual([]);
+    // 命令行：命令名 + 空格 + 一个词，或者一个 `--开关`。
+    // 一条命令被咬成几段是**对的**：判据是「这段字里有没有命令行的形状」，
+    // 不是「把命令完整地切出来」。
+    expect(shellLines("先跑 nh sync，再 uv run pytest -q，别忘了 --force")).toEqual([
+      "nh sync",
+      "uv run",
+      "pytest -q",
+      "--force",
+    ]);
+    // **孤零零一个命令名不算**（门槛在 `screenGuard.ts` 那段注释里）。
+    expect(shellLines("这本书导入的是 TXT，用 WPS 打开也行")).toEqual([]);
+  });
+
+  it("**门槛**：作者自己文件夹里的文件名不许被咬（同步回执就在摆这些名字）", () => {
+    // 假红比漏报更危险。这几行是「读回改动」那颗按钮的真回执长相。
+    const receipt = [
+      "读回来了：1 章有新内容（这本书现在共 300 章）。",
+      "内容变了：第 23 章。之前那一版还在「历史」里。",
+      "这些文件不是章节，没有动它们：chapters/大纲.md、chapters/写作笔记.md。",
+    ].join("\n");
+    expect(devTerms(receipt)).toEqual([]);
   });
 
   it("**不误报**：干净的界面一个字都不许被咬", () => {

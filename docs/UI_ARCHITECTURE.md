@@ -84,10 +84,15 @@
 | POST | `/projects/{pid}/declare/believes` | `Ledger.declare_believes` | `Declaration` | 🟢 |
 | POST | `/projects/{pid}/declare/where` | `Ledger.declare_where` | `Declaration` | 🟢 |
 | POST | `/projects/{pid}/chapters/{n}/draft` | `scene_view` → `assemble`（X0/X1/X2）或 `build_product_context` → `assemble_product`（PRODUCT，默认） | `{experimental, note, text, memory, length, …}`·**这一行 2026-08-02 起就不是 501 了**（修正案 7 实验开放）；`memory` 是记忆层回执，**零带着理由**（装了几份档案/事件/总结、哪几章缺总结）；`previous_tail` 的截断长度**分档**——PRODUCT 从模型窗口倒推（`product_tail_limit()`，2026-08-10 起），点名 X0/X1/X2 则原样拿冻结的 800（那是考卷，见 ADR 0019 边界五） | 🟢 |
-| GET | `/projects/{pid}/chapters/{n}/summaries` | `SummaryStore.coverage`（窗口边界由 `rolling_summary_window` 算） | `{chapter, window_first, window_last, chapters[], summarized, missing[]}`·**窗口不是全书**（近八章走事件记忆）；`missing` = 有正文没总结，`has_text=false` = 还没写，两者别合并 | 🟢 |
-| POST | `/projects/{pid}/chapters/{n}/summary` | `RollingSummarizer.ensure` | `{chapter_number, has_text, summary, created_at}`·**会调模型、会花钱**，幂等（同章同 prompt 只付一次）；**故意没有「保存后自动生成」**，自动那条走下面的 `autopilot` | 🟢 |
-| POST | `/projects/{pid}/chapters/{n}/autopilot` | `RollingSummarizer.ensure` + `runner.enqueue`（都进 `BackgroundTasks`） | 202 `{chapter, summary, extraction, extraction_run_id, errors[]}`·两个状态字取值 `queued`/`skipped`/`no_text`/`running`/`failed`/`unconfigured` | 🟢 |
-| GET | `/projects/{pid}/chapters/{n}/autopilot` | `SummaryStore.get` + `extract.metrics.metrics_for_range` | `{chapter, summary_ready, extraction_ready, running, summary_state, extraction_state, errors[]}`·**只读，不排队不花钱** | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/summaries` | `SummaryStore.coverage`（窗口边界由 `rolling_summary_window` 算） | `{chapter, window_first, window_last, chapters[], summarized, missing[]}`·**窗口不是全书**（近八章走事件记忆）；`missing` = 有正文没总结（**撤回过的也算缺**），`has_text=false` = 还没写，两者别合并 | 🟢 |
+| POST | `/projects/{pid}/chapters/{n}/summary` | `RollingSummarizer.ensure` | `{chapter_number, has_text, summary, created_at, retracted, author_written}`·**会调模型、会花钱**，幂等（同章同 prompt 只付一次）；**故意没有「保存后自动生成」**，自动那条走下面的 `autopilot`；**撤回过的章按这里会真的重来一次（再付一次钱）**，那是撤回语义里写死的退路 | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/summary` | `SummaryStore.coverage`（单章） | `{chapter_number, has_text, summary, created_at, retracted, author_written}`·这一章现在的总结。**没有的时候不许只回一个 null**：`has_text=false`（还没写）/ `retracted`（作者亲手撤的）/ 两者都不是（有正文没生成过）三种零分得开，因为下一步动作完全不同 | 🟢 |
+| PATCH | `/projects/{pid}/chapters/{n}/summary` | `save_author_summary` | `{chapter_number, has_text, summary, created_at, retracted, author_written}`·换成作者自己写的那一段，**不花钱**。库里追加一行（迁移 013），模型写的那一行留着；交上来的就是屏幕上那一段时一行都不追加。空串 422（清空≠撤回，两个动作不共用入口）、超过 1000 字 422 | 🟢 |
+| DELETE | `/projects/{pid}/chapters/{n}/summary` | `retract_summary` | `{chapter_number, has_text, summary, created_at, retracted, author_written}`·撤回，**不花钱、库里一行都不少**。语义定死为「这一章当作没总结」——起草不带它、覆盖率算作缺、想重来就再点生成。本来就没有 / 已经撤过都回 200（这个动作没有失败的形态） | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/summary/mentions` | `summary_index.mentions_in_chapter` | `{chapter, mentions[{node:{id,label,name}, surfaces[]}]}`·这一段总结提到了花名册里的哪些东西。**只做集合判断**（这个称呼出现了没有，`text/mentions.py` 那条 alternation + `rules_only`），不做任何相似度——找相似要向量 + 语义，那是被砍掉的 Qdrant 和 ADR 0005。出参**只有 `NodeRef`**：这批命中里按定义就有 Secret。**不并进 `…/summary`**（那个形状是四条动作共用的，也是 `…/summaries` 里的一行，每章挂芯片 = 一次覆盖率查询变成一次全书反查） | 🟢 |
+| GET | `/projects/{pid}/nodes/{node_id}/summary-mentions` | `summary_index.chapters_mentioning` | `{node, chapters[{chapter_number, summary, surfaces[], author_written}]}`·**还有哪几章的总结提到它**，按章号升序，带那几段原文（作者点开是为了读它、比它、引它）。一次 SQL，**不调模型、不花钱**。`node_id` 不在本项目 → 404（`NodeNotFound`），**不回空表**：「他没在任何总结里出现过」和「这个 id 根本不存在」下一步动作完全不同。索引什么时候重建见 `summary_index.py` | 🟢 |
+| POST | `/projects/{pid}/chapters/{n}/autopilot` | `RollingSummarizer.ensure` + `runner.enqueue`（都进 `BackgroundTasks`） | 202 `{chapter, summary, extraction, extraction_run_id, errors[]}`·两个状态字取值 `queued`/`skipped`/`no_text`/`running`/`failed`/`retracted`/`unconfigured`·**作者撤回过的章一律不派**（判据是 `SummaryStore.latest()` 不是 `get()`：后者对撤回过的章回 None，于是他撤掉、切走一章，后台立刻替他买一份回来） | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/autopilot` | `SummaryStore.latest` + `extract.metrics.metrics_for_range` | `{chapter, summary_ready, extraction_ready, running, summary_state, extraction_state, errors[]}`·**只读，不排队不花钱** | 🟢 |
 | POST | `/projects/{pid}/chapters/{n}/plan` | — | 501 | 🟡 |
 | GET | `/projects/{pid}/activity?actor=&limit=&cursor=` | `activity.read_activity`（`extraction_run` + `model_call` + `decision_log` 归并） | `{entries[], next_cursor, actors[]}`·**折叠层**：一行 = `{id, source, ts, actor, status, title, subtitle, chapter_number, jump}`，**payload 不在这一层**（那是泄漏面，按需取）。`actors[]` 的计数**不受 `actor` 过滤影响**——它要回答的正是「我筛掉了多少」（[ADR 0020](adr/0020-clean-extraction-auto-canon.md)） | 🟢 |
 | GET | `/projects/{pid}/activity/{entry_id}` | `activity.read_entry`（按 id 前缀分派到三张表） | `{entry, rows[], cost, errors[], payload}`·**展开层**：`rows[]` 是「标签→值」的定义列表（措辞归后端，前端不写文案分支）；`payload` 只有 `source=decision` 才有，且过 `narrow_payload`（Node 形状收窄 + `props` 一律丢掉，比 `_narrow` 严——日志行没有「当前章」可比）。查无此条/跨项目 → 404 | 🟢 |
@@ -95,12 +100,12 @@
 | GET | `/projects/{pid}/chapters/{n}/proposals` | `proposals.pending` | `list[ProposalRecord]` | 🟢 |
 | POST | `/projects/{pid}/proposals/{id}/accept` | `review_proposal`（accept） | `ProposalResolution` | 🟢 |
 | POST | `/projects/{pid}/proposals/{id}/reject` | `review_proposal`（reject/bystander） | `ProposalResolution` | 🟢 |
-| POST | `/projects/{pid}/proposals/{id}/edit` | `review_proposal`（edit） | `ProposalResolution`·**按作者改过的样子落进 CANON**：`edited_summary` / `knower_ids` / `participant_ids` 至少给一样（后两个是**绝对集合**，`null`=这一维不动）。此前 `edit` 只存在于库里、没有路由，于是浏览器里只有 accept / reject 两个按钮 | 🟢 |
+| POST | `/projects/{pid}/proposals/{id}/edit` | `review_proposal`（edit） | `ProposalResolution`·**按作者改过的样子落进 CANON**：`edited_summary` / `knower_ids` / `participant_ids` 至少给一样（后两个是**绝对集合**，`null`=这一维不动）。此前 `edit` 只存在于库里、没有路由，于是浏览器里只有 accept / reject 两个按钮·**前端调用方**（2026-08-13 起）：右栏「待确认」那一格里低置信情节卡上的「改一改」→ `ProposalReviewTab.tsx::ProposalEditor`，勾选框和「已确认的情节」那一格**共用同一份控件**（`CastPicker.tsx`）——两条路能力不一致的时候，作者会学会先驳回再重来，而那正好丢掉了证据链。后端只对「恰好 1 个 event、无 edge、无新人物」开放（`extract/proposal_validation.py`），条件不成立**不画那颗按钮** | 🟢 |
 | POST | `/projects/{pid}/canon/knowledge` | `corrections.correct_knowledge` | `KnowledgeCorrection`·**改一条已生效的事实**：`{character_id, secret_id, to_type: KNOWS\|BELIEVES, believed_value?, expected_canon_version}`。机制是**撤回旧边 + 写新边**（旧行留着，`status=RETRACTED`），`valid_from` 从旧边继承——**入参里没有章号**（约束 10）。404=这一格今天是 UNKNOWN / 422=已经是那个类型或 `believed_value` 形状不对 / 409=`stale_base_version`·**前端调用方**（2026-08-11 起）：右栏「人物认知」那一格 → `KnowledgeMatrix.tsx` 的 `CellEditor`，版本取自同一张矩阵的 `version.canon_version`。**同一个编辑器挂在两处**（右栏 + 章节核对页），所以撞 409 之后的重取归编辑器自己管（`useRefreshPanels`），不靠挂载点传 `onRefresh` —— 少传一个可选 prop 就让退路死在一块屏幕上，那是已经发生过一次的形态 | 🟢 |
 | POST | `/projects/{pid}/canon/events/{event_id}/cast` | `corrections.correct_event_cast` | `EventCastCorrection`·改一条已生效**事件**的知情/在场名单：`{knower_ids?, participant_ids?, expected_canon_version}`，绝对集合、`null`=不动。删一个人 = 那一行 `status=RETRACTED`（行留着，读路径看不见）。空编辑 422·**前端调用方**（2026-08-11 起）：右栏「待确认」那一格下半截 → `CanonEventCast.tsx`，勾选框即绝对集合，**只发作者动过的那一维** | 🟢 |
 | POST | `/projects/{pid}/chapters/{n}/provisional/confirm` | `confirm_provisional_*`（幂等回执） | `ProvisionalConfirmation` | 🟢 |
-| POST | `/projects/{pid}/chapters/{n}/extract` | `runner.enqueue`（后台执行） | `ExtractionRun`（202） | 🟢 |
-| GET | `/projects/{pid}/extractions/{run_id}` | `runner.get` | `ExtractionRun` | 🟢 |
+| POST | `/projects/{pid}/chapters/{n}/extract` | `runner.enqueue`（后台执行） | `ExtractionRunView`（202） | 🟢 |
+| GET | `/projects/{pid}/extractions/{run_id}` | `runner.get` | `ExtractionRunView`·**出参不是审计模型 `ExtractionRun`**（2026-08-13）：`errors` 是一串**已经翻好的中文**（`tuple[str, …]`，同 `ActivityDetail.errors`），`code` / `message` 都不出这道门。`ExtractionRunError.message` 是写给**维护者**的英文诊断，而这条端点的唯一消费者是浏览器里的审阅面板——它此前把整条 error 原样发出去，屏幕上是 `chapter analysis provider failed`。措辞的唯一出处是 `activity._RUN_ERROR_LABEL`（日志页那条读端早就在用），**前端不写第二张表** | 🟢 |
 | GET | `/projects/{pid}/chapters/{n}/events?scope=` | `events_for_chapter` | `list[EventView]`·**两个 scope 前端都在用**（2026-08-11 起）：`PROVISIONAL` 是「待确认的情节」，`CANON` 是「已确认的情节」（改名单的那一半）。此前 `CANON` 在浏览器里一个字都没露过面 | 🟢 |
 | POST | `/projects/{pid}/chats` | `ChatStore.create` | `ChatSessionView`（201）·**作者可以同时开好几段**，每段各自 resume。入参 `{title?, house_style?}`——`house_style` 进稳定前缀，**所以它必须跨章不变**（[ADR 0019](adr/0019-agent-loop-not-graph.md) 边界六）；工作台今天不给它输入框，一律发空串 | 🟢 |
 | GET | `/projects/{pid}/chats` | `ChatStore.list` + 两次聚合 | `list[ChatSessionView]`·最近说过话的在前。**`pending_lookups` 在这条路由上是真算的**（不是吃默认值 0）：断在半路的那一段和跑完的那一段下一步动作不同，而这一页是作者唯一一次看得见全部会话的地方。**`message_count` 含不上屏的那些**（工具往返），所以界面上不许把它当「你们说了几句」显示 | 🟢 |
@@ -174,7 +179,7 @@
 | `AmbiguousQuote` | 409 | `ambiguous_quote` + `candidates: list[QuoteCandidate]`（让作者加长引语到唯一） |
 | `SupersedeConflict` | 409 | `supersede_conflict`（乱序 valid_from，v1 拒绝不猜） |
 | `WrongLabel` | 422 | got/want NodeLabel |
-| `QuoteNotFound` | 422 | `quote_not_found`（提示：精确匹配、先 sync、复制别手打） |
+| `QuoteNotFound` | 422 | `quote_not_found`（提示：逐字精确、复制别手打、**这一章可能还没读回来** —— 声明抽屉据它摆出「读回改动」；那句话里**不许出现命令**，见 ARCHITECTURE「已知洞」第 10 条） |
 | `ImportRefused` | 409 | `conflicts: list[str]`（内容不同的已存在文件，无 --force） |
 | `SyncRefused` | 422 | `path`（某 NNNN.md 切出 0 或 >1 章） |
 | pydantic `ValidationError` | 422 | 剥掉开发者 wrapper，留作者可读的一半（CLI 的 `_reason`） |
@@ -297,6 +302,20 @@
 │  │         └─ <CanonEventCast>  ◀ GET /events?scope=CANON
 │  │                              ▶ POST /canon/events/{id}/cast（勾选框=绝对集合，
 │  │                                只发动过的那一维；日志页跳过来时按 `jump.event_id` 展开）
+│  │      Tab7 <SummaryTab>       ◀ 2026-08-13：GET /chapters/{n}/summary（**跟着左栏那一章走**）
+│  │                                + GET /chapters/{n}/summaries（「这一稿带得上几段」那一句）
+│  │                              ▶ PATCH（改，不花钱）· DELETE（撤回，不花钱、不删行）
+│  │                                · POST（重新生成，**要跑一次模型**，按钮上自己说）
+│  │                                **它不吃花名册**：这一段是正文压出来的，和「书里有谁」
+│  │                                无关，所以花名册空着时它照常显示（右栏别的格全靠人）。
+│  │                                「你撤回的」和「还没生成」说两句话——起草那边它们同义，
+│  │                                下一步动作却相反
+│  │         └─ <Memories>/<Trail>  ◀ 2026-08-13 下半：**每一段总结 = 一个可反查的记忆点**
+│  │                                GET /chapters/{n}/summary/mentions（一排芯片）→ 点一个 →
+│  │                                GET /nodes/{id}/summary-mentions（别的章按章号摊开，带原文，
+│  │                                点章号 = setChapter + 回工作台）。**这一层没有会花钱的按钮**，
+│  │                                也**不许出现「相关度 / 匹配度 / 相似」**——引擎在数字符串，
+│  │                                写个百分比等于向作者承诺它读懂了剧情
 │  ├─ <ChatPanel>     ◀── 2026-08-11 模式二（ADR 0019）：中栏右半边，顶栏开合，默认关
 │  │  ├─ <ChatSessions>          ◀ GET /chats（多段并存，各自 resume）
 │  │  │                          ▶ POST /chats · DELETE /chats/{id}（正在跑 ⇒ 409，原样说）
@@ -370,7 +389,9 @@
 
 选 **CodeMirror 6**（`@codemirror/lang-markdown`）作应用内编辑器。
 
-- **怎么守 ADR 0007**：编辑器只是磁盘 `chapters/NNNN.md` 的便利视图，不是新真相源。打开=读盘，保存=写回同一个 md 再 `importer.sync`。磁盘文件始终可被 VSCode/Obsidian 平行编辑（外部改动经 file-watch → sync 回流）。「文件是作者的」没破，GUI 是可选便利不是锁定。
+- **怎么守 ADR 0007**：编辑器只是磁盘 `chapters/NNNN.md` 的便利视图，不是新真相源。打开=读盘，保存=写回同一个 md 再 `importer.sync`。磁盘文件始终可被 WPS/VSCode/Obsidian 平行编辑。
+
+  > ⚠️ **这一行原来写着「外部改动经 file-watch → sync 回流」，而回流那一半从来没建**（`/sync` 在浏览器里零调用方）。**2026-08-13 补上的是一颗按钮，不是 file-watch**，而那是一个决定不是欠账：sync 是写路径（每次落一条快照，快照是证据的锚），「磁盘先、DB 跟」里的那个「跟」是作者的动作；自动跟着磁盘写库等于给他一条按不停也看不见的写入面，还要往 wheel 里加一个平台相关的监听依赖。理由全文和「剩下什么」在 [`ARCHITECTURE.md` 的「工作台的已知洞」第 10 条](ARCHITECTURE.md#工作台的已知洞)，**别在这儿写第二份**。
 - **为什么不 TipTap**：ADR 0007 把 TipTap 砍到 v1.1，核心不是「前端库不许用」（TipTap 只是前端库，不违反后端精简），而是它买来 ADR 0006 的坐标错位——ProseMirror 用持久化 pos，必须维护 `pos ↔ (para_index,quote,k)` 映射层，那正是 offset 地狱、正是 v1.1 才做的那层。**CM6 停在纯文本/markdown 心智**：段落=空行分隔的文本块，锚靠重寻 quote 定位，不需要任何持久化 position 映射。
 - **取舍说明**：内置编辑器降低了非程序员门槛（换取采纳），代价是要自己扛 revalidate——但 CM6 + 磁盘回写让 revalidate 从第一天就被真实编辑行为压测（这是 ADR 0007 的「副作用全是好的」）。这是本方案**唯一松动 ADR 0007「v1 不做编辑器」时机**的地方，且是作者选定的产品方向（非程序员 GUI）的直接推论——松的是时机，守住的是实质（正文在磁盘）。TipTap 的触发条件明确：真有作者要求内置富文本时，图层/规则/面板全不动，只加 TipTap + 一层 pos↔锚映射（v1.1）。
 

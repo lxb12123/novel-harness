@@ -1,6 +1,7 @@
 import { useState } from "react";
-import { useActivity, useActivityDetail, useRuns } from "../api/hooks";
+import { useActivity, useActivityDetail, useRuns, useStartExtraction } from "../api/hooks";
 import { useOpenChapter } from "../autopilot";
+import { refusalText } from "../chat";
 import { useCoords, type Tab } from "../store";
 import { shownTime } from "../time";
 import type {
@@ -43,6 +44,10 @@ const STATUS_ZH: Record<string, string> = {
   pending: "排队中",
 };
 
+/** 后端一句话都没写时才轮到的那一句（同 `SummaryTab`）：**不解释「为什么」**
+ *  ——不知道就说不知道（§10 约束 8）。 */
+const RETRY_FAILED = "没能把这一章重新排上队，而系统没能说清是为什么。过一会儿再试一次。";
+
 /** 跳转坐标 → 右栏的哪一格。
  *
  *  **这不是第二份路由表。** 跳去哪个模块是后端算的（`jump.target`，结构化枚举），
@@ -50,11 +55,16 @@ const STATUS_ZH: Record<string, string> = {
  *  也不该知道。改这条事实要打哪条路由，全在 `jump.endpoints` 里，前端一个字都不拼。
  *
  *  `chapter` 是 `null`：它是兜底坐标（「只能定位到这一章」），换完章就到位，
- *  右栏停在作者原来看的那一格比替他跳一格更诚实。 */
+ *  右栏停在作者原来看的那一格比替他跳一格更诚实。
+ *
+ *  `extraction_retry` 也是 `null`，但理由完全不同：**那一档根本不是跳转**——
+ *  按钮就在这一行上，按下去是把没跑成的那次整理再跑一遍（`RetryRow`）。 */
 const TARGET_TAB: Record<JumpTarget, Tab | null> = {
   knowledge_cell: "matrix",
   event_cast: "review",
   proposal: "review",
+  summary: "summary",
+  extraction_retry: null,
   chapter: null,
 };
 
@@ -74,6 +84,11 @@ const CAN_EDIT_HERE: Record<JumpTarget, boolean> = {
   knowledge_cell: true,
   event_cast: true,
   proposal: true,
+  // 右栏第九格「章节总结」：那一段能改、能撤回、能重新生成（2026-08-13）。
+  // 在它存在之前，写总结那次调用只能跳到章——**那时这一档写 `false` 才是诚实的**。
+  summary: true,
+  // 这一档「有得点」的那个控件就是这一行上的按钮本身（`RetryRow`），不在别的屏幕上。
+  extraction_retry: true,
   chapter: false,
 };
 
@@ -158,10 +173,47 @@ function TokenCell({ t }: { t: CostTotals }) {
   );
 }
 
-/** 这本书到今天为止用掉多少。
+/** 花费那一格 —— **和旁边的用量是同一对形状**（一个合计 + 一个「其中几条算得出」）。
  *
- *  **金额今天恒为「未记录」**，而且要说得出为什么：引擎不知道作者和模型服务商谈的价钱
- *  （钥匙是他自己的），所以只记用量不记钱。写成「¥0.00」是本仓库反复在修的那种失败形态。 */
+ *  这一格 2026-08-13 之前只有一句 `花费 {money(t.cost)}`，而那个合计**只算得上
+ *  `priced_calls` 那几次**：自建端点、公开标价表里没有的模型、供应商没报 token 数的
+ *  那几次都算不出钱。一个合计不说清它是不是全部，就是一句看起来确定的假话——
+ *  后端 `CostTotals.priced_calls` 那段注释写的正是这件事，而**紧挨着的用量那一格
+ *  早就照它写了**，只有这一格没跟上。
+ *
+ *  | 算得出几次 | 屏幕上 |
+ *  |---|---|
+ *  | 全算得出 | 花费 约 $0.34 |
+ *  | 算得出一部分 | 花费 约 $0.34（另有 12 次算不出，实际更多） |
+ *  | 一次都算不出 | 花费未记录 |
+ *
+ *  **「这个数不是全部」写在屏幕上，不是只挂在 title 里**（同 `TokenCell`）：
+ *  作者要判断的正是这件事。 */
+function CostCell({ t }: { t: CostTotals }) {
+  const unpriced = t.calls - t.priced_calls;
+  if (t.priced_calls === 0)
+    return (
+      <span title="这几次都算不出价钱 —— 自建的端点、公开标价表里没有的模型、或者服务商没回报用量。是这个数拿不到，不是没花钱。">
+        花费未记录
+      </span>
+    );
+  return (
+    <span
+      title={
+        "按各家的公开标价估的。你的实际账单可能不一样——有折扣、走中转、或者用的是免费额度。" +
+        (unpriced > 0
+          ? `另外 ${unpriced} 次算不出价钱，所以这里只是其余几次的合计。`
+          : "")
+      }
+    >
+      花费 {money(t.cost)}
+      {unpriced > 0 ? `（另有 ${unpriced} 次算不出，实际更多）` : ""}
+    </span>
+  );
+}
+
+/** 这本书到今天为止用掉多少。**用量和花费各是一对「合计 + 其中几条算得出」**，
+ *  两格都得说清那个数是不是全部（§10 约束 8：零和半个数都要带着理由）。 */
 function UsageStrip() {
   const { projectId } = useCoords();
   const runs = useRuns(projectId);
@@ -177,9 +229,7 @@ function UsageStrip() {
       <span>已整理 {data.run_count} 次</span>
       <span>模型调用 {t.calls} 次</span>
       <TokenCell t={t} />
-      <span title="按各家的公开标价估的。你的实际账单可能不一样——有折扣、走中转、或者用的是免费额度。">
-        花费 {money(t.cost)}
-      </span>
+      <CostCell t={t} />
     </div>
   );
 }
@@ -222,6 +272,47 @@ function CostLine({ cost }: { cost: ActivityCost }) {
     <div className="log-cost">
       {cost.model} · 读入 {num(cost.tokens_in)} / 生成 {num(cost.tokens_out)} token · 用时{" "}
       {cost.ms === null ? "未记录" : `${cost.ms} 毫秒`} · 花费 {money(cost.cost)}
+    </div>
+  );
+}
+
+/** 没跑成的那一条上那颗「再来一次」。**它不是跳转，是一次动作。**
+ *
+ *  作者截图里那条红的（「第 722 章抽取 · 没能连上你配置的模型服务 · 失败」）此前只配着
+ *  一颗「去第 722 章 →」：`_run_jump` 一眼都不看跑成没跑成，成功和失败走同一条路径。
+ *  **而重跑的能力后端一直都在**——那条路由把同一行 run 原地重置回排队，不新建行。
+ *
+ *  三条纪律：
+ *  1. **说什么由后端定**（`jump.label`，措辞和 `target` 是同一次判断的两个产物），
+ *     这里不编第二句；
+ *  2. **`endpoints` 空就不画按钮**——那是一个断言（「今天没有任何路由能让这件事不一样」），
+ *     不是没填。同这一页别处那条纪律；
+ *  3. **打的就是 `endpoints[0]`**，只补一个 `force`：没有它，接口照样 202、
+ *     那一行照旧红着（后端见到已经失败的那条 run 会原样还回来），也就是一颗点了
+ *     没反应的按钮——比没有按钮更糟。两头钉着：pytest 那侧有一个「不带 force」的探针，
+ *     vitest 这侧扫的是请求 URL。 */
+function RetryRow({ jump }: { jump: ActivityJump }) {
+  const { projectId } = useCoords();
+  const chapter = jump.chapter_number;
+  const retry = useStartExtraction(projectId ?? "", chapter ?? 0);
+  const refused = refusalText(retry.error, RETRY_FAILED);
+
+  if (jump.endpoints.length === 0 || !projectId || chapter === null) return null;
+  return (
+    <div className="log-jump">
+      <button
+        className="log-go"
+        disabled={retry.isPending}
+        onClick={() => retry.mutate({ force: true })}
+      >
+        {retry.isPending ? "正在重新排队…" : `${jump.label} →`}
+      </button>
+      {retry.isSuccess && (
+        <span className="log-jump-note">
+          已经重新排上队了 —— 它在后台跑，这一行要过一会儿才会变。
+        </span>
+      )}
+      {refused && <span className="err-box">{refused}</span>}
     </div>
   );
 }
@@ -301,7 +392,14 @@ function EntryDetail({ entry }: { entry: ActivityEntry }) {
         </div>
       )}
       {cost && <CostLine cost={cost} />}
-      {full.jump && <JumpRow entry={full} jump={full.jump} />}
+      {/* 「再来一次」和「跳过去」是两件事，判据是后端给的 `target`——**不是从
+          `entry.status` 反推**：跑没跑成是引擎那一侧的判断，而它已经把结论写进坐标里了。 */}
+      {full.jump &&
+        (full.jump.target === "extraction_retry" ? (
+          <RetryRow jump={full.jump} />
+        ) : (
+          <JumpRow entry={full} jump={full.jump} />
+        ))}
     </div>
   );
 }

@@ -1,7 +1,8 @@
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fixtures, renderWithApi } from "../test/harness";
+import { BOOTSTRAP_IMPORT, IMPORT_SUMMARY_ALARM, fixtures, renderWithApi } from "../test/harness";
+import { devTerms, screenText } from "../test/screenGuard";
 import { useCoords } from "../store";
 import { Setup } from "./Setup";
 
@@ -109,7 +110,10 @@ describe("引导建书", () => {
     expect(useCoords.getState().projectId).toBeNull();
   });
 
-  it("导入后进入返回的项目首章", async () => {
+  it("导入后**先摆回执**，点「进入工作台」才进返回的项目首章", async () => {
+    // 2026-08-13 起中间多了一屏：导完一本 300 章的书，屏幕上不再是一个数字都没有。
+    // 那一屏存在的理由在 `ImportReceipt.tsx`——回执里那个全书性的信号只有在他往里
+    // 记第一条事实**之前**说出来才有用。
     const user = userEvent.setup();
     renderWithApi(<Setup />);
     chooseImport();
@@ -117,6 +121,13 @@ describe("引导建书", () => {
     await screen.findByText("青云记.txt");
     await user.click(screen.getByRole("button", { name: /导入并进入工作台/ }));
 
+    await screen.findByText(BOOTSTRAP_IMPORT.summary.headline);
+    for (const line of BOOTSTRAP_IMPORT.summary.lines) {
+      expect(screen.getByText(line)).toBeInTheDocument();
+    }
+    expect(useCoords.getState().projectId).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "进入工作台" }));
     await waitFor(() => {
       expect(useCoords.getState().projectId).toBe(fixtures.bootstrapImport.project.id);
       expect(useCoords.getState().chapter).toBe(1);
@@ -139,6 +150,72 @@ describe("引导建书", () => {
       expect(useCoords.getState().projectId).toBe(fixtures.bootstrapImport.project.id);
       expect(useCoords.getState().chapter).toBe(1);
     });
+  });
+
+  // ── 导入回执（2026-08-13）───────────────────────────────────────────────────
+  //
+  // 在这一屏之前，`BootstrapResult.import_report` 整份被丢掉：导完 300 章，屏幕上
+  // 一个数字都没有。而回执里躺着**唯一一个全书性的信号**——`preamble_chars` 异常
+  // ⇒ 第一章的章标很可能没被认出来 ⇒ 全书 index 集体少 1 ⇒ 每一条 `valid_from`
+  // 都错一章，且界面上看不出任何异常。
+
+  async function importAndSee(summary: unknown) {
+    const user = userEvent.setup();
+    renderWithApi(<Setup />, [
+      {
+        method: "POST",
+        match: /\/api\/projects\/bootstrap$/,
+        body: { ...fixtures.bootstrapImport, summary },
+      },
+    ]);
+    chooseImport();
+    upload();
+    await screen.findByText("青云记.txt");
+    await user.click(screen.getByRole("button", { name: /导入并进入工作台/ }));
+    return user;
+  }
+
+  it("章标之前躺着一整章：**明说全书章号可能错一位**，并说怎么办", async () => {
+    await importAndSee(IMPORT_SUMMARY_ALARM);
+
+    const alarm = await screen.findByRole("alert");
+    expect(alarm).toHaveClass("import-warning");
+    // 三件必须说到的事：看得见的事实 / 它意味着什么 / 下一步。
+    expect(alarm).toHaveTextContent(`${IMPORT_SUMMARY_ALARM.preamble_chars} 个字`);
+    expect(alarm).toHaveTextContent("整本书的章号会集体差一章");
+    expect(alarm).toHaveTextContent("再重新导入一次");
+    // 后端那句话里的 `**` 是重音，不是两颗星号（同写作助手那条）。
+    expect(alarm.querySelector("strong")).toHaveTextContent("第一章的标题没有被认出来");
+    expect(document.body.textContent).not.toContain("**");
+  });
+
+  it("章标之前没东西：**不摆那块警告**（假警报会让下一次真的被跳过）", async () => {
+    await importAndSee(BOOTSTRAP_IMPORT.summary);
+
+    await screen.findByText(BOOTSTRAP_IMPORT.summary.headline);
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("回执上一个研发术语都没有（那几行字全是后端写的）", async () => {
+    await importAndSee(IMPORT_SUMMARY_ALARM);
+
+    await screen.findByRole("alert");
+    expect(devTerms(screenText())).toEqual([]);
+  });
+
+  it("摆着回执时关掉抽屉 = 进工作台（书已经建好了，别让他回书架上再找一遍）", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    renderWithApi(<Setup onClose={onClose} />);
+    chooseImport();
+    upload();
+    await screen.findByText("青云记.txt");
+    await user.click(screen.getByRole("button", { name: /导入并进入工作台/ }));
+    await screen.findByText(BOOTSTRAP_IMPORT.summary.headline);
+
+    await user.click(screen.getByRole("button", { name: "关闭" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(useCoords.getState().projectId).toBe(fixtures.bootstrapImport.project.id);
   });
 
   it("导入失败时保留文件与书名，并以 alert 呈现错误", async () => {
@@ -186,6 +263,7 @@ describe("引导建书", () => {
     expect(screen.getByText("新稿.txt")).toBeInTheDocument();
     expect(screen.getByLabelText("书名")).toHaveValue("新稿");
     await user.click(screen.getByRole("button", { name: /导入并进入工作台/ }));
+    await user.click(await screen.findByRole("button", { name: "进入工作台" }));
     await waitFor(() => expect(useCoords.getState().projectId).toBe(fixtures.bootstrapImport.project.id));
     const bootstrapCall = fetchSpy.mock.calls.find(([url, init]) =>
       String(url).endsWith("/api/projects/bootstrap") && init?.method === "POST",

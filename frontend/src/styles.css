@@ -4,6 +4,9 @@
   --bg: #ffffff; --panel: #f7f7f6; --line: #dddcd8; --ink: #1c1c1e; --dim: #6b6b70;
   --k: #167a52; --b: #9a6212; --u: #999; --warnbg: #fbecec; --warn: #a23b3b;
   --accent: #3a3ab0; --sel: #ececf8; --okbg: #e8f5ee; --ok: #167a52;
+  /* 「你在看的不是本章」那一片。刻意**不复用** --warnbg/--warn：看上一章不是错误，
+     染成红的会教会作者忽略红色，而这块面板真正的红（未解析的称呼）就在它旁边。 */
+  --backbg: #fbf1de; --back: #7d4f0a;
   --welcome-side: #eceef1; --welcome-surface: #fff; --welcome-action: #242831;
   --welcome-soft: #f4f5f7; --welcome-shadow: 0 24px 64px rgba(26, 31, 40, .16);
 }
@@ -12,6 +15,7 @@
     --bg: #16161a; --panel: #1e1e24; --line: #2f2f38; --ink: #e8e8ec; --dim: #8a8a93;
     --k: #4bbd8b; --b: #d3a24f; --u: #777; --warnbg: #2a1818; --warn: #e08585;
     --accent: #9a98ee; --sel: #26263a; --okbg: #16281f; --ok: #4bbd8b;
+    --backbg: #2c2313; --back: #e2b463;
     --welcome-side: #1b1d22; --welcome-surface: #22252b; --welcome-action: #f1f3f5;
     --welcome-soft: #2b2f36; --welcome-shadow: 0 24px 64px rgba(0, 0, 0, .38);
   }
@@ -237,6 +241,8 @@ body.resizing { cursor: col-resize; -webkit-user-select: none; user-select: none
    不钉这一条的话，长章标会把「保存」挤成两个字换行。
    **`>` 不能少**：章标题自己也是一颗 button，被这条罩上就再也收不成「…」了。 */
 .edbar > button { flex: 0 0 auto; }
+/* 「读回改动」那一小块跟着让步（它有一句说明文字，长章标 + 它一起会顶宽） */
+.edbar > .syncbox { flex: 0 1 auto; min-width: 0; }
 
 /* ── 中栏顶栏的章标题（挑章 + 双击改名）───────────────────────────────────────
    它替下来的是顶栏那个 <select>，而**那个白框没有跟着搬**：select 自带边框和底色，
@@ -357,6 +363,11 @@ td.cell.editing { outline: 2px solid var(--accent); outline-offset: -2px; }
 .cast-pick { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; font-size: 12px; }
 .cast-editor .row.dim { color: var(--dim); font-size: 11px; }
 .cast-editor .actions { margin-top: 8px; display: flex; align-items: center; gap: 8px; }
+/* 「改一改再收下」比上面那个多一行概要框。形状照 `.cell-believed`（「他以为的是」）——
+   同一块右栏上的两个单行输入长得不一样，只会让作者觉得自己点错了地方。 */
+.cast-summary { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.cast-summary > span { flex: 0 0 auto; color: var(--dim); font-size: 11px; }
+.cast-summary input { flex: 1; min-width: 0; }
 .warn { margin-top: 8px; padding: 6px 8px; background: var(--warnbg); color: var(--warn); border-radius: 4px; font-size: 12px; }
 .tag { display: inline-block; padding: 1px 7px; margin: 2px 4px 2px 0; background: var(--sel); border-radius: 10px; font-size: 12px; }
 .mnr .lab { color: var(--dim); font-size: 11px; margin: 10px 0 4px; }
@@ -370,6 +381,27 @@ td.cell.editing { outline: 2px solid var(--accent); outline-offset: -2px; }
 .statecard .row.dim { color: var(--dim); font-size: 11px; }
 .statecard .row.quote { margin-top: 4px; font-style: italic; }
 .statecard .actions { margin-top: 8px; display: flex; gap: 6px; }
+
+/* 「看上一章」——右栏「人物状态」那一格的时光机开关。
+   关着的时候只是一行控件；**开着的时候整块内容换底、换边框、顶一条横幅**：
+   作者照着上一章的局面去改这一章的事实，是引擎自己造出来的错，而它造出来的那条边
+   在面板上长得完全正常。所以这里的「明显」是刻意过量的，不是一行小字。 */
+.lookback-bar { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.lookback-why { color: var(--dim); font-size: 11px; }
+.lookback {
+  border: 2px solid var(--back); border-left-width: 6px; border-radius: 8px;
+  background: var(--backbg); padding: 10px 12px 4px;
+}
+.lookback-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lookback-head b { color: var(--back); font-size: 14px; }
+.lookback-head .spacer { flex: 1; }
+.lookback-badge {
+  flex: 0 0 auto; padding: 1px 7px; border-radius: 3px;
+  background: var(--back); color: var(--backbg);
+  font-size: 11px; font-weight: 600; letter-spacing: .08em;
+}
+.lookback-note { margin: 8px 0 10px; color: var(--back); font-size: 12px; line-height: 1.6; }
+.lookback .statecard { background: var(--bg); border-color: var(--back); }
 
 /* M4 审阅面板 */
 .review-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
@@ -452,6 +484,13 @@ table.mx td.cell.focus { outline: 2px solid var(--accent); outline-offset: -2px;
 .err-box { margin-top: 10px; padding: 8px 10px; background: var(--warnbg); color: var(--warn); border-radius: 4px; font-size: 12px; }
 .locate-hits { margin-top: 6px; font-size: 12px; }
 .locate-hits .hit { color: var(--dim); }
+/* 「读回改动」：中栏工具条和声明抽屉共用同一颗按钮，所以这一组样式也只有一份。
+   它在工具条里是一行（`flex-wrap` 让回执换行到下一行去，不把「保存」挤走），
+   在抽屉里是一小块。 */
+.syncbox { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; }
+.syncsay { color: var(--dim); }
+.syncsay.err { color: var(--warn); }
+.syncnote { flex-basis: 100%; color: var(--dim); }
 .backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.25); z-index: 15; }
 /* 花名册抽屉：label / alias-kind 的按钮组要能换行（6 个中文按钮塞不进 460px 一行） */
 .drawer .row.wrap { flex-wrap: wrap; }
@@ -588,6 +627,15 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
 .onboarding-file-name { overflow: hidden; font-weight: 650; text-overflow: ellipsis; white-space: nowrap; }
 .onboarding-file-meta { flex: 0 0 auto; color: var(--dim); font-size: 12px; }
 .onboarding-error { margin: -8px 0 16px; padding: 9px 11px; border: 1px solid var(--warn); border-radius: 8px; background: var(--warnbg); color: var(--warn); font-size: 13px; }
+/* 导入回执：一行一句，全是后端写好的（`api/manuscript.py`）。 */
+.import-lines { margin: 0 0 18px; padding-left: 18px; color: var(--dim); font-size: 13px; line-height: 1.8; }
+/* 「整本书的章号可能错一位」那一段。它比错误框更该被看见——错误是「这一步没成」，
+   这一段是「这一步成了，但成得不对，而且看不出来」。 */
+.import-warning {
+  margin: 0 0 18px; padding: 12px 14px; border: 1px solid var(--warn); border-radius: 8px;
+  background: var(--warnbg); color: var(--warn); font-size: 13px; line-height: 1.75;
+}
+.import-warning p { margin: 0 0 8px; } .import-warning p:last-child { margin-bottom: 0; }
 .onboarding-form-actions { display: flex; justify-content: space-between; gap: 12px; }
 .onboarding-form-actions button { min-height: 40px; padding: 8px 14px; border-radius: 8px; }
 .onboarding-form-actions .primary { border-color: var(--welcome-action); background: var(--welcome-action); color: var(--welcome-surface); }
@@ -818,3 +866,33 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
   grid-auto-columns: minmax(320px, 1fr); gap: 10px; overflow-x: auto;
 }
 .compare-cols .draft-card { min-width: 0; overflow: auto; }
+
+/* 右栏「章节总结」那一格（2026-08-13）。**全部以 `chsum-` 开头，一条既有规则都没动。**
+   正文框、按钮行、那几句说明各一条；别的一律吃右栏和全局既有的样式
+   （`.empty` / `.warn` / `.err-box` / 全局的 `textarea` 和 `button`）。 */
+.chsum-text { width: 100%; box-sizing: border-box; resize: vertical; line-height: 1.7; }
+.chsum-scope { margin: 0 0 8px; color: var(--dim); font-size: 12px; }
+.chsum-why { margin: 6px 0 0; font-size: 12px; line-height: 1.7; }
+.chsum-actions { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* 总结 = 可反查的记忆点（T6）。同上：全部新类名，一条既有规则都没动。 */
+.chsum-mentions { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chip {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--bg); color: var(--ink); font-size: 12px; cursor: pointer;
+}
+.chip:hover { border-color: var(--accent); }
+.chip.on { background: var(--sel); border-color: var(--accent); }
+.chip-kind { color: var(--dim); font-size: 10px; }
+
+.chsum-trail { margin-top: 10px; }
+.trail-row { margin-top: 8px; padding-left: 8px; border-left: 2px solid var(--line); }
+/* 章号是**可点的**（跳过去看全文），所以它长得像个链接而不是一段静态文字。 */
+.trail-go {
+  padding: 0; border: 0; background: none; color: var(--accent);
+  font-size: 12px; cursor: pointer;
+}
+.trail-text { margin: 3px 0 0; font-size: 12px; line-height: 1.7; white-space: pre-wrap; }
+.trail-why { margin: 3px 0 0; color: var(--dim); font-size: 11px; }

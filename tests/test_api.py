@@ -974,7 +974,11 @@ def _seed_new_character_proposal(book: dict[str, str]) -> tuple[str, str]:
                             "gender": "女",
                             "personality": "隐忍",
                             "background": "北荒旧族",
-                            "character_notes": None,
+                            # **不能是 None**：这一份会进契约夹具，而审阅面板从前根本不画
+                            # 这一行——作者在闸门上批准了一条他没看见的东西，而它接受之后
+                            # 会跟着这个人进写作提示（`draft/product_assemble.py`）。
+                            # 夹具里躺一个 `null`，那条「作者看得见吗」的断言就永远绿。
+                            "character_notes": "说话总带三分敬意，从不主动提北荒",
                             "confidence": 0.8,
                         },
                         "confidence": 0.8,

@@ -16,7 +16,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Final
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 # ══════════════════════════════════════════════════════════════════════════
 # 枚举
@@ -231,6 +231,17 @@ HEALTH_DIM_KEY: Final = "health"
 为什么「死了」是一条 HAS_STATE 边而不是 node 上的一个字段：**它必须是时态的。**
 存成 `node.props.status='dead'` 的话，萧决在第 89 章死了会让 R3 在第 50 章
 也报「死人说话」——那是个 100% 误报，而误报 <1 条/章 是 M3 的生死线。
+"""
+
+HEALTH_DIM_NAME: Final = "生死"
+"""这个维度**建出来时**的 `node.name`。**它不是身份，`dim_key` 才是。**
+
+存在的理由只有一个：`ensure_state_dim` 建第一条时总得给它起个名。之后作者要是把它
+改成「健康」，规则一个字都不受影响（`StateValue.dim_key` 比的是键，不是这个名）——
+`NodeProps.dim_key` 的 docstring 说的就是这件事。
+
+**它进不了花名册**（`CANONICAL_ALIAS_LABELS` 里没有 StateDim），所以正文里的
+「生死」两个字永远不会被它匹配到。
 """
 
 
@@ -614,11 +625,21 @@ class StateSnapshot(BaseModel):
     states: list[StateValue] = Field(default_factory=list)
     """全部 `HAS_STATE`。人物卡渲染它，R3 读它。"""
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def is_dead(self) -> bool:
         """R3 DEAD_SPEAKS 的判据。
 
         闭世界，与「无 KNOWS 边 ⇒ 不知道」同构：**没有 health=dead 的边 ⇒ 活着。**
+
+        **`computed_field` 不是装饰品**：它 2026-08-13 才补上，而在那之前
+        `frontend/src/api/types.ts` 的 `StateSnapshot` 里已经写着 `is_dead: boolean`、
+        `StateCards.tsx` / `ChapterPrepPage.tsx` 也已经在渲染那个「· 已亡」——
+        可 `model_dump()` **从不输出 property**，于是那个字段在浏览器里恒为 `undefined`，
+        角标一次都没画出来过，`tsc` 和 vitest 谁都看不见（契约夹具是从真 app dump 的，
+        真 app 就没发过这个键，两头一致地缺）。
+        **同一条链上第四个断点**：`first_appears_chapter` 没有写入方 / `value_key` 没有
+        写入方 / `StateDim` 没有创建路径 / 算出来了但发不出去。
         """
         return any(
             s.dim_key == HEALTH_DIM_KEY and s.value_key == HealthValue.DEAD for s in self.states
