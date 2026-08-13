@@ -104,6 +104,7 @@ from .deps import (
     load_project,
     resolve_route_capabilities,
 )
+from . import manuscript
 from .activity import router as activity_router
 from .autopilot import router as autopilot_router
 from .chat import router as chat_router
@@ -611,17 +612,25 @@ def create_project(body: CreateProject, conn: Any = Depends(get_conn)) -> Any:
     return project_mod.create(conn, name=body.name, root_path=str(root))
 
 
-@app.post("/api/projects/bootstrap", response_model=onboarding.BootstrapResult)
+@app.post("/api/projects/bootstrap", response_model=manuscript.BootstrapView)
 def bootstrap_project(
     body: BootstrapBody, conn: Any = Depends(get_conn)
-) -> onboarding.BootstrapResult:
-    """原子创建新书：项目、首章、快照与导入报告一起成功或一起消失。"""
-    return onboarding.bootstrap_project(
-        conn,
-        books_root=books_root(),
-        mode=body.mode,
-        name=body.name,
-        text=body.text if isinstance(body, ImportBootstrap) else None,
+) -> manuscript.BootstrapView:
+    """原子创建新书：项目、首章、快照与导入报告一起成功或一起消失。
+
+    出参多一份 `summary`（`api/manuscript.py`）：**导入回执的措辞归后端**。
+    在它出现之前整份 `import_report` 被前端丢在地上，而里面躺着唯一一个**全书性**的
+    信号——`preamble_chars` 异常 = 第一章的章标很可能没被认出来 = 全书 `valid_from`
+    集体错一章，且界面上看不出任何异常。
+    """
+    return manuscript.bootstrap_view(
+        onboarding.bootstrap_project(
+            conn,
+            books_root=books_root(),
+            mode=body.mode,
+            name=body.name,
+            text=body.text if isinstance(body, ImportBootstrap) else None,
+        )
     )
 
 
@@ -646,10 +655,22 @@ def import_book(
         tmp.unlink(missing_ok=True)
 
 
-@app.post("/api/projects/{project_id}/sync")
-def sync_project(store: Any = Depends(get_store), proj: Any = Depends(load_project)) -> Any:
-    """把 {root}/chapters/*.md 的现状读进库（作者在别的编辑器改了稿之后走这条）。"""
-    return importer.sync(store, proj.id, Path(proj.root_path))
+@app.post("/api/projects/{project_id}/sync", response_model=manuscript.SyncOutcome)
+def sync_project(
+    store: Any = Depends(get_store), proj: Any = Depends(load_project)
+) -> manuscript.SyncOutcome:
+    """把 {root}/chapters/*.md 的现状读进库（作者在别的软件里改了稿之后走这条）。
+
+    **它是「正文看得见」和「这句话记得下」之间那半条回路。** 章列表和正文都直接扫磁盘，
+    所以作者在 WPS 里改完回来，屏幕上立刻是新的；而 `locate` 搜的是**库里的快照**，
+    快照只有这条路落得下——不跑它，他刚写的那句话选中之后会被告知「找不到」。
+
+    **不花钱**（没有任何模型调用），但仍然只由作者显式触发：它往库里写快照，
+    而「磁盘先、DB 跟」的那一下是作者的动作（ADR 0007），不是后台的。
+
+    出参是 `SyncOutcome` 不是 `SyncReport`：屏幕上那句话由 `api/manuscript.py` 写。
+    """
+    return manuscript.sync_outcome(importer.sync(store, proj.id, Path(proj.root_path)))
 
 
 @app.get("/api/projects/{project_id}")

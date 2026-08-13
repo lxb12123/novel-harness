@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useDeclare, useLocate } from "../api/hooks";
 import { ApiError } from "../api/client";
 import type { Declaration, Edge, QuoteCandidate } from "../api/types";
+import { SyncButton } from "./SyncButton";
 
 type Kind = "knows" | "believes" | "where";
 
@@ -30,6 +31,11 @@ export function DeclareDrawer({
   const err = declare.error instanceof ApiError ? declare.error : null;
   const candidates =
     err?.code === "ambiguous_name" ? (err.body.candidates as { name: string; label: string }[]) : null;
+  // 「这句话定位不到」的两个到达点：先按「检查原文位置」（0 命中），或者直接保存
+  // （后端 422 `quote_not_found`）。两条路都可能是同一个原因——**这一章还没读回来**，
+  // 所以两条路都把那颗按钮摆出来。后端那句话已经说了「让系统重新读一遍稿子」，
+  // 这里不再复述一遍（同一句话说两遍会教作者跳过整段）。
+  const quoteMissing = err?.code === "quote_not_found" || locate.data?.length === 0;
 
   function submit() {
     setReceipt(null);
@@ -91,6 +97,11 @@ export function DeclareDrawer({
             </button>
             <LocateHint pending={locate.isPending} hits={locate.data} />
           </div>
+          {quoteMissing && (
+            <div style={{ marginTop: 6 }}>
+              <SyncButton pid={pid} />
+            </div>
+          )}
         </div>
 
         <div className="row" style={{ marginTop: 12 }}>
@@ -124,8 +135,16 @@ export function DeclareDrawer({
 function LocateHint({ pending, hits }: { pending: boolean; hits?: QuoteCandidate[] }) {
   if (pending) return <span className="locate-hits">定位中…</span>;
   if (!hits) return null;
+  // 这句话以前是「正文中没有找到这句话，**请重新选择**」——一句甩锅的话。
+  // 他的选择通常没有问题：正文这块屏幕直接读磁盘，所以他在 WPS 里写的字他看得见；
+  // 而定位搜的是**库里的快照**，那一版可能还是他改之前的。让他回去改一个他没做错的
+  // 操作，是这个产品最容易说出口的那句假话。所以现在只说事实 + 那颗按钮就在下面。
   if (hits.length === 0)
-    return <span className="locate-hits hit">正文中没有找到这句话，请重新选择。</span>;
+    return (
+      <span className="locate-hits hit">
+        在系统读到的那一版正文里没找到这句话。这一章你在别的软件里改过的话，先读回来再试。
+      </span>
+    );
   if (hits.length === 1)
     return <span className="locate-hits">✓ 已在第 {hits[0].chapter_number} 章找到</span>;
   return (

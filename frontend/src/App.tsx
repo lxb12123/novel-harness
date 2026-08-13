@@ -68,9 +68,14 @@ function Workbench() {
 
   if (projects.isLoading) return <div style={{ padding: 24 }}>加载中…</div>;
   if (projects.isError)
+    // **这块屏幕上原来印着一条命令**（`NH_DB=book.db uvicorn …`）。它是写给维护者的：
+    // 作者那一侧的工作台和后台是同一个程序（`nh serve`），后台没了 = 那个程序退出了，
+    // 而他能做的只有重新打开一次。给他一条命令等于让他去一个从没打开过的窗口。
+    // （维护者跑 L1 那两个进程时看到的也是这句话——`frontend` 5173 连不上 8000 那一档，
+    //  而那时他知道自己在干什么，不需要屏幕提醒。）
     return (
       <div style={{ padding: 24, color: "var(--warn)" }}>
-        连不上后端。先启动 uvicorn：<code>NH_DB=book.db uvicorn novel_harness.api.app:app</code>
+        连不上后台。工作台和后台是同一个程序，多半是它已经退出了 —— 重新打开一次就行。
       </div>
     );
   if (!projects.data || projects.data.length === 0) return <Setup />;

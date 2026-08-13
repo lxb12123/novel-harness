@@ -285,8 +285,24 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 
 ## 当前状态
 
-**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2629 个 pytest + 599 个 vitest，`.sql` 和前端产物都在 wheel 里）——**「全绿」这三个字 2026-08-13 起不成立**：`tests/test_m3_replay.py::test_replay_passes_the_preregistered_gate` 在 `integration/wave-1` 上就红着（`no such table: alias`，M3 那份考卷的 replay 建库路径断了）。**这句话留在这儿，直到有人去修它**——把它写成「全绿」正是这一节反复在治的那种病：
+**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2622 个 pytest + 606 个 vitest，`.sql` 和前端产物都在 wheel 里）：
 
+> ⚠️ **「全绿」这个词 2026-08-13 从上面那句话里拿掉了，因为它在一台干净机器上不成立。**
+> `tests/test_m3_replay.py::test_replay_passes_the_preregistered_gate` 在**新克隆 /
+> 新 worktree 上必红，而且重新生成也救不回来**：它读 `synth/gate.db`（`*.db` 在
+> `.gitignore` 里，所以那个文件从不进版本库），配的却是**committed 的**
+> `synth/m3_ground_truth.json` —— 那份 json 里写着上一次 build 的 `project_id`（ULID），
+> 而重跑 `synth/build.py` 必然给出另一个 id，于是命中 0/25。
+> 头一次跑还会踩一个更迷惑的形态：测试自己把空的 `synth/gate.db` 建出来
+> （报「no such table: alias」），而 `build.py` **有意不覆盖已存在的库**，
+> 于是不先 `rm` 它就连 build 都跑不了。
+>
+> **这是 2026-08-13 之前就存在的状态，不是哪一次改动带进来的**（在 `integration/wave-1`
+> 上 stash 掉全部改动复验过）。写在这儿是因为它已经骗过一次：一份说「全绿」的文档 +
+> 一条在干净机器上必红的测试 = 下一个人会以为是自己弄坏了什么。
+> **怎么修是 M3 证据那一侧的事**（要么把 `gate.db` 的生成和 ground truth 绑成一步，
+> 要么让 replay 按项目名而不是 ULID 找），**别顺手改 `m3_ground_truth.json`
+> ——那是 M3 门槛的证据**。
 
 > **本节的数字是全仓唯一副本，且 `tests/test_doc_numbers.py` 会拦住第二份。**
 > `README.md` / `CLAUDE.md` / `frontend/README.md` 里只留指针，不许再抄一份数字过去。
@@ -444,6 +460,19 @@ declare.py  importer.py                         ← M1 声明层：引语定章�
                                                   （`exclude_unset`）——原来是整列覆盖，
                                                   「再声明一次顺便标个首现章」会把抽取写进去的
                                                   人物档案静默抹掉
+                                                  **同日拒绝消息里的命令行清干净了**：三个类
+                                                  （`UnknownName` / `QuoteNotFound` /
+                                                  `AmbiguousQuote`）此前写着「先跑 nh sync」
+                                                  「用 nh locate 先试」「先 nh declare character」，
+                                                  而这些字符串经 `api/app.py` 原样进 `message`、
+                                                  由 `DeclareDrawer` 逐字渲染给一位**用 WPS、
+                                                  不想碰命令行**的作者。现在这一层只说产品无关的
+                                                  那半句（「让系统重新读一遍稿子」），
+                                                  终端那半句归 `cli.py::_refusal_tail()`，
+                                                  浏览器那半句归抽屉上那颗「读回改动」。
+                                                  守卫两侧：`screenGuard.ts::SHELL_LINE`（第五张网）
+                                                  + `test_wording_guard.py` 拿每一个拒绝类的
+                                                  **真实消息**去扫（新增一个子类也罩得住）
 cli.py                                          ← nh 的 20 个子命令（含 `nh serve` / `nh gate` / `nh draft` / `nh summarize`；
                                                   2026-08-13 多两条**声明**：`nh declare dead` /
                                                   `nh declare appears`，都只收称呼 + 引语，
@@ -455,9 +484,9 @@ cli.py                                          ← nh 的 20 个子命令（含
                                                   于是它的实际效果是在整本真书上把 R2/R3 挡在
                                                   门外。约束 8 那一半换了形态：照跑，
                                                   **把那个零的成色说出来**（哪一条今天没东西可查）
-api/{app,deps,activity,autopilot,chat,extraction,review}.py
-                                                ← M1.5 FastAPI 壳：70 条路由 + 19 个错误映射
-                                                  （69 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
+api/{app,deps,activity,autopilot,chat,extraction,manuscript,review}.py
+                                                ← M1.5 FastAPI 壳：68 条路由 + 19 个错误映射
+                                                  （67 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
                                                   M4 抽取/事件读端 + 提案审阅/被动确认路由；
                                                   抽取那两条的出参 2026-08-13 换成 `ExtractionRunView`：
                                                   `errors` 是**已经翻好的中文**（措辞唯一出处仍是
@@ -508,6 +537,17 @@ api/{app,deps,activity,autopilot,chat,extraction,review}.py
                                                   候选稿两条（列一章的几稿 / 摊开某一稿的全文，
                                                   ADR 0022）——**它不是版本历史**：那儿是已经在书里的，
                                                   这儿是还摆在桌上的）
+api/manuscript.py                               ← **稿子回流那一层的措辞**（2026-08-13）：
+                                                  `SyncOutcome`（`POST …/sync` 的出参）+
+                                                  `ImportSummary` / `BootstrapView`（导入回执）。
+                                                  这一层不干活，只把回执翻成作者读得懂的话
+                                                  （同 `ExtractionRunView` 那条纪律：措辞归后端，
+                                                  前端一个字都不拼）。**`PREAMBLE_ALARM_CHARS`
+                                                  住在这儿**——「章标之前多长算不对劲」是产品判断，
+                                                  1,000 落在「卷首材料几百字」和「一整章 2,000 字
+                                                  以上」中间，两侧都有余量；越过它就明说
+                                                  **整本书的章号可能集体错一位**（低于门槛照样有
+                                                  一行中性说明，零带着理由）
 corrections.py                                  ← 改一条**已生效（CANON）**的事实：KNOWS↔BELIEVES /
                                                   事件的 knowers / participants（撤回 + 写新的，旧行留着）
                                                   **2026-08-11 起浏览器里有调用方**（矩阵那一格 +
@@ -1411,6 +1451,51 @@ R4 之外，R2（未来实体提前出现）和 R3（死人/未登场角色开�
    后端就只对「恰好 1 个 event」开放 edit（`extract/proposal_validation.py`），
    **条件不成立不画那颗按钮**（同日志页「`endpoints` 空就不画编辑入口」那条纪律）。
    要放开得先动引擎，不是先动界面。
+
+10. ~~**他在外面改的稿子回不来，而系统还说是他选错了**~~ —— **2026-08-13 已补，三处一起。**
+
+    这是本仓「最后一厘米没接」的又一次，而它落在**产品的核心动作**上：作者在 WPS 里改完
+    第 23 章回到工作台，**正文他看得见**（章目录和正文都直接扫磁盘，ADR 0007），可他想拿
+    新写的那句话去声明「谁在这时候知道了什么」，系统说找不到——因为 `locate` 搜的是
+    **库里的快照**，而快照只有 `sync` 落得下。`POST …/projects/{pid}/sync` 从 M1.5 起就在
+    后端、**浏览器里零调用方**，也没有 file-watch；`UI_ARCHITECTURE.md` 把它标成 🟢
+    还承诺过「外部改动经 file-watch → sync 回流」——**回流那一半从来没建**。
+
+    | | 当时的事实 | 现在 |
+    |---|---|---|
+    | a | `/sync` 零调用方，回流那半条路没有任何入口 | `SyncButton.tsx`（**一个组件，两处挂载**：中栏工具条 + 声明抽屉「找不到」那一档）；出参换成 `SyncOutcome`，屏幕上那句话由 `api/manuscript.py` 写 |
+    | b | 定位不到时屏幕上是「正文中没有找到这句话，**请重新选择**」——**甩锅**：他的选择没问题，是库还没读过那一版 | 只说事实（「在系统读到的那一版正文里没找到」），那颗按钮就在下面 |
+    | c | 导完 300 章屏幕上一个数字都没有：`BootstrapResult.import_report` 整份被 `Setup.tsx` 丢掉 | 导完先摆回执（`onboarding/ImportReceipt.tsx`）；`preamble_chars` 越过门槛就**明说全书章号可能错一位** |
+
+    四件值得记住的事：
+
+    - **为什么是按钮不是 file-watch**（**这是一个决定，不是没做完**）：sync 是**写路径**
+      ——每次外部保存落一条快照，而快照是证据的锚；ADR 0007「磁盘先、DB 跟」里的那个
+      「跟」是**作者的动作**。一个跟着磁盘自动写库的后台线程 = 他按不停、也看不见的
+      写入面，还要往 wheel 里加一个平台相关的监听依赖（分发叙事是「一条命令，不装别的」）。
+      它防的事一次点击补得回来，它引入的事补不回来。要加先有触发条件（同 v1.1 那张表）。
+      `CenterEditor.test.tsx` 有一条断言钉着「光是打开一章，一次 sync 都不会自己发出去」。
+    - **`preamble_chars` 是全书唯一一个「整本都错了」的早期信号**，而它此前被丢在地上。
+      门槛 1,000（`api/manuscript.py::PREAMBLE_ALARM_CHARS`）落在「卷首材料几百字」和
+      「一整章 2,000 字以上」中间。**宁可漏报不许假报**——假报一次会让作者下次跳过整段，
+      包括真出事的那一次；漏的那一半由「低于门槛也说一行中性说明」兜着。
+      **它不是「一定错了」的判据**（书里真有楔子 / 长简介是同一个形状），所以警告先说
+      看得见的事实，再说两种解释。
+    - **契约夹具补了三个端点**（`sync` / `syncUnchanged` / `bootstrapPreamble`）。
+      理由同 `extractionFailed`：在它们之前，「有变化 / 没变化」和「章标之前躺着一整章」
+      三条路径在 pytest 和 vitest 两侧扫的都是永远不亮的分支。
+    - **`screenGuard.ts` 多了第五张网**（`SHELL_LINE`：`--开关`，或者「命令名 + 一个
+      ASCII 词」）。它罩的是 `declare.py` 里那三句「先跑 nh sync」——**前四张网一张都咬不住**
+      （没有下划线 / 不是大写 / 没有冒号 / 只有两个词）。命令名那半张表**不是手抄的**：
+      `test_wording_guard.py` 拿 `pyproject.toml` 的 `[project.scripts]` + `cli.py` 里
+      typer 注册的每一个子命令来比。**门槛是「命令名 + 空格 + 一个词」**，孤零零一个 `nh`
+      放过去——假红会让下一个人把守卫关掉。**明确不收**：裸路径（`chapters/0001.md`，
+      同步回执就在摆这些名字）、通配符路径、孤零零一个命令名。
+
+    **剩下的**：`WrongLabel` 的消息里仍然带着 `NodeLabel` 的值（`Character` / `Secret`），
+    浏览器那侧的 `ENGINE_ENUM` 咬得住它，而引擎这一侧今天没有一份「节点类别 → 中文」的
+    唯一表可用（`api/types.ts::LABEL_ZH` 和 `activity.py` 各有一份，**两份都在展示层**）。
+    修它要先决定那张表住哪儿，不是在 `declare.py` 里再抄第三份。
 
 **M4 正在实现、尚未完成**：`events/` 契约与 `002_m4_events.sql` 已落地；`extract/` 已有纯
 结构化 schema、确定性 prompt、精确优先的模糊证据定位与不猜名称解析，后台 provider 调用和

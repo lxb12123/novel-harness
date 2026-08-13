@@ -11,7 +11,7 @@
 //    于是它绿了一整轮**。补一个词进去只会让下一个词接着漏。
 //
 // 所以判据是**形状**：一个中文界面上出现「长得像标识符的英文」本身就是判据，
-// 明天新长出来的那个码也一起收。三张网，各罩一种形状：
+// 明天新长出来的那个码也一起收。五张网，各罩一种形状：
 //
 // | 网 | 罩什么 | 真出现过的例子 |
 // |---|---|---|
@@ -19,6 +19,7 @@
 // | `ENGINE_ENUM` | SCREAMING_SNAKE（形状）+ 裸大写枚举 + 驼峰节点类别 | `NOT_FOUND` / `KNOWS` / `PROVISIONAL` |
 // | `RAW_ID` | `前缀:标识` 形状的内部主键，**包括被截断的** | `edge:01J8…` / `n:ID22` |
 // | `ENGLISH_PROSE` | **一连三个小写英文单词**（= 一句写给维护者的英文） | `chapter analysis provider failed` |
+// | `SHELL_LINE` | **一句「去终端里敲这个」** | `先跑 nh sync` / `用 nh locate 先试` |
 //
 // ── 这张网**看不见**的那一类，写在这儿免得下一个人以为它全包 ────────────────
 //
@@ -40,7 +41,12 @@
 // `id.slice(-6)` 把 `location:ID22` 截成了 `n:ID22`，白名单里的 `node:` 当场逃掉。
 // **截断一个认不出的东西不会让它变得认得出，只会让守卫看不见它。**
 //
-// 自守卫在 `screenGuard.test.ts`：五个**真的上过屏的**违规当探针，一个都抓不住就红。
+// **第五张网收的是另一类东西**（2026-08-13 补）：不是「术语」，是「一条命令」。
+// 真上过屏的两句是 `declare.py` 里的「先跑 nh sync」「用 nh locate 先试」，
+// 而前四张网一张都咬不住（没有下划线 / 不是大写 / 没有冒号 / 只有两个词）。
+// 产品的最终用户是那位「用 WPS、不想碰命令行」的作者——见 `SHELL_LINE` 自己那段注释。
+//
+// 自守卫在 `screenGuard.test.ts`：八个**真的上过屏的**违规当探针，一个都抓不住就红。
 
 /** 屏幕上的 snake_case 标识符：错误码、库字段名、请求体键名。 */
 export const MACHINE = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g;
@@ -81,6 +87,45 @@ export const RAW_ID = /\b[A-Za-z][A-Za-z0-9]*:[A-Za-z0-9]+/g;
  *  假红比漏报更危险——它会让下一个人把守卫关掉，而不是把界面修好。 */
 export const ENGLISH_PROSE = /\b[a-z]{2,}(?:[ \t]+[a-z]{2,}){2,}\b/g;
 
+/** **第五张网**（2026-08-13）：一句「去终端里敲这个」。
+ *
+ *  真上过屏的两句在 `declare.py`（经 `api/app.py` 原样进 `message`，由 `DeclareDrawer`
+ *  逐字渲染）：
+ *
+ *      「也可能是这一章还没进库：先跑 nh sync。」
+ *      「把引语加长到只匹配一处…用 nh locate 先试。」
+ *
+ *  **前四张网一张都咬不住它们**：`nh sync` 没有下划线（`MACHINE` 过）、不是大写
+ *  （`ENGINE_ENUM` 过）、没有冒号（`RAW_ID` 过）、只有两个词（`ENGLISH_PROSE` 要三个）。
+ *  产品的最终用户是那位「用 WPS、不想碰命令行」的作者——对他说这句话，等于让他
+ *  去改一个他没做错的操作，或者干脆卡死。
+ *
+ *  ── 两段：前一段纯形状，后一段是命令名 ───────────────────────────────────
+ *
+ *  1. `--flag`：ASCII 双连字符 + 小写字母。**纯形状**，中文界面上的破折号是「——」，
+ *     ASCII 的 `--` 后面跟一个字母只可能是一个命令行开关。
+ *  2. `<命令名> <一个 ASCII 词或开关>`。这半段只能是词表——`nh` 形状上和任何两个
+ *     字母的缩写分不开，收「所有两字母词」就是假红。**但这张表不是手抄的**：
+ *     `tests/test_wording_guard.py` 拿 `pyproject.toml` 的 `[project.scripts]`（本产品
+ *     自己的命令名）+ `cli.py` 里 typer 注册的**每一个**子命令来比——命令改名、
+ *     新加一个子命令而这儿不跟，那条 pytest 当场红。
+ *
+ *  ── 门槛：为什么是「命令名 + 空格 + 一个词」而不是光一个命令名 ──────────────
+ *
+ *  光一个 `nh` 可能是别的东西（人名缩写、单位、型号里的两个字母）；而「`nh` 后面
+ *  紧跟着一个小写英文词」在一块中文屏幕上只可能是一条命令。**假红会让下一个人把
+ *  守卫关掉**，所以宁可让「孤零零一个 nh」漏过去。
+ *
+ *  ── 它**明确不收**的那几类，写在这儿免得下一个人以为它全包 ────────────────
+ *
+ *  - **裸路径**（`chapters/0001.md`）：那是作者自己文件夹里的文件名，他需要看见它
+ *    （同步回执就在摆这些名字）。
+ *  - **通配符路径**（`chapters/*.md`）：同上，且它今天只出现在终端那一侧。
+ *  - **孤零零一个命令名**：见上面那条门槛。
+ *  这三类只能靠 review 拦。 */
+export const SHELL_LINE =
+  /(?<![\w-])--[a-z][a-z0-9-]*|\b(?:nh|novel-harness|uv|uvx|npm|npx|pnpm|pip|pipx|python3?|node|git|bash|curl|docker|pytest|ruff|vitest)[ \t]+[-a-z][\w./-]*/g;
+
 function hits(text: string, pattern: RegExp): string[] {
   // 正则带 /g，`match` 每次都要一个新的 lastIndex —— 复用同一个对象会漏掉一半。
   return [...new Set(text.match(new RegExp(pattern.source, "g")) ?? [])];
@@ -90,8 +135,9 @@ export const machineWords = (text: string): string[] => hits(text, MACHINE);
 export const engineWords = (text: string): string[] => hits(text, ENGINE_ENUM);
 export const rawIds = (text: string): string[] => hits(text, RAW_ID);
 export const englishProse = (text: string): string[] => hits(text, ENGLISH_PROSE);
+export const shellLines = (text: string): string[] => hits(text, SHELL_LINE);
 
-/** 四张网合起来。**这是给「整块屏幕」用的那一个**，单独的四个留给要说清楚
+/** 五张网合起来。**这是给「整块屏幕」用的那一个**，单独的五个留给要说清楚
  *  「漏的是哪一类」的断言。 */
 export const devTerms = (text: string): string[] => [
   ...new Set([
@@ -99,6 +145,7 @@ export const devTerms = (text: string): string[] => [
     ...engineWords(text),
     ...rawIds(text),
     ...englishProse(text),
+    ...shellLines(text),
   ]),
 ];
 

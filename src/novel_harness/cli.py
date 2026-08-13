@@ -51,6 +51,7 @@ from .declare import (
     DeclarationRefused,
     Ledger,
     QuoteCandidate,
+    QuoteNotFound,
     UnknownName,
     WrongLabel,
 )
@@ -325,13 +326,25 @@ def _die_refused(exc: DeclarationRefused) -> NoReturn:
 
 
 def _refusal_tail(exc: DeclarationRefused) -> str:
+    """**终端里那半句「怎么办」。**
+
+    2026-08-13 起这里多了两支（`AmbiguousQuote` 的 `nh locate`、`QuoteNotFound` 的
+    `nh sync`），而它们不是新话——是**从 `declare.py` 搬过来的**。搬的理由：那些消息
+    经 `api/app.py` 原样进浏览器，而产品的最终用户不碰命令行，「先跑 nh sync」对他是
+    一句死路。引擎那一层现在只说产品无关的半句（「让系统重新读一遍稿子」），
+    终端这半句归这里，浏览器那半句归抽屉上那颗按钮。
+
+    所以下面那条 `case _` 的注释也跟着改了：它原本的理由是「异常自己已经说完了」，
+    而那个前提在搬走之后不再成立。
+    """
     match exc:
         case AmbiguousQuote():
             return (
                 "\n  （没有 --pick，也没有 --chapter 让你直接指定第几章。那个旗标就是章号\n"
                 "    输入框换了个变量名——挑错的产物是一条 valid_from 错了的 CANON 边，\n"
                 "    而它在面板上长得完全正常：没有任何一条规则、任何一个面板分区、\n"
-                "    任何一次 review 会发现它。）"
+                "    任何一次 review 会发现它。）\n"
+                "  改引语之前先用 nh locate 试，比重敲一整条 declare 便宜。"
             )
         case AmbiguousName():
             return (
@@ -341,10 +354,14 @@ def _refusal_tail(exc: DeclarationRefused) -> str:
             )
         case UnknownName():
             return "\n  先声明它：nh declare character / place / secret。"
+        case QuoteNotFound():
+            # 「让系统重新读一遍稿子」在终端里的说法。**它只在这一层说得出口**——
+            # 同一句话在浏览器里是抽屉上那颗按钮。
+            return "\n  「重新读一遍稿子」在终端里是：nh sync（把 chapters/*.md 的现状读进库）。"
         case _:
-            # `QuoteNotFound` / `WrongLabel` 及将来的新拒绝类型：异常自己的消息已经把
-            # 「怎么办」说完了（QuoteNotFound 连「先跑 nh sync」都说了）。**不硬凑一条
-            # 尾巴**——把同一句话说两遍会教作者跳过整段，包括他真正需要读的那半句。
+            # `WrongLabel` 及将来的新拒绝类型：那些异常自己的消息已经把「怎么办」说完了，
+            # 而且那半句不带产品形态（不像 sync / locate 那样在两个壳里长不同的样子）。
+            # **不硬凑一条尾巴**——把同一句话说两遍会教作者跳过整段，包括他真正需要读的那半句。
             return ""
 
 
@@ -757,11 +774,12 @@ def locate(
     candidates = Ledger(store, conn, project).locate(quote)
 
     if not candidates:
-        _die(
-            f"这句话在当前正文里一处都找不到：「{quote}」\n"
-            "  M1 只做逐字精确匹配（标点、空格、全半角都算）——从稿子里复制粘贴，别手打。\n"
-            "  也可能是这一章还没进库：先跑 nh sync。"
-        )
+        # **借 `QuoteNotFound` 的消息，不再抄一份。** 这三行以前在这儿有第二份拷贝，
+        # 而 2026-08-13 改「别对作者说命令行」时只改得动 `declare.py` 那一份——
+        # 两份措辞漂开的那一刻，同一个问题在 `nh locate` 和 `nh declare` 下会得到
+        # 两个不同的建议，而没有任何东西会红。
+        miss = QuoteNotFound(quote)
+        _die(f"{miss}{_refusal_tail(miss)}")
 
     typer.echo(f"「{quote}」：命中 {len(candidates)} 处")
     for line in _candidate_lines(candidates):

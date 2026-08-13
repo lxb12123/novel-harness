@@ -13,6 +13,7 @@ import { SceneBar } from "./SceneBar";
 import { HistoryDrawer } from "./HistoryDrawer";
 import { ChapterTitle } from "./ChapterTitle";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
+import { SyncButton } from "./SyncButton";
 import { locate } from "../anchor";
 import { titleOf, withTitle } from "../chapterTitle";
 import { cleanSuggestion, shouldSuggest } from "../continuation";
@@ -135,6 +136,12 @@ export function CenterEditor() {
           }}
         />
         <span className="spacer" />
+        {/* 「读回改动」（`SyncButton.tsx` 写着为什么是按钮不是 file-watch）。
+            **它在这一行上，因为这一行讲的就是「这份稿子」**：正文他看得见（这块屏幕
+            直接读磁盘），可「记录这句」搜的是库里的快照——那半条回路此前在浏览器里
+            根本没有入口。同一颗按钮还挂在声明抽屉「找不到」那一档上，
+            那是他撞见这件事的地方。 */}
+        {projectId && <SyncButton pid={projectId} />}
         <span className={"status" + (saveErr ? " err" : save.isSuccess && !dirty ? " ok" : "")}>
           {saveErr
             ? "保存被拒：" + saveErr.message

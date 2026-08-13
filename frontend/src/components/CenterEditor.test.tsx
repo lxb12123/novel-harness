@@ -1,6 +1,6 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fixtures, renderWithApi } from "../test/harness";
 import { useCoords } from "../store";
 import { CenterEditor } from "./CenterEditor";
@@ -59,5 +59,44 @@ describe("中栏编辑器", () => {
   it("嵌着的场景条为空时给出「下一步」提示", async () => {
     renderWithApi(<CenterEditor />);
     expect(await screen.findByText(/这一章还没有场景信息/)).toBeInTheDocument();
+  });
+
+  // ── 「读回改动」（2026-08-13）───────────────────────────────────────────────
+  //
+  // `POST …/sync` 从 M1.5 起就在后端，浏览器里零调用方。作者在 WPS 里改完回来，
+  // **正文他看得见**（这块屏幕直接读磁盘），可「记录这句」搜的是库里的快照——
+  // 那半条回路此前根本没有入口。
+
+  it("这一行上有它，并且**自己说得清它在干什么**", async () => {
+    renderWithApi(<CenterEditor />);
+    const button = await screen.findByRole("button", { name: "读回改动" });
+    // 它和「历史 / 保存」在同一条工具条上——这一行讲的就是「这份稿子」。
+    expect(button.closest(".edbar")).not.toBeNull();
+    expect(screen.getByText("在别的软件里改过这本书，就点它一下。")).toBeInTheDocument();
+    expect(button).toHaveAttribute(
+      "title",
+      expect.stringContaining("不读进来的话，新写的句子记录不了"),
+    );
+  });
+
+  it("按下去之后照说后端那句回执（措辞的唯一出处在后端）", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<CenterEditor />);
+    await user.click(await screen.findByRole("button", { name: "读回改动" }));
+
+    await screen.findByText(/读回来了/);
+    // 作者自己的文件不是错误，回执要说得出「没动它们」。
+    await screen.findByText(/这些文件不是章节，没有动它们/);
+  });
+
+  it("**没有 file-watch**：光是打开这一章，一次 sync 都不会自己发出去", async () => {
+    // 这条钉的是一个决定，不是一个 bug：sync 是写路径（每次落一条快照，而快照是
+    // 证据的锚），「磁盘先、DB 跟」里的那个「跟」是作者的动作（ADR 0007）。
+    // 哪天有人加了个 `useEffect(() => sync(), [])`，这里当场红。
+    renderWithApi(<CenterEditor />);
+    await screen.findByRole("button", { name: "读回改动" });
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    await new Promise((r) => setTimeout(r, 60));
+    expect(fetchSpy.mock.calls.filter(([url]) => String(url).endsWith("/sync"))).toEqual([]);
   });
 });
