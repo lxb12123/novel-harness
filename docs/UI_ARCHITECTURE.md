@@ -84,10 +84,13 @@
 | POST | `/projects/{pid}/declare/believes` | `Ledger.declare_believes` | `Declaration` | 🟢 |
 | POST | `/projects/{pid}/declare/where` | `Ledger.declare_where` | `Declaration` | 🟢 |
 | POST | `/projects/{pid}/chapters/{n}/draft` | `scene_view` → `assemble`（X0/X1/X2）或 `build_product_context` → `assemble_product`（PRODUCT，默认） | `{experimental, note, text, memory, length, …}`·**这一行 2026-08-02 起就不是 501 了**（修正案 7 实验开放）；`memory` 是记忆层回执，**零带着理由**（装了几份档案/事件/总结、哪几章缺总结）；`previous_tail` 的截断长度**分档**——PRODUCT 从模型窗口倒推（`product_tail_limit()`，2026-08-10 起），点名 X0/X1/X2 则原样拿冻结的 800（那是考卷，见 ADR 0019 边界五） | 🟢 |
-| GET | `/projects/{pid}/chapters/{n}/summaries` | `SummaryStore.coverage`（窗口边界由 `rolling_summary_window` 算） | `{chapter, window_first, window_last, chapters[], summarized, missing[]}`·**窗口不是全书**（近八章走事件记忆）；`missing` = 有正文没总结，`has_text=false` = 还没写，两者别合并 | 🟢 |
-| POST | `/projects/{pid}/chapters/{n}/summary` | `RollingSummarizer.ensure` | `{chapter_number, has_text, summary, created_at}`·**会调模型、会花钱**，幂等（同章同 prompt 只付一次）；**故意没有「保存后自动生成」**，自动那条走下面的 `autopilot` | 🟢 |
-| POST | `/projects/{pid}/chapters/{n}/autopilot` | `RollingSummarizer.ensure` + `runner.enqueue`（都进 `BackgroundTasks`） | 202 `{chapter, summary, extraction, extraction_run_id, errors[]}`·两个状态字取值 `queued`/`skipped`/`no_text`/`running`/`failed`/`unconfigured` | 🟢 |
-| GET | `/projects/{pid}/chapters/{n}/autopilot` | `SummaryStore.get` + `extract.metrics.metrics_for_range` | `{chapter, summary_ready, extraction_ready, running, summary_state, extraction_state, errors[]}`·**只读，不排队不花钱** | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/summaries` | `SummaryStore.coverage`（窗口边界由 `rolling_summary_window` 算） | `{chapter, window_first, window_last, chapters[], summarized, missing[]}`·**窗口不是全书**（近八章走事件记忆）；`missing` = 有正文没总结（**撤回过的也算缺**），`has_text=false` = 还没写，两者别合并 | 🟢 |
+| POST | `/projects/{pid}/chapters/{n}/summary` | `RollingSummarizer.ensure` | `{chapter_number, has_text, summary, created_at, retracted, author_written}`·**会调模型、会花钱**，幂等（同章同 prompt 只付一次）；**故意没有「保存后自动生成」**，自动那条走下面的 `autopilot`；**撤回过的章按这里会真的重来一次（再付一次钱）**，那是撤回语义里写死的退路 | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/summary` | `SummaryStore.coverage`（单章） | `{chapter_number, has_text, summary, created_at, retracted, author_written}`·这一章现在的总结。**没有的时候不许只回一个 null**：`has_text=false`（还没写）/ `retracted`（作者亲手撤的）/ 两者都不是（有正文没生成过）三种零分得开，因为下一步动作完全不同 | 🟢 |
+| PATCH | `/projects/{pid}/chapters/{n}/summary` | `save_author_summary` | `{chapter_number, has_text, summary, created_at, retracted, author_written}`·换成作者自己写的那一段，**不花钱**。库里追加一行（迁移 013），模型写的那一行留着；交上来的就是屏幕上那一段时一行都不追加。空串 422（清空≠撤回，两个动作不共用入口）、超过 1000 字 422 | 🟢 |
+| DELETE | `/projects/{pid}/chapters/{n}/summary` | `retract_summary` | `{chapter_number, has_text, summary, created_at, retracted, author_written}`·撤回，**不花钱、库里一行都不少**。语义定死为「这一章当作没总结」——起草不带它、覆盖率算作缺、想重来就再点生成。本来就没有 / 已经撤过都回 200（这个动作没有失败的形态） | 🟢 |
+| POST | `/projects/{pid}/chapters/{n}/autopilot` | `RollingSummarizer.ensure` + `runner.enqueue`（都进 `BackgroundTasks`） | 202 `{chapter, summary, extraction, extraction_run_id, errors[]}`·两个状态字取值 `queued`/`skipped`/`no_text`/`running`/`failed`/`retracted`/`unconfigured`·**作者撤回过的章一律不派**（判据是 `SummaryStore.latest()` 不是 `get()`：后者对撤回过的章回 None，于是他撤掉、切走一章，后台立刻替他买一份回来） | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/autopilot` | `SummaryStore.latest` + `extract.metrics.metrics_for_range` | `{chapter, summary_ready, extraction_ready, running, summary_state, extraction_state, errors[]}`·**只读，不排队不花钱** | 🟢 |
 | POST | `/projects/{pid}/chapters/{n}/plan` | — | 501 | 🟡 |
 | GET | `/projects/{pid}/activity?actor=&limit=&cursor=` | `activity.read_activity`（`extraction_run` + `model_call` + `decision_log` 归并） | `{entries[], next_cursor, actors[]}`·**折叠层**：一行 = `{id, source, ts, actor, status, title, subtitle, chapter_number, jump}`，**payload 不在这一层**（那是泄漏面，按需取）。`actors[]` 的计数**不受 `actor` 过滤影响**——它要回答的正是「我筛掉了多少」（[ADR 0020](adr/0020-clean-extraction-auto-canon.md)） | 🟢 |
 | GET | `/projects/{pid}/activity/{entry_id}` | `activity.read_entry`（按 id 前缀分派到三张表） | `{entry, rows[], cost, errors[], payload}`·**展开层**：`rows[]` 是「标签→值」的定义列表（措辞归后端，前端不写文案分支）；`payload` 只有 `source=decision` 才有，且过 `narrow_payload`（Node 形状收窄 + `props` 一律丢掉，比 `_narrow` 严——日志行没有「当前章」可比）。查无此条/跨项目 → 404 | 🟢 |
@@ -297,6 +300,14 @@
 │  │         └─ <CanonEventCast>  ◀ GET /events?scope=CANON
 │  │                              ▶ POST /canon/events/{id}/cast（勾选框=绝对集合，
 │  │                                只发动过的那一维；日志页跳过来时按 `jump.event_id` 展开）
+│  │      Tab7 <SummaryTab>       ◀ 2026-08-13：GET /chapters/{n}/summary（**跟着左栏那一章走**）
+│  │                                + GET /chapters/{n}/summaries（「这一稿带得上几段」那一句）
+│  │                              ▶ PATCH（改，不花钱）· DELETE（撤回，不花钱、不删行）
+│  │                                · POST（重新生成，**要跑一次模型**，按钮上自己说）
+│  │                                **它不吃花名册**：这一段是正文压出来的，和「书里有谁」
+│  │                                无关，所以花名册空着时它照常显示（右栏别的格全靠人）。
+│  │                                「你撤回的」和「还没生成」说两句话——起草那边它们同义，
+│  │                                下一步动作却相反
 │  ├─ <ChatPanel>     ◀── 2026-08-11 模式二（ADR 0019）：中栏右半边，顶栏开合，默认关
 │  │  ├─ <ChatSessions>          ◀ GET /chats（多段并存，各自 resume）
 │  │  │                          ▶ POST /chats · DELETE /chats/{id}（正在跑 ⇒ 409，原样说）

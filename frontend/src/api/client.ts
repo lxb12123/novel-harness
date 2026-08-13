@@ -51,6 +51,10 @@ export const api = {
     request<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) }),
   put: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "PUT", body: JSON.stringify(body) }),
+  // PUT 是「整个换成这份」，PATCH 是「只改这一处」。章节总结走后者：那条路由收的是
+  // 一段正文，而这一章的总结在库里还挂着来源、状态和它取代的那几行（迁移 013）。
+  patch: <T>(path: string, body: unknown) =>
+    request<T>(path, { method: "PATCH", body: JSON.stringify(body) }),
   del: <T>(path: string) => request<T>(path, { method: "DELETE" }),
 };
 

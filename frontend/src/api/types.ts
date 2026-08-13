@@ -65,12 +65,20 @@ export interface DraftMemory {
   unsummarized_chapters: number[];
 }
 
-/** 一章在滚动总结上的状态。三种「没有」分得开：没写 / 写了没生成 / 有。 */
+/** 一章在滚动总结上的状态。几种「没有」分得开：没写 / 写了没生成 / **作者撤回过**。
+ *
+ *  `…/chapters/{n}/summary` 那四条路由（读 / 生成 / 改 / 撤回）**共用这一个出参形状**，
+ *  所以一个动作做完之后界面拿到的，和它重新读一遍拿到的，逐字节相同。 */
 export interface ChapterSummaryStatus {
   chapter_number: number;
   has_text: boolean;
   summary: string | null;
   created_at: string | null;
+  /** 最新那一行是「撤回」。**和「还没生成」分开**：下一步动作相反——那一种要去生成，
+   *  这一种是作者刚做完的事，界面不许回头催他补。 */
+  retracted: boolean;
+  /** 现在这一段是作者自己写的。机器写的那一段才带「未经确认，只当线索」的免责。 */
+  author_written: boolean;
 }
 
 /** 起草第 `chapter` 章时，滚动总结覆盖的那个区间。

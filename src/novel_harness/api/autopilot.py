@@ -28,6 +28,10 @@
   跳过」）。抽取那边则会——新正文 = 新快照 = 新 run。这条不对称是既有行为
   （`SummaryStore.coverage()` 也只问「有没有」不问「新不新」），要改得连它一起改。
   作者仍可用 `POST …/summary` 显式重生成，那条会按新正文的哈希重新付费。
+- **作者撤回过的章一律不派**（`retracted`，迁移 013）。判据是 `SummaryStore.latest()`
+  而不是 `get()`：后者对撤回过的章回 None，也就是「还没生成」——于是他撤掉一份、
+  切走一章，后台立刻替他买一份回来，**顺带把他刚做的动作抹掉**。想要新的一份，
+  按「重新生成」那颗按钮（同上一条：花钱的动作只由他自己按）。
 - **`_JobRegistry` 是进程内的**：重启后「上次后台总结失败过」这件事就没了，GET 会退回
   说「还没生成」。它是给「本次会话里刚发生的事」用的，不是审计。抽取那边不吃这个亏
   ——`extraction_run` 表落了盘。
@@ -48,6 +52,7 @@ from ..draft.rolling_summary import (
     RollingSummarizer,
     SummaryChapterNotFound,
     SummaryGenerationError,
+    SummaryState,
     SummaryStore,
 )
 from ..extract.metrics import metrics_for_range
@@ -87,6 +92,12 @@ class Dispatch(StrEnum):
     """没派，因为上一次派的还在跑。"""
     FAILED = "failed"
     """没派，因为上一次跑失败了。**自动链路不自动重试**：重试要花钱，得作者点。"""
+    RETRACTED = "retracted"
+    """没派，因为**作者亲手撤回过这一章的总结**（迁移 013）。
+
+    同 FAILED 那条的道理，而且更硬：重来要花钱、得作者点，何况这一次「重来」还会
+    把他刚做的那个动作抹掉。判据必须是 `SummaryStore.latest()` 而不是 `get()`——
+    后者对撤回过的章回 None，于是「他撤掉、切走、后台立刻又生成一份」。"""
     UNCONFIGURED = "unconfigured"
     """没派，因为模型还没配好。"""
 
@@ -97,6 +108,9 @@ class Readiness(StrEnum):
     READY = "ready"
     MISSING = "missing"
     """有正文、能跑、但还没有结果。这是「该催作者/该等」的那一种零。"""
+    RETRACTED = "retracted"
+    """有正文、生成过、**作者亲手撤回了**。和 MISSING 分开是因为下一步动作相反：
+    那一种要催他去补，这一种是他刚做完的事。"""
     NO_TEXT = "no_text"
     """这一章还没写。和 MISSING 是两件事，别合并显示。"""
     RUNNING = "running"
@@ -277,9 +291,14 @@ def run_autopilot(
         errors.append(_model_error(config_error))
     has_text = _has_current_text(graph, proj.id, chapter)
 
+    # **`latest()` 不是 `get()`**：撤回过的章在 `get()` 眼里就是「还没生成」，
+    # 于是作者撤掉一份总结、切走一章，后台立刻替他重新买一份回来（见 `Dispatch.RETRACTED`）。
+    stored = SummaryStore(conn).latest(proj.id, chapter)
     if not has_text:
         summary = Dispatch.NO_TEXT
-    elif SummaryStore(conn).get(proj.id, chapter) is not None:
+    elif stored is not None and stored.status is SummaryState.RETRACTED:
+        summary = Dispatch.RETRACTED
+    elif stored is not None:
         summary = Dispatch.SKIPPED
     elif config_error is not None:
         summary = Dispatch.UNCONFIGURED
@@ -351,10 +370,12 @@ def autopilot_status(
     """
     errors: list[AutopilotError] = []
     has_text = _has_current_text(graph, proj.id, chapter)
-    stored = SummaryStore(conn).get(proj.id, chapter)
+    stored = SummaryStore(conn).latest(proj.id, chapter)
     job = JOBS.get(proj.id, chapter)
 
-    if stored is not None:
+    if stored is not None and stored.status is SummaryState.RETRACTED:
+        summary_state = Readiness.RETRACTED
+    elif stored is not None:
         summary_state = Readiness.READY
     elif not has_text:
         summary_state = Readiness.NO_TEXT

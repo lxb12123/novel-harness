@@ -99,8 +99,12 @@ export function useRefreshModelWindows() {
 /** AI 起草（实验状态，修正案 7）：POST /draft。 */
 /** ⚠️ **2026-08-10 起零调用方**（同 `summaryPrep.ts`）：「AI 起草」抽屉当天删了。
  *  留着是因为**后端 `/draft` 一个字没动**——它现在是模式二 agent 的起草工具，
- *  接面板时直接用。同理下面的 `useSummaryWindow` / `useGenerateSummary` /
- *  `fetchAutopilotStatus`（`useRunAutopilot` 仍在用：换章后台整理走它）。 */
+ *  接面板时直接用。同理 `fetchAutopilotStatus`（`useRunAutopilot` 仍在用：换章
+ *  后台整理走它）。
+ *
+ *  **`useSummaryWindow` / `useGenerateSummary` 2026-08-13 接上了**（右栏「章节总结」
+ *  那一格）：那两条在这儿零调用方地躺了三天，而它们背后的东西**一直在花作者的钱、
+ *  一直在影响每一稿**——链路通着，断在最后一格。 */
 export function useDraft(pid: string, chapter: number) {
   return useMutation({
     mutationFn: (input: DraftRequest) =>
@@ -121,15 +125,76 @@ export function useSummaryWindow(pid: string | null, chapter: number) {
   });
 }
 
+/** 这一章现在的总结（`GET …/chapters/{n}/summary`，单章）。
+ *
+ *  **和 `useSummaryWindow` 是两件事，别拿一个去凑另一个。** 那一条回答「起草这一章时
+ *  滚动总结那一层覆盖成什么样」（一整个区间），这一条回答「这一章自己有没有总结」。
+ *  拿窗口端点传 `chapter + 1` 去凑出本章那一行，就是在前端算一次后端的偏移——
+ *  而那种偏移改起来只会有一头跟着改。 */
+export function useChapterSummary(pid: string | null, chapter: number) {
+  return useQuery({
+    queryKey: q(["summary", pid, chapter]),
+    queryFn: () =>
+      api.get<ChapterSummaryStatus>(proj(pid!, `/chapters/${chapter}/summary`)),
+    enabled: !!pid,
+  });
+}
+
+/** 改动这一章的总结之后，哪几处读端要重取。
+ *
+ *  **窗口那一份必须一起失效**：右栏那句「写这一章时带得上几段」读的是它，
+ *  而作者刚撤掉的那一章正在里面算作「有」。不失效它，屏幕上会同时出现
+ *  「这一章的总结已撤回」和「前面 N 章里有 M 段总结（含这一章）」两句互相打架的话。 */
+function invalidateSummaries(qc: ReturnType<typeof useQueryClient>, pid: string) {
+  qc.invalidateQueries({ queryKey: ["summary", pid] });
+  qc.invalidateQueries({ queryKey: ["summaries", pid] });
+}
+
 /** 为某一章生成滚动总结。**会调模型、会花钱，所以只由作者显式触发**——
  *  没有「保存章节后自动生成」那条路（那是一次他没按过的付费调用）。
- *  后端幂等，所以补一批的时候不必自己记住哪些补过。 */
+ *  后端幂等，所以补一批的时候不必自己记住哪些补过。
+ *
+ *  撤回过的章按这里会**真的重新生成**（付一次钱）——那是撤回语义里写死的退路。 */
 export function useGenerateSummary(pid: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (chapter: number) =>
       api.post<ChapterSummaryStatus>(proj(pid, `/chapters/${chapter}/summary`)),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["summaries", pid] }),
+    onSuccess: () => {
+      invalidateSummaries(qc, pid);
+      // 这一次是花了钱的（`model_call` 多一行），日志页和底栏那份用量得跟着变。
+      qc.invalidateQueries({ queryKey: ["activity", pid] });
+      qc.invalidateQueries({ queryKey: ["runs", pid] });
+    },
+  });
+}
+
+/** 把这一章的总结换成作者自己写的那一段。**不花钱。**
+ *
+ *  库里是追加一行，模型写的那一行留着（迁移 013）——所以这里没有「撤销」这颗按钮，
+ *  他随时可以再改回去。 */
+export function useEditSummary(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { chapter: number; summary: string }) =>
+      api.patch<ChapterSummaryStatus>(proj(pid, `/chapters/${v.chapter}/summary`), {
+        summary: v.summary,
+      }),
+    onSuccess: () => invalidateSummaries(qc, pid),
+  });
+}
+
+/** 撤回这一章的总结。**不花钱，库里也一行都不少。**
+ *
+ *  **不做乐观更新**：撤回在库里是追加一条指着它的记录，屏幕上却是「这一段没了」——
+ *  两者之间的差别作者永远看不到。先把那一行抹掉的话，界面自己伪造了一次成功
+ *  （同 `useRevokeRule` 那条道理）。 */
+export function useRetractSummary(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (chapter: number) =>
+      api.del<ChapterSummaryStatus>(proj(pid, `/chapters/${chapter}/summary`)),
+    onSuccess: () => invalidateSummaries(qc, pid),
   });
 }
 
@@ -147,7 +212,12 @@ export function useRunAutopilot(pid: string) {
     mutationFn: (chapter: number) =>
       api.post<AutopilotAck>(proj(pid, `/chapters/${chapter}/autopilot`)),
     // 后台补完一章总结，起草前那次「缺不缺」的检查就该看到新结果。
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["summaries", pid] }),
+    // 单章那一份也要（右栏「章节总结」读的是它）：作者刚离开的那一章，后台正是在
+    // 给它生成总结，而他一翻回去看到的会是「还没生成」。
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["summaries", pid] });
+      qc.invalidateQueries({ queryKey: ["summary", pid] });
+    },
   });
 }
 

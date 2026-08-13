@@ -790,3 +790,11 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
   grid-auto-columns: minmax(320px, 1fr); gap: 10px; overflow-x: auto;
 }
 .compare-cols .draft-card { min-width: 0; overflow: auto; }
+
+/* 右栏「章节总结」那一格（2026-08-13）。**全部以 `chsum-` 开头，一条既有规则都没动。**
+   正文框、按钮行、那几句说明各一条；别的一律吃右栏和全局既有的样式
+   （`.empty` / `.warn` / `.err-box` / 全局的 `textarea` 和 `button`）。 */
+.chsum-text { width: 100%; box-sizing: border-box; resize: vertical; line-height: 1.7; }
+.chsum-scope { margin: 0 0 8px; color: var(--dim); font-size: 12px; }
+.chsum-why { margin: 6px 0 0; font-size: 12px; line-height: 1.7; }
+.chsum-actions { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
