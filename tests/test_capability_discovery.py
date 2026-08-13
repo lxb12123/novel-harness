@@ -16,11 +16,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
 
-from novel_harness.draft import discovery
+from novel_harness.draft import discovery, windows
 from novel_harness.draft.capabilities import (
     CAPABILITY_REGISTRY,
     ProviderCapabilities,
@@ -341,3 +343,89 @@ def test_the_discovered_capability_is_a_pydantic_model_not_a_dict() -> None:
     capability = discover(OPENROUTER, SLUG, fetch=_fetch(REAL_SHAPE))
     assert isinstance(capability, ProviderCapabilities)
     assert capability.route == (OPENROUTER, SLUG)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 7. 装配层那两个入口 —— 这条路由真跑起来，上文到底有多长
+# ══════════════════════════════════════════════════════════════════════════
+#
+# 上面每一条测的都是 `discover` / `resolve_with_discovery`（本模块自己的函数）。
+# **但作者感觉得到的那个数不在这一层**：它在 `product_tail_limit`，而喂它的
+# `max_context_tokens` 由**装配层**取——工作台那三条走 `api/deps.py`，
+# 写作助手（模式二）走 `agent/model.py`，两处各自调 `resolve_with_discovery`。
+#
+# 2026-08-13 有人只调了 `resolve_capabilities`（**它按设计不查快照**）就报了一个
+# 「上文被砍到 800」的 bug。那个函数确实答 unknown，而装配层那两个入口答 384,000。
+# 这一节就是把「按生产路径问」和「按某一个中间函数问」的差别钉住：
+# 判据落在**上文有多长**上，不是某个字段等于几。
+
+
+def _product_tail_for(capability: ProviderCapabilities) -> int:
+    """这份能力下，模式二起草那一次调用给得出多长的逐字上文（code point）。
+
+    预留量**现算**（`plan_call` 走一遍起草那一档），不写一个 7,024 的字面量——
+    那个数会随长度档漂，而漂掉之后这条断言仍然会绿，只是量的不再是同一件事。
+    """
+    from novel_harness.agent.drafting import AGENT_DRAFT_LENGTH, AGENT_DRAFT_REASONING
+    from novel_harness.draft.assemble import product_tail_limit
+
+    reserved = plan_call(
+        AGENT_DRAFT_LENGTH, AGENT_DRAFT_REASONING, capability, interruptible=True
+    ).request_token_budget
+    return product_tail_limit(capability.max_context_tokens, reserved)
+
+
+@pytest.fixture
+def _packaged_snapshot(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """在一个空的家目录下跑，且**两头都清那份快照缓存**。
+
+    `windows._snapshot` 是模块级 `lru_cache`，而它读的是「作者的家目录」——
+    在临时家目录下缓存出来的那一份会活到下一条测试里去（同 `discovery` 那条串味）。
+    """
+    monkeypatch.setenv("NH_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    windows._snapshot.cache_clear()
+    yield
+    windows._snapshot.cache_clear()
+
+
+@pytest.mark.parametrize("wire", ["端点答得上来", "网络不通"])
+@pytest.mark.usefixtures("_packaged_snapshot")
+def test_the_authors_real_route_gets_a_long_tail_through_both_assembly_entries(
+    wire: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """作者 2026-08-13 真在用的那条路由，**两个装配入口都必须给出远大于 800 的上文**。
+
+    ── 为什么「网络不通」那一档必须一起测 ────────────────────────────────────
+
+    `discover()` 把**失败也进缓存**，而失败一律静默（这个模块不许抛）。所以
+    「端点问不到 ⇒ 悄悄退回 800」是这条链上唯一不会有人发现的坏法——
+    垫在下面的是打包快照（`draft/windows.py`），它认得这个 slug 的裸键。
+    这一档要是断了，作者看到的只是「模型忽然变笨」。
+
+    ── 为什么两个入口都点名 ──────────────────────────────────────────────
+
+    它们是**两份各自调用 `resolve_with_discovery` 的代码**，不是一份：
+    工作台的抽取/总结/`/draft` 走 `api/deps.py`，写作助手走 `agent/model.py`。
+    只测一个，另一个哪天被改成裸的 `resolve_capabilities` 时这里照样绿。
+    """
+    # 覆盖 conftest 那道「不许真发请求」的网：这条测试要走完整的发现逻辑，
+    # 而这两个装配入口都不收 `fetch=` 参数——唯一的注入点就是这个模块属性。
+    payload: Any = REAL_SHAPE if wire == "端点答得上来" else TimeoutError()
+    monkeypatch.setattr(discovery, "_http_get_json", _fetch(payload))
+    discovery.clear_cache()
+
+    from novel_harness.agent.model import agent_call_plan
+    from novel_harness.api.deps import resolve_route_capabilities
+    from novel_harness.draft.provider import ProviderConfig
+
+    config = ProviderConfig(base_url=OPENROUTER, model=SLUG, api_key="k", temperature=None)
+
+    shell = resolve_route_capabilities(config)
+    agent_capability, _ = agent_call_plan(config)
+
+    for label, capability in (("api/deps.py", shell), ("agent/model.py", agent_capability)):
+        assert capability.source != "unknown", f"{label} 把这条路由判成了未知"
+        assert _product_tail_for(capability) > 10_000, (
+            f"{label} 给的逐字上文塌回了对照臂那一档（800）—— 症状是「模型忽然变笨」，"
+            "屏幕上没有任何一处会红。"
+        )
