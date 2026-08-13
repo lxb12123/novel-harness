@@ -13,13 +13,12 @@ import { RightPanel } from "./components/RightPanel";
 import { SplitPanes } from "./components/SplitPanes";
 import { ChatPanel } from "./components/ChatPanel";
 import { BottomBar } from "./components/BottomBar";
-import { ChapterPrepPage } from "./components/ChapterPrepPage";
 import { Setup } from "./components/Setup";
 
 /**
  * 地址里那一条哈希决定的**只有一件事**：这个标签页是工作台，还是「并排比几稿」那一页。
  *
- * **别把「工作台 / 章节准备 / 活动记录」也搬进地址**：那三个是同一块屏幕的三种排布，
+ * **别把「工作台 / 活动记录」也搬进地址**：那两个是同一块屏幕的两种排布，
  * 归 `useCoords.page`；搬过去等于让浏览器的前进后退键成为它们的入口，
  * 而作者按后退键想回到的是**上一段正文**，不是上一个面板。
  * 并排比那一页不一样——它开在另一个标签页里，**没有地址就没法开**（ADR 0022）。
@@ -78,26 +77,24 @@ function Workbench() {
   return (
     <div className="app">
       <TopBar />
-      {page === "prep" ? (
-        <ChapterPrepPage />
-      ) : (
-        <>
-          {/* 活动记录换掉的是**中栏**：左栏书架和右栏面板照旧在原地——日志里点「去改这一格」
-              跳的就是右边那一栏，两栏一起消失的话作者就得先跳一次再自己找回来。
+      {/* 活动记录换掉的是**中栏**：左栏书架和右栏面板照旧在原地——日志里点「去改这一格」
+          跳的就是右边那一栏，两栏一起消失的话作者就得先跳一次再自己找回来。
 
-              写作助手（模式二）也只吃中栏，而且是**对半分**（作者的原话：「文章那块对半分，
-              左边是文章右边是 agent」）。它切的是中栏这一块，不是整行——所以它开着的时候
-              左栏书架和右栏面板也照旧在原地：作者一边跟它说话，一边看得见这一章谁还不知道什么。
-              日志页那一档也留着它：换去看记录不该把说到一半的对话收走。 */}
-          <SplitPanes
-            left={<LeftRail onOpenChapter={openChapter} />}
-            center={page === "log" ? <ActivityLog /> : <CenterEditor />}
-            chat={chatOpen ? <ChatPanel /> : undefined}
-            right={<RightPanel />}
-          />
-          <BottomBar />
-        </>
-      )}
+          写作助手（模式二）也只吃中栏，而且是**对半分**（作者的原话：「文章那块对半分，
+          左边是文章右边是 agent」）。它切的是中栏这一块，不是整行——所以它开着的时候
+          左栏书架和右栏面板也照旧在原地：作者一边跟它说话，一边看得见这一章谁还不知道什么。
+          日志页那一档也留着它：换去看记录不该把说到一半的对话收走。
+
+          **这儿原先还有一档「章节准备」，它换掉的是整块中栏**（连左右栏一起）。
+          那一页 2026-08-13 删了（`TopBar.tsx` 记着为什么），于是三栏骨架现在**永远在**：
+          作者不管在哪一页，都看得见左边的章目录和右边「这一章谁还不知道什么」。 */}
+      <SplitPanes
+        left={<LeftRail onOpenChapter={openChapter} />}
+        center={page === "log" ? <ActivityLog /> : <CenterEditor />}
+        chat={chatOpen ? <ChatPanel /> : undefined}
+        right={<RightPanel />}
+      />
+      <BottomBar />
     </div>
   );
 }

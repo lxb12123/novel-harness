@@ -65,12 +65,27 @@ def _without_comments(source: str) -> str:
     return "".join(out)
 
 
+_SVG_PATH_DATA = re.compile(r'\bd="[^"]*"')
+
+
+def _without_path_data(source: str) -> str:
+    """去掉 SVG 的 `d="…"`。**它是几何，不是文案**，而这道守卫查的是文案。
+
+    真出现过的误报（2026-08-13）：齿轮图标的路径以 `M10.48` 起笔，被
+    `\\bM\\d+\\b`（内部里程碑 M0–M4）当场抓成「界面泄漏了里程碑编号」。
+
+    收窄那条里程碑正则也能让它绿，但**那是把守卫削薄去迁就一个不是文案的东西**——
+    真正该做的是别让它看几何。路径数据里藏不住泄漏：它一个字都不会渲染成文字。
+    """
+    return _SVG_PATH_DATA.sub('d=""', source)
+
+
 def test_production_tsx_has_no_internal_or_fixture_copy() -> None:
     offenders: list[str] = []
     for path in sorted(COMPONENTS.rglob("*.tsx")):
         if path.name.endswith(".test.tsx"):
             continue
-        source = _without_comments(path.read_text(encoding="utf-8"))
+        source = _without_path_data(_without_comments(path.read_text(encoding="utf-8")))
         for pattern, label in BANNED_COPY.items():
             if match := re.search(pattern, source):
                 line = source.count("\n", 0, match.start()) + 1

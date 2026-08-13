@@ -6,7 +6,6 @@ import { useEvents, useProjects } from "../api/hooks";
 import type { KnowledgeMatrix, NodeRef } from "../api/types";
 import { useCoords } from "../store";
 import { ActivityLog } from "./ActivityLog";
-import { ChapterPrepPage } from "./ChapterPrepPage";
 import { RightPanel } from "./RightPanel";
 
 // 闭环，**从日志页那一端出发**（ADR 0020：错了看得见 → 跳得过去 → 改得掉）。
@@ -347,8 +346,7 @@ describe("「改得掉」不许只在一块屏幕上成立", () => {
 
   async function hitStaleAndAskForTheLatest(user: ReturnType<typeof userEvent.setup>) {
     await user.click(await screen.findByRole("button", { name: cellName() }));
-    // 按 placeholder 认，不按 role="textbox" 认：核对页上还有一个「本章目标」文本框，
-    // 而两块屏幕要跑的是同一段操作。
+    // 按 placeholder 认，不按 role="textbox" 认：这块屏幕上不止一个文本框。
     await user.type(await screen.findByPlaceholderText("例如：以为那只是个传闻"), "以为那只是个传闻");
     await user.click(screen.getByRole("button", { name: "改成「以为」" }));
     await screen.findByText(/先看一眼最新的/);
@@ -358,16 +356,10 @@ describe("「改得掉」不许只在一块屏幕上成立", () => {
     return { spy, mark };
   }
 
-  it("章节核对页上撞 409，「看看最新的」也要真的把这张表重读一遍", async () => {
-    const user = userEvent.setup();
-    useCoords.setState({ page: "prep", chapter: 1 });
-    renderWithApi(<ChapterPrepPage />, [stale]);
-
-    const { spy, mark } = await hitStaleAndAskForTheLatest(user);
-    await waitFor(() => expect(reReadTheMatrix(spy, mark)).toBe(true));
-  });
-
-  it("右栏那一块同样得成立 —— 两个挂载点不许有两套规矩", async () => {
+  // 这儿原本是**一对**：章节核对页一条、右栏一条，钉的是「同一张表的两个挂载点
+  // 不许有两套规矩」。核对页 2026-08-13 删了（`TopBar.tsx` 记着为什么），
+  // 于是认知矩阵**只剩右栏这一个挂载点**——那条成对的断言跟着一起走。
+  it("撞 409 之后，「看看最新的」要真的把这张表重读一遍", async () => {
     const user = userEvent.setup();
     useCoords.setState({ page: "workbench", activeTab: "matrix", chapter: 1 });
     renderWithApi(<Workbench />, [stale]);

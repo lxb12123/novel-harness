@@ -87,8 +87,10 @@ AGENT_DRAFT_LENGTH: Final[LengthSpec] = DEFAULT_LENGTH_POLICY.default_for(DraftL
    （`tests/test_agent_tools.py::QUERY_COORDINATES`）。
 2. **不读 `LengthPolicy.from_env()`。** 那八个环境变量是**部署者**的旋钮（ADR 0011 D1），
    而 BYOK 的桌面作者没有环境变量——同 `_draft_provider_config` 那条「钥匙在设置页里」。
-   今天走产品默认档，作者要改这一档时该长出来的是界面上的一个控件（同
-   `DraftLengthControls`），不是这儿偷偷读一个他看不见的变量。
+   今天走产品默认档，作者要改这一档时该长出来的是界面上的一个控件，不是这儿偷偷读一个
+   他看不见的变量。（**那个控件曾经存在过**：`DraftLengthControls.tsx` 挂在「章节准备」页上，
+   2026-08-13 随那一页一起删——因为它调完什么都不会变，这儿从来没读过它。
+   要兑现 ADR 0013，缺的是把作者那一档**传进来**，不是把控件画回去。）
 3. **它不是 `M2_LENGTH_SPEC`。** 那一档（上限 3,100）是考卷的定义，冻结在
    EVAL_PROTOCOL；产品这条路继承它就是拿考卷的参数跑产品，反过来改它就是改考卷。
 """

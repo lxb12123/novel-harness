@@ -285,7 +285,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 
 ## 当前状态
 
-**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2570 个 pytest + 560 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
+**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2570 个 pytest + 558 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
 
 > **本节的数字是全仓唯一副本，且 `tests/test_doc_numbers.py` 会拦住第二份。**
 > `README.md` / `CLAUDE.md` / `frontend/README.md` 里只留指针，不许再抄一份数字过去。
@@ -596,8 +596,10 @@ provider-neutral `high` 映射到各兼容端点的 wire shape，未知路由 fa
 至多 2 次 attempt、两段按返回顺序原样拼接，第三次调用与样本替换都判死）、
 **`eval/evidence.py`**（2026-08-01 补，`tests/test_run_evidence.py` 769 行：把 `runs/*.jsonl`
 当证据不当缓存——每个计数/分数/裁决输入都离线重算验证，API key 拒入）、
-**前端 `DraftLengthControls.tsx`**（2026-08-01 补，4 条 vitest：双语长度档，`ChapterPrepPage`
-已接入）、
+~~**前端 `DraftLengthControls.tsx`**~~（2026-08-01 补，4 条 vitest：双语长度档）——
+**2026-08-13 随「章节准备」页一起删**：它写进 localStorage 的值没有任何人读
+（产品起草走 `agent/drafting.py::AGENT_DRAFT_LENGTH` 的默认档），
+接线之后再画回来，见 [ADR 0013](adr/0013-draft-length-is-a-request-parameter.md) 的分界线、
 **[ADR 0010](adr/0010-writer-boundary.md)**（Writer 边界 D1–D6，**先于 `assemble.py` 定形**）、
 **[EVAL_PROTOCOL 修正案 4](EVAL_PROTOCOL_AMENDMENT_4.md)**（先于 `synth/` 定形，见下）。
 

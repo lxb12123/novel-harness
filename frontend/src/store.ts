@@ -20,7 +20,11 @@ export type Tab =
   | "evidence"
   | "check"
   | "review";
-export type Page = "workbench" | "prep" | "log";
+/** 当前页：工作台 / 活动记录。
+ *
+ *  **`"prep"`（章节准备）2026-08-13 删了**，理由记在 `TopBar.tsx` 那段注释里
+ *  （三张读卡是右栏的第二个入口，两个表单写完没人读）。 */
+export type Page = "workbench" | "log";
 
 /** 认知矩阵里的一格（人物 × 秘密）。日志页跳过来时用它高亮「就是这一格」。
  *  两个 id **都来自后端的 `jump`**，不是从标题里认出来的名字。 */
@@ -156,13 +160,10 @@ export const useCoords = create<Coords>((set) => ({
   setPage: (page) => set({ page }),
   // 关掉不清 `chatId`：再打开时回到刚才那一段，作者不用重找。
   //
-  // **打开时如果人在章节准备页，顺手回工作台**：那一页换掉的是整块中栏（不像活动记录
-  // 只换左半边），写作助手在那儿没有位置。不这么做的话那颗按钮在那一页上按下去
-  // **什么都不会发生**——一颗读起来像坏了的按钮，比一次页面切换糟。
-  toggleChat: () =>
-    set((s) =>
-      s.chatOpen ? { chatOpen: false } : { chatOpen: true, page: s.page === "prep" ? "workbench" : s.page },
-    ),
+  // 这儿原本还有一条「打开时如果人在章节准备页，顺手回工作台」——那一页换掉的是整块中栏，
+  // 助手在那儿没有位置。**那一页删了，这条跟着删**：剩下的两页（工作台 / 活动记录）
+  // 换掉的都只有中栏左半边，助手照旧在它右边开着。
+  toggleChat: () => set((s) => ({ chatOpen: !s.chatOpen })),
   setChat: (chatId) => set({ chatId }),
   jumpFromActivity: ({ tab, cell, eventId, include }) =>
     set((s) => ({

@@ -1,8 +1,12 @@
 import { useState } from "react";
 import { useCoords } from "../store";
+import { BotIcon, GearIcon, LogIcon } from "./icons";
 import { SettingsDrawer } from "./SettingsDrawer";
 
-// 顶栏：页面切换 + AI 设置。
+// 顶栏：**两颗开关 + 设置**，一个字都不写（图标 + 悬浮出名字）。
+//
+// 两颗开关都关着 = 工作台（作者自己写）。所以没有「工作台」那颗按钮——
+// 它是「两个都关掉」的同义词，摆出来就是同一件事的第三个入口。
 //
 // 书名和「＋ 新书 / 导入」不在这儿：它们搬进左栏书架了（一个库可以有多本书，
 // 那是一份**列表**，顶栏塞不下，也不该和别的东西抢同一行）。
@@ -27,36 +31,83 @@ export function TopBar() {
         <b>Novel Harness</b> 工作台
       </span>
 
-      <span style={{ width: 8 }} />
-      <button className={page === "workbench" ? "on" : ""} onClick={() => setPage("workbench")}>
-        工作台
-      </button>
-      <button className={page === "prep" ? "on" : ""} onClick={() => setPage("prep")}>
-        章节准备
-      </button>
-      {/* 活动记录只换中栏（左栏书架、右栏面板不动）。**它是入口不是通知**：系统自己整理
-          这本书的每一步都记在那儿，作者想看的时候去看——不弹、不红点、不推给他（约束 8）。 */}
-      <button className={page === "log" ? "on" : ""} onClick={() => setPage("log")}>
-        活动记录
+      <span className="spacer" />
+
+      {/* ── 中间这两颗：**这块屏幕现在是什么样子** ────────────────────────────
+          它们都是**开关**，不是三个并排的页签。「工作台」那颗按钮因此没了：
+          两颗都关着 = 工作台，所以再摆一颗「回工作台」等于给同一件事第三个入口。
+
+          都不带文字，`aria-label` 是它们的名字（读屏念这个），悬浮时那行字由
+          `data-tip` 画出来——**而 `data-tip` 随状态换**：一颗开关最该说的是
+          「按下去会怎样」，不是它自己叫什么。
+
+          `aria-pressed` 才是把状态说给读屏听的地方。**名字不许随状态改**：
+          名字一变，读屏用户会以为按钮换了一颗（而且所有按名字找它的测试会一起烂）。 */}
+
+      {/* 活动记录：系统自己整理这本书的每一步都记在那儿。**它是入口不是通知**——
+          不弹、不红点、不推给作者（约束 8）。它只换中栏，左栏书架和右栏面板不动。 */}
+      <button
+        className={"icon-btn" + (page === "log" ? " on" : "")}
+        aria-label="活动记录"
+        aria-pressed={page === "log"}
+        data-tip={page === "log" ? "回到正文" : "活动记录"}
+        onClick={() => setPage(page === "log" ? "workbench" : "log")}
+      >
+        <LogIcon />
       </button>
 
-      {/* 写作助手（模式二）开合。**默认关着**，而且它开的是中栏的右半边——
-          左栏书架和右栏面板不动（`App.tsx` 那段注释写着理由）。
-          同「活动记录」那条：这是**入口不是通知**，不弹、不红点、不替作者打开。 */}
-      <button className={chatOpen ? "on" : ""} onClick={toggleChat}>
-        写作助手
+      {/* 这一颗切的是**这个产品的两个模式**（作者 2026-08-13 定的名字）：
+          - **协助模式**（模式一，默认）：作者自己写，引擎在右栏守着「谁在第几章还不该知道什么」；
+          - **novel-agent 模式**（模式二）：中栏对半分，右半边是助手（`ChatPanel`）。
+
+          **悬浮那行字说的是「按下去会到哪儿」，不是它自己叫什么**——一颗开关最该说这个。
+          所以两态各念对面那个模式的名字。名字（`aria-label`）仍钉死「写作助手」：
+          它是这块面板一直以来的名字（`ChatPanel` 的标题、活动记录里的 actor 名、
+          后端好几处提示都念这四个字），**状态走 `aria-pressed`，名字不许跟着变**。
+
+          图标是一个**脑袋是书的小机器人**，两态只差书的开合（`BotIcon`）：
+          合着 = 它在旁边待命；摊开 = 它上场了。 */}
+      <button
+        className={"icon-btn" + (chatOpen ? " on" : "")}
+        aria-label="写作助手"
+        aria-pressed={chatOpen}
+        data-tip={chatOpen ? "切换成协助模式" : "切换成 novel-agent 模式"}
+        onClick={toggleChat}
+      >
+        <BotIcon open={chatOpen} />
       </button>
 
       {/* 「AI 起草」那个抽屉 2026-08-10 删了：它是**填表式**的（先填「这一场要写什么」+
           在场角色，再点按钮出一整章），而在场人物是写出来的结果不是写之前的输入（ADR 0018），
           「接下来写什么」也不该由一个表单承载。起草这件事归模式二的 agent 面板——
           在那儿它是一次工具调用，不是一个界面。**一个功能不留两个入口。**
-          后端 `/draft` 一个字没动：它现在是 agent 的起草工具。 */}
-      <button title="AI 设置" onClick={() => setSettingsOpen(true)}>
-        ⚙
-      </button>
+          后端 `/draft` 一个字没动：它现在是 agent 的起草工具。
+
+          **「章节准备」那一页 2026-08-13 也删了**：三张读卡是右栏同名 tab 的第二个入口，
+          两个表单（本章目标 / AI 起草长度）写进 localStorage 没有任何人读。
+          别把它加回来——真要给那几张卡一个整页视图，先想清楚它比右栏多给了什么。 */}
 
       <span className="spacer" />
+
+      {/* 设置**靠最右**：左边那几颗是「现在看哪一块屏幕」（天天按），它是「这台机器怎么配」
+          （配完就不再碰）。挨在一起排，等于让一颗一年按一次的按钮天天参与瞄准。
+          **图标不带名字**（`aria-hidden`），所以 `aria-label` 必须在这儿——
+          少了它，读屏念出来的是一颗没有名字的按钮。 */}
+      {/* `data-tip` 是**悬浮时那两个字**（CSS 画的，见 `.icon-btn::after`）。
+          **不用原生 `title`**：它要等一秒才浮出来，而作者的原话是「以为没有」——
+          一颗只有图标的按钮，名字晚一秒 = 那一秒里它是一颗不知道干什么的按钮。
+          `title` 也不能同时留着，否则悬浮会同时冒出两个气泡。
+
+          字面是「AI 设置」不是「设置」：抽屉的标题、后端那句「先去顶栏「AI 设置」看一眼」
+          都念这四个字。**一个东西一个名字**——少一个字，那句指路的话就指不到了。 */}
+      <button
+        className="icon-btn tip-right"
+        aria-label="AI 设置"
+        data-tip="AI 设置"
+        onClick={() => setSettingsOpen(true)}
+      >
+        <GearIcon />
+      </button>
 
       {settingsOpen && <SettingsDrawer onClose={() => setSettingsOpen(false)} />}
     </header>

@@ -11,7 +11,7 @@ afterEach(cleanup);
 // `--localstorage-file` 时它是个空壳——连 getItem 都不存在。
 // 工作台真的用 localStorage 记东西（栏宽、起草长度、本章 brief），不补上的话那些代码
 // 在测试里只会一路走进 catch / `?.` 分支，**测出来的绿是假的**（原来它在
-// DraftLengthControls.test.tsx 里躺着一份，第二个用到存储的组件出现时就该提上来）。
+// 曾经躺在某个单独的测试文件里，第二个用到存储的组件出现时就该提上来）。
 // **一份就够，别再往单个测试文件里拷第二份。**
 function memoryStorage(): Storage {
   const values = new Map<string, string>();

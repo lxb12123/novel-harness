@@ -388,12 +388,18 @@ EXEMPT_DIRS = (
     "node_modules/",
     ".venv/",
     ".worktrees/",
+    ".claude/",
 )
 """扫不到的目录，各有各的理由，别顺手往里加。
 
 - `docs_dev/` —— 维护者的私记，按定义是**当天的快照**，不是权威，本来就该会过时。
 - `docs/adr/bench/` —— ADR 0001 的实测证据，改写它 = 改写论证（同 ruff 的排除名单）。
 - `node_modules/` / `.venv/` —— 别人的文件。
+- `.worktrees/` / `.claude/` —— **git worktree，不是文档**。里面那份 `ARCHITECTURE.md`
+  是同一份文件的另一个检出，不是「第二份拷贝」；把它算进来，任何一个开着 worktree 干活的
+  人（`.claude/worktrees/agent-*` 是 agent 自己开的）都会让这道守卫无故变红。
+  **2026-08-13 真的红过一次**：三个 agent worktree 一进来，这条就报「八份拷贝」。
+  而一道会无故红的守卫，寿命就是到有人烦了把它关掉为止。
 """
 
 EXEMPT_FILES = ("docs/PLAN.md",)

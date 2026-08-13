@@ -334,13 +334,7 @@
 │  ├─ <DraftCard ×N>              ◀ GET /drafts?chapter= + GET /drafts/{id}（默认摊开最近 3 列）
 │  └─ 只读                        ▶ 无写路由：要用哪一版回工作台跟助手说（一个功能不留两个入口）
 │
-├─ <ChapterPrepPage>  ◀── P2 章节准备（写第 N 章前的确定性简报）
-│  ├─ <ChapterGoalCard>           ◀ 作者手填 brief（磁盘 md，无图谱背书）
-│  ├─ <MainCastPicker>            ◀ GET /roster + /resolve
-│  ├─ <CurrentStatePanel>         ◀ GET /state + /matrix
-│  ├─ <PrevChapterState>          ◀ GET /state?chapter=N-1（F 分区，100% 召回）
-│  ├─ <ForbiddenFuture>           ◀ forbidden_entities
-│  └─ <SceneSkeletonBoard DnD>    ◀▶ parse_scenes / PUT /scenes（AI 骨架=M2 stub）
+├─ ~~<ChapterPrepPage>~~  ◀── P2 章节准备 **2026-08-13 删，见下面「页面二」那一节**
 │
 └─ <GraphExplorerPage>  ◀── P3 全屏图谱（中心漫游，真全图=v2）
    ├─ <GraphModeSwitch>           1 关系 / 3 伏笔 / 4 地点 / 5 认知(头牌) / 6 时间状态
@@ -427,14 +421,24 @@ React 18 + TS（桌面优先）· Vite · **TanStack Query**（服务端状态�
 | **Tab5 置信度** | — | ⚪ **v1 无此字段，只显示「确定性」不显示 %** |
 | 底栏 Harness 10 步 / Token / 成本 | `model_call` + `GET /runs` | 🟡 数据和读端 2026-08-10 都有了，**底栏那一格仍未画**——用量显示在「活动记录」页顶上（v1 是单次调用不是 10 步 Kernel） |
 
-### 页面二 · 章节准备
+### ~~页面二 · 章节准备~~ —— **2026-08-13 整页删除**
 
-| UI 元素 | 背书 | 判定 |
+作者的原话：「我记得我没有设计过这个东西，或者说我压根没打算用到这个 UI 上面。」
+删之前逐项查过一遍，**没有一格是独一份的活功能**：
+
+| UI 元素 | 它当时的样子 | 为什么删得掉 |
 |---|---|---|
-| 主要人物 / 当前状态 / 上一章结束状态 | `resolve` / `state_at` / `state_at(N-1)` | 🟢（F 分区 100% 召回） |
-| 禁止提前出现的未来内容 | `forbidden_entities` | 🟢 |
-| 本章目标 / 必须承接（自由文本） | — | ⚪ 作者 brief，无 store |
-| AI 推荐场景骨架 | — | 🟡 M2；v1 替代=作者手拖手填场景块 |
+| 当前状态 / 认知矩阵 | `state_at` / `matrix`，第 N 章 | 右栏「人物状态」「人物认知」**是同一个组件、同一份数据**——第二个入口 |
+| 禁止提前出现的未来内容 | `forbidden_entities` | 右栏「写作提醒」同一份 |
+| 上一章结束状态 | `state_at(N-1)` | 唯一不重复的一格，但它 = 右栏那一格换个章号看 |
+| 本章目标（自由文本） | localStorage `nh-brief:` | **写进去没有任何人读**：不进请求、不进起草、不落盘 |
+| AI 起草长度 | localStorage `nh-draft-length:v1` | 同上。起草走 `agent/drafting.py` 的产品默认档，**根本不带作者这一档**（见 [ADR 0013](adr/0013-draft-length-is-a-request-parameter.md) 分界线） |
+| AI 推荐场景骨架 | — | 从来没做（原计划 M2） |
+| 在场输入框 | — | 更早就被 [ADR 0018](adr/0018-cast-is-derived-not-declared.md) 删了，那次它已从「写作前简报」降级成「核对」 |
+
+**这一页是「设计稿上有、工程上没长出对应能力」的标本**：三张读卡在别处已经有了，
+两个表单是**看着能填、填完什么都不会发生**的控件——比不做更糟，因为它承诺了一件做不到的事。
+真要给这几张卡一个整页视图，先想清楚它比右栏多给了什么。
 
 ### 页面三 · 全屏图谱 & 联动 & 变更页
 
@@ -492,7 +496,7 @@ React 18 + TS（桌面优先）· Vite · **TanStack Query**（服务端状态�
 - [BE] 准备页读端聚合：`state_at(N-1)` + `forbidden_entities` + `scene_constraints` + 当前章 matrix + CANON 侧已埋伏笔
 - [BE] Tab3 确定性证据（`Evidence.anchor()` → 来源章/原文片段/是否 Canon/图谱边；**明确不给 score**）
 - [BE] 底栏场景时间线（`parse_scenes` 序 + 边闭开区间；无全局事件线——事件未建模）
-- [FE] P2 章节准备页（场景骨架=作者手拖手填，替代未实现的 AI 骨架）
+- ~~[FE] P2 章节准备页（场景骨架=作者手拖手填，替代未实现的 AI 骨架）~~ —— **做过，2026-08-13 又删了**（上面「页面二」那一节记着逐项判据）。**别照这一行重做一遍**：它交付的三张卡今天在右栏，两个表单当时就没接线。
 - [FE] Tab4 约束页（must_not_reveal + forbidden 直读；作者手填字段清楚标注「引擎不背书」）
 - [BE/FE] 扩展 `demo.sh` 心跳覆盖「导入→读面板→declare→再读矩阵变化→R4」端到端，作为 v1 交付验收线
 

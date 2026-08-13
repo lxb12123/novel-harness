@@ -14,7 +14,6 @@ import { RosterDrawer } from "./RosterDrawer";
 import { SettingsDrawer } from "./SettingsDrawer";
 import { HistoryDrawer } from "./HistoryDrawer";
 import { DeclareDrawer } from "./DeclareDrawer";
-import { ChapterPrepPage } from "./ChapterPrepPage";
 import { SceneBar } from "./SceneBar";
 import { BookShelf } from "./BookShelf";
 import { ChatPanel } from "./ChatPanel";
@@ -82,7 +81,6 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     ["左栏书架", <LeftRail key="l" onOpenChapter={() => {}} />],
     ["底栏时间线", <BottomBar key="b" />],
     ["场景条", <SceneBar key="sb" />],
-    ["核对页", <ChapterPrepPage key="p" />],
     ["书架页", <BookShelf key="bs" onOpenChapter={() => {}} />],
     ["花名册抽屉", <RosterDrawer key="rd" pid="project:ID1" onClose={() => {}} />],
     ["设置抽屉", <SettingsDrawer key="sd" onClose={() => {}} />],

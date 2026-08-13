@@ -1172,10 +1172,14 @@ def test_no_screen_in_the_whole_workbench_posts_a_chapter() -> None:
     「顺手让作者确认一下生效章」在哪一格写出来都是同一件事，而这两条编辑路由只是
     今天最像会长出它的两处。
 
-    **数字框今天仍然真的是零**（2026-08-11 起）：全前端唯一的 `<input type="number">` 在
-    `DraftLengthControls.tsx`，它问的是一段草稿写多长，不是第几章；没有一个
-    `.mutate({…})` 的键撞得上章号（换章、后台整理、补总结都把章号放在**路径**里，
-    那是 AS OF，是查询不是声明）。
+    **数字框今天是字面意义的零**（2026-08-13 起）：全前端**一个 `<input type="number">` 都没有**。
+    在此之前唯一那个在 `DraftLengthControls.tsx`（问的是一段草稿写多长，不是第几章），
+    它随「章节准备」那一页一起删了——那个控件写进 localStorage 的值没有任何人读，
+    起草走的是后端的产品默认档。没有一个 `.mutate({…})` 的键撞得上章号
+    （换章、后台整理、补总结都把章号放在**路径**里，那是 AS OF，是查询不是声明）。
+
+    所以这条断言现在是 `== 0`：**下一个数字框出现时它必红**，而红了之后要问的是
+    「它问的是不是第几章」——是就删，不是就把它写进这段话里说清为什么正当。
 
     所以这条是**零基线**守卫，不是允许清单守卫——真出现一个正当的例外时，
     该做的是把那一个具体的键写进这段话里说明为什么它正当，**不是**加一个开口
@@ -1220,10 +1224,10 @@ def test_no_screen_in_the_whole_workbench_posts_a_chapter() -> None:
         "前端往请求体里放了章号：\n  " + "\n  ".join(offenders) + "\n"
         "章号是「这句引语落在哪一章」的产物，不是作者的输入（约束 10 / ADR 0006）。"
     )
-    assert len(numbers) == 1 and "DraftLengthControls" in numbers[0], (
-        f"全前端的数字输入框变了：{numbers}\n"
-        "唯一那一个问的是「这段草稿写多长」。多出来的那一个要是在问第几章，\n"
-        "它就是 §5.9 说的那个邀请污染的表单。"
+    assert not numbers, (
+        f"全前端多出了数字输入框：{numbers}\n"
+        "2026-08-13 起这儿的基线是**零**。新出现的这一个要是在问第几章，\n"
+        "它就是 §5.9 说的那个邀请污染的表单；不是的话，把它写进本函数 docstring 说清楚。"
     )
     assert len(named) == len(NAMED_CHAPTER_BOXES) and all(
         any(where in box and what in box for box in named) for where, what in NAMED_CHAPTER_BOXES

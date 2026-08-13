@@ -46,35 +46,55 @@ header .spacer { flex: 1; }
 header .hint { color: var(--dim); font-size: 11px; }
 header button.on { border-color: var(--accent); color: var(--accent); background: var(--sel); }
 
-/* 章节准备页 */
-.prep { flex: 1; overflow: auto; padding: 16px 20px; }
-.prep-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
-.prep-head label { color: var(--dim); font-size: 12px; }
-/* 标题这一格里挂着挑章的控件（`.chtitle`），所以它自己得是 flex + 可收缩，
-   否则长章标会把右边那句「按这一章提到的：…」顶出去。 */
-.prep-title { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0; }
-.prep-title > span { flex: 0 0 auto; }
-.prep-head .spacer { flex: 1; }
-.prep-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
-.prep-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; background: var(--panel); }
-.prep-card h3 { margin: 0 0 10px; font-size: 13px; }
-.prep-card.prep-wide { grid-column: 1 / -1; }
-.prep .brief { width: 100%; min-height: 120px; resize: vertical; line-height: 1.7; }
-.draft-length-controls { border-style: dashed; color: var(--dim); }
-.draft-length-head, .draft-length-row, .draft-length-lock {
-  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+/* ── 图标（`components/icons.tsx`）─────────────────────────────────────────
+   尺寸只在这儿定，图标自己不写宽高：同一个图标在按钮里和在别处是同一份。
+   颜色一个字都不写——图标用的是 `currentColor`，所以它自动跟着按钮走
+   （悬浮变强调色、禁用变淡）。 */
+.icon { width: 20px; height: 20px; display: block; flex: 0 0 auto; }
+/* 只装一个图标的按钮：**没有框**（作者的原话：加一个方框很丑）。
+   左边那几颗是有框的文字按钮，它不是——它是一颗图标，图标自己就是全部的样子。
+   `border-color` 那两处写成透明而不是 `border: 0`：**位置不许因为悬浮而动**，
+   1px 的框一有一无，图标会跳一下。
+   `:hover:not(:disabled)` 的形状是为了压过全局那条 `button:hover`——
+   它会把框画成强调色，而那正是这儿要去掉的东西（同 `.book-row` / `.chtitle-name`）。 */
+.icon-btn {
+  display: inline-flex; align-items: center; padding: 4px 6px;
+  border-color: transparent; background: transparent; color: var(--dim);
 }
-.draft-length-head { justify-content: space-between; margin-bottom: 10px; }
-.draft-length-head h3 { color: var(--ink); }
-.draft-length-note { font-size: 12px; }
-.draft-language, .draft-length-field { display: flex; align-items: center; gap: 6px; }
-.draft-language > span, .draft-length-field > span { font-size: 12px; }
-.draft-length-field input { width: 96px; text-align: right; }
-.draft-length-field input[aria-invalid="true"] { border-color: var(--warn); }
-.draft-length-unit { min-width: 42px; color: var(--ink); }
-.draft-length-error { margin-top: 8px; color: var(--warn); font-size: 12px; }
-.draft-length-lock { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); }
-.draft-length-lock span { font-size: 12px; }
+.icon-btn:hover:not(:disabled) { border-color: transparent; color: var(--accent); }
+/* 按下去了（`aria-pressed`）：**只换颜色，不加底、不加框**。
+   这一栏里「开着没有」已经由图标自己说了（书是合着还是摊开），
+   底色再说一遍就是把同一句话讲两遍——而两颗按钮各挂一块紫底会比正文还抢眼。 */
+.icon-btn.on { color: var(--accent); border-color: transparent; background: transparent; }
+/* **焦点不画框**：浏览器默认那圈是 `-webkit-focus-ring-color`，macOS 上取的是**系统蓝**——
+   一个四四方方的蓝矩形，扣在一套灰 + 紫的界面上（作者当场看出来了）。
+   焦点改成和悬浮同一个动作：图标变紫。同 `.pane-divider:focus-visible`——
+   那儿也是撤掉默认框、改用「线变粗」在带内表示。
+   **诚实说明**：这比一圈框弱，键盘用户只能靠颜色认。这颗按钮是图标按钮、
+   一整条顶栏就它一个，所以换得起；**别把这条抄成全局 `button` 的规矩**。 */
+.icon-btn:focus-visible { outline: none; color: var(--accent); }
+
+/* 悬浮时浮出名字。**只有图标的按钮必须有这个**：图标本身不说自己叫什么，
+   而原生 `title` 要等约一秒——作者的原话是「以为没有」。这儿 .12s 就出来。
+   深底浅字（`--ink` / `--bg`，暗色模式自动对调），跟底下那片浅灰分得开。
+   默认**居中吊在图标下面**；贴着屏幕右边缘那一颗（设置）用 `.tip-right` 改成右对齐，
+   否则那个气泡有一半会掉出屏幕。 */
+.icon-btn { position: relative; }
+.icon-btn::after {
+  content: attr(data-tip);
+  position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 30;
+  padding: 3px 7px; border-radius: 4px;
+  background: var(--ink); color: var(--bg);
+  font-size: 11px; line-height: 1.5; white-space: nowrap;
+  opacity: 0; pointer-events: none; transition: opacity .12s ease;
+}
+.icon-btn.tip-right::after { left: auto; right: 0; transform: none; }
+.icon-btn:hover::after, .icon-btn:focus-visible::after { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .icon-btn::after { transition: none; } }
+
+/* 「章节准备页」那一整节样式（`.prep*` / `.draft-length*`）2026-08-13 随那一页一起删。
+   理由记在 `components/TopBar.tsx`：三张读卡是右栏同名 tab 的第二个入口，
+   两个表单写进 localStorage 没有任何人读。 */
 
 /* 三栏 —— 列宽由 SplitPanes 内联给（作者拖出来的），这儿只留一份兜底。
    中栏是 minmax(0,1fr) 不是 1fr：裸 1fr 的下限是 min-content，编辑器会撑住不让拖窄。 */

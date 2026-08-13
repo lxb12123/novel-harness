@@ -30,10 +30,18 @@
 
 ## 分界线（什么已就绪 / 什么等开闸）
 
-已就绪：前端 `DraftLengthControls`（本机存储 + 校验）、后端 `LengthPolicy.validate_spec`、
-`/draft` 请求体的 `_DraftLengthBody` 形状、`continuation_instruction(length, cumulative)`。
-等 M2 PASS：`/draft` 从 501 换真实现时，把请求里的 `LengthSpec` 一路传进
-`assemble()` + `generate_draft()`（路径不动，只是接线）。
+已就绪：后端 `LengthPolicy.validate_spec`、`/draft` 请求体的 `_DraftLengthBody` 形状、
+`continuation_instruction(length, cumulative)`。
+
+**前端那一半 2026-08-13 删了。** `DraftLengthControls`（本机存储 + 校验 + 4 条 vitest）
+原先挂在「章节准备」页上，而**它写进 localStorage 的值没有任何人读**：产品这条路上起草是
+写作助手发起的，`agent/drafting.py::AGENT_DRAFT_LENGTH` 直接取 ADR 0011 D1 的产品默认档。
+那一页整个删掉时它跟着走了——**一个作者调了却什么都不会变的旋钮，比没有旋钮糟**。
+
+本决策**不变**：长度是作者的意愿、是请求参数。要兑现它，缺的不是那个控件而是**接线**：
+助手起草时得把作者那一档带上（`DraftAsk` 上不许有 `length`，所以它得作为一次请求/会话的
+参数往下传，不是模型可以主张的东西）。接线那天再把控件画回来，位置该在「AI 设置」
+——那儿是「这台机器怎么配」，不是一页写作前的表单。
 
 ## 若决策错误，修复成本
 
