@@ -55,6 +55,8 @@ from .declare import (
     WrongLabel,
 )
 from .graph import (
+    HEALTH_DIM_KEY,
+    HEALTH_DIM_NAME,
     AliasKind,
     InformationScope,
     KnowledgeCell,
@@ -875,13 +877,6 @@ def check(
     # （ADR 0006 判 offset 的那段话，一字不差地适用于 para_index 的两份定义）。
     paragraphs = split_paragraphs(file.read_text(encoding="utf-8-sig"))
     scenes = parse_scenes(paragraphs)
-    if not scenes:
-        _die(
-            f"{file} 里一个场景块都没有（要的是 `## 场景 N` + 下一非空行的 "
-            "`<!-- nh: cast=... loc=... -->`）。\n"
-            "**没有场景块 = R4 无事可做 = 必然零 issue**，而那个零和「这一章没问题」\n"
-            "在终端上一模一样。不让它冒充体检报告。"
-        )
 
     ctx = CheckContext(
         store=store,
@@ -901,6 +896,20 @@ def check(
         f"（{', '.join(c.__module__.rsplit('.', 1)[-1] for c in ALL_CHECKS)}），"
         f"{len(issues)} 条 issue。"
     )
+    if not scenes:
+        # ⚠️ **2026-08-13 之前这儿是一句 `_die`**，理由写着「没有场景块 = R4 无事可做 =
+        # 必然零 issue，不让那个零冒充体检报告」。**那句理由在「`ALL_CHECKS` 只有 R4」
+        # 的那天是对的，2026-08-02 R2/R3 进表之后就不对了**：那两条读正文，不要场景块。
+        # 而真书里没有人手写 `<!-- nh: -->`，于是这条 `_die` 的实际效果是
+        # **在整本真书上把 R2/R3 全部挡在门外**——一句为了防「假的零」而写的话，
+        # 最后造出的是「一条都跑不了」。
+        # 约束 8 的那半条原样保留，只是换了形态：不拒绝，**把那个零的成色说出来**。
+        typer.secho(
+            "  这一章没有场景块，所以「同一章两个地点」那条没东西可查"
+            "（它读的是你写的场景块，不读正文）；另外两条读的是正文，照跑。",
+            fg=typer.colors.CYAN,
+            err=True,
+        )
     if not issues:
         return
     for issue in issues:
@@ -1289,7 +1298,7 @@ def _issue_text(issue: Issue) -> str:
 # nh declare —— 作者的声明入口
 # ══════════════════════════════════════════════════════════════════════════
 #
-# **这七条子命令里没有一个 `--chapter` / `--valid-from` / `--since` / `--at`，
+# **这九条子命令里没有一个 `--chapter` / `--valid-from` / `--since` / `--at`，
 # 一个 int 型参数都没有。** 作者敲的只有一句引语；章号是「这句引语落在哪一章」的产物
 # （§5.9 / 约束 10）。`tests/test_no_chapter_input.py` 把这条钉成 CI 断言——它拦的不是
 # 笔误，是那个「加个 --chapter 让作者自己挑不就完了」的下午。
@@ -1536,6 +1545,69 @@ def declare_where(
     except (ValueError, StoreError) as exc:
         _die(f"✗ 拒绝：{_reason(exc)}")
     _echo_declaration(decl, store, project)
+
+
+@declare_app.command("dead")
+def declare_dead(
+    who: str = typer.Option(..., "--who", help="谁（称呼原文）"),
+    quote: str = typer.Option(..., "--quote", help="从正文里**复制**的、他死了的那句话"),
+    db: Path = typer.Option(..., "--db", help="SQLite 库"),
+    project: str = typer.Option(..., "--project", "-p", help="project_id"),
+) -> None:
+    """「他在这段原文里死了」。这一条之后，`nh check` 才查得出「死人还在说话」。
+
+    引擎存的是一个机器键，不是你写的那个词——所以「陨落 / 坐化 / 兵解」怎么写都行，
+    规则一个字都不去猜（它只认那个键）。生死这个维度由引擎自己建，你不用管它。
+    """
+    ledger, store = _ledger(db, project)
+    try:
+        decl = ledger.declare_dead(who=who, quote=quote)
+    except DeclarationRefused as exc:
+        _die_refused(exc)
+    except (ValueError, StoreError) as exc:
+        _die(f"✗ 拒绝：{_reason(exc)}")
+    # 生死维度**不在花名册里**（`CANONICAL_ALIAS_LABELS` 排除 StateDim），所以
+    # `_node_names` 认不出这条边的 dst，回执会把一个裸 node id 摆在作者脸上。
+    # 这里按 dim_key 现问一次拿它此刻的显示名（幂等，那个节点上一行刚建过），
+    # 而不是印 `HEALTH_DIM_NAME` ——作者改过名的话那就是一个假名字。
+    dim = store.ensure_state_dim(project, HEALTH_DIM_KEY, HEALTH_DIM_NAME)
+    for line in _declaration_lines(decl, {**_node_names(store, project), dim.id: dim.name}):
+        typer.echo(line)
+    typer.secho(
+        f"  从第 {decl.valid_from} 章起，他再有对话标签，nh check 会报出来。",
+        fg=typer.colors.CYAN,
+        err=True,
+    )
+
+
+@declare_app.command("appears")
+def declare_appears(
+    of: str = typer.Option(..., "--of", help="谁 / 什么（称呼原文）"),
+    quote: str = typer.Option(..., "--quote", help="从正文里**复制**的、他头一回露面的那句话"),
+    db: Path = typer.Option(..., "--db", help="SQLite 库"),
+    project: str = typer.Option(..., "--project", "-p", help="project_id"),
+) -> None:
+    """「他在这段原文里头一回露面」。这一条之后，`nh check` 才查得出提前出场。
+
+    **这句引语在哪一章，他就是在哪一章登场**——你没有输入过那个数字，也没有一个旗标
+    能让你输入它。往前的章节里再出现这个名字，就是一次提前出场。
+    """
+    ledger, _store = _ledger(db, project)
+    try:
+        first = ledger.declare_first_appearance(of=of, quote=quote)
+    except DeclarationRefused as exc:
+        _die_refused(exc)
+    except (ValueError, StoreError) as exc:
+        _die(f"✗ 拒绝：{_reason(exc)}")
+    typer.echo(f"✓ 「{first.node.name}」的首次登场记在第 {first.chapter} 章")
+    if first.previous_chapter is not None and first.previous_chapter != first.chapter:
+        # 不印的话，改掉一个旧答案和第一次声明长得一模一样，而旧的那个在库里没有第二份。
+        typer.echo(f"  （原来记的是第 {first.previous_chapter} 章，这次改掉了）")
+    typer.secho(
+        "  这个数是从你给的那句原文算出来的，你没有输入过它。",
+        fg=typer.colors.CYAN,
+        err=True,
+    )
 
 
 if __name__ == "__main__":

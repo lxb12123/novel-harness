@@ -66,6 +66,7 @@ from ..graph import (
     GraphVersion,
     InformationScope,
     NodeLabel,
+    NodeProps,
     NodeRef,
     SecretDetail,
 )
@@ -993,6 +994,33 @@ class DeclareNodeBody(BaseModel):
     sub_of: str | None = None
     """仅 label=Secret：父秘密的**称呼原文**（拆子事实用）。"""
 
+    first_appears_chapter: int | None = Field(default=None, ge=1)
+    """**「还没写到」的那一半**：这个东西要到第 K 章才头一回出现（R2 FUTURE_LEAK 读它）。
+
+    ── 这一个数为什么是作者填的，而约束 10 说他永不填章号 ────────────────────
+
+    两者不冲突，因为它们是两类数：
+
+    - `valid_from` 是**回忆**（「这条关系从第几章开始有效」）。他不记得，会填 1，
+      而填错的产物是一条在面板上长得完全正常的坏边——所以它只由证据决定（约束 10）。
+    - 首现章是**决定**（「幽泉窟我打算第 200 章才让它出场」）。这个信息**物理上不在
+      已写文本里**（ADR 0004：墙上那把枪是不是伏笔，取决于他第 200 章打不打算开枪），
+      没有任何证据推得出它。同 PLANNED 边的 `valid_from`——001_init.sql 那句
+      「那不是回忆是决定」说的就是这类。`NodeProps.first_appears_chapter` 和
+      `ForbiddenEntity.first_appears_chapter` 两处 docstring 都写着「作者声明的」。
+
+    **已经写到了的那一半不走这里**：`POST …/declare/first-appearance` 收一句引语、
+    自己算出那是第几章（`Ledger.declare_first_appearance`）。**能由证据决定的，
+    一律由证据决定**——这个字段只接它够不着的那部分。
+
+    ⚠️ **浏览器上今天没有它的输入框，那是待裁决不是漏掉。**
+    `tests/test_canon_edit_boundary.py::test_no_screen_in_the_whole_workbench_posts_a_chapter`
+    是一条**零基线**守卫：全前端一个 `<input type="number">` 都不许多、请求体里一个
+    撞 `chapter` 的键都不许有。上面那段论证要变成一个输入框，得由人在那条守卫的
+    docstring 里逐个点名放行（那份文件的原话：「不是加一个开口」）。
+    在那之前，这个字段只有 HTTP 调用方能用。
+    """
+
 
 class DeclareAliasBody(BaseModel):
     of: str
@@ -1017,6 +1045,16 @@ class DeclareBelievesBody(BaseModel):
 class DeclareWhereBody(BaseModel):
     who: str
     loc: str
+    quote: str
+
+
+class DeclareDeadBody(BaseModel):
+    who: str
+    quote: str
+
+
+class DeclareFirstAppearanceBody(BaseModel):
+    of: str
     quote: str
 
 
@@ -1050,7 +1088,20 @@ def declare_node(
     if body.label is NodeLabel.SECRET:
         parent_id = _resolve_parent_secret(store, proj.id, body.sub_of) if body.sub_of else None
         secret = SecretDetail(description=body.description, sub_of=parent_id)
-    node = ledger.declare_node(body.label, body.name, aliases=body.aliases, secret=secret)
+    node = ledger.declare_node(
+        body.label,
+        body.name,
+        aliases=body.aliases,
+        # `declare_node` 的 props 是 patch（`exclude_unset`）：`None` = 一个字段都不动，
+        # 给了这一个 = 只盖这一个。别在这里传 `NodeProps()` ——那读起来像「没给」，
+        # 但它会被当成一次显式的空 patch。
+        props=(
+            NodeProps(first_appears_chapter=body.first_appears_chapter)
+            if body.first_appears_chapter is not None
+            else None
+        ),
+        secret=secret,
+    )
     return _narrowed(node, None)
 
 
@@ -1127,6 +1178,40 @@ def declare_where(
     return ledger.declare_where(who=body.who, loc=body.loc, quote=body.quote).model_dump(
         mode="json"
     )
+
+
+@app.post("/api/projects/{project_id}/declare/death")
+def declare_dead(
+    body: DeclareDeadBody,
+    ledger: Ledger = Depends(get_ledger),
+) -> Any:
+    """「他在这段原文里死了」。**R3 DEAD_SPEAKS 的唯一生产写入方。**
+
+    这条路由之前，`StateSnapshot.is_dead` 在生产上恒为 False：`EdgeProps.value_key`
+    零写入方、`StateDim` 零创建路径，于是「死人还在说话」结构上永远查不出来。
+
+    章号照旧由引语算（`Declaration.valid_from`）。生死这个维度由引擎自己建
+    （`ensure_state_dim`），请求体里没有它——它是引擎的内部结构，不该出现在作者填的表单里
+    （同 `AUTHORED_LABELS` 有意不含 StateDim 的那条理由）。
+    """
+    return ledger.declare_dead(who=body.who, quote=body.quote).model_dump(mode="json")
+
+
+@app.post("/api/projects/{project_id}/declare/first-appearance")
+def declare_first_appearance(
+    body: DeclareFirstAppearanceBody,
+    ledger: Ledger = Depends(get_ledger),
+) -> Any:
+    """「他/它在这段原文里头一回露面」→ 首现章。**R2 FUTURE_LEAK 的作者入口。**
+
+    **请求体里没有章号，也不该有**：首现章 = 这句引语落在哪一章，系统自己算
+    （约束 10 在这条路由上和 `declare/knows` 是同一套）。已经写到了的东西一律走这条；
+    还没写到的（「第 200 章才出场」）没有引语可指，那一半在 `POST /nodes` 的
+    `first_appears_chapter` 字段上，见那儿的说明。
+
+    出参是 `FirstAppearance`：节点已是窄引用（`NodeRef`），不含 props，无需再收窄。
+    """
+    return ledger.declare_first_appearance(of=body.of, quote=body.quote).model_dump(mode="json")
 
 
 @app.post("/api/projects/{project_id}/chapters/{chapter}/check")

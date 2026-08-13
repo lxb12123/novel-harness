@@ -73,8 +73,8 @@ def check(ctx: CheckContext) -> list[Issue]:
                     f"第 {ctx.chapter} 章正文里不该出现。"
                 ),
                 suggested_action=(
-                    f"如果它该在此刻出场，把它的 first_appears_chapter 改到 ≤ {ctx.chapter}；"
-                    "否则删掉这次提前提及。"
+                    f"如果它本来就该在这里出现，去它头一回露面的那一段，"
+                    f"把那句原文记成它的首次登场；否则删掉第 {ctx.chapter} 章这次提前提及。"
                 ),
             )
         )

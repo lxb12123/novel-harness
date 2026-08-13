@@ -78,6 +78,23 @@ class DecisionKind(StrEnum):
     """KNOWS 和 BELIEVES 共用这一个：哪一条在 `payload["edge_type"]` 里。"""
 
     LOCATED_DECLARE = "located_declare"
+
+    STATE_DECLARE = "state_declare"
+    """作者声明「他在这段原文里死了」（`HAS_STATE` → 生死维度）。R3 DEAD_SPEAKS 读它。
+
+    和 `LOCATED_DECLARE` 分开而不是共用一个「边声明」：重放时要知道这一条落在哪个维度上，
+    而那个信息在 `payload["dim_key"]` 里——共用一个 kind 就得靠读 payload 才分得开，
+    那正是 §5.7 让 kind 存在的理由。
+    """
+
+    FIRST_APPEARANCE_DECLARE = "first_appearance_declare"
+    """作者声明「他在这段原文里头一回露面」（写 `node.props.first_appears_chapter`）。
+
+    **这一条不是一条边**，所以它没有 evidence 行——`evidence` 是给时态边的，而节点不是
+    时态的。日志里那句引语和它算出来的章号就是它的全部依据（`payload["quote"]` 由
+    `quote_sha256` 承载，章号在 `chapter_number` 列上）。
+    """
+
     PROPOSAL_REVIEW = "proposal_review"
 
     KNOWLEDGE_EDIT = "knowledge_edit"

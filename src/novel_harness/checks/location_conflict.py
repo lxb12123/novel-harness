@@ -91,9 +91,9 @@ def check(ctx: CheckContext) -> list[Issue]:
                     anchor=TextAnchor(para_index=scene.para_index, quote_text=scene.decl_text),
                     message=_message(scene.number, character, declared, actual, since, ctx.chapter),
                     suggested_action=(
-                        f"把场景 {scene.number} 的 loc 改成「{actual.name}」，"
-                        f"或者在第 {ctx.chapter} 章为{character.name}声明一条到「{declared.name}」"
-                        f"的 LOCATED_AT"
+                        f"把场景 {scene.number} 里写的地点改成「{actual.name}」，"
+                        f"或者在第 {ctx.chapter} 章里找到他到「{declared.name}」的那句原文，"
+                        f"把{character.name}的去处记到那儿"
                     ),
                 )
             )

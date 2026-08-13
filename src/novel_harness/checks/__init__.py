@@ -11,6 +11,20 @@
 M3 的生死线是「真书连续 20 章误报 < 1 条/章 **且** 合成小册子真阳性 ≥ 22/25」。
 双边门槛的存在理由：**沉默的工具死得比吵闹的工具更快，只是死得更安静，而且指标
 不会告诉你它死了**（§6 fatal #7）——所以「先只上 R4」在 M0 是对的，在 M3 不是。
+
+⚠️ **「落地」曾经不等于「开得了火」，这条要写在最前面。** R2/R3 从 2026-08-02 起
+每天绿着，而在 2026-08-13 之前它们在**生产上结构性地不可能报出任何东西**：
+`first_appears_chapter` 没有写入方（`POST /nodes` 的请求体里没有它、`cli._declare_node`
+不传 props）、`EdgeProps.value_key` 没有写入方（于是 `is_dead` 恒为 False）、
+`StateDim` 没有创建路径。三条规则里作者只可能查出 R4 一种问题。
+那次「双边门槛已过」量的是 `synth/m3_replay.py` 的 `OverlayGraph`——它在**内存里**
+补上这些边界数据，一条都没穿过写路径。
+
+补法是三条作者入口（`nh declare dead` / `nh declare appears` + 两条同名 HTTP +
+`POST /nodes` 的 `first_appears_chapter`），钉住它的是
+`tests/test_rules_fire.py`：**每一个字都从 HTTP 进去**，先断言「什么都没声明时两条规则
+是哑的」，再断言它们各自报出一条。**规则本身一行没改**（除了那两句建议语的措辞）——
+这一课是「一条规则写完了、测试绿着，和它在产品里能开火，是两件事」。
 """
 
 from __future__ import annotations

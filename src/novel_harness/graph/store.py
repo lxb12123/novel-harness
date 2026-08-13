@@ -478,6 +478,60 @@ class CanonWriter(Protocol):
         """
         ...
 
+    def set_first_appearance(self, project_id: str, node_id: str, chapter: int) -> Node:
+        """写 `node.props.first_appears_chapter`，**其余 props 一个字段都不动**。
+
+        为什么不是调用方一句 `upsert_node`：`upsert_node` 撞上幂等键时是
+        `UPDATE props_json = :props`——**整列覆盖**。于是「给顾清音标一下首现章」
+        会把抽取写进去的 `gender` / `personality` / `background` 悄悄抹掉，
+        而没有任何一步会报错。这里走的是 merge（同 `EventStore.update_profile`）。
+
+        `chapter` 的血统由调用方负责，且今天只有一条：`declare.Ledger
+        .declare_first_appearance` 把它取自**引语定位到的那一章**（约束 10——
+        作者说的是「他在这段原文里头一回露面」，不是一个数字）。
+        `POST /nodes` 的 `first_appears_chapter` 是另一条：那一条给的是**还没写到**
+        的实体（第 200 章才首现的幽泉窟），它没有引语可指，见那个字段的说明。
+
+        Raises:
+            NodeNotFound: `node_id` 不在本项目。
+        """
+        ...
+
+    def ensure_state_dim(self, project_id: str, dim_key: str, name: str) -> Node:
+        """拿到这个项目里 `props.dim_key == dim_key` 的那个 StateDim，没有就建一个。
+
+        ── 为什么它是一个方法，而不是调用方两句 `upsert_node` ────────────────
+
+        `upsert_node` 的幂等键是 `(project_id, label, name)`，而 StateDim 的身份是
+        **`dim_key`**（`idx_state_dim_key` 是 UNIQUE，`state_at` 按它分组、
+        `is_dead` 按它比对）。两者不是一回事：作者把「生死」改名成「健康」之后，
+        `upsert_node(name="生死")` 会去 INSERT 第二行，撞上那条 UNIQUE 索引，
+        给调用方一个读不懂的 IntegrityError。**按名字找一个按键定身份的东西，
+        是一条平时全绿、改过名才炸的路。**
+
+        ── 为什么它在写入面上（`CanonWriter`），而不是一个 `get_state_dim` 读端 ──
+
+        「查完再建」是两次调用之间的一条缝：并发下两边都查到 None，第二次 INSERT 撞
+        UNIQUE。收敛成一个方法，调用方**在物理上**写不出那条缝——同 `upsert_edge`
+        把 supersede 关在里面的理由。
+
+        `name` 只在**建第一条时**用（见 `HEALTH_DIM_NAME`）：已经存在时原样返回，
+        **绝不改名**——作者改过的显示名不该被一次声明悄悄改回去。
+
+        今天唯一的调用方是 `declare.Ledger.declare_dead`（R3 DEAD_SPEAKS 要
+        `dim_key='health'` 的那条 HAS_STATE 边）。**这是 ADR 0005 增长规则的一次合法
+        加法，不是通用的「按 props 找节点」**：开那个口子等于把 SQL 换个地方泄漏出去。
+
+        Returns:
+            落库后的 StateDim 节点。它**没有** canonical 别名
+            （`CANONICAL_ALIAS_LABELS` 里没有 StateDim），所以不进花名册、
+            不会被 `mentions.py` 拿去匹配正文。
+
+        Raises:
+            StoreError: 同一个 `dim_key` 撞出多行（`idx_state_dim_key` 让它不该发生）。
+        """
+        ...
+
     def add_alias(self, spec: AliasSpec) -> StoredAlias:
         """给一个节点加一个称呼。**canonical 不走这里**（见 `AliasSpec` 的 validator）。
 

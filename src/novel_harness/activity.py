@@ -462,6 +462,8 @@ _KIND_LABEL: Final[dict[str, str]] = {
     "secret_declare": "登记秘密",
     "knows_declare": "声明认知",
     "located_declare": "声明位置",
+    "state_declare": "声明生死",
+    "first_appearance_declare": "声明首次登场",
     "proposal_review": "抽取结果审阅",
     "knowledge_edit": "更正认知类型",
     "event_edit": "更正事件名单",

@@ -29,7 +29,14 @@ God object 里——那个 God object 的下一步就是「顺手让 decision_lo
 
 ── M1 不做的三件事，写在这里免得下一个人以为是遗漏 ──────────────────────
 
-- `declare_state`（HAS_STATE / StateDim）：读者是 R3，R3 在 M3。
+- ~~`declare_state`（HAS_STATE / StateDim）：读者是 R3，R3 在 M3。~~ —— **2026-08-13 已做**
+  （`declare_dead`）。触发条件早就满足了：R2/R3 在 2026-08-02 就进了 `ALL_CHECKS`，
+  而生产上**一个 `value_key` 都没人写**、`StateDim` 一条创建路径都没有，于是
+  `StateSnapshot.is_dead` 恒为 False —— R3 在结构上永远不可能开火。
+  M3 那次「双边门槛已过」量的是 `synth/m3_replay.py` 在**内存里叠加**的死亡边，
+  没有一条穿过生产写路径。同批补上的还有 `declare_first_appearance`
+  （`node.props.first_appears_chapter`，R2 和 R3 的「未登场」那一半读它，
+  在此之前同样零生产写入方）。
 - `declare_related`（RELATED_TO）：读者是局部图（M5）和 R5，而 R5 的生死还压在
   `scripts/probe_speaker_tags.py` 那条探针上。
 - `nh declare foreshadow` / PLANNED 边（PLANTED_IN / RESOLVED_IN）：**两条理由，
@@ -46,9 +53,9 @@ God object 里——那个 God object 的下一步就是「顺手让 decision_lo
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractContextManager
-from typing import Final
+from typing import Any, Final
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -56,6 +63,8 @@ from . import decisions, project
 from .db import Connection
 from .decisions import DecisionKind, Verdict
 from .graph import (
+    HEALTH_DIM_KEY,
+    HEALTH_DIM_NAME,
     AliasKind,
     AliasSpec,
     Edge,
@@ -66,6 +75,7 @@ from .graph import (
     Evidence,
     EvidenceSpec,
     GraphStore,
+    HealthValue,
     InformationScope,
     Node,
     NodeLabel,
@@ -79,6 +89,14 @@ from .text import anchor
 
 CONTEXT_RADIUS: Final = 15
 """`QuoteCandidate.context` 在命中处前后各留的字数。**只影响拒绝消息，不影响任何锚。**"""
+
+DEAD_VALUE_TEXT: Final = "死"
+"""`declare_dead` 写进 `EdgeProps.value` 的那个字。**给人看的，规则不许解析它。**
+
+它是常量而不是一个参数，理由是「作者写什么词」和「规则怎么判」必须彻底分开：
+判据只有 `value_key`（`HealthValue.DEAD`）。哪天要让作者填「陨落 / 坐化 / 兵解」，
+加的是一个**只影响这一行显示**的可选参数，`value_key` 那一侧一个字都不许动。
+"""
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -215,6 +233,29 @@ class Declaration(BaseModel):
         return self.evidence.chapter_number
 
 
+class FirstAppearance(BaseModel):
+    """一次成功的「首现章」声明。**不是 `Declaration`**：它没有边，也没有证据行。
+
+    出参是 `NodeRef` 不是 `Node`（`graph.models.NodeRef` 的完整论证）：这条声明最常用在
+    「还没登场」的东西上，而那类节点的 props 里装的正是关于未来的东西。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    node: NodeRef
+    chapter: int
+    """算出来的首现章。**作者没有输入过它**——它是「这句引语落在哪一章」的产物。"""
+
+    previous_chapter: int | None = None
+    """改之前的值。`None` = 之前没标过（也就是「一开始就在」）。
+
+    回执里带上它，是因为这条声明**会覆盖**上一次的答案，而覆盖掉的那个数
+    在库里没有第二份（节点不是时态的）。作者至少要看得见自己改掉了什么。
+    """
+
+    decision_id: str
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # Ledger
 # ══════════════════════════════════════════════════════════════════════════
@@ -249,8 +290,10 @@ class Ledger:
     ——同 `panel.constraints.resolve_cast` 收 `cast` 的形状（ARCHITECTURE §10.5 第 1 条）：
     调用方**没有机会**把歧义的「师兄」偷偷解析成第一个候选，因为它根本拿不到候选。
 
-    `declare_node` / `declare_alias` **没有 `quote` 参数**：节点不是时态的，只有边有
-    `valid_from`。「哪些声明要引语」在签名上因此是自明的——要 `valid_from` 的才要引语。
+    `declare_node` / `declare_alias` **没有 `quote` 参数**：它们只是「这个东西存在」，
+    没有任何一个数要算。**判据不是「是不是边」**——`declare_first_appearance` 写的是
+    节点上的一个属性，它照样收引语，因为它要算的那个数（首现章）同样只能由证据决定。
+    所以这条纪律的正确说法是：**签名里出现章号那一类的数，就必须收引语**（约束 10）。
     """
 
     def __init__(self, store: GraphStore, conn: Connection, project_id: str) -> None:
@@ -280,6 +323,22 @@ class Ledger:
             if hit.node.label is label and hit.node.name == name
         }
         return next(iter(matches.values())) if len(matches) == 1 else None
+
+    @staticmethod
+    def _patched_props(previous: Node | None, props: NodeProps | None) -> NodeProps:
+        """已有节点上的 props + 调用方**显式给过**的那几个字段。见 `declare_node`。
+
+        `exclude_unset` 是判据：`NodeProps` 的每个字段默认值都是 `None`，不这么读的话
+        「没提到 gender」和「把 gender 清空」在类型上完全一样，而前者是常态、
+        后者今天没有任何调用方。
+        """
+        if previous is None:
+            return props or NodeProps()
+        if props is None:
+            return previous.props
+        return NodeProps.model_validate(
+            {**previous.props.model_dump(), **props.model_dump(exclude_unset=True)}
+        )
 
     def _edge_by_identity(self, spec: EdgeSpec) -> Edge | None:
         """Find the stored Canon edge an idempotent upsert would update, lifecycle included."""
@@ -356,6 +415,15 @@ class Ledger:
 
         `label is SECRET` 时 `secret` 必须给（`NodeSpec` 的 validator 强制：没有 secret 行
         的 Secret 节点在认知矩阵的默认列序里不成列）。
+
+        ── `props` 是 patch 不是替换，且这条不是洁癖 ─────────────────────────
+
+        `upsert_node` 撞上幂等键时是 `UPDATE props_json = :props`——**整列覆盖**。
+        于是「再声明一次萧决，顺便标上首现章」会把抽取写进去的 `gender` /
+        `personality` / `background` 悄悄抹掉，而没有任何一步会报错。
+        这里只把**调用方显式给过的那几个字段**盖上去（`exclude_unset`，同
+        `EventStore.update_profile` 收 `CharacterProfilePatch` 的形状），
+        `props=None` 因此是「一个字段都不动」，不是「清空」。
         """
         with self._canon_transaction():
             current_version = project.require_canon_version(
@@ -367,7 +435,7 @@ class Ledger:
                     project_id=self._project_id,
                     label=label,
                     name=name,
-                    props=props or NodeProps(),
+                    props=self._patched_props(previous, props),
                     secret=secret,
                 )
             )
@@ -489,6 +557,100 @@ class Ledger:
             quote=quote,
         )
 
+    def declare_dead(self, *, who: str, quote: str) -> Declaration:
+        """「他在这段原文里死了」。R3 DEAD_SPEAKS 的**唯一生产写入方**。
+
+        ── 三件必须一起发生的事，所以它们在一个方法里 ────────────────────────
+
+        1. **生死维度得存在。** `StateDim` 是引擎的内部结构，作者不该、也没有入口手工
+           建它（`AUTHORED_LABELS` 里没有它，那是有意的）。所以由这里
+           `ensure_state_dim(HEALTH_DIM_KEY, …)` ——**按键不按名**，理由见那个方法。
+        2. **边上要有机器键。** `EdgeProps.value_key = 'dead'` 是 `is_dead` 的判据；
+           `value` 那个中文只给人看。**R3 永远不许去解析它**（死 / 陨落 / 坐化 / 兵解 ——
+           那是「这句话是什么意思」，撞 ADR 0005 的铁律）。`value_key` 由引擎写死，
+           不是从作者的字里认出来的，这条铁律才在结构上成立。
+        3. **章号由引语算。** 走的是 `_declare_edge` 那唯一一处赋值（§5.9 / 约束 10）。
+
+        `HAS_STATE` 的 exclusivity 是 `single_per_src_dst`，所以同一个维度上的旧值
+        （比如上一次声明的状态）会被自动闭合，`Declaration.closed` 如实报告。
+
+        **没有配对的「他活过来了」**：`HealthValue.ALIVE` 今天没有写入方。加它之前先想清楚
+        「撤销一次说错了的死亡」和「他真的复活了」是两件事——前者是 `corrections.py`
+        那一摊（撤回 + 写新的），后者才是这里的第二个动词。
+        """
+        src = self._resolve_one(who, want=NodeLabel.CHARACTER)
+        dim = self._store.ensure_state_dim(self._project_id, HEALTH_DIM_KEY, HEALTH_DIM_NAME)
+        return self._declare_edge(
+            kind=DecisionKind.STATE_DECLARE,
+            src=src,
+            dst=dim,
+            type=EdgeType.HAS_STATE,
+            props=EdgeProps(value=DEAD_VALUE_TEXT, value_key=HealthValue.DEAD),
+            typed_surface=who,
+            quote=quote,
+            extra_payload={"dim_key": HEALTH_DIM_KEY, "value_key": HealthValue.DEAD.value},
+        )
+
+    # ── 节点上的「首现章」（不是边，所以不在上面那一组里）────────────────────
+
+    def declare_first_appearance(self, *, of: str, quote: str) -> FirstAppearance:
+        """「他/它在这段原文里头一回露面」→ `node.props.first_appears_chapter`。
+
+        R2 FUTURE_LEAK 和 R3 的「未登场角色开口说话」都读这个字段，而在这条方法之前
+        **生产上没有任何东西写它**：两条规则于是结构上永远不可能开火。
+
+        ── 为什么它收引语，不收一个数字 ──────────────────────────────────────
+
+        因为它可以。首现章是「这个名字头一回出现在正文里」——那**是**一件有原文可指的事，
+        所以约束 10 的那套照旧成立：作者从稿子里复制那句话，系统自己算出那是第几章，
+        签名里没有一个位置能让他敲数字。
+
+        **它够不着的那一半**：还没写到的实体（「幽泉窟第 200 章才首现」）没有引语可指——
+        那个数只可能是作者的一次**决定**（同 PLANNED 的 `valid_from`，001_init.sql：
+        「那不是回忆是决定」）。那条路今天只有 `POST /nodes` 的
+        `first_appears_chapter` 字段，**浏览器上没有它的输入框**，而那是一个待裁决的
+        产品问题，不是一个漏掉的表单——见那个字段的说明。
+
+        ── 它不写 evidence 行 ────────────────────────────────────────────────
+
+        `evidence` 是给时态**边**的（`valid_from` 靠它），而这里改的是节点的一个属性，
+        节点不是时态的。依据落在 `decision_log` 那条不可变记录上（引语 + 章号 + 段号）。
+        """
+        node = self._resolve_one(of)
+        cand = self._one_candidate(quote)
+        with self._canon_transaction():
+            current_version = project.require_canon_version(self._conn, self._project_id)
+            previous = node.props.first_appears_chapter
+            updated = self._store.set_first_appearance(
+                self._project_id, node.id, cand.chapter_number
+            )
+            if previous != updated.props.first_appears_chapter:
+                self._bump_canon(current_version)
+        decision = decisions.append(
+            self._conn,
+            project_id=self._project_id,
+            kind=DecisionKind.FIRST_APPEARANCE_DECLARE,
+            decision=Verdict.ACCEPT,
+            subject_name=node.name,
+            # 定位后的原文子串，不是作者敲的那个串（同 `_declare_edge`，同一条理由）。
+            quote_text=cand.matched_text,
+            chapter_number=cand.chapter_number,
+            para_index=cand.para_index,
+            payload={
+                "node_id": node.id,
+                "label": node.label.value,
+                "typed_surface": of,
+                "occurrence_k": cand.occurrence_k,
+                "previous": previous,
+            },
+        )
+        return FirstAppearance(
+            node=NodeRef.of(updated),
+            chapter=cand.chapter_number,
+            previous_chapter=previous,
+            decision_id=decision.id,
+        )
+
     def _declare_edge(
         self,
         *,
@@ -499,8 +661,13 @@ class Ledger:
         props: EdgeProps,
         typed_surface: str,
         quote: str,
+        extra_payload: Mapping[str, Any] | None = None,
     ) -> Declaration:
-        """上面三个声明的**唯一实现**。
+        """上面四个声明的**唯一实现**。
+
+        `extra_payload` 只往 `decision_log` 的 payload 里加键（`declare_dead` 用它记
+        `dim_key` / `value_key`）。**它加不了 `valid_from` 那一类东西**——payload 是给
+        重放读的旁注，边上写什么由上面那几行决定。
 
         为什么它必须只有一份：与 `graph/queries.py` 的时态过滤同理——写第二遍的那一次
         会忘掉「多于一个命中就拒绝」，而那条忘记的产物是一条 `valid_from` 错了的 CANON 边。
@@ -605,6 +772,7 @@ class Ledger:
                 "typed_surface": typed_surface,
                 "evidence_id": ev.id,
                 "occurrence_k": ev.relocate.occurrence_k,
+                **dict(extra_payload or {}),
             },
         )
         return Declaration(

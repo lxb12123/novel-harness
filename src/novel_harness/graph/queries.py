@@ -409,6 +409,32 @@ def find_node_by_name(
     return [to_node(r) for r in _rows(cur)]
 
 
+def find_state_dim(conn: sqlite3.Connection, project_id: str, dim_key: str) -> list[Node]:
+    """按 `props.dim_key` 找 StateDim。**它才是这类节点的身份**（`node.name` 是显示名，
+    作者随时会把「生死」改成「健康」）。
+
+    判据写成 `label='StateDim' AND json_extract(props_json,'$.dim_key') = :key`，
+    与 `idx_state_dim_key` 那条 UNIQUE 索引**同一个表达式**——写成别的形状
+    （比如先取全部 StateDim 再在 Python 里比）就用不上那条索引，而且会和索引的
+    唯一性判据漂开。
+
+    返回 `list` 而不是 `Node | None`，理由同 `find_node_by_name`：
+    索引建立之前进来的行让「撞出两行」在物理上仍是可能的，而那是一个 StoreError
+    （`is_dead` 的 `any()` 会让 dead 永远压过 alive），不是「那就再建一个」。
+    """
+    cur = conn.execute(
+        f"""
+        SELECT {_NODE_COLS} FROM node
+        WHERE project_id = :pid
+          AND label = :label
+          AND json_extract(props_json, '$.dim_key') = :key
+        ORDER BY id
+        """,
+        {"pid": project_id, "label": NodeLabel.STATE_DIM.value, "key": dim_key},
+    )
+    return [to_node(r) for r in _rows(cur)]
+
+
 def insert_node(
     conn: sqlite3.Connection,
     node_id: str,

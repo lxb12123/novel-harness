@@ -285,7 +285,7 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 
 ## 当前状态
 
-**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2570 个 pytest + 560 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
+**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2586 个 pytest + 560 个 vitest 全绿，`.sql` 和前端产物都在 wheel 里）：
 
 > **本节的数字是全仓唯一副本，且 `tests/test_doc_numbers.py` 会拦住第二份。**
 > `README.md` / `CLAUDE.md` / `frontend/README.md` 里只留指针，不许再抄一份数字过去。
@@ -296,8 +296,8 @@ R1/R4 完全不读正文，它们是零 FP 的核心。R2/R3 读正文但限定�
 > 列在「还一个字符都没有」里——照它排期的人会去重写已完成的工作。
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
-> 守卫钉住的是**能在运行时数出来**的那些（63 条路由 / 62 条 /api / 1 条 501 stub /
-> 19 个错误映射 / 18 个子命令 / 24 张表 / 64 个端点 / `ALL_CHECKS` 3），
+> 守卫钉住的是**能在运行时数出来**的那些（65 条路由 / 64 条 /api / 1 条 501 stub /
+> 19 个错误映射 / 20 个子命令 / 24 张表 / 64 个端点 / `ALL_CHECKS` 3），
 > 改错必红、**删掉也必红**（不静默 skip）。
 > （这一行 2026-08-10 之前写的是「路由 42 / fixture 端点 34」那种词序，
 > **而守卫的正则认的是「N 条路由」「N 个端点」**——于是它躺在被守卫盯着的那一节里、
@@ -365,12 +365,46 @@ extract/auto_canon.py                             ← 没进三个例外 bucket 
 panel/{knowledge,state,constraints}.py          ← 认知矩阵（头牌）+ PLANNED 进 prompt 的唯一闸门
 checks/{base,location_conflict,future_leak,dead_speaks}.py
                                                   ← R2/R3/R4（R5 已砍；`ALL_CHECKS` 共三条）
+                                                  ⚠️ **R2/R3 在 2026-08-13 之前生产上开不了火**：
+                                                  它们读的三样东西（`first_appears_chapter` /
+                                                  `EdgeProps.value_key` / `StateDim` 节点）
+                                                  **写入方全为零**，于是 `is_dead` 恒 False、
+                                                  「本章尚未登场」恒空——作者点「检查本章」
+                                                  只可能查出 R4。规则本身没错也没改；
+                                                  缺的是入口。M3 那次门槛量的是
+                                                  `synth/m3_replay.py` 在**内存里**叠加的
+                                                  边界数据，没穿过写路径。
+                                                  现在两条规则各有一次真开火，钉在
+                                                  `tests/test_rules_fire.py`（全程走 HTTP）
 text/{anchor,chapterize,scenes,mentions}.py     ← (para_index,quote,k) 唯一定义 / 切章 / 场景块 / 称呼匹配
 declare.py  importer.py                         ← M1 声明层：引语定章号 + 证据链 + CanonWriter
-cli.py                                          ← nh 的 18 个子命令（含 `nh serve` / `nh gate` / `nh draft` / `nh summarize`）
+                                                  2026-08-13 多两个动词，**都只收称呼 + 引语**：
+                                                  `declare_dead`（HAS_STATE → 生死维度，
+                                                  维度由 `ensure_state_dim` 按 `dim_key` 建，
+                                                  `value_key` 由引擎写死——R3 因此永远不必去解析
+                                                  「陨落 / 坐化 / 兵解」，ADR 0005 铁律不破）+
+                                                  `declare_first_appearance`（写
+                                                  `node.props.first_appears_chapter`，
+                                                  **章号照旧由引语算**：它不是边，所以没有
+                                                  evidence 行，依据在 `decision_log` 上）。
+                                                  `declare_node` 的 `props` 同日改成 patch
+                                                  （`exclude_unset`）——原来是整列覆盖，
+                                                  「再声明一次顺便标个首现章」会把抽取写进去的
+                                                  人物档案静默抹掉
+cli.py                                          ← nh 的 20 个子命令（含 `nh serve` / `nh gate` / `nh draft` / `nh summarize`；
+                                                  2026-08-13 多两条**声明**：`nh declare dead` /
+                                                  `nh declare appears`，都只收称呼 + 引语，
+                                                  一个 int 型参数都没有）。
+                                                  同日 `nh check` **不再因为「这一章没有场景块」
+                                                  整条拒绝**：那句 `_die` 的理由（「没有场景块 =
+                                                  R4 无事可做 = 必然零 issue」）在 R2/R3 进表之后
+                                                  就不成立了，而真书里没人手写 `<!-- nh: -->`，
+                                                  于是它的实际效果是在整本真书上把 R2/R3 挡在
+                                                  门外。约束 8 那一半换了形态：照跑，
+                                                  **把那个零的成色说出来**（哪一条今天没东西可查）
 api/{app,deps,activity,autopilot,chat,extraction,review}.py
-                                                ← M1.5 FastAPI 壳：63 条路由 + 19 个错误映射
-                                                  （62 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
+                                                ← M1.5 FastAPI 壳：65 条路由 + 19 个错误映射
+                                                  （64 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
                                                   M4 抽取/事件读端 + 提案审阅/被动确认路由；
                                                   提案 edit + `/canon/…` 两条改正路由（corrections.py）；
                                                   活动日志两条 + `GET /runs`（2026-08-10 由 501 点亮）；
@@ -1103,6 +1137,46 @@ R4 之外，R2（未来实体提前出现）和 R3（死人/未登场角色开�
      **带一半对照**（同一段正文经 `chapter_text` 进来就会被擦掉）。
      **别顺手照抄那个判据**：一稿不带章标题，而 `handle_chapter_text` 出的是整章、
      还可能被截断，直接比一定恒不相等 ⇒ 每一稿刚写完就被自己擦掉。
+
+8. ~~**「检查本章」只可能查出一种问题**~~ —— **2026-08-13 补上了三个入口，但留下一个
+   待裁决的半条。** 病史值得留全，因为它是本仓「最后一厘米没接」里**最安静**的一次：
+   R2 `FUTURE_LEAK` 和 R3 `DEAD_SPEAKS` 从 2026-08-02 起代码齐、测试绿、进了
+   `ALL_CHECKS`，而它们读的三样东西在生产上**写入方全为零**——
+   `NodeProps.first_appears_chapter`（`POST /nodes` 的请求体里没有它、
+   `cli._declare_node` 不传 props）、`EdgeProps.value_key`（于是
+   `StateSnapshot.is_dead` **恒为 False**）、`NodeLabel.STATE_DIM`（零创建路径：
+   `RosterDrawer` 的 `AUTHORED_LABELS` 有意排除它、迁移不种子、抽取只
+   `resolve_ids(...)` 要求它已存在）。
+   **后果是结构性的**：作者点「检查本章」永远只可能查出 R4「同一章两个地点」，
+   右栏「本章尚未登场」和 `ChapterPrepPage` 的「不能提前出现」恒显示「（无）」
+   ——**不是书干净，是没有入口能填那个字段**。而 M3 那次「双边门槛已过」量的是
+   `synth/m3_replay.py` 的 `OverlayGraph`，它在**内存里**叠加这些边界数据，
+   一条都没穿过写路径，所以那次通过与这个洞完全不矛盾。
+
+   补法是三条**作者入口**，判据是「能由证据决定的，一律由证据决定」：
+
+   | 缺的东西 | 补的入口 | 章号从哪来 |
+   |---|---|---|
+   | `first_appears_chapter`（已经写到了的） | `POST …/declare/first-appearance` + `nh declare appears` | **引语**（约束 10 原样成立） |
+   | `first_appears_chapter`（还没写到的） | `POST /nodes` 的 `first_appears_chapter` | 作者的**决定**（同 PLANNED 的 `valid_from`，「那不是回忆是决定」） |
+   | `value_key` + `StateDim` | `POST …/declare/death` + `nh declare dead` | **引语** |
+
+   同批挖出**第四个断点，而且它在前三个下游**：`StateSnapshot.is_dead` 是一个
+   `@property`，而 `model_dump()` **从不输出 property**——`frontend/src/api/types.ts`
+   里早写着 `is_dead: boolean`、`StateCards.tsx` / `ChapterPrepPage.tsx` 也早在渲染
+   那个「· 已亡」，可那个键在浏览器里恒为 `undefined`，角标一次都没画出来过。
+   `tsc` 和 vitest 都看不见它：契约夹具是从真 app dump 的，**真 app 就没发过这个键，
+   两头一致地缺**。改成 `computed_field` 之后夹具要重新生成。
+
+   ⚠️ **留下的半条（待裁决，不是漏掉）**：「还没写到的那一半」在浏览器里**没有输入框**。
+   `tests/test_canon_edit_boundary.py::test_no_screen_in_the_whole_workbench_posts_a_chapter`
+   是一条**零基线**守卫——全前端只许有一个 `<input type="number">`（起草长度那个），
+   请求体里一个撞 `chapter` 的键都不许有，而 `first_appears_chapter` 两条都撞。
+   那份文件的原话是「真出现一个正当的例外时，该做的是把那一个具体的键写进那段话里
+   说明为什么它正当，**不是**加一个开口」。所以这一格要不要画，是一次需要人签字的
+   产品裁决：**它是约束 10 那条线上第一个「作者确实得自己填一个章号」的字段**
+   （三处 docstring 都写着「作者声明的」，而它按定义没有证据可指）。
+   在有人签字之前，那一半只有 HTTP 调用方够得到。
 
 **M4 正在实现、尚未完成**：`events/` 契约与 `002_m4_events.sql` 已落地；`extract/` 已有纯
 结构化 schema、确定性 prompt、精确优先的模糊证据定位与不猜名称解析，后台 provider 调用和
