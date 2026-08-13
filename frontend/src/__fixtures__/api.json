@@ -698,6 +698,7 @@
   "characterState": {
     "chapter": 2,
     "edges": [],
+    "is_dead": false,
     "location": null,
     "node": {
       "id": "character:ID10",
@@ -1234,6 +1235,42 @@
       "revealed_facts": []
     }
   ],
+  "extractionFailed": {
+    "chapter_number": 3,
+    "created_at": "<ts>",
+    "discarded_event_count": 1,
+    "errors": [
+      "没能连上你配置的模型服务"
+    ],
+    "finished_at": "<ts>",
+    "id": "extraction_run:ID54",
+    "model_call_id": null,
+    "project_id": "project:ID1",
+    "prompt_hash": "prompt:3",
+    "proposal_count": 0,
+    "schema_version": "m4.analysis.v1",
+    "snapshot_id": "snapshot:ID49",
+    "started_at": "<ts>",
+    "status": "FAILED",
+    "valid_event_count": 3
+  },
+  "extractionRun": {
+    "chapter_number": 1,
+    "created_at": "<ts>",
+    "discarded_event_count": 1,
+    "errors": [],
+    "finished_at": "<ts>",
+    "id": "extraction_run:ID38",
+    "model_call_id": "call:ID39",
+    "project_id": "project:ID1",
+    "prompt_hash": "prompt:1",
+    "proposal_count": 2,
+    "schema_version": "m4.analysis.v1",
+    "snapshot_id": "snapshot:ID11",
+    "started_at": "<ts>",
+    "status": "SUCCEEDED",
+    "valid_event_count": 3
+  },
   "locate": [
     {
       "chapter_id": "chapter:ID12",
@@ -1561,7 +1598,7 @@
           "confidence": 0.8,
           "profile": {
             "background": "北荒旧族",
-            "character_notes": null,
+            "character_notes": "说话总带三分敬意，从不主动提北荒",
             "confidence": 0.8,
             "gender": "女",
             "personality": "隐忍",
@@ -1806,6 +1843,7 @@
           "valid_to_chapter": null
         }
       ],
+      "is_dead": false,
       "location": null,
       "node": {
         "id": "character:ID10",
@@ -1828,6 +1866,7 @@
     {
       "chapter": 2,
       "edges": [],
+      "is_dead": false,
       "location": null,
       "node": {
         "id": "character:ID8",
@@ -1891,69 +1930,91 @@
     "chapter": 12,
     "chapters": [
       {
+        "author_written": false,
         "chapter_number": 1,
         "created_at": "<ts>",
         "has_text": true,
+        "retracted": false,
         "summary": "萧决在青云城主府听说了血脉秘密。"
       },
       {
+        "author_written": false,
         "chapter_number": 2,
         "created_at": null,
         "has_text": true,
+        "retracted": false,
         "summary": null
       },
       {
+        "author_written": false,
         "chapter_number": 3,
         "created_at": null,
         "has_text": false,
+        "retracted": false,
         "summary": null
       },
       {
+        "author_written": false,
         "chapter_number": 4,
         "created_at": null,
         "has_text": false,
+        "retracted": false,
         "summary": null
       },
       {
+        "author_written": false,
         "chapter_number": 5,
         "created_at": null,
         "has_text": false,
+        "retracted": false,
         "summary": null
       },
       {
+        "author_written": false,
         "chapter_number": 6,
         "created_at": null,
         "has_text": false,
+        "retracted": false,
         "summary": null
       },
       {
+        "author_written": false,
         "chapter_number": 7,
         "created_at": null,
         "has_text": false,
+        "retracted": false,
         "summary": null
       },
       {
+        "author_written": false,
         "chapter_number": 8,
         "created_at": null,
         "has_text": false,
+        "retracted": false,
         "summary": null
       },
       {
+        "author_written": false,
         "chapter_number": 9,
         "created_at": null,
         "has_text": false,
+        "retracted": false,
         "summary": null
       },
       {
+        "author_written": false,
         "chapter_number": 10,
         "created_at": null,
         "has_text": false,
+        "retracted": false,
         "summary": null
       },
       {
+        "author_written": false,
         "chapter_number": 11,
         "created_at": null,
         "has_text": false,
+        "retracted": false,
         "summary": null
       }
     ],
@@ -1964,10 +2025,36 @@
     "window_first": 1,
     "window_last": 11
   },
-  "summaryGenerated": {
+  "summaryChapter": {
+    "author_written": false,
     "chapter_number": 1,
     "created_at": "<ts>",
     "has_text": true,
+    "retracted": false,
     "summary": "萧决在青云城主府听说了血脉秘密。"
+  },
+  "summaryEdited": {
+    "author_written": true,
+    "chapter_number": 2,
+    "created_at": "<ts>",
+    "has_text": true,
+    "retracted": false,
+    "summary": "萧决把玄铁令收进袖中，谁也没告诉。"
+  },
+  "summaryGenerated": {
+    "author_written": false,
+    "chapter_number": 1,
+    "created_at": "<ts>",
+    "has_text": true,
+    "retracted": false,
+    "summary": "萧决在青云城主府听说了血脉秘密。"
+  },
+  "summaryRetracted": {
+    "author_written": false,
+    "chapter_number": 2,
+    "created_at": null,
+    "has_text": true,
+    "retracted": true,
+    "summary": null
   }
 }
