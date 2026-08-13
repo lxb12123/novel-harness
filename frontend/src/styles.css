@@ -62,6 +62,14 @@ header button.on { border-color: var(--accent); color: var(--accent); background
   border-color: transparent; background: transparent; color: var(--dim);
 }
 .icon-btn:hover:not(:disabled) { border-color: transparent; color: var(--accent); }
+/* 两颗模式开关的托盘：**顶栏是浅灰（`--panel`），这一块是白（`--bg`）**——
+   靠这一层反差把「这两颗是一组」说出来。暗色模式下这对关系自动反过来（白变深），
+   所以写的是 token 不是 `#fff`。 */
+.mode-switch {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 2px 4px; border-radius: 8px;
+  background: var(--bg); border: 1px solid var(--line);
+}
 /* 按下去了（`aria-pressed`）：**只换颜色，不加底、不加框**。
    这一栏里「开着没有」已经由图标自己说了（书是合着还是摊开），
    底色再说一遍就是把同一句话讲两遍——而两颗按钮各挂一块紫底会比正文还抢眼。 */
