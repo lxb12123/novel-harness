@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 
 from ..db import Connection
 from ..events.models import (
+    EventCharacterRole,
     CharacterProfilePatch,
     CharacterProfileView,
     EventCastEdit,
@@ -80,8 +81,8 @@ class SqliteEventStore:
                 {*spec.participant_ids, *spec.knower_ids, *spec.revealed_fact_ids},
             )
             expected = (
-                ("participant", spec.participant_ids, NodeLabel.CHARACTER),
-                ("knower", spec.knower_ids, NodeLabel.CHARACTER),
+                (EventCharacterRole.PARTICIPANT, spec.participant_ids, NodeLabel.CHARACTER),
+                (EventCharacterRole.KNOWER, spec.knower_ids, NodeLabel.CHARACTER),
                 ("reveal", spec.revealed_fact_ids, NodeLabel.SECRET),
             )
             for role, node_ids, label in expected:

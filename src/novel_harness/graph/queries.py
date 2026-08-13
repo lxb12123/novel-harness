@@ -16,7 +16,7 @@ import sqlite3
 from collections.abc import Collection, Sequence
 from typing import Any, Final, NamedTuple
 
-from ..events.models import EventView, StoryEvent
+from ..events.models import EventCharacterRole, EventView, StoryEvent
 from .models import (
     UNDIRECTED_EDGE_TYPES,
     AliasKind,
@@ -353,8 +353,8 @@ def event_views_at(
         views.append(
             EventView(
                 event=to_story_event(row),
-                participants=list(roles.get("participant", {}).values()),
-                knowers=list(roles.get("knower", {}).values()),
+                participants=list(roles.get(EventCharacterRole.PARTICIPANT, {}).values()),
+                knowers=list(roles.get(EventCharacterRole.KNOWER, {}).values()),
                 revealed_facts=list(roles.get("reveal", {}).values()),
             )
         )
