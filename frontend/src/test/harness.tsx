@@ -55,7 +55,7 @@ export const turnStream = (receipt: unknown, events = fixtures.chatTurnEvents): 
   ...sseFrames([{ event: "receipt", data: receipt }]),
 ];
 
-// ⚠️ **手写 stub，全仓仅此两条**：后台整理那两条端点由后端另一条线落地中，
+// ⚠️ **纯手写 stub（一个字节都不来自真 dump），全仓仅此两条**：后台整理那两条端点由后端另一条线落地中，
 // `api.json` 里还没有它们（那份 fixture 由 `tests/test_frontend_contract.py` 从真 app
 // dump，手写它正是这条缝原本的病）。**后端落地后把这两条换成真 fixture。**
 const AUTOPILOT_ACK = { chapter: 1, summary: "queued", extraction: "queued" };
@@ -64,6 +64,36 @@ const AUTOPILOT_IDLE = {
   summary_ready: false,
   extraction_ready: false,
   running: false,
+};
+
+// 总结 = 可反查的记忆点（T6）。**这两份是从真 dump 派生的，不是手写一个形状**——
+// 同上面撤回那一档的理由，用的也是同一条路子：节点整个取自 `fixtures.roster`（真 dump 的
+// `{id,label,name}`），那一段总结原文取自 `fixtures.summaryGenerated`。
+//
+// ⚠️ `tests/test_frontend_contract.py` **已经在抓它们了**（`summaryMentions` /
+// `summaryMentionTrail`），只是这一轮四个 agent 并行、夹具由上游统一重生成，
+// 所以 `api.json` 里还没有那两个键。**重生成之后把下面两行换成那两个 fixture。**
+//
+// 取节点**按 label 不按名字**，那一段字也整段取自 dump：这份文件受
+// `tests/test_frontend_product_language.py` 罩着，样书里的人名一个都不许写在这儿
+// （那道守卫拦的正是「演示数据混进产品代码」）。
+const pick = (label: string) => fixtures.roster.find((node) => node.label === label)!;
+const MEMORY_NODES = [pick("Character"), pick("Location"), pick("Secret")];
+const SUMMARY_MENTIONS = {
+  chapter: 1,
+  mentions: MEMORY_NODES.map((node) => ({ node, surfaces: [node.name] })),
+};
+const SUMMARY_TRAIL = {
+  node: MEMORY_NODES[0],
+  // **两章**：只有一章的话，「点开看还有哪几章」那条分支等于没验过
+  // （同上面 `chapterHistoryTwo` 那条理由）。第二行的 `author_written` 反过来，
+  // 因为「模型压的」那句免责只该贴在模型写的那一行上。
+  chapters: [1, 7].map((chapter_number) => ({
+    chapter_number,
+    summary: fixtures.summaryGenerated.summary,
+    surfaces: [MEMORY_NODES[0].name],
+    author_written: chapter_number !== 1,
+  })),
 };
 
 /** 默认路由表：URL → fixture。测试可以前置自己的 handler 覆盖其中任意一条。 */
@@ -87,6 +117,10 @@ const DEFAULT: Handler[] = [
   // `retracted`），因为一份「刚被撤回」的回执在契约夹具里还没有。
   // `tests/test_frontend_contract.py` 已经在抓它了（`summaryRetracted`），
   // 下一次重生成夹具之后把这一行换成那个键。
+  // 倒排那两条排在 `…/summary$` 前面：那条正则要求 `summary` 结尾，
+  // `…/summary/mentions` 不会被它咬到，但顺序摆对了看得更清楚。
+  { match: /\/chapters\/\d+\/summary\/mentions$/, body: SUMMARY_MENTIONS },
+  { match: /\/nodes\/[^/]+\/summary-mentions$/, body: SUMMARY_TRAIL },
   { match: /\/chapters\/\d+\/summary$/, body: fixtures.summaryGenerated },
   { method: "POST", match: /\/chapters\/\d+\/summary$/, body: fixtures.summaryGenerated },
   { method: "PATCH", match: /\/chapters\/\d+\/summary$/, body: fixtures.summaryGenerated },

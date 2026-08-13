@@ -1685,6 +1685,75 @@ def retract_chapter_summary(
     return _summary_state(conn, proj.id, chapter)
 
 
+# ── 总结 = 可反查的记忆点（T6）───────────────────────────────────────────────
+#
+# 作者的原话：「每一个总结就相当于一本书的一个记忆点。我想迅速找到需要的内容或相关章节的
+# 总结，然后引用、对比、调研，再顺下去看全文。**我不想用 RAG。**」
+#
+# 这两条路由就是那件事，而且它**不是找相似，是找相关**（判据只有「这个称呼出现了没有」，
+# 一个语义判断都没有——完整论证在 `summary_index.py` 的模块 docstring 和迁移 014）。
+#
+#   GET …/chapters/{n}/summary/mentions   这一章的总结提到了哪些东西
+#   GET …/nodes/{node_id}/summary-mentions  还有哪几章的总结提到它（按章号排）
+#
+# 两条都**不调模型、不花钱**，所以界面上可以随便点。
+
+
+@app.get("/api/projects/{project_id}/chapters/{chapter}/summary/mentions")
+def chapter_summary_mentions(
+    chapter: int,
+    conn: Any = Depends(get_conn),
+    store: Any = Depends(get_store),
+    proj: Any = Depends(load_project),
+) -> dict[str, Any]:
+    """这一章**现在算数**的那段总结里，花名册的哪些东西被提到了。
+
+    **为什么不并进 `GET …/summary` 的出参**：那个形状是四条动作路由共用的
+    （`_summary_state`，「一个动作做完之后界面拿到的和它重新读一遍拿到的逐字节相同」），
+    而它同时也是 `…/summaries` 里的一行——那一条要报整个窗口，每一章都挂一串芯片
+    会让一次覆盖率查询变成一次全书反查。两件事，两个资源。
+
+    出参里**只有 `NodeRef`**（id/label/name）。这批命中里按定义就有 Secret，
+    而 `Node.props` 装的正是秘密内容（§10.5 第 3 条）。
+
+    这一章没有总结（没写 / 没生成 / 撤回过）→ `mentions: []`。**三种「没有」的区分
+    不在这儿再答一遍**：屏幕上那一格读的是 `GET …/summary`，那儿已经在说那句话了，
+    这儿再说一遍就是第二份措辞。
+    """
+    from ..summary_index import mentions_in_chapter
+
+    if chapter < 1:
+        raise HTTPException(status_code=422, detail="章号至少是 1")
+    hits = mentions_in_chapter(conn, store, proj.id, chapter)
+    return {
+        "chapter": chapter,
+        "mentions": [hit.model_dump(mode="json") for hit in hits],
+    }
+
+
+@app.get("/api/projects/{project_id}/nodes/{node_id}/summary-mentions")
+def node_summary_mentions(
+    node_id: str,
+    conn: Any = Depends(get_conn),
+    store: Any = Depends(get_store),
+    proj: Any = Depends(load_project),
+) -> dict[str, Any]:
+    """**还有哪几章的总结提到它**，按章号升序。一次 SQL，不调模型、不花钱。
+
+    `node_id` 不在本项目 → `NodeNotFound` → 404（那张错误映射表接的）。
+    **不返回空表**：「他没在任何总结里出现过」和「这个 id 根本不存在」是两件事，
+    下一步动作也完全不同（§10 约束 8）。
+
+    出参带每一章那段总结的**原文**：作者点开是为了读它、比它、引它，
+    再要一次往返只是让他多等一轮。
+    """
+    from ..summary_index import chapters_mentioning
+
+    # 出参里的 `node` 是**后端给的**，不是前端把刚点的那个芯片回填一遍：换一条进入路径
+    # （从花名册、从活动日志点过来）时它手上只有一个 id，没有那个名字。
+    return chapters_mentioning(conn, store, proj.id, node_id).model_dump(mode="json")
+
+
 @app.post("/api/projects/{project_id}/chapters/{chapter}/plan", status_code=501)
 def plan_stub() -> dict[str, str]:
     """AI 规划第 N 章的场景骨架（M2）。v1 的替代是作者手拖手填场景块（§2 表）。"""

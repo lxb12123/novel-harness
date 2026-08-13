@@ -828,3 +828,25 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
 .chsum-scope { margin: 0 0 8px; color: var(--dim); font-size: 12px; }
 .chsum-why { margin: 6px 0 0; font-size: 12px; line-height: 1.7; }
 .chsum-actions { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* 总结 = 可反查的记忆点（T6）。同上：全部新类名，一条既有规则都没动。 */
+.chsum-mentions { margin-top: 14px; border-top: 1px solid var(--line); padding-top: 10px; }
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.chip {
+  display: inline-flex; align-items: baseline; gap: 5px;
+  padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--bg); color: var(--ink); font-size: 12px; cursor: pointer;
+}
+.chip:hover { border-color: var(--accent); }
+.chip.on { background: var(--sel); border-color: var(--accent); }
+.chip-kind { color: var(--dim); font-size: 10px; }
+
+.chsum-trail { margin-top: 10px; }
+.trail-row { margin-top: 8px; padding-left: 8px; border-left: 2px solid var(--line); }
+/* 章号是**可点的**（跳过去看全文），所以它长得像个链接而不是一段静态文字。 */
+.trail-go {
+  padding: 0; border: 0; background: none; color: var(--accent);
+  font-size: 12px; cursor: pointer;
+}
+.trail-text { margin: 3px 0 0; font-size: 12px; line-height: 1.7; white-space: pre-wrap; }
+.trail-why { margin: 3px 0 0; color: var(--dim); font-size: 11px; }

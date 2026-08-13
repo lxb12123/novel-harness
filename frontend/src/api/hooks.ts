@@ -14,6 +14,7 @@ import type {
   ChapterRow,
   ChapterDrafts,
   ChapterSnapshot,
+  ChapterSummaryMentions,
   ChapterSummaryStatus,
   ChapterText,
   ChatDeleted,
@@ -43,6 +44,7 @@ import type {
   KnowledgeMatrix,
   Mentioned,
   NodeRef,
+  NodeSummaryMentions,
   ProposalAction,
   ProposalEditInput,
   ProposalRecord,
@@ -145,10 +147,44 @@ export function useChapterSummary(pid: string | null, chapter: number) {
  *
  *  **窗口那一份必须一起失效**：右栏那句「写这一章时带得上几段」读的是它，
  *  而作者刚撤掉的那一章正在里面算作「有」。不失效它，屏幕上会同时出现
- *  「这一章的总结已撤回」和「前面 N 章里有 M 段总结（含这一章）」两句互相打架的话。 */
+ *  「这一章的总结已撤回」和「前面 N 章里有 M 段总结（含这一章）」两句互相打架的话。
+ *
+ *  **倒排那两条也一起**（T6）：总结里的字一变，「这一段提到了谁」和「还有哪几章提到他」
+ *  两个答案都变了。漏掉它们的话，作者刚把「萧决」改成「魔尊」，下面那排芯片还挂着萧决——
+ *  一块看起来完全正常、内容已经过期的屏幕。**反查那条按 pid 整片失效**：改一章总结会
+ *  同时影响别的章的反查结果（那一章从某个人的名单里进来或出去），按 node_id 精确失效
+ *  等于要在前端算一遍后端刚算完的差集。 */
 function invalidateSummaries(qc: ReturnType<typeof useQueryClient>, pid: string) {
   qc.invalidateQueries({ queryKey: ["summary", pid] });
   qc.invalidateQueries({ queryKey: ["summaries", pid] });
+  qc.invalidateQueries({ queryKey: ["summaryMentions", pid] });
+  qc.invalidateQueries({ queryKey: ["nodeSummaryMentions", pid] });
+}
+
+/** 这一章的总结提到了花名册里的哪些东西（T6）。
+ *
+ *  **和 `useChapterSummary` 分成两条**，不是并进那一份出参：那个形状是四条动作路由
+ *  共用的，而它同时也是 `…/summaries` 窗口里的一行——每一章都挂一串芯片会让一次
+ *  覆盖率查询变成一次全书反查。 */
+export function useSummaryMentions(pid: string | null, chapter: number) {
+  return useQuery({
+    queryKey: q(["summaryMentions", pid, chapter]),
+    queryFn: () =>
+      api.get<ChapterSummaryMentions>(proj(pid!, `/chapters/${chapter}/summary/mentions`)),
+    enabled: !!pid,
+  });
+}
+
+/** 还有哪几章的总结提到它（T6）。**不调模型、不花钱**，所以点着玩没有代价。
+ *
+ *  `nodeId` 为空 = 作者还没点任何一个芯片，这条不发。 */
+export function useNodeSummaryMentions(pid: string | null, nodeId: string | null) {
+  return useQuery({
+    queryKey: q(["nodeSummaryMentions", pid, nodeId]),
+    queryFn: () =>
+      api.get<NodeSummaryMentions>(proj(pid!, `/nodes/${encodeURIComponent(nodeId!)}/summary-mentions`)),
+    enabled: !!pid && !!nodeId,
+  });
 }
 
 /** 为某一章生成滚动总结。**会调模型、会花钱，所以只由作者显式触发**——

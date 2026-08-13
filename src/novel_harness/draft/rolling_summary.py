@@ -179,6 +179,22 @@ class SummaryStore:
             if row.status is SummaryState.ACTIVE
         ]
 
+    def active(self, project_id: str) -> list[ChapterSummary]:
+        """全书**现在算数**的那些摘要，按章号升序。撤回过的章不在里面。
+
+        和 `for_range` 是同一条判据、同一份 SQL，只是不给区间——倒排索引
+        （`summary_index.py`）要的正是「哪几行现在算数」，而它不该自己去猜书有多长。
+
+        **上界不能拍一个常数。** 章号是全书顺序位置，没有上限；写死一个
+        `10**9` 之类的哨兵在这里能跑，但下一个人会照抄它去别的地方。
+        """
+        row = self._conn.execute(
+            "SELECT MAX(chapter_number) AS last FROM chapter_summary WHERE project_id = ?",
+            (project_id,),
+        ).fetchone()
+        last = row["last"]
+        return [] if last is None else self.for_range(project_id, 1, int(last))
+
     def _latest_per_chapter(
         self,
         project_id: str,
