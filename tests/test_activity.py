@@ -26,12 +26,15 @@ from fastapi.testclient import TestClient
 from test_api import PLOT_NOTE, TWIST, _seed_low_confidence_proposal, _seed_provisional_event
 
 from novel_harness import activity, decisions, project
+from novel_harness.api.deps import get_extraction_runner
 from novel_harness.db import connect
 from novel_harness.decisions import SYSTEM_ACTOR, DecisionKind, Verdict
+from novel_harness.draft.provider import CompletionResult
 from novel_harness.extract import RawChapterAnalysis, RawEvent, RawStateUpdate
 from novel_harness.extract.auto_canon import promote_clean_facts
 from novel_harness.extract.call_audit import record_call
 from novel_harness.extract.proposals import confirm_provisional_events
+from novel_harness.extract.runner import ExtractionRunner
 from novel_harness.extract.service import ExtractionService
 from novel_harness.graph import (
     AliasSpec,
@@ -154,6 +157,38 @@ def seed_call(
         )
         conn.commit()
         return call_id
+    finally:
+        conn.close()
+
+
+def seed_summary(
+    book: dict[str, str],
+    chapter: int = 1,
+    *,
+    call_id: str,
+    text: str = "萧决在青云城主府第一次听说了血脉秘密。",
+) -> str:
+    """一条**模型写的**滚动总结，挂在某次调用上（`model_call_id` 就是它的地址）。
+
+    直接写表（同 `seed_run` / `seed_call`）：走真路径要一次模型调用、要钱。
+    `source` / `status` 两列用 DDL 默认值，也就是 `RollingSummarizer.ensure` 落下的
+    那一份形状（`model` / `ACTIVE`）——作者改过或撤回过的行是**另外追加的行**，
+    `model_call_id` 为空，天生不会被这条 join 认走。
+    """
+    conn = connect(book["db"])
+    try:
+        summary_id = new_id(EntityType.SUMMARY, book["pid"])
+        conn.execute(
+            """
+            INSERT INTO chapter_summary (
+                id, project_id, chapter_number, summary,
+                schema_version, prompt_hash, model_call_id
+            ) VALUES (?, ?, ?, ?, 'chapter-summary-v1', ?, ?)
+            """,
+            (summary_id, book["pid"], chapter, text, f"prompt:summary:{chapter}", call_id),
+        )
+        conn.commit()
+        return summary_id
     finally:
         conn.close()
 
@@ -705,6 +740,129 @@ def test_a_rejected_proposal_never_points_at_the_canon_editor() -> None:
     assert jump is not None and jump.target is activity.JumpTarget.CHAPTER
 
 
+# ── 1.1 兜底那一档里躺过的两样东西（2026-08-13）─────────────────────────────
+#
+# **它们落进兜底都不是因为「今天没有更细的目标」**，而是目标后来才长出来、这张表
+# 没跟着改。留在那儿，兜底那一档就从一句诚实话（ADR 0020 拿它当推翻条件的观测点）
+# 变成一句骗人的话。
+
+
+def _thin_analysis() -> str:
+    """一份最小的分析（引语取自第 1 章正文，定位得到）。
+
+    **够用**：下面那条测的是 run 有没有真的重新跑起来，不是抽出了什么
+    （那在 `test_extraction_api.py`）。
+    """
+    return RawChapterAnalysis(
+        events=(
+            RawEvent(
+                summary="萧决听说了血脉秘密。",
+                quote=QUOTE,
+                participants=("萧决",),
+                knowers=("萧决",),
+                revealed_facts=(),
+                confidence=0.95,
+            ),
+        ),
+        state_updates=(),
+        character_profiles=(),
+    ).model_dump_json()
+
+
+def test_a_failed_run_offers_a_real_retry_that_actually_reruns_it(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """没跑成的那一条上必须有「再来一次」，而且那颗按钮真的能让它重跑。
+
+    在这之前 `_run_jump` **一眼都不看 status**：成功和失败走同一条路径，于是屏幕上
+    那句红字（「没能连上你配置的模型服务 · 失败」）只配着一颗「去第 N 章 →」——
+    **重跑的能力后端一直都在**，只是日志上没有那颗按钮。
+
+    整条链路走真代码（`POST …/extract` → 后台 → `extraction_run` 落 FAILED），
+    只有模型那一步是桩：第一次抛（造出真的失败形态），第二次答一份空分析。
+    """
+    calls = {"n": 0}
+
+    def analyze(_request: Any) -> CompletionResult:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("private transport detail")
+        return CompletionResult(text=_thin_analysis(), model="api-test-model")
+
+    runner = ExtractionRunner(lambda: connect(Path(book["db"])), analyze)
+    client.app.dependency_overrides[get_extraction_runner] = lambda: runner
+    try:
+        pid = book["pid"]
+        queued = client.post(f"/api/projects/{pid}/chapters/1/extract")
+        assert queued.status_code == 202, queued.text
+        run_id = queued.json()["id"]
+        assert client.get(f"/api/projects/{pid}/extractions/{run_id}").json()["status"] == "FAILED"
+
+        entry = _by_id(_entries(client, pid, limit=200), run_id)
+        jump = entry["jump"]
+        assert entry["status"] == "failed"
+        assert jump["target"] == "extraction_retry"
+        assert jump["endpoints"] and _resolves(jump["endpoints"][0])
+        # 措辞归后端，而且是作者的话（没有码、没有英文、没有裸 id）。
+        assert "整理" in jump["label"] and "第 1 章" in jump["label"]
+
+        # ── 探针：不带 `force` 就是一颗**点了没反应**的按钮 ────────────────────
+        # 接口照样 202，可那一行照旧红着、模型一次都没再被调用。这正是那条路必须
+        # 带参数的全部理由，也是「这张表只出路径」那条注释指着的东西。
+        idle = client.post(jump["endpoints"][0])
+        assert idle.status_code == 202 and idle.json()["status"] == "FAILED"
+        assert calls["n"] == 1
+
+        again = client.post(jump["endpoints"][0], params={"force": "true"})
+        assert again.status_code == 202, again.text
+        # 同一条 run 原地重置（不删行、不新建行），所以日志上那一行不会变成两行。
+        assert again.json()["id"] == run_id
+        assert calls["n"] == 2
+        final = client.get(f"/api/projects/{pid}/extractions/{run_id}").json()
+        assert final["status"] == "SUCCEEDED", final
+
+        after = _by_id(_entries(client, pid, limit=200), run_id)
+        assert after["status"] == "succeeded"
+        # 跑成了之后那颗按钮跟着没了——`label` 和 `target` 是同一次判断的两个产物。
+        assert after["jump"]["target"] != "extraction_retry"
+    finally:
+        client.app.dependency_overrides.pop(get_extraction_runner, None)
+
+
+def test_a_summary_call_points_at_the_summary_it_wrote(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """写总结那次调用跳的是**那一章的总结**，不是兜底的「去第 N 章」。
+
+    右栏「章节总结」那一格（读 / 改 / 撤回 / 重新生成）是 2026-08-13 才长出来的，
+    在那之前这一档除了章号真的没有更细的目标。目标有了，坐标就得跟着改。
+    """
+    pid = book["pid"]
+    call_id = seed_call(book, capability="summarizer", tokens_in=None, tokens_out=None)
+    seed_summary(book, 1, call_id=call_id)
+
+    jump = _by_id(_entries(client, pid, limit=200), call_id)["jump"]
+    assert jump["target"] == "summary" and jump["chapter_number"] == 1
+    assert jump["endpoints"] == [f"/api/projects/{pid}/chapters/1/summary"]
+    assert _resolves(jump["endpoints"][0])
+    # 那条路由真的改得动这一章的总结——不是一个摆着好看的坐标。
+    edited = client.patch(jump["endpoints"][0], json={"summary": "作者自己写的一段。"})
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["summary"] == "作者自己写的一段。"
+
+
+def test_a_call_that_wrote_no_summary_still_falls_back_to_the_chapter(
+    client: TestClient, seeded: dict[str, str]
+) -> None:
+    """判据是「库里有没有一行总结指着它」，**不是 capability 那个字符串**。
+
+    抽取那次调用照旧退到兜底坐标——按结构判，这一档不会因为哪天多一种能力名
+    就凭空多出一颗跳去总结的按钮（那儿根本没有总结可看）。
+    """
+    jump = _by_id(_entries(client, seeded["pid"], limit=200), seeded["call_id"])["jump"]
+    assert jump["target"] == "chapter" and jump["endpoints"] == []
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 2. 泄漏面
 # ══════════════════════════════════════════════════════════════════════════
@@ -1060,6 +1218,42 @@ def test_a_failed_run_shows_why(client: TestClient, book: dict[str, str]) -> Non
     assert entry["status"] == "failed" and "没能连上你配置的模型服务" in entry["subtitle"]
     detail = client.get(f"/api/projects/{book['pid']}/activity/{run_id}").json()
     assert detail["errors"] == ["没能连上你配置的模型服务"]
+
+
+def test_the_summary_call_says_what_it_actually_summarized(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """展开一条「章节总结」，作者要看得见**买到了什么**。
+
+    在这之前那一层只有能力 / 模型 / token / 耗时：花了钱这件事说得清清楚楚，
+    花出来的东西一个字都没有。正文走**投影层**（`rows`，措辞和别的行同一种形状），
+    不是把 `payload` 那个审计信封摊开——那是给机器重放用的。
+    """
+    pid = book["pid"]
+    text = "萧决在青云城主府第一次听说了血脉秘密。"
+    call_id = seed_call(book, capability="summarizer")
+    seed_summary(book, 1, call_id=call_id, text=text)
+
+    detail = client.get(f"/api/projects/{pid}/activity/{call_id}").json()
+    labels = {row["label"]: row["value"] for row in detail["rows"]}
+    assert labels["这次写出来的总结"] == text
+
+    # 作者后来撤回了它，这一行照旧说得出**当时**买到的是什么：日志是账本，
+    # 不是「现在算数的那一段」（那一段在右栏，跳过去就是）。
+    assert client.delete(f"/api/projects/{pid}/chapters/1/summary").status_code == 200
+    after = client.get(f"/api/projects/{pid}/activity/{call_id}").json()
+    assert {row["label"]: row["value"] for row in after["rows"]}["这次写出来的总结"] == text
+
+
+def test_a_call_that_wrote_no_summary_gets_no_empty_row_for_it(
+    client: TestClient, seeded: dict[str, str]
+) -> None:
+    """抽取那次调用**不多一行永远「未记录」**：那不是一个缺失的值，
+    是这一档调用本来就没有这个字段（同 `_cache_text` 里「报了才说」的取舍）。"""
+    detail = client.get(
+        f"/api/projects/{seeded['pid']}/activity/{seeded['call_id']}"
+    ).json()
+    assert all(row["label"] != "这次写出来的总结" for row in detail["rows"])
 
 
 def test_unrecorded_tokens_say_so_instead_of_rendering_zero(

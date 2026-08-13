@@ -50,6 +50,8 @@ def _endpoints(project_id: str, jump: ActivityJump) -> tuple[str, ...]:
     - `KNOWLEDGE_CELL` → `corrections.correct_knowledge`
     - `EVENT_CAST` → `corrections.correct_event_cast`
     - `PROPOSAL` → 三条审阅路由（accept / reject / edit），**只在指名到某一条提案时给**
+    - `SUMMARY` → 章节总结那一个资源（同一条路径四个动作：读 / 生成 / 改 / 撤回）
+    - `EXTRACTION_RETRY` → 重跑那一章的整理
     - `CHAPTER` → 空：它是兜底坐标，明说「只能定位，今天没有编辑入口」
 
     最后一条不是偷懒。自动升上去的**边**就落在这一档：抽取只产
@@ -58,6 +60,17 @@ def _endpoints(project_id: str, jump: ActivityJump) -> tuple[str, ...]:
     这正是 [ADR 0020](../../docs/adr/0020-clean-extraction-auto-canon.md) 写在
     「什么条件下推翻本 ADR」里的那一条（「出现『作者改不回来』的形态」）。
     编一个按钮出来会让这个条件永远观测不到。
+
+    ── 这张表出的是**路径**，不带查询串 ──────────────────────────────────────
+    重跑那一条真打的时候要带 `?force=true`（没有它，`enqueue` 见到那条已经失败的 run
+    就原样还回来，**接口 202、屏幕没反应**——比没有按钮更糟）。参数留给调用方带，
+    理由是这张表只回答「有没有这条路」，而
+    `tests/test_activity.py::test_every_jump_endpoint_resolves_to_a_real_route`
+    比的是路由表里的路径。两头别各写一份：
+    `tests/test_activity.py::test_a_failed_run_offers_a_real_retry_that_actually_reruns_it`
+    从这里拿到路径真打一次（还带一个「不带 force」的探针），
+    `frontend/src/components/ActivityLog.test.tsx` 那侧扫的是请求 URL 以它开头
+    **且**带上了 `force`。
     """
     base = f"/api/projects/{project_id}"
     if jump.target is JumpTarget.KNOWLEDGE_CELL:
@@ -70,6 +83,10 @@ def _endpoints(project_id: str, jump: ActivityJump) -> tuple[str, ...]:
             f"{base}/proposals/{jump.proposal_id}/reject",
             f"{base}/proposals/{jump.proposal_id}/edit",
         )
+    if jump.target is JumpTarget.SUMMARY and jump.chapter_number is not None:
+        return (f"{base}/chapters/{jump.chapter_number}/summary",)
+    if jump.target is JumpTarget.EXTRACTION_RETRY and jump.chapter_number is not None:
+        return (f"{base}/chapters/{jump.chapter_number}/extract",)
     return ()
 
 
@@ -121,7 +138,7 @@ def _cast(surfaces: _Surfaces, jump: ActivityJump) -> tuple[str, ...]:
 
     **`EVENT_CAST` 那一档故意没有**：它跳的是「已确认情节」那一格里的一份名单，
     不是矩阵的一行；给了坐标只会在右栏那几格里凭空多出一个谁也没要求过的人。
-    `PROPOSAL` / `CHAPTER` 同理。
+    别的几档（`PROPOSAL` / `SUMMARY` / `EXTRACTION_RETRY` / `CHAPTER`）同理。
 
     查不到称呼（没登记过 / 全都有歧义）就返回空——那时退回今天的行为，
     界面照旧说「没有在这一章找到刚才那一格」。**编一个坐标出来才是错的那一侧。**

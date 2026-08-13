@@ -295,7 +295,8 @@ def test_frontend_fixture_matches_the_real_api(
     # 审阅面板轮询的那条端点（`GET …/extractions/{run_id}`）。**跑成了的那一份在这儿，
     # 没跑成的那一份在文件最后**——两份都得是真 dump，理由见那儿。
     grab("extractionRun", client.get(f"{base}/extractions/{activity_run}"))
-    grab("activity", client.get(f"{base}/activity", params={"limit": 8}))
+    activity_page = client.get(f"{base}/activity", params={"limit": 8})
+    grab("activity", activity_page)
     # 按 actor 过滤 —— ADR 0020 点名的那件事（作者点过的会被 system 行淹没）。
     # `actors[]` 的计数**不跟着过滤走**，这份 fixture 冻的就是这个差别。
     grab(
@@ -307,6 +308,19 @@ def test_frontend_fixture_matches_the_real_api(
     # 「界面上不摆研发术语」那条断言只能扫它真的渲染出来的东西，而这一份里曾经躺着
     # prompt 指纹、两个 `artifact:sha256:…` 和一整段 `params_json`。
     grab("activityCallDetail", client.get(f"{base}/activity/{activity_call}"))
+    # 花钱那一档的**第二种长相**：一次章节总结（上面 `summaryGenerated` 那次真调用）。
+    # 它和抽取那一份差两样东西，两样都是 2026-08-13 补的：跳转坐标指着右栏那一格
+    # （不再是兜底的「去第 N 章」），展开层多一行**它到底总结了什么**。
+    # 只冻抽取那一份的话，这两样在浏览器那侧一行都没被渲染过。
+    #
+    # **按结构挑那一行，不按标题**（这一页的第一条禁令就是「别从字面反推」）：
+    # 用的是**规范化之前**的响应，因为 `dump` 里的 id 已经换成 `call:IDn` 了，拿它发不出请求。
+    summary_call = next(
+        entry["id"]
+        for entry in activity_page.json()["entries"]
+        if (entry.get("jump") or {}).get("target") == "summary"
+    )
+    grab("activitySummaryDetail", client.get(f"{base}/activity/{summary_call}"))
     # 展开一条作者亲手点过的确认：`payload` 是这一层唯一的泄漏面，前端照它渲染信封。
     grab(
         "activityDecisionDetail",
@@ -589,12 +603,16 @@ def test_frontend_fixture_matches_the_real_api(
     # 「从侧栏移除」全都只在两本以上时才存在形态，照一本写的界面等于没验过。
     grab("projectsTwo", client.get("/api/projects"))
 
-    # ── 用量条第一档：**这本书每一次调用供应商都报了 usage** ────────────────────
+    # ── 用量条第一档：**这本书每一次调用，用量和价钱都算得出来** ────────────────
     # 三档一次到齐（同上面 `summaries` 那一轮的理由）：夹具里只躺一种形状的样本，
     # 屏幕守卫扫的就是一块永远长一个样的屏幕。这一档落在第二本书上不是取巧——
     # 第一本从那次总结起就再也回不到「全报了」，而作者接 OpenAI 那四条路由时
     # 天天看见的正是这一屏。
-    seed_call({**book, "pid": second_pid}, capability="summarizer")
+    #
+    # **`cost` 是 2026-08-13 加的**：在那之前这份夹具里一条带价钱的调用都没有，
+    # 于是底栏「花费」那一格只可能渲染成「未记录」——它的另外两种长相
+    # （算得出 / 只算得出一部分）在两个运行时的守卫下都没被看过。
+    seed_call({**book, "pid": second_pid}, capability="summarizer", cost=0.34)
     grab("runsAllReported", client.get(f"/api/projects/{second_pid}/runs"))
 
     # ── 一轮没跑成，那句话**留在对话里**（2026-08-13，迁移 012）───────────────
@@ -643,6 +661,19 @@ def test_frontend_fixture_matches_the_real_api(
     # 两块完全不同的界面。
     failed_run = seed_run(book, 3, status="FAILED")
     grab("extractionFailed", client.get(f"{base}/extractions/{failed_run}"))
+    # **日志页上那半块屏幕同样从来没被冻过。** 上面那份 `activity` 里三条 run 全是成功的，
+    # 而「没跑成的那一行长什么样」是这一页唯一需要作者动手的地方（2026-08-13 起它带着
+    # 一颗真能点的「再整理一次」——`jump.target = extraction_retry`）。
+    grab("activityFailed", client.get(f"{base}/activity", params={"limit": 8}))
+    grab("activityFailedDetail", client.get(f"{base}/activity/{failed_run}"))
+
+    # ── 花费那一格的第三种长相：**算得出的只有一部分** ────────────────────────
+    # 这本书此刻有三次调用（抽取的桩 / 那次真总结 / 下面这一条），只有一条填了价钱。
+    # 合计和「其中几条算得出」必须一起摆，否则那个合计是一句看起来确定的假话
+    #（`CostTotals.priced_calls` 那段注释）。**放在最后**：它会改 `/runs` 的合计，
+    # 前面每一个 grab 都不该看见它。
+    seed_call(book, cost=0.34)
+    grab("runsPartlyPriced", client.get(f"{base}/runs"))
 
     frozen = json.dumps(dump, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 

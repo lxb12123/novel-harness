@@ -687,7 +687,18 @@ export interface EventCastCorrection {
 
 export type ActivitySource = "extraction" | "model_call" | "decision";
 export type ActivityStatus = "succeeded" | "failed" | "running" | "pending";
-export type JumpTarget = "knowledge_cell" | "event_cast" | "proposal" | "chapter";
+/** 跳去哪一类目标。**`chapter` 是兜底**（「只能定位到这一章，没有更细的目标」）。
+ *
+ *  `summary`（右栏「章节总结」那一格）和 `extraction_retry`（把没跑成的那次整理再跑一遍）
+ *  是 2026-08-13 从兜底那一档里搬出来的：它们当初落在那儿**不是因为没有目标**，
+ *  是目标后来才长出来、而后端那张表没跟着改。 */
+export type JumpTarget =
+  | "knowledge_cell"
+  | "event_cast"
+  | "proposal"
+  | "summary"
+  | "extraction_retry"
+  | "chapter";
 
 /** 这一条记录改的东西能从哪儿改回去。**坐标和措辞全由后端给**——
  *  前端不许从 title / source 反推跳哪儿去，那就是第二份路由表。 */
@@ -735,8 +746,11 @@ export interface DetailRow {
   value: string;
 }
 
-/** 这一步花了多少。**null 是「没记」不是 0**（§10 约束 8）：`model_call.cost`
- *  至今没有写入方（BYOK 之下引擎不知道作者签的什么单价）。 */
+/** 这一步花了多少。**null 是「没记」不是 0**（§10 约束 8）。
+ *
+ *  `cost` **2026-08-13 起有写入方**（按公开标价估的），但它照旧可能是 null：
+ *  自建端点、公开表里没有的模型、供应商没报 token 数的那几次都算不出钱。
+ *  **算得出的时候屏幕上必须带「约」字**（`ActivityLog.money`）——它是标价估算不是账单。 */
 export interface ActivityCost {
   call_id: string;
   capability: string;
@@ -784,7 +798,13 @@ export interface CostTotals {
   tokens_in: number | null;
   tokens_out: number | null;
   ms: number | null;
-  /** 其中填了金额的有几条。今天恒为 0，所以 `cost` 恒为 null。 */
+  /** 其中**算得出价钱的**有几条。`calls - priced_calls` = 算不出的那几次
+   *  （自建端点 / 公开标价表里没有的模型 / 供应商没报 token 数）。
+   *
+   *  **2026-08-13 起不再恒为 0**（`model_call.cost` 有写入方了）。这一行以前写的是
+   *  「今天恒为 0，所以 `cost` 恒为 null」——那句话过期之后，界面上那句
+   *  `花费 {money(cost)}` 就变成了一个**不说自己缺了几行**的合计，也就是一句
+   *  看起来确定的假话。合计和这个计数必须一起摆，同旁边的 `metered_calls`。 */
   priced_calls: number;
   cost: number | null;
 }
