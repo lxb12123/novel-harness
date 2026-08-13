@@ -38,8 +38,6 @@ def _caps(**updates: object) -> ProviderCapabilities:
         "reasoning_dialect": ReasoningDialect.NONE,
         "reasoning_shares_output": False,
         "reserve_ratio_high": None,
-        "supports_streaming": True,
-        "supports_stream_usage": False,
     }
     values.update(updates)
     return ProviderCapabilities(**values)
@@ -126,15 +124,18 @@ def test_structured_context_boundary_is_exact() -> None:
         )
 
 
-@pytest.mark.parametrize("support", [False, None])
-def test_structured_rejects_required_streaming_without_known_support(
-    support: bool | None,
-) -> None:
-    with pytest.raises(CapabilityError, match="requires streaming.*support"):
-        _plan(
-            visible_token_budget=16_001,
-            capability=_caps(supports_streaming=support),
-        )
+def test_a_big_structured_call_streams_without_asking_the_table_first() -> None:
+    """**2026-08-13 起「没登记就不许流式」那道拒绝没了**（`_streams` 的 docstring 写了为什么）。
+
+    这条原来叫 `test_structured_rejects_required_streaming_without_known_support`，
+    参数化跑 `supports_streaming` 的 `False` / `None` 两档，断言 `plan_structured_call`
+    当场 `CapabilityError`。那两档连同字段本身一起删了：**`stream` 是 OpenAI 兼容协议的
+    基本功能**，不是要逐条登记的扩展。
+
+    留下这条正面断言，钉住换过来的行为：预算过阈值就流式，**不再问表**。
+    """
+    plan = _plan(visible_token_budget=16_001)
+    assert plan.stream is True
 
 
 def test_structured_unknown_capability_fails_closed_even_with_reasoning_off() -> None:

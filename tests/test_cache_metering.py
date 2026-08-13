@@ -179,8 +179,6 @@ def _capability(*, streaming: bool = True) -> caps.ProviderCapabilities:
         reasoning_levels=frozenset({caps.ReasoningEffort.OFF}),
         reasoning_dialect=caps.ReasoningDialect.NONE,
         reasoning_shares_output=False,
-        supports_streaming=streaming,
-        supports_stream_usage=True if streaming else None,
     )
 
 
@@ -405,59 +403,37 @@ def test_the_streaming_half_is_load_bearing(monkeypatch: pytest.MonkeyPatch) -> 
     assert result.cache is None
 
 
-def test_on_the_authors_own_provider_a_streamed_call_is_never_asked_to_report() -> None:
-    """**接了线，不等于量得到。** 作者用的是 DeepSeek，而那两条路由在能力表上
-    `supports_stream_usage` 是 `None`（没审计过），于是流式请求**不发**
-    `stream_options={"include_usage": True}` —— OpenAI 兼容协议下不要就不给，
-    对面一个 usage chunk 都不会送。
+def test_the_authors_own_provider_is_finally_asked_to_report() -> None:
+    """**这条替掉了 `test_on_the_authors_own_provider_a_streamed_call_is_never_asked_to_report`。**
 
-    ── 这条为什么值得钉住 ────────────────────────────────────────────────
-    `_from_stream` 那段注释给的理由是「只补非流式那一条，长稿就会永远说『不知道』」。
-    **在作者自己的端点上，长稿本来就永远说「不知道」**：不是因为那一半没接线，
-    是因为我们从来没问。屏幕上那批「未记录」的意思是**端点没报**，
-    读的人会去查「DeepSeek 支不支持缓存」，而真正该改的是这儿。
+    那一条钉的是：作者用的 DeepSeek 在能力表上 `supports_stream_usage is None`（没审计过）
+    ⇒ 流式请求**不发** `stream_options` ⇒ 每一稿的 token 数「未记录」。它自己写着遗嘱：
+    「哪天真去审计了、改成 True 了，这条会红 —— 那时删掉它。」
 
-    🔴 **2026-08-12：这段原本写着「今天无害（没有一条生产路径真的走流式）；
-    危险的是哪天有人为了写长章把预算抬过阈值」——两句都已经不成立，而这条测试照样绿。**
-    它守的是「预算」那扇门，可 08-12 的可中断起草走的是**另一扇**：
-    `plan_call(..., interruptible=True)`（`agent/drafting.py`），和预算一个铜板关系都没有
-    ——实测两边预算**同为 7,024**，`stream` 却从 `False` 翻成 `True`。
-    于是「危险的是哪天」变成了「已经发生了」，而这条测试只查注册表和 wire shape，
-    **查不到「有没有生产路径在流式」**，所以它一声没吭。
-    下面那条 `test_the_interruptible_draft_path_…` 就是补这个缺口的：
-    **本条守「问不问」，那条守「谁在流」。**
+    结局不是审计（`api.deepseek.com` 在本机 TLS 断，够不着），是**判据换了**：
+    2026-08-13 起 `supports_stream_usage` 这一位从能力表上删掉，
+    要不要用量看的是**这一次要不要可中断** —— 因为丢账的正是那条路。
+    端点不认这个字段就忽略它，读取侧本来就落 `None`；真拒绝的那一档由
+    `provider._NO_STREAM_OPTIONS` 退一次并记住。
 
-    `gpt-5.6` 那四条路由 `supports_stream_usage=True`，所以流式那一半在它们身上是活的
-    —— 这条不是说那半白写了，是说**它在作者的端点上量不到**。
-
-    这个 `None` 本身**不是 bug**：能力表对没审计过的东西一律 fail-closed，
-    不许凭空声称支持（`ProviderCapabilities` 的既有立场）。所以处置是「说出来」，
-    不是把它改成 `True`。哪天真去审计了、改成 `True` 了，这条会红 —— 那时删掉它。
+    **所以作者那条路的账回来了，而且不用等网络。**
     """
-    streaming_but_unmeasured: list[str] = []
-    for (base_url, model), capability in sorted(caps.CAPABILITY_REGISTRY.items()):
-        if capability.supports_streaming is not True or capability.supports_stream_usage is True:
-            continue
-        try:
-            plan = caps.plan_call(LONG, caps.ReasoningEffort.OFF, capability)
-        except caps.CapabilityError:
-            continue
-        if not plan.stream:
-            continue
-        config = prov.ProviderConfig(base_url=base_url, model=model, api_key="k")
-        wire = prov._wire_kwargs(config, plan, [{"role": "user", "content": "写第 89 章"}])
-        assert "stream_options" not in wire
-        streaming_but_unmeasured.append(model)
+    from novel_harness.agent.drafting import AGENT_DRAFT_REASONING
+    from novel_harness.draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage
 
-    assert any("deepseek" in m for m in streaming_but_unmeasured), (
-        "作者用的那两条 DeepSeek 路由不再落在「能流式但不要 usage」这一档了 —— "
-        "若是有人补了审计并改成 supports_stream_usage=True，这条测试和 `_from_stream` "
-        "那段注释一起删掉/改掉；若是路由没了，同理。"
-    )
+    route = ("https://api.deepseek.com", "deepseek-v4-flash")
+    capability = caps.resolve_capabilities(*route)
+    length = DEFAULT_LENGTH_POLICY.default_for(DraftLanguage.ZH)
+    config = prov.ProviderConfig(base_url=route[0], model=route[1], api_key="k")
 
-    # 而这就是那一档在库里和屏幕上的样子：三个数一起「未记录」。
-    result, _ = _call(_chunks([]), length=LONG)
-    assert (result.prompt_tokens, result.completion_tokens, result.cache) == (None, None, None)
+    plan = caps.plan_call(length, AGENT_DRAFT_REASONING, capability, interruptible=True)
+    wire = prov._wire_kwargs(config, plan, [{"role": "user", "content": "写第 89 章"}])
+    assert wire["stream"] is True
+    assert wire["stream_options"] == {"include_usage": True}
+
+    # 而 M2 那一档（不可中断）照旧不带 —— 那是预注册的考卷，wire 必须逐字节稳定。
+    frozen = caps.plan_call(length, AGENT_DRAFT_REASONING, capability)
+    assert "stream_options" not in prov._wire_kwargs(config, frozen, [{"role": "u", "content": "x"}])
 
 
 def test_the_interruptible_draft_path_streams_on_the_authors_own_route() -> None:
@@ -508,10 +484,9 @@ def test_the_interruptible_draft_path_streams_on_the_authors_own_route() -> None
 
     wire = prov._wire_kwargs(config, plans[True], [{"role": "user", "content": "写第 89 章"}])
     assert wire["stream"] is True
-    assert "stream_options" not in wire, (
-        "流式起草开始要 usage 了 —— 若是补了审计把 supports_stream_usage 改成 True，"
-        "这条和上一条 test_on_the_authors_own_provider_… 一起删掉：取舍消失了。"
-    )
+    # **2026-08-13：这里原来断言的是「不带 stream_options」**，理由是那条路由没审计过。
+    # 那个取舍已经消失了（见上一条），所以断言反过来：可中断这一档一定要用量。
+    assert wire["stream_options"] == {"include_usage": True}
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -577,12 +552,24 @@ def _wire_matrix() -> list[dict[str, Any]]:
     return out
 
 
-WIRE_FINGERPRINT = "92f9c5b0b6a80b9df3977799398d073f24f84ded5c521520022dec557f00b33b"
+WIRE_FINGERPRINT = "1a977c543f89a7917a652ffc3452aab946afdcc5b23ec312a6e4070a74c9c094"
 """12 种请求形状下、客户端真正收到的那份 kwargs 的 sha256。
 
-**这个数是跨树对拷出来的**：把 `git archive HEAD src`（缓存这一刀之前那棵树）解到别处、
+**这个数原本是跨树对拷出来的**：把 `git archive HEAD src`（缓存那一刀之前那棵树）解到别处、
 同一份 `_wire_matrix()` 跑一遍，算出来是同一个值。它不是「从当前代码抄下来的」——
 从当前代码抄一个数只能钉住「以后别再变」，钉不住「这次没变过」。
+
+🔴 **2026-08-13 换过一次，而这正是这条测试要求的走法**（它自己写着「改 wire 是可以的，
+但必须是有人明确决定改」）。上一个值是 `92f9c5b0…`，变化只有一处：
+
+> **合成矩阵里那几条不再带 `stream_options`。**
+
+原因是 `supports_stream_usage` 这一位从能力表上删掉了 —— 要不要用量改看
+「这一次要不要可中断」（`provider.py` 那段注释写了为什么不是「无条件发」）。
+矩阵里的 plan 全是不可中断的那一档，所以它们一律不带。
+
+**`nh gate` 那条路的 wire 一个字节都没变**，那是预注册的考卷；
+`tests/test_interruptible_draft.py::test_gate_route_is_untouched…` 单独钉着它。
 """
 
 
@@ -932,3 +919,103 @@ def test_the_screen_judge_is_the_repo_wide_one_not_a_second_copy() -> None:
     """自守卫：上面那条用的判据必须真的会咬人 —— 否则它只是一句摆设。"""
     assert dev_shapes("接着上次的输入：cache_read_tokens 960")
     assert not dev_shapes("接着上次的输入：960 token 接着上次，没有重新算")
+
+
+def test_a_strict_endpoint_that_rejects_stream_options_is_retried_without_it() -> None:
+    """**「学得会的东西不进能力表」这条判据的另一半：学的过程不能让作者赔一稿。**
+
+    `stream_options` 是 OpenAI 规范里的字段，兼容端点普遍**忽略**不认识的参数
+    ⇒ 拿不到用量、落 `None`、屏幕说「未记录」，读取侧本来就 fail-safe。
+    但**真严格拒绝（400）的那一档不是「少个数」，是整次起草失败** —— 而作者刚在
+    「AI 设置」里填的是一个能聊天的端点。
+
+    所以运输层退一次：只摘掉这一个字段（**不退流式**，作者要的是能停下来），
+    并把这条路由记进 `_NO_STREAM_OPTIONS`，下一次连试都不试。
+
+    判据是「**错误里点了这个字段的名**」，不是「状态码是不是 400」——后者会把
+    「模型名写错」「钥匙过期」也吞进重试，于是一次真正的配置错误变成两次失败，
+    而作者只看见后面那次的话术。下面第二段就是钉这条的。
+    """
+    from novel_harness.agent.drafting import AGENT_DRAFT_REASONING
+    from novel_harness.draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage
+
+    route = ("https://api.deepseek.com", "deepseek-v4-flash")
+    capability = caps.resolve_capabilities(*route)
+    length = DEFAULT_LENGTH_POLICY.default_for(DraftLanguage.ZH)
+    config = prov.ProviderConfig(base_url=route[0], model=route[1], api_key="k")
+    plan = caps.plan_call(length, AGENT_DRAFT_REASONING, capability, interruptible=True)
+
+    class _Strict:
+        """第一次带 `stream_options` 就拒，第二次正常。"""
+
+        def __init__(self) -> None:
+            self.seen: list[dict[str, Any]] = []
+            self.chat = self
+
+        @property
+        def completions(self) -> "_Strict":
+            return self
+
+        def create(self, **kwargs: Any) -> Any:
+            self.seen.append(kwargs)
+            if "stream_options" in kwargs:
+                raise RuntimeError("400 unknown parameter: stream_options")
+            return _chunks([_usage("deepseek")])
+
+    prov._NO_STREAM_OPTIONS.discard(route)
+    try:
+        endpoint = _Strict()
+        result = prov.complete(
+            [{"role": "user", "content": "写第 89 章"}],
+            config=config,
+            plan=plan,
+            client=endpoint,
+        )
+        assert result.text, "退一次之后稿子照样拿到了"
+        assert len(endpoint.seen) == 2
+        assert "stream_options" in endpoint.seen[0] and "stream_options" not in endpoint.seen[1]
+        assert endpoint.seen[1]["stream"] is True, "退的是那个字段，不是流式"
+        assert route in prov._NO_STREAM_OPTIONS
+
+        # 记住之后，同一条路由不再白费第一次。
+        again = _Strict()
+        prov.complete(
+            [{"role": "user", "content": "写第 90 章"}], config=config, plan=plan, client=again
+        )
+        assert len(again.seen) == 1
+    finally:
+        prov._NO_STREAM_OPTIONS.discard(route)
+
+
+def test_an_unrelated_failure_is_not_swallowed_into_a_retry() -> None:
+    """**钥匙错了就该说钥匙错了。** 判据点了字段名才退，否则一次配置错误会变成两次失败。"""
+    from novel_harness.agent.drafting import AGENT_DRAFT_REASONING
+    from novel_harness.draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage
+
+    route = ("https://api.deepseek.com", "deepseek-v4-flash")
+    capability = caps.resolve_capabilities(*route)
+    length = DEFAULT_LENGTH_POLICY.default_for(DraftLanguage.ZH)
+    config = prov.ProviderConfig(base_url=route[0], model=route[1], api_key="k")
+    plan = caps.plan_call(length, AGENT_DRAFT_REASONING, capability, interruptible=True)
+
+    class _BadKey:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.chat = self
+
+        @property
+        def completions(self) -> "_BadKey":
+            return self
+
+        def create(self, **kwargs: Any) -> Any:
+            self.calls += 1
+            raise RuntimeError("401 Unauthorized: invalid api key")
+
+    prov._NO_STREAM_OPTIONS.discard(route)
+    endpoint = _BadKey()
+    with pytest.raises(prov.ProviderError, match="401"):
+        prov.complete(
+            [{"role": "user", "content": "x"}], config=config, plan=plan, client=endpoint
+        )
+    assert endpoint.calls == 1, "只发了一次 —— 没有把不相干的失败吞进重试"
+    assert route not in prov._NO_STREAM_OPTIONS

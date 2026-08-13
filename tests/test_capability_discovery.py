@@ -175,8 +175,8 @@ def test_a_response_we_cannot_read_falls_back_to_unknown(payload: Any) -> None:
     assert discover(OPENROUTER, SLUG, fetch=_fetch(payload)) is None
     capability = resolve_with_discovery(OPENROUTER, SLUG, fetch=_fetch(payload))
     assert capability.source == "unknown"
-    assert capability.supports_streaming is None
     assert capability.max_context_tokens is None
+    assert capability.max_output_tokens is None
 
 
 def test_self_contradictory_numbers_are_refused_whole() -> None:
@@ -237,22 +237,34 @@ def test_a_reasoning_level_we_never_measured_is_refused_at_plan_time() -> None:
         plan_call(ZH, ReasoningEffort.HIGH, capability)
 
 
-def test_the_draft_path_gets_its_three_dead_things_back() -> None:
-    """这个模块存在的全部理由，一条断言说完。
+def test_what_this_module_is_still_worth_after_the_streaming_bits_left_the_table() -> None:
+    """**这条替掉了 `test_the_draft_path_gets_its_three_dead_things_back`。**
 
-    没有它：`unknown` ⇒ `supports_streaming=None` ⇒ 可中断起草**不流式** ⇒
-    「停」退化成「这一稿写完才停」、字不再一个个长出来、账退成「未记录」。
+    那一条说的是「没有本模块 ⇒ `supports_streaming=None` ⇒ 可中断起草不流式 ⇒
+    停按钮 / 边写边看 / 账 三样一起死」。**那三样里有两样已经不归这个模块管了**：
+    2026-08-13 起 `supports_streaming` / `supports_stream_usage` 从能力表上删掉，
+    流式按协议默认开、用量按「要不要可中断」发。
+
+    **于是本模块的收益缩成了「那两个测不起的数字」**，比它落地那天小得多——
+    写在这儿是因为一个模块的价值缩水了却没人回来改说明，正是本仓最常见的那种骗人文档。
     """
     unknown = resolve_with_discovery(OPENROUTER, SLUG, fetch=_fetch(TimeoutError()))
-    assert plan_call(ZH, ReasoningEffort.OFF, unknown, interruptible=True).stream is False
+    assert unknown.max_context_tokens is None
+    # 上文长度直接塌到兜底 —— 这才是今天真正只有本模块能救的那一格。
+    from novel_harness.draft.assemble import GATE_TAIL_CODE_POINTS, product_tail_limit
 
-    # **这一行不是样板，是上面那条「失败也进缓存」的直接后果**：同一条路由问第二次
-    # 拿回的是缓存里的失败，换个 `fetch` 也叫不动它。第一版这条测试就红在这儿。
+    assert product_tail_limit(unknown.max_context_tokens, 7_024) == GATE_TAIL_CODE_POINTS
+
+    # **这一行不是样板，是「失败也进缓存」的直接后果**：同一条路由问第二次拿回的是
+    # 缓存里的失败，换个 `fetch` 也叫不动它。第一版这条测试就红在这儿。
     discovery.clear_cache()
     found = resolve_with_discovery(OPENROUTER, SLUG, fetch=_fetch(REAL_SHAPE))
-    plan = plan_call(ZH, ReasoningEffort.OFF, found, interruptible=True)
-    assert plan.stream is True
-    assert found.supports_stream_usage is True
+    assert found.max_context_tokens == 384_000
+    assert product_tail_limit(found.max_context_tokens, 7_024) > GATE_TAIL_CODE_POINTS
+
+    # 而流式这件事，两边现在**一样**——它已经不依赖这个模块了。
+    assert plan_call(ZH, ReasoningEffort.OFF, unknown, interruptible=True).stream is True
+    assert plan_call(ZH, ReasoningEffort.OFF, found, interruptible=True).stream is True
 
 
 # ══════════════════════════════════════════════════════════════════════════

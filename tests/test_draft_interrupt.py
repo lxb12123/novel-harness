@@ -36,8 +36,6 @@ from novel_harness.agent.tools import DraftFullText
 from novel_harness.db import Connection, connect
 from novel_harness.draft.capabilities import (
     STREAM_THRESHOLD_TOKENS,
-    ProviderCapabilities,
-    ReasoningDialect,
     ReasoningEffort,
     ResolvedCallPlan,
     plan_call,
@@ -166,34 +164,28 @@ def test_streaming_opens_for_interruptibility_without_touching_the_budget() -> N
     )
 
 
-def test_an_unregistered_endpoint_still_does_not_stream() -> None:
-    """作者自建的端点（`supports_streaming is None`）：**不流式，但也不拒**。
+def test_an_unregistered_endpoint_now_streams_like_everyone_else() -> None:
+    """**这条替掉了 `test_an_unregistered_endpoint_still_does_not_stream`（+ 它下面那条）。**
 
-    拒掉的形态很难查——**聊天好好的，只有起草每次失败**。所以这一档只是安静地退化成
-    「这一稿写完才停」。
+    那两条钉的是「未登记（`None`）/ 明说不支持（`False`）都不开流式，安静退化成
+    『这一稿写完才停』」。当时给的理由是「拒掉的形态很难查」——**那个理由今天仍然成立，
+    被推翻的是它的前提**：`stream` 是 OpenAI Chat Completions 的基本功能，不是要逐条
+    登记的扩展，所以「未登记」根本不该等于「不支持」。
+
+    退化的真实代价直到 ADR 0024 才显出来：**作者接任何自定义端点，
+    「停」按钮和「边写边看」一起哑掉，而且不报错。**
+
+    `supports_streaming` 这一位因此从能力表上删了，连同下面那条 `False` 的用例。
+    真拒绝流式的端点由运输层兜（同 `provider._NO_STREAM_OPTIONS` 那套：
+    **学得会的东西不进能力表**）。
     """
     capability = resolve_capabilities(HOMEBREW, "my-local-model")
-    assert capability.supports_streaming is None
+    assert capability.source == "unknown"
     plan = plan_call(LENGTH, ReasoningEffort.OFF, capability, interruptible=True)
-    assert plan.stream is False
+    assert plan.stream is True
 
-
-def test_a_route_that_says_no_to_streaming_is_also_left_alone() -> None:
-    """登记过、而且**明说不支持流式**的那一档同样不开（`False` 和 `None` 都不是 `True`）。"""
-    capability = ProviderCapabilities(
-        base_url=HOMEBREW,
-        model="no-stream",
-        source="registry:test-no-stream",
-        source_urls=("https://example.test/docs",),
-        max_context_tokens=200_000,
-        max_output_tokens=64_000,
-        reasoning_levels=frozenset({ReasoningEffort.OFF}),
-        reasoning_dialect=ReasoningDialect.NONE,
-        reasoning_shares_output=False,
-        supports_streaming=False,
-    )
-    plan = plan_call(LENGTH, ReasoningEffort.OFF, capability, interruptible=True)
-    assert plan.stream is False
+    quiet = plan_call(LENGTH, ReasoningEffort.OFF, capability)
+    assert quiet.stream is False, "不想停就别流 —— 判据只剩这一条"
 
 
 def test_the_default_leaves_the_frozen_threshold_alone() -> None:

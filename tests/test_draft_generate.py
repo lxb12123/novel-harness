@@ -52,8 +52,6 @@ def _plan(length: LengthSpec) -> ResolvedCallPlan:
         reasoning_levels=frozenset({ReasoningEffort.OFF}),
         reasoning_dialect=ReasoningDialect.NONE,
         reasoning_shares_output=False,
-        supports_streaming=True,
-        supports_stream_usage=False,
     )
     return plan_call(length, ReasoningEffort.OFF, capability)
 
@@ -392,8 +390,6 @@ def test_continuation_capacity_is_checked_before_the_first_paid_call(
         reasoning_levels=frozenset({ReasoningEffort.OFF}),
         reasoning_dialect=ReasoningDialect.NONE,
         reasoning_shares_output=False,
-        supports_streaming=True,
-        supports_stream_usage=False,
     )
     plan = plan_call(
         length,

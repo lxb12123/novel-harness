@@ -210,8 +210,6 @@ def test_a_full_dry_run_of_the_gate_survives_the_real_booklet(
         reasoning_levels=frozenset({ReasoningEffort.OFF, ReasoningEffort.HIGH}),
         reasoning_dialect=ReasoningDialect.ANTHROPIC_COMPAT,
         reasoning_shares_output=False,
-        supports_streaming=True,
-        supports_stream_usage=False,
     )
     plan = plan_call(M2_LENGTH_SPEC, ReasoningEffort.HIGH, capability)
 

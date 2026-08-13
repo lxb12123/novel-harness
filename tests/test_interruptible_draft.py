@@ -206,7 +206,13 @@ def test_the_net_above_is_alive_because_turning_the_bit_on_changes_the_wire() ->
         if plain != live:
             changed += 1
             assert isinstance(plain, dict) and isinstance(live, dict)
-            assert plain["stream"] is False and live["stream"] is True
+            # **翻转那一位今天有两种可见后果**（2026-08-13 起）：
+            # ① 本来不流式的变成流式（预算在阈值之下的那些）；
+            # ② 本来就流式的多出 `stream_options`（要用量，见 `provider.py`）。
+            # 只断言 ① 会让 ② 那一批悄悄从这张自守卫里溜掉。
+            turned_on = plain["stream"] is False and live["stream"] is True
+            asked_usage = "stream_options" not in plain and "stream_options" in live
+            assert turned_on or asked_usage
     assert changed > 0, "翻转那一位一个 case 都没动 —— 上面那张网量的是空气"
 
 
@@ -226,25 +232,36 @@ def _capability(streaming: bool | None) -> ProviderCapabilities:
         reasoning_levels=frozenset({ReasoningEffort.OFF}),
         reasoning_dialect=ReasoningDialect.NONE,
         reasoning_shares_output=False,
-        supports_streaming=streaming,
     )
 
 
-@pytest.mark.parametrize("streaming", [None, False, True])
-def test_only_an_endpoint_that_says_yes_gets_streamed(streaming: bool | None) -> None:
-    """**只有明确为真那一档会流式。** 未登记（`None`）被当成「支持」是最坏的一种：
+def test_wanting_to_stop_is_enough_to_get_a_stream() -> None:
+    """**2026-08-13：判据从「这条路由登记过支持流式」换成「这一次要不要能停」。**
 
-    那条流根本吐不出 chunk，而这一层已经按流式在读它 —— 症状是**起草每次失败**，
-    而作者刚在「AI 设置」里填的是一个能聊天的端点。
+    原来这条叫 `test_only_an_endpoint_that_says_yes_gets_streamed`，参数化 `None/False/True`
+    三档，断言只有 `True` 会流式。**那个默认方向是错的**，而它的代价不是「保守」：
+    作者接任何自定义端点，「停」按钮和「边写边看」一起哑掉，**且不报错**。
+
+    换掉它的理由是协议本身 —— `stream` 是 OpenAI Chat Completions 的**基本功能**，
+    自称兼容就得支持（对照过 Cursor：它根本不存这一位，Verify 发的就是一次流式请求）。
+    所以 `supports_streaming` 连同那三档一起从能力表上删了。
+
+    原来那条 docstring 担心的是「吐不出 chunk 而我们按流式读 ⇒ 起草每次失败」。
+    **那一档今天由运输层兜**：真拒绝的端点会在第一次失败时被记住（`_NO_STREAM_OPTIONS`
+    是同一套思路），而「学得会的东西不进能力表」正是这次改动的判据。
     """
-    capability = _capability(streaming)
+    capability = _capability(None)  # 未登记的那一份
     plan = plan_call(LENGTH, ReasoningEffort.OFF, capability, interruptible=True)
-    assert plan.stream is (streaming is True)
+    assert plan.stream is True
     assert plan.interruptible is True, "意图照记 —— 它说得出自己想要什么、拿到了什么"
+
     wire = _wire_kwargs(_config((capability.base_url, capability.model)), plan, MESSAGES)
-    assert wire["stream"] is (streaming is True)
-    if streaming is not True:
-        assert "stream_options" not in wire
+    assert wire["stream"] is True
+    # 可中断这一档要用量（丢账的正是它）；M2 那一档不要，见 `provider.py` 那段注释。
+    assert wire["stream_options"] == {"include_usage": True}
+
+    quiet = plan_call(LENGTH, ReasoningEffort.OFF, capability)
+    assert quiet.stream is False, "不想停就别流 —— 判据只剩这一条"
 
 
 def test_an_unregistered_endpoint_is_not_refused_either() -> None:
@@ -253,9 +270,9 @@ def test_an_unregistered_endpoint_is_not_refused_either() -> None:
     `resolve_capabilities` 对未登记的路由给的是真的那一份未知能力，不是构造出来的。
     """
     capability = resolve_capabilities(*HOMEBREW)
-    assert capability.supports_streaming is None
+    assert capability.source == "unknown"
     plan = plan_call(LENGTH, ReasoningEffort.OFF, capability, interruptible=True)
-    assert plan.stream is False
+    assert plan.stream is True, "未登记不再等于不流式"
 
 
 # ══════════════════════════════════════════════════════════════════════════

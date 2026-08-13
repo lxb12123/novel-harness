@@ -313,6 +313,29 @@ def _usage_at(usage: Any, path: tuple[str, ...]) -> int | None:
     return _usage_count(cursor)
 
 
+_NO_STREAM_OPTIONS: set[tuple[str, str]] = set()
+"""实测**拒绝**过 `stream_options` 的路由（进程内，不落盘）。
+
+为什么不登记进能力表:**这一位靠一次失败就学得会**,而能力表要装的是学不会的那些
+(上下文窗口、输出上限)。写进表 = 又多一个要人手维护、下个月过期的字段。
+
+为什么不落盘:一次白费的往返只发生在**换端点之后的第一稿**,而换端点本来就要重启;
+落盘换来的是一张要迁移、要清理、会和作者改设置这件事对不齐的表。
+"""
+
+
+def _rejected_stream_options(exc: Exception, kwargs: dict[str, Any]) -> bool:
+    """这次失败是不是**因为**我们带了 `stream_options`。
+
+    判据是「**错误里点了这个字段的名**」,不是「状态码是不是 400」——后者会把
+    「模型名写错」「钥匙过期」这些也吞进重试里,于是一次真正的配置错误变成两次失败,
+    而作者只看见后面那次的错误话术。
+    """
+    if "stream_options" not in kwargs:
+        return False
+    return "stream_options" in str(exc)
+
+
 def _cache_usage(usage: Any) -> CacheUsage | None:
     """从一个 `usage` 上认出缓存命中量,认不出返回 `None`(见 `CacheUsage`)。
 
@@ -423,7 +446,29 @@ def _wire_kwargs_from_validated(
     }
     if config.temperature is not None:
         kwargs["temperature"] = config.temperature
-    if plan.stream and plan.capability.supports_stream_usage is True:
+    if (
+        plan.stream
+        and getattr(plan, "interruptible", False)
+        and plan.capability.route not in _NO_STREAM_OPTIONS
+    ):
+        # **要用量的判据是「这一次要可中断」，不再是「这条路由登记过支持」**（2026-08-13）。
+        # 原来看的是 `supports_stream_usage is True`，而注册表里只有 OpenAI 那四条是
+        # `True` ⇒ 作者自己那条路一开可中断，每一稿的 token 数就退成「未记录」。
+        #
+        # ⚠️ **为什么不干脆无条件发**：那样 `nh gate` 那条路的 wire 上会多出这个字段，
+        #    而它是**预注册的考卷**（EVAL_PROTOCOL §2：gate 测的必须是产品会发的东西，
+        #    且逐字节稳定）。`interruptible` 恰好是「产品起草」和「M2 三臂」的分界——
+        #    后者**永不设它**（`ResolvedCallPlan.interruptible` 的 docstring 写着），
+        #    `StructuredCallPlan` 上压根没有这一位。于是这道闸天然只开在该开的那条路上。
+        #    代价说清楚：**不可中断的长稿（预算过 16k 会流式）仍然拿不到用量**。
+        #    那一档今天没有生产调用方；真长出来了，改的是这儿，不是回去登记能力。
+        #
+        # 三种结局，只有第三种要处理：
+        #   ① 支持 → 拿到用量；
+        #   ② 不认识这个字段 → 兼容端点普遍**忽略**未知字段 ⇒ 没有用量 ⇒ `_from_stream`
+        #      落 `None` ⇒ 屏幕说「未记录」。**读取侧本来就 fail-safe，不用登记。**
+        #   ③ 严格拒绝（400）→ 那就不是「少个数」，是**整次起草失败**。所以 `complete()`
+        #      在那一档退一次、记进 `_NO_STREAM_OPTIONS`，这条路由以后不再带它。
         kwargs["stream_options"] = {"include_usage": True}
     if tools:
         kwargs["tools"] = list(tools)
@@ -640,6 +685,19 @@ def complete(
     except ProviderError:
         raise
     except Exception as exc:  # 运输及流式迭代异常统一收口
+        if _rejected_stream_options(exc, kwargs):
+            # **只退这一个字段，不退流式**：作者要的是「能停下来」，用量是附带的。
+            # 记住这条路由,下一次连试都不试——否则每一稿都白费一次失败的往返。
+            _NO_STREAM_OPTIONS.add(validated_plan.capability.route)
+            retry = {key: value for key, value in kwargs.items() if key != "stream_options"}
+            try:
+                response = client.chat.completions.create(**retry)
+                return _from_stream(response, config.model)
+            except Exception as retry_exc:
+                raise ProviderError(
+                    f"模型调用失败(model={config.model}, base_url={config.base_url})"
+                    f":{retry_exc}"
+                ) from retry_exc
         raise ProviderError(
             f"模型调用失败(model={config.model}, base_url={config.base_url}):{exc}"
         ) from exc

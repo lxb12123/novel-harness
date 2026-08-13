@@ -177,8 +177,6 @@ def _call_plan(config: ProviderConfig) -> ResolvedCallPlan:
         reasoning_levels=frozenset({ReasoningEffort.OFF, ReasoningEffort.HIGH}),
         reasoning_dialect=ReasoningDialect.ANTHROPIC_COMPAT,
         reasoning_shares_output=False,
-        supports_streaming=True,
-        supports_stream_usage=False,
     )
     return plan_call(M2_LENGTH_SPEC, ReasoningEffort.HIGH, capability)
 

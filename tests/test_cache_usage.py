@@ -66,8 +66,6 @@ def _capability(*, streaming: bool = True) -> ProviderCapabilities:
         reasoning_levels=frozenset({ReasoningEffort.OFF}),
         reasoning_dialect=ReasoningDialect.NONE,
         reasoning_shares_output=False,
-        supports_streaming=streaming,
-        supports_stream_usage=streaming or None,
     )
 
 

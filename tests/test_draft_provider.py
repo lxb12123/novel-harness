@@ -102,8 +102,6 @@ def _plan(
         reasoning_dialect=dialect,
         reasoning_shares_output=dialect is not ReasoningDialect.NONE,
         reserve_ratio_high=0.8 if dialect is not ReasoningDialect.NONE else None,
-        supports_streaming=True,
-        supports_stream_usage=supports_stream_usage,
     )
     return plan_call(
         length,
@@ -289,14 +287,15 @@ def test_high_reasoning_maps_to_each_compatible_wire_dialect(
         ReasoningEffort.HIGH,
         length=M2_LENGTH_SPEC,
         request_token_budget=40_000,
-        supports_stream_usage=dialect is ReasoningDialect.OPENAI,
     )
     config = ProviderConfig(model=plan.model, base_url=plan.base_url)
     kwargs = _wire_kwargs(config, plan, [{"role": "user", "content": "x"}])
 
     assert kwargs[plan.max_tokens_field] == 40_000
     assert kwargs["stream"] is True
-    assert ("stream_options" in kwargs) is (dialect is ReasoningDialect.OPENAI)
+    # **2026-08-13：判据从「这条路由登记过 stream usage」换成「这一次要可中断」。**
+    # 这条 plan 不可中断（M2 三臂那一档），所以四种方言一律不带这个字段。
+    assert "stream_options" not in kwargs
     for key, value in expected.items():
         assert kwargs[key] == value
 

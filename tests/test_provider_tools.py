@@ -71,8 +71,6 @@ def _plan(*, stream: bool = False, supports_stream_usage: bool | None = None) ->
         reasoning_dialect=ReasoningDialect.NONE,
         reasoning_shares_output=False,
         reserve_ratio_high=None,
-        supports_streaming=True,
-        supports_stream_usage=supports_stream_usage,
     )
     return plan_call(
         TEST_LENGTH,

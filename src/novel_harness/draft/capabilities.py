@@ -79,8 +79,9 @@ class ServerContextManagement(StrEnum):
     | `OPAQUE` | 做，但响应里带不回「清了什么」——**有它也不许开** |
     | `REPORTED` | 做，且响应里带得回「清了什么」——只有这一档能外包 |
 
-    字段本身还有第四种状态：`None`（**没登记**）。同 `supports_streaming`，
-    未登记一律 fail-closed 走自己的剪枝。
+    字段本身还有第四种状态：`None`（**没登记**）。未登记一律 fail-closed 走自己的剪枝
+    ——**这一位和已经删掉的 `supports_streaming` 不同**：那一位删得掉是因为协议保证它，
+    而「服务端替我们清了什么」没有任何协议保证，猜错等于承诺里有一段空的。
     """
 
     NONE = "none"
@@ -200,8 +201,6 @@ class ProviderCapabilities(BaseModel):
     reasoning_dialect: ReasoningDialect
     reasoning_shares_output: bool
     reserve_ratio_high: float | None = Field(default=None, gt=0, lt=1)
-    supports_streaming: bool | None = None
-    supports_stream_usage: bool | None = None
     server_context_management: ServerContextManagement | None = None
     """服务端替我们清上下文吗（见 `ServerContextManagement`）。`None` = **这条路由没登记过这件事**。
 
@@ -261,8 +260,6 @@ class ProviderCapabilities(BaseModel):
                 and self.reasoning_dialect is ReasoningDialect.NONE
                 and not self.reasoning_shares_output
                 and self.reserve_ratio_high is None
-                and self.supports_streaming is None
-                and self.supports_stream_usage is None
                 and self.server_context_management is None
             )
             if not canonical_unknown:
@@ -289,8 +286,6 @@ class ProviderCapabilities(BaseModel):
             ReasoningEffort.HIGH not in self.reasoning_levels or not self.reasoning_shares_output
         ):
             raise ValueError("reserve_ratio_high requires high reasoning in a shared output pool")
-        if self.supports_stream_usage is True and self.supports_streaming is not True:
-            raise ValueError("stream usage support requires streaming support")
         return self
 
     @property
@@ -307,16 +302,25 @@ def _streams(
     """这一次调用走不走流式。**两个理由，任一成立即为真；判据只有这一处。**
 
     1. **预算够大**（`request > STREAM_THRESHOLD_TOKENS`）—— 一次阻塞往返会超时；
-    2. **这次要可中断，且这条路由确认支持流式** —— 见 `ResolvedCallPlan.interruptible`。
+    2. **这次要可中断** —— 见 `ResolvedCallPlan.interruptible`。
 
-    第二条**必须带着 `supports_streaming is True` 一起看**：未登记的端点
-    （`None`）在这儿就落回不流式，而不是走到下面那道 fail-closed 上被拒掉——
-    「作者接了个自建端点 ⇒ 起草整个不能用」和「作者接了个自建端点 ⇒ 起草停不下来、
-    但写得出稿」之间，本仓选后者（同 `AGENT_REASONING` 为什么是 `OFF`）。
+    ── 2026-08-13：这儿曾经还有第三个条件，删掉了 ────────────────────────────
+
+    原来第二条写的是「可中断**且这条路由确认支持流式**（`supports_streaming is True`）」，
+    于是没登记的端点一律落回非流式。**那个默认方向是错的**：
+
+    > `stream` 是 OpenAI Chat Completions 协议的**基本功能，不是可选扩展**。
+    > 一个自称 OpenAI 兼容的端点不支持它，就跟不支持 `messages` 一样，是它坏了。
+
+    错的代价不是「保守」，是**作者接任何自定义端点，「停」按钮和「边写边看」一起哑掉，
+    而且不报错**——两个模块各自都对，接缝处静默失效。
+    对照过 Cursor：它**根本不存这一位**，Verify 按钮发的就是一次流式请求。
+
+    所以 `capability` 这个参数在这儿只剩签名上的位置了。**没删它是有意的**：
+    哪天真出现「实测过、确实不流式」的端点，那一位要回来时改的还是这一个函数。
     """
-    if request_token_budget > STREAM_THRESHOLD_TOKENS:
-        return True
-    return interruptible and capability.supports_streaming is True
+    del capability  # 见上：留着形参，是给「实测过确实不行」那一档留的位置
+    return request_token_budget > STREAM_THRESHOLD_TOKENS or interruptible
 
 
 class ResolvedCallPlan(BaseModel):
@@ -348,9 +352,10 @@ class ResolvedCallPlan(BaseModel):
     这一稿写完（30–60 秒）。
 
     **不许改用「把输出预算抬到 16k 以上」来开流式**：那样判据就从「输出多大」变成了
-    「谁想要流式」，而抬上去之后**能力表没登记的端点**（`supports_streaming is None`）
-    会被 `plan_call` 当场 fail-closed 拒掉——作者接一个自建端点，症状是
-    **聊天好好的、只有起草每次失败**。所以是这一位显式说出意图，能力表照旧说了算。
+    「谁想要流式」，而那个式子还管着别的事（超时）。所以是这一位显式说出意图。
+
+    （2026-08-13 之前这儿还有半句「而抬上去之后没登记的端点会被 fail-closed 拒掉」——
+    那道拒绝已经删了，见 `_streams`：`stream` 是协议的基本功能，不需要逐条登记。）
 
     **默认 `False`，而且 M2 三臂 / `nh gate` 永不设它** ⇒ 那条路的 wire shape 逐字节不变
     （同 `previous_tail_limit` 那个既有形状：三臂不传、产品传）。
@@ -420,9 +425,6 @@ class ResolvedCallPlan(BaseModel):
             self.request_token_budget, self.capability, interruptible=self.interruptible
         ):
             raise ValueError("stream must follow the versioned token threshold")
-        if self.stream and self.capability.supports_streaming is not True:
-            state = "unknown" if self.capability.supports_streaming is None else "false"
-            raise ValueError(f"streaming is required, but capability support is {state}")
         return self
 
 
@@ -525,9 +527,6 @@ class StructuredCallPlan(BaseModel):
         # 哪天它们真长出一颗停止按钮，照 `ResolvedCallPlan` 那条加，别在这儿先摆一个空位。
         if self.stream != (self.request_token_budget > STREAM_THRESHOLD_TOKENS):
             raise ValueError("stream must follow the versioned token threshold")
-        if self.stream and self.capability.supports_streaming is not True:
-            state = "unknown" if self.capability.supports_streaming is None else "false"
-            raise ValueError(f"streaming is required, but capability support is {state}")
         return self
 
 
@@ -547,7 +546,6 @@ def _known_capability(
     reasoning_dialect: ReasoningDialect,
     reasoning_shares_output: bool = True,
     reserve_ratio_high: float | None = None,
-    supports_stream_usage: bool | None = None,
 ) -> ProviderCapabilities:
     """一条查证过的路由。
 
@@ -567,8 +565,6 @@ def _known_capability(
         reasoning_dialect=reasoning_dialect,
         reasoning_shares_output=reasoning_shares_output,
         reserve_ratio_high=reserve_ratio_high,
-        supports_streaming=True,
-        supports_stream_usage=supports_stream_usage,
     )
 
 
@@ -629,7 +625,6 @@ def _build_registry() -> Mapping[tuple[str, str], ProviderCapabilities]:
                 max_tokens_field="max_completion_tokens",
                 reasoning_levels=_ALL_EFFORTS,
                 reasoning_dialect=ReasoningDialect.OPENAI,
-                supports_stream_usage=True,
             )
         )
     for model, levels in (
@@ -745,8 +740,6 @@ def resolve_capabilities(
         reasoning_dialect=ReasoningDialect.NONE,
         reasoning_shares_output=False,
         reserve_ratio_high=None,
-        supports_streaming=None,
-        supports_stream_usage=None,
         server_context_management=None,
     )
 
@@ -755,8 +748,9 @@ def server_context_management_usable(capability: ProviderCapabilities) -> bool:
     """能不能把「清旧上下文」外包给这条路由的服务端（ADR 0023 决策一）。
 
     **只有 `REPORTED` 一档为真**，其余（`OPAQUE` / `NONE` / 未登记）一律自己做。
-    这是那张能力表的既有立场（`supports_streaming is None` ⇒ 不许流式）换了个对象，
-    不是新机制。
+    这是那张能力表的既有立场（**没查证过的一律不许声称支持**）换了个对象，不是新机制。
+    ⚠️ 别拿已经删掉的 `supports_streaming` 类比：那一位删得掉，是因为 OpenAI 兼容协议
+    **保证**了 `stream`；而「服务端清了什么」没有任何协议保证，猜错等于承诺里有一段空的。
 
     ── 为什么它今天没有调用方，而这**不是**「接线还没做」──────────────────
 
@@ -810,12 +804,11 @@ def plan_call(
             永不设它** —— 那条路发出去的东西因此逐字节不变。
 
     Notes:
-        **开着它有一笔账上的代价，说在这儿免得以后当成 bug 查**：流式下 usage 只有在
-        `supports_stream_usage is True` 的路由上才要得回来（`provider.py` 只对那一档加
-        `stream_options`）。今天注册表里只有 OpenAI 那四条是 `True`，所以 DeepSeek /
-        Anthropic 兼容 / OpenRouter 上一开可中断，那一稿的 token 数就从「供应商报的」
-        退成 `None`（账上「未记录」、闸门走 `_estimate_tokens` 的估算）。
-        **方向是对的**（不报数就说不知道，绝不编一个），但那是一次真实的精度损失。
+        **2026-08-13 之前这儿写着一笔账上的代价，现在它没了**：那时流式下的 usage 只在
+        `supports_stream_usage is True` 的路由上才要，而注册表里只有 OpenAI 那四条是
+        `True` ⇒ 一开可中断，那一稿的 token 数就退成「未记录」。
+        现在 `stream_options` **无条件发**（`provider.py`），端点不给才落 `None` ——
+        读取侧本来就 fail-safe。留着这段是因为「可中断换掉了记账」曾经是一个真实的取舍。
     """
     try:
         effort = ReasoningEffort(reasoning)
@@ -870,12 +863,6 @@ def plan_call(
         )
 
     stream = _streams(request, capability, interruptible=interruptible)
-    if stream and capability.supports_streaming is not True:
-        state = "unknown" if capability.supports_streaming is None else "false"
-        raise CapabilityError(
-            f"request budget {request} requires streaming, but support is {state}"
-        )
-
     return ResolvedCallPlan(
         base_url=capability.base_url,
         model=capability.model,
@@ -960,11 +947,6 @@ def plan_structured_call(
         )
 
     stream = request > STREAM_THRESHOLD_TOKENS
-    if stream and capability.supports_streaming is not True:
-        state = "unknown" if capability.supports_streaming is None else "false"
-        raise CapabilityError(
-            f"request budget {request} requires streaming, but support is {state}"
-        )
 
     return StructuredCallPlan(
         base_url=capability.base_url,

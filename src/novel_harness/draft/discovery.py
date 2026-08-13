@@ -7,10 +7,13 @@
 
 | 字段 | `unknown` 的值 | 后果 |
 |---|---|---|
-| `supports_streaming` | `None` | 起草不流式 ⇒ **「停」退化成「这一稿写完才停」、字不再一个个长出来** |
-| `supports_stream_usage` | `None` | （流式都没了，这条跟着没意义） |
-| `max_context_tokens` | `None` | 记忆层倒推不出预算 |
-| `max_output_tokens` | `None` | 没有天花板检查 |
+| `max_context_tokens` | `None` | **逐字上文从 40,000 字塌回 800**，记忆层也倒推不出预算 |
+| `max_output_tokens` | `None` | 少一道「发出去必被拒」的预检 |
+
+⚠️ **2026-08-13 这张表短了一半**：原来头两行是 `supports_streaming` / `supports_stream_usage`
+（「停」和「边写边看」在自选端点上一起哑掉）。**那两位已经从能力表里删掉了**——
+`stream` 是 OpenAI 兼容协议的基本功能，不需要逐条登记；用量则是无条件要、端点不给就落
+`None`。于是本模块的收益只剩上面这两个数字，**比它落地那天小得多**。
 
 **注册表不许凭空登记没查证过的东西**，这条立场是对的、不动。但「没查证过」不等于
 「查不到」——有的中转**自己把能力表发布成 API**。这个模块就是去读那份 API。
@@ -199,15 +202,6 @@ def _openrouter_capabilities(
             reasoning_dialect=dialect,
             reasoning_shares_output=shares,
             reserve_ratio_high=None,
-            # ── host 级事实，不是 slug 级 ────────────────────────────────────
-            # OpenRouter 把各家的 usage 归一成 OpenAI 形状再转出来，所以「流式下报不报」
-            # 是这个 host 的属性。2026-08-13 实测（`scripts/probe_stream_usage.py`，
-            # deepseek/deepseek-v4-flash，锁官方上游与不锁各一轮）：三臂全报，
-            # **连不要 usage 的那一臂都报**。
-            # ⚠️ 若某个 slug 其实不吃 `stream_options`，症状是起草 400 —— 那时把这两个
-            # 改回 None（退回今天的行为：不流式、但写得出稿），别去给单个 slug 开豁免。
-            supports_streaming=True,
-            supports_stream_usage=True,
         )
     except (ValueError, CapabilityError):
         # 校验器不收 ⇒ 这份数据自相矛盾 ⇒ 当作没问到。**绝不降级成半份能力**。

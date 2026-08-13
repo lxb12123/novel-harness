@@ -43,8 +43,6 @@ def _caps(**updates: object) -> ProviderCapabilities:
         "reasoning_dialect": ReasoningDialect.NONE,
         "reasoning_shares_output": False,
         "reserve_ratio_high": None,
-        "supports_streaming": True,
-        "supports_stream_usage": False,
     }
     values.update(updates)
     return ProviderCapabilities(**values)
@@ -99,16 +97,36 @@ def test_exact_registry_contains_all_supported_routes() -> None:
         assert capability.model_dump(mode="json")["source_urls"]
 
 
-def test_registry_only_claims_stream_usage_with_recorded_support() -> None:
-    openai = resolve_capabilities("https://api.openai.com/v1", "gpt-5.6")
-    assert openai.supports_stream_usage is True
+def test_the_two_streaming_bits_stay_out_of_the_table() -> None:
+    """**2026-08-13 删掉的那两位，别加回来。**
+
+    这条原来叫 `test_registry_only_claims_stream_usage_with_recorded_support`：
+    它钉的是「只有 OpenAI 那四条敢声称 `supports_stream_usage`，别家一律 `None`」。
+    那个形状本身就是病灶 —— 作者自己那条路一开可中断，每一稿的 token 数就退成「未记录」，
+    而「停」和「边写边看」在任何自选端点上一起哑掉。
+
+    换掉它的判据是**协议**，不是登记：
+
+    * `stream` 是 OpenAI Chat Completions 的**基本功能**，自称兼容就得支持
+      （对照过 Cursor：它根本不存这一位，Verify 按钮发的就是一次流式请求）；
+    * `stream_options` **无条件发**，端点不认就忽略 ⇒ 没有用量 ⇒ 读取侧落 `None`，
+      本来就 fail-safe；真严格拒绝（400）的那一档由 `provider.py` 退一次并记住。
+
+    **要加回来之前先回答一个问题**：这一位是「学得会的」还是「学不会的」？
+    学得会的（一次失败就知道）不进表 —— 表要装的是 `max_context_tokens` 那种
+    **测不起**的东西。
+    """
+    fields = set(ProviderCapabilities.model_fields)
+    assert "supports_streaming" not in fields
+    assert "supports_stream_usage" not in fields
 
     for route in (
+        ("https://api.openai.com/v1", "gpt-5.6"),
         ("https://api.deepseek.com", "deepseek-v4-pro"),
         ("https://api.anthropic.com/v1", "claude-opus-4-8"),
         ("https://openrouter.ai/api/v1", "anthropic/claude-opus-4.8"),
     ):
-        assert resolve_capabilities(*route).supports_stream_usage is None
+        assert resolve_capabilities(*route).source != "unknown"
 
 
 @pytest.mark.parametrize(
@@ -201,9 +219,6 @@ def test_override_registry_metadata_unknown_precedence_and_binding() -> None:
         ),
         pytest.param({"reasoning_shares_output": True}, id="shared-output"),
         pytest.param({"reserve_ratio_high": 0.8}, id="reserve-ratio"),
-        pytest.param({"supports_streaming": False}, id="streaming-false"),
-        pytest.param({"supports_streaming": True}, id="streaming-true"),
-        pytest.param({"supports_stream_usage": False}, id="stream-usage-false"),
     ],
 )
 def test_unknown_source_requires_canonical_fail_closed_capabilities(
@@ -225,8 +240,6 @@ def test_capability_model_enforces_cross_field_invariants() -> None:
             reasoning_levels=frozenset({ReasoningEffort.OFF, ReasoningEffort.HIGH}),
             reasoning_dialect=ReasoningDialect.NONE,
         )
-    with pytest.raises(ValidationError, match="stream usage"):
-        _caps(supports_streaming=False, supports_stream_usage=True)
     with pytest.raises(ValidationError, match="reserve_ratio_high"):
         _caps(reasoning_shares_output=False, reserve_ratio_high=Decimal("0.8"))
     with pytest.raises(ValidationError, match="max_output_tokens"):
@@ -323,16 +336,15 @@ def test_direct_call_plan_rejects_prompt_plus_request_above_context_limit() -> N
         )
 
 
-@pytest.mark.parametrize("support", [False, None])
-def test_direct_call_plan_rejects_required_streaming_without_support(
-    support: bool | None,
-) -> None:
-    with pytest.raises(ValidationError, match="streaming.*support"):
-        _direct_plan(
-            _caps(supports_streaming=support),
-            request_token_budget=16_001,
-            stream=True,
-        )
+def test_a_big_direct_plan_streams_without_asking_the_table_first() -> None:
+    """**2026-08-13：「没登记就不许流式」那道校验删了**（`_streams` 的 docstring 写了为什么）。
+
+    原来这条参数化跑 `supports_streaming` 的 `False` / `None` 两档，断言 `ResolvedCallPlan`
+    在校验器上炸。那个字段本身已经不在模型上了：**`stream` 是 OpenAI 兼容协议的基本功能**。
+    留下正面断言，钉住换过来的行为。
+    """
+    plan = _direct_plan(_caps(), request_token_budget=16_001, stream=True)
+    assert plan.stream is True
 
 
 def test_shared_reasoning_without_a_documented_ratio_is_recordable_but_not_plannable() -> None:
@@ -402,14 +414,10 @@ def test_streaming_threshold_is_strictly_greater_than_16000() -> None:
 
     above = plan_call(spec, ReasoningEffort.OFF, _caps(), request_token_budget=16_001)
     assert above.stream is True
-    for support in (False, None):
-        with pytest.raises(CapabilityError, match="streaming"):
-            plan_call(
-                spec,
-                ReasoningEffort.OFF,
-                _caps(supports_streaming=support),
-                request_token_budget=16_001,
-            )
+    # **2026-08-13 起大预算不再需要「登记过支持流式」**：那道 fail-closed 拒绝删了。
+    assert plan_call(
+        spec, ReasoningEffort.OFF, _caps(), request_token_budget=16_001
+    ).stream is True
 
 
 def test_prompt_plus_request_budget_obeys_context_boundary() -> None:
