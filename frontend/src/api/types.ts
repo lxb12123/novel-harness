@@ -383,6 +383,24 @@ export interface ImportReport {
   synced: { added: unknown[]; refreshed: unknown[]; unchanged_count: number; ignored_files: string[] };
 }
 
+/** 一次导入**摆给作者看的那份回执**（后端 `api/manuscript.py::ImportSummary`）。
+ *
+ *  **`headline` / `lines` / `warning` 里的每一个字都是后端写的**，这一层一句都不拼：
+ *  「切了多少章算好、算不好」是产品判断，两份判断迟早会互相说反话。
+ *  `warning` 非空 = `preamble_chars` 越过了门槛 = **全书章号可能集体错一位**，
+ *  而那件事在界面上看不出任何异常（`api/manuscript.py::PREAMBLE_ALARM_CHARS` 写着门槛和理由）。 */
+export interface ImportSummary {
+  chapter_count: number;
+  written_count: number;
+  unchanged_count: number;
+  landed_count: number;
+  ignored_files: string[];
+  preamble_chars: number;
+  headline: string;
+  lines: string[];
+  warning: string | null;
+}
+
 export type BootstrapRequest =
   | { mode: "import"; name: string; text: string }
   | { mode: "blank"; name: string };
@@ -391,6 +409,22 @@ export interface BootstrapResult {
   project: Project;
   initial_chapter: number;
   import_report: ImportReport | null;
+  /** 空白建书档是 `null`：那时没有任何东西被切、被写、被忽略。 */
+  summary: ImportSummary | null;
+}
+
+/** 「读回我在别的软件里改过的稿子」的回执（后端 `api/manuscript.py::SyncOutcome`）。
+ *
+ *  `headline` 是屏幕上那句话，**后端写的**。零也带着一句理由（约束 8）：
+ *  「一个章节都没有」和「读了一遍没有变化」是两句不同的话，而它们的下一步动作相反。 */
+export interface SyncOutcome {
+  added_chapters: number[];
+  updated_chapters: number[];
+  unchanged_count: number;
+  chapter_count: number;
+  ignored_files: string[];
+  headline: string;
+  notes: string[];
 }
 
 export interface CheckResult {

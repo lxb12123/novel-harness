@@ -112,6 +112,22 @@ class DeclarationRefused(Exception):
 
     **绝不许挑一个。** 挑错的产物是一条 `valid_from` 写错的 CANON 边，而它在面板上
     长得完全正常：没有任何一条规则、任何一个面板分区、任何一次 review 会发现它。
+
+    ── 这些话直接进小说作者的屏幕，所以里面不许有一行命令 ──────────────────
+
+    `api/app.py` 的错误映射把 `str(exc)` 原样放进 `message`，`DeclareDrawer` 逐字渲染。
+    而产品的最终用户是 README 里那位「用 WPS、不想碰命令行」的作者——**告诉他
+    「先跑 nh sync」等于告诉他去一个他从没打开过的窗口**（2026-08-13 之前这里有两句
+    这样的话，第三句在 `UnknownName` 里）。
+
+    所以这一层的措辞只说两件事：**发生了什么** + **产品无关的那半句怎么办**
+    （「让系统重新读一遍稿子」而不是「跑 nh sync」）。终端里那半句由 `cli.py` 的
+    `_refusal_tail()` 接上，浏览器里那半句由抽屉上那颗按钮接上——
+    **哪个壳负责哪半句，由壳自己知道，引擎不知道**。
+
+    守卫：`tests/test_wording_guard.py::test_no_refusal_ever_tells_the_author_to_type_a_command`
+    拿本模块每一个 `DeclarationRefused` 子类的真实消息去扫，
+    浏览器那侧是 `screenGuard.ts::SHELL_LINE`（第五张网）。
     """
 
 
@@ -121,8 +137,8 @@ class UnknownName(DeclarationRefused):
     def __init__(self, surface: str) -> None:
         self.surface = surface
         super().__init__(
-            f"没有叫「{surface}」的东西。先 nh declare character / place / secret 声明它，"
-            "或者用 nh declare alias 把这个称呼挂到已有的节点上"
+            f"没有叫「{surface}」的东西。先把它建出来（人物 / 地点 / 秘密都行），"
+            "或者把这个称呼加到已经建好的那一个上"
         )
 
 
@@ -161,8 +177,12 @@ class QuoteNotFound(DeclarationRefused):
         self.quote = quote
         super().__init__(
             f"这句话在当前正文里一处都找不到：「{quote}」。\n"
-            "  M1 只做逐字精确匹配（标点、空格、全半角都算）——从稿子里复制粘贴，别手打。\n"
-            "  也可能是这一章还没进库：先跑 nh sync。"
+            "  这里只认一模一样的句子（标点、空格、全角半角都算）——从稿子里复制粘贴，别手打。\n"
+            # **不许再写成「你选错了」。** 作者在别的软件里改完这一章回到工作台，正文他
+            # 看得见（章列表和正文都直接扫磁盘），而这句话搜的是**库里的快照**——
+            # 快照只有「读回改动」那一下落得下。他的选择没有问题，是这边还没读过那一版。
+            "  也可能是这一章你在别的软件里改过，而这边还没读回来：\n"
+            "  让系统重新读一遍稿子，再试一次。"
         )
 
 
@@ -180,7 +200,8 @@ class AmbiguousQuote(DeclarationRefused):
         super().__init__(
             f"这句话在 {len(self.candidates)} 处都能定位到，系统不替你挑。\n"
             f"{lines}\n"
-            "  把引语加长到只匹配一处（前后各多复制半句通常就够）。用 nh locate 先试。"
+            "  把引语加长到只匹配一处（前后各多复制半句通常就够），\n"
+            "  改完先试一次定位，看看还剩几处。"
         )
 
 

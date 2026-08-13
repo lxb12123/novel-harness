@@ -87,6 +87,10 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     ["花名册抽屉", <RosterDrawer key="rd" pid="project:ID1" onClose={() => {}} />],
     ["设置抽屉", <SettingsDrawer key="sd" onClose={() => {}} />],
     ["历史抽屉", <HistoryDrawer key="hd" pid="project:ID1" chapter={1} onClose={() => {}} />],
+    // ⚠️ **这儿扫的只有正常态。** 它端着后端每一句拒绝，而那些话此前有三句写着
+    // 「先跑 nh sync」——正常态下一句都不亮，正是它们躲过这张网整整一年的方式。
+    // 「定位不到」那两档（0 命中 / 后端 422）的整屏扫描在 `DeclareDrawer.test.tsx`，
+    // 和它们各自的行为断言摆在一起。**别在这儿抄第二份。**
     ["声明抽屉", <DeclareDrawer key="dd" pid="project:ID1" quote="萧决在青云城主府" onClose={() => {}} />],
     // 写作助手（模式二）。它是这块网上**风险最高**的一格：会话的内部标识
     // （`chat_session:…`）、停止原因的机器码（`done` / `context_full`）、

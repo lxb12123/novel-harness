@@ -644,6 +644,53 @@ def test_frontend_fixture_matches_the_real_api(
     failed_run = seed_run(book, 3, status="FAILED")
     grab("extractionFailed", client.get(f"{base}/extractions/{failed_run}"))
 
+    # ── 作者在 WPS 里改完稿子，回到工作台点「读回改动」（2026-08-13）──────────
+    #
+    # `POST …/sync` 从 M1.5 起就在后端，而**浏览器里零调用方**：正文他看得见（章目录
+    # 和正文都直接扫磁盘），可 `locate` 搜的是库里的快照——不跑这一下，他刚写的那句话
+    # 选中之后会被告知「找不到」，而他的选择没有任何问题。
+    #
+    # **绕开 HTTP 直接写盘**，因为那正是作者干的事（WPS / VSCode / 手机）：
+    # 走 `PUT …/text` 的话后端自己就 sync 了，冻下来的会是「什么都没变」那一档，
+    # 而这条路由存在的全部理由就在「变了」那一档上。
+    #
+    # **放在最后**：它把第 2 章改了、把只在磁盘上的第 3 章落进库，前面每一个 grab
+    # 都不该看见这些。
+    root = Path(client.get(base).json()["root_path"])
+    (root / "chapters" / "0002.md").write_text(
+        (root / "chapters" / "0002.md").read_text(encoding="utf-8-sig") + "\n他在灯下改了这一段。\n",
+        encoding="utf-8",
+    )
+    # 作者自己的东西（大纲、笔记）**不是错误**，回执要说得出「没动它们」。
+    (root / "chapters" / "大纲.md").write_text("三卷的走向。\n", encoding="utf-8")
+    grab("sync", client.post(f"{base}/sync"))
+    # 再点一次：**「读了一遍，没有变化」和「读回来了 N 章」是两句不同的话**，
+    # 而作者按这颗按钮时绝大多数时候落在前一档上。只冻后一档等于只验了一半。
+    grab("syncUnchanged", client.post(f"{base}/sync"))
+
+    # ── 章标之前躺着一整章那一份（2026-08-13）────────────────────────────────
+    #
+    # 在它之前这份夹具里唯一一次导入的 `preamble_chars` 是 0，于是「整本书的章号可能
+    # 错一位」那块警告在 pytest 和 vitest 两侧扫的都是一块永远干净的屏幕——**而它是
+    # 全书唯一一个「整本都错了」的早期信号**（门槛和它两边的余量写在
+    # `api/manuscript.py::PREAMBLE_ALARM_CHARS`）。同 `extractionFailed` 那条的理由：
+    # 正常数据下永远不亮的分支，正是它躲过守卫的方式。
+    #
+    # **放在最后**：它会往这个库里加第三本书，`projects` / `projectsTwo` 都不该看见。
+    grab(
+        "bootstrapPreamble",
+        client.post(
+            "/api/projects/bootstrap",
+            json={
+                "mode": "import",
+                "name": "序章样书",
+                # 第一段没有章标（切章器认的是行首的「第N章/节/回」），所以它整段落在
+                # preamble 里。凑够门槛靠重复——**长度是判据，内容不是**。
+                "text": "楔子\n\n" + ("风雪压着青云城的檐角。" * 100) + "\n\n第一章 起\n\n正文。\n",
+            },
+        ),
+    )
+
     frozen = json.dumps(dump, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
     if os.environ.get("NH_UPDATE_FIXTURES"):

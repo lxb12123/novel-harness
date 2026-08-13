@@ -58,6 +58,7 @@ import type {
   StoredAlias,
   Subgraph,
   SummaryWindow,
+  SyncOutcome,
 } from "./types";
 
 // 服务端状态全进 TanStack Query（§2.3）：queryKey = [端点, pid, chapter, cast]，
@@ -266,6 +267,35 @@ export function useImportBook(pid: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["chapters", pid] });
       qc.invalidateQueries({ queryKey: ["roster", pid] });
+    },
+  });
+}
+
+/** **把作者在别的软件里改过的稿子读回库。**
+ *
+ *  这条路由（`POST …/sync`）从 M1.5 建好起在浏览器里**零调用方**，而它是
+ *  「正文看得见」和「这句话记得下」之间那半条回路：章列表和正文直接扫磁盘，所以
+ *  作者在 WPS 里改完回来屏幕上立刻是新的；而 `locate` 搜的是**库里的快照**——
+ *  不跑这一下，他刚写的那句话选中之后会被告知「找不到」，而他的选择没有任何问题。
+ *
+ *  **不花钱**（一次模型调用都没有），但仍然只由作者按一下：它往库里写快照，
+ *  而「磁盘先、DB 跟」的那一下是作者的动作（ADR 0007），不是后台的。
+ *  **也没有 file-watch**：一个自动跟着磁盘写库的后台线程是一条作者按不停的写路径，
+ *  而它防的那件事一次点击就能补回来。
+ *
+ *  成功后失效的东西按「这一下真的改了什么」来挑：库里的快照变了 ⇒ 历史、面板；
+ *  文件本身没被动过，但章列表可能多出新写的那一章 ⇒ 章目录。
+ *  **正文（`text`）不失效**——那一份直接读磁盘，和这次同步无关，
+ *  而作者手上可能有没保存的字（`CenterEditor` 的 `diskAhead` 那条）。 */
+export function useSyncManuscript(pid: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<SyncOutcome>(proj(pid!, "/sync"), {}),
+    onSuccess: () => {
+      if (!pid) return;
+      qc.invalidateQueries({ queryKey: ["chapters", pid] });
+      qc.invalidateQueries({ queryKey: ["history", pid] });
+      invalidatePanels(qc, pid);
     },
   });
 }

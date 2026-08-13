@@ -177,7 +177,7 @@
 | `AmbiguousQuote` | 409 | `ambiguous_quote` + `candidates: list[QuoteCandidate]`（让作者加长引语到唯一） |
 | `SupersedeConflict` | 409 | `supersede_conflict`（乱序 valid_from，v1 拒绝不猜） |
 | `WrongLabel` | 422 | got/want NodeLabel |
-| `QuoteNotFound` | 422 | `quote_not_found`（提示：精确匹配、先 sync、复制别手打） |
+| `QuoteNotFound` | 422 | `quote_not_found`（提示：逐字精确、复制别手打、**这一章可能还没读回来** —— 声明抽屉据它摆出「读回改动」；那句话里**不许出现命令**，见 ARCHITECTURE「已知洞」第 10 条） |
 | `ImportRefused` | 409 | `conflicts: list[str]`（内容不同的已存在文件，无 --force） |
 | `SyncRefused` | 422 | `path`（某 NNNN.md 切出 0 或 >1 章） |
 | pydantic `ValidationError` | 422 | 剥掉开发者 wrapper，留作者可读的一半（CLI 的 `_reason`） |
@@ -387,7 +387,9 @@
 
 选 **CodeMirror 6**（`@codemirror/lang-markdown`）作应用内编辑器。
 
-- **怎么守 ADR 0007**：编辑器只是磁盘 `chapters/NNNN.md` 的便利视图，不是新真相源。打开=读盘，保存=写回同一个 md 再 `importer.sync`。磁盘文件始终可被 VSCode/Obsidian 平行编辑（外部改动经 file-watch → sync 回流）。「文件是作者的」没破，GUI 是可选便利不是锁定。
+- **怎么守 ADR 0007**：编辑器只是磁盘 `chapters/NNNN.md` 的便利视图，不是新真相源。打开=读盘，保存=写回同一个 md 再 `importer.sync`。磁盘文件始终可被 WPS/VSCode/Obsidian 平行编辑。
+
+  > ⚠️ **这一行原来写着「外部改动经 file-watch → sync 回流」，而回流那一半从来没建**（`/sync` 在浏览器里零调用方）。**2026-08-13 补上的是一颗按钮，不是 file-watch**，而那是一个决定不是欠账：sync 是写路径（每次落一条快照，快照是证据的锚），「磁盘先、DB 跟」里的那个「跟」是作者的动作；自动跟着磁盘写库等于给他一条按不停也看不见的写入面，还要往 wheel 里加一个平台相关的监听依赖。理由全文和「剩下什么」在 [`ARCHITECTURE.md` 的「工作台的已知洞」第 10 条](ARCHITECTURE.md#工作台的已知洞)，**别在这儿写第二份**。
 - **为什么不 TipTap**：ADR 0007 把 TipTap 砍到 v1.1，核心不是「前端库不许用」（TipTap 只是前端库，不违反后端精简），而是它买来 ADR 0006 的坐标错位——ProseMirror 用持久化 pos，必须维护 `pos ↔ (para_index,quote,k)` 映射层，那正是 offset 地狱、正是 v1.1 才做的那层。**CM6 停在纯文本/markdown 心智**：段落=空行分隔的文本块，锚靠重寻 quote 定位，不需要任何持久化 position 映射。
 - **取舍说明**：内置编辑器降低了非程序员门槛（换取采纳），代价是要自己扛 revalidate——但 CM6 + 磁盘回写让 revalidate 从第一天就被真实编辑行为压测（这是 ADR 0007 的「副作用全是好的」）。这是本方案**唯一松动 ADR 0007「v1 不做编辑器」时机**的地方，且是作者选定的产品方向（非程序员 GUI）的直接推论——松的是时机，守住的是实质（正文在磁盘）。TipTap 的触发条件明确：真有作者要求内置富文本时，图层/规则/面板全不动，只加 TipTap + 一层 pos↔锚映射（v1.1）。
 
