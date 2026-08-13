@@ -34,19 +34,49 @@ def _event_line(view: EventView) -> str:
 
 
 def render_product_memory(memory: ResolvedProductContext) -> str:
-    """Render only author-facing names and accepted profile/event prose, never storage metadata."""
+    """Render only author-facing names and accepted profile/event prose, never storage metadata.
+
+    ── 块序：**最不会变的排最前**（ADR 0019 边界六，同一条判据往里再走一层）────
+
+    边界六在**消息**这一层已经守住了（`[文风][记忆][用户]`，见 `assemble_product`），
+    可记忆前言**内部**原来又犯了一遍同一个错，而且这一次代价大得多：
+
+    | 块 | 跟着什么变 | 真书实测长度 |
+    |---|---|---|
+    | 【更早章节滚动总结】 | 只跟章号，且要撑破预算才动 | **5,518 字** |
+    | 【更早的相关事件】/【近八章事件】 | 章号 + 在场 | 各十几字 |
+    | 【在场人物资料】 | **每一场的在场名单** | 48–89 字 |
+
+    原来的顺序把最后那一块（几十个字、每场都变）排在那 5,518 字**前面**。前缀缓存只认
+    前缀，**前面变一个字节后面全废**——于是相邻两章的起草 prompt 共同前缀只剩 333 字
+    （2026-08-13 在作者 722 章真书上实测第 718–722 章，全长约 6,800 字，**4.9%**），
+    换成现在这个顺序是 5,881 字（**87%**）。同一轮里对话那一档命中 97.5%、起草那一档
+    五次调用命中 0，差的就是这件事：对话是**追加式**的消息表（前面每一轮逐字节不动），
+    起草每次从头拼，而拼的时候把最易变的排在了最前面。
+
+    **内容一个字没动，动的只是块的先后。**
+
+    ⚠️ **滚动总结的稳定性有条件**：`product_context._take_from_newest` 是「从新往旧收到
+    预算用完」，所以总结一多到撑破预算，**掉的是最旧的那几条**——那时这一块的前缀会整体
+    平移一次，缓存跟着废一次。那是预算的性质，不是块序的问题；块序只保证「没撑破的时候
+    它是稳的」。
+
+    ⚠️ 那句「未经作者确认」的免责跟着它自己那一块走，并且移到了**块首**：原来它在整段最
+    末尾，离它要免责的那 5,518 字有五千多字远，模型读到它的时候早把总结当成事实读完了。
+    """
 
     lines = [
         "已确认的故事记忆",
         "以下人物资料与事件均已由作者确认；只把它们当作当前写作的既有事实。",
         "",
-        "【在场人物资料】",
-        *(_profile_line(profile) for profile in memory.profiles),
-        "",
-        "【近八章事件】",
+        "【更早章节滚动总结】",
+        "（滚动总结是机器压缩的背景，未经作者确认；只当线索，不当已确认事实。）",
         *(
-            (_event_line(view) for view in memory.recent_events)
-            if memory.recent_events
+            (
+                f"- 第 {summary.chapter_number} 章：{summary.summary}"
+                for summary in memory.rolling_summaries
+            )
+            if memory.rolling_summaries
             else ("- 暂无",)
         ),
         "",
@@ -57,16 +87,15 @@ def render_product_memory(memory: ResolvedProductContext) -> str:
             else ("- 暂无",)
         ),
         "",
-        "【更早章节滚动总结】",
+        "【近八章事件】",
         *(
-            (
-                f"- 第 {summary.chapter_number} 章：{summary.summary}"
-                for summary in memory.rolling_summaries
-            )
-            if memory.rolling_summaries
+            (_event_line(view) for view in memory.recent_events)
+            if memory.recent_events
             else ("- 暂无",)
         ),
-        "（滚动总结是机器压缩的背景，未经作者确认；只当线索，不当已确认事实。）",
+        "",
+        "【在场人物资料】",
+        *(_profile_line(profile) for profile in memory.profiles),
     ]
     return "\n".join(lines)
 

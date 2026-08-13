@@ -139,8 +139,80 @@ def test_product_assembler_renders_rolling_summaries_as_background_only() -> Non
     assert "【更早章节滚动总结】" in memory_text
     assert "第三章：顾清音救下萧决。" in memory_text
     assert "第四章：两人结盟北上。" in memory_text
-    # 机器摘要必须自报「未经作者确认」，不能伪装成已确认事实。
+    # 机器摘要必须自报「未经作者确认」，不能伪装成已确认事实。**而且要在它前面**：
+    # 免责排在 5,000 字总结的末尾，等于模型读到它的时候早把总结当事实读完了。
     assert "未经作者确认" in memory_text
+    assert memory_text.index("未经作者确认") < memory_text.index("第三章：顾清音救下萧决。")
+
+
+def _two_scenes_sharing_one_backlog() -> tuple[str, str]:
+    """同一本书的两场戏：滚动总结那一大块完全相同，在场和近期事件各不相同。
+
+    这就是「模型一轮里连起五稿」的形状——五章共用同一批更早的总结，各自的在场名单不同。
+    """
+    from novel_harness.draft.product_assemble import render_product_memory
+    from novel_harness.draft.product_context import ResolvedProductContext, RollingSummaryView
+
+    # 长度比照真书：单章总结上限 120 字，几十章加起来是这段 prompt 里最大的一块。
+    backlog = tuple(
+        RollingSummaryView(
+            chapter_number=n,
+            summary=f"第 {n} 章：两人在北境查案，线索指向同一枚旧印。" * 3,
+        )
+        for n in range(3, 43)
+    )
+
+    def scene(profiles: tuple[CharacterProfileView, ...], recent: tuple[EventView, ...]) -> str:
+        return render_product_memory(
+            ResolvedProductContext(
+                recent_from_chapter=43,
+                cast=(ALICE, BOB),
+                profiles=profiles,
+                recent_events=recent,
+                background_events=(),
+                rolling_summaries=backlog,
+            )
+        )
+
+    first = scene(
+        (CharacterProfileView(character=ALICE, personality="外冷内热"),),
+        (_event("event:private-a", 44, "顾清音独自守夜。"),),
+    )
+    second = scene(
+        (
+            CharacterProfileView(character=BOB, character_notes="右手有旧伤"),
+            CharacterProfileView(character=ALICE, personality="外冷内热"),
+        ),
+        (_event("event:private-b", 45, "萧决换了佩刀。"),),
+    )
+    return first, second
+
+
+def test_the_memory_preamble_puts_the_cross_chapter_stable_block_first() -> None:
+    """一轮里连起五稿时，**共同前缀要盖住整块滚动总结**（ADR 0019 边界六）。
+
+    这条不钉措辞，钉的是那个会花钱的性质：前缀缓存只认前缀，所以「每场都变的那几十个字」
+    排在「跨章逐字不变的那几千字」前面 = 后面全废。2026-08-13 在作者 722 章真书上量到的
+    就是这个形态——相邻两章共同前缀 4.9%，起草那一档五次调用缓存命中全是 0，而同一轮里
+    对话那一档（追加式消息表）命中 97.5%。
+
+    **不许拿「都在 prompt 里」搪塞**：摆得下和摆对了是两件事，这一条量的是后者。
+    """
+    first, second = _two_scenes_sharing_one_backlog()
+    assert first != second, "两场戏渲染出同一段字，这条测试就量不到任何东西了"
+
+    shared = 0
+    while shared < min(len(first), len(second)) and first[shared] == second[shared]:
+        shared += 1
+
+    assert "第 42 章：" in first[:shared], (
+        "共同前缀没盖住最后一条滚动总结 —— 有每场都变的东西排到它前面去了。"
+        f"（共同前缀 {shared} / 全长 {len(first)}）"
+    )
+    assert shared / len(first) > 0.8, (
+        f"共同前缀只有 {shared / len(first):.1%}，缓存基本用不上。"
+        "块序的判据只有一条：这个东西换一场戏会不会变，会变就往后排。"
+    )
 
 
 def test_kill_gate_forms_never_receive_product_memory() -> None:
