@@ -414,10 +414,18 @@ def test_on_the_authors_own_provider_a_streamed_call_is_never_asked_to_report() 
     ── 这条为什么值得钉住 ────────────────────────────────────────────────
     `_from_stream` 那段注释给的理由是「只补非流式那一条，长稿就会永远说『不知道』」。
     **在作者自己的端点上，长稿本来就永远说「不知道」**：不是因为那一半没接线，
-    是因为我们从来没问。今天无害（产品的输出预算 7,024 远在 16,000 阈值之下，
-    没有一条生产路径真的走流式）；**危险的是哪天有人为了写长章把预算抬过阈值**——
-    屏幕上会多出一批「未记录」，而「未记录」在这一页上的意思是**端点没报**，
+    是因为我们从来没问。屏幕上那批「未记录」的意思是**端点没报**，
     读的人会去查「DeepSeek 支不支持缓存」，而真正该改的是这儿。
+
+    🔴 **2026-08-12：这段原本写着「今天无害（没有一条生产路径真的走流式）；
+    危险的是哪天有人为了写长章把预算抬过阈值」——两句都已经不成立，而这条测试照样绿。**
+    它守的是「预算」那扇门，可 08-12 的可中断起草走的是**另一扇**：
+    `plan_call(..., interruptible=True)`（`agent/drafting.py`），和预算一个铜板关系都没有
+    ——实测两边预算**同为 7,024**，`stream` 却从 `False` 翻成 `True`。
+    于是「危险的是哪天」变成了「已经发生了」，而这条测试只查注册表和 wire shape，
+    **查不到「有没有生产路径在流式」**，所以它一声没吭。
+    下面那条 `test_the_interruptible_draft_path_…` 就是补这个缺口的：
+    **本条守「问不问」，那条守「谁在流」。**
 
     `gpt-5.6` 那四条路由 `supports_stream_usage=True`，所以流式那一半在它们身上是活的
     —— 这条不是说那半白写了，是说**它在作者的端点上量不到**。
@@ -450,6 +458,60 @@ def test_on_the_authors_own_provider_a_streamed_call_is_never_asked_to_report() 
     # 而这就是那一档在库里和屏幕上的样子：三个数一起「未记录」。
     result, _ = _call(_chunks([]), length=LONG)
     assert (result.prompt_tokens, result.completion_tokens, result.cache) == (None, None, None)
+
+
+def test_the_interruptible_draft_path_streams_on_the_authors_own_route() -> None:
+    """**「停」按钮换掉了每一稿的 token 数** —— 在作者自己的路由上，今天，真的。
+
+    上一条守的是「问不问 usage」，它罩不住这一格：**它不知道有没有人在流。**
+    于是 08-12 那一刀（起草可中断）从另一扇门进来，它一声没吭。这条补上，
+    走的是产品真正会走的那一串参数，不是合成的：
+
+        长度  `DEFAULT_LENGTH_POLICY.default_for(ZH)`   ← 作者按「写一稿」得到的那档
+        推理  `AGENT_DRAFT_REASONING`                    ← 起草工具写死的那档
+        路由  设置页 placeholder 与作者实配的那家（DeepSeek）
+        开关  `interruptible=self._cancel is not None`   ← `agent/drafting.py`
+
+    **判据是那对 (False, True) 的落差，不是 `stream is True` 一个孤零零的断言**：
+    只断言后者的话，哪天有人把输出预算抬过 16k 阈值，这条会**继续绿**，
+    而它想说的那句话（「是可中断翻的流式」）已经不成立了。所以预算相等一并钉住
+    —— 上一条的原注释就是死在「以为是预算」上的。
+
+    **这条红了不一定是坏事，先看红在哪一句**：
+      * 预算不再相等 ⇒ 有人动了长度档或阈值，这条的因果论断作废，重写它；
+      * `interruptible=True` 不再流式 ⇒ 「停」退化成「这一稿写完才停」，去看 `_streams`；
+      * `stream_options` 出现了 ⇒ **审计做完了、`None` 变成了 `True`**，
+        那就是这条测试和上一条一起功成身退的时刻 —— 连同 `scripts/probe_stream_usage.py`。
+    """
+    from novel_harness.agent.drafting import AGENT_DRAFT_REASONING
+    from novel_harness.draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage
+
+    route = ("https://api.deepseek.com", "deepseek-v4-flash")
+    capability = caps.resolve_capabilities(*route)
+    length = DEFAULT_LENGTH_POLICY.default_for(DraftLanguage.ZH)
+    config = prov.ProviderConfig(base_url=route[0], model=route[1], api_key="k")
+
+    plans = {
+        interruptible: caps.plan_call(
+            length, AGENT_DRAFT_REASONING, capability, interruptible=interruptible
+        )
+        for interruptible in (False, True)
+    }
+
+    assert plans[False].request_token_budget == plans[True].request_token_budget, (
+        "两档的输出预算不再相等 —— 那么下面那条落差就不再是「可中断翻的流式」，"
+        "而这条测试的整个因果论断建立在它们相等上。"
+    )
+    assert (plans[False].stream, plans[True].stream) == (False, True), (
+        "起草在作者的路由上不再是「不可中断⇒非流式 / 可中断⇒流式」了。"
+    )
+
+    wire = prov._wire_kwargs(config, plans[True], [{"role": "user", "content": "写第 89 章"}])
+    assert wire["stream"] is True
+    assert "stream_options" not in wire, (
+        "流式起草开始要 usage 了 —— 若是补了审计把 supports_stream_usage 改成 True，"
+        "这条和上一条 test_on_the_authors_own_provider_… 一起删掉：取舍消失了。"
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════
