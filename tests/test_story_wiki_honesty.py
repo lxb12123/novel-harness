@@ -642,6 +642,11 @@ def test_a_bogus_project_does_not_come_back_as_an_empty_book(book: Book) -> None
 
 
 def test_l1_refuses_instead_of_returning_an_empty_axis(book: Book) -> None:
-    """人物解析不出来时是**拒绝**，不是一份「他没出现在任何一章」的空轴。"""
+    """人物解析不出来时是**拒绝**，不是一份「他没出现在任何一章」的空轴。
+
+    判据只问「拒没拒 + 说没说是哪个称呼」。**那句话本身别在这儿抄第二份**：
+    它 2026-08-13 改过一次（「查不到」和「说法不对」分成了两句），措辞的网在
+    `tests/test_agent_unknown_names.py`，这里再钉一遍就是第二个会漂的判据。
+    """
     outcome = dispatch(_call("character_chapters", characters=["查无此人"]), book.context())
-    assert outcome.ok is False and "解析不出" in outcome.content
+    assert outcome.ok is False and "查无此人" in outcome.content

@@ -88,7 +88,7 @@ from typing import Final, TypeVar
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..draft.length import DraftLanguage, count_units
-from ..graph import CANONICAL_ALIAS_LABELS, InformationScope, NodeLabel
+from ..graph import CANONICAL_ALIAS_LABELS, InformationScope, Node, NodeLabel, Resolution
 from ..importer import ChapterFile, chapter_files, chapter_path
 from ..panel.constraints import forbidden_entities
 from ..text import paragraphs as split_paragraphs
@@ -583,16 +583,92 @@ _EVENT_SOURCE: Final = (
 )
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# 称呼解析：**「查不到」和「说法不对」是两句话**（2026-08-13 实测）
+# ══════════════════════════════════════════════════════════════════════════
+#
+# 这一段不属于索引的四层，它在这儿只有一个理由：`tools.py` 认得 `index.py`、反过来不行
+# （反过来是环），而这句话必须只有一份。它以前有两份（`tools._handle_character_state`
+# 和下面的 `_resolve_characters`），两份说的都是同一句错话。
+
+
+class UnknownCharacter(ToolRefused):
+    """这个称呼**花名册里根本没有**（`len(hits) == 0`）。
+
+    ── 它为什么必须和「歧义」分成两个类型，而不是两条分支 ──────────────────
+
+    2026-08-13 在作者 722 章的真书上实测：模型给第 723 章起草，连着查了两个大结局才
+    出现的新角色（花名册里当然没有）。两次都拿到同一句
+
+        「…解析不出唯一一个人（查无此人，或者这个叫法同时指向好几个人）。
+          换一个更具体的称呼，或者先在人物卡上把别名理清楚。」
+
+    ——**而这两种情况的正确下一步是相反的**：
+
+    | 情况 | 判据（一个集合判断） | 该做什么 |
+    |---|---|---|
+    | 花名册里没有 | `len(hits) == 0` | **别再试**：换什么叫法都查不到 |
+    | 一个叫法指向好几个人 | `len(hits) > 1` | 换个更具体的称呼（**重试是对的**） |
+
+    合成一句「换个说法再试」= 在第一种情况下**由引擎亲口鼓励它再烧一步**。那一轮八步
+    全花在查询上，一稿都没写出来，而作者看到的是几分钟的空白。**那句话本身就是那个 bug。**
+
+    它是一个**类型**而不是一句话里的关键词，因为 `dispatch` 要把这一种数出来
+    （`tools.TurnMemo`）。判「这条拒绝是不是『查不到』」如果靠在错误文本里找三个字，
+    那就是拿字符串当协议，改一次措辞它就静默失效。
+    """
+
+    def __init__(self, surface: str) -> None:
+        super().__init__(
+            f"「{surface}」这个名字，这本书的花名册里没有。**别换个说法再查一次**——"
+            "花名册是一份定死的名单（调 book_index 能看全），不在名单上的人，"
+            "换什么叫法都查不到，再查一次只是白花一步。"
+            "他要是这一场你新写的人，就当新人物直接往下写；"
+            "要是作者写过他而系统还不认得，那得作者去人物卡上补，这一轮里等不到。"
+        )
+        self.surface = surface
+        """模型填进来的那个称呼。**它只用来计数和复述，不参与任何查询。**"""
+
+
+_AMBIGUOUS_SAMPLE: Final = 5
+"""歧义时最多摆几个候选名字出来。「师兄」可以指向八个人，八个名字排开就成了一段散文，
+而模型要的只是「这个叫法有歧义，挑一个具体的」——摆头几个够它挑了。"""
+
+
+def resolve_one(surface: str, resolution: Resolution | None) -> Node:
+    """一个称呼 → 唯一那个节点。**解析不出就拒，绝不替作者猜一个。**
+
+    `resolution=None` = 图层对这个称呼一行都没返回，和 `hits` 为空是同一件事
+    （花名册里没有）。**两者不许分成两句话**：对模型来说它们的下一步完全相同，
+    而多一种说法只会多一种它要去理解的东西。
+
+    **这里不判 label**：「不是人物」的下一句话每个工具不一样（`character_state` 说
+    「没有处境可查」，`character_chapters` 说「这儿只查人物的出场轴」），
+    合并成一句就得说一句对两边都不够准的话。共用的只有上面那两种，它们的措辞与工具无关。
+    """
+    if resolution is None or not resolution.hits:
+        raise UnknownCharacter(surface)
+    node = resolution.unique_node
+    if node is None:
+        names = [hit.node.name for hit in resolution.hits[:_AMBIGUOUS_SAMPLE]]
+        more = len(resolution.hits) - len(names)
+        raise ToolRefused(
+            f"「{surface}」这个叫法同时指向 {len(resolution.hits)} 个人"
+            f"（{'、'.join(names)}{f'…… 等 {more} 个' if more else ''}）。"
+            "**这一种换个说法是有用的**：挑其中一个的名字再查一次，或者用一个更具体的称呼。"
+        )
+    return node
+
+
 def _resolve_characters(context: ToolContext, names: Sequence[str]) -> dict[str, str]:
-    """称呼 → `{node_id: 正式名}`。解析不出唯一人物就拒，**绝不替作者猜一个**。"""
+    """称呼 → `{node_id: 正式名}`。解析不出唯一人物就拒，**绝不替作者猜一个**。
+
+    **一次 `resolve` 收全部名字**（不是一个一个查）：这一层每多一次库往返都是作者在等，
+    而 `resolve_one` 是纯函数，拿现成的那条 `Resolution` 判就行。
+    """
     out: dict[str, str] = {}
     for resolution in context.store.resolve(context.project_id, list(names)):
-        node = resolution.unique_node
-        if node is None:
-            raise ToolRefused(
-                f"「{resolution.surface}」在这本书里解析不出唯一一个人（查无此人，或者这个"
-                "叫法同时指向好几个人）。换一个更具体的称呼，或者先把别名理清楚。"
-            )
+        node = resolve_one(resolution.surface, resolution)
         if node.label is not NodeLabel.CHARACTER:
             raise ToolRefused(
                 f"「{resolution.surface}」不是人物（它是 {node.label}）。这个工具只查人物的"

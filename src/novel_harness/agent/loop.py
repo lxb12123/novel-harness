@@ -138,6 +138,7 @@ from .tools import (
     AuthorQuestion,
     BatchRunner,
     ToolOutcome,
+    TurnMemo,
     outdated_manuscript,
     tool_declarations,
     tool_label,
@@ -856,8 +857,9 @@ _STOP_WORDING: Final[dict[StopReason, str]] = {
     ),
     StopReason.NO_OUTPUT: "它这一次什么都没说，也没去查任何东西。再说一遍试试。",
     StopReason.TOOL_STUCK: (
-        "同一件事连着查了几次都没查成，先停下来。多半是称呼对不上，"
-        "或者那一章还没有正文。"
+        "有几次查询一直查不成，先停下来了。多半是那几个名字这本书里还没有"
+        "（新出场的人系统还不认得），或者那一章还没有正文。"
+        "你可以直接告诉它那是谁，或者让它别查了、就照现在知道的写。"
     ),
     StopReason.CONTEXT_FULL: (
         "这段对话说得太长，装不下了。开一段新的对话，或者把要问的说得短一点——"
@@ -1236,6 +1238,33 @@ class TurnLimits:
       而那正是没有工具调用经验的模型最典型的翻车方式。
     """
 
+    unknown_name_limit: int = 3
+    """这一轮里**撞空过的不同称呼**有几个算「它在花名册外面打转」（`tools.TurnMemo`）。
+
+    ── 为什么上面那两个数罩不住它（2026-08-13 在 722 章的真书上实测）────────────
+
+    实测那一轮八步全花在查询上，一稿都没写出来：
+
+        …→ character_state 姜召（成）→ 姜源初（查不到）→ 小归终（查不到）
+           → 阮芸芸（成）→ 步数用完 → 作者等了几分钟，什么都没有
+
+    上面那两个数**都会被一次成功清零**（`failure_streak.pop` / `failures_in_a_row = 0`），
+    所以「失败、失败、成功」这个节奏可以无限重复下去，一次都不响。而它是**最自然的**
+    节奏：模型本来就在挨个查人，查得到的和查不到的天然交替。
+
+    这一个数因此是**只增不减**的，判据也不一样：不是「连着失败几次」，是**这一轮里有
+    几个不同的称呼被证明不在花名册上**。差别在于后者是一个**不会因为别的查询成功而改变
+    的事实**——花名册这一轮不会长出新名字（作者在另一个窗口里加人是下一轮的事，
+    而下一轮这个记性是空的）。
+
+    **它数的是「不同的称呼」，不是「撞空的次数」**：同一个名字反复查是「原地打转」，
+    上面那两个数已经罩住了；这一个专管「换个名字接着查」，也就是实测的那个形态。
+
+    默认 3：查一个查不到、直接往下写是正常的；连着三个不同的名字都不在花名册上，
+    说明模型正在写的这一段人物根本不在这本书的图谱里——那时停下来问作者一句，
+    比替他把这一轮的钱烧完对。**它只结束这一轮，不影响下一轮**（记性是一轮一个）。
+    """
+
 
 class Cancellation:
     """作者按下的那个「停」。**线程安全**，因为按下它的是另一条线。
@@ -1573,6 +1602,9 @@ def run_turn(
     seen_signatures: dict[tuple[str, str], int] = {}
     failure_streak: dict[str, int] = {}
     failures_in_a_row = 0
+    # **一轮一个，跨批共用**：模型可以分好几步各撞一个空（实测那一轮就是这样），
+    # 每批各造一个的话 `len()` 永远是 1，`unknown_name_limit` 那道闸一次都不会响。
+    memo = TurnMemo()
 
     def save() -> None:
         """把已经长出来的那几条交给调用方落库（见 `PersistFn`）。
@@ -1665,6 +1697,7 @@ def run_turn(
             on_start=lambda _index: emit(
                 TurnEvent.tool_started(call.name, index=index, total=total)
             ),
+            memo=memo,
         )
         outcome = bill_outcome(runner.take(0))
         emit(TurnEvent.tool_finished(outcome, index=index, total=total))
@@ -1854,6 +1887,7 @@ def run_turn(
             on_start=lambda index: emit(
                 TurnEvent.tool_started(calls[index].name, index=index + 1, total=len(calls))
             ),
+            memo=memo,
         )
 
         def settle(position: int) -> list[AgentMessage]:
@@ -1947,6 +1981,10 @@ def run_turn(
             if (
                 failure_streak[call.name] >= limits.tool_failure_limit
                 or failures_in_a_row >= limits.tool_failure_limit
+                # 第三个数，**它不会被一次成功清零**（见 `TurnLimits.unknown_name_limit`）：
+                # 上面那两个数的节奏是「连着」，而实测那一轮的节奏是「失败、失败、成功」——
+                # 花名册里没有的名字不会因为别的查询成功就变得查得到，所以这个计数只增。
+                or len(memo.unknown_names) >= limits.unknown_name_limit
             ):
                 live = live.extended(*settle(position + 1))
                 return finish(StopReason.TOOL_STUCK, reply=result.text)

@@ -119,6 +119,29 @@ ADR 0019 边界一原来的最后一条是「写正文必须作者确认，模�
 **引擎自己说的每一句里，都没有一条过了期的规矩**；真正生效的那一条（SYSTEM 消息）
 该没就没了。
 
+── 撞空：**「查不到」和「说法不对」是两句话**（2026-08-13 实测）────────────
+
+工具拒绝时说的那句话不只是礼貌，它**决定模型下一步烧不烧一步**。实测那一轮（722 章的
+真书，给第 723 章起草）八步全花在查询上、一稿都没写出来，直接原因是引擎对两种完全不同
+的情况说了同一句「换一个更具体的称呼」——而它们的正确下一步是相反的：
+
+| 情况 | 判据（集合判断） | 该做什么 | 谁说这句话 |
+|---|---|---|---|
+| 花名册里没有 | `len(hits) == 0` | **别再试** | `index.UnknownCharacter` |
+| 一个叫法指向好几个人 | `len(hits) > 1` | 换个更具体的称呼（重试是对的） | `index.resolve_one` |
+
+两句话住在 `index.py`（`tools.py` 认得它、反过来是环），**全仓只有那一份**——它以前有
+两份拷贝，两份说的都是同一句错话。
+
+在这之上加了一件只有派发这一层做得到的事：**`TurnMemo` 记住这一轮撞空过的称呼**，
+从第二次开始把清单附在拒绝后面（「你已经在花名册外面撞了 2 次」）。它是一个**只增不减
+的字符串集合**——一个语义判断都没有——而 `agent/loop.py::TurnLimits.unknown_name_limit`
+拿它的 `len()` 当第三道闸：上面那两个连续失败计数都会被一次成功清零，而实测那一轮的
+节奏恰恰是「失败、失败、成功」。
+
+**它只用来说话和计数，从不短路查询**（见 `TurnMemo` 的 docstring：作者会在这一轮中途
+把人加进花名册，缓存一个「查不到」就是造一个看起来完全正常的错误答案）。
+
 ── 边界二在这里的落点：**没有一个工具收约束** ──────────────────────────
 
 约束是逐章算的，而对话跨章累积（能隔三个月回来）。`ch40 的 must_not_reveal ⊇ ch90 的`
@@ -156,6 +179,7 @@ ADR 0019 边界一原来的最后一条是「写正文必须作者确认，模�
 from __future__ import annotations
 
 import json
+import threading
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -185,10 +209,12 @@ from .index import (
     ChapterSummariesArgs,
     ChapterTextArgs,
     CharacterChaptersArgs,
+    UnknownCharacter,
     handle_book_index,
     handle_chapter_summaries,
     handle_chapter_text,
     handle_character_chapters,
+    resolve_one,
 )
 from .ports import DraftAsk, DraftDesk, ToolContext, ToolRefused
 
@@ -713,12 +739,10 @@ def _handle_character_state(
     args: CharacterStateArgs, context: ToolContext
 ) -> CharacterStateResult:
     resolutions = context.store.resolve(context.project_id, [args.character])
-    node = resolutions[0].unique_node if resolutions else None
-    if node is None:
-        raise ToolRefused(
-            f"「{args.character}」在这本书里解析不出唯一一个人（查无此人，或者这个叫法"
-            "同时指向好几个人）。换一个更具体的称呼，或者先在人物卡上把别名理清楚。"
-        )
+    # **「查不到」和「说法不对」在这儿分成两句话**（`index.UnknownCharacter` 写着实测）：
+    # 合成一句「换个说法再试」等于由引擎亲口鼓励它去烧下一步，而花名册里没有的名字
+    # 换什么叫法都还是没有。判据是 `len(hits)`，一个集合判断。
+    node = resolve_one(args.character, resolutions[0] if resolutions else None)
     if node.label is not NodeLabel.CHARACTER:
         # 集合判断，不是语义判断：秘密 / 地点 / 物件也在花名册里，拿它们去查「状态」
         # 会返回一份看起来正常、实际上没有意义的快照（秘密没有处境）。
@@ -913,6 +937,8 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         name="character_state",
         description=(
             "查某个人在第 N 章的处境：在哪、各状态维度的值、登场了没有、是不是已经死了。"
+            "**只认花名册上的名字**（book_index 里那份）：不在上面的人查不到，"
+            "而那不是你说法不对——换个叫法再查一次也还是查不到，只是白花一步。"
         ),
         args=CharacterStateArgs,
         handler=_handle_character_state,
@@ -1099,6 +1125,87 @@ def tool_declarations() -> list[dict[str, Any]]:
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# 一轮之内的短记性：**只记「花名册里没有的那几个称呼」**
+# ══════════════════════════════════════════════════════════════════════════
+
+
+class TurnMemo:
+    """这一轮里，模型拿哪几个称呼撞过空（`index.UnknownCharacter`）。
+
+    ── 它是什么，以及它**不是**什么 ────────────────────────────────────────
+
+    它是一个**只增不减的字符串集合**，一轮一个，跑完就扔。判据是「这个称呼在这一轮里
+    解析失败过」——一个集合判断，一个语义判断都没有（铁律 2 / ADR 0005）。
+
+    它**不在 `ToolContext` 上**，是显式传进 `dispatch` 的。这不是嫌麻烦：`ToolContext`
+    上的每一个字段都是一道能力闸（ADR 0019 边界一），而这个东西不给模型任何新能力——
+    它记的全是模型自己刚打进来的字。挂上去会让那一页从「模型能碰到什么」变成
+    「这一轮的杂物抽屉」，而那一页的价值全在于它短。
+
+    ── 为什么它不缓存「查到了什么」，也不短路第二次查询 ──────────────────────
+
+    「同一个称呼在一轮里被查第二次时，直接把上次的答案还给它」听起来能省一步，
+    **但它一步都省不下来**：一步 = 一次模型调用 + 它这一次要的那批工具
+    （`TurnLimits.max_steps` 数的是模型调用）。第二次查询之所以发生，是因为模型又发了
+    一次请求——那次调用的钱在工具跑起来**之前**就付掉了。缓存省下的只有一次几毫秒的
+    库往返，而它要付的代价这个仓库已经写死过一次（`index.py` 说 L1 为什么不缓存）：
+
+    > 一份缓存的命中表会在他保存的那一刻变成一个**看起来正常的错误答案**。
+
+    作者在另一个窗口里把那个新角色加进人物卡，是这一轮里真会发生的事。那时被短路掉的
+    第二次查询会拿一句「花名册里没有」去盖住一个已经有了的人，**而它和一次正常的返回
+    长得一模一样**。所以这里的规矩是**记，但不挡**：查询照跑，只有在它**又一次**真的
+    失败之后，才把这一轮的失败清单附在回话后面。方向说死——宁可多查一次（多几毫秒），
+    绝不挡掉一次本来能成功的查询。
+
+    ── 为什么有锁 ────────────────────────────────────────────────────────
+
+    `dispatch` 会跑在 `BatchRunner` 的工作线程上（ADR 0022）。今天没有一条会撞空的工具
+    是 `concurrent=True` 的，所以实测碰不到——但「今天恰好碰不到」不是一条能留给下一个人
+    的保证，而漏掉的形态是一个丢了几条记录的集合，**它不会报错**。
+    """
+
+    __slots__ = ("_lock", "_unknown")
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        # `dict` 当有序集合用：摆给模型看的时候顺序就是它自己试过的顺序，
+        # 而「我按什么顺序试的」是它读得懂的东西，`set` 那种随机序不是。
+        self._unknown: dict[str, None] = {}
+
+    def note_unknown(self, surface: str) -> tuple[str, ...]:
+        """记下一个撞空的称呼，返回**这一轮到此为止**撞空过的全部（含这一个，按出现序）。"""
+        with self._lock:
+            self._unknown[surface] = None
+            return tuple(self._unknown)
+
+    @property
+    def unknown_names(self) -> tuple[str, ...]:
+        """这一轮撞空过的那几个称呼。**`len()` 就是 loop 那道闸的判据。**"""
+        with self._lock:
+            return tuple(self._unknown)
+
+
+def _already_missed(names: Sequence[str]) -> str:
+    """撞空过的那几个摆给模型看。**这是一句集合的复述，不是一句评价。**
+
+    第一次撞空不说这句（`len < 2`）：那一次它还不知道这本书的花名册有多严，
+    `UnknownCharacter` 那句话已经把该说的说完了。**第二次开始才说**——「你在这上面
+    已经花掉两步了」是一个它自己算不出来的事实（它看得见历史，但不会去数），
+    而这一层能给的最有用的东西就是这个数。
+    """
+    if len(names) < 2:
+        return ""
+    # 说的是**几个名字**不是几次：同一个名字查两遍在集合里只算一个，而这句话要是说
+    # 「撞了 2 次」就成了一句可以被人指出来是错的话——这一层的每一句都得经得起对账。
+    return (
+        f"\n**这一轮你已经撞上 {len(names)} 个花名册外的名字**（{'、'.join(names)}）。"
+        "这几次查询一个字的结果都没换来，而这一轮的步数是有限的——**别再查人了**，"
+        "用手上已经有的东西往下写。"
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # 派发：**`json.loads` 在这里，闸也在这里**
 # ══════════════════════════════════════════════════════════════════════════
 
@@ -1193,7 +1300,9 @@ def _validation_message(exc: ValidationError) -> str:
     return "参数不合法 —— " + "；".join(parts)
 
 
-def dispatch(call: ToolCall, context: ToolContext) -> ToolOutcome:
+def dispatch(
+    call: ToolCall, context: ToolContext, memo: TurnMemo | None = None
+) -> ToolOutcome:
     """执行模型请求的一次工具调用。**这是工具表这道闸唯一的执行点。**
 
     四种失败各有各的出口，而**四种都是 `ok=False` 的正常返回，不是异常**：
@@ -1206,10 +1315,14 @@ def dispatch(call: ToolCall, context: ToolContext) -> ToolOutcome:
        截断是真实会发生的事。
     3. **参数不合 schema** —— 含「模型自作主张多传了一个 `must_not_reveal`」
        （`extra="forbid"` 当场拒，边界二）。
-    4. **工具自己拒绝** —— 称呼有歧义、能力没接线。
+    4. **工具自己拒绝** —— 花名册里没这个名字、称呼有歧义、能力没接线。
+       前两种在这一层是**两条不同的出口**（见模块 docstring「撞空」那一节）：
+       它们的正确下一步相反，合成一句就必然有一半在骗模型。
 
     Args:
         call: `draft.provider` 原样带回来的那个请求，`arguments` 还是字符串。
+        memo: 这一轮的短记性（`TurnMemo`）。`None` = 没人记 ⇒ 每一次撞空都只说
+            `UnknownCharacter` 自己那句话，**行为和以前逐字节相同**（测试和 CLI 走这条）。
     """
     spec = TOOLS.get(call.name)
     if spec is None:
@@ -1236,6 +1349,17 @@ def dispatch(call: ToolCall, context: ToolContext) -> ToolOutcome:
 
     try:
         payload = spec.handler(args, context)
+    except UnknownCharacter as exc:
+        # **这一支必须排在 `ToolRefused` 前面**：`UnknownCharacter` 是它的子类，写反了
+        # 这一整段永远不执行——而且不会有任何东西报错，只是那句话又变回原来那句
+        # 「换个说法再试」（正是 2026-08-13 那个 bug 的形状）。
+        #
+        # 记在这儿而不是记在 handler 里，是因为**「这一轮」这个范围只有派发这一层知道**：
+        # handler 是纯函数，`ToolContext` 上没有轮次（也不该有，见 `TurnMemo`）。
+        message = str(exc)
+        if memo is not None:
+            message += _already_missed(memo.note_unknown(exc.surface))
+        return _refused(call, message, chapter)
     except ToolRefused as exc:
         # **拒绝也可能是花过钱的**（`ToolRefused.calls`）：起草的第一次调用答上来了、
         # 续写那次断线，这一档拒得对，但那笔钱得跟着回执一起交出去。
@@ -1345,6 +1469,7 @@ class BatchRunner:
         *,
         workers: int = 1,
         on_start: Callable[[int], None] | None = None,
+        memo: TurnMemo | None = None,
     ) -> None:
         """`on_start(下标)`：**这一条真的开跑了**（ADR 0024 的事件流要说「正在查什么」）。
 
@@ -1364,6 +1489,9 @@ class BatchRunner:
         self._context = context
         self._workers = max(1, workers)
         self._on_start = on_start
+        # 这一轮的短记性，**由调用方（loop）造并且跨批共用**：一轮之内模型可以分好几步
+        # 各撞一个空，每批各造一个的话那个数永远是 1，闸门一次都不响。
+        self._memo = memo
         self._done: dict[int, ToolOutcome] = {}
 
     def __len__(self) -> int:
@@ -1397,14 +1525,14 @@ class BatchRunner:
                 self._on_start(index)
         if end - start == 1:
             # **裸调用，外面没有 try/except**（`dispatch` 的四种失败都是正常返回）。
-            self._done[start] = dispatch(self._calls[start], self._context)
+            self._done[start] = dispatch(self._calls[start], self._context, self._memo)
             return
         failure: BaseException | None = None
         with ThreadPoolExecutor(
             max_workers=min(self._workers, end - start), thread_name_prefix="nh-tool"
         ) as pool:
             futures = {
-                index: pool.submit(dispatch, self._calls[index], self._context)
+                index: pool.submit(dispatch, self._calls[index], self._context, self._memo)
                 for index in range(start, end)
             }
         for index, future in futures.items():
@@ -1426,11 +1554,15 @@ class BatchRunner:
 
 
 def dispatch_all(
-    calls: Sequence[ToolCall], context: ToolContext, *, workers: int = 1
+    calls: Sequence[ToolCall],
+    context: ToolContext,
+    *,
+    workers: int = 1,
+    memo: TurnMemo | None = None,
 ) -> list[ToolOutcome]:
     """模型一轮发了好几个 `tool_call` 时的便利函数，**与 `calls` 同序**。
 
     `workers=1`（默认）= 一条一条跑。放开它之前先读 `BatchRunner` 那三条规矩。
     """
-    runner = BatchRunner(calls, context, workers=workers)
+    runner = BatchRunner(calls, context, workers=workers, memo=memo)
     return [runner.take(index) for index in range(len(calls))]
