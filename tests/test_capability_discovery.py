@@ -1,0 +1,321 @@
+"""对抗性验证：「去问端点自己」这条路，会不会把假的能力放进来。
+
+这个模块是本仓**第一次让能力表以外的东西决定预算和流式**，所以判据不是「解析对了」，
+而是**「它拒绝得够不够狠」**：一份读不懂的响应必须原样退回今天的 `unknown`，
+绝不许降级成半份能力——半份能力比没有能力危险得多，因为它会通过 `plan_call`。
+
+六条网：
+
+1. **登记过的路由一次网都不发**（M2 判分链、直连 DeepSeek/OpenAI 都在这一档）
+2. **数字取下确界**，而且是逐字段取——不是「挑一家全抄」
+3. **烂响应一律退回 unknown**（少字段 / 类型不对 / 空上游 / 自相矛盾）
+4. **推理那两条互锁规矩**没被绕过（方言 ↔ 非 OFF 档 ↔ shares_output）
+5. **缓存真的省掉第二次请求**，且失败也进缓存（否则每起一稿等一次超时）
+6. **别家一律不问**（判据是 host，不是「看起来像不像中转」）
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+
+from novel_harness.draft import discovery
+from novel_harness.draft.capabilities import (
+    CAPABILITY_REGISTRY,
+    ProviderCapabilities,
+    ReasoningDialect,
+    ReasoningEffort,
+    plan_call,
+)
+from novel_harness.draft.discovery import discover, resolve_with_discovery
+from novel_harness.draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage
+
+OPENROUTER = "https://openrouter.ai/api/v1"
+SLUG = "deepseek/deepseek-v4-flash"
+ZH = DEFAULT_LENGTH_POLICY.default_for(DraftLanguage.ZH)
+
+#: 一份**按真响应裁剪**的载荷（2026-08-13 实测 19 家里挑 3 家，字段名一字未改）。
+#: 三家故意各带一种极端：上下文最小 / 输出最小 / 参数集最窄。
+REAL_SHAPE: dict[str, Any] = {
+    "data": {
+        "id": SLUG,
+        "endpoints": [
+            {
+                "provider_name": "DeepSeek",
+                "context_length": 1_048_576,
+                "max_completion_tokens": 384_000,
+                "supported_parameters": ["max_tokens", "temperature", "reasoning_effort"],
+            },
+            {
+                "provider_name": "Cloudflare",
+                "context_length": 384_000,
+                "max_completion_tokens": 384_000,
+                "supported_parameters": ["max_tokens", "temperature", "reasoning_effort"],
+            },
+            {
+                "provider_name": "Venice",
+                "context_length": 1_000_000,
+                "max_completion_tokens": 32_768,
+                "supported_parameters": ["max_tokens", "reasoning_effort", "top_k"],
+            },
+        ],
+    }
+}
+
+
+def _fetch(payload: Any, *, seen: list[str] | None = None) -> discovery.Fetcher:
+    def fetch(url: str) -> Any:
+        if seen is not None:
+            seen.append(url)
+        if isinstance(payload, Exception):
+            raise payload
+        return payload
+
+    return fetch
+
+
+@pytest.fixture(autouse=True)
+def _clean_cache() -> None:
+    discovery.clear_cache()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 1. 登记过的路由一次网都不发
+# ══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize("route", sorted(CAPABILITY_REGISTRY))
+def test_registered_routes_never_touch_the_wire(route: tuple[str, str]) -> None:
+    """8 条精确路由全部短路。
+
+    **这条不是性能测试，是隔离测试**：M2 判分链和 `nh gate` 走的就是这些路由，
+    它们发出去的东西必须逐字节不变（EVAL_PROTOCOL §2）。只要这里漏一条，
+    那条路的能力就可能被一个第三方 API 的返回值改写 —— 而那是「考卷被外部改动」。
+    """
+    seen: list[str] = []
+    capability = resolve_with_discovery(*route, fetch=_fetch(REAL_SHAPE, seen=seen))
+    assert seen == [], f"{route} 走了发现逻辑"
+    assert capability is CAPABILITY_REGISTRY[route]
+
+
+def test_an_unregistered_route_is_the_only_thing_that_asks() -> None:
+    seen: list[str] = []
+    resolve_with_discovery(OPENROUTER, SLUG, fetch=_fetch(REAL_SHAPE, seen=seen))
+    assert seen == [discovery.OPENROUTER_ENDPOINTS_URL.format(slug=SLUG)]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 2. 数字取下确界 —— 逐字段取，不是挑一家全抄
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_limits_are_the_floor_across_upstreams_field_by_field() -> None:
+    """上下文取 Cloudflare 那家、输出取 Venice 那家 —— **两个数来自不同的上游**。
+
+    这条测试真正防的是「挑一家最保守的全抄」那种实现：那样写的话，两个数会一起来自
+    同一行，而真实情况是没有哪一家在所有维度上都最小。抄错的后果是**高估**
+    （比如抄了 Cloudflare 的 384,000 输出上限），而路由器随时可能把这一次请求
+    发给只扛得住 32,768 的那家。
+    """
+    capability = discover(OPENROUTER, SLUG, fetch=_fetch(REAL_SHAPE))
+    assert capability is not None
+    assert capability.max_context_tokens == 384_000  # Cloudflare
+    assert capability.max_output_tokens == 32_768  # Venice
+    assert capability.source == "endpoint:openrouter-models-endpoints"
+
+
+def test_an_upstream_that_declares_no_ceiling_does_not_erase_the_others() -> None:
+    """有的上游 `max_completion_tokens` 是 `null`。**「没说」不等于「没有上限」**，
+    但也不该让整条路由退回「不知道」——那会把另外两家报出来的真数字一起扔掉。
+    读得懂的那些里取最小。"""
+    payload = {"data": {"endpoints": [dict(item) for item in REAL_SHAPE["data"]["endpoints"]]}}
+    payload["data"]["endpoints"][2]["max_completion_tokens"] = None
+    capability = discover(OPENROUTER, SLUG, fetch=_fetch(payload))
+    assert capability is not None
+    assert capability.max_output_tokens == 384_000
+
+
+def test_supported_parameters_are_intersected_not_unioned() -> None:
+    """`top_k` 只有 Venice 支持 ⇒ 不算这条路由支持。**我们不锁上游，所以判据是「每一家都行」**。"""
+    payload = {"data": {"endpoints": [dict(item) for item in REAL_SHAPE["data"]["endpoints"]]}}
+    payload["data"]["endpoints"][0]["supported_parameters"] = ["max_tokens"]
+    capability = discover(OPENROUTER, SLUG, fetch=_fetch(payload))
+    assert capability is not None
+    # 有一家不支持 reasoning_effort ⇒ 整条路由退回只有 OFF 的那一档
+    assert capability.reasoning_levels == frozenset({ReasoningEffort.OFF})
+    assert capability.reasoning_dialect is ReasoningDialect.NONE
+    assert capability.reasoning_shares_output is False
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 3. 烂响应一律退回 unknown —— 半份能力比没有能力危险
+# ══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param({}, id="没有 data"),
+        pytest.param({"data": {}}, id="没有 endpoints"),
+        pytest.param({"data": {"endpoints": []}}, id="一个上游都没有"),
+        pytest.param({"data": {"endpoints": "nope"}}, id="endpoints 不是列表"),
+        pytest.param({"data": [1, 2]}, id="data 不是对象"),
+        pytest.param("<html>502</html>", id="根本不是 JSON 对象"),
+        pytest.param(TimeoutError("slow"), id="超时"),
+        pytest.param(ValueError("bad json"), id="JSON 坏了"),
+    ],
+)
+def test_a_response_we_cannot_read_falls_back_to_unknown(payload: Any) -> None:
+    """**判据是「退回 unknown」，不是「不抛异常」。**
+
+    最危险的失败不是崩，是造出一份「上下文不知道、但流式支持」的半份能力：
+    它能通过 `plan_call`，于是作者的稿子按一个我们编的预算发出去。
+    """
+    assert discover(OPENROUTER, SLUG, fetch=_fetch(payload)) is None
+    capability = resolve_with_discovery(OPENROUTER, SLUG, fetch=_fetch(payload))
+    assert capability.source == "unknown"
+    assert capability.supports_streaming is None
+    assert capability.max_context_tokens is None
+
+
+def test_self_contradictory_numbers_are_refused_whole() -> None:
+    """输出上限大于上下文 —— 校验器会拒。这时**整份作废**，不许挑能用的字段留下。"""
+    payload = {
+        "data": {
+            "endpoints": [
+                {
+                    "context_length": 8_192,
+                    "max_completion_tokens": 100_000,
+                    "supported_parameters": ["max_tokens"],
+                }
+            ]
+        }
+    }
+    capability = discover(OPENROUTER, SLUG, fetch=_fetch(payload))
+    # 实现会把 output 夹到 context 以内 —— 那是「信小的那个」，不是编。
+    assert capability is not None
+    assert (capability.max_context_tokens, capability.max_output_tokens) == (8_192, 8_192)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 4. 推理那两条互锁规矩 —— 也是这个模块最容易写错的地方
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_reasoning_off_must_really_switch_thinking_off() -> None:
+    """**这条是整个模块最贵的一条，理由写在 `discovery.py` 的 docstring 里。**
+
+    `dialect=NONE` 时 OFF 档一个字段都不发，而实测这些模型**默认就在思考**
+    ⇒ 思考的 token 照旧从输出预算里扣，而 `NONE` 又必须配 `shares_output=False`
+    ⇒ 预算算少了 ⇒ **稿子被截断**。所以认出推理能力时方言必须是 OPENROUTER。
+    """
+    capability = discover(OPENROUTER, SLUG, fetch=_fetch(REAL_SHAPE))
+    assert capability is not None
+    assert capability.reasoning_dialect is ReasoningDialect.OPENROUTER
+    assert capability.reasoning_shares_output is True
+
+    from novel_harness.draft import provider as prov
+
+    config = prov.ProviderConfig(base_url=OPENROUTER, model=SLUG, api_key="k")
+    plan = plan_call(ZH, ReasoningEffort.OFF, capability, interruptible=True)
+    wire = prov._wire_kwargs(config, plan, [{"role": "user", "content": "写第 89 章"}])
+    assert wire["extra_body"]["reasoning"] == {"effort": "none", "exclude": True}, (
+        "OFF 档没有真的把思考关掉 —— 预算会算少，稿子会被截断。"
+    )
+
+
+def test_a_reasoning_level_we_never_measured_is_refused_at_plan_time() -> None:
+    """`reserve_ratio_high` 问不出来（只能实跑长稿测右尾），所以非 OFF 档必须在
+    `plan_call` 上被拒。**理由要说的是「没实测过预算比例」，不是「不支持这个档」**
+    —— 后者是假话，端点自己声明了支持。"""
+    capability = discover(OPENROUTER, SLUG, fetch=_fetch(REAL_SHAPE))
+    assert capability is not None
+    assert ReasoningEffort.HIGH in capability.reasoning_levels
+    assert capability.reserve_ratio_high is None
+    with pytest.raises(Exception, match="no audited reserve ratio"):
+        plan_call(ZH, ReasoningEffort.HIGH, capability)
+
+
+def test_the_draft_path_gets_its_three_dead_things_back() -> None:
+    """这个模块存在的全部理由，一条断言说完。
+
+    没有它：`unknown` ⇒ `supports_streaming=None` ⇒ 可中断起草**不流式** ⇒
+    「停」退化成「这一稿写完才停」、字不再一个个长出来、账退成「未记录」。
+    """
+    unknown = resolve_with_discovery(OPENROUTER, SLUG, fetch=_fetch(TimeoutError()))
+    assert plan_call(ZH, ReasoningEffort.OFF, unknown, interruptible=True).stream is False
+
+    # **这一行不是样板，是上面那条「失败也进缓存」的直接后果**：同一条路由问第二次
+    # 拿回的是缓存里的失败，换个 `fetch` 也叫不动它。第一版这条测试就红在这儿。
+    discovery.clear_cache()
+    found = resolve_with_discovery(OPENROUTER, SLUG, fetch=_fetch(REAL_SHAPE))
+    plan = plan_call(ZH, ReasoningEffort.OFF, found, interruptible=True)
+    assert plan.stream is True
+    assert found.supports_stream_usage is True
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 5. 缓存
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_the_second_ask_does_not_go_out_again() -> None:
+    seen: list[str] = []
+    fetch = _fetch(REAL_SHAPE, seen=seen)
+    for _ in range(3):
+        assert discover(OPENROUTER, SLUG, fetch=fetch) is not None
+    assert len(seen) == 1
+
+
+def test_a_failure_is_cached_too() -> None:
+    """**失败也进缓存**，否则一个打不通的端点会让作者每起一次草都干等一次超时。
+    代价是「网络刚恢复」要等 TTL 或换一次模型 —— 换模型会换 key，缓存自然错开。"""
+    seen: list[str] = []
+    fetch = _fetch(TimeoutError(), seen=seen)
+    assert discover(OPENROUTER, SLUG, fetch=fetch) is None
+    assert discover(OPENROUTER, SLUG, fetch=fetch) is None
+    assert len(seen) == 1
+
+
+def test_the_cache_expires_on_its_own_clock() -> None:
+    seen: list[str] = []
+    fetch = _fetch(REAL_SHAPE, seen=seen)
+    clock = [1_000.0]
+    discover(OPENROUTER, SLUG, fetch=fetch, now=lambda: clock[0])
+    clock[0] += discovery.CACHE_TTL_SECONDS + 1
+    discover(OPENROUTER, SLUG, fetch=fetch, now=lambda: clock[0])
+    assert len(seen) == 2
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 6. 别家一律不问 —— 判据是 host
+# ══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize(
+    "base_url",
+    [
+        "http://localhost:11434/v1",
+        "https://api.deepseek.com",
+        "https://my-openrouter-mirror.example.com/api/v1",
+        "https://openrouter.ai.evil.example.com/api/v1",
+        "",
+    ],
+)
+def test_other_hosts_are_never_asked(base_url: str) -> None:
+    """**判据是 host 精确相等，不是「名字里有没有 openrouter」。**
+
+    最后那个探针是重点：`openrouter.ai.evil.example.com` 用子串判据会命中，
+    而那时我们会把一个陌生主机的返回值当成能力表 —— 它能改预算、能开流式。
+    """
+    seen: list[str] = []
+    assert discover(base_url, SLUG, fetch=_fetch(REAL_SHAPE, seen=seen)) is None
+    assert seen == []
+
+
+def test_the_discovered_capability_is_a_pydantic_model_not_a_dict() -> None:
+    """铁律 4 的同一条道理：出参是 Pydantic，别让一个 `dict` 混进能力表这条路。"""
+    capability = discover(OPENROUTER, SLUG, fetch=_fetch(REAL_SHAPE))
+    assert isinstance(capability, ProviderCapabilities)
+    assert capability.route == (OPENROUTER, SLUG)

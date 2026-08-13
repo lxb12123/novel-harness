@@ -56,8 +56,8 @@ from ..draft.capabilities import (
     ReasoningEffort,
     ResolvedCallPlan,
     plan_call,
-    resolve_capabilities,
 )
+from ..draft.discovery import resolve_with_discovery
 from ..draft.generate import CallInterrupted
 from ..draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage, LengthSpec
 from ..draft.provider import CompletionResult, ProviderConfig, ProviderError, complete
@@ -306,7 +306,7 @@ def agent_call_plan(config: ProviderConfig) -> tuple[ProviderCapabilities, Resol
         draft.capabilities.CapabilityError: 这个端点/模型撑不起这一档（调用方映成 422，
             并告诉作者去顶栏「AI 设置」看一眼）。
     """
-    capability = resolve_capabilities(config.base_url, config.model)
+    capability = resolve_with_discovery(config.base_url, config.model)
     return capability, plan_call(AGENT_REPLY_LENGTH, AGENT_REASONING, capability)
 
 

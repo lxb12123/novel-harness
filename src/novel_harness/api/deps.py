@@ -24,8 +24,8 @@ from ..draft.capabilities import (
     ReasoningEffort,
     plan_call,
     plan_structured_call,
-    resolve_capabilities,
 )
+from ..draft.discovery import resolve_with_discovery
 from ..draft.provider import CompletionResult, ProviderConfig, complete
 from ..draft.rolling_summary import RollingSummarizer, SummaryRequest
 from ..draft.summarize import SUMMARY_LENGTH
@@ -112,7 +112,7 @@ def _extraction_provider_config() -> ProviderConfig:
 def _analyze_extraction(request: AnalysisRequest) -> CompletionResult:
     """Send the request's audited wire messages through one validated structured plan."""
     config = _extraction_provider_config()
-    capability = resolve_capabilities(config.base_url, config.model)
+    capability = resolve_with_discovery(config.base_url, config.model)
     plan = plan_structured_call(
         EXTRACTION_VISIBLE_TOKEN_BUDGET,
         ReasoningEffort.OFF,
@@ -143,7 +143,7 @@ def agent_provider_config() -> ProviderConfig:
 
 def _analyze_summary(request: SummaryRequest) -> CompletionResult:
     config = _summary_provider_config()
-    capability = resolve_capabilities(config.base_url, config.model)
+    capability = resolve_with_discovery(config.base_url, config.model)
     plan = plan_call(
         SUMMARY_LENGTH,
         ReasoningEffort.OFF,
@@ -166,7 +166,7 @@ def model_configuration_error() -> str | None:
     """
     try:
         config = _summary_provider_config()
-        resolve_capabilities(config.base_url, config.model)
+        resolve_with_discovery(config.base_url, config.model)
     except (ValidationError, ValueError, CapabilityError) as exc:
         return (
             f"模型没配好：{exc} —— 先去顶栏 ⚙「AI 设置」填服务地址/模型/钥匙，"

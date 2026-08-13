@@ -1220,8 +1220,8 @@ def draft(
         CapabilityError,
         ReasoningEffort,
         plan_call,
-        resolve_capabilities,
     )
+    from ..draft.discovery import resolve_with_discovery
     from ..draft.context import ResolvedConstraints, unknown_cast_constraints
     from ..draft.product_draft import ChapterDraftRequest, DraftRefused, check_request
     from ..draft.product_draft import draft_chapter as run_draft
@@ -1234,7 +1234,7 @@ def draft(
 
     try:
         config = _draft_provider_config()
-        capability = resolve_capabilities(config.base_url, config.model)
+        capability = resolve_with_discovery(config.base_url, config.model)
         plan = plan_call(body.length, ReasoningEffort.HIGH, capability)
     except (ValidationError, ValueError, CapabilityError) as exc:
         raise HTTPException(
