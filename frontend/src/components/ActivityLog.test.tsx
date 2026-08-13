@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fixtures, renderWithApi } from "../test/harness";
 import { devTerms, screenText } from "../test/screenGuard";
 import { useCoords } from "../store";
+import type { ActivityDetail, ActivityPage, RunsPanel } from "../api/types";
 import { ActivityLog, money } from "./ActivityLog";
 
 // 喂进来的每一个字节都来自 `api.json`（真 app dump，`tests/test_frontend_contract.py` 冻的）。
@@ -12,6 +13,31 @@ import { ActivityLog, money } from "./ActivityLog";
 
 const ALL = fixtures.activity.entries.length;
 const AUTHOR_ONLY = fixtures.activityAuthorOnly.entries.length;
+
+// ⚠️ **这四个键 `api.json` 里还没有，而它们已经在被 dump 了。**
+// `tests/test_frontend_contract.py` 这一轮多抓了四个端点（没跑成的那一页 + 它的详情 /
+// 一次章节总结的详情 / 一份「价钱只算得出一部分」的用量），但**这份夹具由维护者统一重生成**
+// （四个 agent 并行，谁都不许自己跑 `NH_UPDATE_FIXTURES=1`，否则四份 json 互相打架）。
+//
+// 所以这里按**手写真相源里的类型**（`api/types.ts`，也就是后端出参该长的样子）声明它们，
+// 重生成之前吃到 `undefined` 的那几条会红在 `fresh()` 那一句上，**而不是整份文件炸掉**
+// —— 一个 module 级的 `.entries` 会连着把这一页另外 20 多条断言一起带走。
+// **重生成之后把这一段删掉**，直接写 `fixtures.activityFailed`。
+const pending = fixtures as unknown as {
+  activityFailed: ActivityPage;
+  activityFailedDetail: ActivityDetail;
+  activitySummaryDetail: ActivityDetail;
+  runsPartlyPriced: RunsPanel;
+};
+
+/** 拿一份**还没进这份 json** 的真 dump；没有就当场说清楚是哪一个键缺了。 */
+function fresh<T>(value: T | undefined, key: string): T {
+  expect(
+    value,
+    `夹具里还没有 \`${key}\` —— 跑一次 NH_UPDATE_FIXTURES=1 uv run pytest tests/test_frontend_contract.py`,
+  ).toBeDefined();
+  return value as T;
+}
 
 /** 更正认知类型那一条：唯一一条 `jump` 指到认知矩阵某一格的行。 */
 const KNOWLEDGE_ROW = /更正认知类型/;
@@ -245,6 +271,120 @@ describe("活动记录", () => {
     expect(screen.getByRole("button", { name: `${emptyEndpoints.jump!.label} →` })).toBeEnabled();
   });
 
+  // ── 没跑成的那一行：这一页上唯一需要作者动手的地方 ────────────────────────
+  //
+  // 夹具里**从来没有过一条失败的整理行**（`activity` 里三条 run 全是成功的），于是
+  // 「失败了屏幕上给什么」在两个运行时的守卫下都扫的是一块永远干净的屏幕。
+  // `activityFailed` / `activityFailedDetail` 是真 dump 的那半块。
+
+  it("没跑成的那一条上有一颗**真能点**的按钮，打的就是后端给的那条路", async () => {
+    // 在这之前它和跑成了的那些长得一模一样：后端 `_run_jump` 一眼都不看成没成，
+    // 于是屏幕上那句红字只配着一颗「去第 N 章 →」——**而重跑的能力后端一直都在**。
+    const user = userEvent.setup();
+    const page = fresh(pending.activityFailed, "activityFailed");
+    const at = page.entries.findIndex((e) => e.jump?.target === "extraction_retry");
+    expect(at, "这份 dump 里没有一条没跑成的整理 —— 下面全是空转").toBeGreaterThanOrEqual(0);
+    const posts: string[] = [];
+    renderWithApi(<ActivityLog />, [
+      { match: /\/activity(\?|$)/, body: page },
+      {
+        match: /\/activity\/extraction_run/,
+        body: fresh(pending.activityFailedDetail, "activityFailedDetail"),
+      },
+      {
+        method: "POST",
+        match: /\/extract/,
+        body: () => {
+          posts.push("hit");
+          return fixtures.extractionRun;
+        },
+      },
+    ]);
+
+    const jump = page.entries[at].jump!;
+    await user.click((await collapsed())[at]);
+    // 按钮上的字是后端写的（`jump.label`），前端不编第二份措辞。
+    const go = await screen.findByRole("button", { name: `${jump.label} →` });
+
+    const spy = vi.spyOn(globalThis, "fetch");
+    await user.click(go);
+    await waitFor(() => expect(posts).toHaveLength(1));
+
+    // **打的就是 `jump.endpoints[0]`**（pid 在 URL 里是编码过的，所以解回来再比），
+    // 而且带着 `force`：不带它，接口照样 202、那一行照旧红着——一颗点了没反应的按钮。
+    // 后端那侧有一个「不带 force」的探针钉着同一件事。
+    const urls = spy.mock.calls.map(([url]) => decodeURIComponent(String(url)));
+    const hit = urls.find((url) => url.startsWith(jump.endpoints[0]));
+    expect(hit, `没有一次请求打在 ${jump.endpoints[0]} 上：${urls.join(" ")}`).toBeDefined();
+    expect(hit).toContain("force=true");
+
+    // 按完之后说一句人话（**不假装它已经跑完了**：那要过一会儿）。
+    expect(await screen.findByText(/已经重新排上队了/)).toBeInTheDocument();
+    // 这块屏幕整片扫一遍：失败那一行是这一页上最容易漏出研发术语的地方
+    // （它曾经印着 `provider_failure：chapter analysis provider failed`）。
+    expect(devTerms(screenText())).toEqual([]);
+  });
+
+  it("跑成了的那些行上**没有**那颗按钮", async () => {
+    // 反面也得成立：`label` 和 `target` 是后端同一次判断的两个产物，
+    // 跑成了就没有「再整理一次」这回事。
+    const user = userEvent.setup();
+    renderWithApi(<ActivityLog />);
+    await user.click(await screen.findByRole("button", { name: RUN_ROW }));
+
+    await screen.findByText("有效事件");
+    expect(screen.queryByRole("button", { name: /再整理一次/ })).toBeNull();
+  });
+
+  // ── 「模型调用 · 章节总结」那一条 ────────────────────────────────────────
+
+  /** 时间线里写总结那次调用（后端按「库里有没有一行总结指着它」判，不按 capability）。 */
+  const summaryRow = () => {
+    const at = fixtures.activity.entries.findIndex((e) => e.jump?.target === "summary");
+    expect(at, "这份 dump 里没有一条跳去总结的调用 —— 下面全是空转").toBeGreaterThanOrEqual(0);
+    return { at, row: fixtures.activity.entries[at] };
+  };
+
+  it("章节总结那一条跳的是**右栏那一格**，不是兜底的「去第 N 章」", async () => {
+    // 右栏「章节总结」那一格（读 / 改 / 撤回 / 重新生成）是后来才长出来的，而这一条
+    // 一直退在兜底坐标上。**跳去哪儿仍然是后端算的**：这里只把它给的枚举翻成 tab。
+    const user = userEvent.setup();
+    const { at, row } = summaryRow();
+    useCoords.setState({ chapter: 5, activeTab: "roster" });
+    renderWithApi(<ActivityLog />, [
+      { match: /\/activity\/call/, body: fresh(pending.activitySummaryDetail, "activitySummaryDetail") },
+    ]);
+
+    await user.click((await collapsed())[at]);
+    await user.click(await screen.findByRole("button", { name: `${row.jump!.label} →` }));
+
+    const s = useCoords.getState();
+    expect(s.page).toBe("workbench");
+    expect(s.activeTab).toBe("summary");
+    expect(s.chapter).toBe(row.jump!.chapter_number);
+    // 这一档不带在场坐标（它跳的不是矩阵的一行），也不高亮任何一格。
+    expect(s.focusCell).toBeNull();
+    expect(s.castInclude).toBe("");
+  });
+
+  it("展开一条章节总结，看得见它**到底总结了什么**", async () => {
+    // 在这之前那一层只有能力 / 模型 / token / 耗时：花了钱说得清清楚楚，
+    // 花出来的东西一个字都没有。正文走投影层（`rows`），**不是把审计信封摊开**。
+    const user = userEvent.setup();
+    const { at } = summaryRow();
+    const detail = fresh(pending.activitySummaryDetail, "activitySummaryDetail");
+    renderWithApi(<ActivityLog />, [{ match: /\/activity\/call/, body: detail }]);
+
+    await user.click((await collapsed())[at]);
+
+    const line = detail.rows.find((r) => r.label === "这次写出来的总结");
+    expect(line, "夹具里这一条详情没带总结正文 —— 下面那句断言会变成空转").toBeDefined();
+    expect(await screen.findByText(line!.label)).toBeInTheDocument();
+    expect(screen.getByText(line!.value)).toBeInTheDocument();
+    // 信封照旧一个字都不上屏（`payload` 在这一档本来就是 null，这里钉的是那条纪律）。
+    expect(devTerms(screenText())).toEqual([]);
+  });
+
   it("「看更早的」把后端那个游标**原样**回传，不自己拼", async () => {
     const user = userEvent.setup();
     const cursor = fixtures.activity.next_cursor!;
@@ -314,6 +454,51 @@ describe("活动记录", () => {
     // **这就是被修掉的那句话**：作者按 README 的默认配置（DeepSeek）写书、花着真钱，
     // 而这条用量条告诉他「读入 0 token」。
     expect(document.body.textContent).not.toMatch(/读入 0|生成 0 token/);
+  });
+
+  // ── 花费那一格：**和旁边的用量是同一对形状** ──────────────────────────────
+  //
+  // 这一格 2026-08-13 之前只有一句 `花费 {money(t.cost)}`，而那个合计只算得上
+  // `priced_calls` 那几次。旁边的 token 那一格早就照「合计 + 其中几条算得出」写了，
+  // 只有这一格没跟上——于是它是一个**不说自己缺了几行**的合计。
+  // 三档各吃一份真 dump（`runsAllReported` / `runsPartlyPriced` / `runs`）。
+
+  it("全都算得出：直接给数，**而且带「约」字**", async () => {
+    const t = fixtures.runsAllReported.totals;
+    // 先验夹具真的是这一档 —— 否则下面那句测的是我以为的形状，不是后端给的。
+    expect(
+      t.priced_calls,
+      "这份 dump 里还没有一次算得出价钱的调用（重生成夹具之后才有）",
+    ).toBe(t.calls);
+    renderWithApi(<ActivityLog />, RUNS(fixtures.runsAllReported));
+
+    expect(await screen.findByText(/花费 约 \$/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/算不出/);
+  });
+
+  it("只算得出一部分：合计照给，**同时说清它不是全部**", async () => {
+    const panel = fresh(pending.runsPartlyPriced, "runsPartlyPriced");
+    const t = panel.totals;
+    expect(t.priced_calls).toBeGreaterThan(0);
+    expect(t.priced_calls).toBeLessThan(t.calls);
+    renderWithApi(<ActivityLog />, RUNS(panel));
+
+    const unpriced = t.calls - t.priced_calls;
+    expect(
+      await screen.findByText(new RegExp(`另有 ${unpriced} 次算不出，实际更多`)),
+    ).toBeInTheDocument();
+    // 算得出的那几次是真信息 —— 丢掉它是同一种假话的另一个方向。
+    expect(document.body.textContent).toMatch(/花费 约 \$/);
+  });
+
+  it("一次都算不出：说「未记录」，**绝不说 $0.00**", async () => {
+    const t = fixtures.runs.totals;
+    expect(t.priced_calls).toBe(0);
+    renderWithApi(<ActivityLog />, RUNS(fixtures.runs));
+
+    expect(await screen.findByText("花费未记录")).toBeInTheDocument();
+    // 一张写着 0 元的账单是本仓反复在修的那种失败形态（漂亮的空结果 + 200）。
+    expect(document.body.textContent).not.toMatch(/\$0\.00|花费 0/);
   });
 
   it("还没有记录时说人话，不摆一张空表", async () => {

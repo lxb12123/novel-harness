@@ -584,7 +584,14 @@ export function useEvents(pid: string | null, chapter: number, scope: "PROVISION
   });
 }
 
-/** 显式后台抽取：POST 后立刻拿回 PENDING run，再用 useExtractionRun 轮询。 */
+/** 显式后台抽取：POST 后立刻拿回 PENDING run，再用 useExtractionRun 轮询。
+ *
+ *  **`force` 那一档是「把没跑成的那一次再跑一遍」**：后端见到已经失败的同一条 run
+ *  会把它**原地重置**回排队（不删行、不新建行），所以日志上那一行不会变成两行。
+ *  不带 `force` 的话它原样还回那条失败的 run —— 接口 202、屏幕上什么都不会发生。
+ *
+ *  时间线和底栏那份用量跟着变：重跑会改写同一条 `extraction_run`，跑完还会多一次
+ *  `model_call`。不失效它们，日志页上那一行会一直红着，而作者刚刚才按过按钮。 */
 export function useStartExtraction(pid: string, chapter: number) {
   const qc = useQueryClient();
   return useMutation({
@@ -592,7 +599,12 @@ export function useStartExtraction(pid: string, chapter: number) {
       api.post<ExtractionRun>(
         proj(pid, `/chapters/${chapter}/extract${opts?.force ? "?force=true" : ""}`),
       ),
-    onSuccess: (run) => qc.setQueryData(["extraction", pid, run.id], run),
+    onSuccess: (run) => {
+      qc.setQueryData(["extraction", pid, run.id], run);
+      qc.invalidateQueries({ queryKey: ["activity", pid] });
+      qc.invalidateQueries({ queryKey: ["activity-detail", pid] });
+      qc.invalidateQueries({ queryKey: ["runs", pid] });
+    },
   });
 }
 
