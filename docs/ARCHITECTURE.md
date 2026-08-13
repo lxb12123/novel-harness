@@ -990,9 +990,9 @@ R4 之外，R2（未来实体提前出现）和 R3（死人/未登场角色开�
      `stream` 由 `plan_call` 按冻结阈值（16k）从输出预算推出来，一次对话回复远在阈值之下。
      适配器按流式写、按流式测（`tests/test_agent_model.py`），到了那一档真的生效；
      到不了的那一档降级成「这一次调用跑完就停」，`loop` 的每步检查仍然在。
-     **不许为了让它流式去抬输出预算**——那样对能力表没登记的模型
-     （`supports_streaming is None`）`plan_call` 会 fail-closed 直接拒，作者换个自建端点
-     写作助手整个不能用。
+     **不许为了让它流式去抬输出预算**——那个式子还管着别的事（超时）。
+     （2026-08-13 之前这儿还有半句「而且没登记的模型会被 fail-closed 拒掉」，
+     那道拒绝连同 `supports_streaming` 那一位一起删了，见下面那条。）
 
    接线那一刀（3.6）自己又留下三条，同样写在这儿免得下一个人当成 bug：
 
@@ -1008,8 +1008,10 @@ R4 之外，R2（未来实体提前出现）和 R3（死人/未登场角色开�
      > **2026-08-13 起这句话只对「问不到能力」的端点成立**
      > （[ADR 0025](adr/0025-unregistered-routes-ask-the-endpoint.md)）：把能力发布成
      > API 的那些家（今天只有 OpenRouter）会被现问一次，问到了就有
-     > `supports_streaming=True` ⇒ **可中断起草在作者自选的 slug 上也流式**。
-     > 问不到的照旧落回上面这一档。
+     > **2026-08-13 又变了一次，而且更简单**：`supports_streaming` 整位删掉，
+     > 可中断就流式，不问表。真拒绝流式的端点由运输层退一次并记住
+     > （`provider._NO_STREAM`），**而且那次降级会一路走到屏幕上**
+     > （`CompletionResult.fell_back_to_one_shot`）——静默降级是这套东西要治的病本身。
      信号走的是**既有那一条**（`complete(client=…)` + `_CancellableClient` +
      `generate_draft` 已有的透传），只补上「`cancel` 从 agent 那层送到
      `product_draft.draft_chapter`」这最后一段——**没有第二个取消机制**。
@@ -1022,20 +1024,19 @@ R4 之外，R2（未来实体提前出现）和 R3（死人/未登场角色开�
      断开连接 ≠ 停止生成 ≠ 停止计费，取决于供应商。
 
      **它换来的三条新欠账，写在这儿免得下一个人当成 bug：**
-     ① **起草那一档的 token 数在三条路由上从此多半是「未记录」。** 流式下只有
-     `supports_stream_usage is True` 的端点才会被要 usage（`provider.py` 只对那一档加
-     `stream_options`），而注册表里今天只有 OpenAI 那四条是 `True`——DeepSeek 两条、
-     Anthropic 兼容、OpenRouter 都会退成 `None`。方向是诚实的（不报就说不知道，
-     绝不编一个）。**这一条曾经带着一条更坏的后果**：底栏那个 `COALESCE(…,0)` 会把它
+     ① ~~**起草那一档的 token 数在三条路由上从此多半是「未记录」。**~~
+     —— **2026-08-13 修掉了，而且是把病根挖了**：`supports_stream_usage` 这一位
+     **从能力表上删掉了**，要不要用量改看「这一次要不要可中断」（丢账的正是那条路）。
+     端点不认这个字段就忽略，读取侧本来就落 `None`；真严格拒绝的那一档由运输层退一次
+     并记住（`provider._NO_STREAM_OPTIONS`）。**作者那条 DeepSeek 直连的账因此回来了，
+     不用等审计。** 同一天 `supports_streaming` 也删了：`stream` 是 OpenAI 兼容协议的
+     基本功能，不是要逐条登记的扩展（对照过 Cursor：它根本不存这一位）。
+     判据从此是「**这一位能不能靠别的办法拿到**」——能拿到的不进表。
+     病史留着：**这一条曾经带着一条更坏的后果**：底栏那个 `COALESCE(…,0)` 会把它
      显示成「入 0 / 出 0 token」——**2026-08-12 已修**。`CostTotals` 的三个合计改成可空，
      并配一个 `metered_calls`（同 `cost`/`priced_calls` 那一对）：报了的那几次照样合计，
      **同时说出有几次没报**，一次都没报就说「用量未记录」。往哪个方向糊都是假话，
-     两个数一起才说得清。要真拿到那些数字，仍然得先给那几条路由登记 stream usage 的证据。
-     **2026-08-13 补上了一部分**（[ADR 0025](adr/0025-unregistered-routes-ask-the-endpoint.md)）：
-     OpenRouter 上**没登记的 slug** 现在会被现问一次能力，问到了就带
-     `supports_stream_usage=True`（实测那家连不要 usage 都报）⇒ 那一档的账回来了。
-     **注册表里手写的那四条（DeepSeek ×2 / Anthropic 兼容 / OpenRouter-Opus）一个字没变**
-     ——它们走注册表，碰不到发现逻辑，所以「未记录」在那四条上照旧。
+     两个数一起才说得清。
      ② **`agent/model.py::_visible_text` 是第二处读 chunk 的地方**（第一处是
      `provider.py::_from_stream`）。信号一亮流就抛出去，运输层那个累加器连同它累到的字
      一起被丢掉——而那些字是付过钱的。两边认的字段哪天分家，
