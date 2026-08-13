@@ -74,6 +74,7 @@ __all__ = [
     "read_activity",
     "read_entry",
     "read_runs",
+    "run_error_label",
 ]
 
 
@@ -512,7 +513,7 @@ _RUN_ERROR_LABEL: Final[dict[str, str]] = {
     ExtractionErrorCode.ANALYSIS_FORMAT: "模型这次答的东西读不出来",
     ExtractionErrorCode.INGEST_FAILURE: "整理结果没能写进这本书，这一章维持原样",
 }
-"""抽取失败的原因 → 作者的说法。
+"""抽取失败的原因 → 作者的说法。**全仓唯一一份**（`run_error_label` 是它的读口）。
 
 **这一节原来根本不存在**，`_run_errors` 直接把 `f"{code}：{message}"` 摆上屏，于是
 一次 provider 抖动在小说作者的日志页上长这样：
@@ -525,6 +526,15 @@ _RUN_ERROR_LABEL: Final[dict[str, str]] = {
 
 `ExtractionRunError.message` 是写给维护者的英文诊断，**永不上屏**：库就在维护者手上，
 而作者读不懂它。所以这里只翻 `code`，不拼 `message`。
+
+⚠️ **2026-08-13：同一个 bug 在另一条路径上还活着，被这张表治好了第二次。**
+日志页那条翻对了，可**审阅面板**（`ProposalReviewTab`）读的是另一条端点
+（`GET …/extractions/{run_id}`），而那条端点当时把 `ExtractionRunError` 原样发出去，
+界面渲染的就是 `message`——于是同一句英文绕开这张表又上了一次屏。根因在类型层：
+前端的 `ExtractionRun.errors` 把字段名抄成了 `kind`/`message`，**可翻译的那个
+`code` 在类型里根本够不着**。现在 `api/extraction.py` 在出门前就把这张表用上，
+那句英文**不再出现在任何一条 HTTP 出参里**——不是「前端记得别渲染」，是它拿不到。
+**别在前端补第二张表，也别在 `extract/` 里补第三张。**
 """
 
 _ACTOR_LABEL: Final[dict[str, str]] = {
@@ -575,11 +585,15 @@ def _node_label(label: str) -> str:
     return _NODE_LABEL.get(label, "条目")
 
 
-def _run_error_label(code: str) -> str:
+def run_error_label(code: str) -> str:
     """同 `_edge_label`：认不出的**不原样回吐**，退到一句中文。
 
     `errors_json` 是 append-only 的审计资产，旧库里可能躺着今天已经删掉的码——
     那种行照样要显示成人话，而不是把 `provider_failure` 摆给作者。
+
+    **公开（同 `actor_label`）**：日志页和审阅面板是两条读端，读的是同一批
+    `extraction_run` 行。第二条（`api/extraction.py`）2026-08-13 接上来之前，
+    它自己把那句英文发给了浏览器——见 `_RUN_ERROR_LABEL` 末尾那段。
     """
     return _RUN_ERROR_LABEL.get(code, "整理没有跑完（没有留下能看懂的原因）")
 
@@ -771,7 +785,7 @@ def _run_errors(row: Any) -> tuple[str, ...]:
     if not isinstance(parsed, list):
         return ()
     return tuple(
-        _run_error_label(_text(item.get("code")) or "")
+        run_error_label(_text(item.get("code")) or "")
         for item in parsed
         if isinstance(item, dict)
     )

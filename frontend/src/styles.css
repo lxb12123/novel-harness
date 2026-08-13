@@ -329,6 +329,11 @@ td.cell.editing { outline: 2px solid var(--accent); outline-offset: -2px; }
 .cast-pick { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; font-size: 12px; }
 .cast-editor .row.dim { color: var(--dim); font-size: 11px; }
 .cast-editor .actions { margin-top: 8px; display: flex; align-items: center; gap: 8px; }
+/* 「改一改再收下」比上面那个多一行概要框。形状照 `.cell-believed`（「他以为的是」）——
+   同一块右栏上的两个单行输入长得不一样，只会让作者觉得自己点错了地方。 */
+.cast-summary { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.cast-summary > span { flex: 0 0 auto; color: var(--dim); font-size: 11px; }
+.cast-summary input { flex: 1; min-width: 0; }
 .warn { margin-top: 8px; padding: 6px 8px; background: var(--warnbg); color: var(--warn); border-radius: 4px; font-size: 12px; }
 .tag { display: inline-block; padding: 1px 7px; margin: 2px 4px 2px 0; background: var(--sel); border-radius: 10px; font-size: 12px; }
 .mnr .lab { color: var(--dim); font-size: 11px; margin: 10px 0 4px; }

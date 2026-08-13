@@ -18,10 +18,11 @@
 // | `MACHINE` | snake_case | `stale_base_version` / `provider_failure` / `valid_from` |
 // | `ENGINE_ENUM` | SCREAMING_SNAKE（形状）+ 裸大写枚举 + 驼峰节点类别 | `NOT_FOUND` / `KNOWS` / `PROVISIONAL` |
 // | `RAW_ID` | `前缀:标识` 形状的内部主键，**包括被截断的** | `edge:01J8…` / `n:ID22` |
+// | `ENGLISH_PROSE` | **一连三个小写英文单词**（= 一句写给维护者的英文） | `chapter analysis provider failed` |
 //
 // ── 这张网**看不见**的那一类，写在这儿免得下一个人以为它全包 ────────────────
 //
-// **小写的裸枚举值**：`author` / `system` / `failed` / `succeeded` / `extraction` /
+// **单个小写的裸枚举值**：`author` / `system` / `failed` / `succeeded` / `extraction` /
 // `decision` / `accept` / `reject` / `edit` / `extractor` / `canonical` / `queued`。
 // HTTP 层有意把一批枚举小写化（`ActivityStatus = "failed"`），而一个小写英文单词
 // 和界面上合法的英文（`token` / `ms` / `deepseek-v4`）形状上分不开——**收它就假红，
@@ -29,6 +30,11 @@
 // 由后端翻好（`activity.actor_label`）或由前端一张**类型上全列**的表映射
 //（`ActivityLog.ACTOR_ZH` / `STATUS_ZH`），两者的完整性由
 // `tests/test_wording_guard.py` 拿枚举本身钉住。
+//
+// **第四张网收的是它的另一半**（2026-08-13 补）：单个词分不开，**一连三个就分得开**。
+// `provider_failure: chapter analysis provider failed` 曾经整句摆在小说作者的屏幕上，
+// 而当时三张网只咬到了前面那个 snake_case——后面那句英文一个字都没被咬。
+// 判据仍然是形状不是词表：明天换一句别的英文诊断，它照样收。
 //
 // 第三张网为什么不是前缀白名单（`edge|event|node|…`）：`ProposalReviewTab` 那条
 // `id.slice(-6)` 把 `location:ID22` 截成了 `n:ID22`，白名单里的 `node:` 当场逃掉。
@@ -64,6 +70,17 @@ export const ENGINE_ENUM =
  *  两者都不会被咬（`screenGuard.test.ts` 钉住了这一条）。 */
 export const RAW_ID = /\b[A-Za-z][A-Za-z0-9]*:[A-Za-z0-9]+/g;
 
+/** 写给维护者的一句英文：**一连三个小写英文单词**。
+ *
+ *  真出现过的那一句是 `chapter analysis provider failed`（`ExtractionRunError.message`，
+ *  `extract/control.py` 明写「它永远不上作者的屏幕」，而审阅面板渲染的正是它）。
+ *
+ *  **门槛是三个词，不是两个**：中文界面上合法的英文全是单个 token
+ *  （`token` / `ms` / `deepseek-v4-flash` / `1200 token`），两个词的组合还可能是
+ *  一个模型名加一个单位，三个连着的小写英文单词只可能是一句话。
+ *  假红比漏报更危险——它会让下一个人把守卫关掉，而不是把界面修好。 */
+export const ENGLISH_PROSE = /\b[a-z]{2,}(?:[ \t]+[a-z]{2,}){2,}\b/g;
+
 function hits(text: string, pattern: RegExp): string[] {
   // 正则带 /g，`match` 每次都要一个新的 lastIndex —— 复用同一个对象会漏掉一半。
   return [...new Set(text.match(new RegExp(pattern.source, "g")) ?? [])];
@@ -72,11 +89,17 @@ function hits(text: string, pattern: RegExp): string[] {
 export const machineWords = (text: string): string[] => hits(text, MACHINE);
 export const engineWords = (text: string): string[] => hits(text, ENGINE_ENUM);
 export const rawIds = (text: string): string[] => hits(text, RAW_ID);
+export const englishProse = (text: string): string[] => hits(text, ENGLISH_PROSE);
 
-/** 三张网合起来。**这是给「整块屏幕」用的那一个**，单独的三个留给要说清楚
+/** 四张网合起来。**这是给「整块屏幕」用的那一个**，单独的四个留给要说清楚
  *  「漏的是哪一类」的断言。 */
 export const devTerms = (text: string): string[] => [
-  ...new Set([...machineWords(text), ...engineWords(text), ...rawIds(text)]),
+  ...new Set([
+    ...machineWords(text),
+    ...engineWords(text),
+    ...rawIds(text),
+    ...englishProse(text),
+  ]),
 ];
 
 /** 屏幕 = 文本节点 **+ 无障碍属性**。

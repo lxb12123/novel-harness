@@ -366,8 +366,16 @@ def edit_proposal(
 ) -> ProposalResolution:
     """接受这条提案，但按作者改过的样子落进 CANON。
 
-    **在此之前 `edit` 只存在于库里，没有一条 HTTP 路由能到达它**——于是浏览器里的作者
-    面对一条 knowers 抽错的事件只有 accept 和 reject 两个按钮，而那正是这次要补的洞。
+    **这个洞补了两次，中间隔着两天，而中间那两天它看起来是补好的。**
+    第一次（路由这一层）之后，`edit` 从「只存在于库里」变成「有一条 HTTP 路由能到达」——
+    可浏览器里的作者面对一条 knowers 抽错的事件**仍然只有 accept 和 reject 两个按钮**：
+    前端的 `ProposalAction` 联合里没有 `"edit"`，`useReviewProposal` 是个二分支，
+    这条路由一个调用方都没有。**这份 docstring 当时用完成时写着「那正是这次要补的洞」，
+    而洞只补了后端一半**——它是本仓「最后一厘米没接」那个形态的又一例，
+    也是「已做完文档说没做」的反面：**没做完，文档说做完了**。
+
+    2026-08-13 接上了另一半：`ProposalReviewTab.tsx::ProposalEditor`（概要 + 在场 + 知情
+    三样，勾选框和「已确认的情节」那一格共用 `CastPicker.tsx`）。
     """
     try:
         return review_proposal(

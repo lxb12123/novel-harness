@@ -60,7 +60,7 @@ RUNNER = REPO / "src" / "novel_harness" / "extract" / "runner.py"
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 判据 —— 形状，三张网，和 `screenGuard.ts` 一一对应
+# 判据 —— 形状，四张网，和 `screenGuard.ts` 一一对应
 # ══════════════════════════════════════════════════════════════════════════
 
 MACHINE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
@@ -112,8 +112,17 @@ def _camel_words() -> frozenset[str]:
 
 
 def caught_by_the_browser_net(text: str) -> bool:
-    """`screenGuard.ts` 的三张网合起来，会不会咬这段字。"""
-    if MACHINE.search(text) or SCREAMING.search(text) or RAW_ID.search(text):
+    """`screenGuard.ts` 的四张网合起来，会不会咬这段字。
+
+    第四张（整句英文）2026-08-13 补上，**它不改变这里任何一个已有结论**：本函数只被
+    拿去问单个枚举值，而那一张要三个连着的小写英文单词才咬。
+    """
+    if (
+        MACHINE.search(text)
+        or SCREAMING.search(text)
+        or RAW_ID.search(text)
+        or LATIN_SENTENCE.search(text)
+    ):
         return True
     words = set(re.findall(r"[A-Za-z][A-Za-z0-9]*", text))
     return bool(words & (_bare_upper_words() | _camel_words()))
@@ -310,7 +319,7 @@ def test_the_failure_wording_table_covers_every_code_and_falls_back_to_chinese()
     }
     assert not dirty, f"抽取失败的说法里有研发术语：{dirty}"
 
-    fallback = activity._run_error_label("some_brand_new_code")
+    fallback = activity.run_error_label("some_brand_new_code")
     assert not dev_shapes(fallback) and re.search(r"[一-鿿]", fallback), (
         f"认不出的码退到了 {fallback!r} —— 封闭枚举认不出只可能是表漏了行，"
         "而漏的那一行不该由小说作者来读"
@@ -400,6 +409,10 @@ def test_the_maintainers_english_diagnosis_never_reaches_the_screen(
     """`ExtractionRunError.message` 是写给**维护者**的，库就在他手上。
 
     读端只翻 `code`，那句英文一个字都不许跟着出来。
+
+    **两条读端一起扫**（2026-08-13 补的那一条）：日志页读 `/activity`，审阅面板读
+    `/extractions/{run_id}`——它们读的是同一批 `extraction_run` 行，而当时只有前者
+    翻对了。第二条把整个 `ExtractionRunError` 原样发出去，浏览器渲染的就是那句英文。
     """
     code = ExtractionErrorCode.PROVIDER_FAILURE
     run_id = _seed_failed_run(book, code)
@@ -408,8 +421,37 @@ def test_the_maintainers_english_diagnosis_never_reaches_the_screen(
 
     page = client.get(f"{base}/activity", params={"limit": 50}).text
     detail = client.get(f"{base}/activity/{run_id}").text
-    for where, payload in (("列表", page), ("详情", detail)):
+    run = client.get(f"{base}/extractions/{run_id}").text
+    for where, payload in (("列表", page), ("详情", detail), ("审阅面板", run)):
         assert english not in payload, f"{where}把写给维护者的英文诊断交出去了：{english!r}"
+
+
+@pytest.mark.parametrize("code", list(ExtractionErrorCode))
+def test_the_review_panels_run_endpoint_speaks_the_authors_language(
+    client: TestClient, book: dict[str, str], code: ExtractionErrorCode
+) -> None:
+    """**审阅面板轮询的那条端点**（`GET …/extractions/{run_id}`）也只说中文。
+
+    它是这个 bug 的第二个现场：日志页那条 2026-08-11 就翻对了，而这一条把
+    `{"code": "provider_failure", "message": "chapter analysis provider failed"}`
+    原样发给浏览器，`ProposalReviewTab` 渲染的正是那个 `message`。
+    **夹具里从来没有过一次失败的抽取**，所以两个运行时的守卫扫的都是一块永远干净的屏幕。
+
+    参数化是**枚举驱动**的：新加一种失败方式，这条自动多跑一遍。
+    """
+    run_id = _seed_failed_run(book, code)
+
+    body = client.get(f"/api/projects/{book['pid']}/extractions/{run_id}")
+
+    assert body.status_code == 200, body.text
+    errors = body.json()["errors"]
+    assert errors, "失败了却一条原因都不说 —— 过度收窄一样是 bug"
+    assert all(isinstance(line, str) for line in errors), (
+        "出参还是 `{code, message}` —— 可翻译的那个值够得着，就总有人会去渲染另一个"
+    )
+    offenders = {line: dev_shapes(line) for line in errors if dev_shapes(line)}
+    assert not offenders, f"审阅面板上摆着研发术语（{code.value}）：{offenders}"
+    assert all(re.search(r"[一-鿿]", line) for line in errors)
 
 
 def test_an_unknown_run_status_is_never_echoed_back(book: dict[str, str]) -> None:

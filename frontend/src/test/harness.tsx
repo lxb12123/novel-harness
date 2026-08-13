@@ -95,6 +95,17 @@ const DEFAULT: Handler[] = [
   { method: "POST", match: /\/declare\/knows$/, body: fixtures.declareKnows },
   { method: "POST", match: /\/accept$/, body: fixtures.proposalAccept },
   { method: "POST", match: /\/reject$/, body: fixtures.proposalReject },
+  // 「改一改再收下」。回执和 accept 同型（`ProposalResolution`），差别在 `status`——
+  // 后端真 dump 的那两份分别是 `ACCEPTED` / `REJECTED`，这条路由要的是 `EDITED`。
+  // **不手写一份**：拿真回执改一个字段，比编一个 27 字段的对象离真形状近得多。
+  {
+    method: "POST",
+    match: /\/edit$/,
+    body: { ...fixtures.proposalAccept, status: "EDITED" },
+  },
+  // 一次整理跑完了长什么样（真 dump）。**没跑成那一份不做默认**：要验它的测试自己前置，
+  // 免得每一块屏幕都莫名其妙挂着一条失败。
+  { match: /\/extractions\//, body: fixtures.extractionRun },
   { method: "POST", match: /\/provisional\/confirm$/, body: fixtures.provisionalConfirm },
   // 改一条**已经生效**的事实（ADR 0020 的「可改」）。两条都是真 dump 的回执。
   { method: "POST", match: /\/canon\/knowledge$/, body: fixtures.canonKnowledge },
