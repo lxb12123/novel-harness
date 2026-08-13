@@ -169,6 +169,31 @@ def _previous_tail(root: Path, chapter: int) -> str:
     return importer.read_chapter(root, chapter - 1) or ""
 
 
+def _without_mark_debris(note: str) -> str:
+    """削掉自述上挂着的记号碎屑：整个记号，以及**配不上对**的那半边括号。
+
+    **只给自述用。** 这一段已经从正文里切出来了，再削一刀只改屏幕上那张卡，
+    作者的稿子碰不到。正文那一侧**不许照做**：`他读着〖天工开物〗〖自述〗：更冷。`
+    这种行的左半段是作者的字，按同一条规矩削就会吃掉他的一个书名号——
+    往那个方向错一次，作者手里没有第二份可以对照。
+
+    **成对的一律留着。** 模型真会在自述里写「删掉了〖回忆〗那一段」，那是它的散文。
+    所以判据是「数一数两边配不配得上对」，不是「见半边就删」——一句话的意思是什么，
+    这一层不问（ADR 0005）。落单的那半边若在句子中间，同样不动：那是模型写的，
+    不是记号掉下来的。
+    """
+    left, right = SELF_NOTE_MARK[0], SELF_NOTE_MARK[-1]
+    note = note.replace(SELF_NOTE_MARK, "").strip()
+    while note and note.count(left) != note.count(right):
+        if note[-1] in (left, right):
+            note = note[:-1].strip()
+        elif note[0] in (left, right):
+            note = note[1:].strip()
+        else:
+            break
+    return note
+
+
 def split_self_note(text: str) -> tuple[str, str]:
     """把写手那句自述从正文里切下来。返回 `(正文, 自述)`。
 
@@ -186,6 +211,25 @@ def split_self_note(text: str) -> tuple[str, str]:
     所以规则是：**从记号切到行尾，每一处都切**；第一处的内容当自述。
     这个记号是引擎自己发明的（`SELF_NOTE_MARK`），正文里天然不会有它——
     误伤的代价因此接近零，而漏一处的代价是作者的书里多一行机器话。
+
+    ── 切下来之后还要再削一刀（记号的碎屑）──────────────────────────────────
+
+    2026-08-13 在作者的真书上实测：12 稿里有 **2 稿的自述末尾多一个 `〗`**。模型把
+    `〖自述〗` 当成一对括号用了——开头照抄了整个记号，收尾又补上右半边
+    （`〖自述〗……节奏轻快。〗`）。切到行尾这一刀没错（那半个括号没进作者的书），
+    错在**切下来的那一段自己还挂着碎屑**，而这一段是原样摆到作者选版本那张卡上的：
+    他看见的是一个乱码字，看不出那是引擎自己的记号漏了半边。`_without_mark_debris`
+    只削自述这一侧，理由写在它自己的 docstring 里。
+
+    ── 认不出的那些，一律不认（这条比补漏更硬）────────────────────────────
+
+    `〖自述`（只写了一半）、`【自述】` / `（自述）`（换了括号族）、`〖自述 〗`
+    （记号里多了个空格）——**全都不认**。后两种是中文里天生就有的括号加一个常用词，
+    认它就等于宣布「作者的正文里不许出现这几个字」，而误切的方向是
+    **正文被切进自述、然后连同超出 60 字的部分一起丢掉**，那是作者的稿子。
+    不认的代价只是他的稿子开头多一行机器话：看得见，能自己删。
+    `tests/test_draft_candidates.py::test_anything_that_is_not_the_engines_own_mark_is_left_alone`
+    是对「未来那个更聪明的修法」的守卫。
     """
     if SELF_NOTE_MARK not in text:
         return text, ""
@@ -197,7 +241,11 @@ def split_self_note(text: str) -> tuple[str, str]:
             kept.append(line)
             continue
         if not note:
-            note = tail.strip().lstrip("：: ").strip()
+            # 先削碎屑再剥冒号：模型多敲的那半边括号会挡在冒号前面
+            # （`〖自述〗〗：更冷。`），顺序反了就剥不掉。
+            note = _without_mark_debris(tail).lstrip("：: ").strip()
+        # **正文那一侧只去空白**：`head` 里的括号可能是作者的字（见
+        # `_without_mark_debris`），削错一个就是从他的稿子里拿走一个字。
         kept.append(head.rstrip())
     if len(note) > SELF_NOTE_UNITS:
         note = note[:SELF_NOTE_UNITS] + "……"
