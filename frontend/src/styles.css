@@ -4,6 +4,9 @@
   --bg: #ffffff; --panel: #f7f7f6; --line: #dddcd8; --ink: #1c1c1e; --dim: #6b6b70;
   --k: #167a52; --b: #9a6212; --u: #999; --warnbg: #fbecec; --warn: #a23b3b;
   --accent: #3a3ab0; --sel: #ececf8; --okbg: #e8f5ee; --ok: #167a52;
+  /* 「你在看的不是本章」那一片。刻意**不复用** --warnbg/--warn：看上一章不是错误，
+     染成红的会教会作者忽略红色，而这块面板真正的红（未解析的称呼）就在它旁边。 */
+  --backbg: #fbf1de; --back: #7d4f0a;
   --welcome-side: #eceef1; --welcome-surface: #fff; --welcome-action: #242831;
   --welcome-soft: #f4f5f7; --welcome-shadow: 0 24px 64px rgba(26, 31, 40, .16);
 }
@@ -12,6 +15,7 @@
     --bg: #16161a; --panel: #1e1e24; --line: #2f2f38; --ink: #e8e8ec; --dim: #8a8a93;
     --k: #4bbd8b; --b: #d3a24f; --u: #777; --warnbg: #2a1818; --warn: #e08585;
     --accent: #9a98ee; --sel: #26263a; --okbg: #16281f; --ok: #4bbd8b;
+    --backbg: #2c2313; --back: #e2b463;
     --welcome-side: #1b1d22; --welcome-surface: #22252b; --welcome-action: #f1f3f5;
     --welcome-soft: #2b2f36; --welcome-shadow: 0 24px 64px rgba(0, 0, 0, .38);
   }
@@ -347,6 +351,27 @@ td.cell.editing { outline: 2px solid var(--accent); outline-offset: -2px; }
 .statecard .row.dim { color: var(--dim); font-size: 11px; }
 .statecard .row.quote { margin-top: 4px; font-style: italic; }
 .statecard .actions { margin-top: 8px; display: flex; gap: 6px; }
+
+/* 「看上一章」——右栏「人物状态」那一格的时光机开关。
+   关着的时候只是一行控件；**开着的时候整块内容换底、换边框、顶一条横幅**：
+   作者照着上一章的局面去改这一章的事实，是引擎自己造出来的错，而它造出来的那条边
+   在面板上长得完全正常。所以这里的「明显」是刻意过量的，不是一行小字。 */
+.lookback-bar { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.lookback-why { color: var(--dim); font-size: 11px; }
+.lookback {
+  border: 2px solid var(--back); border-left-width: 6px; border-radius: 8px;
+  background: var(--backbg); padding: 10px 12px 4px;
+}
+.lookback-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.lookback-head b { color: var(--back); font-size: 14px; }
+.lookback-head .spacer { flex: 1; }
+.lookback-badge {
+  flex: 0 0 auto; padding: 1px 7px; border-radius: 3px;
+  background: var(--back); color: var(--backbg);
+  font-size: 11px; font-weight: 600; letter-spacing: .08em;
+}
+.lookback-note { margin: 8px 0 10px; color: var(--back); font-size: 12px; line-height: 1.6; }
+.lookback .statecard { background: var(--bg); border-color: var(--back); }
 
 /* M4 审阅面板 */
 .review-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }

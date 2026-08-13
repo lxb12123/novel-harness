@@ -162,6 +162,18 @@ class Author:
         assert r.status_code == 200, r.text
         return r.json()
 
+    def panel_state(self, chapter: int) -> Any:
+        """右栏「人物状态」那一格读的**那一条**。
+
+        和上面 `state()` 不是同一条路由：这一条不收 node_id，在场由后端从
+        **路径上那一章**的正文里数出来（`_effective_cast`，ADR 0018）。
+        `chapter` 在两条上都是 AS OF —— 「看上一章」那个开关换的就是这个数，
+        它不写进任何数据。
+        """
+        r = self._c.get(f"/api/projects/{self._pid}/chapters/{chapter}/state")
+        assert r.status_code == 200, r.text
+        return r.json()
+
 
 @pytest.fixture
 def author(client: TestClient, book: dict[str, str]) -> Author:
@@ -328,6 +340,37 @@ def test_is_dead_reaches_the_panel_too(author: Author) -> None:
     after = author.state(node_id, 4)
     assert after["is_dead"] is True
     assert [s["dim_key"] for s in after["states"]] == [HEALTH_DIM_KEY]
+
+
+def test_the_route_the_right_column_actually_calls_carries_is_dead(author: Author) -> None:
+    """右栏「人物状态」读的是 `/chapters/{n}/state`，**不是**上面那条按人查的路由。
+
+    ── 为什么要单钉这一条 ────────────────────────────────────────────────
+    `is_dead` 是一个 computed field，而它 2026-08-13 之前是个光秃秃的 `@property`
+    ——`model_dump()` 从不输出 property，于是那个键在浏览器里恒为 `undefined`，
+    `StateCards.tsx` 里那个「· 已亡」角标**一次都没画出来过**。
+    `tsc` 和 vitest 谁都看不见：契约夹具是从真 app dump 的，真 app 就没发过这个键，
+    两头一致地缺。
+
+    上面那条断言量的是 `/characters/{id}/state`，而**作者的屏幕上是另一条**：
+    它多走一层 `_narrow`（Secret / 未来节点收窄）。收窄那一层递归重建 dict，
+    漏掉一个键不会有任何东西报错。
+
+    ── 顺带钉住「看上一章」那个开关的全部机制 ────────────────────────────
+    第 1 章问不出死人、第 4 章问得出——**同一条路由、同一份数据，只换路径上那个数**。
+    这就是右栏那个开关做的事的全部，后端一个字都不用改。
+    """
+    author.died(who="萧决", quote=DEATH_QUOTE)
+
+    def xiao(chapter: int) -> Any:
+        cards = author.panel_state(chapter)
+        found = [c for c in cards if c["node"]["name"] == "萧决"]
+        assert found, f"第 {chapter} 章的人物状态里没有萧决：{[c['node']['name'] for c in cards]}"
+        return found[0]
+
+    assert "is_dead" in xiao(1), "那个键整个不在 —— 角标又画不出来了，而前端不会报错"
+    assert xiao(1)["is_dead"] is False, "他第 1 章还活着（闭开区间 [2, ∞) 的可见产品行为）"
+    assert xiao(4)["is_dead"] is True
 
 
 # ══════════════════════════════════════════════════════════════════════════
