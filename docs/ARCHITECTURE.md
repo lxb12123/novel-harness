@@ -406,6 +406,11 @@ api/{app,deps,activity,autopilot,chat,extraction,review}.py
                                                 ← M1.5 FastAPI 壳：65 条路由 + 19 个错误映射
                                                   （64 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
                                                   M4 抽取/事件读端 + 提案审阅/被动确认路由；
+                                                  抽取那两条的出参 2026-08-13 换成 `ExtractionRunView`：
+                                                  `errors` 是**已经翻好的中文**（措辞唯一出处仍是
+                                                  `activity._RUN_ERROR_LABEL`），写给维护者的那句英文
+                                                  `ExtractionRunError.message` **不出这道门**——
+                                                  在此之前它原样发给浏览器，审阅面板渲染的就是它；
                                                   提案 edit + `/canon/…` 两条改正路由（corrections.py）；
                                                   活动日志两条 + `GET /runs`（2026-08-10 由 501 点亮）；
                                                   写作助手会话九条（开 / 列 / 看 / 删 / **跑一轮**（两种收法）/
@@ -443,15 +448,26 @@ activity.py                                     ← 「事后可查」（ADR 002
                                                   每条带一个结构化 `jump`——**跳去哪个模块改由后端算**，
                                                   且只落在今天真存在的编辑入口上；`narrow_payload()`
                                                   是这一层的收窄点（比 `_narrow` 严：日志行没有当前章）
-frontend/src/                                   ← React 工作台：58 个非测试手写源文件、9181 行 TS/TSX（7615 行测试）——数法：`frontend/src` 下 `*.ts|*.tsx`，排除 `*.test.*` 与生成物 `api/schema.ts`。**没有守卫罩着这三个数**：`test_doc_numbers` 只钉运行时数得出来的那些，所以它们从 2026-07-25 写下之后烂到 2026-08-12 才被发现，测试那个数当时差了 2.75 倍
+frontend/src/                                   ← React 工作台：62 个非测试手写源文件、10320 行 TS/TSX（9046 行测试）——数法：`frontend/src` 下 `*.ts|*.tsx`，排除 `*.test.*` 与生成物 `api/schema.ts`。**没有守卫罩着这三个数**：`test_doc_numbers` 只钉运行时数得出来的那些，所以它们从 2026-07-25 写下之后烂到 2026-08-12 才被发现，测试那个数当时差了 2.75 倍（2026-08-13 复测又发现文件数已经漂了 3 个——**这条盲区不是历史，它一直在漏**）
                                                   （数法：`frontend/src` 下的 `.ts/.tsx`，不含生成物 `api/schema.ts`）
                                                   （M4 审阅面板：ProposalReviewTab / StateCards / hooks；
                                                   ADR 0020 的「可查」页：ActivityLog —— 顶栏一个入口、
                                                   换的是**中栏**，跳转坐标一律吃后端的 `jump`；
                                                   ADR 0020 的「可改」：KnowledgeMatrix 的 `CellEditor`
                                                   + CanonEventCast + `correctionError.ts`（409/404/422
-                                                  三种拒绝三句话，**409 绝不静默重试**））
-frontend/src/__fixtures__/api.json              ← 从真 app dump 的 64 个端点出参（契约测试两头共用）
+                                                  三种拒绝三句话，**409 绝不静默重试**）；
+                                                  `CastPicker.tsx` = 「谁在场 / 谁知道了」这两维名单的
+                                                  **唯一一份画法**（2026-08-13）——审阅那一格的
+                                                  「改一改再收下」和已确认那一格的「保存名单」是同一件事的
+                                                  前后两步，各画一遍迟早有一遍会改成别的说法，
+                                                  而「＋加一个人」和勾选框对**绝对集合**语义的暗示是相反的）
+frontend/src/__fixtures__/api.json              ← 从真 app dump 的 66 个端点出参（契约测试两头共用）
+                                                  其中 `extractionFailed` 是**一次没跑成的整理**
+                                                  （2026-08-13 补）：在它之前这份夹具里三条 run
+                                                  全是成功的，于是「失败了屏幕上说什么」这条路径
+                                                  在 pytest 和 vitest 两侧都扫的是一块永远干净的
+                                                  屏幕——而它真出过事两次（日志页一次、审阅面板
+                                                  一次，见 `activity._RUN_ERROR_LABEL`）
                                                   其中 `chatTurnEvents` 是**长连接那一轮的原始帧**
                                                   （`event:` / `data:` / 空行都是真的）：ADR 0024 原文说
                                                   「冻成一份录像」，落地当天更正了——冻在 `tests/` 里的
@@ -1177,6 +1193,44 @@ R4 之外，R2（未来实体提前出现）和 R3（死人/未登场角色开�
    产品裁决：**它是约束 10 那条线上第一个「作者确实得自己填一个章号」的字段**
    （三处 docstring 都写着「作者声明的」，而它按定义没有证据可指）。
    在有人签字之前，那一半只有 HTTP 调用方够得到。
+
+9. ~~**提案审阅那道闸门上只有「全收」和「全扔」**~~ —— **2026-08-13 已补，四个洞一起。**
+
+   这块屏幕是作者的**审批闸门**：抽取器从正文里抽出「谁知道什么事」，作者在这儿决定收不收。
+   闸门漏一格，假事实就进了这个产品唯一在卖的那张表。四个洞里前两个是「作者做不了 / 看不见」，
+   后两个是同一件事的病根和它为什么活了这么久。
+
+   | | 当时的事实 | 现在 |
+   |---|---|---|
+   | a | 界面上只有 accept / reject（`ProposalAction` 联合里没有 `"edit"`，`useReviewProposal` 是个二分支）。**引擎和路由一直是通的** | 低置信情节卡上第三颗按钮「改一改」→ `ProposalReviewTab.tsx::ProposalEditor`：概要 + 在场 + 知情三样，勾选框和「已确认的情节」那一格共用 `CastPicker.tsx` |
+   | b | 审阅时看不见 `character_notes`，而它接受之后会进写作 prompt（`draft/product_assemble.py`） | 新人物卡多一行「备注」+ 一句「收下之后，这些设定会跟着这个人进写作提示」 |
+   | c | `GET …/extractions/{id}` 把 `ExtractionRunError` 原样发出去，界面渲染 `message` = **写给维护者的英文** | 出参换成 `ExtractionRunView`：`errors` 是已经翻好的中文，`code`/`message` 都不出这道门 |
+   | d | 夹具里**从来没有一条失败的抽取**，组件测试喂的是手写的 `{code:"analysis_format", message:"格式错误"}`（真码配中文）——测试绿着，屏幕是英文 | 契约夹具多两个端点（`extractionRun` / `extractionFailed`，后者是真的没跑成），组件测试吃真夹具 |
+
+   四件值得记住的事：
+
+   - **c 的根因在类型层，不在渲染那一行。** `frontend/src/api/types.ts` 把字段名抄成了
+     `{ kind, message }`，而后端那一列叫 `code` —— **可翻译的那个值在类型里根本够不着，
+     组件是被结构性地逼上 `message` 的**。所以修法是让那句英文**够不着**（后端出门前就翻好），
+     不是「前端记得别渲染」。
+   - **措辞仍然只有一份**：`activity._RUN_ERROR_LABEL`（`run_error_label()` 是它的读口）。
+     日志页那条读端 2026-08-11 就翻对了，而两条读端读的是**同一批 `extraction_run` 行**——
+     同一个 bug 在第二条路径上又活了两天。别在前端补第二张表，也别在 `extract/` 里补第三张。
+   - **d 比前三条都重要**：没有它，这条路径过两个月会原样回来。现在两侧各有守卫——
+     pytest 侧 `test_wording_guard.py::test_the_review_panels_run_endpoint_speaks_the_authors_language`
+     （**枚举驱动**，`ExtractionErrorCode` 每加一种失败方式自动多跑一遍），
+     vitest 侧组件真渲染一次那条失败并整屏扫 `devTerms`。
+   - **`screenGuard.ts` 多了第四张网**（`ENGLISH_PROSE`：一连三个小写英文单词）。
+     它罩的正是那句 `chapter analysis provider failed` —— 前三张网只咬到了前面那个
+     snake_case，后面整句英文一个字都没被咬，而那一整句就摆在小说作者的屏幕上。
+     **门槛是三个词不是两个**：中文界面上合法的英文全是单个 token（`token` / `ms` /
+     `deepseek-v4-flash`），假红会让下一个人把守卫关掉。小写**单词**那一半仍然是已知盲区，
+     判据文件里照旧写着这件事。
+
+   **剩下的**：`edge_conflict` 和 `new_character` 两种提案仍然只有全收 / 全扔——
+   后端就只对「恰好 1 个 event」开放 edit（`extract/proposal_validation.py`），
+   **条件不成立不画那颗按钮**（同日志页「`endpoints` 空就不画编辑入口」那条纪律）。
+   要放开得先动引擎，不是先动界面。
 
 **M4 正在实现、尚未完成**：`events/` 契约与 `002_m4_events.sql` 已落地；`extract/` 已有纯
 结构化 schema、确定性 prompt、精确优先的模糊证据定位与不猜名称解析，后台 provider 调用和

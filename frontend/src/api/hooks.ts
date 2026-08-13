@@ -44,6 +44,7 @@ import type {
   Mentioned,
   NodeRef,
   ProposalAction,
+  ProposalEditInput,
   ProposalRecord,
   ProposalResolution,
   ProvisionalConfirmation,
@@ -537,7 +538,15 @@ export function useExtractionRun(pid: string | null, runId: string | null) {
   });
 }
 
-/** 审阅一条提案：accept / reject / bystander。成功后刷新提案、事件、花名册与面板。 */
+/** 审阅一条提案：accept / reject / bystander / **edit**。
+ *
+ *  三条路由，不是两条。**`edit` 那条在此之前没有调用方**——引擎和路由都通着，
+ *  而这个 hook 是个二分支（`action === "accept" ? /accept : /reject`），于是
+ *  「改一改再收下」在浏览器里到不了。缺的那一档正好是最需要的那一档：`knowers`
+ *  是抽取里唯一靠推断得来的一维（谁在场是文本里写着的，谁**因此知道了**是猜的）。
+ *
+ *  成功后刷新提案、事件、花名册与面板（`edit` 同样把 canon 版本推高一格，所以它
+ *  和 accept 走同一条失效）。 */
 export function useReviewProposal(pid: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -545,15 +554,26 @@ export function useReviewProposal(pid: string) {
       proposalId: string;
       action: ProposalAction;
       expected_canon_version: number;
-    }) =>
-      body.action === "accept"
-        ? api.post<ProposalResolution>(proj(pid, `/proposals/${body.proposalId}/accept`), {
-            expected_canon_version: body.expected_canon_version,
-          })
-        : api.post<ProposalResolution>(proj(pid, `/proposals/${body.proposalId}/reject`), {
-            action: body.action,
-            expected_canon_version: body.expected_canon_version,
-          }),
+      /** 只有 `action === "edit"` 才带；后端对别的动作带编辑字段是 422。 */
+      edit?: ProposalEditInput;
+    }) => {
+      const path = (verb: string) => proj(pid, `/proposals/${body.proposalId}/${verb}`);
+      if (body.action === "accept") {
+        return api.post<ProposalResolution>(path("accept"), {
+          expected_canon_version: body.expected_canon_version,
+        });
+      }
+      if (body.action === "edit") {
+        return api.post<ProposalResolution>(path("edit"), {
+          ...body.edit,
+          expected_canon_version: body.expected_canon_version,
+        });
+      }
+      return api.post<ProposalResolution>(path("reject"), {
+        action: body.action,
+        expected_canon_version: body.expected_canon_version,
+      });
+    },
     onSuccess: () => invalidateReview(qc, pid),
   });
 }

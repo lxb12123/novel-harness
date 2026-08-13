@@ -464,7 +464,25 @@ export interface StoredAlias {
 
 export type ProposalKind = "low_confidence_main" | "edge_conflict" | "new_character";
 export type ProposalStatus = "PENDING" | "ACCEPTED" | "REJECTED" | "EDITED";
-export type ProposalAction = "accept" | "reject" | "bystander";
+/** 四个动作，和后端 `ProposalAction` 枚举一一对应。
+ *
+ *  **`edit` 曾经不在这个联合里**，于是「改一改再收下」这条退路在浏览器里根本表示不出来：
+ *  引擎支持、路由通着（`POST …/proposals/{id}/edit`），而作者面对一条 knowers 抽错的
+ *  事件只有「整条收下（把假的放进图）」和「整条丢掉（这一章的情节记录就空了）」。
+ *  少一个字面量，闸门就只有开和关两档。 */
+export type ProposalAction = "accept" | "reject" | "bystander" | "edit";
+
+/** 「按作者改过的样子收下」的入参。三样至少给一样（都不给 → 后端 422）。
+ *
+ *  两个名单是**绝对集合**（改完之后是这些人），`null` = 这一维不动 ——
+ *  和 `EventCastEditInput`（改一条已生效事件）收的是同一种东西。**这条纪律必须一致**：
+ *  两条路能力不一样的时候，作者会学会先驳回再重来，而那正好丢掉了证据链。
+ *  同样**没有章号字段**（约束 10）。 */
+export interface ProposalEditInput {
+  edited_summary?: string | null;
+  knower_ids?: string[] | null;
+  participant_ids?: string[] | null;
+}
 
 export interface StoryEvent {
   id: string;
@@ -537,7 +555,20 @@ export interface ExtractionRun {
   chapter_number: number;
   snapshot_id: string;
   status: ExtractionRunStatus;
-  errors: { kind: string; message: string }[];
+  /** **已经翻好的中文**，一条一句（同 `ActivityDetail.errors`）。
+   *
+   *  ── 这个字段是一次真实事故的现场 ────────────────────────────────────────
+   *
+   *  它原来写的是 `{ kind: string; message: string }[]` —— 而后端那两列叫
+   *  `code` / `message`：**字段名抄错了一个**，于是唯一可翻译的那个值在类型里
+   *  根本够不着，组件被结构性地逼上了 `message`。而 `message` 是写给**维护者**的
+   *  英文诊断（`extract/control.py` 明写「它永远不上作者的屏幕」），于是小说作者
+   *  在审阅面板上看到的是 `chapter analysis provider failed`。
+   *
+   *  现在后端在出门前就翻好（`api/extraction.py::ExtractionRunView`，措辞的唯一
+   *  出处是 `activity._RUN_ERROR_LABEL`），那句英文**不再存在于任何 HTTP 出参里**。
+   *  **别在这儿写第二张翻译表**——`correctionError.ts` 那张已经删过一次了。 */
+  errors: string[];
   valid_event_count: number;
   discarded_event_count: number;
   proposal_count: number;

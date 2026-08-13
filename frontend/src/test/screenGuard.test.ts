@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { devTerms, engineWords, machineWords, rawIds } from "./screenGuard";
+import { devTerms, englishProse, engineWords, machineWords, rawIds } from "./screenGuard";
 
 // **守卫的自守卫。**
 //
@@ -11,7 +11,7 @@ import { devTerms, engineWords, machineWords, rawIds } from "./screenGuard";
 // `tests/test_doc_numbers.py` 里那个「五条历史违规」探针：探针过期了要么删要么换，
 // 但不许悄悄变成空集。
 
-/** 五个探针，每一个都在某一轮里真的被小说作者看到过（或者当场就会被看到）。 */
+/** 六个探针，每一个都在某一轮里真的被小说作者看到过（或者当场就会被看到）。 */
 const HISTORICAL: ReadonlyArray<{ shown: string; term: string; why: string }> = [
   {
     shown: "萧决 对「血脉秘密」：KNOWS → BELIEVES",
@@ -38,6 +38,13 @@ const HISTORICAL: ReadonlyArray<{ shown: string; term: string; why: string }> = 
     term: "n:ID22",
     why: "ProposalReviewTab 的 `rosterMap.get(id) ?? id.slice(-6)`；截断后逃掉了 `node:` 那条守卫",
   },
+  {
+    shown: "provider_failure: chapter analysis provider failed",
+    term: "chapter analysis provider failed",
+    why:
+      "审阅面板渲染 `ExtractionRunError.message`（写给维护者的英文）；" +
+      "前三张网只咬到了前面那个 snake_case，后面整句英文一个字都没被咬",
+  },
 ];
 
 describe("屏幕守卫的自守卫", () => {
@@ -45,12 +52,12 @@ describe("屏幕守卫的自守卫", () => {
     expect(devTerms(shown)).toContain(term);
   });
 
-  it("五个探针**一个不漏**（少一个就说明这张网被谁改窄了）", () => {
+  it("六个探针**一个不漏**（少一个就说明这张网被谁改窄了）", () => {
     const caught = HISTORICAL.filter(({ shown, term }) => devTerms(shown).includes(term));
     expect(caught).toHaveLength(HISTORICAL.length);
   });
 
-  it("三张网各自罩住它该罩的那一类", () => {
+  it("四张网各自罩住它该罩的那一类", () => {
     expect(machineWords("stale_base_version project_not_found valid_from")).toEqual([
       "stale_base_version",
       "project_not_found",
@@ -64,6 +71,11 @@ describe("屏幕守卫的自守卫", () => {
     ]);
     // **截断过的也算。** 前缀白名单（`node:` / `edge:` …）在这一条上会当场漏掉。
     expect(rawIds("边 edge:01J8XK 已撤回 · 当前：n:ID22")).toEqual(["edge:01J8XK", "n:ID22"]);
+    // 一连三个小写英文单词 = 一句写给维护者的话。**两个不算**（模型名 + 单位）。
+    expect(englishProse("整理没跑成 chapter analysis provider failed")).toEqual([
+      "chapter analysis provider failed",
+    ]);
+    expect(englishProse("读入 1200 token · 900 ms · deepseek-v4-flash")).toEqual([]);
   });
 
   it("**不误报**：干净的界面一个字都不许被咬", () => {

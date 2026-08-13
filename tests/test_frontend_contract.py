@@ -279,6 +279,9 @@ def test_frontend_fixture_matches_the_real_api(
     # 这里冻的是 DeepSeek 的真实形状：报了命中量、不报写入量。
     activity_call = seed_call(book, cache_read_tokens=960, cache_write_tokens=None)
     activity_run = seed_run(book, 1, proposals=2, call_id=activity_call)
+    # 审阅面板轮询的那条端点（`GET …/extractions/{run_id}`）。**跑成了的那一份在这儿，
+    # 没跑成的那一份在文件最后**——两份都得是真 dump，理由见那儿。
+    grab("extractionRun", client.get(f"{base}/extractions/{activity_run}"))
     grab("activity", client.get(f"{base}/activity", params={"limit": 8}))
     # 按 actor 过滤 —— ADR 0020 点名的那件事（作者点过的会被 system 行淹没）。
     # `actors[]` 的计数**不跟着过滤走**，这份 fixture 冻的就是这个差别。
@@ -609,6 +612,24 @@ def test_frontend_fixture_matches_the_real_api(
         assert ran.status_code == 200, ran.text
         assert ran.json()["reason"] == "model_unreachable", ran.text
     grab("chatDetailFailed", client.get(f"{base}/chats/{broke_id}"))
+
+    # ── 一次**没跑成**的整理（2026-08-13）────────────────────────────────────
+    #
+    # **这份夹具里从来没有过一次失败的抽取**——三条 run 全是成功的，于是「失败了屏幕上
+    # 说什么」这条路径在两个运行时的守卫下都是绿的，而它真出过事：日志页上曾经摆着
+    # `provider_failure：chapter analysis provider failed`（`activity._RUN_ERROR_LABEL`
+    # 记着现场）。那次只补了日志页那条读端；审阅面板读的是这一条，它把整个
+    # `ExtractionRunError` 原样发出去，浏览器渲染的就是那句英文。**判据没错，样本缺了一半。**
+    #
+    # 种法走 `seed_run`（直接写表）：跑一次真抽取要模型、要钱，而它种的是**真形态**
+    # ——`ExtractionErrorCode` 的真值 + `runner.py` 真写下的那句英文诊断。
+    #
+    # **放在最后**：它会往时间线和 `/runs` 里多加一行，前面每一个 grab 都不该看见它。
+    # 落在第 3 章而不是第 1 章：一章一份快照一个 prompt 只有一条 run（库里有一条唯一约束），
+    # 而第 1 章那条已经被上面那次成功的整理占着——**两份都要**，成功和失败在屏幕上是
+    # 两块完全不同的界面。
+    failed_run = seed_run(book, 3, status="FAILED")
+    grab("extractionFailed", client.get(f"{base}/extractions/{failed_run}"))
 
     frozen = json.dumps(dump, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
