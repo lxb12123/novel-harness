@@ -106,6 +106,7 @@ from .capabilities import (
     normalize_model,
     resolve_capabilities,
 )
+from .windows import capabilities_from_snapshot
 
 OPENROUTER_HOST: Final = "openrouter.ai"
 OPENROUTER_ENDPOINTS_URL: Final = "https://openrouter.ai/api/v1/models/{slug}/endpoints"
@@ -266,7 +267,10 @@ def resolve_with_discovery(
         return resolve_capabilities(base_url, model)
     if route in CAPABILITY_REGISTRY:
         return resolve_capabilities(base_url, model)
-    return resolve_capabilities(base_url, model, metadata=discover(*route, fetch=fetch))
+    # **顺序是硬的**：端点自己发布的能力 > 打包的公共快照。前者是这条路由此刻的实况
+    # （按上游逐条列），后者是一份社区维护、可能滞后一代的表（见 `windows.py` 边界一）。
+    metadata = discover(*route, fetch=fetch) or capabilities_from_snapshot(*route)
+    return resolve_capabilities(base_url, model, metadata=metadata)
 
 
 def clear_cache() -> None:

@@ -173,9 +173,14 @@ def test_a_response_we_cannot_read_falls_back_to_unknown(payload: Any) -> None:
     它能通过 `plan_call`，于是作者的稿子按一个我们编的预算发出去。
     """
     assert discover(OPENROUTER, SLUG, fetch=_fetch(payload)) is None
+
+    # **退到下一层，不是退到「我们编一个」。** 2026-08-13 起下面还垫着一层打包快照
+    # （`draft/windows.py`），所以这里的判据不再是「一定是 unknown」，
+    # 而是「**绝不冒充成端点亲口说的**」—— `endpoint:` 那个前缀是这条网真正要防的东西。
     capability = resolve_with_discovery(OPENROUTER, SLUG, fetch=_fetch(payload))
-    assert capability.source == "unknown"
-    assert capability.max_context_tokens is None
+    assert not capability.source.startswith("endpoint:")
+    assert capability.source in {"unknown", "snapshot:litellm-model-windows"}
+    # 无论落到哪一层，**输出上限一律没有** —— 那一列谁都没资格替这条路由声称。
     assert capability.max_output_tokens is None
 
 
@@ -248,22 +253,27 @@ def test_what_this_module_is_still_worth_after_the_streaming_bits_left_the_table
     **于是本模块的收益缩成了「那两个测不起的数字」**，比它落地那天小得多——
     写在这儿是因为一个模块的价值缩水了却没人回来改说明，正是本仓最常见的那种骗人文档。
     """
-    unknown = resolve_with_discovery(OPENROUTER, SLUG, fetch=_fetch(TimeoutError()))
-    assert unknown.max_context_tokens is None
-    # 上文长度直接塌到兜底 —— 这才是今天真正只有本模块能救的那一格。
-    from novel_harness.draft.assemble import GATE_TAIL_CODE_POINTS, product_tail_limit
+    from novel_harness.draft.assemble import product_tail_limit
 
-    assert product_tail_limit(unknown.max_context_tokens, 7_024) == GATE_TAIL_CODE_POINTS
+    # 问不到时退到打包快照那一层（`draft/windows.py`，2026-08-13 起垫在下面）。
+    # **本模块的独家价值因此又缩了一次**：快照给的是「这个模型名一般多大」，
+    # 本模块给的是「这条路由此刻按上游逐条算下来多大」。
+    fallback = resolve_with_discovery(OPENROUTER, SLUG, fetch=_fetch(TimeoutError()))
+    assert fallback.source == "snapshot:litellm-model-windows"
 
     # **这一行不是样板，是「失败也进缓存」的直接后果**：同一条路由问第二次拿回的是
     # 缓存里的失败，换个 `fetch` 也叫不动它。第一版这条测试就红在这儿。
     discovery.clear_cache()
     found = resolve_with_discovery(OPENROUTER, SLUG, fetch=_fetch(REAL_SHAPE))
     assert found.max_context_tokens == 384_000
-    assert product_tail_limit(found.max_context_tokens, 7_024) > GATE_TAIL_CODE_POINTS
+    assert found.max_context_tokens < fallback.max_context_tokens, (
+        "问到的那一份必须比快照更**保守** —— 它按 19 家上游取了下确界，"
+        "而快照只知道『这个模型名一般多大』。反过来的话，取下确界那条就白算了。"
+    )
+    assert product_tail_limit(found.max_context_tokens, 7_024) > 800
 
     # 而流式这件事，两边现在**一样**——它已经不依赖这个模块了。
-    assert plan_call(ZH, ReasoningEffort.OFF, unknown, interruptible=True).stream is True
+    assert plan_call(ZH, ReasoningEffort.OFF, fallback, interruptible=True).stream is True
     assert plan_call(ZH, ReasoningEffort.OFF, found, interruptible=True).stream is True
 
 
