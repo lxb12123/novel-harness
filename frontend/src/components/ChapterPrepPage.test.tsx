@@ -28,6 +28,6 @@ describe("章节准备页", () => {
     renderWithApi(<ChapterPrepPage />);
 
     await user.dblClick(await screen.findByRole("button", { name: "当前章节" }));
-    expect(screen.queryByRole("textbox", { name: "改这一章的标题" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "改这一章的名字" })).not.toBeInTheDocument();
   });
 });

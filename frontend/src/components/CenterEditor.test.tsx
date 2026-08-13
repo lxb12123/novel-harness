@@ -41,9 +41,9 @@ describe("中栏编辑器", () => {
     await screen.findByText(fixtures.chapters[0].title);
 
     await user.dblClick(screen.getByRole("button", { name: "当前章节" }));
-    const box = screen.getByRole("textbox", { name: "改这一章的标题" });
+    const box = screen.getByRole("textbox", { name: "改这一章的名字" });
     await user.clear(box);
-    await user.type(box, "第一章 血脉（改）{Enter}");
+    await user.type(box, "血脉（改）{Enter}");
 
     // 两边都得变，因为它们**是同一行字**：顶上那行标题，和正文的第一行。
     expect(within(screen.getByRole("button", { name: "当前章节" })).getByText("第一章 血脉（改）"))

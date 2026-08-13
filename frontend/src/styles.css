@@ -244,6 +244,9 @@ body.resizing { cursor: col-resize; -webkit-user-select: none; user-select: none
    32rem 封顶。基线给 `auto` 的话它只有 input 的默认宽度（十来个汉字）再和那根弹簧
    平分空白——作者会在一个看不见开头的框里改一个二十几个字的中文章标。 */
 .chtitle.editing { flex: 1 1 100%; max-width: 32rem; }
+/* 改名时留在原位的章号。左边那 7px = 按钮的 6px padding + 1px 透明描边，
+   **凑的就是「原地不动」**：差一个像素，双击的瞬间整行会横跳一下。 */
+.chtitle-fixed { flex: 0 0 auto; padding-left: 7px; margin-right: 6px; font-weight: 600; color: var(--ink); }
 .chtitle-edit {
   font: inherit; font-weight: 600; min-width: 0; flex: 1 1 auto; width: 100%;
   padding: 2px 6px; border: 1px solid var(--accent); border-radius: 4px;

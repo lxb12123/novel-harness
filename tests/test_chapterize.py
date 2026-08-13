@@ -10,6 +10,9 @@
 
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 from novel_harness.text.chapterize import CHAPTER_RE, Chapterization, chapterize, chapters
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -191,3 +194,41 @@ def test_outputs_are_pydantic() -> None:
     out = chapterize("第一章 甲\n正文甲\n")
     assert isinstance(out, Chapterization)
     assert out.model_dump()["chapters"][0]["index"] == 1
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 第二份副本：浏览器里那一份（**唯一一份**，且必须逐字节相同）
+# ══════════════════════════════════════════════════════════════════════════
+
+FRONTEND_COPY = Path(__file__).resolve().parents[1] / "frontend" / "src" / "chapterTitle.ts"
+
+
+def test_frontend_marker_regex_is_the_same_one() -> None:
+    """浏览器里那份章标正则 == 这儿这份，**逐字节**。
+
+    本模块的注释写着「正则是唯一真相，不留第二份副本」，而 `chapterTitle.ts` 里还是有一份。
+    它为什么必须存在：工作台那行标题双击可以改名，而**章号那一段不进输入框**
+    （作者的原话：「双击之后就带章节名，左边的章号原地不动」）——
+    要按住章标，就得当场知道它到哪儿结束，而「当场」指的是**作者此刻正在改的那一行**：
+    还没保存，后端没见过它，问不到。
+
+    所以按那条规矩付代价：这条测试就是钉那条缝的，同
+    `test_serve.py::test_vite_outdir_and_dist_agree`（Vite 的 `outDir` 和 FastAPI 的 `_DIST`
+    也是两个必须同时改的字面量）。**改这边不改那边，这条先红。**
+
+    唯一允许的差别是前端多括了一组「中间那截空白」（`([ \\t　]*)`，改名时原样带回去），
+    摊平之后必须一字不差。JS 那份**不带标志**（`/…/;` 后面什么都没有，本测试的正则要求了
+    这一点）：它一次只看一行，而这边要在整份正文上找章界，所以那边有 `re.M`、这边没有。
+    """
+    source = FRONTEND_COPY.read_text(encoding="utf-8")
+    found = re.search(r"const MARKER =\s*/(\S.*)/;", source)
+    assert found, f"{FRONTEND_COPY.name} 里找不到 `const MARKER = /…/;`——它是这条缝的另一半"
+
+    flattened = found.group(1).replace(r"([ \t　]*)", r"[ \t　]*")
+    assert flattened == CHAPTER_RE.pattern, (
+        "前端那份章标正则和 `CHAPTER_RE` 漂开了：\n"
+        f"  前端（摊平后）：{flattened}\n"
+        f"  这儿：          {CHAPTER_RE.pattern}\n"
+        "两份必须同时改。漂了之后症状看得见但很绕：这边多认一个章标 → 存盘时切不出一章 → 422；"
+        "少认一个 → 改名框里出现整行（含章号），而作者会以为章号也能改。"
+    )

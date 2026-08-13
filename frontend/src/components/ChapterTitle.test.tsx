@@ -92,19 +92,23 @@ describe("章标题", () => {
     expect(screen.getByText(/没有匹配/)).toBeInTheDocument();
   });
 
-  it("双击改标题：改完交回去的是**新的第一行**", async () => {
+  it("双击只改名字 —— **章号原地不动，不进输入框**", async () => {
+    // 作者的原话：「双击之后就带章节名，左边的章号原地不动」。
+    // 这不只是界面偏好：章号是后端切章认的那一段，它进不了框 = 这条路改不坏切章。
     const user = userEvent.setup();
     const onRename = open();
     await screen.findByText(LINE);
 
     await user.dblClick(trigger());
-    const box = screen.getByRole("textbox", { name: "改这一章的标题" });
-    expect(box).toHaveValue(LINE);
+    const box = screen.getByRole("textbox", { name: "改这一章的名字" });
+    expect(box).toHaveValue("血脉"); // 不是「第一章 血脉」
+    expect(screen.getByText("第一章")).toBeInTheDocument(); // 章号还在屏幕上，原位
     // 双击那两下不该把挑章的单子留在屏幕上。
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
 
     await user.clear(box);
-    await user.type(box, "第一章 血脉（改）{Enter}");
+    await user.type(box, "血脉（改）{Enter}");
+    // 交回去的是**整行**（章号原样带回），因为落盘落的是正文第一行。
     expect(onRename).toHaveBeenCalledWith("第一章 血脉（改）");
   });
 
@@ -114,19 +118,33 @@ describe("章标题", () => {
     await screen.findByText(LINE);
 
     await user.dblClick(trigger());
-    await user.type(screen.getByRole("textbox", { name: "改这一章的标题" }), "乱改{Escape}");
+    await user.type(screen.getByRole("textbox", { name: "改这一章的名字" }), "乱改{Escape}");
     expect(onRename).not.toHaveBeenCalled();
     expect(await screen.findByText(LINE)).toBeInTheDocument();
   });
 
-  it("改成空 = 什么都不做（空标题会让下一行正文变成章标题）", async () => {
+  it("名字清空 = 这一章只剩章号（真书里大把无题章），不是把标题弄没", async () => {
     const user = userEvent.setup();
     const onRename = open();
     await screen.findByText(LINE);
 
     await user.dblClick(trigger());
-    await user.clear(screen.getByRole("textbox", { name: "改这一章的标题" }));
-    await user.type(screen.getByRole("textbox", { name: "改这一章的标题" }), "   {Enter}");
+    await user.clear(screen.getByRole("textbox", { name: "改这一章的名字" }));
+    await user.type(screen.getByRole("textbox", { name: "改这一章的名字" }), "   {Enter}");
+    expect(onRename).toHaveBeenCalledWith("第一章");
+  });
+
+  it("认不出章号的那一行：整行可改，但**清空它什么都不做**", async () => {
+    // 首行是正文的稿子（没有「第N章」）。这时清空 = 下一行正文顶上来当章标题。
+    const user = userEvent.setup();
+    const onRename = open("他说第三章很好看。");
+    await screen.findByText("他说第三章很好看。");
+
+    await user.dblClick(trigger());
+    const box = screen.getByRole("textbox", { name: "改这一章的名字" });
+    expect(box).toHaveValue("他说第三章很好看。");
+    await user.clear(box);
+    await user.type(box, "{Enter}");
     expect(onRename).not.toHaveBeenCalled();
   });
 

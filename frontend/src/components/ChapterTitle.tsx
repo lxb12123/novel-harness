@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useChapters } from "../api/hooks";
 import { useOpenChapter } from "../autopilot";
 import { useCoords } from "../store";
-import { findChapters } from "../chapterTitle";
+import { findChapters, joinTitle, splitTitle } from "../chapterTitle";
 
 // 中栏顶栏上的章标题。在作者眼里它是一样东西，所以这儿也只放一样东西——
 // 而它同时回答三个问题：**这一章叫什么**（读）、**换一章**（点开挑）、**改标题**（双击）。
@@ -62,13 +62,17 @@ export function ChapterTitle({
     listRef.current?.querySelector(".on")?.scrollIntoView?.({ block: "center" });
   }, [open]);
 
+  /** 标题行拆成「章号 + 名字」。**章号不进输入框**，作者只改得动名字那一段。 */
+  const parts = line === null ? null : splitTitle(line);
+
   function commit(next: string) {
-    const title = next.trim();
     setEditing(null);
-    // 空标题会让这一章在目录上变成**下一行正文**（章标题 = 首个非空行），
-    // 那不是「没有标题」，是「标题变成了别的字」。改成空 = 什么都不做。
-    if (!title || line === null || title === line) return;
-    onRename?.(title);
+    if (!parts) return;
+    const line2 = joinTitle(parts, next);
+    // 认不出章号那种行（`marker` 空）**清空 = 什么都不做**：那一行整个没了的话，
+    // 下一行正文就顶上来当章标题了。有章号的那种可以清空——剩个「第22章」照样成立。
+    if (!line2 || line2 === line) return;
+    onRename?.(line2);
   }
 
   const hits = findChapters(list, query);
@@ -78,20 +82,28 @@ export function ChapterTitle({
     // 而一个 input 的默认宽度只放得下十来个——作者会在一个看不见开头的框里改标题。
     <div className={"chtitle" + (editing !== null ? " editing" : "")}>
       {editing !== null ? (
-        <input
-          className="chtitle-edit"
-          aria-label="改这一章的标题"
-          value={editing}
-          autoFocus
-          onChange={(e) => setEditing(e.target.value)}
-          onBlur={() => commit(editing)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") commit(editing);
-            // Esc 原样退出：**改一半反悔时唯一的退路**（这一行下面就是正文，
-            // 提交出去就成了一次「未保存」的改动，作者得自己想起来撤回）。
-            if (e.key === "Escape") setEditing(null);
-          }}
-        />
+        <>
+          {/* **章号原地不动**（作者的原话）：它留在原来那个位置上，是一段死字，
+              双击改的只有它后面的名字。这不只是个界面偏好——章号是后端切章认的那一段
+              （`CHAPTER_RE`），改坏它这一章存不回去。让它进不了输入框，
+              这条路就**在结构上**破坏不了切章。 */}
+          {parts?.marker && <span className="chtitle-fixed">{parts.marker}</span>}
+          <input
+            className="chtitle-edit"
+            aria-label="改这一章的名字"
+            placeholder="这一章的名字（可以空着）"
+            value={editing}
+            autoFocus
+            onChange={(e) => setEditing(e.target.value)}
+            onBlur={() => commit(editing)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") commit(editing);
+              // Esc 原样退出：**改一半反悔时唯一的退路**（这一行下面就是正文，
+              // 提交出去就成了一次「未保存」的改动，作者得自己想起来撤回）。
+              if (e.key === "Escape") setEditing(null);
+            }}
+          />
+        </>
       ) : (
         <button
           className="chtitle-name"
@@ -100,7 +112,7 @@ export function ChapterTitle({
           aria-expanded={open}
           // 收成「…」之后，这是作者唯一能读到完整章标的地方（同左栏那一行书名）。
           title={
-            line !== null && onRename ? `${shown}\n双击可以改标题（它就是正文第一行）` : shown
+            line !== null && onRename ? `${shown}\n双击可以改这一章的名字（章号不动）` : shown
           }
           // 上面那个「点别处关掉」是挂在 window 的 pointerdown 上，而 pointerdown 早于
           // click：不挡住的话，单子开着时点这颗按钮会先被关掉、再被 onClick 开回来，
@@ -114,9 +126,10 @@ export function ChapterTitle({
             setOpen((v) => !v);
           }}
           onDoubleClick={() => {
-            if (line === null || !onRename) return;
+            if (!parts || !onRename) return;
             setOpen(false);
-            setEditing(line);
+            // 进框的只有名字那一段（`第22章 女神？ 学姐？` → `女神？ 学姐？`）。
+            setEditing(parts.name);
           }}
         >
           <span className="chtitle-text">{shown}</span>
