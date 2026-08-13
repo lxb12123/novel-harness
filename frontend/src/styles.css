@@ -41,7 +41,6 @@ header {
   padding: 7px 12px; border-bottom: 1px solid var(--line); background: var(--panel);
 }
 header .title { font-weight: 600; } header .title b { color: var(--accent); }
-header label { color: var(--dim); font-size: 12px; }
 header input.ch { width: 56px; text-align: right; }
 header .spacer { flex: 1; }
 header .hint { color: var(--dim); font-size: 11px; }
@@ -51,6 +50,10 @@ header button.on { border-color: var(--accent); color: var(--accent); background
 .prep { flex: 1; overflow: auto; padding: 16px 20px; }
 .prep-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
 .prep-head label { color: var(--dim); font-size: 12px; }
+/* 标题这一格里挂着挑章的控件（`.chtitle`），所以它自己得是 flex + 可收缩，
+   否则长章标会把右边那句「按这一章提到的：…」顶出去。 */
+.prep-title { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 0; }
+.prep-title > span { flex: 0 0 auto; }
 .prep-head .spacer { flex: 1; }
 .prep-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
 .prep-card { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; background: var(--panel); }
@@ -172,7 +175,6 @@ body.resizing { cursor: col-resize; -webkit-user-select: none; user-select: none
 }
 .book-menu button { width: 100%; text-align: left; }
 .book-menu-note { margin-top: 6px; color: var(--dim); font-size: 11px; line-height: 1.5; }
-.book-idle { font-size: 12px; }
 
 /* 切书弹窗：居中的方框（抽屉贴边，这个不贴——它是「换一本」这种全局动作） */
 .modal {
@@ -203,6 +205,58 @@ body.resizing { cursor: col-resize; -webkit-user-select: none; user-select: none
 .edbar .who { font-weight: 600; } .edbar .spacer { flex: 1; }
 .edbar .status { font-size: 12px; color: var(--dim); }
 .edbar .status.err { color: var(--warn); } .edbar .status.ok { color: var(--ok); }
+/* 右边那两颗按钮**不许被压扁**：章标题是唯一该让步的东西（下面 `flex: 0 1 auto`），
+   不钉这一条的话，长章标会把「保存」挤成两个字换行。
+   **`>` 不能少**：章标题自己也是一颗 button，被这条罩上就再也收不成「…」了。 */
+.edbar > button { flex: 0 0 auto; }
+
+/* ── 中栏顶栏的章标题（挑章 + 双击改名）───────────────────────────────────────
+   它替下来的是顶栏那个 <select>，而**那个白框没有跟着搬**：select 自带边框和底色，
+   放在这条面板色的窄条上是一个格格不入的盒子。这儿平时是一行纯标题，
+   悬浮/展开时才浮出一个底——长得像标题，用起来是控件。 */
+.chtitle { position: relative; display: flex; align-items: center; min-width: 0; flex: 0 1 auto; }
+.chtitle-name {
+  display: flex; align-items: center; gap: 8px; min-width: 0; max-width: 100%;
+  /* 右边多留一截：这一行右侧紧挨着状态和「历史 / 保存」，
+     省略号贴着它们时读起来像标题被那颗按钮咬掉了一截。 */
+  margin-right: 6px; padding: 2px 8px 2px 6px;
+  border: 1px solid transparent; border-radius: 4px;
+  font: inherit; font-weight: 600; color: var(--ink); background: transparent;
+}
+/* `:not(:disabled)` 是为了压过全局那条 `button:hover`（它会把整行标题染成强调色）——
+   同左栏 `.book-row:hover` 那一条，它为同一个理由写成同样的形状。
+   悬浮只浮出一个底：这一行首先是标题，其次才是控件。 */
+.chtitle-name:hover:not(:disabled), .chtitle-name[aria-expanded="true"] {
+  background: var(--bg); border-color: var(--line); color: var(--ink);
+}
+/* **这一条就是「伸缩」**：`min-width: 0` 让它可以被压到比内容窄（flex 项默认不肯），
+   压窄之后 `ellipsis` 才有机会出现。少了它，长章标会把整条 edbar 顶宽、
+   把右边的按钮推出屏幕，而不是收成「…」。 */
+.chtitle-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 小三角：同左栏那个，CSS 画的，不用 ▾ 字符（10px 下各字体画得都不一样）。
+   `margin-left: auto` 让它永远贴在右端，和收成「…」的标题之间隔着上面那个 gap。 */
+.chtitle-caret {
+  flex: 0 0 auto; width: 0; height: 0; margin-left: auto;
+  border-top: 5px solid var(--dim);
+  border-left: 4px solid transparent; border-right: 4px solid transparent;
+}
+/* 改名时这一格**撑开**：`100%` 的基线让它先要满一整行，再被右边那几个固定件挤回来，
+   32rem 封顶。基线给 `auto` 的话它只有 input 的默认宽度（十来个汉字）再和那根弹簧
+   平分空白——作者会在一个看不见开头的框里改一个二十几个字的中文章标。 */
+.chtitle.editing { flex: 1 1 100%; max-width: 32rem; }
+.chtitle-edit {
+  font: inherit; font-weight: 600; min-width: 0; flex: 1 1 auto; width: 100%;
+  padding: 2px 6px; border: 1px solid var(--accent); border-radius: 4px;
+  background: var(--bg); color: var(--ink);
+}
+.chtitle-pop {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 25;
+  width: min(360px, 70vw); padding: 6px;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
+  box-shadow: 0 8px 24px rgba(0,0,0,.18);
+}
+.chtitle-find { width: 100%; margin-bottom: 6px; }
+.chtitle-list { max-height: 320px; overflow: auto; }
 .cm-wrap { flex: 1; min-height: 0; display: flex; }
 .cm-host { flex: 1; min-height: 0; overflow: hidden; }
 .cm-host .cm-editor { height: 100%; }
@@ -538,16 +592,10 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
 .setup-card { width: 460px; max-width: 92vw; }
 .setup-card h3 { margin: 0 0 14px; }
 .setup-card .note { color: var(--dim); font-size: 12px; margin-top: 4px; }
-/* 章节选择器。中文章标经常写成「第722章 从昴日星官开始（大结局）」，160px 装不下，
-   而 <select> 默认是**硬切**——切在半个字上，看起来像标题本身就是坏的。
-   `text-overflow: ellipsis` 让它收成「…」，一眼看出是「还有」不是「没了」；
-   全名走 title 悬浮看（同书名行）。
-   220px 是顶栏腾出来的：书名下拉和「＋新书/导入」都搬去左栏书架了。 */
-header select {
-  font: inherit; padding: 3px 7px; border: 1px solid var(--line); border-radius: 4px;
-  background: var(--bg); color: var(--ink);
-  max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
+/* 章节选择器**不在顶栏了**（2026-08-13 搬去中栏顶栏，样式见上面 `.chtitle`）。
+   这儿原本有一条 `header select { border … background … }`——**它没有跟着搬**：
+   那个白框在中栏那条面板色的窄条上是一个格格不入的盒子。
+   「中文章标装不下就收成「…」、全名走 title 悬浮读」那条道理跟着搬过去了。 */
 
 /* ── 中栏对半分：左边正文、右边写作助手（模式二）─────────────────────────────
    两个 fr 因子由 SplitPanes 内联给（作者拖出来的，加起来正好 100），

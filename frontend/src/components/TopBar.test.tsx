@@ -1,7 +1,7 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fixtures, renderWithApi } from "../test/harness";
+import { beforeEach, describe, expect, it } from "vitest";
+import { renderWithApi } from "../test/harness";
 import { useCoords } from "../store";
 import { TopBar } from "./TopBar";
 
@@ -17,58 +17,21 @@ beforeEach(() => {
 });
 
 describe("顶栏", () => {
-  it("只能从已经存在的章节中切换", async () => {
-    const user = userEvent.setup();
+  it("**章节选择器不在这儿了** —— 它搬去中栏那行章标题上（一个功能不留两个入口）", async () => {
+    // 顶栏这一行讲的是整个工作台（换页、设置），而「正在编辑的是哪一章」只对中栏成立。
+    // 搬下去之后它和章标题合成了同一样东西：那行字既是标题，也是挑章的入口，还能双击改。
+    // 换章要发的那次后台整理跟着一起搬走了（`ChapterTitle.test.tsx` 钉着）。
     renderWithApi(<TopBar />);
-
-    const chapter = await screen.findByRole("combobox", { name: "当前章节" });
-    await waitFor(() => {
-      expect(within(chapter).getAllByRole("option")).toHaveLength(fixtures.chapters.length);
-    });
+    await screen.findByRole("button", { name: "写作助手" });
+    expect(screen.queryByRole("combobox")).not.toBeInTheDocument();
+    expect(screen.queryByText("章节")).not.toBeInTheDocument();
     expect(screen.queryByRole("spinbutton")).not.toBeInTheDocument();
-
-    await user.selectOptions(chapter, String(fixtures.chapters[1].number));
-    expect(useCoords.getState().chapter).toBe(fixtures.chapters[1].number);
-  });
-
-  it("换章会把**刚离开的**那一章交给后台整理，而作者看不到这件事", async () => {
-    const user = userEvent.setup();
-    renderWithApi(<TopBar />);
-    const chapter = await screen.findByRole("combobox", { name: "当前章节" });
-    await waitFor(() =>
-      expect(within(chapter).getAllByRole("option")).toHaveLength(fixtures.chapters.length),
-    );
-    const spy = vi.spyOn(globalThis, "fetch");
-
-    await user.selectOptions(chapter, String(fixtures.chapters[1].number));
-
-    await waitFor(() =>
-      expect(
-        spy.mock.calls.some(
-          ([url, init]) =>
-            // 第 1 章 —— 他刚离开的那一章，不是刚进入的那一章
-            String(url).endsWith("/chapters/1/autopilot") &&
-            String((init as RequestInit | undefined)?.method) === "POST",
-        ),
-      ).toBe(true),
-    );
-    // 后台在干活这件事一个字都不该出现在界面上。
-    expect(document.body.textContent).not.toMatch(/后台|整理中|总结中/);
-  });
-
-  it("章标长到装不下时收成「…」，全名靠悬浮读得到", async () => {
-    // 中文章标经常长过下拉框。<select> 默认硬切在半个字上，看起来像标题本身是坏的。
-    renderWithApi(<TopBar />);
-    const chapter = await screen.findByRole("combobox", { name: "当前章节" });
-    await waitFor(() =>
-      expect(chapter).toHaveAttribute("title", fixtures.chapters[0].title),
-    );
   });
 
   it("只展示可用能力和产品文案，不泄漏演示内容或研发术语", async () => {
     renderWithApi(<TopBar />);
 
-    expect(await screen.findByRole("combobox", { name: "当前章节" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "工作台" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "AI 规划" })).not.toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/萧决|顾清音|李管家|M2|valid_from|实验状态/);
   });
@@ -79,7 +42,7 @@ describe("顶栏", () => {
     // 也不该由一个表单承载。起草归模式二的 agent 面板——在那儿它是一次工具调用，
     // 不是一个界面。**后端 `/draft` 一个字没动**：它现在是 agent 的起草工具。
     renderWithApi(<TopBar />);
-    await screen.findByRole("combobox", { name: "当前章节" });
+    await screen.findByRole("button", { name: "写作助手" });
     expect(screen.queryByRole("button", { name: "AI 起草" })).not.toBeInTheDocument();
   });
 
@@ -89,7 +52,7 @@ describe("顶栏", () => {
     // 不在顶栏上摆待办数、不提示「有 N 条新记录」。
     const user = userEvent.setup();
     renderWithApi(<TopBar />);
-    await screen.findByRole("combobox", { name: "当前章节" });
+    await screen.findByRole("button", { name: "写作助手" });
 
     await user.click(screen.getByRole("button", { name: "活动记录" }));
     expect(useCoords.getState().page).toBe("log");
@@ -99,7 +62,7 @@ describe("顶栏", () => {
   it("写作助手是一颗开合按钮，**默认关着** —— 同活动记录那条：入口不是通知", async () => {
     const user = userEvent.setup();
     renderWithApi(<TopBar />);
-    await screen.findByRole("combobox", { name: "当前章节" });
+    await screen.findByRole("button", { name: "写作助手" });
 
     expect(useCoords.getState().chatOpen).toBe(false);
     await user.click(screen.getByRole("button", { name: "写作助手" }));
@@ -114,7 +77,7 @@ describe("顶栏", () => {
     const user = userEvent.setup();
     useCoords.setState({ page: "prep", chatOpen: false });
     renderWithApi(<TopBar />);
-    await screen.findByRole("combobox", { name: "当前章节" });
+    await screen.findByRole("button", { name: "写作助手" });
 
     await user.click(screen.getByRole("button", { name: "写作助手" }));
     expect(useCoords.getState()).toMatchObject({ chatOpen: true, page: "workbench" });
@@ -125,7 +88,7 @@ describe("顶栏", () => {
     // 花名册，新人物是写到那儿才需要的。现在引擎写完之后自己去正文里数（`mentioned.py`），
     // 右栏显示数出来的结果。这条断言钉住「它没有偷偷搬回来」。
     renderWithApi(<TopBar />);
-    await screen.findByRole("combobox", { name: "当前章节" });
+    await screen.findByRole("button", { name: "写作助手" });
     expect(screen.queryByRole("textbox", { name: "本章出场人物" })).not.toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/出场人物|在场/);
   });

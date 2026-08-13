@@ -21,14 +21,17 @@ from ..db import Connection, connect, migrate
 from ..declare import Ledger
 from ..draft.capabilities import (
     CapabilityError,
+    ProviderCapabilities,
     ReasoningEffort,
     plan_call,
     plan_structured_call,
+    resolve_capabilities,
 )
 from ..draft.discovery import resolve_with_discovery
 from ..draft.provider import CompletionResult, ProviderConfig, complete
 from ..draft.rolling_summary import RollingSummarizer, SummaryRequest
 from ..draft.summarize import SUMMARY_LENGTH
+from ..draft.windows import capabilities_from_author
 from ..extract.control import AnalysisRequest
 from ..extract.runner import ExtractionRunner
 from ..graph.sqlite_events import SqliteEventStore
@@ -105,6 +108,32 @@ def _byok_config(temperature: float | None) -> ProviderConfig:
     )
 
 
+def resolve_route_capabilities(config: ProviderConfig) -> ProviderCapabilities:
+    """这条路由的能力，**作者在设置页手填的窗口压在最上面**。
+
+    ── 为什么壳里所有解析都必须走这一个函数 ────────────────────────────────
+
+    同 `_byok_config` 那条理由：顺序只写一次。这里的顺序是
+    `作者手填 → 注册表 → 端点自报 → 公共快照 → unknown`，而漏掉手填那一档的地方
+    会**静默**地少给上文（`product_tail_limit` 从上万字塌回 800），
+    症状是「模型忽然变笨」——没有任何一处会红，作者也说不出哪儿不对。
+
+    ── 走的是既有的那个口子，不是第二条路径 ──────────────────────────────
+
+    `resolve_capabilities` 的 `operator_override` 档本来就是为这件事留的，
+    顺带把「override 的路由必须等于请求的路由」验掉（`capabilities_from_author`
+    是从同一条能力上长出来的，所以这条断言恒真——它拦的是以后有人手工造一份塞进来）。
+
+    ⚠️ **写作助手（模式二）那条今天不走这儿**：`agent/model.py` 自己调
+    `resolve_with_discovery`。哪天要让手填的数也管到聊天，改的是那一处，不是这儿再抄一份。
+    """
+    capability = resolve_with_discovery(config.base_url, config.model)
+    override = capabilities_from_author(capability, load_user_settings().context_window)
+    if override is None:
+        return capability
+    return resolve_capabilities(config.base_url, config.model, operator_override=override)
+
+
 def _extraction_provider_config() -> ProviderConfig:
     return _byok_config(0.3)
 
@@ -112,7 +141,7 @@ def _extraction_provider_config() -> ProviderConfig:
 def _analyze_extraction(request: AnalysisRequest) -> CompletionResult:
     """Send the request's audited wire messages through one validated structured plan."""
     config = _extraction_provider_config()
-    capability = resolve_with_discovery(config.base_url, config.model)
+    capability = resolve_route_capabilities(config)
     plan = plan_structured_call(
         EXTRACTION_VISIBLE_TOKEN_BUDGET,
         ReasoningEffort.OFF,
@@ -143,7 +172,7 @@ def agent_provider_config() -> ProviderConfig:
 
 def _analyze_summary(request: SummaryRequest) -> CompletionResult:
     config = _summary_provider_config()
-    capability = resolve_with_discovery(config.base_url, config.model)
+    capability = resolve_route_capabilities(config)
     plan = plan_call(
         SUMMARY_LENGTH,
         ReasoningEffort.OFF,
@@ -163,10 +192,13 @@ def model_configuration_error() -> str | None:
 
     判据只看 `base_url` / `model`（`resolve_capabilities` 的入参），三个 provider
     档（抽取 / 总结 / 起草）共用同一份 BYOK 设置，所以问一次就够。
+
+    走 `resolve_route_capabilities` 而不是裸的解析，是为了让**作者填了一个不合法的窗口**
+    （比如小到装不下任何一次调用）也在这儿被说成一句人话，而不是等到付费那一刻才炸。
     """
     try:
         config = _summary_provider_config()
-        resolve_with_discovery(config.base_url, config.model)
+        resolve_route_capabilities(config)
     except (ValidationError, ValueError, CapabilityError) as exc:
         return (
             f"模型没配好：{exc} —— 先去顶栏 ⚙「AI 设置」填服务地址/模型/钥匙，"

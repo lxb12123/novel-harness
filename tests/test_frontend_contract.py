@@ -113,6 +113,9 @@ def test_frontend_fixture_matches_the_real_api(
             "base_url": "https://api.deepseek.com",
             "model": "deepseek-v4-flash",
             "api_key": "sk-contract-key",
+            # 手填的窗口也进这份 dump：**「没填」那一份由上面的 GET 提供**，
+            # 两种长相前端都要渲染（空框 vs 显示他填的数），只捕一种等于只验了一半。
+            "context_window": 128_000,
         },
     )
     assert saved.status_code == 200, saved.text
@@ -577,6 +580,35 @@ def test_frontend_fixture_matches_the_real_api(
     # 天天看见的正是这一屏。
     seed_call({**book, "pid": second_pid}, capability="summarizer")
     grab("runsAllReported", client.get(f"/api/projects/{second_pid}/runs"))
+
+    # ── 一轮没跑成，那句话**留在对话里**（2026-08-13，迁移 012）───────────────
+    #
+    # 作者第一次真用就撞到的那一档：他说了两句，助手一个字都没有（他那台机器到端点的
+    # TLS 全断，那一轮在发出去之前就死了）。屏幕上确实弹过一句提醒，可它活在组件状态里
+    # ——他再发一句就没了。现在它落库，于是 `GET …/chats/{id}` 里多出**第三种说话人**。
+    #
+    # **必须真 dump 一份**：前端那块屏幕要照着「系统」那一档写，而手写一份
+    # 「我以为它长这样」正是这条缝原本的病。
+    #
+    # **又另开一段**（同上面几条理由）：这一轮会往历史里加东西。
+    def unreachable(messages: Any, *, tools: Any, cancel: Any) -> Any:
+        from novel_harness.draft.provider import ProviderError
+
+        raise ProviderError("TLSV1_ALERT_INTERNAL_ERROR: api.example.com")
+
+    monkeypatch.setattr(chat_mod, "build_agent_model", lambda config, plan: unreachable)
+    broke = client.post(f"{base}/chats", json={"title": "那一轮没跑成"})
+    assert broke.status_code == 201, broke.text
+    broke_id = broke.json()["id"]
+    # **两轮，因为作者的屏幕上就是两轮**（你好 / fff）。两轮还顺手冻住了一件只有
+    # 两轮才有的事：系统那一行的 `seq` 和紧跟其后那条作者发言**是同一个数**
+    # （它不占历史下标）——照着一份只有一轮的夹具写出来的界面，会拿 `seq` 当 key，
+    # 而那一天屏幕上会少掉一句话。
+    for said in ("你好", "fff"):
+        ran = client.post(f"{base}/chats/{broke_id}/turn", json={"chapter": 2, "said": said})
+        assert ran.status_code == 200, ran.text
+        assert ran.json()["reason"] == "model_unreachable", ran.text
+    grab("chatDetailFailed", client.get(f"{base}/chats/{broke_id}"))
 
     frozen = json.dumps(dump, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 

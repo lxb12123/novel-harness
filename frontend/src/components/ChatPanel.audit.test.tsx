@@ -107,12 +107,17 @@ const POISON = JSON.stringify({
 describe("秘密内容：带毒的会话详情", () => {
   /** 后端的投影（`api/chat.py::_visible`）今天只放两种说话人出来，工具返回一条都不发。
    *  **这一条验的是「万一它变了，屏幕接不接」**——接了就是不可回收的那一种错。 */
+  //
+  // ⚠️ **两个说话人都必须是今天真的认不出的那种**（2026-08-13 改）：
+  // `system` 那一档从这天起是**真的一档**（一轮没跑成时留在对话里的那一行，
+  // 后端迁移 012），拿它当「认不出的说话人」的样本，测的就是别的东西了——
+  // 而且它会假红：那条消息现在**本来就该**被画出来。
   const poisoned = {
     ...fixtures.chatDetail,
     messages: [
       ...fixtures.chatDetail.messages,
       { seq: 4, speaker: "tool", text: POISON },
-      { seq: 5, speaker: "system", text: "must_not_reveal: 血脉秘密" },
+      { seq: 5, speaker: "reasoning", text: "must_not_reveal: 血脉秘密" },
     ],
   };
 
@@ -132,7 +137,7 @@ describe("秘密内容：带毒的会话详情", () => {
     expect(devTerms(screenNow)).toEqual([]);
   });
 
-  it("**反向：认得出的那两种一句都不许被吃掉**（过度收窄一样是 bug）", async () => {
+  it("**反向：认得出的那几种一句都不许被吃掉**（过度收窄一样是 bug）", async () => {
     renderWatched(<ChatPanel />, [{ match: /\/chats\/[^/]+$/, body: poisoned }]);
     // 作者说的那句、助手说的那句、以及助手嘴里的**显示名**（那是它该说的东西）。
     await screen.findByText(fixtures.chatDetail.messages[0].text);
@@ -140,6 +145,22 @@ describe("秘密内容：带毒的会话详情", () => {
     expect(fixtures.chatDetail.messages[1].text).toContain("血脉"); // 探针：显示名真在里头
     expect(screen.getAllByText("你").length).toBe(1);
     expect(screen.getAllByText("写作助手").length).toBeGreaterThan(0);
+  });
+
+  it("**「系统」那一档也过同一张网** —— 它是这块屏幕上新开的一个输出面", async () => {
+    // 一轮没跑成时留在对话里的那一行（后端迁移 012）。它是 2026-08-13 才有的，
+    // 而**每一个新的输出面都要过边界一那道网**（ADR 0024 的「代价」第一条）：
+    // 那行字的唯一出处是引擎写好的中文（`stop_wording()`），所以它扫出来必须是空的。
+    // 喂的是**真 dump 的那一份**（`chatDetailFailed`），不是手写的「我以为它长这样」。
+    renderWatched(<ChatPanel />, [
+      { match: /\/chats\/[^/]+$/, body: fixtures.chatDetailFailed },
+    ]);
+    const failed = fixtures.chatDetailFailed.messages[1];
+    expect(failed.speaker).toBe("system"); // 探针：夹具里真有这一档
+    await screen.findAllByText(failed.text);
+    expect(screen.getAllByText("系统").length).toBe(2);
+    await settle();
+    expect(devTerms(screenText())).toEqual([]);
   });
 
   it("**收起来的条数也不许把它们算进去** —— 一个数不上不该存在的东西", async () => {

@@ -53,7 +53,7 @@ from .ports import (
     ToolContext,
     ToolRefused,
 )
-from .store import ChatConcurrency, ChatSessionRow, ChatStore, StoredChat
+from .store import ChatConcurrency, ChatNotice, ChatSessionRow, ChatStore, StoredChat
 from .tools import (
     TOOL_NAMES,
     TOOL_TABLE,
@@ -107,6 +107,7 @@ __all__ = [
     "ChapterSummaryEntry",
     "ChapterTextArgs",
     "ChatConcurrency",
+    "ChatNotice",
     "ChatSessionRow",
     "ChatStore",
     "CharacterChapters",

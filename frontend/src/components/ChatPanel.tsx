@@ -19,6 +19,7 @@ import {
   emphasize,
   newRunId,
   receiptNotes,
+  receiptSays,
   refusalText,
   stopFootnote,
   tailWindow,
@@ -58,8 +59,19 @@ import { CompareLink, DraftCandidates } from "./DraftCandidates";
 //    这里只补后端**说不出来**的那两句：作者按过停没有（`chat.ts::stopFootnote`），
 //    以及这一轮裁掉了什么（`receiptNotes`）。
 
-// 屏幕上只有两种说话人。那张表（连同「认不出的一律不上屏」这条）在 `chat.ts`：
+// 屏幕上有三种说话人。那张表（连同「认不出的一律不上屏」这条）在 `chat.ts`：
 // 它同时是措辞和白名单，**一份**（`visibleMessages` 的 docstring 写着为什么必须是一份）。
+//
+// 第三种「系统」是**一轮没跑成时留在对话里的那一行**（2026-08-13，后端迁移 012）。
+// 它和下面那个红框（`failureHere`）分工不同，别合并：
+//
+// | | 什么时候 | 活多久 |
+// |---|---|---|
+// | 对话里那一行 | 这一轮**真的开始了**，然后什么都没跑出来 | 落盘，切走切回、三个月后都在 |
+// | 红框 | 这一轮**根本没开始**（模型没配好 422 / 正在跑上一轮 409 / 网断了） | 这一次点击，作者的字还在输入框里 |
+//
+// 红框那一档不该落盘：它连作者那句话都没进历史，写一行进去就是凭空造出一轮
+// 没发生过的对话（后端 `_notice_for` 的 docstring 里那张表写着每一档为什么）。
 
 /** 后端一句话都没写时才轮到的那几句。**一个字都不解释「为什么」**——
  *  §10 约束 8：不知道就说不知道，编一个理由比不说更贵。 */
@@ -217,11 +229,15 @@ function Receipt({
   pid: string;
 }) {
   const notes = receiptNotes(receipt);
+  // 这一轮把「为什么」留在对话里了的话，这儿就不再说一遍（`chat.ts::receiptSays`）。
+  const said = receiptSays(receipt);
   return (
     <div className="chat-receipt">
-      <p className="chat-receipt-say">
-        <Wording text={receipt.message} />
-      </p>
+      {said && (
+        <p className="chat-receipt-say">
+          <Wording text={said} />
+        </p>
+      )}
       {footnote && <p className="chat-receipt-say">{footnote}</p>}
       {notes.map((note, i) => (
         <p key={i} className="chat-receipt-note">
@@ -505,8 +521,12 @@ export function ChatPanel() {
             看更早的 {window.hidden} 条
           </button>
         )}
-        {window.shown.map((message) => (
-          <Bubble key={message.seq} message={message} />
+        {/* **key 不再是 `seq`**（2026-08-13）：系统那一行不占历史下标，它带的那个数
+            说的是「它前面有几条历史消息」——**和紧跟其后那一条撞号**，撞掉的那一条
+            React 会当成同一个东西复用，于是屏幕上少一句话。这一列只增不改、也从不
+            重排，所以位置就是稳定的身份。 */}
+        {window.shown.map((message, i) => (
+          <Bubble key={i} message={message} />
         ))}
         {runningHere && pendingSaid && (
           <div className="chat-msg author">

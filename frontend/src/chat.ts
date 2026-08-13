@@ -23,8 +23,22 @@ import { saidToTheAuthor } from "./correctionError";
  *
  *  它同时是措辞表和白名单，**故意合并成一份**：分开写的那一刻，「谁能上屏」
  *  和「上屏了叫什么」就成了两份会漂的清单，而漂开的方向是 fail-open 那一侧
- *  （认不出名字仍然把正文画出来，见 `visibleMessages`）。 */
-export const SPEAKER_ZH: Record<ChatSpeaker, string> = { author: "你", assistant: "写作助手" };
+ *  （认不出名字仍然把正文画出来，见 `visibleMessages`）。
+ *
+ *  ── 第三行「系统」是 2026-08-13 有意加的（后端迁移 012）────────────────────
+ *
+ *  作者第一次真用就撞到：那一轮在发出去之前就死了（他那台机器到端点的 TLS 全断），
+ *  屏幕上确实弹过一句提醒，可它活在组件状态里——组件一卸载、他再发一句就没了。
+ *  他的原话：「有提醒文字，但是过一会文字消失了，**没有必要消失**。」
+ *
+ *  所以那句话现在**落在库里、跟着对话一起回来**，而这一行就是它上屏的许可证
+ *  （`visibleMessages` 的 docstring 早写着：真要新增一种说话人，得先往这儿加一行，
+ *  那是一次有意的改动）。**措辞仍然全在后端**：这儿加的只是「谁在说」那三个字。 */
+export const SPEAKER_ZH: Record<ChatSpeaker, string> = {
+  author: "你",
+  assistant: "写作助手",
+  system: "系统",
+};
 
 /**
  * 屏幕上放得出去的那几条。**认不出的说话人一律丢掉，不是原样摆出去。**
@@ -44,6 +58,24 @@ export function visibleMessages(
   messages: readonly ChatMessageView[] | undefined,
 ): ChatMessageView[] {
   return (messages ?? []).filter((m) => m.speaker in SPEAKER_ZH);
+}
+
+/**
+ * 一轮跑完之后，回执上那句话还要不要画。**`null` = 不画，它已经在对话里了。**
+ *
+ * ── 判据是结构，不是拿两串字去比 ────────────────────────────────────────────
+ *
+ * 这一轮什么都没跑出来时，后端把「为什么」**落进了库**（`messages` 末尾那条
+ * `system`，后端迁移 012），而回执上那句 `message` 是同一串字。两处一起画，
+ * 作者会在同一块屏幕上把同一句话读两遍——`applyTurnEvent` 拒绝 `turn_stopped`
+ * 用的是同一条理由。
+ *
+ * 判据只能是「这一轮有没有留下一条 `system`」：拿 `message` 去和最后一条比字面
+ * 就是**从字符串反推**，而这个仓库为那种写法栽过两次（`activity.py` 那条
+ * 「别从 label 的措辞去分辨」、前端那条「拿屏幕上的人名自己去凑」）。
+ */
+export function receiptSays(receipt: TurnReceipt): string | null {
+  return receipt.messages.some((m) => m.speaker === "system") ? null : receipt.message;
 }
 
 /**

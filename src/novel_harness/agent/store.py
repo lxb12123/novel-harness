@@ -38,6 +38,23 @@ canonical 对话是**只增不改**的：`run_turn` 全程走 `Conversation.exte
 作者能开多个会话窗口，也能在两个标签页里对着**同一个**会话各跑一轮。没有这个闸，
 两轮的消息会交织成一段谁也读不懂的历史；有了它，后到的那一次拿到
 `ChatConcurrency`，而不是一段静默损坏的对话。
+
+── 第三档 `notice`：**在对话里，但不在 `Conversation` 里**（迁移 012）─────────
+
+一轮没跑成，那句话要留在对话里（作者：「有提醒文字，但是过一会文字消失了，
+没有必要消失」）。它落在同一张表上、占同一串 `seq`——**顺序只有这一份真相**——
+但 `load()` 按 `section` 分流，它进的是 `StoredChat.notices`，**不进 `Conversation`**。
+
+这条分流是那一档全部正确性的来源，两件事因此在实现里**够不着**而不是纪律上不许：
+
+1. 它进不了投影（`project()` 只看 `Conversation.messages`），于是不会被喂回给模型
+   ——喂回去它就成了「模型以为自己说过的话」；
+2. 它进不了 `rules.is_rule()` 的视野。那是个**纯结构判据**（SYSTEM + 没有工具壳 +
+   内容非空），塞一条别的用途的 SYSTEM 消息进 `messages`，**它会被当成一条规矩，
+   在作者切到下一章时静默消失**（`agent/rules.py` 模块 docstring 末尾那段警告）。
+
+它也**不占历史下标**：`history_count` 只数 `history`，所以 `AuthorRule.seq` /
+`revokes_seq` 那套坐标一个数都不动。
 """
 
 from __future__ import annotations
@@ -55,6 +72,8 @@ from .loop import AgentMessage, Conversation, Role, start_conversation
 
 PREFIX_SECTION: Final = "prefix"
 HISTORY_SECTION: Final = "history"
+NOTICE_SECTION: Final = "notice"
+"""**不属于 `Conversation` 的那一档**（迁移 012）。见文件头最后一节。"""
 
 
 class ChatConcurrency(RuntimeError):
@@ -73,6 +92,28 @@ class ChatSessionRow(BaseModel):
     updated_at: str
 
 
+class ChatNotice(BaseModel):
+    """一轮没跑成，留在对话里的那一行。**它不是对话的一部分**（见文件头第三档）。
+
+    **不是 `AgentMessage`，这是有意的**：它要是长成一条消息，谁哪天顺手把它拼进
+    `Conversation.messages` 就完事了——而那正是要防的两件事（进 prompt / 被当成规矩）。
+    两个类型互相塞不进去，那两条判据就不需要任何人记得写。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    text: str
+    """说给作者的那一句。**唯一出处是 `agent/loop.py::stop_wording()`**，这一层只搬运。"""
+
+    after_history: int = Field(ge=0)
+    """它前面有几条历史消息 —— 屏幕上它就画在那两句话中间。
+
+    **不是存下来的一列，是读的时候按 `seq` 数出来的。** 存一列就有两份顺序真相
+    （那一列和 `seq`），而它们对不上的时候没有任何东西会报错：屏幕上那句
+    「这一轮没跑成」会挂到另一句话底下，读起来像是**别的那一轮**失败了。
+    """
+
+
 class StoredChat(BaseModel):
     """从库里读回来的一整段会话。"""
 
@@ -81,7 +122,14 @@ class StoredChat(BaseModel):
     session: ChatSessionRow
     conversation: Conversation
     history_count: int = Field(ge=0)
-    """`conversation.messages` 的条数。**追加时要原样交回来**（见 `append`）。"""
+    """`conversation.messages` 的条数。**追加时要原样交回来**（见 `append`）。
+
+    **它不含 `notices`**：那一档不占历史下标，所以追加那道乐观并发闸、
+    `AuthorRule.seq`、`revokes_seq` 全都不因为多了一行提示而移位。
+    """
+
+    notices: tuple[ChatNotice, ...] = ()
+    """这段对话里那几行「这一轮没跑成」。**按它们在对话里的位置排。**"""
 
 
 def _dump_calls(calls: Sequence[ToolCall]) -> str:
@@ -251,7 +299,12 @@ class ChatStore:
     # ── 消息 ──────────────────────────────────────────────────────────────
 
     def load(self, project_id: str, session_id: str) -> StoredChat | None:
-        """读回整段会话。**出参就是 `run_turn` 要的那个 `Conversation`。**"""
+        """读回整段会话。**出参就是 `run_turn` 要的那个 `Conversation`。**
+
+        **一趟扫完，按 `section` 分流。** 提示那一档（`notice`）在这儿和对话分开，
+        而这一次分流就是它「不进 prompt、不被当成规矩」的全部实现——下游谁都不用
+        再写一条过滤（见文件头第三档）。它排在哪儿由 `seq` 的顺序数出来，不另存一列。
+        """
         session = self.get(project_id, session_id)
         if session is None:
             return None
@@ -261,13 +314,84 @@ class ChatStore:
             " FROM chat_message WHERE session_id = ? ORDER BY seq ASC",
             (session_id,),
         ).fetchall()
-        prefix = [_to_message(r) for r in rows if str(r["section"]) == PREFIX_SECTION]
-        history = [_to_message(r) for r in rows if str(r["section"]) == HISTORY_SECTION]
+        prefix: list[AgentMessage] = []
+        history: list[AgentMessage] = []
+        notices: list[ChatNotice] = []
+        for row in rows:
+            section = str(row["section"])
+            if section == PREFIX_SECTION:
+                prefix.append(_to_message(row))
+            elif section == HISTORY_SECTION:
+                history.append(_to_message(row))
+            elif section == NOTICE_SECTION:
+                notices.append(
+                    ChatNotice(text=str(row["content"]), after_history=len(history))
+                )
         return StoredChat(
             session=session,
             conversation=Conversation(prefix=tuple(prefix), messages=tuple(history)),
             history_count=len(history),
+            notices=tuple(notices),
         )
+
+    def note(self, project_id: str, session_id: str, text: str) -> ChatNotice:
+        """把一句「这一轮没跑成」追加到对话里，返回它落在了哪儿。
+
+        **它不走 `append`**，两条理由都不是洁癖：
+
+        - `append` 那道乐观并发闸问的是「你手上那份历史有多少条」，而这一行**不占
+          历史下标**——拿它去过那道闸，闸会因为一行提示而判失败；
+        - `append` 收的是 `AgentMessage`，而提示**故意不是**那个类型（见 `ChatNotice`）。
+
+        `after_history` 在**同一个事务里**数出来，所以它和这一行真正的落点一致：
+        写完之后再数一次的话，中间插进来的另一轮会让屏幕上那句话挂错位置。
+
+        Args:
+            text: 说给作者的那一句。唯一出处是 `agent/loop.py::stop_wording()`。
+
+        Raises:
+            ValueError: 空话。**一行没有内容的提示比不提示更坏**——屏幕上多出一格
+                空白，而作者要找的是「刚才那一轮怎么了」。
+        """
+        line = text.strip()
+        if not line:
+            raise ValueError("这一行提示是空的：说不出这一轮为什么没跑成就别写它。")
+        landed = ChatNotice(text=line, after_history=0)
+
+        def run() -> None:
+            nonlocal landed
+            row = self._conn.execute(
+                "SELECT COALESCE(MAX(seq), -1) AS last FROM chat_message WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            counted = self._conn.execute(
+                "SELECT COUNT(*) AS n FROM chat_message WHERE session_id = ? AND section = ?",
+                (session_id, HISTORY_SECTION),
+            ).fetchone()
+            self._conn.execute(
+                "INSERT INTO chat_message (id, session_id, seq, section, role, content)"
+                " VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    new_id(EntityType.CHAT_MESSAGE, project_id),
+                    session_id,
+                    int(row["last"]) + 1,
+                    NOTICE_SECTION,
+                    str(Role.SYSTEM),
+                    line,
+                ),
+            )
+            # 侧栏按 `updated_at` 排。**这一行也得把它推上去**：一段刚刚跑砸了的对话
+            # 沉在列表底下，作者下次打开工作台会以为什么都没发生过。
+            self._conn.execute(
+                "UPDATE chat_session"
+                " SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+                " WHERE project_id = ? AND id = ?",
+                (project_id, session_id),
+            )
+            landed = ChatNotice(text=line, after_history=int(counted["n"]))
+
+        self._write(run)
+        return landed
 
     def append(
         self,
@@ -362,6 +486,7 @@ class ChatStore:
 
 __all__ = [
     "ChatConcurrency",
+    "ChatNotice",
     "ChatSessionRow",
     "ChatStore",
     "StoredChat",

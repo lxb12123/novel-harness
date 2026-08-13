@@ -201,6 +201,96 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
   });
 });
 
+describe("一轮没跑成 —— 那句话留在对话里，不是留在界面状态里", () => {
+  // 2026-08-13 作者第一次真用就撞到的那一档：他说了两句，助手一个字都没有，
+  // 屏幕上弹过一句提醒，可它活在组件状态里——他再发一句就没了。
+  // 「没有必要消失」是他的原话，这一节钉的就是「它不再消失」。
+  //
+  // 喂的是**真 dump** 的两份：`chatDetailFailed`（库里那一行）+ 一份把回执的
+  // `messages` 换成它的 `chatTurn`。手写一份「我以为它长这样」正是这条缝原本的病。
+  const notice = fixtures.chatDetailFailed.messages[1];
+  const failedReceipt = {
+    ...fixtures.chatTurn,
+    reason: "model_unreachable",
+    message: notice.text,
+    reply: "",
+    messages: [notice],
+  };
+
+  it("**重新打开这段对话，两轮各留一行，各在各的位置**", async () => {
+    // 真 dump 的就是作者那块屏幕：你好 → 没跑成 → fff → 没跑成。
+    // 两行不许堆在末尾（那读成「最后这一轮失败了两次」）。
+    renderWithApi(<ChatPanel />, [
+      { match: /\/chats\/[^/]+$/, body: fixtures.chatDetailFailed },
+    ]);
+    await screen.findByText(fixtures.chatDetailFailed.messages[0].text);
+
+    const lines = [...document.querySelectorAll(".chat-msg")].map((el) => el.textContent ?? "");
+    expect(lines).toHaveLength(4);
+    expect(lines[0]).toContain("你好");
+    expect(lines[1]).toContain(notice.text);
+    expect(lines[2]).toContain("fff");
+    expect(lines[3]).toContain(notice.text);
+    expect(screen.getAllByText("系统")).toHaveLength(2);
+    // 它是对话里的一条，不是那个红框（两者活得不一样长，别混）。
+    expect(document.querySelectorAll(".err-box")).toHaveLength(0);
+  });
+
+  it("**`seq` 撞号不许把一条画没** —— 系统那一行和它后面那句话同号", async () => {
+    // 系统那一行带的数是「它前面有几条历史」，不占历史下标 —— 真 dump 里
+    // 那条「没跑成」和紧跟其后的「fff」都是 `seq: 1`。拿 `seq` 当 React key，
+    // React 会把这两条当成同一个东西，而作者屏幕上少的正是他自己说的那句话。
+    const seqs = fixtures.chatDetailFailed.messages.map((m) => m.seq);
+    expect(new Set(seqs).size).toBeLessThan(seqs.length); // 探针：夹具里真的撞了
+    const complained = vi.spyOn(console, "error").mockImplementation(() => {});
+    renderWithApi(<ChatPanel />, [
+      { match: /\/chats\/[^/]+$/, body: fixtures.chatDetailFailed },
+    ]);
+    await screen.findByText(fixtures.chatDetailFailed.messages[0].text);
+    const keyed = complained.mock.calls
+      .map((args) => args.map(String).join(" "))
+      .filter((line) => /same key|duplicate key/i.test(line));
+    complained.mockRestore();
+    expect(keyed).toEqual([]);
+  });
+
+  it("**跑完那一瞬间也只说一遍** —— 回执不许把同一句话再画一次", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<ChatPanel />, [
+      { match: /\/chats\/[^/]+$/, body: fixtures.chatDetailFailed },
+      { method: "POST", match: /\/turn\/events$/, stream: turnStream(failedReceipt) },
+    ]);
+    await screen.findByText(fixtures.chatDetailFailed.messages[0].text);
+    await user.type(say(), "你好");
+    await user.click(sendBtn());
+
+    await waitFor(() => expect(say()).not.toBeDisabled());
+    // 那句话在对话里（上面那条钉着），所以回执那一块**一个字都不该再说**：
+    // 同一句话在同一块屏幕上出现两次，是这块屏幕拒绝过好几次的东西。
+    const onReceipt = [...document.querySelectorAll(".chat-receipt-say")].map(
+      (el) => el.textContent ?? "",
+    );
+    expect(onReceipt.filter((line) => line.includes(notice.text))).toEqual([]);
+  });
+
+  it("切去看另一段再切回来，它照样在（红框做不到这件事）", async () => {
+    const user = userEvent.setup();
+    const other = { ...fixtures.chats[0], id: "chat_session:ID99", title: "另一段对话" };
+    renderWithApi(<ChatPanel />, [
+      { match: /\/chats$/, body: [fixtures.chats[0], other] },
+      { match: /\/chats\/[^/]+$/, body: fixtures.chatDetailFailed },
+    ]);
+    await screen.findAllByText(notice.text);
+
+    await user.click(screen.getByRole("button", { name: "对话列表" }));
+    await user.click(screen.getByRole("button", { name: other.title }));
+    await user.click(screen.getByRole("button", { name: "对话列表" }));
+    await user.click(screen.getByRole("button", { name: fixtures.chats[0].title }));
+
+    expect(await screen.findAllByText(notice.text)).toHaveLength(2);
+  });
+});
+
 describe("「停」", () => {
   it("按下去真的打那条路由，而且不等这一轮跑完", async () => {
     const user = userEvent.setup();

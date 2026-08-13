@@ -6,9 +6,12 @@ import {
   elapsedText,
   emphasize,
   receiptNotes,
+  receiptSays,
   stopFootnote,
   tailWindow,
+  visibleMessages,
   NO_PROGRESS,
+  SPEAKER_ZH,
 } from "./chat";
 import type { ChatMessageView, ChatTurnEvent, TurnReceipt } from "./api/types";
 
@@ -136,6 +139,49 @@ describe("按了停、屏幕上却写「说完了」", () => {
 
   it("压根没按过停，不许凭空补一句", () => {
     expect(stopFootnote(false, receipt({ reason: "done" }))).toBeNull();
+  });
+});
+
+describe("一轮没跑成，那句话留在对话里（后端迁移 012）", () => {
+  /** 真 dump 的那一段（作者说了一句、那一轮死在发出去之前）。 */
+  const failed = fixtures.chatDetailFailed.messages as unknown as ChatMessageView[];
+
+  it("「系统」是认得出来的一档 —— 它画得出来，而且有名字", () => {
+    expect(failed[1].speaker).toBe("system"); // 探针：夹具里真有这一档
+    expect(SPEAKER_ZH.system).toBe("系统");
+    // 真 dump 的就是作者那块屏幕：你好 / 没跑成 / fff / 没跑成，一条都不许被筛掉。
+    expect(visibleMessages(failed)).toEqual(failed);
+  });
+
+  it("认不出的说话人照旧一条都不上屏 —— 加了一档不等于把门打开了", () => {
+    const sneaky = [
+      ...failed,
+      { seq: 9, speaker: "tool", text: "must_not_reveal" },
+    ] as unknown as ChatMessageView[];
+    expect(visibleMessages(sneaky)).toEqual(failed);
+  });
+
+  it("**这一轮留了一行的话，回执上那句话就不再画一遍**", () => {
+    // 后端把「为什么」落进了库，`message` 是同一串字：两处一起画 = 作者读两遍。
+    const notice = { seq: 1, speaker: "system", text: RECEIPT.message } as ChatMessageView;
+    expect(receiptSays(receipt({ messages: [notice] }))).toBeNull();
+  });
+
+  it("没留那一行的时候照旧画 —— 判据是结构，不是拿两串字去比", () => {
+    expect(receiptSays(RECEIPT)).toBe(RECEIPT.message);
+    // 反证：这一轮的确说过话（所以后端不会留那一行），而回执那句话仍然要说。
+    expect(RECEIPT.messages.some((m) => m.speaker === "system")).toBe(false);
+  });
+
+  it("`seq` 撞号是**正常的** —— 所以它当不了 key", () => {
+    // 系统那一行带的数是「它前面有几条历史」，和紧跟其后那一条同号。
+    // 拿它当 React key 会把两条画成一条，而少掉的正是作者要看的那一句。
+    const clash = [
+      { seq: 1, speaker: "system", text: "这一轮没跑成" },
+      { seq: 1, speaker: "author", text: "fff" },
+    ] as unknown as ChatMessageView[];
+    expect(new Set(clash.map((m) => m.seq)).size).toBe(1);
+    expect(visibleMessages(clash)).toHaveLength(2);
   });
 });
 

@@ -11,8 +11,10 @@ import { ApiError } from "../api/client";
 import { DeclareDrawer } from "./DeclareDrawer";
 import { SceneBar } from "./SceneBar";
 import { HistoryDrawer } from "./HistoryDrawer";
+import { ChapterTitle } from "./ChapterTitle";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
 import { locate } from "../anchor";
+import { titleOf, withTitle } from "../chapterTitle";
 import { cleanSuggestion, shouldSuggest } from "../continuation";
 import { diskChange } from "../editorDoc";
 
@@ -35,6 +37,10 @@ export function CenterEditor() {
 
   const [doc, setDoc] = useState("");
   const [dirty, setDirty] = useState(false);
+  /** `doc` 里那份是**第几章**的。换章那一瞬间它还是上一章的字（新的还在路上），
+   *  而顶上那行标题念的就是它的第一行——不认这一下，换章时会闪一下上一章的标题，
+   *  更糟的是那时双击改标题会把新标题写进**上一章**的正文里。 */
+  const [docFor, setDocFor] = useState<number | null>(null);
   /** 编辑器手上这份的**出处**（上一次采纳的磁盘正文）。判「别处改过没有」拿它比，
    *  拿 `doc` 比会把作者自己敲的每一个字都算成别人改的（`editorDoc.ts` 第三条）。 */
   const loadedRef = useRef<string | null>(null);
@@ -76,6 +82,7 @@ export function CenterEditor() {
     setOpen(true);
     setDirty(false);
     loadedRef.current = null;
+    setDocFor(null);
     setDiskAhead(false);
   }, [chapter, projectId]);
 
@@ -83,6 +90,9 @@ export function CenterEditor() {
   // （ADR 0021；判断本身在 `editorDoc.ts`，那儿写着两种错的代价为什么不对称）。
   useEffect(() => {
     if (!data) return;
+    // 这一章的正文到手了 —— 不管下面三条走哪一条，编辑器手上那份都是**这一章**的
+    //（"warn" 那条是作者自己没保存的那半段，也是这一章的）。
+    setDocFor(data.number);
     const what = diskChange(data.markdown, loadedRef.current, dirtyRef.current);
     if (what === "same") return;
     if (what === "warn") return setDiskAhead(true);
@@ -113,7 +123,17 @@ export function CenterEditor() {
   return (
     <section className="pane editor">
       <div className="edbar">
-        <span className="who">第 {chapter} 章</span>
+        {/* 章标题 = 挑章 + 改标题，都在这一行上（原先它是顶栏右上角那个 <select>）。
+            **改标题改的就是正文第一行**（`chapterTitle.ts` 写着为什么只能是它），
+            所以这儿走的是和作者自己在正文里改第一行**完全同一条**路：标脏 → 按保存。
+            没有 rename 端点，也没有第二份标题。 */}
+        <ChapterTitle
+          line={docFor === chapter ? titleOf(doc) : null}
+          onRename={(title) => {
+            setDoc(withTitle(doc, title));
+            setDirty(true);
+          }}
+        />
         <span className="spacer" />
         <span className={"status" + (saveErr ? " err" : save.isSuccess && !dirty ? " ok" : "")}>
           {saveErr

@@ -43,6 +43,7 @@ from fastapi.routing import APIRoute
 from novel_harness.api.app import app as api_app
 from novel_harness.checks import ALL_CHECKS
 from novel_harness.cli import app as cli_app
+from novel_harness.db import IN_MEMORY, connect, migrate
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 ARCHITECTURE = REPO_ROOT / "docs" / "ARCHITECTURE.md"
@@ -119,11 +120,27 @@ def cli_leaf_count(group: typer.Typer | None = None) -> int:
 
 
 def table_count() -> int:
-    """迁移里建了几张表。扫整个 `migrations/`，不写死 `001_init.sql`——加了 002 得跟着变。"""
-    return sum(
-        len(re.findall(r"(?im)^\s*CREATE\s+TABLE\b", p.read_text(encoding="utf-8")))
-        for p in sorted(MIGRATIONS.glob("*.sql"))
-    )
+    """作者的库里最后有几张表。**建一个空库、跑完全部迁移，再数 `sqlite_master`。**
+
+    ── 为什么不再数 `.sql` 里的 `CREATE TABLE` 字面量 ────────────────────────
+
+    那个读法从 012 起开始骗人：SQLite 改不了 CHECK，加一档取值只能
+    「建新表 → 拷过去 → 丢掉旧的 → 改名」，于是中转表被数了一遍，而**库里从来没有
+    过它**。003 里那张 `CREATE TEMP TABLE` 是同一个病的反面（它的 `CREATE` 因为多了
+    一个 `TEMP` 没被数到，`DROP` 却会被数到）。
+
+    两次都说明：数 DDL 字面量是在猜结果，而结果本身跑一遍就有。
+    """
+    conn = connect(IN_MEMORY)
+    try:
+        migrate(conn)
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM sqlite_master"
+            " WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchone()
+        return int(row["n"])
+    finally:
+        conn.close()
 
 
 def fixture_endpoint_count() -> int:

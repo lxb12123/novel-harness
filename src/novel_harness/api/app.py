@@ -101,6 +101,7 @@ from .deps import (
     get_store,
     get_summarizer,
     load_project,
+    resolve_route_capabilities,
 )
 from .activity import router as activity_router
 from .autopilot import router as autopilot_router
@@ -468,6 +469,18 @@ class SettingsBody(BaseModel):
     model: str = ""
     api_key: str = ""
 
+    context_window: int | None = None
+    """作者手填的上下文窗口。**这一位的空值语义和上面三个相反：空 = 清掉。**
+
+    理由是作者必须收得回一个填错的数。`api_key` 留空保持原值，是因为屏幕上根本不回显它
+    （不这样他改个地址就得重粘钥匙）；而这个数是回显着的，「留空 = 保持」会让那个框
+    **变成一个只进不出的洞**。
+
+    「有没有清」的判据是**这次请求里带没带这个键**（`model_fields_set`），不是它的值——
+    否则任何一个没发这个字段的老客户端（或者别处一段只想改地址的代码）都会把它悄悄抹掉，
+    而抹掉的症状是上文塌回 800 字，没有任何一处会红。
+    """
+
 
 def _settings_response(settings: UserSettings) -> dict[str, Any]:
     """**永不回吐完整 key**——前端只需要「设没设」和「后四位」。
@@ -477,6 +490,9 @@ def _settings_response(settings: UserSettings) -> dict[str, Any]:
         "model": settings.model,
         "api_key_set": settings.api_key_set,
         "api_key_preview": settings.api_key_preview,
+        # 这一位**要回显**（同上面那条「只进不出的洞」）：没填是 null，不是 0——
+        # 屏幕上「没填」和「填了个 0」是两件事，混成一个数就再也分不开了。
+        "context_window": settings.context_window,
     }
 
 
@@ -494,6 +510,12 @@ def put_settings(body: SettingsBody) -> dict[str, Any]:
         base_url=body.base_url.strip() or current.base_url,
         model=body.model.strip() or current.model,
         api_key=body.api_key or current.api_key,
+        # 带了这个键就照它写（含 null / 0 = 清掉），没带就原样留着。见 `SettingsBody`。
+        context_window=(
+            body.context_window
+            if "context_window" in body.model_fields_set
+            else current.context_window
+        ),
     )
     save_user_settings(merged)
     return _settings_response(merged)
@@ -1269,7 +1291,6 @@ def draft(
         ReasoningEffort,
         plan_call,
     )
-    from ..draft.discovery import resolve_with_discovery
     from ..draft.context import ResolvedConstraints, unknown_cast_constraints
     from ..draft.product_draft import ChapterDraftRequest, DraftRefused, check_request
     from ..draft.product_draft import draft_chapter as run_draft
@@ -1282,7 +1303,9 @@ def draft(
 
     try:
         config = _draft_provider_config()
-        capability = resolve_with_discovery(config.base_url, config.model)
+        # 作者手填的窗口在这儿压过一切（`deps.resolve_route_capabilities`）——
+        # **这条路由是那个数唯一真正花钱的消费者**：它决定逐字上文给他 800 字还是上万字。
+        capability = resolve_route_capabilities(config)
         plan = plan_call(body.length, ReasoningEffort.HIGH, capability)
     except (ValidationError, ValueError, CapabilityError) as exc:
         raise HTTPException(

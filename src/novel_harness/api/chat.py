@@ -50,12 +50,28 @@ socket 断了这一轮**还在跑、还在花钱**。把「停」搬到那条 so
    验收不是「`model_call` 里有行」，是 **`GET /activity` 里看得见**：
    `activity._CAPABILITY_LABEL` 里那条 `agent → 写作助手`。
 
-3. **对话的原文不是这条路由的出参。** 出去的是一份**投影**：作者说的话 + 助手说的话。
+3. **对话的原文不是这条路由的出参。** 出去的是一份**投影**：作者说的话 + 助手说的话
+   （+ 那几行「这一轮没跑成」，见下）。
    工具返回一条都不出去——它们是 `model_dump_json()` 出来的内部模型，里面躺着
    `NodeRef` 的裸 id（`secret:…:01J…`）。那种东西一旦被前端原样渲染就是屏幕上的
    研发术语（`frontend/src/test/screenGuard.ts` 的第三张网认的就是 `前缀:标识`），
    而**收窄的最强形态是根本没发出去**（同 `activity.py` 那次把 `params_json` 从
    SELECT 里删掉）。
+
+── 一轮没跑成，那句话留在**对话里**（2026-08-13，迁移 012）──────────────────
+
+作者说了两句，助手一个字都没有——那一轮在发出去之前就死了（他那台机器到端点的
+TLS 全断）。屏幕上确实弹过一句提醒，可它活在浏览器的组件状态里：组件一卸载、
+他再发一句，那句话就没了。作者的原话：「**没有必要消失**。」
+
+所以这一档落盘：`ChatStore.note()` 往对话里追加一行，`section='notice'`。
+**要不要留、留哪句话**在 `_notice_for`（判据 + 不留痕的那几档都写在它的 docstring 里）；
+措辞一个字不加，原样是 `stop_wording()` 那一句。
+
+**它为什么不是一条 SYSTEM 消息**：`Conversation.messages` 里的 SYSTEM 只有两个来源
+（一条规矩 / 一条撤销记录），而 `rules.is_rule()` 是**纯结构判据**——塞一条别的用途的
+SYSTEM 进去，它会被当成一条规矩，在作者切到下一章时静默消失。第三档 `section` 让
+「不进 prompt」和「不是规矩」变成实现里够不着的事，而不是两条要记得写的过滤。
 
 ── 边界三：草稿存哪儿 ────────────────────────────────────────────────────
 
@@ -94,7 +110,7 @@ ADR 0023 押的退路是两件事：**看得见 + 能取消**。引擎侧齐了�
 from __future__ import annotations
 
 import queue
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import AbstractContextManager
 from threading import Event, Lock, RLock, Thread
 from typing import Annotated, Any, Literal
@@ -118,6 +134,7 @@ from ..agent.loop import (
     StopReason,
     TurnEvent,
     TurnLimits,
+    TurnResult,
     run_turn,
     stop_wording,
 )
@@ -127,7 +144,7 @@ from ..agent.model import ProviderModelPort, agent_call_plan
 from ..agent.ports import ToolContext
 from ..agent.rules import AuthorRule, expired_rule_count, live_rules, revocation
 from ..agent.tools import AuthorQuestion
-from ..agent.store import ChatConcurrency, ChatSessionRow, ChatStore, StoredChat
+from ..agent.store import ChatConcurrency, ChatNotice, ChatSessionRow, ChatStore, StoredChat
 from ..db import Connection
 from ..draft.capabilities import CapabilityError, ProviderCapabilities, ResolvedCallPlan
 from ..draft.provider import ProviderConfig
@@ -136,7 +153,14 @@ from ..extract.call_audit import record_call
 from ..graph.sqlite_events import SqliteEventStore
 from ..graph.store import GraphStore
 from ..ids import EntityType, new_id
-from .deps import agent_provider_config, get_conn, get_store, load_project, model_configuration_error
+from .deps import (
+    agent_provider_config,
+    get_conn,
+    get_store,
+    load_project,
+    model_configuration_error,
+    resolve_route_capabilities,
+)
 
 
 router = APIRouter()
@@ -257,17 +281,28 @@ LIVE = _Running()
 class ChatMessageView(BaseModel):
     """作者在屏幕上看得见的一条。
 
-    **只有两种说话人。** 工具返回和「只叫工具没说话」的那几条不在这里——见模块
+    **三种说话人。** 工具返回和「只叫工具没说话」的那几条不在这里——见模块
     docstring 第三条。少掉的那部分不是被藏起来了：它有一个数（`TurnReceipt.lookups`），
     而**零必须带着理由**这条规矩在这儿的形态是「查了几次说得出来，查到了什么不上屏」。
+
+    第三种 `system` 是「这一轮没跑成」那一行（`ChatStore.note`，迁移 012）。
+    **它不是对话的一部分**：库里它在第三档 `section` 上，读回来进的是
+    `StoredChat.notices` 而不是 `Conversation`——所以它进不了 prompt、也不会被
+    `rules.is_rule()` 当成一条规矩。这一层只负责把它摆回作者看得见的位置。
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     seq: int = Field(ge=0)
-    """在这段对话历史里的位置。前端拿它当 key —— **不要用它当业务标识**。"""
+    """在这段对话历史里的位置。前端拿它当 key —— **不要用它当业务标识**。
 
-    speaker: Literal["author", "assistant"]
+    ⚠️ **`system` 那一档不占历史下标**（它不在历史里），所以它这个数说的是
+    「它前面有几条历史消息」——**和紧跟其后那一条撞号是正常的**。
+    前端不许拿它当身份，也不许拿它去调任何一条按 `seq` 定位的路由
+    （`AuthorRuleView.seq` 那个坐标只对 `author` / `assistant` 成立）。
+    """
+
+    speaker: Literal["author", "assistant", "system"]
     text: str
 
 
@@ -398,11 +433,21 @@ class TurnReceipt(BaseModel):
     chapter: int = Field(ge=1)
     reason: StopReason
     message: str
-    """说给作者的那一句。**措辞唯一出处是 `agent.loop.stop_wording()`**，前端不许再翻一遍。"""
+    """说给作者的那一句。**措辞唯一出处是 `agent.loop.stop_wording()`**，前端不许再翻一遍。
+
+    **这一轮在对话里留了一行的时候，界面不许把这句话再画一遍**：那时它已经是
+    `messages` 里那条 `system`（下面），两处一起画就是同一句话在同一块屏幕上出现两次。
+    判据是**结构**——`messages` 里有没有 `speaker == "system"`——不是拿两串字去比。
+    """
 
     reply: str = ""
     messages: tuple[ChatMessageView, ...] = ()
-    """这一轮新长出来的、上得了屏的那几条。"""
+    """这一轮新长出来的、上得了屏的那几条。
+
+    末尾可能有一条 `speaker == "system"`：这一轮什么都没跑出来，而那句「为什么」
+    已经**落进库里**了（迁移 012 / `_notice_for`）。它不是这份回执生成的一句话，
+    是重新打开这段对话时照样读得到的那一行。
+    """
 
     steps: int = Field(default=0, ge=0)
     lookups: int = Field(default=0, ge=0)
@@ -673,12 +718,39 @@ def _tool_context(
     )
 
 
-def _visible(messages: tuple[AgentMessage, ...], first_seq: int) -> tuple[ChatMessageView, ...]:
-    """canonical → 屏幕上那几条。工具返回和「只叫工具没说话」的那些不出去。"""
+def _visible(
+    messages: tuple[AgentMessage, ...],
+    first_seq: int,
+    notices: Sequence[ChatNotice] = (),
+) -> tuple[ChatMessageView, ...]:
+    """canonical（+ 那几行提示）→ 屏幕上那几条。工具返回和「只叫工具没说话」的不出去。
+
+    **提示要插回它自己的位置，不能一律摆到最后。** 作者说一句、跑砸了、又说一句、
+    又跑砸了——两行提示各属于一轮，堆在末尾读起来就是「最后这一轮失败了两次」。
+    位置由 `ChatNotice.after_history` 给（它前面有几条历史），而那个数是按库里
+    那一串 `seq` 数出来的，**顺序仍然只有一份真相**。
+
+    `first_seq` 之前的那几行不出去：回执切的是**这一轮**新长出来的那一段，
+    把上一轮的提示带进去就是同一句话在屏幕上出现两遍。
+    """
     out: list[ChatMessageView] = []
+    waiting = [n for n in notices if n.after_history >= first_seq]
+    cursor = 0
+
+    def drain(upto: int) -> None:
+        nonlocal cursor
+        while cursor < len(waiting) and waiting[cursor].after_history <= upto:
+            note = waiting[cursor]
+            out.append(
+                ChatMessageView(seq=note.after_history, speaker="system", text=note.text)
+            )
+            cursor += 1
+
     for offset, message in enumerate(messages):
+        # 「它前面有 N 条历史」= 它排在第 N 条**之前**，所以先把它放下去。
+        drain(first_seq + offset)
         if message.role is Role.USER:
-            speaker: Literal["author", "assistant"] = "author"
+            speaker: Literal["author", "assistant", "system"] = "author"
         elif message.role is Role.ASSISTANT and message.content.strip():
             speaker = "assistant"
         else:
@@ -686,7 +758,60 @@ def _visible(messages: tuple[AgentMessage, ...], first_seq: int) -> tuple[ChatMe
         out.append(
             ChatMessageView(seq=first_seq + offset, speaker=speaker, text=message.content)
         )
+    drain(first_seq + len(messages))
     return tuple(out)
+
+
+def _notice_for(
+    result: TurnResult, shown: Sequence[ChatMessageView], drafts: Sequence[DraftCandidate]
+) -> str:
+    """这一轮要不要在对话里留一行，留哪句话。**空串 = 不留。**
+
+    ── 判据（一句话说得出口）────────────────────────────────────────────────
+
+    > **一轮跑完，屏幕上除了作者自己那句话什么都没有，而这不是他自己叫停的。**
+
+    2026-08-13 的真实现场就是这个形状：作者说了两句，助手一个字都没有（端点 TLS 断了，
+    那一轮在发出去之前就死了）。屏幕上确实弹过一句提醒，但它活在组件状态里——
+    组件一卸载、他再发一句，那句话就没了。**留痕就是把这一句从界面状态挪进对话。**
+
+    ── 两半都是结构判据，不是一张「哪几种停法算失败」的表 ────────────────────
+
+    那种表会在下一种停法长出来的那天漂（同 `rules.is_rule` 用结构判据、
+    `ToolOutcome.chapter` 取法那两条先例）。这儿的两半是：
+
+    - **「什么都没留下」走的是 `shown`**，也就是**同一个 `_visible` 的产物**——
+      屏幕上有没有东西，只许有一处答案。稿子（ADR 0022）和它问的那一句
+      （ADR 0024）不在 `shown` 里但都是「留下了东西」，所以各查一次。
+      `DONE` 因此自动不留痕（那一档 `reply` 必非空，见 `run_turn` 的收场），
+      不需要在这儿点它的名。
+    - **「不是他自己叫停的」只排掉 `AUTHOR_STOPPED`**：作者按了停不是失败
+      （ADR 0024 有 `turn_stopped`，回执那句话是「按你的意思停下了」）。
+      把它写成一行「这一轮没跑成」是**把他做的一个决定说成一次故障**。
+
+    ── 不在这个函数里的那几档失败，以及为什么它们不留痕 ──────────────────────
+
+    | 失败 | 为什么不留 |
+    |---|---|
+    | 422（`_plan_or_422`：模型没配好） | 它抛在 `_TurnRun.__init__` 的第一行，**作者那句话根本没进历史**。写一行进去就是凭空造出一轮没发生过的对话：屏幕上会有「这一轮没跑成」，而它上面没有任何人说过话。那一档作者的字被还回了输入框，那才是他要的东西。 |
+    | 409（这段对话正在跑上一轮） | 同上，这一轮**根本没开始**；而且它说的是「你手速太快了」，把它写进历史等于给作者的书里记一笔他自己的手误。 |
+    | 流跑到一半撞上乐观并发闸 | 要写这一行就得再追加一次，而追加正是刚刚失败的那个动作。 |
+    | 认不出的崩溃 | **后端说不出一句给作者的话**（`maintainer_note` 是英文诊断，一个字都不出去）。编一句 = §10 约束 8 禁的那种话，所以这儿交白卷，界面说它自己那句「没能说清是为什么」。 |
+
+    Args:
+        result: 这一轮的 `TurnResult`（`agent.loop`）。
+        shown: 这一轮新长出来、上得了屏的那几条（`_visible` 的产物）。
+        drafts: 这一轮写出来的那几稿（`ChapterDesk.produced`）。
+    """
+    if result.reason is StopReason.AUTHOR_STOPPED:
+        return ""
+    if drafts or result.asked is not None:
+        return ""
+    if any(view.speaker == "assistant" for view in shown):
+        return ""
+    # **措辞原样搬**：`stop_wording()` 是唯一那一份，这一层一个字都不加
+    # （加了就是第二份措辞源，而两份一定会漂）。
+    return result.said_to_author
 
 
 def _session_view(
@@ -756,7 +881,10 @@ def _plan_or_422() -> tuple[ProviderConfig, ProviderCapabilities, ResolvedCallPl
         raise HTTPException(status_code=422, detail=reason)
     config = agent_provider_config()
     try:
-        capability, plan = agent_call_plan(config)
+        # **能力由装配层解析，不让 `agent/` 自己去查**：只有这一层够得着作者在设置页
+        # 手填的上下文窗口（`agent/` 不读设置）。自己解析的话，他填的那个数管得到
+        # 起草抽屉/抽取/总结，唯独管不到写作助手 —— 一半听一半不听，而且不报错。
+        capability, plan = agent_call_plan(config, resolve_route_capabilities(config))
     except (CapabilityError, ValidationError, ValueError) as exc:
         raise HTTPException(
             status_code=422,
@@ -825,7 +953,12 @@ def read_chat(
     proj: Any = Depends(load_project),
     conn: Connection = Depends(get_conn),
 ) -> ChatDetail:
-    """看一段对话。404 = 这一段不在（或不属于这本书），和 501 分得开。"""
+    """看一段对话。404 = 这一段不在（或不属于这本书），和 501 分得开。
+
+    **那几行「这一轮没跑成」也在这儿**（迁移 012）。它们是这条路由存在感最强的一次
+    兑现：作者切走再切回、换台机器、三个月后翻回来，看到的仍然是「那一轮没跑成」——
+    而在这之前那句话只活在浏览器的组件状态里，他再发一句就没了。
+    """
     stored = _load(conn, proj.id, chat_id)
     return ChatDetail(
         session=_session_view(
@@ -834,7 +967,7 @@ def read_chat(
             stored.history_count,
             running=LIVE.running((proj.id, chat_id)),
         ),
-        messages=_visible(stored.conversation.messages, 0),
+        messages=_visible(stored.conversation.messages, 0, stored.notices),
     )
 
 
@@ -1030,6 +1163,24 @@ class _TurnRun:
                 on_event=on_event,
             )
             self._save(result.conversation)
+
+            shown = _visible(result.conversation.messages[self._turn_start :], self._turn_start)
+            # ── 这一轮什么都没留下的话，把「为什么」留在**对话里**（迁移 012）──────
+            # 判据和措辞都在 `_notice_for`。
+            #
+            # **它必须排在 `LIVE.end` 之前**（也就是留在这个 `try` 里）：位子一还回去，
+            # 作者下一句话就能开跑、就能往历史里追加，而那一行落在哪儿是按「它前面有
+            # 几条历史」定的——晚一步，这句「这一轮没跑成」就挂到了他刚发出去的**下一句
+            # 话后面**，读起来像新那一轮失败了。
+            notice = _notice_for(result, shown, desk.produced)
+            if notice:
+                landed = self._chat_store.note(self._proj.id, self._chat_id, notice)
+                shown = (
+                    *shown,
+                    ChatMessageView(
+                        seq=landed.after_history, speaker="system", text=landed.text
+                    ),
+                )
         finally:
             LIVE.end(self._key)
 
@@ -1044,7 +1195,7 @@ class _TurnRun:
             reason=result.reason,
             message=result.said_to_author,
             reply=result.reply,
-            messages=_visible(result.conversation.messages[self._turn_start :], self._turn_start),
+            messages=shown,
             steps=result.steps,
             lookups=result.tool_calls,
             tokens_reported=result.tokens_reported,

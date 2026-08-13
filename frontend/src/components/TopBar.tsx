@@ -1,27 +1,25 @@
 import { useState } from "react";
-import { useChapters } from "../api/hooks";
-import { useOpenChapter } from "../autopilot";
 import { useCoords } from "../store";
 import { SettingsDrawer } from "./SettingsDrawer";
 
-// 顶栏：页面切换 + AI 设置 + AS OF 章号。
-// **章号是查询参数「看第几章的面板」，不是声明**——它不写进任何数据（约束 10）。
+// 顶栏：页面切换 + AI 设置。
 //
 // 书名和「＋ 新书 / 导入」不在这儿：它们搬进左栏书架了（一个库可以有多本书，
-// 那是一份**列表**，顶栏塞不下，也不该和「看第几章」抢同一行）。
+// 那是一份**列表**，顶栏塞不下，也不该和别的东西抢同一行）。
+//
+// **「章节」那个下拉框也不在这儿了**（2026-08-13 搬去中栏顶栏，`ChapterTitle.tsx`）：
+// 「正在编辑的是哪一章」是中栏那块屏幕的事，而顶栏这一行讲的是整个工作台——
+// 换页、设置对三栏都成立，章号只对中栏成立。搬下去之后它和章标题合成了一样东西：
+// 同一行字既是「这一章叫什么」，也是挑章的入口，还能双击改。
+// **别把它加回来**：一个功能两个入口，作者迟早会在两处看见不一样的章号。
 //
 // **「出场人物」也不在这儿了。** 它曾经是顶栏第一等公民，等于对作者说「写之前先填这个」——
 // 而在场人物是**写出来的结果**，不是写之前的输入：没名字的配角进不了花名册，
 // 新人物是写到那儿才需要的。现在引擎在写完之后自己去正文里数（`mentioned.py`），
 // 右栏显示数出来的结果。作者要覆盖就点场景块，那是他在正文里亲手标的。
 export function TopBar() {
-  const { projectId, chapter, page, chatOpen, setPage, toggleChat } = useCoords();
-  const chapters = useChapters(projectId);
-  // 换章走 `useOpenChapter`，不是裸 setChapter：离开一章 = 那一章写完了，
-  // 要把它交给后台整理（`autopilot.ts`）。作者看不到这件事，也不该看到。
-  const openChapter = useOpenChapter();
+  const { page, chatOpen, setPage, toggleChat } = useCoords();
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const chapterList = chapters.data ?? [];
 
   return (
     <header>
@@ -59,23 +57,6 @@ export function TopBar() {
       </button>
 
       <span className="spacer" />
-      <label htmlFor="chapter-picker">章节</label>
-      <select
-        id="chapter-picker"
-        aria-label="当前章节"
-        // 收成「…」之后，这是作者唯一能读到完整章标的地方（同左栏书名行）。
-        title={chapterList.find((item) => item.number === chapter)?.title || undefined}
-        value={chapterList.some((item) => item.number === chapter) ? String(chapter) : ""}
-        disabled={chapterList.length === 0}
-        onChange={(e) => openChapter(Number(e.target.value))}
-      >
-        {chapterList.length === 0 && <option value="">暂无章节</option>}
-        {chapterList.map((item) => (
-          <option key={item.number} value={item.number}>
-            {item.title || `第 ${item.number} 章`}
-          </option>
-        ))}
-      </select>
 
       {settingsOpen && <SettingsDrawer onClose={() => setSettingsOpen(false)} />}
     </header>

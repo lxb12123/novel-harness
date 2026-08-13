@@ -66,9 +66,23 @@ interface Coords {
   /** 现在摊开的是哪一段对话。作者可以同时留着好几段，各自 resume（ADR 0019）。
    *  `null` = 还没挑（面板会自己停在最近说过话的那一段）。 */
   chatId: string | null;
+  /** 光标已经替**哪本书**落过位了。`null` = 一本都还没落过（刚开页面）。
+   *
+   *  「这是不是刚换的一本书」全靠它认（`chapterOnOpen` 的 `switched`）。它原先是 App 里的
+   *  一个 ref，搬进来是因为**换书的人不只 App 一个**：左栏点另一本书的某一章时，
+   *  光标在那一下就已经由作者亲手定好了，得有个地方说出来。 */
+  cursorFor: string | null;
 
   setProject: (id: string) => void;
   setChapter: (n: number) => void;
+  /** 连书带章一起翻过去 —— 左栏书架上点了**另一本**书的章目录。
+   *
+   *  **`cursorFor` 必须在同一次 set 里一起置上。** 不置的话 App 那个 effect 会把这一下
+   *  认成一次「刚换的书」，于是 `chapterOnOpen` 把作者刚点的那一章顶成那本书的最后一章：
+   *  他点第 1 章，屏幕上出来第 722 章。 */
+  openBookAt: (id: string, n: number) => void;
+  /** 记下「这本书的光标已经落好了」。**只有 App 里那个落位 effect 该调它。** */
+  markCursor: (id: string) => void;
   setCast: (c: string) => void;
   setTab: (t: Tab) => void;
   setSelection: (s: string) => void;
@@ -108,6 +122,7 @@ export const useCoords = create<Coords>((set) => ({
   focusEventId: null,
   chatOpen: false,
   chatId: null,
+  cursorFor: null,
 
   // 换书要**把摊开的那段对话一起放下**：`chat_session` 是按书存的，
   // 留着上一本书的 id 就是一次必然 404 的详情请求，而屏幕上会是一句
@@ -118,6 +133,19 @@ export const useCoords = create<Coords>((set) => ({
   // 换了章之后它指的是另一章的表，留着只会凭空多出一行谁也没要求过的人。
   setChapter: (chapter) =>
     set({ chapter, focusCell: null, focusEventId: null, castInclude: "" }),
+  // 换书那份清理（`chatId`）+ 换章那份清理（余温三件）**一次做完**：分两步 set 的话，
+  // 中间那一帧是「新书 + 旧章号」，而屏幕会照着它去拉一次别的书的正文。
+  openBookAt: (projectId, chapter) =>
+    set({
+      projectId,
+      chapter,
+      cursorFor: projectId,
+      chatId: null,
+      focusCell: null,
+      focusEventId: null,
+      castInclude: "",
+    }),
+  markCursor: (cursorFor) => set({ cursorFor }),
   // 作者亲手选了一场 = 他接管了「看谁」。这时还留着系统加的那个人，
   // 他选的那一场就不是他看到的那一场了。
   setCast: (cast) => set({ cast, castInclude: "" }),

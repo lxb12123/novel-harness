@@ -16,7 +16,8 @@
 
 ### 一、它排在我们自己那张表**后面**
 
-顺序：`operator override → 本仓注册表 → 端点自己发布的能力 → 本快照 → unknown`。
+顺序：`作者手填 → 本仓注册表 → 端点自己发布的能力 → 本快照 → unknown`
+（第一档就是 `capabilities_from_author`，走 `resolve_capabilities` 的 `operator_override`）。
 本仓注册表是照官方文档一条条查证过的，而公共表是社区提 PR 维护的——
 **实测它在输出上限那一维会滞后一整代**（`deepseek-v4` 写着 8,192，官方是 384,000）。
 上下文窗口那一维九条全中，所以只信这一列，且只在前面几档都没答案时用。
@@ -43,7 +44,8 @@
 ### 三、猜错的方向是**可见**的
 
 高估 ⇒ prompt 过长 ⇒ 端点当场拒 ⇒ 作者看得见错误，而且设置页那个手填框能压过它
-（那一档优先级最高）。这跟「上文悄悄塌成 800 字」不是一回事：后者没有任何一处会红。
+（那一档优先级最高，2026-08-13 真的接上了：`capabilities_from_author`）。
+这跟「上文悄悄塌成 800 字」不是一回事：后者没有任何一处会红。
 """
 
 from __future__ import annotations
@@ -268,6 +270,72 @@ def capabilities_from_snapshot(base_url: str, model: str) -> ProviderCapabilitie
         return None
 
 
+AUTHOR_WINDOW_SOURCE: Final = "author:settings-context-window"
+"""作者手填那一档的 `source`。**它不是 `unknown`**，而这不是随便起的名字：
+`ProviderCapabilities._is_coherent` 规定「unknown 必须是那份规范的空壳」，
+所以一旦填了窗口，这条路由在能力表眼里就**不再是未知的**（见下面函数的第三条）。"""
+
+
+def capabilities_from_author(
+    capability: ProviderCapabilities, context_window: int | None
+) -> ProviderCapabilities | None:
+    """把作者在设置页手填的窗口盖到已解析出的能力上。**没填返回 `None`。**
+
+    这是边界三里那句「设置页那个手填框能压过它」的实现，也是这份解析顺序的**第一档**：
+
+        作者手填 → 本仓注册表 → 端点自己发布的能力 → 本快照 → unknown
+
+    它只可能被 `resolve_capabilities(..., operator_override=…)` 那个口子消费——
+    **那一档本来就是为这件事留的，别为它另开第二条路径**（第二条路径意味着
+    「谁压过谁」有两份答案，而这个数错了的症状是「模型忽然变笨」，没有任何一处会红）。
+
+    三条边界：
+
+    ### 一、除了窗口，**其余一位都不动**
+
+    作者知道自己那台机器一次能吃多少，不代表他知道这个模型的推理方言、输出上限、
+    或者思考要占多少预算。多改一位就是替他编。
+
+    ### 二、输出上限跟着往下夹
+
+    `_is_coherent` 不许 `max_output_tokens > max_context_tokens`。作者填的数比登记的
+    输出上限还小时（比如给已登记的路由填 8,000），不夹就是一个 `ValidationError`，
+    而作者会看到一句「模型没配好」——**他明明配好了，只是填了个小数**。
+    夹的方向和 `discovery.py` 那条一样：**信小的那个**。
+
+    ### 三、⚠️ 它顺带把这条路由从「未知」变成了「已知」
+
+    这不是设计选择，是模型不变式逼出来的：带着窗口的 `unknown` 在 `_is_coherent` 那儿
+    根本构造不出来。可见的后果是 `plan_structured_call` 那道
+    「`source == "unknown"` 就拒」的闸对这条路由**不再拦**——也就是抽取和滚动总结
+    在自建端点上从「一律 422」变成了「真的发出去试试」。方向是对的
+    （那两条链本来就该在自建端点上能用），而且失败是**当场可见**的
+    （JSON 解不开 = 报错，不是悄悄写坏），符合 ADR 0026「学得会的东西由运输层学」。
+    **写在这儿是因为它是这个函数唯一一处「超出窗口本身」的影响**，
+    `tests/test_author_context_window.py` 把它钉成了一条有意的行为。
+    """
+    if context_window is None or context_window < 1:
+        return None
+    output = capability.max_output_tokens
+    if output is not None:
+        output = min(output, context_window)
+    values = capability.model_dump()
+    values.update(
+        source=AUTHOR_WINDOW_SOURCE,
+        # **出处就是那条路由本身。** 这个数没有公开文档背书——背书它的是把那个端点
+        # 跑起来的人。而 `_is_coherent` 要求非 unknown 的能力至少有一条 http(s) 出处，
+        # 那时随手编一个文档地址塞进审计线索才是真的在骗人。
+        source_urls=(capability.base_url,),
+        max_context_tokens=context_window,
+        max_output_tokens=output,
+    )
+    try:
+        return ProviderCapabilities(**values)
+    except (ValueError, CapabilityError):
+        # 作者填的数把这份能力弄得自相矛盾 ⇒ 当作没填。**一个设置框不该有能力把起草弄挂。**
+        return None
+
+
 class RefreshReport(BaseModel):
     """点一次「更新」之后发生了什么。**没有这份回执，那颗按钮就是个不出声的按钮。**"""
 
@@ -425,10 +493,12 @@ def refresh(raw: object, *, fetched: str) -> RefreshReport:
 
 
 __all__ = [
+    "AUTHOR_WINDOW_SOURCE",
     "SNAPSHOT_PATH",
     "SOURCE_URL",
     "Price",
     "RefreshReport",
+    "capabilities_from_author",
     "capabilities_from_snapshot",
     "estimate_cost",
     "price_for",

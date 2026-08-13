@@ -25,6 +25,10 @@ export interface AiSettings {
   model: string;
   api_key_set: boolean;
   api_key_preview: string;
+  /** 作者手填的那个数：模型一次能记住多少。`null` = 没填（那时后端自己去认）。
+   *
+   *  **`null` 和 `0` 不是一回事**：没填要显示成空框，填了个数才显示那个数。 */
+  context_window: number | null;
 }
 
 export interface AiSettingsInput {
@@ -32,6 +36,9 @@ export interface AiSettingsInput {
   model: string;
   /** 空 = 保持原钥匙（改地址/模型不用重粘）。 */
   api_key?: string;
+  /** 这一位和钥匙相反：**发 `null` 就是清掉**（作者必须收得回一个填错的数）。
+   *  不发这个键才是「保持原值」——所以设置页每次提交都带上它。 */
+  context_window?: number | null;
 }
 
 export interface DraftRequest {
@@ -758,12 +765,25 @@ export interface RunsPanel {
 // `NodeRef` 的裸 id。**前端不许自己去别处把它们捞回来补上**：收窄的最强形态是根本没到手，
 // 而把它捞回来渲染当场就是屏幕上的研发术语（`src/test/screenGuard.ts` 第三张网）。
 
-/** 屏幕上只有两种说话人。少掉的那一部分有一个数（`TurnReceipt.lookups`），
- *  查了几次说得出来，查到了什么不上屏。 */
-export type ChatSpeaker = "author" | "assistant";
+/**
+ * 屏幕上有三种说话人。少掉的那一部分有一个数（`TurnReceipt.lookups`），
+ * 查了几次说得出来，查到了什么不上屏。
+ *
+ * `system` 是「这一轮没跑成」那一行（后端迁移 012）。**它是落盘的**：
+ * 2026-08-13 作者第一次真用就撞到——那一轮在发出去之前就死了，屏幕上弹过一句提醒，
+ * 可它活在组件状态里，他再发一句就没了。作者原话：「没有必要消失。」
+ *
+ * **它不是助手说的话**：库里它在第三档 `section` 上，进不了模型的上下文，也不会被
+ * 引擎当成一条「作者定下的规矩」。这一层只负责把它画出来，一个字都不加。
+ */
+export type ChatSpeaker = "author" | "assistant" | "system";
 
 export interface ChatMessageView {
-  /** 在这段对话历史里的位置。**当 key 用，不是业务标识。** */
+  /** 在这段对话历史里的位置。**当 key 用，不是业务标识。**
+   *
+   *  ⚠️ **`system` 那一档不占历史下标**（它不在历史里），它这个数说的是
+   *  「它前面有几条历史消息」——**和紧跟其后那一条撞号是正常的**。
+   *  所以这份列表里 `seq` 不唯一，拿它当 React key 会撞掉一条。 */
   seq: number;
   speaker: ChatSpeaker;
   text: string;
@@ -940,10 +960,17 @@ export interface TurnReceipt {
   session: ChatSessionView;
   chapter: number;
   reason: ChatStopReason;
-  /** 说给作者的那一句。**措辞的唯一出处在后端**，前端不许再翻一遍。 */
+  /** 说给作者的那一句。**措辞的唯一出处在后端**，前端不许再翻一遍。
+   *
+   *  **这一轮在对话里留了一行的时候不许把它再画一遍**（判据在 `chat.ts::receiptSays`，
+   *  读的是结构不是字面）：那时它已经是下面 `messages` 里那条 `system`，
+   *  两处一起画就是同一句话在同一块屏幕上出现两次。 */
   message: string;
   reply: string;
-  /** 这一轮新长出来、上得了屏的那几条。 */
+  /** 这一轮新长出来、上得了屏的那几条。
+   *
+   *  末尾可能有一条 `speaker === "system"`：这一轮什么都没跑出来，而那句「为什么」
+   *  **已经落进库里了**——它不是这份回执生成的一句话，重新打开这段对话照样读得到。 */
   messages: ChatMessageView[];
   steps: number;
   /** 这一轮查了几次资料（工具调用次数）。**查到了什么不上屏。** */

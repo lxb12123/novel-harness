@@ -1153,6 +1153,18 @@ def test_a_query_string_cannot_say_who_did_it(
 # ══════════════════════════════════════════════════════════════════════════
 
 
+NAMED_CHAPTER_BOXES = (
+    ("ChapterTitle.tsx", "chtitle-edit"),
+    ("ChapterTitle.tsx", "chtitle-find"),
+)
+"""标签里带「章」字、但**收的不是章号**的输入框，逐个点名。
+
+点名的形式是 `(文件, 那个框自己的 class)`：两者都对上才算数，所以换个文件、
+改个类名都会红一次——**红一次的意思是「再想一遍它收的是不是章号」**，不是「去表里补一行」。
+每一个为什么正当，写在下面那个函数的 docstring 里；那段话是这张表的唯一依据。
+"""
+
+
 def test_no_screen_in_the_whole_workbench_posts_a_chapter() -> None:
     """浏览器发出去的**任何**请求体里都没有章号键，且全前端只有一个数字输入框。
 
@@ -1160,7 +1172,7 @@ def test_no_screen_in_the_whole_workbench_posts_a_chapter() -> None:
     「顺手让作者确认一下生效章」在哪一格写出来都是同一件事，而这两条编辑路由只是
     今天最像会长出它的两处。
 
-    **今天真的是零**（2026-08-11 实测）：全前端唯一的 `<input type="number">` 在
+    **数字框今天仍然真的是零**（2026-08-11 起）：全前端唯一的 `<input type="number">` 在
     `DraftLengthControls.tsx`，它问的是一段草稿写多长，不是第几章；没有一个
     `.mutate({…})` 的键撞得上章号（换章、后台整理、补总结都把章号放在**路径**里，
     那是 AS OF，是查询不是声明）。
@@ -1168,9 +1180,26 @@ def test_no_screen_in_the_whole_workbench_posts_a_chapter() -> None:
     所以这条是**零基线**守卫，不是允许清单守卫——真出现一个正当的例外时，
     该做的是把那一个具体的键写进这段话里说明为什么它正当，**不是**加一个开口
     （`test_no_chapter_input.py` 的原话：例外会被拓宽）。
+
+    ── 逐个点名放行的两个（2026-08-13，章节选择器从顶栏搬进中栏那行章标题）──────
+
+    两个都在 `ChapterTitle.tsx`，**都不收章号**，理由各自不同：
+
+    - `chtitle-edit`（「改这一章的标题」）收的是**标题那行字**。章标题在磁盘上就是
+      正文的第一行（`importer.chapter_files()` 只读到首个非空行），所以这个框改的是
+      正文，落盘走 `PUT /chapters/{n}/text`——**章号在路径里，是这块屏幕正开着的那一章**，
+      不是作者敲进去的。
+    - `chtitle-find`（「按章号或标题找…」）是**一个过滤器**：敲进去的字一个字节都不出浏览器，
+      它只决定下拉单子上还剩哪几行。挑中之后走 `openChapter(n)`，n 来自那本书**已经存在**
+      的章目录，进的还是路径。查询不是声明。
+
+    判据始终是 `test_no_chapter_input.py` 那一条：**作者的输入能不能到达 `valid_from`**。
+    这两个都到不了。真到得了的那一个长什么样，看上面那条 offenders 断言——
+    它扫的是请求体的键，而请求体是章号唯一可能被「填」进去的地方。
     """
     offenders: list[str] = []
-    boxes: list[str] = []
+    numbers: list[str] = []
+    named: list[str] = []
     for path in sorted(FRONTEND.rglob("*.tsx")) + sorted(FRONTEND.rglob("*.ts")):
         if path.name.endswith((".test.tsx", ".test.ts")) or "__fixtures__" in path.parts:
             continue
@@ -1180,17 +1209,29 @@ def test_no_screen_in_the_whole_workbench_posts_a_chapter() -> None:
                 offenders.append(f"{path.relative_to(ROOT)}: {key}")
         for tag in input_tags(source):
             flat = " ".join(tag.split())
-            if 'type="number"' in flat or "章" in flat:
-                boxes.append(f"{path.relative_to(ROOT)}: {flat[:120]}")
+            # **两个筐分开装**：合成一个的话，给下面那两个点过名的框补一个
+            # `type="number"` 就能溜过去——而那正好是这道守卫要拦的那一种。
+            if 'type="number"' in flat:
+                numbers.append(f"{path.relative_to(ROOT)}: {flat[:120]}")
+            elif "章" in flat:
+                named.append(f"{path.relative_to(ROOT)}: {flat[:120]}")
 
     assert not offenders, (
         "前端往请求体里放了章号：\n  " + "\n  ".join(offenders) + "\n"
         "章号是「这句引语落在哪一章」的产物，不是作者的输入（约束 10 / ADR 0006）。"
     )
-    assert len(boxes) == 1 and "DraftLengthControls" in boxes[0], (
-        f"全前端的数字输入框变了：{boxes}\n"
+    assert len(numbers) == 1 and "DraftLengthControls" in numbers[0], (
+        f"全前端的数字输入框变了：{numbers}\n"
         "唯一那一个问的是「这段草稿写多长」。多出来的那一个要是在问第几章，\n"
         "它就是 §5.9 说的那个邀请污染的表单。"
+    )
+    assert len(named) == len(NAMED_CHAPTER_BOXES) and all(
+        any(where in box and what in box for box in named) for where, what in NAMED_CHAPTER_BOXES
+    ), (
+        f"标签里带「章」字的输入框变了：{named}\n"
+        f"点过名的只有这几个：{NAMED_CHAPTER_BOXES}（为什么正当写在本函数 docstring 里）。\n"
+        "新长出来的那一个**要先在那段话里说清它收的不是章号**，再加进这张表——\n"
+        "顺手加一行放进去，这道守卫就退化成一张会被拓宽的允许清单。"
     )
 
 

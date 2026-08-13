@@ -9,21 +9,27 @@ import { Setup } from "./Setup";
 // 一个库里可以有多本书（`bootstrap` 是往当前库里加项目），所以「导入一本」是**多一段**，
 // 不是换掉原来那本。换着看 = 直接点另一本那一行（整行都是命中区），没有中间那层弹窗。
 
-/** 只有当前这本会去拉章目录：722 章的书有两本时，一次拉两份纯属浪费。 */
+/**
+ * 一本书的章目录。**展开着就列出来，不管它是不是当前那本。**
+ *
+ * 原先这儿要求「是当前那本」才去拉，不是就摆一句「点一下书名，看这本书的章目录」——
+ * 于是箭头明明朝下、里面却没有目录：**一次假的展开**，而作者已经点开它了。
+ * 省下的那点请求换来的是「同一个东西要点两下才出来」（作者的原话：非常蠢的设计）。
+ *
+ * 「722 章的书别一次拉两份」这条顾虑还在，只是改由**折叠**来管：收起 = 这个组件根本
+ * 不挂上来 = 不发请求，而收哪几本是作者自己按的。
+ */
 function ChapterList({
   pid,
   active,
-  onOpenChapter,
+  onOpen,
 }: {
   pid: string;
   active: boolean;
-  onOpenChapter: (n: number) => void;
+  onOpen: (n: number) => void;
 }) {
   const { chapter } = useCoords();
-  const chapters = useChapters(active ? pid : null);
-  if (!active) {
-    return <div className="empty book-idle">点一下书名，看这本书的章目录。</div>;
-  }
+  const chapters = useChapters(pid);
   if (!chapters.data) return <div className="empty">加载中…</div>;
   if (chapters.data.length === 0) {
     return <div className="empty">这本书还没有章节。用上面的「＋ 新书 / 导入」导入一份 TXT。</div>;
@@ -33,8 +39,10 @@ function ChapterList({
       {chapters.data.map((c) => (
         <div
           key={c.number}
-          className={"ch" + (c.number === chapter ? " on" : "")}
-          onClick={() => onOpenChapter(c.number)}
+          // 「在读的就是这一章」只画在**当前那本**上：另一本书里同号的那一章
+          // 不是作者正看着的东西，画上高亮就是一句假话。
+          className={"ch" + (active && c.number === chapter ? " on" : "")}
+          onClick={() => onOpen(c.number)}
         >
           <span className="n">{String(c.number).padStart(3, "0")}</span>
           {c.title || "（无题）"}
@@ -46,7 +54,7 @@ function ChapterList({
 
 export function BookShelf({ onOpenChapter }: { onOpenChapter: (n: number) => void }) {
   const projects = useProjects();
-  const { projectId, setProject } = useCoords();
+  const { projectId, setProject, openBookAt } = useCoords();
   const { hidden, collapsed, remove, restoreAll, toggleCollapsed } = useShelf();
   const [setup, setSetup] = useState(false);
   const [menuFor, setMenuFor] = useState<string | null>(null);
@@ -152,7 +160,19 @@ export function BookShelf({ onOpenChapter }: { onOpenChapter: (n: number) => voi
               </span>
             </div>
 
-            {!folded && <ChapterList pid={p.id} active={active} onOpenChapter={onOpenChapter} />}
+            {!folded && (
+              <ChapterList
+                pid={p.id}
+                active={active}
+                // 点另一本书的某一章 = **连书带章一起翻过去，一步到位**。
+                // 拆成「先切书、再换章」的话，中间那一下是一次纯粹的换书，
+                // 光标会先落到那本书的最后一章——他点第 1 章，屏幕上闪过第 722 章。
+                //
+                // 也**不走 `onOpenChapter`**：那条路会给刚离开的那一章发一次后台整理
+                //（「离开 = 那一章写完了」），而他只是翻去了另一本书。
+                onOpen={(n) => (active ? onOpenChapter(n) : openBookAt(p.id, n))}
+              />
+            )}
           </div>
         );
       })}

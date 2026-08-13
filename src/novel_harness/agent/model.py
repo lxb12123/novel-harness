@@ -299,15 +299,33 @@ class ProviderModelPort:
         )
 
 
-def agent_call_plan(config: ProviderConfig) -> tuple[ProviderCapabilities, ResolvedCallPlan]:
+def agent_call_plan(
+    config: ProviderConfig, capability: ProviderCapabilities | None = None
+) -> tuple[ProviderCapabilities, ResolvedCallPlan]:
     """这一轮对话按哪份能力证据、多大预算发。
+
+    Args:
+        capability: 装配层已经解析好的那一份。**给了就用它，不再自己解析。**
+
+            ── 为什么要留这个口子 ────────────────────────────────────────────
+
+            装配层（`api/deps.resolve_route_capabilities`）比这儿多知道一件事：
+            **作者在设置页手填的上下文窗口**。这一层够不着那个值（`agent/` 不读设置），
+            自己解析就会得到一份**没有那个数**的能力，于是同一台机器上：
+
+                自建端点 + 作者手填 131,072
+                  /draft、抽取、总结  → 上文 10,337 字
+                  写作助手起草        → 上文 800 字    ← 差 13 倍，而且不报错
+
+            他填了一个数，一半的功能听、一半不听 —— 而不听的那一半正是他最常用的。
+            **`None` 那一档保留**：CLI 和测试没有装配层，让它们自己解析。
 
     Raises:
         draft.capabilities.CapabilityError: 这个端点/模型撑不起这一档（调用方映成 422，
             并告诉作者去顶栏「AI 设置」看一眼）。
     """
-    capability = resolve_with_discovery(config.base_url, config.model)
-    return capability, plan_call(AGENT_REPLY_LENGTH, AGENT_REASONING, capability)
+    resolved = capability or resolve_with_discovery(config.base_url, config.model)
+    return resolved, plan_call(AGENT_REPLY_LENGTH, AGENT_REASONING, resolved)
 
 
 __all__ = [

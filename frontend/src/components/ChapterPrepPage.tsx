@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useConstraints, useMatrix, useMentioned, useStates } from "../api/hooks";
 import { useCoords } from "../store";
+import { ChapterTitle } from "./ChapterTitle";
 import { MatrixView } from "./KnowledgeMatrix";
 import type { StateSnapshot } from "../api/types";
 import { DraftLengthControls } from "./DraftLengthControls";
@@ -48,7 +49,14 @@ export function ChapterPrepPage() {
   return (
     <div className="prep">
       <div className="prep-head">
-        <h2 style={{ margin: 0 }}>第 {chapter} 章 · 核对</h2>
+        {/* 挑章的入口原先在顶栏（一个 <select>），2026-08-13 搬去了中栏那行章标题上——
+            **而这一页换掉的是整块中栏**，于是它一度成了「进来就换不了章」的一页
+            （回工作台才能换）。所以这儿也摆一个：同一个控件，只是没有编辑器可以改名，
+            `line` 给 `null` 就只剩「看 + 挑」。 */}
+        <h2 className="prep-title">
+          <ChapterTitle line={null} />
+          <span>· 核对</span>
+        </h2>
         <span className="hint">
           {cast ? `按「${cast}」` : mentioned.data?.has_text
             ? mentioned.data.surfaces.length

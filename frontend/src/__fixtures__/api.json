@@ -753,6 +753,39 @@
       "updated_at": "<ts>"
     }
   },
+  "chatDetailFailed": {
+    "messages": [
+      {
+        "seq": 0,
+        "speaker": "author",
+        "text": "你好"
+      },
+      {
+        "seq": 1,
+        "speaker": "system",
+        "text": "联系不上写作模型，这一轮没跑成。等一下再试；一直这样的话去顶栏「AI 设置」看一眼。"
+      },
+      {
+        "seq": 1,
+        "speaker": "author",
+        "text": "fff"
+      },
+      {
+        "seq": 2,
+        "speaker": "system",
+        "text": "联系不上写作模型，这一轮没跑成。等一下再试；一直这样的话去顶栏「AI 设置」看一眼。"
+      }
+    ],
+    "session": {
+      "created_at": "<ts>",
+      "id": "chat_session:ID53",
+      "message_count": 2,
+      "pending_lookups": 0,
+      "running": false,
+      "title": "那一轮没跑成",
+      "updated_at": "<ts>"
+    }
+  },
   "chatRuleRevoked": {
     "chat_id": "chat_session:ID47",
     "revoked": true,
@@ -1738,12 +1771,14 @@
     "api_key_preview": "",
     "api_key_set": false,
     "base_url": "",
+    "context_window": null,
     "model": ""
   },
   "settingsSaved": {
     "api_key_preview": "***********-key",
     "api_key_set": true,
     "base_url": "https://api.deepseek.com",
+    "context_window": 128000,
     "model": "deepseek-v4-flash"
   },
   "states": [

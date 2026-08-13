@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect } from "react";
 import { useChapters, useProjects } from "./api/hooks";
 import { useOpenChapter } from "./autopilot";
 import { chapterOnOpen } from "./chapterCursor";
@@ -32,7 +32,8 @@ export default function App() {
 
 function Workbench() {
   const projects = useProjects();
-  const { projectId, chapter, page, chatOpen, setProject, setChapter } = useCoords();
+  const { projectId, chapter, page, chatOpen, cursorFor, setProject, setChapter, markCursor } =
+    useCoords();
   const chapters = useChapters(projectId);
   // 作者点开另一章 = 他离开了当前这一章 = 那一章写完了 → 交给后台整理（`autopilot.ts`）。
   // **下面那个 `chapterOnOpen` 的 setChapter 故意不走它**：开书时把光标放到该停的那一章
@@ -49,18 +50,21 @@ function Workbench() {
 
   // 打开 / 换一本书之后停在第几章 —— 规则在 `chapterOnOpen`（那儿有单测），这里只负责
   // 认出「这份章目录是不是新那本书的」：query key 带 projectId，所以数据到手时它必然对得上。
-  const settledFor = useRef<string | null>(null);
+  //
+  // 「已经替哪本书落过位」在 store 里（`cursorFor`）而不是这儿的一个 ref：
+  // **左栏点另一本书的某一章时，光标是作者亲手定的**，那一下必须能提前把标记置上——
+  // 否则这个 effect 会把它当成一次换书，转手顶成那本书的最后一章。
   useEffect(() => {
     const list = chapters.data;
     if (!projectId || !list || list.length === 0) return;
     const next = chapterOnOpen({
-      switched: settledFor.current !== projectId,
+      switched: cursorFor !== projectId,
       chapter,
       numbers: list.map((c) => c.number),
     });
     if (next !== null) setChapter(next);
-    settledFor.current = projectId;
-  }, [projectId, chapters.data, chapter, setChapter]);
+    if (cursorFor !== projectId) markCursor(projectId);
+  }, [projectId, chapters.data, chapter, cursorFor, setChapter, markCursor]);
 
   if (projects.isLoading) return <div style={{ padding: 24 }}>加载中…</div>;
   if (projects.isError)

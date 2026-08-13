@@ -9,7 +9,7 @@ const [second, first] = fixtures.projectsTwo; // 库里的顺序：契约样书�
 const twoBooks = [{ match: /\/api\/projects$/, body: fixtures.projectsTwo }];
 
 beforeEach(() => {
-  useCoords.setState({ projectId: first.id, chapter: 1, selectedNodeId: null });
+  useCoords.setState({ projectId: first.id, chapter: 1, selectedNodeId: null, cursorFor: null });
   useShelf.setState({ hidden: [], collapsed: [] });
 });
 
@@ -89,11 +89,49 @@ describe("侧栏书架", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("只有正在看的那本会去拉章目录 —— 两本 722 章的书不该一次拉两份", async () => {
+  it("架子上每一本摊开着的书都列着章目录 —— 不用先点书名把它「打开」", async () => {
+    // 原先只有当前那本会列，别的书里摆一句「点一下书名，看这本书的章目录」：
+    // 箭头朝下、里面却没有目录 = **一次假的展开**，而作者已经点开它了。
+    open();
+    for (const book of [await section(first.name), await section(second.name)]) {
+      expect(await within(book).findByText(fixtures.chapters[0].title)).toBeInTheDocument();
+    }
+    expect(screen.queryByText(/点一下书名/)).toBeNull();
+  });
+
+  it("「在读的是这一章」只画在当前那本上 —— 另一本里同号的那一章不是他正看着的", async () => {
+    open(); // 两本书吃的是同一份章目录夹具，所以第 1 章在两边都在
+    const title = fixtures.chapters[0].title;
+    const here = await within(await section(first.name)).findByText(title);
+    const there = await within(await section(second.name)).findByText(title);
+    expect(here).toHaveClass("on");
+    expect(there).not.toHaveClass("on");
+  });
+
+  it("点另一本书的某一章 = 连书带章一起翻过去，落在他点的那一章", async () => {
+    useCoords.setState({ chapter: 3 });
+    const onOpenChapter = vi.fn();
+    renderWithApi(<BookShelf onOpenChapter={onOpenChapter} />, twoBooks);
+
+    const other = await section(second.name);
+    (await within(other).findByText(fixtures.chapters[0].title)).click();
+
+    await waitFor(() => expect(useCoords.getState().projectId).toBe(second.id));
+    expect(useCoords.getState().chapter).toBe(1);
+    // 光标就此落定：不置这个标记的话，App 会把这一下当成一次换书，
+    // 转手把第 1 章顶成那本书的最后一章（`App.test.tsx` 里有那一条端到端的）。
+    expect(useCoords.getState().cursorFor).toBe(second.id);
+    // 换书**不算**「上一章写完了」——那条路会给刚离开的那一章发一次后台整理。
+    expect(onOpenChapter).not.toHaveBeenCalled();
+  });
+
+  it("收起来的那本不去拉章目录 —— 722 章的书有两本时，那才是该省的地方", async () => {
+    useShelf.setState({ hidden: [], collapsed: [second.id] });
     open();
     const other = await section(second.name);
-    expect(within(other).getByText(/点一下书名/)).toBeInTheDocument();
+    await within(await section(first.name)).findByText(fixtures.chapters[0].title);
     expect(within(other).queryByText(fixtures.chapters[0].title)).toBeNull();
+    expect(within(other).queryByText("加载中…")).toBeNull();
   });
 
   it("⋯ 里的「从左边移除」只是拿下架子，书还在库里", async () => {
