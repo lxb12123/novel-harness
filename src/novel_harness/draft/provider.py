@@ -313,6 +313,16 @@ def _usage_at(usage: Any, path: tuple[str, ...]) -> int | None:
     return _usage_count(cursor)
 
 
+_NO_STREAM: set[tuple[str, str]] = set()
+"""实测**拒绝流式**的路由（进程内，不落盘；同 `_NO_STREAM_OPTIONS` 的理由）。
+
+2026-08-13 起 `stream` 不再由能力表登记（协议保证它），于是「这一家真的不支持」
+这一档从「事先声明」变成「**事后学会**」。学的过程只许赔一次调用，所以记在这儿。
+
+⚠️ **记住之后那条路由的「停」按钮就名存实亡了**，而这件事必须一路说到屏幕上
+（`CompletionResult.fell_back_to_one_shot`）——静默降级正是这套东西最开始要治的病。
+"""
+
 _NO_STREAM_OPTIONS: set[tuple[str, str]] = set()
 """实测**拒绝**过 `stream_options` 的路由（进程内，不落盘）。
 
@@ -322,6 +332,40 @@ _NO_STREAM_OPTIONS: set[tuple[str, str]] = set()
 为什么不落盘:一次白费的往返只发生在**换端点之后的第一稿**,而换端点本来就要重启;
 落盘换来的是一张要迁移、要清理、会和作者改设置这件事对不齐的表。
 """
+
+
+def _one_shot_kwargs(kwargs: dict[str, Any]) -> dict[str, Any]:
+    """把一份流式请求改成一次性的。**`stream_options` 必须跟着走**——
+    它是流式的附属字段，留着发给一个非流式请求，换来的是第二种 400。"""
+    return {
+        key: value
+        for key, value in kwargs.items()
+        if key not in {"stream", "stream_options"}
+    }
+
+
+def _looks_like_one_shot(response: Any) -> bool:
+    """端点收下了 `stream: true`，**回来的却是一份普通响应**。
+
+    判据是「**顶层有没有 `choices`**」：非流式的 `ChatCompletion` 有，
+    而 openai SDK 的 `Stream` 对象没有（它只可迭代）。
+
+    ⚠️ **不许用「可不可迭代」当判据**：pydantic v2 的 `BaseModel` 自己就实现了
+    `__iter__`（吐的是字段名/值对），于是一个 `ChatCompletion` 会「可迭代」得
+    很成功，然后 `_from_stream` 在一堆二元组上安静地累出空字符串——
+    那是**一稿钱花了、正文是空的**，而且不报错。
+    """
+    return getattr(response, "choices", None) is not None and not hasattr(response, "__stream__")
+
+
+def _rejected_streaming(exc: Exception) -> bool:
+    """这次失败是不是**因为**我们要了流式。
+
+    同 `_rejected_stream_options`：判据是「**错误里点了这个字段的名**」，不是状态码。
+    宽一点就会把钥匙过期、模型名写错也吞进重试，于是一次配置错误变成两次失败，
+    而作者只看得见后面那次的话术。
+    """
+    return "stream" in str(exc).lower()
 
 
 def _rejected_stream_options(exc: Exception, kwargs: dict[str, Any]) -> bool:
@@ -378,6 +422,19 @@ class CompletionResult(BaseModel):
 
     默认空所以 M2 判分链和产品起草一个字都不用改:它们不传 `tools`,
     端点也就不会返回 `tool_calls`。
+    """
+
+    fell_back_to_one_shot: bool = False
+    """**这一次本来要流式,最后是一次性拿回来的。**
+
+    ── 为什么这一位必须存在 ────────────────────────────────────────────────
+
+    退回一次性响应本身是对的(端点不支持流式,总比整个失败好),但**它一旦是静默的,
+    就是本仓栽过的那种缝**:作者按了「停」没反应、字不再一个个长出来,而屏幕上
+    什么都没说,他只会觉得「这助手怎么变笨了」。
+
+    所以退回这件事必须**顺着出参往上走**,一直走到屏幕。上层不读它是上层的问题,
+    但运输层不许把它咽下去。默认 `False` ⇒ 没退过的路径一个字都没变。
     """
 
 
@@ -676,28 +733,59 @@ def complete(
     """
     validated_plan, kwargs = _prepare_call(config, plan, messages, tools, tool_choice)
     client = client or _build_client(config)
+    route = validated_plan.capability.route
+
+    degraded = False
+    if kwargs.get("stream") and route in _NO_STREAM:
+        # 这条路由上次就拒了流式。**别再赔一次**——但要记着说出来。
+        kwargs = _one_shot_kwargs(kwargs)
+        degraded = True
+
+    def read(raw: Any, *, streamed: bool, fell_back: bool) -> CompletionResult:
+        if streamed and _looks_like_one_shot(raw):
+            # **端点收下了 `stream: true`，回来的却是一份普通响应。** 不用重发，
+            # 当场按非流式读——但这一次同样没有「写到一半」那个时刻，所以照样算降级。
+            _NO_STREAM.add(route)
+            return _from_non_streaming(raw, config.model).model_copy(
+                update={"fell_back_to_one_shot": True}
+            )
+        result = _from_stream(raw, config.model) if streamed else _from_non_streaming(
+            raw, config.model
+        )
+        return result.model_copy(update={"fell_back_to_one_shot": True}) if fell_back else result
+
+    def retry(without: str, *, streamed: bool, fell_back: bool) -> CompletionResult:
+        again = (
+            _one_shot_kwargs(kwargs)
+            if without == "stream"
+            else {key: value for key, value in kwargs.items() if key != without}
+        )
+        try:
+            return read(
+                client.chat.completions.create(**again), streamed=streamed, fell_back=fell_back
+            )
+        except Exception as retry_exc:
+            raise ProviderError(
+                f"模型调用失败(model={config.model}, base_url={config.base_url}):{retry_exc}"
+            ) from retry_exc
 
     try:
-        response = client.chat.completions.create(**kwargs)
-        if validated_plan.stream:
-            return _from_stream(response, config.model)
-        return _from_non_streaming(response, config.model)
+        raw = client.chat.completions.create(**kwargs)
+        return read(raw, streamed=bool(kwargs.get("stream")), fell_back=degraded)
     except ProviderError:
         raise
     except Exception as exc:  # 运输及流式迭代异常统一收口
+        # **两条回退，顺序是硬的**:先试「只摘用量」,再试「连流式一起退」。
+        # 反过来的话,一个只是不认识 `stream_options` 的端点会被永久标成「不支持流式」,
+        # 于是作者白白失去「停」按钮——而那正是这套东西存在的理由。
         if _rejected_stream_options(exc, kwargs):
-            # **只退这一个字段，不退流式**：作者要的是「能停下来」，用量是附带的。
-            # 记住这条路由,下一次连试都不试——否则每一稿都白费一次失败的往返。
-            _NO_STREAM_OPTIONS.add(validated_plan.capability.route)
-            retry = {key: value for key, value in kwargs.items() if key != "stream_options"}
-            try:
-                response = client.chat.completions.create(**retry)
-                return _from_stream(response, config.model)
-            except Exception as retry_exc:
-                raise ProviderError(
-                    f"模型调用失败(model={config.model}, base_url={config.base_url})"
-                    f":{retry_exc}"
-                ) from retry_exc
+            # **只退这一个字段,不退流式**:作者要的是「能停下来」,用量是附带的。
+            _NO_STREAM_OPTIONS.add(route)
+            return retry("stream_options", streamed=True, fell_back=degraded)
+        if kwargs.get("stream") and _rejected_streaming(exc):
+            # 这一家真的不吃流式。退成一次性,**并且让这件事一路走到屏幕上**。
+            _NO_STREAM.add(route)
+            return retry("stream", streamed=False, fell_back=True)
         raise ProviderError(
             f"模型调用失败(model={config.model}, base_url={config.base_url}):{exc}"
         ) from exc

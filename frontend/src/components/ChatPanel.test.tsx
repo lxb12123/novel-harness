@@ -102,7 +102,10 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
     // 2026-08-12（ADR 0024）之后中间过程真的看得见了，**但两条流不是一回事**：
     // 起草那次调用是流式的，回话那次不是（`plan.stream is False`，后端那条
     // `test_todays_agent_call_is_not_streaming_…` 钉着）。所以回话区仍然一次到位，
-    // 而屏幕上那句话必须跟着说准 —— 说反了，作者就会按一个编出来的节奏判断它卡没卡住。
+    // 2026-08-13：这儿原来还断言屏幕上那句「回话是整段一次出现的，稿子才会一个字一个字
+    // 长出来」。**那句话删了**，因为它没有任何条件 —— 端点退回一次性响应时它就是假的，
+    // 而且没有一个成熟工具会向用户解释自己的流式语义。屏幕该用状态本身说话：
+    // 字在流就让他看见字（下面「稿子真的一个字一个字长出来」那条钉的就是这个）。
     const user = userEvent.setup();
     const turn = gated(fixtures.chatTurn);
     renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turn.handler }]);
@@ -113,7 +116,6 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
 
     const strip = await screen.findByRole("status");
     expect(within(strip).getByText(/已经 \d+ 秒/)).toBeInTheDocument();
-    expect(strip.textContent).toContain("回话是整段一次出现的，稿子才会一个字一个字长出来");
     // 他刚说的那句话立刻占一格：后端做的第一件事就是把它落库，这不是假装。
     expect(screen.getByText("先去看看第 1 章")).toBeInTheDocument();
     // 跑着的时候不许再发一条 —— 后端那一侧是 409。

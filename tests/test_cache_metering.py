@@ -1019,3 +1019,151 @@ def test_an_unrelated_failure_is_not_swallowed_into_a_retry() -> None:
         )
     assert endpoint.calls == 1, "只发了一次 —— 没有把不相干的失败吞进重试"
     assert route not in prov._NO_STREAM_OPTIONS
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 7. 流式的回退路径 —— **退可以，静默不行**
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _draft_plan() -> tuple[prov.ProviderConfig, Any, tuple[str, str]]:
+    from novel_harness.agent.drafting import AGENT_DRAFT_REASONING
+    from novel_harness.draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage
+
+    route = ("https://api.deepseek.com", "deepseek-v4-flash")
+    capability = caps.resolve_capabilities(*route)
+    length = DEFAULT_LENGTH_POLICY.default_for(DraftLanguage.ZH)
+    return (
+        prov.ProviderConfig(base_url=route[0], model=route[1], api_key="k"),
+        caps.plan_call(length, AGENT_DRAFT_REASONING, capability, interruptible=True),
+        route,
+    )
+
+
+@pytest.fixture
+def _clean_route_memory() -> Iterator[tuple[str, str]]:
+    route = ("https://api.deepseek.com", "deepseek-v4-flash")
+    prov._NO_STREAM.discard(route)
+    prov._NO_STREAM_OPTIONS.discard(route)
+    yield route
+    prov._NO_STREAM.discard(route)
+    prov._NO_STREAM_OPTIONS.discard(route)
+
+
+class _Recorder:
+    """一个假端点：记下每次收到的 kwargs，按 `answer` 决定怎么回。"""
+
+    def __init__(self, answer: Any) -> None:
+        self.answer = answer
+        self.seen: list[dict[str, Any]] = []
+        self.chat = self
+
+    @property
+    def completions(self) -> "_Recorder":
+        return self
+
+    def create(self, **kwargs: Any) -> Any:
+        self.seen.append(kwargs)
+        return self.answer(kwargs, len(self.seen))
+
+
+def test_an_endpoint_that_refuses_streaming_falls_back_and_says_so(
+    _clean_route_memory: tuple[str, str],
+) -> None:
+    """**退回一次性是对的；不说出来就不是。**
+
+    `fell_back_to_one_shot` 是这条回退唯一的观测点。没有它，作者按「停」没反应、
+    字不再一个个长出来，而屏幕什么都不说 —— 那就是这套东西一开始要治的那种缝。
+    """
+    config, plan, route = _draft_plan()
+
+    def answer(kwargs: dict[str, Any], n: int) -> Any:
+        if kwargs.get("stream"):
+            raise RuntimeError("400 invalid_request_error: stream is not supported")
+        return _completion(_usage("deepseek"))
+
+    endpoint = _Recorder(answer)
+    result = prov.complete(
+        [{"role": "user", "content": "写第 89 章"}], config=config, plan=plan, client=endpoint
+    )
+
+    assert result.text, "退回之后稿子照样拿到了"
+    assert result.fell_back_to_one_shot is True, "退了却没说 —— 屏幕上就会是一句假话"
+    assert len(endpoint.seen) == 2
+    assert endpoint.seen[1].get("stream") is None
+    assert "stream_options" not in endpoint.seen[1], "流式的附属字段必须跟着一起摘"
+    assert route in prov._NO_STREAM
+
+    # 记住之后不再白费第一次，**但那一位照旧为真**——降级是持续的，不是一次性的。
+    again = _Recorder(answer)
+    second = prov.complete(
+        [{"role": "user", "content": "写第 90 章"}], config=config, plan=plan, client=again
+    )
+    assert len(again.seen) == 1
+    assert second.fell_back_to_one_shot is True
+
+
+def test_an_endpoint_that_swallows_the_stream_flag_is_read_as_one_shot(
+    _clean_route_memory: tuple[str, str],
+) -> None:
+    """**最阴的那一种：它收下 `stream: true`，回来的却是一份普通响应。**
+
+    这一档不报错、不用重发。危险在解析：pydantic v2 的 `BaseModel` 自带 `__iter__`，
+    所以「可不可迭代」这个判据会认为它是流，然后在一堆字段二元组上安静地累出
+    **空正文** —— 钱花了、稿子是空的、没有任何一处报错。
+    """
+    config, plan, route = _draft_plan()
+    endpoint = _Recorder(lambda kwargs, n: _completion(_usage("deepseek"), text="他推门进去。"))
+
+    result = prov.complete(
+        [{"role": "user", "content": "写第 89 章"}], config=config, plan=plan, client=endpoint
+    )
+    assert result.text == "他推门进去。", "正文不能被当成流吞掉"
+    assert result.fell_back_to_one_shot is True
+    assert len(endpoint.seen) == 1, "这一档不需要重发"
+    assert route in prov._NO_STREAM
+
+
+def test_a_bad_key_is_still_a_bad_key_not_a_streaming_problem(
+    _clean_route_memory: tuple[str, str],
+) -> None:
+    """**判据是「错误里点了字段名」。** 宽一点，一次配置错误就会变成两次失败，
+    而作者只看得见后面那次的话术 —— 且这条路由被冤枉地记成「不支持流式」。"""
+    config, plan, route = _draft_plan()
+
+    def answer(kwargs: dict[str, Any], n: int) -> Any:
+        raise RuntimeError("401 Unauthorized: invalid api key")
+
+    endpoint = _Recorder(answer)
+    with pytest.raises(prov.ProviderError, match="401"):
+        prov.complete(
+            [{"role": "user", "content": "x"}], config=config, plan=plan, client=endpoint
+        )
+    assert len(endpoint.seen) == 1
+    assert route not in prov._NO_STREAM
+
+
+def test_the_usage_retry_is_tried_before_giving_up_on_streaming(
+    _clean_route_memory: tuple[str, str],
+) -> None:
+    """**两条回退的顺序是硬的。**
+
+    先「只摘用量」，再「连流式一起退」。反过来的话，一个只是不认识 `stream_options`
+    的端点会被永久标成「不支持流式」，作者白白失去「停」按钮 —— 而那正是这套东西
+    存在的理由。
+    """
+    config, plan, route = _draft_plan()
+
+    def answer(kwargs: dict[str, Any], n: int) -> Any:
+        if "stream_options" in kwargs:
+            raise RuntimeError("400 unknown parameter: stream_options")
+        return _chunks([_usage("deepseek")])
+
+    endpoint = _Recorder(answer)
+    result = prov.complete(
+        [{"role": "user", "content": "写第 89 章"}], config=config, plan=plan, client=endpoint
+    )
+    assert result.fell_back_to_one_shot is False, "流式保住了 —— 只丢了用量"
+    assert endpoint.seen[1]["stream"] is True
+    assert route in prov._NO_STREAM_OPTIONS
+    assert route not in prov._NO_STREAM, "只是不认识那个字段，别把它冤枉成不支持流式"
