@@ -38,13 +38,10 @@ import argparse
 import json
 import urllib.request
 from pathlib import Path
-from typing import Any
 
-SOURCE_URL = (
-    "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
-)
+from novel_harness.draft.windows import SOURCE_URL, render, trim
+
 OUT = Path(__file__).resolve().parents[1] / "src" / "novel_harness" / "draft" / "model_windows.json"
-SCHEMA = "nh-model-windows-v1"
 
 
 def main() -> int:
@@ -58,42 +55,16 @@ def main() -> int:
 
     print(f"拉取 {SOURCE_URL}")
     with urllib.request.urlopen(SOURCE_URL, timeout=60) as response:  # noqa: S310
-        raw: dict[str, Any] = json.loads(response.read().decode("utf-8"))
+        raw = json.loads(response.read().decode("utf-8"))
 
-    windows: dict[str, int] = {}
-    for name, entry in raw.items():
-        if not isinstance(entry, dict):
-            continue  # `sample_spec` 那种模板行
-        # **只收对话模型。** 公共表里混着 209 条图片、124 条嵌入、66 条语音——
-        # 它们也有 `max_input_tokens`（`1024-x-1024/...` 那条是 77），
-        # 留着既没用又多一批能被误命中的键。
-        if entry.get("mode") != "chat":
-            continue
-        value = entry.get("max_input_tokens")
-        # **只收读得懂的正整数**（同 `provider._usage_count` 的立场）：
-        # 表里混着 `null`、字符串、还有 `sample_spec` 那种模板行。
-        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-            continue
-        windows[name] = value
-
-    payload = {
-        "schema": SCHEMA,
-        # **拉取日期由维护者在命令行给，不由脚本读时钟。**
-        # 读时钟会让「同一天跑两次」产出不同的文件，git diff 上多一行噪音；
-        # 更要紧的是这个数是给人看的「这份数据有多旧」，它该跟着那次决定走。
-        "fetched": fetched,
-        "source_url": SOURCE_URL,
-        "source_license": "MIT (BerriAI/litellm)",
-        "note": (
-            "只裁了 max_input_tokens 一列。输出上限有意不取 —— 实测 deepseek-v4 那一档"
-            "公共表写的是 8,192，而官方文档是 384,000（差 47 倍）。"
-        ),
-        "windows": dict(sorted(windows.items())),
-    }
-    OUT.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=1, sort_keys=False) + "\n",
-        encoding="utf-8",
-    )
+    # **裁剪和渲染都借库里那一份**（`draft/windows.py`）。设置页那颗「更新」按钮走的
+    # 是同一个函数 —— 两处各写一遍的话，作者点出来的快照和维护者提交的会慢慢分家，
+    # 而那种分家只有在「同一个模型两边窗口不一样」的时候才被发现。
+    windows = trim(raw)
+    if not windows:
+        print("裁完一个对话模型都不剩 —— 没有覆盖原来那份。")
+        return 1
+    OUT.write_text(render(windows, fetched=fetched), encoding="utf-8")
     size = OUT.stat().st_size / 1024
     print(f"写出 {OUT.relative_to(Path.cwd())}：{len(windows)} 个模型，{size:.0f} KB")
     print("**看一眼 git diff** —— 这是别人的数据进我们的包。")

@@ -499,6 +499,54 @@ def put_settings(body: SettingsBody) -> dict[str, Any]:
     return _settings_response(merged)
 
 
+@app.post("/api/settings/model-windows/refresh")
+def refresh_model_windows() -> dict[str, Any]:
+    """作者点一下，去拉一次公开的模型窗口表（ADR 0025 那一层的数据源）。
+
+    ── 为什么是一颗按钮，而不是自动 ────────────────────────────────────────
+
+    这份数据决定**上文给他 800 字还是 40,000 字**，而它来自一个我们不控制的仓库。
+    自动更新 = 别人改一行，作者明天的稿子上下文就变了，而他不知道为什么。
+    **一颗按钮把「什么时候信任新数据」这件事留给他。**
+
+    ── 三条边界 ──────────────────────────────────────────────────────────
+
+    * **写到作者自己的目录**，不碰包里那份（`site-packages` 只读，重装就没）。
+      读的时候作者那份优先 —— 他点过就说明他要的是新的。
+    * **拉失败/裁完是空 ⇒ 不覆盖**，旧的那份原样留着，并回一句人话。
+      「更新」把能用的数据换成空的，比不更新坏得多。
+    * **回执说出变了什么**（新增/变化/减少各几条）。没有它这就是一颗不出声的按钮，
+      作者点完只能猜有没有生效 —— 而这个仓库正在还的债有一半是那种形态。
+    """
+    import json as _json
+    import urllib.error
+    import urllib.request
+    from datetime import date
+
+    from ..draft import windows as model_windows
+
+    request = urllib.request.Request(
+        model_windows.SOURCE_URL, headers={"Accept": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
+            raw = _json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"没能拉到那份公开的模型表（{type(exc).__name__}）。"
+                "原来那份还在用，什么都没改。网络好了再点一次。"
+            ),
+        ) from exc
+
+    try:
+        report = model_windows.refresh(raw, fetched=date.today().isoformat())
+    except (ValueError, OSError) as exc:
+        raise HTTPException(status_code=502, detail=f"{exc}") from exc
+    return report.model_dump()
+
+
 # ── 上手：建书 / 导入 TXT / 同步（让非程序员不碰命令行也能起步）──────────────
 
 

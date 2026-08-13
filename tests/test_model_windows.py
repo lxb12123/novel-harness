@@ -204,3 +204,89 @@ def test_the_snapshot_says_how_old_it_is_and_carries_no_junk() -> None:
     # 真正该消失的是图片/嵌入那一档 —— 它们的键长得都不像模型名。
     assert not [name for name in payload["windows"] if "1024-x-1024" in name]
     assert len(payload["windows"]) < 2_400, "只留 chat 之后条数该明显少于原表"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 6. 作者点的那颗「更新」按钮
+# ══════════════════════════════════════════════════════════════════════════
+
+
+PUBLIC_TABLE = {
+    "deepseek/deepseek-chat": {"mode": "chat", "max_input_tokens": 200_000},
+    "deepseek/deepseek-brand-new": {"mode": "chat", "max_input_tokens": 999_000},
+    "some/image-model": {"mode": "image_generation", "max_input_tokens": 77},
+    "some/embedder": {"mode": "embedding", "max_input_tokens": 8_192},
+    "broken/no-window": {"mode": "chat", "max_input_tokens": None},
+    "sample_spec": "not a dict",
+}
+
+
+@pytest.fixture
+def _author_home(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("NH_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    windows._snapshot.cache_clear()
+    yield tmp_path
+    windows._snapshot.cache_clear()
+
+
+def test_the_button_writes_to_the_authors_home_not_into_the_package(_author_home) -> None:
+    """**绝不碰包里那份。** `site-packages` 是只读的，而且重装一次就没了；
+    作者的数据该住在作者的目录里（跟钥匙、地址、模型放一起）。"""
+    packaged_before = windows.SNAPSHOT_PATH.read_bytes()
+
+    report = windows.refresh(PUBLIC_TABLE, fetched="2026-11-01")
+
+    assert windows.user_snapshot_path().exists()
+    assert windows.user_snapshot_path().parent == _author_home
+    assert windows.SNAPSHOT_PATH.read_bytes() == packaged_before, "包里那份一个字节都不许动"
+    assert report.total == 2, "只收 mode=chat 且窗口读得懂的那两条"
+
+
+def test_the_authors_copy_wins_over_the_packaged_one(_author_home) -> None:
+    """作者点过「更新」，就说明他要的是新的那一份。"""
+    assert window_for("https://api.deepseek.com", "deepseek-chat") is not None
+
+    windows.refresh(PUBLIC_TABLE, fetched="2026-11-01")
+    assert window_for("https://api.deepseek.com", "deepseek-chat") == 200_000
+    # 而包里没有的新模型现在也认得了 —— 这就是那颗按钮的全部意义。
+    assert window_for("https://api.deepseek.com", "deepseek-brand-new") == 999_000
+
+
+def test_the_report_says_what_actually_changed(_author_home) -> None:
+    """**没有这份回执，那就是一颗不出声的按钮**，作者点完只能猜有没有生效。
+
+    `changed` 是最值得摆出来的那个：一个模型的窗口被上游改小了，作者的上文会跟着
+    变短，而那件事没有别的观测点。
+    """
+    windows.refresh(PUBLIC_TABLE, fetched="2026-11-01")
+    second = dict(PUBLIC_TABLE)
+    second["deepseek/deepseek-chat"] = {"mode": "chat", "max_input_tokens": 64_000}
+    second["deepseek/another-one"] = {"mode": "chat", "max_input_tokens": 32_000}
+    del second["deepseek/deepseek-brand-new"]
+
+    report = windows.refresh(second, fetched="2026-11-02")
+    assert (report.added, report.changed, report.removed) == (1, 1, 1)
+    assert report.fetched == "2026-11-02"
+
+
+def test_a_useless_payload_never_replaces_a_working_snapshot(_author_home) -> None:
+    """**「更新」把能用的数据换成空的，比不更新坏得多。**"""
+    windows.refresh(PUBLIC_TABLE, fetched="2026-11-01")
+    good = windows.user_snapshot_path().read_bytes()
+
+    for junk in ({}, {"only/img": {"mode": "image_generation", "max_input_tokens": 77}}, []):
+        with pytest.raises(ValueError, match="没有覆盖"):
+            windows.refresh(junk, fetched="2026-11-03")
+    assert windows.user_snapshot_path().read_bytes() == good
+
+
+def test_the_script_and_the_button_write_the_same_bytes(_author_home) -> None:
+    """**裁剪和渲染只有一份实现。**
+
+    两处各写一遍的话，作者点出来的快照和维护者提交的会慢慢分家 —— 而那种分家
+    只有在「同一个模型两边窗口不一样」的时候才被发现，那时已经影响到稿子了。
+    """
+    windows.refresh(PUBLIC_TABLE, fetched="2026-11-01")
+    from_button = windows.user_snapshot_path().read_text(encoding="utf-8")
+    from_script = windows.render(windows.trim(PUBLIC_TABLE), fetched="2026-11-01")
+    assert from_button == from_script

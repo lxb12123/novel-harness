@@ -49,11 +49,14 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
 from typing import Final
 from urllib.parse import urlsplit
+
+from pydantic import BaseModel, ConfigDict
 
 from .capabilities import (
     CapabilityError,
@@ -66,32 +69,57 @@ from .capabilities import (
 
 SNAPSHOT_PATH: Final = Path(__file__).with_name("model_windows.json")
 SNAPSHOT_SCHEMA: Final = "nh-model-windows-v1"
+SOURCE_URL: Final = (
+    "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+)
+SOURCE_LICENSE: Final = "MIT (BerriAI/litellm)"
 
 
-@lru_cache(maxsize=1)
-def _snapshot() -> tuple[dict[str, int], str]:
-    """读那份快照。**读不出来就是空的**——这一层永不抛。
+def user_snapshot_path() -> Path:
+    """作者自己刷新出来的那一份。**和设置放同一个地方**（`settings.py` 的目录）。
 
-    快照坏掉/缺失的后果只是「退回今天的 unknown」，而让它抛等于一个数据文件
-    能把整个起草弄挂。
+    为什么不覆盖包里那份：装在 `site-packages` 里的东西是只读的，而且重装一次就没了。
+    作者的数据该住在作者的目录里 —— 这跟钥匙、地址、模型放一起是同一条道理。
     """
+    from ..settings import DEFAULT_PATH  # 局部导入：`draft/` 不该在模块层依赖装配层
+
+    override = os.environ.get("NH_SETTINGS_PATH")
+    home = Path(override).parent if override else DEFAULT_PATH.parent
+    return home / "model_windows.json"
+
+
+def _read(path: Path) -> tuple[dict[str, int], str] | None:
+    """读一份快照。**读不出来返回 `None`**（不是空 dict —— 那两者要分得开）。"""
     try:
-        payload = json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}, ""
+        return None
     if not isinstance(payload, dict) or payload.get("schema") != SNAPSHOT_SCHEMA:
-        return {}, ""
+        return None
     raw = payload.get("windows")
     if not isinstance(raw, dict):
-        return {}, ""
+        return None
     windows = {
         name: value
         for name, value in raw.items()
-        if isinstance(name, str) and isinstance(value, int) and not isinstance(value, bool)
+        if isinstance(name, str)
+        and isinstance(value, int)
+        and not isinstance(value, bool)
         and value > 0
     }
     source = payload.get("source_url")
     return windows, source if isinstance(source, str) else ""
+
+
+@lru_cache(maxsize=1)
+def _snapshot() -> tuple[dict[str, int], str]:
+    """当前生效的那份快照。**作者刷新出来的压过包里带的**。
+
+    顺序的理由：包里那份是发版时冻的，作者点过「更新」就说明他明确要更新的那一份。
+    两份都读不出来 ⇒ 空 ⇒ 退回今天的 `unknown`。**这一层永不抛**：
+    一个数据文件不该有能力把起草弄挂。
+    """
+    return _read(user_snapshot_path()) or _read(SNAPSHOT_PATH) or ({}, "")
 
 
 _HOST_PROVIDERS: Final[Mapping[str, str]] = {
@@ -181,4 +209,101 @@ def capabilities_from_snapshot(base_url: str, model: str) -> ProviderCapabilitie
         return None
 
 
-__all__ = ["SNAPSHOT_PATH", "capabilities_from_snapshot", "window_for"]
+class RefreshReport(BaseModel):
+    """点一次「更新」之后发生了什么。**没有这份回执，那颗按钮就是个不出声的按钮。**"""
+
+    model_config = ConfigDict(frozen=True)
+
+    fetched: str
+    """这次拉取的日期（`YYYY-MM-DD`，由调用方给，见 `refresh`）。"""
+
+    total: int
+    """更新后一共认得多少个模型。"""
+
+    added: int
+    changed: int
+    removed: int
+    """和更新前那一份比，多了/变了/少了几个。**`changed` 才是最值得看的那个**——
+    一个模型的窗口被上游改小了，作者的上文会跟着变短，而那件事没有别的观测点。"""
+
+    path: str
+    """写到哪儿去了（作者的配置目录，不是包里）。"""
+
+
+def trim(raw: object) -> dict[str, int]:
+    """把公共表裁成「模型名 → 上下文窗口」。**脚本和设置页那颗按钮共用这一份。**
+
+    两条过滤，理由都在 `scripts/refresh_model_windows.py` 的 docstring 里：
+    只收 `mode == "chat"`（否则混进图片/嵌入/语音），只收读得懂的正整数。
+    """
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, int] = {}
+    for name, entry in raw.items():
+        if not isinstance(name, str) or not isinstance(entry, dict):
+            continue
+        if entry.get("mode") != "chat":
+            continue
+        value = entry.get("max_input_tokens")
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            continue
+        out[name] = value
+    return out
+
+
+def render(windows: dict[str, int], *, fetched: str) -> str:
+    """裁好的那份表写成快照文件的内容。**脚本和按钮写出的字节完全一样。**"""
+    payload = {
+        "schema": SNAPSHOT_SCHEMA,
+        "fetched": fetched,
+        "source_url": SOURCE_URL,
+        "source_license": SOURCE_LICENSE,
+        "note": (
+            "只裁了 max_input_tokens 一列。输出上限有意不取 —— 实测 deepseek-v4 那一档"
+            "公共表写的是 8,192，而官方文档是 384,000（差 47 倍）。"
+        ),
+        "windows": dict(sorted(windows.items())),
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=1, sort_keys=False) + "\n"
+
+
+def refresh(raw: object, *, fetched: str) -> RefreshReport:
+    """把一份刚下下来的公共表落成作者自己那份快照，并说出变了什么。
+
+    Raises:
+        ValueError: 裁完一个模型都不剩。**这时绝不覆盖旧的那份**——
+            一次拉到半截的响应不该把作者手上能用的数据换成空的。
+    """
+    windows = trim(raw)
+    if not windows:
+        raise ValueError("拉回来的内容里一个对话模型都没有，没有覆盖原来那份。")
+
+    before = (_read(user_snapshot_path()) or _read(SNAPSHOT_PATH) or ({}, ""))[0]
+    target = user_snapshot_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(render(windows, fetched=fetched), encoding="utf-8")
+    _snapshot.cache_clear()
+
+    return RefreshReport(
+        fetched=fetched,
+        total=len(windows),
+        added=len(windows.keys() - before.keys()),
+        changed=sum(
+            1 for name, value in windows.items() if name in before and before[name] != value
+        ),
+        removed=len(before.keys() - windows.keys()),
+        path=str(target),
+    )
+
+
+__all__ = [
+    "SNAPSHOT_PATH",
+    "SOURCE_URL",
+    "RefreshReport",
+    "capabilities_from_snapshot",
+    "refresh",
+    "render",
+    "trim",
+    "user_snapshot_path",
+    "window_for",
+]

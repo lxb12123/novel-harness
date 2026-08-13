@@ -6,6 +6,7 @@ import type {
   ActivityPage,
   AiSettings,
   AiSettingsInput,
+  ModelWindowsRefresh,
   AutopilotAck,
   AutopilotStatus,
   BootstrapRequest,
@@ -76,6 +77,22 @@ export function useSaveAiSettings() {
     mutationFn: (input: AiSettingsInput) =>
       api.put<AiSettings>("/api/settings", input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["settings"] }),
+  });
+}
+
+/** 更新那份「模型 → 上下文窗口」的公开表（`POST /api/settings/model-windows/refresh`）。
+ *
+ *  **有意不自动跑**：这份数据决定上文给作者 800 字还是 40,000 字，而它来自一个我们
+ *  不控制的仓库。自动更新 = 别人改一行，作者明天的稿子上下文就变了，而他不知道为什么。
+ *
+ *  拉完要**让能力重新解析一次**：起草抽屉/写作助手拿到的窗口是后端算的，
+ *  不动那些查询的话，作者点完按钮看到的还是旧上文长度。 */
+export function useRefreshModelWindows() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.post<ModelWindowsRefresh>("/api/settings/model-windows/refresh", {}),
+    onSuccess: () => qc.invalidateQueries(),
   });
 }
 

@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { ApiError } from "../api/client";
-import { useAiSettings, useSaveAiSettings } from "../api/hooks";
+import {
+  useAiSettings,
+  useRefreshModelWindows,
+  useSaveAiSettings,
+} from "../api/hooks";
 import type { AiSettingsInput } from "../api/types";
 
 // AI 设置（BYOK）——像 Cursor 的 API Keys：作者粘一把自己的钥匙，存在本机。
@@ -8,6 +12,7 @@ import type { AiSettingsInput } from "../api/types";
 export function SettingsDrawer({ onClose }: { onClose: () => void }) {
   const settings = useAiSettings();
   const save = useSaveAiSettings();
+  const refresh = useRefreshModelWindows();
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -20,6 +25,7 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
   }, [settings.data]);
 
   const err = save.error instanceof ApiError ? save.error : null;
+  const refreshErr = refresh.error instanceof ApiError ? refresh.error : null;
   const current = settings.data;
   const dirty =
     baseUrl.trim() !== (current?.base_url ?? "") ||
@@ -71,6 +77,35 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
         )}
       </div>
       {err && <div className="err-box">{err.message}</div>}
+
+      {/* ── 模型信息 ────────────────────────────────────────────────────
+          这份表决定**上文给作者多长**（同一个模型，认得出是上万字，认不出是 800）。
+          它来自一个我们不控制的公开仓库，所以**只在这儿点，绝不自动跑** ——
+          自动更新等于别人改一行、作者明天的稿子上下文就变了，而他不知道为什么。 */}
+      <div className="field">
+        <span>模型信息</span>
+        <div className="row">
+          <button disabled={refresh.isPending} onClick={() => refresh.mutate()}>
+            {refresh.isPending ? "正在更新…" : "更新模型信息"}
+          </button>
+        </div>
+        {refreshErr ? (
+          <div className="err-box">{refreshErr.message}</div>
+        ) : refresh.data ? (
+          <div className="note">
+            已更新到 {refresh.data.fetched}：认得 {refresh.data.total} 个模型
+            {refresh.data.added || refresh.data.changed || refresh.data.removed
+              ? `（新增 ${refresh.data.added}、变化 ${refresh.data.changed}、减少 ${refresh.data.removed}）`
+              : "，和原来那份一样"}
+            。
+          </div>
+        ) : (
+          <div className="note">
+            用来知道你选的模型能记住多长的上文。不更新也能用，只是新出的模型可能认不出。
+          </div>
+        )}
+      </div>
+
       <div className="row" style={{ marginTop: 10 }}>
         <button onClick={onClose}>关闭</button>
         <button disabled={!dirty || save.isPending} onClick={onSubmit}>

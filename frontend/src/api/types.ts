@@ -1026,3 +1026,16 @@ export interface ChatRuleRevoked {
    *  下标」这个 bug 唯一会现形的地方，就是重取回来它还在。 */
   revoked: boolean;
 }
+
+/** 点一次「更新模型信息」之后后端说的话（`POST /api/settings/model-windows/refresh`）。
+ *
+ *  **`changed` 是最值得摆出来的那个**：一个模型的窗口被上游改小了，作者的上文会
+ *  跟着变短，而那件事没有别的观测点。 */
+export type ModelWindowsRefresh = {
+  fetched: string;
+  total: number;
+  added: number;
+  changed: number;
+  removed: number;
+  path: string;
+};
