@@ -635,14 +635,14 @@
     {
       "created_at": "<ts>",
       "is_current": false,
-      "snapshot_id": "snapshot:ID51",
+      "snapshot_id": "snapshot:ID52",
       "text": "第二章 试探\n\n他终于明白了。\n风起。他终于明白了。\n",
       "text_sha256": "<sha>"
     },
     {
       "created_at": "<ts>",
       "is_current": true,
-      "snapshot_id": "snapshot:ID50",
+      "snapshot_id": "snapshot:ID51",
       "text": "第二章 试探\n\n他终于明白了。\n风起。他终于明白了。\n\n后来又添了一段。\n",
       "text_sha256": "<sha>"
     }
@@ -651,12 +651,12 @@
     "added": [
       {
         "created": true,
-        "id": "chapter:ID47",
+        "id": "chapter:ID48",
         "number": 3,
         "path": "chapters/0003.md",
         "project_id": "project:ID1",
         "snapshot_created": true,
-        "snapshot_id": "snapshot:ID48",
+        "snapshot_id": "snapshot:ID49",
         "text_sha256": "<sha>",
         "title": "对峙"
       }
@@ -665,12 +665,12 @@
     "refreshed": [
       {
         "created": false,
-        "id": "chapter:ID49",
+        "id": "chapter:ID50",
         "number": 2,
         "path": "chapters/0002.md",
         "project_id": "project:ID1",
         "snapshot_created": true,
-        "snapshot_id": "snapshot:ID50",
+        "snapshot_id": "snapshot:ID51",
         "text_sha256": "<sha>",
         "title": "试探"
       }
@@ -752,6 +752,37 @@
       "title": "第 2 章能说破血脉的事吗？",
       "updated_at": "<ts>"
     }
+  },
+  "chatRuleRevoked": {
+    "chat_id": "chat_session:ID47",
+    "revoked": true,
+    "seq": 10
+  },
+  "chatRules": {
+    "chapter": 2,
+    "expired": 0,
+    "rules": [
+      {
+        "scope": "第 2 章都按它来 —— 翻到下一章就自动放掉",
+        "seq": 10,
+        "text": "这一章别写打斗"
+      },
+      {
+        "scope": "只管眼下这一轮 —— 你再说一句话，它就自动放掉",
+        "seq": 11,
+        "text": "冷一点"
+      }
+    ]
+  },
+  "chatRulesExpired": {
+    "chapter": 7,
+    "expired": 2,
+    "rules": []
+  },
+  "chatRulesNone": {
+    "chapter": 2,
+    "expired": 0,
+    "rules": []
   },
   "chatStopped": {
     "chat_id": "chat_session:ID42",

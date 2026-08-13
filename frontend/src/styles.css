@@ -592,6 +592,23 @@ header select {
 .chat-session-del { flex: 0 0 auto; padding: 2px 7px; }
 .chat-session-confirm { flex: 0 0 auto; display: flex; gap: 4px; }
 
+/* 现在生效的规矩（ADR 0023 决策二）：**和会话列表同一个形状** —— 收着不占一个像素，
+   点开盖住对话区。常驻在对话上方的话，绝大多数时候它是一块空面板，
+   而这一半本来就在跟一轮几分钟的对话抢竖直空间。 */
+.chat-rules { padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.chat-rules-empty { margin: 0; font-size: 12px; line-height: 1.8; }
+.chat-rule-list { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow: auto; }
+.chat-rule { display: flex; align-items: flex-start; gap: 4px; padding: 6px 0; }
+.chat-rule + .chat-rule { border-top: 1px solid var(--line); }
+.chat-rule-body { flex: 1; min-width: 0; }
+.chat-rule-text { margin: 0; line-height: 1.6; word-break: break-word; }
+.chat-rule-scope { display: block; margin-top: 2px; color: var(--dim); font-size: 11px; }
+/* 二次确认那一句：取消在库里是**追加**不是删除，而作者看到的是「这一行没了」——
+   两者的差别他看不见，所以按下去之前得先说清他能拿回什么。 */
+.chat-rule-warn { display: block; margin-top: 4px; color: var(--warn); font-size: 11px; line-height: 1.7; }
+.chat-rule-del { flex: 0 0 auto; padding: 2px 7px; }
+.chat-rule-confirm { flex: 0 0 auto; display: flex; gap: 4px; }
+
 /* 对话区 */
 .chat-log { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
 .chat-log .empty { font-size: 12px; line-height: 1.8; }

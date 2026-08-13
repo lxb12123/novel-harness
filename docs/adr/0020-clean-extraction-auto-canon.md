@@ -9,7 +9,7 @@
   [ADR 0005](0005-set-judgment-only.md)（只做集合判断）、
   [ADR 0018](0018-cast-is-derived-not-declared.md)（在场从正文推）、
   [ADR 0019](0019-agent-loop-not-graph.md)（模式二）
-- **决策日志**：`docs_dev/2026-08-10-模式二与事后可查可改的进度板.md`（记「当时怎么想」，非权威）
+- **决策日志**：`docs_dev/2026-08-12-模式二与事后可查可改的收尾快照.md`（它替掉了 08-10 那块板子；旧板子在 `git show f10ddbb:docs_dev/2026-08-10-模式二与事后可查可改的进度板.md`）（记「当时怎么想」，非权威）
 
 ## 决策
 

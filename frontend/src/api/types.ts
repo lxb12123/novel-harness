@@ -978,3 +978,51 @@ export interface ChatDeleted {
   chat_id: string;
   deleted: boolean;
 }
+
+/**
+ * 作者在对话里定下的一条规矩（[ADR 0023](docs/adr/0023-context-is-pruned-by-rebuildability.md) 决策二）。
+ *
+ * **`scope` 是后端写好的一句中文，不是一个码。** 这是有意的：`chapter_wide` 那个 bool
+ * 翻成人话只有两种可能——前端摆一张「码 → 中文」的表（那张表被删过一次，理由在
+ * `correctionError.ts` 顶上），或者后端翻一次。同 `TurnReceipt.message` /
+ * `DraftCandidateView.stopped_reason`：措辞的唯一出处在后端，这一层照抄。
+ *
+ * **屏幕上没有「说过几遍」这个数**，后端也没发（提炼是模型干的，它记下的东西作者
+ * 不一定真说过——一个说不准的数不如不说）。作者要决定的只有「留还是不留」。
+ */
+export interface AuthorRuleView {
+  /** 取消它时报这个数。**一个字符都不上屏**——它是历史下标，不是给人看的编号。 */
+  seq: number;
+  text: string;
+  /** 它管到哪儿、什么时候自己就没了。**后端写的中文，照抄。** */
+  scope: string;
+}
+
+/**
+ * 这一章现在生效的那几条。
+ *
+ * **`expired` 是零态的那句理由**（§10 约束 8）：`rules` 空的时候，屏幕必须说得出
+ * 自己是哪一种空——「还没有规矩在管着」和「定过、这会儿都不作数了」下一步动作不同。
+ * 这个仓库为「静默的零」栽过五次，每一次的形态都一样：一块看起来完全正常的空面板。
+ *
+ * `expired` 数的是**整段对话**里的，不只这一章：作者在第 2 章定过、这会儿在第 7 章，
+ * 正是这个数存在的理由。他自己取消掉的不算（他知道它没了，是他按的）。
+ */
+export interface ChatRules {
+  /** 这份答案是按第几章算的。**屏幕上说的是它**，不是坐标里那一章——
+   *  请求飞着的时候作者可能已经翻了页。 */
+  chapter: number;
+  rules: AuthorRuleView[];
+  expired: number;
+}
+
+export interface ChatRuleRevoked {
+  chat_id: string;
+  seq: number;
+  /** 恒为 `true`（撤不掉的那几种在这之前就是 4xx 了）。
+   *
+   *  **不许拿它当「这条已经从清单上消失」的证据**：真正的证据是重取一次那份清单。
+   *  一条规矩可能被记过好几遍，撤销按**身份**撤掉每一份——而「只划掉作者点的那个
+   *  下标」这个 bug 唯一会现形的地方，就是重取回来它还在。 */
+  revoked: boolean;
+}

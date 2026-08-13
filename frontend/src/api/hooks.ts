@@ -17,6 +17,8 @@ import type {
   ChapterText,
   ChatDeleted,
   ChatDetail,
+  ChatRuleRevoked,
+  ChatRules,
   ChatSessionView,
   ChatStopped,
   ChatTurnEvent,
@@ -664,7 +666,7 @@ export function useCorrectEventCast(pid: string) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// 写作助手（模式二，ADR 0019）—— 六条路由：开 / 列 / 看 / 删 / 跑一轮 / 停
+// 写作助手（模式二，ADR 0019）—— 开 / 列 / 看 / 删 / 跑一轮 / 停 / 规矩两条
 // ══════════════════════════════════════════════════════════════════════════
 
 const chats = (pid: string, tail = "") => proj(pid, `/chats${tail}`);
@@ -782,6 +784,10 @@ export function useRunTurn(pid: string) {
       // 桌上摆着的那几稿（ADR 0022）：这一轮很可能又添了几份，而「这一章还摆着几稿」
       // 那个入口是作者关掉回执之后唯一找得回它们的地方。
       qc.invalidateQueries({ queryKey: ["drafts", pid] });
+      // 这一轮很可能记下了一条新规矩（模型叫的 `remember_rule`，作者没按任何按钮）。
+      // **不失效它，那条规矩要等下一次刷新才出现在清单上**——而 ADR 0023 押的退路
+      // 只有一句「看得见 + 能取消」，一条看不见的新规矩正好落在它外面。
+      qc.invalidateQueries({ queryKey: ["rules", pid] });
       invalidatePanels(qc, pid);
       // **把这一条 return 出去**：mutation 会等它重取完才算落地，于是「正在跑」那一段
       // 屏幕能一直挂到新消息真的到手。不等的话中间有一帧是
@@ -802,6 +808,44 @@ export function useStopChat(pid: string) {
   return useMutation({
     mutationFn: (v: { chatId: string; runId: string }) =>
       api.post<ChatStopped>(chats(pid, `${one(v.chatId)}/stop`), { run_id: v.runId }),
+  });
+}
+
+/**
+ * 这一章现在生效的那几条规矩（[ADR 0023](docs/adr/0023-context-is-pruned-by-rebuildability.md) 决策二）。
+ *
+ * **`chapter` 必给。** 后端在没有章号时直接 422 而不是回一份空清单，理由是那份空清单
+ * 长得和「这一章确实没有规矩」一模一样——**一句它不知道真假的话，而且看起来完全正常**。
+ *
+ * **不轮询**：规矩只有两种长出来的方式，一种是跑一轮（`useRunTurn` 跑完会失效它），
+ * 一种是作者自己点掉一条（那条 mutation 也失效它）。别的时刻它不会自己变。
+ */
+export function useChatRules(pid: string | null, chatId: string | null, chapter: number | null) {
+  return useQuery({
+    queryKey: q(["rules", pid, chatId, chapter]),
+    queryFn: () => api.get<ChatRules>(chats(pid!, `${one(chatId!)}/rules?chapter=${chapter}`)),
+    enabled: !!pid && !!chatId && !!chapter,
+  });
+}
+
+/**
+ * 作者点掉一条规矩。
+ *
+ * ── **不做乐观更新**，而且这一条是这个按钮的全部价值所在 ──────────────────────
+ *
+ * 同一条规矩可能被记过好几遍，读端只摆出最后那一条；撤销在引擎侧按**身份**撤掉每一份。
+ * 那件事出错的时候（只划掉作者点的那个下标），后端照样 200、回执照样 `revoked: true`
+ * ——**唯一能看出来的地方就是重取回来它还在**。
+ *
+ * 所以这儿只失效、不预先把那一行从屏幕上抹掉：抹掉的话界面自己伪造了成功，
+ * 而作者要到下一次打开这块面板才发现规矩还在（那时他早忘了自己点过）。
+ */
+export function useRevokeRule(pid: string, chatId: string | null) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (seq: number) =>
+      api.del<ChatRuleRevoked>(chats(pid, `${one(chatId!)}/rules/${seq}`)),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["rules", pid] }),
   });
 }
 

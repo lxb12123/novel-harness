@@ -120,6 +120,10 @@ const DEFAULT: Handler[] = [
   // 不流式那条仍然在（它是「换回请求/响应」那条退路），今天浏览器不打它。
   { method: "POST", match: /\/chats\/[^/]+\/turn$/, body: fixtures.chatTurn },
   { method: "POST", match: /\/chats\/[^/]+\/stop$/, body: fixtures.chatStopped },
+  // 作者的规矩（ADR 0023 决策二）。**默认给「有两条」那一份**：三种长相里另外两种
+  // （一条都没定过 / 定过都不作数了）在真 dump 里也各有一份，由要验它们的测试自己前置。
+  { method: "DELETE", match: /\/rules\/\d+$/, body: fixtures.chatRuleRevoked },
+  { match: /\/rules\?/, body: fixtures.chatRules },
   { method: "DELETE", match: /\/chats\/[^/]+$/, body: fixtures.chatDeleted },
   { match: /\/chats\/[^/]+$/, body: fixtures.chatDetail },
   // 桌上摆着的那几稿（ADR 0022）。两条**形状上不重叠**：详情那条要求 `/drafts/` 后面

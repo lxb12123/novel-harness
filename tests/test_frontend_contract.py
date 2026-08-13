@@ -478,6 +478,81 @@ def test_frontend_fixture_matches_the_real_api(
     doomed = client.post(f"{base}/chats", json={"title": "删掉它"})
     grab("chatDeleted", client.delete(f"{base}/chats/{doomed.json()['id']}"))
 
+    # ── 作者的规矩（ADR 0023 决策二）：**摆出来 + 能取消** ──────────────────────
+    #
+    # **又另开一段**（同上面那条理由）：这几轮会往历史里加东西，跑在前面那两段上会把
+    # 已经抓好的夹具推着走。
+    #
+    # 三份一起冻，因为这块面板有三种长相，而**照一种写出来的界面等于只验过三分之一**：
+    # 有规矩 / 一条都没有过 / 定过但都不作数了。后两种在屏幕上必须说不同的话
+    # （§10 约束 8：零带着理由），而它们在真夹具里长得都是「空清单」。
+    ruled = client.post(f"{base}/chats", json={"title": "定几条规矩"})
+    assert ruled.status_code == 201, ruled.text
+    ruled_id = ruled.json()["id"]
+
+    def remembers(*rules: str) -> Any:
+        """一轮：模型先叫几次「记下来」，再说一句话收手。"""
+        script = [
+            CompletionResult(
+                text="",
+                model="deepseek-v4-flash",
+                finish_reason="tool_calls",
+                tool_calls=tuple(
+                    ToolCall(
+                        id=f"r{i}",
+                        name="remember_rule",
+                        arguments=json.dumps({"rule": rule}, ensure_ascii=False),
+                    )
+                    for i, rule in enumerate(rules)
+                ),
+            ),
+            CompletionResult(
+                text="记下了。",
+                model="deepseek-v4-flash",
+                finish_reason="stop",
+                prompt_tokens=900,
+                completion_tokens=12,
+            ),
+        ]
+        seen: list[Any] = []
+
+        def model(messages: Any, *, tools: Any, cancel: Any) -> Any:
+            seen.append(messages)
+            return script[min(len(seen) - 1, len(script) - 1)]
+
+        return model
+
+    # 第一轮记一条，第二轮把同一条**再记一遍**（作者又说了）+ 另加一条。
+    # 于是清单上一条是章级（说到第二遍自动升上来）、一条还是批级——**两种长相都在夹具里**。
+    for said, remembered in (
+        ("这一章别写打斗。", ("这一章别写打斗",)),
+        ("我说真的，别写打斗；还有，冷一点。", ("这一章别写打斗", "冷一点")),
+    ):
+        monkeypatch.setattr(chat_mod, "build_agent_model", lambda c, p, m=remembers(*remembered): m)
+        ran = client.post(
+            f"{base}/chats/{ruled_id}/turn", json={"chapter": 2, "said": said}
+        )
+        assert ran.status_code == 200, ran.text
+
+    grab("chatRules", client.get(f"{base}/chats/{ruled_id}/rules", params={"chapter": 2}))
+    # 作者翻到第 7 章：那两条都不属于这一章了，**而它们仍然存在过**——空清单带着的
+    # 那个数就是界面说「定过、这会儿都不作数了」的全部依据。
+    grab("chatRulesExpired", client.get(f"{base}/chats/{ruled_id}/rules", params={"chapter": 7}))
+    # 一条都没定过的那一段（`chat_id` 那一轮只查了约束、写了一稿）。**这不是边角**：
+    # 每一段对话都是从这一档开始的，它是作者最常看见的那一屏。
+    grab("chatRulesNone", client.get(f"{base}/chats/{chat_id}/rules", params={"chapter": 2}))
+    # 点掉那条章级的。**它记过两遍，而撤销按身份撤掉每一份**——只划掉这个下标的话，
+    # 前面那一遍还在，且没有任何东西会报错（`api/chat.py::revoke_rule` 写着那个形态）。
+    chapter_wide = next(
+        rule
+        for rule in dump["chatRules"]["rules"]
+        if "第 2 章" in rule["scope"]
+    )
+    grab(
+        "chatRuleRevoked",
+        client.delete(f"{base}/chats/{ruled_id}/rules/{chapter_wide['seq']}"),
+    )
+
     # ── 多版本的一章：版本抽屉的「还原 / 删除」只在有第二版时才存在 ──────────
     # **放在最后**：这一步会改第 2 章的正文，前面每一个 grab 都不该看见它。
     # `chapterHistory` 那份只有一版（导入即当前），照它写出来的界面在真实的两版面前
