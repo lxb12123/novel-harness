@@ -572,3 +572,51 @@ def test_build_client_converts_a_missing_openai_into_a_provider_error(
     monkeypatch.setitem(sys.modules, "openai", None)
     with pytest.raises(ProviderError, match="缺少 openai"):
         _build_client(ProviderConfig(base_url=LOCAL, model="qwen2.5"))
+
+
+def test_off_on_anthropic_is_a_known_gap() -> None:
+    """**这条钉的是一个「今天还没修」，不是一个「今天正确」。**
+
+    Anthropic 官方 effort 文档（`ANTHROPIC_EFFORT_URL`）三句话连起来：
+    默认就是 `high` ／ 显式写 `high` 和干脆不写**完全等价** ／ `max_tokens` 是
+    「思考 + 正文」的硬上限。所以我们在 OFF 档不发字段 = 请求按 **high** 跑 =
+    思考照样发生、照样从 `max_tokens` 里扣，而 `plan_call` 的预留分支
+    （`effort is not OFF and reasoning_shares_output`）**这一档根本不进** ⇒ 零预留。
+
+    后果不是报错，是**一次整章起草可能在 `finish_reason="length"` 上被截断**，
+    而作者看到的是「这助手写着写着没了」。
+
+    ── 为什么不顺手修掉 ──────────────────────────────────────────────────
+    档位表上五档（max/xhigh/high/medium/low）**没有 "none"**，OFF 只能靠
+    `thinking: {"type": "disabled"}` 表达；而官方明写它在 xhigh/max 上返回 400，
+    在「adaptive 常开」的型号（`claude-fable-5`）上行为没写。
+    **没有 Anthropic 钥匙就验不了**，而发错的下场是起草整个 400 —— 比现在这个
+    偏小的预算更坏。所以今天只把它钉住、说清楚。
+
+    ── 这条什么时候该删 ──────────────────────────────────────────────────
+    有人拿真钥匙验过并补上 OFF 的编码之后，这条会红。**那时删掉它**，
+    并把 `provider.py` 那段注释一起换成实测结论。
+    """
+    from novel_harness.draft.capabilities import CAPABILITY_REGISTRY
+    from novel_harness.draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage
+
+    length = DEFAULT_LENGTH_POLICY.default_for(DraftLanguage.ZH)
+    route = ("https://api.anthropic.com/v1", "claude-opus-5")
+    capability = CAPABILITY_REGISTRY[route]
+    assert capability.reasoning_dialect is ReasoningDialect.ANTHROPIC_COMPAT
+    assert capability.reasoning_shares_output is True
+
+    plan = plan_call(length, ReasoningEffort.OFF, capability)
+    wire = _wire_kwargs(
+        ProviderConfig(base_url=route[0], model=route[1], api_key="k"),
+        plan,
+        [{"role": "user", "content": "写第 89 章"}],
+    )
+    assert "extra_body" not in wire and "reasoning_effort" not in wire, (
+        "OFF 在 Anthropic 上开始发东西了 —— 若是有人验过并补上了编码，"
+        "删掉这条测试，并把 provider.py 里那段注释换成实测结论。"
+    )
+    # 零预留的那一半：required 等于 visible，一个 token 都没给思考留。
+    assert plan.required_token_budget == plan.visible_token_budget, (
+        "预留逻辑变了 —— 这条测试描述的缺口可能已经不成立，重新读 plan_call。"
+    )

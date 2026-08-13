@@ -445,6 +445,22 @@ def _wire_kwargs_from_validated(
             kwargs["extra_body"] = {"reasoning": {"effort": "none", "exclude": True}}
         elif dialect is ReasoningDialect.DEEPSEEK:
             kwargs["extra_body"] = {"thinking": {"type": "disabled"}}
+        # ⚠️ **`ANTHROPIC_COMPAT` 在这儿什么都不发 —— 而那是一个已知缺口,不是省略。**
+        #    2026-08-13 由官方文档坐实(`ANTHROPIC_EFFORT_URL`),三句话连起来看:
+        #      ① 「By default, Claude uses high effort」
+        #      ② 「Setting effort to "high" produces exactly the same behavior as
+        #         omitting the effort parameter entirely」
+        #      ③ 「it is a hard limit on total output, thinking plus response text」
+        #    ⇒ 我们的 OFF 不发字段 = 请求按 **high** 跑 = 思考照样发生,
+        #      而思考的 token 和正文**共用** `max_tokens`。
+        #    偏偏 `plan_call` 的预留分支写的是「effort 不是 OFF 才预留」,于是这一档
+        #    **一个 token 都没预留** ⇒ 一次整章起草(可见预算 7,024)可能被思考吃掉一截
+        #    ⇒ 稿子在 `finish_reason="length"` 上截断,看起来像模型不行。
+        #    档位表上那五档(max/xhigh/high/medium/low)**没有 "none"**,所以 OFF 只能靠
+        #    `thinking: {"type": "disabled"}` 表达 —— 而那个在 xhigh/max 上会 400,
+        #    在「adaptive 常开」的型号上行为未知。**没有 Anthropic 钥匙就验不了,
+        #    所以这一刀今天不发**:发错的下场是起草整个 400,比现在这个偏小的预算更坏。
+        #    钉在 `tests/test_draft_provider.py::test_off_on_anthropic_is_a_known_gap`。
         return kwargs
 
     value = effort.value

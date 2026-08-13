@@ -11,7 +11,7 @@ import os
 from enum import StrEnum
 from fractions import Fraction
 from types import MappingProxyType
-from typing import Literal, Mapping, Self
+from typing import Final, Literal, Mapping, Self
 from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -35,6 +35,8 @@ OPENAI_CHAT_URL = (
 DEEPSEEK_MODELS_URL = "https://api-docs.deepseek.com/quick_start/pricing/"
 DEEPSEEK_THINKING_URL = "https://api-docs.deepseek.com/guides/thinking_mode"
 ANTHROPIC_OPUS_URL = "https://platform.claude.com/docs/en/about-claude/models/whats-new-claude-4-8"
+ANTHROPIC_MODELS_URL = "https://platform.claude.com/docs/en/about-claude/models/overview"
+ANTHROPIC_EFFORT_URL = "https://platform.claude.com/docs/en/build-with-claude/effort"
 ANTHROPIC_COMPAT_URL = "https://platform.claude.com/docs/en/cli-sdks-libraries/libraries/openai-sdk"
 ANTHROPIC_THINKING_URL = (
     "https://platform.claude.com/docs/en/about-claude/models/extended-thinking-models"
@@ -543,9 +545,15 @@ def _known_capability(
     max_tokens_field: Literal["max_tokens", "max_completion_tokens"],
     reasoning_levels: frozenset[ReasoningEffort],
     reasoning_dialect: ReasoningDialect,
+    reasoning_shares_output: bool = True,
     reserve_ratio_high: float | None = None,
     supports_stream_usage: bool | None = None,
 ) -> ProviderCapabilities:
+    """一条查证过的路由。
+
+    `reasoning_shares_output` 默认 `True` 是**保守方向**：多留预算不会写坏，少留会截断。
+    只有「这条路由压根没有非 OFF 档」时才传 `False`——那时 `_is_coherent` 也不许它是 `True`。
+    """
     return ProviderCapabilities(
         base_url=base_url,
         model=model,
@@ -557,7 +565,7 @@ def _known_capability(
         max_tokens_field_source="declared",
         reasoning_levels=reasoning_levels,
         reasoning_dialect=reasoning_dialect,
-        reasoning_shares_output=True,
+        reasoning_shares_output=reasoning_shares_output,
         reserve_ratio_high=reserve_ratio_high,
         supports_streaming=True,
         supports_stream_usage=supports_stream_usage,
@@ -565,6 +573,42 @@ def _known_capability(
 
 
 _ALL_EFFORTS = frozenset(ReasoningEffort)
+
+#: Anthropic 的模型分两组，**判据是官方 effort 文档的「Supported models」那一行**，
+#: 不是「新不新」也不是「贵不贵」。分错的后果各不相同，所以这两张表不许合并：
+#:
+#: * 上表（支持 `effort`）→ `ANTHROPIC_COMPAT` 方言，四档全开；
+#: * 下表（**不支持** `effort`）→ 方言必须是 `NONE`、只有 OFF。给它们发
+#:   `output_config.effort` 是发一个这条路由不认识的字段。
+#:
+#: ⚠️ **`claude-mythos-*` 有意不在表上**：官方写着 invitation-only、无自助开通，
+#: 登记一条作者开不了的路由等于在设置页里挂一个必然失败的选项。
+#:
+#: ⚠️ **Anthropic 还有 `xhigh` / `max` 两档，本仓的 `ReasoningEffort` 没有**。
+#: 那不是漏登记：加两个枚举值会动到所有方言的 wire 和 `_ALL_EFFORTS` 的语义，
+#: 是一次独立改动。今天的后果只是「这条路由最高只到 high」，方向安全。
+#:
+#: (model, max_context_tokens, max_output_tokens)
+_ANTHROPIC_EFFORT_MODELS: Final[tuple[tuple[str, int, int], ...]] = (
+    ("claude-fable-5", 1_000_000, 128_000),
+    ("claude-opus-5", 1_000_000, 128_000),
+    ("claude-sonnet-5", 1_000_000, 128_000),
+    ("claude-opus-4-8", 1_000_000, 128_000),
+    ("claude-opus-4-7", 1_000_000, 128_000),
+    ("claude-opus-4-6", 1_000_000, 128_000),
+    ("claude-sonnet-4-6", 1_000_000, 128_000),
+    ("claude-opus-4-5-20251101", 200_000, 64_000),
+    # **别名也要各登记一条**：注册表的键是精确的 model 字符串，而作者在设置页
+    # 打的是他在文档里看见的那个。少一条 = 那个拼法落回 unknown。
+    ("claude-opus-4-5", 200_000, 64_000),
+)
+
+_ANTHROPIC_NO_EFFORT_MODELS: Final[tuple[tuple[str, int, int], ...]] = (
+    ("claude-haiku-4-5-20251001", 200_000, 64_000),
+    ("claude-haiku-4-5", 200_000, 64_000),
+    ("claude-sonnet-4-5-20250929", 200_000, 64_000),
+    ("claude-sonnet-4-5", 200_000, 64_000),
+)
 _DEEPSEEK_PRO_EFFORTS = frozenset({ReasoningEffort.OFF, ReasoningEffort.HIGH})
 _DEEPSEEK_FLASH_EFFORTS = frozenset(
     {ReasoningEffort.OFF, ReasoningEffort.LOW, ReasoningEffort.HIGH}
@@ -611,19 +655,40 @@ def _build_registry() -> Mapping[tuple[str, str], ProviderCapabilities]:
                 reserve_ratio_high=0.95,
             )
         )
-    entries.append(
-        _known_capability(
-            "https://api.anthropic.com/v1",
-            "claude-opus-4-8",
-            source="registry:anthropic-openai-compat-opus-4.8",
-            source_urls=(ANTHROPIC_OPUS_URL, ANTHROPIC_COMPAT_URL, ANTHROPIC_THINKING_URL),
-            max_context_tokens=1_000_000,
-            max_output_tokens=128_000,
-            max_tokens_field="max_tokens",
-            reasoning_levels=_ALL_EFFORTS,
-            reasoning_dialect=ReasoningDialect.ANTHROPIC_COMPAT,
+    for model, context, output in _ANTHROPIC_EFFORT_MODELS:
+        entries.append(
+            _known_capability(
+                "https://api.anthropic.com/v1",
+                model,
+                source="registry:anthropic-openai-compat",
+                source_urls=(
+                    ANTHROPIC_MODELS_URL,
+                    ANTHROPIC_EFFORT_URL,
+                    ANTHROPIC_COMPAT_URL,
+                    ANTHROPIC_THINKING_URL,
+                ),
+                max_context_tokens=context,
+                max_output_tokens=output,
+                max_tokens_field="max_tokens",
+                reasoning_levels=_ALL_EFFORTS,
+                reasoning_dialect=ReasoningDialect.ANTHROPIC_COMPAT,
+            )
         )
-    )
+    for model, context, output in _ANTHROPIC_NO_EFFORT_MODELS:
+        entries.append(
+            _known_capability(
+                "https://api.anthropic.com/v1",
+                model,
+                source="registry:anthropic-openai-compat-no-effort",
+                source_urls=(ANTHROPIC_MODELS_URL, ANTHROPIC_EFFORT_URL, ANTHROPIC_COMPAT_URL),
+                max_context_tokens=context,
+                max_output_tokens=output,
+                max_tokens_field="max_tokens",
+                reasoning_levels=frozenset({ReasoningEffort.OFF}),
+                reasoning_dialect=ReasoningDialect.NONE,
+                reasoning_shares_output=False,
+            )
+        )
     entries.append(
         _known_capability(
             "https://openrouter.ai/api/v1",
