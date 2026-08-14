@@ -165,7 +165,7 @@ class LowConfidenceStateItem(BaseModel):
     model_config = _STRICT
 
     source_kind: Literal["state_update"]
-    update_kind: Literal["location", "state", "relationship"]
+    update_kind: Literal["location", "state", "relationship", "death"]
     confidence: float = Field(ge=0, le=1)
     proposed: ProposedEdgeItem
 
@@ -173,7 +173,7 @@ class LowConfidenceStateItem(BaseModel):
 class EdgeConflictItem(BaseModel):
     model_config = _STRICT
 
-    update_kind: Literal["location", "state", "relationship"]
+    update_kind: Literal["location", "state", "relationship", "death"]
     current: CurrentEdgeItem
     proposed: ProposedEdgeItem
 

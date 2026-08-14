@@ -63,6 +63,7 @@ from . import decisions, project
 from .db import Connection
 from .decisions import DecisionKind, Verdict
 from .graph import (
+    DEAD_VALUE_TEXT,
     HEALTH_DIM_KEY,
     HEALTH_DIM_NAME,
     AliasKind,
@@ -89,14 +90,6 @@ from .text import anchor
 
 CONTEXT_RADIUS: Final = 15
 """`QuoteCandidate.context` 在命中处前后各留的字数。**只影响拒绝消息，不影响任何锚。**"""
-
-DEAD_VALUE_TEXT: Final = "死"
-"""`declare_dead` 写进 `EdgeProps.value` 的那个字。**给人看的，规则不许解析它。**
-
-它是常量而不是一个参数，理由是「作者写什么词」和「规则怎么判」必须彻底分开：
-判据只有 `value_key`（`HealthValue.DEAD`）。哪天要让作者填「陨落 / 坐化 / 兵解」，
-加的是一个**只影响这一行显示**的可选参数，`value_key` 那一侧一个字都不许动。
-"""
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -556,10 +549,17 @@ class Ledger:
     #
     # ── 为什么下面那两个**不在**这一组里（这是这次改动的全部风险所在）──────────
     #
-    # `declare_dead` 和 `declare_first_appearance` 长得像同一组，其实不是：它们是
-    # **R2 / R3 在生产上唯一的写入方**，而抽取器一个字都不写它们
-    # （`extract/ingest_helpers.py` 的 state_updates 只映射到 `LOCATED_AT`）。
-    # 删了它们的入口 = 两条规则永远不可能开火，而 `nh check` 照旧说「没问题」。
+    # `declare_dead` 和 `declare_first_appearance` 长得像同一组，其实不是。
+    #
+    # **`declare_first_appearance` 仍是 R2 在生产上唯一的写入方**，而且**只能是**：
+    # `first_appears_chapter` 主要用法是「这个东西我打算第 200 章才让它出场」——
+    # 那是**作者的计划**，物理上不在已写文本里（ADR 0004：墙上那把枪是不是伏笔，
+    # 取决于他第 200 章打不打算开枪）。模型读不出没写下来的意图。
+    #
+    # **`declare_dead` 2026-08-14 起不再唯一**：抽取器长出了 `kind="death"`
+    # （`extract/models.py` 那段论证：模型在**封闭枚举**里挑一个，`value_key` 仍由
+    # 引擎写死，铁律 2 没破）。它留下来是作为「改」的入口——模型漏了或判错时，
+    # 作者手上得有一条路。端到端由 `tests/test_extractor_feeds_r3.py` 钉住。
     #
     # **这个坑这个仓库刚爬出来过**：`checks/__init__.py` 开头那段警告说的就是
     # 2026-08-02 到 08-13 之间那十一天——规则每天绿着，生产上结构性哑火。
@@ -611,7 +611,10 @@ class Ledger:
         )
 
     def declare_dead(self, *, who: str, quote: str) -> Declaration:
-        """「他在这段原文里死了」。R3 DEAD_SPEAKS 的**唯一生产写入方**。
+        """「他在这段原文里死了」。R3 DEAD_SPEAKS 的生产写入方**之一**。
+
+        **2026-08-14 起它不再是唯一的**：抽取器长出了 `kind="death"`（模型在封闭枚举里挑一个，`value_key` 仍由引擎写死），端到端由 `tests/test_extractor_feeds_r3.py` 钉住。**手工这条留着是「改」，不是「建」**。
+
 
         ── 三件必须一起发生的事，所以它们在一个方法里 ────────────────────────
 

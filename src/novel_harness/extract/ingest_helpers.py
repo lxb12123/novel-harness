@@ -9,11 +9,28 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..graph import Edge, EdgeType, GraphStore, NodeLabel, StateSnapshot
+from ..graph import (
+    HEALTH_DIM_KEY,
+    Edge,
+    EdgeType,
+    GraphStore,
+    HealthValue,
+    NodeLabel,
+    StateSnapshot,
+)
 from ..text.anchor import Located
 from .analyze import SurfaceResolution, resolve_surfaces
 from .locate import LocateOutcome, locate_quote
 from .models import RawChapterAnalysis, RawStateUpdate
+
+EDGE_TYPE_BY_KIND: dict[str, EdgeType] = {
+    "location": EdgeType.LOCATED_AT,
+    "state": EdgeType.HAS_STATE,
+    "relationship": EdgeType.RELATED_TO,
+    "death": EdgeType.HAS_STATE,
+}
+"""`RawStateUpdate.kind` → 边的类型。**这张表只有一份**：`service.py` 和这里
+原先各写了一遍，加 `death` 那天两处只改了一处就是一条静默丢弃的事实。"""
 
 DiscardKind = Literal["event", "state_update", "character_profile"]
 
@@ -195,6 +212,24 @@ def prepare_state_update(
     )
     if reason is not None:
         return None, reason
+    # `death` 的对面**不是一个称呼**，是引擎自己的 health 维度（`StateDim` 不在花名册里，
+    # `CANONICAL_ALIAS_LABELS` 有意排除它）。所以这一档跳过称呼解析，`target_id` 留空，
+    # 由 `ExtractionService` 在事务里 `ensure_state_dim` 现取——同 `Ledger.declare_dead`。
+    if raw.kind == "death":
+        located, reason = locate_evidence("state_update", index, paras, raw.quote)
+        if reason is not None:
+            return None, reason
+        return PreparedStateUpdate(
+            index=index,
+            raw=raw,
+            subject_id=subjects[0],
+            target_id="",
+            located=located,
+            # 用常量当键：同一章里两条「他死了」要被 `keep_last_state_updates` 折成一条，
+            # 而那时维度节点还没取出来。**这个键只在本次分析里用**，不进库。
+            graph_key=(EdgeType.HAS_STATE.value, subjects[0], HEALTH_DIM_KEY),
+        ), None
+
     target_surface = raw.dimension if raw.kind == "state" else raw.object
     expected = (
         NodeLabel.STATE_DIM
@@ -212,11 +247,7 @@ def prepare_state_update(
     if reason is not None:
         return None, reason
     subject_id, target_id = subjects[0], targets[0]
-    edge_type = {
-        "location": EdgeType.LOCATED_AT,
-        "state": EdgeType.HAS_STATE,
-        "relationship": EdgeType.RELATED_TO,
-    }[raw.kind]
+    edge_type = EDGE_TYPE_BY_KIND[raw.kind]
     if raw.kind == "location":
         graph_key = (edge_type.value, subject_id)
     elif raw.kind == "state":
@@ -272,7 +303,7 @@ def find_conflict(
         if current is None or current.dst == target_id:
             return None
         value: str | None = None
-    elif raw.kind == "state":
+    elif raw.kind in ("state", "death"):
         current = next(
             (
                 edge
@@ -281,7 +312,14 @@ def find_conflict(
             ),
             None,
         )
-        if current is None or current.props.value == raw.value:
+        # `death` 比的是**机器键**不是那段中文（`value` 是引擎写的常量，比它等于自比）。
+        same = (
+            current is not None
+            and current.props.value_key == HealthValue.DEAD
+            if raw.kind == "death"
+            else current is not None and current.props.value == raw.value
+        )
+        if current is None or same:
             return None
         value = current.props.value
     else:

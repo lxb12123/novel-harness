@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from .models import (
     CANONICAL_ALIAS_LABELS,
+    DEAD_VALUE_TEXT,
     HEALTH_DIM_KEY,
     HEALTH_DIM_NAME,
     UNDIRECTED_EDGE_TYPES,
@@ -69,6 +70,7 @@ from .store import (
 
 __all__ = [
     "CANONICAL_ALIAS_LABELS",
+    "DEAD_VALUE_TEXT",
     "HEALTH_DIM_KEY",
     "HEALTH_DIM_NAME",
     "HOP2_EDGE_TYPES",

@@ -29,13 +29,18 @@ Every event is exactly this object:
   "confidence": number from 0 through 1}}
 
 Every state update is exactly this object:
-{{"kind": "location" or "state" or "relationship", "subject": surface name,
+{{"kind": "location" or "state" or "relationship" or "death", "subject": surface name,
   "object": surface name or null, "dimension": string or null,
   "value": string or null, "quote": string, "confidence": number from 0 through 1}}
-The "kind" field is required. Use exactly one of these three shapes:
+The "kind" field is required. Use exactly one of these four shapes:
 - "kind": "location": subject + object; dimension and value must be null or omitted.
 - "kind": "state": subject + dimension + value; object must be null or omitted.
 - "kind": "relationship": subject + object + value; dimension must be null or omitted.
+- "kind": "death": subject only; object, dimension and value must be null or omitted.
+Use "death" when the chapter states that the subject dies, is killed, or is confirmed
+dead. Use it for the death itself, not for someone merely fearing, predicting, or
+falsely reporting a death, and not for a character who is only wounded or unconscious.
+Do not express a death as a "state" update with a dimension of your own wording.
 Return no more than 24 state updates.
 
 Every event and state update must include a verbatim quote of no more than 120

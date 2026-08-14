@@ -72,6 +72,7 @@ _EXPECTED_EDGE_TYPE = {
     "location": EdgeType.LOCATED_AT,
     "state": EdgeType.HAS_STATE,
     "relationship": EdgeType.RELATED_TO,
+    "death": EdgeType.HAS_STATE,
 }
 
 

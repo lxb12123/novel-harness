@@ -1495,10 +1495,17 @@ def declare_alias(
 # ⚠️ **`nh declare knows / believes / where` 2026-08-14 删了**（同 HTTP 那三条）。
 # 作者裁决：「谁知道什么 / 谁以为什么 / 谁在哪儿」只走抽取那条路。
 #
-# **下面这两条不是同一组。** `dead` / `appears` 是 R3 / R2 在生产上唯一的写入方
-# （抽取器不写 `value_key` / `first_appears_chapter`），删了它们等于让 `nh check`
-# 在两条规则永远哑火的情况下继续对作者说「没问题」——`checks/__init__.py` 开头
-# 那段警告记的就是那十一天。
+# **下面这两条不是同一组。**
+#
+# `appears` 是 **R2 在生产上唯一的写入方，而且只能是**：`first_appears_chapter`
+# 主要用法是「这东西我打算第 200 章才让它出场」——那是作者的计划，物理上不在已写
+# 文本里（ADR 0004），模型读不出没写下来的意图。
+#
+# `dead` 2026-08-14 起**不再唯一**（抽取器有 `kind="death"` 了），但它留着当「改」
+# 的入口：模型漏了或判错时，作者手上得有一条路。
+#
+# 删掉它们等于让 `nh check` 在规则哑火的情况下继续说「没问题」——
+# `checks/__init__.py` 开头那段警告记的就是那十一天。
 
 @declare_app.command("dead")
 def declare_dead(

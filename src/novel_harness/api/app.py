@@ -999,8 +999,9 @@ def write_scene(
 # 「谁知道什么 / 谁以为什么 / 谁在哪儿」那三条删了——那类事实只走抽取那条路
 # （作者裁决，见 `declare.py` 的「边」那一节）。剩下这四条各有不可替代的理由：
 # 前两条是**抽取器自己的前置**（称呼解析不到花名册里唯一的人 = 整条事实被丢），
-# 后两条是 **R3 / R2 在生产上唯一的写入方**（抽取器不写 `value_key` /
-# `first_appears_chapter`）。
+# 后两条撑着 R3 / R2：`first-appearance` 是 R2 **唯一且只能唯一**的写入方（首现章是
+# 作者的计划，不在已写文本里，模型读不出），`death` 2026-08-14 起和抽取器的
+# `kind="death"` 并列，留着当「改」的入口。
 #
 # 入参**没有一个章号字段**（§5.9 / 约束 10）：`valid_from` 只由引语落在哪一章决定，
 # `Ledger` 的签名里没有位置能让作者填它。`who`/`secret`/`loc`/`of` 全是称呼原文，
@@ -1141,7 +1142,8 @@ def declare_alias(
 # （作者裁决：「谁知道什么 / 谁在哪儿」只走抽取那条路，见 `declare.py` 那段注释）。
 #
 # **下面那两条不是同一组，别顺手删掉**：`/declare/death` 和 `/declare/first-appearance`
-# 是 R3 / R2 在生产上唯一的写入方，抽取器不写它们。
+# 撑着 R3 / R2：`first-appearance` 是 R2 唯一且只能唯一的写入方（首现章是作者的计划，
+# 不在已写文本里）；`death` 和抽取器的 `kind="death"` 并列，留着当「改」的入口。
 
 
 @app.post("/api/projects/{project_id}/declare/death")
@@ -1149,7 +1151,8 @@ def declare_dead(
     body: DeclareDeadBody,
     ledger: Ledger = Depends(get_ledger),
 ) -> Any:
-    """「他在这段原文里死了」。**R3 DEAD_SPEAKS 的唯一生产写入方。**
+    """「他在这段原文里死了」。**R3 DEAD_SPEAKS 的生产写入方之一**（另一个是抽取器的
+    `kind="death"`，2026-08-14 落地；这一条留着当「改」的入口）。
 
     这条路由之前，`StateSnapshot.is_dead` 在生产上恒为 False：`EdgeProps.value_key`
     零写入方、`StateDim` 零创建路径，于是「死人还在说话」结构上永远查不出来。

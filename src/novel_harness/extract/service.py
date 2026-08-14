@@ -7,19 +7,23 @@ from collections.abc import Sequence
 from ..db import Connection
 from ..events import EventStore, ProposalCreate, ProposalStore, ProvisionalEventSpec
 from ..graph import (
+    DEAD_VALUE_TEXT,
+    HEALTH_DIM_KEY,
+    HEALTH_DIM_NAME,
     ChapterText,
     EdgeProps,
     EdgeSource,
     EdgeSpec,
-    EdgeType,
     EvidenceSpec,
     GraphStore,
+    HealthValue,
     InformationScope,
     NodeLabel,
 )
 from ..text.anchor import Located, paragraphs
 from .analyze import SurfaceResolution
 from .ingest_helpers import (
+    EDGE_TYPE_BY_KIND,
     DiscardOutcome,
     DiscardReason,
     ExtractionContextError,
@@ -336,24 +340,34 @@ class ExtractionService:
     ) -> None:
         raw = prepared.raw
         subject_id, target_id = prepared.subject_id, prepared.target_id
+        # `death` 的对面是引擎自己的 health 维度，不是花名册里的一个称呼——`prepare`
+        # 那边留了空，在这儿现取（幂等）。同 `Ledger.declare_dead`：**维度由引擎建，
+        # 作者和模型都没有入口去建它**（`AUTHORED_LABELS` 里没有 `StateDim`）。
+        if raw.kind == "death":
+            target_id = self._graph.ensure_state_dim(
+                project_id, HEALTH_DIM_KEY, HEALTH_DIM_NAME
+            ).id
         located = prepared.located
         canon = self._graph.state_at(
             project_id, subject_id, chapter.number, scope=InformationScope.CANON
         )
         current = find_conflict(raw, subject_id, target_id, canon)
         evidence = self._put_evidence(project_id, chapter, located)
-        edge_type = {
-            "location": EdgeType.LOCATED_AT,
-            "state": EdgeType.HAS_STATE,
-            "relationship": EdgeType.RELATED_TO,
-        }[raw.kind]
+        # **`value_key` 由引擎写死，不从模型那段文字里认**——R3 的判据是这个键，
+        # 而「死 / 陨落 / 坐化 / 兵解」怎么写都不该影响它（ADR 0005 的铁律，
+        # `declare.py::declare_dead` 有完整论证）。`value` 那段中文只给人看。
+        props = (
+            EdgeProps(value=DEAD_VALUE_TEXT, value_key=HealthValue.DEAD)
+            if raw.kind == "death"
+            else EdgeProps(value=raw.value)
+        )
         result = self._graph.upsert_edge(
             EdgeSpec(
                 project_id=project_id,
                 src=subject_id,
                 dst=target_id,
-                type=edge_type,
-                props=EdgeProps(value=raw.value),
+                type=EDGE_TYPE_BY_KIND[raw.kind],
+                props=props,
                 valid_from_chapter=chapter.number,
                 information_scope=InformationScope.PROVISIONAL,
                 confidence=raw.confidence,

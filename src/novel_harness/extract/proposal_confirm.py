@@ -17,6 +17,7 @@ from ..graph import (
     EdgeType,
     EvidenceStatus,
     GraphStore,
+    HealthValue,
     InformationScope,
 )
 from ..graph.review_store import EdgeReviewStore, EdgeReviewValidationError
@@ -115,7 +116,14 @@ def _event_items(pairs) -> list[dict]:
 def _edge_items(pairs) -> list[dict]:
     items = []
     for item, evidence in pairs:
-        kind = "relationship" if item.edge.type is EdgeType.RELATED_TO else "location"
+        # **从边反推 kind**。`HAS_STATE` 有两种来源（`state` 和 `death`），判据只能是
+        # `value_key` 那个机器键 —— 拿 `value` 里那个中文去认就是在解析语义（ADR 0005）。
+        if item.edge.type is EdgeType.RELATED_TO:
+            kind = "relationship"
+        elif item.edge.type is EdgeType.HAS_STATE:
+            kind = "death" if item.edge.props.value_key == HealthValue.DEAD else "state"
+        else:
+            kind = "location"
         items.append(
             {
                 "source_kind": "state_update",

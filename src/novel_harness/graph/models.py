@@ -244,6 +244,17 @@ HEALTH_DIM_NAME: Final = "生死"
 「生死」两个字永远不会被它匹配到。
 """
 
+DEAD_VALUE_TEXT: Final = "死"
+"""写进 `EdgeProps.value` 的那个字。**给人看的，规则不许解析它。**
+
+它是常量而不是一个参数，理由是「谁写什么词」和「规则怎么判」必须彻底分开：
+判据只有 `value_key`（`HealthValue.DEAD`）。哪天要让作者填「陨落 / 坐化 / 兵解」，
+加的是一个**只影响这一行显示**的可选参数，`value_key` 那一侧一个字都不许动。
+
+**2026-08-14 从 `declare.py` 搬到这儿**：那天抽取器长出了 `kind="death"`，于是它有了
+第二个写入方。一个两处共用的常量放在其中一处，就是在等着有人在另一处写第二份。
+""" 
+
 
 class HealthValue(StrEnum):
     """`HAS_STATE` 到 health 维度时 `EdgeProps.value_key` 的取值。

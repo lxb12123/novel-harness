@@ -54,11 +54,31 @@ class RawCharacterProfile(BaseModel):
 
 
 class RawStateUpdate(BaseModel):
-    """One proposed graph-state change, still expressed only in surface names."""
+    """One proposed graph-state change, still expressed only in surface names.
+
+    ── `death` 为什么是自己一档，而不是 `state` + dimension="生死" ──────────────
+
+    因为**引擎不许去读模型写的那个词**。R3 `DEAD_SPEAKS` 的判据是
+    `EdgeProps.value_key == HealthValue.DEAD` 这个**机器键**，不是 `value` 那段中文
+    （`declare.py` 那段论证：死 / 陨落 / 坐化 / 兵解 —— 认那段字就是「这句话是什么
+    意思」，撞 ADR 0005 的铁律）。
+
+    走 `state` 的话，`dimension` 是模型自由写的一串字，引擎要么去猜「这个维度是不是
+    生死」（语义判断），要么把 `value_key` 留空（那就是 2026-08-13 之前那十一天：
+    R3 每天绿着、生产上结构性哑火）。
+
+    **`kind` 是一个封闭枚举，模型只是在里面挑一个** —— 挑完之后 `value_key` 由引擎
+    写死成常量，一个字都不从模型的文字里认。语义判断留在模型那一侧，引擎这一侧
+    仍然只做集合判断。这和 `location` 那一档是同一个手法。
+
+    `death` 不带 object / dimension / value：那三样都是引擎自己填的常量
+    （health 维度 + `HealthValue.DEAD` + `DEAD_VALUE_TEXT`），**给模型填的机会
+    就是给它编一个别的键的机会**。
+    """
 
     model_config = _UNTRUSTED_CONFIG
 
-    kind: Literal["location", "state", "relationship"]
+    kind: Literal["location", "state", "relationship", "death"]
     subject: str = Field(min_length=1)
     object: str | None = None
     dimension: str | None = None
@@ -72,6 +92,8 @@ class RawStateUpdate(BaseModel):
             valid = self.object is not None and self.dimension is None and self.value is None
         elif self.kind == "state":
             valid = self.object is None and self.dimension is not None and self.value is not None
+        elif self.kind == "death":
+            valid = self.object is None and self.dimension is None and self.value is None
         else:
             valid = self.object is not None and self.dimension is None and self.value is not None
         if not valid:
