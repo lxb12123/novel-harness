@@ -8,7 +8,7 @@ export interface Anchor {
 }
 
 // 全局 store 只放**坐标**（§2.3 铁律）：能从 API 拉的绝不进这里。
-// projectId 一变 = 整棵 query 树失效；chapter / cast / activeTab / selection 都是坐标。
+// projectId 一变 = 整棵 query 树失效；chapter / cast / activeTab 都是坐标。
 // cast 存的是作者写的称呼原文（不是 node_id），原样透传给后端的 resolve_cast。
 
 export type Tab =
@@ -48,9 +48,7 @@ interface Coords {
    *  = fail-open（ADR 0018 §3）。后端 `_effective_cast` 那段注释记着实测形态。 */
   castInclude: string;
   activeTab: Tab;
-  /** 编辑器当前选中的文本 —— declare 的引语来源（选区声明，零章号）。 */
-  selection: string;
-  /** 局部图 / 状态卡的中心节点 id（已解析）。roster 点选或选区 resolve 后设。 */
+  /** 局部图 / 状态卡的中心节点 id（已解析）。花名册点选 / 局部图点选后设。 */
   selectedNodeId: string | null;
   /** 待跳转高亮的锚：点 R4 issue 时设，编辑器消费后清。**按 quote 重寻，不存 offset。** */
   highlight: Anchor | null;
@@ -90,7 +88,6 @@ interface Coords {
   markCursor: (id: string) => void;
   setCast: (c: string) => void;
   setTab: (t: Tab) => void;
-  setSelection: (s: string) => void;
   /** 设中心节点并跳到局部图 tab（点一个人就想看他的图，是同一个动作）。 */
   focusNode: (id: string) => void;
   setHighlight: (a: Anchor | null) => void;
@@ -119,7 +116,6 @@ export const useCoords = create<Coords>((set) => ({
   castInclude: "",
   // 默认停在花名册：打开一本书先看见「这本书里有谁」，其余几格都是「其中某个人怎么样」。
   activeTab: "roster",
-  selection: "",
   selectedNodeId: null,
   highlight: null,
   page: "workbench",
@@ -155,7 +151,6 @@ export const useCoords = create<Coords>((set) => ({
   // 他选的那一场就不是他看到的那一场了。
   setCast: (cast) => set({ cast, castInclude: "" }),
   setTab: (activeTab) => set({ activeTab, focusCell: null, focusEventId: null, castInclude: "" }),
-  setSelection: (selection) => set({ selection }),
   focusNode: (selectedNodeId) => set({ selectedNodeId, activeTab: "graph" }),
   setHighlight: (highlight) => set({ highlight }),
   setPage: (page) => set({ page }),

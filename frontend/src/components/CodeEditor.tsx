@@ -49,17 +49,16 @@ export const CodeEditor = forwardRef<
   {
     value: string;
     onChange: (v: string) => void;
-    onSelectionText: (t: string) => void;
     /** 停手 `IDLE_MS` 之后触发一次，带上光标前的正文。**取消由调用方负责**：
      *  作者一敲键这个计时器就重置，在飞的那次请求该被丢弃。 */
     onIdle?: (ctx: { before: string; pos: number; hasSelection: boolean }) => void;
   }
->(function CodeEditor({ value, onChange, onSelectionText, onIdle }, ref) {
+>(function CodeEditor({ value, onChange, onIdle }, ref) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   // 回调放 ref，避免把它们进 mount 的 deps（否则每次 render 重建整个编辑器）。
-  const cb = useRef({ onChange, onSelectionText, onIdle });
-  cb.current = { onChange, onSelectionText, onIdle };
+  const cb = useRef({ onChange, onIdle });
+  cb.current = { onChange, onIdle };
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -82,10 +81,6 @@ export const CodeEditor = forwardRef<
           // 外部替换（换章）不回调 onChange——那不是用户编辑，不该标脏。
           const external = u.transactions.some((tr) => tr.annotation(External));
           if (u.docChanged && !external) cb.current.onChange(u.state.doc.toString());
-          if (u.selectionSet) {
-            const { from, to } = u.state.selection.main;
-            cb.current.onSelectionText(u.state.sliceDoc(from, to).trim());
-          }
           // 停手计时：任何编辑或移动光标都重来一次。**这就是「取消」**——
           // 续写不需要增量失效，只需要过期的那次别落地（ghostText 的 field 会丢掉它）。
           if (u.docChanged || u.selectionSet) {

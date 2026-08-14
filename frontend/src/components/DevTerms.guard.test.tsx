@@ -13,7 +13,6 @@ import { LeftRail } from "./LeftRail";
 import { RosterDrawer } from "./RosterDrawer";
 import { SettingsDrawer } from "./SettingsDrawer";
 import { HistoryDrawer } from "./HistoryDrawer";
-import { DeclareDrawer } from "./DeclareDrawer";
 import { SceneBar } from "./SceneBar";
 import { BookShelf } from "./BookShelf";
 import { ChatPanel } from "./ChatPanel";
@@ -51,7 +50,6 @@ beforeEach(() => {
     cast: "",
     activeTab: "roster",
     page: "workbench",
-    selection: "萧决在青云城主府",
     selectedNodeId: "character:ID10",
     highlight: null,
     focusCell: null,
@@ -83,13 +81,15 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     ["场景条", <SceneBar key="sb" />],
     ["书架页", <BookShelf key="bs" onOpenChapter={() => {}} />],
     ["花名册抽屉", <RosterDrawer key="rd" pid="project:ID1" onClose={() => {}} />],
-    ["设置抽屉", <SettingsDrawer key="sd" onClose={() => {}} />],
+    // 设置这扇窗 2026-08-14 变成左右分栏，**这一条只扫得到默认那一栏**（「连接服务」）。
+    // 另一栏由紧跟在这个 each 后面那条单独的断言扫。
+    ["设置弹窗", <SettingsDrawer key="sd" onClose={() => {}} />],
     ["历史抽屉", <HistoryDrawer key="hd" pid="project:ID1" chapter={1} onClose={() => {}} />],
-    // ⚠️ **这儿扫的只有正常态。** 它端着后端每一句拒绝，而那些话此前有三句写着
-    // 「先跑 nh sync」——正常态下一句都不亮，正是它们躲过这张网整整一年的方式。
-    // 「定位不到」那两档（0 命中 / 后端 422）的整屏扫描在 `DeclareDrawer.test.tsx`，
-    // 和它们各自的行为断言摆在一起。**别在这儿抄第二份。**
-    ["声明抽屉", <DeclareDrawer key="dd" pid="project:ID1" quote="萧决在青云城主府" onClose={() => {}} />],
+    // ⚠️ **「声明抽屉」这一格 2026-08-14 撤了**（组件连同中栏那条选区工具条一起删了）。
+    // 它端着后端每一句拒绝，是这张网上覆盖面最广的一格——**撤掉它就是覆盖面变小**，
+    // 不是覆盖面变干净。`declare.py` 那几句话今天只走 `nh declare` / `nh locate`，
+    // 终端上说「先跑 nh sync」是对的，所以没有屏幕再需要挡它们。
+    // 哪天手工声明重新接进界面，**这一格要一起回来**。
     // 写作助手（模式二）。它是这块网上**风险最高**的一格：会话的内部标识
     // （`chat_session:…`）、停止原因的机器码（`done` / `context_full`）、
     // 上下文回执那七个 snake_case 字段，全都在它手上过一遍。
@@ -109,6 +109,17 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     // 等第一批查询落地：扫一块还没渲染出内容的屏幕等于什么都没扫。
     await waitFor(() => expect(document.body.textContent).toMatch(/[一-龥]/));
     await new Promise((r) => setTimeout(r, 60));
+    expect(devTerms(screenText())).toEqual([]);
+  });
+
+  it("设置弹窗的另一栏（「前文长度」——**默认不在屏幕上**）", async () => {
+    // 上面那条 each 渲染完就扫，扫的是默认那一栏。而这扇窗上最长的两段说明、
+    // 那份公开模型表的回执、以及拉不到时后端那句话，全在另一栏——
+    // **没被扫到的组件等于没有守卫**，这个仓库为这件事栽过。
+    const user = userEvent.setup();
+    renderWithApi(<SettingsDrawer onClose={() => {}} />);
+    await user.click(await screen.findByRole("tab", { name: "前文长度" }));
+    await screen.findByText("模型一次能记住多少");
     expect(devTerms(screenText())).toEqual([]);
   });
 

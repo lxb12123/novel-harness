@@ -1,14 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  useChapters,
-  useChapterText,
-  useContinuation,
-  useResolve,
-  useSaveChapter,
-} from "../api/hooks";
+import { useChapters, useChapterText, useContinuation, useSaveChapter } from "../api/hooks";
 import { useCoords } from "../store";
 import { ApiError } from "../api/client";
-import { DeclareDrawer } from "./DeclareDrawer";
 import { SceneBar } from "./SceneBar";
 import { HistoryDrawer } from "./HistoryDrawer";
 import { ChapterTitle } from "./ChapterTitle";
@@ -24,13 +17,11 @@ import { diskChange } from "../editorDoc";
 // 正文真相源（ADR 0007）。CM6 停在平铺文本心智，doc 位置 == JS 字符串下标，和 anchor.locate()
 // 直接对齐，不需要 pos↔锚 映射层（那是 ProseMirror 才会买来的 offset 地狱，ADR 0006）。
 export function CenterEditor() {
-  const { projectId, chapter, setSelection, selection, focusNode, highlight, setHighlight } =
-    useCoords();
+  const { projectId, chapter, highlight, setHighlight } = useCoords();
   const [open, setOpen] = useState(false); // 这一章是否已打开进编辑器
   const chapters = useChapters(projectId);
   const { data } = useChapterText(projectId, chapter, open);
   const save = useSaveChapter(projectId ?? "", chapter);
-  const resolve = useResolve(projectId ?? "");
   const continuation = useContinuation(projectId ?? "", chapter);
   // 每次请求发出前 +1。回来时对不上 = 作者在这期间又敲了字，这一条作废。
   // **这就是「取消」**：续写不需要增量失效，只需要过期的那次别落地（ADR 0015）。
@@ -50,7 +41,6 @@ export function CenterEditor() {
   dirtyRef.current = dirty;
   /** 磁盘上这一章被别处改过，而作者手上有没保存的字。 */
   const [diskAhead, setDiskAhead] = useState(false);
-  const [drawer, setDrawer] = useState(false);
   const [history, setHistory] = useState(false);
   const [locateMiss, setLocateMiss] = useState(false);
   const editorRef = useRef<CodeEditorHandle>(null);
@@ -67,16 +57,6 @@ export function CenterEditor() {
     setLocateMiss(false);
     editorRef.current?.select(hit.start, hit.end); // CM6 位置 == 字符串下标，无需换算
   }, [highlight, doc, setHighlight]);
-
-  // 方向一（§2.6）：选区 → resolve → 唯一直接 focus 图谱；歧义弹候选让作者挑，不猜。
-  function lookup() {
-    resolve.mutate(selection, {
-      onSuccess: (r) => {
-        if (r.unique_id) focusNode(r.unique_id);
-      },
-    });
-  }
-  const candidates = resolve.data && !resolve.data.unique_id ? resolve.data.hits : null;
 
   // 换章 = 重新打开：让 useChapterText 重取，并清脏态。
   useEffect(() => {
@@ -138,9 +118,9 @@ export function CenterEditor() {
         <span className="spacer" />
         {/* 「读回改动」（`SyncButton.tsx` 写着为什么是按钮不是 file-watch）。
             **它在这一行上，因为这一行讲的就是「这份稿子」**：正文他看得见（这块屏幕
-            直接读磁盘），可「记录这句」搜的是库里的快照——那半条回路此前在浏览器里
-            根本没有入口。同一颗按钮还挂在声明抽屉「找不到」那一档上，
-            那是他撞见这件事的地方。 */}
+            直接读磁盘），而库里那份快照只有这一下落得下——**后台抽取是按快照跑的**
+            （`extraction_run.snapshot_id`），快照旧了，它分析的就是旧正文。
+            2026-08-14 起它只剩这一个挂载点（声明抽屉连同选区那条工具条一起删了）。 */}
         {projectId && <SyncButton pid={projectId} />}
         <span className={"status" + (saveErr ? " err" : save.isSuccess && !dirty ? " ok" : "")}>
           {saveErr
@@ -189,7 +169,6 @@ export function CenterEditor() {
             setDoc(v);
             setDirty(true);
           }}
-          onSelectionText={setSelection}
           onIdle={({ before, pos, hasSelection }) => {
             if (!projectId) return;
             if (!shouldSuggest({ before, hasSelection, hasSuggestion: false, loading: !data })) {
@@ -208,41 +187,6 @@ export function CenterEditor() {
         />
       </div>
 
-      <div className="selbar">
-        <span className="q">
-          {selection
-            ? "选中：" + selection
-            : "在正文里选中一句话，可以记录人物知道什么、身处何处，或查看相关内容"}
-        </span>
-        <button disabled={!selection || !projectId || resolve.isPending} onClick={lookup}>
-          查看相关内容
-        </button>
-        <button disabled={!selection || !projectId} onClick={() => setDrawer(true)}>
-          记录这句
-        </button>
-      </div>
-
-      {candidates && (
-        <div className="selbar" style={{ borderTop: 0, flexWrap: "wrap" }}>
-          <span className="q" style={{ flex: "0 0 auto", color: "var(--warn)" }}>
-            这个称呼对应多个条目，请选择：
-          </span>
-          {candidates.map((h) => (
-            <button key={h.node.id} onClick={() => focusNode(h.node.id)}>
-              {h.node.name}（{h.node.label}）
-            </button>
-          ))}
-        </div>
-      )}
-      {resolve.data && resolve.data.hits.length === 0 && (
-        <div className="selbar" style={{ borderTop: 0, color: "var(--dim)" }}>
-          花名册中没有找到「{resolve.data.surface}」。
-        </div>
-      )}
-
-      {drawer && projectId && (
-        <DeclareDrawer pid={projectId} quote={selection} onClose={() => setDrawer(false)} />
-      )}
       {history && projectId && (
         <HistoryDrawer
           pid={projectId}

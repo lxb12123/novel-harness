@@ -12,8 +12,6 @@ beforeEach(() => {
     chapter: 1,
     selectedNodeId: null,
     cast: "",
-    selection: "",
-    setSelection: () => {},
     focusNode: () => {},
     highlight: null,
     setHighlight: () => {},
@@ -65,7 +63,7 @@ describe("中栏编辑器", () => {
   // ── 「读回改动」（2026-08-13）───────────────────────────────────────────────
   //
   // `POST …/sync` 从 M1.5 起就在后端，浏览器里零调用方。作者在 WPS 里改完回来，
-  // **正文他看得见**（这块屏幕直接读磁盘），可「记录这句」搜的是库里的快照——
+  // **正文他看得见**（这块屏幕直接读磁盘），可**后台整理读的是库里的快照**——
   // 那半条回路此前根本没有入口。
 
   it("这一行上有它，并且**自己说得清它在干什么**", async () => {
@@ -74,9 +72,12 @@ describe("中栏编辑器", () => {
     // 它和「历史 / 保存」在同一条工具条上——这一行讲的就是「这份稿子」。
     expect(button.closest(".edbar")).not.toBeNull();
     expect(screen.getByText("在别的软件里改过这本书，就点它一下。")).toBeInTheDocument();
+    // **说明文字必须说出「不点会怎样」**，而那个后果 2026-08-14 换了一个：
+    // 「记录这句」删了，快照今天只剩后台整理一个消费者（`extraction_run.snapshot_id`）。
+    // 措辞跟着后果走，不然按钮上挂着的是一句过期的理由。
     expect(button).toHaveAttribute(
       "title",
-      expect.stringContaining("不读进来的话，新写的句子记录不了"),
+      expect.stringContaining("系统整理这一章时看的还是旧正文"),
     );
   });
 

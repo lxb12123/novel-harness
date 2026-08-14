@@ -25,12 +25,8 @@ import type {
   ChatStopped,
   ChatTurnEvent,
   CheckResult,
-  Declaration,
   DeclareAlias,
-  DeclareBelieves,
-  DeclareKnows,
   DeclareNode,
-  DeclareWhere,
   DraftCandidateDetail,
   DraftRequest,
   DraftResult,
@@ -51,8 +47,6 @@ import type {
   ProposalResolution,
   ProvisionalConfirmation,
   Project,
-  QuoteCandidate,
-  ResolveResult,
   RunsPanel,
   Scene,
   SceneConstraints,
@@ -521,25 +515,11 @@ export const CONTINUATION_LENGTH = {
   max_units: 260,
 } as const;
 
-export function useLocate(pid: string) {
-  return useMutation({
-    mutationFn: (quote: string) => api.post<QuoteCandidate[]>(proj(pid, "/locate"), { quote }),
-  });
-}
-
-type DeclareBody =
-  | { kind: "knows"; body: DeclareKnows }
-  | { kind: "believes"; body: DeclareBelieves }
-  | { kind: "where"; body: DeclareWhere };
-
-export function useDeclare(pid: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({ kind, body }: DeclareBody) =>
-      api.post<Declaration>(proj(pid, `/declare/${kind}`), body),
-    onSuccess: () => invalidatePanels(qc, pid),
-  });
-}
+// ⚠️ **`useLocate` / `useDeclare` 2026-08-14 删了**（连同它们唯一的调用方
+// `DeclareDrawer` 和中栏那条选区工具条）。**后端 `POST …/locate`、`POST …/declare/*`
+// 一个字都没动**：`nh locate` 和 `nh declare` 的七条子命令还在用同一套 `Ledger`，
+// 而它们是这套图谱唯一的手工写入口。哪天要把「手工记一条」重新接进界面，
+// 端点、拒绝措辞、`QuoteNotFound` 那段话都还在原地等着。
 
 /** 建一个节点（人物 / 地点 / 秘密 …）。幂等：键是 name，重复提交同一个名字不会建出两个。
  *
@@ -632,13 +612,9 @@ export function useWriteScene(pid: string, chapter: number) {
   });
 }
 
-/** 称呼 → 候选节点。选区查图谱用：唯一则直接 focus，歧义弹候选让作者挑。 */
-export function useResolve(pid: string) {
-  return useMutation({
-    mutationFn: (surface: string) =>
-      api.get<ResolveResult>(proj(pid, `/resolve?surface=${encodeURIComponent(surface)}`)),
-  });
-}
+// ⚠️ **`useResolve` 2026-08-14 删了**（同上：唯一调用方是中栏那条选区工具条的
+// 「查看相关内容」）。后端 `GET …/resolve` 照旧在，左栏花名册那条路也照旧走它的
+// 后端实现（`store.resolve`）——删的只是「选一句话去查图谱」这一个入口。
 
 // ══════════════════════════════════════════════════════════════════════════
 // M4：后台抽取 / 提案审阅 / 被动确认

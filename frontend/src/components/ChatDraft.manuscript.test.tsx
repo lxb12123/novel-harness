@@ -19,7 +19,6 @@ beforeEach(() => {
     chatOpen: true,
     chatId: null,
     page: "workbench",
-    selection: "",
     highlight: null,
   });
   // CodeMirror 6 在 jsdom 里需要这个（同 `CenterEditor.test.tsx`）。

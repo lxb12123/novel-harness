@@ -56,7 +56,7 @@ const HISTORICAL: ReadonlyArray<{ shown: string; term: string; why: string }> = 
     shown: "也可能是这一章还没进库：先跑 nh sync。",
     term: "nh sync",
     why:
-      "declare.py::QuoteNotFound 经 api/app.py 原样进 message，DeclareDrawer 逐字渲染；" +
+      "declare.py::QuoteNotFound 经 api/app.py 原样进 message，当时由 DeclareDrawer 逐字渲染；" +
       "对着一位「用 WPS、不想碰命令行」的作者，这句话是一条死路",
   },
   {

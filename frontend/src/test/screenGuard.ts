@@ -89,8 +89,8 @@ export const ENGLISH_PROSE = /\b[a-z]{2,}(?:[ \t]+[a-z]{2,}){2,}\b/g;
 
 /** **第五张网**（2026-08-13）：一句「去终端里敲这个」。
  *
- *  真上过屏的两句在 `declare.py`（经 `api/app.py` 原样进 `message`，由 `DeclareDrawer`
- *  逐字渲染）：
+ *  真上过屏的两句在 `declare.py`（经 `api/app.py` 原样进 `message`，由当时的
+ *  `DeclareDrawer` 逐字渲染；**那个组件 2026-08-14 删了**，所以今天这两句只到终端）：
  *
  *      「也可能是这一章还没进库：先跑 nh sync。」
  *      「把引语加长到只匹配一处…用 nh locate 先试。」
