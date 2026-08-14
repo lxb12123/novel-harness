@@ -31,6 +31,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+import seed
+
 from test_activity import seed_call, seed_run
 from test_api import (
     _seed_edge_conflict_proposal,
@@ -152,7 +154,6 @@ def test_frontend_fixture_matches_the_real_api(
     )
 
     # ── 写路径的回执 ──────────────────────────────────────────────────────
-    grab("locate", client.post(f"{base}/locate", json={"quote": "萧决在青云城主府"}))
     grab(
         "createNode",
         client.post(f"{base}/nodes", json={"label": "Character", "name": "顾清音"}),
@@ -168,16 +169,16 @@ def test_frontend_fixture_matches_the_real_api(
         "createAlias",
         client.post(f"{base}/aliases", json={"of": "顾清音", "surface": "顾姑娘"}),
     )
-    grab(
-        "declareKnows",
-        client.post(
-            f"{base}/declare/knows",
-            json={
-                "who": "萧决",
-                "secret": "血脉秘密",
-                "quote": "萧决在青云城主府第一次听说了血脉秘密的真相。",
-            },
-        ),
+
+    # 下面每一份读端夹具都**需要图里真有一条 KNOWS 边**（矩阵那一格、子图那条边、
+    # 底栏那个区间、`canonKnowledge` 要改的那条）。这条边原先是 `POST …/declare/knows`
+    # 顺带造出来的，而那条路由 2026-08-14 删了——**播种换成库级入口，位置一定要留在
+    # 原处**：挪到后面去，上面那几份夹具会安静地变成「没有边」的形状，而 vitest 那边
+    # 只会红在一句莫名其妙的 `Spread types may only be created from object types`。
+    seed.knows(
+        book["db"], book["pid"],
+        who="萧决", secret="血脉秘密",
+        quote="萧决在青云城主府第一次听说了血脉秘密的真相。",
     )
 
     # ── 读路径（声明之后：矩阵里现在有 KNOWS，前端渲染测试要的就是这个形状）──
@@ -370,9 +371,9 @@ def test_frontend_fixture_matches_the_real_api(
     )
 
     # ── 拒绝形态：前端有专门分支渲染它们，同样是契约 ────────────────────────
-    ambiguous = client.post(
-        f"{base}/declare/knows", json={"who": "师兄", "secret": "血脉秘密", "quote": "萧决"}
-    )
+    # 「师兄」→ 两个人。**换成 `/declare/death` 只是换了个载体**：这条夹具要的是
+    # `ambiguous_name` 那个拒绝形状（前端有专门分支渲染它），而那套拒绝一个字没变。
+    ambiguous = client.post(f"{base}/declare/death", json={"who": "师兄", "quote": "萧决"})
     assert ambiguous.status_code == 409, ambiguous.text
     dump["errorAmbiguousName"] = norm.walk(ambiguous.json())
 

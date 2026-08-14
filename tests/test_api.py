@@ -21,6 +21,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+import seed
+
 from novel_harness import importer, project
 from novel_harness.api.deps import get_conn
 from novel_harness.db import connect, migrate
@@ -189,15 +191,11 @@ def test_resolve_secret_does_not_leak_props(client: TestClient, book: dict[str, 
 
 def test_subgraph_narrows_secret_node(client: TestClient, book: dict[str, str]) -> None:
     # 萧决 KNOWS 血脉秘密，所以子图里会有那个 Secret 节点——它必须被收窄。
-    r = client.post(
-        f"/api/projects/{_pid(book)}/declare/knows",
-        json={
-            "who": "萧决",
-            "secret": "血脉秘密",
-            "quote": "萧决在青云城主府第一次听说了血脉秘密的真相。",
-        },
+    seed.knows(
+        book["db"], _pid(book),
+        who="萧决", secret="血脉秘密",
+        quote="萧决在青云城主府第一次听说了血脉秘密的真相。",
     )
-    assert r.status_code == 200, r.text
 
     r = client.get(
         f"/api/projects/{_pid(book)}/subgraph",
@@ -328,10 +326,7 @@ def test_project_not_found(client: TestClient) -> None:
 
 
 def test_unknown_name_404(client: TestClient, book: dict[str, str]) -> None:
-    r = client.post(
-        f"/api/projects/{_pid(book)}/declare/knows",
-        json={"who": "查无此人", "secret": "血脉秘密", "quote": "随便"},
-    )
+    r = client.post(f"/api/projects/{_pid(book)}/declare/death", json={"who": "查无此人", "quote": "随便"})
     assert r.status_code == 404
     body = r.json()
     assert body["error"] == "unknown_name"
@@ -340,10 +335,7 @@ def test_unknown_name_404(client: TestClient, book: dict[str, str]) -> None:
 
 def test_ambiguous_name_409_with_candidates(client: TestClient, book: dict[str, str]) -> None:
     # 「师兄」→ 萧决 + 李管家。服务端绝不替作者挑——摆候选，409。
-    r = client.post(
-        f"/api/projects/{_pid(book)}/declare/knows",
-        json={"who": "师兄", "secret": "血脉秘密", "quote": "随便"},
-    )
+    r = client.post(f"/api/projects/{_pid(book)}/declare/death", json={"who": "师兄", "quote": "随便"})
     assert r.status_code == 409
     body = r.json()
     assert body["error"] == "ambiguous_name"
@@ -354,33 +346,24 @@ def test_ambiguous_name_409_with_candidates(client: TestClient, book: dict[str, 
 
 
 def test_wrong_label_422(client: TestClient, book: dict[str, str]) -> None:
-    # secret 位置收到一个 Location（青云城主府）。
-    r = client.post(
-        f"/api/projects/{_pid(book)}/declare/knows",
-        json={"who": "萧决", "secret": "青云城主府", "quote": "随便"},
-    )
+    # who 位置收到一个 Location（青云城主府）。
+    r = client.post(f"/api/projects/{_pid(book)}/declare/death", json={"who": "青云城主府", "quote": "随便"})
     assert r.status_code == 422
     body = r.json()
     assert body["error"] == "wrong_label"
     assert body["got"] == NodeLabel.LOCATION.value
-    assert body["want"] == NodeLabel.SECRET.value
+    assert body["want"] == NodeLabel.CHARACTER.value
 
 
 def test_quote_not_found_422(client: TestClient, book: dict[str, str]) -> None:
-    r = client.post(
-        f"/api/projects/{_pid(book)}/declare/knows",
-        json={"who": "萧决", "secret": "血脉秘密", "quote": "这句话正文里根本没有"},
-    )
+    r = client.post(f"/api/projects/{_pid(book)}/declare/death", json={"who": "萧决", "quote": "这句话正文里根本没有"})
     assert r.status_code == 422
     assert r.json()["error"] == "quote_not_found"
 
 
 def test_ambiguous_quote_409_with_candidates(client: TestClient, book: dict[str, str]) -> None:
     # 「他终于明白了。」在第 2 章出现两次 → 系统不替作者挑，摆两个候选。
-    r = client.post(
-        f"/api/projects/{_pid(book)}/declare/knows",
-        json={"who": "萧决", "secret": "血脉秘密", "quote": "他终于明白了。"},
-    )
+    r = client.post(f"/api/projects/{_pid(book)}/declare/death", json={"who": "萧决", "quote": "他终于明白了。"})
     assert r.status_code == 409
     body = r.json()
     assert body["error"] == "ambiguous_quote"
@@ -416,59 +399,8 @@ def test_sync_refused_on_two_headings_422(client: TestClient, book: dict[str, st
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_locate_returns_single_hit(client: TestClient, book: dict[str, str]) -> None:
-    r = client.post(
-        f"/api/projects/{_pid(book)}/locate",
-        json={"quote": "萧决在青云城主府第一次听说了血脉秘密的真相。"},
-    )
-    assert r.status_code == 200
-    cands = r.json()
-    assert len(cands) == 1
-    assert cands[0]["chapter_number"] == 1
 
 
-def test_locate_zero_hits_is_empty_not_error(client: TestClient, book: dict[str, str]) -> None:
-    # 0 命中不是错误，是合法答案「这句还不可用」——由前端渲染。
-    r = client.post(
-        f"/api/projects/{_pid(book)}/locate",
-        json={"quote": "正文里没有的句子"},
-    )
-    assert r.status_code == 200
-    assert r.json() == []
-
-
-def test_declare_knows_computes_valid_from(client: TestClient, book: dict[str, str]) -> None:
-    r = client.post(
-        f"/api/projects/{_pid(book)}/declare/knows",
-        json={
-            "who": "萧决",
-            "secret": "血脉秘密",
-            "quote": "萧决在青云城主府第一次听说了血脉秘密的真相。",
-        },
-    )
-    assert r.status_code == 200, r.text
-    decl = r.json()
-    # 章号是引语落在第 1 章的产物——请求体里从没有它。
-    assert decl["edge"]["valid_from_chapter"] == 1
-    assert decl["evidence"]["chapter_number"] == 1
-
-
-def test_declare_where_auto_closes_previous(client: TestClient, book: dict[str, str]) -> None:
-    # 引语都在第 1 章，两条 LOCATED_AT 同章 → 后一条撤回前一条（同章更正）。
-    q = "萧决在青云城主府第一次听说了血脉秘密的真相。"
-    first = client.post(
-        f"/api/projects/{_pid(book)}/declare/where",
-        json={"who": "萧决", "loc": "青云城主府", "quote": q},
-    )
-    assert first.status_code == 200, first.text
-    second = client.post(
-        f"/api/projects/{_pid(book)}/declare/where",
-        json={"who": "萧决", "loc": "北荒", "quote": q},
-    )
-    assert second.status_code == 200, second.text
-    # 招牌动作：旧位置被系统自动处理，回执如实报告（closed 或 retracted 至少一处）。
-    decl = second.json()
-    assert decl["closed"] or decl["retracted"]
 
 
 def test_declare_node_secret_is_narrowed(client: TestClient, book: dict[str, str]) -> None:
@@ -592,15 +524,11 @@ def test_deleting_a_version_that_backs_evidence_is_refused(
     锚没了它就只是一句无出处的断言。
     """
     pid = _pid(book)
-    decl = client.post(
-        f"/api/projects/{pid}/declare/knows",
-        json={
-            "who": "萧决",
-            "secret": "血脉秘密",
-            "quote": "萧决在青云城主府第一次听说了血脉秘密的真相。",
-        },
+    seed.knows(
+        book["db"], pid,
+        who="萧决", secret="血脉秘密",
+        quote="萧决在青云城主府第一次听说了血脉秘密的真相。",
     )
-    assert decl.status_code == 200, decl.text
     anchored = next(s for s in _history(client, pid) if s["is_current"])["snapshot_id"]
 
     _save(client, pid, 1, "第一章 血脉\n\n改过之后那句话没了。\n")  # 让它不再是当前那条
@@ -636,11 +564,8 @@ def test_deleting_an_unknown_snapshot_is_refused(client: TestClient, book: dict[
 def test_evidence_roundtrip(client: TestClient, book: dict[str, str]) -> None:
     # 声明产生证据 → 按 id 取回「来源章 + 当年那句原文」，且明确不含 score。
     q = "萧决在青云城主府第一次听说了血脉秘密的真相。"
-    decl = client.post(
-        f"/api/projects/{_pid(book)}/declare/knows",
-        json={"who": "萧决", "secret": "血脉秘密", "quote": q},
-    ).json()
-    ev_id = decl["evidence"]["id"]
+    decl = seed.knows(book["db"], _pid(book), who="萧决", secret="血脉秘密", quote=q)
+    ev_id = decl.evidence.id
 
     r = client.get(f"/api/projects/{_pid(book)}/evidence/{ev_id}")
     assert r.status_code == 200, r.text

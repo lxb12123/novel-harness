@@ -24,6 +24,8 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
+import seed
+
 from test_activity import (  # noqa: F401  ← poisoned / book / client 是 fixture，靠名字注入
     POISON_CHAPTER,
     _by_id,
@@ -213,11 +215,7 @@ def test_a_knowledge_cell_jump_can_point_at_a_chapter_whose_matrix_has_no_such_r
     `frontend/src/components/ActivityLog.loop.test.tsx`。
     """
     pid = book["pid"]
-    declared = client.post(
-        f"/api/projects/{pid}/declare/knows",
-        json={"who": "萧决", "secret": "血脉秘密", "quote": NAMELESS_QUOTE},
-    )
-    assert declared.status_code == 200, declared.text
+    seed.knows(book["db"], pid, who="萧决", secret="血脉秘密", quote=NAMELESS_QUOTE)
 
     version = client.get(f"/api/projects/{pid}").json()["canon_version"]
     flipped = client.post(
@@ -267,11 +265,7 @@ def test_a_named_quote_does_land_on_the_matrix(
     而不是本文件要说的那件事。
     """
     pid = book["pid"]
-    declared = client.post(
-        f"/api/projects/{pid}/declare/knows",
-        json={"who": "萧决", "secret": "血脉秘密", "quote": NAMED_QUOTE},
-    )
-    assert declared.status_code == 200, declared.text
+    seed.knows(book["db"], pid, who="萧决", secret="血脉秘密", quote=NAMED_QUOTE)
 
     version = client.get(f"/api/projects/{pid}").json()["canon_version"]
     flipped = client.post(
@@ -307,10 +301,7 @@ def test_the_matrix_carries_the_version_that_its_own_editor_needs(
     **每一次都会 409**，而那个 409 说的是「别处刚改过」——一个骗人的错误比一个错误更贵。
     """
     pid = book["pid"]
-    client.post(
-        f"/api/projects/{pid}/declare/knows",
-        json={"who": "萧决", "secret": "血脉秘密", "quote": NAMELESS_QUOTE},
-    )
+    seed.knows(book["db"], pid, who="萧决", secret="血脉秘密", quote=NAMELESS_QUOTE)
     truth = client.get(f"/api/projects/{pid}").json()["canon_version"]
     assert truth > 0, "这本书还没升过版本，下面比什么都一样 —— 换个种子"
     seen = client.get(f"/api/projects/{pid}/chapters/1/matrix").json()["version"]
@@ -390,13 +381,9 @@ def test_the_authors_own_knowledge_declaration_is_not_filed_as_unfixable(
     日志在那一行告诉他没救了，等于把 ADR 0020 押的退路在最常用的入口上关掉。
     """
     pid = book["pid"]
-    declared = client.post(
-        f"/api/projects/{pid}/declare/knows",
-        json={"who": "萧决", "secret": "血脉秘密", "quote": NAMED_QUOTE},
-    )
-    assert declared.status_code == 200, declared.text
+    declared = seed.knows(book["db"], pid, who="萧决", secret="血脉秘密", quote=NAMED_QUOTE)
 
-    jump = _declare_row(client, pid, declared.json()["decision_id"])["jump"]
+    jump = _declare_row(client, pid, declared.decision_id)["jump"]
     assert jump["target"] == JumpTarget.KNOWLEDGE_CELL.value, (
         "声明认知那一行被归进了「改不了」那一档 —— 而它改得掉"
     )
@@ -428,17 +415,12 @@ def test_a_belief_declaration_lands_on_the_same_cell(
     两条声明共用 `_log_edge`，所以「只对 KNOWS 补坐标」这种半吊子实现在这条上会红。
     """
     pid = book["pid"]
-    declared = client.post(
-        f"/api/projects/{pid}/declare/believes",
-        json={
-            "who": "萧决",
-            "secret": "血脉秘密",
-            "believed_value": "以为那只是个传闻",
-            "quote": NAMED_QUOTE,
-        },
+    declared = seed.believes(
+        book["db"], pid,
+        who="萧决", secret="血脉秘密",
+        believed_value="以为那只是个传闻", quote=NAMED_QUOTE,
     )
-    assert declared.status_code == 200, declared.text
-    jump = _declare_row(client, pid, declared.json()["decision_id"])["jump"]
+    jump = _declare_row(client, pid, declared.decision_id)["jump"]
     assert jump["target"] == JumpTarget.KNOWLEDGE_CELL.value
     assert (jump["character_id"], jump["secret_id"]) == (book["萧决"], book["血脉秘密"])
 
@@ -465,12 +447,8 @@ def test_a_place_declaration_still_admits_it_cannot_be_edited(
     正是本仓反复禁止的东西：一个点了必然被拒的按钮，外加把 ADR 0020 的观测点关掉。
     """
     pid = book["pid"]
-    declared = client.post(
-        f"/api/projects/{pid}/declare/where",
-        json={"who": "萧决", "loc": "青云城主府", "quote": NAMED_QUOTE},
-    )
-    assert declared.status_code == 200, declared.text
-    jump = _declare_row(client, pid, declared.json()["decision_id"])["jump"]
+    declared = seed.where(book["db"], pid, who="萧决", loc="青云城主府", quote=NAMED_QUOTE)
+    jump = _declare_row(client, pid, declared.decision_id)["jump"]
     assert jump["target"] == JumpTarget.CHAPTER.value
     assert jump["endpoints"] == []
     assert jump["character_id"] is None and jump["secret_id"] is None

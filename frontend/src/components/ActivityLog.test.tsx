@@ -228,7 +228,12 @@ describe("活动记录", () => {
     // 确认进来的）——它被错归进空 bucket，`tests/test_canon_edit_loop.py::
     // test_the_authors_own_knowledge_declaration_is_not_filed_as_unfixable` 修掉了那一条。
     // 现在用「否决」那一行：被驳回的提案从来没升上 CANON，所以它是①的最硬形态。
-    const emptyEndpoints = fixtures.activity.entries.find((e) => e.id === "decision:ID32")!;
+    // **按形状找，不按 id 找**：`decision:ID3x` 那串序号是 dump 时按写入顺序编的，
+    // 播种链上少一次写（2026-08-14 删掉 `declareKnows` 那一 grab 时就少了一次）
+    // 整串就集体前移，而测试会红在一句和它主张毫无关系的话上。
+    const emptyEndpoints = fixtures.activity.entries.find(
+      (e) => e.id.startsWith("decision:") && e.jump !== null && e.jump.endpoints.length === 0,
+    )!;
     expect(emptyEndpoints.jump?.endpoints).toEqual([]);
     renderWithApi(<ActivityLog />, [
       {

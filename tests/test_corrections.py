@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+import seed
 from fastapi.testclient import TestClient
 
 from novel_harness import corrections, decisions, project
@@ -518,15 +519,11 @@ def test_http_knowledge_edit_flips_the_cell_and_leaks_nothing(
     client: TestClient, book: dict[str, str]
 ) -> None:
     pid = book["pid"]
-    declared = client.post(
-        f"/api/projects/{pid}/declare/knows",
-        json={
-            "who": "萧决",
-            "secret": "血脉秘密",
-            "quote": "萧决在青云城主府第一次听说了血脉秘密的真相。",
-        },
+    seed.knows(
+        book["db"], pid,
+        who="萧决", secret="血脉秘密",
+        quote="萧决在青云城主府第一次听说了血脉秘密的真相。",
     )
-    assert declared.status_code == 200, declared.text
 
     response = client.post(
         f"/api/projects/{pid}/canon/knowledge",
@@ -569,13 +566,10 @@ def test_http_knowledge_edit_maps_its_three_failures(
     assert missing.status_code == 404
     assert missing.json()["detail"]["error"] == "fact_not_found"
 
-    client.post(
-        f"/api/projects/{pid}/declare/knows",
-        json={
-            "who": "萧决",
-            "secret": "血脉秘密",
-            "quote": "萧决在青云城主府第一次听说了血脉秘密的真相。",
-        },
+    seed.knows(
+        book["db"], pid,
+        who="萧决", secret="血脉秘密",
+        quote="萧决在青云城主府第一次听说了血脉秘密的真相。",
     )
     blank = client.post(
         f"/api/projects/{pid}/canon/knowledge",

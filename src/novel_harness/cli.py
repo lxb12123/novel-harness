@@ -1492,78 +1492,13 @@ def declare_alias(
         typer.echo("  规则不会拿这个称呼去正文里匹配（--not-for-rules）。")
 
 
-@declare_app.command("knows")
-def declare_knows(
-    who: str = typer.Option(..., "--who", help="谁（称呼原文）"),
-    secret: str = typer.Option(..., "--secret", help="哪个秘密（称呼原文）"),
-    quote: str = typer.Option(..., "--quote", help="从正文里**复制**的、他知道了的那句话"),
-    db: Path = typer.Option(..., "--db", help="SQLite 库"),
-    project: str = typer.Option(..., "--project", "-p", help="project_id"),
-) -> None:
-    """「他在这段原文里知道了这个秘密」。
-
-    **章号由这句引语算出来，你没有输入过它，也没有任何一个旗标能让你输入它**
-    （§5.9 / 约束 10）。你确认的是「这条事实在这段原文里出现过」——看着原文点，
-    零记忆负担；「那是第几章」是系统的活。
-    """
-    ledger, store = _ledger(db, project)
-    try:
-        decl = ledger.declare_knows(who=who, secret=secret, quote=quote)
-    except DeclarationRefused as exc:
-        _die_refused(exc)
-    except (ValueError, StoreError) as exc:
-        _die(f"✗ 拒绝：{_reason(exc)}")
-    _echo_declaration(decl, store, project)
-
-
-@declare_app.command("believes")
-def declare_believes(
-    who: str = typer.Option(..., "--who", help="谁（称呼原文）"),
-    secret: str = typer.Option(..., "--secret", help="哪个秘密（称呼原文）"),
-    believed: str = typer.Option(..., "--as", help="他**以为**的那个版本"),
-    quote: str = typer.Option(..., "--quote", help="从正文里**复制**的那句话"),
-    db: Path = typer.Option(..., "--db", help="SQLite 库"),
-    project: str = typer.Option(..., "--project", "-p", help="project_id"),
-) -> None:
-    """「他以为的是另一个版本」——错误认知，面板上那个 ⚠。
-
-    `--as` 是他以为的内容，面板直接渲染它（「ch103 起以为『已泄露』」）。只画一个 ⚠
-    而不说他以为的是什么，等于没说。
-    """
-    ledger, store = _ledger(db, project)
-    try:
-        decl = ledger.declare_believes(who=who, secret=secret, believed_value=believed, quote=quote)
-    except DeclarationRefused as exc:
-        _die_refused(exc)
-    except (ValueError, StoreError) as exc:
-        _die(f"✗ 拒绝：{_reason(exc)}")
-    _echo_declaration(decl, store, project)
-    typer.echo(f"  他以为的是：「{believed}」")
-
-
-@declare_app.command("where")
-def declare_where(
-    who: str = typer.Option(..., "--who", help="谁（称呼原文）"),
-    loc: str = typer.Option(..., "--loc", help="哪儿（称呼原文）"),
-    quote: str = typer.Option(..., "--quote", help="从正文里**复制**的、他到了那儿的那句话"),
-    db: Path = typer.Option(..., "--db", help="SQLite 库"),
-    project: str = typer.Option(..., "--project", "-p", help="project_id"),
-) -> None:
-    """「他在这段原文里到了这个地方」。
-
-    `LOCATED_AT` 的 exclusivity 是 `single_per_src`（一个人同时只能在一个地方），所以这
-    一条会**自动闭合他上一个位置**——闭到哪一章同样是算出来的（= 这条新边的 valid_from）。
-    那是这个产品的招牌动作，回执里印着。
-    """
-    ledger, store = _ledger(db, project)
-    try:
-        decl = ledger.declare_where(who=who, loc=loc, quote=quote)
-    except DeclarationRefused as exc:
-        _die_refused(exc)
-    except (ValueError, StoreError) as exc:
-        _die(f"✗ 拒绝：{_reason(exc)}")
-    _echo_declaration(decl, store, project)
-
+# ⚠️ **`nh declare knows / believes / where` 2026-08-14 删了**（同 HTTP 那三条）。
+# 作者裁决：「谁知道什么 / 谁以为什么 / 谁在哪儿」只走抽取那条路。
+#
+# **下面这两条不是同一组。** `dead` / `appears` 是 R3 / R2 在生产上唯一的写入方
+# （抽取器不写 `value_key` / `first_appears_chapter`），删了它们等于让 `nh check`
+# 在两条规则永远哑火的情况下继续对作者说「没问题」——`checks/__init__.py` 开头
+# 那段警告记的就是那十一天。
 
 @declare_app.command("dead")
 def declare_dead(

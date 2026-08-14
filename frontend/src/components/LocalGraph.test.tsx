@@ -48,7 +48,7 @@ describe("局部关系图", () => {
   it("toFlow：中心节点加粗，关系使用自然中文和完整章名", () => {
     const g = {
       ...fixtures.subgraph,
-      edges: [fixtures.declareKnows.edge],
+      edges: [fixtures.states[0].edges[0]],
     } as unknown as Parameters<typeof toFlow>[0];
     const { nodes, edges } = toFlow(g);
     const center = nodes.find((n) => n.id === g.center.id);

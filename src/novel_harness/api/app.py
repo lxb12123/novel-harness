@@ -993,17 +993,20 @@ def write_scene(
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 写图谱：declare（P2 核心闭环）—— 作者敲称呼原文 + 引语，系统算章号
+# 写图谱：declare —— 作者敲称呼原文 + 引语，系统算章号
+#
+# ⚠️ **2026-08-14 起这里只剩四条**：建节点 / 建别名 / 声明死亡 / 声明首现。
+# 「谁知道什么 / 谁以为什么 / 谁在哪儿」那三条删了——那类事实只走抽取那条路
+# （作者裁决，见 `declare.py` 的「边」那一节）。剩下这四条各有不可替代的理由：
+# 前两条是**抽取器自己的前置**（称呼解析不到花名册里唯一的人 = 整条事实被丢），
+# 后两条是 **R3 / R2 在生产上唯一的写入方**（抽取器不写 `value_key` /
+# `first_appears_chapter`）。
 #
 # 入参**没有一个章号字段**（§5.9 / 约束 10）：`valid_from` 只由引语落在哪一章决定，
 # `Ledger` 的签名里没有位置能让作者填它。`who`/`secret`/`loc`/`of` 全是称呼原文，
 # 本文件一次都不解析——解析在 `Ledger` 里，于是壳没有机会把歧义的「师兄」偷偷挑成
 # 第一个候选（歧义 → AmbiguousName → 409 + candidates，让前端弹消歧下拉）。
 # ══════════════════════════════════════════════════════════════════════════
-
-
-class LocateBody(BaseModel):
-    quote: str
 
 
 class DeclareNodeBody(BaseModel):
@@ -1056,25 +1059,6 @@ class DeclareAliasBody(BaseModel):
     usable_for_rules: bool = True
 
 
-class DeclareKnowsBody(BaseModel):
-    who: str
-    secret: str
-    quote: str
-
-
-class DeclareBelievesBody(BaseModel):
-    who: str
-    secret: str
-    believed_value: str
-    quote: str
-
-
-class DeclareWhereBody(BaseModel):
-    who: str
-    loc: str
-    quote: str
-
-
 class DeclareDeadBody(BaseModel):
     who: str
     quote: str
@@ -1083,19 +1067,6 @@ class DeclareDeadBody(BaseModel):
 class DeclareFirstAppearanceBody(BaseModel):
     of: str
     quote: str
-
-
-@app.post("/api/projects/{project_id}/locate")
-def locate(
-    body: LocateBody,
-    ledger: Ledger = Depends(get_ledger),
-) -> Any:
-    """这句引语在当前正文里的全部命中（只读预览，declare 前先试唯一性）。
-
-    QuoteCandidate 不含 Node，无需收窄。0 命中不报错——它是合法答案（「这句还不可用」），
-    由前端渲染成「加长引语 / 先 sync」。
-    """
-    return [c.model_dump(mode="json") for c in ledger.locate(body.quote)]
 
 
 @app.post("/api/projects/{project_id}/nodes")
@@ -1166,45 +1137,11 @@ def declare_alias(
     return stored.model_dump(mode="json")
 
 
-@app.post("/api/projects/{project_id}/declare/knows")
-def declare_knows(
-    body: DeclareKnowsBody,
-    ledger: Ledger = Depends(get_ledger),
-) -> Any:
-    """「他在这段原文里知道了这个秘密」。章号由引语算，入参里没有它。
-
-    Declaration 收据带 valid_from（系统算的）+ 被自动闭合/撤回的旧边。不含 Node，无需收窄。
-    """
-    return ledger.declare_knows(who=body.who, secret=body.secret, quote=body.quote).model_dump(
-        mode="json"
-    )
-
-
-@app.post("/api/projects/{project_id}/declare/believes")
-def declare_believes(
-    body: DeclareBelievesBody,
-    ledger: Ledger = Depends(get_ledger),
-) -> Any:
-    """「他以为的是另一个版本」——错误认知。believed_value 进 edge.props，面板直接渲染。"""
-    return ledger.declare_believes(
-        who=body.who,
-        secret=body.secret,
-        believed_value=body.believed_value,
-        quote=body.quote,
-    ).model_dump(mode="json")
-
-
-@app.post("/api/projects/{project_id}/declare/where")
-def declare_where(
-    body: DeclareWhereBody,
-    ledger: Ledger = Depends(get_ledger),
-) -> Any:
-    """「他在这段原文里到了这个地方」。LOCATED_AT 是 single_per_src——这条会自动闭合
-    他上一个位置（Declaration.closed，产品招牌动作）。闭到哪一章同样是算出来的。
-    """
-    return ledger.declare_where(who=body.who, loc=body.loc, quote=body.quote).model_dump(
-        mode="json"
-    )
+# ⚠️ **`/declare/knows`、`/declare/believes`、`/declare/where` 2026-08-14 删了**
+# （作者裁决：「谁知道什么 / 谁在哪儿」只走抽取那条路，见 `declare.py` 那段注释）。
+#
+# **下面那两条不是同一组，别顺手删掉**：`/declare/death` 和 `/declare/first-appearance`
+# 是 R3 / R2 在生产上唯一的写入方，抽取器不写它们。
 
 
 @app.post("/api/projects/{project_id}/declare/death")

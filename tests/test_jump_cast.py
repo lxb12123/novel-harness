@@ -28,6 +28,8 @@ from fastapi.testclient import TestClient
 from test_activity import seeded  # noqa: F401  ← 一条抽取 + 一次自动生效的那本书
 from test_api import TWIST
 
+import seed
+
 
 QUOTE = "萧决在青云城主府第一次听说了血脉秘密的真相。"
 QUOTE_STEWARD = "李管家什么也没说。"
@@ -85,21 +87,17 @@ def _jump_of(client: TestClient, pid: str, character_id: str) -> dict[str, Any]:
     return hits[0]
 
 
-def _both_know(client: TestClient, pid: str) -> None:
+def _both_know(client: TestClient, pid: str, db: str) -> None:
     """让这一章提到的**两个人都知道**血脉秘密。
 
     没有这一步，推导出来的在场（萧决 + 李管家）自己就产出一条禁令，
     「坐标把人挤掉了」和「本来就该禁」就分不开——下面几条断言会因为一个巧合而绿。
     """
     for who, quote in (("萧决", QUOTE), ("李管家", QUOTE_STEWARD)):
-        r = client.post(
-            f"/api/projects/{pid}/declare/knows",
-            json={"who": who, "secret": "血脉秘密", "quote": quote},
-        )
-        assert r.status_code == 200, r.text
+        seed.knows(db, pid, who=who, secret="血脉秘密", quote=quote)
 
 
-def _offstage_believer(client: TestClient, pid: str) -> tuple[str, dict[str, Any]]:
+def _offstage_believer(client: TestClient, pid: str, db: str) -> tuple[str, dict[str, Any]]:
     """建一个没在第 1 章露过面的人，声明他**以为**血脉秘密是别的东西。
 
     「以为」和「不知道」在 `must_not_reveal` 的判据里是同一侧（`state is not KNOWS`），
@@ -109,16 +107,11 @@ def _offstage_believer(client: TestClient, pid: str) -> tuple[str, dict[str, Any
         f"/api/projects/{pid}/nodes", json={"label": "Character", "name": OFFSTAGE}
     )
     assert made.status_code == 200, made.text
-    declared = client.post(
-        f"/api/projects/{pid}/declare/believes",
-        json={
-            "who": OFFSTAGE,
-            "secret": "血脉秘密",
-            "believed_value": "她以为那只是个传闻",
-            "quote": QUOTE,
-        },
+    seed.believes(
+        db, pid,
+        who=OFFSTAGE, secret="血脉秘密",
+        believed_value="她以为那只是个传闻", quote=QUOTE,
     )
-    assert declared.status_code == 200, declared.text
     node_id = made.json()["id"]
     return node_id, _jump_of(client, pid, node_id)
 
@@ -141,7 +134,7 @@ def test_the_jump_coordinate_puts_a_row_back_without_taking_the_others_off(
     derived = _rows(client, pid, 1)
     assert derived == [book["萧决"], book["李管家"]], f"前提坏了：推导出来的是 {derived}"
 
-    node_id, jump = _offstage_believer(client, pid)
+    node_id, jump = _offstage_believer(client, pid, book["db"])
     widened = _rows(client, pid, 1, include=_coordinate(jump))
     assert node_id in widened, "坐标没到面板上 —— 那一行仍然不在表里"
     assert set(derived) <= set(widened), f"推导出来的行被挤掉了：{derived} → {widened}"
@@ -158,8 +151,8 @@ def test_a_jump_coordinate_never_shrinks_must_not_reveal(
     所以正确的结果是禁令**变多**。变少（或者干脆没变化，那说明坐标压根没到）都不行。
     """
     pid = book["pid"]
-    _both_know(client, pid)
-    _, jump = _offstage_believer(client, pid)
+    _both_know(client, pid, book["db"])
+    _, jump = _offstage_believer(client, pid, book["db"])
     chapter = jump["chapter_number"]
 
     baseline = _forbidden(client, pid, chapter)
@@ -177,7 +170,7 @@ def test_a_jump_coordinate_never_shrinks_the_state_cards(
 ) -> None:
     """`/state` 吃的是同一份在场。少一个人 = 少一张状态卡，作者以为那个人这一章没状态。"""
     pid = book["pid"]
-    node_id, jump = _offstage_believer(client, pid)
+    node_id, jump = _offstage_believer(client, pid, book["db"])
     chapter = jump["chapter_number"]
 
     baseline = _state_ids(client, pid, chapter)
@@ -201,7 +194,7 @@ def test_the_net_catches_a_coordinate_that_filters_instead_of_adding(
     所以「坐标落到面板上之后禁令没少」是一句有内容的话。
     """
     pid = book["pid"]
-    _both_know(client, pid)
+    _both_know(client, pid, book["db"])
     # 李管家改成「以为」——于是推导下的在场里有一个人不知道真相，禁令有一条。
     version = client.get(f"/api/projects/{pid}").json()["canon_version"]
     flipped = client.post(
@@ -243,7 +236,7 @@ def test_a_coordinate_cannot_break_open_a_chapter_where_nobody_was_named(
     第 2 章正文全是代词（`test_api.BOOK`），一个花名册称呼都没有。
     """
     pid = book["pid"]
-    _both_know(client, pid)
+    _both_know(client, pid, book["db"])
     assert _rows(client, pid, 2) == [], "前提坏了：第 2 章居然数出人来了"
 
     locked = _forbidden(client, pid, 2)
@@ -269,7 +262,7 @@ def test_an_ambiguous_coordinate_locks_down_instead_of_silently_falling_back(
     「师兄」在这本书里指向两个人。
     """
     pid = book["pid"]
-    _both_know(client, pid)
+    _both_know(client, pid, book["db"])
     assert _forbidden(client, pid, 1) == [], "前提坏了：两个人都知道，本来不该有禁令"
 
     body = _panel(client, pid, "constraints", 1, include="师兄")
@@ -295,11 +288,7 @@ def test_the_coordinate_carries_a_display_name_and_no_secret_text(
     过度收窄一样是 bug——作者认不出这条日志说的是哪个秘密，「可查」就没兑现。
     """
     pid = book["pid"]
-    declared = client.post(
-        f"/api/projects/{pid}/declare/knows",
-        json={"who": "萧决", "secret": "血脉秘密", "quote": QUOTE},
-    )
-    assert declared.status_code == 200, declared.text
+    seed.knows(book["db"], pid, who="萧决", secret="血脉秘密", quote=QUOTE)
     page = client.get(f"/api/projects/{pid}/activity", params={"limit": "200"})
     assert page.status_code == 200, page.text
     assert TWIST not in page.text, "秘密正文出现在日志页上"

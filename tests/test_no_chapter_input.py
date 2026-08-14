@@ -295,11 +295,13 @@ def test_the_guard_actually_walks_the_real_app() -> None:
     """扫描器要是把 app 找错了地方（或者遍历为空），三条守卫会永远绿着通过。"""
     paths = {path for path, _ in walk(get_command(app))}
 
-    assert {"declare knows", "declare believes", "declare where", "declare alias"} <= paths
+    # 2026-08-14：`declare knows / believes / where` 删了（那类事实只走抽取）。
+    # **剩下这几条仍然必须走过这道网**——它们都收引语、都算章号，正是这道网防的东西。
+    assert {"declare dead", "declare appears", "declare alias"} <= paths
     assert {"init", "import", "sync", "locate", "panel", "check"} <= paths
     # 声明面上真的有参数可扫——一条零参数的命令当然「没有章号输入框」。
     commands = {path: cmd for path, cmd in walk(get_command(app))}
-    assert len(commands["declare knows"].params) >= 4
+    assert len(commands["declare dead"].params) >= 4
 
 
 def test_the_ast_guard_can_see_a_hand_typed_chapter() -> None:

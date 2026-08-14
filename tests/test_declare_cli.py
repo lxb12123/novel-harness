@@ -216,7 +216,7 @@ def test_the_chapter_number_is_computed_not_typed(seeded: Book) -> None:
     时态模型退化成快照图 → 项目全部差异化的地基没了。
     """
     out = seeded.ok(
-        "declare", "knows", "--who", "萧决", "--secret", "血脉秘密", "--quote", BLOOD_QUOTE
+        "declare", "dead", "--who", "萧决", "--quote", BLOOD_QUOTE
     )
 
     assert "valid_from = ch3" in out
@@ -234,52 +234,13 @@ def test_a_quote_from_another_chapter_yields_another_chapter(seeded: Book) -> No
     只有上面那一条的话，`valid_from = 3` 硬编码全绿（fixture 恰好 3 章）。
     """
     out = seeded.ok(
-        "declare", "knows", "--who", "萧决", "--secret", "血脉秘密", "--quote", HERB_QUOTE
+        "declare", "dead", "--who", "萧决", "--quote", HERB_QUOTE
     )
 
     assert "valid_from = ch1" in out
 
 
-def test_the_closed_open_interval_runs_through_the_real_declaration_path(seeded: Book) -> None:
-    """`[valid_from, valid_to)` 的**下界**，穿过真实的声明链路。
 
-    ch3 声明 → ch3 知道 / ch2 不知道。只查 ch3 的话，一个把时态过滤整个丢掉的实现照样
-    全绿——它对每一章都答「知道」。这一格便宜且致命。
-    """
-    seeded.ok("declare", "knows", "--who", "萧决", "--secret", "血脉秘密", "--quote", BLOOD_QUOTE)
-
-    assert "✓ 知道 (ch3)" in seeded.ok("panel", "--chapter", "3", "--cast", "萧决")
-    assert "✗ 不知道" in seeded.ok("panel", "--chapter", "2", "--cast", "萧决")
-
-
-def test_believes_renders_what_he_thinks_it_is(seeded: Book) -> None:
-    """只画一个 ⚠ 而不说他以为的是什么，等于没说。"""
-    out = seeded.ok(
-        "declare", "believes", "--who", "萧决", "--secret", "血脉秘密",
-        "--as", "只是流言", "--quote", HERB_QUOTE,
-    )
-
-    assert "valid_from = ch1" in out
-    assert "只是流言" in out
-    assert "⚠ 错误认知 (ch1)" in seeded.ok("panel", "--chapter", "2", "--cast", "萧决")
-
-
-def test_declare_where_prints_the_supersede(seeded: Book) -> None:
-    """**招牌动作。** 作者敲的是「他到了北荒」，系统顺手把「他在药庐」闭合到 `[1, 3)`。
-
-    那个 3 同样是算出来的（= 新边的 valid_from）。不印的话，作者永远不知道系统替他维护了
-    一条时间线——而他不知道的功能等于不存在的功能。
-    """
-    seeded.ok("declare", "place", "青云城主府")
-    seeded.ok("declare", "place", "北荒")
-    seeded.ok("declare", "where", "--who", "萧决", "--loc", "青云城主府", "--quote", HERB_QUOTE)
-
-    out = seeded.ok("declare", "where", "--who", "萧决", "--loc", "北荒", "--quote", SNOW_QUOTE)
-
-    assert "valid_from = ch3" in out
-    assert "自动闭合" in out
-    assert "青云城主府" in out
-    assert "[1, 3)" in out, "闭开区间要原样印出来：150 和 149 差一章，而差一章是最贵的 bug"
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -294,7 +255,7 @@ def test_an_ambiguous_quote_is_refused_with_candidates(seeded: Book) -> None:
     这不违反约束 8：约束 8 治的是系统主动推队列；这里是作者按了按钮而系统不肯替他猜。
     """
     out = seeded.refused(
-        "declare", "knows", "--who", "萧决", "--secret", "血脉秘密", "--quote", "萧决"
+        "declare", "dead", "--who", "萧决", "--quote", "萧决"
     )
 
     assert "系统不替你挑" in out
@@ -306,7 +267,7 @@ def test_an_ambiguous_quote_is_refused_with_candidates(seeded: Book) -> None:
 def test_a_quote_that_is_not_in_the_text_is_refused(seeded: Book) -> None:
     """找不到 → 提到 `nh sync`：最常见的原因是作者刚在编辑器里改过这一章。"""
     out = seeded.refused(
-        "declare", "knows", "--who", "萧决", "--secret", "血脉秘密", "--quote", "他推开了那扇门"
+        "declare", "dead", "--who", "萧决", "--quote", "他推开了那扇门"
     )
 
     assert "一处都找不到" in out
@@ -321,7 +282,7 @@ def test_an_ambiguous_name_is_refused_with_candidates(book: Book) -> None:
     book.ok("declare", "secret", "血脉秘密")
 
     out = book.refused(
-        "declare", "knows", "--who", "师兄", "--secret", "血脉秘密", "--quote", BLOOD_QUOTE
+        "declare", "dead", "--who", "师兄", "--quote", BLOOD_QUOTE
     )
 
     assert "系统不替你挑" in out
@@ -331,20 +292,24 @@ def test_an_ambiguous_name_is_refused_with_candidates(book: Book) -> None:
 
 def test_an_unknown_name_is_refused(seeded: Book) -> None:
     out = seeded.refused(
-        "declare", "knows", "--who", "张三", "--secret", "血脉秘密", "--quote", BLOOD_QUOTE
+        "declare", "dead", "--who", "张三", "--quote", BLOOD_QUOTE
     )
 
     assert "没有叫「张三」的东西" in out
 
 
-def test_a_secret_slot_refuses_a_character(seeded: Book) -> None:
-    """`--secret` 收到一个人 → 拒绝。一条 dst 是人的 KNOWS 边在面板上**不成列**——
-    作者看见的是「系统对这条没意见」，那是最沉默的一种错。"""
+def test_a_character_slot_refuses_a_secret(seeded: Book) -> None:
+    """`--who` 收到一个秘密 → 拒绝。**槽位的类型是硬的**，系统不替作者把它掰过来——
+    掰过来的产物是一条 src 不是人的边，它在面板上不成列，作者看见的是
+    「系统对这条没意见」，那是最沉默的一种错。
+
+    （2026-08-14 这条从 `declare knows --secret` 改指 `declare dead --who`：
+    那三条命令删了，而这条测的是 `WrongLabel` 这套拒绝，它一个字没变。）"""
     out = seeded.refused(
-        "declare", "knows", "--who", "萧决", "--secret", "决哥", "--quote", BLOOD_QUOTE
+        "declare", "dead", "--who", "血脉秘密", "--quote", BLOOD_QUOTE
     )
 
-    assert "这里要的是 Secret" in out
+    assert "这里要的是 Character" in out
 
 
 def test_a_one_character_alias_needs_not_for_rules(seeded: Book) -> None:
@@ -420,20 +385,16 @@ def test_declare_character_is_idempotent(book: Book) -> None:
     book.ok("declare", "character", "萧决")
     book.ok("declare", "secret", "血脉秘密")
 
-    out = book.ok(
-        "declare", "knows", "--who", "萧决", "--secret", "血脉秘密", "--quote", BLOOD_QUOTE
-    )
+    out = book.ok("declare", "dead", "--who", "萧决", "--quote", BLOOD_QUOTE)
 
     assert "valid_from = ch3" in out
 
 
 def test_an_alias_resolves_the_same_node(seeded: Book) -> None:
     """`--who 决哥` 和 `--who 萧决` 是同一个人。别名**永不合并实体**，但解析到同一个节点。"""
-    out = seeded.ok(
-        "declare", "knows", "--who", "决哥", "--secret", "血脉秘密", "--quote", BLOOD_QUOTE
-    )
+    out = seeded.ok("declare", "dead", "--who", "决哥", "--quote", BLOOD_QUOTE)
 
-    assert "✓ 萧决 KNOWS 血脉秘密" in out, "回执印的是本名，不是他这次敲的那个称呼"
+    assert "✓ 萧决 " in out, "回执印的是本名，不是他这次敲的那个称呼"
 
 
 def test_declare_secret_can_hang_a_sub_fact(seeded: Book) -> None:

@@ -532,9 +532,41 @@ class Ledger:
         return stored
 
     # ── 边（唯一给 valid_from 赋值的地方）──────────────────────────────────
+    #
+    # ⚠️ **下面三条 2026-08-14 起没有任何作者入口了。**
+    #
+    # 作者的裁决：**「谁知道什么 / 谁以为什么 / 谁在哪儿」只走抽取那条路。** 手工那条是
+    # 「你说，我记」，抽取那条是「我猜，你审」——两条路往同一批表里写同一种事实，就有两个
+    # 真相源，而作者只会看见后者。所以删掉的是**入口**：
+    #
+    #     浏览器  中栏选区工具条 + 声明抽屉        （2026-08-14，commit 28e892e）
+    #     HTTP    POST …/declare/{knows,believes,where} + POST …/locate
+    #     CLI     nh declare {knows,believes,where}
+    #
+    # **方法本身留着，因为它们不是作者的路，是夹具的词汇**：
+    #
+    #     synth/build.py:413      M2 kill-gate 那本合成小册子就是用它建起来的，
+    #                             ground truth 由建出来的图派生（EVAL_PROTOCOL）。
+    #                             删它 = 改卷子，而协议是预注册的。
+    #     scripts/seed_demo.py    demo.sh 的心跳
+    #     tests/                  九个文件，四十余处「先造一条 KNOWS 边」
+    #
+    # 把这三个方法删掉，代价是重写 M2 的考卷装置，收益是零——**作者根本够不着它们**。
+    # 哪天真要连库里这一层也拿掉，先想清楚 `synth/` 用什么替代，那是一次协议动作。
+    #
+    # ── 为什么下面那两个**不在**这一组里（这是这次改动的全部风险所在）──────────
+    #
+    # `declare_dead` 和 `declare_first_appearance` 长得像同一组，其实不是：它们是
+    # **R2 / R3 在生产上唯一的写入方**，而抽取器一个字都不写它们
+    # （`extract/ingest_helpers.py` 的 state_updates 只映射到 `LOCATED_AT`）。
+    # 删了它们的入口 = 两条规则永远不可能开火，而 `nh check` 照旧说「没问题」。
+    #
+    # **这个坑这个仓库刚爬出来过**：`checks/__init__.py` 开头那段警告说的就是
+    # 2026-08-02 到 08-13 之间那十一天——规则每天绿着，生产上结构性哑火。
+    # 补法正是这两条入口。**别再把它们当成「手工声明的残留」删掉。**
 
     def declare_knows(self, *, who: str, secret: str, quote: str) -> Declaration:
-        """「他在这段原文里知道了这个秘密」。章号由引语决定，你没有输入过它。"""
+        """「他在这段原文里知道了这个秘密」。章号由引语决定。**没有作者入口**（见上）。"""
         src = self._resolve_one(who)
         dst = self._resolve_one(secret, want=NodeLabel.SECRET)
         return self._declare_edge(
@@ -550,7 +582,7 @@ class Ledger:
     def declare_believes(
         self, *, who: str, secret: str, believed_value: str, quote: str
     ) -> Declaration:
-        """「他以为的是另一个版本」。`believed_value` 进 `edge.props`，面板直接渲染它。"""
+        """「他以为的是另一个版本」。`believed_value` 进 `edge.props`。**没有作者入口。**"""
         src = self._resolve_one(who)
         dst = self._resolve_one(secret, want=NodeLabel.SECRET)
         return self._declare_edge(
@@ -564,8 +596,8 @@ class Ledger:
         )
 
     def declare_where(self, *, who: str, loc: str, quote: str) -> Declaration:
-        """「他在这段原文里到了这个地方」。`LOCATED_AT` 的 exclusivity 是 single_per_src，
-        所以这一条会自动闭合他上一个位置（`Declaration.closed`）。"""
+        """「他在这段原文里到了这个地方」。`LOCATED_AT` 是 single_per_src，会自动闭合
+        他上一个位置（`Declaration.closed`）。**没有作者入口。**"""
         src = self._resolve_one(who)
         dst = self._resolve_one(loc, want=NodeLabel.LOCATION)
         return self._declare_edge(

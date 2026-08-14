@@ -129,8 +129,6 @@ const DEFAULT: Handler[] = [
   { method: "DELETE", match: /\/snapshots\//, body: { deleted: true } },
   { method: "POST", match: /\/nodes$/, body: fixtures.createNode },
   { method: "POST", match: /\/aliases$/, body: fixtures.createAlias },
-  { method: "POST", match: /\/locate$/, body: fixtures.locate },
-  { method: "POST", match: /\/declare\/knows$/, body: fixtures.declareKnows },
   { method: "POST", match: /\/accept$/, body: fixtures.proposalAccept },
   { method: "POST", match: /\/reject$/, body: fixtures.proposalReject },
   // 「改一改再收下」。回执和 accept 同型（`ProposalResolution`），差别在 `status`——

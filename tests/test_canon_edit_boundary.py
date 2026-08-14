@@ -40,6 +40,8 @@ from novel_harness.db import connect
 
 from test_activity import seed_call, seed_run
 from test_api import TWIST, _seed_provisional_event
+
+import seed
 from test_no_chapter_input import BANNED, model_chapter_fields
 
 # `_without_comments` 是一份写对了很难、写错了很安静的东西（它要在剥注释的同时
@@ -232,10 +234,7 @@ def edited(client: TestClient, book: dict[str, str]) -> dict[str, Any]:
     pid = book["pid"]
     base = f"/api/projects/{pid}"
 
-    declared = client.post(
-        f"{base}/declare/knows", json={"who": "萧决", "secret": "血脉秘密", "quote": QUOTE}
-    )
-    assert declared.status_code == 200, declared.text
+    seed.knows(book["db"], pid, who="萧决", secret="血脉秘密", quote=QUOTE)
 
     version = client.get(base).json()["canon_version"]
     corrected = client.post(

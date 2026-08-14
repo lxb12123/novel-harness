@@ -19,6 +19,8 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+import seed
+
 from novel_harness.api.manuscript import (
     PREAMBLE_ALARM_CHARS,
     import_summary,
@@ -168,10 +170,13 @@ def test_sync_lets_the_author_declare_what_he_just_wrote(
     line = "他在灯下把那封信烧了。"
     second.write_text(second.read_text(encoding="utf-8-sig") + f"\n{line}\n", encoding="utf-8")
 
-    assert client.post(f"{base}/locate", json={"quote": line}).json() == []
+    # `POST …/locate` 2026-08-14 删了（手工声明那条路整条退场），但**这颗按钮的理由
+    # 一个字没变**：库里那份快照旧了，后台整理就照着旧正文跑。这里改用库级 `locate`
+    # 直接问那份快照——问的还是同一件事：「系统手上那一版有没有这句话」。
+    assert seed.locate(book["db"], book["pid"], line) == []
     assert client.post(f"{base}/sync").status_code == 200
-    hits = client.post(f"{base}/locate", json={"quote": line}).json()
-    assert [h["chapter_number"] for h in hits] == [2]
+    hits = seed.locate(book["db"], book["pid"], line)
+    assert [h.chapter_number for h in hits] == [2]
 
 
 def test_sync_costs_nothing(client: TestClient, book: dict[str, str]) -> None:

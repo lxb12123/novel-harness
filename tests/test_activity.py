@@ -25,6 +25,8 @@ from fastapi.testclient import TestClient
 
 from test_api import PLOT_NOTE, TWIST, _seed_low_confidence_proposal, _seed_provisional_event
 
+import seed
+
 from novel_harness import activity, decisions, project
 from novel_harness.api.deps import get_extraction_runner
 from novel_harness.db import connect
@@ -471,11 +473,7 @@ def test_the_knowledge_cell_jump_actually_changes_that_cell(
     这是「事后可查可改」两半接上的唯一证明：光有日志或光有 `/canon/…` 都不算。
     """
     pid = book["pid"]
-    declared = client.post(
-        f"/api/projects/{pid}/declare/knows",
-        json={"who": "萧决", "secret": "血脉秘密", "quote": QUOTE},
-    )
-    assert declared.status_code == 200, declared.text
+    seed.knows(book["db"], pid, who="萧决", secret="血脉秘密", quote=QUOTE)
     version = client.get(f"/api/projects/{pid}").json()["canon_version"]
     flipped = client.post(
         f"/api/projects/{pid}/canon/knowledge",
@@ -511,11 +509,7 @@ def test_the_knowledge_cell_jump_actually_changes_that_cell(
 def _knowledge_jump(client: TestClient, book: dict[str, str], who: str) -> dict[str, Any]:
     """声明一次「谁知道血脉秘密」，把那条日志行的 `jump` 取回来。"""
     pid = book["pid"]
-    declared = client.post(
-        f"/api/projects/{pid}/declare/knows",
-        json={"who": who, "secret": "血脉秘密", "quote": QUOTE},
-    )
-    assert declared.status_code == 200, declared.text
+    seed.knows(book["db"], pid, who=who, secret="血脉秘密", quote=QUOTE)
     entries = _entries(client, pid, limit=200)
     hits = [e for e in entries if e["jump"] and e["jump"]["target"] == "knowledge_cell"]
     assert hits, "没有认知矩阵那一档的日志行 —— 这条测试在空转"
@@ -1050,10 +1044,7 @@ def test_the_net_does_not_flatten_a_reference_that_was_already_narrow(
     一起收窄掉，而作者正是照着那个名字去找那一格的。
     """
     pid = book["pid"]
-    client.post(
-        f"/api/projects/{pid}/declare/knows",
-        json={"who": "萧决", "secret": "血脉秘密", "quote": QUOTE},
-    )
+    seed.knows(book["db"], pid, who="萧决", secret="血脉秘密", quote=QUOTE)
     version = client.get(f"/api/projects/{pid}").json()["canon_version"]
     flipped = client.post(
         f"/api/projects/{pid}/canon/knowledge",
