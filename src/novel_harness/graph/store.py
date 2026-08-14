@@ -540,6 +540,17 @@ class CanonWriter(Protocol):
         """
         ...
 
+    def retire_stale_extractor_facts(
+        self, project_id: str, chapter_id: str, current_snapshot_id: str
+    ) -> int:
+        """这一章换了新正文之后，让锚在**旧那一版**上的抽取事实退休（`STALE`）。
+
+        返回退休了几条。**幂等**：没有旧锚时改 0 行，所以每次 sync 都调也不要紧。
+        论证写在 `queries.retire_stale_extractor_facts`（为什么是 STALE 不是
+        RETRACTED、为什么只动抽取器那些）。
+        """
+        ...
+
     def put_chapter(self, spec: ChapterSpec) -> StoredChapter:
         """落一章：Chapter 节点 + `chapter` 行 + 一条快照，**一个事务**。
 

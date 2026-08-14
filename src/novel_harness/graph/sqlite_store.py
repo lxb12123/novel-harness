@@ -573,6 +573,14 @@ class SqliteStoryGraph:
                 usable_for_rules=spec.usable_for_rules,
             )
 
+    def retire_stale_extractor_facts(
+        self, project_id: str, chapter_id: str, current_snapshot_id: str
+    ) -> int:
+        with _transaction(self._conn):
+            return queries.retire_stale_extractor_facts(
+                self._conn, project_id, chapter_id, current_snapshot_id
+            )
+
     def put_chapter(self, spec: ChapterSpec) -> StoredChapter:
         sha = quote_hash(spec.text)
         with _transaction(self._conn):

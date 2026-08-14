@@ -286,7 +286,7 @@ def _read_one_chapter(
             path=rel,
         )
     chapter = book.chapters[0]
-    return store.put_chapter(
+    stored = store.put_chapter(
         ChapterSpec(
             project_id=project_id,
             number=number,
@@ -299,6 +299,19 @@ def _read_one_chapter(
             text=text,
         )
     )
+    # ── 新正文落地了 → 让锚在旧那一版上的抽取事实退休（2026-08-14）──────────
+    #
+    # **这一下必须紧贴 `put_chapter`**：三条磁盘写路径（`sync` 整本 /
+    # `sync_chapter` 单章 / `save_chapter` 作者按保存和助手落稿）全都从这个函数过，
+    # 放在这儿等于一次覆盖三条。放到调用方去，迟早有一条忘了调。
+    #
+    # 不调的后果实测过：同一章分析两次，事件从 2 条变 4 条（一模一样两组），
+    # 而同一个人在同一章同时 ACTIVE 在两个地点——**R4 会报一条正文里根本不存在的
+    # 位置冲突**，作者对着稿子完全看不懂。
+    #
+    # 幂等：没有旧锚时改 0 行。所以整本 sync 每章都调一次也不要紧。
+    store.retire_stale_extractor_facts(project_id, stored.id, stored.snapshot_id)
+    return stored
 
 
 def sync_chapter(

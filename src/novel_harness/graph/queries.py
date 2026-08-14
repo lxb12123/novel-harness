@@ -1227,3 +1227,79 @@ def fetch_evidence(conn: sqlite3.Connection, evidence_id: str) -> Evidence:
     if not rows:
         raise LookupError(f"evidence 不存在：{evidence_id}")
     return to_evidence(rows[0])
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 换快照之后：让锚在旧正文上的抽取事实退休
+# ══════════════════════════════════════════════════════════════════════════
+
+_RETIRE_SELECT: Final = """
+    SELECT e.id FROM evidence e
+     WHERE e.project_id = :pid
+       AND e.chapter_id = :chapter
+       AND e.chapter_snapshot_id != :current
+"""
+"""这一章里**锚在非当前快照**上的证据。
+
+`chapter_snapshot_id` 是**审计指针**（永不更新，指着当年那一版），`chapter_id` 是
+重定位指针（指着这一章）。所以这两个条件合起来就是「它当年锚的那一版正文，
+已经不是现在磁盘上那一版了」。
+"""
+
+
+def retire_stale_extractor_facts(
+    conn: sqlite3.Connection, project_id: str, chapter_id: str, current_snapshot_id: str
+) -> int:
+    """把这一章里锚在**旧快照**上的**抽取器**事实标成 `STALE`。返回退休了几条。
+
+    ── 为什么必须有这一下 ────────────────────────────────────────────────────
+
+    作者在别的软件里改了第 88 章 → 后台整理按新快照重新分析一遍 → 而旧那一版的
+    事实**还活着**。实测过（2026-08-14）：同一章分析两次，`story_event` 从 2 条变 4 条
+    （一模一样两组），`edge` 里同一个人同时在两个地点 ACTIVE——**R4 会报一条正文里
+    根本不存在的位置冲突**，而作者对着稿子完全看不懂系统在说什么。
+
+    `STALE` 这一档从 001_init 就写在 `TEMPORAL_WHERE` 里、`location_conflict.py` 也
+    照着它写了「STALE 立刻停火」，**但生产上一个写入方都没有**（`importer.py` 模块头
+    写着「那是 M4」）。这个函数就是那个写入方。
+
+    ── 为什么是 STALE 不是 RETRACTED ────────────────────────────────────────
+
+    `RETRACTED` 的语义是「这条事实从未成立过」（同章更正）。而改稿之后那条事实
+    **可能仍然是真的**，只是它的引语不在正文里了——依据没了，不等于结论错了。
+    这正是 ADR 0006「STALE 立刻停火」那一档：停火，不是宣判。
+
+    ── 为什么只退休 `source = 'extractor'` ──────────────────────────────────
+
+    **作者手动加的、改过的那些一条都不许动。** 退休它们等于系统吃掉了作者的决定，
+    那比重复更糟——他会发现自己刚补的一条认知在改了个错别字之后消失了，
+    而没有任何地方告诉他为什么。`event_knower` 没有 `source` 列，它跟着它的事件走。
+    """
+    params = {"pid": project_id, "chapter": chapter_id, "current": current_snapshot_id}
+    touched = 0
+    for table in ("edge", "story_event"):
+        cur = conn.execute(
+            f"""
+            UPDATE {table} SET evidence_status = 'STALE'
+             WHERE project_id = :pid
+               AND source = 'extractor'
+               AND evidence_status = 'FRESH'
+               AND evidence_id IN ({_RETIRE_SELECT})
+            """,
+            params,
+        )
+        touched += cur.rowcount
+    # 知情名单没有自己的 `source`，判据是「它挂的那条事件刚被退休了」。
+    cur = conn.execute(
+        """
+        UPDATE event_knower SET evidence_status = 'STALE'
+         WHERE project_id = :pid
+           AND evidence_status = 'FRESH'
+           AND event_id IN (
+                 SELECT id FROM story_event
+                  WHERE project_id = :pid AND evidence_status = 'STALE'
+             )
+        """,
+        {"pid": project_id},
+    )
+    return touched + cur.rowcount
