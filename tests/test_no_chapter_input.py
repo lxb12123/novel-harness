@@ -39,7 +39,7 @@ import ast
 import re
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import typer
 from typer.main import get_command
@@ -343,9 +343,15 @@ def callable_chapter_params(func: Any) -> list[str]:
 
 
 def test_fact_edit_request_schemas_have_no_chapter_field() -> None:
-    """三个改正入参模型（两条 `/canon/…` + 提案 `edit`）里一个章号字段都没有。"""
+    """四个改正入参模型（三条 `/canon/…` + 提案 `edit`）里一个章号字段都没有。
+
+    `KnowledgeAddRequest`（2026-08-14「补一条」）**尤其**要在这张单子上：它那条路由的
+    路径上就有一个 `{chapter}`，而「路径上已经有了，请求体里顺手也收一个吧」是这几个
+    schema 里最容易长出章号的一个——收下的那一刻，界面上就有理由画一个框让作者去填它。
+    """
     from novel_harness.api.review import (
         EventCastEditRequest,
+        KnowledgeAddRequest,
         KnowledgeEditRequest,
         ProposalEditRequest,
     )
@@ -355,6 +361,7 @@ def test_fact_edit_request_schemas_have_no_chapter_field() -> None:
         model.__name__: model_chapter_fields(model)
         for model in (
             KnowledgeEditRequest,
+            KnowledgeAddRequest,
             EventCastEditRequest,
             ProposalEditRequest,
             ProposalReview,
@@ -369,6 +376,12 @@ def test_fact_edit_request_schemas_have_no_chapter_field() -> None:
 
 
 def test_the_correction_layer_takes_no_chapter_argument() -> None:
+    """**改**那几条一个章号参数都没有：它们的 `valid_from` 从被改的那条事实上继承。
+
+    `add_knowledge` 不在这张单子上，它是**逐个点名**的唯一例外，由下面那条单独钉住
+    ——理由和形式写在那儿（同 `test_canon_edit_boundary.NAMED_CHAPTER_BOXES` 的做法：
+    例外写清楚为什么正当，**不是**在这条守卫上开一个「名字里带 chapter 就放过」的口子）。
+    """
     from novel_harness.corrections import correct_event_cast, correct_knowledge
     from novel_harness.graph.sqlite_events import SqliteEventStore
 
@@ -378,6 +391,58 @@ def test_the_correction_layer_takes_no_chapter_argument() -> None:
         if callable_chapter_params(func)
     }
     assert not offenders, f"改正层长出了章号参数：{offenders}"
+
+
+def test_the_only_chapter_the_correction_layer_takes_never_passes_through_the_author() -> None:
+    """**逐个点名的那一个**：`add_knowledge(chapter=…)`，2026-08-14。
+
+    它是「在认知矩阵一格空白上补一条」的业务函数，而这一条边背后**没有引语**——
+    没有引语就没有能算出章号的证据。那个数于是只能从别处来，而唯一正当的别处是
+    **作者正看着的那一章**：矩阵本来就是 AS OF 第 N 章渲染的，他点的那一格就在那儿。
+
+    判据始终是这份守卫开头那一句：**作者的输入能不能到达 `valid_from`。** 这个数到不了
+    ——它一路是这样来的：
+
+        edge.valid_from_chapter ← add_knowledge(chapter=…) ← 路由的 `/chapters/{chapter}/`
+          ← `matrix.chapter`（那张表画的是第几章）← 作者点开的那一章
+
+    每一段都是坐标，没有一段是输入框。**下面三条断言把这件事钉死**：函数上恰好只有这
+    一个章号参数（多一个就说明有第二条路让它进来）、HTTP 那一侧的请求体一个都没有、
+    而路径参数是 `ge=1` 的整数（不是作者能敲的自由文本）。
+
+    真要把它变成一个输入框，红的会是
+    `test_canon_edit_boundary.py::test_no_screen_in_the_whole_workbench_posts_a_chapter`
+    ——那是零基线守卫，全前端一个 `<input type="number">` 都不许有。
+    """
+    from novel_harness.api.review import KnowledgeAddRequest
+    from novel_harness.corrections import add_knowledge
+
+    assert callable_chapter_params(add_knowledge) == ["chapter"], (
+        "`add_knowledge` 上的章号参数不只 `chapter` 一个了 —— 第二个一定是第二条让章号"
+        "进来的路，而这份守卫只为路径上那一个背书。"
+    )
+    assert model_chapter_fields(KnowledgeAddRequest) == [], (
+        "请求体收章号了 —— 路径上已经有一个，收下的这一个只可能来自作者的手"
+    )
+
+    # 第三条：**那个数是一个受约束的整数，不是一段自由文本。** 上面两条管住了「有没有
+    # 第二条路」，这一条管住「这条路本身能塞进什么」——`str` 或者不带下界的 `int`
+    # 都会让「第 0 章 / 第 -1 章」变成一次 500，而作者点的那一格永远给不出那种数。
+    #
+    # **这条断言 2026-08-14 补的**：它原先只活在上面那段 docstring 里（写着「三条断言」
+    # 而实际只有两条）——一份比测试大的说明书，正是这个仓库反复在修的东西。
+    # `Path(ge=1)` 的下界住在 `params.Path.metadata` 里的一个 `annotated_types.Ge`，
+    # **不是 `Path.ge`**（那个属性不存在，写它会得到一条 AttributeError 而不是红断言）。
+    from novel_harness.api.review import ChapterNumber
+
+    assert get_args(ChapterNumber)[0] is int, f"路径上那个章号不再是整数：{ChapterNumber!r}"
+    bounds = [
+        m.ge
+        for param in getattr(ChapterNumber, "__metadata__", ())
+        for m in getattr(param, "metadata", ())
+        if hasattr(m, "ge")
+    ]
+    assert bounds == [1], f"路径上那个章号丢了 `ge=1` 的下界：{ChapterNumber!r}"
 
 
 def test_the_schema_guard_can_see_a_chapter_field() -> None:

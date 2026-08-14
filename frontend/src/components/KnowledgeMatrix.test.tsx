@@ -22,6 +22,13 @@ const knows = matrix.cells.find((c) => c.state === "KNOWS")!;
 const who = () => matrix.characters.find((c) => c.id === knows.character_id)!;
 const what = () => matrix.secrets.find((s) => s.id === knows.secret_id)!;
 const openCell = () => screen.getByRole("button", { name: `改「${who().name} 对 ${what().name}」` });
+
+/** 一格「不知道」的坐标 —— 这次要**补**的那一格。 */
+const blank = matrix.cells.find((c) => c.state === "UNKNOWN")!;
+const blankWho = () => matrix.characters.find((c) => c.id === blank.character_id)!;
+const blankWhat = () => matrix.secrets.find((s) => s.id === blank.secret_id)!;
+const openBlank = () =>
+  screen.getByRole("button", { name: `补上「${blankWho().name} 对 ${blankWhat().name}」` });
 /** `vi.spyOn(globalThis, "fetch")` 的调用记录，结构化收窄（`MockInstance` 的泛型在
  *  fetch 上对不齐，而这里只需要「参数数组的数组」）。 */
 type Calls = { mock: { calls: unknown[][] } };
@@ -119,9 +126,10 @@ describe("认知矩阵", () => {
 // 那条退路：**看得见还不够，得改得掉。**
 
 describe("改这一格", () => {
-  it("「不知道」的格子没有编辑入口 —— 那儿没有可改的事实", async () => {
+  it("「不知道」的格子没有**改**的入口 —— 那儿没有可改的事实", async () => {
     // 改正层改的是**已经存在的那条边**，空格子必然 404（`corrections.py::FactNotFound`）。
-    // 新增一条认知是「声明」，那条路要一句引语来定章号——一个功能不留两个入口。
+    // 它今天有的是另一条路（「补上」，见下一组）——**两颗按钮的名字必须分得开**，
+    // 否则作者按下去之前不知道会发生什么，而两条路由的后果完全不同。
     renderWithApi(<MatrixView matrix={matrix} constraints={constraints} />);
     const unknown = matrix.cells.filter((c) => c.state === "UNKNOWN");
     expect(unknown.length).toBeGreaterThan(0);
@@ -129,8 +137,12 @@ describe("改这一格", () => {
       const ch = matrix.characters.find((x) => x.id === c.character_id)!;
       const s = matrix.secrets.find((x) => x.id === c.secret_id)!;
       expect(screen.queryByRole("button", { name: `改「${ch.name} 对 ${s.name}」` })).toBeNull();
+      expect(
+        screen.getByRole("button", { name: `补上「${ch.name} 对 ${s.name}」` }),
+      ).toBeInTheDocument();
     }
-    expect(screen.getAllByRole("button")).toHaveLength(1); // 只有那一格「知道」是按钮
+    // 每一格恰好一颗按钮：一格「改」+ 其余「补上」，不多不少。
+    expect(screen.getAllByRole("button")).toHaveLength(matrix.cells.length);
   });
 
   it("点开只给「另一种」，而且带着作者的话说这一处不动章号", async () => {
@@ -255,5 +267,148 @@ describe("改这一格", () => {
     await waitFor(() => expect(spy.mock.calls.some(([, i]) => (i as RequestInit)?.method === "POST")).toBe(true));
     expect(lastPost(spy)).not.toHaveProperty("believed_value");
     expect(lastPost(spy).to_type).toBe("KNOWS");
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 补这一格（2026-08-14：「作者可以手动修改**和增加**」的后一半）
+// ══════════════════════════════════════════════════════════════════════════
+//
+// 抽取写得出 `event_knower`，而在此之前作者想手工补一条时**没有路**（空格子 404）。
+// 这一组测的是那条路：它存在、它把章号留在 URL 里、它撞 409 时不悄悄改成「改」。
+
+/** 最后一次 POST 的 URL。**章号是不是留在了路径上**，只有它答得出来。 */
+const lastPostUrl = (spy: Calls) =>
+  String(
+    [...spy.mock.calls]
+      .reverse()
+      .find(([, init]) => (init as RequestInit | undefined)?.method === "POST")![0],
+  );
+
+describe("补这一格", () => {
+  it("点开先问是哪一种，并且**说出**从第几章起算（而不是给一个框让他填）", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<MatrixView matrix={matrix} constraints={constraints} />);
+    await user.click(openBlank());
+
+    expect(screen.getByText(/现在是「不知道」/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "他知道" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "他以为" })).toBeInTheDocument();
+    // 约束 10 的界面影子：那个数说出来了，但一个能敲的框都没有。
+    expect(screen.getByText(new RegExp(`从第 ${matrix.chapter} 章起算`))).toBeInTheDocument();
+    expect(document.querySelectorAll('input[type="number"]')).toHaveLength(0);
+    expect(screen.queryByRole("spinbutton")).toBeNull();
+    expect(document.body.textContent).not.toMatch(/KNOWS|BELIEVES|valid_from|canon_version/);
+  });
+
+  it("一种都没选就保存不了 —— 这一格上「知道」和「以为」不是一回事", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<MatrixView matrix={matrix} constraints={constraints} />);
+    await user.click(openBlank());
+
+    expect(screen.getByRole("button", { name: "补上这一条" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "他知道" }));
+    expect(screen.getByRole("button", { name: "补上「知道」" })).toBeEnabled();
+  });
+
+  it("「以为」没写内容照样保存不了（和改那条同一句话）", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<MatrixView matrix={matrix} constraints={constraints} />);
+    await user.click(openBlank());
+    await user.click(screen.getByRole("button", { name: "他以为" }));
+
+    expect(screen.getByRole("button", { name: "补上「以为」" })).toBeDisabled();
+    await user.type(screen.getByRole("textbox"), "以为那只是个传闻");
+    expect(screen.getByRole("button", { name: "补上「以为」" })).toBeEnabled();
+  });
+
+  it("**章号在路径上，请求体里一个都没有**", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<MatrixView matrix={matrix} constraints={constraints} />);
+    const spy = vi.spyOn(globalThis, "fetch");
+    await user.click(openBlank());
+    await user.click(screen.getByRole("button", { name: "他知道" }));
+    await user.click(screen.getByRole("button", { name: "补上「知道」" }));
+
+    await waitFor(() => expect(spy.mock.calls.some(([, i]) => (i as RequestInit)?.method === "POST")).toBe(true));
+    // 整个请求体就这四个键，多一个都得有人解释它为什么在。
+    expect(lastPost(spy)).toEqual({
+      character_id: blank.character_id,
+      secret_id: blank.secret_id,
+      type: "KNOWS",
+      expected_canon_version: matrix.version.canon_version,
+    });
+    // 那个数在 URL 的 `/chapters/{n}/` 那一段上，而且是**这张表画的那一章**。
+    expect(lastPostUrl(spy)).toContain(`/chapters/${matrix.chapter}/canon/knowledge`);
+    // 改完就收起来：留着一张选好了的表单，作者会以为自己还没保存。
+    await waitFor(() => expect(screen.queryByText("现在是「不知道」")).toBeNull());
+  });
+
+  it("「以为」那一边把内容一起带上", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<MatrixView matrix={matrix} constraints={constraints} />);
+    const spy = vi.spyOn(globalThis, "fetch");
+    await user.click(openBlank());
+    await user.click(screen.getByRole("button", { name: "他以为" }));
+    await user.type(screen.getByRole("textbox"), "以为那只是个传闻");
+    await user.click(screen.getByRole("button", { name: "补上「以为」" }));
+
+    await waitFor(() => expect(spy.mock.calls.some(([, i]) => (i as RequestInit)?.method === "POST")).toBe(true));
+    expect(lastPost(spy).believed_value).toBe("以为那只是个传闻");
+    expect(lastPost(spy).type).toBe("BELIEVES");
+  });
+
+  it("「这一格刚刚有了内容」要作者再看一眼，**不静默重试**", async () => {
+    // 真 dump 的 409（`errorFactAlreadyExists`）：作者摊开这一格的这段时间里，后台
+    // 正好把这条事实抽了出来——ADR 0020 之下这是常态。重试等于把他的改动盖到一份
+    // 他没看过的状态上，而这一条**不许**在前端悄悄改走「改」那条路。
+    const user = userEvent.setup();
+    const refreshed: number[] = [];
+    renderWithApi(
+      <MatrixView matrix={matrix} constraints={constraints} onRefresh={() => refreshed.push(1)} />,
+      [
+        {
+          method: "POST",
+          match: /\/chapters\/\d+\/canon\/knowledge$/,
+          status: 409,
+          body: fixtures.errorFactAlreadyExists,
+        },
+      ],
+    );
+    const spy = vi.spyOn(globalThis, "fetch");
+    await user.click(openBlank());
+    await user.click(screen.getByRole("button", { name: "他知道" }));
+    await user.click(screen.getByRole("button", { name: "补上「知道」" }));
+
+    // 后端那句话**原样**上屏（措辞的源只有后端一个）。
+    const said = (fixtures.errorFactAlreadyExists as { detail: { message: string } }).detail.message;
+    expect(await screen.findByText(said)).toBeInTheDocument();
+    const posts = spy.mock.calls.filter(([, i]) => (i as RequestInit)?.method === "POST");
+    expect(posts).toHaveLength(1);
+    expect(document.body.textContent).not.toContain("fact_already_exists");
+
+    await user.click(screen.getByRole("button", { name: "看看最新的" }));
+    expect(refreshed).toHaveLength(1);
+  });
+
+  it("换一格就重来 —— 上一格填了一半的内容不许跟过去", async () => {
+    // 跟过去的产物是一条**凭空多出来**的 CANON 事实，比改错一条更难发现。
+    const user = userEvent.setup();
+    const blanks = matrix.cells.filter((c) => c.state === "UNKNOWN");
+    expect(blanks.length).toBeGreaterThan(1);
+    renderWithApi(<MatrixView matrix={matrix} constraints={constraints} />);
+
+    const nameOf = (i: number) => {
+      const ch = matrix.characters.find((x) => x.id === blanks[i].character_id)!;
+      const s = matrix.secrets.find((x) => x.id === blanks[i].secret_id)!;
+      return `补上「${ch.name} 对 ${s.name}」`;
+    };
+    await user.click(screen.getByRole("button", { name: nameOf(0) }));
+    await user.click(screen.getByRole("button", { name: "他以为" }));
+    await user.type(screen.getByRole("textbox"), "以为那只是个传闻");
+
+    await user.click(screen.getByRole("button", { name: nameOf(1) }));
+    expect(screen.queryByRole("textbox")).toBeNull(); // 连「哪一种」都回到没选
+    expect(screen.getByRole("button", { name: "补上这一条" })).toBeDisabled();
   });
 });

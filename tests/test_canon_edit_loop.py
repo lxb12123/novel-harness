@@ -488,3 +488,217 @@ def test_pointing_a_place_declaration_at_the_cell_editor_really_would_be_a_dead_
         },
     )
     assert refused.status_code == 422, refused.text
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 6. **补**一条（2026-08-14）：空格子 → 补上 → 表上变了 → 日志里指得回来
+# ══════════════════════════════════════════════════════════════════════════
+#
+# 上面五节验的都是「改」。产品规则的后一半是「**增**」——抽取写得出 `event_knower`，
+# 而作者想手工补一条时此前**没有路**（空格子 404）。这一节是那条路的闭环，判据和
+# 第 1 节逐字相同：不是「后端函数写得对」，是「作者补完之后，回到日志页看得见、
+# 而且点得回那一格」。
+#
+# **章号那件事在这里必须一起验**：这条路由的生效章在路径上（矩阵本来就是 AS OF 那一章
+# 渲染的），请求体里一个章号键都没有。`test_canon_edit_boundary.py` 从源码和 schema
+# 两侧钉这条，这里钉的是**结果**——那个数真的落成了 `since_chapter`。
+
+BLANK_CELL_CHAPTER = 1
+"""补在第 1 章：那一章的正文里 `李管家` 和 `血脉秘密` 都被点到了，所以坐标落得下
+（第 2 章一个人名都没有，见第 3 节）。"""
+
+
+def _add_blank(
+    client: TestClient, book: dict[str, str], **body: Any
+) -> Any:
+    """在「李管家 对 血脉秘密」那一格空白上补一条。**章号只出现在路径里。**"""
+    pid = book["pid"]
+    return client.post(
+        f"/api/projects/{pid}/chapters/{BLANK_CELL_CHAPTER}/canon/knowledge",
+        json={
+            "character_id": book["李管家"],
+            "secret_id": book["血脉秘密"],
+            "expected_canon_version": client.get(f"/api/projects/{pid}").json()["canon_version"],
+            **body,
+        },
+    )
+
+
+def _cell(client: TestClient, book: dict[str, str], chapter: int) -> dict[str, Any]:
+    """那一格在第 `chapter` 章的矩阵上长什么样。"""
+    matrix = client.get(f"/api/projects/{book['pid']}/chapters/{chapter}/matrix")
+    assert matrix.status_code == 200, matrix.text
+    found = [
+        c
+        for c in matrix.json()["cells"]
+        if (c["character_id"], c["secret_id"]) == (book["李管家"], book["血脉秘密"])
+    ]
+    assert len(found) == 1, f"第 {chapter} 章的表上没有这一格：{matrix.json()['cells']}"
+    return found[0]
+
+
+def test_an_empty_cell_can_be_filled_in_and_the_fill_in_points_back_at_itself(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """**这一条是第 6 节存在的理由。** 四段一次走完，中间任何一段断掉这条路就是半条。
+
+    ① 那一格现在是空的 → ② 补一条 → ③ 同一张表上它变了 → ④ 日志里有一行署着作者，
+    而且它的坐标**点得回这一格**（当场用它改一次，不是看 endpoints 的长度）。
+    """
+    pid = book["pid"]
+
+    # ① 空的。**这一句不是装饰**：不先证明它是空的，下面三段可能只是在描述一条早就
+    #    存在的边（那样这个测试对「补」这件事一个字都没验）。
+    assert _cell(client, book, BLANK_CELL_CHAPTER)["state"] == "UNKNOWN"
+
+    # ② 补一条。
+    added = _add_blank(client, book, type="BELIEVES", believed_value="以为那是老爷编出来的")
+    assert added.status_code == 200, added.text
+    receipt = added.json()
+    # 生效章 = 路径里那一段（作者正看着的那一章），不是他敲的数。
+    assert receipt["since_chapter"] == BLANK_CELL_CHAPTER
+    assert receipt["character"]["name"] == "李管家" and receipt["secret"]["name"] == "血脉秘密"
+
+    # ③ 同一张表上那一格变了。
+    now = _cell(client, book, BLANK_CELL_CHAPTER)
+    assert now["state"] == "BELIEVES"
+    assert now["believed_value"] == "以为那是老爷编出来的"
+    assert now["since_chapter"] == BLANK_CELL_CHAPTER
+    # **没有依据，而且这件事必须在出参上看得出来**：这条边背后没有引语（作者手工补的），
+    # 伪造一条证据出来会被 M4 的 relocate/revalidate 当真，而它指着一句他没写过的话。
+    assert now["evidence_id"] is None
+
+    # ④ 日志里那一行：署作者，坐标是两个真 id，且**点得回这一格**。
+    entry = _by_id(_entries(client, pid, limit=200), receipt["decision_id"])
+    assert entry["actor"] == "author"
+    jump = entry["jump"]
+    assert jump["target"] == JumpTarget.KNOWLEDGE_CELL.value, (
+        "补上的那一行被归进了「改不了」那一档 —— 而它当场就改得掉"
+    )
+    assert (jump["character_id"], jump["secret_id"]) == (book["李管家"], book["血脉秘密"])
+    assert jump["chapter_number"] == BLANK_CELL_CHAPTER
+    back = client.post(
+        jump["endpoints"][0],
+        json={
+            "character_id": jump["character_id"],
+            "secret_id": jump["secret_id"],
+            "to_type": "KNOWS",
+            "expected_canon_version": receipt["canon_version"],
+        },
+    )
+    assert back.status_code == 200, back.text
+    assert _cell(client, book, BLANK_CELL_CHAPTER)["state"] == "KNOWS"
+
+
+def test_filling_in_a_cell_that_already_has_one_is_a_conflict_not_a_silent_edit(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """**这一格已经有内容时 409，且绝不悄悄兼做「改」。**
+
+    作者摊开这一格的这段时间里后台正好把这条事实抽出来，是 ADR 0020 的常态而不是边角。
+    那时「补」这条路要么静默改掉他没看过的那一条（最坏），要么老实说一句
+    「这一格现在有内容了，先看一眼」。这里钉的是后者，**并且钉住那条边一个字节都没动**。
+    """
+    first = _add_blank(client, book, type="KNOWS")
+    assert first.status_code == 200, first.text
+
+    again = _add_blank(client, book, type="BELIEVES", believed_value="以为那是假的")
+    assert again.status_code == 409, again.text
+    assert again.json()["detail"]["error"] == "fact_already_exists"
+    # 和「你手上的版本旧了」分得开：作者该做的事不一样（那边是重取，这边是先去看）。
+    assert again.json()["detail"]["error"] != "stale_base_version"
+
+    # **那条边一个字节都没动**：兼做「改」的实现在这儿会把它换成 BELIEVES。
+    now = _cell(client, book, BLANK_CELL_CHAPTER)
+    assert now["state"] == "KNOWS" and now["believed_value"] is None
+
+
+def test_the_cell_that_only_exists_later_is_a_conflict_too(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """**判据是「这一格现在有没有事实」，不是「这一章看得见没有」。**
+
+    先在第 2 章补一条，再回到第 1 章看同一格——第 1 章的表上它仍然是空的（AS OF），
+    而在那儿补一条的产物是乱序插入。按「本章看不看得见」判的实现会放它进去，
+    然后撞在图层那句写给维护者的诊断上（带裸 id 和 `valid_from=`）。
+    """
+    pid = book["pid"]
+    later = client.post(
+        f"/api/projects/{pid}/chapters/2/canon/knowledge",
+        json={
+            "character_id": book["李管家"],
+            "secret_id": book["血脉秘密"],
+            "type": "KNOWS",
+            "expected_canon_version": client.get(f"/api/projects/{pid}").json()["canon_version"],
+        },
+    )
+    assert later.status_code == 200, later.text
+    # 第 1 章的表上这一格照旧是空的（这正是那条陷阱的形状）。
+    assert _cell(client, book, 1)["state"] == "UNKNOWN"
+
+    earlier = _add_blank(client, book, type="KNOWS")
+    assert earlier.status_code == 409, earlier.text
+    assert earlier.json()["detail"]["error"] == "fact_already_exists"
+
+
+def test_the_add_route_refuses_the_shapes_the_edit_route_refuses(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """形状那三条规矩两条路共用一份（`corrections._knowledge_shape`）。
+
+    **不是洁癖**：作者在同一块屏幕上按下的是同一个「以为」，两份措辞漂开的那天，
+    同一个错误在「补」和「改」上说的不是一句话。
+    """
+    empty = _add_blank(client, book, type="BELIEVES", believed_value="  ")
+    assert empty.status_code == 422, empty.text
+    extra = _add_blank(client, book, type="KNOWS", believed_value="多余的一句")
+    assert extra.status_code == 422, extra.text
+    # 那一格仍然是空的：被拒的请求一个字节都不许落库。
+    assert _cell(client, book, BLANK_CELL_CHAPTER)["state"] == "UNKNOWN"
+
+    # 两端不是「一个人物对一个秘密」同样拒（照抄「改」那条的判据）。
+    pid = book["pid"]
+    wrong = client.post(
+        f"/api/projects/{pid}/chapters/1/canon/knowledge",
+        json={
+            "character_id": book["萧决"],
+            "secret_id": book["青云城主府"],  # ← 一个地点
+            "type": "KNOWS",
+            "expected_canon_version": client.get(f"/api/projects/{pid}").json()["canon_version"],
+        },
+    )
+    assert wrong.status_code == 422, wrong.text
+
+
+def test_the_add_route_takes_the_version_the_matrix_carries(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """版本跟着**作者看到的那张表**走（同第 4 节，另一条路由）。
+
+    矩阵那一格的补录器和编辑器读的是同一个 `matrix.version.canon_version`；
+    从别处另取一次就是第二个会漂的源。
+    """
+    pid = book["pid"]
+    seen = client.get(f"/api/projects/{pid}/chapters/1/matrix").json()["version"]["canon_version"]
+    added = client.post(
+        f"/api/projects/{pid}/chapters/1/canon/knowledge",
+        json={
+            "character_id": book["李管家"],
+            "secret_id": book["血脉秘密"],
+            "type": "KNOWS",
+            "expected_canon_version": seen,
+        },
+    )
+    assert added.status_code == 200, added.text
+
+    stale = client.post(
+        f"/api/projects/{pid}/chapters/1/canon/knowledge",
+        json={
+            "character_id": book["萧决"],
+            "secret_id": book["血脉秘密"],
+            "type": "KNOWS",
+            "expected_canon_version": 0,  # 作者手上那份是很久以前的
+        },
+    )
+    assert stale.status_code == 409, stale.text
+    assert stale.json()["detail"]["error"] == "stale_base_version"

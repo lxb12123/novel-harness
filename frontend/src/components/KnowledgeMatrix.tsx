@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useCorrectKnowledge, useRefreshPanels } from "../api/hooks";
+import { useAddKnowledge, useCorrectKnowledge, useRefreshPanels } from "../api/hooks";
 import { readCorrectionError } from "../correctionError";
 import type {
   KnowledgeCell,
@@ -18,11 +18,14 @@ import { useCoords } from "../store";
 //
 // 三条纪律：
 //
-// 1. **「不知道」的格子没有编辑入口。** 改正层改的是**已经存在的那条边**，空格子会
-//    404。新增一条认知得先有一条边，而边只从两处来：后台整理抽出来的提案（右栏
-//    「待确认」），或 `nh declare`。**2026-08-14 起浏览器里没有手工新增的入口了**
-//    （`DeclareDrawer` 连同选区工具条一起删了）——这一格照旧只改不增，理由没变：
-//    新增要一句引语来定章号（约束 10），而这里一个章号输入框都没有。
+// 1. **「不知道」的格子也动得了，但走的是另一条路。** 改正层（`POST /canon/knowledge`）
+//    改的是**已经存在的那条边**，空格子它一律 404；补一条走
+//    `POST /chapters/{n}/canon/knowledge`（`corrections.add_knowledge`）。
+//    **两条路不合并**：一个能力两个入口，作者学会的会是错的那一个；而且「补」比
+//    「改」多一件事要交代 —— 它背后没有引语，生效章只能是**作者正看着的这一章**。
+//    那个数由 `matrix.chapter` 带来（矩阵本来就是 AS OF 那一章渲染的），进的是 URL，
+//    **不是请求体、更不是一个输入框**（约束 10：作者永不填章号）。
+//    这一格已经有内容时后端答 409，让作者先去看一眼 —— 这一条也不许在前端悄悄兼做「改」。
 // 2. **版本跟着数据走。** `expected_canon_version` 取自 `matrix.version.canon_version`
 //    ——作者看到的那一版。撞上 409 就重新取一次**让他再看一眼**，绝不静默重试。
 // 3. **屏幕上不出现引擎的词。** 这一格上的两种事实在界面里叫「知道」和「以为」，
@@ -168,6 +171,128 @@ function CellEditor({
   );
 }
 
+/** 补这一格：这一格现在是「不知道」，作者要手工添一条「他知道」或「他以为（内容是 …）」。
+ *
+ *  和上面那个编辑器的两处不同，都不是随手定的：
+ *
+ *  1. **两种都给**（编辑器只给「另一种」）。这一格上还没有事实，没有哪一种是多余的。
+ *  2. **说清楚从第几章起算，同时不给他填的机会**。那个数是他正看着的这一章，
+ *     由这张表自己带来（`matrix.chapter`）——说出来他才不会去找输入框。 */
+function CellAdder({
+  character,
+  secret,
+  chapter,
+  canonVersion,
+  onClose,
+  onStale,
+}: {
+  character: NodeRef;
+  secret: NodeRef;
+  /** 这张表画的是第几章。**这就是这条边的生效章**，不是作者的输入。 */
+  chapter: number;
+  canonVersion: number;
+  onClose: () => void;
+  onStale: () => void;
+}) {
+  const { projectId } = useCoords();
+  const add = useAddKnowledge(projectId!, chapter);
+  // 重取归编辑器自己管（理由同 `CellEditor`：这张表挂在两个地方）。
+  const refresh = useRefreshPanels(projectId);
+  // 换一格就重来（调用方给了 `key`）：上一格选了一半的「以为 + 内容」跟着跑到下一格，
+  // 写出来的是一条**凭空多出来**的 CANON 事实，比改错一条更难发现。
+  const [type, setType] = useState<KnowledgeEdgeType | null>(null);
+  const [believed, setBelieved] = useState("");
+  const failure = add.error ? readCorrectionError(add.error) : null;
+
+  const needsValue = type === "BELIEVES";
+  const ready = type !== null && (!needsValue || believed.trim().length > 0);
+
+  const submit = () => {
+    if (!projectId || !ready || type === null) return;
+    add.mutate(
+      {
+        character_id: character.id,
+        secret_id: secret.id,
+        type,
+        // 「知道」这一边**一个字都不许带**：他知道的就是真的那一版（后端也会拒）。
+        ...(needsValue ? { believed_value: believed.trim() } : {}),
+        expected_canon_version: canonVersion,
+      },
+      { onSuccess: onClose },
+    );
+  };
+
+  return (
+    <div className="cell-editor">
+      <div className="lab">
+        {character.name} 对「{secret.name}」
+      </div>
+      <div className="row dim">
+        现在是「不知道」
+        {/* 章号是**这块屏幕正开着的那一章**，不是作者敲的——说出来，他才不会去找输入框。 */}
+        <span className="dim"> · 补上的这一条从第 {chapter} 章起算</span>
+      </div>
+
+      <div className="row">
+        {(["KNOWS", "BELIEVES"] as const).map((k) => (
+          <button
+            key={k}
+            className={type === k ? "" : "link"}
+            aria-pressed={type === k}
+            onClick={() => setType(k)}
+          >
+            他{STATE_ZH[k]}
+          </button>
+        ))}
+      </div>
+
+      {/* 「以为」独有的那一格内容（同 `CellEditor`）。 */}
+      {needsValue && (
+        <label className="cell-believed">
+          <span>他以为的是</span>
+          <input
+            value={believed}
+            placeholder="例如：以为那只是个传闻"
+            onChange={(e) => setBelieved(e.target.value)}
+          />
+        </label>
+      )}
+
+      {failure && (
+        <div className="err-box">
+          <div>{failure.message}</div>
+          {failure.kind === "stale" && (
+            <button
+              className="link"
+              onClick={() => {
+                refresh();
+                onStale();
+              }}
+            >
+              看看最新的
+            </button>
+          )}
+        </div>
+      )}
+
+      <div className="actions">
+        <button disabled={!ready || add.isPending} onClick={submit}>
+          {add.isPending ? "保存中…" : type === null ? "补上这一条" : `补上「${STATE_ZH[type]}」`}
+        </button>
+        <button className="link" onClick={onClose}>
+          取消
+        </button>
+      </div>
+      {type === null && <div className="row dim">先选一种：他知道了，还是他以为的是别的。</div>}
+      {needsValue && !ready && (
+        <div className="row dim">
+          写一句他以为的版本再保存 —— 空着的话，这一格上只会显示一片空白。
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MatrixView({
   matrix,
   constraints,
@@ -239,9 +364,12 @@ export function MatrixView({
                 {matrix.secrets.map((s) => {
                   const focused = focus?.character_id === ch.id && focus?.secret_id === s.id;
                   const here = map.get(ch.id + "|" + s.id);
-                  // 「不知道」那一格没有可改的事实（改正层只在两种已存在的边之间换），
-                  // 所以它不是按钮：点了必然 404 的东西不该长得像能点。
+                  // 「不知道」那一格上没有可**改**的事实（改正层只在两种已存在的边之间
+                  // 换），但 2026-08-14 起它有可**补**的：两条路由不同，措辞也不同，
+                  // 所以按钮的名字必须分得开（「改「…」」 / 「补上「…」」）——
+                  // 光看一格是不是按钮，作者分不出自己按下去会发生什么。
                   const editable = !!here && EDITABLE.has(here.state);
+                  const addable = !!here && !editable;
                   const isOpen =
                     editing?.character_id === ch.id && editing?.secret_id === s.id;
                   return (
@@ -249,7 +377,7 @@ export function MatrixView({
                       className={
                         "cell" +
                         (focused ? " focus" : "") +
-                        (editable ? " editable" : "") +
+                        (editable || addable ? " editable" : "") +
                         (isOpen ? " editing" : "")
                       }
                       key={s.id}
@@ -257,10 +385,14 @@ export function MatrixView({
                       // 光靠一圈边框的话，读屏的人根本不知道自己被送到了哪儿。
                       aria-label={focused ? `${ch.name} 对 ${s.name}（刚跳转到这一格）` : undefined}
                     >
-                      {editable ? (
+                      {editable || addable ? (
                         <button
                           className="cell-open"
-                          aria-label={`改「${ch.name} 对 ${s.name}」`}
+                          aria-label={
+                            editable
+                              ? `改「${ch.name} 对 ${s.name}」`
+                              : `补上「${ch.name} 对 ${s.name}」`
+                          }
                           onClick={() =>
                             setEditing(
                               isOpen ? null : { character_id: ch.id, secret_id: s.id },
@@ -283,12 +415,28 @@ export function MatrixView({
         <div className="empty">当前没有可比较的人物和秘密。</div>
       )}
 
-      {open && editingCharacter && editingSecret && (
+      {open && editingCharacter && editingSecret && EDITABLE.has(open.state) && (
         <CellEditor
           key={editingCharacter.id + "|" + editingSecret.id}
           character={editingCharacter}
           secret={editingSecret}
           current={open}
+          canonVersion={matrix.version.canon_version}
+          onClose={() => setEditing(null)}
+          onStale={() => {
+            setEditing(null);
+            onRefresh?.();
+          }}
+        />
+      )}
+
+      {open && editingCharacter && editingSecret && !EDITABLE.has(open.state) && (
+        <CellAdder
+          key={editingCharacter.id + "|" + editingSecret.id}
+          character={editingCharacter}
+          secret={editingSecret}
+          // ★ 章号从**数据**来（这张表画的就是这一章），不从作者来（约束 10）。
+          chapter={matrix.chapter}
           canonVersion={matrix.version.canon_version}
           onClose={() => setEditing(null)}
           onStale={() => {

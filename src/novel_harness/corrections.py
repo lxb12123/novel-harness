@@ -1,9 +1,14 @@
 """作者事后改一条**已经生效（CANON）的事实** —— 「错了能看见、能改」的那个「能改」。
 
-`declare.py` 是作者**新增**一条事实的入口，本模块是他**改正**一条已经在库里的事实的入口。
-两者共用同一套机制（图的 supersede / RETRACTED、`decision_log`、canon 版本 CAS），
-区别只有一个：这边的 `valid_from` 不是从引语算出来的，而是**从被改的那条事实上继承的**——
+`declare.py` 是作者**带着一句引语**新增一条事实的入口，本模块是他面对**已经在库里**
+那一格时的入口。两者共用同一套机制（图的 supersede / RETRACTED、`decision_log`、
+canon 版本 CAS），区别只有一个：这边的 `valid_from` 不是从引语算出来的——
 所以这边同样一个章号输入框都没有（约束 10 / ADR 0006）。
+
+本模块今天有两种写：**改**（`correct_knowledge` / `correct_event_cast`，`valid_from`
+从被改的那条事实上继承）和**补**（`add_knowledge`，认知矩阵那一格空白上手工添一条，
+`valid_from` = 作者正在看的那一章，且**没有证据**）。后者是 2026-08-14 那条产品规则
+（右栏每一格「LLM 无感生成 + 作者可改**可增**」）还差的那一半，详见它自己的 docstring。
 
 ── 为什么必须先有它，自动生效才敢开 ──────────────────────────────────────
 
@@ -54,6 +59,7 @@ from .graph import (
     InformationScope,
     NodeLabel,
     NodeRef,
+    SupersedeConflict,
 )
 from .graph.review_store import EdgeReviewStore, EdgeReviewValidationError
 from .graph.sqlite_review import SqliteEdgeReviewStore
@@ -109,6 +115,15 @@ class CorrectionRefused(CorrectionError):
     """事实在，但这次改正本身讲不通（改成它已经是的样子 / 什么都没改 / 名单里有个地点）。"""
 
 
+class FactAlreadyThere(CorrectionError):
+    """要**新添**的那一格上已经有一条事实了（`add_knowledge` 独有）。
+
+    和 `CorrectionRefused` 分开是因为作者该做的事不一样：那一类是「改一下再提交」，
+    这一类是「这一格现在不是空的了 —— 先看一眼它是什么」。壳把它翻成 409，
+    和 `stale_base_version` 落在同一档上（前端那一档会给一颗「看看最新的」）。
+    """
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 出参 —— 一律窄引用
 # ══════════════════════════════════════════════════════════════════════════
@@ -146,6 +161,36 @@ class KnowledgeCorrection(BaseModel):
 
     closed_edge_ids: tuple[str, ...] = ()
     """写新边时被 supersede 顺手闭合的旧边（同类型、更早的那条）。"""
+
+
+class KnowledgeAddition(BaseModel):
+    """在一格「不知道」上补完一条「他知道 / 他以为」之后的回执。
+
+    收窄的理由和 `KnowledgeCorrection` 逐字相同（dst 按定义是一个 Secret）。
+    **没有 `from_type`、也没有 `retracted_edge_id`**：这一格上本来什么都没有，
+    没有哪条边被撤回——出参里摆一个空位，读的人会以为「撤回了什么但没告诉我」。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    project_id: str
+    canon_version: int = Field(ge=0)
+    decision_id: str
+
+    character: NodeRef
+    secret: NodeRef
+
+    type: EdgeType
+    believed_value: str | None = None
+    """仅 BELIEVES：他以为的那个版本。面板 §3.2 直接渲染它。"""
+
+    since_chapter: int = Field(ge=1)
+    """**作者正在看的那一章**，不是他敲进来的数（见 `add_knowledge` 的 `chapter`）。"""
+
+    edge_id: str
+    closed_edge_ids: tuple[str, ...] = ()
+    """写新边时被 supersede 顺手闭合的旧边。这条路上它恒为空（有旧边就先 409 了），
+    留着是因为「恒为空」是今天的判据推出来的结果，不是 `upsert_edge` 的承诺。"""
 
 
 class EventCastCorrection(BaseModel):
@@ -190,6 +235,23 @@ def _source_for(actor: str) -> EdgeSource:
     确认过的东西——`EdgeSource` 的三个值里 `system` 就是给「推导 / 迁移 / 重放」留的。
     """
     return EdgeSource.AUTHOR if actor == decisions.DEFAULT_ACTOR else EdgeSource.SYSTEM
+
+
+def _knowledge_shape(to_type: EdgeType, believed_value: str | None) -> None:
+    """「知道 / 以为」这一格上，类型和内容那三条形状规矩。**两条写路径共用一份。**
+
+    分两份的代价不是重复几行：它们是**同一块屏幕上的同一句话**，而作者补一条和改一条
+    时按下的是同一个「以为」。两份措辞漂开的那天，同一个错误在两条路上说的不是一句话。
+    """
+    if to_type not in KNOWLEDGE_EDGE_TYPES:
+        raise CorrectionRefused("这一格只有「知道」和「以为」两种，改不成别的")
+    if to_type is EdgeType.BELIEVES and not (believed_value or "").strip():
+        raise CorrectionRefused(
+            "改成「以为」要写一句他以为的版本 —— 那句话就是这一格上会显示的东西，"
+            "空着的话，这一格只会显示一片空白"
+        )
+    if to_type is EdgeType.KNOWS and believed_value is not None:
+        raise CorrectionRefused("改成「知道」时不用写内容：他知道的就是真的那一版")
 
 
 def _ref_payload(refs: Sequence[NodeRef]) -> list[dict[str, str]]:
@@ -284,15 +346,7 @@ def correct_knowledge(
             两端不是 Character 和 Secret。
         project.StaleBaseVersion: 作者看的是旧版本（有人在他之前改过）。
     """
-    if to_type not in KNOWLEDGE_EDGE_TYPES:
-        raise CorrectionRefused("这一格只有「知道」和「以为」两种，改不成别的")
-    if to_type is EdgeType.BELIEVES and not (believed_value or "").strip():
-        raise CorrectionRefused(
-            "改成「以为」要写一句他以为的版本 —— 那句话就是这一格上会显示的东西，"
-            "空着的话，这一格只会显示一片空白"
-        )
-    if to_type is EdgeType.KNOWS and believed_value is not None:
-        raise CorrectionRefused("改成「知道」时不用写内容：他知道的就是真的那一版")
+    _knowledge_shape(to_type, believed_value)
 
     reviews = _reviews(conn, graph, edge_review_store)
     with _business_transaction(conn):
@@ -313,9 +367,12 @@ def correct_knowledge(
         held = reviews.current_knowledge(project_id, character_id, secret_id)
         wrong = [item for item in held if item.edge.type is not to_type]
         if not held:
+            # 这句话 2026-08-14 之前写着「请去那句原文上声明」——而那条路（选区工具条 +
+            # 声明抽屉）当天就删了，于是它把作者指向一个不存在的地方，整整指了一轮。
+            # 今天空格子有自己的入口（`add_knowledge`），所以这里说的是那一条。
             raise FactNotFound(
                 f"「{character.name}」对「{secret.name}」现在是「不知道」 —— 这一格上没有可改的"
-                "事实。要新添一条，请去那句原文上声明（章号由那句话定，不用你填）"
+                "事实。要补一条，直接在那一格上添（从哪一章起算由你正在看的那一章定，不用你填）"
             )
         if not wrong:
             raise CorrectionRefused(
@@ -412,6 +469,169 @@ def correct_knowledge(
         since_chapter=source_edge.valid_from_chapter,
         edge_id=new_edge_id,
         retracted_edge_id=source_edge.id,
+        closed_edge_ids=closed,
+    )
+
+
+def add_knowledge(
+    conn: Connection,
+    graph: GraphStore,
+    project_id: str,
+    *,
+    character_id: str,
+    secret_id: str,
+    edge_type: EdgeType,
+    chapter: int,
+    believed_value: str | None = None,
+    expected_canon_version: int,
+    actor: str = decisions.DEFAULT_ACTOR,
+    edge_review_store: EdgeReviewStore | None = None,
+) -> KnowledgeAddition:
+    """在一格「不知道」上**补**一条「他知道 X」或「他以为 X（内容是 Y）」。
+
+    `correct_knowledge` 改的是已经存在的那条边，空格子它一律 404。而抽取写得出
+    `event_knower`、作者却补不上一条，正是 2026-08-14 那条产品规则（右栏每一格
+    「LLM 无感生成 + 作者可改**可增**」）还差的那一半。
+
+    ── `chapter` 是这个模块唯一一个章号入参，它**不是作者敲的** ────────────────
+
+    约束 10 禁的是「让作者回忆第几章」——他不记得，他会填 1，而填错的产物是一条
+    `valid_from` 错了的 CANON 边，在面板上长得完全正常。这里那个数**不经过作者的手**：
+    认知矩阵本来就是「AS OF 第 N 章」渲染的，他点的那一格就在他正看的那一章上，
+    这个数由那块屏幕自己带过来（HTTP 上它在**路径**里，请求体一个章号键都没有）。
+    所以工作台上照旧没有、也不许有任何一个章号输入框
+    （`tests/test_canon_edit_boundary.py::test_no_screen_in_the_whole_workbench_posts_a_chapter`
+    是零基线守卫，这次改动不许往它的放行清单里加东西）。
+
+    **代价说清楚**：这条边和别的 CANON 边不一样，它背后没有引语。所以
+    `evidence_id=NULL` + `evidence_status='NONE'`（001_init.sql 那条 CHECK 要求两列
+    同生同死）。**绝不伪造一条证据**——伪造出来的锚会被 M4 的 relocate/revalidate
+    当真，而它指着一句作者从没写过的话。
+
+    Args:
+        edge_type: `KNOWS` 或 `BELIEVES`。
+        chapter: 作者正在看的那一章 = 这条边的 `valid_from`（见上）。
+        believed_value: `edge_type is BELIEVES` 时必填、否则必须为空。
+
+    Raises:
+        FactAlreadyThere: 这一格上已经有一条「知道 / 以为」了 —— 去用「改」那条路。
+        CorrectionRefused: 类型/内容形状不对，或两端不是 Character 和 Secret。
+        FactNotFound: 这一格上的人物或秘密不在这本书里。
+        project.StaleBaseVersion: 作者看的是旧版本（有人在他之前改过）。
+    """
+    _knowledge_shape(edge_type, believed_value)
+
+    reviews = _reviews(conn, graph, edge_review_store)
+    with _business_transaction(conn):
+        current_version = _require_version(conn, project_id, expected_canon_version)
+        try:
+            character, secret = reviews.node_refs(project_id, [character_id, secret_id])
+        except EdgeReviewValidationError as exc:
+            raise FactNotFound(
+                "这一格上的人物或秘密在这本书里找不到了 —— 刷新一下看看现在有哪些。"
+            ) from exc
+        if character.label is not NodeLabel.CHARACTER or secret.label is not NodeLabel.SECRET:
+            raise CorrectionRefused(
+                f"这一格只能是一个人物对一个秘密 —— 「{character.name}」和"
+                f"「{secret.name}」不是这样的一对"
+            )
+
+        # ★ **判据是「这一格上现在有没有事实」，不是「这一章看得见没有」**：
+        #   `current_knowledge` 一个章号都不收（`queries.current_knowledge_edges`）。
+        #   按本章去判的话，一条从第 8 章起才成立的「知道」在第 2 章的表上是空格，
+        #   而在那儿补一条的产物是乱序插入——`upsert_edge` 会抛，抛出来的那句话是
+        #   写给维护者的。宁可在这儿说人话。
+        if reviews.current_knowledge(project_id, character_id, secret_id):
+            raise FactAlreadyThere(
+                f"「{character.name}」对「{secret.name}」这一格上已经有内容了 —— "
+                "可能是刚刚在别处添上的，也可能它从后面某一章才开始。"
+                "先看一眼它现在是什么，再决定要不要改它。"
+            )
+
+        props = EdgeProps(believed_value=believed_value)
+        spec = EdgeSpec(
+            project_id=project_id,
+            src=character_id,
+            dst=secret_id,
+            type=edge_type,
+            props=props,
+            # ★ 这一处是全系统唯一一个不来自证据的 `valid_from`（见上面那段）。
+            valid_from_chapter=chapter,
+            information_scope=InformationScope.CANON,
+            source=_source_for(actor),
+            # ★ 没有引语 ⇒ 没有证据。`upsert_edge` 据此写 evidence_status='NONE'。
+            evidence_id=None,
+        )
+        existing = graph.find_edge_by_identity(spec)
+        closed: tuple[str, ...] = ()
+        if existing is None:
+            try:
+                result = graph.upsert_edge(spec)
+            except SupersedeConflict as exc:
+                # 上面那条 409 拦掉了「还成立的旧边」，剩下能撞进来的只有「一段已经
+                # 结束、起点却在这一章之后」的历史区间。借它那句原文（带裸 id 和
+                # `valid_from=`）等于把维护者的诊断摆到小说作者脸上。
+                raise CorrectionRefused(
+                    f"「{character.name}」对「{secret.name}」这一格上有一段更晚的记录，"
+                    "在这一章补一条会和它撞在同一段时间上。先看一眼那一段。"
+                ) from exc
+            new_edge_id = result.edge.id
+            closed = tuple(edge.id for edge in result.closed)
+        elif existing.status is EdgeStatus.RETRACTED and existing.valid_to_chapter is None:
+            # 这一格上曾经有过一模一样的一条、后来被撤回了。走 `upsert_edge` 的话它撞
+            # 幂等键 → 被当成重跑 → **只更 props，status 一个字节不动**，于是这条边停在
+            # 「撤回」上、这一格仍然是空的，而没有任何一步会报错
+            #（`correct_knowledge` 的「改回来」那一支记的是同一个形态）。
+            new_edge_id = reviews.restore_canon(project_id, existing.id, props=props).edge.id
+        else:
+            raise CorrectionRefused(
+                f"「{character.name}」对「{secret.name}」这一格上有一段从这一章开始、"
+                "却已经结束了的旧记录，直接补一条会和它撞在同一段时间上。"
+                "先看一眼那一段。"
+            )
+        canon_version = project.compare_and_bump_canon_version(
+            conn, project_id, current_version
+        )
+
+    decision = decisions.append(
+        conn,
+        project_id=project_id,
+        kind=DecisionKind.KNOWLEDGE_ADD,
+        # 这一条是**新增**，不是「改过之后接受」——日志页把 `edit` 画成「改过之后接受」。
+        decision=Verdict.ACCEPT,
+        subject_name=character.name,
+        # payload 的形状**照抄 `correct_knowledge`**（少一个 `from`）：跳转坐标那一侧
+        # 靠 `character.id` / `secret.id` 认这一格，两份形状漂开就要写第二套读法。
+        payload={
+            "target": "knowledge",
+            "character": _ref_payload([character])[0],
+            "secret": _ref_payload([secret])[0],
+            "to": {
+                "edge_id": new_edge_id,
+                "edge_type": edge_type.value,
+                "believed_value": believed_value,
+            },
+            "scope": InformationScope.CANON.value,
+            "valid_from_chapter": chapter,
+            # 明写成 null 而不是不写：读日志的人要分得开「没有依据」和「这份日志漏了一栏」。
+            "evidence_id": None,
+            "closed_edge_ids": list(closed),
+            "canon_version": canon_version,
+        },
+        # 引语和段落都没有（这条边不挂在任何一句原文上），章号是它的生效章。
+        chapter_number=chapter,
+        actor=actor,
+    )
+    return KnowledgeAddition(
+        project_id=project_id,
+        canon_version=canon_version,
+        decision_id=decision.id,
+        character=character,
+        secret=secret,
+        type=edge_type,
+        believed_value=believed_value,
+        since_chapter=chapter,
+        edge_id=new_edge_id,
         closed_edge_ids=closed,
     )
 

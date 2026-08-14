@@ -928,6 +928,26 @@
     "since_chapter": 1,
     "to_type": "BELIEVES"
   },
+  "canonKnowledgeAdded": {
+    "believed_value": "以为那是老爷编出来的",
+    "canon_version": 15,
+    "character": {
+      "id": "character:ID8",
+      "label": "Character",
+      "name": "李管家"
+    },
+    "closed_edge_ids": [],
+    "decision_id": "decision:ID64",
+    "edge_id": "edge:ID65",
+    "project_id": "project:ID1",
+    "secret": {
+      "id": "secret:ID7",
+      "label": "Secret",
+      "name": "血脉秘密"
+    },
+    "since_chapter": 2,
+    "type": "BELIEVES"
+  },
   "chapterHistory": [
     {
       "created_at": "<ts>",
@@ -1311,10 +1331,16 @@
     "message": "「师兄」在这个项目里指 2 个东西（萧决(Character)、李管家(Character)），系统不替你挑。用本名或者一个只属于一个人的称呼",
     "surface": "师兄"
   },
+  "errorFactAlreadyExists": {
+    "detail": {
+      "error": "fact_already_exists",
+      "message": "「李管家」对「血脉秘密」这一格上已经有内容了 —— 可能是刚刚在别处添上的，也可能它从后面某一章才开始。先看一眼它现在是什么，再决定要不要改它。"
+    }
+  },
   "errorFactNotFound": {
     "detail": {
       "error": "fact_not_found",
-      "message": "「李管家」对「血脉秘密」现在是「不知道」 —— 这一格上没有可改的事实。要新添一条，请去那句原文上声明（章号由那句话定，不用你填）"
+      "message": "「李管家」对「血脉秘密」现在是「不知道」 —— 这一格上没有可改的事实。要补一条，直接在那一格上添（从哪一章起算由你正在看的那一章定，不用你填）"
     }
   },
   "errorKnowledgeRefused": {

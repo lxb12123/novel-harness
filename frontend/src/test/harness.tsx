@@ -143,7 +143,16 @@ const DEFAULT: Handler[] = [
   // 免得每一块屏幕都莫名其妙挂着一条失败。
   { match: /\/extractions\//, body: fixtures.extractionRun },
   { method: "POST", match: /\/provisional\/confirm$/, body: fixtures.provisionalConfirm },
-  // 改一条**已经生效**的事实（ADR 0020 的「可改」）。两条都是真 dump 的回执。
+  // 改一条**已经生效**的事实（ADR 0020 的「可改」）。三条都是真 dump 的回执。
+  //
+  // **「补一条」那条必须排在前面**：两条路由都以 `/canon/knowledge` 结尾，只差前面
+  // 那段 `/chapters/{n}/`。顺序反了的话，补一条会静默拿到「改」的回执——而两份回执
+  // 长得像（都有 character/secret/since_chapter），测试不会当场看出来。
+  {
+    method: "POST",
+    match: /\/chapters\/\d+\/canon\/knowledge$/,
+    body: fixtures.canonKnowledgeAdded,
+  },
   { method: "POST", match: /\/canon\/knowledge$/, body: fixtures.canonKnowledge },
   { method: "POST", match: /\/canon\/events\/.*\/cast$/, body: fixtures.canonEventCast },
   // 活动记录。**按 id 前缀分派详情**（`extraction_run:` / `decision:`）——和后端

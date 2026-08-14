@@ -737,6 +737,41 @@ def test_frontend_fixture_matches_the_real_api(
         ),
     )
 
+    # ── 在一格「不知道」上**补**一条（2026-08-14）────────────────────────────────
+    #
+    # 抽取写得出 `event_knower`，而作者想手工补一条时没有路——右栏那条产品规则
+    # （每一格「LLM 无感生成 + 作者可改**可增**」）差的就是这一半。
+    # 两份形状都冻：回执，和「这一格已经有了」那个 409。**后者不是边角**：
+    # 作者摊开这一格的这段时间里后台正好把这条事实抽出来，是 ADR 0020 的常态，
+    # 而它和 `stale_base_version` 在屏幕上必须是两句不同的话。
+    #
+    # **放在最后**：它往图里加一条边、把 canon 版本推高一格，而上面 `matrix` /
+    # `errorFactNotFound` 两份夹具冻的正是「李管家对血脉秘密那一格是空的」。
+    grab(
+        "canonKnowledgeAdded",
+        client.post(
+            f"{base}/chapters/2/canon/knowledge",
+            json={
+                "character_id": book["李管家"],
+                "secret_id": book["血脉秘密"],
+                "type": "BELIEVES",
+                "believed_value": "以为那是老爷编出来的",
+                "expected_canon_version": client.get(base).json()["canon_version"],
+            },
+        ),
+    )
+    already = client.post(
+        f"{base}/chapters/2/canon/knowledge",
+        json={
+            "character_id": book["李管家"],
+            "secret_id": book["血脉秘密"],
+            "type": "KNOWS",
+            "expected_canon_version": client.get(base).json()["canon_version"],
+        },
+    )
+    assert already.status_code == 409, already.text
+    dump["errorFactAlreadyExists"] = norm.walk(already.json())
+
     frozen = json.dumps(dump, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
     if os.environ.get("NH_UPDATE_FIXTURES"):

@@ -102,6 +102,7 @@
 | POST | `/projects/{pid}/proposals/{id}/reject` | `review_proposal`（reject/bystander） | `ProposalResolution` | 🟢 |
 | POST | `/projects/{pid}/proposals/{id}/edit` | `review_proposal`（edit） | `ProposalResolution`·**按作者改过的样子落进 CANON**：`edited_summary` / `knower_ids` / `participant_ids` 至少给一样（后两个是**绝对集合**，`null`=这一维不动）。此前 `edit` 只存在于库里、没有路由，于是浏览器里只有 accept / reject 两个按钮·**前端调用方**（2026-08-13 起）：右栏「待确认」那一格里低置信情节卡上的「改一改」→ `ProposalReviewTab.tsx::ProposalEditor`，勾选框和「已确认的情节」那一格**共用同一份控件**（`CastPicker.tsx`）——两条路能力不一致的时候，作者会学会先驳回再重来，而那正好丢掉了证据链。后端只对「恰好 1 个 event、无 edge、无新人物」开放（`extract/proposal_validation.py`），条件不成立**不画那颗按钮** | 🟢 |
 | POST | `/projects/{pid}/canon/knowledge` | `corrections.correct_knowledge` | `KnowledgeCorrection`·**改一条已生效的事实**：`{character_id, secret_id, to_type: KNOWS\|BELIEVES, believed_value?, expected_canon_version}`。机制是**撤回旧边 + 写新边**（旧行留着，`status=RETRACTED`），`valid_from` 从旧边继承——**入参里没有章号**（约束 10）。404=这一格今天是 UNKNOWN / 422=已经是那个类型或 `believed_value` 形状不对 / 409=`stale_base_version`·**前端调用方**（2026-08-11 起）：右栏「人物认知」那一格 → `KnowledgeMatrix.tsx` 的 `CellEditor`，版本取自同一张矩阵的 `version.canon_version`。**同一个编辑器挂在两处**（右栏 + 章节核对页），所以撞 409 之后的重取归编辑器自己管（`useRefreshPanels`），不靠挂载点传 `onRefresh` —— 少传一个可选 prop 就让退路死在一块屏幕上，那是已经发生过一次的形态 | 🟢 |
+| POST | `/projects/{pid}/chapters/{n}/canon/knowledge` | `corrections.add_knowledge` | `KnowledgeAddition`·**在认知矩阵一格空白上补一条**（2026-08-14，作者规则「每一格 LLM 无感生成、他能改**能增**」的后一半）：`{character_id, secret_id, type: KNOWS\|BELIEVES, believed_value?, expected_canon_version}`。**章号在路径上、请求体里一个都没有**——矩阵本来就是 AS OF 第 N 章渲染的，作者点的那一格就在他正看的那一章上，`valid_from` 就是那个 N（他一个数都没敲；全前端照旧零个 `<input type="number">`）。**这条边没有引语 ⇒ 没有证据**（`evidence_id IS NULL` + `evidence_status='NONE'`，绝不伪造）。409=`fact_already_exists`（这一格已经有事实了 —— **不悄悄兼做「改」**，判据是「现在有没有」不是「这一章看得见没有」）/ 409=`stale_base_version` / 422=形状不对（和「改」共用 `corrections._knowledge_shape` 一份措辞）·**前端调用方**：右栏「人物认知」那一格的空格子 → `KnowledgeMatrix.tsx` 的 `CellAdder`，章号取自 `matrix.chapter`、版本取自 `matrix.version.canon_version` | 🟢 |
 | POST | `/projects/{pid}/canon/events/{event_id}/cast` | `corrections.correct_event_cast` | `EventCastCorrection`·改一条已生效**事件**的知情/在场名单：`{knower_ids?, participant_ids?, expected_canon_version}`，绝对集合、`null`=不动。删一个人 = 那一行 `status=RETRACTED`（行留着，读路径看不见）。空编辑 422·**前端调用方**（2026-08-11 起）：右栏「待确认」那一格下半截 → `CanonEventCast.tsx`，勾选框即绝对集合，**只发作者动过的那一维** | 🟢 |
 | POST | `/projects/{pid}/chapters/{n}/provisional/confirm` | `confirm_provisional_*`（幂等回执） | `ProvisionalConfirmation` | 🟢 |
 | POST | `/projects/{pid}/chapters/{n}/extract` | `runner.enqueue`（后台执行） | `ExtractionRunView`（202） | 🟢 |
@@ -293,9 +294,11 @@
 │  │  ├─ Tab3 <DeterministicEvidence> ◀ Evidence 双指针 + state_at(N-1)（无 score）
 │  │  ├─ Tab4 <ConstraintsBox>    ◀ GET /constraints（must_not_reveal / forbidden）
 │  │  │       <KnowledgeMatrix>   ◀ GET /matrix（cast×secret 头牌）
-│  │  │        └─ <CellEditor>    ▶ POST /canon/knowledge（「知道」↔「以为」；
-│  │  │                             **「不知道」的格子没有入口**——那儿没有可改的事实，
-│  │  │                             新增认知走 DeclareDrawer，一个功能不留两个入口）
+│  │  │        ├─ <CellEditor>    ▶ POST /canon/knowledge（「知道」↔「以为」）
+│  │  │        └─ <CellAdder>     ▶ POST /chapters/{n}/canon/knowledge
+│  │  │                             （「不知道」那一格上**补**一条；章号在路径上=这张表
+│  │  │                              画的那一章，作者一个数都不敲；这一格已经有事实→409，
+│  │  │                              **不兼做「改」**，一个能力不留两个入口）
 │  │  └─ Tab5 <IssueList>         ◀ POST /check（Issue+anchor+evidence；显示「确定性」）
 │  │      Tab6 <ProposalReviewTab> ◀ GET /proposals + /events?scope=PROVISIONAL
 │  │         ▶ POST accept|reject|bystander · provisional/confirm · extract

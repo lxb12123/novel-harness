@@ -35,7 +35,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from novel_harness import activity, decisions
-from novel_harness.api.review import EventCastEditRequest, KnowledgeEditRequest
+from novel_harness.api.review import (
+    EventCastEditRequest,
+    KnowledgeAddRequest,
+    KnowledgeEditRequest,
+)
 from novel_harness.db import connect
 
 from test_activity import seed_call, seed_run
@@ -190,10 +194,21 @@ def screen_strings(page: activity.ActivityPage) -> dict[str, str]:
     return out
 
 
+REFUSAL_CLASSES = frozenset({"CorrectionRefused", "FactNotFound", "FactAlreadyThere"})
+"""改正层的每一个拒绝异常。**加一个不补这儿，它写的每一句话都在守卫视野之外。**
+
+`FactAlreadyThere` 是 2026-08-14 加的（「补一条」撞上这一格已经有内容 → 409）。
+这一行就是那次的产物：新异常类的构造器在扫描器眼里根本不存在，而它端着一句
+会**原样**摆到小说作者错误框里的话。判据是「谁被塞进这几个构造器」，所以
+下一个新异常同样要写进这个集合——`test_every_refusal_class_is_scanned` 拿
+`corrections.CorrectionError` 的子类逐个来比，漏一个当场红。
+"""
+
+
 def refusal_literals(source: str) -> list[tuple[int, str]]:
     """`corrections.py` 里每一句**拒绝文案**：`(行号, 那句话)`。
 
-    判据是「谁被塞进 `CorrectionRefused(...)` / `FactNotFound(...)`」的 AST，不是 grep：
+    判据是「谁被塞进 `CorrectionRefused(...)` / `FactNotFound(...)` / …」的 AST，不是 grep：
     那两个类名在模块 docstring 和注释里到处都是，grep 会对着文档开火。
     f-string 只取其中的字面量段（`{character.name}` 是数据，不是措辞）。
     """
@@ -202,7 +217,7 @@ def refusal_literals(source: str) -> list[tuple[int, str]]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
             continue
-        if node.func.id not in {"CorrectionRefused", "FactNotFound"}:
+        if node.func.id not in REFUSAL_CLASSES:
             continue
         for arg in node.args:
             if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
@@ -269,6 +284,23 @@ def edited(client: TestClient, book: dict[str, str]) -> dict[str, Any]:
     )
     assert cast.status_code == 200, cast.text
 
+    # 2026-08-14 起矩阵那一格上还有第三个动作：**在一格空白上补一条**。
+    # 它往日志里加的是一行新 kind（`knowledge_add`）、一句新副标题（「补上「以为」」）
+    # ——**不按一次的话，线 2 那几条扫的就是一块少了三分之一的屏幕**（同这个 fixture
+    # 末尾那段：守卫的样本不全 = 守卫在骗人）。
+    version = client.get(base).json()["canon_version"]
+    added = client.post(
+        f"{base}/chapters/1/canon/knowledge",
+        json={
+            "character_id": book["李管家"],
+            "secret_id": book["血脉秘密"],
+            "type": "BELIEVES",
+            "believed_value": "以为那是老爷编出来的",
+            "expected_canon_version": version,
+        },
+    )
+    assert added.status_code == 200, added.text
+
     # 一次抽取运行 + 一次模型调用。**这不是装饰**：日志页有三种展开层，而在它们进来
     # 之前这个 fixture 里只有「确认」那一种——于是
     # `test_the_expanded_row_never_prints_an_engine_word` 只扫过三分之一的屏幕，
@@ -281,6 +313,7 @@ def edited(client: TestClient, book: dict[str, str]) -> dict[str, Any]:
         "pid": pid,
         "base": base,
         "knowledge": corrected.json(),
+        "added": added.json(),
         "cast": cast.json(),
         "event_id": canon_event,
     }
@@ -334,7 +367,9 @@ def test_neither_editor_draws_a_box_that_asks_for_a_number() -> None:
 def test_the_request_schemas_still_take_no_chapter() -> None:
     """后端这一侧再钉一次（`test_no_chapter_input.py` 已有一条，这里量的是同一件事的
     另一半：**前端发得出的东西后端也收不下**）。"""
-    for model in (KnowledgeEditRequest, EventCastEditRequest):
+    # `KnowledgeAddRequest` 尤其要在这儿：它那条路由的路径上**就有**一个 `{chapter}`，
+    # 而「路径上已经有了，顺手也收一个吧」是这三个 schema 里最容易长出章号的一个。
+    for model in (KnowledgeEditRequest, KnowledgeAddRequest, EventCastEditRequest):
         assert model_chapter_fields(model) == [], f"{model.__name__} 长出了章号字段"
         assert model.model_config.get("extra") == "forbid", (
             f"{model.__name__} 不是 extra=forbid —— 前端多塞一个 chapter 会被静默吃掉"
@@ -467,10 +502,28 @@ def test_every_refusal_the_editors_can_show_is_in_the_authors_words(
             f"{base}/canon/events/{edited['event_id']}/cast",
             json={"knower_ids": [book["萧决"]], "expected_canon_version": version},
         ),
+        # ── 「补一条」那一条路上作者按得到的三种 ────────────────────────────
+        # 这一格刚刚在别处有了内容（ADR 0020 之下是常态：后台整理跑完了）
+        "补一条但这一格已经有了": client.post(
+            f"{base}/chapters/1/canon/knowledge",
+            json={"character_id": book["李管家"], "secret_id": book["血脉秘密"],
+                  "type": "KNOWS", "expected_canon_version": version},
+        ),
+        "补一条·以为却没写内容": client.post(
+            f"{base}/chapters/1/canon/knowledge",
+            json={**cell, "type": "BELIEVES", "believed_value": "  ",
+                  "expected_canon_version": version},
+        ),
+        "补一条·知道却带了内容": client.post(
+            f"{base}/chapters/1/canon/knowledge",
+            json={**cell, "type": "KNOWS", "believed_value": "多余的一句",
+                  "expected_canon_version": version},
+        ),
     }
     offenders: dict[str, Any] = {}
     for name, response in cases.items():
-        assert response.status_code in (404, 422), f"{name} → {response.status_code}"
+        # 409 是「补一条」独有的那一档（这一格已经有内容了）——它同样带着一句话。
+        assert response.status_code in (404, 409, 422), f"{name} → {response.status_code}"
         message = response.json()["detail"]["message"]
         if found := dev_terms_in(message):
             offenders[name] = (found, message)
@@ -689,7 +742,7 @@ def test_neither_request_schema_lets_the_caller_say_who_did_it() -> None:
     ADR 0020 拿「事后可查」换掉了「事前逐条确认」，而那份日志唯一的价值就是
     **分得清哪几步是系统自己动的手**。前端能填这一栏 = 那个区分作废。
     """
-    for model in (KnowledgeEditRequest, EventCastEditRequest):
+    for model in (KnowledgeEditRequest, KnowledgeAddRequest, EventCastEditRequest):
         assert "actor" not in model.model_fields, f"{model.__name__} 收了 actor"
 
 
@@ -737,9 +790,14 @@ def test_both_edits_land_in_the_log_as_the_author(
     edits = [
         row
         for row in rows
-        if row.kind in (decisions.DecisionKind.KNOWLEDGE_EDIT, decisions.DecisionKind.EVENT_EDIT)
+        if row.kind
+        in (
+            decisions.DecisionKind.KNOWLEDGE_EDIT,
+            decisions.DecisionKind.KNOWLEDGE_ADD,
+            decisions.DecisionKind.EVENT_EDIT,
+        )
     ]
-    assert len(edits) == 2, f"两次编辑没有各留一条记录：{[r.kind for r in edits]}"
+    assert len(edits) == 3, f"三次编辑没有各留一条记录：{[r.kind for r in edits]}"
     assert {row.actor for row in edits} == {decisions.DEFAULT_ACTOR}
     assert decisions.DEFAULT_ACTOR == "author"
 
@@ -969,8 +1027,30 @@ def test_the_cast_editor_still_says_what_went_wrong(
     assert len(set(said.values())) == 3, f"三种拒绝说了同一句话，作者分不清该做什么：{said}"
 
 
+def test_every_refusal_class_is_scanned() -> None:
+    """**扫描器的名单 == 改正层真有的那几个异常类。**
+
+    上面两个 AST 扫描器按**类名**认拒绝，而类名是手写的。新加一个异常类而这儿不补，
+    它写的每一句话（会原样进作者的错误框）就整批离开守卫视野，且没有任何东西会喊一声
+    ——这正是 `EDIT_CONTROLS` 那一行记着的那种失败（一次搬家，整批控件离开扫描面）。
+    """
+    from novel_harness import corrections
+
+    real = {
+        name
+        for name, obj in vars(corrections).items()
+        if isinstance(obj, type)
+        and issubclass(obj, corrections.CorrectionError)
+        and obj is not corrections.CorrectionError
+    }
+    assert real == set(REFUSAL_CLASSES), (
+        f"改正层的拒绝异常是 {sorted(real)}，扫描器认的是 {sorted(REFUSAL_CLASSES)}。\n"
+        "补 `REFUSAL_CLASSES`——名单少一个，那个类写的每一句话都不再被任何守卫看着。"
+    )
+
+
 def _refusal_call_args(source: str) -> list[tuple[int, str]]:
-    """`CorrectionRefused(...)` / `FactNotFound(...)` 的**每一个**实参，含非字面量。
+    """`CorrectionRefused(...)` / `FactNotFound(...)` / … 的**每一个**实参，含非字面量。
 
     和 `refusal_literals` 是一对：那个只收字面量（它要扫的是「措辞」），这个收全部
     （它要问的是「有没有一句话根本不是这儿写的」）。
@@ -980,7 +1060,7 @@ def _refusal_call_args(source: str) -> list[tuple[int, str]]:
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
             continue
-        if node.func.id not in {"CorrectionRefused", "FactNotFound"}:
+        if node.func.id not in REFUSAL_CLASSES:
             continue
         for arg in node.args:
             out.append((node.lineno, ast.unparse(arg)))

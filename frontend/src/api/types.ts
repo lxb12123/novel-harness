@@ -7,8 +7,10 @@
 // 这个文件是这些形状的权威。补齐那步是「让 openapi-typescript 真正兑现」的后续。
 //
 // 铁律的前端影子：这里**没有一个类型带章号输入字段**。`valid_from` 只在出参里出现
-// （Edge / KnowledgeCell），是系统算出来的产物；declare 的入参类型（DeclareKnows…）
-// 一个 chapter 字段都没有（约束 10）。
+// （Edge / KnowledgeCell），是系统算出来的产物。**唯一一个章号在路径上的写路由**
+// （`…/chapters/{n}/canon/knowledge`，2026-08-14「补一条认知」）的入参
+// `KnowledgeAddInput` 同样一个 chapter 字段都没有——那个数是作者正看着的那一章，
+// 不是他填的（约束 10；`tests/test_no_chapter_input.py` 逐个点名钉着它）。
 
 export type DraftLanguage = "zh" | "en";
 
@@ -311,16 +313,6 @@ export interface Scene {
   decl_text: string;
 }
 
-export interface QuoteCandidate {
-  chapter_id: string;
-  chapter_number: number;
-  snapshot_id: string;
-  para_index: number;
-  occurrence_k: number;
-  matched_text: string;
-  context: string;
-}
-
 /** 引擎的 9 类关系（`graph/models.py::EdgeType`）。
  *  `tests/test_wording_guard.py` 拿 Python 那个枚举**逐个**比这份联合类型，少一个就红。 */
 export type EdgeType =
@@ -370,15 +362,6 @@ export interface Edge {
   props: { believed_value?: string | null; value?: string | null };
 }
 
-/** 一次成功声明的回执。closed/retracted 是产品招牌动作，前端务必展示。 */
-export interface Declaration {
-  edge: Edge;
-  evidence: { id: string; chapter_number: number };
-  decision_id: string;
-  closed: Edge[];
-  retracted: Edge[];
-}
-
 // subgraph 的节点：present 节点是完整 Node，Secret/未来节点被 _narrow 成 NodeRef。
 // 前端只读 id/label/name，按 NodeRef 用即可。
 export type SubgraphNode = NodeRef & { props?: unknown };
@@ -392,19 +375,6 @@ export interface Subgraph {
   edges: Edge[];
   /** 节点数超上限被折叠过（hops≤2 硬上限，3 跳数学上坏）。 */
   truncated: boolean;
-}
-
-export interface ResolveHit {
-  node: NodeRef;
-  kind: string;
-  usable_for_rules: boolean;
-}
-
-export interface ResolveResult {
-  surface: string;
-  ambiguous: boolean;
-  unique_id: string | null;
-  hits: ResolveHit[];
 }
 
 export interface ImportReport {
@@ -483,25 +453,12 @@ export interface Issue {
   suggested_action: string | null;
 }
 
-// declare 入参 —— 全是称呼原文 + 引语，**没有章号**（约束 10）。
-export interface DeclareKnows {
-  who: string;
-  secret: string;
-  quote: string;
-}
-export interface DeclareBelieves {
-  who: string;
-  secret: string;
-  believed_value: string;
-  quote: string;
-}
-export interface DeclareWhere {
-  who: string;
-  loc: string;
-  quote: string;
-}
-
-// 建节点 / 加称呼 —— 同样没有章号，但理由不同：上面那三条是**边**，边才是时态的；
+// ⚠️ **`DeclareKnows` / `DeclareBelieves` / `DeclareWhere` / `Declaration` /
+// `QuoteCandidate` / `ResolveResult` / `ResolveHit` 2026-08-14 删了**，跟着它们那几条
+// 路由一起（「谁知道什么 / 谁以为什么 / 谁在哪儿」只走抽取那条路）。
+// 后端 `POST …/declare/*` 和 `Ledger` 上那几个方法都还在，要重接界面时按出参重写即可。
+//
+// 建节点 / 加称呼 —— 没有章号，理由和边那几条不同：边才是时态的，
 // 节点不在时间轴上（一个人不会「从第 88 章起是人物」），所以这里天然无从填起。
 export interface DeclareNode {
   label: NodeLabel;
@@ -693,9 +650,12 @@ export interface NewCharacterItem {
 // 改一条**已经生效**的事实（ADR 0020 的「可改」）
 // ══════════════════════════════════════════════════════════════════════════
 //
-// 这两组入参同样**一个章号字段都没有**（约束 10）：改的是「这条事实说错了」，
+// 这几组入参同样**一个章号字段都没有**（约束 10）：改的是「这条事实说错了」，
 // 不是「它从第几章开始成立」——后者只由证据决定，新事实的生效章从被改的那条上继承。
 // 出参里的 `since_chapter` 是那条继承的**产物**，面板要显示它。
+//
+// **补一条**（`KnowledgeAddInput`，2026-08-14）那一份的生效章不是继承来的，
+// 但它同样不经作者的手：它在**路径**上，是作者正看着的那一章。请求体里照旧没有。
 
 export type KnowledgeEdgeType = "KNOWS" | "BELIEVES";
 
@@ -723,6 +683,35 @@ export interface KnowledgeCorrection {
   since_chapter: number;
   edge_id: string;
   retracted_edge_id: string;
+  closed_edge_ids: string[];
+}
+
+/** 在一格「不知道」上**补**一条。
+ *
+ *  **这一份同样一个章号字段都没有**：生效章在路径上（`/chapters/{n}/canon/knowledge`），
+ *  而那一段是作者正看着的那一章 —— 认知矩阵本来就按它渲染，不是他敲进去的。 */
+export interface KnowledgeAddInput {
+  character_id: string;
+  secret_id: string;
+  type: KnowledgeEdgeType;
+  /** `type="BELIEVES"` 时必填、`"KNOWS"` 时必须不传（后端两边都会拒）。 */
+  believed_value?: string;
+  expected_canon_version: number;
+}
+
+/** 补完一条之后的回执。**没有 `from_type`、也没有 `retracted_edge_id`**：
+ *  这一格上本来什么都没有，没有哪条边被撤回。 */
+export interface KnowledgeAddition {
+  project_id: string;
+  canon_version: number;
+  decision_id: string;
+  character: NodeRef;
+  secret: NodeRef;
+  type: KnowledgeEdgeType;
+  believed_value: string | null;
+  /** **作者正在看的那一章**，不是他填的数（约束 10）。 */
+  since_chapter: number;
+  edge_id: string;
   closed_edge_ids: string[];
 }
 

@@ -488,6 +488,7 @@ _KIND_LABEL: Final[dict[str, str]] = {
     "first_appearance_declare": "声明首次登场",
     "proposal_review": "抽取结果审阅",
     "knowledge_edit": "更正认知类型",
+    "knowledge_add": "补一条认知",
     "event_edit": "更正事件名单",
     "chapter_draft": "写进正文",
 }
@@ -936,7 +937,13 @@ def _decision_jump(decision: decisions.Decision) -> ActivityJump | None:
     kind = decision.kind
     chapter = decision.chapter_number
 
-    if kind == decisions.DecisionKind.KNOWLEDGE_EDIT:
+    if kind in (
+        decisions.DecisionKind.KNOWLEDGE_EDIT,
+        # 「补一条」和「改一条」落在同一格上，坐标形状也是同一份（payload 里的
+        # `character` / `secret`）。**共用这一支而不是另写一支**：两支的那天，
+        # 补出来的那一行会安静地退到兜底坐标「去第 N 章」，而这一格明明改得动。
+        decisions.DecisionKind.KNOWLEDGE_ADD,
+    ):
         character_id = _text(_dig(payload, "character", "id"))
         secret_id = _text(_dig(payload, "secret", "id"))
         if character_id and secret_id:
@@ -1045,6 +1052,12 @@ def _decision_subtitle(decision: decisions.Decision) -> str:
         before = _edge_label(_text(_dig(payload, "from", "edge_type")) or "")
         after = _edge_label(_text(_dig(payload, "to", "edge_type")) or "")
         return f"{subject} 对「{secret}」：{before} → {after}"
+    if kind == decisions.DecisionKind.KNOWLEDGE_ADD:
+        # **不复用上面那一行**：这一格之前是「不知道」，没有「从什么改成什么」。
+        # 硬套那句话的产物是 `_edge_label("")` 的兜底——屏幕上会写「关系 → 知道」。
+        secret = _text(_dig(payload, "secret", "name")) or "—"
+        after = _edge_label(_text(_dig(payload, "to", "edge_type")) or "")
+        return f"{subject} 对「{secret}」：补上「{after}」"
     if kind == decisions.DecisionKind.EVENT_EDIT:
         knowers = payload.get("knowers") if isinstance(payload.get("knowers"), dict) else {}
         cast = payload.get("participants") if isinstance(payload.get("participants"), dict) else {}

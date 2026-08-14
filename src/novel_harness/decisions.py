@@ -104,6 +104,17 @@ class DecisionKind(StrEnum):
     这边是「把已经写下的那条读错了」——payload 里有 `from` 和 `to` 两侧。
     """
 
+    KNOWLEDGE_ADD = "knowledge_add"
+    """作者在认知矩阵一格**空白**上手工补了一条「他知道 / 他以为」。`corrections.py`。
+
+    和 `KNOWLEDGE_EDIT` 分开：那边 payload 有 `from` 和 `to` 两侧（读法改了），
+    这边只有 `to`（这一格上本来什么都没有）。**也和 `KNOWS_DECLARE` 分开**，
+    而这一条更硬：那边每一条都挂着一句引语，章号是从引语算出来的；这边**没有引语，
+    也没有 evidence 行**（`edge.evidence_id IS NULL` / `evidence_status = 'NONE'`），
+    生效章是作者当时正在看的那一章。共用一个 kind，重放时就分不出该走哪条重建路径，
+    而那正是 §5.7 让 kind 存在的理由。
+    """
+
     EVENT_EDIT = "event_edit"
     """作者改了一条已生效事件的知情 / 在场名单。`corrections.py`。"""
 

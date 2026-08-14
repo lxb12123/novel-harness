@@ -28,13 +28,12 @@ import type {
   DeclareAlias,
   DeclareNode,
   DraftCandidateDetail,
-  DraftRequest,
-  DraftResult,
   EventCastCorrection,
   EventCastInput,
   EventView,
   ExtractionRun,
-  ImportReport,
+  KnowledgeAddInput,
+  KnowledgeAddition,
   KnowledgeCorrection,
   KnowledgeEditInput,
   KnowledgeMatrix,
@@ -94,21 +93,17 @@ export function useRefreshModelWindows() {
   });
 }
 
-/** AI 起草（实验状态，修正案 7）：POST /draft。 */
-/** ⚠️ **2026-08-10 起零调用方**（同 `summaryPrep.ts`）：「AI 起草」抽屉当天删了。
- *  留着是因为**后端 `/draft` 一个字没动**——它现在是模式二 agent 的起草工具，
- *  接面板时直接用。同理 `fetchAutopilotStatus`（`useRunAutopilot` 仍在用：换章
- *  后台整理走它）。
- *
- *  **`useSummaryWindow` / `useGenerateSummary` 2026-08-13 接上了**（右栏「章节总结」
- *  那一格）：那两条在这儿零调用方地躺了三天，而它们背后的东西**一直在花作者的钱、
- *  一直在影响每一稿**——链路通着，断在最后一格。 */
-export function useDraft(pid: string, chapter: number) {
-  return useMutation({
-    mutationFn: (input: DraftRequest) =>
-      api.post<DraftResult>(proj(pid, `/chapters/${chapter}/draft`), input),
-  });
-}
+// ⚠️ **`useDraft` 2026-08-14 删了。** 它从 2026-08-10「AI 起草」抽屉被删起就零调用方，
+// 当时留着的理由写的是「模式二接面板时直接用」——**那个理由已经过期**：模式二的起草
+// 是后端一次工具调用（`agent/drafting.py` → `importer.save_chapter`），浏览器不发这条
+// 请求。后端 `POST …/draft` 一个字没动，要用重写一个 hook 是十行的事。
+//
+// 同一批删掉的还有 `useCreateProject` / `useImportBook`（建书和导书都走
+// `POST /api/projects/bootstrap` 那一条了）和整个 `summaryPrep.ts`（它自己写着
+// 「如果模式二最终没用它，删掉整个文件」，而模式二起草读现有总结、不补缺的）。
+//
+// **零调用方的东西放着不管，就是下一个「文档说有其实没有」**——那句话是
+// `summaryPrep.ts` 自己写的，这次照它执行。
 
 /** 起草第 `chapter` 章时，滚动总结那一层覆盖了哪些章、缺哪些。
  *
@@ -234,7 +229,7 @@ export function useRetractSummary(pid: string) {
 //
 // ⚠️ **这两条端点由后端另一条线落地中，今天线上可能还是 404。**
 // 所以调用方必须把失败当无事发生：POST 那条永远不许打扰作者，GET 那条问不到就当
-// 「不知道」，退回当场自己跑一遍（`summaryPrep.ts`）。等后端落地后，
+// 「不知道」，问不到就当无事发生。等后端落地后，
 // `frontend/src/test/harness.tsx` 里那两条手写 stub 要换成真 fixture。
 
 /** 把「刚写完的那一章」交给后台整理（生成总结 / 抽取事件）。**不阻塞、不提示。** */
@@ -265,14 +260,6 @@ export function useProjects() {
   return useQuery({ queryKey: q(["projects"]), queryFn: () => api.get<Project[]>("/api/projects") });
 }
 
-export function useCreateProject() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (name: string) => api.post<Project>("/api/projects", { name }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["projects"] }),
-  });
-}
-
 export function useBootstrapProject() {
   const qc = useQueryClient();
   return useMutation({
@@ -285,18 +272,6 @@ export function useBootstrapProject() {
         qc.invalidateQueries({ queryKey: ["chapters", pid] });
         qc.invalidateQueries({ queryKey: ["roster", pid] });
       }
-    },
-  });
-}
-
-/** 导入整本 TXT（浏览器已把文件解码成文本）。成功后刷章目录 + 花名册 + 面板。 */
-export function useImportBook(pid: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (text: string) => api.post<ImportReport>(proj(pid, "/import"), { text }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["chapters", pid] });
-      qc.invalidateQueries({ queryKey: ["roster", pid] });
     },
   });
 }
@@ -478,6 +453,18 @@ export function useSaveChapter(pid: string, chapter: number) {
  *  所以这里没有 `/restore` 端点，只有一次 PUT。 */
 export function useRestoreSnapshot(pid: string, chapter: number) {
   return useSaveChapter(pid, chapter);
+}
+
+/** 在书末尾新起一章（空的）。**不带任何入参**——章号和章标题都由后端按磁盘定。
+ *
+ *  没有「在第 N 章后面插一章」这一档：那会把它后面每一章的号都推一位，而章号是
+ *  全书的顺序键（证据、事件、快照全挂在它上面）。要插叙就在末尾新起一章再改标题。 */
+export function useCreateChapter(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<ChapterRow>(proj(pid, "/chapters")),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["chapters", pid] }),
+  });
 }
 
 /** 删掉一版历史。后端会拒绝两种：当前那一版、被证据/抽取/提案引着的那一版。 */
@@ -800,7 +787,9 @@ function invalidateReview(qc: ReturnType<typeof useQueryClient>, pid: string) {
  *
  *  `expected_canon_version` 由调用方从**它正在渲染的那张矩阵**上取
  *  （`matrix.version.canon_version`），不在这里另拉一次：版本必须跟着作者看到的数据走。
- *  **这不是新增认知的入口**——空格子（不知道）走声明抽屉，那条路要一句引语来定章号。 */
+ *  **这不是新增认知的入口**——空格子（不知道）走 `useAddKnowledge`，那条路的生效章在
+ *  URL 里。两条分开是有意的：一个能力两个入口，作者学会的会是错的那一个。
+ *  （这句话 2026-08-14 之前写着「走声明抽屉」，而那个抽屉当天就删了。） */
 export function useCorrectKnowledge(pid: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -810,6 +799,27 @@ export function useCorrectKnowledge(pid: string) {
       invalidatePanels(qc, pid);
       qc.invalidateQueries({ queryKey: ["projects"] }); // canon 版本推高了一格
       qc.invalidateQueries({ queryKey: ["activity", pid] }); // 这一步会进日志
+    },
+  });
+}
+
+/** 在一格「不知道」上**补**一条「他知道 / 他以为」。
+ *
+ *  **`chapter` 绑在 hook 上，不进请求体。** 它是作者正看着的那一章（矩阵本来就按它
+ *  渲染），落在 URL 的 `/chapters/{n}/` 那一段上；进了请求体，界面上迟早就有一个框
+ *  让他去填它（约束 10）——而 `tests/test_canon_edit_boundary.py` 那道零基线守卫扫的
+ *  正是 `.mutate({…})` 的键，所以这个数**在物理上**没法从那儿进来。
+ *
+ *  失效面和「改」那条一模一样：这一步同样改了 CANON、推高了版本、进了日志。 */
+export function useAddKnowledge(pid: string, chapter: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: KnowledgeAddInput) =>
+      api.post<KnowledgeAddition>(proj(pid, `/chapters/${chapter}/canon/knowledge`), body),
+    onSuccess: () => {
+      invalidatePanels(qc, pid);
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["activity", pid] });
     },
   });
 }
