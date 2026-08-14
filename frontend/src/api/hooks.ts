@@ -365,6 +365,16 @@ export function useChapterText(pid: string | null, chapter: number, open: boolea
     queryKey: q(["text", pid, chapter]),
     queryFn: () => api.get<ChapterText>(proj(pid!, `/chapters/${chapter}/text`)),
     enabled: !!pid && open,
+    // **切回来重取**（`main.tsx` 把它全局关了，这里和 `useDrafts` 是仅有的两个例外）。
+    //
+    // 作者的日常回路是「工作台标签页一直开着 → 切到 WPS 改 → 切回来」，而这中间
+    // **页面一次都没有重新加载过**。不重取，编辑器里就一直是他切走之前那份，
+    // 且屏幕上没有任何东西说它旧了——他会对着旧正文接着写，然后按保存**盖掉
+    // 自己刚在 WPS 里写的东西**。这是「看起来正常的假页面」里最贵的一种。
+    //
+    // 它安全，是因为落点在 `editorDoc.diskChange`：没有未存的改动就静默采纳，
+    // 有才拦一句「这一章在别处变过了」。**这两档都是对的，不能只留一半。**
+    refetchOnWindowFocus: true,
   });
 }
 
@@ -1051,7 +1061,8 @@ export function useDrafts(pid: string | null, chapter: number | null) {
     queryFn: () =>
       api.get<ChapterDrafts>(proj(pid!, `/drafts${chapter ? `?chapter=${chapter}` : ""}`)),
     enabled: !!pid,
-    // **全仓唯一一条开着「切回来重取」的查询**（`main.tsx` 那一行把它全局关了）。
+    // **开着「切回来重取」的两条查询之一**（另一条是 `useChapterText`；`main.tsx`
+    // 那一行把它全局关了）。
     // 理由是这一条读端有一个别处没有的形态：**并排比那一页开在另一个标签页里**，
     // 而作者切走的那段时间里，工作台那边可能又写了几稿。切回来看见一份少了两稿的
     // 桌子，而屏幕上没有任何东西说它旧了——那正是这个仓库反复在修的「看起来正常的

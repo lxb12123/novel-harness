@@ -1,3 +1,4 @@
+import { focusManager } from "@tanstack/react-query";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -98,5 +99,69 @@ describe("中栏编辑器", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
     await new Promise((r) => setTimeout(r, 60));
     expect(fetchSpy.mock.calls.filter(([url]) => String(url).endsWith("/sync"))).toEqual([]);
+  });
+
+  // ── 切出去改完回来，正文得对上磁盘（2026-08-13）─────────────────────────────
+  //
+  // 上面那条钉的是「不许自动 sync」（**写**路径，历史里只该有作者自己按下的保存）。
+  // 这两条钉的是**读**路径，两件事不能混：不自动写快照，不等于可以显示旧正文。
+  //
+  // 日常回路是「标签页一直开着 → 切到 WPS 改 → 切回来」，中间**页面一次都没有重新
+  // 加载**。不重取，编辑器里就一直是切走之前那份，且屏幕上没有任何东西说它旧了。
+  it("在别的软件里改完切回来，正文跟着磁盘那份变（页面没有重新加载过）", async () => {
+    const 改过的 = "第一章 血脉\n\n他在 WPS 里把这一段整个重写了。\n";
+    let 第几次 = 0;
+    renderWithApi(<CenterEditor />, [
+      {
+        match: /\/chapters\/\d+\/text/,
+        body: () =>
+          ++第几次 === 1 ? fixtures.chapterText : { ...fixtures.chapterText, markdown: 改过的 },
+      },
+    ]);
+    await waitFor(() =>
+      expect(document.querySelector(".cm-content")?.textContent).toContain("李管家什么也没说"),
+    );
+
+    focusManager.setFocused(false);
+    focusManager.setFocused(true); // ← 作者切回这个标签页
+
+    await waitFor(() =>
+      expect(document.querySelector(".cm-content")?.textContent).toContain(
+        "他在 WPS 里把这一段整个重写了",
+      ),
+    );
+  });
+
+  it("但手上有没保存的改动时**先问一句**，不闷头盖掉", async () => {
+    // 「一律采纳」在这一档是错的：作者手上那份是他刚敲的字。`editorDoc.diskChange`
+    // 的两档（干净 → 采纳、脏 → 拦一句）必须一起活着，只留一半就是在拿他的稿子赌。
+    const user = userEvent.setup();
+    let 第几次 = 0;
+    renderWithApi(<CenterEditor />, [
+      {
+        match: /\/chapters\/\d+\/text/,
+        body: () =>
+          ++第几次 === 1
+            ? fixtures.chapterText
+            : { ...fixtures.chapterText, markdown: "第一章 血脉\n\n磁盘那边换了。\n" },
+      },
+    ]);
+    await waitFor(() =>
+      expect(document.querySelector(".cm-content")?.textContent).toContain("李管家什么也没说"),
+    );
+
+    // 在编辑器里敲两个字 = 手上这份脏了。
+    await user.dblClick(screen.getByRole("button", { name: "当前章节" }));
+    const box = screen.getByRole("textbox", { name: "改这一章的名字" });
+    await user.clear(box);
+    await user.type(box, "第一章 血脉（我改的）{Enter}");
+    expect(screen.getByText("未保存")).toBeInTheDocument();
+
+    focusManager.setFocused(false);
+    focusManager.setFocused(true);
+
+    await screen.findByText(/这一章在别处变过了/);
+    // 他手上那份**一个字都没被动**。
+    expect(document.querySelector(".cm-content")?.textContent).toContain("（我改的）");
   });
 });

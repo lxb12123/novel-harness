@@ -237,6 +237,13 @@ export function stubFetch(extra: Handler[] = []): void {
 export function renderWithApi(ui: ReactElement, extra: Handler[] = []) {
   stubFetch(extra);
   // retry: false —— 默认 3 次重试会让「断言失败」变成「测试超时」，报错难读。
-  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  //
+  // `refetchOnWindowFocus: false` **是在抄 `main.tsx`**，不是测试偏好：react-query 的
+  // 默认值是 `true`，不写这一行，测试里每一条查询都开着「切回来重取」，而生产里
+  // 只有点名开的那两条开着。那种装配下「切回来会不会重取」这件事**测不出来**——
+  // 断言在两种实现下都绿。两边的默认值必须是同一个。
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+  });
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
