@@ -30,9 +30,10 @@ from .models import (
     AliasHit,
     AliasKind,
     AliasSpec,
-    ChapterSpec,
     ChapterSnapshot,
+    ChapterSpec,
     ChapterText,
+    ChapterUsage,
     Edge,
     EdgeSpec,
     EdgeType,
@@ -61,6 +62,7 @@ from .store import (
     MAX_HOPS,
     MAX_SUBGRAPH_NODES,
     QUERYABLE_SCOPES,
+    ChapterInUse,
     NodeNotFound,
     QuoteMismatch,
     SnapshotInUse,
@@ -581,6 +583,9 @@ class SqliteStoryGraph:
                 self._conn, project_id, chapter_id, current_snapshot_id
             )
 
+    def chapter_disk_stats(self, project_id: str) -> dict[int, tuple[int | None, int | None]]:
+        return queries.chapter_disk_stats(self._conn, project_id)
+
     def put_chapter(self, spec: ChapterSpec) -> StoredChapter:
         sha = quote_hash(spec.text)
         with _transaction(self._conn):
@@ -604,7 +609,25 @@ class SqliteStoryGraph:
                 node = self._require_node(spec.project_id, chapter_id, what="chapter 节点")
                 if node.name != spec.heading:
                     queries.update_node_name(self._conn, chapter_id, spec.heading)
-                queries.update_chapter(self._conn, chapter_id, spec, sha)
+                # **一个字节都没变就不写。** `sync` 会对整本书每一章都调到这里，
+                # 而 2026-08-14 起它还会在**每次回到标签页时**跑一遍（回焦对齐）——
+                # 无条件 UPDATE 的话，722 章的书每对一次就搅一遍全书的 WAL，
+                # 而其中 721 章一个字节没动。
+                #
+                # 判据是 `text_sha256` **加上那两列 stat**：
+                #
+                # · sha 相等 ⇒ `heading`/`title`（从正文切出来的）和 `path`（由幂等键
+                #   `number` 定）全都相等，那次 UPDATE 唯一会改的是 `updated_at`，
+                #   而那一列没有任何读者依赖它跳动。
+                # · **但 stat 也必须相等才能跳过**。文件被 touch 过（`rsync` / 保存了
+                #   一份一模一样的内容）时 sha 不变而 mtime 变了——不把新 stat 记下来，
+                #   下一次回焦检查又会判它「变了」，于是**这一章永远重读**（迁移 015）。
+                if (row.text_sha256, row.disk_mtime_ns, row.disk_size) != (
+                    sha,
+                    spec.disk_mtime_ns,
+                    spec.disk_size,
+                ):
+                    queries.update_chapter(self._conn, chapter_id, spec, sha)
                 created = False
 
             snapshot_id = queries.find_snapshot(self._conn, chapter_id, sha)
@@ -662,6 +685,20 @@ class SqliteStoryGraph:
             if not usage.is_free():
                 raise SnapshotInUse(usage)
             queries.delete_snapshot(self._conn, snapshot_id)
+
+    def delete_chapter(self, project_id: str, number: int) -> ChapterUsage:
+        # 数引用和删在同一个事务里。**这一条比 delete_chapter_snapshot 那条更要紧**：
+        # 那儿漏了还有外键兜底（IntegrityError），这儿两条相关外键都是 ON DELETE CASCADE，
+        # 漏了就是**一声不吭地**把边和证据带走。事务是唯一的一道。
+        with _transaction(self._conn):
+            row = queries.find_chapter_by_number(self._conn, project_id, number)
+            if row is None:
+                raise StoreError(f"第 {number} 章不在库里")
+            usage = queries.chapter_usage(self._conn, project_id, row.id, number)
+            if not usage.is_free():
+                raise ChapterInUse(usage)
+            queries.delete_chapter(self._conn, project_id, row.id)
+            return usage
 
     def get_evidence(self, project_id: str, evidence_id: str) -> Evidence | None:
         try:

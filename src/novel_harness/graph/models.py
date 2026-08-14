@@ -1011,6 +1011,20 @@ class ChapterSpec(BaseModel):
 
     path: str = Field(min_length=1)
     text: str
+
+    disk_mtime_ns: int | None = None
+    disk_size: int | None = None
+    """磁盘上那个文件的 `(mtime, size)`。**快路的过滤器，不是真相**——真相是 `text`
+    算出来的 sha（迁移 015 的完整论证：mtime 会撒谎，Git 也有这个病）。
+
+    `None` = 调用方不是从一个文件读来的（`save_chapter` 之外的路径、测试的内存构造）。
+    **写进库的 `None` 意味着「下次必须重读」**，那是 fail-safe 的那一侧。
+
+    ⚠️ **调用方必须先 stat 再读**。反过来的话，文件在 stat 和 read 之间被改，
+    记下的 mtime 会比读到的内容**新** → 下一次检查看着一致 → **那次改动永远发现不了**。
+    先 stat 最坏是多读一次，无害（`importer._read_one_chapter` 钉着这个顺序）。
+    """
+
     # text_sha256 **不是字段**：由 text 现算。开着这个口子迟早有调用方传一个跟 text 不符的
     # 哈希进来，而快照去重（UNIQUE(chapter_id, text_sha256)）会照单全收，且没有任何东西
     # 会报错——同 decisions.append() 没有 quote_sha256 参数，同一条理由。
@@ -1096,6 +1110,40 @@ class SnapshotUsage(BaseModel):
 
     def is_free(self) -> bool:
         """没有任何东西引着 = 删了不会让谁失去出处。"""
+        return self.total == 0
+
+
+class ChapterUsage(BaseModel):
+    """这一章**已经被引擎记住了多少东西**。删整章之前必须先问它。
+
+    和 `SnapshotUsage` 同一个道理，但拦的东西更狠：Chapter 既是一行 `chapter`，
+    也是一个 `node`（`put_chapter` 让两者同生），而 `edge.src/dst` 到 `node` 是
+    **ON DELETE CASCADE** 的——一句 `DELETE FROM node` 会把指着这一章的
+    PLANTED_IN / RESOLVED_IN **无声地**一起带走。`evidence.chapter_id` 到 `chapter`
+    同样是 CASCADE，于是那些证据（连同引着它们的边和事件）也会跟着蒸发。
+
+    **所以这里数的不是「删了会不会报错」，是「删了会不会让作者丢掉他不知道自己有的东西」。**
+    数出来非零就拒绝，让作者看见挡路的是什么——而不是替他决定那些记忆可以丢。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    chapter_number: int = Field(ge=1)
+    evidence: int = Field(ge=0)
+    """锚在这一章正文里的证据条数（每一条都是「那句话当年在这儿」）。"""
+    edges: int = Field(ge=0)
+    """从这一章生效、或者指着这一章那个节点的关系条数。"""
+    events: int = Field(ge=0)
+    """记在这一章名下的情节条数。"""
+    extraction_runs: int = Field(ge=0)
+    proposal_sets: int = Field(ge=0)
+
+    @property
+    def total(self) -> int:
+        return self.evidence + self.edges + self.events + self.extraction_runs + self.proposal_sets
+
+    def is_free(self) -> bool:
+        """引擎在这一章上什么都没记 = 删掉它不会让任何东西失去出处。"""
         return self.total == 0
 
 

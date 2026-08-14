@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useChapters, useProjects } from "./api/hooks";
 import { useOpenChapter } from "./autopilot";
 import { chapterOnOpen } from "./chapterCursor";
+import { useReconcileOnFocus } from "./reconcile";
 import { useHashRoute } from "./route";
 import { useCoords } from "./store";
 import { DraftCompare } from "./components/DraftCompare";
@@ -34,6 +35,9 @@ function Workbench() {
   const { projectId, chapter, page, chatOpen, cursorFor, setProject, setChapter, markCursor } =
     useCoords();
   const chapters = useChapters(projectId);
+  // 开书时把库和磁盘深对一次，之后每次切回这个标签页快对一次（`reconcile.ts`）。
+  // **挂在这儿而不是中栏**：对的是整本书，不是正在看的那一章。
+  useReconcileOnFocus(projectId);
   // 作者点开另一章 = 他离开了当前这一章 = 那一章写完了 → 交给后台整理（`autopilot.ts`）。
   // **下面那个 `chapterOnOpen` 的 setChapter 故意不走它**：开书时把光标放到该停的那一章
   // 不是「写完了一章」，走它等于凭空发一次后台整理。

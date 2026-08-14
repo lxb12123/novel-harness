@@ -109,6 +109,7 @@ from .activity import router as activity_router
 from .autopilot import router as autopilot_router
 from .chat import router as chat_router
 from .extraction import router as extraction_router
+from .reconcile import router as reconcile_router
 from .review import router as review_router
 
 _STATIC = Path(__file__).resolve().parent / "static"
@@ -283,6 +284,7 @@ app.include_router(activity_router)
 app.include_router(autopilot_router)
 app.include_router(chat_router)
 app.include_router(extraction_router)
+app.include_router(reconcile_router)
 app.include_router(review_router)
 
 # 构建产物的静态资源（/assets/index-xxxx.js）。只有 dist 真的构建出来才挂载——

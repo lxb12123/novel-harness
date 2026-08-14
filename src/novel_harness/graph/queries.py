@@ -24,6 +24,7 @@ from .models import (
     ChapterSnapshot,
     ChapterSpec,
     ChapterText,
+    ChapterUsage,
     Edge,
     EdgeProps,
     EdgeSpec,
@@ -961,6 +962,8 @@ class ChapterRow(NamedTuple):
     title: str
     path: str
     text_sha256: str
+    disk_mtime_ns: int | None = None
+    disk_size: int | None = None
 
 
 class SnapshotContext(NamedTuple):
@@ -978,7 +981,7 @@ def find_chapter_by_number(
     """`put_chapter` 的幂等键 `(project_id, number)` —— schema 的 UNIQUE。"""
     cur = conn.execute(
         """
-        SELECT id, number, title, path, text_sha256 FROM chapter
+        SELECT id, number, title, path, text_sha256, disk_mtime_ns, disk_size FROM chapter
         WHERE project_id = :pid AND number = :number
         """,
         {"pid": project_id, "number": number},
@@ -992,8 +995,9 @@ def insert_chapter(conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec,
     `ChapterSpec` 里没有这个字段，见那份 docstring。"""
     conn.execute(
         """
-        INSERT INTO chapter (id, project_id, number, title, path, text_sha256)
-        VALUES (:id, :pid, :number, :title, :path, :sha)
+        INSERT INTO chapter (id, project_id, number, title, path, text_sha256,
+                             disk_mtime_ns, disk_size)
+        VALUES (:id, :pid, :number, :title, :path, :sha, :mtime, :size)
         """,
         {
             "id": chapter_id,
@@ -1002,6 +1006,8 @@ def insert_chapter(conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec,
             "title": spec.title,
             "path": spec.path,
             "sha": sha,
+            "mtime": spec.disk_mtime_ns,
+            "size": spec.disk_size,
         },
     )
 
@@ -1016,10 +1022,18 @@ def update_chapter(conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec,
         """
         UPDATE chapter
            SET title = :title, path = :path, text_sha256 = :sha,
+               disk_mtime_ns = :mtime, disk_size = :size,
                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
          WHERE id = :id
         """,
-        {"id": chapter_id, "title": spec.title, "path": spec.path, "sha": sha},
+        {
+            "id": chapter_id,
+            "title": spec.title,
+            "path": spec.path,
+            "sha": sha,
+            "mtime": spec.disk_mtime_ns,
+            "size": spec.disk_size,
+        },
     )
 
 
@@ -1112,6 +1126,64 @@ def snapshot_usage(conn: sqlite3.Connection, snapshot_id: str) -> SnapshotUsage:
         {"sid": snapshot_id},
     )
     return SnapshotUsage(snapshot_id=snapshot_id, **_rows(cur)[0])
+
+
+def chapter_usage(
+    conn: sqlite3.Connection, project_id: str, chapter_id: str, number: int
+) -> ChapterUsage:
+    """引擎在这一章上记了多少东西。**删整章之前问这个。**
+
+    五个计数各对应一条「删了这一章就会跟着没」的路：
+
+    - `evidence.chapter_id` → CASCADE，跟着蒸发；
+    - `edge` 两条：**从这一章生效的**（`valid_from_chapter`）和**指着这一章那个节点的**
+      （`src`/`dst`，PLANTED_IN / RESOLVED_IN），后者走 node 的 CASCADE 无声消失。
+      两条用 `OR` 数进同一个 `edges`，不是相加——一条边可能同时满足两边，
+      相加会报出一个比真实条数大的数，而那个数会被原样念给作者听；
+    - `story_event.chapter_number`：记在这一章名下的情节；
+    - `extraction_run` / `proposal_set`：跟着快照走的两张审计表（同 `snapshot_usage`）。
+
+    **`valid_to_chapter` 故意不算**：一条「在第 n 章失效」的边说的是别处那件事在这儿结束了，
+    它的出处不在这一章。把它算进来，删任何一章都会被自己以外的历史挡住。
+    """
+    cur = conn.execute(
+        """
+        SELECT
+          (SELECT COUNT(*) FROM evidence WHERE chapter_id = :cid) AS evidence,
+          (SELECT COUNT(*) FROM edge
+             WHERE project_id = :pid
+               AND (valid_from_chapter = :number OR src = :cid OR dst = :cid)) AS edges,
+          (SELECT COUNT(*) FROM story_event
+             WHERE project_id = :pid AND chapter_number = :number) AS events,
+          (SELECT COUNT(*) FROM extraction_run WHERE snapshot_id IN
+             (SELECT id FROM chapter_snapshot WHERE chapter_id = :cid)) AS extraction_runs,
+          (SELECT COUNT(*) FROM proposal_set   WHERE snapshot_id IN
+             (SELECT id FROM chapter_snapshot WHERE chapter_id = :cid)) AS proposal_sets
+        """,
+        {"pid": project_id, "cid": chapter_id, "number": number},
+    )
+    return ChapterUsage(chapter_number=number, **_rows(cur)[0])
+
+
+def delete_chapter(conn: sqlite3.Connection, project_id: str, chapter_id: str) -> None:
+    """把这一章从库里抹掉：证据 → 快照 → 节点（`chapter` 行跟着节点的 CASCADE 走）。
+
+    **顺序是这个函数的全部内容，不是风格。** 一句 `DELETE FROM node` 本来就能靠级联
+    删干净，但级联的执行次序不由我们定：`evidence.chapter_snapshot_id` 到
+    `chapter_snapshot` **没有 CASCADE**，快照先被级联掉的那一刻，还活着的证据行就
+    撞外键了。自己按依赖倒序删，就没有「中途那一瞬间」这回事。
+
+    **不检查引用**——那是调用方（`sqlite_store.delete_chapter`）的活，它要在同一个事务里
+    先问 `chapter_usage`。这里真有人引着的话外键会抛，那是最后一道，不是第一道。
+    """
+    conn.execute("DELETE FROM evidence WHERE chapter_id = :cid", {"cid": chapter_id})
+    conn.execute("DELETE FROM chapter_snapshot WHERE chapter_id = :cid", {"cid": chapter_id})
+    # 删 node 而不是删 chapter：两者同生（`put_chapter`），只删 chapter 会在库里留下
+    # 一个没有章的 Chapter 节点，而它照样会出现在按 label 扫的地方。
+    conn.execute(
+        "DELETE FROM node WHERE id = :cid AND project_id = :pid",
+        {"cid": chapter_id, "pid": project_id},
+    )
 
 
 def delete_snapshot(conn: sqlite3.Connection, snapshot_id: str) -> int:
@@ -1303,3 +1375,18 @@ def retire_stale_extractor_facts(
         {"pid": project_id},
     )
     return touched + cur.rowcount
+
+
+def chapter_disk_stats(
+    conn: sqlite3.Connection, project_id: str
+) -> dict[int, tuple[int | None, int | None]]:
+    """`{章号: (记下的 mtime_ns, 记下的 size)}`。**一次查询问完整本书。**
+
+    值里的 `None` = 这一章的 stat 没记过（老库、或从非文件路径落的）——调用方必须把
+    它当成「不知道 ⇒ 重读」（迁移 015：那是 fail-safe 的那一侧，而且读过一次就自愈）。
+    """
+    cur = conn.execute(
+        "SELECT number, disk_mtime_ns, disk_size FROM chapter WHERE project_id = :pid",
+        {"pid": project_id},
+    )
+    return {int(r["number"]): (r["disk_mtime_ns"], r["disk_size"]) for r in _rows(cur)}

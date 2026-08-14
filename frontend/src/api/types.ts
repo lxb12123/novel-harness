@@ -31,16 +31,22 @@ export interface AiSettings {
    *
    *  **`null` 和 `0` 不是一回事**：没填要显示成空框，填了个数才显示那个数。 */
   context_window: number | null;
+  /** 每次打开工作台自动更新那份模型表。**默认关着**，由作者自己拨开。 */
+  auto_update_model_windows: boolean;
 }
 
 export interface AiSettingsInput {
-  base_url: string;
-  model: string;
+  /** **每一位都可以不发**：后端按「这次请求里带没带这个键」判断改没改
+   *  （`model_fields_set`）。所以那颗开关只发它自己那一位，
+   *  **不会顺手把作者刚敲了一半的服务地址一起提交上去**。 */
+  base_url?: string;
+  model?: string;
   /** 空 = 保持原钥匙（改地址/模型不用重粘）。 */
   api_key?: string;
   /** 这一位和钥匙相反：**发 `null` 就是清掉**（作者必须收得回一个填错的数）。
-   *  不发这个键才是「保持原值」——所以设置页每次提交都带上它。 */
+   *  不发这个键才是「保持原值」——所以那张表单每次提交都带上它。 */
   context_window?: number | null;
+  auto_update_model_windows?: boolean;
 }
 
 export interface DraftRequest {
@@ -304,15 +310,6 @@ export interface StateSnapshot {
   is_dead: boolean;
 }
 
-export interface Scene {
-  number: number;
-  cast: string[];
-  loc: string | null;
-  goal: string | null;
-  para_index: number;
-  decl_text: string;
-}
-
 /** 引擎的 9 类关系（`graph/models.py::EdgeType`）。
  *  `tests/test_wording_guard.py` 拿 Python 那个枚举**逐个**比这份联合类型，少一个就红。 */
 export type EdgeType =
@@ -377,6 +374,17 @@ export interface Subgraph {
   truncated: boolean;
 }
 
+/** 把库和磁盘对一遍的回执（`POST …/reconcile`）。**不花钱**，一次模型调用都没有。
+ *
+ *  `reread` ≠ `refreshed`：文件被 touch 过（内容一模一样）会进前者不进后者。
+ *  前端只看 `refreshed`——只有内容真的变了才值得失效缓存。 */
+export interface ReconcileOutcome {
+  checked: number;
+  reread: number[];
+  refreshed: number[];
+  refused: { chapter: number; message: string }[];
+}
+
 export interface ImportReport {
   chapter_count: number;
   preamble_chars: number;
@@ -431,7 +439,8 @@ export interface SyncOutcome {
 
 export interface CheckResult {
   chapter: number;
-  scene_count: number;
+  /** 这一趟真的跑了哪几条。**零 issue 要靠它说清自己是哪一种零**（§10 约束 8）：
+   *  一条规则哑掉时它照样返回空 issue 列表。 */
   rules_run: string[];
   issues: Issue[];
 }

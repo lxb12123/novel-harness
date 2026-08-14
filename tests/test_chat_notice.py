@@ -432,7 +432,7 @@ def test_migration_012_runs_on_a_book_that_already_has_three_messages(
     conn = _at_version_11(tmp_path / "book.db")
     before = [dict(r) for r in conn.execute("SELECT * FROM chat_message ORDER BY seq")]
 
-    assert migrate(conn) == 14
+    assert migrate(conn) == 15
     after = [dict(r) for r in conn.execute("SELECT * FROM chat_message ORDER BY seq")]
     assert after == before, "重建之后有列对不上 —— 那一列的数据已经没了，而且不报错"
 

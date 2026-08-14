@@ -36,9 +36,10 @@ from typing import Final, Protocol, runtime_checkable
 
 from .models import (
     AliasSpec,
-    ChapterSpec,
     ChapterSnapshot,
+    ChapterSpec,
     ChapterText,
+    ChapterUsage,
     Edge,
     EdgeSpec,
     EdgeType,
@@ -146,6 +147,32 @@ class SnapshotInUse(StoreError):
         super().__init__(
             f"快照 {usage.snapshot_id} 还被引用着"
             f"（证据 {usage.evidence} / 抽取 {usage.extraction_runs} / 提案 {usage.proposal_sets}）"
+        )
+
+
+class ChapterInUse(StoreError):
+    """要删的那一章上，引擎已经记了东西（`ChapterUsage.total > 0`）。
+
+    **这条拒绝拦的不是外键，是级联。** `edge.src/dst` → `node` 和
+    `evidence.chapter_id` → `chapter` 两条都是 ON DELETE CASCADE，所以「删一章」
+    技术上一句 DELETE 就过了，**而且一声不吭**：指着这一章的关系、锚在这一章正文里的
+    证据、连同引着那些证据的情节，会在作者按下那颗按钮的一瞬间一起没掉。
+
+    引擎记住的东西是这个产品**唯一**的资产。所以这里的默认动作是拒绝并把挡路的东西
+    数给作者看，由他决定——不是替他决定那些记忆可以丢。
+    """
+
+    def __init__(self, usage: ChapterUsage) -> None:
+        self.usage = usage
+        # 这句话**是要上屏的**（`api/app.py` 原样发给前端）。所以它说三件事：
+        # 挡路的是什么、有多少条、删了会怎样。**不说「怎么办」**——今天界面上确实
+        # 没有一条路能把这些清掉，编一句「先去某处删掉它们」就是把作者支去一个空房间。
+        # 词按 `SnapshotInUse` 那句的口径（证据 / 抽取 / 提案 已经在版本抽屉里上过屏）。
+        super().__init__(
+            f"第 {usage.chapter_number} 章上还记着东西"
+            f"（证据 {usage.evidence} / 关系 {usage.edges} / 情节 {usage.events} / "
+            f"抽取 {usage.extraction_runs} / 提案 {usage.proposal_sets}）。"
+            "删掉这一章，这些会跟着一起没。"
         )
 
 
@@ -551,6 +578,15 @@ class CanonWriter(Protocol):
         """
         ...
 
+    def chapter_disk_stats(self, project_id: str) -> dict[int, tuple[int | None, int | None]]:
+        """`{章号: (记下的 mtime_ns, 记下的 size)}` —— 一次查询问完整本书。
+
+        「这一章在外面改过没有」的**快路**：拿它和 `os.stat` 比，一致就不读文件
+        （迁移 015 / Git 的 index 用了二十年的那一招）。值里的 `None` = 没记过，
+        调用方当成「必须重读」。
+        """
+        ...
+
     def put_chapter(self, spec: ChapterSpec) -> StoredChapter:
         """落一章：Chapter 节点 + `chapter` 行 + 一条快照，**一个事务**。
 
@@ -615,6 +651,28 @@ class CanonWriter(Protocol):
 
         实现必须把「查引用」和「删」罩进同一个事务：中间隔着一次声明的话，检查过的
         `usage=0` 会在 DELETE 执行时已经不成立，而外键会在那一刻才炸出来。
+        """
+        ...
+
+    def delete_chapter(self, project_id: str, number: int) -> ChapterUsage:
+        """把这一章从库里删掉（章行、它的节点、它的快照）。**只删引擎还没记过东西的那种。**
+
+        磁盘上那个 .md **不归它管**（ADR 0007：正文在磁盘上，图层只存快照和记忆）——
+        文件由 `importer.remove_chapter` 处理，它是这个方法唯一的调用方。
+
+        Returns:
+            删掉之前数出来的那份 `ChapterUsage`（全零）。**返回它而不是 `None`**：
+            调用方要能把「删掉了，而且确实什么都没连着」写进日志，
+            而不是事后再查一次一个已经不存在的章。
+
+        Raises:
+            StoreError: 这一章不在库里（磁盘上有、还没 sync 过也算，那时没有行可删）。
+            ChapterInUse: 引擎在这一章上记过东西（异常里带 `ChapterUsage` 明细）。
+
+        实现必须把「数引用」和「删」罩进同一个事务，理由同 `delete_chapter_snapshot`：
+        中间隔着一次抽取的话，数出来的 0 在 DELETE 那一刻已经不成立——**而这一次不会
+        撞外键报错，会静默级联删掉**（`edge.src/dst` 和 `evidence.chapter_id` 都是
+        ON DELETE CASCADE），也就是说这个竞态没有第二道防线，只有事务。
         """
         ...
 

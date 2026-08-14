@@ -276,6 +276,12 @@ def _read_one_chapter(
     每一条证据的 `para_index` 全体偏移——面板照旧画得出来。
     """
     rel = f"{CHAPTER_DIR}/{file.name}"
+    # ⚠️ **先 stat，再读。这个顺序不许反。**
+    #
+    # 反过来的话：文件在 read 和 stat 之间被改一次 → 记下的 mtime 比读到的内容**新**
+    # → 下一次 stat 看着一致 → **那次改动永远发现不了**。先 stat 的最坏情况是
+    # 「记下的 stat 比内容旧 → 下次多读一遍」，无害。（迁移 015 / `ChapterSpec` 那两个字段）
+    stat = file.stat()
     text = file.read_text(encoding="utf-8-sig")
     book = chapterize(text)
     if len(book.chapters) != 1:
@@ -297,6 +303,8 @@ def _read_one_chapter(
             # anchor.paragraphs 分段的字节必须是同一份。错开一个字节（比如这里省掉
             # 标题行）→ 每一条证据的 para_index 全体偏移 → 锚全坏。
             text=text,
+            disk_mtime_ns=stat.st_mtime_ns,
+            disk_size=stat.st_size,
         )
     )
     # ── 新正文落地了 → 让锚在旧那一版上的抽取事实退休（2026-08-14）──────────
@@ -336,6 +344,89 @@ def sync_chapter(
     if not file.is_file():
         return None
     return _read_one_chapter(store, project_id, chapter, file)
+
+
+class ReconcileReport(BaseModel):
+    """把库和磁盘对一遍之后：看了几章、读了几章、哪几章读不回来。
+
+    **`refused` 不能是空着的**：一个章标写坏了的文件会让那一章从此既总结不了也抽不了，
+    而这条路径是**作者没按过任何按钮**的（回焦自动跑）。不带出来的话，
+    「什么都没发生」和「有一章一直读不回来」在屏幕上长得一模一样（约束 8）。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    checked: int = Field(default=0, ge=0)
+    """磁盘上一共有几个章节文件。"""
+
+    reread: tuple[int, ...] = ()
+    """stat 对不上、于是真的读了一遍的那些章号。**不等于「内容变了」**——
+    文件被 touch 过（内容一模一样）也会进这里，只是读完之后 sha 相同、不落新快照。"""
+
+    refreshed: tuple[int, ...] = ()
+    """内容**真的**变了、落了新快照的那些章。"""
+
+    refused: tuple[tuple[int, str], ...] = ()
+    """`(章号, 为什么读不回来)`。今天只有一种：切不出恰好一章（章标写坏了）。"""
+
+
+def reconcile(
+    store: GraphStore, project_id: str, root: Path, *, deep: bool = False
+) -> ReconcileReport:
+    """把库和磁盘对一遍。**`deep=False` 时先 stat，只有对不上才读文件。**
+
+    ── 两级，因为 mtime 会撒谎 ────────────────────────────────────────────────
+
+    `deep=False`（回焦时跑）：722 章实测 ~1–2ms，因为绝大多数章一次 `stat` 就过了。
+    `deep=True`（开书时跑一次）：忽略 stat，每一章都 read + hash，66ms。
+
+    第二级不是冗余：`rsync -t` / `cp -p` / 从备份恢复都可能**保留原 mtime**，
+    大小又恰好没变的话，快路那一关就漏了（Git 自己也有这个病，就是 "racy git"）。
+    在此之前兜这一档的是作者手点「读回改动」，而那颗按钮正要退休。
+
+    ── 一章读不回来不许拖垮整本 ──────────────────────────────────────────────
+
+    `sync` 撞上一个切不出恰好一章的文件会直接抛，于是**整本书一章都对不上**。
+    那条语义对「作者点了导入」是对的（他在等一个结果），对这条**没人按过**的路径
+    是错的：第 500 章的章标写坏了，不该让第 100 章的改动也读不回来。
+    所以这里逐章收集，最后一起带出去。
+    """
+    directory = root / CHAPTER_DIR
+    if not directory.is_dir():
+        return ReconcileReport()
+
+    recorded = {} if deep else store.chapter_disk_stats(project_id)
+    reread: list[int] = []
+    refreshed: list[int] = []
+    refused: list[tuple[int, str]] = []
+    checked = 0
+    for file in sorted(directory.iterdir()):
+        if not file.is_file():
+            continue
+        m = _CHAPTER_FILE_RE.match(file.name)
+        if m is None:
+            continue
+        number = int(m.group(1))
+        checked += 1
+        # **先 stat**（同 `_read_one_chapter` 那条顺序纪律）。`(None, None)` = 没记过，
+        # 比不上就当成「变了」——老库升级上来的第一次会全读一遍，之后就便宜了。
+        stat = file.stat()
+        if not deep and recorded.get(number) == (stat.st_mtime_ns, stat.st_size):
+            continue
+        reread.append(number)
+        try:
+            stored = _read_one_chapter(store, project_id, number, file)
+        except SyncRefused as exc:
+            refused.append((number, str(exc)))
+            continue
+        if stored.created or stored.snapshot_created:
+            refreshed.append(number)
+    return ReconcileReport(
+        checked=checked,
+        reread=tuple(reread),
+        refreshed=tuple(refreshed),
+        refused=tuple(refused),
+    )
 
 
 def sync(store: GraphStore, project_id: str, root: Path) -> SyncReport:
