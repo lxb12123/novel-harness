@@ -40,12 +40,14 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from pathlib import Path as FsPath
 from threading import Lock
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Path
 from pydantic import BaseModel, ConfigDict, Field
 
+from .. import importer
 from ..db import Connection
 from ..draft.provider import ProviderError
 from ..draft.rolling_summary import (
@@ -61,7 +63,8 @@ from ..extract.runner import (
     ExtractionRunner,
     ExtractionRunStatus,
 )
-from ..graph.store import StoryGraph
+from ..graph.store import GraphStore, StoryGraph
+from ..importer import SyncRefused
 from .deps import (
     build_summarizer,
     get_conn,
@@ -123,7 +126,7 @@ class AutopilotError(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    stage: Literal["model", "summary", "extraction"]
+    stage: Literal["model", "manuscript", "summary", "extraction"]
     code: str = Field(min_length=1)
     message: str = Field(min_length=1)
 
@@ -275,7 +278,10 @@ def run_autopilot(
     background_tasks: BackgroundTasks,
     proj: Any = Depends(load_project),
     conn: Connection = Depends(get_conn),
-    graph: StoryGraph = Depends(get_store),
+    # **读写交集，不是只读的 `StoryGraph`**：这条路由跑之前要把这一章读回库
+    # （`importer.sync_chapter` → `put_chapter`）。同 `api/chat.py` 起草落盘那一处：
+    # 写入面在签名上看得见，而不是靠一个恰好是 `SqliteStoryGraph` 的对象蒙混过去。
+    graph: GraphStore = Depends(get_store),
     runner: ExtractionRunner = Depends(get_extraction_runner),
     summarizer: RollingSummarizer = Depends(build_summarizer),
     config_error: str | None = Depends(model_configuration_error),
@@ -289,6 +295,44 @@ def run_autopilot(
     errors: list[AutopilotError] = []
     if config_error is not None:
         errors.append(_model_error(config_error))
+
+    # ── 先让这一章的快照对上磁盘，再决定跑什么（2026-08-14）────────────────────
+    #
+    # **抽取是按快照跑的**（`extract/runner.py` 那条 `text_sha256 = chapter.text_sha256`
+    # 的 JOIN），而在这一步之前，全系统没有任何地方比较过「库以为磁盘上是什么」和
+    # 「磁盘上真的是什么」——读路径一处都没有，只有保存那条路比过（防助手覆盖作者）。
+    #
+    # 于是作者在 WPS 里写完一章、切走，后台整理**照着旧正文**分析，右栏「待确认」里
+    # 摆出来的是上一版的情节，而屏幕上没有任何东西说它读的是旧的。
+    #
+    # 这一下**不花钱**（`sync_chapter` 不调模型），而且只读这一章：一次 stat + 最多
+    # 一次读 + 一次 `put_chapter`。放在这儿而不是让作者去点「读回改动」，是因为
+    # 那颗按钮要求他先理解「屏幕上的正文来自磁盘、库里的快照来自那颗按钮」——
+    # 而这个分工本来就不该让他知道。
+    #
+    # **效果是保证不是尽力而为**：走到下面任何一行时，这一章的快照就是磁盘那份。
+    try:
+        importer.sync_chapter(graph, proj.id, FsPath(proj.root_path), chapter)
+    except SyncRefused as exc:
+        # 章标题写坏了（切不出恰好一章）。**这条必须说出来**：它会让这一章从此
+        # 既总结不了也抽不了，而作者完全看不出为什么（约束 8 / 本模块纪律 3）。
+        errors.append(
+            AutopilotError(
+                stage="manuscript",
+                code="chapter_file_unreadable",
+                message=f"第 {chapter} 章的稿子读不回来：{exc}",
+            )
+        )
+    except OSError as exc:
+        # 稿子文件夹被移走 / 权限没了。同上：不许静默。
+        errors.append(
+            AutopilotError(
+                stage="manuscript",
+                code="manuscript_unreadable",
+                message=f"第 {chapter} 章的稿子读不回来：{exc}",
+            )
+        )
+
     has_text = _has_current_text(graph, proj.id, chapter)
 
     # **`latest()` 不是 `get()`**：撤回过的章在 `get()` 眼里就是「还没生成」，

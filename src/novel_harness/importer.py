@@ -265,6 +265,66 @@ def explode(book: Chapterization, root: Path) -> tuple[list[str], list[str]]:
     return [rel for rel, _ in todo], unchanged
 
 
+def _read_one_chapter(
+    store: GraphStore, project_id: str, number: int, file: Path
+) -> StoredChapter:
+    """把**一个**章节文件读进库。`sync` 和 `sync_chapter` 共用的那一份实现。
+
+    **拆出来是因为有了第二个调用方**（`sync_chapter`，2026-08-14 后台整理跑之前那一下），
+    而这段里有三条各自付过学费的约束：`chapterize` 只此一份、恰好一章才落、
+    进库的是**文件全文**。抄第二份的那一天，坏的会是其中某一条，而它坏了之后
+    每一条证据的 `para_index` 全体偏移——面板照旧画得出来。
+    """
+    rel = f"{CHAPTER_DIR}/{file.name}"
+    text = file.read_text(encoding="utf-8-sig")
+    book = chapterize(text)
+    if len(book.chapters) != 1:
+        raise SyncRefused(
+            f"{rel} 切出了 {len(book.chapters)} 章，一个章节文件必须**恰好**是一章。\n"
+            "  0 章 = 首行不是章标（认的是行首的「第N章/节/回」，前面容不下 `# `）；\n"
+            "  >1 章 = 一个文件里塞了两章，而 number 来自文件名，第二章会被静默吞掉。",
+            path=rel,
+        )
+    chapter = book.chapters[0]
+    return store.put_chapter(
+        ChapterSpec(
+            project_id=project_id,
+            number=number,
+            heading=chapter.raw_heading,
+            title=chapter.title,
+            path=rel,
+            # 写进库的是**文件全文**，不是 chapter.body：写进盘的字节、快照存的字节、
+            # anchor.paragraphs 分段的字节必须是同一份。错开一个字节（比如这里省掉
+            # 标题行）→ 每一条证据的 para_index 全体偏移 → 锚全坏。
+            text=text,
+        )
+    )
+
+
+def sync_chapter(
+    store: GraphStore, project_id: str, root: Path, chapter: int
+) -> StoredChapter | None:
+    """只把**第 `chapter` 章**读进库。`None` = 磁盘上没有那个文件。
+
+    ── 它为什么存在，而不是让调用方跑一次整本 `sync` ──────────────────────────
+
+    后台整理（`api/autopilot.py`）在跑抽取之前要确认这一章的快照就是磁盘上那份——
+    **抽取是按快照跑的**（`extract/runner.py` 那条 `text_sha256 = chapter.text_sha256`
+    的 JOIN），快照旧了它分析的就是旧正文，而屏幕上没有任何东西说它读的是旧的。
+
+    整本 `sync` 也能达到目的（722 章实测 80ms），但它会对**每一章**都
+    `UPDATE … updated_at`——作者每换一次章就搅一遍全书的 WAL，而其中 721 章
+    和这次要跑的那一章毫无关系。**后台动作的写入面要和它的目的一样窄。**
+
+    `SyncRefused` 照旧往外抛：一个切不出恰好一章的文件是作者要知道的事
+    （章标题写坏了），不是后台该吞掉的。
+    """
+    file = root / chapter_path(chapter)
+    if not file.is_file():
+        return None
+    return _read_one_chapter(store, project_id, chapter, file)
+
+
 def sync(store: GraphStore, project_id: str, root: Path) -> SyncReport:
     """把 `{root}/chapters/*.md` 的**现状**读进库。**日常回路。**
 
@@ -299,30 +359,7 @@ def sync(store: GraphStore, project_id: str, root: Path) -> SyncReport:
     # 按 number 升序，不按文件名字典序：两者今天同解（补零），1000 章之后不同解，
     # 而落章顺序决定了 UNIQUE(project_id, number) 撞车时先炸的是哪一章。
     for number, file in sorted(numbered, key=lambda pair: pair[0]):
-        rel = f"{CHAPTER_DIR}/{file.name}"
-        text = file.read_text(encoding="utf-8-sig")
-        book = chapterize(text)
-        if len(book.chapters) != 1:
-            raise SyncRefused(
-                f"{rel} 切出了 {len(book.chapters)} 章，一个章节文件必须**恰好**是一章。\n"
-                "  0 章 = 首行不是章标（认的是行首的「第N章/节/回」，前面容不下 `# `）；\n"
-                "  >1 章 = 一个文件里塞了两章，而 number 来自文件名，第二章会被静默吞掉。",
-                path=rel,
-            )
-        chapter = book.chapters[0]
-        stored = store.put_chapter(
-            ChapterSpec(
-                project_id=project_id,
-                number=number,
-                heading=chapter.raw_heading,
-                title=chapter.title,
-                path=rel,
-                # 写进库的是**文件全文**，不是 chapter.body：写进盘的字节、快照存的字节、
-                # anchor.paragraphs 分段的字节必须是同一份。错开一个字节（比如这里省掉
-                # 标题行）→ 每一条证据的 para_index 全体偏移 → 锚全坏。
-                text=text,
-            )
-        )
+        stored = _read_one_chapter(store, project_id, number, file)
         if stored.created:
             added.append(stored)
         elif stored.snapshot_created:
