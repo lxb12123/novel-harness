@@ -38,4 +38,8 @@ build/
 node_modules/
 .superpowers/
 .worktrees/
+# 分析工具自己刨出来的缓存（知识图 / 指纹 / 审计报告，6MB 量级）。
+# **它是从这个仓库派生出来的，不是这个仓库的一部分**——重跑一次工具就有，
+# 而入库之后每跑一次分析就是一次几 MB 的 diff，还会盖过真正的改动。
+.understand-anything/
 .DS_Store
