@@ -6,7 +6,6 @@ import { SceneBar } from "./SceneBar";
 import { HistoryDrawer } from "./HistoryDrawer";
 import { ChapterTitle } from "./ChapterTitle";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
-import { SyncButton } from "./SyncButton";
 import { locate } from "../anchor";
 import { titleOf, withTitle } from "../chapterTitle";
 import { cleanSuggestion, shouldSuggest } from "../continuation";
@@ -116,12 +115,10 @@ export function CenterEditor() {
           }}
         />
         <span className="spacer" />
-        {/* 「读回改动」（`SyncButton.tsx` 写着为什么是按钮不是 file-watch）。
-            **它在这一行上，因为这一行讲的就是「这份稿子」**：正文他看得见（这块屏幕
-            直接读磁盘），而库里那份快照只有这一下落得下——**后台抽取是按快照跑的**
-            （`extraction_run.snapshot_id`），快照旧了，它分析的就是旧正文。
-            2026-08-14 起它只剩这一个挂载点（声明抽屉连同选区那条工具条一起删了）。 */}
-        {projectId && <SyncButton pid={projectId} />}
+        {/* 「读回改动」那颗按钮 2026-08-15 删了。它要求作者先理解一件他不该知道的事
+            ——**屏幕上的正文来自磁盘，而库里那份快照来自这颗按钮**。它今天的活由两处
+            自动接管：后台整理跑之前先读回这一章（`api/autopilot.py`），以及回到这个
+            标签页时把整本书对一遍（`reconcile.ts`，只 stat，722 章 ~4ms）。 */}
         <span className={"status" + (saveErr ? " err" : save.isSuccess && !dirty ? " ok" : "")}>
           {saveErr
             ? "保存被拒：" + saveErr.message

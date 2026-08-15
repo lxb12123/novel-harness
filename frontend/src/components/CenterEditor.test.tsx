@@ -1,7 +1,7 @@
 import { focusManager } from "@tanstack/react-query";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { fixtures, renderWithApi } from "../test/harness";
 import { useCoords } from "../store";
 import { CenterEditor } from "./CenterEditor";
@@ -60,47 +60,21 @@ describe("中栏编辑器", () => {
     expect(await screen.findByText(/这一章还没有场景信息/)).toBeInTheDocument();
   });
 
-  // ── 「读回改动」（2026-08-13）───────────────────────────────────────────────
+  // ── 「读回改动」那颗按钮 2026-08-15 删了 ──────────────────────────────────
   //
-  // `POST …/sync` 从 M1.5 起就在后端，浏览器里零调用方。作者在 WPS 里改完回来，
-  // **正文他看得见**（这块屏幕直接读磁盘），可**后台整理读的是库里的快照**——
-  // 那半条回路此前根本没有入口。
-
-  it("这一行上有它，并且**自己说得清它在干什么**", async () => {
-    renderWithApi(<CenterEditor />);
-    const button = await screen.findByRole("button", { name: "读回改动" });
-    // 它和「历史 / 保存」在同一条工具条上——这一行讲的就是「这份稿子」。
-    expect(button.closest(".edbar")).not.toBeNull();
-    expect(screen.getByText("在别的软件里改过这本书，就点它一下。")).toBeInTheDocument();
-    // **说明文字必须说出「不点会怎样」**，而那个后果 2026-08-14 换了一个：
-    // 「记录这句」删了，快照今天只剩后台整理一个消费者（`extraction_run.snapshot_id`）。
-    // 措辞跟着后果走，不然按钮上挂着的是一句过期的理由。
-    expect(button).toHaveAttribute(
-      "title",
-      expect.stringContaining("系统整理这一章时看的还是旧正文"),
-    );
-  });
-
-  it("按下去之后照说后端那句回执（措辞的唯一出处在后端）", async () => {
-    const user = userEvent.setup();
-    renderWithApi(<CenterEditor />);
-    await user.click(await screen.findByRole("button", { name: "读回改动" }));
-
-    await screen.findByText(/读回来了/);
-    // 作者自己的文件不是错误，回执要说得出「没动它们」。
-    await screen.findByText(/这些文件不是章节，没有动它们/);
-  });
-
-  it("**没有 file-watch**：光是打开这一章，一次 sync 都不会自己发出去", async () => {
-    // 这条钉的是一个决定，不是一个 bug：sync 是写路径（每次落一条快照，而快照是
-    // 证据的锚），「磁盘先、DB 跟」里的那个「跟」是作者的动作（ADR 0007）。
-    // 哪天有人加了个 `useEffect(() => sync(), [])`，这里当场红。
-    renderWithApi(<CenterEditor />);
-    await screen.findByRole("button", { name: "读回改动" });
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
-    await new Promise((r) => setTimeout(r, 60));
-    expect(fetchSpy.mock.calls.filter(([url]) => String(url).endsWith("/sync"))).toEqual([]);
-  });
+  // 这儿原本有三条：它在不在这一行上、按下去说不说后端那句回执、**以及「光是打开
+  // 这一章不许自己发 sync」**。
+  //
+  // 最后那一条钉的是一个决定（「磁盘先、DB 跟」里的那个「跟」是作者的动作，ADR 0007），
+  // 而那个决定 2026-08-14 被推翻了：后台整理跑之前会自己把这一章读回来
+  // （`api/autopilot.py`），回到标签页时会把整本书对一遍（`reconcile.ts`）。
+  //
+  // **推翻它的不是「懒得让作者点」，是那颗按钮要求他先理解一件他不该知道的事**——
+  // 屏幕上的正文来自磁盘，而库里那份快照来自这颗按钮。他不点，后台整理分析的就是
+  // 旧正文，且屏幕上没有任何东西说得出来。
+  //
+  // 接管它的两条各自有端到端的钉子：`tests/test_autopilot_reads_disk.py` 和
+  // `tests/test_reconcile.py` + `frontend/src/reconcile.test.tsx`。
 
   // ── 切出去改完回来，正文得对上磁盘（2026-08-13）─────────────────────────────
   //
