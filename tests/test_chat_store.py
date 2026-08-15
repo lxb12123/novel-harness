@@ -336,10 +336,10 @@ def test_an_empty_append_is_not_a_write(conn: Connection, pid: str) -> None:
     assert store.get(pid, session.id) == before
 
 
-def test_the_round_trip_survives_a_conversation_with_no_house_style(
+def test_the_round_trip_survives_a_conversation_with_no_write_rule(
     conn: Connection, pid: str
 ) -> None:
-    """没填文风的那一档：前缀只有一条，读回来还是一条。"""
+    """没填写作规则的那一档：前缀只有一条，读回来还是一条。"""
     store = ChatStore(conn)
     session = store.create(pid)
     got = store.load(pid, session.id)

@@ -28,7 +28,7 @@ sqlite3、永不 connect、永不碰图表 SQL**(它不在 test_arch_guard 的�
 
 from __future__ import annotations
 
-from .assemble import DEFAULT_HOUSE_STYLE, PromptForm, graph_section
+from .assemble import DEFAULT_WRITING_PROMPT, PromptForm, graph_section
 from .capabilities import (
     CallPlan,
     CapabilityError,
@@ -75,7 +75,7 @@ from .provider import (
 )
 
 __all__ = [
-    "DEFAULT_HOUSE_STYLE",
+    "DEFAULT_WRITING_PROMPT",
     "COUNTING_RULE_VERSION",
     "DEFAULT_LENGTH_POLICY",
     "DEFAULT_TEMPERATURE",

@@ -230,7 +230,7 @@ def _prompt_text(messages: Sequence[Mapping[str, str]]) -> str:
     """把 messages 压成一段文本供 `confound_lint` 比对。
 
     `confound_lint(x1, x2)` 比的是「专名集合 + 字数」，而这两样都跨 role 存在：
-    house-style 在 system、图谱段在 user。只比其中一条 message 会漏掉另一条里的差异。
+    写作提示在 system、图谱段在 user。只比其中一条 message 会漏掉另一条里的差异。
 
     **口径说清楚：这里比的是整份 prompt，含三臂共用的那段 base。** 协议 §2 的「两者」
     指的就是两条臂，这是字面读法，而且它不依赖 `assemble()` 的内部结构（想只比图谱段，

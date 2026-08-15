@@ -816,7 +816,7 @@ length/capability/streaming/continuation/JSONL 实现与回归测试已于 2026-
 `/draft` 曾是 EVAL_PROTOCOL 修正案 1 给 KILL 分支定的动作前提，该前提现已满足且被
 修正案 7 改为「实验开放，裁决 KILL 时按修正案撤销」）、
 **`draft/assemble.py`**（三臂本体，2026-07-30 补，17 条：X0 是 X1/X2 的**严格前缀**由
-`x1[:-1] == x0[:-1]` 加一条尾部拼接断言钉死，不是一句自觉；`DEFAULT_HOUSE_STYLE` 三臂共用，
+`x1[:-1] == x0[:-1]` 加一条尾部拼接断言钉死，不是一句自觉；`DEFAULT_WRITING_PROMPT` 三臂共用，
 里面**不许出现「秘密 / 不知道 / 泄露 / 剧透 / 伏笔 / 设定」**，另有一条关键词集合测试守着）、
 **`eval/confound_lint.py`**（2026-07-30 补，25 条：X1/X2 的人名集合差 + 可见字符长度比
 `max/min ≤ 1.15`；纯集合判断无分词器，空态一律判 `ok=False`）、

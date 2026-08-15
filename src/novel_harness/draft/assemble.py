@@ -152,7 +152,7 @@ class PromptForm(StrEnum):
     """三臂 = 同一个渲染器的三个取值（协议 §2 那张表）。"""
 
     X0 = "X0"
-    """对照臂：house-style + 上文 + 在场 + 本场目标。**零图谱事实。**"""
+    """对照臂：默认写作提示 + 上文 + 在场 + 本场目标。**零图谱事实。**"""
 
     X1 = "X1"
     """事实清单臂：X0 + 认知矩阵三态（含 `believed_value`）+ 秘密显示名 + 未来实体名/首现章。"""
@@ -161,33 +161,33 @@ class PromptForm(StrEnum):
     """叙事化臂：X0 + **同一份矩阵**改写成散文。与 X1 只差「清单 vs 散文」这一个变量。"""
 
 
-ZH_HOUSE_STYLE = """你是一位中文长篇小说的写作搭档。根据作者提供的上文和本场目标，写出这一场的正文。
+ZH_WRITING_PROMPT = """你是一位中文长篇小说的写作搭档。根据作者提供的上文和本场目标，写出这一场的正文。
 
 - 只输出正文：不写标题、章节号、小标题、创作说明，也不用 Markdown 标记。
 - 使用第三人称，贴着场上人物的动作、对白和环境来写。
 - 承接上文的语气和称呼，不重写已经写过的段落。
 - 一次写完这一场，并让结尾自然收束。"""
-"""中文草稿的共享文风要求；长度由 ``length_instruction()`` 单独提供。"""
+"""中文草稿的默认写作提示；长度由 ``length_instruction()`` 单独提供。"""
 
 
-EN_HOUSE_STYLE = """You are a long-form fiction writing partner. Using the supplied prior text and scene goal, write the scene's prose.
+EN_WRITING_PROMPT = """You are a long-form fiction writing partner. Using the supplied prior text and scene goal, write the scene's prose.
 
 - Output prose only: no title, chapter label, heading, writing notes, or Markdown.
 - Write in third person through the characters' actions, dialogue, and surroundings.
 - Continue the voice and names used in the prior text; do not rewrite material already written.
 - Complete the scene in one pass and bring it to a natural close."""
-"""English draft's shared style requirements; length is supplied separately."""
+"""English draft's default writing prompt; length is supplied separately."""
 
 
-DEFAULT_HOUSE_STYLE = ZH_HOUSE_STYLE
-"""Backward-compatible export for callers that previously selected the Chinese house style."""
+DEFAULT_WRITING_PROMPT = ZH_WRITING_PROMPT
+"""Backward-compatible export for callers that previously selected the Chinese default writing prompt."""
 
 WRITE_RULE_FORBIDDEN_HINTS = ("秘密", "不知道", "泄露", "剧透", "伏笔", "设定")
-"""文风提示（**三臂共用**）里的禁词：出现任何一个 = 把约束漏给 X0，Δ 塌掉。
+"""写作提示（**三臂共用**）里的禁词：出现任何一个 = 把约束漏给 X0，Δ 塌掉。
 
 这是**关键词网**不是语义检查（ADR 0005）：抓得住顺手写出来的那一种，抓不住
-换个说法的那一种。入口（/draft、nh draft）用它拒绝自定义文风；`assemble()` 本身
-保持宽松（测试要用自己的文风），中性由入口守。
+换个说法的那一种。入口（/draft、nh draft）用它拒绝自定义写作规则；`assemble()` 本身
+保持宽松（测试要用自己的写作提示），中性由入口守。
 """
 
 
@@ -216,7 +216,9 @@ def system_prompt(spec: LengthSpec, write_rule: str | None = None) -> str:
     """Combine the selected language's shared style with its required length instruction."""
     style = write_rule
     if style is None:
-        style = ZH_HOUSE_STYLE if spec.language is DraftLanguage.ZH else EN_HOUSE_STYLE
+        style = (
+            ZH_WRITING_PROMPT if spec.language is DraftLanguage.ZH else EN_WRITING_PROMPT
+        )
     return style.strip() + "\n\n" + length_instruction(spec)
 
 
@@ -244,7 +246,8 @@ def assemble(
             （`GATE_TAIL_CODE_POINTS`），三臂必须用这个默认值**；产品档显式传
             `product_tail_limit(...)` 算出来的值。`<= 0` = 完全不给上文。
         length: 已合法的输出篇幅与语言。调用边界已验证，本函数不再做 hard-max 校验。
-        write_rule: 可选文风系统提示；为空时按 ``length.language`` 选择中英文默认文风。
+        write_rule: 自定义写作规则，替换默认写作提示；为空时按 ``length.language``
+            选择中英文默认写作提示。
 
     Returns:
         `[{"role": ..., "content": ...}]`。**本仓库少见的非 Pydantic 出参**，理由是它要原样
@@ -320,7 +323,7 @@ def _base(
     previous_tail_limit: int,
     write_rule: str,
 ) -> list[dict[str, str]]:
-    """house-style + 上文 + 在场 + 本场目标。**图谱事实一个字都不在这儿。**
+    """默认写作提示 + 上文 + 在场 + 本场目标。**图谱事实一个字都不在这儿。**
 
     合成一条用户消息而不是拆成多条同角色消息：OpenAI 兼容端点五花八门（本地 vLLM / Ollama /
     各家中转），连续同 role 消息有的接受有的 400，而 kill-gate 跑到一半因为消息形状被拒

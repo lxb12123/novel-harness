@@ -248,7 +248,7 @@ def test_explicit_kill_gate_form_keeps_the_prior_prompt_path(
     assert "已确认的故事记忆" not in rendered
 
 
-def test_draft_custom_house_style_is_accepted(
+def test_draft_custom_write_rule_is_accepted(
     client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _configure(client)
@@ -266,7 +266,7 @@ def test_draft_custom_house_style_is_accepted(
 
 
 @pytest.mark.parametrize("word", ["秘密", "不知道", "泄露", "剧透", "伏笔", "设定"])
-def test_draft_house_style_forbidden_hints_are_422(
+def test_draft_write_rule_forbidden_hints_are_422(
     client: TestClient, book: dict[str, str], word: str
 ) -> None:
     _configure(client)

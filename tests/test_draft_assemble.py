@@ -42,11 +42,11 @@ from test_knowledge import (
 )
 
 from novel_harness.draft.assemble import (
-    DEFAULT_HOUSE_STYLE,
-    EN_HOUSE_STYLE,
+    DEFAULT_WRITING_PROMPT,
+    EN_WRITING_PROMPT,
     WRITE_RULE_FORBIDDEN_HINTS,
     PromptForm,
-    ZH_HOUSE_STYLE,
+    ZH_WRITING_PROMPT,
     assemble,
     graph_section,
 )
@@ -249,27 +249,27 @@ def test_the_tell_really_is_reachable_in_the_graph() -> None:
     assert TWIST in hit.model_dump_json()
 
 
-def test_the_house_style_names_nobody_and_hints_at_no_constraint() -> None:
-    """共用系统提示的两条硬约束（见 `DEFAULT_HOUSE_STYLE` 的 docstring）。
+def test_the_default_writing_prompt_names_nobody_and_hints_at_no_constraint() -> None:
+    """共用系统提示的两条硬约束（见 `DEFAULT_WRITING_PROMPT` 的 docstring）。
 
-    第二条是关键：house style 里若写了「不要写出角色还不知道的事」这类**通用版**约束，
+    第二条是关键：默认写作提示里若写了「不要写出角色还不知道的事」这类**通用版**约束，
     等于把处理组的东西发一份给对照组 —— X0 的泄漏率被自己压低，`Δ` 塌掉，实验读出
     「注入没用」，而真实原因是 base 里替它做了一半。
 
     下面是一张**关键词网**，不是语义检查：它抓得住顺手写出来的那一种，抓不住换个说法的那一种。
     """
     for name in ("萧决", "顾清音", "李管家", "血脉秘密", "血枭盟", "幽泉窟", TELL):
-        assert name not in DEFAULT_HOUSE_STYLE
+        assert name not in DEFAULT_WRITING_PROMPT
     for hint in WRITE_RULE_FORBIDDEN_HINTS:
-        assert hint not in DEFAULT_HOUSE_STYLE, f"house style 里出现了 {hint!r} —— 它三臂共用"
-    assert "600–1000" not in DEFAULT_HOUSE_STYLE
+        assert hint not in DEFAULT_WRITING_PROMPT, f"默认写作提示里出现了 {hint!r} —— 它三臂共用"
+    assert "600–1000" not in DEFAULT_WRITING_PROMPT
 
 
-def test_default_styles_do_not_constrain_control_arm_content() -> None:
-    assert "凭空" not in DEFAULT_HOUSE_STYLE
-    assert "凭空" not in ZH_HOUSE_STYLE
-    assert "invent" not in EN_HOUSE_STYLE.lower()
-    assert "absent" not in EN_HOUSE_STYLE.lower()
+def test_default_writing_prompts_do_not_constrain_control_arm_content() -> None:
+    assert "凭空" not in DEFAULT_WRITING_PROMPT
+    assert "凭空" not in ZH_WRITING_PROMPT
+    assert "invent" not in EN_WRITING_PROMPT.lower()
+    assert "absent" not in EN_WRITING_PROMPT.lower()
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -395,7 +395,7 @@ def test_length_instruction_is_explicit_in_english_system_prompt() -> None:
     assert "over-length draft is discarded" in prompt
 
 
-def test_custom_house_style_cannot_bypass_the_length_instruction() -> None:
+def test_custom_write_rule_cannot_bypass_the_length_instruction() -> None:
     assert hasattr(assemble_module, "system_prompt")
     prompt = assemble_module.system_prompt(EN_LENGTH, write_rule="  Keep the prose spare.  ")
 
