@@ -494,6 +494,9 @@ def test_the_tool_table_stays_put() -> None:
 
     加一条之前先回答 ADR 0019 边界一那个问题：它的出参里有没有任何一条路径能走到
     `Node` / `node.props` / PLANNED 边的内容？
+
+    `get_result` 的答案是「没有新路」：它回吐的是**已经**给过、已经躺在 canonical 里
+    的工具返回（`_handle_get_result` 拿的是 loop 的只读表），不是新开一条通往图数据的路。
     """
     assert TOOL_NAMES == frozenset(
         {
@@ -511,11 +514,14 @@ def test_the_tool_table_stays_put() -> None:
             # 问作者（ADR 0024）：表里第一条**不查东西也不做东西**的工具，
             # 它把一句问话交出去，然后这一轮就结束了。
             "ask_author",
-            # 记规矩（ADR 0023 决策二）：**入参里没有章号**，那个数只能是引擎手里的
-            # `working_chapter`（约束 10）。它也不写任何东西——贴进 canonical 的是 loop。
-            "remember_rule",
-        }
-    )
+                # 记规矩（ADR 0023 决策二）：**入参里没有章号**，那个数只能是引擎手里的
+                # `working_chapter`（约束 10）。它也不写任何东西——贴进 canonical 的是 loop。
+                "remember_rule",
+                # 按编号取回这一轮被收起的结果（2026-08-15 设计，docs_dev 快照）。
+                # **只读、只回吐已有出参**：权限边界和原来的查询是同一条。
+                "get_result",
+            }
+        )
     by_name = {spec.name: spec for spec in TOOL_TABLE}
     assert len(by_name) == len(TOOL_TABLE), "表里有重名 —— 后一条会静默盖掉前一条"
 

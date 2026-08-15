@@ -420,7 +420,9 @@ def test_a_brand_new_tool_lands_in_the_right_class_with_no_code_change(
     asked_at_40, got_at_40 = _mood_turn(40)
     here = a_session(said("看第 40 章"), asked_at_40, got_at_40, said("接着写"))
     floor = floor_units(here, declarations)
-    stubbed = project(here, 40, budget_units=floor + 400, tools=declarations)
+    # `floor + 400` 在「已收起的结果」清单（2026-08-15 设计）落进来之后不够第一档
+    # 单独收场：清单本身也占 payload，会把它逼进第二档。+600 保住本测试要验的那一档。
+    stubbed = project(here, 40, budget_units=floor + 600, tools=declarations)
     assert stubbed.stubbed_results == 1 and stubbed.dropped_calls == 0
     assert "tool" in [m["role"] for m in stubbed.messages], "壳不能删，wire 上它要接住调用"
 
@@ -511,6 +513,7 @@ def test_the_authors_words_survive_every_budget_all_the_way_down_to_zero() -> No
         "user",
         "system",  # 作者的规矩 —— 它不在剪枝链上（ADR 0023 那张表第二行）
         "user",
+        "system",  # 「已收起的结果」清单（2026-08-15 设计）：剪过就有，在投影末尾
     ]
     assert "别写打斗" in str(starved.messages), "规矩按章号过期，不按预算剪"
 

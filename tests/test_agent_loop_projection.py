@@ -435,7 +435,9 @@ def test_the_oldest_goes_first_in_the_first_two_tiers() -> None:
         if (p := project(conversation, None, budget_units=room(budget))).stubbed_results == 1
     )
     blob = str(stubbed_one.messages)
-    assert "老返回" not in blob and "新返回" in blob, "第一档动的必须是更早的那条返回"
+    # 完整原文必须没了；「老返回：」这种短首句出现在清单描述里是设计内的入口，不算原文。
+    assert ("老返回：" + "目" * 300) not in blob, "更早那条返回的原文还在 —— 第一档动错了"
+    assert "新返回" in blob, "更晚那条返回不该被第一档动"
 
     dropped_one = next(
         p

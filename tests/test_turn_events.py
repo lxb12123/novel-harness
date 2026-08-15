@@ -226,6 +226,9 @@ EVERY_TOOL = (
     ("save_draft", {"draft_id": DRAFT_ID}),
     ("read_draft", {"draft_id": DRAFT_ID}),
     ("remember_rule", {"rule": "这一章别写打斗", "until": "这一章写完为止"}),
+    # `get_result` 要放在**第二批**：stored 表在批创建时从 live 数，第一批都还没跑
+    # 的话它手里是空的，取 1 号会拒绝（`ok=False`）——这一节要的是每条都 ok=True。
+    ("get_result", {"id": 1}),
     ("ask_author", {"question": "这一场你想让萧决知道那件事吗？",
                     "options": ["让他知道", "先瞒着他"]}),
 )

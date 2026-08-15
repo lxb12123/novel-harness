@@ -252,6 +252,19 @@ PRUNED_RESULT = "（这条查询结果已经从上下文里清掉了。需要就
 第一步删内容留壳（省掉的是绝大部分字），第二步才把壳和它的 `tool_call` 成对拿掉。
 """
 
+RECENT_RESULT_KEEP: Final = 8
+"""「已收起的结果」清单最多几条。**这是成本的闸，不是能力闸。**
+
+被剪掉的结果**内容本来就永久在 canonical 里**（剪的只是给模型看的那一份），
+清单只是给模型指路的编号入口——入口本身也占 token，所以要封顶。新的进来踢最旧的；
+被踢的条目模型不再知道它存在，而按编号取回的工具照常工作
+（编号从 canonical 数，不因清单长短而变）。
+"""
+
+REGISTRY_HEADER: Final = "已收起的结果（需要时按编号取回）："
+"""清单块的标题行。它和 `PRUNED_RESULT` 是同一件事的两半：壳说「被清掉了」，
+清单说「它在哪、有多大、怎么拿回来」。"""
+
 STALE_MANUSCRIPT = (
     "（这一章的正文在你读过它之后被作者改过了——上面那份是旧的，已经从上下文里清掉。"
     "要用就重新读一次，读回来的是他此刻看见的那一份。）"
@@ -556,6 +569,82 @@ def _fill_lost_shells(messages: list[AgentMessage]) -> tuple[list[AgentMessage],
     return out, filled
 
 
+def _tool_result_number(conversation: Conversation, tool_call_id: str) -> int | None:
+    """这条工具结果在 canonical 里是第几条（1-based，按 TOOL 消息的顺序）。
+
+    **编号从 canonical 数，不从投影数**：canonical 只增不改，所以一轮之内编号稳定；
+    投影会剪、会删，但编号照旧——这正是按编号取回工具的保证。
+    """
+    number = 0
+    for message in conversation.messages:
+        if message.role is not Role.TOOL:
+            continue
+        number += 1
+        if message.tool_call_id == tool_call_id:
+            return number
+    return None
+
+
+def _the_call(conversation: Conversation, tool_call_id: str) -> ToolCall | None:
+    """和这条工具结果配对的 assistant 调用（wire 上它俩必须配对，所以找得到）。"""
+    for message in conversation.messages:
+        if message.role is not Role.ASSISTANT or not message.tool_calls:
+            continue
+        for call in message.tool_calls:
+            if call.id == tool_call_id:
+                return call
+    return None
+
+
+def _registry_line(conversation: Conversation, tool_call_id: str) -> str | None:
+    """清单里的一行：编号 + 工具名 + 参数 + 字数 + 首句。确定性生成，零 LLM。"""
+    number = _tool_result_number(conversation, tool_call_id)
+    if number is None:
+        return None
+    message = next(
+        m
+        for m in conversation.messages
+        if m.role is Role.TOOL and m.tool_call_id == tool_call_id
+    )
+    call = _the_call(conversation, tool_call_id)
+    name = call.name if call is not None else "?"
+    arguments = call.arguments if call is not None else ""
+    if len(arguments) > 60:
+        arguments = arguments[:60] + "…"
+    units = count_units(message.content, _LANGUAGE)
+    line = f"#{number} {name} · {arguments} · {units} 字"
+    first = message.content.split("\n", 1)[0].strip()
+    if first:
+        if len(first) > 24:
+            first = first[:24] + "…"
+        line += f" · 首句「{first}」"
+    return line
+
+
+def _registry_block(conversation: Conversation, tool_call_ids: Sequence[str]) -> dict[str, str] | None:
+    """「已收起的结果」清单块（投影末尾那条 system 消息）。没有条目就不出现。"""
+    lines: list[str] = []
+    for tool_call_id in tool_call_ids:
+        line = _registry_line(conversation, tool_call_id)
+        if line is not None:
+            lines.append(line)
+        if len(lines) == RECENT_RESULT_KEEP:
+            break
+    if not lines:
+        return None
+    return {"role": "system", "content": "\n".join([REGISTRY_HEADER, *lines])}
+
+
+def _stored_contents(conversation: Conversation) -> dict[int, str]:
+    """这一轮按编号的只读结果表（取回工具用）。内容和 canonical 同一份，不复制。"""
+    return {
+        number: message.content
+        for number, message in enumerate(
+            (m for m in conversation.messages if m.role is Role.TOOL), start=1
+        )
+    }
+
+
 class Projection(BaseModel):
     """一次投影的结果 + **它裁了什么**。
 
@@ -768,6 +857,15 @@ def project(
     tool_side = _array_units(tool_costs)  # == `tool_declaration_units(declarations)`
     prefix_costs = [_cost(message) for message in conversation.prefix]
     stubbed = dropped_calls = dropped_reasoning = 0
+    stubbed_ids: list[str] = []
+    registry_lines: list[str] = []
+
+    def registry_units() -> int:
+        """「已收起的结果」清单块此刻占多少字（逐行累计，量的是真实块）。"""
+        if not registry_lines:
+            return 0
+        block = {"role": "system", "content": "\n".join([REGISTRY_HEADER, *registry_lines])}
+        return _json_units(block)
 
     def sent() -> int:
         """**这一刻发出去的话，那份 payload 有多大。** 剪枝的每一步问的都是这一个数。
@@ -776,16 +874,17 @@ def project(
         账上（ADR 0023「前置」）。现在预算和实际是同一个口径，所以
         `over_budget` 和 `payload_units` 不可能各说各的。
         """
-        return _measured_units(
-            [*prefix_costs, *(_cost(message) for message in kept)], tool_costs
-        )
+        costs = [*prefix_costs, *(_cost(message) for message in kept)]
+        if registry_lines:
+            costs.append(registry_units())
+        return _measured_units(costs, tool_costs)
 
     # 第一档：老 `tool_result` —— 删内容留壳。**壳不能删**，wire 上它必须接住那个 tool_call。
     if sent() > budget_units:
         for index, message in enumerate(kept):
             if sent() <= budget_units:
                 break
-            if message.role is not Role.TOOL or message.pruned:
+            if message.role is not Role.TOOL or message.pruned or not message.tool_call_id:
                 continue
             stub = message.model_copy(update={"content": PRUNED_RESULT, "pruned": True})
             # **占位比原返回还长的时候不换。** 换了是三重损失：内容没了、prompt 反而更大、
@@ -795,6 +894,13 @@ def project(
                 continue
             kept[index] = stub
             stubbed += 1
+            stubbed_ids.append(message.tool_call_id)
+            # 清单随剪随长：壳告诉模型「被清掉了」，清单告诉它「在哪、多大、怎么拿回来」。
+            line = _registry_line(conversation, message.tool_call_id)
+            if line is not None:
+                if len(registry_lines) == RECENT_RESULT_KEEP:
+                    registry_lines.pop(0)  # 新的进来踢最旧（`RECENT_RESULT_KEEP` 是成本闸）
+                registry_lines.append(line)
 
     # 第二档：老 `tool_call` —— 壳和它的调用**成对**拿掉。
     if sent() > budget_units:
@@ -819,9 +925,22 @@ def project(
 
     # 第四档不存在：**作者说的话不砍**。**规矩也不在这条链上**——它按章号过期，不按预算剪
     # （ADR 0023 那张表：小、跨轮有效、丢了最气人）。
+    registry_message = None
+    if registry_lines:
+        registry_message = {
+            "role": "system",
+            "content": "\n".join([REGISTRY_HEADER, *registry_lines]),
+        }
+    messages = [_wire(m) for m in (*conversation.prefix, *kept)]
+    if registry_message is not None:
+        messages.append(registry_message)
+    final_costs = [*prefix_costs, *(_cost(m) for m in kept)]
+    if registry_message is not None:
+        final_costs.append(_json_units(registry_message))
+    final_units = _measured_units(final_costs, tool_costs)
     return Projection(
         chapter=chapter,
-        messages=[_wire(m) for m in (*conversation.prefix, *kept)],
+        messages=messages,
         off_chapter=off_chapter,
         stale_manuscript=stale_manuscript,
         filled_shells=filled,
@@ -829,10 +948,10 @@ def project(
         stubbed_results=stubbed,
         dropped_calls=dropped_calls,
         dropped_reasoning=dropped_reasoning,
-        over_budget=sent() > budget_units,
+        over_budget=final_units > budget_units,
         budget_units=budget_units,
         tool_units=tool_side,
-        payload_units=sent(),
+        payload_units=final_units,
     )
 
 
@@ -1467,6 +1586,62 @@ def _outcome_message(outcome: ToolOutcome) -> AgentMessage:
     )
 
 
+def _fit_stored_fetch(
+    outcome: ToolOutcome,
+    live: Conversation,
+    *,
+    chapter: int | None,
+    budget_units: int,
+    stale_calls: frozenset[str],
+    tools: Sequence[dict[str, Any]],
+) -> ToolOutcome:
+    """取回预检：按编号取回的内容装不装得下，在**派发这一步**就定论。
+
+    判据一句话：把当前所有可再生内容（老工具结果、老工具调用、中间推理）**全部假设
+    剪掉**之后还剩多少空间，拿它和要取回的结果大小比——这正是 `project()` 自己会做的
+    事，所以直接跑一次试投影（纯函数，零 LLM 成本）。装得下就放行（旧的被挤掉是下一
+    次投影的正常行为）；装不下就当场换成一句拒绝，**不让内容白回来一趟**——那次调用
+    的钱已经花了，而模型永远看不见它的那笔账，正是 run_turn docstring 点名的那类失败。
+    """
+    if outcome.stored is None:
+        return outcome
+    trial = project(
+        live.extended(_outcome_message(outcome)),
+        chapter,
+        budget_units=budget_units,
+        stale_calls=stale_calls,
+        tools=tools,
+    )
+    if not trial.over_budget and _fetch_survives(trial, outcome):
+        return outcome
+    return outcome.model_copy(
+        update={
+            "ok": False,
+            "content": (
+                f"（结果 #{outcome.stored.id} 有 {outcome.stored.units} 字，"
+                "当前腾不出这么多位置。用取回工具的 max_units 只取一部分，"
+                "或把要问的说得短一点，或重查一个更小的范围。）"
+            ),
+            "stored": None,
+        }
+    )
+
+
+def _fetch_survives(projection: Projection, outcome: ToolOutcome) -> bool:
+    """取回的那份内容在试投影里**真的活着**：没被换成壳、没被成对删掉。
+
+    只查 `over_budget` 不够：试投影装得下可能是**把取回内容自己又剪掉**换来的——
+    那时放行 = 内容白回来一趟，正是预检要防的那类失败。所以判据是
+    「下一次模型调用能看到这份原文」本身。
+    """
+    return any(
+        message.get("role") == "tool"
+        and message.get("tool_call_id") == outcome.call_id
+        and message.get("content") == outcome.content
+        for message in projection.messages
+    )
+
+
 def _unrun(calls: Sequence[ToolCall]) -> list[AgentMessage]:
     """给没跑的那几个调用配壳（见 `UNRUN_CALL`）。"""
     return [
@@ -1909,6 +2084,8 @@ def run_turn(
 
         # **这一批的执行器**（ADR 0022）：没有副作用的那几条同时跑，其余按序、单独跑。
         # 它不改这儿的任何一条规矩——出来的结果与 `calls` 同序，闸门照旧逐条查。
+        # **`stored` 是这一轮按编号的只读结果表**（取回工具用），随轮即焚：
+        # 它不落库、不进 `ToolContext`（那是能力闸，不是杂物抽屉——同 `TurnMemo`）。
         batch = BatchRunner(
             calls,
             context,
@@ -1920,6 +2097,7 @@ def run_turn(
                 TurnEvent.tool_started(calls[index].name, index=index + 1, total=len(calls))
             ),
             memo=memo,
+            stored=_stored_contents(live),
         )
 
         def settle(position: int) -> list[AgentMessage]:
@@ -1964,6 +2142,17 @@ def run_turn(
             # **裸调用，外面没有 try/except**（模块 docstring 第三节）。
             outcome = bill_outcome(batch.take(position))
             remember(outcome)
+            # **取回预检排在落库/上屏之前**：装不下就在这一步换成拒绝，
+            # 模型下一次调用看到的是一句「装不下 + 差多少」，不是白回来一趟的内容。
+            if outcome.stored is not None:
+                outcome = _fit_stored_fetch(
+                    outcome,
+                    live,
+                    chapter=chapter,
+                    budget_units=budget,
+                    stale_calls=stale_calls,
+                    tools=declarations,
+                )
             tool_calls += 1
             emit(TurnEvent.tool_finished(outcome, index=position + 1, total=len(calls)))
             live = live.extended(_outcome_message(outcome))

@@ -652,7 +652,8 @@ def test_the_prune_order_is_frozen_tool_results_first() -> None:
     # 两条：agent 的那段推理，加上第二档剪完剩下的那句「我先看看目录。」——
     # 调用被拿掉之后它就是一条纯粹的中间推理，排在同一档。
     assert tightest.dropped_reasoning == 2
-    assert _roles(tightest) == ["system", "user", "user"]
+    # 末尾那条 system 是「已收起的结果」清单（2026-08-15 设计）：第一档剪过就会留一行。
+    assert _roles(tightest) == ["system", "user", "user", "system"]
     assert not tightest.over_budget
 
 
