@@ -469,7 +469,7 @@
       },
       {
         "actor": "system",
-        "count": 14
+        "count": 12
       }
     ],
     "entries": [
@@ -525,7 +525,7 @@
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 900 / 出 12 token · 0 ms",
+        "subtitle": "deepseek-v4-flash · 入 1200 / 出 64 token · 0 ms",
         "title": "模型调用 · 写作助手",
         "ts": "<ts>"
       },
@@ -536,8 +536,8 @@
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
-        "title": "模型调用 · 写作助手",
+        "subtitle": "deepseek-v4-flash · 入 1800 / 出 2600 token · 0 ms",
+        "title": "模型调用 · 起草",
         "ts": "<ts>"
       },
       {
@@ -547,7 +547,7 @@
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 1200 / 出 64 token · 0 ms",
+        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
         "title": "模型调用 · 写作助手",
         "ts": "<ts>"
       },
@@ -558,8 +558,8 @@
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 1800 / 出 2600 token · 0 ms",
-        "title": "模型调用 · 起草",
+        "subtitle": "deepseek-v4-flash · 入 1200 / 出 64 token · 0 ms",
+        "title": "模型调用 · 写作助手",
         "ts": "<ts>"
       },
       {
@@ -569,8 +569,8 @@
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
-        "title": "模型调用 · 写作助手",
+        "subtitle": "deepseek-v4-flash · 入 1800 / 出 2600 token · 0 ms",
+        "title": "模型调用 · 起草",
         "ts": "<ts>"
       }
     ],
@@ -1113,37 +1113,6 @@
       "updated_at": "<ts>"
     }
   },
-  "chatRuleRevoked": {
-    "chat_id": "chat_session:ID46",
-    "revoked": true,
-    "seq": 10
-  },
-  "chatRules": {
-    "chapter": 2,
-    "expired": 0,
-    "rules": [
-      {
-        "scope": "第 2 章都按它来 —— 翻到下一章就自动放掉",
-        "seq": 10,
-        "text": "这一章别写打斗"
-      },
-      {
-        "scope": "只管眼下这一轮 —— 你再说一句话，它就自动放掉",
-        "seq": 11,
-        "text": "冷一点"
-      }
-    ]
-  },
-  "chatRulesExpired": {
-    "chapter": 7,
-    "expired": 2,
-    "rules": []
-  },
-  "chatRulesNone": {
-    "chapter": 2,
-    "expired": 0,
-    "rules": []
-  },
   "chatStopped": {
     "chat_id": "chat_session:ID41",
     "message": "这段对话这会儿没在跑，不用停。",
@@ -1224,11 +1193,9 @@
     "chapter": 3,
     "issues": [],
     "rules_run": [
-      "location_conflict",
       "future_leak",
       "dead_speaks"
-    ],
-    "scene_count": 1
+    ]
   },
   "constraints": {
     "chapter": 2,
@@ -1948,6 +1915,25 @@
     ],
     "project_id": "project:ID1"
   },
+  "recordedRules": {
+    "rules": [
+      {
+        "chapter": 2,
+        "chat_id": "chat_session:ID46",
+        "chat_title": "沙地那一段",
+        "text": "男主在这片沙地不杀人",
+        "until": "男主走出这片沙地为止"
+      },
+      {
+        "chapter": 2,
+        "chat_id": "chat_session:ID46",
+        "chat_title": "沙地那一段",
+        "text": "冷一点",
+        "until": "这一场写完"
+      }
+    ],
+    "scanned_chats": 3
+  },
   "resolve": {
     "ambiguous": false,
     "hits": [
@@ -2116,13 +2102,13 @@
     ],
     "run_count": 2,
     "totals": {
-      "calls": 13,
+      "calls": 11,
       "cost": 0.34,
-      "metered_calls": 8,
+      "metered_calls": 7,
       "ms": 1800,
       "priced_calls": 1,
-      "tokens_in": 10200,
-      "tokens_out": 6152
+      "tokens_in": 9300,
+      "tokens_out": 6140
     }
   },
   "runsUnreported": {
@@ -2138,10 +2124,10 @@
       "tokens_out": null
     }
   },
-  "scenes": [],
   "settings": {
     "api_key_preview": "",
     "api_key_set": false,
+    "auto_update_model_windows": false,
     "base_url": "",
     "context_window": null,
     "model": ""
@@ -2149,6 +2135,7 @@
   "settingsSaved": {
     "api_key_preview": "***********-key",
     "api_key_set": true,
+    "auto_update_model_windows": false,
     "base_url": "https://api.deepseek.com",
     "context_window": 128000,
     "model": "deepseek-v4-flash"

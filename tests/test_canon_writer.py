@@ -21,6 +21,7 @@ from novel_harness.decisions import quote_hash
 from novel_harness.graph import (
     AliasKind,
     AliasSpec,
+    ChapterInUse,
     ChapterSpec,
     EdgeSpec,
     EdgeType,
@@ -342,6 +343,141 @@ def test_chapter_spec_has_no_chapter_number_the_author_could_type(pid: str) -> N
     assert "valid_from" not in ChapterSpec.model_fields
     with pytest.raises(ValidationError):
         ChapterSpec(project_id=pid, number=1, heading="第一章", path="p.md", text="x", valid_from=1)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# delete_chapter —— **拒绝那一半才是它的本体**
+#
+# 「删一章」在 SQL 上是免费的：`edge.src/dst → node` 和 `evidence.chapter_id → chapter`
+# 两条外键都是 ON DELETE CASCADE，所以一句 DELETE 就过，**而且一声不吭**。
+# 也就是说这一组测试拦的东西**没有第二道防线**：漏了不会报错，只会让作者按一下按钮，
+# 指着这一章的关系和证据就跟着没了——而屏幕上只会显示「删掉了」。
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_delete_chapter_takes_the_node_and_the_snapshots_with_it(
+    conn: Connection, store: SqliteStoryGraph, pid: str
+) -> None:
+    ch = store.put_chapter(_chapter(pid))
+    assert _count(conn, "node", id=ch.id) == 1
+
+    usage = store.delete_chapter(pid, 1)
+
+    assert usage.is_free()
+    assert _count(conn, "chapter", id=ch.id) == 0
+    assert _count(conn, "chapter_snapshot", chapter_id=ch.id) == 0
+    # **节点也得没**：它和 chapter 行同生（`put_chapter`），只删一半会在库里留下一个
+    # 没有章的 Chapter 节点，而按 label 扫的地方照样看得见它。
+    assert _count(conn, "node", id=ch.id) == 0
+
+
+def test_delete_chapter_refuses_when_evidence_is_anchored_there(
+    conn: Connection, store: SqliteStoryGraph, pid: str
+) -> None:
+    """证据的价值全在「那句话当年在这儿」。章没了，它就只是一句无出处的断言。"""
+    ch = store.put_chapter(_chapter(pid))
+    ev = store.put_evidence(
+        EvidenceSpec(
+            project_id=pid,
+            chapter_snapshot_id=ch.snapshot_id,
+            para_index=2,
+            quote_text="他终于明白母亲为何从不提起父亲",
+        )
+    )
+
+    with pytest.raises(ChapterInUse) as caught:
+        store.delete_chapter(pid, 1)
+
+    assert caught.value.usage.evidence == 1
+    assert caught.value.usage.chapter_number == 1
+    # **一行都没动。** 拒绝要是拒绝到一半，作者会有一份删了证据却还在的章。
+    assert _count(conn, "chapter", id=ch.id) == 1
+    assert _count(conn, "evidence", id=ev.id) == 1
+
+
+def test_delete_chapter_refuses_when_an_edge_starts_there(
+    conn: Connection, store: SqliteStoryGraph, pid: str
+) -> None:
+    """这一条钉的是 `valid_from_chapter`——**它跟这一章的证据完全无关**。
+
+    一条作者声明的边（`evidence_id IS NULL`）照样写着「从第 2 章起」。章删了，
+    那条边的起点就指向一个不存在的章号，而 `state_at` 会照样把它算进去。
+    """
+    store.put_chapter(_chapter(pid, number=2, text="第二章 试探\n\n他终于明白了。\n"))
+    a = store.upsert_node(_character(pid, "萧决"))
+    b = store.upsert_node(_character(pid, "李管家"))
+    store.upsert_edge(
+        EdgeSpec(
+            project_id=pid,
+            src=a.id,
+            dst=b.id,
+            type=EdgeType.RELATED_TO,
+            valid_from_chapter=2,
+            information_scope=InformationScope.CANON,
+        )
+    )
+
+    with pytest.raises(ChapterInUse) as caught:
+        store.delete_chapter(pid, 2)
+    assert caught.value.usage.edges == 1
+    assert caught.value.usage.evidence == 0
+
+
+def test_delete_chapter_refuses_when_an_edge_points_at_that_chapter(
+    store: SqliteStoryGraph, pid: str
+) -> None:
+    """PLANTED_IN 的 dst **就是那个 Chapter 节点**（这是 `chapter.id` 是 node id 的理由）。
+
+    这一条是全组里最危险的那个形态：它走的是 node 的 CASCADE，删起来连
+    `evidence` / `valid_from_chapter` 都不沾——不专门数一下 `src`/`dst`，
+    「第 200 章要回收的那个伏笔」会在删第 3 章时无声消失。
+    """
+    ch = store.put_chapter(_chapter(pid, number=3, text="第三章 对峙\n\n他攥紧了拳头。\n"))
+    secret = store.upsert_node(_secret(pid, "血脉秘密"))
+    store.upsert_edge(
+        EdgeSpec(
+            project_id=pid,
+            src=secret.id,
+            dst=ch.id,
+            type=EdgeType.PLANTED_IN,
+            valid_from_chapter=1,
+            information_scope=InformationScope.CANON,
+        )
+    )
+
+    with pytest.raises(ChapterInUse) as caught:
+        store.delete_chapter(pid, 3)
+    assert caught.value.usage.edges == 1
+
+
+def test_delete_chapter_counts_one_edge_once(store: SqliteStoryGraph, pid: str) -> None:
+    """同时满足两个条件的边只数一次。
+
+    那个数会被原样念给作者听（「关系 2」），而库里只有一条——报大了他会去找
+    一条不存在的东西。
+    """
+    ch = store.put_chapter(_chapter(pid, number=4, text="第四章\n\n他推开门。\n"))
+    secret = store.upsert_node(_secret(pid, "血脉秘密"))
+    store.upsert_edge(
+        EdgeSpec(
+            project_id=pid,
+            src=secret.id,
+            dst=ch.id,
+            type=EdgeType.PLANTED_IN,
+            valid_from_chapter=4,  # 既从这一章生效，又指着这一章
+            information_scope=InformationScope.CANON,
+        )
+    )
+
+    with pytest.raises(ChapterInUse) as caught:
+        store.delete_chapter(pid, 4)
+    assert caught.value.usage.edges == 1
+
+
+def test_delete_chapter_that_is_not_in_the_library_raises(store: SqliteStoryGraph, pid: str) -> None:
+    # 磁盘上有、还没 sync 过也走这里：**不吞掉**，那说明库和文件夹已经对不上了。
+    with pytest.raises(StoreError, match="第 7 章"):
+        store.delete_chapter(pid, 7)
 
 
 # ══════════════════════════════════════════════════════════════════════════

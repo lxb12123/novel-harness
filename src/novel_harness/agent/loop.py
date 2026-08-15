@@ -206,6 +206,18 @@ class AgentMessage(BaseModel):
     pruned: bool = False
     """这条工具返回已经被剪成一句占位。**不许把它当成「工具返回了这么一句」**。"""
 
+    rule_until: str = ""
+    """这条规矩**管到什么时候**——模型自己写下的一句人话（[ADR 0028] / 迁移 016）。
+
+    「男主走出这片沙地为止」「这一场打完」「整本书都这样」。**引擎一个字都不解析**：
+    存进去、渲进 prompt、摆进那张表，三处都原样搬。想把它归成几类就得先回答
+    「这是哪一类时效」，而那是语义判断（ADR 0005 不许引擎做）。
+
+    **只有规矩会有它**，别的消息一律空串。空串还有第二种来路：016 之前记下的那些规矩
+    ——那时模型还没有这个参数。**不给它们补写**，给一条老规矩编一个时效就是替模型说
+    它没说过的话；渲染那一层认这个空串（`rules.prompt_text` 退回 ADR 0028 那句通用的）。
+    """
+
     revokes_seq: int | None = None
     """这条消息**撤销的是第几条**（作者取消了一条自己定下的规矩，ADR 0023 / 迁移 011）。
 
@@ -217,9 +229,13 @@ class AgentMessage(BaseModel):
     canonical **只增不改**：读回来重建出的 `Conversation` 必须和存进去之前逐字节相同，
     删一行就把这条不变量拆了，而它错的时候没有任何东西会报错。
 
-    **也不能靠「再说一遍」表达撤销**：那条通路已经被「说第二遍 = 从批级升到章级」占用了
-    （`rules.REPEAT_TO_WIDEN`），作者想取消，系统会听成加强。所以撤销必须有一个**结构上
-    的槽**而不是一段字——这一位就是那个槽，整条消息的正文是空的。
+    **也不能靠「再说一遍」表达撤销**：那条通路当年被「说第二遍 = 从批级升到章级」占用着，
+    作者想取消，系统会听成加强。所以撤销必须有一个**结构上的槽**而不是一段字——
+    这一位就是那个槽，整条消息的正文是空的。
+
+    ⚠️ **2026-08-14 起没有任何入口能写出一条新的撤销记录**（ADR 0028：规矩不上屏，
+    `revocation()` 连同那颗 × 和两条路由一起删了）。读的那一半留着，理由见
+    `rules._revoked_indices`。
 
     **这一层不校验它指得对不对**：`Conversation` 也用来装一段**尾巴**（会话列表数
     `pending` 时读的就是尾巴），那时它指的东西根本不在手上。判据在
@@ -570,10 +586,10 @@ class Projection(BaseModel):
     不为零 = 有一次派发断在半路上，而作者的下一句话把它挡在了 resume 的视野之外。"""
 
     expired_rules: int = 0
-    """因为**切到了另一章**（或者根本没有章号坐标）而失效的作者规矩条数（ADR 0023 决策二）。
+    """这一轮**没带上**的作者规矩条数。
 
-    不为零 = 有几条偏好这一轮不再生效了。**方向和上面那几个字段是反的**：那几个是
-    「这条还在，只是我们没发」，这一条是「它到期了」——而偏好到期是**设计**，不是损失。
+    2026-08-14 起它只有一种来源：**条数上限挤掉的**（`rules.RULE_KEEP_MAX`），
+    所以正常情况下它是 0。「切章就失效」那一档随 [ADR 0028] 一起没了。
     """
 
     stubbed_results: int = 0
@@ -607,8 +623,8 @@ def project(
     """canonical → 模型这一次看得见的那份（ADR 0019 边界五）。
 
     Args:
-        chapter: **第几章视角**。`None` = 不知道作者在写第几章 ⇒ 工具返回不按章号过滤，
-            而作者的规矩**一条都不留**（见下面那条诚实说明和「方向是反的」那一节）。
+        chapter: **第几章视角**。`None` = 不知道作者在写第几章 ⇒ 工具返回不按章号过滤。
+            **它不再影响规矩那一档**（ADR 0028）。
             它决定「取什么」。
         budget_units: **整份 payload** 最多多少字——含工具声明，见 `payload_units()`。
             它决定「取多少」。
@@ -621,20 +637,19 @@ def project(
 
     ── 四段，顺序不能反 ──────────────────────────────────────────────
 
-    **零、把不生效的规矩和撤销记录拿掉**（`expired_rules`，ADR 0023 决策二）：作者定下的
-    规矩默认**只管当前这一章**，切章自动失效；他取消掉的那些也在这一步没的。
+    **零、规矩这一档**（`expired_rules`）：去重 + 条数上限 + 拿掉作者取消过的和撤销记录
+    本身，然后给每条规矩加上「作者写第几章时说的；情境不在了就不必守」。
     **它必须排在所有删减之前**：撤销的坐标是 canonical 的下标
     （`AgentMessage.revokes_seq`），下一档会从中间摘掉消息，摘完那个下标就指到别的
-    消息上了。**判据是 `!=`，而且方向和下一档是反的**：
+    消息上了。
 
-    | | 拿不准时 | 为什么 |
-    |---|---|---|
-    | `must_not_reveal`（下一档） | **留着**（`>` 只丢往后的） | 说破了收不回来 |
-    | **作者的偏好**（这一档） | **放掉**（`!=`，换一章就没了） | 留着 = 第 200 章写不出打戏，而**作者不知道为什么** |
+    ⚠️ **2026-08-14 这一档不再按章号过期**（[ADR 0028](../../../docs/adr/0028-rules-expire-by-situation.md)
+    推翻 ADR 0023 决策二）。原来的判据是 `!=`（换一章就没了），理由写在一张
+    「拿不准时放掉」的表里：留着 = 第 200 章写不出打戏，而作者不知道为什么。
+    **那个担心仍然成立，换掉的是谁来解决它**——章号从来不是有效期，它只是引擎手上唯一
+    能确定知道的数；今天由读到规矩的模型按情境判，而作者每一稿都在读，判错了他当场就说。
 
-    所以 `chapter is None` 时这一档**清空**，而下一档**全留**——同一个「不知道第几章」，
-    两个相反的动作，因为两边猜错的代价不对称。判据全在 `rules.surviving_rule_indices`，
-    这儿不写第二份。
+    `chapter` 参数因此**不再喂给这一档**，它只管下一档（工具返回按章号取）。
 
     **一、按章号取**（`off_chapter`）：绑在**更后面**的章上的工具返回不进这一份。
     作者会从第 90 章回头改第 40 章，那时「最近」是错的坐标——对话的近端讲的是第 90 章，
@@ -686,7 +701,13 @@ def project(
     # `Conversation` / `Role`（canonical 的形状住在这儿），所以它在模块级 import 本文件；
     # 本文件反过来在模块级 import 它就是一个真的循环。同 `agent/model.py` 里那处
     # `from ..draft.provider import _build_client`——这个包已经有这个先例。
-    from .rules import expired_rule_count, is_revocation, is_rule, surviving_rule_indices
+    from .rules import (
+        expired_rule_count,
+        is_revocation,
+        is_rule,
+        prompt_text,
+        surviving_rule_indices,
+    )
 
     kept = list(conversation.messages)
 
@@ -694,14 +715,18 @@ def project(
     # **顺序不是风格问题**：撤销的坐标是 canonical 的下标（`AgentMessage.revokes_seq`），
     # 而下面那一档会从中间摘掉消息——摘完再来解释那个下标，它指的就是别的消息了。
     # 整条判据在 `rules.py`，这儿只负责把不生效的那几条拿掉并报个数。
-    live_rules = surviving_rule_indices(kept, chapter)
+    live_rules = surviving_rule_indices(kept)
     expired_rules = 0
     if any(is_rule(message) for message in kept):
-        # **报的是「有几条规矩不再生效」，不是「丢了几条消息」**：同一条被记了两遍、
-        # 这儿只留最后一遍是**去重**，不是过期（见 `rules.expired_rule_count`）。
+        # **报的是「有几条规矩这一轮没带上」，不是「丢了几条消息」**：同一条被记了两遍、
+        # 这儿只留最后一遍是**去重**，不是没带上（见 `rules.expired_rule_count`）。
         expired_rules = expired_rule_count(kept, live_rules)
     kept = [
-        message
+        # 规矩带着「作者写第几章时说的 + 情境不在了就不必守」进 prompt（ADR 0028）。
+        # **只在这一层加，canonical 里存的仍是作者那句话本身**——措辞会变，历史不能变。
+        message.model_copy(update={"content": prompt_text(message)})
+        if is_rule(message)
+        else message
         for index, message in enumerate(kept)
         # 撤销记录一条都不发出去：它的意义全在结构槽上，正文是空的，而模型该看到的
         # 结果是「那条规矩从来没被说过」——发一条空的 system 消息只是白花钱。
@@ -1666,7 +1691,14 @@ def run_turn(
         from .rules import rule_message  # 断环，同 `project()`
 
         remembered.append(
-            rule_message(outcome.remembered.rule, chapter=outcome.remembered.chapter)
+            rule_message(
+                outcome.remembered.rule,
+                chapter=outcome.remembered.chapter,
+                # 模型自己写下的那句时效（迁移 016）。**漏掉它不会报错**：
+                # 规矩照旧落进 canonical，只是那一格空着，于是下一轮它读到的是
+                # 那句通用的兜底，而作者那张表上也少一格。
+                until=outcome.remembered.until,
+            )
         )
 
     def bill_outcome(outcome: ToolOutcome) -> ToolOutcome:

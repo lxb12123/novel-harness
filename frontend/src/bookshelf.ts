@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { ApiError } from "./api/client";
 
 // 侧栏书架的状态：**哪几本书摆在左边、哪几本折叠着**。
 //
@@ -112,3 +113,50 @@ export const useShelf = create<ShelfStore>((set) => {
       ),
   };
 });
+
+/**
+ * 「＋ 新起一章」没成时，屏幕上该说哪句话。
+ *
+ * ── 为什么这儿允许有一句前端自己的话 ──────────────────────────────────────
+ *
+ * 这个仓库删过一份 `correctionError.ts`（「码 → 中文」的映射表）：措辞有两个源，
+ * 后端改了一句话，前端那份还在说旧的。规矩因此是**后端写词、前端只渲染**。
+ *
+ * 这儿只有一个例外，而它恰恰是那条规矩管不到的地方：**服务上根本没有这条路**
+ * （旧版进程还开着，前端已经是新的——2026-08-14 作者就撞上了这一档）。
+ * 那时后端说不出话，它不认识这个端点。判据是精确的：404 **且** body 里没有
+ * `error` 码。带 `error` 的 404（`project_not_found`）是后端说的话，照旧原样渲染。
+ *
+ * 那句话里**不许出现任何一条命令**：产品的最终用户是那位「用 WPS、不想碰命令行」
+ * 的作者，对他说「去重启某个命令」等于让他卡死（`test/screenGuard.ts` 第五张网收这个）。
+ */
+export function newChapterError(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 404 && !error.body.error) {
+      return "这台电脑上的程序是旧的一版，还不认得「新起一章」。把工作台关掉、重新打开一次就好。";
+    }
+    if (error.body.message) return error.body.message;
+  }
+  return "没能新起一章，再点一次试试。";
+}
+
+/**
+ * 删一章没成时，屏幕上该说哪句话。
+ *
+ * 同 `newChapterError`：**只有「服务上根本没这条路」那一档由前端说**（判据一样精确：
+ * 404 且 body 里没有 `error` 码），别的一律原样渲染后端那句。
+ *
+ * 后端那句话尤其不许在这儿改写：拒绝的时候它带着**数出来的明细**
+ *（「证据 3 / 关系 2 / 情节 1 ⋯」），而那串数字正是作者判断「这一章到底还连着什么」
+ * 的唯一依据。前端替它换一句笼统的「删不掉」，就等于把他赶去文件夹里自己动手删——
+ * 那条路上引擎的记忆一条都不会被清理。
+ */
+export function deleteChapterError(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 404 && !error.body.error) {
+      return "这台电脑上的程序是旧的一版，还不认得「删除本章」。把工作台关掉、重新打开一次就好。";
+    }
+    if (error.body.message) return error.body.message;
+  }
+  return "没能删除本章，再点一次试试。";
+}

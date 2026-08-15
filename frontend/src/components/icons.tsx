@@ -121,3 +121,88 @@ export function GearIcon() {
     </svg>
   );
 }
+
+/**
+ * 看不看得见密钥。`off` = 明文正露着（点一下藏回去），所以那时才划一道。
+ *
+ * 眼形是**四段对称的三次贝塞尔**：左右两个尖角落在 (3,12)/(21,12)，上下顶点 5.7/18.3，
+ * 瞳孔 r=3。上一版是两段二次曲线（控制点 (12,4.2)/(12,19.8)）——二次曲线的顶点只走到
+ * 控制点的一半，实际只鼓到 3.75，于是在 17px 下看着是**一道横缝里卡了颗小黑点**，
+ * 而不是一只眼睛（作者：「这个眼睛太丑了」）。三次曲线才画得出「尖角 + 圆顶」这个形状，
+ * 瞳孔也跟着放到 r=3——眼白和瞳孔的比例是「像不像眼睛」的全部。
+ *
+ * 那道杠是 45° 的整条对角线，**压在眼睛上面画**：短一截的斜杠在这个尺寸下会看成睫毛。
+ */
+export function EyeIcon({ off }: { off: boolean }) {
+  return (
+    <svg
+      className="icon"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M3 12c0 0 3.4-6.3 9-6.3s9 6.3 9 6.3-3.4 6.3-9 6.3-9-6.3-9-6.3z" />
+      {/* **划掉的那只不画瞳孔。** 一条 45° 的杠正好从瞳孔正中穿过去，三笔挤在
+          中间那 6px 里，17px 下糊成一个黑团（实测比过：带瞳孔的那版认不出是眼睛）。
+          去掉之后剩「一只眼 + 一道杠」，两笔各说各的。 */}
+      {off ? <path d="M4.2 4.2 19.8 19.8" /> : <circle cx="12" cy="12" r="3" />}
+    </svg>
+  );
+}
+
+/**
+ * 关掉这扇窗。
+ *
+ * **是图标不是那个 `×` 字符**：字形的两笔在不同字体里粗细、倾角、在方格里的位置都不一样
+ * （上一版就是它，作者：「右上角的打叉是不是有点问题」），而且它跟着字号走、跟不了
+ * `currentColor` 之外的那套图标粗细。画成图标之后，它和这扇窗里的眼睛是同一档描边。
+ */
+export function CloseIcon() {
+  return (
+    <svg
+      className="icon"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M6.5 6.5 17.5 17.5" />
+      <path d="M17.5 6.5 6.5 17.5" />
+    </svg>
+  );
+}
+
+/**
+ * 加号（「新起一章」）。
+ *
+ * 两笔都**穿到 5.5–18.5**、在 12 处正交——不是「一个 ＋ 字符」：那个字形自带很宽的
+ * 两侧留白，塞进一颗 26px 的圆里会显得又小又偏，而它旁边就是一列 13px 的汉字。
+ * 画成图标之后大小由 `.icon` 给，和这套里别的图标是同一档。
+ */
+export function PlusIcon() {
+  return (
+    <svg
+      className="icon"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 5.5v13" />
+      <path d="M5.5 12h13" />
+    </svg>
+  );
+}

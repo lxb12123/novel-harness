@@ -4,7 +4,7 @@
 
 `test_knowledge.py` 的全部断言（含 README 第一行承诺的 ch87/ch88/ch152）跑在 `FakeGraph`
 上，而那个 Fake **自己手写了一遍** `knowledge_matrix` 的闭世界推导和那五个时态条件。
-`test_checks.py` 的 R4 同理。于是「232 个测试全绿」这句话在生产查询路径上是虚的：
+`test_checks.py` 的 R2/R3 同理。于是「232 个测试全绿」这句话在生产查询路径上是虚的：
 `queries.knowledge_edges_at` 的 SQL、`KNOWS 压 BELIEVES`、`NodeLabel.SECRET` 校验、
 重复边的 StoreError、`secret_ids` 的默认列序——一条都没被执行过。唯一碰到真
 `knowledge_matrix` 的测试只断言了 `chapter<1` 抛 ValueError，**够不到 SQL**。
@@ -42,8 +42,8 @@ import pytest
 from test_checks import FakeGraph as RulesFakeGraph
 from test_knowledge import FakeGraph as KnowledgeFakeGraph
 
-from novel_harness.checks import CheckContext, Scene
-from novel_harness.checks.location_conflict import check
+from novel_harness.checks import CheckContext
+from novel_harness.checks.dead_speaks import check
 from novel_harness.db import IN_MEMORY, Connection, connect, migrate
 from novel_harness.graph import (
     AliasKind,
@@ -52,6 +52,7 @@ from novel_harness.graph import (
     EdgeStatus,
     EdgeType,
     EvidenceStatus,
+    HealthValue,
     InformationScope,
     KnowledgeState,
     Node,
@@ -260,7 +261,7 @@ def matrix_store(request: pytest.FixtureRequest, real_store: Build) -> Build:
 
 @pytest.fixture(params=["fake", "real"])
 def rules_store(request: pytest.FixtureRequest, real_store: Build) -> Build:
-    """R4 那条路的两个后端（它要的是 resolve + state_at，不是矩阵）。"""
+    """规则那条路的两个后端（它要的是 resolve + state_at，不是矩阵）。"""
     if request.param == "real":
         return real_store
     return lambda world: RulesFakeGraph(_alias_index(world), list(world.edges))
@@ -585,148 +586,104 @@ def test_planned_and_rejected_have_no_read_path(
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 6. R4 LOCATION_CONFLICT —— 打真库，不是打 FakeGraph
+# 6. R3 DEAD_SPEAKS —— 打真库，不是打 FakeGraph
+#
+# ⚠️ **2026-08-14 这一节从 R4 换成了 R3**（[ADR 0027](../docs/adr/0027-scene-blocks-cut.md)
+# 砍掉了 R4）。**换而不是删**，理由就是这个文件存在的理由：`RulesFakeGraph`
+# （`test_checks.py` 里那份）手写了一遍五条件时态过滤，而 R4 那一节是**唯一**把它钉在
+# 生产 `state_at` 上的地方。整节删掉的话，那个 Fake 从此可以单方面漂移，
+# 而 `test_checks.py` 会一路绿着——正是本文件开头描述的那个故障。
+#
+# 换过来之后打的还是同两个后端方法（`resolve` + `state_at`），只是入口规则不同。
 # ══════════════════════════════════════════════════════════════════════════
 
+HEALTH_DIM = _node("state:conf:01JA", NodeLabel.STATE_DIM, "健康", dim_key="health")
 
-def _ctx(store: StoryGraph, *, chapter: int = 151, loc: str = "北荒") -> CheckContext:
-    scene = Scene(
-        number=3,
-        cast=["萧决"],
-        loc=loc,
-        goal="李管家试探萧决的身世",
-        para_index=4,
-        decl_text=f"<!-- nh: cast=萧决 loc={loc} -->",
+R3_CAST = (*CAST, HEALTH_DIM)
+"""R3 要一个状态维度节点才能表达「死了」（`HAS_STATE` 的 dst）。"""
+
+
+def _dead_world(**edge_kwargs: object) -> World:
+    """萧决在第 89 章死了。`edge_kwargs` 用来把这条边推进那五个条件的某一个里去。"""
+    return World(
+        nodes=R3_CAST,
+        edges=(
+            _edge(
+                XIAO_JUE,
+                HEALTH_DIM,
+                EdgeType.HAS_STATE,
+                89,
+                value_key=HealthValue.DEAD,
+                **edge_kwargs,  # type: ignore[arg-type]
+            ),
+        ),
     )
-    return CheckContext(store=store, project_id=PID, chapter=chapter, scenes=[scene])
 
 
-def test_r4_fires_on_declared_vs_graph_conflict(rules_store: Build) -> None:
-    """作者声明 vs 作者声明：场景写着北荒，图上他在青云城主府。"""
-    store = rules_store(
-        World(edges=(_edge(XIAO_JUE, QINGYUN, EdgeType.LOCATED_AT, 10),))
+def _r3_ctx(store: StoryGraph, *, chapter: int = 151) -> CheckContext:
+    return CheckContext(
+        store=store,
+        project_id=PID,
+        chapter=chapter,
+        paragraphs=["萧决道：「我还没死。」"],
     )
 
-    issues = check(_ctx(store))
+
+def test_r3_fires_when_a_dead_character_speaks(rules_store: Build) -> None:
+    """图上他第 89 章死了，第 151 章的正文里还挂着他的对话标签。"""
+    issues = check(_r3_ctx(rules_store(_dead_world())))
 
     assert len(issues) == 1
-    assert issues[0].rule == "R4"
-    assert issues[0].issue_type == "LOCATION_CONFLICT"
-    assert "青云城主府" in issues[0].message and "萧决" in issues[0].message
-    # 锚是作者写错的那行声明，永远是三元组，永不 offset（ADR 0006）。
-    assert issues[0].anchor.para_index == 4
-    assert issues[0].anchor.quote_text == "<!-- nh: cast=萧决 loc=北荒 -->"
+    assert issues[0].rule == "R3"
+    assert issues[0].issue_type == "DEAD_SPEAKS"
+    assert "萧决" in issues[0].message
+    # 锚永远是三元组，永不 offset（ADR 0006）。
+    assert issues[0].anchor.para_index == 0
+    assert issues[0].anchor.quote_text == "萧决"
 
 
-@pytest.mark.parametrize(("chapter", "expected"), [(150, 1), (151, 0), (152, 0)])
-def test_r4_conflict_disappears_the_chapter_he_arrives(
+@pytest.mark.parametrize(("chapter", "expected"), [(88, 0), (89, 1), (151, 1)])
+def test_r3_starts_firing_at_the_death_chapter(
     rules_store: Build, chapter: int, expected: int
 ) -> None:
-    """他在第 151 章到北荒：ch150 声明 loc=北荒 是冲突，ch151 起不是。
-    区间的上闭下开在这里是**可见的产品行为**，不是内部细节。"""
+    """`[valid_from, valid_to)` 的下界在这里是**可见的产品行为**：死亡那一章起才算死。"""
+    assert len(check(_r3_ctx(rules_store(_dead_world()), chapter=chapter))) == expected
+
+
+def test_r3_is_silent_when_nothing_is_declared(rules_store: Build) -> None:
+    """闭世界：图上没有任何状态 ≠ 他死了。"""
+    assert check(_r3_ctx(rules_store(World()))) == []
+
+
+def test_r3_is_silent_when_the_speaker_surface_is_ambiguous(rules_store: Build) -> None:
+    """「师兄」一章里可能是 8 个人 → 跳过，不猜（`usable_for_rules`）。"""
     store = rules_store(
         World(
-            edges=(
-                _edge(XIAO_JUE, QINGYUN, EdgeType.LOCATED_AT, 10, valid_to=151),
-                _edge(XIAO_JUE, BEIHUANG, EdgeType.LOCATED_AT, 151),
-            )
-        )
-    )
-
-    assert len(check(_ctx(store, chapter=chapter))) == expected
-
-
-def test_r4_is_silent_when_no_location_edge_at_all(rules_store: Build) -> None:
-    """闭世界：图上没声明过他在哪 ≠ 他不在这。"""
-    assert check(_ctx(rules_store(World()))) == []
-
-
-def test_r4_is_silent_when_declared_loc_is_ambiguous(rules_store: Build) -> None:
-    """「北荒」映射到两个节点 → 不知道作者指哪个 → 闭嘴。
-
-    真库那一半在这里多测了一件事：歧义是**跨行事实**（alias 表里存不进「歧义」），
-    只能由 `alias_rows` 的 GROUP BY 在查询时算出来。
-    """
-    beihuang_2 = _node("location:conf:01J9", NodeLabel.LOCATION, "北荒关外")
-    store = rules_store(
-        World(
-            nodes=(*CAST, beihuang_2),
-            edges=(_edge(XIAO_JUE, QINGYUN, EdgeType.LOCATED_AT, 10),),
-            extra_aliases={"北荒": (beihuang_2,)},
-        )
-    )
-
-    assert check(_ctx(store)) == []
-
-
-def test_r4_is_silent_when_cast_surface_is_ambiguous(rules_store: Build) -> None:
-    """「师兄」一章里可能是 8 个人 → 跳过这个人，不猜。"""
-    store = rules_store(
-        World(
-            edges=(
-                _edge(XIAO_JUE, QINGYUN, EdgeType.LOCATED_AT, 10),
-                _edge(GU_QINGYIN, QINGYUN, EdgeType.LOCATED_AT, 10),
-            ),
+            nodes=R3_CAST,
+            edges=_dead_world().edges,
             extra_aliases={"师兄": (XIAO_JUE, GU_QINGYIN)},
         )
     )
-    scene = Scene(
-        number=3, cast=["师兄"], loc="北荒", para_index=4,
-        decl_text="<!-- nh: cast=师兄 loc=北荒 -->",
+    context = CheckContext(
+        store=store, project_id=PID, chapter=151, paragraphs=["师兄道：「我还没死。」"]
     )
 
-    assert check(CheckContext(store=store, project_id=PID, chapter=151, scenes=[scene])) == []
+    assert check(context) == []
 
 
-def test_r4_is_silent_when_declared_loc_is_not_a_location(rules_store: Build) -> None:
-    """`loc=萧决`（打错了）→ 闭嘴。拿人物节点去比所在地会报出一条无意义的红字。"""
-    store = rules_store(World(edges=(_edge(XIAO_JUE, QINGYUN, EdgeType.LOCATED_AT, 10),)))
-
-    assert check(_ctx(store, loc="萧决")) == []
-
-
-def test_r4_never_fires_on_provisional(rules_store: Build) -> None:
+def test_r3_never_fires_on_provisional(rules_store: Build) -> None:
     """§5.4：拿抽取器的猜测报错 = 用 Agent 的猜测去质疑作者 = 原则 5 的反面。"""
-    store = rules_store(
-        World(
-            edges=(
-                _edge(
-                    XIAO_JUE, QINGYUN, EdgeType.LOCATED_AT, 10,
-                    scope=InformationScope.PROVISIONAL,
-                ),
-            )
-        )
-    )
-
-    assert check(_ctx(store)) == []
+    assert check(_r3_ctx(rules_store(_dead_world(scope=InformationScope.PROVISIONAL)))) == []
 
 
-def test_r4_stops_firing_on_stale_evidence(rules_store: Build) -> None:
+def test_r3_stops_firing_on_stale_evidence(rules_store: Build) -> None:
     """「依据没了还在质疑作者」是最伤的那类误报——这就是 STALE 90% 的价值。"""
-    store = rules_store(
-        World(
-            edges=(
-                _edge(
-                    XIAO_JUE, QINGYUN, EdgeType.LOCATED_AT, 10,
-                    evidence_id=EV, evidence_status=EvidenceStatus.STALE,
-                ),
-            )
-        )
-    )
-
-    assert check(_ctx(store)) == []
+    world = _dead_world(evidence_id=EV, evidence_status=EvidenceStatus.STALE)
+    assert check(_r3_ctx(rules_store(world))) == []
 
 
-def test_r4_never_fires_on_retracted(rules_store: Build) -> None:
-    store = rules_store(
-        World(
-            edges=(
-                _edge(XIAO_JUE, QINGYUN, EdgeType.LOCATED_AT, 10, status=EdgeStatus.RETRACTED),
-            )
-        )
-    )
-
-    assert check(_ctx(store)) == []
+def test_r3_never_fires_on_retracted(rules_store: Build) -> None:
+    assert check(_r3_ctx(rules_store(_dead_world(status=EdgeStatus.RETRACTED)))) == []
 
 
 # ══════════════════════════════════════════════════════════════════════════

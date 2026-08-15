@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { useChapters, useChapterText, useContinuation, useSaveChapter } from "../api/hooks";
 import { useCoords } from "../store";
 import { ApiError } from "../api/client";
-import { SceneBar } from "./SceneBar";
 import { HistoryDrawer } from "./HistoryDrawer";
 import { ChapterTitle } from "./ChapterTitle";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
@@ -140,8 +139,6 @@ export function CenterEditor() {
           保存
         </button>
       </div>
-
-      <SceneBar />
 
       {/* 别处改过、而作者手上有没保存的字。**不替他挑**：盖掉他没保存的那半段是找不回来的，
           盖掉磁盘上那一版是找得回来的（历史里那一条），所以这儿只说一句、不动他的字。 */}

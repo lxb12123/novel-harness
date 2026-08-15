@@ -13,11 +13,10 @@ import { LeftRail } from "./LeftRail";
 import { RosterDrawer } from "./RosterDrawer";
 import { SettingsDrawer } from "./SettingsDrawer";
 import { HistoryDrawer } from "./HistoryDrawer";
-import { SceneBar } from "./SceneBar";
 import { BookShelf } from "./BookShelf";
 import { ChatPanel } from "./ChatPanel";
-import { ChatRules } from "./ChatRules";
 import { DraftCompare } from "./DraftCompare";
+import { RulesTable } from "./RulesTable";
 
 // **对抗性验证：那张「形状判据」的网真的比词表强吗。**
 //
@@ -65,6 +64,11 @@ const STATE_WITH_EDGES = { ...fixtures.characterState, edges: fixtures.states[0]
 
 const stateRoute = (body: unknown) => [{ match: /\/characters\/.*\/state/, body }];
 
+// ⚠️ **「场景条」这一格 2026-08-14 撤了**（组件连同场景块、两条路由和 R4 一起删了，
+// [ADR 0027](docs/adr/0027-scene-blocks-cut.md)）。它是这张网上少数几个**从来没被真夹具
+// 喂活过**的格子——`fixtures.scenes` 那份真 dump 是 `[]`，因为真书里没人手写 `## 场景 N`，
+// 而那正是砍掉它的理由。底栏那一格今天扫的是仅剩的「人物与设定变化」一列。
+
 /** 真 dump 的那一轮里**除回执以外**的那几帧（ADR 0024 第二刀）。
  *  卡住回执就能把屏幕停在「还在跑」那一刻 —— 而那正是这三块新屏幕唯一活着的时候。 */
 const TURN_MIDDLE = fixtures.chatTurnEvents.filter((f) => !f.startsWith("event: receipt"));
@@ -78,7 +82,6 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     ["顶栏", <TopBar key="t" />],
     ["左栏书架", <LeftRail key="l" onOpenChapter={() => {}} />],
     ["底栏时间线", <BottomBar key="b" />],
-    ["场景条", <SceneBar key="sb" />],
     ["书架页", <BookShelf key="bs" onOpenChapter={() => {}} />],
     ["花名册抽屉", <RosterDrawer key="rd" pid="project:ID1" onClose={() => {}} />],
     // 设置这扇窗 2026-08-14 变成左右分栏，**这一条只扫得到默认那一栏**（「连接服务」）。
@@ -99,16 +102,31 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     // 那一稿的自述和定长预览。没被扫到的组件等于没有守卫，这一页尤其——
     // 作者在这儿读的是三章正文，任何一个漏出来的码都摆在正文旁边。
     ["并排比几稿", <DraftCompare key="dc" chapter={2} />],
-    // 现在生效的规矩（ADR 0023 决策二）。它手上两样东西形状可疑：每条规矩的 `seq`
-    // （历史下标，一个裸数字——**三张网都认不出它**，所以它只能靠人守着 + 下面那条
-    // 专门的断言），以及「它管到哪儿」那句话——那句话是后端写的，而它一旦退化成
-    // 按 `chapter_wide` 现编，第一个漏出来的就是那个字段名本身。
-    ["现在生效的规矩", <ChatRules key="cr" pid="project:ID1" chatId="chat_session:ID47" chapter={2} />],
+    // 「你交代过的」那张表（ADR 0028 + 迁移 016）。它手上形状可疑的东西有两样：
+    // 会话的内部标识（`chat_session:…`，那一列今天只渲染标题，探针在下面那条断言里）
+    // 和模型自己写的那句时效——**那句话是模型写的，不是引擎的措辞表出来的**，
+    // 所以词表那张网罩不住它，只有形状判据罩得住。
+    ["你交代过的", <RulesTable key="rt" />],
+    // ⚠️ **「现在生效的规矩」这一格 2026-08-14 撤了**（组件 + 两份测试文件一起删）。
+    // 它手上两样东西形状可疑——每条规矩的 `seq`（裸数字，三张网都认不出）和后端写的
+    // 「它管到哪儿」那句话——**撤掉它同样是覆盖面变小**，同上面「声明抽屉」那一条。
+    // 规矩的留痕哪天落到日志，这一格要跟着回来。理由见 `ChatPanel.tsx` 顶上那段。
   ])("「%s」上一个研发术语都没有", async (_name, ui) => {
     renderWithApi(ui, stateRoute(STATE_WITH_EDGES));
     // 等第一批查询落地：扫一块还没渲染出内容的屏幕等于什么都没扫。
     await waitFor(() => expect(document.body.textContent).toMatch(/[一-龥]/));
     await new Promise((r) => setTimeout(r, 60));
+    expect(devTerms(screenText())).toEqual([]);
+  });
+
+  it("章目录那颗「⋯」摊开的样子（**默认不在屏幕上**）", async () => {
+    // 同下面那条：菜单收着的时候上面那条 each 扫不到它，而它端着后端删章那句拒绝——
+    // 那句话里带着五个计数，是这一栏上唯一一处「引擎内部有多少东西」会露头的地方。
+    const user = userEvent.setup();
+    renderWithApi(<BookShelf onOpenChapter={() => {}} />);
+    await user.click(await screen.findByRole("button", { name: "第一章 血脉的更多操作" }));
+    await user.click(await screen.findByRole("button", { name: "删除本章" }));
+    await screen.findByText(/删除第 1 章？/);
     expect(devTerms(screenText())).toEqual([]);
   });
 
@@ -119,7 +137,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     const user = userEvent.setup();
     renderWithApi(<SettingsDrawer onClose={() => {}} />);
     await user.click(await screen.findByRole("tab", { name: "前文长度" }));
-    await screen.findByText("模型一次能记住多少");
+    await screen.findByText("模型一次能读多少");
     expect(devTerms(screenText())).toEqual([]);
   });
 
@@ -370,73 +388,25 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     expect(devTerms(screenText())).toEqual([]);
   });
 
-  // ── 现在生效的规矩，那几支兜底（ADR 0023 决策二）─────────────────────────
+  // ── 「现在生效的规矩」那一块 2026-08-14 整个撤了（组件 + 两份测试一起删）───────
   //
-  // **这一块是 2026-08-12 新长出来的屏幕**，而它的四种长相里有三种在真夹具里不出现：
-  // 空（两种）、读不出来、点了 × 之后那句确认。正常数据下永远不亮，正是它们躲过守卫的
-  // 方式——这个仓库为「一条分支从没被扫过」栽过。
+  // 这儿原来有六条：四条扫 `ChatRules` 自己的四种长相（两种空 / 读不出来 / 点 × 之后
+  // 那句确认），两条扫写作助手顶上那颗按钮。撤掉它们**就是覆盖面变小**，不是覆盖面变干净
+  // ——同上面「声明抽屉」那一格的写法。
+  //
+  // 撤的理由不在这一层：规矩的**有效期该由模型按情境判**（「男主在这片沙地时」），
+  // 而引擎今天按章号算，那块面板把这个粗糙度摆到了作者面前
+  // （`ChatPanel.tsx` 顶上那段写着全文）。
+  //
+  // **规矩的留痕哪天落到日志，这几条要跟着回来**——它扫的东西一样也没消失：
+  // 规矩原文是模型写的、`seq` 是裸数字（三张网都认不出）、后端的拒绝只有码没有话。
 
-  it.each([
-    ["一条都没定过", "chatRulesNone"],
-    ["定过、这会儿都不作数了", "chatRulesExpired"],
-  ] as const)("现在生效的规矩：「%s」那一档", async (_name, key) => {
-    renderWithApi(<ChatRules pid="project:ID1" chatId="chat_session:ID47" chapter={2} />, [
-      { match: /\/rules\?/, body: fixtures[key] },
-    ]);
-    await screen.findByText(/规矩/);
-    expect(devTerms(screenText())).toEqual([]);
-  });
-
-  it("现在生效的规矩：这一章读不出来那一档", async () => {
-    renderWithApi(<ChatRules pid="project:ID1" chatId="chat_session:ID47" chapter={2} />, [
-      { match: /\/rules\?/, status: 500, body: {} },
-    ]);
-    await screen.findByText(/没读出来/);
-    expect(devTerms(screenText())).toEqual([]);
-  });
-
-  it("现在生效的规矩：点了 × 之后那句确认，以及取消没成那一档", async () => {
-    const user = userEvent.setup();
-    const one = fixtures.chatRules.rules[0];
-    renderWithApi(<ChatRules pid="project:ID1" chatId="chat_session:ID47" chapter={2} />, [
-      { method: "DELETE", match: /\/rules\/\d+$/, status: 500, body: {} },
-    ]);
-    await screen.findByText(one.text);
-    await user.click(screen.getByRole("button", { name: `取消这条规矩：${one.text}` }));
-    await screen.findByText(/不再管着你的稿子/);
-    expect(devTerms(screenText())).toEqual([]);
-
-    await user.click(screen.getByRole("button", { name: "取消它" }));
-    await screen.findByText(/没能取消/);
-    expect(devTerms(screenText())).toEqual([]);
-  });
-
-  it("现在生效的规矩：那个 `seq` 一个字符都不上屏（**三张网都认不出裸数字**）", async () => {
-    // 它是历史下标，不是给人看的编号。`MACHINE` 认 snake_case、`ENGINE_ENUM` 认大写枚举、
-    // `RAW_ID` 认 `前缀:标识` —— 一个裸的 `10` 从三张网中间穿过去。
-    // 所以这一条不是重复上面那条扫描，它是那张网**明确罩不住**的那一类的补丁。
-    renderWithApi(<ChatRules pid="project:ID1" chatId="chat_session:ID47" chapter={2} />);
-    await screen.findByText(fixtures.chatRules.rules[0].text);
-    const shown = screenText();
-    for (const rule of fixtures.chatRules.rules) {
-      expect(shown).not.toContain(String(rule.seq));
-    }
-  });
-
-  it("写作助手：顶上那颗按钮上的数字是规矩条数，不是别的什么", async () => {
-    // 面板收着的时候，作者能看见的只有这颗按钮 —— **「看得见」那一半在这儿兑现**。
+  it("写作助手：顶上不再有「这一章的规矩」那颗按钮", async () => {
+    // 探针式的一条：它防的是「删了组件、忘了删按钮」——那样按钮会渲染成一颗点开
+    // 什么都没有的死键，而 `tsc` 看不见这种坏法（按钮上没有类型）。
     renderWithApi(<ChatPanel />);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
-    await screen.findByRole("button", { name: `这一章的规矩 ${fixtures.chatRules.rules.length}` });
-    expect(devTerms(screenText())).toEqual([]);
-  });
-
-  it("写作助手：规矩那一块摊开的时候（它盖在对话区上）", async () => {
-    const user = userEvent.setup();
-    renderWithApi(<ChatPanel />);
-    await screen.findByText(fixtures.chatDetail.messages[0].text);
-    await user.click(await screen.findByRole("button", { name: /这一章的规矩/ }));
-    await screen.findByText(fixtures.chatRules.rules[0].scope);
+    expect(screen.queryByRole("button", { name: /规矩/ })).toBeNull();
     expect(devTerms(screenText())).toEqual([]);
   });
 

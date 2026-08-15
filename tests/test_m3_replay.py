@@ -64,15 +64,19 @@ def test_replay_passes_the_preregistered_gate() -> None:
 
 
 def test_gate_fails_when_the_rules_are_missing() -> None:
-    """门槛会咬：只留 R4（不读正文），25 题全落空 → 不过。"""
-    from novel_harness.checks.location_conflict import check as r4
+    """门槛会咬：一条规则都不给，25 题全落空 → 不过。
 
+    ⚠️ **2026-08-14 之前这里给的是 R4**（一条不读正文的规则，所以 25 题必然全落空）。
+    R4 随场景块一起砍了（[ADR 0027](../docs/adr/0027-scene-blocks-cut.md)），
+    而这条测试要的从来不是 R4 本身，是「拿一组**跑不出真阳性**的规则去跑，门槛得咬住」。
+    空元组是那件事最直接的形态。
+    """
     summary = replay(
         db_path=DB,
         project_id=PROJECT_ID,
         ground_truth=GT,
         booklet=BOOKLET,
-        checks=(r4,),
+        checks=(),
     )
     assert not summary.passed
     assert summary.true_positives == 0

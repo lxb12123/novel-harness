@@ -7,27 +7,20 @@
 |---|---|
 | `anchor` | 「什么是一段」+「这段引语在哪」—— `para_index` 的唯一定义 |
 | `chapterize` | 切章 —— `Chapter.index` 是全书全序键，`state_at` 的那个 `:ch` 的产地 |
-| `scenes` | `## 场景 N` + `<!-- nh: ... -->` 的解析与写回 —— `Scene` 的唯一生产者 |
+| ~~`scenes`~~ | **2026-08-14 删了**（[ADR 0027](../../../docs/adr/0027-scene-blocks-cut.md)），连同它唯一的消费者 R4 |
 
 `CHAPTER_RE` 在这里再出口是**故意的**（`chapterize` 的 docstring：正则是唯一真相，
 `scripts/probe_speaker_tags.py` 从那里 import，不留第二份副本）。
 `normalize` 同理要出口：它是喂正则之前的必经步骤，藏起来只会让第二个调用方跳过它，
 而跳过它的代价是 CRLF / BOM 那两个各一字符宽的 index 偏移 bug。
 
-── ⚠️ M3 会在这里踩一个 import 环，别在那天才第一次读到这段 ────────────────
+── ⚠️ 这儿曾经有一个「M3 会踩到的 import 环」的警告，它跟着 `scenes` 一起没了 ────
 
-`scenes` → `..checks.base`（`Scene` 定义在消费者一侧，见那份 docstring）。方向是反的——
-文本层在 checks 之下——但今天无环：`checks/` 只 import `graph/`。
-
-`checks/base.py:126` 已经 TODO 了「R2/R3/R5 在 M3 import `text/mentions.py`」。**那一行落地
-的当天，这个文件下面的 `from .scenes import ...` 就是环的另一半**：`checks/__init__` 跑到
-一半 → import `text` → `text/__init__` 跑 `from .scenes` → `scenes` import 一个半成品的
-`novel_harness.checks`。今天它侥幸活着，靠的是 `checks/__init__` 恰好先 import 了
-`location_conflict`（它把 `.base` 拉了进来）——**一个 import 语句的顺序，不是一条约束。**
-
-M3 真被绊倒时的正确修法**不是**把这里的再出口删掉（那只是把环藏进调用方），是把
-`Scene` 挪进 `text/`、让 `checks/` import 它。那与 `Scene` docstring 里「定义在消费者
-这一侧」的论证冲突，所以留给 M3 连同 `mentions.py` 一起决定，不在 Wire 阶段单方面动。
+那个环是 `text/scenes` → `..checks.base`（`Scene` 定义在消费者一侧），靠
+`checks/__init__` 恰好先 import `location_conflict` 才没炸——**一个 import 语句的顺序，
+不是一条约束**。2026-08-14 两头一起删掉之后，`text/` 重新变成一层纯下游：
+它今天不 import `checks/` 里的任何东西，环连成立的条件都没有了。
+**别再把任何 `checks/` 的类型 import 进这一层来。**
 """
 
 from __future__ import annotations
@@ -46,34 +39,15 @@ from .chapterize import (
     chapters,
     normalize,
 )
-from .scenes import (
-    KEEP,
-    AmbiguousScene,
-    MalformedDirective,
-    SceneNotFound,
-    SceneWriteRefused,
-    UnwritableValue,
-    parse_scenes,
-    write_scene_directive,
-)
-
 __all__ = [
     "CHAPTER_RE",
-    "KEEP",
-    "AmbiguousScene",
     "Chapter",
     "Chapterization",
     "Located",
-    "MalformedDirective",
-    "SceneNotFound",
-    "SceneWriteRefused",
-    "UnwritableValue",
     "chapterize",
     "chapters",
     "find_all",
     "find_one",
     "normalize",
     "paragraphs",
-    "parse_scenes",
-    "write_scene_directive",
 ]

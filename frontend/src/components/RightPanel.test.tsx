@@ -49,7 +49,11 @@ describe("右侧信息区", () => {
 
     await user.click(screen.getByRole("button", { name: "检查" }));
     await user.click(screen.getByRole("button", { name: "检查本章" }));
-    expect(await screen.findByText(/已检查 1 个场景/)).toBeInTheDocument();
+    // **不许说「已检查 N 个场景」**：「场景」是作者要在正文里手写的标记块，
+    // 导进来的真书上永远是零个；而它旁边那句「无法进行内容检查」从 R2/R3 进
+    // `ALL_CHECKS`（2026-08-02）起就是假的——零场景块照样查了两条规则。
+    expect(await screen.findByText(/没有发现需要处理的问题/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/场景/);
     expect(document.body.textContent).not.toMatch(/R[1-4]|issue|location_conflict|future_leak/);
   });
 });

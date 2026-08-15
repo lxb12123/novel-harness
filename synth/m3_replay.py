@@ -207,7 +207,6 @@ def _run_one(
         store=store,
         project_id=project_id,
         chapter=int(case["chapter"]),
-        scenes=(),
         paragraphs=[case["violation"] if violation else case["clean"]],
     )
     return tuple(run_checks(ctx, checks=checks))
@@ -277,8 +276,7 @@ def replay(
             store=real,
             project_id=project_id,
             chapter=index,
-            scenes=(),
-            paragraphs=chapter.body.splitlines(),
+                paragraphs=chapter.body.splitlines(),
         )
         clean_prose_issues += len(run_checks(ctx, checks=effective_checks))
 

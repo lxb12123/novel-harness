@@ -119,6 +119,47 @@ def chapter_files(root: Path) -> list[ChapterFile]:
     return sorted(out, key=lambda entry: entry.number)
 
 
+_CN_DIGITS: Final = "零一二三四五六七八九"
+_CN_UNITS: Final = ("", "十", "百", "千")
+
+
+def chinese_number(value: int) -> str:
+    """`2` → `二`、`101` → `一百零一`。**只有「新起一章」用得着它。**
+
+    切章器认阿拉伯数字（`CHAPTER_RE` 的字符组里有 `0-9`），所以写「第2章」也能跑通。
+    但那本书的第一章叫「第一章」——同一本书里「第一章、第2章、第3章」是作者一眼
+    就会看见的东西，而他是写小说的，不是读日志的。
+
+    `十一` 而不是 `一十一`：十位打头的两位数中文里不念那个「一」。但 `一百一十` 要念，
+    所以那一刀只切在开头（见最后那一行）。
+    """
+    if not 1 <= value <= 9999:
+        raise ValueError(f"章号超出中文数字的范围：{value}")
+    out = ""
+    zero_pending = False
+    for power in (3, 2, 1, 0):
+        digit = value // 10**power % 10
+        if digit == 0:
+            # 中间的 0 只补**一个**「零」，而且末尾那些 0 不补（`一千` 不是 `一千零`）。
+            zero_pending = bool(out)
+            continue
+        if zero_pending:
+            out += "零"
+            zero_pending = False
+        out += _CN_DIGITS[digit] + _CN_UNITS[power]
+    return out[1:] if out.startswith("一十") else out
+
+
+def empty_chapter_text(number: int) -> str:
+    """一章空正文的**全部内容**（`第二章\\n\\n`）。
+
+    **新建一章只有这一个写法**：空白新书开局那一章走它，作者在书架上按「＋」新起一章
+    也走它。两处各写一份字面量的话，哪天章标形状变了（比如改成阿拉伯数字），
+    会有一半的章跟着变、另一半不变，而症状是「目录里有两种章号」。
+    """
+    return f"第{chinese_number(number)}章\n\n"
+
+
 def chapter_text(heading: str, body: str) -> str:
     """一个章节文件的全部内容。
 
@@ -565,6 +606,86 @@ def save_chapter(
             )
     file.write_text(markdown, encoding="utf-8")
     return sync(store, project_id, root)
+
+
+def append_chapter(store: GraphStore, project_id: str, root: Path) -> tuple[int, SyncReport]:
+    """在这本书末尾新起一章（只有章标，正文是空的），返回它的章号。
+
+    **章号由磁盘决定，作者填不了**——同「`valid_from` 只由证据决定」那条规矩：
+    表单里一有章号输入框，就等着有人把第 7 章建成第 3 章，而章号是全书的顺序键。
+    取的是现有文件里最大的那个 +1，不是「文件个数 +1」：中间缺了一章（作者自己删了
+    `0003.md`）时后者会撞上一个已存在的号。
+
+    `save_chapter` 那条 404 仍然关着（ADR 0021：agent 不许自己新建章节）。
+    这条路是**作者按了按钮**才走的，而章标由这儿生成、不由任何模型写。
+
+    Raises:
+        FileExistsError: 那个文件已经在了。**不覆盖**——`chapter_files` 刚读过一遍，
+            这一刻它还能存在只可能是另一个进程同时也在新起一章，而覆盖掉的是正文。
+        SyncRefused: 写出去的东西切不出一章（`empty_chapter_text` 坏了才可能）。
+    """
+    existing = chapter_files(root)
+    number = existing[-1].number + 1 if existing else 1
+    file = root / chapter_path(number)
+    file.parent.mkdir(parents=True, exist_ok=True)
+    # "x" = 存在就抛，不覆盖。`exists()` 判一下再写是两步，中间那道缝正是要防的东西。
+    with file.open("x", encoding="utf-8") as handle:
+        handle.write(empty_chapter_text(number))
+    return number, sync(store, project_id, root)
+
+
+DELETED_DIR: Final = "deleted"
+"""删掉的章去哪儿。**同一本书的文件夹底下，作者自己看得见。**
+
+`chapter_files` 只认 `chapters/NNNN.md`，所以挪进这儿的文件对引擎等于不存在，
+而对作者等于「还在」——他打开书的文件夹就能找回来，不用命令行、不用问任何人。
+"""
+
+
+def remove_chapter(store: GraphStore, project_id: str, root: Path, chapter: int) -> Path:
+    """删掉一章：先过图层那一关，再把 .md **挪走**（不是删掉）。返回它挪到了哪儿。
+
+    ── 两条顺序上的选择，都不是随手定的 ──────────────────────────────────────
+
+    **① 先库后盘**，跟 `save_chapter` 的「磁盘先、DB 跟」（ADR 0007）**是反的**。
+    因为这一次库那边**会拒绝**（`ChapterInUse`）：盘先动的话，作者会看见文件没了、
+    然后弹一句「删不掉」——两件事同时成立，而他没有任何办法把它放回去。
+    反过来出错（库删了、文件没挪成）是自愈的：下一次 `sync` 照着磁盘把这一章重新读回来。
+
+    **② 挪走不是删掉。** 那是作者的稿子，可能是他写了三小时的东西，而这颗按钮离
+    「新起一章」只有一列的距离。挪进 `deleted/` 之后引擎立刻当它不存在
+    （`chapter_files` 只认 `chapters/NNNN.md`），而他在自己的文件夹里还找得回来。
+    重名不覆盖：同一章删两次（新建 → 删 → 再新建 → 再删）会有第二份，加 `-2`、`-3`。
+
+    Args:
+        chapter: 章号。**不检查它是不是最后一章**——中间留个洞是允许的
+            （`append_chapter` 取的是「最大的号 +1」，正是为了这个）。
+
+    Returns:
+        挪过去之后那个文件的路径。
+
+    Raises:
+        ChapterMissing: 磁盘上没有这一章。
+        ChapterInUse: 引擎在这一章上记过东西（图层抛的，明细在异常里）。
+        StoreError: 这一章还没进过库（磁盘上有、没 sync 过）。**不吞掉**：
+            那说明这个库和这个文件夹已经对不上了，作者该知道，而不是让删除
+            悄悄地只删掉一半。
+    """
+    file = root / chapter_path(chapter)
+    if not file.is_file():
+        raise ChapterMissing(f"第 {chapter} 章在磁盘上不存在", chapter)
+
+    store.delete_chapter(project_id, chapter)
+
+    trash = root / DELETED_DIR
+    trash.mkdir(parents=True, exist_ok=True)
+    target = trash / file.name
+    serial = 2
+    while target.exists():
+        target = trash / f"{file.stem}-{serial}{file.suffix}"
+        serial += 1
+    file.rename(target)
+    return target
 
 
 def import_book(store: GraphStore, project_id: str, *, txt: Path, root: Path) -> ImportReport:

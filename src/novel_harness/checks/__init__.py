@@ -5,8 +5,13 @@
 | R1 认知边界 | 不在这里——它是面板不是规则（`panel/knowledge.py`） |
 | **R2 FUTURE_LEAK** | **2026-08-02 落地**：`text/mentions.py` + `first_appears_chapter` |
 | **R3 DEAD_SPEAKS** | **2026-08-02 落地**：说话人标签位置 × `is_dead` / `has_appeared()` |
-| **R4 LOCATION_CONFLICT** | v1 最早的一条：不读正文，零 FP |
-| ~~R5 ADDRESS_CONFLICT~~ | **已砍**（2026-08-02：真书样本 8.2% < 10%，[ADR 0014](../docs/adr/0014-r5-cut-by-quote-coverage.md)） |
+| ~~R4 LOCATION_CONFLICT~~ | **已砍**（2026-08-14，[ADR 0027](../../../docs/adr/0027-scene-blocks-cut.md)：它的一侧输入只能由作者手写，真书上零覆盖） |
+| ~~R5 ADDRESS_CONFLICT~~ | **已砍**（2026-08-02：真书样本 8.2% < 10%，[ADR 0014](../../../docs/adr/0014-r5-cut-by-quote-coverage.md)） |
+
+**两条被砍的规则死于同一个判据，这不是巧合**：ADR 0005 的表按「输入从哪儿来」排规则，
+而排在最上面那几条（不读正文、零 FP）之所以便宜，是因为**它们把成本转嫁给了作者**——
+R4 的一侧输入是他要在正文里手写的 `<!-- nh: loc=… -->`，R5 的一侧是显式说话人标签。
+真书上前者是 0%、后者是 8.2%。**「零误报」在一条永远跑不起来的规则上是免费的。**
 
 M3 的生死线是「真书连续 20 章误报 < 1 条/章 **且** 合成小册子真阳性 ≥ 22/25」。
 双边门槛的存在理由：**沉默的工具死得比吵闹的工具更快，只是死得更安静，而且指标
@@ -40,11 +45,10 @@ M3 的生死线是「真书连续 20 章误报 < 1 条/章 **且** 合成小册�
 
 from __future__ import annotations
 
-from . import dead_speaks, future_leak, location_conflict
-from .base import FIRE_SCOPE, Check, CheckContext, Issue, Scene
+from . import dead_speaks, future_leak
+from .base import Check, CheckContext, Issue
 
 ALL_CHECKS: tuple[Check, ...] = (
-    location_conflict.check,
     future_leak.check,
     dead_speaks.check,
 )
@@ -65,10 +69,8 @@ def run_checks(ctx: CheckContext, checks: tuple[Check, ...] = ALL_CHECKS) -> lis
 
 __all__ = [
     "ALL_CHECKS",
-    "FIRE_SCOPE",
     "Check",
     "CheckContext",
     "Issue",
-    "Scene",
     "run_checks",
 ]

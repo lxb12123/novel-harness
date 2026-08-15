@@ -158,6 +158,8 @@ def _to_message(row: Any) -> AgentMessage:
         tool_call_id=str(row["tool_call_id"]),
         chapter=None if chapter is None else int(chapter),
         pruned=bool(row["pruned"]),
+        # 016 之前存下的行没有这一列的值（`DEFAULT ''` 兜着），所以这儿也吃 None。
+        rule_until=str(row["rule_until"] or ""),
         # 同 `chapter`：`None` 和 `0` 是两件事（`0` 是「撤销第 0 条」，那是一条真的消息）。
         revokes_seq=None if revokes is None else int(revokes),
     )
@@ -248,7 +250,8 @@ class ChatStore:
         rows = self._conn.execute(
             "SELECT m.session_id AS sid, m.role AS role, m.content AS content,"
             "       m.tool_calls_json AS tool_calls_json, m.tool_call_id AS tool_call_id,"
-            "       m.chapter AS chapter, m.pruned AS pruned, m.revokes_seq AS revokes_seq"
+            "       m.chapter AS chapter, m.pruned AS pruned, m.revokes_seq AS revokes_seq,"
+            "       m.rule_until AS rule_until"
             " FROM chat_message m"
             " JOIN chat_session s ON s.id = m.session_id"
             " WHERE s.project_id = ? AND m.section = ?"
@@ -310,7 +313,7 @@ class ChatStore:
             return None
         rows = self._conn.execute(
             "SELECT section, role, content, tool_calls_json, tool_call_id, chapter, pruned,"
-            "       revokes_seq"
+            "       revokes_seq, rule_until"
             " FROM chat_message WHERE session_id = ? ORDER BY seq ASC",
             (session_id,),
         ).fetchall()
@@ -451,8 +454,8 @@ class ChatStore:
         self._conn.executemany(
             "INSERT INTO chat_message"
             " (id, session_id, seq, section, role, content, tool_calls_json,"
-            "  tool_call_id, chapter, pruned, revokes_seq)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "  tool_call_id, chapter, pruned, revokes_seq, rule_until)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             [
                 (
                     new_id(EntityType.CHAT_MESSAGE, project_id),
@@ -467,6 +470,7 @@ class ChatStore:
                     int(message.pruned),
                     # **原样写下去，不换算**：它是历史的下标，不是上面那个 `seq`（见文件头）。
                     message.revokes_seq,
+                    message.rule_until,
                 )
                 for offset, message in enumerate(messages)
             ],

@@ -111,7 +111,7 @@ def _prepared_book(*, mode: BootstrapMode, text: str | None) -> Chapterization:
     if mode == "blank":
         if text is not None:
             raise ValueError("blank 模式不接受 text")
-        return importer.prepare_text("第一章\n\n", source="新建空白书")
+        return importer.prepare_text(importer.empty_chapter_text(1), source="新建空白书")
     raise ValueError(f"未知的新书启动模式：{mode}")
 
 
@@ -153,7 +153,7 @@ def bootstrap_project(
             else:
                 first = stage / importer.chapter_path(1)
                 first.parent.mkdir(parents=True, exist_ok=True)
-                first.write_text("第一章\n\n", encoding="utf-8")
+                first.write_text(importer.empty_chapter_text(1), encoding="utf-8")
                 importer.sync(store, created.id, stage)
                 report = None
             result = BootstrapResult(

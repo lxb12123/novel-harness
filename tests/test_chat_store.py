@@ -29,7 +29,11 @@ from novel_harness.agent.loop import (
     Role,
     start_conversation,
 )
-from novel_harness.agent.rules import is_revocation, is_rule, live_rules
+from novel_harness.agent.rules import (
+    is_revocation,
+    is_rule,
+    surviving_rule_indices,
+)
 from novel_harness.agent.store import ChatConcurrency, ChatStore
 from novel_harness.db import Connection, connect, migrate
 from novel_harness.draft.provider import ToolCall
@@ -126,9 +130,38 @@ def test_a_rule_the_author_took_back_does_not_come_back_alive(
     revoked = got.conversation.messages[6]
     assert is_revocation(revoked) and revoked.revokes_seq == 5
     assert is_rule(got.conversation.messages[5]), "样本里那条规矩没了 —— 下面这条是空的"
-    assert live_rules(got.conversation, 40) == (), (
+    assert surviving_rule_indices(got.conversation.messages) == frozenset(), (
         "读回来之后那条被取消的规矩又活了 —— 多半是 `revokes_seq` 被当成了本表的 seq"
     )
+
+
+def test_the_expiry_a_rule_carries_survives_the_round_trip(
+    conn: Connection, pid: str
+) -> None:
+    """**「管到什么时候」逐字节存回来**（迁移 016）。
+
+    漏掉这一列不会报错：读回来的规矩正文一字不差，只是那句时效没了——于是下一轮模型
+    读到的是那句通用的兜底，而它**本来是有过判断的**。作者那张表上也会空着一格。
+    这就是这个文件开头那条「往返逐字节一致」在新加一列上的形态。
+    """
+    store = ChatStore(conn)
+    session = store.create(pid)
+    said = "男主走出这片沙地为止"
+    store.append(
+        pid,
+        session.id,
+        base_count=0,
+        messages=(
+            AgentMessage(role=Role.USER, content="这片沙地里别让他杀人"),
+            AgentMessage(
+                role=Role.SYSTEM, content="男主在这片沙地不杀人", chapter=722, rule_until=said
+            ),
+        ),
+    )
+
+    got = store.load(pid, session.id)
+    assert got is not None
+    assert [m.rule_until for m in got.conversation.messages] == ["", said]
 
 
 def test_the_stable_prefix_is_stored_not_regenerated(conn: Connection, pid: str) -> None:

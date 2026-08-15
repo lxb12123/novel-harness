@@ -119,7 +119,8 @@ Vite 的 `outDir` 和 `api/app.py` 的 `_DIST` 是**两个必须同时改的字�
 > 同「工作台的已知洞」那条规矩，且 `tests/test_doc_numbers.py` 现在会拦住重新抄一份的行为
 > （它钉运行时数得出来的那些；pytest / vitest 两个数它罩不住，仍靠人手改那一处）。
 
-已落地：数据层 / 图层 / panel / 规则 R2·R3·R4 / `text/{anchor,chapterize,mentions,scenes}` / 声明层 `declare.py` /
+已落地：数据层 / 图层 / panel / 规则 R2·R3（R4 已于 2026-08-14 砍，[ADR 0027](docs/adr/0027-scene-blocks-cut.md)） /
+`text/{anchor,chapterize,mentions}` / 声明层 `declare.py` /
 `nh` 的子命令（M0+M1），FastAPI 壳（`api/`）+ React 工作台（`frontend/`，手写 TS/TSX）（M1.5）。
 **`demo.sh` 心跳绿着（2026-08-06 复核）——但这句话没有任何东西自动验证它**：
 没有一个 pytest 会跑 demo.sh，所以它红了也只有人肉执行才看得见。
@@ -161,7 +162,8 @@ endpoint/profile 跑第一轮，跑完且检查 JSONL 才写 ADR 0009。
 
 > 这儿原本有一份手抄的四条清单，**它是「拷贝会骗人」的第二个受害者**，而且一次烂了四处：
 > R5 说「覆盖率仍未测量」（2026-08-02 已测 8.2%，R5 已砍，ADR 0014，ADR 0005 那节也已填）、
-> `text/mentions.py` 说「缺」（同日已落地）、`ALL_CHECKS` 说「只有 R4」（实际 R2/R3/R4 三条）、
+> `text/mentions.py` 说「缺」（同日已落地）、`ALL_CHECKS` 说「只有 R4」（实际 R2/R3 两条——
+> R4 2026-08-14 也砍了，ADR 0027）、
 > M3 说「今天不可测而且会假绿」（2026-08-03 双边门槛已过、M4 已解锁）。
 > **照它排期的人会去重写三样已经写完的工作。** 所以现在这儿只留指针，不留内容。
 

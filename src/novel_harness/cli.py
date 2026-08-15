@@ -81,7 +81,7 @@ from .panel import (
 from .project import Project
 from .project import create as create_project
 from .project import get as get_project
-from .text import chapterize, parse_scenes
+from .text import chapterize
 from .text import paragraphs as split_paragraphs
 
 if TYPE_CHECKING:  # `nh gate` 的裁决类型。**运行期不 import**——见 `gate()` 里那段
@@ -105,9 +105,8 @@ app.add_typer(declare_app, name="declare")
 _CAST_SEP_RE = re.compile(r"[,，、]")
 """`--cast 萧决,顾清音、李管家` 的分隔符：半角逗号 / 全角逗号 / 顿号。
 
-跟 `text/scenes.py` 认的是同一组，且理由相同（三个都是中文作者会打出来的），
-但**不共用那个私有常量**：命令行和场景块是两个不同的输入面，作者在 shell 里敲的东西
-还要过一层 shell 分词。两处同时改的日子来临时，这里该跟着改，不该是自动跟着变。
+三个都是中文作者会打得出来的分隔符。**这里曾经和 `text/scenes.py` 各有一份**，
+而那一份 2026-08-14 随场景块一起删了（ADR 0027），于是它现在是全库唯一的一份。
 **同样不含空格**——`--cast "李 管家"` 里那个空格是名字的一部分。
 """
 
@@ -884,50 +883,34 @@ def check(
         _die(f"稿子不存在：{file}")
     store = _open_store(db, project)
 
-    # 一份 list，两个消费者（parse_scenes 的 para_index 和 CheckContext.paragraphs），
-    # 于是 para_index 在这个进程里**只有一个含义**——这正是 parse_scenes 那句
-    # 「本函数不收裸文本，只收段落」要的东西。
     # 走 anchor.paragraphs() 而不是裸 splitlines()：那个函数存在的全部理由就是让
     # 「什么是一段」只有一处定义（它的 docstring 点名的两个消费者就是这儿和证据锚）。
-    # 这两者今天逐字节同解，所以这一行换过来时行为零变化——**换的是「改一处就全改」这个性质**：
-    # 从前 api/app.py 走它、这儿不走，paragraphs() 一改（比如改成按空行分段）就会静默分叉，
-    # R4 的 Issue 锚到隔壁段落，且是「偶尔差一两段」那种查两周的形态
+    # paragraphs() 一改（比如改成按空行分段）而别处没跟着改，Issue 就会锚到隔壁段落，
+    # 且是「偶尔差一两段」那种查两周的形态
     # （ADR 0006 判 offset 的那段话，一字不差地适用于 para_index 的两份定义）。
     paragraphs = split_paragraphs(file.read_text(encoding="utf-8-sig"))
-    scenes = parse_scenes(paragraphs)
 
     ctx = CheckContext(
         store=store,
         project_id=project,
         chapter=chapter,
-        scenes=tuple(scenes),
         paragraphs=paragraphs,
     )
     issues = run_checks(ctx)
 
     # 「跑了几条规则」必须印出来，且这是本命令唯一的成功输出。§10 约束 8 /
-    # checks/__init__.py:29：静默的零和真的零不许长得一样。「无 issue」的真实含义是
+    # checks/__init__.py 那张表：静默的零和真的零不许长得一样。「无 issue」的真实含义是
     # 「跑过的这几条没意见」，不是「这章没问题」——沉默的工具死得比吵闹的工具更快，
     # 只是死得更安静。**所以这里印的是 `len(ALL_CHECKS)` 和规则名，不是写死的数字。**
+    #
+    # 2026-08-14 这一行少了「N 个场景块」那一段，紧跟着那句「这一章没有场景块，所以
+    # 某条没东西可查」也一起没了（ADR 0027）。**那句话是这次砍掉的东西留下的最后一个
+    # 形态**：一条在真书上永远跑不起来的规则，每检查一次就要为自己的缺席解释一次。
     typer.echo(
-        f"第 {chapter} 章：{len(scenes)} 个场景块，跑了 {len(ALL_CHECKS)} 条规则"
+        f"第 {chapter} 章：跑了 {len(ALL_CHECKS)} 条规则"
         f"（{', '.join(c.__module__.rsplit('.', 1)[-1] for c in ALL_CHECKS)}），"
         f"{len(issues)} 条 issue。"
     )
-    if not scenes:
-        # ⚠️ **2026-08-13 之前这儿是一句 `_die`**，理由写着「没有场景块 = R4 无事可做 =
-        # 必然零 issue，不让那个零冒充体检报告」。**那句理由在「`ALL_CHECKS` 只有 R4」
-        # 的那天是对的，2026-08-02 R2/R3 进表之后就不对了**：那两条读正文，不要场景块。
-        # 而真书里没有人手写 `<!-- nh: -->`，于是这条 `_die` 的实际效果是
-        # **在整本真书上把 R2/R3 全部挡在门外**——一句为了防「假的零」而写的话，
-        # 最后造出的是「一条都跑不了」。
-        # 约束 8 的那半条原样保留，只是换了形态：不拒绝，**把那个零的成色说出来**。
-        typer.secho(
-            "  这一章没有场景块，所以「同一章两个地点」那条没东西可查"
-            "（它读的是你写的场景块，不读正文）；另外两条读的是正文，照跑。",
-            fg=typer.colors.CYAN,
-            err=True,
-        )
     if not issues:
         return
     for issue in issues:

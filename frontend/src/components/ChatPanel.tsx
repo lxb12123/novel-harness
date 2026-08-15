@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
   useChatDetail,
-  useChatRules,
   useChats,
   useCreateChat,
   useDrafts,
@@ -30,7 +29,6 @@ import {
   type TurnProgress,
 } from "../chat";
 import { useCoords } from "../store";
-import { ChatRules } from "./ChatRules";
 import { ChatSessions } from "./ChatSessions";
 import { CompareLink, DraftCandidates } from "./DraftCandidates";
 
@@ -264,15 +262,29 @@ export function ChatPanel() {
    *  一旦那一轮的回执被下一轮顶掉，这条入口就是作者唯一找得回它们的地方。
    *  **零的时候一个字都不画**：没有稿子时摆一句「还摆着 0 稿」是噪音（同回执那一条）。 */
   const desk = useDrafts(projectId, chapter);
-  /** 这一章此刻**生效着**的规矩（ADR 0023 决策二）。这儿只为了顶上那个按钮上的数
-   *  ——面板本身由 `ChatRules` 自己取，两处走的是同一个 query key，react-query 只发一次。
-   *
-   *  **零的时候按钮照样在**（不同于「还摆着 N 稿」那个入口）：一块空面板要说得出
-   *  自己是哪一种空，而作者也得有个地方确认「它没有背着我记下什么」。 */
-  const rules = useChatRules(projectId, chatId, chapter);
+  // ⚠️ **「这一章的规矩」那颗按钮和它那块面板 2026-08-14 整个撤了**（ADR 0023 决策二的
+  // 界面那一半）。作者的原话：
+  //
+  //   「这个原本就不需要展示给用户看，并且这个规则是有时效性的。比如用户说男主不准
+  //     杀人在这个沙地，那男主出了沙地这个规则就失效了，这个要由 llm 智能判断，
+  //     而不是显示出来给用户选择。」
+  //
+  // 他说的是**机制**，不是显示：一条规矩的有效期是**情境**的（「在这片沙地时」），
+  // 而引擎今天把它算成**章号**的——`agent/rules.py` 只有两档「这一轮」/「这一章」，
+  // 靠 `!=` 在切章时整批放掉。那块面板把这个粗糙度原样摆到了作者面前，还要他去管。
+  //
+  // **提炼那一步本来就是模型干的**（`agent/rules.py` 顶上那句「第五件不在这儿」），
+  // 作者一个表单都没填过——所以撤掉的只是「让他去点掉」这一半。
+  //
+  // ⚠️ **它换走了 ADR 0023 押的那条退路**（「看得见 + 能取消」）。今天的兜底是
+  // 规矩最多祸害一章（切章自动失效）；**一旦有效期改成模型判**，那条兜底就没了，
+  // 留痕必须先落到日志（「这一轮用了你说过的哪几句」）**再**改机制，顺序不能反。
+  //
+  // 后端 `GET/DELETE …/rules` 因此**变成零调用方**——这个仓库为「零调用方端点」
+  // 栽过一次（ARCHITECTURE「工作台的已知洞」第 4 条：滚动总结一直在花作者的钱，
+  // 而他看不见），所以这句话写在这儿而不是靠人记着。
 
   const [listOpen, setListOpen] = useState(false);
-  const [rulesOpen, setRulesOpen] = useState(false);
   const [said, setSaid] = useState("");
   /** 作者刚按下发送的那句话。跑完之前它在屏幕上占一格——**那不是假装**：
    *  后端做的第一件事就是把它落库（`run_chat` 的注释写着理由）。 */
@@ -311,9 +323,6 @@ export function ChatPanel() {
   const list = sessions.data ?? [];
   const current = list.find((s) => s.id === chatId) ?? null;
   const onDesk = desk.data?.drafts.length ?? 0;
-  /** 顶上那颗按钮上的数。**读不出来时它是 0，而那时按钮照样点得开**——
-   *  空按钮点开是一句「没读出来」，比在按钮上编一个数字诚实。 */
-  const onRules = rules.data?.rules.length ?? 0;
 
   // 没挑过就停在最近说过话的那一段（后端按这个顺序给），同 App 里「默认打开第一本书」。
   useEffect(() => {
@@ -323,13 +332,9 @@ export function ChatPanel() {
   // 换一段对话 = 上一段的「看更早的」和那句「不用停」都过期了。
   // **回执不在这儿清**：它自己记着属于哪一段（`receipt.chat`），切回来还看得见
   // 上一轮的结论，切走也不会跟着跑到别人头上。
-  //
-  // 规矩那一块也收起来：它摊开时**盖住对话区**，换一段对话之后作者要看的是那一段说过
-  // 什么，而不是继续盯着一块（属于新那一段的）规矩清单。
   useEffect(() => {
     setExpanded(false);
     setStopSaid(null);
-    setRulesOpen(false);
   }, [chatId]);
 
   // **认不出的说话人一条都不画**（`chat.ts::visibleMessages`）。后端今天的投影是对的，
@@ -354,9 +359,6 @@ export function ChatPanel() {
 
   function runTurn(id: string, text: string) {
     stopLanded.current = false;
-    // 规矩那一块盖在对话区上，跑一轮的时候作者要看的是它在做什么。
-    // （这一轮很可能又记下一条，而顶上那颗按钮上的数会跟着变——`useRunTurn` 失效它。）
-    setRulesOpen(false);
     setStopSaid(null);
     setReceipt(null);
     setProgress(NO_PROGRESS);
@@ -440,40 +442,27 @@ export function ChatPanel() {
       <div className="chat-head">
         <span className="chat-head-title">{current?.title.trim() || "写作助手"}</span>
         <span className="spacer" />
-        {/* 章号不是作者填的，是他此刻在写的那一章（顶栏那个选择器）。
-            **它必须显示出来**：助手回答「这儿能不能说破」时用的正是这个坐标，
-            而作者看到的是一段没有坐标的对话。 */}
-        <span className="chat-asof">按第 {chapter} 章回答</span>
+        {/* 这儿曾经有一句「按第 N 章回答」。**2026-08-14 撤掉**，作者的原话是
+            「写这一章也可能引用其他章的内容，不一定要强制地把这个显示在这」——
+            而他是对的，那句话有两处不对：
+
+            1. **它读起来像一条限制，而那条限制不存在。** 助手能去翻目录、别的章的正文
+               和梗概（正下方那句空态自己就写着）。章号管的只有「这儿能不能说破」
+               这一件事，不是「只准用这一章的材料」。
+            2. **那个坐标屏幕上本来就有**：顶栏的章节选择器和中栏的正文都停在同一章。
+               在对话头上再抄一份，抄的还是一句会误导人的措辞。
+
+            它原来的理由是「作者看到的是一段没有坐标的对话」。那件事仍然真——
+            同一段对话在第 700 章和第 722 章会给出不一样的答案——**但那属于助手
+            开口时该说的话**（「第 722 章这儿还不能说破他的身世」），不属于常驻在
+            标题栏的一行字。想补的时候补在那句话里，别把它加回这儿。 */}
         {onDesk > 0 && (
           <CompareLink pid={pid} chapter={chapter}>
             还摆着 {onDesk} 稿 ↗
           </CompareLink>
         )}
-        {/* 它记下的规矩摆在这后面（ADR 0023 决策二）。**有几条就写几条，零不写数字**
-            ——一个「0」在这儿是噪音，而「一条都没有」这件事本身要带着理由，
-            那句理由在面板里（同 `/check` 的 `rules_run`：零必须说得出自己是哪一种零）。
-            **没挑中任何一段对话时整颗按钮不画**：规矩的坐标是「这一段对话 × 这一章」，
-            没有前一半时它连问题都不成立。
-            **它和「对话列表」互斥**：两块都盖在对话区上，同时摊开就把对话挤没了——
-            而这一半的下限本来就只有 `MIN_CHAT` 那么宽（`layout.ts`）。 */}
-        {chatId && (
-          <button
-            aria-expanded={rulesOpen}
-            onClick={() => {
-              setRulesOpen((v) => !v);
-              setListOpen(false);
-            }}
-          >
-            这一章的规矩{onRules > 0 ? ` ${onRules}` : ""}
-          </button>
-        )}
-        <button
-          aria-expanded={listOpen}
-          onClick={() => {
-            setListOpen((v) => !v);
-            setRulesOpen(false);
-          }}
-        >
+        {/* 「这一章的规矩」那颗按钮原来在这儿。撤掉的理由写在上面 `listOpen` 那一段。 */}
+        <button aria-expanded={listOpen} onClick={() => setListOpen((v) => !v)}>
           对话列表
         </button>
       </div>
@@ -487,17 +476,6 @@ export function ChatPanel() {
           onPick={setChat}
           onPicked={() => setListOpen(false)}
         />
-      )}
-
-      {/* **`key` 是坐标，不是优化**：规矩的坐标是（这一段对话 × 这一章），换掉其中任何
-          一半，这块面板就是另一块了。不换 `key` 的话它原地留着，而它手上攒着一条只对
-          上一个坐标成立的东西——**上一次「这一条没能取消」那句红字**（mutation 的错误
-          活到下一次 mutate 为止）。于是作者翻了一页，红字跟着翻过去，挂在一块什么都没
-          发生的面板上。
-          这块屏幕上有过一模一样的病，而且已经修过一次：`failureHere` 那一条注释写着
-          「一句关于别处的话，长得像这儿的事实」。 */}
-      {rulesOpen && projectId && chatId && (
-        <ChatRules key={`${chatId}#${chapter}`} pid={pid} chatId={chatId} chapter={chapter} />
       )}
 
       <div className="chat-log" ref={logRef}>

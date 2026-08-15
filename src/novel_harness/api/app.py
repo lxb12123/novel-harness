@@ -27,6 +27,7 @@ from __future__ import annotations
 import re
 import os
 import tempfile
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -71,6 +72,7 @@ from ..graph import (
     SecretDetail,
 )
 from ..graph.store import (
+    ChapterInUse,
     NodeNotFound,
     SnapshotInUse,
     SnapshotIsCurrent,
@@ -85,13 +87,6 @@ from ..panel import (
     knowledge_matrix,
     resolve_cast,
     scene_constraints,
-)
-from ..text import (
-    AmbiguousScene,
-    SceneNotFound,
-    SceneWriteRefused,
-    parse_scenes,
-    write_scene_directive,
 )
 from ..text import paragraphs as split_paragraphs
 from .deps import (
@@ -276,6 +271,7 @@ description 的下一步就是三处开始说不一样的话，然后有人照�
 @asynccontextmanager
 async def _lifespan(_: FastAPI) -> Any:
     ensure_schema()  # 启动即验库在、schema 到位；库不存在直接炸，不建空库
+    _auto_refresh_windows()  # 开着才跑，后台线程，拉不到当无事发生
     yield
 
 
@@ -394,6 +390,20 @@ async def _snapshot_in_use(_: Request, exc: SnapshotInUse) -> JSONResponse:
     )
 
 
+@app.exception_handler(ChapterInUse)
+async def _chapter_in_use(_: Request, exc: ChapterInUse) -> JSONResponse:
+    # 明细一起给：屏幕上要说得出**挡路的是什么**，不是只说一句「删不掉」——
+    # 一句不带理由的拒绝会让作者去翻文件夹自己动手删，那才是真的会丢东西。
+    return _err(
+        409,
+        {
+            "error": "chapter_in_use",
+            "usage": exc.usage.model_dump(mode="json"),
+            "message": str(exc),
+        },
+    )
+
+
 @app.exception_handler(StoreError)
 async def _store_error(_: Request, exc: StoreError) -> JSONResponse:
     # 图层其余错误（QuoteMismatch 等）：作者/调用方的输入撞上了图层不变式。
@@ -416,25 +426,6 @@ async def _import_refused(_: Request, exc: importer.ImportRefused) -> JSONRespon
 async def _sync_refused(_: Request, exc: importer.SyncRefused) -> JSONResponse:
     # 某个 NNNN.md 切出 0 或 >1 章。正文可能已写进磁盘，但 sync 拒绝落库。
     return _err(422, {"error": "sync_refused", "path": exc.path, "message": str(exc)})
-
-
-@app.exception_handler(SceneNotFound)
-async def _scene_not_found(_: Request, exc: SceneNotFound) -> JSONResponse:
-    # 面板点了「写进场景 N」，但这一章没有那个场景号——什么都不发生比报错更糟（作者以为写了）。
-    return _err(404, {"error": "scene_not_found", "message": str(exc)})
-
-
-@app.exception_handler(AmbiguousScene)
-async def _ambiguous_scene(_: Request, exc: AmbiguousScene) -> JSONResponse:
-    # 同章两个同号 ## 场景 N，写哪个都是猜。
-    return _err(409, {"error": "ambiguous_scene", "message": str(exc)})
-
-
-@app.exception_handler(SceneWriteRefused)
-async def _scene_write_refused(_: Request, exc: SceneWriteRefused) -> JSONResponse:
-    # MalformedDirective（key 有两份）/ UnwritableValue（值里有表达不了的字符，回读发现）。
-    # 系统看不懂作者的文件时的唯一正确动作：原样交还 + 说清哪里看不懂，绝不写坏它。
-    return _err(422, {"error": "scene_write_refused", "message": str(exc)})
 
 
 @app.exception_handler(ValidationError)
@@ -485,6 +476,13 @@ class SettingsBody(BaseModel):
     而抹掉的症状是上文塌回 800 字，没有任何一处会红。
     """
 
+    auto_update_model_windows: bool | None = None
+    """每次打开工作台自动更新那份模型表。**同上：带没带这个键才是判据。**
+
+    `None` 不是「关掉」，是「这次没提这件事」——只想改一下地址的请求不该顺手替作者
+    把这个开关拨回去。真要关它，前端发的是 `false`。
+    """
+
 
 def _settings_response(settings: UserSettings) -> dict[str, Any]:
     """**永不回吐完整 key**——前端只需要「设没设」和「后四位」。
@@ -497,6 +495,7 @@ def _settings_response(settings: UserSettings) -> dict[str, Any]:
         # 这一位**要回显**（同上面那条「只进不出的洞」）：没填是 null，不是 0——
         # 屏幕上「没填」和「填了个 0」是两件事，混成一个数就再也分不开了。
         "context_window": settings.context_window,
+        "auto_update_model_windows": settings.auto_update_model_windows,
     }
 
 
@@ -520,9 +519,81 @@ def put_settings(body: SettingsBody) -> dict[str, Any]:
             if "context_window" in body.model_fields_set
             else current.context_window
         ),
+        auto_update_model_windows=(
+            bool(body.auto_update_model_windows)
+            if "auto_update_model_windows" in body.model_fields_set
+            else current.auto_update_model_windows
+        ),
     )
     save_user_settings(merged)
     return _settings_response(merged)
+
+
+class ModelWindowsPullFailed(Exception):
+    """那份公开的模型表没拉下来（网络、超时、内容不对）。**旧的那份原样留着。**"""
+
+
+def pull_model_windows() -> dict[str, Any]:
+    """去拉一次那份公开的模型表，成功返回回执（新增/变化/减少各几条）。
+
+    **这是全仓库唯一一份「拉那张表」的实现**，两个调用方共用：作者拨开关那一刻
+    （`PUT /api/settings` 之后前端立刻点一次刷新），和**每次打开工作台时的自动更新**
+    （`_auto_refresh_windows`）。两份实现的下一步是两条不一样的超时和两种「失败算不算数」。
+
+    Raises:
+        ModelWindowsPullFailed: 拉不到或裁完是空。调用方自己决定是报 502 还是当无事发生。
+    """
+    import json as _json
+    import urllib.error
+    import urllib.request
+    from datetime import date
+
+    from ..draft import windows as model_windows
+
+    request = urllib.request.Request(
+        model_windows.SOURCE_URL, headers={"Accept": "application/json"}
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
+            raw = _json.loads(response.read().decode("utf-8"))
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
+        raise ModelWindowsPullFailed(
+            f"没能拉到那份公开的模型表（{type(exc).__name__}）。"
+            "原来那份还在用，什么都没改。网络好了再试一次。"
+        ) from exc
+
+    try:
+        report = model_windows.refresh(raw, fetched=date.today().isoformat())
+    except (ValueError, OSError) as exc:
+        raise ModelWindowsPullFailed(str(exc)) from exc
+    return report.model_dump()
+
+
+def _auto_refresh_windows() -> threading.Thread | None:
+    """开着「自动更新」时，工作台起来之后在后台悄悄拉一次那份表。
+
+    三条边界，每一条都是「别把锦上添花变成门槛」：
+
+    * **后台线程**：启动不等它。那是一次跨公网的请求，拿它挡在工作台前面，
+      作者断网时就打不开自己的稿子了。
+    * **拉不到就当无事发生**：启动时没网是常态。旧的那份原样留着（`windows.refresh`
+      自己也拒绝用空表覆盖），屏幕上不弹任何东西——他没按过任何按钮。
+    * **默认关着**。这一位由作者自己拨开，见 `settings.Settings.auto_update_model_windows`。
+    """
+    if not load_user_settings().auto_update_model_windows:
+        return None
+
+    def run() -> None:
+        try:
+            pull_model_windows()
+        except ModelWindowsPullFailed:
+            pass  # 见上：没网是常态，不是错误
+
+    # **把线程还回去**只为一件事：测试能 join 它。没有这一下，「关着时一次都不许拉」
+    # 那条断言就只能靠 sleep 猜，而那种测试要么慢要么假绿。
+    thread = threading.Thread(target=run, name="nh-model-windows", daemon=True)
+    thread.start()
+    return thread
 
 
 @app.post("/api/settings/model-windows/refresh")
@@ -544,33 +615,10 @@ def refresh_model_windows() -> dict[str, Any]:
     * **回执说出变了什么**（新增/变化/减少各几条）。没有它这就是一颗不出声的按钮，
       作者点完只能猜有没有生效 —— 而这个仓库正在还的债有一半是那种形态。
     """
-    import json as _json
-    import urllib.error
-    import urllib.request
-    from datetime import date
-
-    from ..draft import windows as model_windows
-
-    request = urllib.request.Request(
-        model_windows.SOURCE_URL, headers={"Accept": "application/json"}
-    )
     try:
-        with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
-            raw = _json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=(
-                f"没能拉到那份公开的模型表（{type(exc).__name__}）。"
-                "原来那份还在用，什么都没改。网络好了再点一次。"
-            ),
-        ) from exc
-
-    try:
-        report = model_windows.refresh(raw, fetched=date.today().isoformat())
-    except (ValueError, OSError) as exc:
-        raise HTTPException(status_code=502, detail=f"{exc}") from exc
-    return report.model_dump()
+        return pull_model_windows()
+    except ModelWindowsPullFailed as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 # ── 上手：建书 / 导入 TXT / 同步（让非程序员不碰命令行也能起步）──────────────
@@ -873,6 +921,70 @@ def chapters(proj: Any = Depends(load_project)) -> Any:
     ]
 
 
+@app.post("/api/projects/{project_id}/chapters", status_code=201)
+def create_chapter(
+    store: Any = Depends(get_store),
+    proj: Any = Depends(load_project),
+) -> Any:
+    """在这本书末尾新起一章（空的）。**没有请求体，也没有章号入参。**
+
+    章号由磁盘上现有的文件决定（`importer.append_chapter`）——同「作者不填 `valid_from`」
+    那条规矩：让他填章号 = 邀请他把第 7 章建成第 3 章，而章号是全书的顺序键，
+    错一位整本书的时态过滤跟着错。
+
+    章标题也由这儿写（`第N章`），不是作者填的：它是切章的锚，写坏了这一章 sync 不进库。
+    起完名再改走的是**改正文第一行**那条老路（`chapterTitle.ts`），没有第二个入口。
+    """
+    try:
+        number, _ = importer.append_chapter(store, proj.id, Path(proj.root_path))
+    except FileExistsError:
+        # 另一个窗口（或另一个进程）在这两步之间已经把那一章建出来了。
+        # **不覆盖**：那边可能已经写了字。让作者刷新一下看见它，而不是把它清空。
+        raise HTTPException(
+            409,
+            {
+                "error": "chapter_exists",
+                "message": "这一章刚刚已经被建出来了（另一个窗口？）。刷新一下就能看见它。",
+            },
+        )
+    entry = next(
+        (e for e in importer.chapter_files(Path(proj.root_path)) if e.number == number),
+        None,
+    )
+    return {"number": number, "title": entry.title if entry else ""}
+
+
+@app.delete("/api/projects/{project_id}/chapters/{chapter}")
+def delete_chapter(
+    chapter: int,
+    store: Any = Depends(get_store),
+    proj: Any = Depends(load_project),
+) -> Any:
+    """删掉一章。**引擎在它上面记过东西就拒绝**（409 `chapter_in_use`，带明细）。
+
+    那条拒绝的完整论证在 `GraphStore.delete_chapter` / `ChapterInUse`：一句 DELETE
+    会连着把指向这一章的关系和证据**无声地**级联掉，而那些是这个产品唯一的资产。
+
+    正文不是删掉是**挪走**（`importer.remove_chapter` → 书文件夹底下的 `deleted/`）——
+    作者按错了还找得回来。出参里**不带那个路径**：屏幕上不摆文件路径（作者不看路径），
+    要找回来是在他自己的文件夹里找。
+
+    **章号不重排。** 删掉第 3 章之后还是 1、2、4——章号是全书的顺序键，
+    每一条边和每一条情节的 `valid_from` 都钉在它上面，重排一次等于把整本书的时态挪位。
+    """
+    try:
+        importer.remove_chapter(store, proj.id, Path(proj.root_path), chapter)
+    except importer.ChapterMissing:
+        raise HTTPException(
+            404,
+            {
+                "error": "chapter_missing",
+                "message": f"第 {chapter} 章已经不在了。刷新一下就对得上了。",
+            },
+        )
+    return {"deleted": True, "number": chapter}
+
+
 @app.get("/api/projects/{project_id}/chapters/{chapter}/history")
 def chapter_history(
     chapter: int,
@@ -938,60 +1050,13 @@ def save_chapter(
         raise HTTPException(404, {"error": "chapter_not_found", "chapter": chapter})
 
 
-# ── 场景块：## 场景 N + <!-- nh: cast=… loc=… goal=… -->（面板的「在场是谁」的来源）──
-
-
-class SceneWrite(BaseModel):
-    """回写一个场景块的 cast/loc/goal。**三个都发**：这一场的期望全态，不做 KEEP 增量——
-    前端场景条是「读出当前值 → 改 → 存全部」，所以每次写的是完整意图。空 cast / 空 loc /
-    空 goal = 删掉那个 key（write_scene_directive 的 None 语义）。
-    """
-
-    number: int
-    cast: list[str] = []
-    loc: str | None = None
-    goal: str | None = None
-
-
-@app.get("/api/projects/{project_id}/chapters/{chapter}/scenes")
-def scenes(chapter: int, proj: Any = Depends(load_project)) -> Any:
-    """这一章磁盘正文里的场景块（cast/loc/goal 全是称呼原文，不解析）。切段走 text.paragraphs()。"""
-    file = _chapter_file(proj, chapter)
-    if not file.exists():
-        raise HTTPException(404, {"error": "chapter_not_found", "chapter": chapter})
-    paras = split_paragraphs(file.read_text(encoding="utf-8-sig"))
-    return [s.model_dump(mode="json") for s in parse_scenes(paras)]
-
-
-@app.put("/api/projects/{project_id}/chapters/{chapter}/scenes")
-def write_scene(
-    chapter: int,
-    body: SceneWrite,
-    store: Any = Depends(get_store),
-    proj: Any = Depends(load_project),
-) -> Any:
-    """把 cast/loc/goal 无损写进第 chapter 章的场景 N，再 sync。**只动它拥有的那几个字符**
-    （缩进/行尾/未知 key 逐字节保留，ADR 0007：正文是作者的文件）。写完回读验尸——
-    值里有表达不了的字符 → UnwritableValue → 422，不写坏文件。
-
-    返回回写后重新解析的场景列表，让前端拿到「系统看到的」而不是「它以为写进去的」。
-    """
-    file = _chapter_file(proj, chapter)
-    if not file.exists():
-        raise HTTPException(404, {"error": "chapter_not_found", "chapter": chapter})
-    text = file.read_text(encoding="utf-8-sig")
-    # 空 = 删该 key（None 语义）；非空原样写。三个都传 = 这一场的完整意图，不用 KEEP 哨兵。
-    new_text = write_scene_directive(
-        text,
-        body.number,
-        cast=body.cast,
-        loc=body.loc or None,
-        goal=body.goal or None,
-    )
-    file.write_text(new_text, encoding="utf-8")
-    importer.sync(store, proj.id, Path(proj.root_path))
-    paras = split_paragraphs(new_text)
-    return [s.model_dump(mode="json") for s in parse_scenes(paras)]
+# ⚠️ **场景块那两条路由（`GET`/`PUT …/chapters/{n}/scenes`）2026-08-14 删了**
+# （[ADR 0027](../../../docs/adr/0027-scene-blocks-cut.md)），连同 `SceneWrite` 和 R4。
+#
+# 它们是「面板的『在场是谁』的来源」的第一版，而 ADR 0018 早就把主路换成了从正文数出来
+# （`mentioned.py`）；剩下的那半条身份是「作者手标了就压过推算」——**而真书上他一次都
+# 没标过，也不该被要求去标**。把它留着的代价不是几行死代码，是屏幕上一句永远为真的
+# 「这一章还没有场景信息」。
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1174,7 +1239,7 @@ def declare_first_appearance(
     """「他/它在这段原文里头一回露面」→ 首现章。**R2 FUTURE_LEAK 的作者入口。**
 
     **请求体里没有章号，也不该有**：首现章 = 这句引语落在哪一章，系统自己算
-    （约束 10 在这条路由上和 `declare/knows` 是同一套）。已经写到了的东西一律走这条；
+    （约束 10 在这条路由上和别的写路由是同一套：入参里没有一个位置能填章号）。已经写到了的东西一律走这条；
     还没写到的（「第 200 章才出场」）没有引语可指，那一半在 `POST /nodes` 的
     `first_appears_chapter` 字段上，见那儿的说明。
 
@@ -1189,31 +1254,32 @@ def check(
     store: Any = Depends(get_store),
     proj: Any = Depends(load_project),
 ) -> Any:
-    """对第 chapter 章的磁盘正文跑一致性规则（M3 规则集 = R2 / R3 / R4，R5 已按 ADR 0014 砍掉）。
+    """对第 chapter 章的磁盘正文跑一致性规则（今天 = R2 / R3；R4 和 R5 都已砍）。
 
-    切段和 parse_scenes 都走 `text.paragraphs()`（全库唯一定义，§1.4）——路由里**不许**
-    自己写 `.splitlines()`，否则 anchor 一改，Issue 锚就和别处「差一段」。
+    切段走 `text.paragraphs()`（全库唯一定义，§1.4）——路由里**不许**自己写
+    `.splitlines()`，否则 anchor 一改，Issue 锚就和别处「差一段」。
 
-    **不返裸 list[Issue]**：返 `{scene_count, rules_run, issues}`。静默的零和真的零不许
-    长得一样（§10 约束 8 / cli.check 的原话）——0 个场景块 = R4 无事可做 = 必然零 issue，
-    那个零不是「这章没问题」。前端据 scene_count / rules_run 把它和「跑了但没意见」分开。
+    **不返裸 list[Issue]**：返 `{rules_run, issues}`。静默的零和真的零不许长得一样
+    （§10 约束 8 / cli.check 的原话）：一条规则哑掉时它照样返回零 issue，而那个零不是
+    「这章没问题」。前端据 `rules_run` 把它和「跑了但没意见」分开。
+
+    ⚠️ **出参 2026-08-14 少了 `scene_count`**（ADR 0027）。它原本是那个「零」的成色说明
+    ——0 个场景块 = R4 无事可做——而 R4 已经不在了，再报这个数就是在替一条不存在的规则
+    解释它为什么没说话。
     """
     file = _chapter_file(proj, chapter)
     if not file.exists():
         raise HTTPException(404, {"error": "chapter_not_found", "chapter": chapter})
     paras = split_paragraphs(file.read_text(encoding="utf-8-sig"))
-    scenes = parse_scenes(paras)
     ctx = CheckContext(
         store=store,
         project_id=proj.id,
         chapter=chapter,
-        scenes=tuple(scenes),
         paragraphs=paras,
     )
     issues = run_checks(ctx)
     return {
         "chapter": chapter,
-        "scene_count": len(scenes),
         "rules_run": [c.__module__.rsplit(".", 1)[-1] for c in ALL_CHECKS],
         "issues": [i.model_dump(mode="json") for i in issues],
     }

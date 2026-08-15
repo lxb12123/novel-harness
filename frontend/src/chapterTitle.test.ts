@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { findChapters, joinTitle, splitTitle, titleOf, withTitle } from "./chapterTitle";
+import {
+  findChapters,
+  joinTitle,
+  splitHeading,
+  splitTitle,
+  titleOf,
+  withTitle,
+} from "./chapterTitle";
 
 // 「章标题 = 正文首个非空行」这条是**后端定的**（`importer.chapter_files()`）。
 // 这儿钉的是「前端改标题时改的是不是同一行」——不是同一行的话，
@@ -84,5 +91,43 @@ describe("章标题", () => {
     expect(findChapters(list, "12").map((c) => c.number)).toEqual([12, 122]);
     // 空串 = 不筛，**不是一条都不匹配**：单子刚打开时它就是空的。
     expect(findChapters(list, "  ")).toHaveLength(3);
+  });
+});
+
+// ── 章标那一行不进编辑器（2026-08-14）─────────────────────────────────────────
+//
+// 这一组钉的是**无损**：`head + body` 必须逐字节等于原文。差一个换行，作者按一次保存
+// 就把正文改了一个字节——而他什么都没做，也不会看到任何提示。
+
+describe("splitHeading", () => {
+  it.each([
+    ["第一章\n\n", "第一章\n\n", ""],
+    ["第一章 血脉\n\n正文。\n", "第一章 血脉\n\n", "正文。\n"],
+    // 只有一个换行（作者自己删掉了那个空行）
+    ["第一章\n正文。\n", "第一章\n", "正文。\n"],
+    // 三个换行：只吃掉一个，剩下的还给正文
+    ["第一章\n\n\n正文。\n", "第一章\n\n", "\n正文。\n"],
+    // 章标前面有空行 / 空白：整段都归 head，不然拼回去会少几个字节
+    ["\n\n第一章\n\n正文。\n", "\n\n第一章\n\n", "正文。\n"],
+    ["  第一章 血脉\n\n正文。\n", "  第一章 血脉\n\n", "正文。\n"],
+    // 整份就一行章标，没有换行
+    ["第一章", "第一章", ""],
+    // **认不出章标就一个字都不藏**（真书里的「楔子」）
+    ["楔子\n\n正文。\n", "", "楔子\n\n正文。\n"],
+    ["萧决推开门。\n", "", "萧决推开门。\n"],
+    ["", "", ""],
+    ["\n\n\n", "", "\n\n\n"],
+  ])("%j → head %j", (doc, head, body) => {
+    expect(splitHeading(doc)).toEqual({ head, body });
+    expect(head + body).toBe(doc); // 无损：这一条才是重点
+  });
+
+  it("章标行藏起来之后，剩下那截的下标正好差一个 head.length", () => {
+    // `CenterEditor` 拿 `locate()` 在**整份**上算下标，再减这一截喂给 CM6。
+    // 这条断言就是那个减法的依据。
+    const doc = "第一章 血脉\n\n萧决推开门。\n";
+    const { head, body } = splitHeading(doc);
+    const at = doc.indexOf("萧决");
+    expect(body.slice(at - head.length, at - head.length + 2)).toBe("萧决");
   });
 });

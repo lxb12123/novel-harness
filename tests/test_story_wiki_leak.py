@@ -421,7 +421,7 @@ def surfaces_of(book: PoisonedBook) -> dict[str, str]:
                 options=["让她看见", "先不给她"],
             ),
             # ADR 0023 的记规矩：出参会原样进对话历史，所以它也是一个面。
-            _call("remember_rule", rule="这一章别写打斗"),
+            _call("remember_rule", rule="这一章别写打斗", until="这一章写完为止"),
             # 失败那条路：拿秘密 / 未来地点 / 不存在的章去问每一层。
             #
             # **这里故意不拿内容 tell（`TELL`）去问。** 拒绝语会把称呼原样回显，而那个串是

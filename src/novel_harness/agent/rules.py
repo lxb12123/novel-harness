@@ -95,7 +95,6 @@ from __future__ import annotations
 import unicodedata
 from collections.abc import Sequence
 
-from pydantic import BaseModel, ConfigDict, Field
 
 from ..draft.length import DraftLanguage, count_units
 from .loop import AgentMessage, Conversation, Role
@@ -108,22 +107,39 @@ RULE_MAX_UNITS = 120
 一段免费的常驻 prompt，而作者是按 token 付钱的那个人。
 """
 
-REPEAT_TO_WIDEN = 2
-"""**作者**说到第几遍自动从「就这一批」升到「这一章都这样」（ADR 0023：一次是偶然，两次是模式）。
+RULE_KEEP_MAX = 12
+"""最多带几条规矩进 prompt（最近的优先）。**这是成本的闸，不是有效期。**
 
-**「说了几遍」是集合判断**：`rule_key()` 归一化之后**字节相等**才算同一条。
-「这两句话是不是一个意思」是语义判断，ADR 0005 禁止——所以提炼那一步（模型干的）
-必须对同一条规矩**重述成一模一样的措辞**，工具描述里要写死这句话。
+2026-08-14 起规矩**不按章号过期**（[ADR 0028](../../../docs/adr/0028-rules-expire-by-situation.md)）：
+一条规矩什么时候不作数是**情境**的事（「男主在这片沙地时别杀人」——他走出沙地它就没了），
+而情境要读懂剧情才判得出来。引擎不判，**模型判**：所有还在的规矩带着「作者写第几章时
+说的」一起进 prompt，作不作数由读到它的那个模型决定。
 
-**数的是作者开口的次数，不是引擎记了几条**（`_hearings`）。ADR 把这条机制写成一个
-来回：取窄（就这一批）⇒「猜窄了的代价是**作者再说一次**（顺口，他本来就要评价下一批）」
-⇒ 升到章级。照记录条数数的话，模型在**同一批**里把同一条规矩记两遍就直接升到章级，
-而那一批里作者只说过一次——方向正是 ADR 点名最贵的那一侧：「猜宽了的代价是**一条隐形的
-规矩跟着他走，他不知道它在**」。它够得着：`TurnLimits.repeat_limit` 允许同一个调用在
-一轮里出现三次，而 resume 补跑一条 `pending` 的调用就会把同一条规矩再记一遍。
+于是唯一还需要引擎管的是**别让它无限长**：一条上限 `RULE_MAX_UNITS` 字，总共
+`RULE_KEEP_MAX` 条，最坏情况约 1,440 字的常驻 prompt——作者是按 token 付钱的那个人。
+挤掉的是**最早说的那几条**，方向和 ADR 0023 原来那条「拿不准就放掉」一致。
+"""
 
-**代价说清楚**：模型换了个说法，计数就从头开始，那条规矩多活一轮批级、少活一段章级。
-方向是**放掉**那一侧，和上面那张表一致。
+RULE_PROMPT_PREFIX = "（作者写第 {chapter} 章时随口说的；情境不在了就不必守）"
+"""每条规矩进 prompt 时前面那一句——**模型没写下时效时的兜底那一版**。
+
+引擎能确定地知道的只有一件事：**他是在写第几章时说的**（`ToolContext.working_chapter`，
+约束 10 照旧——不是作者填的，也不是模型填的）。剩下那句「情境不在了就不必守」是
+一条**许可**，不是判断：它把「这条还作不作数」这个问题明确交给读到它的模型。
+
+**今天它只招呼老会话**：迁移 016 之后模型每记一条规矩都必须同时写下 `until`，
+那时用的是下面那一版（把它自己那句话摆回它面前）。空串只可能来自 016 之前存下的行，
+而**不给它们补写**——替模型说一句它没说过的话，比缺一句更贵。
+
+**不写进 canonical**：库里存的是作者那句话本身 + 模型那句时效，这一行只在投影里拼
+（`loop.project()`）。理由和撤销那条一样——canonical 只增不改，而措辞会变。
+"""
+
+RULE_PROMPT_UNTIL = "（作者写第 {chapter} 章时说的，你当时判定它管到「{until}」；情境不在了就不必守）"
+"""模型写下过时效时用的那一版（迁移 016）。
+
+**「你当时判定」这四个字是有意的**：那句话是它自己写的，不是引擎的规定，也不是作者的
+要求。它下一轮读到的是自己的判断，而不是一条不知道谁定下的期限——后者会被当成硬约束。
 """
 
 _DROPPED_PUNCTUATION = frozenset(
@@ -208,37 +224,19 @@ def is_revocation(message: AgentMessage) -> bool:
     return message.role is Role.SYSTEM and message.revokes_seq is not None
 
 
-def revocation(messages: Sequence[AgentMessage], seq: int) -> AgentMessage:
-    """作者取消第 `seq` 条规矩。**追加一条指着它的记录**，不是把那一条删掉。
-
-    Args:
-        messages: 这一段会话的 canonical 历史（**整段**，不是尾巴）。
-        seq: 要取消的那条规矩在 `messages` 里的下标，也就是 `AuthorRule.seq` ——
-            读端摆给作者的就是它，**界面回传的也只能是它**。
-
-    **重复取消不报错**：作者双击、两个标签页各点一次都是常态，多出来的那条是一次无害的
-    重复（撤销按身份生效，第二条杀的是同一批）。
-
-    Raises:
-        ValueError: 那个下标不在这段历史里，或者它指的不是一条规矩。**两句都是说给
-            作者听的中文**——这条路的尽头是他手上那个按钮，不是一条诊断。
-    """
-    if not 0 <= seq < len(messages):
-        raise ValueError("找不到要取消的那条规矩——它不在这段对话里。")
-    if not is_rule(messages[seq]):
-        raise ValueError("那一条不是你定下的规矩，取消不了它。")
-    return AgentMessage(role=Role.SYSTEM, revokes_seq=seq)
-
-
-def rule_message(text: str, *, chapter: int | None) -> AgentMessage:
+def rule_message(text: str, *, chapter: int | None, until: str = "") -> AgentMessage:
     """把模型提炼出来的一条规矩变成 canonical 里的一条记录。
 
     Args:
         text: 规矩本身（会经 `normalized_rule`）。
         chapter: **只能是 `ToolContext.working_chapter`**，见模块 docstring。
+        until: **这条管到什么时候**，模型自己写的一句人话（迁移 016）。
+            同样过 `normalized_rule`——它和规矩正文一样会每轮重发，一样该有长度上限，
+            一样不许是「只剩标点」那种记得下却一次都用不上的东西。
+            **默认空串是给老调用方留的**，不是给模型留的：工具入参上它是必填。
 
     Raises:
-        ValueError: 没有章号坐标，或者章号不合法，或者规矩空/超长。
+        ValueError: 没有章号坐标，或者章号不合法，或者规矩/时效空、超长。
     """
     if chapter is None:
         raise ValueError(
@@ -247,65 +245,30 @@ def rule_message(text: str, *, chapter: int | None) -> AgentMessage:
         )
     if chapter < 1:
         raise ValueError("章号至少是 1。")
-    return AgentMessage(role=Role.SYSTEM, content=normalized_rule(text), chapter=chapter)
+    return AgentMessage(
+        role=Role.SYSTEM,
+        content=normalized_rule(text),
+        chapter=chapter,
+        rule_until="" if not until.strip() else normalized_rule(until),
+    )
 
 
-class AuthorRule(BaseModel):
-    """一条**现在生效**的规矩（读端用；投影自己走 `surviving_rule_indices`）。
-
-    这是 ADR 0023「摆出来、能取消」的**摆出来**那一半；取消那一半是 `revocation()`，
-    它收的就是下面那个 `seq`。
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    text: str
-    chapter: int = Field(ge=1)
-    """它绑在第几章上。**规矩的全部时间状态就这一个数。**"""
-
-    heard: int = Field(ge=1)
-    """这一章里**作者**说过它几遍（`rule_key` 相等，按作者回合数，见 `_hearings`）。
-
-    `>= REPEAT_TO_WIDEN` = 已经升到章级。**不是「引擎记了几条」**：同一批里记两遍
-    算一遍，那一批里作者只开过一次口。
-    """
-
-    seq: int = Field(ge=0)
-    """它在 canonical 历史（`Conversation.messages`）里的下标。**取消时按它定位。**
-
-    **它不是会话表里那一列 `seq`**：那儿的编号把稳定前缀也数在内，两者差一个前缀长度。
-    这个数和界面上每条消息带的那个是同一个坐标（`api/chat.py::_visible` 也按历史下标编），
-    所以「作者点了哪一条」在整条链上只有一种读法。
-    """
-
-    @property
-    def chapter_wide(self) -> bool:
-        """章级（整章有效） vs 批级（活到作者下一次开口）。"""
-        return self.heard >= REPEAT_TO_WIDEN
-
-    @property
-    def valid_from(self) -> int:
-        """闭开区间的左端。**它是 `chapter` 的别名，不是第二个存起来的数。**
-
-        这里刻意不存一对端点：存两个数就有两处能不一致，而这个仓库把「同一个事实两份
-        拷贝」当成头号病。**这条区间也不是一条图上的边**——这个模块没有 `StoryGraph`、
-        没有连接、一句 SQL 都没有，`[valid_from, valid_to)` 那份唯一实现仍然只在
-        `graph/queries.py`（铁律 3）。
-        """
-        return self.chapter
-
-    @property
-    def valid_to(self) -> int:
-        """闭开区间的右端：**下一章**。切章就是失效，不是「有效期长一点」。"""
-        return self.chapter + 1
-
-
-def _last_author_index(messages: Sequence[AgentMessage]) -> int:
-    """作者最后一次开口在哪儿。没开过口返回 `-1`。"""
-    for index in range(len(messages) - 1, -1, -1):
-        if messages[index].role is Role.USER:
-            return index
-    return -1
+# ⚠️ **`AuthorRule` 和 `live_rules()` 2026-08-14 删了**（[ADR 0028]）。
+# 它们是 ADR 0023「摆出来、能取消」那一半的读端——服务的是写作助手顶上那颗
+# 「这一章的规矩」按钮，而那颗按钮连同它背后的两条路由一起撤了：规矩是模型从作者随口
+# 一句话里提炼的，**收集本来就是默默的**，摆出来让他管的只有「撤销」那半边。
+#
+# 作者今天怎么让一条规矩失效？**跟助手说一句。** 那句话在对话里，模型读得到；
+# 而规矩本身带着「情境不在了就不必守」进 prompt。这不是把退路拿掉，是把退路换成
+# 他本来就在用的那条——他每一稿都要读，不对当场就会说（作者原话：
+# 「用户察觉到错误自然会在左侧章节看到实时的内容」）。
+#
+# **`revocation()` 也一起删了**（写入方），但 `is_revocation` / `_revoked_indices`
+# **必须留着**：canonical 只增不改，那些天里存下的撤销记录还躺在真实的库里，
+# 不认它们就等于把作者当年明确取消过的规矩又放回 prompt。
+#
+# 哪天发现模型死守一条作者已经不要的规矩，正确的加法是给它一个 `forget_rule` 工具
+# （和 `remember_rule` 对称、同样不上屏），**不是把那颗按钮加回来**。
 
 
 def _identity(message: AgentMessage) -> tuple[str, int | None]:
@@ -342,74 +305,67 @@ def _revoked_indices(messages: Sequence[AgentMessage]) -> frozenset[int]:
     return frozenset(dead)
 
 
-def _hearings(
-    messages: Sequence[AgentMessage], chapter: int, revoked: frozenset[int]
-) -> dict[str, int]:
-    """这一章里每一条规矩**被作者说过几遍**（`rule_key` 相等算同一条）。
-
-    **判据是结构：它被记在第几个作者回合里。** 一个「作者回合」= 两句作者的话之间的
-    那一段，也就是模型在他说完之后干的那一批活。同一批里记两遍算**一遍**——
-    那一批里作者只开过一次口，见 `REPEAT_TO_WIDEN`。
-
-    **被撤销的那几条不计数**：不然作者取消完再说一遍，计数从 3 起跳、当场就是章级，
-    而他刚刚明确表示过不想要它。
-
-    这仍然是集合判断：数的是回合的**下标集合**有多大，一个「这两次是不是同一个意思」
-    都没问。
-    """
-    turns: dict[str, set[int]] = {}
-    turn = 0
-    for index, message in enumerate(messages):
-        if message.role is Role.USER:
-            turn += 1
-            continue
-        if index not in revoked and is_rule(message) and message.chapter == chapter:
-            key = rule_key(message.content)
-            if key:
-                turns.setdefault(key, set()).add(turn)
-    return {key: len(seen) for key, seen in turns.items()}
-
-
-def surviving_rule_indices(
-    messages: Sequence[AgentMessage], chapter: int | None
-) -> frozenset[int]:
+def surviving_rule_indices(messages: Sequence[AgentMessage]) -> frozenset[int]:
     """这一份投影里**留得下来**的规矩，返回它们在 `messages` 里的下标。
 
-    ── 三条判据，顺序无关 ──────────────────────────────────────────────
+    ── 2026-08-14：这里少了一整条判据，而那是这次改动的全部内容 ──────────────
 
-    1. **切章就失效**（`!=`，不是 `>`）。ADR 0023：默认只管当前这一章。
-       `chapter is None`（不知道作者在写第几章）⇒ **一条都不留**。
-       这两处都是「拿不准就放掉」，和工具返回那一档正好相反。
-    2. **取窄**：作者只说过一遍的规矩活到**他下一次开口**为止（结构判据：它后面还没有
-       USER 消息）。猜窄了的代价是作者顺口再说一次；猜宽了的代价是**一条隐形的规矩
-       跟着他走**。
-    3. **数重复**：同一章里同一串字被**作者**说到第 `REPEAT_TO_WIDEN` 遍，整章有效
-       （`_hearings`：数的是作者回合，不是记录条数）。
-    4. **作者取消掉的不留**（`_revoked_indices`）。
+    从前是「切章就失效」（`chapter != working_chapter` 一律丢），外加一档「同一句说到
+    第二遍就从这一批升到这一章」。**两条都没了**（[ADR 0028](../../../docs/adr/0028-rules-expire-by-situation.md)）：
+    一条规矩什么时候不作数是**情境**的事——作者说「男主在这片沙地别杀人」，他走出沙地
+    它就该没了，而那跟第几章没有关系。章号是引擎手上唯一一个能确定知道的数，于是它
+    被当成了有效期的代理，**而那个代理在真书上两个方向都错**：写一章要好几天、跨好几段
+    对话，翻一页规矩就没了；而一条只管一场戏的规矩，在同一章里也早该失效。
+
+    今天引擎只做三件确定的事，一件语义判断都没有（ADR 0005 铁律没被碰）：
+
+    1. **作者取消掉的不留**（`_revoked_indices`）；
+    2. **同一串字只留最后那一次**（`rule_key` 字节相等，纯去重——记两遍就在 prompt 里
+       出现两遍，是纯浪费）；
+    3. **最多 `RULE_KEEP_MAX` 条，留最近的**（成本的闸，不是有效期）。
+
+    「它此刻还作不作数」交给模型：每条规矩进 prompt 时带着 `RULE_PROMPT_PREFIX`
+    （作者写第几章说的 + 一句「情境不在了就不必守」）。
+
+    **入参不再有 `chapter`。** 它以前是判据的一半；今天引擎对规矩的有效期不再有意见，
+    留一个不影响结果的参数只会让下一个人以为它还在过滤什么。
 
     **入参的 `messages` 必须是完整的那一段历史**：这里的下标就是 `revokes_seq` 的坐标，
     拿一段剪过的、或者一截尾巴进来，撤销会指到别的消息上。`project()` 因此把规矩这一档
     排在任何删减**之前**。
-
-    **同一条只留最后那一次**：记了两遍就在 prompt 里出现两遍，是纯浪费。
     """
-    if chapter is None:
-        return frozenset()
-
     revoked = _revoked_indices(messages)
-    heard = _hearings(messages, chapter, revoked)
-    last_author = _last_author_index(messages)
     keep: dict[str, int] = {}
     for index, message in enumerate(messages):
-        if index in revoked or not is_rule(message) or message.chapter != chapter:
+        if index in revoked or not is_rule(message):
             continue
         key = rule_key(message.content)
         if not key:
             continue
-        if heard[key] < REPEAT_TO_WIDEN and index < last_author:
-            continue  # 批级，而作者已经又开口了 —— 这一批过去了
-        keep[key] = index
-    return frozenset(keep.values())
+        keep[key] = index  # 后面的盖掉前面的 = 同一串字只留最后那一次
+    # **按下标重排一次再截尾**：`dict` 保的是「第一次被说出来」的顺序，直接截尾会变成
+    # 「最早提到的 N 条」，而这道闸要留的是最近的 N 条。
+    return frozenset(sorted(keep.values())[-RULE_KEEP_MAX:])
+
+
+def prompt_text(message: AgentMessage) -> str:
+    """一条规矩进 prompt 时的样子：前缀 + 作者那句话。
+
+    三档，按信息量从多到少退：
+
+    1. 有章号 + 模型写过时效 ⇒ `RULE_PROMPT_UNTIL`（把它自己那句判断摆回它面前）；
+    2. 有章号、没时效 ⇒ `RULE_PROMPT_PREFIX`（016 之前存下的那些）；
+    3. **连章号都没有 ⇒ 只发那句话。** 老会话里存过 `chapter is None` 的规矩
+       （那时的 `rule_message` 还没拒它们），给它们编一个章号就是造一条假的坐标。
+    """
+    if message.chapter is None:
+        return message.content
+    if message.rule_until:
+        return (
+            RULE_PROMPT_UNTIL.format(chapter=message.chapter, until=message.rule_until)
+            + message.content
+        )
+    return RULE_PROMPT_PREFIX.format(chapter=message.chapter) + message.content
 
 
 def expired_rule_count(
@@ -438,32 +394,6 @@ def expired_rule_count(
     }
     surviving = {_identity(messages[index]) for index in live}
     return len(everything - surviving)
-
-
-def live_rules(conversation: Conversation, chapter: int | None) -> tuple[AuthorRule, ...]:
-    """第 `chapter` 章此刻生效的那几条规矩，**按它们被说出来的顺序**。
-
-    这是「摆出来、能取消」那条理由链（ADR 0020 → 0022 → 0023）的读端：不问作者，
-    但他看得见、改得掉。**投影不走这个函数**（它只要下标），两边判据同源
-    （`surviving_rule_indices`），不写第二份。
-    """
-    live = surviving_rule_indices(conversation.messages, chapter)
-    if not live:
-        return ()
-    # 计数走 `_hearings`（作者回合），**不在这儿写第二份**：读端显示的「说过几遍」
-    # 和投影用来判章级的必须是同一个数，否则清单上写着「说过 2 遍」而它其实没升级。
-    counts = _hearings(
-        conversation.messages, chapter, _revoked_indices(conversation.messages)
-    )
-    return tuple(
-        AuthorRule(
-            text=conversation.messages[index].content,
-            chapter=chapter,  # `index in live` 已经保证了它等于消息上那个数
-            heard=counts[rule_key(conversation.messages[index].content)],
-            seq=index,
-        )
-        for index in sorted(live)
-    )
 
 
 def promoted(conversation: Conversation, text: str) -> Conversation:
@@ -497,16 +427,16 @@ def promoted(conversation: Conversation, text: str) -> Conversation:
 
 
 __all__ = [
-    "REPEAT_TO_WIDEN",
+    "RULE_KEEP_MAX",
     "RULE_MAX_UNITS",
-    "AuthorRule",
+    "RULE_PROMPT_PREFIX",
+    "RULE_PROMPT_UNTIL",
     "expired_rule_count",
     "is_revocation",
     "is_rule",
-    "live_rules",
     "normalized_rule",
     "promoted",
-    "revocation",
+    "prompt_text",
     "rule_key",
     "rule_message",
     "surviving_rule_indices",

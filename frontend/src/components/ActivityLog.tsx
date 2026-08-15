@@ -3,6 +3,7 @@ import { useActivity, useActivityDetail, useRuns, useStartExtraction } from "../
 import { useOpenChapter } from "../autopilot";
 import { refusalText } from "../chat";
 import { useCoords, type Tab } from "../store";
+import { RulesTable } from "./RulesTable";
 import { shownTime } from "../time";
 import type {
   ActivityCost,
@@ -460,6 +461,14 @@ export function ActivityLog() {
             setOpenId(null);
           }}
         />
+      </div>
+
+      {/* 你交代过的那些话（ADR 0028 + 迁移 016）。**摆在活动记录上面**：
+          它是一小段、几乎总是空的、而且是「回头查」的东西；压在几百行流水下面
+          等于没有。理由和「这儿为什么没有取消按钮」都写在 `RulesTable.tsx` 顶上。 */}
+      <div className="log-rules">
+        <h3>你交代过的</h3>
+        <RulesTable />
       </div>
 
       {log.isLoading && <div className="empty">读取中…</div>}

@@ -18,9 +18,9 @@ kill-gate 量出来的就不是产品的行为。
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 from ..graph import InformationScope, StoryGraph, TextAnchor
 
@@ -28,43 +28,24 @@ FIRE_SCOPE = InformationScope.CANON
 """规则唯一许可开火的层。**规则不许接受 scope 参数。**
 
 PROVISIONAL 是「抽取的、未确认」，拿它报错等于用一条 Agent 猜出来的事实去质疑作者——
-原则 5 的反面。CANON 是「作者确认过」，所以 R4 的全部断言都是「作者声明 vs 作者声明」。
+原则 5 的反面。
+
+⚠️ **2026-08-14 起它没有显式调用方**：唯一那个（R4 的 `state_at(..., scope=FIRE_SCOPE)`）
+随 R4 一起砍了（[ADR 0027](../../../docs/adr/0027-scene-blocks-cut.md)），而 R3 走的是
+`state_at` 的默认值——它**恰好**也是 `CANON`。留着这个常量是因为那个「恰好」是这条
+铁律今天唯一的实现：默认值哪天改了，这儿才有一个地方能把话说清楚。
 """
 
 
-class Scene(BaseModel):
-    """场景块的声明（PLAN §5「改 3」的那行 Markdown 注释）。
-
-    ```markdown
-    ## 场景 3
-    <!-- nh: cast=萧决,顾清音,李管家 loc=青云城主府 goal=李管家试探萧决的身世 -->
-    ```
-
-    **`cast` / `loc` 是作者写的称呼原文，不是 node_id。** 规则自己去 `resolve`——
-    因为「这个称呼解析不出唯一节点」正是规则必须闭嘴的那种情况，把解析藏在上游
-    会让规则拿到一个已经被猜过一次的答案。
-
-    这个类型是 `text/scenes.py`（解析与写回）和 `checks/` 的共享契约，定义在消费者
-    这一侧，理由同 `TextAnchor`：**契约有两份定义就等于没有契约。**
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    number: int = Field(ge=1)
-    """`## 场景 N` 里的 N。"""
-
-    cast: list[str] = Field(default_factory=list)
-    """在场角色的称呼，顺序 = 作者写的顺序。"""
-
-    loc: str | None = None
-    goal: str | None = None
-
-    para_index: int = Field(ge=0)
-    """声明行在本章段落里的 0-based 位置。R4 的 Issue 锚在这里——
-    它不读正文，但它报的问题**有**一个精确的物理位置：作者写错的那行声明。"""
-
-    decl_text: str
-    """声明行原文（`<!-- nh: ... -->`），作为锚的 `quote_text`。"""
+# ⚠️ **`Scene` 和 `CheckContext.scenes` 2026-08-14 删了**（[ADR 0027](../../../docs/adr/0027-scene-blocks-cut.md)）。
+# 场景块是作者要在正文里手写的 `## 场景 N` + `<!-- nh: cast=… loc=… -->`，唯一的消费者
+# 是 R4——而两样一起砍掉的判据是**真书上零覆盖**：导进来的稿子里一个场景块都不会有，
+# 于是 R4 结构性地永远跑不了，而屏幕上还挂着一句催作者去补的话。
+#
+# **别把它当成「以后要恢复的东西」再加回来。** 场景块想要的那些信息（这一章分了几场、
+# 每场谁在、在哪儿）都不是「作者写之前先填」的东西，是**写出来的结果**——ADR 0018 已经
+# 就「在场是谁」下过一次同样的判断，`mentioned.py` 是那次的产物。真要有「每场在哪儿」，
+# 出处是抽取器（它已经在写 `LOCATED_AT` 了），不是一套要作者去学的标记语法。
 
 
 class Issue(BaseModel):
@@ -78,13 +59,13 @@ class Issue(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     rule: str
-    """哪条规则产出的（R2 / R3 / R4 / R5）。用于「关掉某条规则」和归因误报。"""
+    """哪条规则产出的（今天只剩 R2 / R3）。用于「关掉某条规则」和归因误报。"""
 
     issue_type: str
     """**开放字符串枚举**（ADR 0005）：SQLite 改 CHECK 要重建整张表，而 issue_type
     只进 `validation_report.issues_json`，不参与任何过滤。
 
-    v1 填规则自己的名字（`LOCATION_CONFLICT`）。ConStory-Bench 的 5 类 19 子类映射
+    v1 填规则自己的名字（`FUTURE_LEAK`）。ConStory-Bench 的 5 类 19 子类映射
     等 `validation_report` 真的开始写行时再补——v1 一行不写，现在映射是在无数据的
     情况下猜分类法。
     """
@@ -113,9 +94,6 @@ class CheckContext:
     chapter: int
     """全书顺序位置（1-based），由导入器分配。不是正文里印的章号——分卷重启和番外
     会让印号重复，而时态过滤 `valid_from_chapter <= :ch` 要求全序键。"""
-
-    scenes: Sequence[Scene] = field(default_factory=tuple)
-    """本章的场景块声明，按出现顺序。R1 / R4 只吃这个，**不读正文**。"""
 
     paragraphs: Sequence[str] | None = None
     """本章正文，按段落切开；`para_index` 是它的 0-based 下标。

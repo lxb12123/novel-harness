@@ -48,9 +48,15 @@ describe("对话摊在中栏右半边", () => {
     expect(screen.getAllByText("写作助手").length).toBeGreaterThan(0);
   });
 
-  it("**屏幕上显示它按第几章回答** —— 那是它判断「这儿能不能说」的坐标", async () => {
+  it("🔴 **不写「按第几章回答」** —— 那句话把一条不存在的限制说成了规则", async () => {
+    // 2026-08-14 反过来了。这一条原来钉的是「屏幕上显示它按第几章回答」，
+    // 理由是「那是它判断能不能说破的坐标」。作者看到的却是另一件事：
+    // 「按第 722 章回答」读起来是**「只准用这一章的材料」**——而助手能翻目录、
+    // 翻别的章的正文和梗概（正下方那句空态自己就这么写着）。
+    // 章号真正管的只有「这儿能不能说破」，那属于助手开口时该说的话。
     renderWithApi(<ChatPanel />);
-    expect(await screen.findByText("按第 2 章回答")).toBeInTheDocument();
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    expect(screen.queryByText(/按第 \d+ 章回答/)).toBeNull();
   });
 
   it("会话的内部标识一个字符都不上屏", async () => {

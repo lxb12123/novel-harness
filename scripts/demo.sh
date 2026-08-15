@@ -18,7 +18,7 @@
 #
 #   已确认的声明 → 真的 SQLite 文件 → SqliteStoryGraph → resolve_cast → knowledge_matrix
 #     → 终端上那个框                                      ← README:20-31 逐格
-#   同一个库 → parse_scenes → run_checks → Issue + (para_index, quote_text, k)
+#   同一个库 → run_checks → Issue + (para_index, quote_text, k)
 #
 # 时态下界（ch87/ch88）、fail-closed 的两面、「师兄」→2 人、R4 开火与闭嘴——全在这条。
 #
@@ -170,45 +170,27 @@ has "一个都没解析出唯一角色"
 
 check() { _run uv run nh check --db "$DB" -p "$PID" --chapter 151 -f "$1"; }
 
-# R4 = 作者声明 vs 作者声明：场景块写着在青云城主府，而图上萧决自第 150 章起在北荒。
-step "nh check —— R4 抓到 LOCATION_CONFLICT"
-cat >"$TMP/ch151_conflict.md" <<'EOF'
-## 场景 1
-<!-- nh: cast=萧决 loc=青云城主府 goal=李管家试探萧决的身世 -->
+# ⚠️ **「规则会开火」那一段 2026-08-14 挪到泳道 2 去了**（脚本末尾）。
+# 它原来是 R4（场景块声明的地点 vs 图上的地点），而 R4 连同场景块一起砍了（ADR 0027）。
+# 顶上来的 R3 要一条「他死了」的边，而 `nh declare dead` 只收**引语**（约束 10：
+# 作者永不填章号）——`seed_demo.py` 这一条泳道**磁盘上没有正文**，那句引语无处可找。
+# 所以开火那一半跟着能算出章号的那条泳道走，这儿只留「它会闭嘴」这一半。
 
-　　萧决把那碗药搁在石阶上，很久没有说话。
-EOF
-check "$TMP/ch151_conflict.md"
-exits_nonzero "nh check（有冲突）"
-has "[R4] LOCATION_CONFLICT"
-has "北荒"
-has "青云城主府"
-has "建议：" # 建议由规则确定性产出（PLAN 改 13），不是 LLM 编的
-# 锚是 (para_index, quote_text, occurrence_k)，**永远不是 offset**（ADR 0006）。
-has "第 1 段"
-has "第 0 次"
-has "<!-- nh: cast=萧决 loc=青云城主府 goal=李管家试探萧决的身世 -->"
-printf '%s\n' "$OUT"
-
-# 干净的一章。**这一条不是凑数**：上面那条只证明 R4 会开火，不证明它会闭嘴——
-# 一条永远开火的规则同样能让上面全绿，而那是 M3 生死线（误报 < 1 条/章）的死法。
-step "nh check —— 场景改到北荒，R4 闭嘴（且必须报「跑了几条规则」）"
+# 干净的一章。**这一条不是凑数**：泳道 2 那条只证明规则会开火，不证明它会闭嘴——
+# 一条永远开火的规则同样能让那一条全绿，而那是 M3 生死线（误报 < 1 条/章）的死法。
+step "nh check —— 没有对话标签，规则闭嘴（且必须报「跑了几条规则」）"
 cat >"$TMP/ch151_clean.md" <<'EOF'
-## 场景 1
-<!-- nh: cast=萧决 loc=北荒 goal=雪夜独行 -->
-
 　　窗外的雪落下来。
 EOF
 check "$TMP/ch151_clean.md"
-exits_zero "nh check（无冲突）"
+exits_zero "nh check（无问题）"
 has "0 条 issue"
 # 零 issue 必须带着「跑了几条规则」一起出现（§10 约束 8）：「无 issue」的真实含义是
-# 「这 3 条规则没意见」，不是「这一章没问题」。
-# ⚠️ 这个 3 = `len(ALL_CHECKS)`。**加规则时要改这儿**——
+# 「这 2 条规则没意见」，不是「这一章没问题」。
+# ⚠️ 这个 2 = `len(ALL_CHECKS)`。**加规则或砍规则时要改这儿**——
 # `tests/test_doc_numbers.py::test_demo_pins_the_real_rule_count` 会拦住忘了改的那一次
 # （这一行曾经写着「1」，R2/R3 在 2026-08-02 落地后心跳断了四天没人发现）。
-has "跑了 3 条规则"
-has "location_conflict"
+has "跑了 2 条规则"
 has "future_leak"
 has "dead_speaks"
 
@@ -249,36 +231,56 @@ has "切出 $CHAPTERS 章"
 # 长得一模一样，而它的代价是下面每一条 declare 都报「引语找不到」——作者会去查引语。
 has "库里现在 $CHAPTERS 章"
 
-step "真链路 —— 声明一个人和一条秘密"
+step "真链路 —— 声明一个人"
 nh2 declare character 萧决
 exits_zero "nh declare character"
-nh2 declare secret 血脉秘密
-exits_zero "nh declare secret"
 
 # ── 这一步是全脚本的头等断言 ─────────────────────────────────────────────
 # 作者敲的只有一句从正文里复制的话。他没有输入 3，也没有任何一个旗标能让他输入 3。
-step "真链路 —— nh declare knows：章号由引语算出来"
-nh2 declare knows --who 萧决 --secret 血脉秘密 --quote "你身上流的不是萧家的血"
-exits_zero "nh declare knows"
-has "valid_from = ch3" # ← 3 是**算出来的**：这句话落在 fixture 的第三章。
-has "第 3 章"          #   上面那条命令行里没有 3，整条泳道里也没有任何一个章号入参。
+#
+# ⚠️ **2026-08-14：这一步从 `nh declare knows` 换成了 `nh declare dead`。**
+# 不是因为这条更好，是因为 `declare knows` / `declare where` 已经**不存在了**
+# （`1364ba0`：手工声明「谁知道什么 / 谁在哪儿」退场，只留抽取那条路）。
+# **这条心跳从那次改动起就一直是红的，没有人发现** —— 正是这个脚本自己反复警告的那种断法
+# （CLAUDE.md：上一次断了四天）。头等断言本身一个字没变：**章号由引语算出来。**
+step "真链路 —— nh declare dead：章号由引语算出来"
+nh2 declare dead --who 萧决 --quote "你身上流的不是萧家的血"
+exits_zero "nh declare dead"
+has "ch3" # ← 3 是**算出来的**：这句话落在 fixture 的第三章。
 printf '%s\n' "$OUT"
 
-# 同一条闭开区间下界，这次穿过的是**真实的声明链路**而不是替身。ch87/ch88 那一格证明
-# 时态过滤在 seed 出来的边上活着；这一格证明它在一条 valid_from 由引语算出来的边上
-# 也活着——两者之间隔着 evidence 表和整条 put_evidence → upsert_edge 的血统。
-step "真链路 —— AS OF：ch3 知道 / ch2 还不知道"
-nh2 panel --chapter 3 --cast 萧决
-exits_zero "nh panel -c 3（真链路）"
-has "✓ 知道 (ch3)"
-nh2 panel --chapter 2 --cast 萧决
-exits_zero "nh panel -c 2（真链路）"
-has "✗ 不知道"
-lacks "✓ 知道 (ch3)"
+# ── 同一条闭开区间下界，这次穿过的是**真实的声明链路** ──────────────────────
+#
+# ch87/ch88 那一格（泳道 1）证明时态过滤在 seed 出来的边上活着；这一格证明它在一条
+# `valid_from` 由引语算出来的边上也活着——两者之间隔着 evidence 表和整条
+# `put_evidence → upsert_edge` 的血统。**而这一次量它的是一条规则**：
+# 第 3 章起他死了，所以第 4 章的对话标签要报，第 2 章的不报。
+step "真链路 —— nh check：R3 抓到 DEAD_SPEAKS（第 4 章）"
+cat >"$TMP/ch4.md" <<'EOF'
+　　夜里风大。
+
+　　萧决道：「我还没死。」
+EOF
+_run uv run nh check --db "$DB2" -p "$PID2" --chapter 4 -f "$TMP/ch4.md"
+exits_nonzero "nh check（第 4 章有问题）"
+has "[R3] DEAD_SPEAKS"
+has "萧决"
+has "建议：" # 建议由规则确定性产出（PLAN 改 13），不是 LLM 编的
+# 锚是 (para_index, quote_text, occurrence_k)，**永远不是 offset**（ADR 0006）。
+has "第 2 段"
+has "第 0 次"
+printf '%s\n' "$OUT"
+
+step "真链路 —— AS OF：第 2 章他还没死，同一段字一条都不报"
+_run uv run nh check --db "$DB2" -p "$PID2" --chapter 2 -f "$TMP/ch4.md"
+exits_zero "nh check（第 2 章无问题）"
+has "0 条 issue"
+lacks "DEAD_SPEAKS"
 
 printf '\n✓ 心跳正常。两条泳道：\n'
 printf '  1. 已确认的声明（seed_demo.py）→ SqliteStoryGraph → knowledge_matrix → 面板，\n'
-printf '     以及 → run_checks → issue。量的是替身之后的接缝。\n'
-printf '  2. nh init → nh import → nh declare knows --quote → valid_from = ch3 → 面板。\n'
-printf '     量的是「引语 → 章号」那条链本身，而那个 3 作者一次都没输过。\n'
+printf '     以及 → run_checks（会闭嘴）。量的是替身之后的接缝。\n'
+printf '  2. nh init → nh import → nh declare dead --quote → valid_from = ch3 → run_checks。\n'
+printf '     量的是「引语 → 章号」那条链本身，而那个 3 作者一次都没输过；\n'
+printf '     再拿一条规则把闭开区间量出来（ch4 报、ch2 不报）。\n'
 printf '  （量的是接缝，不是真书：import 用的是手写的 3 章 fixture。）\n'

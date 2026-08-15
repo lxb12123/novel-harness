@@ -36,7 +36,7 @@ from fastapi.testclient import TestClient
 
 import novel_harness.api.chat as chat_mod
 from novel_harness.agent.loop import StopReason, stop_wording
-from novel_harness.agent.rules import is_rule, live_rules
+from novel_harness.agent.rules import is_rule, surviving_rule_indices
 from novel_harness.agent.store import ChatStore
 from novel_harness.db import connect, migrate, user_version
 from novel_harness.draft.provider import ProviderError
@@ -233,48 +233,50 @@ def test_the_line_is_never_mistaken_for_a_rule_the_author_laid_down(
         conn.close()
     assert stored is not None
     assert not any(is_rule(m) for m in stored.conversation.messages)
-    assert live_rules(stored.conversation, 1) == ()
-
-    # 作者那块「这一章的规矩」面板上也没有它（那条路由和引擎同源，这儿是端到端那一遍）。
-    rules = client.get(f"/api/projects/{pid}/chats/{chat_id}/rules", params={"chapter": 1})
-    assert rules.status_code == 200, rules.text
-    assert rules.json()["rules"] == []
-    assert rules.json()["expired"] == 0
+    assert surviving_rule_indices(stored.conversation.messages) == frozenset()
+    # ⚠️ 这儿原来还有一遍端到端：`GET …/rules` 那条路由。**2026-08-14 两条路由都撤了**
+    # （ADR 0028——规矩不上屏），所以「作者面板上也没有它」这半句无处可验了。
 
 
-def test_a_notice_does_not_shift_the_coordinate_a_rule_is_cancelled_by(
+def test_a_notice_does_not_disturb_a_rule_that_was_already_recorded(
     client: TestClient, book: dict[str, str], configured: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """先记一条规矩、再跑砸一轮 —— 那条规矩的 `seq` 一个数都不许动。
+    """先记一条规矩、再跑砸一轮 —— 那条规矩还在，而且还是同一条。
 
-    `AuthorRule.seq` 是历史下标，作者点「×」时报的就是它。提示要是占了一个下标，
-    这个数会往后挪一格，而作者点下去撤掉的是**另一条消息**（或者一句「找不到」）。
+    ── 这条测试 2026-08-14 换了主张 ──────────────────────────────────────
+
+    原来它量的是 `AuthorRule.seq`（历史下标）在提示插进来之后一个数都不动，
+    理由是作者点「×」时报的就是它。**那颗「×」连同两条路由一起撤了**（[ADR 0028]：
+    规矩不上屏，有效期由模型按情境判），于是那个坐标不再有对外的消费者。
+
+    **换而不是删**：提示是这一层唯一会往历史中间插东西的机制，而规矩的去重和取消
+    都按历史下标算（`_revoked_indices` / `surviving_rule_indices`）。插进来的一行
+    要是把规矩挤出投影，模型下一轮就看不见作者刚交代的事——而不会有任何东西报错。
     """
     pid = book["pid"]
-    use(monkeypatch, Scripted(wants(("remember_rule", json.dumps({"rule": "别写打斗"}))), says("好")))
+    remembered = json.dumps({"rule": "别写打斗", "until": "这一章写完"})
+    use(monkeypatch, Scripted(wants(("remember_rule", remembered)), says("好")))
     chat_id = open_chat(client, pid)
     _turn(client, pid, chat_id, chapter=1, said="打斗少一点")
-    before = client.get(
-        f"/api/projects/{pid}/chats/{chat_id}/rules", params={"chapter": 1}
-    ).json()["rules"]
-    assert before, "探针：这一轮真的记下了一条规矩"
 
-    # **接着往下跑**（`said` 留空 = resume），不是再说一句：作者再开口本来就会让一条
-    # 批级规矩过期（ADR 0023），那样测的就是别的东西了。
+    def rules_now() -> list[str]:
+        conn = connect(book["db"])
+        try:
+            stored = ChatStore(conn).load(pid, chat_id)
+        finally:
+            conn.close()
+        assert stored is not None
+        messages = stored.conversation.messages
+        return [messages[i].content for i in sorted(surviving_rule_indices(messages))]
+
+    before = rules_now()
+    assert before == ["别写打斗"], "探针：这一轮真的记下了一条规矩"
+
+    # **接着往下跑**（`said` 留空 = resume）：这一轮会砸，砸完往历史里插一行提示。
     use(monkeypatch, Unreachable())
     _turn(client, pid, chat_id, chapter=1, said="")
-    after = client.get(
-        f"/api/projects/{pid}/chats/{chat_id}/rules", params={"chapter": 1}
-    ).json()["rules"]
-    assert after == before
 
-    revoked = client.delete(
-        f"/api/projects/{pid}/chats/{chat_id}/rules/{before[0]['seq']}"
-    )
-    assert revoked.status_code == 200, revoked.text
-    assert client.get(
-        f"/api/projects/{pid}/chats/{chat_id}/rules", params={"chapter": 1}
-    ).json()["rules"] == []
+    assert rules_now() == before
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -432,9 +434,13 @@ def test_migration_012_runs_on_a_book_that_already_has_three_messages(
     conn = _at_version_11(tmp_path / "book.db")
     before = [dict(r) for r in conn.execute("SELECT * FROM chat_message ORDER BY seq")]
 
-    assert migrate(conn) == 15
+    assert migrate(conn) == 16
     after = [dict(r) for r in conn.execute("SELECT * FROM chat_message ORDER BY seq")]
-    assert after == before, "重建之后有列对不上 —— 那一列的数据已经没了，而且不报错"
+    # **只比 011 那时就有的那几列。** 012 之后的迁移还会往这张表上加列（016 的
+    # `rule_until` 就是一个），而这条测试量的是「012 重建整张表时有没有漏掉一列」——
+    # 拿全列去比，任何一次后续 `ADD COLUMN` 都会让它红，而那一次根本没碰这条迁移。
+    kept = [{key: row[key] for key in before[0]} for row in after]
+    assert kept == before, "重建之后有列对不上 —— 那一列的数据已经没了，而且不报错"
 
     # 索引跟着 DROP 一起没了，必须重建过（少了它，列表页那两条聚合查询会全表扫）。
     indexes = [

@@ -55,9 +55,15 @@ describe("中栏编辑器", () => {
     expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
   });
 
-  it("嵌着的场景条为空时给出「下一步」提示", async () => {
+  it("🔴 嵌着的场景条为空时**什么都不画** —— 正文上方不多一行常驻文案", async () => {
+    // 2026-08-14 反过来了。原来这儿钉的是「空场景条给出下一步提示」，而那句提示
+    // （「这一章还没有场景信息。你可以先继续写正文。」）在导进来的真书上是**永久的**：
+    // 场景块是一套要作者手写的标记语法，他不去学就一章都不会有。
+    // 于是那条「提示」不提示任何东西，只是在每一章的正文上方压一行引擎内部的词。
     renderWithApi(<CenterEditor />);
-    expect(await screen.findByText(/这一章还没有场景信息/)).toBeInTheDocument();
+    // 等正文落地，否则量到的是「还没渲染」而不是「渲染成没有」。
+    await waitFor(() => expect(document.querySelector(".cm-line")).not.toBeNull());
+    expect(document.body.textContent).not.toMatch(/场景信息|场景 \d/);
   });
 
   // ── 「读回改动」那颗按钮 2026-08-15 删了 ──────────────────────────────────

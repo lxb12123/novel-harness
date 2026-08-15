@@ -620,40 +620,37 @@ def _rule_reached_the_wire(recorder: Recorder) -> bool:
     )
 
 
-def test_switching_chapters_really_stops_sending_the_rule_over_the_wire() -> None:
+def test_the_rule_keeps_reaching_the_wire_after_a_chapter_change() -> None:
     """**判在运输层的入口上**，不判 `Projection.messages`。
 
-    回执和真发出去的那份是两个东西，而 ADR 0023 那条 fail-open 承诺的是后者：
-    「留着 = 第 200 章写不出打戏，而**作者不知道为什么**」说的是模型收到了什么。
+    ⚠️ **这条测试 2026-08-14 反过来了**（[ADR 0028](../docs/adr/0028-rules-expire-by-situation.md)）。
+    它原来叫 `test_switching_chapters_really_stops_sending_the_rule_over_the_wire`，
+    量的是「第 40 章定的偏好不许跟到第 90 章」——那是 ADR 0023 按章号过期的承诺。
+    章号从来不是有效期：作者说「男主在这片沙地别杀人」，那条规矩跟第几章没关系。
+    今天它一路跟着走，**作不作数由读到它的模型按情境判**。
+
+    回执和真发出去的那份是两个东西，这条测试判的一直是后者。
     """
     conversation = a_session_with_a_rule()
 
-    here = Recorder()
-    run_turn(
-        conversation,
-        context=a_context(working_chapter=40),
-        model=here,
-        ledger=lambda receipt: None,
-    )
-    assert _rule_reached_the_wire(here), "同一章里它还该在 —— 不然这条断言验的是别的东西"
-
-    later = Recorder()
-    result = run_turn(
-        conversation,
-        context=a_context(working_chapter=90),
-        model=later,
-        ledger=lambda receipt: None,
-    )
-    assert not _rule_reached_the_wire(later), (
-        "第 40 章定的偏好跟到了第 90 章。留着的代价是他在第 200 章写不出打戏，"
-        "**而他不知道为什么**（ADR 0023 决策二，方向跟 `must_not_reveal` 相反）"
-    )
-    assert result.projection is not None and result.projection.expired_rules == 1
+    for chapter in (40, 90):
+        wire = Recorder()
+        result = run_turn(
+            conversation,
+            context=a_context(working_chapter=chapter),
+            model=wire,
+            ledger=lambda receipt: None,
+        )
+        assert _rule_reached_the_wire(wire), f"第 {chapter} 章：那条规矩没被发出去"
+        assert result.projection is not None and result.projection.expired_rules == 0
 
 
-def test_the_rule_goes_when_there_is_no_chapter_coordinate_at_all() -> None:
-    """没有坐标（`working_chapter is None`）时规矩**全放**——同一个「不知道」，
-    工具返回全留、规矩全放，因为两边猜错的代价不对称。"""
+def test_the_rule_still_reaches_the_wire_without_a_chapter_coordinate() -> None:
+    """没有坐标（`working_chapter is None`）时规矩**照发**。
+
+    那个坐标今天只管工具返回那一档（按章号往前筛，`>`）。规矩这一档不再看它——
+    它进 prompt 时带的章号是**作者说这句话时**那一章，写在消息自己身上。
+    """
     blind = Recorder()
     run_turn(
         a_session_with_a_rule(),
@@ -661,41 +658,43 @@ def test_the_rule_goes_when_there_is_no_chapter_coordinate_at_all() -> None:
         model=blind,
         ledger=lambda receipt: None,
     )
-    assert not _rule_reached_the_wire(blind)
+    assert _rule_reached_the_wire(blind)
 
 
-def _fail_closed_indices(
-    messages: Any, chapter: int | None
-) -> frozenset[int]:
-    """**探针：把它「修」成 fail-closed**（第 40 章定的规矩第 90 章当然还算数）。
+def _expired_by_chapter_indices(messages: Any) -> frozenset[int]:
+    """**探针：把它换回按章号过期那一版**（规矩只管作者说它那一章）。
 
-    这是下一个人最可能顺手写出来的那一版，而它一条别的测试都不会弄红。
+    这是下一个人最可能顺手写回去的那一版（「规矩当然只管那一章」），
+    而它一条别的测试都不会弄红——它只会表现成「上一章交代的事这一章模型不知道」。
     """
     return frozenset(
-        index for index, message in enumerate(messages) if is_rule(message)
+        index
+        for index, message in enumerate(messages)
+        if is_rule(message) and message.chapter == 90
     )
 
 
-def test_the_net_catches_a_fail_closed_rule_filter(
+def test_the_net_catches_a_chapter_scoped_rule_filter(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """自守卫：把过滤器换成 fail-closed，**上面那张网必须当场红**。
+    """自守卫：把过滤器换回按章号过期，**上面那张网必须当场红**。
 
     `project()` 是在函数体里 `from .rules import …` 的（为了断一条环），所以换掉模块上
     那个名字就等于换掉了实现——这条自守卫因此判的是真的实现，不是一个平行宇宙。
     """
-    monkeypatch.setattr(rules_module, "surviving_rule_indices", _fail_closed_indices)
+    monkeypatch.setattr(rules_module, "surviving_rule_indices", _expired_by_chapter_indices)
 
     later = Recorder()
     run_turn(
         a_session_with_a_rule(),
-        context=a_context(working_chapter=90),
+        context=a_context(working_chapter=40),
         model=later,
         ledger=lambda receipt: None,
     )
-    assert _rule_reached_the_wire(later), (
-        "换成 fail-closed 之后这张网居然还是绿的 —— 那它一开始就没在验这件事"
+    assert not _rule_reached_the_wire(later), (
+        "换回按章号过期之后这张网居然还是绿的 —— 那它一开始就没在验这件事"
     )
+
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -796,20 +795,20 @@ def test_counting_repeats_never_asks_whether_two_sentences_mean_the_same() -> No
         said("再写三版"),
         rule_message("别写得太煽情", chapter=40),
     ).with_author("再来一版")
-    assert surviving_rule_indices(rephrased.messages, 40) == frozenset(), (
-        "换个说法就该重新数 —— 认它们是同一条等于在这一层做语义判断（ADR 0005）"
+    assert len(surviving_rule_indices(rephrased.messages)) == 2, (
+        "换个说法折成了一条 —— 认它们是同一条等于在这一层做语义判断（ADR 0005）"
     )
 
 
-def test_widening_takes_two_author_turns_not_two_records() -> None:
-    """**「说第二次」说的是作者说第二次**，不是引擎记了第二条（ADR 0023 决策二）。
+def test_the_same_sentence_recorded_twice_goes_out_once() -> None:
+    """同一串字记了两遍，进 prompt 的只有一条。**重复是浪费，不是加强。**
 
-    ADR 把这条机制写死成一个来回：**取窄**（就这一批）⇒ 猜窄了「作者再说一次（顺口，
-    他本来就要评价下一批）」⇒ 升到章级。所以那个 2 数的是**作者开口的次数**。
+    ⚠️ **这条测试 2026-08-14 换了主张，原来它叫
+    `test_widening_takes_two_author_turns_not_two_records`。** 那时说到第二遍会把一条
+    规矩从「这一批」升到「这一章」，而「第二遍」必须数**作者开口的次数**——同一批里
+    模型记两遍不算。**那两个档次连同那个阈值随 ADR 0028 一起没了**（有效期改成模型判），
+    于是「记了几遍」今天只剩一个后果：去重。
 
-    照「记了几条」数的话，模型在**同一批**里把同一条规矩记两遍就直接升到章级——
-    而那一批里作者只说过一次。方向正是 ADR 点名最贵的那一侧：
-    「猜宽了的代价是**一条隐形的规矩跟着他走，他不知道它在**」。
     它够得着，不是理论风险：`TurnLimits.repeat_limit` 允许同一个调用在一轮里出现三次，
     而 resume 补跑一条 `pending` 的调用就会把同一条规矩再记一遍。
     """
@@ -818,8 +817,8 @@ def test_widening_takes_two_author_turns_not_two_records() -> None:
         rule_message("别太煽情", chapter=40),
         rule_message("别太煽情", chapter=40),  # 同一批里记了两遍，作者只说过一次
     ).with_author("再写三版")
-    assert surviving_rule_indices(one_turn_two_records.messages, 40) == frozenset(), (
-        "同一批里记两遍就升成章级了 —— 那个 2 数的是引擎写了几条，不是作者说了几遍"
+    assert len(surviving_rule_indices(one_turn_two_records.messages)) == 1, (
+        "同一串字记了两遍，发出去也是两遍 —— 那是白花钱"
     )
 
     two_turns = a_session(
@@ -828,9 +827,7 @@ def test_widening_takes_two_author_turns_not_two_records() -> None:
         said("还是太煽情了"),
         rule_message("别太煽情", chapter=40),
     ).with_author("再写三版")
-    assert surviving_rule_indices(two_turns.messages, 40), (
-        "作者真说了两遍反而没升上去 —— 那这条机制永远升不上去"
-    )
+    assert len(surviving_rule_indices(two_turns.messages)) == 1
 
 
 # ══════════════════════════════════════════════════════════════════════════

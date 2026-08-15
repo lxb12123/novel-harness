@@ -40,6 +40,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from novel_harness.checks import ALL_CHECKS
 from novel_harness import importer, project
 from novel_harness.db import connect, migrate
 from novel_harness.graph import HEALTH_DIM_KEY, NodeLabel
@@ -202,7 +203,7 @@ def test_nothing_fires_before_the_author_says_anything(author: Author) -> None:
     assert author.check(1)["issues"] == []
     assert author.check(4)["issues"] == []
     # 规则确实跑了（静默的零和真的零不许长得一样，§10 约束 8）。
-    assert len(author.check(1)["rules_run"]) == 3
+    assert len(author.check(1)["rules_run"]) == len(ALL_CHECKS)
 
 
 # ══════════════════════════════════════════════════════════════════════════

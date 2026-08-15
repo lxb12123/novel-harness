@@ -56,6 +56,9 @@ def test_get_settings_starts_empty(client: TestClient) -> None:
         # 没填是 `null`，**不是 0**：屏幕上「没填」和「填了个 0」是两件事，
         # 混成一个数就再也分不开了（0 那个数会让起草当场抛）。
         "context_window": None,
+        # **默认关着**：那份模型表决定上文给作者 800 字还是 40,000 字，
+        # 而它来自一个我们不控制的仓库。开着它的只能是作者本人。
+        "auto_update_model_windows": False,
     }
 
 
@@ -200,3 +203,87 @@ def test_default_path_is_user_config_not_the_book() -> None:
     assert settings_module.DEFAULT_PATH == (
         Path.home() / ".config" / "novel-harness" / "settings.json"
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 「每次打开工作台自动更新模型表」那颗开关（2026-08-14）
+# ══════════════════════════════════════════════════════════════════════════
+#
+# `refresh_model_windows` 那条路由的注释写着「只在这儿点，绝不自动跑」，理由是那份表
+# 决定上文给作者 800 字还是 40,000 字，自动更新 = 别人改一行、作者明天的稿子变了、
+# **而他不知道为什么**。这颗开关**默认关着、由作者自己拨开**——拨开的那一刻他就知道了
+# 为什么，那条理由的要害（最后半句）不再成立。下面这几条钉的就是「默认关着」。
+
+
+def test_auto_update_round_trips(client: TestClient) -> None:
+    r = client.put("/api/settings", json={"auto_update_model_windows": True})
+    assert r.json()["auto_update_model_windows"] is True
+    assert client.get("/api/settings").json()["auto_update_model_windows"] is True
+
+    off = client.put("/api/settings", json={"auto_update_model_windows": False})
+    assert off.json()["auto_update_model_windows"] is False
+
+
+def test_toggling_it_does_not_touch_anything_else(client: TestClient) -> None:
+    """**那颗开关只发它自己那一位。**
+
+    界面上它和「服务地址」在同一扇窗里，而作者可能正敲了一半——拨一下开关就把
+    半截地址提交上去，是这一层最容易漏的那种错。
+    """
+    client.put(
+        "/api/settings",
+        json={"base_url": "https://a.example", "model": "m1", "context_window": 65536},
+    )
+    r = client.put("/api/settings", json={"auto_update_model_windows": True})
+    body = r.json()
+    assert body["base_url"] == "https://a.example"
+    assert body["model"] == "m1"
+    assert body["context_window"] == 65536
+
+
+def test_a_request_without_the_switch_keeps_it(client: TestClient) -> None:
+    """同 `context_window`：判据是**带没带这个键**，不是它的值。
+
+    不这样的话，任何一个只想改地址的请求都会顺手把作者拨开的那个开关关回去。
+    """
+    client.put("/api/settings", json={"auto_update_model_windows": True})
+    r = client.put("/api/settings", json={"base_url": "https://b.example"})
+    assert r.json()["auto_update_model_windows"] is True
+
+
+def test_startup_pulls_only_when_the_switch_is_on(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from novel_harness.api import app as app_module
+
+    pulls: list[int] = []
+    monkeypatch.setattr(app_module, "pull_model_windows", lambda: pulls.append(1))
+
+    # 关着（默认）：**一次都不许拉**。它是一次跨公网的请求，也是一次会改上文长度的更新。
+    assert app_module._auto_refresh_windows() is None
+    assert pulls == []
+
+    client.put("/api/settings", json={"auto_update_model_windows": True})
+    thread = app_module._auto_refresh_windows()
+    assert thread is not None
+    thread.join(timeout=5)
+    assert pulls == [1]
+
+
+def test_startup_pull_failure_is_not_an_error(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """启动时没网是常态。为它拦住工作台，就是把锦上添花变成一道门槛——
+    作者断网时连自己的稿子都打不开了。"""
+    from novel_harness.api import app as app_module
+
+    def boom() -> None:
+        raise app_module.ModelWindowsPullFailed("没网")
+
+    monkeypatch.setattr(app_module, "pull_model_windows", boom)
+    client.put("/api/settings", json={"auto_update_model_windows": True})
+
+    thread = app_module._auto_refresh_windows()
+    assert thread is not None
+    thread.join(timeout=5)
+    assert not thread.is_alive()  # 线程里那一下没把异常带出来

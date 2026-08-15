@@ -62,6 +62,23 @@ class Settings(BaseModel):
     填小了只是上文短一点。
     """
 
+    auto_update_model_windows: bool = False
+    """开着的话，**每次打开工作台都去拉一次那份公开的模型表**。
+
+    ── 这一位推翻了什么，以及为什么推翻得起 ────────────────────────────────
+
+    `POST /api/settings/model-windows/refresh` 的注释写着「只在这儿点，绝不自动跑」，
+    理由是：那份表决定上文给作者 800 字还是 40,000 字，而它来自一个我们不控制的仓库，
+    自动更新 = 别人改一行、作者明天的稿子上下文就变了，**而他不知道为什么**。
+
+    那条理由的要害是最后半句。**这一位默认关着，只有作者自己拨开它**——拨开的那一刻
+    他就知道了为什么，那半句不再成立。所以撤掉的是「替他决定」，不是「让他知道」：
+    默认仍然是不自动跑（2026-08-14 作者要的开关，见 `api/app.py::_auto_refresh_windows`）。
+
+    **拉不到就当无事发生**：启动时没网是常态，为它拦住工作台是把一件锦上添花的事
+    变成一道门槛。旧的那份原样留着（`draft/windows.refresh` 自己也拒绝用空表覆盖）。
+    """
+
     @field_validator("context_window", mode="before")
     @classmethod
     def _unset_is_not_zero(cls, value: object) -> object:

@@ -1,25 +1,30 @@
-"""R4 LOCATION_CONFLICT + 规则契约。
+"""R2 / R3 + 规则契约。
 
 **这些测试里一半是「不报」的测试。** 那不是凑数：M3 的生死线是「误报 < 1 条/章」，
-而 R4 的零 FP 全部来自四个闭嘴条件。每个闭嘴条件都有一条测试，因为删掉其中任何一个
-都不会让「会报的那条」变红——它只会让真书上多出几条误报，在第 11 周才被发现。
+而每一条「闭嘴条件」删掉之后都**不会让任何一条会报的测试变红**——它只会让真书上多出
+几条误报，在第 11 周才被发现。
 
-⚠️ **本文件的 R4 只打下面那个 `FakeGraph`，到不了生产的 `state_at`。** 那个 Fake 手写了
+⚠️ **本文件只打下面那个 `FakeGraph`，到不了生产的 `state_at`。** 那个 Fake 手写了
 一遍五条件过滤（见它的 docstring），所以「时态正确」「STALE 停火」在这里验的是 Fake 的
 保真度。真库上的同一组断言在 `tests/test_store_conformance.py`——它 import 本文件的
 `FakeGraph`，把同一份规格参数化跑 [fake, real]。**改这个 Fake 的过滤逻辑前先读那个文件。**
+
+⚠️ **2026-08-14：R4 LOCATION_CONFLICT 那一整节（约 200 行）随规则一起删了**
+（[ADR 0027](../docs/adr/0027-scene-blocks-cut.md)）。它是这个文件原本的主角，
+四个闭嘴条件各有一条测试——**而那些测试从头到尾都是绿的，规则本身也没有 bug**。
+砍掉它的判据不在这一层：它的一侧输入（场景块 `<!-- nh: loc=… -->`）只能由作者手写，
+真书上零覆盖，于是这条零误报的规则在产品里**一次都没开过火**。
+留一句在这儿是因为「测试全绿」这件事在那 200 行上曾经读起来像「这条规则很健康」。
 """
 
 from __future__ import annotations
 
 from collections.abc import Collection, Sequence
 
-import pytest
 
-from novel_harness.checks import ALL_CHECKS, CheckContext, Issue, Scene, run_checks
+from novel_harness.checks import ALL_CHECKS, CheckContext, Issue, run_checks
 from novel_harness.checks.dead_speaks import check as dead_speaks_check
 from novel_harness.checks.future_leak import check as future_leak_check
-from novel_harness.checks.location_conflict import check
 from novel_harness.graph import (
     AliasHit,
     AliasKind,
@@ -222,179 +227,21 @@ def ctx(
     edges: list[Edge],
     *,
     chapter: int = 151,
-    loc: str | None = "北荒",
-    cast: list[str] | None = None,
     aliases: dict[str, list[Node]] | None = None,
     paragraphs: Sequence[str] | None = None,
 ) -> CheckContext:
-    scene = Scene(
-        number=3,
-        cast=cast if cast is not None else ["萧决"],
-        loc=loc,
-        goal="李管家试探萧决的身世",
-        para_index=4,
-        decl_text=f"<!-- nh: cast=萧决 loc={loc} -->",
-    )
+    """2026-08-14：`loc` / `cast` 两个参数随场景块一起没了（ADR 0027）——
+    今天两条规则的输入只有「图 + 正文」。"""
     return CheckContext(
         store=FakeGraph(aliases or ALIASES, edges),
         project_id=PID,
         chapter=chapter,
-        scenes=[scene],
         paragraphs=paragraphs,
     )
 
 
 def test_fake_satisfies_protocol() -> None:
     assert isinstance(FakeGraph({}, []), StoryGraph)
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 会报的那条
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def test_declared_loc_conflicts_with_graph() -> None:
-    """作者声明 vs 作者声明：场景写着北荒，图上他在青云城主府。"""
-    issues = check(ctx([located_at(XIAO_JUE.id, QINGYUN.id, 10)]))
-
-    assert len(issues) == 1
-    issue = issues[0]
-    assert issue.rule == "R4"
-    assert issue.issue_type == "LOCATION_CONFLICT"
-    assert issue.chapter == 151
-    assert "青云城主府" in issue.message and "萧决" in issue.message
-    assert issue.suggested_action is not None and "青云城主府" in issue.suggested_action
-
-
-def test_issue_anchor_is_the_declaration_line() -> None:
-    """R4 不读正文，但它报的问题有精确位置：作者写错的那行声明。"""
-    issues = check(ctx([located_at(XIAO_JUE.id, QINGYUN.id, 10)]))
-
-    anchor = issues[0].anchor
-    assert anchor.para_index == 4
-    assert anchor.quote_text == "<!-- nh: cast=萧决 loc=北荒 -->"
-    assert anchor.occurrence_k == 0
-
-
-def test_one_issue_per_conflicting_character() -> None:
-    issues = check(
-        ctx(
-            [
-                located_at(XIAO_JUE.id, QINGYUN.id, 10),
-                located_at(GU_QINGYIN.id, QINGYUN.id, 10),
-            ],
-            cast=["萧决", "顾清音"],
-        )
-    )
-
-    assert len(issues) == 2
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 时态：闭开区间 [valid_from, valid_to)
-# ══════════════════════════════════════════════════════════════════════════
-
-
-@pytest.mark.parametrize(
-    ("chapter", "expected"),
-    [(150, 1), (151, 0), (152, 0)],
-)
-def test_conflict_disappears_the_chapter_he_arrives(chapter: int, expected: int) -> None:
-    """他在第 151 章到北荒：ch150 声明 loc=北荒 是冲突，ch151 起不是。
-
-    区间的上闭下开在这里是可见的产品行为，不是内部细节。
-    """
-    edges = [
-        located_at(XIAO_JUE.id, QINGYUN.id, 10, valid_to=151),
-        located_at(XIAO_JUE.id, BEIHUANG.id, 151),
-    ]
-
-    assert len(check(ctx(edges, chapter=chapter))) == expected
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 四个闭嘴条件 —— 零 FP 的全部来源
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def test_silent_when_no_location_edge_at_all() -> None:
-    """闭世界：图上没声明过他在哪 ≠ 他不在这。"""
-    assert check(ctx([])) == []
-
-
-def test_silent_when_declared_loc_is_ambiguous() -> None:
-    """「北荒」映射到两个节点 → 不知道作者指哪个 → 闭嘴。"""
-    aliases = {**ALIASES, "北荒": [BEIHUANG, BEIHUANG_2]}
-
-    assert check(ctx([located_at(XIAO_JUE.id, QINGYUN.id, 10)], aliases=aliases)) == []
-
-
-def test_silent_when_declared_loc_is_unknown() -> None:
-    """作者写了个图上没有的地方（还没建节点）→ 那不是位置冲突。"""
-    assert check(ctx([located_at(XIAO_JUE.id, QINGYUN.id, 10)], loc="幽泉窟")) == []
-
-
-def test_silent_when_declared_loc_is_not_a_location() -> None:
-    """`loc=萧决`（打错了）→ 闭嘴。拿人物节点去比所在地会报出一条无意义的红字。"""
-    assert check(ctx([located_at(XIAO_JUE.id, QINGYUN.id, 10)], loc="萧决")) == []
-
-
-def test_silent_when_cast_surface_is_ambiguous() -> None:
-    """「师兄」一章里可能是 8 个人 → 跳过这个人，不猜。"""
-    aliases = {**ALIASES, "师兄": [XIAO_JUE, GU_QINGYIN]}
-    edges = [located_at(XIAO_JUE.id, QINGYUN.id, 10), located_at(GU_QINGYIN.id, QINGYUN.id, 10)]
-
-    assert check(ctx(edges, cast=["师兄"], aliases=aliases)) == []
-
-
-def test_short_but_unambiguous_loc_still_fires() -> None:
-    """1 字地名不是闭嘴条件。
-
-    ADR 0004 的短别名约束防的是「短别名去匹配正文」（「音」「决」是灾难），而 R4
-    **不匹配正文**——它读的是作者亲手敲在 `loc=` 后面的字。所以这里用
-    `Resolution.unique_node` 而不是 `usable_for_rules`。
-    """
-    yuan = node("location:demo:01J6", NodeLabel.LOCATION, "渊")
-    aliases = {**ALIASES, "渊": [yuan]}
-
-    issues = check(ctx([located_at(XIAO_JUE.id, QINGYUN.id, 10)], loc="渊", aliases=aliases))
-
-    assert len(issues) == 1
-
-
-def test_scene_without_loc_is_skipped() -> None:
-    assert check(ctx([located_at(XIAO_JUE.id, QINGYUN.id, 10)], loc=None)) == []
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 只在 CANON 层开火
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def test_provisional_edge_never_fires() -> None:
-    """§5.4：PROVISIONAL 是抽取器猜的、未确认的。**永不开火。**
-
-    拿它报错 = 用 Agent 的猜测去质疑作者 = 原则 5 的反面。
-    """
-    edges = [located_at(XIAO_JUE.id, QINGYUN.id, 10, scope=InformationScope.PROVISIONAL)]
-
-    assert check(ctx(edges)) == []
-
-
-def test_stale_evidence_stops_firing() -> None:
-    """ADR 0006：依据被作者改没了 ⇒ 立刻停火。
-
-    「依据没了还在质疑作者」是最伤的那种误报——这就是 STALE 90% 的价值。
-    """
-    edges = [located_at(XIAO_JUE.id, QINGYUN.id, 10, evidence_status=EvidenceStatus.STALE)]
-
-    assert check(ctx(edges)) == []
-
-
-def test_retracted_edge_never_fires() -> None:
-    edges = [located_at(XIAO_JUE.id, QINGYUN.id, 10, status=EdgeStatus.RETRACTED)]
-
-    assert check(ctx(edges)) == []
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -424,28 +271,34 @@ def test_issue_has_no_offset_and_never_will() -> None:
     }
 
 
-def test_check_does_not_read_the_manuscript() -> None:
-    """R4 的零 FP 前提：`paragraphs=None` 也照跑。
+def test_no_rule_raises_without_the_manuscript() -> None:
+    """`paragraphs=None` 时**每一条规则都必须安静地返回 `[]`，不许抛**。
 
-    面板/规则是两条链路（§6 serious #3），R4 属于不读正文那条。
+    面板/规则是两条链路（§6 serious #3）：面板不读正文（2–5ms），规则读。
+    今天两条规则都在读正文那一侧，所以这一条量的是「没正文时它们闭嘴」——
+    ⚠️ **2026-08-14 之前它量的是相反的一件事**（R4 不读正文也照样开火），
+    而 R4 是那时唯一不读正文的规则。这条断言换了含义，不是换了写法。
     """
-    context = ctx([located_at(XIAO_JUE.id, QINGYUN.id, 10)])
+    context = ctx([])
     assert context.paragraphs is None
 
-    assert len(check(context)) == 1
+    for check in ALL_CHECKS:
+        assert check(context) == []
 
 
 def test_run_checks_runs_the_registry() -> None:
-    assert set(ALL_CHECKS) == {check, future_leak_check, dead_speaks_check}
-    assert len(run_checks(ctx([located_at(XIAO_JUE.id, QINGYUN.id, 10)]))) == 1
+    assert set(ALL_CHECKS) == {future_leak_check, dead_speaks_check}
+    context = ctx([], aliases={**ALIASES, "幽泉窟": [YOUQUANKU]}, paragraphs=["幽泉窟塌了一角。"])
+    assert len(run_checks(context)) == 1
 
 
-def test_check_is_a_pure_function_of_ctx() -> None:
+def test_checks_are_pure_functions_of_ctx() -> None:
     """同一个 ctx 跑两次结果相同——判分器（eval）和 Validator（写作时）是同一份代码，
     它必须可复现，否则 kill-gate 量的是噪声。"""
-    context = ctx([located_at(XIAO_JUE.id, QINGYUN.id, 10)])
+    context = ctx([], aliases={**ALIASES, "幽泉窟": [YOUQUANKU]}, paragraphs=["幽泉窟塌了一角。"])
 
-    assert check(context) == check(context)
+    for check in ALL_CHECKS:
+        assert check(context) == check(context)
 
 
 # ══════════════════════════════════════════════════════════════════════════

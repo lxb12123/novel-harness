@@ -1,9 +1,12 @@
-import { useCharacterState, useRoster, useScenes } from "../api/hooks";
+import { useCharacterState, useRoster } from "../api/hooks";
 import { useCoords } from "../store";
 import { edgeName, type Edge } from "../api/types";
 
-// 底栏时间线（§2.2）：左半 = 本章场景序（parse_scenes），右半 = 选中节点的边闭开区间。
-// 两半都用现成端点，零新引擎。
+// 底栏时间线（§2.2）：选中节点的边闭开区间。用现成端点，零新引擎。
+//
+// ⚠️ **左半那一列（「场景顺序」）2026-08-14 删了**，连同场景块、两条路由和 R4
+// （[ADR 0027](docs/adr/0027-scene-blocks-cut.md)）：它画的是作者要在正文里手写的
+// `## 场景 N`，真书上永远是零条。于是这条底栏现在只有一列。
 //
 // 说明（诚实边界）：右半画的是**当前有效**的边（valid_to=null → 到「现在这一章」）。
 // 被 supersede 的历史区间（valid_to 已写）不在 character_state 的这一章快照里——要画出
@@ -13,31 +16,6 @@ import { edgeName, type Edge } from "../api/types";
 // 关系类型 → 中文的那张表**搬去了 `api/types.ts::EDGE_ZH`**（全前端一份，9 类全列）。
 // 这儿原来有一份 7 行的拷贝，兜底写的是 `?? e.type`——`PLANTED_IN` / `RESOLVED_IN`
 // 一旦被写出来，屏幕上就是四个大写字母。
-
-function SceneStrip() {
-  const { projectId, chapter, cast, setCast } = useCoords();
-  const { data: scenes } = useScenes(projectId, chapter);
-  if (!scenes || scenes.length === 0)
-    return <div className="tl-empty">第 {chapter} 章还没有场景信息</div>;
-  return (
-    <div className="tl-scenes">
-      {scenes.map((s, i) => (
-        <span key={s.number} className="tl-scene-wrap">
-          <button
-            className={"tl-scene" + (cast === s.cast.join(",") && cast ? " on" : "")}
-            onClick={() => setCast(s.cast.join(","))}
-            title="用这一场的在场刷新面板"
-          >
-            <b>场景 {s.number}</b>
-            {s.cast.length > 0 && <span> · {s.cast.join(",")}</span>}
-            {s.loc && <span className="tl-loc"> @{s.loc}</span>}
-          </button>
-          {i < scenes.length - 1 && <span className="tl-arrow">→</span>}
-        </span>
-      ))}
-    </div>
-  );
-}
 
 function IntervalBars() {
   const { projectId, chapter, selectedNodeId } = useCoords();
@@ -89,16 +67,12 @@ function IntervalBars() {
 }
 
 export function BottomBar() {
-  const { projectId, chapter, selectedNodeId } = useCoords();
-  const { data: scenes } = useScenes(projectId, chapter);
-  if (!selectedNodeId && (!scenes || scenes.length === 0)) return null;
+  const { selectedNodeId } = useCoords();
+  // 没挑人 = 这条底栏一个像素都不占。它只有一列了，那一列没内容时整条就没有理由存在。
+  if (!selectedNodeId) return null;
 
   return (
     <footer className="bottombar">
-      <div className="tl-col tl-col-scenes">
-        <div className="tl-title">场景顺序</div>
-        <SceneStrip />
-      </div>
       <div className="tl-col tl-col-intervals">
         <div className="tl-title">人物与设定变化</div>
         <IntervalBars />

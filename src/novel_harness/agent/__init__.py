@@ -86,7 +86,6 @@ from .loop import EventFn, TurnEvent, TurnEventKind, safe_emitter
 
 # **摆出来 + 能取消**（ADR 0023 决策二）：这两样是 HTTP 壳要的读端和写端。
 # `rules` 排在 `loop` 后面是因为它 import 得着 `loop`（canonical 的形状住在那儿）。
-from .rules import AuthorRule, live_rules, revocation
 
 __all__ = [
     "TOOLS",
@@ -95,7 +94,6 @@ __all__ = [
     "AskAuthorArgs",
     "AskAuthorResult",
     "AuthorQuestion",
-    "AuthorRule",
     "BatchRunner",
     "BookIndex",
     "BookIndexArgs",
@@ -147,8 +145,6 @@ __all__ = [
     "TurnEventKind",
     "dispatch",
     "dispatch_all",
-    "live_rules",
-    "revocation",
     "safe_emitter",
     "tool_declarations",
     "tool_label",

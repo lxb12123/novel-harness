@@ -19,8 +19,6 @@ import type {
   ChapterText,
   ChatDeleted,
   ChatDetail,
-  ChatRuleRevoked,
-  ChatRules,
   ChatSessionView,
   ChatStopped,
   ChatTurnEvent,
@@ -46,8 +44,8 @@ import type {
   ProposalResolution,
   ProvisionalConfirmation,
   Project,
+  RecordedRules,
   RunsPanel,
-  Scene,
   SceneConstraints,
   StateSnapshot,
   StoredAlias,
@@ -442,6 +440,25 @@ export function useCreateChapter(pid: string) {
   });
 }
 
+/** 删掉一整章。**后端会拒绝「引擎已经在它上面记过东西」的那种**（409，带明细）。
+ *
+ *  正文不是删掉是挪走（书文件夹底下的 `deleted/`），所以这条路按错了还找得回来——
+ *  但那件事**不在屏幕上说**：作者不看路径，而一句「已经挪到某某文件夹」会把一颗
+ *  「删掉」按钮讲成一次搬家。
+ *
+ *  连章目录带正文一起失效：**删的那一章可能正开着**，只失效目录的话，
+ *  中栏会继续摆着一份磁盘上已经不存在的正文，而作者还能往里打字。 */
+export function useDeleteChapter(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (chapter: number) => api.del(proj(pid, `/chapters/${chapter}`)),
+    onSuccess: (_data, chapter) => {
+      qc.invalidateQueries({ queryKey: ["chapters", pid] });
+      qc.invalidateQueries({ queryKey: ["text", pid, chapter] });
+    },
+  });
+}
+
 /** 删掉一版历史。后端会拒绝两种：当前那一版、被证据/抽取/提案引着的那一版。 */
 export function useDeleteSnapshot(pid: string, chapter: number) {
   const qc = useQueryClient();
@@ -554,25 +571,10 @@ export function useSubgraph(
   });
 }
 
-export function useScenes(pid: string | null, chapter: number) {
-  return useQuery({
-    queryKey: q(["scenes", pid, chapter]),
-    queryFn: () => api.get<Scene[]>(proj(pid!, `/chapters/${chapter}/scenes`)),
-    enabled: !!pid,
-  });
-}
-
-export function useWriteScene(pid: string, chapter: number) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: { number: number; cast: string[]; loc: string | null; goal: string | null }) =>
-      api.put<Scene[]>(proj(pid, `/chapters/${chapter}/scenes`), body),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["scenes", pid, chapter] });
-      invalidatePanels(qc, pid); // cast/loc 变 → 矩阵/约束/state 跟着变
-    },
-  });
-}
+// ⚠️ **`useScenes` / `useWriteScene` 2026-08-14 删了**，连同它们背后的两条路由、
+// 场景条、底栏那一列和 R4（[ADR 0027](docs/adr/0027-scene-blocks-cut.md)）。
+// 场景块是一套要作者在正文里手写的标记语法（`## 场景 N` + `<!-- nh: cast=… -->`），
+// 而「这一场谁在」ADR 0018 起就是从正文数出来的（`useMentioned`）。
 
 // ⚠️ **`useResolve` 2026-08-14 删了**（同上：唯一调用方是中栏那条选区工具条的
 // 「查看相关内容」）。后端 `GET …/resolve` 照旧在，左栏花名册那条路也照旧走它的
@@ -967,41 +969,25 @@ export function useStopChat(pid: string) {
   });
 }
 
-/**
- * 这一章现在生效的那几条规矩（[ADR 0023](docs/adr/0023-context-is-pruned-by-rebuildability.md) 决策二）。
- *
- * **`chapter` 必给。** 后端在没有章号时直接 422 而不是回一份空清单，理由是那份空清单
- * 长得和「这一章确实没有规矩」一模一样——**一句它不知道真假的话，而且看起来完全正常**。
- *
- * **不轮询**：规矩只有两种长出来的方式，一种是跑一轮（`useRunTurn` 跑完会失效它），
- * 一种是作者自己点掉一条（那条 mutation 也失效它）。别的时刻它不会自己变。
- */
-export function useChatRules(pid: string | null, chatId: string | null, chapter: number | null) {
-  return useQuery({
-    queryKey: q(["rules", pid, chatId, chapter]),
-    queryFn: () => api.get<ChatRules>(chats(pid!, `${one(chatId!)}/rules?chapter=${chapter}`)),
-    enabled: !!pid && !!chatId && !!chapter,
-  });
-}
+// ⚠️ **`useChatRules` / `useRevokeRule` 2026-08-14 删了**，连同「这一章的规矩」那颗按钮
+// 和那块面板（理由在 `ChatPanel.tsx` 顶上那段：有效期该由模型按情境判，而不是按章号算，
+// 更不该摆出来让作者管）。
+//
+// **后端那两条路由（`GET`/`DELETE …/chats/{cid}/rules[/{seq}]`）同日一起撤了**，
+// 所以这儿没有留下一对零调用方的端点——这个仓库为「有端点、没人调」栽过一次
+// （ARCHITECTURE「工作台的已知洞」第 4 条：滚动总结一直在花作者的钱，而他看不见）。
+//
+// 作者今天怎么让一条规矩失效？**跟助手说一句。** 规矩带着「作者写第几章时说的；
+// 情境不在了就不必守」进 prompt，作不作数由模型判（[ADR 0028]）。
 
-/**
- * 作者点掉一条规矩。
+/** 作者交代过的每一条规矩（`GET /projects/{pid}/rules`）。**记录，不是控件。**
  *
- * ── **不做乐观更新**，而且这一条是这个按钮的全部价值所在 ──────────────────────
- *
- * 同一条规矩可能被记过好几遍，读端只摆出最后那一条；撤销在引擎侧按**身份**撤掉每一份。
- * 那件事出错的时候（只划掉作者点的那个下标），后端照样 200、回执照样 `revoked: true`
- * ——**唯一能看出来的地方就是重取回来它还在**。
- *
- * 所以这儿只失效、不预先把那一行从屏幕上抹掉：抹掉的话界面自己伪造了成功，
- * 而作者要到下一次打开这块面板才发现规矩还在（那时他早忘了自己点过）。
- */
-export function useRevokeRule(pid: string, chatId: string | null) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (seq: number) =>
-      api.del<ChatRuleRevoked>(chats(pid, `${one(chatId!)}/rules/${seq}`)),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["rules", pid] }),
+ *  **不轮询**：它只在跑完一轮之后可能变，而日志页本来就不常驻在屏幕上。 */
+export function useRecordedRules(pid: string | null) {
+  return useQuery({
+    queryKey: q(["recordedRules", pid]),
+    queryFn: () => api.get<RecordedRules>(proj(pid!, "/rules")),
+    enabled: !!pid,
   });
 }
 

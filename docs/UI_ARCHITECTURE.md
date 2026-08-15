@@ -60,13 +60,13 @@
 | POST | `/projects/{pid}/import` | `importer.import_book` | `ImportReport` | 🟢 |
 | POST | `/projects/{pid}/sync` | `importer.sync` | `SyncReport` | 🟢 |
 | GET | `/projects/{pid}/chapters` | **扫磁盘** `{root}/chapters/*.md` | `list[{number,title}]`（title=首个非空行） | 🟢 |
+| DELETE | `/projects/{pid}/chapters/{n}` | `importer.remove_chapter` → `store.delete_chapter` | `{deleted, number}`·**引擎在这一章上记过东西 → 409 `chapter_in_use` 带五个计数**（`edge.src/dst→node` 和 `evidence.chapter_id→chapter` 都是 CASCADE，不拦就是**无声**删掉那些记忆）·正文不是删掉是挪进 `{root}/deleted/`·**章号不重排**（它是全书 `valid_from` 的锚） | 🟢 |
 | GET | `/projects/{pid}/chapters/{n}/text` | **读磁盘** `{root}/chapters/{n:04d}.md` | `{number, markdown}` | 🟢 |
 | PUT | `/projects/{pid}/chapters/{n}/text` | **写磁盘** → `importer.sync` | `SyncReport` | 🟢 |
 | GET | `/projects/{pid}/chapters/{n}/history` | `store.chapter_snapshots` | `list[ChapterSnapshot]`（带 text 供前端 diff；**内容去重、非全量版本史**） | 🟢 |
 | DELETE | `/projects/{pid}/chapters/{n}/snapshots/{sid}` | `store.delete_chapter_snapshot` | `{deleted, snapshot_id}`·**当前那条 409 / 被证据引着 409**（三条外键都没有 CASCADE，快照是审计锚） | 🟢 |
 | — | **还原到某一版没有自己的路由** | 走上面那条 `PUT .../text` | 快照按内容去重 → 写回旧正文正好命中已有那条 → `is_current` 移回去、不新增一版 | 🟢 |
-| GET | `/projects/{pid}/chapters/{n}/scenes` | `text.paragraphs` → `parse_scenes` | `list[Scene]`（cast/loc/goal 全是称呼原文，不解析） | 🟢 |
-| PUT | `/projects/{pid}/chapters/{n}/scenes` | `write_scene_directive` → `importer.sync` | `list[Scene]`（回写后**重新解析**的，不是前端以为写进去的） | 🟢 |
+| ~~GET/PUT~~ | ~~`/projects/{pid}/chapters/{n}/scenes`~~ | — | **2026-08-14 删了**，连同场景块、R4 和中栏那条场景条（[ADR 0027](adr/0027-scene-blocks-cut.md)）：那套标记语法要作者手写，真书覆盖率 0% | ⚫ |
 | GET | `/projects/{pid}/roster` | `store.resolve(surfaces=None)` | `list[{id,label,name}]`（**不整体序列化 `Node.props`**）·⚠️设计里的 `?label=` **后端没实现**：出全项目，按 label 分组是前端 `LeftRail` 做的 | 🟢 |
 | GET | `/projects/{pid}/resolve?surface=` | `store.resolve([surface])` | `{surface, ambiguous, unique_id, hits[]}`（hits 一律收窄成 `NodeRef`） | 🟢 |
 | GET | `/projects/{pid}/chapters/{n}/mentioned` | `mentioned.mentioned_cast`（读磁盘正文） | `{chapter, has_text, surfaces[]}`·**`has_text=false`（章还没写）和 `surfaces=[]`（写了但没提到人）是两件事，别合并显示** | 🟢 |
@@ -76,7 +76,7 @@
 | GET | `/projects/{pid}/characters/{node_id}/state?chapter=` | `panel.character_state` | `StateSnapshot` | 🟢 |
 | GET | `/projects/{pid}/subgraph?center=&chapter=&hops=&edge_types=` | `store.subgraph`（hops≤2） | `Subgraph` | 🟢 |
 | GET | `/projects/{pid}/evidence/{evidence_id}` | `store.get_evidence` | `{id, chapter_number, quote_text, anchor}`（扁平；**不给 score**，v1 没有向量） | 🟢 |
-| POST | `/projects/{pid}/chapters/{n}/check` | `parse_scenes` → `run_checks` | `{chapter, scene_count, rules_run, issues}`——**不是裸 `list[Issue]`**：静默的零和真的零不许长得一样（0 个场景块 = R4 无事可做 = 必然零 issue，那个零不是「这章没问题」） | 🟢 |
+| POST | `/projects/{pid}/chapters/{n}/check` | `run_checks` | `{chapter, rules_run, issues}`——**不是裸 `list[Issue]`**：静默的零和真的零不许长得一样，前端据 `rules_run` 把「跑了没意见」和「哪条没跑」分开。⚠️ **`scene_count` 2026-08-14 从出参里去掉了**（ADR 0027：它是 R4 缺席的成色说明，而 R4 不在了） | 🟢 |
 | POST | `/projects/{pid}/locate` | `Ledger.locate` | `list[QuoteCandidate]` | 🟢 |
 | POST | `/projects/{pid}/nodes` | `Ledger.declare_node` | `Node` | 🟢 |
 | POST | `/projects/{pid}/aliases` | `Ledger.declare_alias` | `StoredAlias` | 🟢 |
@@ -141,7 +141,8 @@
 > **顶栏那个「出场人物」输入框已经删掉**——在场人物是写出来的结果，不是写之前的输入。
 
 > **`?include=` 和 `?cast=` 方向相反，不许混用**（2026-08-11 起）。`cast` 是**过滤**
-> （「只看这几个人」），唯一来源是作者亲手标的场景块；`include` 是**只加不减**
+> （「只看这几个人」），唯一来源曾经是作者亲手标的场景块（**2026-08-14 那条来源没了**，
+> ADR 0027，于是 `cast` 今天在界面上没有写入方）；`include` 是**只加不减**
 > （「这几个人也要算进来」），给的是日志页那个由**系统**算出来的跳转坐标（`ActivityJump.cast`）。
 > 三条读端共用同一份在场，而 `must_not_reveal` 的判据是「在场的人里至少有一个还不知道」——
 > 把一个只知道一个人的坐标塞进 `cast`，禁令会**少一批**（fail-open，ADR 0018 §3）。
@@ -426,12 +427,12 @@ React 18 + TS（桌面优先）· Vite · **TanStack Query**（服务端状态�
 | UI 元素 | 背书 | 判定 |
 |---|---|---|
 | 项目名 / 当前章 / 保存 | `Project` / `chapter` 表 / `sync` | 🟢（卷非节点类型，只能 heading 推断，不做卷导航） |
-| 一致性检查 | `run_checks` / R2·R3·R4 | 🟢（印「跑了几条规则」+ 规则名避免静默零；R5 已按 ADR 0014 砍掉） |
+| 一致性检查 | `run_checks` / R2·R3 | 🟢（印「跑了几条规则」+ 规则名避免静默零；R4 按 [ADR 0027](adr/0027-scene-blocks-cut.md)、R5 按 ADR 0014 砍掉） |
 | AI 规划 | — | 🟡 M2（灰置 stub） |
 | ~~AI 起草（抽屉）~~ | ~~`/draft`~~ | **2026-08-10 删掉界面**，端点保留给模式二 agent 当工具 |
 | 左栏 人物/地点/势力/物品/伏笔 | `resolve` 按 label 过滤 | 🟢 读端就绪；⚠️ 势力/物品/伏笔 **M1 无 declare 写路径**，v1 初期空 |
 | 左栏 大纲 / 世界观 | — | ⚪ 降级为磁盘 markdown，无图谱背书 |
-| 中栏 正文 / 场景块 | 磁盘 md + `parse_scenes` | 🟢 |
+| 中栏 正文 | 磁盘 md | 🟢（**场景块那一半 2026-08-14 砍了**，ADR 0027） |
 | 中栏 AI 生成 / 局部重写 / 接受拒绝 | — | 🟡 M2 |
 | 中栏 选中文字查图谱 / 选段跑检查 | `resolve` + `subgraph` + `run_checks` | 🟢 |
 | 中栏 版本对比 | `chapter_snapshot`（去重非全量） | 🟢 降级为作者版 diff |
@@ -495,7 +496,10 @@ React 18 + TS（桌面优先）· Vite · **TanStack Query**（服务端状态�
 - [FE] AI 规划/起草渲染成灰置 stub；最近运行隐藏
 - [FE] `openapi-typescript` 从 Pydantic 出参生成前端类型
 
-### P1 · 应用内 Markdown 编辑器 + 磁盘同步 + 场景块
+### P1 · 应用内 Markdown 编辑器 + 磁盘同步 + ~~场景块~~
+
+> ⚠️ **场景块那一条 2026-08-14 整个砍了**（[ADR 0027](adr/0027-scene-blocks-cut.md)）。
+> 下面这一节留着是当时的计划记录，**别照它重做一遍**：它交付的东西今天一样都不在。
 **交付**：作者在应用内改正文、保存即落快照（文件仍在磁盘），编辑/拖动场景块并回写，拉出「当前 md vs 历史快照」作者版对比。**守住 ADR 0007。**
 - [BE] `PUT /chapters/{n}/text`（写磁盘 → `sync`；`SyncRefused`→422 带 path）
 - [BE] `GET /chapters/{n}/history` + diff（标注「快照按内容去重、非全量版本史」）
@@ -504,7 +508,9 @@ React 18 + TS（桌面优先）· Vite · **TanStack Query**（服务端状态�
 - [FE] 场景块 UI（拖拽排序/增删/改目标 → 回写 md）
 - [FE] `TextAnchor` 桥脚手架：段落级定位一律三元组，代码里彻底不留 offset
 
-### P2 · declare 写入闭环 + 名称消歧 + 局部关系图 + R4 内联
+### P2 · declare 写入闭环 + 名称消歧 + 局部关系图 + ~~R4 内联~~
+
+> ⚠️ **R4 那一条 2026-08-14 砍了**（ADR 0027）。同上：别照它重做。
 **交付**：作者敲原始称呼 + 引语就能写图谱（系统算章号、给收据、自动关闭旧地点边）；名字歧义有选择器；选中正文能查节点/局部图；对本章跑 R4 并在正文精确高亮冲突。**这是 v1 核心闭环。**
 - [BE] 每请求构造 `Ledger`（唯一同时持 store+conn，一条共享连接）
 - [BE] `POST /nodes`（全 8 label）· `/aliases` · `/declare/{knows,believes,where}`（入参=称呼+引语，永不 node_id、永不章号）

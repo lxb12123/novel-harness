@@ -322,7 +322,15 @@ class AskAuthorArgs(BaseModel):
 # （模型能拿一段自己编的字去盖作者的书）。一条规矩不是正文，但**长得像正文的字段名一律
 # 不许出现在工具入参上**，那条判据认的就是名字。
 class RememberRuleArgs(BaseModel):
-    """记下作者刚定的一条规矩。**只有那句话，没有章号。**"""
+    """记下作者刚定的一条规矩：**那句话 + 它管到什么时候。没有章号。**
+
+    `until` 是 2026-08-15 加的（迁移 016）。作者的原话：「你在写某一章的时候用户讲过的
+    规则，然后**你规定的时效**什么的都可以记一下」。**「你规定的」三个字定死了它的形状**：
+    时效得是模型明确交出来的一个字段，埋在 `rule` 那句话里就没有可以记下来的东西。
+
+    **它仍然不是章号**（约束 10）：模型写的是一句人话（「男主走出这片沙地为止」），
+    引擎一个字都不解析，也永远不会把它换算成一个数。
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -330,6 +338,18 @@ class RememberRuleArgs(BaseModel):
         min_length=1,
         description=(
             "他要的那一句，用他自己的说法，一句话。太长会被退回来让你压短。"
+        ),
+    )
+
+    until: str = Field(
+        min_length=1,
+        description=(
+            "**这条什么时候就不算数了**，用一句人话写清楚。"
+            "比如「男主走出这片沙地为止」「这一场打完」「他和师父摊牌之前」"
+            "「整本书都这样」。\n"
+            "说不清就写「整本书都这样」——**别硬编一个条件**，编出来的条件下一轮是你自己在读。\n"
+            "这句话你以后每一轮都会连着规矩一起看到，**它是你判断这条还作不作数的依据**；"
+            "作者也会在那张表里看到它。"
         ),
     )
 
@@ -563,6 +583,8 @@ class RememberedRule(BaseModel):
 
     rule: str
     chapter: int = Field(ge=1)
+    until: str = ""
+    """这条管到什么时候（模型自己写的一句人话，迁移 016）。**空串只可能来自老会话。**"""
 
 
 class RememberRuleResult(RememberedRule):
@@ -590,8 +612,13 @@ class RememberRuleResult(RememberedRule):
     （同 `ToolOutcome.calls` 那条「账单原料不进对话」）。loop 从
     `ToolOutcome.remembered` 拿它——那条路不经过对话。"""
 
+    until: str = Field(default="", exclude=True)
+    """模型刚写下的那句时效。**同样 `exclude=True`，理由同上**：它下一轮会连着规矩
+    一起回到 prompt 里（`rules.prompt_text`），在工具返回里再摆一遍是同一句话的第二份，
+    而两份措辞一旦不一致，模型信哪一份没有答案。"""
+
     note: str = ""
-    """说给**模型**听的那句：它管多久、怎么才算说了第二遍。**不是给作者的。**"""
+    """说给**模型**听的那句：它管多久、同一条怎么才算同一条。**不是给作者的。**"""
 
 
 class ToolOutcome(BaseModel):
@@ -842,16 +869,20 @@ def _handle_read_draft(args: DraftIdArgs, context: ToolContext) -> DraftFullText
 
 
 RULE_ACKNOWLEDGED: Final = (
-    "记下了。它只管这一章，作者切到别的章就自动没了；他要是再说一遍，你就再记一遍——"
-    "**同一条得用一模一样的措辞**（说了几遍是按字比的，换个说法就成了两条），"
-    "说到第二遍它就管住整章。"
+    "记下了。**它不会自己过期**：以后每一轮你都会看到它，前面标着作者是写第几章时说的。"
+    "每次读到它，自己判断那个情境还在不在——不在了就当它不存在，别硬套。"
+    "他再说一遍你就再记一遍，**同一条得用一模一样的措辞**（是按字比的，"
+    "换个说法就成了两条，两条都会跟着你走）。"
 )
 """`remember_rule` 交回给**模型**的那句话。**它不上屏。**
 
-最后那半句不是客套：升到章级的判据是 `rules.rule_key` 归一化之后**字节相等**
-（ADR 0005：「这两句是不是一个意思」是语义判断，引擎不做）。模型每次换个说法重述，
-计数就从头开始，那条规矩少活一段章级——方向是「放掉」那一侧，和 ADR 0023 那张表一致，
-但它是可以避免的浪费，所以这句话得说出口。
+两半都不是客套：
+
+- **「不会自己过期」**是 2026-08-14 换掉的机制（[ADR 0028]）。从前它按章号作废，
+  而章号从来不是有效期——「男主在这片沙地别杀人」跟第几章没关系。
+- **「同一条得用一模一样的措辞」**：去重的判据是 `rules.rule_key` 归一化之后
+  **字节相等**（ADR 0005：「这两句是不是一个意思」是语义判断，引擎不做）。
+  换个说法就多一条，而条数是有上限的（`RULE_KEEP_MAX`）——挤掉的是最早那几条。
 """
 
 
@@ -864,9 +895,10 @@ def _handle_remember_rule(args: RememberRuleArgs, context: ToolContext) -> Remem
     """
     from .rules import rule_message  # 断环，同 `loop.project()`
 
-    message = rule_message(args.rule, chapter=context.working_chapter)
+    message = rule_message(args.rule, chapter=context.working_chapter, until=args.until)
     return RememberRuleResult(
         rule=message.content,
+        until=message.rule_until,
         # `rule_message` 保证它不是 `None`（没有坐标那一支已经拒了）；真漏了的话
         # 这儿是一次 `ValidationError`（也是 `ValueError`）⇒ 同样变成一条拒绝，
         # **而不是一条章号为空的规矩**。
@@ -1059,16 +1091,20 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
     ToolSpec(
         name="remember_rule",
         description=(
-            "作者提了一条**怎么写**的要求（「别写打斗」「冷一点」「这段别太煽情」），"
-            "把它记下来。记下的那条会跟着他这一章走，下一轮你还看得见它。\n"
+            "作者提了一条**怎么写**的要求（「别写打斗」「冷一点」「男主在这片沙地不杀人」），"
+            "把它记下来。记下的那条以后每一轮你都看得见。\n"
+            "**把「什么时候不算数了」写进那句话里**，用他自己的说法。"
+            "他说「男主在这片沙地别杀人」，就照这么记——你以后读到它，"
+            "自己看男主还在不在那片沙地；不在了就当它不存在，不必守。"
+            "系统**不会**替你按章号把它作废（那是 2026-08-14 撤掉的机制）："
+            "一条规矩活多久，由你每次读到它时判断。\n"
             "**只记怎么写，不记书里发生了什么**：人物、关系、谁知道什么那些是书里的事实，"
             "有它们自己的地方，从这儿进去只会变成一句谁也查不到的话。\n"
-            "**同一条要用一模一样的措辞**——他再说一遍你就再记一遍，两遍之后它管住整章；"
-            "而「说了几遍」是按字比的，你换个说法就成了两条，那条规矩就少活一段。\n"
+            "**同一条要用一模一样的措辞**：换个说法就成了两条，两条都会跟着你走。\n"
             "**没有章号这个参数**：记在第几章由这本书此刻打开的地方决定，你传不进来，"
             "他也不填。他还没停在任何一章上时这一次会被退回来——那时先接着聊，别硬记。\n"
             "**别每句话都记**：他随口的一句评价不是规矩，记多了等于给他攒了一堆他不知道"
-            "自己定过的规矩。"
+            "自己定过的规矩——而他看不见这张单子。"
         ),
         args=RememberRuleArgs,
         handler=_handle_remember_rule,
@@ -1284,7 +1320,7 @@ def _remembered_rule(payload: BaseModel) -> RememberedRule | None:
     """
     if not isinstance(payload, RememberedRule):
         return None
-    return RememberedRule(rule=payload.rule, chapter=payload.chapter)
+    return RememberedRule(rule=payload.rule, chapter=payload.chapter, until=payload.until)
 
 
 def _validation_message(exc: ValidationError) -> str:

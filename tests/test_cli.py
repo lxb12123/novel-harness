@@ -42,8 +42,10 @@ from novel_harness.graph import (
     EdgeProps,
     EdgeSpec,
     EdgeType,
+    HealthValue,
     InformationScope,
     NodeLabel,
+    NodeProps,
     SecretDetail,
 )
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
@@ -360,16 +362,48 @@ def _chapter_file(tmp_path: Path, text: str) -> Path:
     return path
 
 
-def test_check_reports_a_location_conflict(book: Seeded, tmp_path: Path) -> None:
-    """R4：场景声明在青云城主府，而萧决自第 150 章起在北荒。**作者声明 vs 作者声明。**
+def _kill(book: Seeded, chapter: int) -> None:
+    """让萧决在第 `chapter` 章死掉。**只给需要它的那条测试用**，不进 `_seed`——
+    整本种子书里多一条死亡会把别的断言（面板、状态）一起改掉。
 
-    这是 `checks/` 第一次被一个真实的、非测试的调用方喂到——在此之前 R4 是一条正确的
-    纯函数，`Scene` 全仓库只在测试里被构造过。
+    走的仍是生产写路径（`Ledger.declare_node` + `store.upsert_edge`），
+    理由同 `_seed` 的 docstring：测试里手写第二份写路径 = 把被测物换成自己。
     """
-    manuscript = _chapter_file(
-        tmp_path,
-        "## 场景 1\n<!-- nh: cast=萧决 loc=青云城主府 goal=试探身世 -->\n\n正文正文。\n",
+    conn = db.connect(book.path)
+    store = SqliteStoryGraph(conn)
+    dim = Ledger(store, conn, book.pid).declare_node(
+        NodeLabel.STATE_DIM, "健康", props=NodeProps(dim_key="health")
     )
+    store.upsert_edge(
+        EdgeSpec(
+            project_id=book.pid,
+            src=book.ids["萧决"],
+            dst=dim.id,
+            type=EdgeType.HAS_STATE,
+            props=EdgeProps(value_key=HealthValue.DEAD),
+            valid_from_chapter=chapter,
+            information_scope=InformationScope.CANON,
+        )
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_check_reports_an_issue_with_the_anchor_triple(book: Seeded, tmp_path: Path) -> None:
+    """R3：萧决第 150 章死了，第 151 章的正文里还挂着他的对话标签。
+
+    ── 这条测试 2026-08-14 从 R4 换成了 R3 ────────────────────────────────
+
+    原来它喂的是一个场景块（`<!-- nh: cast=萧决 loc=青云城主府 -->`），断言
+    `[R4] LOCATION_CONFLICT`。R4 连同场景块一起砍了（[ADR 0027]）。**换而不是删**：
+    这是 `checks/` 唯一一处被**命令行**这个真实调用方喂到的地方，删掉之后
+    `nh check` 的输出格式（锚三元组怎么印、建议印不印、退出码）就再没有东西验。
+
+    锚是 `(para_index, quote_text, occurrence_k)`（ADR 0006）——**后端永不对外发 offset**，
+    所以这里逐个断言那三个数，不断言任何字符位置。
+    """
+    _kill(book, 150)
+    manuscript = _chapter_file(tmp_path, "夜里风大。\n\n萧决道：「我还没死。」\n")
     result = runner.invoke(
         app,
         [
@@ -386,49 +420,23 @@ def test_check_reports_a_location_conflict(book: Seeded, tmp_path: Path) -> None
     )
 
     assert result.exit_code != 0, result.output
-    assert "[R4] LOCATION_CONFLICT" in result.output
-    assert "北荒" in result.output
-    assert "青云城主府" in result.output
+    assert "[R3] DEAD_SPEAKS" in result.output
+    assert "萧决" in result.output
+    # 锚：第 2 段（0-based，`text.paragraphs()` 把那行空行也算一段）、第 0 次。
+    assert "第 2 段" in result.output
+    assert "第 0 次" in result.output
     # 建议由规则确定性产出（PLAN 改 13），不是 LLM 编的。
     assert "建议：" in result.output
 
 
-def test_check_prints_the_anchor_triple_and_never_an_offset(book: Seeded, tmp_path: Path) -> None:
-    """锚是 `(para_index, quote_text, occurrence_k)`（ADR 0006）。**后端永不对外发 offset。**
-
-    指令行在第 1 行（0-based），`quote_text` 必须是那一行的原文。
-    """
-    manuscript = _chapter_file(
-        tmp_path, "## 场景 1\n<!-- nh: cast=萧决 loc=青云城主府 -->\n"
-    )
-    result = runner.invoke(
-        app,
-        [
-            "check",
-            "--db",
-            str(book.path),
-            "-p",
-            book.pid,
-            "--chapter",
-            "151",
-            "-f",
-            str(manuscript),
-        ],
-    )
-
-    assert "第 1 段" in result.output
-    assert "第 0 次" in result.output
-    assert "<!-- nh: cast=萧决 loc=青云城主府 -->" in result.output
-
-
 def test_check_says_how_many_rules_it_ran(book: Seeded, tmp_path: Path) -> None:
-    """**零 issue 必须带着「跑了几条规则」一起出现**（§10 约束 8 / `checks/__init__.py:29`）。
+    """**零 issue 必须带着「跑了哪几条规则」一起出现**（§10 约束 8 / `checks/__init__.py`）。
 
-    2026-08-02 起 `ALL_CHECKS` 是 R2/R3/R4；「无 issue」的真实含义是
-    「三条规则都没意见」，不是「这一章没问题」——沉默的工具死得比吵闹的工具更快，
-    只是死得更安静。
+    「无 issue」的真实含义是「跑过的这几条都没意见」，不是「这一章没问题」——
+    沉默的工具死得比吵闹的工具更快，只是死得更安静。
+    **断言的是 `len(ALL_CHECKS)` 不是写死的数字**：砍一条规则不该让这条测试变成手改。
     """
-    manuscript = _chapter_file(tmp_path, "## 场景 1\n<!-- nh: cast=萧决 loc=北荒 -->\n")
+    manuscript = _chapter_file(tmp_path, "夜里风大，城头上没有人。\n")
     result = runner.invoke(
         app,
         [
@@ -445,8 +453,7 @@ def test_check_says_how_many_rules_it_ran(book: Seeded, tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 0, result.output
-    assert "跑了 3 条规则" in result.output
-    assert "location_conflict" in result.output
+    assert f"跑了 {len(ALL_CHECKS)} 条规则" in result.output
     assert "future_leak" in result.output
     assert "dead_speaks" in result.output
     assert "0 条 issue" in result.output
@@ -494,46 +501,6 @@ def test_draft_is_an_experimental_channel_that_prints_text(
     assert result.exit_code == 0, result.output
     assert "萧决道：「此剑无名。」" in result.output
     assert calls and calls[0]["plan"] is not None
-
-
-def test_check_without_scene_blocks_still_runs_the_rules_that_read_prose(
-    book: Seeded, tmp_path: Path
-) -> None:
-    """没有场景块**不再是拒绝**，是一句说明。
-
-    ── 这条测试 2026-08-13 反过来了，反的理由是它原来那句话过期了 ────────────
-
-    原来这里断言 `exit_code != 0`，理由写着「没有场景块 = R4 无事可做 = 必然零 issue，
-    不让那个零冒充体检报告」。那在 `ALL_CHECKS` 只有 R4 的那天是对的。R2/R3 在
-    2026-08-02 进表之后就不对了：**那两条读的是正文，一个场景块都不需要**。
-    而真书里没有人手写 `<!-- nh: -->`，于是那句 `_die` 的实际效果，是在整本真书上
-    把 R2/R3 全部挡在门外——一句为了防「假的零」写的话，最后造出的是「一条都跑不了」。
-
-    约束 8 那一半原样在：**那个零的成色必须说出来**，所以既印「跑了几条规则」，
-    也印「哪一条今天没东西可查、为什么」。
-    """
-    manuscript = _chapter_file(tmp_path, "萧决站在城头上，看着北荒的方向。\n")
-    result = runner.invoke(
-        app,
-        [
-            "check",
-            "--db",
-            str(book.path),
-            "-p",
-            book.pid,
-            "--chapter",
-            "151",
-            "-f",
-            str(manuscript),
-        ],
-    )
-
-    assert result.exit_code == 0, result.output
-    assert "0 个场景块" in result.output
-    assert f"跑了 {len(ALL_CHECKS)} 条规则" in result.output
-    # 零必须带着理由（§10 约束 8）：不说的话，「R4 没东西可查」和「R4 查过了没意见」
-    # 在终端上一模一样，而那正是原来那句 `_die` 想防的东西。
-    assert "没东西可查" in result.output
 
 
 # ══════════════════════════════════════════════════════════════════════════

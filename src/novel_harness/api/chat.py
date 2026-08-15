@@ -97,9 +97,7 @@ ADR 0023 押的退路是两件事：**看得见 + 能取消**。引擎侧齐了�
 
 | 问题 | 谁回答 |
 |---|---|
-| 这一章现在哪几条生效 | `rules.live_rules()` |
-| 有几条已经不作数了（零态的那句理由） | `rules.expired_rule_count()` |
-| 取消一条要动哪几份 | `rules.revocation()` + 读端的 `_revoked_indices` |
+| ~~这一章现在哪几条生效 / 取消一条~~ | **2026-08-14 撤了**（ADR 0028）——规矩不上屏，见文件末尾那段 |
 
 最后那一行是**这条按钮唯一会假绿的地方**：同一条规矩记过两遍时读端只摆最后一条，
 作者点的也只能是那一条，**而前面那一遍已经是章级的**。只划掉那个下标 =
@@ -119,6 +117,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from ..agent.rules import surviving_rule_indices
 from ..agent.loop import (
     write_rule_of,
     AgentMessage,
@@ -142,7 +141,6 @@ from ..agent.candidates import DraftCandidate, DraftCandidateStore
 from ..agent.drafting import ChapterDesk, chapter_drafter
 from ..agent.model import ProviderModelPort, agent_call_plan
 from ..agent.ports import ToolContext
-from ..agent.rules import AuthorRule, expired_rule_count, live_rules, revocation
 from ..agent.tools import AuthorQuestion
 from ..agent.store import ChatConcurrency, ChatNotice, ChatSessionRow, ChatStore, StoredChat
 from ..db import Connection
@@ -299,7 +297,7 @@ class ChatMessageView(BaseModel):
     ⚠️ **`system` 那一档不占历史下标**（它不在历史里），所以它这个数说的是
     「它前面有几条历史消息」——**和紧跟其后那一条撞号是正常的**。
     前端不许拿它当身份，也不许拿它去调任何一条按 `seq` 定位的路由
-    （`AuthorRuleView.seq` 那个坐标只对 `author` / `assistant` 成立）。
+    （那个历史下标坐标只对 `author` / `assistant` 成立）。
     """
 
     speaker: Literal["author", "assistant", "system"]
@@ -515,76 +513,56 @@ class ChatDeleted(BaseModel):
     deleted: bool
 
 
-class AuthorRuleView(BaseModel):
-    """摆给作者看的一条规矩（ADR 0023 决策二的「摆出来」那一半）。
+class RecordedRule(BaseModel):
+    """作者交代过的一条规矩，**摆进那张表里的一行**（[ADR 0028] + 迁移 016）。
 
-    **`heard` 不在这儿，这是有意的。** 它是「在几个来回里被记下过」，读起来像
-    「你说过 N 遍」——而提炼是模型干的，它记下的东西作者不一定真说过（ADR 0023 自己
-    把这条列在「代价」里）。屏幕上说不准的数不如不说；作者要决定的只有「留还是不留」，
-    而那两个字段（`text` / `scope`）就够。
-    """
+    ⚠️ **它不是 2026-08-14 撤掉的那个东西，别把两者当成一回事。**
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    | | 撤掉的那个（`GET …/chats/{cid}/rules`） | 这一个 |
+    |---|---|---|
+    | 回答的问题 | **这一章此刻哪几条生效** | **我到底跟它交代过什么** |
+    | 形态 | 对话头上一颗常驻按钮 + 一块能点掉的面板 | 一张回头翻的表 |
+    | 有没有取消 | 有（那是它存在的理由） | **没有，一颗按钮都没有** |
+    | 生不生效 | 引擎按章号算给作者看 | **不说** —— 那是模型每一轮按情境判的事 |
 
-    seq: int = Field(ge=0)
-    """取消它时报这个数（`AuthorRule.seq`，历史下标）。**不上屏。**
+    作者 2026-08-15 的原话：「你在写某一章的时候用户讲过的规则，然后你规定的时效
+    什么的都可以记一下」。**「记一下」和「摆出来让他管」是两件事**，他 8-14 否掉的是后者。
 
-    它和消息上那个 `seq` 是同一个坐标（`_visible` 也按历史下标编），所以「作者点了
-    哪一条」在整条链上只有一种读法。
-    """
-
-    text: str
-    """那句话，**作者自己的措辞**（模型提炼时被要求原样重述，`agent/tools.py`）。"""
-
-    scope: str
-    """它管到哪儿，**一句中文**。
-
-    **枚举不出这一层**（`chapter_wide` 是个 bool，翻成中文要么在前端摆一张
-    「码 → 中文」的表——那张表被删过一次，理由在 `frontend/src/api/correctionError.ts`
-    顶上——要么在这儿翻一次）。同 `stopped_reason` / `stop_wording()`：措辞的唯一出处
-    在后端，前端照抄。
-    """
-
-
-class ChatRules(BaseModel):
-    """第 `chapter` 章此刻生效的那几条（`GET …/rules?chapter=N`）。
-
-    **`expired` 不是装饰，它是零态的那句理由**（§10 约束 8）：一块空面板要说得出
-    自己是哪一种空——「还没有规矩」和「定过、这会儿都不作数了」下一步动作不同，
-    后者的下一句是「规矩只管你说它时那一章」，而这个仓库为「静默的零」栽过五次。
+    **这里没有「它还作不作数」这一列，而且不许加。** 那个答案只有读到规矩的那个模型
+    知道（ADR 0028），引擎给不出来——给一个出来就是编，而编出来的那一列看起来完全正常。
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     chapter: int = Field(ge=1)
-    """这份答案是按第几章算的。**原样回给界面**：作者可能在请求飞着的时候翻了页，
-    那时屏幕上说的必须是这份数据真正的坐标，不是他此刻站的那一章。"""
+    """他说这话时在写第几章。**时间轴就是它**——对一个写了 722 章的人来说，
+    「第几章」比「几月几号」有用得多，而且它已经存着（`ToolContext.working_chapter`，
+    约束 10：不是他填的）。"""
 
-    rules: tuple[AuthorRuleView, ...] = ()
-    expired: int = Field(default=0, ge=0)
-    """**已经不作数**的有几条（按身份数，见 `rules.expired_rule_count`）。
+    text: str
+    """那句话，作者自己的措辞（模型被要求原样重述）。"""
 
-    它数的是**整段对话**里的，不只这一章——「他在第 2 章定过、现在在第 7 章」正是
-    这个数存在的理由，而那时那几条不属于当前这一章。作者取消掉的不算（他知道它没了）。
-    """
-
-
-class RuleRevoked(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    until: str = ""
+    """模型当时判定它管到什么时候。**空 = 迁移 016 之前记下的**，那时还没有这一格；
+    界面照实说「没记下」，**不许替它编一个**。"""
 
     chat_id: str
-    seq: int = Field(ge=0)
-    revoked: bool
-    """恒为 `true`（撤不掉的那几种在上面就 4xx 了）。
-
-    **界面不许拿它当「这条已经从清单上消失」的证据**：真正的证据是重取一次那份清单，
-    而那正是「按下标撤」那个 bug 唯一会现形的地方。
-    """
+    chat_title: str = ""
+    """哪一段对话里说的 —— 表上那一行的出处，作者点回去能读到上下文。"""
 
 
-# ══════════════════════════════════════════════════════════════════════════
-# 入参
-# ══════════════════════════════════════════════════════════════════════════
+class RecordedRules(BaseModel):
+    """全书的规矩表（`GET /api/projects/{pid}/rules`）。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    rules: tuple[RecordedRule, ...] = ()
+    """按章号从大到小（他最近在写的那一章排最前），同章按说出来的先后。"""
+
+    scanned_chats: int = Field(default=0, ge=0)
+    """这一次翻了几段对话。**零条规矩时它就是那个零的成色**（§10 约束 8）：
+    「一段对话都没有」和「说过话但一条规矩都没记下」在屏幕上是两句不同的话，
+    而后者今天是**默认**那一档——`remember_rule` 在真书上一次都没开过火。"""
 
 
 class NewChat(BaseModel):
@@ -841,26 +819,6 @@ def _draft_view(candidate: DraftCandidate) -> DraftCandidateView:
         created_at=candidate.created_at,
         landed=candidate.landed,
         stopped_reason=candidate.stopped_reason,
-    )
-
-
-def _rule_view(rule: AuthorRule) -> AuthorRuleView:
-    """一条规矩 → 屏幕上那一行。**这儿只翻一件事：`chapter_wide` 那个 bool。**
-
-    两句话都带着「什么时候它自己就没了」，因为那正是作者不问就不会知道的一半：
-    ADR 0023 的安全方向是**拿不准就放掉**（留着 = 第 200 章写不出打戏，而作者不知道
-    为什么），所以「它会自己过期」这件事必须和规矩本身摆在一起，不能只活在 ADR 里。
-    """
-    if rule.chapter_wide:
-        return AuthorRuleView(
-            seq=rule.seq,
-            text=rule.text,
-            scope=f"第 {rule.chapter} 章都按它来 —— 翻到下一章就自动放掉",
-        )
-    return AuthorRuleView(
-        seq=rule.seq,
-        text=rule.text,
-        scope="只管眼下这一轮 —— 你再说一句话，它就自动放掉",
     )
 
 
@@ -1463,90 +1421,72 @@ def stop_chat(
     )
 
 
-@router.get("/api/projects/{project_id}/chats/{chat_id}/rules", response_model=ChatRules)
-def list_rules(
-    chat_id: ChatId,
-    chapter: Annotated[int, Query(ge=1)],
+# ⚠️ **`GET`/`DELETE …/chats/{cid}/rules[/{seq}]` 两条路由 2026-08-14 删了**
+# （[ADR 0028](../../../docs/adr/0028-rules-expire-by-situation.md)）。
+#
+# 它们是 ADR 0023「看得见 + 能取消」那一半的 HTTP 面，服务的是写作助手顶上那颗
+# 「这一章的规矩」按钮——而那颗按钮同日撤了。作者的原话：
+#
+#   「这个原本就不需要展示给用户看，并且这个规则是有时效性的……
+#     这个要由 llm 智能判断，而不是显示出来给用户选择。」
+#
+# **零调用方的端点不许留着。** 这个仓库为它栽过一次（ARCHITECTURE「工作台的已知洞」
+# 第 4 条：滚动总结的两条端点「有了」却没人调，于是它一直在花作者的钱、影响每一稿，
+# 而他看不见改不了删不掉）。删掉是那条教训的正着用法。
+#
+# `AuthorRuleView` / `ChatRules` / `RuleRevoked` 三个出参模型、`_rule_view()`
+# 和 `rules.revocation()` 一起没了。**引擎侧一个字没动**：规矩照旧被记下、照旧进 prompt，
+# 只是有效期从「按章号算」变成「模型按情境判」。
+#
+# **2026-08-15 长出来的是另一条**（`GET /api/projects/{pid}/rules`，就在下面）：
+# 它回答的不是「这一章哪几条生效」，是「我到底跟它交代过什么」——一张回头翻的表，
+# 没有取消按钮，也不说哪条还作不作数。两者的差别写在 `RecordedRule` 的 docstring 里。
+
+
+@router.get("/api/projects/{project_id}/rules", response_model=RecordedRules)
+def recorded_rules(
+    limit: Annotated[int, Query(ge=1, le=500)] = 200,
     proj: Any = Depends(load_project),
     conn: Connection = Depends(get_conn),
-) -> ChatRules:
-    """这一章此刻**生效着**的规矩（ADR 0023 决策二的「看得见」那一半）。
+) -> RecordedRules:
+    """作者交代过的每一条规矩，**按他说话时在写第几章排**。
 
-    **`chapter` 必填，和跑一轮那条同一个理由，但故障形态不同**：`live_rules` 在
-    `chapter is None` 时返回空元组（拿不准就放掉，那一侧是对的），而这条路由的出参
-    会直接变成一块「这一章还没有规矩」的空面板——**一句它不知道真假的话**。
-    那一档比漏几条规矩更坏：它长得完全正常。
+    ── 为什么逐段把对话读出来，而不是一条 SQL 扫过去 ──────────────────────────
 
-    两个数一次给全（`rules` + `expired`），**不给第二条路由**：分成两次取的话，
-    界面上会出现「零条规矩」和「有几条过期了」不同步的一瞬间，而那一瞬间说的是假话。
+    「这条被撤销过没有」的坐标是**历史下标**（`AgentMessage.revokes_seq`），而下标只有
+    在一整段历史手上才算得出来（`rules._revoked_indices`）。用 SQL 现拼一遍那个判据 =
+    第二份实现，而它错的形态是**作者当年明确取消过的规矩又出现在这张表上**。
+
+    代价是 O(段数) 次 `load()`。**今天这个代价接近零**：真书上 7 个作者回合、一段对话。
+    哪天它真的贵起来，正确的修法是给 `ChatStore` 加一条只取候选行的读端，
+    **不是**在这一层重写那条判据。
+
+    ⚠️ **它和 2026-08-14 撤掉的那两条不是一回事**，差别在 `RecordedRule` 的 docstring 里。
     """
-    stored = _load(conn, proj.id, chat_id)
-    live = live_rules(stored.conversation, chapter)
-    return ChatRules(
-        chapter=chapter,
-        rules=tuple(_rule_view(rule) for rule in live),
-        # **下标集合由上面那份现成的答案凑出来**（`AuthorRule.seq` 按定义就是它），
-        # 不再调一次 `surviving_rule_indices` —— 两次调用之间那份会话不会变，
-        # 但「同一个问题在这一层问了两遍」正是判据开始漂的形状。
-        expired=expired_rule_count(
-            stored.conversation.messages, frozenset(rule.seq for rule in live)
-        ),
-    )
-
-
-@router.delete(
-    "/api/projects/{project_id}/chats/{chat_id}/rules/{seq}", response_model=RuleRevoked
-)
-def revoke_rule(
-    chat_id: ChatId,
-    seq: Annotated[int, Path(ge=0)],
-    proj: Any = Depends(load_project),
-    conn: Connection = Depends(get_conn),
-) -> RuleRevoked:
-    """作者点掉一条规矩（ADR 0023 决策二的「能取消」那一半）。
-
-    ── 它是 `DELETE`，但库里**一行都没少** ────────────────────────────────────
-
-    canonical 只增不改（读回来重建出的 `Conversation` 必须和存进去之前逐字节相同），
-    所以取消是历史上多出来的一条记录，指着被取消的那一条。动词仍然用 `DELETE`：
-    对作者而言这就是「把这条划掉」，而 HTTP 的动词说的是他要的效果，不是库里的实现。
-
-    ── 撤销**按身份**，这一层一个循环都不写 ──────────────────────────────────
-
-    同一条规矩被记过两遍时，读端只摆最后那一条（`live_rules` 去重），作者点的也就是
-    那一条；只把那个下标划掉的话，前面那一遍还在，而它此刻已经是章级的——
-    **按钮按了、规矩还在，且没有任何东西会报错**。判据在 `rules._revoked_indices`
-    （按「同一章的同一串字」撤掉每一份），这儿只负责把那条记录追加进去。
-
-    ── 正在跑的那一轮**先拒掉**，而且这不是洁癖 ──────────────────────────────
-
-    这一轮自己也在往同一段历史里追加（`_TurnRun._save` 每长出一条落一次），追加走的是
-    乐观并发闸：中间插一条进去，**下一次落库当场 409，那一轮整个死掉**。
-    作者点的是一条规矩上的 ×，而代价是他已经付过钱的那一轮——两件事之间没有任何
-    看得出来的联系。所以这儿先说「它正在跑」，那句话是准的。
-    """
-    if LIVE.running((proj.id, chat_id)):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": "chat_busy",
-                "chat_id": chat_id,
-                "message": "这段对话正在跑，跑完（或者按「停」）再取消这条规矩。",
-            },
-        )
-    stored = _load(conn, proj.id, chat_id)
-    try:
-        record = revocation(stored.conversation.messages, seq)
-    except ValueError as exc:
-        # **那两句话是引擎写给作者的中文**（`rules.revocation` 的 docstring 写着为什么
-        # 它们不是诊断），这一层原样转发，不翻第二遍。这一档只可能是界面拿着一份旧清单
-        # 在点（另一个标签页刚取消过同一条、或者会话被换掉了）。
-        raise HTTPException(
-            status_code=422,
-            detail={"error": "rule_not_found", "chat_id": chat_id, "message": str(exc)},
-        )
-    _append(ChatStore(conn), proj.id, chat_id, stored.history_count, (record,))
-    return RuleRevoked(chat_id=chat_id, seq=seq, revoked=True)
+    store = ChatStore(conn)
+    rows: list[RecordedRule] = []
+    sessions = store.list(proj.id, limit=limit)
+    for session in sessions:
+        stored = store.load(proj.id, session.id)
+        if stored is None:  # 两次查询之间被删掉了；这一段就当不存在
+            continue
+        messages = stored.conversation.messages
+        for index in sorted(surviving_rule_indices(messages)):
+            message = messages[index]
+            if message.chapter is None:  # 没有坐标的老规矩，表上摆不出行
+                continue
+            rows.append(
+                RecordedRule(
+                    chapter=message.chapter,
+                    text=message.content,
+                    until=message.rule_until,
+                    chat_id=session.id,
+                    chat_title=session.title,
+                )
+            )
+    # 他最近在写的那一章排最前；同一章里按说出来的先后（`rows` 已经是那个序）。
+    rows.sort(key=lambda r: -r.chapter)
+    return RecordedRules(rules=tuple(rows), scanned_chats=len(sessions))
 
 
 @router.get("/api/projects/{project_id}/drafts", response_model=ChapterDrafts)

@@ -141,7 +141,6 @@ def test_frontend_fixture_matches_the_real_api(
     grab("chapters", client.get(f"{base}/chapters"))
     grab("chapterText", client.get(f"{base}/chapters/1/text"))
     grab("chapterHistory", client.get(f"{base}/chapters/1/history"))
-    grab("scenes", client.get(f"{base}/chapters/2/scenes"))
     grab("resolve", client.get(f"{base}/resolve", params={"surface": "萧决"}))
     grab("resolveAmbiguous", client.get(f"{base}/resolve", params={"surface": "师兄"}))
     grab(
@@ -526,20 +525,27 @@ def test_frontend_fixture_matches_the_real_api(
     doomed = client.post(f"{base}/chats", json={"title": "删掉它"})
     grab("chatDeleted", client.delete(f"{base}/chats/{doomed.json()['id']}"))
 
-    # ── 作者的规矩（ADR 0023 决策二）：**摆出来 + 能取消** ──────────────────────
+    # ── 作者交代过的那些规矩：一张回头能翻的表（ADR 0028 + 迁移 016）───────────
     #
-    # **又另开一段**（同上面那条理由）：这几轮会往历史里加东西，跑在前面那两段上会把
+    # ⚠️ **「这一章的规矩」那四份夹具 2026-08-14 撤了**
+    # （`chatRules` / `chatRulesExpired` / `chatRulesNone` / `chatRuleRevoked`）。
+    # 它们喂的是写作助手顶上那颗按钮和它背后的面板，而那两条路由连同界面一起删了
+    # （[ADR 0028](../docs/adr/0028-rules-expire-by-situation.md)：规矩不上屏，
+    # 有效期由模型按情境判）。**引擎侧一个字没动**——规矩照旧被记下、照旧进 prompt，
+    # 那条链由 `tests/test_agent_rules.py` 端到端钉着，不经过 HTTP。
+
+    # 而 2026-08-15 长出来的是**另一件事**：`GET /projects/{pid}/rules`——不是控件，
+    # 是记录（「我到底跟它交代过什么」）。它得有一份非空的真夹具，否则前端那张表
+    # 只在空态下被验过，而空态是它最不容易出错的那一档。
+    #
+    # **另开一段**（同上面那条理由）：这一轮会往历史里加东西，跑在前面那两段上会把
     # 已经抓好的夹具推着走。
-    #
-    # 三份一起冻，因为这块面板有三种长相，而**照一种写出来的界面等于只验过三分之一**：
-    # 有规矩 / 一条都没有过 / 定过但都不作数了。后两种在屏幕上必须说不同的话
-    # （§10 约束 8：零带着理由），而它们在真夹具里长得都是「空清单」。
-    ruled = client.post(f"{base}/chats", json={"title": "定几条规矩"})
+    ruled = client.post(f"{base}/chats", json={"title": "沙地那一段"})
     assert ruled.status_code == 201, ruled.text
     ruled_id = ruled.json()["id"]
 
-    def remembers(*rules: str) -> Any:
-        """一轮：模型先叫几次「记下来」，再说一句话收手。"""
+    def remembers(*rules: tuple[str, str]) -> Any:
+        """一轮：模型先叫几次「记下来」（每次连时效一起交），再说一句话收手。"""
         script = [
             CompletionResult(
                 text="",
@@ -549,9 +555,11 @@ def test_frontend_fixture_matches_the_real_api(
                     ToolCall(
                         id=f"r{i}",
                         name="remember_rule",
-                        arguments=json.dumps({"rule": rule}, ensure_ascii=False),
+                        arguments=json.dumps(
+                            {"rule": rule, "until": until}, ensure_ascii=False
+                        ),
                     )
-                    for i, rule in enumerate(rules)
+                    for i, (rule, until) in enumerate(rules)
                 ),
             ),
             CompletionResult(
@@ -570,36 +578,22 @@ def test_frontend_fixture_matches_the_real_api(
 
         return model
 
-    # 第一轮记一条，第二轮把同一条**再记一遍**（作者又说了）+ 另加一条。
-    # 于是清单上一条是章级（说到第二遍自动升上来）、一条还是批级——**两种长相都在夹具里**。
-    for said, remembered in (
-        ("这一章别写打斗。", ("这一章别写打斗",)),
-        ("我说真的，别写打斗；还有，冷一点。", ("这一章别写打斗", "冷一点")),
-    ):
-        monkeypatch.setattr(chat_mod, "build_agent_model", lambda c, p, m=remembers(*remembered): m)
-        ran = client.post(
-            f"{base}/chats/{ruled_id}/turn", json={"chapter": 2, "said": said}
-        )
-        assert ran.status_code == 200, ran.text
-
-    grab("chatRules", client.get(f"{base}/chats/{ruled_id}/rules", params={"chapter": 2}))
-    # 作者翻到第 7 章：那两条都不属于这一章了，**而它们仍然存在过**——空清单带着的
-    # 那个数就是界面说「定过、这会儿都不作数了」的全部依据。
-    grab("chatRulesExpired", client.get(f"{base}/chats/{ruled_id}/rules", params={"chapter": 7}))
-    # 一条都没定过的那一段（`chat_id` 那一轮只查了约束、写了一稿）。**这不是边角**：
-    # 每一段对话都是从这一档开始的，它是作者最常看见的那一屏。
-    grab("chatRulesNone", client.get(f"{base}/chats/{chat_id}/rules", params={"chapter": 2}))
-    # 点掉那条章级的。**它记过两遍，而撤销按身份撤掉每一份**——只划掉这个下标的话，
-    # 前面那一遍还在，且没有任何东西会报错（`api/chat.py::revoke_rule` 写着那个形态）。
-    chapter_wide = next(
-        rule
-        for rule in dump["chatRules"]["rules"]
-        if "第 2 章" in rule["scope"]
+    # 两条，**时效写法故意不一样**：一条挂在剧情上、一条挂在结构上。
+    # 照一种写出来的那一列（比如以为它总是「第 N 章」）会在另一种面前当场崩。
+    monkeypatch.setattr(
+        chat_mod,
+        "build_agent_model",
+        lambda c, p, m=remembers(
+            ("男主在这片沙地不杀人", "男主走出这片沙地为止"),
+            ("冷一点", "这一场写完"),
+        ): m,
     )
-    grab(
-        "chatRuleRevoked",
-        client.delete(f"{base}/chats/{ruled_id}/rules/{chapter_wide['seq']}"),
+    ran = client.post(
+        f"{base}/chats/{ruled_id}/turn",
+        json={"chapter": 2, "said": "这片沙地里别让他杀人，整体也冷一点。"},
     )
+    assert ran.status_code == 200, ran.text
+    grab("recordedRules", client.get(f"{base}/rules"))
 
     # ── 多版本的一章：版本抽屉的「还原 / 删除」只在有第二版时才存在 ──────────
     # **放在最后**：这一步会改第 2 章的正文，前面每一个 grab 都不该看见它。

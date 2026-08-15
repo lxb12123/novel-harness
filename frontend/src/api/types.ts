@@ -445,6 +445,29 @@ export interface CheckResult {
   issues: Issue[];
 }
 
+/** 作者交代过的一条规矩，**表上的一行**（[ADR 0028](docs/adr/0028-rules-expire-by-situation.md) + 迁移 016）。
+ *
+ *  ⚠️ **它不是 2026-08-14 撤掉的那个东西。** 那个是对话头上一颗常驻按钮 + 一块能点掉的
+ *  面板，回答「这一章此刻哪几条生效」；这个是一张回头翻的表，回答「我到底跟它交代过
+ *  什么」。**这儿没有取消按钮，也不许加一列「还生不生效」**——那个答案只有读到规矩的
+ *  那个模型知道（有效期是情境的事），引擎给一个出来就是编。 */
+export interface RecordedRule {
+  /** 他说这话时在写第几章。**这张表的时间轴就是它**，不是几月几号。 */
+  chapter: number;
+  text: string;
+  /** 模型当时判定它管到什么时候。**空 = 迁移 016 之前记下的**，界面照实说「没记下」。 */
+  until: string;
+  chat_id: string;
+  chat_title: string;
+}
+
+export interface RecordedRules {
+  rules: RecordedRule[];
+  /** 这一次翻了几段对话。**零条规矩时它就是那个零的成色**：「一段对话都没有」和
+   *  「说过话但一条都没记下」在屏幕上是两句不同的话，而后者是默认那一档。 */
+  scanned_chats: number;
+}
+
 /** 本章正文里提到的花名册称呼。**不是「在场」**——引擎在数字符串，没有读懂剧情。 */
 export interface Mentioned {
   chapter: number;

@@ -582,13 +582,15 @@ def test_evidence_not_found_404(client: TestClient, book: dict[str, str]) -> Non
     assert r.json()["detail"]["error"] == "evidence_not_found"
 
 
-def test_check_reports_rules_and_scene_count(client: TestClient, book: dict[str, str]) -> None:
+def test_check_reports_which_rules_ran(client: TestClient, book: dict[str, str]) -> None:
     r = client.post(f"/api/projects/{_pid(book)}/chapters/3/check")
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["scene_count"] == 1
-    assert body["rules_run"]  # 「跑了几条规则」印出来，不静默
+    assert body["rules_run"]  # 「跑了哪几条」印出来，不静默（§10 约束 8）
     assert isinstance(body["issues"], list)
+    # `scene_count` 2026-08-14 随场景块和 R4 一起从出参里去掉了（ADR 0027）。
+    # 它原本是那个「零 issue」的成色说明，而它说明的那条规则已经不在了。
+    assert "scene_count" not in body
 
 
 def test_check_missing_chapter_404(client: TestClient, book: dict[str, str]) -> None:
@@ -615,38 +617,126 @@ def test_roster_and_chapters(client: TestClient, book: dict[str, str]) -> None:
     assert {1, 2, 3} <= numbers
 
 
-def test_scenes_read(client: TestClient, book: dict[str, str]) -> None:
-    # 第 3 章磁盘正文有 `## 场景 1` + cast=萧决 loc=北荒。
-    r = client.get(f"/api/projects/{_pid(book)}/chapters/3/scenes")
-    assert r.status_code == 200, r.text
-    scenes = r.json()
-    assert len(scenes) == 1
-    assert scenes[0]["number"] == 1
-    assert scenes[0]["cast"] == ["萧决"]
-    assert scenes[0]["loc"] == "北荒"
+def test_create_chapter_appends_and_is_immediately_editable(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """书架上那颗「＋」：新起一章 → 它当场在目录里、正文读得到、也存得回去。
 
+    **最后那一步是这条测试的重点**：新建那一章的正文如果切不出恰好一章，
+    作者第一次按保存就会撞 422，而那时他已经写了一整章了。
+    """
+    pid = _pid(book)
+    created = client.post(f"/api/projects/{pid}/chapters")
+    assert created.status_code == 201
+    assert created.json() == {"number": 4, "title": "第四章"}
 
-def test_scenes_write_updates_cast(client: TestClient, book: dict[str, str]) -> None:
-    r = client.put(
-        f"/api/projects/{_pid(book)}/chapters/3/scenes",
-        json={"number": 1, "cast": ["萧决", "李管家"], "loc": "北荒", "goal": "对峙"},
+    listed = client.get(f"/api/projects/{pid}/chapters").json()
+    assert {c["number"] for c in listed} == {1, 2, 3, 4}
+
+    text = client.get(f"/api/projects/{pid}/chapters/4/text")
+    assert text.status_code == 200
+    assert text.json()["markdown"] == "第四章\n\n"
+
+    saved = client.put(
+        f"/api/projects/{pid}/chapters/4/text", json={"markdown": "第四章\n\n他推开门。\n"}
     )
+    assert saved.status_code == 200
+
+
+def test_create_chapter_conflict_says_so_instead_of_500(
+    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """另一个窗口在这两步之间抢先建好了那一章。
+
+    **不覆盖**（那边可能已经写了字），而且要说一句人话——裸 `FileExistsError` 会变成
+    500，而 500 在屏幕上只剩「再试一次」，重试多少次都一样。
+    """
+    from novel_harness import importer
+
+    def boom(*args: object, **kwargs: object) -> object:
+        raise FileExistsError
+
+    monkeypatch.setattr(importer, "append_chapter", boom)
+    r = client.post(f"/api/projects/{_pid(book)}/chapters")
+
+    assert r.status_code == 409
+    # HTTPException 的详情裹在 `detail` 里（前端 `client.ts` 就是照这个形状拆的）。
+    assert r.json()["detail"]["error"] == "chapter_exists"
+    assert "另一个窗口" in r.json()["detail"]["message"]
+
+
+def test_create_chapter_takes_no_chapter_number(client: TestClient, book: dict[str, str]) -> None:
+    """约束 6 的同一条道理：章号由磁盘决定，请求体里没有一个位置能让作者填它。"""
+    pid = _pid(book)
+    r = client.post(f"/api/projects/{pid}/chapters", json={"number": 99})
+    assert r.status_code == 201
+    assert r.json()["number"] == 4  # 那个 99 一个字都没被听进去
+
+
+def test_delete_chapter_takes_it_out_of_the_list(client: TestClient, book: dict[str, str]) -> None:
+    """章目录里那颗「⋯」：删掉一章 → 目录里没有了，正文也读不到了。
+
+    删的是刚新建的第 4 章——引擎在它上面什么都没记过，所以它是唯一一档
+    「删得动」的形状（别的形状见下面那条 409）。
+    """
+    pid = _pid(book)
+    client.post(f"/api/projects/{pid}/chapters")
+
+    r = client.delete(f"/api/projects/{pid}/chapters/4")
+
     assert r.status_code == 200, r.text
-    scenes = r.json()
-    assert scenes[0]["cast"] == ["萧决", "李管家"]
-    assert scenes[0]["goal"] == "对峙"
-    # 再读一次磁盘确认落盘了（不是只在响应里）。
-    again = client.get(f"/api/projects/{_pid(book)}/chapters/3/scenes")
-    assert again.json()[0]["cast"] == ["萧决", "李管家"]
+    assert r.json() == {"deleted": True, "number": 4}
+    assert {c["number"] for c in client.get(f"/api/projects/{pid}/chapters").json()} == {1, 2, 3}
+    assert client.get(f"/api/projects/{pid}/chapters/4/text").status_code == 404
 
 
-def test_scene_write_missing_number_404(client: TestClient, book: dict[str, str]) -> None:
-    r = client.put(
-        f"/api/projects/{_pid(book)}/chapters/3/scenes",
-        json={"number": 99, "cast": ["萧决"]},
-    )
+def test_delete_chapter_refuses_when_the_engine_remembers_something(
+    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """挡路的东西要**数得出来**摆在屏幕上。
+
+    一句不带理由的「删不掉」会把作者赶去文件夹里自己动手删那个 .md——
+    而那条路上引擎的记忆一条都不会被清理，库和磁盘从此对不上。
+    """
+    from novel_harness import importer
+    from novel_harness.graph import ChapterInUse, ChapterUsage
+
+    def refuse(*args: object, **kwargs: object) -> object:
+        raise ChapterInUse(
+            ChapterUsage(
+                chapter_number=1, evidence=3, edges=2, events=1, extraction_runs=1, proposal_sets=0
+            )
+        )
+
+    monkeypatch.setattr(importer, "remove_chapter", refuse)
+    r = client.delete(f"/api/projects/{_pid(book)}/chapters/1")
+
+    assert r.status_code == 409
+    body = r.json()
+    assert body["error"] == "chapter_in_use"
+    assert body["usage"]["evidence"] == 3
+    assert body["usage"]["edges"] == 2
+    assert "第 1 章" in body["message"]
+
+
+def test_delete_a_chapter_that_is_not_there(client: TestClient, book: dict[str, str]) -> None:
+    r = client.delete(f"/api/projects/{_pid(book)}/chapters/9")
     assert r.status_code == 404
-    assert r.json()["error"] == "scene_not_found"
+    assert r.json()["detail"]["error"] == "chapter_missing"
+
+
+def test_delete_a_chapter_the_library_never_saw(client: TestClient, book: dict[str, str]) -> None:
+    """第三章只写了磁盘、没进过库（夹具就是这么造的）。
+
+    **不能只删掉磁盘那一半就说删掉了**：那说明这个库和这个文件夹已经对不上，
+    作者该知道——所以图层的 `StoreError` 原样上来（422），文件留在原地。
+    """
+    pid = _pid(book)
+    r = client.delete(f"/api/projects/{pid}/chapters/3")
+
+    assert r.status_code == 422
+    assert r.json()["error"] == "store_error"
+    assert 3 in {c["number"] for c in client.get(f"/api/projects/{pid}/chapters").json()}
 
 
 def test_create_project_then_import(client: TestClient) -> None:

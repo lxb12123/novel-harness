@@ -22,6 +22,7 @@ import pytest
 
 from novel_harness import importer, project
 from novel_harness.db import IN_MEMORY, Connection, connect, migrate
+from novel_harness.graph import ChapterInUse, ChapterUsage
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.importer import (
     ImportRefused,
@@ -341,3 +342,206 @@ def test_the_importer_takes_no_conn_and_no_chapter_number() -> None:
     for fn in (importer.import_book, importer.sync, importer.explode):
         params = set(inspect.signature(fn).parameters)
         assert not params & {"conn", "chapter", "valid_from", "since", "at", "ch", "number"}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 新起一章（书架上那颗「＋」）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (1, "一"),
+        (2, "二"),
+        (9, "九"),
+        # 十位打头的两位数不念那个「一」
+        (10, "十"),
+        (11, "十一"),
+        (19, "十九"),
+        (20, "二十"),
+        (99, "九十九"),
+        (100, "一百"),
+        # 中间的 0 补**一个**「零」
+        (101, "一百零一"),
+        # …但 `一百一十` 的那个「一」要念（上面那一刀只切在开头）
+        (110, "一百一十"),
+        (999, "九百九十九"),
+        # 末尾那些 0 不补零
+        (1000, "一千"),
+        (1001, "一千零一"),
+        (1010, "一千零一十"),
+        (9999, "九千九百九十九"),
+    ],
+)
+def test_chinese_number(value: int, expected: str) -> None:
+    assert importer.chinese_number(value) == expected
+
+
+def test_every_generated_marker_chapterizes_back_to_one_chapter() -> None:
+    """**这是这颗按钮的绊线。**
+
+    章标是切章的锚：`chinese_number` 哪天写出一个 `CHAPTER_RE` 认不出的形状，症状不是
+    「章号难看」，是那一章 sync 不进库——而作者在界面上只会看到「保存被拒」。
+    """
+    from novel_harness.text.chapterize import chapterize
+
+    for number in (1, 2, 10, 11, 100, 101, 110, 999, 1000, 9999):
+        text = importer.empty_chapter_text(number)
+        cut = chapterize(text)
+        # preamble 必须是空的：章标前面多出一个字符，那一章的 para_index 全体偏一位。
+        assert len(cut.chapters) == 1, text
+        assert cut.preamble == "", text
+
+
+def test_append_chapter_takes_the_next_number_and_syncs(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> None:
+    importer.import_book(store, pid, txt=BOOK, root=tmp_path)
+
+    number, report = importer.append_chapter(store, pid, tmp_path)
+
+    assert number == 4  # 夹具是 3 章
+    assert (tmp_path / importer.chapter_path(4)).read_text(encoding="utf-8") == "第四章\n\n"
+    assert [c.number for c in report.added] == [4]
+    # 磁盘先、DB 跟：新起的那一章当场就在库里，不用再按一次「读回改动」。
+    assert 4 in {c.number for c in store.current_snapshots(pid)}
+
+
+def test_append_chapter_on_an_empty_book_starts_at_one(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> None:
+    number, _ = importer.append_chapter(store, pid, tmp_path)
+
+    assert number == 1
+    assert (tmp_path / importer.chapter_path(1)).read_text(encoding="utf-8") == "第一章\n\n"
+
+
+def test_append_chapter_skips_over_a_hole_instead_of_reusing_a_number(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> None:
+    """**取最大号 +1，不是「文件个数 +1」。** 作者自己删掉中间一章之后，
+    后者会算出一个已经存在的号，然后撞在下面那条「不覆盖」上——或者更糟，覆盖掉正文。"""
+    importer.import_book(store, pid, txt=BOOK, root=tmp_path)
+    (tmp_path / importer.chapter_path(2)).unlink()
+
+    number, _ = importer.append_chapter(store, pid, tmp_path)
+
+    assert number == 4
+
+
+def test_append_chapter_never_overwrites(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """两个进程同时按「＋」：后到的那次宁可炸，也不许把先到的那一章正文清空。
+
+    那道缝在「列完目录」和「写文件」之间，从外面按不出来——所以这儿把目录**钉成旧的**，
+    正是另一个进程抢先建好第 4 章之后、这一次调用手上那份过期清单的样子。
+    """
+    importer.import_book(store, pid, txt=BOOK, root=tmp_path)
+    (tmp_path / importer.chapter_path(4)).write_text("第四章\n\n别动我。\n", encoding="utf-8")
+    stale = importer.chapter_files(tmp_path)[:3]
+    monkeypatch.setattr(importer, "chapter_files", lambda root: stale)
+
+    with pytest.raises(FileExistsError):
+        importer.append_chapter(store, pid, tmp_path)
+
+    assert "别动我" in (tmp_path / importer.chapter_path(4)).read_text(encoding="utf-8")
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 删掉一章（章目录里那颗「⋯」）
+#
+# 这一组只管**磁盘那一半**：拒不拒绝是图层的活（`tests/test_canon_writer.py`
+# 的 delete_chapter 那一组），这儿钉的是「拒绝了的时候文件有没有被动过」
+# 和「删掉的稿子去哪儿了」。
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_remove_chapter_moves_the_file_instead_of_deleting_it(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> None:
+    """**那是作者的稿子。** 这颗按钮离「新起一章」只有一列的距离，按错的代价
+    不该是「三小时的字没了」——所以它挪进 `deleted/`，而不是 unlink。"""
+    importer.import_book(store, pid, txt=BOOK, root=tmp_path)
+    original = (tmp_path / importer.chapter_path(2)).read_text(encoding="utf-8")
+
+    moved = importer.remove_chapter(store, pid, tmp_path, 2)
+
+    assert not (tmp_path / importer.chapter_path(2)).exists()
+    assert moved.read_text(encoding="utf-8") == original  # 一个字节都没少
+    assert moved.parent == tmp_path / importer.DELETED_DIR
+    # 引擎当它不存在：`chapter_files` 只认 chapters/NNNN.md。
+    assert [c.number for c in importer.chapter_files(tmp_path)] == [1, 3]
+    assert 2 not in {c.number for c in store.current_snapshots(pid)}
+
+
+def test_remove_chapter_leaves_a_hole_and_does_not_renumber(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> None:
+    """**章号不重排。** 每一条边和每一条情节的 `valid_from` 都钉在章号上，
+    重排一次等于把整本书的时态挪位——而那件事没有任何一处会报错。"""
+    importer.import_book(store, pid, txt=BOOK, root=tmp_path)
+
+    importer.remove_chapter(store, pid, tmp_path, 2)
+
+    assert [c.number for c in importer.chapter_files(tmp_path)] == [1, 3]
+    # 洞留着，下一章接在最大号后面（`append_chapter` 取的就是最大号 +1）。
+    assert importer.append_chapter(store, pid, tmp_path)[0] == 4
+
+
+def test_remove_chapter_does_not_clobber_an_earlier_deletion(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> None:
+    """新建 → 删 → 再新建 → 再删：两次都是 `0004.md`。**第二次不许盖掉第一次。**"""
+    importer.import_book(store, pid, txt=BOOK, root=tmp_path)
+    importer.append_chapter(store, pid, tmp_path)
+    (tmp_path / importer.chapter_path(4)).write_text("第四章\n\n头一版。\n", encoding="utf-8")
+    importer.sync(store, pid, tmp_path)
+    first = importer.remove_chapter(store, pid, tmp_path, 4)
+
+    importer.append_chapter(store, pid, tmp_path)
+    (tmp_path / importer.chapter_path(4)).write_text("第四章\n\n第二版。\n", encoding="utf-8")
+    importer.sync(store, pid, tmp_path)
+    second = importer.remove_chapter(store, pid, tmp_path, 4)
+
+    assert first != second
+    assert "头一版" in first.read_text(encoding="utf-8")
+    assert "第二版" in second.read_text(encoding="utf-8")
+
+
+def test_remove_chapter_that_is_not_on_disk(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> None:
+    importer.import_book(store, pid, txt=BOOK, root=tmp_path)
+    with pytest.raises(importer.ChapterMissing):
+        importer.remove_chapter(store, pid, tmp_path, 9)
+
+
+def test_remove_chapter_keeps_the_file_when_the_library_refuses(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**先库后盘**，跟 `save_chapter` 的「磁盘先、DB 跟」是反的——因为这一次库那边
+    会拒绝。盘先动的话，作者会看见文件没了、然后弹一句「删不掉」，两件事同时成立。
+    """
+
+    def refuse(project_id: str, number: int) -> object:
+        raise ChapterInUse(
+            ChapterUsage(
+                chapter_number=number,
+                evidence=3,
+                edges=0,
+                events=0,
+                extraction_runs=0,
+                proposal_sets=0,
+            )
+        )
+
+    importer.import_book(store, pid, txt=BOOK, root=tmp_path)
+    monkeypatch.setattr(store, "delete_chapter", refuse)
+
+    with pytest.raises(ChapterInUse):
+        importer.remove_chapter(store, pid, tmp_path, 2)
+
+    assert (tmp_path / importer.chapter_path(2)).is_file()
+    assert not (tmp_path / importer.DELETED_DIR).exists()

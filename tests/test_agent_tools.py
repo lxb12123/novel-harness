@@ -280,7 +280,7 @@ def _surfaces_of(world: World) -> dict[str, str]:
             # ADR 0023 的记规矩：出参会原样带回作者那句话，**它也是一个面**。
             # 这里记的是一句干净的偏好——测的不是「模型会不会把秘密写进规矩里」
             # （语义判断，引擎判不了），是**引擎会不会往里加料**（handler 里只有那一句）。
-            _call("remember_rule", rule="这一章别写打斗"),
+            _call("remember_rule", rule="这一章别写打斗", until="这一章写完为止"),
             # 书内索引的四层，一层都不能漏：它们新开了四个模型看得见的面。
             _call("book_index"),
             _call("character_chapters", characters=["萧决", "顾清音"]),

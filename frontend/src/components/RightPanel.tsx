@@ -19,7 +19,7 @@ import type { CheckResult } from "../api/types";
 import { useState } from "react";
 
 /** 算的是「其中某个人怎么样」的那几格 —— 只有它们需要知道在场是谁。
- *  花名册（全项目）、原文依据、待确认、检查（读正文和场景块）都不吃 cast。 */
+ *  花名册（全项目）、原文依据、待确认、检查（读正文）都不吃 cast。 */
 const CAST_TABS = new Set<Tab>(["matrix", "state", "constraints"]);
 
 const TABS: { key: Tab; label: string }[] = [
@@ -95,13 +95,17 @@ function CheckView() {
       {check.error && <div className="err-box">{(check.error as Error).message}</div>}
       {result && (
         <div style={{ marginTop: 10 }}>
+          {/* 这两行 2026-08-14 改了，**其中一行是在改一句假话**：
+              「已检查 N 个场景」和「这一章还没有场景信息，暂时无法进行内容检查」都是
+              `ALL_CHECKS` 只有 R4 那会儿写的。R2/R3 在 2026-08-02 进来之后，
+              **零场景块照样查了两条规则**（`checks/` 里只有 `location_conflict` 读
+              `ctx.scenes`），而屏幕上说的是「无法进行内容检查」——
+              和 `demo.sh` 那次是同一天、同一个原因断的，只是这一处没人发现。
+              「场景」这个词一起去掉：它指的是作者要在正文里手写的标记块，
+              导进来的真书上永远是零个，说了也只是把一个内部名字摆到他面前。 */}
           <div className="row" style={{ color: "var(--dim)", fontSize: 12 }}>
-            已检查 {result.scene_count} 个场景，
             {result.issues.length ? `发现 ${result.issues.length} 处需要留意` : "没有发现需要处理的问题"}。
           </div>
-          {result.scene_count === 0 && (
-            <div className="warn">这一章还没有场景信息，暂时无法进行内容检查。</div>
-          )}
           {result.issues.map((iss, i) => (
             <div
               className="statecard clickable"
@@ -137,9 +141,14 @@ function CastLine({ chapter }: { chapter: number }) {
   // 这一行照旧说「这一章提到：…」就是在给一块讲第 12 章的面板配一句讲第 13 章的话。
   const which = chapter === here ? "这一章" : `第 ${chapter} 章`;
 
-  // **这一行只说 `cast`（过滤）那一种**，而 `cast` 只有一个来源：正文里点的场景块
-  // （`SceneBar` / `BottomBar`）——收窄是作者自己要的。它**存在的全部理由**就是让他
-  // 看见「现在只在看几个人」并且一键退出去。
+  // **这一行只说 `cast`（过滤）那一种**——收窄是作者自己要的，这一行存在的全部理由
+  // 就是让他看见「现在只在看几个人」并且一键退出去。
+  //
+  // ⚠️ **2026-08-14 起 `cast` 在界面上没有写入方了**：唯一那两个（场景条 / 底栏场景列）
+  // 随场景块一起删了（ADR 0027）。这一支因此今天渲不出来。**留着它不是忘了删**：
+  // `?cast=` 这条通道在后端还在，而 `JumpCast.coord.test.tsx` 那条探针正是靠直接写
+  // `cast` 来证明「系统替作者收窄」这件事真的抓得住——把这一支删掉，那条守卫就
+  // 没有了它要守的形态。
   //
   // 日志页跳过来的那个坐标**不在这里**：它走 `castInclude`（只加不减），没有把任何人
   // 从表上拿掉，所以没有「退出去」这回事。系统要是能往 `cast` 里写，这一行就得替它
@@ -199,7 +208,7 @@ export function RightPanel() {
   const prevChapter = chapter - 1;
   const lookingBack = lookBackAt === chapter && prevChapter >= 1;
   const stateChapter = lookingBack ? prevChapter : chapter;
-  // 三格吃同一份在场：`cast` 过滤（场景块），`castInclude` 只加不减（日志页跳转坐标）。
+  // 三格吃同一份在场：`cast` 过滤（今天没有写入方，见 `CastLine`），`castInclude` 只加不减（日志页跳转坐标）。
   const matrix = useMatrix(projectId, chapter, cast, castInclude);
   const constraints = useConstraints(projectId, chapter, cast, castInclude);
   // **在场也跟着那一章走**：后端的 `_effective_cast` 从**路径上那一章**的正文里数人

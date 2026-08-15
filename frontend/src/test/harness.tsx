@@ -121,7 +121,6 @@ const DEFAULT: Handler[] = [
   },
   { method: "POST", match: /\/chapters\/\d+\/autopilot$/, body: AUTOPILOT_ACK },
   { match: /\/chapters\/\d+\/autopilot$/, body: AUTOPILOT_IDLE },
-  { match: /\/chapters\/\d+\/scenes/, body: fixtures.scenes },
   { match: /\/chapters\/\d+\/text/, body: fixtures.chapterText },
   // 默认给**两版**那一份：一版的历史里没有还原/删除可点，照它写的界面等于没验过。
   { match: /\/chapters\/\d+\/history$/, body: fixtures.chapterHistoryTwo },
@@ -166,6 +165,7 @@ const DEFAULT: Handler[] = [
   { match: /\/activity\?.*actor=author/, body: fixtures.activityAuthorOnly },
   { match: /\/activity(\?|$)/, body: fixtures.activity },
   { match: /\/runs(\?|$)/, body: fixtures.runs },
+  { match: /\/rules$/, body: fixtures.recordedRules },
   // 写作助手（模式二）的六条。**顺序有意义**：`/chats` 那两条要排在 `/chats/…`
   // 前面，否则列表和详情会互相顶掉。
   { method: "POST", match: /\/chats$/, body: fixtures.chatCreated },
@@ -178,8 +178,6 @@ const DEFAULT: Handler[] = [
   { method: "POST", match: /\/chats\/[^/]+\/stop$/, body: fixtures.chatStopped },
   // 作者的规矩（ADR 0023 决策二）。**默认给「有两条」那一份**：三种长相里另外两种
   // （一条都没定过 / 定过都不作数了）在真 dump 里也各有一份，由要验它们的测试自己前置。
-  { method: "DELETE", match: /\/rules\/\d+$/, body: fixtures.chatRuleRevoked },
-  { match: /\/rules\?/, body: fixtures.chatRules },
   { method: "DELETE", match: /\/chats\/[^/]+$/, body: fixtures.chatDeleted },
   { match: /\/chats\/[^/]+$/, body: fixtures.chatDetail },
   // 桌上摆着的那几稿（ADR 0022）。两条**形状上不重叠**：详情那条要求 `/drafts/` 后面

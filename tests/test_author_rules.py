@@ -52,11 +52,10 @@ from novel_harness.agent.loop import (
 from novel_harness.agent.rules import (
     expired_rule_count,
     is_rule,
-    live_rules,
     normalized_rule,
-    revocation,
     rule_key,
     rule_message,
+    surviving_rule_indices,
 )
 from novel_harness.agent.store import ChatStore
 from novel_harness.agent.tools import RULE_ACKNOWLEDGED, RememberRuleArgs, dispatch
@@ -82,7 +81,9 @@ def pid(conn: Connection, tmp_path: Path) -> str:
 ROOMY = 1_000_000
 """投影预算给到满：这份文件一条都不量剪枝，剪枝那一档有它自己的文件。"""
 
-REMEMBER = '{"rule": "别写打斗"}'
+REMEMBER = '{"rule": "别写打斗", "until": "这一章写完为止"}'
+"""`until` 是必填（迁移 016）：模型记一条规矩就得同时说清它管到什么时候。
+**测试里那句话写什么不重要，有没有才是被量的东西。**"""
 """模型叫这条工具时打进来的那串字。**里面没有章号，也塞不进去**（第六节）。"""
 
 
@@ -223,7 +224,7 @@ def test_the_cancel_still_points_at_the_same_message_after_a_reload(
         back = roundtrip(store, pid, history, write_rule=write_rule)
         assert is_rule(back.messages[1]), "样本里那条规矩没了 —— 下面这句是空的"
         assert back.messages[2].revokes_seq == 1
-        assert live_rules(back, 40) == (), (
+        assert surviving_rule_indices(back.messages) == frozenset(), (
             "读回来之后那条被取消的规矩又活了 —— 多半是 `revokes_seq` 被当成了本表的 seq"
         )
 
@@ -248,127 +249,132 @@ def test_a_read_that_drops_the_cancel_turns_this_net_red(
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 二、🔴 安全方向：拿不准就**放掉**，和 `must_not_reveal` 相反
+# 二、🔴 规矩**不按章号过期**，而这一节 2026-08-14 整个翻了个面
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def assert_the_rule_is_really_gone(conversation: Conversation, chapter: int | None) -> None:
-    """「切了章，那条规矩真的失效了」——**三层同时量**。
+def assert_the_rule_travels(conversation: Conversation, chapter: int | None) -> None:
+    """「切了章，那条规矩还在，而且带着它的情境标记」——**两层同时量**。
 
-    只量其中一层都骗得过去：投影那一层过了而读端没过，界面就会摆一条其实没生效的规矩；
-    读端过了而投影没过，模型手上还留着它。所以三条一起：
+    只量其中一层都骗得过去：判据过了而 payload 没过，模型手上就没有它；
+    payload 里有而标记没跟上，模型会把一条早就过去的交代当成硬约束。
 
-    1. 判据本身（`surviving_rule_indices`）；
-    2. 摆给作者的那一份（`live_rules`）；
-    3. **真正发出去的那份 payload 里，引擎自己说的每一句**（`engine_words`）。
-
-    第三条是这一节唯一担保得了的形态，理由见 `ENGINE_ROLES`：模型自己那次调用的参数
-    （`{"rule": "别写打斗"}`）躺在它自己的 assistant 消息里，作者那句原话躺在他自己的
-    user 消息里，**两样引擎都删不掉也不该删**。
-
-    三条**都走模块属性**（`rules_mod.x`），不走这份文件顶上那几个 `from … import`：
+    两条**都走模块属性**（`rules_mod.x`），不走这份文件顶上那几个 `from … import`：
     下面那个探针换掉的是模块上那个名字，而 `from` 进来的引用换不掉——那样探针会绿，
     而它绿的时候这一节什么都没证明。
     """
-    assert rules_mod.surviving_rule_indices(conversation.messages, chapter) == frozenset()
-    assert rules_mod.live_rules(conversation, chapter) == ()
-    assert "别写打斗" not in engine_words(project(conversation, chapter, budget_units=ROOMY))
+    assert rules_mod.surviving_rule_indices(conversation.messages) != frozenset()
+    words = engine_words(project(conversation, chapter, budget_units=ROOMY))
+    assert "别写打斗" in words
+    assert "情境" in words, "规矩到了，判它还作不作数的那半句没到"
 
 
-def test_a_preference_from_another_chapter_is_gone_not_merely_unlisted() -> None:
-    """作者在第 40 章说的「别写打斗」，到第 200 章**不该还管着他**。
+def test_a_preference_from_another_chapter_still_travels_with_him() -> None:
+    """作者在第 40 章说的「别写打斗」，到第 200 章**还在模型手上**。
 
-    ADR 0023：留着的代价是「第 200 章写不出打戏，而**作者不知道为什么**」——
-    那正是这条 ADR 把偏好判成「拿不准就放掉」的全部理由。
+    ⚠️ **这条测试 2026-08-14 反过来了，它原来的名字是
+    `test_a_preference_from_another_chapter_is_gone_not_merely_unlisted`。**
+    ADR 0023 当时把偏好判成「拿不准就放掉」，理由是「留着 = 第 200 章写不出打戏，
+    而作者不知道为什么」。**那个担心仍然成立，换掉的是谁来解决它**（ADR 0028）：
+    章号从来不是有效期，而「这条还作不作数」要读懂剧情——引擎判不了，模型判得了。
     """
     result = a_turn(wants(("remember_rule", REMEMBER)), say("好，记下了。"), chapter=40)
     conversation = result.conversation
 
-    # 先证明它在第 40 章上是真的生效着的 —— 不然下面那两条「没了」不值一分钱。
-    assert [entry.text for entry in live_rules(conversation, 40)] == ["别写打斗"]
     assert "别写打斗" in engine_words(project(conversation, 40, budget_units=ROOMY))
+    assert_the_rule_travels(conversation, 200)
+    assert_the_rule_travels(conversation, 39)
+    # **没有章号坐标时也照发**：那个坐标今天只管工具返回那一档。
+    assert_the_rule_travels(conversation, None)
 
-    assert_the_rule_is_really_gone(conversation, 200)
-    assert_the_rule_is_really_gone(conversation, 39)
-    # **没有章号坐标时也放掉**，不是「留着更安全」：那是工具返回那一档的方向。
-    assert_the_rule_is_really_gone(conversation, None)
 
+def test_nothing_is_dropped_so_the_receipt_says_zero() -> None:
+    """裁了什么必须说出来（`Projection.expired_rules`）——静默失效读起来像「全给了」。
 
-def test_the_receipt_says_a_preference_expired_instead_of_staying_silent() -> None:
-    """裁了什么必须说出来（`Projection.expired_rules`）——静默失效读起来像「全给了」。"""
+    今天没有「按章号裁」这回事，所以两个坐标上都是 0。它不为零的唯一来源是条数上限
+    （`RULE_KEEP_MAX`），那一条在 `test_agent_rules.py` 里量。
+    """
     conversation = a_turn(wants(("remember_rule", REMEMBER)), say("好。"), chapter=40).conversation
     assert project(conversation, 40, budget_units=ROOMY).expired_rules == 0
-    assert project(conversation, 200, budget_units=ROOMY).expired_rules == 1
+    assert project(conversation, 200, budget_units=ROOMY).expired_rules == 0
 
 
-def _fail_closed(messages: Sequence[AgentMessage], chapter: int | None) -> frozenset[int]:
-    """**下一个人最可能顺手写出来的那一版**：定下之后一直算数。
+def _expired_by_chapter(messages: Sequence[AgentMessage]) -> frozenset[int]:
+    """**2026-08-14 之前那一版**：规矩只管作者说它那一章，这里写死成「第 200 章的才留」。
 
-    它读起来完全正常（「作者说过的话当然还算数」），而且它和这个仓库其余地方的直觉一致
-    ——`must_not_reveal` 那一档正是这么写的。区别只有一个字符：那儿是 `>`，这儿该是 `!=`。
+    它是下一个人最可能顺手写回去的东西（「规矩当然只管那一章」/「和工具返回统一一下」），
+    而写回去之后别的测试照旧全绿——它只会表现成「作者上一章交代的事，这一章模型不知道」。
     """
     return frozenset(
         index
         for index, message in enumerate(messages)
-        if is_rule(message)
-        and message.chapter is not None
-        and (chapter is None or message.chapter <= chapter)
+        if is_rule(message) and message.chapter == 200
     )
 
 
-def test_swapping_in_a_fail_closed_filter_turns_this_net_red(
+def test_swapping_in_the_old_chapter_filter_turns_this_net_red(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """**探针**：把判据换成 fail-closed，上面那一节量的事必须当场不成立。
+    """**探针**：把判据换回按章号过期，上面那一节量的事必须当场不成立。
 
     `project()` 是**函数内** import `surviving_rule_indices` 的（它和 `rules.py` 互相要用
-    对方的东西），所以换掉模块上那个名字就够——三条判据一起换，一处漏网都没有。
+    对方的东西），所以换掉模块上那个名字就够。
 
-    没有这一条，`assert_the_rule_is_really_gone` 可能只是因为**别的原因**碰巧成立
-    （比如投影根本没把规矩发出去过），而那时它对 fail-open 这条方向一个字都没证明。
+    没有这一条，`assert_the_rule_travels` 可能只是因为**别的原因**碰巧成立
+    （比如那条规矩根本没被记下来过），而那时它对这条方向一个字都没证明。
     """
     conversation = a_turn(wants(("remember_rule", REMEMBER)), say("好。"), chapter=40).conversation
-    monkeypatch.setattr(rules_mod, "surviving_rule_indices", _fail_closed)
+    monkeypatch.setattr(rules_mod, "surviving_rule_indices", _expired_by_chapter)
     with pytest.raises(AssertionError):
-        assert_the_rule_is_really_gone(conversation, 200)
+        assert_the_rule_travels(conversation, 200)
 
-    # **换到底了没有**：上面那句只证明第一行断言有牙。这一句量的是 ADR 0023 真正在乎的
-    # 那件事 —— 第 40 章定的规矩跟着模型去写第 200 章了。
-    assert "别写打斗" in engine_words(project(conversation, 200, budget_units=ROOMY))
-
-    # 读端那一层在这个探针下**炸**而不是答错，这里把它钉住（顺手量出来的一件事）：
-    # `live_rules` 用查询章号去 `_hearings` 数出来的那张表里取计数，而一条属于别的章的
-    # 规矩在那张表里没有条目。也就是说「留下来的那几条都属于这一章」是
-    # `surviving_rule_indices` 的**前提**，而它今天只写在一句注释里、没有一道检查。
-    # 换判据的人会先撞上这个 `KeyError` —— 响是响的，但它指向的地方跟原因不是一回事。
-    with pytest.raises(KeyError):
-        rules_mod.live_rules(conversation, 200)
+    # **换到底了没有**：上面那句只证明第一行断言有牙。这一句量的是这次改动真正在乎的
+    # 那件事 —— 第 40 章交代过的话，模型写第 200 章时看不见了。
+    assert "别写打斗" not in engine_words(project(conversation, 200, budget_units=ROOMY))
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 三、撤销和「说第二遍」分得开
+# 三、老会话里那些撤销记录仍然算数，且撤销和「再说一遍」分得开
+#
+# ⚠️ **`revocation()`（写入方）2026-08-14 删了**（ADR 0028：规矩不上屏，那颗 × 没了）。
+# 读的那一半必须留着——canonical 只增不改，作者当年按过的取消还躺在真实的库里，
+# 不认它们就是把他明确说过不要的规矩又放回 prompt。
 # ══════════════════════════════════════════════════════════════════════════
+
+
+def revoked(messages: Sequence[AgentMessage], seq: int) -> AgentMessage:
+    """当年那颗 × 按下去之后，库里留下的就是这一条。**直接写结构槽**：今天没有别的路
+    能造出它，而这一节验的正是「留在库里的那些记录还认不认」。"""
+    del messages  # 从前 `revocation()` 在这儿校验下标；那一层随写入方一起没了
+    return AgentMessage(role=Role.SYSTEM, revokes_seq=seq)
+
+
+def live_texts(conversation: Conversation) -> list[str]:
+    """还留得下来的那几条规矩的正文（从前的 `live_rules(...)` 的替代）。"""
+    messages = conversation.messages
+    return [messages[i].content for i in sorted(surviving_rule_indices(messages))]
 
 
 def a_cancelled_then_repeated_session() -> Conversation:
-    """说一遍 → 撤销 → 再说一遍。**这三步共用一条通路的话，第三步会被读成第二遍。**"""
+    """说一遍 → 撤销 → 再说一遍。**这三步共用一条通路的话，第三步会被读成撤销的撤销。**"""
     first = [said("这一章别写打斗。"), rule("别写打斗", 40)]
-    first.append(revocation(first, 1))
+    first.append(revoked(first, 1))
     again = [*first, said("算了，还是别写打斗。"), rule("别写打斗", 40)]
     return a_conversation(*again)
 
 
 def test_cancelling_is_never_heard_as_saying_it_again() -> None:
-    """取消完又说一遍是**新的一条**，`heard` 从 1 重新起 —— 不是第二遍、不升章级。
+    """取消完又说一遍是**新的一条**，它照旧生效。
 
-    照记录条数数的话它是第 2 遍，当场升到章级：作者刚明确表示不想要它，
-    系统反手把它管到了整章。
+    ⚠️ 这条测试原来量的是 `heard` 从 1 重新起（那时说到第二遍会升到章级，而作者刚
+    明确表示不想要它）。**两档有效期 2026-08-14 一起没了**（ADR 0028），
+    留下来的主张是更基本的那一句：**取消不许把后面那一次也吃掉。**
     """
     conversation = a_cancelled_then_repeated_session()
-    live = live_rules(conversation, 40)
-    assert [entry.heard for entry in live] == [1]
-    assert live[0].chapter_wide is False
-    assert live[0].seq == 4, "摆给作者的该是最后那一条（去重之后只剩它）"
+    assert live_texts(conversation) == ["别写打斗"]
+    assert sorted(surviving_rule_indices(conversation.messages)) == [4], (
+        "留下来的该是最后那一条（去重之后只剩它）"
+    )
 
 
 def test_the_cancel_does_not_eat_the_time_he_said_it_again() -> None:
@@ -378,25 +384,21 @@ def test_the_cancel_does_not_eat_the_time_he_said_it_again() -> None:
     系统装作没听见，而没有任何东西会报错。
     """
     conversation = a_cancelled_then_repeated_session()
-    assert live_rules(conversation, 40) != ()
+    assert live_texts(conversation) != []
     assert "别写打斗" in engine_words(project(conversation, 40, budget_units=ROOMY))
     # 中间那一步真的取消掉过 —— 不然上面那句是废话。
     halfway = a_conversation(*conversation.messages[:3])
-    assert live_rules(halfway, 40) == ()
+    assert live_texts(halfway) == []
 
 
 def a_rule_said_three_times_then_cancelled() -> list[AgentMessage]:
-    """说三遍（早就升到章级了）→ 作者点了读端摆出来的那一条。
-
-    **三遍不是凑数**：两遍的话，划掉一遍之后计数就掉回 1，那条规矩会因为「批级 + 作者
-    已经又开口了」自己死掉——于是一个按下标撤的错实现也能蒙对，探针量不出东西来。
-    三遍时剩下的那两遍仍然够章级，错实现的症状才露出来。
-    """
+    """说三遍（记了三条）→ 作者点了读端摆出来的那一条（最后那条）。"""
     history = [said("别写打斗。"), rule("别写打斗", 40)]
     for _ in range(2):
         history.append(said("我说真的，别写打斗。"))
         history.append(rule("别写打斗", 40))
-    history.append(revocation(history, live_rules(a_conversation(*history), 40)[0].seq))
+    last = max(surviving_rule_indices(tuple(history)))
+    history.append(revoked(history, last))
     return history
 
 
@@ -404,15 +406,15 @@ def test_cancelling_takes_every_copy_not_only_the_one_the_author_clicked() -> No
     """**按身份撤，不按下标撤。**
 
     同一条说过好几遍时，读端只摆最后那一条，作者点的也只能是它。只划掉那个下标的话，
-    前面那几遍还在，**而且它们此刻已经是章级的**——于是按钮按了、规矩还在，
-    且没有任何东西会报错。
+    前面那几遍还在——于是按钮按了、规矩还在，且没有任何东西会报错。
     """
     history = a_rule_said_three_times_then_cancelled()
-    before = live_rules(a_conversation(*history[:-1]), 40)
-    assert [entry.heard for entry in before] == [3]
-    assert before[0].chapter_wide is True, "样本没升到章级 —— 下面那条量不出东西"
+    before = live_texts(a_conversation(*history[:-1]))
+    assert before == ["别写打斗"], "样本里那条规矩没生效 —— 下面那条量不出东西"
+    copies = [m for m in history if is_rule(m)]
+    assert len(copies) == 3, "只有一份拷贝的话，「按身份撤」和「按下标撤」看起来一样"
 
-    assert live_rules(a_conversation(*history), 40) == ()
+    assert live_texts(a_conversation(*history)) == []
     assert "别写打斗" not in engine_words(
         project(a_conversation(*history), 40, budget_units=ROOMY)
     )
@@ -434,12 +436,11 @@ def _revoked_by_index_only(messages: Sequence[AgentMessage]) -> frozenset[int]:
 def test_a_cancel_that_only_crosses_out_one_index_turns_this_net_red(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """**探针**：换成按下标撤，上面那条必须当场不成立 —— 而且**规矩还是章级的**。"""
+    """**探针**：换成按下标撤，上面那条必须当场不成立 —— 规矩还留着。"""
     history = a_rule_said_three_times_then_cancelled()
     monkeypatch.setattr(rules_mod, "_revoked_indices", _revoked_by_index_only)
-    still_there = rules_mod.live_rules(a_conversation(*history), 40)
-    assert still_there != ()
-    assert still_there[0].chapter_wide is True
+    still_there = rules_mod.surviving_rule_indices(tuple(history))
+    assert still_there != frozenset()
 
 
 def test_a_cancel_never_shows_up_in_the_prompt() -> None:
@@ -448,29 +449,20 @@ def test_a_cancel_never_shows_up_in_the_prompt() -> None:
     模型该看到的结果是**那条规矩从来没被说过**，而不是一条空的 system 消息。
     """
     history = [said("别写打斗。"), rule("别写打斗", 40)]
-    history.append(revocation(history, 1))
+    history.append(revoked(history, 1))
     wire = project(a_conversation(*history), 40, budget_units=ROOMY).messages
     assert [m["role"] for m in wire[len(start_conversation().prefix) :]] == ["user"]
 
 
 def test_cancelling_the_same_rule_twice_is_not_an_error() -> None:
-    """双击、两个标签页各点一次都是常态。第二下是一次无害的重复，不是一次报错。"""
+    """作者当年双击、两个标签页各点一次都是常态。第二条是一次无害的重复，不是一次报错。"""
     history = [said("别写打斗。"), rule("别写打斗", 40)]
-    history.append(revocation(history, 1))
-    history.append(revocation(history, 1))
-    assert live_rules(a_conversation(*history), 40) == ()
+    history.append(revoked(history, 1))
+    history.append(revoked(history, 1))
+    assert live_texts(a_conversation(*history)) == []
     assert expired_rule_count(tuple(history), frozenset()) == 0, (
-        "作者自己取消掉的不算「过期」——他知道它没了，是他按的"
+        "作者自己取消掉的不算「这一轮没带上」——他知道它没了，是他按的"
     )
-
-
-def test_a_cancel_that_points_at_nothing_is_refused_in_chinese() -> None:
-    """两句都是说给**作者**听的中文：这条路的尽头是他手上那个按钮，不是一条诊断。"""
-    history = [said("别写打斗。"), rule("别写打斗", 40)]
-    with pytest.raises(ValueError, match="不在这段对话里"):
-        revocation(history, 7)
-    with pytest.raises(ValueError, match="不是你定下的规矩"):
-        revocation(history, 0)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -498,30 +490,24 @@ def two_ways_across_two_turns() -> Conversation:
 
 
 def assert_they_are_two_rules(conversation: Conversation) -> None:
-    """「别写打斗」和「不要写打戏」是**两条**，各说过一遍，一条都没升到章级。
+    """「别写打斗」和「不要写打戏」是**两条**，两条都进 prompt。
 
     判它们是同一条要回答「这两句是不是一个意思」——那是语义判断，ADR 0005 在 v1 里
-    禁止本仓库长出这种能力。代价是明说的：模型换个说法计数就从头开始，那条规矩少活
-    一段章级——方向是「放掉」那一侧，和 ADR 0023 那张表一致。
+    禁止本仓库长出这种能力。代价是明说的：模型换个说法就多一条，两条都跟着走，
+    而条数是有上限的（`RULE_KEEP_MAX`）。
     """
-    live = rules_mod.live_rules(conversation, 40)
-    assert sorted(entry.text for entry in live) == ["不要写打戏", "别写打斗"]
-    assert [entry.heard for entry in live] == [1, 1]
-    assert not any(entry.chapter_wide for entry in live)
+    assert sorted(live_texts(conversation)) == ["不要写打戏", "别写打斗"]
 
 
-def assert_nothing_got_widened(conversation: Conversation) -> None:
-    """换个说法**凑不出**「说了两遍」——升到章级的判据是同一串字。"""
-    live = rules_mod.live_rules(conversation, 40)
-    assert live != ()
-    assert [entry.heard for entry in live] == [1]
-    assert not any(entry.chapter_wide for entry in live)
+def assert_the_two_did_not_fold(conversation: Conversation) -> None:
+    """换个说法**折不到一起**——是不是同一条的判据是同一串字。"""
+    assert len(live_texts(conversation)) == 2
 
 
 def test_two_ways_of_saying_the_same_thing_are_two_rules() -> None:
     assert rule_key("别写打斗") != rule_key("不要写打戏")
     assert_they_are_two_rules(two_ways_in_one_breath())
-    assert_nothing_got_widened(two_ways_across_two_turns())
+    assert_the_two_did_not_fold(two_ways_across_two_turns())
 
 
 def test_only_what_a_set_judgment_can_see_is_folded_together() -> None:
@@ -539,8 +525,8 @@ def test_a_semantic_key_would_be_caught_by_this_net(monkeypatch: pytest.MonkeyPa
     """**探针**：换一个「懂意思」的判据进去，上面那一节必须当场红。
 
     这里那一版只是把「打斗 / 打戏」映射到同一个词——一个真会有人写的「小优化」
-    （「这两句明明是一回事」）。它一旦成立，`REPEAT_TO_WIDEN` 就会被换个说法凑够，
-    而作者只说过一次。
+    （「这两句明明是一回事」）。它一旦成立，作者说过的两条就被折成一条，
+    而**折掉哪一条是判据说了算，不是他说了算**。
     """
 
     def semantic(text: str) -> str:
@@ -550,9 +536,8 @@ def test_a_semantic_key_would_be_caught_by_this_net(monkeypatch: pytest.MonkeyPa
     with pytest.raises(AssertionError):
         assert_they_are_two_rules(two_ways_in_one_breath())
     with pytest.raises(AssertionError):
-        # 更贵的那一半：两个回合各说一种说法，被凑成了「说了两遍」⇒ 整章有效，
-        # 而作者每种说法只说过一次。
-        assert_nothing_got_widened(two_ways_across_two_turns())
+        # 跨两个回合说的那两种说法同样被折成一条 —— 而它们是两句不同的交代。
+        assert_the_two_did_not_fold(two_ways_across_two_turns())
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -599,11 +584,17 @@ def test_the_leading_block_really_does_move_when_a_rule_sits_in_front() -> None:
     也就是说上面那条断言**不是恒真的**，它量的是一件真会变的事。今天规矩到不了那个位置
     （`run_turn` 要求作者先开口，规矩在 `finish()` 落到队尾），**而这一点没有一条校验器
     钉着**——它是接线的结果，不是类型的结果。
+
+    ⚠️ **这个探针 2026-08-14 换了做法。** 它原来靠「同一段会话在第 40 章和第 90 章上
+    前导块不同」——那个差别来自规矩会按章号过期，而它不再过期了（ADR 0028）。
+    今天拿「有没有那条规矩」两段会话对比，量的仍然是同一件事：
+    一条规矩坐到最前面，前导块就不是原来那一块了。
     """
     sneaked = a_conversation(rule("别写打斗", 40))
-    at_40 = project(sneaked, 40, budget_units=ROOMY)
-    at_90 = project(sneaked, 90, budget_units=ROOMY)
-    assert leading_system_block(at_40) != leading_system_block(at_90)
+    plain = a_conversation(said("接着写"))
+    assert leading_system_block(
+        project(sneaked, 40, budget_units=ROOMY)
+    ) != leading_system_block(project(plain, 40, budget_units=ROOMY))
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -628,7 +619,11 @@ def test_a_model_that_tries_to_pin_a_chapter_is_refused_and_nothing_is_remembere
     9999」要防的东西。
     """
     outcome = dispatch(
-        ToolCall(id="x", name="remember_rule", arguments='{"rule": "别写打斗", "chapter": 9999}'),
+        ToolCall(
+            id="x",
+            name="remember_rule",
+            arguments='{"rule": "别写打斗", "until": "永远", "chapter": 9999}',
+        ),
         a_context(working_chapter=40),
     )
     assert outcome.ok is False
@@ -687,7 +682,9 @@ def test_a_rule_made_only_of_punctuation_is_refused_instead_of_acknowledged() ->
             rule_message(junk, chapter=40)
 
     outcome = dispatch(
-        ToolCall(id="x", name="remember_rule", arguments='{"rule": "……"}'),
+        ToolCall(
+            id="x", name="remember_rule", arguments='{"rule": "……", "until": "这一场"}'
+        ),
         a_context(working_chapter=40),
     )
     assert outcome.ok is False
@@ -704,7 +701,7 @@ def test_a_rule_the_engine_can_never_honour_does_not_haunt_the_receipt() -> None
     自己把这个形态写成了它要防的东西（那儿说的是「说了两遍」那一档）。
     """
     haunting = a_conversation(said("嗯。"), AgentMessage(role=Role.SYSTEM, content="。。。", chapter=40))
-    assert live_rules(haunting, 40) == ()
+    assert surviving_rule_indices(haunting.messages) == frozenset()
     assert project(haunting, 40, budget_units=ROOMY).expired_rules == 0
     assert project(haunting, 200, budget_units=ROOMY).expired_rules == 0
 

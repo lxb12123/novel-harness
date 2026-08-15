@@ -66,6 +66,33 @@ export function titleOf(doc: string): string {
   return "";
 }
 
+/** 章标那一行 + 它后面那个空行，和**剩下的正文**，分开。
+ *
+ *  ── 它为什么存在 ────────────────────────────────────────────────────────
+ *
+ *  章标题在屏幕上出现两次：中栏顶上那一行（可改）、和正文的第一行。作者的原话是
+ *  「正文不要有第一章」——同一句话说两遍，而且改哪一处都对，看起来却像两个东西。
+ *
+ *  **但它必须留在磁盘上**：`importer.chapter_files()` 靠首个非空行读章标题，
+ *  `PUT …/text` 保存时会拿 `CHAPTER_RE` 重切一次章——第一行不是章标就 422。
+ *  所以这儿藏的只是**编辑器里那一份视图**，`doc` 仍然是整份文件，存出去的也是整份。
+ *
+ *  ⚠️ **认不出章标就一个字都不藏**（返回 `head: ""`）。首行是正文的稿子在真书里
+ *  出现过（章标写成「楔子」没被切章器认出来），那时藏掉第一行 = 藏掉一段正文，
+ *  而作者不会知道那一段去哪儿了。 */
+export function splitHeading(doc: string): { head: string; body: string } {
+  const first = doc.search(/\S/);
+  if (first < 0) return { head: "", body: doc };
+  const eol = doc.indexOf("\n", first);
+  const line = eol < 0 ? doc.slice(first) : doc.slice(first, eol);
+  if (!splitTitle(line).marker) return { head: "", body: doc };
+  if (eol < 0) return { head: doc, body: "" };
+  // 章标行 + 紧跟着的**一个**空行 —— `importer.chapter_text()` 写下去就是这个形状。
+  // 多吃一个的话，`head + body` 拼回去会比原文少一个换行（存出去就是改了正文）。
+  const cut = doc[eol + 1] === "\n" ? eol + 2 : eol + 1;
+  return { head: doc.slice(0, cut), body: doc.slice(cut) };
+}
+
 /**
  * 把正文的标题行换成 `title`，其余一个字节不动。
  *

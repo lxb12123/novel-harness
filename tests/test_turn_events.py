@@ -225,7 +225,7 @@ EVERY_TOOL = (
     ("draft_chapter", {"chapter": CHAPTER, "goal": "写萧决独自走进北荒"}),
     ("save_draft", {"draft_id": DRAFT_ID}),
     ("read_draft", {"draft_id": DRAFT_ID}),
-    ("remember_rule", {"rule": "这一章别写打斗"}),
+    ("remember_rule", {"rule": "这一章别写打斗", "until": "这一章写完为止"}),
     ("ask_author", {"question": "这一场你想让萧决知道那件事吗？",
                     "options": ["让他知道", "先瞒着他"]}),
 )

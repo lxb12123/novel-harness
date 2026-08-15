@@ -229,7 +229,84 @@ body.resizing { cursor: col-resize; -webkit-user-select: none; user-select: none
 .ch:hover, .item:hover { background: var(--panel); }
 .ch.on, .item.on { background: var(--sel); color: var(--accent); font-weight: 600; }
 .ch .n { color: var(--dim); font-family: ui-monospace, monospace; font-size: 11px; margin-right: 6px; }
+/* 章号 + 章名 + 右边那颗「⋯」排成一行。**行高必须还是 1.5em**：`.ch-add` 的高度
+   写的是 `calc(1.5em + 6px)`，这一行一胖，那颗按钮就跟目录对不齐了（作者点过名）。 */
+.ch { position: relative; display: flex; align-items: center; }
+.ch-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 「⋯」**平时不显形**：一列 722 章不该是一列点点点。
+   但它一直在 DOM 里（不是 `display:none`）——只在悬浮时才挂上去的话键盘走不到它，
+   而这是删一章唯一的入口。 */
+/* `margin-right: -4px` **是对齐用的，不是留白**：这一行自己有 6px 内边距，
+   而书名那一行（`.book-head`）只有 2px——两个「⋯」的内边距和描边都一样，
+   于是章的那颗天生比书的那颗往左 4px。抵掉这一栏才是一竖列（作者点过名）。
+   **改 `.ch` 或 `.book-head` 的左右内边距，这个数要跟着重算。** */
+.ch-act {
+  flex: 0 0 auto; height: 1.5em; padding: 0 4px; margin-left: 4px; margin-right: -4px;
+  border-color: transparent; border-radius: 4px; background: transparent;
+  color: var(--dim); line-height: 1; opacity: 0;
+}
+.ch:hover .ch-act, .ch.menu .ch-act, .ch-act:focus-visible { opacity: 1; }
+.ch-act:hover:not(:disabled) { border-color: transparent; color: var(--accent); background: var(--sel); }
+.ch-menu {
+  position: absolute; top: 100%; right: 0; z-index: 25; width: 150px; padding: 6px;
+  display: grid; gap: 4px; cursor: default;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
+}
+.ch-menu button { width: 100%; text-align: left; font-weight: 400; }
+.ch-menu-ask { color: var(--dim); font-size: 11px; line-height: 1.5; }
+/* 删除是红的。**只有这一颗**——一栏里两颗红按钮，红色就不再是警告了。 */
+.ch-menu button.danger { color: var(--warn); }
+.ch-menu button.danger:hover:not(:disabled) { border-color: var(--warn); color: var(--warn); background: var(--warnbg); }
 .grp .lab { color: var(--dim); font-size: 11px; margin: 8px 0 3px; }
+/* 「新起一章」：**屏幕上只有一个加号，名字悬浮才出来**（作者 2026-08-14 要的）。
+   借的是顶栏那套图标按钮的机制（`.icon-btn` + `data-tip`，见上面那段）——
+   那份 `::after` 全仓库只此一份，在这儿再抄一遍就是第二份会漂的实现。
+
+   只改三处：
+   ① 加号在这一行里居中——它是这一列唯一一个「动作」，居中才不像目录的又一条；
+   ② 加号比正文大一档，否则一个 13px 的 ＋ 在一列汉字下面看着像个句读；
+   ③ **把焦点框还回来**。`.icon-btn:focus-visible` 那条「焦点只变色不画框」是为顶栏
+      那一颗单独写的，它自己的注释就写着「别把这条抄成规矩」——键盘用户只靠颜色认
+      是换得起还是换不起，要一颗一颗地判，不是继承来的。 */
+/* **一条和章目录同宽同高的方角行**（作者 2026-08-14 下午：「我要方形的外边轮廓，
+   其次要对齐上边的悬浮大小、悬浮宽」）。它的盒子逐项抄 `.ch`：
+   同样的 `padding: 3px 6px`、同样的 `border-radius: 4px`、同样的 100% 宽——
+   于是它**悬浮时亮起来的那一片，和上面每一章亮起来的那一片一模一样**。
+
+   高度写成 `calc(1.5em + 6px)` 而不是一个像素数：1.5em 就是 `.ch` 那一行的行高
+   （body 的 `13px/1.5`），6px 是它上下两个 3px 的内边距。**改 `.ch` 的字号或内边距，
+   这一行自己跟着走**——写死 25.5px 的话，两边会在下一次改动里悄悄错开一像素。
+   `border-box` 是全局的（第 23 行），所以那 1px 描边算在这个高度里面，不外扩。
+
+   之前那两版都是「一个孤立的小东西挂在一列文字下面」：
+   ① 74×36 的深底方块 = 一个被禁用的输入框；② 26px 的圆 = 一颗和左栏毫无关系的纽扣。
+   问题不在圆还是方，在**它没跟这一列对齐**。 */
+.ch-add {
+  display: flex; width: 100%; min-height: calc(1.5em + 6px);
+  justify-content: center; align-items: center;
+  margin: 6px 0 2px; padding: 3px 6px;
+  border: 1px solid var(--line); border-radius: 4px;
+  background: transparent; color: var(--dim);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .05);
+}
+.ch-add .icon { width: 15px; height: 15px; }
+/* ⚠️ **这颗按钮有框，而顶栏那几颗没有——两处都是作者当面定的，别拿一处去「统一」另一处。**
+   顶栏（2026-08-13）：「加一个方框很丑」——那儿一整排都是图标，形状本身就说明它们能按。
+   这儿（2026-08-14）：「至少加个阴影，不然怎么看得出按钮」——它孤零零挂在一列
+   文字目录下面，没有框的话它读起来是目录的又一行，不是一个能按的东西。 */
+/* 悬浮**跟上面那些章一样是 `--panel`**，不是 `--sel`：`--sel` 是「这一章正开着」
+   那一片（带强调色的字），拿它当悬浮，鼠标一过去就像又打开了一章。
+   描边和加号转强调色 —— 那是「这颗按得动」，和「这一片亮着」两回事。 */
+.ch-add:hover:not(:disabled) {
+  border-color: var(--accent); color: var(--accent);
+  background: var(--panel); box-shadow: 0 1px 3px rgba(0, 0, 0, .09);
+}
+/* 按下去阴影收掉 = 那一下「压下去了」。没有它，按钮按不按都长一个样。 */
+.ch-add:active:not(:disabled) { box-shadow: none; }
+/* 写在 `.icon-btn:focus-visible` 后面才压得住它（同样是两个类，靠源码顺序定胜负）。 */
+.ch-add:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ch-add-err { padding: 2px 6px; color: var(--warn); font-size: 11px; }
 
 /* 中栏编辑器 */
 .editor { display: flex; flex-direction: column; padding: 0; }
@@ -298,7 +375,7 @@ body.resizing { cursor: col-resize; -webkit-user-select: none; user-select: none
 .cm-host { flex: 1; min-height: 0; overflow: hidden; }
 .cm-host .cm-editor { height: 100%; }
 /* 行内续写的灰字（ADR 0015）。它是装饰不是文档内容——按 Tab 才落进正文。
-   `user-select: none`：作者拖选一段去「记录这句」时，不该把还没接受的建议选进去。 */
+   `user-select: none`：作者拖选一段正文去复制时，不该把还没接受的建议选进去。 */
 .cm-ghost { color: var(--dim); opacity: .75; font-style: italic; -webkit-user-select: none; user-select: none; }
 
 /* 右栏「这一章提到：…」——引擎数出来的在场，不是作者填的表单 */
@@ -668,9 +745,217 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
   .onboarding-action { transition: none; }
   .onboarding-action:hover:not(:disabled) { transform: none; }
 }
-.setup-card { width: 460px; max-width: 92vw; }
-.setup-card h3 { margin: 0 0 14px; }
-.setup-card .note { color: var(--dim); font-size: 12px; margin-top: 4px; }
+/* ── AI 设置：左右两色的弹窗（`components/SettingsDrawer.tsx`）────────────────
+   **它没有标题栏。** 名字由顶栏那颗齿轮给（`aria-label` / 悬浮气泡），
+   进来之后再顶一行「AI 设置」是把同一句话说第二遍——而那一行正好占着
+   作者一眼先看到的位置。窗口的无障碍名字改由 `aria-label` 带，读屏没丢。
+
+   **两栏靠颜色分，不靠线。** 左边整条 `--welcome-soft`、右边 `--welcome-surface`，
+   一路铺到底（脚上那两颗按钮也在右边这一栏里）——所以它是「一块浅色的边条 +
+   一块白」，不是「两个被一条线切开的格子」。上一版那条竖线加一颗白药丸，
+   看着是同一张纸上画了道缝。
+
+   视觉档跟开场那扇门同一套（`--welcome-*`，暗色下自动对调）。
+   高度写死：切栏目时窗口大小不许跳，跳一下作者会以为自己点错了。 */
+.set-modal {
+  position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 20;
+  width: min(800px, 94vw); height: min(500px, 86vh);
+  display: grid; grid-template-columns: 172px minmax(0, 1fr); overflow: hidden;
+  border: 1px solid var(--line); border-radius: 14px;
+  background: var(--welcome-surface); box-shadow: var(--welcome-shadow);
+}
+.set-rail {
+  display: grid; gap: 2px; align-content: start; overflow: auto;
+  padding: 14px 10px; background: var(--welcome-soft);
+}
+.set-rail-item {
+  min-height: 34px; padding: 6px 11px; border-color: transparent; border-radius: 8px;
+  background: transparent; color: var(--dim); font-weight: 600; text-align: left;
+}
+.set-rail-item:hover:not(:disabled) {
+  border-color: transparent; background: color-mix(in srgb, var(--welcome-action) 8%, transparent);
+  color: var(--ink);
+}
+/* 选中那一条：**底色换成右边那一栏的颜色**。它不是「一颗被高亮的按钮」，
+   是「白色那一块从右边伸过来接住了它」——两色分区里这一下才说得清「你在哪一栏」。 */
+.set-rail-item.on {
+  border-color: transparent; background: var(--welcome-surface); color: var(--ink);
+}
+
+.set-right { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto; min-width: 0; }
+/* × 吊在右上角，**不占一行**：给它单开一条横栏就等于把刚拆掉的标题栏又装回去。
+   它压在内容区上方，所以下面那一栏的上内边距（50px）留够了它整个身子——
+   上一版只留 22px，于是它正好骑在第一张卡的右上角上，看着像卡片上长出来的东西
+   （作者：「右上角的打叉是不是有点问题」）。**改这颗按钮的高度就得回来改那个内边距。**
+
+   悬浮跟这扇窗里别的按钮统一：**圆形的浅色底 + 强调色**，没有方框。 */
+.set-close {
+  position: absolute; top: 12px; right: 14px; z-index: 1;
+  width: 28px; height: 28px; display: grid; place-items: center;
+  padding: 0; border-color: transparent; border-radius: 50%;
+  background: transparent; color: var(--dim);
+}
+.set-close:hover:not(:disabled) {
+  border-color: transparent; color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.set-close .icon { width: 16px; height: 16px; }
+
+.set-pane { display: grid; gap: 16px; align-content: start; overflow: auto; padding: 50px 22px 20px; }
+.set-field { display: grid; gap: 6px; }
+.set-block { display: grid; gap: 8px; }
+.set-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.set-row > button { min-height: 34px; padding: 6px 13px; border-radius: 8px; }
+.set-field > label { font-size: 13px; font-weight: 650; }
+/* 输入框照抄 `.onboarding-form input` 的配方（只把高度和圆角紧一档）：
+   同一套边框/底色/聚焦光晕，两扇门才看得出是同一个产品。 */
+.set-field input {
+  width: 100%; min-height: 40px; padding: 9px 12px;
+  border: 1px solid color-mix(in srgb, var(--line) 82%, transparent); border-radius: 9px;
+  outline: none;
+  background: color-mix(in srgb, var(--welcome-soft) 45%, var(--welcome-surface));
+  box-shadow: inset 0 1px 1px rgba(0, 0, 0, .025);
+  transition: border-color .16s ease, background-color .16s ease, box-shadow .16s ease;
+}
+.set-field input:hover { border-color: color-mix(in srgb, var(--welcome-action) 36%, var(--line)); }
+.set-field input:focus {
+  border-color: color-mix(in srgb, var(--welcome-action) 72%, var(--line));
+  background: var(--welcome-surface);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--welcome-action) 12%, transparent);
+}
+
+/* ── 密钥那一格：一排点 + （敲了字才有的）一只眼睛 ─────────────────────────
+   点是 placeholder（框里**必须是空的**：空 = 保持原钥匙，这是后端的判据），
+   所以它比一般的 placeholder 画得深一档——它说的不是「这儿该填什么」，
+   是「这儿本来就有东西」。**正因为它是 placeholder 而不是值，眼睛在那一档不出现**
+   （谁都露不出一个不存在的东西），理由写在 `SettingsDrawer.tsx` 那颗按钮上面。
+
+   右边这 42px 的留白**空着的时候也留着**：眼睛一出现就把文字挤一下，
+   等于每敲第一个字符屏幕抖一次。 */
+.set-key { position: relative; }
+.set-key > input { padding-right: 42px; }
+.set-key > input.on::placeholder { color: color-mix(in srgb, var(--ink) 72%, transparent); letter-spacing: .04em; }
+.set-eye {
+  position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+  width: 28px; height: 28px; display: grid; place-items: center;
+  padding: 0; border-color: transparent; border-radius: 50%;
+  background: transparent; color: color-mix(in srgb, var(--ink) 45%, transparent);
+}
+/* **`:not(:disabled)` 不是抄来的赘肉，它是这条规则赢不赢得了的关键。**
+   全局那条 `button:hover:not(:disabled)`（画强调色**边框**）比不带它的 `.set-eye:hover`
+   高一档特指度，于是悬浮时框回来了——屏幕上就是「眼睛外面套了个紫方框」
+   （作者：「为什么悬浮有个方框」）。带上它才平手，后写的这条才生效。
+   同理，圆角走 50%：这颗按钮悬浮/聚焦时的形状是**圆**，不是方。 */
+.set-eye:hover:not(:disabled) {
+  border-color: transparent; color: var(--accent);
+  /* 底色**由强调色本身调出来**，不是 `--sel`：`--sel` 在暗色下是一块偏蓝的深灰，
+     压在同样深的输入框上等于没有——悬浮时那颗圆看不见。 */
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.set-eye[aria-pressed="true"] { color: var(--accent); }
+.set-eye .icon { width: 17px; height: 17px; }
+
+.set-note { color: var(--dim); font-size: 12px; line-height: 1.7; }
+
+/* 说明默认全部收着（作者的原话：解释太多）。**收着不等于没有**：
+   `<details>` 里的字仍在 DOM 里，术语守卫（`test/screenGuard.ts`）扫得到，读屏也念得到。 */
+.set-why { font-size: 12px; }
+.set-why > summary {
+  display: inline-flex; align-items: center; gap: 5px; width: fit-content;
+  padding: 2px 0; color: var(--dim); cursor: pointer; list-style: none; user-select: none;
+}
+.set-why > summary::-webkit-details-marker { display: none; }
+.set-why > summary::before { content: "›"; display: inline-block; transition: transform .16s ease; }
+.set-why[open] > summary::before { transform: rotate(90deg); }
+.set-why > summary:hover { color: var(--ink); }
+.set-why > p { margin: 6px 0 0; padding-left: 13px; color: var(--dim); line-height: 1.8; }
+
+/* ── 一组控件 = 一张卡 ─────────────────────────────────────────────────────
+   2026-08-14 作者：「这三个做成一组，右下角一个开关用来控制是否应用……这样就不会很丑」。
+   于是脚条整条撤了（它横跨整扇窗，说不清自己在存哪一栏），「应用」跟着它管的那张卡走。
+   **一颗按钮离它改的东西越近，越说得清它会改什么。** */
+.set-card {
+  display: grid; gap: 12px;
+  padding: 14px; border: 1px solid var(--line); border-radius: 12px;
+  background: color-mix(in srgb, var(--welcome-soft) 42%, var(--welcome-surface));
+}
+.set-card + .set-card, .set-note + .set-card, .err-box + .set-card { margin-top: 12px; }
+.set-card-foot { display: flex; justify-content: flex-end; }
+/* 「应用」：小圆角实心（作者的原话是 apple 按钮）。**灰着的时候不是坏了，是没得应用**——
+   所以禁用态是安静的软底，不是把一块深色调半透明（那会糊成一坨）。 */
+.set-apply {
+  min-height: 30px; padding: 4px 16px; border-radius: 999px;
+  border-color: var(--welcome-action); background: var(--welcome-action);
+  color: var(--welcome-surface); font-weight: 650;
+}
+.set-apply:hover:not(:disabled) {
+  border-color: var(--welcome-action); background: var(--welcome-action); color: var(--welcome-surface);
+}
+.set-apply:disabled {
+  border-color: transparent; background: color-mix(in srgb, var(--ink) 8%, transparent);
+  color: var(--dim); opacity: 1;
+}
+
+/* 一行一件事：左边标题 + 小字，右边一个控件。 */
+.set-row-card { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+.set-row-text { display: grid; gap: 3px; min-width: 0; }
+.set-row-title { font-size: 13px; font-weight: 650; }
+.set-row-sub { color: var(--dim); font-size: 12px; line-height: 1.6; }
+
+/* 开关。**它自己就是那句「开着没有」**，所以旁边不再挂「已开启」之类的字。
+   `role="switch"` + `aria-checked` 是读屏读得懂的那一份；颜色只是给眼睛的。 */
+.set-switch {
+  flex: 0 0 auto; position: relative; width: 40px; height: 24px; padding: 0;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: color-mix(in srgb, var(--ink) 9%, transparent);
+  transition: background-color .16s ease, border-color .16s ease;
+}
+.set-switch[aria-checked="true"] {
+  border-color: var(--welcome-action); background: var(--welcome-action);
+}
+.set-switch:hover:not(:disabled) { border-color: var(--welcome-action); }
+.set-switch-knob {
+  position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--welcome-surface); box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
+  transition: transform .16s ease;
+}
+.set-switch[aria-checked="true"] .set-switch-knob { transform: translateX(16px); }
+
+.set-modal button:focus-visible, .set-why > summary:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--welcome-action) 42%, transparent); outline-offset: 3px;
+}
+/* 那两颗小圆按钮（眼睛、×）单独一档：**跟着系统强调色**，而且贴身画。
+   3px 的外扩在一颗 28px 的圆上会顶出输入框的边，看起来又是一个框。 */
+.set-eye:focus-visible, .set-close:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 1px;
+}
+
+/* 窗子窄到这一档，左右就分不动了：左栏一压再压，右边的框也跟着变形。
+   改成上下——栏目横过来排成一条，内容在下面。两色的关系跟着转 90 度，仍然成立。 */
+@media (max-width: 700px) {
+  .set-modal {
+    top: 0; left: 0; transform: none;
+    grid-template-rows: auto minmax(0, 1fr); grid-template-columns: none;
+    width: 100vw; height: 100vh; border: 0; border-radius: 0;
+  }
+  .set-rail {
+    grid-auto-flow: column; grid-auto-columns: max-content; justify-content: start;
+    overflow-x: auto; padding: 8px 10px;
+  }
+  /* × 改成贴整扇窗的右上角 —— 也就是栏目条那一行的右端。
+     竖排时它的定位基准是右边那一栏（在栏目条**下面**），于是它会正好停在
+     第一个标签旁边，看着像那一行多长出来一个东西。撤掉基准，它就往上走一格。 */
+  .set-right { position: static; }
+  .set-close { top: 12px; right: 10px; }
+  /* 竖排时 × 已经不在内容上方了（它跑去栏目条那一行），那 50px 是给它让的路，
+     留着就是窗口顶上白掉一大块。 */
+  .set-pane { padding-top: 22px; }
+  /* 窄窗里「应用」铺满那张卡的一整行：拇指够得着。 */
+  .set-apply { width: 100%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .set-field input, .set-why > summary::before { transition: none; }
+}
 /* 章节选择器**不在顶栏了**（2026-08-13 搬去中栏顶栏，样式见上面 `.chtitle`）。
    这儿原本有一条 `header select { border … background … }`——**它没有跟着搬**：
    那个白框在中栏那条面板色的窄条上是一个格格不入的盒子。
@@ -692,7 +977,6 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
   font-weight: 600; min-width: 0; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
 }
-.chat-asof { color: var(--dim); font-size: 11px; flex: 0 0 auto; }
 
 /* 会话列表：**盖住对话区**而不是切一条侧栏出来 —— 这一半窄到放不下两列
    （理由写在 ChatSessions.tsx 顶上）。 */
@@ -719,22 +1003,7 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
 .chat-session-del { flex: 0 0 auto; padding: 2px 7px; }
 .chat-session-confirm { flex: 0 0 auto; display: flex; gap: 4px; }
 
-/* 现在生效的规矩（ADR 0023 决策二）：**和会话列表同一个形状** —— 收着不占一个像素，
-   点开盖住对话区。常驻在对话上方的话，绝大多数时候它是一块空面板，
-   而这一半本来就在跟一轮几分钟的对话抢竖直空间。 */
-.chat-rules { padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
-.chat-rules-empty { margin: 0; font-size: 12px; line-height: 1.8; }
-.chat-rule-list { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow: auto; }
-.chat-rule { display: flex; align-items: flex-start; gap: 4px; padding: 6px 0; }
-.chat-rule + .chat-rule { border-top: 1px solid var(--line); }
-.chat-rule-body { flex: 1; min-width: 0; }
-.chat-rule-text { margin: 0; line-height: 1.6; word-break: break-word; }
-.chat-rule-scope { display: block; margin-top: 2px; color: var(--dim); font-size: 11px; }
-/* 二次确认那一句：取消在库里是**追加**不是删除，而作者看到的是「这一行没了」——
-   两者的差别他看不见，所以按下去之前得先说清他能拿回什么。 */
-.chat-rule-warn { display: block; margin-top: 4px; color: var(--warn); font-size: 11px; line-height: 1.7; }
-.chat-rule-del { flex: 0 0 auto; padding: 2px 7px; }
-.chat-rule-confirm { flex: 0 0 auto; display: flex; gap: 4px; }
+/* 「现在生效的规矩」那一块的样式 2026-08-14 随组件一起删了（`ChatPanel.tsx` 顶上写着理由）。 */
 
 /* 对话区 */
 .chat-log { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
@@ -896,3 +1165,15 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
 }
 .trail-text { margin: 3px 0 0; font-size: 12px; line-height: 1.7; white-space: pre-wrap; }
 .trail-why { margin: 3px 0 0; color: var(--dim); font-size: 11px; }
+
+/* 「你交代过的」那张表（ADR 0028 + 迁移 016）。**它是记录不是控件**：没有取消按钮，
+   也没有「还生不生效」那一列（理由在 RulesTable.tsx 顶上）。 */
+.log-rules { margin: 0 0 18px; }
+.log-rules h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
+.ruletable { width: 100%; border-collapse: collapse; font-size: 12px; }
+.ruletable th { text-align: left; font-weight: 500; color: var(--dim); padding: 4px 8px 4px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.ruletable td { padding: 6px 8px 6px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+.ruletable .rt-ch { white-space: nowrap; color: var(--dim); }
+.ruletable .rt-text { line-height: 1.6; word-break: break-word; }
+.ruletable .rt-until { line-height: 1.6; word-break: break-word; }
+.ruletable .rt-chat { color: var(--dim); word-break: break-word; }
