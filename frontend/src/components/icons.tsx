@@ -156,6 +156,33 @@ export function EyeIcon({ off }: { off: boolean }) {
 }
 
 /**
+ * 发送（写作助手输入框里那颗）。
+ *
+ * 一支向上的箭头，不是纸飞机：这颗按钮**贴在输入框右下角**、只有 28px，
+ * 纸飞机那种斜的轮廓在这个尺寸下糊成一团，而箭头在 12px 都认得出。
+ * 竖杆穿 5.5–18.5（同 `PlusIcon` 那一笔，两颗按钮的视觉重量才一致），
+ * 两撇从顶点各斜下 5.5。
+ */
+export function SendIcon() {
+  return (
+    <svg
+      className="icon"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 18.5v-13" />
+      <path d="M6.5 11 12 5.5 17.5 11" />
+    </svg>
+  );
+}
+
+/**
  * 关掉这扇窗。
  *
  * **是图标不是那个 `×` 字符**：字形的两笔在不同字体里粗细、倾角、在方格里的位置都不一样

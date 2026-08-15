@@ -220,7 +220,7 @@ describe("研发术语：整块面板的兜底分支", () => {
 
   it("一段对话都还没有的时候", async () => {
     renderWatched(<ChatPanel />, [{ match: /\/chats$/, body: [] }]);
-    await screen.findByText(/跟它说一句话就开始/);
+    await screen.findByText(/说一句就行/);
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "对话列表" }));
     await screen.findByText(/还没有说过话/);
@@ -242,7 +242,7 @@ describe("研发术语：整块面板的兜底分支", () => {
     const user = userEvent.setup();
     renderWatched(<ChatPanel />, [{ match: /\/chats$/, status: 500, body: PROJECT_GONE }]);
     await settle();
-    expect(screen.queryByText(/跟它说一句话就开始/)).toBeNull();
+    expect(screen.queryByText(/说一句就行/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "对话列表" }));
     expect(screen.queryByText(/还没有说过话/)).toBeNull();
     expect(errBoxes().join("\n")).toMatch(/没读出来/);
@@ -288,7 +288,7 @@ describe("研发术语：整块面板的兜底分支", () => {
       { method: "POST", match: /\/chats$/, status: 404, body: PROJECT_GONE },
       { match: /\/chats$/, body: [] },
     ]);
-    await screen.findByText(/跟它说一句话就开始/);
+    await screen.findByText(/说一句就行/);
     await user.type(say(), "第一句");
     await user.click(sendBtn());
 

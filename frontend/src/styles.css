@@ -983,15 +983,28 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
 .chat-sessions { padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .chat-new { width: 100%; margin-bottom: 8px; padding: 5px 8px; }
 .chat-sessions-empty { margin: 4px 0 0; font-size: 12px; line-height: 1.7; }
-.chat-session-list { list-style: none; margin: 0; padding: 0; max-height: 240px; overflow: auto; }
-.chat-session { display: flex; align-items: flex-start; gap: 4px; }
-.chat-session + .chat-session { border-top: 1px solid var(--line); }
+/* **有上限，而且是一屏的一半**（作者问过这一列有没有最大高度）：它盖在对话区上，
+   一段书写了三个月会有几十段对话，不封顶的话点开它等于把整块面板换成一张长名单。
+   `40vh` 而不是写死的 240px：中栏是能拖的，一个固定像素数在高屏上留一大片白、
+   在矮屏上照样顶到底。 */
+.chat-session-list {
+  list-style: none; margin: 0; padding: 0;
+  max-height: 40vh; overflow: auto;
+  display: grid; gap: 2px;
+}
+/* 整行是一个圆角块，**行与行之间不画线**：一列分割线加一列圆角高亮，是两套
+   分组语言同时在说话（左栏章目录也是这么收的）。 */
+.chat-session { display: flex; align-items: center; gap: 4px; border-radius: 6px; }
+.chat-session:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
 .chat-session-pick {
   flex: 1; min-width: 0; display: block; text-align: left; padding: 6px 8px;
-  border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; cursor: pointer;
+  border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; cursor: pointer;
 }
-.chat-session-pick:hover { background: var(--sel); color: inherit; border-color: transparent; }
-.chat-session.on .chat-session-pick { background: var(--sel); color: var(--accent); font-weight: 600; }
+.chat-session-pick:hover { background: transparent; color: inherit; border-color: transparent; }
+/* 正开着的那一段：底色铺**整行**（连右边那个 × 一起罩住），不是只铺左边那颗按钮——
+   只铺一半时右边会露出一截没上色的缺口。 */
+.chat-session.on { background: var(--sel); }
+.chat-session.on .chat-session-pick { background: transparent; color: var(--accent); font-weight: 600; }
 .chat-session-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-session-meta {
   display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 2px;
@@ -1000,8 +1013,60 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
 .chat-badge { border: 1px solid var(--line); border-radius: 8px; padding: 0 5px; }
 .chat-badge.half { color: var(--warn); border-color: var(--warn); }
 .chat-badge.run { color: var(--accent); border-color: var(--accent); }
-.chat-session-del { flex: 0 0 auto; padding: 2px 7px; }
-.chat-session-confirm { flex: 0 0 auto; display: flex; gap: 4px; }
+/* × **平时不显形**（同章目录那颗「⋯」）：一列二十段对话不该是一列叉。
+   它一直在 DOM 里，键盘走得到——这是删一段对话唯一的入口。 */
+.chat-session-del {
+  flex: 0 0 auto; width: 24px; height: 24px; margin-right: 4px; padding: 0;
+  display: grid; place-items: center;
+  border-color: transparent; border-radius: 50%; background: transparent;
+  color: var(--dim); line-height: 1; opacity: 0;
+}
+.chat-session:hover .chat-session-del,
+.chat-session.on .chat-session-del,
+.chat-session-del:focus-visible { opacity: 1; }
+.chat-session-del:hover:not(:disabled) {
+  border-color: transparent; color: var(--warn);
+  background: color-mix(in srgb, var(--warn) 14%, transparent);
+}
+/* 确认删一段对话。**整行换成它**（`ChatSessions.tsx` 写着为什么不是在右边挤两颗）。
+   药丸 + 纯文字取消是这一档的通用形：危险那个有颜色、取消那个最轻。 */
+.chat-session-confirm {
+  flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px;
+  padding: 5px 6px 5px 10px;
+}
+.chat-session-ask {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 12px; color: var(--ink);
+}
+.chat-session-yes {
+  flex: 0 0 auto; min-height: 24px; padding: 2px 12px; border: 0; border-radius: 999px;
+  background: var(--warn); color: #fff; font-size: 12px; font-weight: 600;
+}
+.chat-session-yes:hover:not(:disabled) { border-color: transparent; background: var(--warn); color: #fff; opacity: .88; }
+.chat-session-no {
+  flex: 0 0 auto; min-height: 24px; padding: 2px 6px; border: 0; border-radius: 6px;
+  background: transparent; color: var(--dim); font-size: 12px;
+}
+.chat-session-no:hover:not(:disabled) { border-color: transparent; color: var(--ink); background: transparent; }
+.chat-session-del .icon { width: 13px; height: 13px; }
+
+/* 一句话都还没有的那块屏幕（`ChatPanel.tsx::nothingSaidYet`）。
+   **不是一段居左的小字**——那读起来像一条说明；居中的一张脸 + 一行大字才像
+   「这儿是空的，从这里开始」。上下留白按 `padding` 给，不用 `height: 100%`：
+   这块区域上面还可能顶着一个错误框，撑满会把它推出视野。 */
+.chat-hello {
+  display: grid; justify-items: center; gap: 6px;
+  padding: 42px 24px 0; text-align: center;
+}
+.chat-hello-mark {
+  display: grid; place-items: center; width: 46px; height: 46px; margin-bottom: 4px;
+  border-radius: 50%; background: var(--sel); color: var(--accent);
+}
+.chat-hello-mark .icon { width: 26px; height: 26px; }
+.chat-hello-title { margin: 0; font-size: 15px; font-weight: 650; }
+.chat-hello-sub {
+  margin: 0; max-width: 30em; color: var(--dim); font-size: 12px; line-height: 1.9;
+}
 
 /* 「现在生效的规矩」那一块的样式 2026-08-14 随组件一起删了（`ChatPanel.tsx` 顶上写着理由）。 */
 
@@ -1010,10 +1075,24 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
 .chat-log .empty { font-size: 12px; line-height: 1.8; }
 .chat-earlier { width: 100%; margin-bottom: 10px; font-size: 12px; }
 .chat-msg + .chat-msg { margin-top: 12px; }
-.chat-who { display: block; color: var(--dim); font-size: 11px; margin-bottom: 3px; }
+/* 说话人**只念给读屏**（2026-08-15 作者：「不需要系统和你这种文字区分」）。
+   `display:none` 不行——那样读屏也念不到了，而它是这块屏幕上唯一说得清
+   「这句是谁说的」的东西。所以按老办法藏：占 1px、裁干净、不换行。 */
+.chat-who-sr {
+  position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
 .chat-text { margin: 0; white-space: pre-wrap; line-height: 1.75; }
+/* 你说的话有一块底，它说的话没有——**一屏五句话时这比五个「你」字省得多**。 */
 .chat-msg.author .chat-text {
   padding: 7px 10px; border-radius: 8px; background: var(--sel);
+}
+/* 系统那一行（一轮没跑成时留在对话里的那句）。名字撤掉之后**它不能和助手长一样**：
+   那会让一句「联系不上写作模型」读起来像助手自己说的话。灰一档 + 一道竖线，
+   不用红——它不是错误，是「这一轮没成」，而红色在这块屏幕上另有主人（`.err-box`）。 */
+.chat-msg.system .chat-text {
+  padding-left: 9px; border-left: 2px solid var(--line);
+  color: var(--dim); font-size: 12px;
 }
 
 /* 还在跑的那一段。**回话区没有打字机动画**：回话那一档今天非流式，装成在逐字吐
@@ -1065,9 +1144,36 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
 
 /* 输入 */
 .chat-say { border-top: 1px solid var(--line); padding: 8px 12px 10px; background: var(--panel); }
-.chat-say textarea { width: 100%; resize: vertical; font: inherit; line-height: 1.7; }
-.chat-say-row { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
-.chat-say-row .spacer { flex: 1; }
+/* **框和按钮是一个盒子**：边框画在盒子上，textarea 自己不画（框里套框最难看的那种）。
+   聚焦光圈也挂在盒子上（`:focus-within`），所以点到哪儿都是整块亮起来。 */
+.chat-say-box {
+  position: relative; display: flex;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--bg);
+}
+.chat-say-box:focus-within { border-color: var(--accent); }
+.chat-say-box textarea {
+  width: 100%; resize: vertical; font: inherit; line-height: 1.7;
+  /* 右边给那颗按钮让出 40px，下边让出 34px：**不让的话最后一行文字会钻到它底下**，
+     而作者正好看不见自己刚打的字。改按钮尺寸要回来改这两个数。 */
+  padding: 8px 40px 34px 10px;
+  border: 0; border-radius: 10px; background: transparent; outline: none;
+}
+/* 发送：吊在框内右下角的一颗圆钮。**只有图标**（作者 2026-08-15），
+   名字走 `aria-label` + 悬浮气泡（`.icon-btn::after` 那套，这儿单独抄了一份定位）。 */
+.chat-send {
+  position: absolute; right: 7px; bottom: 7px;
+  width: 28px; height: 28px; display: grid; place-items: center; padding: 0;
+  border: 0; border-radius: 50%;
+  background: var(--accent); color: var(--bg);
+}
+.chat-send .icon { width: 17px; height: 17px; }
+.chat-send:hover:not(:disabled) { border-color: transparent; color: var(--bg); opacity: .88; }
+/* 灰着 = 还没话可发（或者正跑着）。**安静的软底，不是把强调色调半透明**——
+   半透明的紫在浅底上会糊成一块脏颜色（设置窗那颗「应用」踩过同一个坑）。 */
+.chat-send:disabled {
+  background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--dim); opacity: 1;
+}
+.chat-send:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .chat-say-note { margin: 6px 0 0; color: var(--dim); font-size: 11px; line-height: 1.7; }
 
 /* 这两个类只有写作助手在用（工作台其余地方按钮一律同一副长相）。

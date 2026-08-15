@@ -3,6 +3,7 @@ import { useCreateChat, useDeleteChat } from "../api/hooks";
 import type { ChatSessionView } from "../api/types";
 import { refusalText } from "../chat";
 import { shownTime } from "../time";
+import { CloseIcon } from "./icons";
 
 // 写作助手的**会话列表**。作者可以同时留着好几段对话，每一段各自 resume
 // （ADR 0019：线性 loop 的执行态就是「一串 message + 哪几个查询还缺结果」，
@@ -57,18 +58,31 @@ function SessionRow({
           {session.running && <span className="chat-badge run">正在跑</span>}
           {/* 断在半路的和跑完的**必须长得不一样**：两者的下一步动作不同，而后端
               专门为这一列算了这个数（列表那条路由的 docstring 写着理由）。
-              这里不画「恢复」按钮 —— 接着说一句就会自动把缺的那几步补上。 */}
+
+              ⚠️ **这句话 2026-08-15 改过，因为原来那句变成了假话。** 原文是
+              「接着说会自动补上」，而它成立只因为屏幕上还有一颗「接着往下」
+              （发空话 = resume）。那颗按钮当天撤了，于是唯一剩下的路是作者自己打一句——
+              **而打一句恰好是让那几步永远补不上的那条路**：`Conversation.pending_calls`
+              往回扫到 `USER` 就停（`agent/loop.py` 的 `LOST_RESULT` 写着「再也没有人
+              会去补它」）。实测过：断在半路时它数出 1 个，`with_author("继续")` 之后是 0 个。 */}
           {session.pending_lookups > 0 && (
-            <span className="chat-badge half">上次断在半路 · 接着说会自动补上</span>
+            <span className="chat-badge half">上次断在半路 · 那几步没跑完</span>
           )}
         </span>
       </button>
       {confirming ? (
+        /* **确认时整行换成这一条**，不是在原来那一行右边再挤两颗按钮——
+           那两颗方框按钮把标题挤没了，而且它俩长得和「开一段新的对话」一样重
+           （作者：「太丑了」）。这一条：左边一句问话，右边一颗实心的小药丸 +
+           一个纯文字的「算了」。**只有危险的那一个有颜色**，取消永远是最轻的那个。 */
         <span className="chat-session-confirm">
-          <button className="danger" disabled={deleting} onClick={onDelete}>
-            删掉
+          <span className="chat-session-ask">删掉这段对话？</span>
+          <button className="chat-session-yes" disabled={deleting} onClick={onDelete}>
+            {deleting ? "删着…" : "删掉"}
           </button>
-          <button onClick={() => setConfirming(false)}>算了</button>
+          <button className="chat-session-no" onClick={() => setConfirming(false)}>
+            算了
+          </button>
         </span>
       ) : (
         <button
@@ -76,7 +90,7 @@ function SessionRow({
           aria-label={`删掉这段对话：${title}`}
           onClick={() => setConfirming(true)}
         >
-          ×
+          <CloseIcon />
         </button>
       )}
     </li>

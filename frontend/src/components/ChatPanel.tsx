@@ -30,6 +30,7 @@ import {
 } from "../chat";
 import { useCoords } from "../store";
 import { ChatSessions } from "./ChatSessions";
+import { BotIcon, SendIcon } from "./icons";
 import { CompareLink, DraftCandidates } from "./DraftCandidates";
 
 // 写作助手（模式二，[ADR 0019](docs/adr/0019-agent-loop-not-graph.md)）。
@@ -58,7 +59,8 @@ import { CompareLink, DraftCandidates } from "./DraftCandidates";
 //    以及这一轮裁掉了什么（`receiptNotes`）。
 
 // 屏幕上有三种说话人。那张表（连同「认不出的一律不上屏」这条）在 `chat.ts`：
-// 它同时是措辞和白名单，**一份**（`visibleMessages` 的 docstring 写着为什么必须是一份）。
+// **它今天的第一身份是白名单**，措辞只剩读屏在用（2026-08-15 起名字不画在屏幕上，
+// 见 `Bubble`）——但仍然**一份**（`visibleMessages` 的 docstring 写着为什么必须是一份）。
 //
 // 第三种「系统」是**一轮没跑成时留在对话里的那一行**（2026-08-13，后端迁移 012）。
 // 它和下面那个红框（`failureHere`）分工不同，别合并：
@@ -93,10 +95,19 @@ function Wording({ text }: { text: string }) {
   );
 }
 
+/** 一句话。**说话人不写在屏幕上**（作者 2026-08-15：「不需要系统和你这种文字区分」）。
+ *
+ *  分得开靠的是形：**你说的话有一块底**，它说的话没有，系统那一行是灰的窄字加一道竖线。
+ *  这三样都不是文字，所以不占地方，也不会在一屏五句话时重复五遍「你」。
+ *
+ *  **`SPEAKER_ZH` 一个字都不许删**：它同时是那张白名单（`chat.ts::visibleMessages`
+ *  靠「认不认得这个说话人」把工具返回挡在屏幕外，而那里面是节点标识和作者写的
+ *  秘密）。名字改成读屏专用（`.chat-who` 那一版是画在屏幕上的），读屏还念得出
+ *  这句是谁说的——去掉它，那块屏幕对读屏用户就变成一串没有归属的段落。 */
 function Bubble({ message }: { message: ChatMessageView }) {
   return (
     <div className={"chat-msg " + message.speaker}>
-      <span className="chat-who">{SPEAKER_ZH[message.speaker]}</span>
+      <span className="chat-who-sr">{SPEAKER_ZH[message.speaker]}</span>
       <p className="chat-text">{message.text}</p>
     </div>
   );
@@ -410,11 +421,6 @@ export function ChatPanel() {
     });
   }
 
-  /** 接着往下跑：`said` 留空就是 resume（ADR 0019——看尾巴、补跑缺的、继续）。 */
-  function resume() {
-    if (chatId && !running) runTurn(chatId, "");
-  }
-
   // **不读 `error.message`**：它在后端没写 `message` 时退回 `body.error`，而这几条路由的
   // 404 恰恰只有码没有话（`chat_not_found` / `project_not_found`，真 app 打过）。
   const failure = refusalText(turn.error, TURN_FAILED);
@@ -424,18 +430,22 @@ export function ChatPanel() {
    *  一轮跑好几分钟，「等的时候切过去看另一段」是常态：不钉住的话，另一段上会长出
    *  一个红框，而那一段什么都没发生——一句关于别处的话，长得像这儿的事实。 */
   const failureHere = runFor === chatId ? failure : null;
-  // 上一轮没跑完（撞了闸 / 作者按了停 / 进程死在半路），接着往下才有意义。
+  /** 这块屏幕上一句话都还没有。**含「刚开的新对话」那一档**（`chatId` 有了、消息是空的）——
+   *  原来那条判据是 `!chatId`，于是新开一段之后屏幕上什么都没有。
+   *  读不出来（`detail.isError` / `listFailure`）时不画：那时候「还没说话」是一句
+   *  它不知道真假的话，而作者三个月的对话可能都在里面。 */
+  const nothingSaidYet =
+    messages.length === 0 && !running && !listFailure && !detail.isError && !detail.isLoading;
+
+  // ⚠️ **「接着往下」那颗按钮 2026-08-15 撤了**（作者：「就不能用户用打字的形式说继续吗」）。
+  // 它发的是一句空话（`said=""` 即 resume，ADR 0019：看尾巴、补跑缺的、继续）。
+  // **后端那条路一个字没动**，撤掉的只是屏幕上那颗按钮。
   //
-  // **「它问了你一句」不算没跑完**（ADR 0024）：那一轮是**说完了**的一种——
-  // 在对话里，停下来问就等于这一轮说到这儿了，下一句归作者。这时摆一颗「接着往下」
-  // 等于请他跳过那个问题往下跑，而它问的正是「不问就得猜、猜错了他看不出来」的事。
-  const canResume =
-    !running &&
-    !!chatId &&
-    ((shownReceipt !== null &&
-      shownReceipt.reason !== "done" &&
-      shownReceipt.reason !== "asked_author") ||
-      (current?.pending_lookups ?? 0) > 0);
+  // 诚实说明：作者打「继续」和那颗按钮**不是同一件事**——前者是新的一轮、带着他那两个字，
+  // 后者是接着上一轮的尾巴往下跑。今天两者的结果多半一样（模型看得见整段历史），
+  // 但「上次断在半路」那一档（`pending_lookups > 0`）走打字这条路，补查是模型自己
+  // 决定要不要做的，不再是系统替他补。会话列表那一行的提示（「接着说会自动补上」）
+  // 说的就是这条路。
 
   return (
     <section className="pane chat">
@@ -487,11 +497,24 @@ export function ChatPanel() {
         {/* 列表读不出来这件事**只说一遍**：那一列摊开的时候由它自己说（它就长在这块
             屏幕正上方），收起来的时候由这儿说。两处同时画就是同一句话摆两遍。 */}
         {listFailure && !listOpen && <div className="err-box">{listFailure}</div>}
-        {!chatId && !running && !listFailure && (
-          <p className="empty">
-            跟它说一句话就开始。它能去翻这本书的目录、某几章的正文和梗概，
-            也能替你算这一章谁还不知道什么。
-          </p>
+        {/* 一句话都还没有的那块屏幕。**判据是「这一段里没有话」，不是「还没挑一段」**——
+            刚开的新对话 `chatId` 是有的、消息是空的，原来那条判据在这一档什么都不画，
+            于是「＋ 开一段新的对话」按下去等于面对一片空白（作者 2026-08-15 的原话）。
+
+            画的是助手自己那张脸 + 一句「开始写作」+ 它能干什么。**不摆按钮**：
+            这块屏幕上唯一的下一步就在正下方那个输入框里，再放一颗按钮是同一个动作
+            两个入口，而其中一个还得替作者想好第一句话该说什么。 */}
+        {nothingSaidYet && (
+          <div className="chat-hello">
+            <span className="chat-hello-mark" aria-hidden="true">
+              <BotIcon open={false} />
+            </span>
+            <p className="chat-hello-title">开始写作</p>
+            <p className="chat-hello-sub">
+              说一句就行。它能翻这本书的目录、某几章的正文和梗概，
+              也能替你算这一章谁还不知道什么。
+            </p>
+          </div>
         )}
 
         {window.hidden > 0 && (
@@ -508,7 +531,7 @@ export function ChatPanel() {
         ))}
         {runningHere && pendingSaid && (
           <div className="chat-msg author">
-            <span className="chat-who">{SPEAKER_ZH.author}</span>
+            <span className="chat-who-sr">{SPEAKER_ZH.author}</span>
             <p className="chat-text">{pendingSaid}</p>
           </div>
         )}
@@ -563,42 +586,63 @@ export function ChatPanel() {
       </div>
 
       <div className="chat-say">
+        {/* 输入框和那颗发送**是一个盒子**（`.chat-say-box`）：按钮吊在框内右下角，
+            文字的右边和下边给它让出了位置（`.chat-say-box textarea` 的内边距）。
+            它原来是框底下单独一行、写着「发送」两个字——作者要的是「放进框里、
+            换成图标」。**框自己画边框，textarea 不画**，否则框里套一个框。 */}
+        <div className="chat-say-box">
         <textarea
           aria-label="跟写作助手说"
-          placeholder="想问它什么？（Ctrl / ⌘ + Enter 发送）"
+          placeholder="开始写作…（Enter 发送，Shift + Enter 换行）"
           rows={3}
           value={said}
           disabled={running}
           onChange={(e) => setSaid(e.target.value)}
-          // 光按 Enter 不发：中文输入法里 Enter 是选字，那会把半句话发出去。
+          /* **Enter 直接发，Shift + Enter 换行**（2026-08-15 作者定的）。
+           *
+           * 这儿原先是「必须 Ctrl/⌘ + Enter 才发」，理由写的是「中文输入法里 Enter
+           * 是选字，光按 Enter 会把半句话发出去」——**那个顾虑是真的，但躲开它的
+           * 办法不是让作者多按一个键**，是问浏览器「这一下 Enter 是不是在选字」：
+           *
+           *   `isComposing` = 输入法的候选框正开着。中文敲「你好」时按下的那个
+           *   Enter 属于输入法，不属于这个输入框——放过它，`onChange` 会照常把
+           *   确认好的字填进来。**这一条错了的症状正是原来那句注释描述的东西**，
+           *   而这个产品的作者每一句话都是中文敲的。
+           *
+           *   `keyCode === 229` 是同一件事的老写法。两个都判：Safari 和一部分
+           *   输入法（搜狗、微信输入法）在某些版本上只给得出其中一个。
+           *
+           * **屏幕上只说这一套手势**（作者 2026-08-15：老那套不保留）。
+           * Ctrl/⌘ + Enter 落在「Enter 且没按 Shift」里，所以它照样把话发出去——
+           * 那不是留着的第二套手势，是**没有为它单开一条分支**：为了让它彻底没反应
+           * 而多写一个 `if`，等于亲手做出一颗按下去什么都不发生的键。 */
           onKeyDown={(e) => {
-            if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-              e.preventDefault();
-              send();
-            }
+            if (e.key !== "Enter") return;
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+            if (e.shiftKey) return; // 换行：交给浏览器自己插那个 \n
+            e.preventDefault();
+            send();
           }}
         />
+          {/* 名字由 `aria-label` 给（图标按钮的规矩，同顶栏那几颗）。
+              跑着的时候只是灰掉——**「停」在上面那条跑动条上**，这儿再放一颗
+              就是同一个动作两个入口。 */}
+          <button
+            className="chat-send"
+            aria-label="发送"
+            data-tip="发送"
+            disabled={!said.trim() || running || create.isPending || !projectId}
+            onClick={send}
+          >
+            <SendIcon />
+          </button>
+        </div>
         {/* 输入框停用的理由必须写出来。**一轮跑好几分钟**，作者很可能在等的时候
             切去看另一段对话——那时这儿是一个没有任何解释的灰输入框，读起来像坏了。
             （一次只跑一轮是有意的：两轮同时飞，屏幕上就有两笔说不清是谁花的钱。） */}
         {running && !runningHere && (
           <p className="chat-say-note">另一段对话正在跑，跑完才能在这儿说话。</p>
         )}
-        <div className="chat-say-row">
-          {canResume && (
-            <button onClick={resume} title="上一轮没跑完，接着往下">
-              接着往下
-            </button>
-          )}
-          <span className="spacer" />
-          <button
-            className="primary"
-            disabled={!said.trim() || running || create.isPending || !projectId}
-            onClick={send}
-          >
-            {running ? "跑着呢…" : "发送"}
-          </button>
-        </div>
       </div>
     </section>
   );

@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fixtures, renderWithApi, turnStream } from "../test/harness";
@@ -104,6 +104,97 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
     });
   });
 
+  it("**刚开的新对话不是一片空白** —— 一句话都没有时画的是「开始写作」那块", async () => {
+    // 2026-08-15 作者报的：按「＋ 开一段新的对话」之后面对一片空白。
+    // 病根是那条判据写的是 `!chatId`——而新开的一段**是有 id 的**，只是没有话。
+    // 判据改成「这一段里没有话」，这一条钉的就是那个差别。
+    useCoords.setState({ chatId: "chat_session:ID77" });
+    renderWithApi(<ChatPanel />, [
+      { match: /\/chats\/[^/]+$/, body: { ...fixtures.chatDetail, messages: [] } },
+    ]);
+
+    expect(await screen.findByText("开始写作")).toBeInTheDocument();
+    expect(screen.getByText(/说一句就行/)).toBeInTheDocument();
+  });
+
+  it("读不出来的时候**不许说「还没说话」** —— 那是一句它不知道真假的话", async () => {
+    useCoords.setState({ chatId: "chat_session:ID77" });
+    renderWithApi(<ChatPanel />, [
+      { match: /\/chats\/[^/]+$/, status: 500, body: {} },
+    ]);
+    await screen.findByText(/没读出来/);
+    expect(screen.queryByText("开始写作")).toBeNull();
+  });
+
+  // ── Enter 直接发（2026-08-15）─────────────────────────────────────────────
+  //
+  // 这一组里**只有第三条**（输入法正在选字）是真的难：前两条错了作者立刻看得见，
+  // 第三条错了的症状是「他敲『你好』刚要选字，半句话就飞出去了」——而这个产品的
+  // 作者每一句话都是中文敲的，也就是说那条路他每次说话都要走一遍。
+
+  it("按 Enter 直接发出去", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<ChatPanel />);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    const spy = vi.spyOn(globalThis, "fetch");
+
+    await user.type(say(), "这一章能说破血脉吗{Enter}");
+
+    await waitFor(() => {
+      const call = spy.mock.calls.find(([url]) => String(url).endsWith("/turn/events"));
+      expect(call).toBeTruthy();
+      expect(JSON.parse(String((call![1] as RequestInit).body)).said).toBe("这一章能说破血脉吗");
+    });
+  });
+
+  it("Shift + Enter 是换行，不发", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<ChatPanel />);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    const spy = vi.spyOn(globalThis, "fetch");
+
+    await user.type(say(), "第一行{Shift>}{Enter}{/Shift}第二行");
+
+    expect(spy.mock.calls.filter(([url]) => String(url).endsWith("/turn/events"))).toHaveLength(0);
+    expect((say() as HTMLTextAreaElement).value).toBe("第一行\n第二行");
+  });
+
+  it("🔴 **输入法正在选字的那一下 Enter 不许发** —— 那是「确认这几个字」", async () => {
+    // 中文敲「你好」时按下的 Enter 属于输入法，不属于这个输入框。判错了，
+    // 作者每说一句话都会先飞出去半句。**两种写法都要认**：Safari 和一部分
+    // 输入法在某些版本上只给得出 `isComposing` 和 `keyCode 229` 中的一个。
+    renderWithApi(<ChatPanel />);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    const spy = vi.spyOn(globalThis, "fetch");
+    const box = say();
+    fireEvent.change(box, { target: { value: "你好" } });
+
+    const sends = () => spy.mock.calls.filter(([url]) => String(url).endsWith("/turn/events"));
+
+    fireEvent.keyDown(box, { key: "Enter", isComposing: true });
+    fireEvent.keyDown(box, { key: "Enter", keyCode: 229 });
+    // **等一拍再断言**：发送是异步发出去的，紧接着断言「一次都没发」会在请求
+    // 出门之前就通过——那样这条测试拆掉守卫也照样绿（写它的时候真踩了这一下）。
+    await new Promise((r) => setTimeout(r, 30));
+    expect(sends()).toHaveLength(0);
+
+    // 选完字之后那一下**要发**——否则这条守卫就把发送整个关掉了，而它一样是绿的。
+    fireEvent.keyDown(box, { key: "Enter" });
+    await waitFor(() => expect(sends()).toHaveLength(1));
+  });
+
+  it("Ctrl / ⌘ + Enter 照旧能发 —— 别把老手势弄坏", async () => {
+    renderWithApi(<ChatPanel />);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    const spy = vi.spyOn(globalThis, "fetch");
+    fireEvent.change(say(), { target: { value: "老手势" } });
+    fireEvent.keyDown(say(), { key: "Enter", metaKey: true });
+
+    await waitFor(() =>
+      expect(spy.mock.calls.filter(([url]) => String(url).endsWith("/turn/events"))).toHaveLength(1),
+    );
+  });
+
   it("**回话区没有打字机**，只有真的秒表 —— 而且这块屏幕自己说清了哪一档才逐字", async () => {
     // 2026-08-12（ADR 0024）之后中间过程真的看得见了，**但两条流不是一回事**：
     // 起草那次调用是流式的，回话那次不是（`plan.stream is False`，后端那条
@@ -177,7 +268,7 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
   it("还没有一段对话时，发送会先开一段 —— **不预先开空会话**", async () => {
     const user = userEvent.setup();
     renderWithApi(<ChatPanel />, [{ match: /\/chats$/, body: [] }]);
-    await screen.findByText(/跟它说一句话就开始/);
+    await screen.findByText(/说一句就行/);
     const spy = vi.spyOn(globalThis, "fetch");
 
     await user.type(say(), "第一句");
@@ -416,21 +507,24 @@ describe("多段对话：侧列表", () => {
     expect(screen.queryByRole("button", { name: "恢复" })).toBeNull();
   });
 
-  it("断在半路时有一颗「接着往下」，它发的是**空话**（resume）", async () => {
+  it("断在半路时**没有那颗「接着往下」** —— 接着打一句就是了", async () => {
+    // 2026-08-15 作者把它撤了（「就不能用户用打字的形式说继续吗」）。它发的是一句
+    // 空话（`said=""` 即 resume）。**后端那条路一个字没动**，撤掉的只是这颗按钮。
+    //
+    // 这条测的是「撤干净了」，而**它撤掉的东西没有别处补**：断在半路那一档，
+    // 作者今天只能自己说一句，补不补那几个查询由模型决定。会话列表那一行的提示
+    // （下一条断言）是屏幕上仅剩的、告诉他这段对话断过的地方。
     const user = userEvent.setup();
     renderWithApi(<ChatPanel />, [
       { match: /\/chats$/, body: [{ ...fixtures.chats[0], pending_lookups: 1 }] },
     ]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
-    const spy = vi.spyOn(globalThis, "fetch");
 
-    await user.click(screen.getByRole("button", { name: "接着往下" }));
+    expect(screen.queryByRole("button", { name: "接着往下" })).toBeNull();
 
-    await waitFor(() => {
-      const call = spy.mock.calls.find(([url]) => String(url).endsWith("/turn/events"));
-      expect(call).toBeTruthy();
-      expect(JSON.parse(String((call![1] as RequestInit).body)).said).toBe("");
-    });
+    // 断过这件事本身没被一起撤掉：列表里那一行还说得出来。
+    await user.click(screen.getByRole("button", { name: "对话列表" }));
+    expect(await screen.findByText(/上次断在半路/)).toBeInTheDocument();
   });
 
   it("**一轮跑着的时候切去看另一段：秒表和回执不许跟过去**", async () => {
