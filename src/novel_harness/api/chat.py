@@ -145,7 +145,7 @@ from ..agent.tools import AuthorQuestion
 from ..agent.store import ChatConcurrency, ChatNotice, ChatSessionRow, ChatStore, StoredChat
 from ..db import Connection
 from ..draft.capabilities import CapabilityError, ProviderCapabilities, ResolvedCallPlan
-from ..draft.provider import ProviderConfig
+from ..draft.provider import CompletionResult, ProviderConfig
 from ..draft.rolling_summary import SummaryStore
 from ..extract.call_audit import record_call
 from ..graph.sqlite_events import SqliteEventStore
@@ -357,6 +357,13 @@ class ContextReceipt(BaseModel):
     lost_lookups: int = 0
     full: bool = False
     """剪到只剩作者说过的话仍然装不下。**这一档不砍作者的话**，这一轮直接停。"""
+
+    compressed_blocks: int = 0
+    """这一份投影里有几块**更早的对话被压成了摘要**（docs_dev 快照第五节）。
+
+    压缩只发生在「装不下」那一档：把最旧块换成摘要，canonical 和界面原文一字不动。
+    **裁了什么必须说出来**——作者有权知道模型读到的是摘要，而原文可以按编号取回。
+    """
 
 
 class DraftCandidateView(BaseModel):
@@ -617,6 +624,30 @@ class StopBody(BaseModel):
 def build_agent_model(config: ProviderConfig, plan: ResolvedCallPlan) -> ModelPort:
     """造这一轮的模型端口。**测试替换的就是这一个函数**（同 `deps` 里那几个注入点）。"""
     return ProviderModelPort(config, plan)
+
+
+def _summarize_conversation_block(
+    text: str, config: ProviderConfig, capability: ProviderCapabilities
+) -> CompletionResult:
+    """把最旧一段对话压成一句摘要（docs_dev 快照第五节）。**一次真的模型调用。**
+
+    只读、确定性 prompt、按块原文做幂等键；loop 拿到 `CompletionResult` 自己记账
+    （`_compress_oldest_block` 的 `bill`），这一层不碰账本——同 `build_agent_model`
+    的位置。
+    """
+    from ..draft.block_summary import BLOCK_SUMMARY_LENGTH, block_summary_messages
+    from ..draft.capabilities import ReasoningEffort, plan_call
+    from ..draft.length import DraftLanguage, count_units
+    from ..draft.provider import complete
+    from ..draft.product_context import TOKENS_PER_UNIT
+
+    plan = plan_call(
+        BLOCK_SUMMARY_LENGTH,
+        ReasoningEffort.OFF,
+        capability,
+        prompt_token_budget=count_units(text, DraftLanguage.ZH) * TOKENS_PER_UNIT,
+    )
+    return complete(block_summary_messages(text), config=config, plan=plan)
 
 
 def _ledger(conn: Connection, project_id: str) -> LedgerFn:
@@ -1113,6 +1144,12 @@ class _TurnRun:
                 # 而那一天要一起决定的是界面上那一档怎么画（今天的答案是「不画」）。
                 model=build_agent_model(self._config, self._plan),
                 ledger=_ledger(self._conn, self._proj.id),
+                # **装不下时先压最旧一段对话**（docs_dev 快照第五节）：作者的话是唯一
+                # 不可剪的累积，压缩是它唯一的出口。`None` 会退回 CONTEXT_FULL 停，
+                # 但产品档要接——否则长对话永远硬停。
+                block_summarizer=lambda text: _summarize_conversation_block(
+                    text, self._config, self._capability
+                ),
                 # **并发只在这一层放开**（见 `AGENT_PARALLEL_TOOLS`）：只有开连接的人
                 # 知道这条连接跨不跨得了线程。
                 limits=TurnLimits(parallel_tools=AGENT_PARALLEL_TOOLS),
@@ -1571,6 +1608,7 @@ def _context_receipt(projection: Projection | None) -> ContextReceipt:
         dropped_reasoning=projection.dropped_reasoning,
         lost_lookups=projection.filled_shells,
         full=projection.over_budget,
+        compressed_blocks=projection.compressed_blocks,
     )
 
 

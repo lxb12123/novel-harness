@@ -347,7 +347,9 @@ def test_a_turn_that_dies_mid_batch_leaves_exactly_the_calls_that_never_ran(
 
     # 第三个参数是这一轮的短记性（`tools.TurnMemo`）。**替身要原样收下并转交**：
     # 吞掉它的话「这一轮撞空过几个名字」在补跑那条路上就丢了。
-    def dying_dispatch(call: Any, context: Any, memo: Any = None, stored: Any = None) -> Any:
+    def dying_dispatch(
+        call: Any, context: Any, memo: Any = None, stored: Any = None, blocks: Any = None
+    ) -> Any:
         nonlocal done
         if done >= 1:
             raise ProcessDied("断电")
@@ -395,7 +397,9 @@ def test_only_the_calls_that_never_ran_are_replayed(
     real_dispatch = tools_mod.dispatch
     ran: list[str] = []
 
-    def dying_dispatch(call: Any, context: Any, memo: Any = None, stored: Any = None) -> Any:
+    def dying_dispatch(
+        call: Any, context: Any, memo: Any = None, stored: Any = None, blocks: Any = None
+    ) -> Any:
         if len(ran) >= 1:
             raise ProcessDied("断电")
         ran.append(call.name)
@@ -518,7 +522,9 @@ def test_a_lost_lookup_behind_a_new_sentence_still_leaves_a_wire_that_can_be_sen
     pid_ = book["pid"]
     real_dispatch = tools_mod.dispatch
 
-    def dying_dispatch(call: Any, context: Any, memo: Any = None, stored: Any = None) -> Any:
+    def dying_dispatch(
+        call: Any, context: Any, memo: Any = None, stored: Any = None, blocks: Any = None
+    ) -> Any:
         raise ProcessDied("断电")
 
     monkeypatch.setattr("novel_harness.agent.tools.dispatch", dying_dispatch)
@@ -607,7 +613,9 @@ def test_two_windows_on_the_same_chapter_do_not_resume_each_other(
     pid_ = book["pid"]
     real_dispatch = tools_mod.dispatch
 
-    def die(call: Any, context: Any, memo: Any = None, stored: Any = None) -> Any:
+    def die(
+        call: Any, context: Any, memo: Any = None, stored: Any = None, blocks: Any = None
+    ) -> Any:
         raise ProcessDied("断电")
 
     left = open_chat(client, pid_, title="甲")

@@ -1123,6 +1123,7 @@
     "calls_without_usage": 1,
     "chapter": 2,
     "context": {
+      "compressed_blocks": 0,
       "dropped_lookups": 0,
       "dropped_reasoning": 0,
       "full": false,
@@ -1176,7 +1177,7 @@
     "event: turn\ndata: {\"kind\":\"tool_finished\",\"said_to_author\":\"写一稿（第 2 章），好了。\",\"text\":\"\",\"tool\":\"draft_chapter\",\"ok\":true,\"chapter\":2,\"index\":2,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
     "event: turn\ndata: {\"kind\":\"reply_text\",\"said_to_author\":\"\",\"text\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\",\"tool\":\"\",\"ok\":null,\"chapter\":null,\"index\":0,\"total\":0,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
     "event: turn\ndata: {\"kind\":\"turn_stopped\",\"said_to_author\":\"说完了。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":null,\"index\":0,\"total\":0,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":\"done\",\"asked\":null}\n\n",
-    "event: receipt\ndata: {\"session\":{\"id\":\"chat_session:ID43\",\"title\":\"长连接那一轮\",\"created_at\":\"<ts>\",\"updated_at\":\"<ts>\",\"message_count\":5,\"running\":false,\"pending_lookups\":0},\"chapter\":2,\"reason\":\"done\",\"message\":\"说完了。\",\"reply\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\",\"messages\":[{\"seq\":4,\"speaker\":\"assistant\",\"text\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\"}],\"steps\":2,\"lookups\":2,\"tokens_reported\":5664,\"calls_without_usage\":1,\"context\":{\"off_chapter\":0,\"stale_lookups\":0,\"trimmed_results\":0,\"dropped_lookups\":0,\"dropped_reasoning\":0,\"lost_lookups\":0,\"full\":false},\"asked\":null,\"drafts\":[{\"id\":\"draft:ID44\",\"chapter\":2,\"ordinal\":2,\"units\":2800,\"note\":\"这一版更冷，收在他没抬头。\",\"preview\":\"风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他……\",\"created_at\":\"<ts>\",\"landed\":false,\"stopped_reason\":\"\"}]}\n\n"
+    "event: receipt\ndata: {\"session\":{\"id\":\"chat_session:ID43\",\"title\":\"长连接那一轮\",\"created_at\":\"<ts>\",\"updated_at\":\"<ts>\",\"message_count\":5,\"running\":false,\"pending_lookups\":0},\"chapter\":2,\"reason\":\"done\",\"message\":\"说完了。\",\"reply\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\",\"messages\":[{\"seq\":4,\"speaker\":\"assistant\",\"text\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\"}],\"steps\":2,\"lookups\":2,\"tokens_reported\":5664,\"calls_without_usage\":1,\"context\":{\"off_chapter\":0,\"stale_lookups\":0,\"trimmed_results\":0,\"dropped_lookups\":0,\"dropped_reasoning\":0,\"lost_lookups\":0,\"full\":false,\"compressed_blocks\":0},\"asked\":null,\"drafts\":[{\"id\":\"draft:ID44\",\"chapter\":2,\"ordinal\":2,\"units\":2800,\"note\":\"这一版更冷，收在他没抬头。\",\"preview\":\"风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他……\",\"created_at\":\"<ts>\",\"landed\":false,\"stopped_reason\":\"\"}]}\n\n"
   ],
   "chats": [
     {

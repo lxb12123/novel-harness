@@ -721,15 +721,19 @@ def test_the_code_scanner_really_strips_the_prose() -> None:
     assert "空转" not in code
 
 
-def test_nothing_in_this_layer_summarises_anything() -> None:
-    """**「正文永不压缩」在这一层是白拿的**：只剪不压，一个字都不摘要。
+def test_the_only_summarisation_in_this_layer_is_conversation_block_compression() -> None:
+    """loop 里只允许一种压缩：对话块压缩（docs_dev 快照第五节，作者的话那一档）。
 
-    摘要是 3.4 的事，而边界四管着它（总结不许含图谱事实）。这条断言在这儿是为了
-    那一天有人往这个文件里加压缩时，先被问一次「边界四怎么办」。
+    这条原来的守卫是「只剪不压，一个字都不摘要」——2026-08-15 设计改了：装不下时把
+    最旧一段作者的话压成摘要（canonical 一字不动、可按编号取回）。**边界四（总结不许
+    含图谱事实）管的是章节滚动总结**——那一位喂起草 prompt，图谱事实是引擎塞进去的；
+    块压缩总结的是**作者自己说过的话**，不是引擎注入的事实，错了原文还在界面里可对质。
+    所以这儿仍然禁止的只有章节总结那条链（`SummaryIndex` / `build_summary_messages`）：
+    它不在这层。
     """
     code = loop_code()
-    for banned in ("summarize", "summarise", "SummaryIndex", "build_summary_messages"):
-        assert banned not in code, f"loop 里长出了压缩：{banned} —— 先回答 ADR 0019 边界四"
+    for banned in ("SummaryIndex", "build_summary_messages", "RollingSummarizer"):
+        assert banned not in code, f"loop 里长出了章节总结：{banned} —— 那条链不在这层"
 
 
 # ══════════════════════════════════════════════════════════════════════════

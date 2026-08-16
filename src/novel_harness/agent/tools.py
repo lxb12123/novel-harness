@@ -184,7 +184,7 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -364,6 +364,9 @@ class GetResultArgs(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: int = Field(ge=1, description="「已收起的结果」清单里的编号。")
+    kind: Literal["result", "block"] = "result"
+    """取什么：`result` = 被剪掉的工具结果（默认）；`block` = 被压成摘要的对话块
+    （「更早的对话」清单里的 #N）。两个编号空间各自独立，所以必须点名。"""
     max_units: int | None = Field(
         default=None,
         ge=1,
@@ -960,16 +963,18 @@ def _handle_get_result(
     args: GetResultArgs,
     context: ToolContext,
     stored: dict[int, str] | None,
+    blocks: dict[int, str] | None,
 ) -> StoredResult:
-    """按编号把这一轮里已收起的那条结果原文取回来。**只读，不重新执行任何查询。**
+    """按编号把这一轮里已收起的工具结果 / 已压缩的对话块原文取回来。
 
-    `stored` 是 loop 造、随轮即焚的只读表（同 `TurnMemo` 的位置）：它不住在
+    `stored` / `blocks` 是 loop 造、随轮即焚的只读表（同 `TurnMemo` 的位置）：它们不住在
     `ToolContext` 上，因为那是能力闸不是杂物抽屉，而这一轮的 canonical 在 loop 手里。
     `None` = 没有这一轮的表（CLI / 直接派发）⇒ fail-closed，不猜。
     """
-    if stored is None:
+    table = blocks if args.kind == "block" else stored
+    if table is None:
         raise ToolRefused("这一轮没有可取的已收起结果。")
-    content = stored.get(args.id)
+    content = table.get(args.id)
     if content is None:
         raise ToolRefused(f"没有编号 {args.id} 的已收起结果。")
     if args.max_units is not None and len(content) > args.max_units:
@@ -1195,7 +1200,8 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         name="get_result",
         description=(
             "把这一轮里**已收起**的某一条工具结果按编号取回来（编号和一行描述见上下文"
-            "末尾的「已收起的结果」清单）。只读，不重新执行任何查询。\n"
+            "末尾的「已收起的结果」清单），或把**被压成摘要的对话块**按编号取回整块原文"
+            "（编号见「更早的对话」清单，取块要传 kind=\"block\"）。只读，不重新执行任何查询。\n"
             "**取回的内容会重新占用上下文**：编号对应的内容之前被剪掉正是因为装不下，"
             "取回来之前系统会先量一次——装不下会拒绝并告诉你差多少，那时用 "
             "get_result(id, max_units=N) 只取一部分，或把要问的说得短一点，"
@@ -1441,6 +1447,7 @@ def dispatch(
     context: ToolContext,
     memo: TurnMemo | None = None,
     stored: dict[int, str] | None = None,
+    blocks: dict[int, str] | None = None,
 ) -> ToolOutcome:
     """执行模型请求的一次工具调用。**这是工具表这道闸唯一的执行点。**
 
@@ -1464,6 +1471,8 @@ def dispatch(
             `UnknownCharacter` 自己那句话，**行为和以前逐字节相同**（测试和 CLI 走这条）。
         stored: 这一轮按编号的只读结果表（`get_result` 用，loop 造、随轮即焚）。
             `None` = 没有这一轮的表 ⇒ `get_result` fail-closed，其它工具不受影响。
+        blocks: 这一轮已压缩对话块的编号 → 原文（`get_result(kind="block")` 用）。
+            同上，随轮即焚；`None` ⇒ 块取回 fail-closed。
     """
     spec = TOOLS.get(call.name)
     if spec is None:
@@ -1492,7 +1501,7 @@ def dispatch(
         if call.name == "get_result":
             # 唯一一个需要「这一轮才有的只读结果表」的工具：表由 run_turn 造、随轮即焚，
             # 不可能住进 ToolContext（那是能力闸，不是杂物抽屉——同 TurnMemo）。
-            payload = _handle_get_result(args, context, stored)
+            payload = _handle_get_result(args, context, stored, blocks)
         else:
             payload = spec.handler(args, context)
     except UnknownCharacter as exc:
@@ -1628,6 +1637,7 @@ class BatchRunner:
         on_start: Callable[[int], None] | None = None,
         memo: TurnMemo | None = None,
         stored: dict[int, str] | None = None,
+        blocks: dict[int, str] | None = None,
     ) -> None:
         """`on_start(下标)`：**这一条真的开跑了**（ADR 0024 的事件流要说「正在查什么」）。
 
@@ -1653,6 +1663,8 @@ class BatchRunner:
         # 这一轮按编号的只读结果表（`get_result` 用）。**同样由 loop 造、跨批共用**：
         # 每批重造一份的话，模型在同一轮里分几步取回，编号会各数各的。
         self._stored = stored
+        # 已压缩对话块 → 原文（`get_result(kind="block")` 用）。同上，跨批共用。
+        self._blocks = blocks
         self._done: dict[int, ToolOutcome] = {}
 
     def __len__(self) -> int:
@@ -1687,7 +1699,11 @@ class BatchRunner:
         if end - start == 1:
             # **裸调用，外面没有 try/except**（`dispatch` 的四种失败都是正常返回）。
             self._done[start] = dispatch(
-                self._calls[start], self._context, self._memo, self._stored
+                self._calls[start],
+                self._context,
+                self._memo,
+                self._stored,
+                self._blocks,
             )
             return
         failure: BaseException | None = None
@@ -1701,6 +1717,7 @@ class BatchRunner:
                     self._context,
                     self._memo,
                     self._stored,
+                    self._blocks,
                 )
                 for index in range(start, end)
             }
@@ -1729,10 +1746,13 @@ def dispatch_all(
     workers: int = 1,
     memo: TurnMemo | None = None,
     stored: dict[int, str] | None = None,
+    blocks: dict[int, str] | None = None,
 ) -> list[ToolOutcome]:
     """模型一轮发了好几个 `tool_call` 时的便利函数，**与 `calls` 同序**。
 
     `workers=1`（默认）= 一条一条跑。放开它之前先读 `BatchRunner` 那三条规矩。
     """
-    runner = BatchRunner(calls, context, workers=workers, memo=memo, stored=stored)
+    runner = BatchRunner(
+        calls, context, workers=workers, memo=memo, stored=stored, blocks=blocks
+    )
     return [runner.take(index) for index in range(len(calls))]

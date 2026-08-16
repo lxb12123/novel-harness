@@ -174,6 +174,12 @@ export function receiptNotes(receipt: TurnReceipt): string[] {
         `要用到那几处，跟它说一声让它重新查。`,
     );
   }
+  if (c.compressed_blocks > 0) {
+    notes.push(
+      `更早的 ${c.compressed_blocks} 块对话被压成了摘要，它读到的是概括；` +
+        `你的原话一句没删、还在上面，需要时它会按编号取回。`,
+    );
+  }
   if (receipt.calls_without_usage > 0) {
     notes.push(
       `这一轮有 ${receipt.calls_without_usage} 次调用没报用量，所以「活动记录」里这一笔是少算的。`,

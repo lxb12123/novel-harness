@@ -627,6 +627,7 @@ def test_the_context_receipt_says_what_it_trimmed(
         "dropped_reasoning",
         "lost_lookups",
         "full",
+        "compressed_blocks",
     }
     assert context["full"] is False
 

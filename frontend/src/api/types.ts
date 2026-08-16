@@ -966,6 +966,9 @@ export interface ChatContextReceipt {
   lost_lookups: number;
   /** 剪到只剩作者说过的话仍然装不下。**这一档不砍作者的话**，这一轮直接停。 */
   full: boolean;
+  /** 这一份投影里有几块**更早的对话被压成了摘要**（docs_dev 快照第五节）。
+   *  原文在 canonical 和界面里一字不动，模型读到的是摘要。 */
+  compressed_blocks: number;
 }
 
 /**

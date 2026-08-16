@@ -645,6 +645,66 @@ def _stored_contents(conversation: Conversation) -> dict[int, str]:
     }
 
 
+def _stored_blocks(conversation: Conversation) -> dict[int, str]:
+    """已压缩对话块的编号 → 整块原文（取回工具的 `kind="block"` 那一路用）。"""
+    from .blocks import block_text, marked_blocks
+
+    return {number: block_text(conversation, number) for number in marked_blocks(conversation)}
+
+
+def _compress_oldest_block(
+    live: Conversation,
+    summarizer: Callable[[str], CompletionResult],
+    bill: Callable[[ModelCallReceipt], None],
+) -> Conversation | None:
+    """把最旧那个还没压的对话块压成摘要，返回追加了标记的新 canonical。
+
+    没有可压的块（全压过了 / 作者没说过几句话）返回 `None` —— 那时交给调用方
+    按 `CONTEXT_FULL` 停。**记账走 `bill`**：压缩是一次真的模型调用，账上不能没有它；
+    `prompt_hash` 用块原文的哈希（prompt 是它的确定性函数，同滚动总结的幂等键思路）。
+
+    幂等由标记本身保证：压过之后 `oldest_uncompressed_number` 就不再返回它，
+    **同一个块不会付第二次钱**（除非标记没落库——进程死在摘要和保存之间，那一档
+    和滚动总结的缺口一样，接受）。
+    """
+    from .blocks import (
+        BLOCK_SUMMARY_MAX_UNITS,
+        block_text,
+        oldest_uncompressed_number,
+        summary_message,
+    )
+
+    number = oldest_uncompressed_number(live)
+    if number is None:
+        return None
+    text = block_text(live, number)
+    started = perf_counter()
+    completion = summarizer(text)
+    bill(
+        ModelCallReceipt(
+            capability=AGENT_CAPABILITY,
+            schema_version=AGENT_SCHEMA_VERSION,
+            model=completion.model,
+            finish_reason=completion.finish_reason,
+            prompt_hash=sha256(text.encode("utf-8")).hexdigest(),
+            prompt_bytes=text.encode("utf-8"),
+            text=completion.text,
+            prompt_tokens=completion.prompt_tokens,
+            completion_tokens=completion.completion_tokens,
+            cache_read_tokens=None if completion.cache is None else completion.cache.read_tokens,
+            cache_write_tokens=None if completion.cache is None else completion.cache.written_tokens,
+            cost=completion.cost,
+            elapsed_ms=max(0, int((perf_counter() - started) * 1_000)),
+        )
+    )
+    summary = completion.text.strip()
+    if not summary:
+        summary = "（这一段对话没有可概括的内容。）"
+    if count_units(summary, _LANGUAGE) > BLOCK_SUMMARY_MAX_UNITS:
+        summary = summary[:BLOCK_SUMMARY_MAX_UNITS] + "…"
+    return live.extended(summary_message(number, summary))
+
+
 class Projection(BaseModel):
     """一次投影的结果 + **它裁了什么**。
 
@@ -684,6 +744,13 @@ class Projection(BaseModel):
     stubbed_results: int = 0
     dropped_calls: int = 0
     dropped_reasoning: int = 0
+    compressed_blocks: int = 0
+    """这一份投影里**已经被压成摘要**的对话块数（设计：docs_dev 快照第五节）。
+
+    压缩是「作者的话」那一档的显式动作：装不下时把最旧块换成摘要，canonical 一字
+    不动。**裁了什么必须说出来**（同 `off_chapter` 那条纪律）——回执拿它告诉作者
+    「模型读到的是摘要，原文还在界面里」。
+    """
     over_budget: bool = False
     """剪到只剩作者说的话，仍然装不下。**这一档不砍作者的话，由调用方停下来。**"""
 
@@ -822,6 +889,39 @@ def project(
         if not is_revocation(message) and (not is_rule(message) or index in live_rules)
     ]
 
+    # ── 已压缩块：canonical 里带标记的块 → 投影里整块换成摘要。作者的话不可重建，
+    #    但压缩是显式动作，原文仍在 canonical 和界面里（docs_dev 快照第五节）。
+    #    规矩是 SYSTEM 消息、不算块成员，照旧单独活着——它小、重要、有自己的机制，
+    #    不该被埋进摘要。**块过滤排在规矩档之后**：规矩的下标是完整历史的坐标。
+    from .blocks import (  # 断环，同 `rules.py`
+        CONVERSATION_SUMMARY_HEADER,
+        block_span,
+        is_block_summary,
+        marked_blocks,
+    )
+
+    marked = marked_blocks(conversation)
+    summary_block = None
+    if marked:
+        members: set[int] = set()
+        for number in marked:
+            start, end = block_span(conversation, number)
+            members.update(
+                id(m)
+                for m in conversation.messages[start:end]
+                if m.role is not Role.SYSTEM
+            )
+        kept = [m for m in kept if id(m) not in members and not is_block_summary(m)]
+        summary_block = {
+            "role": "system",
+            "content": "\n".join(
+                [
+                    CONVERSATION_SUMMARY_HEADER,
+                    *(f"#{n} · {s}" for n, s in marked.items()),
+                ]
+            ),
+        }
+
     off_chapter = 0
     if chapter is not None:
         stale = {
@@ -875,6 +975,8 @@ def project(
         `over_budget` 和 `payload_units` 不可能各说各的。
         """
         costs = [*prefix_costs, *(_cost(message) for message in kept)]
+        if summary_block is not None:
+            costs.append(_json_units(summary_block))
         if registry_lines:
             costs.append(registry_units())
         return _measured_units(costs, tool_costs)
@@ -931,10 +1033,15 @@ def project(
             "role": "system",
             "content": "\n".join([REGISTRY_HEADER, *registry_lines]),
         }
-    messages = [_wire(m) for m in (*conversation.prefix, *kept)]
+    messages = [_wire(m) for m in conversation.prefix]
+    if summary_block is not None:
+        messages.append(summary_block)
+    messages += [_wire(m) for m in kept]
     if registry_message is not None:
         messages.append(registry_message)
     final_costs = [*prefix_costs, *(_cost(m) for m in kept)]
+    if summary_block is not None:
+        final_costs.append(_json_units(summary_block))
     if registry_message is not None:
         final_costs.append(_json_units(registry_message))
     final_units = _measured_units(final_costs, tool_costs)
@@ -948,6 +1055,7 @@ def project(
         stubbed_results=stubbed,
         dropped_calls=dropped_calls,
         dropped_reasoning=dropped_reasoning,
+        compressed_blocks=len(marked),
         over_budget=final_units > budget_units,
         budget_units=budget_units,
         tool_units=tool_side,
@@ -1714,6 +1822,7 @@ def run_turn(
     limits: TurnLimits = TurnLimits(),
     cancel: Cancellation | None = None,
     budget_units: int | None = None,
+    block_summarizer: Callable[[str], CompletionResult] | None = None,
     persist: PersistFn | None = None,
     on_event: EventFn | None = None,
 ) -> TurnResult:
@@ -1741,6 +1850,11 @@ def run_turn(
             作者收到的说法是「它在反复查同一件事」（一个指向别处的解释）。
             这条关系钉在 `tests/test_context_policy.py` 第七节。
             这仍然是今天真实的紧，不是一个安全余量，调用方要更宽就显式传。
+        block_summarizer: 把**最旧一段作者的话**压成一句摘要的可调用（输入是块原文，
+            输出是一次完成的模型调用）。`None` = 不压缩，装不下照旧 `CONTEXT_FULL` 停
+            （CLI / 没接线的路径 fail-closed，行为和以前逐字节相同）。
+            压缩是「作者的话」那一档的唯一出口：剪枝永不碰它，装不下先压最旧的，
+            还装不下才停。
         persist: 跑到一半就把已经长出来的消息落库（见 `PersistFn`）。
             **不传 = 这一轮的执行态只活在进程内**，进程死了 resume 无事可补。
         on_event: 边跑边往外喊（见 `EventFn`，ADR 0024）。**不传 = 一声不喊，
@@ -2007,6 +2121,14 @@ def run_turn(
             tools=declarations,
         )
         if last_projection.over_budget:
+            # **先压缩，再停**：作者的话是唯一不可剪的累积，装不下时把最旧块压成
+            # 摘要（docs_dev 快照第五节）。没有块可压（或没接压缩器）才 CONTEXT_FULL。
+            if block_summarizer is not None:
+                compressed = _compress_oldest_block(live, block_summarizer, bill=bill)
+                if compressed is not None:
+                    live = compressed
+                    save()
+                    continue
             return finish(StopReason.CONTEXT_FULL)
 
         started = perf_counter()
@@ -2098,6 +2220,7 @@ def run_turn(
             ),
             memo=memo,
             stored=_stored_contents(live),
+            blocks=_stored_blocks(live),
         )
 
         def settle(position: int) -> list[AgentMessage]:
