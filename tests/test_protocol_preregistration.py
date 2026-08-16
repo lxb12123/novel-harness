@@ -73,7 +73,7 @@ def test_adr_index_lists_0011() -> None:
     ("relative_path", "current", "stale"),
     [
         (
-            "README.md",
+            "docs/ROADMAP.md",
             "协议本体之外还有九份修正案",
             "协议本体之外还有八份修正案",
         ),
