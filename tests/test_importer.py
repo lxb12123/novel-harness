@@ -443,17 +443,17 @@ def test_db_commit_failure_returns_sync_failed_then_reconcile_repairs(
     """写盘成功但图层提交失败：202 sync_failed，随后 reconcile 把库补回来。"""
     _seed_book(store, pid, tmp_path)
     base = store.current_chapter_hash(pid, 1)
-    real_put = store.put_chapter
+    real_commit = store.commit_chapter_snapshot
     failed = False
 
-    def flaky_put(spec):  # type: ignore[no-untyped-def]
+    def flaky_commit(spec, *, expected_text_sha256):  # type: ignore[no-untyped-def]
         nonlocal failed
         if not failed:
             failed = True
             raise RuntimeError("模拟图层提交失败")
-        return real_put(spec)
+        return real_commit(spec, expected_text_sha256=expected_text_sha256)
 
-    monkeypatch.setattr(store, "put_chapter", flaky_put)
+    monkeypatch.setattr(store, "commit_chapter_snapshot", flaky_commit)
     receipt = importer.save_chapter(
         store, pid, tmp_path, 1, "第一章 血脉\n\nDB 第一次没赶上。\n", expected_sha256=base
     )

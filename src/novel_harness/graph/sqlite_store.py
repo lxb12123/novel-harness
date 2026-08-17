@@ -30,6 +30,7 @@ from .models import (
     AliasHit,
     AliasKind,
     AliasSpec,
+    ChapterCommitToken,
     ChapterSnapshot,
     ChapterSpec,
     ChapterText,
@@ -50,6 +51,7 @@ from .models import (
     NodeRef,
     NodeSpec,
     Resolution,
+    RetirementReport,
     StateSnapshot,
     StateValue,
     StoredAlias,
@@ -63,6 +65,7 @@ from .store import (
     MAX_SUBGRAPH_NODES,
     QUERYABLE_SCOPES,
     ChapterInUse,
+    ChapterWriteConflict,
     NodeNotFound,
     QuoteMismatch,
     SnapshotInUse,
@@ -577,88 +580,136 @@ class SqliteStoryGraph:
 
     def retire_stale_extractor_facts(
         self, project_id: str, chapter_id: str, current_snapshot_id: str
-    ) -> int:
+    ) -> RetirementReport:
         with _transaction(self._conn):
-            return queries.retire_stale_extractor_facts(
+            retirement = queries.retire_stale_extractor_facts(
                 self._conn, project_id, chapter_id, current_snapshot_id
             )
+            queries.bump_canon_once_if_retired_canon(
+                self._conn, project_id, retirement
+            )
+            return retirement
 
     def chapter_disk_stats(self, project_id: str) -> dict[int, tuple[int | None, int | None]]:
         return queries.chapter_disk_stats(self._conn, project_id)
 
     def put_chapter(self, spec: ChapterSpec) -> StoredChapter:
+        with _transaction(self._conn):
+            return self._put_chapter_locked(spec)
+
+    def _put_chapter_locked(self, spec: ChapterSpec) -> StoredChapter:
+        """`put_chapter` 的事务体（`commit_chapter_snapshot` 在同一事务里复用）。
+
+        调用方必须已持有 `_transaction`——本函数绝不自己 BEGIN/COMMIT。
+        """
         sha = quote_hash(spec.text)
+        row = queries.find_chapter_by_number(self._conn, spec.project_id, spec.number)
+        if row is None:
+            chapter_id = new_id(EntityType.CHAPTER, spec.project_id)
+            generation = 1
+            # Chapter 节点和 chapter 行**同生**，而且没有 canonical 别名
+            # （CANONICAL_ALIAS_LABELS 里没有它）：300 章 = 300 条章标进花名册。
+            queries.insert_node(
+                self._conn,
+                chapter_id,
+                project_id=spec.project_id,
+                label=NodeLabel.CHAPTER,
+                name=spec.heading,
+                props=NodeProps(),
+            )
+            queries.insert_chapter(self._conn, chapter_id, spec, sha)
+            created = True
+        else:
+            chapter_id = row.id
+            # 单调 generation：只有当前 text hash 真正切换才加一（017）。
+            # 从 S2 还原到历史 S1 也是切换 —— 否则 S1 的旧任务会借 ABA 复活。
+            generation = row.snapshot_generation
+            node = self._require_node(spec.project_id, chapter_id, what="chapter 节点")
+            if node.name != spec.heading:
+                queries.update_node_name(self._conn, chapter_id, spec.heading)
+            # **一个字节都没变就不写。** `sync` 会对整本书每一章都调到这里，
+            # 而 2026-08-14 起它还会在**每次回到标签页时**跑一遍（回焦对齐）——
+            # 无条件 UPDATE 的话，722 章的书每对一次就搅一遍全书的 WAL，
+            # 而其中 721 章一个字节没动。
+            #
+            # 判据是 `text_sha256` **加上那两列 stat**：
+            #
+            # · sha 相等 ⇒ `heading`/`title`（从正文切出来的）和 `path`（由幂等键
+            #   `number` 定）全都相等，那次 UPDATE 唯一会改的是 `updated_at`，
+            #   而那一列没有任何读者依赖它跳动。
+            # · **但 stat 也必须相等才能跳过**。文件被 touch 过（`rsync` / 保存了
+            #   一份一模一样的内容）时 sha 不变而 mtime 变了——不把新 stat 记下来，
+            #   下一次回焦检查又会判它「变了」，于是**这一章永远重读**（迁移 015）。
+            if (row.text_sha256, row.disk_mtime_ns, row.disk_size) != (
+                sha,
+                spec.disk_mtime_ns,
+                spec.disk_size,
+            ):
+                if row.text_sha256 != sha:
+                    generation = row.snapshot_generation + 1
+                queries.update_chapter(
+                    self._conn, chapter_id, spec, sha, snapshot_generation=generation
+                )
+            created = False
+
+        snapshot_id = queries.find_snapshot(self._conn, chapter_id, sha)
+        snapshot_created = snapshot_id is None
+        if snapshot_id is None:
+            snapshot_id = queries.insert_snapshot(
+                self._conn,
+                new_id(EntityType.SNAPSHOT, spec.project_id),
+                chapter_id,
+                spec.text,
+                sha,
+            )
+        return StoredChapter(
+            id=chapter_id,
+            project_id=spec.project_id,
+            number=spec.number,
+            title=spec.title,
+            path=spec.path,
+            text_sha256=sha,
+            snapshot_id=snapshot_id,
+            snapshot_generation=generation,
+            created=created,
+            snapshot_created=snapshot_created,
+        )
+
+    def commit_chapter_snapshot(
+        self, spec: ChapterSpec, *, expected_text_sha256: str
+    ) -> ChapterCommitToken:
+        """保存路径的单一图层事务：CAS → 落快照 → 退休 → 至多一次 canon bump。
+
+        - `expected_text_sha256` 是调用方依据的 **DB current hash**（保存入口已在
+          章级锁内把 DB 对齐到磁盘并校验过；这一层是第二道、也是最后一道闸）。
+        - 旧 hash/generation 必须在这个 `BEGIN IMMEDIATE` 内读取——不能由事务外
+          调用方传一个会过期的 previous 值。
+        - 退休失败（含注入测试）⇒ 快照和 CAS 一起回滚：快照不能半提交。
+        - 返回的 token 是保存后所有自动任务的唯一输入（ADR 0029）。
+        """
         with _transaction(self._conn):
             row = queries.find_chapter_by_number(self._conn, spec.project_id, spec.number)
-            if row is None:
-                chapter_id = new_id(EntityType.CHAPTER, spec.project_id)
-                generation = 1
-                # Chapter 节点和 chapter 行**同生**，而且没有 canonical 别名
-                # （CANONICAL_ALIAS_LABELS 里没有它）：300 章 = 300 条章标进花名册。
-                queries.insert_node(
-                    self._conn,
-                    chapter_id,
-                    project_id=spec.project_id,
-                    label=NodeLabel.CHAPTER,
-                    name=spec.heading,
-                    props=NodeProps(),
-                )
-                queries.insert_chapter(self._conn, chapter_id, spec, sha)
-                created = True
-            else:
-                chapter_id = row.id
-                # 单调 generation：只有当前 text hash 真正切换才加一（017）。
-                # 从 S2 还原到历史 S1 也是切换 —— 否则 S1 的旧任务会借 ABA 复活。
-                generation = row.snapshot_generation
-                node = self._require_node(spec.project_id, chapter_id, what="chapter 节点")
-                if node.name != spec.heading:
-                    queries.update_node_name(self._conn, chapter_id, spec.heading)
-                # **一个字节都没变就不写。** `sync` 会对整本书每一章都调到这里，
-                # 而 2026-08-14 起它还会在**每次回到标签页时**跑一遍（回焦对齐）——
-                # 无条件 UPDATE 的话，722 章的书每对一次就搅一遍全书的 WAL，
-                # 而其中 721 章一个字节没动。
-                #
-                # 判据是 `text_sha256` **加上那两列 stat**：
-                #
-                # · sha 相等 ⇒ `heading`/`title`（从正文切出来的）和 `path`（由幂等键
-                #   `number` 定）全都相等，那次 UPDATE 唯一会改的是 `updated_at`，
-                #   而那一列没有任何读者依赖它跳动。
-                # · **但 stat 也必须相等才能跳过**。文件被 touch 过（`rsync` / 保存了
-                #   一份一模一样的内容）时 sha 不变而 mtime 变了——不把新 stat 记下来，
-                #   下一次回焦检查又会判它「变了」，于是**这一章永远重读**（迁移 015）。
-                if (row.text_sha256, row.disk_mtime_ns, row.disk_size) != (
-                    sha,
-                    spec.disk_mtime_ns,
-                    spec.disk_size,
-                ):
-                    if row.text_sha256 != sha:
-                        generation = row.snapshot_generation + 1
-                    queries.update_chapter(
-                        self._conn, chapter_id, spec, sha, snapshot_generation=generation
-                    )
-                created = False
-
-            snapshot_id = queries.find_snapshot(self._conn, chapter_id, sha)
-            snapshot_created = snapshot_id is None
-            if snapshot_id is None:
-                snapshot_id = queries.insert_snapshot(
-                    self._conn,
-                    new_id(EntityType.SNAPSHOT, spec.project_id),
-                    chapter_id,
-                    spec.text,
-                    sha,
-                )
-            return StoredChapter(
-                id=chapter_id,
+            previous_hash = row.text_sha256 if row is not None else None
+            # 从没进过库的章（DB 行缺失）没有「previous hash」可比：expected 的 409
+            # 保护在保存入口（expected vs 磁盘）已经完成，这里放行首笔提交。
+            if previous_hash is not None and previous_hash != expected_text_sha256:
+                raise ChapterWriteConflict(expected_text_sha256, previous_hash)
+            stored = self._put_chapter_locked(spec)
+            retirement = queries.retire_stale_extractor_facts(
+                self._conn, spec.project_id, stored.id, stored.snapshot_id
+            )
+            queries.bump_canon_once_if_retired_canon(
+                self._conn, spec.project_id, retirement
+            )
+            return ChapterCommitToken(
                 project_id=spec.project_id,
-                number=spec.number,
-                title=spec.title,
-                path=spec.path,
-                text_sha256=sha,
-                snapshot_id=snapshot_id,
-                snapshot_generation=generation,
-                created=created,
-                snapshot_created=snapshot_created,
+                chapter_id=stored.id,
+                chapter_number=stored.number,
+                source_snapshot_id=stored.snapshot_id,
+                source_generation=stored.snapshot_generation,
+                text_sha256=stored.text_sha256,
+                text=spec.text,
+                changed=previous_hash != stored.text_sha256,
             )
 
     def current_chapter_id(self, project_id: str, number: int) -> str | None:

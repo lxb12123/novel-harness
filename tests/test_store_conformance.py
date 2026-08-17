@@ -42,11 +42,13 @@ import pytest
 from test_checks import FakeGraph as RulesFakeGraph
 from test_knowledge import FakeGraph as KnowledgeFakeGraph
 
+from novel_harness import importer, project
 from novel_harness.checks import CheckContext
 from novel_harness.checks.dead_speaks import check
 from novel_harness.db import IN_MEMORY, Connection, connect, migrate
 from novel_harness.graph import (
     AliasKind,
+    ChapterSpec,
     Edge,
     EdgeProps,
     EdgeStatus,
@@ -63,6 +65,8 @@ from novel_harness.graph import (
     StoryGraph,
 )
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
+from novel_harness.graph.store import ChapterWriteConflict
+from novel_harness.text.chapterize import chapterize
 from novel_harness.panel import knowledge_matrix
 
 PID = "project:conf:01J0"
@@ -776,3 +780,90 @@ def test_cross_project_leakage_is_impossible(
 
     with pytest.raises(NodeNotFound):
         knowledge_matrix(store, "project:conf:别的书", 152, [XIAO_JUE.id], secrets=[BLOODLINE.id])
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# real only —— 保存提交令牌：ABA generation / CAS / 退休失败回滚
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _chapter_spec(pid: str, number: int, text: str) -> ChapterSpec:
+    chapter = chapterize(text).chapters[0]
+    return ChapterSpec(
+        project_id=pid,
+        number=number,
+        heading=chapter.raw_heading,
+        title=chapter.title,
+        path=f"chapters/{number:04d}.md",
+        text=text,
+    )
+
+
+def test_commit_chapter_snapshot_generations_are_monotonic_across_aba() -> None:
+    """S1→S2→S1 得到三个不同、单调递增的 generation；相同 S1 连续保存不递增。"""
+    conn = connect(IN_MEMORY)
+    migrate(conn)
+    store = SqliteStoryGraph(conn)
+    pid = project.create(conn, name="t", root_path=".").id
+    s1 = "第一章 甲\n\n第一版。\n"
+    s2 = "第一章 甲\n\n第二版。\n"
+    s1_sha = importer.text_digest(s1)
+
+    t1 = store.commit_chapter_snapshot(_chapter_spec(pid, 1, s1), expected_text_sha256=s1_sha)
+    t2 = store.commit_chapter_snapshot(_chapter_spec(pid, 1, s2), expected_text_sha256=t1.text_sha256)
+    t3 = store.commit_chapter_snapshot(_chapter_spec(pid, 1, s1), expected_text_sha256=t2.text_sha256)
+    assert (t1.source_generation, t2.source_generation, t3.source_generation) == (1, 2, 3)
+    assert t1.text_sha256 == t3.text_sha256 == s1_sha
+    # 第一轮 S1 token 在第三轮 S1 已 current 时仍因 generation 不同而失效。
+    assert t1.source_generation != t3.source_generation
+
+    t4 = store.commit_chapter_snapshot(_chapter_spec(pid, 1, s1), expected_text_sha256=t3.text_sha256)
+    assert t4.changed is False
+    assert t4.source_generation == 3
+    conn.close()
+
+
+def test_commit_chapter_snapshot_cas_rejects_stale_expected() -> None:
+    conn = connect(IN_MEMORY)
+    migrate(conn)
+    store = SqliteStoryGraph(conn)
+    pid = project.create(conn, name="t", root_path=".").id
+    s1 = "第一章 甲\n\n第一版。\n"
+    s1_sha = importer.text_digest(s1)
+    store.commit_chapter_snapshot(_chapter_spec(pid, 1, s1), expected_text_sha256=s1_sha)
+
+    with pytest.raises(ChapterWriteConflict):
+        store.commit_chapter_snapshot(
+            _chapter_spec(pid, 1, "第一章 甲\n\n不该落。\n"),
+            expected_text_sha256="a" * 64,
+        )
+    assert store.current_chapter_hash(pid, 1) == s1_sha
+    conn.close()
+
+
+def test_retire_failure_rolls_back_the_snapshot_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """退休失败 ⇒ 快照不能半提交：CAS/快照和退休必须在同一个事务里。"""
+    conn = connect(IN_MEMORY)
+    migrate(conn)
+    store = SqliteStoryGraph(conn)
+    pid = project.create(conn, name="t", root_path=".").id
+    s1 = "第一章 甲\n\n第一版。\n"
+    s1_sha = importer.text_digest(s1)
+    store.commit_chapter_snapshot(_chapter_spec(pid, 1, s1), expected_text_sha256=s1_sha)
+
+    import novel_harness.graph.queries as queries
+
+    def boom(*args: object, **kwargs: object) -> object:
+        raise RuntimeError("注入：退休失败")
+
+    monkeypatch.setattr(queries, "retire_stale_extractor_facts", boom)
+    with pytest.raises(RuntimeError, match="退休失败"):
+        store.commit_chapter_snapshot(
+            _chapter_spec(pid, 1, "第一章 甲\n\n第二版。\n"),
+            expected_text_sha256=s1_sha,
+        )
+    assert store.current_chapter_hash(pid, 1) == s1_sha
+    assert store.current_chapter_generation(pid, 1) == 1
+    conn.close()

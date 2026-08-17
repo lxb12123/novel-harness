@@ -23,6 +23,12 @@ from collections.abc import Collection, Sequence
 
 
 from novel_harness.checks import ALL_CHECKS, CheckContext, Issue, run_checks
+from novel_harness.checks.catalog import (
+    SYSTEM_RULES,
+    SYSTEM_RULESET_V1_HASH,
+    ruleset_hash,
+    ruleset_semantic_json,
+)
 from novel_harness.checks.dead_speaks import check as dead_speaks_check
 from novel_harness.checks.future_leak import check as future_leak_check
 from novel_harness.graph import (
@@ -445,3 +451,33 @@ def test_r3_longest_surface_wins_before_the_verb() -> None:
     issues = dead_speaks_check(ctx([], aliases=aliases, paragraphs=["顾清音道：「……」"]))
     assert len(issues) == 1
     assert issues[0].anchor.quote_text == "顾清音"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 规则目录 —— 稳定语义字段 / 排序 / 冻结 hash（Task 3）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_catalog_lists_exactly_r2_and_r3_with_stable_semantics() -> None:
+    assert [spec.rule_id for spec in SYSTEM_RULES] == ["R2", "R3"]
+    assert all(spec.enabled and spec.blocks_downstream for spec in SYSTEM_RULES)
+    assert all(spec.schema_version == "v1" for spec in SYSTEM_RULES)
+    assert {spec.template for spec in SYSTEM_RULES} == {"system"}
+
+
+def test_ruleset_hash_is_stable_and_order_independent() -> None:
+    first = ruleset_semantic_json(SYSTEM_RULES)
+    # 同一份目录怎么排都算同一个 JSON（排序由函数负责，不靠调用方传序）。
+    assert ruleset_semantic_json(tuple(reversed(SYSTEM_RULES))) == first
+    assert ruleset_hash(SYSTEM_RULES) == SYSTEM_RULESET_V1_HASH
+    assert ruleset_hash() == SYSTEM_RULESET_V1_HASH
+
+
+def test_title_and_description_do_not_enter_the_hash() -> None:
+    """只改 UI 文案不能让所有机器任务失效（§4.2）。"""
+    from dataclasses import replace
+
+    renamed = tuple(
+        replace(spec, title="换个标题", description="换个说明") for spec in SYSTEM_RULES
+    )
+    assert ruleset_hash(renamed) == SYSTEM_RULESET_V1_HASH

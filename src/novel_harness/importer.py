@@ -789,7 +789,7 @@ def save_chapter(
                 db_hash = store.current_chapter_hash(project_id, chapter)
             except SyncRefused:
                 pass
-        if expected_sha256 is not None and expected_sha256 != db_hash:
+        if expected_sha256 is not None and expected_sha256 != (db_hash or disk_hash_before):
             raise ChapterChanged(
                 f"第 {chapter} 章已经变了",
                 chapter,
@@ -814,9 +814,10 @@ def save_chapter(
             )
 
         # ④ 单章落库（旧实现是整本 sync；这里只碰这一章，写入面与目的一样窄）。
+        #    图层事务 = CAS + 快照 + 旧机器事实退休 + 至多一次 canon bump。
         try:
             stat = file.stat()
-            stored = store.put_chapter(
+            stored = store.commit_chapter_snapshot(
                 ChapterSpec(
                     project_id=project_id,
                     number=chapter,
@@ -826,7 +827,8 @@ def save_chapter(
                     text=markdown,
                     disk_mtime_ns=stat.st_mtime_ns,
                     disk_size=stat.st_size,
-                )
+                ),
+                expected_text_sha256=db_hash or disk_hash_before,
             )
         except BaseException:
             # 写盘成功后 DB 提交才失败 → 202 sync_failed，不能谎报 409/200。
@@ -863,8 +865,8 @@ def save_chapter(
             indexed=True,
             changed=disk_hash_before != new_sha,
             chapter_number=chapter,
-            snapshot_id=stored.snapshot_id,
-            snapshot_generation=stored.snapshot_generation,
+            snapshot_id=stored.source_snapshot_id,
+            snapshot_generation=stored.source_generation,
             text_sha256=new_sha,
             processing="reused",
         )

@@ -39,6 +39,7 @@ from .models import (
     NodeProps,
     NodeRef,
     RelocatePointer,
+    RetirementReport,
     SecretDetail,
     SnapshotUsage,
     StoredAlias,
@@ -1329,8 +1330,12 @@ _RETIRE_SELECT: Final = """
 
 def retire_stale_extractor_facts(
     conn: sqlite3.Connection, project_id: str, chapter_id: str, current_snapshot_id: str
-) -> int:
-    """把这一章里锚在**旧快照**上的**抽取器**事实标成 `STALE`。返回退休了几条。
+) -> RetirementReport:
+    """把这一章里锚在**旧快照**上的**抽取器**事实标成 `STALE`。
+
+    返回精确的 `RetirementReport`（退了哪些 ID、其中多少是 Writer 可见的 CANON），
+    不能只给 rowcount——`chapter_refresh_run` 的 outbox 要记精确 ID，canon bump
+    要问「有没有退到 CANON」。
 
     ── 为什么必须有这一下 ────────────────────────────────────────────────────
 
@@ -1356,21 +1361,30 @@ def retire_stale_extractor_facts(
     而没有任何地方告诉他为什么。`event_knower` 没有 `source` 列，它跟着它的事件走。
     """
     params = {"pid": project_id, "chapter": chapter_id, "current": current_snapshot_id}
-    touched = 0
-    for table in ("edge", "story_event"):
-        cur = conn.execute(
-            f"""
-            UPDATE {table} SET evidence_status = 'STALE'
-             WHERE project_id = :pid
-               AND source = 'extractor'
-               AND evidence_status = 'FRESH'
-               AND evidence_id IN ({_RETIRE_SELECT})
-            """,
-            params,
-        )
-        touched += cur.rowcount
+    retired_edges = conn.execute(
+        f"""
+        UPDATE edge SET evidence_status = 'STALE'
+         WHERE project_id = :pid
+           AND source = 'extractor'
+           AND evidence_status = 'FRESH'
+           AND evidence_id IN ({_RETIRE_SELECT})
+        RETURNING id, information_scope
+        """,
+        params,
+    ).fetchall()
+    retired_events = conn.execute(
+        f"""
+        UPDATE story_event SET evidence_status = 'STALE'
+         WHERE project_id = :pid
+           AND source = 'extractor'
+           AND evidence_status = 'FRESH'
+           AND evidence_id IN ({_RETIRE_SELECT})
+        RETURNING id, information_scope
+        """,
+        params,
+    ).fetchall()
     # 知情名单没有自己的 `source`，判据是「它挂的那条事件刚被退休了」。
-    cur = conn.execute(
+    retired_knowers = conn.execute(
         """
         UPDATE event_knower SET evidence_status = 'STALE'
          WHERE project_id = :pid
@@ -1379,10 +1393,45 @@ def retire_stale_extractor_facts(
                  SELECT id FROM story_event
                   WHERE project_id = :pid AND evidence_status = 'STALE'
              )
+        RETURNING event_id
         """,
         {"pid": project_id},
     )
-    return touched + cur.rowcount
+    return RetirementReport(
+        project_id=project_id,
+        chapter_id=chapter_id,
+        current_snapshot_id=current_snapshot_id,
+        retired_edge_ids=tuple(str(row["id"]) for row in retired_edges),
+        retired_event_ids=tuple(str(row["id"]) for row in retired_events),
+        retired_knower_event_ids=tuple(str(row["event_id"]) for row in retired_knowers),
+        touched_canon_edges=sum(
+            1 for row in retired_edges if row["information_scope"] == InformationScope.CANON
+        ),
+        touched_canon_events=sum(
+            1 for row in retired_events if row["information_scope"] == InformationScope.CANON
+        ),
+    )
+
+
+def bump_canon_once_if_retired_canon(
+    conn: sqlite3.Connection, project_id: str, retirement: RetirementReport
+) -> int:
+    """退休使 Writer 可见 Canon 集合变化时，至多 bump 一次 `canon_version`。
+
+    零 CANON 变化不 bump。返回事务内的新（或原）版本——调用方拿它写
+    `chapter_refresh_run.canon_version_before/after`。
+    """
+    row = conn.execute(
+        "SELECT canon_version FROM project WHERE id = ?", (project_id,)
+    ).fetchone()
+    current = int(row["canon_version"])
+    if not retirement.effective_canon_changed:
+        return current
+    bumped = conn.execute(
+        "UPDATE project SET canon_version = canon_version + 1 WHERE id = ? RETURNING canon_version",
+        (project_id,),
+    ).fetchone()
+    return int(bumped["canon_version"])
 
 
 def chapter_disk_stats(

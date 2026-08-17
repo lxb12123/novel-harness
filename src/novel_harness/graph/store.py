@@ -36,6 +36,7 @@ from typing import Final, Protocol, runtime_checkable
 
 from .models import (
     AliasSpec,
+    ChapterCommitToken,
     ChapterSnapshot,
     ChapterSpec,
     ChapterText,
@@ -50,6 +51,7 @@ from .models import (
     Node,
     NodeSpec,
     Resolution,
+    RetirementReport,
     SnapshotUsage,
     StateSnapshot,
     StoredAlias,
@@ -186,6 +188,22 @@ class QuoteMismatch(StoreError):
     一条锚错了的证据是查不出来的——它的产物是一条 `valid_from` 错了的 CANON 边，
     而它在面板上长得完全正常。
     """
+
+
+class ChapterWriteConflict(StoreError):
+    """图层保存 CAS 失败：`commit_chapter_snapshot` 依据的那版 DB 正文已经变了。
+
+    调用方（保存入口）已持有章级锁，这个异常只可能是锁外路径（reconcile / 外部
+    写者）在我们读盘与提交之间动了 DB。写盘已经发生，所以 HTTP 层按
+    202 `sync_failed` 处理并立即 reconcile，不能谎报 409「正文未保存」。
+    """
+
+    def __init__(self, expected: str, actual: str | None) -> None:
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            f"图层保存冲突：expected text_sha256={expected}，DB current={actual or '<无>'}"
+        )
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -569,12 +587,13 @@ class CanonWriter(Protocol):
 
     def retire_stale_extractor_facts(
         self, project_id: str, chapter_id: str, current_snapshot_id: str
-    ) -> int:
+    ) -> RetirementReport:
         """这一章换了新正文之后，让锚在**旧那一版**上的抽取事实退休（`STALE`）。
 
-        返回退休了几条。**幂等**：没有旧锚时改 0 行，所以每次 sync 都调也不要紧。
-        论证写在 `queries.retire_stale_extractor_facts`（为什么是 STALE 不是
-        RETRACTED、为什么只动抽取器那些）。
+        返回精确 `RetirementReport`；若退休触及 Writer 可见 CANON，同一事务
+        bump 一次 canon version。**幂等**：没有旧锚时改 0 行，所以每次 sync 都调
+        也不要紧。论证写在 `queries.retire_stale_extractor_facts`（为什么是 STALE
+        不是 RETRACTED、为什么只动抽取器那些）。
         """
         ...
 
@@ -615,6 +634,18 @@ class CanonWriter(Protocol):
             `spec.number` 是全书顺序位置，由 `text/chapterize.py` 的 index 决定，
             **不是作者填的**，也不是正文里印的章号（分卷重启和番外会让后者重复，
             而 `state_at` 的 `valid_from_chapter <= :ch` 要求它是全序键）。
+        """
+        ...
+
+    def commit_chapter_snapshot(
+        self, spec: ChapterSpec, *, expected_text_sha256: str
+    ) -> ChapterCommitToken:
+        """保存路径的**单一图层事务**：落快照 + 退休旧机器事实 + 至多一次 canon bump。
+
+        事务内先按 DB current hash 做 CAS（expected 不匹配 → `ChapterWriteConflict`），
+        再 `_put_chapter_locked`，再退休旧快照的 extractor facts 并返回精确
+        `RetirementReport`，最后在 Writer 可见 Canon 变化时 bump 一次 canon version。
+        四个步骤要么全成要么全回滚——快照不能半提交（退休失败 = 快照不落）。
         """
         ...
 

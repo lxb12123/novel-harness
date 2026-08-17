@@ -189,3 +189,57 @@ def test_a_chapter_that_did_not_change_retires_nothing(world: World) -> None:
 
     assert world.fresh_events() == before
     assert world.places_on_screen() == ["青云城主府"]
+
+
+def test_saving_new_text_retires_extractor_canon_and_bumps_canon_version_once(
+    world: World,
+) -> None:
+    """保存路径（`commit_chapter_snapshot`）退休 Writer 可见 CANON 时，
+    同一事务只 bump 一次 canon version；作者拿旧 expected 改事实必须 409。"""
+    world.ingest("萧决走进了青云城主府。", "青云城主府")
+    before = project.require_canon_version(world.conn, world.pid)
+    # 保存前那条 extractor 边是 CANON + FRESH（自动升 Canon，ADR 0020）。
+    row = world.conn.execute(
+        "SELECT information_scope, evidence_status FROM edge "
+        "WHERE project_id = ? AND source = 'extractor' AND information_scope = 'CANON'",
+        (world.pid,),
+    ).fetchone()
+    assert row["information_scope"] == "CANON" and row["evidence_status"] == "FRESH"
+
+    # 作者保存新正文（走产品保存路径，不是 sync）。
+    importer.save_chapter(
+        world.graph,
+        world.pid,
+        world.root,
+        1,
+        AFTER,
+        expected_sha256=importer.text_digest(BEFORE),
+    )
+    world.conn.commit()
+
+    retired = world.conn.execute(
+        "SELECT evidence_status FROM edge "
+        "WHERE project_id = ? AND source = 'extractor' AND information_scope = 'CANON'",
+        (world.pid,),
+    ).fetchone()
+    assert retired["evidence_status"] == "STALE"
+    assert project.require_canon_version(world.conn, world.pid) == before + 1
+
+    # 作者拿着旧 canon version 改事实 → CAS 失败（HTTP 层就是 409）。
+    with pytest.raises(project.StaleBaseVersion):
+        project.compare_and_bump_canon_version(world.conn, world.pid, before)
+
+
+def test_same_hash_save_does_not_bump_canon_version(world: World) -> None:
+    world.ingest("萧决走进了青云城主府。", "青云城主府")
+    before = project.require_canon_version(world.conn, world.pid)
+    importer.save_chapter(
+        world.graph,
+        world.pid,
+        world.root,
+        1,
+        BEFORE,
+        expected_sha256=importer.text_digest(BEFORE),
+    )
+    world.conn.commit()
+    assert project.require_canon_version(world.conn, world.pid) == before

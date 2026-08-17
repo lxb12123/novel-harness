@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from novel_harness.checks.catalog import SYSTEM_RULESET_V1_HASH
 from novel_harness.db import IN_MEMORY, MigrationError, connect, migrate, user_version
 from novel_harness.decisions import DecisionKind, quote_hash, read as read_decisions
 from novel_harness.ids import EntityType, new_id, new_project_id
@@ -2911,3 +2912,106 @@ def _story_event(
     conn.execute(
         f"INSERT INTO story_event ({columns}) VALUES ({markers})", tuple(values.values())
     )
+
+
+def _v16_book(tmp_path: Path) -> object:
+    """按 001–016 逐脚本建一本 v16 的旧书（一个项目 + 一章 + 一条快照）。"""
+    from importlib.resources import files
+
+    conn = connect(tmp_path / "v16.db")
+    root = files("novel_harness") / "migrations"
+    for name in (
+        "001_init.sql",
+        "002_m4_events.sql",
+        "003_proposal_audit_recovery.sql",
+        "004_chapter_summary.sql",
+        "005_fact_edit.sql",
+        "006_chat_session.sql",
+        "007_draft_candidate.sql",
+        "008_cache_usage.sql",
+        "009_call_chapter.sql",
+        "010_candidate_stopped.sql",
+        "011_rule_revocation.sql",
+        "012_chat_notice.sql",
+        "013_summary_edit.sql",
+        "014_summary_mentions.sql",
+        "015_chapter_disk_stat.sql",
+        "016_rule_until.sql",
+    ):
+        conn.executescript((root / name).read_text(encoding="utf-8"))
+    project_id = "project:v16-book"
+    chapter_id = "chapter:v16-book"
+    conn.execute(
+        "INSERT INTO project (id, name, root_path, canon_version) VALUES (?,?,?,?)",
+        (project_id, "v16 旧书", "/old", 3),
+    )
+    conn.execute(
+        "INSERT INTO node (id, project_id, label, name, props_json) VALUES (?,?,?,?,?)",
+        (chapter_id, project_id, "Chapter", "第一章 旧", "{}"),
+    )
+    conn.execute(
+        "INSERT INTO chapter (id, project_id, number, title, path, text_sha256) "
+        "VALUES (?,?,?,?,?,?)",
+        (chapter_id, project_id, 1, "旧", "chapters/0001.md", quote_hash("旧正文")),
+    )
+    conn.execute(
+        "INSERT INTO chapter_snapshot (id, chapter_id, text, text_sha256) VALUES (?,?,?,?)",
+        ("snapshot:v16-book", chapter_id, "旧正文", quote_hash("旧正文")),
+    )
+    conn.commit()
+    return conn
+
+
+def test_v16_upgrade_plants_ruleset_baseline_and_synthetic_refresh_runs(
+    tmp_path: Path,
+) -> None:
+    """v16 旧书升级后：每个项目恰有一行 epoch=1 的 ruleset state（hash == 目录常量），
+    每章恰有一条 generation=1 的 synthetic refresh run；重跑迁移不新增。"""
+    conn = _v16_book(tmp_path)
+    assert user_version(conn) == 16
+
+    assert migrate(conn) == 17
+    ruleset = conn.execute(
+        "SELECT epoch, ruleset_hash FROM validation_ruleset_state WHERE project_id = ?",
+        ("project:v16-book",),
+    ).fetchall()
+    assert len(ruleset) == 1
+    assert ruleset[0]["epoch"] == 1
+    assert ruleset[0]["ruleset_hash"] == SYSTEM_RULESET_V1_HASH
+
+    runs = conn.execute(
+        "SELECT source_generation, source_snapshot_id FROM chapter_refresh_run "
+        "WHERE project_id = ?",
+        ("project:v16-book",),
+    ).fetchall()
+    assert len(runs) == 1
+    assert runs[0]["source_generation"] == 1
+    assert runs[0]["source_snapshot_id"] == "snapshot:v16-book"
+
+    assert migrate(conn) == 17  # 幂等：不新增第二行
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM validation_ruleset_state WHERE project_id = ?",
+            ("project:v16-book",),
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM chapter_refresh_run WHERE project_id = ?",
+            ("project:v16-book",),
+        ).fetchone()[0]
+        == 1
+    )
+    conn.close()
+
+
+def test_migration_017_frozen_hash_matches_the_catalog_constant() -> None:
+    """017 SQL 里冻结的历史字面量必须等于 `checks.catalog.SYSTEM_RULESET_V1_HASH`——
+    改目录语义而不开新迁移递增 epoch，这一条会红。"""
+    from importlib.resources import files
+
+    sql = (files("novel_harness") / "migrations" / "017_chapter_refresh.sql").read_text(
+        encoding="utf-8"
+    )
+    assert SYSTEM_RULESET_V1_HASH in sql

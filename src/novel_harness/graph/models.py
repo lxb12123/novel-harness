@@ -1065,6 +1065,52 @@ class StoredChapter(BaseModel):
     `UNIQUE(chapter_id, text_sha256)` 复用了旧的——快照是证据的锚，不是版本历史。"""
 
 
+class ChapterCommitToken(BaseModel):
+    """保存后所有自动任务的**唯一正文输入**（ADR 0029 / §4.1）。
+
+    任务不得在运行中重新读取「当前正文」。token 同时带不可变
+    `source_snapshot_id` 和单调 `source_generation`——前者钉住正文是哪一版，
+    后者钉住它是第几代（S1→S2→S1 的第三轮 S1 与第一轮 S1 是不同 generation，
+    ABA 在这里断掉）。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    project_id: str
+    chapter_id: str
+    chapter_number: int = Field(ge=1)
+    source_snapshot_id: str
+    source_generation: int = Field(ge=1)
+    text_sha256: str
+    text: str
+    changed: bool
+
+
+class RetirementReport(BaseModel):
+    """一次「旧快照机器事实退休」的精确账（`commit_chapter_snapshot` 的中间产物）。
+
+    不能只给 rowcount：run outbox 要记录**精确 ID**（`chapter_refresh_run` 那三列
+    JSON），canon bump 要问「有没有退到 Writer 可见的 CANON 行」——两个问题
+    用行数都答不了。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    project_id: str
+    chapter_id: str
+    current_snapshot_id: str
+    retired_edge_ids: tuple[str, ...] = ()
+    retired_event_ids: tuple[str, ...] = ()
+    retired_knower_event_ids: tuple[str, ...] = ()
+    touched_canon_edges: int = Field(default=0, ge=0)
+    touched_canon_events: int = Field(default=0, ge=0)
+
+    @property
+    def effective_canon_changed(self) -> bool:
+        """退休的行里有没有 Writer 可见的 CANON（PROVISIONAL 退休不 bump）。"""
+        return self.touched_canon_edges > 0 or self.touched_canon_events > 0
+
+
 class ChapterText(BaseModel):
     """一章的**当前**快照连正文。`current_snapshots` 的出参，定位引语的料。"""
 

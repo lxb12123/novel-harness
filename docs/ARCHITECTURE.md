@@ -355,7 +355,7 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
 > 守卫钉住的是**能在运行时数出来**的那些（67 条路由 / 66 条 /api / 1 条 501 stub /
-> 19 个错误映射 / 17 个子命令 / 26 张表 / 74 个端点 / `ALL_CHECKS` 2），
+> 19 个错误映射 / 17 个子命令 / 29 张表 / 74 个端点 / `ALL_CHECKS` 2），
 > 改错必红、**删掉也必红**（不静默 skip）。
 > （这一行 2026-08-10 之前写的是「路由 42 / fixture 端点 34」那种词序，
 > **而守卫的正则认的是「N 条路由」「N 个端点」**——于是它躺在被守卫盯着的那一节里、
@@ -376,7 +376,7 @@ db.py  ids.py  decisions.py  project.py
 migrations/{001_init,002_m4_events,003_proposal_audit_recovery,004_chapter_summary,005_fact_edit,
             006_chat_session,007_draft_candidate,008_cache_usage,
             009_call_chapter,010_candidate_stopped,011_rule_revocation,
-            012_chat_notice,013_summary_edit,014_summary_mentions}.sql（26 张表）
+            012_chat_notice,013_summary_edit,014_summary_mentions}.sql（29 张表）
                                                 ← 013 也是 ALTER 不建表：`chapter_summary`
                                                   多两列（`source` / `status`），照 005 的先例。
                                                   **作者改一条滚动总结时不许有一行凭空消失**：
