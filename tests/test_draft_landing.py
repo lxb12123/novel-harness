@@ -422,13 +422,14 @@ def test_a_paragraph_the_author_never_synced_is_still_in_the_version_history(
     ).count("从没同步过"), "磁盘上当然没有了（它就是被盖掉的那一版）"
 
 
-def test_without_the_pre_landing_sync_that_paragraph_is_really_gone(
+def test_the_paragraph_survives_even_without_the_pre_landing_sync(
     client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**上一条的自守卫。** 去掉落盘前那一次 `sync()`（只去掉那一次，`save_chapter`
-    自己那次照跑），断言作者那一段**在磁盘上、在版本抽屉里、在任何地方都没有了**。
-
-    这是这一整摊里唯一一种「改代码也找不回来」的故障，所以它必须被真的演一遍。
+    """**上一条的自守卫，换了个方向。** 去掉落盘前那一次 `sync()`（只去掉那一次，
+    `save_chapter` 自己那次照跑），断言作者那一段**在版本抽屉里仍然找得回来**：
+    Task 2 的 `save_chapter` 写盘前发现 DB 落后于磁盘时会先 reconcile 收编。
+    也就是说那条退路不再依赖「落盘前记得跑一次 sync」——将来删掉那一次也不会
+    让作者的字消失（这条测试会在退路真的断掉时红）。
     """
     conn = connect(book["db"])
     pid = book["pid"]
@@ -450,7 +451,7 @@ def test_without_the_pre_landing_sync_that_paragraph_is_really_gone(
         conn.close()
 
     texts = [row["text"] for row in client.get(f"/api/projects/{pid}/chapters/1/history").json()]
-    assert MINE not in texts, "探针没咬住 —— 上一条证明不了那一次 `sync` 在干活"
+    assert MINE in texts, "save_chapter 的 stale-DB reconcile 没有把作者那一段收进版本历史"
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -898,7 +899,11 @@ def test_the_copy_of_the_manuscript_a_draft_leaves_in_the_conversation_is_not_ch
 
     # 作者读完那一稿，自己把它改了（走的是他按保存那条路）。
     mine = "第一章 血脉\n\n作者读完之后自己重写的那一段。\n"
-    saved = client.put(f"/api/projects/{pid}/chapters/1/text", json={"markdown": mine})
+    base = client.get(f"/api/projects/{pid}/chapters/1/text").json()["text_sha256"]
+    saved = client.put(
+        f"/api/projects/{pid}/chapters/1/text",
+        json={"markdown": mine, "expected_text_sha256": base},
+    )
     assert saved.status_code == 200, saved.text
 
     monkeypatch.setattr(
@@ -940,9 +945,10 @@ def test_the_copy_of_the_manuscript_a_draft_leaves_in_the_conversation_is_not_ch
         ),
     )
     _turn(client, pid, other, 1, "读一下第 1 章")
+    base = client.get(f"/api/projects/{pid}/chapters/1/text").json()["text_sha256"]
     client.put(
         f"/api/projects/{pid}/chapters/1/text",
-        json={"markdown": "第一章 血脉\n\n再改一次。\n"},
+        json={"markdown": "第一章 血脉\n\n再改一次。\n", "expected_text_sha256": base},
     )
     monkeypatch.setattr(
         chat_mod,

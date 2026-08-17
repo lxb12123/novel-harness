@@ -962,6 +962,7 @@ class ChapterRow(NamedTuple):
     title: str
     path: str
     text_sha256: str
+    snapshot_generation: int
     disk_mtime_ns: int | None = None
     disk_size: int | None = None
 
@@ -981,7 +982,9 @@ def find_chapter_by_number(
     """`put_chapter` 的幂等键 `(project_id, number)` —— schema 的 UNIQUE。"""
     cur = conn.execute(
         """
-        SELECT id, number, title, path, text_sha256, disk_mtime_ns, disk_size FROM chapter
+        SELECT id, number, title, path, text_sha256, snapshot_generation,
+               disk_mtime_ns, disk_size
+          FROM chapter
         WHERE project_id = :pid AND number = :number
         """,
         {"pid": project_id, "number": number},
@@ -996,8 +999,8 @@ def insert_chapter(conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec,
     conn.execute(
         """
         INSERT INTO chapter (id, project_id, number, title, path, text_sha256,
-                             disk_mtime_ns, disk_size)
-        VALUES (:id, :pid, :number, :title, :path, :sha, :mtime, :size)
+                             snapshot_generation, disk_mtime_ns, disk_size)
+        VALUES (:id, :pid, :number, :title, :path, :sha, 1, :mtime, :size)
         """,
         {
             "id": chapter_id,
@@ -1012,7 +1015,10 @@ def insert_chapter(conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec,
     )
 
 
-def update_chapter(conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec, sha: str) -> None:
+def update_chapter(
+    conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec, sha: str,
+    *, snapshot_generation: int,
+) -> None:
     """`nh sync` 的落点：作者在自己的编辑器里改了这一章。
 
     `number` 不在这里——它是幂等键，改它就是换一章。`updated_at` 显式重写：它的
@@ -1022,6 +1028,7 @@ def update_chapter(conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec,
         """
         UPDATE chapter
            SET title = :title, path = :path, text_sha256 = :sha,
+               snapshot_generation = :generation,
                disk_mtime_ns = :mtime, disk_size = :size,
                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
          WHERE id = :id
@@ -1031,6 +1038,7 @@ def update_chapter(conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec,
             "title": spec.title,
             "path": spec.path,
             "sha": sha,
+            "generation": snapshot_generation,
             "mtime": spec.disk_mtime_ns,
             "size": spec.disk_size,
         },

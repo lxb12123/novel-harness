@@ -1050,6 +1050,13 @@ class StoredChapter(BaseModel):
     snapshot_id: str
     """**当前**快照，即 `text_sha256` 对得上的那一条。"""
 
+    snapshot_generation: int = Field(ge=1)
+    """这一章当前正文的**单调 generation**（017 迁移）。
+
+    每次当前 `text_sha256` 真正切换（包括从 S2 还原到历史 S1）都加一；相同 hash
+    重存不加。它是保存后所有自动任务判断「结果是否还新」的钥匙之一（ABA 防护）。
+    """
+
     created: bool
     """True = 这一章的节点和 chapter 行是这次建的。"""
 

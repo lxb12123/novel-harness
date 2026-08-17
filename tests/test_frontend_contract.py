@@ -599,9 +599,14 @@ def test_frontend_fixture_matches_the_real_api(
     # **放在最后**：这一步会改第 2 章的正文，前面每一个 grab 都不该看见它。
     # `chapterHistory` 那份只有一版（导入即当前），照它写出来的界面在真实的两版面前
     # 是没被验过的——所以这里真存一次，冻的是「有历史可还原」那个形态。
-    two_versions = client.get(f"{base}/chapters/2/text").json()["markdown"]
+    two_versions_body = client.get(f"{base}/chapters/2/text").json()
+    two_versions = two_versions_body["markdown"]
     saved_again = client.put(
-        f"{base}/chapters/2/text", json={"markdown": two_versions + "\n后来又添了一段。\n"}
+        f"{base}/chapters/2/text",
+        json={
+            "markdown": two_versions + "\n后来又添了一段。\n",
+            "expected_text_sha256": two_versions_body["text_sha256"],
+        },
     )
     # 保存的回执也冻住：还原走的就是这条 PUT，测试桩得照它的真形状答话。
     grab("chapterSaved", saved_again)
@@ -668,6 +673,10 @@ def test_frontend_fixture_matches_the_real_api(
     # 落在第 3 章而不是第 1 章：一章一份快照一个 prompt 只有一条 run（库里有一条唯一约束），
     # 而第 1 章那条已经被上面那次成功的整理占着——**两份都要**，成功和失败在屏幕上是
     # 两块完全不同的界面。
+    # 单章保存（Task 2）不再靠整本 sync 顺带索引别的章，所以第 3 章要在这里显式
+    # 索引一次——它躺在磁盘上（`check` 用的），`seed_run` 需要它的快照当锚。
+    indexed = client.post(f"{base}/sync")
+    assert indexed.status_code == 200, indexed.text
     failed_run = seed_run(book, 3, status="FAILED")
     grab("extractionFailed", client.get(f"{base}/extractions/{failed_run}"))
     # **日志页上那半块屏幕同样从来没被冻过。** 上面那份 `activity` 里三条 run 全是成功的，

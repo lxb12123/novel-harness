@@ -236,13 +236,16 @@ def test_the_gate_refuses_to_overwrite_a_chapter_the_author_touched_later(
     conn.close()
 
 
-def test_without_the_gate_the_authors_words_really_would_be_gone(
-    book: dict[str, str]
+def test_save_chapter_itself_snapshots_an_unsynced_disk_version_before_overwriting(
+    book: dict[str, str],
 ) -> None:
-    """**上一条的自守卫。** 同一个局面、同一条保存路径，只是不带闸——断言作者的字
-    **真的会被盖掉**，而且旧那一版在版本历史里也找不回来（它从没同步过）。
+    """**上一条的自守卫，换了个方向。** 同一个局面、同一条保存路径，只是不带闸——
+    作者的字**会被盖掉**（磁盘上），但旧那一版在版本历史里**找得回来**：
+    Task 2 的 `save_chapter` 写盘前发现 DB 落后于磁盘时会先 reconcile，
+    把作者没同步过的那一版收进库再覆盖（ADR 0021 的退路搬进了保存路径本身）。
 
-    没有这一条，上面那句 `saved is False` 可能只是因为别的什么东西没跑起来。
+    没有这一条，将来有人把那段 reconcile 删掉时，上面那条 `landed is False`
+    的测试照样绿——而作者的字会在没人知道的地方消失。
     """
     conn = connect(book["db"])
     pid = book["pid"]
@@ -256,8 +259,8 @@ def test_without_the_gate_the_authors_words_really_would_be_gone(
 
     assert DRAFT in _on_disk(conn, pid, 1)
     assert AUTHORS_OWN_WORDS not in _on_disk(conn, pid, 1)
-    assert all(AUTHORS_OWN_WORDS not in text for text in _snapshots(conn, pid, 1)), (
-        "从没同步过的那一版本来就找不回来 —— 这正是那道闸必须先有测试的原因"
+    assert any(AUTHORS_OWN_WORDS in text for text in _snapshots(conn, pid, 1)), (
+        "save_chapter 的 stale-DB reconcile 没有把作者没同步过的那一版收进版本历史"
     )
     conn.close()
 

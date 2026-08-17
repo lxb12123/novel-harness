@@ -428,6 +428,24 @@ async def _sync_refused(_: Request, exc: importer.SyncRefused) -> JSONResponse:
     return _err(422, {"error": "sync_refused", "path": exc.path, "message": str(exc)})
 
 
+@app.exception_handler(importer.ChapterChanged)
+async def _chapter_changed(_: Request, exc: importer.ChapterChanged) -> JSONResponse:
+    # 保存的乐观闸：调用方依据的那份正文已经过期。409，一个字节都不写。
+    return _err(
+        409,
+        {
+            "error": "chapter_changed",
+            "chapter": exc.chapter,
+            "message": str(exc),
+        },
+    )
+
+
+@app.exception_handler(importer.ChapterLockTimeout)
+async def _chapter_lock_timeout(_: Request, exc: importer.ChapterLockTimeout) -> JSONResponse:
+    return _err(423, {"error": "lock_timeout", "message": str(exc)})
+
+
 @app.exception_handler(ValidationError)
 async def _validation_error(_: Request, exc: ValidationError) -> JSONResponse:
     # NodeSpec/AliasSpec 的 validator 写给作者的话（「别名『音』只有 1 个字…」）藏在
@@ -906,6 +924,13 @@ def evidence(
 
 class ChapterSave(BaseModel):
     markdown: str
+    expected_text_sha256: str
+    """调用方**依据的那一份**正文的哈希，来自 `GET …/text` 或成功索引回执。
+
+    它是保存的乐观闸（ADR 0021 那道闸的产品形态）：写盘前在锁内与磁盘/DB 当前值
+    比对，不一致 → 409 `chapter_changed`，一个字节都不写。前端不能自己另算一份
+    经过编辑器转换的「服务端 hash」。
+    """
 
 
 @app.get("/api/projects/{project_id}/chapters")
@@ -1018,12 +1043,26 @@ def delete_chapter_snapshot(
 
 
 @app.get("/api/projects/{project_id}/chapters/{chapter}/text")
-def chapter_text(chapter: int, proj: Any = Depends(load_project)) -> Any:
-    """读磁盘 md（不是 DB 快照——那是给证据锚用的冻结版，不是可编辑的正文）。"""
+def chapter_text(
+    chapter: int,
+    store: Any = Depends(get_store),
+    proj: Any = Depends(load_project),
+) -> Any:
+    """读磁盘 md（不是 DB 快照——那是给证据锚用的冻结版，不是可编辑的正文）。
+
+    出参带 `text_sha256` 与 `snapshot_generation`：前者是下一次 PUT 的 expected
+    server base；后者让前端在还原旧版后知道 generation 已经前进。
+    """
     file = _chapter_file(proj, chapter)
     if not file.exists():
         raise HTTPException(404, {"error": "chapter_not_found", "chapter": chapter})
-    return {"number": chapter, "markdown": file.read_text(encoding="utf-8-sig")}
+    markdown = file.read_text(encoding="utf-8-sig")
+    return {
+        "number": chapter,
+        "markdown": markdown,
+        "text_sha256": importer.text_digest(markdown),
+        "snapshot_generation": store.current_chapter_generation(proj.id, chapter),
+    }
 
 
 @app.put("/api/projects/{project_id}/chapters/{chapter}/text")
@@ -1033,18 +1072,21 @@ def save_chapter(
     store: Any = Depends(get_store),
     proj: Any = Depends(load_project),
 ) -> Any:
-    """保存：先写磁盘（文件是作者的），再 importer.sync 落快照。磁盘先、DB 跟。
+    """保存：写盘前结构预检 → 章级锁 → 原子替换 → 单章落库 → 提交后复核。
 
-    切出 0 或 >1 章时 sync 抛 `SyncRefused` → 全局 handler 映成 422 带 path（正文已写进
-    磁盘，作者需修好章标题再存一次）。
-
-    **不带乐观闸**（`expected_sha256=None`）：作者改的就是他眼前那份，中间没有第三方。
-    agent 起草落盘走的是**同一个** `importer.save_chapter()`，只是必须给出它依据的那份
-    哈希（ADR 0021）——两条路一个实现，闸是不是开着由调用方说，不由第二份保存逻辑说。
+    返回 `ChapterSaveReceipt`。结构预检失败 422 且磁盘/DB 不动；expected hash 冲突
+    409；锁超时 423；`os.replace` 成功后的目录 fsync / DB 提交失败返回 202
+    `durability_failed` / `sync_failed`（`saved_to_disk=true,indexed=false`），
+    恢复靠后续 reconcile，不是让前端重发 PUT。
     """
     try:
         return importer.save_chapter(
-            store, proj.id, Path(proj.root_path), chapter, body.markdown
+            store,
+            proj.id,
+            Path(proj.root_path),
+            chapter,
+            body.markdown,
+            expected_sha256=body.expected_text_sha256,
         )
     except importer.ChapterMissing:
         raise HTTPException(404, {"error": "chapter_not_found", "chapter": chapter})

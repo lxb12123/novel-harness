@@ -592,6 +592,7 @@ class SqliteStoryGraph:
             row = queries.find_chapter_by_number(self._conn, spec.project_id, spec.number)
             if row is None:
                 chapter_id = new_id(EntityType.CHAPTER, spec.project_id)
+                generation = 1
                 # Chapter 节点和 chapter 行**同生**，而且没有 canonical 别名
                 # （CANONICAL_ALIAS_LABELS 里没有它）：300 章 = 300 条章标进花名册。
                 queries.insert_node(
@@ -606,6 +607,9 @@ class SqliteStoryGraph:
                 created = True
             else:
                 chapter_id = row.id
+                # 单调 generation：只有当前 text hash 真正切换才加一（017）。
+                # 从 S2 还原到历史 S1 也是切换 —— 否则 S1 的旧任务会借 ABA 复活。
+                generation = row.snapshot_generation
                 node = self._require_node(spec.project_id, chapter_id, what="chapter 节点")
                 if node.name != spec.heading:
                     queries.update_node_name(self._conn, chapter_id, spec.heading)
@@ -627,7 +631,11 @@ class SqliteStoryGraph:
                     spec.disk_mtime_ns,
                     spec.disk_size,
                 ):
-                    queries.update_chapter(self._conn, chapter_id, spec, sha)
+                    if row.text_sha256 != sha:
+                        generation = row.snapshot_generation + 1
+                    queries.update_chapter(
+                        self._conn, chapter_id, spec, sha, snapshot_generation=generation
+                    )
                 created = False
 
             snapshot_id = queries.find_snapshot(self._conn, chapter_id, sha)
@@ -648,9 +656,22 @@ class SqliteStoryGraph:
                 path=spec.path,
                 text_sha256=sha,
                 snapshot_id=snapshot_id,
+                snapshot_generation=generation,
                 created=created,
                 snapshot_created=snapshot_created,
             )
+
+    def current_chapter_id(self, project_id: str, number: int) -> str | None:
+        row = queries.find_chapter_by_number(self._conn, project_id, number)
+        return row.id if row is not None else None
+
+    def current_chapter_hash(self, project_id: str, number: int) -> str | None:
+        row = queries.find_chapter_by_number(self._conn, project_id, number)
+        return row.text_sha256 if row is not None else None
+
+    def current_chapter_generation(self, project_id: str, number: int) -> int | None:
+        row = queries.find_chapter_by_number(self._conn, project_id, number)
+        return row.snapshot_generation if row is not None else None
 
     def current_snapshots(self, project_id: str) -> list[ChapterText]:
         return queries.current_snapshots(self._conn, project_id)

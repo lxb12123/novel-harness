@@ -476,7 +476,7 @@
       {
         "actor": "system",
         "chapter_number": 3,
-        "id": "extraction_run:ID53",
+        "id": "extraction_run:ID50",
         "jump": {
           "cast": [],
           "chapter_number": 3,
@@ -499,7 +499,7 @@
       {
         "actor": "system",
         "chapter_number": null,
-        "id": "call:ID54",
+        "id": "call:ID52",
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
@@ -510,7 +510,7 @@
       {
         "actor": "system",
         "chapter_number": null,
-        "id": "call:ID55",
+        "id": "call:ID53",
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
@@ -521,11 +521,33 @@
       {
         "actor": "system",
         "chapter_number": null,
-        "id": "call:ID56",
+        "id": "call:ID54",
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
         "subtitle": "deepseek-v4-flash · 入 1200 / 出 64 token · 0 ms",
+        "title": "模型调用 · 写作助手",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "system",
+        "chapter_number": null,
+        "id": "call:ID55",
+        "jump": null,
+        "source": "model_call",
+        "status": "succeeded",
+        "subtitle": "deepseek-v4-flash · 入 1800 / 出 2600 token · 0 ms",
+        "title": "模型调用 · 起草",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "system",
+        "chapter_number": null,
+        "id": "call:ID56",
+        "jump": null,
+        "source": "model_call",
+        "status": "succeeded",
+        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
         "title": "模型调用 · 写作助手",
         "ts": "<ts>"
       },
@@ -536,8 +558,8 @@
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 1800 / 出 2600 token · 0 ms",
-        "title": "模型调用 · 起草",
+        "subtitle": "deepseek-v4-flash · 入 1200 / 出 64 token · 0 ms",
+        "title": "模型调用 · 写作助手",
         "ts": "<ts>"
       },
       {
@@ -547,41 +569,19 @@
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
-        "title": "模型调用 · 写作助手",
-        "ts": "<ts>"
-      },
-      {
-        "actor": "system",
-        "chapter_number": null,
-        "id": "call:ID59",
-        "jump": null,
-        "source": "model_call",
-        "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 1200 / 出 64 token · 0 ms",
-        "title": "模型调用 · 写作助手",
-        "ts": "<ts>"
-      },
-      {
-        "actor": "system",
-        "chapter_number": null,
-        "id": "call:ID60",
-        "jump": null,
-        "source": "model_call",
-        "status": "succeeded",
         "subtitle": "deepseek-v4-flash · 入 1800 / 出 2600 token · 0 ms",
         "title": "模型调用 · 起草",
         "ts": "<ts>"
       }
     ],
-    "next_cursor": "<ts>|call:ID60"
+    "next_cursor": "<ts>|call:ID58"
   },
   "activityFailedDetail": {
     "cost": null,
     "entry": {
       "actor": "system",
       "chapter_number": 3,
-      "id": "extraction_run:ID53",
+      "id": "extraction_run:ID50",
       "jump": {
         "cast": [],
         "chapter_number": 3,
@@ -771,6 +771,7 @@
             "path": "chapters/0001.md",
             "project_id": "project:ID2",
             "snapshot_created": true,
+            "snapshot_generation": 1,
             "snapshot_id": "snapshot:ID4",
             "text_sha256": "<sha>",
             "title": "契约"
@@ -815,12 +816,13 @@
         "added": [
           {
             "created": true,
-            "id": "chapter:ID62",
+            "id": "chapter:ID60",
             "number": 1,
             "path": "chapters/0001.md",
-            "project_id": "project:ID61",
+            "project_id": "project:ID59",
             "snapshot_created": true,
-            "snapshot_id": "snapshot:ID63",
+            "snapshot_generation": 1,
+            "snapshot_id": "snapshot:ID61",
             "text_sha256": "<sha>",
             "title": "起"
           }
@@ -837,7 +839,7 @@
     "initial_chapter": 1,
     "project": {
       "canon_version": 0,
-      "id": "project:ID61",
+      "id": "project:ID59",
       "name": "序章样书",
       "root_path": "<root>/books/序章样书"
     },
@@ -937,8 +939,8 @@
       "name": "李管家"
     },
     "closed_edge_ids": [],
-    "decision_id": "decision:ID64",
-    "edge_id": "edge:ID65",
+    "decision_id": "decision:ID62",
+    "edge_id": "edge:ID63",
     "project_id": "project:ID1",
     "secret": {
       "id": "secret:ID7",
@@ -961,51 +963,33 @@
     {
       "created_at": "<ts>",
       "is_current": false,
-      "snapshot_id": "snapshot:ID51",
+      "snapshot_id": "snapshot:ID48",
       "text": "第二章 试探\n\n他终于明白了。\n风起。他终于明白了。\n",
       "text_sha256": "<sha>"
     },
     {
       "created_at": "<ts>",
       "is_current": true,
-      "snapshot_id": "snapshot:ID50",
+      "snapshot_id": "snapshot:ID47",
       "text": "第二章 试探\n\n他终于明白了。\n风起。他终于明白了。\n\n后来又添了一段。\n",
       "text_sha256": "<sha>"
     }
   ],
   "chapterSaved": {
-    "added": [
-      {
-        "created": true,
-        "id": "chapter:ID47",
-        "number": 3,
-        "path": "chapters/0003.md",
-        "project_id": "project:ID1",
-        "snapshot_created": true,
-        "snapshot_id": "snapshot:ID48",
-        "text_sha256": "<sha>",
-        "title": "对峙"
-      }
-    ],
-    "ignored_files": [],
-    "refreshed": [
-      {
-        "created": false,
-        "id": "chapter:ID49",
-        "number": 2,
-        "path": "chapters/0002.md",
-        "project_id": "project:ID1",
-        "snapshot_created": true,
-        "snapshot_id": "snapshot:ID50",
-        "text_sha256": "<sha>",
-        "title": "试探"
-      }
-    ],
-    "unchanged_count": 1
+    "changed": true,
+    "chapter_number": 2,
+    "indexed": true,
+    "processing": "reused",
+    "saved_to_disk": true,
+    "snapshot_generation": 2,
+    "snapshot_id": "snapshot:ID47",
+    "text_sha256": "<sha>"
   },
   "chapterText": {
     "markdown": "第一章 血脉\n\n萧决在青云城主府第一次听说了血脉秘密的真相。\n李管家什么也没说。\n",
-    "number": 1
+    "number": 1,
+    "snapshot_generation": 1,
+    "text_sha256": "<sha>"
   },
   "chapters": [
     {
@@ -1105,7 +1089,7 @@
     ],
     "session": {
       "created_at": "<ts>",
-      "id": "chat_session:ID52",
+      "id": "chat_session:ID49",
       "message_count": 2,
       "pending_lookups": 0,
       "running": false,
@@ -1501,13 +1485,13 @@
       "没能连上你配置的模型服务"
     ],
     "finished_at": "<ts>",
-    "id": "extraction_run:ID53",
+    "id": "extraction_run:ID50",
     "model_call_id": null,
     "project_id": "project:ID1",
     "prompt_hash": "prompt:3",
     "proposal_count": 0,
     "schema_version": "m4.analysis.v1",
-    "snapshot_id": "snapshot:ID48",
+    "snapshot_id": "snapshot:ID51",
     "started_at": "<ts>",
     "status": "FAILED",
     "valid_event_count": 3
@@ -2061,7 +2045,7 @@
       {
         "actor": "system",
         "chapter_number": 3,
-        "id": "extraction_run:ID53",
+        "id": "extraction_run:ID50",
         "jump": {
           "cast": [],
           "chapter_number": 3,

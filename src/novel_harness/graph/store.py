@@ -587,6 +587,18 @@ class CanonWriter(Protocol):
         """
         ...
 
+    def current_chapter_id(self, project_id: str, number: int) -> str | None:
+        """这一章当前的 `chapter.id`；没进过库 → `None`。锁键的稳定来源。"""
+        ...
+
+    def current_chapter_hash(self, project_id: str, number: int) -> str | None:
+        """这一章当前 `text_sha256`（`chapter` 行，不是磁盘）；没进过库 → `None`。"""
+        ...
+
+    def current_chapter_generation(self, project_id: str, number: int) -> int | None:
+        """这一章当前 `snapshot_generation`；没进过库 → `None`。"""
+        ...
+
     def put_chapter(self, spec: ChapterSpec) -> StoredChapter:
         """落一章：Chapter 节点 + `chapter` 行 + 一条快照，**一个事务**。
 
