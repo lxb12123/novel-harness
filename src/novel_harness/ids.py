@@ -87,6 +87,8 @@ class EntityType(StrEnum):
     CHAT_SESSION = "chat_session"
     CHAT_MESSAGE = "chat_message"
     DRAFT_CANDIDATE = "draft"
+    REFRESH_RUN = "refresh_run"
+    REFRESH_ATTEMPT = "refresh_attempt"
 
     PROJECT = "project"
     """只由 `new_project_id()` 用。**项目 ID 不能走 `new_id()`**——见那个函数的 docstring。"""

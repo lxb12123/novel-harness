@@ -1,0 +1,775 @@
+"""固定章节刷新协调器 —— 唯一的自动流水线（ADR 0029 / 计划 Task 5）。
+
+**不提供通用 DAG API。** 它只表达这一条固定 DAG：
+
+    正文验证器（availability 先行；blocked/error 停下游）
+        → 总结 ∥ 抽取（两个**独立连接**并行）
+        → final gate（alias 阶段确认后才 PASSED）
+
+并且只消费持久 `chapter_refresh_run / chapter_refresh_attempt`（017 迁移）——
+进程提交后立刻退出也不能漏刷新（不变量 20 的持久一半）。
+
+Task 5 只交付协调器本身：生产保存 / autopilot / reconcile 触发点在 Task 16 才
+接通，这里用 stub adapter 证明固定 DAG、幂等 coverage、lease/fencing 与真实并行。
+summary 的 head CAS（Task 6）和抽取的 application CAS（Task 9）届时挂到同一套
+claim/lease/fence 上。
+
+── lease 与 fencing token 的口径（不变量 17）──────────────────────────────
+
+lease 只控制**谁可以工作**，不代表模型只调用一次。claim 在事务中递增单调
+`fencing_token`；所有状态写入必须带 claimed token 且 lease_owner 匹配，否则 CAS
+失败。旧 token 即使 provider 晚到也只能留审计。
+"""
+
+from __future__ import annotations
+
+import threading
+import time
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from typing import Any, Final, Literal, Protocol
+
+from .checks.service import SnapshotValidationReport, validate_snapshot
+from .db import Connection
+from .graph import ChapterCommitToken, StoryGraph
+from .ids import EntityType, new_id
+from .text import paragraphs as split_paragraphs
+
+
+BRANCH_STATES: Final = (
+    "PENDING",
+    "RUNNING",
+    "SUCCEEDED",
+    "REUSED",
+    "BLOCKED",
+    "FAILED",
+    "SUPERSEDED",
+)
+
+TERMINAL_BRANCH_STATES: Final = frozenset({"SUCCEEDED", "REUSED", "BLOCKED", "FAILED", "SUPERSEDED"})
+
+TERMINAL_ALIAS_PHASES: Final = frozenset({"UNCHANGED", "COMPLETE", "FAILED_BEFORE_CHANGE"})
+
+
+class AttemptNotFound(RuntimeError):
+    """claim/run 时 attempt 行不见了（被删 = 数据损坏，不是正常流程）。"""
+
+
+class BranchAdapter(Protocol):
+    """一个下游分支的 worker 契约（Task 5 的 stub / Task 6/9 的真 worker）。"""
+
+    def run(self, ctx: BranchContext) -> str:
+        """在独立连接上干活，返回给 attempt 状态列填的 note。"""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class BranchContext:
+    """下游 worker 的只读上下文。token 是唯一正文输入（ADR 0029）。"""
+
+    project_id: str
+    chapter_id: str
+    chapter_number: int
+    token: ChapterCommitToken
+    ruleset_epoch: int
+    ruleset_hash: str
+    attempt_id: str
+    fencing_token: int
+    lease_owner: str
+    conn: Connection
+    store: StoryGraph
+
+
+@dataclass(frozen=True, slots=True)
+class CoverageDecision:
+    """`ensure_refresh_coverage` 的结论：哪些分支缺、复用还是新建 attempt。"""
+
+    missing_branch_mask: int
+    attempt_id: str | None
+    reused: bool
+    processing: Literal["reused", "queued", "attention_required"]
+
+
+BRANCH_VALIDATION: Final = 1
+BRANCH_SUMMARY: Final = 2
+BRANCH_EXTRACTION: Final = 4
+
+
+def _run_row(conn: Connection, run_id: str) -> dict[str, Any] | None:
+    row = conn.execute(
+        "SELECT id, project_id, chapter_id, source_snapshot_id, source_generation "
+        "FROM chapter_refresh_run WHERE id = ?",
+        (run_id,),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def find_run(
+    conn: Connection, project_id: str, chapter_id: str, generation: int
+) -> dict[str, Any] | None:
+    row = conn.execute(
+        """
+        SELECT id, project_id, chapter_id, source_snapshot_id, source_generation
+          FROM chapter_refresh_run
+         WHERE project_id = ? AND chapter_id = ? AND source_generation = ?
+        """,
+        (project_id, chapter_id, generation),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def create_run(
+    conn: Connection,
+    *,
+    project_id: str,
+    chapter_id: str,
+    snapshot_id: str,
+    generation: int,
+    retired_edge_ids: Sequence[str] = (),
+    retired_event_ids: Sequence[str] = (),
+    retired_knower_event_ids: Sequence[str] = (),
+    canon_version_before: int | None = None,
+    canon_version_after: int | None = None,
+) -> str:
+    """一个 (project, chapter, generation) 的 run 行（与 generation 指针同事务）。
+
+    调用方（保存路径 / 迁移回填）负责把它放进同一个事务；这里不自己 BEGIN。
+    """
+    import json
+
+    run_id = new_id(EntityType.REFRESH_RUN, project_id)
+    conn.execute(
+        """
+        INSERT INTO chapter_refresh_run (
+            id, project_id, chapter_id, source_snapshot_id, source_generation,
+            retired_edge_ids_json, retired_event_ids_json, retired_knower_event_ids_json,
+            canon_version_before, canon_version_after
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            run_id,
+            project_id,
+            chapter_id,
+            snapshot_id,
+            generation,
+            json.dumps(list(retired_edge_ids), ensure_ascii=False),
+            json.dumps(list(retired_event_ids), ensure_ascii=False),
+            json.dumps(list(retired_knower_event_ids), ensure_ascii=False),
+            canon_version_before,
+            canon_version_after,
+        ),
+    )
+    return run_id
+
+
+def _head_missing(conn: Connection, project_id: str, chapter_id: str) -> bool:
+    """当前是否缺滚动总结 head（018 之前恒 True；Task 6 接真表）。"""
+    row = conn.execute(
+        """
+        SELECT 1 FROM chapter_summary_head
+         WHERE chapter_id = :cid
+           AND (current_summary_id IS NULL
+                OR EXISTS (SELECT 1 FROM chapter_summary s
+                            WHERE s.id = chapter_summary_head.current_summary_id
+                              AND s.status = 'RETRACTED'))
+        """,
+        {"cid": chapter_id},
+    ).fetchone()
+    return row is None
+
+
+def _application_missing(conn: Connection, run_id: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM extraction_application_head WHERE refresh_run_id = ?",
+        (run_id,),
+    ).fetchone()
+    return row is None
+
+
+def ensure_refresh_coverage(
+    conn: Connection,
+    *,
+    project_id: str,
+    chapter_id: str,
+    snapshot_id: str,
+    generation: int,
+    ruleset_epoch: int,
+    ruleset_hash: str,
+    expected_summary_head: str | None = None,
+    missing_check: Callable[[Connection, str, str, str], int] | None = None,
+) -> CoverageDecision:
+    """同 hash 保存的幂等补缺：只为缺失分支建 coverage attempt，不重复付费。
+
+    - 覆盖完整 → `reused`（不建 attempt，复用已有结果）。
+    - 有缺口 → 复用同 trigger key 的既有 attempt（幂等），否则新建并返回 `queued`。
+    - 同 basis 已有 terminal FAILED/BLOCKED → `attention_required`，不自动重付；
+      只有显式「重新整理/重新总结」创建新的 manual intent。
+
+    `missing_branch_mask` 的位：1=验证报告，2=总结 head，4=抽取 application。
+    """
+    run = find_run(conn, project_id, chapter_id, generation)
+    if run is None:
+        run_id = create_run(
+            conn,
+            project_id=project_id,
+            chapter_id=chapter_id,
+            snapshot_id=snapshot_id,
+            generation=generation,
+        )
+    else:
+        run_id = run["id"]
+
+    if missing_check is not None:
+        mask = missing_check(conn, project_id, chapter_id, run_id)
+    else:
+        mask = _default_missing_mask(
+            conn, project_id, chapter_id, run_id, snapshot_id, generation, ruleset_epoch
+        )
+
+    if mask == 0:
+        return CoverageDecision(0, None, reused=True, processing="reused")
+
+    trigger_key = f"coverage:{mask}"
+    row = conn.execute(
+        """
+        SELECT id, summary_state, extraction_state, validation_state
+          FROM chapter_refresh_attempt
+         WHERE run_id = ? AND workflow_version = 1 AND ruleset_epoch = ?
+           AND trigger_kind = 'coverage' AND missing_branch_mask = ?
+        """,
+        (run_id, ruleset_epoch, mask),
+    ).fetchone()
+    if row is not None:
+        any_failed = any(
+            row[key] in ("FAILED", "BLOCKED")
+            for key in ("validation_state", "summary_state", "extraction_state")
+        )
+        if any_failed:
+            return CoverageDecision(mask, row["id"], reused=True, processing="attention_required")
+        return CoverageDecision(mask, row["id"], reused=True, processing="queued")
+
+    attempt_id = new_id(EntityType.REFRESH_ATTEMPT, project_id)
+    conn.execute(
+        """
+        INSERT INTO chapter_refresh_attempt (
+            id, run_id, workflow_version, ruleset_epoch, ruleset_hash,
+            trigger_kind, trigger_key, missing_branch_mask, expected_summary_head,
+            validation_state, summary_state, extraction_state
+        ) VALUES (?, ?, 1, ?, ?, 'coverage', ?, ?, ?, 'PENDING', 'PENDING', 'PENDING')
+        """,
+        (attempt_id, run_id, ruleset_epoch, ruleset_hash, trigger_key, mask, expected_summary_head),
+    )
+    return CoverageDecision(mask, attempt_id, reused=False, processing="queued")
+
+
+def _default_missing_mask(
+    conn: Connection,
+    project_id: str,
+    chapter_id: str,
+    run_id: str,
+    snapshot_id: str,
+    generation: int,
+    ruleset_epoch: int,
+) -> int:
+    """默认的缺口计算：验证报告 / 总结 head / 抽取 application 三个分支。"""
+    mask = 0
+    report = conn.execute(
+        """
+        SELECT 1 FROM validation_report
+         WHERE project_id = ? AND chapter_snapshot_id = ?
+           AND source_generation = ? AND ruleset_epoch = ?
+         LIMIT 1
+        """,
+        (project_id, snapshot_id, generation, ruleset_epoch),
+    ).fetchone()
+    if report is None:
+        mask |= BRANCH_VALIDATION
+    if _head_missing(conn, project_id, chapter_id):
+        mask |= BRANCH_SUMMARY
+    if _application_missing(conn, run_id):
+        mask |= BRANCH_EXTRACTION
+    return mask
+
+
+def create_manual_attempt(
+    conn: Connection,
+    *,
+    project_id: str,
+    chapter_id: str,
+    snapshot_id: str,
+    generation: int,
+    ruleset_epoch: int,
+    ruleset_hash: str,
+    trigger_key: str,
+    missing_branch_mask: int = BRANCH_VALIDATION | BRANCH_SUMMARY | BRANCH_EXTRACTION,
+    expected_summary_head: str | None = None,
+) -> str:
+    """显式「重新整理」：新的 manual intent，不能被 coverage 唯一键吞掉。"""
+    run = find_run(conn, project_id, chapter_id, generation)
+    if run is None:
+        run_id = create_run(
+            conn,
+            project_id=project_id,
+            chapter_id=chapter_id,
+            snapshot_id=snapshot_id,
+            generation=generation,
+        )
+    else:
+        run_id = run["id"]
+    attempt_id = new_id(EntityType.REFRESH_ATTEMPT, project_id)
+    conn.execute(
+        """
+        INSERT INTO chapter_refresh_attempt (
+            id, run_id, workflow_version, ruleset_epoch, ruleset_hash,
+            trigger_kind, trigger_key, missing_branch_mask, expected_summary_head,
+            validation_state, summary_state, extraction_state
+        ) VALUES (?, ?, 1, ?, ?, 'manual', ?, ?, ?, 'PENDING', 'PENDING', 'PENDING')
+        """,
+        (attempt_id, run_id, ruleset_epoch, ruleset_hash, trigger_key, missing_branch_mask, expected_summary_head),
+    )
+    return attempt_id
+
+
+def claim_attempt(
+    conn: Connection,
+    attempt_id: str,
+    *,
+    owner: str,
+    ttl_seconds: float = 60.0,
+    now: float | None = None,
+) -> int | None:
+    """原子 claim：拿到单调 fencing token。返回 None = 不可领（未过期/已终态）。"""
+    now = time.time() if now is None else now
+    expires = _iso(now + ttl_seconds)
+    row = conn.execute(
+        """
+        UPDATE chapter_refresh_attempt
+           SET lease_owner = :owner, lease_expires_at = :expires,
+               fencing_token = fencing_token + 1,
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE id = :id
+           AND (lease_expires_at IS NULL OR lease_expires_at <= :now)
+           AND ((validation_state IN ('PENDING','RUNNING')
+                 OR summary_state IN ('PENDING','RUNNING')
+                 OR extraction_state IN ('PENDING','RUNNING'))
+                OR (final_gate_state = 'PENDING'
+                    AND validation_state IN ('SUCCEEDED','REUSED')))
+        RETURNING fencing_token
+        """,
+        {"id": attempt_id, "owner": owner, "expires": expires, "now": _iso(now)},
+    ).fetchone()
+    conn.commit()
+    return int(row["fencing_token"]) if row is not None else None
+
+
+def heartbeat(
+    conn: Connection, attempt_id: str, *, owner: str, token: int, ttl_seconds: float
+) -> bool:
+    """在 TTL/3 前续租；owner+token 不匹配 = False（lease 已被抢走）。"""
+    row = conn.execute(
+        """
+        UPDATE chapter_refresh_attempt
+           SET lease_expires_at = :expires,
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE id = :id AND lease_owner = :owner AND fencing_token = :token
+        RETURNING id
+        """,
+        {"id": attempt_id, "owner": owner, "expires": _iso(time.time() + ttl_seconds), "token": token},
+    ).fetchone()
+    conn.commit()
+    return row is not None
+
+
+def release_attempt(conn: Connection, attempt_id: str, *, owner: str, token: int) -> None:
+    conn.execute(
+        """
+        UPDATE chapter_refresh_attempt
+           SET lease_owner = NULL, lease_expires_at = NULL
+         WHERE id = :id AND lease_owner = :owner AND fencing_token = :token
+        """,
+        {"id": attempt_id, "owner": owner, "token": token},
+    )
+    conn.commit()
+
+
+def recover_claimable(
+    conn: Connection, *, owner: str, ttl_seconds: float = 60.0
+) -> list[str]:
+    """启动恢复：扫描所有可领的 attempt（PENDING/过期 RUNNING），逐个 claim。"""
+    rows = conn.execute(
+        """
+        SELECT id FROM chapter_refresh_attempt
+         WHERE (lease_expires_at IS NULL OR lease_expires_at < :now)
+           AND ((validation_state IN ('PENDING','RUNNING')
+                 OR summary_state IN ('PENDING','RUNNING')
+                 OR extraction_state IN ('PENDING','RUNNING'))
+                OR (final_gate_state = 'PENDING'
+                    AND validation_state IN ('SUCCEEDED','REUSED')))
+        """,
+        {"now": _iso(time.time())},
+    ).fetchall()
+    claimed: list[str] = []
+    for row in rows:
+        token = claim_attempt(conn, row["id"], owner=owner, ttl_seconds=ttl_seconds)
+        if token is not None:
+            claimed.append(str(row["id"]))
+    conn.commit()
+    return claimed
+
+
+def _iso(ts: float) -> str:
+    import datetime
+
+    return datetime.datetime.fromtimestamp(ts, datetime.UTC).strftime("%Y-%m-%dT%H:%M:%fZ")
+
+
+def _branch_update(
+    conn: Connection,
+    attempt_id: str,
+    *,
+    owner: str,
+    token: int,
+    column: str,
+    state: str,
+    reused_id: str | None = None,
+) -> bool:
+    if reused_id is not None:
+        reused_column = {
+            "validation_state": "reused_validation_report_id",
+            "summary_state": "reused_summary_version_id",
+            "extraction_state": "reused_application_id",
+        }[column]
+        row = conn.execute(
+            f"""
+            UPDATE chapter_refresh_attempt
+               SET {column} = :state, {reused_column} = :reused_id,
+                   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             WHERE id = :id AND lease_owner = :owner AND fencing_token = :token
+            RETURNING id
+            """,
+            {"id": attempt_id, "owner": owner, "token": token, "state": state, "reused_id": reused_id},
+        ).fetchone()
+    else:
+        row = conn.execute(
+            f"""
+            UPDATE chapter_refresh_attempt
+               SET {column} = :state, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             WHERE id = :id AND lease_owner = :owner AND fencing_token = :token
+            RETURNING id
+            """,
+            {"id": attempt_id, "owner": owner, "token": token, "state": state},
+        ).fetchone()
+    conn.commit()
+    return row is not None
+
+
+class ChapterRefreshCoordinator:
+    """一条 attempt 的固定 DAG 执行器。
+
+    Args:
+        conn: 协调器主连接（validation / 状态写）。
+        connection_factory: 每个下游 worker 的独立连接（真并行需要各自连接）。
+        store_factory: 每个下游 worker 的 store（独立连接上的 StoryGraph）。
+    """
+
+    def __init__(
+        self,
+        conn: Connection,
+        *,
+        connection_factory: Callable[[], Connection],
+        store_factory: Callable[[Connection], StoryGraph],
+    ) -> None:
+        self._conn = conn
+        self._connection_factory = connection_factory
+        self._store_factory = store_factory
+
+    def run(
+        self,
+        attempt_id: str,
+        *,
+        owner: str,
+        token: int,
+        summary_adapter: BranchAdapter,
+        extraction_adapter: BranchAdapter,
+        alias_adapter: BranchAdapter | None = None,
+        ttl_seconds: float = 60.0,
+    ) -> dict[str, str]:
+        """执行固定 DAG：验证 → alias 阶段 → 总结 ∥ 抽取 → final gate。"""
+        attempt = self._attempt(attempt_id)
+        if attempt is None:
+            raise AttemptNotFound(attempt_id)
+        run = _run_row(self._conn, attempt["run_id"])
+        if run is None:
+            raise AttemptNotFound(attempt_id)
+        if attempt["validation_state"] in ("BLOCKED", "FAILED", "SUPERSEDED"):
+            return {"validation": attempt["validation_state"].lower()}
+        token_ctx = ChapterCommitToken(
+            project_id=run["project_id"],
+            chapter_id=run["chapter_id"],
+            chapter_number=self._chapter_number(run["project_id"], run["chapter_id"]),
+            source_snapshot_id=run["source_snapshot_id"],
+            source_generation=int(run["source_generation"]),
+            text_sha256="",
+            text="",
+            changed=False,
+        )
+        snapshot = self._snapshot_text(run["project_id"], run["source_snapshot_id"])
+        if snapshot is None:
+            _branch_update(
+                self._conn, attempt_id, owner=owner, token=token,
+                column="validation_state", state="FAILED",
+            )
+            return {"validation": "FAILED"}
+        token_ctx = ChapterCommitToken(
+            project_id=run["project_id"],
+            chapter_id=run["chapter_id"],
+            chapter_number=token_ctx.chapter_number,
+            source_snapshot_id=run["source_snapshot_id"],
+            source_generation=int(run["source_generation"]),
+            text_sha256=self._conn.execute(
+                "SELECT text_sha256 FROM chapter_snapshot WHERE id = ?",
+                (run["source_snapshot_id"],),
+            ).fetchone()["text_sha256"],
+            text=snapshot,
+            changed=False,
+        )
+
+        epoch = int(attempt["ruleset_epoch"])
+        ruleset_hash = attempt["ruleset_hash"]
+        branch_ctx = BranchContext(
+            project_id=run["project_id"],
+            chapter_id=run["chapter_id"],
+            chapter_number=token_ctx.chapter_number,
+            token=token_ctx,
+            ruleset_epoch=epoch,
+            ruleset_hash=ruleset_hash,
+            attempt_id=attempt_id,
+            fencing_token=token,
+            lease_owner=owner,
+            conn=self._conn,
+            store=self._store_factory(self._conn),
+        )
+
+        # ── ① 正文验证（快照绑定）────────────────────────────────────────
+        validation: SnapshotValidationReport | None = None
+        if attempt["validation_state"] in ("PENDING", "RUNNING"):
+            _branch_update(
+                self._conn, attempt_id, owner=owner, token=token,
+                column="validation_state", state="RUNNING",
+            )
+            try:
+                validation = validate_snapshot(
+                    self._conn,
+                    branch_ctx.store,
+                    token_ctx,
+                    ruleset_epoch=epoch,
+                    ruleset_hash=ruleset_hash,
+                    phase="initial",
+                    refresh_attempt_id=attempt_id,
+                    paragraphs=split_paragraphs(snapshot),
+                )
+            except Exception as exc:  # noqa: BLE001 —— store/规则异常按 error 阻断
+                _branch_update(
+                    self._conn, attempt_id, owner=owner, token=token,
+                    column="validation_state", state="FAILED",
+                )
+                return {"validation": "FAILED", "error": str(exc)}
+            if validation.gate in ("blocked", "error"):
+                _branch_update(
+                    self._conn, attempt_id, owner=owner, token=token,
+                    column="validation_state", state="BLOCKED" if validation.gate == "blocked" else "FAILED",
+                )
+                return {"validation": validation.gate}
+            _branch_update(
+                self._conn, attempt_id, owner=owner, token=token,
+                column="validation_state", state="SUCCEEDED",
+            )
+            self._set_initial_report(attempt_id, validation.id)
+
+        # ── ② alias 阶段（Task 12 接真 adapter；Task 5 只接受注入）────────
+        # NOT_STARTED/CHANGED 时 final gate 保持 PENDING：初次 PASSED 报告不能
+        # 冒充最终闸门（别名可能补齐 R2/R3 的输入，二次验证才作数）。
+        if attempt["alias_phase"] in ("NOT_STARTED", "CHANGED") and alias_adapter is not None:
+            try:
+                alias_note = alias_adapter.run(branch_ctx)
+            except Exception as exc:  # noqa: BLE001
+                self._set_alias_phase(attempt_id, "FAILED_BEFORE_CHANGE")
+                return {"validation": "passed", "alias": f"FAILED_BEFORE_CHANGE: {exc}"}
+            if alias_note == "changed":
+                post = self._run_post_alias_validation(branch_ctx, token_ctx, epoch, ruleset_hash, attempt_id)
+                if post is None:
+                    _branch_update(
+                        self._conn, attempt_id, owner=owner, token=token,
+                        column="validation_state", state="BLOCKED",
+                    )
+                    self._set_alias_phase(attempt_id, "CHANGED")
+                    return {"validation": "blocked_post_alias"}
+                self._set_alias_phase(attempt_id, "COMPLETE")
+                self._set_final_report(attempt_id, post.id)
+            else:
+                self._set_alias_phase(attempt_id, "UNCHANGED")
+
+        # ── ③ final gate：alias 阶段终态 + 初次验证通过才 PASSED ─────────
+        final_report_id = self._finalize_gate_if_terminal(attempt_id, owner=owner, token=token)
+
+        # ── ④ 总结 ∥ 抽取：两个独立连接并行 ──────────────────────────────
+        results: dict[str, str] = {}
+        def _worker(column: str, adapter: BranchAdapter) -> None:
+            worker_conn = self._connection_factory()
+            try:
+                state_row = worker_conn.execute(
+                    f"SELECT {column} FROM chapter_refresh_attempt WHERE id = ?",
+                    (attempt_id,),
+                ).fetchone()
+                if state_row is not None and state_row[column] in TERMINAL_BRANCH_STATES:
+                    results[column] = "reused"
+                    return
+                worker_ctx = BranchContext(
+                    project_id=branch_ctx.project_id,
+                    chapter_id=branch_ctx.chapter_id,
+                    chapter_number=branch_ctx.chapter_number,
+                    token=token_ctx,
+                    ruleset_epoch=epoch,
+                    ruleset_hash=ruleset_hash,
+                    attempt_id=attempt_id,
+                    fencing_token=token,
+                    lease_owner=owner,
+                    conn=worker_conn,
+                    store=self._store_factory(worker_conn),
+                )
+                _branch_update(
+                    worker_conn, attempt_id, owner=owner, token=token,
+                    column=column, state="RUNNING",
+                )
+                note = adapter.run(worker_ctx)
+                _branch_update(
+                    worker_conn, attempt_id, owner=owner, token=token,
+                    column=column, state="SUCCEEDED",
+                )
+                results[column] = note
+            except Exception as exc:  # noqa: BLE001
+                _branch_update(
+                    worker_conn, attempt_id, owner=owner, token=token,
+                    column=column, state="FAILED",
+                )
+                results[column] = f"FAILED: {exc}"
+            finally:
+                worker_conn.close()
+
+        threads = [
+            threading.Thread(target=_worker, args=("summary_state", summary_adapter)),
+            threading.Thread(target=_worker, args=("extraction_state", extraction_adapter)),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        return {"validation": "passed", "final_gate": final_report_id or "PENDING", **results}
+
+    def _run_post_alias_validation(
+        self,
+        branch_ctx: BranchContext,
+        token_ctx: ChapterCommitToken,
+        epoch: int,
+        ruleset_hash: str,
+        attempt_id: str,
+    ) -> SnapshotValidationReport | None:
+        """别名集合变化后的二次验证（phase=post_alias）；blocked → None。"""
+        report = validate_snapshot(
+            self._conn,
+            branch_ctx.store,
+            token_ctx,
+            ruleset_epoch=epoch,
+            ruleset_hash=ruleset_hash,
+            phase="post_alias",
+            refresh_attempt_id=attempt_id,
+            paragraphs=split_paragraphs(token_ctx.text),
+        )
+        if report.gate in ("blocked", "error"):
+            return None
+        return report
+
+    def _attempt(self, attempt_id: str) -> dict[str, Any] | None:
+        row = self._conn.execute(
+            """
+            SELECT id, run_id, ruleset_epoch, ruleset_hash, validation_state,
+                   summary_state, extraction_state, alias_phase,
+                   initial_validation_report_id, final_gate_state, final_validation_report_id
+              FROM chapter_refresh_attempt WHERE id = ?
+            """,
+            (attempt_id,),
+        ).fetchone()
+        return dict(row) if row is not None else None
+
+    def _chapter_number(self, project_id: str, chapter_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT number FROM chapter WHERE id = ? AND project_id = ?",
+            (chapter_id, project_id),
+        ).fetchone()
+        return int(row["number"]) if row is not None else 0
+
+    def _snapshot_text(self, project_id: str, snapshot_id: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT text FROM chapter_snapshot WHERE id = ?", (snapshot_id,)
+        ).fetchone()
+        return str(row["text"]) if row is not None else None
+
+    def _set_initial_report(self, attempt_id: str, report_id: str) -> None:
+        self._conn.execute(
+            """
+            UPDATE chapter_refresh_attempt
+               SET initial_validation_report_id = ?
+             WHERE id = ?
+            """,
+            (report_id, attempt_id),
+        )
+        self._conn.commit()
+
+    def _set_alias_phase(self, attempt_id: str, phase: str) -> None:
+        self._conn.execute(
+            """
+            UPDATE chapter_refresh_attempt
+               SET alias_phase = ?,
+                   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             WHERE id = ?
+            """,
+            (phase, attempt_id),
+        )
+        self._conn.commit()
+
+    def _set_final_report(self, attempt_id: str, report_id: str) -> None:
+        self._conn.execute(
+            """
+            UPDATE chapter_refresh_attempt
+               SET final_validation_report_id = ?,
+                   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             WHERE id = ?
+            """,
+            (report_id, attempt_id),
+        )
+        self._conn.commit()
+
+    def _finalize_gate_if_terminal(self, attempt_id: str, *, owner: str, token: int) -> str | None:
+        attempt = self._attempt(attempt_id)
+        if attempt is None:
+            return None
+        if attempt["final_gate_state"] != "PENDING":
+            return attempt["final_validation_report_id"]
+        if attempt["alias_phase"] not in TERMINAL_ALIAS_PHASES:
+            return None
+        if attempt["validation_state"] not in ("SUCCEEDED", "REUSED"):
+            return None
+        # COMPLETE 时 final report 是 post-alias 报告；否则用初次报告。
+        final_report = attempt["final_validation_report_id"] or attempt["initial_validation_report_id"]
+        row = self._conn.execute(
+            """
+            UPDATE chapter_refresh_attempt
+               SET final_gate_state = 'PASSED', final_validation_report_id = :report,
+                   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             WHERE id = :id AND lease_owner = :owner AND fencing_token = :token
+            RETURNING final_validation_report_id
+            """,
+            {"id": attempt_id, "report": final_report, "owner": owner, "token": token},
+        ).fetchone()
+        self._conn.commit()
+        return str(row["final_validation_report_id"]) if row is not None else None
