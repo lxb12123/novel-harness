@@ -24,13 +24,35 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any, Final, Literal
+
+from .base import Check, CheckContext
+from .dead_speaks import check as dead_speaks_check
+from .future_leak import check as future_leak_check
+
+
+class RuleAvailability(StrEnum):
+    """一条规则的正文输入是否可用（Task 4 的 availability 判据）。
+
+    只有「正文没装入 / snapshot 读不出」这类**技术性**缺失才是 UNAVAILABLE；
+    人物、别名、未来实体或状态集合为空是**合法空集合**——规则照跑，显示
+    「本次未报告问题」，不能伪称资料不全。
+    """
+
+    AVAILABLE = "available"
+    UNAVAILABLE = "unavailable"
 
 
 @dataclass(frozen=True, slots=True)
 class RuleSpec:
-    """一条确定性规则在目录里的稳定描述（Task 4 再挂 availability / callable）。"""
+    """一条确定性规则在目录里的完整描述。
+
+    `availability` / `check` 不进 ruleset hash（`_SEMANTIC_FIELDS` 只挑语义字段）——
+    换实现不改语义，不该让所有机器任务失效。
+    """
 
     rule_id: str
     title: str
@@ -40,6 +62,17 @@ class RuleSpec:
     schema_version: str = "v1"
     template: Literal["system", "forbidden_literal"] = "system"
     config: dict[str, Any] = field(default_factory=dict)
+    availability: Callable[[CheckContext], RuleAvailability] | None = None
+    check: Check | None = None
+
+
+def _paragraphs_available(ctx: CheckContext) -> RuleAvailability:
+    """R2/R3 的 availability：正文段落装入 = AVAILABLE（空集合是合法空集合）。"""
+    return (
+        RuleAvailability.AVAILABLE
+        if ctx.paragraphs is not None
+        else RuleAvailability.UNAVAILABLE
+    )
 
 
 SYSTEM_RULES: Final[tuple[RuleSpec, ...]] = (
@@ -48,12 +81,16 @@ SYSTEM_RULES: Final[tuple[RuleSpec, ...]] = (
         title="设定提前出现",
         description="正文提到作者标记为「第 K 章才出现」的实体/秘密，而当前章 N < K。",
         blocks_downstream=True,
+        availability=_paragraphs_available,
+        check=future_leak_check,
     ),
     RuleSpec(
         rule_id="R3",
         title="人物开口时机",
         description="已死或尚未登场的角色在说话人标签位置开口。",
         blocks_downstream=True,
+        availability=_paragraphs_available,
+        check=dead_speaks_check,
     ),
 )
 """系统默认规则。**Task 4 之前它只有语义字段**——availability/callable 是 Task 4

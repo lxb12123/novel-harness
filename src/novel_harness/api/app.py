@@ -47,10 +47,10 @@ from pydantic import (
 from .. import importer
 from .. import onboarding
 from .. import project as project_mod
-from ..checks import ALL_CHECKS, CheckContext, run_checks
 from ..settings import Settings as UserSettings
 from ..settings import load as load_user_settings
 from ..settings import save as save_user_settings
+from .validation import router as validation_router
 from ..declare import (
     AmbiguousName,
     AmbiguousQuote,
@@ -282,6 +282,7 @@ app.include_router(chat_router)
 app.include_router(extraction_router)
 app.include_router(reconcile_router)
 app.include_router(review_router)
+app.include_router(validation_router)
 
 # 构建产物的静态资源（/assets/index-xxxx.js）。只有 dist 真的构建出来才挂载——
 # 挂一个不存在的目录会在启动时炸，而测试套件不构建前端（那时走 static/ 原型兜底）。
@@ -1290,44 +1291,6 @@ def declare_first_appearance(
     return ledger.declare_first_appearance(of=body.of, quote=body.quote).model_dump(mode="json")
 
 
-@app.post("/api/projects/{project_id}/chapters/{chapter}/check")
-def check(
-    chapter: int,
-    store: Any = Depends(get_store),
-    proj: Any = Depends(load_project),
-) -> Any:
-    """对第 chapter 章的磁盘正文跑一致性规则（今天 = R2 / R3；R4 和 R5 都已砍）。
-
-    切段走 `text.paragraphs()`（全库唯一定义，§1.4）——路由里**不许**自己写
-    `.splitlines()`，否则 anchor 一改，Issue 锚就和别处「差一段」。
-
-    **不返裸 list[Issue]**：返 `{rules_run, issues}`。静默的零和真的零不许长得一样
-    （§10 约束 8 / cli.check 的原话）：一条规则哑掉时它照样返回零 issue，而那个零不是
-    「这章没问题」。前端据 `rules_run` 把它和「跑了但没意见」分开。
-
-    ⚠️ **出参 2026-08-14 少了 `scene_count`**（ADR 0027）。它原本是那个「零」的成色说明
-    ——0 个场景块 = R4 无事可做——而 R4 已经不在了，再报这个数就是在替一条不存在的规则
-    解释它为什么没说话。
-    """
-    file = _chapter_file(proj, chapter)
-    if not file.exists():
-        raise HTTPException(404, {"error": "chapter_not_found", "chapter": chapter})
-    paras = split_paragraphs(file.read_text(encoding="utf-8-sig"))
-    ctx = CheckContext(
-        store=store,
-        project_id=proj.id,
-        chapter=chapter,
-        paragraphs=paras,
-    )
-    issues = run_checks(ctx)
-    return {
-        "chapter": chapter,
-        "rules_run": [c.__module__.rsplit(".", 1)[-1] for c in ALL_CHECKS],
-        "issues": [i.model_dump(mode="json") for i in issues],
-    }
-
-
-# ══════════════════════════════════════════════════════════════════════════
 # M2 / M4 剩余 stub —— 稳定的 501，**不是 404**（UI_ARCHITECTURE §1.2 第 48 行）
 #
 # M4 抽取与事件读端已经在 ``api/extraction.py`` 点亮；这里保留的能力仍未开放。它们今天

@@ -682,7 +682,11 @@ def test_check_reports_which_rules_ran(client: TestClient, book: dict[str, str])
     r = client.post(f"/api/projects/{_pid(book)}/chapters/3/check")
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["rules_run"]  # 「跑了哪几条」印出来，不静默（§10 约束 8）
+    # 「跑了哪几条、各自什么状态」印出来，不静默（§10 约束 8）。
+    assert {rule["rule_id"] for rule in body["rules"]} == {"R2", "R3"}
+    assert body["gate"] in {"passed", "blocked", "error"}
+    assert body["source_generation"] >= 1
+    assert body["ruleset_epoch"] >= 1
     assert isinstance(body["issues"], list)
     # `scene_count` 2026-08-14 随场景块和 R4 一起从出参里去掉了（ADR 0027）。
     # 它原本是那个「零 issue」的成色说明，而它说明的那条规则已经不在了。
