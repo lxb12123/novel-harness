@@ -14,7 +14,7 @@ Protocol 是「自我安慰」——唯一实现 = 接口静默泄漏。那条�
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Final
+from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
@@ -945,6 +945,8 @@ class AliasSpec(BaseModel):
     surface: str = Field(min_length=1)
     kind: AliasKind = AliasKind.ALIAS
     usable_for_rules: bool = True
+    source: Literal["extractor", "author"] = "author"
+    """022 / Task 11：谁写的这条 alias（机器自动 / 作者）。canonical 是 node 本名。"""
 
     @model_validator(mode="after")
     def _canonical_belongs_to_upsert_node(self) -> AliasSpec:
@@ -984,6 +986,10 @@ class StoredAlias(BaseModel):
     surface: str
     kind: AliasKind
     usable_for_rules: bool
+    source: Literal["extractor", "author"] = "author"
+    status: Literal["ACTIVE", "RETRACTED"] = "ACTIVE"
+    derived_from_alias_id: str | None = None
+    """022 / Task 11：author 行指回它改的那条机器 alias。"""
 
 
 class ChapterSpec(BaseModel):

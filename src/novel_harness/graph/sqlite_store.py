@@ -583,7 +583,133 @@ class SqliteStoryGraph:
                 surface=spec.surface,
                 kind=spec.kind,
                 usable_for_rules=spec.usable_for_rules,
+                source=spec.source,
             )
+
+    def aliases_of(self, project_id: str, node_id: str) -> list[StoredAlias]:
+        """一个节点的全部别名（含 canonical），canonical 优先、其余按创建时间。"""
+        rows = self._conn.execute(
+            """
+            SELECT id, project_id, node_id, surface, kind, usable_for_rules,
+                   source, status, derived_from_alias_id, created_at
+              FROM alias
+             WHERE project_id = ? AND node_id = ?
+             ORDER BY (kind = 'canonical') DESC, created_at, id
+            """,
+            (project_id, node_id),
+        ).fetchall()
+        return [
+            StoredAlias(
+                id=r["id"],
+                project_id=r["project_id"],
+                node_id=r["node_id"],
+                surface=r["surface"],
+                kind=AliasKind(r["kind"]),
+                usable_for_rules=bool(r["usable_for_rules"]),
+                source=r["source"],
+                status=r["status"],
+                derived_from_alias_id=r["derived_from_alias_id"],
+            )
+            for r in rows
+            if r["status"] == "ACTIVE"
+        ]
+
+    def retract_alias(self, project_id: str, alias_id: str) -> StoredAlias:
+        with _transaction(self._conn):
+            row = queries.fetch_alias(self._conn, alias_id)
+            if row is None:
+                raise self._alias_missing(project_id, alias_id)
+            if row["project_id"] != project_id:
+                raise self._alias_missing(project_id, alias_id)
+            if row["kind"] == AliasKind.CANONICAL.value:
+                raise CanonEdgeRefused("canonical 是本名索引，不能撤回：改本名请改节点本身")
+            if row["status"] != "ACTIVE":
+                raise CanonEdgeRefused(f"alias {alias_id} 已经撤回了")
+            queries.retract_alias(self._conn, alias_id)
+            return self._read_alias(alias_id)
+
+    def edit_alias(
+        self,
+        project_id: str,
+        alias_id: str,
+        *,
+        surface: str | None = None,
+        usable_for_rules: bool | None = None,
+    ) -> StoredAlias:
+        with _transaction(self._conn):
+            row = queries.fetch_alias(self._conn, alias_id)
+            if row is None or row["project_id"] != project_id:
+                raise self._alias_missing(project_id, alias_id)
+            if row["kind"] == AliasKind.CANONICAL.value:
+                raise CanonEdgeRefused("canonical 是本名索引，不能改：改本名请改节点本身")
+            new_surface = surface if surface is not None else row["surface"]
+            new_usable = (
+                usable_for_rules if usable_for_rules is not None else bool(row["usable_for_rules"])
+            )
+            # 不管原来是谁写的，改过 = 作者接手：撤回旧行 + 新建 author 派生行
+            # （§5 022：作者版不随旧机器证据失效）。
+            queries.retract_alias(self._conn, alias_id)
+            new_id_value = new_id(EntityType.ALIAS, project_id)
+            return queries.insert_alias(
+                self._conn,
+                new_id_value,
+                project_id=project_id,
+                node_id=row["node_id"],
+                surface=new_surface,
+                kind=AliasKind(row["kind"]),
+                usable_for_rules=new_usable,
+                source="author",
+                derived_from_alias_id=alias_id,
+            )
+
+    def reassign_alias(
+        self, project_id: str, alias_id: str, *, to_node_id: str
+    ) -> StoredAlias:
+        with _transaction(self._conn):
+            row = queries.fetch_alias(self._conn, alias_id)
+            if row is None or row["project_id"] != project_id:
+                raise self._alias_missing(project_id, alias_id)
+            if row["kind"] == AliasKind.CANONICAL.value:
+                raise CanonEdgeRefused("canonical 是本名索引，不能改归属")
+            # 目标必须是同项目 Character。
+            target = self._require_node(project_id, to_node_id, what="目标人物")
+            if target.label is not NodeLabel.CHARACTER:
+                raise CanonEdgeRefused(f"别名只能改到 Character，{to_node_id} 是 {target.label.value}")
+            queries.retract_alias(self._conn, alias_id)
+            new_id_value = new_id(EntityType.ALIAS, project_id)
+            return queries.insert_alias(
+                self._conn,
+                new_id_value,
+                project_id=project_id,
+                node_id=to_node_id,
+                surface=row["surface"],
+                kind=AliasKind(row["kind"]),
+                usable_for_rules=bool(row["usable_for_rules"]),
+                source="author",
+                derived_from_alias_id=alias_id,
+            )
+
+    def _read_alias(self, alias_id: str) -> StoredAlias:
+        row = queries.fetch_alias(self._conn, alias_id)
+        if row is None:  # pragma: no cover - 写入事务内读不回只能是库坏了
+            raise RuntimeError(f"alias 写入后读不回：{alias_id}")
+        return StoredAlias(
+            id=row["id"],
+            project_id=row["project_id"],
+            node_id=row["node_id"],
+            surface=row["surface"],
+            kind=AliasKind(row["kind"]),
+            usable_for_rules=bool(row["usable_for_rules"]),
+            source=row["source"],
+            status=row["status"],
+            derived_from_alias_id=row["derived_from_alias_id"],
+        )
+
+    @staticmethod
+    def _alias_missing(project_id: str, alias_id: str) -> Exception:
+        from .store import NodeNotFound
+
+        return NodeNotFound(f"alias {alias_id} 不在项目 {project_id} 里")
 
     def retire_stale_extractor_facts(
         self, project_id: str, chapter_id: str, current_snapshot_id: str

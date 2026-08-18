@@ -817,6 +817,52 @@ def test_frontend_fixture_matches_the_real_api(
     _nid = dump["notifications"][0]["id"]
     grab("notificationsIgnored", client.post(f"{base}/notifications/{_nid}/ignore"))
 
+    # ── 人物基础信息 + 别名生命周期（Task 11 / §6.5）────────────────────────
+    # 全走真服务。放在这里：它 bump canon version + 加一条 alias，别的夹具要的
+    # 恰好是「加之前」的形状。
+    grab(
+        "characterProfile",
+        client.get(f"{base}/characters/{book['萧决']}/profile"),
+    )
+    _ac = connect(book["db"])
+    try:
+        _canon_before = _ac.execute(
+            "SELECT canon_version FROM project WHERE id = ?", (pid,)
+        ).fetchone()[0]
+    finally:
+        _ac.close()
+    alias_create_resp = client.post(
+        f"{base}/characters/{book['萧决']}/aliases",
+        json={"surface": "魔尊", "expected_canon_version": _canon_before},
+    )
+    assert alias_create_resp.status_code == 200, alias_create_resp.text
+    grab("aliasCreated", alias_create_resp)
+    alias_id = alias_create_resp.json()["id"]
+    alias_reassign_resp = client.post(
+        f"{base}/aliases/{alias_id}/reassign",
+        json={
+            "to_character_id": book["李管家"],
+            "expected_canon_version": client.get(base).json()["canon_version"],
+        },
+    )
+    assert alias_reassign_resp.status_code == 200, alias_reassign_resp.text
+    grab("aliasReassigned", alias_reassign_resp)
+    _alias2 = alias_reassign_resp.json()["id"]
+    alias_edit_resp = client.patch(
+        f"{base}/aliases/{_alias2}",
+        json={
+            "surface": "魔尊（北荒）",
+            "expected_canon_version": client.get(base).json()["canon_version"],
+        },
+    )
+    assert alias_edit_resp.status_code == 200, alias_edit_resp.text
+    grab("aliasEdited", alias_edit_resp)
+    _alias3 = alias_edit_resp.json()["id"]
+    grab(
+        "aliasDeleted",
+        client.delete(f"{base}/aliases/{_alias3}"),
+    )
+
     # ── 自动 Canon 边的纠错（Task 8 / ADR 0032）─────────────────────────────
     # 种法走抽取 ingest + `promote_clean_facts`（真代码），不手写：要的是
     # 「`source=extractor`、CANON、FRESH evidence」那种真形态——作者在日志页

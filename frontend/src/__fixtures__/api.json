@@ -387,14 +387,14 @@
   "activityCanonEdge": {
     "actor": "system",
     "chapter_number": 1,
-    "id": "decision:ID73",
+    "id": "decision:ID77",
     "jump": {
       "cast": [],
       "chapter_number": 1,
       "character_id": null,
-      "edge_id": "edge:ID70",
+      "edge_id": "edge:ID74",
       "endpoints": [
-        "/api/projects/project:ID1/canon/edges/edge:ID70"
+        "/api/projects/project:ID1/canon/edges/edge:ID74"
       ],
       "event_id": null,
       "label": "去改这条自动生成的边（第 1 章）",
@@ -800,6 +800,43 @@
       }
     ]
   },
+  "aliasCreated": {
+    "derived_from_alias_id": null,
+    "id": "alias:ID71",
+    "kind": "alias",
+    "node_id": "character:ID10",
+    "project_id": "project:ID1",
+    "source": "author",
+    "status": "ACTIVE",
+    "surface": "魔尊",
+    "usable_for_rules": true
+  },
+  "aliasDeleted": {
+    "id": "alias:ID73",
+    "status": "RETRACTED"
+  },
+  "aliasEdited": {
+    "derived_from_alias_id": "alias:ID72",
+    "id": "alias:ID73",
+    "kind": "alias",
+    "node_id": "character:ID8",
+    "project_id": "project:ID1",
+    "source": "author",
+    "status": "ACTIVE",
+    "surface": "魔尊（北荒）",
+    "usable_for_rules": true
+  },
+  "aliasReassigned": {
+    "derived_from_alias_id": "alias:ID71",
+    "id": "alias:ID72",
+    "kind": "alias",
+    "node_id": "character:ID8",
+    "project_id": "project:ID1",
+    "source": "author",
+    "status": "ACTIVE",
+    "surface": "魔尊",
+    "usable_for_rules": true
+  },
   "bootstrapImport": {
     "import_report": {
       "chapter_count": 1,
@@ -902,11 +939,11 @@
   },
   "canonEdge": {
     "author_owned": false,
-    "canon_version": 17,
+    "canon_version": 21,
     "dst": "location:ID5",
-    "edge_id": "edge:ID70",
+    "edge_id": "edge:ID74",
     "edge_type": "LOCATED_AT",
-    "evidence_id": "evidence:ID71",
+    "evidence_id": "evidence:ID75",
     "evidence_status": "FRESH",
     "props": {
       "believed_value": null,
@@ -919,15 +956,15 @@
     "valid_from_chapter": 1
   },
   "canonEdgeEdited": {
-    "canon_version": 18,
-    "edge_id": "edge:ID72",
-    "replacement_edge_id": "edge:ID72",
+    "canon_version": 22,
+    "edge_id": "edge:ID76",
+    "replacement_edge_id": "edge:ID76",
     "retracted": false,
     "view": {
       "author_owned": true,
-      "canon_version": 18,
+      "canon_version": 22,
       "dst": "location:ID9",
-      "edge_id": "edge:ID72",
+      "edge_id": "edge:ID76",
       "edge_type": "LOCATED_AT",
       "evidence_id": null,
       "evidence_status": "NONE",
@@ -943,15 +980,15 @@
     }
   },
   "canonEdgeRetracted": {
-    "canon_version": 19,
-    "edge_id": "edge:ID72",
+    "canon_version": 23,
+    "edge_id": "edge:ID76",
     "replacement_edge_id": null,
     "retracted": true,
     "view": {
       "author_owned": false,
-      "canon_version": 19,
+      "canon_version": 23,
       "dst": "location:ID9",
-      "edge_id": "edge:ID72",
+      "edge_id": "edge:ID76",
       "edge_type": "LOCATED_AT",
       "evidence_id": null,
       "evidence_status": "NONE",
@@ -1113,6 +1150,38 @@
       "title": "第三章 对峙"
     }
   ],
+  "characterProfile": {
+    "aliases": [
+      {
+        "derived_from_alias_id": null,
+        "id": "alias:ID70",
+        "kind": "title",
+        "node_id": "character:ID10",
+        "project_id": "project:ID1",
+        "source": "author",
+        "status": "ACTIVE",
+        "surface": "师兄",
+        "usable_for_rules": true
+      }
+    ],
+    "character": {
+      "id": "character:ID10",
+      "label": "Character",
+      "name": "萧决"
+    },
+    "profile": {
+      "background": null,
+      "character": {
+        "id": "character:ID10",
+        "label": "Character",
+        "name": "萧决"
+      },
+      "character_notes": null,
+      "gender": null,
+      "main_character": null,
+      "personality": null
+    }
+  },
   "characterState": {
     "chapter": 2,
     "edges": [],
@@ -1345,10 +1414,13 @@
     "unresolved_cast": []
   },
   "createAlias": {
+    "derived_from_alias_id": null,
     "id": "alias:ID14",
     "kind": "alias",
     "node_id": "character:ID12",
     "project_id": "project:ID1",
+    "source": "author",
+    "status": "ACTIVE",
     "surface": "顾姑娘",
     "usable_for_rules": true
   },
@@ -1419,7 +1491,7 @@
   "errorCanonEdgeGone": {
     "detail": {
       "error": "canon_edge_refused",
-      "message": "edge edge:ID72 不是 current CANON（已撤回/非 CANON）"
+      "message": "edge edge:ID76 不是 current CANON（已撤回/非 CANON）"
     }
   },
   "errorFactAlreadyExists": {

@@ -593,6 +593,45 @@ class CanonWriter(Protocol):
         """
         ...
 
+    def aliases_of(self, project_id: str, node_id: str) -> list[StoredAlias]:
+        """一个节点的全部别名（含 canonical）。**人物基础信息那一格读它。**
+
+        canonical 也在里面：界面显示「本名」用 node.name（`GET …/characters/{id}/profile`
+        的 `character.name`），这一份喂「别名」那排 chip——但 canonical **不是 chip**，
+        也不能通过别名接口改（§4.5）。排序：canonical 优先，其余按 created_at。
+        """
+        ...
+
+    def retract_alias(self, project_id: str, alias_id: str) -> StoredAlias:
+        """软撤回一条别名（§6.5 DELETE）：status → RETRACTED（tombstone 保留历史）。
+
+        改归属 = 撤回旧 + 新建目标，不原地改 node_id（§5 022）。
+        canonical 和其他实体的别名拒绝。
+        """
+        ...
+
+    def edit_alias(
+        self,
+        project_id: str,
+        alias_id: str,
+        *,
+        surface: str | None = None,
+        usable_for_rules: bool | None = None,
+    ) -> StoredAlias:
+        """改一条别名的 surface / usable（§6.5 PATCH）。
+
+        机器 alias 被改时**撤回旧行 + 新建 `source=author` 行**，以
+        `derived_from_alias_id` 指回机器行（§5 022：作者版不随旧机器证据失效）。
+        作者自己也以派生行落库（改 surface / usable 都等于一次新 author 决定）。
+        """
+        ...
+
+    def reassign_alias(
+        self, project_id: str, alias_id: str, *, to_node_id: str
+    ) -> StoredAlias:
+        """改归属（§6.5 POST …/reassign）：旧 alias RETRACTED，目标 Character 新建 ACTIVE。"""
+        ...
+
     def retire_stale_extractor_facts(
         self, project_id: str, chapter_id: str, current_snapshot_id: str
     ) -> RetirementReport:

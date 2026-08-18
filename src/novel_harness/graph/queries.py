@@ -506,13 +506,20 @@ def insert_alias(
     surface: str,
     kind: AliasKind,
     usable_for_rules: bool,
+    source: str = "author",
+    derived_from_alias_id: str | None = None,
 ) -> StoredAlias:
     """收散参数而不是 `AliasSpec`：canonical 别名（`upsert_node` 建的那条）在
-    `AliasSpec` 里根本构造不出来——那条 validator 是故意的。"""
+    `AliasSpec` 里根本构造不出来——那条 validator 是故意的。
+
+    `source` / `derived_from_alias_id`（022 / Task 11）：作者改机器别名 → 新 author
+    行以 `derived_from_alias_id` 指回机器行，不丢掉原 evidence。"""
     conn.execute(
         """
-        INSERT INTO alias (id, project_id, node_id, surface, kind, usable_for_rules)
-        VALUES (:id, :pid, :nid, :surface, :kind, :usable)
+        INSERT INTO alias (
+            id, project_id, node_id, surface, kind, usable_for_rules,
+            source, derived_from_alias_id
+        ) VALUES (:id, :pid, :nid, :surface, :kind, :usable, :source, :derived)
         """,
         {
             "id": alias_id,
@@ -521,6 +528,8 @@ def insert_alias(
             "surface": surface,
             "kind": kind.value,
             "usable": int(usable_for_rules),
+            "source": source,
+            "derived": derived_from_alias_id,
         },
     )
     return StoredAlias(
@@ -530,6 +539,8 @@ def insert_alias(
         surface=surface,
         kind=kind,
         usable_for_rules=usable_for_rules,
+        source=source,
+        derived_from_alias_id=derived_from_alias_id,
     )
 
 
@@ -745,7 +756,15 @@ def alias_rows(
         SELECT a.surface AS surface, a.kind AS kind, a.usable_for_rules AS usable_for_rules,
                {", ".join(f"n.{c} AS {c}" for c in _NODE_COLS.split(", "))}
         FROM alias a JOIN node n ON n.id = a.node_id
-        WHERE a.project_id = :pid {where}
+        WHERE a.project_id = :pid
+          AND a.status = 'ACTIVE'
+          -- 022 / §5：解析只读 ACTIVE alias；extractor 的还必须至少有一条
+          -- FRESH alias_evidence（§4.5 的自动条件；作者 alias 不要求伪造证据）。
+          AND (a.source = 'author' OR EXISTS (
+            SELECT 1 FROM alias_evidence ae
+             WHERE ae.alias_id = a.id AND ae.status = 'FRESH'
+          ))
+          {where}
         ORDER BY length(a.surface) DESC, a.surface ASC, n.id ASC
         """,
         params,
@@ -1863,3 +1882,72 @@ def chapter_disk_stats(
         {"pid": project_id},
     )
     return {int(r["number"]): (r["disk_mtime_ns"], r["disk_size"]) for r in _rows(cur)}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 别名生命周期（022 / Task 11）：软撤回 / 改归属 / 改 surface
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def fetch_alias(conn: sqlite3.Connection, alias_id: str) -> dict[str, Any] | None:
+    row = conn.execute(
+        """
+        SELECT id, project_id, node_id, surface, kind, usable_for_rules,
+               source, status, derived_from_alias_id, created_at, updated_at
+          FROM alias
+         WHERE id = ?
+        """,
+        (alias_id,),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def retract_alias(conn: sqlite3.Connection, alias_id: str) -> None:
+    """软撤回：status → RETRACTED（tombstone，历史保留、允许重新登记）。"""
+    conn.execute(
+        "UPDATE alias SET status = 'RETRACTED', "
+        "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+        "WHERE id = ? AND status = 'ACTIVE'",
+        (alias_id,),
+    )
+
+
+def add_alias_evidence(
+    conn: sqlite3.Connection,
+    *,
+    alias_id: str,
+    evidence_id: str,
+    source_snapshot_id: str,
+    source_generation: int,
+    extraction_application_id: str | None,
+) -> None:
+    """机器别名的一条支撑证据（幂等：同 evidence + generation 只记一次）。"""
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO alias_evidence (
+            alias_id, evidence_id, source_snapshot_id, source_generation,
+            extraction_application_id, status
+        ) VALUES (?, ?, ?, ?, ?, 'FRESH')
+        """,
+        (
+            alias_id,
+            evidence_id,
+            source_snapshot_id,
+            source_generation,
+            extraction_application_id,
+        ),
+    )
+
+
+def stale_alias_evidence_for_snapshot(
+    conn: sqlite3.Connection, project_id: str, snapshot_id: str
+) -> int:
+    """章节提交新快照时，把该章旧 snapshot 的机器 alias_evidence 标 STALE。"""
+    cur = conn.execute(
+        "UPDATE alias_evidence SET status = 'STALE' "
+        "WHERE source_snapshot_id = ? AND status = 'FRESH' AND alias_id IN ("
+        "  SELECT a.id FROM alias a WHERE a.project_id = ? AND a.source = 'extractor'"
+        ")",
+        (snapshot_id, project_id),
+    )
+    return cur.rowcount
