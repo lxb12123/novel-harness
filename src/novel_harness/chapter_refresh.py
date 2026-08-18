@@ -163,15 +163,22 @@ def create_run(
 
 
 def _head_missing(conn: Connection, project_id: str, chapter_id: str) -> bool:
-    """当前是否缺滚动总结 head（018 之前恒 True；Task 6 接真表）。"""
+    """当前是否缺滚动总结 head（018 之前恒 True；Task 6 接真表）。
+
+    缺 = 这一章要么没有 `chapter_summary_head` 行，要么 head 指向的行是
+    RETRACTED（撤回 = 当作没有总结）。有且 ACTIVE = 不缺。
+    """
     row = conn.execute(
         """
-        SELECT 1 FROM chapter_summary_head
-         WHERE chapter_id = :cid
-           AND (current_summary_id IS NULL
-                OR EXISTS (SELECT 1 FROM chapter_summary s
-                            WHERE s.id = chapter_summary_head.current_summary_id
-                              AND s.status = 'RETRACTED'))
+        SELECT 1
+          FROM chapter_summary_head h
+         WHERE h.chapter_id = :cid
+           AND h.current_summary_id IS NOT NULL
+           AND EXISTS (
+                 SELECT 1 FROM chapter_summary s
+                  WHERE s.id = h.current_summary_id
+                    AND s.status = 'ACTIVE'
+               )
         """,
         {"cid": chapter_id},
     ).fetchone()
@@ -312,6 +319,7 @@ def ensure_refresh_coverage(
     ruleset_hash: str,
     expected_summary_head: str | None = None,
     missing_check: Callable[[Connection, str, str, str], int] | None = None,
+    skip_summary: bool = False,
 ) -> CoverageDecision:
     """同 hash 保存的幂等补缺：只为缺失分支建 coverage attempt，不重复付费。
 
@@ -340,6 +348,9 @@ def ensure_refresh_coverage(
         mask = _default_missing_mask(
             conn, project_id, chapter_id, run_id, snapshot_id, generation, ruleset_epoch
         )
+    if skip_summary:
+        # 当前章防抖（2026-08-18 §3）：作者正盯着的那一章不排总结分支，别的照跑。
+        mask &= ~BRANCH_SUMMARY
 
     if mask == 0:
         return CoverageDecision(0, None, reused=True, processing="reused")

@@ -128,6 +128,8 @@ const DEFAULT: Handler[] = [
   { method: "DELETE", match: /\/snapshots\//, body: { deleted: true } },
   { method: "POST", match: /\/nodes$/, body: fixtures.createNode },
   { method: "POST", match: /\/aliases$/, body: fixtures.createAlias },
+  // 当前章焦点（2026-08-18 §3）：免费心跳，只记位置。
+  { method: "POST", match: /\/focus$/, body: { chapter: 1, project_id: "project:ID1" } },
   // 人物基础信息（Task 11/15）：profile 读 + 别名增/撤回。
   { match: /\/characters\/[^/]+\/profile$/, body: fixtures.characterProfile },
   { method: "POST", match: /\/characters\/[^/]+\/aliases$/, body: fixtures.aliasCreated },

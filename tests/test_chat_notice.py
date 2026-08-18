@@ -434,7 +434,7 @@ def test_migration_012_runs_on_a_book_that_already_has_three_messages(
     conn = _at_version_11(tmp_path / "book.db")
     before = [dict(r) for r in conn.execute("SELECT * FROM chat_message ORDER BY seq")]
 
-    assert migrate(conn) == 23
+    assert migrate(conn) == 24
     after = [dict(r) for r in conn.execute("SELECT * FROM chat_message ORDER BY seq")]
     # **只比 011 那时就有的那几列。** 012 之后的迁移还会往这张表上加列（016 的
     # `rule_until` 就是一个），而这条测试量的是「012 重建整张表时有没有漏掉一列」——

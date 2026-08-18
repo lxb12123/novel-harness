@@ -1142,6 +1142,11 @@ def _trigger_refresh(
     if current is None:
         return
     generation = store.current_chapter_generation(project_id, chapter) or 1
+    # 当前章防抖（2026-08-18 §3）：作者正盯着的那一章，保存时**不排总结**；
+    # 验证/抽取照跑。切走 / 心跳过期后才重新够格（被清的位在下一次触发时补上）。
+    from ..focus import is_focused
+
+    skip_summary = is_focused(conn, project_id, chapter)
     try:
         from ..chapter_refresh import ensure_refresh_coverage
 
@@ -1153,6 +1158,7 @@ def _trigger_refresh(
             generation=generation,
             ruleset_epoch=_current_ruleset(conn, project_id)[0],
             ruleset_hash=_current_ruleset(conn, project_id)[1],
+            skip_summary=skip_summary,
         )
     except Exception:
         # 触发失败不把「保存成功」拖下水：正文已落库，dispatcher 启动恢复会再扫。
@@ -1165,6 +1171,33 @@ def _current_ruleset(conn: Any, project_id: str) -> tuple[int, str]:
     from ..checks.service import current_ruleset
 
     return current_ruleset(conn, project_id)
+
+
+class FocusBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    chapter: int = Field(ge=1)
+
+
+@app.post("/api/projects/{project_id}/focus")
+def report_focus(
+    body: FocusBody,
+    proj: Any = Depends(load_project),
+    conn: Any = Depends(get_conn),
+) -> dict[str, Any]:
+    """作者换章/开书时上报「我现在在第 N 章」（2026-08-18 §3 当前章防抖）。
+
+    **免费心跳，绝不触发任何总结/抽取/付费**：只 upsert「当前章」位置 + 心跳时间。
+    它回答的唯一问题是「作者眼睛现在停在哪一章」——保存传的 chapter 是「保存哪一章」，
+    两者不相等。读端（保存触发/调度器）靠它决定给不给某章排总结：正写的那章不排，
+    切走/心跳过期后重新够格。**不校验章号存在**：开书汇报的是「我要停在哪」，不要求
+    那一章已经进库。
+    """
+    from ..focus import report_focus as _set_focus
+
+    _set_focus(conn, proj.id, body.chapter)
+    conn.commit()
+    return {"chapter": body.chapter, "project_id": proj.id}
 
 # ⚠️ **场景块那两条路由（`GET`/`PUT …/chapters/{n}/scenes`）2026-08-14 删了**
 # （[ADR 0027](../../../docs/adr/0027-scene-blocks-cut.md)），连同 `SceneWrite` 和 R4。
