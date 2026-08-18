@@ -1623,14 +1623,18 @@
     "errors": [
       "没能连上你配置的模型服务"
     ],
+    "fencing_token": 0,
     "finished_at": "<ts>",
     "id": "extraction_run:ID56",
     "model_call_id": null,
     "project_id": "project:ID1",
     "prompt_hash": "prompt:3",
     "proposal_count": 0,
+    "required_ruleset_epoch": null,
+    "required_ruleset_hash": null,
     "schema_version": "m4.analysis.v1",
     "snapshot_id": "snapshot:ID19",
+    "source_generation": null,
     "started_at": "<ts>",
     "status": "FAILED",
     "valid_event_count": 3
@@ -1640,14 +1644,18 @@
     "created_at": "<ts>",
     "discarded_event_count": 1,
     "errors": [],
+    "fencing_token": 0,
     "finished_at": "<ts>",
     "id": "extraction_run:ID42",
     "model_call_id": "call:ID43",
     "project_id": "project:ID1",
     "prompt_hash": "prompt:1",
     "proposal_count": 2,
+    "required_ruleset_epoch": null,
+    "required_ruleset_hash": null,
     "schema_version": "m4.analysis.v1",
     "snapshot_id": "snapshot:ID11",
+    "source_generation": null,
     "started_at": "<ts>",
     "status": "SUCCEEDED",
     "valid_event_count": 3
@@ -1865,6 +1873,7 @@
       "chapter_number": 1,
       "confidence": null,
       "created_at": "<ts>",
+      "currentness": "CURRENT",
       "decision_log_id": null,
       "edge_ids": [],
       "event_ids": [
@@ -1891,7 +1900,8 @@
       "schema_version": "m4.analysis.v1",
       "snapshot_id": "snapshot:ID11",
       "status": "PENDING",
-      "summary": ""
+      "summary": "",
+      "superseded_by_snapshot_id": null
     },
     {
       "audit_envelope": null,
@@ -1899,6 +1909,7 @@
       "chapter_number": 1,
       "confidence": null,
       "created_at": "<ts>",
+      "currentness": "CURRENT",
       "decision_log_id": null,
       "edge_ids": [
         "edge:ID24"
@@ -1950,7 +1961,8 @@
       "schema_version": "m4.analysis.v1",
       "snapshot_id": "snapshot:ID11",
       "status": "PENDING",
-      "summary": ""
+      "summary": "",
+      "superseded_by_snapshot_id": null
     },
     {
       "audit_envelope": null,
@@ -1958,6 +1970,7 @@
       "chapter_number": 1,
       "confidence": null,
       "created_at": "<ts>",
+      "currentness": "CURRENT",
       "decision_log_id": null,
       "edge_ids": [],
       "event_ids": [],
@@ -1987,7 +2000,8 @@
       "schema_version": "m4.analysis.v1",
       "snapshot_id": "snapshot:ID11",
       "status": "PENDING",
-      "summary": ""
+      "summary": "",
+      "superseded_by_snapshot_id": null
     }
   ],
   "provisionalConfirm": {

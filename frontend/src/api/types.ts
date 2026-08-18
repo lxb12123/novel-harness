@@ -678,7 +678,12 @@ export interface ProvisionalConfirmation {
   edges: unknown[];
 }
 
-export type ExtractionRunStatus = "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED";
+export type ExtractionRunStatus =
+  | "PENDING"
+  | "RUNNING"
+  | "SUCCEEDED"
+  | "FAILED"
+  | "SUPERSEDED";
 
 export interface ExtractionRun {
   id: string;

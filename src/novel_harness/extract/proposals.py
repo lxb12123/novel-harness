@@ -15,6 +15,7 @@ from ..events import (
     EventView,
     ProposalAlreadyResolved,
     ProposalNotFound,
+    ProposalObsolete,
     ProposalRecord,
     ProposalResolutionMark,
     ProposalStore,
@@ -394,6 +395,10 @@ def review_proposal(
         if proposal.status.value != "PENDING":
             raise ProposalAlreadyResolved(
                 f"proposal {proposal_id} 已是 {proposal.status.value}，不能再次处理"
+            )
+        if proposal.currentness == "OBSOLETE":
+            raise ProposalObsolete(
+                f"proposal {proposal_id} 锚的正文已经不是当前版本，先看看新正文"
             )
         current = project.require_canon_version(conn, proposal.project_id)
         if review.expected_canon_version != current:

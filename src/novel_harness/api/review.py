@@ -35,6 +35,7 @@ from ..events import (
     EventStore,
     ProposalAlreadyResolved,
     ProposalNotFound,
+    ProposalObsolete,
     ProposalRecord,
     ProposalStore,
     ProposalValidationError,
@@ -427,6 +428,10 @@ def _review_error(exc: Exception) -> HTTPException:
         )
     if isinstance(exc, ProposalAlreadyResolved):
         return _conflict("proposal_already_resolved")
+    if isinstance(exc, ProposalObsolete):
+        # 409 而不是 404：提案还在（历史可查），只是它锚的正文已经不是当前。
+        # 作者该做的是**先看看新正文**，不是重发一次旧裁决。
+        return _conflict("proposal_obsolete", message=str(exc))
     if isinstance(exc, ConfirmationConflict):
         return _conflict("confirmation_conflict", message=str(exc))
     if isinstance(exc, ProposalShapeError | ProposalValidationError):

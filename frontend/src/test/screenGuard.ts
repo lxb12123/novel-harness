@@ -67,7 +67,7 @@ export const MACHINE = /\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b/g;
  *     少一个就红——枚举加一行、这儿不补，CI 拦得住。
  *  3. 节点类别是驼峰（`Character`），同理只能列，同样由那条 pytest 钉住。 */
 export const ENGINE_ENUM =
-  /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b|\b(?:KNOWS|BELIEVES|UNKNOWN|CANON|PROVISIONAL|PLANNED|REJECTED|RETRACTED|ACTIVE|STALE|FRESH|OWNS|PENDING|RUNNING|SUCCEEDED|FAILED|ACCEPTED|EDITED|AMBIGUOUS|EXACT|FUZZY|NONE)\b|\b(?:Character|Location|Faction|Secret|Foreshadow|Object|StateDim|Chapter)\b/g;
+  /\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b|\b(?:KNOWS|BELIEVES|UNKNOWN|CANON|PROVISIONAL|PLANNED|REJECTED|RETRACTED|ACTIVE|STALE|FRESH|OWNS|PENDING|RUNNING|SUCCEEDED|FAILED|SUPERSEDED|ACCEPTED|EDITED|AMBIGUOUS|EXACT|FUZZY|NONE)\b|\b(?:Character|Location|Faction|Secret|Foreshadow|Object|StateDim|Chapter)\b/g;
 
 /** 内部主键的形状：`字母开头的前缀` + `:` + `标识`。
  *

@@ -216,6 +216,16 @@ class ProposalRecord(ProposalCreate):
     resolved_canon_version: int | None = Field(default=None, ge=0)
     audit_envelope: ProposalAuditSnapshot | None = None
 
+    currentness: Literal["CURRENT", "OBSOLETE"] = "CURRENT"
+    """正文时效（020 / Task 9）：OBSOLETE 表示「它锚的那版正文已经不是当前了」。
+
+    `status` 仍只表达作者裁决（PENDING/ACCEPTED/…）；OBSOLETE 的 PENDING 提案
+    不出现在当前待确认列表、直接审阅返回 409，但历史查询仍读得到——它不伪造
+    ACCEPTED/REJECTED resolution metadata。"""
+
+    superseded_by_snapshot_id: str | None = None
+    """把这一条顶成 OBSOLETE 的那一版正文快照。"""
+
     node_refs: tuple[NodeRef, ...] = ()
     """`items` 里那些**裸 id** 对应的显示名（id / label / name）。
 

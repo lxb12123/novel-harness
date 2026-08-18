@@ -1199,10 +1199,20 @@ class SnapshotUsage(BaseModel):
     """引这条快照当审计锚的证据数。"""
     extraction_runs: int = Field(ge=0)
     proposal_sets: int = Field(ge=0)
+    extraction_analyses: int = Field(ge=0)
+    """规范 analysis JSON（020 / Task 9）引用它的条数。"""
+    extraction_applications: int = Field(ge=0)
+    """机器事实归属的 generation application（020 / Task 9）引用它的条数。"""
 
     @property
     def total(self) -> int:
-        return self.evidence + self.extraction_runs + self.proposal_sets
+        return (
+            self.evidence
+            + self.extraction_runs
+            + self.proposal_sets
+            + self.extraction_analyses
+            + self.extraction_applications
+        )
 
     def is_free(self) -> bool:
         """没有任何东西引着 = 删了不会让谁失去出处。"""

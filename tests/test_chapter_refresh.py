@@ -20,6 +20,7 @@ from novel_harness.chapter_refresh import (
     BRANCH_SUMMARY,
     BranchContext,
     ChapterRefreshCoordinator,
+    activate_extraction_application,
     claim_attempt,
     create_manual_attempt,
     ensure_refresh_coverage,
@@ -371,3 +372,93 @@ def test_coverage_is_idempotent_and_manual_creates_new_intent(
         trigger_key=f"manual:{time.time_ns()}",
     )
     assert manual != first.attempt_id
+
+
+def test_extraction_application_head_cas_keeps_only_the_latest_intent_current(
+    conn: Connection, tmp_path: Path
+) -> None:
+    """020 / Task 9：同一 generation 的多个合法 attempt 竞争同一个 application head。
+
+    各自持有合法 fencing token，但只有 `intent_seq` 最新者能成为 CURRENT；
+    DB 的 partial unique（每个 refresh run 至多一条 CURRENT）再兜一道底——
+    两个 attempt 不能各自建 head 绕过竞争（不变量 22）。
+    """
+    pid, chapter_id = _seed_chapter(conn, tmp_path)
+    snapshot_id = _snapshot_id(conn, pid)
+    run_id = create_manual_attempt(
+        conn,
+        project_id=pid,
+        chapter_id=chapter_id,
+        snapshot_id=snapshot_id,
+        generation=1,
+        ruleset_epoch=1,
+        ruleset_hash="x",
+        trigger_key="run:a",
+    )
+    # create_manual_attempt 返回的是 attempt id，不是 run id —— 取 run。
+    row = conn.execute(
+        "SELECT run_id FROM chapter_refresh_attempt WHERE id = ?", (run_id,)
+    ).fetchone()
+    refresh_run_id = row["run_id"]
+
+    # analysis_run_id 是真实存在的 extraction_run（020 的 FK 不许悬空引用）。
+    def seed_run(run_id: str) -> None:
+        # prompt_hash 不同：同一 generation 的 save/manual/ruleset attempt 可以
+        # 有不同的 content-addressed run，但不能各自建 head 绕过竞争（不变量 22）。
+        conn.execute(
+            "INSERT INTO extraction_run (id, project_id, chapter_number, snapshot_id, "
+            "status, errors_json, schema_version, prompt_hash, source_generation, "
+            "required_ruleset_epoch, required_ruleset_hash) "
+            "VALUES (?, ?, 1, ?, 'SUCCEEDED', '[]', 'm4.analysis.v1', ?, 1, 1, 'x')",
+            (run_id, pid, snapshot_id, run_id + "-prompt"),
+        )
+
+    seed_run("run:analysis-a")
+    app_a, status_a = activate_extraction_application(
+        conn,
+        project_id=pid,
+        chapter_id=chapter_id,
+        snapshot_id=snapshot_id,
+        generation=1,
+        analysis_run_id="run:analysis-a",
+        ruleset_epoch=1,
+        ruleset_hash="x",
+    )
+    assert status_a == "CURRENT"
+    assert conn.execute(
+        "SELECT intent_seq FROM extraction_application_head WHERE refresh_run_id = ?",
+        (refresh_run_id,),
+    ).fetchone()["intent_seq"] == 1
+
+    # 第二次 intent 前进 → 它取代 a 成为 CURRENT（+1），a 退休留审计。
+    seed_run("run:analysis-b")
+    app_b, status_b = activate_extraction_application(
+        conn,
+        project_id=pid,
+        chapter_id=chapter_id,
+        snapshot_id=snapshot_id,
+        generation=1,
+        analysis_run_id="run:analysis-b",
+        ruleset_epoch=1,
+        ruleset_hash="x",
+    )
+    assert status_b == "CURRENT"
+    # partial unique：整个 refresh run 只有一条 CURRENT —— 是最新的 b。
+    current = conn.execute(
+        "SELECT id FROM extraction_application WHERE refresh_run_id = ? AND status = 'CURRENT'",
+        (refresh_run_id,),
+    ).fetchone()
+    assert current["id"] == app_b
+    # 旧的 a：SUPERSEDED（审计保留，不删）。
+    a_row = conn.execute(
+        "SELECT status FROM extraction_application WHERE id = ?", (app_a,)
+    ).fetchone()
+    assert a_row["status"] == "SUPERSEDED"
+    # head intent 单调前进，且只指向最新那条。
+    head = conn.execute(
+        "SELECT intent_seq, current_application_id FROM extraction_application_head "
+        "WHERE refresh_run_id = ?",
+        (refresh_run_id,),
+    ).fetchone()
+    assert head["intent_seq"] == 2
+    assert head["current_application_id"] == app_b

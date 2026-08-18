@@ -186,6 +186,121 @@ def _application_missing(conn: Connection, run_id: str) -> bool:
     return row is None
 
 
+def activate_extraction_application(
+    conn: Connection,
+    *,
+    project_id: str,
+    chapter_id: str,
+    snapshot_id: str,
+    generation: int,
+    analysis_run_id: str,
+    ruleset_epoch: int | None,
+    ruleset_hash: str | None,
+    resolution_hash: str | None = None,
+) -> tuple[str, str]:
+    """抽取 run 成功后，在 (project, chapter, generation) 的 refresh run 上建立 application。
+
+    返回 `(application_id, status)`，status 是 `CURRENT` 或 `SUPERSEDED`。
+
+    ── 为什么必须走 head 的 intent CAS（020 / Task 9）────────────────────────
+
+    同一个 generation 可以有多个合法 attempt（save / manual / ruleset / replay），
+    各自持有自己的 fencing token。它们竞争的是**同一个** `extraction_application_head`
+    （以 refresh run 为主键）：建 application 时原子递增 `intent_seq`，只有最新 intent
+    可以成为 CURRENT；旧 intent 的 application 即使模型晚到也只能留审计。
+    DB 的 partial unique（每个 refresh run 至多一条 CURRENT）再兜一道底——
+    两个 attempt 不能各自建 head 绕过竞争。
+
+    `conn` 必须在**无外层事务**的连接上（调用方已把 ingest 业务事务 commit 完）。
+    """
+    run = find_run(conn, project_id, chapter_id, generation)
+    if run is None:
+        run_id = create_run(
+            conn,
+            project_id=project_id,
+            chapter_id=chapter_id,
+            snapshot_id=snapshot_id,
+            generation=generation,
+        )
+    else:
+        run_id = run["id"]
+    # 原子递增 intent：两个并发 attempt 各自拿到不同序号，且序号单调。
+    row = conn.execute(
+        """
+        INSERT INTO extraction_application_head (refresh_run_id, intent_seq)
+        VALUES (?, 1)
+        ON CONFLICT (refresh_run_id)
+        DO UPDATE SET intent_seq = extraction_application_head.intent_seq + 1,
+                      updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+        RETURNING intent_seq
+        """,
+        (run_id,),
+    ).fetchone()
+    intent_seq = int(row["intent_seq"])
+    application_id = new_id(EntityType.EXTRACTION_APPLICATION, project_id)
+    conn.execute(
+        """
+        INSERT INTO extraction_application (
+            id, project_id, refresh_run_id, analysis_run_id, snapshot_id,
+            source_generation, resolution_hash, ruleset_epoch, ruleset_hash,
+            required_intent_seq, status
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'STAGED')
+        """,
+        (
+            application_id,
+            project_id,
+            run_id,
+            analysis_run_id,
+            snapshot_id,
+            generation,
+            resolution_hash,
+            ruleset_epoch,
+            ruleset_hash,
+            intent_seq,
+        ),
+    )
+    # 只有 head 的**最新 intent** 可以成为 CURRENT：先退休旧 CURRENT（它的 intent
+    # 已经落后），再把这条 CAS 成 CURRENT。partial unique 防止两个 intent 同时自称
+    # CURRENT，但 CAS 前置的「退休旧 CURRENT」才是语义闸——SQLite 不保证两个
+    # 事务按 intent 顺序提交，必须显式比 intent。
+    conn.execute(
+        """
+        UPDATE extraction_application
+           SET status = 'SUPERSEDED'
+         WHERE refresh_run_id = :run_id
+           AND status = 'CURRENT'
+           AND required_intent_seq < :intent
+        """,
+        {"run_id": run_id, "intent": intent_seq},
+    )
+    activated = conn.execute(
+        """
+        UPDATE extraction_application
+           SET status = 'CURRENT'
+         WHERE id = :app_id
+           AND status = 'STAGED'
+           AND required_intent_seq = (
+                 SELECT intent_seq FROM extraction_application_head
+                  WHERE refresh_run_id = :run_id
+               )
+        """,
+        {"app_id": application_id, "run_id": run_id},
+    )
+    status = "CURRENT" if activated.rowcount == 1 else "SUPERSEDED"
+    if status == "SUPERSEDED":
+        conn.execute(
+            "UPDATE extraction_application SET status = 'SUPERSEDED' WHERE id = ?",
+            (application_id,),
+        )
+    conn.execute(
+        "UPDATE extraction_application_head SET current_application_id = ? "
+        "WHERE refresh_run_id = ? AND intent_seq = ?",
+        (application_id if status == "CURRENT" else None, run_id, intent_seq),
+    )
+    conn.commit()
+    return application_id, status
+
+
 def ensure_refresh_coverage(
     conn: Connection,
     *,

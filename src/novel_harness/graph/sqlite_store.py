@@ -711,6 +711,11 @@ class SqliteStoryGraph:
             queries.bump_canon_once_if_retired_canon(
                 self._conn, spec.project_id, retirement
             )
+            # 020 / Task 9：正文换了，锚在旧快照上的 PENDING 提案退出待确认
+            # （status 仍是 PENDING 审计状态）。与快照提交同一事务（不变量 20）。
+            queries.supersede_obsolete_proposals(
+                self._conn, spec.project_id, spec.number, stored.snapshot_id
+            )
             return ChapterCommitToken(
                 project_id=spec.project_id,
                 chapter_id=stored.id,

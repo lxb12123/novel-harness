@@ -89,6 +89,10 @@ class EntityType(StrEnum):
     DRAFT_CANDIDATE = "draft"
     REFRESH_RUN = "refresh_run"
     REFRESH_ATTEMPT = "refresh_attempt"
+    EXTRACTION_APPLICATION = "application"
+    """020：一个 chapter generation 的机器事实归属（`extraction_application`）。"""
+    EXTRACTION_ANALYSIS = "analysis"
+    """020：规范 analysis JSON 的持久化（`extraction_analysis`）。"""
 
     PROJECT = "project"
     """只由 `new_project_id()` 用。**项目 ID 不能走 `new_id()`**——见那个函数的 docstring。"""

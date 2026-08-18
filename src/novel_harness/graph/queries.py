@@ -1134,16 +1134,19 @@ def chapter_snapshots(
 def snapshot_usage(conn: sqlite3.Connection, snapshot_id: str) -> SnapshotUsage:
     """这条快照被多少条记录引着。**删之前问这个。**
 
-    三个计数各对应一张外键到 `chapter_snapshot` 且**没有 CASCADE** 的表。写死这三张
-    是有意的：新增第四个引用方时这里不会自动跟上，但那时 `delete_snapshot` 会撞外键
+    五个计数各对应一张外键到 `chapter_snapshot` 且**没有 CASCADE** 的表。写死这五张
+    是有意的：新增第六个引用方时这里不会自动跟上，但那时 `delete_snapshot` 会撞外键
     直接抛——**宁可炸也不要静默删掉别人的出处**（这正是不加 CASCADE 的理由）。
+    020 补的两张：`extraction_analysis` / `extraction_application` 都引 snapshot_id。
     """
     cur = conn.execute(
         """
         SELECT
-          (SELECT COUNT(*) FROM evidence       WHERE chapter_snapshot_id = :sid) AS evidence,
-          (SELECT COUNT(*) FROM extraction_run WHERE snapshot_id         = :sid) AS extraction_runs,
-          (SELECT COUNT(*) FROM proposal_set   WHERE snapshot_id         = :sid) AS proposal_sets
+          (SELECT COUNT(*) FROM evidence              WHERE chapter_snapshot_id = :sid) AS evidence,
+          (SELECT COUNT(*) FROM extraction_run        WHERE snapshot_id          = :sid) AS extraction_runs,
+          (SELECT COUNT(*) FROM proposal_set          WHERE snapshot_id          = :sid) AS proposal_sets,
+          (SELECT COUNT(*) FROM extraction_analysis   WHERE snapshot_id          = :sid) AS extraction_analyses,
+          (SELECT COUNT(*) FROM extraction_application WHERE snapshot_id         = :sid) AS extraction_applications
         """,
         {"sid": snapshot_id},
     )
@@ -1424,6 +1427,51 @@ def retire_stale_extractor_facts(
             1 for row in retired_events if row["information_scope"] == InformationScope.CANON
         ),
     )
+
+
+def mark_canon_event_cast_author(
+    conn: sqlite3.Connection,
+    event_id: str,
+    project_id: str,
+    decision_log_id: str,
+) -> None:
+    """020 / Task 9：作者改过名单的整套 incidence 视为作者覆盖，机器重放不得再碰。
+
+    `cast_owner` 是「当前解释由谁接管」；`story_event.source` 仍是 extractor 起源
+    （正文换快照时旧机器事实照旧退休、作者修正不随它走）。SQL 只住 graph 层。
+    """
+    conn.execute(
+        "UPDATE story_event SET cast_owner = 'author', cast_decision_log_id = ? "
+        "WHERE id = ? AND project_id = ?",
+        (decision_log_id, event_id, project_id),
+    )
+
+
+def supersede_obsolete_proposals(
+    conn: sqlite3.Connection,
+    project_id: str,
+    chapter_number: int,
+    new_snapshot_id: str,
+) -> int:
+    """这一章保存了新正文：PENDING 提案若锚的不是新快照 → OBSOLETE（020 / Task 9）。
+
+    必须在 `commit_chapter_snapshot` 的**同一事务**里调用（不变量 20）：正文已变
+    和旧提案退出待确认不能拆成两个原子性。status 一字不改（003 的审计触发器
+    只把非 PENDING 当作者裁决），`superseded_by_snapshot_id` 记下是谁顶的。
+    """
+    cur = conn.execute(
+        """
+        UPDATE proposal_set
+           SET currentness = 'OBSOLETE',
+               superseded_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+               superseded_by_snapshot_id = :new_snapshot
+         WHERE project_id = :pid AND chapter_number = :chapter
+           AND status = 'PENDING' AND currentness = 'CURRENT'
+           AND snapshot_id IS NOT NULL AND snapshot_id <> :new_snapshot
+        """,
+        {"new_snapshot": new_snapshot_id, "pid": project_id, "chapter": chapter_number},
+    )
+    return cur.rowcount
 
 
 def bump_canon_once_if_retired_canon(
