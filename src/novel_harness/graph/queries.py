@@ -1951,3 +1951,68 @@ def stale_alias_evidence_for_snapshot(
         (snapshot_id, project_id),
     )
     return cur.rowcount
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 抽取别名 identity-first（Task 12）—— alias/evidence SQL 的唯一住址
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def active_alias_surfaces(conn: sqlite3.Connection, project_id: str) -> set[str]:
+    """全项目 ACTIVE surface 集合（判「当前未映射」的原料）。"""
+    rows = conn.execute(
+        "SELECT surface FROM alias WHERE project_id = ? AND status = 'ACTIVE'",
+        (project_id,),
+    ).fetchall()
+    return {str(r[0]) for r in rows}
+
+
+def existing_active_alias(
+    conn: sqlite3.Connection, project_id: str, surface: str
+) -> dict[str, Any] | None:
+    """surface 的 ACTIVE 别名；`ambiguous=True` = 它指向 >1 个不同人物。"""
+    rows = conn.execute(
+        "SELECT id, node_id FROM alias "
+        "WHERE project_id = ? AND surface = ? AND status = 'ACTIVE'",
+        (project_id, surface),
+    ).fetchall()
+    if not rows:
+        return None
+    distinct = {str(r["node_id"]) for r in rows}
+    return {
+        "id": str(rows[0]["id"]),
+        "node_id": str(rows[0]["node_id"]),
+        "ambiguous": len(distinct) > 1,
+    }
+
+
+def insert_alias_evidence_quote(
+    conn: sqlite3.Connection,
+    *,
+    evidence_id: str,
+    project_id: str,
+    chapter_id: str,
+    chapter_snapshot_id: str,
+    quote_text: str,
+    para_index: int,
+) -> None:
+    """自动别名的证据行（quote 必须逐字落锚，§4.5 条件 3 的锚侧）。"""
+    from ..decisions import quote_hash
+
+    conn.execute(
+        """
+        INSERT INTO evidence (
+            id, project_id, chapter_id, chapter_snapshot_id,
+            para_index, quote_text, quote_sha256, para_index_hint, occurrence_k
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)
+        """,
+        (
+            evidence_id,
+            project_id,
+            chapter_id,
+            chapter_snapshot_id,
+            para_index,
+            quote_text,
+            quote_hash(quote_text),
+        ),
+    )

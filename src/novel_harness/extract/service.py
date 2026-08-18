@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
+from .. import project as project_mod
 from ..db import Connection
 from ..events import EventStore, ProposalCreate, ProposalStore, ProvisionalEventSpec
 from ..graph import (
@@ -80,7 +81,38 @@ class ExtractionService:
         self._profile_main.clear()
         with self._graph.transaction():
             canon_version = self._validate_context(project_id, chapter)
-            resolutions = resolution_map(self._graph, project_id, analysis)
+            # ── identity-first（Task 12）：先落地模型提议的称呼，再解析事件 ──
+            # 不先做这一下，「凤辣子」会被 resolve 成 unknown → 整条事件被丢 / 误进
+            # new_character bucket，同一个已出场的人物被登记两遍。
+            from .aliases import resolve_analysis_identity
+
+            generation_row = self._conn.execute(
+                "SELECT snapshot_generation FROM chapter "
+                "WHERE project_id = ? AND id = ?",
+                (project_id, chapter.chapter_id),
+            ).fetchone()
+            source_generation = (
+                int(generation_row["snapshot_generation"])
+                if generation_row is not None
+                else None
+            )
+            identity = resolve_analysis_identity(
+                self._conn,
+                self._graph,
+                project_id,
+                analysis,
+                chapter_id=chapter.chapter_id,
+                chapter_snapshot_id=chapter.snapshot_id,
+                source_generation=source_generation,
+                extraction_application_id=None,
+            )
+            if identity.ambiguous_candidates:
+                # 歧义称呼 → 进入 alias_resolution 聚类提案（§4.5），不替作者挑。
+                self._propose_identity_ambiguities(
+                    project_id, chapter, identity.ambiguous_candidates
+                )
+            # 重建 resolution_map：自动 alias 已落库，新称呼现在能解析回人了。
+            resolutions = self._resolutions_after_identity(project_id, analysis)
             paras = paragraphs(chapter.text)
             discarded: list[DiscardReason] = []
             event_ids: list[str] = []
@@ -242,7 +274,7 @@ class ExtractionService:
         row = self._conn.execute(
             """
             SELECT chapter.id AS chapter_id, chapter.number, snapshot.text,
-                   project.canon_version
+                   chapter.snapshot_generation, project.canon_version
             FROM chapter_snapshot AS snapshot
             JOIN chapter AS chapter ON chapter.id = snapshot.chapter_id
             JOIN project AS project ON project.id = chapter.project_id
@@ -442,3 +474,50 @@ class ExtractionService:
             if self._profile_main[character_id]:
                 return True
         return False
+
+    def _resolutions_after_identity(
+        self, project_id: str, analysis: RawChapterAnalysis
+    ) -> dict[str, SurfaceResolution]:
+        """identity 落地后重建 resolution_map：新 alias 现在能解析回人了。"""
+        return resolution_map(self._graph, project_id, analysis)
+
+    def _propose_identity_ambiguities(
+        self,
+        project_id: str,
+        chapter: ChapterText,
+        ambiguous: Sequence[tuple[str, Sequence[object]]],
+    ) -> None:
+        """歧义称呼 → `alias_resolution` 聚类提案（§4.5），不替作者挑。
+
+        提案保留受影响 raw surface——作者确认归属后走确定性重放，不能重新付费
+        调模型（Task 12 / §4.5）。
+        """
+        for surface, people in ambiguous:
+            item = {
+                "surface": surface,
+                "candidates": [
+                    {
+                        "id": getattr(p, "id", None),
+                        "name": getattr(p, "name", None),
+                        "label": getattr(p, "label", None),
+                    }
+                    for p in people
+                ],
+            }
+            self._proposals.create(
+                ProposalCreate(
+                    project_id=project_id,
+                    kind="alias_resolution",
+                    summary=f"「{surface}」可能指这几个人，系统不替你挑。",
+                    items=[item],
+                    chapter_number=chapter.number,
+                    snapshot_id=chapter.snapshot_id,
+                    base_canon_version=project_mod.require_canon_version(
+                        self._conn, project_id
+                    ),
+                    schema_version=ANALYSIS_SCHEMA_VERSION,
+                    prompt_hash="identity-first",
+                )
+            )
+
+
