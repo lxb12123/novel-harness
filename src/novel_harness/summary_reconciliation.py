@@ -5,6 +5,10 @@
 解决旧的 OPEN，不新建。模型失败、JSON 不合法或来源已变，分别记 FAILED 或
 SUPERSEDED，**不创建新通知**。
 
+**通知单源化（2026-08-18 文档 §5）：** 冲突通知只在「作者动作落在总结上」时
+冒出来——违反 `_current_summary_source == "author"`（即当前 head 总结是机器写 /
+机器覆写的）绝不建通知。正文→总结方向（写与覆写）是自动对齐，永远安静。
+
 ── 它和 `checks/` 的关系 ──────────────────────────────────────────────────
 `checks/` 是**正文验证器**：对不可变快照跑确定性规则，report 是功能闸门。
 总结核对是**语义模型核对**（ADR 0005 的窄例外）——它不进入 checks/、不阻断
@@ -275,6 +279,48 @@ def claim_next_outbox(
     )
 
 
+def _current_summary_source(
+    conn: Connection, task: ReconcileTask
+) -> Literal["model", "author"] | None:
+    """subject 当前 head 总结是谁写的（通知单源化，文档 §5）。
+
+    - `chapter_summary`（subject_id = chapter_id）→ 章总结 head 的 `source`;
+    - `proposal_event` / `canon_event`（subject_id = event_id）→ 事件摘要
+      head 的 `source`;
+    - head 不在 / 不是 ACTIVE → `None`（没有「当前总结」可核对，自然不通知）。
+    机器写或覆写会把 head 顶成 `model`，作者手动保存才是 `author`——这条判据
+    就是「作者动作落在总结上」的落地：正文自动对齐永远安静，作者手改对不上才响。
+    """
+    if task.subject_type == "chapter_summary":
+        row = conn.execute(
+            """
+            SELECT s.source
+              FROM chapter_summary_head h
+              JOIN chapter_summary s ON s.id = h.current_summary_id
+              JOIN chapter c ON c.id = h.chapter_id
+             WHERE c.project_id = :pid AND c.id = :subject
+               AND s.status = 'ACTIVE'
+             LIMIT 1
+            """,
+            {"pid": task.project_id, "subject": task.subject_id},
+        ).fetchone()
+        return None if row is None else str(row["source"])
+    if task.subject_type in ("proposal_event", "canon_event"):
+        row = conn.execute(
+            """
+            SELECT v.source
+              FROM event_summary_head h
+              JOIN event_summary_version v ON v.id = h.current_version_id
+             WHERE h.event_id = :subject AND v.project_id = :pid
+               AND v.status = 'ACTIVE'
+             LIMIT 1
+            """,
+            {"pid": task.project_id, "subject": task.subject_id},
+        ).fetchone()
+        return None if row is None else str(row["source"])
+    return None
+
+
 def finalize_reconciliation_run(
     conn: Connection,
     task: ReconcileTask,
@@ -290,8 +336,11 @@ def finalize_reconciliation_run(
 ) -> None:
     """把核对 run 定稿，并据结果 upsert/resolve 系统通知（同事务）。
 
-    - `possible_conflict` → upsert OPEN（dedupe = kind+subject+summary+source，
-      不变量 10；already IGNORED/RESOLVED 不重开）；
+    - `possible_conflict` **且当前 head 总结是作者写的** → upsert OPEN
+      （dedupe = kind+subject+summary+source，不变量 10；already
+      IGNORED/RESOLVED 不重开）；
+    - `possible_conflict` 但 head 已被机器写/覆写（`source == model`）→ **不建**
+      通知（单源化：正文自动对齐安静），照常走下面的 SUCCEEDED 解决旧 OPEN；
     - `supported` → 解决该 subject 的旧 OPEN（IGNORED 保留作审计）；
     - FAILED / SUPERSEDED → 只记 run，不新建冲突通知。
     """
@@ -322,7 +371,14 @@ def finalize_reconciliation_run(
         "WHERE id = :outbox_id AND fencing_token = :fence",
         {"status": status, "outbox_id": task.outbox_id, "fence": task.fencing_token},
     )
-    if possible_conflict and status == "SUCCEEDED" and summary_sha256 and source_sha256:
+    authored = _current_summary_source(conn, task) == "author"
+    if (
+        possible_conflict
+        and status == "SUCCEEDED"
+        and summary_sha256
+        and source_sha256
+        and authored
+    ):
         dedupe = _sha256_hex(f"{task.subject_type}\x00{task.subject_id}"
                              f"\x00{summary_sha256}\x00{source_sha256}")
         head = subject_title or ""
