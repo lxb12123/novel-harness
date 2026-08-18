@@ -20,7 +20,8 @@ export type Tab =
   | "evidence"
   | "summary"
   | "check"
-  | "review";
+  | "review"
+  | "notifications";
 /** 当前页：工作台 / 活动记录。
  *
  *  **`"prep"`（章节准备）2026-08-13 删了**，理由记在 `TopBar.tsx` 那段注释里

@@ -160,6 +160,14 @@ const DEFAULT: Handler[] = [
   { match: /\/canon\/edges\/[^/]+$/, body: fixtures.canonEdge },
   { method: "PATCH", match: /\/canon\/edges\/[^/]+$/, body: fixtures.canonEdgeEdited },
   { method: "DELETE", match: /\/canon\/edges\/[^/]+$/, body: fixtures.canonEdgeRetracted },
+  // 系统通知（Task 10 / 前端 Task 14）：列表 + 忽略（真 dump）。
+  { match: /\/notifications\/count$/, body: fixtures.notificationsCount },
+  { match: /\/notifications$/, body: fixtures.notifications },
+  {
+    method: "POST",
+    match: /\/notifications\/[^/]+\/ignore$/,
+    body: fixtures.notificationsIgnored,
+  },
   // 活动记录。**按 id 前缀分派详情**（`extraction_run:` / `decision:`）——和后端
   // `read_entry` 的分派判据是同一个，所以这几条路由表不会和真接口漂开。
   // id 在 URL 里是编码过的（`decision%3AID36`），所以只匹配前缀不匹配那个冒号。
