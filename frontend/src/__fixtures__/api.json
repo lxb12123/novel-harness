@@ -19,6 +19,7 @@
           "cast": [],
           "chapter_number": 1,
           "character_id": null,
+          "edge_id": null,
           "endpoints": [],
           "event_id": null,
           "label": "第 1 章还有 2 条待审",
@@ -40,6 +41,7 @@
           "cast": [],
           "chapter_number": 1,
           "character_id": null,
+          "edge_id": null,
           "endpoints": [],
           "event_id": null,
           "label": "去第 1 章",
@@ -63,6 +65,7 @@
           ],
           "chapter_number": 1,
           "character_id": "character:ID10",
+          "edge_id": null,
           "endpoints": [
             "/api/projects/project:ID1/canon/knowledge"
           ],
@@ -86,6 +89,7 @@
           "cast": [],
           "chapter_number": 1,
           "character_id": null,
+          "edge_id": null,
           "endpoints": [
             "/api/projects/project:ID1/chapters/1/summary"
           ],
@@ -109,6 +113,7 @@
           "cast": [],
           "chapter_number": 1,
           "character_id": null,
+          "edge_id": null,
           "endpoints": [
             "/api/projects/project:ID1/canon/events/event:ID36/cast"
           ],
@@ -132,6 +137,7 @@
           "cast": [],
           "chapter_number": 1,
           "character_id": null,
+          "edge_id": null,
           "endpoints": [],
           "event_id": null,
           "label": "去第 1 章",
@@ -153,6 +159,7 @@
           "cast": [],
           "chapter_number": 1,
           "character_id": null,
+          "edge_id": null,
           "endpoints": [
             "/api/projects/project:ID1/canon/events/event:ID31/cast"
           ],
@@ -178,6 +185,7 @@
           ],
           "chapter_number": 1,
           "character_id": "character:ID10",
+          "edge_id": null,
           "endpoints": [
             "/api/projects/project:ID1/canon/knowledge"
           ],
@@ -218,6 +226,7 @@
           ],
           "chapter_number": 1,
           "character_id": "character:ID10",
+          "edge_id": null,
           "endpoints": [
             "/api/projects/project:ID1/canon/knowledge"
           ],
@@ -241,6 +250,7 @@
           "cast": [],
           "chapter_number": 1,
           "character_id": null,
+          "edge_id": null,
           "endpoints": [
             "/api/projects/project:ID1/canon/events/event:ID36/cast"
           ],
@@ -264,6 +274,7 @@
           "cast": [],
           "chapter_number": 1,
           "character_id": null,
+          "edge_id": null,
           "endpoints": [],
           "event_id": null,
           "label": "去第 1 章",
@@ -285,6 +296,7 @@
           "cast": [],
           "chapter_number": 1,
           "character_id": null,
+          "edge_id": null,
           "endpoints": [
             "/api/projects/project:ID1/canon/events/event:ID31/cast"
           ],
@@ -321,6 +333,7 @@
         "cast": [],
         "chapter_number": 1,
         "character_id": null,
+        "edge_id": null,
         "endpoints": [],
         "event_id": null,
         "label": "去第 1 章",
@@ -371,6 +384,30 @@
       }
     ]
   },
+  "activityCanonEdge": {
+    "actor": "system",
+    "chapter_number": 1,
+    "id": "decision:ID72",
+    "jump": {
+      "cast": [],
+      "chapter_number": 1,
+      "character_id": null,
+      "edge_id": "edge:ID69",
+      "endpoints": [
+        "/api/projects/project:ID1/canon/edges/edge:ID69"
+      ],
+      "event_id": null,
+      "label": "去改这条自动生成的边（第 1 章）",
+      "proposal_id": null,
+      "secret_id": null,
+      "target": "canon_edge"
+    },
+    "source": "decision",
+    "status": "succeeded",
+    "subtitle": "接受：事件 0 条 · 关系 1 条",
+    "title": "系统 · 抽取结果审阅",
+    "ts": "<ts>"
+  },
   "activityDecisionDetail": {
     "cost": null,
     "entry": {
@@ -383,6 +420,7 @@
         ],
         "chapter_number": 1,
         "character_id": "character:ID10",
+        "edge_id": null,
         "endpoints": [
           "/api/projects/project:ID1/canon/knowledge"
         ],
@@ -481,6 +519,7 @@
           "cast": [],
           "chapter_number": 3,
           "character_id": null,
+          "edge_id": null,
           "endpoints": [
             "/api/projects/project:ID1/chapters/3/extract"
           ],
@@ -586,6 +625,7 @@
         "cast": [],
         "chapter_number": 3,
         "character_id": null,
+        "edge_id": null,
         "endpoints": [
           "/api/projects/project:ID1/chapters/3/extract"
         ],
@@ -646,6 +686,7 @@
         "cast": [],
         "chapter_number": 1,
         "character_id": null,
+        "edge_id": null,
         "endpoints": [],
         "event_id": null,
         "label": "第 1 章还有 2 条待审",
@@ -702,6 +743,7 @@
         "cast": [],
         "chapter_number": 1,
         "character_id": null,
+        "edge_id": null,
         "endpoints": [
           "/api/projects/project:ID1/chapters/1/summary"
         ],
@@ -856,6 +898,72 @@
       "unchanged_count": 0,
       "warning": "⚠️ 第一章的标题之前还有 1104 个字，它们不属于任何一章。\n最常见的原因是**第一章的标题没有被认出来**（比如它写成「楔子」「序章」，或者标题那一行前面还有别的字）。真是这样的话，整本书的章号会集体差一章：你在第 24 章记下的事，系统会记成第 23 章，而这件事在界面上看不出任何异常。\n先打开这份 TXT 看一眼开头：如果那段字确实是第一章的正文，把它的标题改成「第一章 ……」再重新导入一次（导入不会覆盖已经建好的书，请新建一本）。如果那本来就是简介或者楔子，它不属于任何一章是对的，可以不管。",
       "written_count": 1
+    }
+  },
+  "canonEdge": {
+    "author_owned": false,
+    "canon_version": 17,
+    "dst": "location:ID5",
+    "edge_id": "edge:ID69",
+    "edge_type": "LOCATED_AT",
+    "evidence_id": "evidence:ID70",
+    "evidence_status": "FRESH",
+    "props": {
+      "believed_value": null,
+      "value": null,
+      "value_key": null
+    },
+    "slot_key": "character:ID8|LOCATED_AT|1",
+    "source": "extractor",
+    "src": "character:ID8",
+    "valid_from_chapter": 1
+  },
+  "canonEdgeEdited": {
+    "canon_version": 18,
+    "edge_id": "edge:ID71",
+    "replacement_edge_id": "edge:ID71",
+    "retracted": false,
+    "view": {
+      "author_owned": true,
+      "canon_version": 18,
+      "dst": "location:ID9",
+      "edge_id": "edge:ID71",
+      "edge_type": "LOCATED_AT",
+      "evidence_id": null,
+      "evidence_status": "NONE",
+      "props": {
+        "believed_value": null,
+        "value": null,
+        "value_key": null
+      },
+      "slot_key": "character:ID8|LOCATED_AT|1",
+      "source": "author",
+      "src": "character:ID8",
+      "valid_from_chapter": 1
+    }
+  },
+  "canonEdgeRetracted": {
+    "canon_version": 19,
+    "edge_id": "edge:ID71",
+    "replacement_edge_id": null,
+    "retracted": true,
+    "view": {
+      "author_owned": false,
+      "canon_version": 19,
+      "dst": "location:ID9",
+      "edge_id": "edge:ID71",
+      "edge_type": "LOCATED_AT",
+      "evidence_id": null,
+      "evidence_status": "NONE",
+      "props": {
+        "believed_value": null,
+        "value": null,
+        "value_key": null
+      },
+      "slot_key": "character:ID8|LOCATED_AT|1",
+      "source": "author",
+      "src": "character:ID8",
+      "valid_from_chapter": 1
     }
   },
   "canonEventCast": {
@@ -1307,6 +1415,12 @@
     "error": "ambiguous_name",
     "message": "「师兄」在这个项目里指 2 个东西（萧决(Character)、李管家(Character)），系统不替你挑。用本名或者一个只属于一个人的称呼",
     "surface": "师兄"
+  },
+  "errorCanonEdgeGone": {
+    "detail": {
+      "error": "canon_edge_refused",
+      "message": "edge edge:ID71 不是 current CANON（已撤回/非 CANON）"
+    }
   },
   "errorFactAlreadyExists": {
     "detail": {
@@ -2027,6 +2141,7 @@
           "cast": [],
           "chapter_number": 1,
           "character_id": null,
+          "edge_id": null,
           "endpoints": [],
           "event_id": null,
           "label": "第 1 章还有 2 条待审",
@@ -2075,6 +2190,7 @@
           "cast": [],
           "chapter_number": 3,
           "character_id": null,
+          "edge_id": null,
           "endpoints": [],
           "event_id": null,
           "label": "再整理一次第 3 章",
@@ -2096,6 +2212,7 @@
           "cast": [],
           "chapter_number": 1,
           "character_id": null,
+          "edge_id": null,
           "endpoints": [],
           "event_id": null,
           "label": "第 1 章还有 2 条待审",

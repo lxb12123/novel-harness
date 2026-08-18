@@ -8,6 +8,7 @@ import { useCoords } from "./store";
 import { DraftCompare } from "./components/DraftCompare";
 import { TopBar } from "./components/TopBar";
 import { ActivityLog } from "./components/ActivityLog";
+import { CanonEdgeEditor } from "./components/CanonEdgeEditor";
 import { LeftRail } from "./components/LeftRail";
 import { CenterEditor } from "./components/CenterEditor";
 import { RightPanel } from "./components/RightPanel";
@@ -103,6 +104,7 @@ function Workbench() {
         chat={chatOpen ? <ChatPanel /> : undefined}
         right={<RightPanel />}
       />
+      <CanonEdgeEditor />
       <BottomBar />
     </div>
   );

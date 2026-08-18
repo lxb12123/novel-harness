@@ -1606,6 +1606,174 @@ def event_information_scope(
     return str(row["information_scope"]) if row is not None else None
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# Canon 边纠错（019 / Task 8）—— slot key 与 override 的 SQL 唯一住址
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def canon_edge_slot_key(edge: Edge) -> str:
+    """一个语义槽的唯一键（§4.6）。
+
+    location=`subject+type+valid_from`；state=`subject+type+dim_key+valid_from`；
+    relation=`normalized_pair+type+valid_from`。纠错、抽取 staging、auto-Canon
+    promotion 和重放全部调用它——禁止各自拼字符串。
+    """
+    subject = edge.src
+    if edge.type is EdgeType.RELATED_TO:
+        subject = "|".join(sorted((edge.src, edge.dst)))
+    parts = [subject, edge.type.value]
+    if edge.type is EdgeType.HAS_STATE:
+        parts.append(edge.props.dim_key or "")
+    parts.append(str(edge.valid_from_chapter))
+    return "|".join(parts)
+
+
+def active_canon_override_for_slot(
+    conn: sqlite3.Connection, project_id: str, slot_key: str
+) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT id, project_id, slot_key, edge_type, source_edge_id, replacement_edge_id,
+               before_props_json, after_props_json, action, decision_log_id, status,
+               supersedes_override_id, created_at
+          FROM canon_edge_override
+         WHERE project_id = ? AND slot_key = ? AND status = 'ACTIVE'
+        """,
+        (project_id, slot_key),
+    ).fetchone()
+
+
+def active_canon_override_for_edge(
+    conn: sqlite3.Connection, project_id: str, edge_id: str
+) -> sqlite3.Row | None:
+    """`replacement_edge_id = :edge_id` 的 ACTIVE override —— 该边当前由作者接管。"""
+    return conn.execute(
+        """
+        SELECT id, project_id, slot_key, edge_type, source_edge_id, replacement_edge_id,
+               before_props_json, after_props_json, action, decision_log_id, status,
+               supersedes_override_id, created_at
+          FROM canon_edge_override
+         WHERE project_id = ? AND replacement_edge_id = ? AND status = 'ACTIVE'
+        """,
+        (project_id, edge_id),
+    ).fetchone()
+
+
+def insert_canon_override(
+    conn: sqlite3.Connection,
+    *,
+    override_id: str,
+    project_id: str,
+    slot_key: str,
+    edge_type: str,
+    source_edge_id: str,
+    replacement_edge_id: str | None,
+    before_props_json: str,
+    after_props_json: str | None,
+    action: str,
+    decision_log_id: str | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO canon_edge_override (
+            id, project_id, slot_key, edge_type, source_edge_id, replacement_edge_id,
+            before_props_json, after_props_json, action, decision_log_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            override_id,
+            project_id,
+            slot_key,
+            edge_type,
+            source_edge_id,
+            replacement_edge_id,
+            before_props_json,
+            after_props_json,
+            action,
+            decision_log_id,
+        ),
+    )
+
+
+def supersede_active_override(
+    conn: sqlite3.Connection, project_id: str, slot_key: str
+) -> str | None:
+    """把该槽现有的 ACTIVE override 标 SUPERSEDED（append-only，历史不删）。
+
+    返回被 supersede 的旧 override id——调用方在新 override 插入后补 FK 链接。
+    """
+    row = conn.execute(
+        """
+        UPDATE canon_edge_override
+           SET status = 'SUPERSEDED'
+         WHERE project_id = :pid AND slot_key = :slot AND status = 'ACTIVE'
+        RETURNING id
+        """,
+        {"pid": project_id, "slot": slot_key},
+    ).fetchone()
+    return str(row["id"]) if row is not None else None
+
+
+def link_override_chain(
+    conn: sqlite3.Connection, old_override_id: str, new_override_id: str
+) -> None:
+    conn.execute(
+        "UPDATE canon_edge_override SET supersedes_override_id = ? WHERE id = ?",
+        (new_override_id, old_override_id),
+    )
+
+
+def find_edge_by_identity_any_status(
+    conn: sqlite3.Connection, spec: EdgeSpec
+) -> Edge | None:
+    """按身份找边（含 RETRACTED）——A→B→A 恢复旧 identity 时复用旧行。"""
+    row = conn.execute(
+        """
+        SELECT id, project_id, src, dst, type, valid_from_chapter, valid_to_chapter,
+               information_scope, status, confidence, props_json, source, evidence_id,
+               evidence_status
+          FROM edge
+         WHERE project_id = :pid AND src = :src AND dst = :dst AND type = :type
+           AND valid_from_chapter = :vf AND information_scope = :scope
+        """,
+        {
+            "pid": spec.project_id,
+            "src": spec.src,
+            "dst": spec.dst,
+            "type": spec.type.value,
+            "vf": spec.valid_from_chapter,
+            "scope": spec.information_scope.value,
+        },
+    ).fetchone()
+    return None if row is None else to_edge(row)
+
+
+def restore_retracted_edge(
+    conn: sqlite3.Connection, edge_id: str
+) -> None:
+    """A→B→A：把 RETRACTED 旧行恢复成 ACTIVE current（origin/evidence 原样保留，
+    author ownership 由 ACTIVE override 赋予）。"""
+    conn.execute(
+        """
+        UPDATE edge SET status = 'ACTIVE', valid_to_chapter = NULL
+         WHERE id = ?
+        """,
+        (edge_id,),
+    )
+
+
+def update_edge_props_only(conn: sqlite3.Connection, edge_id: str, props_json: str) -> None:
+    """identity 不变时的投影更新：**只**改 props（019 专用），
+    严禁普通 `update_edge_facets` 改 source/evidence/status/vf。"""
+    conn.execute(
+        """
+        UPDATE edge SET props_json = :props
+         WHERE id = :id
+        """,
+        {"id": edge_id, "props": props_json},
+    )
+
+
 def _sha256_hex(text: str) -> str:
     """summary_sha256 的唯一实现：UTF-8 原始字节（§4.4，不做 strip/归一化）。"""
     import hashlib

@@ -354,8 +354,8 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 > 列在「还一个字符都没有」里——照它排期的人会去重写已完成的工作。
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
-> 守卫钉住的是**能在运行时数出来**的那些（74 条路由 / 73 条 /api / 1 条 501 stub /
-> 19 个错误映射 / 17 个子命令 / 34 张表 / 74 个端点 / `ALL_CHECKS` 2），
+> 守卫钉住的是**能在运行时数出来**的那些（77 条路由 / 76 条 /api / 1 条 501 stub /
+> 19 个错误映射 / 17 个子命令 / 35 张表 / 79 个端点 / `ALL_CHECKS` 2），
 > 改错必红、**删掉也必红**（不静默 skip）。
 > （这一行 2026-08-10 之前写的是「路由 42 / fixture 端点 34」那种词序，
 > **而守卫的正则认的是「N 条路由」「N 个端点」**——于是它躺在被守卫盯着的那一节里、
@@ -376,7 +376,7 @@ db.py  ids.py  decisions.py  project.py
 migrations/{001_init,002_m4_events,003_proposal_audit_recovery,004_chapter_summary,005_fact_edit,
             006_chat_session,007_draft_candidate,008_cache_usage,
             009_call_chapter,010_candidate_stopped,011_rule_revocation,
-            012_chat_notice,013_summary_edit,014_summary_mentions}.sql（34 张表）
+            012_chat_notice,013_summary_edit,014_summary_mentions}.sql（35 张表）
                                                 ← 013 也是 ALTER 不建表：`chapter_summary`
                                                   多两列（`source` / `status`），照 005 的先例。
                                                   **作者改一条滚动总结时不许有一行凭空消失**：
@@ -526,8 +526,8 @@ cli.py                                          ← nh 的 17 个子命令（含
                                                   **印的是 `len(ALL_CHECKS)` 和规则名**，
                                                   不是写死的数字
 api/{app,deps,activity,autopilot,chat,extraction,manuscript,review}.py
-                                                ← M1.5 FastAPI 壳：74 条路由 + 19 个错误映射
-                                                  （73 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
+                                                ← M1.5 FastAPI 壳：77 条路由 + 19 个错误映射
+                                                  （76 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
                                                   M4 抽取/事件读端 + 提案审阅/被动确认路由；
                                                   抽取那两条的出参 2026-08-13 换成 `ExtractionRunView`：
                                                   `errors` 是**已经翻好的中文**（措辞唯一出处仍是
@@ -635,7 +635,7 @@ frontend/src/                                   ← React 工作台：62 个非�
                                                   翻到第 5 章面板自己跳进去）。
                                                   在场跟着那一章走（`_effective_cast` 数的是**路径上那一章**
                                                   的正文），所以 `CastLine` 那一行也跟着说「第 N 章提到：」）
-frontend/src/__fixtures__/api.json              ← 从真 app dump 的 74 个端点出参（契约测试两头共用）
+frontend/src/__fixtures__/api.json              ← 从真 app dump 的 79 个端点出参（契约测试两头共用）
                                                   其中 `extractionFailed` 是**一次没跑成的整理**
                                                   （2026-08-13 补）：在它之前这份夹具里三条 run
                                                   全是成功的，于是「失败了屏幕上说什么」这条路径
@@ -1158,7 +1158,8 @@ R2（未来实体提前出现）和 R3（死人/未登场角色开口说话）�
    - **`jump` 由后端给，前端不许从标题反推。** 每条日志带一个结构化坐标 +
      `endpoints`（今天真能改这个东西的路由）。`endpoints` 是空元组时**不许画编辑按钮**
      ——那不是没填。但**它今天有两个意思，别只读成一个**：
-     ① 真的没有路由能改（自动升上去的边，见下一条）；
+     ① 真的没有路由能改（正在补纠错入口的新边类型；`LOCATED_AT` / `HAS_STATE` /
+        `RELATED_TO` 已由 Task 8 的 `canon_edge` 那一档接走）；
      ② 有好几条、后端不替作者挑是哪一条（一次升掉一整章的干净事件、一章里有 ≥2 条待审提案）。
      ② 那几行**改得掉**——`/canon/events/{id}/cast` 对它们一打就通（实测 200）。
      两种含义共用一个空元组是出参形状的事；在形状改掉之前，**② 的 `label` 里带着数目**
@@ -1183,7 +1184,9 @@ R2（未来实体提前出现）和 R3（死人/未登场角色开口说话）�
      > 没有 id**，`_decision_jump` 拼不出坐标（按人名反查就是「从字符串反推」，
      > 而「师兄」在一章里可能指 8 个人）。现在 `declare._log_edge` 把两端的 id 和名字
      > **一起**记（名字仍在，§5.7 那条没破），`LOCATED_DECLARE` 照旧留在空 bucket 里
-     > ——`LOCATED_AT` 今天真的没有编辑入口，那才是这个 bucket 该装的东西。
+     > ——当时 `LOCATED_AT` 真的没有编辑入口。**2026-08-17（Task 8）这句作废了**：
+     > `/canon/edges/{edge_id}` 现在能改 / 撤回 / 改归属自动升上去的地点/状态/关系边，
+     > 那个 bucket 里只剩正在补纠错入口的新边类型。
      > 旧库里的行没有那两个键，照旧退到兜底坐标（`decision_log` 只增不改，重写不了）。
      > 两头钉在 `tests/test_canon_edit_loop.py`：声明那一行的坐标打过去必须 200，
      > 而「所有声明行都给认知格坐标」的假实现打过去必须被拒。
@@ -1194,11 +1197,13 @@ R2（未来实体提前出现）和 R3（死人/未登场角色开口说话）�
      > 没有任何东西会替他补那一次重读，作者在核对页上会一直撞同一个 409）。
      > 现在重取归 `CellEditor` 自己管（`useRefreshPanels`），挂载点少传一个 prop
      > 不再能让这条退路死掉。
-   - **自动升上去的「边」今天真的改不掉。** 抽取只产
-     `LOCATED_AT` / `HAS_STATE` / `RELATED_TO`，而 `corrections.py` 只改
-     KNOWS↔BELIEVES 和事件名单。这正是 ADR 0020 写在「什么条件下推翻本 ADR」里的
-     第二条（「出现『作者改不回来』的形态」）——**日志页把它显式显示出来，
-     那条推翻条件才第一次可观测**。编一个假按钮出来等于把观测点关掉。
+   - **自动升上去的「边」2026-08-17 起改得掉了**（[ADR 0032](adr/0032-reversible-auto-canon-edges.md) /
+     Task 8）：`LOCATED_AT` / `HAS_STATE` / `RELATED_TO` 各有按稳定 `edge_id` 的
+     修改 / 撤回 / 改归属路由（`/canon/edges/{edge_id}`），日志页那一行的
+     `jump.target = canon_edge` 直接弹起 `<CanonEdgeEditor>`。**「先可逆、后自动」**
+     的启用闸：这三类之外的新边类型没有纠错入口就不许 auto-Canon
+     （`AUTO_CANON_CORRECTABLE_EDGE_TYPES` 是 allowlist 的上界），所以
+     「改不回来」这个 bucket 里现在只剩正在补纠错入口的新边类型。
    - **跳过去那一格得真的在表上。** 矩阵的行由本章正文推（[ADR 0018](adr/0018-cast-is-derived-not-declared.md)），
      而声明的生效章由引语定（[ADR 0006](adr/0006-evidence-double-pointer.md)）——一句满是代词的声明
      会把坐标指向一章「他一次都没被点名」的正文，那一行不在表上，高亮和编辑入口一起落空，

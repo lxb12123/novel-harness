@@ -52,16 +52,11 @@ def _endpoints(project_id: str, jump: ActivityJump) -> tuple[str, ...]:
     - `PROPOSAL` → 三条审阅路由（accept / reject / edit），**只在指名到某一条提案时给**
     - `SUMMARY` → 章节总结那一个资源（同一条路径四个动作：读 / 生成 / 改 / 撤回）
     - `EXTRACTION_RETRY` → 重跑那一章的整理
+    - `CANON_EDGE` → `canon/edges/{edge_id}`（Task 8：自动升上去的地点/状态/关系边
+      现在有真实修改 / 撤回 / 改归属入口）
     - `CHAPTER` → 空：它是兜底坐标，明说「只能定位，今天没有编辑入口」
 
-    最后一条不是偷懒。自动升上去的**边**就落在这一档：抽取只产
-    `LOCATED_AT` / `HAS_STATE` / `RELATED_TO`，而 `corrections.py` 只改
-    KNOWS↔BELIEVES 和事件名单——**今天没有任何路由能改一条自动生效的位置边**。
-    这正是 [ADR 0020](../../docs/adr/0020-clean-extraction-auto-canon.md) 写在
-    「什么条件下推翻本 ADR」里的那一条（「出现『作者改不回来』的形态」）。
-    编一个按钮出来会让这个条件永远观测不到。
-
-    ── 这张表出的是**路径**，不带查询串 ──────────────────────────────────────
+    这张表出的是**路径**，不带查询串 ──────────────────────────────────────
     重跑那一条真打的时候要带 `?force=true`（没有它，`enqueue` 见到那条已经失败的 run
     就原样还回来，**接口 202、屏幕没反应**——比没有按钮更糟）。参数留给调用方带，
     理由是这张表只回答「有没有这条路」，而
@@ -87,6 +82,8 @@ def _endpoints(project_id: str, jump: ActivityJump) -> tuple[str, ...]:
         return (f"{base}/chapters/{jump.chapter_number}/summary",)
     if jump.target is JumpTarget.EXTRACTION_RETRY and jump.chapter_number is not None:
         return (f"{base}/chapters/{jump.chapter_number}/extract",)
+    if jump.target is JumpTarget.CANON_EDGE and jump.edge_id:
+        return (f"{base}/canon/edges/{jump.edge_id}",)
     return ()
 
 

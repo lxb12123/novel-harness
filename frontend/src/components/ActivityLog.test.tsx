@@ -213,6 +213,35 @@ describe("活动记录", () => {
     expect(s.cast).toBe("");
   });
 
+  it("自动升 CANON 的边那一行，跳过去带的是**后端给的那条边**（Task 8）", async () => {
+    // `activityCanonEdge` 是真 dump 的「自动升边」决策行：`jump.target = canon_edge`、
+    // `jump.edge_id` 由后端填——前端不从那行字里认哪条边。点击后弹起
+    // `CanonEdgeEditor`（store 的 `focusEdgeId`），而不是假装它只能定位。
+    const user = userEvent.setup();
+    const row = fixtures.activityCanonEdge;
+    expect(row.jump!.target).toBe("canon_edge");
+    expect(row.jump!.edge_id).toBeTruthy();
+    expect(row.jump!.endpoints.length).toBeGreaterThan(0);
+    // 详情主体真 dump 里没有这一条，所以把「哪一行」换掉——两半都来自 api.json。
+    renderWithApi(<ActivityLog />, [
+      {
+        match: /\/activity(\?|$)/,
+        body: { ...fixtures.activity, entries: [row, ...fixtures.activity.entries] },
+      },
+      { match: /\/activity\/decision/, body: { ...fixtures.activityDecisionDetail, entry: row } },
+    ]);
+
+    await user.click((await collapsed())[0]);
+    await user.click(await screen.findByRole("button", { name: `${row.jump!.label} →` }));
+
+    const s = useCoords.getState();
+    expect(s.page).toBe("workbench");
+    expect(s.focusEdgeId).toBe(row.jump!.edge_id);
+    // 这一档不带在场坐标、不高亮矩阵那一格。
+    expect(s.focusCell).toBeNull();
+    expect(s.cast).toBe("");
+  });
+
   it("`endpoints` 为空时说的是「从这儿点不到某一处」，**不是「改不了」**", async () => {
     // 空 `endpoints` 今天有两个意思，而它们在出参形状上长得一模一样：
     // ① 真的没有路由能改（自动升上去的位置/状态边）；

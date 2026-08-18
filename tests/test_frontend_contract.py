@@ -33,6 +33,11 @@ from fastapi.testclient import TestClient
 
 import seed
 
+from novel_harness.db import connect
+from novel_harness.graph.sqlite_events import SqliteEventStore
+from novel_harness.graph.sqlite_proposals import SqliteProposalStore
+from novel_harness.graph.sqlite_store import SqliteStoryGraph
+
 from test_activity import seed_call, seed_run
 from test_api import (
     _seed_edge_conflict_proposal,
@@ -774,6 +779,121 @@ def test_frontend_fixture_matches_the_real_api(
     )
     assert already.status_code == 409, already.text
     dump["errorFactAlreadyExists"] = norm.walk(already.json())
+
+    # ── 自动 Canon 边的纠错（Task 8 / ADR 0032）─────────────────────────────
+    # 种法走抽取 ingest + `promote_clean_facts`（真代码），不手写：要的是
+    # 「`source=extractor`、CANON、FRESH evidence」那种真形态——作者在日志页
+    # 点到「去改这条自动生成的边」时面对的正是它。
+    #
+    # **放在最末**：它会往图里加一条 CANON 边、把 canon 版本推高几格、写
+    # decision log，而上面 `matrix` / `characterState` / `subgraph` 三份夹具
+    # 冻的正是「还没有这条边」的形状。
+    from novel_harness.extract import RawChapterAnalysis, RawEvent, RawStateUpdate
+    from novel_harness.extract.auto_canon import promote_clean_facts
+    from novel_harness.extract.service import ExtractionService
+
+    _edge_conn = connect(book["db"])
+    try:
+        _edge_store = SqliteStoryGraph(_edge_conn)
+        _chapter_row = _edge_conn.execute(
+            "SELECT c.id AS chapter_id, s.id AS snapshot_id, s.text AS text "
+            "FROM chapter c JOIN chapter_snapshot s ON s.chapter_id = c.id "
+            "WHERE c.project_id = ? AND c.number = 1 AND s.text_sha256 = c.text_sha256",
+            (pid,),
+        ).fetchone()
+        from novel_harness.graph import ChapterText
+
+        _edge_report = ExtractionService(
+            conn=_edge_conn,
+            graph=_edge_store,
+            event_store=SqliteEventStore(_edge_conn),
+            proposal_store=SqliteProposalStore(_edge_conn),
+        ).ingest(
+            pid,
+            ChapterText(
+                chapter_id=_chapter_row["chapter_id"],
+                number=1,
+                snapshot_id=_chapter_row["snapshot_id"],
+                text=_chapter_row["text"],
+            ),
+            RawChapterAnalysis(
+                events=(
+                    RawEvent(
+                        summary="李管家在青云城主府听到了血脉秘密的真相。",
+                        quote="萧决在青云城主府第一次听说了血脉秘密的真相。",
+                        participants=("李管家",),
+                        knowers=("李管家",),
+                        revealed_facts=(),
+                        confidence=0.95,
+                    ),
+                ),
+                state_updates=(
+                    RawStateUpdate(
+                        kind="location",
+                        subject="李管家",
+                        object="青云城主府",
+                        quote="萧决在青云城主府第一次听说了血脉秘密的真相。",
+                        confidence=0.95,
+                    ),
+                ),
+                character_profiles=(),
+            ),
+            prompt_hash="prompt:canon-edge-contract",
+        )
+        promote_clean_facts(
+            _edge_conn, pid, _edge_report, graph=_edge_store, events=SqliteEventStore(_edge_conn)
+        )
+        _edge_conn.commit()
+        _edge_id = _edge_conn.execute(
+            "SELECT id FROM edge WHERE project_id = ? AND type = 'LOCATED_AT' "
+            "AND information_scope = 'CANON' AND source = 'extractor' "
+            "ORDER BY rowid DESC LIMIT 1",
+            (pid,),
+        ).fetchone()["id"]
+    finally:
+        _edge_conn.close()
+
+    grab("canonEdge", client.get(f"{base}/canon/edges/{_edge_id}"))
+    edge_edit_resp = client.patch(
+        f"{base}/canon/edges/{_edge_id}",
+        json={
+            "kind": "location",
+            # 只改地点、不换人物：edge id 保持不变（props 投影 + override）。
+            "location_id": book["北荒"],
+            "expected_canon_version": client.get(f"{base}/canon/edges/{_edge_id}").json()[
+                "canon_version"
+            ],
+        },
+    )
+    assert edge_edit_resp.status_code == 200, edge_edit_resp.text
+    grab("canonEdgeEdited", edge_edit_resp)
+    edge_edited_id = edge_edit_resp.json()["edge_id"]
+    edge_retract_resp = client.delete(f"{base}/canon/edges/{edge_edited_id}")
+    assert edge_retract_resp.status_code == 200, edge_retract_resp.text
+    grab("canonEdgeRetracted", edge_retract_resp)
+    # 撤回后的旧 ID 再改 → 409（客户端不能用旧 selection state 继续 PATCH）。
+    refused_again = client.patch(
+        f"{base}/canon/edges/{edge_edited_id}",
+        json={
+            "kind": "location",
+            "location_id": book["北荒"],
+            "expected_canon_version": edge_retract_resp.json()["canon_version"],
+        },
+    )
+    assert refused_again.status_code == 409, refused_again.text
+    dump["errorCanonEdgeGone"] = norm.walk(refused_again.json())
+    # 自动升 CANON 那一条决策日志：`_decision_jump` 现在认得它（`edges` payload 里
+    # 恰好一条 → `jump.target = canon_edge`）。日志页那一行必须真的带这条跳转——
+    # 「自动升上去的边改得掉」正是 Task 8 的全部主张。**放在本节最后**：它抓的是
+    # 刚发生的事，别的夹具都不该看见这条新决策。
+    edge_activity = client.get(f"{base}/activity", params={"limit": 8})
+    canon_edge_jump = next(
+        (entry for entry in edge_activity.json()["entries"]
+         if (entry.get("jump") or {}).get("target") == "canon_edge"),
+        None,
+    )
+    assert canon_edge_jump is not None, "自动升边的决策没有带上 canon_edge 跳转"
+    dump["activityCanonEdge"] = norm.walk(canon_edge_jump)
 
     frozen = json.dumps(dump, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 

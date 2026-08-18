@@ -125,6 +125,15 @@ class DecisionKind(StrEnum):
     Canon 摘要编辑在同一事务 bump canon version；payload 里有 event_id 和
     新版本的 summary_sha256。"""
 
+    CANON_EDGE_EDIT = "canon_edge_edit"
+    """作者编辑/改归属了一条自动 Canon 边（Task 8，`canon_edge_override`）。
+
+    payload 可重放 before/after：edge_id、edge_type、src/dst、valid_from_chapter、
+    before/after props JSON。"""
+
+    CANON_EDGE_RETRACT = "canon_edge_retract"
+    """作者软撤回了一条自动 Canon 边（replacement=NULL 的 override tombstone）。"""
+
     CHAPTER_DRAFT = "chapter_draft"
     """写作助手起草完**直接把一稿写进了某一章**（[ADR 0021](../docs/adr/0021-agent-writes-drafts-without-asking.md)）。
 

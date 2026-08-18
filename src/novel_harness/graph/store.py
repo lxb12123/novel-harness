@@ -36,6 +36,9 @@ from typing import Final, Protocol, runtime_checkable
 
 from .models import (
     AliasSpec,
+    CanonEdgeEditResult,
+    CanonEdgeView,
+    EdgeProps,
     ChapterCommitToken,
     ChapterSnapshot,
     ChapterSpec,
@@ -204,6 +207,11 @@ class ChapterWriteConflict(StoreError):
         super().__init__(
             f"图层保存冲突：expected text_sha256={expected}，DB current={actual or '<无>'}"
         )
+
+
+class CanonEdgeRefused(StoreError):
+    """一条 Canon 边不可纠错（不在 allowlist / 不是 current CANON / 裸 STALE /
+    跨项目 / 错误 NodeLabel）。HTTP 映射 409/422 由路由决定。"""
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -647,6 +655,35 @@ class CanonWriter(Protocol):
         `RetirementReport`，最后在 Writer 可见 Canon 变化时 bump 一次 canon version。
         四个步骤要么全成要么全回滚——快照不能半提交（退休失败 = 快照不落）。
         """
+        ...
+
+    def canon_edge_view(self, project_id: str, edge_id: str) -> CanonEdgeView:
+        """读取一条可纠错 Canon 边（allowlist + current CANON + 可编辑资格）。"""
+        ...
+
+    def edit_canon_edge(
+        self,
+        project_id: str,
+        edge_id: str,
+        *,
+        new_src: str,
+        new_dst: str,
+        props: EdgeProps,
+        expected_canon_version: int,
+        action: str = "EDIT",
+    ) -> CanonEdgeEditResult:
+        """修改/改归属一条 Canon 边（identity 变 → supersede+replacement；否则
+        override + props 投影更新）。同一事务 bump canon version + 写 decision log。"""
+        ...
+
+    def retract_canon_edge(
+        self,
+        project_id: str,
+        edge_id: str,
+        *,
+        expected_canon_version: int,
+    ) -> CanonEdgeEditResult:
+        """软撤回一条 Canon 边：override tombstone + status RETRACTED。"""
         ...
 
     def current_snapshots(self, project_id: str) -> list[ChapterText]:

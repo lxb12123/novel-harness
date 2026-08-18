@@ -359,6 +359,74 @@ export interface Edge {
   props: { believed_value?: string | null; value?: string | null };
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// Canon 边纠错（Task 8 / ADR 0032）：自动升上去的地点/状态/关系边的
+// 读取 / 修改 / 撤回 / 改归属。**唯一权威是后端 `canon_edge_view`/`edit_canon_edge`**
+// 的 Pydantic 出参 —— 这条契约和 `tests/test_frontend_contract.py` 钉的 fixture 同源。
+// ══════════════════════════════════════════════════════════════════════════
+
+/** 一条可纠错 Canon 边的读取视图（`GET …/canon/edges/{edge_id}` 出参）。 */
+export interface CanonEdgeView {
+  edge_id: string;
+  edge_type: EdgeType;
+  src: string;
+  dst: string;
+  props: EdgeProps;
+  valid_from_chapter: number;
+  source: string;
+  /** `extractor` = 起源是抽取；`author` = 起源是作者。**当前归属看 `author_owned`。** */
+  evidence_id: string | null;
+  evidence_status: string;
+  /** active override 的 replacement 指向它 = 当前解释由作者接管。 */
+  author_owned: boolean;
+  slot_key: string;
+  canon_version: number;
+}
+
+export interface EdgeProps {
+  dim_key?: string | null;
+  value?: string | null;
+  value_key?: string | null;
+  display?: string | null;
+}
+
+/** 修改/撤回之后给客户端的回执（同 `CanonEdgeEditResult` 出参）。 */
+export interface CanonEdgeEditResult {
+  /** identity 改变后是 replacement——客户端要换选择状态，不能继续 PATCH 旧 ID。 */
+  edge_id: string;
+  replacement_edge_id: string | null;
+  canon_version: number;
+  retracted: boolean;
+  view: CanonEdgeView;
+}
+
+/** 类型化修改的判别联合（§6.6）：PATCH 按 `kind` 分派，不提供通用
+ *  `type/src/dst/props_json` 直通口，**也不收章号**（后端 `extra="forbid"`）。 */
+export type CanonEdgeEditRequest =
+  | {
+      kind: "location";
+      /** 改归属：把整条事实改到另一个 Character（省略 = 保持原主体）。 */
+      character_id?: string | null;
+      /** 改地点：目标 Location（省略 = 保持原地）。 */
+      location_id?: string | null;
+      expected_canon_version: number;
+    }
+  | {
+      kind: "state";
+      subject_id?: string | null;
+      dim_key: string;
+      value: string;
+      value_key?: string | null;
+      expected_canon_version: number;
+    }
+  | {
+      kind: "relation";
+      peer_id?: string | null;
+      /** 关系显示值（存进 EdgeProps 的 `display`）。 */
+      display?: string | null;
+      expected_canon_version: number;
+    };
+
 // subgraph 的节点：present 节点是完整 Node，Secret/未来节点被 _narrow 成 NodeRef。
 // 前端只读 id/label/name，按 NodeRef 用即可。
 export type SubgraphNode = NodeRef & { props?: unknown };
@@ -785,6 +853,7 @@ export type JumpTarget =
   | "proposal"
   | "summary"
   | "extraction_retry"
+  | "canon_edge"
   | "chapter";
 
 /** 这一条记录改的东西能从哪儿改回去。**坐标和措辞全由后端给**——
@@ -798,6 +867,8 @@ export interface ActivityJump {
   secret_id: string | null;
   event_id: string | null;
   proposal_id: string | null;
+  /** 跳去一条自动升上去的地点/状态/关系边（`canon_edge` 那一档，Task 8）。 */
+  edge_id: string | null;
   /** 今天真能改这个目标的路由。**空数组是一个断言**（「今天没有任何入口能改它」），
    *  不是「后端忘了填」——照它画一个编辑按钮等于把 ADR 0020 的推翻条件关掉。 */
   endpoints: string[];

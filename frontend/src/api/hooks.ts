@@ -11,6 +11,9 @@ import type {
   AutopilotStatus,
   BootstrapRequest,
   BootstrapResult,
+  CanonEdgeEditRequest,
+  CanonEdgeEditResult,
+  CanonEdgeView,
   ChapterRow,
   ChapterDrafts,
   ChapterSnapshot,
@@ -819,6 +822,62 @@ export function useCorrectEventCast(pid: string) {
     onSuccess: () => {
       invalidateReview(qc, pid);
       qc.invalidateQueries({ queryKey: ["activity", pid] });
+    },
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Canon 边纠错（Task 8 / ADR 0032）：自动升上去的地点/状态/关系边
+// ══════════════════════════════════════════════════════════════════════════
+//
+// 同「改一条已经生效的事实」那两条：**不做静默重试**。409 是「这本书在别处刚被
+// 改过 / 这条边已经变了」，重试等于把作者的改动画到一份他没看过的状态上；
+// 界面该做的是刷新当前事实、保留表单让作者看过后再提交。
+
+const edgePath = (pid: string, edgeId: string) =>
+  proj(pid, `/canon/edges/${encodeURIComponent(edgeId)}`);
+
+/** 一条可纠错 Canon 边（`GET …/canon/edges/{id}`）。null = 还没有要打开的边。 */
+export function useCanonEdge(pid: string | null, edgeId: string | null) {
+  return useQuery({
+    queryKey: q(["canon-edge", pid, edgeId]),
+    queryFn: () => api.get<CanonEdgeView>(edgePath(pid!, edgeId!)),
+    enabled: !!pid && !!edgeId,
+    retry: false,
+  });
+}
+
+/** 修改 / 改归属（PATCH）。**`expected_canon_version` 从正在渲染的那份 view 上取。** */
+export function useEditCanonEdge(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ edgeId, ...body }: CanonEdgeEditRequest & { edgeId: string }) =>
+      api.patch<CanonEdgeEditResult>(edgePath(pid, edgeId), body),
+    onSuccess: (result) => {
+      // 旧 edge ID 在 identity 改变后会返回 replacement——把旧 ID 那条缓存清掉，
+      // 下次按回执里的新 ID 重新读。
+      qc.invalidateQueries({ queryKey: ["canon-edge", pid] });
+      invalidateReview(qc, pid);
+      qc.invalidateQueries({ queryKey: ["projects"] }); // canon 版本推高了一格
+      qc.invalidateQueries({ queryKey: ["activity", pid] });
+      qc.invalidateQueries({ queryKey: ["canon-version", pid] });
+      return result;
+    },
+  });
+}
+
+/** 软撤回（DELETE）。 */
+export function useRetractCanonEdge(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ edgeId }: { edgeId: string }) =>
+      api.del<CanonEdgeEditResult>(edgePath(pid, edgeId)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["canon-edge", pid] });
+      invalidateReview(qc, pid);
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["activity", pid] });
+      qc.invalidateQueries({ queryKey: ["canon-version", pid] });
     },
   });
 }

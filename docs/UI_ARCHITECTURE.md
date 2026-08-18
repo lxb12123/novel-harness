@@ -369,7 +369,7 @@
 ```
 
 ⚠️ **这棵树里有 2 个组件今天不存在**：`<RecentRuns hidden>` / `<RunTelemetry collapsed>`（都是 M2 的隐藏/折叠态，v1 本来就不显示）。`<AIPlanBtn disabled>` 仍是灰置 stub（规划未开放）；`<AIDraftBtn>` 已按 **修正案 7** 点亮并接上真实 `/draft`（实验状态，2026-08-02）——响应与 UI 都带「未经 kill-gate 裁决」标注。M2 有效裁决后再决定是否去掉实验标注。**Tab6 `<ProposalReviewTab>`（M4 审阅）已落地（2026-08-03）**：冲突/低置信/新人物卡 + 被动事件批量确认 + 显式抽取按钮。
-**`<ActivityLog>`（ADR 0020 的「可查」）已落地（2026-08-10）。** 它当天只有 Tab6 那一格真能动手，1.1 的两条改正路由在浏览器里还没有调用方，日志页在那一行明说了这件事——**2026-08-11 那句话被改掉了，因为它不再成立**：`POST /canon/knowledge` 的调用方是 Tab4 矩阵里的 `<CellEditor>`，`POST /canon/events/{id}/cast` 的调用方是 Tab6 下半截的 `<CanonEventCast>`。日志页的 `CAN_EDIT_HERE` 里 `knowledge_cell` / `event_cast` 因此翻成 `true`，`chapter` 那一档**仍是 `false`**——自动升上去的位置/状态边今天真的没有编辑入口，那是 ADR 0020 自己写下的推翻条件之一，把它一起翻掉等于关掉观测点。
+**`<ActivityLog>`（ADR 0020 的「可查」）已落地（2026-08-10）。** 它当天只有 Tab6 那一格真能动手，1.1 的两条改正路由在浏览器里还没有调用方，日志页在那一行明说了这件事——**2026-08-11 那句话被改掉了，因为它不再成立**：`POST /canon/knowledge` 的调用方是 Tab4 矩阵里的 `<CellEditor>`，`POST /canon/events/{id}/cast` 的调用方是 Tab6 下半截的 `<CanonEventCast>`。日志页的 `CAN_EDIT_HERE` 里 `knowledge_cell` / `event_cast` 因此翻成 `true`。**2026-08-17（Task 8）`canon_edge` 那一档也翻成 `true` 了**：自动升上去的位置/状态/关系边现在有 `/canon/edges/{edge_id}` 的修改 / 撤回 / 改归属路由，日志行直接弹起 `<CanonEdgeEditor>`——ADR 0020 那条「作者改不回来」的推翻条件就此闭合（[ADR 0032](adr/0032-reversible-auto-canon-edges.md)）。
 
 ### 2.3 状态管理：坐标进 Zustand，数据进 react-query
 

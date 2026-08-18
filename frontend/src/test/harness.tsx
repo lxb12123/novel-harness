@@ -154,6 +154,12 @@ const DEFAULT: Handler[] = [
   },
   { method: "POST", match: /\/canon\/knowledge$/, body: fixtures.canonKnowledge },
   { method: "POST", match: /\/canon\/events\/.*\/cast$/, body: fixtures.canonEventCast },
+  // Canon 边纠错（Task 8 / ADR 0032）：读 / 改 / 撤回自动升上去的地点边。
+  // 三条都是真 dump（`canonEdge` / `canonEdgeEdited` / `canonEdgeRetracted`）。
+  // PATCH 之后旧 ID 失效——回执里的 replacement id 才是下一次要读的那条。
+  { match: /\/canon\/edges\/[^/]+$/, body: fixtures.canonEdge },
+  { method: "PATCH", match: /\/canon\/edges\/[^/]+$/, body: fixtures.canonEdgeEdited },
+  { method: "DELETE", match: /\/canon\/edges\/[^/]+$/, body: fixtures.canonEdgeRetracted },
   // 活动记录。**按 id 前缀分派详情**（`extraction_run:` / `decision:`）——和后端
   // `read_entry` 的分派判据是同一个，所以这几条路由表不会和真接口漂开。
   // id 在 URL 里是编码过的（`decision%3AID36`），所以只匹配前缀不匹配那个冒号。

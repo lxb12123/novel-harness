@@ -1111,6 +1111,49 @@ class RetirementReport(BaseModel):
         return self.touched_canon_edges > 0 or self.touched_canon_events > 0
 
 
+AUTO_CANON_CORRECTABLE_EDGE_TYPES: Final[frozenset[EdgeType]] = frozenset(
+    {EdgeType.LOCATED_AT, EdgeType.HAS_STATE, EdgeType.RELATED_TO}
+)
+"""可自动进入 Canon 的三类边（ADR 0032 / §4.6）。
+
+它同时是 auto-Canon allowlist 的**上界**：抽取模块不得另抄一份更宽的集合。
+无纠错入口不得 auto-Canon——这三类之外的新边类型必须先补纠错路由再开放。
+"""
+
+
+class CanonEdgeView(BaseModel):
+    """一条可纠错 Canon 边的读取视图（§6.6 GET 出参）。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    edge_id: str
+    edge_type: EdgeType
+    src: str
+    dst: str
+    props: EdgeProps
+    valid_from_chapter: int
+    source: EdgeSource
+    evidence_id: str | None
+    evidence_status: EvidenceStatus
+    author_owned: bool
+    """active override 的 replacement 指向它 = 当前解释由作者接管。"""
+    slot_key: str
+    canon_version: int
+
+
+class CanonEdgeEditResult(BaseModel):
+    """修改/撤回一条 Canon 边之后给客户端的回执（§6.6）。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    edge_id: str
+    """当前生效的边 id——identity 改变后是 replacement（客户端要换选择状态）。"""
+    replacement_edge_id: str | None
+    canon_version: int
+    retracted: bool
+    view: CanonEdgeView
+
+
 class ChapterText(BaseModel):
     """一章的**当前**快照连正文。`current_snapshots` 的出参，定位引语的料。"""
 

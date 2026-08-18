@@ -30,13 +30,19 @@ from .models import (
     AliasHit,
     AliasKind,
     AliasSpec,
+    AUTO_CANON_CORRECTABLE_EDGE_TYPES,
+    CanonEdgeEditResult,
+    CanonEdgeView,
     ChapterCommitToken,
     ChapterSnapshot,
     ChapterSpec,
     ChapterText,
     ChapterUsage,
     Edge,
+    EdgeProps,
+    EdgeSource,
     EdgeSpec,
+    EdgeStatus,
     EdgeType,
     Evidence,
     EvidenceSpec,
@@ -66,6 +72,7 @@ from .store import (
     QUERYABLE_SCOPES,
     ChapterInUse,
     ChapterWriteConflict,
+    CanonEdgeRefused,
     NodeNotFound,
     QuoteMismatch,
     SnapshotInUse,
@@ -714,6 +721,343 @@ class SqliteStoryGraph:
                 text=spec.text,
                 changed=previous_hash != stored.text_sha256,
             )
+
+    # ══════════════════════════════════════════════════════════════════════
+    # Canon 边纠错（019 / Task 8）——「先可逆、后自动」的入口
+    # ══════════════════════════════════════════════════════════════════════
+
+    def canon_edge_view(self, project_id: str, edge_id: str) -> CanonEdgeView:
+        with _transaction(self._conn):
+            edge = self._editable_canon_edge(project_id, edge_id)
+            return self._edge_view(project_id, edge)
+
+    def edit_canon_edge(
+        self,
+        project_id: str,
+        edge_id: str,
+        *,
+        new_src: str,
+        new_dst: str,
+        props: EdgeProps,
+        expected_canon_version: int,
+        action: str = "EDIT",
+    ) -> CanonEdgeEditResult:
+        with _transaction(self._conn):
+            edge = self._editable_canon_edge(project_id, edge_id)
+            slot_key = queries.canon_edge_slot_key(edge)
+            canon_version = self._require_canon_version(project_id)
+            if canon_version != expected_canon_version:
+                from ..project import StaleBaseVersion
+
+                raise StaleBaseVersion(
+                    project_id, expected=expected_canon_version, current=canon_version
+                )
+            # 类型化校验（与节点 label 一起在这里收口）。
+            self._validate_correction_target(project_id, edge, new_src, new_dst, props)
+
+            identity_changed = (
+                new_src != edge.src or new_dst != edge.dst or edge.status is not EdgeStatus.ACTIVE
+            )
+            if identity_changed:
+                result = self._replace_edge(
+                    project_id, edge, slot_key, new_src, new_dst, props, action
+                )
+            else:
+                result = self._patch_edge_props(project_id, edge, slot_key, props, action)
+            return result
+
+    def retract_canon_edge(
+        self,
+        project_id: str,
+        edge_id: str,
+        *,
+        expected_canon_version: int,
+    ) -> CanonEdgeEditResult:
+        with _transaction(self._conn):
+            edge = self._editable_canon_edge(project_id, edge_id)
+            slot_key = queries.canon_edge_slot_key(edge)
+            canon_version = self._require_canon_version(project_id)
+            if canon_version != expected_canon_version:
+                from ..project import StaleBaseVersion
+
+                raise StaleBaseVersion(
+                    project_id, expected=expected_canon_version, current=canon_version
+                )
+            before_props = edge.props.model_dump_json()
+            old_override = queries.supersede_active_override(
+                self._conn, project_id, slot_key
+            )
+            decision_id = self._append_canon_edge_decision(
+                project_id, edge, action="RETRACT", before_props=before_props,
+                after_props=None,
+            )
+            override_id = new_id(EntityType.EDGE, project_id)
+            queries.insert_canon_override(
+                self._conn,
+                override_id=override_id,
+                project_id=project_id,
+                slot_key=slot_key,
+                edge_type=edge.type.value,
+                source_edge_id=edge.id,
+                replacement_edge_id=None,
+                before_props_json=before_props,
+                after_props_json=None,
+                action="RETRACT",
+                decision_log_id=decision_id,
+            )
+            if old_override is not None:
+                queries.link_override_chain(self._conn, old_override, override_id)
+            queries.retract_edge(self._conn, edge.id)
+            canon_version = self._bump_canon(project_id)
+            view = CanonEdgeView(
+                edge_id=edge.id,
+                edge_type=edge.type,
+                src=edge.src,
+                dst=edge.dst,
+                props=edge.props,
+                valid_from_chapter=edge.valid_from_chapter,
+                source=edge.source,
+                evidence_id=edge.evidence_id,
+                evidence_status=edge.evidence_status,
+                author_owned=False,
+                slot_key=slot_key,
+                canon_version=canon_version,
+            )
+            return CanonEdgeEditResult(
+                edge_id=edge.id,
+                replacement_edge_id=None,
+                canon_version=canon_version,
+                retracted=True,
+                view=view,
+            )
+
+    def _editable_canon_edge(self, project_id: str, edge_id: str) -> Edge:
+        """读取 + 可编辑资格校验（allowlist / current CANON / 非裸 STALE）。"""
+        try:
+            edge = queries.fetch_edge(self._conn, edge_id)
+        except LookupError as exc:
+            raise CanonEdgeRefused(str(exc)) from exc
+        if edge.project_id != project_id:
+            raise CanonEdgeRefused(f"edge {edge_id} 不属于项目 {project_id}")
+        if edge.type not in AUTO_CANON_CORRECTABLE_EDGE_TYPES:
+            raise CanonEdgeRefused(
+                f"edge type {edge.type.value} 不在可纠错 allowlist，不得 auto-Canon"
+            )
+        if edge.status is not EdgeStatus.ACTIVE or edge.information_scope is not InformationScope.CANON:
+            raise CanonEdgeRefused(f"edge {edge_id} 不是 current CANON（已撤回/非 CANON）")
+        override = queries.active_canon_override_for_edge(
+            self._conn, project_id, edge_id
+        )
+        protected = override is not None
+        if edge.evidence_status is EvidenceStatus.STALE and not protected:
+            raise CanonEdgeRefused(
+                f"edge {edge_id} 是裸 STALE 机器边（无 ACTIVE override 保护），拒绝纠错"
+            )
+        return edge
+
+    def _validate_correction_target(
+        self,
+        project_id: str,
+        edge: Edge,
+        new_src: str,
+        new_dst: str,
+        props: EdgeProps,
+    ) -> None:
+        """类型化目标校验：跨项目/错误 label 在这里收口（§4.6）。"""
+        def _require(role: str, node_id: str, label: NodeLabel) -> None:
+            node = self._require_node(project_id, node_id, what=role)
+            if node.label is not label:
+                raise CanonEdgeRefused(
+                    f"{role} {node_id} 的 label 是 {node.label.value}，需要 {label.value}"
+                )
+
+        if edge.type is EdgeType.LOCATED_AT:
+            _require("src", new_src, NodeLabel.CHARACTER)
+            _require("dst", new_dst, NodeLabel.LOCATION)
+        elif edge.type is EdgeType.HAS_STATE:
+            _require("src", new_src, NodeLabel.CHARACTER)
+            _require("dst", new_dst, NodeLabel.STATE_DIM)
+            if not props.dim_key or not props.value:
+                raise CanonEdgeRefused("HAS_STATE 需要 dim_key 与 value")
+        elif edge.type is EdgeType.RELATED_TO:
+            _require("src", new_src, NodeLabel.CHARACTER)
+            _require("dst", new_dst, NodeLabel.CHARACTER)
+
+    def _replace_edge(
+        self,
+        project_id: str,
+        edge: Edge,
+        slot_key: str,
+        new_src: str,
+        new_dst: str,
+        props: EdgeProps,
+        action: str,
+    ) -> CanonEdgeEditResult:
+        """identity 改变：软撤回旧边 + ACTIVE override + 建/恢复 replacement。"""
+        spec = EdgeSpec(
+            project_id=project_id,
+            src=new_src,
+            dst=new_dst,
+            type=edge.type,
+            props=props,
+            valid_from_chapter=edge.valid_from_chapter,
+            information_scope=InformationScope.CANON,
+            source=EdgeSource.AUTHOR,
+            evidence_id=None,
+        )
+        restored = queries.find_edge_by_identity_any_status(self._conn, spec)
+        before_props = edge.props.model_dump_json()
+        if restored is not None:
+            replacement_id = restored.id
+            queries.restore_retracted_edge(self._conn, replacement_id)
+            queries.update_edge_props_only(self._conn, replacement_id, props.model_dump_json())
+        else:
+            replacement_id = self._new_edge_id(project_id)
+            queries.insert_edge(
+                self._conn, replacement_id, spec, EvidenceStatus.NONE
+            )
+        decision_id = self._append_canon_edge_decision(
+            project_id, edge, action=action, before_props=before_props,
+            after_props=props.model_dump_json(),
+        )
+        old_override = queries.supersede_active_override(self._conn, project_id, slot_key)
+        override_id = new_id(EntityType.EDGE, project_id)
+        queries.insert_canon_override(
+            self._conn,
+            override_id=override_id,
+            project_id=project_id,
+            slot_key=slot_key,
+            edge_type=edge.type.value,
+            source_edge_id=edge.id,
+            replacement_edge_id=replacement_id,
+            before_props_json=before_props,
+            after_props_json=props.model_dump_json(),
+            action=action,
+            decision_log_id=decision_id,
+        )
+        if old_override is not None:
+            queries.link_override_chain(self._conn, old_override, override_id)
+        queries.retract_edge(self._conn, edge.id)
+        canon_version = self._bump_canon(project_id)
+        current = queries.fetch_edge(self._conn, replacement_id)
+        view = self._edge_view(project_id, current)
+        return CanonEdgeEditResult(
+            edge_id=current.id,
+            replacement_edge_id=current.id,
+            canon_version=canon_version,
+            retracted=False,
+            view=view,
+        )
+
+    def _patch_edge_props(
+        self,
+        project_id: str,
+        edge: Edge,
+        slot_key: str,
+        props: EdgeProps,
+        action: str,
+    ) -> CanonEdgeEditResult:
+        """identity 不变：先 append before/after override，再只更新 props 投影。"""
+        before_props = edge.props.model_dump_json()
+        old_override = queries.supersede_active_override(self._conn, project_id, slot_key)
+        decision_id = self._append_canon_edge_decision(
+            project_id, edge, action=action, before_props=before_props,
+            after_props=props.model_dump_json(),
+        )
+        override_id = new_id(EntityType.EDGE, project_id)
+        queries.insert_canon_override(
+            self._conn,
+            override_id=override_id,
+            project_id=project_id,
+            slot_key=slot_key,
+            edge_type=edge.type.value,
+            source_edge_id=edge.id,
+            replacement_edge_id=edge.id,
+            before_props_json=before_props,
+            after_props_json=props.model_dump_json(),
+            action=action,
+            decision_log_id=decision_id,
+        )
+        if old_override is not None:
+            queries.link_override_chain(self._conn, old_override, override_id)
+        queries.update_edge_props_only(self._conn, edge.id, props.model_dump_json())
+        canon_version = self._bump_canon(project_id)
+        current = queries.fetch_edge(self._conn, edge.id)
+        view = self._edge_view(project_id, current)
+        return CanonEdgeEditResult(
+            edge_id=current.id,
+            replacement_edge_id=current.id,
+            canon_version=canon_version,
+            retracted=False,
+            view=view,
+        )
+
+    def _edge_view(self, project_id: str, edge: Edge) -> CanonEdgeView:
+        override = queries.active_canon_override_for_edge(self._conn, project_id, edge.id)
+        return CanonEdgeView(
+            edge_id=edge.id,
+            edge_type=edge.type,
+            src=edge.src,
+            dst=edge.dst,
+            props=edge.props,
+            valid_from_chapter=edge.valid_from_chapter,
+            source=edge.source,
+            evidence_id=edge.evidence_id,
+            evidence_status=edge.evidence_status,
+            author_owned=override is not None,
+            slot_key=queries.canon_edge_slot_key(edge),
+            canon_version=self._require_canon_version(project_id),
+        )
+
+    def _require_canon_version(self, project_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT canon_version FROM project WHERE id = ?", (project_id,)
+        ).fetchone()
+        if row is None:
+            raise CanonEdgeRefused(f"project {project_id} 不存在")
+        return int(row["canon_version"])
+
+    def _bump_canon(self, project_id: str) -> int:
+        row = self._conn.execute(
+            "UPDATE project SET canon_version = canon_version + 1 "
+            "WHERE id = ? RETURNING canon_version",
+            (project_id,),
+        ).fetchone()
+        return int(row["canon_version"])
+
+    def _append_canon_edge_decision(
+        self,
+        project_id: str,
+        edge: Edge,
+        *,
+        action: str,
+        before_props: str,
+        after_props: str | None,
+    ) -> str:
+        from .. import decisions
+
+        kind = (
+            decisions.DecisionKind.CANON_EDGE_EDIT
+            if action != "RETRACT"
+            else decisions.DecisionKind.CANON_EDGE_RETRACT
+        )
+        return decisions.append(
+            self._conn,
+            project_id=project_id,
+            kind=kind,
+            decision=decisions.Verdict.ACCEPT,
+            subject_name=edge.id,
+            chapter_number=edge.valid_from_chapter,
+            payload={
+                "edge_id": edge.id,
+                "edge_type": edge.type.value,
+                "src": edge.src,
+                "dst": edge.dst,
+                "valid_from_chapter": edge.valid_from_chapter,
+                "before_props_json": before_props,
+                "after_props_json": after_props,
+            },
+        ).id
 
     def current_chapter_id(self, project_id: str, number: int) -> str | None:
         row = queries.find_chapter_by_number(self._conn, project_id, number)

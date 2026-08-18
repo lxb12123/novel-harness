@@ -59,6 +59,9 @@ interface Coords {
   /** 日志页跳过来要打开的那条**已生效事件**（改它的知情 / 在场名单）。
    *  同 `focusCell`：id 来自后端的 `jump.event_id`，不是从那行字里认出来的。 */
   focusEventId: string | null;
+  /** 日志页跳过来要打开的那条**自动 Canon 边**（改它 / 撤回它 / 改归属）。
+   *  同 `focusEventId`：id 来自后端的 `jump.edge_id`（Task 8 / ADR 0032）。 */
+  focusEdgeId: string | null;
   /** 中栏右半边的写作助手开着没有。**默认关着**——它是作者要的时候才展开的一块屏幕，
    *  不是常驻的（同「活动记录」那条：入口不是通知）。
    *
@@ -78,6 +81,8 @@ interface Coords {
 
   setProject: (id: string) => void;
   setChapter: (n: number) => void;
+  /** 打开 / 关掉 Canon 边纠错弹窗（Task 8）。`edgeId` 来自后端的 `jump.edge_id`。 */
+  setEdgeFocus: (edgeId: string | null) => void;
   /** 连书带章一起翻过去 —— 左栏书架上点了**另一本**书的章目录。
    *
    *  **`cursorFor` 必须在同一次 set 里一起置上。** 不置的话 App 那个 effect 会把这一下
@@ -102,6 +107,7 @@ interface Coords {
     tab: Tab | null;
     cell: FocusCell | null;
     eventId: string | null;
+    edgeId: string | null;
     /** 后端 `jump.cast` 拼出来的那一串，原样落进 `castInclude`（**不是 `cast`**）。
      *  空串 = 这一档给不出坐标，面板照旧按推导算。
      *  前端不在这里挑人、不在这里合并——两者都是「替引擎决定谁在场」。 */
@@ -121,6 +127,7 @@ export const useCoords = create<Coords>((set) => ({
   page: "workbench",
   focusCell: null,
   focusEventId: null,
+  focusEdgeId: null,
   chatOpen: false,
   chatId: null,
   cursorFor: null,
@@ -129,11 +136,12 @@ export const useCoords = create<Coords>((set) => ({
   // 留着上一本书的 id 就是一次必然 404 的详情请求，而屏幕上会是一句
   // 「这段对话不在了」——一句完全对不上作者刚做的事的话。
   setProject: (projectId) => set({ projectId, chatId: null }),
+  setEdgeFocus: (focusEdgeId) => set({ focusEdgeId }),
   // 换章 / 换 tab 都会让「刚才跳过来的是这一格」失效，留着它就是在别的章上画一个假高亮。
   // `castInclude` 跟着一起清：它是那次跳转的余温（把那一行推回表上），
   // 换了章之后它指的是另一章的表，留着只会凭空多出一行谁也没要求过的人。
   setChapter: (chapter) =>
-    set({ chapter, focusCell: null, focusEventId: null, castInclude: "" }),
+    set({ chapter, focusCell: null, focusEventId: null, focusEdgeId: null, castInclude: "" }),
   // 换书那份清理（`chatId`）+ 换章那份清理（余温三件）**一次做完**：分两步 set 的话，
   // 中间那一帧是「新书 + 旧章号」，而屏幕会照着它去拉一次别的书的正文。
   openBookAt: (projectId, chapter) =>
@@ -144,13 +152,15 @@ export const useCoords = create<Coords>((set) => ({
       chatId: null,
       focusCell: null,
       focusEventId: null,
+      focusEdgeId: null,
       castInclude: "",
     }),
   markCursor: (cursorFor) => set({ cursorFor }),
   // 作者亲手选了一场 = 他接管了「看谁」。这时还留着系统加的那个人，
   // 他选的那一场就不是他看到的那一场了。
   setCast: (cast) => set({ cast, castInclude: "" }),
-  setTab: (activeTab) => set({ activeTab, focusCell: null, focusEventId: null, castInclude: "" }),
+  setTab: (activeTab) =>
+    set({ activeTab, focusCell: null, focusEventId: null, focusEdgeId: null, castInclude: "" }),
   focusNode: (selectedNodeId) => set({ selectedNodeId, activeTab: "graph" }),
   setHighlight: (highlight) => set({ highlight }),
   setPage: (page) => set({ page }),
@@ -161,7 +171,7 @@ export const useCoords = create<Coords>((set) => ({
   // 换掉的都只有中栏左半边，助手照旧在它右边开着。
   toggleChat: () => set((s) => ({ chatOpen: !s.chatOpen })),
   setChat: (chatId) => set({ chatId }),
-  jumpFromActivity: ({ tab, cell, eventId, include }) =>
+  jumpFromActivity: ({ tab, cell, eventId, edgeId, include }) =>
     set((s) => ({
       page: "workbench",
       activeTab: tab ?? s.activeTab,
@@ -174,5 +184,6 @@ export const useCoords = create<Coords>((set) => ({
       castInclude: include,
       focusCell: cell,
       focusEventId: eventId,
+      focusEdgeId: edgeId,
     })),
 }));

@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, ConfigDict, Field
@@ -62,6 +62,12 @@ from ..extract.proposals import (
     review_proposal,
 )
 from ..graph import EdgeType, GraphStore
+from ..graph.models import (
+    CanonEdgeEditResult,
+    CanonEdgeView,
+    EdgeProps,
+)
+from ..graph.store import CanonEdgeRefused
 from ..graph.sqlite_proposals import SqliteProposalStore
 from ..graph.sqlite_review import SqliteEdgeReviewStore
 from ..graph.sqlite_events import SqliteEventStore
@@ -69,6 +75,142 @@ from .deps import get_conn, get_event_store, get_store, load_project
 
 
 router = APIRouter()
+
+
+class LocationEdgeEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["location"] = "location"
+    character_id: str | None = None
+    """改归属：把整条事实改到另一个 Character（省略 = 保持原主体）。"""
+    location_id: str | None = None
+    """改地点：目标 Location（省略 = 保持原地）。"""
+    expected_canon_version: int
+
+
+class StateEdgeEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["state"] = "state"
+    subject_id: str | None = None
+    dim_key: str
+    value: str
+    value_key: str | None = None
+    expected_canon_version: int
+
+
+class RelationEdgeEdit(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["relation"] = "relation"
+    peer_id: str | None = None
+    """改对端：替换关系另一端（省略 = 保持原对端）。"""
+    display: str | None = None
+    """关系显示值（存进 EdgeProps 的 `display` 额外字段）。"""
+    expected_canon_version: int
+
+
+CanonEdgeEdit = Annotated[
+    Union[LocationEdgeEdit, StateEdgeEdit, RelationEdgeEdit],
+    Field(discriminator="kind"),
+]
+
+
+@router.get("/api/projects/{project_id}/canon/edges/{edge_id}")
+def get_canon_edge(
+    edge_id: str,
+    store: Any = Depends(get_store),
+    proj: Any = Depends(load_project),
+) -> CanonEdgeView:
+    """读取一条可纠错 Canon 边（§6.6）：只返回 allowlist 中的 current CANON。"""
+    try:
+        return store.canon_edge_view(proj.id, edge_id)
+    except CanonEdgeRefused as exc:
+        raise HTTPException(409, {"error": "canon_edge_refused", "message": str(exc)})
+
+
+@router.patch("/api/projects/{project_id}/canon/edges/{edge_id}")
+def patch_canon_edge(
+    edge_id: str,
+    body: CanonEdgeEdit,
+    store: Any = Depends(get_store),
+    proj: Any = Depends(load_project),
+) -> CanonEdgeEditResult:
+    """类型化修改/改归属一条 Canon 边（无章号字段，extra=forbid）。"""
+    try:
+        edge = store.canon_edge_view(proj.id, edge_id)
+    except CanonEdgeRefused as exc:
+        raise HTTPException(409, {"error": "canon_edge_refused", "message": str(exc)})
+    new_src, new_dst, props = _canon_edge_target(edge, body)
+    try:
+        return store.edit_canon_edge(
+            proj.id,
+            edge_id,
+            new_src=new_src,
+            new_dst=new_dst,
+            props=props,
+            expected_canon_version=body.expected_canon_version,
+        )
+    except CanonEdgeRefused as exc:
+        raise HTTPException(409, {"error": "canon_edge_refused", "message": str(exc)})
+    except project.StaleBaseVersion as exc:
+        raise HTTPException(409, {"error": "stale_canon_version", "message": str(exc)})
+
+
+@router.delete("/api/projects/{project_id}/canon/edges/{edge_id}")
+def delete_canon_edge(
+    edge_id: str,
+    conn: Annotated[Connection, Depends(get_conn)],
+    store: Any = Depends(get_store),
+    proj: Any = Depends(load_project),
+) -> CanonEdgeEditResult:
+    """软撤回一条 Canon 边（override tombstone；expected_canon_version 防旧表单）。"""
+    row = conn.execute(
+        "SELECT canon_version FROM project WHERE id = ?", (proj.id,)
+    ).fetchone()
+    expected = int(row["canon_version"])
+    try:
+        return store.retract_canon_edge(
+            proj.id, edge_id, expected_canon_version=expected
+        )
+    except CanonEdgeRefused as exc:
+        raise HTTPException(409, {"error": "canon_edge_refused", "message": str(exc)})
+    except project.StaleBaseVersion as exc:
+        raise HTTPException(409, {"error": "stale_canon_version", "message": str(exc)})
+
+
+def _canon_edge_target(edge: CanonEdgeView, body: CanonEdgeEdit) -> tuple[str, str, EdgeProps]:
+    """把类型化请求译成 (new_src, new_dst, props)。kind 必须与 edge type 匹配。"""
+    if body.kind == "location":
+        if edge.edge_type is not EdgeType.LOCATED_AT:
+            raise HTTPException(422, {"error": "bad_request", "message": "这条边不是位置边"})
+        if body.character_id is None and body.location_id is None:
+            raise HTTPException(422, {"error": "bad_request", "message": "至少要改一个目标"})
+        return (
+            body.character_id or edge.src,
+            body.location_id or edge.dst,
+            edge.props,
+        )
+    if body.kind == "state":
+        if edge.edge_type is not EdgeType.HAS_STATE:
+            raise HTTPException(422, {"error": "bad_request", "message": "这条边不是状态边"})
+        return (
+            body.subject_id or edge.src,
+            edge.dst,
+            EdgeProps(dim_key=body.dim_key, value=body.value, value_key=body.value_key),
+        )
+    if body.kind == "relation":
+        if edge.edge_type is not EdgeType.RELATED_TO:
+            raise HTTPException(422, {"error": "bad_request", "message": "这条边不是关系边"})
+        if body.peer_id is not None:
+            new_src, new_dst = sorted((edge.src, body.peer_id))
+        else:
+            new_src, new_dst = edge.src, edge.dst
+        props = edge.props
+        if body.display is not None:
+            props = EdgeProps.model_validate({**edge.props.model_dump(), "display": body.display})
+        return new_src, new_dst, props
+    raise HTTPException(422, {"error": "bad_request", "message": "未知的编辑类型"})
 
 
 class EventSummaryEditBody(BaseModel):
