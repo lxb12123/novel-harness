@@ -354,8 +354,8 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 > 列在「还一个字符都没有」里——照它排期的人会去重写已完成的工作。
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
-> 守卫钉住的是**能在运行时数出来**的那些（77 条路由 / 76 条 /api / 1 条 501 stub /
-> 19 个错误映射 / 17 个子命令 / 39 张表 / 79 个端点 / `ALL_CHECKS` 2），
+> 守卫钉住的是**能在运行时数出来**的那些（82 条路由 / 81 条 /api / 1 条 501 stub /
+> 19 个错误映射 / 17 个子命令 / 44 张表 / 82 个端点 / `ALL_CHECKS` 2），
 > 改错必红、**删掉也必红**（不静默 skip）。
 > （这一行 2026-08-10 之前写的是「路由 42 / fixture 端点 34」那种词序，
 > **而守卫的正则认的是「N 条路由」「N 个端点」**——于是它躺在被守卫盯着的那一节里、
@@ -376,7 +376,7 @@ db.py  ids.py  decisions.py  project.py
 migrations/{001_init,002_m4_events,003_proposal_audit_recovery,004_chapter_summary,005_fact_edit,
             006_chat_session,007_draft_candidate,008_cache_usage,
             009_call_chapter,010_candidate_stopped,011_rule_revocation,
-            012_chat_notice,013_summary_edit,014_summary_mentions}.sql（39 张表）
+            012_chat_notice,013_summary_edit,014_summary_mentions}.sql（44 张表）
                                                 ← 013 也是 ALTER 不建表：`chapter_summary`
                                                   多两列（`source` / `status`），照 005 的先例。
                                                   **作者改一条滚动总结时不许有一行凭空消失**：
@@ -526,8 +526,8 @@ cli.py                                          ← nh 的 17 个子命令（含
                                                   **印的是 `len(ALL_CHECKS)` 和规则名**，
                                                   不是写死的数字
 api/{app,deps,activity,autopilot,chat,extraction,manuscript,review}.py
-                                                ← M1.5 FastAPI 壳：77 条路由 + 19 个错误映射
-                                                  （76 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
+                                                ← M1.5 FastAPI 壳：82 条路由 + 19 个错误映射
+                                                  （81 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
                                                   M4 抽取/事件读端 + 提案审阅/被动确认路由；
                                                   抽取那两条的出参 2026-08-13 换成 `ExtractionRunView`：
                                                   `errors` 是**已经翻好的中文**（措辞唯一出处仍是
@@ -635,7 +635,7 @@ frontend/src/                                   ← React 工作台：62 个非�
                                                   翻到第 5 章面板自己跳进去）。
                                                   在场跟着那一章走（`_effective_cast` 数的是**路径上那一章**
                                                   的正文），所以 `CastLine` 那一行也跟着说「第 N 章提到：」）
-frontend/src/__fixtures__/api.json              ← 从真 app dump 的 79 个端点出参（契约测试两头共用）
+frontend/src/__fixtures__/api.json              ← 从真 app dump 的 82 个端点出参（契约测试两头共用）
                                                   其中 `extractionFailed` 是**一次没跑成的整理**
                                                   （2026-08-13 补）：在它之前这份夹具里三条 run
                                                   全是成功的，于是「失败了屏幕上说什么」这条路径

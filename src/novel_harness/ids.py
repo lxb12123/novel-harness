@@ -93,6 +93,12 @@ class EntityType(StrEnum):
     """020：一个 chapter generation 的机器事实归属（`extraction_application`）。"""
     EXTRACTION_ANALYSIS = "analysis"
     """020：规范 analysis JSON 的持久化（`extraction_analysis`）。"""
+    SUMMARY_RECONCILIATION_RUN = "recon"
+    """021：一次只告警的总结核对 run（`summary_reconciliation_run`）。"""
+    SUMMARY_RECONCILIATION_OUTBOX = "reconob"
+    """021：总结核对的持久 outbox（`summary_reconciliation_outbox`）。"""
+    SYSTEM_NOTIFICATION = "notif"
+    """021：统一系统通知（`system_notification`）。"""
 
     PROJECT = "project"
     """只由 `new_project_id()` 用。**项目 ID 不能走 `new_id()`**——见那个函数的 docstring。"""

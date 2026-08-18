@@ -780,6 +780,43 @@ def test_frontend_fixture_matches_the_real_api(
     assert already.status_code == 409, already.text
     dump["errorFactAlreadyExists"] = norm.walk(already.json())
 
+    # ── 系统通知（Task 10 / 021）：读列表 / count / 忽略 全走真服务 ──────────
+    # 直接往通知 outbox 塞一条再物化（走真 `materialize_notification_outbox`），
+    # 然后冻三条读端。**放在最末**：它不会往图里加东西，不影响上面任何夹具。
+    from novel_harness.system_notifications import (
+        background_failure_dedupe_key,
+        enqueue_notification,
+        materialize_notification_outbox,
+    )
+
+    _notif_conn = connect(book["db"])
+    try:
+        _notif_pid = pid
+        _notif_key = background_failure_dedupe_key(
+            kind="summary_mismatch", subject_type="chapter", subject_id=book["萧决"],
+            operation="reconcile", source_snapshot_id=None, job_id="job:contract",
+        )
+        _notif_conn.execute("BEGIN IMMEDIATE")
+        enqueue_notification(
+            _notif_conn,
+            project_id=_notif_pid,
+            kind="summary_mismatch",
+            subject_type="chapter",
+            subject_id=book["萧决"],
+            chapter_number=1,
+            title="第 1 章的总结可能与正文不一致",
+            dedupe_key=_notif_key,
+        )
+        _notif_conn.commit()
+        materialize_notification_outbox(_notif_conn, project_id=_notif_pid, lease_owner="contract")
+        _notif_conn.commit()
+    finally:
+        _notif_conn.close()
+    grab("notifications", client.get(f"{base}/notifications"))
+    grab("notificationsCount", client.get(f"{base}/notifications/count"))
+    _nid = dump["notifications"][0]["id"]
+    grab("notificationsIgnored", client.post(f"{base}/notifications/{_nid}/ignore"))
+
     # ── 自动 Canon 边的纠错（Task 8 / ADR 0032）─────────────────────────────
     # 种法走抽取 ingest + `promote_clean_facts`（真代码），不手写：要的是
     # 「`source=extractor`、CANON、FRESH evidence」那种真形态——作者在日志页

@@ -54,6 +54,7 @@ import type {
   StoredAlias,
   Subgraph,
   SummaryWindow,
+  SystemNotification,
 } from "./types";
 
 // 服务端状态全进 TanStack Query（§2.3）：queryKey = [端点, pid, chapter, cast]，
@@ -888,6 +889,40 @@ export function useRetractCanonEdge(pid: string) {
 
 const chats = (pid: string, tail = "") => proj(pid, `/chats${tail}`);
 const one = (id: string) => `/${encodeURIComponent(id)}`;
+
+/** 右栏「系统通知 N」那一格（Task 10）。只有 OPEN 会显示在默认列表里。 */
+export function useNotifications(pid: string | null) {
+  return useQuery({
+    queryKey: q(["notifications", pid]),
+    queryFn: () => api.get<SystemNotification[]>(proj(pid!, "/notifications")),
+    enabled: !!pid,
+  });
+}
+
+/** 数字 badge：只数 OPEN。**null 是「还没读」，不是 0。** */
+export function useNotificationsCount(pid: string | null) {
+  return useQuery({
+    queryKey: q(["notifications-count", pid]),
+    queryFn: () => api.get<{ open: number }>(proj(pid!, "/notifications/count")),
+    enabled: !!pid,
+  });
+}
+
+/** 忽略当前 hash 对（正文或总结任一变化都允许再次提醒，后端去重键钉着）。 */
+export function useIgnoreNotification(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (notificationId: string) =>
+      api.post<{ id: string; status: string }>(
+        proj(pid, `/notifications/${encodeURIComponent(notificationId)}/ignore`),
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["notifications", pid] });
+      qc.invalidateQueries({ queryKey: ["notifications-count", pid] });
+    },
+  });
+}
+
 
 /** 侧栏那一列。**不轮询**：`running` 是后端**进程内**的事实，只有另一个标签页
  *  正在跑同一本书时它才会自己变——而那时那边一停，这边下一次动作就会看到。

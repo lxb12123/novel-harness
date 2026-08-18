@@ -387,14 +387,14 @@
   "activityCanonEdge": {
     "actor": "system",
     "chapter_number": 1,
-    "id": "decision:ID72",
+    "id": "decision:ID73",
     "jump": {
       "cast": [],
       "chapter_number": 1,
       "character_id": null,
-      "edge_id": "edge:ID69",
+      "edge_id": "edge:ID70",
       "endpoints": [
-        "/api/projects/project:ID1/canon/edges/edge:ID69"
+        "/api/projects/project:ID1/canon/edges/edge:ID70"
       ],
       "event_id": null,
       "label": "去改这条自动生成的边（第 1 章）",
@@ -904,9 +904,9 @@
     "author_owned": false,
     "canon_version": 17,
     "dst": "location:ID5",
-    "edge_id": "edge:ID69",
+    "edge_id": "edge:ID70",
     "edge_type": "LOCATED_AT",
-    "evidence_id": "evidence:ID70",
+    "evidence_id": "evidence:ID71",
     "evidence_status": "FRESH",
     "props": {
       "believed_value": null,
@@ -920,14 +920,14 @@
   },
   "canonEdgeEdited": {
     "canon_version": 18,
-    "edge_id": "edge:ID71",
-    "replacement_edge_id": "edge:ID71",
+    "edge_id": "edge:ID72",
+    "replacement_edge_id": "edge:ID72",
     "retracted": false,
     "view": {
       "author_owned": true,
       "canon_version": 18,
       "dst": "location:ID9",
-      "edge_id": "edge:ID71",
+      "edge_id": "edge:ID72",
       "edge_type": "LOCATED_AT",
       "evidence_id": null,
       "evidence_status": "NONE",
@@ -944,14 +944,14 @@
   },
   "canonEdgeRetracted": {
     "canon_version": 19,
-    "edge_id": "edge:ID71",
+    "edge_id": "edge:ID72",
     "replacement_edge_id": null,
     "retracted": true,
     "view": {
       "author_owned": false,
       "canon_version": 19,
       "dst": "location:ID9",
-      "edge_id": "edge:ID71",
+      "edge_id": "edge:ID72",
       "edge_type": "LOCATED_AT",
       "evidence_id": null,
       "evidence_status": "NONE",
@@ -1419,7 +1419,7 @@
   "errorCanonEdgeGone": {
     "detail": {
       "error": "canon_edge_refused",
-      "message": "edge edge:ID71 不是 current CANON（已撤回/非 CANON）"
+      "message": "edge edge:ID72 不是 current CANON（已撤回/非 CANON）"
     }
   },
   "errorFactAlreadyExists": {
@@ -1741,6 +1741,30 @@
     "chapter": 99,
     "has_text": false,
     "surfaces": []
+  },
+  "notifications": [
+    {
+      "actions": [],
+      "chapter_number": 1,
+      "created_at": "<ts>",
+      "id": "notif:ID69",
+      "jump": null,
+      "kind": "summary_mismatch",
+      "project_id": "project:ID1",
+      "source_sha256": null,
+      "status": "OPEN",
+      "subject_id": "character:ID10",
+      "subject_type": "chapter",
+      "summary_sha256": null,
+      "title": "第 1 章的总结可能与正文不一致"
+    }
+  ],
+  "notificationsCount": {
+    "open": 1
+  },
+  "notificationsIgnored": {
+    "id": "notif:ID69",
+    "status": "IGNORED"
   },
   "projects": [
     {

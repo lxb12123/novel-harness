@@ -1,7 +1,7 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { renderWithApi } from "../test/harness";
+import { fixtures, renderWithApi } from "../test/harness";
 import { useCoords } from "../store";
 import { CanonEdgeEditor } from "./CanonEdgeEditor";
 
@@ -14,7 +14,10 @@ import { CanonEdgeEditor } from "./CanonEdgeEditor";
 // `author_owned=false` 的 LOCATED_AT 边）：形状变了但组件没跟上 → vitest 红。
 
 const PID = "project:ID1";
-const EDGE_ID = "edge:ID69";
+// **从真 dump 反查而不是写死 `edge:IDn`**：id 是 dump 按写入顺序编的别名，
+// 契约测试每多 dump 一个端点（如 Task 10 的通知）整串就集体前移。
+const EDGE_ID = fixtures.canonEdge.edge_id;
+const EDGE_URL = `/canon/edges/${encodeURIComponent(EDGE_ID)}`;
 
 function openEdge() {
   useCoords.setState({ projectId: PID, focusEdgeId: EDGE_ID });
@@ -60,7 +63,7 @@ describe("CanonEdgeEditor（Task 8）", () => {
 
     await waitFor(() =>
       expect(fetchSpy).toHaveBeenCalledWith(
-        expect.stringContaining(`/canon/edges/edge%3AID69`),
+        expect.stringContaining(EDGE_URL),
         expect.objectContaining({ method: "PATCH" }),
       ),
     );
@@ -86,7 +89,7 @@ describe("CanonEdgeEditor（Task 8）", () => {
     await waitFor(() => {
       const calls = fetchSpy.mock.calls.filter(
         ([url, init]) =>
-          String(url).includes(`/canon/edges/edge%3AID69`) && init?.method === "PATCH",
+          String(url).includes(EDGE_URL) && init?.method === "PATCH",
       );
       expect(calls.length).toBeGreaterThan(0);
       const body = JSON.parse(String(calls[0][1]?.body));
@@ -108,7 +111,7 @@ describe("CanonEdgeEditor（Task 8）", () => {
     expect(
       fetchSpy.mock.calls.some(
         ([url, init]) =>
-          String(url).includes(`/canon/edges/edge%3AID69`) && init?.method === "DELETE",
+          String(url).includes(EDGE_URL) && init?.method === "DELETE",
       ),
     ).toBe(false);
 
@@ -116,7 +119,7 @@ describe("CanonEdgeEditor（Task 8）", () => {
     await userEvent.click(confirm);
     await waitFor(() =>
       expect(fetchSpy).toHaveBeenCalledWith(
-        expect.stringContaining(`/canon/edges/edge%3AID69`),
+        expect.stringContaining(EDGE_URL),
         expect.objectContaining({ method: "DELETE" }),
       ),
     );

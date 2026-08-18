@@ -135,6 +135,26 @@ def edit_event_summary(
     ):
         raise EventSummaryEditConflict("event summary head CAS failed")
 
+    # 021 / Task 10：event summary head 切换与「要核对这条新摘要」同一事务
+    # （不变量 9）。`source_sha256` 是事件 evidence 的稳定指纹（§4.4），
+    # 不是本模块自造的第三种来源哈希。
+    from ..summary_reconciliation import enqueue_reconciliation_outbox
+
+    basis = store.event_summary_job_basis(project_id, event_id)
+    if basis is not None:
+        enqueue_reconciliation_outbox(
+            conn,
+            project_id=project_id,
+            subject_type="proposal_event" if scope == "PROVISIONAL" else "canon_event",
+            subject_id=event_id,
+            chapter_number=None,
+            checked_against_snapshot_id=basis["chapter_snapshot_id"],
+            source_generation=int(basis["snapshot_generation"] or 1),
+            source_sha256=basis["evidence_sha256"]
+            or _evidence_fingerprint(basis.get("quote_text") or ""),
+            summary_sha256=version_id,
+        )
+
     if scope == "CANON" and bump_canon:
         if expected_canon_version is None:
             raise EventSummaryEditConflict("Canon 摘要编辑必须带 expected_canon_version")

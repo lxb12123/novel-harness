@@ -411,6 +411,17 @@ def _chapter_identity(
     return (str(row["chapter_id"]), str(row["snapshot_id"])) if row is not None else None
 
 
+def _snapshot_text_hash(conn: Connection, project_id: str, chapter_number: int) -> str:
+    """当前快照的 `text_sha256`（§4.4：滚动总结的 `source_sha256` 用它，不发明第三种）。"""
+    row = conn.execute(
+        "SELECT text_sha256 FROM chapter WHERE project_id = ? AND number = ?",
+        (project_id, chapter_number),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError(f"chapter {chapter_number} 没有当前快照，无法核对")
+    return str(row["text_sha256"])
+
+
 def _chapter_generation(conn: Connection, project_id: str, chapter_number: int) -> int:
     row = conn.execute(
         "SELECT snapshot_generation FROM chapter WHERE project_id = ? AND number = ?",
@@ -585,6 +596,20 @@ def save_author_summary(
             conn, chapter_id, new_id_value, expected_head=expected_head
         ):
             raise RuntimeError("author summary CAS failed: head moved concurrently")
+        # 021 / Task 10：作者版总结立即生效，也要按当前正文核对（同一事务）。
+        from ..summary_reconciliation import enqueue_reconciliation_outbox
+
+        enqueue_reconciliation_outbox(
+            conn,
+            project_id=project_id,
+            subject_type="chapter_summary",
+            subject_id=chapter_id,
+            chapter_number=chapter_number,
+            checked_against_snapshot_id=snapshot_id,
+            source_generation=_chapter_generation(conn, project_id, chapter_number),
+            source_sha256=_snapshot_text_hash(conn, project_id, chapter_number),
+            summary_sha256=_text_hash(body),
+        )
         conn.commit()
     except Exception:
         conn.rollback()
@@ -841,6 +866,23 @@ class RollingSummarizer:
                 conn.execute(
                     "UPDATE summary_generation_job SET status = 'SUCCEEDED' WHERE id = ?",
                     (job_id,),
+                )
+                # 021 / Task 10：head 切换与「要核对这条新总结」同一事务（不变量 9）。
+                # 进程在这之后立即退出，重启后 dispatcher 仍能补核对。
+                # `source_sha256` 口径只有一份（§4.4）：滚动总结用
+                # `chapter_snapshot.text_sha256`，不用总结自己的 hash。
+                from ..summary_reconciliation import enqueue_reconciliation_outbox
+
+                enqueue_reconciliation_outbox(
+                    conn,
+                    project_id=project_id,
+                    subject_type="chapter_summary",
+                    subject_id=chapter_id,
+                    chapter_number=chapter_number,
+                    checked_against_snapshot_id=snapshot_id,
+                    source_generation=_chapter_generation(conn, project_id, chapter_number),
+                    source_sha256=_snapshot_text_hash(conn, project_id, chapter_number),
+                    summary_sha256=_text_hash(summary),
                 )
                 conn.commit()
                 created = self._read(conn, project_id, chapter_number)

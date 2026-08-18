@@ -104,6 +104,7 @@ from .activity import router as activity_router
 from .autopilot import router as autopilot_router
 from .chat import router as chat_router
 from .extraction import router as extraction_router
+from .notifications import router as notifications_router
 from .reconcile import router as reconcile_router
 from .review import router as review_router
 
@@ -280,6 +281,7 @@ app.include_router(activity_router)
 app.include_router(autopilot_router)
 app.include_router(chat_router)
 app.include_router(extraction_router)
+app.include_router(notifications_router)
 app.include_router(reconcile_router)
 app.include_router(review_router)
 app.include_router(validation_router)

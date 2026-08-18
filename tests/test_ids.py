@@ -131,6 +131,17 @@ def test_020_new_id_types_use_their_own_prefixes() -> None:
     )
 
 
+def test_021_new_id_types_use_their_own_prefixes() -> None:
+    """021 / Task 10 新增的两类 id：recon（核对 run）/ notif（系统通知）。"""
+    pid = "project:01JZ0000000000000000000000"
+    assert new_id(EntityType.SUMMARY_RECONCILIATION_RUN, pid).startswith(
+        f"recon:{project_short(pid)}:"
+    )
+    assert new_id(EntityType.SYSTEM_NOTIFICATION, pid).startswith(
+        f"notif:{project_short(pid)}:"
+    )
+
+
 def test_ids_are_unique() -> None:
     pid = "project:01JZ0000000000000000000000"
     ids = {new_id(EntityType.EDGE, pid) for _ in range(1000)}

@@ -690,6 +690,34 @@ class ChapterRefreshCoordinator:
                 )
                 return {"validation": "FAILED", "error": str(exc)}
             if validation.gate in ("blocked", "error"):
+                # 029 不变量：final gate 变 BLOCKED 与通知 outbox **同事务**。
+                # 通知可以晚显示，不能因进程在两步之间退出而永久丢失。
+                if validation.gate == "blocked":
+                    from .system_notifications import (
+                        background_failure_dedupe_key,
+                        enqueue_notification,
+                    )
+
+                    enqueue_notification(
+                        self._conn,
+                        project_id=branch_ctx.project_id,
+                        kind="validation_blocked",
+                        subject_type="chapter",
+                        subject_id=branch_ctx.chapter_id,
+                        chapter_number=branch_ctx.chapter_number,
+                        title=(
+                            f"第 {branch_ctx.chapter_number} 章的正文检查发现需要留意的地方，"
+                            "新正文不会再自动生成总结与情节"
+                        ),
+                        dedupe_key=background_failure_dedupe_key(
+                            kind="validation_blocked",
+                            subject_type="chapter",
+                            subject_id=branch_ctx.chapter_id,
+                            operation=f"validation:{validation.id}",
+                            source_snapshot_id=branch_ctx.token.source_snapshot_id,
+                            job_id=attempt_id,
+                        ),
+                    )
                 _branch_update(
                     self._conn, attempt_id, owner=owner, token=token,
                     column="validation_state", state="BLOCKED" if validation.gate == "blocked" else "FAILED",

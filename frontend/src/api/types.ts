@@ -852,6 +852,37 @@ export type ActivityStatus = "succeeded" | "failed" | "running" | "pending";
  *  `summary`（右栏「章节总结」那一格）和 `extraction_retry`（把没跑成的那次整理再跑一遍）
  *  是 2026-08-13 从兜底那一档里搬出来的：它们当初落在那儿**不是因为没有目标**，
  *  是目标后来才长出来、而后端那张表没跟着改。 */
+/** 系统通知（Task 10 / 021）。**坐标和动作全由后端给**：前端按
+ *  `subject_type/subject_id/jump/actions` 导航，禁止从文案反推。 */
+export type SystemNotificationKind =
+  | "summary_mismatch"
+  | "background_failure"
+  | "validation_blocked";
+export type SystemNotificationStatus = "OPEN" | "IGNORED" | "RESOLVED";
+
+/** 锚三元组（ADR 0006，永不 offset）：段号 + 引语 + 第几次。 */
+export interface NotificationAnchor {
+  para_index: number;
+  quote_text: string;
+  occurrence_k: number;
+}
+
+export interface SystemNotification {
+  id: string;
+  project_id: string;
+  kind: SystemNotificationKind;
+  status: SystemNotificationStatus;
+  subject_type: "chapter_summary" | "proposal_event" | "canon_event" | "chapter";
+  subject_id: string;
+  chapter_number: number | null;
+  title: string;
+  summary_sha256: string | null;
+  source_sha256: string | null;
+  jump: NotificationAnchor | null;
+  actions: string[];
+  created_at: string;
+}
+
 export type JumpTarget =
   | "knowledge_cell"
   | "event_cast"

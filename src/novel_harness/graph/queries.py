@@ -1447,6 +1447,27 @@ def mark_canon_event_cast_author(
     )
 
 
+def event_reconciliation_ready(
+    conn: sqlite3.Connection, project_id: str, event_id: str
+) -> bool:
+    """021 / Task 10：一条事件摘要是否仍是当前可用（核对该不该调模型）。
+
+    status ACTIVE + evidence FRESH 且仍在 PROVISIONAL/CANON 才核；被撤回 /
+    证据已失效的事件只解决旧 OPEN 通知，不调模型。SQL 只住 graph 层。
+    """
+    row = conn.execute(
+        """
+        SELECT 1 FROM story_event e
+         WHERE e.project_id = ? AND e.id = ?
+           AND e.status = 'ACTIVE' AND e.evidence_status = 'FRESH'
+           AND e.information_scope IN ('PROVISIONAL','CANON')
+         LIMIT 1
+        """,
+        (project_id, event_id),
+    ).fetchone()
+    return row is not None
+
+
 def supersede_obsolete_proposals(
     conn: sqlite3.Connection,
     project_id: str,
