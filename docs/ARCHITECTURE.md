@@ -354,7 +354,7 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 > 列在「还一个字符都没有」里——照它排期的人会去重写已完成的工作。
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
-> 守卫钉住的是**能在运行时数出来**的那些（91 条路由 / 90 条 /api / 1 条 501 stub /
+> 守卫钉住的是**能在运行时数出来**的那些（92 条路由 / 91 条 /api / 1 条 501 stub /
 > 19 个错误映射 / 17 个子命令 / 48 张表 / 89 个端点 / `ALL_CHECKS` 2），
 > 改错必红、**删掉也必红**（不静默 skip）。
 > （这一行 2026-08-10 之前写的是「路由 42 / fixture 端点 34」那种词序，
@@ -526,8 +526,8 @@ cli.py                                          ← nh 的 17 个子命令（含
                                                   **印的是 `len(ALL_CHECKS)` 和规则名**，
                                                   不是写死的数字
 api/{app,deps,activity,autopilot,chat,extraction,manuscript,review}.py
-                                                ← M1.5 FastAPI 壳：91 条路由 + 19 个错误映射
-                                                  （90 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
+                                                ← M1.5 FastAPI 壳：92 条路由 + 19 个错误映射
+                                                  （91 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
                                                   M4 抽取/事件读端 + 提案审阅/被动确认路由；
                                                   抽取那两条的出参 2026-08-13 换成 `ExtractionRunView`：
                                                   `errors` 是**已经翻好的中文**（措辞唯一出处仍是
@@ -684,6 +684,24 @@ draft/rolling_summary.py                        ← M4 后续切片：后台章�
                                            用 `get()` 的话作者撤掉的那一章会在他保存后下一秒
                                            被自动买回来 —— 一次他没按过的付费调用，
                                            顺带抹掉他刚做的动作
+focus.py                                         ← 2026-08-18 §3「当前章防抖」：**全系统唯一的当前章来源**。
+                                                  换章/开书上报 `POST …/focus`，免费心跳只记位置，
+                                                  不触发任何总结/抽取/付费。「正写的章不碰」的读端就是它
+                                                  + 心跳超时（2 分钟）。`resolve_draft_origin`：
+                                                  调度/视图的坐标（有焦点=焦点章+豁免；无焦点=前沿章号+1）。
+summary_schedule.py                              ← 2026-08-18 §2.2/§4/Step 2：**30 分钟自治调度**。
+                                                  每 30 分钟确定性扫全书（缺章 + 不对齐两类），按
+                                                  「近 10 章必补、越远越衰减」的权重把活写进
+                                                  `chapter_refresh_attempt`，与保存共用同一条 dispatcher
+                                                  管线（不新造第二条总结管线、不调 LLM 判「哪章该补」）。
+                                                  `book_summary_status` = 全书总结状态视图（Step 4，
+                                                  逐章三态 + 异常标记 + 权重，`GET …/summary-status`）；
+                                                  `reconcile_anomaly_notifications` 把异常标记同步成
+                                                  `background_failure` 通知（§5 末行：不阻塞其它章）。
+                                                  通知单源化（§5 / Step 3，`summary_reconciliation`
+                                                  finalize 按 head 总结的 `source` 门控）：正文→总结
+                                                  自动写/覆写一律**不**产生 `summary_mismatch`，只有
+                                                  作者手改总结与正文冲突才冒出来（正文自动对齐永远安静）。
 draft/summarize.py                              ← M4 后续切片：章节摘要 prompt（`nh summarize` 补档，HTTP 同一条）
 agent/{ports,index,tools,loop,store,model,drafting,candidates,rules}.py
                                                 ← 模式二（ADR 0019）：**工具表就是权限边界**。
