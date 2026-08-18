@@ -56,6 +56,7 @@ import type {
   SummaryWindow,
   SystemNotification,
   ValidationRuleView,
+  CharacterBasicInfo,
 } from "./types";
 
 // 服务端状态全进 TanStack Query（§2.3）：queryKey = [端点, pid, chapter, cast]，
@@ -520,6 +521,81 @@ export function useCreateNode(pid: string) {
     mutationFn: (body: DeclareNode) =>
       api.post<NodeRef & { props?: unknown }>(proj(pid, "/nodes"), body),
     onSuccess: () => invalidatePanels(qc, pid),
+  });
+}
+
+/** 一个人物的本名 + 全部 ACTIVE 别名（canonical 不算 chip，Task 11 API）。 */
+export function useCharacterProfile(pid: string | null, characterId: string | null) {
+  return useQuery({
+    queryKey: q(["character-profile", pid, characterId]),
+    queryFn: () =>
+      api.get<CharacterBasicInfo>(
+        proj(pid!, `/characters/${encodeURIComponent(characterId!)}/profile`),
+      ),
+    enabled: !!pid && !!characterId,
+  });
+}
+
+/** 给一个人物加别名（canonical 拒；撞 expected_canon_version 409）。 */
+export function useAddCharacterAlias(pid: string, characterId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { surface: string; expected_canon_version: number }) =>
+      api.post<StoredAlias>(
+        proj(pid, `/characters/${encodeURIComponent(characterId)}/aliases`),
+        body,
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["character-profile", pid, characterId] });
+    },
+  });
+}
+
+/** 改一条别名（机器 alias → author 派生行）。 */
+export function useEditAlias(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      aliasId,
+      ...body
+    }: { aliasId: string; surface?: string; expected_canon_version: number }) =>
+      api.patch<StoredAlias>(proj(pid, `/aliases/${encodeURIComponent(aliasId)}`), body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["character-profile", pid] });
+      qc.invalidateQueries({ queryKey: ["roster", pid] });
+    },
+  });
+}
+
+/** 撤回一条别名。 */
+export function useRetractAlias(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (aliasId: string) =>
+      api.del<{ id: string; status: string }>(proj(pid, `/aliases/${encodeURIComponent(aliasId)}`)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["character-profile", pid] });
+      qc.invalidateQueries({ queryKey: ["roster", pid] });
+    },
+  });
+}
+
+/** 改归属：撤回 + 在目标 Character 上新建（只能移到 Character）。 */
+export function useReassignAlias(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      aliasId,
+      ...body
+    }: { aliasId: string; to_character_id: string; expected_canon_version: number }) =>
+      api.post<StoredAlias>(
+        proj(pid, `/aliases/${encodeURIComponent(aliasId)}/reassign`),
+        body,
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["character-profile", pid] });
+      qc.invalidateQueries({ queryKey: ["roster", pid] });
+    },
   });
 }
 

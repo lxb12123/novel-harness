@@ -599,6 +599,19 @@ export interface StoredAlias {
   surface: string;
   kind: AliasKind;
   usable_for_rules: boolean;
+  /** Task 11 / 022：谁写的（`extractor` 机器自动 / `author` 作者）。 */
+  source: "extractor" | "author";
+  status: "ACTIVE" | "RETRACTED";
+  /** 作者改了机器别名时指回原机器行的 id；否则 null。 */
+  derived_from_alias_id: string | null;
+}
+
+/** 人物基础信息（Task 11 API / §4.5）：本名 + 一键别名 chips。 */
+export interface CharacterBasicInfo {
+  character: NodeRef;
+  profile: unknown;
+  aliases: StoredAlias[];
+  canon_version: number;
 }
 
 // ══════════════════════════════════════════════════════════════════════════

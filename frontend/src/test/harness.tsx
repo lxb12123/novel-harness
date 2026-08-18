@@ -128,6 +128,11 @@ const DEFAULT: Handler[] = [
   { method: "DELETE", match: /\/snapshots\//, body: { deleted: true } },
   { method: "POST", match: /\/nodes$/, body: fixtures.createNode },
   { method: "POST", match: /\/aliases$/, body: fixtures.createAlias },
+  // 人物基础信息（Task 11/15）：profile 读 + 别名增/撤回。
+  { match: /\/characters\/[^/]+\/profile$/, body: fixtures.characterProfile },
+  { method: "POST", match: /\/characters\/[^/]+\/aliases$/, body: fixtures.aliasCreated },
+  { method: "DELETE", match: /\/aliases\/[^/]+$/, body: fixtures.aliasDeleted },
+  { method: "PATCH", match: /\/aliases\/[^/]+$/, body: fixtures.aliasEdited },
   { method: "POST", match: /\/accept$/, body: fixtures.proposalAccept },
   { method: "POST", match: /\/reject$/, body: fixtures.proposalReject },
   // 「改一改再收下」。回执和 accept 同型（`ProposalResolution`），差别在 `status`——

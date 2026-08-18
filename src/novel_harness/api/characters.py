@@ -32,13 +32,18 @@ router = APIRouter()
 
 
 class CharacterBasicInfo(BaseModel):
-    """人物基础信息出参（§4.5）：本名 + 全部 ACTIVE 别名（canonical 在 `character.name`）。"""
+    """人物基础信息出参（§4.5）：本名 + 全部 ACTIVE 别名（canonical 在 `character.name`）。
+
+    `canon_version` 是编辑弹层下一次写动作的 `expected_canon_version`——它跟着
+    **这次读取时**的项目版本走（`proj.canon_version`），前端不用自己去猜。
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     character: NodeRef
     profile: Any | None = None
     aliases: tuple[StoredAlias, ...] = ()
+    canon_version: int = Field(default=0, ge=0)
 
 
 class AliasCreate(BaseModel):
@@ -99,6 +104,7 @@ def character_profile(
         character=NodeRef(id=node.id, label=node.label.value, name=node.name),
         profile=profile,
         aliases=tuple(a for a in aliases if a.kind is not AliasKind.CANONICAL),
+        canon_version=project_mod.require_canon_version(conn, proj.id),
     )
 
 

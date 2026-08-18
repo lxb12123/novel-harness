@@ -1164,6 +1164,7 @@
         "usable_for_rules": true
       }
     ],
+    "canon_version": 15,
     "character": {
       "id": "character:ID10",
       "label": "Character",
