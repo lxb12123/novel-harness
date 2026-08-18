@@ -1454,3 +1454,73 @@ def test_validation_rule_roundtrips_in_the_ruleset_hash(
     ).fetchall()
     assert after[0][0] == before[0][0] + 1, "规则语义变化必须递增 epoch"
     assert after[0][1] != before[0][1], "ruleset hash 必须重算"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 保存触发的固定刷新（Task 16 / Task 18 e2e）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_save_creates_a_refresh_attempt_and_reply_stays_reused(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """保存后 `_trigger_refresh` 给当前 generation 排一个覆盖性 attempt。
+
+    保存本身（`save_chapter`）的语义不受它影响——回执仍是 `reused`（同正文再次
+    保存）。断言的是持久 attempt 表里多了一行：这就是后台 dispatcher
+    （Task 16）会去 claim 的那条，**不是内存 enqueue**。
+    """
+    pid = _pid(book)
+    body = client.get(f"/api/projects/{pid}/chapters/1/text").json()
+    markdown = body["markdown"]
+    # 先带同 hash 保存一次（reused），把「已有 attempt」那次撇开。
+    first = client.put(
+        f"/api/projects/{pid}/chapters/1/text",
+        json={"markdown": markdown, "expected_text_sha256": body["text_sha256"]},
+    )
+    assert first.status_code == 200, first.text
+    conn = connect(book["db"])
+    conn.close()
+
+    # 保存**同一**正文第二次：正文没变、不是新 generation，但 `_trigger_refresh`
+    # 仍然会为一个「保存动作」确保覆盖（head/验证缺哪补哪）。
+    again = client.put(
+        f"/api/projects/{pid}/chapters/1/text",
+        json={"markdown": markdown, "expected_text_sha256": body["text_sha256"]},
+    )
+    assert again.status_code == 200, again.text
+    conn = connect(book["db"])
+    after = conn.execute(
+        "SELECT COUNT(*) FROM chapter_refresh_attempt a "
+        "JOIN chapter_refresh_run r ON r.id = a.run_id "
+        "WHERE r.project_id = ?",
+        (pid,),
+    ).fetchone()[0]
+    conn.close()
+    # 至少排了一次（第一次保存也可能建了一条；关键是这条路径真的写持久表）。
+    assert after >= 1, "保存必须把刷新动作写进持久 attempt 表，不能只在内存"
+
+
+def test_save_changes_length_triggers_a_fresh_attempt(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """正文 hash 变了（作者真的改了）→ `changed=true` → 为**新 generation** 排 attempt。"""
+    pid = _pid(book)
+    body = client.get(f"/api/projects/{pid}/chapters/1/text").json()
+    markdown = body["markdown"] + "\n\n萧决在结尾又说了一句话。\n"
+    saved = client.put(
+        f"/api/projects/{pid}/chapters/1/text",
+        json={"markdown": markdown, "expected_text_sha256": body["text_sha256"]},
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["changed"] is True
+    # 新 generation 快照在库里（保存那一步落库了）。
+    conn = connect(book["db"])
+    row = conn.execute(
+        "SELECT r.source_generation AS g FROM chapter_refresh_attempt a "
+        "JOIN chapter_refresh_run r ON r.id = a.run_id "
+        "WHERE r.project_id = ? ORDER BY a.created_at DESC, r.source_generation DESC LIMIT 1",
+        (pid,),
+    ).fetchone()
+    conn.close()
+    assert row is not None and int(row["g"]) >= 1

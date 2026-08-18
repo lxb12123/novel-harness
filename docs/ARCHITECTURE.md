@@ -678,11 +678,12 @@ draft/rolling_summary.py                        ← M4 后续切片：后台章�
                                                   **最新那一行是撤回就当这一章没有**（起草不带它、
                                                   覆盖率算作缺、想重来就再点生成——「删了重来」因此
                                                   顺带覆盖，不用做两套）。
-                                                  `get()` / `latest()` 的差别是钱：后台整理
-                                                  （`api/autopilot.py`）拿 `latest()` 判「要不要派活」，
-                                                  用 `get()` 的话作者撤掉的那一章会在他切走的下一秒
-                                                  被自动买回来 —— 一次他没按过的付费调用，
-                                                  顺带抹掉他刚做的动作
+                                                  `get()` / `latest()` 的差别是钱：保存触发的
+                                           background runtime（`api/background_runtime.py`，
+                                           已取代换章 autopilot）拿 `latest()` 判「要不要派活」，
+                                           用 `get()` 的话作者撤掉的那一章会在他保存后下一秒
+                                           被自动买回来 —— 一次他没按过的付费调用，
+                                           顺带抹掉他刚做的动作
 draft/summarize.py                              ← M4 后续切片：章节摘要 prompt（`nh summarize` 补档，HTTP 同一条）
 agent/{ports,index,tools,loop,store,model,drafting,candidates,rules}.py
                                                 ← 模式二（ADR 0019）：**工具表就是权限边界**。
