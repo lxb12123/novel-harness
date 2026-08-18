@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useActivity, useActivityDetail, useRuns, useStartExtraction } from "../api/hooks";
-import { useOpenChapter } from "../autopilot";
+import { useOpenChapter } from "../chapterNavigation";
 import { refusalText } from "../chat";
 import { useCoords, type Tab } from "../store";
 import { RulesTable } from "./RulesTable";

@@ -2,7 +2,7 @@ import { useIgnoreNotification, useNotifications } from "../api/hooks";
 import { refusalText } from "../chat";
 import type { SystemNotification } from "../api/types";
 import { useCoords } from "../store";
-import { useOpenChapter } from "../autopilot";
+import { useOpenChapter } from "../chapterNavigation";
 
 // 系统通知（Task 10 / 021，前端 Task 14）：右栏那一格。
 //

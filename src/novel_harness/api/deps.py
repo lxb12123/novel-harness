@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 
 from fastapi import Depends, HTTPException
@@ -82,6 +82,16 @@ def get_conn() -> Iterator[Connection]:
         yield conn
     finally:
         conn.close()
+
+
+def background_connection_factory() -> Callable[[], Connection]:
+    """装配层给后台 runtime 的**连接工厂**（每个 worker 一条独立连接）。
+
+    放在这里是因为只有装配层有资格开连接（`test_arch_guard.py` 的
+    CONNECTION_OPENERS）；`api/background_runtime.py` 只收工厂、不 import connect。
+    """
+    path = _db_path()
+    return lambda: connect(path)
 
 
 def get_store(conn: Connection = Depends(get_conn)) -> SqliteStoryGraph:

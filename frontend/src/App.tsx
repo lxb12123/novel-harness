@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useChapters, useProjects } from "./api/hooks";
-import { useOpenChapter } from "./autopilot";
+import { useOpenChapter } from "./chapterNavigation";
 import { chapterOnOpen } from "./chapterCursor";
 import { useReconcileOnFocus } from "./reconcile";
 import { useHashRoute } from "./route";

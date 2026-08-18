@@ -274,7 +274,26 @@ description 的下一步就是三处开始说不一样的话，然后有人照�
 async def _lifespan(_: FastAPI) -> Any:
     ensure_schema()  # 启动即验库在、schema 到位；库不存在直接炸，不建空库
     _auto_refresh_windows()  # 开着才跑，后台线程，拉不到当无事发生
-    yield
+    # Task 16：持久 attempt 的 dispatcher——保存/reconcile/显式重整只写 attempt，
+    # 这里把 PENDING/过期 RUNNING 转成真实结果。wake 丢了靠持久扫描兜底（不变量 18）。
+    # 测试套件用 `NH_BACKGROUND_RUNTIME=0` 关掉它（几千个 TestClient 每个起一个
+    # 轮询线程会把套件搅成不确定）；生产不设这个变量 = 默认开。
+    runtime = None
+    if os.environ.get("NH_BACKGROUND_RUNTIME", "1") == "1":
+        try:
+            from .background_runtime import build_runtime
+
+            runtime = build_runtime()
+            runtime.start()
+        except Exception:
+            # 库/模型没那么好时也要能启动（作者可能先建书再看设置）——dispatcher
+            # 的 adapter 只在真的 claim 到 attempt 时才构造。
+            runtime = None
+    try:
+        yield
+    finally:
+        if runtime is not None:
+            runtime.stop()
 
 
 app = FastAPI(title="Novel Harness 工作台", lifespan=_lifespan)
@@ -1074,6 +1093,7 @@ def chapter_text(
 def save_chapter(
     chapter: int,
     body: ChapterSave,
+    conn: Any = Depends(get_conn),
     store: Any = Depends(get_store),
     proj: Any = Depends(load_project),
 ) -> Any:
@@ -1085,7 +1105,7 @@ def save_chapter(
     恢复靠后续 reconcile，不是让前端重发 PUT。
     """
     try:
-        return importer.save_chapter(
+        receipt = importer.save_chapter(
             store,
             proj.id,
             Path(proj.root_path),
@@ -1095,7 +1115,56 @@ def save_chapter(
         )
     except importer.ChapterMissing:
         raise HTTPException(404, {"error": "chapter_not_found", "chapter": chapter})
+    _trigger_refresh(conn, store, proj.id, chapter, receipt)
+    return receipt
 
+
+def _trigger_refresh(
+    conn: Any,
+    store: Any,
+    project_id: str,
+    chapter: int,
+    receipt: importer.ChapterSaveReceipt,
+) -> None:
+    """保存动作的固定刷新触发点（Task 16 / ADR 0029）。
+
+    `changed=true` 时快照/generation 已经再往前走一版——dispatcher 只认持久
+    attempt，所以这里为当前 generation 建一个覆盖性 attempt（缺哪支补哪支）。
+    `changed=false`（同 hash）也调 `ensure_refresh_coverage`：正文没变 ≠ 首次
+    整理做了，head/app 缺失时仍要补缺（幂等 coverage，不重复付费）。
+
+    **绝不在内存里 enqueue 模型调用**：只写 `chapter_refresh_attempt`（lease/fence
+    化），由后台 dispatcher（`NH_BACKGROUND_RUNTIME=1` 时自动开）转成结果。
+    """
+    current = next(
+        (ct for ct in store.current_snapshots(project_id) if ct.number == chapter), None
+    )
+    if current is None:
+        return
+    generation = store.current_chapter_generation(project_id, chapter) or 1
+    try:
+        from ..chapter_refresh import ensure_refresh_coverage
+
+        result = ensure_refresh_coverage(
+            conn,
+            project_id=project_id,
+            chapter_id=current.chapter_id,
+            snapshot_id=current.snapshot_id,
+            generation=generation,
+            ruleset_epoch=_current_ruleset(conn, project_id)[0],
+            ruleset_hash=_current_ruleset(conn, project_id)[1],
+        )
+    except Exception:
+        # 触发失败不把「保存成功」拖下水：正文已落库，dispatcher 启动恢复会再扫。
+        result = None
+    if result is not None:
+        conn.commit()
+
+
+def _current_ruleset(conn: Any, project_id: str) -> tuple[int, str]:
+    from ..checks.service import current_ruleset
+
+    return current_ruleset(conn, project_id)
 
 # ⚠️ **场景块那两条路由（`GET`/`PUT …/chapters/{n}/scenes`）2026-08-14 删了**
 # （[ADR 0027](../../../docs/adr/0027-scene-blocks-cut.md)），连同 `SceneWrite` 和 R4。

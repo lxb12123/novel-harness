@@ -509,8 +509,12 @@ def release_attempt(conn: Connection, attempt_id: str, *, owner: str, token: int
 
 def recover_claimable(
     conn: Connection, *, owner: str, ttl_seconds: float = 60.0
-) -> list[str]:
-    """启动恢复：扫描所有可领的 attempt（PENDING/过期 RUNNING），逐个 claim。"""
+) -> list[tuple[str, int]]:
+    """启动恢复：扫描所有可领的 attempt（PENDING/过期 RUNNING），逐个 claim。
+
+    返回 `(attempt_id, fencing_token)`——调用方拿着 token 直接 run，**不要再 claim
+    一次**（同一 owner 的未过期 lease 会让第二次 claim 返回 None，跑不出来）。
+    """
     rows = conn.execute(
         """
         SELECT id FROM chapter_refresh_attempt
@@ -523,11 +527,11 @@ def recover_claimable(
         """,
         {"now": _iso(time.time())},
     ).fetchall()
-    claimed: list[str] = []
+    claimed: list[tuple[str, int]] = []
     for row in rows:
         token = claim_attempt(conn, row["id"], owner=owner, ttl_seconds=ttl_seconds)
         if token is not None:
-            claimed.append(str(row["id"]))
+            claimed.append((str(row["id"]), token))
     conn.commit()
     return claimed
 
