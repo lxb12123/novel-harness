@@ -1692,6 +1692,47 @@ def chapter_summaries(
     }
 
 
+@app.get("/api/projects/{project_id}/summary-status")
+def book_summary_status_view(
+    proj: Any = Depends(load_project),
+    conn: Any = Depends(get_conn),
+    draft_chapter: int | None = Query(
+        default=None,
+        ge=1,
+        description="权重原点；缺省取焦点章或「前沿章号 + 1」。",
+    ),
+) -> dict[str, Any]:
+    """全书总结状态视图（2026-08-18 文档 §6 / Step 4）。
+
+    一口气给「这本书现在长什么样」：每一章是配对 / 缺 / 不对齐 / 空，这一轮调度
+    会给它多少权重，以及那章最近一次总结 attempt 是不是已经失败（异常标记）。
+    全部查库，一次视图查询；**GET 不写任何东西**（异常→通知在 `autonomy_once`
+    那一侧落地，不是在这里）。
+    """
+    from ..focus import focus_current_chapter, resolve_draft_origin
+    from ..summary_schedule import book_summary_status
+
+    if draft_chapter is None:
+        draft_chapter, focused = resolve_draft_origin(conn, proj.id)
+    else:
+        focused = focus_current_chapter(conn, proj.id)
+    states = book_summary_status(conn, proj.id, draft_chapter=draft_chapter)
+    return {
+        "draft_chapter": draft_chapter,
+        "focused_chapter": focused,
+        "chapters": [
+            {
+                "chapter_number": item.chapter_number,
+                "has_text": item.has_text,
+                "state": item.state,
+                "weight": item.weight,
+                "anomaly": item.anomaly,
+            }
+            for item in states
+        ],
+    }
+
+
 def _summary_state(conn: Any, project_id: str, chapter: int) -> dict[str, Any]:
     """第 chapter 章现在的总结状态。**四条路由共用同一个出参形状。**
 

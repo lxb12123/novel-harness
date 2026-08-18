@@ -33,10 +33,14 @@ from ..checks.service import current_ruleset
 from ..db import Connection
 from ..draft.rolling_summary import RollingSummarizer
 from ..extract.runner import ExtractionRunner
-from ..focus import focus_current_chapter
+from ..focus import resolve_draft_origin
 from ..graph.sqlite_store import SqliteStoryGraph
 from ..project import list_all
-from ..summary_schedule import schedule_alignment
+from ..summary_schedule import (
+    book_summary_status,
+    reconcile_anomaly_notifications,
+    schedule_alignment,
+)
 
 __all__ = ["BackgroundRuntime", "build_runtime", "new_connection_factory"]
 
@@ -183,6 +187,11 @@ class BackgroundRuntime:
                         focused_chapter=focused_chapter,
                         limit=self._autonomy_limit,
                     )
+                    # Step 4：异常标记 → background_failure 通知（同一事务，§5/§6）。
+                    statuses = book_summary_status(
+                        conn, project_id, draft_chapter=draft_chapter
+                    )
+                    reconcile_anomaly_notifications(conn, project_id, statuses)
                     conn.commit()
                     enqueued += sum(
                         1
@@ -197,21 +206,8 @@ class BackgroundRuntime:
             conn.close()
 
     def _resolve_draft(self, conn: Connection, project_id: str) -> tuple[int, int | None]:
-        """本轮调度的坐标 `(draft_chapter, focused_chapter)`（文档 §3/§4）。
-
-        - 有有效焦点：draft_chapter = 焦点章（权重从它往回量），focused_chapter =
-          同一章（防抖豁免）——正写的章这轮不碰；
-        - 无焦点（人走开 / 心跳过期）：以「前沿章号 + 1」为原点——这样全本旧章都
-          落在权重公式的 Δ ≥ 1 过去侧按距离计权，没有任何章被 Δ=0 意外豁免。
-        """
-        focused = focus_current_chapter(conn, project_id)
-        if focused is not None:
-            return focused, focused
-        row = conn.execute(
-            "SELECT COALESCE(MAX(number), 0) + 1 FROM chapter WHERE project_id = ?",
-            (project_id,),
-        ).fetchone()
-        return int(row[0]), None
+        """本轮调度的坐标 `(draft_chapter, focused_chapter)`（文档 §3/§4）。"""
+        return resolve_draft_origin(conn, project_id)
 
     def _run_one(self, attempt_id: str, token: int) -> None:
         conn = self._conn_factory()

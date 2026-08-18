@@ -30,7 +30,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
+from typing import Any, Literal
 
 from .chapter_refresh import ensure_refresh_coverage
 from .db import Connection
@@ -38,7 +38,11 @@ from .db import Connection
 __all__ = [
     "SUMMARY_WINDOW",
     "SUMMARY_DECAY_CAP",
+    "BookChapterStatus",
     "ChapterSummaryState",
+    "book_summary_status",
+    "chapter_summary_anomaly",
+    "reconcile_anomaly_notifications",
     "scan_chapter_summary_state",
     "weight_for_chapter",
     "schedule_alignment",
@@ -188,7 +192,7 @@ def schedule_alignment(
             decisions[item.chapter_number] = "no_snapshot"
             continue
         try:
-            ensure_refresh_coverage(
+            decision = ensure_refresh_coverage(
                 conn,
                 project_id=project_id,
                 chapter_id=_chapter_id(conn, project_id, item.chapter_number),
@@ -199,6 +203,11 @@ def schedule_alignment(
             )
         except Exception:  # noqa: BLE001 —— 单章入队失败不阻塞整轮调度（§6）
             decisions[item.chapter_number] = "enqueue_failed"
+            continue
+        if decision.processing == "attention_required":
+            # 同 basis 已有一个终态 FAILED/BLOCKED 的 coverage attempt：不自动重付
+            # （Task 16 纪律），这章要作者手动处理。不算本轮入队预算。
+            decisions[item.chapter_number] = "attention_required"
             continue
         decisions[item.chapter_number] = (
             "queued" if item.state == "missing" else "queued_overwrite"
@@ -226,3 +235,222 @@ def _generation(conn: Connection, project_id: str, number: int) -> int:
     if row is None or row["snapshot_generation"] is None:
         return 1
     return int(row["snapshot_generation"])
+
+
+@dataclass(frozen=True, slots=True)
+class BookChapterStatus:
+    """全书总结状态视图的一行（文档 §6 / Step 4）：逐章三态 + 异常标记 + 权重。
+
+    `state` 只按**正文有没有、总结配不配**推：
+    - `empty`   = 这一章还没有正文（没得总结）；
+    - `missing` = 有正文、没有 ACTIVE 总结；
+    - `stale`   = 有总结但来源指纹 != 当前正文（不对齐，该覆写）；
+    - `paired`  = 有总结且指纹对得上（配对，不动）。
+    `anomaly` = 该章最近一次总结 attempt 终态 FAILED/BLOCKED（§5 末行：异常标记，
+    不阻塞其它章）。`weight` 是同一轮调度会给它的权重（§4 反馈）。
+    """
+
+    chapter_id: str
+    chapter_number: int
+    has_text: bool
+    state: Literal["empty", "paired", "missing", "stale"]
+    weight: float
+    anomaly: bool
+
+
+def chapter_summary_anomaly(
+    conn: Connection, project_id: str, chapter_id: str
+) -> bool:
+    """这一章最近一次总结 attempt 是不是终态 FAILED/BLOCKED（§6 异常标记）。
+
+    "卡住"（PENDING/RUNNING 过期未收敛）由 `recover_claimable` 在 dispatcher 侧
+    重抢，不在这里算异常；这里只看**已经定性失败**的尝试。
+    """
+    row = conn.execute(
+        """
+        SELECT a.summary_state
+          FROM chapter_refresh_attempt a
+          JOIN chapter_refresh_run r ON r.id = a.run_id
+         WHERE r.project_id = ? AND r.chapter_id = ?
+         ORDER BY a.created_at DESC, a.id DESC
+         LIMIT 1
+        """,
+        (project_id, chapter_id),
+    ).fetchone()
+    return (
+        row is not None and str(row["summary_state"]) in ("FAILED", "BLOCKED")
+    )
+
+
+def _latest_attempt_states(
+    conn: Connection, project_id: str
+) -> dict[str, tuple[str, str]]:
+    """每章最近一次 attempt 的 `(attempt_id, summary_state)`（一次查询，N+1 收敛）。"""
+    rows = conn.execute(
+        """
+        SELECT r.chapter_id AS chapter_id, a.id AS attempt_id,
+               a.summary_state AS s
+          FROM chapter_refresh_attempt a
+          JOIN chapter_refresh_run r ON r.id = a.run_id
+         WHERE r.project_id = ?
+           AND a.id = (
+                SELECT a2.id
+                  FROM chapter_refresh_attempt a2
+                  JOIN chapter_refresh_run r2 ON r2.id = a2.run_id
+                 WHERE r2.project_id = ? AND r2.chapter_id = r.chapter_id
+                 ORDER BY a2.created_at DESC, a2.id DESC
+                 LIMIT 1
+           )
+        """,
+        (project_id, project_id),
+    ).fetchall()
+    return {
+        str(row["chapter_id"]): (str(row["attempt_id"]), str(row["s"]))
+        for row in rows
+    }
+
+
+def _latest_attempt(
+    conn: Connection, project_id: str, chapter_id: str
+) -> Any | None:
+    """这一章最近一次 attempt（带 run 的 source_snapshot_id，供通知去重锚定）。"""
+    return conn.execute(
+        """
+        SELECT a.id AS attempt_id, a.summary_state, r.source_snapshot_id
+          FROM chapter_refresh_attempt a
+          JOIN chapter_refresh_run r ON r.id = a.run_id
+         WHERE r.project_id = ? AND r.chapter_id = ?
+         ORDER BY a.created_at DESC, a.id DESC
+         LIMIT 1
+        """,
+        (project_id, chapter_id),
+    ).fetchone()
+
+
+def book_summary_status(
+    conn: Connection,
+    project_id: str,
+    *,
+    draft_chapter: int,
+) -> tuple[BookChapterStatus, ...]:
+    """全书总结状态视图（Step 4）：每一章的三态 + 权重 + 异常标记。
+
+    与 `scan_chapter_summary_state` 的区别：这里是**给作者看全貌**的视图，包含
+    没有正文的章（`empty`）；那是**给调度器用**的，只挑有正文的章。
+    """
+    rows = conn.execute(
+        """
+        SELECT c.id AS chapter_id, c.number AS number,
+               (cur_snap.id IS NOT NULL) AS has_text,
+               src_snap.text_sha256 AS source_sha,
+               cur_snap.text_sha256 AS text_sha
+          FROM chapter c
+          LEFT JOIN chapter_snapshot cur_snap
+            ON cur_snap.chapter_id = c.id
+           AND cur_snap.text_sha256 = c.text_sha256
+          LEFT JOIN chapter_summary_head h ON h.chapter_id = c.id
+          LEFT JOIN chapter_summary s
+            ON s.id = h.current_summary_id AND s.status = 'ACTIVE'
+          LEFT JOIN chapter_snapshot src_snap ON src_snap.id = s.source_snapshot_id
+         WHERE c.project_id = ?
+         ORDER BY c.number
+        """,
+        (project_id,),
+    ).fetchall()
+    attempt_states = _latest_attempt_states(conn, project_id)
+    out: list[BookChapterStatus] = []
+    for row in rows:
+        chapter_id = str(row["chapter_id"])
+        num = int(row["number"])
+        has_text = bool(row["has_text"])
+        text_sha = str(row["text_sha"]) if row["text_sha"] else None
+        src_sha = str(row["source_sha"]) if row["source_sha"] else None
+        if not has_text:
+            state: Literal["empty", "paired", "missing", "stale"] = "empty"
+        elif src_sha is None:
+            state = "missing"
+        elif text_sha is not None and src_sha != text_sha:
+            state = "stale"
+        else:
+            state = "paired"
+        out.append(
+            BookChapterStatus(
+                chapter_id=chapter_id,
+                chapter_number=num,
+                has_text=has_text,
+                state=state,
+                weight=weight_for_chapter(
+                    draft_chapter=draft_chapter, chapter_number=num
+                ),
+                anomaly=(
+                    attempt_states.get(chapter_id, ("", ""))[1]
+                    in ("FAILED", "BLOCKED")
+                ),
+            )
+        )
+    return tuple(out)
+
+
+def reconcile_anomaly_notifications(
+    conn: Connection,
+    project_id: str,
+    statuses: tuple[BookChapterStatus, ...],
+) -> int:
+    """把异常标记同步成 `background_failure` 通知（§5 末行 / §6 / Step 4）。
+
+    - 异常章：按「章 + operation=summary + **失败的那条 attempt**」找最新一次失败
+      attempt，用它的稳定键 upsert 一条 OPEN——同一失败重复扫不重开（不变量 10）；
+      好转后旧 OPEN 被解决，将来**新的**失败（新 attempt = 新键）又能重新 OPEN；
+    - 好转章：解决该章所有 OPEN 的 `background_failure`（本章目前只有总结失败会产
+      生这个 kind；validation 走 `validation_blocked`，不受影响）。
+
+    直接写 `system_notification`（同 `finalize_reconciliation_run` 的模式）；调用方
+    （`autonomy_once`）在自己的事务里提交。返回本轮新建的条数。
+    """
+    from .ids import EntityType, new_id
+    from .system_notifications import background_failure_dedupe_key
+
+    created = 0
+    for item in statuses:
+        latest = _latest_attempt(conn, project_id, item.chapter_id)
+        if latest is not None and latest["summary_state"] in ("FAILED", "BLOCKED"):
+            dedupe = background_failure_dedupe_key(
+                kind="background_failure",
+                subject_type="chapter",
+                subject_id=item.chapter_id,
+                operation="summary",
+                source_snapshot_id=latest["source_snapshot_id"],
+                job_id=latest["attempt_id"],
+            )
+            row = conn.execute(
+                """
+                INSERT INTO system_notification (
+                    id, project_id, kind, status, subject_type, subject_id,
+                    chapter_number, title, dedupe_key
+                ) VALUES (?, ?, 'background_failure', 'OPEN', 'chapter', ?, ?,
+                          ?, ?)
+                ON CONFLICT (project_id, dedupe_key) DO NOTHING
+                RETURNING id
+                """,
+                (
+                    new_id(EntityType.SYSTEM_NOTIFICATION, project_id),
+                    project_id,
+                    item.chapter_id,
+                    item.chapter_number,
+                    f"第 {item.chapter_number} 章的总结生成异常，已跳过不阻塞其它章",
+                    dedupe,
+                ),
+            ).fetchone()
+            created += row is not None
+        else:
+            conn.execute(
+                """
+                UPDATE system_notification SET status = 'RESOLVED',
+                       resolved_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+                 WHERE project_id = ? AND kind = 'background_failure'
+                   AND subject_type = 'chapter' AND subject_id = ?
+                   AND status = 'OPEN'
+                """,
+                (project_id, item.chapter_id),
+            )
+    return created

@@ -11,6 +11,7 @@ import type {
   AutopilotStatus,
   BootstrapRequest,
   BootstrapResult,
+  BookSummaryStatus,
   CanonEdgeEditRequest,
   CanonEdgeEditResult,
   CanonEdgeView,
@@ -121,6 +122,19 @@ export function useSummaryWindow(pid: string | null, chapter: number) {
   });
 }
 
+/** 全书总结状态视图（`GET …/summary-status`，2026-08-18 文档 §6 / Step 4）。
+ *
+ *  这份只跟书走、不跟章走（没有 chapter 参数）：它回答的是「全书哪些章有/缺/
+ *  不对齐/异常」，以及这一轮自治调度会按什么权重补。**不只读、还是自治轮的可见
+ *  反馈**——作者看完点某个芯片就跳去那一章。 */
+export function useBookSummaryStatus(pid: string | null) {
+  return useQuery({
+    queryKey: q(["bookSummaryStatus", pid]),
+    queryFn: () => api.get<BookSummaryStatus>(proj(pid!, `/summary-status`)),
+    enabled: !!pid,
+  });
+}
+
 /** 这一章现在的总结（`GET …/chapters/{n}/summary`，单章）。
  *
  *  **和 `useSummaryWindow` 是两件事，别拿一个去凑另一个。** 那一条回答「起草这一章时
@@ -152,6 +166,8 @@ function invalidateSummaries(qc: ReturnType<typeof useQueryClient>, pid: string)
   qc.invalidateQueries({ queryKey: ["summaries", pid] });
   qc.invalidateQueries({ queryKey: ["summaryMentions", pid] });
   qc.invalidateQueries({ queryKey: ["nodeSummaryMentions", pid] });
+  // 全书视图随着任何一章的总结生/改/撤而变：一起失效，别留一份过期全貌。
+  qc.invalidateQueries({ queryKey: ["bookSummaryStatus", pid] });
 }
 
 /** 这一章的总结提到了花名册里的哪些东西（T6）。

@@ -1262,6 +1262,18 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
 .chip.on { background: var(--sel); border-color: var(--accent); }
 .chip-kind { color: var(--dim); font-size: 10px; }
 
+/* 全书总结状态视图（Step 4）。● 颜色纪律按「要不要行动」分：
+   paired=绿（安静）/ missing=橙（该补，要花预算）/ stale=棕（该覆写）/
+   anomaly=红（真出错，err-box 的主人）/ empty=灰（没正文，另一件事）。 */
+.chsum-book { margin-bottom: 12px; border-bottom: 1px solid var(--line); padding-bottom: 10px; }
+.status-chip { border-color: var(--line); }
+.status-chip-empty { color: var(--dim); border-color: var(--line); }
+.status-chip-paired { color: var(--ok); border-color: var(--ok); }
+.status-chip-missing { color: var(--b); border-color: var(--b); }
+.status-chip-stale { color: var(--b); border-color: var(--b); }
+.status-chip-anomaly { color: var(--warn); border-color: var(--warn); font-weight: 600; }
+.status-chip-skip { opacity: 0.5; }
+
 .chsum-trail { margin-top: 10px; }
 .trail-row { margin-top: 8px; padding-left: 8px; border-left: 2px solid var(--line); }
 /* 章号是**可点的**（跳过去看全文），所以它长得像个链接而不是一段静态文字。 */

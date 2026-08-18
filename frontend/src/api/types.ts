@@ -103,6 +103,31 @@ export interface SummaryWindow {
   missing: number[];
 }
 
+// ── 全书总结状态视图（2026-08-18 文档 §6 / Step 4）──────────────────────────
+//
+// 后端 `GET …/summary-status` 一次给全貌：每一章是配对 / 缺 / 不对齐 / 空，这一轮
+// 自治调度会给它多少权重（§4 反馈），以及那章最近一次总结是不是已经失败（异常）。
+// 全部查库，不调 LLM；GET 只读不写。
+
+/** 逐章三态 + 「不对齐」标注（§6）。`empty` = 这一章还没有正文。 */
+export type BookChapterSummaryState = "empty" | "paired" | "missing" | "stale";
+
+export interface BookChapterStatusRow {
+  chapter_number: number;
+  has_text: boolean;
+  state: BookChapterSummaryState;
+  /** 这一轮调度会给它的权重（§4 公式）。`0` = 这一轮不看它（正在写/未来章/已衰减到 0）。 */
+  weight: number;
+  /** 最近一次总结生成终态失败（异常标记，§5 末行）。 */
+  anomaly: boolean;
+}
+
+export interface BookSummaryStatus {
+  draft_chapter: number;
+  focused_chapter: number | null;
+  chapters: BookChapterStatusRow[];
+}
+
 // ── 总结 = 可反查的记忆点（T6）────────────────────────────────────────────────
 //
 // **不是「找相似」，是「找相关」。** 后端一个语义判断都不做：判据只有「这个称呼在这段

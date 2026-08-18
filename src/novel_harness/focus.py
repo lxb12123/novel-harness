@@ -23,7 +23,14 @@ from datetime import datetime, timedelta, timezone
 
 from .db import Connection
 
-__all__ = ["FOCUS_TTL", "focus_current_chapter", "is_focused", "focused_on", "report_focus"]
+__all__ = [
+    "FOCUS_TTL",
+    "focus_current_chapter",
+    "is_focused",
+    "focused_on",
+    "report_focus",
+    "resolve_draft_origin",
+]
 
 FOCUS_TTL = timedelta(minutes=2)
 """心跳有效期：超过这么久没有新心跳，就当作作者不在这了（解除防抖）。"""
@@ -73,6 +80,26 @@ def is_focused(conn: Connection, project_id: str, chapter_number: int) -> bool:
 def focus_current_chapter(conn: Connection, project_id: str) -> int | None:
     """等价于 `focused_on`——命名对齐「当前章」措辞，供调度器读取。"""
     return focused_on(conn, project_id)
+
+
+def resolve_draft_origin(
+    conn: Connection, project_id: str
+) -> tuple[int, int | None]:
+    """本轮调度/状态视图的坐标 `(draft_chapter, focused_chapter)`（文档 §3/§4）。
+
+    - 有有效焦点：draft_chapter = 焦点章（权重从它往回量），focused_chapter =
+      同一章（防抖豁免）——正写的章这轮不碰；
+    - 无焦点（人走开 / 心跳过期）：以「前沿章号 + 1」为原点——这样全本旧章都
+      落在权重公式的 Δ ≥ 1 过去侧按距离计权，没有任何章被 Δ=0 意外豁免。
+    """
+    focused = focused_on(conn, project_id)
+    if focused is not None:
+        return focused, focused
+    row = conn.execute(
+        "SELECT COALESCE(MAX(number), 0) + 1 FROM chapter WHERE project_id = ?",
+        (project_id,),
+    ).fetchone()
+    return int(row[0]), None
 
 
 def _parse_iso(value: str) -> datetime:

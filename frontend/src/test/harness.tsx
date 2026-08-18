@@ -78,6 +78,21 @@ const SUMMARY_TRAIL = {
   ],
 };
 
+/** 全书总结状态（Step 4）。纯手写 stub（见路由表那条注释）——四章把四态一眼摆全：
+ *  `paired`（对得上）/ `stale`（不对齐，该覆写）/ `missing`（缺，该补）/ `empty`
+ *  （没正文），第 4 章还是 `anomaly`（生成异常，§6）。第 5 章权重 0 = 这一轮不看。 */
+const SUMMARY_STATUS = {
+  draft_chapter: 4,
+  focused_chapter: 4,
+  chapters: [
+    { chapter_number: 1, has_text: true, state: "paired", weight: 1.0, anomaly: false },
+    { chapter_number: 2, has_text: true, state: "stale", weight: 1.0, anomaly: false },
+    { chapter_number: 3, has_text: true, state: "missing", weight: 1.0, anomaly: false },
+    { chapter_number: 4, has_text: true, state: "missing", weight: 0.0, anomaly: true },
+    { chapter_number: 5, has_text: false, state: "empty", weight: 0.0, anomaly: false },
+  ],
+};
+
 /** 章标之前躺着一整章那一档：**全书章号可能集体错一位**，而界面上看不出任何异常。
  *  真 dump 出来的（`preamble_chars: 1104` 越过后端 1000 的门槛，警告那段字是后端写的）。 */
 export const IMPORT_SUMMARY_ALARM = fixtures.bootstrapPreamble.summary;
@@ -130,6 +145,13 @@ const DEFAULT: Handler[] = [
   { method: "POST", match: /\/aliases$/, body: fixtures.createAlias },
   // 当前章焦点（2026-08-18 §3）：免费心跳，只记位置。
   { method: "POST", match: /\/focus$/, body: { chapter: 1, project_id: "project:ID1" } },
+  // 全书总结状态视图（2026-08-18 文档 §6 / Step 4）。
+  //
+  // ⚠️ 纯手写 stub（同上两条）：`…/summary-status` 是这条线新增的端点，
+  // `api.json` 里还没有它（那份 fixture 由 `tests/test_frontend_contract.py` 从真 app
+  // dump）。形状是确定性查库的结果（不调模型），等它进真 dump 后换成 fixture 键。
+  // 形状：`paired` 一章 + `missing` 一章 + `anomaly` 一章 + `empty` 一章 + 权重反馈。
+  { match: /\/summary-status$/, body: SUMMARY_STATUS },
   // 人物基础信息（Task 11/15）：profile 读 + 别名增/撤回。
   { match: /\/characters\/[^/]+\/profile$/, body: fixtures.characterProfile },
   { method: "POST", match: /\/characters\/[^/]+\/aliases$/, body: fixtures.aliasCreated },
