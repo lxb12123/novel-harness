@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 import json
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, computed_field, model_validator
 
@@ -98,6 +99,28 @@ class EventCastEdit(BaseModel):
             or self.participants_added
             or self.participants_removed
         )
+
+
+class EventSummaryVersion(BaseModel):
+    """一条事件摘要版本（018 / Task 7）。
+
+    `story_event.summary` 保留为迁移基线，生产读路径全部改读 effective head——
+    版本历史里每一行都真的生效过（ADR 0030）。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: str
+    project_id: str
+    event_id: str
+    source_snapshot_id: str | None = None
+    evidence_sha256: str | None = None
+    summary: str
+    summary_sha256: str
+    source: Literal["model", "author", "legacy"] = "model"
+    status: Literal["ACTIVE", "RETRACTED"] = "ACTIVE"
+    replaces_version_id: str | None = None
+    created_at: str
 
 
 class ProvisionalEventSpec(BaseModel):

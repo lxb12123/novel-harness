@@ -311,6 +311,17 @@ class ExtractionService:
                 confidence=raw.confidence,
             )
         )
+        # Task 7：新事件的机器摘要基线版本（绑定 evidence 快照，不调模型）。
+        from ..events.summaries import create_event_summary_baseline
+
+        create_event_summary_baseline(
+            self._conn,
+            project_id=project_id,
+            event_id=view.event.id,
+            summary=raw.summary,
+            source_snapshot_id=evidence.audit.chapter_snapshot_id,
+            evidence_sha256=evidence.audit.quote_sha256,
+        )
         event_ids.append(view.event.id)
         if raw.confidence < 0.70 and self._any_main(
             project_id, (*participants, *knowers)

@@ -490,6 +490,7 @@ _KIND_LABEL: Final[dict[str, str]] = {
     "knowledge_edit": "更正认知类型",
     "knowledge_add": "补一条认知",
     "event_edit": "更正事件名单",
+    "event_summary_edit": "编辑情节摘要",
     "chapter_draft": "写进正文",
 }
 

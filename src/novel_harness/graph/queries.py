@@ -74,8 +74,12 @@ _EDGE_COLS: Final = (
 _NODE_COLS: Final = "id, project_id, label, name, props_json"
 
 _EVENT_COLS: Final = (
-    "id, project_id, chapter_number, summary, information_scope, status, confidence, "
-    "source, evidence_id, evidence_status, derived_from_event_id"
+    "id, project_id, chapter_number, "
+    "COALESCE((SELECT v.summary FROM event_summary_head h "
+    "          JOIN event_summary_version v ON v.id = h.current_version_id "
+    "          WHERE h.event_id = story_event.id), summary) AS summary, "
+    "information_scope, status, confidence, source, evidence_id, evidence_status, "
+    "derived_from_event_id"
 )
 
 
@@ -1441,6 +1445,172 @@ def bump_canon_once_if_retired_canon(
         (project_id,),
     ).fetchone()
     return int(bumped["canon_version"])
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 事件摘要版本（018 / Task 7）—— 所有 event_summary_* 的 SQL 只住在这儿
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def event_summary_current_row(
+    conn: sqlite3.Connection, event_id: str
+) -> dict[str, Any] | None:
+    """一个事件的当前摘要版本（head 指向的那一行）；无版本 → None。"""
+    return conn.execute(
+        """
+        SELECT v.id, v.project_id, v.event_id, v.source_snapshot_id, v.evidence_sha256,
+               v.summary, v.summary_sha256, v.source, v.status,
+               v.replaces_version_id, v.created_at
+          FROM event_summary_head h
+          JOIN event_summary_version v ON v.id = h.current_version_id
+         WHERE h.event_id = ?
+        """,
+        (event_id,),
+    ).fetchone()
+
+
+def insert_event_summary_version(
+    conn: sqlite3.Connection,
+    *,
+    version_id: str,
+    project_id: str,
+    event_id: str,
+    source_snapshot_id: str | None,
+    evidence_sha256: str | None,
+    summary: str,
+    source: str,
+    status: str,
+    replaces_version_id: str | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO event_summary_version (
+            id, project_id, event_id, source_snapshot_id, evidence_sha256,
+            summary, summary_sha256, source, status, replaces_version_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            version_id,
+            project_id,
+            event_id,
+            source_snapshot_id,
+            evidence_sha256,
+            summary,
+            _sha256_hex(summary),
+            source,
+            status,
+            replaces_version_id,
+        ),
+    )
+
+
+def switch_event_summary_head(
+    conn: sqlite3.Connection, event_id: str, new_version_id: str, expected: str | None
+) -> bool:
+    row = conn.execute(
+        """
+        UPDATE event_summary_head
+           SET current_version_id = :new_id,
+               machine_intent_seq = machine_intent_seq + 1,
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE event_id = :eid AND current_version_id IS :expected
+        RETURNING event_id
+        """,
+        {"new_id": new_version_id, "eid": event_id, "expected": expected},
+    ).fetchone()
+    return row is not None
+
+
+def event_summary_history_rows(
+    conn: sqlite3.Connection, event_id: str
+) -> list[dict[str, Any]]:
+    return conn.execute(
+        """
+        SELECT id, project_id, event_id, source_snapshot_id, evidence_sha256,
+               summary, summary_sha256, source, status, replaces_version_id, created_at
+          FROM event_summary_version
+         WHERE event_id = ?
+         ORDER BY created_at, rowid
+        """,
+        (event_id,),
+    ).fetchall()
+
+
+def create_event_summary_job(
+    conn: sqlite3.Connection,
+    *,
+    job_id: str,
+    project_id: str,
+    event_id: str,
+    source_snapshot_id: str,
+    source_generation: int,
+    source_sha256: str,
+    expected_head: str | None,
+    intent_seq: int,
+    trigger_key: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO summary_generation_job (
+            id, project_id, target_type, chapter_id, event_id,
+            source_snapshot_id, source_generation, source_sha256,
+            refresh_attempt_id, required_ruleset_epoch, required_ruleset_hash,
+            expected_head_version_id, required_machine_intent_seq,
+            trigger_key, trigger_source, status
+        ) VALUES (?, ?, 'EVENT', NULL, ?, ?, ?, ?, NULL, NULL, NULL,
+                  ?, ?, ?, 'manual', 'PENDING')
+        """,
+        (
+            job_id,
+            project_id,
+            event_id,
+            source_snapshot_id,
+            source_generation,
+            source_sha256,
+            expected_head,
+            intent_seq,
+            trigger_key,
+        ),
+    )
+
+
+def event_summary_job_basis(
+    conn: sqlite3.Connection, project_id: str, event_id: str
+) -> dict[str, Any] | None:
+    """regenerate 冻结 job basis 用的只读查询（story_event/evidence/snapshot）。"""
+    row = conn.execute(
+        """
+        SELECT e.project_id, e.information_scope, e.valid_from_chapter,
+               ev.chapter_snapshot_id, ch.snapshot_generation,
+               ev.quote_text, ev.quote_sha256 AS evidence_sha256,
+               h.current_version_id, h.machine_intent_seq
+          FROM story_event e
+          LEFT JOIN evidence ev ON ev.id = e.evidence_id
+          LEFT JOIN chapter_snapshot cs ON cs.id = ev.chapter_snapshot_id
+          LEFT JOIN chapter ch ON ch.id = cs.chapter_id
+          JOIN event_summary_head h ON h.event_id = e.id
+         WHERE e.id = ? AND e.project_id = ?
+        """,
+        (event_id, project_id),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def event_information_scope(
+    conn: sqlite3.Connection, project_id: str, event_id: str
+) -> str | None:
+    row = conn.execute(
+        "SELECT information_scope FROM story_event WHERE id = ? AND project_id = ?",
+        (event_id, project_id),
+    ).fetchone()
+    return str(row["information_scope"]) if row is not None else None
+
+
+def _sha256_hex(text: str) -> str:
+    """summary_sha256 的唯一实现：UTF-8 原始字节（§4.4，不做 strip/归一化）。"""
+    import hashlib
+
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def chapter_disk_stats(

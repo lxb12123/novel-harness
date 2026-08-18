@@ -39,6 +39,16 @@ from ..events import (
     ProposalStore,
     ProposalValidationError,
 )
+from ..events.models import EventSummaryVersion
+from ..events.summaries import (
+    EventSummaryEditConflict,
+    EventSummaryNotFound,
+    EventSummaryTextRejected,
+    current_event_summary,
+    edit_event_summary,
+    event_summary_history,
+    regenerate_event_summary,
+)
 from ..extract.proposals import (
     ConfirmationConflict,
     ProposalAction,
@@ -54,10 +64,95 @@ from ..extract.proposals import (
 from ..graph import EdgeType, GraphStore
 from ..graph.sqlite_proposals import SqliteProposalStore
 from ..graph.sqlite_review import SqliteEdgeReviewStore
+from ..graph.sqlite_events import SqliteEventStore
 from .deps import get_conn, get_event_store, get_store, load_project
 
 
 router = APIRouter()
+
+
+class EventSummaryEditBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    summary: str
+    expected_version_id: str | None = None
+    expected_canon_version: int | None = None
+
+
+@router.get("/api/projects/{project_id}/events/{event_id}/summary")
+def get_event_summary(
+    event_id: str,
+    conn: Annotated[Connection, Depends(get_conn)],
+    proj: Any = Depends(load_project),
+) -> EventSummaryVersion | None:
+    """一个事件的当前摘要版本（PROVISIONAL / CANON 共用）。"""
+    version = current_event_summary(conn, event_id)
+    if version is None:
+        raise HTTPException(404, {"error": "event_summary_not_found", "event_id": event_id})
+    return version
+
+
+@router.get("/api/projects/{project_id}/events/{event_id}/summary/history")
+def get_event_summary_history(
+    event_id: str,
+    conn: Annotated[Connection, Depends(get_conn)],
+    proj: Any = Depends(load_project),
+) -> list[EventSummaryVersion]:
+    return event_summary_history(conn, event_id)
+
+
+@router.patch("/api/projects/{project_id}/events/{event_id}/summary")
+def patch_event_summary(
+    event_id: str,
+    body: EventSummaryEditBody,
+    conn: Annotated[Connection, Depends(get_conn)],
+    proj: Any = Depends(load_project),
+) -> EventSummaryVersion:
+    """作者编辑事件摘要：只追加 AUTHOR 版本并切 head，proposal 仍 PENDING。
+
+    Canon 事件摘要改变 Writer 实际 Canon → 必须带 `expected_canon_version`，
+    同一事务 bump canon version 并写 decision log（`events/summaries.py`）。
+    """
+    store = SqliteEventStore(conn)
+    scope = store.event_information_scope(proj.id, event_id)
+    if scope is None:
+        raise HTTPException(404, {"error": "event_not_found", "event_id": event_id})
+    try:
+        return edit_event_summary(
+            conn,
+            project_id=proj.id,
+            event_id=event_id,
+            text=body.summary,
+            expected_version_id=body.expected_version_id,
+            expected_canon_version=body.expected_canon_version,
+            scope=scope,
+        )
+    except EventSummaryTextRejected as exc:
+        raise HTTPException(422, str(exc))
+    except EventSummaryEditConflict as exc:
+        raise HTTPException(409, str(exc))
+
+
+@router.post("/api/projects/{project_id}/events/{event_id}/summary/regenerate")
+def regenerate_event_summary_route(
+    event_id: str,
+    conn: Annotated[Connection, Depends(get_conn)],
+    proj: Any = Depends(load_project),
+) -> dict[str, Any]:
+    """事件摘要显式重新总结：只创建持久 job（EVENT target），不同步调模型。"""
+    from ..ids import EntityType, new_id
+
+    try:
+        job_id = regenerate_event_summary(
+            conn,
+            project_id=proj.id,
+            event_id=event_id,
+            trigger_key=f"event-regenerate:{new_id(EntityType.SUMMARY, proj.id)}",
+        )
+    except EventSummaryNotFound:
+        raise HTTPException(404, {"error": "event_not_found", "event_id": event_id})
+    conn.commit()
+    return {"queued": True, "job_id": job_id}
 ChapterNumber = Annotated[int, Path(ge=1)]
 ProposalId = Annotated[str, Path(min_length=1)]
 EventId = Annotated[str, Path(min_length=1)]

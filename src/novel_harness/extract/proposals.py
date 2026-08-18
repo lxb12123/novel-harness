@@ -277,6 +277,7 @@ def _create_characters(
 
 
 def _clone_events(
+    conn: Connection,
     event_store: EventStore,
     event_ids: Sequence[str],
     *,
@@ -285,13 +286,28 @@ def _clone_events(
     out: list[EventView] = []
     try:
         for event_id in event_ids:
-            out.append(
-                event_store.clone_to_scope(
-                    event_id,
-                    InformationScope.CANON,
-                    summary=edited_summary,
-                )
+            cloned = event_store.clone_to_scope(
+                event_id,
+                InformationScope.CANON,
+                summary=edited_summary,
             )
+            # Task 7：「改完收下」的摘要走同一个事件摘要版本服务——
+            # 追加 AUTHOR 版本并切 head；proposal 接受事务自己 bump canon，
+            # 这里不重复 bump。
+            if edited_summary is not None:
+                from ..events.summaries import edit_event_summary
+
+                edit_event_summary(
+                    conn,
+                    project_id=cloned.event.project_id,
+                    event_id=cloned.event.id,
+                    text=edited_summary,
+                    expected_version_id=None,
+                    scope="CANON",
+                    bump_canon=False,
+                    store=event_store,
+                )
+            out.append(cloned)
     except EventStoreError as exc:
         raise ProposalShapeError(str(exc)) from exc
     return tuple(out)
@@ -408,6 +424,7 @@ def review_proposal(
                 events,
                 proposal.project_id,
                 _clone_events(
+                    conn,
                     events,
                     proposal.event_ids,
                     edited_summary=review.edited_summary,

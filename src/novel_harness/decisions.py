@@ -118,6 +118,13 @@ class DecisionKind(StrEnum):
     EVENT_EDIT = "event_edit"
     """作者改了一条已生效事件的知情 / 在场名单。`corrections.py`。"""
 
+    EVENT_SUMMARY_EDIT = "event_summary_edit"
+    """作者编辑了一条 Canon/待确认事件的摘要（Task 7，`events/summaries.py`）。
+
+    只新增 AUTHOR summary version，`story_event.source` 一字不改（不变量 21）。
+    Canon 摘要编辑在同一事务 bump canon version；payload 里有 event_id 和
+    新版本的 summary_sha256。"""
+
     CHAPTER_DRAFT = "chapter_draft"
     """写作助手起草完**直接把一稿写进了某一章**（[ADR 0021](../docs/adr/0021-agent-writes-drafts-without-asking.md)）。
 
