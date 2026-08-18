@@ -141,6 +141,26 @@ class RollingSummaryView(BaseModel):
     summary: str = Field(min_length=1)
 
 
+class RawTextFallback(BaseModel):
+    """没有总结时的一章**原文片段**（Task 17 / ADR 0030 step 3）。
+
+    它不是总结：所以连「滚动总结是机器压缩的背景」那句都不该照抄——那是在给
+    一段原文贴上「背景」的标签。这里必须诚实地说「这是原文章节片段，不是总结」。
+    有界：最多 `raw_fallback_chars` 字符（按字符数算，不是 token——这是给模型
+    看的哪一段是边界，字符是它的可读边界）。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chapter_number: int = Field(ge=1)
+    text: str = Field(min_length=1)
+    """有界截断的原文（不超过 `raw_fallback_chars`）。"""
+
+    @property
+    def is_summary(self) -> bool:
+        return False
+
+
 class ResolvedProductContext(BaseModel):
     """允许进入产品写作调用的完整记忆前言。"""
 
@@ -158,6 +178,8 @@ class ResolvedProductContext(BaseModel):
     recent_events: tuple[ResolvedProductEvent, ...]
     background_events: tuple[ResolvedProductEvent, ...]
     rolling_summaries: tuple[RollingSummaryView, ...] = ()
+    raw_fallbacks: tuple[RawTextFallback, ...] = ()
+    """没有滚动总结的章，用有界原文顶上（诚实标明不是总结，ADR 0030 step 3）。"""
 
     @field_validator("recent_events", "background_events", mode="before")
     @classmethod

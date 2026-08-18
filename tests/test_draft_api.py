@@ -223,8 +223,8 @@ def test_default_product_draft_gets_confirmed_memory_preface(
     # `[文风][记忆][用户]`（ADR 0019 边界六）：文风跨章不变、排最前面，才有前缀缓存可言；
     # 记忆逐章变，插在它后面。原来的顺序把唯一稳定的那块夹在中间，缓存价值为零。
     assert [message["role"] for message in observed[0]] == ["system", "system", "user"]
-    assert observed[0][1]["content"].startswith("已确认的故事记忆")
-    assert "已确认的故事记忆" not in observed[0][0]["content"]
+    assert observed[0][1]["content"].startswith("已生效的故事记忆")
+    assert "已生效的故事记忆" not in observed[0][0]["content"]
 
 
 def test_explicit_kill_gate_form_keeps_the_prior_prompt_path(
@@ -245,7 +245,7 @@ def test_explicit_kill_gate_form_keeps_the_prior_prompt_path(
 
     assert response.status_code == 200, response.text
     rendered = "\n".join(message["content"] for message in observed[0])
-    assert "已确认的故事记忆" not in rendered
+    assert "已生效的故事记忆" not in rendered
 
 
 def test_draft_custom_write_rule_is_accepted(

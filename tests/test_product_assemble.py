@@ -106,7 +106,7 @@ def test_product_assembler_prepends_narrow_canon_memory() -> None:
     assert product[0] == plain[0], "文风段必须是逐字节的第一条 —— 它是唯一能被前缀缓存的那块"
     assert product[1]["role"] == "system"
     memory_text = product[1]["content"]
-    assert memory_text.startswith("已确认的故事记忆")
+    assert memory_text.startswith("已生效的故事记忆")
     for expected in ("顾清音", "外冷内热", "曾守过北境", "右手有旧伤", "两人共同烧毁密信", "顾清音曾救过萧决"):
         assert expected in memory_text
     for forbidden in ("character:private", "event:private", "evidence:private", "PROVISIONAL"):
@@ -224,7 +224,7 @@ def test_kill_gate_forms_never_receive_product_memory() -> None:
             message["content"]
             for message in assemble(ctx, form=form, goal="继续交谈。", length=LENGTH)
         )
-        assert "已确认的故事记忆" not in rendered
+        assert "已生效的故事记忆" not in rendered
         assert all(sentinel not in rendered for sentinel in sentinels)
 
 
@@ -271,7 +271,7 @@ def test_product_assembler_calls_the_existing_assembler_unchanged(monkeypatch) -
     ]
     # 记忆插在前导 system 段之后：文风原样在第 0 格，用户消息原样在最后。
     assert [result[0], result[2]] == base_messages
-    assert result[1]["content"].startswith("已确认的故事记忆")
+    assert result[1]["content"].startswith("已生效的故事记忆")
 
 
 def test_the_gate_never_reaches_this_module() -> None:
@@ -329,3 +329,35 @@ def test_the_gate_never_reaches_this_module() -> None:
         f"`assemble_product` 的调用方变了：{sorted(callers)}\n"
         "多一个调用方就要重新回答一次「三臂受不受影响」——上面那条换序的全部安全性押在这儿。"
     )
+
+
+def test_raw_text_fallback_is_honest_about_not_being_a_summary() -> None:
+    """没有总结的章用有界原文顶上，**必须诚实地说它不是总结**（Task 17/ADR 0030）。"""
+    from novel_harness.draft.product_assemble import assemble_product
+    from novel_harness.draft.product_context import (
+        RawTextFallback,
+        ResolvedProductContext,
+    )
+
+    memory = ResolvedProductContext(
+        recent_from_chapter=1,
+        cast=(ALICE,),
+        profiles=(),
+        recent_events=(),
+        background_events=(),
+        rolling_summaries=(),
+        raw_fallbacks=(
+            RawTextFallback(chapter_number=2, text="萧决在第二章的开头推开了门，风雪灌了进来。"),
+        ),
+    )
+    product = assemble_product(
+        _constraints(),
+        memory,
+        form=PromptForm.X1,
+        goal="两人在渡口商量下一步。",
+        length=LENGTH,
+    )
+    memory_text = product[1]["content"]
+    assert "第 2 章原文片段" in memory_text
+    assert "这不是总结" in memory_text
+    assert "未经作者确认" in memory_text

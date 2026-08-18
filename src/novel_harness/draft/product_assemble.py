@@ -66,8 +66,9 @@ def render_product_memory(memory: ResolvedProductContext) -> str:
     """
 
     lines = [
-        "已确认的故事记忆",
-        "以下人物资料与事件均已由作者确认；只把它们当作当前写作的既有事实。",
+        "已生效的故事记忆",
+        "以下人物资料与事件是当前已生效的记忆（系统自动整理的部分只当线索，"
+        "作者亲自确认过的才当既定事实）。",
         "",
         "【更早章节滚动总结】",
         "（滚动总结是机器压缩的背景，未经作者确认；只当线索，不当已确认事实。）",
@@ -78,6 +79,14 @@ def render_product_memory(memory: ResolvedProductContext) -> str:
             )
             if memory.rolling_summaries
             else ("- 暂无",)
+        ),
+        *(
+            line
+            for fallback in memory.raw_fallbacks
+            for line in (
+                f"【第 {fallback.chapter_number} 章原文片段（没有总结，这不是总结）】",
+                fallback.text,
+            )
         ),
         "",
         "【更早的相关事件】",
