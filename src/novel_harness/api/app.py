@@ -1661,6 +1661,13 @@ class SummaryEdit(BaseModel):
     """作者自己写的那一段。空串走 422 而不是「等于撤回」——**两个动作不许共用一个入口**：
     清空输入框然后保存，和按下「撤回」，在作者脑子里不是一件事。"""
 
+    expected_version_id: str | None = None
+    """作者编辑所依据的版本 id（018 head 元数据）。与当前 head 不一致 → 409。
+
+    `None` 有两个意思：字段缺省（旧客户端，不做 CAS）和「作者预期当前无总结」
+    （首次编辑，期望 head 为 NULL）。路由用 `model_fields_set` 区分两者。
+    """
+
 
 @app.patch("/api/projects/{project_id}/chapters/{chapter}/summary")
 def edit_chapter_summary(
@@ -1675,6 +1682,7 @@ def edit_chapter_summary(
     这一章还没有总结时也收——手写一份比先付一次钱再改要合理。
     """
     from ..draft.rolling_summary import (
+        SummaryEditConflict,
         SummaryChapterNotFound,
         SummaryTextRejected,
         save_author_summary,
@@ -1688,15 +1696,146 @@ def edit_chapter_summary(
             project_id=proj.id,
             chapter_number=chapter,
             text=body.summary,
+            expected_version_id=body.expected_version_id,
+            expect_head="expected_version_id" in body.model_fields_set,
         )
     except SummaryTextRejected as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    except SummaryEditConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except SummaryChapterNotFound:
         raise HTTPException(
             status_code=404,
             detail={"error": "chapter_not_found", "chapter": chapter},
         )
     return _summary_state(conn, proj.id, chapter)
+
+
+@app.get("/api/projects/{project_id}/chapters/{chapter}/summary/history")
+def chapter_summary_history(
+    chapter: int,
+    conn: Any = Depends(get_conn),
+    proj: Any = Depends(load_project),
+) -> list[dict[str, Any]]:
+    """一章的 append-only 版本历史（018），旧 → 新。**一行都不删。**"""
+
+    if chapter < 1:
+        raise HTTPException(status_code=422, detail="章号至少是 1")
+    row = conn.execute(
+        """
+        SELECT c.id FROM chapter c
+         WHERE c.project_id = ? AND c.number = ?
+        """,
+        (proj.id, chapter),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "chapter_not_found", "chapter": chapter},
+        )
+    versions = conn.execute(
+        """
+        SELECT id, summary, summary_sha256, schema_version, prompt_hash,
+               source, status, source_snapshot_id, replaces_summary_id, created_at
+          FROM chapter_summary
+         WHERE project_id = ? AND chapter_number = ?
+         ORDER BY created_at, rowid
+        """,
+        (proj.id, chapter),
+    ).fetchall()
+    return [dict(v) for v in versions]
+
+
+class SummaryRegenerateReceipt(BaseModel):
+    queued: bool
+    job_id: str
+
+
+@app.post("/api/projects/{project_id}/chapters/{chapter}/summary/regenerate")
+def regenerate_chapter_summary(
+    chapter: int,
+    conn: Any = Depends(get_conn),
+    proj: Any = Depends(load_project),
+) -> SummaryRegenerateReceipt:
+    """**显式重新总结**：创建持久 `summary_generation_job`，不直接同步调用模型。
+
+    创建 job 的同一事务递增 `machine_intent_seq` 并 supersede 旧未完成 job——
+    作者点击后的任何修改都赢，旧机器任务即使 expected head 相同也失效。
+    """
+    from ..ids import EntityType, new_id
+
+    if chapter < 1:
+        raise HTTPException(status_code=422, detail="章号至少是 1")
+    identity = conn.execute(
+        """
+        SELECT c.id AS chapter_id, s.id AS snapshot_id, c.snapshot_generation AS generation,
+               h.current_summary_id AS head_id, h.machine_intent_seq AS intent_seq
+          FROM chapter c
+          JOIN chapter_snapshot s
+            ON s.chapter_id = c.id AND s.text_sha256 = c.text_sha256
+          JOIN chapter_summary_head h ON h.chapter_id = c.id
+         WHERE c.project_id = ? AND c.number = ?
+        """,
+        (proj.id, chapter),
+    ).fetchone()
+    if identity is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "chapter_not_found", "chapter": chapter},
+        )
+    text_hash = conn.execute(
+        "SELECT text_sha256 FROM chapter_snapshot WHERE id = ?", (identity["snapshot_id"],)
+    ).fetchone()["text_sha256"]
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        intent = conn.execute(
+            """
+            UPDATE chapter_summary_head
+               SET machine_intent_seq = machine_intent_seq + 1,
+                   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             WHERE chapter_id = ?
+            RETURNING machine_intent_seq
+            """,
+            (identity["chapter_id"],),
+        ).fetchone()["machine_intent_seq"]
+        conn.execute(
+            """
+            UPDATE summary_generation_job SET status = 'SUPERSEDED'
+             WHERE project_id = ? AND target_type = 'CHAPTER' AND chapter_id = ?
+               AND status IN ('PENDING','RUNNING')
+            """,
+            (proj.id, identity["chapter_id"]),
+        )
+        job_id = new_id(EntityType.SUMMARY, proj.id)
+        conn.execute(
+            """
+            INSERT INTO summary_generation_job (
+                id, project_id, target_type, chapter_id, event_id,
+                source_snapshot_id, source_generation, source_sha256,
+                refresh_attempt_id, required_ruleset_epoch, required_ruleset_hash,
+                expected_head_version_id, required_machine_intent_seq,
+                trigger_key, trigger_source, status
+            ) VALUES (?, ?, 'CHAPTER', ?, NULL, ?, ?, ?, NULL, NULL, NULL,
+                      ?, ?, ?, 'manual', 'PENDING')
+            """,
+            (
+                job_id,
+                proj.id,
+                identity["chapter_id"],
+                identity["snapshot_id"],
+                identity["generation"],
+                text_hash,
+                identity["head_id"],
+                intent,
+                f"regenerate:{intent}:{identity['head_id'] or 'null'}",
+            ),
+        )
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return SummaryRegenerateReceipt(queued=True, job_id=job_id)
 
 
 @app.delete("/api/projects/{project_id}/chapters/{chapter}/summary")

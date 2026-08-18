@@ -14,7 +14,7 @@
       {
         "actor": "system",
         "chapter_number": 1,
-        "id": "extraction_run:ID39",
+        "id": "extraction_run:ID42",
         "jump": {
           "cast": [],
           "chapter_number": 1,
@@ -35,7 +35,7 @@
       {
         "actor": "system",
         "chapter_number": 1,
-        "id": "call:ID40",
+        "id": "call:ID43",
         "jump": {
           "cast": [],
           "chapter_number": 1,
@@ -56,7 +56,7 @@
       {
         "actor": "author",
         "chapter_number": 1,
-        "id": "decision:ID37",
+        "id": "decision:ID40",
         "jump": {
           "cast": [
             "萧决"
@@ -81,7 +81,7 @@
       {
         "actor": "system",
         "chapter_number": 1,
-        "id": "call:ID41",
+        "id": "call:ID44",
         "jump": {
           "cast": [],
           "chapter_number": 1,
@@ -171,7 +171,7 @@
       {
         "actor": "author",
         "chapter_number": 1,
-        "id": "decision:ID42",
+        "id": "decision:ID45",
         "jump": {
           "cast": [
             "萧决"
@@ -194,7 +194,7 @@
         "ts": "<ts>"
       }
     ],
-    "next_cursor": "<ts>|decision:ID42"
+    "next_cursor": "<ts>|decision:ID45"
   },
   "activityAuthorOnly": {
     "actors": [
@@ -211,7 +211,7 @@
       {
         "actor": "author",
         "chapter_number": 1,
-        "id": "decision:ID37",
+        "id": "decision:ID40",
         "jump": {
           "cast": [
             "萧决"
@@ -305,7 +305,7 @@
   },
   "activityCallDetail": {
     "cost": {
-      "call_id": "call:ID40",
+      "call_id": "call:ID43",
       "capability": "extractor",
       "cost": null,
       "model": "deepseek-v4",
@@ -316,7 +316,7 @@
     "entry": {
       "actor": "system",
       "chapter_number": 1,
-      "id": "call:ID40",
+      "id": "call:ID43",
       "jump": {
         "cast": [],
         "chapter_number": 1,
@@ -376,7 +376,7 @@
     "entry": {
       "actor": "author",
       "chapter_number": 1,
-      "id": "decision:ID37",
+      "id": "decision:ID40",
       "jump": {
         "cast": [
           "萧决"
@@ -425,7 +425,7 @@
       "target": "knowledge",
       "to": {
         "believed_value": "他以为那只是个传闻",
-        "edge_id": "edge:ID38",
+        "edge_id": "edge:ID41",
         "edge_type": "BELIEVES"
       },
       "valid_from_chapter": 1
@@ -476,7 +476,7 @@
       {
         "actor": "system",
         "chapter_number": 3,
-        "id": "extraction_run:ID53",
+        "id": "extraction_run:ID56",
         "jump": {
           "cast": [],
           "chapter_number": 3,
@@ -499,45 +499,12 @@
       {
         "actor": "system",
         "chapter_number": null,
-        "id": "call:ID54",
+        "id": "call:ID57",
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
         "subtitle": "deepseek-v4-flash · 入 900 / 出 12 token · 0 ms",
         "title": "模型调用 · 写作助手",
-        "ts": "<ts>"
-      },
-      {
-        "actor": "system",
-        "chapter_number": null,
-        "id": "call:ID55",
-        "jump": null,
-        "source": "model_call",
-        "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
-        "title": "模型调用 · 写作助手",
-        "ts": "<ts>"
-      },
-      {
-        "actor": "system",
-        "chapter_number": null,
-        "id": "call:ID56",
-        "jump": null,
-        "source": "model_call",
-        "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 1200 / 出 64 token · 0 ms",
-        "title": "模型调用 · 写作助手",
-        "ts": "<ts>"
-      },
-      {
-        "actor": "system",
-        "chapter_number": null,
-        "id": "call:ID57",
-        "jump": null,
-        "source": "model_call",
-        "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 1800 / 出 2600 token · 0 ms",
-        "title": "模型调用 · 起草",
         "ts": "<ts>"
       },
       {
@@ -572,16 +539,49 @@
         "subtitle": "deepseek-v4-flash · 入 1800 / 出 2600 token · 0 ms",
         "title": "模型调用 · 起草",
         "ts": "<ts>"
+      },
+      {
+        "actor": "system",
+        "chapter_number": null,
+        "id": "call:ID61",
+        "jump": null,
+        "source": "model_call",
+        "status": "succeeded",
+        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
+        "title": "模型调用 · 写作助手",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "system",
+        "chapter_number": null,
+        "id": "call:ID62",
+        "jump": null,
+        "source": "model_call",
+        "status": "succeeded",
+        "subtitle": "deepseek-v4-flash · 入 1200 / 出 64 token · 0 ms",
+        "title": "模型调用 · 写作助手",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "system",
+        "chapter_number": null,
+        "id": "call:ID63",
+        "jump": null,
+        "source": "model_call",
+        "status": "succeeded",
+        "subtitle": "deepseek-v4-flash · 入 1800 / 出 2600 token · 0 ms",
+        "title": "模型调用 · 起草",
+        "ts": "<ts>"
       }
     ],
-    "next_cursor": "<ts>|call:ID60"
+    "next_cursor": "<ts>|call:ID63"
   },
   "activityFailedDetail": {
     "cost": null,
     "entry": {
       "actor": "system",
       "chapter_number": 3,
-      "id": "extraction_run:ID53",
+      "id": "extraction_run:ID56",
       "jump": {
         "cast": [],
         "chapter_number": 3,
@@ -630,7 +630,7 @@
   },
   "activityRunDetail": {
     "cost": {
-      "call_id": "call:ID40",
+      "call_id": "call:ID43",
       "capability": "extractor",
       "cost": null,
       "model": "deepseek-v4",
@@ -641,7 +641,7 @@
     "entry": {
       "actor": "system",
       "chapter_number": 1,
-      "id": "extraction_run:ID39",
+      "id": "extraction_run:ID42",
       "jump": {
         "cast": [],
         "chapter_number": 1,
@@ -686,7 +686,7 @@
   },
   "activitySummaryDetail": {
     "cost": {
-      "call_id": "call:ID41",
+      "call_id": "call:ID44",
       "capability": "summarizer",
       "cost": null,
       "model": "deepseek-v4-flash",
@@ -697,7 +697,7 @@
     "entry": {
       "actor": "system",
       "chapter_number": 1,
-      "id": "call:ID41",
+      "id": "call:ID44",
       "jump": {
         "cast": [],
         "chapter_number": 1,
@@ -816,13 +816,13 @@
         "added": [
           {
             "created": true,
-            "id": "chapter:ID62",
+            "id": "chapter:ID65",
             "number": 1,
             "path": "chapters/0001.md",
-            "project_id": "project:ID61",
+            "project_id": "project:ID64",
             "snapshot_created": true,
             "snapshot_generation": 1,
-            "snapshot_id": "snapshot:ID63",
+            "snapshot_id": "snapshot:ID66",
             "text_sha256": "<sha>",
             "title": "起"
           }
@@ -839,7 +839,7 @@
     "initial_chapter": 1,
     "project": {
       "canon_version": 0,
-      "id": "project:ID61",
+      "id": "project:ID64",
       "name": "序章样书",
       "root_path": "<root>/books/序章样书"
     },
@@ -860,7 +860,7 @@
   },
   "canonEventCast": {
     "canon_version": 14,
-    "decision_id": "decision:ID43",
+    "decision_id": "decision:ID46",
     "event": {
       "event": {
         "chapter_number": 1,
@@ -917,8 +917,8 @@
       "name": "萧决"
     },
     "closed_edge_ids": [],
-    "decision_id": "decision:ID37",
-    "edge_id": "edge:ID38",
+    "decision_id": "decision:ID40",
+    "edge_id": "edge:ID41",
     "from_type": "KNOWS",
     "project_id": "project:ID1",
     "retracted_edge_id": "edge:ID16",
@@ -939,8 +939,8 @@
       "name": "李管家"
     },
     "closed_edge_ids": [],
-    "decision_id": "decision:ID64",
-    "edge_id": "edge:ID65",
+    "decision_id": "decision:ID67",
+    "edge_id": "edge:ID68",
     "project_id": "project:ID1",
     "secret": {
       "id": "secret:ID7",
@@ -963,14 +963,14 @@
     {
       "created_at": "<ts>",
       "is_current": false,
-      "snapshot_id": "snapshot:ID51",
+      "snapshot_id": "snapshot:ID54",
       "text": "第二章 试探\n\n他终于明白了。\n风起。他终于明白了。\n",
       "text_sha256": "<sha>"
     },
     {
       "created_at": "<ts>",
       "is_current": true,
-      "snapshot_id": "snapshot:ID50",
+      "snapshot_id": "snapshot:ID53",
       "text": "第二章 试探\n\n他终于明白了。\n风起。他终于明白了。\n\n后来又添了一段。\n",
       "text_sha256": "<sha>"
     }
@@ -982,7 +982,7 @@
     "processing": "reused",
     "saved_to_disk": true,
     "snapshot_generation": 2,
-    "snapshot_id": "snapshot:ID50",
+    "snapshot_id": "snapshot:ID53",
     "text_sha256": "<sha>"
   },
   "chapterText": {
@@ -1030,7 +1030,7 @@
   },
   "chatCreated": {
     "created_at": "<ts>",
-    "id": "chat_session:ID44",
+    "id": "chat_session:ID47",
     "message_count": 0,
     "pending_lookups": 0,
     "running": false,
@@ -1038,7 +1038,7 @@
     "updated_at": "<ts>"
   },
   "chatDeleted": {
-    "chat_id": "chat_session:ID48",
+    "chat_id": "chat_session:ID51",
     "deleted": true
   },
   "chatDetail": {
@@ -1056,7 +1056,7 @@
     ],
     "session": {
       "created_at": "<ts>",
-      "id": "chat_session:ID44",
+      "id": "chat_session:ID47",
       "message_count": 5,
       "pending_lookups": 0,
       "running": false,
@@ -1089,7 +1089,7 @@
     ],
     "session": {
       "created_at": "<ts>",
-      "id": "chat_session:ID52",
+      "id": "chat_session:ID55",
       "message_count": 2,
       "pending_lookups": 0,
       "running": false,
@@ -1098,7 +1098,7 @@
     }
   },
   "chatStopped": {
-    "chat_id": "chat_session:ID44",
+    "chat_id": "chat_session:ID47",
     "message": "这段对话这会儿没在跑，不用停。",
     "stopped": false
   },
@@ -1120,7 +1120,7 @@
       {
         "chapter": 2,
         "created_at": "<ts>",
-        "id": "draft:ID45",
+        "id": "draft:ID48",
         "landed": false,
         "note": "这一版更冷，收在他没抬头。",
         "ordinal": 1,
@@ -1142,7 +1142,7 @@
     "reply": "第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。",
     "session": {
       "created_at": "<ts>",
-      "id": "chat_session:ID44",
+      "id": "chat_session:ID47",
       "message_count": 5,
       "pending_lookups": 0,
       "running": false,
@@ -1161,12 +1161,12 @@
     "event: turn\ndata: {\"kind\":\"tool_finished\",\"said_to_author\":\"写一稿（第 2 章），好了。\",\"text\":\"\",\"tool\":\"draft_chapter\",\"ok\":true,\"chapter\":2,\"index\":2,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
     "event: turn\ndata: {\"kind\":\"reply_text\",\"said_to_author\":\"\",\"text\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\",\"tool\":\"\",\"ok\":null,\"chapter\":null,\"index\":0,\"total\":0,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
     "event: turn\ndata: {\"kind\":\"turn_stopped\",\"said_to_author\":\"说完了。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":null,\"index\":0,\"total\":0,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":\"done\",\"asked\":null}\n\n",
-    "event: receipt\ndata: {\"session\":{\"id\":\"chat_session:ID46\",\"title\":\"长连接那一轮\",\"created_at\":\"<ts>\",\"updated_at\":\"<ts>\",\"message_count\":5,\"running\":false,\"pending_lookups\":0},\"chapter\":2,\"reason\":\"done\",\"message\":\"说完了。\",\"reply\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\",\"messages\":[{\"seq\":4,\"speaker\":\"assistant\",\"text\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\"}],\"steps\":2,\"lookups\":2,\"tokens_reported\":5664,\"calls_without_usage\":1,\"context\":{\"off_chapter\":0,\"stale_lookups\":0,\"trimmed_results\":0,\"dropped_lookups\":0,\"dropped_reasoning\":0,\"lost_lookups\":0,\"full\":false,\"compressed_blocks\":0},\"asked\":null,\"drafts\":[{\"id\":\"draft:ID47\",\"chapter\":2,\"ordinal\":2,\"units\":2800,\"note\":\"这一版更冷，收在他没抬头。\",\"preview\":\"风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他……\",\"created_at\":\"<ts>\",\"landed\":false,\"stopped_reason\":\"\"}]}\n\n"
+    "event: receipt\ndata: {\"session\":{\"id\":\"chat_session:ID49\",\"title\":\"长连接那一轮\",\"created_at\":\"<ts>\",\"updated_at\":\"<ts>\",\"message_count\":5,\"running\":false,\"pending_lookups\":0},\"chapter\":2,\"reason\":\"done\",\"message\":\"说完了。\",\"reply\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\",\"messages\":[{\"seq\":4,\"speaker\":\"assistant\",\"text\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\"}],\"steps\":2,\"lookups\":2,\"tokens_reported\":5664,\"calls_without_usage\":1,\"context\":{\"off_chapter\":0,\"stale_lookups\":0,\"trimmed_results\":0,\"dropped_lookups\":0,\"dropped_reasoning\":0,\"lost_lookups\":0,\"full\":false,\"compressed_blocks\":0},\"asked\":null,\"drafts\":[{\"id\":\"draft:ID50\",\"chapter\":2,\"ordinal\":2,\"units\":2800,\"note\":\"这一版更冷，收在他没抬头。\",\"preview\":\"风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他……\",\"created_at\":\"<ts>\",\"landed\":false,\"stopped_reason\":\"\"}]}\n\n"
   ],
   "chats": [
     {
       "created_at": "<ts>",
-      "id": "chat_session:ID44",
+      "id": "chat_session:ID47",
       "message_count": 5,
       "pending_lookups": 0,
       "running": false,
@@ -1267,7 +1267,7 @@
   "draftDetail": {
     "chapter": 2,
     "created_at": "<ts>",
-    "id": "draft:ID45",
+    "id": "draft:ID48",
     "landed": false,
     "note": "这一版更冷，收在他没抬头。",
     "ordinal": 1,
@@ -1281,7 +1281,7 @@
       {
         "chapter": 2,
         "created_at": "<ts>",
-        "id": "draft:ID45",
+        "id": "draft:ID48",
         "landed": false,
         "note": "这一版更冷，收在他没抬头。",
         "ordinal": 1,
@@ -1510,7 +1510,7 @@
       "没能连上你配置的模型服务"
     ],
     "finished_at": "<ts>",
-    "id": "extraction_run:ID53",
+    "id": "extraction_run:ID56",
     "model_call_id": null,
     "project_id": "project:ID1",
     "prompt_hash": "prompt:3",
@@ -1527,8 +1527,8 @@
     "discarded_event_count": 1,
     "errors": [],
     "finished_at": "<ts>",
-    "id": "extraction_run:ID39",
-    "model_call_id": "call:ID40",
+    "id": "extraction_run:ID42",
+    "model_call_id": "call:ID43",
     "project_id": "project:ID1",
     "prompt_hash": "prompt:1",
     "proposal_count": 2,
@@ -1929,14 +1929,14 @@
     "rules": [
       {
         "chapter": 2,
-        "chat_id": "chat_session:ID49",
+        "chat_id": "chat_session:ID52",
         "chat_title": "沙地那一段",
         "text": "男主在这片沙地不杀人",
         "until": "男主走出这片沙地为止"
       },
       {
         "chapter": 2,
-        "chat_id": "chat_session:ID49",
+        "chat_id": "chat_session:ID52",
         "chat_title": "沙地那一段",
         "text": "冷一点",
         "until": "这一场写完"
@@ -2022,7 +2022,7 @@
       {
         "actor": "system",
         "chapter_number": 1,
-        "id": "extraction_run:ID39",
+        "id": "extraction_run:ID42",
         "jump": {
           "cast": [],
           "chapter_number": 1,
@@ -2070,7 +2070,7 @@
       {
         "actor": "system",
         "chapter_number": 3,
-        "id": "extraction_run:ID53",
+        "id": "extraction_run:ID56",
         "jump": {
           "cast": [],
           "chapter_number": 3,
@@ -2091,7 +2091,7 @@
       {
         "actor": "system",
         "chapter_number": 1,
-        "id": "extraction_run:ID39",
+        "id": "extraction_run:ID42",
         "jump": {
           "cast": [],
           "chapter_number": 1,
@@ -2266,88 +2266,132 @@
         "chapter_number": 1,
         "created_at": "<ts>",
         "has_text": true,
+        "replaces_version_id": null,
         "retracted": false,
-        "summary": "萧决在青云城主府听说了血脉秘密。"
+        "summary": "萧决在青云城主府听说了血脉秘密。",
+        "summary_sha256": "<sha>",
+        "version_id": "summary:ID37",
+        "version_source": "model"
       },
       {
         "author_written": false,
         "chapter_number": 2,
         "created_at": null,
         "has_text": true,
+        "replaces_version_id": null,
         "retracted": false,
-        "summary": null
+        "summary": null,
+        "summary_sha256": null,
+        "version_id": null,
+        "version_source": null
       },
       {
         "author_written": false,
         "chapter_number": 3,
         "created_at": null,
         "has_text": true,
+        "replaces_version_id": null,
         "retracted": false,
-        "summary": null
+        "summary": null,
+        "summary_sha256": null,
+        "version_id": null,
+        "version_source": null
       },
       {
         "author_written": false,
         "chapter_number": 4,
         "created_at": null,
         "has_text": false,
+        "replaces_version_id": null,
         "retracted": false,
-        "summary": null
+        "summary": null,
+        "summary_sha256": null,
+        "version_id": null,
+        "version_source": null
       },
       {
         "author_written": false,
         "chapter_number": 5,
         "created_at": null,
         "has_text": false,
+        "replaces_version_id": null,
         "retracted": false,
-        "summary": null
+        "summary": null,
+        "summary_sha256": null,
+        "version_id": null,
+        "version_source": null
       },
       {
         "author_written": false,
         "chapter_number": 6,
         "created_at": null,
         "has_text": false,
+        "replaces_version_id": null,
         "retracted": false,
-        "summary": null
+        "summary": null,
+        "summary_sha256": null,
+        "version_id": null,
+        "version_source": null
       },
       {
         "author_written": false,
         "chapter_number": 7,
         "created_at": null,
         "has_text": false,
+        "replaces_version_id": null,
         "retracted": false,
-        "summary": null
+        "summary": null,
+        "summary_sha256": null,
+        "version_id": null,
+        "version_source": null
       },
       {
         "author_written": false,
         "chapter_number": 8,
         "created_at": null,
         "has_text": false,
+        "replaces_version_id": null,
         "retracted": false,
-        "summary": null
+        "summary": null,
+        "summary_sha256": null,
+        "version_id": null,
+        "version_source": null
       },
       {
         "author_written": false,
         "chapter_number": 9,
         "created_at": null,
         "has_text": false,
+        "replaces_version_id": null,
         "retracted": false,
-        "summary": null
+        "summary": null,
+        "summary_sha256": null,
+        "version_id": null,
+        "version_source": null
       },
       {
         "author_written": false,
         "chapter_number": 10,
         "created_at": null,
         "has_text": false,
+        "replaces_version_id": null,
         "retracted": false,
-        "summary": null
+        "summary": null,
+        "summary_sha256": null,
+        "version_id": null,
+        "version_source": null
       },
       {
         "author_written": false,
         "chapter_number": 11,
         "created_at": null,
         "has_text": false,
+        "replaces_version_id": null,
         "retracted": false,
-        "summary": null
+        "summary": null,
+        "summary_sha256": null,
+        "version_id": null,
+        "version_source": null
       }
     ],
     "missing": [
@@ -2363,24 +2407,36 @@
     "chapter_number": 1,
     "created_at": "<ts>",
     "has_text": true,
+    "replaces_version_id": null,
     "retracted": false,
-    "summary": "萧决在青云城主府听说了血脉秘密。"
+    "summary": "萧决在青云城主府听说了血脉秘密。",
+    "summary_sha256": "<sha>",
+    "version_id": "summary:ID37",
+    "version_source": "model"
   },
   "summaryEdited": {
     "author_written": true,
     "chapter_number": 2,
     "created_at": "<ts>",
     "has_text": true,
+    "replaces_version_id": null,
     "retracted": false,
-    "summary": "萧决把玄铁令收进袖中，谁也没告诉。"
+    "summary": "萧决把玄铁令收进袖中，谁也没告诉。",
+    "summary_sha256": "<sha>",
+    "version_id": "summary:ID38",
+    "version_source": "author"
   },
   "summaryGenerated": {
     "author_written": false,
     "chapter_number": 1,
     "created_at": "<ts>",
     "has_text": true,
+    "replaces_version_id": null,
     "retracted": false,
-    "summary": "萧决在青云城主府听说了血脉秘密。"
+    "summary": "萧决在青云城主府听说了血脉秘密。",
+    "summary_sha256": "<sha>",
+    "version_id": "summary:ID37",
+    "version_source": "model"
   },
   "summaryMentionTrail": {
     "chapters": [
@@ -2439,8 +2495,12 @@
     "chapter_number": 2,
     "created_at": null,
     "has_text": true,
+    "replaces_version_id": null,
     "retracted": true,
-    "summary": null
+    "summary": null,
+    "summary_sha256": null,
+    "version_id": "summary:ID39",
+    "version_source": "author"
   },
   "sync": {
     "added_chapters": [],

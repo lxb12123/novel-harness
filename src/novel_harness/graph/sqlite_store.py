@@ -618,6 +618,9 @@ class SqliteStoryGraph:
                 props=NodeProps(),
             )
             queries.insert_chapter(self._conn, chapter_id, spec, sha)
+            # 018：每章从出生起就有一行 summary head（current 可为 NULL），
+            # 否则「首次生成」的 expected-null CAS 会更新零行（不变量 5/20）。
+            queries.insert_chapter_summary_head(self._conn, chapter_id)
             created = True
         else:
             chapter_id = row.id

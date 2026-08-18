@@ -132,7 +132,8 @@ def _rows(conn: Connection, project_id: str, chapter: int) -> list[dict[str, Any
     return [
         dict(row)
         for row in conn.execute(
-            "SELECT summary, source, status FROM chapter_summary"
+            "SELECT id, summary, summary_sha256, replaces_summary_id, source, status "
+            "FROM chapter_summary"
             " WHERE project_id = ? AND chapter_number = ? ORDER BY rowid",
             (project_id, chapter),
         )
@@ -264,7 +265,13 @@ def test_retracting_hides_the_chapter_everywhere_the_draft_reads(seed: Seed) -> 
         rows = _rows(conn, seed.project_id, 1)
         assert len(rows) == 2 and rows[0]["status"] == "ACTIVE"
         assert rows[1]["status"] == "RETRACTED"
-        assert rows[1]["summary"] == rows[0]["summary"], "撤回那一行要带着被撤掉的原文"
+        # 018 之后撤回是 tombstone：summary=NULL、hash 是统一空字节 hash，
+        # 被撤的那一行原样留在版本历史里（replaces 链指回它）。
+        assert rows[1]["summary"] is None
+        assert rows[1]["replaces_summary_id"] == rows[0]["id"]
+        from novel_harness.draft.rolling_summary import EMPTY_SUMMARY_HASH
+
+        assert rows[1]["summary_sha256"] == EMPTY_SUMMARY_HASH
     finally:
         conn.close()
 
@@ -399,6 +406,10 @@ def test_the_four_routes_all_answer_with_the_same_shape(
         "created_at": None,
         "retracted": False,
         "author_written": False,
+        "version_id": None,
+        "summary_sha256": None,
+        "replaces_version_id": None,
+        "version_source": None,
     }
 
     generated = client.post(base)

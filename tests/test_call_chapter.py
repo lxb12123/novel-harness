@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import ast
 from collections.abc import Iterator
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -192,14 +193,24 @@ def test_rows_written_before_this_column_existed_still_know_their_chapter(
     summarizer_call = seed_call(book, capability="summarizer")
     conn = connect(book["db"])
     try:
+        chapter_id = conn.execute(
+            "SELECT id FROM chapter WHERE project_id = ? AND number = 1",
+            (book["pid"],),
+        ).fetchone()["id"]
         conn.execute(
             """
             INSERT INTO chapter_summary (
-                id, project_id, chapter_number, summary, schema_version, prompt_hash,
-                model_call_id
-            ) VALUES (?, ?, 1, '第一章讲了什么', 'nh.summary.v1', 'ph', ?)
+                id, project_id, chapter_id, chapter_number, summary, summary_sha256,
+                schema_version, prompt_hash, model_call_id
+            ) VALUES (?, ?, ?, 1, '第一章讲了什么', ?, 'nh.summary.v1', 'ph', ?)
             """,
-            (new_id(EntityType.SUMMARY, book["pid"]), book["pid"], summarizer_call),
+            (
+                new_id(EntityType.SUMMARY, book["pid"]),
+                book["pid"],
+                chapter_id,
+                sha256("第一章讲了什么".encode("utf-8")).hexdigest(),
+                summarizer_call,
+            ),
         )
         conn.commit()
         assert [

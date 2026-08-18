@@ -42,6 +42,12 @@ AUTHOR_VERSION: Final = "chapter-summary-author-v1"
 RETRACTION_VERSION: Final = "chapter-summary-retraction-v1"
 """「撤回」那一行的 `schema_version`。同上：它也不是 prompt 产出的。"""
 
+EMPTY_SUMMARY_HASH: Final = sha256(b"").hexdigest()
+"""RETRACTED tombstone 的统一 `summary_sha256`（§4.3：sha256(空字节)）。
+
+ACTIVE 行要求非空 summary 且 hash == 正文 hash；RETRACTED 行要求 summary 为 NULL
+且 hash == 这个常量。这样撤回本身可追溯，Writer 又能明确走 raw-text fallback。"""
+
 AUTHOR_SUMMARY_MAX_CHARS: Final = 1_000
 """作者手写一段总结的上限。
 
@@ -81,19 +87,35 @@ class SummaryTextRejected(ValueError):
     """作者交上来的那段字收不下（空的 / 太长）。`str(exc)` 是给作者看的那句话。"""
 
 
+class SummaryEditConflict(RuntimeError):
+    """PATCH 的 `expected_version_id` 与当前 head 不一致（作者/机器已先行改动）。
+
+    HTTP 映射成 409：界面保留作者输入并重取当前事实，不能靠覆盖解决。
+    """
+
+
 class ChapterSummary(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     id: str
     project_id: str
+    chapter_id: str
     chapter_number: int = Field(ge=1)
-    summary: str = Field(min_length=1)
+    summary: str | None = None
+    summary_sha256: str
+    source_snapshot_id: str | None = None
+    replaces_summary_id: str | None = None
     schema_version: str
     prompt_hash: str
     model_call_id: str | None = None
     created_at: str
     source: SummaryOrigin = SummaryOrigin.MODEL
     status: SummaryState = SummaryState.ACTIVE
+
+    @property
+    def is_retraction_tombstone(self) -> bool:
+        """这一行是不是「撤回」tombstone（summary 为空、hash 是统一空字节 hash）。"""
+        return self.status is SummaryState.RETRACTED
 
 
 class ChapterSummaryStatus(BaseModel):
@@ -125,6 +147,14 @@ class ChapterSummaryStatus(BaseModel):
     **它不是装饰**：作者手写的那段不带「机器摘要，未经确认」的免责，而屏幕上
     分不出来的话，他会对着自己写的字读到一句「这是机器压缩的，别当事实」。"""
 
+    version_id: str | None = None
+    """head 指向的版本行 id（018）。第一次生成前为 NULL。"""
+
+    summary_sha256: str | None = None
+    replaces_version_id: str | None = None
+    version_source: str | None = None
+    """`model` / `author` / `legacy`（018 迁移后旧行可能是 legacy）。"""
+
 
 class SummaryStore:
     """chapter_summary 的只读仓储。
@@ -151,12 +181,14 @@ class SummaryStore:
         """
         row = self._conn.execute(
             """
-            SELECT id, project_id, chapter_number, summary, schema_version,
-                   prompt_hash, model_call_id, created_at, source, status
-            FROM chapter_summary
-            WHERE project_id = ? AND chapter_number = ?
-            ORDER BY rowid DESC
-            LIMIT 1
+            SELECT s.id, s.project_id, c.id AS chapter_id, c.number AS chapter_number,
+                   s.summary, s.summary_sha256, s.source_snapshot_id,
+                   s.replaces_summary_id, s.schema_version, s.prompt_hash,
+                   s.model_call_id, s.created_at, s.source, s.status
+            FROM chapter c
+            JOIN chapter_summary_head h ON h.chapter_id = c.id
+            JOIN chapter_summary s ON s.id = h.current_summary_id
+            WHERE c.project_id = ? AND c.number = ?
             """,
             (project_id, chapter_number),
         ).fetchone()
@@ -208,19 +240,15 @@ class SummaryStore:
         """
         rows = self._conn.execute(
             """
-            SELECT summary.id, summary.project_id, summary.chapter_number,
-                   summary.summary, summary.schema_version, summary.prompt_hash,
-                   summary.model_call_id, summary.created_at,
-                   summary.source, summary.status
-            FROM chapter_summary AS summary
-            WHERE summary.project_id = ? AND summary.chapter_number BETWEEN ? AND ?
-              AND NOT EXISTS (
-                SELECT 1 FROM chapter_summary AS newer
-                WHERE newer.project_id = summary.project_id
-                  AND newer.chapter_number = summary.chapter_number
-                  AND newer.rowid > summary.rowid
-              )
-            ORDER BY summary.chapter_number
+            SELECT s.id, s.project_id, c.id AS chapter_id, c.number AS chapter_number,
+                   s.summary, s.summary_sha256, s.source_snapshot_id,
+                   s.replaces_summary_id, s.schema_version, s.prompt_hash,
+                   s.model_call_id, s.created_at, s.source, s.status
+            FROM chapter c
+            JOIN chapter_summary_head h ON h.chapter_id = c.id
+            JOIN chapter_summary s ON s.id = h.current_summary_id
+            WHERE c.project_id = ? AND c.number BETWEEN ? AND ?
+            ORDER BY c.number
             """,
             (project_id, first_chapter, last_chapter),
         ).fetchall()
@@ -277,6 +305,12 @@ class SummaryStore:
                     created_at=row.created_at if live else None,
                     retracted=row is not None and row.status is SummaryState.RETRACTED,
                     author_written=live and row.source is SummaryOrigin.AUTHOR,
+                    version_id=row.id if row is not None else None,
+                    summary_sha256=row.summary_sha256 if live else None,
+                    replaces_version_id=row.replaces_summary_id if live else None,
+                    version_source=(
+                        str(row.source.value) if row is not None else None
+                    ),
                 )
             )
         return out
@@ -286,8 +320,16 @@ def _row_to_summary(row: Any) -> ChapterSummary:
     return ChapterSummary(
         id=str(row["id"]),
         project_id=str(row["project_id"]),
+        chapter_id=str(row["chapter_id"]),
         chapter_number=int(row["chapter_number"]),
-        summary=str(row["summary"]),
+        summary=None if row["summary"] is None else str(row["summary"]),
+        summary_sha256=str(row["summary_sha256"]),
+        source_snapshot_id=(
+            None if row["source_snapshot_id"] is None else str(row["source_snapshot_id"])
+        ),
+        replaces_summary_id=(
+            None if row["replaces_summary_id"] is None else str(row["replaces_summary_id"])
+        ),
         schema_version=str(row["schema_version"]),
         prompt_hash=str(row["prompt_hash"]),
         model_call_id=(
@@ -348,6 +390,61 @@ def _revision(conn: Connection, project_id: str, chapter_number: int) -> int:
     return int(row["n"])
 
 
+def _chapter_identity(
+    conn: Connection, project_id: str, chapter_number: int
+) -> tuple[str, str] | None:
+    """当前正文的 `(chapter_id, snapshot_id)`；没进库 → None。
+
+    判据与 `RollingSummarizer._chapter` 是同一条（当前快照存在才总结得了）。
+    """
+    row = conn.execute(
+        """
+        SELECT c.id AS chapter_id, s.id AS snapshot_id
+        FROM chapter c
+        JOIN chapter_snapshot s
+          ON s.chapter_id = c.id
+         AND s.text_sha256 = c.text_sha256
+        WHERE c.project_id = ? AND c.number = ?
+        """,
+        (project_id, chapter_number),
+    ).fetchone()
+    return (str(row["chapter_id"]), str(row["snapshot_id"])) if row is not None else None
+
+
+def _chapter_generation(conn: Connection, project_id: str, chapter_number: int) -> int:
+    row = conn.execute(
+        "SELECT snapshot_generation FROM chapter WHERE project_id = ? AND number = ?",
+        (project_id, chapter_number),
+    ).fetchone()
+    return int(row["snapshot_generation"])
+
+
+def _switch_head(
+    conn: Connection,
+    chapter_id: str,
+    new_summary_id: str,
+    *,
+    expected_head: str | None,
+) -> bool:
+    """head CAS：只有 current 仍等于 expected 才切换（作者编辑先赢）。
+
+    返回 False = CAS 失败（并发作者/机器已切走 head），调用方必须回滚。
+    """
+    row = conn.execute(
+        """
+        UPDATE chapter_summary_head
+           SET current_summary_id = :new_id,
+               machine_intent_seq = machine_intent_seq + 1,
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE chapter_id = :cid
+           AND current_summary_id IS :expected
+        RETURNING chapter_id
+        """,
+        {"new_id": new_summary_id, "cid": chapter_id, "expected": expected_head},
+    ).fetchone()
+    return row is not None
+
+
 def _has_current_text(conn: Connection, project_id: str, chapter_number: int) -> bool:
     """这一章有没有**当前**快照。判据和 `RollingSummarizer._chapter` 是同一条。"""
     row = conn.execute(
@@ -369,31 +466,40 @@ def _insert_row(
     *,
     row_id: str,
     project_id: str,
+    chapter_id: str,
     chapter_number: int,
-    summary: str,
+    summary: str | None,
+    summary_sha256: str,
     schema_version: str,
     prompt_hash: str,
     source: SummaryOrigin,
     status: SummaryState,
     model_call_id: str | None = None,
+    source_snapshot_id: str | None = None,
+    replaces_summary_id: str | None = None,
 ) -> None:
     conn.execute(
         """
         INSERT INTO chapter_summary (
-            id, project_id, chapter_number, summary,
-            schema_version, prompt_hash, model_call_id, source, status
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            id, project_id, chapter_id, chapter_number, summary, summary_sha256,
+            schema_version, prompt_hash, model_call_id, source, status,
+            source_snapshot_id, replaces_summary_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             row_id,
             project_id,
+            chapter_id,
             chapter_number,
             summary,
+            summary_sha256,
             schema_version,
             prompt_hash,
             model_call_id,
             str(source),
             str(status),
+            source_snapshot_id,
+            replaces_summary_id,
         ),
     )
 
@@ -409,6 +515,8 @@ def save_author_summary(
     project_id: str,
     chapter_number: int,
     text: str,
+    expected_version_id: str | None = None,
+    expect_head: bool = False,
     summary_id_factory: Callable[[str], str] = _default_summary_id,
 ) -> ChapterSummary:
     """把这一章的总结换成作者自己写的这一段。**追加一行，模型那一行留着。**
@@ -436,8 +544,18 @@ def save_author_summary(
             raise SummaryChapterNotFound(
                 f"chapter {chapter_number} has no current snapshot in project {project_id}"
             )
+        identity = _chapter_identity(conn, project_id, chapter_number)
+        assert identity is not None
+        chapter_id, snapshot_id = identity
         store = SummaryStore(conn)
         current = store.latest(project_id, chapter_number)
+        if expect_head:
+            actual_head = current.id if current is not None else None
+            if expected_version_id != actual_head:
+                raise SummaryEditConflict(
+                    f"expected summary head {expected_version_id!r}, "
+                    f"current head {actual_head!r}"
+                )
         if (
             current is not None
             and current.status is SummaryState.ACTIVE
@@ -445,18 +563,28 @@ def save_author_summary(
         ):
             conn.commit()
             return current
+        expected_head = current.id if current is not None else None
         revision = _revision(conn, project_id, chapter_number)
+        new_id_value = summary_id_factory(project_id)
         _insert_row(
             conn,
-            row_id=summary_id_factory(project_id),
+            row_id=new_id_value,
             project_id=project_id,
+            chapter_id=chapter_id,
             chapter_number=chapter_number,
             summary=body,
+            summary_sha256=_text_hash(body),
             schema_version=AUTHOR_VERSION,
             prompt_hash=_address(_text_hash(body), revision),
             source=SummaryOrigin.AUTHOR,
             status=SummaryState.ACTIVE,
+            source_snapshot_id=snapshot_id,
+            replaces_summary_id=expected_head,
         )
+        if not _switch_head(
+            conn, chapter_id, new_id_value, expected_head=expected_head
+        ):
+            raise RuntimeError("author summary CAS failed: head moved concurrently")
         conn.commit()
     except Exception:
         conn.rollback()
@@ -488,21 +616,32 @@ def retract_summary(
         if current is None or current.status is SummaryState.RETRACTED:
             conn.commit()
             return current
+        identity = _chapter_identity(conn, project_id, chapter_number)
+        assert identity is not None
+        chapter_id, snapshot_id = identity
+        expected_head = current.id
         revision = _revision(conn, project_id, chapter_number)
+        new_id_value = summary_id_factory(project_id)
         _insert_row(
             conn,
-            row_id=summary_id_factory(project_id),
+            row_id=new_id_value,
             project_id=project_id,
+            chapter_id=chapter_id,
             chapter_number=chapter_number,
-            # 撤回那一行**带着被撤掉的原文**：库里因此看得见「撤掉的是哪一段」，
-            # 而不只是「这儿曾经有过点什么」。（`summary` 那一列还有 length > 0 的
-            # CHECK，也塞不进一个空串。）
-            summary=current.summary,
+            # 撤回 tombstone：正文为空、hash 是统一空字节 hash（§4.3）。
+            summary=None,
+            summary_sha256=EMPTY_SUMMARY_HASH,
             schema_version=RETRACTION_VERSION,
             prompt_hash=_address(current.prompt_hash, revision),
             source=SummaryOrigin.AUTHOR,
             status=SummaryState.RETRACTED,
+            source_snapshot_id=snapshot_id,
+            replaces_summary_id=expected_head,
         )
+        if not _switch_head(
+            conn, chapter_id, new_id_value, expected_head=expected_head
+        ):
+            raise RuntimeError("retraction CAS failed: head moved concurrently")
         conn.commit()
     except Exception:
         conn.rollback()
@@ -555,21 +694,28 @@ class RollingSummarizer:
     def ensure(self, project_id: str, chapter_number: int) -> ChapterSummary:
         """幂等：已有摘要直接返回；否则付费生成并落库。
 
-        ── 幂等的判据是「**最新那一行**是这份 prompt 产出的」──────────────────
+        ── 幂等的判据是「**head 指向的那一行**是这份 prompt 产出的」────────────
         013 之前它是「这一章有没有一行的键等于这份 prompt」。作者能改、能撤回之后，
         那个判据会在两处静默说谎：撤回过的章（旧的那一行还在，于是「已经有了」，
         重新生成永远不发生）、作者改过的章（同上，他点重新生成拿回自己的字）。
-        所以改成看最新那一行的**内容地址 + 状态**。
+        所以改成看 head 的**内容地址 + 状态**。
 
         探针认两个地址：`prompt_hash` 本身（013 之前写下的那些行）和
         `_address(prompt_hash, revision - 1)`（这一章后来又长过行的情况）。
         少认前一个，作者已有的库里每一章都会被判成没生成过，然后重新付一遍钱。
+
+        018 之后机器结果走 job → result 审计 → CAS 切 head：CAS 失败只把
+        job/result 标 SUPERSEDED，不产生一条假装生效过的 ACTIVE 版本。
         """
         conn = self._connections()
         try:
             chapter = self._chapter(conn, project_id, chapter_number)
             request = SummaryRequest(chapter)
             conn.execute("BEGIN IMMEDIATE")
+            identity = _chapter_identity(conn, project_id, chapter_number)
+            assert identity is not None
+            chapter_id, snapshot_id = identity
+            generation = _chapter_generation(conn, project_id, chapter_number)
             revision = _revision(conn, project_id, chapter_number)
             known = {request.prompt_hash, _address(request.prompt_hash, revision - 1)}
             current = SummaryStore(conn).latest(project_id, chapter_number)
@@ -581,6 +727,31 @@ class RollingSummarizer:
             ):
                 conn.commit()
                 return current
+            expected_head = current.id if current is not None else None
+            trigger_key = f"manual:{request.prompt_hash}"
+            job_id = self._new_summary_id(project_id)
+            conn.execute(
+                """
+                INSERT INTO summary_generation_job (
+                    id, project_id, target_type, chapter_id, event_id,
+                    source_snapshot_id, source_generation, source_sha256,
+                    refresh_attempt_id, required_ruleset_epoch, required_ruleset_hash,
+                    expected_head_version_id, required_machine_intent_seq,
+                    trigger_key, trigger_source, status
+                ) VALUES (?, ?, 'CHAPTER', ?, NULL, ?, ?, ?, NULL, NULL, NULL,
+                          ?, NULL, ?, 'save', 'RUNNING')
+                """,
+                (
+                    job_id,
+                    project_id,
+                    chapter_id,
+                    snapshot_id,
+                    generation,
+                    request.prompt_hash,
+                    expected_head,
+                    trigger_key,
+                ),
+            )
             conn.commit()
 
             started = perf_counter()
@@ -618,17 +789,58 @@ class RollingSummarizer:
                     chapter_number=chapter_number,
                     call_id_factory=self._new_call_id,
                 )
+                conn.commit()
+                conn.execute("BEGIN IMMEDIATE")
+                result_id = self._new_summary_id(project_id)
+                conn.execute(
+                    """
+                    INSERT INTO summary_generation_result (
+                        id, job_id, summary, summary_sha256, model_call_id
+                    ) VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        result_id,
+                        job_id,
+                        summary,
+                        _text_hash(summary),
+                        call_id,
+                    ),
+                )
+                version_id = self._new_summary_id(project_id)
                 _insert_row(
                     conn,
-                    row_id=self._new_summary_id(project_id),
+                    row_id=version_id,
                     project_id=project_id,
+                    chapter_id=chapter_id,
                     chapter_number=chapter_number,
                     summary=summary,
+                    summary_sha256=_text_hash(summary),
                     schema_version=SUMMARY_VERSION,
                     prompt_hash=_address(request.prompt_hash, revision),
                     source=SummaryOrigin.MODEL,
                     status=SummaryState.ACTIVE,
                     model_call_id=call_id,
+                    source_snapshot_id=snapshot_id,
+                    replaces_summary_id=expected_head,
+                )
+                if not _switch_head(
+                    conn, chapter_id, version_id, expected_head=expected_head
+                ):
+                    # 版本/result 一起回滚；job 的 SUPERSEDED 标记要**活下来**，
+                    # 所以在回滚之后用新事务单独写（不能靠同一事务——它已经回滚了）。
+                    conn.rollback()
+                    conn.execute(
+                        "UPDATE summary_generation_job SET status = 'SUPERSEDED' WHERE id = ?",
+                        (job_id,),
+                    )
+                    conn.commit()
+                    existing = self._read(conn, project_id, chapter_number)
+                    if existing is not None:
+                        return existing
+                    raise RuntimeError("summary CAS failed and no existing head")
+                conn.execute(
+                    "UPDATE summary_generation_job SET status = 'SUCCEEDED' WHERE id = ?",
+                    (job_id,),
                 )
                 conn.commit()
                 created = self._read(conn, project_id, chapter_number)
@@ -692,6 +904,7 @@ __all__ = [
     "ROLLING_WINDOW",
     "RollingSummarizer",
     "SummaryChapterNotFound",
+    "SummaryEditConflict",
     "SummaryGenerationError",
     "SummaryOrigin",
     "SummaryRequest",

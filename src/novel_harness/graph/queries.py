@@ -1016,6 +1016,15 @@ def insert_chapter(conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec,
     )
 
 
+def insert_chapter_summary_head(conn: sqlite3.Connection, chapter_id: str) -> None:
+    """新章同事务预建 `chapter_summary_head` 行（018）——head 行不是「有了总结才有」，
+    是「这一章存在就有」，current 指向 ACTIVE/RETRACTED 版本或 NULL。"""
+    conn.execute(
+        "INSERT INTO chapter_summary_head (chapter_id, current_summary_id) VALUES (?, NULL)",
+        (chapter_id,),
+    )
+
+
 def update_chapter(
     conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec, sha: str,
     *, snapshot_generation: int,
