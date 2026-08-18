@@ -1,4 +1,4 @@
-"""保存触发的唯一后台运行时（Task 16）。
+"""保存触发的唯一后台运行时（Task 16）＋ 30 分钟自治调度（2026-08-18 文档 §2.2）。
 
 保存 / reconcile / 显式「重新整理」三件事都只做一件事：持久地写一个
 `chapter_refresh_attempt`（lease/fence 化），然后唤醒这个 dispatcher。谁都不许
@@ -8,6 +8,12 @@
 wake signal 丢了也不怕：dispatcher 轮询 `recover_claimable`，任何一次启动 /
 定时扫描都能把 PENDING / 过期 RUNNING 重新 claim（不变量 18）。本模块提供的是
 尽力而为的即时唤醒 + 一定做得到的持久扫描的组合。
+
+30 分钟自治（文档 §2.2 智能路）= 这层的另一条 入口：不依赖任何点击，后台每
+`autonomy_seconds` 秒扫一次全书，把缺总结 / 不对齐的章按权重写进同一个
+`chapter_refresh_attempt`，然后由同一条 pump 波次把它们变成真实结果。调度坐标
+（`draft_chapter` / 焦点豁免）来自 focus 模块；「哪章该补」是纯查库的
+`summary_schedule` 决定，不调 LLM（§8）。
 """
 
 from __future__ import annotations
@@ -23,12 +29,22 @@ from ..chapter_refresh import (
     ChapterRefreshCoordinator,
     recover_claimable,
 )
+from ..checks.service import current_ruleset
 from ..db import Connection
 from ..draft.rolling_summary import RollingSummarizer
 from ..extract.runner import ExtractionRunner
+from ..focus import focus_current_chapter
 from ..graph.sqlite_store import SqliteStoryGraph
+from ..project import list_all
+from ..summary_schedule import schedule_alignment
 
 __all__ = ["BackgroundRuntime", "build_runtime", "new_connection_factory"]
+
+AUTONOMY_INTERVAL: float = 30 * 60.0
+"""自治调度默认间隔：30 分钟（文档 §2.2）。可注入（测试/演示用短间隔）。"""
+
+AUTONOMY_LIMIT: int = 20
+"""每一轮每个项目的入队预算（权重最低的先被砍，文档 §4 / §6 `limit`）。"""
 
 
 def new_connection_factory(db_path: str) -> Callable[[], Connection]:
@@ -85,6 +101,8 @@ class BackgroundRuntime:
         owner: str = "background",
         poll_seconds: float = 1.0,
         sleep: Callable[[float], None] = time.sleep,
+        autonomy_seconds: float = AUTONOMY_INTERVAL,
+        autonomy_limit: int = AUTONOMY_LIMIT,
     ) -> None:
         self._db_path = db_path
         self._conn_factory = connection_factory or new_connection_factory(db_path)
@@ -98,6 +116,9 @@ class BackgroundRuntime:
         self._owner = owner
         self._poll_seconds = poll_seconds
         self._sleep = sleep
+        self._autonomy_seconds = autonomy_seconds
+        self._autonomy_limit = autonomy_limit
+        self._next_autonomy = time.monotonic() + self._autonomy_seconds
         self._stop = threading.Event()
 
     def start(self) -> None:
@@ -127,7 +148,70 @@ class BackgroundRuntime:
             except Exception:
                 # 单波失败不炸线程：下一波靠 lease 过期重抢，不留孤儿。
                 pass
+            if time.monotonic() >= self._next_autonomy:
+                try:
+                    self.autonomy_once()
+                except Exception:
+                    # 单轮自治失败不炸线程：下一轮再扫（attempt 是持久重试的基础）。
+                    pass
+                self._next_autonomy = time.monotonic() + self._autonomy_seconds
             self._sleep(self._poll_seconds)
+
+    def autonomy_once(self) -> int:
+        """30 分钟自治的一轮：扫全部项目，把缺总结/不对齐的章按权重建 attempt。
+
+        只写 `chapter_refresh_attempt`（系统记录）并 commit，不付模型——真正生成
+        由后续 `pump_once` 的 adapter 承担（文档 §2.3：「只补缺的那一步」）。返回
+        本轮入队条数。单项目失败（库/规则集缺行）不阻断其他项目，下一轮重试。
+        """
+        conn = self._conn_factory()
+        try:
+            enqueued = 0
+            for book in list_all(conn):
+                project_id = book.id
+                try:
+                    draft_chapter, focused_chapter = self._resolve_draft(
+                        conn, project_id
+                    )
+                    epoch, ruleset_hash = current_ruleset(conn, project_id)
+                    decisions = schedule_alignment(
+                        conn,
+                        project_id,
+                        draft_chapter=draft_chapter,
+                        ruleset_epoch=epoch,
+                        ruleset_hash=ruleset_hash,
+                        focused_chapter=focused_chapter,
+                        limit=self._autonomy_limit,
+                    )
+                    conn.commit()
+                    enqueued += sum(
+                        1
+                        for outcome in decisions.values()
+                        if outcome in ("queued", "queued_overwrite")
+                    )
+                except Exception:  # noqa: BLE001
+                    # 单项目失败不拖垮整轮（§6 纪律的聚合层）；下一轮会自动重扫。
+                    conn.rollback()
+            return enqueued
+        finally:
+            conn.close()
+
+    def _resolve_draft(self, conn: Connection, project_id: str) -> tuple[int, int | None]:
+        """本轮调度的坐标 `(draft_chapter, focused_chapter)`（文档 §3/§4）。
+
+        - 有有效焦点：draft_chapter = 焦点章（权重从它往回量），focused_chapter =
+          同一章（防抖豁免）——正写的章这轮不碰；
+        - 无焦点（人走开 / 心跳过期）：以「前沿章号 + 1」为原点——这样全本旧章都
+          落在权重公式的 Δ ≥ 1 过去侧按距离计权，没有任何章被 Δ=0 意外豁免。
+        """
+        focused = focus_current_chapter(conn, project_id)
+        if focused is not None:
+            return focused, focused
+        row = conn.execute(
+            "SELECT COALESCE(MAX(number), 0) + 1 FROM chapter WHERE project_id = ?",
+            (project_id,),
+        ).fetchone()
+        return int(row[0]), None
 
     def _run_one(self, attempt_id: str, token: int) -> None:
         conn = self._conn_factory()
