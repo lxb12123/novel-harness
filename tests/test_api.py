@@ -1391,3 +1391,66 @@ def test_draft_rejects_invalid_length_body(
     )
     assert r.status_code == 422, r.text
     assert r.json()["detail"]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 自定义确定性验证规则（023 / Task 13）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_validation_rule_crud_and_ruleset_bump(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    pid = _pid(book)
+    base = client.get(f"/api/projects/{pid}/validation-rules")
+    assert base.status_code == 200, base.text
+    assert any(r["rule_id"] == "R2" for r in base.json()), "R2 常驻显示"
+    assert any(r["rule_id"] == "R3" for r in base.json()), "R3 常驻显示"
+    # 空项目还没有自定义规则。
+    assert all(r["rule_id"] not in ("vrule",) for r in base.json())
+
+    created = client.post(
+        f"/api/projects/{pid}/validation-rules",
+        json={"title": "不许有玄铁令", "literal": "玄铁令", "blocks_downstream": True},
+    )
+    assert created.status_code == 200, created.text
+    rule_id = created.json()["rule_id"]
+    after = client.get(f"/api/projects/{pid}/validation-rules").json()
+    custom = [r for r in after if r["rule_id"] == rule_id]
+    assert len(custom) == 1 and custom[0]["title"] == "不许有玄铁令"
+
+    # 禁用后列表不再返回（照旧留在库里）。
+    patched = client.patch(
+        f"/api/projects/{pid}/validation-rules/{rule_id}", json={"enabled": False}
+    )
+    assert patched.status_code == 200, patched.text
+    after_disable = client.get(f"/api/projects/{pid}/validation-rules").json()
+    assert all(r["rule_id"] != rule_id for r in after_disable)
+
+    # 删除。
+    deleted = client.delete(f"/api/projects/{pid}/validation-rules/{rule_id}")
+    assert deleted.status_code == 200, deleted.text
+    missing = client.delete(f"/api/projects/{pid}/validation-rules/{rule_id}")
+    assert missing.status_code == 404, missing.text
+
+
+def test_validation_rule_roundtrips_in_the_ruleset_hash(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    from novel_harness.db import connect
+
+    pid = _pid(book)
+    before = connect(book["db"]).execute(
+        "SELECT epoch, ruleset_hash FROM validation_ruleset_state WHERE project_id = ?",
+        (pid,),
+    ).fetchall()
+    client.post(
+        f"/api/projects/{pid}/validation-rules",
+        json={"literal": "血脉" if False else "青云城", "title": "地点别写"},
+    )
+    after = connect(book["db"]).execute(
+        "SELECT epoch, ruleset_hash FROM validation_ruleset_state WHERE project_id = ?",
+        (pid,),
+    ).fetchall()
+    assert after[0][0] == before[0][0] + 1, "规则语义变化必须递增 epoch"
+    assert after[0][1] != before[0][1], "ruleset hash 必须重算"

@@ -99,6 +99,8 @@ class EntityType(StrEnum):
     """021：总结核对的持久 outbox（`summary_reconciliation_outbox`）。"""
     SYSTEM_NOTIFICATION = "notif"
     """021：统一系统通知（`system_notification`）。"""
+    VALIDATION_RULE = "vrule"
+    """023：项目级确定性自定义验证规则（`validation_rule`）。"""
 
     PROJECT = "project"
     """只由 `new_project_id()` 用。**项目 ID 不能走 `new_id()`**——见那个函数的 docstring。"""

@@ -615,3 +615,37 @@ def test_service_missing_ruleset_row_is_an_error_not_a_temp_epoch() -> None:
     with pytest.raises(RulesetStateMissing):
         current_ruleset(conn, pid)
     conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 自定义确定性规则（023 / Task 13）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_forbidden_literal_finds_every_occurrence() -> None:
+    from novel_harness.checks.custom import forbidden_literal_check
+
+    check = forbidden_literal_check("玄铁令", rule_id="vrule:1")
+    issues = check(ctx([], paragraphs=["萧决把玄铁令收进袖中，又把玄铁令放回桌上。"]))
+    assert len(issues) == 2
+    assert all(i.rule == "custom:vrule:1" for i in issues)
+    assert issues[0].anchor.quote_text == "玄铁令"
+
+
+def test_forbidden_literal_silent_when_absent() -> None:
+    from novel_harness.checks.custom import forbidden_literal_check
+
+    issues = forbidden_literal_check("玄铁令")(ctx([], paragraphs=["风起，雪落。"], chapter=1))
+    assert issues == []
+
+
+def test_custom_rule_spec_is_a_directory_rule() -> None:
+    from novel_harness.checks.custom import custom_rule_spec
+
+    spec = custom_rule_spec(
+        rule_id="vrule:1", title="不许有玄铁令", literal="玄铁令", blocks_downstream=True
+    )
+    assert spec.template == "forbidden_literal"
+    assert spec.check is not None
+    found = spec.check(ctx([], paragraphs=["玄铁令出现了。"]))
+    assert len(found) == 1

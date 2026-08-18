@@ -387,14 +387,14 @@
   "activityCanonEdge": {
     "actor": "system",
     "chapter_number": 1,
-    "id": "decision:ID77",
+    "id": "decision:ID78",
     "jump": {
       "cast": [],
       "chapter_number": 1,
       "character_id": null,
-      "edge_id": "edge:ID74",
+      "edge_id": "edge:ID75",
       "endpoints": [
-        "/api/projects/project:ID1/canon/edges/edge:ID74"
+        "/api/projects/project:ID1/canon/edges/edge:ID75"
       ],
       "event_id": null,
       "label": "去改这条自动生成的边（第 1 章）",
@@ -514,7 +514,7 @@
       {
         "actor": "system",
         "chapter_number": 3,
-        "id": "extraction_run:ID56",
+        "id": "extraction_run:ID57",
         "jump": {
           "cast": [],
           "chapter_number": 3,
@@ -538,7 +538,7 @@
       {
         "actor": "system",
         "chapter_number": null,
-        "id": "call:ID57",
+        "id": "call:ID58",
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
@@ -549,22 +549,11 @@
       {
         "actor": "system",
         "chapter_number": null,
-        "id": "call:ID58",
-        "jump": null,
-        "source": "model_call",
-        "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
-        "title": "模型调用 · 写作助手",
-        "ts": "<ts>"
-      },
-      {
-        "actor": "system",
-        "chapter_number": null,
         "id": "call:ID59",
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 1200 / 出 64 token · 0 ms",
+        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
         "title": "模型调用 · 写作助手",
         "ts": "<ts>"
       },
@@ -575,6 +564,17 @@
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
+        "subtitle": "deepseek-v4-flash · 入 1200 / 出 64 token · 0 ms",
+        "title": "模型调用 · 写作助手",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "system",
+        "chapter_number": null,
+        "id": "call:ID61",
+        "jump": null,
+        "source": "model_call",
+        "status": "succeeded",
         "subtitle": "deepseek-v4-flash · 入 1800 / 出 2600 token · 0 ms",
         "title": "模型调用 · 起草",
         "ts": "<ts>"
@@ -582,7 +582,7 @@
       {
         "actor": "system",
         "chapter_number": null,
-        "id": "call:ID61",
+        "id": "call:ID62",
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
@@ -593,7 +593,7 @@
       {
         "actor": "system",
         "chapter_number": null,
-        "id": "call:ID62",
+        "id": "call:ID63",
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
@@ -604,7 +604,7 @@
       {
         "actor": "system",
         "chapter_number": null,
-        "id": "call:ID63",
+        "id": "call:ID64",
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
@@ -613,14 +613,14 @@
         "ts": "<ts>"
       }
     ],
-    "next_cursor": "<ts>|call:ID63"
+    "next_cursor": "<ts>|call:ID64"
   },
   "activityFailedDetail": {
     "cost": null,
     "entry": {
       "actor": "system",
       "chapter_number": 3,
-      "id": "extraction_run:ID56",
+      "id": "extraction_run:ID57",
       "jump": {
         "cast": [],
         "chapter_number": 3,
@@ -802,7 +802,7 @@
   },
   "aliasCreated": {
     "derived_from_alias_id": null,
-    "id": "alias:ID71",
+    "id": "alias:ID72",
     "kind": "alias",
     "node_id": "character:ID10",
     "project_id": "project:ID1",
@@ -812,12 +812,12 @@
     "usable_for_rules": true
   },
   "aliasDeleted": {
-    "id": "alias:ID73",
+    "id": "alias:ID74",
     "status": "RETRACTED"
   },
   "aliasEdited": {
-    "derived_from_alias_id": "alias:ID72",
-    "id": "alias:ID73",
+    "derived_from_alias_id": "alias:ID73",
+    "id": "alias:ID74",
     "kind": "alias",
     "node_id": "character:ID8",
     "project_id": "project:ID1",
@@ -827,8 +827,8 @@
     "usable_for_rules": true
   },
   "aliasReassigned": {
-    "derived_from_alias_id": "alias:ID71",
-    "id": "alias:ID72",
+    "derived_from_alias_id": "alias:ID72",
+    "id": "alias:ID73",
     "kind": "alias",
     "node_id": "character:ID8",
     "project_id": "project:ID1",
@@ -895,13 +895,13 @@
         "added": [
           {
             "created": true,
-            "id": "chapter:ID65",
+            "id": "chapter:ID66",
             "number": 1,
             "path": "chapters/0001.md",
-            "project_id": "project:ID64",
+            "project_id": "project:ID65",
             "snapshot_created": true,
             "snapshot_generation": 1,
-            "snapshot_id": "snapshot:ID66",
+            "snapshot_id": "snapshot:ID67",
             "text_sha256": "<sha>",
             "title": "起"
           }
@@ -918,7 +918,7 @@
     "initial_chapter": 1,
     "project": {
       "canon_version": 0,
-      "id": "project:ID64",
+      "id": "project:ID65",
       "name": "序章样书",
       "root_path": "<root>/books/序章样书"
     },
@@ -941,9 +941,9 @@
     "author_owned": false,
     "canon_version": 21,
     "dst": "location:ID5",
-    "edge_id": "edge:ID74",
+    "edge_id": "edge:ID75",
     "edge_type": "LOCATED_AT",
-    "evidence_id": "evidence:ID75",
+    "evidence_id": "evidence:ID76",
     "evidence_status": "FRESH",
     "props": {
       "believed_value": null,
@@ -957,14 +957,14 @@
   },
   "canonEdgeEdited": {
     "canon_version": 22,
-    "edge_id": "edge:ID76",
-    "replacement_edge_id": "edge:ID76",
+    "edge_id": "edge:ID77",
+    "replacement_edge_id": "edge:ID77",
     "retracted": false,
     "view": {
       "author_owned": true,
       "canon_version": 22,
       "dst": "location:ID9",
-      "edge_id": "edge:ID76",
+      "edge_id": "edge:ID77",
       "edge_type": "LOCATED_AT",
       "evidence_id": null,
       "evidence_status": "NONE",
@@ -981,14 +981,14 @@
   },
   "canonEdgeRetracted": {
     "canon_version": 23,
-    "edge_id": "edge:ID76",
+    "edge_id": "edge:ID77",
     "replacement_edge_id": null,
     "retracted": true,
     "view": {
       "author_owned": false,
       "canon_version": 23,
       "dst": "location:ID9",
-      "edge_id": "edge:ID76",
+      "edge_id": "edge:ID77",
       "edge_type": "LOCATED_AT",
       "evidence_id": null,
       "evidence_status": "NONE",
@@ -1084,8 +1084,8 @@
       "name": "李管家"
     },
     "closed_edge_ids": [],
-    "decision_id": "decision:ID67",
-    "edge_id": "edge:ID68",
+    "decision_id": "decision:ID68",
+    "edge_id": "edge:ID69",
     "project_id": "project:ID1",
     "secret": {
       "id": "secret:ID7",
@@ -1108,14 +1108,14 @@
     {
       "created_at": "<ts>",
       "is_current": false,
-      "snapshot_id": "snapshot:ID54",
+      "snapshot_id": "snapshot:ID55",
       "text": "第二章 试探\n\n他终于明白了。\n风起。他终于明白了。\n",
       "text_sha256": "<sha>"
     },
     {
       "created_at": "<ts>",
       "is_current": true,
-      "snapshot_id": "snapshot:ID53",
+      "snapshot_id": "snapshot:ID54",
       "text": "第二章 试探\n\n他终于明白了。\n风起。他终于明白了。\n\n后来又添了一段。\n",
       "text_sha256": "<sha>"
     }
@@ -1127,7 +1127,7 @@
     "processing": "reused",
     "saved_to_disk": true,
     "snapshot_generation": 2,
-    "snapshot_id": "snapshot:ID53",
+    "snapshot_id": "snapshot:ID54",
     "text_sha256": "<sha>"
   },
   "chapterText": {
@@ -1154,7 +1154,7 @@
     "aliases": [
       {
         "derived_from_alias_id": null,
-        "id": "alias:ID70",
+        "id": "alias:ID71",
         "kind": "title",
         "node_id": "character:ID10",
         "project_id": "project:ID1",
@@ -1266,7 +1266,7 @@
     ],
     "session": {
       "created_at": "<ts>",
-      "id": "chat_session:ID55",
+      "id": "chat_session:ID56",
       "message_count": 2,
       "pending_lookups": 0,
       "running": false,
@@ -1491,7 +1491,7 @@
   "errorCanonEdgeGone": {
     "detail": {
       "error": "canon_edge_refused",
-      "message": "edge edge:ID76 不是 current CANON（已撤回/非 CANON）"
+      "message": "edge edge:ID77 不是 current CANON（已撤回/非 CANON）"
     }
   },
   "errorFactAlreadyExists": {
@@ -1697,7 +1697,7 @@
     ],
     "fencing_token": 0,
     "finished_at": "<ts>",
-    "id": "extraction_run:ID56",
+    "id": "extraction_run:ID57",
     "model_call_id": null,
     "project_id": "project:ID1",
     "prompt_hash": "prompt:3",
@@ -1819,7 +1819,7 @@
       "actions": [],
       "chapter_number": 1,
       "created_at": "<ts>",
-      "id": "notif:ID69",
+      "id": "notif:ID70",
       "jump": null,
       "kind": "summary_mismatch",
       "project_id": "project:ID1",
@@ -1835,7 +1835,7 @@
     "open": 1
   },
   "notificationsIgnored": {
-    "id": "notif:ID69",
+    "id": "notif:ID70",
     "status": "IGNORED"
   },
   "projects": [
@@ -2295,7 +2295,7 @@
       {
         "actor": "system",
         "chapter_number": 3,
-        "id": "extraction_run:ID56",
+        "id": "extraction_run:ID57",
         "jump": {
           "cast": [],
           "chapter_number": 3,
@@ -2757,5 +2757,33 @@
     ],
     "unchanged_count": 3,
     "updated_chapters": []
-  }
+  },
+  "validationRuleCreated": {
+    "blocks_downstream": true,
+    "config": {
+      "literal": "玄铁令"
+    },
+    "enabled": true,
+    "rule_id": "vrule:ID53",
+    "template": "forbidden_literal",
+    "title": "不许有玄铁令"
+  },
+  "validationRules": [
+    {
+      "blocks_downstream": true,
+      "description": "正文提到作者标记为「第 K 章才出现」的实体/秘密，而当前章 N < K。",
+      "enabled": true,
+      "rule_id": "R2",
+      "template": "system",
+      "title": "设定提前出现"
+    },
+    {
+      "blocks_downstream": true,
+      "description": "已死或尚未登场的角色在说话人标签位置开口。",
+      "enabled": true,
+      "rule_id": "R3",
+      "template": "system",
+      "title": "人物开口时机"
+    }
+  ]
 }

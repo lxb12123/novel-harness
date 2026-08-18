@@ -513,6 +513,18 @@ export interface CheckResult {
   issues: Issue[];
 }
 
+/** 一条确定性命中规则（023 / Task 13）。`template=forbidden_literal` 时
+ *  `config.literal` 是作者写的字——引擎逐段精确匹配，不执行代码。 */
+export interface ValidationRuleView {
+  rule_id: string;
+  title: string;
+  description: string;
+  enabled: boolean;
+  blocks_downstream: boolean;
+  template: "system" | "forbidden_literal";
+  config?: { literal?: string };
+}
+
 /** 作者交代过的一条规矩，**表上的一行**（[ADR 0028](docs/adr/0028-rules-expire-by-situation.md) + 迁移 016）。
  *
  *  ⚠️ **它不是 2026-08-14 撤掉的那个东西。** 那个是对话头上一颗常驻按钮 + 一块能点掉的

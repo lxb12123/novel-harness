@@ -55,6 +55,7 @@ import type {
   Subgraph,
   SummaryWindow,
   SystemNotification,
+  ValidationRuleView,
 } from "./types";
 
 // 服务端状态全进 TanStack Query（§2.3）：queryKey = [端点, pid, chapter, cast]，
@@ -1082,6 +1083,59 @@ export function useRecordedRules(pid: string | null) {
     queryKey: q(["recordedRules", pid]),
     queryFn: () => api.get<RecordedRules>(proj(pid!, "/rules")),
     enabled: !!pid,
+  });
+}
+
+/** 规则目录元数据（023 / Task 13）：R2/R3 常驻 + 作者自定义规则。 */
+export function useValidationRules(pid: string | null) {
+  return useQuery({
+    queryKey: q(["validation-rules", pid]),
+    queryFn: () => api.get<ValidationRuleView[]>(proj(pid!, "/validation-rules")),
+    enabled: !!pid,
+  });
+}
+
+/** 添加一条确定性命中规则（`forbidden_literal`，不进代码 / 正则 / 语义）。 */
+export function useAddValidationRule(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { title?: string; literal: string; blocks_downstream?: boolean }) =>
+      api.post<ValidationRuleView>(proj(pid, "/validation-rules"), body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["validation-rules", pid] });
+    },
+  });
+}
+
+/** 启停 / 改字 / 改阻断。语义变化 = 后端同事务 epoch+1 + 重算 hash。 */
+export function useUpdateValidationRule(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      ruleId,
+      ...body
+    }: { ruleId: string; enabled?: boolean; blocks_downstream?: boolean; literal?: string }) =>
+      api.patch<{ rule_id: string; updated: boolean }>(
+        proj(pid, `/validation-rules/${encodeURIComponent(ruleId)}`),
+        body,
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["validation-rules", pid] });
+    },
+  });
+}
+
+/** 删除一条作者规则。 */
+export function useDeleteValidationRule(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ruleId: string) =>
+      api.del<{ rule_id: string; deleted: string }>(
+        proj(pid, `/validation-rules/${encodeURIComponent(ruleId)}`),
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["validation-rules", pid] });
+    },
   });
 }
 

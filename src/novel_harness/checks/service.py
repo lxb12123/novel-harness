@@ -29,7 +29,7 @@ from ..graph import ChapterCommitToken, StoryGraph
 from ..ids import EntityType, new_id
 from . import catalog
 from .base import CheckContext, Issue
-from .catalog import RuleAvailability
+from .catalog import RuleAvailability, RuleSpec
 
 
 class RuleExecution(BaseModel):
@@ -89,6 +89,48 @@ def current_ruleset(conn: Connection, project_id: str) -> tuple[int, str]:
     return int(row["epoch"]), str(row["ruleset_hash"])
 
 
+def load_custom_rules(conn: Connection, project_id: str) -> tuple[RuleSpec, ...]:
+    """项目定义的自定义确定性规则（023 / Task 13）升格成 catalog 的 RuleSpec。
+
+    只读 `enabled=1` 的；禁用规则照旧留在库里（历史可查），不参与运行。
+    规则语义变化（增改删启停）由写侧在**同一事务**递增 `ruleset_epoch` 并重算 hash。
+    """
+    from .custom import custom_rule_spec
+
+    rows = conn.execute(
+        "SELECT id, title, template, enabled, blocks_downstream, config_json "
+        "FROM validation_rule WHERE project_id = ? AND enabled = 1 "
+        "ORDER BY created_at, id",
+        (project_id,),
+    ).fetchall()
+    specs: list[RuleSpec] = []
+    for row in rows:
+        config = json.loads(row["config_json"]) if row["config_json"] else {}
+        literal = config.get("literal", "")
+        if not literal or not isinstance(literal, str):
+            continue
+        specs.append(
+            custom_rule_spec(
+                rule_id=row["id"],
+                title=row["title"] or row["id"],
+                literal=literal,
+                blocks_downstream=bool(row["blocks_downstream"]),
+            )
+        )
+    return tuple(specs)
+
+
+def ruleset_semantic_hash(conn: Connection, project_id: str) -> str:
+    """当前 validation_ruleset_state 的**语义 hash 对账**：system + custom 一起算。
+
+    写侧（规则 CRUD）用它在同一事务里重算并更新 state 行；报告侧只读冻结值。
+    """
+    from .catalog import ruleset_hash
+
+    all_rules = (*catalog.SYSTEM_RULES, *load_custom_rules(conn, project_id))
+    return ruleset_hash(all_rules)
+
+
 def validate_snapshot(
     conn: Connection,
     store: StoryGraph,
@@ -116,7 +158,10 @@ def validate_snapshot(
     )
     rule_execs: list[RuleExecution] = []
     issues: list[Issue] = []
-    for spec in catalog.SYSTEM_RULES:
+    # 023 / Task 13：把作者的确定性自定义规则并进目录再跑，让手动检查与保存后的
+    # 自动验证共用一个实现（不建第二套）。自定义规则永远排在系统规则之后。
+    all_rules = (*catalog.SYSTEM_RULES, *load_custom_rules(conn, token.project_id))
+    for spec in all_rules:
         state: Literal["clear", "blocked", "unavailable", "error"] = "unavailable"
         count = 0
         note: str | None = None

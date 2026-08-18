@@ -599,6 +599,14 @@ def test_frontend_fixture_matches_the_real_api(
     )
     assert ran.status_code == 200, ran.text
     grab("recordedRules", client.get(f"{base}/rules"))
+    # 自定义确定性规则（023 / Task 13）：R2/R3 常驻显示 + 一条作者规则。
+    grab("validationRules", client.get(f"{base}/validation-rules"))
+    vr_created = client.post(
+        f"{base}/validation-rules",
+        json={"title": "不许有玄铁令", "literal": "玄铁令", "blocks_downstream": True},
+    )
+    assert vr_created.status_code == 200, vr_created.text
+    grab("validationRuleCreated", vr_created)
 
     # ── 多版本的一章：版本抽屉的「还原 / 删除」只在有第二版时才存在 ──────────
     # **放在最后**：这一步会改第 2 章的正文，前面每一个 grab 都不该看见它。
