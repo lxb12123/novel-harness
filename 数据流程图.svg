@@ -1,0 +1,320 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="2075" viewBox="0 0 1700 2075" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif"><defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#333"/></marker></defs><rect x="0" y="0" width="1700" height="2075" fill="#FFFFFF"/>
+<text x="850.0" y="32" font-size="24" fill="#111" font-weight="bold" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">Novel Harness 数据流程图</text>
+<text x="850.0" y="54" font-size="13" fill="#666" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">真相源：SQLite 单文件 + 磁盘 Markdown（正文）· 依据 docs/ARCHITECTURE.md 与源码核对 · 只读审计，未改动任何代码</text>
+<rect x="14" y="70" width="1672" height="252" rx="10" fill="#FFFFFF" stroke="#BBBBBB" stroke-width="1.3"/>
+<text x="32" y="92" font-size="16" fill="#111" font-weight="bold" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">图一 · 分层与数据走向（上下文）</text>
+<rect x="40" y="112" width="200" height="170" rx="8" fill="#FFF3CD" stroke="#555555" stroke-width="1.4"/>
+<text x="140.0" y="189.0" font-size="14" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">作者（最终用户）</text>
+<text x="140.0" y="202.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">在 WPS / Obsidian /
+VSCode 写</text>
+<text x="140.0" y="216.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">正文 md；
+工作台点按钮/下命令</text>
+<rect x="280" y="112" width="180" height="170" rx="8" fill="#D6E4F0" stroke="#555555" stroke-width="1.4"/>
+<text x="370.0" y="189.0" font-size="14" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">浏览器工作台</text>
+<text x="370.0" y="195.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">Vite + React
+正文编辑器 Cod</text>
+<text x="370.0" y="209.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">eMirror 6
+Zustand 坐标·Rea</text>
+<text x="370.0" y="223.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">ct Query 服务态</text>
+<rect x="500" y="112" width="170" height="170" rx="8" fill="#D9EAD3" stroke="#555555" stroke-width="1.4"/>
+<text x="585.0" y="189.0" font-size="14" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">FastAPI 薄壳</text>
+<text x="585.0" y="202.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">REST / SSE 路由
+只做校验转</text>
+<text x="585.0" y="216.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">译，不装业务</text>
+<rect x="710" y="112" width="330" height="170" rx="8" fill="#E4DCF0" stroke="#555555" stroke-width="1.4"/>
+<text x="875.0" y="189.0" font-size="14" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">能力层（纯函数，可换可测）</text>
+<text x="875.0" y="202.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">panel 认知矩阵 · checks 规则 R2/R3
+draft 装配/起草 ·</text>
+<text x="875.0" y="216.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif"> extract 抽取
+agent 写作助手 · calibration 写前校准</text>
+<rect x="1080" y="112" width="180" height="170" rx="8" fill="#FCE5CD" stroke="#555555" stroke-width="1.4"/>
+<text x="1170.0" y="189.0" font-size="14" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">图层（时态唯一收敛点）</text>
+<text x="1170.0" y="195.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">queries.py state_at/supers</text>
+<text x="1170.0" y="209.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">ede
+闭开区间 [valid_from,va</text>
+<text x="1170.0" y="223.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">lid_to)
+出参一律 Pydantic</text>
+<rect x="1300" y="112" width="230" height="170" rx="8" fill="#EFEFEF" stroke="#555555" stroke-width="1.4"/>
+<text x="1415.0" y="189.0" font-size="14" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">SQLite 单文件</text>
+<text x="1415.0" y="202.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">唯一真相源
+node/edge/alias/secret/c</text>
+<text x="1415.0" y="216.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">hapter
+证据/事件/提案/审计/候选/校准</text>
+<rect x="1300" y="296" width="150" height="44" rx="8" fill="#E8F0E0" stroke="#555555" stroke-width="1.4"/>
+<text x="1375.0" y="301.5" font-size="14" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">磁盘 chapters/*.m</text>
+<text x="1375.0" y="318.5" font-size="14" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">d</text>
+<text x="1375.0" y="323.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">正文唯一居所（ADR 0007</text>
+<text x="1375.0" y="337.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">）</text>
+<line x1="240" y1="200" x2="280" y2="200" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="260" y="190" font-size="10" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">JSON / 流 / 操作</text>
+<line x1="460" y1="200" x2="500" y2="200" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="480" y="190" font-size="10" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">REST JSON / SSE</text>
+<line x1="670" y1="200" x2="710" y2="200" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="690" y="190" font-size="10" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">Pydantic 出参</text>
+<line x1="1040" y1="190" x2="1080" y2="190" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="1060" y="180" font-size="10" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">EdgeSpec / 查询</text>
+<line x1="1260" y1="200" x2="1300" y2="200" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="1280" y="190" font-size="10" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">SQL（只经 graph/）</text>
+<line x1="1170" y1="282" x2="1310" y2="296" stroke="#333" stroke-width="1.7" stroke-dasharray="6,5" marker-end="url(#arr)"/>
+<text x="1210" y="290" font-size="10" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">读/写正文 md</text>
+<text x="710" y="296" font-size="11" fill="#555" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">extractor/writer/agent/calibrator → provider → model_call 记账（tokens/ms/章号）</text>
+<text x="32" y="350" font-size="16" fill="#111" font-weight="bold" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">图二 · 主要业务数据流（每车道 = 一条端到端数据路径）</text>
+<text x="1668" y="350" font-size="12" fill="#666" font-weight="normal" text-anchor="end" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">→ = 数据流  ·  标签 = 数据契约要点</text>
+<rect x="12" y="396" width="1676" height="142" rx="8" fill="#FBFBFB" stroke="#E0E0E0" stroke-width="1"/>
+<text x="28" y="420" font-size="13" fill="#222" font-weight="bold" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">① 书稿导入 / 同步（importer）</text>
+<text x="28" y="433" font-size="10" fill="#666" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">外部 .md/.txt（浏览器 GBK 探测）或空白书 → 切章 → 版本化</text>
+<rect x="40" y="438" width="215" height="50" rx="8" fill="#FFF3CD" stroke="#555555" stroke-width="1.4"/>
+<text x="147.5" y="455.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">本地书稿文件 / 空白书</text>
+<text x="147.5" y="475.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">.md / .txt</text>
+<line x1="255" y1="463" x2="300" y2="463" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="277.5" y="457" font-size="11" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">POST /api/projects /bootstrap /import /sync</text>
+<rect x="300" y="438" width="200" height="50" rx="8" fill="#D9EAD3" stroke="#555555" stroke-width="1.4"/>
+<text x="400.0" y="455.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">bootstrap / import / sync</text>
+<text x="400.0" y="475.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">root_path + 乐观并发基版本</text>
+<line x1="500" y1="463" x2="550" y2="463" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<rect x="550" y="438" width="390" height="50" rx="8" fill="#E4DCF0" stroke="#555555" stroke-width="1.4"/>
+<text x="745.0" y="455.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">importer 切章 / 判重</text>
+<text x="745.0" y="475.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">sha256 · UNIQUE(项目,章号,path)</text>
+<line x1="940" y1="463" x2="990" y2="463" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="965.0" y="457" font-size="11" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">ChapterSpec</text>
+<rect x="990" y="438" width="230" height="50" rx="8" fill="#FCE5CD" stroke="#555555" stroke-width="1.4"/>
+<text x="1105.0" y="455.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">put_chapter</text>
+<text x="1105.0" y="475.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">disk_mtime_ns/size 快路</text>
+<line x1="1220" y1="463" x2="1270" y2="463" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<path d="M1270 503 L1270 525 A195.0 9 0 0 0 1660 525 L1660 503 A195.0 9 0 0 0 1270 503 Z" fill="#EFEFEF" stroke="#555555" stroke-width="1.4"/>
+<ellipse cx="1465.0" cy="503" rx="195.0" ry="9" fill="#EFEFEF" stroke="#555555" stroke-width="1.4"/>
+<text x="1465.0" y="510.0" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">project / chapter</text>
+<text x="1465.0" y="527.0" font-size="10" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">每章=1 节点 + 扩展表</text>
+<rect x="12" y="546" width="1676" height="142" rx="8" fill="#FBFBFB" stroke="#E0E0E0" stroke-width="1"/>
+<text x="28" y="570" font-size="13" fill="#222" font-weight="bold" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">② 正文保存与版本快照</text>
+<text x="28" y="583" font-size="10" fill="#666" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">编辑器 → PUT → 写盘 + 快照（审计锚）→ 触发证据重定位</text>
+<rect x="40" y="588" width="215" height="50" rx="8" fill="#D6E4F0" stroke="#555555" stroke-width="1.4"/>
+<text x="147.5" y="613.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">编辑器正文
+CodeMirror</text>
+<line x1="255" y1="613" x2="300" y2="613" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="277.5" y="607" font-size="11" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">PUT /chapters/{n}/text</text>
+<rect x="300" y="588" width="200" height="50" rx="8" fill="#D9EAD3" stroke="#555555" stroke-width="1.4"/>
+<text x="400.0" y="605.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">save_chapter</text>
+<text x="400.0" y="625.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">乐观锁 / in-use 检查</text>
+<line x1="500" y1="613" x2="550" y2="613" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<rect x="550" y="588" width="390" height="50" rx="8" fill="#E4DCF0" stroke="#555555" stroke-width="1.4"/>
+<text x="745.0" y="605.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">防抖 800ms + sha 去重</text>
+<text x="745.0" y="625.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">文本原样上盘</text>
+<line x1="940" y1="608" x2="1040" y2="608" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="990" y="602.0" font-size="10" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">写盘</text>
+<line x1="940" y1="628" x2="1060" y2="596" stroke="#333" stroke-width="1.7" stroke-dasharray="6,5" marker-end="url(#arr)"/>
+<text x="985" y="638" font-size="10" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">revalidate 证据</text>
+<rect x="1270" y="588" width="190" height="50" rx="8" fill="#E8F0E0" stroke="#555555" stroke-width="1.4"/>
+<text x="1365.0" y="605.0" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">chapters/*.md</text>
+<text x="1365.0" y="625.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">磁盘正文</text>
+<rect x="1470" y="588" width="190" height="50" rx="8" fill="#EFEFEF" stroke="#555555" stroke-width="1.4"/>
+<text x="1565.0" y="605.0" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">chapter_snapshot</text>
+<text x="1565.0" y="625.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">UNIQUE(chapter_id,sha)</text>
+<text x="1470" y="652" font-size="10" fill="#666" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">然后：evidence 重定位 / mention 重建</text>
+<rect x="12" y="696" width="1676" height="142" rx="8" fill="#FBFBFB" stroke="#E0E0E0" stroke-width="1"/>
+<text x="28" y="720" font-size="13" fill="#222" font-weight="bold" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">③ 声明与认知写入（declare）</text>
+<text x="28" y="733" font-size="10" fill="#666" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">作者一句话声明 → 图中意图；作者永不手填章号；RELATED_TO 无向规范化</text>
+<rect x="40" y="738" width="215" height="50" rx="8" fill="#FFF3CD" stroke="#555555" stroke-width="1.4"/>
+<text x="147.5" y="755.5" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">声明表单：人物/别名
+死亡/首现/补</text>
+<text x="147.5" y="770.5" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">认知</text>
+<line x1="255" y1="763" x2="300" y2="763" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="277.5" y="757" font-size="10" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">POST /nodes /aliases /declare/*
+/chapters/{n}/canon/knowledge</text>
+<rect x="300" y="738" width="200" height="50" rx="8" fill="#D9EAD3" stroke="#555555" stroke-width="1.4"/>
+<text x="400.0" y="755.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">declare_* / add_knowledge</text>
+<text x="400.0" y="768.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">UnknownName/AmbiguousName 语义</text>
+<text x="400.0" y="782.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">码</text>
+<line x1="500" y1="763" x2="550" y2="763" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<rect x="550" y="738" width="390" height="50" rx="8" fill="#E4DCF0" stroke="#555555" stroke-width="1.4"/>
+<text x="745.0" y="755.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">panel/state 意图转译</text>
+<text x="745.0" y="775.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">NodeSpec / AliasSpec / EdgeSpec</text>
+<line x1="940" y1="763" x2="990" y2="763" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="965.0" y="757" font-size="11" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">valid_from 由证据决定</text>
+<rect x="990" y="738" width="230" height="50" rx="8" fill="#FCE5CD" stroke="#555555" stroke-width="1.4"/>
+<text x="1105.0" y="755.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">upsert_edge / supersede</text>
+<text x="1105.0" y="775.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">幂等唯一索引 · 时态区间</text>
+<line x1="1220" y1="763" x2="1270" y2="763" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<path d="M1270 803 L1270 825 A195.0 9 0 0 0 1660 825 L1660 803 A195.0 9 0 0 0 1270 803 Z" fill="#EFEFEF" stroke="#555555" stroke-width="1.4"/>
+<ellipse cx="1465.0" cy="803" rx="195.0" ry="9" fill="#EFEFEF" stroke="#555555" stroke-width="1.4"/>
+<text x="1465.0" y="810.0" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">node / alias / edge / secret</text>
+<text x="1465.0" y="827.0" font-size="10" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">+ evidence + decision_log</text>
+<rect x="12" y="846" width="1676" height="142" rx="8" fill="#FBFBFB" stroke="#E0E0E0" stroke-width="1"/>
+<text x="28" y="870" font-size="13" fill="#222" font-weight="bold" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">④ 认知面板 / 状态卡（集合差集，读原文字面不读语义）</text>
+<text x="28" y="883" font-size="10" fill="#666" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">cast × secret 头像矩阵 ·「谁第几章还不该知道什么」</text>
+<rect x="40" y="888" width="215" height="50" rx="8" fill="#D6E4F0" stroke="#555555" stroke-width="1.4"/>
+<text x="147.5" y="913.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">cast×secret
+面板请求</text>
+<line x1="255" y1="913" x2="300" y2="913" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="277.5" y="907" font-size="11" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">GET /matrix /constraints /state</text>
+<rect x="300" y="888" width="200" height="50" rx="8" fill="#D9EAD3" stroke="#555555" stroke-width="1.4"/>
+<text x="400.0" y="897.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">matrix / constraints / st</text>
+<text x="400.0" y="913.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">ate</text>
+<text x="400.0" y="925.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">_narrow 收窄出参</text>
+<line x1="500" y1="913" x2="550" y2="913" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<rect x="550" y="888" width="390" height="50" rx="8" fill="#E4DCF0" stroke="#555555" stroke-width="1.4"/>
+<text x="745.0" y="905.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">panel/state.py 集合差集</text>
+<text x="745.0" y="925.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">已knows - 未knows = 边界</text>
+<line x1="940" y1="913" x2="990" y2="913" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="965.0" y="907" font-size="11" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">state_at(章)</text>
+<rect x="990" y="888" width="230" height="50" rx="8" fill="#FCE5CD" stroke="#555555" stroke-width="1.4"/>
+<text x="1105.0" y="905.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">queries.state_at</text>
+<text x="1105.0" y="925.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">闭开区间 [valid_from,valid_to)</text>
+<line x1="1220" y1="913" x2="1270" y2="913" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<path d="M1270 953 L1270 975 A195.0 9 0 0 0 1660 975 L1660 953 A195.0 9 0 0 0 1270 953 Z" fill="#EFEFEF" stroke="#555555" stroke-width="1.4"/>
+<ellipse cx="1465.0" cy="953" rx="195.0" ry="9" fill="#EFEFEF" stroke="#555555" stroke-width="1.4"/>
+<text x="1465.0" y="960.0" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">edge / node / alias / secret</text>
+<text x="1465.0" y="977.0" font-size="10" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">只读查询</text>
+<rect x="12" y="996" width="1676" height="142" rx="8" fill="#FBFBFB" stroke="#E0E0E0" stroke-width="1"/>
+<text x="28" y="1020" font-size="13" fill="#222" font-weight="bold" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">⑤ 确定性连续性检查（R2 提前暴露 / R3 死者说话）</text>
+<text x="28" y="1033" font-size="10" fill="#666" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">纯函数 check(ctx)→[Issue]；锚=(para_index,quote,occurrence_k)，禁 offset</text>
+<rect x="40" y="1038" width="215" height="50" rx="8" fill="#E8F0E0" stroke="#555555" stroke-width="1.4"/>
+<text x="147.5" y="1063.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">磁盘章节正文</text>
+<line x1="255" y1="1063" x2="300" y2="1063" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="277.5" y="1057" font-size="11" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">POST /chapters/{n}/check</text>
+<rect x="300" y="1038" width="200" height="50" rx="8" fill="#D9EAD3" stroke="#555555" stroke-width="1.4"/>
+<text x="400.0" y="1055.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">check 路由</text>
+<text x="400.0" y="1075.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">只经 text.paragraphs() 切段</text>
+<line x1="500" y1="1063" x2="550" y2="1063" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="525.0" y="1057" font-size="11" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">匿名化正文</text>
+<rect x="550" y="1038" width="390" height="50" rx="8" fill="#E4DCF0" stroke="#555555" stroke-width="1.4"/>
+<text x="745.0" y="1055.0" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">checks R2 / R3（纯函数）</text>
+<text x="745.0" y="1075.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">唯一专名精确匹配 · 与图对表</text>
+<line x1="940" y1="1063" x2="990" y2="1063" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="965.0" y="1057" font-size="11" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">只取 usable_for_rules 别名</text>
+<rect x="990" y="1038" width="230" height="50" rx="8" fill="#FCE5CD" stroke="#555555" stroke-width="1.4"/>
+<text x="1105.0" y="1063.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">只读 range 查询</text>
+<line x1="1220" y1="1063" x2="1270" y2="1063" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<path d="M1270 1103 L1270 1125 A195.0 9 0 0 0 1660 1125 L1660 1103 A195.0 9 0 0 0 1270 1103 Z" fill="#EFEFEF" stroke="#555555" stroke-width="1.4"/>
+<ellipse cx="1465.0" cy="1103" rx="195.0" ry="9" fill="#EFEFEF" stroke="#555555" stroke-width="1.4"/>
+<text x="1465.0" y="1110.0" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">node / alias / edge</text>
+<text x="1465.0" y="1127.0" font-size="10" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">只读 · 供匹配</text>
+<text x="700" y="1108" font-size="10" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">→ 结果 {rules_run, issues} 直接回 UI；v1 有意不写 validation_report 行</text>
+<rect x="12" y="1146" width="1676" height="142" rx="8" fill="#FBFBFB" stroke="#E0E0E0" stroke-width="1"/>
+<text x="28" y="1170" font-size="13" fill="#222" font-weight="bold" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">⑥ 机器抽取与提案审阅（M4）</text>
+<text x="28" y="1183" font-size="10" fill="#666" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">模型分析=不可信输入：严格 parse → 证据定位 → 事务分流为事件 / 临时事实 / 提案</text>
+<rect x="40" y="1188" width="215" height="50" rx="8" fill="#E8F0E0" stroke="#555555" stroke-width="1.4"/>
+<text x="147.5" y="1213.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">章节正文 + 快照锚</text>
+<line x1="255" y1="1213" x2="300" y2="1213" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="277.5" y="1207" font-size="11" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">POST /chapters/{n}/extract</text>
+<rect x="300" y="1188" width="200" height="50" rx="8" fill="#D9EAD3" stroke="#555555" stroke-width="1.4"/>
+<text x="400.0" y="1205.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">extraction 启动/轮询</text>
+<text x="400.0" y="1225.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">返回 runId → 跑完再取</text>
+<line x1="500" y1="1213" x2="550" y2="1213" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<rect x="550" y="1188" width="390" height="50" rx="8" fill="#E4DCF0" stroke="#555555" stroke-width="1.4"/>
+<text x="745.0" y="1205.0" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">extract/runner → LLM</text>
+<text x="745.0" y="1225.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">严格 parse / locate / 去重</text>
+<line x1="940" y1="1213" x2="990" y2="1213" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="965.0" y="1207" font-size="11" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">证据双指针（快照锚）</text>
+<rect x="990" y="1188" width="230" height="50" rx="8" fill="#FCE5CD" stroke="#555555" stroke-width="1.4"/>
+<text x="1105.0" y="1205.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">proposal_confirm 事务</text>
+<text x="1105.0" y="1225.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">基版本检查 + 幂等</text>
+<line x1="1220" y1="1213" x2="1270" y2="1213" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<path d="M1270 1253 L1270 1275 A195.0 9 0 0 0 1660 1275 L1660 1253 A195.0 9 0 0 0 1270 1253 Z" fill="#EFEFEF" stroke="#555555" stroke-width="1.4"/>
+<ellipse cx="1465.0" cy="1253" rx="195.0" ry="9" fill="#EFEFEF" stroke="#555555" stroke-width="1.4"/>
+<text x="1465.0" y="1260.0" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">story_event / evidence
+proposal_set</text>
+<text x="1465.0" y="1277.0" font-size="10" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">+ decision_log 审计</text>
+<rect x="12" y="1296" width="1676" height="142" rx="8" fill="#FBFBFB" stroke="#E0E0E0" stroke-width="1"/>
+<text x="28" y="1320" font-size="13" fill="#222" font-weight="bold" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">⑦ 章节总结与滚动印象</text>
+<text x="28" y="1333" font-size="10" fill="#666" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">每章一条总结 + mention 索引（按人物倒查）；作者可改 / 可撤回</text>
+<rect x="40" y="1338" width="215" height="50" rx="8" fill="#E8F0E0" stroke="#555555" stroke-width="1.4"/>
+<text x="147.5" y="1363.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">章节正文 + 上章总结</text>
+<line x1="255" y1="1363" x2="300" y2="1363" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="277.5" y="1357" font-size="11" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">POST /chapters/{n}/summary</text>
+<rect x="300" y="1338" width="200" height="50" rx="8" fill="#D9EAD3" stroke="#555555" stroke-width="1.4"/>
+<text x="400.0" y="1355.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">summary / sums / mentions</text>
+<text x="400.0" y="1375.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">source / status / 作者溯源</text>
+<line x1="500" y1="1363" x2="550" y2="1363" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<rect x="550" y="1338" width="390" height="50" rx="8" fill="#E4DCF0" stroke="#555555" stroke-width="1.4"/>
+<text x="745.0" y="1355.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">summarize + 名称索引</text>
+<text x="745.0" y="1375.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">mentions.py 索引</text>
+<line x1="940" y1="1363" x2="990" y2="1363" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<rect x="990" y="1338" width="230" height="50" rx="8" fill="#FCE5CD" stroke="#555555" stroke-width="1.4"/>
+<text x="1105.0" y="1355.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">summary_mention 写入</text>
+<text x="1105.0" y="1375.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">roster_hash 联动</text>
+<line x1="1220" y1="1363" x2="1270" y2="1363" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<path d="M1270 1403 L1270 1425 A195.0 9 0 0 0 1660 1425 L1660 1403 A195.0 9 0 0 0 1270 1403 Z" fill="#EFEFEF" stroke="#555555" stroke-width="1.4"/>
+<ellipse cx="1465.0" cy="1403" rx="195.0" ry="9" fill="#EFEFEF" stroke="#555555" stroke-width="1.4"/>
+<text x="1465.0" y="1414.0" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">chapter_summary / summary_index
+summary_mention</text>
+<rect x="12" y="1446" width="1676" height="142" rx="8" fill="#FBFBFB" stroke="#E0E0E0" stroke-width="1"/>
+<text x="28" y="1470" font-size="13" fill="#222" font-weight="bold" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">⑧ 受约束候选稿起草（draft）</text>
+<text x="28" y="1483" font-size="10" fill="#666" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">PLANNED 只转译成 must_not_reveal / forbidden_entities，绝不让完整计划进 prompt</text>
+<rect x="40" y="1488" width="215" height="50" rx="8" fill="#D6E4F0" stroke="#555555" stroke-width="1.4"/>
+<text x="147.5" y="1513.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">第 N 章意图 + cast</text>
+<line x1="255" y1="1513" x2="300" y2="1513" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="277.5" y="1507" font-size="11" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">POST /chapters/{n}/draft</text>
+<rect x="300" y="1488" width="200" height="50" rx="8" fill="#D9EAD3" stroke="#555555" stroke-width="1.4"/>
+<text x="400.0" y="1505.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">draft 路由</text>
+<text x="400.0" y="1525.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">长度规格（zh 计字 / en 计词）</text>
+<line x1="500" y1="1513" x2="550" y2="1513" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<rect x="550" y="1488" width="390" height="50" rx="8" fill="#E4DCF0" stroke="#555555" stroke-width="1.4"/>
+<text x="745.0" y="1505.0" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">draft/context 装配
+LLM 生成 3 候选</text>
+<text x="745.0" y="1525.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">10 分区 · 只给边界不给 PLANNED</text>
+<line x1="940" y1="1513" x2="990" y2="1513" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="965.0" y="1507" font-size="11" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">须禁清单 / 证据</text>
+<rect x="990" y="1488" width="230" height="50" rx="8" fill="#FCE5CD" stroke="#555555" stroke-width="1.4"/>
+<text x="1105.0" y="1505.0" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">must_not_reveal
+投影</text>
+<text x="1105.0" y="1525.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">from state_at</text>
+<line x1="1220" y1="1513" x2="1270" y2="1513" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<path d="M1270 1553 L1270 1575 A195.0 9 0 0 0 1660 1575 L1660 1553 A195.0 9 0 0 0 1270 1553 Z" fill="#EFEFEF" stroke="#555555" stroke-width="1.4"/>
+<ellipse cx="1465.0" cy="1553" rx="195.0" ry="9" fill="#EFEFEF" stroke="#555555" stroke-width="1.4"/>
+<text x="1465.0" y="1560.0" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">draft_candidate</text>
+<text x="1465.0" y="1577.0" font-size="10" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">不可变 · 可对比 · 可落盘</text>
+<text x="1430" y="1558" font-size="10" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">→ 作者选中后点「落盘」→ chapter 表 + chapter_snapshot（写盘成稿）</text>
+<rect x="12" y="1596" width="1676" height="142" rx="8" fill="#FBFBFB" stroke="#E0E0E0" stroke-width="1"/>
+<text x="28" y="1620" font-size="13" fill="#222" font-weight="bold" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">⑨ 写作助手对话（agent 单轮）</text>
+<text x="28" y="1633" font-size="10" fill="#666" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">确定性循环 · 白名单工具 · 预算/取消/停止由代码掌管；工具结果按号取回</text>
+<rect x="40" y="1638" width="215" height="50" rx="8" fill="#FFF3CD" stroke="#555555" stroke-width="1.4"/>
+<text x="147.5" y="1663.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">作者消息 / 回复流</text>
+<line x1="255" y1="1663" x2="300" y2="1663" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="277.5" y="1657" font-size="10" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">POST /chats/{id}/turn（SSE 流式）</text>
+<rect x="300" y="1638" width="200" height="50" rx="8" fill="#D9EAD3" stroke="#555555" stroke-width="1.4"/>
+<text x="400.0" y="1655.0" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">run_turn / stop / events</text>
+<text x="400.0" y="1675.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">可中断 · 事件回流</text>
+<line x1="500" y1="1663" x2="550" y2="1663" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<rect x="550" y="1638" width="390" height="50" rx="8" fill="#E4DCF0" stroke="#555555" stroke-width="1.4"/>
+<text x="745.0" y="1655.0" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">agent/loop + 白名单工具</text>
+<text x="745.0" y="1675.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">上下文投影 · 预算裁剪</text>
+<line x1="940" y1="1663" x2="990" y2="1663" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="965.0" y="1657" font-size="11" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">只读 canon 资料</text>
+<rect x="990" y="1638" width="230" height="50" rx="8" fill="#FCE5CD" stroke="#555555" stroke-width="1.4"/>
+<text x="1105.0" y="1655.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">只读范围查询</text>
+<text x="1105.0" y="1675.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">谱 / 矩阵 / 总结</text>
+<line x1="1220" y1="1663" x2="1270" y2="1663" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<path d="M1270 1703 L1270 1725 A195.0 9 0 0 0 1660 1725 L1660 1703 A195.0 9 0 0 0 1270 1703 Z" fill="#EFEFEF" stroke="#555555" stroke-width="1.4"/>
+<ellipse cx="1465.0" cy="1703" rx="195.0" ry="9" fill="#EFEFEF" stroke="#555555" stroke-width="1.4"/>
+<text x="1465.0" y="1702.5" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">chat_session / chat_message
+(+draft_candidate/summary/</text>
+<text x="1465.0" y="1717.5" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">事件)</text>
+<text x="1465.0" y="1727.0" font-size="10" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">追加式历史 · 对话块压缩</text>
+<rect x="12" y="1746" width="1676" height="142" rx="8" fill="#FBFBFB" stroke="#E0E0E0" stroke-width="1"/>
+<text x="28" y="1770" font-size="13" fill="#222" font-weight="bold" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">⑩ 写前校准 / 场景简报（calibration，WIP 未提交）</text>
+<text x="28" y="1783" font-size="10" fill="#666" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">目标章 vs 可信事实 → 差异一览 + 场景简报 → 起草前自洽；⚠️迁移 024 断号见报告 B1</text>
+<rect x="40" y="1788" width="215" height="50" rx="8" fill="#D6E4F0" stroke="#555555" stroke-width="1.4"/>
+<text x="147.5" y="1813.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">目标章草稿 + 资料</text>
+<line x1="255" y1="1813" x2="300" y2="1813" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="277.5" y="1807" font-size="11" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">（新路由）</text>
+<rect x="300" y="1788" width="200" height="50" rx="8" fill="#FCF3CF" stroke="#555555" stroke-width="1.4"/>
+<text x="400.0" y="1805.0" font-size="13" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">calibration 新 API</text>
+<text x="400.0" y="1825.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">未提交 · 未接线</text>
+<line x1="500" y1="1813" x2="550" y2="1813" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<rect x="550" y="1788" width="390" height="50" rx="8" fill="#FCF3CF" stroke="#555555" stroke-width="1.4"/>
+<text x="745.0" y="1805.0" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">calibrate / repair / handoff</text>
+<text x="745.0" y="1825.0" font-size="11" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">seed → 可信事实对照</text>
+<line x1="940" y1="1813" x2="990" y2="1813" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<text x="965.0" y="1807" font-size="11" fill="#333" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">只读比对 facts</text>
+<rect x="990" y="1788" width="230" height="50" rx="8" fill="#FCE5CD" stroke="#555555" stroke-width="1.4"/>
+<text x="1105.0" y="1813.0" font-size="11" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">读 canon / events / summary</text>
+<line x1="1220" y1="1813" x2="1270" y2="1813" stroke="#333" stroke-width="1.7" marker-end="url(#arr)"/>
+<path d="M1270 1853 L1270 1875 A195.0 9 0 0 0 1660 1875 L1660 1853 A195.0 9 0 0 0 1270 1853 Z" fill="#FCF3CF" stroke="#555555" stroke-width="1.4"/>
+<ellipse cx="1465.0" cy="1853" rx="195.0" ry="9" fill="#FCF3CF" stroke="#555555" stroke-width="1.4"/>
+<text x="1465.0" y="1860.0" font-size="12" fill="#111" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">calibration_artifact
+calibration_handoff_outbox</text>
+<text x="1465.0" y="1877.0" font-size="10" fill="#444" font-weight="normal" text-anchor="middle" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">迁移 024（断号）</text>
+<text x="32" y="2045" font-size="12" fill="#555" font-weight="normal" text-anchor="start" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">读法：每条车道从左往右流到存储；箭头上的标签是实际路由 / 数据契约要点。所有异常码、约束名均取自源码。</text>
+<text x="1668" y="2045" font-size="12" fill="#aa3333" font-weight="normal" text-anchor="end" font-family="'PingFang SC','Microsoft YaHei','Hiragino Sans GB','Noto Sans CJK SC',sans-serif">⚠️ 标注 = 审计发现问题，详见《数据流与语言问题审计.md》</text>
+</svg>
