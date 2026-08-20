@@ -48,10 +48,12 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from ..draft.context import DraftContext
 from ..draft.product_context import memory_units_available
-from ..draft.rolling_summary import ChapterSummaryStatus
+from ..draft.rolling_summary import ChapterSummaryStatus, SummarySnapshotWatermark
 from ..events import EventView
 from ..extract.call_audit import ModelCallReceipt
 from ..graph import InformationScope, StoryGraph
+from ..calibration.models import AuthorTurnRef
+from ..calibration.store import CalibrationStore
 from .candidates import DraftCandidate, StoredDraft
 
 
@@ -80,10 +82,13 @@ class ToolRefused(Exception):
 
 
 class DraftAsk(BaseModel):
-    """起草第 N 章的一稿。
+    """起草第 N 章的一稿（**chapter + calibration_id**，ADR 0033）。
 
     **这里没有、也永远不会有约束字段**（ADR 0019 边界二）：不许说破什么由后端当场
     从第 N 章重新算，你上一轮看到的那份清单对这一章可能已经过期了。
+
+    **也没有自由文本 goal**（ADR 0033）：`goal_spec` 只从不可变校准产物读取——
+    外层 Agent 不负责抄写事实文字或目标散文，Writer 拿到的是校准层实际产出的版本。
 
     它和 `DraftFn` 放在一起而不是和别的工具入参放在一起，是因为它是**注入契约的一半**：
     起草侧收的就是 `(DraftAsk, DraftContext)`，而这两件东西里都没有模型给的约束。
@@ -95,9 +100,12 @@ class DraftAsk(BaseModel):
         ge=1,
         description="起草第几章。约束由后端按这个章号当场计算。",
     )
-    goal: str = Field(
+    calibration_id: str = Field(
         min_length=1,
-        description="这一场要写什么（一两句话说清目标）。",
+        description=(
+            "seal_scene_brief 返回的那个不可变编号。"
+            "起草目标只从它读取，你不需要也不应该在这里传任何目标文字。"
+        ),
     )
 
 
@@ -219,6 +227,12 @@ class SummaryIndex(Protocol):
         last_chapter: int,
     ) -> list[ChapterSummaryStatus]: ...
 
+    def snapshot_watermark(
+        self,
+        project_id: str,
+        chapter_number: int,
+    ) -> SummarySnapshotWatermark | None: ...
+
 
 @runtime_checkable
 class EventIndex(Protocol):
@@ -257,6 +271,24 @@ class ToolContext:
 
     events: EventIndex | None = None
     """已确认事件的只读端口。`None` = 人物轴的「事件」那一条明确说自己是瞎的。"""
+
+    calibrations: CalibrationStore | None = None
+    """写前校准的非 Canon artifact 存储（ADR 0033，迁移 017）。
+
+    它是 `ToolContext` 上**第一个带写路径的端口**，但写面只有两张表：
+    `calibration_artifact` / `calibration_handoff_outbox`。Canon、正文、会话
+    仍然一个都碰不到——「模型改不了作者的 canon」没有被这一条打开。
+
+    `None` = `calibrate_scene` / `seal_scene_brief` 明确回一句「没接线」。
+    """
+
+    author_turn: AuthorTurnRef | None = None
+    """当前会话里**作者最新一条消息**的服务端绑定（turn id + 原话哈希）。
+
+    模型不能自报或替换：`calibrate_scene` / `seal_scene_brief` 从这儿取绑定，
+    入参模型上**没有**这个格子。`None` = 这段会话还没有作者消息可绑定，
+    校准工具明确拒绝。
+    """
 
     working_chapter: int | None = None
     """作者此刻在写第几章。**只用来标「这是你还没写到的地方」，不挡任何东西。**

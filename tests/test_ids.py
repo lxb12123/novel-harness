@@ -59,6 +59,9 @@ GOLDEN: list[tuple[EntityType, str, str]] = [
     (EntityType.EDGE, "proj-legacy-import", "edge:ddd232ca"),
     # 非 ASCII + 内含 ':' 的 project_id：钉死「UTF-8 原始字节，不归一化，不切分」。
     (EntityType.EVIDENCE, "项目:青云", "evidence:b339193b"),
+    # ADR 0033：非 Canon 校准产物 + RETCON handoff outbox（迁移 017）。
+    (EntityType.CALIBRATION, "project:01JZ0000000000000000000008", "calibration:a5bfc94e"),
+    (EntityType.HANDOFF, "project:01JZ0000000000000000000008", "handoff:a5bfc94e"),
 ]
 
 ULID_RE = re.compile(r"^[0-9A-HJKMNP-TV-Z]{26}$")
@@ -79,10 +82,11 @@ def test_golden_short_is_stable(entity_type: EntityType, project_id: str, want_p
     assert len(project_short(project_id)) == PROJECT_SHORT_LEN
 
 
-def test_golden_covers_ten_cases() -> None:
-    # ADR 0003 写的是 10 个，不是「大约 10 个」。少一个就该有人来解释为什么。
-    assert len(GOLDEN) == 10
-    assert len({(t, p) for t, p, _ in GOLDEN}) == 10
+def test_golden_covers_twelve_cases() -> None:
+    # ADR 0003 写的是 10 个（后来 ADR 0033 加了 calibration / handoff 两个，
+    # 因为它们各自有一张真的表）。少一个就该有人来解释为什么。
+    assert len(GOLDEN) == 12
+    assert len({(t, p) for t, p, _ in GOLDEN}) == 12
 
 
 # ══════════════════════════════════════════════════════════════════════════
