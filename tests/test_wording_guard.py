@@ -681,12 +681,9 @@ def test_the_activity_screen_strings_are_all_scanned_by_shape(
 # 产品的最终用户是 README 里那位「用 WPS、不想碰命令行」的作者——对他说这句话，
 # 等于让他去改一个他没做错的操作，或者干脆卡死。
 #
-# 判据的两半：形状那半（`--开关`）+ 命令名那半。**命令名那张表不是手抄的**，
-# 由下面两条从 `pyproject.toml` 和 `cli.py` 驱动。
+# 判据的两半：形状那半（`--开关`）+ 命令名那半。**命令名那张表现在没有产品自己的
+# 命令可喂了**（命令行面已删），剩下的形状那半仍是作者屏幕不变量。
 # ══════════════════════════════════════════════════════════════════════════
-
-PYPROJECT = REPO / "pyproject.toml"
-CLI = REPO / "src" / "novel_harness" / "cli.py"
 
 
 def _shell_line_pattern() -> re.Pattern[str]:
@@ -700,68 +697,6 @@ def _shell_line_pattern() -> re.Pattern[str]:
     match = re.search(r"export const SHELL_LINE\s*=\s*\n?\s*/(.+?)/g;", source, re.S)
     assert match, "screenGuard.ts 里找不到 SHELL_LINE —— 判据换了名字，这份守卫要跟着改"
     return re.compile(match.group(1))
-
-
-def _shell_command_words() -> frozenset[str]:
-    """`SHELL_LINE` 第二段列出来的那些命令名。"""
-    body = _shell_line_pattern().pattern
-    words: set[str] = set()
-    for group in re.findall(r"\(\?:([^)]*)\)", body):
-        words |= {token for token in group.split("|") if re.fullmatch(r"[a-z][a-z0-9?-]*", token)}
-    assert len(words) >= 5, f"从 screenGuard.ts 里只读出 {sorted(words)} —— 解析多半坏了"
-    return frozenset(words)
-
-
-def _console_scripts() -> frozenset[str]:
-    """`pyproject.toml` 的 `[project.scripts]`：**这个产品自己的命令名**。"""
-    text = PYPROJECT.read_text(encoding="utf-8")
-    section = re.search(r"\[project\.scripts\]\n(.*?)(?:\n\[|\Z)", text, re.S)
-    assert section, "pyproject.toml 里找不到 [project.scripts]"
-    names = frozenset(re.findall(r"^([A-Za-z][\w-]*)\s*=", section.group(1), re.M))
-    assert names, "[project.scripts] 里一个命令名都没读出来"
-    return names
-
-
-def _cli_subcommands() -> frozenset[str]:
-    """`cli.py` 里 typer 注册的每一个子命令名（含 `nh declare *` 那一组）。
-
-    **从装饰器读，不从文档抄**：加一个子命令、`screenGuard.ts` 不跟，下面那条当场红。
-    """
-    tree = ast.parse(CLI.read_text(encoding="utf-8"))
-    names: set[str] = set()
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.FunctionDef):
-            continue
-        for deco in node.decorator_list:
-            if not isinstance(deco, ast.Call) or not isinstance(deco.func, ast.Attribute):
-                continue
-            if deco.func.attr != "command":
-                continue
-            explicit = [a for a in deco.args if isinstance(a, ast.Constant)]
-            names.add(str(explicit[0].value) if explicit else node.name)
-    assert len(names) >= 15, f"只从 cli.py 读到 {len(names)} 个子命令 —— 解析坏了"
-    return frozenset(names)
-
-
-def test_the_browser_net_knows_this_products_own_command_names() -> None:
-    """**判据是 `pyproject.toml`，不是一张手抄的表。** 命令改名，这里当场红。"""
-    listed = _shell_command_words()
-    missing = sorted(name for name in _console_scripts() if name not in listed)
-    assert not missing, (
-        f"这些命令名一旦上屏，浏览器那侧的第五张网看不见：{missing}\n"
-        "修法：补进 `screenGuard.ts::SHELL_LINE` 第二段那张表。"
-    )
-
-
-def test_every_subcommand_of_this_products_cli_is_caught_on_screen() -> None:
-    """**枚举驱动**：`cli.py` 注册的每一个子命令，`nh <它>` 都得被咬住。
-
-    这条不需要随子命令增长而维护：判据是「`nh` + 一个 ASCII 词」的形状，
-    而这里只是拿真实的子命令名把那个形状验一遍。
-    """
-    pattern = _shell_line_pattern()
-    escaped = [name for name in sorted(_cli_subcommands()) if not pattern.search(f"nh {name}")]
-    assert not escaped, f"这些命令摆到作者屏幕上不会被拦：{escaped}"
 
 
 def test_the_shell_net_does_not_cry_wolf() -> None:
@@ -781,7 +716,7 @@ def test_the_shell_net_does_not_cry_wolf() -> None:
     bitten = {line: pattern.findall(line) for line in clean if pattern.search(line)}
     assert not bitten, f"干净的界面被咬了：{bitten}"
     # 自守卫：这张网真的咬得动东西（一张什么都咬不到却一直绿着的网是最坏的那种）。
-    assert pattern.search("先跑 nh sync。"), "第五张网什么都咬不到 —— 它是一张空网"
+    assert pattern.search("先跑 uv sync。"), "第五张网什么都咬不到 —— 它是一张空网"
 
 
 def test_no_refusal_ever_tells_the_author_to_type_a_command() -> None:
@@ -821,21 +756,8 @@ def test_no_refusal_ever_tells_the_author_to_type_a_command() -> None:
     }
     assert not offenders, (
         f"这些拒绝把一条命令摆到了小说作者的屏幕上：{offenders}\n"
-        "终端那半句归 `cli.py::_refusal_tail()`，浏览器那半句归抽屉上那颗按钮 —— "
-        "引擎这一层只说产品无关的那半句。"
+        "浏览器那半句归抽屉上那颗按钮 —— 引擎这一层只说产品无关的那半句。"
     )
     # 自守卫：判据真的扫得动（探针是 2026-08-13 之前的原话）。
-    assert pattern.search("也可能是这一章还没进库：先跑 nh sync。")
+    assert pattern.search("也可能是这一章还没进库：先跑 uv sync。")
 
-
-def test_the_terminal_still_gets_its_half_of_the_answer() -> None:
-    """搬走之后**终端那半句不许消失**：`nh sync` / `nh locate` 落到 `_refusal_tail()` 上。
-
-    这一条是上面那条的对偶。只做上面那条的话，最省事的「修法」是把「怎么办」整段删掉，
-    而那时两个壳都变哑——CLI 用户拿到一句「让系统重新读一遍稿子」却不知道敲什么。
-    """
-    from novel_harness.cli import _refusal_tail
-    from novel_harness.declare import AmbiguousQuote, QuoteNotFound
-
-    assert "nh sync" in _refusal_tail(QuoteNotFound("他终于明白了"))
-    assert "nh locate" in _refusal_tail(AmbiguousQuote("他终于明白了", []))

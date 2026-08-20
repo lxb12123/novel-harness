@@ -29,10 +29,8 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 import pytest
-from typer.testing import CliRunner
 
 from novel_harness import db, project
-from novel_harness.cli import app
 from novel_harness.declare import Ledger
 from novel_harness.draft.assemble import assemble
 from novel_harness.draft.capabilities import (
@@ -89,7 +87,22 @@ CLEAN = _m2_valid("苏挽把茶盏推过去，没有接话。窗外的雨停了�
 KNOWS_LEAK = _m2_valid(f"苏挽压低声音：「那是{TELL}的痕迹。」")
 FUTURE_LEAK = _m2_valid(f"远处传来消息，{FUTURE_TELL}的人已经动身。")
 
-runner = CliRunner()
+def _gate_invoke(argv: list[str]) -> tuple[int, str]:
+    """跑 gate 入口（typer CliRunner 的替身：gate 是唯一还活着的命令面）。
+
+    `argv` 保留旧的 `["gate", ...]` 词法（人肉对照原文省力）；捕获 stdout+stderr，
+    返回 (退出码, 合并输出)。`gate_main` 返回 int、绝不 sys.exit。
+    """
+    import io
+    from contextlib import redirect_stderr, redirect_stdout
+
+    from novel_harness.gate import main as gate_main
+
+    assert argv and argv[0] == "gate"
+    buf = io.StringIO()
+    with redirect_stdout(buf), redirect_stderr(buf):
+        code = gate_main(argv[1:])
+    return code, buf.getvalue()
 
 
 class Seeded(NamedTuple):
@@ -1257,8 +1270,7 @@ def test_gate_fails_closed_until_amendment_5_runner_is_implemented(
         "EVAL_PROTOCOL.md@0393088 + 修正案 1/2/3/4 + ADR 0010",
     )
     out = tmp_path / "must-not-exist.jsonl"
-    result = runner.invoke(
-        app,
+    code, captured = _gate_invoke(
         [
             "gate",
             "--db", str(tmp_path / "missing.db"),
@@ -1268,9 +1280,9 @@ def test_gate_fails_closed_until_amendment_5_runner_is_implemented(
         ],
     )
 
-    assert result.exit_code != 0
-    assert "已暂停" in result.output
-    assert "1/2/3/4/5/6" in result.output
+    assert code != 0
+    assert "已暂停" in captured
+    assert "1/2/3/4/5/6" in captured
     assert not out.exists()
 
 
@@ -1289,14 +1301,13 @@ def test_gate_without_an_endpoint_gives_chinese_instructions(
     monkeypatch.delenv("NH_LLM_BASE_URL", raising=False)
     gt = _write_ground_truth(tmp_path / "gt.json", book.pid, [_row("K01", "KNOWS")])
 
-    result = runner.invoke(
-        app,
+    code, captured = _gate_invoke(
         ["gate", "--db", str(book.path), "-p", book.pid, "--ground-truth", str(gt)],
     )
 
-    assert result.exit_code != 0
-    assert "NH_LLM_BASE_URL" in result.output
-    assert "Traceback" not in result.output
+    assert code != 0
+    assert "NH_LLM_BASE_URL" in captured
+    assert "Traceback" not in captured
 
 
 def test_gate_rejects_legacy_global_token_env_without_a_traceback(
@@ -1309,15 +1320,14 @@ def test_gate_rejects_legacy_global_token_env_without_a_traceback(
     monkeypatch.setenv("NH_LLM_MAX_TOKENS", "4096")
     gt = _write_ground_truth(tmp_path / "gt.json", book.pid, [_row("K01", "KNOWS")])
 
-    result = runner.invoke(
-        app,
+    code, captured = _gate_invoke(
         ["gate", "--db", str(book.path), "-p", book.pid, "--ground-truth", str(gt)],
     )
 
-    assert result.exit_code != 0
-    assert "NH_LLM_MAX_TOKENS" in result.output
-    assert "call plan" in result.output
-    assert "Traceback" not in result.output
+    assert code != 0
+    assert "NH_LLM_MAX_TOKENS" in captured
+    assert "call plan" in captured
+    assert "Traceback" not in captured
 
 
 def test_gate_prints_how_many_traps_and_generations(
@@ -1338,8 +1348,7 @@ def test_gate_prints_how_many_traps_and_generations(
     )
     out = tmp_path / "runs" / "one.jsonl"
 
-    result = runner.invoke(
-        app,
+    code, captured = _gate_invoke(
         [
             "gate",
             "--db", str(book.path),
@@ -1349,9 +1358,9 @@ def test_gate_prints_how_many_traps_and_generations(
         ],
     )
 
-    assert result.exit_code == 1, result.output  # 全干净 → X0 泄漏 0.00 → 地板 → INVALID
-    assert "2 条陷阱 × 3 臂 × 3 次 = 18 次生成" in result.output
-    assert "INVALID" in result.output
+    assert code == 1, captured  # 全干净 → X0 泄漏 0.00 → 地板 → INVALID
+    assert "2 条陷阱 × 3 臂 × 3 次 = 18 次生成" in captured
+    assert "INVALID" in captured
     assert out.exists() and len(_records(out)) == 1 + 2 * 2 + 18 * 2
 
 
@@ -1375,8 +1384,7 @@ def test_gate_exits_zero_on_a_real_verdict(
     )
     out = tmp_path / "one.jsonl"
 
-    result = runner.invoke(
-        app,
+    code, captured = _gate_invoke(
         [
             "gate",
             "--db", str(book.path),
@@ -1386,9 +1394,9 @@ def test_gate_exits_zero_on_a_real_verdict(
         ],
     )
 
-    assert result.exit_code == 0, result.output
-    assert "INCONCLUSIVE" in result.output
-    assert "判别对" in result.output
+    assert code == 0, captured
+    assert "INCONCLUSIVE" in captured
+    assert "判别对" in captured
 
 
 def test_gate_refuses_a_ground_truth_from_another_project(
@@ -1400,13 +1408,12 @@ def test_gate_refuses_a_ground_truth_from_another_project(
     """
     gt = _write_ground_truth(tmp_path / "gt.json", "project:别的书:01J0", [_row("K01", "KNOWS")])
 
-    result = runner.invoke(
-        app,
+    code, captured = _gate_invoke(
         ["gate", "--db", str(book.path), "-p", book.pid, "--ground-truth", str(gt)],
     )
 
-    assert result.exit_code != 0
-    assert "别的书" in result.output
+    assert code != 0
+    assert "别的书" in captured
 
 
 def test_gate_refuses_an_illegal_repeats(
@@ -1414,8 +1421,7 @@ def test_gate_refuses_an_illegal_repeats(
 ) -> None:
     gt = _write_ground_truth(tmp_path / "gt.json", book.pid, [_row("K01", "KNOWS")])
 
-    result = runner.invoke(
-        app,
+    code, captured = _gate_invoke(
         [
             "gate",
             "--db", str(book.path),
@@ -1425,15 +1431,14 @@ def test_gate_refuses_an_illegal_repeats(
         ],
     )
 
-    assert result.exit_code != 0
-    assert "重复" in result.output and "Traceback" not in result.output
+    assert code != 0
+    assert "重复" in captured and "Traceback" not in captured
 
 
 def test_gate_refuses_a_missing_ground_truth(
     book: Seeded, tmp_path: Path, amendment_5_runner_ready: None
 ) -> None:
-    result = runner.invoke(
-        app,
+    code, captured = _gate_invoke(
         [
             "gate",
             "--db", str(book.path),
@@ -1442,5 +1447,5 @@ def test_gate_refuses_a_missing_ground_truth(
         ],
     )
 
-    assert result.exit_code != 0
-    assert "不存在" in result.output
+    assert code != 0
+    assert "不存在" in captured

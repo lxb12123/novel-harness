@@ -143,20 +143,24 @@ def _readline(stream: object, timeout: float) -> str:
 
 
 def test_serve_creates_the_db_and_prints_one_url(tmp_path: Path) -> None:
-    """一条命令 = 建库 + 起服务 + 报出真实端口。子进程跑真服务，零 mock。
+    """`api/launch.py::launch()` = 建库 + 起服务 + 报出真实端口。子进程跑真服务，零 mock。
 
     三条断言各有出处：
     - **建库**：`api/deps.py` 的 `_db_path()` 拒绝连一个不存在的路径，所以库必须由
-      这条命令先建出来，否则作者第一次跑就撞 500。
-    - **stdout 只有一行 URL**：同 `nh init` 的纪律（stdout 是给机器吃的）。以后的桌面壳
-      就是靠读这一行知道该把窗口指向哪儿——**所以它还必须是 flush 过的**，
-      不能躺在块缓冲里等进程退出。这个测试正是在证明它没躺着。
-    - **`--port 0`**：让内核挑端口，CI 上并发跑也不会撞车。
+      启动器先建出来，否则作者第一次跑就撞 500。
+    - **stdout 只有一行 URL**：同桌面壳的契约（stdout 是给机器吃的）。桌面壳就是靠
+      读这一行知道该把窗口指向哪儿——**所以它还必须是 flush 过的**，不能躺在块缓冲里
+      等进程退出。这个测试正是在证明它没躺着。
+    - **`port=0`**：让内核挑端口，CI 上并发跑也不会撞车。
     """
     db = tmp_path / "serve.db"
     proc = subprocess.Popen(
-        [sys.executable, "-m", "novel_harness.cli", "serve",
-         "--db", str(db), "--port", "0", "--no-open"],
+        [
+            sys.executable,
+            "-c",
+            "from pathlib import Path; from novel_harness.api.launch import launch; "
+            f"launch(Path({str(db)!r}), open_browser=False, port=0)",
+        ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,

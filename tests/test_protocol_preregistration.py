@@ -93,11 +93,6 @@ def test_adr_index_lists_0011() -> None:
             "加八份修正案",
         ),
         (
-            "src/novel_harness/cli.py",
-            "+ 九份修正案",
-            "+ 八份修正案",
-        ),
-        (
             "synth/booklet.toml",
             "九份修正案一个字都没碰",
             "八份修正案一个字都没碰",

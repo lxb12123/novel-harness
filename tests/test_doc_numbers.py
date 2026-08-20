@@ -37,12 +37,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-import typer
 from fastapi.routing import APIRoute
 
 from novel_harness.api.app import app as api_app
 from novel_harness.checks import ALL_CHECKS
-from novel_harness.cli import app as cli_app
 from novel_harness.db import IN_MEMORY, connect, migrate
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -105,17 +103,6 @@ def error_mapping_count() -> int:
     ours = "novel_harness.api.app"
     return len(
         [h for h in api_app.exception_handlers.values() if getattr(h, "__module__", "") == ours]
-    )
-
-
-def cli_leaf_count(group: typer.Typer | None = None) -> int:
-    """`nh` 的**叶子**子命令数（`declare character` 算一条，`declare` 本身不算）。
-
-    作者敲得出来的是叶子，中间那层分组敲了只会打印帮助。
-    """
-    group = cli_app if group is None else group
-    return len(group.registered_commands) + sum(
-        cli_leaf_count(g.typer_instance) for g in group.registered_groups
     )
 
 
@@ -193,7 +180,6 @@ FACTS: tuple[Fact, ...] = (
     # 提要求的那份文档说不出自己要几条，就没法提要求了。所以只验值，不管唯一性。
     Fact("501 stub 数", r"(\d+)\s*条(?:是)?\s*501", stub_501_count, unique=False),
     Fact("错误映射数", r"(\d+)\s*个错误映射", error_mapping_count),
-    Fact("CLI 叶子子命令数", r"(\d+)\s*个子命令", cli_leaf_count),
     Fact("migrations 建表数", r"(\d+)\s*张表", table_count),
     Fact("契约 fixture 端点数", r"(\d+)\s*个端点", fixture_endpoint_count),
     Fact("pytest 数", r"(\d+)\s*个 ?pytest", None),
@@ -306,7 +292,6 @@ CLAIM_FILES = (
     "docs/ARCHITECTURE.md",
     "docs/UI_ARCHITECTURE.md",
     "scripts/demo.sh",
-    "src/novel_harness/cli.py",
     "src/novel_harness/api/app.py",
 )
 
@@ -470,7 +455,6 @@ def _fresh_probe() -> str:
     return (
         f"## {SECTION}\n"
         f"migrations/001_init.sql（{table_count()} 张表）\n"
-        f"cli.py ← nh 的 {cli_leaf_count()} 个子命令\n"
         f"api/ ← {route_count()} 条自建路由 + {error_mapping_count()} 个错误映射\n"
         f"（{api_route_count()} 条 /api + 1 条 `GET /`；其中 {stub_501_count()} 条是 501 stub）\n"
         f"api.json ← {fixture_endpoint_count()} 个端点\n"

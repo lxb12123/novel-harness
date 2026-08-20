@@ -455,10 +455,10 @@ def test_no_kill_gate_call_site_ever_passes_a_tail_limit() -> None:
     from pathlib import Path
 
     root = Path(assemble_module.__file__).resolve().parent.parent
-    for relative in ("eval/runner.py", "eval/evidence.py", "cli.py"):
+    for relative in ("eval/runner.py", "eval/evidence.py"):
         source = (root / relative).read_text(encoding="utf-8")
         assert "previous_tail_limit" not in source, (
-            f"{relative} 传了 previous_tail_limit：三臂和 `nh draft` 必须用冻结的默认值，"
+            f"{relative} 传了 previous_tail_limit：三臂必须用冻结的默认值，"
             "改它 = 改考卷（EVAL_PROTOCOL §2）"
         )
 

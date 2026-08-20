@@ -78,19 +78,16 @@ GRAPH_TABLE_OWNERS = frozenset({"db.py"})
 那不是图——这正好说明这条判据比「谁 import 了 sqlite3」准。
 """
 
-CONNECTION_OPENERS = frozenset(
-    {"db.py", "cli.py", "__main__.py", "api/deps.py", "api/launch.py", "eval/gate.py"}
-)
+CONNECTION_OPENERS = frozenset({"db.py", "api/deps.py", "api/launch.py", "gate.py"})
 """允许 `from .db import connect` 的文件：装配层。
 
-`db.py` 是家；`cli.py` / `__main__.py` 是进程入口，它们的活就是「开库、组装、递给别人」。
-`api/deps.py` 是 **FastAPI 壳的装配层**——同一份活（开库、组装 store、递给路由），只不过
-入口是 HTTP 而不是命令行。`api/launch.py` 是**工作台启动器**（原 `nh serve` 的库函数版，
-桌面壳的地基）：建库 + 起服务，所以它开连接。`eval/gate.py` 是 M2「防泄漏」考试的独立
-入口（`python -m novel_harness.eval.gate`）：它要开库组装 store 才能跑考试，同属装配。
+`db.py` 是家；`api/deps.py` 是 **FastAPI 壳的装配层**（开库、组装 store、递给路由），
+入口是 HTTP。`api/launch.py` 是**工作台启动器**（原 `nh serve` 的库函数版，桌面壳的
+地基）：建库 + 起服务，所以它开连接。`gate.py` 是 M2「防泄漏」考试的独立入口
+（`python -m novel_harness.gate`）：它要开库组装 store 才能跑考试，同属装配。
 它们是装配面里仅有的开连接处；路由 `api/app.py` 收 `Depends(get_store)`，不碰连接，
-正如 `checks/` 的规则收 `CheckContext`。加它们进来回答了守卫 docstring 那个问题：这些
-文件是要**开连接**（装配），不是要**查图**（那仍然只走 StoryGraph）。
+正如 `checks/` 的规则收 `CheckContext`。加它们进来回答了守卫 docstring 那个问题：
+这些文件是要**开连接**（装配），不是要**查图**（那仍然只走 StoryGraph）。
 
 别的文件想要连接就该**收一个 StoryGraph**，而不是自己开一个——`checks/` 里的规则收
 `CheckContext`，面板收 `store`，那是它们成为纯函数的原因（`checks/base.py`：
@@ -281,15 +278,13 @@ def test_allowlist_stays_small() -> None:
     assert ALLOWED_DIRS == frozenset({"graph"})
     assert GRAPH_TABLE_OWNERS == frozenset({"db.py"})
     # api/deps.py 是 FastAPI 壳的装配层（唯一开连接处），api/launch.py 是启动器，
-    # eval/gate.py 是 M2 考试入口，均与 cli.py 同性质。
+    # gate.py 是 M2 考试入口。
     assert CONNECTION_OPENERS == frozenset(
         {
             "db.py",
-            "cli.py",
-            "__main__.py",
             "api/deps.py",
             "api/launch.py",
-            "eval/gate.py",
+            "gate.py",
         }
     )
     # 同理：遮蔽豁免名单长一个，就多一个「模块取不到」的地方。

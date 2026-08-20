@@ -24,14 +24,9 @@ dependencies = [
     "openai>=2.47.0",
     "pydantic>=2.13.4",
     "python-ulid>=3.1.0",
-    "typer>=0.27.0",
     "uvicorn[standard]>=0.51.0",
     "watchdog>=6.0.0",
 ]
-
-[project.scripts]
-nh = "novel_harness.cli:app"
-novel-harness = "novel_harness.__main__:main"
 
 [build-system]
 requires = ["uv_build>=0.11.7,<0.12.0"]

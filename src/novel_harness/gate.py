@@ -1,4 +1,4 @@
-"""M2「防泄漏」考试的独立入口：`python -m novel_harness.eval.gate`。
+"""M2「防泄漏」考试的独立入口：`python -m novel_harness.gate`。
 
 这场考试干的事：拿 `synth/build.py` 造出来的那本带陷阱的假书（里面谁该知道秘密、
 谁不该知道，都是提前埋好的），让引擎去续写，看它会不会"说漏嘴"——把不该知道的
@@ -25,11 +25,12 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from ..db import connect
-from ..graph.sqlite_store import SqliteStoryGraph
+from .db import connect
+from .graph.sqlite_store import SqliteStoryGraph
+from .project import get as get_project
 
 if TYPE_CHECKING:
-    from .score import GateDecision
+    from .eval.score import GateDecision
 
 # ── 展示用的盒子和表格 ─────────────────────────────────────────────────────
 # 从 cli.py 搬来的（那里同名助手是面板/检查的命令行渲染）；删掉命令行面后，这里就是
@@ -75,26 +76,30 @@ def _reason(exc: Exception) -> str:
     return str(exc)
 
 
-def _open_store(db: Path, project: str) -> SqliteStoryGraph:
-    """开库 + 组装 + 确认这个项目真的有东西（读路径的两道闸门）。
+class GateError(RuntimeError):
+    """跑不通考试（输入错了 / 库/项目对不上）。`run()` 会把它转成退出码 1 的消息。"""
 
-    走 `resolve(project)`（`surfaces=None` = 全项目花名册）——它是 StoryGraph 五个方法里
-    唯一能回答「这个项目里有东西吗」的那个。空花名册 = 项目号打错了或一条声明都没有，
-    两者都不该跑考试。**只读校验时并不替你建库**：空库上闭世界推导会给出一张「谁都不知道」
-    的假矩阵，长得像正确答案，其实什么都不是。
+
+def _open_store(db: Path, project: str) -> SqliteStoryGraph:
+    """开库 + 确认这个项目真的有东西。
+
+    存在性检查走 **`project` 表**（`project.get`），而不是 `store.resolve()`——后者是
+    算「谁知道什么」的入口，判分层碰它 = 自己摆了第二份禁忌集（EVAL_PROTOCOL §3 /
+    `test_draft_boundary.py::test_neither_side_resolves_on_its_own`）。只查项目存在，
+    不查花名册、不算约束视图。**不替你建库**：空库上闭世界推导会给出一张「谁都不知道」
+    的假矩阵，长得像正确答案，其实什么都不是。失败抛 `GateError`（不 sys.exit——库函数
+    不该把退出决定做掉）。
     """
     if not db.exists():
-        print(f"库不存在：{db}（不替你建，见 EVAL_PROTOCOL/ADR 0012）", file=sys.stderr)
-        sys.exit(1)
-    store = SqliteStoryGraph(connect(db))
-    if not store.resolve(project):
-        print(
-            f"项目 {project} 在 {db} 里没有任何花名册行：\n"
-            "要么 project_id 打错了，要么这本书还一条声明都没有。",
-            file=sys.stderr,
+        raise GateError(f"库不存在：{db}（不替你建，见 EVAL_PROTOCOL/ADR 0012）")
+    conn = connect(db)
+    if get_project(conn, project) is None:
+        conn.close()
+        raise GateError(
+            f"项目 {project} 在 {db} 里没有项目行：\n"
+            "要么 project_id 打错了，要么这个库是别本书的。"
         )
-        sys.exit(1)
-    return store
+    return SqliteStoryGraph(conn)
 
 
 def _gate_lines(decision: GateDecision, repeats: int) -> list[str]:
@@ -157,9 +162,9 @@ def run(
     out: Path | None,
 ) -> int:
     """跑一轮考试。返回退出码（0 = 有效实验结束；非 0 = INVALID 或仪器/输入错误）。"""
-    from ..draft.provider import ProviderConfig, ProviderError
-    from .runner import PROTOCOL_VERSION, load_traps, run_gate, stamped_path
-    from .score import Verdict, decide
+    from .draft.provider import ProviderConfig, ProviderError
+    from .eval.runner import PROTOCOL_VERSION, load_traps, run_gate, stamped_path
+    from .eval.score import Verdict, decide
 
     if "修正案 1/2/3/4/5/6/7/8" not in PROTOCOL_VERSION:
         print(
@@ -178,7 +183,11 @@ def run(
         )
         return 1
 
-    store = _open_store(db, project)
+    try:
+        store = _open_store(db, project)
+    except GateError as exc:
+        print(f"✗ {exc}", file=sys.stderr)
+        return 1
 
     try:
         data = json.loads(ground_truth.read_text(encoding="utf-8"))
@@ -212,13 +221,13 @@ def run(
         return 1
 
     try:
-        from ..draft.capabilities import (
+        from .draft.capabilities import (
             CapabilityError,
             ReasoningEffort,
             plan_call,
             resolve_capabilities,
         )
-        from ..draft.length import M2_LENGTH_SPEC
+        from .draft.length import M2_LENGTH_SPEC
 
         capability = resolve_capabilities(config.base_url, config.model)
         plan = plan_call(M2_LENGTH_SPEC, ReasoningEffort.HIGH, capability)
@@ -275,7 +284,7 @@ def run(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="python -m novel_harness.eval.gate",
+        prog="python -m novel_harness.gate",
         description="跑一轮 M2「防泄漏」考试并出裁决（会调模型、会花钱，维护者专用）。",
     )
     parser.add_argument("--db", required=True, help="SQLite 库（合成小册子那本）")

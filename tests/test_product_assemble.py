@@ -308,7 +308,8 @@ def test_the_gate_never_reaches_this_module() -> None:
                 found |= {alias.name for alias in node.names}
         return found
 
-    gate_sources = sorted((src / "eval").glob("*.py")) + [src / "cli.py"]
+    # cli.py 已删（2026-08-18 去命令行面）；判分链只剩 eval/ 自己。
+    gate_sources = sorted((src / "eval").glob("*.py"))
     assert len(gate_sources) >= 5, "扫到的判分链文件太少 —— glob 坏了，这条会永远绿"
     polluted = {
         path.name: sorted(n for n in imported_names(path) if "product_assemble" in n)
