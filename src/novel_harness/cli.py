@@ -26,13 +26,8 @@
 from __future__ import annotations
 
 import json
-import os
 import re
-import socket
-import threading
-import time
 import unicodedata
-import webbrowser
 from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
@@ -463,48 +458,6 @@ def _candidate_lines(candidates: Sequence[QuoteCandidate]) -> list[str]:
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def _bind(host: str, wanted: int) -> socket.socket:
-    """绑住端口，把**绑好的** socket 交给 uvicorn（`Server.run(sockets=[...])`）。
-
-    为什么不是「先探测一个空闲端口，再让 uvicorn 自己去绑」：探测得 bind 完再 close，
-    而 close 到 uvicorn bind 之间有一个窗口，端口可能被别人抢走——那时 uvicorn 报
-    「地址已被占用」，可我们已经把那个端口印在终端上、甚至已经拿它开了浏览器。
-    直接把绑好的 socket 递过去，「我们知道端口号」和「端口是我们的」就成了同一件事。
-
-    `wanted` 被占（多半是上一个 `nh serve` 还开着）→ 让内核挑一个空闲的，不报错退出：
-    作者要的是「打开工作台」，不是「学习什么是端口占用」。
-    """
-    last: OSError | None = None
-    for candidate in (wanted, 0):
-        sock = socket.socket()  # AF_INET：v1 只支持 IPv4 字面量，IPv6 地址会在下面报错退出
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        try:
-            sock.bind((host, candidate))
-        except OSError as exc:  # 被占 / 地址不可用 / <1024 无权限
-            sock.close()
-            last = exc
-            continue
-        return sock
-    _die(f"✗ 绑不上 {host}：{last}")
-
-
-def _open_when_ready(url: str, host: str, port: int, timeout: float = 15.0) -> None:
-    """等服务真的开始 accept 了再开浏览器。
-
-    绑好但还没 listen 的端口会**拒绝**连接，所以这里轮询到连得上为止：立刻开浏览器
-    多半只换来一张「无法访问此网站」，而服务其实半秒后就起来了——作者会以为它坏了。
-    等超时都没起来就什么都不做：终端上的那行报错才是他该看的，再弹一个空白页只是添乱。
-    """
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        try:
-            with socket.create_connection((host, port), timeout=0.2):
-                webbrowser.open(url)
-                return
-        except OSError:
-            time.sleep(0.1)
-
-
 @app.command()
 def version() -> None:
     """打印版本。"""
@@ -521,67 +474,13 @@ def serve(
     ),
     open_browser: bool = typer.Option(True, "--open/--no-open", help="起好后自动开浏览器"),
 ) -> None:
-    """起浏览器工作台：**一条命令** = 建库 + 起服务 + 开浏览器。
+    """起浏览器工作台：建库 + 起服务 + 开浏览器（薄壳；逻辑已搬进 api/launch.py，本命令面待删）。"""
+    from .api.launch import LaunchError, launch
 
-    在这之前起工作台是三步：手敲一句 `python -c "... migrate ..."` 建库、手敲 uvicorn
-    并记得带上 `NH_DB`、再自己往地址栏里输端口。这条命令是 ADR 0007 那句分发叙事
-    （「一条命令，不装 Docker」）的兑现，也是桌面壳的地基——**桌面版 = 这条命令 + 一个
-    窗口**，不是另一套代码。
-
-    **默认只听 127.0.0.1。** 这里没有任何认证（27 条路由全部裸奔），而库里是作者未发表
-    的稿子和情节——`--host 0.0.0.0` 等于把它们摊在局域网上。要那么干的人得自己敲出来。
-    """
-    resolved_db = db.resolve()
-
-    # 库不存在就建一个空的。`api/deps.py` 的 `_db_path()` **拒绝**连一个不存在的路径
-    # （怕 sqlite 悄悄建出空库，给作者一张「看起来正常、全 UNKNOWN」的假矩阵），所以
-    # 这一步必须由装配层做掉——cli.py 在 test_arch_guard 的 CONNECTION_OPENERS 里就是为这个。
-    # 建出来的是**空书架不是空书**：工作台首屏会是「开始一本书」。
-    conn = connect(resolved_db)
     try:
-        migrate(conn)
-    finally:
-        conn.close()
-
-    os.environ["NH_DB"] = str(resolved_db)
-    if books_dir is not None:
-        os.environ["NH_BOOKS_DIR"] = str(books_dir.resolve())
-
-    # uvicorn（+uvloop/httptools）与 api.app（+FastAPI）加起来约 240ms 的导入开销。
-    # 放在函数体里，好让 `nh declare` 这种一天敲几十次的命令不为一个它永远不跑的服务器买单。
-    import uvicorn
-
-    from .api.app import webui_built
-
-    sock = _bind(host, port)
-    actual = sock.getsockname()[1]
-    # 0.0.0.0 是「所有网卡」，不是一个能访问的地址——别把它印进地址栏。
-    browse_host = "127.0.0.1" if host == "0.0.0.0" else host
-    url = f"http://{browse_host}:{actual}"
-
-    typer.echo(url)  # ← stdout 的全部内容（同 `nh init` 的纪律：一行机器可读的东西）
-    typer.secho(
-        f"✓ 工作台起来了：{url}\n  库：{resolved_db}\n  停：Ctrl-C",
-        fg=typer.colors.GREEN,
-        err=True,
-    )
-    if not webui_built():
-        typer.secho(
-            "⚠ 前端没构建 —— 现在服务的是 api/static 的只读原型（页面能开，但功能少一半）。\n"
-            "  构建一次：cd frontend && npm install && npm run build",
-            fg=typer.colors.YELLOW,
-            err=True,
-        )
-
-    if open_browser:
-        threading.Thread(
-            target=_open_when_ready, args=(url, browse_host, actual), daemon=True
-        ).start()
-
-    config = uvicorn.Config(
-        "novel_harness.api.app:app", host=host, port=actual, log_level="warning"
-    )
-    uvicorn.Server(config).run(sockets=[sock])
+        launch(db, host=host, port=port, books_dir=books_dir, open_browser=open_browser)
+    except LaunchError as exc:
+        _die(f"✗ {exc}")
 
 
 @app.command()

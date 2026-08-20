@@ -25,10 +25,9 @@ import threading
 from pathlib import Path
 
 import pytest
-import typer
 
 from novel_harness.api import app as app_mod
-from novel_harness.cli import _bind
+from novel_harness.api.launch import LaunchError, _bind
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PKG_ROOT = Path(app_mod.__file__).resolve().parents[1]  # …/novel_harness
@@ -124,10 +123,10 @@ def test_bind_falls_back_when_the_port_is_taken() -> None:
 def test_bind_dies_loudly_on_an_unusable_host() -> None:
     """绑不上就得响亮地死，别退化成一个「起来了但连不上」的服务。
 
-    抛的是 `typer.Exit` 而不是 `SystemExit`——`_die` 走的是 typer 的退出通道，
-    由最外层转成退出码 1（`demo.sh` 是 `set -e` 的，那个码就是心跳的布尔值）。
+    现在 `_bind` 是 `api/launch.py` 的库函数（CLI 薄壳负责把 `LaunchError` 转成退出码 1，
+    `demo.sh` 是 `set -e` 的，那个码就是心跳的布尔值）。
     """
-    with pytest.raises(typer.Exit):
+    with pytest.raises(LaunchError):
         _bind("203.0.113.1", 0)  # TEST-NET-3，本机不可能有这个地址
 
 
