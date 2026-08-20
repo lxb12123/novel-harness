@@ -123,8 +123,9 @@ def test_bind_falls_back_when_the_port_is_taken() -> None:
 def test_bind_dies_loudly_on_an_unusable_host() -> None:
     """绑不上就得响亮地死，别退化成一个「起来了但连不上」的服务。
 
-    现在 `_bind` 是 `api/launch.py` 的库函数（CLI 薄壳负责把 `LaunchError` 转成退出码 1，
-    `demo.sh` 是 `set -e` 的，那个码就是心跳的布尔值）。
+    现在 `_bind` 是 `api/launch.py` 的库函数，而 **`LaunchError` 没有人接**——它原样冒到
+    调用方（今天是 `start.command` 里那句 `python -c`，将来是桌面壳），于是进程拿到非零
+    退出码。**这是有意的**：一个绑不上端口却安静返回的启动器，作者只会看到浏览器打不开。
     """
     with pytest.raises(LaunchError):
         _bind("203.0.113.1", 0)  # TEST-NET-3，本机不可能有这个地址
