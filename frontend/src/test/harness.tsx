@@ -55,16 +55,12 @@ export const turnStream = (receipt: unknown, events = fixtures.chatTurnEvents): 
   ...sseFrames([{ event: "receipt", data: receipt }]),
 ];
 
-// ⚠️ **纯手写 stub（一个字节都不来自真 dump），全仓仅此两条**：后台整理那两条端点由后端另一条线落地中，
-// `api.json` 里还没有它们（那份 fixture 由 `tests/test_frontend_contract.py` 从真 app
-// dump，手写它正是这条缝原本的病）。**后端落地后把这两条换成真 fixture。**
-const AUTOPILOT_ACK = { chapter: 1, summary: "queued", extraction: "queued" };
-const AUTOPILOT_IDLE = {
-  chapter: 1,
-  summary_ready: false,
-  extraction_ready: false,
-  running: false,
-};
+// 后台整理那两条端点（换章时 `POST …/autopilot` 的回执 + `GET …/autopilot` 状态）
+// **从真 dump 来**：`tests/test_frontend_contract.py` 会 dump `autopilotDispatch`
+// （第 2 章的 `summary:"retracted"`——正好是数量最多那一档）/ `autopilotStatus`，
+// 不再手写（手写 = 两份手写的东西互相验证，正是这条缝原本的病）。
+const AUTOPILOT_ACK = fixtures.autopilotDispatch;
+const AUTOPILOT_IDLE = fixtures.autopilotStatus;
 
 // 反查那一份**多加一章**：真 dump 只有一章（第 2 章那段刚被撤回，它冻的正是
 // 「撤回过的章不在名单里」——这一层最贵的断言）。而「点开看还有哪几章」那条分支

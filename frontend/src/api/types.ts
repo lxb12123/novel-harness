@@ -135,8 +135,24 @@ export interface NodeSummaryMentions {
   chapters: ChapterSummaryMention[];
 }
 
-/** 后台整理某一章时，单件活的去向：排上了 / 不用做（已经有了）/ 那一章还没正文。 */
-export type AutopilotTask = "queued" | "skipped" | "no_text";
+/** `POST …/autopilot` 回执里那条「为什么没发生」（后端 `AutopilotError`）。 */
+export interface AutopilotError {
+  stage: "model" | "manuscript" | "summary" | "extraction";
+  code: string;
+  message: string;
+}
+
+/** 后台整理某一章时，单件活的去向（后端 `Dispatch` 的 **7 个值**，一个都不能省：
+ *  `running/failed/retracted/unconfigured` 是真实出现过的回执，类型少写一个，
+ *  将来做分支时要么 TS 报错、要么悄悄写错分支——这正是这条缝原本的病）。 */
+export type AutopilotTask =
+  | "queued" // 派了：后台会真的跑（可能命中幂等而不付费，那由引擎裁）
+  | "skipped" // 没派，因为已经有了
+  | "no_text" // 没派，因为这一章没有当前正文快照
+  | "running" // 没派，因为上一次派的还在跑
+  | "failed" // 没派，因为上一次跑失败了（自动链路不自动重试）
+  | "retracted" // 没派，因为作者亲手撤回过这一章的总结（迁移 013）
+  | "unconfigured"; // 没派，因为模型还没配好
 
 /** 「把这一章交给后台整理」的回执。**作者看不到它**——这条路径存在的全部意义
  *  就是他不必知道后台在干活（他只会在下次按「起草」时发现资料已经齐了）。 */
@@ -144,15 +160,32 @@ export interface AutopilotAck {
   chapter: number;
   summary: AutopilotTask;
   extraction: AutopilotTask;
+  /** 抽取那条 run 的 id。给「追查失败详情」一个精确的句柄，回执里可能没有。 */
+  extraction_run_id: string | null;
+  errors: AutopilotError[];
 }
 
+/** 某一章的后台整理做到哪了（后端 `Readiness` 的 **7 个值**）。 */
+export type AutopilotStatusState =
+  | "ready"
+  | "missing" // 有正文、能跑、但还没有结果（该催/该等的那一种零）
+  | "retracted" // 生成过、作者亲手撤回了（下一步动作和 missing 相反）
+  | "no_text" // 这一章还没写
+  | "running"
+  | "failed"
+  | "unconfigured";
+
 /** 某一章的后台整理进行到哪了。起草前用它决定「等它」还是「自己当场跑一遍」——
- *  两条都跑就是同一次模型调用付两遍钱。 */
+ *  两条都跑就是同一次模型调用付两遍钱。`summary_state` / `extraction_state` 说清
+ *  「还没生成」和「生成失败了，因为 X」的区别（§10 约束 8：什么都不发生也要说得出口）。 */
 export interface AutopilotStatus {
   chapter: number;
   summary_ready: boolean;
   extraction_ready: boolean;
   running: boolean;
+  summary_state: AutopilotStatusState;
+  extraction_state: AutopilotStatusState;
+  errors: AutopilotError[];
 }
 
 export interface DraftResult {

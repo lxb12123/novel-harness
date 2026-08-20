@@ -355,7 +355,7 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
 > 守卫钉住的是**能在运行时数出来**的那些（67 条路由 / 66 条 /api / 1 条 501 stub /
-> 17 个错误映射 / 17 个子命令 / 26 张表 / 74 个端点 / `ALL_CHECKS` 2），
+> 17 个错误映射 / 17 个子命令 / 28 张表 / 77 个端点 / `ALL_CHECKS` 2），
 > 改错必红、**删掉也必红**（不静默 skip）。
 > （这一行 2026-08-10 之前写的是「路由 42 / fixture 端点 34」那种词序，
 > **而守卫的正则认的是「N 条路由」「N 个端点」**——于是它躺在被守卫盯着的那一节里、
@@ -376,7 +376,8 @@ db.py  ids.py  decisions.py  project.py
 migrations/{001_init,002_m4_events,003_proposal_audit_recovery,004_chapter_summary,005_fact_edit,
             006_chat_session,007_draft_candidate,008_cache_usage,
             009_call_chapter,010_candidate_stopped,011_rule_revocation,
-            012_chat_notice,013_summary_edit,014_summary_mentions}.sql（26 张表）
+            012_chat_notice,013_summary_edit,014_summary_mentions,
+            024_calibration}.sql（28 张表；017–023 属并行保存闭环任务）
                                                 ← 013 也是 ALTER 不建表：`chapter_summary`
                                                   多两列（`source` / `status`），照 005 的先例。
                                                   **作者改一条滚动总结时不许有一行凭空消失**：
@@ -460,6 +461,13 @@ checks/{base,future_leak,dead_speaks}.py
                                                   现在两条规则各有一次真开火，钉在
                                                   `tests/test_rules_fire.py`（全程走 HTTP）
 text/{anchor,chapterize,mentions}.py            ← (para_index,quote,k) 唯一定义 / 切章 / 称呼匹配
+calibration/{models,visibility,render,freshness,store,
+              calibrate,seal,handoff,repair}.py
+                                                  ← **模式二写前校准**（2026-08-17，ADR 0033）：
+                                                  预计人物只做检索、安全 cast 仍由后端按章即时重算、
+                                                  Writer 只收类型化 SceneBrief（不可变 calibration_id
+                                                  引用）。非 Canon 产物存迁移 024 两张表；RETCON
+                                                  handoff 只写 producer outbox，通知任务消费它。
 summary_index.py                                ← **每一段章节总结 = 一个可反查的记忆点**（2026-08-13）。
                                                   作者的原话：「迅速找到需要的内容或相关章节的总结，
                                                   然后引用、对比、调研」+「**我不想用 RAG**」。
@@ -635,7 +643,7 @@ frontend/src/                                   ← React 工作台：62 个非�
                                                   翻到第 5 章面板自己跳进去）。
                                                   在场跟着那一章走（`_effective_cast` 数的是**路径上那一章**
                                                   的正文），所以 `CastLine` 那一行也跟着说「第 N 章提到：」）
-frontend/src/__fixtures__/api.json              ← 从真 app dump 的 74 个端点出参（契约测试两头共用）
+frontend/src/__fixtures__/api.json              ← 从真 app dump 的 77 个端点出参（契约测试两头共用）
                                                   其中 `extractionFailed` 是**一次没跑成的整理**
                                                   （2026-08-13 补）：在它之前这份夹具里三条 run
                                                   全是成功的，于是「失败了屏幕上说什么」这条路径

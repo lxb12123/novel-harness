@@ -431,32 +431,81 @@ def test_frontend_fixture_matches_the_real_api(
     import novel_harness.api.chat as chat_mod
     from novel_harness.draft.provider import ToolCall
 
+    scripted_calls = {"n": 0}
+
+    def _tool_results(messages: Any) -> list[dict[str, Any]]:
+        return [
+            json.loads(m["content"])
+            for m in messages
+            if m.get("role") == "tool" and str(m.get("content", "")).strip()
+        ]
+
     def scripted_agent(messages: Any, *, tools: Any, cancel: Any) -> Any:
-        # 第一步要两个工具（真的会派发、真的会绑章号），第二步说话收手。
-        # **第二个是起草**：ADR 0022 之后它不落盘，回执上多一份候选——前端那一栏
-        # （「写了两稿，挑一个」）照的就是这份 fixture，而**不落盘正是它要画的常态**。
-        if any(m.get("role") == "tool" for m in messages):
+        # 校准 → 封存 → （起草 + 查约束）→ 说话收手。起草不落盘，回执上多一份候选
+        # ——前端那一栏（「写了两稿，挑一个」）照的就是这份 fixture。
+        scripted_calls["n"] += 1
+        n = scripted_calls["n"]
+        if n == 1:
             return CompletionResult(
-                text="第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。",
+                text="",
                 model="deepseek-v4-flash",
-                finish_reason="stop",
-                prompt_tokens=1_200,
-                completion_tokens=64,
-            )
-        return CompletionResult(
-            text="",
-            model="deepseek-v4-flash",
-            finish_reason="tool_calls",
-            tool_calls=(
-                ToolCall(id="c1", name="scene_constraints", arguments='{"chapter": 2}'),
-                ToolCall(
-                    id="c2",
-                    name="draft_chapter",
-                    arguments=json.dumps(
-                        {"chapter": 2, "goal": "两人在城主府对峙"}, ensure_ascii=False
+                finish_reason="tool_calls",
+                tool_calls=(
+                    ToolCall(
+                        id="cal0",
+                        name="calibrate_scene",
+                        arguments='{"chapter": 2}',
                     ),
                 ),
-            ),
+            )
+        if n == 2:
+            results = _tool_results(messages)
+            inspection_id = [r["id"] for r in results if "id" in r][0]
+            return CompletionResult(
+                text="",
+                model="deepseek-v4-flash",
+                finish_reason="tool_calls",
+                tool_calls=(
+                    ToolCall(
+                        id="seal0",
+                        name="seal_scene_brief",
+                        arguments=json.dumps({"inspection_id": inspection_id}),
+                    ),
+                ),
+            )
+        if n == 3:
+            results = _tool_results(messages)
+            chapter, calibration_id = [
+                (r["chapter"], r["calibration_id"])
+                for r in results
+                if "calibration_id" in r
+            ][0]
+            return CompletionResult(
+                text="",
+                model="deepseek-v4-flash",
+                finish_reason="tool_calls",
+                tool_calls=(
+                    ToolCall(
+                        id="c1",
+                        name="scene_constraints",
+                        arguments='{"chapter": 2}',
+                    ),
+                    ToolCall(
+                        id="c2",
+                        name="draft_chapter",
+                        arguments=json.dumps(
+                            {"chapter": chapter, "calibration_id": calibration_id},
+                            ensure_ascii=False,
+                        ),
+                    ),
+                ),
+            )
+        return CompletionResult(
+            text="第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。",
+            model="deepseek-v4-flash",
+            finish_reason="stop",
+            prompt_tokens=1_200,
+            completion_tokens=64,
         )
 
     # 起草那一次真的模型调用也换成桩（同上面那一轮总结）：约束装配、候选表、
@@ -508,6 +557,7 @@ def test_frontend_fixture_matches_the_real_api(
     #
     # **另开一段对话**：跑在上面那段上会把 `chatDetail` / `drafts` / `chats` 三份
     # 已经抓好的夹具全推着走，而那三份是前端好几块屏幕照着写的。
+    scripted_calls["n"] = 0  # 第一段对话已经消费了四步，长连接那一段重新从校准开始。
     streamed_chat = client.post(f"{base}/chats", json={"title": "长连接那一轮"})
     assert streamed_chat.status_code == 201, streamed_chat.text
     events = client.post(
@@ -765,6 +815,27 @@ def test_frontend_fixture_matches_the_real_api(
     )
     assert already.status_code == 409, already.text
     dump["errorFactAlreadyExists"] = norm.walk(already.json())
+
+    # ── 后台整理（autopilot）────────────────────────────────────────────────
+    #
+    # 前端 `AutopilotAck` / `AutopilotStatus` 是**手写类型**（`types.ts`），而后端
+    # `Dispatch` / `Readiness` 是 **7 个值**——之前这份 dump 里一个 autopilot 端点都没有，
+    # 于是「只写 3 个值 (`queued|skipped|no_text`)」的手写类型在后端多吐值时一条守卫都拦不住。
+    # 把它冻进 fixture：后端出参一变 pytest 红，前端 `AutopilotTask` 少写一个值就是**撒谎**。
+    #
+    # 第 1 章：有正文、总结已生成 → GET 说得出「ready」（那一章也成功抽取过）。
+    grab("autopilotStatus", client.get(f"{base}/chapters/1/autopilot"))
+    # 第 2 章：总结刚被作者撤回（上面的 `summaryRetracted`）→ GET 那一档是 `retracted`，
+    # 不是 `missing`（对前端而言下一步动作相反）。**GET 不派活**，放哪儿都安全。
+    grab("autopilotStatusRetracted", client.get(f"{base}/chapters/2/autopilot"))
+    # POST 回执：换章时对**刚离开**的那一章派活。落在第 2 章上——总结已撤回 → 回执里
+    # `summary: "retracted"`，正好冻住「3 值类型表达不了」的那一档。`sync_chapter` 读盘、
+    # 抽取 enqueue 都走真代码（模型调用被上面的 `deps.complete` 桩接住，不上网）。
+    # **放在最后**：它会往 `extraction_run` 里加一行，前面每一个 grab 都不该看见它。
+    # 202 不是 200，所以不走 `grab`。
+    autopilot_post = client.post(f"{base}/chapters/2/autopilot")
+    assert autopilot_post.status_code == 202, autopilot_post.text
+    dump["autopilotDispatch"] = norm.walk(autopilot_post.json())
 
     frozen = json.dumps(dump, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
