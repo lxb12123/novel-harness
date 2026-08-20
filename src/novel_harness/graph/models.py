@@ -14,7 +14,7 @@ Protocol 是「自我安慰」——唯一实现 = 接口静默泄漏。那条�
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Final
+from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
@@ -945,6 +945,8 @@ class AliasSpec(BaseModel):
     surface: str = Field(min_length=1)
     kind: AliasKind = AliasKind.ALIAS
     usable_for_rules: bool = True
+    source: Literal["extractor", "author"] = "author"
+    """022 / Task 11：谁写的这条 alias（机器自动 / 作者）。canonical 是 node 本名。"""
 
     @model_validator(mode="after")
     def _canonical_belongs_to_upsert_node(self) -> AliasSpec:
@@ -984,6 +986,10 @@ class StoredAlias(BaseModel):
     surface: str
     kind: AliasKind
     usable_for_rules: bool
+    source: Literal["extractor", "author"] = "author"
+    status: Literal["ACTIVE", "RETRACTED"] = "ACTIVE"
+    derived_from_alias_id: str | None = None
+    """022 / Task 11：author 行指回它改的那条机器 alias。"""
 
 
 class ChapterSpec(BaseModel):
@@ -1050,12 +1056,108 @@ class StoredChapter(BaseModel):
     snapshot_id: str
     """**当前**快照，即 `text_sha256` 对得上的那一条。"""
 
+    snapshot_generation: int = Field(ge=1)
+    """这一章当前正文的**单调 generation**（017 迁移）。
+
+    每次当前 `text_sha256` 真正切换（包括从 S2 还原到历史 S1）都加一；相同 hash
+    重存不加。它是保存后所有自动任务判断「结果是否还新」的钥匙之一（ABA 防护）。
+    """
+
     created: bool
     """True = 这一章的节点和 chapter 行是这次建的。"""
 
     snapshot_created: bool
     """True = 这次新落了一条快照（正文与上次不同）。False = 同内容，按
     `UNIQUE(chapter_id, text_sha256)` 复用了旧的——快照是证据的锚，不是版本历史。"""
+
+
+class ChapterCommitToken(BaseModel):
+    """保存后所有自动任务的**唯一正文输入**（ADR 0029 / §4.1）。
+
+    任务不得在运行中重新读取「当前正文」。token 同时带不可变
+    `source_snapshot_id` 和单调 `source_generation`——前者钉住正文是哪一版，
+    后者钉住它是第几代（S1→S2→S1 的第三轮 S1 与第一轮 S1 是不同 generation，
+    ABA 在这里断掉）。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    project_id: str
+    chapter_id: str
+    chapter_number: int = Field(ge=1)
+    source_snapshot_id: str
+    source_generation: int = Field(ge=1)
+    text_sha256: str
+    text: str
+    changed: bool
+
+
+class RetirementReport(BaseModel):
+    """一次「旧快照机器事实退休」的精确账（`commit_chapter_snapshot` 的中间产物）。
+
+    不能只给 rowcount：run outbox 要记录**精确 ID**（`chapter_refresh_run` 那三列
+    JSON），canon bump 要问「有没有退到 Writer 可见的 CANON 行」——两个问题
+    用行数都答不了。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    project_id: str
+    chapter_id: str
+    current_snapshot_id: str
+    retired_edge_ids: tuple[str, ...] = ()
+    retired_event_ids: tuple[str, ...] = ()
+    retired_knower_event_ids: tuple[str, ...] = ()
+    touched_canon_edges: int = Field(default=0, ge=0)
+    touched_canon_events: int = Field(default=0, ge=0)
+
+    @property
+    def effective_canon_changed(self) -> bool:
+        """退休的行里有没有 Writer 可见的 CANON（PROVISIONAL 退休不 bump）。"""
+        return self.touched_canon_edges > 0 or self.touched_canon_events > 0
+
+
+AUTO_CANON_CORRECTABLE_EDGE_TYPES: Final[frozenset[EdgeType]] = frozenset(
+    {EdgeType.LOCATED_AT, EdgeType.HAS_STATE, EdgeType.RELATED_TO}
+)
+"""可自动进入 Canon 的三类边（ADR 0032 / §4.6）。
+
+它同时是 auto-Canon allowlist 的**上界**：抽取模块不得另抄一份更宽的集合。
+无纠错入口不得 auto-Canon——这三类之外的新边类型必须先补纠错路由再开放。
+"""
+
+
+class CanonEdgeView(BaseModel):
+    """一条可纠错 Canon 边的读取视图（§6.6 GET 出参）。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    edge_id: str
+    edge_type: EdgeType
+    src: str
+    dst: str
+    props: EdgeProps
+    valid_from_chapter: int
+    source: EdgeSource
+    evidence_id: str | None
+    evidence_status: EvidenceStatus
+    author_owned: bool
+    """active override 的 replacement 指向它 = 当前解释由作者接管。"""
+    slot_key: str
+    canon_version: int
+
+
+class CanonEdgeEditResult(BaseModel):
+    """修改/撤回一条 Canon 边之后给客户端的回执（§6.6）。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    edge_id: str
+    """当前生效的边 id——identity 改变后是 replacement（客户端要换选择状态）。"""
+    replacement_edge_id: str | None
+    canon_version: int
+    retracted: bool
+    view: CanonEdgeView
 
 
 class ChapterText(BaseModel):
@@ -1103,10 +1205,20 @@ class SnapshotUsage(BaseModel):
     """引这条快照当审计锚的证据数。"""
     extraction_runs: int = Field(ge=0)
     proposal_sets: int = Field(ge=0)
+    extraction_analyses: int = Field(ge=0)
+    """规范 analysis JSON（020 / Task 9）引用它的条数。"""
+    extraction_applications: int = Field(ge=0)
+    """机器事实归属的 generation application（020 / Task 9）引用它的条数。"""
 
     @property
     def total(self) -> int:
-        return self.evidence + self.extraction_runs + self.proposal_sets
+        return (
+            self.evidence
+            + self.extraction_runs
+            + self.proposal_sets
+            + self.extraction_analyses
+            + self.extraction_applications
+        )
 
     def is_free(self) -> bool:
         """没有任何东西引着 = 删了不会让谁失去出处。"""

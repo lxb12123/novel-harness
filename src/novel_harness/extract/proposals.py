@@ -15,6 +15,7 @@ from ..events import (
     EventView,
     ProposalAlreadyResolved,
     ProposalNotFound,
+    ProposalObsolete,
     ProposalRecord,
     ProposalResolutionMark,
     ProposalStore,
@@ -277,6 +278,7 @@ def _create_characters(
 
 
 def _clone_events(
+    conn: Connection,
     event_store: EventStore,
     event_ids: Sequence[str],
     *,
@@ -285,13 +287,28 @@ def _clone_events(
     out: list[EventView] = []
     try:
         for event_id in event_ids:
-            out.append(
-                event_store.clone_to_scope(
-                    event_id,
-                    InformationScope.CANON,
-                    summary=edited_summary,
-                )
+            cloned = event_store.clone_to_scope(
+                event_id,
+                InformationScope.CANON,
+                summary=edited_summary,
             )
+            # Task 7：「改完收下」的摘要走同一个事件摘要版本服务——
+            # 追加 AUTHOR 版本并切 head；proposal 接受事务自己 bump canon，
+            # 这里不重复 bump。
+            if edited_summary is not None:
+                from ..events.summaries import edit_event_summary
+
+                edit_event_summary(
+                    conn,
+                    project_id=cloned.event.project_id,
+                    event_id=cloned.event.id,
+                    text=edited_summary,
+                    expected_version_id=None,
+                    scope="CANON",
+                    bump_canon=False,
+                    store=event_store,
+                )
+            out.append(cloned)
     except EventStoreError as exc:
         raise ProposalShapeError(str(exc)) from exc
     return tuple(out)
@@ -379,6 +396,10 @@ def review_proposal(
             raise ProposalAlreadyResolved(
                 f"proposal {proposal_id} 已是 {proposal.status.value}，不能再次处理"
             )
+        if proposal.currentness == "OBSOLETE":
+            raise ProposalObsolete(
+                f"proposal {proposal_id} 锚的正文已经不是当前版本，先看看新正文"
+            )
         current = project.require_canon_version(conn, proposal.project_id)
         if review.expected_canon_version != current:
             raise project.StaleBaseVersion(
@@ -408,6 +429,7 @@ def review_proposal(
                 events,
                 proposal.project_id,
                 _clone_events(
+                    conn,
                     events,
                     proposal.event_ids,
                     edited_summary=review.edited_summary,

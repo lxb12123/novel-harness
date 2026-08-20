@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useChapters, useProjects } from "./api/hooks";
-import { useOpenChapter } from "./autopilot";
+import { useOpenChapter } from "./chapterNavigation";
 import { chapterOnOpen } from "./chapterCursor";
 import { useReconcileOnFocus } from "./reconcile";
 import { useHashRoute } from "./route";
@@ -8,6 +8,7 @@ import { useCoords } from "./store";
 import { DraftCompare } from "./components/DraftCompare";
 import { TopBar } from "./components/TopBar";
 import { ActivityLog } from "./components/ActivityLog";
+import { CanonEdgeEditor } from "./components/CanonEdgeEditor";
 import { LeftRail } from "./components/LeftRail";
 import { CenterEditor } from "./components/CenterEditor";
 import { RightPanel } from "./components/RightPanel";
@@ -103,6 +104,7 @@ function Workbench() {
         chat={chatOpen ? <ChatPanel /> : undefined}
         right={<RightPanel />}
       />
+      <CanonEdgeEditor />
       <BottomBar />
     </div>
   );

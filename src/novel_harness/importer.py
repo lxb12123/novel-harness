@@ -30,9 +30,13 @@ INSERT/UPDATE/DELETE）。
 
 from __future__ import annotations
 
+import fcntl
+import os
 import re
+import tempfile
+import time
 from pathlib import Path
-from typing import Final
+from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -212,6 +216,23 @@ class ChapterChanged(Exception):
         self.actual: Final = actual
 
 
+class ChapterLockTimeout(Exception):
+    """章级锁在 `lock_timeout` 内没拿到（另一个保存 / reconcile 还在跑这一章）。
+
+    HTTP 映射成 423（Locked）：**不排队、不覆盖**。作者看一眼稍后重试即可；
+    让他靠重复点击覆盖冲突正是这条锁要防的事。
+    """
+
+
+class PostReplaceDurabilityError(OSError):
+    """`os.replace()` 已经成功、但目录 `fsync()` 失败。
+
+    **目标文件的字节已经变了**——调用方必须返回 `202 + saved_to_disk=true +
+    indexed=false`（正文已写盘，但持久性/索引确认失败），不能把它归入写盘前失败，
+    也不能谎报 409「正文未保存」。恢复靠后续 reconcile。
+    """
+
+
 class SyncReport(BaseModel):
     """`sync` 干了什么。"""
 
@@ -228,6 +249,41 @@ class SyncReport(BaseModel):
 
     ignored_files: list[str] = Field(default_factory=list)
     """`chapters/` 下不叫 `NNNN.md` 的文件。**不是错误**：那是作者的工作区。"""
+
+
+class ChapterSaveReceipt(BaseModel):
+    """保存一章的**回执**——不再把整本 `SyncReport` 塞回给保存请求。
+
+    三个布尔讲三件不同的事（`saved_to_disk` / `indexed` / `changed` 不许互相推导）：
+
+    - `saved_to_disk`：目标文件已经是这份正文（`os.replace` 成功）。False 只出现在
+      写盘前被拒（结构预检 / expected hash 冲突 / 锁超时），那几种走异常，不走回执。
+    - `indexed`：`chapter_snapshot` / `chapter` 已经承认这份正文。False 的两档
+      （`durability_failed` / `sync_failed`）都必须是 202，且**不是让前端重发 PUT 的
+      暗号**——重复覆盖修不了数据库，恢复必须走后续 reconcile。
+    - `changed`：保存前后的当前 `text_sha256` 是否真的变了。相同 hash 重存不加
+      generation、不新建快照；从 S2 还原到历史 S1 也算变化（ABA 防护）。
+
+    `processing` 的 `queued/reused/attention_required` 三档属于刷新 coverage
+    （Task 5/16）；本阶段保存成功统一报 `reused`，只承诺「没有需要排队的分支」。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    saved_to_disk: bool
+    indexed: bool
+    changed: bool
+    chapter_number: int = Field(ge=1)
+    snapshot_id: str | None
+    snapshot_generation: int | None = Field(default=None, ge=1)
+    text_sha256: str
+    processing: Literal[
+        "reused",
+        "queued",
+        "attention_required",
+        "durability_failed",
+        "sync_failed",
+    ]
 
 
 class ImportReport(BaseModel):
@@ -384,7 +440,8 @@ def sync_chapter(
     file = root / chapter_path(chapter)
     if not file.is_file():
         return None
-    return _read_one_chapter(store, project_id, chapter, file)
+    with chapter_lock(store, project_id, root, chapter):
+        return _read_one_chapter(store, project_id, chapter, file)
 
 
 class ReconcileReport(BaseModel):
@@ -456,7 +513,8 @@ def reconcile(
             continue
         reread.append(number)
         try:
-            stored = _read_one_chapter(store, project_id, number, file)
+            with chapter_lock(store, project_id, root, number):
+                stored = _read_one_chapter(store, project_id, number, file)
         except SyncRefused as exc:
             refused.append((number, str(exc)))
             continue
@@ -504,7 +562,8 @@ def sync(store: GraphStore, project_id: str, root: Path) -> SyncReport:
     # 按 number 升序，不按文件名字典序：两者今天同解（补零），1000 章之后不同解，
     # 而落章顺序决定了 UNIQUE(project_id, number) 撞车时先炸的是哪一章。
     for number, file in sorted(numbered, key=lambda pair: pair[0]):
-        stored = _read_one_chapter(store, project_id, number, file)
+        with chapter_lock(store, project_id, root, number):
+            stored = _read_one_chapter(store, project_id, number, file)
         if stored.created:
             added.append(stored)
         elif stored.snapshot_created:
@@ -549,6 +608,109 @@ def single_chapter(text: str) -> Chapter | None:
     return book.chapters[0]
 
 
+def validate_chapter_markdown(markdown: str) -> Chapter:
+    """保存前的**零副作用结构预检**：`markdown` 必须恰好是一章且章标前没有正文。
+
+    失败时抛 `SyncRefused`，**磁盘和数据库都不修改**（这是它和 `sync` 事后报错的
+    本质区别：`sync` 读的是已经写进盘的文件，这一道读的是还没写盘的字符串）。
+    """
+    chapter = single_chapter(markdown)
+    if chapter is None:
+        raise SyncRefused(
+            "一个章节文件必须恰好是一章，且章标前不能有正文（写盘前预检拒绝，"
+            "磁盘和数据库都没有改）。",
+            path="",
+        )
+    return chapter
+
+
+def atomic_replace_text(path: Path, text: str) -> None:
+    """原子替换一个章节文件：临时文件 fsync → `os.replace` → 目录 fsync。
+
+    - 临时文件写在**目标文件同目录**：`os.replace` 才保证同文件系统原子换名。
+    - 目录 fsync 把「换名」本身落盘（不然断电后可能回到旧文件名）。
+    - `os.replace` 成功后目录 fsync 再失败 → `PostReplaceDurabilityError`
+      （**目标字节已经变了**，调用方按 202 处理，不能按写盘前失败处理）。
+    - 异常时只清理**这一个**精确临时文件，绝不递归删除目录。
+    """
+    fd, raw_temp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
+    temp = Path(raw_temp)
+    replace_done = False
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="") as handle:
+            handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temp, path)
+        replace_done = True
+        directory_fd = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+    except BaseException as exc:
+        temp.unlink(missing_ok=True)
+        if replace_done:
+            raise PostReplaceDurabilityError(path) from exc
+        raise
+
+
+LOCK_DIR: Final = ".novel-harness/locks"
+
+
+def _chapter_lock_key(store: GraphStore, project_id: str, number: int) -> str:
+    """一章的稳定锁键。优先用库里的 `chapter.id`（计划写的是 `<chapter_id>.lock`）；
+    那章还没进过库时退回 `ch{number}`——save 和 reconcile 用同一个函数，两边永远同解。
+    """
+    chapter_id = store.current_chapter_id(project_id, number)
+    return chapter_id if chapter_id is not None else f"ch{number}"
+
+
+class _ChapterLock:
+    """章级 advisory lock（`fcntl.flock`，跨进程生效）。
+
+    锁**文件**而不是 Markdown 本身：`os.replace` 会换 inode，锁在正文文件上等于
+    没锁。锁路径固定在 `.novel-harness/locks/`，和库、章节目录一样住在书文件夹里。
+    """
+
+    def __init__(self, root: Path, key: str, *, timeout: float) -> None:
+        lock_dir = root / LOCK_DIR
+        lock_dir.mkdir(parents=True, exist_ok=True)
+        self._path = lock_dir / f"{key}.lock"
+        self._timeout = timeout
+        self._handle = None
+
+    def __enter__(self) -> _ChapterLock:
+        handle = self._path.open("w")
+        deadline = time.monotonic() + self._timeout
+        while True:
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                self._handle = handle
+                return self
+            except BlockingIOError:
+                if time.monotonic() >= deadline:
+                    handle.close()
+                    raise ChapterLockTimeout(
+                        f"第 {self._path.stem} 章正被另一个保存/reconcile 处理，"
+                        "锁在超时内没拿到，一个字都没写。稍后重试。"
+                    )
+                time.sleep(0.01)
+
+    def __exit__(self, *exc: object) -> None:
+        if self._handle is not None:
+            fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+            self._handle.close()
+            self._handle = None
+
+
+def chapter_lock(
+    store: GraphStore, project_id: str, root: Path, number: int, *, timeout: float = 2.0
+) -> _ChapterLock:
+    """save 与 reconcile 共用的同一条锁入口（锁覆盖磁盘/DB 整段，有界超时）。"""
+    return _ChapterLock(root, _chapter_lock_key(store, project_id, number), timeout=timeout)
+
+
 def text_digest(text: str) -> str:
     """一段章节正文的 `text_sha256`。**和 `chapter_snapshot` 那一列同解。**
 
@@ -567,45 +729,147 @@ def save_chapter(
     markdown: str,
     *,
     expected_sha256: str | None = None,
-) -> SyncReport:
-    """把一章正文写进磁盘，再 `sync` 落快照。**磁盘先、DB 跟**（ADR 0007）。
+    lock_timeout: float = 2.0,
+) -> ChapterSaveReceipt:
+    """把一章正文写进磁盘，再落快照。**磁盘先、DB 跟**（ADR 0007）。
 
     保存这条路只有这一个实现：作者按 Ctrl-S 走它（`PUT …/chapters/{n}/text`），
-    agent 起草完落盘也走它（ADR 0021）。**一个功能不留两个入口**，也不给
-    「哪份正文是真的」第二个答案。
+    agent 起草完落盘也走它（ADR 0021）。**一个功能不留两个入口**。
+
+    临界区（Task 2）：写盘前结构预检 → 章级锁 → 读磁盘/DB hash → 校验 expected →
+    原子替换 → 单章落库 → 提交后复核磁盘。锁覆盖磁盘/DB 整段，与 reconcile 同一条
+    `chapter_lock`，两个协作式 PUT 不能交错出「磁盘 S3 / DB S2」。
 
     Args:
-        expected_sha256: 调用方**依据的那一份**正文的哈希。给了就先比对磁盘当前值，
-            不一致 → `ChapterChanged`，**一个字节都不写**。
+        expected_sha256: 调用方**依据的那一份**正文的哈希（来自 GET / 成功索引回执）。
+            先在锁内与磁盘/DB 当前值比对，不一致 → `ChapterChanged`，**一个字节都不写**。
+            保存请求已经带完整正文，直接算精确 hash，不再走 stat。
+        lock_timeout: 拿章级锁的有界超时（秒）。超时 → `ChapterLockTimeout`（423）。
 
-            `None` = 不比对，也就是作者自己按保存那一档：他改的就是他眼前那份，
-            没有第三方能在中间插一脚。**agent 那条路必须给**——它从起草到落盘之间隔着
-            一次几十秒的模型调用，而作者就在旁边打字。
+    Returns:
+        `ChapterSaveReceipt`。写盘前失败走异常；`os.replace` 成功后的两类失败
+        （目录 fsync / DB 提交）返回 202 形态的回执，并立即 reconcile 修复。
 
     Raises:
-        ChapterMissing: 那一章的文件不存在。**这条 404 不许为 agent 放开**（ADR 0021）：
-            新建一章要起章标题，而标题是切章的锚（`chapterize` 认「首个非空行」），
-            起错了整本书的章号会漂；`chapter_snapshot.chapter_id` 也没有落点。
-        ChapterChanged: 磁盘上那份已经比 `expected_sha256` 新。
-        SyncRefused: 写进去的东西切不出恰好一章（正文**已经**落盘，作者要修章标题再存一次）。
+        ChapterMissing: 那一章的文件不存在（404；ADR 0021：agent 不许自己新建章节）。
+        ChapterChanged: 磁盘/DB 上那份已经比 `expected_sha256` 新（409）。
+        SyncRefused: **写盘前**结构预检失败（422；磁盘和数据库都没有改）。
+        ChapterLockTimeout: 锁在 `lock_timeout` 内没拿到（423）。
     """
+    # ① 零副作用结构预检：失败时磁盘和数据库都不修改。
+    chapter_obj = validate_chapter_markdown(markdown)
     file = root / chapter_path(chapter)
     if not file.exists():
         raise ChapterMissing(f"第 {chapter} 章在磁盘上不存在", chapter)
-    if expected_sha256 is not None:
-        # **读了立刻比、比完立刻写**：中间不夹任何一次模型调用或事务。窗口关不死
-        # （没有文件锁，作者的编辑器随时可能在这两行之间落盘），但它从「几十秒」
-        # 缩到「几毫秒」，而剩下那点窗口和作者的两个编辑器互相覆盖是同一种东西。
-        actual = text_digest(file.read_text(encoding="utf-8-sig"))
-        if actual != expected_sha256:
+
+    new_sha = text_digest(markdown)
+
+    def _reconcile_after_write() -> None:
+        """写盘后的补救：把磁盘现状读回库（锁已持有，`_read_one_chapter` 不再加锁）。
+
+        202 的两档都是「磁盘已变、恢复靠 reconcile」；这里同步先补一次，补不上也
+        不吞——下一轮 reconcile 会再试（`disk_mtime_ns=None` 时必然重读）。
+        """
+        try:
+            _read_one_chapter(store, project_id, chapter, file)
+        except SyncRefused:
+            pass
+
+    with chapter_lock(store, project_id, root, chapter, timeout=lock_timeout):
+        # ② 入锁后读磁盘精确 hash，并核对 DB current hash（DB 落后则先 reconcile）。
+        disk_before = file.read_text(encoding="utf-8-sig")
+        disk_hash_before = text_digest(disk_before)
+        db_hash = store.current_chapter_hash(project_id, chapter)
+        if db_hash is not None and db_hash != disk_hash_before:
+            # 外部写者改了磁盘、库还没跟上：先把磁盘版收进库（被覆盖的那一版因此
+            # 进得了版本历史），再拿它当 base 继续。磁盘版切不成一章时收编不了，
+            # 库保持原状，写盘照走——旧版本来就进不了快照。
+            try:
+                _read_one_chapter(store, project_id, chapter, file)
+                db_hash = store.current_chapter_hash(project_id, chapter)
+            except SyncRefused:
+                pass
+        if expected_sha256 is not None and expected_sha256 != (db_hash or disk_hash_before):
             raise ChapterChanged(
-                f"第 {chapter} 章在磁盘上已经变了",
+                f"第 {chapter} 章已经变了",
                 chapter,
                 expected=expected_sha256,
-                actual=actual,
+                actual=db_hash or disk_hash_before,
             )
-    file.write_text(markdown, encoding="utf-8")
-    return sync(store, project_id, root)
+
+        # ③ 原子替换。replace 成功后目录 fsync 失败 → 202 durability_failed。
+        try:
+            atomic_replace_text(file, markdown)
+        except PostReplaceDurabilityError:
+            _reconcile_after_write()
+            return ChapterSaveReceipt(
+                saved_to_disk=True,
+                indexed=False,
+                changed=disk_hash_before != new_sha,
+                chapter_number=chapter,
+                snapshot_id=None,
+                snapshot_generation=None,
+                text_sha256=new_sha,
+                processing="durability_failed",
+            )
+
+        # ④ 单章落库（旧实现是整本 sync；这里只碰这一章，写入面与目的一样窄）。
+        #    图层事务 = CAS + 快照 + 旧机器事实退休 + 至多一次 canon bump。
+        try:
+            stat = file.stat()
+            stored = store.commit_chapter_snapshot(
+                ChapterSpec(
+                    project_id=project_id,
+                    number=chapter,
+                    heading=chapter_obj.raw_heading,
+                    title=chapter_obj.title,
+                    path=chapter_path(chapter),
+                    text=markdown,
+                    disk_mtime_ns=stat.st_mtime_ns,
+                    disk_size=stat.st_size,
+                ),
+                expected_text_sha256=db_hash or disk_hash_before,
+            )
+        except BaseException:
+            # 写盘成功后 DB 提交才失败 → 202 sync_failed，不能谎报 409/200。
+            _reconcile_after_write()
+            return ChapterSaveReceipt(
+                saved_to_disk=True,
+                indexed=False,
+                changed=disk_hash_before != new_sha,
+                chapter_number=chapter,
+                snapshot_id=None,
+                snapshot_generation=None,
+                text_sha256=new_sha,
+                processing="sync_failed",
+            )
+
+        # ⑤ 提交后复核：外部写者若在我们 replace 与 DB 提交之间又改了盘，返回 202，
+        # 立即 reconcile 把磁盘真相收编（Task 2 先补索引；outbox 级联在 Task 16）。
+        after = file.read_text(encoding="utf-8-sig")
+        if text_digest(after) != new_sha:
+            _reconcile_after_write()
+            return ChapterSaveReceipt(
+                saved_to_disk=True,
+                indexed=True,
+                changed=True,
+                chapter_number=chapter,
+                snapshot_id=None,
+                snapshot_generation=None,
+                text_sha256=text_digest(after),
+                processing="sync_failed",
+            )
+
+        return ChapterSaveReceipt(
+            saved_to_disk=True,
+            indexed=True,
+            changed=disk_hash_before != new_sha,
+            chapter_number=chapter,
+            snapshot_id=stored.source_snapshot_id,
+            snapshot_generation=stored.source_generation,
+            text_sha256=new_sha,
+            processing="reused",
+        )
 
 
 def append_chapter(store: GraphStore, project_id: str, root: Path) -> tuple[int, SyncReport]:

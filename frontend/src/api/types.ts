@@ -103,6 +103,31 @@ export interface SummaryWindow {
   missing: number[];
 }
 
+// ── 全书总结状态视图（2026-08-18 文档 §6 / Step 4）──────────────────────────
+//
+// 后端 `GET …/summary-status` 一次给全貌：每一章是配对 / 缺 / 不对齐 / 空，这一轮
+// 自治调度会给它多少权重（§4 反馈），以及那章最近一次总结是不是已经失败（异常）。
+// 全部查库，不调 LLM；GET 只读不写。
+
+/** 逐章三态 + 「不对齐」标注（§6）。`empty` = 这一章还没有正文。 */
+export type BookChapterSummaryState = "empty" | "paired" | "missing" | "stale";
+
+export interface BookChapterStatusRow {
+  chapter_number: number;
+  has_text: boolean;
+  state: BookChapterSummaryState;
+  /** 这一轮调度会给它的权重（§4 公式）。`0` = 这一轮不看它（正在写/未来章/已衰减到 0）。 */
+  weight: number;
+  /** 最近一次总结生成终态失败（异常标记，§5 末行）。 */
+  anomaly: boolean;
+}
+
+export interface BookSummaryStatus {
+  draft_chapter: number;
+  focused_chapter: number | null;
+  chapters: BookChapterStatusRow[];
+}
+
 // ── 总结 = 可反查的记忆点（T6）────────────────────────────────────────────────
 //
 // **不是「找相似」，是「找相关」。** 后端一个语义判断都不做：判据只有「这个称呼在这段
@@ -392,6 +417,74 @@ export interface Edge {
   props: { believed_value?: string | null; value?: string | null };
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// Canon 边纠错（Task 8 / ADR 0032）：自动升上去的地点/状态/关系边的
+// 读取 / 修改 / 撤回 / 改归属。**唯一权威是后端 `canon_edge_view`/`edit_canon_edge`**
+// 的 Pydantic 出参 —— 这条契约和 `tests/test_frontend_contract.py` 钉的 fixture 同源。
+// ══════════════════════════════════════════════════════════════════════════
+
+/** 一条可纠错 Canon 边的读取视图（`GET …/canon/edges/{edge_id}` 出参）。 */
+export interface CanonEdgeView {
+  edge_id: string;
+  edge_type: EdgeType;
+  src: string;
+  dst: string;
+  props: EdgeProps;
+  valid_from_chapter: number;
+  source: string;
+  /** `extractor` = 起源是抽取；`author` = 起源是作者。**当前归属看 `author_owned`。** */
+  evidence_id: string | null;
+  evidence_status: string;
+  /** active override 的 replacement 指向它 = 当前解释由作者接管。 */
+  author_owned: boolean;
+  slot_key: string;
+  canon_version: number;
+}
+
+export interface EdgeProps {
+  dim_key?: string | null;
+  value?: string | null;
+  value_key?: string | null;
+  display?: string | null;
+}
+
+/** 修改/撤回之后给客户端的回执（同 `CanonEdgeEditResult` 出参）。 */
+export interface CanonEdgeEditResult {
+  /** identity 改变后是 replacement——客户端要换选择状态，不能继续 PATCH 旧 ID。 */
+  edge_id: string;
+  replacement_edge_id: string | null;
+  canon_version: number;
+  retracted: boolean;
+  view: CanonEdgeView;
+}
+
+/** 类型化修改的判别联合（§6.6）：PATCH 按 `kind` 分派，不提供通用
+ *  `type/src/dst/props_json` 直通口，**也不收章号**（后端 `extra="forbid"`）。 */
+export type CanonEdgeEditRequest =
+  | {
+      kind: "location";
+      /** 改归属：把整条事实改到另一个 Character（省略 = 保持原主体）。 */
+      character_id?: string | null;
+      /** 改地点：目标 Location（省略 = 保持原地）。 */
+      location_id?: string | null;
+      expected_canon_version: number;
+    }
+  | {
+      kind: "state";
+      subject_id?: string | null;
+      dim_key: string;
+      value: string;
+      value_key?: string | null;
+      expected_canon_version: number;
+    }
+  | {
+      kind: "relation";
+      peer_id?: string | null;
+      /** 关系显示值（存进 EdgeProps 的 `display`）。 */
+      display?: string | null;
+      expected_canon_version: number;
+    };
+
 // subgraph 的节点：present 节点是完整 Node，Secret/未来节点被 _narrow 成 NodeRef。
 // 前端只读 id/label/name，按 NodeRef 用即可。
 export type SubgraphNode = NodeRef & { props?: unknown };
@@ -478,6 +571,18 @@ export interface CheckResult {
   issues: Issue[];
 }
 
+/** 一条确定性命中规则（023 / Task 13）。`template=forbidden_literal` 时
+ *  `config.literal` 是作者写的字——引擎逐段精确匹配，不执行代码。 */
+export interface ValidationRuleView {
+  rule_id: string;
+  title: string;
+  description: string;
+  enabled: boolean;
+  blocks_downstream: boolean;
+  template: "system" | "forbidden_literal";
+  config?: { literal?: string };
+}
+
 /** 作者交代过的一条规矩，**表上的一行**（[ADR 0028](docs/adr/0028-rules-expire-by-situation.md) + 迁移 016）。
  *
  *  ⚠️ **它不是 2026-08-14 撤掉的那个东西。** 那个是对话头上一颗常驻按钮 + 一块能点掉的
@@ -552,6 +657,19 @@ export interface StoredAlias {
   surface: string;
   kind: AliasKind;
   usable_for_rules: boolean;
+  /** Task 11 / 022：谁写的（`extractor` 机器自动 / `author` 作者）。 */
+  source: "extractor" | "author";
+  status: "ACTIVE" | "RETRACTED";
+  /** 作者改了机器别名时指回原机器行的 id；否则 null。 */
+  derived_from_alias_id: string | null;
+}
+
+/** 人物基础信息（Task 11 API / §4.5）：本名 + 一键别名 chips。 */
+export interface CharacterBasicInfo {
+  character: NodeRef;
+  profile: unknown;
+  aliases: StoredAlias[];
+  canon_version: number;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -643,7 +761,12 @@ export interface ProvisionalConfirmation {
   edges: unknown[];
 }
 
-export type ExtractionRunStatus = "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED";
+export type ExtractionRunStatus =
+  | "PENDING"
+  | "RUNNING"
+  | "SUCCEEDED"
+  | "FAILED"
+  | "SUPERSEDED";
 
 export interface ExtractionRun {
   id: string;
@@ -812,12 +935,44 @@ export type ActivityStatus = "succeeded" | "failed" | "running" | "pending";
  *  `summary`（右栏「章节总结」那一格）和 `extraction_retry`（把没跑成的那次整理再跑一遍）
  *  是 2026-08-13 从兜底那一档里搬出来的：它们当初落在那儿**不是因为没有目标**，
  *  是目标后来才长出来、而后端那张表没跟着改。 */
+/** 系统通知（Task 10 / 021）。**坐标和动作全由后端给**：前端按
+ *  `subject_type/subject_id/jump/actions` 导航，禁止从文案反推。 */
+export type SystemNotificationKind =
+  | "summary_mismatch"
+  | "background_failure"
+  | "validation_blocked";
+export type SystemNotificationStatus = "OPEN" | "IGNORED" | "RESOLVED";
+
+/** 锚三元组（ADR 0006，永不 offset）：段号 + 引语 + 第几次。 */
+export interface NotificationAnchor {
+  para_index: number;
+  quote_text: string;
+  occurrence_k: number;
+}
+
+export interface SystemNotification {
+  id: string;
+  project_id: string;
+  kind: SystemNotificationKind;
+  status: SystemNotificationStatus;
+  subject_type: "chapter_summary" | "proposal_event" | "canon_event" | "chapter";
+  subject_id: string;
+  chapter_number: number | null;
+  title: string;
+  summary_sha256: string | null;
+  source_sha256: string | null;
+  jump: NotificationAnchor | null;
+  actions: string[];
+  created_at: string;
+}
+
 export type JumpTarget =
   | "knowledge_cell"
   | "event_cast"
   | "proposal"
   | "summary"
   | "extraction_retry"
+  | "canon_edge"
   | "chapter";
 
 /** 这一条记录改的东西能从哪儿改回去。**坐标和措辞全由后端给**——
@@ -831,6 +986,8 @@ export interface ActivityJump {
   secret_id: string | null;
   event_id: string | null;
   proposal_id: string | null;
+  /** 跳去一条自动升上去的地点/状态/关系边（`canon_edge` 那一档，Task 8）。 */
+  edge_id: string | null;
   /** 今天真能改这个目标的路由。**空数组是一个断言**（「今天没有任何入口能改它」），
    *  不是「后端忘了填」——照它画一个编辑按钮等于把 ADR 0020 的推翻条件关掉。 */
   endpoints: string[];

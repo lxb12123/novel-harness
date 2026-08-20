@@ -74,6 +74,21 @@ const SUMMARY_TRAIL = {
   ],
 };
 
+/** 全书总结状态（Step 4）。纯手写 stub（见路由表那条注释）——四章把四态一眼摆全：
+ *  `paired`（对得上）/ `stale`（不对齐，该覆写）/ `missing`（缺，该补）/ `empty`
+ *  （没正文），第 4 章还是 `anomaly`（生成异常，§6）。第 5 章权重 0 = 这一轮不看。 */
+const SUMMARY_STATUS = {
+  draft_chapter: 4,
+  focused_chapter: 4,
+  chapters: [
+    { chapter_number: 1, has_text: true, state: "paired", weight: 1.0, anomaly: false },
+    { chapter_number: 2, has_text: true, state: "stale", weight: 1.0, anomaly: false },
+    { chapter_number: 3, has_text: true, state: "missing", weight: 1.0, anomaly: false },
+    { chapter_number: 4, has_text: true, state: "missing", weight: 0.0, anomaly: true },
+    { chapter_number: 5, has_text: false, state: "empty", weight: 0.0, anomaly: false },
+  ],
+};
+
 /** 章标之前躺着一整章那一档：**全书章号可能集体错一位**，而界面上看不出任何异常。
  *  真 dump 出来的（`preamble_chars: 1104` 越过后端 1000 的门槛，警告那段字是后端写的）。 */
 export const IMPORT_SUMMARY_ALARM = fixtures.bootstrapPreamble.summary;
@@ -124,6 +139,20 @@ const DEFAULT: Handler[] = [
   { method: "DELETE", match: /\/snapshots\//, body: { deleted: true } },
   { method: "POST", match: /\/nodes$/, body: fixtures.createNode },
   { method: "POST", match: /\/aliases$/, body: fixtures.createAlias },
+  // 当前章焦点（2026-08-18 §3）：免费心跳，只记位置。
+  { method: "POST", match: /\/focus$/, body: { chapter: 1, project_id: "project:ID1" } },
+  // 全书总结状态视图（2026-08-18 文档 §6 / Step 4）。
+  //
+  // ⚠️ 纯手写 stub（同上两条）：`…/summary-status` 是这条线新增的端点，
+  // `api.json` 里还没有它（那份 fixture 由 `tests/test_frontend_contract.py` 从真 app
+  // dump）。形状是确定性查库的结果（不调模型），等它进真 dump 后换成 fixture 键。
+  // 形状：`paired` 一章 + `missing` 一章 + `anomaly` 一章 + `empty` 一章 + 权重反馈。
+  { match: /\/summary-status$/, body: SUMMARY_STATUS },
+  // 人物基础信息（Task 11/15）：profile 读 + 别名增/撤回。
+  { match: /\/characters\/[^/]+\/profile$/, body: fixtures.characterProfile },
+  { method: "POST", match: /\/characters\/[^/]+\/aliases$/, body: fixtures.aliasCreated },
+  { method: "DELETE", match: /\/aliases\/[^/]+$/, body: fixtures.aliasDeleted },
+  { method: "PATCH", match: /\/aliases\/[^/]+$/, body: fixtures.aliasEdited },
   { method: "POST", match: /\/accept$/, body: fixtures.proposalAccept },
   { method: "POST", match: /\/reject$/, body: fixtures.proposalReject },
   // 「改一改再收下」。回执和 accept 同型（`ProposalResolution`），差别在 `status`——
@@ -150,6 +179,20 @@ const DEFAULT: Handler[] = [
   },
   { method: "POST", match: /\/canon\/knowledge$/, body: fixtures.canonKnowledge },
   { method: "POST", match: /\/canon\/events\/.*\/cast$/, body: fixtures.canonEventCast },
+  // Canon 边纠错（Task 8 / ADR 0032）：读 / 改 / 撤回自动升上去的地点边。
+  // 三条都是真 dump（`canonEdge` / `canonEdgeEdited` / `canonEdgeRetracted`）。
+  // PATCH 之后旧 ID 失效——回执里的 replacement id 才是下一次要读的那条。
+  { match: /\/canon\/edges\/[^/]+$/, body: fixtures.canonEdge },
+  { method: "PATCH", match: /\/canon\/edges\/[^/]+$/, body: fixtures.canonEdgeEdited },
+  { method: "DELETE", match: /\/canon\/edges\/[^/]+$/, body: fixtures.canonEdgeRetracted },
+  // 系统通知（Task 10 / 前端 Task 14）：列表 + 忽略（真 dump）。
+  { match: /\/notifications\/count$/, body: fixtures.notificationsCount },
+  { match: /\/notifications$/, body: fixtures.notifications },
+  {
+    method: "POST",
+    match: /\/notifications\/[^/]+\/ignore$/,
+    body: fixtures.notificationsIgnored,
+  },
   // 活动记录。**按 id 前缀分派详情**（`extraction_run:` / `decision:`）——和后端
   // `read_entry` 的分派判据是同一个，所以这几条路由表不会和真接口漂开。
   // id 在 URL 里是编码过的（`decision%3AID36`），所以只匹配前缀不匹配那个冒号。

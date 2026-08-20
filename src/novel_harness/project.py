@@ -23,6 +23,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
+from .checks.catalog import SYSTEM_RULESET_V1_HASH
 from .db import Connection
 from .ids import new_project_id
 
@@ -67,9 +68,27 @@ def create(conn: Connection, *, name: str, root_path: str) -> Project:
     没有 `canon_version` 参数：它由 SQL 的 DEFAULT 起于 0，之后只能由
     `compare_and_bump_canon_version()` 在同一笔 Canon 写事务中 CAS 递增。
     """
-    created = insert(conn, name=name, root_path=root_path)
-    conn.commit()
-    return created
+    already = conn.in_transaction
+    if not already:
+        conn.execute("BEGIN IMMEDIATE")
+    try:
+        created = insert(conn, name=name, root_path=root_path)
+        # 017：每个项目从出生的那一刻起就有一行 ruleset 基线（epoch=1），
+        # 与 project 行同事务——Task 5 的 attempt 冻结 ruleset 时才不会撞上缺行。
+        conn.execute(
+            """
+            INSERT INTO validation_ruleset_state (project_id, epoch, ruleset_hash)
+            VALUES (?, 1, ?)
+            """,
+            (created.id, SYSTEM_RULESET_V1_HASH),
+        )
+        if not already:
+            conn.commit()
+        return created
+    except BaseException:
+        if not already:
+            conn.rollback()
+        raise
 
 
 def insert(conn: Connection, *, name: str, root_path: str) -> Project:

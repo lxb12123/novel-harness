@@ -36,6 +36,7 @@ class ExtractionRunStatus(StrEnum):
     RUNNING = "RUNNING"
     SUCCEEDED = "SUCCEEDED"
     FAILED = "FAILED"
+    SUPERSEDED = "SUPERSEDED"
 
 
 class ExtractionErrorCode(StrEnum):
@@ -80,6 +81,15 @@ class ExtractionRun(BaseModel):
     model_call_id: str | None = None
     schema_version: str
     prompt_hash: str
+    source_generation: int | None = Field(default=None, ge=1)
+    """创建时冻结的 `chapter.snapshot_generation`（020 / Task 9）。
+
+    run 完成时若当前 generation 已经更大 → SUPERSEDED。S1(g1)→S2(g2)→S1(g3)
+    时 snapshot/hash 会再次相同，只有 generation 能区分第一轮 g1 的晚到结果。"""
+    required_ruleset_epoch: int | None = Field(default=None, ge=1)
+    required_ruleset_hash: str | None = None
+    """创建时冻结的 ruleset basis；当前 epoch/hash 变化后旧 run 不得生效。"""
+    fencing_token: int = 0
     created_at: str
     started_at: str | None = None
     finished_at: str | None = None
@@ -186,7 +196,8 @@ class AuditedCompletion(BaseModel):
 RUN_COLUMNS: Final = """
 id, project_id, chapter_number, snapshot_id, status, errors_json,
 valid_event_count, discarded_event_count, proposal_count, model_call_id,
-schema_version, prompt_hash, created_at, started_at, finished_at
+schema_version, prompt_hash, source_generation, required_ruleset_epoch,
+required_ruleset_hash, fencing_token, created_at, started_at, finished_at
 """
 
 
@@ -226,6 +237,10 @@ def to_run(row: Any) -> ExtractionRun:
         model_call_id=row["model_call_id"],
         schema_version=row["schema_version"],
         prompt_hash=row["prompt_hash"],
+        source_generation=row["source_generation"],
+        required_ruleset_epoch=row["required_ruleset_epoch"],
+        required_ruleset_hash=row["required_ruleset_hash"],
+        fencing_token=row["fencing_token"],
         created_at=row["created_at"],
         started_at=row["started_at"],
         finished_at=row["finished_at"],

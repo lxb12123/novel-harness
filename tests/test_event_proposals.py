@@ -929,6 +929,62 @@ def test_reject_does_not_rebase_same_cohort_siblings(world: ReviewWorld) -> None
     assert world.proposals.get(world.project_id, sibling.id).base_canon_version == 0
 
 
+def test_saving_new_text_marks_pending_proposals_obsolete_and_rejects_direct_review(
+    conn: Connection, world: ReviewWorld
+) -> None:
+    """020 / Task 9：保存 S3 后，S2 的旧 PENDING 提案退出待确认。
+
+    - `pending()` 不再返回它（当前待确认列表只读 `PENDING + CURRENT`）；
+    - 直接审阅 → `ProposalObsolete`（HTTP 层 409）——它锚的那版正文已经不是当前；
+    - 历史仍读得到，且不伪造 ACCEPTED/REJECTED resolution metadata。
+    """
+    from novel_harness.events import ProposalObsolete
+
+    # 一条锚在 chapter 7 当前快照上的 PENDING 提案。
+    proposal = _make_proposal(
+        world,
+        items=[_event_item(world)],
+        event_ids=[world.event_id],
+    )
+    assert any(
+        p.id == proposal.id for p in world.proposals.pending(world.project_id)
+    ), "前提交到一条待确认 —— 下面是空转"
+
+    # 保存新正文（产品保存路径：`commit_chapter_snapshot` 在同一事务把旧快照
+    # 锚的 PENDING 提案标 OBSOLETE —— 不变量 20）。
+    world.graph.commit_chapter_snapshot(
+        ChapterSpec(
+            project_id=world.project_id,
+            number=world.chapter_number,
+            heading="第七章 改",
+            path="chapters/0007.md",
+            text="第七章 改\n\n这是一段完全不同的新正文。\n",
+        ),
+        expected_text_sha256=world.graph.current_chapter_hash(
+            world.project_id, world.chapter_number
+        ),
+    )
+    conn.commit()
+
+    with pytest.raises(ProposalObsolete):
+        review_proposal(
+            world.conn,
+            world.graph,
+            world.events,
+            proposal.id,
+            ProposalReview(action=ProposalAction.REJECT, expected_canon_version=0),
+            proposal_store=world.proposals,
+            edge_review_store=world.edge_reviews,
+        )
+    assert all(
+        p.id != proposal.id for p in world.proposals.pending(world.project_id)
+    ), "保存新正文后旧提案还在待确认列表"
+    record = world.proposals.get(world.project_id, proposal.id)
+    assert record is not None and record.currentness == "OBSOLETE"
+    assert record.status.value == "PENDING", "OBSOLETE 不改 status：那是作者裁决的领域"
+    assert record.resolution_action is None and record.resolved_canon_version is None
+
+
 class _RebaseFailingStore:
     def __init__(self, real: SqliteProposalStore) -> None:
         self.real = real

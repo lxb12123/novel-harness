@@ -36,6 +36,10 @@ from typing import Final, Protocol, runtime_checkable
 
 from .models import (
     AliasSpec,
+    CanonEdgeEditResult,
+    CanonEdgeView,
+    EdgeProps,
+    ChapterCommitToken,
     ChapterSnapshot,
     ChapterSpec,
     ChapterText,
@@ -50,6 +54,7 @@ from .models import (
     Node,
     NodeSpec,
     Resolution,
+    RetirementReport,
     SnapshotUsage,
     StateSnapshot,
     StoredAlias,
@@ -186,6 +191,27 @@ class QuoteMismatch(StoreError):
     一条锚错了的证据是查不出来的——它的产物是一条 `valid_from` 错了的 CANON 边，
     而它在面板上长得完全正常。
     """
+
+
+class ChapterWriteConflict(StoreError):
+    """图层保存 CAS 失败：`commit_chapter_snapshot` 依据的那版 DB 正文已经变了。
+
+    调用方（保存入口）已持有章级锁，这个异常只可能是锁外路径（reconcile / 外部
+    写者）在我们读盘与提交之间动了 DB。写盘已经发生，所以 HTTP 层按
+    202 `sync_failed` 处理并立即 reconcile，不能谎报 409「正文未保存」。
+    """
+
+    def __init__(self, expected: str, actual: str | None) -> None:
+        self.expected = expected
+        self.actual = actual
+        super().__init__(
+            f"图层保存冲突：expected text_sha256={expected}，DB current={actual or '<无>'}"
+        )
+
+
+class CanonEdgeRefused(StoreError):
+    """一条 Canon 边不可纠错（不在 allowlist / 不是 current CANON / 裸 STALE /
+    跨项目 / 错误 NodeLabel）。HTTP 映射 409/422 由路由决定。"""
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -592,14 +618,54 @@ class CanonWriter(Protocol):
         """
         ...
 
+    def aliases_of(self, project_id: str, node_id: str) -> list[StoredAlias]:
+        """一个节点的全部别名（含 canonical）。**人物基础信息那一格读它。**
+
+        canonical 也在里面：界面显示「本名」用 node.name（`GET …/characters/{id}/profile`
+        的 `character.name`），这一份喂「别名」那排 chip——但 canonical **不是 chip**，
+        也不能通过别名接口改（§4.5）。排序：canonical 优先，其余按 created_at。
+        """
+        ...
+
+    def retract_alias(self, project_id: str, alias_id: str) -> StoredAlias:
+        """软撤回一条别名（§6.5 DELETE）：status → RETRACTED（tombstone 保留历史）。
+
+        改归属 = 撤回旧 + 新建目标，不原地改 node_id（§5 022）。
+        canonical 和其他实体的别名拒绝。
+        """
+        ...
+
+    def edit_alias(
+        self,
+        project_id: str,
+        alias_id: str,
+        *,
+        surface: str | None = None,
+        usable_for_rules: bool | None = None,
+    ) -> StoredAlias:
+        """改一条别名的 surface / usable（§6.5 PATCH）。
+
+        机器 alias 被改时**撤回旧行 + 新建 `source=author` 行**，以
+        `derived_from_alias_id` 指回机器行（§5 022：作者版不随旧机器证据失效）。
+        作者自己也以派生行落库（改 surface / usable 都等于一次新 author 决定）。
+        """
+        ...
+
+    def reassign_alias(
+        self, project_id: str, alias_id: str, *, to_node_id: str
+    ) -> StoredAlias:
+        """改归属（§6.5 POST …/reassign）：旧 alias RETRACTED，目标 Character 新建 ACTIVE。"""
+        ...
+
     def retire_stale_extractor_facts(
         self, project_id: str, chapter_id: str, current_snapshot_id: str
-    ) -> int:
+    ) -> RetirementReport:
         """这一章换了新正文之后，让锚在**旧那一版**上的抽取事实退休（`STALE`）。
 
-        返回退休了几条。**幂等**：没有旧锚时改 0 行，所以每次 sync 都调也不要紧。
-        论证写在 `queries.retire_stale_extractor_facts`（为什么是 STALE 不是
-        RETRACTED、为什么只动抽取器那些）。
+        返回精确 `RetirementReport`；若退休触及 Writer 可见 CANON，同一事务
+        bump 一次 canon version。**幂等**：没有旧锚时改 0 行，所以每次 sync 都调
+        也不要紧。论证写在 `queries.retire_stale_extractor_facts`（为什么是 STALE
+        不是 RETRACTED、为什么只动抽取器那些）。
         """
         ...
 
@@ -610,6 +676,18 @@ class CanonWriter(Protocol):
         （迁移 015 / Git 的 index 用了二十年的那一招）。值里的 `None` = 没记过，
         调用方当成「必须重读」。
         """
+        ...
+
+    def current_chapter_id(self, project_id: str, number: int) -> str | None:
+        """这一章当前的 `chapter.id`；没进过库 → `None`。锁键的稳定来源。"""
+        ...
+
+    def current_chapter_hash(self, project_id: str, number: int) -> str | None:
+        """这一章当前 `text_sha256`（`chapter` 行，不是磁盘）；没进过库 → `None`。"""
+        ...
+
+    def current_chapter_generation(self, project_id: str, number: int) -> int | None:
+        """这一章当前 `snapshot_generation`；没进过库 → `None`。"""
         ...
 
     def put_chapter(self, spec: ChapterSpec) -> StoredChapter:
@@ -629,6 +707,47 @@ class CanonWriter(Protocol):
             **不是作者填的**，也不是正文里印的章号（分卷重启和番外会让后者重复，
             而 `state_at` 的 `valid_from_chapter <= :ch` 要求它是全序键）。
         """
+        ...
+
+    def commit_chapter_snapshot(
+        self, spec: ChapterSpec, *, expected_text_sha256: str
+    ) -> ChapterCommitToken:
+        """保存路径的**单一图层事务**：落快照 + 退休旧机器事实 + 至多一次 canon bump。
+
+        事务内先按 DB current hash 做 CAS（expected 不匹配 → `ChapterWriteConflict`），
+        再 `_put_chapter_locked`，再退休旧快照的 extractor facts 并返回精确
+        `RetirementReport`，最后在 Writer 可见 Canon 变化时 bump 一次 canon version。
+        四个步骤要么全成要么全回滚——快照不能半提交（退休失败 = 快照不落）。
+        """
+        ...
+
+    def canon_edge_view(self, project_id: str, edge_id: str) -> CanonEdgeView:
+        """读取一条可纠错 Canon 边（allowlist + current CANON + 可编辑资格）。"""
+        ...
+
+    def edit_canon_edge(
+        self,
+        project_id: str,
+        edge_id: str,
+        *,
+        new_src: str,
+        new_dst: str,
+        props: EdgeProps,
+        expected_canon_version: int,
+        action: str = "EDIT",
+    ) -> CanonEdgeEditResult:
+        """修改/改归属一条 Canon 边（identity 变 → supersede+replacement；否则
+        override + props 投影更新）。同一事务 bump canon version + 写 decision log。"""
+        ...
+
+    def retract_canon_edge(
+        self,
+        project_id: str,
+        edge_id: str,
+        *,
+        expected_canon_version: int,
+    ) -> CanonEdgeEditResult:
+        """软撤回一条 Canon 边：override tombstone + status RETRACTED。"""
         ...
 
     def current_snapshots(self, project_id: str) -> list[ChapterText]:

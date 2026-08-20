@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useChapters } from "../api/hooks";
-import { useOpenChapter } from "../autopilot";
+import { useOpenChapter } from "../chapterNavigation";
 import { useCoords } from "../store";
 import { findChapters, joinTitle, splitTitle } from "../chapterTitle";
 

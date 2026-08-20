@@ -12,6 +12,7 @@ from .. import project
 from ..db import Connection
 from ..decisions import DEFAULT_ACTOR
 from ..events import EventStore, EventStoreError, EventView
+from ..graph import AUTO_CANON_CORRECTABLE_EDGE_TYPES
 from ..graph import (
     EdgeStatus,
     EdgeType,
@@ -388,6 +389,18 @@ def confirm_provisional_edges(
             )
         try:
             sources = edge_store.hydrate_provisional(project_id, selected)
+            # ADR 0032：auto-Canon allowlist 的上界。无纠错入口的 edge type
+            # 不得自动升 CANON——留在 PROVISIONAL（fail-safe），不静默改判。
+            disallowed = [
+                item.edge.type.value
+                for item in sources
+                if item.edge.type not in AUTO_CANON_CORRECTABLE_EDGE_TYPES
+            ]
+            if disallowed:
+                raise EdgeReviewValidationError(
+                    "无纠错入口的 edge type 不得 auto-Canon："
+                    + ", ".join(sorted(set(disallowed)))
+                )
             evidence = tuple(
                 edge_store.evidence(project_id, item.edge.evidence_id or "")
                 for item in sources

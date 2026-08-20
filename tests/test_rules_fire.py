@@ -203,7 +203,13 @@ def test_nothing_fires_before_the_author_says_anything(author: Author) -> None:
     assert author.check(1)["issues"] == []
     assert author.check(4)["issues"] == []
     # 规则确实跑了（静默的零和真的零不许长得一样，§10 约束 8）。
-    assert len(author.check(1)["rules_run"]) == len(ALL_CHECKS)
+    report = author.check(1)
+    assert report["gate"] == "passed"
+    assert len(report["rules"]) == len(ALL_CHECKS)
+    assert {r["rule_id"] for r in report["rules"]} == {"R2", "R3"}
+    assert all(r["state"] == "clear" for r in report["rules"])
+    assert report["source_generation"] >= 1
+    assert report["ruleset_epoch"] >= 1
 
 
 # ══════════════════════════════════════════════════════════════════════════

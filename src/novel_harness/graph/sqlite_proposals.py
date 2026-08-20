@@ -18,6 +18,7 @@ from ..events.models import (
 from ..events.store import (
     ProposalAlreadyResolved,
     ProposalNotFound,
+    ProposalObsolete,
     ProposalValidationError,
 )
 from ..ids import EntityType, new_id
@@ -204,6 +205,7 @@ class SqliteProposalStore:
             )
             rows = self._conn.execute(
                 "SELECT id FROM proposal_set WHERE project_id = ? AND status = 'PENDING'"
+                " AND currentness = 'CURRENT'"
                 f"{clause} ORDER BY created_at, id",
                 params,
             ).fetchall()
@@ -221,7 +223,8 @@ class SqliteProposalStore:
             SELECT id, project_id, kind, summary, items_json, confidence, status,
                    created_at, resolved_at, decision_log_id, chapter_number, snapshot_id,
                    base_canon_version, schema_version, prompt_hash, resolution_action,
-                   resolved_canon_version, audit_envelope_json
+                   resolved_canon_version, audit_envelope_json, currentness,
+                   superseded_by_snapshot_id
             FROM proposal_set WHERE project_id = ? AND id = ?
             """,
             (project_id, proposal_id),
@@ -267,6 +270,8 @@ class SqliteProposalStore:
                 if row["audit_envelope_json"] is None
                 else json.loads(row["audit_envelope_json"])
             ),
+            currentness=row["currentness"],
+            superseded_by_snapshot_id=row["superseded_by_snapshot_id"],
         )
 
     def get_by_id(self, proposal_id: str) -> ProposalRecord | None:
@@ -283,7 +288,7 @@ class SqliteProposalStore:
     ) -> ProposalRecord:
         with _transaction(self._conn):
             row = self._conn.execute(
-                "SELECT project_id, kind, status, base_canon_version "
+                "SELECT project_id, kind, status, base_canon_version, currentness "
                 "FROM proposal_set WHERE id = ?",
                 (proposal_id,),
             ).fetchone()
@@ -292,6 +297,10 @@ class SqliteProposalStore:
             if row["status"] != "PENDING":
                 raise ProposalAlreadyResolved(
                     f"proposal {proposal_id} 已是 {row['status']}，不能再次处理"
+                )
+            if row["currentness"] == "OBSOLETE":
+                raise ProposalObsolete(
+                    f"proposal {proposal_id} 锚的正文已经不是当前版本，先看看新正文"
                 )
             expected_version = int(row["base_canon_version"]) + (
                 1 if resolution.action.value in {"accept", "edit"} else 0
@@ -435,6 +444,34 @@ class SqliteProposalStore:
                 ),
             )
             return updated.rowcount
+
+    def supersede_obsolete(
+        self,
+        project_id: str,
+        chapter_number: int,
+        new_snapshot_id: str,
+    ) -> int:
+        """这一章保存了新正文：PENDING 提案若锚的不是新快照 → OBSOLETE。
+
+        必须在 `commit_chapter_snapshot` 的**同一事务**里调用（不变量 20）：
+        「正文已变」和「旧提案退出待确认」不能拆成两个原子性，进程在两步之间
+        退出会让旧提案在屏幕上冒充当前正文的产物。status 一字不改（仍是 PENDING
+        审计状态，003 的触发器不动），`superseded_by_snapshot_id` 记下是谁顶的。
+        """
+        with _transaction(self._conn):
+            changed = self._conn.execute(
+                """
+                UPDATE proposal_set
+                   SET currentness = 'OBSOLETE',
+                       superseded_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+                       superseded_by_snapshot_id = ?
+                 WHERE project_id = ? AND chapter_number = ? AND status = 'PENDING'
+                   AND currentness = 'CURRENT'
+                   AND snapshot_id IS NOT NULL AND snapshot_id <> ?
+                """,
+                (new_snapshot_id, project_id, chapter_number, new_snapshot_id),
+            )
+            return changed.rowcount
 
     def rebase_to_current(
         self,

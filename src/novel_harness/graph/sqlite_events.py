@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from typing import Any
 
 from ..db import Connection
 from ..events.models import (
@@ -10,6 +11,7 @@ from ..events.models import (
     CharacterProfilePatch,
     CharacterProfileView,
     EventCastEdit,
+    EventSummaryVersion,
     EventView,
     ProvisionalEventSpec,
     StoryEvent,
@@ -40,6 +42,28 @@ def _default_event_id(project_id: str) -> str:
     return new_id(EntityType.EVENT, project_id)
 
 
+def _row_to_event_summary(row: Any) -> EventSummaryVersion:
+    return EventSummaryVersion(
+        id=str(row["id"]),
+        project_id=str(row["project_id"]),
+        event_id=str(row["event_id"]),
+        source_snapshot_id=(
+            None if row["source_snapshot_id"] is None else str(row["source_snapshot_id"])
+        ),
+        evidence_sha256=(
+            None if row["evidence_sha256"] is None else str(row["evidence_sha256"])
+        ),
+        summary=str(row["summary"]),
+        summary_sha256=str(row["summary_sha256"]),
+        source=str(row["source"]),
+        status=str(row["status"]),
+        replaces_version_id=(
+            None if row["replaces_version_id"] is None else str(row["replaces_version_id"])
+        ),
+        created_at=str(row["created_at"]),
+    )
+
+
 class SqliteEventStore:
     def __init__(
         self,
@@ -56,6 +80,85 @@ class SqliteEventStore:
             raise EventScopeError(f"scope={scope.value} 不可读；只允许 CANON / PROVISIONAL")
         if chapter < 1:
             raise ValueError(f"章号从 1 起，得到 {chapter}")
+
+    # ── 事件摘要版本（018 / Task 7）：SQL 全在 queries.py，这里只做形状 ──
+
+    def event_summary_current(self, event_id: str) -> EventSummaryVersion | None:
+        row = queries.event_summary_current_row(self._conn, event_id)
+        return None if row is None else _row_to_event_summary(row)
+
+    def event_summary_history(self, event_id: str) -> list[EventSummaryVersion]:
+        return [
+            _row_to_event_summary(row)
+            for row in queries.event_summary_history_rows(self._conn, event_id)
+        ]
+
+    def event_summary_insert(
+        self,
+        *,
+        version_id: str,
+        project_id: str,
+        event_id: str,
+        source_snapshot_id: str | None,
+        evidence_sha256: str | None,
+        summary: str,
+        source: str,
+        status: str,
+        replaces_version_id: str | None,
+    ) -> None:
+        queries.insert_event_summary_version(
+            self._conn,
+            version_id=version_id,
+            project_id=project_id,
+            event_id=event_id,
+            source_snapshot_id=source_snapshot_id,
+            evidence_sha256=evidence_sha256,
+            summary=summary,
+            source=source,
+            status=status,
+            replaces_version_id=replaces_version_id,
+        )
+
+    def event_summary_switch_head(
+        self, event_id: str, new_version_id: str, expected: str | None
+    ) -> bool:
+        return queries.switch_event_summary_head(
+            self._conn, event_id, new_version_id, expected
+        )
+
+    def create_event_summary_job(
+        self,
+        *,
+        job_id: str,
+        project_id: str,
+        event_id: str,
+        source_snapshot_id: str,
+        source_generation: int,
+        source_sha256: str,
+        expected_head: str | None,
+        intent_seq: int,
+        trigger_key: str,
+    ) -> None:
+        queries.create_event_summary_job(
+            self._conn,
+            job_id=job_id,
+            project_id=project_id,
+            event_id=event_id,
+            source_snapshot_id=source_snapshot_id,
+            source_generation=source_generation,
+            source_sha256=source_sha256,
+            expected_head=expected_head,
+            intent_seq=intent_seq,
+            trigger_key=trigger_key,
+        )
+
+    def event_summary_job_basis(
+        self, project_id: str, event_id: str
+    ) -> dict[str, Any] | None:
+        return queries.event_summary_job_basis(self._conn, project_id, event_id)
+
+    def event_information_scope(self, project_id: str, event_id: str) -> str | None:
+        return queries.event_information_scope(self._conn, project_id, event_id)
 
     def put_provisional(self, spec: ProvisionalEventSpec) -> EventView:
         with _transaction(self._conn):
@@ -128,6 +231,10 @@ class SqliteEventStore:
                     evidence.id,
                     EvidenceStatus.FRESH.value,
                 ),
+            )
+            # 018：每个事件出生就有 head 行（current 可为 NULL）。
+            self._conn.execute(
+                "INSERT INTO event_summary_head (event_id) VALUES (?)", (event_id,)
             )
             participant_ids = sorted(set(spec.participant_ids))
             knower_ids = sorted(set(spec.knower_ids))
@@ -256,6 +363,9 @@ class SqliteEventStore:
                 FROM story_event WHERE id = ?
                 """,
                 (clone_id, event_summary, scope.value, event_id),
+            )
+            self._conn.execute(
+                "INSERT INTO event_summary_head (event_id) VALUES (?)", (clone_id,)
             )
             self._conn.execute(
                 """

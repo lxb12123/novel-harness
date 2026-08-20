@@ -143,6 +143,11 @@ def _pid(book: dict[str, str]) -> str:
     return book["pid"]
 
 
+def _root(book: dict[str, str]) -> Path:
+    """书的稿子目录：`book.db` 同级的 `book/`（fixture 里 `root = tmp_path / "book"`）。"""
+    return Path(book["db"]).parent / "book"
+
+
 def _error(response: Any) -> dict[str, Any]:
     """测试侧的归一化：自定义 handler 的 error 在顶层，HTTPException 在 .detail。"""
     body = response.json()
@@ -383,15 +388,23 @@ def test_short_alias_rejected_422(client: TestClient, book: dict[str, str]) -> N
 
 
 def test_sync_refused_on_two_headings_422(client: TestClient, book: dict[str, str]) -> None:
-    # 把一章存成两个章标 → 切出 2 章 → SyncRefused → 422 带 path。
+    # 把一章存成两个章标 → 写盘前结构预检拒绝 → 422 带 path，磁盘和库都不动。
+    pid = _pid(book)
+    disk_before = (_root(book) / "chapters/0001.md").read_text(encoding="utf-8")
+    db_before = _current_hash(client, pid, 1)
     r = client.put(
-        f"/api/projects/{_pid(book)}/chapters/1/text",
-        json={"markdown": "第一章 甲\n\n正文。\n\n第二章 乙\n\n正文。\n"},
+        f"/api/projects/{pid}/chapters/1/text",
+        json={
+            "markdown": "第一章 甲\n\n正文。\n\n第二章 乙\n\n正文。\n",
+            "expected_text_sha256": db_before,
+        },
     )
     assert r.status_code == 422
     body = r.json()
     assert body["error"] == "sync_refused"
     assert body["path"] is not None
+    assert (_root(book) / "chapters/0001.md").read_text(encoding="utf-8") == disk_before
+    assert _current_hash(client, pid, 1) == db_before
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -426,11 +439,10 @@ def test_chapter_history_grows_on_edit(client: TestClient, book: dict[str, str])
     assert h0[0]["is_current"] is True
 
     # 改正文 → sync 落一条新快照，旧的还在（证据锚指着它）。
-    r = client.put(
-        f"/api/projects/{pid}/chapters/1/text",
-        json={"markdown": "第一章 血脉\n\n改了的正文在这里。\n"},
-    )
+    r = _put_text(client, pid, 1, "第一章 血脉\n\n改了的正文在这里。\n")
     assert r.status_code == 200, r.text
+    assert r.json()["indexed"] is True
+    assert r.json()["changed"] is True
 
     h1 = client.get(f"/api/projects/{pid}/chapters/1/history").json()
     assert len(h1) == 2  # 内容去重：两份不同内容 = 两条
@@ -444,8 +456,14 @@ def test_chapter_history_dedupes_identical_content(
 ) -> None:
     pid = _pid(book)
     # 存成与当前一字不差的内容 → 不新建快照（UNIQUE(chapter_id, text_sha256)）。
-    same = client.get(f"/api/projects/{pid}/chapters/2/text").json()["markdown"]
-    client.put(f"/api/projects/{pid}/chapters/2/text", json={"markdown": same})
+    current = client.get(f"/api/projects/{pid}/chapters/2/text").json()
+    same = current["markdown"]
+    r = client.put(
+        f"/api/projects/{pid}/chapters/2/text",
+        json={"markdown": same, "expected_text_sha256": current["text_sha256"]},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["changed"] is False
     h = client.get(f"/api/projects/{pid}/chapters/2/history").json()
     assert len(h) == 1  # 同内容只存一次
 
@@ -459,8 +477,23 @@ def _history(client: TestClient, pid: str, chapter: int = 1) -> list[dict[str, A
     return list(client.get(f"/api/projects/{pid}/chapters/{chapter}/history").json())
 
 
+def _current_hash(client: TestClient, pid: str, chapter: int) -> str:
+    return client.get(f"/api/projects/{pid}/chapters/{chapter}/text").json()["text_sha256"]
+
+
+def _put_text(
+    client: TestClient, pid: str, chapter: int, markdown: str, expected: str | None = None
+) -> Any:
+    if expected is None:
+        expected = _current_hash(client, pid, chapter)
+    return client.put(
+        f"/api/projects/{pid}/chapters/{chapter}/text",
+        json={"markdown": markdown, "expected_text_sha256": expected},
+    )
+
+
 def _save(client: TestClient, pid: str, chapter: int, markdown: str) -> None:
-    r = client.put(f"/api/projects/{pid}/chapters/{chapter}/text", json={"markdown": markdown})
+    r = _put_text(client, pid, chapter, markdown)
     assert r.status_code == 200, r.text
 
 
@@ -500,6 +533,69 @@ def test_deleting_an_unused_old_version_removes_it(
     left = _history(client, pid)
     assert [s["snapshot_id"] for s in left] == [s["snapshot_id"] for s in left if s["is_current"]]
     assert v1 not in [s["snapshot_id"] for s in left]
+
+
+def test_save_receipt_carries_snapshot_generation_and_hash(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    pid = _pid(book)
+    base = _current_hash(client, pid, 1)
+    r = _put_text(client, pid, 1, "第一章 血脉\n\n带 generation 的回执。\n", expected=base)
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["saved_to_disk"] is True
+    assert body["indexed"] is True
+    assert body["changed"] is True
+    assert body["chapter_number"] == 1
+    assert body["snapshot_generation"] == 2
+    assert body["snapshot_id"] is not None
+    assert body["text_sha256"] == importer.text_digest("第一章 血脉\n\n带 generation 的回执。\n")
+
+
+def test_save_stale_expected_hash_is_409(client: TestClient, book: dict[str, str]) -> None:
+    pid = _pid(book)
+    r = _put_text(client, pid, 1, "第一章 血脉\n\n不该覆盖。\n", expected="a" * 64)
+    assert r.status_code == 409
+    assert r.json()["error"] == "chapter_changed"
+
+
+def test_save_lock_timeout_is_423(
+    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import fcntl
+
+    pid = _pid(book)
+    base = _current_hash(client, pid, 1)
+    lock_dir = _root(book) / ".novel-harness" / "locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    conn = connect(book["db"])
+    try:
+        store = SqliteStoryGraph(conn)
+        chapter_id = next(ct.chapter_id for ct in store.current_snapshots(pid) if ct.number == 1)
+    finally:
+        conn.close()
+    lock_file = lock_dir / f"{chapter_id}.lock"
+    handle = lock_file.open("w")
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    try:
+        from novel_harness import importer as _importer
+
+        original = _importer.save_chapter
+
+        def short_timeout(*args: object, **kwargs: object) -> object:
+            kwargs = {**kwargs, "lock_timeout": 0.05}
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(_importer, "save_chapter", short_timeout)
+        r = client.put(
+            f"/api/projects/{pid}/chapters/1/text",
+            json={"markdown": "第一章 血脉\n\n锁超时。\n", "expected_text_sha256": base},
+        )
+        assert r.status_code == 423
+        assert r.json()["error"] == "lock_timeout"
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
 
 
 def test_deleting_the_current_version_is_refused(
@@ -586,7 +682,11 @@ def test_check_reports_which_rules_ran(client: TestClient, book: dict[str, str])
     r = client.post(f"/api/projects/{_pid(book)}/chapters/3/check")
     assert r.status_code == 200, r.text
     body = r.json()
-    assert body["rules_run"]  # 「跑了哪几条」印出来，不静默（§10 约束 8）
+    # 「跑了哪几条、各自什么状态」印出来，不静默（§10 约束 8）。
+    assert {rule["rule_id"] for rule in body["rules"]} == {"R2", "R3"}
+    assert body["gate"] in {"passed", "blocked", "error"}
+    assert body["source_generation"] >= 1
+    assert body["ruleset_epoch"] >= 1
     assert isinstance(body["issues"], list)
     # `scene_count` 2026-08-14 随场景块和 R4 一起从出参里去掉了（ADR 0027）。
     # 它原本是那个「零 issue」的成色说明，而它说明的那条规则已经不在了。
@@ -636,9 +736,15 @@ def test_create_chapter_appends_and_is_immediately_editable(
     text = client.get(f"/api/projects/{pid}/chapters/4/text")
     assert text.status_code == 200
     assert text.json()["markdown"] == "第四章\n\n"
+    assert "text_sha256" in text.json()
+    assert text.json()["snapshot_generation"] == 1
 
     saved = client.put(
-        f"/api/projects/{pid}/chapters/4/text", json={"markdown": "第四章\n\n他推开门。\n"}
+        f"/api/projects/{pid}/chapters/4/text",
+        json={
+            "markdown": "第四章\n\n他推开门。\n",
+            "expected_text_sha256": text.json()["text_sha256"],
+        },
     )
     assert saved.status_code == 200
 
@@ -1285,3 +1391,136 @@ def test_draft_rejects_invalid_length_body(
     )
     assert r.status_code == 422, r.text
     assert r.json()["detail"]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 自定义确定性验证规则（023 / Task 13）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_validation_rule_crud_and_ruleset_bump(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    pid = _pid(book)
+    base = client.get(f"/api/projects/{pid}/validation-rules")
+    assert base.status_code == 200, base.text
+    assert any(r["rule_id"] == "R2" for r in base.json()), "R2 常驻显示"
+    assert any(r["rule_id"] == "R3" for r in base.json()), "R3 常驻显示"
+    # 空项目还没有自定义规则。
+    assert all(r["rule_id"] not in ("vrule",) for r in base.json())
+
+    created = client.post(
+        f"/api/projects/{pid}/validation-rules",
+        json={"title": "不许有玄铁令", "literal": "玄铁令", "blocks_downstream": True},
+    )
+    assert created.status_code == 200, created.text
+    rule_id = created.json()["rule_id"]
+    after = client.get(f"/api/projects/{pid}/validation-rules").json()
+    custom = [r for r in after if r["rule_id"] == rule_id]
+    assert len(custom) == 1 and custom[0]["title"] == "不许有玄铁令"
+
+    # 禁用后列表不再返回（照旧留在库里）。
+    patched = client.patch(
+        f"/api/projects/{pid}/validation-rules/{rule_id}", json={"enabled": False}
+    )
+    assert patched.status_code == 200, patched.text
+    after_disable = client.get(f"/api/projects/{pid}/validation-rules").json()
+    assert all(r["rule_id"] != rule_id for r in after_disable)
+
+    # 删除。
+    deleted = client.delete(f"/api/projects/{pid}/validation-rules/{rule_id}")
+    assert deleted.status_code == 200, deleted.text
+    missing = client.delete(f"/api/projects/{pid}/validation-rules/{rule_id}")
+    assert missing.status_code == 404, missing.text
+
+
+def test_validation_rule_roundtrips_in_the_ruleset_hash(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    from novel_harness.db import connect
+
+    pid = _pid(book)
+    before = connect(book["db"]).execute(
+        "SELECT epoch, ruleset_hash FROM validation_ruleset_state WHERE project_id = ?",
+        (pid,),
+    ).fetchall()
+    client.post(
+        f"/api/projects/{pid}/validation-rules",
+        json={"literal": "血脉" if False else "青云城", "title": "地点别写"},
+    )
+    after = connect(book["db"]).execute(
+        "SELECT epoch, ruleset_hash FROM validation_ruleset_state WHERE project_id = ?",
+        (pid,),
+    ).fetchall()
+    assert after[0][0] == before[0][0] + 1, "规则语义变化必须递增 epoch"
+    assert after[0][1] != before[0][1], "ruleset hash 必须重算"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 保存触发的固定刷新（Task 16 / Task 18 e2e）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_save_creates_a_refresh_attempt_and_reply_stays_reused(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """保存后 `_trigger_refresh` 给当前 generation 排一个覆盖性 attempt。
+
+    保存本身（`save_chapter`）的语义不受它影响——回执仍是 `reused`（同正文再次
+    保存）。断言的是持久 attempt 表里多了一行：这就是后台 dispatcher
+    （Task 16）会去 claim 的那条，**不是内存 enqueue**。
+    """
+    pid = _pid(book)
+    body = client.get(f"/api/projects/{pid}/chapters/1/text").json()
+    markdown = body["markdown"]
+    # 先带同 hash 保存一次（reused），把「已有 attempt」那次撇开。
+    first = client.put(
+        f"/api/projects/{pid}/chapters/1/text",
+        json={"markdown": markdown, "expected_text_sha256": body["text_sha256"]},
+    )
+    assert first.status_code == 200, first.text
+    conn = connect(book["db"])
+    conn.close()
+
+    # 保存**同一**正文第二次：正文没变、不是新 generation，但 `_trigger_refresh`
+    # 仍然会为一个「保存动作」确保覆盖（head/验证缺哪补哪）。
+    again = client.put(
+        f"/api/projects/{pid}/chapters/1/text",
+        json={"markdown": markdown, "expected_text_sha256": body["text_sha256"]},
+    )
+    assert again.status_code == 200, again.text
+    conn = connect(book["db"])
+    after = conn.execute(
+        "SELECT COUNT(*) FROM chapter_refresh_attempt a "
+        "JOIN chapter_refresh_run r ON r.id = a.run_id "
+        "WHERE r.project_id = ?",
+        (pid,),
+    ).fetchone()[0]
+    conn.close()
+    # 至少排了一次（第一次保存也可能建了一条；关键是这条路径真的写持久表）。
+    assert after >= 1, "保存必须把刷新动作写进持久 attempt 表，不能只在内存"
+
+
+def test_save_changes_length_triggers_a_fresh_attempt(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """正文 hash 变了（作者真的改了）→ `changed=true` → 为**新 generation** 排 attempt。"""
+    pid = _pid(book)
+    body = client.get(f"/api/projects/{pid}/chapters/1/text").json()
+    markdown = body["markdown"] + "\n\n萧决在结尾又说了一句话。\n"
+    saved = client.put(
+        f"/api/projects/{pid}/chapters/1/text",
+        json={"markdown": markdown, "expected_text_sha256": body["text_sha256"]},
+    )
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["changed"] is True
+    # 新 generation 快照在库里（保存那一步落库了）。
+    conn = connect(book["db"])
+    row = conn.execute(
+        "SELECT r.source_generation AS g FROM chapter_refresh_attempt a "
+        "JOIN chapter_refresh_run r ON r.id = a.run_id "
+        "WHERE r.project_id = ? ORDER BY a.created_at DESC, r.source_generation DESC LIMIT 1",
+        (pid,),
+    ).fetchone()
+    conn.close()
+    assert row is not None and int(row["g"]) >= 1

@@ -88,10 +88,26 @@ class EntityType(StrEnum):
     CHAT_MESSAGE = "chat_message"
     DRAFT_CANDIDATE = "draft"
     CALIBRATION = "calibration"
-    """写前校准的非 Canon 派生产物（`calibration_artifact`，迁移 024 / ADR 0033）。"""
+    """写前校准的非 Canon 派生产物（`calibration_artifact`，迁移 017 / ADR 0033）。"""
 
     HANDOFF = "handoff"
     """`ContinuityConflictHandoff` 的 producer outbox 行（`calibration_handoff_outbox`）。"""
+
+    # ── 保存闭环任务（原 017–024，2026-08-20 合并时整体后移一档 → 018–025）────
+    REFRESH_RUN = "refresh_run"
+    REFRESH_ATTEMPT = "refresh_attempt"
+    EXTRACTION_APPLICATION = "application"
+    """021：一个 chapter generation 的机器事实归属（`extraction_application`）。"""
+    EXTRACTION_ANALYSIS = "analysis"
+    """021：规范 analysis JSON 的持久化（`extraction_analysis`）。"""
+    SUMMARY_RECONCILIATION_RUN = "recon"
+    """022：一次只告警的总结核对 run（`summary_reconciliation_run`）。"""
+    SUMMARY_RECONCILIATION_OUTBOX = "reconob"
+    """022：总结核对的持久 outbox（`summary_reconciliation_outbox`）。"""
+    SYSTEM_NOTIFICATION = "notif"
+    """022：统一系统通知（`system_notification`）。"""
+    VALIDATION_RULE = "vrule"
+    """024：项目级确定性自定义验证规则（`validation_rule`）。"""
 
     PROJECT = "project"
     """只由 `new_project_id()` 用。**项目 ID 不能走 `new_id()`**——见那个函数的 docstring。"""

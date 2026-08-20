@@ -123,6 +123,29 @@ def test_extraction_run_id_uses_its_persisted_table_prefix() -> None:
     assert ULID_RE.fullmatch(got.rsplit(":", 1)[1])
 
 
+def test_020_new_id_types_use_their_own_prefixes() -> None:
+    """020 / Task 9 新增的两类 id：application / analysis。**每个值对应一张真表**
+    （ADR 0005 的增长规则），前缀不许和别的实体共用。"""
+    pid = "project:01JZ0000000000000000000000"
+    assert new_id(EntityType.EXTRACTION_APPLICATION, pid).startswith(
+        f"application:{project_short(pid)}:"
+    )
+    assert new_id(EntityType.EXTRACTION_ANALYSIS, pid).startswith(
+        f"analysis:{project_short(pid)}:"
+    )
+
+
+def test_021_new_id_types_use_their_own_prefixes() -> None:
+    """021 / Task 10 新增的两类 id：recon（核对 run）/ notif（系统通知）。"""
+    pid = "project:01JZ0000000000000000000000"
+    assert new_id(EntityType.SUMMARY_RECONCILIATION_RUN, pid).startswith(
+        f"recon:{project_short(pid)}:"
+    )
+    assert new_id(EntityType.SYSTEM_NOTIFICATION, pid).startswith(
+        f"notif:{project_short(pid)}:"
+    )
+
+
 def test_ids_are_unique() -> None:
     pid = "project:01JZ0000000000000000000000"
     ids = {new_id(EntityType.EDGE, pid) for _ in range(1000)}

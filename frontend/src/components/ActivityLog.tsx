@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useActivity, useActivityDetail, useRuns, useStartExtraction } from "../api/hooks";
-import { useOpenChapter } from "../autopilot";
+import { useOpenChapter } from "../chapterNavigation";
 import { refusalText } from "../chat";
 import { useCoords, type Tab } from "../store";
 import { RulesTable } from "./RulesTable";
@@ -66,6 +66,7 @@ const TARGET_TAB: Record<JumpTarget, Tab | null> = {
   proposal: "review",
   summary: "summary",
   extraction_retry: null,
+  canon_edge: null,
   chapter: null,
 };
 
@@ -90,6 +91,8 @@ const CAN_EDIT_HERE: Record<JumpTarget, boolean> = {
   summary: true,
   // 这一档「有得点」的那个控件就是这一行上的按钮本身（`RetryRow`），不在别的屏幕上。
   extraction_retry: true,
+  // 自动升上去的地点/状态/关系边（Task 8）：跳过去打开 `CanonEdgeEditor`。
+  canon_edge: true,
   chapter: false,
 };
 
@@ -103,8 +106,8 @@ const CAN_EDIT_HERE: Record<JumpTarget, boolean> = {
  *  （`activity._decision_jump` 里那段注释 + `test_activity.py::
  *  test_a_row_that_changed_several_events_does_not_read_as_unfixable`）：
  *
- *  ① 真的没有任何路由能改它（自动升上去的位置/状态边——改正层只管
- *     「知道」↔「以为」和事件名单）；
+ *  ① 真的没有任何路由能改它（2026-08-17 之前自动升上去的位置/状态边就落在这——
+ *      `canon_edge` 那一档落地后，剩在这儿的只有正在补纠错入口的新边类型）；
  *  ② 有好几条、后端**不替作者挑是哪一条**（一次升掉一整章的干净事件，是常态不是边角）
  *     ——那几条其实一打就通。
  *
@@ -337,6 +340,9 @@ function JumpRow({ entry, jump }: { entry: ActivityEntry; jump: ActivityJump }) 
           : null,
       // 同理：改哪条情节的名单用 `jump.event_id`，不从那行字里认。
       eventId: jump.event_id,
+      // 改自动升上去的地点/状态/关系边用 `jump.edge_id`（`canon_edge` 那一档）——
+      // 同一句规矩：坐标由后端给，前端不从那行字里认哪条边。
+      edgeId: jump.edge_id,
       // 右栏那张表要**多算**上谁 —— 也是后端给的坐标（`jump.cast`），这里只是拼成
       // 后端收的那种写法。矩阵的行由本章正文推（ADR 0018），而日志里那个人可能在
       // 那一章一次都没被点名，那一行就不在表上、点不开也改不了。

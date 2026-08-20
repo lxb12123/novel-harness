@@ -263,3 +263,149 @@ def record_model_call(
     except BaseException:
         conn.rollback()
         raise
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 两阶段模型调用审计（021 / Task 10，不变量 30）
+# ══════════════════════════════════════════════════════════════════════════
+#
+# `record_call` 只覆盖「调用成功」那一条：provider 已经答上来了，一步落库。
+# 进程崩溃 / provider 抛错 / lease 丢失后的重试，都需要把「这次调用**正在花
+# 钱**」这一步也记下来 —— 否则同一业务 run 的多次真实付费尝试会互相覆盖，
+# 而账本上只有一次。这三条是给那些两阶段调用方（总结核对 / 事件摘要重生成）
+# 用的：
+#
+#   begin_call      → 事务内插入 RUNNING model_call（provider 出发前）
+#   finalize_success→ 成功：token / cache / cost / finished_at
+#   finalize_failure→ 失败：error_type / error_message / finished_at
+#   abandon_call    → 进程崩溃遗留的 RUNNING，lease 过期后标 ABANDONED
+#
+# 「供应商报没报」的规矩在这里不变：报出来的数原样写，没报的留 NULL，绝不估。
+
+
+def begin_call(
+    conn: Connection,
+    *,
+    project_id: str,
+    capability: str,
+    model: str | None,
+    params_json: str = "{}",
+    prompt_hash: str | None = None,
+    in_artifact: str | None = None,
+    out_artifact: str | None = None,
+    provider_name: str | None = None,
+    profile_name: str | None = None,
+    chapter_number: int | None = None,
+    call_id_factory: Callable[[str], str],
+) -> str:
+    """provider 出发前：事务内插入一条 RUNNING model_call 并返回 call id。
+
+    调用方随后在自己的业务事务里 INSERT 对应的 link 行（`summary_reconciliation_call`
+    之类）。这一层**不提交**：和调用方要写的 link 必须在同一个事务里（否则崩溃点
+    在这两步之间，会留下一条没有归属的 RUNNING）。
+    """
+    call_id = call_id_factory(project_id)
+    if not isinstance(call_id, str) or not call_id:
+        raise ValueError("call id factory must return a non-empty string")
+    conn.execute("BEGIN IMMEDIATE")
+    conn.execute(
+        """
+        INSERT INTO model_call (
+            id, project_id, capability, model, params_json, prompt_hash,
+            in_artifact, out_artifact, chapter_number,
+            call_state, provider_name, profile_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'RUNNING', ?, ?)
+        """,
+        (
+            call_id,
+            project_id,
+            capability,
+            model or "unknown",
+            params_json,
+            prompt_hash,
+            in_artifact,
+            out_artifact,
+            chapter_number,
+            provider_name,
+            profile_name,
+        ),
+    )
+    return call_id
+
+
+def finalize_call_success(
+    conn: Connection,
+    call_id: str,
+    *,
+    out_artifact: str | None,
+    tokens_in: int | None,
+    tokens_out: int | None,
+    ms: int,
+    cost: float | None,
+    cache_read_tokens: int | None,
+    cache_write_tokens: int | None,
+    finished_at: str,
+) -> None:
+    """成功：补 completion / token / cache / cost，并把 state 改成 SUCCEEDED。"""
+    changed = conn.execute(
+        """
+        UPDATE model_call
+           SET call_state = 'SUCCEEDED',
+               out_artifact = ?, tokens_in = ?, tokens_out = ?, ms = ?,
+               cost = ?, cache_read_tokens = ?, cache_write_tokens = ?,
+               finished_at = ?
+         WHERE id = ? AND call_state = 'RUNNING'
+        """,
+        (
+            out_artifact,
+            tokens_in,
+            tokens_out,
+            ms,
+            cost,
+            cache_read_tokens,
+            cache_write_tokens,
+            finished_at,
+            call_id,
+        ),
+    )
+    if changed.rowcount != 1:
+        raise LookupError(f"no RUNNING model_call to finalize: {call_id}")
+
+
+def finalize_call_failure(
+    conn: Connection,
+    call_id: str,
+    *,
+    error_type: str,
+    error_message: str,
+    finished_at: str,
+) -> None:
+    """失败：写 error_type / error_message，state → FAILED。"""
+    changed = conn.execute(
+        """
+        UPDATE model_call
+           SET call_state = 'FAILED', error_type = ?, error_message = ?,
+               finished_at = ?
+         WHERE id = ? AND call_state = 'RUNNING'
+        """,
+        (error_type, error_message, finished_at, call_id),
+    )
+    if changed.rowcount != 1:
+        raise LookupError(f"no RUNNING model_call to fail: {call_id}")
+
+
+def abandon_call(
+    conn: Connection,
+    call_id: str,
+    *,
+    finished_at: str,
+) -> None:
+    """进程崩溃遗留的 RUNNING：lease 过期后标 ABANDONED（不覆盖、不删除）。"""
+    conn.execute(
+        """
+        UPDATE model_call
+           SET call_state = 'ABANDONED', finished_at = ?
+         WHERE id = ? AND call_state = 'RUNNING'
+        """,
+        (finished_at, call_id),
+    )

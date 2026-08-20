@@ -38,7 +38,7 @@ async function reconcile(pid: string, deep: boolean): Promise<ReconcileOutcome> 
 /**
  * 开书时深对一次，之后每次切回标签页快对一次。
  *
- * **失败一律当无事发生**（同 `useRunAutopilot`）：这条路径作者没按过任何按钮，
+ * **失败一律当无事发生**（同保存那条后台路径）：这条路径作者没按过任何按钮，
  * 弹一个错等于每次 alt-tab 骂他一次。真出事的那一档（某一章章标写坏了）由
  * 后台整理的回执负责说——那一章他一打开就会撞上。
  */

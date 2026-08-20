@@ -40,6 +40,11 @@ def _no_capability_discovery_over_the_wire(
     """
     from novel_harness.draft import discovery
 
+    # Task 16：后台 dispatcher 的轮询线程在每个 TestClient lifespan 里会真的
+    # 去扫库并可能 claim 测试 pre-seed 的 attempt——那把套件搅成不确定。套件
+    # 默认关掉它；只有 `test_background_recovery.py` 显式设回 1 来验恢复。
+    monkeypatch.setenv("NH_BACKGROUND_RUNTIME", "0")
+
     def _refuse(url: str) -> NoReturn:
         raise AssertionError(
             f"测试里不许真发能力发现请求（{url}）——给 discover(fetch=...) 注入一个假的。"

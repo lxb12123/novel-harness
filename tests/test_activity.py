@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import re
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -180,14 +181,27 @@ def seed_summary(
     conn = connect(book["db"])
     try:
         summary_id = new_id(EntityType.SUMMARY, book["pid"])
+        chapter_id = conn.execute(
+            "SELECT id FROM chapter WHERE project_id = ? AND number = ?",
+            (book["pid"], chapter),
+        ).fetchone()["id"]
         conn.execute(
             """
             INSERT INTO chapter_summary (
-                id, project_id, chapter_number, summary,
+                id, project_id, chapter_id, chapter_number, summary, summary_sha256,
                 schema_version, prompt_hash, model_call_id
-            ) VALUES (?, ?, ?, ?, 'chapter-summary-v1', ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, 'chapter-summary-v1', ?, ?)
             """,
-            (summary_id, book["pid"], chapter, text, f"prompt:summary:{chapter}", call_id),
+            (
+                summary_id,
+                book["pid"],
+                chapter_id,
+                chapter,
+                text,
+                sha256(text.encode("utf-8")).hexdigest(),
+                f"prompt:summary:{chapter}",
+                call_id,
+            ),
         )
         conn.commit()
         return summary_id

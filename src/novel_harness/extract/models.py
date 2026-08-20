@@ -40,6 +40,24 @@ class RawEvent(BaseModel):
     confidence: float = Field(ge=0, le=1)
 
 
+class ExtractedAlias(BaseModel):
+    """模型提议的一条称呼对应（§4.5 / Task 12）。
+
+    `surface` = 正文里出现的称呼；`character_surface` = 它指的那个人物的**已登记
+    称呼**（本名或既有别名）。**禁止仅凭字符串相似断言同人**——目标人物称呼必须
+    逐字出现在模型输出的这段里，引擎仍按它去 `resolve` 成确定 person。
+
+    `quote` 必须逐字包含目标称呼和 alias surface（§4.5 的自动条件之一）。
+    """
+
+    model_config = _UNTRUSTED_CONFIG
+
+    surface: str = Field(min_length=1)
+    character_surface: str = Field(min_length=1)
+    quote: str = Field(min_length=1, max_length=120)
+    confidence: float = Field(ge=0, le=1)
+
+
 class RawCharacterProfile(BaseModel):
     """Profile fields attributed to a character surface name."""
 
@@ -109,6 +127,11 @@ class RawChapterAnalysis(BaseModel):
     events: tuple[RawEvent, ...] = Field(min_length=1, max_length=12)
     state_updates: tuple[RawStateUpdate, ...] = Field(max_length=24)
     character_profiles: tuple[RawCharacterProfile, ...]
+    aliases: tuple[ExtractedAlias, ...] = ()
+    """Task 12：模型提议的称呼对应，**先于** profile/event/state 解析（identity-first）。
+
+    默认空元组 = 旧 prompt 的响应对 `aliases` 字段直接 `extra="forbid"` 拒绝——
+    升级 prompt 时模型必须显式给（哪怕给空数组）。"""
 
     @model_validator(mode="after")
     def short_quote_frequency_capped(self) -> Self:

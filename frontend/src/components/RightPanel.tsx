@@ -15,6 +15,7 @@ import { StateTab } from "./StateCards";
 import { ProposalReviewTab } from "./ProposalReviewTab";
 import { RosterTab } from "./RosterTab";
 import { SummaryTab } from "./SummaryTab";
+import { SystemNotifications } from "./SystemNotifications";
 import type { CheckResult } from "../api/types";
 import { useState } from "react";
 
@@ -32,6 +33,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: "check", label: "检查" },
   { key: "review", label: "待确认" },
   { key: "summary", label: "章节总结" },
+  { key: "notifications", label: "通知" },
 ];
 
 /** 花名册空着的时候仍然有话可说的那几格。
@@ -275,6 +277,7 @@ export function RightPanel() {
       {!bare && activeTab === "constraints" && <ConstraintsView />}
       {!bare && activeTab === "check" && <CheckView />}
       {!bare && activeTab === "review" && <ProposalReviewTab />}
+      {activeTab === "notifications" && <SystemNotifications />}
     </section>
   );
 }
