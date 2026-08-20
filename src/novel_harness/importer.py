@@ -294,7 +294,7 @@ def explode(book: Chapterization, root: Path) -> tuple[list[str], list[str]]:
             "  最常见的原因是你在 TXT 中间插了一章：之后每一章的顺序位置全体 +1，于是\n"
             "  chapters/0088.md 要被写成原来的第 87 章。放它过去的话，图里每一条\n"
             "  valid_from=88 从此都指着另一章，而面板会理直气壮地画出来。\n"
-            "  M1 不支持中途插章。要么直接在 chapters/ 里改（然后 nh sync），\n"
+            "  M1 不支持中途插章。要么直接在 chapters/ 里改（然后让系统重新读一遍稿子），\n"
             "  要么导进一个空目录。",
             conflicts=conflicts,
         )
@@ -474,7 +474,7 @@ def sync(store: GraphStore, project_id: str, root: Path) -> SyncReport:
     """把 `{root}/chapters/*.md` 的**现状**读进库。**日常回路。**
 
     ADR 0007 说这些 .md 就是稿子：作者随时在 VSCode 里改它、在里面写新的第 301 章。
-    没有 `sync`，`nh import` 就是一次性播种，而「我刚写完的那句话」永远定位不到——
+    没有 `sync`，import 就是一次性播种，而「我刚写完的那句话」永远定位不到——
     `declare` 搜的是快照，快照只有这里落得下。它是 M1 回路的一半，不是 M4 的活。
 
     `number` 来自**文件名**（不是文件内容里印的章号，也不是这次扫到第几个文件）：

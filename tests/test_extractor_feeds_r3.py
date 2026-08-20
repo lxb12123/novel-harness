@@ -17,7 +17,7 @@ R2/R3 在 2026-08-02 到 08-13 之间每天绿着、生产上结构性哑火，�
 都是对的**：规则对、`is_dead` 对、`state_at` 对，断的是「没有任何东西写 `value_key`」。
 所以这里不断言中间任何一层，只断言两头：
 
-    模型吐出 kind="death"   →   `nh check` 在第 4 章报出「死人说话」
+    模型吐出 kind="death"   →   第 4 章 check 报出「死人说话」
 
 ── 三条一起钉住，少一条这份测试就会在错的地方绿 ──────────────────────────
 
@@ -29,7 +29,7 @@ R2/R3 在 2026-08-02 到 08-13 之间每天绿着、生产上结构性哑火，�
 3. **`StateDim` 由引擎自己建。** 抽取那条路只会 `resolve_ids`（要求节点**已存在**），
    而生死维度不在花名册里（`CANONICAL_ALIAS_LABELS` 有意排除它）。不自己建的话
    这条 death 会被当成「称呼解析不到」静默丢掉——**丢掉的形态和成功的形态在
-   `nh check` 上长得一模一样**，都是「本章没问题」。
+   check 的出参上长得一模一样**，都是「本章没问题」。
 """
 
 from __future__ import annotations
@@ -191,7 +191,7 @@ def test_without_the_model_saying_anything_r3_is_mute(
 def test_the_model_saying_he_died_is_enough_to_make_r3_fire(
     client: TestClient, book: dict[str, str]
 ) -> None:
-    """**这份文件的头等大事**：作者一个字都没敲，`nh check` 报出了「死人说话」。"""
+    """**这份文件的头等大事**：作者一个字都没敲，check 报出了「死人说话」。"""
     _add_character(client, book["pid"], "萧决")
     _run_extraction(book["db"], book["pid"])
 

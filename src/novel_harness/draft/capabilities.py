@@ -357,7 +357,7 @@ class ResolvedCallPlan(BaseModel):
     （2026-08-13 之前这儿还有半句「而抬上去之后没登记的端点会被 fail-closed 拒掉」——
     那道拒绝已经删了，见 `_streams`：`stream` 是协议的基本功能，不需要逐条登记。）
 
-    **默认 `False`，而且 M2 三臂 / `nh gate` 永不设它** ⇒ 那条路的 wire shape 逐字节不变
+    **默认 `False`，而且 M2 三臂 / gate 永不设它** ⇒ 那条路的 wire shape 逐字节不变
     （同 `previous_tail_limit` 那个既有形状：三臂不传、产品传）。
     """
 
@@ -800,7 +800,7 @@ def plan_call(
 
     Args:
         interruptible: 这一次要不要能在生成到一半时停下来（见
-            `ResolvedCallPlan.interruptible`）。**默认 `False`，M2 三臂 / `nh gate`
+            `ResolvedCallPlan.interruptible`）。**默认 `False`，M2 三臂 / gate
             永不设它** —— 那条路发出去的东西因此逐字节不变。
 
     Notes:

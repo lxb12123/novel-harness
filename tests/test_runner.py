@@ -1182,7 +1182,7 @@ def test_the_two_injected_arms_actually_pass_the_confound_lint(
 
 def test_the_runner_lives_inside_the_wall() -> None:
     """`tests/test_draft_boundary.py` 的 `SCORER_DIRS` docstring 逐字写着：runner 落在
-    `cli.py` 或顶层 `synth/` 就绕过整堵墙。**它是同时碰两侧的唯一一段代码**，
+    顶层 `gate.py` 或顶层 `synth/` 就绕过整堵墙。**它是同时碰两侧的唯一一段代码**，
     在墙外意味着墙的两面都可以被它一个人破掉。
 
     第 4 道守卫扫的是目录，所以「文件在哪儿」就是「它受不受管」——把它钉住。
@@ -1191,7 +1191,7 @@ def test_the_runner_lives_inside_the_wall() -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# ⑫ nh gate
+# ⑫ gate 入口
 # ══════════════════════════════════════════════════════════════════════════
 
 
@@ -1337,7 +1337,7 @@ def test_gate_prints_how_many_traps_and_generations(
     llm_env: None,
     amendment_5_runner_ready: None,
 ) -> None:
-    """「跑了几条陷阱、几次生成」是这条命令的成功输出本身（同 `nh check` 的「跑了几条规则」）。
+    """「跑了几条陷阱、几次生成」是这个入口的成功输出本身（同 check 的「跑了几条规则」）。
 
     两条 KNOWS 陷阱、X0 在第一条上泄漏 → `x0_knows_leak = 0.50`，刚好越过地板门，
     于是走到判别对那一档 → INCONCLUSIVE。**那是一次有效实验的合法结论，退出码 0。**

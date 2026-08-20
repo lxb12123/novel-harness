@@ -548,7 +548,7 @@ def _wire_kwargs_from_validated(
         # 原来看的是 `supports_stream_usage is True`，而注册表里只有 OpenAI 那四条是
         # `True` ⇒ 作者自己那条路一开可中断，每一稿的 token 数就退成「未记录」。
         #
-        # ⚠️ **为什么不干脆无条件发**：那样 `nh gate` 那条路的 wire 上会多出这个字段，
+        # ⚠️ **为什么不干脆无条件发**：那样 gate 那条路的 wire 上会多出这个字段，
         #    而它是**预注册的考卷**（EVAL_PROTOCOL §2：gate 测的必须是产品会发的东西，
         #    且逐字节稳定）。`interruptible` 恰好是「产品起草」和「M2 三臂」的分界——
         #    后者**永不设它**（`ResolvedCallPlan.interruptible` 的 docstring 写着），

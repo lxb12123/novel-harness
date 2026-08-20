@@ -130,7 +130,7 @@ async function loadChapters() {
   const r = await j(`/api/projects/${PID}/chapters`);
   const list = r.ok ? r.body : [];
   const el = document.getElementById('chapters');
-  if (!list.length) { el.innerHTML = '<div class="empty">还没有章节（先 nh import 一本书）</div>'; return; }
+  if (!list.length) { el.innerHTML = '<div class="empty">还没有章节（先导入一本书）</div>'; return; }
   el.innerHTML = list.map(c =>
     `<div class="ch" data-n="${c.number}"><span class="n">${String(c.number).padStart(3,'0')}</span>${esc(c.title || '（无题）')}</div>`
   ).join('');

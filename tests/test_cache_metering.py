@@ -568,7 +568,7 @@ WIRE_FINGERPRINT = "1a977c543f89a7917a652ffc3452aab946afdcc5b23ec312a6e4070a74c9
 「这一次要不要可中断」（`provider.py` 那段注释写了为什么不是「无条件发」）。
 矩阵里的 plan 全是不可中断的那一档，所以它们一律不带。
 
-**`nh gate` 那条路的 wire 一个字节都没变**，那是预注册的考卷；
+**gate 那条路的 wire 一个字节都没变**，那是预注册的考卷；
 `tests/test_interruptible_draft.py::test_gate_route_is_untouched…` 单独钉着它。
 """
 

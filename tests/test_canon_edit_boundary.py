@@ -1342,7 +1342,7 @@ def test_no_screen_in_the_whole_workbench_posts_a_chapter() -> None:
 # - 删节点没有路由，所以 `node_refs` 找不到人这件事到不了。
 # - `retract_canon` 和读端（`queries.current_knowledge_edges`）唯一的判据差是
 #   `evidence_status is STALE`——而**今天没有任何东西会把一条证据标成 STALE**
-#   （`cli.py` 的 sync 那段写着「它不做 STALE / relocate / revalidate（那是 M4）」；
+#   （`importer.py` 模块头那段写着「标成 STALE、重定位、重校验是 M4，不是这里」；
 #   实测：改掉那句引语再存，边仍然是 FRESH）。
 #
 # 所以这两句由 `test_no_refusal_borrows_someone_elses_sentence` 从源码钉住，理由和

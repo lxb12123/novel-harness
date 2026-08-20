@@ -29,7 +29,7 @@ def test_paragraphs_is_splitlines_on_a_real_book() -> None:
 
 
 def test_paragraphs_keeps_blank_lines() -> None:
-    """空行**占一个 index**——`cli.py` 喂给 CheckContext 的那份也是这样数的。"""
+    """空行**占一个 index**——`api/app.py` 喂给 CheckContext 的那份也是这样数的。"""
     assert paragraphs("甲\n\n乙\n") == ["甲", "", "乙"]
 
 

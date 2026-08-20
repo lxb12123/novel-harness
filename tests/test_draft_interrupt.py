@@ -189,7 +189,7 @@ def test_an_unregistered_endpoint_now_streams_like_everyone_else() -> None:
 
 
 def test_the_default_leaves_the_frozen_threshold_alone() -> None:
-    """**不设它 = 今天那条式子一个字没改。** 三臂 / `nh gate` 走的就是这一档。"""
+    """**不设它 = 今天那条式子一个字没改。** 三臂 / gate 走的就是这一档。"""
     capability = resolve_capabilities(ENDPOINT, MODEL)
     small = plan_call(LENGTH, ReasoningEffort.OFF, capability)
     big = plan_call(

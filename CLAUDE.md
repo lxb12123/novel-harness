@@ -69,7 +69,7 @@
 uv sync
 uv run pytest -q
 uv run ruff check .
-uv run nh --help
+# 没有 nh 命令行面了（2026-08-20 删）；产品线 = 桌面壳，调试线 = Web 工作台。
 bash scripts/demo.sh                                                        # 心跳：端到端还通着吗
 
 # ── M2 kill-gate 的合成小册子（`synth/`，仪器不是产品，不进 wheel）────────────
@@ -77,17 +77,20 @@ uv run python synth/build.py                # booklet.toml + booklet.txt → 库
 uv run python -m synth.leak_selfcheck       # ⚠️ 必须 -m：它和 build.py 共用一份 schema，
                                             #    `python synth/leak_selfcheck.py` 会 ImportError
 # 真跑一轮（**会调模型、会花钱**：225 个 final cell；每份最多一次长度续写，成功轮为 225–450 次 transport call）。作者永远不敲这条。
-uv run nh gate --db synth/gate.db -p <pid> --ground-truth synth/ground_truth.json
+uv run python -m novel_harness.gate --db synth/gate.db -p <pid> --ground-truth synth/ground_truth.json
 
 # ── 工作台的三层，别混 ──────────────────────────────────────────────────────
+# 产品线（最终）= 桌面壳：它调 novel_harness/api/launch.py::launch()
+#   （建库 + 起内置服务 + 可选开浏览器）。启动器不是命令行，没有子命令。
+# 调试线（现在）= Web 工作台，下面 L1/L2/L3 全是它在用。
 # L1 日常开发（每分钟）：两个进程，热更新。改代码就走这条，不走 L2。
-uv run nh serve --db book.db --no-open                     # 只为建库，看到 URL 就 Ctrl-C
+uv run python -c "from pathlib import Path; from novel_harness.api.launch import launch; launch(Path('book.db'), open_browser=False)"  # 首次建库（起完 Ctrl-C）
 NH_DB=book.db uv run uvicorn novel_harness.api.app:app --port 8000 --reload   # 8000 是 Vite 代理目标
 cd frontend && npm run dev                                 # 前端 5173
 
 # L2 集成验证（每周）：一个进程，验「打包后还对不对」。没有热更新。
 cd frontend && npm run build && cd ..                      # 产物落 src/novel_harness/webui/
-uv run nh serve --db book.db                               # 建库 + 起服务 + 开浏览器
+uv run python -c "from pathlib import Path; from novel_harness.api.launch import launch; launch(Path('book.db'))"  # 建库 + 起服务 + 开浏览器
 
 # L3 发布验证（发版）：装出来的包里还有没有工作台。
 # ⚠️ ci.yml 里写了 packaging job 验这个，但**本仓库至今没有 git remote，CI 一次都没跑过**。
@@ -122,8 +125,9 @@ Vite 的 `outDir` 和 `api/app.py` 的 `_DIST` 是**两个必须同时改的字�
 
 已落地：数据层 / 图层 / panel / 规则 R2·R3（R4 已于 2026-08-14 砍，[ADR 0027](docs/adr/0027-scene-blocks-cut.md)） /
 `text/{anchor,chapterize,mentions}` / 声明层 `declare.py` /
-`nh` 的子命令（M0+M1），FastAPI 壳（`api/`）+ React 工作台（`frontend/`，手写 TS/TSX）（M1.5）。
-**`demo.sh` 心跳绿着（2026-08-06 复核）——但这句话没有任何东西自动验证它**：
+M0+M1 的作者面（当时是 `nh` 的十几条子命令，**2026-08-20 整个删了**，[ADR 0034](docs/adr/0034-no-command-line-surface.md)——
+能力一条没少，都在 Web 工作台上），FastAPI 壳（`api/`）+ React 工作台（`frontend/`，手写 TS/TSX）（M1.5）。
+**`demo.sh` 心跳绿着（2026-08-20 复核；它 2026-08-20 从 `nh` 心跳重写成 API 心跳）——但这句话没有任何东西自动验证它**：
 没有一个 pytest 会跑 demo.sh，所以它红了也只有人肉执行才看得见。
 它上一次断是 2026-08-02（R2/R3 进 `ALL_CHECKS`，而 demo.sh 还在等「跑了 1 条规则」），
 **四天没人发现**。那一种断法现在被 `tests/test_doc_numbers.py::test_demo_pins_the_real_rule_count`
@@ -131,7 +135,7 @@ Vite 的 `outDir` 和 `api/app.py` 的 `_DIST` 是**两个必须同时改的字�
 **前端 ↔ 后端契约由两头钉住**：`tests/test_frontend_contract.py` 从真 app dump 一批端点的真出参冻成 `frontend/src/__fixtures__/api.json`（出参一改 pytest 红），组件测试吃**同一份** fixture（形状变了没改组件 vitest 红）。**别手写前端 fixture**——两份手写的东西互相验证正是这条缝原本的病。改了后端出参跑 `NH_UPDATE_FIXTURES=1 uv run pytest tests/test_frontend_contract.py` 然后看 git diff。
 
 **M2 的旧短输出链在，但修正案 5 的链还没合拢，也没通电。** 判分侧（`eval/{leak,score,confound_lint}.py`）、
-被判侧（`draft/{provider,context,assemble}.py`）、产出侧（`eval/runner.py` + `nh gate` + `synth/`）
+被判侧（`draft/{provider,context,assemble}.py`）、产出侧（`eval/runner.py` + `python -m novel_harness.gate` + `synth/`）
 都已落地并有测试。**建造顺序「判分器先于被判者」是有意的**：先有卷子和判分口径再有被判的东西，
 「看到结果再定及格线」在结构上就做不到。
 **修正案 5 与 ADR 0011 已预注册，长度/provider/续写实现仍待落地**；全量离线验证后才冻结

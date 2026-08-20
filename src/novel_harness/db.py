@@ -63,7 +63,7 @@ BACKUP_LABEL: Final = "升级前备份"
 - 结尾仍是 `.db` ⇒ 真要回退时，改个名字就能用，不必懂任何工具。
 
 **它和正在用的那个不会认错**：正在用的那个的名字**恰好**是 `book.db`
-（`start.command` 写死这一个名字，`nh serve --db` 是显式路径，全仓没有一处
+（`start.command` 写死这一个名字，启动器 `launch()` 收的是显式路径，全仓没有一处
 按 `*.db` 通配找库）——所以这份备份永远不会被当成书打开，作者也不会为了「清掉多余的库」
 而删错那一个。
 """
@@ -254,7 +254,7 @@ def migrate(conn: Connection) -> int:
     **版本已经到位**（日常那千百次重启，包括开着 `--reload` 的 dev server）一份都不拷；
     **`current == 0`** 是一个刚建出来的空库，里面还没有任何东西可丢。
     钩子挂在这儿而不是 `api/deps.py::ensure_schema()`：出事的那两次确实走的是那条路，
-    但作者自己走的是 `nh serve`/`nh init`（`cli.py` 也调 `migrate`）——
+    但作者自己走的是启动器（`api/launch.py::launch()` 也调 `migrate`，桌面壳将来同此）——
     只保护出过事的那一条，等于把作者留在外面。
     """
     migrations = _migrations()

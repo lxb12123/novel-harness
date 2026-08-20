@@ -1,7 +1,7 @@
 """锚点 —— 「什么是一段」和「这段引语在哪」的**唯一定义**（ADR 0006）。
 
 `para_index` 是证据锚的第一个分量，而它今天在本仓库有**两个潜在产地**：
-`cli.py` 里喂给 `CheckContext.paragraphs` 的那一份，和 `evidence.para_index`。
+`api/app.py` 里喂给 `CheckContext.paragraphs` 的那一份，和 `evidence.para_index`。
 两份定义 = R4 的 Issue 锚到隔壁段落，且是「偶尔差一两段」那种查两周的形态——
 ADR 0006 对 offset 的判词一字不差地适用。**这个模块存在的理由就是把那个数收敛成一个。**
 
@@ -54,7 +54,7 @@ def paragraphs(text: str) -> list[str]:
     """一章正文 → 段落列表。**`para_index` 全库唯一的定义。**
 
     今天的实现逐字节等于 `text.splitlines()`。这个函数存在的理由不是它做了什么，
-    是它让那个下标只有一处定义：`cli.py` 的 `CheckContext.paragraphs` 和
+    是它让那个下标只有一处定义：`api/app.py` 喂进 `CheckContext.paragraphs` 的那一份和
     `evidence.para_index` 必须永远是同一个含义。
 
     **别顺手改成按空行分段。** 那会静默改变 `para_index` 的含义——R4 的现有测试全绿着，

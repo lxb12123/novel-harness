@@ -454,7 +454,7 @@ QUERY_COORDINATES = frozenset({"chapter", "from_chapter", "first_chapter", "last
 `valid_from` / `valid_to` / `since` 一个都不在这里，而且**这个集合本身是断言**：
 往里加名字之前先回答「作者会不会以为他在告诉系统这条事实从第几章开始成立」。
 索引层的 `from_chapter` / `first_chapter` / `last_chapter` 是「列表从哪儿开始 / 拉哪一段」，
-与 `nh panel --chapter` 同性质。
+与面板那条 `chapter` 参数同性质。
 """
 
 
@@ -463,7 +463,7 @@ def test_the_only_time_coordinates_in_any_tool_are_query_coordinates() -> None:
 
     判据借 `test_no_chapter_input.BANNED` 那份既有正则（`chapter|valid_from|valid_to|since|
     ^ch$|^at$`），**但结论不同**：那份守卫盯的是**声明面**，那里一个章号输入框都不许有；
-    这里是**查询面**，章号坐标合法（同 `nh panel --chapter`），不合法的是别的那几个。
+    这里是**查询面**，章号坐标合法（同面板那条 `chapter` 参数），不合法的是别的那几个。
 
     这条在工具表上今天之所以成立，还有一层结构性理由：**表里一条写图谱的工具都没有**，
     `ToolContext` 里也没有 `CanonWriter`——没有写路径就没有地方能把这个数存成一条边的

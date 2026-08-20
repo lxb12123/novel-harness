@@ -105,7 +105,7 @@ def sync_outcome(report: SyncReport) -> SyncOutcome:
 
     notes: list[str] = []
     if total == 0:
-        # 真的零 vs 静默的零（同 `nh sync` 那条 `_die` 的理由）：这两种都会让作者的
+        # 真的零 vs 静默的零（同 sync 那条空态的理由）：这两种都会让作者的
         # 下一步「记录这句」被拒，而他会去查引语——问题却在这里。
         headline = "这本书的稿子文件夹里一个章节都没有，没有读到任何正文。"
         notes.append("这不是「没有变化」，是「没找到稿子」——书的文件夹可能被移动或改名了。")

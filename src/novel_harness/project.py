@@ -1,6 +1,7 @@
 """项目 —— `project` 表的唯一拥有者（PLAN §5.9 / ADR 0007）。
 
-`nh init` 和 `scripts/seed_demo.py` 都从这里开局：一个项目行是全库其余一切的作用域
+建库那条路（`POST /api/projects` / `api/launch.py` 首次建库）和 `scripts/seed_demo.py`
+都从这里开局：一个项目行是全库其余一切的作用域
 （`node.project_id` 的外键指着它，`ids.project_short()` 的短指纹派生自它的 id）。
 
 本模块碰的不是图（`project` 不在 `tests/test_arch_guard.py` 的 `GRAPH_TABLES` 里）；
@@ -79,7 +80,7 @@ def insert(conn: Connection, *, name: str, root_path: str) -> Project:
     开启外层事务。`project` 表仍只由本模块写，普通公开创建仍应使用会提交的 `create()`。
     """
     if not name:
-        raise ValueError("name 不能为空：它是作者在 nh init 之后唯一认得出这个库的东西")
+        raise ValueError("name 不能为空：它是作者建好库之后唯一认得出这个库的东西")
     if not root_path:
         raise ValueError("root_path 不能为空：正文在磁盘上（ADR 0007），没有它就没有 chapters/")
 

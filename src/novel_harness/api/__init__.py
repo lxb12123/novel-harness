@@ -4,7 +4,7 @@
 `StateSnapshot` …），直接当 API response schema，FastAPI 自动序列化。读走 `panel/` +
 `StoryGraph`，写走 `Ledger`（P2 再接）。
 
-这一层是**装配层**（同 cli.py）：`api/deps.py` 是全壳唯一开连接的地方，因此进了
+这一层是**装配层**（另一处是 `api/launch.py`，启动器）：`api/deps.py` 是全壳唯一开连接的地方，因此进了
 `tests/test_arch_guard.py` 的 `CONNECTION_OPENERS`。路由文件 `app.py` 不碰连接——它收
 `Depends(get_store)`，就像规则收 `CheckContext`、面板收 `store`。
 

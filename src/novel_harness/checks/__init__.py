@@ -25,8 +25,9 @@ M3 的生死线是「真书连续 20 章误报 < 1 条/章 **且** 合成小册�
 那次「双边门槛已过」量的是 `synth/m3_replay.py` 的 `OverlayGraph`——它在**内存里**
 补上这些边界数据，一条都没穿过写路径。
 
-补法是三条作者入口（`nh declare dead` / `nh declare appears` + 两条同名 HTTP +
-`POST /nodes` 的 `first_appears_chapter`），钉住它的是
+补法是三条作者入口（`POST …/declare/death` / `POST …/declare/first-appearance` +
+`POST /nodes` 的 `first_appears_chapter`；当时还各有一条同名子命令，随命令行面一起删了，
+见 ADR 0034），钉住它的是
 `tests/test_rules_fire.py`：**每一个字都从 HTTP 进去**，先断言「什么都没声明时两条规则
 是哑的」，再断言它们各自报出一条。**规则本身一行没改**（除了那两句建议语的措辞）——
 这一课是「一条规则写完了、测试绿着，和它在产品里能开火，是两件事」。
@@ -34,8 +35,8 @@ M3 的生死线是「真书连续 20 章误报 < 1 条/章 **且** 合成小册�
 **2026-08-14：R3 那一半不再需要作者动手。** 抽取器长出了 `kind="death"`
 （`extract/models.py` 那段论证：模型在**封闭枚举**里挑一个，`value_key` 仍由引擎
 写死成常量，铁律 2 没破），端到端由 `tests/test_extractor_feeds_r3.py` 钉住——
-判据同上，只断言两头：模型说「他死了」→ `nh check` 在后面的章报出「死人说话」。
-`nh declare dead` 留着当**改**的入口（模型漏了或判错时作者手上得有一条路）。
+判据同上，只断言两头：模型说「他死了」→ 后面的章 check 报出「死人说话」。
+`POST …/declare/death` 留着当**改**的入口（模型漏了或判错时作者手上得有一条路）。
 
 **R2 那一半不会跟进，这不是待办。** `first_appears_chapter` 的主要用法是
 「这东西我打算第 200 章才让它出场」——那是**作者的计划**，物理上不在已写文本里
@@ -56,7 +57,7 @@ ALL_CHECKS: tuple[Check, ...] = (
 
 
 def run_checks(ctx: CheckContext, checks: tuple[Check, ...] = ALL_CHECKS) -> list[Issue]:
-    """跑全部规则（`nh check --chapter N` / `scripts/demo.sh` 的入口）。
+    """跑全部规则（`POST …/chapters/{n}/check` / `scripts/demo.sh` 的入口）。
 
     **不吞异常。** 一条规则炸了应当整个红，而不是让作者以为「这章没问题」——
     静默的零 issue 和真的零 issue 在面板上长得一模一样。

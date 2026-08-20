@@ -43,7 +43,7 @@ def test_the_public_snapshot_never_overrides_our_own_table(route: tuple[str, str
     """**登记过的路由一条都不许被公共表改写。**
 
     这不是洁癖：公共表在输出上限那一维**实测滞后一整代**（`deepseek-v4` 写 8,192，
-    官方文档 384,000，差 47 倍），而 M2 判分链和 `nh gate` 走的就是这些路由。
+    官方文档 384,000，差 47 倍），而 M2 判分链和 gate 走的就是这些路由。
     """
     assert resolve_with_discovery(*route, fetch=NO_FETCH) is CAPABILITY_REGISTRY[route]
 

@@ -1013,7 +1013,7 @@ def insert_chapter(conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec,
 
 
 def update_chapter(conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec, sha: str) -> None:
-    """`nh sync` 的落点：作者在自己的编辑器里改了这一章。
+    """`sync` 的落点（今天的入口是 `POST …/sync`）：作者在自己的编辑器里改了这一章。
 
     `number` 不在这里——它是幂等键，改它就是换一章。`updated_at` 显式重写：它的
     DEFAULT 只在 INSERT 时生效。

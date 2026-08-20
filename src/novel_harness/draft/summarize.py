@@ -28,8 +28,9 @@ SUMMARY_LENGTH: Final = DEFAULT_LENGTH_POLICY.validate_spec(
 )
 """总结调用的长度档。**和 prompt 放在同一个文件里**是因为它们必须一起改：
 上面那句 system prompt 写死了「不超过 {SUMMARY_MAX_CHARS} 个中文字符」，预算档要是
-另在别处写一份，两边就能各自漂。`nh summarize`（CLI）和 `POST /summary`（HTTP）
-读的是这一个常量——两条入口给同一章算出不同的预算，是那种「只在长章上才犯」的 bug。"""
+另在别处写一份，两边就能各自漂。后台总结器和 `POST /summary` 读的是这一个常量——
+两条入口给同一章算出不同的预算，是那种「只在长章上才犯」的 bug。
+（当时的第三条入口是 `nh summarize`，随命令行面一起删了，见 ADR 0034。）"""
 
 
 _SYSTEM_PROMPT: Final = f"""你是中文长篇小说的后台背景总结器。

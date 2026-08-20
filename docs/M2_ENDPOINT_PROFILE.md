@@ -114,7 +114,9 @@ continuation 预检：prompt + (request + overhead) + request ≈ 302K ≤ 1M �
       （[修正案 9](../docs/EVAL_PROTOCOL_AMENDMENT_9.md) /
       [ADR 0009](../docs/adr/0009-m2-verdict.md)，**非数据裁决**：
       泄漏统计未产出，「图谱约束有效」未证明）。本文件冻结的 profile
-      保留，`nh gate` 可随时补跑。
+      保留，gate 可随时补跑（入口 2026-08-20 从 `nh gate` 改成
+      `python -m novel_harness.gate`，见 [ADR 0034](adr/0034-no-command-line-surface.md)；
+      仪器和 profile 都没动）。
 
 跑完之前 `runs/` 不存在、ADR 0009 不写；本 profile 的 commit 时间戳先于
 第一份 `runs/*.jsonl` 是「先定卷子再答卷」的证据链最后一环。

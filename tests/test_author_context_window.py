@@ -232,7 +232,7 @@ def test_filling_it_in_also_stops_this_route_from_being_unknown() -> None:
 def test_the_authors_box_can_never_reach_the_exam() -> None:
     """**卷子不许被作者的设置改一个字节**（协议 §2：wire 变了就是改卷子）。
 
-    今天这条成立是结构上的：`nh gate` 走 `ProviderConfig.from_env()` +
+    今天这条成立是结构上的：gate 走 `ProviderConfig.from_env()` +
     裸的 `resolve_capabilities`，压根不读设置文件。钉在这儿是因为**它靠的是
     「那一档只加在壳里」这一个事实**——哪天有人图省事把手填那一档下沉到
     `resolve_capabilities` 或 `resolve_with_discovery` 里，三臂的 prompt 预算会跟着变，

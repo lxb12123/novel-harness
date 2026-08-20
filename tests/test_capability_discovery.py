@@ -91,7 +91,7 @@ def _clean_cache() -> None:
 def test_registered_routes_never_touch_the_wire(route: tuple[str, str]) -> None:
     """8 条精确路由全部短路。
 
-    **这条不是性能测试，是隔离测试**：M2 判分链和 `nh gate` 走的就是这些路由，
+    **这条不是性能测试，是隔离测试**：M2 判分链和 gate 走的就是这些路由，
     它们发出去的东西必须逐字节不变（EVAL_PROTOCOL §2）。只要这里漏一条，
     那条路的能力就可能被一个第三方 API 的返回值改写 —— 而那是「考卷被外部改动」。
     """

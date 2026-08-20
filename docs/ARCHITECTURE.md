@@ -191,7 +191,7 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 
 > **那个 800 是 X0 的定义，不是产品参数**（ADR 0019 边界五）。它存在的目的是证明「给得少会崩」，
 > 而三臂和产品共用 `assemble()`，于是产品一度继承了对照组的上下文预算。
-> 2026-08-10 起截断长度参数化（`previous_tail_limit`）：**三臂 / `nh gate` / `nh draft` 一个字不传，
+> 2026-08-10 起截断长度参数化（`previous_tail_limit`）：**三臂 / gate 一个字不传，
 > 照旧拿冻结的 800**；`/draft` 的 PRODUCT 档从 `capability.max_context_tokens` 倒推
 > （`assemble.product_tail_limit()`，比例 + 成本闸，与记忆层同一个 `TOKENS_PER_UNIT` 换算）。
 
@@ -292,7 +292,7 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 
 ## 当前状态
 
-**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2613 个 pytest + 650 个 vitest，`.sql` 和前端产物都在 wheel 里）：
+**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2596 个 pytest + 656 个 vitest，`.sql` 和前端产物都在 wheel 里）：
 
 > ⚠️ **2026-08-14 两刀，都是作者看着工作台提的，都撤掉了「要作者去填」的东西**：
 >
@@ -328,6 +328,30 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 > 泳道 2 的头等断言换成 `nh declare dead --quote`（**「章号由引语算出来」一个字没变**），
 > 闭开区间改由一条规则量出来（ch4 报、ch2 不报）；心跳现在是绿的。
 
+> ⚠️ **上面那段说的 `nh` 心跳 2026-08-20 整个重写了**（命令行面已删，ADR 0034）。
+> `demo.sh` 现在是 **API 心跳**：seed_demo 造库 → 起 `python -m novel_harness.api` →
+> curl 打真端点。两条泳道和它们各证的那件事一个字没变，泳道 2 的头等断言换成
+> `POST …/declare/death`（**「章号由引语算出来」仍然一个字没变**，断的是
+> `edge.valid_from_chapter == 3`），闭开区间仍由规则量出来（改用 ch3 报 / ch2 不报——
+> fixture 只有 3 章，老心跳那个 `--chapter 4` 是拿 `-f` 直接喂文件，API 的 check 读磁盘）。
+
+> ⚠️ **2026-08-20 第三刀：命令行面整个删掉**（[ADR 0034](adr/0034-no-command-line-surface.md)）。
+> 起因是作者定了三条线：**产品线 = 桌面壳（最终形态）、调试线 = Web 工作台（保留）、
+> 删减线 = CLI（不留）**。作者面的每一条子命令 Web 都已经等价，留着等于维护第二块表面。
+>
+> 删掉的：`cli.py`、`__main__.py`、`[project.scripts]` 的 `nh` / `novel-harness` 两个可执行、
+> `typer` 依赖，以及 `test_cli` / `test_declare_cli` / `test_main` 三份测试（合计 −2984 行）。
+> **搬家而不是删掉的两块**（CLI 里唯二 Web 等价不了的）：
+>
+> - `serve` 的装配逻辑 → `api/launch.py::launch()`（建库 → 设 env → 起 uvicorn → 开浏览器）。
+>   它是**桌面壳的地基**，今天由 `start.command` 双击调用。
+> - `gate` → `python -m novel_harness.gate`。它是仪器不是产品，一个月不一定跑一次，
+>   但 M2 复验和四条真书验收都指望它当入口，**保一个薄入口的成本≈0，不保才是省那 30 行**。
+>   搬家时才发现它**不能住在 `eval/` 里**：边界守卫不许「开库 + 装配」进判分层，
+>   于是它落在顶层 `gate.py`。
+>
+> 心跳同日改成 **API 心跳**（见上一段）。**这一刀之后，仓库里没有任何要维护的文本命令面**。
+
 > ⚠️ **「全绿」这个词 2026-08-13 从上面那句话里拿掉了，因为它在一台干净机器上不成立。**
 > `tests/test_m3_replay.py::test_replay_passes_the_preregistered_gate` 在**新克隆 /
 > 新 worktree 上必红，而且重新生成也救不回来**：它读 `synth/gate.db`（`*.db` 在
@@ -355,8 +379,10 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
 > 守卫钉住的是**能在运行时数出来**的那些（67 条路由 / 66 条 /api / 1 条 501 stub /
-> 17 个错误映射 / 17 个子命令 / 28 张表 / 77 个端点 / `ALL_CHECKS` 2），
+> 17 个错误映射 / 28 张表 / 77 个端点 / `ALL_CHECKS` 2），
 > 改错必红、**删掉也必红**（不静默 skip）。
+> （**「17 个子命令」2026-08-20 从这张清单里退了**：命令行面整个删掉，那个数在运行时
+> 已经数不出来，守卫里那条 `Fact` 同步撤掉——见 ADR 0034。）
 > （这一行 2026-08-10 之前写的是「路由 42 / fixture 端点 34」那种词序，
 > **而守卫的正则认的是「N 条路由」「N 个端点」**——于是它躺在被守卫盯着的那一节里、
 > 却一个字都没被检查，真值早已是别的数。现在改成守卫认得的写法，它才真的被钉住。）
@@ -377,7 +403,13 @@ migrations/{001_init,002_m4_events,003_proposal_audit_recovery,004_chapter_summa
             006_chat_session,007_draft_candidate,008_cache_usage,
             009_call_chapter,010_candidate_stopped,011_rule_revocation,
             012_chat_notice,013_summary_edit,014_summary_mentions,
-            024_calibration}.sql（28 张表；017–023 属并行保存闭环任务）
+            015_chapter_disk_stat,016_rule_until,017_calibration}.sql（28 张表）
+                                                ← calibration 2026-08-19 从 `024_` 改名 `017_`：
+                                                  它原来跳号跳在 016 后面，`_migrations()` 见到
+                                                  断号直接抛 `MigrationError`，建库和起服务当场崩。
+                                                  **并行保存闭环任务的 017–023 将来整体后移一档
+                                                  （018–024）**，合并时照 ADR 0033 的约定做，
+                                                  否则和这条撞号。
                                                 ← 013 也是 ALTER 不建表：`chapter_summary`
                                                   多两列（`source` / `status`），照 005 的先例。
                                                   **作者改一条滚动总结时不许有一行凭空消失**：
@@ -518,22 +550,26 @@ declare.py  importer.py                         ← M1 声明层：引语定章�
                                                   由 `DeclareDrawer` 逐字渲染给一位**用 WPS、
                                                   不想碰命令行**的作者。现在这一层只说产品无关的
                                                   那半句（「让系统重新读一遍稿子」），
-                                                  终端那半句归 `cli.py::_refusal_tail()`，
-                                                  浏览器那半句归抽屉上那颗「读回改动」。
+                                                  产品相关的那半句归壳——浏览器里是抽屉上那颗
+                                                  「读回改动」。命令行面删掉之后（ADR 0034）
+                                                  壳只剩一个，但**引擎不许出现命令**这条没变
                                                   守卫两侧：`screenGuard.ts::SHELL_LINE`（第五张网）
                                                   + `test_wording_guard.py` 拿每一个拒绝类的
                                                   **真实消息**去扫（新增一个子类也罩得住）
-cli.py                                          ← nh 的 17 个子命令（含 `nh serve` / `nh gate` / `nh draft` / `nh summarize`；
-                                                  2026-08-13 多两条**声明**：`nh declare dead` /
-                                                  `nh declare appears`，都只收称呼 + 引语，
-                                                  一个 int 型参数都没有）。
-                                                  2026-08-14 `nh check` 的输出里**没有场景块了**：
-                                                  它先是从 `_die`（「没有场景块 = R4 无事可做」）
-                                                  退成一句说明，再随 R4 一起整个撤掉
-                                                  （ADR 0027）。约束 8 那一半原样在：
-                                                  **印的是 `len(ALL_CHECKS)` 和规则名**，
-                                                  不是写死的数字
-api/{app,deps,activity,autopilot,chat,extraction,manuscript,review}.py
+gate.py                                         ← M2 大门的薄入口（`python -m novel_harness.gate`）。
+                                                  **命令行面 2026-08-20 整个删了**（ADR 0034）：
+                                                  17 个子命令连同 `cli.py` / `__main__.py` /
+                                                  `[project.scripts]` / typer 一起走，作者面的每一条
+                                                  Web 工作台都已等价，不再维护第二块表面。
+                                                  只留这一个入口，因为 M2 复验和真书验收还指望它——
+                                                  它是**仪器不是产品**，作者永远不敲。
+                                                  它住在**顶层而不在 `eval/`**：边界守卫不许「开库 +
+                                                  装配」住进判分层（`tests/test_draft_boundary.py`），
+                                                  搬家时才发现这条。
+                                                  约束 8 那一半没丢，换了地方：`POST …/check` 的出参
+                                                  `rules_run` 列的是 `len(ALL_CHECKS)` 个真规则名，
+                                                  不是写死的数字，`demo.sh` 的心跳逐字钉着那个数
+api/{app,deps,launch,activity,autopilot,chat,extraction,manuscript,review}.py
                                                 ← M1.5 FastAPI 壳：67 条路由 + 17 个错误映射
                                                   （66 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
                                                   M4 抽取/事件读端 + 提案审阅/被动确认路由；
@@ -691,7 +727,7 @@ draft/rolling_summary.py                        ← M4 后续切片：后台章�
                                                   用 `get()` 的话作者撤掉的那一章会在他切走的下一秒
                                                   被自动买回来 —— 一次他没按过的付费调用，
                                                   顺带抹掉他刚做的动作
-draft/summarize.py                              ← M4 后续切片：章节摘要 prompt（`nh summarize` 补档，HTTP 同一条）
+draft/summarize.py                              ← M4 后续切片：章节摘要 prompt（入口只有 HTTP：`POST …/chapters/{n}/summary`）
 agent/{ports,index,tools,loop,store,model,drafting,candidates,rules}.py
                                                 ← 模式二（ADR 0019）：**工具表就是权限边界**。
                                                   `ports.py` = 模型碰得到的全部东西（`ToolContext` +
@@ -776,7 +812,8 @@ agent/{ports,index,tools,loop,store,model,drafting,candidates,rules}.py
 eval/{leak,score}.py                            ← M2：泄漏集合判断 + 精确 McNemar / Holm + `decide()` 裁决表
 eval/confound_lint.py                           ← M2：X1 vs X2 除 form 外不许有第二处差异（§2 反混淆铁律）
 eval/runner.py                                  ← M2：三臂 × N 次 → 独占新建 `out_path` → `GateInput`
-                                                  （`nh gate` 默认写 `runs/`；全仓唯一同时碰两侧的代码）
+                                                  （`python -m novel_harness.gate` 默认写 `runs/`；
+                                                  全仓唯一同时碰两侧的代码）
 eval/evidence.py                                ← M2：JSONL 证据重建器（离线重算每个记录，key 拒入）
 synth/                                          ← M2：合成小册子（12 章正文 + booklet.toml + build + selfcheck）；**不进 wheel**
                                                   （M3：m3_ground_truth.json 考卷 + m3_replay.py 量具，同不进 wheel）
@@ -788,8 +825,9 @@ KNOWS 压 BELIEVES、STALE 停火、跨项目隔离）一条都没被执行过�
 场景降解成纯数据再参数化成两个后端，**同一份断言 24 条 × {fake, real} 各跑一遍**，另有 6 条
 Fake 够不着的（label 校验 / 重复边 StoreError / `secret_ids` 默认列序）只打真库。Fake 从此漂不动。
 
-`cli.py` 在此之前是**只有 `--version` 的空壳**；现在 `nh panel` 渲染的就是本文档
-开头那个框，走的是真 SqliteStoryGraph。面板不再只在终端里存在——同一个矩阵在浏览器工作台的右栏
+在此之前面板只是一份**没有渲染器的数据结构**；后来终端上那条 `nh panel` 渲染的就是本文档
+开头那个框，走的是真 SqliteStoryGraph（命令行面 2026-08-20 已删，ADR 0034——**渲染器那一份论证
+没有作废，只是它今天唯一的落点是浏览器**）。同一个矩阵在浏览器工作台的右栏
 第一个 tab 里（`api/app.py` 的那批路由 + `frontend/src/components/KnowledgeMatrix.tsx`；
 条数在「当前状态」，这儿不留第二份）。
 
@@ -806,7 +844,7 @@ Fake 够不着的（label 校验 / 重复边 StoreError / `secret_ids` 默认列
 length/capability/streaming/continuation/JSONL 实现与回归测试已于 2026-08-01 全部落地并离线验证
 （1079 个 pytest / 33 个 vitest 全绿，见下）；2026-08-02 又补了两件事：DeepSeek 共享输出预留
 按 0.95 审计入册（thinking 与正文共池、官方无占比；实测右尾单 cell 达 40,000 tokens），
-`nh gate` 按 env 从注册表解析并冻结 plan（high reasoning、request 150,000、streaming）。
+gate 按 env 从注册表解析并冻结 plan（high reasoning、request 150,000、streaming）。
 
 已落地并有测试：`eval/leak.py`（草稿泄漏 = 纯集合判断，禁忌集只经 `panel/constraints`）、
 `eval/score.py`（`majority` / 精确 McNemar / `compare_arms` / Holm，零重依赖）、
@@ -828,7 +866,7 @@ length/capability/streaming/continuation/JSONL 实现与回归测试已于 2026-
 里面**不许出现「秘密 / 不知道 / 泄露 / 剧透 / 伏笔 / 设定」**，另有一条关键词集合测试守着）、
 **`eval/confound_lint.py`**（2026-07-30 补，25 条：X1/X2 的人名集合差 + 可见字符长度比
 `max/min ≤ 1.15`；纯集合判断无分词器，空态一律判 `ok=False`）、
-**`eval/runner.py` + `nh gate`**（2026-08-01 收口，40 条：一条陷阱只调**一次** `scene_view()`
+**`eval/runner.py` + gate 入口**（2026-08-01 收口，40 条：一条陷阱只调**一次** `scene_view()`
 喂两侧，`repeats ∈ {3,5}`，`config=None` 显式判死，完整 `messages` 原样进 `runs/*.jsonl`，
 结果文件独占新建、已存在则在第一次模型调用前拒绝且原样保留）、
 **`draft/length.py`**（双语长度域，2026-08-01 补：中文按非空白 code point / 英文按词计数，
@@ -885,7 +923,7 @@ provider-neutral `high` 映射到各兼容端点的 wire shape，未知路由 fa
 `synth/` 是最贵的一块且**一半不是写代码**：`declare_knows(quote=...)` 靠引语在正文里唯一命中派生
 `valid_from`，所以 12 章正文得先被人写出来、每条声明的引语在全书恰好命中一次。
 runner 的落点有硬约束：`tests/test_draft_boundary.py` 写明它必须落进 `eval/`，
-落到 `cli.py` 或顶层 `synth/` 就绕过整堵墙——它是**同时碰两侧的唯一一段代码**。
+落到顶层 `gate.py` 或顶层 `synth/` 就绕过整堵墙——它是**同时碰两侧的唯一一段代码**。
 `out_path` 同样是硬边界：runner 用独占新建而不是 `exists()` 后再写，两个进程撞名也只有一个能创建；
 旧 run 存在时早于 `scene_view()` 和第一次模型调用判死，原字节不变。这里没有覆盖、追加或断点续跑。
 
@@ -916,7 +954,8 @@ ADR 0009 不写（协议 §8 定死它「跑完写」）、任何地方都不会
 [`_8`](EVAL_PROTOCOL_AMENDMENT_8.md)（**长度降权**：±10% 宽容带 1,800–3,410，
 带内记录不判死、带外才 INVALID；七轮全死于长度之后裁定）、
 [`_9`](EVAL_PROTOCOL_AMENDMENT_9.md)（**维护者裁定 M2 通过**：非数据裁决，
-泄漏统计未产出、科学主张未证明，`nh gate` 保留可补跑）。
+泄漏统计未产出、科学主张未证明，「`nh gate` 保留为可跑仪器」——**那是修正案的原话，
+逐字不动**；那个入口 2026-08-20 改成 `python -m novel_harness.gate`，仪器本身照旧在）。
 九份都是**另开文件**、冻结正文逐字节未动（从 `## 1.` 起与 `0393088` byte-exact）。
 1–4 写下时 `synth/` 尚不存在；第 5 份晚于 `synth/`，但五份都早于真实推理与 `runs/`，所以仍属预注册。
 **动 `eval/` 或 `draft/` 之前要读的是「协议 + 这五份修正案 + ADR 0010/0011」，不是协议一份。**
@@ -1000,8 +1039,9 @@ R2（未来实体提前出现）和 R3（死人/未登场角色开口说话）�
    用别名「魔尊」声明 → `valid_from = ch1` 由引语算出 → 矩阵 `KNOWS (ch1)`。
    **但要记着**：这条 UI 只过了 `tsc` + 构建 + 后端 HTTP 验证，**没有人在浏览器里点过**——
    ——不过 `RosterDrawer` 本身已经有 7 条 vitest（第 3 条），渲染层至少不再是全裸的。
-2. ~~**没有一条命令的入口**~~ —— **2026-07-25 已补。** `nh serve --db book.db` = 建库 + 起服务 +
-   挑端口 + 开浏览器；`npm run build` 的产物落在**包内** `src/novel_harness/webui/`（`uv_build`
+2. ~~**没有一条命令的入口**~~ —— **2026-07-25 已补**（当时是 `nh serve --db book.db`）。
+   命令行面 2026-08-20 删掉后（ADR 0034），那套逻辑原样搬进 `api/launch.py::launch()` =
+   建库 + 起服务 + 挑端口 + 开浏览器，作者的入口是双击 `start.command`（将来是桌面壳）；`npm run build` 的产物落在**包内** `src/novel_harness/webui/`（`uv_build`
    自动打包模块目录下的非 `.py` 文件，实测），于是 `uv build` 天然带上前端。ADR 0007 的
    「一条命令，不装 Docker」到此兑现。守卫：`tests/test_serve.py` 的两条打包路径断言 +
    `ci.yml` packaging job 的三级验证（wheel 里有产物 / 包装得上 / 装完之后 `webui_built()` 为真）。
@@ -1354,7 +1394,7 @@ R2（未来实体提前出现）和 R3（死人/未登场角色开口说话）�
    - **打断的粒度取决于 plan 流不流式。**
      ⚠️ **2026-08-12 起「起草」那一档已经流式了**（`6b13abd`）：`plan_call(interruptible=…)`
      让 `stream` 除了「预算过 16k」之外多一个理由「这次要可中断且端点确认支持流式」，
-     唯一设值点是 `ChapterDesk.write`，三臂 / `nh gate` 一条都不传。
+     唯一设值点是 `ChapterDesk.write`，三臂 / gate 一条都不传。
      **下面这段说的是对话回复那一档，它今天仍然不流式。**
      `stream` 由 `plan_call` 按冻结阈值（16k）从输出预算推出来，一次对话回复远在阈值之下。
      适配器按流式写、按流式测（`tests/test_agent_model.py`），到了那一档真的生效；
@@ -1368,7 +1408,7 @@ R2（未来实体提前出现）和 R3（死人/未登场角色开口说话）�
    - ~~**按「停」中断不了一次正在跑的起草。**~~ —— **2026-08-12 已补。**
      修法**不是**抬输出预算（那条禁令原样有效），是给 `plan_call` 加一个**显式输入**
      `interruptible`（默认 `False`）：`stream` 从此为「预算够大 **或** 这次要可中断
-     **且**端点确认支持流式」而开。三条同时成立——**M2 三臂 / `nh gate` 永不设它**
+     **且**端点确认支持流式」而开。三条同时成立——**M2 三臂 / gate 永不设它**
      （wire 逐字节不变，拿 `git archive HEAD` 的旧树同桩捕获 83 次真实
      `create(**kwargs)` 对拷验过，sha256 相同；把 `interruptible=True` 塞进探针
      本身时 30 条当场变了，所以那个相同不是空转）；**未登记的端点仍然不流式**
@@ -1457,9 +1497,9 @@ R2（未来实体提前出现）和 R3（死人/未登场角色开口说话）�
 
    | 缺的东西 | 补的入口 | 章号从哪来 |
    |---|---|---|
-   | `first_appears_chapter`（已经写到了的） | `POST …/declare/first-appearance` + `nh declare appears` | **引语**（约束 10 原样成立） |
+   | `first_appears_chapter`（已经写到了的） | `POST …/declare/first-appearance` | **引语**（约束 10 原样成立） |
    | `first_appears_chapter`（还没写到的） | `POST /nodes` 的 `first_appears_chapter` | 作者的**决定**（同 PLANNED 的 `valid_from`，「那不是回忆是决定」） |
-   | `value_key` + `StateDim` | `POST …/declare/death` + `nh declare dead` | **引语** |
+   | `value_key` + `StateDim` | `POST …/declare/death` | **引语** |
 
    同批挖出**第四个断点，而且它在前三个下游**：`StateSnapshot.is_dead` 是一个
    `@property`，而 `model_dump()` **从不输出 property**——`frontend/src/api/types.ts`
@@ -1566,10 +1606,11 @@ R2（未来实体提前出现）和 R3（死人/未登场角色开口说话）�
       三条路径在 pytest 和 vitest 两侧扫的都是永远不亮的分支。
     - **`screenGuard.ts` 多了第五张网**（`SHELL_LINE`：`--开关`，或者「命令名 + 一个
       ASCII 词」）。它罩的是 `declare.py` 里那三句「先跑 nh sync」——**前四张网一张都咬不住**
-      （没有下划线 / 不是大写 / 没有冒号 / 只有两个词）。命令名那半张表**不是手抄的**：
+      （没有下划线 / 不是大写 / 没有冒号 / 只有两个词）。命令名那半张表原本**不是手抄的**：
       `test_wording_guard.py` 拿 `pyproject.toml` 的 `[project.scripts]` + `cli.py` 里
-      typer 注册的每一个子命令来比。**门槛是「命令名 + 空格 + 一个词」**，孤零零一个 `nh`
-      放过去——假红会让下一个人把守卫关掉。**明确不收**：裸路径（`chapters/0001.md`，
+      typer 注册的每一个子命令来比。**2026-08-20 命令行面删了之后那张表没有产品自己的命令可喂**
+      （ADR 0034），于是命令名那半退场，**形状那半（`--开关`）原样是作者屏幕的不变量**。
+      门槛仍是「命令名 + 空格 + 一个词」，孤零零一个词放过去——假红会让下一个人把守卫关掉。**明确不收**：裸路径（`chapters/0001.md`，
       同步回执就在摆这些名字）、通配符路径、孤零零一个命令名。
 
     **剩下的**：`WrongLabel` 的消息里仍然带着 `NodeLabel` 的值（`Character` / `Secret`），

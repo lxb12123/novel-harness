@@ -2,7 +2,7 @@
 #
 # 心跳（ARCHITECTURE §11「心跳」）：端到端还通着 = 这个脚本的退出码。
 #
-# 2026-08-18 起它是 **API 心跳**：命令行面（nh）删了，产品线 = 桌面壳 + Web 工作台，
+# 2026-08-20 起它是 **API 心跳**：命令行面（nh）删了，产品线 = 桌面壳 + Web 工作台，
 # 调试线 = `python -m novel_harness.api`。所以心跳改为：seed_demo 造库 → 起真服务 →
 # curl 打真端点断言。它量的是接缝（作者声明 → 真 SQLite → 图 → 面板 / 规则），
 # 和以前 CLI 心跳量的是同一条链，只是从浏览器那半边走。
@@ -202,7 +202,7 @@ json_ok "ch2 没有 DEAD_SPEAKS" \
   "all('dead_speaks' not in (i.get('rule') or '').lower() for i in d['issues'])"
 # ⚠️ 下面这句里的「跑了 2 条规则」是字面量，被 test_doc_numbers::test_demo_pins_the_real_rule_count
 #    钉着（必须 == len(ALL_CHECKS)）。加规则时连它一起改——**没有别的东西会告诉你心跳断了**。
-#    2026-08-18 改 API 心跳时它一度被写成宽松的 `>= 2`，守卫当场咬住；别再放宽。
+#    2026-08-20 改 API 心跳时它一度被写成宽松的 `>= 2`，守卫当场咬住；别再放宽。
 json_ok "ch2 报「跑了 2 条规则」（§10 约束 8：零要和真零分开）" \
   "len(d.get('rules_run', [])) == 2"
 

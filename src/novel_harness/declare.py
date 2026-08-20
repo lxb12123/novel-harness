@@ -14,7 +14,7 @@
     ev.chapter_number ← chapter.number ← ChapterSpec.number ← chapterize 的 index
 
 作者的输入从没进过这条链，`Ledger` 的签名里也没有一个位置能让它进来。
-（`nh panel --chapter N` 里的 N 是查询参数「AS OF 第几章」，不是声明，那个合法。）
+（面板那条 `chapter` 参数里的 N 是查询坐标「AS OF 第几章」，不是声明，那个合法。）
 
 ── 为什么这里同时拿 store 和 conn ────────────────────────────────────────
 
@@ -39,7 +39,7 @@ God object 里——那个 God object 的下一步就是「顺手让 decision_lo
   在此之前同样零生产写入方）。
 - `declare_related`（RELATED_TO）：读者是局部图（M5）和 R5，而 R5 的生死还压在
   `scripts/probe_speaker_tags.py` 那条探针上。
-- `nh declare foreshadow` / PLANNED 边（PLANTED_IN / RESOLVED_IN）：**两条理由，
+- 伏笔声明 / PLANNED 边（PLANTED_IN / RESOLVED_IN）：**两条理由，
   2026-08-06 只剩一条。**
 
   ① ~~M1 没有消费者（ADR 0005 增长规则）~~ —— **已作废。** 模式二的推进侧要的正是
@@ -114,9 +114,10 @@ class DeclarationRefused(Exception):
     这样的话，第三句在 `UnknownName` 里）。
 
     所以这一层的措辞只说两件事：**发生了什么** + **产品无关的那半句怎么办**
-    （「让系统重新读一遍稿子」而不是「跑 nh sync」）。终端里那半句由 `cli.py` 的
-    `_refusal_tail()` 接上，浏览器里那半句由抽屉上那颗按钮接上——
-    **哪个壳负责哪半句，由壳自己知道，引擎不知道**。
+    （「让系统重新读一遍稿子」而不是「跑 nh sync」）。产品相关的那半句由壳接上：
+    浏览器里是抽屉上那颗按钮——**哪个壳负责哪半句，由壳自己知道，引擎不知道**。
+    2026-08-20 命令行面删掉之后（ADR 0034）壳只剩一个，但这条分工没变：
+    引擎这一侧照旧不许出现任何一行命令，**将来加桌面壳时也不许**。
 
     守卫：`tests/test_wording_guard.py::test_no_refusal_ever_tells_the_author_to_type_a_command`
     拿本模块每一个 `DeclarationRefused` 子类的真实消息去扫，
@@ -391,7 +392,7 @@ class Ledger:
     # ── 定位（只读）────────────────────────────────────────────────────────
 
     def locate(self, quote: str) -> list[QuoteCandidate]:
-        """这句引语在**当前**正文里的全部命中，按 (章, 段, 第几次) 升序。`nh locate` 用。
+        """这句引语在**当前**正文里的全部命中，按 (章, 段, 第几次) 升序。`POST …/locate` 用。
 
         只读：库里一个字节都不会变。判据是精确匹配——M1 的引语只有一个来源（作者从自己
         稿子里复制粘贴），difflib 是给 M4 抽取器的（ADR 0005 增长规则，见 text/anchor.py）。

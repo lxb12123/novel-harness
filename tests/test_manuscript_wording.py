@@ -121,7 +121,7 @@ def test_no_manuscript_at_all_is_not_the_same_sentence_as_no_change() -> None:
     """**「一个章节都没有」和「读了一遍没有变化」的下一步动作正好相反。**
 
     合成一句「同步完成」的话，作者的下一步 declare 会被拒，而他会去查引语——
-    问题却在这里（同 `nh sync` 那条 `_die` 的理由）。
+    问题却在这里（同 sync 那条空态的理由）。
     """
     empty = sync_outcome(SyncReport())
     quiet = sync_outcome(SyncReport(unchanged_count=12))

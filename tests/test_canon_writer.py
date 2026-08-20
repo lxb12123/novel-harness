@@ -282,7 +282,7 @@ def test_put_chapter_is_idempotent(conn: Connection, store: SqliteStoryGraph, pi
 def test_edited_chapter_gets_a_new_snapshot_and_keeps_the_old_one(
     conn: Connection, store: SqliteStoryGraph, pid: str
 ) -> None:
-    """`nh sync` 的正身：作者在自己的编辑器里改了这一章。"""
+    """`sync` 的正身（今天的入口是 `POST …/sync`）：作者在自己的编辑器里改了这一章。"""
     first = store.put_chapter(_chapter(pid))
     edited = store.put_chapter(_chapter(pid, text=CH1 + "他攥紧了拳头。\n"))
     assert edited.id == first.id

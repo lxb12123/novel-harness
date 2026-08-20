@@ -342,8 +342,8 @@ def test_events_package_imports_in_a_cold_interpreter() -> None:
 SHADOW_GRANDFATHERED = frozenset({"novel_harness.text.chapterize"})
 """下面那条守卫的既有例外。**只有一个成员，加第二个要在 PR 里回答「为什么不能改名」。**
 
-`chapterize` 这个函数名比包早：`importer.py` / `cli.py` / `test_importer.py` 都在用
-`from .text import chapterize`，改成模块优先要动三处调用方，而收益是零——
+`chapterize` 这个函数名比包早：`importer.py` / `test_importer.py` 都在用
+`from .text import chapterize`，改成模块优先要动两处调用方，而收益是零——
 `text/__init__` 已经把 `CHAPTER_RE` / `normalize` / `Chapter` 全部再出口了，
 `scripts/probe_speaker_tags.py` 走的又是 `from novel_harness.text.chapterize import ...`
 （这个写法不吃包属性，走 `sys.modules` 的尾模块，不受遮蔽影响）。

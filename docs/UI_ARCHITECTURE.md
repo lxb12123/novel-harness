@@ -192,7 +192,7 @@
 
 - **磁盘是正文的真相，DB 只是派生索引。** 应用内编辑器读写**磁盘** `chapters/NNNN.md`，不读 DB 快照。
   - 读：`{root}/chapters/{n:04d}.md`（`utf-8-sig`）→ raw markdown。**不**返 `current_snapshots`（那是给证据锚用的冻结快照，不是可编辑正文）。
-  - 存（保存键）：先写磁盘 → 再 `importer.sync` 落快照。磁盘先、DB 跟（正是 CLI 回路：改 md → `nh sync`）。`import_book` 已拒绝覆盖内容不同的文件（无 --force），ADR 0007 的实质没破。
+  - 存（保存键）：先写磁盘 → 再 `importer.sync` 落快照。磁盘先、DB 跟（原来的 CLI 回路「改 md → `nh sync`」2026-08-20 随命令行面一起删了，ADR 0034；今天这条回路整个在工作台里：编辑器保存 → `POST …/sync`，抽屉上那颗「读回改动」按的是同一条）。`import_book` 已拒绝覆盖内容不同的文件（无 --force），ADR 0007 的实质没破。
 - **定位桥只有一个：`TextAnchor` 三元组 `(para_index, quote_text, occurrence_k)`，全链路禁 offset（ADR 0006）。** 编辑器靠「在第 para_index 段内重寻 quote_text 数到第 k 次」定位高亮，render 时现算、天然抗文本漂移。
 - **`check` 端点的切段和 `locate` 都走 `text.paragraphs()`**（今天 == `splitlines()`，但是全库唯一定义）——路由里**不许**自己写 `.splitlines()`，否则 `text/anchor.py` 一改，`Issue` 锚和 `QuoteCandidate` 锚就「差一段」。
 
@@ -349,7 +349,7 @@
 │
 ├─ <DraftCompare>     ◀── 2026-08-12 ADR 0022 第三档，**唯一一条哈希路由**：`#/compare/{章号}`
 │  │                      在新标签页里并排读几稿。工作台本来就是本地浏览器应用
-│  │                      （`nh serve` 开的就是 localhost），所以这是**同一个应用的另一条
+│  │                      （启动器 `api/launch.py::launch()` 开的就是 localhost），所以这是**同一个应用的另一条
 │  │                      路由，零新基础设施**——哈希不进请求行，服务端一个路径都不用多认。
 │  │                      **地址里只有章号**：书是点链接那一下留在本地存储里的
 │  │                      （`route.ts`，内部标识不进地址栏——地址栏也是屏幕）；

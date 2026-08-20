@@ -17,7 +17,7 @@
 
     | 方法              | 消费者                                             |
     |-------------------|----------------------------------------------------|
-    | `resolve`         | text/mentions.py 的花名册、cast 解析、`nh panel --cast`、R2 |
+    | `resolve`         | text/mentions.py 的花名册、cast 解析、面板的 `cast` 参数、R2 |
     | `state_at`        | panel/state.py、R3 DEAD_SPEAKS、R4 LOCATION_CONFLICT |
     | `knowledge_matrix`| panel/knowledge.py ← **头牌**、draft 的 D 分区      |
     | `subgraph`        | 局部关系图（M5）                                    |
@@ -616,7 +616,7 @@ class CanonWriter(Protocol):
         """落一章：Chapter 节点 + `chapter` 行 + 一条快照，**一个事务**。
 
         幂等键 `(project_id, number)`（schema 的 UNIQUE）。已存在时**不抛异常**——
-        `nh sync` 靠这条把作者在自己编辑器里改过的章读进来：heading / title / path /
+        `sync` 靠这条把作者在自己编辑器里改过的章读进来：heading / title / path /
         text_sha256 就地更新，正文变了就多一条快照（按 `UNIQUE(chapter_id, text_sha256)`
         去重：快照是证据的锚，不是版本历史，同内容只需要存在一次）。
 

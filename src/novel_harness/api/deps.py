@@ -1,7 +1,8 @@
 """装配层 —— 壳里**唯一**开连接的地方（因此在 test_arch_guard 的 CONNECTION_OPENERS 里）。
 
-复刻 cli.py 的两条纪律：
-- `_db_path()` 用「存在才连」的语义（对应 cli 的 `_connect_existing`）——绝不裸 `connect`
+两条纪律（原是从命令行面复刻来的，那一面 2026-08-20 已删，见 ADR 0034；今天另一处装配层
+是 `api/launch.py`，它**要**建库所以走的是另一套）：
+- `_db_path()` 用「存在才连」的语义——绝不裸 `connect`
   一个不存在的路径，否则 sqlite 会建一个空库，给出一张「看起来正常、全 UNKNOWN」的假矩阵。
 - 一请求一连接：`get_conn` 被 FastAPI 在单个请求内缓存，所以 `get_store` 和 `load_project`
   共享同一条连接（M1 之后写路径要靠这个：Ledger 与 store 必须同连接，transaction() 才盖得住）。
@@ -46,7 +47,7 @@ EXTRACTION_VISIBLE_TOKEN_BUDGET = 8_192
 def _db_path() -> Path:
     raw = os.environ.get("NH_DB")
     if not raw:
-        raise RuntimeError("环境变量 NH_DB 未设置：指向 nh init / seed_demo 建好的库")
+        raise RuntimeError("环境变量 NH_DB 未设置：指向启动器（api/launch.py）或 seed_demo 建好的库")
     path = Path(raw)
     if not path.exists():
         raise RuntimeError(f"NH_DB 指向的库不存在：{path}（不让 connect 建一个空库出来）")

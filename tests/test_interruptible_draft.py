@@ -159,7 +159,7 @@ def _wire(spec: LengthSpec, effort: ReasoningEffort, capability: ProviderCapabil
 def test_the_frozen_arms_still_stream_by_exactly_the_old_rule() -> None:
     """**不设 `interruptible` ⇒ `stream` 只由那条冻结的式子决定，逐个 case。**
 
-    三臂和 `nh gate` 走的就是这一档。这条式子改错了，三臂发出去的东西就和
+    三臂和 gate 走的就是这一档。这条式子改错了，三臂发出去的东西就和
     改动前不可比——而那是一份已经跑过九轮、且协议先于结果冻结的考卷。
     """
     checked = 0
@@ -173,7 +173,7 @@ def test_the_frozen_arms_still_stream_by_exactly_the_old_rule() -> None:
 
 
 def test_gate_route_is_untouched_and_the_new_bit_never_reaches_the_wire() -> None:
-    """`nh gate` 那一条（`M2_LENGTH_SPEC` + `HIGH` + 冻结 profile 路由）逐字节量一遍，
+    """gate 那一条（`M2_LENGTH_SPEC` + `HIGH` + 冻结 profile 路由）逐字节量一遍，
     并且**「可中断」这个名字在 wire 上一次都不出现**——它是编排层的意图，不是协议字段。
     """
     capability = resolve_capabilities(*GATE_ROUTE)

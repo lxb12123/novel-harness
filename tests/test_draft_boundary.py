@@ -43,7 +43,7 @@
   没有哪道 AST 守卫是完备的；它拦住的是**顺手写出来的那一种**，而那一种正是会真的发生的那一种。
 - **它拦不住「完整 PLANNED 进 Writer prompt」**（CLAUDE.md 头号错误第 5 条）。那要读懂 prompt
   文本的含义 = 语义判断 = ADR 0005 禁止的东西。那条只有 review 和 ADR 0010 守得住。
-- **它只扫 `draft/` 和 `eval/` 两个目录。** runner 若写在别处（比如顶层 `synth/` 或 `cli.py`），
+- **它只扫 `draft/` 和 `eval/` 两个目录。** runner 若写在别处（比如顶层 `gate.py` 或顶层 `synth/`），
   这堵墙就绕过去了。所以 `WRITER_DIRS` / `SCORER_DIRS` **必须跟着 runner 落在哪一起更新**——
   下面 `test_the_scanned_dirs_are_the_ones_that_matter` 会在目录消失时红，但它没法知道
   你又在第三个地方新建了一个 runner。
@@ -70,7 +70,9 @@ SCORER_DIRS = frozenset({"eval"})
 """判分层：泄漏检测 + 统计。**它是「判分的那个」。**
 
 runner（`runs/*.jsonl` 的产出者）已经落在这里，因此自动被本守卫罩住；若把它移到
-`cli.py` 或顶层 `synth/` 就会绕过整堵墙。这不是风格问题：runner 是**同时**碰
+顶层 `gate.py` 或顶层 `synth/` 就会绕过整堵墙。**`gate.py` 是今天真实存在的那个诱惑位**：
+它是 gate 的入口、就在顶层、离 runner 只有一次 import（2026-08-20 删命令行面时它从
+`eval/gate.py` 搬出来，正是因为边界守卫不许入口住在 `eval/` 里）。这不是风格问题：runner 是**同时**碰
 两侧的唯一一段代码，它在墙外意味着墙的两面都可以被它一个人破掉。
 """
 

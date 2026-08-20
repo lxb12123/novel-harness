@@ -280,7 +280,7 @@ def test_the_gate_never_reaches_this_module() -> None:
     ADR 0019 边界六写着「纯换顺序，`assemble()` 一个字不动，三臂不受影响」。
     那句话和代码一样会过期，所以这里量的是代码：
 
-    1. **`eval/` 和 `cli.py` 里 `product_assemble` 三个字都不出现** —— kill-gate 的三臂
+    1. **`eval/` 里 `product_assemble` 三个字不出现** —— kill-gate 的三臂
        （`eval/runner.py`）和它的离线重算器（`eval/evidence.py`）直接 import `assemble`；
     2. **整个 `src/` 里 `assemble_product` 只有一个调用方** —— `draft/product_draft.py`
        里那个「章号 → 一稿正文」的函数，而它只在 `PRODUCT` 那一支走这条路
@@ -308,7 +308,7 @@ def test_the_gate_never_reaches_this_module() -> None:
                 found |= {alias.name for alias in node.names}
         return found
 
-    # cli.py 已删（2026-08-18 去命令行面）；判分链只剩 eval/ 自己。
+    # cli.py 已删（2026-08-20 去命令行面）；判分链只剩 eval/ 自己。
     gate_sources = sorted((src / "eval").glob("*.py"))
     assert len(gate_sources) >= 5, "扫到的判分链文件太少 —— glob 坏了，这条会永远绿"
     polluted = {

@@ -21,7 +21,7 @@
 ## 铁律：登记过的路由永远走注册表
 
 `resolve_capabilities` 的顺序是 `operator override → 注册表 → metadata → unknown`，
-所以**已登记的 8 条路由碰都不会碰这里**：M2 判分链、`nh gate`、作者直连 DeepSeek /
+所以**已登记的 8 条路由碰都不会碰这里**：M2 判分链、gate、作者直连 DeepSeek /
 OpenAI 的那几条，wire shape 一个字节不变。这个模块只可能影响「本来就是 unknown」的那些。
 
 ## 只对 OpenRouter 成立，且是**有意**只做一家

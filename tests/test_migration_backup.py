@@ -116,7 +116,7 @@ def test_a_database_already_at_the_latest_version_is_never_copied(tmp_path: Path
 
 
 def test_a_brand_new_empty_database_is_not_copied(tmp_path: Path) -> None:
-    """空库（`user_version == 0`）没有任何东西可丢。`nh init` / `nh serve` 建库走这条。"""
+    """空库（`user_version == 0`）没有任何东西可丢。启动器首次建库走这条。"""
     conn = connect(tmp_path / "new.db")
     try:
         migrate(conn)

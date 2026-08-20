@@ -1,4 +1,4 @@
-"""`nh serve` 与前端产物的打包路径。
+"""启动器（`api/launch.py::launch()`）与前端产物的打包路径。
 
 本文件守的是**一类特别难自查的故障**：分发路径坏掉，但什么都不报错。
 
@@ -68,7 +68,7 @@ def test_vite_outdir_and_dist_agree() -> None:
 
 
 def test_webui_built_follows_the_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`webui_built()` 说的是实话——`nh serve` 那句黄色警告靠它。
+    """`webui_built()` 说的是实话——启动器那句黄色警告靠它。
 
     没构建时 `/` 仍然返回 200（只读原型），所以「有没有工作台」这件事必须由起服务的
     那一刻主动说出来，不能指望作者从一个 200 里看出来。
@@ -98,7 +98,7 @@ def test_bind_takes_the_port_it_was_asked_for() -> None:
 
 
 def test_bind_falls_back_when_the_port_is_taken() -> None:
-    """端口被占（多半是上一个 `nh serve` 还开着）→ 换一个，**不是**报错退出。
+    """端口被占（多半是上一个启动器还开着）→ 换一个，**不是**报错退出。
 
     作者要的是「打开工作台」。一个因为 8756 被占就拒绝启动的命令，会把「端口是什么」
     这个问题推给一个不该知道答案的人。
