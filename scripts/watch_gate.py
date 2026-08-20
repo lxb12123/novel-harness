@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Watch a running `nh gate` round and notify on completion.
+"""Watch a running `python -m novel_harness.gate` round and notify on completion.
 
-Waits until no ``nh gate`` process is alive, then inspects the newest
+Waits until no gate process is alive, then inspects the newest
 ``runs/*.jsonl`` with the strict offline evidence reconstructor, computes the
 preregistered verdict, prints it, writes ``runs/WATCHER_STATUS.txt``, and posts
 a macOS notification.
@@ -26,7 +26,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 def _gate_pids() -> list[str]:
     out = subprocess.run(
-        ["pgrep", "-f", "nh gate"], capture_output=True, text=True
+        ["pgrep", "-f", "novel_harness.gate"], capture_output=True, text=True
     )
     return [pid for pid in out.stdout.split() if pid]
 
@@ -39,7 +39,7 @@ def main() -> None:
     args = parser.parse_args()
 
     pids = _gate_pids()
-    print(f"[watch] waiting for nh gate to finish (pids: {pids or 'none'})", flush=True)
+    print(f"[watch] waiting for gate to finish (pids: {pids or 'none'})", flush=True)
     while _gate_pids():
         time.sleep(30)
 
@@ -85,7 +85,7 @@ def main() -> None:
                 "osascript",
                 "-e",
                 "display notification "
-                f'"{summary}" with title "nh gate 跑完了 · {verdict}"',
+                f'"{summary}" with title "M2 gate 跑完了 · {verdict}"',
             ],
             check=False,
             capture_output=True,

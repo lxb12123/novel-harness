@@ -71,5 +71,6 @@ echo "  库：$DB"
 echo "  关掉它：在这个窗口按 Control-C（直接关窗口也行）"
 echo
 
-# nh serve 自己会建库、挑端口（8756 被占就换）、等服务真起来了再开浏览器。
-exec uv run nh serve --db "$DB"
+# api/launch.py 自己会建库、挑端口（8756 被占就换）、等服务真起来了再开浏览器。
+# （命令行面 2026-08-18 删了；启动逻辑在 novel_harness/api/launch.py::launch()。）
+exec uv run python -c "from pathlib import Path; from novel_harness.api.launch import launch; launch(Path('$DB'))"
