@@ -237,6 +237,31 @@ class StoryGraph(Protocol):
         """
         ...
 
+    def canon_version(self, project_id: str) -> int:
+        """项目当前的 canon 水位（`project.canon_version`）。
+
+        校准产物把这一位冻结进 `source_watermark`（ADR 0033）：水位变化后
+        `draft_chapter` 明确拒绝旧校准 ID，而不是悄悄沿用。
+        """
+        ...
+
+    def knowledge_edges_at(
+        self,
+        project_id: str,
+        character_ids: Sequence[str],
+        secret_ids: Sequence[str],
+        chapter: int,
+        *,
+        scope: InformationScope = InformationScope.CANON,
+    ) -> list[Edge]:
+        """(人物, 秘密) 格上的 KNOWS / BELIEVES **原边**（带完整来源字段）。
+
+        `knowledge_matrix` 把来源字段收窄成格子（state / since / believed_value /
+        evidence_id）；写前校准要保留 `source` / `confidence` / `evidence_status` /
+        有效区间，所以这里直接给原边。**只给校准层用，不给 Agent。**
+        """
+        ...
+
     def state_at(
         self,
         project_id: str,

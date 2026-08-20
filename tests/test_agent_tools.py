@@ -63,6 +63,7 @@ from novel_harness.agent.tools import (
     dispatch_all,
     tool_declarations,
 )
+from novel_harness.calibration.store import CalibrationStore
 from novel_harness.db import IN_MEMORY, Connection, connect, migrate
 from novel_harness.declare import Ledger
 from novel_harness.draft.context import DraftContext, ResolvedConstraints
@@ -77,6 +78,7 @@ from novel_harness.graph import (
     SecretDetail,
 )
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
+from calibration_seed import seed_calibration
 
 # 泄漏物：作者写在节点上的东西。**出现在任何一个模型看得见的面上都是泄漏**
 # （`graph.models.NodeRef` 的 docstring 记着这两种实测形态）。
@@ -209,7 +211,7 @@ class FakeDesk:
             created_at="2026-08-12T00:00:00.000Z",
         )
 
-    def write(self, ask: DraftAsk, ctx: DraftContext) -> DraftProduct:
+    def write(self, ask: DraftAsk, ctx: DraftContext, **kwargs: Any) -> DraftProduct:
         # 起草侧收到的这份约束**就是要进 prompt 的那一份**——第 4 个面在这里被捉住。
         self.seen.append(ctx)
         return DraftProduct(candidate=self._candidate(ask.chapter))
@@ -254,9 +256,18 @@ def _surfaces_of(world: World) -> dict[str, str]:
 
     from novel_harness.draft.rolling_summary import SummaryStore
 
+    _, turn = seed_calibration(
+        conn=world.conn,
+        project_id=world.project_id,
+        store=world.store,
+        root=world.root,
+        chapter=CHAPTER,
+    )
     context = world.context(
         drafter=desk,
         summaries=SummaryStore(world.conn),
+        calibrations=CalibrationStore(world.conn),
+        author_turn=turn,
         # **索引层要在「知道作者写到第几章」的状态下被采样**：那是它会去算未来实体、
         # 会往返回里写「这是你还没写到的」的那一档，也就是最容易把秘密带出来的那一档。
         working_chapter=CHAPTER,
@@ -265,7 +276,7 @@ def _surfaces_of(world: World) -> dict[str, str]:
         [
             _call("scene_constraints", chapter=CHAPTER),
             _call("character_state", chapter=CHAPTER, character="萧决"),
-            _call("draft_chapter", chapter=CHAPTER, goal="写萧决独自走进北荒"),
+            _call("draft_chapter", chapter=CHAPTER, calibration_id="calibration:test:seeded"),
             # ADR 0022 拆出来的另外两个动作：它们各自是一个新的返回面。
             _call("save_draft", draft_id=DRAFT_ID),
             _call("read_draft", draft_id=DRAFT_ID),
@@ -386,7 +397,7 @@ def test_no_tool_accepts_constraints_as_an_argument() -> None:
         "清单去写第 40 章，而那份清单更短——fail-open 的最坏那侧（ADR 0019 边界二）。\n"
         "约束必须由后端当场从 scene_view(chapter) 算。"
     )
-    assert set(DraftAsk.model_fields) == {"chapter", "goal"}
+    assert set(DraftAsk.model_fields) == {"chapter", "calibration_id"}
 
 
 def test_a_model_invented_constraint_argument_is_refused(world: World) -> None:
@@ -409,10 +420,21 @@ def test_a_model_invented_constraint_argument_is_refused(world: World) -> None:
 def test_the_backend_computes_the_constraints_for_the_drafter(world: World) -> None:
     """起草侧收到的约束是**后端按章号现算的**，不是模型给的。"""
     desk = FakeDesk()
+    _, turn = seed_calibration(
+        conn=world.conn,
+        project_id=world.project_id,
+        store=world.store,
+        root=world.root,
+        chapter=CHAPTER,
+    )
 
     outcome = dispatch(
-        _call("draft_chapter", chapter=CHAPTER, goal="写萧决独自走进北荒"),
-        world.context(drafter=desk),
+        _call("draft_chapter", chapter=CHAPTER, calibration_id="calibration:test:seeded"),
+        world.context(
+            drafter=desk,
+            calibrations=CalibrationStore(world.conn),
+            author_turn=turn,
+        ),
     )
     assert outcome.ok, outcome.content
     ctx = desk.seen[0]
@@ -503,6 +525,9 @@ def test_the_tool_table_stays_put() -> None:
             "scene_constraints",
             "character_state",
             "draft_chapter",
+            # 写前校准（ADR 0033）：确定性核对 + 不可变封存。
+            "calibrate_scene",
+            "seal_scene_brief",
             # 书内索引四层（`agent/index.py`）：目录 / 人物轴 / 摘要 / 正文。
             "book_index",
             "character_chapters",
@@ -687,7 +712,8 @@ def test_a_refusal_says_why(world: World) -> None:
     assert not_a_character.ok is False and "不是人物" in not_a_character.content
 
     unwired = dispatch(
-        _call("draft_chapter", chapter=CHAPTER, goal="写一场雪"), world.context(drafter=None)
+        _call("draft_chapter", chapter=CHAPTER, calibration_id="unused"),
+        world.context(drafter=None),
     )
     assert unwired.ok is False and "还没接" in unwired.content
 

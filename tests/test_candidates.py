@@ -62,6 +62,7 @@ from novel_harness.draft.provider import CompletionResult, ProviderConfig, ToolC
 from novel_harness.graph import NodeLabel, NodeProps, NodeSpec, SecretDetail
 from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
+from calibration_seed import seed_calibration
 
 ENDPOINT = "https://api.deepseek.com"
 MODEL = "deepseek-v4-flash"
@@ -203,6 +204,9 @@ class _NoSummaries:
     def coverage(self, project_id: str, first: int, last: int) -> list[Any]:
         return []
 
+    def snapshot_watermark(self, project_id: str, chapter_number: int) -> Any:
+        return None
+
 
 @pytest.fixture
 def desk_conn(poisoned: dict[str, str]) -> Iterator[Connection]:
@@ -213,23 +217,46 @@ def desk_conn(poisoned: dict[str, str]) -> Iterator[Connection]:
         conn.close()
 
 
-def _context(conn: Connection, book: dict[str, str], desk: Any, **kw: Any) -> ToolContext:
+def _context(
+    conn: Connection,
+    book: dict[str, str],
+    desk: Any,
+    *,
+    seed_chapter: int = 1,
+    **kw: Any,
+) -> ToolContext:
     kw.setdefault("working_chapter", 1)
+    from novel_harness.calibration.store import CalibrationStore
+
+    store = SqliteStoryGraph(conn)
+    _, author_turn = seed_calibration(
+        conn=conn,
+        project_id=book["pid"],
+        store=store,
+        root=_root(conn, book),
+        chapter=seed_chapter,
+    )
     return ToolContext(
-        store=SqliteStoryGraph(conn),
+        store=store,
         project_id=book["pid"],
         root_path=str(_root(conn, book)),
         drafter=desk,
         events=SqliteEventStore(conn),
+        calibrations=CalibrationStore(conn),
+        author_turn=author_turn,
         **kw,
     )
 
 
-def _draft(chapter: int, call_id: str = "c0", goal: str = "写一场对峙") -> ToolCall:
+def _draft(
+    chapter: int,
+    call_id: str = "c0",
+    calibration_id: str = "calibration:test:seeded",
+) -> ToolCall:
     return ToolCall(
         id=call_id,
         name="draft_chapter",
-        arguments=json.dumps({"chapter": chapter, "goal": goal}),
+        arguments=json.dumps({"chapter": chapter, "calibration_id": calibration_id}),
     )
 
 
@@ -374,7 +401,7 @@ def test_three_drafts_leave_less_than_one_page_in_the_conversation(
     _writer(monkeypatch, body)
     desk = _desk(desk_conn, poisoned)
     context = _context(desk_conn, poisoned, desk)
-    calls = [_draft(1, f"c{n}", f"第 {n} 稿") for n in range(3)]
+    calls = [_draft(1, f"c{n}") for n in range(3)]
     outcomes = dispatch_all(calls, context)
     assert [o.ok for o in outcomes] == [True, True, True], [o.content for o in outcomes]
 
@@ -561,7 +588,7 @@ def test_the_desk_receipt_marks_only_the_one_that_actually_landed(
     _writer(monkeypatch, _prose("庚"))
     desk = _desk(desk_conn, poisoned)
     context = _context(desk_conn, poisoned, desk)
-    outcomes = dispatch_all([_draft(1, f"c{n}", f"第 {n} 稿") for n in range(3)], context)
+    outcomes = dispatch_all([_draft(1, f"c{n}") for n in range(3)], context)
     ids = [json.loads(o.content)["draft_id"] for o in outcomes]
 
     (saved,) = dispatch_all(
@@ -612,7 +639,7 @@ def test_the_write_tool_really_waits_for_the_concurrent_window(
     desk = _desk(desk_conn, poisoned, db_lock=lock)
     context = _context(desk_conn, poisoned, desk, db_lock=lock)
 
-    (seed,) = dispatch_all([_draft(1, "seed", "先来一稿")], context)
+    (seed,) = dispatch_all([_draft(1, "seed")], context)
     seed_id = json.loads(seed.content)["draft_id"]
 
     real_land = desk.land
@@ -628,8 +655,8 @@ def test_the_write_tool_really_waits_for_the_concurrent_window(
     timeline.clear()
     outcomes = dispatch_all(
         [
-            _draft(1, "c0", "甲版"),
-            _draft(1, "c1", "乙版"),
+            _draft(1, "c0"),
+            _draft(1, "c1"),
             ToolCall(id="c2", name="save_draft", arguments=json.dumps({"draft_id": seed_id})),
         ],
         context,
@@ -656,9 +683,11 @@ def test_the_write_tool_really_waits_for_the_concurrent_window(
 class DraftOnce:
     """一轮：要一稿，然后收手。"""
 
-    def __init__(self, chapters: tuple[int, ...] = (1,), goal: str = "写一场对峙") -> None:
+    def __init__(
+        self,
+        chapters: tuple[int, ...] = (1,),
+    ) -> None:
         self.chapters = chapters
-        self.goal = goal
         self.calls = 0
 
     def __call__(self, messages: Any, *, tools: Any, cancel: Any) -> CompletionResult:
@@ -669,11 +698,66 @@ class DraftOnce:
                 model=MODEL,
                 finish_reason="tool_calls",
                 tool_calls=tuple(
-                    _draft(chapter, f"c{n}", self.goal)
+                    ToolCall(
+                        id=f"cal{n}",
+                        name="calibrate_scene",
+                        arguments=json.dumps(_calibrate_args(chapter, n)),
+                    )
                     for n, chapter in enumerate(self.chapters)
                 ),
             )
+        if self.calls == 2:
+            results = [
+                json.loads(m["content"])
+                for m in messages
+                if m.get("role") == "tool" and str(m.get("content", "")).strip()
+            ]
+            ids = [r["id"] for r in results if "id" in r]
+            return CompletionResult(
+                text="",
+                model=MODEL,
+                finish_reason="tool_calls",
+                tool_calls=tuple(
+                    ToolCall(
+                        id=f"seal{n}",
+                        name="seal_scene_brief",
+                        arguments=json.dumps({"inspection_id": iid}),
+                    )
+                    for n, iid in enumerate(ids)
+                ),
+            )
+        if self.calls == 3:
+            results = [
+                json.loads(m["content"])
+                for m in messages
+                if m.get("role") == "tool" and str(m.get("content", "")).strip()
+            ]
+            pairs = [
+                (r["chapter"], r["calibration_id"])
+                for r in results
+                if "calibration_id" in r
+            ]
+            return CompletionResult(
+                text="",
+                model=MODEL,
+                finish_reason="tool_calls",
+                tool_calls=tuple(
+                    _draft(pairs[0][0], f"c{n}", pairs[0][1])
+                    for n in range(len(self.chapters))
+                ),
+            )
         return CompletionResult(text="写好了，你看看。", model=MODEL, finish_reason="stop")
+
+
+def _calibrate_args(chapter: int, index: int) -> dict[str, Any]:
+    """同章多稿要多份**签名不同**的校准入参（否则会在校准步先撞重复闸）。"""
+    variants = [
+        {"chapter": chapter, "viewpoint_surface": "萧决"},
+        {"chapter": chapter, "viewpoint_surface": "李管家"},
+        {"chapter": chapter, "intended_cast": [{"surface": "萧决"}]},
+        {"chapter": chapter, "intended_cast": [{"surface": "李管家"}]},
+    ]
+    return variants[index % len(variants)]
 
 
 def test_a_gate_inside_a_concurrent_window_loses_neither_a_bill_nor_a_pairing(
@@ -709,8 +793,8 @@ def test_a_gate_inside_a_concurrent_window_loses_neither_a_bill_nor_a_pairing(
     )
 
     assert len(desk.produced) == 4, f"四稿没有都跑掉：{len(desk.produced)}"
-    assert len(billed) == 5, (
-        f"账上只有 {len(billed)} 笔：一次 agent 的模型调用 + 四稿。"
+    assert len(billed) == 7, (
+        f"账上只有 {len(billed)} 笔：校准 + 封存 + 起草三步的 agent 调用 + 四稿。"
         "并发窗口里那几条已经花过钱了，配「没跑」的壳就是一次凭空消失的花销。"
     )
 
@@ -725,7 +809,10 @@ def test_a_gate_inside_a_concurrent_window_loses_neither_a_bill_nor_a_pairing(
         "`tool_call` 和 `tool_result` 错位了 —— resume 会去补一个已经跑过的"
     )
     assert not result.conversation.pending_calls, "还有 tool_call 没被接住"
-    ordinals = [json.loads(m.content)["ordinal"] for m in results]
+    draft_results = [
+        m for m in results if "ordinal" in json.loads(m.content)
+    ]
+    ordinals = [json.loads(m.content)["ordinal"] for m in draft_results]
     assert sorted(ordinals) == [1, 2, 3, 4], f"并发插进去的稿子撞号了：{ordinals}"
 
 
@@ -735,9 +822,9 @@ def test_a_gate_inside_a_concurrent_window_loses_neither_a_bill_nor_a_pairing(
 
 
 class DraftThenLook:
-    """要一稿，然后**把下一步拿到的上下文原样存下来**再收手。
+    """校准（为还没写到的章），然后**把下一步拿到的上下文原样存下来**再收手。
 
-    这就是模型的处境：它下一步能不能存那一稿，取决于那个编号还在不在它眼前。
+    这就是模型的处境：它下一步能不能封存/起草，取决于那个编号还在不在它眼前。
     """
 
     def __init__(self, chapter: int) -> None:
@@ -752,7 +839,13 @@ class DraftThenLook:
                 text="",
                 model=MODEL,
                 finish_reason="tool_calls",
-                tool_calls=(_draft(self.chapter, "c0", "写一场对峙"),),
+                tool_calls=(
+                    ToolCall(
+                        id="cal0",
+                        name="calibrate_scene",
+                        arguments=json.dumps({"chapter": self.chapter}),
+                    ),
+                ),
             )
         self.seen = list(messages)
         return CompletionResult(text="写好了。", model=MODEL, finish_reason="stop")
@@ -761,33 +854,26 @@ class DraftThenLook:
 def test_a_draft_for_a_chapter_the_author_has_not_reached_loses_its_handle(
     desk_conn: Connection, poisoned: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**为「作者还没写到的章」起草，那个编号下一步就不在模型眼前了。**
+    """**为「作者还没写到的章」校准，那个编号下一步就不在模型眼前了。**
 
     两条边界叠在一起的结果，两条各自都是对的：
 
     - 边界五（ADR 0019）：绑在**更后面**的章上的工具返回不进这一次投影
       （判据 `> working_chapter`，方向是 fail-closed 那一侧——过期清单越往后越短）；
-    - ADR 0022：拆开落盘之后，**那个编号是拿回这一稿的唯一把手**（`save_draft` /
-      `read_draft` 都只收它，工具表里没有第二条路）。
+    - ADR 0033：校准结果绑章号，**那个编号是封存/起草的唯一把手**
+      （`seal_scene_brief` / `draft_chapter` 都只收它）。
 
-    于是「给第 12 章起一稿」在作者的光标停在第 3 章时，是**花了一次钱、然后把它丢掉**：
-    模型下一步既存不进去、也读不回来，甚至不知道自己写过——它多半会再要一稿
-    （再花一次钱），三次之后撞上 `REPEATED_CALL`，而那句话对作者说的是
-    「它在反复查同一件事」，一个**指向别处**的解释。
-
-    **ADR 0022 之前这个洞不疼**：那时落盘是起草的副作用，稿子在返回被丢掉之前
-    就已经进书了。是这一刀让它变成一次真实的损失。
+    于是「给第 12 章起一稿」在作者的光标停在第 3 章时，校准结果在下一步就被丢掉：
+    模型既封存不了、也起草不了——校准这一步不花模型的钱，损失从「一笔起草费」
+    提前到「这一轮白走」。
 
     **这条断言在描述现状，不是在批准它。** 修它要动 `project()`（那是另一个人的地盘），
     所以这儿只把今天的形状钉住：它被修好的那天这条会红，那时该做的是删掉这条测试。
-
-    顺带钉住**今天的兜底真的在**：作者从界面上仍然看得见那一稿（`ChapterDesk.produced`
-    → `TurnReceipt.drafts` → `GET …/drafts`），所以这不是「稿子没了」，是「模型手里没了」。
     """
     _writer(monkeypatch, _prose("子"))
     desk = _desk(desk_conn, poisoned)
     # 作者的光标停在第 1 章，而模型给第 3 章起稿（第 3 章磁盘上是有的）。
-    context = _context(desk_conn, poisoned, desk, working_chapter=1)
+    context = _context(desk_conn, poisoned, desk, seed_chapter=3, working_chapter=1)
     model = DraftThenLook(chapter=3)
     result = run_turn(
         start_conversation().with_author("给第 3 章也起一稿"),
@@ -796,18 +882,13 @@ def test_a_draft_for_a_chapter_the_author_has_not_reached_loses_its_handle(
         ledger=lambda receipt: None,
     )
 
-    assert len(desk.produced) == 1, "这一稿根本没写出来，下面那几条不作数"
-    draft_id = desk.produced[0].id
-    assert model.calls == 2, "模型只被叫了一次 —— 没有「下一步」可看"
+    assert len(desk.produced) == 0, (
+        "校准结果没被投影丢掉 —— 这个洞已经在校准这一环被补上了，这条测试该删"
+    )
+    assert model.calls == 2, "校准之后没有「下一步」可看"
 
     seen = json.dumps(model.seen, ensure_ascii=False)
-    assert draft_id not in seen, (
-        "这个洞被补上了（编号下一步还在）—— 把这条测试删掉，它的活儿干完了"
+    assert "inspection" not in seen, (
+        "校准结果还在下一步的投影里 —— 这个洞被补上了，把这条测试删掉"
     )
     assert result.projection is not None and result.projection.off_chapter == 1
-
-    # 而作者那一侧仍然看得见它：洞在模型手里，不在界面上。
-    assert [c.chapter for c in desk.produced] == [3]
-    assert draft_id in {
-        c.id for c in DraftCandidateStore(desk_conn).recent(poisoned["pid"], chapter=3)
-    }

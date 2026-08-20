@@ -68,6 +68,7 @@ from ..draft.provider import ProviderConfig, ProviderError
 from ..events import EventStore
 from ..extract.call_audit import ModelCallReceipt
 from ..graph import GraphStore
+from ..calibration.models import SceneBrief, TargetChapterSnapshot
 from .candidates import DraftCandidate, DraftCandidateStore, StoredDraft
 from .loop import Cancellation, EventFn, TurnEvent, safe_emitter
 from .model import cancellable_client
@@ -362,8 +363,24 @@ class ChapterDesk:
 
     # ── 生成：花钱，不动书 ────────────────────────────────────────────────
 
-    def write(self, ask: DraftAsk, ctx: DraftContext) -> DraftProduct:
+    def write(
+        self,
+        ask: DraftAsk,
+        ctx: DraftContext,
+        *,
+        goal: str | None = None,
+        brief: SceneBrief | None = None,
+        snapshot: TargetChapterSnapshot | None = None,
+    ) -> DraftProduct:
         """生成一稿，收进候选表。**书一个字节都不动**（ADR 0022）。
+
+        Args:
+            goal: 起草目标。**模式二只许来自 sealed calibration 的 `goal_spec`**
+                （`_handle_draft_chapter` 负责从 artifact 取）；测试可以直传。
+            brief: 已封存的 `SceneBrief`（Writer「本稿执行计划」分区）。
+            snapshot: 目标章当前正文快照 `{text, sha256}`。**一次读取，全链共用**：
+                安全 cast、水位校验、Writer 当前章、候选 `base_sha256` 都用它，
+                不许各自重读磁盘（ADR 0033 §8.4）。
 
         Returns:
             `DraftProduct`：候选的摘要行 + 这一稿花掉的那几笔。**无论如何都带着回执**
@@ -375,6 +392,11 @@ class ChapterDesk:
                 写手交回来的是空的 / **作者按了停**（那一档半截的正文照旧收进候选表，
                 见 `AUTHOR_STOPPED_NOTE`）。
         """
+        if goal is None:
+            raise ToolRefused(
+                "起草必须先 calibrate_scene + seal_scene_brief 拿到 calibration_id，"
+                "目标只从封存产物读取——直接传目标文字这条路已经关掉了。"
+            )
         # **`plan_call` 在这儿算，不在构造函数里算。** 放在构造里的话，一个撑不起整章
         # 起草预算的模型会让 `POST …/turn` 整个 422——聊天本来是能用的，作者只会看到
         # 「写作助手用不了」。放在这儿，坏的只有起草这一个工具，而它说得出原因。
@@ -399,8 +421,11 @@ class ChapterDesk:
         # **起草之前先记下它依据的是哪一份**（ADR 0021 那道乐观闸的另一半在
         # `importer.save_chapter`）。顺序不能反：模型调用要跑几十秒，作者就在旁边打字。
         # 拆成两个动作之后这个哈希要**跟着候选进表**——落盘可能发生在好几轮之后。
-        current = importer.read_chapter(self._root, ask.chapter)
-        base_sha = None if current is None else importer.text_digest(current)
+        if snapshot is not None:
+            base_sha = snapshot.sha256
+        else:
+            current = importer.read_chapter(self._root, ask.chapter)
+            base_sha = None if current is None else importer.text_digest(current)
 
         # **流号在这儿发，不在事件里数**：一批三稿是同时在飞的，事件那一层数不出
         # 「这一片属于哪一稿」。`_streams` 只增不减，所以同一轮里三条流永远不撞号。
@@ -415,7 +440,14 @@ class ChapterDesk:
         # 加第五条失败路径的那天漏掉一个，而漏掉的症状是一个永远转下去的图标。
         try:
             return self._write_the_open_stream(
-                ask, ctx, plan, base_sha=base_sha, stream=stream
+                ask,
+                ctx,
+                plan,
+                goal=goal,
+                brief=brief,
+                snapshot=snapshot,
+                base_sha=base_sha,
+                stream=stream,
             )
         finally:
             self._close_stream(ask.chapter, stream)
@@ -426,16 +458,21 @@ class ChapterDesk:
         ctx: DraftContext,
         plan: ResolvedCallPlan,
         *,
+        goal: str,
+        brief: SceneBrief | None,
+        snapshot: TargetChapterSnapshot | None,
         base_sha: str | None,
         stream: int,
     ) -> DraftProduct:
         """`write()` 里**「正在写」已经喊出去之后**的那一段。见那儿的 `finally`。"""
         request = ChapterDraftRequest(
-            goal=ask.goal + _SELF_NOTE_ASK,
+            goal=goal + _SELF_NOTE_ASK,
             length=self._length,
             previous_tail=_previous_tail(self._root, ask.chapter),
             # **这一行 2026-08-13 之前是缺的**，见 `self._write_rule` 那段。
             write_rule=self._write_rule,
+            brief=brief,
+            target_chapter_text=snapshot.text if snapshot is not None else None,
         )
         # **逐次收回执，不等整份出参。** 整章起草是一到两次调用（生成 + 至多一次续写，
         # ADR 0011 D3），而「第一次答上来了、续写那次断线」是真会发生的一档——那时

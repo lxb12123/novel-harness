@@ -145,6 +145,22 @@ class FakeGraph:
             out.append(resolution)
         return out
 
+    def canon_version(self, project_id: str) -> int:
+        del project_id
+        return 0
+
+    def knowledge_edges_at(
+        self,
+        project_id: str,
+        character_ids: Sequence[str],
+        secret_ids: Sequence[str],
+        chapter: int,
+        *,
+        scope: InformationScope = InformationScope.CANON,
+    ) -> list[Edge]:
+        del project_id, character_ids, secret_ids, chapter, scope
+        return []
+
     def state_at(
         self,
         project_id: str,

@@ -38,6 +38,7 @@ from novel_harness.agent.candidates import (
 from novel_harness.agent.drafting import SELF_NOTE_MARK, chapter_drafter, split_self_note
 from novel_harness.agent.ports import DraftAsk, ToolContext
 from novel_harness.agent.tools import dispatch_all
+from novel_harness.calibration.store import CalibrationStore
 from novel_harness.db import Connection, connect, migrate
 from novel_harness.declare import Ledger
 from novel_harness.draft.capabilities import resolve_capabilities
@@ -51,6 +52,7 @@ from novel_harness.graph import (
 )
 from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
+from calibration_seed import seed_calibration
 
 ENDPOINT = "https://api.deepseek.com"
 MODEL = "deepseek-v4-flash"
@@ -162,12 +164,20 @@ class _NoSummaries:
     def coverage(self, project_id: str, first: int, last: int) -> list[Any]:
         return []
 
+    def snapshot_watermark(self, project_id: str, chapter_number: int) -> Any:
+        return None
+
 
 def _ask(poisoned: dict[str, Any], chapter: int) -> tuple[DraftAsk, Any]:
     return (
-        DraftAsk(chapter=chapter, goal="写一场对峙"),
+        DraftAsk(chapter=chapter, calibration_id="test:unused"),
         unknown_cast_constraints(SqliteStoryGraph(poisoned["conn"]), poisoned["pid"], chapter),
     )
+
+
+def _write(desk: Any, poisoned: dict[str, Any], chapter: int) -> Any:
+    ask, ctx = _ask(poisoned, chapter)
+    return desk.write(ask, ctx, goal="写一场对峙")
 
 
 def every_column(conn: Connection) -> str:
@@ -196,7 +206,7 @@ def test_no_poison_survives_into_the_candidate_table(
     """
     writer = FakeWriter(f"{SELF_NOTE_MARK} 这一版更冷。\n\n风雪落在肩上。")
     desk = _desk(poisoned, monkeypatch, writer)
-    product = desk.write(*_ask(poisoned, 1))
+    product = _write(desk, poisoned, 1)
     desk.land(product.candidate.id)
 
     stored = every_column(poisoned["conn"])
@@ -251,7 +261,7 @@ def test_the_preview_is_a_hard_number_not_the_whole_chapter(
     """
     whole_chapter = "风雪落在肩上。" * 500
     desk = _desk(poisoned, monkeypatch, FakeWriter(whole_chapter))
-    product = desk.write(*_ask(poisoned, 1))
+    product = _write(desk, poisoned, 1)
 
     preview = product.candidate.preview
     assert len(preview) <= PREVIEW_UNITS + 2, f"预览有 {len(preview)} 字，硬上限不管用"
@@ -271,11 +281,20 @@ def test_the_tool_result_never_carries_the_chapter(
     """
     whole_chapter = "风雪落在肩上。" * 500
     desk = _desk(poisoned, monkeypatch, FakeWriter(whole_chapter))
+    _, author_turn = seed_calibration(
+        conn=poisoned["conn"],
+        project_id=poisoned["pid"],
+        store=SqliteStoryGraph(poisoned["conn"]),
+        root=poisoned["root"],
+        chapter=1,
+    )
     context = ToolContext(
         store=SqliteStoryGraph(poisoned["conn"]),
         project_id=poisoned["pid"],
         root_path=str(poisoned["root"]),
         drafter=desk,
+        calibrations=CalibrationStore(poisoned["conn"]),
+        author_turn=author_turn,
         working_chapter=1,
     )
     (outcome,) = dispatch_all(
@@ -283,7 +302,9 @@ def test_the_tool_result_never_carries_the_chapter(
             ToolCall(
                 id="c0",
                 name="draft_chapter",
-                arguments=json.dumps({"chapter": 1, "goal": "写一场对峙"}),
+                arguments=json.dumps(
+                    {"chapter": 1, "calibration_id": "calibration:test:seeded"}
+                ),
             )
         ],
         context,
@@ -317,11 +338,20 @@ def test_a_draft_result_is_bound_to_its_chapter_even_when_the_call_has_no_chapte
     **不是一张「哪个工具绑章号」的表**（表会在加工具的那天漂）。
     """
     desk = _desk(poisoned, monkeypatch, FakeWriter("风雪落在肩上。"))
+    _, author_turn = seed_calibration(
+        conn=poisoned["conn"],
+        project_id=poisoned["pid"],
+        store=SqliteStoryGraph(poisoned["conn"]),
+        root=poisoned["root"],
+        chapter=1,
+    )
     context = ToolContext(
         store=SqliteStoryGraph(poisoned["conn"]),
         project_id=poisoned["pid"],
         root_path=str(poisoned["root"]),
         drafter=desk,
+        calibrations=CalibrationStore(poisoned["conn"]),
+        author_turn=author_turn,
         working_chapter=1,
     )
     (drafted,) = dispatch_all(
@@ -329,7 +359,9 @@ def test_a_draft_result_is_bound_to_its_chapter_even_when_the_call_has_no_chapte
             ToolCall(
                 id="c0",
                 name="draft_chapter",
-                arguments=json.dumps({"chapter": 1, "goal": "写一场对峙"}),
+                arguments=json.dumps(
+                    {"chapter": 1, "calibration_id": "calibration:test:seeded"}
+                ),
             )
         ],
         context,
@@ -372,7 +404,7 @@ def test_the_note_comes_from_the_writer_in_the_same_call(
     """
     writer = FakeWriter(f"{SELF_NOTE_MARK}：这一版更冷，删掉了那段回忆。\n\n风雪落在肩上。")
     desk = _desk(poisoned, monkeypatch, writer)
-    product = desk.write(*_ask(poisoned, 1))
+    product = _write(desk, poisoned, 1)
 
     assert product.candidate.note == "这一版更冷，删掉了那段回忆。"
     assert SELF_NOTE_MARK in json.dumps(writer.prompts[0], ensure_ascii=False), (
@@ -392,7 +424,7 @@ def test_a_writer_that_ignores_the_ask_gets_no_invented_note(
     编出来的那一句会被作者当成模型的判断去挑版本——那是这个仓库最不该长出来的能力。
     """
     desk = _desk(poisoned, monkeypatch, FakeWriter("风雪落在肩上。\n\n那一夜谁都没说话。"))
-    product = desk.write(*_ask(poisoned, 1))
+    product = _write(desk, poisoned, 1)
 
     assert product.candidate.note == ""
     assert desk.recall(product.candidate.id).body.startswith("风雪落在肩上。"), (
@@ -554,11 +586,20 @@ def test_three_drafts_in_one_batch_really_run_at_the_same_time(
     together = threading.Barrier(3, timeout=5)
     desk = _desk(poisoned, monkeypatch, FakeWriter("风雪落在肩上。", during=together.wait))
     lock = threading.RLock()
+    _, author_turn = seed_calibration(
+        conn=poisoned["conn"],
+        project_id=poisoned["pid"],
+        store=SqliteStoryGraph(poisoned["conn"]),
+        root=poisoned["root"],
+        chapter=1,
+    )
     context = ToolContext(
         store=SqliteStoryGraph(poisoned["conn"]),
         project_id=poisoned["pid"],
         root_path=str(poisoned["root"]),
         drafter=desk,
+        calibrations=CalibrationStore(poisoned["conn"]),
+        author_turn=author_turn,
         working_chapter=1,
         db_lock=lock,
     )
@@ -570,7 +611,9 @@ def test_three_drafts_in_one_batch_really_run_at_the_same_time(
         ToolCall(
             id=f"c{n}",
             name="draft_chapter",
-            arguments=json.dumps({"chapter": 1, "goal": f"第 {n} 稿"}),
+            arguments=json.dumps(
+                {"chapter": 1, "calibration_id": "calibration:test:seeded"}
+            ),
         )
         for n in range(3)
     ]

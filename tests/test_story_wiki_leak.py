@@ -99,6 +99,8 @@ from novel_harness.graph import (
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.importer import CHAPTER_DIR, chapter_path
 from novel_harness.panel.constraints import forbidden_entities
+from novel_harness.calibration.models import SceneProposal
+from calibration_seed import seed_calibration
 
 # ══════════════════════════════════════════════════════════════════════════
 # 毒：作者写在图上的东西。**出现在任何一个模型看得见的面上都是泄漏。**
@@ -164,6 +166,8 @@ class PoisonedBook:
     store: SqliteStoryGraph
     root: Path
     secret_id: str
+    calibrations: Any = None
+    author_turn: Any = None
 
     def context(self, **overrides: Any) -> ToolContext:
         base: dict[str, Any] = {
@@ -172,6 +176,8 @@ class PoisonedBook:
             "root_path": str(self.root),
             "summaries": SummaryStore(self.conn),
             "events": PoisonedEvents(self.secret_id),
+            "calibrations": self.calibrations,
+            "author_turn": self.author_turn,
             "working_chapter": WORKING_CHAPTER,
         }
         base.update(overrides)
@@ -290,6 +296,14 @@ def book(tmp_path: Path) -> Iterator[PoisonedBook]:
             )
         )
     conn.commit()
+    calibrations, author_turn = seed_calibration(
+        conn=conn,
+        project_id=pid,
+        store=store,
+        root=root,
+        chapter=WORKING_CHAPTER,
+        proposal=SceneProposal(chapter=WORKING_CHAPTER),
+    )
     yield PoisonedBook(
         conn=conn,
         db_path=db_path,
@@ -297,6 +311,8 @@ def book(tmp_path: Path) -> Iterator[PoisonedBook]:
         store=store,
         root=root,
         secret_id=secret.id,
+        calibrations=calibrations,
+        author_turn=author_turn,
     )
     conn.close()
 
@@ -379,7 +395,7 @@ def surfaces_of(book: PoisonedBook) -> dict[str, str]:
         """注入进来的起草台（ADR 0022 之后是三个动作）。三个动作各自都是一个
         模型看得见的面，所以三个都要填满——只填一个的话另外两块屏幕没被扫过。"""
 
-        def write(self, ask: DraftAsk, ctx: DraftContext) -> DraftProduct:
+        def write(self, ask: DraftAsk, ctx: DraftContext, **kwargs: Any) -> DraftProduct:
             captured.append(ctx)
             return DraftProduct(candidate=_candidate(ask.chapter))
 
@@ -410,7 +426,11 @@ def surfaces_of(book: PoisonedBook) -> dict[str, str]:
             # 3.1 那三个约束类工具也带上：索引层改过 `agent/` 的共用面。
             _call("scene_constraints", chapter=WORKING_CHAPTER),
             _call("character_state", chapter=WORKING_CHAPTER, character="萧决"),
-            _call("draft_chapter", chapter=WORKING_CHAPTER, goal="写顾清音在藏书阁"),
+            _call(
+                "draft_chapter",
+                chapter=WORKING_CHAPTER,
+                calibration_id="calibration:test:seeded",
+            ),
             # ADR 0022 拆出来的另外两个动作，各自一个新的返回面。
             _call("save_draft", draft_id=DRAFT_ID),
             _call("read_draft", draft_id=DRAFT_ID),

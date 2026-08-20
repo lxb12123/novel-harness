@@ -40,8 +40,8 @@ from test_agent_drafting import (
     MODEL,
     FakeDrafting,
     _NoSummaries,
-    _ask,
     _root,
+    _write,
 )
 from test_agent_loop import Ledger, ScriptedModel, a_context, say, wants
 from test_agent_tools import CHAPTER, SECRET_CONTENT, TWIST, World, conn, leaks, world
@@ -893,8 +893,8 @@ def test_a_draft_says_which_chapter_it_is_writing_and_which_draft_it_became(
     screen = Screen()
     desk = a_desk(conn, book["pid"], monkeypatch, screen)
 
-    first = desk.write(*_ask(conn, book["pid"], 1))
-    second = desk.write(*_ask(conn, book["pid"], 1))
+    first = _write(desk, conn, book["pid"], 1)
+    second = _write(desk, conn, book["pid"], 1)
 
     assert screen.kinds == [
         TurnEventKind.DRAFT_STARTED,
@@ -930,7 +930,7 @@ def test_the_pieces_of_a_draft_carry_the_chapter_and_the_stream_they_belong_to(
 
     monkeypatch.setattr(drafting, "cancellable_client", spy)
     desk = a_desk(conn, book["pid"], monkeypatch, screen, cancel=Cancellation())
-    desk.write(*_ask(conn, book["pid"], 1))
+    _write(desk, conn, book["pid"], 1)
 
     assert sinks and sinks[0] is not None, "起草那一次调用没带上「这一片叫什么」"
     sinks[0]("风雪落在")
@@ -953,7 +953,7 @@ def test_without_a_stop_signal_there_is_no_live_text_and_that_is_not_a_bug(
     conn = connect(book["db"])
     screen = Screen()
     desk = a_desk(conn, book["pid"], monkeypatch, screen, cancel=None)
-    desk.write(*_ask(conn, book["pid"], 1))
+    _write(desk, conn, book["pid"], 1)
 
     assert screen.of(TurnEventKind.DRAFT_DELTA) == []
     assert screen.of(TurnEventKind.DRAFT_STARTED) and screen.of(TurnEventKind.DRAFT_KEPT)

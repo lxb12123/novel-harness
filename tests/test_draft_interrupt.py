@@ -335,6 +335,9 @@ class _NoSummaries:
     def coverage(self, project_id: str, first: int, last: int) -> list[Any]:
         return []
 
+    def snapshot_watermark(self, project_id: str, chapter_number: int) -> Any:
+        return None
+
 
 def _desk(conn: Connection, pid: str, cancel: Cancellation | None, endpoint: Any) -> Any:
     return chapter_drafter(
@@ -354,9 +357,14 @@ def _ask(conn: Connection, pid: str, chapter: int) -> tuple[DraftAsk, Any]:
     from novel_harness.draft.context import unknown_cast_constraints
 
     return (
-        DraftAsk(chapter=chapter, goal="写一场对峙"),
+        DraftAsk(chapter=chapter, calibration_id="test:unused"),
         unknown_cast_constraints(SqliteStoryGraph(conn), pid, chapter),
     )
+
+
+def _write(desk: Any, conn: Connection, pid: str, chapter: int) -> Any:
+    ask, ctx = _ask(conn, pid, chapter)
+    return desk.write(ask, ctx, goal="写一场对峙")
 
 
 def test_the_half_draft_is_kept_and_says_it_is_a_half_draft(
@@ -377,7 +385,7 @@ def test_the_half_draft_is_kept_and_says_it_is_a_half_draft(
     desk = _desk(conn, pid, cancel, endpoint)
 
     with pytest.raises(ToolRefused) as caught:
-        desk.write(*_ask(conn, pid, 1))
+        _write(desk, conn, pid, 1)
 
     # ① 真的走了流式（不然这颗按钮对起草无效）
     assert endpoint.kwargs[0]["stream"] is True
@@ -421,7 +429,7 @@ def test_the_annotation_comes_back_with_the_text_when_the_model_reads_it(
     ))
     desk = _desk(conn, pid, cancel, endpoint)
     with pytest.raises(ToolRefused):
-        desk.write(*_ask(conn, pid, 1))
+        _write(desk, conn, pid, 1)
     candidate_id = desk.produced[0].id
 
     recalled = desk.recall(candidate_id)
@@ -459,7 +467,7 @@ def test_a_finished_draft_carries_no_annotation(
     ))
     desk = _desk(conn, pid, cancel, endpoint)
 
-    product = desk.write(*_ask(conn, pid, 1))
+    product = _write(desk, conn, pid, 1)
 
     assert product.candidate.stopped_reason == ""
     assert desk.recall(product.candidate.id).stopped_reason == ""
@@ -485,7 +493,7 @@ def test_nothing_written_before_the_stop_leaves_no_candidate_but_still_leaves_a_
     desk = _desk(conn, pid, cancel, endpoint)
 
     with pytest.raises(ToolRefused) as caught:
-        desk.write(*_ask(conn, pid, 1))
+        _write(desk, conn, pid, 1)
 
     assert DraftCandidateStore(conn).recent(pid, chapter=1) == []
     assert desk.produced == []
@@ -511,7 +519,7 @@ def test_without_a_signal_drafting_behaves_exactly_as_before(
     monkeypatch.setattr("novel_harness.draft.provider._build_client", lambda config: endpoint)
     desk = _desk(conn, pid, None, endpoint)
 
-    product = desk.write(*_ask(conn, pid, 1))
+    product = _write(desk, conn, pid, 1)
 
     assert built == [], "没信号就不该有那层包装"
     assert endpoint.kwargs[0]["stream"] is False

@@ -165,13 +165,22 @@ class _NoSummaries:
     def coverage(self, project_id: str, first_chapter: int, last_chapter: int) -> list[Any]:
         return []
 
+    def snapshot_watermark(self, project_id: str, chapter_number: int) -> Any:
+        return None
+
 
 def _ask(conn: Connection, pid: str, chapter: int) -> tuple[DraftAsk, Any]:
     """一次起草请求 + 后端算出来的那份约束（**模型碰不到它**，边界二）。"""
     return (
-        DraftAsk(chapter=chapter, goal="写一场对峙"),
+        DraftAsk(chapter=chapter, calibration_id="test:unused"),
         unknown_cast_constraints(SqliteStoryGraph(conn), pid, chapter),
     )
+
+
+def _write(desk: Any, conn: Connection, pid: str, chapter: int) -> Any:
+    """`desk.write` 的测试桩：goal 是这一层直传的（模式二里它只来自封存产物）。"""
+    ask, ctx = _ask(conn, pid, chapter)
+    return desk.write(ask, ctx, goal="写一场对峙")
 
 
 def _write_and_land(desk: Any, conn: Connection, pid: str, chapter: int) -> LandingReport:
@@ -181,7 +190,7 @@ def _write_and_land(desk: Any, conn: Connection, pid: str, chapter: int) -> Land
     （sha 闸 / 只对已存在的章 / 先 sync / 留章标题 + 验「恰好一章」/ 空稿闸）。
     第一个动作在 `tests/test_draft_candidates.py`。
     """
-    product = desk.write(*_ask(conn, pid, chapter))
+    product = _write(desk, conn, pid, chapter)
     return desk.land(product.candidate.id)
 
 
@@ -222,7 +231,7 @@ def test_the_gate_refuses_to_overwrite_a_chapter_the_author_touched_later(
 
     fake = FakeDrafting(during=author_types)
     desk = _drafter(conn, pid, monkeypatch, fake)
-    product = desk.write(*_ask(conn, pid, 1))
+    product = _write(desk, conn, pid, 1)
     report = desk.land(product.candidate.id)
 
     assert report.landed is False
@@ -297,7 +306,7 @@ def test_a_chapter_that_does_not_exist_yet_is_handed_back_not_created(
     pid = book["pid"]
     desk = _drafter(conn, pid, monkeypatch, FakeDrafting())
 
-    product = desk.write(*_ask(conn, pid, 8))
+    product = _write(desk, conn, pid, 8)
     report = desk.land(product.candidate.id)
 
     assert report.landed is False
@@ -371,7 +380,7 @@ def test_a_draft_that_is_two_chapters_is_refused_before_anything_is_written(
     fake = FakeDrafting(text=f"第一章 甲\n\n{DRAFT}\n\n第二章 乙\n\n再来一段。")
     desk = _drafter(conn, pid, monkeypatch, fake)
 
-    product = desk.write(*_ask(conn, pid, 1))
+    product = _write(desk, conn, pid, 1)
     report = desk.land(product.candidate.id)
 
     assert report.landed is False
@@ -396,7 +405,7 @@ def test_an_empty_draft_never_becomes_a_candidate(
     desk = _drafter(conn, pid, monkeypatch, FakeDrafting(text="   \n\n  "))
 
     with pytest.raises(ToolRefused) as caught:
-        desk.write(*_ask(conn, pid, 1))
+        _write(desk, conn, pid, 1)
 
     assert "空的" in str(caught.value)
     assert [r.capability for r in caught.value.calls] == ["writer"], (
@@ -547,7 +556,7 @@ def test_the_draft_call_lands_on_the_bill(
     pid = book["pid"]
     desk = _drafter(conn, pid, monkeypatch, FakeDrafting())
 
-    product = desk.write(*_ask(conn, pid, 1))
+    product = _write(desk, conn, pid, 1)
 
     assert [(r.capability, r.prompt_tokens, r.completion_tokens) for r in product.calls] == [
         ("writer", 1_200, 2_400)
@@ -585,7 +594,7 @@ def test_a_provider_failure_becomes_a_refusal_not_a_crash(
     monkeypatch.setattr(drafting, "draft_chapter", boom)
 
     with pytest.raises(ToolRefused) as caught:
-        desk.write(*_ask(conn, pid, 1))
+        _write(desk, conn, pid, 1)
     assert "没写成" in str(caught.value)
     conn.close()
 
@@ -605,7 +614,7 @@ def test_a_landing_that_cannot_be_logged_is_loud(
     conn = connect(book["db"])
     pid = book["pid"]
     desk = _drafter(conn, pid, monkeypatch, FakeDrafting())
-    product = desk.write(*_ask(conn, pid, 1))
+    product = _write(desk, conn, pid, 1)
 
     def boom(*args: Any, **kwargs: Any) -> Any:
         raise RuntimeError("日志表写不进去")
@@ -638,7 +647,7 @@ def test_a_model_too_small_for_a_whole_chapter_only_breaks_the_draft_tool(
     monkeypatch.setattr(drafting, "AGENT_DRAFT_REASONING", ReasoningEffort.HIGH)
 
     with pytest.raises(ToolRefused) as caught:
-        desk.write(*_ask(conn, pid, 1))
+        _write(desk, conn, pid, 1)
     assert "AI 设置" in str(caught.value)
     conn.close()
 
@@ -684,7 +693,7 @@ def test_one_turn_from_the_browser_really_changes_the_chapter_on_disk(
     pid = book["pid"]
 
     class Scripted:
-        """先要一稿，再把**那一稿**存进去，最后说话收手。"""
+        """先校准、封存，再要一稿，把**那一稿**存进去，最后说话收手。"""
 
         def __init__(self) -> None:
             self.calls = 0
@@ -699,12 +708,46 @@ def test_one_turn_from_the_browser_really_changes_the_chapter_on_disk(
                     tool_calls=(
                         ToolCall(
                             id="c0",
-                            name="draft_chapter",
-                            arguments=json.dumps({"chapter": 1, "goal": "写一场对峙"}),
+                            name="calibrate_scene",
+                            arguments=json.dumps({"chapter": 1}),
                         ),
                     ),
                 )
             if self.calls == 2:
+                calibrated = [m for m in messages if m.get("role") == "tool"][-1]
+                inspection_id = json.loads(calibrated["content"]).get("id", "inspection:不存在")
+                return CompletionResult(
+                    text="",
+                    model=MODEL,
+                    finish_reason="tool_calls",
+                    tool_calls=(
+                        ToolCall(
+                            id="c1",
+                            name="seal_scene_brief",
+                            arguments=json.dumps({"inspection_id": inspection_id}),
+                        ),
+                    ),
+                )
+            if self.calls == 3:
+                sealed = [m for m in messages if m.get("role") == "tool"][-1]
+                calibration_id = json.loads(sealed["content"]).get(
+                    "calibration_id", "calibration:不存在"
+                )
+                return CompletionResult(
+                    text="",
+                    model=MODEL,
+                    finish_reason="tool_calls",
+                    tool_calls=(
+                        ToolCall(
+                            id="c2",
+                            name="draft_chapter",
+                            arguments=json.dumps(
+                                {"chapter": 1, "calibration_id": calibration_id}
+                            ),
+                        ),
+                    ),
+                )
+            if self.calls == 4:
                 drafted = [m for m in messages if m.get("role") == "tool"][-1]
                 draft_id = json.loads(drafted["content"]).get("draft_id", "draft:不存在")
                 return CompletionResult(
@@ -713,7 +756,7 @@ def test_one_turn_from_the_browser_really_changes_the_chapter_on_disk(
                     finish_reason="tool_calls",
                     tool_calls=(
                         ToolCall(
-                            id="c1",
+                            id="c3",
                             name="save_draft",
                             arguments=json.dumps({"draft_id": draft_id}),
                         ),
@@ -731,7 +774,7 @@ def test_one_turn_from_the_browser_really_changes_the_chapter_on_disk(
         json={"chapter": 1, "said": "第 1 章重写一稿"},
     )
     assert turn.status_code == 200, turn.text
-    assert turn.json()["lookups"] == 2
+    assert turn.json()["lookups"] == 4
 
     # 出参上那几稿：界面靠它知道「这一轮写了什么、哪一版进了书」（ADR 0022）。
     drafts = turn.json()["drafts"]

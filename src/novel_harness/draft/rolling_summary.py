@@ -126,6 +126,16 @@ class ChapterSummaryStatus(BaseModel):
     分不出来的话，他会对着自己写的字读到一句「这是机器压缩的，别当事实」。"""
 
 
+class SummarySnapshotWatermark(BaseModel):
+    """一章的当前快照水位：给摘要新鲜度判据用（`calibration/freshness.py`）。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chapter_number: int = Field(ge=1)
+    text_sha256: str
+    snapshot_created_at: str
+
+
 class SummaryStore:
     """chapter_summary 的只读仓储。
 
@@ -280,6 +290,36 @@ class SummaryStore:
                 )
             )
         return out
+
+    def snapshot_watermark(
+        self,
+        project_id: str,
+        chapter_number: int,
+    ) -> SummarySnapshotWatermark | None:
+        """当前快照水位：`chapter.text_sha256` 指向的那行 `chapter_snapshot`。
+
+        `None` = 没有当前快照行（正文从未同步过）⇒ 新鲜度只能判 `UNVERIFIED`。
+        判据和 `coverage` 的 `with_text` 是同一条（当前快照存在才总结得了），
+        不许在别处写第二份。
+        """
+        row = self._conn.execute(
+            """
+            SELECT snapshot.text_sha256 AS sha, snapshot.created_at AS created
+            FROM chapter_snapshot AS snapshot
+            JOIN chapter ON chapter.id = snapshot.chapter_id
+            WHERE chapter.project_id = ?
+              AND chapter.number = ?
+              AND snapshot.text_sha256 = chapter.text_sha256
+            """,
+            (project_id, chapter_number),
+        ).fetchone()
+        if row is None:
+            return None
+        return SummarySnapshotWatermark(
+            chapter_number=chapter_number,
+            text_sha256=str(row["sha"]),
+            snapshot_created_at=str(row["created"]),
+        )
 
 
 def _row_to_summary(row: Any) -> ChapterSummary:

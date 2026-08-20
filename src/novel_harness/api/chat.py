@@ -143,7 +143,10 @@ from ..agent.model import ProviderModelPort, agent_call_plan
 from ..agent.ports import ToolContext
 from ..agent.tools import AuthorQuestion
 from ..agent.store import ChatConcurrency, ChatNotice, ChatSessionRow, ChatStore, StoredChat
+from ..calibration.models import AuthorTurnRef
+from ..calibration.store import CalibrationStore
 from ..db import Connection
+from ..decisions import quote_hash
 from ..draft.capabilities import CapabilityError, ProviderCapabilities, ResolvedCallPlan
 from ..draft.provider import CompletionResult, ProviderConfig
 from ..draft.rolling_summary import SummaryStore
@@ -691,6 +694,7 @@ def _tool_context(
     store: GraphStore,
     conn: Connection,
     *,
+    chat_id: str,
     chapter: int,
     desk: ChapterDesk,
     capability: ProviderCapabilities,
@@ -718,12 +722,41 @@ def _tool_context(
         db_lock=db_lock,
         summaries=SummaryStore(conn),
         events=SqliteEventStore(conn),
+        calibrations=CalibrationStore(conn),
+        author_turn=_latest_author_turn(conn, proj.id, chat_id),
         working_chapter=chapter,
         max_context_tokens=capability.max_context_tokens,
         # **对话那一档的输出预算**（`AGENT_REPLY_LENGTH` 倒推的），用来算「一次工具返回
         # 最多给多少字」。起草那一次调用的预算是另一个数，由 `chapter_drafter` 自己算
         # ——两档长度不同，共用一个 plan 会让工具返回的天花板跟着起草的输出预算走。
         reserved_output_tokens=plan.request_token_budget,
+    )
+
+
+def _latest_author_turn(
+    conn: Connection,
+    project_id: str,
+    chat_id: str,
+) -> AuthorTurnRef | None:
+    """当前会话里**作者最新一条**历史消息的绑定（turn id + 原话哈希）。
+
+    模型不能自报或替换：`calibrate_scene` / `seal_scene_brief` 从这儿取绑定。
+    `None` = 这段会话还没有作者消息可绑定。
+    """
+    row = conn.execute(
+        "SELECT id, content FROM chat_message"
+        " WHERE session_id = ? AND section = 'history' AND role = 'user'"
+        " ORDER BY seq DESC LIMIT 1",
+        (chat_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    text = str(row["content"]).strip()
+    if not text:
+        return None
+    return AuthorTurnRef(
+        turn_id=str(row["id"]),
+        request_sha256=quote_hash(text),
     )
 
 
@@ -1128,6 +1161,7 @@ class _TurnRun:
                     self._proj,
                     self._store,
                     self._conn,
+                    chat_id=self._chat_id,
                     chapter=self._chapter,
                     desk=desk,
                     capability=self._capability,

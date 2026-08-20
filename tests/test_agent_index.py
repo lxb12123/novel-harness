@@ -646,5 +646,5 @@ def test_the_context_still_has_no_connection_and_no_writer(book: Book) -> None:
     assert not hasattr(context, "writer")
     # 端口本身必须是窄的：实现可以更宽（`SummaryStore` 还有 `for_range` / `get`），
     # 但**协议上多一个方法就等于多一条模型够得着的路**。
-    assert set(SummaryIndex.__protocol_attrs__) == {"coverage"}
+    assert set(SummaryIndex.__protocol_attrs__) == {"coverage", "snapshot_watermark"}
     assert set(EventIndex.__protocol_attrs__) == {"events_for_characters"}

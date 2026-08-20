@@ -824,8 +824,13 @@ def test_the_chapter_is_read_by_shape_not_by_a_second_tool_table() -> None:
         if "chapter" in spec.args.model_fields
         and spec.args.model_fields["chapter"].annotation is int
     }
-    assert tools_with_chapter == {"scene_constraints", "character_state", "draft_chapter",
-                                  "chapter_text"}
+    assert tools_with_chapter == {
+        "scene_constraints",
+        "character_state",
+        "draft_chapter",
+        "calibrate_scene",
+        "chapter_text",
+    }
 
 
 def test_the_tool_table_is_what_gets_declared_and_the_loop_writes_no_second_copy() -> None:

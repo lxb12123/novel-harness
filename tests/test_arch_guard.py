@@ -305,6 +305,8 @@ def test_story_graph_method_set_remains_frozen() -> None:
     }
     assert methods == {
         "resolve",
+        "canon_version",
+        "knowledge_edges_at",
         "state_at",
         "knowledge_matrix",
         "subgraph",

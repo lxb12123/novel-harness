@@ -48,6 +48,8 @@ from typing import Any, Final, Literal, Protocol, runtime_checkable
 from ..events import EventStore
 from ..extract.call_audit import ModelCallReceipt
 from ..graph import NodeLabel
+from ..calibration.models import SceneBrief
+from ..calibration.render import render_scene_brief, render_target_chapter
 from .assemble import (
     CONTINUATION_GOAL,
     GATE_TAIL_CODE_POINTS,
@@ -57,13 +59,17 @@ from .assemble import (
     product_tail_limit,
 )
 from .capabilities import ProviderCapabilities, ResolvedCallPlan
-from .context import DraftContext, ResolvedConstraints
+from .context import DraftContext, ResolvedConstraints, UnknownCastConstraints
 from .generate import DraftAttempt, DraftResult, generate_draft
 from .length import DraftLanguage, LengthSpec
 from .product_assemble import assemble_product
 from .product_context import MemoryBudget, build_product_context, memory_units_available
 from .provider import ProviderConfig
-from .rolling_summary import ChapterSummary, ChapterSummaryStatus
+from .rolling_summary import (
+    ChapterSummary,
+    ChapterSummaryStatus,
+    SummarySnapshotWatermark,
+)
 
 WRITER_CAPABILITY: Final = "writer"
 """`model_call.capability` 这一列的取值。**`activity._CAPABILITY_LABEL` 里已经有它**
@@ -103,6 +109,10 @@ class SummarySource(Protocol):
         self, project_id: str, first_chapter: int, last_chapter: int
     ) -> list[ChapterSummaryStatus]: ...
 
+    def snapshot_watermark(
+        self, project_id: str, chapter_number: int
+    ) -> SummarySnapshotWatermark | None: ...
+
 
 @dataclass(frozen=True)
 class ChapterDraftRequest:
@@ -118,6 +128,15 @@ class ChapterDraftRequest:
     form: str = "PRODUCT"
     previous_tail: str = ""
     write_rule: str = ""
+    brief: SceneBrief | None = None
+    """已封存的 `SceneBrief`（ADR 0033）。只有 PRODUCT 分支渲染它。"""
+
+    target_chapter_text: str | None = None
+    """目标章当前正文（重写/续写已有章时）。**一次读取的快照，不是磁盘现读。**"""
+
+
+TARGET_CHAPTER_UNITS: Final = 16_000
+"""目标章当前正文分区的最多字数。超出确定性截断并给覆盖回执（ADR 0033 §8.4）。"""
 
 
 @dataclass(frozen=True)
@@ -337,6 +356,8 @@ def draft_chapter(
                 events=events,
                 summaries=summaries,
             )
+            if request.brief is not None or request.target_chapter_text:
+                messages = _append_execution_plan(messages, ctx, request)
         else:
             messages = assemble(ctx, **assemble_args)
             memory = memory_receipt(
@@ -365,6 +386,52 @@ def draft_chapter(
         messages, length=request.length, config=config, plan=plan, client=client, on_attempt=bill
     )
     return ChapterDraft(result=result, memory=memory, calls=tuple(receipts))
+
+
+def _append_execution_plan(
+    messages: list[dict[str, str]],
+    ctx: DraftContext,
+    request: ChapterDraftRequest,
+) -> list[dict[str, str]]:
+    """把「本稿执行计划」+「目标章当前正文」作为**独立分区**追加到产品 prompt。
+
+    不拼进 write rule、约束块或另一份 goal_spec；安全约束由 `assemble()` 那块
+    单独渲染。UnknownCast 下 `render_scene_brief(unknown_cast=True)` 按白名单
+    再收窄一次（fail-closed）。
+    """
+    sections: list[str] = []
+    if request.target_chapter_text:
+        text, truncated = render_target_chapter(
+            request.target_chapter_text, max_units=TARGET_CHAPTER_UNITS
+        )
+        sections.append("【目标章当前正文】")
+        sections.append(text)
+        if truncated:
+            sections.append(
+                "（覆盖回执：本章正文超过预算，以上只给了开头一段；"
+                "需要全文请使用未来的修订能力，不能把缺的部分当成不存在。）"
+            )
+    if request.brief is not None:
+        sections.append(
+            render_scene_brief(
+                request.brief, unknown_cast=isinstance(ctx, UnknownCastConstraints)
+            )
+        )
+    if sections:
+        messages = [*messages, {"role": "system", "content": "\n".join(sections)}]
+    return messages
+
+
+def _summary_is_current(
+    summaries: SummarySource,
+    project_id: str,
+    item: ChapterSummary,
+) -> bool:
+    """DB 级摘要新鲜度：总结行不得早于当前快照行；无水位 = 无法证明 = 排除。"""
+    watermark = summaries.snapshot_watermark(project_id, item.chapter_number)
+    if watermark is None:
+        return False
+    return item.created_at >= watermark.snapshot_created_at
 
 
 def _with_memory(
@@ -414,12 +481,19 @@ def _with_memory(
     budget = MemoryBudget.for_context(
         memory_units_available(capability.max_context_tokens, plan.request_token_budget)
     )
+    all_summaries = sorted(summaries.for_range(project_id, 1, chapter - 1), key=lambda s: s.chapter_number)
+    # 摘要新鲜度（ADR 0033 §8.2）：无法证明与当前快照一致的总结不进 Writer。
+    fresh_summaries = [
+        item
+        for item in all_summaries
+        if _summary_is_current(summaries, project_id, item)
+    ]
     product = build_product_context(
         events,
         project_id,
         characters,
         draft_chapter=chapter,
-        summaries=summaries.for_range(project_id, 1, chapter - 1),
+        summaries=fresh_summaries,
         budget=budget,
         language=language,
     )

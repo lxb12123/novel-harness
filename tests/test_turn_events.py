@@ -37,7 +37,7 @@ import pytest
 
 import novel_harness.agent.drafting as drafting
 import novel_harness.agent.tools as agent_tools
-from test_agent_drafting import ENDPOINT, MODEL, FakeDrafting, _NoSummaries, _ask, _root
+from test_agent_drafting import ENDPOINT, MODEL, FakeDrafting, _NoSummaries, _root, _write
 from test_agent_loop import Ledger, ScriptedModel, a_context, say, wants
 from test_agent_tools import (
     CHAPTER,
@@ -73,6 +73,7 @@ from novel_harness.agent.ports import (
 )
 from novel_harness.agent.tools import TOOL_NAMES, AuthorQuestion
 from novel_harness.api.chat import _visible
+from novel_harness.calibration.store import CalibrationStore
 from novel_harness.db import Connection, connect
 from novel_harness.draft.capabilities import resolve_capabilities
 from novel_harness.draft.context import DraftContext
@@ -81,6 +82,7 @@ from novel_harness.draft.provider import ProviderConfig, ProviderError, ToolCall
 from novel_harness.draft.rolling_summary import SUMMARY_VERSION, SummaryStore
 from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
+from calibration_seed import seed_calibration
 
 __all__ = ["conn", "world"]
 """两个 fixture 从 `test_agent_tools` 借来（同 `conftest.py` 那次 re-export）。"""
@@ -165,7 +167,7 @@ class PoisonedDesk:
             created_at="2026-08-12T00:00:00.000Z",
         )
 
-    def write(self, ask: DraftAsk, ctx: DraftContext) -> DraftProduct:
+    def write(self, ask: DraftAsk, ctx: DraftContext, **kwargs: Any) -> DraftProduct:
         self.seen.append(ctx)
         return DraftProduct(candidate=self._candidate(ask.chapter))
 
@@ -201,10 +203,19 @@ def a_wired_context(world: World, **overrides: Any) -> ToolContext:
     「没接线」——`ok=False`、返回里一个字的书都没有。**在那种上下文上搜毒是空转。**
     """
     _feed_a_summary(world.conn, world.project_id)
+    _, author_turn = seed_calibration(
+        conn=world.conn,
+        project_id=world.project_id,
+        store=world.store,
+        root=world.root,
+        chapter=CHAPTER,
+    )
     base: dict[str, Any] = {
         "drafter": PoisonedDesk(),
         "summaries": SummaryStore(world.conn),
         "events": SqliteEventStore(world.conn),
+        "calibrations": CalibrationStore(world.conn),
+        "author_turn": author_turn,
         "working_chapter": CHAPTER,
     }
     base.update(overrides)
@@ -222,13 +233,23 @@ EVERY_TOOL = (
     ("character_chapters", {"characters": ["萧决", "顾清音"]}),
     ("chapter_summaries", {"first_chapter": 1, "last_chapter": CHAPTER}),
     ("chapter_text", {"chapter": CHAPTER}),
-    ("draft_chapter", {"chapter": CHAPTER, "goal": "写萧决独自走进北荒"}),
+    ("draft_chapter", {"chapter": CHAPTER, "calibration_id": "calibration:test:seeded"}),
     ("save_draft", {"draft_id": DRAFT_ID}),
     ("read_draft", {"draft_id": DRAFT_ID}),
     ("remember_rule", {"rule": "这一章别写打斗", "until": "这一章写完为止"}),
     # `get_result` 要放在**第二批**：stored 表在批创建时从 live 数，第一批都还没跑
     # 的话它手里是空的，取 1 号会拒绝（`ok=False`）——这一节要的是每条都 ok=True。
     ("get_result", {"id": 1}),
+    ("calibrate_scene", {
+        "chapter": CHAPTER,
+        "intended_cast": [{"surface": "萧决"}],
+        "directive_candidates": [{
+            "kind": "ENTER_LOCATION",
+            "actor_surface": "萧决",
+            "location_surface": "北荒",
+        }],
+    }),
+    ("seal_scene_brief", {"inspection_id": "inspection:test:seeded"}),
     ("ask_author", {"question": "这一场你想让萧决知道那件事吗？",
                     "options": ["让他知道", "先瞒着他"]}),
 )
@@ -261,16 +282,25 @@ def run_the_whole_table(world: World, *, screen: Screen | None = None) -> WholeT
     发出一批超宽的调用（那时这一轮会停在 `BATCH_TOO_WIDE` 上，一条工具都跑不到）。
     """
     board = screen if screen is not None else Screen()
-    cut = len(EVERY_TOOL) - MAX_CALLS_PER_STEP
-    first, second = EVERY_TOOL[:cut], EVERY_TOOL[cut:]
+    batches = [
+        EVERY_TOOL[i : i + MAX_CALLS_PER_STEP]
+        for i in range(0, len(EVERY_TOOL), MAX_CALLS_PER_STEP)
+    ]
     model = ScriptedModel(
         script=[
-            wants(*[(name, json.dumps(args)) for name, args in first],
-                  text="我先把这一章的底摸清楚。"),
-            wants(*[(name, json.dumps(args)) for name, args in second],
-                  text="接着写一稿，写完有件事想问你。"),
-            say("这一句到不了 —— 上一步那个问句会把这一轮收掉。"),
+            wants(
+                *[(name, json.dumps(args)) for name, args in batch],
+                text=(
+                    "我先把这一章的底摸清楚。"
+                    if i == 0
+                    else "接着写一稿，写完有件事想问你。"
+                ),
+            )
+            for i, batch in enumerate(batches)
         ]
+        + [
+            say("这一句到不了 —— 上一步那个问句会把这一轮收掉。"),
+        ],
     )
     context = a_wired_context(world)
     result = run_turn(
@@ -279,7 +309,10 @@ def run_the_whole_table(world: World, *, screen: Screen | None = None) -> WholeT
         model=model,
         ledger=Ledger(),
         on_event=board,
-        limits=TurnLimits(max_steps=4, max_calls_per_step=MAX_CALLS_PER_STEP),
+        limits=TurnLimits(
+            max_steps=len(batches) + 1,
+            max_calls_per_step=MAX_CALLS_PER_STEP,
+        ),
     )
     # **按 `call_id` 认领，不按下标对齐**：位置对齐在有壳（`UNRUN_CALL`）的那一轮会
     # 整体错位，而错位的症状是「某条工具的返回里没有那句话」——读起来像一个泄漏结论。
@@ -454,8 +487,11 @@ def test_the_author_can_still_tell_what_it_was_doing(world: World) -> None:
     assert f"第 {CHAPTER} 章" in said, "查的是哪一章也该说得出来"
 
     spoken = [event.text for event in ran.screen.of(TurnEventKind.REPLY_TEXT)]
-    assert spoken == ["我先把这一章的底摸清楚。", "接着写一稿，写完有件事想问你。"], (
-        "模型在路上说的那两句没出去 —— 界面上就是几十秒的空白配一个转圈的图标"
+    assert spoken and spoken[0] == "我先把这一章的底摸清楚。", (
+        "模型在路上说的那句开场没出去 —— 界面上就是几十秒的空白配一个转圈的图标"
+    )
+    assert all("接着写一稿" in text for text in spoken[1:]), (
+        "中途那几句没出去 —— 界面上就是几十秒的空白配一个转圈的图标"
     )
     asked = ran.screen.of(TurnEventKind.ASKED_AUTHOR)
     assert asked and asked[0].asked is not None
@@ -799,9 +835,19 @@ def test_a_question_wins_even_when_the_batch_was_allowed_to_run_at_once(
         model=ScriptedModel(
             script=[
                 wants(
-                    ("draft_chapter", json.dumps({"chapter": CHAPTER, "goal": "一稿"})),
+                    (
+                        "draft_chapter",
+                        json.dumps(
+                            {"chapter": CHAPTER, "calibration_id": "calibration:test:seeded"}
+                        ),
+                    ),
                     ("ask_author", json.dumps({"question": ASKED, "options": list(OPTIONS)})),
-                    ("draft_chapter", json.dumps({"chapter": CHAPTER, "goal": "二稿"})),
+                    (
+                        "draft_chapter",
+                        json.dumps(
+                            {"chapter": CHAPTER, "calibration_id": "calibration:test:seeded"}
+                        ),
+                    ),
                     ("save_draft", json.dumps({"draft_id": DRAFT_ID})),
                 ),
                 say("到不了"),
@@ -1016,7 +1062,7 @@ def test_a_dead_screen_does_not_take_down_the_drafting_desk(
         summaries=_NoSummaries(),
         on_event=dead,
     )
-    product = desk.write(*_ask(conn, book["pid"], 1))
+    product = _write(desk, conn, book["pid"], 1)
     assert product.candidate.ordinal == 1, "屏幕掉线把这一稿弄没了"
     assert len(dead.events) >= 1
     conn.close()
@@ -1078,7 +1124,7 @@ def test_a_draft_stream_that_dies_still_gets_an_ending(
     monkeypatch.setattr(drafting, "draft_chapter", boom)
     screen = Screen()
     with pytest.raises(agent_tools.ToolRefused):
-        _a_desk(conn, book["pid"], screen).write(*_ask(conn, book["pid"], 1))
+        _write(_a_desk(conn, book["pid"], screen), conn, book["pid"], 1)
 
     opened = {event.stream for event in screen.of(TurnEventKind.DRAFT_STARTED)}
     assert opened, f"样本（{how}）没造出「流开了」这件事"
@@ -1109,8 +1155,8 @@ def test_a_draft_that_made_it_says_so_exactly_once(
     monkeypatch.setattr(drafting, "draft_chapter", FakeDrafting())
     screen = Screen()
     desk = _a_desk(conn, book["pid"], screen)
-    desk.write(*_ask(conn, book["pid"], 1))
-    desk.write(*_ask(conn, book["pid"], 1))
+    _write(desk, conn, book["pid"], 1)
+    _write(desk, conn, book["pid"], 1)
 
     endings = [event.kind for event in screen.events if event.kind in _ENDINGS]
     assert endings == [TurnEventKind.DRAFT_KEPT] * 2, f"写成了的那两稿收错了尾：{endings}"

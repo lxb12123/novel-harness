@@ -36,6 +36,7 @@ from novel_harness.draft.provider import CompletionResult, ProviderConfig, ToolC
 from novel_harness.extract.call_audit import ModelCallReceipt
 from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
+from calibration_seed import seed_calibration
 
 ENDPOINT = "https://api.deepseek.com"
 MODEL = "deepseek-v4-flash"
@@ -104,6 +105,9 @@ class _NoSummaries:
 
     def coverage(self, project_id: str, first: int, last: int) -> list[Any]:
         return []
+
+    def snapshot_watermark(self, project_id: str, chapter_number: int) -> Any:
+        return None
 
 
 class Drafting:
@@ -174,7 +178,7 @@ def _land(desk: Any, conn: Connection, pid: str, chapter: int) -> tuple[Any, Any
     **ADR 0022 之后这是两个动作**：生成花钱不动书，落盘动书不花钱。这一份量的全是
     第二个动作那几道闸，但每一条都得先有一稿——所以两步都在这儿走完。
     """
-    product = desk.write(*_ask(conn, pid, chapter))
+    product = _write(desk, conn, pid, chapter)
     return product, desk.land(product.candidate.id)
 
 
@@ -186,23 +190,39 @@ def _body(desk: Any, product: Any) -> str:
 def _context(conn: Connection, pid: str) -> Any:
     """走 `dispatch` 那条真路径要的上下文（**写入面不在它身上**，边界一）。"""
     from novel_harness.agent.ports import ToolContext
+    from novel_harness.calibration.store import CalibrationStore
 
+    store = SqliteStoryGraph(conn)
+    _, author_turn = seed_calibration(
+        conn=conn,
+        project_id=pid,
+        store=store,
+        root=_root(conn, pid),
+        chapter=1,
+    )
     return ToolContext(
-        store=SqliteStoryGraph(conn),
+        store=store,
         project_id=pid,
         root_path=str(_root(conn, pid)),
         drafter=_real_drafter(conn, pid),
         summaries=_NoSummaries(),
         events=SqliteEventStore(conn),
+        calibrations=CalibrationStore(conn),
+        author_turn=author_turn,
         working_chapter=1,
     )
 
 
 def _ask(conn: Connection, pid: str, chapter: int) -> tuple[DraftAsk, Any]:
     return (
-        DraftAsk(chapter=chapter, goal="写一场对峙"),
+        DraftAsk(chapter=chapter, calibration_id="test:unused"),
         unknown_cast_constraints(SqliteStoryGraph(conn), pid, chapter),
     )
+
+
+def _write(desk: Any, conn: Connection, pid: str, chapter: int) -> Any:
+    ask, ctx = _ask(conn, pid, chapter)
+    return desk.write(ask, ctx, goal="写一场对峙")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -510,7 +530,7 @@ def test_what_it_says_about_a_chapter_that_does_not_exist_is_readable_by_a_novel
         # 空稿那一档 ADR 0022 之后在**生成**那一步就被拒，而那句话同样会被模型转述给
         # 作者，所以它也得过这张网。
         with pytest.raises(ToolRefused) as empty:
-            _drafter(conn, pid, monkeypatch, Drafting(text="  \n ")).write(*_ask(conn, pid, 1))
+            _write(_drafter(conn, pid, monkeypatch, Drafting(text="  \n ")), conn, pid, 1)
         notes.append(str(empty.value))
     finally:
         conn.close()
@@ -536,7 +556,7 @@ class Scripted:
 
 
 class DraftThenSave:
-    """先要三稿（一批，**同时跑**），再把三稿逐个存进去，最后说话收手。
+    """先校准、封存，再要三稿（一批，**同时跑**），再把三稿逐个存进去。
 
     ADR 0022 之后这是两个动作，而中间那几个编号得真的传得回来——所以这个假模型
     照真形态办：从上一批工具返回里把编号读出来。
@@ -548,28 +568,47 @@ class DraftThenSave:
     def __call__(self, messages: Any, *, tools: Any, cancel: Any) -> CompletionResult:
         self.calls += 1
         if self.calls == 1:
-            return _wants(1, 2, 3)
+            return _wants_calibrate(1, 2, 3)
         if self.calls == 2:
-            ids = [
-                json.loads(m["content"])["draft_id"]
-                for m in messages
-                if m.get("role") == "tool" and "draft_id" in str(m.get("content", ""))
+            results = _tool_results(messages)
+            ids = [r["id"] for r in results if "id" in r]
+            return _wants_seal(ids)
+        if self.calls == 3:
+            results = _tool_results(messages)
+            pairs = [
+                (r["chapter"], r["calibration_id"])
+                for r in results
+                if "calibration_id" in r
             ]
+            return _wants_draft(pairs)
+        if self.calls == 4:
+            results = _tool_results(messages)
+            draft_ids = [r["draft_id"] for r in results if "draft_id" in r]
             return CompletionResult(
                 text="",
                 model=MODEL,
                 finish_reason="tool_calls",
                 tool_calls=tuple(
                     ToolCall(
-                        id=f"s{n}", name="save_draft", arguments=json.dumps({"draft_id": did})
+                        id=f"s{n}",
+                        name="save_draft",
+                        arguments=json.dumps({"draft_id": did}),
                     )
-                    for n, did in enumerate(ids)
+                    for n, did in enumerate(draft_ids)
                 ),
             )
         return CompletionResult(text="三章都写好了。", model=MODEL, finish_reason="stop")
 
 
-def _wants(*chapters: int) -> CompletionResult:
+def _tool_results(messages: list[Any]) -> list[dict[str, Any]]:
+    return [
+        json.loads(m["content"])
+        for m in messages
+        if m.get("role") == "tool" and str(m.get("content", "")).strip()
+    ]
+
+
+def _wants_calibrate(*chapters: int) -> CompletionResult:
     return CompletionResult(
         text="",
         model=MODEL,
@@ -577,12 +616,73 @@ def _wants(*chapters: int) -> CompletionResult:
         tool_calls=tuple(
             ToolCall(
                 id=f"c{n}",
-                name="draft_chapter",
-                arguments=json.dumps({"chapter": n, "goal": "写一场对峙"}),
+                name="calibrate_scene",
+                arguments=json.dumps({"chapter": n}),
             )
             for n in chapters
         ),
     )
+
+
+def _wants_seal(inspection_ids: list[str]) -> CompletionResult:
+    return CompletionResult(
+        text="",
+        model=MODEL,
+        finish_reason="tool_calls",
+        tool_calls=tuple(
+            ToolCall(
+                id=f"seal{n}",
+                name="seal_scene_brief",
+                arguments=json.dumps({"inspection_id": iid}),
+            )
+            for n, iid in enumerate(inspection_ids)
+        ),
+    )
+
+
+def _wants_draft(pairs: list[tuple[int, str]]) -> CompletionResult:
+    return CompletionResult(
+        text="",
+        model=MODEL,
+        finish_reason="tool_calls",
+        tool_calls=tuple(
+            ToolCall(
+                id=f"d{n}",
+                name="draft_chapter",
+                arguments=json.dumps({"chapter": chapter, "calibration_id": cid}),
+            )
+            for n, (chapter, cid) in enumerate(pairs)
+        ),
+    )
+
+
+class CalibrateSealDraft:
+    """单章版：校准 → 封存 → 起草 → 说话收手（`Scripted` 是静态的，解析不了编号）。"""
+
+    def __init__(self, final_text: str = "写好了。") -> None:
+        self.final_text = final_text
+        self.calls = 0
+
+    def __call__(self, messages: Any, *, tools: Any, cancel: Any) -> CompletionResult:
+        self.calls += 1
+        if self.calls == 1:
+            return _wants_calibrate(1)
+        if self.calls == 2:
+            results = _tool_results(messages)
+            return _wants_seal([r["id"] for r in results if "id" in r])
+        if self.calls == 3:
+            results = _tool_results(messages)
+            pairs = [
+                (r["chapter"], r["calibration_id"])
+                for r in results
+                if "calibration_id" in r
+            ]
+            return _wants_draft(pairs)
+        return CompletionResult(
+            text=self.final_text,
+            model=MODEL,
+            finish_reason="stop",
+        )
 
 
 def _rows(client: TestClient, pid: str, **params: Any) -> list[dict[str, Any]]:
@@ -713,7 +813,9 @@ def test_a_draft_that_dies_halfway_still_reports_what_it_already_spent(
             ToolCall(
                 id="c0",
                 name="draft_chapter",
-                arguments=json.dumps({"chapter": 1, "goal": "写一场对峙"}),
+                arguments=json.dumps(
+                    {"chapter": 1, "calibration_id": "calibration:test:seeded"}
+                ),
             ),
             _context(conn, pid),
         )
@@ -882,16 +984,17 @@ def test_the_copy_of_the_manuscript_a_draft_leaves_in_the_conversation_is_not_ch
 
     class Recording(Scripted):
         def __call__(self, messages: Any, *, tools: Any, cancel: Any) -> CompletionResult:
+            self.calls += 1
             seen.append([dict(m) for m in messages])
-            return super().__call__(messages, tools=tools, cancel=cancel)
+            result = self.script[min(self.calls - 1, len(self.script) - 1)]
+            if callable(result):
+                return result(messages, tools=tools, cancel=cancel)
+            return result
 
     monkeypatch.setattr(
         chat_mod,
         "build_agent_model",
-        lambda config, plan: Recording(
-            _wants(1),
-            CompletionResult(text="写好了。", model=MODEL, finish_reason="stop"),
-        ),
+        lambda config, plan: Recording(CalibrateSealDraft()),
     )
     chat_id = client.post(f"/api/projects/{pid}/chats", json={}).json()["id"]
     assert _turn(client, pid, chat_id, 1, "第 1 章重写一稿")["reason"] == "done"

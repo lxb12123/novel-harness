@@ -727,7 +727,7 @@ def test_a_batch_of_paid_tools_stops_on_money_not_only_on_count(
         result, model, ledger = a_turn(
             wants(
                 *[
-                    ("draft_chapter", json.dumps({"chapter": 7, "goal": f"第 {n} 稿"}))
+                    ("draft_chapter", json.dumps({"chapter": 7, "calibration_id": "calibration:test:runaway"}))
                     for n in range(1, 7)
                 ],
                 # 对话那一次也报 usage —— 不报的话闸门用估算，这条断言的算术就不确定了。
@@ -795,7 +795,7 @@ def test_money_already_spent_in_a_parallel_window_never_disappears() -> None:
         result, model, ledger = a_turn(
             wants(
                 *[
-                    ("draft_chapter", json.dumps({"chapter": 7, "goal": f"第 {n} 稿"}))
+                    ("draft_chapter", json.dumps({"chapter": 7, "calibration_id": "calibration:test:runaway"}))
                     for n in range(1, 4)
                 ],
                 prompt_tokens=1_000,

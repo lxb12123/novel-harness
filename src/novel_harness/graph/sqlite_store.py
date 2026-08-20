@@ -204,6 +204,39 @@ class SqliteStoryGraph:
             return [r for r in ordered if r.usable_for_rules]
         return ordered
 
+    # ── 校准层窄读（ADR 0033）：来源字段不被收窄掉 ────────────────────────
+
+    def canon_version(self, project_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT canon_version FROM project WHERE id = ?", (project_id,)
+        ).fetchone()
+        if row is None:
+            raise NodeNotFound(f"项目不存在：{project_id}")
+        return int(row["canon_version"])
+
+    def knowledge_edges_at(
+        self,
+        project_id: str,
+        character_ids: Sequence[str],
+        secret_ids: Sequence[str],
+        chapter: int,
+        *,
+        scope: InformationScope = InformationScope.CANON,
+    ) -> list[Edge]:
+        self._check_scope(scope)
+        self._check_chapter(chapter)
+        _reject_dups(character_ids, "character_ids")
+        _reject_dups(secret_ids, "secret_ids")
+        for cid in character_ids:
+            self._require_node(project_id, cid, what="character_ids")
+        for sid in secret_ids:
+            node = self._require_node(project_id, sid, what="secret_ids")
+            if node.label is not NodeLabel.SECRET:
+                raise ValueError(f"secret_ids 只接受 label=Secret 的节点：{sid} 是 {node.label}")
+        return queries.knowledge_edges_at(
+            self._conn, project_id, character_ids, secret_ids, chapter, scope
+        )
+
     # ── state_at ──────────────────────────────────────────────────────────
 
     def state_at(

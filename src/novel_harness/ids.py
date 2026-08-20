@@ -87,6 +87,11 @@ class EntityType(StrEnum):
     CHAT_SESSION = "chat_session"
     CHAT_MESSAGE = "chat_message"
     DRAFT_CANDIDATE = "draft"
+    CALIBRATION = "calibration"
+    """写前校准的非 Canon 派生产物（`calibration_artifact`，迁移 024 / ADR 0033）。"""
+
+    HANDOFF = "handoff"
+    """`ContinuityConflictHandoff` 的 producer outbox 行（`calibration_handoff_outbox`）。"""
 
     PROJECT = "project"
     """只由 `new_project_id()` 用。**项目 ID 不能走 `new_id()`**——见那个函数的 docstring。"""
