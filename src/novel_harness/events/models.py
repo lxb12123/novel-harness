@@ -102,7 +102,7 @@ class EventCastEdit(BaseModel):
 
 
 class EventSummaryVersion(BaseModel):
-    """一条事件摘要版本（018 / Task 7）。
+    """一条事件摘要版本（019 / Task 7）。
 
     `story_event.summary` 保留为迁移基线，生产读路径全部改读 effective head——
     版本历史里每一行都真的生效过（ADR 0030）。
@@ -217,7 +217,7 @@ class ProposalRecord(ProposalCreate):
     audit_envelope: ProposalAuditSnapshot | None = None
 
     currentness: Literal["CURRENT", "OBSOLETE"] = "CURRENT"
-    """正文时效（020 / Task 9）：OBSOLETE 表示「它锚的那版正文已经不是当前了」。
+    """正文时效（021 / Task 9）：OBSOLETE 表示「它锚的那版正文已经不是当前了」。
 
     `status` 仍只表达作者裁决（PENDING/ACCEPTED/…）；OBSOLETE 的 PENDING 提案
     不出现在当前待确认列表、直接审阅返回 409，但历史查询仍读得到——它不伪造

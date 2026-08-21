@@ -37,7 +37,7 @@ def validation_rules(
     conn: Annotated[Connection, Depends(get_conn)] = None,
 ) -> list[dict[str, Any]]:
 
-    """规则目录元数据：R2/R3 常驻显示 + 作者自定义规则（023 / Task 13）。"""
+    """规则目录元数据：R2/R3 常驻显示 + 作者自定义规则（024 / Task 13）。"""
     from .. import checks
     from ..checks.service import load_custom_rules
 
@@ -61,7 +61,7 @@ def add_validation_rule(
     conn: Annotated[Connection, Depends(get_conn)],
     proj: Any = Depends(load_project),
 ) -> dict[str, Any]:
-    """添加一条确定性命中规则（023 / Task 13）。
+    """添加一条确定性命中规则（024 / Task 13）。
 
     `literal` 必须非空；语义变化在同一事务 `epoch += 1` 并重算 ruleset hash——
     否则旧报告/旧 attempt 会拿旧 ruleset 冒充新集。
@@ -98,7 +98,7 @@ def update_validation_rule(
     conn: Annotated[Connection, Depends(get_conn)],
     proj: Any = Depends(load_project),
 ) -> dict[str, Any]:
-    """启停 / 改字 / 改阻断（023）。语义变化同事务 bump ruleset epoch。"""
+    """启停 / 改字 / 改阻断（024）。语义变化同事务 bump ruleset epoch。"""
     row = conn.execute(
         "SELECT id FROM validation_rule WHERE project_id = ? AND id = ?",
         (proj.id, rule_id),

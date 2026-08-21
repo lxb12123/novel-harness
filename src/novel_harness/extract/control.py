@@ -82,7 +82,7 @@ class ExtractionRun(BaseModel):
     schema_version: str
     prompt_hash: str
     source_generation: int | None = Field(default=None, ge=1)
-    """创建时冻结的 `chapter.snapshot_generation`（020 / Task 9）。
+    """创建时冻结的 `chapter.snapshot_generation`（021 / Task 9）。
 
     run 完成时若当前 generation 已经更大 → SUPERSEDED。S1(g1)→S2(g2)→S1(g3)
     时 snapshot/hash 会再次相同，只有 generation 能区分第一轮 g1 的晚到结果。"""

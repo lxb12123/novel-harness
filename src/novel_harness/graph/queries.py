@@ -512,7 +512,7 @@ def insert_alias(
     """收散参数而不是 `AliasSpec`：canonical 别名（`upsert_node` 建的那条）在
     `AliasSpec` 里根本构造不出来——那条 validator 是故意的。
 
-    `source` / `derived_from_alias_id`（022 / Task 11）：作者改机器别名 → 新 author
+    `source` / `derived_from_alias_id`（023 / Task 11）：作者改机器别名 → 新 author
     行以 `derived_from_alias_id` 指回机器行，不丢掉原 evidence。"""
     conn.execute(
         """
@@ -1040,7 +1040,7 @@ def insert_chapter(conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec,
 
 
 def insert_chapter_summary_head(conn: sqlite3.Connection, chapter_id: str) -> None:
-    """新章同事务预建 `chapter_summary_head` 行（019）——head 行不是「有了总结才有」，
+    """新章同事务预建 `chapter_summary_head` 行（020）——head 行不是「有了总结才有」，
     是「这一章存在就有」，current 指向 ACTIVE/RETRACTED 版本或 NULL。"""
     conn.execute(
         "INSERT INTO chapter_summary_head (chapter_id, current_summary_id) VALUES (?, NULL)",
@@ -1454,7 +1454,7 @@ def mark_canon_event_cast_author(
     project_id: str,
     decision_log_id: str,
 ) -> None:
-    """020 / Task 9：作者改过名单的整套 incidence 视为作者覆盖，机器重放不得再碰。
+    """021 / Task 9：作者改过名单的整套 incidence 视为作者覆盖，机器重放不得再碰。
 
     `cast_owner` 是「当前解释由谁接管」；`story_event.source` 仍是 extractor 起源
     （正文换快照时旧机器事实照旧退休、作者修正不随它走）。SQL 只住 graph 层。
@@ -1469,7 +1469,7 @@ def mark_canon_event_cast_author(
 def event_reconciliation_ready(
     conn: sqlite3.Connection, project_id: str, event_id: str
 ) -> bool:
-    """021 / Task 10：一条事件摘要是否仍是当前可用（核对该不该调模型）。
+    """022 / Task 10：一条事件摘要是否仍是当前可用（核对该不该调模型）。
 
     status ACTIVE + evidence FRESH 且仍在 PROVISIONAL/CANON 才核；被撤回 /
     证据已失效的事件只解决旧 OPEN 通知，不调模型。SQL 只住 graph 层。
@@ -1493,7 +1493,7 @@ def supersede_obsolete_proposals(
     chapter_number: int,
     new_snapshot_id: str,
 ) -> int:
-    """这一章保存了新正文：PENDING 提案若锚的不是新快照 → OBSOLETE（020 / Task 9）。
+    """这一章保存了新正文：PENDING 提案若锚的不是新快照 → OBSOLETE（021 / Task 9）。
 
     必须在 `commit_chapter_snapshot` 的**同一事务**里调用（不变量 20）：正文已变
     和旧提案退出待确认不能拆成两个原子性。status 一字不改（003 的审计触发器
@@ -1536,7 +1536,7 @@ def bump_canon_once_if_retired_canon(
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 事件摘要版本（018 / Task 7）—— 所有 event_summary_* 的 SQL 只住在这儿
+# 事件摘要版本（019 / Task 7）—— 所有 event_summary_* 的 SQL 只住在这儿
 # ══════════════════════════════════════════════════════════════════════════
 
 
@@ -1695,7 +1695,7 @@ def event_information_scope(
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# Canon 边纠错（019 / Task 8）—— slot key 与 override 的 SQL 唯一住址
+# Canon 边纠错（020 / Task 8）—— slot key 与 override 的 SQL 唯一住址
 # ══════════════════════════════════════════════════════════════════════════
 
 
@@ -1851,7 +1851,7 @@ def restore_retracted_edge(
 
 
 def update_edge_props_only(conn: sqlite3.Connection, edge_id: str, props_json: str) -> None:
-    """identity 不变时的投影更新：**只**改 props（019 专用），
+    """identity 不变时的投影更新：**只**改 props（020 专用），
     严禁普通 `update_edge_facets` 改 source/evidence/status/vf。"""
     conn.execute(
         """
@@ -1885,7 +1885,7 @@ def chapter_disk_stats(
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 别名生命周期（022 / Task 11）：软撤回 / 改归属 / 改 surface
+# 别名生命周期（023 / Task 11）：软撤回 / 改归属 / 改 surface
 # ══════════════════════════════════════════════════════════════════════════
 
 

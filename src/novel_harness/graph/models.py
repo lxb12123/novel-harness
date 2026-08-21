@@ -946,7 +946,7 @@ class AliasSpec(BaseModel):
     kind: AliasKind = AliasKind.ALIAS
     usable_for_rules: bool = True
     source: Literal["extractor", "author"] = "author"
-    """022 / Task 11：谁写的这条 alias（机器自动 / 作者）。canonical 是 node 本名。"""
+    """023 / Task 11：谁写的这条 alias（机器自动 / 作者）。canonical 是 node 本名。"""
 
     @model_validator(mode="after")
     def _canonical_belongs_to_upsert_node(self) -> AliasSpec:
@@ -989,7 +989,7 @@ class StoredAlias(BaseModel):
     source: Literal["extractor", "author"] = "author"
     status: Literal["ACTIVE", "RETRACTED"] = "ACTIVE"
     derived_from_alias_id: str | None = None
-    """022 / Task 11：author 行指回它改的那条机器 alias。"""
+    """023 / Task 11：author 行指回它改的那条机器 alias。"""
 
 
 class ChapterSpec(BaseModel):
@@ -1057,7 +1057,7 @@ class StoredChapter(BaseModel):
     """**当前**快照，即 `text_sha256` 对得上的那一条。"""
 
     snapshot_generation: int = Field(ge=1)
-    """这一章当前正文的**单调 generation**（017 迁移）。
+    """这一章当前正文的**单调 generation**（018 迁移）。
 
     每次当前 `text_sha256` 真正切换（包括从 S2 还原到历史 S1）都加一；相同 hash
     重存不加。它是保存后所有自动任务判断「结果是否还新」的钥匙之一（ABA 防护）。
@@ -1206,9 +1206,9 @@ class SnapshotUsage(BaseModel):
     extraction_runs: int = Field(ge=0)
     proposal_sets: int = Field(ge=0)
     extraction_analyses: int = Field(ge=0)
-    """规范 analysis JSON（020 / Task 9）引用它的条数。"""
+    """规范 analysis JSON（021 / Task 9）引用它的条数。"""
     extraction_applications: int = Field(ge=0)
-    """机器事实归属的 generation application（020 / Task 9）引用它的条数。"""
+    """机器事实归属的 generation application（021 / Task 9）引用它的条数。"""
 
     @property
     def total(self) -> int:

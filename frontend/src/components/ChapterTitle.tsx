@@ -32,9 +32,10 @@ export function ChapterTitle({
 }) {
   const { projectId, chapter } = useCoords();
   const chapters = useChapters(projectId);
-  // 换章走 `useOpenChapter`，不是裸 setChapter：离开一章 = 那一章写完了，
-  // 要把它交给后台整理（`autopilot.ts`）。**这条随控件一起搬下来**——
-  // 换章的入口只有这一个，它掉了就没有别的地方会发那次整理。
+  // 换章走 `useOpenChapter`（`chapterNavigation.ts`），不是裸 setChapter：它要上报
+  // 「作者现在在第几章」这个免费心跳，后端靠它做当前章防抖（正在写的那章不排总结）。
+  // **这条随控件一起搬下来**——换章的入口只有这一个，它掉了就没有别的地方会上报。
+  // 注意它**不发付费工作**：付费的总结/抽取只由保存触发（2026-08-17 起）。
   const openChapter = useOpenChapter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");

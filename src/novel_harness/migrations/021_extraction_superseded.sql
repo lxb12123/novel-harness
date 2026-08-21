@@ -236,7 +236,7 @@ UPDATE story_event
    );
 
 -- ══════════════════════════════════════════════════════════════════════════
--- 5. 既有数据回填：LEGACY application（017 的 legacy refresh run 一一对应）
+-- 5. 既有数据回填：LEGACY application（018 的 legacy refresh run 一一对应）
 -- ══════════════════════════════════════════════════════════════════════════
 
 -- 每个 refresh run 一个 head。LEGACY application：有 FRESH extractor 事实的

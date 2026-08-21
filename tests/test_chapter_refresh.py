@@ -377,7 +377,7 @@ def test_coverage_is_idempotent_and_manual_creates_new_intent(
 def test_extraction_application_head_cas_keeps_only_the_latest_intent_current(
     conn: Connection, tmp_path: Path
 ) -> None:
-    """020 / Task 9：同一 generation 的多个合法 attempt 竞争同一个 application head。
+    """021 / Task 9：同一 generation 的多个合法 attempt 竞争同一个 application head。
 
     各自持有合法 fencing token，但只有 `intent_seq` 最新者能成为 CURRENT；
     DB 的 partial unique（每个 refresh run 至多一条 CURRENT）再兜一道底——
@@ -401,7 +401,7 @@ def test_extraction_application_head_cas_keeps_only_the_latest_intent_current(
     ).fetchone()
     refresh_run_id = row["run_id"]
 
-    # analysis_run_id 是真实存在的 extraction_run（020 的 FK 不许悬空引用）。
+    # analysis_run_id 是真实存在的 extraction_run（021 的 FK 不许悬空引用）。
     def seed_run(run_id: str) -> None:
         # prompt_hash 不同：同一 generation 的 save/manual/ruleset attempt 可以
         # 有不同的 content-addressed run，但不能各自建 head 绕过竞争（不变量 22）。

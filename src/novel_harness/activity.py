@@ -475,7 +475,7 @@ _RUN_STATUS: Final[dict[str, ActivityStatus]] = {
     ExtractionRunStatus.RUNNING: ActivityStatus.RUNNING,
     ExtractionRunStatus.SUCCEEDED: ActivityStatus.SUCCEEDED,
     ExtractionRunStatus.FAILED: ActivityStatus.FAILED,
-    # 020 / Task 9：晚到的旧快照结果。Status 是「成功/失败」之外的一档——
+    # 021 / Task 9：晚到的旧快照结果。Status 是「成功/失败」之外的一档——
     # 它没跑错，只是结果不再适用；记一笔 PENDING 直到有什么盖住它不合适，
     # 它也不会「重新来过」。沿用 FAILED 的粗略态最诚实：作者不需要为
     # 一条绝不会变成 current 的旧 run 操心。指标那侧不把它数成失败。

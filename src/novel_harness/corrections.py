@@ -725,7 +725,7 @@ def correct_event_cast(
         **_anchor(evidence),
         actor=actor,
     )
-    # 020 / Task 9：作者改过名单的整套 incidence 视为作者覆盖，机器重放不得再碰
+    # 021 / Task 9：作者改过名单的整套 incidence 视为作者覆盖，机器重放不得再碰
     # （`cast_owner` 是「当前解释由谁接管」，`story_event.source` 仍是 extractor 起源）。
     # SQL 只住 graph 层（arch guard），这里经 queries 调用。
     from .graph import queries

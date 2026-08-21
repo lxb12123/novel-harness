@@ -790,7 +790,7 @@ class SqliteStoryGraph:
             created = True
         else:
             chapter_id = row.id
-            # 单调 generation：只有当前 text hash 真正切换才加一（017）。
+            # 单调 generation：只有当前 text hash 真正切换才加一（018）。
             # 从 S2 还原到历史 S1 也是切换 —— 否则 S1 的旧任务会借 ABA 复活。
             generation = row.snapshot_generation
             node = self._require_node(spec.project_id, chapter_id, what="chapter 节点")
@@ -870,7 +870,7 @@ class SqliteStoryGraph:
             queries.bump_canon_once_if_retired_canon(
                 self._conn, spec.project_id, retirement
             )
-            # 020 / Task 9：正文换了，锚在旧快照上的 PENDING 提案退出待确认
+            # 021 / Task 9：正文换了，锚在旧快照上的 PENDING 提案退出待确认
             # （status 仍是 PENDING 审计状态）。与快照提交同一事务（不变量 20）。
             queries.supersede_obsolete_proposals(
                 self._conn, spec.project_id, spec.number, stored.snapshot_id
@@ -887,7 +887,7 @@ class SqliteStoryGraph:
             )
 
     # ══════════════════════════════════════════════════════════════════════
-    # Canon 边纠错（019 / Task 8）——「先可逆、后自动」的入口
+    # Canon 边纠错（020 / Task 8）——「先可逆、后自动」的入口
     # ══════════════════════════════════════════════════════════════════════
 
     def canon_edge_view(self, project_id: str, edge_id: str) -> CanonEdgeView:

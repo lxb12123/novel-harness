@@ -649,7 +649,7 @@ def test_frontend_fixture_matches_the_real_api(
     )
     assert ran.status_code == 200, ran.text
     grab("recordedRules", client.get(f"{base}/rules"))
-    # 自定义确定性规则（023 / Task 13）：R2/R3 常驻显示 + 一条作者规则。
+    # 自定义确定性规则（024 / Task 13）：R2/R3 常驻显示 + 一条作者规则。
     grab("validationRules", client.get(f"{base}/validation-rules"))
     vr_created = client.post(
         f"{base}/validation-rules",

@@ -1,6 +1,6 @@
 """规则目录 —— R2/R3 的稳定语义字段与 `ruleset_hash` 的唯一注册源。
 
-为什么要有这一个文件：017 迁移在 `validation_ruleset_state` 里冻结了
+为什么要有这一个文件：018 迁移在 `validation_ruleset_state` 里冻结了
 `SYSTEM_RULESET_V1_HASH`，而 Task 4 的 service 要按当前目录重算 hash 去对账。
 两边各算各的 = 两份实现会漂；目录只有一个，迁移 SQL 里的字面量由测试钉住
 （`tests/test_migrate.py` 断言 SQL 里的历史字面量 == 本文件的常量）。
@@ -122,4 +122,4 @@ def ruleset_hash(rules: tuple[RuleSpec, ...] = SYSTEM_RULES) -> str:
 
 
 SYSTEM_RULESET_V1_HASH: Final = ruleset_hash()
-"""R2/R3 catalog + 空自定义规则集在 epoch=1 时的冻结 hash（017 迁移回填用）。"""
+"""R2/R3 catalog + 空自定义规则集在 epoch=1 时的冻结 hash（018 迁移回填用）。"""

@@ -135,7 +135,7 @@ def edit_event_summary(
     ):
         raise EventSummaryEditConflict("event summary head CAS failed")
 
-    # 021 / Task 10：event summary head 切换与「要核对这条新摘要」同一事务
+    # 022 / Task 10：event summary head 切换与「要核对这条新摘要」同一事务
     # （不变量 9）。`source_sha256` 是事件 evidence 的稳定指纹（§4.4），
     # 不是本模块自造的第三种来源哈希。
     from ..summary_reconciliation import enqueue_reconciliation_outbox

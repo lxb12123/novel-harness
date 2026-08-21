@@ -106,7 +106,7 @@ class ExtractionRunner:
                 )
             encoded_prompt = prompt_bytes(str(snapshot["text"]))
             prompt_hash = sha256(encoded_prompt).hexdigest()
-            # 020 / Task 9：run 创建时冻结当前 generation + ruleset basis。
+            # 021 / Task 9：run 创建时冻结当前 generation + ruleset basis。
             # 完成时若这些已不是当前值 → SUPERSEDED（S1→S2→S1 的 ABA 只能靠
             # generation 认出来，snapshot/hash 会再次相同）。
             generation = int(snapshot["snapshot_generation"])
@@ -230,7 +230,7 @@ class ExtractionRunner:
                     ),
                 )
             if not self._basis_current(conn, claimed):
-                # 020 / Task 9：run 创建后正文 generation 或 ruleset 已经往前走。
+                # 021 / Task 9：run 创建后正文 generation 或 ruleset 已经往前走。
                 # 晚到结果永远不能 ingest / 建提案 / auto-Canon（S1→S2→S1 的 ABA
                 # 只能靠 generation 认出来）。model_call 与 run 历史照旧保留。
                 return self._mark_superseded(
@@ -313,7 +313,7 @@ class ExtractionRunner:
             # 自动升 CANON 在业务事务 commit **之后**，且**在上面那个 try 之外**：
             # `_transaction` 要求无外层事务，而升不上去绝不该把已经抽完、已经付过钱的
             # run 标成 FAILED（`promote_clean_facts` 自己 fail-safe，见该模块 docstring）。
-            # 020 / Task 9：promotion 前**再次**确认 basis 仍 current——晚到结果
+            # 021 / Task 9：promotion 前**再次**确认 basis 仍 current——晚到结果
             # 即使侥幸过了 ingest 也不能复活 Canon。
             if self._basis_current(conn, claimed):
                 from ..chapter_refresh import activate_extraction_application
@@ -334,11 +334,11 @@ class ExtractionRunner:
             conn.close()
 
     def _basis_current(self, conn: Connection, run: ExtractionRun) -> bool:
-        """run 的冻结 basis（snapshot/generation/ruleset）是否仍是当前值（020 / Task 9）。
+        """run 的冻结 basis（snapshot/generation/ruleset）是否仍是当前值（021 / Task 9）。
 
         判据是 **generation + ruleset epoch/hash**，不是 snapshot/hash 等值：
         S1(g1)→S2(g2)→S1(g3) 时 snapshot/hash 会再次相同，只有 generation 不同。
-        冻结字段为空 = legacy run（020 迁移前的行），无法核对时**按当前处理**——
+        冻结字段为空 = legacy run（021 迁移前的行），无法核对时**按当前处理**——
         迁移回填只可能发生在旧库上，而旧库没有 generation 语义可对照。
         """
         row = conn.execute(
@@ -470,7 +470,7 @@ class ExtractionRunner:
             analysis,
             prompt_hash=run.prompt_hash,
         )
-        # 020 / Task 9：规范 analysis JSON 落库（严格 Pydantic 校验后的形状），
+        # 021 / Task 9：规范 analysis JSON 落库（严格 Pydantic 校验后的形状），
         # 供别名纠正后确定性重放；不保存不可验证的自由文本。
         conn.execute(
             """

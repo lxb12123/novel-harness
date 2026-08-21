@@ -1810,7 +1810,7 @@ class SummaryEdit(BaseModel):
     清空输入框然后保存，和按下「撤回」，在作者脑子里不是一件事。"""
 
     expected_version_id: str | None = None
-    """作者编辑所依据的版本 id（018 head 元数据）。与当前 head 不一致 → 409。
+    """作者编辑所依据的版本 id（019 head 元数据）。与当前 head 不一致 → 409。
 
     `None` 有两个意思：字段缺省（旧客户端，不做 CAS）和「作者预期当前无总结」
     （首次编辑，期望 head 为 NULL）。路由用 `model_fields_set` 区分两者。
@@ -1865,7 +1865,7 @@ def chapter_summary_history(
     conn: Any = Depends(get_conn),
     proj: Any = Depends(load_project),
 ) -> list[dict[str, Any]]:
-    """一章的 append-only 版本历史（018），旧 → 新。**一行都不删。**"""
+    """一章的 append-only 版本历史（019），旧 → 新。**一行都不删。**"""
 
     if chapter < 1:
         raise HTTPException(status_code=422, detail="章号至少是 1")

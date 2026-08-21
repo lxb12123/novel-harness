@@ -90,7 +90,7 @@ def current_ruleset(conn: Connection, project_id: str) -> tuple[int, str]:
 
 
 def load_custom_rules(conn: Connection, project_id: str) -> tuple[RuleSpec, ...]:
-    """项目定义的自定义确定性规则（023 / Task 13）升格成 catalog 的 RuleSpec。
+    """项目定义的自定义确定性规则（024 / Task 13）升格成 catalog 的 RuleSpec。
 
     只读 `enabled=1` 的；禁用规则照旧留在库里（历史可查），不参与运行。
     规则语义变化（增改删启停）由写侧在**同一事务**递增 `ruleset_epoch` 并重算 hash。
@@ -158,7 +158,7 @@ def validate_snapshot(
     )
     rule_execs: list[RuleExecution] = []
     issues: list[Issue] = []
-    # 023 / Task 13：把作者的确定性自定义规则并进目录再跑，让手动检查与保存后的
+    # 024 / Task 13：把作者的确定性自定义规则并进目录再跑，让手动检查与保存后的
     # 自动验证共用一个实现（不建第二套）。自定义规则永远排在系统规则之后。
     all_rules = (*catalog.SYSTEM_RULES, *load_custom_rules(conn, token.project_id))
     for spec in all_rules:

@@ -248,7 +248,7 @@ def test_same_hash_save_does_not_bump_canon_version(world: World) -> None:
 def test_aba_restore_gets_a_new_generation_and_a_fresh_run(seed_provider=None) -> None:
     """S1(g1)→S2(g2)→S1(g3)：第三次的 S1 必须拥有自己的 generation + run。
 
-    020 / Task 9 的核心：g1 的晚到 run 虽然 snapshot/hash 与当前再次相同，
+    021 / Task 9 的核心：g1 的晚到 run 虽然 snapshot/hash 与当前再次相同，
     也必须因 generation 不同而 SUPERSEDED；g3 的 enqueue 必须拿到一条以
     g3 basis 冻结的新 run（content-addressed 复用只发生在同 basis 内）。
     """

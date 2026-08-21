@@ -502,7 +502,7 @@ calibration/{models,visibility,render,freshness,store,
                                                   ← **模式二写前校准**（2026-08-17，ADR 0033）：
                                                   预计人物只做检索、安全 cast 仍由后端按章即时重算、
                                                   Writer 只收类型化 SceneBrief（不可变 calibration_id
-                                                  引用）。非 Canon 产物存迁移 024 两张表；RETCON
+                                                  引用）。非 Canon 产物存迁移 017 两张表；RETCON
                                                   handoff 只写 producer outbox，通知任务消费它。
 summary_index.py                                ← **每一段章节总结 = 一个可反查的记忆点**（2026-08-13）。
                                                   作者的原话：「迅速找到需要的内容或相关章节的总结，

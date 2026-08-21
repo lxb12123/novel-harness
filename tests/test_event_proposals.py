@@ -932,7 +932,7 @@ def test_reject_does_not_rebase_same_cohort_siblings(world: ReviewWorld) -> None
 def test_saving_new_text_marks_pending_proposals_obsolete_and_rejects_direct_review(
     conn: Connection, world: ReviewWorld
 ) -> None:
-    """020 / Task 9：保存 S3 后，S2 的旧 PENDING 提案退出待确认。
+    """021 / Task 9：保存 S3 后，S2 的旧 PENDING 提案退出待确认。
 
     - `pending()` 不再返回它（当前待确认列表只读 `PENDING + CURRENT`）；
     - 直接审阅 → `ProposalObsolete`（HTTP 层 409）——它锚的那版正文已经不是当前；

@@ -81,7 +81,7 @@ class SqliteEventStore:
         if chapter < 1:
             raise ValueError(f"章号从 1 起，得到 {chapter}")
 
-    # ── 事件摘要版本（018 / Task 7）：SQL 全在 queries.py，这里只做形状 ──
+    # ── 事件摘要版本（019 / Task 7）：SQL 全在 queries.py，这里只做形状 ──
 
     def event_summary_current(self, event_id: str) -> EventSummaryVersion | None:
         row = queries.event_summary_current_row(self._conn, event_id)

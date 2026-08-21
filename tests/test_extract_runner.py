@@ -268,7 +268,7 @@ def test_success_records_extractor_call_and_second_run_never_pays_again(seed: Se
 
 
 def test_a_late_run_after_the_text_moved_is_superseded_not_ingested(seed: Seed) -> None:
-    """020 / Task 9：run 创建后正文换过版本 → 晚到结果 SUPERSEDED。
+    """021 / Task 9：run 创建后正文换过版本 → 晚到结果 SUPERSEDED。
 
     旧契约是「run 照旧用创建时那份不可变快照跑完」——Task 9 把它推翻了：晚到
     结果永远不能 ingest / 建提案 / auto-Canon（正文已经往前走，旧结果对着的是

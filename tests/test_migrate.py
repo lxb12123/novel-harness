@@ -2649,7 +2649,7 @@ def test_extraction_run_checks_status_counters_and_idempotency(
             "VALUES (?,?,?,?,?,?,?,?,?)",
             ("run:duplicate", project, 143, snapshot_id, "m4.v1", "prompt-a", 3, 1, "ruleset-hash"),
         )
-    # 020 / Task 9：同一内容不同 generation/ruleset basis 是**另一条 run**
+    # 021 / Task 9：同一内容不同 generation/ruleset basis 是**另一条 run**
     # （S1→S2→S1 的第三轮 S1 必须有自己的 run，不能复用第一轮的）。
     conn.execute(
         "INSERT INTO extraction_run "

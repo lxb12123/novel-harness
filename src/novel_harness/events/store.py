@@ -54,7 +54,7 @@ class ProposalObsolete(ProposalStoreError):
     """PENDING 但 `currentness=OBSOLETE`：它锚的那版正文已经不是当前。
 
     不是作者裁决过（`status` 仍是 PENDING），是正文已经往前走了一版——直接审阅
-    返回 409「正文已变化」，历史查询仍读得到（020 / Task 9）。
+    返回 409「正文已变化」，历史查询仍读得到（021 / Task 9）。
     """
 
 

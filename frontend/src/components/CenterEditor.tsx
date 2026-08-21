@@ -116,7 +116,7 @@ export function CenterEditor() {
         <span className="spacer" />
         {/* 「读回改动」那颗按钮 2026-08-15 删了。它要求作者先理解一件他不该知道的事
             ——**屏幕上的正文来自磁盘，而库里那份快照来自这颗按钮**。它今天的活由两处
-            自动接管：后台整理跑之前先读回这一章（`api/autopilot.py`），以及回到这个
+            自动接管：保存时把这一章读回库并触发刷新（`api/app.py::_trigger_refresh`），以及回到这个
             标签页时把整本书对一遍（`reconcile.ts`，只 stat，722 章 ~4ms）。 */}
         <span className={"status" + (saveErr ? " err" : save.isSuccess && !dirty ? " ok" : "")}>
           {saveErr

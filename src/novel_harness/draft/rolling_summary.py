@@ -148,12 +148,12 @@ class ChapterSummaryStatus(BaseModel):
     分不出来的话，他会对着自己写的字读到一句「这是机器压缩的，别当事实」。"""
 
     version_id: str | None = None
-    """head 指向的版本行 id（018）。第一次生成前为 NULL。"""
+    """head 指向的版本行 id（019）。第一次生成前为 NULL。"""
 
     summary_sha256: str | None = None
     replaces_version_id: str | None = None
     version_source: str | None = None
-    """`model` / `author` / `legacy`（018 迁移后旧行可能是 legacy）。"""
+    """`model` / `author` / `legacy`（019 迁移后旧行可能是 legacy）。"""
 
 
 class SummarySnapshotWatermark(BaseModel):
@@ -636,7 +636,7 @@ def save_author_summary(
             conn, chapter_id, new_id_value, expected_head=expected_head
         ):
             raise RuntimeError("author summary CAS failed: head moved concurrently")
-        # 021 / Task 10：作者版总结立即生效，也要按当前正文核对（同一事务）。
+        # 022 / Task 10：作者版总结立即生效，也要按当前正文核对（同一事务）。
         from ..summary_reconciliation import enqueue_reconciliation_outbox
 
         enqueue_reconciliation_outbox(
@@ -907,7 +907,7 @@ class RollingSummarizer:
                     "UPDATE summary_generation_job SET status = 'SUCCEEDED' WHERE id = ?",
                     (job_id,),
                 )
-                # 021 / Task 10：head 切换与「要核对这条新总结」同一事务（不变量 9）。
+                # 022 / Task 10：head 切换与「要核对这条新总结」同一事务（不变量 9）。
                 # 进程在这之后立即退出，重启后 dispatcher 仍能补核对。
                 # `source_sha256` 口径只有一份（§4.4）：滚动总结用
                 # `chapter_snapshot.text_sha256`，不用总结自己的 hash。

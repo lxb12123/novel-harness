@@ -6,11 +6,13 @@
         → 总结 ∥ 抽取（两个**独立连接**并行）
         → final gate（alias 阶段确认后才 PASSED）
 
-并且只消费持久 `chapter_refresh_run / chapter_refresh_attempt`（017 迁移）——
+并且只消费持久 `chapter_refresh_run / chapter_refresh_attempt`（018 迁移）——
 进程提交后立刻退出也不能漏刷新（不变量 20 的持久一半）。
 
-Task 5 只交付协调器本身：生产保存 / autopilot / reconcile 触发点在 Task 16 才
-接通，这里用 stub adapter 证明固定 DAG、幂等 coverage、lease/fencing 与真实并行。
+Task 5 只交付协调器本身，用 stub adapter 证明固定 DAG、幂等 coverage、lease/fencing
+与真实并行。**Task 16 接通的只有保存那一条**（`api/app.py::_trigger_refresh`）：
+换章那条不但没接，反而被摘掉了——作者切走不等于他保存过，凭空付费总结/抽取是
+「双重 autopilot」的旧设计。换章今天只上报一个免费焦点心跳（`focus.py`）。
 summary 的 head CAS（Task 6）和抽取的 application CAS（Task 9）届时挂到同一套
 claim/lease/fence 上。
 
@@ -163,7 +165,7 @@ def create_run(
 
 
 def _head_missing(conn: Connection, project_id: str, chapter_id: str) -> bool:
-    """当前是否缺滚动总结 head（018 之前恒 True；Task 6 接真表）。
+    """当前是否缺滚动总结 head（019 之前恒 True；Task 6 接真表）。
 
     缺 = 这一章要么没有 `chapter_summary_head` 行，要么 head 指向的行是
     RETRACTED（撤回 = 当作没有总结）。有且 ACTIVE = 不缺。
@@ -209,7 +211,7 @@ def activate_extraction_application(
 
     返回 `(application_id, status)`，status 是 `CURRENT` 或 `SUPERSEDED`。
 
-    ── 为什么必须走 head 的 intent CAS（020 / Task 9）────────────────────────
+    ── 为什么必须走 head 的 intent CAS（021 / Task 9）────────────────────────
 
     同一个 generation 可以有多个合法 attempt（save / manual / ruleset / replay），
     各自持有自己的 fencing token。它们竞争的是**同一个** `extraction_application_head`
