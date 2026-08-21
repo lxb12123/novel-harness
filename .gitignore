@@ -43,3 +43,7 @@ node_modules/
 # 而入库之后每跑一次分析就是一次几 MB 的 diff，还会盖过真正的改动。
 .understand-anything/
 .DS_Store
+
+# 章级锁：，保存/导入时在书文件夹里现建的运行时产物。
+# 和 *.db 同理——它属于「作者的那本书」，不属于仓库。
+.novel-harness/
