@@ -165,10 +165,25 @@ def create_run(
 
 
 def _head_missing(conn: Connection, project_id: str, chapter_id: str) -> bool:
-    """当前是否缺滚动总结 head（019 之前恒 True；Task 6 接真表）。
+    """**自动**派活时，这一章算不算「缺滚动总结」（019 之前恒 True；Task 6 接真表）。
 
-    缺 = 这一章要么没有 `chapter_summary_head` 行，要么 head 指向的行是
-    RETRACTED（撤回 = 当作没有总结）。有且 ACTIVE = 不缺。
+    缺 = 这一章从来没有过总结（没有 head 行，或 head 还指着 NULL）。
+
+    ── ⚠️ 撤回过的章**不算缺** ────────────────────────────────────────────────
+    这是本函数唯一容易写反的地方，而写反的代价是**花作者的钱去抹掉他刚做的动作**：
+    他点了「撤回这一章的总结」，下一次保存就被系统重新买一份回来。
+    ARCHITECTURE 把这条写死过：「`get()` / `latest()` 的差别是钱……用 `get()` 的话
+    作者撤掉的那一章会在他保存后下一秒被自动买回来——一次他没按过的付费调用，
+    顺带抹掉他刚做的动作」。2026-08-20 合并保存闭环任务时实测发现代码和这句话相反
+    （判据写的是 `status = 'ACTIVE'`，于是 RETRACTED 被当成「缺」），且没有任何测试
+    盖着——**这半条纪律原本只由已删掉的 `api/autopilot.py` 实现着**（它拿 `latest()`
+    + `retracted` 标志跳过），随那个模块一起没了。现在由
+    `test_a_retracted_summary_is_not_bought_back_by_the_next_save` 钉住。
+
+    **和 `SummaryStore.coverage()` 不矛盾**：那边是给界面看的读端，撤回后照旧显示
+    「这一章没有总结」（作者要看得见自己撤了）。这边回答的是另一个问题——
+    **系统该不该自己掏钱补一份**。答案是不该：想要新的一份他自己点「重新生成」
+    （走 `create_manual_attempt` / `POST …/summary`，他按的，所以花钱合理）。
     """
     row = conn.execute(
         """
@@ -176,11 +191,6 @@ def _head_missing(conn: Connection, project_id: str, chapter_id: str) -> bool:
           FROM chapter_summary_head h
          WHERE h.chapter_id = :cid
            AND h.current_summary_id IS NOT NULL
-           AND EXISTS (
-                 SELECT 1 FROM chapter_summary s
-                  WHERE s.id = h.current_summary_id
-                    AND s.status = 'ACTIVE'
-               )
         """,
         {"cid": chapter_id},
     ).fetchone()

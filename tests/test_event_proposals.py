@@ -2264,7 +2264,7 @@ def test_the_queue_answer_is_self_sufficient(world: ReviewWorld) -> None:
     `resolve(pid, None)`，而 `upsert_node` 每建一个节点都会写一条 canonical 别名，
     所以任何 label 的节点都在里面。真正的缝在**两次查询的时间差**：
     `["roster", pid]` 和 `["proposals", pid, chapter]` 是两条独立缓存，
-    后台抽取（autopilot / 自动升 CANON）会造出新节点，而没有任何一条路径保证
+    后台抽取（保存触发的整理 / 自动升 CANON）会造出新节点，而没有任何一条路径保证
     花名册那份在提案那份之后重取过。差一拍，屏幕上就是一串截断的内部编号。
 
     自足的出参让这一整类失败在结构上不存在：名字和 id 在**同一个响应**里。

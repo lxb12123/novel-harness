@@ -23,13 +23,17 @@ function mount() {
   return { spy, open: (n: number) => act(() => hook.result.current(n)) };
 }
 
-/** 那些 POST /chapters/N/autopilot 打的是第几章（Task 16 起应该没有）。 */
-function autopilotChapters(spy: { mock: { calls: unknown[][] } }): number[] {
+/** 换章时除了 `/focus` 之外还打出去的 POST（**应该一个都没有**）。
+ *
+ *  ⚠️ 这条比它替下来的那版严：原来只数 `POST …/autopilot`，而那条端点 2026-08-20 已
+ *  整块删掉（ADR 0035），一个打不到的 URL 守不住任何东西。现在数的是「除心跳外的
+ *  一切 POST」——**换章不许花钱**这条纪律，从此对将来任何新加的付费动作都成立，
+ *  不只对 autopilot。 */
+function nonFocusPosts(spy: { mock: { calls: unknown[][] } }): string[] {
   return spy.mock.calls
     .filter((call) => String((call[1] as RequestInit | undefined)?.method) === "POST")
-    .map((call) => /\/chapters\/(\d+)\/autopilot$/.exec(String(call[0]))?.[1])
-    .filter((n): n is string => !!n)
-    .map(Number);
+    .map((call) => String(call[0]))
+    .filter((url) => !/\/focus$/.test(url));
 }
 
 /** 换章时打的 `/focus` 免费心跳报的是第几章。 */
@@ -55,8 +59,8 @@ describe("换章（2026-08-18 §3：只上报位置，不发付费工作）", ()
 
     expect(useCoords.getState().chapter).toBe(5);
     await waitFor(() => expect(focusChapters(spy)).toEqual([5]));
-    // 不指向旧那章，不触发任何 autopilot。
-    await waitFor(() => expect(autopilotChapters(spy)).toEqual([]));
+    // 不指向旧那章，也不发任何付费工作。
+    await waitFor(() => expect(nonFocusPosts(spy)).toEqual([]));
   });
 
   it("点的还是当前这一章就什么都不做（不扫脏心跳）", async () => {
@@ -64,7 +68,7 @@ describe("换章（2026-08-18 §3：只上报位置，不发付费工作）", ()
     const { spy, open } = mount();
     open(1);
     await Promise.resolve();
-    expect(autopilotChapters(spy)).toEqual([]);
+    expect(nonFocusPosts(spy)).toEqual([]);
     expect(focusChapters(spy)).toEqual([]);
   });
 });

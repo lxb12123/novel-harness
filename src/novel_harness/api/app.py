@@ -102,7 +102,6 @@ from .deps import (
 from . import manuscript
 from .activity import router as activity_router
 from .characters import router as characters_router
-from .autopilot import router as autopilot_router
 from .chat import router as chat_router
 from .extraction import router as extraction_router
 from .notifications import router as notifications_router
@@ -300,7 +299,6 @@ async def _lifespan(_: FastAPI) -> Any:
 app = FastAPI(title="Novel Harness 工作台", lifespan=_lifespan)
 app.include_router(activity_router)
 app.include_router(characters_router)
-app.include_router(autopilot_router)
 app.include_router(chat_router)
 app.include_router(extraction_router)
 app.include_router(notifications_router)

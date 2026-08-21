@@ -72,15 +72,16 @@ describe("中栏编辑器", () => {
   // 这一章不许自己发 sync」**。
   //
   // 最后那一条钉的是一个决定（「磁盘先、DB 跟」里的那个「跟」是作者的动作，ADR 0007），
-  // 而那个决定 2026-08-14 被推翻了：后台整理跑之前会自己把这一章读回来
-  // （`api/autopilot.py`），回到标签页时会把整本书对一遍（`reconcile.ts`）。
+  // 而那个决定 2026-08-14 被推翻了：整理跑之前会自己把这一章读回来
+  // （今天是保存那条路 `api/app.py::_trigger_refresh` 和手动检查
+  // `api/validation.py`），回到标签页时会把整本书对一遍（`reconcile.ts`）。
   //
   // **推翻它的不是「懒得让作者点」，是那颗按钮要求他先理解一件他不该知道的事**——
   // 屏幕上的正文来自磁盘，而库里那份快照来自这颗按钮。他不点，后台整理分析的就是
   // 旧正文，且屏幕上没有任何东西说得出来。
   //
-  // 接管它的两条各自有端到端的钉子：`tests/test_autopilot_reads_disk.py` 和
-  // `tests/test_reconcile.py` + `frontend/src/reconcile.test.tsx`。
+  // 接管它的两条各自有端到端的钉子：`tests/test_chapter_refresh.py`（保存触发那条）
+  // 和 `tests/test_reconcile.py` + `frontend/src/reconcile.test.tsx`。
 
   // ── 切出去改完回来，正文得对上磁盘（2026-08-13）─────────────────────────────
   //

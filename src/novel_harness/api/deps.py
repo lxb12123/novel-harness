@@ -198,8 +198,9 @@ def model_configuration_error() -> str | None:
 
     抽出来是因为它有两个语气不同的消费者，而语气差别是产品差别，不是风格：
     - 作者**亲手点**的付费动作（`get_summarizer`）→ 没配好就该当场 422 顶回去；
-    - **后台自动**跑的链路（`api/autopilot.py`）→ 换一次章弹一次 422 是骚扰，
-      它要的是把这句话装进回执里（§10 约束 8：什么都没发生时必须说得出为什么）。
+    - **后台自动**跑的链路（保存触发的刷新 → `api/background_runtime.py` 的 dispatcher）
+      → 每保存一次弹一次 422 是骚扰，它要的是把这句话装进回执/记录里
+      （§10 约束 8：什么都没发生时必须说得出为什么）。
 
     判据只看 `base_url` / `model`（`resolve_capabilities` 的入参），三个 provider
     档（抽取 / 总结 / 起草）共用同一份 BYOK 设置，所以问一次就够。

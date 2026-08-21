@@ -44,7 +44,7 @@ const since = (spy: Calls) => spy.mock.calls.length;
 const urlsAfter = (spy: Calls, mark: number) =>
   spy.mock.calls.slice(mark).map(([url]) => String(url));
 /** 改一条**已经生效**的事实的那几次 POST。
- *  换章会顺手发一次 `POST …/autopilot`（离开的那一章交后台整理），它不在这里算。 */
+ *  换章会顺手发一次 `POST …/focus`（免费心跳，只上报位置），它不在这里算。 */
 const canonPosts = (spy: Calls) =>
   spy.mock.calls.filter(
     ([url, init]) =>

@@ -838,27 +838,7 @@ def test_frontend_fixture_matches_the_real_api(
     assert already.status_code == 409, already.text
     dump["errorFactAlreadyExists"] = norm.walk(already.json())
 
-    # ── 后台整理（autopilot）────────────────────────────────────────────────
-    #
-    # 前端 `AutopilotAck` / `AutopilotStatus` 是**手写类型**（`types.ts`），而后端
-    # `Dispatch` / `Readiness` 是 **7 个值**——之前这份 dump 里一个 autopilot 端点都没有，
-    # 于是「只写 3 个值 (`queued|skipped|no_text`)」的手写类型在后端多吐值时一条守卫都拦不住。
-    # 把它冻进 fixture：后端出参一变 pytest 红，前端 `AutopilotTask` 少写一个值就是**撒谎**。
-    #
-    # 第 1 章：有正文、总结已生成 → GET 说得出「ready」（那一章也成功抽取过）。
-    grab("autopilotStatus", client.get(f"{base}/chapters/1/autopilot"))
-    # 第 2 章：总结刚被作者撤回（上面的 `summaryRetracted`）→ GET 那一档是 `retracted`，
-    # 不是 `missing`（对前端而言下一步动作相反）。**GET 不派活**，放哪儿都安全。
-    grab("autopilotStatusRetracted", client.get(f"{base}/chapters/2/autopilot"))
-    # POST 回执：换章时对**刚离开**的那一章派活。落在第 2 章上——总结已撤回 → 回执里
-    # `summary: "retracted"`，正好冻住「3 值类型表达不了」的那一档。`sync_chapter` 读盘、
-    # 抽取 enqueue 都走真代码（模型调用被上面的 `deps.complete` 桩接住，不上网）。
-    # **放在最后**：它会往 `extraction_run` 里加一行，前面每一个 grab 都不该看见它。
-    # 202 不是 200，所以不走 `grab`。
-    autopilot_post = client.post(f"{base}/chapters/2/autopilot")
-    assert autopilot_post.status_code == 202, autopilot_post.text
-    dump["autopilotDispatch"] = norm.walk(autopilot_post.json())
-    # ── 系统通知（Task 10 / 021）：读列表 / count / 忽略 全走真服务 ──────────
+    # ── 系统通知（Task 10 / 022）：读列表 / count / 忽略 全走真服务 ──────────
     # 直接往通知 outbox 塞一条再物化（走真 `materialize_notification_outbox`），
     # 然后冻三条读端。**放在最末**：它不会往图里加东西，不影响上面任何夹具。
     from novel_harness.system_notifications import (

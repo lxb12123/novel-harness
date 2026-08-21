@@ -18,6 +18,7 @@ from novel_harness import importer, project
 from novel_harness.chapter_refresh import (
     BRANCH_EXTRACTION,
     BRANCH_SUMMARY,
+    _head_missing,
     BranchContext,
     ChapterRefreshCoordinator,
     activate_extraction_application,
@@ -462,3 +463,41 @@ def test_extraction_application_head_cas_keeps_only_the_latest_intent_current(
     ).fetchone()
     assert head["intent_seq"] == 2
     assert head["current_application_id"] == app_b
+
+
+def test_a_retracted_summary_is_not_bought_back_by_the_next_save(
+    conn: Connection, tmp_path: Path
+) -> None:
+    """作者撤回一章的总结之后，**自动派活不许再替他买一份回来**。
+
+    这条是钱和信任两件事：他按了「撤回」，下一次保存就冒出来一份新的，等于
+    **花了他没按过的钱去抹掉他刚做的动作**。ARCHITECTURE 把这条写死过
+    （「`get()` / `latest()` 的差别是钱……用 `get()` 的话作者撤掉的那一章会在他保存后
+    下一秒被自动买回来」），而 2026-08-20 合并保存闭环任务时实测发现代码和那句话相反。
+
+    **它原本只由 `api/autopilot.py` 实现着**（拿 `latest()` + `retracted` 标志跳过），
+    那个模块随换章 autopilot 一起删掉之后，这半条纪律就没有任何东西守着了——
+    所以补这条测试，而不是只改那一行 SQL。
+
+    界面那一侧不受影响：`SummaryStore.coverage()` 照旧把撤回过的章显示成「没有总结」
+    （他要看得见自己撤了），想要新的一份他自己点「重新生成」（走 manual intent）。
+    """
+    from novel_harness.draft.rolling_summary import retract_summary, save_author_summary
+
+    pid, chapter_id = _seed_chapter(conn, tmp_path)
+
+    # ① 从没总结过 → 该自动补。
+    assert _head_missing(conn, pid, chapter_id) is True
+
+    # ② 有一份生效的总结 → 不缺。
+    save_author_summary(conn, project_id=pid, chapter_number=1, text="作者亲手写的摘要")
+    conn.commit()
+    assert _head_missing(conn, pid, chapter_id) is False
+
+    # ③ 作者撤回它 → **仍然不算缺**（关键的那一档）。
+    retract_summary(conn, project_id=pid, chapter_number=1)
+    conn.commit()
+    assert _head_missing(conn, pid, chapter_id) is False, (
+        "撤回过的章被判成「缺总结」——下一次保存就会自动付费买回来，"
+        "把作者刚做的动作抹掉。判据只能问「有没有 head」，不能问「head 是不是 ACTIVE」。"
+    )

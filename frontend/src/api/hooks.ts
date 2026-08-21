@@ -7,8 +7,6 @@ import type {
   AiSettings,
   AiSettingsInput,
   ModelWindowsRefresh,
-  AutopilotAck,
-  AutopilotStatus,
   BootstrapRequest,
   BootstrapResult,
   BookSummaryStatus,
@@ -242,37 +240,6 @@ export function useRetractSummary(pid: string) {
       api.del<ChapterSummaryStatus>(proj(pid, `/chapters/${chapter}/summary`)),
     onSuccess: () => invalidateSummaries(qc, pid),
   });
-}
-
-// ── 后台整理（作者一离开某一章就交给后端做的那些活）─────────────────────────
-//
-// ⚠️ **这两条端点由后端另一条线落地中，今天线上可能还是 404。**
-// 所以调用方必须把失败当无事发生：POST 那条永远不许打扰作者，GET 那条问不到就当
-// 「不知道」，问不到就当无事发生。等后端落地后，
-// `frontend/src/test/harness.tsx` 里那两条手写 stub 要换成真 fixture。
-
-/** 把「刚写完的那一章」交给后台整理（生成总结 / 抽取事件）。**不阻塞、不提示。** */
-export function useRunAutopilot(pid: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (chapter: number) =>
-      api.post<AutopilotAck>(proj(pid, `/chapters/${chapter}/autopilot`)),
-    // 后台补完一章总结，起草前那次「缺不缺」的检查就该看到新结果。
-    // 单章那一份也要（右栏「章节总结」读的是它）：作者刚离开的那一章，后台正是在
-    // 给它生成总结，而他一翻回去看到的会是「还没生成」。
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["summaries", pid] });
-      qc.invalidateQueries({ queryKey: ["summary", pid] });
-    },
-  });
-}
-
-/** 问一句：这一章的后台整理跑完了吗、正在跑吗。
- *
- *  **命令式，不是 useQuery**：它只在作者按下「起草」的那一刻被问到，而且要在一个
- *  按章循环里逐章问——那种形状套不进 hook 的渲染期缓存。 */
-export function fetchAutopilotStatus(pid: string, chapter: number): Promise<AutopilotStatus> {
-  return api.get<AutopilotStatus>(proj(pid, `/chapters/${chapter}/autopilot`));
 }
 
 export function useProjects() {

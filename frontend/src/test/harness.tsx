@@ -55,13 +55,6 @@ export const turnStream = (receipt: unknown, events = fixtures.chatTurnEvents): 
   ...sseFrames([{ event: "receipt", data: receipt }]),
 ];
 
-// 后台整理那两条端点（换章时 `POST …/autopilot` 的回执 + `GET …/autopilot` 状态）
-// **从真 dump 来**：`tests/test_frontend_contract.py` 会 dump `autopilotDispatch`
-// （第 2 章的 `summary:"retracted"`——正好是数量最多那一档）/ `autopilotStatus`，
-// 不再手写（手写 = 两份手写的东西互相验证，正是这条缝原本的病）。
-const AUTOPILOT_ACK = fixtures.autopilotDispatch;
-const AUTOPILOT_IDLE = fixtures.autopilotStatus;
-
 // 反查那一份**多加一章**：真 dump 只有一章（第 2 章那段刚被撤回，它冻的正是
 // 「撤回过的章不在名单里」——这一层最贵的断言）。而「点开看还有哪几章」那条分支
 // 一章验不出来，所以在真 dump 之上**派生**出第二章，不手写一个形状。
@@ -130,8 +123,6 @@ const DEFAULT: Handler[] = [
     match: /\/chapters\/\d+\/summary$/,
     body: { ...fixtures.summaryGenerated, summary: null, created_at: null, retracted: true },
   },
-  { method: "POST", match: /\/chapters\/\d+\/autopilot$/, body: AUTOPILOT_ACK },
-  { match: /\/chapters\/\d+\/autopilot$/, body: AUTOPILOT_IDLE },
   { match: /\/chapters\/\d+\/text/, body: fixtures.chapterText },
   // 默认给**两版**那一份：一版的历史里没有还原/删除可点，照它写的界面等于没验过。
   { match: /\/chapters\/\d+\/history$/, body: fixtures.chapterHistoryTwo },

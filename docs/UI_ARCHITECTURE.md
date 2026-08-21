@@ -85,7 +85,7 @@
 | POST | `/projects/{pid}/declare/where` | `Ledger.declare_where` | `Declaration` | 🟢 |
 | POST | `/projects/{pid}/chapters/{n}/draft` | `scene_view` → `assemble`（X0/X1/X2）或 `build_product_context` → `assemble_product`（PRODUCT，默认） | `{experimental, note, text, memory, length, …}`·**这一行 2026-08-02 起就不是 501 了**（修正案 7 实验开放）；`memory` 是记忆层回执，**零带着理由**（装了几份档案/事件/总结、哪几章缺总结）；`previous_tail` 的截断长度**分档**——PRODUCT 从模型窗口倒推（`product_tail_limit()`，2026-08-10 起），点名 X0/X1/X2 则原样拿冻结的 800（那是考卷，见 ADR 0019 边界五） | 🟢 |
 | GET | `/projects/{pid}/chapters/{n}/summaries` | `SummaryStore.coverage`（窗口边界由 `rolling_summary_window` 算） | `{chapter, window_first, window_last, chapters[], summarized, missing[]}`·**窗口不是全书**（近八章走事件记忆）；`missing` = 有正文没总结（**撤回过的也算缺**），`has_text=false` = 还没写，两者别合并 | 🟢 |
-| POST | `/projects/{pid}/chapters/{n}/summary` | `RollingSummarizer.ensure` | `{chapter_number, has_text, summary, created_at, retracted, author_written}`·**会调模型、会花钱**，幂等（同章同 prompt 只付一次）；**故意没有「保存后自动生成」**，自动那条走下面的 `autopilot`；**撤回过的章按这里会真的重来一次（再付一次钱）**，那是撤回语义里写死的退路 | 🟢 |
+| POST | `/projects/{pid}/chapters/{n}/summary` | `RollingSummarizer.ensure` | `{chapter_number, has_text, summary, created_at, retracted, author_written}`·**会调模型、会花钱**，幂等（同章同 prompt 只付一次）；**故意没有「保存后自动生成」这个同步入口**（自动那条是保存触发的后台整理，异步、去重）；**撤回过的章按这里会真的重来一次（再付一次钱）**，那是撤回语义里写死的退路 | 🟢 |
 | GET | `/projects/{pid}/chapters/{n}/summary` | `SummaryStore.coverage`（单章） | `{chapter_number, has_text, summary, created_at, retracted, author_written}`·这一章现在的总结。**没有的时候不许只回一个 null**：`has_text=false`（还没写）/ `retracted`（作者亲手撤的）/ 两者都不是（有正文没生成过）三种零分得开，因为下一步动作完全不同 | 🟢 |
 | PATCH | `/projects/{pid}/chapters/{n}/summary` | `save_author_summary` | `{chapter_number, has_text, summary, created_at, retracted, author_written}`·换成作者自己写的那一段，**不花钱**。库里追加一行（迁移 013），模型写的那一行留着；交上来的就是屏幕上那一段时一行都不追加。空串 422（清空≠撤回，两个动作不共用入口）、超过 1000 字 422 | 🟢 |
 | DELETE | `/projects/{pid}/chapters/{n}/summary` | `retract_summary` | `{chapter_number, has_text, summary, created_at, retracted, author_written}`·撤回，**不花钱、库里一行都不少**。语义定死为「这一章当作没总结」——起草不带它、覆盖率算作缺、想重来就再点生成。本来就没有 / 已经撤过都回 200（这个动作没有失败的形态） | 🟢 |
@@ -93,8 +93,6 @@
 | GET | `/projects/{pid}/summary-status` | `summary_schedule.book_summary_status` + `focus.resolve_draft_origin` | `{draft_chapter, focused_chapter, chapters[{chapter_number, has_text, state, weight, anomaly}]}`·**全书总结状态视图**（2026-08-18 §6 / Step 4）：逐章三态 + 异常标记 + 这一轮自治权重，全部查库、**GET 只读不写**。`state ∈ {empty, paired, missing, stale}`；`anomaly` = 最近一次总结 attempt 终态失败（不阻塞别的章，由 30 分钟自治轮重试） | 🟢 |
 | GET | `/projects/{pid}/chapters/{n}/summary/mentions` | `summary_index.mentions_in_chapter` | `{chapter, mentions[{node:{id,label,name}, surfaces[]}]}`·这一段总结提到了花名册里的哪些东西。**只做集合判断**（这个称呼出现了没有，`text/mentions.py` 那条 alternation + `rules_only`），不做任何相似度——找相似要向量 + 语义，那是被砍掉的 Qdrant 和 ADR 0005。出参**只有 `NodeRef`**：这批命中里按定义就有 Secret。**不并进 `…/summary`**（那个形状是四条动作共用的，也是 `…/summaries` 里的一行，每章挂芯片 = 一次覆盖率查询变成一次全书反查） | 🟢 |
 | GET | `/projects/{pid}/nodes/{node_id}/summary-mentions` | `summary_index.chapters_mentioning` | `{node, chapters[{chapter_number, summary, surfaces[], author_written}]}`·**还有哪几章的总结提到它**，按章号升序，带那几段原文（作者点开是为了读它、比它、引它）。一次 SQL，**不调模型、不花钱**。`node_id` 不在本项目 → 404（`NodeNotFound`），**不回空表**：「他没在任何总结里出现过」和「这个 id 根本不存在」下一步动作完全不同。索引什么时候重建见 `summary_index.py` | 🟢 |
-| POST | `/projects/{pid}/chapters/{n}/autopilot` | `RollingSummarizer.ensure` + `runner.enqueue`（都进 `BackgroundTasks`） | 202 `{chapter, summary, extraction, extraction_run_id, errors[]}`·两个状态字取值 `queued`/`skipped`/`no_text`/`running`/`failed`/`retracted`/`unconfigured`·**作者撤回过的章一律不派**（判据是 `SummaryStore.latest()` 不是 `get()`：后者对撤回过的章回 None，于是他撤掉、切走一章，后台立刻替他买一份回来） | 🟢 |
-| GET | `/projects/{pid}/chapters/{n}/autopilot` | `SummaryStore.latest` + `extract.metrics.metrics_for_range` | `{chapter, summary_ready, extraction_ready, running, summary_state, extraction_state, errors[]}`·**只读，不排队不花钱** | 🟢 |
 | POST | `/projects/{pid}/chapters/{n}/plan` | — | 501 | 🟡 |
 | GET | `/projects/{pid}/activity?actor=&limit=&cursor=` | `activity.read_activity`（`extraction_run` + `model_call` + `decision_log` 归并） | `{entries[], next_cursor, actors[]}`·**折叠层**：一行 = `{id, source, ts, actor, status, title, subtitle, chapter_number, jump}`，**payload 不在这一层**（那是泄漏面，按需取）。`actors[]` 的计数**不受 `actor` 过滤影响**——它要回答的正是「我筛掉了多少」（[ADR 0020](adr/0020-clean-extraction-auto-canon.md)） | 🟢 |
 | GET | `/projects/{pid}/activity/{entry_id}` | `activity.read_entry`（按 id 前缀分派到三张表） | `{entry, rows[], cost, errors[], payload}`·**展开层**：`rows[]` 是「标签→值」的定义列表（措辞归后端，前端不写文案分支）；`payload` 只有 `source=decision` 才有，且过 `narrow_payload`（Node 形状收窄 + `props` 一律丢掉，比 `_narrow` 严——日志行没有「当前章」可比）。查无此条/跨项目 → 404 | 🟢 |
@@ -151,18 +149,25 @@
 > 推导为空那一档 `include` 一律不加人：那时的含义是「不知道谁在场 ⇒ 全禁」，加人会把它撬开。
 > 前端 store 里因此是两个字段（`cast` / `castInclude`），`jumpFromActivity` 只写后一个。
 
-> **`autopilot` 的触发点是「离开某一章」，不是「保存某一章」。** 这不是实现偏好，是成本事实：
-> 滚动总结的幂等键是**正文的**哈希（`sha256(build_summary_messages(text))`），所以「保存后自动总结」
-> 会在作者写一章的过程中每存一次就换一次哈希、重新付一次费——写一小时存 30 次 = 30 次调用。
-> 作者说的是「**写完后**」，而机器能识别的最接近的信号是**换章**。所以前端在切章时打这条，
-> **不许**把它挂到保存键上。它幂等（总结走 `ensure`、抽取走 `enqueue`），来回切章不重复付费。
+> **自动整理的触发点是「保存」，不是「离开某一章」。** 这条 2026-08-17 反过来过一次，
+> 值得把两边的理由都留着——它是这个产品里少见的「先算成本、后被推翻」的决定。
 >
-> 三件事写死在 `api/autopilot.py` 里，改之前先读那份 docstring：**① 总是 202**（换章是无人值守的
-> 动作，模型没配好就弹 4xx = 每换一章骂作者一次，真相放在回执体里）；**② 自动链路不自动重试**
-> 失败的抽取（重试要再付一次钱，得作者点 `/extract?force=true`）；**③ 失败不许静默**——
-> `chapter_summary` 表只记成功，所以后台总结炸掉在库里一个字节都没有，那条留痕是进程内的
-> （重启即失，GET 会退回说「还没生成」）。**改过正文的章不会被自动重新总结**（已有一条就判
-> `skipped`，同 `coverage()` 只问「有没有」不问「新不新」），显式那条按钮仍会按新哈希重生成。
+> **原来的理由**：滚动总结的幂等键是**正文的**哈希（`sha256(build_summary_messages(text))`），
+> 所以「保存后自动总结」会在作者写一章的过程中每存一次就换一次哈希、重新付一次费——
+> 写一小时存 30 次 = 30 次调用。于是触发点选了**换章**（`POST …/autopilot`）。
+>
+> **被什么推翻的**：作者切走 ≠ 他写完了（也许他根本没保存），而「保存一次、切章再派一次」
+> 是**双重 autopilot**——同一章付两回。真正的修法不是换触发点，是让触发点变便宜：
+> 保存写的是一条持久的 `chapter_refresh_attempt`（lease/fence 化，幂等 coverage），
+> **不在内存里 enqueue 模型调用**，由后台 dispatcher 去重后才真的花钱（[ADR 0029](adr/0029-save-triggers-snapshot-refresh.md)）。
+> 换章今天只打一个**免费**的焦点心跳（`POST …/focus`），给「正写的那一章先别排总结」用。
+>
+> **`POST/GET …/chapters/{n}/autopilot` 两条端点 2026-08-20 整块删了**
+> （[ADR 0035](adr/0035-autopilot-cut.md)）：前端在 Task 16 就不再调它，留着就是一块没有
+> 用户的表面。它写下过的三条纪律没丢，各自搬了家：**失败不许静默**由 `chapter_refresh_attempt`
+> 的持久状态接（比原来那个进程内注册表强，重启不丢）；**自动链路不自动重试**由
+> `attention_required` 接；**撤回过的章不许被自动买回来**由 `chapter_refresh._head_missing` 接
+> （删的时候实测发现这条在新路径上是破的，已修并补了两条测试）。
 
 **关键陷阱（壳写错就退化成 fail-open）：**
 
