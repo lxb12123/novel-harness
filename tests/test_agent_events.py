@@ -186,7 +186,14 @@ class Transcript:
         persisted: list[str] = []
 
         def ledger(receipt: Any) -> None:
-            receipts.append(receipt.model_dump_json())
+            # ⚠️ **`elapsed_ms` 不进这次对拷。** 它是秒表读数（实测墙钟，
+            # `agent/loop.py` 里 `int((perf_counter() - started) * 1000)`），不是钱。
+            # 两遍跑本来就不可能花一样久：假模型瞬间返回，两遍通常都不到 1 毫秒、
+            # 双双取整成 0 于是相等，但机器忙一下就会一边 0 一边 1——**逐字节对拷当场
+            # 假红**，喊的还是「账变了」。三次全量跑里响过一次。
+            # 一条会喊狼来了的守卫迟早被人关掉，而它守的那件事是真的要紧
+            # （开着进度条会不会偷偷多花钱），所以剔掉尺子上这一格，别放宽判据。
+            receipts.append(receipt.model_dump_json(exclude={"elapsed_ms"}))
 
         def persist(conversation: Any) -> None:
             persisted.append(conversation.model_dump_json())
@@ -231,6 +238,11 @@ def test_not_passing_the_callback_leaves_the_turn_byte_for_byte_identical() -> N
 
     assert quiet.payloads == watched.payloads, "有人在听的时候发给模型的东西变了"
     assert quiet.receipts == watched.receipts, "账变了 —— 事件流不许影响钱"
+    # 自守卫：**排除的只有秒表那一格**。钱那几格必须还在对拷里，否则这条断言就空了
+    # ——「把假红的字段排掉」和「把判据放宽到什么都不查」只差一次顺手。
+    for money in ("prompt_tokens", "completion_tokens", "cost"):
+        assert all(money in r for r in quiet.receipts), f"{money} 被排出对拷了 —— 这条守卫空了"
+    assert all("elapsed_ms" not in r for r in quiet.receipts), "秒表那一格又回来了"
     assert quiet.persisted == watched.persisted, "落库的历史变了 —— 事件流不许进 canonical"
     assert quiet.result == watched.result, "回执变了"
     assert len(quiet.payloads) == 3 and quiet.receipts, "剧本没跑起来，这条对拷是空的"
