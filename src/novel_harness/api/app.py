@@ -47,10 +47,10 @@ from pydantic import (
 from .. import importer
 from .. import onboarding
 from .. import project as project_mod
-from ..checks import ALL_CHECKS, CheckContext, run_checks
 from ..settings import Settings as UserSettings
 from ..settings import load as load_user_settings
 from ..settings import save as save_user_settings
+from .validation import router as validation_router
 from ..declare import (
     AmbiguousName,
     AmbiguousQuote,
@@ -101,9 +101,10 @@ from .deps import (
 )
 from . import manuscript
 from .activity import router as activity_router
-from .autopilot import router as autopilot_router
+from .characters import router as characters_router
 from .chat import router as chat_router
 from .extraction import router as extraction_router
+from .notifications import router as notifications_router
 from .reconcile import router as reconcile_router
 from .review import router as review_router
 
@@ -273,16 +274,37 @@ description 的下一步就是三处开始说不一样的话，然后有人照�
 async def _lifespan(_: FastAPI) -> Any:
     ensure_schema()  # 启动即验库在、schema 到位；库不存在直接炸，不建空库
     _auto_refresh_windows()  # 开着才跑，后台线程，拉不到当无事发生
-    yield
+    # Task 16：持久 attempt 的 dispatcher——保存/reconcile/显式重整只写 attempt，
+    # 这里把 PENDING/过期 RUNNING 转成真实结果。wake 丢了靠持久扫描兜底（不变量 18）。
+    # 测试套件用 `NH_BACKGROUND_RUNTIME=0` 关掉它（几千个 TestClient 每个起一个
+    # 轮询线程会把套件搅成不确定）；生产不设这个变量 = 默认开。
+    runtime = None
+    if os.environ.get("NH_BACKGROUND_RUNTIME", "1") == "1":
+        try:
+            from .background_runtime import build_runtime
+
+            runtime = build_runtime()
+            runtime.start()
+        except Exception:
+            # 库/模型没那么好时也要能启动（作者可能先建书再看设置）——dispatcher
+            # 的 adapter 只在真的 claim 到 attempt 时才构造。
+            runtime = None
+    try:
+        yield
+    finally:
+        if runtime is not None:
+            runtime.stop()
 
 
 app = FastAPI(title="Novel Harness 工作台", lifespan=_lifespan)
 app.include_router(activity_router)
-app.include_router(autopilot_router)
+app.include_router(characters_router)
 app.include_router(chat_router)
 app.include_router(extraction_router)
+app.include_router(notifications_router)
 app.include_router(reconcile_router)
 app.include_router(review_router)
+app.include_router(validation_router)
 
 # 构建产物的静态资源（/assets/index-xxxx.js）。只有 dist 真的构建出来才挂载——
 # 挂一个不存在的目录会在启动时炸，而测试套件不构建前端（那时走 static/ 原型兜底）。
@@ -427,6 +449,24 @@ async def _import_refused(_: Request, exc: importer.ImportRefused) -> JSONRespon
 async def _sync_refused(_: Request, exc: importer.SyncRefused) -> JSONResponse:
     # 某个 NNNN.md 切出 0 或 >1 章。正文可能已写进磁盘，但 sync 拒绝落库。
     return _err(422, {"error": "sync_refused", "path": exc.path, "message": str(exc)})
+
+
+@app.exception_handler(importer.ChapterChanged)
+async def _chapter_changed(_: Request, exc: importer.ChapterChanged) -> JSONResponse:
+    # 保存的乐观闸：调用方依据的那份正文已经过期。409，一个字节都不写。
+    return _err(
+        409,
+        {
+            "error": "chapter_changed",
+            "chapter": exc.chapter,
+            "message": str(exc),
+        },
+    )
+
+
+@app.exception_handler(importer.ChapterLockTimeout)
+async def _chapter_lock_timeout(_: Request, exc: importer.ChapterLockTimeout) -> JSONResponse:
+    return _err(423, {"error": "lock_timeout", "message": str(exc)})
 
 
 @app.exception_handler(ValidationError)
@@ -907,6 +947,13 @@ def evidence(
 
 class ChapterSave(BaseModel):
     markdown: str
+    expected_text_sha256: str
+    """调用方**依据的那一份**正文的哈希，来自 `GET …/text` 或成功索引回执。
+
+    它是保存的乐观闸（ADR 0021 那道闸的产品形态）：写盘前在锁内与磁盘/DB 当前值
+    比对，不一致 → 409 `chapter_changed`，一个字节都不写。前端不能自己另算一份
+    经过编辑器转换的「服务端 hash」。
+    """
 
 
 @app.get("/api/projects/{project_id}/chapters")
@@ -1019,37 +1066,137 @@ def delete_chapter_snapshot(
 
 
 @app.get("/api/projects/{project_id}/chapters/{chapter}/text")
-def chapter_text(chapter: int, proj: Any = Depends(load_project)) -> Any:
-    """读磁盘 md（不是 DB 快照——那是给证据锚用的冻结版，不是可编辑的正文）。"""
+def chapter_text(
+    chapter: int,
+    store: Any = Depends(get_store),
+    proj: Any = Depends(load_project),
+) -> Any:
+    """读磁盘 md（不是 DB 快照——那是给证据锚用的冻结版，不是可编辑的正文）。
+
+    出参带 `text_sha256` 与 `snapshot_generation`：前者是下一次 PUT 的 expected
+    server base；后者让前端在还原旧版后知道 generation 已经前进。
+    """
     file = _chapter_file(proj, chapter)
     if not file.exists():
         raise HTTPException(404, {"error": "chapter_not_found", "chapter": chapter})
-    return {"number": chapter, "markdown": file.read_text(encoding="utf-8-sig")}
+    markdown = file.read_text(encoding="utf-8-sig")
+    return {
+        "number": chapter,
+        "markdown": markdown,
+        "text_sha256": importer.text_digest(markdown),
+        "snapshot_generation": store.current_chapter_generation(proj.id, chapter),
+    }
 
 
 @app.put("/api/projects/{project_id}/chapters/{chapter}/text")
 def save_chapter(
     chapter: int,
     body: ChapterSave,
+    conn: Any = Depends(get_conn),
     store: Any = Depends(get_store),
     proj: Any = Depends(load_project),
 ) -> Any:
-    """保存：先写磁盘（文件是作者的），再 importer.sync 落快照。磁盘先、DB 跟。
+    """保存：写盘前结构预检 → 章级锁 → 原子替换 → 单章落库 → 提交后复核。
 
-    切出 0 或 >1 章时 sync 抛 `SyncRefused` → 全局 handler 映成 422 带 path（正文已写进
-    磁盘，作者需修好章标题再存一次）。
-
-    **不带乐观闸**（`expected_sha256=None`）：作者改的就是他眼前那份，中间没有第三方。
-    agent 起草落盘走的是**同一个** `importer.save_chapter()`，只是必须给出它依据的那份
-    哈希（ADR 0021）——两条路一个实现，闸是不是开着由调用方说，不由第二份保存逻辑说。
+    返回 `ChapterSaveReceipt`。结构预检失败 422 且磁盘/DB 不动；expected hash 冲突
+    409；锁超时 423；`os.replace` 成功后的目录 fsync / DB 提交失败返回 202
+    `durability_failed` / `sync_failed`（`saved_to_disk=true,indexed=false`），
+    恢复靠后续 reconcile，不是让前端重发 PUT。
     """
     try:
-        return importer.save_chapter(
-            store, proj.id, Path(proj.root_path), chapter, body.markdown
+        receipt = importer.save_chapter(
+            store,
+            proj.id,
+            Path(proj.root_path),
+            chapter,
+            body.markdown,
+            expected_sha256=body.expected_text_sha256,
         )
     except importer.ChapterMissing:
         raise HTTPException(404, {"error": "chapter_not_found", "chapter": chapter})
+    _trigger_refresh(conn, store, proj.id, chapter, receipt)
+    return receipt
 
+
+def _trigger_refresh(
+    conn: Any,
+    store: Any,
+    project_id: str,
+    chapter: int,
+    receipt: importer.ChapterSaveReceipt,
+) -> None:
+    """保存动作的固定刷新触发点（Task 16 / ADR 0029）。
+
+    `changed=true` 时快照/generation 已经再往前走一版——dispatcher 只认持久
+    attempt，所以这里为当前 generation 建一个覆盖性 attempt（缺哪支补哪支）。
+    `changed=false`（同 hash）也调 `ensure_refresh_coverage`：正文没变 ≠ 首次
+    整理做了，head/app 缺失时仍要补缺（幂等 coverage，不重复付费）。
+
+    **绝不在内存里 enqueue 模型调用**：只写 `chapter_refresh_attempt`（lease/fence
+    化），由后台 dispatcher（`NH_BACKGROUND_RUNTIME=1` 时自动开）转成结果。
+    """
+    current = next(
+        (ct for ct in store.current_snapshots(project_id) if ct.number == chapter), None
+    )
+    if current is None:
+        return
+    generation = store.current_chapter_generation(project_id, chapter) or 1
+    # 当前章防抖（2026-08-18 §3）：作者正盯着的那一章，保存时**不排总结**；
+    # 验证/抽取照跑。切走 / 心跳过期后才重新够格（被清的位在下一次触发时补上）。
+    from ..focus import is_focused
+
+    skip_summary = is_focused(conn, project_id, chapter)
+    try:
+        from ..chapter_refresh import ensure_refresh_coverage
+
+        result = ensure_refresh_coverage(
+            conn,
+            project_id=project_id,
+            chapter_id=current.chapter_id,
+            snapshot_id=current.snapshot_id,
+            generation=generation,
+            ruleset_epoch=_current_ruleset(conn, project_id)[0],
+            ruleset_hash=_current_ruleset(conn, project_id)[1],
+            skip_summary=skip_summary,
+        )
+    except Exception:
+        # 触发失败不把「保存成功」拖下水：正文已落库，dispatcher 启动恢复会再扫。
+        result = None
+    if result is not None:
+        conn.commit()
+
+
+def _current_ruleset(conn: Any, project_id: str) -> tuple[int, str]:
+    from ..checks.service import current_ruleset
+
+    return current_ruleset(conn, project_id)
+
+
+class FocusBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    chapter: int = Field(ge=1)
+
+
+@app.post("/api/projects/{project_id}/focus")
+def report_focus(
+    body: FocusBody,
+    proj: Any = Depends(load_project),
+    conn: Any = Depends(get_conn),
+) -> dict[str, Any]:
+    """作者换章/开书时上报「我现在在第 N 章」（2026-08-18 §3 当前章防抖）。
+
+    **免费心跳，绝不触发任何总结/抽取/付费**：只 upsert「当前章」位置 + 心跳时间。
+    它回答的唯一问题是「作者眼睛现在停在哪一章」——保存传的 chapter 是「保存哪一章」，
+    两者不相等。读端（保存触发/调度器）靠它决定给不给某章排总结：正写的那章不排，
+    切走/心跳过期后重新够格。**不校验章号存在**：开书汇报的是「我要停在哪」，不要求
+    那一章已经进库。
+    """
+    from ..focus import report_focus as _set_focus
+
+    _set_focus(conn, proj.id, body.chapter)
+    conn.commit()
+    return {"chapter": body.chapter, "project_id": proj.id}
 
 # ⚠️ **场景块那两条路由（`GET`/`PUT …/chapters/{n}/scenes`）2026-08-14 删了**
 # （[ADR 0027](../../../docs/adr/0027-scene-blocks-cut.md)），连同 `SceneWrite` 和 R4。
@@ -1249,44 +1396,6 @@ def declare_first_appearance(
     return ledger.declare_first_appearance(of=body.of, quote=body.quote).model_dump(mode="json")
 
 
-@app.post("/api/projects/{project_id}/chapters/{chapter}/check")
-def check(
-    chapter: int,
-    store: Any = Depends(get_store),
-    proj: Any = Depends(load_project),
-) -> Any:
-    """对第 chapter 章的磁盘正文跑一致性规则（今天 = R2 / R3；R4 和 R5 都已砍）。
-
-    切段走 `text.paragraphs()`（全库唯一定义，§1.4）——路由里**不许**自己写
-    `.splitlines()`，否则 anchor 一改，Issue 锚就和别处「差一段」。
-
-    **不返裸 list[Issue]**：返 `{rules_run, issues}`。静默的零和真的零不许长得一样
-    （§10 约束 8 / cli.check 的原话）：一条规则哑掉时它照样返回零 issue，而那个零不是
-    「这章没问题」。前端据 `rules_run` 把它和「跑了但没意见」分开。
-
-    ⚠️ **出参 2026-08-14 少了 `scene_count`**（ADR 0027）。它原本是那个「零」的成色说明
-    ——0 个场景块 = R4 无事可做——而 R4 已经不在了，再报这个数就是在替一条不存在的规则
-    解释它为什么没说话。
-    """
-    file = _chapter_file(proj, chapter)
-    if not file.exists():
-        raise HTTPException(404, {"error": "chapter_not_found", "chapter": chapter})
-    paras = split_paragraphs(file.read_text(encoding="utf-8-sig"))
-    ctx = CheckContext(
-        store=store,
-        project_id=proj.id,
-        chapter=chapter,
-        paragraphs=paras,
-    )
-    issues = run_checks(ctx)
-    return {
-        "chapter": chapter,
-        "rules_run": [c.__module__.rsplit(".", 1)[-1] for c in ALL_CHECKS],
-        "issues": [i.model_dump(mode="json") for i in issues],
-    }
-
-
-# ══════════════════════════════════════════════════════════════════════════
 # M2 / M4 剩余 stub —— 稳定的 501，**不是 404**（UI_ARCHITECTURE §1.2 第 48 行）
 #
 # M4 抽取与事件读端已经在 ``api/extraction.py`` 点亮；这里保留的能力仍未开放。它们今天
@@ -1582,6 +1691,47 @@ def chapter_summaries(
     }
 
 
+@app.get("/api/projects/{project_id}/summary-status")
+def book_summary_status_view(
+    proj: Any = Depends(load_project),
+    conn: Any = Depends(get_conn),
+    draft_chapter: int | None = Query(
+        default=None,
+        ge=1,
+        description="权重原点；缺省取焦点章或「前沿章号 + 1」。",
+    ),
+) -> dict[str, Any]:
+    """全书总结状态视图（2026-08-18 文档 §6 / Step 4）。
+
+    一口气给「这本书现在长什么样」：每一章是配对 / 缺 / 不对齐 / 空，这一轮调度
+    会给它多少权重，以及那章最近一次总结 attempt 是不是已经失败（异常标记）。
+    全部查库，一次视图查询；**GET 不写任何东西**（异常→通知在 `autonomy_once`
+    那一侧落地，不是在这里）。
+    """
+    from ..focus import focus_current_chapter, resolve_draft_origin
+    from ..summary_schedule import book_summary_status
+
+    if draft_chapter is None:
+        draft_chapter, focused = resolve_draft_origin(conn, proj.id)
+    else:
+        focused = focus_current_chapter(conn, proj.id)
+    states = book_summary_status(conn, proj.id, draft_chapter=draft_chapter)
+    return {
+        "draft_chapter": draft_chapter,
+        "focused_chapter": focused,
+        "chapters": [
+            {
+                "chapter_number": item.chapter_number,
+                "has_text": item.has_text,
+                "state": item.state,
+                "weight": item.weight,
+                "anomaly": item.anomaly,
+            }
+            for item in states
+        ],
+    }
+
+
 def _summary_state(conn: Any, project_id: str, chapter: int) -> dict[str, Any]:
     """第 chapter 章现在的总结状态。**四条路由共用同一个出参形状。**
 
@@ -1657,6 +1807,13 @@ class SummaryEdit(BaseModel):
     """作者自己写的那一段。空串走 422 而不是「等于撤回」——**两个动作不许共用一个入口**：
     清空输入框然后保存，和按下「撤回」，在作者脑子里不是一件事。"""
 
+    expected_version_id: str | None = None
+    """作者编辑所依据的版本 id（019 head 元数据）。与当前 head 不一致 → 409。
+
+    `None` 有两个意思：字段缺省（旧客户端，不做 CAS）和「作者预期当前无总结」
+    （首次编辑，期望 head 为 NULL）。路由用 `model_fields_set` 区分两者。
+    """
+
 
 @app.patch("/api/projects/{project_id}/chapters/{chapter}/summary")
 def edit_chapter_summary(
@@ -1671,6 +1828,7 @@ def edit_chapter_summary(
     这一章还没有总结时也收——手写一份比先付一次钱再改要合理。
     """
     from ..draft.rolling_summary import (
+        SummaryEditConflict,
         SummaryChapterNotFound,
         SummaryTextRejected,
         save_author_summary,
@@ -1684,15 +1842,146 @@ def edit_chapter_summary(
             project_id=proj.id,
             chapter_number=chapter,
             text=body.summary,
+            expected_version_id=body.expected_version_id,
+            expect_head="expected_version_id" in body.model_fields_set,
         )
     except SummaryTextRejected as exc:
         raise HTTPException(status_code=422, detail=str(exc))
+    except SummaryEditConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except SummaryChapterNotFound:
         raise HTTPException(
             status_code=404,
             detail={"error": "chapter_not_found", "chapter": chapter},
         )
     return _summary_state(conn, proj.id, chapter)
+
+
+@app.get("/api/projects/{project_id}/chapters/{chapter}/summary/history")
+def chapter_summary_history(
+    chapter: int,
+    conn: Any = Depends(get_conn),
+    proj: Any = Depends(load_project),
+) -> list[dict[str, Any]]:
+    """一章的 append-only 版本历史（019），旧 → 新。**一行都不删。**"""
+
+    if chapter < 1:
+        raise HTTPException(status_code=422, detail="章号至少是 1")
+    row = conn.execute(
+        """
+        SELECT c.id FROM chapter c
+         WHERE c.project_id = ? AND c.number = ?
+        """,
+        (proj.id, chapter),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "chapter_not_found", "chapter": chapter},
+        )
+    versions = conn.execute(
+        """
+        SELECT id, summary, summary_sha256, schema_version, prompt_hash,
+               source, status, source_snapshot_id, replaces_summary_id, created_at
+          FROM chapter_summary
+         WHERE project_id = ? AND chapter_number = ?
+         ORDER BY created_at, rowid
+        """,
+        (proj.id, chapter),
+    ).fetchall()
+    return [dict(v) for v in versions]
+
+
+class SummaryRegenerateReceipt(BaseModel):
+    queued: bool
+    job_id: str
+
+
+@app.post("/api/projects/{project_id}/chapters/{chapter}/summary/regenerate")
+def regenerate_chapter_summary(
+    chapter: int,
+    conn: Any = Depends(get_conn),
+    proj: Any = Depends(load_project),
+) -> SummaryRegenerateReceipt:
+    """**显式重新总结**：创建持久 `summary_generation_job`，不直接同步调用模型。
+
+    创建 job 的同一事务递增 `machine_intent_seq` 并 supersede 旧未完成 job——
+    作者点击后的任何修改都赢，旧机器任务即使 expected head 相同也失效。
+    """
+    from ..ids import EntityType, new_id
+
+    if chapter < 1:
+        raise HTTPException(status_code=422, detail="章号至少是 1")
+    identity = conn.execute(
+        """
+        SELECT c.id AS chapter_id, s.id AS snapshot_id, c.snapshot_generation AS generation,
+               h.current_summary_id AS head_id, h.machine_intent_seq AS intent_seq
+          FROM chapter c
+          JOIN chapter_snapshot s
+            ON s.chapter_id = c.id AND s.text_sha256 = c.text_sha256
+          JOIN chapter_summary_head h ON h.chapter_id = c.id
+         WHERE c.project_id = ? AND c.number = ?
+        """,
+        (proj.id, chapter),
+    ).fetchone()
+    if identity is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "chapter_not_found", "chapter": chapter},
+        )
+    text_hash = conn.execute(
+        "SELECT text_sha256 FROM chapter_snapshot WHERE id = ?", (identity["snapshot_id"],)
+    ).fetchone()["text_sha256"]
+
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        intent = conn.execute(
+            """
+            UPDATE chapter_summary_head
+               SET machine_intent_seq = machine_intent_seq + 1,
+                   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             WHERE chapter_id = ?
+            RETURNING machine_intent_seq
+            """,
+            (identity["chapter_id"],),
+        ).fetchone()["machine_intent_seq"]
+        conn.execute(
+            """
+            UPDATE summary_generation_job SET status = 'SUPERSEDED'
+             WHERE project_id = ? AND target_type = 'CHAPTER' AND chapter_id = ?
+               AND status IN ('PENDING','RUNNING')
+            """,
+            (proj.id, identity["chapter_id"]),
+        )
+        job_id = new_id(EntityType.SUMMARY, proj.id)
+        conn.execute(
+            """
+            INSERT INTO summary_generation_job (
+                id, project_id, target_type, chapter_id, event_id,
+                source_snapshot_id, source_generation, source_sha256,
+                refresh_attempt_id, required_ruleset_epoch, required_ruleset_hash,
+                expected_head_version_id, required_machine_intent_seq,
+                trigger_key, trigger_source, status
+            ) VALUES (?, ?, 'CHAPTER', ?, NULL, ?, ?, ?, NULL, NULL, NULL,
+                      ?, ?, ?, 'manual', 'PENDING')
+            """,
+            (
+                job_id,
+                proj.id,
+                identity["chapter_id"],
+                identity["snapshot_id"],
+                identity["generation"],
+                text_hash,
+                identity["head_id"],
+                intent,
+                f"regenerate:{intent}:{identity['head_id'] or 'null'}",
+            ),
+        )
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    return SummaryRegenerateReceipt(queued=True, job_id=job_id)
 
 
 @app.delete("/api/projects/{project_id}/chapters/{chapter}/summary")

@@ -21,10 +21,29 @@ from __future__ import annotations
 
 from collections.abc import Collection, Sequence
 
+import pytest
+
 
 from novel_harness.checks import ALL_CHECKS, CheckContext, Issue, run_checks
+from novel_harness.checks.catalog import (
+    RuleAvailability,
+    RuleSpec,
+    SYSTEM_RULES,
+    SYSTEM_RULESET_V1_HASH,
+    ruleset_hash,
+    ruleset_semantic_json,
+)
+from novel_harness.checks import catalog as checks_catalog
 from novel_harness.checks.dead_speaks import check as dead_speaks_check
 from novel_harness.checks.future_leak import check as future_leak_check
+from novel_harness.checks.service import (
+    RulesetStateMissing,
+    SnapshotValidationReport,
+    current_ruleset,
+    validate_snapshot,
+)
+from novel_harness.db import IN_MEMORY, connect, migrate
+from novel_harness import importer, project
 from novel_harness.graph import (
     AliasHit,
     AliasKind,
@@ -47,6 +66,10 @@ from novel_harness.graph import (
     Subgraph,
     UpsertResult,
 )
+from novel_harness.graph import ChapterSpec
+from novel_harness.graph.sqlite_store import SqliteStoryGraph
+from novel_harness.text import paragraphs as split_paragraphs
+from novel_harness.text.chapterize import chapterize
 
 PID = "project:demo:01J0"
 
@@ -461,3 +484,184 @@ def test_r3_longest_surface_wins_before_the_verb() -> None:
     issues = dead_speaks_check(ctx([], aliases=aliases, paragraphs=["顾清音道：「……」"]))
     assert len(issues) == 1
     assert issues[0].anchor.quote_text == "顾清音"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 规则目录 —— 稳定语义字段 / 排序 / 冻结 hash（Task 3）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_catalog_lists_exactly_r2_and_r3_with_stable_semantics() -> None:
+    assert [spec.rule_id for spec in SYSTEM_RULES] == ["R2", "R3"]
+    assert all(spec.enabled and spec.blocks_downstream for spec in SYSTEM_RULES)
+    assert all(spec.schema_version == "v1" for spec in SYSTEM_RULES)
+    assert {spec.template for spec in SYSTEM_RULES} == {"system"}
+
+
+def test_ruleset_hash_is_stable_and_order_independent() -> None:
+    first = ruleset_semantic_json(SYSTEM_RULES)
+    # 同一份目录怎么排都算同一个 JSON（排序由函数负责，不靠调用方传序）。
+    assert ruleset_semantic_json(tuple(reversed(SYSTEM_RULES))) == first
+    assert ruleset_hash(SYSTEM_RULES) == SYSTEM_RULESET_V1_HASH
+    assert ruleset_hash() == SYSTEM_RULESET_V1_HASH
+
+
+def test_title_and_description_do_not_enter_the_hash() -> None:
+    """只改 UI 文案不能让所有机器任务失效（§4.2）。"""
+    from dataclasses import replace
+
+    renamed = tuple(
+        replace(spec, title="换个标题", description="换个说明") for spec in SYSTEM_RULES
+    )
+    assert ruleset_hash(renamed) == SYSTEM_RULESET_V1_HASH
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 快照绑定的验证服务（Task 4）：报告绑定 / availability / error / ruleset 缺行
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _validation_token(pid: str, store: SqliteStoryGraph, text: str):
+    chapter = chapterize(text).chapters[0]
+    spec = ChapterSpec(
+        project_id=pid,
+        number=1,
+        heading=chapter.raw_heading,
+        title=chapter.title,
+        path="chapters/0001.md",
+        text=text,
+    )
+    return store.commit_chapter_snapshot(
+        spec, expected_text_sha256=importer.text_digest(text)
+    )
+
+
+def test_service_report_binds_snapshot_ruleset_and_persists() -> None:
+    conn = connect(IN_MEMORY)
+    migrate(conn)
+    store = SqliteStoryGraph(conn)
+    pid = project.create(conn, name="t", root_path=".").id
+    token = _validation_token(pid, store, "第一章 甲\n\n萧决走进来了。\n")
+    epoch, ruleset_hash = current_ruleset(conn, pid)
+    assert (epoch, ruleset_hash) == (1, SYSTEM_RULESET_V1_HASH)
+
+    report = validate_snapshot(
+        conn, store, token, ruleset_epoch=epoch, ruleset_hash=ruleset_hash,
+        paragraphs=split_paragraphs(token.text),
+    )
+    assert isinstance(report, SnapshotValidationReport)
+    assert report.source_snapshot_id == token.source_snapshot_id
+    assert report.source_generation == token.source_generation
+    assert report.text_sha256 == token.text_sha256
+    assert report.phase == "initial"
+    assert report.gate == "passed"
+    assert [r.rule_id for r in report.rules] == ["R2", "R3"]
+    assert all(r.state == "clear" for r in report.rules)
+
+    row = conn.execute(
+        "SELECT chapter_snapshot_id, source_generation, phase, text_sha256, "
+        "ruleset_epoch, ruleset_hash, gate, rules_json FROM validation_report WHERE id = ?",
+        (report.id,),
+    ).fetchone()
+    assert row["chapter_snapshot_id"] == token.source_snapshot_id
+    assert row["source_generation"] == token.source_generation
+    assert row["ruleset_epoch"] == 1
+    assert row["ruleset_hash"] == SYSTEM_RULESET_V1_HASH
+    assert row["gate"] == "passed"
+    conn.close()
+
+
+def test_service_marks_technical_unavailable_without_blocking() -> None:
+    """正文输入没装入 = unavailable（不阻断，gate 仍 passed）；不是「0 条问题」。"""
+    conn = connect(IN_MEMORY)
+    migrate(conn)
+    store = SqliteStoryGraph(conn)
+    pid = project.create(conn, name="t", root_path=".").id
+    token = _validation_token(pid, store, "第一章 甲\n\n萧决走进来了。\n")
+    epoch, ruleset_hash = current_ruleset(conn, pid)
+    report = validate_snapshot(
+        conn, store, token, ruleset_epoch=epoch, ruleset_hash=ruleset_hash, paragraphs=None,
+    )
+    assert all(r.state == "unavailable" for r in report.rules)
+    assert report.gate == "passed"
+    conn.close()
+
+
+def test_service_rule_exception_becomes_error_and_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    conn = connect(IN_MEMORY)
+    migrate(conn)
+    store = SqliteStoryGraph(conn)
+    pid = project.create(conn, name="t", root_path=".").id
+    token = _validation_token(pid, store, "第一章 甲\n\n萧决走进来了。\n")
+    epoch, ruleset_hash = current_ruleset(conn, pid)
+
+    def boom(ctx: CheckContext) -> list[Issue]:
+        raise RuntimeError("注入：规则崩溃")
+
+    broken = RuleSpec(
+        rule_id="TEST",
+        title="测试规则",
+        description="注入崩溃",
+        blocks_downstream=True,
+        availability=lambda ctx: RuleAvailability.AVAILABLE,
+        check=boom,
+    )
+    monkeypatch.setattr(checks_catalog, "SYSTEM_RULES", (broken,))
+    report = validate_snapshot(
+        conn, store, token, ruleset_epoch=epoch, ruleset_hash=ruleset_hash,
+        paragraphs=split_paragraphs(token.text),
+    )
+    assert report.gate == "error"
+    assert any(r.state == "error" for r in report.rules)
+    assert report.rules[0].rule_id == "TEST"
+    conn.close()
+
+
+def test_service_missing_ruleset_row_is_an_error_not_a_temp_epoch() -> None:
+    conn = connect(IN_MEMORY)
+    migrate(conn)
+    store = SqliteStoryGraph(conn)
+    pid = project.create(conn, name="t", root_path=".").id
+    _validation_token(pid, store, "第一章 甲\n\n萧决走进来了。\n")
+    conn.execute("DELETE FROM validation_ruleset_state WHERE project_id = ?", (pid,))
+    conn.commit()
+
+    with pytest.raises(RulesetStateMissing):
+        current_ruleset(conn, pid)
+    conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 自定义确定性规则（024 / Task 13）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_forbidden_literal_finds_every_occurrence() -> None:
+    from novel_harness.checks.custom import forbidden_literal_check
+
+    check = forbidden_literal_check("玄铁令", rule_id="vrule:1")
+    issues = check(ctx([], paragraphs=["萧决把玄铁令收进袖中，又把玄铁令放回桌上。"]))
+    assert len(issues) == 2
+    assert all(i.rule == "custom:vrule:1" for i in issues)
+    assert issues[0].anchor.quote_text == "玄铁令"
+
+
+def test_forbidden_literal_silent_when_absent() -> None:
+    from novel_harness.checks.custom import forbidden_literal_check
+
+    issues = forbidden_literal_check("玄铁令")(ctx([], paragraphs=["风起，雪落。"], chapter=1))
+    assert issues == []
+
+
+def test_custom_rule_spec_is_a_directory_rule() -> None:
+    from novel_harness.checks.custom import custom_rule_spec
+
+    spec = custom_rule_spec(
+        rule_id="vrule:1", title="不许有玄铁令", literal="玄铁令", blocks_downstream=True
+    )
+    assert spec.template == "forbidden_literal"
+    assert spec.check is not None
+    found = spec.check(ctx([], paragraphs=["玄铁令出现了。"]))
+    assert len(found) == 1

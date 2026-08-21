@@ -131,6 +131,12 @@ class JumpTarget(StrEnum):
     共用 `endpoints` 是因为它回答的是同一个问题：**今天有没有一条路能让这件事不一样。**
     """
 
+    CANON_EDGE = "canon_edge"
+    """自动升上去的地点 / 状态 / 关系边（Task 8 / ADR 0032）。
+
+    跳过去打开 `CanonEdgeEditor`：按稳定 `edge_id` 修改、撤回或改归属，
+    不再退到「去第 N 章」的兜底坐标。"""
+
     CHAPTER = "chapter"
 
 
@@ -149,12 +155,15 @@ class ActivityJump(BaseModel):
     secret_id: str | None = None
     event_id: str | None = None
     proposal_id: str | None = None
+    edge_id: str | None = None
+    """`CANON_EDGE` 那一档的稳定边 id（改归属/撤回也是它）。"""
 
     endpoints: tuple[str, ...] = ()
     """改这个目标要打的路由。**引擎不填，由 HTTP 壳补**（路由表是壳的知识）。
 
     空元组不是「还没填」而是一个断言：**今天没有任何路由能改这个东西**，前端不许
-    画编辑按钮。自动升上去的边就是这一类。
+    画编辑按钮。现在三类自动边都有 `CANON_EDGE` 入口，落到这一档的只剩正在
+    补纠错入口的新边类型。
     """
 
     cast: tuple[str, ...] = ()
@@ -466,6 +475,11 @@ _RUN_STATUS: Final[dict[str, ActivityStatus]] = {
     ExtractionRunStatus.RUNNING: ActivityStatus.RUNNING,
     ExtractionRunStatus.SUCCEEDED: ActivityStatus.SUCCEEDED,
     ExtractionRunStatus.FAILED: ActivityStatus.FAILED,
+    # 021 / Task 9：晚到的旧快照结果。Status 是「成功/失败」之外的一档——
+    # 它没跑错，只是结果不再适用；记一笔 PENDING 直到有什么盖住它不合适，
+    # 它也不会「重新来过」。沿用 FAILED 的粗略态最诚实：作者不需要为
+    # 一条绝不会变成 current 的旧 run 操心。指标那侧不把它数成失败。
+    ExtractionRunStatus.SUPERSEDED: ActivityStatus.FAILED,
 }
 
 _CAPABILITY_LABEL: Final[dict[str, str]] = {
@@ -490,6 +504,9 @@ _KIND_LABEL: Final[dict[str, str]] = {
     "knowledge_edit": "更正认知类型",
     "knowledge_add": "补一条认知",
     "event_edit": "更正事件名单",
+    "event_summary_edit": "编辑情节摘要",
+    "canon_edge_edit": "更正地点/状态/关系",
+    "canon_edge_retract": "撤回地点/状态/关系",
     "chapter_draft": "写进正文",
 }
 
@@ -930,7 +947,7 @@ def _call_entry(row: Any) -> ActivityEntry:
 def _decision_jump(decision: decisions.Decision) -> ActivityJump | None:
     """这条确认改的东西，今天能从哪儿改回去。
 
-    只认**今天真的存在**的三个编辑入口。认不出来就退到章号，认不出章号就不给 jump
+    只认**今天真的存在**的编辑入口。认不出来就退到章号，认不出章号就不给 jump
     ——给一个点了没反应的按钮比不给按钮更糟。
     """
     payload = decision.payload if isinstance(decision.payload, dict) else {}
@@ -1005,7 +1022,6 @@ def _decision_jump(decision: decisions.Decision) -> ActivityJump | None:
                 )
         if applied and isinstance(events, list) and len(events) > 1 and chapter is not None:
             # ── 这一行的空 `endpoints` 和别处的空**不是一个意思** ──────────────
-            # 自动升上去的边那一档是「今天没有任何路由能改它」；这一档是
             # 「有好几条，后端不替作者挑是哪一条」——那几条事件其实
             # `/canon/events/{id}/cast` 一打就通。两种含义共用一个空元组是出参形状
             # 的事，改不到这一层（日志页正照着今天这份契约在写）。
@@ -1017,6 +1033,20 @@ def _decision_jump(decision: decisions.Decision) -> ActivityJump | None:
                 label=f"改了 {len(events)} 条事件，去第 {chapter} 章逐条改",
                 chapter_number=chapter,
             )
+        # 自动升上去的边（Task 8 / ADR 0032）：现在有真实编辑入口，不再落兜底。
+        edges = payload.get("edges")
+        if applied and isinstance(edges, list) and len(edges) == 1:
+            edge_id = _text(_dig(edges[0], "edge_id")) if isinstance(edges[0], dict) else None
+            if edge_id:
+                label = "去改这条自动生成的边"
+                if chapter is not None:
+                    label += f"（第 {chapter} 章）"
+                return ActivityJump(
+                    target=JumpTarget.CANON_EDGE,
+                    label=label,
+                    chapter_number=chapter,
+                    edge_id=edge_id,
+                )
 
     if chapter is not None:
         return ActivityJump(

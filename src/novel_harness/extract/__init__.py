@@ -11,6 +11,7 @@ from .analyze import (
     resolve_surfaces,
 )
 from .models import (
+    ExtractedAlias,
     RawChapterAnalysis,
     RawCharacterProfile,
     RawEvent,
@@ -27,6 +28,7 @@ from .prompt import (
 __all__ = [
     "ANALYSIS_PROMPT_VERSION",
     "ANALYSIS_SCHEMA_VERSION",
+    "ExtractedAlias",
     "AnalysisFormatError",
     "AnalysisMessage",
     "LocateOutcome",

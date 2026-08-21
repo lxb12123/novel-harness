@@ -59,6 +59,9 @@ const RUN_STATUS_ZH = {
   RUNNING: "分析中",
   SUCCEEDED: "已完成",
   FAILED: "失败",
+  // 020 / Task 9：晚到的旧快照结果。它没跑错，只是不再适用——把它归在「失败」
+  // 那一档最诚实（和日志页 `_RUN_STATUS` 的合并同一件事，别在这里再造一档）。
+  SUPERSEDED: "失败",
 } as const;
 
 function asEventItem(raw: unknown): LowConfidenceEventItem | null {

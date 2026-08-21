@@ -100,7 +100,8 @@ def metrics_for_range(
         proposal = conn.execute(
             """
             SELECT
-              COALESCE(SUM(CASE WHEN status = 'PENDING' THEN 1 ELSE 0 END), 0)
+              COALESCE(SUM(CASE WHEN status = 'PENDING' AND currentness = 'CURRENT'
+                                THEN 1 ELSE 0 END), 0)
                 AS pending_proposals,
               COALESCE(SUM(CASE WHEN status <> 'PENDING' THEN 1 ELSE 0 END), 0)
                 AS resolved_proposals,

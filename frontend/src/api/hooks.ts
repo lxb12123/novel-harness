@@ -7,10 +7,12 @@ import type {
   AiSettings,
   AiSettingsInput,
   ModelWindowsRefresh,
-  AutopilotAck,
-  AutopilotStatus,
   BootstrapRequest,
   BootstrapResult,
+  BookSummaryStatus,
+  CanonEdgeEditRequest,
+  CanonEdgeEditResult,
+  CanonEdgeView,
   ChapterRow,
   ChapterDrafts,
   ChapterSnapshot,
@@ -51,6 +53,9 @@ import type {
   StoredAlias,
   Subgraph,
   SummaryWindow,
+  SystemNotification,
+  ValidationRuleView,
+  CharacterBasicInfo,
 } from "./types";
 
 // 服务端状态全进 TanStack Query（§2.3）：queryKey = [端点, pid, chapter, cast]，
@@ -115,6 +120,19 @@ export function useSummaryWindow(pid: string | null, chapter: number) {
   });
 }
 
+/** 全书总结状态视图（`GET …/summary-status`，2026-08-18 文档 §6 / Step 4）。
+ *
+ *  这份只跟书走、不跟章走（没有 chapter 参数）：它回答的是「全书哪些章有/缺/
+ *  不对齐/异常」，以及这一轮自治调度会按什么权重补。**不只读、还是自治轮的可见
+ *  反馈**——作者看完点某个芯片就跳去那一章。 */
+export function useBookSummaryStatus(pid: string | null) {
+  return useQuery({
+    queryKey: q(["bookSummaryStatus", pid]),
+    queryFn: () => api.get<BookSummaryStatus>(proj(pid!, `/summary-status`)),
+    enabled: !!pid,
+  });
+}
+
 /** 这一章现在的总结（`GET …/chapters/{n}/summary`，单章）。
  *
  *  **和 `useSummaryWindow` 是两件事，别拿一个去凑另一个。** 那一条回答「起草这一章时
@@ -146,6 +164,8 @@ function invalidateSummaries(qc: ReturnType<typeof useQueryClient>, pid: string)
   qc.invalidateQueries({ queryKey: ["summaries", pid] });
   qc.invalidateQueries({ queryKey: ["summaryMentions", pid] });
   qc.invalidateQueries({ queryKey: ["nodeSummaryMentions", pid] });
+  // 全书视图随着任何一章的总结生/改/撤而变：一起失效，别留一份过期全貌。
+  qc.invalidateQueries({ queryKey: ["bookSummaryStatus", pid] });
 }
 
 /** 这一章的总结提到了花名册里的哪些东西（T6）。
@@ -220,37 +240,6 @@ export function useRetractSummary(pid: string) {
       api.del<ChapterSummaryStatus>(proj(pid, `/chapters/${chapter}/summary`)),
     onSuccess: () => invalidateSummaries(qc, pid),
   });
-}
-
-// ── 后台整理（作者一离开某一章就交给后端做的那些活）─────────────────────────
-//
-// ⚠️ **这两条端点由后端另一条线落地中，今天线上可能还是 404。**
-// 所以调用方必须把失败当无事发生：POST 那条永远不许打扰作者，GET 那条问不到就当
-// 「不知道」，问不到就当无事发生。等后端落地后，
-// `frontend/src/test/harness.tsx` 里那两条手写 stub 要换成真 fixture。
-
-/** 把「刚写完的那一章」交给后台整理（生成总结 / 抽取事件）。**不阻塞、不提示。** */
-export function useRunAutopilot(pid: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (chapter: number) =>
-      api.post<AutopilotAck>(proj(pid, `/chapters/${chapter}/autopilot`)),
-    // 后台补完一章总结，起草前那次「缺不缺」的检查就该看到新结果。
-    // 单章那一份也要（右栏「章节总结」读的是它）：作者刚离开的那一章，后台正是在
-    // 给它生成总结，而他一翻回去看到的会是「还没生成」。
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["summaries", pid] });
-      qc.invalidateQueries({ queryKey: ["summary", pid] });
-    },
-  });
-}
-
-/** 问一句：这一章的后台整理跑完了吗、正在跑吗。
- *
- *  **命令式，不是 useQuery**：它只在作者按下「起草」的那一刻被问到，而且要在一个
- *  按章循环里逐章问——那种形状套不进 hook 的渲染期缓存。 */
-export function fetchAutopilotStatus(pid: string, chapter: number): Promise<AutopilotStatus> {
-  return api.get<AutopilotStatus>(proj(pid, `/chapters/${chapter}/autopilot`));
 }
 
 export function useProjects() {
@@ -515,6 +504,81 @@ export function useCreateNode(pid: string) {
     mutationFn: (body: DeclareNode) =>
       api.post<NodeRef & { props?: unknown }>(proj(pid, "/nodes"), body),
     onSuccess: () => invalidatePanels(qc, pid),
+  });
+}
+
+/** 一个人物的本名 + 全部 ACTIVE 别名（canonical 不算 chip，Task 11 API）。 */
+export function useCharacterProfile(pid: string | null, characterId: string | null) {
+  return useQuery({
+    queryKey: q(["character-profile", pid, characterId]),
+    queryFn: () =>
+      api.get<CharacterBasicInfo>(
+        proj(pid!, `/characters/${encodeURIComponent(characterId!)}/profile`),
+      ),
+    enabled: !!pid && !!characterId,
+  });
+}
+
+/** 给一个人物加别名（canonical 拒；撞 expected_canon_version 409）。 */
+export function useAddCharacterAlias(pid: string, characterId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { surface: string; expected_canon_version: number }) =>
+      api.post<StoredAlias>(
+        proj(pid, `/characters/${encodeURIComponent(characterId)}/aliases`),
+        body,
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["character-profile", pid, characterId] });
+    },
+  });
+}
+
+/** 改一条别名（机器 alias → author 派生行）。 */
+export function useEditAlias(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      aliasId,
+      ...body
+    }: { aliasId: string; surface?: string; expected_canon_version: number }) =>
+      api.patch<StoredAlias>(proj(pid, `/aliases/${encodeURIComponent(aliasId)}`), body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["character-profile", pid] });
+      qc.invalidateQueries({ queryKey: ["roster", pid] });
+    },
+  });
+}
+
+/** 撤回一条别名。 */
+export function useRetractAlias(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (aliasId: string) =>
+      api.del<{ id: string; status: string }>(proj(pid, `/aliases/${encodeURIComponent(aliasId)}`)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["character-profile", pid] });
+      qc.invalidateQueries({ queryKey: ["roster", pid] });
+    },
+  });
+}
+
+/** 改归属：撤回 + 在目标 Character 上新建（只能移到 Character）。 */
+export function useReassignAlias(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      aliasId,
+      ...body
+    }: { aliasId: string; to_character_id: string; expected_canon_version: number }) =>
+      api.post<StoredAlias>(
+        proj(pid, `/aliases/${encodeURIComponent(aliasId)}/reassign`),
+        body,
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["character-profile", pid] });
+      qc.invalidateQueries({ queryKey: ["roster", pid] });
+    },
   });
 }
 
@@ -824,11 +888,101 @@ export function useCorrectEventCast(pid: string) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
+// Canon 边纠错（Task 8 / ADR 0032）：自动升上去的地点/状态/关系边
+// ══════════════════════════════════════════════════════════════════════════
+//
+// 同「改一条已经生效的事实」那两条：**不做静默重试**。409 是「这本书在别处刚被
+// 改过 / 这条边已经变了」，重试等于把作者的改动画到一份他没看过的状态上；
+// 界面该做的是刷新当前事实、保留表单让作者看过后再提交。
+
+const edgePath = (pid: string, edgeId: string) =>
+  proj(pid, `/canon/edges/${encodeURIComponent(edgeId)}`);
+
+/** 一条可纠错 Canon 边（`GET …/canon/edges/{id}`）。null = 还没有要打开的边。 */
+export function useCanonEdge(pid: string | null, edgeId: string | null) {
+  return useQuery({
+    queryKey: q(["canon-edge", pid, edgeId]),
+    queryFn: () => api.get<CanonEdgeView>(edgePath(pid!, edgeId!)),
+    enabled: !!pid && !!edgeId,
+    retry: false,
+  });
+}
+
+/** 修改 / 改归属（PATCH）。**`expected_canon_version` 从正在渲染的那份 view 上取。** */
+export function useEditCanonEdge(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ edgeId, ...body }: CanonEdgeEditRequest & { edgeId: string }) =>
+      api.patch<CanonEdgeEditResult>(edgePath(pid, edgeId), body),
+    onSuccess: (result) => {
+      // 旧 edge ID 在 identity 改变后会返回 replacement——把旧 ID 那条缓存清掉，
+      // 下次按回执里的新 ID 重新读。
+      qc.invalidateQueries({ queryKey: ["canon-edge", pid] });
+      invalidateReview(qc, pid);
+      qc.invalidateQueries({ queryKey: ["projects"] }); // canon 版本推高了一格
+      qc.invalidateQueries({ queryKey: ["activity", pid] });
+      qc.invalidateQueries({ queryKey: ["canon-version", pid] });
+      return result;
+    },
+  });
+}
+
+/** 软撤回（DELETE）。 */
+export function useRetractCanonEdge(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ edgeId }: { edgeId: string }) =>
+      api.del<CanonEdgeEditResult>(edgePath(pid, edgeId)),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["canon-edge", pid] });
+      invalidateReview(qc, pid);
+      qc.invalidateQueries({ queryKey: ["projects"] });
+      qc.invalidateQueries({ queryKey: ["activity", pid] });
+      qc.invalidateQueries({ queryKey: ["canon-version", pid] });
+    },
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // 写作助手（模式二，ADR 0019）—— 开 / 列 / 看 / 删 / 跑一轮 / 停 / 规矩两条
 // ══════════════════════════════════════════════════════════════════════════
 
 const chats = (pid: string, tail = "") => proj(pid, `/chats${tail}`);
 const one = (id: string) => `/${encodeURIComponent(id)}`;
+
+/** 右栏「系统通知 N」那一格（Task 10）。只有 OPEN 会显示在默认列表里。 */
+export function useNotifications(pid: string | null) {
+  return useQuery({
+    queryKey: q(["notifications", pid]),
+    queryFn: () => api.get<SystemNotification[]>(proj(pid!, "/notifications")),
+    enabled: !!pid,
+  });
+}
+
+/** 数字 badge：只数 OPEN。**null 是「还没读」，不是 0。** */
+export function useNotificationsCount(pid: string | null) {
+  return useQuery({
+    queryKey: q(["notifications-count", pid]),
+    queryFn: () => api.get<{ open: number }>(proj(pid!, "/notifications/count")),
+    enabled: !!pid,
+  });
+}
+
+/** 忽略当前 hash 对（正文或总结任一变化都允许再次提醒，后端去重键钉着）。 */
+export function useIgnoreNotification(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (notificationId: string) =>
+      api.post<{ id: string; status: string }>(
+        proj(pid, `/notifications/${encodeURIComponent(notificationId)}/ignore`),
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["notifications", pid] });
+      qc.invalidateQueries({ queryKey: ["notifications-count", pid] });
+    },
+  });
+}
+
 
 /** 侧栏那一列。**不轮询**：`running` 是后端**进程内**的事实，只有另一个标签页
  *  正在跑同一本书时它才会自己变——而那时那边一停，这边下一次动作就会看到。
@@ -988,6 +1142,59 @@ export function useRecordedRules(pid: string | null) {
     queryKey: q(["recordedRules", pid]),
     queryFn: () => api.get<RecordedRules>(proj(pid!, "/rules")),
     enabled: !!pid,
+  });
+}
+
+/** 规则目录元数据（023 / Task 13）：R2/R3 常驻 + 作者自定义规则。 */
+export function useValidationRules(pid: string | null) {
+  return useQuery({
+    queryKey: q(["validation-rules", pid]),
+    queryFn: () => api.get<ValidationRuleView[]>(proj(pid!, "/validation-rules")),
+    enabled: !!pid,
+  });
+}
+
+/** 添加一条确定性命中规则（`forbidden_literal`，不进代码 / 正则 / 语义）。 */
+export function useAddValidationRule(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { title?: string; literal: string; blocks_downstream?: boolean }) =>
+      api.post<ValidationRuleView>(proj(pid, "/validation-rules"), body),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["validation-rules", pid] });
+    },
+  });
+}
+
+/** 启停 / 改字 / 改阻断。语义变化 = 后端同事务 epoch+1 + 重算 hash。 */
+export function useUpdateValidationRule(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      ruleId,
+      ...body
+    }: { ruleId: string; enabled?: boolean; blocks_downstream?: boolean; literal?: string }) =>
+      api.patch<{ rule_id: string; updated: boolean }>(
+        proj(pid, `/validation-rules/${encodeURIComponent(ruleId)}`),
+        body,
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["validation-rules", pid] });
+    },
+  });
+}
+
+/** 删除一条作者规则。 */
+export function useDeleteValidationRule(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ruleId: string) =>
+      api.del<{ rule_id: string; deleted: string }>(
+        proj(pid, `/validation-rules/${encodeURIComponent(ruleId)}`),
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["validation-rules", pid] });
+    },
   });
 }
 

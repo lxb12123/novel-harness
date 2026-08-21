@@ -123,9 +123,9 @@ export function CanonEventCast({ canonVersion }: { canonVersion: number }) {
   // 调用方共用同一份缓存（queryKey 相同），`refetch()` 刷的就是它读的那一个——
   // 这不是第二个读源，是让那唯一一个读源重读一遍。
   //
-  // ⚠️ 这条路在这个产品里是常态不是边角：作者一离开某一章，后台就去整理那一章
-  //（`autopilot.ts`），干净的抽取结果直接升 CANON（ADR 0020），版本就涨了一格，
-  // 而浏览器里那份缓存一个字都没变。
+  // ⚠️ 这条路在这个产品里是常态不是边角：作者一保存，后台就去整理那一章
+  //（`api/app.py::_trigger_refresh`），干净的抽取结果直接升 CANON（ADR 0020），
+  // 版本就涨了一格，而浏览器里那份缓存一个字都没变。
   const projects = useProjects();
   const [openId, setOpenId] = useState<string | null>(null);
 

@@ -184,14 +184,30 @@ def _feed_a_summary(conn: Connection, project_id: str) -> None:
     **没有它，`chapter_summaries` 的返回里一个字都没有**，而这份文件的头条会在
     一个空字符串上搜子串——正是 3.2 那次空转的形态。
     """
+    from hashlib import sha256
+
+    summary_id = f"summary:{project_id}:{CHAPTER}"
+    row = conn.execute(
+        "SELECT id FROM chapter WHERE project_id = ? AND number = ?",
+        (project_id, CHAPTER),
+    ).fetchone()
+    assert row is not None
     conn.execute(
         """
         INSERT OR IGNORE INTO chapter_summary (
-            id, project_id, chapter_number, summary, schema_version, prompt_hash
-        ) VALUES (?, ?, ?, ?, ?, ?)
+            id, project_id, chapter_id, chapter_number, summary, summary_sha256,
+            schema_version, prompt_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (f"summary:{project_id}:{CHAPTER}", project_id, CHAPTER, SUMMARY_TELL,
-         SUMMARY_VERSION, "hash-for-the-net"),
+        (summary_id, project_id, row["id"], CHAPTER, SUMMARY_TELL,
+         sha256(SUMMARY_TELL.encode("utf-8")).hexdigest(), SUMMARY_VERSION, "hash-for-the-net"),
+    )
+    conn.execute(
+        """
+        UPDATE chapter_summary_head SET current_summary_id = ?
+         WHERE chapter_id = ?
+        """,
+        (summary_id, row["id"]),
     )
     conn.commit()
 

@@ -260,9 +260,10 @@ def test_save_sync_and_import_do_not_implicitly_trigger_extraction(
     extraction_client.app.dependency_overrides[get_extraction_runner] = lambda: spy
     pid = extraction_book["pid"]
 
+    base = extraction_client.get(f"/api/projects/{pid}/chapters/1/text").json()["text_sha256"]
     saved = extraction_client.put(
         f"/api/projects/{pid}/chapters/1/text",
-        json={"markdown": CHAPTER_TEXT},
+        json={"markdown": CHAPTER_TEXT, "expected_text_sha256": base},
     )
     synced = extraction_client.post(f"/api/projects/{pid}/sync")
     made = extraction_client.post("/api/projects", json={"name": "新书"})

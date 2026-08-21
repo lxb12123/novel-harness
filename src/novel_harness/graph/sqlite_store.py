@@ -30,12 +30,19 @@ from .models import (
     AliasHit,
     AliasKind,
     AliasSpec,
+    AUTO_CANON_CORRECTABLE_EDGE_TYPES,
+    CanonEdgeEditResult,
+    CanonEdgeView,
+    ChapterCommitToken,
     ChapterSnapshot,
     ChapterSpec,
     ChapterText,
     ChapterUsage,
     Edge,
+    EdgeProps,
+    EdgeSource,
     EdgeSpec,
+    EdgeStatus,
     EdgeType,
     Evidence,
     EvidenceSpec,
@@ -50,6 +57,7 @@ from .models import (
     NodeRef,
     NodeSpec,
     Resolution,
+    RetirementReport,
     StateSnapshot,
     StateValue,
     StoredAlias,
@@ -63,6 +71,8 @@ from .store import (
     MAX_SUBGRAPH_NODES,
     QUERYABLE_SCOPES,
     ChapterInUse,
+    ChapterWriteConflict,
+    CanonEdgeRefused,
     NodeNotFound,
     QuoteMismatch,
     SnapshotInUse,
@@ -606,84 +616,624 @@ class SqliteStoryGraph:
                 surface=spec.surface,
                 kind=spec.kind,
                 usable_for_rules=spec.usable_for_rules,
+                source=spec.source,
             )
+
+    def aliases_of(self, project_id: str, node_id: str) -> list[StoredAlias]:
+        """一个节点的全部别名（含 canonical），canonical 优先、其余按创建时间。"""
+        rows = self._conn.execute(
+            """
+            SELECT id, project_id, node_id, surface, kind, usable_for_rules,
+                   source, status, derived_from_alias_id, created_at
+              FROM alias
+             WHERE project_id = ? AND node_id = ?
+             ORDER BY (kind = 'canonical') DESC, created_at, id
+            """,
+            (project_id, node_id),
+        ).fetchall()
+        return [
+            StoredAlias(
+                id=r["id"],
+                project_id=r["project_id"],
+                node_id=r["node_id"],
+                surface=r["surface"],
+                kind=AliasKind(r["kind"]),
+                usable_for_rules=bool(r["usable_for_rules"]),
+                source=r["source"],
+                status=r["status"],
+                derived_from_alias_id=r["derived_from_alias_id"],
+            )
+            for r in rows
+            if r["status"] == "ACTIVE"
+        ]
+
+    def retract_alias(self, project_id: str, alias_id: str) -> StoredAlias:
+        with _transaction(self._conn):
+            row = queries.fetch_alias(self._conn, alias_id)
+            if row is None:
+                raise self._alias_missing(project_id, alias_id)
+            if row["project_id"] != project_id:
+                raise self._alias_missing(project_id, alias_id)
+            if row["kind"] == AliasKind.CANONICAL.value:
+                raise CanonEdgeRefused("canonical 是本名索引，不能撤回：改本名请改节点本身")
+            if row["status"] != "ACTIVE":
+                raise CanonEdgeRefused(f"alias {alias_id} 已经撤回了")
+            queries.retract_alias(self._conn, alias_id)
+            return self._read_alias(alias_id)
+
+    def edit_alias(
+        self,
+        project_id: str,
+        alias_id: str,
+        *,
+        surface: str | None = None,
+        usable_for_rules: bool | None = None,
+    ) -> StoredAlias:
+        with _transaction(self._conn):
+            row = queries.fetch_alias(self._conn, alias_id)
+            if row is None or row["project_id"] != project_id:
+                raise self._alias_missing(project_id, alias_id)
+            if row["kind"] == AliasKind.CANONICAL.value:
+                raise CanonEdgeRefused("canonical 是本名索引，不能改：改本名请改节点本身")
+            new_surface = surface if surface is not None else row["surface"]
+            new_usable = (
+                usable_for_rules if usable_for_rules is not None else bool(row["usable_for_rules"])
+            )
+            # 不管原来是谁写的，改过 = 作者接手：撤回旧行 + 新建 author 派生行
+            # （§5 022：作者版不随旧机器证据失效）。
+            queries.retract_alias(self._conn, alias_id)
+            new_id_value = new_id(EntityType.ALIAS, project_id)
+            return queries.insert_alias(
+                self._conn,
+                new_id_value,
+                project_id=project_id,
+                node_id=row["node_id"],
+                surface=new_surface,
+                kind=AliasKind(row["kind"]),
+                usable_for_rules=new_usable,
+                source="author",
+                derived_from_alias_id=alias_id,
+            )
+
+    def reassign_alias(
+        self, project_id: str, alias_id: str, *, to_node_id: str
+    ) -> StoredAlias:
+        with _transaction(self._conn):
+            row = queries.fetch_alias(self._conn, alias_id)
+            if row is None or row["project_id"] != project_id:
+                raise self._alias_missing(project_id, alias_id)
+            if row["kind"] == AliasKind.CANONICAL.value:
+                raise CanonEdgeRefused("canonical 是本名索引，不能改归属")
+            # 目标必须是同项目 Character。
+            target = self._require_node(project_id, to_node_id, what="目标人物")
+            if target.label is not NodeLabel.CHARACTER:
+                raise CanonEdgeRefused(f"别名只能改到 Character，{to_node_id} 是 {target.label.value}")
+            queries.retract_alias(self._conn, alias_id)
+            new_id_value = new_id(EntityType.ALIAS, project_id)
+            return queries.insert_alias(
+                self._conn,
+                new_id_value,
+                project_id=project_id,
+                node_id=to_node_id,
+                surface=row["surface"],
+                kind=AliasKind(row["kind"]),
+                usable_for_rules=bool(row["usable_for_rules"]),
+                source="author",
+                derived_from_alias_id=alias_id,
+            )
+
+    def _read_alias(self, alias_id: str) -> StoredAlias:
+        row = queries.fetch_alias(self._conn, alias_id)
+        if row is None:  # pragma: no cover - 写入事务内读不回只能是库坏了
+            raise RuntimeError(f"alias 写入后读不回：{alias_id}")
+        return StoredAlias(
+            id=row["id"],
+            project_id=row["project_id"],
+            node_id=row["node_id"],
+            surface=row["surface"],
+            kind=AliasKind(row["kind"]),
+            usable_for_rules=bool(row["usable_for_rules"]),
+            source=row["source"],
+            status=row["status"],
+            derived_from_alias_id=row["derived_from_alias_id"],
+        )
+
+    @staticmethod
+    def _alias_missing(project_id: str, alias_id: str) -> Exception:
+        from .store import NodeNotFound
+
+        return NodeNotFound(f"alias {alias_id} 不在项目 {project_id} 里")
 
     def retire_stale_extractor_facts(
         self, project_id: str, chapter_id: str, current_snapshot_id: str
-    ) -> int:
+    ) -> RetirementReport:
         with _transaction(self._conn):
-            return queries.retire_stale_extractor_facts(
+            retirement = queries.retire_stale_extractor_facts(
                 self._conn, project_id, chapter_id, current_snapshot_id
             )
+            queries.bump_canon_once_if_retired_canon(
+                self._conn, project_id, retirement
+            )
+            return retirement
 
     def chapter_disk_stats(self, project_id: str) -> dict[int, tuple[int | None, int | None]]:
         return queries.chapter_disk_stats(self._conn, project_id)
 
     def put_chapter(self, spec: ChapterSpec) -> StoredChapter:
+        with _transaction(self._conn):
+            return self._put_chapter_locked(spec)
+
+    def _put_chapter_locked(self, spec: ChapterSpec) -> StoredChapter:
+        """`put_chapter` 的事务体（`commit_chapter_snapshot` 在同一事务里复用）。
+
+        调用方必须已持有 `_transaction`——本函数绝不自己 BEGIN/COMMIT。
+        """
         sha = quote_hash(spec.text)
+        row = queries.find_chapter_by_number(self._conn, spec.project_id, spec.number)
+        if row is None:
+            chapter_id = new_id(EntityType.CHAPTER, spec.project_id)
+            generation = 1
+            # Chapter 节点和 chapter 行**同生**，而且没有 canonical 别名
+            # （CANONICAL_ALIAS_LABELS 里没有它）：300 章 = 300 条章标进花名册。
+            queries.insert_node(
+                self._conn,
+                chapter_id,
+                project_id=spec.project_id,
+                label=NodeLabel.CHAPTER,
+                name=spec.heading,
+                props=NodeProps(),
+            )
+            queries.insert_chapter(self._conn, chapter_id, spec, sha)
+            # 018：每章从出生起就有一行 summary head（current 可为 NULL），
+            # 否则「首次生成」的 expected-null CAS 会更新零行（不变量 5/20）。
+            queries.insert_chapter_summary_head(self._conn, chapter_id)
+            created = True
+        else:
+            chapter_id = row.id
+            # 单调 generation：只有当前 text hash 真正切换才加一（018）。
+            # 从 S2 还原到历史 S1 也是切换 —— 否则 S1 的旧任务会借 ABA 复活。
+            generation = row.snapshot_generation
+            node = self._require_node(spec.project_id, chapter_id, what="chapter 节点")
+            if node.name != spec.heading:
+                queries.update_node_name(self._conn, chapter_id, spec.heading)
+            # **一个字节都没变就不写。** `sync` 会对整本书每一章都调到这里，
+            # 而 2026-08-14 起它还会在**每次回到标签页时**跑一遍（回焦对齐）——
+            # 无条件 UPDATE 的话，722 章的书每对一次就搅一遍全书的 WAL，
+            # 而其中 721 章一个字节没动。
+            #
+            # 判据是 `text_sha256` **加上那两列 stat**：
+            #
+            # · sha 相等 ⇒ `heading`/`title`（从正文切出来的）和 `path`（由幂等键
+            #   `number` 定）全都相等，那次 UPDATE 唯一会改的是 `updated_at`，
+            #   而那一列没有任何读者依赖它跳动。
+            # · **但 stat 也必须相等才能跳过**。文件被 touch 过（`rsync` / 保存了
+            #   一份一模一样的内容）时 sha 不变而 mtime 变了——不把新 stat 记下来，
+            #   下一次回焦检查又会判它「变了」，于是**这一章永远重读**（迁移 015）。
+            if (row.text_sha256, row.disk_mtime_ns, row.disk_size) != (
+                sha,
+                spec.disk_mtime_ns,
+                spec.disk_size,
+            ):
+                if row.text_sha256 != sha:
+                    generation = row.snapshot_generation + 1
+                queries.update_chapter(
+                    self._conn, chapter_id, spec, sha, snapshot_generation=generation
+                )
+            created = False
+
+        snapshot_id = queries.find_snapshot(self._conn, chapter_id, sha)
+        snapshot_created = snapshot_id is None
+        if snapshot_id is None:
+            snapshot_id = queries.insert_snapshot(
+                self._conn,
+                new_id(EntityType.SNAPSHOT, spec.project_id),
+                chapter_id,
+                spec.text,
+                sha,
+            )
+        return StoredChapter(
+            id=chapter_id,
+            project_id=spec.project_id,
+            number=spec.number,
+            title=spec.title,
+            path=spec.path,
+            text_sha256=sha,
+            snapshot_id=snapshot_id,
+            snapshot_generation=generation,
+            created=created,
+            snapshot_created=snapshot_created,
+        )
+
+    def commit_chapter_snapshot(
+        self, spec: ChapterSpec, *, expected_text_sha256: str
+    ) -> ChapterCommitToken:
+        """保存路径的单一图层事务：CAS → 落快照 → 退休 → 至多一次 canon bump。
+
+        - `expected_text_sha256` 是调用方依据的 **DB current hash**（保存入口已在
+          章级锁内把 DB 对齐到磁盘并校验过；这一层是第二道、也是最后一道闸）。
+        - 旧 hash/generation 必须在这个 `BEGIN IMMEDIATE` 内读取——不能由事务外
+          调用方传一个会过期的 previous 值。
+        - 退休失败（含注入测试）⇒ 快照和 CAS 一起回滚：快照不能半提交。
+        - 返回的 token 是保存后所有自动任务的唯一输入（ADR 0029）。
+        """
         with _transaction(self._conn):
             row = queries.find_chapter_by_number(self._conn, spec.project_id, spec.number)
-            if row is None:
-                chapter_id = new_id(EntityType.CHAPTER, spec.project_id)
-                # Chapter 节点和 chapter 行**同生**，而且没有 canonical 别名
-                # （CANONICAL_ALIAS_LABELS 里没有它）：300 章 = 300 条章标进花名册。
-                queries.insert_node(
-                    self._conn,
-                    chapter_id,
-                    project_id=spec.project_id,
-                    label=NodeLabel.CHAPTER,
-                    name=spec.heading,
-                    props=NodeProps(),
-                )
-                queries.insert_chapter(self._conn, chapter_id, spec, sha)
-                created = True
-            else:
-                chapter_id = row.id
-                node = self._require_node(spec.project_id, chapter_id, what="chapter 节点")
-                if node.name != spec.heading:
-                    queries.update_node_name(self._conn, chapter_id, spec.heading)
-                # **一个字节都没变就不写。** `sync` 会对整本书每一章都调到这里，
-                # 而 2026-08-14 起它还会在**每次回到标签页时**跑一遍（回焦对齐）——
-                # 无条件 UPDATE 的话，722 章的书每对一次就搅一遍全书的 WAL，
-                # 而其中 721 章一个字节没动。
-                #
-                # 判据是 `text_sha256` **加上那两列 stat**：
-                #
-                # · sha 相等 ⇒ `heading`/`title`（从正文切出来的）和 `path`（由幂等键
-                #   `number` 定）全都相等，那次 UPDATE 唯一会改的是 `updated_at`，
-                #   而那一列没有任何读者依赖它跳动。
-                # · **但 stat 也必须相等才能跳过**。文件被 touch 过（`rsync` / 保存了
-                #   一份一模一样的内容）时 sha 不变而 mtime 变了——不把新 stat 记下来，
-                #   下一次回焦检查又会判它「变了」，于是**这一章永远重读**（迁移 015）。
-                if (row.text_sha256, row.disk_mtime_ns, row.disk_size) != (
-                    sha,
-                    spec.disk_mtime_ns,
-                    spec.disk_size,
-                ):
-                    queries.update_chapter(self._conn, chapter_id, spec, sha)
-                created = False
-
-            snapshot_id = queries.find_snapshot(self._conn, chapter_id, sha)
-            snapshot_created = snapshot_id is None
-            if snapshot_id is None:
-                snapshot_id = queries.insert_snapshot(
-                    self._conn,
-                    new_id(EntityType.SNAPSHOT, spec.project_id),
-                    chapter_id,
-                    spec.text,
-                    sha,
-                )
-            return StoredChapter(
-                id=chapter_id,
-                project_id=spec.project_id,
-                number=spec.number,
-                title=spec.title,
-                path=spec.path,
-                text_sha256=sha,
-                snapshot_id=snapshot_id,
-                created=created,
-                snapshot_created=snapshot_created,
+            previous_hash = row.text_sha256 if row is not None else None
+            # 从没进过库的章（DB 行缺失）没有「previous hash」可比：expected 的 409
+            # 保护在保存入口（expected vs 磁盘）已经完成，这里放行首笔提交。
+            if previous_hash is not None and previous_hash != expected_text_sha256:
+                raise ChapterWriteConflict(expected_text_sha256, previous_hash)
+            stored = self._put_chapter_locked(spec)
+            retirement = queries.retire_stale_extractor_facts(
+                self._conn, spec.project_id, stored.id, stored.snapshot_id
             )
+            queries.bump_canon_once_if_retired_canon(
+                self._conn, spec.project_id, retirement
+            )
+            # 021 / Task 9：正文换了，锚在旧快照上的 PENDING 提案退出待确认
+            # （status 仍是 PENDING 审计状态）。与快照提交同一事务（不变量 20）。
+            queries.supersede_obsolete_proposals(
+                self._conn, spec.project_id, spec.number, stored.snapshot_id
+            )
+            return ChapterCommitToken(
+                project_id=spec.project_id,
+                chapter_id=stored.id,
+                chapter_number=stored.number,
+                source_snapshot_id=stored.snapshot_id,
+                source_generation=stored.snapshot_generation,
+                text_sha256=stored.text_sha256,
+                text=spec.text,
+                changed=previous_hash != stored.text_sha256,
+            )
+
+    # ══════════════════════════════════════════════════════════════════════
+    # Canon 边纠错（020 / Task 8）——「先可逆、后自动」的入口
+    # ══════════════════════════════════════════════════════════════════════
+
+    def canon_edge_view(self, project_id: str, edge_id: str) -> CanonEdgeView:
+        with _transaction(self._conn):
+            edge = self._editable_canon_edge(project_id, edge_id)
+            return self._edge_view(project_id, edge)
+
+    def edit_canon_edge(
+        self,
+        project_id: str,
+        edge_id: str,
+        *,
+        new_src: str,
+        new_dst: str,
+        props: EdgeProps,
+        expected_canon_version: int,
+        action: str = "EDIT",
+    ) -> CanonEdgeEditResult:
+        with _transaction(self._conn):
+            edge = self._editable_canon_edge(project_id, edge_id)
+            slot_key = queries.canon_edge_slot_key(edge)
+            canon_version = self._require_canon_version(project_id)
+            if canon_version != expected_canon_version:
+                from ..project import StaleBaseVersion
+
+                raise StaleBaseVersion(
+                    project_id, expected=expected_canon_version, current=canon_version
+                )
+            # 类型化校验（与节点 label 一起在这里收口）。
+            self._validate_correction_target(project_id, edge, new_src, new_dst, props)
+
+            identity_changed = (
+                new_src != edge.src or new_dst != edge.dst or edge.status is not EdgeStatus.ACTIVE
+            )
+            if identity_changed:
+                result = self._replace_edge(
+                    project_id, edge, slot_key, new_src, new_dst, props, action
+                )
+            else:
+                result = self._patch_edge_props(project_id, edge, slot_key, props, action)
+            return result
+
+    def retract_canon_edge(
+        self,
+        project_id: str,
+        edge_id: str,
+        *,
+        expected_canon_version: int,
+    ) -> CanonEdgeEditResult:
+        with _transaction(self._conn):
+            edge = self._editable_canon_edge(project_id, edge_id)
+            slot_key = queries.canon_edge_slot_key(edge)
+            canon_version = self._require_canon_version(project_id)
+            if canon_version != expected_canon_version:
+                from ..project import StaleBaseVersion
+
+                raise StaleBaseVersion(
+                    project_id, expected=expected_canon_version, current=canon_version
+                )
+            before_props = edge.props.model_dump_json()
+            old_override = queries.supersede_active_override(
+                self._conn, project_id, slot_key
+            )
+            decision_id = self._append_canon_edge_decision(
+                project_id, edge, action="RETRACT", before_props=before_props,
+                after_props=None,
+            )
+            override_id = new_id(EntityType.EDGE, project_id)
+            queries.insert_canon_override(
+                self._conn,
+                override_id=override_id,
+                project_id=project_id,
+                slot_key=slot_key,
+                edge_type=edge.type.value,
+                source_edge_id=edge.id,
+                replacement_edge_id=None,
+                before_props_json=before_props,
+                after_props_json=None,
+                action="RETRACT",
+                decision_log_id=decision_id,
+            )
+            if old_override is not None:
+                queries.link_override_chain(self._conn, old_override, override_id)
+            queries.retract_edge(self._conn, edge.id)
+            canon_version = self._bump_canon(project_id)
+            view = CanonEdgeView(
+                edge_id=edge.id,
+                edge_type=edge.type,
+                src=edge.src,
+                dst=edge.dst,
+                props=edge.props,
+                valid_from_chapter=edge.valid_from_chapter,
+                source=edge.source,
+                evidence_id=edge.evidence_id,
+                evidence_status=edge.evidence_status,
+                author_owned=False,
+                slot_key=slot_key,
+                canon_version=canon_version,
+            )
+            return CanonEdgeEditResult(
+                edge_id=edge.id,
+                replacement_edge_id=None,
+                canon_version=canon_version,
+                retracted=True,
+                view=view,
+            )
+
+    def _editable_canon_edge(self, project_id: str, edge_id: str) -> Edge:
+        """读取 + 可编辑资格校验（allowlist / current CANON / 非裸 STALE）。"""
+        try:
+            edge = queries.fetch_edge(self._conn, edge_id)
+        except LookupError as exc:
+            raise CanonEdgeRefused(str(exc)) from exc
+        if edge.project_id != project_id:
+            raise CanonEdgeRefused(f"edge {edge_id} 不属于项目 {project_id}")
+        if edge.type not in AUTO_CANON_CORRECTABLE_EDGE_TYPES:
+            raise CanonEdgeRefused(
+                f"edge type {edge.type.value} 不在可纠错 allowlist，不得 auto-Canon"
+            )
+        if edge.status is not EdgeStatus.ACTIVE or edge.information_scope is not InformationScope.CANON:
+            raise CanonEdgeRefused(f"edge {edge_id} 不是 current CANON（已撤回/非 CANON）")
+        override = queries.active_canon_override_for_edge(
+            self._conn, project_id, edge_id
+        )
+        protected = override is not None
+        if edge.evidence_status is EvidenceStatus.STALE and not protected:
+            raise CanonEdgeRefused(
+                f"edge {edge_id} 是裸 STALE 机器边（无 ACTIVE override 保护），拒绝纠错"
+            )
+        return edge
+
+    def _validate_correction_target(
+        self,
+        project_id: str,
+        edge: Edge,
+        new_src: str,
+        new_dst: str,
+        props: EdgeProps,
+    ) -> None:
+        """类型化目标校验：跨项目/错误 label 在这里收口（§4.6）。"""
+        def _require(role: str, node_id: str, label: NodeLabel) -> None:
+            node = self._require_node(project_id, node_id, what=role)
+            if node.label is not label:
+                raise CanonEdgeRefused(
+                    f"{role} {node_id} 的 label 是 {node.label.value}，需要 {label.value}"
+                )
+
+        if edge.type is EdgeType.LOCATED_AT:
+            _require("src", new_src, NodeLabel.CHARACTER)
+            _require("dst", new_dst, NodeLabel.LOCATION)
+        elif edge.type is EdgeType.HAS_STATE:
+            _require("src", new_src, NodeLabel.CHARACTER)
+            _require("dst", new_dst, NodeLabel.STATE_DIM)
+            if not props.dim_key or not props.value:
+                raise CanonEdgeRefused("HAS_STATE 需要 dim_key 与 value")
+        elif edge.type is EdgeType.RELATED_TO:
+            _require("src", new_src, NodeLabel.CHARACTER)
+            _require("dst", new_dst, NodeLabel.CHARACTER)
+
+    def _replace_edge(
+        self,
+        project_id: str,
+        edge: Edge,
+        slot_key: str,
+        new_src: str,
+        new_dst: str,
+        props: EdgeProps,
+        action: str,
+    ) -> CanonEdgeEditResult:
+        """identity 改变：软撤回旧边 + ACTIVE override + 建/恢复 replacement。"""
+        spec = EdgeSpec(
+            project_id=project_id,
+            src=new_src,
+            dst=new_dst,
+            type=edge.type,
+            props=props,
+            valid_from_chapter=edge.valid_from_chapter,
+            information_scope=InformationScope.CANON,
+            source=EdgeSource.AUTHOR,
+            evidence_id=None,
+        )
+        restored = queries.find_edge_by_identity_any_status(self._conn, spec)
+        before_props = edge.props.model_dump_json()
+        if restored is not None:
+            replacement_id = restored.id
+            queries.restore_retracted_edge(self._conn, replacement_id)
+            queries.update_edge_props_only(self._conn, replacement_id, props.model_dump_json())
+        else:
+            replacement_id = self._new_edge_id(project_id)
+            queries.insert_edge(
+                self._conn, replacement_id, spec, EvidenceStatus.NONE
+            )
+        decision_id = self._append_canon_edge_decision(
+            project_id, edge, action=action, before_props=before_props,
+            after_props=props.model_dump_json(),
+        )
+        old_override = queries.supersede_active_override(self._conn, project_id, slot_key)
+        override_id = new_id(EntityType.EDGE, project_id)
+        queries.insert_canon_override(
+            self._conn,
+            override_id=override_id,
+            project_id=project_id,
+            slot_key=slot_key,
+            edge_type=edge.type.value,
+            source_edge_id=edge.id,
+            replacement_edge_id=replacement_id,
+            before_props_json=before_props,
+            after_props_json=props.model_dump_json(),
+            action=action,
+            decision_log_id=decision_id,
+        )
+        if old_override is not None:
+            queries.link_override_chain(self._conn, old_override, override_id)
+        queries.retract_edge(self._conn, edge.id)
+        canon_version = self._bump_canon(project_id)
+        current = queries.fetch_edge(self._conn, replacement_id)
+        view = self._edge_view(project_id, current)
+        return CanonEdgeEditResult(
+            edge_id=current.id,
+            replacement_edge_id=current.id,
+            canon_version=canon_version,
+            retracted=False,
+            view=view,
+        )
+
+    def _patch_edge_props(
+        self,
+        project_id: str,
+        edge: Edge,
+        slot_key: str,
+        props: EdgeProps,
+        action: str,
+    ) -> CanonEdgeEditResult:
+        """identity 不变：先 append before/after override，再只更新 props 投影。"""
+        before_props = edge.props.model_dump_json()
+        old_override = queries.supersede_active_override(self._conn, project_id, slot_key)
+        decision_id = self._append_canon_edge_decision(
+            project_id, edge, action=action, before_props=before_props,
+            after_props=props.model_dump_json(),
+        )
+        override_id = new_id(EntityType.EDGE, project_id)
+        queries.insert_canon_override(
+            self._conn,
+            override_id=override_id,
+            project_id=project_id,
+            slot_key=slot_key,
+            edge_type=edge.type.value,
+            source_edge_id=edge.id,
+            replacement_edge_id=edge.id,
+            before_props_json=before_props,
+            after_props_json=props.model_dump_json(),
+            action=action,
+            decision_log_id=decision_id,
+        )
+        if old_override is not None:
+            queries.link_override_chain(self._conn, old_override, override_id)
+        queries.update_edge_props_only(self._conn, edge.id, props.model_dump_json())
+        canon_version = self._bump_canon(project_id)
+        current = queries.fetch_edge(self._conn, edge.id)
+        view = self._edge_view(project_id, current)
+        return CanonEdgeEditResult(
+            edge_id=current.id,
+            replacement_edge_id=current.id,
+            canon_version=canon_version,
+            retracted=False,
+            view=view,
+        )
+
+    def _edge_view(self, project_id: str, edge: Edge) -> CanonEdgeView:
+        override = queries.active_canon_override_for_edge(self._conn, project_id, edge.id)
+        return CanonEdgeView(
+            edge_id=edge.id,
+            edge_type=edge.type,
+            src=edge.src,
+            dst=edge.dst,
+            props=edge.props,
+            valid_from_chapter=edge.valid_from_chapter,
+            source=edge.source,
+            evidence_id=edge.evidence_id,
+            evidence_status=edge.evidence_status,
+            author_owned=override is not None,
+            slot_key=queries.canon_edge_slot_key(edge),
+            canon_version=self._require_canon_version(project_id),
+        )
+
+    def _require_canon_version(self, project_id: str) -> int:
+        row = self._conn.execute(
+            "SELECT canon_version FROM project WHERE id = ?", (project_id,)
+        ).fetchone()
+        if row is None:
+            raise CanonEdgeRefused(f"project {project_id} 不存在")
+        return int(row["canon_version"])
+
+    def _bump_canon(self, project_id: str) -> int:
+        row = self._conn.execute(
+            "UPDATE project SET canon_version = canon_version + 1 "
+            "WHERE id = ? RETURNING canon_version",
+            (project_id,),
+        ).fetchone()
+        return int(row["canon_version"])
+
+    def _append_canon_edge_decision(
+        self,
+        project_id: str,
+        edge: Edge,
+        *,
+        action: str,
+        before_props: str,
+        after_props: str | None,
+    ) -> str:
+        from .. import decisions
+
+        kind = (
+            decisions.DecisionKind.CANON_EDGE_EDIT
+            if action != "RETRACT"
+            else decisions.DecisionKind.CANON_EDGE_RETRACT
+        )
+        return decisions.append(
+            self._conn,
+            project_id=project_id,
+            kind=kind,
+            decision=decisions.Verdict.ACCEPT,
+            subject_name=edge.id,
+            chapter_number=edge.valid_from_chapter,
+            payload={
+                "edge_id": edge.id,
+                "edge_type": edge.type.value,
+                "src": edge.src,
+                "dst": edge.dst,
+                "valid_from_chapter": edge.valid_from_chapter,
+                "before_props_json": before_props,
+                "after_props_json": after_props,
+            },
+        ).id
+
+    def current_chapter_id(self, project_id: str, number: int) -> str | None:
+        row = queries.find_chapter_by_number(self._conn, project_id, number)
+        return row.id if row is not None else None
+
+    def current_chapter_hash(self, project_id: str, number: int) -> str | None:
+        row = queries.find_chapter_by_number(self._conn, project_id, number)
+        return row.text_sha256 if row is not None else None
+
+    def current_chapter_generation(self, project_id: str, number: int) -> int | None:
+        row = queries.find_chapter_by_number(self._conn, project_id, number)
+        return row.snapshot_generation if row is not None else None
 
     def current_snapshots(self, project_id: str) -> list[ChapterText]:
         return queries.current_snapshots(self._conn, project_id)

@@ -281,7 +281,7 @@ def test_l2_says_a_summary_may_be_older_than_the_chapter_it_summarizes(book: Boo
     这一层唯一的「这一章讲了什么」，所以它过期 = 索引在那一章给的是**错的**而不是缺的
     ——比缺更坏。
 
-    上游知道这件事（`api/autopilot.py`：「`coverage()` 也只问「有没有」不问「新不新」」），
+    上游知道这件事（`SummaryStore.coverage()` 的 docstring：「它只问「有没有」不问「新不新」」），
     但 `index.py` 自己的 docstring 反过来宣称「照抄它就不会撒谎」。
     """
     _summarize(book, [1, 2, 3])

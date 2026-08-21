@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  useBookSummaryStatus,
   useChapterSummary,
   useEditSummary,
   useGenerateSummary,
@@ -9,7 +10,12 @@ import {
   useSummaryWindow,
 } from "../api/hooks";
 import { LABEL_ZH } from "../api/types";
-import type { NodeSummaryMentions, SummaryMention } from "../api/types";
+import type {
+  BookChapterStatusRow,
+  BookSummaryStatus,
+  NodeSummaryMentions,
+  SummaryMention,
+} from "../api/types";
 import { refusalText } from "../chat";
 import { useCoords } from "../store";
 
@@ -63,6 +69,7 @@ export function SummaryTab() {
   const { projectId, chapter, setChapter, setPage } = useCoords();
   const status = useChapterSummary(projectId, chapter);
   const covered = useSummaryWindow(projectId, chapter);
+  const book = useBookSummaryStatus(projectId);
   const generate = useGenerateSummary(projectId ?? "");
   const edit = useEditSummary(projectId ?? "");
   const retract = useRetractSummary(projectId ?? "");
@@ -105,6 +112,22 @@ export function SummaryTab() {
     setConfirming(false);
   }
 
+  function goChapter(n: number) {
+    setChapter(n);
+    setPage("workbench");
+  }
+
+  // 全书总结状态一直挂在这一格最上面：**它跟着书走，不跟着当前章走**——
+  // 作者在这一格里既看「当前章有没有」也看「全书缺哪些/哪章不对齐/哪章异常」。
+  const bookStatusEl = (
+    <BookStatus
+      data={book.data}
+      failed={book.isError}
+      current={chapter}
+      onGo={goChapter}
+    />
+  );
+
   if (failed) return <div className="err-box">{failed}</div>;
   if (!data) return <div className="empty">正在看这一章有没有总结…</div>;
 
@@ -112,6 +135,7 @@ export function SummaryTab() {
   if (!data.has_text) {
     return (
       <div className="chsum">
+        {bookStatusEl}
         <p className="empty">
           第 {chapter} 章还没有正文，所以没有总结可写 —— 总结是从这一章的正文压出来的。
           写完这一章、存一次，这里就有得生成了。
@@ -125,6 +149,7 @@ export function SummaryTab() {
 
   return (
     <div className="chsum">
+      {bookStatusEl}
       <p className="chsum-scope">{coverageLine(chapter, covered.data)}</p>
 
       <textarea
@@ -234,6 +259,137 @@ export function SummaryTab() {
       )}
     </div>
   );
+}
+
+// ── 全书总结状态（2026-08-18 文档 §6 / Step 4）──────────────────────────────
+//
+// 一口气看清「这本书现在长什么样」：哪章配对、哪章缺、哪章不对齐（正文动过、
+// 总结该覆写）、哪章生成时出了岔子。**全部确定性查库**（指纹配对 + attempt 终态），
+// 后端一个语义判断都没有，所以这里也不许出现「相关度 / 相似」那类说法。
+//
+// ● 不许出现的东西：
+// 1. **把 `empty` 和 `missing` 并成一类。** 下一步动作相反：一种去写正文，
+//    一种去生成总结（要花预算）。
+// 2. **指着异常章给一颗会花钱的按钮。** 异常由自治轮自己重试（§6 不阻塞别的章），
+//    界面只把它标出来，不催作者手动付一次费。
+// 3. **手动算一遍「近几章优先」。** 权重是后端确定性公式给的（§4），前端照抄一个
+//    就是第二个会漂的常量。
+
+const BOOK_STATUS_FAILED =
+  "全书总结状态这会儿没读出来。上面空着不代表没总结 —— 刷新一下再看。";
+
+/** 芯片上那句短状态。`paired` 绿 / `missing` 橙 / `stale` 棕 / `empty` 灰。 */
+const STATUS_LABEL: Record<BookChapterStatusRow["state"], string> = {
+  paired: "有",
+  missing: "缺",
+  stale: "不对齐",
+  empty: "空",
+};
+
+function BookStatus(props: {
+  data: BookSummaryStatus | undefined;
+  failed: boolean;
+  current: number;
+  onGo: (chapter: number) => void;
+}) {
+  if (props.failed) return <div className="err-box">{BOOK_STATUS_FAILED}</div>;
+  if (!props.data) return null;
+
+  const data = props.data;
+  const rows = data.chapters;
+  const paired = rows.filter((r) => r.state === "paired").length;
+  const missing = rows.filter((r) => r.state === "missing").length;
+  const stale = rows.filter((r) => r.state === "stale").length;
+  const anomaly = rows.filter((r) => r.anomaly).length;
+  return (
+    <div className="chsum-book">
+      <p className="chsum-scope">全书总结 —— 缺章 / 不对齐每 30 分钟自动补，正在写的章不碰：</p>
+      <div className="chip-row">
+        {rows.map((row) => (
+          <StatusChip
+            key={row.chapter_number}
+            row={row}
+            isCurrent={row.chapter_number === props.current}
+            focused={row.chapter_number === data.focused_chapter}
+            onGo={props.onGo}
+          />
+        ))}
+      </div>
+      <p className="chsum-why">{bookStatusLine(data, paired, missing, stale, anomaly)}</p>
+    </div>
+  );
+}
+
+function StatusChip(props: {
+  row: BookChapterStatusRow;
+  isCurrent: boolean;
+  focused: boolean;
+  onGo: (chapter: number) => void;
+}) {
+  const r = props.row;
+  const cls =
+    "chip status-chip" +
+    (r.anomaly
+      ? " status-chip-anomaly"
+      : r.state === "paired"
+        ? " status-chip-paired"
+        : r.state === "missing"
+          ? " status-chip-missing"
+          : r.state === "stale"
+            ? " status-chip-stale"
+            : " status-chip-empty") +
+    (r.weight === 0 && !r.anomaly ? " status-chip-skip" : "");
+  const label = r.anomaly ? "异常" : STATUS_LABEL[r.state];
+  return (
+    <button
+      className={cls}
+      title={statusChipTitle(r, props.isCurrent, props.focused)}
+      aria-label={`第 ${r.chapter_number} 章，${r.anomaly ? "异常" : label}`}
+      onClick={() => props.onGo(r.chapter_number)}
+    >
+      {r.chapter_number}
+      <span className="chip-kind">{label}</span>
+    </button>
+  );
+}
+
+/** 芯片悬停时那句「为什么」。**reason 只写查得到的事实**，一句解释都没有（约束 8）。 */
+function statusChipTitle(
+  r: BookChapterStatusRow,
+  isCurrent: boolean,
+  focused: boolean,
+): string {
+  const head = `第 ${r.chapter_number} 章`;
+  if (isCurrent) return `${head} —— 你现在正看着它。`;
+  if (focused) return `${head} —— 作者正在写的那一章，先不碰。`;
+  if (r.anomaly) return `${head}的总结生成时出了岔子（不阻塞别的章，会照常重试）。`;
+  const weight =
+    r.weight === 0 ? "这一轮不看" : `这一轮权重 ${r.weight}（越近越必补）`;
+  if (r.state === "empty") return `${head}还没有正文，没得总结。`;
+  if (r.state === "paired") return `${head}的总结和正文对得上。`;
+  if (r.state === "missing") return `${head}还没有总结 —— ${weight}。`;
+  return `${head}的正文动过，总结还没跟着覆写 —— ${weight}。`;
+}
+
+/** 那一行总结。**数字全来自后端视图**（前端不数第二遍会漂的账）。 */
+function bookStatusLine(
+  data: BookSummaryStatus,
+  paired: number,
+  missing: number,
+  stale: number,
+  anomaly: number,
+): string {
+  const head = `全书 ${data.chapters.length} 章：${paired} 章有总结`;
+  const extras: string[] = [];
+  if (missing) extras.push(`${missing} 章缺`);
+  if (stale) extras.push(`${stale} 章不对齐`);
+  if (anomaly) extras.push(`${anomaly} 章生成异常`);
+  const tail = extras.length ? `、${extras.join("、")}。` : "，都跟正文对得上。";
+  const origin =
+    data.focused_chapter != null
+      ? `作者正写在第 ${data.focused_chapter} 章，那一章不碰。`
+      : "没有作者在位信号，全都够资格排进自动补全。";
+  return `${head}${tail}${origin}`;
 }
 
 /** 这一段总结提到了什么 —— **一排可点的记忆点**。

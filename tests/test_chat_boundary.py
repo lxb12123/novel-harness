@@ -310,7 +310,11 @@ def test_the_author_edits_the_chapter_and_the_conversation_stops_serving_the_old
     rewritten = (
         "第一章 血脉\n\n萧决在青云城主府第一次听说了血脉秘密的真相。\n李管家改口了：其实我知道。\n"
     )
-    saved = client.put(f"/api/projects/{pid}/chapters/1/text", json={"markdown": rewritten})
+    base = client.get(f"/api/projects/{pid}/chapters/1/text").json()["text_sha256"]
+    saved = client.put(
+        f"/api/projects/{pid}/chapters/1/text",
+        json={"markdown": rewritten, "expected_text_sha256": base},
+    )
     assert saved.status_code == 200, saved.text
 
     second = Scripted(says("嗯。"))
@@ -375,9 +379,13 @@ def test_the_net_would_catch_a_projection_that_kept_serving_the_old_manuscript(
     )
     chat_id = open_chat(client, pid)
     turn(client, pid, chat_id, chapter=1, said="读一下第 1 章")
+    base = client.get(f"/api/projects/{pid}/chapters/1/text").json()["text_sha256"]
     client.put(
         f"/api/projects/{pid}/chapters/1/text",
-        json={"markdown": "第一章 血脉\n\n萧决在青云城主府听说了真相。\n李管家改口了。\n"},
+        json={
+            "markdown": "第一章 血脉\n\n萧决在青云城主府听说了真相。\n李管家改口了。\n",
+            "expected_text_sha256": base,
+        },
     )
     second = Scripted(says("嗯。"))
     use(monkeypatch, second)

@@ -294,9 +294,9 @@ def test_the_edit_is_written_into_the_decision_log_with_what_it_became(world: Wo
 def test_actor_is_not_hardwired_to_the_author(world: World) -> None:
     """自动生效那条链是另一个 agent 的活，但它一旦来调这里，写下的边不该冒充作者
     亲手确认过的东西。"""
-    result = _flip(world, EdgeType.BELIEVES, "以为已泄露", actor="autopilot")
+    result = _flip(world, EdgeType.BELIEVES, "以为已泄露", actor="background")
     (decision,) = world.edits(decisions.DecisionKind.KNOWLEDGE_EDIT)
-    assert decision.actor == "autopilot"
+    assert decision.actor == "background"
     assert world.edge(result.edge_id).source is EdgeSource.SYSTEM
 
 

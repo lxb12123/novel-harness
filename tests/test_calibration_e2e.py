@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -71,14 +72,30 @@ def _insert_summary(
     *,
     created_at: str = "",
 ) -> None:
+    # 2026-08-20 合并保存闭环任务后，总结是**版本化**的：读路径走
+    # `chapter chapter_summary_head chapter_summary` 三连 JOIN（`_latest_per_chapter`），
+    # 所以夹具除了版本行还必须把 head 指针指过来——只插版本行的话 `coverage()`
+    # 看不见它，这一章会被当成「没总结」而不是「总结陈旧」。
+    # 这里仍然裸写 SQL 而不是走 `RollingSummarizer.ensure()`：**要的就是能指定
+    # `created_at`**（新鲜度判据比的正是它和当前快照的先后）。
     created = created_at or "strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+    chapter_id = conn.execute(
+        "SELECT id FROM chapter WHERE project_id = ? AND number = ?", (pid, chapter)
+    ).fetchone()["id"]
+    summary_id = f"summary:{pid}:{chapter}"
     conn.execute(
         f"""
         INSERT OR IGNORE INTO chapter_summary
-          (id, project_id, chapter_number, summary, schema_version, prompt_hash, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, {created})
+          (id, project_id, chapter_id, chapter_number, summary, summary_sha256,
+           schema_version, prompt_hash, created_at, source, status)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, {created}, 'model', 'ACTIVE')
         """,
-        (f"summary:{pid}:{chapter}", pid, chapter, summary, "v1", f"hash-{chapter}"),
+        (summary_id, pid, chapter_id, chapter, summary,
+         sha256(summary.encode("utf-8")).hexdigest(), "v1", f"hash-{chapter}"),
+    )
+    conn.execute(
+        "UPDATE chapter_summary_head SET current_summary_id = ? WHERE chapter_id = ?",
+        (summary_id, chapter_id),
     )
     conn.commit()
 

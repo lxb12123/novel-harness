@@ -267,7 +267,14 @@ def test_success_records_extractor_call_and_second_run_never_pays_again(seed: Se
     conn.close()
 
 
-def test_run_uses_the_immutable_enqueued_snapshot_after_current_text_changes(seed: Seed) -> None:
+def test_a_late_run_after_the_text_moved_is_superseded_not_ingested(seed: Seed) -> None:
+    """021 / Task 9：run 创建后正文换过版本 → 晚到结果 SUPERSEDED。
+
+    旧契约是「run 照旧用创建时那份不可变快照跑完」——Task 9 把它推翻了：晚到
+    结果永远不能 ingest / 建提案 / auto-Canon（正文已经往前走，旧结果对着的是
+    作者已经看不见的那一版）。prompt 仍按**创建时**的快照算（run 不该在运行中
+    重新读"当前正文"），但**写盘前**的 basis 检查会把它拦下。
+    """
     analyzer = Analyzer()
     runner = _runner(seed, analyzer)
     queued = runner.enqueue(seed.project_id, 3)
@@ -287,10 +294,81 @@ def test_run_uses_the_immutable_enqueued_snapshot_after_current_text_changes(see
 
     result = runner.run(queued.id)
 
-    assert result.status is ExtractionRunStatus.SUCCEEDED
-    assert analyzer.requests[0].chapter.text == QUOTE + "\n"
-    assert analyzer.requests[0].chapter.snapshot_id == queued.snapshot_id
+    assert result.status is ExtractionRunStatus.SUPERSEDED
+    # 模型调用根本没发生（basis 检查在付费之前）——旧快照的 run 不给新正文掏钱。
+    assert analyzer.calls == 0
     assert queued.snapshot_id != current_snapshot
+    conn = seed.connection()
+    assert conn.execute("SELECT COUNT(*) FROM story_event").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM evidence").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM proposal_set").fetchone()[0] == 0
+    conn.close()
+
+
+def test_a_run_claimed_before_the_save_pays_but_still_does_not_ingest(seed: Seed) -> None:
+    """模型调用期间正文又变了：钱已经花了，但结果不能进库（审计保留）。
+
+    `_basis_current` 检查两处：付费前（省钱）和 ingest 前（晚到防护）。这一条
+    走的是第二处——claim 之后、模型调用期间保存了 S3。
+    """
+    gate: dict[str, bool] = {"released": False}
+
+    class GatedAnalyzer:
+        calls = 0
+
+        def __call__(self, request):
+            GatedAnalyzer.calls += 1
+            # 模拟 provider 慢：调用进行中，作者保存了新正文。
+            import time
+
+            while not gate["released"]:
+                time.sleep(0.005)
+            return CompletionResult(
+                text=_analysis_json(),
+                model="extractor-test-model",
+                finish_reason="stop",
+                prompt_tokens=123,
+                completion_tokens=45,
+            )
+
+    runner = _runner(seed, GatedAnalyzer())
+    queued = runner.enqueue(seed.project_id, 3)
+
+    conn = seed.connection()
+    graph = SqliteStoryGraph(conn)
+    import threading
+
+    result: list = []
+
+    def complete() -> None:
+        result.append(runner.run(queued.id))
+
+    worker = threading.Thread(target=complete)
+    worker.start()
+    # 等 provider 真的开始跑（call 已进入阻塞），再保存 S3。
+    while GatedAnalyzer.calls == 0:
+        import time
+
+        time.sleep(0.005)
+    graph.put_chapter(
+        ChapterSpec(
+            project_id=seed.project_id,
+            number=3,
+            heading="第三章 改稿",
+            path="chapters/0003.md",
+            text="这是一份完全不同的新正文，不含旧引语。\n",
+        )
+    )
+    conn.close()
+    gate["released"] = True
+    worker.join()
+
+    run = result[0]
+    assert run.status is ExtractionRunStatus.SUPERSEDED
+    assert run.model_call_id is not None  # 调用审计保留
+    conn = seed.connection()
+    assert conn.execute("SELECT COUNT(*) FROM story_event").fetchone()[0] == 0
+    conn.close()
 
 
 def test_malformed_json_is_parsed_once_failed_and_never_retried(seed: Seed) -> None:

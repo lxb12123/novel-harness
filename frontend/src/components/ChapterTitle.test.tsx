@@ -49,8 +49,12 @@ describe("章标题", () => {
     expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
   });
 
-  it("换章会把**刚离开的**那一章交给后台整理，而作者看不到这件事", async () => {
-    // 这条随控件一起从顶栏搬下来：换章的入口只有这一个，它掉了就没有别的地方会发那次整理。
+  it("换章**不发任何付费工作**（Task 16：触发点是保存）", async () => {
+    // 2026-08-17：`useOpenChapter` 从发 autopilot 改成纯坐标 + 免费焦点心跳。
+    // 付费动作只在保存（Ctrl-S → `PUT …/text` → `_trigger_refresh`）时由后台
+    // dispatcher 触发；换章再悄悄发一次整理是「双重 autopilot」的旧设计
+    // （作者切走 ≠ 写完了）。那条端点 2026-08-20 已整块删掉（ADR 0035），
+    // 所以下面数的是**除免费心跳外的一切 POST**——比只盯 autopilot 那个 URL 严。
     const user = userEvent.setup();
     open();
     await screen.findByText(LINE);
@@ -62,11 +66,11 @@ describe("章标题", () => {
       expect(
         spy.mock.calls.some(
           ([url, init]) =>
-            // 第 1 章 —— 他刚离开的那一章，不是刚进入的那一章
-            String(url).endsWith("/chapters/1/autopilot") &&
+            // 换章除了 `/focus` 免费心跳，一个 POST 都不该有。
+            !/\/focus$/.test(String(url)) &&
             String((init as RequestInit | undefined)?.method) === "POST",
         ),
-      ).toBe(true),
+      ).toBe(false),
     );
     expect(document.body.textContent).not.toMatch(/后台|整理中|总结中/);
   });

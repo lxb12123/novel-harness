@@ -178,7 +178,12 @@ json_ok "valid_from 是算出来的 ch3" "d.get('edge', {}).get('valid_from_chap
 printf '  valid_from_chapter = %s\n' "$(python3 -c "import json,io; print(json.load(io.open('$TMP/resp.json',encoding='utf-8'))['edge']['valid_from_chapter'])")"
 
 step "第 3 章 —— R3 抓到 DEAD_SPEAKS（死者说话：valid_from=3 起他死了）"
+# ⚠️ **必须带章标题。** 2026-08-20 合并保存闭环任务后，check 端点先把磁盘版
+#    同步进库再跑规则（报告绑定快照），而 sync 要求一个章节文件**恰好切出一章**——
+#    没有行首「第N章」的正文会被 422 `sync_refused` 拒掉，规则一条都跑不到。
 cat >"$CH3" <<'EOF'
+第三章
+
 　　夜里风大。
 
 　　萧决道：「我还没死。」
@@ -192,6 +197,8 @@ json_ok "ch3 的 issue 带「建议」（确定性产出，非 LLM）" \
 
 step "第 2 章 —— 同一段字，他还活着 → 0 issue"
 cat >"$CH2" <<'EOF'
+第二章 玄铁令
+
 　　夜里风大。
 
 　　萧决道：「我还没死。」
@@ -203,8 +210,10 @@ json_ok "ch2 没有 DEAD_SPEAKS" \
 # ⚠️ 下面这句里的「跑了 2 条规则」是字面量，被 test_doc_numbers::test_demo_pins_the_real_rule_count
 #    钉着（必须 == len(ALL_CHECKS)）。加规则时连它一起改——**没有别的东西会告诉你心跳断了**。
 #    2026-08-20 改 API 心跳时它一度被写成宽松的 `>= 2`，守卫当场咬住；别再放宽。
+#    同日合并保存闭环任务后出参从 `rules_run: [名字]` 换成 `rules: [{rule_id, state, …}]`
+#    （快照绑定报告），断言跟着读 `rules`——**约束 8 那一半没变**：零要和真零分得开。
 json_ok "ch2 报「跑了 2 条规则」（§10 约束 8：零要和真零分开）" \
-  "len(d.get('rules_run', [])) == 2"
+  "len(d.get('rules', [])) == 2 and all(r.get('rule_id') for r in d['rules'])"
 
 printf '\n✓ 心跳正常。两条泳道：\n'
 printf '  1. 种子库 → 花名册/矩阵/闭开区间（读路径，Web 那半边）。\n'

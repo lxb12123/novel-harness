@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from .models import (
+    AUTO_CANON_CORRECTABLE_EDGE_TYPES,
     CANONICAL_ALIAS_LABELS,
     DEAD_VALUE_TEXT,
     HEALTH_DIM_KEY,
@@ -20,6 +21,9 @@ from .models import (
     AliasKind,
     AliasSpec,
     AuditPointer,
+    CanonEdgeEditResult,
+    CanonEdgeView,
+    ChapterCommitToken,
     ChapterSpec,
     ChapterText,
     ChapterUsage,
@@ -46,6 +50,7 @@ from .models import (
     NodeSpec,
     RelocatePointer,
     Resolution,
+    RetirementReport,
     SecretDetail,
     StateSnapshot,
     StateValue,
@@ -61,6 +66,7 @@ from .store import (
     MAX_SUBGRAPH_NODES,
     QUERYABLE_SCOPES,
     CanonWriter,
+    CanonEdgeRefused,
     ChapterInUse,
     GraphStore,
     NodeNotFound,
@@ -71,6 +77,7 @@ from .store import (
 )
 
 __all__ = [
+    "AUTO_CANON_CORRECTABLE_EDGE_TYPES",
     "CANONICAL_ALIAS_LABELS",
     "DEAD_VALUE_TEXT",
     "HEALTH_DIM_KEY",
@@ -84,6 +91,10 @@ __all__ = [
     "AliasKind",
     "AliasSpec",
     "AuditPointer",
+    "CanonEdgeEditResult",
+    "CanonEdgeRefused",
+    "CanonEdgeView",
+    "ChapterCommitToken",
     "CanonWriter",
     "ChapterInUse",
     "ChapterSpec",
@@ -115,6 +126,7 @@ __all__ = [
     "QuoteMismatch",
     "RelocatePointer",
     "Resolution",
+    "RetirementReport",
     "SecretDetail",
     "StateSnapshot",
     "StateValue",

@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import fcntl
+import os
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -25,6 +27,8 @@ from novel_harness.db import IN_MEMORY, Connection, connect, migrate
 from novel_harness.graph import ChapterInUse, ChapterUsage
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.importer import (
+    ChapterChanged,
+    ChapterLockTimeout,
     ImportRefused,
     SyncRefused,
     chapter_path,
@@ -58,6 +62,10 @@ def pid(conn: Connection) -> str:
 def _chapter_rows(store: SqliteStoryGraph, pid: str) -> list[tuple[int, str, str]]:
     """(number, chapter_id, snapshot_id)，按章序。走 `current_snapshots` —— 不裸 SQL。"""
     return [(ct.number, ct.chapter_id, ct.snapshot_id) for ct in store.current_snapshots(pid)]
+
+
+def _seed_book(store: SqliteStoryGraph, pid: str, tmp_path: Path) -> None:
+    import_book(store, pid, txt=BOOK, root=tmp_path)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -251,6 +259,233 @@ def test_sync_picks_up_an_edit_as_a_new_snapshot_and_keeps_the_old_one(
     assert "顾清吟" in after[2].text
     assert after[1].snapshot_id == before[1]
     assert after[3].snapshot_id == before[3]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 保存回执：写盘前结构预检 / 原子替换 / 章级锁 / snapshot_generation
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_validate_chapter_markdown_rejects_bad_structure_and_accepts_good() -> None:
+    good = importer.validate_chapter_markdown("第一章 血脉\n\n正文。\n")
+    assert good is not None and good.raw_heading == "第一章 血脉"
+    with pytest.raises(SyncRefused):
+        importer.validate_chapter_markdown(
+            "第一章 甲\n\n正文。\n\n第二章 乙\n\n再来一段。\n"
+        )
+    with pytest.raises(SyncRefused):
+        importer.validate_chapter_markdown("卷首没有章标的一整段。\n")
+
+
+def test_save_structure_failure_leaves_disk_and_db_untouched(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> None:
+    _seed_book(store, pid, tmp_path)
+    disk_before = (tmp_path / "chapters/0001.md").read_text(encoding="utf-8")
+    db_hash_before = store.current_chapter_hash(pid, 1)
+
+    with pytest.raises(SyncRefused):
+        importer.save_chapter(
+            store,
+            pid,
+            tmp_path,
+            1,
+            "第一章 甲\n\n正文。\n\n第二章 乙\n\n再来一段。\n",
+            expected_sha256=db_hash_before,
+        )
+    assert (tmp_path / "chapters/0001.md").read_text(encoding="utf-8") == disk_before
+    assert store.current_chapter_hash(pid, 1) == db_hash_before
+
+
+def test_save_new_hash_bumps_generation_and_returns_receipt(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> None:
+    _seed_book(store, pid, tmp_path)
+    base = store.current_chapter_hash(pid, 1)
+    receipt = importer.save_chapter(
+        store, pid, tmp_path, 1, "第一章 血脉\n\n新正文。\n", expected_sha256=base
+    )
+    assert receipt.changed is True
+    assert receipt.saved_to_disk is True
+    assert receipt.indexed is True
+    assert receipt.snapshot_generation == 2
+    assert receipt.snapshot_id is not None
+    assert receipt.text_sha256 == importer.text_digest("第一章 血脉\n\n新正文。\n")
+    assert store.current_chapter_hash(pid, 1) == receipt.text_sha256
+
+
+def test_save_same_hash_keeps_generation_and_snapshot(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> None:
+    _seed_book(store, pid, tmp_path)
+    base = store.current_chapter_hash(pid, 1)
+    same = (tmp_path / "chapters/0001.md").read_text(encoding="utf-8")
+    receipt = importer.save_chapter(store, pid, tmp_path, 1, same, expected_sha256=base)
+    assert receipt.changed is False
+    assert receipt.snapshot_generation == 1
+    assert receipt.snapshot_id is not None
+    # 同 hash 连续保存：generation 不涨、快照不新增。
+    again = importer.save_chapter(store, pid, tmp_path, 1, same, expected_sha256=base)
+    assert again.changed is False
+    assert again.snapshot_generation == 1
+    assert again.snapshot_id == receipt.snapshot_id
+
+
+def test_restoring_a_historical_snapshot_is_a_change_with_a_new_generation(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> None:
+    _seed_book(store, pid, tmp_path)
+    s1_text = (tmp_path / "chapters/0001.md").read_text(encoding="utf-8")
+    s1_hash = importer.text_digest(s1_text)
+    s1_snapshot = store.current_chapter_hash(pid, 1)
+    assert store.current_chapter_generation(pid, 1) == 1
+
+    r2 = importer.save_chapter(
+        store, pid, tmp_path, 1, "第一章 血脉\n\n第二版正文。\n", expected_sha256=s1_hash
+    )
+    assert r2.changed is True
+    assert r2.snapshot_generation == 2
+    assert store.current_chapter_generation(pid, 1) == 2
+
+    # 从 S2 还原到历史已有的 S1 —— 识别为变化、新 generation（ABA 防护）。
+    r3 = importer.save_chapter(store, pid, tmp_path, 1, s1_text, expected_sha256=r2.text_sha256)
+    assert r3.changed is True
+    assert r3.snapshot_generation == 3
+    assert store.current_chapter_generation(pid, 1) == 3
+    assert store.current_chapter_hash(pid, 1) == s1_hash
+    assert s1_snapshot is not None  # 快照按内容去重，S1 那条被复用
+
+
+def test_save_expected_hash_conflict_refuses_before_writing(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> None:
+    _seed_book(store, pid, tmp_path)
+    disk_before = (tmp_path / "chapters/0001.md").read_text(encoding="utf-8")
+    with pytest.raises(ChapterChanged):
+        importer.save_chapter(
+            store,
+            pid,
+            tmp_path,
+            1,
+            "第一章 血脉\n\n不该落盘。\n",
+            expected_sha256="a" * 64,
+        )
+    assert (tmp_path / "chapters/0001.md").read_text(encoding="utf-8") == disk_before
+
+
+def test_save_reconciles_stale_db_before_writing_and_409_on_stale_base(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> None:
+    """磁盘被外部改过（WPS）、DB 还没跟上：保存先收编磁盘版，再按新 base 判断。"""
+    _seed_book(store, pid, tmp_path)
+    old_base = store.current_chapter_hash(pid, 1)
+    external = "第一章 血脉\n\n作者在 WPS 里写的新版，还没同步。\n"
+    (tmp_path / "chapters/0001.md").write_text(external, encoding="utf-8")
+    assert store.current_chapter_hash(pid, 1) == old_base
+
+    # 客户端依据的是旧 base → 先 reconcile 到磁盘版，再发现 base 过期 → 409。
+    with pytest.raises(ChapterChanged):
+        importer.save_chapter(
+            store, pid, tmp_path, 1, "第一章 血脉\n\n新保存。\n", expected_sha256=old_base
+        )
+    # reconcile 已经把外部版收进库（ADR 0021 的退路），磁盘仍是外部版。
+    assert store.current_chapter_hash(pid, 1) == importer.text_digest(external)
+    assert (tmp_path / "chapters/0001.md").read_text(encoding="utf-8") == external
+
+
+def test_save_with_current_base_after_stale_db_reconciles_then_writes(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> None:
+    _seed_book(store, pid, tmp_path)
+    external = "第一章 血脉\n\n外部新版。\n"
+    (tmp_path / "chapters/0001.md").write_text(external, encoding="utf-8")
+    receipt = importer.save_chapter(
+        store, pid, tmp_path, 1, "第一章 血脉\n\n作者保存。\n", expected_sha256=importer.text_digest(external)
+    )
+    assert receipt.changed is True
+    assert receipt.indexed is True
+    assert store.current_chapter_hash(pid, 1) == receipt.text_sha256
+    # 被覆盖的外部版先进了版本历史。
+    assert importer.text_digest(external) in {
+        s.text_sha256 for s in store.chapter_snapshots(pid, 1)
+    }
+
+
+def test_directory_fsync_failure_returns_durability_failed(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """os.replace 成功但目录 fsync 失败：202 形态，不谎报旧文件仍在。"""
+    _seed_book(store, pid, tmp_path)
+    base = store.current_chapter_hash(pid, 1)
+    real_fsync = os.fsync
+    calls = 0
+
+    def flaky_fsync(fd: int) -> None:
+        nonlocal calls
+        calls += 1
+        if calls >= 2:  # 第一次是临时文件的 fsync，第二次是目录的 fsync
+            raise OSError("模拟目录 fsync 失败")
+        real_fsync(fd)
+
+    monkeypatch.setattr(importer.os, "fsync", flaky_fsync)
+    receipt = importer.save_chapter(
+        store, pid, tmp_path, 1, "第一章 血脉\n\n已替换但持久性未确认。\n", expected_sha256=base
+    )
+    assert receipt.processing == "durability_failed"
+    assert receipt.saved_to_disk is True
+    assert receipt.indexed is False
+    assert "已替换但持久性未确认" in (tmp_path / "chapters/0001.md").read_text(encoding="utf-8")
+
+
+def test_db_commit_failure_returns_sync_failed_then_reconcile_repairs(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """写盘成功但图层提交失败：202 sync_failed，随后 reconcile 把库补回来。"""
+    _seed_book(store, pid, tmp_path)
+    base = store.current_chapter_hash(pid, 1)
+    real_commit = store.commit_chapter_snapshot
+    failed = False
+
+    def flaky_commit(spec, *, expected_text_sha256):  # type: ignore[no-untyped-def]
+        nonlocal failed
+        if not failed:
+            failed = True
+            raise RuntimeError("模拟图层提交失败")
+        return real_commit(spec, expected_text_sha256=expected_text_sha256)
+
+    monkeypatch.setattr(store, "commit_chapter_snapshot", flaky_commit)
+    receipt = importer.save_chapter(
+        store, pid, tmp_path, 1, "第一章 血脉\n\nDB 第一次没赶上。\n", expected_sha256=base
+    )
+    assert receipt.processing == "sync_failed"
+    assert receipt.saved_to_disk is True
+    assert receipt.indexed is False
+    # reconcile（save_chapter 内部那次）把库修好了。
+    assert store.current_chapter_hash(pid, 1) == receipt.text_sha256
+
+
+def test_save_lock_timeout_leaves_everything_untouched(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> None:
+    _seed_book(store, pid, tmp_path)
+    disk_before = (tmp_path / "chapters/0001.md").read_text(encoding="utf-8")
+    db_before = store.current_chapter_hash(pid, 1)
+    lock_dir = tmp_path / ".novel-harness" / "locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_file = lock_dir / f"{store.current_chapter_id(pid, 1)}.lock"
+    handle = lock_file.open("w")
+    fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    try:
+        with pytest.raises(ChapterLockTimeout):
+            importer.save_chapter(
+                store, pid, tmp_path, 1, "第一章 血脉\n\n锁超时。\n", expected_sha256=db_before,
+                lock_timeout=0.05,
+            )
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+    assert (tmp_path / "chapters/0001.md").read_text(encoding="utf-8") == disk_before
+    assert store.current_chapter_hash(pid, 1) == db_before
 
 
 def test_sync_adds_a_chapter_the_author_wrote_by_hand(

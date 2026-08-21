@@ -33,6 +33,11 @@ from fastapi.testclient import TestClient
 
 import seed
 
+from novel_harness.db import connect
+from novel_harness.graph.sqlite_events import SqliteEventStore
+from novel_harness.graph.sqlite_proposals import SqliteProposalStore
+from novel_harness.graph.sqlite_store import SqliteStoryGraph
+
 from test_activity import seed_call, seed_run
 from test_api import (
     _seed_edge_conflict_proposal,
@@ -644,14 +649,27 @@ def test_frontend_fixture_matches_the_real_api(
     )
     assert ran.status_code == 200, ran.text
     grab("recordedRules", client.get(f"{base}/rules"))
+    # 自定义确定性规则（024 / Task 13）：R2/R3 常驻显示 + 一条作者规则。
+    grab("validationRules", client.get(f"{base}/validation-rules"))
+    vr_created = client.post(
+        f"{base}/validation-rules",
+        json={"title": "不许有玄铁令", "literal": "玄铁令", "blocks_downstream": True},
+    )
+    assert vr_created.status_code == 200, vr_created.text
+    grab("validationRuleCreated", vr_created)
 
     # ── 多版本的一章：版本抽屉的「还原 / 删除」只在有第二版时才存在 ──────────
     # **放在最后**：这一步会改第 2 章的正文，前面每一个 grab 都不该看见它。
     # `chapterHistory` 那份只有一版（导入即当前），照它写出来的界面在真实的两版面前
     # 是没被验过的——所以这里真存一次，冻的是「有历史可还原」那个形态。
-    two_versions = client.get(f"{base}/chapters/2/text").json()["markdown"]
+    two_versions_body = client.get(f"{base}/chapters/2/text").json()
+    two_versions = two_versions_body["markdown"]
     saved_again = client.put(
-        f"{base}/chapters/2/text", json={"markdown": two_versions + "\n后来又添了一段。\n"}
+        f"{base}/chapters/2/text",
+        json={
+            "markdown": two_versions + "\n后来又添了一段。\n",
+            "expected_text_sha256": two_versions_body["text_sha256"],
+        },
     )
     # 保存的回执也冻住：还原走的就是这条 PUT，测试桩得照它的真形状答话。
     grab("chapterSaved", saved_again)
@@ -718,6 +736,10 @@ def test_frontend_fixture_matches_the_real_api(
     # 落在第 3 章而不是第 1 章：一章一份快照一个 prompt 只有一条 run（库里有一条唯一约束），
     # 而第 1 章那条已经被上面那次成功的整理占着——**两份都要**，成功和失败在屏幕上是
     # 两块完全不同的界面。
+    # 单章保存（Task 2）不再靠整本 sync 顺带索引别的章，所以第 3 章要在这里显式
+    # 索引一次——它躺在磁盘上（`check` 用的），`seed_run` 需要它的快照当锚。
+    indexed = client.post(f"{base}/sync")
+    assert indexed.status_code == 200, indexed.text
     failed_run = seed_run(book, 3, status="FAILED")
     grab("extractionFailed", client.get(f"{base}/extractions/{failed_run}"))
     # **日志页上那半块屏幕同样从来没被冻过。** 上面那份 `activity` 里三条 run 全是成功的，
@@ -816,26 +838,203 @@ def test_frontend_fixture_matches_the_real_api(
     assert already.status_code == 409, already.text
     dump["errorFactAlreadyExists"] = norm.walk(already.json())
 
-    # ── 后台整理（autopilot）────────────────────────────────────────────────
+    # ── 系统通知（Task 10 / 022）：读列表 / count / 忽略 全走真服务 ──────────
+    # 直接往通知 outbox 塞一条再物化（走真 `materialize_notification_outbox`），
+    # 然后冻三条读端。**放在最末**：它不会往图里加东西，不影响上面任何夹具。
+    from novel_harness.system_notifications import (
+        background_failure_dedupe_key,
+        enqueue_notification,
+        materialize_notification_outbox,
+    )
+
+    _notif_conn = connect(book["db"])
+    try:
+        _notif_pid = pid
+        _notif_key = background_failure_dedupe_key(
+            kind="summary_mismatch", subject_type="chapter", subject_id=book["萧决"],
+            operation="reconcile", source_snapshot_id=None, job_id="job:contract",
+        )
+        _notif_conn.execute("BEGIN IMMEDIATE")
+        enqueue_notification(
+            _notif_conn,
+            project_id=_notif_pid,
+            kind="summary_mismatch",
+            subject_type="chapter",
+            subject_id=book["萧决"],
+            chapter_number=1,
+            title="第 1 章的总结可能与正文不一致",
+            dedupe_key=_notif_key,
+        )
+        _notif_conn.commit()
+        materialize_notification_outbox(_notif_conn, project_id=_notif_pid, lease_owner="contract")
+        _notif_conn.commit()
+    finally:
+        _notif_conn.close()
+    grab("notifications", client.get(f"{base}/notifications"))
+    grab("notificationsCount", client.get(f"{base}/notifications/count"))
+    _nid = dump["notifications"][0]["id"]
+    grab("notificationsIgnored", client.post(f"{base}/notifications/{_nid}/ignore"))
+
+    # ── 人物基础信息 + 别名生命周期（Task 11 / §6.5）────────────────────────
+    # 全走真服务。放在这里：它 bump canon version + 加一条 alias，别的夹具要的
+    # 恰好是「加之前」的形状。
+    grab(
+        "characterProfile",
+        client.get(f"{base}/characters/{book['萧决']}/profile"),
+    )
+    _ac = connect(book["db"])
+    try:
+        _canon_before = _ac.execute(
+            "SELECT canon_version FROM project WHERE id = ?", (pid,)
+        ).fetchone()[0]
+    finally:
+        _ac.close()
+    alias_create_resp = client.post(
+        f"{base}/characters/{book['萧决']}/aliases",
+        json={"surface": "魔尊", "expected_canon_version": _canon_before},
+    )
+    assert alias_create_resp.status_code == 200, alias_create_resp.text
+    grab("aliasCreated", alias_create_resp)
+    alias_id = alias_create_resp.json()["id"]
+    alias_reassign_resp = client.post(
+        f"{base}/aliases/{alias_id}/reassign",
+        json={
+            "to_character_id": book["李管家"],
+            "expected_canon_version": client.get(base).json()["canon_version"],
+        },
+    )
+    assert alias_reassign_resp.status_code == 200, alias_reassign_resp.text
+    grab("aliasReassigned", alias_reassign_resp)
+    _alias2 = alias_reassign_resp.json()["id"]
+    alias_edit_resp = client.patch(
+        f"{base}/aliases/{_alias2}",
+        json={
+            "surface": "魔尊（北荒）",
+            "expected_canon_version": client.get(base).json()["canon_version"],
+        },
+    )
+    assert alias_edit_resp.status_code == 200, alias_edit_resp.text
+    grab("aliasEdited", alias_edit_resp)
+    _alias3 = alias_edit_resp.json()["id"]
+    grab(
+        "aliasDeleted",
+        client.delete(f"{base}/aliases/{_alias3}"),
+    )
+
+    # ── 自动 Canon 边的纠错（Task 8 / ADR 0032）─────────────────────────────
+    # 种法走抽取 ingest + `promote_clean_facts`（真代码），不手写：要的是
+    # 「`source=extractor`、CANON、FRESH evidence」那种真形态——作者在日志页
+    # 点到「去改这条自动生成的边」时面对的正是它。
     #
-    # 前端 `AutopilotAck` / `AutopilotStatus` 是**手写类型**（`types.ts`），而后端
-    # `Dispatch` / `Readiness` 是 **7 个值**——之前这份 dump 里一个 autopilot 端点都没有，
-    # 于是「只写 3 个值 (`queued|skipped|no_text`)」的手写类型在后端多吐值时一条守卫都拦不住。
-    # 把它冻进 fixture：后端出参一变 pytest 红，前端 `AutopilotTask` 少写一个值就是**撒谎**。
-    #
-    # 第 1 章：有正文、总结已生成 → GET 说得出「ready」（那一章也成功抽取过）。
-    grab("autopilotStatus", client.get(f"{base}/chapters/1/autopilot"))
-    # 第 2 章：总结刚被作者撤回（上面的 `summaryRetracted`）→ GET 那一档是 `retracted`，
-    # 不是 `missing`（对前端而言下一步动作相反）。**GET 不派活**，放哪儿都安全。
-    grab("autopilotStatusRetracted", client.get(f"{base}/chapters/2/autopilot"))
-    # POST 回执：换章时对**刚离开**的那一章派活。落在第 2 章上——总结已撤回 → 回执里
-    # `summary: "retracted"`，正好冻住「3 值类型表达不了」的那一档。`sync_chapter` 读盘、
-    # 抽取 enqueue 都走真代码（模型调用被上面的 `deps.complete` 桩接住，不上网）。
-    # **放在最后**：它会往 `extraction_run` 里加一行，前面每一个 grab 都不该看见它。
-    # 202 不是 200，所以不走 `grab`。
-    autopilot_post = client.post(f"{base}/chapters/2/autopilot")
-    assert autopilot_post.status_code == 202, autopilot_post.text
-    dump["autopilotDispatch"] = norm.walk(autopilot_post.json())
+    # **放在最末**：它会往图里加一条 CANON 边、把 canon 版本推高几格、写
+    # decision log，而上面 `matrix` / `characterState` / `subgraph` 三份夹具
+    # 冻的正是「还没有这条边」的形状。
+    from novel_harness.extract import RawChapterAnalysis, RawEvent, RawStateUpdate
+    from novel_harness.extract.auto_canon import promote_clean_facts
+    from novel_harness.extract.service import ExtractionService
+
+    _edge_conn = connect(book["db"])
+    try:
+        _edge_store = SqliteStoryGraph(_edge_conn)
+        _chapter_row = _edge_conn.execute(
+            "SELECT c.id AS chapter_id, s.id AS snapshot_id, s.text AS text "
+            "FROM chapter c JOIN chapter_snapshot s ON s.chapter_id = c.id "
+            "WHERE c.project_id = ? AND c.number = 1 AND s.text_sha256 = c.text_sha256",
+            (pid,),
+        ).fetchone()
+        from novel_harness.graph import ChapterText
+
+        _edge_report = ExtractionService(
+            conn=_edge_conn,
+            graph=_edge_store,
+            event_store=SqliteEventStore(_edge_conn),
+            proposal_store=SqliteProposalStore(_edge_conn),
+        ).ingest(
+            pid,
+            ChapterText(
+                chapter_id=_chapter_row["chapter_id"],
+                number=1,
+                snapshot_id=_chapter_row["snapshot_id"],
+                text=_chapter_row["text"],
+            ),
+            RawChapterAnalysis(
+                events=(
+                    RawEvent(
+                        summary="李管家在青云城主府听到了血脉秘密的真相。",
+                        quote="萧决在青云城主府第一次听说了血脉秘密的真相。",
+                        participants=("李管家",),
+                        knowers=("李管家",),
+                        revealed_facts=(),
+                        confidence=0.95,
+                    ),
+                ),
+                state_updates=(
+                    RawStateUpdate(
+                        kind="location",
+                        subject="李管家",
+                        object="青云城主府",
+                        quote="萧决在青云城主府第一次听说了血脉秘密的真相。",
+                        confidence=0.95,
+                    ),
+                ),
+                character_profiles=(),
+            ),
+            prompt_hash="prompt:canon-edge-contract",
+        )
+        promote_clean_facts(
+            _edge_conn, pid, _edge_report, graph=_edge_store, events=SqliteEventStore(_edge_conn)
+        )
+        _edge_conn.commit()
+        _edge_id = _edge_conn.execute(
+            "SELECT id FROM edge WHERE project_id = ? AND type = 'LOCATED_AT' "
+            "AND information_scope = 'CANON' AND source = 'extractor' "
+            "ORDER BY rowid DESC LIMIT 1",
+            (pid,),
+        ).fetchone()["id"]
+    finally:
+        _edge_conn.close()
+
+    grab("canonEdge", client.get(f"{base}/canon/edges/{_edge_id}"))
+    edge_edit_resp = client.patch(
+        f"{base}/canon/edges/{_edge_id}",
+        json={
+            "kind": "location",
+            # 只改地点、不换人物：edge id 保持不变（props 投影 + override）。
+            "location_id": book["北荒"],
+            "expected_canon_version": client.get(f"{base}/canon/edges/{_edge_id}").json()[
+                "canon_version"
+            ],
+        },
+    )
+    assert edge_edit_resp.status_code == 200, edge_edit_resp.text
+    grab("canonEdgeEdited", edge_edit_resp)
+    edge_edited_id = edge_edit_resp.json()["edge_id"]
+    edge_retract_resp = client.delete(f"{base}/canon/edges/{edge_edited_id}")
+    assert edge_retract_resp.status_code == 200, edge_retract_resp.text
+    grab("canonEdgeRetracted", edge_retract_resp)
+    # 撤回后的旧 ID 再改 → 409（客户端不能用旧 selection state 继续 PATCH）。
+    refused_again = client.patch(
+        f"{base}/canon/edges/{edge_edited_id}",
+        json={
+            "kind": "location",
+            "location_id": book["北荒"],
+            "expected_canon_version": edge_retract_resp.json()["canon_version"],
+        },
+    )
+    assert refused_again.status_code == 409, refused_again.text
+    dump["errorCanonEdgeGone"] = norm.walk(refused_again.json())
+    # 自动升 CANON 那一条决策日志：`_decision_jump` 现在认得它（`edges` payload 里
+    # 恰好一条 → `jump.target = canon_edge`）。日志页那一行必须真的带这条跳转——
+    # 「自动升上去的边改得掉」正是 Task 8 的全部主张。**放在本节最后**：它抓的是
+    # 刚发生的事，别的夹具都不该看见这条新决策。
+    edge_activity = client.get(f"{base}/activity", params={"limit": 8})
+    canon_edge_jump = next(
+        (entry for entry in edge_activity.json()["entries"]
+         if (entry.get("jump") or {}).get("target") == "canon_edge"),
+        None,
+    )
+    assert canon_edge_jump is not None, "自动升边的决策没有带上 canon_edge 跳转"
+    dump["activityCanonEdge"] = norm.walk(canon_edge_jump)
 
     frozen = json.dumps(dump, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 

@@ -132,7 +132,8 @@ def _rows(conn: Connection, project_id: str, chapter: int) -> list[dict[str, Any
     return [
         dict(row)
         for row in conn.execute(
-            "SELECT summary, source, status FROM chapter_summary"
+            "SELECT id, summary, summary_sha256, replaces_summary_id, source, status "
+            "FROM chapter_summary"
             " WHERE project_id = ? AND chapter_number = ? ORDER BY rowid",
             (project_id, chapter),
         )
@@ -264,7 +265,13 @@ def test_retracting_hides_the_chapter_everywhere_the_draft_reads(seed: Seed) -> 
         rows = _rows(conn, seed.project_id, 1)
         assert len(rows) == 2 and rows[0]["status"] == "ACTIVE"
         assert rows[1]["status"] == "RETRACTED"
-        assert rows[1]["summary"] == rows[0]["summary"], "撤回那一行要带着被撤掉的原文"
+        # 018 之后撤回是 tombstone：summary=NULL、hash 是统一空字节 hash，
+        # 被撤的那一行原样留在版本历史里（replaces 链指回它）。
+        assert rows[1]["summary"] is None
+        assert rows[1]["replaces_summary_id"] == rows[0]["id"]
+        from novel_harness.draft.rolling_summary import EMPTY_SUMMARY_HASH
+
+        assert rows[1]["summary_sha256"] == EMPTY_SUMMARY_HASH
     finally:
         conn.close()
 
@@ -399,6 +406,10 @@ def test_the_four_routes_all_answer_with_the_same_shape(
         "created_at": None,
         "retracted": False,
         "author_written": False,
+        "version_id": None,
+        "summary_sha256": None,
+        "replaces_version_id": None,
+        "version_source": None,
     }
 
     generated = client.post(base)
@@ -445,18 +456,54 @@ def test_an_overlong_edit_is_refused_in_the_authors_language(
 def test_background_tidying_never_buys_back_a_retracted_summary(
     client: TestClient, book: dict[str, str], stub_model: None
 ) -> None:
-    """作者撤掉一份总结、切走一章 —— 后台**不许**替他重新买一份回来。
+    """作者撤掉一份总结、再保存一次 —— 后台**不许**替他重新买一份回来。
 
-    判据在 `SummaryStore.latest()`：用 `get()` 的话撤回过的章在后台眼里就是「还没生成」，
-    于是那是一次他没按过的付费调用，顺带把他刚做的动作抹掉。
+    这是钱和信任两件事：他按了「撤回」，保存一下就冒出来一份新的，等于**花了他没按过
+    的钱去抹掉他刚做的动作**。
+
+    ⚠️ **这条测试 2026-08-20 换过一次路径。** 它原来走 `POST …/chapters/N/autopilot`
+    ——换章派活那条端点。那条端点连同整个换章 autopilot 已经删掉（ADR 0035），今天
+    「该不该自动补一份总结」由保存那条路判（`PUT …/text` → `_trigger_refresh` →
+    `ensure_refresh_coverage`）。**换路径的时候实测发现新路径上这条纪律是破的**
+    （`_head_missing` 把 RETRACTED 当成「缺」），已修，另有单测
+    `test_a_retracted_summary_is_not_bought_back_by_the_next_save` 钉决策层。
+
+    这里钉的是端到端那一半：保存之后**没有一条总结分支的活被排出去**。
     """
     base = f"/api/projects/{book['pid']}/chapters/1"
     assert client.post(f"{base}/summary").status_code == 200
     assert client.delete(f"{base}/summary").status_code == 200
 
-    dispatched = client.post(f"{base}/autopilot")
-    assert dispatched.status_code == 202, dispatched.text
-    assert dispatched.json()["summary"] == "retracted"
-    assert client.get(f"{base}/autopilot").json()["summary_state"] == "retracted"
-    # 后台一个字都没写回去。
+    # 保存一次（改一个字就够，要的是走完真的保存链路）。
+    current = client.get(f"{base}/text").json()
+    saved = client.put(
+        f"{base}/text",
+        json={
+            "markdown": current["markdown"] + "\n又写了一句。\n",
+            "expected_text_sha256": current["text_sha256"],
+        },
+    )
+    assert saved.status_code == 200, saved.text
+
+    # 一条总结分支的 attempt 都不该有（BRANCH_SUMMARY = 2）。
+    conn = connect(Path(book["db"]))
+    try:
+        rows = conn.execute(
+            """
+            SELECT a.missing_branch_mask
+              FROM chapter_refresh_attempt a
+              JOIN chapter_refresh_run r ON r.id = a.run_id
+              JOIN chapter c ON c.id = r.chapter_id
+             WHERE c.project_id = ? AND c.number = 1
+            """,
+            (book["pid"],),
+        ).fetchall()
+    finally:
+        conn.close()
+    summary_branch = [int(r["missing_branch_mask"]) for r in rows if int(r["missing_branch_mask"]) & 2]
+    assert not summary_branch, (
+        f"保存之后排出了总结分支的活（mask={summary_branch}）——"
+        "作者撤掉的那一份会被自动买回来，顺带抹掉他刚做的动作。"
+    )
+    # 他撤掉的那一份原样还撤着。
     assert client.get(f"{base}/summary").json()["retracted"] is True

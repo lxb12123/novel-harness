@@ -44,7 +44,7 @@ const since = (spy: Calls) => spy.mock.calls.length;
 const urlsAfter = (spy: Calls, mark: number) =>
   spy.mock.calls.slice(mark).map(([url]) => String(url));
 /** 改一条**已经生效**的事实的那几次 POST。
- *  换章会顺手发一次 `POST …/autopilot`（离开的那一章交后台整理），它不在这里算。 */
+ *  换章会顺手发一次 `POST …/focus`（免费心跳，只上报位置），它不在这里算。 */
 const canonPosts = (spy: Calls) =>
   spy.mock.calls.filter(
     ([url, init]) =>
@@ -249,9 +249,9 @@ describe("同一条闭环，事件那一半", () => {
 });
 
 describe("「别处刚改过」之后，作者得真的能往下走", () => {
-  // 409 在这个产品里是**常态不是边角**：作者一离开某一章，后台就去整理那一章
-  //（`autopilot.ts`），干净的抽取结果直接升 CANON（ADR 0020），项目的 canon 版本
-  // 就涨了一格 —— 而浏览器里那份 `/api/projects` 的缓存一个字都没变。
+  // 409 在这个产品里是**常态不是边角**：作者一保存，后台就去整理那一章
+  //（`api/app.py::_trigger_refresh`），干净的抽取结果直接升 CANON（ADR 0020），
+  // 项目的 canon 版本就涨了一格 —— 而浏览器里那份 `/api/projects` 的缓存一个字都没变。
   // 所以他打开「待确认」改一次名单，撞 409 是**很可能发生的第一件事**。
   // 那时「看看最新的」必须真的把版本重读一遍，否则这条退路在他手里是死的。
 

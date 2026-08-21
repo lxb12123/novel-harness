@@ -292,7 +292,7 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 
 ## 当前状态
 
-**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2596 个 pytest + 656 个 vitest，`.sql` 和前端产物都在 wheel 里）：
+**M0 + M1 + M1.5 已落地；M2 已由维护者裁定通过（修正案 9 / ADR 0009，非数据裁决）；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2692 个 pytest + 669 个 vitest，`.sql` 和前端产物都在 wheel 里）：
 
 > ⚠️ **2026-08-14 两刀，都是作者看着工作台提的，都撤掉了「要作者去填」的东西**：
 >
@@ -352,6 +352,20 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 >
 > 心跳同日改成 **API 心跳**（见上一段）。**这一刀之后，仓库里没有任何要维护的文本命令面**。
 
+> ⚠️ **2026-08-20 第四刀：换章 autopilot 整块砍掉**（[ADR 0035](adr/0035-autopilot-cut.md)）。
+> 并行的保存闭环任务在 Task 16 就把**前端那一半**摘了（`autopilot.ts` → `chapterNavigation.ts`，
+> 理由：作者切走 ≠ 他保存过，凭空付费总结/抽取是「双重 autopilot」），
+> 但**后端那一半留下了**——模块还在、路由还挂着、契约 fixture 还钉着它的出参。
+> 两条线合并那天才看见：一条**零调用方**的付费入口。端点 92 → 89。
+>
+> **删的时候查出一个真 bug，比那块死代码重要得多**：「作者撤回过的章不许被自动买回来」
+> 这条纪律（本文档滚动总结那一节写着、ADR 也写着）在**新的保存触发链上是破的**——
+> `chapter_refresh._head_missing` 把 RETRACTED 判成「缺总结」，于是作者撤掉一份总结、
+> 下一次保存就被系统重新买一份回来，**花他没按过的钱去抹掉他刚做的动作**。
+> 没人发现是因为**这条纪律唯一的测试走的正是 autopilot 端点**，前端不再调它之后
+> 那条测试还绿着——它测的是一条已经没有人走的路。已修，并补了决策层单测 + 端到端
+> 测试各一条（两条都做过反向验证）。
+
 > ⚠️ **「全绿」这个词 2026-08-13 从上面那句话里拿掉了，因为它在一台干净机器上不成立。**
 > `tests/test_m3_replay.py::test_replay_passes_the_preregistered_gate` 在**新克隆 /
 > 新 worktree 上必红，而且重新生成也救不回来**：它读 `synth/gate.db`（`*.db` 在
@@ -378,8 +392,8 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 > 列在「还一个字符都没有」里——照它排期的人会去重写已完成的工作。
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
-> 守卫钉住的是**能在运行时数出来**的那些（67 条路由 / 66 条 /api / 1 条 501 stub /
-> 17 个错误映射 / 28 张表 / 77 个端点 / `ALL_CHECKS` 2），
+> 守卫钉住的是**能在运行时数出来**的那些（90 条路由 / 89 条 /api / 1 条 501 stub /
+> 19 个错误映射 / 50 张表 / 89 个端点 / `ALL_CHECKS` 2），
 > 改错必红、**删掉也必红**（不静默 skip）。
 > （**「17 个子命令」2026-08-20 从这张清单里退了**：命令行面整个删掉，那个数在运行时
 > 已经数不出来，守卫里那条 `Fact` 同步撤掉——见 ADR 0034。）
@@ -403,13 +417,17 @@ migrations/{001_init,002_m4_events,003_proposal_audit_recovery,004_chapter_summa
             006_chat_session,007_draft_candidate,008_cache_usage,
             009_call_chapter,010_candidate_stopped,011_rule_revocation,
             012_chat_notice,013_summary_edit,014_summary_mentions,
-            015_chapter_disk_stat,016_rule_until,017_calibration}.sql（28 张表）
+            015_chapter_disk_stat,016_rule_until,017_calibration,
+            018_chapter_refresh,019_summary_versions,020_canon_edge_overrides,
+            021_extraction_superseded,022_system_notifications,023_alias_lifecycle,
+            024_validation_rules,025_chapter_focus}.sql（50 张表）
                                                 ← calibration 2026-08-19 从 `024_` 改名 `017_`：
                                                   它原来跳号跳在 016 后面，`_migrations()` 见到
                                                   断号直接抛 `MigrationError`，建库和起服务当场崩。
-                                                  **并行保存闭环任务的 017–023 将来整体后移一档
-                                                  （018–024）**，合并时照 ADR 0033 的约定做，
-                                                  否则和这条撞号。
+                                                  **并行保存闭环任务原本占 017–024，2026-08-20
+                                                  合并时整体后移一档（018–025）**，照 ADR 0033
+                                                  「迁移编号约定」执行。文件名上的号是权威，
+                                                  `_apply` 按它拼 `PRAGMA user_version`。
                                                 ← 013 也是 ALTER 不建表：`chapter_summary`
                                                   多两列（`source` / `status`），照 005 的先例。
                                                   **作者改一条滚动总结时不许有一行凭空消失**：
@@ -498,7 +516,7 @@ calibration/{models,visibility,render,freshness,store,
                                                   ← **模式二写前校准**（2026-08-17，ADR 0033）：
                                                   预计人物只做检索、安全 cast 仍由后端按章即时重算、
                                                   Writer 只收类型化 SceneBrief（不可变 calibration_id
-                                                  引用）。非 Canon 产物存迁移 024 两张表；RETCON
+                                                  引用）。非 Canon 产物存迁移 017 两张表；RETCON
                                                   handoff 只写 producer outbox，通知任务消费它。
 summary_index.py                                ← **每一段章节总结 = 一个可反查的记忆点**（2026-08-13）。
                                                   作者的原话：「迅速找到需要的内容或相关章节的总结，
@@ -569,9 +587,11 @@ gate.py                                         ← M2 大门的薄入口（`pyt
                                                   约束 8 那一半没丢，换了地方：`POST …/check` 的出参
                                                   `rules_run` 列的是 `len(ALL_CHECKS)` 个真规则名，
                                                   不是写死的数字，`demo.sh` 的心跳逐字钉着那个数
-api/{app,deps,launch,activity,autopilot,chat,extraction,manuscript,review}.py
-                                                ← M1.5 FastAPI 壳：67 条路由 + 17 个错误映射
-                                                  （66 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
+api/{app,deps,launch,activity,background_runtime,chat,extraction,manuscript,notifications,reconcile,review,validation}.py
+                                                ← M1.5 FastAPI 壳：90 条路由 + 19 个错误映射
+                                                  （89 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
+                                                  2026-08-20 少两条：换章 autopilot 的
+                                                  POST/GET 随 ADR 0035 整块删了；
                                                   M4 抽取/事件读端 + 提案审阅/被动确认路由；
                                                   抽取那两条的出参 2026-08-13 换成 `ExtractionRunView`：
                                                   `errors` 是**已经翻好的中文**（措辞唯一出处仍是
@@ -679,7 +699,7 @@ frontend/src/                                   ← React 工作台：62 个非�
                                                   翻到第 5 章面板自己跳进去）。
                                                   在场跟着那一章走（`_effective_cast` 数的是**路径上那一章**
                                                   的正文），所以 `CastLine` 那一行也跟着说「第 N 章提到：」）
-frontend/src/__fixtures__/api.json              ← 从真 app dump 的 77 个端点出参（契约测试两头共用）
+frontend/src/__fixtures__/api.json              ← 从真 app dump 的 89 个端点出参（契约测试两头共用）
                                                   其中 `extractionFailed` 是**一次没跑成的整理**
                                                   （2026-08-13 补）：在它之前这份夹具里三条 run
                                                   全是成功的，于是「失败了屏幕上说什么」这条路径
@@ -722,11 +742,30 @@ draft/rolling_summary.py                        ← M4 后续切片：后台章�
                                                   **最新那一行是撤回就当这一章没有**（起草不带它、
                                                   覆盖率算作缺、想重来就再点生成——「删了重来」因此
                                                   顺带覆盖，不用做两套）。
-                                                  `get()` / `latest()` 的差别是钱：后台整理
-                                                  （`api/autopilot.py`）拿 `latest()` 判「要不要派活」，
-                                                  用 `get()` 的话作者撤掉的那一章会在他切走的下一秒
-                                                  被自动买回来 —— 一次他没按过的付费调用，
-                                                  顺带抹掉他刚做的动作
+                                                  `get()` / `latest()` 的差别是钱：保存触发的
+                                           background runtime（`api/background_runtime.py`，
+                                           已取代换章 autopilot）拿 `latest()` 判「要不要派活」，
+                                           用 `get()` 的话作者撤掉的那一章会在他保存后下一秒
+                                           被自动买回来 —— 一次他没按过的付费调用，
+                                           顺带抹掉他刚做的动作
+focus.py                                         ← 2026-08-18 §3「当前章防抖」：**全系统唯一的当前章来源**。
+                                                  换章/开书上报 `POST …/focus`，免费心跳只记位置，
+                                                  不触发任何总结/抽取/付费。「正写的章不碰」的读端就是它
+                                                  + 心跳超时（2 分钟）。`resolve_draft_origin`：
+                                                  调度/视图的坐标（有焦点=焦点章+豁免；无焦点=前沿章号+1）。
+summary_schedule.py                              ← 2026-08-18 §2.2/§4/Step 2：**30 分钟自治调度**。
+                                                  每 30 分钟确定性扫全书（缺章 + 不对齐两类），按
+                                                  「近 10 章必补、越远越衰减」的权重把活写进
+                                                  `chapter_refresh_attempt`，与保存共用同一条 dispatcher
+                                                  管线（不新造第二条总结管线、不调 LLM 判「哪章该补」）。
+                                                  `book_summary_status` = 全书总结状态视图（Step 4，
+                                                  逐章三态 + 异常标记 + 权重，`GET …/summary-status`）；
+                                                  `reconcile_anomaly_notifications` 把异常标记同步成
+                                                  `background_failure` 通知（§5 末行：不阻塞其它章）。
+                                                  通知单源化（§5 / Step 3，`summary_reconciliation`
+                                                  finalize 按 head 总结的 `source` 门控）：正文→总结
+                                                  自动写/覆写一律**不**产生 `summary_mismatch`，只有
+                                                  作者手改总结与正文冲突才冒出来（正文自动对齐永远安静）。
 draft/summarize.py                              ← M4 后续切片：章节摘要 prompt（入口只有 HTTP：`POST …/chapters/{n}/summary`）
 agent/{ports,index,tools,loop,store,model,drafting,candidates,rules}.py
                                                 ← 模式二（ADR 0019）：**工具表就是权限边界**。
@@ -1206,7 +1245,8 @@ R2（未来实体提前出现）和 R3（死人/未登场角色开口说话）�
    - **`jump` 由后端给，前端不许从标题反推。** 每条日志带一个结构化坐标 +
      `endpoints`（今天真能改这个东西的路由）。`endpoints` 是空元组时**不许画编辑按钮**
      ——那不是没填。但**它今天有两个意思，别只读成一个**：
-     ① 真的没有路由能改（自动升上去的边，见下一条）；
+     ① 真的没有路由能改（正在补纠错入口的新边类型；`LOCATED_AT` / `HAS_STATE` /
+        `RELATED_TO` 已由 Task 8 的 `canon_edge` 那一档接走）；
      ② 有好几条、后端不替作者挑是哪一条（一次升掉一整章的干净事件、一章里有 ≥2 条待审提案）。
      ② 那几行**改得掉**——`/canon/events/{id}/cast` 对它们一打就通（实测 200）。
      两种含义共用一个空元组是出参形状的事；在形状改掉之前，**② 的 `label` 里带着数目**
@@ -1231,7 +1271,9 @@ R2（未来实体提前出现）和 R3（死人/未登场角色开口说话）�
      > 没有 id**，`_decision_jump` 拼不出坐标（按人名反查就是「从字符串反推」，
      > 而「师兄」在一章里可能指 8 个人）。现在 `declare._log_edge` 把两端的 id 和名字
      > **一起**记（名字仍在，§5.7 那条没破），`LOCATED_DECLARE` 照旧留在空 bucket 里
-     > ——`LOCATED_AT` 今天真的没有编辑入口，那才是这个 bucket 该装的东西。
+     > ——当时 `LOCATED_AT` 真的没有编辑入口。**2026-08-17（Task 8）这句作废了**：
+     > `/canon/edges/{edge_id}` 现在能改 / 撤回 / 改归属自动升上去的地点/状态/关系边，
+     > 那个 bucket 里只剩正在补纠错入口的新边类型。
      > 旧库里的行没有那两个键，照旧退到兜底坐标（`decision_log` 只增不改，重写不了）。
      > 两头钉在 `tests/test_canon_edit_loop.py`：声明那一行的坐标打过去必须 200，
      > 而「所有声明行都给认知格坐标」的假实现打过去必须被拒。
@@ -1242,11 +1284,13 @@ R2（未来实体提前出现）和 R3（死人/未登场角色开口说话）�
      > 没有任何东西会替他补那一次重读，作者在核对页上会一直撞同一个 409）。
      > 现在重取归 `CellEditor` 自己管（`useRefreshPanels`），挂载点少传一个 prop
      > 不再能让这条退路死掉。
-   - **自动升上去的「边」今天真的改不掉。** 抽取只产
-     `LOCATED_AT` / `HAS_STATE` / `RELATED_TO`，而 `corrections.py` 只改
-     KNOWS↔BELIEVES 和事件名单。这正是 ADR 0020 写在「什么条件下推翻本 ADR」里的
-     第二条（「出现『作者改不回来』的形态」）——**日志页把它显式显示出来，
-     那条推翻条件才第一次可观测**。编一个假按钮出来等于把观测点关掉。
+   - **自动升上去的「边」2026-08-17 起改得掉了**（[ADR 0032](adr/0032-reversible-auto-canon-edges.md) /
+     Task 8）：`LOCATED_AT` / `HAS_STATE` / `RELATED_TO` 各有按稳定 `edge_id` 的
+     修改 / 撤回 / 改归属路由（`/canon/edges/{edge_id}`），日志页那一行的
+     `jump.target = canon_edge` 直接弹起 `<CanonEdgeEditor>`。**「先可逆、后自动」**
+     的启用闸：这三类之外的新边类型没有纠错入口就不许 auto-Canon
+     （`AUTO_CANON_CORRECTABLE_EDGE_TYPES` 是 allowlist 的上界），所以
+     「改不回来」这个 bucket 里现在只剩正在补纠错入口的新边类型。
    - **跳过去那一格得真的在表上。** 矩阵的行由本章正文推（[ADR 0018](adr/0018-cast-is-derived-not-declared.md)），
      而声明的生效章由引语定（[ADR 0006](adr/0006-evidence-double-pointer.md)）——一句满是代词的声明
      会把坐标指向一章「他一次都没被点名」的正文，那一行不在表上，高亮和编辑入口一起落空，

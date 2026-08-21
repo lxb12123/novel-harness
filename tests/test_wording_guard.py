@@ -183,8 +183,11 @@ def test_the_word_list_is_read_from_the_browser_guard_not_retyped_here() -> None
     upper = _bare_upper_words()
     assert {"CANON", "PROVISIONAL", "KNOWS", "BELIEVES"} <= upper
     assert "Character" in _camel_words()
-    # 自守卫：解析真的在读那一行，而不是碰巧命中了别处的大写字母。
-    assert "SUPERSEDED" not in upper, "带下划线的值归形状那一条管，不该也躺在词表里"
+    # 021 / Task 9：`ExtractionRunStatus.SUPERSEDED`（裸大写，无下划线）是真实枚举值，
+    # 归词表管（同 FAILED / ACCEPTED）。带下划线的变体（`SUPERSEDED_IN_ANALYSIS`）
+    # 由 SCREAMING_SNAKE 形状那一条收，不该在词表里。
+    assert "SUPERSEDED" in upper, "SUPERSEDED 是裸大写枚举值，词表必须兜住它"
+    assert "SUPERSEDED_IN_ANALYSIS" not in upper, "带下划线的值归形状那一条管，不该也躺在词表里"
 
 
 # ══════════════════════════════════════════════════════════════════════════

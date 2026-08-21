@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 import json
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, computed_field, model_validator
 
@@ -98,6 +99,28 @@ class EventCastEdit(BaseModel):
             or self.participants_added
             or self.participants_removed
         )
+
+
+class EventSummaryVersion(BaseModel):
+    """一条事件摘要版本（019 / Task 7）。
+
+    `story_event.summary` 保留为迁移基线，生产读路径全部改读 effective head——
+    版本历史里每一行都真的生效过（ADR 0030）。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    id: str
+    project_id: str
+    event_id: str
+    source_snapshot_id: str | None = None
+    evidence_sha256: str | None = None
+    summary: str
+    summary_sha256: str
+    source: Literal["model", "author", "legacy"] = "model"
+    status: Literal["ACTIVE", "RETRACTED"] = "ACTIVE"
+    replaces_version_id: str | None = None
+    created_at: str
 
 
 class ProvisionalEventSpec(BaseModel):
@@ -192,6 +215,16 @@ class ProposalRecord(ProposalCreate):
     resolution_action: ProposalResolutionAction | None = None
     resolved_canon_version: int | None = Field(default=None, ge=0)
     audit_envelope: ProposalAuditSnapshot | None = None
+
+    currentness: Literal["CURRENT", "OBSOLETE"] = "CURRENT"
+    """正文时效（021 / Task 9）：OBSOLETE 表示「它锚的那版正文已经不是当前了」。
+
+    `status` 仍只表达作者裁决（PENDING/ACCEPTED/…）；OBSOLETE 的 PENDING 提案
+    不出现在当前待确认列表、直接审阅返回 409，但历史查询仍读得到——它不伪造
+    ACCEPTED/REJECTED resolution metadata。"""
+
+    superseded_by_snapshot_id: str | None = None
+    """把这一条顶成 OBSOLETE 的那一版正文快照。"""
 
     node_refs: tuple[NodeRef, ...] = ()
     """`items` 里那些**裸 id** 对应的显示名（id / label / name）。

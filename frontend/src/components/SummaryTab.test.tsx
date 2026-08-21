@@ -328,3 +328,37 @@ describe("总结下面那排记忆点", () => {
     expect(screenText()).not.toMatch(/相关度|匹配度|相似/);
   });
 });
+
+describe("全书总结状态（Step 4）", () => {
+  it("挂在这一格最上面：全书哪些章有/缺/不对齐/异常一眼看清", async () => {
+    renderSpying(<SummaryTab />);
+    // 真后端视图（测试 harness 的 `…/summary-status` stub）：5 章 = 1 有 + 2 缺
+    // + 1 不对齐 + 1 异常；作者正写在第 4 章。
+    expect(await screen.findByText(/全书 5 章：1 章有总结/)).toBeInTheDocument();
+    expect(screen.getByText(/2 章缺/)).toBeInTheDocument();
+    expect(screen.getByText(/1 章不对齐/)).toBeInTheDocument();
+    expect(screen.getByText(/1 章生成异常/)).toBeInTheDocument();
+    // 正在写的那一章有「不碰」的提示；异常那章挂「异常」而不是「缺」。
+    expect(screen.getByText(/作者正写在第 4 章，那一章不碰/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "第 4 章，异常" })).toBeInTheDocument();
+  });
+
+  it("缺章/异常章有标记芯片，点击跳到那一章", async () => {
+    const user = userEvent.setup();
+    renderSpying(<SummaryTab />);
+    await screen.findByText(/全书 5 章/);
+    const chip = screen.getByRole("button", { name: "第 3 章，缺" });
+    expect(chip.className).toContain("status-chip-missing");
+    await user.click(chip);
+    expect(useCoords.getState().chapter).toBe(3);
+    expect(useCoords.getState().page).toBe("workbench");
+    expect(screen.getByRole("button", { name: "第 4 章，异常" })).toBeInTheDocument();
+  });
+
+  it("查不出来 ≠ 全书没状态（不许静默）", async () => {
+    renderSpying(<SummaryTab />, [
+      { match: /\/summary-status$/, status: 500, body: {} },
+    ]);
+    expect(await screen.findByText(/全书总结状态这会儿没读出来/)).toBeInTheDocument();
+  });
+});

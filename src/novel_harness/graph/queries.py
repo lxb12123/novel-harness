@@ -39,6 +39,7 @@ from .models import (
     NodeProps,
     NodeRef,
     RelocatePointer,
+    RetirementReport,
     SecretDetail,
     SnapshotUsage,
     StoredAlias,
@@ -73,8 +74,12 @@ _EDGE_COLS: Final = (
 _NODE_COLS: Final = "id, project_id, label, name, props_json"
 
 _EVENT_COLS: Final = (
-    "id, project_id, chapter_number, summary, information_scope, status, confidence, "
-    "source, evidence_id, evidence_status, derived_from_event_id"
+    "id, project_id, chapter_number, "
+    "COALESCE((SELECT v.summary FROM event_summary_head h "
+    "          JOIN event_summary_version v ON v.id = h.current_version_id "
+    "          WHERE h.event_id = story_event.id), summary) AS summary, "
+    "information_scope, status, confidence, source, evidence_id, evidence_status, "
+    "derived_from_event_id"
 )
 
 
@@ -501,13 +506,20 @@ def insert_alias(
     surface: str,
     kind: AliasKind,
     usable_for_rules: bool,
+    source: str = "author",
+    derived_from_alias_id: str | None = None,
 ) -> StoredAlias:
     """收散参数而不是 `AliasSpec`：canonical 别名（`upsert_node` 建的那条）在
-    `AliasSpec` 里根本构造不出来——那条 validator 是故意的。"""
+    `AliasSpec` 里根本构造不出来——那条 validator 是故意的。
+
+    `source` / `derived_from_alias_id`（023 / Task 11）：作者改机器别名 → 新 author
+    行以 `derived_from_alias_id` 指回机器行，不丢掉原 evidence。"""
     conn.execute(
         """
-        INSERT INTO alias (id, project_id, node_id, surface, kind, usable_for_rules)
-        VALUES (:id, :pid, :nid, :surface, :kind, :usable)
+        INSERT INTO alias (
+            id, project_id, node_id, surface, kind, usable_for_rules,
+            source, derived_from_alias_id
+        ) VALUES (:id, :pid, :nid, :surface, :kind, :usable, :source, :derived)
         """,
         {
             "id": alias_id,
@@ -516,6 +528,8 @@ def insert_alias(
             "surface": surface,
             "kind": kind.value,
             "usable": int(usable_for_rules),
+            "source": source,
+            "derived": derived_from_alias_id,
         },
     )
     return StoredAlias(
@@ -525,6 +539,8 @@ def insert_alias(
         surface=surface,
         kind=kind,
         usable_for_rules=usable_for_rules,
+        source=source,
+        derived_from_alias_id=derived_from_alias_id,
     )
 
 
@@ -740,7 +756,15 @@ def alias_rows(
         SELECT a.surface AS surface, a.kind AS kind, a.usable_for_rules AS usable_for_rules,
                {", ".join(f"n.{c} AS {c}" for c in _NODE_COLS.split(", "))}
         FROM alias a JOIN node n ON n.id = a.node_id
-        WHERE a.project_id = :pid {where}
+        WHERE a.project_id = :pid
+          AND a.status = 'ACTIVE'
+          -- 022 / §5：解析只读 ACTIVE alias；extractor 的还必须至少有一条
+          -- FRESH alias_evidence（§4.5 的自动条件；作者 alias 不要求伪造证据）。
+          AND (a.source = 'author' OR EXISTS (
+            SELECT 1 FROM alias_evidence ae
+             WHERE ae.alias_id = a.id AND ae.status = 'FRESH'
+          ))
+          {where}
         ORDER BY length(a.surface) DESC, a.surface ASC, n.id ASC
         """,
         params,
@@ -962,6 +986,7 @@ class ChapterRow(NamedTuple):
     title: str
     path: str
     text_sha256: str
+    snapshot_generation: int
     disk_mtime_ns: int | None = None
     disk_size: int | None = None
 
@@ -981,7 +1006,9 @@ def find_chapter_by_number(
     """`put_chapter` 的幂等键 `(project_id, number)` —— schema 的 UNIQUE。"""
     cur = conn.execute(
         """
-        SELECT id, number, title, path, text_sha256, disk_mtime_ns, disk_size FROM chapter
+        SELECT id, number, title, path, text_sha256, snapshot_generation,
+               disk_mtime_ns, disk_size
+          FROM chapter
         WHERE project_id = :pid AND number = :number
         """,
         {"pid": project_id, "number": number},
@@ -996,8 +1023,8 @@ def insert_chapter(conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec,
     conn.execute(
         """
         INSERT INTO chapter (id, project_id, number, title, path, text_sha256,
-                             disk_mtime_ns, disk_size)
-        VALUES (:id, :pid, :number, :title, :path, :sha, :mtime, :size)
+                             snapshot_generation, disk_mtime_ns, disk_size)
+        VALUES (:id, :pid, :number, :title, :path, :sha, 1, :mtime, :size)
         """,
         {
             "id": chapter_id,
@@ -1012,7 +1039,19 @@ def insert_chapter(conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec,
     )
 
 
-def update_chapter(conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec, sha: str) -> None:
+def insert_chapter_summary_head(conn: sqlite3.Connection, chapter_id: str) -> None:
+    """新章同事务预建 `chapter_summary_head` 行（020）——head 行不是「有了总结才有」，
+    是「这一章存在就有」，current 指向 ACTIVE/RETRACTED 版本或 NULL。"""
+    conn.execute(
+        "INSERT INTO chapter_summary_head (chapter_id, current_summary_id) VALUES (?, NULL)",
+        (chapter_id,),
+    )
+
+
+def update_chapter(
+    conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec, sha: str,
+    *, snapshot_generation: int,
+) -> None:
     """`sync` 的落点（今天的入口是 `POST …/sync`）：作者在自己的编辑器里改了这一章。
 
     `number` 不在这里——它是幂等键，改它就是换一章。`updated_at` 显式重写：它的
@@ -1022,6 +1061,7 @@ def update_chapter(conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec,
         """
         UPDATE chapter
            SET title = :title, path = :path, text_sha256 = :sha,
+               snapshot_generation = :generation,
                disk_mtime_ns = :mtime, disk_size = :size,
                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
          WHERE id = :id
@@ -1031,6 +1071,7 @@ def update_chapter(conn: sqlite3.Connection, chapter_id: str, spec: ChapterSpec,
             "title": spec.title,
             "path": spec.path,
             "sha": sha,
+            "generation": snapshot_generation,
             "mtime": spec.disk_mtime_ns,
             "size": spec.disk_size,
         },
@@ -1112,16 +1153,19 @@ def chapter_snapshots(
 def snapshot_usage(conn: sqlite3.Connection, snapshot_id: str) -> SnapshotUsage:
     """这条快照被多少条记录引着。**删之前问这个。**
 
-    三个计数各对应一张外键到 `chapter_snapshot` 且**没有 CASCADE** 的表。写死这三张
-    是有意的：新增第四个引用方时这里不会自动跟上，但那时 `delete_snapshot` 会撞外键
+    五个计数各对应一张外键到 `chapter_snapshot` 且**没有 CASCADE** 的表。写死这五张
+    是有意的：新增第六个引用方时这里不会自动跟上，但那时 `delete_snapshot` 会撞外键
     直接抛——**宁可炸也不要静默删掉别人的出处**（这正是不加 CASCADE 的理由）。
+    020 补的两张：`extraction_analysis` / `extraction_application` 都引 snapshot_id。
     """
     cur = conn.execute(
         """
         SELECT
-          (SELECT COUNT(*) FROM evidence       WHERE chapter_snapshot_id = :sid) AS evidence,
-          (SELECT COUNT(*) FROM extraction_run WHERE snapshot_id         = :sid) AS extraction_runs,
-          (SELECT COUNT(*) FROM proposal_set   WHERE snapshot_id         = :sid) AS proposal_sets
+          (SELECT COUNT(*) FROM evidence              WHERE chapter_snapshot_id = :sid) AS evidence,
+          (SELECT COUNT(*) FROM extraction_run        WHERE snapshot_id          = :sid) AS extraction_runs,
+          (SELECT COUNT(*) FROM proposal_set          WHERE snapshot_id          = :sid) AS proposal_sets,
+          (SELECT COUNT(*) FROM extraction_analysis   WHERE snapshot_id          = :sid) AS extraction_analyses,
+          (SELECT COUNT(*) FROM extraction_application WHERE snapshot_id         = :sid) AS extraction_applications
         """,
         {"sid": snapshot_id},
     )
@@ -1321,8 +1365,12 @@ _RETIRE_SELECT: Final = """
 
 def retire_stale_extractor_facts(
     conn: sqlite3.Connection, project_id: str, chapter_id: str, current_snapshot_id: str
-) -> int:
-    """把这一章里锚在**旧快照**上的**抽取器**事实标成 `STALE`。返回退休了几条。
+) -> RetirementReport:
+    """把这一章里锚在**旧快照**上的**抽取器**事实标成 `STALE`。
+
+    返回精确的 `RetirementReport`（退了哪些 ID、其中多少是 Writer 可见的 CANON），
+    不能只给 rowcount——`chapter_refresh_run` 的 outbox 要记精确 ID，canon bump
+    要问「有没有退到 CANON」。
 
     ── 为什么必须有这一下 ────────────────────────────────────────────────────
 
@@ -1348,21 +1396,30 @@ def retire_stale_extractor_facts(
     而没有任何地方告诉他为什么。`event_knower` 没有 `source` 列，它跟着它的事件走。
     """
     params = {"pid": project_id, "chapter": chapter_id, "current": current_snapshot_id}
-    touched = 0
-    for table in ("edge", "story_event"):
-        cur = conn.execute(
-            f"""
-            UPDATE {table} SET evidence_status = 'STALE'
-             WHERE project_id = :pid
-               AND source = 'extractor'
-               AND evidence_status = 'FRESH'
-               AND evidence_id IN ({_RETIRE_SELECT})
-            """,
-            params,
-        )
-        touched += cur.rowcount
+    retired_edges = conn.execute(
+        f"""
+        UPDATE edge SET evidence_status = 'STALE'
+         WHERE project_id = :pid
+           AND source = 'extractor'
+           AND evidence_status = 'FRESH'
+           AND evidence_id IN ({_RETIRE_SELECT})
+        RETURNING id, information_scope
+        """,
+        params,
+    ).fetchall()
+    retired_events = conn.execute(
+        f"""
+        UPDATE story_event SET evidence_status = 'STALE'
+         WHERE project_id = :pid
+           AND source = 'extractor'
+           AND evidence_status = 'FRESH'
+           AND evidence_id IN ({_RETIRE_SELECT})
+        RETURNING id, information_scope
+        """,
+        params,
+    ).fetchall()
     # 知情名单没有自己的 `source`，判据是「它挂的那条事件刚被退休了」。
-    cur = conn.execute(
+    retired_knowers = conn.execute(
         """
         UPDATE event_knower SET evidence_status = 'STALE'
          WHERE project_id = :pid
@@ -1371,10 +1428,445 @@ def retire_stale_extractor_facts(
                  SELECT id FROM story_event
                   WHERE project_id = :pid AND evidence_status = 'STALE'
              )
+        RETURNING event_id
         """,
         {"pid": project_id},
     )
-    return touched + cur.rowcount
+    return RetirementReport(
+        project_id=project_id,
+        chapter_id=chapter_id,
+        current_snapshot_id=current_snapshot_id,
+        retired_edge_ids=tuple(str(row["id"]) for row in retired_edges),
+        retired_event_ids=tuple(str(row["id"]) for row in retired_events),
+        retired_knower_event_ids=tuple(str(row["event_id"]) for row in retired_knowers),
+        touched_canon_edges=sum(
+            1 for row in retired_edges if row["information_scope"] == InformationScope.CANON
+        ),
+        touched_canon_events=sum(
+            1 for row in retired_events if row["information_scope"] == InformationScope.CANON
+        ),
+    )
+
+
+def mark_canon_event_cast_author(
+    conn: sqlite3.Connection,
+    event_id: str,
+    project_id: str,
+    decision_log_id: str,
+) -> None:
+    """021 / Task 9：作者改过名单的整套 incidence 视为作者覆盖，机器重放不得再碰。
+
+    `cast_owner` 是「当前解释由谁接管」；`story_event.source` 仍是 extractor 起源
+    （正文换快照时旧机器事实照旧退休、作者修正不随它走）。SQL 只住 graph 层。
+    """
+    conn.execute(
+        "UPDATE story_event SET cast_owner = 'author', cast_decision_log_id = ? "
+        "WHERE id = ? AND project_id = ?",
+        (decision_log_id, event_id, project_id),
+    )
+
+
+def event_reconciliation_ready(
+    conn: sqlite3.Connection, project_id: str, event_id: str
+) -> bool:
+    """022 / Task 10：一条事件摘要是否仍是当前可用（核对该不该调模型）。
+
+    status ACTIVE + evidence FRESH 且仍在 PROVISIONAL/CANON 才核；被撤回 /
+    证据已失效的事件只解决旧 OPEN 通知，不调模型。SQL 只住 graph 层。
+    """
+    row = conn.execute(
+        """
+        SELECT 1 FROM story_event e
+         WHERE e.project_id = ? AND e.id = ?
+           AND e.status = 'ACTIVE' AND e.evidence_status = 'FRESH'
+           AND e.information_scope IN ('PROVISIONAL','CANON')
+         LIMIT 1
+        """,
+        (project_id, event_id),
+    ).fetchone()
+    return row is not None
+
+
+def supersede_obsolete_proposals(
+    conn: sqlite3.Connection,
+    project_id: str,
+    chapter_number: int,
+    new_snapshot_id: str,
+) -> int:
+    """这一章保存了新正文：PENDING 提案若锚的不是新快照 → OBSOLETE（021 / Task 9）。
+
+    必须在 `commit_chapter_snapshot` 的**同一事务**里调用（不变量 20）：正文已变
+    和旧提案退出待确认不能拆成两个原子性。status 一字不改（003 的审计触发器
+    只把非 PENDING 当作者裁决），`superseded_by_snapshot_id` 记下是谁顶的。
+    """
+    cur = conn.execute(
+        """
+        UPDATE proposal_set
+           SET currentness = 'OBSOLETE',
+               superseded_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+               superseded_by_snapshot_id = :new_snapshot
+         WHERE project_id = :pid AND chapter_number = :chapter
+           AND status = 'PENDING' AND currentness = 'CURRENT'
+           AND snapshot_id IS NOT NULL AND snapshot_id <> :new_snapshot
+        """,
+        {"new_snapshot": new_snapshot_id, "pid": project_id, "chapter": chapter_number},
+    )
+    return cur.rowcount
+
+
+def bump_canon_once_if_retired_canon(
+    conn: sqlite3.Connection, project_id: str, retirement: RetirementReport
+) -> int:
+    """退休使 Writer 可见 Canon 集合变化时，至多 bump 一次 `canon_version`。
+
+    零 CANON 变化不 bump。返回事务内的新（或原）版本——调用方拿它写
+    `chapter_refresh_run.canon_version_before/after`。
+    """
+    row = conn.execute(
+        "SELECT canon_version FROM project WHERE id = ?", (project_id,)
+    ).fetchone()
+    current = int(row["canon_version"])
+    if not retirement.effective_canon_changed:
+        return current
+    bumped = conn.execute(
+        "UPDATE project SET canon_version = canon_version + 1 WHERE id = ? RETURNING canon_version",
+        (project_id,),
+    ).fetchone()
+    return int(bumped["canon_version"])
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 事件摘要版本（019 / Task 7）—— 所有 event_summary_* 的 SQL 只住在这儿
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def event_summary_current_row(
+    conn: sqlite3.Connection, event_id: str
+) -> dict[str, Any] | None:
+    """一个事件的当前摘要版本（head 指向的那一行）；无版本 → None。"""
+    return conn.execute(
+        """
+        SELECT v.id, v.project_id, v.event_id, v.source_snapshot_id, v.evidence_sha256,
+               v.summary, v.summary_sha256, v.source, v.status,
+               v.replaces_version_id, v.created_at
+          FROM event_summary_head h
+          JOIN event_summary_version v ON v.id = h.current_version_id
+         WHERE h.event_id = ?
+        """,
+        (event_id,),
+    ).fetchone()
+
+
+def insert_event_summary_version(
+    conn: sqlite3.Connection,
+    *,
+    version_id: str,
+    project_id: str,
+    event_id: str,
+    source_snapshot_id: str | None,
+    evidence_sha256: str | None,
+    summary: str,
+    source: str,
+    status: str,
+    replaces_version_id: str | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO event_summary_version (
+            id, project_id, event_id, source_snapshot_id, evidence_sha256,
+            summary, summary_sha256, source, status, replaces_version_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            version_id,
+            project_id,
+            event_id,
+            source_snapshot_id,
+            evidence_sha256,
+            summary,
+            _sha256_hex(summary),
+            source,
+            status,
+            replaces_version_id,
+        ),
+    )
+
+
+def switch_event_summary_head(
+    conn: sqlite3.Connection, event_id: str, new_version_id: str, expected: str | None
+) -> bool:
+    row = conn.execute(
+        """
+        UPDATE event_summary_head
+           SET current_version_id = :new_id,
+               machine_intent_seq = machine_intent_seq + 1,
+               updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE event_id = :eid AND current_version_id IS :expected
+        RETURNING event_id
+        """,
+        {"new_id": new_version_id, "eid": event_id, "expected": expected},
+    ).fetchone()
+    return row is not None
+
+
+def event_summary_history_rows(
+    conn: sqlite3.Connection, event_id: str
+) -> list[dict[str, Any]]:
+    return conn.execute(
+        """
+        SELECT id, project_id, event_id, source_snapshot_id, evidence_sha256,
+               summary, summary_sha256, source, status, replaces_version_id, created_at
+          FROM event_summary_version
+         WHERE event_id = ?
+         ORDER BY created_at, rowid
+        """,
+        (event_id,),
+    ).fetchall()
+
+
+def create_event_summary_job(
+    conn: sqlite3.Connection,
+    *,
+    job_id: str,
+    project_id: str,
+    event_id: str,
+    source_snapshot_id: str,
+    source_generation: int,
+    source_sha256: str,
+    expected_head: str | None,
+    intent_seq: int,
+    trigger_key: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO summary_generation_job (
+            id, project_id, target_type, chapter_id, event_id,
+            source_snapshot_id, source_generation, source_sha256,
+            refresh_attempt_id, required_ruleset_epoch, required_ruleset_hash,
+            expected_head_version_id, required_machine_intent_seq,
+            trigger_key, trigger_source, status
+        ) VALUES (?, ?, 'EVENT', NULL, ?, ?, ?, ?, NULL, NULL, NULL,
+                  ?, ?, ?, 'manual', 'PENDING')
+        """,
+        (
+            job_id,
+            project_id,
+            event_id,
+            source_snapshot_id,
+            source_generation,
+            source_sha256,
+            expected_head,
+            intent_seq,
+            trigger_key,
+        ),
+    )
+
+
+def event_summary_job_basis(
+    conn: sqlite3.Connection, project_id: str, event_id: str
+) -> dict[str, Any] | None:
+    """regenerate 冻结 job basis 用的只读查询（story_event/evidence/snapshot）。"""
+    row = conn.execute(
+        """
+        SELECT e.project_id, e.information_scope, e.valid_from_chapter,
+               ev.chapter_snapshot_id, ch.snapshot_generation,
+               ev.quote_text, ev.quote_sha256 AS evidence_sha256,
+               h.current_version_id, h.machine_intent_seq
+          FROM story_event e
+          LEFT JOIN evidence ev ON ev.id = e.evidence_id
+          LEFT JOIN chapter_snapshot cs ON cs.id = ev.chapter_snapshot_id
+          LEFT JOIN chapter ch ON ch.id = cs.chapter_id
+          JOIN event_summary_head h ON h.event_id = e.id
+         WHERE e.id = ? AND e.project_id = ?
+        """,
+        (event_id, project_id),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def event_information_scope(
+    conn: sqlite3.Connection, project_id: str, event_id: str
+) -> str | None:
+    row = conn.execute(
+        "SELECT information_scope FROM story_event WHERE id = ? AND project_id = ?",
+        (event_id, project_id),
+    ).fetchone()
+    return str(row["information_scope"]) if row is not None else None
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Canon 边纠错（020 / Task 8）—— slot key 与 override 的 SQL 唯一住址
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def canon_edge_slot_key(edge: Edge) -> str:
+    """一个语义槽的唯一键（§4.6）。
+
+    location=`subject+type+valid_from`；state=`subject+type+dim_key+valid_from`；
+    relation=`normalized_pair+type+valid_from`。纠错、抽取 staging、auto-Canon
+    promotion 和重放全部调用它——禁止各自拼字符串。
+    """
+    subject = edge.src
+    if edge.type is EdgeType.RELATED_TO:
+        subject = "|".join(sorted((edge.src, edge.dst)))
+    parts = [subject, edge.type.value]
+    if edge.type is EdgeType.HAS_STATE:
+        parts.append(edge.props.dim_key or "")
+    parts.append(str(edge.valid_from_chapter))
+    return "|".join(parts)
+
+
+def active_canon_override_for_slot(
+    conn: sqlite3.Connection, project_id: str, slot_key: str
+) -> sqlite3.Row | None:
+    return conn.execute(
+        """
+        SELECT id, project_id, slot_key, edge_type, source_edge_id, replacement_edge_id,
+               before_props_json, after_props_json, action, decision_log_id, status,
+               supersedes_override_id, created_at
+          FROM canon_edge_override
+         WHERE project_id = ? AND slot_key = ? AND status = 'ACTIVE'
+        """,
+        (project_id, slot_key),
+    ).fetchone()
+
+
+def active_canon_override_for_edge(
+    conn: sqlite3.Connection, project_id: str, edge_id: str
+) -> sqlite3.Row | None:
+    """`replacement_edge_id = :edge_id` 的 ACTIVE override —— 该边当前由作者接管。"""
+    return conn.execute(
+        """
+        SELECT id, project_id, slot_key, edge_type, source_edge_id, replacement_edge_id,
+               before_props_json, after_props_json, action, decision_log_id, status,
+               supersedes_override_id, created_at
+          FROM canon_edge_override
+         WHERE project_id = ? AND replacement_edge_id = ? AND status = 'ACTIVE'
+        """,
+        (project_id, edge_id),
+    ).fetchone()
+
+
+def insert_canon_override(
+    conn: sqlite3.Connection,
+    *,
+    override_id: str,
+    project_id: str,
+    slot_key: str,
+    edge_type: str,
+    source_edge_id: str,
+    replacement_edge_id: str | None,
+    before_props_json: str,
+    after_props_json: str | None,
+    action: str,
+    decision_log_id: str | None,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO canon_edge_override (
+            id, project_id, slot_key, edge_type, source_edge_id, replacement_edge_id,
+            before_props_json, after_props_json, action, decision_log_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            override_id,
+            project_id,
+            slot_key,
+            edge_type,
+            source_edge_id,
+            replacement_edge_id,
+            before_props_json,
+            after_props_json,
+            action,
+            decision_log_id,
+        ),
+    )
+
+
+def supersede_active_override(
+    conn: sqlite3.Connection, project_id: str, slot_key: str
+) -> str | None:
+    """把该槽现有的 ACTIVE override 标 SUPERSEDED（append-only，历史不删）。
+
+    返回被 supersede 的旧 override id——调用方在新 override 插入后补 FK 链接。
+    """
+    row = conn.execute(
+        """
+        UPDATE canon_edge_override
+           SET status = 'SUPERSEDED'
+         WHERE project_id = :pid AND slot_key = :slot AND status = 'ACTIVE'
+        RETURNING id
+        """,
+        {"pid": project_id, "slot": slot_key},
+    ).fetchone()
+    return str(row["id"]) if row is not None else None
+
+
+def link_override_chain(
+    conn: sqlite3.Connection, old_override_id: str, new_override_id: str
+) -> None:
+    conn.execute(
+        "UPDATE canon_edge_override SET supersedes_override_id = ? WHERE id = ?",
+        (new_override_id, old_override_id),
+    )
+
+
+def find_edge_by_identity_any_status(
+    conn: sqlite3.Connection, spec: EdgeSpec
+) -> Edge | None:
+    """按身份找边（含 RETRACTED）——A→B→A 恢复旧 identity 时复用旧行。"""
+    row = conn.execute(
+        """
+        SELECT id, project_id, src, dst, type, valid_from_chapter, valid_to_chapter,
+               information_scope, status, confidence, props_json, source, evidence_id,
+               evidence_status
+          FROM edge
+         WHERE project_id = :pid AND src = :src AND dst = :dst AND type = :type
+           AND valid_from_chapter = :vf AND information_scope = :scope
+        """,
+        {
+            "pid": spec.project_id,
+            "src": spec.src,
+            "dst": spec.dst,
+            "type": spec.type.value,
+            "vf": spec.valid_from_chapter,
+            "scope": spec.information_scope.value,
+        },
+    ).fetchone()
+    return None if row is None else to_edge(row)
+
+
+def restore_retracted_edge(
+    conn: sqlite3.Connection, edge_id: str
+) -> None:
+    """A→B→A：把 RETRACTED 旧行恢复成 ACTIVE current（origin/evidence 原样保留，
+    author ownership 由 ACTIVE override 赋予）。"""
+    conn.execute(
+        """
+        UPDATE edge SET status = 'ACTIVE', valid_to_chapter = NULL
+         WHERE id = ?
+        """,
+        (edge_id,),
+    )
+
+
+def update_edge_props_only(conn: sqlite3.Connection, edge_id: str, props_json: str) -> None:
+    """identity 不变时的投影更新：**只**改 props（020 专用），
+    严禁普通 `update_edge_facets` 改 source/evidence/status/vf。"""
+    conn.execute(
+        """
+        UPDATE edge SET props_json = :props
+         WHERE id = :id
+        """,
+        {"id": edge_id, "props": props_json},
+    )
+
+
+def _sha256_hex(text: str) -> str:
+    """summary_sha256 的唯一实现：UTF-8 原始字节（§4.4，不做 strip/归一化）。"""
+    import hashlib
+
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def chapter_disk_stats(
@@ -1390,3 +1882,137 @@ def chapter_disk_stats(
         {"pid": project_id},
     )
     return {int(r["number"]): (r["disk_mtime_ns"], r["disk_size"]) for r in _rows(cur)}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 别名生命周期（023 / Task 11）：软撤回 / 改归属 / 改 surface
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def fetch_alias(conn: sqlite3.Connection, alias_id: str) -> dict[str, Any] | None:
+    row = conn.execute(
+        """
+        SELECT id, project_id, node_id, surface, kind, usable_for_rules,
+               source, status, derived_from_alias_id, created_at, updated_at
+          FROM alias
+         WHERE id = ?
+        """,
+        (alias_id,),
+    ).fetchone()
+    return dict(row) if row is not None else None
+
+
+def retract_alias(conn: sqlite3.Connection, alias_id: str) -> None:
+    """软撤回：status → RETRACTED（tombstone，历史保留、允许重新登记）。"""
+    conn.execute(
+        "UPDATE alias SET status = 'RETRACTED', "
+        "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') "
+        "WHERE id = ? AND status = 'ACTIVE'",
+        (alias_id,),
+    )
+
+
+def add_alias_evidence(
+    conn: sqlite3.Connection,
+    *,
+    alias_id: str,
+    evidence_id: str,
+    source_snapshot_id: str,
+    source_generation: int,
+    extraction_application_id: str | None,
+) -> None:
+    """机器别名的一条支撑证据（幂等：同 evidence + generation 只记一次）。"""
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO alias_evidence (
+            alias_id, evidence_id, source_snapshot_id, source_generation,
+            extraction_application_id, status
+        ) VALUES (?, ?, ?, ?, ?, 'FRESH')
+        """,
+        (
+            alias_id,
+            evidence_id,
+            source_snapshot_id,
+            source_generation,
+            extraction_application_id,
+        ),
+    )
+
+
+def stale_alias_evidence_for_snapshot(
+    conn: sqlite3.Connection, project_id: str, snapshot_id: str
+) -> int:
+    """章节提交新快照时，把该章旧 snapshot 的机器 alias_evidence 标 STALE。"""
+    cur = conn.execute(
+        "UPDATE alias_evidence SET status = 'STALE' "
+        "WHERE source_snapshot_id = ? AND status = 'FRESH' AND alias_id IN ("
+        "  SELECT a.id FROM alias a WHERE a.project_id = ? AND a.source = 'extractor'"
+        ")",
+        (snapshot_id, project_id),
+    )
+    return cur.rowcount
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 抽取别名 identity-first（Task 12）—— alias/evidence SQL 的唯一住址
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def active_alias_surfaces(conn: sqlite3.Connection, project_id: str) -> set[str]:
+    """全项目 ACTIVE surface 集合（判「当前未映射」的原料）。"""
+    rows = conn.execute(
+        "SELECT surface FROM alias WHERE project_id = ? AND status = 'ACTIVE'",
+        (project_id,),
+    ).fetchall()
+    return {str(r[0]) for r in rows}
+
+
+def existing_active_alias(
+    conn: sqlite3.Connection, project_id: str, surface: str
+) -> dict[str, Any] | None:
+    """surface 的 ACTIVE 别名；`ambiguous=True` = 它指向 >1 个不同人物。"""
+    rows = conn.execute(
+        "SELECT id, node_id FROM alias "
+        "WHERE project_id = ? AND surface = ? AND status = 'ACTIVE'",
+        (project_id, surface),
+    ).fetchall()
+    if not rows:
+        return None
+    distinct = {str(r["node_id"]) for r in rows}
+    return {
+        "id": str(rows[0]["id"]),
+        "node_id": str(rows[0]["node_id"]),
+        "ambiguous": len(distinct) > 1,
+    }
+
+
+def insert_alias_evidence_quote(
+    conn: sqlite3.Connection,
+    *,
+    evidence_id: str,
+    project_id: str,
+    chapter_id: str,
+    chapter_snapshot_id: str,
+    quote_text: str,
+    para_index: int,
+) -> None:
+    """自动别名的证据行（quote 必须逐字落锚，§4.5 条件 3 的锚侧）。"""
+    from ..decisions import quote_hash
+
+    conn.execute(
+        """
+        INSERT INTO evidence (
+            id, project_id, chapter_id, chapter_snapshot_id,
+            para_index, quote_text, quote_sha256, para_index_hint, occurrence_k
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0)
+        """,
+        (
+            evidence_id,
+            project_id,
+            chapter_id,
+            chapter_snapshot_id,
+            para_index,
+            quote_text,
+            quote_hash(quote_text),
+        ),
+    )

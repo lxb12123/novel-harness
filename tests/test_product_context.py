@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from hashlib import sha256
 
 import pytest
 
@@ -177,8 +178,10 @@ def test_rolling_summaries_do_not_depend_on_the_event_window() -> None:
         return ChapterSummary(
             id=f"summary:{chapter:02d}",
             project_id=PID,
+            chapter_id=f"chapter:{chapter:02d}",
             chapter_number=chapter,
             summary=f"第{chapter}章摘要",
+            summary_sha256=sha256(f"第{chapter}章摘要".encode("utf-8")).hexdigest(),
             schema_version="chapter-summary-v1",
             prompt_hash="prompt:hash",
             created_at="<ts>",
@@ -212,8 +215,10 @@ def test_older_layers_are_dropped_oldest_first() -> None:
         ChapterSummary(
             id=f"summary:{chapter:03d}",
             project_id=PID,
+            chapter_id=f"chapter:{chapter:03d}",
             chapter_number=chapter,
             summary=f"第{chapter}章摘要",
+            summary_sha256=sha256(f"第{chapter}章摘要".encode("utf-8")).hexdigest(),
             schema_version="chapter-summary-v1",
             prompt_hash="prompt:hash",
             created_at="<ts>",

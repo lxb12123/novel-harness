@@ -88,7 +88,8 @@ def reconcile_manuscript(
     """把这本书和磁盘对一遍。**不花钱**（一次模型调用都没有）。
 
     **收的是读写交集，不是只读的 `StoryGraph`**：对上之后要把变了的章读进库
-    （`put_chapter`）。写入面在签名上看得见，同 `api/autopilot.py` 那一处。
+    （`put_chapter`）。写入面在签名上看得见，同保存那条路由（`api/app.py` 的
+    `PUT …/text` → `_trigger_refresh`）那一处。
     """
     report = importer.reconcile(graph, proj.id, Path(proj.root_path), deep=deep)
     return ReconcileOutcome(

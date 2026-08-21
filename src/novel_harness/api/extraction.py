@@ -70,6 +70,10 @@ class ExtractionRunView(BaseModel):
     model_call_id: str | None = None
     schema_version: str
     prompt_hash: str
+    source_generation: int | None = Field(default=None, ge=1)
+    required_ruleset_epoch: int | None = Field(default=None, ge=1)
+    required_ruleset_hash: str | None = None
+    fencing_token: int = 0
     created_at: str
     started_at: str | None = None
     finished_at: str | None = None

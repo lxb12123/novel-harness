@@ -41,7 +41,7 @@
    （两边都没有）。**四个桶必须把问到的区间铺满**，`tests/test_story_wiki_honesty.py`
    的那条 partition 断言就是钉这个的。
    `coverage()` 还有一件事答不了：**它只问「有没有」不问「新不新」**
-   （`api/autopilot.py` 已经写下这条既有限制）。摘要过期比缺摘要更坏——缺是**瞎**，
+   （这条既有限制写在 `SummaryStore.coverage()` 自己的 docstring 里）。摘要过期比缺摘要更坏——缺是**瞎**，
    过期是**说错**，而模型手里只有那一段摘要。所以这一层拿磁盘 mtime 自己核一遍
    （`_rewritten_since`），核不了的时候用 `stale_checked` 说「我没查」。
 3. **超过作者进度的条目只标不挡**（`ToolContext.working_chapter` 的 docstring 讲了为什么
@@ -914,7 +914,7 @@ class ChapterSummaryEntry(BaseModel):
 
     这一档比「缺摘要」更坏：缺摘要是索引在那一章**瞎**，而它是索引在那一章**说错**——
     模型手里唯一的「这一章讲了什么」描述的是一段已经不存在的正文。上游知道这件事
-    （`api/autopilot.py`：「`coverage()` 也只问「有没有」不问「新不新」」），
+    （`SummaryStore.coverage()` 的 docstring：「它只问「有没有」不问「新不新」」），
     界面上作者对着正文看得见，而在这里模型只看得见摘要，所以这一层必须自己标。
     """
 

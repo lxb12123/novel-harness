@@ -289,7 +289,7 @@ def test_no_poison_reaches_the_table_on_the_path_that_assembles_memory(
     prompt = json.dumps(writer.prompts[0], ensure_ascii=False)
     # **自守卫：这一次真的走了记忆前言那条路。** 少了这一句，下面所有「没搜到」
     # 都可能只是因为那一段根本没跑（既有那份网就正好停在这儿）。
-    assert "已确认的故事记忆" in prompt and "【在场人物资料】" in prompt, (
+    assert "已生效的故事记忆" in prompt and "【在场人物资料】" in prompt, (
         "这一稿是从退化路上跑出来的 —— 记忆前言那一段没进扫描面"
     )
 

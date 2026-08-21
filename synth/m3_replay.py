@@ -231,7 +231,16 @@ def replay(
     if data["project_id"] != project_id:
         raise ValueError("考卷 project_id 与 --project 不一致")
 
-    real = SqliteStoryGraph(db.connect(db_path))
+    # ⚠️ **先迁移再读。** `gate.db` 是一个长期躺在磁盘上的本地产物（gitignore，不进版本
+    # 控制），而引擎的读路径会跟着迁移往前走：2026-08-20 合并保存闭环任务后
+    # `queries.alias_rows` 开始 JOIN `alias_evidence`（迁移 023），于是一个停在旧版本的
+    # 旧产物上 replay 会以 `no such table` 当场炸——**而它炸的是一条预注册的门**。
+    # 迁移不改考卷：题目在 `m3_ground_truth.json` 和 `booklet.txt` 里，阈值是常量，
+    # 迁移只补表补列（`test_populated_v1_database_migrates_without_changing_existing_rows`
+    # 钉着「既有行一个字节不动」）。
+    conn = db.connect(db_path)
+    db.migrate(conn)
+    real = SqliteStoryGraph(conn)
     overlay = OverlayGraph(
         real,
         first_appears=data["first_appears"],

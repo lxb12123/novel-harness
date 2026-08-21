@@ -17,6 +17,7 @@ from pathlib import Path
 
 import pytest
 
+from novel_harness.checks.catalog import SYSTEM_RULESET_V1_HASH
 from novel_harness.db import IN_MEMORY, MigrationError, connect, migrate, user_version
 from novel_harness.decisions import DecisionKind, quote_hash, read as read_decisions
 from novel_harness.ids import EntityType, new_id, new_project_id
@@ -79,9 +80,9 @@ def test_migrate_twice_is_idempotent(tmp_path: Path) -> None:
     闸门拦住了它。"""
     c = connect(tmp_path / "nh.db")
     assert user_version(c) == 0
-    assert migrate(c) == 17
-    assert migrate(c) == 17  # 不抛
-    assert user_version(c) == 17
+    assert migrate(c) == 25
+    assert migrate(c) == 25  # 不抛
+    assert user_version(c) == 25
     c.close()
 
 
@@ -92,8 +93,8 @@ def test_migrate_twice_on_fresh_connections(tmp_path: Path) -> None:
     migrate(c1)
     c1.close()
     c2 = connect(path)
-    assert migrate(c2) == 17
-    assert user_version(c2) == 17
+    assert migrate(c2) == 25
+    assert user_version(c2) == 25
     c2.close()
 
 
@@ -141,9 +142,19 @@ def test_migration_files_are_readable_from_package() -> None:
         "014_summary_mentions.sql",
         "015_chapter_disk_stat.sql",
         "016_rule_until.sql",
-        # 017 是本任务（calibration，ADR 0033）。并行任务原拟用 017–023，与之撞号：
-        # 合并时必须整体后移一档（018–024），见 ADR 0033「迁移编号约定」。
+        # 017 是校准（calibration，ADR 0033）。并行的保存闭环任务原拟用 017–024，
+        # 与之撞号：2026-08-20 合并时整体后移一档（018–025），照 ADR 0033
+        # 「迁移编号约定」执行。**文件名上的号才是权威**（`_apply` 按它拼
+        # `PRAGMA user_version`）；文件内那句是冗余的，改号时一起改了。
         "017_calibration.sql",
+        "018_chapter_refresh.sql",
+        "019_summary_versions.sql",
+        "020_canon_edge_overrides.sql",
+        "021_extraction_superseded.sql",
+        "022_system_notifications.sql",
+        "023_alias_lifecycle.sql",
+        "024_validation_rules.sql",
+        "025_chapter_focus.sql",
     ]
     assert "PRAGMA user_version = 1" in (root / "001_init.sql").read_text(encoding="utf-8")
     assert "PRAGMA user_version = 2" in (root / "002_m4_events.sql").read_text(encoding="utf-8")
@@ -198,8 +209,8 @@ def test_populated_v1_database_migrates_without_changing_existing_rows(tmp_path:
         ).fetchone()
     )
 
-    assert migrate(c) == 17
-    assert migrate(c) == 17
+    assert migrate(c) == 25
+    assert migrate(c) == 25
     assert tuple(c.execute("SELECT * FROM project WHERE id = ?", (project_id,)).fetchone()) == before_project
     assert tuple(c.execute("SELECT * FROM node WHERE id = ?", (character_id,)).fetchone()) == before_node
     assert (
@@ -293,7 +304,7 @@ def test_populated_v2_database_backfills_attached_proposal_audit(tmp_path: Path)
     )
     c.commit()
 
-    assert migrate(c) == 17
+    assert migrate(c) == 25
     row = c.execute(
         """
         SELECT resolution_action, resolved_canon_version, audit_envelope_json
@@ -354,7 +365,7 @@ def test_v2_migration_attaches_one_matching_proposal_review_gap(tmp_path: Path) 
     )
     c.commit()
 
-    assert migrate(c) == 17
+    assert migrate(c) == 25
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -412,7 +423,7 @@ def test_v2_migration_refuses_duplicate_matching_proposal_reviews(tmp_path: Path
     )
     c.commit()
 
-    assert migrate(c) == 17
+    assert migrate(c) == 25
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -475,7 +486,7 @@ def test_v2_migration_quarantines_utf8_blob_kind_duplicate_history(
     )
     c.commit()
 
-    assert migrate(c) == 17
+    assert migrate(c) == 25
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -535,7 +546,7 @@ def test_v2_migration_quarantines_shared_decision_attachment(tmp_path: Path) -> 
         )
     c.commit()
 
-    assert migrate(c) == 17
+    assert migrate(c) == 25
     rows = c.execute(
         """
         SELECT id, resolution_action, resolved_canon_version, audit_envelope_json
@@ -652,7 +663,7 @@ def test_v2_migration_quarantines_ambiguous_audit_payload(
     )
     c.commit()
 
-    assert migrate(c) == 17
+    assert migrate(c) == 25
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -705,7 +716,7 @@ def test_v2_migration_quarantines_invalid_utf8_payload_without_stalling(
     )
     c.commit()
 
-    assert migrate(c) == 17
+    assert migrate(c) == 25
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -776,7 +787,7 @@ def test_v2_migration_quarantines_invalid_utf8_decision_fields(
     )
     c.commit()
 
-    assert migrate(c) == 17
+    assert migrate(c) == 25
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -847,7 +858,7 @@ def test_v2_migration_quarantines_invalid_decision_audit_fields(
     )
     c.commit()
 
-    assert migrate(c) == 17
+    assert migrate(c) == 25
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -1550,9 +1561,9 @@ def test_concurrent_first_migrate_does_not_race(tmp_path: Path) -> None:
     for t in threads:
         t.join()
 
-    assert results == [17] * n, f"并发首跑必须全部成功，实得 {results}"
+    assert results == [25] * n, f"并发首跑必须全部成功，实得 {results}"
     c = connect(path)
-    assert user_version(c) == 17
+    assert user_version(c) == 25
     assert c.execute("SELECT COUNT(*) FROM edge_type").fetchone()[0] == 9
     c.close()
 
@@ -1561,14 +1572,14 @@ def test_connect_in_memory_works(tmp_path: Path) -> None:
     # 内存库不支持 WAL，会静默停在 memory 模式。这没关系（没有并发读者），
     # 但 connect() 不能因此炸——测试和 CLI 的 --dry-run 都走这条。
     c = connect(IN_MEMORY)
-    assert migrate(c) == 17
+    assert migrate(c) == 25
     assert c.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     c.close()
 
 
 def test_connect_creates_parent_dirs(tmp_path: Path) -> None:
     c = connect(tmp_path / "a" / "b" / "nh.db")
-    assert migrate(c) == 17
+    assert migrate(c) == 25
     c.close()
 
 
@@ -2618,9 +2629,10 @@ def test_extraction_run_checks_status_counters_and_idempotency(
     ).fetchone()[0]
     conn.execute(
         "INSERT INTO extraction_run "
-        "(id, project_id, chapter_number, snapshot_id, schema_version, prompt_hash) "
-        "VALUES (?,?,?,?,?,?)",
-        ("run:one", project, 143, snapshot_id, "m4.v1", "prompt-a"),
+        "(id, project_id, chapter_number, snapshot_id, schema_version, prompt_hash, "
+        " source_generation, required_ruleset_epoch, required_ruleset_hash) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        ("run:one", project, 143, snapshot_id, "m4.v1", "prompt-a", 3, 1, "ruleset-hash"),
     )
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
@@ -2632,10 +2644,20 @@ def test_extraction_run_checks_status_counters_and_idempotency(
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
             "INSERT INTO extraction_run "
-            "(id, project_id, chapter_number, snapshot_id, schema_version, prompt_hash) "
-            "VALUES (?,?,?,?,?,?)",
-            ("run:duplicate", project, 143, snapshot_id, "m4.v1", "prompt-a"),
+            "(id, project_id, chapter_number, snapshot_id, schema_version, prompt_hash, "
+            " source_generation, required_ruleset_epoch, required_ruleset_hash) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            ("run:duplicate", project, 143, snapshot_id, "m4.v1", "prompt-a", 3, 1, "ruleset-hash"),
         )
+    # 021 / Task 9：同一内容不同 generation/ruleset basis 是**另一条 run**
+    # （S1→S2→S1 的第三轮 S1 必须有自己的 run，不能复用第一轮的）。
+    conn.execute(
+        "INSERT INTO extraction_run "
+        "(id, project_id, chapter_number, snapshot_id, schema_version, prompt_hash, "
+        " source_generation, required_ruleset_epoch, required_ruleset_hash) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        ("run:other-basis", project, 143, snapshot_id, "m4.v1", "prompt-a", 4, 1, "ruleset-hash"),
+    )
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
             "INSERT INTO extraction_run "
@@ -2913,3 +2935,110 @@ def _story_event(
     conn.execute(
         f"INSERT INTO story_event ({columns}) VALUES ({markers})", tuple(values.values())
     )
+
+
+def _v16_book(tmp_path: Path) -> object:
+    """按 001–016 逐脚本建一本 v16 的旧书（一个项目 + 一章 + 一条快照）。"""
+    from importlib.resources import files
+
+    conn = connect(tmp_path / "v16.db")
+    root = files("novel_harness") / "migrations"
+    for name in (
+        "001_init.sql",
+        "002_m4_events.sql",
+        "003_proposal_audit_recovery.sql",
+        "004_chapter_summary.sql",
+        "005_fact_edit.sql",
+        "006_chat_session.sql",
+        "007_draft_candidate.sql",
+        "008_cache_usage.sql",
+        "009_call_chapter.sql",
+        "010_candidate_stopped.sql",
+        "011_rule_revocation.sql",
+        "012_chat_notice.sql",
+        "013_summary_edit.sql",
+        "014_summary_mentions.sql",
+        "015_chapter_disk_stat.sql",
+        "016_rule_until.sql",
+    ):
+        conn.executescript((root / name).read_text(encoding="utf-8"))
+    project_id = "project:v16-book"
+    chapter_id = "chapter:v16-book"
+    conn.execute(
+        "INSERT INTO project (id, name, root_path, canon_version) VALUES (?,?,?,?)",
+        (project_id, "v16 旧书", "/old", 3),
+    )
+    conn.execute(
+        "INSERT INTO node (id, project_id, label, name, props_json) VALUES (?,?,?,?,?)",
+        (chapter_id, project_id, "Chapter", "第一章 旧", "{}"),
+    )
+    conn.execute(
+        "INSERT INTO chapter (id, project_id, number, title, path, text_sha256) "
+        "VALUES (?,?,?,?,?,?)",
+        (chapter_id, project_id, 1, "旧", "chapters/0001.md", quote_hash("旧正文")),
+    )
+    conn.execute(
+        "INSERT INTO chapter_snapshot (id, chapter_id, text, text_sha256) VALUES (?,?,?,?)",
+        ("snapshot:v16-book", chapter_id, "旧正文", quote_hash("旧正文")),
+    )
+    conn.commit()
+    return conn
+
+
+def test_v16_upgrade_plants_ruleset_baseline_and_synthetic_refresh_runs(
+    tmp_path: Path,
+) -> None:
+    """v16 旧书升级后：每个项目恰有一行 epoch=1 的 ruleset state（hash == 目录常量），
+    每章恰有一条 generation=1 的 synthetic refresh run；重跑迁移不新增。"""
+    conn = _v16_book(tmp_path)
+    assert user_version(conn) == 16
+
+    assert migrate(conn) == 25
+    ruleset = conn.execute(
+        "SELECT epoch, ruleset_hash FROM validation_ruleset_state WHERE project_id = ?",
+        ("project:v16-book",),
+    ).fetchall()
+    assert len(ruleset) == 1
+    assert ruleset[0]["epoch"] == 1
+    assert ruleset[0]["ruleset_hash"] == SYSTEM_RULESET_V1_HASH
+
+    runs = conn.execute(
+        "SELECT source_generation, source_snapshot_id FROM chapter_refresh_run "
+        "WHERE project_id = ?",
+        ("project:v16-book",),
+    ).fetchall()
+    assert len(runs) == 1
+    assert runs[0]["source_generation"] == 1
+    assert runs[0]["source_snapshot_id"] == "snapshot:v16-book"
+
+    assert migrate(conn) == 25  # 幂等：不新增第二行
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM validation_ruleset_state WHERE project_id = ?",
+            ("project:v16-book",),
+        ).fetchone()[0]
+        == 1
+    )
+    assert (
+        conn.execute(
+            "SELECT COUNT(*) FROM chapter_refresh_run WHERE project_id = ?",
+            ("project:v16-book",),
+        ).fetchone()[0]
+        == 1
+    )
+    conn.close()
+
+
+def test_migration_018_frozen_hash_matches_the_catalog_constant() -> None:
+    """chapter_refresh 那条迁移里冻结的历史字面量必须等于
+    `checks.catalog.SYSTEM_RULESET_V1_HASH`——改目录语义而不开新迁移递增 epoch，这一条会红。
+
+    **文件名 2026-08-20 从 `017_` 改成 `018_`**：并行的保存闭环任务原本占 017–024，
+    和 calibration 的 017 撞号，合并时整体后移一档（ADR 0033「迁移编号约定」）。
+    """
+    from importlib.resources import files
+
+    sql = (files("novel_harness") / "migrations" / "018_chapter_refresh.sql").read_text(
+        encoding="utf-8"
+    )
+    assert SYSTEM_RULESET_V1_HASH in sql

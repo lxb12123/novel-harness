@@ -321,7 +321,8 @@ def test_legacy_allocator_cannot_reuse_an_active_bootstrap_reservation(
     assert final_root == books / "混合分配"
     assert legacy_roots == [books / "混合分配-2"]
     assert legacy_roots[0].is_dir()
-    assert sorted(path.name for path in final_root.iterdir()) == ["chapters"]
+    # `.novel-harness/locks/` 是章级保存锁的固定落点（Task 2），导入时随 sync 出现。
+    assert sorted(path.name for path in final_root.iterdir()) == [".novel-harness", "chapters"]
     legacy_roots[0].rmdir()
 
 

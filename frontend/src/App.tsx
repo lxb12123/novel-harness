@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { useChapters, useProjects } from "./api/hooks";
-import { useOpenChapter } from "./autopilot";
+import { useOpenChapter } from "./chapterNavigation";
 import { chapterOnOpen } from "./chapterCursor";
 import { useReconcileOnFocus } from "./reconcile";
 import { useHashRoute } from "./route";
@@ -8,6 +8,7 @@ import { useCoords } from "./store";
 import { DraftCompare } from "./components/DraftCompare";
 import { TopBar } from "./components/TopBar";
 import { ActivityLog } from "./components/ActivityLog";
+import { CanonEdgeEditor } from "./components/CanonEdgeEditor";
 import { LeftRail } from "./components/LeftRail";
 import { CenterEditor } from "./components/CenterEditor";
 import { RightPanel } from "./components/RightPanel";
@@ -38,9 +39,11 @@ function Workbench() {
   // 开书时把库和磁盘深对一次，之后每次切回这个标签页快对一次（`reconcile.ts`）。
   // **挂在这儿而不是中栏**：对的是整本书，不是正在看的那一章。
   useReconcileOnFocus(projectId);
-  // 作者点开另一章 = 他离开了当前这一章 = 那一章写完了 → 交给后台整理（`autopilot.ts`）。
+  // 换章走 `useOpenChapter`（`chapterNavigation.ts`）：它只上报「我现在在第 N 章」这个
+  // **免费心跳**，给后端做「当前章防抖」用。**它不发任何付费工作**——2026-08-17 起
+  // 「那一章写完了」的信号是**保存**（`api/app.py::_trigger_refresh`），不是换章。
   // **下面那个 `chapterOnOpen` 的 setChapter 故意不走它**：开书时把光标放到该停的那一章
-  // 不是「写完了一章」，走它等于凭空发一次后台整理。
+  // 不是作者在换章，不该上报成一次焦点移动。
   const openChapter = useOpenChapter();
 
   // v1 单机单库（ADR 0007）：默认打开第一个项目。换项目 = 整棵 query 树失效（store 里
@@ -103,6 +106,7 @@ function Workbench() {
         chat={chatOpen ? <ChatPanel /> : undefined}
         right={<RightPanel />}
       />
+      <CanonEdgeEditor />
       <BottomBar />
     </div>
   );

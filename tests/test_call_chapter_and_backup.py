@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import ast
+from hashlib import sha256
 import os
 import sqlite3
 from importlib.resources import files
@@ -162,14 +163,23 @@ def _old_rows(book: dict[str, str], client: TestClient) -> dict[str, int]:
     summarizer = seed_call(book, capability="summarizer")
     conn = connect(book["db"])
     try:
+        chapter_id = conn.execute(
+            "SELECT id FROM chapter WHERE project_id = ? AND number = 1",
+            (book["pid"],),
+        ).fetchone()["id"]
         conn.execute(
             """
             INSERT INTO chapter_summary (
-                id, project_id, chapter_number, summary, schema_version, prompt_hash,
-                model_call_id
-            ) VALUES ('summary:old', ?, 1, '第一章讲了什么', 'nh.summary.v1', 'ph', ?)
+                id, project_id, chapter_id, chapter_number, summary, summary_sha256,
+                schema_version, prompt_hash, model_call_id
+            ) VALUES ('summary:old', ?, ?, 1, '第一章讲了什么', ?, 'nh.summary.v1', 'ph', ?)
             """,
-            (book["pid"], summarizer),
+            (
+                book["pid"],
+                chapter_id,
+                sha256("第一章讲了什么".encode("utf-8")).hexdigest(),
+                summarizer,
+            ),
         )
         conn.commit()
         # 前提：它们的新列真的是空的。不断言这一条，下面测的就是别的东西。

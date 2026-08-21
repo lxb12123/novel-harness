@@ -189,3 +189,150 @@ def test_a_chapter_that_did_not_change_retires_nothing(world: World) -> None:
 
     assert world.fresh_events() == before
     assert world.places_on_screen() == ["青云城主府"]
+
+
+def test_saving_new_text_retires_extractor_canon_and_bumps_canon_version_once(
+    world: World,
+) -> None:
+    """保存路径（`commit_chapter_snapshot`）退休 Writer 可见 CANON 时，
+    同一事务只 bump 一次 canon version；作者拿旧 expected 改事实必须 409。"""
+    world.ingest("萧决走进了青云城主府。", "青云城主府")
+    before = project.require_canon_version(world.conn, world.pid)
+    # 保存前那条 extractor 边是 CANON + FRESH（自动升 Canon，ADR 0020）。
+    row = world.conn.execute(
+        "SELECT information_scope, evidence_status FROM edge "
+        "WHERE project_id = ? AND source = 'extractor' AND information_scope = 'CANON'",
+        (world.pid,),
+    ).fetchone()
+    assert row["information_scope"] == "CANON" and row["evidence_status"] == "FRESH"
+
+    # 作者保存新正文（走产品保存路径，不是 sync）。
+    importer.save_chapter(
+        world.graph,
+        world.pid,
+        world.root,
+        1,
+        AFTER,
+        expected_sha256=importer.text_digest(BEFORE),
+    )
+    world.conn.commit()
+
+    retired = world.conn.execute(
+        "SELECT evidence_status FROM edge "
+        "WHERE project_id = ? AND source = 'extractor' AND information_scope = 'CANON'",
+        (world.pid,),
+    ).fetchone()
+    assert retired["evidence_status"] == "STALE"
+    assert project.require_canon_version(world.conn, world.pid) == before + 1
+
+    # 作者拿着旧 canon version 改事实 → CAS 失败（HTTP 层就是 409）。
+    with pytest.raises(project.StaleBaseVersion):
+        project.compare_and_bump_canon_version(world.conn, world.pid, before)
+
+
+def test_same_hash_save_does_not_bump_canon_version(world: World) -> None:
+    world.ingest("萧决走进了青云城主府。", "青云城主府")
+    before = project.require_canon_version(world.conn, world.pid)
+    importer.save_chapter(
+        world.graph,
+        world.pid,
+        world.root,
+        1,
+        BEFORE,
+        expected_sha256=importer.text_digest(BEFORE),
+    )
+    world.conn.commit()
+    assert project.require_canon_version(world.conn, world.pid) == before
+
+
+def test_aba_restore_gets_a_new_generation_and_a_fresh_run(seed_provider=None) -> None:
+    """S1(g1)→S2(g2)→S1(g3)：第三次的 S1 必须拥有自己的 generation + run。
+
+    021 / Task 9 的核心：g1 的晚到 run 虽然 snapshot/hash 与当前再次相同，
+    也必须因 generation 不同而 SUPERSEDED；g3 的 enqueue 必须拿到一条以
+    g3 basis 冻结的新 run（content-addressed 复用只发生在同 basis 内）。
+    """
+    from test_extract_runner import QUOTE as RUNNER_QUOTE  # noqa: F401  (API 形状探针)
+
+    tmp = tempfile.mkdtemp()
+    root = Path(tmp) / "book"
+    conn = connect(Path(tmp) / "b.db")
+    migrate(conn)
+    pid = project.create(conn, name="t", root_path=str(root)).id
+    graph = SqliteStoryGraph(conn)
+    src = Path(tmp) / "s.txt"
+    src.write_text(BEFORE, encoding="utf-8")
+    importer.import_book(graph, pid, txt=src, root=root)
+    conn.commit()
+
+    from novel_harness.extract.runner import ExtractionRunner
+    from novel_harness.draft.provider import CompletionResult
+
+    calls: list[str] = []
+
+    def analyzer(request):
+        calls.append(request.chapter.snapshot_id)
+        return CompletionResult(
+            text=RawChapterAnalysis(
+                events=(
+                    RawEvent(
+                        summary="萧决到了青云城主府。",
+                        quote="萧决走进了青云城主府。",
+                        participants=("萧决",),
+                        knowers=("萧决",),
+                        revealed_facts=(),
+                        confidence=0.95,
+                    ),
+                ),
+                state_updates=(
+                    RawStateUpdate(
+                        kind="location",
+                        subject="萧决",
+                        object="青云城主府",
+                        quote="萧决走进了青云城主府。",
+                        confidence=0.95,
+                    ),
+                ),
+                character_profiles=(),
+            ).model_dump_json(),
+            model="extractor-test-model",
+            finish_reason="stop",
+        )
+
+    runner = ExtractionRunner(lambda: connect(Path(tmp) / "b.db"), analyzer)
+
+    # g1：第一轮 S1，run 成功。
+    g1_run = runner.enqueue(pid, 1)
+    assert g1_run.source_generation == 1
+    assert runner.run(g1_run.id).status.value == "SUCCEEDED"
+
+    # g2：保存 S2（换正文）。
+    importer.save_chapter(
+        graph, pid, root, 1, AFTER, expected_sha256=importer.text_digest(BEFORE)
+    )
+    conn.commit()
+
+    # g3：从 S2 还原历史 S1 —— 判为「变化」，generation 必须 +1。
+    importer.save_chapter(
+        graph, pid, root, 1, BEFORE, expected_sha256=importer.text_digest(AFTER)
+    )
+    conn.commit()
+    current = graph.current_snapshots(pid)[0]
+    assert current.text == BEFORE
+    assert graph.current_chapter_generation(pid, 1) == 3, (
+        "S1→S2→S1 的第三次 S1 必须拿到新 generation（ABA 防护）"
+    )
+
+    # g3 的 enqueue：同一内容，但 basis 不同 → 新 run（g3 basis）。
+    g3_run = runner.enqueue(pid, 1)
+    assert g3_run.id != g1_run.id
+    assert g3_run.source_generation == 3
+
+    # g1 的晚到 run 在 g3 已经 current 之后重新跑：因 generation 不同而 SUPERSEDED。
+    g1_again = runner.run(g1_run.id)
+    assert g1_again.status.value == "SUPERSEDED", (
+        "g1 的晚到结果借 snapshot/hash 等值复活 = ABA"
+    )
+
+    # g3 自己的 run 正常成功。
+    assert runner.run(g3_run.id).status.value == "SUCCEEDED"
