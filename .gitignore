@@ -44,6 +44,7 @@ node_modules/
 .understand-anything/
 .DS_Store
 
-# 章级锁：，保存/导入时在书文件夹里现建的运行时产物。
+# 章级锁（`importer.LOCK_DIR` = `.novel-harness/locks`）：保存/导入时在书文件夹里
+# 现建的运行时产物（空文件）。
 # 和 *.db 同理——它属于「作者的那本书」，不属于仓库。
 .novel-harness/
