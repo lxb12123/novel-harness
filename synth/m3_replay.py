@@ -212,15 +212,53 @@ def _run_one(
     return tuple(run_checks(ctx, checks=checks))
 
 
+def resolve_project(conn: Any) -> str:
+    """库里那**唯一**一个项目的 id。
+
+    ── 为什么不拿考卷上那个号去找 ────────────────────────────────────────────
+    考卷（`m3_ground_truth.json`）里记着一个 `project_id`，那是**写考卷那天那座图书馆
+    的门牌号**。而造图书馆的 `synth/build.py` 走 `project.create`，**每建一次就换一个
+    随机 ULID**（它自己的 docstring 写着「每次都建一个新项目」）。
+
+    于是拿考卷上的号当查找键，等于要求「图书馆必须是那一次建的那一座」——
+    2026-08-21 实测：重建一份库再 replay，25 道题答对 **0** 道，门直接不通过。
+    能过这道门的全世界只有一份文件（本机那个 2026-07-30 建的 `gate.db`），
+    它在 `.gitignore` 里、复制不出来，**于是这道预注册的门在任何新克隆上都不成立**。
+
+    改成现取之后，考卷上那个号退成一条**出处记录**（写卷子那天用的是哪座馆），
+    不再是查找键——题目、答案、阈值一个字没动，动的只是「怎么找到图书馆」。
+
+    多于一个项目就报错而不是挑一个：`build.py` 说过往同一个库跑第二次「只会多出一个
+    项目，库里于是有两份看起来都对的真相」。那种时候**说不知道**，不猜。
+    """
+    rows = conn.execute("SELECT id FROM project ORDER BY id").fetchall()
+    if len(rows) == 1:
+        return str(rows[0][0])
+    if not rows:
+        raise ValueError(
+            "这个库里一个项目都没有 —— 它不是 `synth/build.py` 造出来的考场。"
+            "先跑 `uv run python synth/build.py --out <新路径>`。"
+        )
+    ids = ", ".join(str(r[0]) for r in rows)
+    raise ValueError(
+        f"这个库里有 {len(rows)} 个项目（{ids}）—— 说不出该考哪一个。"
+        "多半是往同一个库跑了两次 build.py；请指一个新路径重建。"
+    )
+
+
 def replay(
     *,
     db_path: Path,
-    project_id: str,
     ground_truth: Path,
     booklet: Path,
+    project_id: str | None = None,
     checks: tuple[Any, ...] | None = None,
 ) -> ReplaySummary:
-    """跑完整张考卷 + 干净正文抽查，返回汇总（不打印，测试直接吃这个）。"""
+    """跑完整张考卷 + 干净正文抽查，返回汇总（不打印，测试直接吃这个）。
+
+    `project_id` 不给就从库里现取（见 `resolve_project`）。显式给了就照旧和考卷核对
+    ——那是「我知道我在指哪一座馆」的用法，值得当场拦住指错。
+    """
     from novel_harness.checks import ALL_CHECKS
 
     effective_checks = ALL_CHECKS if checks is None else checks
@@ -228,7 +266,7 @@ def replay(
     cases = data["cases"]
     if len(cases) != TOTAL_CASES:
         raise ValueError(f"考卷必须是 {TOTAL_CASES} 题，收到 {len(cases)}")
-    if data["project_id"] != project_id:
+    if project_id is not None and data["project_id"] != project_id:
         raise ValueError("考卷 project_id 与 --project 不一致")
 
     # ⚠️ **先迁移再读。** `gate.db` 是一个长期躺在磁盘上的本地产物（gitignore，不进版本
@@ -238,8 +276,20 @@ def replay(
     # 迁移不改考卷：题目在 `m3_ground_truth.json` 和 `booklet.txt` 里，阈值是常量，
     # 迁移只补表补列（`test_populated_v1_database_migrates_without_changing_existing_rows`
     # 钉着「既有行一个字节不动」）。
+    # **库不存在就当场说清楚，别顺手造一个空的出来。** `db.connect` 会把文件建出来，
+    # 而 `synth/build.py` **有意不覆盖已存在的库**——于是新克隆上第一次跑会陷进一个
+    # 很迷惑的形态：测试自己留下一个空 `gate.db`，然后 build.py 拒绝覆盖它，
+    # 人得先想到去 `rm` 才能往下走。这一条把那个坑堵在入口。
+    if not db_path.exists():
+        raise FileNotFoundError(
+            f"考场不存在：{db_path}。它是 `.gitignore` 里的本地产物（`*.db` 从不进版本库），"
+            "新克隆上要先造一份：`uv run python synth/build.py`。"
+        )
+
     conn = db.connect(db_path)
     db.migrate(conn)
+    if project_id is None:
+        project_id = resolve_project(conn)
     real = SqliteStoryGraph(conn)
     overlay = OverlayGraph(
         real,
@@ -302,7 +352,8 @@ def replay(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", default="synth/gate.db")
-    parser.add_argument("--project", required=True)
+    parser.add_argument("--project", default=None,
+                        help="不给就从库里现取那唯一一个项目（见 resolve_project）")
     parser.add_argument("--ground-truth", default="synth/m3_ground_truth.json")
     parser.add_argument("--booklet", default="synth/booklet.txt")
     args = parser.parse_args()
