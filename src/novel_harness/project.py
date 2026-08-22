@@ -99,7 +99,7 @@ def insert(conn: Connection, *, name: str, root_path: str) -> Project:
     开启外层事务。`project` 表仍只由本模块写，普通公开创建仍应使用会提交的 `create()`。
     """
     if not name:
-        raise ValueError("name 不能为空：它是作者建好库之后唯一认得出这个库的东西")
+        raise ValueError("书名不能为空：它是作者建好之后唯一认得出这本书的东西")
     if not root_path:
         raise ValueError("root_path 不能为空：正文在磁盘上（ADR 0007），没有它就没有 chapters/")
 

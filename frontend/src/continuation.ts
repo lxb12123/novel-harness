@@ -7,8 +7,17 @@
 /** 停手多久才去问。太短 = 边打字边烧钱；太长 = 感觉不到它在。 */
 export const IDLE_MS = 400;
 
-/** 送给模型的上文长度上限。后端 `assemble()` 还会再截到 800 个 code point——
- *  这里先截是为了别把整章正文塞进请求体。 */
+/** 送给模型的上文长度上限（code point）。
+ *
+ *  ⚠️ **这一刀今天是唯一那一刀，不是「先粗截一道」。** 这条注释此前写着「后端
+ *  `assemble()` 还会再截到 800」——那句话在产品路径上**已经不成立**：
+ *  `draft/assemble.py::product_tail_limit()` 从模型的真实窗口倒推，下限才是 800，
+ *  上限 `TAIL_UNITS_CEILING = 40_000`；800 那个值（`GATE_TAIL_CODE_POINTS`）是 kill-gate
+ *  对照臂的冻结定义，产品路径明确不拿它跑（`product_draft.py` 的注释写着为什么）。
+ *
+ *  所以后端准备给上万字时，作者的续写实际只拿得到这 1000 —— **少给不会有人发现，
+ *  只会觉得模型忽然变笨**，而这正是 `product_tail_limit` 的 docstring 点名要避免的事。
+ *  维持 1000 需要一个产品理由（每次续写都是作者自己的钱），不能靠「反正后端还会截」。 */
 export const TAIL_LIMIT = 1000;
 
 export interface SuggestSignal {

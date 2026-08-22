@@ -131,7 +131,7 @@ def bootstrap_project(
     """
     cleaned_name = name.strip()
     if not cleaned_name:
-        raise ValueError("name 不能为空")
+        raise ValueError("书名不能为空")
 
     # Preparation precedes even books_root creation, so invalid input has no persistent effect.
     book = _prepared_book(mode=mode, text=text)

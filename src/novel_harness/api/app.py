@@ -1468,9 +1468,9 @@ class DraftRequest(BaseModel):
                 )
             return self
         if not self.goal.strip():
-            raise ValueError("起草一整章必须说清这一场要写什么（goal）")
+            raise ValueError("起草一整章必须说清这一场要写什么")
         if not self.cast:
-            raise ValueError("起草一整章必须声明在场角色（cast）")
+            raise ValueError("起草一整章必须声明这一场有谁在")
         return self
 
 
