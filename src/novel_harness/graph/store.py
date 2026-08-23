@@ -718,6 +718,10 @@ class CanonWriter(Protocol):
         再 `_put_chapter_locked`，再退休旧快照的 extractor facts 并返回精确
         `RetirementReport`，最后在 Writer 可见 Canon 变化时 bump 一次 canon version。
         四个步骤要么全成要么全回滚——快照不能半提交（退休失败 = 快照不落）。
+
+        那份 `RetirementReport` **挂在返回的 token 上**（`token.retirement`）：它同时是
+        「这一次改动让哪些机器事实失去了依据」的精确清单，从前算完只喂 canon bump
+        就丢了。理由和落点写在 `ChapterCommitToken.retirement`。
         """
         ...
 

@@ -15,6 +15,13 @@
 `focused_elsewhere()` = 焦点存在但在别的章（作者切走了）→ 旧章失去保护。
 「回来不停队」不在这里表达：已入队的任务由队列自身的 lease/fence 决定，
 本模块只回答「现在够不够格被调度」，不撤销任何已排队的动作。
+
+── 「全书写到第几章了」也在这儿（`frontier_chapter`）──────────────────────
+`resolve_draft_origin` 无焦点那一档要的就是这个数，它原本内联在下面那条 SQL 里。
+2026-08-22 起 `track.py` 要问同一个问题（「作者是不是在书的最前沿写」），
+**所以把它提成一个函数，不在第二个地方再写一遍 `MAX(number)`**——
+两处各写一份的下场是其中一份哪天忘了 `COALESCE`，而空书那一档谁都不会去测。
+它和焦点是两件事，放在一起只因为那条查询本来就在这儿。
 """
 
 from __future__ import annotations
@@ -26,6 +33,7 @@ from .db import Connection
 __all__ = [
     "FOCUS_TTL",
     "focus_current_chapter",
+    "frontier_chapter",
     "is_focused",
     "focused_on",
     "report_focus",
@@ -82,6 +90,25 @@ def focus_current_chapter(conn: Connection, project_id: str) -> int | None:
     return focused_on(conn, project_id)
 
 
+def frontier_chapter(conn: Connection, project_id: str) -> int:
+    """**这本书写到第几章了**：库里最大的那个章号。一本章都没有 → 0。
+
+    「作者是不是在最前沿写」就是拿当前章号和它比一下（`chapter >= frontier`）。
+    调度原点（下面那个函数）和轨道（`track.py`）问的是同一个问题，
+    **判断只许有这一份**——别在别处再写一条 `MAX(number)`。
+
+    它数的是**章目录**，不是「有正文的章」：一章建了但正文还在磁盘上没同步进来，
+    它仍然是「后面已经有东西了」的证据。往「书更长」那一侧偏是安全的一侧
+    （多认一章 = 轨道多找一次，代价是一次免费查询；少认一章 = 改旧章时
+    引擎又以为自己在最前沿，那正是这件事要修的病）。
+    """
+    row = conn.execute(
+        "SELECT COALESCE(MAX(number), 0) FROM chapter WHERE project_id = ?",
+        (project_id,),
+    ).fetchone()
+    return int(row[0])
+
+
 def resolve_draft_origin(
     conn: Connection, project_id: str
 ) -> tuple[int, int | None]:
@@ -95,11 +122,7 @@ def resolve_draft_origin(
     focused = focused_on(conn, project_id)
     if focused is not None:
         return focused, focused
-    row = conn.execute(
-        "SELECT COALESCE(MAX(number), 0) + 1 FROM chapter WHERE project_id = ?",
-        (project_id,),
-    ).fetchone()
-    return int(row[0]), None
+    return frontier_chapter(conn, project_id) + 1, None
 
 
 def _parse_iso(value: str) -> datetime:

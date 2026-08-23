@@ -462,13 +462,18 @@ export function useDeleteSnapshot(pid: string, chapter: number) {
  *
  *  **请求里没有 `goal`**——续写的提示语是后端常量（D3），前端能传的东西作者就能改，
  *  而 `goal` 是 ADR 0010 点名的泄漏入口之一。
- *  **`cast` 也不带**——不知道谁在场就走全禁（D4）；这是不给作者设门槛，不是偷懒。 */
+ *  **`cast` 也不带**——不知道谁在场就走全禁（D4）；这是不给作者设门槛，不是偷懒。
+ *
+ *  光标**前后**两截都送（`following_text` 是后面那截已经写好的正文）。**送不等于用**：
+ *  后端只在「这一章不是全书最后一章」时才把它渲染成【下文】——那个判断要知道全书
+ *  写到第几章，前端不知道。 */
 export function useContinuation(pid: string, chapter: number) {
   return useMutation({
-    mutationFn: (previousTail: string) =>
+    mutationFn: (around: { before: string; after: string }) =>
       api.post<{ text: string }>(proj(pid, `/chapters/${chapter}/draft`), {
         mode: "continuation",
-        previous_tail: previousTail,
+        previous_tail: around.before,
+        following_text: around.after,
         length: CONTINUATION_LENGTH,
       }),
   });

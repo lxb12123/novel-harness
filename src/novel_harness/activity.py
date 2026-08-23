@@ -490,6 +490,9 @@ _CAPABILITY_LABEL: Final[dict[str, str]] = {
     #（`_capability_label`），所以新长出一种花钱的动作就要在这儿补一行，
     # 否则日志页上写的是 `agent`。
     "agent": "写作助手",
+    # `advisory_review.ADVISORY_CAPABILITY`。保存之后那一遍事后语义核对
+    #（秘密有没有说破 / 跟后面的章抵不抵触）——它只写通知，不阻断任何东西。
+    "advisory": "事后核对",
 }
 
 _KIND_LABEL: Final[dict[str, str]] = {

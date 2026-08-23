@@ -387,14 +387,14 @@
   "activityCanonEdge": {
     "actor": "system",
     "chapter_number": 1,
-    "id": "decision:ID78",
+    "id": "decision:ID80",
     "jump": {
       "cast": [],
       "chapter_number": 1,
       "character_id": null,
-      "edge_id": "edge:ID75",
+      "edge_id": "edge:ID77",
       "endpoints": [
-        "/api/projects/project:ID1/canon/edges/edge:ID75"
+        "/api/projects/project:ID1/canon/edges/edge:ID77"
       ],
       "event_id": null,
       "label": "去改这条自动生成的边（第 1 章）",
@@ -802,7 +802,7 @@
   },
   "aliasCreated": {
     "derived_from_alias_id": null,
-    "id": "alias:ID72",
+    "id": "alias:ID74",
     "kind": "alias",
     "node_id": "character:ID10",
     "project_id": "project:ID1",
@@ -812,12 +812,12 @@
     "usable_for_rules": true
   },
   "aliasDeleted": {
-    "id": "alias:ID74",
+    "id": "alias:ID76",
     "status": "RETRACTED"
   },
   "aliasEdited": {
-    "derived_from_alias_id": "alias:ID73",
-    "id": "alias:ID74",
+    "derived_from_alias_id": "alias:ID75",
+    "id": "alias:ID76",
     "kind": "alias",
     "node_id": "character:ID8",
     "project_id": "project:ID1",
@@ -827,8 +827,8 @@
     "usable_for_rules": true
   },
   "aliasReassigned": {
-    "derived_from_alias_id": "alias:ID72",
-    "id": "alias:ID73",
+    "derived_from_alias_id": "alias:ID74",
+    "id": "alias:ID75",
     "kind": "alias",
     "node_id": "character:ID8",
     "project_id": "project:ID1",
@@ -941,9 +941,9 @@
     "author_owned": false,
     "canon_version": 21,
     "dst": "location:ID5",
-    "edge_id": "edge:ID75",
+    "edge_id": "edge:ID77",
     "edge_type": "LOCATED_AT",
-    "evidence_id": "evidence:ID76",
+    "evidence_id": "evidence:ID78",
     "evidence_status": "FRESH",
     "props": {
       "believed_value": null,
@@ -957,14 +957,14 @@
   },
   "canonEdgeEdited": {
     "canon_version": 22,
-    "edge_id": "edge:ID77",
-    "replacement_edge_id": "edge:ID77",
+    "edge_id": "edge:ID79",
+    "replacement_edge_id": "edge:ID79",
     "retracted": false,
     "view": {
       "author_owned": true,
       "canon_version": 22,
       "dst": "location:ID9",
-      "edge_id": "edge:ID77",
+      "edge_id": "edge:ID79",
       "edge_type": "LOCATED_AT",
       "evidence_id": null,
       "evidence_status": "NONE",
@@ -981,14 +981,14 @@
   },
   "canonEdgeRetracted": {
     "canon_version": 23,
-    "edge_id": "edge:ID77",
+    "edge_id": "edge:ID79",
     "replacement_edge_id": null,
     "retracted": true,
     "view": {
       "author_owned": false,
       "canon_version": 23,
       "dst": "location:ID9",
-      "edge_id": "edge:ID77",
+      "edge_id": "edge:ID79",
       "edge_type": "LOCATED_AT",
       "evidence_id": null,
       "evidence_status": "NONE",
@@ -1154,7 +1154,7 @@
     "aliases": [
       {
         "derived_from_alias_id": null,
-        "id": "alias:ID71",
+        "id": "alias:ID73",
         "kind": "title",
         "node_id": "character:ID10",
         "project_id": "project:ID1",
@@ -1496,7 +1496,7 @@
   "errorCanonEdgeGone": {
     "detail": {
       "error": "canon_edge_refused",
-      "message": "edge edge:ID77 不是 current CANON（已撤回/非 CANON）"
+      "message": "edge edge:ID79 不是 current CANON（已撤回/非 CANON）"
     }
   },
   "errorFactAlreadyExists": {
@@ -1834,10 +1834,29 @@
       "subject_type": "chapter",
       "summary_sha256": null,
       "title": "第 1 章的总结可能与正文不一致"
+    },
+    {
+      "actions": [],
+      "chapter_number": 1,
+      "created_at": "<ts>",
+      "id": "notif:ID71",
+      "jump": {
+        "occurrence_k": 0,
+        "para_index": 1,
+        "quote_text": "萧决"
+      },
+      "kind": "text_advisory",
+      "project_id": "project:ID1",
+      "source_sha256": null,
+      "status": "OPEN",
+      "subject_id": "chapter:ID72",
+      "subject_type": "chapter",
+      "summary_sha256": null,
+      "title": "第 2 段·这一句可能对不该知道的人说破了什么。"
     }
   ],
   "notificationsCount": {
-    "open": 1
+    "open": 2
   },
   "notificationsIgnored": {
     "id": "notif:ID70",

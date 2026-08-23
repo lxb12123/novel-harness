@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanSuggestion, shouldSuggest, tailBefore } from "./continuation";
+import { cleanSuggestion, shouldSuggest, tailAfter, tailBefore } from "./continuation";
 import fixtures from "./__fixtures__/api.json";
 
 const base = { before: "萧决推开门。", hasSelection: false, hasSuggestion: false };
@@ -66,6 +66,34 @@ describe("送过去的上文", () => {
   it("越界的光标位置不会炸", () => {
     expect(tailBefore("短", 999, 99)).toBe("短");
     expect(tailBefore("短", -5, 99)).toBe("");
+  });
+});
+
+describe("送过去的下文（改旧章时光标后面那截已经写好的正文）", () => {
+  it("只取光标后面那一截", () => {
+    expect(tailAfter("一二三四五", 3, 99)).toBe("四五");
+  });
+
+  it("🔴 超长时留住**紧挨着光标**的那一头，不是最后那一头", () => {
+    // 切错方向的症状是「模型接的是三千字之后那一段」——读起来像它没听懂，
+    // 而不像一个截断 bug，所以没有任何别的东西会红。
+    expect(tailAfter("近近近远远远", 0, 3)).toBe("近近近");
+  });
+
+  it("在章末（光标后面什么都没有）→ 空串，那一块整块不出现", () => {
+    const doc = "他没有回头。";
+    expect(tailAfter(doc, doc.length, 99)).toBe("");
+  });
+
+  it("和上文共用同一个上限，同样不会把一个字切成两半", () => {
+    const limit = 12;
+    const doc = "字".repeat(limit + 500);
+    expect(Array.from(tailAfter(doc, 0, limit))).toHaveLength(limit);
+  });
+
+  it("越界的光标位置不会炸", () => {
+    expect(tailAfter("短", 999, 99)).toBe("");
+    expect(tailAfter("短", -5, 99)).toBe("短");
   });
 });
 

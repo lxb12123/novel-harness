@@ -847,9 +847,11 @@ def test_frontend_fixture_matches_the_real_api(
     # ── 系统通知（Task 10 / 022）：读列表 / count / 忽略 全走真服务 ──────────
     # 直接往通知 outbox 塞一条再物化（走真 `materialize_notification_outbox`），
     # 然后冻三条读端。**放在最末**：它不会往图里加东西，不影响上面任何夹具。
+    from novel_harness.graph import TextAnchor
     from novel_harness.system_notifications import (
         background_failure_dedupe_key,
         enqueue_notification,
+        enqueue_text_advisory,
         materialize_notification_outbox,
     )
 
@@ -870,6 +872,26 @@ def test_frontend_fixture_matches_the_real_api(
             chapter_number=1,
             title="第 1 章的总结可能与正文不一致",
             dedupe_key=_notif_key,
+        )
+        # 第二条：**带锚**、且**只告警不阻断**的那一档（026）。两件事前端都要渲染，
+        # 而上面那条 `summary_mismatch` 的 `jump` 是 null——只冻它，那两支渲染分支
+        # 在夹具里就永远是暗的。
+        _notif_chapter = next(
+            ct.chapter_id
+            for ct in SqliteStoryGraph(_notif_conn).current_snapshots(_notif_pid)
+            if ct.number == 1
+        )
+        enqueue_text_advisory(
+            _notif_conn,
+            project_id=_notif_pid,
+            chapter_id=_notif_chapter,
+            chapter_number=1,
+            title="第 2 段·这一句可能对不该知道的人说破了什么。",
+            dedupe_key=background_failure_dedupe_key(
+                kind="text_advisory", subject_type="chapter", subject_id=_notif_chapter,
+                operation="secret_spoken", source_snapshot_id=None, job_id="job:contract",
+            ),
+            jump=TextAnchor(para_index=1, quote_text="萧决", occurrence_k=0),
         )
         _notif_conn.commit()
         materialize_notification_outbox(_notif_conn, project_id=_notif_pid, lease_owner="contract")

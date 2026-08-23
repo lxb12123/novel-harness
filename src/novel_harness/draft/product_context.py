@@ -22,6 +22,7 @@ from ..graph import (
 )
 from .length import DraftLanguage, count_units
 from .rolling_summary import ChapterSummary
+from .summarize import SUMMARY_MAX_CHARS
 
 
 class MemoryBudget(BaseModel):
@@ -141,26 +142,6 @@ class RollingSummaryView(BaseModel):
     summary: str = Field(min_length=1)
 
 
-class RawTextFallback(BaseModel):
-    """没有总结时的一章**原文片段**（Task 17 / ADR 0030 step 3）。
-
-    它不是总结：所以连「滚动总结是机器压缩的背景」那句都不该照抄——那是在给
-    一段原文贴上「背景」的标签。这里必须诚实地说「这是原文章节片段，不是总结」。
-    有界：最多 `raw_fallback_chars` 字符（按字符数算，不是 token——这是给模型
-    看的哪一段是边界，字符是它的可读边界）。
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    chapter_number: int = Field(ge=1)
-    text: str = Field(min_length=1)
-    """有界截断的原文（不超过 `raw_fallback_chars`）。"""
-
-    @property
-    def is_summary(self) -> bool:
-        return False
-
-
 class ResolvedProductContext(BaseModel):
     """允许进入产品写作调用的完整记忆前言。"""
 
@@ -178,8 +159,6 @@ class ResolvedProductContext(BaseModel):
     recent_events: tuple[ResolvedProductEvent, ...]
     background_events: tuple[ResolvedProductEvent, ...]
     rolling_summaries: tuple[RollingSummaryView, ...] = ()
-    raw_fallbacks: tuple[RawTextFallback, ...] = ()
-    """没有滚动总结的章，用有界原文顶上（诚实标明不是总结，ADR 0030 step 3）。"""
 
     @field_validator("recent_events", "background_events", mode="before")
     @classmethod
@@ -257,6 +236,43 @@ def _take_from_newest(
         kept.append(item)
     kept.reverse()
     return tuple(kept)
+
+
+def summary_window_chapters(budget_units: int) -> int:
+    """这一格的字数预算换算成「往回够几章」。**只有这一处做这个换算。**
+
+    单章摘要的上限是 `SUMMARY_MAX_CHARS`（120 字，写死在总结 prompt 里），所以
+    「预算 ÷ 120」就是这一格装得下的章数上界。它是**问哪几章要总结**用的范围
+    （行内续写的第三个触发源），不是裁剪判据——真正装多少仍由
+    `select_rolling_summaries` 按实际字数收，短摘要多的书自然多装几章。
+    """
+    return max(0, budget_units) // SUMMARY_MAX_CHARS
+
+
+def select_rolling_summaries(
+    summaries: Sequence[ChapterSummary],
+    *,
+    draft_chapter: int,
+    budget: int,
+    language: DraftLanguage | str = DraftLanguage.ZH,
+) -> tuple[RollingSummaryView, ...]:
+    """把「本章之前的那些总结」收成一格，超预算从**最旧**那头砍。
+
+    **整章起草和行内续写共用这一份**（2026-08-22 接续写时提出来的）：两条路
+    各写一遍「怎么筛、超了砍哪头」，迟早有一天砍的方向不一样，而症状是
+    「同一本书，续写记得的和起草记得的不是同几章」——没有任何东西会红。
+    """
+    rolling_all = [
+        RollingSummaryView(chapter_number=item.chapter_number, summary=item.summary)
+        for item in sorted(summaries, key=lambda item: item.chapter_number)
+        if item.chapter_number < draft_chapter
+    ]
+    return _take_from_newest(
+        rolling_all,
+        budget=budget,
+        text_of=lambda item: item.summary,
+        language=language,
+    )
 
 
 def _is_writer_safe(
@@ -347,12 +363,6 @@ def build_product_context(
     # 两者本来就是互补而不是分层：事件是「发生了一件什么事」，总结是「这一整章讲了什么」。
     # 一章有一条事件不代表它的其余三千字不值得给。少量重叠（近几章同时有事件和总结）
     # 是可接受的代价——单章摘要上限 120 字，而漏掉整章背景的代价大得多。
-    rolling_all = [
-        RollingSummaryView(chapter_number=item.chapter_number, summary=item.summary)
-        for item in sorted(summaries, key=lambda item: item.chapter_number)
-        if item.chapter_number < draft_chapter
-    ]
-
     return ResolvedProductContext(
         cast=resolved_cast,
         profiles=profiles,
@@ -364,10 +374,10 @@ def build_product_context(
             text_of=lambda view: view.event.summary,
             language=language,
         ),
-        rolling_summaries=_take_from_newest(
-            rolling_all,
+        rolling_summaries=select_rolling_summaries(
+            summaries,
+            draft_chapter=draft_chapter,
             budget=budget.rolling_summaries,
-            text_of=lambda item: item.summary,
             language=language,
         ),
     )
@@ -385,4 +395,6 @@ __all__ = [
     "build_product_context",
     "memory_units_available",
     "recent_event_boundary",
+    "select_rolling_summaries",
+    "summary_window_chapters",
 ]

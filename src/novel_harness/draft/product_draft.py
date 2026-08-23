@@ -41,6 +41,7 @@ import json
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
+from functools import partial
 from hashlib import sha256
 from time import perf_counter
 from typing import Any, Final, Literal, Protocol, runtime_checkable
@@ -62,8 +63,14 @@ from .capabilities import ProviderCapabilities, ResolvedCallPlan
 from .context import DraftContext, ResolvedConstraints, UnknownCastConstraints
 from .generate import DraftAttempt, DraftResult, generate_draft
 from .length import DraftLanguage, LengthSpec
-from .product_assemble import assemble_product
-from .product_context import MemoryBudget, build_product_context, memory_units_available
+from .product_assemble import assemble_continuation, assemble_product
+from .product_context import (
+    MemoryBudget,
+    build_product_context,
+    memory_units_available,
+    select_rolling_summaries,
+    summary_window_chapters,
+)
 from .provider import ProviderConfig
 from .rolling_summary import (
     ChapterSummary,
@@ -114,6 +121,46 @@ class SummarySource(Protocol):
     ) -> SummarySnapshotWatermark | None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class SummaryBackfillReply:
+    """`SummaryBackfill.request()` 的回话：这一次别用谁、给谁下了单。"""
+
+    unusable: frozenset[int] = frozenset()
+    """这一次不许进 prompt 的章号。**默认拒**：答不出「配对」的一律在里面
+    （缺 / 旧 / 作者撤回过 / 名额用完 / 这一章压根没查到）。一份停在旧正文上的
+    总结比没有总结更坏——缺是瞎，过期是说错，而模型手里只有那一段字。"""
+
+    ordered: tuple[int, ...] = ()
+    """真的下了单的那几章。**回执里报的是它**，不是 `unusable`：后者含「作者自己
+    撤掉的」和「这一章没正文」，把它们说成「该补而没补」就是催他去做一件他刚做过
+    相反决定的事。"""
+
+
+@runtime_checkable
+class SummaryBackfill(Protocol):
+    """**写作时取总结取到缺 / 旧就下一单**（第三个触发源，2026-08-22）。
+
+    定期扫描和扫描时的三态判定已经是两个入口，这里只是再加一个：真的取到了这一章，
+    发现缺 / 旧，就下同样的单（`summary_schedule.request_summary_backfill`）。
+    **不当场补**——生成一章总结是一次模型调用、几秒起步，而续写的整个预算是 400 毫秒
+    （ADR 0019 明写模式一塞不下第二次往返）。这一次先不给那几章，下一次就有了。
+
+    为什么是一个**单独的端口**而不是 `SummarySource` 上多一个方法：那个协议的定义是
+    「滚动总结的**只读**端口」，而下单是写。两件事分两个口子，「谁能改什么」才在类型上是准的。
+    """
+
+    def request(
+        self, project_id: str, first_chapter: int, last_chapter: int
+    ) -> SummaryBackfillReply:
+        """给这个闭区间里缺 / 旧的章下单，并说清这一次哪几章用不上。
+
+        **唯一出口是 `chapter_refresh.summary_alignment`**：实现这个协议的那一层
+        不许自己再问一遍「有没有总结 / 旧不旧」——两份判据分叉的后果 2026-08-22
+        实测过一次（报了「已排覆写」，一单没下）。
+        """
+        ...
+
+
 @dataclass(frozen=True)
 class ChapterDraftRequest:
     """作者这一次想要什么样的一稿。**没有一个字段装得下约束**（ADR 0019 边界二）。
@@ -127,6 +174,15 @@ class ChapterDraftRequest:
     mode: Literal["chapter", "continuation"] = "chapter"
     form: str = "PRODUCT"
     previous_tail: str = ""
+    following_text: str = ""
+    """光标**后面**那截同章正文。**只有 `continuation` 那一支读它。**
+
+    作者跳回去改第 2 章时，光标后面那几千字是**已经写好的正文**——模型看不到它，
+    写出来的一段就可能跟紧接着的下一段接不上，或者干脆把它重写一遍。
+    渲染成【下文】块的是 `product_assemble.assemble_continuation`，那儿写死了
+    「别重写」这句话（不说清楚模型会把它当成待写的段落）。
+    """
+
     write_rule: str = ""
     brief: SceneBrief | None = None
     """已封存的 `SceneBrief`（ADR 0033）。只有 PRODUCT 分支渲染它。"""
@@ -264,6 +320,7 @@ def draft_chapter(
     plan: ResolvedCallPlan,
     events: EventStore,
     summaries: SummarySource,
+    backfill: SummaryBackfill | None = None,
     on_call: Callable[[ModelCallReceipt], None] | None = None,
     db_lock: AbstractContextManager[Any] | None = None,
     client: Any = None,
@@ -275,8 +332,14 @@ def draft_chapter(
             （`ResolvedConstraints` = 在场都解析成功；`UnknownCastConstraints` = 全禁）。
             章号从它身上取，**不另收一个 `chapter` 参数**——两个来源必须相等的东西，
             迟早有一天不相等。
-        events / summaries: 记忆前言的两个只读来源。**只在 PRODUCT 且在场里有人物时**
-            被碰到（行内续写和三臂都不装记忆）。
+        events / summaries: 记忆前言的两个只读来源。`events` **只在 PRODUCT 且在场里有
+            人物时**被碰到；`summaries` 行内续写也要（那一格 2026-08-22 接上了）。
+            三臂（X0/X1/X2）两个都不碰。
+        backfill: 续写取总结时**缺 / 旧的章往待办里下单**的口子（第三个触发源）。
+            `None` = 没接这条线，于是**这一稿不带滚动总结**——不是「不下单但照样带」：
+            「能不能用」和「要不要补」是同一个判据的两个出口（`summary_alignment`），
+            问不出前者就没有资格回答后者，而把一份可能停在旧正文上的总结喂给模型
+            比不给更坏（缺是瞎，过期是说错）。整章起草那条路不看这一位。
         on_call: **每一次真的模型调用一落地就叫一次**，不等整份 `ChapterDraft` 拼好。
             出参上的 `calls` 只在**成功**那条路上交得出去，而这条路会在中途失败：
             第一次答上来了、续写那次断线（ADR 0011 D3 的第二次调用），那时钱已经付掉，
@@ -339,11 +402,18 @@ def draft_chapter(
     # **碰库的只有这一段**（`_with_memory` 里那几次查询），所以锁只罩这一段。
     with db_lock if db_lock is not None else nullcontext():
         if continuation:
-            # 续写**不带已确认事件记忆**：那一段要查档案 + 近八章事件 + 滚动总结，
-            # 对一次「停手 400ms 就要出结果」的提示来说太贵，而 `previous_tail`
-            # 本来就是此刻最相关的上下文。记忆是整章起草的东西。
-            messages = assemble(ctx, **assemble_args)
-            memory = memory_receipt("行内续写不带已确认记忆，上文就是此刻最相关的上下文。")
+            messages, memory = _with_rolling_summaries(
+                ctx,
+                assemble_args,
+                project_id=project_id,
+                chapter=chapter,
+                language=request.length.language,
+                capability=capability,
+                plan=plan,
+                summaries=summaries,
+                backfill=backfill,
+                following_text=request.following_text,
+            )
         elif product_form:
             messages, memory = _with_memory(
                 ctx,
@@ -434,6 +504,83 @@ def _summary_is_current(
     return item.created_at >= watermark.snapshot_created_at
 
 
+def _with_rolling_summaries(
+    ctx: DraftContext,
+    assemble_args: dict[str, Any],
+    *,
+    project_id: str,
+    chapter: int,
+    language: DraftLanguage | str,
+    capability: ProviderCapabilities,
+    plan: ResolvedCallPlan,
+    summaries: SummarySource,
+    backfill: SummaryBackfill | None,
+    following_text: str = "",
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    """行内续写的记忆：**只有前几章的滚动总结那一格**（2026-08-22）。
+
+    ── 为什么只接这一格 ──────────────────────────────────────────────────
+
+    这条路的预算是「作者停手 400 毫秒就要出结果」。这一格是**纯查库**：
+    一次 `for_range`（总结行单章 ≤120 字）+ 一次按章号问状态，量由预算算死
+    （`summary_window_chapters`），没有图查询、没有窗口边界推导。
+    档案和事件那两格进不来——它们要查图、要按字数往回数整章，那是整章起草的开销。
+
+    在这之前这一支**整个跳过记忆**，理由写在注释里也是延迟，不是正确性；
+    结果是续写送出去的全部内容约 404 个字符，而库里的总结一条没给。
+
+    ── 超预算怎么砍 ──────────────────────────────────────────────────────
+
+    走 `select_rolling_summaries`（从最旧那头砍），**和整章起草是同一份实现**。
+    两条路各写一遍的下场是「同一本书，续写记得的和起草记得的不是同几章」。
+
+    ── 下面每一条退化分支也走 `assemble_continuation` ────────────────────────
+
+    它不只装总结，还装【下文】（光标后那截已经写好的正文）。两格都空时它与
+    `assemble()` 逐字节相同（`test_continuation_memory` 钉着这条性质），所以
+    「总结这一格空了」不再是「顺手把下文也丢掉」的理由——那两格互不相干。
+    """
+    render = partial(assemble_continuation, ctx, following_text=following_text, **assemble_args)
+    budget = MemoryBudget.for_context(
+        memory_units_available(capability.max_context_tokens, plan.request_token_budget)
+    ).rolling_summaries
+    window = summary_window_chapters(budget)
+    first = max(1, chapter - window)
+    if chapter <= 1 or window <= 0:
+        return render(()), memory_receipt(
+            "这一稿没有前几章的总结：这一章之前没有可总结的章。"
+        )
+    if backfill is None:
+        # 没接下单口 ⇒ 问不出「这一章的总结能不能用」⇒ 不给。见 `draft_chapter` 的
+        # `backfill` 参数说明：过期的总结比缺总结更坏，而这一层无从分辨。
+        return render(()), memory_receipt(
+            "这一稿没有前几章的总结：这条调用没接总结待办，无从判断哪几章的总结还算数。"
+        )
+    reply = backfill.request(project_id, first, chapter - 1)
+    kept = select_rolling_summaries(
+        [
+            item
+            for item in summaries.for_range(project_id, first, chapter - 1)
+            if item.chapter_number not in reply.unusable
+        ],
+        draft_chapter=chapter,
+        budget=budget,
+        language=language,
+    )
+    if not kept:
+        return render(()), memory_receipt(
+            "这一稿没有前几章的总结：这个窗口里还没有一章的总结是照当前正文写的。"
+            "缺的那几章已经排进后台待办，下一次续写就有了。",
+            unsummarized_chapters=list(reply.ordered),
+        )
+    return render(kept), memory_receipt(
+        "这一稿带上了前几章的滚动总结（只有这一格；人物档案与事件是整章起草才装的）。",
+        assembled=True,
+        rolling_summaries=len(kept),
+        unsummarized_chapters=list(reply.ordered),
+    )
+
+
 def _with_memory(
     ctx: DraftContext,
     assemble_args: dict[str, Any],
@@ -517,6 +664,8 @@ __all__ = [
     "ChapterDraft",
     "ChapterDraftRequest",
     "DraftRefused",
+    "SummaryBackfill",
+    "SummaryBackfillReply",
     "SummarySource",
     "check_request",
     "draft_chapter",

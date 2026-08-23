@@ -4,7 +4,7 @@ import { history, defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { Annotation } from "@codemirror/state";
 import { ghostText, setSuggestion, suggestionField } from "./ghostText";
-import { IDLE_MS, tailBefore } from "../continuation";
+import { IDLE_MS, tailAfter, tailBefore } from "../continuation";
 
 // 标记「外部灌入」的事务（换章时替换整篇 doc）。用它把外部替换和用户输入分开——
 // 否则换章那次 docChanged 会 onChange 回去，把新打开的章误标成「未保存」。
@@ -49,9 +49,18 @@ export const CodeEditor = forwardRef<
   {
     value: string;
     onChange: (v: string) => void;
-    /** 停手 `IDLE_MS` 之后触发一次，带上光标前的正文。**取消由调用方负责**：
-     *  作者一敲键这个计时器就重置，在飞的那次请求该被丢弃。 */
-    onIdle?: (ctx: { before: string; pos: number; hasSelection: boolean }) => void;
+    /** 停手 `IDLE_MS` 之后触发一次，带上光标**前后**的正文。**取消由调用方负责**：
+     *  作者一敲键这个计时器就重置，在飞的那次请求该被丢弃。
+     *
+     *  `after` 是光标后面那截（改旧章时它是已经写好的正文）。**给不给模型看由后端定**：
+     *  它只在「这一章不是全书最后一章」时才渲染成【下文】——那个判断要知道全书写到
+     *  第几章，前端不知道，也不该猜。 */
+    onIdle?: (ctx: {
+      before: string;
+      after: string;
+      pos: number;
+      hasSelection: boolean;
+    }) => void;
     /** 送出去的上文最多几个 code point。**后端算的**（`GET /api/settings` 的
      *  `continuation_tail_limit`），这一层只负责按它切——理由见 `continuation.ts`。
      *
@@ -102,8 +111,11 @@ export const CodeEditor = forwardRef<
                 const limit = cb.current.tailLimit;
                 if (limit === null) return;
                 const { from, to } = state.selection.main;
+                const doc = state.doc.toString();
                 fire({
-                  before: tailBefore(state.doc.toString(), from, limit),
+                  before: tailBefore(doc, from, limit),
+                  // 光标后面那截同章正文。**同一个额度**，两刀都朝着光标切。
+                  after: tailAfter(doc, from, limit),
                   pos: from,
                   hasSelection: from !== to,
                 });

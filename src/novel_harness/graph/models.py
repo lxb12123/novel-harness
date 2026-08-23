@@ -1071,27 +1071,6 @@ class StoredChapter(BaseModel):
     `UNIQUE(chapter_id, text_sha256)` 复用了旧的——快照是证据的锚，不是版本历史。"""
 
 
-class ChapterCommitToken(BaseModel):
-    """保存后所有自动任务的**唯一正文输入**（ADR 0029 / §4.1）。
-
-    任务不得在运行中重新读取「当前正文」。token 同时带不可变
-    `source_snapshot_id` 和单调 `source_generation`——前者钉住正文是哪一版，
-    后者钉住它是第几代（S1→S2→S1 的第三轮 S1 与第一轮 S1 是不同 generation，
-    ABA 在这里断掉）。
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    project_id: str
-    chapter_id: str
-    chapter_number: int = Field(ge=1)
-    source_snapshot_id: str
-    source_generation: int = Field(ge=1)
-    text_sha256: str
-    text: str
-    changed: bool
-
-
 class RetirementReport(BaseModel):
     """一次「旧快照机器事实退休」的精确账（`commit_chapter_snapshot` 的中间产物）。
 
@@ -1115,6 +1094,50 @@ class RetirementReport(BaseModel):
     def effective_canon_changed(self) -> bool:
         """退休的行里有没有 Writer 可见的 CANON（PROVISIONAL 退休不 bump）。"""
         return self.touched_canon_edges > 0 or self.touched_canon_events > 0
+
+
+class ChapterCommitToken(BaseModel):
+    """保存后所有自动任务的**唯一正文输入**（ADR 0029 / §4.1）。
+
+    任务不得在运行中重新读取「当前正文」。token 同时带不可变
+    `source_snapshot_id` 和单调 `source_generation`——前者钉住正文是哪一版，
+    后者钉住它是第几代（S1→S2→S1 的第三轮 S1 与第一轮 S1 是不同 generation，
+    ABA 在这里断掉）。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    project_id: str
+    chapter_id: str
+    chapter_number: int = Field(ge=1)
+    source_snapshot_id: str
+    source_generation: int = Field(ge=1)
+    text_sha256: str
+    text: str
+    changed: bool
+
+    retirement: RetirementReport | None = None
+    """这一次保存让**哪些机器事实失去了依据**（`None` = 这条 token 不是从一次保存
+    事务里出来的，比如协调器按 run 行自己拼的那两条）。
+
+    ── 它为什么在这儿（2026-08-23）────────────────────────────────────────────
+
+    这份账**本来每次保存都在算**（`retire_stale_extractor_facts` 返回精确 ID 与
+    「其中几条是 Writer 可见的 CANON」），算完只喂了一次 canon bump 就被丢掉了。
+    丢掉的是这一句：
+
+        「你刚改的这一段，原本支撑着 3 条已确认的事实，它们现在失去了依据。」
+
+    它确定性、纯查库、不花一分钱，而且答的正是改老章最容易出事的那一问——
+    「你刚删的那句话，是后面某些设定的唯一出处」。**所以它挂在 token 上**：
+    ADR 0029 已经把 token 定成「保存后所有自动任务的唯一输入」，账跟着那个输入走，
+    下游谁要用都不必再加一条管子。
+
+    持久落点是 `chapter_refresh_run` 那三列 JSON（018 迁移就是为它留的，
+    `chapter_refresh.create_run` 的入参已经收着）。**要不要变成一条通知、算哪一类，
+    由通知那一侧定**——这里只负责它不再被算完就扔。
+    `test_the_save_transaction_hands_back_the_facts_that_lost_their_support` 钉着。
+    """
 
 
 AUTO_CANON_CORRECTABLE_EDGE_TYPES: Final[frozenset[EdgeType]] = frozenset(

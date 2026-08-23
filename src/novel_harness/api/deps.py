@@ -18,6 +18,7 @@ from fastapi import Depends, HTTPException
 from pydantic import ValidationError
 
 from .. import project as project_mod
+from ..advisory_review import AdvisoryRequest
 from ..db import Connection, connect, migrate
 from ..declare import Ledger
 from ..draft.capabilities import (
@@ -42,6 +43,12 @@ from ..settings import load as load_user_settings
 
 EXTRACTION_VISIBLE_TOKEN_BUDGET = 8_192
 """Maximum visible JSON output for one bounded 1-12 event chapter analysis."""
+
+ADVISORY_VISIBLE_TOKEN_BUDGET = 1_024
+"""事后核对那一问的可见输出预算。**它比抽取小一个量级，因为出参形状本来就小**：
+几条 `{"sentence":3,"chapter":64,"conflict":"setting"}`，没有自由文本的理由字段
+（`advisory_review.TrackClash` 的注释讲了为什么不许有）。给大了不会更准，只会让一个
+啰嗦的端点有地方啰嗦。"""
 
 
 def _db_path() -> Path:
@@ -191,6 +198,37 @@ def _analyze_summary(request: SummaryRequest) -> CompletionResult:
         prompt_token_budget=len(request.prompt_bytes),
     )
     return complete(request.messages, config=config, plan=plan)
+
+
+def _advisory_provider_config() -> ProviderConfig:
+    return _byok_config(None)
+
+
+def _analyze_advisory(request: AdvisoryRequest) -> CompletionResult:
+    """事后语义核对那一次调用（M1-b / 轨道阶段 2）。**第五个消费者，仍然只有一份 BYOK 顺序。**
+
+    ── 它可以换一个更便宜的模型，而换法就是这一个函数 ────────────────────────
+    这一侧干的是判对错不是写文章（`advisory_review` 模块头第五节），上下文本来就和
+    Writer 分开，所以换模型是零代价。**今天它跟总结共用作者填的那一份连接参数**——
+    不另开一档，是因为设置页上还没有「核对用哪个模型」这一格，而凭空多一个环境变量
+    等于给作者一个他看不见也改不了的旋钮。真要分档时改的是这里，不是核对器那一侧。
+    """
+    config = _advisory_provider_config()
+    capability = resolve_route_capabilities(config)
+    plan = plan_structured_call(
+        ADVISORY_VISIBLE_TOKEN_BUDGET,
+        ReasoningEffort.OFF,
+        capability,
+        prompt_token_budget=len(request.prompt_bytes),
+    )
+    return complete(request.wire_messages(), config=config, plan=plan)
+
+
+def get_advisory_reviewer() -> Callable[[AdvisoryRequest], CompletionResult]:
+    """后台核对器。**不问「模型配好了没」**：这条路上没有作者按过的按钮，
+    没配好的正确表现是这一次核对安静地不发生（`review_saved_chapter` 收着异常），
+    不是往他屏幕上弹一句 422。"""
+    return _analyze_advisory
 
 
 def model_configuration_error() -> str | None:

@@ -1,10 +1,24 @@
 """统一系统通知的去重 / 忽略 / 解决 / 动作坐标（ADR 0030 / 计划 Task 10）。
 
-三种语义各自独立的失败形态共用一张通知表：
+四种语义各自独立的失败形态共用一张通知表：
 
 - `summary_mismatch`：总结核对发现可能冲突（只告警，不撤销/不用不了/不改 Canon）；
 - `background_failure`：后台任务失败（provider 崩溃、重放过不去…）；
-- `validation_blocked`：正文验证器阻断（保留了旧结果，只是新快照不自动总结/抽取）。
+- `validation_blocked`：正文验证器阻断（保留了旧结果，只是新快照不自动总结/抽取）；
+- `text_advisory`：保存之后的语义核对发现问题（026）。**只告警，两支照常跑。**
+
+── 阻断与不阻断是两件事，别按「听起来像不像坏消息」分 ────────────────────
+`validation_blocked` 那句「新正文不会再自动生成总结与情节」是真的：停下游的是
+`chapter_refresh` 的 gate，通知只是那件事的回执。而事后语义核对（秘密有没有对
+不该知道的人说破、这一段跟后面章节抵不抵触）按 ADR 0030 的窄例外只许告警。
+**挂错档的后果是作者改一个老章就把那一章的自动整理停掉，而那不会有任何东西报错**
+——只会表现成「总结怎么一直不更新」。`BLOCKING_KINDS` 是这条区分唯一的落笔处。
+
+── 定位跟着通知走（M1-c）──────────────────────────────────────────────────
+规则产出的 `Issue` 本来就带着精确的锚 `(para_index, quote_text, occurrence_k)`
+（ADR 0006，**禁止 offset**）。以前那个锚停在报告里，通知只说「第 N 章的正文检查
+发现需要留意的地方」，作者点不过去。现在 `enqueue_validation_blocked` 把第一条
+Issue 的锚原样带上，标题也说出哪一段、哪条规则、哪一句。
 
 ── 去重纪律（不变量 10 / 29）──────────────────────────────────────────────
 `dedupe_key` 由 kind + subject + summary hash + source hash 稳定计算，非空，
@@ -17,7 +31,7 @@
 from __future__ import annotations
 
 import hashlib
-from typing import Literal
+from typing import TYPE_CHECKING, Final, Literal
 
 from pydantic import BaseModel, ConfigDict
 
@@ -25,20 +39,37 @@ from .db import Connection
 from .graph import TextAnchor
 from .ids import EntityType, new_id
 
+if TYPE_CHECKING:  # 只为标注：通知层不该在运行时拖上 checks 那一层
+    from .checks.service import SnapshotValidationReport
+
 __all__ = [
+    "BLOCKING_KINDS",
     "SystemNotification",
     "background_failure_dedupe_key",
     "dedupe_key_for",
     "enqueue_notification",
+    "enqueue_text_advisory",
+    "enqueue_validation_blocked",
     "ignore_notification",
     "list_open_notifications",
     "materialize_notification_outbox",
     "notification_count",
     "resolve_notification",
+    "resolve_stale_chapter_advisories",
 ]
 
 NotificationStatus = Literal["OPEN", "IGNORED", "RESOLVED"]
-NotificationKind = Literal["summary_mismatch", "background_failure", "validation_blocked"]
+NotificationKind = Literal[
+    "summary_mismatch", "background_failure", "validation_blocked", "text_advisory"
+]
+
+BLOCKING_KINDS: Final[frozenset[str]] = frozenset({"validation_blocked"})
+"""哪几种通知落下的同时意味着**这一章的下游被停掉了**。
+
+这不是渲染用的分类，是一句关于副作用的断言：只有 `validation_blocked` 那一档，
+总结与抽取两支真的不会跑。新长出来的「事后发现的问题」**默认属于不阻断那一侧**
+——阻断那一侧要新增成员，必须同时改 `chapter_refresh` 的 gate，否则通知在撒谎。
+"""
 
 
 class SystemNotification(BaseModel):
@@ -156,6 +187,144 @@ def enqueue_notification(
     return outbox_id
 
 
+def enqueue_validation_blocked(
+    conn: Connection,
+    *,
+    report: SnapshotValidationReport,
+    attempt_id: str,
+) -> str:
+    """正文验证阻断的那条通知 —— **带着第一条 Issue 的锚**（M1-c）。
+
+    不变量 29：调用方（`chapter_refresh` 的验证闸门）负责把这一次 enqueue 和
+    `validation_state = BLOCKED` 放进同一个事务；本函数不自己 BEGIN。
+
+    ── 为什么只带第一条 ─────────────────────────────────────────────────────
+    通知一行只有一个锚位，而作者要的是「从哪儿开始看」，不是一份清单——清单在
+    「检查本章」那一格里。所以标题带头一条的原话加上「还有几处」，`jump` 带头一条
+    的锚。顺序是确定的：规则按目录序跑，命中按段序出。
+    """
+    if not report.issues:
+        # gate=blocked 的定义就是「至少一条规则报了至少一条 issue」。真走到这儿说明
+        # 报告和闸门对不上，宁可炸也不落一条点不过去的通知——那正是这一层要补的洞。
+        raise ValueError(f"验证报告 {report.id} 判了 blocked 却一条 issue 都没有")
+    return enqueue_notification(
+        conn,
+        project_id=report.project_id,
+        kind="validation_blocked",
+        subject_type="chapter",
+        subject_id=report.chapter_id,
+        chapter_number=report.chapter_number,
+        title=_validation_blocked_title(report),
+        dedupe_key=background_failure_dedupe_key(
+            kind="validation_blocked",
+            subject_type="chapter",
+            subject_id=report.chapter_id,
+            operation=f"validation:{report.id}",
+            source_snapshot_id=report.source_snapshot_id,
+            job_id=attempt_id,
+        ),
+        jump=report.issues[0].anchor,
+    )
+
+
+def enqueue_text_advisory(
+    conn: Connection,
+    *,
+    project_id: str,
+    chapter_id: str,
+    chapter_number: int | None,
+    title: str,
+    dedupe_key: str,
+    jump: TextAnchor,
+    source_sha256: str | None = None,
+    actions: tuple[str, ...] = (),
+) -> str:
+    """落一条**只告警、不阻断**的正文通知（026 / ADR 0030 的窄例外）。
+
+    保存之后用模型做的语义核对走这里：秘密有没有对不该知道的人说破、这一段跟后面
+    章节已经写死的设定抵不抵触。它和 `validation_blocked` 只差一件事，而那一件是
+    全部——**它不停下游**：这一章的总结与抽取照常跑。
+
+    `jump` **是必填的**。这一类问题只有模型说得出「在哪一句」，而说不出位置的告警
+    作者点不过去；空引语当场报错，不落一条点不动的通知。
+    """
+    if not jump.quote_text.strip():
+        raise ValueError("只告警的正文通知必须带着能点过去的引语，空锚不许落库")
+    return enqueue_notification(
+        conn,
+        project_id=project_id,
+        kind="text_advisory",
+        subject_type="chapter",
+        subject_id=chapter_id,
+        chapter_number=chapter_number,
+        title=title,
+        dedupe_key=dedupe_key,
+        source_sha256=source_sha256,
+        jump=jump,
+        actions=actions,
+    )
+
+
+def resolve_stale_chapter_advisories(
+    conn: Connection, *, project_id: str, chapter_id: str, current_sha256: str
+) -> int:
+    """把这一章**照着旧正文写的**那些 `text_advisory` 标 RESOLVED，返回条数。
+
+    事后语义核对核完一版新正文之后调它：上一版那条告警指着的那句话，作者很可能刚刚
+    就是改掉了它——一条锚落不到任何地方的通知，作者点过去只会落空，而它永远不会自己走。
+    这和 `finalize_reconciliation_run` 里 `supported` 解决旧 OPEN 是同一个动作，
+    只是这一边的主语是「这一章的正文」而不是「这一条总结」。
+
+    **判据是来源正文的 hash，不是「这一章的全部」**：同一版正文上刚落的那几条
+    （`source_sha256` 相等）必须留着，否则一次幂等重扫就会把自己刚报的问题抹掉。
+
+    **只动 OPEN**：`IGNORED` 是作者自己按下的终态（不变量 10），系统不许替他重开，
+    也不许把它悄悄改写成「已解决」——那两句话在日志上不是同一件事。
+
+    **不自己 BEGIN**（不变量 29）：它必须和调用方那一批新告警的 enqueue 在同一个事务里，
+    否则崩溃点落在两者之间时右栏会短暂地既没有旧的也没有新的。
+    """
+    changed = conn.execute(
+        """
+        UPDATE system_notification
+           SET status = 'RESOLVED', resolved_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+         WHERE project_id = ? AND kind = 'text_advisory' AND subject_type = 'chapter'
+           AND subject_id = ? AND status = 'OPEN'
+           AND (source_sha256 IS NULL OR source_sha256 <> ?)
+        """,
+        (project_id, chapter_id, current_sha256),
+    )
+    return int(changed.rowcount or 0)
+
+
+def _validation_blocked_title(report: SnapshotValidationReport) -> str:
+    """「第几段·哪条规则：哪一句」+ 还有几处 + 那句真实的副作用。
+
+    **不印 `R2` / `R3` 这种编号**：规则自己的名字（「设定提前出现」）说得清，编号
+    只是引擎内部的门牌。段号按作者的数法从 1 起——`TextAnchor` 内部是 0-based，
+    两种数法只在这一处换算。
+    """
+    first = report.issues[0]
+    head = f"第 {first.anchor.para_index + 1} 段"
+    rule_title = _rule_title(report, first.rule)
+    if rule_title:
+        head = f"{head}·{rule_title}"
+    rest = len(report.issues) - 1
+    more = f"（另有 {rest} 处）" if rest else ""
+    return f"{head}：{first.message}{more}新正文不会再自动生成总结与情节。"
+
+
+def _rule_title(report: SnapshotValidationReport, rule: str) -> str:
+    """Issue 上那条规则在报告里叫什么名字；对不上返回空串（**绝不退回编号**）。
+
+    自定义规则的 Issue 写的是 `custom:{rule_id}`，执行记录里却是裸 `rule_id`
+    （那个前缀 `checks/custom.py` 只加在 Issue 上）——不脱这一层，作者自己写的
+    规则在通知里就永远没名字。
+    """
+    titles = {execution.rule_id: execution.title for execution in report.rules}
+    return titles.get(rule) or titles.get(rule.removeprefix("custom:")) or ""
+
+
 def materialize_notification_outbox(
     conn: Connection,
     *,
@@ -167,6 +336,9 @@ def materialize_notification_outbox(
 
     幂等：重复 claim 同一 outbox 不会刷出重复行（`UNIQUE(project_id, dedupe_key)` +
     CREATE_OR_UPDATE 的 ON CONFLICT DO NOTHING 语义）。返回处理的条数。
+
+    重放时**标题和锚一起更新**：它们是同一句话的两半，只刷一半会让通知说的段号和
+    点过去的位置对不上（今天的去重键都含内容 hash，所以同键必同锚，这是防将来）。
     """
     rows = conn.execute(
         """
@@ -190,7 +362,10 @@ def materialize_notification_outbox(
                     actions_json, dedupe_key
                 ) VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (project_id, dedupe_key)
-                DO UPDATE SET title = excluded.title
+                DO UPDATE SET title = excluded.title,
+                              jump_para_index = excluded.jump_para_index,
+                              jump_quote_text = excluded.jump_quote_text,
+                              jump_occurrence_k = excluded.jump_occurrence_k
                 """,
                 (
                     new_id(EntityType.SYSTEM_NOTIFICATION, project_id),

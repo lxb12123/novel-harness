@@ -431,9 +431,15 @@ def test_kill_gate_arms_say_they_carry_no_memory(
     assert memory["note"]
 
 
-def test_continuation_reports_its_missing_memory_too(
+def test_continuation_reports_its_empty_memory_too(
     client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """这本书一条总结都没有 ⇒ 续写那一格是空的，而**空要带着理由**（§10 约束 8）。
+
+    2026-08-22 之前这条零的理由是「续写整个不带记忆」；现在它带滚动总结那一格
+    （`tests/test_continuation_memory.py` 钉着），所以同样一个 `False` 背后换了个
+    原因——回执里那句话必须跟着换，否则它就是一句过期的解释。
+    """
     _configure(client)
     _stub_complete(monkeypatch)
     response = client.post(
@@ -441,7 +447,10 @@ def test_continuation_reports_its_missing_memory_too(
         json={"mode": "continuation", "previous_tail": "夜色沉下来。", "length": _SHORT},
     )
     assert response.status_code == 200, response.text
-    assert response.json()["memory"]["assembled"] is False
+    memory = response.json()["memory"]
+    assert memory["assembled"] is False
+    assert memory["rolling_summaries"] == 0
+    assert "总结" in memory["note"]
 
 
 def test_a_non_character_cast_surface_does_not_explode(

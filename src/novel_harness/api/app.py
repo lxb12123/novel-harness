@@ -61,6 +61,9 @@ from ..declare import (
     WrongLabel,
 )
 from ..draft.length import DEFAULT_LENGTH_POLICY, LengthSpec
+# 模块级 import：`api/chat.py` → `agent/` 那条链本来就把它拉进来了
+# （`sys.modules` 实测），所以这一行不多花任何启动时间。
+from ..draft.product_draft import SummaryBackfillReply
 from ..graph import (
     AliasKind,
     EdgeType,
@@ -1216,6 +1219,7 @@ def _trigger_refresh(
             ruleset_epoch=_current_ruleset(conn, project_id)[0],
             ruleset_hash=_current_ruleset(conn, project_id)[1],
             skip_summary=skip_summary,
+            retirement=receipt.retirement,
         )
     except Exception:
         # 触发失败不把「保存成功」拖下水：正文已落库，dispatcher 启动恢复会再扫。
@@ -1514,6 +1518,15 @@ class DraftRequest(BaseModel):
     length: _DraftLengthBody
     form: str = "PRODUCT"
     previous_tail: str = ""
+    following_text: str = ""
+    """光标**后面**那截同章正文。**只有 `continuation` 收它。**
+
+    作者跳回去改第 2 章、光标停在中间时，后面那几千字是**已经写好的正文**。
+    不给模型看，它写出来的一段就可能跟紧接着的下一段接不上，或者把它重写一遍。
+    截多长由后端那一份公式说了算（同 `previous_tail`，见 `_continuation_tail`），
+    这一层只是收下——**前端不许自己判断给多少**。
+    """
+
     write_rule: str = ""
 
     @model_validator(mode="after")
@@ -1525,6 +1538,13 @@ class DraftRequest(BaseModel):
                     "提示语是后端常量（ADR 0015 D3）"
                 )
             return self
+        if self.following_text.strip():
+            # 整章起草没有「光标后面」——那一支根本不读这一位。**静默丢掉才是坏的**：
+            # 调用方会以为模型看过它了（同本文件到处那条「静默的零」纪律）。
+            raise ValueError(
+                "起草一整章不接受 following_text：那一位是行内续写「光标后面还有正文」"
+                "才有的东西，整章起草要给已有正文走的是另一条（目标章当前正文）"
+            )
         if not self.goal.strip():
             raise ValueError("起草一整章必须说清这一场要写什么")
         if not self.cast:
@@ -1548,6 +1568,87 @@ def _draft_provider_config():
         api_key=user.api_key or os.environ.get("NH_LLM_API_KEY", ""),
         temperature=None,
     )
+
+
+class _SummaryBackfillDesk:
+    """行内续写取总结时的**第三个触发源**（`draft.product_draft.SummaryBackfill`）。
+
+    它只做两件事：问这个窗口里每一章的总结能不能用（`summary_alignment`，唯一出口），
+    给缺 / 旧的那几章下**同一种单**（`request_summary_backfill` → `chapter_refresh_attempt`）。
+    这一次先不给那几章——生成一章总结是一次模型调用、几秒起步，而续写的整个预算是
+    400 毫秒（ADR 0019）。后台补完，下一次续写就有了。
+
+    **自己提交**：`/draft` 这条路上没有别的地方会 commit（记账那一行走
+    `record_receipt` 自己提交），单不落盘就等于「报了没做」——今天刚修掉的同一个病。
+
+    **一分钱都不花**：单只是 `chapter_refresh_attempt` 里的一行，真正的生成由后台
+    dispatcher 领走（`api/background_runtime.py`）。
+    """
+
+    def __init__(self, conn: Any) -> None:
+        self._conn = conn
+
+    def request(
+        self, project_id: str, first_chapter: int, last_chapter: int
+    ) -> SummaryBackfillReply:
+        from ..checks.service import current_ruleset
+        from ..summary_schedule import QUEUED_OUTCOMES, request_summary_backfill
+
+        window = range(first_chapter, last_chapter + 1)
+        try:
+            epoch, ruleset_hash = current_ruleset(self._conn, project_id)
+            decisions = request_summary_backfill(
+                self._conn,
+                project_id,
+                first_chapter=first_chapter,
+                last_chapter=last_chapter,
+                ruleset_epoch=epoch,
+                ruleset_hash=ruleset_hash,
+            )
+            self._conn.commit()
+        except Exception:  # noqa: BLE001
+            # 待办这一侧不高兴（库缺 ruleset 行之类）不该让作者的续写 500。
+            # **但也不能因此把没验过的总结喂进去**：答不出「能不能用」就一律不给
+            # （同 ADR 0033 §8.2：无法证明与当前快照一致的总结不进 Writer）。
+            self._conn.rollback()
+            return SummaryBackfillReply(unusable=frozenset(window))
+        return SummaryBackfillReply(
+            # **默认拒**：只有明确答 `paired` 的那几章这一次用得上。查不到的章
+            # （比如当前快照对不上，一行都没扫到）走的是「不在 decisions 里」，
+            # 那一档必须落在拒的一侧，不能靠「没说不行就是行」漏过去。
+            unusable=frozenset(n for n in window if decisions.get(n) != "paired"),
+            ordered=tuple(
+                sorted(n for n, outcome in decisions.items() if outcome in QUEUED_OUTCOMES)
+            ),
+        )
+
+
+def _resolve_track(
+    conn: Any, store: Any, project_id: str, *, chapter: int, text: str
+) -> Any:
+    """算这一次的轨道（`track.build_track`），**并且保证它绝不会把写作这条路弄崩**。
+
+    ⚠️ **它算出来的东西一个字都不进 Writer 的 prompt**（`track.py` 模块头讲了为什么：
+    后面章节的总结里可能写着这一章的读者还不该知道的事）。它的出口只有两个：
+    响应里那一格 `track`，和将来验证那一侧。**别把它拼进任何一段 messages。**
+
+    轨道是护栏不是素材：算不出来就没有护栏，但那不该变成「这一段写不出来」。
+    所以这儿兜住一切异常，代价只有一条——`note` 必须说出「这一次没算成」，
+    否则空轨道和「后面真的没有相关章节」在界面上长成同一个样子（§10 约束 8）。
+    """
+    from ..track import Track, build_track
+
+    try:
+        return build_track(conn, store, project_id, chapter=chapter, text=text)
+    except Exception:  # noqa: BLE001
+        # 倒排表补扫是一次写事务（`summary_index._rebuild`），炸在半路要把这条连接放干净——
+        # 后面还有真正要落盘的东西（记账那一行）在用同一条连接。
+        conn.rollback()
+        return Track(
+            chapter=chapter,
+            frontier=0,
+            note="这一次没能算出轨道（后面那些章有没有相关设定，这一稿不知道）。",
+        )
 
 
 @app.post("/api/projects/{project_id}/chapters/{chapter}/draft")
@@ -1589,6 +1690,9 @@ def draft(
     from ..ids import EntityType, new_id
     from ..panel.constraints import UnresolvedCast, scene_view
 
+    if chapter < 1:
+        raise HTTPException(status_code=422, detail="章号至少是 1")
+
     try:
         config = _draft_provider_config()
         # 作者手填的窗口在这儿压过一切（`deps.resolve_route_capabilities`）——
@@ -1604,6 +1708,20 @@ def draft(
             ),
         )
 
+    # 轨道（`track.py`）：**作者是不是跳回去改旧章**，以及后面哪几章的总结跟这一段相关。
+    # 零模型调用、零花费，两级都是查库 + 一条正则。就在最前沿写 = 空的，什么都不变。
+    #
+    # ⚠️ **它下面一行都不许流进 messages。** 出口只有响应里那一格 `track`
+    # （见 `_resolve_track` 和 `track.py` 模块头；`tests/test_track_isolation.py` 钉着）。
+    track = _resolve_track(
+        conn,
+        store,
+        proj.id,
+        chapter=chapter,
+        # 「作者刚改的那段字」在这一层拿得到的最接近的东西：这一次请求带上来的正文。
+        text="\n".join(part for part in (body.previous_tail, body.following_text) if part),
+    )
+
     # **plan 提前到装配之前**：记忆层的预算要从 `capability.max_context_tokens` 倒推
     # （`memory_units_available`），所以得先知道模型是谁。它不依赖 messages，提前无副作用；
     # 而且「模型没配好」这种错在这儿就报出来，比装配完一大堆上下文再报便宜。
@@ -1613,6 +1731,11 @@ def draft(
         mode=body.mode,
         form=body.form,
         previous_tail=body.previous_tail,
+        # 【下文】**只在改旧章时给**。最新章的常态是往末尾写，光标后面没有字；
+        # 而「是最新章时行为一字不变」是这一刀明写的验收条件，所以那一档一个字节都不动。
+        # 要在最新章中间插写时也给，那是一次单独的产品决定，别藏在这一刀里。
+        # 轨道没算成时 `at_frontier` 也是 True（fail-safe，见 `Track.at_frontier`）。
+        following_text="" if track.at_frontier else body.following_text,
         write_rule=body.write_rule,
     )
     try:
@@ -1662,6 +1785,8 @@ def draft(
             plan=plan,
             events=SqliteEventStore(conn),
             summaries=SummaryStore(conn),
+            # 续写那一支要它（缺 / 旧的章下单 + 这次别用）；整章起草不看这一位。
+            backfill=_SummaryBackfillDesk(conn),
             on_call=bill,
         )
     except DraftRefused as exc:
@@ -1681,6 +1806,10 @@ def draft(
         "note": "实验状态：未经 kill-gate 裁决，图谱约束是否有效尚未证实（修正案 7）。",
         "text": result.text,
         "memory": drafted.memory,
+        # `memory` 说的是「这一稿的 prompt 里装了什么」，`track` 说的正好相反：
+        # 「这一次查到了后面哪几章跟它相关，而且它一个字都没进 prompt」。
+        # 两格必须分开报——合成一格的那一天，就会有人顺手把它拼进记忆前言。
+        "track": track.model_dump(mode="json"),
         "length": result.length.model_dump(mode="json"),
         "attempts": len(result.attempts),
         "model": last.model,

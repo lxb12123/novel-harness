@@ -26,7 +26,7 @@ from collections.abc import Iterator, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
-__all__ = ["Located", "find_all", "find_one", "paragraphs"]
+__all__ = ["Located", "find_all", "find_one", "occurrence_at", "paragraphs"]
 
 
 class Located(BaseModel):
@@ -95,6 +95,26 @@ def find_all(paras: Sequence[str], quote: str) -> list[Located]:
         for k, idx in enumerate(_occurrences(para, quote))
     ]
 
+
+def occurrence_at(para: str, quote: str, start: int) -> int | None:
+    """`para[start:]` 上那一次命中是**第几次**出现（`Located.occurrence_k` 的口径）。
+
+    调用方手上已经知道位置、只缺那个 k 时用它——**不许自己数一遍**。「第 k 次」是
+    非重叠计数（`_occurrences`），自己数出来的那个 k 在
+    `para="他走了。走了。", quote="走了。"` 上就已经和这里不一致，而症状是
+    一条锚到隔壁半句的证据，在面板上长得完全正常。
+
+    Returns:
+        `start` 不是一次出现的起点（非重叠计数下被前一次吃掉了）时返回 `None`。
+        调用方该把这一条丢掉，**不要退回 0** —— 退回 0 就是锚到别处。
+    """
+    _require_quote(quote)
+    for k, idx in enumerate(_occurrences(para, quote)):
+        if idx == start:
+            return k
+        if idx > start:
+            break
+    return None
 
 def find_one(para: str, quote: str, occurrence_k: int) -> str | None:
     """单段内取第 k 次出现，返回**切出来的子串**；k 越界返回 `None`。

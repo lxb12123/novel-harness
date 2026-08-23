@@ -26,7 +26,7 @@ beforeEach(() => {
 });
 
 /** 停手之后那一发的入参。等不到就是「这一次没问模型」。 */
-type Idle = { before: string; pos: number; hasSelection: boolean };
+type Idle = { before: string; after: string; pos: number; hasSelection: boolean };
 
 describe("续写这一刀用的是哪个上限", () => {
   it("🔴 上限跟着 prop 走 —— 换个更大的数，同一个编辑器立刻多带上文", async () => {
@@ -88,5 +88,62 @@ describe("续写这一刀用的是哪个上限", () => {
 
     await waitFor(() => expect(seen).toHaveLength(1));
     expect(Array.from(seen[0].before)).toHaveLength(1_200);
+  });
+});
+
+describe("光标后面那截也交上去（改旧章时它是已经写好的正文）", () => {
+  it("🔴 光标停在中间 —— 前后两截都送，各自按同一个上限切", async () => {
+    // 只送前面那截时，模型看不见紧接着的下一段，写出来的可能跟它接不上、
+    // 或者干脆把它重写一遍。**给不给模型看由后端定**（它要知道全书写到第几章），
+    // 这一层的职责只有一条：把后面那截也交上去。
+    const seen: Idle[] = [];
+    const ref = createRef<CodeEditorHandle>();
+    const doc = "前".repeat(1_000) + "后".repeat(1_000);
+    const view = render(
+      <CodeEditor
+        ref={ref}
+        value={doc}
+        onChange={() => {}}
+        onIdle={(ctx) => seen.push(ctx)}
+        tailLimit={null}
+      />,
+    );
+    view.rerender(
+      <CodeEditor
+        ref={ref}
+        value={doc}
+        onChange={() => {}}
+        onIdle={(ctx) => seen.push(ctx)}
+        tailLimit={600}
+      />,
+    );
+
+    ref.current!.select(1_000, 1_000);
+    await waitFor(() => expect(seen).toHaveLength(1));
+
+    expect(Array.from(seen[0].before)).toHaveLength(600);
+    expect(seen[0].before.endsWith("前")).toBe(true);
+    // 后面那截留住的是**紧挨着光标**的那一头。
+    expect(Array.from(seen[0].after)).toHaveLength(600);
+    expect(seen[0].after.startsWith("后")).toBe(true);
+  });
+
+  it("在章末往下写（常态）—— 后面那截是空的", async () => {
+    const seen: Idle[] = [];
+    const ref = createRef<CodeEditorHandle>();
+    const doc = "字".repeat(50);
+    render(
+      <CodeEditor
+        ref={ref}
+        value={doc}
+        onChange={() => {}}
+        onIdle={(ctx) => seen.push(ctx)}
+        tailLimit={800}
+      />,
+    );
+
+    ref.current!.select(50, 50);
+    await waitFor(() => expect(seen).toHaveLength(1));
+    expect(seen[0].after).toBe("");
   });
 });

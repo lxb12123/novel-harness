@@ -66,6 +66,11 @@ export interface DraftRequest {
   length: DraftLengthSpec;
   form?: string;
   previous_tail?: string;
+  /** 光标**后面**那截同章正文（**只有行内续写收它**，整章起草发它会被 422）。
+   *
+   *  改旧章时那是已经写好的正文。**送不等于用**：后端只在「这一章不是全书最后一章」
+   *  时才把它渲染成【下文】块，并在块首写死「别重写、要能接上」。 */
+  following_text?: string;
   /** 自定义文风，留空 = 默认。三臂共用，禁词由后端校验。 */
   write_rule?: string;
 }
@@ -898,7 +903,10 @@ export type ActivityStatus = "succeeded" | "failed" | "running" | "pending";
 export type SystemNotificationKind =
   | "summary_mismatch"
   | "background_failure"
-  | "validation_blocked";
+  | "validation_blocked"
+  /** 保存之后的语义核对（026）。**只告警，那一章的自动整理照常跑**——
+   *  和 `validation_blocked` 的全部区别就是这一条，别在渲染上把两者说成一回事。 */
+  | "text_advisory";
 export type SystemNotificationStatus = "OPEN" | "IGNORED" | "RESOLVED";
 
 /** 锚三元组（ADR 0006，永不 offset）：段号 + 引语 + 第几次。 */

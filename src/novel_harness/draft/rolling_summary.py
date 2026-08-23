@@ -46,7 +46,9 @@ EMPTY_SUMMARY_HASH: Final = sha256(b"").hexdigest()
 """RETRACTED tombstone 的统一 `summary_sha256`（§4.3：sha256(空字节)）。
 
 ACTIVE 行要求非空 summary 且 hash == 正文 hash；RETRACTED 行要求 summary 为 NULL
-且 hash == 这个常量。这样撤回本身可追溯，Writer 又能明确走 raw-text fallback。"""
+且 hash == 这个常量。这样撤回本身可追溯，而起草那一侧确定地当这一章没有总结
+（**没有「用原文顶上」那条兜底**：它 2026-08-22 删了，一章原文 3,000–5,000 字、
+一段总结 120 字，顶替一次就吃掉三十章的额度，量完全不可控）。"""
 
 AUTHOR_SUMMARY_MAX_CHARS: Final = 1_000
 """作者手写一段总结的上限。

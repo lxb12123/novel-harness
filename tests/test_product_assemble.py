@@ -331,34 +331,3 @@ def test_the_gate_never_reaches_this_module() -> None:
         "多一个调用方就要重新回答一次「三臂受不受影响」——上面那条换序的全部安全性押在这儿。"
     )
 
-
-def test_raw_text_fallback_is_honest_about_not_being_a_summary() -> None:
-    """没有总结的章用有界原文顶上，**必须诚实地说它不是总结**（Task 17/ADR 0030）。"""
-    from novel_harness.draft.product_assemble import assemble_product
-    from novel_harness.draft.product_context import (
-        RawTextFallback,
-        ResolvedProductContext,
-    )
-
-    memory = ResolvedProductContext(
-        recent_from_chapter=1,
-        cast=(ALICE,),
-        profiles=(),
-        recent_events=(),
-        background_events=(),
-        rolling_summaries=(),
-        raw_fallbacks=(
-            RawTextFallback(chapter_number=2, text="萧决在第二章的开头推开了门，风雪灌了进来。"),
-        ),
-    )
-    product = assemble_product(
-        _constraints(),
-        memory,
-        form=PromptForm.X1,
-        goal="两人在渡口商量下一步。",
-        length=LENGTH,
-    )
-    memory_text = product[1]["content"]
-    assert "第 2 章原文片段" in memory_text
-    assert "这不是总结" in memory_text
-    assert "未经作者确认" in memory_text

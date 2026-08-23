@@ -2,6 +2,12 @@
 
 钉住：正在写的那一章，保存触发**不排总结**（但验证/抽取照跑）；一旦切走（焦点
 移到别章或心跳过期），那一章才重新够格；已经入队的任务即使作者回来也不停。
+
+**2026-08-23 起还钉执行层**：从前防抖只挡到「下单」为止——单上把总结位剥掉了，
+协调器却一眼都不看那张单，照样调了一次总结模型（实测）。于是「作者改一下午、
+存三十次，一次都不买」这句话在执行层不成立，而「覆写单真去重买一份」那条裁定的
+成本论证靠的正是它。链条整条钉在
+`test_a_long_afternoon_of_saves_buys_nothing_and_leaving_buys_exactly_one`。
 """
 
 from __future__ import annotations
@@ -168,6 +174,134 @@ def test_save_after_leaving_schedules_summary(client: TestClient, book) -> None:
         conn.close()
     mask = int(missing[0]) if missing else 0
     assert (mask & 0b010) != 0, f"切走后总结分支必须恢复，mask={mask:b}"
+
+
+def _counting_runtime(db: str, calls: dict[str, int]):
+    """真协调器 + 会数数的桩 adapter：一次「调模型」就是 `calls` 上的一笔。
+
+    防抖这条纪律的单位是**钱**，所以守卫必须数模型调用，不能只看 attempt 的状态列
+    ——状态列在出 bug 的那一版里也是对的（mask 剥了总结位），真金白银照样花了。
+    """
+    from novel_harness.api.background_runtime import BackgroundRuntime
+    from novel_harness.draft.provider import CompletionResult
+    from novel_harness.draft.rolling_summary import RollingSummarizer
+    from novel_harness.extract import RawChapterAnalysis
+    from novel_harness.extract.runner import ExtractionRunner
+
+    def conn_factory():
+        return connect(db)
+
+    def extraction(_request):
+        calls["extraction"] = calls.get("extraction", 0) + 1
+        return CompletionResult(
+            text=RawChapterAnalysis(
+                events=(), state_updates=(), character_profiles=()
+            ).model_dump_json(),
+            model="stub-model",
+            finish_reason="stop",
+            prompt_tokens=1,
+            completion_tokens=1,
+        )
+
+    def summarize(_request):
+        calls["summary"] = calls.get("summary", 0) + 1
+        return CompletionResult(
+            text="这一章萧决做了些事。",
+            model="stub-model",
+            finish_reason="stop",
+            prompt_tokens=1,
+            completion_tokens=1,
+        )
+
+    return BackgroundRuntime(
+        db_path=db,
+        connection_factory=conn_factory,
+        runner_factory=lambda: ExtractionRunner(conn_factory, extraction),
+        summarizer_factory=lambda: RollingSummarizer(conn_factory, summarize),
+        owner="test",
+        poll_seconds=100,
+        autonomy_seconds=3600.0,
+    )
+
+
+def test_a_long_afternoon_of_saves_buys_nothing_and_leaving_buys_exactly_one(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """整条防抖链（2026-08-23）：**不是「每保存一次买一次」，是「每离开一次改动过的章买一次」。**
+
+        作者正在改第 1 章        → 这一章不排总结（焦点防抖）
+        他改了一下午、存了 30 次 → 一次都不买
+        切走                     → 才够格
+        生成总结                 → 幂等（同一份正文只买一次）
+
+    第二步从前是假的：单上没有总结那一支，执行层却不看单，照跑不误——三十次保存
+    就是三十次模型调用。第三、四步是「覆写单真去重买一份」那条裁定的另一半：
+    够格之后**真的买**（不是只提示），而且同一份正文只买一次。
+    """
+    pid = book["pid"]
+    calls: dict[str, int] = {}
+    runtime = _counting_runtime(book["db"], calls)
+
+    client.post(f"/api/projects/{pid}/focus", json={"chapter": 1})
+    body = client.get(f"/api/projects/{pid}/chapters/1/text").json()
+    text, sha = body["markdown"], body["text_sha256"]
+    for i in range(30):
+        text = text + f"\n他又改了第 {i} 遍。\n"
+        saved = client.put(
+            f"/api/projects/{pid}/chapters/1/text",
+            json={"markdown": text, "expected_text_sha256": sha},
+        )
+        assert saved.status_code == 200, saved.text
+        sha = saved.json()["text_sha256"]
+        runtime.pump_once()
+        # 后台那半小时一次的扫描也照样扫到它 —— 焦点章是扫描唯一的例外。
+        runtime.autonomy_once()
+        runtime.pump_once()
+    assert calls.get("summary", 0) == 0, (
+        f"作者正改着这一章，30 次保存买了 {calls.get('summary', 0)} 次总结 —— "
+        "防抖在执行层没生效（单上剥了总结位，协调器却不看单）"
+    )
+
+    # 切走 → 这一章才够格。定期扫描是主路（不必再保存一次）。
+    client.post(f"/api/projects/{pid}/focus", json={"chapter": 2})
+    assert runtime.autonomy_once() == 1, "切走之后这一章该进这一轮的名额"
+    runtime.pump_once()
+    assert calls.get("summary", 0) == 1, (
+        f"切走之后该买且只买一份，实得 {calls.get('summary', 0)} 次"
+    )
+
+    # 幂等：同一份正文再扫再跑，一分钱都不再花。
+    assert runtime.autonomy_once() == 0, "补完再扫不许产生新单"
+    runtime.pump_once()
+    assert calls.get("summary", 0) == 1, "同一份正文被买了第二次（幂等破了）"
+
+    # ── 第二轮：他回来又改一下午。这一次库里已经挂着一份总结了 = **覆写**场景 ──
+    # 「覆写单真去重买一份、自动覆盖」那条裁定的成本论证就在这儿：覆写的频率不是
+    # 保存次数，是**离开次数**。
+    client.post(f"/api/projects/{pid}/focus", json={"chapter": 1})
+    for i in range(30):
+        text = text + f"\n回来又改了第 {i} 遍。\n"
+        saved = client.put(
+            f"/api/projects/{pid}/chapters/1/text",
+            json={"markdown": text, "expected_text_sha256": sha},
+        )
+        assert saved.status_code == 200, saved.text
+        sha = saved.json()["text_sha256"]
+        runtime.pump_once()
+        runtime.autonomy_once()
+        runtime.pump_once()
+    assert calls.get("summary", 0) == 1, (
+        f"改的是已经有总结的章，30 次保存买了 {calls.get('summary', 0) - 1} 次覆写"
+    )
+
+    client.post(f"/api/projects/{pid}/focus", json={"chapter": 2})
+    assert runtime.autonomy_once() == 1, "切走之后这一章的覆写单该下出来"
+    runtime.pump_once()
+    assert calls.get("summary", 0) == 2, (
+        "**每离开一次改动过的章买一次** —— 这一次是覆写，"
+        f"实得总共 {calls.get('summary', 0)} 次"
+    )
+    assert runtime.autonomy_once() == 0, "覆写完再扫不许再下单"
 
 
 def _chapter_markdown(book):

@@ -18,6 +18,7 @@ from novel_harness import importer, project
 from novel_harness.chapter_refresh import (
     BRANCH_EXTRACTION,
     BRANCH_SUMMARY,
+    BRANCH_VALIDATION,
     _head_missing,
     BranchContext,
     ChapterRefreshCoordinator,
@@ -288,6 +289,155 @@ def test_heartbeat_keeps_lease_and_stale_token_cas_fails(
         "SELECT summary_state FROM chapter_refresh_attempt WHERE id = ?", (attempt_id,)
     ).fetchone()
     assert row["summary_state"] == "PENDING"
+
+
+def _validation_reports(conn: Connection, project_id: str) -> int:
+    return int(
+        conn.execute(
+            "SELECT COUNT(*) FROM validation_report WHERE project_id = ?", (project_id,)
+        ).fetchone()[0]
+    )
+
+
+@pytest.mark.parametrize("ordered", [1, 2, 3, 4, 5, 6, 7])
+def test_the_coordinator_runs_exactly_the_branches_the_order_carries(
+    conn: Connection, tmp_path: Path, ordered: int
+) -> None:
+    """**排了几支 = 跑了几支**（2026-08-23）。单上没有的那一支一次都不许跑。
+
+    从前 `run` 一眼都不看 `missing_branch_mask`，只要那一列还是 `PENDING` 就跑。
+    实测的后果：焦点防抖在下单那一层把总结位剥掉（mask=0b101），执行层照样调了
+    一次总结模型——**作者正改着的那一章，改一下午存三十次就买三十次**，而
+    「覆写单真去重买一份」那条裁定的成本论证靠的恰恰是这条防抖。
+
+    它和 `test_reporting_an_overwrite_means_the_order_carries_the_summary_branch`
+    是同一个病的两面：那条钉「报的 = 排的」，这条钉「排的 = 做的」。两条都在，
+    报什么、排什么、做什么之间才第一次有人对过。
+    """
+    pid, chapter_id = _seed_chapter(conn, tmp_path)
+    snapshot_id = _snapshot_id(conn, pid)
+    if not ordered & BRANCH_VALIDATION:
+        # 单上没有验证位的含义是「这一版正文已经验过了」。先真验一遍，
+        # 否则协调器答不出「放不放行」，会（正确地）连下游一起停掉。
+        warmup = create_manual_attempt(
+            conn,
+            project_id=pid,
+            chapter_id=chapter_id,
+            snapshot_id=snapshot_id,
+            generation=1,
+            ruleset_epoch=1,
+            ruleset_hash="x",
+            trigger_key="warmup:validation",
+            missing_branch_mask=BRANCH_VALIDATION,
+        )
+        conn.commit()
+        warm_token = claim_attempt(conn, warmup, owner="w0")
+        assert warm_token is not None
+        _coordinator(conn).run(
+            warmup,
+            owner="w0",
+            token=warm_token,
+            summary_adapter=Stub(),
+            extraction_adapter=Stub(),
+        )
+
+    reports_before = _validation_reports(conn, pid)
+    attempt_id = create_manual_attempt(
+        conn,
+        project_id=pid,
+        chapter_id=chapter_id,
+        snapshot_id=snapshot_id,
+        generation=1,
+        ruleset_epoch=1,
+        ruleset_hash="x",
+        trigger_key=f"mask:{ordered}",
+        missing_branch_mask=ordered,
+    )
+    conn.commit()
+    token = claim_attempt(conn, attempt_id, owner="w1")
+    assert token is not None
+    summary = Stub(note="summary-ok")
+    extraction = Stub(note="extraction-ok")
+    _coordinator(conn).run(
+        attempt_id,
+        owner="w1",
+        token=token,
+        summary_adapter=summary,
+        extraction_adapter=extraction,
+    )
+
+    ran = 0
+    if _validation_reports(conn, pid) > reports_before:
+        ran |= BRANCH_VALIDATION
+    if summary.calls:
+        ran |= BRANCH_SUMMARY
+    if extraction.calls:
+        ran |= BRANCH_EXTRACTION
+    assert ran == ordered, (
+        f"单上排了 0b{ordered:03b}，实际跑了 0b{ran:03b} —— 「排了什么」和"
+        "「做了什么」对不上（多跑 = 花没排过的钱，少跑 = 报了没做）"
+    )
+    # 没排的那几支要落终态：留在 PENDING 的话这条 attempt 永远算「还有活」，
+    # 每一波 pump 都把它重新 claim 一次，却什么都不做。
+    row = conn.execute(
+        "SELECT validation_state, summary_state, extraction_state "
+        "FROM chapter_refresh_attempt WHERE id = ?",
+        (attempt_id,),
+    ).fetchone()
+    for column, branch in (
+        ("validation_state", BRANCH_VALIDATION),
+        ("summary_state", BRANCH_SUMMARY),
+        ("extraction_state", BRANCH_EXTRACTION),
+    ):
+        if not ordered & branch:
+            assert row[column] != "PENDING", f"{column} 没排也没落终态：{row[column]}"
+
+
+def test_a_branch_left_off_the_order_does_not_slip_past_a_blocked_report(
+    conn: Connection, tmp_path: Path
+) -> None:
+    """复用验证报告时复用的是**结论**，不只是「跑过了」。
+
+    单上没有验证位 = 这一版正文已经验过。要是只当成「跳过验证」，一张只缺总结的
+    单就能绕过闸门，把一章**已经判定阻断**的正文拿去总结和抽取——而闸门存在的
+    全部理由就是不让那件事发生。
+    """
+    pid, chapter_id = _seed_chapter(conn, tmp_path)
+    snapshot_id = _snapshot_id(conn, pid)
+    # 造一份 blocked 报告（同一 snapshot/generation/epoch），模拟前一张单验出问题。
+    conn.execute(
+        """
+        INSERT INTO validation_report (
+            id, project_id, chapter_id, chapter_number, chapter_snapshot_id,
+            source_generation, ruleset_epoch, ruleset_hash, phase, gate, issues_json
+        ) VALUES ('report:blocked', ?, ?, 1, ?, 1, 1, 'x', 'initial', 'blocked', '[]')
+        """,
+        (pid, chapter_id, snapshot_id),
+    )
+    attempt_id = create_manual_attempt(
+        conn,
+        project_id=pid,
+        chapter_id=chapter_id,
+        snapshot_id=snapshot_id,
+        generation=1,
+        ruleset_epoch=1,
+        ruleset_hash="x",
+        trigger_key="summary-only",
+        missing_branch_mask=BRANCH_SUMMARY,
+    )
+    conn.commit()
+    token = claim_attempt(conn, attempt_id, owner="w1")
+    assert token is not None
+    summary = Stub()
+    outcome = _coordinator(conn).run(
+        attempt_id,
+        owner="w1",
+        token=token,
+        summary_adapter=summary,
+        extraction_adapter=Stub(),
+    )
+    assert outcome["validation"] == "blocked"
+    assert summary.calls == [], "已判定阻断的正文被拿去总结了 —— 闸门被绕过去了"
 
 
 def test_coverage_is_idempotent_and_manual_creates_new_intent(

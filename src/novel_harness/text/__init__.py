@@ -29,6 +29,7 @@ from .anchor import (
     Located,
     find_all,
     find_one,
+    occurrence_at,
     paragraphs,
 )
 from .chapterize import (
@@ -49,5 +50,6 @@ __all__ = [
     "find_all",
     "find_one",
     "normalize",
+    "occurrence_at",
     "paragraphs",
 ]

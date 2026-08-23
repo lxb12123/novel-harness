@@ -6,17 +6,23 @@ import { useOpenChapter } from "../chapterNavigation";
 
 // 系统通知（Task 10 / 021，前端 Task 14）：右栏那一格。
 //
-// 三种语义：总结可能与正文不一致（只告警，不撤销/不用不了/不改 Canon）、
-// 后台失败、正文验证阻断（保留了旧结果）。每一条是「要作者知道、也许要点一下
-// 确认」的东西，不是错误——它永远不会是因为引擎坏了。
+// 四种语义：总结可能与正文不一致（只告警，不撤销/不用不了/不改 Canon）、
+// 后台失败、正文验证阻断（保留了旧结果）、保存后的语义核对（026，**只告警**）。
+// 每一条是「要作者知道、也许要点一下确认」的东西，不是错误——它永远不会是因为
+// 引擎坏了。
 //
 // **坐标和动作全由后端给**：`jump`（TextAnchor / 章号）定位，`actions` 是可点
 // 的动作。前端不从那行字里认「去哪儿改」。
-
+//
+// ⚠️ 这张表**必须罩住每一个 kind**（`Record<…["kind"], string>` 会在漏一个时让
+// tsc 红）。漏了的话那一档会把 `text_advisory` 这种机器码原样摆到作者屏幕上——
+// `screenGuard` 的 snake_case 那张网正是为这种兜底存在的。
 const KIND_TITLE: Record<SystemNotification["kind"], string> = {
   summary_mismatch: "总结与正文可能对不上",
   background_failure: "后台有一件事没办成",
   validation_blocked: "这一章的检查需要留意",
+  // 措辞刻意和上一条分开：那一条**停掉了**这一章的自动整理，这一条没有。
+  text_advisory: "这一段值得再看一眼",
 };
 
 function NotificationRow({
@@ -26,13 +32,21 @@ function NotificationRow({
   item: SystemNotification;
   onIgnored: (id: string) => void;
 }) {
-  const { projectId } = useCoords();
+  const { projectId, setHighlight } = useCoords();
   const openChapter = useOpenChapter();
   const ignore = useIgnoreNotification(projectId ?? "");
   const failure = ignore.error ? refusalText(ignore.error, "没能忽略这条通知。") : null;
 
   const go = () => {
     if (item.chapter_number !== null) openChapter(item.chapter_number);
+  };
+
+  // 带锚的那些（规则报的问题、保存后核对出来的问题）能一路点到那一句上：换章 +
+  // 设 highlight，编辑器按 quote 重寻并滚进视野（`anchor.ts::locate`，永不用 offset）。
+  // **锚是后端给的**，前端不从标题里认位置。
+  const goToQuote = () => {
+    go();
+    if (item.jump) setHighlight(item.jump);
   };
 
   return (
@@ -45,10 +59,16 @@ function NotificationRow({
       </div>
       <div className="row">{item.title}</div>
       <div className="actions">
-        {item.chapter_number !== null && (
-          <button className="link" onClick={go}>
-            去这一章 →
+        {item.jump ? (
+          <button className="link" onClick={goToQuote}>
+            去这一句 →
           </button>
+        ) : (
+          item.chapter_number !== null && (
+            <button className="link" onClick={go}>
+              去这一章 →
+            </button>
+          )
         )}
         {item.actions.includes("ignore") && (
           <button

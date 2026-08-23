@@ -41,7 +41,7 @@ from typing import Final, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from .decisions import quote_hash
-from .graph import ChapterSpec, GraphStore, StoredChapter
+from .graph import ChapterSpec, GraphStore, RetirementReport, StoredChapter
 from .text import Chapter, Chapterization, chapterize
 
 CHAPTER_DIR: Final = "chapters"
@@ -284,6 +284,20 @@ class ChapterSaveReceipt(BaseModel):
         "durability_failed",
         "sync_failed",
     ]
+    retirement: RetirementReport | None = Field(default=None, exclude=True)
+    """这一次保存让哪些「依据是旧正文」的机器事实失去了依据 —— **进程内交接，不上线**。
+
+    `exclude=True` 是硬要求不是风格：这份账带的是内部图 ID（边 / 事件 / 知情名单），
+    作者的浏览器永远不该看见它。而这个回执**就是 `PUT …/text` 的出参**，
+    加一个会序列化的字段等于改前端契约 —— `tests/test_frontend_contract.py` 的夹具会当场红。
+
+    它从 `commit_chapter_snapshot` 的同一个事务里出来（不变量 20），终点是
+    `chapter_refresh_run` 那三列 JSON（018 迁移留的位子，2026-08-23 之前一直全空：
+    算出来了、挂在 token 上了，就是没人往下递）。
+
+    `None` = 这条回执不是从保存事务里出来的（写盘成功但落库失败那两档）；
+    **空账是空 tuple**，两者不混 —— 「没退休任何东西」和「压根没走那条路」是两件事。
+    """
 
 
 class ImportReport(BaseModel):
@@ -870,6 +884,7 @@ def save_chapter(
             snapshot_generation=stored.source_generation,
             text_sha256=new_sha,
             processing="reused",
+            retirement=stored.retirement,
         )
 
 

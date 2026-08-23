@@ -53,6 +53,24 @@ export function tailBefore(doc: string, pos: number, limit: number): string {
   return points.length <= limit ? before : points.slice(-limit).join("");
 }
 
+/** 光标**后面**那截同章正文——作者跳回去改旧章时，那是**已经写好的**几千字。
+ *
+ *  今天续写只给光标之前的；模型看不见后面那段，写出来的一句就可能跟紧接着的下一段
+ *  接不上，或者干脆把它重写一遍。后端把它渲染成【下文】块，并在块首写死
+ *  「别重写、要能接上」（`draft/product_assemble.py`）——**这句话必须在后端**，
+ *  和续写的提示语是常量同一个理由（前端能传的东西作者就能改）。
+ *
+ *  ⚠️ 和 `tailBefore` 共用**同一个** `limit`（后端那一份公式算出来的），这里同样
+ *  不许出现第二个上限的字面量。两刀朝着光标切：上文留末尾，下文留开头。
+ *
+ *  后端还会再截一次（同一个额度）。两头都截不是重复：这一头省的是请求体，
+ *  那一头是**不信客户端**——`following_text` 是个自由字符串入口。 */
+export function tailAfter(doc: string, pos: number, limit: number): string {
+  const after = doc.slice(Math.max(0, Math.min(pos, doc.length)));
+  const points = Array.from(after);
+  return points.length <= limit ? after : points.slice(0, limit).join("");
+}
+
 /** 模型返回的那一段清理成能直接插进正文的样子。
  *
  *  模型偶尔会把上文的最后一句重复一遍再往下写；也常带首尾空行。这里只做**无损的**

@@ -884,6 +884,9 @@ class SqliteStoryGraph:
                 text_sha256=stored.text_sha256,
                 text=spec.text,
                 changed=previous_hash != stored.text_sha256,
+                # 这份账算完不许扔：它是「你刚改的这一段，原本支撑着 N 条已确认的
+                # 事实」那句话的全部数据，而它从前只喂了一次 canon bump 就没了。
+                retirement=retirement,
             )
 
     # ══════════════════════════════════════════════════════════════════════

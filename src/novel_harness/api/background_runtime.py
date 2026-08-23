@@ -30,16 +30,18 @@ import threading
 import time
 from typing import Any
 
+from ..advisory_review import Reviewer, review_saved_chapter
 from ..chapter_refresh import (
     BranchAdapter,
     ChapterRefreshCoordinator,
+    attempt_chapter,
     recover_claimable,
 )
 from ..checks.service import current_ruleset
 from ..db import Connection
 from ..draft.rolling_summary import RollingSummarizer
 from ..extract.runner import ExtractionRunner
-from ..focus import resolve_draft_origin
+from ..focus import is_focused, resolve_draft_origin
 from ..graph.sqlite_store import SqliteStoryGraph
 from ..project import list_all
 from ..summary_schedule import (
@@ -48,6 +50,7 @@ from ..summary_schedule import (
     reconcile_anomaly_notifications,
     schedule_alignment,
 )
+from ..system_notifications import materialize_notification_outbox
 
 __all__ = ["BackgroundRuntime", "build_runtime", "new_connection_factory"]
 
@@ -111,6 +114,7 @@ class BackgroundRuntime:
         db_path: str,
         runner_factory: Callable[[], ExtractionRunner],
         summarizer_factory: Callable[[], RollingSummarizer],
+        reviewer_factory: Callable[[], Reviewer] | None = None,
         connection_factory: Callable[[], Connection] | None = None,
         owner: str = "background",
         poll_seconds: float = 1.0,
@@ -127,6 +131,9 @@ class BackgroundRuntime:
         )
         self._runner_factory = runner_factory
         self._summarizer_factory = summarizer_factory
+        # `None` = 这个运行时不做事后语义核对（桩运行时、只验调度的测试）。**不是降级**：
+        # 核对是加在 DAG 后面的一件事，没有它前面每一支的行为一字不变。
+        self._reviewer_factory = reviewer_factory
         self._owner = owner
         self._poll_seconds = poll_seconds
         self._sleep = sleep
@@ -145,7 +152,11 @@ class BackgroundRuntime:
         self._stop.set()
 
     def pump_once(self) -> int:
-        """跑一波：claim 可做的 attempt 并执行固定 DAG。返回执行了几条。"""
+        """跑一波：claim 可做的 attempt 并执行固定 DAG。返回执行了几条。
+
+        **返回的是「执行了几条 attempt」，不是「花了几次钱」**：协调器只跑单上排了的
+        那几支（`missing_branch_mask`），焦点防抖剥掉总结位的那种单跑完一分钱都不花。
+        """
         conn = self._conn_factory()
         try:
             claimed = recover_claimable(conn, owner=self._owner)
@@ -220,9 +231,24 @@ class BackgroundRuntime:
         return resolve_draft_origin(conn, project_id)
 
     def _run_one(self, attempt_id: str, token: int) -> None:
+        """跑一条 attempt 的固定 DAG，**再做两件不属于 DAG 的事**。
+
+        两件都在闸门外边，因为它们都不许影响「这一章能不能被整理」：
+
+        1. **物化通知 outbox。** `enqueue_*` 只写 outbox（和业务状态同事务，不变量 29），
+           **总得有人把它搬进 `system_notification`**，否则作者的右栏永远看不见那条
+           已经落库的通知。这里是那个消费者。无条件做——阻断那一条正是这么来的。
+        2. **事后语义核对**（`advisory_review`）。两道门都要过：
+           - **闸门放行了**——一章已经判定阻断的正文不值得再为它花一次模型调用；
+           - **这一版正文是作者存出来的**（`AttemptTarget.authored`）。接一本 158 章
+             的旧书进来时，补总结那一轮会为每一章下一张单，**在那儿顺手核对一遍等于
+             把接书的成本翻一倍**。这一批做的是「保存之后验一遍」，不是「扫全书找矛盾」
+             ——后者是另一个决定（它有它自己的成本和一次几十条通知的噪声），
+             要做就单独做，别从这条缝里溜进来。
+        """
         conn = self._conn_factory()
         try:
-            self._coordination.run(
+            outcome = self._coordination.run(
                 attempt_id,
                 owner=self._owner,
                 token=token,
@@ -230,8 +256,45 @@ class BackgroundRuntime:
                 extraction_adapter=_ExtractionAdapter(self._runner_factory),
                 alias_adapter=None,
             )
+            target = attempt_chapter(conn, attempt_id)
+            if target is None:
+                return
+            if outcome.get("validation") == "passed" and target.authored:
+                self._review_chapter(conn, target.project_id, target.chapter_number)
+            materialize_notification_outbox(
+                conn, project_id=target.project_id, lease_owner=self._owner
+            )
         finally:
             conn.close()
+
+    def _review_chapter(self, conn: Connection, project_id: str, chapter: int) -> None:
+        """保存之后的那一遍语义核对（M1-b / 轨道阶段 2）。**只告警，不阻断，不抛。**
+
+        ── 为什么这里也问一次焦点 ──────────────────────────────────────────
+        它是**第二个会花钱的后台动作**，所以它适用和总结那一支一模一样的那条防抖
+        （2026-08-18 §3）：作者正盯着的那一章，他还在改，这一版正文不算数。不问的话
+        「改一下午存三十次」就变成三十次核对——那正是总结那一支刚修好的病，
+        换个模块又长一遍。**判据借的是同一个 `is_focused`，不是第二份口径。**
+
+        （真被连着叫两次也不会连着付两次钱：核对器的幂等判据是 prompt 的内容哈希。）
+        """
+        if self._reviewer_factory is None:
+            return
+        if is_focused(conn, project_id, chapter):
+            return
+        try:
+            review_saved_chapter(
+                conn,
+                SqliteStoryGraph(conn),
+                project_id,
+                chapter,
+                reviewer=self._reviewer_factory(),
+            )
+        except Exception:  # noqa: BLE001
+            # 核对器自己已经把两问各自的失败收成一句 note；这一层兜住的是它外面那圈
+            # （模型没配好、装配炸了、库被别的连接锁着）。**这条路是后台的，它的失败
+            # 形态是「什么都没发生」，不是作者屏幕上的一个栈。**
+            pass
 
 
 def build_runtime(*, db_path: str | None = None, **kwargs) -> BackgroundRuntime:
@@ -246,4 +309,5 @@ def build_runtime(*, db_path: str | None = None, **kwargs) -> BackgroundRuntime:
 
     kwargs.setdefault("runner_factory", deps.get_extraction_runner)
     kwargs.setdefault("summarizer_factory", deps.get_summarizer)
+    kwargs.setdefault("reviewer_factory", deps.get_advisory_reviewer)
     return BackgroundRuntime(db_path=db_path, **kwargs)

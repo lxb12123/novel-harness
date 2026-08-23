@@ -174,20 +174,26 @@ export function CenterEditor() {
             setDoc(v);
             setDirty(true);
           }}
-          onIdle={({ before, pos, hasSelection }) => {
+          onIdle={({ before, after, pos, hasSelection }) => {
             if (!projectId) return;
             if (!shouldSuggest({ before, hasSelection, hasSuggestion: false, loading: !data })) {
               return;
             }
             const ask = ++askRef.current;
-            continuation.mutate(before, {
-              onSuccess: (r) => {
-                // 作者在等待期间又动过 → 这条是对着旧文本算的，丢掉。
-                if (ask !== askRef.current) return;
-                const text = cleanSuggestion(r.text);
-                if (text) editorRef.current?.showSuggestion(text, pos);
+            // `after` 是光标后面那截已经写好的正文（改旧章时才有东西）。
+            // **给不给模型看由后端定**：那要知道这一章后面还有没有已经写完的章，
+            // 前端不知道全书写到第几章，也不该猜（同上文那个额度）。
+            continuation.mutate(
+              { before, after },
+              {
+                onSuccess: (r) => {
+                  // 作者在等待期间又动过 → 这条是对着旧文本算的，丢掉。
+                  if (ask !== askRef.current) return;
+                  const text = cleanSuggestion(r.text);
+                  if (text) editorRef.current?.showSuggestion(text, pos);
+                },
               },
-            });
+            );
           }}
         />
       </div>

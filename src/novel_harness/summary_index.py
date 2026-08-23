@@ -57,9 +57,11 @@ __all__ = [
     "INDEXED_LABELS",
     "NodeSummaryMentions",
     "SummaryMention",
+    "chapters_after_mentioning",
     "chapters_mentioning",
     "ensure_index",
     "mentions_in_chapter",
+    "mentions_in_text",
     "roster_hash",
 ]
 
@@ -379,6 +381,108 @@ def mentions_in_chapter(
     ]
     hits.sort(key=lambda hit: (_LABEL_ORDER[hit.node.label], hit.node.name))
     return hits
+
+
+def mentions_in_text(
+    store: StoryGraph,
+    project_id: str,
+    text: str,
+) -> list[SummaryMention]:
+    """**这段字**里出现了花名册的哪些东西。库一次都不碰，一个语义判断都没有。
+
+    和 `mentions_in_chapter` 的差别只有输入：那个问的是「第 N 章那段总结提到了谁」，
+    这个问的是「你手上这段字提到了谁」。**两者共用同一份 alternation 和同一批标签**
+    （`_roster` + `INDEXED_LABELS`），所以它算出来的 node_id 必然对得上倒排表里的键——
+    自己另起一份花名册的话，反查会稳定地少命中，而少命中是静默的。
+
+    这是「轨道」的第一级（`track.py`）：作者刚改的那段字命中了哪些记忆点，
+    再拿它们去反查后面哪几章的总结也提到过。
+
+    和 `mentioned.py::mentioned_cast` 的分工：那个只收 Character、返回**称呼原文**，
+    因为它的下游 `resolve_cast` 收的就是原文；这里六类都要（物件、地点、伏笔同样是
+    「后面章节可能已经写死了的设定」），返回的是节点——反查表的键是 node_id。
+    """
+    roster = _roster(store, project_id)
+    if not roster.owner or not text:
+        return []
+    pattern = compile_alternation(list(roster.owner))
+    surfaces = _hit_surfaces(text, pattern, roster)
+    if not surfaces:
+        return []
+    grouped: dict[str, list[str]] = {}
+    for surface in surfaces:
+        grouped.setdefault(roster.owner[surface], []).append(surface)
+    nodes = _nodes_by_id(store, project_id)
+    hits = [
+        SummaryMention(node=NodeRef.of(nodes[node_id]), surfaces=_ordered(found))
+        for node_id, found in grouped.items()
+        # 同 `mentions_in_chapter`：另一个标签页刚把这个节点删掉是可能的。
+        if node_id in nodes
+    ]
+    hits.sort(key=lambda hit: (_LABEL_ORDER[hit.node.label], hit.node.name))
+    return hits
+
+
+def chapters_after_mentioning(
+    conn: Connection,
+    store: StoryGraph,
+    project_id: str,
+    node_ids: Iterable[str],
+    *,
+    after_chapter: int,
+) -> list[ChapterSummaryMention]:
+    """**第 `after_chapter` 章之后**，哪几章的总结提到了这批东西里的任意一个。
+
+    这是「轨道」的第二级（`track.py`）：一次 SQL，不调模型、不花钱。
+
+    ── 为什么不是「`chapters_mentioning` 循环 N 次再过滤」──────────────────
+
+    那个函数每调一次都要把整本花名册解析两遍（`_ensure` 一遍、`_nodes_by_id` 一遍）。
+    一段正文命中十几个东西是常事，而这条路跑在**作者停手 400 毫秒**那条预算里。
+    判据、索引、时态口径全部共用，差的只有「一次问一批」和「只要后面的章」。
+
+    Args:
+        after_chapter: 严格大于它的章才进来。**这就是「后面」的定义**——
+            作者正在改的那一章自己不算（他手上那段字就是它，再给一遍是噪声），
+            更早的章也不算（那是记忆层的活，走 `product_context`，而且那一侧
+            允许进 Writer 的 prompt，这一侧不允许）。
+
+    Returns:
+        按章号升序。`surfaces` 是**这一批节点在那一章的总结里合起来用过的称呼**，
+        所以它的长度可以拿来当「相关度」用（共同提到的越多越相关）——
+        代价说清楚：一个人有三个别名时它数出来是 3 不是 1，排序会略偏向别名多的人。
+        排序归调用方（`track.py`），这儿只保证序稳定。
+    """
+    state = _ensure(conn, store, project_id)
+    wanted = sorted({node_id for node_id in node_ids})
+    if not wanted:
+        return []
+    grouped: dict[str, list[str]] = {}
+    for chunk in _chunks(wanted):
+        marks = ",".join("?" * len(chunk))
+        rows = conn.execute(
+            "SELECT summary_id, surface FROM summary_mention"
+            f" WHERE project_id = ? AND node_id IN ({marks})",
+            (project_id, *chunk),
+        ).fetchall()
+        for row in rows:
+            summary_id = str(row["summary_id"])
+            # 同 `chapters_mentioning`：索引行可能指着一段**刚刚不算数了**的总结。
+            item = state.active.get(summary_id)
+            if item is None or item.chapter_number <= after_chapter:
+                continue
+            grouped.setdefault(summary_id, []).append(str(row["surface"]))
+    out = [
+        ChapterSummaryMention(
+            chapter_number=state.active[summary_id].chapter_number,
+            summary=state.active[summary_id].summary,
+            surfaces=_ordered(set(surfaces)),
+            author_written=state.active[summary_id].source is SummaryOrigin.AUTHOR,
+        )
+        for summary_id, surfaces in grouped.items()
+    ]
+    out.sort(key=lambda row: row.chapter_number)
+    return out
 
 
 def chapters_mentioning(

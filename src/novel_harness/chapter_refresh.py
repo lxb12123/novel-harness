@@ -33,7 +33,7 @@ from typing import Any, Final, Literal, Protocol
 
 from .checks.service import SnapshotValidationReport, validate_snapshot
 from .db import Connection
-from .graph import ChapterCommitToken, StoryGraph
+from .graph import ChapterCommitToken, RetirementReport, StoryGraph
 from .ids import EntityType, new_id
 from .text import paragraphs as split_paragraphs
 
@@ -121,6 +121,57 @@ def find_run(
         (project_id, chapter_id, generation),
     ).fetchone()
     return dict(row) if row is not None else None
+
+
+@dataclass(frozen=True, slots=True)
+class AttemptTarget:
+    """一条 attempt 的坐标：**哪个项目的第几章、第几版正文**。"""
+
+    project_id: str
+    chapter_number: int
+    source_generation: int
+
+    @property
+    def authored(self) -> bool:
+        """这一版正文是**作者存出来的**，不是导进来的那一版。
+
+        `snapshot_generation` 只在 text hash 真正切换时 +1（018）：`1` = 这一章自打
+        进库就没被改过（`import_book` 落的那一版，或者刚 `append_chapter` 出来的空章），
+        `≥ 2` = 作者（或写作助手）至少存过它一次。
+
+        **判据在这儿，不在调度那一侧**：它是「保存之后」那句话唯一说得清的机械形态，
+        而拿它当门槛的那件事（事后语义核对要不要花这一次钱）代价不对称——
+        判错成真只是多花一次钱，判错成假是漏掉一次告警，而后者作者永远不会知道。
+        """
+        return self.source_generation > 1
+
+
+def attempt_chapter(conn: Connection, attempt_id: str) -> AttemptTarget | None:
+    """这条 attempt 干的是哪一章。`None` = 这条 attempt 已经不在了。
+
+    调度那一侧（`api/background_runtime.py`）跑完固定 DAG 之后还要接着做两件不属于
+    DAG 的事——物化通知 outbox、跑事后语义核对——而它手上只有一个 attempt id。
+    坐标从这里出，**不在第二个地方再拼一遍那三张表的 JOIN**：拼错的后果是把一章的
+    告警记到另一章头上，而通知看起来完全正常。
+    """
+    row = conn.execute(
+        """
+        SELECT r.project_id AS project_id, c.number AS number,
+               r.source_generation AS generation
+          FROM chapter_refresh_attempt a
+          JOIN chapter_refresh_run r ON r.id = a.run_id
+          JOIN chapter c ON c.id = r.chapter_id
+         WHERE a.id = ?
+        """,
+        (attempt_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    return AttemptTarget(
+        project_id=str(row["project_id"]),
+        chapter_number=int(row["number"]),
+        source_generation=int(row["generation"]),
+    )
 
 
 def create_run(
@@ -265,6 +316,37 @@ def summary_alignment(
     return "paired"
 
 
+def _existing_validation_report(
+    conn: Connection,
+    project_id: str,
+    snapshot_id: str,
+    generation: int,
+    ruleset_epoch: int,
+) -> tuple[str, str] | None:
+    """这一版正文在这个规则集下**已经验过**的那份报告 `(id, gate)`；没有 → None。
+
+    「验证那一支缺不缺」和「协调器该复用哪一份」是同一个问题，所以只有这一份实现：
+    `_default_missing_mask` 拿它答前者，`ChapterRefreshCoordinator.run` 拿它答后者。
+    分成两份的下场正是本轮要修的那个病——单上说「验证不缺」，执行层却自己又验一遍
+    （或者反过来：跳过一份 `blocked` 的报告，让下游照跑）。
+
+    取最新那一条：同一版正文可能先后有 `initial` 和 `post_alias` 两份，而 alias
+    之后那份才是最终结论。legacy 行（018 之前的）没有 `chapter_snapshot_id`，
+    这条 WHERE 天然把它们排除在外。
+    """
+    row = conn.execute(
+        """
+        SELECT id, gate FROM validation_report
+         WHERE project_id = ? AND chapter_snapshot_id = ?
+           AND source_generation = ? AND ruleset_epoch = ?
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1
+        """,
+        (project_id, snapshot_id, generation, ruleset_epoch),
+    ).fetchone()
+    return (str(row["id"]), str(row["gate"])) if row is not None else None
+
+
 def _application_missing(conn: Connection, run_id: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM extraction_application_head WHERE refresh_run_id = ?",
@@ -400,6 +482,7 @@ def ensure_refresh_coverage(
     expected_summary_head: str | None = None,
     missing_check: Callable[[Connection, str, str, str], int] | None = None,
     skip_summary: bool = False,
+    retirement: RetirementReport | None = None,
 ) -> CoverageDecision:
     """同 hash 保存的幂等补缺：只为缺失分支建 coverage attempt，不重复付费。
 
@@ -412,12 +495,21 @@ def ensure_refresh_coverage(
     """
     run = find_run(conn, project_id, chapter_id, generation)
     if run is None:
+        # `retirement` 只在**建 run 的那一次**落库：一个 (project, chapter, generation)
+        # 对应一次保存事务，那一次退休了什么是这一版正文的定值。同 hash 重存走下面
+        # 那一支（run 已存在），而那时 `retire_stale_extractor_facts` 本来就改 0 行
+        # ——它幂等，没有旧锚时不动任何东西。所以「复用 run」不会把账丢掉。
         run_id = create_run(
             conn,
             project_id=project_id,
             chapter_id=chapter_id,
             snapshot_id=snapshot_id,
             generation=generation,
+            retired_edge_ids=retirement.retired_edge_ids if retirement else (),
+            retired_event_ids=retirement.retired_event_ids if retirement else (),
+            retired_knower_event_ids=(
+                retirement.retired_knower_event_ids if retirement else ()
+            ),
         )
     else:
         run_id = run["id"]
@@ -484,16 +576,10 @@ def _default_missing_mask(
     （`summary_alignment`）——否则一份挂着的旧总结永远答「不缺」，覆写就永远不发生。
     """
     mask = 0
-    report = conn.execute(
-        """
-        SELECT 1 FROM validation_report
-         WHERE project_id = ? AND chapter_snapshot_id = ?
-           AND source_generation = ? AND ruleset_epoch = ?
-         LIMIT 1
-        """,
-        (project_id, snapshot_id, generation, ruleset_epoch),
-    ).fetchone()
-    if report is None:
+    verified = _existing_validation_report(
+        conn, project_id, snapshot_id, generation, ruleset_epoch
+    )
+    if verified is None:
         mask |= BRANCH_VALIDATION
     # 两个独立的问题，同一支活：缺一份 → 补缺；挂着的那份照的是旧正文 → 覆写。
     if summary_alignment(conn, project_id, chapter_id) in ("missing", "stale"):
@@ -710,7 +796,28 @@ class ChapterRefreshCoordinator:
         alias_adapter: BranchAdapter | None = None,
         ttl_seconds: float = 60.0,
     ) -> dict[str, str]:
-        """执行固定 DAG：验证 → alias 阶段 → 总结 ∥ 抽取 → final gate。"""
+        """执行固定 DAG：验证 → alias 阶段 → 总结 ∥ 抽取 → final gate。
+
+        ── 只跑单上排了的那几支（`missing_branch_mask`，2026-08-23）────────────
+
+        **「排了哪几支」和「跑了哪几支」必须是同一个答案。** 从前这里一眼都不看
+        mask，只要那一列还是 `PENDING` 就跑——于是焦点防抖在下单那一层把总结位
+        剥掉了（`ensure_refresh_coverage(skip_summary=True)` → mask=0b101），执行层
+        照样调了一次总结模型（2026-08-22 实测）。作者正改着的那一章，改一下午存
+        三十次就买三十次，而防抖这条纪律的成本论证靠的恰恰是「一次都不买」。
+
+        它和「报了覆写、单里没总结」是同一个病的另一层：**报什么、排什么、做什么，
+        三者之间要有人对过。** 这里就是第三面的那个人，
+        `test_the_coordinator_runs_exactly_the_branches_the_order_carries` 钉着它。
+
+        排了却没做的分支落什么状态：
+        - 验证：单上没有它 = 这一版正文已经验过了 → `REUSED` 并指向那份报告
+          （**连结论一起复用**：那份报告是 blocked/error 时下游照样停）；
+        - 总结 / 抽取：`SUPERSEDED` = 「这张单上没有这一支」。这一层分不出两种
+          原因（上游判它不缺 / 焦点防抖故意不排），也不需要分——**但不能不落**：
+          留在 `PENDING` 的话这条 attempt 永远算「还有活」，每次 pump 都被重新
+          claim 一次，却什么都不做。
+        """
         attempt = self._attempt(attempt_id)
         if attempt is None:
             raise AttemptNotFound(attempt_id)
@@ -752,6 +859,8 @@ class ChapterRefreshCoordinator:
 
         epoch = int(attempt["ruleset_epoch"])
         ruleset_hash = attempt["ruleset_hash"]
+        # 这张单排了哪几支。**下面每一支都先问它**，别再问「那一列还是不是 PENDING」。
+        ordered = int(attempt["missing_branch_mask"])
         branch_ctx = BranchContext(
             project_id=run["project_id"],
             chapter_id=run["chapter_id"],
@@ -768,7 +877,20 @@ class ChapterRefreshCoordinator:
 
         # ── ① 正文验证（快照绑定）────────────────────────────────────────
         validation: SnapshotValidationReport | None = None
-        if attempt["validation_state"] in ("PENDING", "RUNNING"):
+        pending_validation = attempt["validation_state"] in ("PENDING", "RUNNING")
+        if pending_validation and not ordered & BRANCH_VALIDATION:
+            settled = self._reuse_validation_report(
+                attempt_id,
+                owner=owner,
+                token=token,
+                project_id=run["project_id"],
+                snapshot_id=run["source_snapshot_id"],
+                generation=int(run["source_generation"]),
+                ruleset_epoch=epoch,
+            )
+            if settled is not None:
+                return settled
+        elif pending_validation:
             _branch_update(
                 self._conn, attempt_id, owner=owner, token=token,
                 column="validation_state", state="RUNNING",
@@ -794,30 +916,12 @@ class ChapterRefreshCoordinator:
                 # 029 不变量：final gate 变 BLOCKED 与通知 outbox **同事务**。
                 # 通知可以晚显示，不能因进程在两步之间退出而永久丢失。
                 if validation.gate == "blocked":
-                    from .system_notifications import (
-                        background_failure_dedupe_key,
-                        enqueue_notification,
-                    )
+                    # 标题和锚都由通知层从报告里取（M1-c）——**哪一段、哪一句、哪条规则**
+                    # 本来就在 Issue 上，以前停在报告里没跟着通知走，作者点不过去。
+                    from .system_notifications import enqueue_validation_blocked
 
-                    enqueue_notification(
-                        self._conn,
-                        project_id=branch_ctx.project_id,
-                        kind="validation_blocked",
-                        subject_type="chapter",
-                        subject_id=branch_ctx.chapter_id,
-                        chapter_number=branch_ctx.chapter_number,
-                        title=(
-                            f"第 {branch_ctx.chapter_number} 章的正文检查发现需要留意的地方，"
-                            "新正文不会再自动生成总结与情节"
-                        ),
-                        dedupe_key=background_failure_dedupe_key(
-                            kind="validation_blocked",
-                            subject_type="chapter",
-                            subject_id=branch_ctx.chapter_id,
-                            operation=f"validation:{validation.id}",
-                            source_snapshot_id=branch_ctx.token.source_snapshot_id,
-                            job_id=attempt_id,
-                        ),
+                    enqueue_validation_blocked(
+                        self._conn, report=validation, attempt_id=attempt_id
                     )
                 _branch_update(
                     self._conn, attempt_id, owner=owner, token=token,
@@ -900,15 +1004,73 @@ class ChapterRefreshCoordinator:
             finally:
                 worker_conn.close()
 
-        threads = [
-            threading.Thread(target=_worker, args=("summary_state", summary_adapter)),
-            threading.Thread(target=_worker, args=("extraction_state", extraction_adapter)),
-        ]
+        threads: list[threading.Thread] = []
+        for column, branch, adapter in (
+            ("summary_state", BRANCH_SUMMARY, summary_adapter),
+            ("extraction_state", BRANCH_EXTRACTION, extraction_adapter),
+        ):
+            if not ordered & branch:
+                # 单上没有这一支：**一次 adapter 都不许调**（调了就是花钱），
+                # 但要落一个终态，否则这条 attempt 永远算「还有活」。
+                _branch_update(
+                    self._conn, attempt_id, owner=owner, token=token,
+                    column=column, state="SUPERSEDED",
+                )
+                results[column] = "not_ordered"
+                continue
+            threads.append(threading.Thread(target=_worker, args=(column, adapter)))
         for t in threads:
             t.start()
         for t in threads:
             t.join()
         return {"validation": "passed", "final_gate": final_report_id or "PENDING", **results}
+
+    def _reuse_validation_report(
+        self,
+        attempt_id: str,
+        *,
+        owner: str,
+        token: int,
+        project_id: str,
+        snapshot_id: str,
+        generation: int,
+        ruleset_epoch: int,
+    ) -> dict[str, str] | None:
+        """单上没有验证那一支 → 复用这一版正文已有的那份报告，**不重跑**。
+
+        返回 `None` = 可以继续走下游；返回 dict = 这一次到此为止（那就是 `run`
+        的出参）。
+
+        **复用的是结论，不只是「跑过了」**：那份报告要是 blocked/error，下游同样
+        停。少了这一半，一张只缺总结的单就能绕过闸门，把一章已经判定阻断的正文
+        拿去总结和抽取——而闸门存在的全部理由就是不让那件事发生。
+        通知不重发：产出那份报告的那次尝试已经发过了。
+        """
+        found = _existing_validation_report(
+            self._conn, project_id, snapshot_id, generation, ruleset_epoch
+        )
+        gate = found[1] if found is not None else None
+        if gate == "passed":
+            _branch_update(
+                self._conn, attempt_id, owner=owner, token=token,
+                column="validation_state", state="REUSED", reused_id=found[0],
+            )
+            self._set_initial_report(attempt_id, found[0])
+            return None
+        if gate in ("blocked", "error"):
+            _branch_update(
+                self._conn, attempt_id, owner=owner, token=token,
+                column="validation_state", state="BLOCKED" if gate == "blocked" else "FAILED",
+            )
+            return {"validation": gate}
+        # 上游说这一支不缺，库里却没有一份**能答话**的报告（找不到 / legacy /
+        # superseded）。这张单答不出「放不放行」，就不替它答：下游不跑，等下一张
+        # 带验证位的单去补。假装放行的代价是拿没验过的正文去花钱。
+        _branch_update(
+            self._conn, attempt_id, owner=owner, token=token,
+            column="validation_state", state="SUPERSEDED",
+        )
+        return {"validation": "not_ordered"}
 
     def _run_post_alias_validation(
         self,
@@ -936,8 +1098,8 @@ class ChapterRefreshCoordinator:
     def _attempt(self, attempt_id: str) -> dict[str, Any] | None:
         row = self._conn.execute(
             """
-            SELECT id, run_id, ruleset_epoch, ruleset_hash, validation_state,
-                   summary_state, extraction_state, alias_phase,
+            SELECT id, run_id, ruleset_epoch, ruleset_hash, missing_branch_mask,
+                   validation_state, summary_state, extraction_state, alias_phase,
                    initial_validation_report_id, final_gate_state, final_validation_report_id
               FROM chapter_refresh_attempt WHERE id = ?
             """,

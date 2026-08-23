@@ -116,8 +116,12 @@ function CheckView() {
               onClick={() => setHighlight(iss.anchor)}
             >
               <div className="nm">需要留意</div>
+              {/* 段号按作者的数法从 1 起。`para_index` 内部是 0-based，这儿原本直接
+                  印了它，于是第一段在屏幕上叫「第 0 段」——而同一条问题落成通知时
+                  说的是「第 1 段」（`system_notifications` 那边换算过）。
+                  同一处正文两个数，两处必须一致。 */}
               <div className="row">
-                第 {iss.chapter} 章 · 第 {iss.anchor.para_index} 段 · 点击回到原文
+                第 {iss.chapter} 章 · 第 {iss.anchor.para_index + 1} 段 · 点击回到原文
               </div>
               <div className="row">{iss.message}</div>
               {iss.suggested_action && <div className="row">建议：{iss.suggested_action}</div>}

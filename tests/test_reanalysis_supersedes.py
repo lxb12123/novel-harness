@@ -41,7 +41,13 @@ from novel_harness.declare import Ledger
 from novel_harness.extract import RawChapterAnalysis, RawEvent, RawStateUpdate
 from novel_harness.extract.auto_canon import promote_clean_facts
 from novel_harness.extract.service import ExtractionService
-from novel_harness.graph import ChapterText, EdgeType, InformationScope, NodeLabel
+from novel_harness.graph import (
+    ChapterSpec,
+    ChapterText,
+    EdgeType,
+    InformationScope,
+    NodeLabel,
+)
 from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_proposals import SqliteProposalStore
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
@@ -336,3 +342,145 @@ def test_aba_restore_gets_a_new_generation_and_a_fresh_run(seed_provider=None) -
 
     # g3 自己的 run 正常成功。
     assert runner.run(g3_run.id).status.value == "SUCCEEDED"
+
+
+def test_the_save_transaction_hands_back_the_facts_that_lost_their_support(
+    world: World,
+) -> None:
+    """那份「失去依据」的清单**算完不许扔**（2026-08-23）。
+
+    退休这一下每次保存都在算，而且算得很精确：退了哪几条边、哪几条事件、其中几条
+    是 Writer 可见的 CANON。**从前它只喂了一次 canon bump 就被丢在
+    `commit_chapter_snapshot` 里**——于是这句话说不出来：
+
+        「你刚改的这一段，原本支撑着 N 条已确认的事实，它们现在失去了依据。」
+
+    它确定性、纯查库、不花一分钱，答的正是改老章最容易出事的那一问。现在它挂在
+    token 上（ADR 0029 已经把 token 定成保存后所有自动任务的唯一输入）。
+    **这条红了 = 那份清单又被扔了**，而不是「退休本身坏了」——退休对不对由这份
+    文件里的另外几条钉着。
+    """
+    world.ingest("萧决走进了青云城主府。", "青云城主府")
+    live = {
+        table: {
+            str(row["id"])
+            for row in world.conn.execute(
+                f"SELECT id FROM {table} WHERE project_id = ? "  # noqa: S608 —— 表名是字面量
+                "AND source = 'extractor' AND evidence_status = 'FRESH'",
+                (world.pid,),
+            )
+        }
+        for table in ("edge", "story_event")
+    }
+    assert live["edge"] and live["story_event"], "这条测试在空转 —— 抽取出来的事实没建成"
+
+    token = world.graph.commit_chapter_snapshot(
+        ChapterSpec(
+            project_id=world.pid,
+            number=1,
+            heading="第一章 甲",
+            path=importer.chapter_path(1),
+            text=AFTER,
+        ),
+        expected_text_sha256=importer.text_digest(BEFORE),
+    )
+    world.conn.commit()
+
+    assert token.retirement is not None, "保存回来的 token 上没有那份清单 —— 又被扔了"
+    assert set(token.retirement.retired_edge_ids) == live["edge"]
+    assert set(token.retirement.retired_event_ids) == live["story_event"]
+    assert token.retirement.effective_canon_changed, (
+        "退掉的是 Writer 可见的 CANON，清单却说没碰到 —— 那句话会报 0 条"
+    )
+
+    # 同一份正文再存一次：清单是**空的**，不是 None。空账和「这条 token 不是从
+    # 保存事务来的」是两件事，混起来的话「没有东西失去依据」会被当成「不知道」。
+    again = world.graph.commit_chapter_snapshot(
+        ChapterSpec(
+            project_id=world.pid,
+            number=1,
+            heading="第一章 甲",
+            path=importer.chapter_path(1),
+            text=AFTER,
+        ),
+        expected_text_sha256=importer.text_digest(AFTER),
+    )
+    world.conn.commit()
+    assert again.retirement is not None
+    assert again.retirement.retired_edge_ids == ()
+    assert again.retirement.retired_event_ids == ()
+
+
+def test_the_list_reaches_the_run_row_instead_of_dying_in_the_receipt(
+    world: World,
+) -> None:
+    """那份清单要一路走到**库里那三列**，不是只挂在 token 上（2026-08-23）。
+
+    上一条钉的是「算完没被扔」；这一条钉的是**它真的到了终点**。
+    `chapter_refresh_run` 的三列 JSON 是 018 迁移就留好的位子，注释写着
+    「Task 3 起由 `commit_chapter_snapshot` 写」——而实测到 2026-08-23 为止
+    **一直全空**：账算出来了、挂在 token 上了，就是没人往下递。
+
+    中间那一段是 `importer.save_chapter` → 回执 → `api.app._trigger_refresh`
+    → `ensure_refresh_coverage` → `create_run`。**这条红了 = 那一段又断了**，
+    而不是「退休本身坏了」（那个由这份文件里的另外几条钉着）。
+
+    顺带钉住那份账**不上线**：回执就是 `PUT …/text` 的出参，而这份清单带的是
+    内部图 ID，作者的浏览器永远不该看见。
+    """
+    import json
+
+    from novel_harness.api.app import _trigger_refresh
+    from novel_harness.chapter_refresh import find_run
+
+    world.ingest("萧决走进了青云城主府。", "青云城主府")
+    live = {
+        table: {
+            str(row["id"])
+            for row in world.conn.execute(
+                f"SELECT id FROM {table} WHERE project_id = ? "  # noqa: S608 —— 表名是字面量
+                "AND source = 'extractor' AND evidence_status = 'FRESH'",
+                (world.pid,),
+            )
+        }
+        for table in ("edge", "story_event")
+    }
+    assert live["edge"] and live["story_event"], "这条测试在空转 —— 抽取出来的事实没建成"
+
+    receipt = importer.save_chapter(
+        world.graph,
+        world.pid,
+        world.root,
+        1,
+        AFTER,
+        expected_sha256=importer.text_digest(BEFORE),
+    )
+    world.conn.commit()
+    assert receipt.retirement is not None, "回执把 token 上那份账丢了"
+
+    # 出参里不许有它：多一个会序列化的字段就是改前端契约。
+    assert "retirement" not in receipt.model_dump()
+
+    _trigger_refresh(world.conn, world.graph, world.pid, 1, receipt)
+    world.conn.commit()
+
+    chapter_id = next(
+        ct.chapter_id for ct in world.graph.current_snapshots(world.pid) if ct.number == 1
+    )
+    generation = world.graph.current_chapter_generation(world.pid, 1) or 1
+    run = find_run(world.conn, world.pid, chapter_id, generation)
+    assert run is not None, "保存之后连 run 行都没有 —— 断在更前面"
+
+    # `find_run` 只取窄投影，那三列不在里面 —— 直接问那一行。
+    stored = world.conn.execute(
+        "SELECT retired_edge_ids_json, retired_event_ids_json, "
+        "retired_knower_event_ids_json FROM chapter_refresh_run WHERE id = ?",
+        (run["id"],),
+    ).fetchone()
+    assert set(json.loads(stored["retired_edge_ids_json"])) == live["edge"], (
+        "run 行上那三列还是空的 —— 清单又死在回执里了"
+    )
+    assert set(json.loads(stored["retired_event_ids_json"])) == live["story_event"]
+    assert json.loads(stored["retired_knower_event_ids_json"]) == list(
+        receipt.retirement.retired_knower_event_ids
+    )
