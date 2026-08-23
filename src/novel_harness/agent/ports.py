@@ -295,6 +295,18 @@ class ToolContext:
     校准工具明确拒绝。
     """
 
+    frontier_chapter: int | None = None
+    """全书最大章号（`focus.frontier_chapter`）。**只用来判「作者是不是在改一章旧的」。**
+
+    `working_chapter < frontier_chapter` ⇒ 这一轮的投影里多一句提醒，让模型知道
+    后面还有已经写完的章、可以去调 `check_track`（轨道阶段 3）。
+    **判断在系统这边，调用在模型那边**——做成「必须验」就把 ADR 0019 的
+    「循环归模型，不归代码」破了。
+
+    `None` = 这一轮没算（装配层没给）⇒ 不提醒。往「不提醒」那一侧偏是安全的一侧：
+    多提醒一次只是浪费几十个字，而这一位算错不会让任何东西泄漏。
+    """
+
     track_check: TrackCheck | None = None
     """轨道核对（轨道阶段 3）。`None` = `check_track` 明确回一句「没接线」。
 

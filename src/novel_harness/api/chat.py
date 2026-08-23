@@ -147,6 +147,7 @@ from ..agent.store import ChatConcurrency, ChatNotice, ChatSessionRow, ChatStore
 from ..calibration.models import AuthorTurnRef
 from ..calibration.store import CalibrationStore
 from ..db import Connection
+from ..focus import frontier_chapter
 from ..graph import StoryGraph
 from ..decisions import quote_hash
 from ..draft.capabilities import CapabilityError, ProviderCapabilities, ResolvedCallPlan
@@ -736,6 +737,9 @@ def _tool_context(
         # 同 `drafter` 那条：模型碰得到的是一个已经判完的结论（三个数），
         # 不是 `Track` 本身。核对模型没配时闭包返回一句「没接线」，工具照实说。
         track_check=_a_track_check(conn, store, proj.id),
+        # 一条 `MAX(number)`。**和调度原点、轨道问的是同一个问题，判断只许有这一份**
+        # （`focus.frontier_chapter` 的 docstring 点名了这条）。
+        frontier_chapter=frontier_chapter(conn, proj.id),
         working_chapter=chapter,
         max_context_tokens=capability.max_context_tokens,
         # **对话那一档的输出预算**（`AGENT_REPLY_LENGTH` 倒推的），用来算「一次工具返回

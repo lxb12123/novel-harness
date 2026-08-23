@@ -911,3 +911,73 @@ def test_a_tool_that_raises_something_unexpected_still_kills_the_turn() -> None:
         assert outcome.ok is False and outcome.content == "换个说法"
     finally:
         tools_module.TOOLS["book_index"] = original
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 「你正在改一章旧的」那句提醒（轨道阶段 3）
+#
+# **判断在系统这边，调用在模型那边**：系统只把处境说给它听，去不去查它自己定。
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _nudges(projected: object) -> list[str]:
+    from novel_harness.agent.tools import TRACK_NUDGE_HEADER
+
+    return [
+        m["content"]
+        for m in projected.messages  # type: ignore[attr-defined]
+        if TRACK_NUDGE_HEADER in str(m.get("content", ""))
+    ]
+
+
+def test_being_at_the_frontier_changes_the_projection_by_not_one_byte() -> None:
+    """在最前沿写 = **一个字节都不变**。
+
+    这是这整条路的第一条纪律（`track.py` 模块头）：作者在书的最前端写作时，
+    引擎的行为必须和这套东西不存在时完全一样。它红了代表那条纪律破了——
+    症状是每一次正常写作都多花几十个字去说一句不成立的话。
+    """
+    here = project(a_session_that_wandered(), 90, budget_units=100_000)
+    same = project(a_session_that_wandered(), 90, budget_units=100_000, frontier=90)
+    ahead = project(a_session_that_wandered(), 90, budget_units=100_000, frontier=80)
+    assert here.messages == same.messages == ahead.messages
+    assert _nudges(same) == []
+
+
+def test_editing_an_old_chapter_puts_the_situation_in_front_of_the_model() -> None:
+    """不是最新章 ⇒ 投影里多一句，**说得出后面还剩几章**。
+
+    它红了代表模型再也不知道自己在改旧章——而它不知道就不会去查，那条工具就等于没接
+    （轨道那份计划原话：「**不能指望模型自觉去调**」）。
+    """
+    projected = project(a_session_that_wandered(), 12, budget_units=100_000, frontier=20)
+    said = _nudges(projected)
+    assert len(said) == 1, "提醒要么没出现，要么出现了不止一次"
+    assert "第 12 章" in said[0] and "8 章" in said[0], "说不出后面还剩几章 = 一句没有信息的话"
+
+
+def test_the_nudge_never_names_what_the_track_holds() -> None:
+    """提醒里**不许出现后面那几章的任何内容**——它只说「有几章」和「去查」。
+
+    这是整条路的地基（`track.py` 模块头第一节）：把后面章节的内容给写第 2 章的模型看，
+    等于把伏笔亲手告诉它。**这一句是系统写的、每轮重建，所以它是这条边上最容易
+    被顺手加料的地方**——加一句「第 64 章他就知道了」就当场破功。
+    """
+    projected = project(a_session_that_wandered(), 12, budget_units=100_000, frontier=20)
+    said = _nudges(projected)[0]
+    assert "不会告诉你那几章写了什么" in said
+
+
+def test_the_nudge_is_projection_only_and_never_lands_in_history() -> None:
+    """提醒**只活在这一次投影里**，不进对话历史。
+
+    它绑着章号，而对话是持久且累积的（ADR 0019 边界六）：存进去之后作者写到第 200 章，
+    第 12 章那句「后面还有 8 章」还躺在历史里，**而它已经是假话**。
+    """
+    from novel_harness.agent.tools import TRACK_NUDGE_HEADER
+
+    session = a_session_that_wandered()
+    project(session, 12, budget_units=100_000, frontier=20)
+    assert all(
+        TRACK_NUDGE_HEADER not in m.content for m in (*session.prefix, *session.messages)
+    ), "提醒落进了 canonical 历史 —— 它会在后面每一章里继续说那句已经过期的话"

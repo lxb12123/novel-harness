@@ -775,6 +775,7 @@ def project(
     budget_units: int,
     stale_calls: frozenset[str] = frozenset(),
     tools: Sequence[dict[str, Any]] | None = None,
+    frontier: int | None = None,
 ) -> Projection:
     """canonical → 模型这一次看得见的那份（ADR 0019 边界五）。
 
@@ -1033,17 +1034,28 @@ def project(
             "role": "system",
             "content": "\n".join([REGISTRY_HEADER, *registry_lines]),
         }
+    # **惰性 import，同下面 `rule_message` 那条**：那句话点了工具的名字，而本模块有一条
+    # 守卫钉着「loop 自己不认识任何一个工具名」——措辞归工具表那一侧。
+    from .tools import track_nudge
+
+    nudge = track_nudge(chapter, frontier)
     messages = [_wire(m) for m in conversation.prefix]
     if summary_block is not None:
         messages.append(summary_block)
     messages += [_wire(m) for m in kept]
     if registry_message is not None:
         messages.append(registry_message)
+    if nudge is not None:
+        # **排在最后**：它说的是「你现在的处境」，处境要压在历史后面才读得到
+        # （同 `registry_message`——那一条也是这一轮才成立的东西）。
+        messages.append(nudge)
     final_costs = [*prefix_costs, *(_cost(m) for m in kept)]
     if summary_block is not None:
         final_costs.append(_json_units(summary_block))
     if registry_message is not None:
         final_costs.append(_json_units(registry_message))
+    if nudge is not None:
+        final_costs.append(_json_units(nudge))
     final_units = _measured_units(final_costs, tool_costs)
     return Projection(
         chapter=chapter,
@@ -2119,6 +2131,7 @@ def run_turn(
             budget_units=budget,
             stale_calls=stale_calls,
             tools=declarations,
+            frontier=context.frontier_chapter,
         )
         if last_projection.over_budget:
             # **先压缩，再停**：作者的话是唯一不可剪的累积，装不下时把最旧块压成

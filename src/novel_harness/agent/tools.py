@@ -1181,6 +1181,43 @@ def _knowledge_sentence(
     return f"{prefix}{who} 还不知道「{secret}」。他在场时这一场不许说破它。"
 
 
+TRACK_NUDGE_HEADER: Final = "你正在改一章旧的："
+"""「不是最新章」那句提醒的抬头（轨道阶段 3）。
+
+**判断在系统这边，调用在模型那边**：系统只负责把「后面还有 N 章已经写完」说给它听，
+去不去调那条工具是它自己的事——ADR 0019 的「循环归模型，不归代码」。
+做成「写完必须验、验完必须改」的流水线就把那条 ADR 破了。
+
+**这段话住在本模块而不是 `loop.py`**：它点了工具的名字，而 loop 那一侧有一条守卫
+（`test_the_tool_table_is_what_gets_declared_and_the_loop_writes_no_second_copy`）
+钉着「loop 自己不认识任何一个工具名」——认识一个就是第二份工具表的开头。
+"""
+
+
+def track_nudge(chapter: int | None, frontier: int | None) -> dict[str, str] | None:
+    """不是最新章时，投影里多的那一句。**每轮重算，一个字都不落库。**
+
+    ── 为什么它不能进对话历史 ────────────────────────────────────────────
+
+    它绑着章号，而对话是**持久且累积的**（ADR 0019 边界六）：存进去之后作者写到
+    第 200 章时，第 12 章那句「后面还有 8 章已经写完」还躺在历史里，而它已经是假话。
+    稳定前缀那一侧的 validator 直接拒收绑章号的消息，理由是同一条。
+
+    所以它跟着「已收起的结果」那条注记走同一条路：**投影时追加，用完就没了**。
+    """
+    if chapter is None or frontier is None or chapter >= frontier:
+        return None
+    return {
+        "role": "system",
+        "content": (
+            f"{TRACK_NUDGE_HEADER}第 {chapter} 章后面还有 {frontier - chapter} 章"
+            "已经写完了。动笔前先用 check_track 对一遍——它会告诉你第几句跟第几章抵触，"
+            "**不会告诉你那几章写了什么**（那是这一章的读者还不该知道的）。"
+            "查不查、改不改你自己定。"
+        ),
+    }
+
+
 def _handle_check_track(args: CheckTrackArgs, context: ToolContext) -> TrackVerdict:
     """轨道核对。**这个工具有权看轨道，agent 没有**（ADR 0019 边界一的字面落点）。
 
