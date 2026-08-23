@@ -90,6 +90,22 @@ def resolve_cast(store: StoryGraph, project_id: str, cast: Sequence[str]) -> Res
     Notes:
         面板要渲染矩阵行时也该走这里，然后把 `unresolved` 一起传给
         `panel.knowledge_matrix(..., unresolved=...)`——否则面板会安静地少一行。
+
+        ── ⚠️ 歧义在这儿进 `unresolved` 是**有意的**，别改成「候选全算在场」───────
+
+        「把 8 个候选全算在场」那件事**确实在做，但不在这一层**：它住在
+        `mentioned.py::mentioned_cast(expand_ambiguous=True)`，今天只有模式二传
+        （`agent/tools.py::_derived_cast_from_text`）。那一侧算的是**给模型的禁令**，
+        判据是「在场至少有一个人还不知道 ⇒ 就禁」，多算一个人只会多一批禁令。
+
+        **这一层不一样：它的出参会被渲染给作者看。** 右栏那一格回答的是
+        「这一章谁在场」——把「师兄」摊成 8 行没有解释的人是噪声，而且正犯了
+        「引擎的机制不上作者的屏」那条。作者要的是一条「这个『师兄』是谁？」的提示，
+        而 `unresolved` 就是那条提示的通道。
+
+        **所以这个仓库里有两份歧义判据，是两个不同的目标，不是一份实现漏抄了。**
+        下一个人看见它们不一致时的正确动作是读这两段注释，**不是去「修统一」**
+        （2026-08-22 裁定）。
     """
     ids: list[str] = []
     unresolved: list[str] = []

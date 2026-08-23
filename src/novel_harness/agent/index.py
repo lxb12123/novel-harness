@@ -632,7 +632,12 @@ class UnknownCharacter(ToolRefused):
 
 _AMBIGUOUS_SAMPLE: Final = 5
 """歧义时最多摆几个候选名字出来。「师兄」可以指向八个人，八个名字排开就成了一段散文，
-而模型要的只是「这个叫法有歧义，挑一个具体的」——摆头几个够它挑了。"""
+而模型要的只是「这个叫法有歧义，挑一个具体的」——摆头几个够它挑了。
+
+**这是一句话的长度上限，不是候选集的上限**（2026-08-22）：`mentioned.py` 的
+`expand_ambiguous` 把八个候选**全部**算进 cast，那儿一个都不许截——判据是「在场至少有
+一个人还不知道」，截掉第 6 个就是少算一个人，方向从 fail-closed 翻成 fail-open。
+两处的「候选」是同一批人，但一处是说给模型听的措辞、另一处是禁令的依据。"""
 
 
 def resolve_one(surface: str, resolution: Resolution | None) -> Node:
@@ -689,6 +694,11 @@ def _mention_axis(
     用的是 `text/mentions.py` 那条 alternation（长度降序、最长优先），和 R2 FUTURE_LEAK
     同一份实现——**这里不重新数一遍**。只收 `rules_only=True` 的 surface，所以歧义的
     「师兄」天然出局（不是这里语义过滤，是它根本没进 alternation）。
+
+    **别把 `mentioned.py` 的 `expand_ambiguous` 搬到这儿来**（2026-08-22）：那一侧算的是
+    **禁令**，多算一个人只是多禁一条；这一侧是一条**查询**的答案（「这几个人在哪几章
+    同时出现」），模型会把它当事实读——把八个候选全填进来是在回答里编造八条出场记录。
+    同一个展开在一侧是 fail-closed，在另一侧是造假。
     """
     # 瞎着的时候留 `None`：0 会被读成「他一章都没出现」。
     per_character: dict[str, int | None] = dict.fromkeys(targets.values())
