@@ -104,9 +104,14 @@ __all__ = [
 ]
 
 
-ADVISORY_VERSION: Final = "text-advisory-v1"
+ADVISORY_VERSION: Final = "text-advisory-v2"
 """提示词与出参 schema 的版本。**改提示词就要改它**：`model_call.params_json` 里记着
-这个数，而幂等判据是 prompt 的内容哈希——版本进了 prompt，改版就自然重新算一遍。"""
+这个数，而幂等判据是 prompt 的内容哈希——版本进了 prompt，改版就自然重新算一遍。
+
+`v2`（2026-08-23）：轨道那一问的 prompt 多了一块【那几章的原文片段】（阶段 4 三级下探）。
+**按上面那条规矩照改**，代价说清楚：所有章的轨道核对会重新付一次钱。
+不改的话省下的是那笔钱，赌的是「反正只有带片段的那几章 hash 变了」——
+而这条规矩存在的意义就是让没人需要去做这个判断。"""
 
 ADVISORY_CAPABILITY: Final = "advisory"
 """账上这一列的取值（`model_call.capability`）。**新长出一种花钱的动作就要去
@@ -416,6 +421,34 @@ def _secret_request(
     )
 
 
+def _excerpt_block(track: Track) -> str:
+    """三级下探回来的那几段原文（ADR 0038 阶段 4）。**没有就整块不出。**
+
+    ── 它为什么必须进这一份 prompt ────────────────────────────────────────
+
+    不进 = 「算完扔掉」，而那正是这一整批工作反复在修的病。三级只在**总结可证明地
+    没提到某个锚点**时才下探（`track._dig`），所以这几段是那一章里唯一能回答
+    「你写的这句跟它抵不抵触」的证据——二级那份总结对这几样东西只字未提。
+
+    ── 它**只**进这一份 prompt ───────────────────────────────────────────
+
+    这一侧是验证的上下文，它按定义就看得见后面章节的内容。Writer 那一侧从没见过
+    轨道（`track.py` 模块头第一节），两条守卫钉着：`tests/test_track_isolation.py`
+    静态扫 `draft/` + `calibration/`，外加一条拿轨道每一段去搜 prompt 的动态网。
+    """
+    if not track.excerpts:
+        return ""
+    lines = "\n".join(
+        # 段号 +1：`para_index` 全系统 0-based，而这一行是说给模型听的人话。
+        f"- 第 {item.chapter_number} 章第 {item.para_index + 1} 段：{item.text}"
+        for item in track.excerpts
+    )
+    return (
+        "\n\n【那几章的原文片段】（上面的总结没提到你正在改的某几样东西，"
+        "所以把原文里提到它们的那几段补在这儿）：\n" + lines
+    )
+
+
 def _track_request(
     chapter: int, sentences: Sequence[Sentence], track: Track
 ) -> AdvisoryRequest:
@@ -425,6 +458,7 @@ def _track_request(
     body = (
         f"【后面已经写完的章】（全书写到第 {track.frontier} 章）：\n"
         + later
+        + _excerpt_block(track)
         + f"\n\n【正文】第 {chapter} 章，逐句编号：\n"
         + _numbered_block(sentences)
     )

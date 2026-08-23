@@ -756,3 +756,49 @@ def test_backfilling_an_imported_book_does_not_buy_a_single_review(
     runtime.pump_once()
 
     assert reviewer.seen == []
+
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 三级下探回来的那几段，**必须真的进这一份 prompt**（ADR 0038 阶段 4）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_the_dug_out_paragraphs_actually_reach_the_reviewer() -> None:
+    """不进 = 「算完扔掉」，而那正是这一整批工作反复在修的病。
+
+    三级只在**总结可证明地没提到某个锚点**时才下探，所以这几段是那一章里唯一能回答
+    「你写的这句跟它抵不抵触」的证据——二级那份总结对这几样东西只字未提。
+    它红了代表那条链断在最后一米：钱花了（下探是免费的，但核对那一次不是），
+    证据没进去，模型照旧只看得见一份不提这件事的总结。
+    """
+    from novel_harness.advisory_review import _track_request, numbered_sentences
+    from novel_harness.track import Track, TrackExcerpt
+
+    track = Track(
+        chapter=12,
+        frontier=20,
+        note="x",
+        excerpts=[
+            TrackExcerpt(
+                chapter_number=15, para_index=2, text="萧决把它按进水里。", surfaces=["萧决"]
+            )
+        ],
+    )
+    body = _track_request(12, numbered_sentences(["他举起了它。"]), track).messages[1].content
+
+    assert "萧决把它按进水里。" in body, "下探回来的原文没进 prompt —— 又是算完扔掉"
+    assert "第 15 章第 3 段" in body, "段号没 +1 —— 说给模型听的那一行还是引擎的 0-based 门牌"
+
+
+def test_no_excerpt_block_when_nothing_was_dug_out() -> None:
+    """没下探就**整块不出**，不留一个空标题。
+
+    空标题会让模型以为「那几章的原文我看过了，里面没东西」——而真相是压根没去看。
+    """
+    from novel_harness.advisory_review import _track_request, numbered_sentences
+    from novel_harness.track import Track
+
+    track = Track(chapter=12, frontier=20, note="x")
+    body = _track_request(12, numbered_sentences(["他举起了它。"]), track).messages[1].content
+    assert "原文片段" not in body
