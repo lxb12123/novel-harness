@@ -8,7 +8,8 @@
    「约束是算出来的」；一旦空 cast 能穿过去，`panel/constraints.py` 记的那次
    fail-open 病史立刻能重演，而且没有任何东西会红。
 3. **`ResolvedConstraints` 那条路径逐字节不变。** kill-gate 与产品起草共用 `assemble()`，
-   这次改动只许**加一个分支**，不许挪动原路径的任何一个字节（EVAL_PROTOCOL §2）。
+   退化态那一支怎么改都不许挪动原路径的任何一个字节（EVAL_PROTOCOL §2）——
+   2026-08-22 的 M1-a 把退化态的「【在场】未知」整块删掉，走的也是这条纪律。
 """
 
 from __future__ import annotations
@@ -26,7 +27,6 @@ from test_knowledge import (
 
 from novel_harness.draft.assemble import (
     CONTINUATION_GOAL,
-    UNKNOWN_CAST_LINE,
     PromptForm,
     assemble,
 )
@@ -101,10 +101,45 @@ def test_resolved_constraints_still_refuses_an_empty_cast() -> None:
         ResolvedConstraints(chapter=1, cast=[], matrix=None)  # type: ignore[arg-type]
 
 
-def test_the_unknown_cast_line_states_the_consequence_not_just_the_gap() -> None:
-    """「在场：未知」单独出现时，模型最自然的反应是自己猜一个。约束得跟在同一句里。"""
-    assert "未知" in UNKNOWN_CAST_LINE
-    assert "不得说破" in UNKNOWN_CAST_LINE
+# ── 2.5 「【在场】未知」那一块已经删了（M1-a，2026-08-22）───────────────────
+
+
+def test_the_degraded_prompt_says_nothing_about_who_is_present() -> None:
+    """退化态的 prompt 里**没有**「【在场】未知」那一块。
+
+    它坏掉时代表：有人把那句话加了回来。加回来的代价不是多一行——「未知」两个字
+    不带任何信息，而它后半句（「因此这一段不得说破任何尚未公开的秘密」）和下面那条
+    禁写清单说的是同一件事，于是同一份 prompt 里同一条禁令说了两遍，模型仍然不知道
+    这一场有谁。要把这一块变准就得知道在场是谁，而续写的那一刻它还没被写出来——
+    那份精度只有保存之后的验证侧算得准（`docs_dev` 2026-08-22 M1-a）。
+    """
+    ctx = unknown_cast_constraints(_store(), PID, 152, secrets=[BLOODLINE.id])
+
+    body = "\n".join(
+        m["content"]
+        for m in assemble(ctx, form=PromptForm.X1, goal=CONTINUATION_GOAL, length=SHORT)
+    )
+
+    assert "【在场】" not in body
+    assert "未知" not in body
+
+
+def test_what_is_left_of_the_degraded_prompt_all_still_carries_information() -> None:
+    """**删过头也要红。** 剩下的每一块都还在，而且每一块都带着信息。
+
+    它坏掉时代表：M1-a 连**不依赖在场**的那两块也一起删了——
+    粗的禁写清单（全书未公开的秘密，写时当提醒）和尚未登场的实体
+    （只看章号算，退化态里仍然精确）。那样退化态的 prompt 就只剩一句空提示。
+    """
+    ctx = unknown_cast_constraints(_store(), PID, 152, secrets=[BLOODLINE.id])
+
+    body = assemble(ctx, form=PromptForm.X1, goal=CONTINUATION_GOAL, length=SHORT)[-1][
+        "content"
+    ]
+
+    assert "这一场不得写破：血脉秘密" in body
+    assert "尚未登场、这一场不得出现：幽泉窟（第 200 章首现）" in body
+    assert CONTINUATION_GOAL in body
 
 
 # ── 3. 渲染：退化态进得了 prompt，且原路径逐字节不变 ──────────────────────
@@ -116,7 +151,6 @@ def test_the_degraded_context_renders_and_carries_the_ban() -> None:
     messages = assemble(ctx, form=PromptForm.X1, goal=CONTINUATION_GOAL, length=SHORT)
     body = "\n".join(m["content"] for m in messages)
 
-    assert UNKNOWN_CAST_LINE in body
     assert "血脉秘密" in body  # 禁的是显示名……
     assert "玄血蛊" not in body  # ……永远不是内容 tell
 
@@ -130,8 +164,8 @@ def test_the_degraded_context_injects_no_knowledge_matrix() -> None:
         )[-1]["content"]
 
 
-def test_the_resolved_path_is_byte_identical_after_adding_the_branch() -> None:
-    """**本次改动只许加一个分支。** 这条钉住 kill-gate 走的那条路径一个字节没动。
+def test_the_resolved_path_is_byte_identical() -> None:
+    """kill-gate 走的那条路径一个字节没动 —— 加分支那次没动，M1-a 删分支这次也没动。
 
     坏掉的形态：有人为了让两条路径「长得一样」而顺手改了 `_base()` 里在场行的措辞——
     X0/X1/X2 三臂的 prompt 全变，而 `runs/*.jsonl` 里的历史结果再也不可比。

@@ -324,7 +324,10 @@ def test_continuation_without_cast_forbids_every_secret(
     assert r.status_code == 200, r.text
 
     body = "\n".join(m["content"] for m in seen[0])
-    assert "未知" in body and "不得说破" in body
+    # M1-a（2026-08-22）把退化态的「【在场】未知」整块删了：**约束整个由禁写清单承载**。
+    # 这两条一起才是 fail-closed —— 只钉「块没了」会漏掉「禁写清单也一起没了」那种改法。
+    assert "【在场】" not in body
+    assert "不得写破" in body
     assert "血脉秘密" in body  # 显示名进 prompt……
     assert TWIST not in body  # ……内容 tell 永远不进
 
