@@ -953,40 +953,6 @@ def _derived_cast_from_text(
     )
 
 
-def _borrowed_cast(context: ToolContext, chapter: int) -> list[str]:
-    """上一章正文里出现过的人，**给数不出人的那一章借用**（M2-b，2026-08-22）。
-
-    ── 为什么要借：起草一个刚开头的空章**必然**数不出人 ──────────────────
-
-    而那正是最常用的起草场景（第 11 章只有一行标题）。数出 0 个人 ⇒ 下游退化成
-    **全书全禁**——安全，却安全得没用：AI 拿着一份「什么都别碰」的清单写不出能用的
-    东西。借上一章的人算出来的禁令清单**具体得多**，而方向没变。
-
-    ── 为什么借了仍然安全 ────────────────────────────────────────────────
-
-    判据是「在场**至少有一个人**还不知道 ⇒ 就禁」，它对在场集合**单调**：
-    集合变大，禁令只增不减。所以「只加不减」是 fail-closed 那一侧，
-    **多算一个人只会多一批禁令，少算一个人才会漏。**
-
-    **只借前一章，不借后面的。** 不是因为后面的人不安全（多算仍然多禁），而是因为
-    这一层的语义是「这一场大概有谁」——上一场刚在的人最可能还在，第 158 章的人不是。
-    借一个跟这一场无关的人，代价是凭空多出一批禁令，AI 又写不出东西了。
-
-    ── 借不到时返回空，让调用方退回全禁（M2-d，不动）────────────────────
-
-    第一章、全新的书、上一章文件还不存在——**前面没人可借，那时全禁是唯一诚实的
-    答案**。这三种都返回空列表，而不是编一个出来。
-    """
-    if chapter <= 1 or context.root_path is None:
-        return []
-    file = Path(context.root_path) / chapter_path(chapter - 1)
-    if not file.exists():
-        return []
-    return _derived_cast_from_text(
-        context, chapter - 1, file.read_text(encoding="utf-8-sig")
-    )
-
-
 def _scene_context_from_text(
     context: ToolContext,
     chapter: int,
@@ -994,10 +960,6 @@ def _scene_context_from_text(
 ) -> DraftContext:
     """从**已经读好的**目标章正文算约束（与 `_scene_context` 同一份实现）。"""
     cast = _derived_cast_from_text(context, chapter, text)
-    if not cast:
-        # 这一章还数不出人（最常见：刚开头的空章）→ 借上一章的（M2-b）。
-        # 借来的人一律是**比本章更早**出现过的，所以矩阵按本章章号算出来时他们都已登场。
-        cast = _borrowed_cast(context, chapter)
     if cast:
         try:
             view = scene_view(context.store, context.project_id, chapter, cast)
@@ -1022,11 +984,8 @@ def _scene_context(context: ToolContext, chapter: int) -> DraftContext:
     **歧义已经不从这道口子掉下去了**（2026-08-22）：`_derived_cast_from_text` 把
     「师兄」展开成全部候选，展开出来的是各自唯一可解析的正式名。剩下能落到这一支的
     只有花名册本身病了的那几种（两个节点重名、节点没有 canonical 别名行），
-    那时全禁仍然是唯一诚实的答案。
-
-    **数不出人也不再直接掉下去了**（M2-b，2026-08-22）：`_scene_context_from_text`
-    先借上一章的人（只加不减，仍是 fail-closed）。真正还会落到全禁的只剩
-    **第一章 / 全新的书 / 上一章也还没写**——前面没人可借（M2-d，不动）。
+    那时全禁仍然是唯一诚实的答案。**空 cast 那一档不归这儿**：第一章 / 全新的书
+    前面没人可借，走的是下面 `if cast:` 外面那条路（M2-d，不动）。
     """
     if context.root_path is None:
         return unknown_cast_constraints(context.store, context.project_id, chapter)
