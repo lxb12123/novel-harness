@@ -172,7 +172,9 @@ def render_scene_brief(brief: SceneBrief, *, unknown_cast: bool = False) -> str:
     machine = list(brief.machine_directives)
     if machine:
         lines.append("【机器写作建议】")
-        lines.extend(f"- {_render_directive(item)}（机器推演）" for item in machine)
+        lines.extend(
+            f"- {_render_directive(item)}（{_basis_label(item.basis)}）" for item in machine
+        )
 
     beats = [
         item for item in brief.event_beats if not _is_unknown_cast_dropped(item, unknown_cast=unknown_cast)
@@ -230,10 +232,27 @@ def _render_directive(item: BriefDirective) -> str:
     return text or item.directive_kind.value
 
 
+# 出处五档。**只表出处，不表效力**：效力（硬依据 / 参考）由 `_strength_label`
+# 单独负责，两件事合成一个标签会印出「机器推演 · 硬依据」这种读不通的组合，
+# 也会把作者亲手立的事实说成机器猜的——模型据此低估它，作者上屏后会看见假话。
+# **故意没有默认值**：新增一类 EpistemicKind 而忘了在这里定档，宁可 KeyError
+# 也不要静默塌进某一档（那正是这份表要修的病）。
+_BASIS_LABEL: dict[EpistemicKind, str] = {
+    EpistemicKind.AUTHOR_INTENT: "作者确认",
+    EpistemicKind.AUTHOR_CANON_FACT: "作者记录",
+    EpistemicKind.AUTHOR_BACKGROUND: "作者记录",
+    EpistemicKind.EXTRACTED_CURRENT: "机器有据",
+    EpistemicKind.OBSERVED_TEXT: "机器有据",
+    EpistemicKind.MACHINE_SUMMARY: "机器有据",
+    EpistemicKind.MACHINE_INFERENCE: "机器推演",
+    # 「未知」不是一条弱事实，是一个洞：标成「推演」会让读者（今天是模型）
+    # 以为可以顺着它往下补写，而它的定义恰恰是「不得补写成事实」。
+    EpistemicKind.UNKNOWN: "未知",
+}
+
+
 def _basis_label(basis: EpistemicKind) -> str:
-    if basis is EpistemicKind.AUTHOR_INTENT:
-        return "作者确认"
-    return "机器推演"
+    return _BASIS_LABEL[basis]
 
 
 def _strength_label(fact: ContinuityFact) -> str:
