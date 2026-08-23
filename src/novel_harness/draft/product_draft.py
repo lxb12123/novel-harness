@@ -484,7 +484,14 @@ def _append_execution_plan(
     if request.brief is not None:
         sections.append(
             render_scene_brief(
-                request.brief, unknown_cast=isinstance(ctx, UnknownCastConstraints)
+                request.brief,
+                # 借来的 cast（M2-b）在这一侧和「不知道谁在场」等价：两者都只是
+                # **实际在场人物的一个猜测**，而这份白名单要的是「对全体可能人物
+                # 都公开」。禁令那一侧照旧用借来的人算（多算只多禁），两条通道
+                # 方向相反，所以这儿必须连 `cast_is_borrowed` 一起看。
+                unknown_cast=(
+                    isinstance(ctx, UnknownCastConstraints) or ctx.cast_is_borrowed
+                ),
             )
         )
     if sections:
@@ -600,6 +607,17 @@ def _with_memory(
         return assemble(ctx, **assemble_args), memory_receipt(
             "这一稿没有记忆前言：不知道这一场有谁在，档案与事件记忆无从查起"
             "（约束和禁令照常生效，而且是全禁那一侧）。"
+        )
+    if ctx.cast_is_borrowed:
+        # 借来的 cast（M2-b）在这一侧和「不知道谁在场」等价：这几个人是**从上一章
+        # 猜的**，本章真正在场的人可能不在里面。记忆前言给的是「这几个人的档案 /
+        # 他们都知道的事件 / 前面章节的总结」，按一份猜出来的名单发，等于把一段
+        # 也许不该给这一场的背景塞进 Writer。
+        # 禁令那一侧照旧用借来的人算（多算只多禁）——**两条通道方向相反**，
+        # 这是同一条不对称的第二个落点（第一个在 `_append_execution_plan`）。
+        return assemble(ctx, **assemble_args), memory_receipt(
+            "这一稿没有记忆前言：这一章还没写出人来，在场是按上一章借的，"
+            "拿它去查档案与事件会把别处的背景带进来（禁写清单照常按借来的人算）。"
         )
 
     # **必须过滤 label。** `resolve_cast` 认的是花名册里的全部称呼，不只人物：

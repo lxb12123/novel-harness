@@ -1126,9 +1126,115 @@ def test_more_candidates_only_ever_means_more_bans_never_fewer(world: World) -> 
     assert derived == {"血脉秘密"}, "工具那条路必须拿到宽的那一份"
 
 
-def test_a_chapter_with_nobody_in_it_still_bans_everything(world: World) -> None:
-    """**M2-d 不动**：第一章 / 全新的书前面没人可借时，全禁仍然是唯一诚实的答案。"""
-    _with_an_ambiguous_title(world, "风雪落了一夜。\n")
+# ══════════════════════════════════════════════════════════════════════════
+# 数不出人：**往前借上一章的 cast**（M2-b / ADR 0037），
+# 但**只借给禁令那一条通道** —— 记忆那条照旧关着
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_a_blank_chapter_borrows_the_people_from_the_chapter_before_it(
+    world: World,
+) -> None:
+    """**起草一个刚开头的空章必然数不出人**，而那正是最常用的起草场景。
+
+    借之前这一档直接退化成**全书全禁**——安全，却安全得没用：AI 拿着一份
+    「什么都别碰」的清单写不出能用的东西。
+
+    它红了代表借那一步没了：症状是作者每开一个新章，AI 就收到一份写不了的禁令清单。
+    """
+    _with_an_ambiguous_title(world, "风雪落了一夜。\n")  # 一个花名册里的人都没提到
     bans, derived = _bans_at(world, AMBIGUOUS_CHAPTER)
-    assert derived is False, "一个人都没数出来却说自己算准了 —— 那是把「不知道」伪装成答案"
+
+    assert derived is True, (
+        "上一章明明数得出人，这一章却说自己不知道有谁 —— 那份「不知道」是借之前的旧行为"
+    )
+    assert bans == {"血脉秘密"}, "借来的是第 7 章那两个人，禁令按他们算（萧决不知道这条）"
+
+
+def test_a_borrowed_cast_is_marked_so_the_memory_side_can_stay_shut(
+    world: World,
+) -> None:
+    """**这条是这次改动的重点**：借来的人只放宽禁令，**不许打开记忆那条通道**。
+
+    ADR 0037 的论证是「判据对在场集合单调 ⇒ 多算一个人只会多一批禁令」。那条成立，
+    **但它只覆盖禁令**。记忆那一侧（档案 / 事件 / 前面章节的总结）问的是另一个问题——
+    「这几个人是不是**真的**都在场」，而借来的名单是从上一章猜的。
+
+    它红了代表那位标记丢了，于是作者每开一个新章，事件和总结就顺着一份**猜出来的**
+    在场名单流进 Writer。两处消费它：`_append_execution_plan` 和 `_with_memory`。
+    """
+    from novel_harness.agent.tools import _scene_context_from_text
+    from novel_harness.draft.context import ResolvedConstraints
+
+    _with_an_ambiguous_title(world, "风雪落了一夜。\n")
+    ctx = _scene_context_from_text(world.context(), AMBIGUOUS_CHAPTER, "风雪落了一夜。\n")
+    assert isinstance(ctx, ResolvedConstraints), "借到人了就该是算出来的那一种"
+    assert ctx.cast_is_borrowed is True, "借来的名单没标出来 —— 下游两处都会当成数出来的"
+
+    counted = _scene_context_from_text(world.context(), CHAPTER, CHAPTER_TEXT)
+    assert isinstance(counted, ResolvedConstraints)
+    assert counted.cast_is_borrowed is False, "本章正文里数出来的人被误标成借来的 —— 白白少给记忆"
+
+
+def test_borrowing_only_ever_adds_bans_never_removes_one(world: World) -> None:
+    """**这条钉的是方向，不是准确率**：借来的人只会让禁令更多。
+
+    判据是「在场至少有一个人还不知道 ⇒ 就禁」，它对在场集合单调。所以借错人的代价是
+    「多禁一条」，而不是「漏禁一条」——**少算一个人才是崩人设的那一侧。**
+    """
+    _with_an_ambiguous_title(world, "风雪落了一夜。\n")
+
+    from novel_harness.panel import scene_constraints
+
+    def bans(cast: list[str]) -> set[str]:
+        c = scene_constraints(world.store, world.project_id, AMBIGUOUS_CHAPTER, cast)
+        return {ref.name for ref in c.must_not_reveal}
+
+    borrowed, _ = _bans_at(world, AMBIGUOUS_CHAPTER)
+    assert bans(["顾清音"]) <= borrowed, (
+        "借进来一个人却少禁了一条 —— 方向反了，那一侧是把秘密说破"
+    )
+
+
+def test_nothing_is_borrowed_from_a_chapter_that_comes_later(world: World) -> None:
+    """**只借前一章，不借后面的。** 后面那些章不是「这一场大概有谁」的答案。
+
+    它红了代表借的范围放宽了：代价不是泄漏（多算仍然多禁），是凭空多出一批
+    跟这一场无关的禁令，AI 又写不出东西了。
+    """
+    _with_an_ambiguous_title(world, "风雪落了一夜。\n")
+    later = AMBIGUOUS_CHAPTER + 1
+    (world.root / "chapters" / f"{later:04d}.md").write_text(
+        "李管家在偏厅候着。\n", encoding="utf-8"
+    )
+
+    from novel_harness.agent.tools import _borrowed_cast
+
+    assert "李管家" not in _borrowed_cast(world.context(), AMBIGUOUS_CHAPTER)
+
+
+def test_the_first_chapter_has_nobody_to_borrow_from_and_still_bans_everything(
+    world: World,
+) -> None:
+    """**ADR 0037「保留不动」那一条**：前面没人可借时，全禁是唯一诚实的答案。
+
+    借不到时必须返回空、让调用方退回全禁，**而不是编一个人出来**。
+    """
+    from novel_harness.agent.tools import _borrowed_cast
+
+    assert _borrowed_cast(world.context(), 1) == [], "第一章前面没有章可借"
+    assert _borrowed_cast(world.context(root_path=None), CHAPTER) == [], (
+        "读不到磁盘正文时借不到人 —— 不许拿一份猜的 cast 顶上"
+    )
+
+
+def test_a_blank_chapter_after_a_blank_chapter_still_bans_everything(
+    world: World,
+) -> None:
+    """上一章**也**数不出人时照旧全禁：借是「往前一章」，不是「一直翻到找着为止」。"""
+    _with_an_ambiguous_title(world, "风雪落了一夜。\n")
+    (world.root / "chapters" / f"{CHAPTER:04d}.md").write_text("夜色沉下来。\n", encoding="utf-8")
+
+    bans, derived = _bans_at(world, AMBIGUOUS_CHAPTER)
+    assert derived is False, "两章都数不出人却说自己算准了 —— 那是把「不知道」伪装成答案"
     assert bans == {"血脉秘密"}
