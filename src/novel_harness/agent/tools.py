@@ -243,7 +243,7 @@ from .index import (
     handle_character_chapters,
     resolve_one,
 )
-from .ports import DraftAsk, DraftDesk, ToolContext, ToolRefused
+from .ports import DraftAsk, DraftDesk, ToolContext, ToolRefused, TrackVerdict
 
 # ══════════════════════════════════════════════════════════════════════════
 # 入参：模型填的那几个格子。**每一个字段名和描述都会原样发给模型。**
@@ -313,6 +313,24 @@ class KnowsSecretArgs(BaseModel):
         # 跨章都不变；随手写一个「比如『血脉秘密』」就是把这本书的数据钉进缓存
         # （`tests/test_agent_tools.py::test_the_declaration_never_learns_the_secret` 会红）。
         description="秘密的显示名，用 book_index 的花名册里给的那个名字。",
+    )
+
+
+class CheckTrackArgs(BaseModel):
+    """拿这一章已经落盘的正文去跟**后面那些已经写完的章**对一遍（轨道阶段 3）。
+
+    ── 为什么只收一个章号 ────────────────────────────────────────────────
+
+    ADR 0019 边界二：**模型没有机会影响这个工具的任何一个实质入参。** 正文由后端从
+    磁盘读当前快照，轨道由后端算——模型递不进来一段自己编的正文，也指不定要跟哪几章比。
+    它能决定的只有「问不问、问哪一章」，那正是「循环归模型」该有的那点自由。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chapter: int = Field(
+        ge=1,
+        description="要核对第几章。用它**已经落盘的当前正文**，不是你手里这一稿。",
     )
 
 
@@ -1163,6 +1181,21 @@ def _knowledge_sentence(
     return f"{prefix}{who} 还不知道「{secret}」。他在场时这一场不许说破它。"
 
 
+def _handle_check_track(args: CheckTrackArgs, context: ToolContext) -> TrackVerdict:
+    """轨道核对。**这个工具有权看轨道，agent 没有**（ADR 0019 边界一的字面落点）。
+
+    出参里只有 `TrackClash` 那三个数，轨道原文一个字都不过这条边——理由是 `track.py`
+    模块头那一节：后面章节的总结里可能写着这一章的读者还不该知道的事，把它给写
+    第 2 章的模型看，等于把伏笔亲手告诉它。
+    """
+    if context.track_check is None:
+        raise ToolRefused(
+            "轨道核对没接线（这套工作台没配核对模型）。"
+            "禁写清单和「尚未登场」照常生效，缺的只是「跟后面章节抵不抵触」这一问。"
+        )
+    return context.track_check(args.chapter)
+
+
 def _handle_knows_secret(
     args: KnowsSecretArgs, context: ToolContext
 ) -> SecretKnowledgeResult:
@@ -1752,6 +1785,31 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         args=KnowsSecretArgs,
         handler=_handle_knows_secret,
         label="查一个人知不知道那件事",
+    ),
+    # ── 轨道核对（2026-08-23，轨道阶段 3）。**追加在表尾**，理由同上面那几条。
+    #
+    # 这一条是 ADR 0019 边界一「工具表就是权限边界」在这份文件里**字面成立**的地方：
+    # **工具有权看轨道，agent 没有。** 出参锁死在 `TrackClash` 那三个数上
+    # （第几句 / 跟第几章 / 冲突类型），多一个自由文本的 `reason` 就等于给轨道原文
+    # 开了一条进出参的路，而那条路一开，「写的那个看不见验的那个看见的东西」当场破功。
+    #
+    # **做成工具而不是「写完必须验、验完必须改」的流水线**：ADR 0019 的
+    # 「循环归模型，不归代码」保住了——验不验、改不改，它自己定。
+    ToolSpec(
+        name="check_track",
+        description=(
+            "拿第 N 章**已经落盘的正文**去跟后面那些已经写完的章对一遍，"
+            "看有没有跟既有设定抵触。**只告警，不阻断**——改不改你自己定。\n"
+            "**什么时候用**：你在改一章旧的（后面还有已经写完的章）。"
+            "在最前沿写时它一步都不走，会直接告诉你「这儿是最前沿」。\n"
+            "**它给你的是三个数**：第几句、跟第几章抵触、哪一类抵触。"
+            "**不会告诉你后面那几章写了什么**——那是这一章的读者还不该知道的东西，"
+            "拿到了你也不许写进正文。要细节请作者自己去翻那一章。\n"
+            "空清单要连着那句话一起读：「没抵触」和「压根没核对」不是一回事。"
+        ),
+        args=CheckTrackArgs,
+        handler=_handle_check_track,
+        label="跟后面已经写完的章对一遍",
     ),
 )
 """**模式二的权限边界。这张表以外的能力，模型一律没有。**

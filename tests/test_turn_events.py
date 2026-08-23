@@ -212,6 +212,16 @@ def _feed_a_summary(conn: Connection, project_id: str) -> None:
     conn.commit()
 
 
+def _a_track_check() -> Any:
+    """一个不花钱的轨道核对：**答得出话，而且那句话带着理由**（§10 约束 8）。"""
+    from novel_harness.agent.ports import TrackVerdict
+
+    def check(chapter: int) -> TrackVerdict:
+        return TrackVerdict(chapter=chapter, note="这一章就在最前沿，后面没有已经写完的章。")
+
+    return check
+
+
 def a_wired_context(world: World, **overrides: Any) -> ToolContext:
     """**每一个接线口都接上**的那份上下文。
 
@@ -233,6 +243,10 @@ def a_wired_context(world: World, **overrides: Any) -> ToolContext:
         "calibrations": CalibrationStore(world.conn),
         "author_turn": author_turn,
         "working_chapter": CHAPTER,
+        # 轨道核对（2026-08-23）。这儿给的是一个**假的核对模型**，因为真核对要花钱；
+        # 这张网测的是「这条工具答不答得上话、作者看不看得见它在干什么」，
+        # 而轨道那一问本身有 `tests/test_advisory_review.py` 单独钉着。
+        "track_check": _a_track_check(),
     }
     base.update(overrides)
     return world.context(**base)
@@ -267,6 +281,7 @@ EVERY_TOOL = (
     }),
     ("seal_scene_brief", {"inspection_id": "inspection:test:seeded"}),
     ("knows_secret", {"chapter": CHAPTER, "character": "萧决", "secret": "血脉秘密"}),
+    ("check_track", {"chapter": CHAPTER}),
     ("ask_author", {"question": "这一场你想让萧决知道那件事吗？",
                     "options": ["让他知道", "先瞒着他"]}),
 )

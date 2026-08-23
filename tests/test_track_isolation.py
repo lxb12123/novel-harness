@@ -149,6 +149,46 @@ def test_no_prompt_layer_names_a_track_symbol() -> None:
     assert not offenders, f"这几处引用了轨道那几个符号：{offenders}\n{_WHY}"
 
 
+AGENT_MAY_BORROW = frozenset({"TrackClash"})
+"""`agent/` 唯一许从轨道那三个模块里借的名字。
+
+**为什么它能借这一个**：`TrackClash` 是三个数（第几句 / 跟第几章 / 冲突类型），
+手里没有轨道原文。轨道阶段 3 那条工具（`check_track`）要它当出参的形状。
+
+**为什么别的一个都不许**：`Track` / `build_track` / `chapters_after_mentioning`
+手里有后面章节的总结，`AdvisoryOutcome` 手里有秘密那一问的结论。
+`agent/` 是模式二的会话层——工具结果会**永久留在对话历史里**（ADR 0019 边界六），
+一旦这几个里的任何一个能被 import，「工具有权看轨道，agent 没有」就只剩一句自觉。
+"""
+
+
+def test_the_agent_layer_borrows_exactly_one_name_from_the_track_modules() -> None:
+    """**工具表就是权限边界**（ADR 0019 边界一）在 import 这一层的落点。
+
+    它红了代表 `agent/` 里有人直接够到了轨道本体：症状是下一次有人「顺手」把
+    `build_track` 的结果拼进工具返回，于是第 64 章的总结进了写第 2 章的模型的
+    对话历史——**而对话是持久且累积的，它再也出不去了**。
+    """
+    import ast
+
+    offenders: list[str] = []
+    for path in sorted((SRC / "agent").rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom) or not node.module:
+                continue
+            if not any(node.module.endswith(m) for m in TRACK_MODULES):
+                continue
+            for alias in node.names:
+                if alias.name not in AGENT_MAY_BORROW:
+                    rel = path.relative_to(SRC)
+                    offenders.append(f"{rel}:{node.lineno} {node.module}.{alias.name}")
+    assert not offenders, (
+        f"`agent/` 从轨道模块里借了白名单以外的名字：{offenders}。"
+        "工具可以持有轨道，agent 不行——出参只许是已经判完的那三个数。"
+    )
+
+
 def test_the_scanned_surface_is_the_one_that_matters() -> None:
     """名单里那几个目录都还在。**目录改名而名单没跟上 = 这道守卫静默失效。**"""
     for name in PROMPT_DIRS:

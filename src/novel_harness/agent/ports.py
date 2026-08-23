@@ -49,6 +49,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from ..draft.context import DraftContext
 from ..draft.product_context import memory_units_available
 from ..draft.rolling_summary import ChapterSummaryStatus, SummarySnapshotWatermark
+# 轨道那几个模块里，**只借 `TrackClash` 这一个名字**：它是三个数（第几句 / 跟第几章 /
+# 冲突类型），手里没有轨道原文。`Track` / `build_track` / `chapters_after_mentioning` /
+# `AdvisoryOutcome` 一律不许进 `agent/`——这一层的整个意义就是「agent 拿不到轨道」。
+# `tests/test_track_isolation.py::test_the_agent_layer_borrows_exactly_one_name...` 钉着它。
+from ..advisory_review import TrackClash
 from ..events import EventView
 from ..extract.call_audit import ModelCallReceipt
 from ..graph import InformationScope, StoryGraph
@@ -290,6 +295,14 @@ class ToolContext:
     校准工具明确拒绝。
     """
 
+    track_check: TrackCheck | None = None
+    """轨道核对（轨道阶段 3）。`None` = `check_track` 明确回一句「没接线」。
+
+    **这一位就是 ADR 0019 边界一那句话的字面落点**：「工具表就是权限边界」——
+    **那个工具有权看轨道，agent 没有。** 端口收进来的是一个已经判完的结论
+    （`TrackClash`：第几句 / 跟第几章 / 冲突类型），轨道原文一个字都不过这条边。
+    """
+
     working_chapter: int | None = None
     """作者此刻在写第几章。**只用来标「这是你还没写到的地方」，不挡任何东西。**
 
@@ -381,6 +394,30 @@ class ToolContext:
         return nullcontext() if self.db_lock is None else self.db_lock
 
 
+class TrackVerdict(BaseModel):
+    """一次轨道核对的结论。**只有结论，没有轨道。**"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chapter: int = Field(ge=1)
+    clashes: tuple[TrackClash, ...] = ()
+    """`TrackClash` 是三个数（第几句 / 跟第几章 / 冲突类型），**不许长第四个**——
+    多一个 `reason: str` 就等于给轨道原文开了一条进出参的路
+    （`advisory_review.TrackClash` 的注释讲了整件事，那儿有一条钉字段名的守卫）。"""
+
+    note: str = ""
+    """**零要带着理由**（§10 约束 8）：「没抵触」和「压根没核对」（在最前沿写 /
+    核对模型没配 / 这一份已经付过钱）在模型眼里长成同一个空清单，而这两件事的
+    下一步动作完全相反。"""
+
+
+@runtime_checkable
+class TrackCheck(Protocol):
+    """轨道核对的只读端口。**装配层持有轨道，agent 只拿得到结论。**"""
+
+    def __call__(self, chapter: int) -> TrackVerdict: ...
+
+
 __all__ = [
     "DraftAsk",
     "DraftCandidate",
@@ -394,5 +431,7 @@ __all__ = [
     "StoredDraft",
     "SummaryIndex",
     "ToolContext",
+    "TrackCheck",
+    "TrackVerdict",
     "ToolRefused",
 ]

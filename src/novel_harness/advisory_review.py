@@ -100,6 +100,7 @@ __all__ = [
     "TrackClash",
     "numbered_sentences",
     "review_saved_chapter",
+    "review_track_on_demand",
 ]
 
 
@@ -816,6 +817,62 @@ def review_saved_chapter(
         notices=tuple(notices),
         notes=notes,
     )
+
+
+def review_track_on_demand(
+    conn: Connection,
+    store: StoryGraph,
+    project_id: str,
+    chapter_number: int,
+    *,
+    reviewer: Reviewer,
+    call_id_factory: Callable[[str], str] = _default_call_id,
+) -> AdvisoryOutcome:
+    """只答轨道那一问，**而且一条通知都不落**（轨道阶段 3：模式二自己调的那条）。
+
+    ── 跟 `review_saved_chapter` 的差别只有两处，两处都是有意的 ──────────
+
+    **一、不问秘密那一问。** 模型问的是「我刚写的这段跟后面打不打架」，
+    秘密说破那一问归保存之后那一遍（它要的是稳定正文，不是写到一半的稿子）。
+
+    **二、不落通知。** 那一遍是**系统**发现的、作者没做过任何动作，所以要在右栏
+    留一条；这一次是**模型自己问的**，答案当场回给它。给它记一条通知等于让作者的
+    右栏冒出一件他没做过的事——而右栏那一格的语义是「你该看一眼」，不是「模型问过什么」。
+    幂等仍然共用同一份内容地址判据（`_already_paid`），所以模型连问两次不会连付两次。
+
+    ── 出参为什么仍然是 `AdvisoryOutcome` ────────────────────────────────
+
+    同一件事只该有一种回执形状。这一次 `slips` / `notices` 必然是空，
+    而 `notes["track"]` 照旧**带着理由**——「没抵触」和「压根没核对」
+    （在最前沿写 / 模型没配 / 已经付过钱）在右栏和在模型眼里都长成
+    「什么都没有」，而这两件事的下一步动作完全相反（§10 约束 8）。
+    """
+    found = _current_chapter(conn, project_id, chapter_number)
+    if found is None:
+        return AdvisoryOutcome(
+            chapter=chapter_number,
+            notes={"track": "这一章在库里没有当前快照，核对无从谈起。"},
+        )
+    paragraphs = split_paragraphs(found.text)
+    sentences = numbered_sentences(paragraphs)
+    if not sentences:
+        return AdvisoryOutcome(
+            chapter=chapter_number, notes={"track": "这一章的正文里一句话都没有。"}
+        )
+    notes: dict[str, str] = {}
+    clashes = _review_track(
+        conn,
+        store,
+        project_id,
+        chapter_number,
+        sentences=sentences,
+        text=found.text,
+        reviewer=reviewer,
+        call_id_factory=call_id_factory,
+        notes=notes,
+        broke=[],  # 收不走旧账，也就不必记谁没答上来
+    )
+    return AdvisoryOutcome(chapter=chapter_number, clashes=clashes, notes=notes)
 
 
 def _review_secrets(

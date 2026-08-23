@@ -557,6 +557,10 @@ def test_the_tool_table_stays_put() -> None:
                 # 一个章号的三态 + 显示名 + 纯量。矩阵不出的理由不是 props（它没有），
                 # 是寿命——整张表过期是几十行一起错（ADR 0019 边界六）。
                 "knows_secret",
+                # 轨道核对（2026-08-23）。它是这张表里**唯一一条自己手里有轨道**的：
+                # 出去的只有 `TrackClash` 那三个数（第几句 / 跟第几章 / 冲突类型），
+                # 后面那几章写了什么一个字都不出——「工具有权看，agent 没有」。
+                "check_track",
             }
         )
     by_name = {spec.name: spec for spec in TOOL_TABLE}
@@ -1124,6 +1128,54 @@ def test_more_candidates_only_ever_means_more_bans_never_fewer(world: World) -> 
 
     derived, _ = _bans_at(world, AMBIGUOUS_CHAPTER)
     assert derived == {"血脉秘密"}, "工具那条路必须拿到宽的那一份"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 轨道核对（`check_track`，2026-08-23）：**工具有权看轨道，agent 没有**
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_the_track_tool_says_it_is_unwired_instead_of_returning_an_empty_list(
+    world: World,
+) -> None:
+    """没接核对模型时**明说没接线**，不返回一份空清单。
+
+    「没抵触」和「压根没核对」在模型眼里长成同一个空清单，而这两件事的下一步动作
+    完全相反（§10 约束 8）。它红了代表那一档退化又变静默了。
+    """
+    outcome = dispatch(_call("check_track", chapter=CHAPTER), world.context())
+    assert outcome.ok is False
+    assert "没接线" in outcome.content
+
+
+def test_the_track_tool_hands_back_three_numbers_and_nothing_else(
+    world: World,
+) -> None:
+    """**出参锁死在三个数上**：第几句 / 跟第几章 / 冲突类型。
+
+    多一个自由文本字段就等于给轨道原文开了一条进出参的路，而那条路一开，
+    「写的那个看不见验的那个看见的东西」当场破功（`track.py` 模块头第一节）。
+    它红了代表有人给评语加了「理由」那一栏。
+    """
+    from novel_harness.agent.ports import TrackVerdict
+
+    assert set(TrackVerdict.model_fields) == {"chapter", "clashes", "note"}
+    clash = TrackVerdict.model_fields["clashes"]
+    assert clash.annotation is not None
+    from novel_harness.advisory_review import TrackClash
+
+    assert set(TrackClash.model_fields) == {"sentence", "chapter", "conflict"}
+
+
+def test_the_track_tool_only_lets_the_model_pick_which_chapter(world: World) -> None:
+    """**模型影响不了任何一个实质入参**（ADR 0019 边界二）。
+
+    正文由后端读当前快照，轨道由后端算——递不进来一段自己编的正文，也指不定要跟
+    哪几章比。它红了代表入参上长出了第二个格子，那个格子就是模型改判据的入口。
+    """
+    from novel_harness.agent.tools import CheckTrackArgs
+
+    assert set(CheckTrackArgs.model_fields) == {"chapter"}
 
 
 # ══════════════════════════════════════════════════════════════════════════

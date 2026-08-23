@@ -108,7 +108,7 @@ ADR 0023 押的退路是两件事：**看得见 + 能取消**。引擎侧齐了�
 from __future__ import annotations
 
 import queue
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import AbstractContextManager
 from threading import Event, Lock, RLock, Thread
 from typing import Annotated, Any, Literal
@@ -117,6 +117,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from ..advisory_review import review_track_on_demand
 from ..agent.rules import surviving_rule_indices
 from ..agent.loop import (
     write_rule_of,
@@ -140,12 +141,13 @@ from ..agent.loop import (
 from ..agent.candidates import DraftCandidate, DraftCandidateStore
 from ..agent.drafting import ChapterDesk, chapter_drafter
 from ..agent.model import ProviderModelPort, agent_call_plan
-from ..agent.ports import ToolContext
+from ..agent.ports import ToolContext, TrackVerdict
 from ..agent.tools import AuthorQuestion
 from ..agent.store import ChatConcurrency, ChatNotice, ChatSessionRow, ChatStore, StoredChat
 from ..calibration.models import AuthorTurnRef
 from ..calibration.store import CalibrationStore
 from ..db import Connection
+from ..graph import StoryGraph
 from ..decisions import quote_hash
 from ..draft.capabilities import CapabilityError, ProviderCapabilities, ResolvedCallPlan
 from ..draft.provider import CompletionResult, ProviderConfig
@@ -156,6 +158,7 @@ from ..graph.store import GraphStore
 from ..ids import EntityType, new_id
 from .deps import (
     agent_provider_config,
+    get_advisory_reviewer,
     get_conn,
     get_store,
     load_project,
@@ -729,6 +732,10 @@ def _tool_context(
         events=SqliteEventStore(conn),
         calibrations=CalibrationStore(conn),
         author_turn=_latest_author_turn(conn, proj.id, chat_id),
+        # 轨道核对（轨道阶段 3）。**轨道握在这个闭包里，不在 `ToolContext` 上**——
+        # 同 `drafter` 那条：模型碰得到的是一个已经判完的结论（三个数），
+        # 不是 `Track` 本身。核对模型没配时闭包返回一句「没接线」，工具照实说。
+        track_check=_a_track_check(conn, store, proj.id),
         working_chapter=chapter,
         max_context_tokens=capability.max_context_tokens,
         # **对话那一档的输出预算**（`AGENT_REPLY_LENGTH` 倒推的），用来算「一次工具返回
@@ -736,6 +743,41 @@ def _tool_context(
         # ——两档长度不同，共用一个 plan 会让工具返回的天花板跟着起草的输出预算走。
         reserved_output_tokens=plan.request_token_budget,
     )
+
+
+def _a_track_check(
+    conn: Connection,
+    store: StoryGraph,
+    project_id: str,
+) -> Callable[[int], TrackVerdict]:
+    """把「轨道核对」包成一个只出结论的闭包（ADR 0019 边界一的落点）。
+
+    **轨道原文一个字都不过这条边**：`review_track_on_demand` 手里有 `Track`，
+    交出来的是 `TrackClash` 那三个数。`agent/` 那一侧连 `build_track` 都 import 不到
+    （`tests/test_track_isolation.py` 钉着那份白名单）。
+
+    **核对模型没配就说没配**，不静默返回一份空清单——「没抵触」和「压根没核对」
+    在模型眼里长成同一个空清单，而这两件事的下一步动作完全相反（§10 约束 8）。
+    """
+
+    def check(chapter: int) -> TrackVerdict:
+        try:
+            reviewer = get_advisory_reviewer()
+        except Exception:  # noqa: BLE001 —— 没配 / 配错都只是「这一问没跑」，不是 500
+            return TrackVerdict(
+                chapter=chapter,
+                note="这套工作台没配核对模型，跟后面章节抵不抵触这一问没跑。",
+            )
+        outcome = review_track_on_demand(
+            conn, store, project_id, chapter, reviewer=reviewer
+        )
+        return TrackVerdict(
+            chapter=chapter,
+            clashes=outcome.clashes,
+            note=outcome.notes.get("track", ""),
+        )
+
+    return check
 
 
 def _latest_author_turn(
