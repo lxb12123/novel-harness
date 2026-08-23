@@ -514,3 +514,103 @@ def test_a_whole_chapter_draft_refuses_a_following_text(
         },
     )
     assert reply.status_code == 422, reply.text
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 三级下探（ADR 0038 阶段 4，2026-08-23 维护者裁定要做）
+#
+# 判据是**集合**不是语义：这一章的总结提到的锚点 ⊊ 作者刚改那段字里的锚点
+# ⇒ 那份总结可证明地对我们正关心的某几样东西只字未提 ⇒ 下探它的原文相关段落。
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _rewrite(book: dict[str, str], chapter: int, text: str) -> None:
+    """把某一章的正文换掉（走产品保存那条路，`current_chapter_text` 才认得出它）。"""
+    from novel_harness.graph.models import ChapterSpec
+
+    conn = connect(book["db"])
+    try:
+        store = SqliteStoryGraph(conn)
+        store.commit_chapter_snapshot(
+            ChapterSpec(
+                project_id=book["pid"],
+                number=chapter,
+                heading=f"第{chapter}章 甲{chapter}",
+                path=importer.chapter_path(chapter),
+                text=text,
+            ),
+            expected_text_sha256=store.current_chapter_hash(book["pid"], chapter),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_a_summary_that_covers_every_anchor_is_never_dug_into(book: dict[str, str]) -> None:
+    """总结**已经**提到了全部锚点 ⇒ 一段原文都不下探。
+
+    下探只是把同一件事用 5 倍的字再读一遍，而验证那一侧的料量有上限，多带的会把
+    该带的挤掉。它红了代表判据从「差集非空」滑成了「总是下探」。
+    """
+    _summarize(book, 15, "萧决把玄铁令收好了。")  # 两个锚点都提到
+    _rewrite(book, 15, "萧决在水底站着。\n\n玄铁令亮了。\n")
+    track = _track(book)
+    assert [row.chapter_number for row in track.chapters] == [15]
+    assert track.excerpts == [], "总结已经覆盖了全部锚点，不该下探"
+
+
+def test_a_summary_that_misses_an_anchor_gets_dug_into_but_only_those_paragraphs(
+    book: dict[str, str],
+) -> None:
+    """总结只提到一半 ⇒ 下探，**而且只取命中缺口那几样东西的段落**。
+
+    第 15 章的总结只说了玄铁令，没说萧决；作者刚改的那段字两样都提了。
+    缺口 = {萧决}，下探回来的必须是提到萧决的那几段，**不是整章**。
+
+    它红了代表要么下探没发生（那一章的原文永远看不到），要么取成了整章——
+    后者的代价同「原文兜底」那条：一章 3,000–5,000 字会把二级那八章总结全挤掉。
+    """
+    _summarize(book, 15, "玄铁令只能在水底唤醒。")  # 只提物件，没提萧决
+    _rewrite(
+        book, 15, "萧决走到水边。\n\n那天风很大，什么都没发生。\n\n萧决把它按进水里。\n"
+    )
+    track = _track(book)
+
+    assert [e.chapter_number for e in track.excerpts] == [15, 15]
+    # **不钉字面段号**：存进库的正文带着标题行，段号是 `text.paragraphs` 的口径，
+    # 不是我在这条测试里数的那个。钉的是「顺序稳定、0-based、只取命中的那几段」。
+    numbers = [e.para_index for e in track.excerpts]
+    assert numbers == sorted(numbers) and numbers[0] >= 0
+    assert len(set(numbers)) == len(numbers), "同一段被带回了两次"
+    assert all("萧决" in e.text for e in track.excerpts)
+    assert "什么都没发生" not in "".join(e.text for e in track.excerpts), (
+        "取回了没命中缺口的段落 —— 那是把整章搬过来，不是下探"
+    )
+    assert "下探" in track.note, "带回了原文却不在回执里说 —— 零和非零都要带着理由"
+
+
+def test_the_dig_stops_on_a_chapter_boundary_not_in_the_middle_of_one(
+    book: dict[str, str],
+) -> None:
+    """预算用完**停在章的边界上**，不是段的边界。
+
+    半章证据在下游和整章长得一模一样，而「我看全了」和「我看了一半」的下一步不同。
+    少一章是可数的，半章是不可数的。
+    """
+    _summarize(book, 15, "玄铁令在这一章出现过。")
+    _summarize(book, 16, "玄铁令在这一章也出现过。")
+    _rewrite(book, 15, "萧决说了很长很长很长很长很长的一段话。\n\n萧决又说了一句。\n")
+    _rewrite(book, 16, "萧决在这里。\n")
+
+    tight = _track(book, excerpt_units=12)
+    chapters = {e.chapter_number for e in tight.excerpts}
+    assert 15 not in chapters, "第 15 章装不下却带回了它的一部分 —— 那就是半章证据"
+    assert chapters <= {16}
+
+
+def test_zero_budget_means_level_two_only(book: dict[str, str]) -> None:
+    """`excerpt_units=0` = 只做到二级（模式一 2026-08-22 的行为，留着当退路）。"""
+    _summarize(book, 15, "玄铁令只能在水底唤醒。")
+    _rewrite(book, 15, "萧决走到水边。\n")
+    assert _track(book, excerpt_units=0).excerpts == []
+    assert _track(book).excerpts != [], "默认档就该下探 —— 不然这条路等于没接"

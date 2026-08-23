@@ -58,14 +58,25 @@ from pydantic import BaseModel, ConfigDict, Field
 from .db import Connection
 from .focus import frontier_chapter
 from .graph import StoryGraph
+from .draft.length import count_units
 from .summary_index import (
     ChapterSummaryMention,
     SummaryMention,
     chapters_after_mentioning,
     mentions_in_text,
+    paragraphs_mentioning,
 )
+from .text import paragraphs as split_paragraphs
 
-__all__ = ["TRACK_CHAPTER_LIMIT", "Track", "build_track"]
+__all__ = [
+    "TRACK_CHAPTER_LIMIT",
+    "TRACK_EXCERPT_UNITS",
+    "ChapterSnapshotText",
+    "Track",
+    "TrackExcerpt",
+    "build_track",
+    "current_chapter_text",
+]
 
 
 TRACK_CHAPTER_LIMIT: Final = 8
@@ -77,6 +88,81 @@ TRACK_CHAPTER_LIMIT: Final = 8
 没有它的下场：主角在 700 章里章章出现，一次续写就把 700 段总结拖出来——免费是免费，
 但排在后面的那几百段既不会被读，也只是把回执撑成一屏无用的章号。
 """
+
+
+TRACK_EXCERPT_UNITS: Final = 1_000
+"""三级下探一次最多带回多少字（`draft/length.py::count_units` 口径 = 非空白字符数）。
+
+**它是闸不是配额**：常态下拦不到（一章里真提到那几样东西的段落通常只有两三段）。
+它拦的是病态输入——一整卷被当成一章、或者主角在那一章里章章出现。
+
+为什么是 1,000：二级八章总结 ≈ 960 字已经是验证那一侧一次调用的合理料量，
+三级是**在总结说不清时补那几段**，不是换一种更贵的方式把那几章重读一遍。
+"""
+
+
+class ChapterSnapshotText(BaseModel):
+    """某一章**当前**那一版快照连正文。
+
+    判据是 `chapter_snapshot.text_sha256 == chapter.text_sha256` 的**精确等值**，
+    不是「这一章最新的那条快照」——后者要在「哪个快照是当前的」这件事上猜，
+    而 `chapter.text_sha256` 已经把答案写在那儿了（同 `store.current_snapshots`）。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chapter_id: str
+    snapshot_id: str
+    sha256: str
+    """这段正文是哪一版。事后核对拿它记「这条告警照的是哪一版」。"""
+
+    text: str
+
+
+def current_chapter_text(
+    conn: Connection, project_id: str, chapter_number: int
+) -> ChapterSnapshotText | None:
+    """第 N 章当前那一版正文。查不到 → `None`（还没进库，或者刚被删掉）。
+
+    **这份读法全仓只有这一处**：`advisory_review` 也要它（事后核对拿真正文数句子），
+    而它已经 import 本模块，本模块不 import 它——方向对，住在这儿是唯一不会长出
+    第二份的位置。两份的下场是「当前快照」的判据在两处各写一遍，漂了之后的产物是
+    一条锚在旧正文上的告警，**而那种错没有任何东西会红**。
+    """
+    row = conn.execute(
+        """
+        SELECT chapter.id AS chapter_id, chapter_snapshot.id AS snapshot_id,
+               chapter_snapshot.text_sha256 AS sha256, chapter_snapshot.text AS text
+          FROM chapter
+          JOIN chapter_snapshot
+            ON chapter_snapshot.chapter_id = chapter.id
+           AND chapter_snapshot.text_sha256 = chapter.text_sha256
+         WHERE chapter.project_id = ? AND chapter.number = ?
+        """,
+        (project_id, chapter_number),
+    ).fetchone()
+    if row is None:
+        return None
+    return ChapterSnapshotText(
+        chapter_id=str(row["chapter_id"]),
+        snapshot_id=str(row["snapshot_id"]),
+        sha256=str(row["sha256"]),
+        text=str(row["text"]),
+    )
+
+
+class TrackExcerpt(BaseModel):
+    """三级：那一章原文里**真正提到了缺口那几样东西**的一段。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chapter_number: int = Field(ge=1)
+    para_index: int = Field(ge=0)
+    """段号 **0-based**（ADR 0006 全系统口径）。上屏要 +1，那是渲染层的事。"""
+
+    text: str = Field(min_length=1)
+    surfaces: list[str] = Field(min_length=1)
+    """这一段命中了缺口里的哪几个称呼。"""
 
 
 class Track(BaseModel):
@@ -103,6 +189,10 @@ class Track(BaseModel):
     """二级：后面哪几章的总结跟它们相关，**最相关的在前**（共同提到得越多越靠前），
     至多 `TRACK_CHAPTER_LIMIT` 章。"""
 
+    excerpts: list[TrackExcerpt] = Field(default_factory=list)
+    """三级：总结说不清的那几章，原文里的相关段落。**空是常态**——
+    二级的总结把锚点都覆盖到了就不下探（判据见 `_dig`）。"""
+
     @property
     def at_frontier(self) -> bool:
         """这一章后面还有没有已经写完的章。**问不出来时也答 `True`。**
@@ -123,6 +213,7 @@ def build_track(
     chapter: int,
     text: str,
     limit: int = TRACK_CHAPTER_LIMIT,
+    excerpt_units: int = TRACK_EXCERPT_UNITS,
 ) -> Track:
     """算一次轨道。**零模型调用、零花费**，两级都是查库 + 一条正则。
 
@@ -133,6 +224,8 @@ def build_track(
             引擎手上没有 diff，所以「刚改的」在这一层是个近似，而这个近似
             只会让锚定**多找**几个东西，不会让它漏。
         limit: 最多带回几章，见 `TRACK_CHAPTER_LIMIT`。
+        excerpt_units: 三级下探最多带回多少字，见 `TRACK_EXCERPT_UNITS`。
+            传 `0` = 只做到二级（模式一 2026-08-22 的行为，留着当退路）。
 
     Returns:
         一份 `Track`。**在最前沿写就是空的**（只花一条 `MAX(number)` 查询），
@@ -185,15 +278,97 @@ def build_track(
     # **排序在这儿，不在查询那一层**：那一层保证的是「序稳定」，怎么算相关是这一层的事。
     ranked = sorted(found, key=lambda row: (-len(row.surfaces), row.chapter_number))
     kept = ranked[: max(0, limit)]
+    excerpts = _dig(
+        conn, store, project_id, anchors=anchors, chapters=kept, budget=max(0, excerpt_units)
+    )
     return Track(
         chapter=chapter,
         frontier=frontier,
         anchors=anchors,
         chapters=kept,
+        excerpts=excerpts,
         # **`found` 和 `kept` 两个数都要报**：砍掉的那几章不是「不存在」，是「这一次没带」，
         # 而这两件事的下一步动作不同（前者去补总结，后者去调名额）。
         note=(
             f"这一段提到了 {len(anchors)} 样东西，后面 {len(found)} 章的总结跟它们相关"
             f"（这一次带回最相关的 {len(kept)} 章）。"
+            + (
+                f"其中有几章的总结没提到全部锚点，下探回了 {len(excerpts)} 段原文。"
+                if excerpts
+                else ""
+            )
         ),
     )
+
+
+def _dig(
+    conn: Connection,
+    store: StoryGraph,
+    project_id: str,
+    *,
+    anchors: list[SummaryMention],
+    chapters: list[ChapterSummaryMention],
+    budget: int,
+) -> list[TrackExcerpt]:
+    """三级：**总结说不清的那几章**，下探到原文里的相关段落（ADR 0038 阶段 4）。
+
+    ── 「说不清」是一次集合判断，不是一次语义判断 ──────────────────────────
+
+    这一条 2026-08-22 定不下来，理由是「现在定死规则就是拍脑袋」。**2026-08-23 维护者
+    裁定要做**，而能不拍脑袋的判据只有一条形状：
+
+        这一章的**总结**提到的锚点  ⊊  作者刚改那段字里的锚点
+
+    差集非空 = 那一章的总结**可证明地**对我们正关心的某几样东西只字未提，而它偏偏
+    因为提到了别的锚点才进的候选池。这是 ADR 0005 那条铁律的正面用法：只问「提没提到」，
+    不问「说清楚了没有」——后者是语义，本仓 v1 一律不做。
+
+    差集为空 ⇒ **不下探**。那时总结已经覆盖了全部锚点，下探只是把同一件事用 5 倍的字
+    再读一遍，而验证那一侧的料量有上限，多带的会把该带的挤掉。
+
+    ── 为什么只取那几段，不取整章 ────────────────────────────────────────
+
+    取的是**命中缺口那几样东西的段落**，判据同上，仍是集合。整章带回来会让二级那八章
+    总结一个都装不下——同 `product_context` 删掉「原文兜底」那条的理由：用原文顶替总结
+    = 一章吃掉几十章的额度，量完全不可控。
+
+    ── 预算用完就停，而且停在**章**的边界上 ──────────────────────────────
+
+    停在段边界会让某一章只带回半份证据（前三段有、后两段被截），而「这一章我看全了」
+    和「这一章我看了一半」在下游长得一模一样。**宁可整章不带**——少一章是可数的，
+    半章是不可数的。
+    """
+    if budget <= 0 or not chapters:
+        return []
+    anchor_ids = {anchor.node.id for anchor in anchors}
+    out: list[TrackExcerpt] = []
+    spent = 0
+    for row in chapters:
+        covered = {hit.node.id for hit in mentions_in_text(store, project_id, row.summary)}
+        gaps = anchor_ids - covered
+        if not gaps:
+            continue
+        snapshot = current_chapter_text(conn, project_id, row.chapter_number)
+        if snapshot is None:
+            # 有总结没正文：反查读的是总结表，两张表可以不同步（正文刚被删、或者这一章
+            # 还没同步进来）。这不是错，是「这一章没法下探」。
+            continue
+        found = paragraphs_mentioning(
+            store, project_id, split_paragraphs(snapshot.text), gaps
+        )
+        if not found:
+            continue
+        cost = sum(count_units(hit.text, "zh") for hit in found)
+        if spent + cost > budget:
+            break  # 停在**章**的边界上（见 docstring 最后一节）
+        spent += cost
+        out.extend(
+            TrackExcerpt(
+                chapter_number=row.chapter_number,
+                para_index=hit.para_index,
+                text=hit.text,
+                surfaces=hit.surfaces,
+            )
+            for hit in found
+        )
+    return out

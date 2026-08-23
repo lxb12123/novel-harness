@@ -85,7 +85,7 @@ from .system_notifications import (
     resolve_stale_chapter_advisories,
 )
 from .text import occurrence_at, paragraphs as split_paragraphs
-from .track import Track, build_track
+from .track import Track, build_track, current_chapter_text
 
 __all__ = [
     "ADVISORY_CAPABILITY",
@@ -611,39 +611,10 @@ def _default_call_id(project_id: str) -> str:
     return new_id(EntityType.CALL, project_id)
 
 
-@dataclass(frozen=True, slots=True)
-class _Current:
-    """**当前**那一版快照。`sha256` 是「这条告警照的是哪一版正文」的那个数。"""
-
-    chapter_id: str
-    snapshot_id: str
-    sha256: str
-    text: str
-
-
-def _current_chapter(
-    conn: Connection, project_id: str, chapter_number: int
-) -> _Current | None:
-    row = conn.execute(
-        """
-        SELECT chapter.id AS chapter_id, chapter_snapshot.id AS snapshot_id,
-               chapter_snapshot.text_sha256 AS sha256, chapter_snapshot.text AS text
-          FROM chapter
-          JOIN chapter_snapshot
-            ON chapter_snapshot.chapter_id = chapter.id
-           AND chapter_snapshot.text_sha256 = chapter.text_sha256
-         WHERE chapter.project_id = ? AND chapter.number = ?
-        """,
-        (project_id, chapter_number),
-    ).fetchone()
-    if row is None:
-        return None
-    return _Current(
-        chapter_id=str(row["chapter_id"]),
-        snapshot_id=str(row["snapshot_id"]),
-        sha256=str(row["sha256"]),
-        text=str(row["text"]),
-    )
+# 「当前那一版快照」的读法**全仓只有一处**，住在 `track.py`（本模块已经 import 它，
+# 而它不 import 本模块——方向对）。两份的下场是那条判据在两处各写一遍，漂了之后的
+# 产物是一条锚在旧正文上的告警，而那种错没有任何东西会红。
+_current_chapter = current_chapter_text
 
 
 def _already_paid(conn: Connection, project_id: str, prompt_hash: str) -> bool:

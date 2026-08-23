@@ -56,9 +56,11 @@ __all__ = [
     "ChapterSummaryMention",
     "INDEXED_LABELS",
     "NodeSummaryMentions",
+    "ParagraphMention",
     "SummaryMention",
     "chapters_after_mentioning",
     "chapters_mentioning",
+    "paragraphs_mentioning",
     "ensure_index",
     "mentions_in_chapter",
     "mentions_in_text",
@@ -186,6 +188,64 @@ def roster_hash(store: StoryGraph, project_id: str) -> str:
     正是 §10 约束 8 反复在拦的那一类。
     """
     return _roster(store, project_id).hash
+
+
+class ParagraphMention(BaseModel):
+    """一段正文里命中了哪几样东西（轨道三级下探的料）。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    para_index: int = Field(ge=0)
+    """段号，**0-based**（全系统口径，ADR 0006）。要给作者看就在渲染那一层 +1。"""
+
+    text: str = Field(min_length=1)
+    surfaces: list[str] = Field(min_length=1)
+    """这一段里那几样东西是用哪几个称呼被提到的。"""
+
+
+def paragraphs_mentioning(
+    store: StoryGraph,
+    project_id: str,
+    paragraphs: Sequence[str],
+    node_ids: Iterable[str],
+) -> list[ParagraphMention]:
+    """这几段里，**哪几段提到了这几个节点**。库只碰一次，正则只编一次。
+
+    ── 为什么它在这儿而不在 `track.py` ──────────────────────────────────
+
+    花名册和那条 alternation 归本模块（`_roster` + `INDEXED_LABELS`）。调用方按段调
+    `mentions_in_text` 也能算出同样的答案，但那是**每段重建一次花名册、重编一次正则**
+    ——8 章 × 30 段 = 240 次，而这条路的整个卖点是「零模型调用、零花费」。
+
+    ── 出参为什么带 `para_index` ────────────────────────────────────────
+
+    三级要的是「那几段」，不是「那一章」。段号从 `find_mentions` 来，和 `Issue` 的锚
+    是同一份实现（ADR 0006）——**这一层不自己数第二遍**。
+    """
+    wanted = frozenset(node_ids)
+    if not wanted or not paragraphs:
+        return []
+    roster = _roster(store, project_id)
+    if not roster.owner:
+        return []
+    # **只把要找的那几个节点的称呼编进 alternation**：整本花名册编进去会命中一堆跟这次
+    # 无关的东西再在后面滤掉——那不只是白跑，还会让最长优先在别处生效
+    # （`text/mentions.py` 那条机械纪律是按「进了 alternation 的那些」算的）。
+    surfaces = [s for s, owner in roster.owner.items() if owner in wanted]
+    if not surfaces:
+        return []
+    pattern = compile_alternation(_ordered(surfaces))
+    by_para: dict[int, list[str]] = {}
+    for hit in find_mentions(list(paragraphs), pattern):
+        found = by_para.setdefault(hit.para_index, [])
+        if hit.matched_text not in found:
+            found.append(hit.matched_text)
+    return [
+        ParagraphMention(
+            para_index=index, text=paragraphs[index], surfaces=_ordered(by_para[index])
+        )
+        for index in sorted(by_para)
+    ]
 
 
 def _roster(store: StoryGraph, project_id: str) -> _Roster:
