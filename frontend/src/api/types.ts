@@ -33,6 +33,17 @@ export interface AiSettings {
   context_window: number | null;
   /** 每次打开工作台自动更新那份模型表。**默认关着**，由作者自己拨开。 */
   auto_update_model_windows: boolean;
+  /** 行内续写这一次值得带多少上文（code point）。**后端按模型窗口算的**
+   *  （`draft/assemble.py::product_tail_limit()`），前端**不许再存一份**——
+   *  写死一个数会把后端整套伸缩设计架空（2026-08-22 之前就是这样，利用率 2%）。 */
+  continuation_tail_limit: number;
+  /** 上面那个数的出处。`model_window` = 按这条路由的窗口算的；
+   *  `unknown_window` = 认得出路由但不知道窗口（自建端点）；
+   *  `unconfigured` = 服务地址/模型还没填。
+   *
+   *  **后两档的数字一模一样**（都是地板值），只有这一位分得开——少给上文是静默的，
+   *  作者只会觉得模型忽然变笨，所以这个数为什么小必须说得出来。 */
+  continuation_tail_basis: "model_window" | "unknown_window" | "unconfigured";
 }
 
 export interface AiSettingsInput {

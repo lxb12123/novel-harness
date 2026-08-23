@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { useChapters, useChapterText, useContinuation, useSaveChapter } from "../api/hooks";
+import {
+  useAiSettings,
+  useChapters,
+  useChapterText,
+  useContinuation,
+  useSaveChapter,
+} from "../api/hooks";
 import { useCoords } from "../store";
 import { ApiError } from "../api/client";
 import { HistoryDrawer } from "./HistoryDrawer";
@@ -21,6 +27,10 @@ export function CenterEditor() {
   const { data } = useChapterText(projectId, chapter, open);
   const save = useSaveChapter(projectId ?? "", chapter);
   const continuation = useContinuation(projectId ?? "", chapter);
+  // 续写能带多少上文**是后端按模型窗口算的**，搭在设置那条返回上过来
+  // （`continuation_tail_limit`）。这儿一个上限的字面量都没有，也不许有：
+  // 前端写死一个数会把后端整套伸缩设计架空，而症状是「模型忽然变笨」，没有一处会红。
+  const settings = useAiSettings();
   // 每次请求发出前 +1。回来时对不上 = 作者在这期间又敲了字，这一条作废。
   // **这就是「取消」**：续写不需要增量失效，只需要过期的那次别落地（ADR 0015）。
   const askRef = useRef(0);
@@ -159,6 +169,7 @@ export function CenterEditor() {
         <CodeEditor
           ref={editorRef}
           value={doc}
+          tailLimit={settings.data?.continuation_tail_limit ?? null}
           onChange={(v) => {
             setDoc(v);
             setDirty(true);

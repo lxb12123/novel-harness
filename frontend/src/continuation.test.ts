@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { TAIL_LIMIT, cleanSuggestion, shouldSuggest, tailBefore } from "./continuation";
+import { cleanSuggestion, shouldSuggest, tailBefore } from "./continuation";
+import fixtures from "./__fixtures__/api.json";
 
 const base = { before: "萧决推开门。", hasSelection: false, hasSuggestion: false };
 
@@ -27,20 +28,44 @@ describe("什么时候才去问模型", () => {
 });
 
 describe("送过去的上文", () => {
+  // **上限是外面传进来的**（后端按模型窗口算，跟着 `GET /api/settings` 回来）。
+  // 这一组里出现的每一个数都是这条测试自己造的输入，不是「续写的上限」——
+  // 那个常量 2026-08-22 从前端删了，它曾经把后端整套伸缩设计架空
+  // （`tests/test_continuation_tail_limit.py` 现在钉着「前端不许再有一个」）。
   it("只取光标前面那一截", () => {
-    expect(tailBefore("一二三四五", 3)).toBe("一二三");
+    expect(tailBefore("一二三四五", 3, 99)).toBe("一二三");
   });
 
-  it("超长时按 code point 截，不会把一个字切成两半", () => {
-    const doc = "字".repeat(TAIL_LIMIT + 500);
-    const tail = tailBefore(doc, doc.length);
-    expect(Array.from(tail)).toHaveLength(TAIL_LIMIT);
+  it("超长时按传进来的上限截，且不会把一个字切成两半", () => {
+    const limit = 12;
+    const doc = "字".repeat(limit + 500);
+    const tail = tailBefore(doc, doc.length, limit);
+    expect(Array.from(tail)).toHaveLength(limit);
     expect(tail.endsWith("字")).toBe(true);
   });
 
+  it("🔴 上限**真的跟着那个参数走** —— 换一个更大的数就多带一些上文", () => {
+    // 这条是这次修的那个 bug 的正面：换个窗口更大的模型，后端算出来的数变大，
+    // 送出去的上文就该跟着变多。写死一个常量的实现在这条上会绿——所以它不测「等于 N」，
+    // 它测「两个不同的上限拿到两个不同长度的结果」。
+    const doc = "字".repeat(5_000);
+    expect(Array.from(tailBefore(doc, doc.length, 800))).toHaveLength(800);
+    expect(Array.from(tailBefore(doc, doc.length, 4_000))).toHaveLength(4_000);
+  });
+
+  it("上限来自后端那条设置返回（真 dump），前端不自己算", () => {
+    // 吃的是 `tests/test_frontend_contract.py` 从真 app dump 的那份：这一位一旦被
+    // 后端改名或删掉，这条当场红——而不是等到作者发现「AI 好像没在看我前面写的」。
+    const limit = fixtures.settings.continuation_tail_limit;
+    expect(typeof limit).toBe("number");
+    expect(limit).toBeGreaterThan(0);
+    const doc = "字".repeat(limit + 10);
+    expect(Array.from(tailBefore(doc, doc.length, limit))).toHaveLength(limit);
+  });
+
   it("越界的光标位置不会炸", () => {
-    expect(tailBefore("短", 999)).toBe("短");
-    expect(tailBefore("短", -5)).toBe("");
+    expect(tailBefore("短", 999, 99)).toBe("短");
+    expect(tailBefore("短", -5, 99)).toBe("");
   });
 });
 

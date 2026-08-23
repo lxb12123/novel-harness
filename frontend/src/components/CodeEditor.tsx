@@ -52,13 +52,22 @@ export const CodeEditor = forwardRef<
     /** 停手 `IDLE_MS` 之后触发一次，带上光标前的正文。**取消由调用方负责**：
      *  作者一敲键这个计时器就重置，在飞的那次请求该被丢弃。 */
     onIdle?: (ctx: { before: string; pos: number; hasSelection: boolean }) => void;
+    /** 送出去的上文最多几个 code point。**后端算的**（`GET /api/settings` 的
+     *  `continuation_tail_limit`），这一层只负责按它切——理由见 `continuation.ts`。
+     *
+     *  `null` = 那个数还没到手（设置还在路上，或后端连模型都认不出）。
+     *  **这时不问**：随手猜一个数正是这次删掉的那个 bug，而「不确定就闭嘴」
+     *  是这个仓库的默认动作。 */
+    tailLimit: number | null;
   }
->(function CodeEditor({ value, onChange, onIdle }, ref) {
+>(function CodeEditor({ value, onChange, onIdle, tailLimit }, ref) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   // 回调放 ref，避免把它们进 mount 的 deps（否则每次 render 重建整个编辑器）。
-  const cb = useRef({ onChange, onIdle });
-  cb.current = { onChange, onIdle };
+  // 上限也放这个 ref：编辑器只挂载一次（下面那个 `[]`），作者在设置页换了模型之后
+  // 新的数得进得来，而不是等他把整个工作台关掉重开。
+  const cb = useRef({ onChange, onIdle, tailLimit });
+  cb.current = { onChange, onIdle, tailLimit };
   const idleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -89,9 +98,12 @@ export const CodeEditor = forwardRef<
             if (fire) {
               const state = u.state;
               idleTimer.current = setTimeout(() => {
+                // 上限在**开火那一刻**才读：作者停手的这 400 毫秒里设置可能刚回来。
+                const limit = cb.current.tailLimit;
+                if (limit === null) return;
                 const { from, to } = state.selection.main;
                 fire({
-                  before: tailBefore(state.doc.toString(), from),
+                  before: tailBefore(state.doc.toString(), from, limit),
                   pos: from,
                   hasSelection: from !== to,
                 });

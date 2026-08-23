@@ -2372,6 +2372,8 @@
     "auto_update_model_windows": false,
     "base_url": "",
     "context_window": null,
+    "continuation_tail_basis": "unconfigured",
+    "continuation_tail_limit": 800,
     "model": ""
   },
   "settingsSaved": {
@@ -2380,6 +2382,8 @@
     "auto_update_model_windows": false,
     "base_url": "https://api.deepseek.com",
     "context_window": 128000,
+    "continuation_tail_basis": "model_window",
+    "continuation_tail_limit": 10666,
     "model": "deepseek-v4-flash"
   },
   "states": [

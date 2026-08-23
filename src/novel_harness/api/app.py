@@ -525,9 +525,63 @@ class SettingsBody(BaseModel):
     """
 
 
+def _continuation_tail() -> tuple[int, str]:
+    """行内续写值得带多少上文（code point），外加**这个数为什么是这个数**。
+
+    ── 公式只有后端一份 ──────────────────────────────────────────────────
+
+    这一格只是把 `draft/assemble.py::product_tail_limit()` 算出来的数送到浏览器。
+    **前端不许再存一份**：那个函数按模型窗口伸缩，而 2026-08-22 之前前端写死 1,000，
+    32k 和 1M 的模型送出去的都是 1,000 字——后端整套伸缩设计被一个常量架空了，
+    而症状（「模型忽然变笨」）没有任何一处会红。这条缝两头由
+    `tests/test_continuation_tail_limit.py` 钉着。
+
+    ── 输出预留传 0，是有意的 ────────────────────────────────────────────
+
+    这一格回答的是「这个模型的窗口最多值得带多少上文」，不是「这一次要给输出留多少」。
+    后者由 `POST …/draft` 按这一稿的长度算（`plan.request_token_budget`），而
+    `product_tail_limit` 对预留单调不增——那条路只会把这个数**往下夹**，绝不会往上抬。
+    方向是有意选的：前端多送几百字只是白送几个字符（同一台机器上的 HTTP），
+    少送就再也补不回来（`product_tail_limit` 的 docstring：「只许把上文变长，不许变短」）。
+
+    ── 拿不到能力/窗口时**说出来**，不静默塌回 800 ────────────────────────
+
+    `basis` 是这个数的出处，三档各对应一种真会发生的状态：
+
+    - ``model_window``：认得出这条路由，按它的窗口算的；
+    - ``unknown_window``：认得出路由但不知道窗口（自建端点），塌到地板值；
+    - ``unconfigured``：连服务地址/模型都还没有，同样是地板值，但原因完全不同。
+
+    后两档的数字一模一样，**只有这一位区分得开**——`deps.resolve_route_capabilities`
+    那条注释讲的正是这个坑：少给上文是静默的，作者也说不出哪儿不对。
+
+    Note:
+        连接参数走 `_draft_provider_config()`（本文件下面那个），**不是另抄一份**：
+        它必须和真正发请求的那条路解析出同一条路由，否则这一格报的数就是另一个模型的。
+        `resolve_route_capabilities` 里「作者手填的窗口」那一档读的是盘上那份设置，
+        而两个调用方都保证盘上已经是最新的（`PUT` 先 `save_user_settings` 再进这儿）。
+
+        代价：这条读路由从此**可能出一次网**（只有 OpenRouter 那一档会，5 秒超时、
+        成功失败都进 1 小时缓存，见 `draft/discovery.py`）。可以接受——`/draft` 本来
+        每次都走同一条解析，而这一格不走就只能在前端再猜一个数。
+    """
+    from ..draft.assemble import product_tail_limit
+    from ..draft.capabilities import CapabilityError
+
+    try:
+        capability = resolve_route_capabilities(_draft_provider_config())
+    except (CapabilityError, ValueError):
+        # 地板值也从同一个公式里取（`product_tail_limit(None, …)`），不在这儿抄一个 800。
+        return product_tail_limit(None, 0), "unconfigured"
+    if capability.max_context_tokens is None:
+        return product_tail_limit(None, 0), "unknown_window"
+    return product_tail_limit(capability.max_context_tokens, 0), "model_window"
+
+
 def _settings_response(settings: UserSettings) -> dict[str, Any]:
     """**永不回吐完整 key**——前端只需要「设没设」和「后四位」。
     完整 key 只在本机文件里，不出 HTTP（本地环回也算出口）。"""
+    tail_limit, tail_basis = _continuation_tail()
     return {
         "base_url": settings.base_url,
         "model": settings.model,
@@ -537,6 +591,10 @@ def _settings_response(settings: UserSettings) -> dict[str, Any]:
         # 屏幕上「没填」和「填了个 0」是两件事，混成一个数就再也分不开了。
         "context_window": settings.context_window,
         "auto_update_model_windows": settings.auto_update_model_windows,
+        # 续写这一格搭这条已有的返回过来（**不另开接口**）：前端本来每次开工作台
+        # 就在拿它，而这个数只随「换了模型/改了窗口」变，正是这条返回会变的时候。
+        "continuation_tail_limit": tail_limit,
+        "continuation_tail_basis": tail_basis,
     }
 
 

@@ -184,6 +184,32 @@ describe("手填「一次能读多少」", () => {
     await waitFor(() => expect(savedBody(spy)).toHaveProperty("context_window", null));
   });
 
+  it("说出来这两样**买到了什么** —— 续写这一次读得到多少字", async () => {
+    // 这个数是后端算的（`continuation_tail_limit`，按模型窗口伸缩），这儿只念它。
+    // 没有这一句，那个框就是一个填完毫无反馈的洞——而它是自建端点唯一的出路。
+    renderWithApi(<SettingsDrawer onClose={() => {}} />, [
+      { match: /\/api\/settings$/, body: fixtures.settingsSaved },
+    ]);
+    openLength();
+    await screen.findByDisplayValue("128000");
+    const shown = fixtures.settingsSaved.continuation_tail_limit.toLocaleString("zh-CN");
+    expect(screenText()).toContain(shown);
+  });
+
+  it("🔴 短的时候**说得出为什么短** —— 不静默塌回最短那一档", async () => {
+    // 「认不出这个模型」和「还没填服务地址」算出来的数一模一样，只有 `basis` 分得开。
+    // 不说原因的话，作者看到的只有「AI 好像没在看我前面写的」，而他会以为是模型不行。
+    renderWithApi(<SettingsDrawer onClose={() => {}} />, [
+      { match: /\/api\/settings$/, body: fixtures.settings },
+    ]);
+    openLength();
+    // **等那句话自己出现**：这一份 dump 里 `context_window` 是 null，没有任何一个
+    // 输入框会因为数据到手而变——不等的话，断言跑在设置回来之前，红的是「还没渲染」。
+    await screen.findByText(/还没填服务地址和模型/);
+    expect(fixtures.settings.continuation_tail_basis).toBe("unconfigured");
+    expect(screenText()).toContain(String(fixtures.settings.continuation_tail_limit));
+  });
+
   it("认不出来的输入当没填，不替他猜一个数", async () => {
     renderWithApi(<SettingsDrawer onClose={() => {}} />, [
       { match: /\/api\/settings$/, body: fixtures.settings },

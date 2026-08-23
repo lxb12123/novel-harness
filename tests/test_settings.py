@@ -34,6 +34,10 @@ def client(
     conn.close()
     monkeypatch.setenv("NH_DB", str(db))
     monkeypatch.setenv("NH_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    # `continuation_tail_limit` 走的是「设置页优先、环境变量兜底」那条链，
+    # 所以跑测试的人 shell 里那几位会渗进出参里来。清干净，出参才只由设置文件决定。
+    for name in ("NH_LLM_BASE_URL", "NH_LLM_MODEL", "NH_LLM_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
     from novel_harness.api.app import app
 
     with TestClient(app) as c:
@@ -59,6 +63,12 @@ def test_get_settings_starts_empty(client: TestClient) -> None:
         # **默认关着**：那份模型表决定上文给作者 800 字还是 40,000 字，
         # 而它来自一个我们不控制的仓库。开着它的只能是作者本人。
         "auto_update_model_windows": False,
+        # 续写能带多少上文（后端按模型窗口算，前端不许存第二份）。一个字都没配过时
+        # 它是地板值，**而 `basis` 说得出为什么是地板值**——「认不出模型」和「还没填」
+        # 算出来的数一模一样，不区分开的话，少给上文就是一件没人看得见的事。
+        # 这条缝两头由 `tests/test_continuation_tail_limit.py` 钉着。
+        "continuation_tail_limit": 800,
+        "continuation_tail_basis": "unconfigured",
     }
 
 

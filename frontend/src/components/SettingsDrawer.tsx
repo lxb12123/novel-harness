@@ -5,7 +5,7 @@ import {
   useRefreshModelWindows,
   useSaveAiSettings,
 } from "../api/hooks";
-import type { AiSettingsInput } from "../api/types";
+import type { AiSettings, AiSettingsInput } from "../api/types";
 import { CloseIcon, EyeIcon } from "./icons";
 
 // AI 设置（BYOK）——像 Cursor 的 API Keys：作者粘一把自己的钥匙，存在本机。
@@ -41,6 +41,27 @@ function asPositiveInteger(text: string): number | null {
  *  **它是 placeholder，不是一个能被「露出来」的值**——这条区别是下面那只眼睛
  *  为什么只在作者敲了字之后才出现的全部原因，见 `reveal` 那一段。 */
 const MASK = "•".repeat(12);
+
+/** 上面那两样**买到了什么**：写着写着让 AI 接一段时，它读得到你前面多少字。
+ *
+ *  这个数是**后端算的**（`continuation_tail_limit`，按模型窗口伸缩），这儿一个公式
+ *  都不许有——前端自己算一份，就是这一整条改动要修掉的那个 bug。
+ *
+ *  **「短」这件事必须说得出原因。** 认不出这个模型和还没配服务，算出来的数一模一样
+ *  （都是最短那一档），而作者看到的症状只有「AI 好像没在看我前面写的」——不说原因，
+ *  他会以为是模型不行，其实差的只是上面那个框里的一个数。
+ *
+ *  写成**类型上全列**的表而不是一串三元：后端哪天多一档，这儿不补 `tsc` 当场红。 */
+function tailNote(settings: AiSettings): string {
+  const many = settings.continuation_tail_limit.toLocaleString("zh-CN");
+  return {
+    model_window: `写着写着让它接一段时，它会先读一遍你光标前的约 ${many} 字。`,
+    unknown_window:
+      `还认不出这个模型一次能读多少，所以让它接一段时，它只读得到你光标前的 ` +
+      `${many} 字。把上面那个数填上就会变长。`,
+    unconfigured: `还没填服务地址和模型，让它接一段时，它只读得到你光标前的 ${many} 字。`,
+  }[settings.continuation_tail_basis];
+}
 
 const TABS = [
   { key: "link", name: "连接服务" },
@@ -328,6 +349,9 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                     </button>
                   </div>
                 </div>
+
+                {/* 上面那两样**买到了什么**。 */}
+                {current && <div className="set-note">{tailNote(current)}</div>}
               </>
             )}
           </div>

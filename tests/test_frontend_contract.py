@@ -104,6 +104,12 @@ def test_frontend_fixture_matches_the_real_api(
     base = f"/api/projects/{pid}"
     # 设置会写本机文件——测试必须指到临时路径，不许碰真实用户目录。
     monkeypatch.setenv("NH_SETTINGS_PATH", str(tmp_path / "settings.json"))
+    # **环境变量也得清干净。** `/api/settings` 的 `continuation_tail_limit` 是从
+    # 「设置页优先、环境变量兜底」那条链上算出来的（`_draft_provider_config`）——
+    # 谁的 shell 里恰好有 `NH_LLM_MODEL`，冻出来的 fixture 就跟着他的模型变，
+    # 这份夹具就不再是「后端在干净状态下吐的东西」了。
+    for name in ("NH_LLM_BASE_URL", "NH_LLM_MODEL", "NH_LLM_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
     norm = _Normalizer(str(tmp_path))
     dump: dict[str, Any] = {}
 
