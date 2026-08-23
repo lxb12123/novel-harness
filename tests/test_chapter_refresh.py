@@ -29,6 +29,7 @@ from novel_harness.chapter_refresh import (
     release_attempt,
 )
 from novel_harness.db import Connection, connect, migrate
+from novel_harness.graph import ChapterSpec
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 
 
@@ -500,4 +501,109 @@ def test_a_retracted_summary_is_not_bought_back_by_the_next_save(
     assert _head_missing(conn, pid, chapter_id) is False, (
         "撤回过的章被判成「缺总结」——下一次保存就会自动付费买回来，"
         "把作者刚做的动作抹掉。判据只能问「有没有 head」，不能问「head 是不是 ACTIVE」。"
+    )
+
+
+def _rewrite_chapter_one(conn: Connection, pid: str, text: str) -> tuple[str, int]:
+    """把第 1 章的正文换成 `text`（走产品保存那条路），返回新的 `(快照, generation)`。"""
+    store = SqliteStoryGraph(conn)
+    token = store.commit_chapter_snapshot(
+        ChapterSpec(
+            project_id=pid,
+            number=1,
+            heading="第一章 甲",
+            path=importer.chapter_path(1),
+            text=text,
+        ),
+        expected_text_sha256=store.current_chapter_hash(pid, 1),
+    )
+    conn.commit()
+    return token.source_snapshot_id, token.source_generation
+
+
+def test_the_coverage_order_carries_the_summary_branch_when_the_text_moved_on(
+    conn: Connection, tmp_path: Path
+) -> None:
+    """正文改过、旧总结还挂着 → coverage 单里**必须**带总结那一支（2026-08-22 任务 B）。
+
+    这里是那个 bug 的出生地：`missing_branch_mask` 只答得了「缺不缺」，而一份挂着的
+    旧总结在那份清单里永远答「不缺」。于是上游扫描器判 `stale`、报「已排覆写」，
+    真正下的单里一项总结都没有。
+
+    **这条红了代表「缺不缺」和「旧不旧」又被并回了同一个问题**，症状是覆写永远不
+    发生：作者在别的软件里改完一章，系统嘴上说排了，这一章的总结却永远停在旧版，
+    写下一章时被喂进模型的仍然是过时的剧情。
+    """
+    from novel_harness.draft.rolling_summary import save_author_summary
+
+    pid, chapter_id = _seed_chapter(conn, tmp_path)
+    store = SqliteStoryGraph(conn)
+    before = next(ct for ct in store.current_snapshots(pid) if ct.number == 1)
+    save_author_summary(conn, project_id=pid, chapter_number=1, text="照着这一版正文写的摘要")
+    conn.commit()
+
+    paired = ensure_refresh_coverage(
+        conn,
+        project_id=pid,
+        chapter_id=chapter_id,
+        snapshot_id=before.snapshot_id,
+        generation=1,
+        ruleset_epoch=1,
+        ruleset_hash="x",
+    )
+    assert not paired.missing_branch_mask & BRANCH_SUMMARY, (
+        "总结照的就是当前正文 = 既不缺也不旧，不该再买一份"
+    )
+
+    snapshot_id, generation = _rewrite_chapter_one(
+        conn, pid, "第一章 甲\n\n萧决改了主意，这一段和原来完全不同。\n"
+    )
+    stale = ensure_refresh_coverage(
+        conn,
+        project_id=pid,
+        chapter_id=chapter_id,
+        snapshot_id=snapshot_id,
+        generation=generation,
+        ruleset_epoch=1,
+        ruleset_hash="x",
+    )
+    assert stale.missing_branch_mask & BRANCH_SUMMARY, (
+        "正文换了版本、总结停在旧版，单里却没有总结那一项 —— 这正是「报了覆写、"
+        f"实际一单没下」的形状（mask={stale.missing_branch_mask:b}）"
+    )
+
+
+def test_a_retracted_chapter_is_not_bought_back_after_the_text_changes(
+    conn: Connection, tmp_path: Path
+) -> None:
+    """撤回过的章，**正文后来又改了也不许自动买回来**（2026-08-21 那个坑的第二种走法）。
+
+    「旧不旧」这一问加进来之后，撤回的 tombstone 一旦被当成「一份照旧正文写的总结」，
+    作者只要在撤回之后再动一次正文，系统就替他买回来一份——正是他刚按掉的东西，
+    而且这次连保存都不必：30 分钟扫描自己就会去买。
+
+    这条红了代表「旧不旧」那一问漏掉了「只看 ACTIVE 那一份」的那一半。
+    """
+    from novel_harness.draft.rolling_summary import retract_summary, save_author_summary
+
+    pid, chapter_id = _seed_chapter(conn, tmp_path)
+    save_author_summary(conn, project_id=pid, chapter_number=1, text="他后来不想要的那份摘要")
+    retract_summary(conn, project_id=pid, chapter_number=1)
+    conn.commit()
+
+    snapshot_id, generation = _rewrite_chapter_one(
+        conn, pid, "第一章 甲\n\n撤回之后他又把这一章重写了一遍。\n"
+    )
+    after = ensure_refresh_coverage(
+        conn,
+        project_id=pid,
+        chapter_id=chapter_id,
+        snapshot_id=snapshot_id,
+        generation=generation,
+        ruleset_epoch=1,
+        ruleset_hash="x",
+    )
+    assert not after.missing_branch_mask & BRANCH_SUMMARY, (
+        "撤回过的章在正文改动后被排了总结分支 —— 花作者没按过的钱，"
+        f"抹掉他刚做的动作（mask={after.missing_branch_mask:b}）"
     )

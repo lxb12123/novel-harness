@@ -96,6 +96,9 @@ BRANCH_VALIDATION: Final = 1
 BRANCH_SUMMARY: Final = 2
 BRANCH_EXTRACTION: Final = 4
 
+SummaryAlignment = Literal["paired", "missing", "stale", "retracted"]
+"""一章的总结与正文的关系（`summary_alignment` 的出参）。"""
+
 
 def _run_row(conn: Connection, run_id: str) -> dict[str, Any] | None:
     row = conn.execute(
@@ -195,6 +198,71 @@ def _head_missing(conn: Connection, project_id: str, chapter_id: str) -> bool:
         {"cid": chapter_id},
     ).fetchone()
     return row is None
+
+
+def _head_outdated(conn: Connection, chapter_id: str) -> bool:
+    """第二个问题：head 上那份 **ACTIVE** 总结，是不是照**旧正文**写的（该覆写）。
+
+    这是与「缺不缺」**各自独立**的一问（2026-08-22）。它必须单独问，因为
+    `missing_branch_mask` 只表达得了「缺哪几样」——一份挂着的旧总结在那份清单里
+    永远答「不缺」，于是扫描器判 stale、报「已排覆写」，下的单里却一项总结都没有。
+
+    - 撤回 tombstone 不是 ACTIVE → 恒 False（他删一次系统买回来一次的坑，见
+      `_head_missing`）；
+    - `source_snapshot_id` 为 NULL（019 迁移里反推不出来的 legacy 行）→ 不算旧：
+      我们答不出「它照的是哪一版」，就不拿作者的钱去赌一个答案。
+    """
+    row = conn.execute(
+        """
+        SELECT 1
+          FROM chapter_summary_head h
+          JOIN chapter_summary s
+            ON s.id = h.current_summary_id AND s.status = 'ACTIVE'
+          JOIN chapter_snapshot src ON src.id = s.source_snapshot_id
+          JOIN chapter c ON c.id = h.chapter_id
+         WHERE h.chapter_id = :cid
+           AND src.text_sha256 <> c.text_sha256
+        """,
+        {"cid": chapter_id},
+    ).fetchone()
+    return row is not None
+
+
+def _head_retracted(conn: Connection, chapter_id: str) -> bool:
+    """head 指着的是作者的撤回 tombstone —— 这一章「他不要总结」。"""
+    row = conn.execute(
+        """
+        SELECT 1
+          FROM chapter_summary_head h
+          JOIN chapter_summary s ON s.id = h.current_summary_id
+         WHERE h.chapter_id = :cid AND s.status = 'RETRACTED'
+        """,
+        {"cid": chapter_id},
+    ).fetchone()
+    return row is not None
+
+
+def summary_alignment(
+    conn: Connection, project_id: str, chapter_id: str
+) -> SummaryAlignment:
+    """这一章的总结该不该动 —— 两个独立的问题，一个出口（2026-08-22）。
+
+    - `missing`   = 没有可用的总结（`_head_missing`）→ 下「补缺」单；
+    - `stale`     = 有 ACTIVE 总结但它照的是旧正文（`_head_outdated`）→ 下「覆写」单；
+    - `retracted` = 作者亲手撤掉的 → 一律不动（不是「缺」，见 `_head_missing`）；
+    - `paired`    = 有总结、照的就是当前正文 → 不动。
+
+    **调度器和 `_default_missing_mask` 必须用这同一个答案。** 从前调度器自己写了一份
+    SQL 判三态、下单那一步另问「缺哪几样」，两份判据分叉的后果是报了「已排覆写」却
+    一单没下（2026-08-22 实测）。单一实现让那种分叉写不出来。
+    """
+    if _head_missing(conn, project_id, chapter_id):
+        return "missing"
+    if _head_outdated(conn, chapter_id):
+        return "stale"
+    if _head_retracted(conn, chapter_id):
+        return "retracted"
+    return "paired"
 
 
 def _application_missing(conn: Connection, run_id: str) -> bool:
@@ -409,7 +477,12 @@ def _default_missing_mask(
     generation: int,
     ruleset_epoch: int,
 ) -> int:
-    """默认的缺口计算：验证报告 / 总结 head / 抽取 application 三个分支。"""
+    """默认的缺口计算：验证报告 / 总结 head / 抽取 application 三个分支。
+
+    **总结那一支问的是两件事**（2026-08-22）：缺一份、或挂着的那份照的是旧正文。
+    这份 mask 只表达得了「缺哪几样」，所以「旧不旧」必须在进 mask 之前就答完
+    （`summary_alignment`）——否则一份挂着的旧总结永远答「不缺」，覆写就永远不发生。
+    """
     mask = 0
     report = conn.execute(
         """
@@ -422,7 +495,8 @@ def _default_missing_mask(
     ).fetchone()
     if report is None:
         mask |= BRANCH_VALIDATION
-    if _head_missing(conn, project_id, chapter_id):
+    # 两个独立的问题，同一支活：缺一份 → 补缺；挂着的那份照的是旧正文 → 覆写。
+    if summary_alignment(conn, project_id, chapter_id) in ("missing", "stale"):
         mask |= BRANCH_SUMMARY
     if _application_missing(conn, run_id):
         mask |= BRANCH_EXTRACTION

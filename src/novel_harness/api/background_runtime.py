@@ -10,10 +10,16 @@ wake signal 丢了也不怕：dispatcher 轮询 `recover_claimable`，任何一�
 尽力而为的即时唤醒 + 一定做得到的持久扫描的组合。
 
 30 分钟自治（文档 §2.2 智能路）= 这层的另一条 入口：不依赖任何点击，后台每
-`autonomy_seconds` 秒扫一次全书，把缺总结 / 不对齐的章按权重写进同一个
+`autonomy_seconds` 秒扫一次全书，把缺总结 / 不对齐的章写进同一个
 `chapter_refresh_attempt`，然后由同一条 pump 波次把它们变成真实结果。调度坐标
 （`draft_chapter` / 焦点豁免）来自 focus 模块；「哪章该补」是纯查库的
 `summary_schedule` 决定，不调 LLM（§8）。
+
+**这条循环是主路，保存不是必需**（2026-08-22）：作者在 WPS 里改稿、导入一整本
+写好的书、进程崩掉——每一种都不经过保存，只要覆写依赖保存就必漏。所以扫描自给
+自足：要干活的章**全部**进候选池（权重只分配一轮的名额，不当准入门槛），一轮取
+`autonomy_limit` 个，取不完下一轮接着取，直到池子空。补完就停 —— 幂等收敛，
+不反复花钱。
 """
 
 from __future__ import annotations
@@ -37,6 +43,7 @@ from ..focus import resolve_draft_origin
 from ..graph.sqlite_store import SqliteStoryGraph
 from ..project import list_all
 from ..summary_schedule import (
+    QUEUED_OUTCOMES,
     book_summary_status,
     reconcile_anomaly_notifications,
     schedule_alignment,
@@ -48,7 +55,10 @@ AUTONOMY_INTERVAL: float = 30 * 60.0
 """自治调度默认间隔：30 分钟（文档 §2.2）。可注入（测试/演示用短间隔）。"""
 
 AUTONOMY_LIMIT: int = 20
-"""每一轮每个项目的入队预算（权重最低的先被砍，文档 §4 / §6 `limit`）。"""
+"""每一轮每个项目的**名额**（文档 §4 / §6 `limit`）。
+
+不是上限：权重只决定这 20 个名额给谁，排不上的下一轮接着排。一本 158 章的旧书
+刚接进来时会连补约 4 小时（每半小时 20 章），补完就停。"""
 
 
 def new_connection_factory(db_path: str) -> Callable[[], Connection]:
@@ -162,7 +172,7 @@ class BackgroundRuntime:
             self._sleep(self._poll_seconds)
 
     def autonomy_once(self) -> int:
-        """30 分钟自治的一轮：扫全部项目，把缺总结/不对齐的章按权重建 attempt。
+        """30 分钟自治的一轮：扫全部项目，给缺总结/不对齐的章建 attempt。
 
         只写 `chapter_refresh_attempt`（系统记录）并 commit，不付模型——真正生成
         由后续 `pump_once` 的 adapter 承担（文档 §2.3：「只补缺的那一步」）。返回
@@ -196,7 +206,7 @@ class BackgroundRuntime:
                     enqueued += sum(
                         1
                         for outcome in decisions.values()
-                        if outcome in ("queued", "queued_overwrite")
+                        if outcome in QUEUED_OUTCOMES
                     )
                 except Exception:  # noqa: BLE001
                     # 单项目失败不拖垮整轮（§6 纪律的聚合层）；下一轮会自动重扫。
