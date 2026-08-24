@@ -23,6 +23,8 @@ const KIND_TITLE: Record<SystemNotification["kind"], string> = {
   validation_blocked: "这一章的检查需要留意",
   // 措辞刻意和上一条分开：那一条**停掉了**这一章的自动整理，这一条没有。
   text_advisory: "这一段值得再看一眼",
+  // 措辞刻意不含「失败」二字：这一次没失败，只是一件都没留下（027）。
+  extraction_yielded_nothing: "这一章什么都没整理出来",
 };
 
 function NotificationRow({

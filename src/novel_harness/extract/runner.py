@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Final
 from hashlib import sha256
 import json
 from time import perf_counter
@@ -487,6 +488,7 @@ class ExtractionRunner:
             ),
         )
         self._mark_succeeded(conn, run.id, call_id, report)
+        _notify_if_nothing_survived(conn, run, report)
         row = self._fetch_row(conn, run.id)
         conn.commit()
         return to_run(row), report
@@ -556,3 +558,73 @@ class ExtractionRunner:
             f"SELECT {RUN_COLUMNS} FROM extraction_run WHERE id = ?",
             (run_id,),
         ).fetchone()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 全丢了不许静默报成功（2026-08-23，027）
+# ══════════════════════════════════════════════════════════════════════════
+
+_NO_PARTICIPANTS: Final = "event has no resolvable participants"
+"""`extract/service.py` 里那条唯一的事件丢弃理由的原文。**比对字面量是有意的**：
+它是那一侧的出参，改了措辞这儿就该跟着改——而跟不上时症状是通知少说一句话，
+不是崩，所以下面用的是「命中才敢下这个结论」的写法。"""
+
+
+def _notify_if_nothing_survived(
+    conn: Connection, run: ExtractionRun, report: ExtractionReport
+) -> None:
+    """这一章整理完了、模型也答了，**但一件都没留下** —— 得让作者知道。
+
+    ── 这是 2026-08-23 在作者 158 章真书上撞出来的哑告警 ──────────────────
+
+        章    模型抽到的事件   引擎留下的   丢掉的      run 状态
+        1          12            0          12      SUCCEEDED / errors=[]
+        2          11            0          11      SUCCEEDED / errors=[]
+        158        12            0          12      SUCCEEDED / errors=[]
+
+    整本书的图谱因此是空的（人物 0 / 边 0 / 事件 0 / 证据 0），而**没有任何一处
+    告诉过作者**。丢弃条件只有一条：事件里的人在花名册里认不出来 ⇒ 整条丢；
+    而花名册空着，所以下一章接着全丢——**它是个死锁，而且是静默的**。
+
+    ── 判据为什么是「valid==0 且 discarded>0」，不是「valid==0」 ───────────
+
+    **「模型明明抽到了，我们一件都没留住」才是异常**；产出为零本身不是。
+
+    ⚠️ `valid==0 且 discarded==0` 今天**不可达**：`RawChapterAnalysis.events` 的下限
+    是 1，所以「这一章本来就没有事件」（写景、独白）在那一层压根表达不出来——模型只能
+    硬编一件事出来。那个洞是另一件事，这儿这一半条件是**为它准备的**：真放开下限那天，
+    没有产出可言的一章不该跟着报一条通知。
+
+    ── 不阻断 ────────────────────────────────────────────────────────────
+
+    走 027 那一档，它不在 `BLOCKING_KINDS` 里：总结和抽取两支该跑照跑。
+    这一次没失败，只是产出为零——挂 `background_failure` 会让作者去查一个
+    不存在的故障。
+    """
+    if report.valid_event_count or not report.discarded_event_count:
+        return
+    from ..system_notifications import enqueue_extraction_yielded_nothing
+
+    lost = report.discarded_event_count
+    # 只有当丢弃理由**真的**是「认不出人」时才敢这么说。理由换了别的（将来多一档
+    # 丢弃条件）就退回中性措辞——宁可少说一句，也不给作者指一个错方向。
+    unresolved = sum(
+        reason.kind == "event" and _NO_PARTICIPANTS in reason.detail
+        for reason in report.discarded
+    )
+    if unresolved == lost:
+        why = "它们提到的人在花名册里还认不出来"
+    else:
+        why = "它们都没能落库"
+    tail = (
+        f"这一次提了 {report.proposal_count} 条待确认，确认之后重新整理这一章，事件才留得下。"
+        if report.proposal_count
+        else "花名册里先得有人，这一章的事件才留得下。"
+    )
+    enqueue_extraction_yielded_nothing(
+        conn,
+        project_id=run.project_id,
+        snapshot_id=run.snapshot_id,
+        chapter_number=run.chapter_number,
+        title=f"这一章整理完了，但 {lost} 件事一件都没留下 —— {why}。{tail}",
+    )

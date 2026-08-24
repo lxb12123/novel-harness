@@ -708,3 +708,99 @@ def test_recording_interrupt_is_not_swallowed_as_an_audit_failure(seed: Seed) ->
         runner.run(queued.id)
 
     assert analyzer.calls == 1
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 全丢了不许静默报成功（2026-08-23，027）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _stranger_analysis() -> str:
+    """一件事，参与者**不在花名册里** —— 会被整条丢掉。"""
+    return RawChapterAnalysis(
+        events=(
+            RawEvent(
+                summary="贾环在渡口拿走玄铁令。",
+                quote=QUOTE,
+                participants=("贾环",),
+                knowers=("贾环",),
+                revealed_facts=(),
+                confidence=0.92,
+            ),
+        ),
+        state_updates=(),
+        character_profiles=(),
+    ).model_dump_json()
+
+
+def _notifications(conn: Connection, project_id: str):
+    from novel_harness.system_notifications import (
+        list_open_notifications,
+        materialize_notification_outbox,
+    )
+
+    materialize_notification_outbox(conn, project_id=project_id, lease_owner="t")
+    return list_open_notifications(conn, project_id)
+
+
+def test_a_chapter_that_kept_nothing_does_not_pass_as_a_quiet_success(seed: Seed) -> None:
+    """模型抽到了、我们一件都没留下 —— **作者必须知道**（2026-08-23 真书上的哑告警）。
+
+    真书实测：第 1 / 2 / 158 章各抽到 12 / 11 / 12 件事，**留下 0 件**，
+    而三次 run 全是 `SUCCEEDED` + `errors_json='[]'`。丢弃条件只有一条
+    （事件里的人在花名册里认不出来 ⇒ 整条丢），花名册又是空的，于是：
+
+        花名册空 → 认不出 → 全丢 → 花名册还是空 → 下一章接着全丢
+
+    整本书的图谱因此是空的，**而没有任何一处告诉过作者**。这条红了 = 那个哑告警回来了。
+    """
+    analyzer = Analyzer(
+        CompletionResult(
+            text=_stranger_analysis(),
+            model="extractor-test-model",
+            finish_reason="stop",
+            prompt_tokens=1,
+            completion_tokens=1,
+        )
+    )
+    run = _runner(seed, analyzer)
+    enqueued = run.enqueue(seed.project_id, 3)
+    finished = run.run(enqueued.id)
+
+    # run 本身仍然是「成功」——它确实跑完了，这一点不改（改了会牵动整条状态机）。
+    assert finished.status is ExtractionRunStatus.SUCCEEDED
+    assert (finished.valid_event_count, finished.discarded_event_count) == (0, 1)
+
+    conn = seed.connection()
+    notices = _notifications(conn, seed.project_id)
+    kinds = [n.kind for n in notices]
+    assert "extraction_yielded_nothing" in kinds, (
+        f"一件都没留下却一条通知都没落——哑告警回来了。实得 {kinds}"
+    )
+
+    only = next(n for n in notices if n.kind == "extraction_yielded_nothing")
+    assert "1 件事" in only.title, only.title
+    # **不阻断**：新档不许混进阻断那一侧，否则作者整理一次老章就把下游停了。
+    from novel_harness.system_notifications import BLOCKING_KINDS
+
+    assert only.kind not in BLOCKING_KINDS
+    conn.close()
+
+
+def test_a_chapter_that_kept_something_stays_quiet(seed: Seed) -> None:
+    """留下了东西就**不报** —— 对照组，否则上一条可能是「永远报」而不是「该报才报」。
+
+    判据是「valid==0 **且** discarded>0」：「模型明明抽到了、我们一件都没留住」才是异常。
+
+    ⚠️ 顺带记一条**这一轮没修的**：`valid==0 且 discarded==0` 今天**不可达**——
+    `RawChapterAnalysis.events` 的下限是 1，所以「这一章本来就没有事件」（写景、独白）
+    在这一层压根表达不出来，模型只能硬编一件事出来。那个洞归它自己那一轮。
+    """
+    analyzer = Analyzer()  # 默认那份：参与者「顾清音」在花名册里
+    run = _runner(seed, analyzer)
+    finished = run.run(run.enqueue(seed.project_id, 3).id)
+
+    assert finished.valid_event_count == 1 and finished.discarded_event_count == 0
+    conn = seed.connection()
+    assert [n.kind for n in _notifications(conn, seed.project_id)] == []
+    conn.close()

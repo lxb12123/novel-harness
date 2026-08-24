@@ -6,6 +6,8 @@
 - `background_failure`：后台任务失败（provider 崩溃、重放过不去…）；
 - `validation_blocked`：正文验证器阻断（保留了旧结果，只是新快照不自动总结/抽取）；
 - `text_advisory`：保存之后的语义核对发现问题（026）。**只告警，两支照常跑。**
+- `extraction_yielded_nothing`：这一章整理完了，但一件都没留下（027）。**不是失败**
+  ——模型答了、我们也处理完了，产出为零。它和 `background_failure` 的差别是这一条。
 
 ── 阻断与不阻断是两件事，别按「听起来像不像坏消息」分 ────────────────────
 `validation_blocked` 那句「新正文不会再自动生成总结与情节」是真的：停下游的是
@@ -47,6 +49,7 @@ __all__ = [
     "SystemNotification",
     "background_failure_dedupe_key",
     "dedupe_key_for",
+    "enqueue_extraction_yielded_nothing",
     "enqueue_notification",
     "enqueue_text_advisory",
     "enqueue_validation_blocked",
@@ -60,7 +63,11 @@ __all__ = [
 
 NotificationStatus = Literal["OPEN", "IGNORED", "RESOLVED"]
 NotificationKind = Literal[
-    "summary_mismatch", "background_failure", "validation_blocked", "text_advisory"
+    "summary_mismatch",
+    "background_failure",
+    "validation_blocked",
+    "text_advisory",
+    "extraction_yielded_nothing",
 ]
 
 BLOCKING_KINDS: Final[frozenset[str]] = frozenset({"validation_blocked"})
@@ -185,6 +192,53 @@ def enqueue_notification(
         ),
     )
     return outbox_id
+
+
+def enqueue_extraction_yielded_nothing(
+    conn: Connection,
+    *,
+    project_id: str,
+    snapshot_id: str,
+    chapter_number: int,
+    title: str,
+) -> str:
+    """这一章整理完了、但**一件都没留下**时的那条通知（027）。
+
+    ── 它为什么不是 `background_failure`，也不是 `text_advisory` ──────────
+
+    **不是失败**：run 的 `status` 就是 `SUCCEEDED`，模型答了、我们也处理完了，
+    只是产出为零。叫它失败会让作者去查一个不存在的故障。
+
+    **也不带锚**：`text_advisory` 的 `jump` 是必填且引语非空的（026 有意定的，
+    说不出「在哪一句」的告警作者点不过去），而这一条说的是**整整一章**的产出。
+    为了复用而编一个假锚，等于把 026 那条纪律从内部拆掉。
+
+    ── 去重按快照，不按章 ───────────────────────────────────────────────
+
+    `subject_id` 用 `snapshot_id`：同一版正文重跑几次抽取只提醒一次（幂等），
+    而作者改了正文再跑，那是**新的一版**，值得再说一次——他可能正是为了修这件事
+    才去改的。按章去重的话第二次就哑了。
+
+    **不进 `BLOCKING_KINDS`**：它不停任何下游，两支该跑照跑。
+    """
+    return enqueue_notification(
+        conn,
+        project_id=project_id,
+        kind="extraction_yielded_nothing",
+        subject_type="chapter_snapshot",
+        subject_id=snapshot_id,
+        chapter_number=chapter_number,
+        title=title,
+        dedupe_key=background_failure_dedupe_key(
+            kind="extraction_yielded_nothing",
+            subject_type="chapter_snapshot",
+            subject_id=snapshot_id,
+            operation="extract",
+            source_snapshot_id=snapshot_id,
+            job_id=None,
+        ),
+        source_sha256=None,
+    )
 
 
 def enqueue_validation_blocked(

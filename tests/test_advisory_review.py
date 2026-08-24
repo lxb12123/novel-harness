@@ -29,8 +29,11 @@ from novel_harness import importer, project
 from novel_harness.advisory_review import (
     SecretSlip,
     TrackClash,
+    _SECRET_NOT_CHECKED,
+    _TRACK_NOT_CHECKED,
     numbered_sentences,
     review_saved_chapter,
+    review_track_on_demand,
 )
 from novel_harness.db import Connection, connect, migrate
 from novel_harness.declare import Ledger
@@ -124,6 +127,31 @@ class Exploding:
         raise RuntimeError("模型没配好：先去顶栏 ⚙ 填服务地址")
 
 
+UPSTREAM_MARKER = "[echoed-by-the-endpoint]"
+"""`EchoingFailure` 报错里那个只可能来自异常的标记。
+
+后面章节的内容（`SPOILER`）验的是「泄漏发生了」，它验的是「异常文本本身一个字都
+没进来」——两问的 prompt 里有什么各不相同，而这个标记两边都在。"""
+
+
+class EchoingFailure:
+    """端点炸了，**而且报错里把请求原样贴了回来**。
+
+    这不是一个为了写测试想出来的形状：第三方网关的 4xx 常把请求片段回显进 body
+    （`{"error":{"message":"...your input was: ..."}}`），内容过滤更是直接回显被
+    标记的那一段原文。**报错文本不是我们写的，所以「它里面有没有后面章节的内容」
+    不由我们决定**——我们唯一能决定的是它进不进那几个会往下走的字段。
+    """
+
+    def __init__(self) -> None:
+        self.seen: list = []
+
+    def __call__(self, request):
+        self.seen.append(request)
+        body = "\n".join(m.content for m in request.messages)
+        raise RuntimeError(f"{UPSTREAM_MARKER} 400 —— 上游拒收，原样回显请求：{body}")
+
+
 @pytest.fixture
 def world(tmp_path: Path) -> Iterator[dict]:
     db = tmp_path / "book.db"
@@ -167,6 +195,17 @@ def written(world: dict) -> dict:
 
 def _review(world: dict, reviewer, **kwargs):
     return review_saved_chapter(
+        world["conn"], world["store"], world["pid"], HERE, reviewer=reviewer, **kwargs
+    )
+
+
+def _track_only(world: dict, reviewer, **kwargs):
+    """模式二自己叫的那一次：只问轨道，不问秘密，不落通知（轨道阶段 3）。
+
+    形状照抄 `_review`，**入口不同**是这条路的全部差别——所以这儿也只换那一个名字，
+    别在测试里替它多做一层包装。
+    """
+    return review_track_on_demand(
         world["conn"], world["store"], world["pid"], HERE, reviewer=reviewer, **kwargs
     )
 
@@ -434,6 +473,118 @@ def test_a_chatty_model_loses_its_reason_but_keeps_its_finding(written: dict) ->
     )
 
 
+# ── 四之二：**跑砸的那一次**也出不来 ─────────────────────────────────────
+#
+# 上面几条守的是「跑成了，评语里没有轨道」，而它们全靠 `TrackClash` 的形状。
+# `notes` 旁边就是一格自由文本，形状救不了它——原来那儿拼着 `{exc}`，
+# 于是「端点回显请求」这一种再普通不过的 4xx 就把后面章节的正文段落原样送进
+# 持久化的对话历史。**这一节守的是那半边。**
+
+
+def test_an_exploded_endpoint_cannot_smuggle_a_later_chapter_out(written: dict) -> None:
+    """**报错里带着第 6 章，回执里一个字都不许有。**
+
+    模式二的模型自己调 `check_track`，答案当场回给它并**留在对话历史里**（工具返回值
+    是持久的）。所以这一格自由文本的下游不是右栏，是「写第 2 章的模型此后每一轮都
+    看得见的东西」——这个产品的一句话定义就在那儿。
+    """
+    endpoint = EchoingFailure()
+
+    outcome = _track_only(written, endpoint)
+
+    # 对照组：那一次请求里**确实**装着第 6 章的剧透和第 5 章的设定，所以下面搜不到
+    # 不是因为轨道压根没算出来。（阶段 4 之后装进去的还包括那几章的正文段落。）
+    echoed = "\n".join(m.content for r in endpoint.seen for m in r.messages)
+    assert SPOILER in echoed and LATER_SETTING in echoed
+
+    receipt = outcome.model_dump_json()
+    for leaked in (SPOILER, LATER_SETTING, "玄血蛊", UPSTREAM_MARKER):
+        assert leaked not in receipt, f"异常原文进了回执：{leaked}"
+    assert outcome.notes["track"] == _TRACK_NOT_CHECKED
+    assert outcome.clashes == () and outcome.notices == ()
+
+
+def test_the_tool_return_value_carries_no_word_of_the_exception(
+    written: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**走真的那条边**：`_a_track_check` → `TrackVerdict` → 工具返回值。
+
+    上一条钉的是源头那一格，这一条钉的是它到底流去了哪儿——`TrackVerdict.note` 是
+    模式二的模型真正读到的那串字，而 `TrackClash` 那三个数装不下东西这件事在这条
+    路上帮不上忙。两条都要：只有源头那条时，谁把 `note` 换成别的来源都不会红。
+    """
+    from novel_harness.api import chat
+
+    endpoint = EchoingFailure()
+    monkeypatch.setattr(chat, "get_advisory_reviewer", lambda: endpoint)
+
+    verdict = chat._a_track_check(written["conn"], written["store"], written["pid"])(HERE)
+
+    assert endpoint.seen, "核对压根没发生的话，下面搜不到什么都不能说明"
+    dumped = verdict.model_dump_json()
+    for leaked in (SPOILER, LATER_SETTING, "玄血蛊", UPSTREAM_MARKER):
+        assert leaked not in dumped, f"异常原文进了工具返回值（此后每一轮都在）：{leaked}"
+    assert verdict.note == _TRACK_NOT_CHECKED, "没跑成也要说得出没跑成（§10 约束 8）"
+
+
+def test_a_broken_secret_check_says_nothing_about_why_either(written: dict) -> None:
+    """秘密那一问是**同一个写法**，一起钉住。
+
+    今天它没人读（`review_saved_chapter` 的回执被后台丢掉），所以它泄了也不会有人
+    看见——这恰恰是它值得钉的理由：等哪天有人把这一格接到屏幕或对话上，谁都不会想起
+    来这儿曾经拼着一段端点回的原话。
+    """
+    endpoint = EchoingFailure()
+
+    outcome = _review(written, endpoint)
+
+    receipt = outcome.model_dump_json()
+    assert UPSTREAM_MARKER not in receipt, "异常原文进了回执"
+    assert SLIP_LINE not in receipt, "被回显的正文进了回执"
+    assert outcome.notes["secret"] == _SECRET_NOT_CHECKED
+    assert outcome.notes["track"] == _TRACK_NOT_CHECKED
+
+
+# ── 四之三：模式二自己调的那一次（`review_track_on_demand`）────────────────
+#
+# 它此前**一次都没有被测过**。零覆盖的东西在这条路上尤其贵：它是唯一一个把核对结论
+# 直接交到模型手上的入口，上面两条守的洞都长在它身上。
+
+
+def test_the_on_demand_check_answers_only_the_track_question(written: dict) -> None:
+    """只问轨道那一问，**不问秘密、不落通知**。
+
+    多问一次秘密 = 每轮对话多付一次钱，而那一问要的是稳定正文（作者可能正写到一半）；
+    落一条通知 = 作者的右栏冒出一件他没做过的事，而右栏那一格的语义是「你该看一眼」。
+    """
+    number = _sentence_number(written, "白光")
+    reviewer = Reviewer({"track": _found(number, chapter=5, conflict="setting")})
+
+    outcome = _track_only(written, reviewer)
+
+    assert outcome.clashes == (TrackClash(sentence=number, chapter=5, conflict="setting"),)
+    assert reviewer.calls("secret") == 0
+    assert outcome.slips == () and outcome.notices == ()
+    assert [n.kind for n in _notices(written)] == []
+    # 顺带：这一路也不许把轨道带出来（上面那条对照组已证明模型确实看得见它）。
+    assert SPOILER not in outcome.model_dump_json()
+
+
+def test_the_on_demand_check_does_not_pay_twice_for_the_same_text(written: dict) -> None:
+    """连问两次不连付两次钱——幂等判据和保存后那一遍**共用同一份**（内容地址）。
+
+    模式二每动一次笔都可能叫它一次，所以「重复触发」在这条路上是常态。
+    """
+    reviewer = Reviewer()
+
+    first = _track_only(written, reviewer)
+    second = _track_only(written, reviewer)
+
+    assert reviewer.calls("track") == 1
+    assert "没发现抵触" in first.notes["track"]
+    assert "没有再花钱" in second.notes["track"], "第二次必须说得出它没跑，不是没发现"
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 五、不阻断 / 不花冤枉钱 / 不炸
 # ══════════════════════════════════════════════════════════════════════════
@@ -479,10 +630,13 @@ def test_the_same_text_is_never_paid_for_twice(written: dict) -> None:
 
 
 def test_a_model_that_is_not_configured_leaves_the_author_alone(written: dict) -> None:
-    """模型不可用时：**不抛、不落通知、但说得出为什么**（§10 约束 8）。
+    """模型不可用时：**不抛、不落通知、但说得出这一问没跑成**（§10 约束 8）。
 
     「这一章没问题」和「压根没问」在右栏上长成同一个「什么都没有」，
     而这两件事的下一步动作完全相反。
+
+    **说得出的只有「没跑成」，不包括「为什么」**——那句为什么是端点回的原话，
+    而它会一路走到持久化的对话历史里（上面「四之二」那一节）。
     """
     exploding = Exploding()
 
@@ -490,8 +644,10 @@ def test_a_model_that_is_not_configured_leaves_the_author_alone(written: dict) -
 
     assert outcome.slips == () and outcome.clashes == () and outcome.notices == ()
     assert [n.kind for n in _notices(written)] == []
-    assert "模型没配好" in outcome.notes["secret"]
-    assert "模型没配好" in outcome.notes["track"]
+    assert outcome.notes["secret"] == _SECRET_NOT_CHECKED
+    assert outcome.notes["track"] == _TRACK_NOT_CHECKED
+    # 跑成了和没跑成必须是两句不同的话，否则上面那两条断言只是在验一个空壳。
+    assert "没跑成" in _SECRET_NOT_CHECKED and "没跑成" in _TRACK_NOT_CHECKED
 
 
 def test_garbage_instead_of_json_is_not_an_exception(written: dict) -> None:

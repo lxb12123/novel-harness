@@ -45,6 +45,15 @@ ADR 0005 的铁律是「只做集合判断，不做语义判断」，而这两�
 
 结构化的出参能被机械检查，自由文本不能。作者要细节自己去翻第 64 章。
 
+**但「形状保证」只保得住 `TrackClash` 那三个数，保不住它旁边的 `notes`。** 那是一格
+自由文本，而它经 `api/chat.py::_a_track_check` 变成 `TrackVerdict.note` 之后就是工具
+返回值——落进**持久化的对话历史**，泄完删不掉。所以两问跑砸时那两句话是**写死的**
+（`_SECRET_NOT_CHECKED` / `_TRACK_NOT_CHECKED`），异常原文一个字都不拼进去：报错文本
+不是我们写的，第三方端点常把请求片段原样回显，而这一问的请求里装着后面几章的总结和
+正文段落。那儿有一段完整论证，
+`tests/test_advisory_review.py::test_an_exploded_endpoint_cannot_smuggle_a_later_chapter_out`
+钉着它。
+
 ── 四、锚由我们算，不由模型给 ────────────────────────────────────────────
 
 模型返回的是**句号**（我们编的号），不是引语。ADR 0006 那段病史里「模型返回的 quote
@@ -890,6 +899,28 @@ def review_track_on_demand(
     return AdvisoryOutcome(chapter=chapter_number, clashes=clashes, notes=notes)
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# 两问跑砸了时那两句话 —— **固定文案，绝不许把 `exc` 拼进来**
+# ══════════════════════════════════════════════════════════════════════════
+#
+# `notes["track"]` 经 `api/chat.py::_a_track_check` 变成 `TrackVerdict.note`，而那是
+# **工具返回值**——它进的是持久化的对话历史，泄完就删不掉了（同 `agent/tools.py`
+# 那几处的论证）。异常文本**不是我们写的**：第三方端点 4xx 常把请求片段原样回显，
+# 内容过滤会回显被标记的原文，而这一问的请求里装着后面几章的总结**和正文段落**
+# （阶段 4 的三级下探）。一次 5xx 就能让第 64 章的伏笔逐字进历史，此后每一轮都在。
+#
+# 模块头第三节说「评语里不许有轨道原文，由出参形状保证」——那半句只罩得住
+# `TrackClash`（三个字段，装不下总结）。**`notes` 是自由文本，形状救不了它，
+# 只能靠这儿不拼。** `notes["secret"]` 今天还没有人读，但它跟上面那格是同一个写法，
+# 一起钉住——「等有人接线时再想起来」不是一条能指望的规矩。
+#
+# 异常本身就地丢掉，不另开一条诊断通路：这条路是后台的，它的失败形态就是
+# 「什么都没发生」（`api/deps.py` 和 `BackgroundRuntime._review_chapter` 都按这条
+# 写着），而把一个作者管不了的故障搬上右栏是让他去处理一件他处理不了的事。
+_SECRET_NOT_CHECKED: Final = "这一次没能核对秘密有没有被说破，这一问没跑成。"
+_TRACK_NOT_CHECKED: Final = "这一次没能跟后面的章比对，这一问没跑成——空着不等于没抵触。"
+
+
 def _review_secrets(
     conn: Connection,
     store: StoryGraph,
@@ -953,11 +984,12 @@ def _review_secrets(
         kept = _keep_slips(
             _pick(_payload(answer), SecretSlip), sentences=sentences, allowed=allowed
         )
-    except Exception as exc:  # noqa: BLE001 —— 后台告警链的失败形态是「什么都没发生」
+    except Exception:  # noqa: BLE001 —— 后台告警链的失败形态是「什么都没发生」
         # 记账那一步半途炸了的话事务还开着，下面落通知那一次 BEGIN 会撞上它。
         conn.rollback()
         broke.append("secret")
-        notes["secret"] = f"这一次没能核对秘密有没有被说破：{exc}"
+        # 异常**不进这一格**（上面 `_SECRET_NOT_CHECKED` 那段讲了为什么）。
+        notes["secret"] = _SECRET_NOT_CHECKED
         return ()
     trimmed = f"（清单太长，这一次只看了前 {len(lines)} 条，共 {total} 条）" if total > len(lines) else ""
     notes["secret"] = (
@@ -1007,10 +1039,11 @@ def _review_track(
             sentences=sentences,
             chapters=[row.chapter_number for row in track.chapters],
         )
-    except Exception as exc:  # noqa: BLE001 —— 同上：这条路不许把栈甩给作者
+    except Exception:  # noqa: BLE001 —— 同上：这条路不许把栈甩给作者
         conn.rollback()
         broke.append("track")
-        notes["track"] = f"这一次没能跟后面的章比对：{exc}"
+        # 异常**进不了这一格**：它一路走到工具返回值，而那是持久化的对话历史。
+        notes["track"] = _TRACK_NOT_CHECKED
         return ()
     notes["track"] = (
         f"跟后面 {len(track.chapters)} 章比过了，{len(kept)} 处对不上。"

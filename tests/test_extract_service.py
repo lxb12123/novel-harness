@@ -598,6 +598,45 @@ def test_new_character_proposals_are_split_per_surface(
     }
 
 
+def test_each_new_character_row_says_who_it_is(seed: Seed, conn: Connection) -> None:
+    """待确认队列那一行**自己说清是谁** —— 不许再是一句通用话（2026-08-23）。
+
+    真书上的后果实测过：22 条 `new_character` 提案的 `summary` 去重之后**只有 1 条**
+    不同文本（「抽取发现尚未登记的人物画像。」），名字和画像明明就躺在 `items` 里。
+    它们从 2026-08-15 一条都没被确认过——而这些人不确认，抽出来的事件就一件都落不了地
+    （认不出参与者会被整条丢），花名册空着 ⇒ 下一章接着全丢。
+
+    这条红了 = 那句写死的通用话回来了。**断言的是「各不相同 + 带名字」**，
+    不是某一句具体措辞——措辞可以改，「说不清是谁」不行。
+    """
+    report = _service(conn, seed).ingest(
+        seed.project_id,
+        seed.chapter,
+        _analysis(
+            profiles=(
+                RawCharacterProfile(
+                    surface="陆青禾",
+                    gender="女",
+                    background="药王谷弃徒",
+                    personality="隐忍",
+                    confidence=0.8,
+                ),
+                RawCharacterProfile(surface="白峰", gender="男", confidence=0.7),
+            )
+        ),
+        prompt_hash="prompt:new-character-rows-name-themselves",
+    )
+
+    assert report.proposal_count == 2
+    summaries = [p.summary for p in SqliteProposalStore(conn).pending(seed.project_id)]
+    assert len(set(summaries)) == 2, f"两条提案长得一模一样：{summaries}"
+    assert all(
+        any(name in text for name in ("陆青禾", "白峰")) for text in summaries
+    ), summaries
+    # 有画像就带上（背景最认得出人）；三样都空时只报名字，不编一句。
+    assert any("药王谷弃徒" in text for text in summaries), summaries
+
+
 class _ExplodingProposalStore:
     def create(self, proposal: ProposalCreate):
         raise RuntimeError(f"proposal write failed: {proposal.kind}")
@@ -651,3 +690,51 @@ def test_reused_service_does_not_cache_main_character_across_ingests(
 
     assert first.proposal_count == 1
     assert second.proposal_count == 0
+
+
+def test_the_deadlock_and_the_key_that_opens_it(seed: Seed, conn: Connection) -> None:
+    """死锁的两半，一条测试里演一遍（2026-08-23 真书上撞出来的）。
+
+    ── 上半：花名册里没有这个人 ⇒ 事件整条丢 ────────────────────────────
+
+    作者的 158 章真书上，抽取跑过三章，每次都 `SUCCEEDED`、`errors_json='[]'`，
+    而**留下 0 件**（12 / 11 / 12 全丢）。整本书的图谱是空的：人物 0、边 0、
+    事件 0、证据 0。丢弃条件只有一条 —— 事件里的人在花名册里认不出来。
+
+        花名册空 → 认不出 → 全丢 → 花名册还是空 → 下一章接着全丢
+
+    唯一出口是 `new_character` 提案，而那 22 条从 2026-08-15 一条没被确认过。
+
+    ── 下半：那个人一登记，同一份 analysis 立刻留得下 ──────────────────
+
+    **这一半是「钥匙确实能开那把锁」的证据。** 真书上跑这一遍要重新付一次模型调用
+    （那本书停在 `user_version=16`，早于 021，没有可重放的规范 analysis），
+    所以机制在这儿钉，账在那儿算。
+
+    这条红了 = 要么丢弃判据变了，要么确认人物不再解得开它 —— 两种都得当场知道。
+    """
+    # 参与者**全部**认不出 —— 丢弃判据是 `if not participants`，也就是
+    # 「一个都解不出来才丢」。混一个认得出的人进去，这条事件会活下来（只留认得出的
+    # 那部分），所以真书全丢的成因是花名册**空**，不是「有生面孔」。
+    stranger = _analysis(events=(_event(participants=("陆青禾",), knowers=("陆青禾",)),))
+
+    before = _service(conn, seed).ingest(
+        seed.project_id, seed.chapter, stranger, prompt_hash="prompt:deadlock-locked"
+    )
+    assert (before.valid_event_count, before.discarded_event_count) == (0, 1), (
+        "花名册里没有「陆青禾」，这一件事本该被整条丢掉 —— 丢弃判据变了？"
+    )
+
+    # 作者在待确认队列上点了「接受为角色」—— 那一步落地就是花名册里多一个人。
+    seed.graph.upsert_node(
+        NodeSpec(
+            project_id=seed.project_id, label=NodeLabel.CHARACTER, name="陆青禾"
+        )
+    )
+
+    after = _service(conn, seed).ingest(
+        seed.project_id, seed.chapter, stranger, prompt_hash="prompt:deadlock-opened"
+    )
+    assert after.valid_event_count == 1 and after.discarded_event_count == 0, (
+        "人已经在花名册里了，同一份 analysis 却还是留不下 —— 死锁没被打开"
+    )

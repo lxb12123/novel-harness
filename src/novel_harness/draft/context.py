@@ -113,30 +113,6 @@ class ResolvedConstraints(BaseModel):
     forbidden_entities: list[ForbiddenEntity] = Field(default_factory=list)
     """首现章号在本章之后的实体，按首现章号升序。完整 PLANNED 到此为止，只剩名字和章号。"""
 
-    cast_is_borrowed: bool = False
-    """这份 cast 不是从**本章**正文里数出来的，是从上一章借来的（M2-b）。
-
-    ── 为什么这一位必须存在：两条通道的方向是相反的 ────────────────────────
-
-    借 cast 的安全性论证（ADR 0037）是「判据『在场至少有一个人还不知道 ⇒ 就禁』
-    对在场集合单调 ⇒ **多算一个人只会多一批禁令**」。那条论证成立，
-    **但它只覆盖禁令那一条通道。**
-
-    还有第二条通道：`calibration/render.py::_is_unknown_cast_dropped` 那份更窄的白名单
-    ——自由文本事件、章节总结、任意字符串状态在「不知道谁在场」时一律不给 Writer。
-    它的理由是「**预计人物只是实际人物的子集**，不能只证明预计人物都是 knower」。
-
-    **借来的 cast 有一模一样的性质**：它是从上一章猜的，本章真正在场的人可能不在
-    上一章里。所以那道闸必须继续关着——`product_draft.py` 判 `unknown_cast` 时要
-    连这一位一起看。少看这一位的后果是：作者每开一个新章，事件和总结就顺着一份
-    **猜出来的**在场名单流进 Writer。
-
-    ⚠️ **这不是给这个类型开第三种状态。** 类型仍然只回答一个问题——
-    「`must_not_reveal` 是算出来的答案，还是退化值」，而借来的 cast 算出来的
-    **确实是**答案（对那几个人成立）。这一位记的是**那几个人是怎么来的**，
-    只被更保守的那一侧读。
-    """
-
     matrix: KnowledgeMatrix
     """**算 `must_not_reveal` 用的就是这一份**（`panel.scene_view()` 交出来的）。
 
@@ -155,15 +131,16 @@ class ResolvedConstraints(BaseModel):
         cls,
         view: SceneView,
         cast: Sequence[str],
-        *,
-        borrowed: bool = False,
     ) -> ResolvedConstraints:
         """收窄一份**已经算好的** `SceneView`。歧义 / 空 cast 在这里弹给作者。
 
+        `cast` 必须是从**本章**正文里数出来的。**没有「从别处借一份顶上」这条路**
+        （2026-08-23 撤销 M2-b，见 ADR 0037 补记）：另一章的名单不是本章名单的超集，
+        顶替的结果是**少禁**，而少禁那一侧是把秘密说破。数不出人时调用方退回
+        `unknown_cast_constraints`（全禁），不构造这个类型。
+
         Args:
             view: `panel.scene_view()` 的出参（约束 + 算它用的那份矩阵）。
-            borrowed: 这几个人是从上一章借来的（M2-b），不是本章正文里数出来的。
-                只影响记忆通道那一侧的收窄——见 `cast_is_borrowed`。
             cast: 算它时用的**同一份**称呼原文。`SceneConstraints` 记不住解析成功的那些称呼
                 （它只留 `unresolved_cast`），所以「作者到底声明了几个人」这个信息只能从
                 这里进来。也正因如此这两个参数必须成对：
@@ -190,7 +167,6 @@ class ResolvedConstraints(BaseModel):
             must_not_reveal=list(constraints.must_not_reveal),
             forbidden_entities=list(constraints.forbidden_entities),
             matrix=view.matrix,
-            cast_is_borrowed=borrowed,
         )
 
     @property

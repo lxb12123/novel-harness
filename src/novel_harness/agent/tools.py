@@ -971,61 +971,29 @@ def _derived_cast_from_text(
     )
 
 
-def _borrowed_cast(context: ToolContext, chapter: int) -> list[str]:
-    """上一章正文里出现过的人，**给数不出人的那一章借用**（M2-b / ADR 0037）。
-
-    ── 为什么要借：起草一个刚开头的空章**必然**数不出人 ──────────────────
-
-    而那正是最常用的起草场景（第 11 章只有一行标题）。数出 0 个人 ⇒ 禁写清单退化成
-    **全书全禁**——安全，却安全得没用：AI 拿着一份「什么都别碰」的清单写不出能用的东西。
-
-    ── 借了为什么仍然安全（**只对禁令那一条通道成立**）────────────────────
-
-    判据是「在场**至少有一个人**还不知道 ⇒ 就禁」，它对在场集合**单调**：集合变大，
-    禁令只增不减。所以「只加不减」是 fail-closed 那一侧。
-
-    ⚠️ **这条论证覆盖不到记忆那条通道**，所以借来的 cast 会被标上
-    `cast_is_borrowed=True`，让 `product_draft` 那一侧继续按「不知道谁在场」收窄
-    （自由文本事件、章节总结不进 Writer）。**两条通道方向相反，别只改一条。**
-
-    ── 只借前一章 ────────────────────────────────────────────────────────
-
-    不是因为后面的人不安全（多算仍然多禁），而是这一层答的是「这一场大概有谁」——
-    上一场刚在的人最可能还在，第 158 章的人不是。借一个跟这一场无关的人，
-    代价是凭空多出一批禁令，AI 又写不出东西了。
-
-    ── 借不到时返回空，让调用方退回全禁（ADR 0037「保留不动」那一条）──────
-
-    第一章、全新的书、上一章文件还不存在——**前面没人可借，那时全禁是唯一诚实的
-    答案**。三种都返回空列表，而不是编一个出来。
-    """
-    if chapter <= 1 or context.root_path is None:
-        return []
-    file = Path(context.root_path) / chapter_path(chapter - 1)
-    if not file.exists():
-        return []
-    return _derived_cast_from_text(
-        context, chapter - 1, file.read_text(encoding="utf-8-sig")
-    )
-
-
 def _scene_context_from_text(
     context: ToolContext,
     chapter: int,
     text: str,
 ) -> DraftContext:
-    """从**已经读好的**目标章正文算约束（与 `_scene_context` 同一份实现）。"""
+    """从**已经读好的**目标章正文算约束（与 `_scene_context` 同一份实现）。
+
+    ── 有正文 ⇒ cast 是**数**出来的 ⇒ 用；数不出人 ⇒ 只能**猜** ⇒ **不猜** ──────
+
+    数不出人的那一章（最常见：刚开头的空章）退回全禁，**不许拿上一章的名单顶上**
+    （2026-08-23 撤销 M2-b，见 ADR 0037 补记）。「多算一个人 = 多一批禁令 = 安全」
+    那条论证只在往**真实名单**上加人时成立；用另一章的名单顶替一份未知的名单
+    得不到真实名单的超集——`synth/gate.db` 第 11 章实测 20 种组合里 **15 种少禁**，
+    最坏一组从 5 条掉到 2 条，而少禁那一侧是当着不知情的人把秘密说破。
+
+    「还没开始写」= **cast 不存在**，不是「未知，需要补一个」。精确的那份留给
+    保存之后的验证器——写完才数得出谁真的在场。
+    """
     cast = _derived_cast_from_text(context, chapter, text)
-    borrowed = False
-    if not cast:
-        # 这一章还数不出人（最常见：刚开头的空章）→ 借上一章的（M2-b）。
-        # 借来的人一律**比本章更早**出现过，所以矩阵按本章章号算时他们都已登场。
-        cast = _borrowed_cast(context, chapter)
-        borrowed = bool(cast)
     if cast:
         try:
             view = scene_view(context.store, context.project_id, chapter, cast)
-            return ResolvedConstraints.of(view, cast, borrowed=borrowed)
+            return ResolvedConstraints.of(view, cast)
         except UnresolvedCast:
             pass
     return unknown_cast_constraints(context.store, context.project_id, chapter)
@@ -1046,8 +1014,9 @@ def _scene_context(context: ToolContext, chapter: int) -> DraftContext:
     **歧义已经不从这道口子掉下去了**（2026-08-22）：`_derived_cast_from_text` 把
     「师兄」展开成全部候选，展开出来的是各自唯一可解析的正式名。剩下能落到这一支的
     只有花名册本身病了的那几种（两个节点重名、节点没有 canonical 别名行），
-    那时全禁仍然是唯一诚实的答案。**空 cast 那一档不归这儿**：第一章 / 全新的书
-    前面没人可借，走的是下面 `if cast:` 外面那条路（M2-d，不动）。
+    那时全禁仍然是唯一诚实的答案。**空 cast 那一档不归这儿**：这一章还没写出人来时
+    走的是 `_scene_context_from_text` 里 `if cast:` 外面那条路——同样是全禁，
+    但理由是「不存在」而不是「算不准」。
     """
     if context.root_path is None:
         return unknown_cast_constraints(context.store, context.project_id, chapter)

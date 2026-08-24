@@ -906,7 +906,10 @@ export type SystemNotificationKind =
   | "validation_blocked"
   /** 保存之后的语义核对（026）。**只告警，那一章的自动整理照常跑**——
    *  和 `validation_blocked` 的全部区别就是这一条，别在渲染上把两者说成一回事。 */
-  | "text_advisory";
+  | "text_advisory"
+  /** 这一章整理完了、但一件都没留下（027）。**不是失败**——模型答了、也处理完了，
+   *  产出为零。跟 `background_failure` 分开是因为叫它失败会让作者去查一个不存在的故障。 */
+  | "extraction_yielded_nothing";
 export type SystemNotificationStatus = "OPEN" | "IGNORED" | "RESOLVED";
 
 /** 锚三元组（ADR 0006，永不 offset）：段号 + 引语 + 第几次。 */

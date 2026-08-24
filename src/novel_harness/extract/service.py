@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Final
 
 from .. import project as project_mod
 from ..db import Connection
@@ -38,7 +39,7 @@ from .ingest_helpers import (
     resolve_event_surfaces,
     surface_reason,
 )
-from .models import RawChapterAnalysis, RawEvent
+from .models import RawCharacterProfile, RawChapterAnalysis, RawEvent
 from .prompt import ANALYSIS_SCHEMA_VERSION
 
 __all__ = [
@@ -47,7 +48,44 @@ __all__ = [
     "ExtractionContextError",
     "ExtractionReport",
     "ExtractionService",
+    "new_character_summary",
 ]
+
+PROFILE_DIGEST_LIMIT: Final = 40
+"""队列那一行里画像摘要最多摆几个字。
+
+画像是模型写的自由文本（`RawCharacterProfile` 那几个字段一个长度上限都没有），
+而这一行是**一行**：不封顶的话，一个话痨模型能把待确认列表撑成一堵墙。
+截断只发生在这一行上——完整画像照旧原样躺在 `items` 里，卡片下面几行逐条摆着。
+"""
+
+
+def new_character_summary(profile: RawCharacterProfile) -> str:
+    """待确认队列上那一行，**自己说清是谁**。
+
+    这儿原先是一句写死的通用话（「抽取发现尚未登记的人物画像。」）。真书上的后果是
+    22 条提案在队列里长得一模一样，而名字和画像明明就在 `items` 里躺着——
+    作者面对的是 22 个「点开才知道是谁」的待办，于是它们从 2026-08-15 躺到今天
+    一条都没被确认过。**而这些人物没被确认，抽出来的事件就一件都落不了地**
+    （事件认不出参与者会被整条丢弃），花名册空着 ⇒ 下一章接着全丢。
+
+    摘要按「背景 → 性格 → 性别」取**第一个非空的**：背景最认得出人（「荣国府庶子」），
+    性格次之。三样都空时不编一句，只报名字。**这不是语义判断**（ADR 0005）——
+    它没有读那段文字是什么意思，只挑了第一个有字的字段。
+    """
+    digest = next(
+        (
+            text.strip()
+            for text in (profile.background, profile.personality, profile.gender)
+            if text and text.strip()
+        ),
+        "",
+    )
+    if len(digest) > PROFILE_DIGEST_LIMIT:
+        digest = digest[:PROFILE_DIGEST_LIMIT] + "…"
+    if not digest:
+        return f"新人物「{profile.surface}」还没登记。"
+    return f"新人物「{profile.surface}」还没登记：{digest}"
 
 
 class ExtractionService:
@@ -194,10 +232,12 @@ class ExtractionService:
                 # 已知档案保持只读，直到作者显式审阅。
 
             proposal_ids: list[str] = []
+            # `new_character` **不在这张表里**：它一人一条提案，那一行由
+            # `new_character_summary()` 逐条算（名字 + 画像摘要）。写死一句通用话的后果
+            # 见那个函数的 docstring —— 真书上 22 条提案在队列里长得一模一样。
             summaries = {
                 "edge_conflict": "抽取状态与当前 Canon 冲突。",
                 "low_confidence_main": "主要人物相关抽取置信度低于 0.70。",
-                "new_character": "抽取发现尚未登记的人物画像。",
             }
             for kind in ("edge_conflict", "low_confidence_main", "new_character"):
                 items = buckets[kind]
@@ -211,7 +251,9 @@ class ExtractionService:
                             ProposalCreate(
                                 project_id=project_id,
                                 kind=kind,
-                                summary=summaries[kind],
+                                summary=new_character_summary(
+                                    RawCharacterProfile.model_validate(item["profile"])
+                                ),
                                 items=[item],
                                 confidence=item["confidence"],
                                 chapter_number=chapter.number,
