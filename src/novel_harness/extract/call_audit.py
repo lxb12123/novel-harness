@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 import json
+from typing import Final
 
 from pydantic import BaseModel, ConfigDict
 
@@ -162,6 +163,81 @@ def record_call(
     return call_id
 
 
+EXTRACTOR_CAPABILITY: Final = "extractor"
+"""抽取那一路在 `model_call.capability` 上的取值。**两个写入方，一个定义**
+（成功那条 `record_model_call`、失败那条 `record_failed_call`）——抄成两份字面量的话，
+账上会长出两类看起来无关的行，而它们是同一件事的两个结局。"""
+
+
+def record_failed_call(
+    conn: Connection,
+    *,
+    project_id: str,
+    capability: str,
+    model: str | None,
+    prompt_hash: str | None,
+    prompt_bytes: bytes,
+    elapsed_ms: int,
+    error_type: str,
+    error_message: str,
+    chapter_number: int | None,
+    call_id_factory: Callable[[str], str],
+) -> str:
+    """**没答上来的那一次也要记一行。** 一条 FAILED `model_call`，一步落库。
+
+    ── 为什么它必须存在（2026-08-25 实测撞出来的）──────────────────────────
+
+    `model_call` 有 `error_type` / `error_message` 两列，而抽取那条路
+    **一次都没填过**：provider 抛异常 → run 标 FAILED → 就没了。那天真书上跑了一次，
+    跑前 6 行、跑后还是 6 行，**作者每一次失败的尝试在账上都不存在**。
+
+    这不只是记账好看：**失败的调用照样可能计费**（供应商按请求计、按已生成的
+    token 计的都有），而账本上看不见的钱是查不出来的钱。
+
+    ── 它记什么、不记什么 ──────────────────────────────────────────────
+
+    - `tokens_*` / `cost` / `out_artifact` **全部留 NULL**：没答上来就是没有这些数。
+      「供应商报没报」那条规矩在这里不变——**没报的留 NULL，绝不估**。
+    - `in_artifact` 照记：prompt 是我们自己发出去的，它的哈希是确定的，
+      而「这一次发的是哪一份 prompt」正是事后排查要问的第一个问题。
+    - `error_type` 是**分档的机器码**（`ProviderFailureKind` 之类），
+      `error_message` 是写给维护者的诊断。**两者都不上作者的屏幕**——
+      屏幕上那句话由 `activity._RUN_ERROR_LABEL` 从 run 的 `code` 翻，
+      见那一节（同 `ExtractionRunError.message` 的规矩）。
+
+    **不提交**：调用方（`runner._mark_failed`）要把这一行和 run 的状态写在同一个
+    事务里，否则崩在中间会留下一条没有 run 的孤儿账。
+    """
+    call_id = call_id_factory(project_id)
+    if not isinstance(call_id, str) or not call_id:
+        raise ValueError("call id factory must return a non-empty string")
+    if not capability or not isinstance(capability, str):
+        raise ValueError("capability must be a non-empty string")
+    conn.execute(
+        """
+        INSERT INTO model_call (
+            id, project_id, capability, model, params_json, prompt_hash,
+            in_artifact, chapter_number, ms,
+            call_state, error_type, error_message, finished_at
+        ) VALUES (?, ?, ?, ?, '{}', ?, ?, ?, ?, 'FAILED', ?, ?,
+                  strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+        """,
+        (
+            call_id,
+            project_id,
+            capability,
+            model or "unknown",
+            prompt_hash,
+            artifact_id(prompt_bytes),
+            chapter_number,
+            elapsed_ms,
+            error_type,
+            error_message,
+        ),
+    )
+    return call_id
+
+
 def record_receipt(
     conn: Connection,
     receipt: ModelCallReceipt,
@@ -228,7 +304,7 @@ def record_model_call(
         call_id = record_call(
             conn,
             project_id=run.project_id,
-            capability="extractor",
+            capability=EXTRACTOR_CAPABILITY,
             model=completion.model,
             finish_reason=completion.finish_reason,
             schema_version=run.schema_version,

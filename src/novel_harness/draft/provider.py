@@ -77,8 +77,84 @@ _OPENAI_OFFICIAL_HOSTS = frozenset({"api.openai.com"})
 """
 
 
+class ProviderFailureKind(StrEnum):
+    """这一次调用**是哪一类失败**。判据是 **HTTP 状态码**，不是错误文案。
+
+    ── 为什么按状态码分，而不是读 provider 那句话 ────────────────────────
+
+    2026-08-25 实测：`opencode.ai/zen/v1` 的余额耗尽返回的是
+    `401 {'type':'CreditsError','message':'Insufficient balance…'}`——
+    **一个鉴权状态码装着一件计费的事**。而作者屏幕上那句话当时写的是
+    「没能连上你配置的模型服务」，于是排查方向从头就是错的：连上了，是账走错门。
+
+    但**不许去解析那段文案**：「Insufficient balance」「quota exceeded」
+    「余额不足」每家写法都不一样，认那段字就是回答「这句话是什么意思」——
+    ADR 0005 在 v1 里禁止本仓库长出这种能力，而一张漏了的关键词表会**静默**地
+    把一类失败归错档。状态码是协议规定的，各家一致。
+
+    ⚠️ **这几个值会走到小说作者的屏幕上**（经 `activity._RUN_ERROR_LABEL` 翻成中文），
+    所以它们是封闭枚举而不是开放字符串——同 `ExtractionErrorCode` 的理由。
+    """
+
+    AUTH = "auth"
+    """401 / 403：钥匙不对，或者这把钥匙用不了这个地址。
+
+    **余额耗尽今天也落在这一档**（上面那条实测），所以作者的话里两件事都要提到。
+    """
+
+    QUOTA = "quota"
+    """402 / 429：额度、余额或频率的问题。要去服务商后台看，不是改配置。"""
+
+    UNREACHABLE = "unreachable"
+    """连不上：DNS、拒连、超时（408）。**这一档才是「没能连上」那句话的真正对象。**"""
+
+    UPSTREAM = "upstream"
+    """5xx：对方服务出问题了，过一会儿再试。"""
+
+    UNKNOWN = "unknown"
+    """既没有状态码也不是连接错误。**不猜**——归到这一档，让作者看到一句诚实的
+    「说不清为什么」，而不是一句听起来很具体的假话。"""
+
+
+def _failure_kind(exc: BaseException) -> ProviderFailureKind:
+    """把一个 provider 异常归档。**只看状态码和异常类型，一个字都不读。**"""
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, int):
+        if status in (401, 403):
+            return ProviderFailureKind.AUTH
+        if status in (402, 429):
+            return ProviderFailureKind.QUOTA
+        if status == 408:
+            return ProviderFailureKind.UNREACHABLE
+        if 500 <= status < 600:
+            return ProviderFailureKind.UPSTREAM
+        return ProviderFailureKind.UNKNOWN
+    # openai SDK 的连接/超时异常没有状态码——它们都是 `APIConnectionError` 的子类
+    # （`APITimeoutError` 也是），所以这一条把它们一起收了。
+    #
+    # **import 写在函数里**，和 `_build_client` 同一条理由：这个模块不该在 import 时
+    # 就把 openai 拉起来。这儿是错误路径，一次懒加载的开销无所谓；
+    # 而 openai 装坏了的时候，归档失败不该盖住原来那个异常，所以整段兜住。
+    try:
+        from openai import APIConnectionError
+
+        if isinstance(exc, APIConnectionError):
+            return ProviderFailureKind.UNREACHABLE
+    except ImportError:  # pragma: no cover - openai 是声明依赖
+        pass
+    return ProviderFailureKind.UNKNOWN
+
+
 class ProviderError(RuntimeError):
-    """模型调用失败(网络、鉴权、供应商 4xx/5xx)统一收敛成这一个,调用方不必认识 openai 的异常类型。"""
+    """模型调用失败(网络、鉴权、供应商 4xx/5xx)统一收敛成这一个,调用方不必认识 openai 的异常类型。
+
+    `kind` 是**给调用方分档用的**（`ProviderFailureKind`），`str(self)` 那句话照旧是
+    写给维护者的诊断——**它永远不上作者的屏幕**（同 `ExtractionRunError.message`）。
+    """
+
+    def __init__(self, message: str, *, kind: ProviderFailureKind = ProviderFailureKind.UNKNOWN) -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
 def _model_family(model: str) -> str:
@@ -823,7 +899,8 @@ def complete(
             )
         except Exception as retry_exc:
             raise ProviderError(
-                f"模型调用失败(model={config.model}, base_url={config.base_url}):{retry_exc}"
+                f"模型调用失败(model={config.model}, base_url={config.base_url}):{retry_exc}",
+                kind=_failure_kind(retry_exc),
             ) from retry_exc
 
     try:
@@ -844,5 +921,6 @@ def complete(
             _NO_STREAM.add(route)
             return retry("stream", streamed=False, fell_back=True)
         raise ProviderError(
-            f"模型调用失败(model={config.model}, base_url={config.base_url}):{exc}"
+            f"模型调用失败(model={config.model}, base_url={config.base_url}):{exc}",
+            kind=_failure_kind(exc),
         ) from exc

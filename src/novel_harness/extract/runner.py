@@ -6,10 +6,11 @@ from collections.abc import Callable
 from typing import Final
 from hashlib import sha256
 import json
+from dataclasses import dataclass
 from time import perf_counter
 
 from ..db import Connection
-from ..draft.provider import CompletionResult
+from ..draft.provider import CompletionResult, ProviderFailureKind
 from ..graph import ChapterText
 from ..graph.sqlite_events import SqliteEventStore
 from ..graph.sqlite_proposals import SqliteProposalStore
@@ -17,7 +18,7 @@ from ..graph.sqlite_store import SqliteStoryGraph
 from ..ids import EntityType, new_id
 from .analyze import parse_analysis
 from .auto_canon import promote_clean_facts
-from .call_audit import record_model_call
+from .call_audit import EXTRACTOR_CAPABILITY, record_failed_call, record_model_call
 from .control import (
     RUN_COLUMNS,
     AnalysisRequest,
@@ -55,6 +56,75 @@ def _default_run_id(project_id: str) -> str:
 
 def _default_call_id(project_id: str) -> str:
     return new_id(EntityType.CALL, project_id)
+
+
+@dataclass(frozen=True, slots=True)
+class _FailedCall:
+    """一次**没答上来**的调用，记账要的那几个字段。
+
+    `model` 是 `None`：这一层拿不到 provider 那一侧最终用的模型名（那是 `analyzer`
+    闭包里的事），而**编一个比留空更糟**——账上一个错的模型名会让「这本书是用哪个
+    模型跑的」这个问题永远答错。`record_failed_call` 会把它落成 `'unknown'`。
+    """
+
+    project_id: str
+    model: str | None
+    prompt_hash: str | None
+    prompt_bytes: bytes
+    elapsed_ms: int
+    error_type: str
+    error_message: str
+    chapter_number: int | None
+
+
+# ── provider 失败的五档，**每一档一个字面量**（2026-08-25）────────────────────
+#
+# 写成一张字面量表而不是一次 `.get()` 拼装，是因为
+# `tests/test_wording_guard.py::_runner_error_literals` 用 **AST** 扫这个文件里
+# 每一处 `ExtractionRunError(code=枚举, message=字面量)`，再和枚举成员对齐。
+# 拼装出来的码在那个扫描器眼里根本不存在 —— 于是「新加一种失败方式却忘了给它一句
+# 中文」这件事会静默通过，而那正是这张表要拦的。
+#
+# ⚠️ `message` 是写给**维护者**的英文诊断，而且**必须是固定字面量**：
+# `tests/test_extract_runner.py::test_provider_exception_fails_without_graph_writes_or_retry`
+# 钉着「provider 那句原话不许进 `errors_json`」—— 那份 JSON 会整份发给浏览器，
+# 而 provider 的错误文案里可能带着请求内容甚至 key 片段。
+# **原话只进 `model_call.error_message`**（那一列全仓没有任何读端发给前端）。
+_PROVIDER_ERRORS: Final[dict[str, ExtractionRunError]] = {
+    ProviderFailureKind.AUTH: ExtractionRunError(
+        code=ExtractionErrorCode.PROVIDER_AUTH,
+        message="chapter analysis provider rejected the credentials",
+    ),
+    ProviderFailureKind.QUOTA: ExtractionRunError(
+        code=ExtractionErrorCode.PROVIDER_QUOTA,
+        message="chapter analysis provider reported no quota or balance",
+    ),
+    ProviderFailureKind.UNREACHABLE: ExtractionRunError(
+        code=ExtractionErrorCode.PROVIDER_UNREACHABLE,
+        message="chapter analysis provider could not be reached",
+    ),
+    ProviderFailureKind.UPSTREAM: ExtractionRunError(
+        code=ExtractionErrorCode.PROVIDER_UPSTREAM,
+        message="chapter analysis provider returned a server error",
+    ),
+}
+
+_PROVIDER_UNKNOWN: Final = ExtractionRunError(
+    code=ExtractionErrorCode.PROVIDER_FAILURE,
+    message="chapter analysis provider failed",
+)
+"""**说不清是哪一档**。它同时是 2026-08-25 之前所有 provider 失败写的那个码，
+所以老行读得回来（`errors_json` 是 append-only 的审计资产）。"""
+
+
+def _provider_error(exc: BaseException) -> ExtractionRunError:
+    """provider 异常 → 这一次该记哪个码。**分档在 provider 那一层，这里只查表。**
+
+    判据是 HTTP 状态码（`draft.provider.ProviderFailureKind`，那儿写了为什么不读文案）。
+    拿不到 `kind`（不是 `ProviderError`，比如 analyzer 自己抛了 TypeError）就落到
+    `PROVIDER_FAILURE` —— **一句诚实的「说不清」，不是一句听起来很具体的假话**。
+    """
+    return _PROVIDER_ERRORS.get(getattr(exc, "kind", None), _PROVIDER_UNKNOWN)
 
 
 class ExtractionRunner:
@@ -244,13 +314,24 @@ class ExtractionRunner:
                 completion = self._analyzer(request)
                 if not isinstance(completion, CompletionResult):
                     raise TypeError("analyzer must return CompletionResult")
-            except Exception:
+            except Exception as exc:
+                # **没答上来的那一次也要记一行**（2026-08-25）：`model_call` 那两列
+                # `error_type` / `error_message` 在这条路上一次都没填过，于是作者
+                # 每一次失败的尝试在账上都不存在——而失败的调用照样可能计费。
+                # 记账和标 run 在**同一个事务**里（`_mark_failed` 收口）。
                 return self._mark_failed(
                     conn,
                     run_id,
-                    ExtractionRunError(
-                        code=ExtractionErrorCode.PROVIDER_FAILURE,
-                        message="chapter analysis provider failed",
+                    _provider_error(exc),
+                    failed_call=_FailedCall(
+                        project_id=claimed.project_id,
+                        model=None,
+                        prompt_hash=claimed.prompt_hash,
+                        prompt_bytes=request.prompt_bytes,
+                        elapsed_ms=max(0, int((perf_counter() - started) * 1_000)),
+                        error_type=str(getattr(exc, "kind", "") or type(exc).__name__),
+                        error_message=str(exc)[:2000],
+                        chapter_number=claimed.chapter_number,
                     ),
                 )
             elapsed_ms = max(0, int((perf_counter() - started) * 1_000))
@@ -526,7 +607,14 @@ class ExtractionRunner:
         conn: Connection,
         run_id: str,
         error: ExtractionRunError,
+        *,
+        failed_call: _FailedCall | None = None,
     ) -> ExtractionRun:
+        """把 run 标 FAILED。给了 `failed_call` 就**在同一个事务里**补一行账。
+
+        同一个事务不是洁癖：崩在两步之间的话，要么留下一条没有 run 的孤儿账，
+        要么留下一次「失败了但账上没有」——而后者正是这一刀要修的东西。
+        """
         errors_json = json.dumps(
             [error.model_dump(mode="json")],
             sort_keys=True,
@@ -534,6 +622,20 @@ class ExtractionRunner:
         )
         try:
             conn.execute("BEGIN IMMEDIATE")
+            if failed_call is not None:
+                record_failed_call(
+                    conn,
+                    project_id=failed_call.project_id,
+                    capability=EXTRACTOR_CAPABILITY,
+                    model=failed_call.model,
+                    prompt_hash=failed_call.prompt_hash,
+                    prompt_bytes=failed_call.prompt_bytes,
+                    elapsed_ms=failed_call.elapsed_ms,
+                    error_type=failed_call.error_type,
+                    error_message=failed_call.error_message,
+                    chapter_number=failed_call.chapter_number,
+                    call_id_factory=self._new_call_id,
+                )
             changed = conn.execute(
                 """
                 UPDATE extraction_run

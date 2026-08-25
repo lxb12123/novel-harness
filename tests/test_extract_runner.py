@@ -420,11 +420,103 @@ def test_provider_exception_fails_without_graph_writes_or_retry(seed: Seed) -> N
     assert calls == 1
     assert failed.model_call_id is None
     assert failed.errors[0].code == "provider_failure"
+    # **provider 那句原话不许进 `errors_json`**：那份 JSON 会整份发给浏览器，
+    # 而 provider 的错误文案里可能带着请求内容甚至 key 片段。原话只进
+    # `model_call.error_message`（见下面那条）。
     assert "secret provider detail" not in failed.errors[0].message
     conn = seed.connection()
-    assert conn.execute("SELECT COUNT(*) FROM model_call").fetchone()[0] == 0
+    # ⚠️ 2026-08-25 之前这一行断言的是 `== 0`。**那正是这次要修的东西**：
+    # 失败的调用照样可能计费，而账上一行都没有。见下面那条专门的测试。
+    assert conn.execute("SELECT COUNT(*) FROM model_call").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM evidence").fetchone()[0] == 0
     conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# provider 失败：记账 + 分档（2026-08-25，真书上撞出来的）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_a_failed_provider_call_still_lands_one_row_in_the_ledger(seed: Seed) -> None:
+    """**没答上来的那一次也要记一行。**
+
+    2026-08-25 真书实测：跑一次失败的抽取，`model_call` 跑前 6 行、跑后还是 6 行
+    ——那两列 `error_type` / `error_message` 在这条路上一次都没填过。
+    **失败的调用照样可能计费**（按请求计、按已生成 token 计的供应商都有），
+    而账本上看不见的钱是查不出来的钱。
+    """
+    from novel_harness.draft.provider import ProviderError, ProviderFailureKind
+
+    def explode(_chapter):
+        raise ProviderError("模型调用失败:余额不足", kind=ProviderFailureKind.QUOTA)
+
+    runner = _runner(seed, explode)
+    failed = runner.run(runner.enqueue(seed.project_id, 3).id)
+    assert failed.status is ExtractionRunStatus.FAILED
+
+    conn = seed.connection()
+    try:
+        rows = conn.execute(
+            "SELECT capability, call_state, error_type, error_message, chapter_number, "
+            "in_artifact, out_artifact, tokens_in, tokens_out, cost FROM model_call"
+        ).fetchall()
+        assert len(rows) == 1, f"失败的调用没进账：{rows}"
+        row = rows[0]
+        assert row["call_state"] == "FAILED"
+        assert row["capability"] == "extractor"
+        assert row["chapter_number"] == 3
+        assert row["error_type"] == ProviderFailureKind.QUOTA
+        assert "余额不足" in row["error_message"], "原话没进账 —— 那就查不出是为什么失败的"
+        # prompt 是我们自己发出去的，哈希是确定的：「这一次发的是哪一份 prompt」
+        # 正是事后排查要问的第一个问题。
+        assert row["in_artifact"], "连发出去的那份 prompt 都没记"
+        # **没答上来就是没有这些数**：绝不估（同「供应商报没报」那条规矩）。
+        assert (row["out_artifact"], row["tokens_in"], row["tokens_out"], row["cost"]) == (
+            None, None, None, None,
+        )
+    finally:
+        conn.close()
+
+
+def test_the_run_says_which_kind_of_provider_failure_it_was(seed: Seed) -> None:
+    """401 和「连不上」不是同一件事，作者屏幕上也不许是同一句话。
+
+    这一条钉的是那次实测：`opencode.ai/zen/v1` 余额耗尽返回 **401**，
+    而屏幕上写的是「没能连上你配置的模型服务」——连上了，是账走错门，
+    作者被那句话指去查网络和地址，查一天查不出来。
+
+    分档判据在 `draft.provider.ProviderFailureKind`（**只看状态码，不读文案**）。
+    """
+    from novel_harness.activity import run_error_label
+    from novel_harness.draft.provider import ProviderError, ProviderFailureKind
+
+    seen: dict[ProviderFailureKind, str] = {}
+    for index, kind in enumerate(ProviderFailureKind):
+        def explode(_chapter, _kind=kind):
+            raise ProviderError("boom", kind=_kind)
+
+        # **每一档一个新的 call id**：失败现在也记账了，共用一个固定 id 会在第二档
+        # 撞 `model_call` 的主键——那本身就是「这一行真的写进去了」的旁证。
+        runner = _runner(seed, explode, call_id_factory=lambda _pid, i=index: f"call:{i}")
+        failed = runner.run(runner.enqueue(seed.project_id, 3, force=True).id)
+        seen[kind] = failed.errors[0].code
+
+    # 五档各自一个码，一个都不许重。
+    assert len(set(seen.values())) == len(ProviderFailureKind), seen
+    assert seen[ProviderFailureKind.AUTH] == "provider_auth"
+    assert seen[ProviderFailureKind.QUOTA] == "provider_quota"
+    assert seen[ProviderFailureKind.UNKNOWN] == "provider_failure"
+
+    # 屏幕上那几句话也各不相同，且**都不出现 HTTP 状态码**（那是机器码）。
+    said = {run_error_label(code) for code in seen.values()}
+    assert len(said) == len(seen), f"两档翻成了同一句话：{said}"
+    import re
+
+    for text in said:
+        assert not re.search(r"\b[45]\d\d\b", text), f"作者的话里出现了状态码：{text}"
+    # 「没能连上」这句只许留给真的连不上那一档。
+    assert run_error_label("provider_unreachable") == "没能连上你配置的模型服务"
+    assert "连上" not in run_error_label("provider_quota")
 
 
 def test_ingest_failure_rolls_back_business_data_but_retains_model_history(

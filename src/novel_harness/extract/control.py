@@ -48,7 +48,29 @@ class ExtractionErrorCode(StrEnum):
     """
 
     PROMPT_DRIFT = "prompt_drift"
+
+    # ── provider 那一类：**按 HTTP 状态码分档**（2026-08-25）─────────────────
+    #
+    # 从前只有一个 `PROVIDER_FAILURE`，屏幕上翻成「没能连上你配置的模型服务」。
+    # 真书上撞到的那一次：`opencode.ai/zen/v1` 余额耗尽返回 **401**
+    # `{'type':'CreditsError','message':'Insufficient balance…'}` ——
+    # 连上了，是账走错门，而作者被那句话指去查网络和地址，查一天查不出来。
+    #
+    # 分档的判据在 `draft.provider.ProviderFailureKind`（**只看状态码，不读文案**，
+    # 那儿写了为什么）。这里一个 kind 一个 code，是为了让
+    # `activity._RUN_ERROR_LABEL` 那张表能一对一地翻——那是措辞的唯一出处。
+    PROVIDER_AUTH = "provider_auth"
+    PROVIDER_QUOTA = "provider_quota"
+    PROVIDER_UNREACHABLE = "provider_unreachable"
+    PROVIDER_UPSTREAM = "provider_upstream"
+
     PROVIDER_FAILURE = "provider_failure"
+    """**说不清是哪一档**（没有状态码，也不是连接错误）。
+
+    它同时是**老行的那个码**：2026-08-25 之前所有 provider 失败都写它，
+    而这一列是 append-only 的审计资产，那些行永远读得回来。
+    """
+
     CALL_RECORD_FAILURE = "call_record_failure"
     ANALYSIS_FORMAT = "analysis_format"
     INGEST_FAILURE = "ingest_failure"

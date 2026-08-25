@@ -533,7 +533,22 @@ _NODE_LABEL: Final[dict[str, str]] = {
 
 _RUN_ERROR_LABEL: Final[dict[str, str]] = {
     ExtractionErrorCode.PROMPT_DRIFT: "这一章在排队期间被改过，整理没有继续（重新整理一次即可）",
-    ExtractionErrorCode.PROVIDER_FAILURE: "没能连上你配置的模型服务",
+    # ── provider 那四档 + 兜底（2026-08-25）──────────────────────────────
+    #
+    # 这五句从前是**一句**：「没能连上你配置的模型服务」。真书上撞到的那一次是
+    # 401 CreditsError（余额耗尽），连上了，而作者被那句话指去查网络和地址。
+    # **一句听起来很具体的假话，比一句诚实的「说不清」贵得多。**
+    #
+    # 分档判据在 `draft.provider.ProviderFailureKind`（只看 HTTP 状态码，不读文案）。
+    # **这几句里一个状态码都不许出现**——那是机器码，同这张表的整条规矩。
+    ExtractionErrorCode.PROVIDER_AUTH: (
+        "模型服务没接受你的密钥。可能是密钥不对，也可能是这把密钥用不了你填的那个地址"
+        "——有些服务商按套餐分了不同的地址"
+    ),
+    ExtractionErrorCode.PROVIDER_QUOTA: "你在模型服务商那儿的额度或余额不够了，去他们的后台看一眼",
+    ExtractionErrorCode.PROVIDER_UNREACHABLE: "没能连上你配置的模型服务",
+    ExtractionErrorCode.PROVIDER_UPSTREAM: "模型服务那边出了问题，过一会儿再试",
+    ExtractionErrorCode.PROVIDER_FAILURE: "这一次没能调用模型，而系统没能说清是为什么",
     ExtractionErrorCode.CALL_RECORD_FAILURE: "模型答了，但这次调用没能记进账里，整理没有继续",
     ExtractionErrorCode.ANALYSIS_FORMAT: "模型这次答的东西读不出来",
     ExtractionErrorCode.INGEST_FAILURE: "整理结果没能写进这本书，这一章维持原样",
