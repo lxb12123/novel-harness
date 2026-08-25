@@ -56,18 +56,15 @@ from novel_harness.graph import (
     EvidenceStatus,
     HealthValue,
     InformationScope,
-    KnowledgeState,
     Node,
     NodeLabel,
-    NodeNotFound,
     NodeProps,
-    StoreError,
     StoryGraph,
 )
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
+from novel_harness.panel import character_state
 from novel_harness.graph.store import ChapterWriteConflict
 from novel_harness.text.chapterize import chapterize
-from novel_harness.panel import knowledge_matrix
 
 PID = "project:conf:01J0"
 SHA = "c" * 64
@@ -283,310 +280,24 @@ def test_both_backends_satisfy_the_protocol(matrix_store: Build, rules_store: Bu
 # ══════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.parametrize(
-    ("chapter", "expected"),
-    [
-        (87, KnowledgeState.UNKNOWN),
-        (88, KnowledgeState.KNOWS),
-        (152, KnowledgeState.KNOWS),
-    ],
-)
-def test_knows_since_chapter_88(
-    matrix_store: Build, chapter: int, expected: KnowledgeState
-) -> None:
-    """§8 Day 5 点名的那条。**这一条此前只在 Fake 上绿过。**"""
-    store = matrix_store(World(edges=(_edge(XIAO_JUE, BLOODLINE, EdgeType.KNOWS, 88),)))
-
-    cell = knowledge_matrix(store, PID, chapter, [XIAO_JUE.id], secrets=[BLOODLINE.id]).cell(
-        XIAO_JUE.id, BLOODLINE.id
-    )
-
-    assert cell.state is expected
-    # ch87 那格不许带 since_chapter，否则面板渲染出「✗ 不知道 (ch88)」这种自相矛盾的东西。
-    assert cell.since_chapter == (88 if expected is KnowledgeState.KNOWS else None)
-
-
-def test_believes_carries_believed_value(matrix_store: Build) -> None:
-    store = matrix_store(
-        World(
-            edges=(
-                _edge(
-                    LI_GUANJIA, BLOODLINE, EdgeType.BELIEVES, 103, believed_value="以为已泄露"
-                ),
-            )
-        )
-    )
-
-    cell = knowledge_matrix(store, PID, 152, [LI_GUANJIA.id], secrets=[BLOODLINE.id]).cell(
-        LI_GUANJIA.id, BLOODLINE.id
-    )
-
-    assert cell.state is KnowledgeState.BELIEVES
-    assert cell.believed_value == "以为已泄露"
-    assert cell.since_chapter == 103
-
-
-def test_evidence_id_reaches_the_cell(matrix_store: Build) -> None:
-    """FRESH 的边照常开火，且它的 evidence_id 要能到面板——「✓ 知道 (ch88)」旁边那个
-    可以点回原文的指针（ADR 0006 的双指针）就靠它。"""
-    store = matrix_store(
-        World(
-            edges=(
-                _edge(
-                    XIAO_JUE, BLOODLINE, EdgeType.KNOWS, 88,
-                    evidence_id=EV, evidence_status=EvidenceStatus.FRESH,
-                ),
-            )
-        )
-    )
-
-    cell = knowledge_matrix(store, PID, 152, [XIAO_JUE.id], secrets=[BLOODLINE.id]).cell(
-        XIAO_JUE.id, BLOODLINE.id
-    )
-
-    assert cell.state is KnowledgeState.KNOWS
-    assert cell.evidence_id == EV
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 2. 闭世界：无 KNOWS 边 ⇒ UNKNOWN。全库零 DOES_NOT_KNOW 边，那是设计（ADR 0005）。
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def test_closed_world_unknown_cells_are_materialized(matrix_store: Build) -> None:
-    """零 KNOWS 边 ⇒ 每一格都是 UNKNOWN，且**每一格都存在**。
-
-    「没有这一格」和「他不知道」是两个意思。面板上少一格 = 作者以为系统没意见 = 说漏嘴。
-    """
-    store = matrix_store(World())
-
-    matrix = knowledge_matrix(store, PID, 152, [XIAO_JUE.id, GU_QINGYIN.id])
-
-    assert len(matrix.cells) == len(matrix.characters) * len(matrix.secrets) == 4
-    assert {c.state for c in matrix.cells} == {KnowledgeState.UNKNOWN}
-    assert {c.since_chapter for c in matrix.cells} == {None}
-
-
-def test_closed_world_needs_no_does_not_know_edge(matrix_store: Build) -> None:
-    """UNKNOWN 是**推导**，不是一条边。萧决知道血脉秘密、对玄铁令一无所知——
-    后者那一格没有任何边支撑它，它照样必须是一个断言。"""
-    store = matrix_store(World(edges=(_edge(XIAO_JUE, BLOODLINE, EdgeType.KNOWS, 88),)))
-
-    matrix = knowledge_matrix(store, PID, 152, [XIAO_JUE.id], secrets=[BLOODLINE.id, XUANTIE.id])
-
-    assert matrix.cell(XIAO_JUE.id, BLOODLINE.id).state is KnowledgeState.KNOWS
-    assert matrix.cell(XIAO_JUE.id, XUANTIE.id).state is KnowledgeState.UNKNOWN
-
-
-def test_cast_and_secret_order_is_the_panel_layout(matrix_store: Build) -> None:
-    """行序 = 作者写的 cast 顺序，列序 = 传入的 secrets 顺序。面板逐格核对靠它对得上。"""
-    cast = [LI_GUANJIA.id, XIAO_JUE.id, GU_QINGYIN.id]
-
-    matrix = knowledge_matrix(matrix_store(World()), PID, 152, cast, secrets=[XUANTIE.id])
-
-    assert [c.id for c in matrix.characters] == cast
-    assert [s.id for s in matrix.secrets] == [XUANTIE.id]
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 3. KNOWS 压 BELIEVES
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def test_knows_overrides_believes_when_both_exist(matrix_store: Build) -> None:
-    """两条边都有效时，真知道了就不再是错误认知（§8 Day 5 的 CASE WHEN 顺序）。
-
-    (人,秘密) 的 exclusivity 是 single_per_src_dst，而它是**按 type 分组**的——所以
-    KNOWS 和 BELIEVES 谁也挤不掉谁，这一格靠的是投影时的优先级，不是 supersede。
-    压错方向的产物是：面板告诉作者「李管家以为已泄露」，而他其实**真的知道**，
-    于是这一场的 must_not_reveal 少了一条。
-    """
-    store = matrix_store(
-        World(
-            edges=(
-                _edge(LI_GUANJIA, BLOODLINE, EdgeType.BELIEVES, 103, believed_value="以为已泄露"),
-                _edge(LI_GUANJIA, BLOODLINE, EdgeType.KNOWS, 120),
-            )
-        )
-    )
-
-    cell = knowledge_matrix(store, PID, 152, [LI_GUANJIA.id], secrets=[BLOODLINE.id]).cell(
-        LI_GUANJIA.id, BLOODLINE.id
-    )
-
-    assert cell.state is KnowledgeState.KNOWS
-    assert cell.since_chapter == 120
-    # believed_value 只属于 BELIEVES。KNOWS 那一格带着它 = 面板同时显示两个互斥状态。
-    assert cell.believed_value is None
-
-
-def test_believes_still_shows_before_he_actually_knows(matrix_store: Build) -> None:
-    """反面：KNOWS 从 ch120 起才有效，ch119 那一格必须还是错误认知。
-    压 BELIEVES 是**时态之后**的事——先过五条件，再谈优先级。
-    """
-    store = matrix_store(
-        World(
-            edges=(
-                _edge(LI_GUANJIA, BLOODLINE, EdgeType.BELIEVES, 103, believed_value="以为已泄露"),
-                _edge(LI_GUANJIA, BLOODLINE, EdgeType.KNOWS, 120),
-            )
-        )
-    )
-
-    cell = knowledge_matrix(store, PID, 119, [LI_GUANJIA.id], secrets=[BLOODLINE.id]).cell(
-        LI_GUANJIA.id, BLOODLINE.id
-    )
-
-    assert cell.state is KnowledgeState.BELIEVES
-    assert cell.believed_value == "以为已泄露"
-
-
 # ══════════════════════════════════════════════════════════════════════════
 # 4. 闭开区间 [valid_from, valid_to)
 # ══════════════════════════════════════════════════════════════════════════
-
-
-@pytest.mark.parametrize(
-    ("chapter", "hit"),
-    [(9, False), (10, True), (142, True), (143, False), (150, False)],
-)
-def test_closed_open_interval_boundary_on_knows(
-    matrix_store: Build, chapter: int, hit: bool
-) -> None:
-    """vf=10, vt=143 → ch9 ✗ / ch10 ✓ / ch142 ✓ / **ch143 ✗** / ch150 ✗。
-
-    ch143 是全组唯一有价值的一个：`valid_to > :ch` 写成 `>=` 只在这一章上错。
-    test_state_at.py 已经在真库上把这五个数钉在 LOCATED_AT 上了——这里钉的是
-    `knowledge_edges_at`，**它是另一条 SQL**，共享的只有 TEMPORAL_WHERE 那个常量。
-    哪天有人在那条 SQL 里手写一遍条件（而不是拼常量），这一条会红。
-    """
-    store = matrix_store(
-        World(edges=(_edge(XIAO_JUE, BLOODLINE, EdgeType.KNOWS, 10, valid_to=143),))
-    )
-
-    cell = knowledge_matrix(store, PID, chapter, [XIAO_JUE.id], secrets=[BLOODLINE.id]).cell(
-        XIAO_JUE.id, BLOODLINE.id
-    )
-
-    assert (cell.state is KnowledgeState.KNOWS) is hit
-    assert cell.since_chapter == (10 if hit else None)
-
-
-def test_open_ended_knows_holds_forever(matrix_store: Build) -> None:
-    store = matrix_store(World(edges=(_edge(XIAO_JUE, BLOODLINE, EdgeType.KNOWS, 88),)))
-
-    def state(ch: int) -> KnowledgeState:
-        return knowledge_matrix(store, PID, ch, [XIAO_JUE.id], secrets=[BLOODLINE.id]).cell(
-            XIAO_JUE.id, BLOODLINE.id
-        ).state
-
-    assert state(87) is KnowledgeState.UNKNOWN
-    assert state(88) is KnowledgeState.KNOWS
-    # 上界不管是对的：超过全书章数返回「最新状态」是闭开区间的正确语义。
-    assert state(99999) is KnowledgeState.KNOWS
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 5. 另外三个条件：PROVISIONAL / STALE / RETRACTED 一律不开火
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def test_provisional_never_leaks_into_the_canon_matrix(matrix_store: Build) -> None:
-    """PROVISIONAL「永不断言为真」：默认那次查询里它必须完全不存在，
-    灰显是**第二次调用**，不是混在同一份结果里。"""
-    prov = InformationScope.PROVISIONAL
-    store = matrix_store(
-        World(edges=(_edge(XIAO_JUE, BLOODLINE, EdgeType.KNOWS, 88, scope=prov),))
-    )
-
-    canon = knowledge_matrix(store, PID, 152, [XIAO_JUE.id], secrets=[BLOODLINE.id])
-    grey = knowledge_matrix(store, PID, 152, [XIAO_JUE.id], secrets=[BLOODLINE.id], scope=prov)
-
-    assert canon.cell(XIAO_JUE.id, BLOODLINE.id).state is KnowledgeState.UNKNOWN
-    assert grey.cell(XIAO_JUE.id, BLOODLINE.id).state is KnowledgeState.KNOWS
-
-
-def test_canon_and_provisional_rows_coexist_without_mixing(matrix_store: Build) -> None:
-    """同一个 (人,秘密) 两层各一行是必须允许的（幂等键含 information_scope）。
-    两层的查询互不串味——串了就是抽取器的猜测污染了 Canon。"""
-    prov = InformationScope.PROVISIONAL
-    store = matrix_store(
-        World(
-            edges=(
-                _edge(LI_GUANJIA, BLOODLINE, EdgeType.BELIEVES, 103, believed_value="以为已泄露"),
-                _edge(LI_GUANJIA, BLOODLINE, EdgeType.KNOWS, 88, scope=prov),
-            )
-        )
-    )
-
-    canon = knowledge_matrix(store, PID, 152, [LI_GUANJIA.id], secrets=[BLOODLINE.id])
-    grey = knowledge_matrix(store, PID, 152, [LI_GUANJIA.id], secrets=[BLOODLINE.id], scope=prov)
-
-    assert canon.cell(LI_GUANJIA.id, BLOODLINE.id).state is KnowledgeState.BELIEVES
-    assert grey.cell(LI_GUANJIA.id, BLOODLINE.id).state is KnowledgeState.KNOWS
-
-
-def test_stale_evidence_stops_firing(matrix_store: Build) -> None:
-    """ADR 0006：依据被作者改没了 ⇒ 立刻停火。这条边等于不存在。"""
-    store = matrix_store(
-        World(
-            edges=(
-                _edge(
-                    XIAO_JUE, BLOODLINE, EdgeType.KNOWS, 88,
-                    evidence_id=EV, evidence_status=EvidenceStatus.STALE,
-                ),
-            )
-        )
-    )
-
-    matrix = knowledge_matrix(store, PID, 152, [XIAO_JUE.id], secrets=[BLOODLINE.id])
-
-    assert matrix.cell(XIAO_JUE.id, BLOODLINE.id).state is KnowledgeState.UNKNOWN
-
-
-def test_author_declared_edge_without_evidence_survives_the_stale_filter(
-    matrix_store: Build,
-) -> None:
-    """`evidence_status='NONE'` 是哨兵值不是「空」。
-
-    真库那一半才是这条的意义：SQL 里 `NULL != 'STALE'` 在三值逻辑下求值为 NULL 即假，
-    那一列若可空，`knowledge_edges_at` 会**静默丢掉每一条作者声明的无证据边**——
-    而作者声明正是整个产品（ADR 0004）。Fake 用的是 Python 的 `is not`，它天然测不到这个。
-    """
-    store = matrix_store(World(edges=(_edge(XIAO_JUE, BLOODLINE, EdgeType.KNOWS, 88),)))
-
-    cell = knowledge_matrix(store, PID, 152, [XIAO_JUE.id], secrets=[BLOODLINE.id]).cell(
-        XIAO_JUE.id, BLOODLINE.id
-    )
-
-    assert cell.state is KnowledgeState.KNOWS
-    assert cell.evidence_id is None
-
-
-def test_retracted_edge_stops_firing(matrix_store: Build) -> None:
-    """同章更正撤回的边不算数（status 与时态正交）。"""
-    store = matrix_store(
-        World(
-            edges=(
-                _edge(XIAO_JUE, BLOODLINE, EdgeType.KNOWS, 88, status=EdgeStatus.RETRACTED),
-            )
-        )
-    )
-
-    matrix = knowledge_matrix(store, PID, 152, [XIAO_JUE.id], secrets=[BLOODLINE.id])
-
-    assert matrix.cell(XIAO_JUE.id, BLOODLINE.id).state is KnowledgeState.UNKNOWN
 
 
 @pytest.mark.parametrize("scope", [InformationScope.PLANNED, InformationScope.REJECTED])
 def test_planned_and_rejected_have_no_read_path(
     matrix_store: Build, scope: InformationScope
 ) -> None:
-    """改 7：泄漏在**物理上**不可能，不是「大概率不会」。"""
+    """改 7：泄漏在**物理上**不可能，不是「大概率不会」。
+
+    （载体 2026-08-24 从认知矩阵换成了人物状态卡——矩阵随秘密下线删了，而这道闸
+    `require_queryable_scope` 一个字没改，它现在住在 `panel/scope.py`。）
+    """
     store = matrix_store(World())
 
     with pytest.raises(ValueError, match="不可读"):
-        knowledge_matrix(store, PID, 152, [XIAO_JUE.id], scope=scope)
+        character_state(store, PID, XIAO_JUE.id, 152, scope=scope)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -688,100 +399,6 @@ def test_r3_stops_firing_on_stale_evidence(rules_store: Build) -> None:
 
 def test_r3_never_fires_on_retracted(rules_store: Build) -> None:
     assert check(_r3_ctx(rules_store(_dead_world(status=EdgeStatus.RETRACTED)))) == []
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 7. real only —— Fake 够不着的那些
-#
-# 下面每一条都不是「懒得给 Fake 实现」：它们要么是 SQL 的属性（ORDER BY），要么是
-# sqlite_store 在 Fake 之外多做的入参校验/守卫。Fake 是**参考实现**不是生产实现，
-# 给它补上这些只会让它更像一份手抄本。审计点名的「生产路径未覆盖」，余数就在这一节。
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def test_secret_ids_default_order_is_the_declaration_order(
-    real_store: Callable[[World], SqliteStoryGraph],
-) -> None:
-    """`secrets=None`（面板的唯一路径）的列序 = id 升序 = ULID 创建顺序 = 作者声明顺序。
-
-    **这是一条 ORDER BY 的断言，Fake 结构上测不到**：它按 dict 插入序返回，那恰好是
-    「碰巧对了」。真库不加 ORDER BY 时 SQLite 也会碰巧按 rowid 给出插入序——所以这里
-    **故意把插入序打乱**：没有那条 ORDER BY，列序就变成插入序，面板的列头会在
-    「重跑一次导入」之后换位置，而作者是按列的位置逐格核对的。
-    """
-    scrambled = (XUANTIE, XIAO_JUE, BLOODLINE, GU_QINGYIN)
-    store = real_store(World(nodes=scrambled))
-
-    matrix = knowledge_matrix(store, PID, 152, [XIAO_JUE.id])
-
-    assert [s.id for s in matrix.secrets] == sorted([BLOODLINE.id, XUANTIE.id])
-    assert [s.name for s in matrix.secrets] == ["血脉秘密", "玄铁令下落"]
-
-
-def test_secrets_default_is_every_secret_in_the_project(matrix_store: Build) -> None:
-    """`secrets=None` = 全书秘密。声明序 == id 序时两个后端必须给出同一份列头。"""
-    store = matrix_store(World(edges=(_edge(XIAO_JUE, BLOODLINE, EdgeType.KNOWS, 88),)))
-
-    matrix = knowledge_matrix(store, PID, 152, [XIAO_JUE.id])
-
-    assert [s.name for s in matrix.secrets] == ["血脉秘密", "玄铁令下落"]
-    assert matrix.cell(XIAO_JUE.id, BLOODLINE.id).state is KnowledgeState.KNOWS
-    assert matrix.cell(XIAO_JUE.id, XUANTIE.id).state is KnowledgeState.UNKNOWN
-
-
-def test_non_secret_node_is_rejected_as_a_column(
-    real_store: Callable[[World], SqliteStoryGraph],
-) -> None:
-    """`secrets=[一个人物的 id]` → 当场拒。
-
-    Fake 直接 `NodeRef.of(self._nodes[s])`，**它会把一个人当成秘密列进面板列头**且毫无
-    怨言。真实的触发路径不是调用方手滑：001_init 的复合外键（`secret.label`）挡住了
-    「Character 节点登记成秘密」，这道运行时校验是它的第二层。
-    """
-    store = real_store(World())
-
-    with pytest.raises(ValueError, match="label=Secret"):
-        knowledge_matrix(store, PID, 152, [XIAO_JUE.id], secrets=[GU_QINGYIN.id])
-
-
-def test_two_active_knows_edges_at_one_chapter_blow_up(
-    real_store: Callable[[World], SqliteStoryGraph],
-) -> None:
-    """(人,秘密) 的 exclusivity 是 single_per_src_dst，同一章两条有效 KNOWS = supersede 漏了。
-
-    **不许悄悄取第一条**：Fake 的 `_cell` 就是取第一条（它 `return` 在循环里），于是一个
-    数据层的 bug 会变成面板上一个看起来完全正常的答案。这里让它炸——同 state_at 对
-    「两条 LOCATED_AT」的处置。
-    """
-    store = real_store(
-        World(
-            edges=(
-                _edge(XIAO_JUE, BLOODLINE, EdgeType.KNOWS, 88),
-                _edge(XIAO_JUE, BLOODLINE, EdgeType.KNOWS, 120),
-            )
-        )
-    )
-
-    with pytest.raises(StoreError, match="supersede"):
-        knowledge_matrix(store, PID, 152, [XIAO_JUE.id], secrets=[BLOODLINE.id])
-
-    # 反面：ch119 只有一条有效，正常出答案——这道守卫不许把正常矩阵也炸了。
-    assert knowledge_matrix(store, PID, 119, [XIAO_JUE.id], secrets=[BLOODLINE.id]).cell(
-        XIAO_JUE.id, BLOODLINE.id
-    ).since_chapter == 88
-
-
-def test_cross_project_leakage_is_impossible(
-    real_store: Callable[[World], SqliteStoryGraph],
-) -> None:
-    """全部时态查询都带 `project_id = :pid`。**Fake 的每个方法都 `del project_id`**，
-    所以「别的书的边泄漏进这本书的矩阵」在 Fake 上是结构性测不到的。"""
-    store = real_store(World())
-
-    with pytest.raises(NodeNotFound):
-        knowledge_matrix(store, "project:conf:别的书", 152, [XIAO_JUE.id], secrets=[BLOODLINE.id])
-
-
 # ══════════════════════════════════════════════════════════════════════════
 # real only —— 保存提交令牌：ABA generation / CAS / 退休失败回滚
 # ══════════════════════════════════════════════════════════════════════════

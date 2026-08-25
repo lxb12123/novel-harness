@@ -236,8 +236,18 @@ def _head_missing(conn: Connection, project_id: str, chapter_id: str) -> bool:
 
     **和 `SummaryStore.coverage()` 不矛盾**：那边是给界面看的读端，撤回后照旧显示
     「这一章没有总结」（作者要看得见自己撤了）。这边回答的是另一个问题——
-    **系统该不该自己掏钱补一份**。答案是不该：想要新的一份他自己点「重新生成」
-    （走 `create_manual_attempt` / `POST …/summary`，他按的，所以花钱合理）。
+    **系统该不该自己掏钱补一份**。答案是不该。
+
+    ── ⚠️ 2026-08-25 起「撤回」是**终态**，不再有那条退路 ────────────────────
+
+    这段话原来的后半句是「想要新的一份他自己点『重新生成』」。**那颗按钮和它背后的
+    `POST …/summary` / `create_manual_attempt` 已经整条删掉了**：总结的触发从此只剩
+    两个，都是系统自动的（保存之后 / 每 30 分钟扫描），作者手上没有任何手动入口。
+
+    于是这条纪律的后果变了，而**这是裁定不是 bug**：作者撤回一章的总结之后，
+    系统不会再买回来——**永远不会**，包括他后来又改了那一章的正文。
+    他还能自己写一段（`PATCH …/summary`，不花钱），那是撤回之后唯一的回头路。
+    **别把这当成洞去补**：要补的话得先把「谁按的、谁付钱」那条重新想一遍。
     """
     row = conn.execute(
         """
@@ -587,45 +597,6 @@ def _default_missing_mask(
     if _application_missing(conn, run_id):
         mask |= BRANCH_EXTRACTION
     return mask
-
-
-def create_manual_attempt(
-    conn: Connection,
-    *,
-    project_id: str,
-    chapter_id: str,
-    snapshot_id: str,
-    generation: int,
-    ruleset_epoch: int,
-    ruleset_hash: str,
-    trigger_key: str,
-    missing_branch_mask: int = BRANCH_VALIDATION | BRANCH_SUMMARY | BRANCH_EXTRACTION,
-    expected_summary_head: str | None = None,
-) -> str:
-    """显式「重新整理」：新的 manual intent，不能被 coverage 唯一键吞掉。"""
-    run = find_run(conn, project_id, chapter_id, generation)
-    if run is None:
-        run_id = create_run(
-            conn,
-            project_id=project_id,
-            chapter_id=chapter_id,
-            snapshot_id=snapshot_id,
-            generation=generation,
-        )
-    else:
-        run_id = run["id"]
-    attempt_id = new_id(EntityType.REFRESH_ATTEMPT, project_id)
-    conn.execute(
-        """
-        INSERT INTO chapter_refresh_attempt (
-            id, run_id, workflow_version, ruleset_epoch, ruleset_hash,
-            trigger_kind, trigger_key, missing_branch_mask, expected_summary_head,
-            validation_state, summary_state, extraction_state
-        ) VALUES (?, ?, 1, ?, ?, 'manual', ?, ?, ?, 'PENDING', 'PENDING', 'PENDING')
-        """,
-        (attempt_id, run_id, ruleset_epoch, ruleset_hash, trigger_key, missing_branch_mask, expected_summary_head),
-    )
-    return attempt_id
 
 
 def claim_attempt(

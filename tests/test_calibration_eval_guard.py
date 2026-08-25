@@ -17,10 +17,13 @@ REPO = Path(__file__).resolve().parents[1]
 EVAL_DIR = REPO / "src" / "novel_harness" / "eval"
 ASSEMBLE = REPO / "src" / "novel_harness" / "draft" / "assemble.py"
 
-ASSEMBLE_SHA256 = "c17dd23db78ab032d9e22eb034da19b3f116cecf5f5f290458f6c9ba1421e1e8"
+ASSEMBLE_SHA256 = "bbea289747a0b7d611356ba169b1f77a05e9fbe41b6115bdfdb6fe71fdde2e64"
 """`draft/assemble.py` 全文的 sha256。**改那个文件就必须在同一笔里改这个数。**
 
-这一版是 2026-08-22 的 M1-a（退化态不再发「【在场】未知」那一块）。
+这一版是 2026-08-24 的秘密下线（ADR 0039）：`graph_section` 里的认知矩阵块和
+禁写清单块整个删了，只剩「尚未登场」。**改这个数是有意的动作**，见那笔提交。
+
+上一版是 2026-08-22 的 M1-a（退化态不再发「【在场】未知」那一块）。
 在此之前这道闸比的是 `git diff --exit-code`——它只看「工作区 vs 已暂存」，
 拦得住「顺手改了忘了看」，**拦不住「改了并且提交」**，而真要改考卷的人当然会提交。
 """

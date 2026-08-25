@@ -592,9 +592,6 @@ def test_new_character_cannot_turn_unknown_cast_into_resolved(
         _context(warehouse, turn=turn, drafter=desk),
     )
     assert draft_out.ok, draft_out.content
-    assert "花瓶秘密" in json.loads(draft_out.content)["must_not_reveal"], (
-        "空白章的安全基集仍必须是 UnknownCast/full-ban"
-    )
 
 
 def test_watermark_change_rejects_the_old_calibration_id(

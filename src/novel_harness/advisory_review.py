@@ -1,26 +1,23 @@
 """保存之后的事后语义核对 —— **只告警，永不阻断**（[ADR 0030](../../docs/adr/0030-versioned-summaries-and-advisory-reconciliation.md) 的窄例外）。
 
-一条路上串着两问，它们的共同点是「写之前答不了，写之后答得准」：
+问一件事，它的性质是「写之前答不了，写之后答得准」：
 
-    ① 这一章有没有对**不该知道的人**说破什么               （M1-b）
-    ② 作者刚改的这一段跟**后面已经写完的章**抵不抵触        （轨道阶段 2）
+    作者刚改的这一段跟**后面已经写完的章**抵不抵触        （轨道阶段 2）
+
+⚠️ **2026-08-24 这儿原来是两问。** 第一问是「这一章有没有对不该知道的人说破什么」
+（M1-b），它随秘密整套功能下线一起走了（ADR 0039）。留下的这一问跟秘密无关：
+它比的是新正文和后面章节的总结/正文段落。
 
 ── 一、为什么是「事后」，而不是拼 prompt 的时候就防住 ────────────────────
 
-**关键是一条不对称：写之前不知道谁在场（那是写出来的结果），写之后知道（数得出来）。**
-生成侧只能退化成「全书全禁」——安全，却安全得没用（AI 拿着一份「什么都别碰」的清单
-写不出能用的东西）；验证侧拿真正文一数就是**精确**的。把它搬过来**不是降级处理，
-是搬到了它唯一能算准的地方。**
-
-第二问同理：ADR 0019 明写模式一不适用它（「停手 400 毫秒的交互里塞不下第二次往返」）
+ADR 0019 明写模式一不适用它（「停手 400 毫秒的交互里塞不下第二次往返」）
 ——**那句话仍然对**，所以这里不在续写那一次里验，而是等它落进正文之后，跟保存后跑
 总结/抽取同一条路上再验一遍。
 
 ── 二、为什么只能用模型 ──────────────────────────────────────────────────
 
-ADR 0005 的铁律是「只做集合判断，不做语义判断」，而这两问都是语义的：真书里秘密的
-内容散在字里行间，合成小册子那种「每条秘密配一个生造专名（玄血蛊）」的形态**真书没有**。
-所以这件事进不了 `checks/`。它能存在，靠的是 ADR 0030 给「写完之后用模型核对、只写
+ADR 0005 的铁律是「只做集合判断，不做语义判断」，而「这一段跟第 64 章打不打架」
+是语义的：设定散在字里行间，集合判断够不着。所以这件事进不了 `checks/`。它能存在，靠的是 ADR 0030 给「写完之后用模型核对、只写
 通知、不阻断、不改数据」开的那个窄例外——**「不阻断」是这条例外成立的前提**，不是
 一个可以以后再收紧的实现细节。
 
@@ -83,11 +80,8 @@ from .db import Connection
 from .draft.provider import CompletionResult
 from .extract.call_audit import record_call
 from .extract.control import AuditedCompletion
-from .graph import KnowledgeCell, KnowledgeState, StoryGraph, TextAnchor
+from .graph import StoryGraph, TextAnchor
 from .ids import EntityType, new_id
-from .mentioned import mentioned_cast
-from .panel.constraints import resolve_cast
-from .panel.knowledge import knowledge_matrix
 from .system_notifications import (
     background_failure_dedupe_key,
     enqueue_text_advisory,
@@ -104,7 +98,6 @@ __all__ = [
     "AdvisoryRequest",
     "ConflictKind",
     "Reviewer",
-    "SecretSlip",
     "Sentence",
     "TrackClash",
     "numbered_sentences",
@@ -172,27 +165,6 @@ _CONFLICT_LABEL: Final[dict[str, str]] = {
     "knowledge": "谁在什么时候知道什么，对不上",
 }
 """上屏的中文。**枚举值本身不上屏**：`setting` 是机器码，作者屏幕上只该有人话。"""
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 出参：形状限死
-# ══════════════════════════════════════════════════════════════════════════
-
-
-class SecretSlip(BaseModel):
-    """①「这一句像是对不该知道的人说破了什么」。
-
-    `character` / `secret` 是**名字**而不是 node_id：模型只看得见名字，而它交回来的
-    每一个都要在我们给出去的那份清单里逐字找得到，找不到就丢掉（见 `_keep_slips`）。
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    sentence: int = Field(ge=1)
-    character: str = Field(min_length=1)
-    secret: str = Field(min_length=1)
-
-
 class TrackClash(BaseModel):
     """②「这一句跟后面第几章抵触，哪一类抵触」。
 
@@ -214,7 +186,6 @@ class AdvisoryOutcome(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     chapter: int = Field(ge=1)
-    slips: tuple[SecretSlip, ...] = ()
     clashes: tuple[TrackClash, ...] = ()
     notices: tuple[str, ...] = ()
     """落进通知 outbox 的那几条的 id（**还没物化**，物化归调度那一侧）。"""
@@ -349,34 +320,6 @@ class Reviewer(Protocol):
     `analyzer`），解析和判定归本模块——运输层不认识这份 schema，也不该认识。"""
 
     def __call__(self, request: AdvisoryRequest) -> CompletionResult: ...
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 提示词
-# ══════════════════════════════════════════════════════════════════════════
-
-
-_SECRET_SYSTEM: Final = f"""你是中文长篇小说的后台核对器。你**只判对错，不写正文、不改正文**。
-Prompt version: {ADVISORY_VERSION}.
-
-下面给你两样东西：
-【谁还不知道什么】这一章正文里被提到的人，各自到这一章为止还不知道、或者抱着错误
-认知的那些事。这份清单是作者自己一条条登记下来的，**它是对的**。
-【正文】这一章的正文，逐句编了号。
-
-请只回答一个问题：**有没有哪一句，把清单上某个人还不知道的那件事，当着他说破了、
-让他听见了、或者把他写成一副已经知道的样子。**
-
-只输出 JSON，形如：
-{{"findings":[{{"sentence":3,"character":"萧决","secret":"沈孤鸿之死"}}]}}
-
-- `sentence`：出问题那一句的编号，必须是【正文】里真实出现过的编号；
-- `character` / `secret`：**逐字抄**【谁还不知道什么】里的名字，不许换说法、不许自己造；
-- 拿不准就不要报。什么都没发现时输出 {{"findings":[]}}。
-
-不要输出任何解释、理由、Markdown 或多余的字。"""
-
-
 _TRACK_SYSTEM: Final = f"""你是中文长篇小说的后台核对器。你**只判对错，不写正文、不改正文**。
 Prompt version: {ADVISORY_VERSION}.
 
@@ -400,46 +343,6 @@ Prompt version: {ADVISORY_VERSION}.
 
 def _numbered_block(sentences: Sequence[Sentence]) -> str:
     return "\n".join(f"{s.number}. {s.text}" for s in sentences)
-
-
-def _unknown_lines(cells: Sequence[tuple[str, str, KnowledgeCell]]) -> list[str]:
-    """把「他还不知道」那几格渲染成人话。**KNOWS 的格子一行都不进来。**
-
-    `BELIEVES` 也算「不知道」：李管家以为血脉秘密已泄露，这一场把真相说破同样是崩
-    人设——判据和 `SceneConstraints.must_not_reveal` 是同一条（`state != KNOWS`），
-    两处渲染不同是因为那一份进 Writer 的 prompt、这一份进核对器的 prompt。
-    """
-    lines: list[str] = []
-    for who, secret, cell in cells:
-        if cell.state is KnowledgeState.KNOWS:
-            continue
-        if cell.state is KnowledgeState.BELIEVES:
-            believed = f"，他以为是「{cell.believed_value}」" if cell.believed_value else ""
-            lines.append(f"- {who}：对「{secret}」抱着错误认知{believed}")
-        else:
-            lines.append(f"- {who}：还不知道「{secret}」")
-    return lines
-
-
-def _secret_request(
-    chapter: int, sentences: Sequence[Sentence], lines: Sequence[str]
-) -> AdvisoryRequest:
-    body = (
-        f"【谁还不知道什么】截至第 {chapter} 章：\n"
-        + "\n".join(lines)
-        + f"\n\n【正文】第 {chapter} 章，逐句编号：\n"
-        + _numbered_block(sentences)
-    )
-    return AdvisoryRequest(
-        kind="secret",
-        chapter_number=chapter,
-        messages=(
-            AdvisoryMessage(role="system", content=_SECRET_SYSTEM),
-            AdvisoryMessage(role="user", content=body),
-        ),
-    )
-
-
 def _excerpt_block(track: Track) -> str:
     """三级下探回来的那几段原文（ADR 0038 阶段 4）。**没有就整块不出。**
 
@@ -495,7 +398,7 @@ def _track_request(
 # 解析 + 机械复核
 # ══════════════════════════════════════════════════════════════════════════
 
-_Finding = TypeVar("_Finding", SecretSlip, TrackClash)
+_Finding = TypeVar("_Finding", bound=BaseModel)
 
 
 def _payload(text: str) -> dict[str, Any]:
@@ -539,34 +442,6 @@ def _pick(payload: dict[str, Any], model: type[_Finding]) -> list[_Finding]:
         except ValidationError:
             continue
     return out
-
-
-def _keep_slips(
-    raw: Sequence[SecretSlip],
-    *,
-    sentences: Sequence[Sentence],
-    allowed: Sequence[tuple[str, str]],
-) -> tuple[SecretSlip, ...]:
-    """只留下**机械上说得通**的那几条。这是结构化出参唯一的价值兑现处。
-
-    三道全是集合判断：句号在不在表上、这个人这条秘密在不在我们给出去的那份清单里、
-    同一条不重复。模型编一个人名、编一个秘密、指一个不存在的句号——三种都在这儿掉。
-    """
-    numbers = {s.number for s in sentences}
-    pairs = set(allowed)
-    seen: set[tuple[int, str, str]] = set()
-    kept: list[SecretSlip] = []
-    for item in raw:
-        key = (item.sentence, item.character, item.secret)
-        if item.sentence not in numbers or key in seen:
-            continue
-        if (item.character, item.secret) not in pairs:
-            continue
-        seen.add(key)
-        kept.append(item)
-    return tuple(kept)
-
-
 def _keep_clashes(
     raw: Sequence[TrackClash],
     *,
@@ -594,22 +469,6 @@ def _keep_clashes(
 
 def _more(rest: int) -> str:
     return f"（另有 {rest} 处）" if rest else ""
-
-
-def _slip_title(slips: Sequence[SecretSlip]) -> str:
-    """**措辞要同时对得上「还不知道」和「误以为」两态。**
-
-    出参上没有那一格的状态（也不该有：多一个字段就多一处要维护的口径），而
-    「他还不知道」对一个持错误认知的人是句假话——李管家以为血脉秘密已泄露，
-    问题不是他没听说过，是这一句把真相摆到了他面前。「还不该听见它」两种都成立。
-    """
-    first = slips[0]
-    return (
-        f"第 {first.sentence} 句：这一句像是把「{first.secret}」说破了，"
-        f"而{first.character}到这一章还不该听见它。{_more(len(slips) - 1)}"
-    )
-
-
 def _clash_title(clashes: Sequence[TrackClash]) -> str:
     """**只有句号、章号、类型。** 后面那一章的原文一个字都不在这句话里——
     信息隔离的最后一米就在这儿，而它靠的是 `TrackClash` 压根没有装它的地方。"""
@@ -775,19 +634,6 @@ def review_saved_chapter(
 
     notes: dict[str, str] = {}
     broke: list[str] = []
-    slips = _review_secrets(
-        conn,
-        store,
-        project_id,
-        chapter_number,
-        sentences=sentences,
-        paragraphs=paragraphs,
-        reviewer=reviewer,
-        cell_limit=cell_limit,
-        call_id_factory=call_id_factory,
-        notes=notes,
-        broke=broke,
-    )
     clashes = _review_track(
         conn,
         store,
@@ -815,7 +661,6 @@ def review_saved_chapter(
             current_sha256=found.sha256,
         )
     for kind, title, first in (
-        ("secret", _slip_title(slips) if slips else "", slips[0].sentence if slips else 0),
         ("track", _clash_title(clashes) if clashes else "", clashes[0].sentence if clashes else 0),
     ):
         if not title:
@@ -836,7 +681,6 @@ def review_saved_chapter(
     conn.commit()
     return AdvisoryOutcome(
         chapter=chapter_number,
-        slips=slips,
         clashes=clashes,
         notices=tuple(notices),
         notes=notes,
@@ -917,89 +761,7 @@ def review_track_on_demand(
 # 异常本身就地丢掉，不另开一条诊断通路：这条路是后台的，它的失败形态就是
 # 「什么都没发生」（`api/deps.py` 和 `BackgroundRuntime._review_chapter` 都按这条
 # 写着），而把一个作者管不了的故障搬上右栏是让他去处理一件他处理不了的事。
-_SECRET_NOT_CHECKED: Final = "这一次没能核对秘密有没有被说破，这一问没跑成。"
 _TRACK_NOT_CHECKED: Final = "这一次没能跟后面的章比对，这一问没跑成——空着不等于没抵触。"
-
-
-def _review_secrets(
-    conn: Connection,
-    store: StoryGraph,
-    project_id: str,
-    chapter_number: int,
-    *,
-    sentences: Sequence[Sentence],
-    paragraphs: Sequence[str],
-    reviewer: Reviewer,
-    cell_limit: int,
-    call_id_factory: Callable[[str], str],
-    notes: dict[str, str],
-    broke: list[str],
-) -> tuple[SecretSlip, ...]:
-    """① 秘密有没有被说破（M1-b）。
-
-    Notes:
-        **歧义称呼在这一侧照旧出局**（`mentioned_cast` 走默认档，不 `expand_ambiguous`）。
-        模式二那一侧把「师兄」的 8 个候选全算在场是对的——它算的是**给模型的禁令**，
-        多算一个人只会多一批禁令。这一侧算的是**报不报警**，多算一个人就是多一条打扰，
-        而 ADR 0030 的推翻条件第一条正是「误报率把通知变成纯噪声」。
-        判不出「师兄」是谁时这一层的正确动作是闭嘴（§10 约束 7），不是猜一个。
-    """
-    try:
-        surfaces = mentioned_cast(store, project_id, paragraphs)
-        if not surfaces:
-            notes["secret"] = "这一章的正文里没有出现花名册上的人，算不出该拿谁的认知来比。"
-            return ()
-        resolved = resolve_cast(store, project_id, surfaces)
-        if not resolved.ids:
-            notes["secret"] = "这一章提到的称呼一个都解析不到唯一的人，这一次不猜。"
-            return ()
-        matrix = knowledge_matrix(store, project_id, chapter_number, resolved.ids)
-        cells = [
-            (who.name, secret.name, matrix.cell(who.id, secret.id))
-            for who in matrix.characters
-            for secret in matrix.secrets
-        ]
-        lines = _unknown_lines(cells)
-        if not lines:
-            notes["secret"] = "这一章提到的人，对已登记的秘密全都知情，没有可说破的。"
-            return ()
-        total = len(lines)
-        lines = lines[: max(0, cell_limit)]
-        allowed = [
-            (who, secret)
-            for who, secret, cell in cells
-            if cell.state is not KnowledgeState.KNOWS
-        ][: max(0, cell_limit)]
-        request = _secret_request(chapter_number, sentences, lines)
-        answer = _ask(
-            conn,
-            request,
-            reviewer,
-            project_id=project_id,
-            call_id_factory=call_id_factory,
-        )
-        if answer is None:
-            notes["secret"] = "同一份正文和同一份清单已经核对过了，这一次没有再花钱。"
-            return ()
-        kept = _keep_slips(
-            _pick(_payload(answer), SecretSlip), sentences=sentences, allowed=allowed
-        )
-    except Exception:  # noqa: BLE001 —— 后台告警链的失败形态是「什么都没发生」
-        # 记账那一步半途炸了的话事务还开着，下面落通知那一次 BEGIN 会撞上它。
-        conn.rollback()
-        broke.append("secret")
-        # 异常**不进这一格**（上面 `_SECRET_NOT_CHECKED` 那段讲了为什么）。
-        notes["secret"] = _SECRET_NOT_CHECKED
-        return ()
-    trimmed = f"（清单太长，这一次只看了前 {len(lines)} 条，共 {total} 条）" if total > len(lines) else ""
-    notes["secret"] = (
-        f"核对过了，{len(kept)} 处像是说破了什么{trimmed}。"
-        if kept
-        else f"核对过了，没发现说破{trimmed}。"
-    )
-    return kept
-
-
 def _review_track(
     conn: Connection,
     store: StoryGraph,

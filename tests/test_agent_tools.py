@@ -71,7 +71,6 @@ from novel_harness.draft.provider import ToolCall
 from novel_harness.graph import (
     AliasKind,
     ChapterSpec,
-    KnowledgeState,
     Node,
     NodeLabel,
     NodeProps,
@@ -299,20 +298,16 @@ def _surfaces_of(world: World) -> dict[str, str]:
             _call("character_chapters", characters=["萧决", "顾清音"]),
             _call("chapter_summaries", first_chapter=1, last_chapter=CHAPTER),
             _call("chapter_text", chapter=CHAPTER),
-            # 一格认知边界（2026-08-22）：它是**唯一一条以秘密为入参**的工具，
-            # 也就是最容易把那条秘密的内容顺手带出来的那一档。
-            _call("knows_secret", chapter=CHAPTER, character="萧决", secret="血脉秘密"),
             # 失败那条路也要罩住：一句好心的解释同样进对话。
             _call("character_state", chapter=CHAPTER, character="血脉秘密"),
             _call("character_state", chapter=CHAPTER, character="幽泉窟"),
             _call("character_chapters", characters=["血脉秘密"]),
             _call("chapter_text", chapter=CHAPTER + 1),
             # 「这不是一条秘密」那句拒绝里会点那个节点的名 —— 它同样是一个面。
-            _call("knows_secret", chapter=CHAPTER, character="萧决", secret="幽泉窟"),
         ],
         context,
     )
-    assert [o.ok for o in outcomes] == [True] * 12 + [False] * 5
+    assert [o.ok for o in outcomes] == [True] * 11 + [False] * 4
     assert desk.seen, "起草工具没把约束交给起草侧 —— 第 4 个面没被采到，这条测试是空的"
 
     surfaces = {f"{o.name} 的返回（ok={o.ok}）": o.content for o in outcomes}
@@ -354,9 +349,6 @@ def test_the_constraints_tool_still_tells_the_author_which_constraint(world: Wor
     assert outcome.ok, outcome.content
     result = ConstraintsResult.model_validate_json(outcome.content)
 
-    assert [ref.name for ref in result.must_not_reveal] == ["血脉秘密"], (
-        "显示名必须在：萧决被正文提到、而他不知道这条秘密，所以这一章不许说破它"
-    )
     assert [(e.name, e.first_appears_chapter) for e in result.forbidden_entities] == [
         ("幽泉窟", 200)
     ], "未来实体只交名字和首现章号 —— 但那两样必须交，否则作者不知道在拦什么"
@@ -447,7 +439,6 @@ def test_the_backend_computes_the_constraints_for_the_drafter(world: World) -> N
     ctx = desk.seen[0]
     assert isinstance(ctx, ResolvedConstraints)
     assert ctx.chapter == CHAPTER
-    assert ctx.secret_labels == ["血脉秘密"], "显示名，永远不是内容 tell"
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -552,11 +543,6 @@ def test_the_tool_table_stays_put() -> None:
                 # 按编号取回这一轮被收起的结果（2026-08-15 设计，docs_dev 快照）。
                 # **只读、只回吐已有出参**：权限边界和原来的查询是同一条。
                 "get_result",
-                # 一格认知边界（2026-08-22）。它的答案是「没有新路」的另一种形态：
-                # **整张 `KnowledgeMatrix` 仍然不出**，出去的是一个人 × 一条秘密 ×
-                # 一个章号的三态 + 显示名 + 纯量。矩阵不出的理由不是 props（它没有），
-                # 是寿命——整张表过期是几十行一起错（ADR 0019 边界六）。
-                "knows_secret",
                 # 轨道核对（2026-08-23）。它是这张表里**唯一一条自己手里有轨道**的：
                 # 出去的只有 `TrackClash` 那三个数（第几句 / 跟第几章 / 冲突类型），
                 # 后面那几章写了什么一个字都不出——「工具有权看，agent 没有」。
@@ -766,7 +752,6 @@ def test_without_the_manuscript_the_constraints_degrade_to_everything(world: Wor
     result = ConstraintsResult.model_validate_json(outcome.content)
 
     assert result.cast_derived is False and result.cast == []
-    assert [ref.name for ref in result.must_not_reveal] == ["血脉秘密"], "退化值 = 全部秘密"
     assert not leaks("退化路径的返回", outcome.content)
 
 
@@ -926,132 +911,6 @@ def test_that_ast_guard_can_see_the_bypass() -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 一格认知边界（`knows_secret`，2026-08-22）：**答案必须自己说得出它是第几章的**
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def _cell(world: World, character: str, secret: str, chapter: int = CHAPTER) -> Any:
-    from novel_harness.agent.tools import SecretKnowledgeResult
-
-    outcome = dispatch(
-        _call("knows_secret", chapter=chapter, character=character, secret=secret),
-        world.context(),
-    )
-    assert outcome.ok, outcome.content
-    return SecretKnowledgeResult.model_validate_json(outcome.content)
-
-
-def test_one_cell_of_the_matrix_carries_its_own_chapter(world: World) -> None:
-    """**这条是这条工具存在的理由。**
-
-    工具结果永久留在对话里，而它跟章号绑死：第 7 章查的那一格，写到第 200 章时可能
-    已经错了，且错的方向是 fail-open（越往后知道的人越多 ⇒ 该禁的越少 ⇒ 旧答案更严）。
-    投影那道闸只丢**绑在更后面**的章上的返回（`agent/loop.py` 的 `off_chapter`），
-    一条第 7 章的答案在第 200 章的投影里照样在——**所以章号必须写在那句话本身里**。
-    """
-    unknown = _cell(world, "萧决", "血脉秘密")
-    assert unknown.state is KnowledgeState.UNKNOWN
-    assert unknown.since_chapter is None
-    assert f"截至第 {CHAPTER} 章" in unknown.answer, (
-        "答案里没有章号 —— 那它在第 200 章的对话历史里就是一句看不出已经过期的话"
-    )
-    assert "还不知道" in unknown.answer
-
-    knows = _cell(world, "顾清音", "血脉秘密")
-    assert knows.state is KnowledgeState.KNOWS
-    assert knows.since_chapter == CHAPTER, "从第几章起只由证据决定（ADR 0006）"
-    assert f"截至第 {CHAPTER} 章" in knows.answer and "已经知道" in knows.answer
-
-
-def test_the_cell_answer_changes_with_the_chapter_it_was_asked_for(world: World) -> None:
-    """章号是 AS OF，不是装饰：同一个人同一条秘密，早一章就是另一个答案。
-
-    没有这一条，一个把 `chapter` 收下却不用的实现照样能让上面那条全绿。
-    """
-    before = _cell(world, "顾清音", "血脉秘密", chapter=CHAPTER - 1)
-    assert before.state is KnowledgeState.UNKNOWN
-    assert f"截至第 {CHAPTER - 1} 章" in before.answer
-
-
-def test_a_wrong_belief_is_its_own_answer_not_just_does_not_know(world: World) -> None:
-    """三态里最容易被压扁的那一个：**「误以为」不等于「不知道」**。
-
-    对「这一场能不能说破」两者的结论相同（都不能），但对写作不同——误以为的那一位
-    有一个他自己的版本，写他说话时得按那个版本写。合成一句「他不知道」会让那半场
-    戏没法写，而那正是这条工具存在的理由。
-    """
-    ledger = Ledger(world.store, world.conn, world.project_id)
-    ledger.declare_believes(
-        who="萧决", secret="血脉秘密", believed_value="早就传遍了", quote=WHERE_QUOTE
-    )
-    world.conn.commit()
-
-    cell = _cell(world, "萧决", "血脉秘密")
-    assert cell.state is KnowledgeState.BELIEVES
-    assert cell.believed_value == "早就传遍了"
-    assert "早就传遍了" in cell.answer and f"截至第 {CHAPTER} 章" in cell.answer
-    assert "还不知道" not in cell.answer, "「误以为」被压成了「不知道」—— 那半场戏就写不了了"
-
-
-def test_the_cell_never_hands_over_the_whole_matrix(world: World) -> None:
-    """出参里只有显示名和纯量——**没有 id，也没有第二行第二列**。
-
-    模块 docstring 那条「`KnowledgeMatrix` 一个都不出」的原始理由（props 会穿过序列化）
-    对矩阵不成立，但收窄不因此放松：真理由是寿命，而它对整张表才致命。这条钉的是
-    「一格」这个形状本身——有人为了省一次调用把它改成收一串人名的那天，它会红。
-    """
-    from novel_harness.agent.tools import KnowsSecretArgs, SecretKnowledgeResult
-
-    assert set(KnowsSecretArgs.model_fields) == {"chapter", "character", "secret"}
-    assert set(SecretKnowledgeResult.model_fields) == {
-        "chapter",
-        "character",
-        "secret",
-        "state",
-        "since_chapter",
-        "believed_value",
-        "answer",
-    }
-    blob = _cell(world, "萧决", "血脉秘密").model_dump_json()
-    # **按真 id 的字面值查，不按前缀**：id 长成 `character:01…` / `secret:01…`，
-    # 而出参里本来就有一个叫 `secret` 的字段——按前缀查会被 `"secret":` 骗成假红。
-    node_ids = {
-        hit.node.id
-        for resolution in world.store.resolve(world.project_id, ["萧决", "血脉秘密"])
-        for hit in resolution.hits
-    }
-    assert node_ids, "这本书里查不到那两个节点 —— 下面那条断言在检查一个空集合"
-    assert not [nid for nid in node_ids if nid in blob], "出参里出现了 id —— 收窄的意义没了"
-
-
-def test_asking_the_cell_about_a_non_secret_is_refused(world: World) -> None:
-    """集合判断：地点 / 人物也在花名册里，拿它们来问「谁知道它」会返回一份看起来
-    正常、实际上没有意义的答案。"""
-    outcome = dispatch(
-        _call("knows_secret", chapter=CHAPTER, character="萧决", secret="北荒"),
-        world.context(),
-    )
-    assert outcome.ok is False and "不是一条秘密" in outcome.content
-
-    not_a_person = dispatch(
-        _call("knows_secret", chapter=CHAPTER, character="北荒", secret="血脉秘密"),
-        world.context(),
-    )
-    assert not_a_person.ok is False and "不是人物" in not_a_person.content
-
-
-def test_a_name_off_the_roster_still_says_do_not_retry(world: World) -> None:
-    """撞空那两句话仍然只有一份（`index.UnknownCharacter` / `resolve_one`）——
-    这条工具没有为自己另抄一份措辞。"""
-    from novel_harness.agent.index import UnknownCharacter
-
-    outcome = dispatch(
-        _call("knows_secret", chapter=CHAPTER, character="姜源初", secret="血脉秘密"),
-        world.context(),
-    )
-    assert outcome.ok is False
-    assert "别换个说法再查" in outcome.content
-    assert UnknownCharacter("姜源初").args[0] == outcome.content
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1073,11 +932,15 @@ def _with_an_ambiguous_title(world: World, text: str) -> World:
     return world
 
 
-def _bans_at(world: World, chapter: int) -> tuple[set[str], bool]:
+def _derived_at(world: World, chapter: int) -> bool:
+    """这一章的在场是**数出来的**（True）还是退化值（False）。
+
+    （2026-08-24 之前这个辅助还回一份禁写清单——秘密下线之后没有那份清单了，
+    留下的这一位仍然是那几条守卫真正断言的东西。）
+    """
     outcome = dispatch(_call("scene_constraints", chapter=chapter), world.context())
     assert outcome.ok, outcome.content
-    result = ConstraintsResult.model_validate_json(outcome.content)
-    return {ref.name for ref in result.must_not_reveal}, result.cast_derived
+    return ConstraintsResult.model_validate_json(outcome.content).cast_derived
 
 
 def test_an_ambiguous_title_no_longer_flattens_the_chapter_to_ban_everything(
@@ -1089,29 +952,31 @@ def test_an_ambiguous_title_no_longer_flattens_the_chapter_to_ban_everything(
     的是**类型那一位**，不是「清单里有几条」——这本书只有一条秘密，光看清单两者相同。
     """
     _with_an_ambiguous_title(world, "师兄站在门口，一言不发。\n")
-    bans, derived = _bans_at(world, AMBIGUOUS_CHAPTER)
+    derived = _derived_at(world, AMBIGUOUS_CHAPTER)
     assert derived is True, (
         "歧义称呼把这一章打回了退化态（全书全禁）—— 安全，但安全得没用："
         "AI 拿着一份「什么都别碰」的清单写不出能用的东西"
     )
-    assert bans == {"血脉秘密"}, "萧决是候选之一而他不知道这条秘密 —— 照旧要禁"
 
 
-def test_more_candidates_only_ever_means_more_bans_never_fewer(world: World) -> None:
-    """**这条钉的是方向，不是准确率**：候选多 ⇒ 禁令只多不少。
+def test_an_ambiguous_title_widens_the_cast_instead_of_dropping_it(world: World) -> None:
+    """歧义称呼把**所有候选**都算进在场，不是把那一个人丢掉。
 
-    这一章里「顾清音」和「师兄」同时出现，而顾清音**知道**那条秘密。
-    - 不展开：cast = 只有顾清音 ⇒ 一条都不用瞒 ⇒ **fail-open**（师兄要是萧决，他不知道）；
-    - 展开：cast = 顾清音 + 萧决 ⇒ 血脉秘密进禁说清单。
+    ⚠️ **这条测试今天只记录行为，不再证明它是安全的**（2026-08-24，ADR 0039）。
 
-    所以「歧义出局是安全的那一侧」这个说法**只在 cast 因此变空时才成立**——
-    还有别人在场时，丢掉那一个人就是 `panel/constraints.py` 记的那个真 bug
-    （「李管家静默地从 cast 里消失」）的同一种形态。
+    它原来叫 `test_more_candidates_only_ever_means_more_bans_never_fewer`，钉的是
+    **方向**：候选多 ⇒ 禁令只多不少 ⇒ fail-closed。那是 ADR 0018 正确性证明唯一的
+    数学理由，也是 ADR 0037 那条裁定站着的地基。
+
+    **秘密下线之后禁令没了，那条论证跟着塌了。** 今天多算一个人的后果不再是「多一批
+    禁令」，而是「多一份人物档案进 prompt」——那可能是噪声，不再明显是安全的那一侧。
+
+    **`expand_ambiguous` 因此需要一个新理由，或者被重新裁定。** 在那之前这条测试
+    只说清它做了什么，不替它声称那是对的。
     """
     _with_an_ambiguous_title(world, "顾清音看了师兄一眼。\n")
 
     from novel_harness.mentioned import mentioned_cast
-    from novel_harness.panel import scene_constraints
     from novel_harness.text import paragraphs as split_paragraphs
 
     paras = split_paragraphs("顾清音看了师兄一眼。\n")
@@ -1119,16 +984,7 @@ def test_more_candidates_only_ever_means_more_bans_never_fewer(world: World) -> 
     wide = mentioned_cast(world.store, world.project_id, paras, expand_ambiguous=True)
     assert narrow == ["顾清音"]
     assert set(wide) == {"顾清音", "萧决"}, "候选只加不减：「师兄」的两个候选都进来"
-
-    def bans(cast: list[str]) -> set[str]:
-        c = scene_constraints(world.store, world.project_id, AMBIGUOUS_CHAPTER, cast)
-        return {ref.name for ref in c.must_not_reveal}
-
-    assert bans(narrow) <= bans(wide), "多算一个人却少禁了一条 —— 方向反了，那一侧是崩人设"
-    assert bans(narrow) == set() and bans(wide) == {"血脉秘密"}
-
-    derived, _ = _bans_at(world, AMBIGUOUS_CHAPTER)
-    assert derived == {"血脉秘密"}, "工具那条路必须拿到宽的那一份"
+    assert set(narrow) <= set(wide), "展开只许加人，不许换掉一份名单"
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1203,13 +1059,11 @@ def test_a_blank_chapter_bans_everything_instead_of_borrowing_the_cast_next_door
     借来的清单和全禁的清单光看内容一模一样，借用当年就是从这条缝里溜进来的。
     """
     _with_an_ambiguous_title(world, "风雪落了一夜。\n")  # 一个花名册里的人都没提到
-    bans, derived = _bans_at(world, AMBIGUOUS_CHAPTER)
 
-    assert derived is False, (
+    assert _derived_at(world, AMBIGUOUS_CHAPTER) is False, (
         "上一章数得出人，这一章就说自己算准了 —— 那份名单只可能是从隔壁借来的，"
-        "而顶替一份未知的名单会少禁"
+        "而顶替一份未知的名单不是它的超集"
     )
-    assert bans == {"血脉秘密"}, "退回全禁：这本书的秘密一条不落"
 
     from novel_harness.agent.tools import _scene_context_from_text
     from novel_harness.draft.context import UnknownCastConstraints

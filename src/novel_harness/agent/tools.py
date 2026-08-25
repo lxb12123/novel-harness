@@ -16,13 +16,12 @@ agent 调一次就把 PLANNED 秘密的正文读进对话历史，而对话是�
    （秘密本身、`first_appears_chapter > 本章` 的未来实体）恰好就是约束工具要谈论的那两批，
    而 `NodeProps` 是 `extra="allow"`——作者写在秘密节点上的 `twist` 会原样穿过任何一次
    `model_dump_json()`。因此这里**只出 `NodeRef`（id/label/name）和纯量**，
-   `Node` / `StateSnapshot` / `KnowledgeMatrix` 一个都不出。
+   `Node` / `StateSnapshot` 一个都不出。
 
-   **矩阵那一条的理由和另外两条不一样，别混**（2026-08-22 查清）：矩阵上根本没有节点
-   属性（只有 id/label/name 和几个纯量），所以「props 会穿过序列化」对它不成立。
-   它不出去的真理由是**寿命**——工具结果永久留在对话里，而矩阵跟章号绑死，整张表
-   过期是几十行一起错（ADR 0019 边界六）。所以 `knows_secret` 出的是**一格**，
-   而且那一格自己说得出它是第几章的；完整论证在 `KnowsSecretArgs` 上面那段。
+   （这儿原来还有一条关于认知矩阵的说明：它不出去的理由是**寿命**不是 props——
+   工具结果永久留在对话里，而矩阵跟章号绑死。矩阵和 `knows_secret` 都随秘密下线
+   走了，ADR 0039；那条「寿命」的论证仍然对**其它**跟章号绑死的出参成立，
+   记在 ADR 0037 的补记里。）
 3. **`json.loads` 在这一层做，不在运输层。** `draft/provider.py` 的 `ToolCall.arguments`
    是模型生成的原始字符串，运输层不解析、也不校验工具名（认得工具名就等于有第二份工具表）。
    「解析失败算什么」是编排层的判断，所以它是 `dispatch()` 的一个分支，返回一条
@@ -34,9 +33,8 @@ agent 调一次就把 PLANNED 秘密的正文读进对话历史，而对话是�
 
 | 工具 | 它回答什么 | 它绝不返回什么 |
 |---|---|---|
-| `scene_constraints` | 第 N 章不许说破哪几条秘密、哪些实体还没登场 | 秘密的内容、PLANNED 边 |
+| `scene_constraints` | 第 N 章哪些实体还没登场 | PLANNED 边 |
 | `character_state`   | 某人第 N 章在哪、什么状态、登场没有、死没死 | `Node`（它带着 props） |
-| `knows_secret`      | 某人第 N 章知不知道**某一条**秘密（一格） | `KnowledgeMatrix`（整张表）、秘密的内容 |
 | `draft_chapter`     | 起草第 N 章的一稿，**收进候选、不动书** | **一整章正文**（只给 id + 定长预览 + 自述） |
 | `save_draft`        | 把某一稿写进它那一章（**不问作者**） | —— 见下面「落盘」那一节 |
 | `read_draft`        | 按 id 把某一稿的全文拿回来 | —— 最贵的一条，只在要合并两版时调 |
@@ -210,12 +208,11 @@ from ..draft.context import (
 from ..draft.length import DraftLanguage, count_units
 from ..draft.provider import ToolCall
 from ..extract.call_audit import ModelCallReceipt
-from ..graph import KnowledgeCell, KnowledgeState, NodeLabel, NodeRef
+from ..graph import NodeLabel, NodeRef
 from ..graph.store import StoreError
 from ..importer import chapter_path, read_chapter, text_digest
 from ..mentioned import mentioned_cast
 from ..panel.constraints import UnresolvedCast, scene_view
-from ..panel.knowledge import knowledge_matrix
 from ..panel.state import character_state as _state_at
 from ..text import paragraphs as split_paragraphs
 from ..calibration.calibrate import CalibrationInput, calibrate_scene
@@ -273,46 +270,6 @@ class CharacterStateArgs(BaseModel):
     character: str = Field(
         min_length=1,
         description="人物的称呼，用作者在正文里的那个叫法。有歧义的叫法会被拒绝。",
-    )
-
-
-# ── `knows_secret` 的入参为什么长这样（一次一格，不是一张表）────────────────
-#
-# 起草时进 prompt 的是**整张认知矩阵**（`assemble()` 的 X1 逐格渲染），而这条工具
-# 只回答一格。差别不在内容，**在寿命**：
-#
-# - 起草的 prompt 每一轮重建、用完就没了，它带的章号永远是当下那个；
-# - 工具结果**永久留在对话里**——第 10 章查的那张表，写到第 50 章时它还躺在历史里，
-#   而那时它已经错了，且错的方向是 **fail-open**（后面知道的人只会更多 ⇒ 该禁的更少
-#   ⇒ 旧表看起来更严 ⇒ 模型按旧的走）。
-#
-# ADR 0019 边界六把「认知矩阵」明确列在**不能进稳定前缀**那一列，就是这个。整张表
-# 过期是几十行一起错，一格过期只错一格；出参那句话里明写「截至第 N 章」，过期了看得出来。
-# 投影那道闸只帮一半：它丢的是**绑在更后面**的章上的返回（`agent/loop.py` 的 `off_chapter`），
-# 一条第 10 章的答案在第 50 章的投影里照样在——所以章号必须写进那句话本身。
-#
-# **`secret` 是查询坐标，不是约束**（同 `character`）：`CONSTRAINT_SHAPED_FIELDS`
-# 禁的是复数的 `secrets`（一份清单 = 模型把上一章的禁忌集递回来，边界二）。
-# 这里是「我想问这一条」，一次一条，它决定不了这一场禁什么。
-class KnowsSecretArgs(BaseModel):
-    """查「某个人在第 N 章知不知道某一条秘密」——**一格，不是一张表**。"""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    chapter: int = Field(
-        ge=1,
-        description="要查第几章（AS OF 第几章，纯查询坐标）。答案只对这一章有效。",
-    )
-    character: str = Field(
-        min_length=1,
-        description="人物的称呼，用作者在正文里的那个叫法。有歧义的叫法会被拒绝。",
-    )
-    secret: str = Field(
-        min_length=1,
-        # **描述里不许举这本书的例子。** 声明是稳定前缀的一部分（边界六），它必须跨书、
-        # 跨章都不变；随手写一个「比如『血脉秘密』」就是把这本书的数据钉进缓存
-        # （`tests/test_agent_tools.py::test_the_declaration_never_learns_the_secret` 会红）。
-        description="秘密的显示名，用 book_index 的花名册里给的那个名字。",
     )
 
 
@@ -498,14 +455,11 @@ class ConstraintsResult(BaseModel):
     """本章正文里被提到的花名册称呼（ADR 0018：在场是数出来的，不是作者填的）。"""
 
     cast_derived: bool = False
-    """`False` = 这一章的正文还读不到，`must_not_reveal` 是**退化值（全部秘密）**。
+    """`False` = 这一章的正文还读不到，在场是**退化值**（数不出人）。
 
-    **零必须带着理由一起出现**（约束 8）：「一条都不用瞒」和「我没数出这一场有谁」
+    **零必须带着理由一起出现**（约束 8）：「这一章没人」和「我没数出这一场有谁」
     在清单上长得一模一样，而它们对作者是完全相反的两件事。
     """
-
-    must_not_reveal: list[NodeRef] = Field(default_factory=list)
-    """在场的人里至少有一个还不知道（或持错误认知）的秘密。**显示名在 `name` 上。**"""
 
     forbidden_entities: list[ForbiddenName] = Field(default_factory=list)
 
@@ -536,58 +490,6 @@ class CharacterStateResult(BaseModel):
     states: list[StateFact] = Field(default_factory=list)
     is_dead: bool = False
     has_appeared: bool = True
-
-
-class SecretKnowledgeResult(BaseModel):
-    """`knows_secret` 的出参：**认知矩阵里的一格**，而且它自己说得出自己是第几章的。
-
-    ── 为什么这里连 `NodeRef` 都不出，只出名字 ──────────────────────────────
-
-    模块 docstring 那条「`KnowledgeMatrix` 一个都不出」的原始理由（矩阵里有节点属性）
-    对一个格子**不成立**——矩阵上只有 id/label/name 和几个纯量。但收窄没有理由放松：
-    这一格要回答的问题里没有一个字需要 id，而 ULID 进对话之后模型会把它念给作者听。
-    所以出参只有**显示名和纯量**。
-
-    `answer` 和上面那几个纯量是**同一格渲染出来的两种形态**，不是两份事实：
-    模型读的是那句话，`state` / `since_chapter` 是它想精确引用时的那一份。
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    chapter: int
-    """查的是第几章。**它同时是 `ToolOutcome.chapter`**（结构判断取的就是入参这个字段），
-    也就是 ADR 0019 边界五那道投影闸认的坐标。"""
-
-    character: str
-    """人物的正式名（`node.name`），不是模型填进来的那个叫法。"""
-
-    secret: str
-    """秘密的**显示名**（`血脉秘密`），永远不是它的内容 tell（`玄血蛊`）。"""
-
-    state: KnowledgeState
-    """三态：`KNOWS` / `BELIEVES`（错误认知）/ `UNKNOWN`（闭世界推导，不是「查不到」）。"""
-
-    since_chapter: int | None = None
-    """`KNOWS` / `BELIEVES` 从第几章起。UNKNOWN 时为 `None`。
-
-    **作者从来没有输入过这个数字**（ADR 0006）：它由证据决定。
-    """
-
-    believed_value: str | None = None
-    """仅 `BELIEVES`：他以为的那个版本（「以为已泄露」）。
-
-    它是作者声明在边上的一句话，不是秘密节点的 props——`assemble()` 的 X1 本来就把它
-    逐格渲染进 prompt（`draft/assemble.py`），这一格给的和那儿是同一样东西。
-    """
-
-    answer: str
-    """一句中文，**开头就是「截至第 N 章」**。
-
-    章号写在句子里而不是只挂在 `chapter` 字段上，是因为这条返回会**永久留在对话里**：
-    模型在第 50 章读到它时，唯一能让它认出「这是第 10 章的答案」的就是这句话本身
-    （见 `KnowsSecretArgs` 上面那段）。
-    """
-
 
 class DraftResult(BaseModel):
     """`draft_chapter` 的出参：**认得出是哪一稿的那几样，不是那一稿本身**（ADR 0022）。
@@ -624,9 +526,6 @@ class DraftResult(BaseModel):
 
     不是引擎给的评价——引擎不给散文打分（ADR 0005）。空 = 它这次没说，这儿不替它编。
     """
-
-    must_not_reveal: list[str] = Field(default_factory=list)
-    """秘密的**显示名**（`血脉秘密`），永远不是它的内容 tell（`玄血蛊`）。"""
 
     calls: tuple[ModelCallReceipt, ...] = Field(default=(), exclude=True)
     """这一稿花掉的那几笔。**`exclude=True`：它一个字都不进对话历史。**
@@ -1083,7 +982,6 @@ def _handle_scene_constraints(
         cast=list(ctx.cast) if resolved else [],
         cast_derived=resolved,
         # 收窄发生在 `panel/constraints.py`（`NodeRef.of`），这里只是不要把它加回来。
-        must_not_reveal=list(ctx.must_not_reveal),
         forbidden_entities=[
             ForbiddenName(
                 name=entity.node.name,
@@ -1123,31 +1021,6 @@ def _handle_character_state(
         is_dead=snapshot.is_dead,
         has_appeared=snapshot.has_appeared(),
     )
-
-
-def _knowledge_sentence(
-    chapter: int,
-    who: str,
-    secret: str,
-    cell: KnowledgeCell,
-) -> str:
-    """把一格渲染成一句中文。**三态各说各的，而且都以「截至第 N 章」开头。**
-
-    「还不知道」和「误以为」对写作是**同一个结论**（这一场都不许说破），但对模型不是
-    同一件事：误以为的那一位有一个他自己的版本，写他说话时得按那个版本写。
-    合成一句「他不知道」会让那半场戏没法写——而这正是这条工具存在的理由。
-    """
-    prefix = f"截至第 {chapter} 章："
-    since = f"（第 {cell.since_chapter} 章起）" if cell.since_chapter is not None else ""
-    if cell.state is KnowledgeState.KNOWS:
-        return f"{prefix}{who} 已经知道「{secret}」{since}。"
-    if cell.state is KnowledgeState.BELIEVES:
-        believed = f"，他以为是「{cell.believed_value}」" if cell.believed_value else ""
-        return (
-            f"{prefix}{who} 对「{secret}」持的是错误认知{believed}{since}。"
-            "他在场时这一场同样不许把真相说破。"
-        )
-    return f"{prefix}{who} 还不知道「{secret}」。他在场时这一场不许说破它。"
 
 
 TRACK_NUDGE_HEADER: Final = "你正在改一章旧的："
@@ -1200,56 +1073,6 @@ def _handle_check_track(args: CheckTrackArgs, context: ToolContext) -> TrackVerd
             "禁写清单和「尚未登场」照常生效，缺的只是「跟后面章节抵不抵触」这一问。"
         )
     return context.track_check(args.chapter)
-
-
-def _handle_knows_secret(
-    args: KnowsSecretArgs, context: ToolContext
-) -> SecretKnowledgeResult:
-    """一格认知矩阵。**两个称呼一次 `resolve` 解完**（同 `index._resolve_characters`：
-    这一层每多一次库往返都是作者在等）。"""
-    resolutions = context.store.resolve(context.project_id, [args.character, args.secret])
-    by_surface = {resolution.surface: resolution for resolution in resolutions}
-    # 「查不到」和「说法有歧义」在这儿仍然是两句话（`index.UnknownCharacter`）——
-    # 它们的正确下一步相反。**秘密名也走同一句**：那句话的尾巴是人物口吻的
-    # （「就当新人物直接往下写」），对一条查不到的秘密名略微跑偏；但它操作性的那半句
-    # （名单是定死的、别换说法重试、去 book_index 看全）两边都对，而为此另开一份措辞
-    # 正是 2026-08-13 那段病史里的那个错误（两份拷贝，两份说的都是同一句错话）。
-    who = resolve_one(args.character, by_surface.get(args.character))
-    if who.label is not NodeLabel.CHARACTER:
-        raise ToolRefused(
-            f"「{args.character}」不是人物（它是 {who.label}），没有「知不知道」可查。"
-        )
-    what = resolve_one(args.secret, by_surface.get(args.secret))
-    if what.label is not NodeLabel.SECRET:
-        # 集合判断：花名册里地点、门派、物件都在，拿它们来问「谁知道它」会返回一份
-        # 看起来正常、实际上没有意义的答案（一个地点不是一条被瞒着的事）。
-        raise ToolRefused(
-            f"「{args.secret}」不是一条秘密（它是 {what.label}）。"
-            "这条工具只查秘密——秘密的显示名在 book_index 的花名册里。"
-        )
-
-    # 走 `panel.knowledge_matrix` 而不是在这儿自己查边：时态过滤（`[valid_from, valid_to)`）
-    # 全系统只在 `graph/queries.py` 实现一次，闭世界的 UNKNOWN 也只由它物化。
-    # 一行一列的矩阵在这里**只是取那一格的路径，它一个字都不出去**（边界一）。
-    matrix = knowledge_matrix(
-        context.store,
-        context.project_id,
-        args.chapter,
-        [who.id],
-        secrets=[what.id],
-    )
-    cell = matrix.cell(who.id, what.id)
-    return SecretKnowledgeResult(
-        chapter=args.chapter,
-        character=who.name,
-        secret=what.name,
-        state=cell.state,
-        since_chapter=cell.since_chapter,
-        believed_value=cell.believed_value,
-        answer=_knowledge_sentence(args.chapter, who.name, what.name, cell),
-    )
-
-
 def _desk(context: ToolContext) -> DraftDesk:
     """起草那一摊，或者一句「没接线」。**不假装写了一稿。**"""
     if context.drafter is None:
@@ -1299,7 +1122,6 @@ def _handle_draft_chapter(args: DraftAsk, context: ToolContext) -> DraftResult:
         units=candidate.units,
         preview=candidate.preview,
         note=candidate.note,
-        must_not_reveal=list(ctx.secret_labels),
         calls=product.calls,
     )
 
@@ -1770,27 +1592,6 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         args=SealSceneBriefArgs,
         handler=_handle_seal_scene_brief,
         label="封存写作简报",
-    ),
-    # ── 一格认知边界（2026-08-22）。**追加在表尾**，理由同上面那几条。
-    #
-    # 它和 `scene_constraints` 不重复，问的是两件事：那条给「这一场不许说破哪几条」，
-    # 这条给「具体是他、具体这一条、具体这一章」。**整张矩阵仍然不出**（边界一 / 边界六）——
-    # 理由在 `KnowsSecretArgs` 上面那段：差别不在内容，在寿命。
-    ToolSpec(
-        name="knows_secret",
-        description=(
-            "查一个人在第 N 章**知不知道**某一条秘密。一次一格：一个人、一条秘密、一个章号。"
-            "三种答案——已经知道（带第几章起）/ 还不知道 / 持错误认知（他以为是别的版本）。"
-            "**它不给你秘密的内容**，只给显示名和这一格的状态。\n"
-            "**什么时候用**：你正要让某个人把某件事说出口，而你不确定这一章他知不知道。"
-            "整场的禁写清单照旧走 scene_constraints；这一条补它不回答的那半句：具体是谁。\n"
-            "**答案只对你问的那一章有效**，返回里那句话自己写着「截至第 N 章」。"
-            "写到更后面的章时它可能已经过期（越往后知道的人只会越多），那时重新问一次，"
-            "别拿这一轮的答案去写第 200 章。"
-        ),
-        args=KnowsSecretArgs,
-        handler=_handle_knows_secret,
-        label="查一个人知不知道那件事",
     ),
     # ── 轨道核对（2026-08-23，轨道阶段 3）。**追加在表尾**，理由同上面那几条。
     #

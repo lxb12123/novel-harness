@@ -280,7 +280,6 @@ EVERY_TOOL = (
         }],
     }),
     ("seal_scene_brief", {"inspection_id": "inspection:test:seeded"}),
-    ("knows_secret", {"chapter": CHAPTER, "character": "萧决", "secret": "血脉秘密"}),
     ("check_track", {"chapter": CHAPTER}),
     ("ask_author", {"question": "这一场你想让萧决知道那件事吗？",
                     "options": ["让他知道", "先瞒着他"]}),

@@ -151,8 +151,7 @@ def test_the_wire_is_clean_and_the_poison_was_really_there_to_leak(
 
     # **毒真的在工具返回里** —— 也就是这一轮里引擎手上真的握着这几段话。
     handed_to_model = sent_to_the_model(model, 1)
-    assert "secret:" in handed_to_model, "约束那一条没带回 `NodeRef` 的裸 id —— 料不满"
-    assert "must_not_reveal" in handed_to_model, "约束那一条没带回禁说清单 —— 料不满"
+    assert "forbidden_entities" in handed_to_model, "约束那一条没带回未来实体清单 —— 料不满"
     assert CH1_LINE in handed_to_model, "正文那一条没读回来 —— 料不满"
 
     # ── 那条连接上一个字都没有 ─────────────────────────────────────────────

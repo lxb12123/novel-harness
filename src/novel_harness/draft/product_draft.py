@@ -608,7 +608,7 @@ def _with_memory(
     # 节点、穿过 `require_resolved_cast()`，然后在 `build_product_context` 的
     # 「cast must contain only Character references」上炸成 500。
     # ADR 0018 之后这条路更容易走到——在场是从正文里数出来的，数出来的是称呼。
-    characters = [ref for ref in ctx.matrix.characters if ref.label is NodeLabel.CHARACTER]
+    characters = [ref for ref in ctx.characters if ref.label is NodeLabel.CHARACTER]
     if not characters:
         # 退化不是错误（约束照常生效，禁令一条不少），但**不许静默**：
         # 少了记忆前言的稿子和多了记忆前言的稿子长得不一样，作者有权知道是哪一种。

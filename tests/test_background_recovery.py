@@ -14,8 +14,8 @@ from novel_harness.api.background_runtime import BackgroundRuntime
 from novel_harness.chapter_refresh import (
     BranchAdapter,
     BranchContext,
-    create_manual_attempt,
 )
+from test_chapter_refresh import an_attempt
 from novel_harness.db import connect, migrate
 from novel_harness.draft.provider import CompletionResult
 from novel_harness.extract import RawChapterAnalysis, RawEvent
@@ -106,25 +106,17 @@ def test_pump_once_claims_and_runs_pending_attempts_without_http(tmp_path: Path)
     conn = connect(db)
     # 预放两个 attempt：一个 summary+extraction 都缺的 manual，一个 validation 已过、
     # 只缺 extraction 的 coverage。
-    attempt_a = create_manual_attempt(
+    attempt_a = an_attempt(
         conn,
         project_id=pid,
         chapter_id=chapter_id,
         snapshot_id=_snapshot(conn, pid),
-        generation=1,
-        ruleset_epoch=1,
-        ruleset_hash="x",
-        trigger_key="manual:a",
     )
-    attempt_b = create_manual_attempt(
+    attempt_b = an_attempt(
         conn,
         project_id=pid,
         chapter_id=chapter_id,
         snapshot_id=_snapshot(conn, pid),
-        generation=1,
-        ruleset_epoch=1,
-        ruleset_hash="x",
-        trigger_key="manual:b",
     )
     # 第二个 attempt 预置验证通过，只等 summary/extraction。
     conn.execute(
@@ -168,15 +160,11 @@ def test_pump_once_claims_and_runs_pending_attempts_without_http(tmp_path: Path)
 def test_unexpired_running_attempt_is_not_stolen(tmp_path: Path) -> None:
     db, pid, chapter_id = _seed_book(tmp_path)
     conn = connect(db)
-    attempt = create_manual_attempt(
+    attempt = an_attempt(
         conn,
         project_id=pid,
         chapter_id=chapter_id,
         snapshot_id=_snapshot(conn, pid),
-        generation=1,
-        ruleset_epoch=1,
-        ruleset_hash="x",
-        trigger_key="manual:running",
     )
     # 别的 worker 正拿着（lease 未过期）。
     conn.execute(

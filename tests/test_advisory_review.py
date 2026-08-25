@@ -27,9 +27,7 @@ import pytest
 
 from novel_harness import importer, project
 from novel_harness.advisory_review import (
-    SecretSlip,
     TrackClash,
-    _SECRET_NOT_CHECKED,
     _TRACK_NOT_CHECKED,
     numbered_sentences,
     review_saved_chapter,
@@ -286,11 +284,11 @@ def test_the_notice_points_at_the_real_sentence(written: dict) -> None:
     所以它不可能指向一句作者没写过的话（ADR 0006 那段病史的来源正是反过来做）。
     """
     number = _sentence_number(written, SLIP_LINE)
-    reviewer = Reviewer({"secret": _found(number, character=OUTSIDER, secret=SECRET)})
+    reviewer = Reviewer({"track": _found(number, chapter=5, conflict="setting")})
 
     outcome = _review(written, reviewer)
 
-    assert outcome.slips == (SecretSlip(sentence=number, character=OUTSIDER, secret=SECRET),)
+    assert outcome.clashes == (TrackClash(sentence=number, chapter=5, conflict="setting"),)
     notice = next(n for n in _notices(written) if n.kind == "text_advisory")
     assert notice.jump is not None
     para = paragraphs(_current_text(written["conn"], written["pid"], HERE))
@@ -298,64 +296,26 @@ def test_the_notice_points_at_the_real_sentence(written: dict) -> None:
         find_one(para[notice.jump.para_index], notice.jump.quote_text, notice.jump.occurrence_k)
         == f"他说：「{SLIP_LINE}」"
     )
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 二、M1-b：秘密有没有对不该知道的人说破
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def test_only_what_he_does_not_know_is_put_in_front_of_the_model(written: dict) -> None:
-    """摆给核对器的是「**还不知道**」那几格，知道的一格都不进去。
-
-    对照组同在这一条里：萧决从第 1 章起就知道这件事（章号由引语算的），
-    所以清单里只该有顾清音那一行——两行都出现的话，模型会去找一句根本不存在的问题。
-    """
-    reviewer = Reviewer()
-    _review(written, reviewer)
-
-    prompt = reviewer.prompt("secret")
-    assert f"- {OUTSIDER}：还不知道「{SECRET}」" in prompt
-    assert f"- {KNOWER}：还不知道「{SECRET}」" not in prompt
-    assert SLIP_LINE in prompt, "正文没进去的话上面那条断言绿得毫无意义"
-
-
-def test_a_person_or_a_secret_the_model_invented_is_dropped(written: dict) -> None:
-    """模型编一个名字出来 → 当场丢掉，**不落通知**。
-
-    这是「结构化出参」唯一的价值兑现处：`character` / `secret` 必须在我们给出去的
-    那份清单里逐字找得到。判据是集合成员，不是相似度。
-    """
-    number = _sentence_number(written, SLIP_LINE)
-    reviewer = Reviewer({"secret": _found(number, character="李管家", secret=SECRET)})
-
-    outcome = _review(written, reviewer)
-
-    assert outcome.slips == ()
-    assert [n.kind for n in _notices(written)] == []
-
-
 def test_a_sentence_number_that_does_not_exist_is_dropped(written: dict) -> None:
     """指一个不存在的句号 → 丢掉。**绝不退回第 1 句**——退回去就是锚到别处。"""
-    reviewer = Reviewer({"secret": _found(9999, character=OUTSIDER, secret=SECRET)})
+    reviewer = Reviewer({"track": _found(9999, chapter=5, conflict="setting")})
 
     outcome = _review(written, reviewer)
-
-    assert outcome.slips == ()
+    assert outcome.clashes == (), "模型指了一个不存在的句号，那条必须被机械复核挡掉"
     assert [n.kind for n in _notices(written)] == []
 
 
 def test_the_notice_says_who_and_what_without_any_engine_words(written: dict) -> None:
     """标题是给小说作者看的：说得出哪一句、哪个人、哪条秘密，**不说机器码**。"""
     number = _sentence_number(written, SLIP_LINE)
-    reviewer = Reviewer({"secret": _found(number, character=OUTSIDER, secret=SECRET)})
+    reviewer = Reviewer({"track": _found(number, chapter=5, conflict="setting")})
 
     _review(written, reviewer)
 
     title = next(n for n in _notices(written) if n.kind == "text_advisory").title
     assert f"第 {number} 句" in title
-    assert OUTSIDER in title and SECRET in title
-    for machine in ("secret", "text_advisory", "KNOWS", "UNKNOWN", "node"):
+    assert "第 5 章" in title
+    for machine in ("track", "text_advisory", "setting", "clash", "node"):
         assert machine not in title
 
 
@@ -525,37 +485,12 @@ def test_the_tool_return_value_carries_no_word_of_the_exception(
     for leaked in (SPOILER, LATER_SETTING, "玄血蛊", UPSTREAM_MARKER):
         assert leaked not in dumped, f"异常原文进了工具返回值（此后每一轮都在）：{leaked}"
     assert verdict.note == _TRACK_NOT_CHECKED, "没跑成也要说得出没跑成（§10 约束 8）"
-
-
-def test_a_broken_secret_check_says_nothing_about_why_either(written: dict) -> None:
-    """秘密那一问是**同一个写法**，一起钉住。
-
-    今天它没人读（`review_saved_chapter` 的回执被后台丢掉），所以它泄了也不会有人
-    看见——这恰恰是它值得钉的理由：等哪天有人把这一格接到屏幕或对话上，谁都不会想起
-    来这儿曾经拼着一段端点回的原话。
-    """
-    endpoint = EchoingFailure()
-
-    outcome = _review(written, endpoint)
-
-    receipt = outcome.model_dump_json()
-    assert UPSTREAM_MARKER not in receipt, "异常原文进了回执"
-    assert SLIP_LINE not in receipt, "被回显的正文进了回执"
-    assert outcome.notes["secret"] == _SECRET_NOT_CHECKED
-    assert outcome.notes["track"] == _TRACK_NOT_CHECKED
-
-
-# ── 四之三：模式二自己调的那一次（`review_track_on_demand`）────────────────
-#
-# 它此前**一次都没有被测过**。零覆盖的东西在这条路上尤其贵：它是唯一一个把核对结论
-# 直接交到模型手上的入口，上面两条守的洞都长在它身上。
-
-
 def test_the_on_demand_check_answers_only_the_track_question(written: dict) -> None:
-    """只问轨道那一问，**不问秘密、不落通知**。
+    """答得出轨道那一问，**但不落通知**。
 
-    多问一次秘密 = 每轮对话多付一次钱，而那一问要的是稳定正文（作者可能正写到一半）；
-    落一条通知 = 作者的右栏冒出一件他没做过的事，而右栏那一格的语义是「你该看一眼」。
+    落一条通知 = 作者的右栏冒出一件他没做过的事，而右栏那一格的语义是「你该看一眼」，
+    不是「模型问过什么」。
+    （这儿原来还断言「不问秘密那一问」——秘密整套 2026-08-24 下线了，那半句没了对象。）
     """
     number = _sentence_number(written, "白光")
     reviewer = Reviewer({"track": _found(number, chapter=5, conflict="setting")})
@@ -563,8 +498,7 @@ def test_the_on_demand_check_answers_only_the_track_question(written: dict) -> N
     outcome = _track_only(written, reviewer)
 
     assert outcome.clashes == (TrackClash(sentence=number, chapter=5, conflict="setting"),)
-    assert reviewer.calls("secret") == 0
-    assert outcome.slips == () and outcome.notices == ()
+    assert outcome.notices == ()
     assert [n.kind for n in _notices(written)] == []
     # 顺带：这一路也不许把轨道带出来（上面那条对照组已证明模型确实看得见它）。
     assert SPOILER not in outcome.model_dump_json()
@@ -600,7 +534,6 @@ def test_this_side_can_only_produce_the_non_blocking_kind(written: dict) -> None
     number = _sentence_number(written, SLIP_LINE)
     reviewer = Reviewer(
         {
-            "secret": _found(number, character=OUTSIDER, secret=SECRET),
             "track": _found(number, chapter=5, conflict="timeline"),
         }
     )
@@ -620,12 +553,12 @@ def test_the_same_text_is_never_paid_for_twice(written: dict) -> None:
     reviewer = Reviewer()
 
     _review(written, reviewer)
-    first = (reviewer.calls("secret"), reviewer.calls("track"))
+    first = (reviewer.calls("track"), reviewer.calls("track"))
     outcome = _review(written, reviewer)
 
     assert first == (1, 1)
-    assert (reviewer.calls("secret"), reviewer.calls("track")) == first
-    assert "没有再花钱" in outcome.notes["secret"]
+    assert (reviewer.calls("track"), reviewer.calls("track")) == first
+    assert "没有再花钱" in outcome.notes["track"]
     assert "没有再花钱" in outcome.notes["track"]
 
 
@@ -642,22 +575,19 @@ def test_a_model_that_is_not_configured_leaves_the_author_alone(written: dict) -
 
     outcome = _review(written, exploding)
 
-    assert outcome.slips == () and outcome.clashes == () and outcome.notices == ()
+    assert outcome.clashes == () and outcome.notices == ()
     assert [n.kind for n in _notices(written)] == []
-    assert outcome.notes["secret"] == _SECRET_NOT_CHECKED
     assert outcome.notes["track"] == _TRACK_NOT_CHECKED
     # 跑成了和没跑成必须是两句不同的话，否则上面那两条断言只是在验一个空壳。
-    assert "没跑成" in _SECRET_NOT_CHECKED and "没跑成" in _TRACK_NOT_CHECKED
+    assert "没跑成" in _TRACK_NOT_CHECKED
 
 
 def test_garbage_instead_of_json_is_not_an_exception(written: dict) -> None:
     """核对器回了一段散文 → 这一次核对不算数，**不是一个 500**。"""
-    reviewer = Reviewer({"secret": "我觉得这一章写得挺好的。"})
+    reviewer = Reviewer({"track": "我觉得这一章写得挺好的。"})
 
     outcome = _review(written, reviewer)
-
-    assert outcome.slips == ()
-    assert "没能核对" in outcome.notes["secret"]
+    assert outcome.clashes == (), "回了一段散文时不许当成一条抵触"
 
 
 def test_a_second_scan_of_the_same_text_does_not_wipe_its_own_warning(
@@ -670,7 +600,7 @@ def test_a_second_scan_of_the_same_text_does_not_wipe_its_own_warning(
     **来源正文的 hash**，不是章。
     """
     number = _sentence_number(written, SLIP_LINE)
-    reviewer = Reviewer({"secret": _found(number, character=OUTSIDER, secret=SECRET)})
+    reviewer = Reviewer({"track": _found(number, chapter=5, conflict="setting")})
     _review(written, reviewer)
     assert len(_notices(written)) == 1
 
@@ -686,7 +616,7 @@ def test_a_model_outage_does_not_quietly_clear_yesterdays_warning(written: dict)
     「已解决」是发生了一件事，而且是作者最看不见的那一种。
     """
     number = _sentence_number(written, SLIP_LINE)
-    _review(written, Reviewer({"secret": _found(number, character=OUTSIDER, secret=SECRET)}))
+    _review(written, Reviewer({"track": _found(number, chapter=5, conflict="setting")}))
     assert len(_notices(written)) == 1
 
     root = Path(written["root"])
@@ -711,7 +641,7 @@ def test_a_fixed_sentence_stops_warning(written: dict) -> None:
     而它永远不会自己走。**只动 OPEN**：他自己按过的「忽略」是终态。
     """
     number = _sentence_number(written, SLIP_LINE)
-    reviewer = Reviewer({"secret": _found(number, character=OUTSIDER, secret=SECRET)})
+    reviewer = Reviewer({"track": _found(number, chapter=5, conflict="setting")})
     _review(written, reviewer)
     assert len(_notices(written)) == 1
 
@@ -802,7 +732,7 @@ def test_the_author_sees_the_warning_without_anyone_calling_materialize(
     """
     pid = written["pid"]
     number = _sentence_number(written, SLIP_LINE)
-    reviewer = Reviewer({"secret": _found(number, character=OUTSIDER, secret=SECRET)})
+    reviewer = Reviewer({"track": _found(number, chapter=5, conflict="setting")})
     runtime = _runtime(written, reviewer)
 
     body = client.get(f"/api/projects/{pid}/chapters/{HERE}/text").json()
@@ -858,7 +788,7 @@ def test_the_review_waits_until_the_author_leaves_that_chapter(
     runtime.autonomy_once()
     runtime.pump_once()
 
-    assert reviewer.calls("secret") == 1, "切走之后该核对一次"
+    assert reviewer.calls("track") == 1, "切走之后该核对一次"
     assert reviewer.calls("track") == 1
 
 

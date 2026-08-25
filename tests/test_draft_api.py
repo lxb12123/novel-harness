@@ -309,29 +309,6 @@ def test_continuation_needs_neither_goal_nor_cast(
     )
     assert r.status_code == 200, r.text
     assert r.json()["experimental"] is True
-
-
-def test_continuation_without_cast_forbids_every_secret(
-    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """不知道谁在场 ⇒ 全禁（fail-closed）。**方向搞反就是泄漏。**"""
-    _configure(client)
-    seen = _capture_complete(monkeypatch)
-    r = client.post(
-        _url(book),
-        json={"mode": "continuation", "previous_tail": "夜色沉下来。", "length": _SHORT},
-    )
-    assert r.status_code == 200, r.text
-
-    body = "\n".join(m["content"] for m in seen[0])
-    # M1-a（2026-08-22）把退化态的「【在场】未知」整块删了：**约束整个由禁写清单承载**。
-    # 这两条一起才是 fail-closed —— 只钉「块没了」会漏掉「禁写清单也一起没了」那种改法。
-    assert "【在场】" not in body
-    assert "不得写破" in body
-    assert "血脉秘密" in body  # 显示名进 prompt……
-    assert TWIST not in body  # ……内容 tell 永远不进
-
-
 def test_continuation_with_cast_is_less_restrictive(
     client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -546,6 +523,18 @@ def _stub_summarizer(monkeypatch: pytest.MonkeyPatch, text: str = "萧决进屋�
     )
 
 
+def _generate(book: dict[str, str], chapter: int) -> None:
+    """给这一章生成一份滚动总结。
+
+    **从前走 `POST …/summary`**，那条路由 2026-08-25 随手动按钮一起删了（总结只剩
+    「保存之后」和「每 30 分钟扫描」两个自动触发）。这儿直接调生产上那个执行体——
+    同一个 `ensure`、同一份幂等、同一条审计，只是少了 HTTP 那一层。
+    """
+    import novel_harness.api.deps as deps_mod
+
+    deps_mod.build_summarizer().ensure(book["pid"], chapter)
+
+
 def _summaries(client: TestClient, book: dict[str, str], chapter: int) -> dict:
     response = client.get(f"/api/projects/{book['pid']}/chapters/{chapter}/summaries")
     assert response.status_code == 200, response.text
@@ -618,7 +607,7 @@ def test_generated_summary_reaches_the_writer_prompt(
     """
     _configure(client)
     _stub_summarizer(monkeypatch, text="萧决进屋，没点灯。")
-    assert client.post(f"/api/projects/{book['pid']}/chapters/1/summary").status_code == 200
+    _generate(book, 1)
 
     seen = _capture_complete(monkeypatch)
     response = client.post(
@@ -632,19 +621,18 @@ def test_generated_summary_reaches_the_writer_prompt(
     assert response.json()["memory"]["unsummarized_chapters"] == [2]
 
 
-def test_summarizing_a_chapter_without_text_is_404(
+def test_summarizing_a_chapter_without_text_refuses_instead_of_inventing_one(
     client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """没有正文的章**拒绝**，不拿一段空白去换一次模型调用。
+
+    从前这条钉的是那条手动路由的 404；路由 2026-08-25 删了，但**规矩没变**，
+    只是唯一还会撞上它的人从作者变成了后台（保存触发 / 30 分钟扫描）。
+    所以它改钉执行体本身——那才是这条规矩真正住的地方。
+    """
+    from novel_harness.draft.rolling_summary import SummaryChapterNotFound
+
     _configure(client)
     _stub_summarizer(monkeypatch)
-    response = client.post(f"/api/projects/{book['pid']}/chapters/9/summary")
-    assert response.status_code == 404
-
-
-def test_summarizing_without_connection_config_is_422(
-    client: TestClient, book: dict[str, str]
-) -> None:
-    """没配钥匙的作者该看见「去顶栏 ⚙ 填」，不是 pydantic 的开发者输出。"""
-    response = client.post(f"/api/projects/{book['pid']}/chapters/1/summary")
-    assert response.status_code == 422
-    assert "AI 设置" in response.text
+    with pytest.raises(SummaryChapterNotFound):
+        _generate(book, 9)

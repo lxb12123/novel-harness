@@ -285,18 +285,6 @@ def test_panels_derive_cast_when_the_author_did_not_type_one(
     # 显式传 cast 仍然优先：作者说了算，推导只在他没说时接手。
     explicit = client.get(f"/api/projects/{pid}/chapters/1/state", params={"cast": "萧决"}).json()
     assert [c["node"]["name"] for c in explicit] == ["萧决"]
-
-
-def test_derived_cast_still_fails_closed_on_an_unwritten_chapter(
-    client: TestClient, book: dict[str, str]
-) -> None:
-    """推不出人 → 空 cast → 全禁。退化路径和作者什么都没填时**完全一样**。
-
-    方向别搞反：这里多禁一条的代价是「少写一段」，漏禁一条的代价是「崩人设」。
-    """
-    pid = _pid(book)
-    unwritten = client.get(f"/api/projects/{pid}/chapters/99/constraints").json()
-    assert [n["name"] for n in unwritten["must_not_reveal"]] == ["血脉秘密"]
 # ══════════════════════════════════════════════════════════════════════════
 # 错误映射（§1.3）
 # ══════════════════════════════════════════════════════════════════════════

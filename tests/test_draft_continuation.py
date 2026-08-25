@@ -20,7 +20,6 @@ from test_knowledge import (
     GU_QINGYIN,
     PID,
     XIAO_JUE,
-    XUANTIE,
     build,
     edge,
 )
@@ -32,7 +31,6 @@ from novel_harness.draft.assemble import (
 )
 from novel_harness.draft.context import (
     ResolvedConstraints,
-    UnknownCastConstraints,
     resolve_constraints,
     unknown_cast_constraints,
 )
@@ -46,33 +44,6 @@ SHORT = LengthSpec(language=DraftLanguage.ZH, min_units=80, target_units=150, ma
 
 def _store():
     return build([edge(XIAO_JUE.id, BLOODLINE.id, EdgeType.KNOWS, 88)])
-
-
-# ── 1. 不知道谁在场 ⇒ 全禁 ────────────────────────────────────────────────
-
-
-def test_unknown_cast_forbids_every_secret() -> None:
-    """空 cast 的答案是「全禁」，不是「无约束」，也不是抛异常。"""
-    ctx = unknown_cast_constraints(_store(), PID, 152, secrets=[BLOODLINE.id, XUANTIE.id])
-
-    assert isinstance(ctx, UnknownCastConstraints)
-    assert sorted(ctx.secret_labels) == sorted(["血脉秘密", "玄铁令下落"])
-
-
-def test_a_known_cast_is_strictly_less_restrictive_than_not_knowing() -> None:
-    """对照：知道在场是谁 ⇒ 约束收紧。
-
-    没有这一条，上面那条也可能是因为「这个函数恒返回全部秘密」而绿的——
-    而「恒返回全部秘密」正好是退化值自己的形状，两者从出参上分不开。
-    """
-    store = _store()
-    unknown = unknown_cast_constraints(store, PID, 152, secrets=[BLOODLINE.id])
-    known = resolve_constraints(store, PID, 152, [XIAO_JUE.name], secrets=[BLOODLINE.id])
-
-    assert unknown.secret_labels == ["血脉秘密"]  # 不知道谁在场 → 禁
-    assert known.secret_labels == []  # 萧决第 88 章就知道了 → 不必禁
-
-
 def test_forbidden_entities_stay_exact_because_they_never_depended_on_cast() -> None:
     """未来实体是按章号算的，与在场无关——退化态里这一项**不该**跟着退化。"""
     ctx = unknown_cast_constraints(_store(), PID, 152, secrets=[BLOODLINE.id])
@@ -137,24 +108,8 @@ def test_what_is_left_of_the_degraded_prompt_all_still_carries_information() -> 
         "content"
     ]
 
-    assert "这一场不得写破：血脉秘密" in body
     assert "尚未登场、这一场不得出现：幽泉窟（第 200 章首现）" in body
     assert CONTINUATION_GOAL in body
-
-
-# ── 3. 渲染：退化态进得了 prompt，且原路径逐字节不变 ──────────────────────
-
-
-def test_the_degraded_context_renders_and_carries_the_ban() -> None:
-    ctx = unknown_cast_constraints(_store(), PID, 152, secrets=[BLOODLINE.id])
-
-    messages = assemble(ctx, form=PromptForm.X1, goal=CONTINUATION_GOAL, length=SHORT)
-    body = "\n".join(m["content"] for m in messages)
-
-    assert "血脉秘密" in body  # 禁的是显示名……
-    assert "玄血蛊" not in body  # ……永远不是内容 tell
-
-
 def test_the_degraded_context_injects_no_knowledge_matrix() -> None:
     """没有 cast 就没有矩阵行。渲一个空矩阵等于说「查过了，没人知道任何事」——那是假的。"""
     ctx = unknown_cast_constraints(_store(), PID, 152, secrets=[BLOODLINE.id])

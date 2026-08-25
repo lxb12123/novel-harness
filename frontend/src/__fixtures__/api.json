@@ -1286,18 +1286,6 @@
         ]
       }
     ],
-    "must_not_reveal": [
-      {
-        "id": "secret:ID7",
-        "label": "Secret",
-        "name": "血脉秘密"
-      },
-      {
-        "id": "secret:ID13",
-        "label": "Secret",
-        "name": "玄铁令下落"
-      }
-    ],
     "unresolved_cast": []
   },
   "createAlias": {

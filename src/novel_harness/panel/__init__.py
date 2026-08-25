@@ -13,9 +13,8 @@
 
 | 模块 | 内容 |
 |---|---|
-| `knowledge` | ★ 认知边界矩阵（头牌，README 第一行） |
 | `state` | 人物卡：所在地 / 状态维度 / 生死 |
-| `constraints` | PLANNED 进 prompt 的唯一闸门：must_not_reveal / forbidden_entities |
+| `constraints` | PLANNED 进 prompt 的唯一闸门：forbidden_entities（尚未登场的实体） |
 | `scope` | 读路径那道 scope 闸（PLANNED / REJECTED 挡在外面）——**这一层唯一的安全断言** |
 """
 
@@ -30,7 +29,6 @@ from .constraints import (
     resolve_cast,
     scene_constraints,
 )
-from .knowledge import knowledge_matrix
 from .scope import require_queryable_scope
 from .state import cast_states, character_state
 
@@ -42,7 +40,6 @@ __all__ = [
     "cast_states",
     "character_state",
     "forbidden_entities",
-    "knowledge_matrix",
     "require_queryable_scope",
     "resolve_cast",
     "scene_constraints",

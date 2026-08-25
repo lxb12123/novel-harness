@@ -53,49 +53,33 @@ TELL = "玄血蛊"
 
 
 def test_happy_path_narrows_a_scene() -> None:
-    """顾清音不知道血脉秘密 → 这一场不许说破；幽泉窟第 200 章才首现 → 不许出现。"""
-    store = build([edge(XIAO_JUE.id, BLOODLINE.id, EdgeType.KNOWS, 88)])
+    """幽泉窟第 200 章才首现 → 这一场不许出现；在场解析成了唯一一个人。"""
+    store = build([])
 
-    ctx = resolve_constraints(store, PID, 152, [GU_QINGYIN.name], secrets=[BLOODLINE.id])
+    ctx = resolve_constraints(store, PID, 152, [GU_QINGYIN.name])
 
     assert ctx.chapter == 152
     assert ctx.cast == ["顾清音"]
-    assert ctx.secret_labels == ["血脉秘密"]
+    assert [r.name for r in ctx.characters] == ["顾清音"]
     assert ctx.forbidden_names == ["幽泉窟"]
-
-
-def test_all_present_know_it_means_no_constraint() -> None:
-    """对照：真的「全员都知道」时约束为空。
-
-    没有这一条，上面那条也可能是因为「这个封装恒返回全部秘密」而绿的——
-    而「恒返回全部秘密」正是退化值的形状。
-    """
-    store = build([edge(XIAO_JUE.id, BLOODLINE.id, EdgeType.KNOWS, 88)])
-
-    ctx = resolve_constraints(store, PID, 152, [XIAO_JUE.name], secrets=[BLOODLINE.id])
-
-    assert ctx.secret_labels == []
-
-
 def test_of_narrows_the_very_same_constraints() -> None:
     """`of()` 是**收窄**，不是重算。
 
     kill-gate 的 runner 要拿同一份 `SceneConstraints` 既判分（`score_against`）又起草，
     「禁忌集只有一个来源」必须在对象层成立（EVAL_PROTOCOL §3），不能靠两次查询碰巧一致。
     """
-    store = build([edge(GU_QINGYIN.id, BLOODLINE.id, EdgeType.KNOWS, 10)])
+    store = build([])
     cast = [GU_QINGYIN.name, LI_GUANJIA.name]
 
-    view = scene_view(store, PID, 152, cast, secrets=[BLOODLINE.id, XUANTIE.id])
+    view = scene_view(store, PID, 152, cast)
     ctx = ResolvedConstraints.of(view, cast)
 
     sc = view.constraints
-    assert ctx.must_not_reveal == sc.must_not_reveal
     assert ctx.forbidden_entities == sc.forbidden_entities
     assert ctx.chapter == sc.chapter
-    # 矩阵也是**同一个对象**，不是重算的——反混淆铁律靠的就是这条身份等式
-    # （EVAL_PROTOCOL §2：X1 与 X2 必须从同一个 knowledge_matrix 渲染）。
-    assert ctx.matrix is view.matrix
+    # 在场那几个 ref 也是**同一份**，不是重算的：下游拿不到 `resolve_cast`
+    # （第 4 道 arch-guard 的 WRITER_BANNED），所以这一份必须从这儿传下去。
+    assert ctx.characters == view.characters
 
 
 def test_the_degraded_state_is_unrepresentable() -> None:
@@ -126,7 +110,6 @@ def test_ambiguous_cast_raises_instead_of_degrading() -> None:
 
     degraded = scene_constraints(store, PID, 152, cast, secrets=[BLOODLINE.id])
     assert degraded.unresolved_cast == ["师兄"]
-    assert [n.name for n in degraded.must_not_reveal] == ["血脉秘密"]  # 退化值：全部秘密
 
     with pytest.raises(UnresolvedCast, match="师兄"):
         resolve_constraints(store, PID, 152, cast, secrets=[BLOODLINE.id])
@@ -151,7 +134,6 @@ def test_empty_cast_raises_the_hole_require_resolved_cast_misses() -> None:
 
     degraded_view = scene_view(store, PID, 152, [], secrets=[BLOODLINE.id, XUANTIE.id])
     degraded = degraded_view.constraints
-    assert [n.name for n in degraded.must_not_reveal] == ["血脉秘密", "玄铁令下落"]
     degraded.require_resolved_cast()  # ← 不抛。这就是那个洞。
 
     with pytest.raises(UnresolvedCast, match="cast"):
@@ -192,11 +174,10 @@ def test_no_tell_and_no_props_reach_the_output() -> None:
     """
     store = _store_with_a_tell()
 
-    ctx = resolve_constraints(store, PID, 152, [GU_QINGYIN.name], secrets=[BLOODLINE.id])
+    ctx = resolve_constraints(store, PID, 152, [GU_QINGYIN.name])
     dumped = ctx.model_dump_json()
 
-    assert ctx.secret_labels == ["血脉秘密"]
-    assert TELL not in dumped
+    assert [r.name for r in ctx.characters] == ["顾清音"]
     assert TWIST not in dumped
     # 同一份东西经 dict 出去也不许漏（prompt 拼装未必走 JSON）。
     assert TELL not in str(ctx.model_dump())
@@ -216,7 +197,7 @@ def test_the_tell_really_is_in_the_graph() -> None:
 
 
 def test_a_full_node_is_rejected_by_the_type() -> None:
-    """`must_not_reveal` 只收 `NodeRef`。塞一个完整的 `Node` 进来 pydantic 当场拒。
+    """`characters` 只收 `NodeRef`。塞一个完整的 `Node` 进来 pydantic 当场拒。
 
     ARCHITECTURE §10.5 第 3 条：`NodeProps` 是 `extra="allow"`，一个完整 `Node` 会把
     `props.twist` 顺着序列化进 prompt——**保密清单自己泄密**。
@@ -225,7 +206,7 @@ def test_a_full_node_is_rejected_by_the_type() -> None:
         ResolvedConstraints(
             chapter=152,
             cast=[GU_QINGYIN.name],
-            must_not_reveal=[node(BLOODLINE.id, NodeLabel.SECRET, "血脉秘密", twist=TWIST)],
+            characters=[node(GU_QINGYIN.id, NodeLabel.CHARACTER, "顾清音", twist=TWIST)],
         )
 
 

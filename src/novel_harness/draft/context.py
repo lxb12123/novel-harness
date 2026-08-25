@@ -67,7 +67,7 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..graph import KnowledgeMatrix, NodeRef, StoryGraph
+from ..graph import NodeRef, StoryGraph
 from ..panel.constraints import (
     ForbiddenEntity,
     SceneView,
@@ -102,28 +102,14 @@ class ResolvedConstraints(BaseModel):
     空 cast 会安静地穿过 `require_resolved_cast()`。
     """
 
-    must_not_reveal: list[NodeRef] = Field(default_factory=list)
-    """在场的人里至少有一个还不知道（或持错误认知）的秘密。**窄引用，没有 props。**
-
-    传一个完整的 `Node` 进来会被 pydantic 当场拒——那是故意的（ARCHITECTURE §10.5 第 3 条）：
-    `NodeProps` 是 `extra="allow"`，秘密节点上的 `twist` 会顺着序列化进 prompt，
-    **保密清单自己泄密**。
-    """
-
     forbidden_entities: list[ForbiddenEntity] = Field(default_factory=list)
     """首现章号在本章之后的实体，按首现章号升序。完整 PLANNED 到此为止，只剩名字和章号。"""
 
-    matrix: KnowledgeMatrix
-    """**算 `must_not_reveal` 用的就是这一份**（`panel.scene_view()` 交出来的）。
+    characters: list[NodeRef] = Field(default_factory=list)
+    """`cast` 里解析出来的那几个节点（**窄引用，没有 props**）。
 
-    它在这里而不是当 `assemble()` 的参数，为的是 EVAL_PROTOCOL §2 的**反混淆铁律**：
-    X1 与 X2 必须从**同一个** `knowledge_matrix` 对象渲染，除「清单 vs 散文」外
-    不许有第二处差异。矩阵绑在这个 frozen 对象上，`assemble(ctx, form=X1)` 与
-    `assemble(ctx, form=X2)` 拿的**必然**是同一份——铁律从 runner 纪律变成类型保证，
-    和这个类型用 `cast` 编码「已解析」是同一招。
-
-    副产物：`draft/` 不必自己算矩阵（它也算不了——矩阵要 node_id，而 `resolve_cast`
-    在第 4 道 arch-guard 的 `WRITER_BANNED` 里），于是不存在第二份会漂移的真相。
+    起草侧要它把「作者在在场里写了个地点名」挡掉，而它拿不到 `resolve_cast`
+    （第 4 道 arch-guard 的 `WRITER_BANNED`）——所以由 `panel` 那一层交出来。
     """
 
     @classmethod
@@ -164,20 +150,9 @@ class ResolvedConstraints(BaseModel):
         return cls(
             chapter=constraints.chapter,
             cast=list(cast),
-            must_not_reveal=list(constraints.must_not_reveal),
             forbidden_entities=list(constraints.forbidden_entities),
-            matrix=view.matrix,
+            characters=list(view.characters),
         )
-
-    @property
-    def secret_labels(self) -> list[str]:
-        """进 prompt 的秘密**显示名**（`血脉秘密`），**永远不是内容 tell（`玄血蛊`）**。
-
-        两个集合天然不相交（tell 那一侧排除 canonical 别名），这是 KNOWS 维度不会自己命中
-        自己的机械保证。**这个 property 存在就是为了让「拼 prompt」这件事没有第二种写法**——
-        没有它，某天会有人为了「让模型知道得更全」去找一个更具体的字符串。
-        """
-        return [s.name for s in self.must_not_reveal]
 
     @property
     def forbidden_names(self) -> list[str]:
@@ -217,16 +192,8 @@ class UnknownCastConstraints(BaseModel):
 
     chapter: int
 
-    must_not_reveal: list[NodeRef] = Field(default_factory=list)
-    """**全书尚未被所有人知道的秘密**（`scene_constraints` 空 cast 时的退化值）。窄引用，无 props。"""
-
     forbidden_entities: list[ForbiddenEntity] = Field(default_factory=list)
     """首现章号在本章之后的实体。**这一项本来就与 cast 无关**（按章号算），所以退化态里它是精确的。"""
-
-    @property
-    def secret_labels(self) -> list[str]:
-        """同 `ResolvedConstraints.secret_labels`：显示名，**永不是内容 tell**。"""
-        return [s.name for s in self.must_not_reveal]
 
     @property
     def forbidden_names(self) -> list[str]:
@@ -253,11 +220,9 @@ def unknown_cast_constraints(
     空 cast 喂给 `scene_view()` 得到的正是 `resolved.complete == False` 那一支：
     `must_not_reveal` = 全部秘密（`panel/constraints.py`：「算不准就多禁」）。
     """
-    view = scene_view(store, project_id, chapter, (), secrets=secrets)
-    constraints = view.constraints
+    constraints = scene_view(store, project_id, chapter, ()).constraints
     return UnknownCastConstraints(
         chapter=constraints.chapter,
-        must_not_reveal=list(constraints.must_not_reveal),
         forbidden_entities=list(constraints.forbidden_entities),
     )
 

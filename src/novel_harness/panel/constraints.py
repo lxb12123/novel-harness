@@ -38,8 +38,7 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..graph import AliasKind, InformationScope, KnowledgeState, Node, NodeRef, StoryGraph
-from .knowledge import KnowledgeMatrix, knowledge_matrix
+from ..graph import Node, NodeRef, StoryGraph
 
 
 class UnresolvedCast(Exception):
@@ -69,6 +68,14 @@ class ResolvedCast(BaseModel):
 
     unresolved: list[str] = Field(default_factory=list)
     """解析不出唯一节点的称呼原文。**非空 = 这份 cast 不完整。**"""
+
+    refs: list[NodeRef] = Field(default_factory=list)
+    """`ids` 对应的**窄引用**（id/label/name，没有 props），同序。
+
+    解析时本来就拿着 `Node`，交出来是为了让下游不必再解析一遍——而下游也解析不了
+    （`resolve_cast` 在第 4 道 arch-guard 的 `WRITER_BANNED` 里）。
+    **窄的，不是 `Node`**：`NodeProps` 是 `extra="allow"`，作者写的东西会穿过序列化。
+    """
 
     @property
     def complete(self) -> bool:
@@ -108,6 +115,7 @@ def resolve_cast(store: StoryGraph, project_id: str, cast: Sequence[str]) -> Res
         （2026-08-22 裁定）。
     """
     ids: list[str] = []
+    refs: list[NodeRef] = []
     unresolved: list[str] = []
     for resolution in store.resolve(project_id, list(cast)):
         node = resolution.unique_node
@@ -118,7 +126,8 @@ def resolve_cast(store: StoryGraph, project_id: str, cast: Sequence[str]) -> Res
                 unresolved.append(resolution.surface)
         elif node.id not in ids:
             ids.append(node.id)
-    return ResolvedCast(ids=ids, unresolved=unresolved)
+            refs.append(NodeRef(id=node.id, label=node.label, name=node.name))
+    return ResolvedCast(ids=ids, refs=refs, unresolved=unresolved)
 
 
 class ForbiddenEntity(BaseModel):
@@ -153,19 +162,9 @@ class SceneConstraints(BaseModel):
     chapter: int
 
     unresolved_cast: list[str] = Field(default_factory=list)
-    """作者声明了、但解析不出唯一节点的称呼。**非空时 `must_not_reveal` 是退化值**
-    （全部秘密），不是算出来的答案——见 `scene_constraints`。
+    """作者声明了、但解析不出唯一节点的称呼。**非空 = 这份在场不完整。**
 
     起草侧必须 `require_resolved_cast()`，别自己读这个字段判空。
-    """
-
-    must_not_reveal: list[NodeRef] = Field(default_factory=list)
-    """**在场的人里至少有一个还不知道**（或持错误认知）的秘密，列序 = 矩阵列序。
-
-    判据是 `KnowledgeState != KNOWS`：BELIEVES 也算——李管家以为血脉秘密已泄露，
-    这一场把真相说破同样是崩人设。
-
-    `unresolved_cast` 非空或 cast 为空时，这里是**全部秘密**（fail-closed）。
     """
 
     forbidden_entities: list[ForbiddenEntity] = Field(default_factory=list)
@@ -250,8 +249,15 @@ class SceneView(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     constraints: SceneConstraints
-    matrix: KnowledgeMatrix
-    """算 `must_not_reveal` 用的**就是这一份**。X1 的「认知矩阵要点」也渲染它。"""
+    characters: list[NodeRef] = Field(default_factory=list)
+    """已解析的在场角色（**只有人物**），顺序 = 作者写的顺序。
+
+    起草侧要它把「作者在在场里写了个地点名」挡掉（`product_draft`），
+    而它拿不到 `resolve_cast`（第 4 道 arch-guard 的 `WRITER_BANNED`）——
+    所以由这一层交出来，不让下游自己再解析一遍。
+
+    （2026-08-24 之前这儿是整张认知矩阵。它随秘密下线一起走了，ADR 0039。）
+    """
 
 
 def scene_view(
@@ -268,35 +274,13 @@ def scene_view(
     **两条路算的是同一次**——`scene_constraints()` 现在就是这个函数的一行封装。
     """
     resolved = resolve_cast(store, project_id, cast)
-    matrix = knowledge_matrix(
-        store,
-        project_id,
-        chapter,
-        resolved.ids,
-        secrets=secrets,
-        scope=InformationScope.CANON,
-        unresolved=resolved.unresolved,
-    )
-    if resolved.complete:
-        must_not_reveal = [
-            secret
-            for secret in matrix.secrets
-            if any(
-                matrix.cell(character.id, secret.id).state is not KnowledgeState.KNOWS
-                for character in matrix.characters
-            )
-        ]
-    else:
-        # fail-closed：在场的人我没数全，就没资格说哪条秘密是安全的。
-        must_not_reveal = list(matrix.secrets)
     return SceneView(
         constraints=SceneConstraints(
             chapter=chapter,
             unresolved_cast=resolved.unresolved,
-            must_not_reveal=must_not_reveal,
             forbidden_entities=forbidden_entities(store, project_id, chapter),
         ),
-        matrix=matrix,
+        characters=list(resolved.refs),
     )
 
 
@@ -339,41 +323,3 @@ def forbidden_entities(
         for node_id, node in nodes.items()
     ]
     return sorted(entities, key=lambda e: (e.first_appears_chapter, e.node.id))
-
-
-def secret_surfaces(
-    store: StoryGraph,
-    project_id: str,
-    secrets: Sequence[NodeRef],
-) -> dict[str, list[str]]:
-    """每个 must_not_reveal 秘密「可拿去匹配正文」的**内容 tell**，node_id → surfaces（长度降序）。
-
-    与 `forbidden_entities` 的 surface 逻辑同源（都走 `resolve` 花名册 + `usable_for_rules`），
-    只有一处关键不同：**排除 canonical 别名**（= 秘密的显示名，如「血脉秘密」）。
-
-    ── 为什么排除 canonical ──────────────────────────────────────────────
-    显示名是进 Writer prompt 的**标签**（§3.2 面板印着「must_not_reveal：血脉秘密」，
-    X1/X2 注入的也是这个名）。检测器若把它算成 tell，命中的就是 prompt 自己写进去的
-    那个词——一次 echo 假阳性。真正「说漏嘴」的判据是**内容 tell**（「玄血蛊」），它以
-    非 canonical 别名声明，与显示名不相交。这正是 M2 kill-gate 里 KNOWS 维度「检测集合 ⟂
-    prompt 集合」得以成立、从而 FUTURE_LEAK 只能作地板的原因（docs/EVAL_PROTOCOL.md §3/§5）。
-
-    **本函数为合成小册子的「唯一专名 tell」而生。** 真书里秘密内容散在语义里，集合判断
-    够不着（ADR 0005）——那正是 kill-gate 要先在合成小册子上验证的东西。`eval/leak.py`
-    只经本函数取 must_not_reveal 的 tell，不自己走 `store.resolve`
-    （由 `tests/test_draft_boundary.py` 的第 4 道 arch-guard 钉死——那道守卫 2026-07-27 才真的
-    写出来，在此之前这句话是空头支票）。**同一道守卫还禁止 `draft/` 引用本函数**：
-    tell 是判分器那一侧的东西，进了 prompt 就是 echo 假阳性。
-    """
-    wanted = {s.id for s in secrets}
-    if not wanted:
-        return {}
-    surfaces: dict[str, list[str]] = {}
-    for resolution in store.resolve(project_id):
-        if not resolution.usable_for_rules:
-            continue
-        hit = resolution.hits[0]  # usable_for_rules ⇒ 恰好一个 hit（见 Resolution.usable_for_rules）
-        if hit.node.id not in wanted or hit.kind is AliasKind.CANONICAL:
-            continue
-        surfaces.setdefault(hit.node.id, []).append(resolution.surface)
-    return {nid: sorted(ss, key=len, reverse=True) for nid, ss in surfaces.items()}

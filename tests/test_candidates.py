@@ -305,8 +305,7 @@ def test_no_poison_reaches_the_table_on_the_path_that_assembles_memory(
 
     # **反向断言：显示名必须在。** 一张什么都搜不到的网和一条什么都没查的链路，
     # 在上面那几个 `not in` 面前长得一模一样。
-    assert "血脉秘密" in json.loads(outcome.content)["must_not_reveal"]
-    assert "血脉秘密" in prompt
+    assert "未来大能" in prompt, "这一稿根本没带约束跑 —— 上面那几条「没搜到」是空的"
 
 
 def test_the_same_scan_over_the_three_places_a_candidate_is_handed_out(
@@ -462,28 +461,13 @@ def test_the_only_thing_in_a_draft_result_without_a_ceiling_is_the_forbidden_lis
     那时该做的是给它一个上限（同 `PREVIEW_UNITS`），不是把这个数调大。
     """
     conn = desk_conn
-    store = SqliteStoryGraph(conn)
-    for n in range(40):
-        store.upsert_node(
-            NodeSpec(
-                project_id=poisoned["pid"],
-                label=NodeLabel.SECRET,
-                name=f"第{n}号秘密",
-                props=NodeProps.model_validate({}),
-                secret=SecretDetail(),
-            )
-        )
-    conn.commit()
-
     _writer(monkeypatch, _prose("戊"))
     desk = _desk(conn, poisoned)
     (outcome,) = dispatch_all([_draft(1)], _context(conn, poisoned, desk))
     assert outcome.ok, outcome.content
-    payload = json.loads(outcome.content)
-    assert len(payload["must_not_reveal"]) >= 40, "这本书的秘密没进禁说清单，下面那个数不作数"
     assert len(outcome.content) <= 700, (
         f"一份不含正文的起草返回涨到了 {len(outcome.content)} 字。"
-        "定长的是预览和自述，禁说清单没有上限 —— 它一批三份、每一轮重发。"
+        "**它一批三份、每一轮重发**，所以这份回执上的每一格都必须是定长的（预览、自述）——不许再长出一份「长度随书大小走」的清单。"
     )
 
 

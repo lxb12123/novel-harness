@@ -220,7 +220,7 @@ def test_no_poison_survives_into_the_candidate_table(
     # 反证：这一条不是在一个「什么都没跑到」的库上搜的。约束真的算过（秘密**显示名**
     # 出现在发出去的那份 prompt 里，那是它本来就该在的地方），而候选表里没有它的内容。
     prompt = json.dumps(writer.prompts[0], ensure_ascii=False)
-    assert "血脉秘密" in prompt, "这一稿根本没带约束跑 —— 上面那几条「没搜到」是空的"
+    assert "幽泉窟" in prompt, "这一稿根本没带约束跑 —— 上面那几条「没搜到」是空的"
     assert TWIST not in prompt
 
 

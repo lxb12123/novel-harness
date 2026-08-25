@@ -32,8 +32,8 @@ from novel_harness.chapter_refresh import (
     BranchContext,
     ChapterRefreshCoordinator,
     claim_attempt,
-    create_manual_attempt,
 )
+from test_chapter_refresh import an_attempt
 from novel_harness.db import Connection, connect, migrate
 from novel_harness.declare import Ledger
 from novel_harness.graph import NodeLabel, TextAnchor
@@ -117,15 +117,11 @@ def _coordinator(world: dict[str, object]) -> ChapterRefreshCoordinator:
 
 
 def _run_refresh(world: dict[str, object], trigger: str) -> tuple[dict[str, str], Stub, Stub]:
-    attempt_id = create_manual_attempt(
+    attempt_id = an_attempt(
         world["conn"],
         project_id=str(world["pid"]),
         chapter_id=str(world["chapter_id"]),
         snapshot_id=str(world["snapshot_id"]),
-        generation=1,
-        ruleset_epoch=1,
-        ruleset_hash="x",
-        trigger_key=trigger,
     )
     world["conn"].commit()
     token = claim_attempt(world["conn"], attempt_id, owner="w1")

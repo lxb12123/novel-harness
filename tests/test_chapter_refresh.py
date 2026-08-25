@@ -24,7 +24,6 @@ from novel_harness.chapter_refresh import (
     ChapterRefreshCoordinator,
     activate_extraction_application,
     claim_attempt,
-    create_manual_attempt,
     ensure_refresh_coverage,
     heartbeat,
     release_attempt,
@@ -86,6 +85,43 @@ def _snapshot_id(conn: Connection, pid: str) -> str:
     )
 
 
+def an_attempt(
+    conn: Connection,
+    *,
+    project_id: str,
+    chapter_id: str,
+    snapshot_id: str,
+    mask: int = BRANCH_VALIDATION | BRANCH_SUMMARY | BRANCH_EXTRACTION,
+    generation: int = 1,
+) -> str:
+    """建一张待跑的单，**给要「手里先有一张单」的那些测试建场用**。
+
+    ── 它从前走 `create_manual_attempt`（2026-08-25 删了）──────────────────
+
+    那条是「作者点重新整理」的产方，而手动入口整条下线之后它零生产调用。
+    这些测试要的从来不是「manual 那一种单」，是「一张单」——所以改走
+    `ensure_refresh_coverage`，也就是**今天生产上唯一还在建单的那条路**。
+    建场跟着生产走，测试才测得到真实形状。
+
+    `missing_check` 直接给死 mask：从前 `create_manual_attempt` 收
+    `missing_branch_mask=`，这儿是同一件事的注入口。**coverage 的唯一键带着 mask**
+    （`idx_refresh_attempt_coverage`），所以同一个 run 上 mask 不同就是两张单——
+    「两张单竞争同一个 head」那类场景照旧构造得出来。
+    """
+    decision = ensure_refresh_coverage(
+        conn,
+        project_id=project_id,
+        chapter_id=chapter_id,
+        snapshot_id=snapshot_id,
+        generation=generation,
+        ruleset_epoch=1,
+        ruleset_hash="x",
+        missing_check=lambda *_: mask,
+    )
+    assert decision.attempt_id is not None, "没建出单来 —— 建场就已经不成立了"
+    return decision.attempt_id
+
+
 def _coordinator(conn: Connection) -> ChapterRefreshCoordinator:
     path = str(conn.execute("PRAGMA database_list").fetchone()[2])
 
@@ -106,15 +142,11 @@ def test_validation_blocked_stops_downstream_with_zero_summary_calls(
     """验证阻断 → 总结/抽取调用数为 0，旧分支保持未启动。"""
     pid, chapter_id = _seed_chapter(conn, tmp_path)
     snapshot_id = _snapshot_id(conn, pid)
-    attempt_id = create_manual_attempt(
+    attempt_id = an_attempt(
         conn,
         project_id=pid,
         chapter_id=chapter_id,
         snapshot_id=snapshot_id,
-        generation=1,
-        ruleset_epoch=1,
-        ruleset_hash="x",
-        trigger_key="manual:1",
     )
     # 直接把验证状态预置成 BLOCKED，让 run 跳过验证、也跳过下游。
     conn.execute(
@@ -145,15 +177,11 @@ def test_summary_and_extraction_run_in_parallel(
     """两个 stub 同时进入 barrier：调用顺序证明不了并行，barrier 通过才证明。"""
     pid, chapter_id = _seed_chapter(conn, tmp_path)
     snapshot_id = _snapshot_id(conn, pid)
-    attempt_id = create_manual_attempt(
+    attempt_id = an_attempt(
         conn,
         project_id=pid,
         chapter_id=chapter_id,
         snapshot_id=snapshot_id,
-        generation=1,
-        ruleset_epoch=1,
-        ruleset_hash="x",
-        trigger_key="manual:parallel",
     )
     conn.commit()
     token = claim_attempt(conn, attempt_id, owner="w1")
@@ -192,15 +220,11 @@ def test_alias_not_started_blocks_the_final_gate(
     （final gate 保持 PENDING）；alias 阶段确认 UNCHANGED 后才 PASSED。"""
     pid, chapter_id = _seed_chapter(conn, tmp_path)
     snapshot_id = _snapshot_id(conn, pid)
-    attempt_id = create_manual_attempt(
+    attempt_id = an_attempt(
         conn,
         project_id=pid,
         chapter_id=chapter_id,
         snapshot_id=snapshot_id,
-        generation=1,
-        ruleset_epoch=1,
-        ruleset_hash="x",
-        trigger_key="manual:gate",
     )
     conn.commit()
     token = claim_attempt(conn, attempt_id, owner="w1")
@@ -251,15 +275,11 @@ def test_heartbeat_keeps_lease_and_stale_token_cas_fails(
     旧 worker 的状态写 CAS 失败。"""
     pid, chapter_id = _seed_chapter(conn, tmp_path)
     snapshot_id = _snapshot_id(conn, pid)
-    attempt_id = create_manual_attempt(
+    attempt_id = an_attempt(
         conn,
         project_id=pid,
         chapter_id=chapter_id,
         snapshot_id=snapshot_id,
-        generation=1,
-        ruleset_epoch=1,
-        ruleset_hash="x",
-        trigger_key="manual:lease",
     )
     conn.commit()
     now = [time.time()]
@@ -319,16 +339,12 @@ def test_the_coordinator_runs_exactly_the_branches_the_order_carries(
     if not ordered & BRANCH_VALIDATION:
         # 单上没有验证位的含义是「这一版正文已经验过了」。先真验一遍，
         # 否则协调器答不出「放不放行」，会（正确地）连下游一起停掉。
-        warmup = create_manual_attempt(
+        warmup = an_attempt(
             conn,
             project_id=pid,
             chapter_id=chapter_id,
             snapshot_id=snapshot_id,
-            generation=1,
-            ruleset_epoch=1,
-            ruleset_hash="x",
-            trigger_key="warmup:validation",
-            missing_branch_mask=BRANCH_VALIDATION,
+            mask=BRANCH_VALIDATION,
         )
         conn.commit()
         warm_token = claim_attempt(conn, warmup, owner="w0")
@@ -342,16 +358,12 @@ def test_the_coordinator_runs_exactly_the_branches_the_order_carries(
         )
 
     reports_before = _validation_reports(conn, pid)
-    attempt_id = create_manual_attempt(
+    attempt_id = an_attempt(
         conn,
         project_id=pid,
         chapter_id=chapter_id,
         snapshot_id=snapshot_id,
-        generation=1,
-        ruleset_epoch=1,
-        ruleset_hash="x",
-        trigger_key=f"mask:{ordered}",
-        missing_branch_mask=ordered,
+        mask=ordered,
     )
     conn.commit()
     token = claim_attempt(conn, attempt_id, owner="w1")
@@ -414,16 +426,12 @@ def test_a_branch_left_off_the_order_does_not_slip_past_a_blocked_report(
         """,
         (pid, chapter_id, snapshot_id),
     )
-    attempt_id = create_manual_attempt(
+    attempt_id = an_attempt(
         conn,
         project_id=pid,
         chapter_id=chapter_id,
         snapshot_id=snapshot_id,
-        generation=1,
-        ruleset_epoch=1,
-        ruleset_hash="x",
-        trigger_key="summary-only",
-        missing_branch_mask=BRANCH_SUMMARY,
+        mask=BRANCH_SUMMARY,
     )
     conn.commit()
     token = claim_attempt(conn, attempt_id, owner="w1")
@@ -440,7 +448,7 @@ def test_a_branch_left_off_the_order_does_not_slip_past_a_blocked_report(
     assert summary.calls == [], "已判定阻断的正文被拿去总结了 —— 闸门被绕过去了"
 
 
-def test_coverage_is_idempotent_and_manual_creates_new_intent(
+def test_coverage_is_idempotent_and_another_mask_is_another_order(
     conn: Connection,
     tmp_path: Path,
 ) -> None:
@@ -512,18 +520,18 @@ def test_coverage_is_idempotent_and_manual_creates_new_intent(
     )
     assert failed.processing == "attention_required"
 
-    # 显式「重新整理」→ 新 manual intent，不被 coverage 唯一键吞掉。
-    manual = create_manual_attempt(
+    # **另一个 mask 是另一张单**：coverage 的唯一键是 (run, epoch, kind, mask)，
+    # 所以「缺的东西不一样」建得出第二张单，而「同一批缺口」建不出。
+    # （从前这儿钉的是「显式重新整理 → 新 manual intent」，那条路 2026-08-25
+    # 随手动入口一起删了；剩下的这条不变式是那几个「手里先有两张单」的测试
+    # 今天还能建场的原因。）
+    other_mask = an_attempt(
         conn,
         project_id=pid,
         chapter_id=chapter_id,
         snapshot_id=snapshot_id,
-        generation=1,
-        ruleset_epoch=1,
-        ruleset_hash="x",
-        trigger_key=f"manual:{time.time_ns()}",
     )
-    assert manual != first.attempt_id
+    assert other_mask != first.attempt_id
 
 
 def test_extraction_application_head_cas_keeps_only_the_latest_intent_current(
@@ -537,17 +545,13 @@ def test_extraction_application_head_cas_keeps_only_the_latest_intent_current(
     """
     pid, chapter_id = _seed_chapter(conn, tmp_path)
     snapshot_id = _snapshot_id(conn, pid)
-    run_id = create_manual_attempt(
+    run_id = an_attempt(
         conn,
         project_id=pid,
         chapter_id=chapter_id,
         snapshot_id=snapshot_id,
-        generation=1,
-        ruleset_epoch=1,
-        ruleset_hash="x",
-        trigger_key="run:a",
     )
-    # create_manual_attempt 返回的是 attempt id，不是 run id —— 取 run。
+    # `an_attempt` 返回的是 attempt id，不是 run id —— 取 run。
     row = conn.execute(
         "SELECT run_id FROM chapter_refresh_attempt WHERE id = ?", (run_id,)
     ).fetchone()

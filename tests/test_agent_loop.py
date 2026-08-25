@@ -832,7 +832,6 @@ def test_the_chapter_is_read_by_shape_not_by_a_second_tool_table() -> None:
         "chapter_text",
         # 一格认知边界（2026-08-22）：它按章号绑投影**正是它最需要的那道闸**——
         # 一格认知答案越到后面越可能过期，而过期的方向是 fail-open。
-        "knows_secret",
         # 轨道核对（2026-08-23）：同理按章号绑投影——「第 N 章跟后面抵不抵触」
         # 的答案在正文改过之后就不作数了。
         "check_track",

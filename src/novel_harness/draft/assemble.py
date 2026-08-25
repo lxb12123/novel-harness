@@ -23,8 +23,9 @@ X1 与 X2 之间只许差「清单 vs 散文」这一个变量，多出来的任
 
 ── 三、只有标签进 prompt，永不 tell（协议 §2 / 第 4 道 arch-guard）──────────
 
-本模块只读 `ctx` 上的五类字段（ADR 0010 D3 的白名单）：`cast`、`secret_labels`、
-`forbidden_names` + 首现章、`KnowledgeCell` 的三个标量、`matrix.characters/secrets` 的 `.name`。
+本模块只读 `ctx` 上的两类字段：`cast`、`forbidden_names` + 首现章。
+（2026-08-24 之前还有三类跟秘密有关的——`secret_labels`、`KnowledgeCell` 的三个标量、
+`matrix.characters/secrets` 的 `.name`。它们随秘密下线一起走了，ADR 0039。）
 **签名里没有 store**——拿不到 store 就查不了第二遍，prompt 里的事实和 `eval/leak.py` 判分用的
 事实必然是同一个对象算出来的。`.props` 一个字符都不碰（tell 住在那儿）。
 
@@ -49,7 +50,6 @@ from __future__ import annotations
 from enum import StrEnum
 from fractions import Fraction
 
-from ..graph import KnowledgeCell, KnowledgeState
 from .context import DraftContext, ResolvedConstraints
 from .length import DraftLanguage, LengthSpec
 
@@ -281,22 +281,17 @@ def graph_section(ctx: DraftContext, form: PromptForm) -> str:
     公开出来是为了让「X0 是前缀」这条性质可以被**逐字节**验证（测试拿它重建 X1 的内容），
     而不是靠肉眼比对两段渲染结果。`confound_lint` 若要单独比这一段也走这里。
 
-    X1 与 X2 读的是**同一个** `ctx.matrix`、**同一批**格子、**同一个**顺序——它们的差别
-    只在措辞模板。协议 §2 的反混淆铁律在这一层是「同一份数据两种排版」，不是「两次渲染」。
+    X1 与 X2 读的是**同一份**数据，差别只在措辞模板（清单 vs 散文）。
+
+    ⚠️ 秘密下线之后这儿只剩「尚未登场」一块（ADR 0039）：认知矩阵和禁写清单那两块
+    没了。三臂 X0/X1/X2 因此在产品侧只剩 X1 有调用方——**要不要塌成一个是另一个决定**，
+    记在 ADR 0039 的「范围之外」里。
     """
     form = PromptForm(form)
     if form is PromptForm.X0:
         return ""
 
-    blocks = [
-        b
-        for b in (
-            _matrix_block(ctx, form),
-            _secrets_block(ctx, form),
-            _forbidden_block(ctx, form),
-        )
-        if b
-    ]
+    blocks = [b for b in (_forbidden_block(ctx, form),) if b]
     if not blocks:
         # 这一场确实没有任何图谱事实可注入（没有秘密、没有未来实体）。
         # 此时三臂逐字节相同，是**正确的退化**：注入的内容为空，臂间差异也该为零。
@@ -341,75 +336,6 @@ def _base(
         {"role": "system", "content": write_rule},
         {"role": "user", "content": "\n\n".join(parts)},
     ]
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 图谱段 —— 同一份数据的两种排版
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def _panel_order(ctx: ResolvedConstraints) -> list[tuple[str, str, KnowledgeCell]]:
-    """行 = 角色（作者写的 cast 顺序），列 = 秘密，取自 `characters`/`secrets` 而**不是**
-    `cells` 的存储顺序——后者是 store 的实现细节，两臂逐格对应不能建立在它上面。
-    """
-    matrix = ctx.matrix
-    return [
-        (who.name, secret.name, matrix.cell(who.id, secret.id))
-        for who in matrix.characters
-        for secret in matrix.secrets
-    ]
-
-
-def _matrix_block(ctx: DraftContext, form: PromptForm) -> str:
-    # 退化态没有矩阵：行就是 cast，没有 cast 就没有行。给一个空矩阵会让下游
-    # 以为「查过了，确实没人知道任何事」——那是另一句话，而且是假的。
-    if not isinstance(ctx, ResolvedConstraints):
-        return ""
-    cells = _panel_order(ctx)
-    if not cells:
-        return ""
-    if form is PromptForm.X1:
-        head = f"截至第 {ctx.chapter} 章的认知边界："
-        return head + "\n" + "\n".join(_x1_cell(*c) for c in cells)
-    head = f"截至第 {ctx.chapter} 章，眼下的情形是："
-    return head + "".join(_x2_cell(*c) for c in cells)
-
-
-def _x1_cell(who: str, secret: str, cell: KnowledgeCell) -> str:
-    since = f"（第 {cell.since_chapter} 章起）" if cell.since_chapter is not None else ""
-    if cell.state is KnowledgeState.KNOWS:
-        return f"- {who}：知道「{secret}」{since}"
-    if cell.state is KnowledgeState.BELIEVES:
-        if cell.believed_value:
-            return f"- {who}：误以为「{secret}」是「{cell.believed_value}」{since}"
-        # BELIEVES 但没记下他以为的是什么。**不许在这儿编一个**：编出来的那句话
-        # 会同时进 X1 和 X2，两臂一起被污染，而它不来自图。
-        return f"- {who}：对「{secret}」持错误认知{since}"
-    return f"- {who}：还不知道「{secret}」"
-
-
-def _x2_cell(who: str, secret: str, cell: KnowledgeCell) -> str:
-    since = f"从第 {cell.since_chapter} 章起" if cell.since_chapter is not None else ""
-    if cell.state is KnowledgeState.KNOWS:
-        return f"{who}{since}就知道「{secret}」。" if since else f"{who}已经知道「{secret}」。"
-    if cell.state is KnowledgeState.BELIEVES:
-        if cell.believed_value:
-            return f"{who}{since}一直误以为「{secret}」是「{cell.believed_value}」。"
-        return f"{who}{since}对「{secret}」抱着错误的认知。"
-    return f"{who}到现在还不知道「{secret}」。"
-
-
-def _secrets_block(ctx: DraftContext, form: PromptForm) -> str:
-    labels = ctx.secret_labels
-    if not labels:
-        return ""
-    joined = "、".join(labels)
-    if form is PromptForm.X1:
-        return f"这一场不得写破：{joined}"
-    quantifier = "这一条" if len(labels) == 1 else "这几条"
-    return f"{joined}{quantifier}，这一场还写不得。"
-
-
 def _forbidden_block(ctx: DraftContext, form: PromptForm) -> str:
     """未来实体的名字 + 首现章。**这一侧「标签 ⟂ tell」不成立**：`血枭盟` 自身即检测词，
     X1/X2 必然点它的名 → echo 风险 → 协议让 `future_leak` 只作描述性地板、不主导裁决

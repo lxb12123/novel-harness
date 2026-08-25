@@ -19,7 +19,6 @@ from novel_harness.declare import Ledger
 from novel_harness.graph import AliasKind, NodeLabel, NodeProps, NodeSpec, SecretDetail
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.mentioned import mentioned_cast
-from novel_harness.panel import scene_constraints
 from novel_harness import project
 
 
@@ -210,28 +209,26 @@ def test_空正文和空花名册都不炸(tmp_path: Path) -> None:
     assert mentioned_cast(store, pid, ["谁也不认识的一句话。"]) == []
 
 
-def test_推出来的cast落在多禁那一侧_这是整件事成立的理由(
+def test_推出来的cast是被提到的那些人_不是真在场(
     store_pid: tuple[SqliteStoryGraph, str],
 ) -> None:
-    """**这条是本文件的重点。**
+    """「被提到」⊇「真在场」：回忆里的死人、被议论的第三方都会进来。
 
-    「被提到」⊇「真在场」。多出来的那些人（回忆里的死人、被议论的第三方）不会让
-    must_not_reveal 变短——因为判据是「至少有一个还不知道」，多一个不知道的人只会
-    让更多秘密进禁说清单。
+    ⚠️ **这条今天只记录行为，不再证明它落在安全那一侧**（2026-08-24，ADR 0039）。
 
-    这里同时钉住退化端：推不出人 = 空 cast = 全禁，和作者什么都没填时一模一样。
+    它原来叫 `test_推出来的cast落在多禁那一侧_这是整件事成立的理由`，钉的是
+    ADR 0018 正确性证明唯一的数学理由：判据是「在场至少有一个人还不知道 ⇒ 就禁」，
+    所以多算一个人只会让更多秘密进禁说清单 —— **单调，因此 fail-closed**。
+
+    **秘密下线之后禁说清单没了，那条论证跟着塌了。** 今天多算一个人的后果是
+    「多一份人物档案进 prompt」——可能是噪声，不再明显是安全的那一侧。
+    **「推导是超集所以安全」这句话需要一个新理由，或者被重新裁定。**
     """
     store, pid = store_pid
-    secrets = {n.name for n in _all_secrets(store, pid)}
-    assert secrets == {"血脉秘密"}
 
-    nobody = scene_constraints(store, pid, 10, [])
-    mentioned = scene_constraints(store, pid, 10, mentioned_cast(store, pid, ["萧决推开门。"]))
-
-    # 一个人都没有 → 全禁（fail-closed 的退化值）
-    assert {n.name for n in nobody.must_not_reveal} == {"血脉秘密"}
-    # 提到了萧决，而他还不知道这条秘密 → 照样禁
-    assert {n.name for n in mentioned.must_not_reveal} == {"血脉秘密"}
+    mentioned = mentioned_cast(store, pid, ["萧决推开门。"])
+    assert mentioned == ["萧决"], "正文里提到谁就是谁，不多不少"
+    assert mentioned_cast(store, pid, ["风雪落了一夜。"]) == [], "一个人都没提到就是空"
 
 
 def _all_secrets(store: SqliteStoryGraph, pid: str) -> list:

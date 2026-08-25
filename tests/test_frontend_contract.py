@@ -252,7 +252,12 @@ def test_frontend_fixture_matches_the_real_api(
             text="萧决在青云城主府听说了血脉秘密。", model="deepseek-v4-flash", finish_reason="stop"
         ),
     )
-    grab("summaryGenerated", client.post(f"{base}/chapters/1/summary"))
+    # **生成那一次不再走 HTTP**：手动生成那条路由 2026-08-25 随按钮一起删了
+    # （总结只剩两个自动触发）。这儿直接调生产上那个执行体——同一个 `ensure`、
+    # 同一份幂等、同一次真模型调用（下面用量条那一档指望的就是它）。
+    # 夹具本身照旧是**真 dump**，只是从 `GET` 那条读端抓：前端拿的本来也是这一份。
+    deps_mod.build_summarizer().ensure(pid, 1)
+    grab("summaryGenerated", client.get(f"{base}/chapters/1/summary"))
     # ── 用量条第三档：**这本书唯一一次模型调用，供应商没报 usage** ──────────────
     # 桩返回的 `CompletionResult` 不带 `prompt_tokens`，也就是流式下 DeepSeek 的真实
     # 形状（`supports_stream_usage` 不是 True ⇒ 不加 `stream_options` ⇒ 两个数都 NULL）。

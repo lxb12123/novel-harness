@@ -96,7 +96,6 @@ from .deps import (
     get_conn,
     get_ledger,
     get_store,
-    get_summarizer,
     load_project,
     resolve_route_capabilities,
 )
@@ -1926,44 +1925,6 @@ def chapter_summary(
     return _summary_state(conn, proj.id, chapter)
 
 
-@app.post("/api/projects/{project_id}/chapters/{chapter}/summary")
-def generate_chapter_summary(
-    chapter: int,
-    conn: Any = Depends(get_conn),
-    proj: Any = Depends(load_project),
-    summarizer: Any = Depends(get_summarizer),
-) -> dict[str, Any]:
-    """**显式**为第 chapter 章生成滚动总结（会调模型、会花钱）。
-
-    幂等由 `RollingSummarizer.ensure` 保证：这一章最新那一行就是这份 prompt 产出的
-    就直接返回，重复点不会重复付费。所以前端可以放心地「把缺的那几章挨个补一遍」
-    而不必自己记住哪些补过。
-
-    **撤回过的章按下这里会真的重新生成**（付一次钱）——那是撤回语义里写死的那条退路
-    （「想重来就再点生成」），也是「删了重来」不必做成两套的原因。
-    """
-    from ..draft.provider import ProviderError
-    from ..draft.rolling_summary import SummaryChapterNotFound, SummaryGenerationError
-
-    if chapter < 1:
-        raise HTTPException(status_code=422, detail="章号至少是 1")
-    try:
-        summarizer.ensure(proj.id, chapter)
-    except SummaryChapterNotFound:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": "chapter_not_found", "chapter": chapter},
-        )
-    except SummaryGenerationError as exc:
-        raise HTTPException(status_code=502, detail=f"总结器返回了空文本：{exc}")
-    except ProviderError as exc:
-        raise HTTPException(status_code=502, detail=f"模型调用失败：{exc}")
-    # 出参从库里重读一遍，不拿 `ensure` 的返回自己拼：`RollingSummarizer` 用的是它
-    # 自己那条连接，而这一条是请求的连接——两边各拼一份的话，「刚生成完」和「刷新一下」
-    # 有机会长得不一样。
-    return _summary_state(conn, proj.id, chapter)
-
-
 class SummaryEdit(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -2054,98 +2015,6 @@ def chapter_summary_history(
         (proj.id, chapter),
     ).fetchall()
     return [dict(v) for v in versions]
-
-
-class SummaryRegenerateReceipt(BaseModel):
-    queued: bool
-    job_id: str
-
-
-@app.post("/api/projects/{project_id}/chapters/{chapter}/summary/regenerate")
-def regenerate_chapter_summary(
-    chapter: int,
-    conn: Any = Depends(get_conn),
-    proj: Any = Depends(load_project),
-) -> SummaryRegenerateReceipt:
-    """**显式重新总结**：创建持久 `summary_generation_job`，不直接同步调用模型。
-
-    创建 job 的同一事务递增 `machine_intent_seq` 并 supersede 旧未完成 job——
-    作者点击后的任何修改都赢，旧机器任务即使 expected head 相同也失效。
-    """
-    from ..ids import EntityType, new_id
-
-    if chapter < 1:
-        raise HTTPException(status_code=422, detail="章号至少是 1")
-    identity = conn.execute(
-        """
-        SELECT c.id AS chapter_id, s.id AS snapshot_id, c.snapshot_generation AS generation,
-               h.current_summary_id AS head_id, h.machine_intent_seq AS intent_seq
-          FROM chapter c
-          JOIN chapter_snapshot s
-            ON s.chapter_id = c.id AND s.text_sha256 = c.text_sha256
-          JOIN chapter_summary_head h ON h.chapter_id = c.id
-         WHERE c.project_id = ? AND c.number = ?
-        """,
-        (proj.id, chapter),
-    ).fetchone()
-    if identity is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": "chapter_not_found", "chapter": chapter},
-        )
-    text_hash = conn.execute(
-        "SELECT text_sha256 FROM chapter_snapshot WHERE id = ?", (identity["snapshot_id"],)
-    ).fetchone()["text_sha256"]
-
-    conn.execute("BEGIN IMMEDIATE")
-    try:
-        intent = conn.execute(
-            """
-            UPDATE chapter_summary_head
-               SET machine_intent_seq = machine_intent_seq + 1,
-                   updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
-             WHERE chapter_id = ?
-            RETURNING machine_intent_seq
-            """,
-            (identity["chapter_id"],),
-        ).fetchone()["machine_intent_seq"]
-        conn.execute(
-            """
-            UPDATE summary_generation_job SET status = 'SUPERSEDED'
-             WHERE project_id = ? AND target_type = 'CHAPTER' AND chapter_id = ?
-               AND status IN ('PENDING','RUNNING')
-            """,
-            (proj.id, identity["chapter_id"]),
-        )
-        job_id = new_id(EntityType.SUMMARY, proj.id)
-        conn.execute(
-            """
-            INSERT INTO summary_generation_job (
-                id, project_id, target_type, chapter_id, event_id,
-                source_snapshot_id, source_generation, source_sha256,
-                refresh_attempt_id, required_ruleset_epoch, required_ruleset_hash,
-                expected_head_version_id, required_machine_intent_seq,
-                trigger_key, trigger_source, status
-            ) VALUES (?, ?, 'CHAPTER', ?, NULL, ?, ?, ?, NULL, NULL, NULL,
-                      ?, ?, ?, 'manual', 'PENDING')
-            """,
-            (
-                job_id,
-                proj.id,
-                identity["chapter_id"],
-                identity["snapshot_id"],
-                identity["generation"],
-                text_hash,
-                identity["head_id"],
-                intent,
-                f"regenerate:{intent}:{identity['head_id'] or 'null'}",
-            ),
-        )
-        conn.commit()
-    except BaseException:
-        conn.rollback()
-        raise
-    return SummaryRegenerateReceipt(queued=True, job_id=job_id)
 
 
 @app.delete("/api/projects/{project_id}/chapters/{chapter}/summary")

@@ -25,8 +25,9 @@
 
 from __future__ import annotations
 
-import inspect
 import re
+
+import inspect
 
 import pytest
 import novel_harness.draft.assemble as assemble_module
@@ -133,17 +134,14 @@ def test_the_graph_section_is_empty_for_the_control_arm() -> None:
     assert graph_section(_full_ctx(), PromptForm.X0) == ""
 
 
-def test_the_control_arm_names_no_secret_and_no_future_entity() -> None:
-    """X0 里不许出现秘密显示名和未来实体名——否则「对照」二字不成立。"""
+def test_the_control_arm_names_no_future_entity() -> None:
+    """X0 里不许出现未来实体名——否则「对照」二字不成立。"""
     ctx = _full_ctx()
     text = _text(_arm(ctx, PromptForm.X0))
 
-    for label in ctx.secret_labels:
-        assert label not in text
     for name in ctx.forbidden_names:
         assert name not in text
-    # 非空证明：这两组名字**确实存在**，是被 X0 挡掉的，不是 fixture 本来就空。
-    assert ctx.secret_labels == ["血脉秘密"]
+    # 非空证明：这几个名字**确实存在**，是被 X0 挡掉的，不是 fixture 本来就空。
     assert ctx.forbidden_names == ["血枭盟", "幽泉窟"]
 
 
@@ -171,24 +169,22 @@ def test_the_previous_tail_is_optional_and_leaves_no_empty_heading() -> None:
     assert "【上文】" in with_tail[-1]["content"]
     assert "【上文】" not in without[-1]["content"]
     assert without[-1]["content"].startswith("【在场】")
-
-
 # ══════════════════════════════════════════════════════════════════════════
-# ② 反混淆铁律：X1 与 X2 只差「清单 vs 散文」
+# ③ D3：tell 永不进 prompt
 # ══════════════════════════════════════════════════════════════════════════
 
 
 def test_the_two_injected_arms_say_the_same_things_in_two_layouts() -> None:
-    """专名集合相同、章号集合相同、字数在 ±15% 内 —— 与 `confound_lint` 同口径。
+    """专名集合相同、章号集合相同、字数在 ±15% 内 —— 同一份数据两种排版。
 
-    这三项都是**集合/数值**判断，零语义（ADR 0005）。它们一起排除的是最贵的那种混淆：
-    X2 顺手多带一句行为指令（PLAN §5.7 的内建混淆，协议 §2 点名要修掉的那条），
-    于是 `Δ2 − Δ1` 量的是「form + 那句话」，而 ADR 0009 会把它读成「form 重要」。
+    它一起排除的是最贵的那种混淆：X2 顺手多带一句行为指令，于是两臂差的不只是排版。
+    （秘密下线之后这一段只剩「尚未登场」一块，所以专名集合就是那几个未来实体的名字。）
     """
     ctx = _full_ctx()
     s1 = graph_section(ctx, PromptForm.X1)
     s2 = graph_section(ctx, PromptForm.X2)
-    known = [*ctx.cast, *ctx.secret_labels, *ctx.forbidden_names]
+    known = list(ctx.forbidden_names)
+    assert known, "没有未来实体 —— 这条测试在空转"
 
     assert {n for n in known if n in s1} == {n for n in known if n in s2} == set(known)
     # 章号也必须一一对应：X2 少写一个「第 8 章首现」就是少注入了一条事实。
@@ -196,45 +192,34 @@ def test_the_two_injected_arms_say_the_same_things_in_two_layouts() -> None:
     assert 0.85 <= len(s2) / len(s1) <= 1.15, f"字数比 {len(s2) / len(s1):.3f} 出界"
 
 
-def test_both_injected_arms_render_all_three_knowledge_states() -> None:
-    """KNOWS / BELIEVES / UNKNOWN 三态都得渲染得出来。
+def test_no_forbidden_entities_leaves_no_dangling_line() -> None:
+    """没有未来实体时**整段是空的**，不许留下「尚未登场、这一场不得出现：」后面空一片。
 
-    UNKNOWN 是**闭世界推导出来的断言**，不是「查不到」——它恰恰是这个产品要卖的那一格
-    （「谁在第几章还不该知道什么」）。少了它，注入臂等于什么都没说。
+    「空」和「留了个抬头没内容」在屏幕上差得很远：后者会让模型以为有一份它没读到的清单。
     """
-    ctx = _full_ctx()
+    store = FakeGraph([XIAO_JUE, GU_QINGYIN], [])
+    ctx = resolve_constraints(store, PID, 5, [GU_QINGYIN.name])
+
     for form in (PromptForm.X1, PromptForm.X2):
-        section = graph_section(ctx, form)
-        assert "萧决" in section and "第 3 章" in section  # KNOWS + since_chapter
-        assert "李管家" in section and "第 4 章" in section  # BELIEVES + since_chapter
-        assert "顾清音" in section and "还不知道" in section  # UNKNOWN
-
-
-def test_the_believed_value_reaches_both_injected_arms() -> None:
-    """误信值（「以为已泄露」）是 BELIEVES 这一态的**全部内容**，丢了它 = 退化成 KNOWS。"""
-    ctx = _full_ctx()
-    for form in (PromptForm.X1, PromptForm.X2):
-        assert "已泄露" in graph_section(ctx, form)
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# ③ D3：tell 永不进 prompt
-# ══════════════════════════════════════════════════════════════════════════
+        assert graph_section(ctx, form) == ""
 
 
 def test_no_tell_and_no_props_reach_any_arm() -> None:
-    """**这条是本文件存在的主要理由。**
+    """**节点属性里作者写的东西一个字都不许进 prompt。**
 
-    tell 进了 X1/X2 → 两臂 100% 命中自己写进去的词 → `Δ` 翻负 → 预注册裁决表读出
-    「KILL 起草线」：把一个本来对的项目砍掉，而全程没有任何东西会红。
+    `NodeProps` 是 `extra="allow"` 的：作者写在未来实体上的 `plot_note`（「第 200 章
+    才揭晓」那类）会原样穿过任何一次 `model_dump_json()`。进 prompt 的只许是**显示名**
+    加首现章。
+
+    （这条原来还罩着秘密的 tell —— 那半随秘密下线一起走了，ADR 0039。留下的这半
+    跟秘密无关：任何一类节点的 props 都装得下作者写的剧透。）
     """
     ctx = _full_ctx(with_tell=True)
     for form in PromptForm:
         text = _text(_arm(ctx, form))
-        assert TELL not in text, f"{form} 的 prompt 里出现了 tell"
-        assert TWIST not in text, f"{form} 的 prompt 里出现了 props.twist"
-    # 进 prompt 的是**显示名**，它和 tell 是两个字符串——这是「不自己命中自己」的机械保证。
-    assert "血脉秘密" in _text(_arm(ctx, PromptForm.X1))
+        assert TWIST not in text, f"{form} 的 prompt 里出现了 props 里的字"
+    # 进 prompt 的是**显示名** + 首现章，别的一个字都没有。
+    assert "幽泉窟" in _text(_arm(ctx, PromptForm.X1))
 
 
 def test_the_tell_really_is_reachable_in_the_graph() -> None:
@@ -284,43 +269,12 @@ def test_nothing_to_inject_collapses_all_three_arms_into_one() -> None:
     反过来说，此时若 X1 仍多出一个「【本场设定要点】」空标题，那就是一句只有注入臂才有的
     额外指令 —— 正是反混淆铁律要禁的东西。
     """
-    store = FakeGraph([XIAO_JUE, GU_QINGYIN, BLOODLINE], [])
-    ctx = resolve_constraints(store, PID, 5, [XIAO_JUE.name], secrets=[])
+    store = FakeGraph([XIAO_JUE, GU_QINGYIN], [])
+    ctx = resolve_constraints(store, PID, 5, [XIAO_JUE.name])
 
-    assert ctx.secret_labels == [] and ctx.forbidden_names == [] and ctx.matrix.cells == []
+    assert ctx.forbidden_names == []
     assert graph_section(ctx, PromptForm.X1) == graph_section(ctx, PromptForm.X2) == ""
     assert _arm(ctx, PromptForm.X0) == _arm(ctx, PromptForm.X1) == _arm(ctx, PromptForm.X2)
-
-
-def test_an_empty_must_not_reveal_still_renders_the_matrix() -> None:
-    """对照：在场的人**全都知道** → 没有「不得写破」那一行，但矩阵照渲染。
-
-    没有这一条，上面那条也可能是因为「图谱段恒为空」而绿的——而恒为空的注入臂
-    等于三臂全是 X0，`Δ` 恒为 0，gate 读出 KILL。
-    """
-    store = FakeGraph(
-        [XIAO_JUE, BLOODLINE], [edge(XIAO_JUE.id, BLOODLINE.id, EdgeType.KNOWS, 3)]
-    )
-    ctx = resolve_constraints(store, PID, 5, [XIAO_JUE.name], secrets=[BLOODLINE.id])
-
-    assert ctx.secret_labels == [] and ctx.forbidden_names == []
-    for form in (PromptForm.X1, PromptForm.X2):
-        section = graph_section(ctx, form)
-        assert "萧决" in section and "血脉秘密" in section
-        assert "不得写破" not in section and "写不得" not in section
-        assert "尚未登场" not in section
-
-
-def test_no_forbidden_entities_leaves_no_dangling_line() -> None:
-    """只有秘密没有未来实体：不许留下「尚未登场、这一场不得出现：」后面空一片。"""
-    store = FakeGraph([XIAO_JUE, GU_QINGYIN, BLOODLINE], [])
-    ctx = resolve_constraints(store, PID, 5, [GU_QINGYIN.name], secrets=[BLOODLINE.id])
-
-    for form in (PromptForm.X1, PromptForm.X2):
-        section = graph_section(ctx, form)
-        assert "血脉秘密" in section
-        assert "尚未登场" not in section and "头一回出现" not in section
-        assert not section.rstrip().endswith("：")
 
 
 # ══════════════════════════════════════════════════════════════════════════

@@ -105,21 +105,22 @@ _attempt_seq = 0
 def _seed_failed_attempt(conn, pid: str, chapter_id: str, *, seed: str = "") -> str:
     global _attempt_seq
 
-    from novel_harness.chapter_refresh import create_manual_attempt
+    from test_chapter_refresh import an_attempt
 
     _attempt_seq += 1
     snap = conn.execute(
         "SELECT id FROM chapter_snapshot WHERE chapter_id=? LIMIT 1", (chapter_id,)
     ).fetchone()["id"]
-    attempt = create_manual_attempt(
+    # **每次 seed 都是一张新的单**：coverage 的唯一键带着 (run, mask)，同一个 run 上
+    # 同一个 mask 只会有一张。生产上「好转之后又失败一次」的来法是**正文换了一版**
+    # ⇒ 新 generation ⇒ 新 run ⇒ 新单，所以这儿也走 generation 递增，
+    # 而不是把一张已经 SUCCEEDED 的单硬掰回 FAILED（那个状态生产上不存在）。
+    attempt = an_attempt(
         conn,
         project_id=pid,
         chapter_id=chapter_id,
         snapshot_id=snap,
-        generation=1,
-        ruleset_epoch=1,
-        ruleset_hash="x",
-        trigger_key=f"anomaly:{chapter_id}:{seed or _attempt_seq}",
+        generation=_attempt_seq,
     )
     conn.execute(
         "UPDATE chapter_refresh_attempt SET summary_state = 'FAILED' "
