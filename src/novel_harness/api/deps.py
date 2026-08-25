@@ -270,10 +270,21 @@ def build_summarizer() -> RollingSummarizer:
 def get_summarizer() -> RollingSummarizer:
     """章节滚动总结器。**在这里就把「模型配好了没」问一次。**
 
-    问题不是防御性编程：不问的话，没配钥匙的作者点「生成总结」拿到的是
-    `RollingSummarizer.ensure` 中途抛出的 pydantic / capability 开发者输出——被全局
-    handler 接住原样发成一句 422 英文，而他能做的动作是「去顶栏 ⚙ 填三个框」。
-    依赖层抛 HTTPException 是本模块既有的做法（`load_project`）。
+    ── ⚠️ 它今天只剩一个消费方，而那个消费方不是它当初服务的那个（2026-08-25）──
+
+    这个「先问一次」的变体是为**作者亲手点「生成总结」**写的：不问的话他拿到的是
+    `ensure` 中途抛出的 pydantic / capability 开发者输出，而他能做的动作是
+    「去顶栏 ⚙ 填三个框」。**那颗按钮和它背后的路由已经删了**——总结只剩两个
+    自动触发，作者手上没有手动入口。
+
+    于是今天唯一还拿它当工厂的是 `api/background_runtime.py`（`summarizer_factory`
+    的默认值），**而那正是上面 `model_configuration_error` 明写「不该 422」的那一侧**
+    （每保存一次弹一次 422 是骚扰，它要的是把这句话装进回执）。
+
+    **这个错配是记录在案的，不是没看见**：改它是一次行为改动（后台没配模型时的失败
+    形状会变），不在「删手动入口」这一批的范围里。要改的话把后台指向
+    `build_summarizer`（那个不问的、今天零直接调用的），并同时给后台补上
+    「把这句话装进回执」那一半——只改一半会让作者更看不出为什么什么都没发生。
     """
     reason = model_configuration_error()
     if reason is not None:

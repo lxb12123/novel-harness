@@ -801,8 +801,9 @@ def test_the_stopwatch_is_ours_so_a_real_call_always_carries_it(
             text="萧决在青云城主府听说了血脉秘密。", model="deepseek-v4-flash", finish_reason="stop"
         ),
     )
-    made = client.post(f"/api/projects/{book['pid']}/chapters/1/summary")
-    assert made.status_code == 200, made.text
+    # 手动那条路由 2026-08-25 删了；直接调生产上那个执行体，**同一次真模型调用**
+    # ——这条测的是「供应商没报 usage 时用量条怎么说」，要的就是那一次调用。
+    deps_mod.build_summarizer().ensure(book["pid"], 1)
     totals = client.get(f"/api/projects/{book['pid']}/runs").json()["totals"]
     assert totals["calls"] == 1 and totals["metered_calls"] == 0
     assert totals["tokens_in"] is None, "桩没给 token 数，那就是 NULL"

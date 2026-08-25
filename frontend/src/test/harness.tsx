@@ -119,7 +119,6 @@ const DEFAULT: Handler[] = [
   { match: /\/chapters\/\d+\/summary\/mentions$/, body: fixtures.summaryMentions },
   { match: /\/nodes\/[^/]+\/summary-mentions$/, body: SUMMARY_TRAIL },
   { match: /\/chapters\/\d+\/summary$/, body: fixtures.summaryGenerated },
-  { method: "POST", match: /\/chapters\/\d+\/summary$/, body: fixtures.summaryGenerated },
   { method: "PATCH", match: /\/chapters\/\d+\/summary$/, body: fixtures.summaryGenerated },
   {
     method: "DELETE",

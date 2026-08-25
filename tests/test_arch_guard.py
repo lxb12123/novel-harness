@@ -462,3 +462,50 @@ def test_the_guard_ignores_docstrings() -> None:
     assert graph_table_sql(doc_only) == []
     real_sql = 'x = "SELECT * FROM edge WHERE valid_from_chapter <= 1"\n'
     assert graph_table_sql(real_sql) == [1]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 花作者的钱的那几个入口：**总结只剩两个触发，都是系统自动的**（2026-08-25）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_only_one_place_in_production_can_buy_a_chapter_summary() -> None:
+    """**能真正调 `RollingSummarizer.ensure()` 的地方只许有一处。**
+
+    ── 它守的是什么 ────────────────────────────────────────────────────────
+
+    2026-08-25 定：滚动总结的触发**只剩两个，都是系统自动的**——保存之后、
+    每 30 分钟扫描。手动那一整条（右栏那颗「生成」按钮 + `POST …/summary` +
+    `POST …/summary/regenerate` + `create_manual_attempt`）全删了。
+
+    两个触发不是两条执行路：它们都只是**下一张单**，而单最后都汇到
+    `chapter_refresh` 的协调器，由 `background_runtime` 那个 adapter 去付那一次钱。
+    **所以「今天有几个触发」这个问题在代码里的答案就是这一处。**
+
+    ── 它红了代表什么 ──────────────────────────────────────────────────────
+
+    有人加了第二个付费入口，而这条产品线上最容易犯的错就是这个：
+    这个仓库已经修过一次「一条零调用方的付费入口」（ADR 0035，换章 autopilot），
+    修过一次「防抖在执行层根本没生效，改一下午存三十次就买三十次」。
+    **多一个入口 = 多一处要重新论证「这笔钱是谁按的」。**
+
+    要加之前先回答：谁按的？他知道自己在付费吗？撤回过的章会不会被它买回来？
+    """
+    import ast
+
+    offenders: list[str] = []
+    for path in sorted(SRC.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if isinstance(func, ast.Attribute) and func.attr == "ensure":
+                # **只记文件不记行号**：钉行号的守卫会在无关改动上误报，
+                # 而误报会让人把守卫关掉（同本文件那条「不许 cry wolf」的纪律）。
+                offenders.append(str(path.relative_to(SRC)))
+    assert offenders == ["api/background_runtime.py"], (
+        f"能买一份章节总结的地方不止一处了：{offenders}。"
+        "总结的触发只剩「保存之后」和「每 30 分钟扫描」两个，它们共用同一个执行体——"
+        "多一个入口就是多一处要重新论证「这笔钱是谁按的」。"
+    )

@@ -19,6 +19,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from test_draft_api import _generate
 from novel_harness.db import Connection, connect, migrate
 from novel_harness.draft.provider import CompletionResult
 from novel_harness.draft.rolling_summary import (
@@ -392,7 +393,7 @@ def stub_model(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def test_the_four_routes_all_answer_with_the_same_shape(
+def test_the_three_routes_all_answer_with_the_same_shape(
     client: TestClient, book: dict[str, str], stub_model: None
 ) -> None:
     base = f"/api/projects/{book['pid']}/chapters/1/summary"
@@ -412,9 +413,12 @@ def test_the_four_routes_all_answer_with_the_same_shape(
         "version_source": None,
     }
 
-    generated = client.post(base)
+    # 机器那一份由**生产上那个执行体**产出：手动生成那条路由 2026-08-25 随按钮一起删了
+    # （总结只剩两个自动触发），所以这一格的 POST 不再存在，四条变三条。
+    _generate(book, 1)
+    generated = client.get(base)
     assert generated.status_code == 200, generated.text
-    assert set(generated.json()) == set(empty.json()), "四条路由的出参形状必须一样"
+    assert set(generated.json()) == set(empty.json()), "三条路由的出参形状必须一样"
     assert generated.json()["summary"] and generated.json()["author_written"] is False
 
     edited = client.patch(base, json={"summary": AUTHOR_TEXT})
@@ -469,9 +473,13 @@ def test_background_tidying_never_buys_back_a_retracted_summary(
     `test_a_retracted_summary_is_not_bought_back_by_the_next_save` 钉决策层。
 
     这里钉的是端到端那一半：保存之后**没有一条总结分支的活被排出去**。
+
+    ⚠️ **2026-08-25 起这条纪律的后果变重了**：手动生成整条下线（按钮 + 路由都删了），
+    所以撤回**是终态**——系统再也不会买回来，而作者手上也没有「再点一次生成」那条
+    退路了。他还能自己写一段（PATCH，不花钱）。**这是裁定不是洞。**
     """
     base = f"/api/projects/{book['pid']}/chapters/1"
-    assert client.post(f"{base}/summary").status_code == 200
+    _generate(book, 1)  # 手动那条路由删了（2026-08-25），先用生产执行体造一份出来
     assert client.delete(f"{base}/summary").status_code == 200
 
     # 保存一次（改一个字就够，要的是走完真的保存链路）。

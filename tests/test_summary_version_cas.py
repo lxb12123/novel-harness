@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
+from test_draft_api import _generate
 from novel_harness import importer, project
 from novel_harness.db import connect, migrate
 from novel_harness.draft.provider import CompletionResult
@@ -160,7 +161,7 @@ def test_author_edit_switches_head_and_keeps_machine_row(book: dict[str, str]) -
 
 def test_stale_expected_version_is_409(client: TestClient, book: dict[str, str]) -> None:
     pid = book["pid"]
-    client.post(f"/api/projects/{pid}/chapters/1/summary")
+    _generate(book, 1)
     current = client.get(f"/api/projects/{pid}/chapters/1/summary").json()
     assert current["version_id"] is not None
 
@@ -171,30 +172,6 @@ def test_stale_expected_version_is_409(client: TestClient, book: dict[str, str])
     assert r.status_code == 409
     # 作者输入没被吞：head 仍是机器那一条。
     assert client.get(f"/api/projects/{pid}/chapters/1/summary").json()["summary"] != "作者新版"
-
-
-def test_regenerate_freezes_head_and_supersedes_old_job(
-    client: TestClient, book: dict[str, str]
-) -> None:
-    pid = book["pid"]
-    client.post(f"/api/projects/{pid}/chapters/1/summary")
-    first = client.post(f"/api/projects/{pid}/chapters/1/summary/regenerate")
-    assert first.status_code == 200, first.text
-    second = client.post(f"/api/projects/{pid}/chapters/1/summary/regenerate")
-    assert second.status_code == 200, second.text
-
-    conn = connect(book["db"])
-    try:
-        rows = conn.execute(
-            "SELECT id, status, expected_head_version_id, required_machine_intent_seq "
-            "FROM summary_generation_job WHERE project_id = ? ORDER BY created_at",
-            (pid,),
-        ).fetchall()
-        assert [r["status"] for r in rows] == ["SUCCEEDED", "SUPERSEDED", "PENDING"]
-        assert rows[1]["expected_head_version_id"] == rows[2]["expected_head_version_id"]
-        assert rows[2]["required_machine_intent_seq"] > rows[1]["required_machine_intent_seq"]
-    finally:
-        conn.close()
 
 
 def test_late_machine_cas_failure_leaves_only_result_audit(

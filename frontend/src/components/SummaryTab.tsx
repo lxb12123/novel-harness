@@ -3,7 +3,6 @@ import {
   useBookSummaryStatus,
   useChapterSummary,
   useEditSummary,
-  useGenerateSummary,
   useNodeSummaryMentions,
   useRetractSummary,
   useSummaryMentions,
@@ -54,8 +53,6 @@ import { useCoords } from "../store";
 //    本身要靠「这儿一颗付费按钮都没有」保证，不是靠一句提示。
 
 /** 后端一句话都没写时才轮到的那几句。 */
-const GENERATE_FAILED =
-  "这一章的总结没能生成，而系统没能说清是为什么。过一会儿再试一次。";
 const SAVE_FAILED = "这一段没能保存，而系统没能说清是为什么。过一会儿再试一次。";
 const RETRACT_FAILED = "没能撤回这一章的总结，而系统没能说清是为什么。过一会儿再试一次。";
 const READ_FAILED =
@@ -70,7 +67,6 @@ export function SummaryTab() {
   const status = useChapterSummary(projectId, chapter);
   const covered = useSummaryWindow(projectId, chapter);
   const book = useBookSummaryStatus(projectId);
-  const generate = useGenerateSummary(projectId ?? "");
   const edit = useEditSummary(projectId ?? "");
   const retract = useRetractSummary(projectId ?? "");
 
@@ -90,11 +86,10 @@ export function SummaryTab() {
   const stored = data?.summary ?? "";
   const shown = typed ?? stored;
   const dirty = typed !== null && typed !== stored;
-  const busy = generate.isPending || edit.isPending || retract.isPending;
+  const busy = edit.isPending || retract.isPending;
 
   const failed = status.isError ? (refusalText(status.error, READ_FAILED) ?? READ_FAILED) : null;
   const refused =
-    refusalText(generate.error, GENERATE_FAILED) ??
     refusalText(edit.error, SAVE_FAILED) ??
     refusalText(retract.error, RETRACT_FAILED);
 
@@ -218,15 +213,6 @@ export function SummaryTab() {
               算了
             </button>
           </>
-        )}
-        {!confirming && (
-          <button disabled={busy} onClick={() => generate.mutate(chapter, { onSuccess: done })}>
-            {generate.isPending
-              ? "正在生成…"
-              : data.summary === null
-                ? "生成（要跑一次模型）"
-                : "重新生成（要跑一次模型）"}
-          </button>
         )}
         <button onClick={jumpToText}>跳到原文</button>
       </div>

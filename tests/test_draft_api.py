@@ -573,10 +573,16 @@ def test_early_chapters_have_an_empty_window_not_a_complaint(
     assert body["window_last"] < body["window_first"]
 
 
-def test_generating_a_summary_is_explicit_and_idempotent(
+def test_generating_the_same_chapter_twice_only_pays_once(
     client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """同章重复点不重复付费——前端因此可以「把缺的挨个补一遍」而不必自己记账。"""
+    """同一份正文只买一次。
+
+    **这条从前叫「显式且幂等」，2026-08-25 只剩后半句**：手动那颗按钮删了，总结的
+    触发只剩「保存之后」和「每 30 分钟扫描」两个自动的。于是「显式」不再是一件事，
+    **而「幂等」比从前更要紧**——两个自动触发都不问作者，一份正文被扫到两次是常态
+    （保存一次、半小时后又扫到），它俩共用的正是这一个执行体。
+    """
     _configure(client)
     calls: list[int] = []
     import novel_harness.api.deps as deps_mod
@@ -588,12 +594,12 @@ def test_generating_a_summary_is_explicit_and_idempotent(
 
     monkeypatch.setattr(deps_mod, "complete", fake)
 
-    url = f"/api/projects/{book['pid']}/chapters/1/summary"
-    first = client.post(url)
-    assert first.status_code == 200, first.text
-    assert first.json()["summary"] == "萧决进屋，没点灯。"
-    assert client.post(url).json() == first.json()
-    assert len(calls) == 1
+    _generate(book, 1)
+    first = client.get(f"/api/projects/{book['pid']}/chapters/1/summary").json()
+    assert first["summary"] == "萧决进屋，没点灯。"
+    _generate(book, 1)
+    assert client.get(f"/api/projects/{book['pid']}/chapters/1/summary").json() == first
+    assert len(calls) == 1, "同一份正文买了第二次 —— 两个自动触发的成本论证靠的就是这条"
 
     assert _summaries(client, book, 12)["missing"] == [2]
 

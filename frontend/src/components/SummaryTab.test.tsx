@@ -16,10 +16,12 @@ import { SummaryTab } from "./SummaryTab";
 //
 // 1. 它跟着左栏选中的那一章走 —— 打错章号的话，作者会在第 99 章上改掉第 1 章的总结。
 // 2. 「你撤回的」和「还没生成」是两句话 —— 合并成一句，界面就会回头催他补一件他刚做完的事。
-// 3. 撤回要先确认 —— 撤了再要一份新的得**再花一次钱**。
+// 3. 撤回要先确认 —— **2026-08-25 起撤回是终态**：手动生成整条下线之后，
+//    撤掉的那一份系统再也不会买回来（他还能自己写一段，那不花钱）。
 // 4. 作者自己写的那一段上不许贴「机器压缩的背景」那句免责。
 
-/** 一章**有总结**的真 dump（`summaryGenerated` 是 `POST …/summary` 的真出参）。 */
+/** 一章**有总结**的真 dump（`summaryGenerated` 从 `GET …/summary` dump 出来，
+ *  名字留着是因为它描述的是「已经生成过的那一章长什么样」）。 */
 const HAVE = fixtures.summaryGenerated;
 
 /** 三种「没有」。**从真 dump 派生**，不是手写一个形状：
@@ -154,18 +156,26 @@ describe("章节总结这一格", () => {
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 
-  it("生成那颗按钮**自己说它要花钱**，点了才打出去", async () => {
+  it("这一格**没有任何会花钱的按钮**，怎么点都不会打出一次付费调用", async () => {
+    // 2026-08-25：手动生成整条下线，总结的触发只剩两个，都是系统自动的
+    // （保存之后 / 每 30 分钟扫描）。这条测试从前钉的是「那颗按钮自己说它要花钱」，
+    // 现在钉的是**那颗按钮不该再存在**。
+    //
+    // 它红了有两种可能，都要人来看一眼：
+    //   · 有人把手动生成加回来了 —— 那是产品裁定，得先改裁定再改代码；
+    //   · 这一格自己替作者打出了一次付费调用 —— 那是这个仓库修过第六次的那个病。
     const user = userEvent.setup();
     const { calls } = renderSpying(<SummaryTab />, summaryRoute(NONE));
-    const button = await screen.findByRole("button", { name: /^生成/ });
-    expect(button).toHaveTextContent("要跑一次模型");
-    // **渲染这一格不会替作者按下任何一次付费调用。**
-    expect(calls.some((c) => c.method === "POST")).toBe(false);
+    expect(await screen.findByText(/这一章还没有总结/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /生成/ })).toBeNull();
 
-    await user.click(button);
-    await waitFor(() =>
-      expect(calls.some((c) => c.method === "POST" && c.url.endsWith("/summary"))).toBe(true),
-    );
+    // 屏幕上剩下的每一颗按钮都按一遍，一次 POST 都不许出来。
+    // （「撤回它」要先点「撤回」确认，所以这一轮真正打出去的只有 DELETE 那条路——
+    //  而这一章没有总结，连那条也走不到。）
+    for (const button of screen.queryAllByRole("button")) {
+      await user.click(button);
+    }
+    expect(calls.some((c) => c.method === "POST")).toBe(false);
   });
 
   it("「跳到原文」把中栏换回正文（作者可能正摊着活动记录）", async () => {

@@ -193,25 +193,6 @@ export function useNodeSummaryMentions(pid: string | null, nodeId: string | null
   });
 }
 
-/** 为某一章生成滚动总结。**会调模型、会花钱，所以只由作者显式触发**——
- *  没有「保存章节后自动生成」那条路（那是一次他没按过的付费调用）。
- *  后端幂等，所以补一批的时候不必自己记住哪些补过。
- *
- *  撤回过的章按这里会**真的重新生成**（付一次钱）——那是撤回语义里写死的退路。 */
-export function useGenerateSummary(pid: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (chapter: number) =>
-      api.post<ChapterSummaryStatus>(proj(pid, `/chapters/${chapter}/summary`)),
-    onSuccess: () => {
-      invalidateSummaries(qc, pid);
-      // 这一次是花了钱的（`model_call` 多一行），日志页和底栏那份用量得跟着变。
-      qc.invalidateQueries({ queryKey: ["activity", pid] });
-      qc.invalidateQueries({ queryKey: ["runs", pid] });
-    },
-  });
-}
-
 /** 把这一章的总结换成作者自己写的那一段。**不花钱。**
  *
  *  库里是追加一行，模型写的那一行留着（迁移 013）——所以这里没有「撤销」这颗按钮，
