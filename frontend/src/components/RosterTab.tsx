@@ -32,7 +32,7 @@ export function RosterTab() {
       <h2>
         花名册
         {projectId && (
-          <button className="add" onClick={() => setAdding(true)} title="建人物 / 地点 / 秘密…">
+          <button className="add" onClick={() => setAdding(true)} title="建人物 / 地点 / 势力…">
             ＋
           </button>
         )}

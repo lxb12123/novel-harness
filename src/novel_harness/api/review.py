@@ -5,9 +5,6 @@
 `/canon/…` 那几条是「事后可查可改」的**改**：抽取直接生效之后，作者第一次看见那条事实时
 它已经是 CANON，所以退路必须在 CANON 上，而不只在审阅队列里。业务在 `corrections.py`。
 
-**其中一条是「补」不是「改」**：`POST …/chapters/{chapter}/canon/knowledge` 在认知矩阵
-一格空白上添一条。它是这个文件里唯一一条把章号放在路径上的写路由——理由写在那个
-处理函数的 docstring 里（一句话：那个数是作者正看着的那一章，不是他填的）。
 """
 
 from __future__ import annotations
@@ -21,7 +18,6 @@ from .. import project
 from ..corrections import (
     CorrectionRefused,
     EventCastCorrection,
-    FactAlreadyThere,
     FactNotFound,
     correct_event_cast,
 )
@@ -348,46 +344,6 @@ class ProposalEditRequest(BaseModel):
     expected_canon_version: int = Field(ge=0)
 
 
-class KnowledgeEditRequest(BaseModel):
-    """把这一格从 KNOWS 改成 BELIEVES（或反过来）。
-
-    **入参里没有章号，一个都没有**（ARCHITECTURE §10 约束 10 / ADR 0006）：改的是
-    「这条事实说错了」，不是「它从第几章开始成立」——后者由证据说了算，作者不记得
-    也不该被问。`tests/test_no_chapter_input.py` 有一条守卫在扫这个 schema。
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    character_id: NodeId
-    secret_id: NodeId
-    to_type: Literal["KNOWS", "BELIEVES"]
-    believed_value: str | None = None
-    """`to_type="BELIEVES"` 时必填：他以为的那一版。面板 §3.2 渲染的就是它。"""
-
-    expected_canon_version: int = Field(ge=0)
-
-
-class KnowledgeAddRequest(BaseModel):
-    """在一格「不知道」上补一条「他知道 / 他以为」。
-
-    **入参里没有章号，一个都没有**，和 `KnowledgeEditRequest` 逐字同一条规矩——
-    这条路由的生效章在**路径**里（`/chapters/{chapter}/…`），而那个数是作者正在看的
-    那一章（认知矩阵本来就是 AS OF 渲染的），不是他敲进来的。
-    `test_no_chapter_input.py` 和 `test_canon_edit_boundary.py` 两头各有一条守卫扫这个
-    schema：请求体里出现任何一个撞章号的键都会红。
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    character_id: NodeId
-    secret_id: NodeId
-    type: Literal["KNOWS", "BELIEVES"]
-    believed_value: str | None = None
-    """`type="BELIEVES"` 时必填：他以为的那一版。"""
-
-    expected_canon_version: int = Field(ge=0)
-
-
 class EventCastEditRequest(BaseModel):
     """改一条已生效事件的知情 / 在场名单。
 
@@ -442,10 +398,6 @@ def _correction_error(exc: Exception) -> HTTPException:
         return HTTPException(
             status_code=404, detail={"error": "fact_not_found", "message": str(exc)}
         )
-    if isinstance(exc, FactAlreadyThere):
-        # 409 而不是 422：作者该做的是**先去看一眼**，不是改一改再提交一次。
-        # 和 `stale_base_version` 同一档，所以前端那颗「看看最新的」原样管用。
-        return _conflict("fact_already_exists", message=str(exc))
     if isinstance(exc, CorrectionRefused):
         return _bad_request(str(exc))
     return _review_error(exc)

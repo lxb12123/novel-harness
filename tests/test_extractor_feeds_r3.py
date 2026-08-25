@@ -119,7 +119,6 @@ def _analysis() -> RawChapterAnalysis:
                 quote=DEATH_QUOTE,
                 participants=("萧决",),
                 knowers=("萧决",),
-                revealed_facts=("萧决死了",),
                 confidence=0.95,
             ),
         ),

@@ -99,7 +99,6 @@ CONNECTION_OPENERS = frozenset({"db.py", "api/deps.py", "api/launch.py"})
 GRAPH_TABLES = (
     "event_participant",
     "event_knower",
-    "event_reveal",
     "proposal_event",
     "proposal_edge",
     "story_event",
@@ -107,7 +106,6 @@ GRAPH_TABLES = (
     "edge",
     "node",
     "alias",
-    "secret",
 )
 """时态过滤碰得到的表。`edge_type` 排在 `edge` 前面：交替是 leftmost-first，
 `edge` 会先匹配上 `edge_type` 的前 4 个字符——同 mentions.py 那条长度降序的理由。
@@ -296,7 +294,6 @@ def test_event_hyperedge_tables_are_inside_the_graph_sql_boundary() -> None:
         "story_event",
         "event_participant",
         "event_knower",
-        "event_reveal",
         "proposal_event",
         "proposal_edge",
     }
@@ -313,12 +310,13 @@ def test_story_graph_method_set_remains_frozen() -> None:
         for name, value in StoryGraph.__dict__.items()
         if not name.startswith("_") and callable(value)
     }
+    # 2026-08-25：`knowledge_edges_at` / `knowledge_matrix` 随秘密下线删了（ADR 0039）。
+    # **这条守卫的意思没变**：加一个方法就得有人来解释它对得上哪个真实消费者
+    # （`store.py` 顶上那张表）。
     assert methods == {
         "resolve",
         "canon_version",
-        "knowledge_edges_at",
         "state_at",
-        "knowledge_matrix",
         "subgraph",
         "upsert_edge",
     }

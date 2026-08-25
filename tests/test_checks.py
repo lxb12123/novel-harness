@@ -55,7 +55,6 @@ from novel_harness.graph import (
     EvidenceStatus,
     HealthValue,
     InformationScope,
-    KnowledgeMatrix,
     Node,
     NodeLabel,
     NodeProps,
@@ -172,18 +171,6 @@ class FakeGraph:
         del project_id
         return 0
 
-    def knowledge_edges_at(
-        self,
-        project_id: str,
-        character_ids: Sequence[str],
-        secret_ids: Sequence[str],
-        chapter: int,
-        *,
-        scope: InformationScope = InformationScope.CANON,
-    ) -> list[Edge]:
-        del project_id, character_ids, secret_ids, chapter, scope
-        return []
-
     def state_at(
         self,
         project_id: str,
@@ -226,17 +213,6 @@ class FakeGraph:
             location=self._nodes[locations[0].dst] if locations else None,
             states=states,
         )
-
-    def knowledge_matrix(
-        self,
-        project_id: str,
-        chapter: int,
-        cast: Sequence[str],
-        *,
-        secrets: Sequence[str] | None = None,
-        scope: InformationScope = InformationScope.CANON,
-    ) -> KnowledgeMatrix:
-        raise NotImplementedError
 
     def subgraph(
         self,

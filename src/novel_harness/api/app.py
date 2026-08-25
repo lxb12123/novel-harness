@@ -11,9 +11,9 @@ M4 抽取/事件读端拆在 ``api/extraction.py``，提案审阅与改正在 ``
 ── 两条贯穿本文件的纪律 ───────────────────────────────────────────────────
 
 1. **出参收窄（§1.2 陷阱）**：`resolve` / `subgraph` / `state` 出**完整 `Node`**，而
-   `NodeProps` 是 `extra="allow"`——一个 Secret/未来节点会把作者写的 `props.twist` /
+   `NodeProps` 是 `extra="allow"`——一个未来节点会把作者写的 `props.twist` /
    `plot_note` 序列化出去（`graph.models.NodeRef` 的 docstring 有实测形态）。所有可能
-   含完整 Node 的响应过 `_narrow`：Secret 或「first_appears > 当前章」的节点收窄成
+   含完整 Node 的响应过 `_narrow`：「first_appears > 当前章」的节点收窄成
    `{id,label,name}`。这是出口侧的**唯一**收窄点（同时态过滤只写一次的道理）。
 
 2. **错误映射（§1.3）**：引擎的每一类拒绝异常在这里映成一个稳定的 HTTP 码 + 结构化
@@ -71,7 +71,6 @@ from ..graph import (
     NodeLabel,
     NodeProps,
     NodeRef,
-    SecretDetail,
 )
 from ..graph.store import (
     ChapterInUse,
@@ -146,19 +145,22 @@ def _split_edge_types(raw: str) -> list[EdgeType] | None:
     return [EdgeType(p) for p in parts] or None
 
 
-# ── 出参收窄：Secret / 未来节点绝不整体序列化（§1.2 陷阱）──────────────────
+# ── 出参收窄：未来节点绝不整体序列化（§1.2 陷阱）──────────────────────────
 
 
 def _is_sensitive_node(node: dict[str, Any], chapter: int | None) -> bool:
     """一个已 `model_dump` 的 Node 字典是不是「最不该被完整序列化」的那批。
 
-    判据两条（§1.2 / `NodeRef` docstring）：label==Secret（秘密的 props 里装的正是秘密
-    内容），或 first_appears > 当前章（这个节点按定义是关于未来的）。`chapter is None`
-    时没有「当前章」可比（如 resolve 花名册查询），只认 Secret——未来判据留给带章号的
-    读端。
+    判据一条（§1.2 / `NodeRef` docstring）：first_appears > 当前章 —— 这个节点按定义
+    是关于未来的。
+
+    ⚠️ 原来还有第二条 `label == Secret`，2026-08-25 随秘密下线（ADR 0039）。
+    **它的消失让 `chapter is None` 这条分支变成了「什么都不收窄」**：没有当前章就判不了
+    未来。今天这不构成泄漏，因为**唯一**传 `None` 的调用方是 `declare_node`——把作者刚
+    自己建的那个节点原样递回去。`resolve` 那条无章号的花名册路径不走这里，它一律出
+    `NodeRef`（比这儿更严）。**再有新的 `chapter=None` 调用方时，先回答「这批 Node 是
+    谁的」，别默认它安全。**
     """
-    if node.get("label") == NodeLabel.SECRET.value:
-        return True
     if chapter is None:
         return False
     first = (node.get("props") or {}).get("first_appears_chapter")
@@ -886,7 +888,7 @@ def state(
 ) -> Any:
     """当前状态卡：cast_states 收已解析 node_id，所以先 resolve_cast。
 
-    出参含完整 Node（node/location/states[].dim）→ 过 `_narrow`：这一章视角下的 Secret
+    出参含完整 Node（node/location/states[].dim）→ 过 `_narrow`：这一章视角下的
     和未来节点收窄。unresolved 由前端另走 `/matrix` 的 `unresolved_cast` 拿。
     """
     resolved = resolve_cast(store, proj.id, _effective_cast(proj, store, chapter, cast, include))
@@ -944,7 +946,7 @@ def subgraph(
 ) -> Any:
     """局部关系图（Tab2）。hops>2 由引擎抛 ValueError → 422；center 不存在 → 404。
 
-    nodes/center 是完整 Node → 过 `_narrow`：这一章的 Secret / 未来节点收窄。
+    nodes/center 是完整 Node → 过 `_narrow`：这一章的未来节点收窄。
     """
     graph = store.subgraph(
         proj.id,
@@ -1257,7 +1259,7 @@ def report_focus(
 # `kind="death"` 并列，留着当「改」的入口。
 #
 # 入参**没有一个章号字段**（§5.9 / 约束 10）：`valid_from` 只由引语落在哪一章决定，
-# `Ledger` 的签名里没有位置能让作者填它。`who`/`secret`/`loc`/`of` 全是称呼原文，
+# `Ledger` 的签名里没有位置能让作者填它。`who`/`loc`/`of` 全是称呼原文，
 # 本文件一次都不解析——解析在 `Ledger` 里，于是壳没有机会把歧义的「师兄」偷偷挑成
 # 第一个候选（歧义 → AmbiguousName → 409 + candidates，让前端弹消歧下拉）。
 # ══════════════════════════════════════════════════════════════════════════
@@ -1267,10 +1269,6 @@ class DeclareNodeBody(BaseModel):
     label: NodeLabel
     name: str
     aliases: list[str] = []
-    description: str = ""
-    """仅 label=Secret：秘密的内容，进 secret 扩展表（不进 node.props）。"""
-    sub_of: str | None = None
-    """仅 label=Secret：父秘密的**称呼原文**（拆子事实用）。"""
 
     first_appears_chapter: int | None = Field(default=None, ge=1)
     """**「还没写到」的那一半**：这个东西要到第 K 章才头一回出现（R2 FUTURE_LEAK 读它）。
@@ -1330,16 +1328,7 @@ def declare_node(
     ledger: Ledger = Depends(get_ledger),
     proj: Any = Depends(load_project),
 ) -> Any:
-    """声明一个节点（8 类 label）。幂等（键 = name）。
-
-    label=Secret 时把 `sub_of` 称呼解析成父秘密 node_id（复刻 cli 那处已知破例：`Ledger`
-    今天没有收「父秘密称呼」的入口）——解析不出/歧义/不是 Secret，走同一套 declare 拒绝
-    异常（→ 404/409/422）。返回的 Node 过 `_narrow`：Secret 收窄成 {id,label,name}。
-    """
-    secret: SecretDetail | None = None
-    if body.label is NodeLabel.SECRET:
-        parent_id = _resolve_parent_secret(store, proj.id, body.sub_of) if body.sub_of else None
-        secret = SecretDetail(description=body.description, sub_of=parent_id)
+    """声明一个节点（7 类 label）。幂等（键 = name）。"""
     node = ledger.declare_node(
         body.label,
         body.name,
@@ -1352,24 +1341,8 @@ def declare_node(
             if body.first_appears_chapter is not None
             else None
         ),
-        secret=secret,
     )
     return _narrowed(node, None)
-
-
-def _resolve_parent_secret(store: Any, project_id: str, surface: str) -> str:
-    """`sub_of` 称呼 → 父秘密 node_id。逐字复刻 cli._resolve_parent_secret 的拒绝形态：
-    绝不挑第一个候选（歧义 → AmbiguousName，查无 → UnknownName，非 Secret → WrongLabel）。
-    """
-    resolution = store.resolve(project_id, [surface])[0]
-    node = resolution.unique_node
-    if node is None:
-        if not resolution.hits:
-            raise UnknownName(surface)
-        raise AmbiguousName(surface, [NodeRef.of(hit.node) for hit in resolution.hits])
-    if node.label is not NodeLabel.SECRET:
-        raise WrongLabel(surface, node.label, NodeLabel.SECRET)
-    return node.id
 
 
 @app.post("/api/projects/{project_id}/aliases")
@@ -2071,8 +2044,8 @@ def chapter_summary_mentions(
     而它同时也是 `…/summaries` 里的一行——那一条要报整个窗口，每一章都挂一串芯片
     会让一次覆盖率查询变成一次全书反查。两件事，两个资源。
 
-    出参里**只有 `NodeRef`**（id/label/name）。这批命中里按定义就有 Secret，
-    而 `Node.props` 装的正是秘密内容（§10.5 第 3 条）。
+    出参里**只有 `NodeRef`**（id/label/name）：这批命中里会有作者还没写到的实体，
+    而 `Node.props` 装的正是「第 200 章才揭晓」那类东西（§10.5 第 3 条）。
 
     这一章没有总结（没写 / 没生成 / 撤回过）→ `mentions: []`。**三种「没有」的区分
     不在这儿再答一遍**：屏幕上那一格读的是 `GET …/summary`，那儿已经在说那句话了，

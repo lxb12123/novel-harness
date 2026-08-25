@@ -79,7 +79,6 @@ class World:
                         quote=quote,
                         participants=("萧决",),
                         knowers=("萧决",),
-                        revealed_facts=(),
                         confidence=0.95,
                     ),
                 ),

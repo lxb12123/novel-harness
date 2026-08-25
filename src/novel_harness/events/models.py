@@ -70,7 +70,6 @@ class EventView(BaseModel):
     event: StoryEvent
     participants: list[NodeRef] = Field(default_factory=list)
     knowers: list[NodeRef] = Field(default_factory=list)
-    revealed_facts: list[NodeRef] = Field(default_factory=list)
 
 
 class EventCastEdit(BaseModel):
@@ -131,7 +130,6 @@ class ProvisionalEventSpec(BaseModel):
     evidence_id: str
     participant_ids: list[str] = Field(default_factory=list)
     knower_ids: list[str] = Field(default_factory=list)
-    revealed_fact_ids: list[str] = Field(default_factory=list)
     confidence: float = Field(ge=0, le=1)
 
 

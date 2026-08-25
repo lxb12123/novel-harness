@@ -20,7 +20,6 @@ def _event(**overrides: object) -> dict[str, object]:
         "quote": "顾清音从袖中取出密信，轻轻放在案上。",
         "participants": ["顾清音"],
         "knowers": ["顾清音", "萧决"],
-        "revealed_facts": ["顾清音持有密信"],
         "confidence": 0.95,
     }
     data.update(overrides)
@@ -78,7 +77,6 @@ def test_raw_collection_fields_are_deeply_immutable_tuples() -> None:
     assert isinstance(analysis.character_profiles, tuple)
     assert isinstance(analysis.events[0].participants, tuple)
     assert isinstance(analysis.events[0].knowers, tuple)
-    assert isinstance(analysis.events[0].revealed_facts, tuple)
     serialized = json.loads(analysis.model_dump_json())
     assert isinstance(serialized["events"], list)
     assert isinstance(serialized["state_updates"], list)
@@ -104,7 +102,7 @@ def test_chapter_analysis_requires_at_least_one_event() -> None:
         RawChapterAnalysis.model_validate(_analysis(events=[]))
 
 
-@pytest.mark.parametrize("missing", ["participants", "knowers", "revealed_facts"])
+@pytest.mark.parametrize("missing", ["participants", "knowers"])
 def test_event_requires_every_surface_collection(missing: str) -> None:
     payload = _event()
     payload.pop(missing)

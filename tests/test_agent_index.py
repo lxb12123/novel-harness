@@ -52,7 +52,6 @@ from novel_harness.graph import (
     NodeProps,
     NodeRef,
     NodeSpec,
-    SecretDetail,
 )
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.importer import CHAPTER_DIR, chapter_path
@@ -114,10 +113,9 @@ def book(tmp_path: Path) -> Iterator[Book]:
     store.upsert_node(
         NodeSpec(
             project_id=pid,
-            label=NodeLabel.SECRET,
+            label=NodeLabel.FACTION,
             name="血脉秘密",
-            props=NodeProps.model_validate({"twist": TWIST}),
-            secret=SecretDetail(description=SECRET_DESC),
+            props=NodeProps.model_validate({"twist": TWIST, "plot_note": SECRET_DESC}),
         )
     )
     store.upsert_node(
@@ -261,7 +259,7 @@ def test_l0_is_a_table_of_contents_with_names_and_no_aliases(book: Book) -> None
 
     by_label = {(entry.label, entry.name) for entry in result.roster}
     assert ("Character", "萧决") in by_label
-    assert ("Secret", "血脉秘密") in by_label, "秘密的**显示名**要给（否则作者不知道在拦什么）"
+    assert ("Faction", "血脉秘密") in by_label, "非人物条目的**显示名**也要给"
     assert ("Location", "幽泉窟") in by_label
     assert result.roster_total == len(result.roster)
 
@@ -371,10 +369,10 @@ def test_l1_refuses_an_ambiguous_or_non_character_name(book: Book) -> None:
     )
     assert outcome.ok is False and "查无此人" in outcome.content
 
-    secret = dispatch(
+    not_a_character = dispatch(
         _call("character_chapters", characters=["血脉秘密"]), book.context()
     )
-    assert secret.ok is False and "不是人物" in secret.content
+    assert not_a_character.ok is False and "不是人物" in not_a_character.content
 
 
 class FakeEvents:

@@ -48,7 +48,6 @@ from novel_harness.graph import (
     NodeLabel,
     NodeProps,
     NodeSpec,
-    SecretDetail,
 )
 from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
@@ -89,10 +88,9 @@ def poisoned(tmp_path: Path) -> Iterator[dict[str, Any]]:
     store.upsert_node(
         NodeSpec(
             project_id=pid,
-            label=NodeLabel.SECRET,
+            label=NodeLabel.FACTION,
             name="血脉秘密",
-            props=NodeProps.model_validate({"twist": TWIST}),
-            secret=SecretDetail(description=SECRET_DESC),
+            props=NodeProps.model_validate({"twist": TWIST, "plot_note": SECRET_DESC}),
         )
     )
     store.upsert_node(

@@ -7,10 +7,8 @@
 // 这个文件是这些形状的权威。补齐那步是「让 openapi-typescript 真正兑现」的后续。
 //
 // 铁律的前端影子：这里**没有一个类型带章号输入字段**。`valid_from` 只在出参里出现
-// （Edge / KnowledgeCell），是系统算出来的产物。**唯一一个章号在路径上的写路由**
-// （`…/chapters/{n}/canon/knowledge`，2026-08-14「补一条认知」）的入参
-// `KnowledgeAddInput` 同样一个 chapter 字段都没有——那个数是作者正看着的那一章，
-// 不是他填的（约束 10；`tests/test_no_chapter_input.py` 逐个点名钉着它）。
+// （`Edge`），是系统算出来的产物，不是作者填的
+// （约束 10；`tests/test_no_chapter_input.py` 逐个点名钉着它）。
 
 export type DraftLanguage = "zh" | "en";
 
@@ -149,7 +147,7 @@ export interface BookSummaryStatus {
 // 字里出现了没有」（`summary_index.py`）。前端这一侧因此也不许出现任何「相关度」
 // 「匹配度」之类的数字——那种数字会让作者以为引擎读懂了剧情，而它在数字符串。
 
-/** 一段总结提到的一个东西。**只有 `NodeRef`，没有 props**（秘密的内容不出接口）。 */
+/** 一段总结提到的一个东西。**只有 `NodeRef`，没有 props**（节点上的伏笔备注不出接口）。 */
 export interface SummaryMention {
   node: NodeRef;
   /** 这一段里真正出现的那几个称呼。「魔尊」还是「萧决」是作者自己的信息，别合并。 */
@@ -197,25 +195,28 @@ export type NodeLabel =
   | "Character"
   | "Location"
   | "Faction"
-  | "Secret"
   | "Foreshadow"
   | "Object"
   | "StateDim"
   | "Chapter";
 
-/** label → 中文。**8 类全列**：花名册里也会出现引擎自己建的节点（Chapter 由 import 生成）。 */
+/** label → 中文。**7 类全列**：花名册里也会出现引擎自己建的节点（Chapter 由 import 生成）。
+ *
+ *  ⚠️ **后端 `activity._NODE_LABEL` 里还留着一行 `Secret`，这儿没有——那不是漏了。**
+ *  后端那张表还要渲染 `decision_log` 里 2026-08-25 之前的历史行（那张表封死了 DELETE），
+ *  而浏览器这一份只喂当下的图。守卫（`test_wording_guard.py`）对这一份要求**逐个相等**，
+ *  多一行就红。 */
 export const LABEL_ZH: Record<NodeLabel, string> = {
   Character: "人物",
   Location: "地点",
   Faction: "势力",
   Object: "物品",
-  Secret: "秘密",
   Foreshadow: "伏笔",
   StateDim: "状态",
   Chapter: "章",
 };
 
-/** 作者能自己建的 6 类，附一句「什么时候用它」。
+/** 作者能自己建的 5 类，附一句「什么时候用它」。
  *
  * **故意不含 `StateDim` 和 `Chapter`**：前者是引擎内部的状态维度，后者由 import 生成——
  * 把它们放进「新建」菜单等于邀请作者手工造出引擎的内部结构。上面的 `LABEL_ZH` 仍要认它们
@@ -224,7 +225,6 @@ export const LABEL_ZH: Record<NodeLabel, string> = {
 export const AUTHORED_LABELS: { label: NodeLabel; hint: string }[] = [
   { label: "Character", hint: "故事中的人物" },
   { label: "Location", hint: "故事发生的地点" },
-  { label: "Secret", hint: "尚未公开的信息或真相" },
   { label: "Faction", hint: "门派、家族或组织" },
   { label: "Object", hint: "对情节有影响的物品" },
   { label: "Foreshadow", hint: "准备在后文回应的线索" },
@@ -255,22 +255,11 @@ export interface ChapterSnapshot {
   is_current: boolean;
 }
 
-/** 收窄后的窄引用：Secret / 未来节点只剩这三键（props 被 _narrow 摘掉了）。 */
+/** 收窄后的窄引用：未来节点只剩这三键（props 被 _narrow 摘掉了）。 */
 export interface NodeRef {
   id: string;
   label: NodeLabel;
   name: string;
-}
-
-export type KnowledgeState = "KNOWS" | "BELIEVES" | "UNKNOWN";
-
-export interface KnowledgeCell {
-  character_id: string;
-  secret_id: string;
-  state: KnowledgeState;
-  since_chapter: number | null;
-  believed_value: string | null;
-  evidence_id: string | null;
 }
 
 /** 这张表是**哪一版**的图算出来的。
@@ -283,18 +272,6 @@ export interface GraphVersion {
   canon_version: number;
   indexed_version: number;
   staleness: number;
-}
-
-export interface KnowledgeMatrix {
-  project_id: string;
-  chapter: number;
-  scope: string;
-  version: GraphVersion;
-  /** 作者声明了、但解析不出唯一节点的称呼。非空 = 面板不完整，须消歧。 */
-  unresolved_cast: string[];
-  characters: NodeRef[];
-  secrets: NodeRef[];
-  cells: KnowledgeCell[];
 }
 
 export interface ForbiddenEntity {
@@ -330,20 +307,18 @@ export interface StateSnapshot {
   is_dead: boolean;
 }
 
-/** 引擎的 9 类关系（`graph/models.py::EdgeType`）。
+/** 引擎的 7 类关系（`graph/models.py::EdgeType`）。
  *  `tests/test_wording_guard.py` 拿 Python 那个枚举**逐个**比这份联合类型，少一个就红。 */
 export type EdgeType =
   | "LOCATED_AT"
   | "MEMBER_OF"
   | "RELATED_TO"
-  | "KNOWS"
-  | "BELIEVES"
   | "HAS_STATE"
   | "OWNS"
   | "PLANTED_IN"
   | "RESOLVED_IN";
 
-/** 关系类型 → 作者的说法。**9 类全列**，而且类型上必须全列：
+/** 关系类型 → 作者的说法。**7 类全列**，而且类型上必须全列：
  *  `Record<EdgeType, string>` 让「漏一行」变成一个编译错误，不是一句运行时兜底。
  *
  *  ── 这张表为什么在这儿，而不是三份散在组件里 ──────────────────────────────
@@ -353,8 +328,6 @@ export type EdgeType =
  *  措辞的**唯一**出处是后端（`activity._EDGE_LABEL`），这张表是它在浏览器里的投影；
  *  投影只该有一份，且必须被守卫钉住它和后端说的是同一句话。 */
 export const EDGE_ZH: Record<EdgeType, string> = {
-  KNOWS: "知道",
-  BELIEVES: "以为",
   LOCATED_AT: "在",
   MEMBER_OF: "属于",
   RELATED_TO: "关系",
@@ -679,7 +652,6 @@ export interface EventView {
   event: StoryEvent;
   participants: NodeRef[];
   knowers: NodeRef[];
-  revealed_facts: NodeRef[];
 }
 
 export interface ProposalRecord {
@@ -802,68 +774,6 @@ export interface NewCharacterItem {
 //
 // 这几组入参同样**一个章号字段都没有**（约束 10）：改的是「这条事实说错了」，
 // 不是「它从第几章开始成立」——后者只由证据决定，新事实的生效章从被改的那条上继承。
-// 出参里的 `since_chapter` 是那条继承的**产物**，面板要显示它。
-//
-// **补一条**（`KnowledgeAddInput`，2026-08-14）那一份的生效章不是继承来的，
-// 但它同样不经作者的手：它在**路径**上，是作者正看着的那一章。请求体里照旧没有。
-
-export type KnowledgeEdgeType = "KNOWS" | "BELIEVES";
-
-export interface KnowledgeEditInput {
-  character_id: string;
-  secret_id: string;
-  to_type: KnowledgeEdgeType;
-  /** `to_type="BELIEVES"` 时必填、`"KNOWS"` 时必须不传（后端两边都会拒）。 */
-  believed_value?: string;
-  expected_canon_version: number;
-}
-
-/** 改完一格之后的回执。**没有整条边、也没有秘密正文**：这条边的另一端按定义是个
- *  Secret，整份序列化出去就是保密清单自己泄密。 */
-export interface KnowledgeCorrection {
-  project_id: string;
-  canon_version: number;
-  decision_id: string;
-  character: NodeRef;
-  secret: NodeRef;
-  from_type: KnowledgeEdgeType;
-  to_type: KnowledgeEdgeType;
-  believed_value: string | null;
-  /** **继承来的，不是作者填的**（约束 10）。 */
-  since_chapter: number;
-  edge_id: string;
-  retracted_edge_id: string;
-  closed_edge_ids: string[];
-}
-
-/** 在一格「不知道」上**补**一条。
- *
- *  **这一份同样一个章号字段都没有**：生效章在路径上（`/chapters/{n}/canon/knowledge`），
- *  而那一段是作者正看着的那一章 —— 认知矩阵本来就按它渲染，不是他敲进去的。 */
-export interface KnowledgeAddInput {
-  character_id: string;
-  secret_id: string;
-  type: KnowledgeEdgeType;
-  /** `type="BELIEVES"` 时必填、`"KNOWS"` 时必须不传（后端两边都会拒）。 */
-  believed_value?: string;
-  expected_canon_version: number;
-}
-
-/** 补完一条之后的回执。**没有 `from_type`、也没有 `retracted_edge_id`**：
- *  这一格上本来什么都没有，没有哪条边被撤回。 */
-export interface KnowledgeAddition {
-  project_id: string;
-  canon_version: number;
-  decision_id: string;
-  character: NodeRef;
-  secret: NodeRef;
-  type: KnowledgeEdgeType;
-  believed_value: string | null;
-  /** **作者正在看的那一章**，不是他填的数（约束 10）。 */
-  since_chapter: number;
-  edge_id: string;
-  closed_edge_ids: string[];
-}
 
 /** 改一条已生效事件的知情 / 在场名单。
  *

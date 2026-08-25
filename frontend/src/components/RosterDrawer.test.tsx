@@ -14,9 +14,9 @@ function renderedCopy() {
 }
 
 describe("花名册抽屉", () => {
-  it("只展示作者可以创建的 6 类条目，并使用通用作者语言", async () => {
+  it("只展示作者可以创建的 5 类条目，并使用通用作者语言", async () => {
     open();
-    for (const zh of ["人物", "地点", "秘密", "势力", "物品", "伏笔"]) {
+    for (const zh of ["人物", "地点", "势力", "物品", "伏笔"]) {
       expect(await screen.findByRole("button", { name: zh })).toBeInTheDocument();
     }
     expect(screen.queryByRole("button", { name: "状态维度" })).toBeNull();
@@ -26,13 +26,11 @@ describe("花名册抽屉", () => {
     );
   });
 
-  it("选了秘密才出现内容和所属秘密两个格子", async () => {
-    const user = userEvent.setup();
+  // 这儿原来还有一条「选了秘密才出现内容和所属秘密两个格子」。秘密下线之后
+  // （ADR 0039）抽屉里不再有随 label 变化的字段，那条测试没有对象了。
+  it("「秘密」不再是可建的一类", async () => {
     open();
-    expect(screen.queryByText("内容")).toBeNull();
-    await user.click(screen.getByRole("button", { name: "秘密" }));
-    expect(screen.getByText("内容")).toBeInTheDocument();
-    expect(screen.getByText(/所属秘密/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "秘密" })).toBeNull();
   });
 
   it("建完给回执，并告诉作者下一步是什么", async () => {

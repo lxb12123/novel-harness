@@ -45,12 +45,12 @@ from novel_harness.importer import import_book
 
 HERE: Final = Path(__file__).resolve().parent
 
-FUTURE_LABELS: Final = ("Faction", "Location", "Object")
-"""未来实体只许是这三类。
+NON_CHARACTER_LABELS: Final = ("Faction", "Location", "Object", "Foreshadow")
+"""非角色实体只许是这四类。
 
-不是全部 `NodeLabel`：`Character` 的首现有它自己的规则（R3「未登场角色开口说话」），
-`Chapter` 只能由 `put_chapter` 建。写死成三个，是为了让「作者在 TOML 里手滑写了
-`Charater`」当场炸，而不是切出一类没人消费的节点。
+不是全部 `NodeLabel`：`Character` 有它自己的 section（`[[character]]`），
+`Chapter` 只能由 `put_chapter` 建，`StateDim` 是引擎内部的维度。写死成一张名单，
+是为了让「作者在 TOML 里手滑写了 `Charater`」当场炸，而不是切出一类没人消费的节点。
 """
 
 
@@ -86,13 +86,47 @@ class CharacterSpec(BaseModel):
     """非 canonical 显示名，可空。"""
 
 
+class EntitySpec(BaseModel):
+    """一个非角色节点，**不带首现章**。
+
+    ⚠️ 2026-08-25 加的这一节替的是原来的 `[[secret]]`（ADR 0039）。M3 那张卷子的
+    `first_appears` 里有 5 个名字（血脉秘密 / 玄铁令下落 / 沈孤鸿之死 / 顾清音真身 /
+    裴景之谋）原来是 `Secret` 节点，秘密下线之后它们建不出来，25 题当场只剩 12 题。
+
+    **它们必须落在这一节而不是 `[[future]]`**：`m3_replay.py` 的干净正文抽查
+    写着「不叠加 overlay，用真库」——首现章由 overlay 在读的时候补上，库里那一格
+    是空的。写进库就等于给真库也补上了首现章，于是 R2 会在 `booklet.txt` 的**合法**
+    正文上开 7 枪（那几个别名在首现章之前本来就出现过——那是 tell 的原始设计），
+    `clean_prose_issues` 从 0 变 7，门槛不过。**卷子一个字节没改，只是节点放回去了。**
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    name: str = Field(min_length=2)
+    label: Literal["Faction", "Location", "Object", "Foreshadow"]
+    """必须是 `NON_CHARACTER_LABELS` 的成员——两处手抄，改一处要改两处。"""
+
+    aliases: list[str] = Field(default_factory=list)
+    """这个实体在正文里被叫的**别的名字**，可空。
+
+    ⚠️ **R2 靠它开火。** 判据是 `resolve(rules_only=True)`——它匹配别名表里的 surface，
+    不是节点的显示名。M3 那 15 道 R2 题里有 13 道的违例句写的是别名
+    （「玄血蛊的事，府里已经传开了」），显示名一次都没出现：不给别名，那 13 道
+    必然全部落空，而库建得出来、跑得通、只是分数少了一半。
+    """
+
+
 class FutureSpec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str = Field(min_length=2)
-    label: Literal["Faction", "Location", "Object"]
+    label: Literal["Faction", "Location", "Object", "Foreshadow"]
+    """必须是 `NON_CHARACTER_LABELS` 的成员——两处手抄，改一处要改两处。"""
     first_appears: int = Field(ge=1)
     """R2「设定提前出现」的边界。**M3 那张卷子考的正是它**，所以这一格活着。"""
+
+    aliases: list[str] = Field(default_factory=list)
+    """同 `EntitySpec.aliases`。"""
 
 
 class Booklet(BaseModel):
@@ -103,6 +137,7 @@ class Booklet(BaseModel):
     book: BookMeta
     characters: list[CharacterSpec] = Field(default_factory=list, validation_alias="character")
     futures: list[FutureSpec] = Field(default_factory=list, validation_alias="future")
+    entities: list[EntitySpec] = Field(default_factory=list, validation_alias="entity")
 
     @model_validator(mode="after")
     def _names_are_unique(self) -> Booklet:
@@ -111,6 +146,7 @@ class Booklet(BaseModel):
         for what, names in (
             ("character.canonical", [c.canonical for c in self.characters]),
             ("future.name", [f.name for f in self.futures]),
+            ("entity.name", [e.name for e in self.entities]),
         ):
             dupes = sorted({n for n in names if names.count(n) > 1})
             if dupes:
@@ -139,6 +175,7 @@ class BuildResult(BaseModel):
     chapters: int
     characters: int
     futures: int
+    entities: int
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -202,8 +239,13 @@ def build(*, booklet: Path, prose: Path, db: Path) -> BuildResult:
             ledger.declare_node(
                 NodeLabel(future.label),
                 future.name,
+                aliases=future.aliases,
                 props=NodeProps(first_appears_chapter=future.first_appears),
             )
+        for entity in bk.entities:
+            # **不给 props**：首现章由 `m3_replay` 在读的时候按名字覆盖上去，
+            # 库里那一格必须是空的（见 `EntitySpec` 的 docstring）。
+            ledger.declare_node(NodeLabel(entity.label), entity.name, aliases=entity.aliases)
     finally:
         conn.close()
 
@@ -212,6 +254,7 @@ def build(*, booklet: Path, prose: Path, db: Path) -> BuildResult:
         chapters=report.chapter_count,
         characters=len(bk.characters),
         futures=len(bk.futures),
+        entities=len(bk.entities),
     )
 
 

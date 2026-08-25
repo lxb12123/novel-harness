@@ -2,30 +2,34 @@
 
 核心不变式，坏掉的样子各不相同：
 
-1. **构造成功 ⇒ cast 无歧义。** 歧义要在构造时弹给作者，不能静默用 `scene_constraints`
-   的 fail-closed 退化值（「全部秘密」）——那份退化值防得住泄漏，但拿它起草会让 Writer
-   收到「什么都不许提」，拿它跑 kill-gate 会把「全禁」当基线、污染臂间比较。
+1. **构造成功 ⇒ cast 无歧义。** 歧义要在构造时弹给作者，不能静默丢掉一个解析不出的人。
 2. **空 cast 也算歧义。** 这是 `SceneConstraints.require_resolved_cast()` **看不见**的那条
-   退化路径（它只读 `unresolved_cast`），本文件用一条对照测试把那个洞钉出来。
-3. **出参里没有 tell、没有 props。** 秘密进 prompt 的是显示名（`血脉秘密`），
-   内容 tell（`玄血蛊`）和 `props.twist` 一个字符都不许出现。
+   路径（它只读 `unresolved_cast`），本文件用一条对照测试把那个洞钉出来。
+3. **出参里没有别名、没有 props。** 进 prompt 的是显示名，作者写在节点上的 `twist`
+   和非 canonical 别名一个字符都不许出现。
 
-复用 `test_knowledge.FakeGraph`（同 `test_store_conformance.py` 的做法）：它是 StoryGraph
-契约的参考实现，`scene_constraints` 要的 `resolve` + `knowledge_matrix` 它都按契约实现了。
+⚠️ **1 和 2 的理由 2026-08-25 换过**（ADR 0039）：原来它们说的是「退化值 =
+`must_not_reveal` 全部秘密」，那是一条 fail-closed 的安全性质。秘密下线之后
+`SceneConstraints` 只剩 `forbidden_entities`，而它按章号算、与 cast 无关——
+**空 cast 今天不再让任何东西退化**。留下来的理由见 `draft/context.py` 第二节：
+一份你没有的在场名单，不许拿空列表冒充着发给模型。
+
+复用 `test_fake_graph.FakeGraph`（同 `test_store_conformance.py` 的做法）：它是 StoryGraph
+契约的参考实现，`scene_constraints` 要的 `resolve` 它按契约实现了。
 """
 
 from __future__ import annotations
 
 import pytest
 from pydantic import ValidationError
-from test_knowledge import (
+from test_fake_graph import (
     AMBIGUOUS_SHIXIONG,
-    BLOODLINE,
+    BEIHUANG,
     GU_QINGYIN,
     LI_GUANJIA,
     PID,
+    QINGYUN,
     XIAO_JUE,
-    XUANTIE,
     YOUQUAN,
     FakeGraph,
     build,
@@ -39,12 +43,12 @@ from novel_harness.panel import UnresolvedCast, scene_constraints
 from novel_harness.panel.constraints import scene_view
 
 TWIST = "萧决其实是魔尊之子，第 200 章揭晓"
-"""挂在秘密节点上的 `props` 额外字段。`NodeProps` 是 `extra="allow"`，所以它真的存在，
+"""挂在节点上的 `props` 额外字段。`NodeProps` 是 `extra="allow"`，所以它真的存在，
 真的会被 `model_dump_json()` 吐出来——除非出参已经收窄成 `NodeRef`。"""
 
 TELL = "玄血蛊"
-"""血脉秘密的**内容 tell**（EVAL_PROTOCOL §4 的第 1 条边界）。它是判分器那一侧的词：
-进了 prompt，X1/X2 就会命中自己写进去的东西，Δ 翻负 → 裁决表读出假的「KILL」。"""
+"""一条**非 canonical 别名**。别名里装着作者的意图（ADR 0004：别名差异「是 canon，
+不是噪声」），所以它跟 `props` 一样不许进 prompt——进 prompt 的只有显示名。"""
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -104,20 +108,21 @@ def test_ambiguous_cast_raises_instead_of_degrading() -> None:
     抛异常会让头牌整片黑掉，且作者修不了一个异常）。两侧的行为差异是有意的。
     """
     store = build(
-        [edge(GU_QINGYIN.id, BLOODLINE.id, EdgeType.KNOWS, 10)], extra_aliases=AMBIGUOUS_SHIXIONG
+        [edge(GU_QINGYIN.id, QINGYUN.id, EdgeType.LOCATED_AT, 10)],
+        extra_aliases=AMBIGUOUS_SHIXIONG,
     )
     cast = [GU_QINGYIN.name, "师兄"]
 
-    degraded = scene_constraints(store, PID, 152, cast, secrets=[BLOODLINE.id])
+    degraded = scene_constraints(store, PID, 152, cast)
     assert degraded.unresolved_cast == ["师兄"]
 
     with pytest.raises(UnresolvedCast, match="师兄"):
-        resolve_constraints(store, PID, 152, cast, secrets=[BLOODLINE.id])
+        resolve_constraints(store, PID, 152, cast)
 
 
 def test_unknown_cast_surface_raises_too() -> None:
     """「查无此人」和歧义走同一个出口：两者都是「我不知道这一场有谁」。"""
-    store = build([edge(GU_QINGYIN.id, BLOODLINE.id, EdgeType.KNOWS, 10)])
+    store = build([edge(GU_QINGYIN.id, QINGYUN.id, EdgeType.LOCATED_AT, 10)])
 
     with pytest.raises(UnresolvedCast, match="查无此人"):
         resolve_constraints(store, PID, 152, [GU_QINGYIN.name, "查无此人"])
@@ -127,19 +132,19 @@ def test_empty_cast_raises_the_hole_require_resolved_cast_misses() -> None:
     """**这条是这个封装不只是转发的证据。**
 
     `Scene.cast` 的默认值是 `[]`（作者写了个没有 `cast=` 的场景块）→ `ResolvedCast.complete`
-    为假 → `must_not_reveal` 退化成全部秘密。而 `require_resolved_cast()` 只读
-    `unresolved_cast`，**它对这条路径完全无感**——下面第一段断言就是把那个洞钉出来。
+    为假。而 `require_resolved_cast()` 只读 `unresolved_cast`，**它对这条路径完全无感**——
+    下面第一段断言就是把那个洞钉出来。
     """
-    store = build([edge(XIAO_JUE.id, BLOODLINE.id, EdgeType.KNOWS, 88)])
+    store = build([edge(XIAO_JUE.id, BEIHUANG.id, EdgeType.LOCATED_AT, 88)])
 
-    degraded_view = scene_view(store, PID, 152, [], secrets=[BLOODLINE.id, XUANTIE.id])
+    degraded_view = scene_view(store, PID, 152, [])
     degraded = degraded_view.constraints
     degraded.require_resolved_cast()  # ← 不抛。这就是那个洞。
 
     with pytest.raises(UnresolvedCast, match="cast"):
         ResolvedConstraints.of(degraded_view, [])
     with pytest.raises(UnresolvedCast, match="cast"):
-        resolve_constraints(store, PID, 152, [], secrets=[BLOODLINE.id])
+        resolve_constraints(store, PID, 152, [])
 
 
 def test_direct_construction_still_rejects_an_empty_cast() -> None:
@@ -152,26 +157,22 @@ def test_direct_construction_still_rejects_an_empty_cast() -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# ③ 出参里没有 tell、没有 props
+# ③ 出参里没有别名、没有 props
 # ══════════════════════════════════════════════════════════════════════════
 
 
 def _store_with_a_tell() -> FakeGraph:
-    """血脉秘密带一个 `props.twist` 和一个非 canonical 的内容 tell「玄血蛊」。"""
-    bloodline = node(BLOODLINE.id, NodeLabel.SECRET, "血脉秘密", twist=TWIST)
+    """青云城主府带一个 `props.twist` 和一个非 canonical 别名「玄血蛊」。"""
+    poisoned = node(QINGYUN.id, NodeLabel.LOCATION, "青云城主府", twist=TWIST)
     return FakeGraph(
-        [XIAO_JUE, GU_QINGYIN, bloodline, YOUQUAN],
-        [edge(XIAO_JUE.id, bloodline.id, EdgeType.KNOWS, 88)],
-        extra_aliases={TELL: [bloodline]},
+        [XIAO_JUE, GU_QINGYIN, poisoned, YOUQUAN],
+        [edge(XIAO_JUE.id, poisoned.id, EdgeType.LOCATED_AT, 88)],
+        extra_aliases={TELL: [poisoned]},
     )
 
 
-def test_no_tell_and_no_props_reach_the_output() -> None:
-    """进 prompt 的是标签（`血脉秘密`），不是 tell（`玄血蛊`），更不是 `props.twist`。
-
-    tell 进了 X1/X2 的 prompt → 两臂 100% 命中自己写进去的词 → `Δ` 翻负 →
-    预注册裁决表读出「KILL 起草线」：**把一个本来对的项目砍掉，而全程没有东西会红。**
-    """
+def test_no_alias_and_no_props_reach_the_output() -> None:
+    """进 prompt 的是显示名，不是别名（`玄血蛊`），更不是 `props.twist`。"""
     store = _store_with_a_tell()
 
     ctx = resolve_constraints(store, PID, 152, [GU_QINGYIN.name])
@@ -185,14 +186,14 @@ def test_no_tell_and_no_props_reach_the_output() -> None:
 
 
 def test_the_tell_really_is_in_the_graph() -> None:
-    """上一条的非空证明：tell 和 twist **确实存在**于图里，是被收窄挡掉的，不是本来就没有。
+    """上一条的非空证明：别名和 twist **确实存在**于图里，是被收窄挡掉的，不是本来就没有。
 
     没有这一条，只要哪天 fixture 少写了一个别名，那条测试就会永远绿着通过。
     """
     store = _store_with_a_tell()
 
     hit = store.resolve(PID, [TELL])[0].unique_node
-    assert hit is not None and hit.id == BLOODLINE.id
+    assert hit is not None and hit.id == QINGYUN.id
     assert TWIST in hit.model_dump_json()
 
 
@@ -211,15 +212,14 @@ def test_a_full_node_is_rejected_by_the_type() -> None:
 
 
 def test_future_entity_names_are_not_the_same_promise() -> None:
-    """诚实说明的那一半：未来实体的名字**自身就是 tell**，它必然进 prompt。
+    """诚实说明的那一半：未来实体的**名字必然进 prompt**，那是设计不是泄漏。
 
-    `血枭盟` / `幽泉窟` 既是显示名也是检测词，所以 X1/X2 有 echo 风险——EVAL_PROTOCOL §3
-    因此让 `future_leak` 只作描述性地板、**不主导裁决**。把 KNOWS 那侧「标签 ⟂ tell」的
-    直觉搬过来用，就会读错 gate 的结论。
+    `幽泉窟` 既是显示名也是禁写清单上的那个词——不点它的名，Writer 就不知道该躲开什么。
+    别把上面那条「别名和 props 一个字都不出」的直觉搬到这一侧来用。
     """
     store = _store_with_a_tell()
 
-    ctx = resolve_constraints(store, PID, 152, [GU_QINGYIN.name], secrets=[BLOODLINE.id])
+    ctx = resolve_constraints(store, PID, 152, [GU_QINGYIN.name])
 
     assert ctx.forbidden_names == [YOUQUAN.name]
     assert YOUQUAN.name in ctx.model_dump_json()  # 它进 prompt 是设计，不是泄漏

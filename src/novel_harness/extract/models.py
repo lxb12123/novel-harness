@@ -36,7 +36,6 @@ class RawEvent(BaseModel):
     quote: str = Field(min_length=1, max_length=120)
     participants: tuple[str, ...]
     knowers: tuple[str, ...]
-    revealed_facts: tuple[str, ...]
     confidence: float = Field(ge=0, le=1)
 
 

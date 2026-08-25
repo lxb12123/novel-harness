@@ -14,51 +14,33 @@
 在这个类型上根本不存在，退化态在类型里表示不出来。**这就是「薄封装」的价值：它不是多一层
 转发，它是把一条运行期纪律变成一个类型**（拿到对象 = 检查已经做过，且只可能做过一次）。
 
-── 二、它比 `require_resolved_cast()` 多堵一个洞：空 cast ────────────────
+── ⚠️ 二、这两个类型的**理由 2026-08-25 换了**，别照着旧的读 ────────────
 
-`scene_constraints` 退化成「全部秘密」有**两条**触发路径（`ResolvedCast.complete` 是
-`not unresolved and bool(ids)`）：① 有称呼解析不出唯一节点（「师兄」→ 8 个人）；
-② 作者根本没写 `cast=`——`Scene.cast` 的默认值就是 `[]`。
-而 `require_resolved_cast()` **只看 ①**（它只读 `unresolved_cast`）。第 ② 条能安静地穿过
-那道断言：`SceneConstraints` 出参上「一个人都没有」和「这一场的人全都知道」不可区分，
-两者的 `unresolved_cast` 都是空。拿着它去起草，Writer 收到的是「全部秘密都不许提」；
-拿着它去跑 kill-gate，等于给注入臂换了一份更严的卷子，臂间比较当场失效
-（同 `eval/leak.py::score_draft` 那句「把『全禁』当基线」）。
+这一段原来写的是：空 cast 会让 `scene_constraints` 退化成「`must_not_reveal` = 全部
+秘密」，而那是 fail-closed 的退化值，所以必须用两个类型把它和精确值分开。
 
-**两条路径这里都堵**：① 由 `require_resolved_cast()` 抛，② 由 `cast` 的 `min_length=1` 挡，
-两者对作者是同一个信号，所以出口也是同一个异常（`UnresolvedCast`）。
+**秘密下线之后（ADR 0039）那条论证整个不成立了**：`SceneConstraints` 今天只剩
+`forbidden_entities`，而它**按章号算、与 cast 无关**——空 cast 不再让任何东西退化。
+`UnknownCastConstraints` **因此不再是一个安全类型**。
 
-── 三、只有标签，永不 tell（EVAL_PROTOCOL §2 / 第 4 道 arch-guard）───────
+**但两个类型仍然留着**，理由换成了一条更朴素、也仍然真实的：
 
-进 prompt 的是秘密的**显示名**（`血脉秘密`），永远不是它的内容 tell（`玄血蛊`）。
-tell 只经 `panel.constraints` 的那个助手取，而 `tests/test_draft_boundary.py` 禁止 `draft/`
-引用它——理由不是洁癖：tell 一旦进了 X1/X2 的 prompt，两臂 100% 命中自己写进去的词，
-`Δ` 翻负，预注册的裁决表读出「KILL 起草线」，**把一个本来对的项目砍掉，而全程没有东西会红**。
+> 一份**你没有**的在场名单，不许拿空列表冒充着发给 Writer。
 
-**但这条不对称，且必须说清楚**：`forbidden_entities` 的名字**自身就是 tell**
-（`血枭盟` 既是显示名也是检测词，EVAL_PROTOCOL §3），X1/X2 必然点它的名。协议因此让
-`future_leak` 只作**描述性地板、不主导裁决**。别把 KNOWS 那一侧「标签 ⟂ tell」的直觉
-搬到 FUTURE 这一侧来用。
+`assemble()` 拿到 `UnknownCastConstraints` 时**整个不发【在场】块**（2026-08-22 M1-a），
+而不是发一个「在场：」后面空着的块。行内续写（ADR 0015 D4）真的不知道这一场有谁——
+「谁在场」是被那一段写出来的结果，不是前提。这件事今天由类型保证，仍然比留给纪律好。
 
-── 四、PLANNED 只转译不透传（约束 4）────────────────────────────────────
+**改这一层之前先想清楚你在守什么**：守的不再是泄漏，是「别对模型说一句你不知道的话」。
+这两条的严格程度不一样，取舍也不一样。
 
-出参里没有一个字段装得下 PLANNED 边的内容：秘密和未来实体都是 `NodeRef`（id/label/name，
-**没有 props**），未来实体额外只带一个首现章号。这不是本文件的功劳，是 `panel/constraints.py`
+── 三、PLANNED 只转译不透传（约束 4）────────────────────────────────────
+
+出参里没有一个字段装得下 PLANNED 边的内容：未来实体是 `NodeRef`（id/label/name，
+**没有 props**）外加一个首现章号。这不是本文件的功劳，是 `panel/constraints.py`
 和 `graph.models.NodeRef` 的——本文件的责任是**不要在收窄的路上把它加回来**。
 
-── 五、认知矩阵也绑在这个类型上（反混淆铁律的类型化）────────────────────
-
-EVAL_PROTOCOL §2 的 X1 要注入「认知矩阵要点」，且**反混淆铁律**要求 X1/X2 从**同一个**
-`knowledge_matrix` 对象渲染，除「清单 vs 散文」外不许有第二处差异。
-
-矩阵本来就是 `must_not_reveal` 的中间结果，只是 `scene_constraints()` 算完就丢了。
-现在 `panel.scene_view()` 把它一并交出来，`ResolvedConstraints` 带着它——于是
-`assemble(ctx, form=X1)` 与 `assemble(ctx, form=X2)` 拿的**必然**是同一份，
-铁律从「runner 记得只算一次」变成类型保证。这跟第一节用类型编码「cast 已解析」是同一招：
-**能由类型保证的事，不要留给纪律。**
-
-（`draft/` 也确实自己算不了矩阵：它要 node_id，而 `resolve_cast` 在第 4 道 arch-guard 的
-`WRITER_BANNED` 里。所以这条路线同时消掉了「第二份会漂移的真相」这个隐患。）
+**这一节没有跟着上一节一起失效**：它防的是「未来剧情泄漏」，而未来实体还在。
 """
 
 from __future__ import annotations
@@ -80,12 +62,11 @@ class ResolvedConstraints(BaseModel):
     """一个场景的约束集，**且保证它不是 fail-closed 的退化值**。
 
     与 `SceneConstraints` 的差别只有一处，而那一处就是全部意义：**它没有 `unresolved_cast`**。
-    这个类型的实例存在，就等价于「作者声明的每一个称呼都解析成了唯一角色，且至少有一个人」，
-    也就等价于「`must_not_reveal` 是算出来的答案，不是『全部秘密』这个退化值」。
+    这个类型的实例存在，就等价于「作者声明的每一个称呼都解析成了唯一角色，且至少有一个人」。
 
     **唯一被认可的构造路径是 `of()` / `resolve_constraints()`。** Python 拦不住有人裸调
-    `ResolvedConstraints(...)`，但那么做的人是在**手写**一份没人检查过的约束——这跟绕过
-    `panel/constraints.py` 自己拼一套禁忌集是同一类事，只有 review 拦得住。
+    `ResolvedConstraints(...)`，但那么做的人是在**手写**一份没人检查过的在场名单——
+    这跟绕过 `panel/constraints.py` 自己拼一份是同一类事，只有 review 拦得住。
     """
 
     model_config = ConfigDict(frozen=True)
@@ -122,16 +103,15 @@ class ResolvedConstraints(BaseModel):
 
         `cast` 必须是从**本章**正文里数出来的。**没有「从别处借一份顶上」这条路**
         （2026-08-23 撤销 M2-b，见 ADR 0037 补记）：另一章的名单不是本章名单的超集，
-        顶替的结果是**少禁**，而少禁那一侧是把秘密说破。数不出人时调用方退回
-        `unknown_cast_constraints`（全禁），不构造这个类型。
+        顶替的结果是对模型说了一句「这一场有这些人」，而那句话是假的。数不出人时调用方
+        退回 `unknown_cast_constraints`（那时 `assemble` 干脆不提在场），不构造这个类型。
 
         Args:
-            view: `panel.scene_view()` 的出参（约束 + 算它用的那份矩阵）。
+            view: `panel.scene_view()` 的出参（约束 + 算它用的那份在场名单）。
             cast: 算它时用的**同一份**称呼原文。`SceneConstraints` 记不住解析成功的那些称呼
                 （它只留 `unresolved_cast`），所以「作者到底声明了几个人」这个信息只能从
                 这里进来。也正因如此这两个参数必须成对：
-                `unresolved_cast` 为空 **且** `cast` 非空 ⟺ `ResolvedCast.complete`
-                ⟺ `must_not_reveal` 是算出来的而不是退化值。
+                `unresolved_cast` 为空 **且** `cast` 非空 ⟺ `ResolvedCast.complete`。
                 不想操心配对就用 `resolve_constraints()`，它没有配错的余地。
 
         Raises:
@@ -140,12 +120,11 @@ class ResolvedConstraints(BaseModel):
         constraints = view.constraints
         constraints.require_resolved_cast()
         if not list(cast):
-            # 这一条 `require_resolved_cast()` 看不见（它只读 unresolved_cast），
-            # 但它导致的退化和歧义那条一模一样：must_not_reveal = 全部秘密。
+            # 这一条 `require_resolved_cast()` 看不见（它只读 unresolved_cast）。
             raise UnresolvedCast(
                 f"第 {constraints.chapter} 章的这一场没有声明在场角色（`cast=`）。"
-                "没有在场的人就没有「谁还不知道什么」，约束会退化成「全部秘密都不许提」——"
-                "那既不是这一场的答案，也让 Writer 写不出东西。请在场景块里写明这一场有谁"
+                "空着的在场名单和「这一场真的没有人」在出参上长得一模一样，"
+                "而前者不该被当成后者发给模型。请在场景块里写明这一场有谁"
             )
         return cls(
             chapter=constraints.chapter,
@@ -156,11 +135,7 @@ class ResolvedConstraints(BaseModel):
 
     @property
     def forbidden_names(self) -> list[str]:
-        """未来实体的名字。**这一侧没有上面那条不相交性质**（模块 docstring 第三节）。
-
-        `血枭盟` 自身即 tell，X1/X2 必然点它的名 → echo 风险 → 协议让 `future_leak`
-        只作描述性地板、不主导裁决。
-        """
+        """未来实体的名字（进 prompt 的禁写清单）。"""
         return [e.node.name for e in self.forbidden_entities]
 
 
@@ -173,19 +148,12 @@ class UnknownCastConstraints(BaseModel):
 
     ── 为什么是第二个类型，而不是把 `ResolvedConstraints.cast` 的 `min_length=1` 放宽 ──
 
-    那个类型存在的**全部意义**就是「`must_not_reveal` 是算出来的答案，不是退化值」。
-    一旦空 cast 能穿过去，`panel/constraints.py` 记的那次病史（人静默消失 → 秘密从清单里
-    消失 → Writer 收到「无需保密」）立刻能重演，**而且没有任何东西会红**。
-
-    两个类型 ⇒ `assemble()` **知道自己拿的是哪一种**：退化态**整个不发【在场】块**
-    （2026-08-22 M1-a——「未知」两个字不带信息，而它后半句和禁写清单是同一句话），
-    而不是拿一份空 cast 伪装成精确清单；也 ⇒ **kill-gate 永远拿不到本类型**
-    （它走 `resolve_constraints()`），臂间比较不会被「更严的卷子」污染
-    （模块 docstring 第二节点名的那种失效）。
+    **⚠️ 这条理由 2026-08-25 换过一次，见模块 docstring 第二节。** 今天的理由是：
+    两个类型 ⇒ `assemble()` **知道自己拿的是哪一种**，于是不知道在场时**整个不发
+    【在场】块**（2026-08-22 M1-a——「未知」两个字不带信息），而不是拿一份空 cast
+    伪装成精确清单。一句你不知道的话，不发比发一个空壳好。
 
     **没有 `cast`**：不知道就是不知道，不许用空列表冒充「这一场没有人」。
-    **没有 `matrix`**：矩阵的行就是 cast，没有 cast 就没有行——给一个空矩阵只会让
-    下游以为「查过了，确实没人知道任何事」。
     """
 
     model_config = ConfigDict(frozen=True)
@@ -208,8 +176,6 @@ def unknown_cast_constraints(
     store: StoryGraph,
     project_id: str,
     chapter: int,
-    *,
-    secrets: Sequence[str] | None = None,
 ) -> UnknownCastConstraints:
     """算出「不知道谁在场」时的全禁约束（ADR 0015 D4）。
 
@@ -217,8 +183,9 @@ def unknown_cast_constraints(
     却以为拿到了精确值」；这里的调用方**明确要的就是退化值**，而它拿到的类型也明说了
     这一点，所以守卫在这条路径上没有对象可守。
 
-    空 cast 喂给 `scene_view()` 得到的正是 `resolved.complete == False` 那一支：
-    `must_not_reveal` = 全部秘密（`panel/constraints.py`：「算不准就多禁」）。
+    空 cast 喂给 `scene_view()` 得到的正是 `resolved.complete == False` 那一支。
+    今天这一支和精确值算出来的 `forbidden_entities` 是一样的（它按章号算，与 cast 无关），
+    **区别全在类型上**：拿到本类型的下游知道自己不知道在场是谁。
     """
     constraints = scene_view(store, project_id, chapter, ()).constraints
     return UnknownCastConstraints(
@@ -232,21 +199,9 @@ def resolve_constraints(
     project_id: str,
     chapter: int,
     cast: Sequence[str],
-    *,
-    secrets: Sequence[str] | None = None,
 ) -> ResolvedConstraints:
     """算一次 + 收窄一次。**产品起草的默认入口**（`cast` 是称呼原文，同 `scene_constraints`）。
 
     它比 `of()` 少一个出错的方式：`constraints` 和 `cast` 没有配错的余地。
-
-    Notes:
-        **kill-gate 的 runner 不该走这条。** 它要拿**同一份** `SceneConstraints` 既喂
-        `eval.leak.score_against`（判分）又喂 prompt（起草），所以它该自己
-        `scene_view()` 一次，把 `.constraints` 喂判分器、把整个 view 喂 `of()`——两侧共用一个
-        对象，EVAL_PROTOCOL §3 的「禁忌集只有一个来源」在对象层就成立，
-        而不是靠「两次查询之间图没变」这种碰巧。
     """
-    return ResolvedConstraints.of(
-        scene_view(store, project_id, chapter, cast, secrets=secrets),
-        cast,
-    )
+    return ResolvedConstraints.of(scene_view(store, project_id, chapter, cast), cast)

@@ -63,12 +63,12 @@ def wired(book: dict[str, str]) -> Any:
 
 def test_a_summary_links_to_whoever_it_names(wired: Any) -> None:
     conn, store, pid, book = wired
-    _seed(conn, pid, 1, "萧决在青云城主府听说了血脉秘密。")
+    _seed(conn, pid, 1, "萧决在青云城主府等着未来大能。")
 
     hits = mentions_in_chapter(conn, store, pid, 1)
-    assert {hit.node.name for hit in hits} == {"萧决", "青云城主府", "血脉秘密"}
-    assert [hit.node.name for hit in hits] == ["萧决", "青云城主府", "血脉秘密"], (
-        "芯片按 NodeLabel 的声明顺序分组（人物 → 地点 → 秘密），组内按名字排。"
+    assert {hit.node.name for hit in hits} == {"未来大能", "萧决", "青云城主府"}
+    assert [hit.node.name for hit in hits] == ["未来大能", "萧决", "青云城主府"], (
+        "芯片按 NodeLabel 的声明顺序分组（人物 → 地点 → …），组内按名字排。"
         "顺序不稳 = 同一份数据每次刷新长得不一样。"
     )
 
@@ -90,7 +90,7 @@ def test_the_reverse_lookup_lists_chapters_in_order(wired: Any) -> None:
     """**这就是作者要的那件事**：点一个东西 → 还有哪几章的总结提到它，按章号排。"""
     conn, store, pid, book = wired
     _seed(conn, pid, 2, "萧决离开青云城主府。")
-    _seed(conn, pid, 1, "萧决在青云城主府听说了血脉秘密。")
+    _seed(conn, pid, 1, "萧决在青云城主府等着未来大能。")
 
     found = chapters_mentioning(conn, store, pid, book["萧决"])
     assert found.node.name == "萧决"
@@ -128,10 +128,10 @@ def test_engine_internal_labels_stay_out(wired: Any) -> None:
     assert NodeLabel.CHAPTER not in INDEXED_LABELS
     conn, store, pid, book = wired
     # 导入器给每一章建了一个 Chapter 节点（第 1 章的 name 是「血脉」）。
-    _seed(conn, pid, 1, "血脉秘密在这一章被说破了。")
+    _seed(conn, pid, 1, "青云城主府在这一章空了。")
     assert [hit.node.label for hit in mentions_in_chapter(conn, store, pid, 1)] == [
-        NodeLabel.SECRET
-    ], "命中的该是「血脉秘密」那个 Secret，不是标题叫「血脉」的 Chapter 节点"
+        NodeLabel.LOCATION
+    ], "命中的该是「青云城主府」那个 Location，不是任何一个 Chapter 节点"
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -309,17 +309,18 @@ def test_stale_rows_are_swept_not_left_behind(wired: Any) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 3. 秘密 / 零 / 边界
+# 3. props / 零 / 边界
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_a_secret_chip_carries_the_label_never_the_content(wired: Any) -> None:
-    """秘密**只出 `NodeRef`**（§10.5 第 3 条）。显示名是花名册本来就在渲染的东西。"""
+def test_a_chip_carries_the_label_never_the_content(wired: Any) -> None:
+    """芯片**只出 `NodeRef`**（§10.5 第 3 条）。显示名是花名册本来就在渲染的东西，
+    而作者写在节点 props 上的 `twist` 一个字都不出这一层。"""
     conn, store, pid, book = wired
-    _seed(conn, pid, 1, "血脉秘密被说破了。")
+    _seed(conn, pid, 1, "未来大能出手了。")
 
     hits = mentions_in_chapter(conn, store, pid, 1)
-    assert [hit.node.name for hit in hits] == ["血脉秘密"]
+    assert [hit.node.name for hit in hits] == ["未来大能"]
     assert TWIST not in hits[0].model_dump_json()
     assert not hasattr(hits[0].node, "props")
 
@@ -370,15 +371,15 @@ def _pid(book: dict[str, str]) -> str:
 
 def test_http_chapter_mentions(client: TestClient, book: dict[str, str]) -> None:
     conn = connect(book["db"])
-    _seed(conn, book["pid"], 1, "萧决在青云城主府听说了血脉秘密。")
+    _seed(conn, book["pid"], 1, "萧决在青云城主府等着未来大能。")
     conn.close()
 
     body = client.get(
         f"/api/projects/{_pid(book)}/chapters/1/summary/mentions"
     ).json()
     assert body["chapter"] == 1
-    assert [m["node"]["name"] for m in body["mentions"]] == ["萧决", "青云城主府", "血脉秘密"]
-    assert TWIST not in str(body), "秘密的 props 一个字都不许出接口"
+    assert [m["node"]["name"] for m in body["mentions"]] == ["未来大能", "萧决", "青云城主府"]
+    assert TWIST not in str(body), "节点的 props 一个字都不许出接口"
     assert all("props" not in m["node"] for m in body["mentions"])
 
 

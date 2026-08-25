@@ -2,8 +2,8 @@
 
 分工：**SQL 在 `queries.py`，编排在这里。** 这个文件里一条时态过滤都没有——
 它只做五件 SQL 做不了的事：入参校验（scope / hops / NodeNotFound）、事务边界、
-supersede 的分支决定、把边投影成 `StateSnapshot` / `KnowledgeMatrix` / `Subgraph`，
-以及写入侧那些「必须同生」的组合（节点 + canonical 别名 + secret 行 / 章节 + 快照）。
+supersede 的分支决定、把边投影成 `StateSnapshot` / `Subgraph`，
+以及写入侧那些「必须同生」的组合（节点 + canonical 别名 / 章节 + 快照）。
 
 `quote_hash` 从 `decisions.py` import，**不在这里重新实现**（那份 docstring 立过
 「别在别处再实现一遍」）：`evidence.quote_sha256` 和 `chapter.text_sha256` 是它仅有的
@@ -48,13 +48,9 @@ from .models import (
     EvidenceSpec,
     EvidenceStatus,
     InformationScope,
-    KnowledgeCell,
-    KnowledgeMatrix,
-    KnowledgeState,
     Node,
     NodeLabel,
     NodeProps,
-    NodeRef,
     NodeSpec,
     Resolution,
     RetirementReport,
@@ -159,9 +155,9 @@ class SqliteStoryGraph:
 
         写侧这条不变量是硬的（`EdgeSpec.valid_from_chapter` 是 `Field(ge=1)`，chapter 表是
         `CHECK(number >= 1)`），读侧却收 0 / 负数照单全收，然后静默返回一个语义上不可能
-        存在的答案：`knowledge_matrix(pid, 0, cast)` 给出一个格格 UNKNOWN 的**完整**矩阵，
-        而闭世界推导下 UNKNOWN 是一个**断言**（models.py：「这不是「查不到」，是一个断言」）——
-        于是面板理直气壮地告诉作者「在场三个人对全部秘密一无所知」，而不是承认这个问题问错了。
+        存在的答案：`state_at(pid, 萧决, 0)` 给出一份**空**快照，而空快照在闭世界下是一个
+        **断言**（`is_dead` 的 docstring：「没有 health=dead 的边 ⇒ 活着」）——于是人物卡
+        理直气壮地告诉作者「他在第 0 章还活着、不在任何地方」，而不是承认这个问题问错了。
 
         触发形态是任何一次 off-by-one：0-based 的场景索引、「上一章」在第 1 章时算成 0
         （§5.2 的 F 分区就是 `WHERE chapter = N-1`）。它把调用方的一个 off-by-one 放大成
@@ -223,29 +219,6 @@ class SqliteStoryGraph:
         if row is None:
             raise NodeNotFound(f"项目不存在：{project_id}")
         return int(row["canon_version"])
-
-    def knowledge_edges_at(
-        self,
-        project_id: str,
-        character_ids: Sequence[str],
-        secret_ids: Sequence[str],
-        chapter: int,
-        *,
-        scope: InformationScope = InformationScope.CANON,
-    ) -> list[Edge]:
-        self._check_scope(scope)
-        self._check_chapter(chapter)
-        _reject_dups(character_ids, "character_ids")
-        _reject_dups(secret_ids, "secret_ids")
-        for cid in character_ids:
-            self._require_node(project_id, cid, what="character_ids")
-        for sid in secret_ids:
-            node = self._require_node(project_id, sid, what="secret_ids")
-            if node.label is not NodeLabel.SECRET:
-                raise ValueError(f"secret_ids 只接受 label=Secret 的节点：{sid} 是 {node.label}")
-        return queries.knowledge_edges_at(
-            self._conn, project_id, character_ids, secret_ids, chapter, scope
-        )
 
     # ── state_at ──────────────────────────────────────────────────────────
 
@@ -331,87 +304,6 @@ class SqliteStoryGraph:
                     f"{s.dim.name}={s.value_key or s.value}）：supersede 漏了，不是渲染问题"
                 )
             seen[key] = s
-
-    # ── knowledge_matrix ──────────────────────────────────────────────────
-
-    def knowledge_matrix(
-        self,
-        project_id: str,
-        chapter: int,
-        cast: Sequence[str],
-        *,
-        secrets: Sequence[str] | None = None,
-        scope: InformationScope = InformationScope.CANON,
-    ) -> KnowledgeMatrix:
-        self._check_scope(scope)
-        self._check_chapter(chapter)
-        _reject_dups(cast, "cast")
-        characters = [self._require_node(project_id, cid, what="cast") for cid in cast]
-
-        if secrets is None:
-            secret_list = queries.secret_ids(self._conn, project_id)
-        else:
-            _reject_dups(secrets, "secrets")
-            secret_list = list(secrets)
-        secret_nodes = [self._require_node(project_id, sid, what="secret") for sid in secret_list]
-        for n in secret_nodes:
-            if n.label is not NodeLabel.SECRET:
-                raise ValueError(f"secrets 只接受 label=Secret 的节点：{n.id} 是 {n.label}")
-
-        edges = queries.knowledge_edges_at(
-            self._conn, project_id, [n.id for n in characters], secret_list, chapter, scope
-        )
-        found: dict[tuple[str, str, EdgeType], Edge] = {}
-        for e in edges:
-            key = (e.src, e.dst, e.type)
-            if key in found:
-                # (人, 秘密) 的 exclusivity 是 single_per_src_dst，同一章两条 = supersede
-                # 漏了。面板上「他既知道又不知道」是错误答案，让它炸。
-                raise StoreError(
-                    f"({e.src}, {e.dst}, {e.type}) 在第 {chapter} 章有两条有效边"
-                    f"（{found[key].id} / {e.id}）：supersede 漏了"
-                )
-            found[key] = e
-
-        cells: list[KnowledgeCell] = []
-        for c in characters:
-            for s in secret_nodes:
-                # KNOWS 压 BELIEVES（§8 Day 5 的 CASE WHEN 顺序）：真知道了就不再是错误认知。
-                k = found.get((c.id, s.id, EdgeType.KNOWS))
-                b = found.get((c.id, s.id, EdgeType.BELIEVES))
-                hit = k or b
-                if hit is None:
-                    # 闭世界：无边 ⇒ 不知道。UNKNOWN 格**必须物化**——「没有这一格」和
-                    # 「他不知道」是两个意思，面板上少一格 = 作者以为系统没意见 = 说漏嘴。
-                    cells.append(
-                        KnowledgeCell(
-                            character_id=c.id, secret_id=s.id, state=KnowledgeState.UNKNOWN
-                        )
-                    )
-                    continue
-                cells.append(
-                    KnowledgeCell(
-                        character_id=c.id,
-                        secret_id=s.id,
-                        state=(
-                            KnowledgeState.KNOWS if hit is k else KnowledgeState.BELIEVES
-                        ),
-                        since_chapter=hit.valid_from_chapter,
-                        believed_value=hit.props.believed_value if hit is b else None,
-                        evidence_id=hit.evidence_id,
-                    )
-                )
-        return KnowledgeMatrix(
-            project_id=project_id,
-            chapter=chapter,
-            scope=scope,
-            # 窄引用：矩阵是 D 分区的料，整份序列化进 prompt，而 Secret 节点的 props 里
-            # 装的就是秘密的内容（见 NodeRef 的论证）。这里传 Node 会被 pydantic 拒——
-            # 那是故意的：忘记收窄要当场炸，不能靠纪律。
-            characters=[NodeRef.of(n) for n in characters],
-            secrets=[NodeRef.of(n) for n in secret_nodes],
-            cells=cells,
-        )
 
     # ── subgraph ──────────────────────────────────────────────────────────
 
@@ -542,8 +434,7 @@ class SqliteStoryGraph:
                     "resolve 会把它读成歧义称呼，而歧义称呼在面板上是整行消失"
                 )
             if found:
-                # 重复声明 = 更 props。**不重写 secret 行**：description / sub_of 的
-                # 修改是一次独立的编辑，不是「再声明一次」的副作用。
+                # 重复声明 = 更 props。
                 return queries.update_node_props(self._conn, found[0].id, spec.props)
 
             node_id = new_id(EntityType.for_node_label(spec.label), spec.project_id)
@@ -565,8 +456,6 @@ class SqliteStoryGraph:
                     kind=AliasKind.CANONICAL,
                     usable_for_rules=len(spec.name) >= MIN_RULE_SURFACE_LEN,
                 )
-            if spec.secret is not None:
-                queries.insert_secret(self._conn, node.id, spec.project_id, spec.secret)
             return node
 
     def set_first_appearance(self, project_id: str, node_id: str, chapter: int) -> Node:
@@ -1338,11 +1227,3 @@ class SqliteStoryGraph:
                 quote_text=sliced,
                 quote_sha256=quote_hash(sliced),
             )
-
-
-def _reject_dups(ids: Sequence[str], what: str) -> None:
-    """重复 id 会让 KnowledgeMatrix 的笛卡尔积 validator 报一个读不懂的错
-    （want 去重了、got 没有）。在这里拦，给调用方一句人话。"""
-    if len(set(ids)) != len(ids):
-        dup = sorted({i for i in ids if list(ids).count(i) > 1})
-        raise ValueError(f"{what} 有重复 id：{dup}")

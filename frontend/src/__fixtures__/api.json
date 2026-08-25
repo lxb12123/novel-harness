@@ -3,7 +3,7 @@
     "actors": [
       {
         "actor": "author",
-        "count": 13
+        "count": 12
       },
       {
         "actor": "system",
@@ -14,7 +14,7 @@
       {
         "actor": "system",
         "chapter_number": 1,
-        "id": "extraction_run:ID40",
+        "id": "extraction_run:ID38",
         "jump": {
           "chapter_number": 1,
           "edge_id": null,
@@ -33,7 +33,7 @@
       {
         "actor": "system",
         "chapter_number": 1,
-        "id": "call:ID41",
+        "id": "call:ID39",
         "jump": {
           "chapter_number": 1,
           "edge_id": null,
@@ -52,7 +52,7 @@
       {
         "actor": "system",
         "chapter_number": 1,
-        "id": "call:ID42",
+        "id": "call:ID40",
         "jump": {
           "chapter_number": 1,
           "edge_id": null,
@@ -73,14 +73,14 @@
       {
         "actor": "author",
         "chapter_number": 1,
-        "id": "decision:ID35",
+        "id": "decision:ID33",
         "jump": {
           "chapter_number": 1,
           "edge_id": null,
           "endpoints": [
-            "/api/projects/project:ID1/canon/events/event:ID36/cast"
+            "/api/projects/project:ID1/canon/events/event:ID34/cast"
           ],
-          "event_id": "event:ID36",
+          "event_id": "event:ID34",
           "label": "去改这条事件的知情 / 在场名单",
           "proposal_id": null,
           "target": "event_cast"
@@ -94,7 +94,7 @@
       {
         "actor": "author",
         "chapter_number": 1,
-        "id": "decision:ID33",
+        "id": "decision:ID31",
         "jump": {
           "chapter_number": 1,
           "edge_id": null,
@@ -113,14 +113,14 @@
       {
         "actor": "author",
         "chapter_number": 1,
-        "id": "decision:ID30",
+        "id": "decision:ID28",
         "jump": {
           "chapter_number": 1,
           "edge_id": null,
           "endpoints": [
-            "/api/projects/project:ID1/canon/events/event:ID31/cast"
+            "/api/projects/project:ID1/canon/events/event:ID29/cast"
           ],
-          "event_id": "event:ID31",
+          "event_id": "event:ID29",
           "label": "去改这条事件的知情 / 在场名单",
           "proposal_id": null,
           "target": "event_cast"
@@ -134,7 +134,7 @@
       {
         "actor": "author",
         "chapter_number": 1,
-        "id": "decision:ID43",
+        "id": "decision:ID41",
         "jump": {
           "chapter_number": 1,
           "edge_id": null,
@@ -153,7 +153,7 @@
       {
         "actor": "author",
         "chapter_number": null,
-        "id": "decision:ID44",
+        "id": "decision:ID42",
         "jump": null,
         "source": "decision",
         "status": "succeeded",
@@ -162,13 +162,13 @@
         "ts": "<ts>"
       }
     ],
-    "next_cursor": "<ts>|decision:ID44"
+    "next_cursor": "<ts>|decision:ID42"
   },
   "activityAuthorOnly": {
     "actors": [
       {
         "actor": "author",
-        "count": 13
+        "count": 12
       },
       {
         "actor": "system",
@@ -179,14 +179,14 @@
       {
         "actor": "author",
         "chapter_number": 1,
-        "id": "decision:ID35",
+        "id": "decision:ID33",
         "jump": {
           "chapter_number": 1,
           "edge_id": null,
           "endpoints": [
-            "/api/projects/project:ID1/canon/events/event:ID36/cast"
+            "/api/projects/project:ID1/canon/events/event:ID34/cast"
           ],
-          "event_id": "event:ID36",
+          "event_id": "event:ID34",
           "label": "去改这条事件的知情 / 在场名单",
           "proposal_id": null,
           "target": "event_cast"
@@ -200,7 +200,7 @@
       {
         "actor": "author",
         "chapter_number": 1,
-        "id": "decision:ID33",
+        "id": "decision:ID31",
         "jump": {
           "chapter_number": 1,
           "edge_id": null,
@@ -219,14 +219,14 @@
       {
         "actor": "author",
         "chapter_number": 1,
-        "id": "decision:ID30",
+        "id": "decision:ID28",
         "jump": {
           "chapter_number": 1,
           "edge_id": null,
           "endpoints": [
-            "/api/projects/project:ID1/canon/events/event:ID31/cast"
+            "/api/projects/project:ID1/canon/events/event:ID29/cast"
           ],
-          "event_id": "event:ID31",
+          "event_id": "event:ID29",
           "label": "去改这条事件的知情 / 在场名单",
           "proposal_id": null,
           "target": "event_cast"
@@ -240,7 +240,7 @@
       {
         "actor": "author",
         "chapter_number": 1,
-        "id": "decision:ID43",
+        "id": "decision:ID41",
         "jump": {
           "chapter_number": 1,
           "edge_id": null,
@@ -257,11 +257,11 @@
         "ts": "<ts>"
       }
     ],
-    "next_cursor": "<ts>|decision:ID43"
+    "next_cursor": "<ts>|decision:ID41"
   },
   "activityCallDetail": {
     "cost": {
-      "call_id": "call:ID41",
+      "call_id": "call:ID39",
       "capability": "extractor",
       "cost": null,
       "model": "deepseek-v4",
@@ -272,7 +272,7 @@
     "entry": {
       "actor": "system",
       "chapter_number": 1,
-      "id": "call:ID41",
+      "id": "call:ID39",
       "jump": {
         "chapter_number": 1,
         "edge_id": null,
@@ -328,12 +328,12 @@
   "activityCanonEdge": {
     "actor": "system",
     "chapter_number": 1,
-    "id": "decision:ID77",
+    "id": "decision:ID75",
     "jump": {
       "chapter_number": 1,
-      "edge_id": "edge:ID74",
+      "edge_id": "edge:ID72",
       "endpoints": [
-        "/api/projects/project:ID1/canon/edges/edge:ID74"
+        "/api/projects/project:ID1/canon/edges/edge:ID72"
       ],
       "event_id": null,
       "label": "去改这条自动生成的边（第 1 章）",
@@ -351,14 +351,14 @@
     "entry": {
       "actor": "author",
       "chapter_number": 1,
-      "id": "decision:ID35",
+      "id": "decision:ID33",
       "jump": {
         "chapter_number": 1,
         "edge_id": null,
         "endpoints": [
-          "/api/projects/project:ID1/canon/events/event:ID36/cast"
+          "/api/projects/project:ID1/canon/events/event:ID34/cast"
         ],
-        "event_id": "event:ID36",
+        "event_id": "event:ID34",
         "label": "去改这条事件的知情 / 在场名单",
         "proposal_id": null,
         "target": "event_cast"
@@ -373,16 +373,16 @@
     "payload": {
       "action": "accept",
       "actor": "author",
-      "canon_version": 12,
+      "canon_version": 11,
       "characters": [],
       "edges": [],
       "events": [
         {
-          "derived_from_event_id": "event:ID28",
-          "event_id": "event:ID36",
+          "derived_from_event_id": "event:ID26",
+          "event_id": "event:ID34",
           "evidence": {
             "chapter_number": 1,
-            "evidence_id": "evidence:ID29",
+            "evidence_id": "evidence:ID27",
             "occurrence_k": 0,
             "para_index": 2,
             "quote": "萧决在青云城主府第一次听说了血脉秘密的真相。",
@@ -396,12 +396,11 @@
             "萧决",
             "李管家"
           ],
-          "revealed_facts": [],
           "summary": "萧决得知血脉秘密。"
         }
       ],
       "kind": "provisional_confirm",
-      "proposal_id": "proposal:ID34",
+      "proposal_id": "proposal:ID32",
       "status": "ACCEPTED"
     },
     "rows": [
@@ -439,7 +438,7 @@
     "actors": [
       {
         "actor": "author",
-        "count": 14
+        "count": 13
       },
       {
         "actor": "system",
@@ -450,7 +449,7 @@
       {
         "actor": "system",
         "chapter_number": 3,
-        "id": "extraction_run:ID56",
+        "id": "extraction_run:ID54",
         "jump": {
           "chapter_number": 3,
           "edge_id": null,
@@ -471,7 +470,7 @@
       {
         "actor": "system",
         "chapter_number": null,
-        "id": "call:ID57",
+        "id": "call:ID55",
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
@@ -482,7 +481,7 @@
       {
         "actor": "system",
         "chapter_number": null,
-        "id": "call:ID58",
+        "id": "call:ID56",
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
@@ -493,7 +492,7 @@
       {
         "actor": "system",
         "chapter_number": null,
-        "id": "call:ID59",
+        "id": "call:ID57",
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
@@ -504,12 +503,34 @@
       {
         "actor": "system",
         "chapter_number": null,
-        "id": "call:ID60",
+        "id": "call:ID58",
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
         "subtitle": "deepseek-v4-flash · 入 1800 / 出 2600 token · 0 ms",
         "title": "模型调用 · 起草",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "system",
+        "chapter_number": null,
+        "id": "call:ID59",
+        "jump": null,
+        "source": "model_call",
+        "status": "succeeded",
+        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
+        "title": "模型调用 · 写作助手",
+        "ts": "<ts>"
+      },
+      {
+        "actor": "system",
+        "chapter_number": null,
+        "id": "call:ID60",
+        "jump": null,
+        "source": "model_call",
+        "status": "succeeded",
+        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
+        "title": "模型调用 · 写作助手",
         "ts": "<ts>"
       },
       {
@@ -522,38 +543,16 @@
         "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
         "title": "模型调用 · 写作助手",
         "ts": "<ts>"
-      },
-      {
-        "actor": "system",
-        "chapter_number": null,
-        "id": "call:ID62",
-        "jump": null,
-        "source": "model_call",
-        "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
-        "title": "模型调用 · 写作助手",
-        "ts": "<ts>"
-      },
-      {
-        "actor": "system",
-        "chapter_number": null,
-        "id": "call:ID63",
-        "jump": null,
-        "source": "model_call",
-        "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
-        "title": "模型调用 · 写作助手",
-        "ts": "<ts>"
       }
     ],
-    "next_cursor": "<ts>|call:ID63"
+    "next_cursor": "<ts>|call:ID61"
   },
   "activityFailedDetail": {
     "cost": null,
     "entry": {
       "actor": "system",
       "chapter_number": 3,
-      "id": "extraction_run:ID56",
+      "id": "extraction_run:ID54",
       "jump": {
         "chapter_number": 3,
         "edge_id": null,
@@ -600,7 +599,7 @@
   },
   "activityRunDetail": {
     "cost": {
-      "call_id": "call:ID41",
+      "call_id": "call:ID39",
       "capability": "extractor",
       "cost": null,
       "model": "deepseek-v4",
@@ -611,7 +610,7 @@
     "entry": {
       "actor": "system",
       "chapter_number": 1,
-      "id": "extraction_run:ID40",
+      "id": "extraction_run:ID38",
       "jump": {
         "chapter_number": 1,
         "edge_id": null,
@@ -654,7 +653,7 @@
   },
   "activitySummaryDetail": {
     "cost": {
-      "call_id": "call:ID42",
+      "call_id": "call:ID40",
       "capability": "summarizer",
       "cost": null,
       "model": "deepseek-v4-flash",
@@ -665,7 +664,7 @@
     "entry": {
       "actor": "system",
       "chapter_number": 1,
-      "id": "call:ID42",
+      "id": "call:ID40",
       "jump": {
         "chapter_number": 1,
         "edge_id": null,
@@ -726,9 +725,9 @@
   },
   "aliasCreated": {
     "derived_from_alias_id": null,
-    "id": "alias:ID71",
+    "id": "alias:ID69",
     "kind": "alias",
-    "node_id": "character:ID10",
+    "node_id": "character:ID9",
     "project_id": "project:ID1",
     "source": "author",
     "status": "ACTIVE",
@@ -736,14 +735,14 @@
     "usable_for_rules": true
   },
   "aliasDeleted": {
-    "id": "alias:ID73",
+    "id": "alias:ID71",
     "status": "RETRACTED"
   },
   "aliasEdited": {
-    "derived_from_alias_id": "alias:ID72",
-    "id": "alias:ID73",
+    "derived_from_alias_id": "alias:ID70",
+    "id": "alias:ID71",
     "kind": "alias",
-    "node_id": "character:ID8",
+    "node_id": "character:ID7",
     "project_id": "project:ID1",
     "source": "author",
     "status": "ACTIVE",
@@ -751,10 +750,10 @@
     "usable_for_rules": true
   },
   "aliasReassigned": {
-    "derived_from_alias_id": "alias:ID71",
-    "id": "alias:ID72",
+    "derived_from_alias_id": "alias:ID69",
+    "id": "alias:ID70",
     "kind": "alias",
-    "node_id": "character:ID8",
+    "node_id": "character:ID7",
     "project_id": "project:ID1",
     "source": "author",
     "status": "ACTIVE",
@@ -819,13 +818,13 @@
         "added": [
           {
             "created": true,
-            "id": "chapter:ID65",
+            "id": "chapter:ID63",
             "number": 1,
             "path": "chapters/0001.md",
-            "project_id": "project:ID64",
+            "project_id": "project:ID62",
             "snapshot_created": true,
             "snapshot_generation": 1,
-            "snapshot_id": "snapshot:ID66",
+            "snapshot_id": "snapshot:ID64",
             "text_sha256": "<sha>",
             "title": "起"
           }
@@ -842,7 +841,7 @@
     "initial_chapter": 1,
     "project": {
       "canon_version": 0,
-      "id": "project:ID64",
+      "id": "project:ID62",
       "name": "序章样书",
       "root_path": "<root>/books/序章样书"
     },
@@ -863,81 +862,78 @@
   },
   "canonEdge": {
     "author_owned": false,
-    "canon_version": 19,
+    "canon_version": 18,
     "dst": "location:ID5",
-    "edge_id": "edge:ID74",
+    "edge_id": "edge:ID72",
     "edge_type": "LOCATED_AT",
-    "evidence_id": "evidence:ID75",
+    "evidence_id": "evidence:ID73",
     "evidence_status": "FRESH",
     "props": {
-      "believed_value": null,
       "value": null,
       "value_key": null
     },
-    "slot_key": "character:ID8|LOCATED_AT|1",
+    "slot_key": "character:ID7|LOCATED_AT|1",
     "source": "extractor",
-    "src": "character:ID8",
+    "src": "character:ID7",
     "valid_from_chapter": 1
   },
   "canonEdgeEdited": {
-    "canon_version": 20,
-    "edge_id": "edge:ID76",
-    "replacement_edge_id": "edge:ID76",
+    "canon_version": 19,
+    "edge_id": "edge:ID74",
+    "replacement_edge_id": "edge:ID74",
     "retracted": false,
     "view": {
       "author_owned": true,
-      "canon_version": 20,
-      "dst": "location:ID9",
-      "edge_id": "edge:ID76",
+      "canon_version": 19,
+      "dst": "location:ID8",
+      "edge_id": "edge:ID74",
       "edge_type": "LOCATED_AT",
       "evidence_id": null,
       "evidence_status": "NONE",
       "props": {
-        "believed_value": null,
         "value": null,
         "value_key": null
       },
-      "slot_key": "character:ID8|LOCATED_AT|1",
+      "slot_key": "character:ID7|LOCATED_AT|1",
       "source": "author",
-      "src": "character:ID8",
+      "src": "character:ID7",
       "valid_from_chapter": 1
     }
   },
   "canonEdgeRetracted": {
-    "canon_version": 21,
-    "edge_id": "edge:ID76",
+    "canon_version": 20,
+    "edge_id": "edge:ID74",
     "replacement_edge_id": null,
     "retracted": true,
     "view": {
       "author_owned": false,
-      "canon_version": 21,
-      "dst": "location:ID9",
-      "edge_id": "edge:ID76",
+      "canon_version": 20,
+      "dst": "location:ID8",
+      "edge_id": "edge:ID74",
       "edge_type": "LOCATED_AT",
       "evidence_id": null,
       "evidence_status": "NONE",
       "props": {
-        "believed_value": null,
         "value": null,
         "value_key": null
       },
-      "slot_key": "character:ID8|LOCATED_AT|1",
+      "slot_key": "character:ID7|LOCATED_AT|1",
       "source": "author",
-      "src": "character:ID8",
+      "src": "character:ID7",
       "valid_from_chapter": 1
     }
   },
   "canonEventCast": {
-    "canon_version": 13,
-    "decision_id": "decision:ID45",
+    "canon_version": 12,
+    "decision_id": "decision:ID43",
     "event": {
       "event": {
         "chapter_number": 1,
         "confidence": 0.6,
-        "derived_from_event_id": "event:ID20",
-        "evidence_id": "evidence:ID27",
+        "derived_from_event_id": "event:ID18",
+        "evidence_id": "evidence:ID25",
         "evidence_status": "FRESH",
-        "id": "event:ID31",
+        "id": "event:ID29",
         "information_scope": "CANON",
         "project_id": "project:ID1",
         "source": "extractor",
@@ -946,29 +942,28 @@
       },
       "knowers": [
         {
-          "id": "character:ID10",
+          "id": "character:ID9",
           "label": "Character",
           "name": "萧决"
         }
       ],
       "participants": [
         {
-          "id": "character:ID10",
+          "id": "character:ID9",
           "label": "Character",
           "name": "萧决"
         },
         {
-          "id": "character:ID8",
+          "id": "character:ID7",
           "label": "Character",
           "name": "李管家"
         }
-      ],
-      "revealed_facts": []
+      ]
     },
     "knowers_added": [],
     "knowers_removed": [
       {
-        "id": "character:ID8",
+        "id": "character:ID7",
         "label": "Character",
         "name": "李管家"
       }
@@ -981,7 +976,7 @@
     {
       "created_at": "<ts>",
       "is_current": true,
-      "snapshot_id": "snapshot:ID11",
+      "snapshot_id": "snapshot:ID10",
       "text": "第一章 血脉\n\n萧决在青云城主府第一次听说了血脉秘密的真相。\n李管家什么也没说。\n",
       "text_sha256": "<sha>"
     }
@@ -990,14 +985,14 @@
     {
       "created_at": "<ts>",
       "is_current": false,
-      "snapshot_id": "snapshot:ID54",
+      "snapshot_id": "snapshot:ID52",
       "text": "第二章 试探\n\n他终于明白了。\n风起。他终于明白了。\n",
       "text_sha256": "<sha>"
     },
     {
       "created_at": "<ts>",
       "is_current": true,
-      "snapshot_id": "snapshot:ID53",
+      "snapshot_id": "snapshot:ID51",
       "text": "第二章 试探\n\n他终于明白了。\n风起。他终于明白了。\n\n后来又添了一段。\n",
       "text_sha256": "<sha>"
     }
@@ -1009,7 +1004,7 @@
     "processing": "reused",
     "saved_to_disk": true,
     "snapshot_generation": 2,
-    "snapshot_id": "snapshot:ID53",
+    "snapshot_id": "snapshot:ID51",
     "text_sha256": "<sha>"
   },
   "chapterText": {
@@ -1036,9 +1031,9 @@
     "aliases": [
       {
         "derived_from_alias_id": null,
-        "id": "alias:ID70",
+        "id": "alias:ID68",
         "kind": "title",
-        "node_id": "character:ID10",
+        "node_id": "character:ID9",
         "project_id": "project:ID1",
         "source": "author",
         "status": "ACTIVE",
@@ -1046,16 +1041,16 @@
         "usable_for_rules": true
       }
     ],
-    "canon_version": 13,
+    "canon_version": 12,
     "character": {
-      "id": "character:ID10",
+      "id": "character:ID9",
       "label": "Character",
       "name": "萧决"
     },
     "profile": {
       "background": null,
       "character": {
-        "id": "character:ID10",
+        "id": "character:ID9",
         "label": "Character",
         "name": "萧决"
       },
@@ -1071,7 +1066,7 @@
     "is_dead": false,
     "location": null,
     "node": {
-      "id": "character:ID10",
+      "id": "character:ID9",
       "label": "Character",
       "name": "萧决",
       "project_id": "project:ID1",
@@ -1090,7 +1085,7 @@
   },
   "chatCreated": {
     "created_at": "<ts>",
-    "id": "chat_session:ID46",
+    "id": "chat_session:ID44",
     "message_count": 0,
     "pending_lookups": 0,
     "running": false,
@@ -1098,7 +1093,7 @@
     "updated_at": "<ts>"
   },
   "chatDeleted": {
-    "chat_id": "chat_session:ID50",
+    "chat_id": "chat_session:ID48",
     "deleted": true
   },
   "chatDetail": {
@@ -1116,7 +1111,7 @@
     ],
     "session": {
       "created_at": "<ts>",
-      "id": "chat_session:ID46",
+      "id": "chat_session:ID44",
       "message_count": 9,
       "pending_lookups": 0,
       "running": false,
@@ -1149,7 +1144,7 @@
     ],
     "session": {
       "created_at": "<ts>",
-      "id": "chat_session:ID55",
+      "id": "chat_session:ID53",
       "message_count": 2,
       "pending_lookups": 0,
       "running": false,
@@ -1158,7 +1153,7 @@
     }
   },
   "chatStopped": {
-    "chat_id": "chat_session:ID46",
+    "chat_id": "chat_session:ID44",
     "message": "这段对话这会儿没在跑，不用停。",
     "stopped": false
   },
@@ -1180,7 +1175,7 @@
       {
         "chapter": 2,
         "created_at": "<ts>",
-        "id": "draft:ID47",
+        "id": "draft:ID45",
         "landed": false,
         "note": "这一版更冷，收在他没抬头。",
         "ordinal": 1,
@@ -1202,7 +1197,7 @@
     "reply": "第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。",
     "session": {
       "created_at": "<ts>",
-      "id": "chat_session:ID46",
+      "id": "chat_session:ID44",
       "message_count": 9,
       "pending_lookups": 0,
       "running": false,
@@ -1225,12 +1220,12 @@
     "event: turn\ndata: {\"kind\":\"tool_finished\",\"said_to_author\":\"写一稿（第 2 章），好了。\",\"text\":\"\",\"tool\":\"draft_chapter\",\"ok\":true,\"chapter\":2,\"index\":2,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
     "event: turn\ndata: {\"kind\":\"reply_text\",\"said_to_author\":\"\",\"text\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\",\"tool\":\"\",\"ok\":null,\"chapter\":null,\"index\":0,\"total\":0,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
     "event: turn\ndata: {\"kind\":\"turn_stopped\",\"said_to_author\":\"说完了。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":null,\"index\":0,\"total\":0,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":\"done\",\"asked\":null}\n\n",
-    "event: receipt\ndata: {\"session\":{\"id\":\"chat_session:ID48\",\"title\":\"长连接那一轮\",\"created_at\":\"<ts>\",\"updated_at\":\"<ts>\",\"message_count\":9,\"running\":false,\"pending_lookups\":0},\"chapter\":2,\"reason\":\"done\",\"message\":\"说完了。\",\"reply\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\",\"messages\":[{\"seq\":8,\"speaker\":\"assistant\",\"text\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\"}],\"steps\":4,\"lookups\":4,\"tokens_reported\":5664,\"calls_without_usage\":3,\"context\":{\"off_chapter\":0,\"stale_lookups\":0,\"trimmed_results\":0,\"dropped_lookups\":0,\"dropped_reasoning\":0,\"lost_lookups\":0,\"full\":false,\"compressed_blocks\":0},\"asked\":null,\"drafts\":[{\"id\":\"draft:ID49\",\"chapter\":2,\"ordinal\":2,\"units\":2800,\"note\":\"这一版更冷，收在他没抬头。\",\"preview\":\"风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他……\",\"created_at\":\"<ts>\",\"landed\":false,\"stopped_reason\":\"\"}]}\n\n"
+    "event: receipt\ndata: {\"session\":{\"id\":\"chat_session:ID46\",\"title\":\"长连接那一轮\",\"created_at\":\"<ts>\",\"updated_at\":\"<ts>\",\"message_count\":9,\"running\":false,\"pending_lookups\":0},\"chapter\":2,\"reason\":\"done\",\"message\":\"说完了。\",\"reply\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\",\"messages\":[{\"seq\":8,\"speaker\":\"assistant\",\"text\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\"}],\"steps\":4,\"lookups\":4,\"tokens_reported\":5664,\"calls_without_usage\":3,\"context\":{\"off_chapter\":0,\"stale_lookups\":0,\"trimmed_results\":0,\"dropped_lookups\":0,\"dropped_reasoning\":0,\"lost_lookups\":0,\"full\":false,\"compressed_blocks\":0},\"asked\":null,\"drafts\":[{\"id\":\"draft:ID47\",\"chapter\":2,\"ordinal\":2,\"units\":2800,\"note\":\"这一版更冷，收在他没抬头。\",\"preview\":\"风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他……\",\"created_at\":\"<ts>\",\"landed\":false,\"stopped_reason\":\"\"}]}\n\n"
   ],
   "chats": [
     {
       "created_at": "<ts>",
-      "id": "chat_session:ID46",
+      "id": "chat_session:ID44",
       "message_count": 9,
       "pending_lookups": 0,
       "running": false,
@@ -1239,10 +1234,10 @@
     }
   ],
   "check": {
-    "chapter_id": "chapter:ID18",
+    "chapter_id": "chapter:ID16",
     "chapter_number": 3,
     "gate": "passed",
-    "id": "report:ID17",
+    "id": "report:ID15",
     "issues": [],
     "phase": "initial",
     "project_id": "project:ID1",
@@ -1268,7 +1263,7 @@
     "ruleset_epoch": 1,
     "ruleset_hash": "<sha>",
     "source_generation": 1,
-    "source_snapshot_id": "snapshot:ID19",
+    "source_snapshot_id": "snapshot:ID17",
     "text_sha256": "<sha>"
   },
   "constraints": {
@@ -1290,9 +1285,9 @@
   },
   "createAlias": {
     "derived_from_alias_id": null,
-    "id": "alias:ID14",
+    "id": "alias:ID12",
     "kind": "alias",
-    "node_id": "character:ID12",
+    "node_id": "character:ID11",
     "project_id": "project:ID1",
     "source": "author",
     "status": "ACTIVE",
@@ -1300,7 +1295,7 @@
     "usable_for_rules": true
   },
   "createNode": {
-    "id": "character:ID12",
+    "id": "character:ID11",
     "label": "Character",
     "name": "顾清音",
     "project_id": "project:ID1",
@@ -1314,15 +1309,10 @@
       "personality": null
     }
   },
-  "createSecret": {
-    "id": "secret:ID13",
-    "label": "Secret",
-    "name": "玄铁令下落"
-  },
   "draftDetail": {
     "chapter": 2,
     "created_at": "<ts>",
-    "id": "draft:ID47",
+    "id": "draft:ID45",
     "landed": false,
     "note": "这一版更冷，收在他没抬头。",
     "ordinal": 1,
@@ -1336,7 +1326,7 @@
       {
         "chapter": 2,
         "created_at": "<ts>",
-        "id": "draft:ID47",
+        "id": "draft:ID45",
         "landed": false,
         "note": "这一版更冷，收在他没抬头。",
         "ordinal": 1,
@@ -1349,12 +1339,12 @@
   "errorAmbiguousName": {
     "candidates": [
       {
-        "id": "character:ID10",
+        "id": "character:ID9",
         "label": "Character",
         "name": "萧决"
       },
       {
-        "id": "character:ID8",
+        "id": "character:ID7",
         "label": "Character",
         "name": "李管家"
       }
@@ -1366,7 +1356,7 @@
   "errorCanonEdgeGone": {
     "detail": {
       "error": "canon_edge_refused",
-      "message": "edge edge:ID76 不是 current CANON（已撤回/非 CANON）"
+      "message": "edge edge:ID74 不是 current CANON（已撤回/非 CANON）"
     }
   },
   "errorFactNotFound": {
@@ -1387,7 +1377,7 @@
   },
   "errorStaleCanon": {
     "detail": {
-      "current": 13,
+      "current": 12,
       "error": "stale_base_version",
       "expected": 0,
       "project_id": "project:ID1"
@@ -1398,10 +1388,10 @@
       "event": {
         "chapter_number": 1,
         "confidence": 0.6,
-        "derived_from_event_id": "event:ID20",
-        "evidence_id": "evidence:ID27",
+        "derived_from_event_id": "event:ID18",
+        "evidence_id": "evidence:ID25",
         "evidence_status": "FRESH",
-        "id": "event:ID31",
+        "id": "event:ID29",
         "information_scope": "CANON",
         "project_id": "project:ID1",
         "source": "extractor",
@@ -1410,38 +1400,37 @@
       },
       "knowers": [
         {
-          "id": "character:ID10",
+          "id": "character:ID9",
           "label": "Character",
           "name": "萧决"
         },
         {
-          "id": "character:ID8",
+          "id": "character:ID7",
           "label": "Character",
           "name": "李管家"
         }
       ],
       "participants": [
         {
-          "id": "character:ID10",
+          "id": "character:ID9",
           "label": "Character",
           "name": "萧决"
         },
         {
-          "id": "character:ID8",
+          "id": "character:ID7",
           "label": "Character",
           "name": "李管家"
         }
-      ],
-      "revealed_facts": []
+      ]
     },
     {
       "event": {
         "chapter_number": 1,
         "confidence": 0.6,
-        "derived_from_event_id": "event:ID28",
-        "evidence_id": "evidence:ID29",
+        "derived_from_event_id": "event:ID26",
+        "evidence_id": "evidence:ID27",
         "evidence_status": "FRESH",
-        "id": "event:ID36",
+        "id": "event:ID34",
         "information_scope": "CANON",
         "project_id": "project:ID1",
         "source": "extractor",
@@ -1450,29 +1439,28 @@
       },
       "knowers": [
         {
-          "id": "character:ID10",
+          "id": "character:ID9",
           "label": "Character",
           "name": "萧决"
         },
         {
-          "id": "character:ID8",
+          "id": "character:ID7",
           "label": "Character",
           "name": "李管家"
         }
       ],
       "participants": [
         {
-          "id": "character:ID10",
+          "id": "character:ID9",
           "label": "Character",
           "name": "萧决"
         },
         {
-          "id": "character:ID8",
+          "id": "character:ID7",
           "label": "Character",
           "name": "李管家"
         }
-      ],
-      "revealed_facts": []
+      ]
     }
   ],
   "eventsProvisional": [
@@ -1481,9 +1469,9 @@
         "chapter_number": 1,
         "confidence": 0.6,
         "derived_from_event_id": null,
-        "evidence_id": "evidence:ID27",
+        "evidence_id": "evidence:ID25",
         "evidence_status": "FRESH",
-        "id": "event:ID20",
+        "id": "event:ID18",
         "information_scope": "PROVISIONAL",
         "project_id": "project:ID1",
         "source": "extractor",
@@ -1492,38 +1480,37 @@
       },
       "knowers": [
         {
-          "id": "character:ID10",
+          "id": "character:ID9",
           "label": "Character",
           "name": "萧决"
         },
         {
-          "id": "character:ID8",
+          "id": "character:ID7",
           "label": "Character",
           "name": "李管家"
         }
       ],
       "participants": [
         {
-          "id": "character:ID10",
+          "id": "character:ID9",
           "label": "Character",
           "name": "萧决"
         },
         {
-          "id": "character:ID8",
+          "id": "character:ID7",
           "label": "Character",
           "name": "李管家"
         }
-      ],
-      "revealed_facts": []
+      ]
     },
     {
       "event": {
         "chapter_number": 1,
         "confidence": 0.6,
         "derived_from_event_id": null,
-        "evidence_id": "evidence:ID29",
+        "evidence_id": "evidence:ID27",
         "evidence_status": "FRESH",
-        "id": "event:ID28",
+        "id": "event:ID26",
         "information_scope": "PROVISIONAL",
         "project_id": "project:ID1",
         "source": "extractor",
@@ -1532,29 +1519,28 @@
       },
       "knowers": [
         {
-          "id": "character:ID10",
+          "id": "character:ID9",
           "label": "Character",
           "name": "萧决"
         },
         {
-          "id": "character:ID8",
+          "id": "character:ID7",
           "label": "Character",
           "name": "李管家"
         }
       ],
       "participants": [
         {
-          "id": "character:ID10",
+          "id": "character:ID9",
           "label": "Character",
           "name": "萧决"
         },
         {
-          "id": "character:ID8",
+          "id": "character:ID7",
           "label": "Character",
           "name": "李管家"
         }
-      ],
-      "revealed_facts": []
+      ]
     }
   ],
   "extractionFailed": {
@@ -1566,7 +1552,7 @@
     ],
     "fencing_token": 0,
     "finished_at": "<ts>",
-    "id": "extraction_run:ID56",
+    "id": "extraction_run:ID54",
     "model_call_id": null,
     "project_id": "project:ID1",
     "prompt_hash": "prompt:3",
@@ -1574,7 +1560,7 @@
     "required_ruleset_epoch": null,
     "required_ruleset_hash": null,
     "schema_version": "m4.analysis.v1",
-    "snapshot_id": "snapshot:ID19",
+    "snapshot_id": "snapshot:ID17",
     "source_generation": null,
     "started_at": "<ts>",
     "status": "FAILED",
@@ -1587,15 +1573,15 @@
     "errors": [],
     "fencing_token": 0,
     "finished_at": "<ts>",
-    "id": "extraction_run:ID40",
-    "model_call_id": "call:ID41",
+    "id": "extraction_run:ID38",
+    "model_call_id": "call:ID39",
     "project_id": "project:ID1",
     "prompt_hash": "prompt:1",
     "proposal_count": 2,
     "required_ruleset_epoch": null,
     "required_ruleset_hash": null,
     "schema_version": "m4.analysis.v1",
-    "snapshot_id": "snapshot:ID11",
+    "snapshot_id": "snapshot:ID10",
     "source_generation": null,
     "started_at": "<ts>",
     "status": "SUCCEEDED",
@@ -1619,13 +1605,13 @@
       "actions": [],
       "chapter_number": 1,
       "created_at": "<ts>",
-      "id": "notif:ID67",
+      "id": "notif:ID65",
       "jump": null,
       "kind": "summary_mismatch",
       "project_id": "project:ID1",
       "source_sha256": null,
       "status": "OPEN",
-      "subject_id": "character:ID10",
+      "subject_id": "character:ID9",
       "subject_type": "chapter",
       "summary_sha256": null,
       "title": "第 1 章的总结可能与正文不一致"
@@ -1634,7 +1620,7 @@
       "actions": [],
       "chapter_number": 1,
       "created_at": "<ts>",
-      "id": "notif:ID68",
+      "id": "notif:ID66",
       "jump": {
         "occurrence_k": 0,
         "para_index": 1,
@@ -1644,7 +1630,7 @@
       "project_id": "project:ID1",
       "source_sha256": null,
       "status": "OPEN",
-      "subject_id": "chapter:ID69",
+      "subject_id": "chapter:ID67",
       "subject_type": "chapter",
       "summary_sha256": null,
       "title": "第 2 段·这一句可能对不该知道的人说破了什么。"
@@ -1654,7 +1640,7 @@
     "open": 2
   },
   "notificationsIgnored": {
-    "id": "notif:ID67",
+    "id": "notif:ID65",
     "status": "IGNORED"
   },
   "projects": [
@@ -1673,26 +1659,26 @@
       "root_path": "<root>/books/契约样书"
     },
     {
-      "canon_version": 13,
+      "canon_version": 12,
       "id": "project:ID1",
       "name": "青云记",
       "root_path": "<root>/book"
     }
   ],
   "proposalAccept": {
-    "canon_version": 11,
+    "canon_version": 10,
     "character": null,
     "characters": [],
-    "decision_id": "decision:ID30",
+    "decision_id": "decision:ID28",
     "edges": [],
     "event": {
       "event": {
         "chapter_number": 1,
         "confidence": 0.6,
-        "derived_from_event_id": "event:ID20",
-        "evidence_id": "evidence:ID27",
+        "derived_from_event_id": "event:ID18",
+        "evidence_id": "evidence:ID25",
         "evidence_status": "FRESH",
-        "id": "event:ID31",
+        "id": "event:ID29",
         "information_scope": "CANON",
         "project_id": "project:ID1",
         "source": "extractor",
@@ -1701,39 +1687,38 @@
       },
       "knowers": [
         {
-          "id": "character:ID10",
+          "id": "character:ID9",
           "label": "Character",
           "name": "萧决"
         },
         {
-          "id": "character:ID8",
+          "id": "character:ID7",
           "label": "Character",
           "name": "李管家"
         }
       ],
       "participants": [
         {
-          "id": "character:ID10",
+          "id": "character:ID9",
           "label": "Character",
           "name": "萧决"
         },
         {
-          "id": "character:ID8",
+          "id": "character:ID7",
           "label": "Character",
           "name": "李管家"
         }
-      ],
-      "revealed_facts": []
+      ]
     },
     "events": [
       {
         "event": {
           "chapter_number": 1,
           "confidence": 0.6,
-          "derived_from_event_id": "event:ID20",
-          "evidence_id": "evidence:ID27",
+          "derived_from_event_id": "event:ID18",
+          "evidence_id": "evidence:ID25",
           "evidence_status": "FRESH",
-          "id": "event:ID31",
+          "id": "event:ID29",
           "information_scope": "CANON",
           "project_id": "project:ID1",
           "source": "extractor",
@@ -1742,49 +1727,48 @@
         },
         "knowers": [
           {
-            "id": "character:ID10",
+            "id": "character:ID9",
             "label": "Character",
             "name": "萧决"
           },
           {
-            "id": "character:ID8",
+            "id": "character:ID7",
             "label": "Character",
             "name": "李管家"
           }
         ],
         "participants": [
           {
-            "id": "character:ID10",
+            "id": "character:ID9",
             "label": "Character",
             "name": "萧决"
           },
           {
-            "id": "character:ID8",
+            "id": "character:ID7",
             "label": "Character",
             "name": "李管家"
           }
-        ],
-        "revealed_facts": []
+        ]
       }
     ],
-    "proposal_id": "proposal:ID21",
+    "proposal_id": "proposal:ID19",
     "status": "ACCEPTED"
   },
   "proposalReject": {
-    "canon_version": 11,
+    "canon_version": 10,
     "character": null,
     "characters": [],
-    "decision_id": "decision:ID33",
+    "decision_id": "decision:ID31",
     "edges": [],
     "event": null,
     "events": [],
-    "proposal_id": "proposal:ID32",
+    "proposal_id": "proposal:ID30",
     "status": "REJECTED"
   },
   "proposals": [
     {
       "audit_envelope": null,
-      "base_canon_version": 10,
+      "base_canon_version": 9,
       "chapter_number": 1,
       "confidence": null,
       "created_at": "<ts>",
@@ -1792,14 +1776,14 @@
       "decision_log_id": null,
       "edge_ids": [],
       "event_ids": [
-        "event:ID20"
+        "event:ID18"
       ],
-      "id": "proposal:ID21",
+      "id": "proposal:ID19",
       "item_count": 1,
       "items": [
         {
           "confidence": 0.6,
-          "event_id": "event:ID20",
+          "event_id": "event:ID18",
           "quote": "萧决在青云城主府第一次听说了血脉秘密的真相。",
           "source_kind": "event",
           "summary": "萧决得知血脉秘密。"
@@ -1813,38 +1797,38 @@
       "resolved_at": null,
       "resolved_canon_version": null,
       "schema_version": "m4.analysis.v1",
-      "snapshot_id": "snapshot:ID11",
+      "snapshot_id": "snapshot:ID10",
       "status": "PENDING",
       "summary": "",
       "superseded_by_snapshot_id": null
     },
     {
       "audit_envelope": null,
-      "base_canon_version": 10,
+      "base_canon_version": 9,
       "chapter_number": 1,
       "confidence": null,
       "created_at": "<ts>",
       "currentness": "CURRENT",
       "decision_log_id": null,
       "edge_ids": [
-        "edge:ID24"
+        "edge:ID22"
       ],
       "event_ids": [],
-      "id": "proposal:ID25",
+      "id": "proposal:ID23",
       "item_count": 1,
       "items": [
         {
           "current": {
-            "edge_id": "edge:ID22",
-            "subject_id": "character:ID10",
-            "target_id": "location:ID23",
+            "edge_id": "edge:ID20",
+            "subject_id": "character:ID9",
+            "target_id": "location:ID21",
             "value": null
           },
           "proposed": {
-            "edge_id": "edge:ID24",
+            "edge_id": "edge:ID22",
             "quote": "萧决在青云城主府第一次听说了血脉秘密的真相。",
-            "subject_id": "character:ID10",
-            "target_id": "location:ID9",
+            "subject_id": "character:ID9",
+            "target_id": "location:ID8",
             "value": null
           },
           "update_kind": "location"
@@ -1853,17 +1837,17 @@
       "kind": "edge_conflict",
       "node_refs": [
         {
-          "id": "character:ID10",
+          "id": "character:ID9",
           "label": "Character",
           "name": "萧决"
         },
         {
-          "id": "location:ID23",
+          "id": "location:ID21",
           "label": "Location",
           "name": "青云城"
         },
         {
-          "id": "location:ID9",
+          "id": "location:ID8",
           "label": "Location",
           "name": "北荒"
         }
@@ -1874,14 +1858,14 @@
       "resolved_at": null,
       "resolved_canon_version": null,
       "schema_version": "m4.analysis.v1",
-      "snapshot_id": "snapshot:ID11",
+      "snapshot_id": "snapshot:ID10",
       "status": "PENDING",
       "summary": "",
       "superseded_by_snapshot_id": null
     },
     {
       "audit_envelope": null,
-      "base_canon_version": 10,
+      "base_canon_version": 9,
       "chapter_number": 1,
       "confidence": null,
       "created_at": "<ts>",
@@ -1889,7 +1873,7 @@
       "decision_log_id": null,
       "edge_ids": [],
       "event_ids": [],
-      "id": "proposal:ID26",
+      "id": "proposal:ID24",
       "item_count": 1,
       "items": [
         {
@@ -1913,26 +1897,26 @@
       "resolved_at": null,
       "resolved_canon_version": null,
       "schema_version": "m4.analysis.v1",
-      "snapshot_id": "snapshot:ID11",
+      "snapshot_id": "snapshot:ID10",
       "status": "PENDING",
       "summary": "",
       "superseded_by_snapshot_id": null
     }
   ],
   "provisionalConfirm": {
-    "canon_version": 12,
-    "confirmation_id": "proposal:ID34",
-    "decision_id": "decision:ID35",
+    "canon_version": 11,
+    "confirmation_id": "proposal:ID32",
+    "decision_id": "decision:ID33",
     "edges": [],
     "events": [
       {
         "event": {
           "chapter_number": 1,
           "confidence": 0.6,
-          "derived_from_event_id": "event:ID28",
-          "evidence_id": "evidence:ID29",
+          "derived_from_event_id": "event:ID26",
+          "evidence_id": "evidence:ID27",
           "evidence_status": "FRESH",
-          "id": "event:ID36",
+          "id": "event:ID34",
           "information_scope": "CANON",
           "project_id": "project:ID1",
           "source": "extractor",
@@ -1941,29 +1925,28 @@
         },
         "knowers": [
           {
-            "id": "character:ID10",
+            "id": "character:ID9",
             "label": "Character",
             "name": "萧决"
           },
           {
-            "id": "character:ID8",
+            "id": "character:ID7",
             "label": "Character",
             "name": "李管家"
           }
         ],
         "participants": [
           {
-            "id": "character:ID10",
+            "id": "character:ID9",
             "label": "Character",
             "name": "萧决"
           },
           {
-            "id": "character:ID8",
+            "id": "character:ID7",
             "label": "Character",
             "name": "李管家"
           }
-        ],
-        "revealed_facts": []
+        ]
       }
     ],
     "project_id": "project:ID1"
@@ -1972,14 +1955,14 @@
     "rules": [
       {
         "chapter": 2,
-        "chat_id": "chat_session:ID51",
+        "chat_id": "chat_session:ID49",
         "chat_title": "沙地那一段",
         "text": "男主在这片沙地不杀人",
         "until": "男主走出这片沙地为止"
       },
       {
         "chapter": 2,
-        "chat_id": "chat_session:ID51",
+        "chat_id": "chat_session:ID49",
         "chat_title": "沙地那一段",
         "text": "冷一点",
         "until": "这一场写完"
@@ -1993,7 +1976,7 @@
       {
         "kind": "canonical",
         "node": {
-          "id": "character:ID10",
+          "id": "character:ID9",
           "label": "Character",
           "name": "萧决"
         },
@@ -2001,7 +1984,7 @@
       }
     ],
     "surface": "萧决",
-    "unique_id": "character:ID10"
+    "unique_id": "character:ID9"
   },
   "resolveAmbiguous": {
     "ambiguous": true,
@@ -2009,7 +1992,7 @@
       {
         "kind": "title",
         "node": {
-          "id": "character:ID10",
+          "id": "character:ID9",
           "label": "Character",
           "name": "萧决"
         },
@@ -2018,7 +2001,7 @@
       {
         "kind": "title",
         "node": {
-          "id": "character:ID8",
+          "id": "character:ID7",
           "label": "Character",
           "name": "李管家"
         },
@@ -2040,22 +2023,17 @@
       "name": "未来大能"
     },
     {
-      "id": "secret:ID7",
-      "label": "Secret",
-      "name": "血脉秘密"
-    },
-    {
-      "id": "character:ID8",
+      "id": "character:ID7",
       "label": "Character",
       "name": "李管家"
     },
     {
-      "id": "location:ID9",
+      "id": "location:ID8",
       "label": "Location",
       "name": "北荒"
     },
     {
-      "id": "character:ID10",
+      "id": "character:ID9",
       "label": "Character",
       "name": "萧决"
     }
@@ -2065,7 +2043,7 @@
       {
         "actor": "system",
         "chapter_number": 1,
-        "id": "extraction_run:ID40",
+        "id": "extraction_run:ID38",
         "jump": {
           "chapter_number": 1,
           "edge_id": null,
@@ -2111,7 +2089,7 @@
       {
         "actor": "system",
         "chapter_number": 3,
-        "id": "extraction_run:ID56",
+        "id": "extraction_run:ID54",
         "jump": {
           "chapter_number": 3,
           "edge_id": null,
@@ -2130,7 +2108,7 @@
       {
         "actor": "system",
         "chapter_number": 1,
-        "id": "extraction_run:ID40",
+        "id": "extraction_run:ID38",
         "jump": {
           "chapter_number": 1,
           "edge_id": null,
@@ -2198,18 +2176,17 @@
         {
           "confidence": 1.0,
           "dst": "location:ID5",
-          "evidence_id": "evidence:ID16",
+          "evidence_id": "evidence:ID14",
           "evidence_status": "FRESH",
-          "id": "edge:ID15",
+          "id": "edge:ID13",
           "information_scope": "CANON",
           "project_id": "project:ID1",
           "props": {
-            "believed_value": null,
             "value": null,
             "value_key": null
           },
           "source": "author",
-          "src": "character:ID10",
+          "src": "character:ID9",
           "status": "ACTIVE",
           "type": "LOCATED_AT",
           "valid_from_chapter": 1,
@@ -2233,7 +2210,7 @@
         }
       },
       "node": {
-        "id": "character:ID10",
+        "id": "character:ID9",
         "label": "Character",
         "name": "萧决",
         "project_id": "project:ID1",
@@ -2256,7 +2233,7 @@
       "is_dead": false,
       "location": null,
       "node": {
-        "id": "character:ID8",
+        "id": "character:ID7",
         "label": "Character",
         "name": "李管家",
         "project_id": "project:ID1",
@@ -2276,7 +2253,7 @@
   ],
   "subgraph": {
     "center": {
-      "id": "character:ID10",
+      "id": "character:ID9",
       "label": "Character",
       "name": "萧决",
       "project_id": "project:ID1",
@@ -2295,7 +2272,7 @@
     "hops": 1,
     "nodes": [
       {
-        "id": "character:ID10",
+        "id": "character:ID9",
         "label": "Character",
         "name": "萧决",
         "project_id": "project:ID1",
@@ -2325,7 +2302,7 @@
         "retracted": false,
         "summary": "萧决在青云城主府听说了血脉秘密。",
         "summary_sha256": "<sha>",
-        "version_id": "summary:ID37",
+        "version_id": "summary:ID35",
         "version_source": "model"
       },
       {
@@ -2466,7 +2443,7 @@
     "retracted": false,
     "summary": "萧决在青云城主府听说了血脉秘密。",
     "summary_sha256": "<sha>",
-    "version_id": "summary:ID37",
+    "version_id": "summary:ID35",
     "version_source": "model"
   },
   "summaryEdited": {
@@ -2478,7 +2455,7 @@
     "retracted": false,
     "summary": "萧决把玄铁令收进袖中，谁也没告诉。",
     "summary_sha256": "<sha>",
-    "version_id": "summary:ID38",
+    "version_id": "summary:ID36",
     "version_source": "author"
   },
   "summaryGenerated": {
@@ -2490,7 +2467,7 @@
     "retracted": false,
     "summary": "萧决在青云城主府听说了血脉秘密。",
     "summary_sha256": "<sha>",
-    "version_id": "summary:ID37",
+    "version_id": "summary:ID35",
     "version_source": "model"
   },
   "summaryMentionTrail": {
@@ -2505,7 +2482,7 @@
       }
     ],
     "node": {
-      "id": "character:ID10",
+      "id": "character:ID9",
       "label": "Character",
       "name": "萧决"
     }
@@ -2515,7 +2492,7 @@
     "mentions": [
       {
         "node": {
-          "id": "character:ID10",
+          "id": "character:ID9",
           "label": "Character",
           "name": "萧决"
         },
@@ -2532,16 +2509,6 @@
         "surfaces": [
           "青云城主府"
         ]
-      },
-      {
-        "node": {
-          "id": "secret:ID7",
-          "label": "Secret",
-          "name": "血脉秘密"
-        },
-        "surfaces": [
-          "血脉秘密"
-        ]
       }
     ]
   },
@@ -2554,7 +2521,7 @@
     "retracted": true,
     "summary": null,
     "summary_sha256": null,
-    "version_id": "summary:ID39",
+    "version_id": "summary:ID37",
     "version_source": "author"
   },
   "sync": {
@@ -2592,7 +2559,7 @@
       "literal": "玄铁令"
     },
     "enabled": true,
-    "rule_id": "vrule:ID52",
+    "rule_id": "vrule:ID50",
     "template": "forbidden_literal",
     "title": "不许有玄铁令"
   },

@@ -2,12 +2,13 @@
 
 ── 这个文件为什么必须存在 ────────────────────────────────────────────────
 
-`test_knowledge.py` 的全部断言（含 README 第一行承诺的 ch87/ch88/ch152）跑在 `FakeGraph`
-上，而那个 Fake **自己手写了一遍** `knowledge_matrix` 的闭世界推导和那五个时态条件。
-`test_checks.py` 的 R2/R3 同理。于是「232 个测试全绿」这句话在生产查询路径上是虚的：
-`queries.knowledge_edges_at` 的 SQL、`KNOWS 压 BELIEVES`、`NodeLabel.SECRET` 校验、
-重复边的 StoreError、`secret_ids` 的默认列序——一条都没被执行过。唯一碰到真
-`knowledge_matrix` 的测试只断言了 `chapter<1` 抛 ValueError，**够不到 SQL**。
+`test_fake_graph.py` 的断言跑在 `FakeGraph` 上，而那个 Fake **自己手写了一遍**那五个
+时态条件。`test_checks.py` 的 R2/R3 同理。于是「测试全绿」这句话在生产查询路径上是虚的：
+真 SQL、`NodeLabel` 校验、重复边的 StoreError——一条都没被执行过。
+
+（这段原话点名的是 `knowledge_matrix` 那条路：闭世界推导、`KNOWS 压 BELIEVES`、
+`secret_ids` 的默认列序。**那条路 2026-08-25 随秘密下线删了**，ADR 0039——
+但这个文件的理由一个字没变，只是载体换成了 `state_at` 和 `resolve`。）
 
 Fake 本身没有错：它快、它是 Protocol 的参考实现、它让 panel/checks 的测试不依赖建库。
 错的是**没有任何东西把它钉在生产实现上**。一份被两处独立手写的规格，早晚会在其中一处
@@ -24,8 +25,8 @@ Fake 本身没有错：它快、它是 Protocol 的参考实现、它让 panel/c
 把场景降解成纯数据（`World`），再让 `build_*_store` fixture 把同一个 `World` 分别铺进
 Fake 和真 SQLite。**断言只有一份，后端有两个。**
 
-Fake 兜不住的三条（label 校验 / 重复边 StoreError / secret_ids 默认列序）在文件末尾单列，
-标着 `real only` 并写明 Fake 为什么够不着——它们是这次审计点名的「生产路径未覆盖」的余数。
+Fake 兜不住的那几条在文件末尾单列，标着 `real only` 并写明 Fake 为什么够不着——
+它们是这次审计点名的「生产路径未覆盖」的余数。
 
 ── 真库怎么建 ────────────────────────────────────────────────────────────
 
@@ -40,7 +41,7 @@ from dataclasses import dataclass, field
 
 import pytest
 from test_checks import FakeGraph as RulesFakeGraph
-from test_knowledge import FakeGraph as KnowledgeFakeGraph
+from test_fake_graph import FakeGraph as KnowledgeFakeGraph
 
 from novel_harness import importer, project
 from novel_harness.checks import CheckContext
@@ -83,18 +84,13 @@ def _node(node_id: str, label: NodeLabel, name: str, **props: object) -> Node:
     return Node(id=node_id, project_id=PID, label=label, name=name, props=NodeProps(**props))
 
 
-# 秘密的 id **按声明顺序升序**：ULID 的创建顺序就是作者的声明顺序（ADR 0003），而真库的
-# secret_ids 按 id 排。列在这里升序，两个后端的默认列序才可能对上——对不上就是 bug，
-# 见 test_secret_ids_default_order_is_the_declaration_order。
 XIAO_JUE = _node("character:conf:01J1", NodeLabel.CHARACTER, "萧决")
 GU_QINGYIN = _node("character:conf:01J2", NodeLabel.CHARACTER, "顾清音")
 LI_GUANJIA = _node("character:conf:01J3", NodeLabel.CHARACTER, "李管家")
-BLOODLINE = _node("secret:conf:01J4", NodeLabel.SECRET, "血脉秘密")
-XUANTIE = _node("secret:conf:01J5", NodeLabel.SECRET, "玄铁令下落")
 QINGYUN = _node("location:conf:01J6", NodeLabel.LOCATION, "青云城主府")
 BEIHUANG = _node("location:conf:01J7", NodeLabel.LOCATION, "北荒")
 
-CAST = (XIAO_JUE, GU_QINGYIN, LI_GUANJIA, BLOODLINE, XUANTIE, QINGYUN, BEIHUANG)
+CAST = (XIAO_JUE, GU_QINGYIN, LI_GUANJIA, QINGYUN, BEIHUANG)
 
 
 @dataclass(frozen=True)
@@ -203,9 +199,6 @@ def _populate(conn: Connection, world: World) -> Connection:
             "INSERT INTO node (id, project_id, label, name, props_json) VALUES (?,?,?,?,?)",
             (n.id, n.project_id, n.label.value, n.name, n.props.model_dump_json()),
         )
-        if n.label is NodeLabel.SECRET:
-            # 扩展表：主键就是 node.id。secret_ids（secrets=None 的那条路）只读这张表。
-            conn.execute("INSERT INTO secret (id, project_id) VALUES (?,?)", (n.id, n.project_id))
 
     for surface, targets in _alias_index(world).items():
         for t in targets:
@@ -252,7 +245,7 @@ def real_store() -> Iterator[Callable[[World], SqliteStoryGraph]]:
 
 @pytest.fixture(params=["fake", "real"])
 def matrix_store(request: pytest.FixtureRequest, real_store: Build) -> Build:
-    """认知矩阵那条路的两个后端。**下面每条断言都跑两遍。**"""
+    """`state_at` 那条路的两个后端。**下面每条断言都跑两遍。**"""
     if request.param == "real":
         return real_store
     return lambda world: KnowledgeFakeGraph(
@@ -273,11 +266,6 @@ def test_both_backends_satisfy_the_protocol(matrix_store: Build, rules_store: Bu
     # 通过。这条钉住「两个后端确实是两个东西」。
     assert isinstance(matrix_store(World()), StoryGraph)
     assert isinstance(rules_store(World()), StoryGraph)
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 1. 头牌：ch87 UNKNOWN / ch88 KNOWS / ch152 KNOWS（README 第一行的那句承诺）
-# ══════════════════════════════════════════════════════════════════════════
 
 
 # ══════════════════════════════════════════════════════════════════════════

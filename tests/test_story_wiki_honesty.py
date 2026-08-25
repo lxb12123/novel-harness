@@ -61,8 +61,8 @@ from novel_harness.graph import (
     InformationScope,
     NodeLabel,
     NodeRef,
+    NodeProps,
     NodeSpec,
-    SecretDetail,
 )
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.importer import CHAPTER_DIR, chapter_path
@@ -341,9 +341,9 @@ def _crowd_the_roster(book: Book) -> None:
         book.store.upsert_node(
             NodeSpec(
                 project_id=book.project_id,
-                label=NodeLabel.SECRET,
+                label=NodeLabel.FACTION,
                 name=f"某条秘密{i:03d}",
-                secret=SecretDetail(description="内容不许出现在任何工具返回里"),
+                props=NodeProps.model_validate({"plot_note": "内容不许出现在任何工具返回里"}),
             )
         )
     book.store.upsert_node(
@@ -353,10 +353,10 @@ def _crowd_the_roster(book: Book) -> None:
 
 
 def test_l0_says_which_kinds_of_names_it_dropped_entirely(book: Book) -> None:
-    """花名册按 (类型, 名字) 排序 + 从头收 ⇒ **`Secret` 永远是第一批被裁光的**。
+    """花名册按 (类型, 名字) 排序 + 从头收 ⇒ **排在后面的整类会被裁光**。
 
-    而 `book_index` 的工具描述自己承诺「人物 / 地点 / 门派 / 物件 / **秘密**的显示名」。
-    只报一个 `roster_omitted=28` 是不够的：模型读到的是「这本书没有任何秘密」，
+    而 `book_index` 的工具描述自己承诺「人物 / 地点 / 门派 / 物件的显示名」。
+    只报一个 `roster_omitted=28` 是不够的：模型读到的是「这本书没有任何地点」，
     而那正是它接下来会据以判断「这一章可以随便写」的东西。
     **裁了什么必须说出来 —— 是「什么」，不只是「多少条」。**
     """
@@ -366,12 +366,12 @@ def test_l0_says_which_kinds_of_names_it_dropped_entirely(book: Book) -> None:
 
     assert result.roster_omitted > 0, "这个窗口本来就装不下，装下了说明 fixture 失效了"
     assert {entry.label for entry in result.roster} == {"Character"}, (
-        "前提：排序 + 从头收让整批 Secret / Location 掉在了外面"
+        "前提：排序 + 从头收让整批 Faction / Location 掉在了外面"
     )
-    assert set(result.roster_labels_omitted) >= {"Secret", "Location"}, (
+    assert set(result.roster_labels_omitted) >= {"Faction", "Location"}, (
         "整整一类一条都没给到 —— 这件事必须物化成纯量，不能只留在 roster_omitted 那个总数里"
     )
-    assert any("Secret" in note for note in result.notes)
+    assert any("Faction" in note for note in result.notes)
 
 
 def test_l0_roster_truncation_has_a_way_to_get_the_rest(book: Book) -> None:
@@ -384,14 +384,14 @@ def test_l0_roster_truncation_has_a_way_to_get_the_rest(book: Book) -> None:
     _crowd_the_roster(book)
     tight = book.context(max_context_tokens=8_000, reserved_output_tokens=0)
 
-    only_secrets = BookIndex.model_validate_json(
-        _ok("book_index", tight, labels=["Secret"])
+    only_factions = BookIndex.model_validate_json(
+        _ok("book_index", tight, labels=["Faction"])
     )
-    assert [entry.label for entry in only_secrets.roster] == ["Secret"] * 5
-    assert only_secrets.roster_omitted == 0
-    assert only_secrets.roster_labels_omitted == []
+    assert [entry.label for entry in only_factions.roster] == ["Faction"] * 5
+    assert only_factions.roster_omitted == 0
+    assert only_factions.roster_labels_omitted == []
     # 过滤本身也是一次「少给」，它同样要说出来。
-    assert any("Secret" in note and "别的" in note for note in only_secrets.notes)
+    assert any("Faction" in note and "别的" in note for note in only_factions.notes)
 
     refused = dispatch(_call("book_index", labels=["主角"]), tight)
     assert refused.ok is False and "Character" in refused.content

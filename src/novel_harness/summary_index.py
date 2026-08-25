@@ -73,12 +73,11 @@ INDEXED_LABELS: Final = frozenset(
         NodeLabel.CHARACTER,
         NodeLabel.LOCATION,
         NodeLabel.FACTION,
-        NodeLabel.SECRET,
         NodeLabel.FORESHADOW,
         NodeLabel.OBJECT,
     }
 )
-"""进倒排表的 6 类节点。**判据是 `node.label`，仍然是集合判断**（同 `mentioned.py`）。
+"""进倒排表的 5 类节点。**判据是 `node.label`，仍然是集合判断**（同 `mentioned.py`）。
 
 差集正是 `StateDim` 和 `Chapter`，理由和前端 `AUTHORED_LABELS` 那张表一字不差：
 前者是引擎内部的状态维度（`修为` / `身份` / `健康` —— 这些词在总结里是常事，
@@ -87,7 +86,7 @@ INDEXED_LABELS: Final = frozenset(
 """
 
 _LABEL_ORDER: Final = {label: i for i, label in enumerate(NodeLabel)}
-"""芯片的分组顺序 = `NodeLabel` 的声明顺序（人物 → 地点 → 势力 → 秘密 → …）。
+"""芯片的分组顺序 = `NodeLabel` 的声明顺序（人物 → 地点 → 势力 → 伏笔 → …）。
 
 **不按「在这段字里第几个出现」排**：那要在读的时候再摸一遍正文，而这一层的全部
 主张就是「读的时候不摸文本，只查表」。组内按显示名排，于是同一份数据永远同一个顺序。

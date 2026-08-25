@@ -58,16 +58,15 @@ def book(tmp_path: Path) -> dict[str, str]:
     # 它是「在场角色」框里最容易被作者写进去的那类词，也是 PRODUCT 分支曾经的 500。
     ledger.declare_node(NodeLabel.LOCATION, "青云城主府")
     # 一个带 tell 的秘密：没有它，「续写全禁」和「tell 不外泄」两条断言都只是在验空集。
-    from novel_harness.graph import NodeProps, SecretDetail
+    from novel_harness.graph import NodeProps
     from novel_harness.graph.models import NodeSpec
 
     store.upsert_node(
         NodeSpec(
             project_id=pid,
-            label=NodeLabel.SECRET,
+            label=NodeLabel.FACTION,
             name="血脉秘密",
             props=NodeProps.model_validate({"twist": TWIST}),
-            secret=SecretDetail(),
         )
     )
     conn.commit()

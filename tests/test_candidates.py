@@ -59,7 +59,7 @@ from novel_harness.agent.tools import dispatch_all
 from novel_harness.db import Connection, connect
 from novel_harness.draft.capabilities import resolve_capabilities
 from novel_harness.draft.provider import CompletionResult, ProviderConfig, ToolCall
-from novel_harness.graph import NodeLabel, NodeProps, NodeSpec, SecretDetail
+from novel_harness.graph import NodeLabel, NodeProps, NodeSpec
 from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from calibration_seed import seed_calibration
@@ -113,10 +113,9 @@ def poisoned(book: dict[str, str]) -> dict[str, str]:
         store.upsert_node(
             NodeSpec(
                 project_id=book["pid"],
-                label=NodeLabel.SECRET,
+                label=NodeLabel.FACTION,
                 name="禁地之密",
-                props=NodeProps.model_validate({}),
-                secret=SecretDetail(description=SECRET_DESC),
+                props=NodeProps.model_validate({"plot_note": SECRET_DESC}),
             )
         )
         conn.commit()

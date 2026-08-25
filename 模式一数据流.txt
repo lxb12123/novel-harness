@@ -1,0 +1,338 @@
+════════════════════════════════════════════════════════════════════════════════════
+  模式一（协助模式）数据流 —— 逐段实读自代码，2026-08-22（第 3 版）
+  形态：作者自己写，引擎在右栏守着「谁在第几章还不该知道什么」
+  ⚠️ 模式一没有整章起草。「AI 起草」抽屉 2026-08-10 删，useDraft 2026-08-14 删。
+
+  第 2 版改了什么：第 1 版把后台 dispatcher 画成「保存的下游」——错的。
+  触发与执行之间隔着一张表，**有意**不是一条线（为的是重启能接着跑、wake 丢了不丢活）。
+
+  第 3 版改了什么（当天后续复核揪出来的四处）：
+    ① 后台不是「三支并列」，是**四段有序 DAG**，而且验证不过会把后面两支停掉；
+       中间还有一段「别名」，生产上没接线（adapter 传 None），但 DAG 里有它的位置。
+    ② 缝 3 写错了：**整章起草时认知矩阵是逐格进 prompt 的**，只有续写（本图这条路）没有。
+    ③ 缝 7 写反了：不是「无顺序保证」，是**有严格顺序**。
+    ④ 新增缝 9：保存后那次验证有通知出口，但**通知不带定位**。
+════════════════════════════════════════════════════════════════════════════════════
+
+  四条流。① 是唯一的写入源；②③④ 都从 ① 的产物里取，彼此之间无数据传递。
+
+
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│ 流 ①  正文变更  →  后台四段 DAG              【自动花钱的地方】                    │
+│                                                                                   │
+│   ⚠️ 关键结构：两个生产者 + 一张表 + 一个消费者。三者互不知道对方存在。            │
+└───────────────────────────────────────────────────────────────────────────────────┘
+
+  ┌─ 生产者 A：作者保存 ────────────────────────────────────────────────┐
+  │                                                                     │
+  │  作者在 CodeEditor 打字                                             │
+  │    │  正文字符串（CodeMirror doc）                                   │
+  │    ▼                                                                │
+  │  PUT /api/projects/{pid}/chapters/{n}/text              app.py:1091 │
+  │    │  ChapterSave { markdown, expected_text_sha256 }                │
+  │    ▼                                                                │
+  │  importer.save_chapter()      结构预检 → 章级锁 → os.replace → 落库  │
+  │    ├──▶ 磁盘 chapters/{n}.md          ← 正文唯一真相源（ADR 0007）   │
+  │    └──▶ 库   chapter_snapshot (id, text_sha256, generation)         │
+  │    │                                                                │
+  │    │  ChapterSaveReceipt { saved_to_disk, indexed, changed,          │
+  │    │      chapter_number, snapshot_id, snapshot_generation,          │
+  │    │      text_sha256, processing: reused|queued|attention_required  │
+  │    │                              |durability_failed|sync_failed }   │
+  │    ▼                                                                │
+  │  _trigger_refresh()                                     app.py:1121 │
+  │    │  先读 focus.is_focused(n) ─▶ skip_summary: bool                 │
+  │    │     作者正盯着那一章不排总结（防抖）；验证/抽取照跑              │
+  │    ▼                                                                │
+  │  ensure_refresh_coverage()   ← 只管 **这一章**                       │
+  └──────────────────────────────┬──────────────────────────────────────┘
+                                 │
+  ┌─ 生产者 B：30 分钟自治 ───────┼──────────────────────────────────────┐
+  │   ⚠️ 与保存完全无关。没人点任何东西也照跑。                          │
+  │                              │                                      │
+  │  autonomy_once()   每 AUTONOMY_INTERVAL = 30 分钟                    │
+  │    │  for book in list_all(conn):        ← **每一个项目**            │
+  │    ▼                                                                │
+  │  scan_chapter_summary_state()  确定性扫**全书**  summary_schedule.py │
+  │    │  每章三态 + 权重：                                              │
+  │    │    state  = paired | missing | stale                            │
+  │    │             （比 chapter_summary.source_snapshot_id 的 sha       │
+  │    │               和当前 chapter.text_sha256）                       │
+  │    │    weight = Δ=draft−n；Δ≤0 → 0.0；1≤Δ≤10 → 1.0；               │
+  │    │             Δ>10 → max(0, 1−(Δ−10)/50)                          │
+  │    │    needs_work = state != paired 且 weight > 0                   │
+  │    ▼                                                                │
+  │  schedule_alignment()   焦点章豁免；按权重排；一轮至多 limit=20 章    │
+  │    │                                                                │
+  │    ▼                                                                │
+  │  ensure_refresh_coverage()   ← 管**每一个 needs_work 的章**           │
+  └──────────────────────────────┬──────────────────────────────────────┘
+                                 │
+                                 ▼
+              ensure_refresh_coverage()              chapter_refresh.py:323
+                 │  算 mask（位掩码）—— **两个生产者共用同一个判据**
+                 │      BRANCH_VALIDATION = 1 ← validation_report 没有这一代的行
+                 │      BRANCH_SUMMARY    = 2 ← head.current_summary_id IS NULL
+                 │                              ⚠️ 章级判据，不看快照（见缝 8）
+                 │      BRANCH_EXTRACTION = 4 ← extraction_application 缺这一 run
+                 │  mask == 0 → reused，不建 attempt，不花钱
+                 ▼
+      ╔═══════════════════════════════════════════════════════╗
+      ║  表  chapter_refresh_attempt   (lease / fencing_token) ║  ← 唯一的交接点
+      ║      落表就算数；重启能接着跑；wake 丢了也不丢活        ║
+      ╚═══════════════════════════════╤═══════════════════════╝
+                                      │
+                                      ▼
+  ┌─ 消费者：dispatcher ──────────────────────────────────────────────────────────┐
+  │   ⚠️ 它不认「谁写的」，只认表。所以「保存后才有」这个直觉不成立。              │
+  │                                                                              │
+  │  BackgroundRuntime._loop()                     api/background_runtime.py:91  │
+  │    while not stop:                                                           │
+  │        pump_once()          ← **每 poll_seconds = 1 秒一波**                  │
+  │        if 到 30 分钟: autonomy_once()   ← 生产者 B 就挂在这个循环里            │
+  │        sleep(1.0)                                                            │
+  │                                                                              │
+  │  pump_once() = recover_claimable(conn, owner) → 逐个 _run_one()               │
+  │                （PENDING + 过期 RUNNING 都捞，不变量 18）                      │
+  │                                                                              │
+  │  默认开：os.environ.get("NH_BACKGROUND_RUNTIME", "1") == "1"    app.py:282    │
+  │          测试套件设 0 关掉；**生产不设这个变量 = 开**                          │
+  └──────────────────────────────┬───────────────────────────────────────────────┘
+                                 │  ChapterRefreshCoordinator.run(attempt_id)
+                                 ▼
+  ⚠️ **不是三支并列，是四段有序 DAG。** 前面的段决定后面的段跑不跑。
+
+  ┌─ ① 正文验证 ────────────────────────────────── 【不花钱，纯规则】
+  │    validate_snapshot()
+  │    ALL_CHECKS = R2 FUTURE_LEAK + R3 DEAD_SPEAKS（2 条）
+  │    └─▶ 表 validation_report
+  │          Issue 锚 = (para_index, quote_text, occurrence_k)   ← 禁 offset
+  │
+  │    gate = blocked / error  ─▶ 落一条通知（kind=validation_blocked，
+  │                                与 final gate 同事务，029 不变量）
+  │                            ─▶ **当场 return，②③④ 一个都不跑**
+  │                               通知原话：「新正文不会再自动生成总结与情节」
+  ▼
+  ┌─ ② 别名阶段 ──────────────────────────────────
+  │    ⚠️ **生产上没接线**：dispatcher 传 alias_adapter=None，这一段直接跳过。
+  │    接上之后：别名可能补齐 R2/R3 的输入 ⇒ 改变了就**再验一次**（二次验证才作数），
+  │    二次验证不过 ─▶ 同样 BLOCKED，后面照样不跑。
+  ▼
+  ┌─ ③ final gate ────────────────────────────────
+  │    别名阶段到终态 + 初次验证通过 ⇒ PASSED
+  ▼
+  ┌─ ④ 总结 ∥ 抽取 ───────── 这两支才是并行的（各自独立连接）
+  │
+  ├──▶ 滚动总结  RollingSummarizer.ensure()             【💰 一次模型调用】
+  │        │  幂等判据 = head 指向的那行是不是这份 prompt 产的（内容地址 + 状态）
+  │        │  机器结果走 job → result 审计 → CAS 切 head（ADR 0030）
+  │        │  CAS 失败只把 job/result 标 SUPERSEDED，不产生假 ACTIVE
+  │        └─▶ 表 chapter_summary + chapter_summary_head.current_summary_id
+  │              status ∈ ACTIVE | RETRACTED（作者可改可撤回，撤回是 tombstone）
+  │
+  └──▶ 抽取  ExtractionRunner.enqueue() → .run()        【💰 一次模型调用】
+            │  出参是封闭枚举 + 引语，模型不能自由造字段
+            ▼
+          extraction_report
+            ▼
+          auto_canon.promote_clean_facts()              extract/auto_canon.py
+            │  ⚠️ 静默升 CANON：不推队列、不弹提示（ADR 0020）
+            │  失败方向 fail-safe：升不上去就留在 PROVISIONAL，不进写作上下文
+            ├──▶ 干净的          ─▶ CANON 边          ← 作者事后可改可查
+            └──▶ 三个例外 bucket ─▶ 表 proposal (PENDING)  ← 唯一还打扰作者的地方
+                   edge_conflict / low_confidence_main / new_character
+
+
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│ 流 ②  右栏读数据                              【不花钱，纯查库】                   │
+└───────────────────────────────────────────────────────────────────────────────────┘
+
+ RightPanel  useCoords() → { projectId, chapter, cast, castInclude }
+   │
+   │  ⚠️ cast 作者没填时 → _effective_cast() 从本章正文推           app.py:221
+   │      mentioned_cast(store, pid, paragraphs)  按首次出现顺序去重
+   │      include 只往里加人，绝不减人 —— 少一个人 = 少一批禁令 = fail-open
+   ▼
+ ┌─ GET …/roster                  ─▶ [ {id, label, name} ]   ← props 不出去
+ │
+ ├─ GET …/chapters/{n}/mentioned  ─▶ { chapter, has_text: bool, surfaces: [str] }
+ │                                     has_text=false ≠ surfaces=[]
+ │
+ ├─ GET …/chapters/{n}/matrix     ─▶ KnowledgeMatrix {
+ │    ★ 头牌                             project_id, chapter, scope=CANON
+ │                                       version: GraphVersion       ← CAS 用
+ │                                       unresolved_cast: [str]
+ │                                       characters: [NodeRef]
+ │                                       secrets:    [NodeRef]
+ │                                       cells: [ KnowledgeCell {
+ │                                           character_id, secret_id,
+ │                                           state: KNOWS|BELIEVES|UNKNOWN,
+ │                                           since_chapter, believed_value,
+ │                                           evidence_id } ] }
+ │
+ ├─ GET …/chapters/{n}/constraints ─▶ SceneConstraints {
+ │                                       chapter: int
+ │                                       unresolved_cast: [str]
+ │                                       must_not_reveal:   [NodeRef]  ← 只有显示名
+ │                                       forbidden_entities:[ForbiddenEntity{
+ │                                           node, first_appears_chapter, surfaces}] }
+ │
+ └─ GET …/proposals               ─▶ 待确认队列（流 ① 的例外 bucket）
+
+  ⚠️ 这四条端点都没有 response_model（收窄 dict），前端靠手写 types.ts 兜底。
+     两端由 tests/test_frontend_contract.py + __fixtures__/api.json 钉着。
+
+
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│ 流 ③  行内续写                                【💰 唯一作者主动触发的花钱】        │
+└───────────────────────────────────────────────────────────────────────────────────┘
+
+ 作者停手 400ms（IDLE_MS）                                        continuation.ts:9
+   ▼
+ shouldSuggest(signal)  ← 默认「不问」：loading / hasSelection / hasSuggestion /
+   │                                      before 为空 —— 四条任一成立就不问
+   ▼
+ tailBefore(doc, pos)   按 code point 切最后 TAIL_LIMIT = 1000
+   │  ⚠️ 这一刀今天是唯一那一刀（后端产品路径能给到 40,000，见缝 6）
+   ▼
+ POST …/chapters/{n}/draft                              hooks.ts:461 useContinuation
+   │  { mode: "continuation", previous_tail: str,
+   │    length: { language:"zh", min_units:60, target_units:140, max_units:260 } }
+   │  ⚠️ 没有 goal（后端常量，ADR 0015 D3）   ⚠️ 没有 cast（走全禁，D4）
+   ▼
+ DraftRequest 校验    continuation 下 goal 必须为空，否则 422       app.py:1435
+   ▼
+ resolve_route_capabilities() + plan_call()
+   │  ▶ capability.max_context_tokens    ▶ plan.request_token_budget
+   │  模型没配好 → 422「先去顶栏 ⚙ AI 设置」
+   ▼
+ unknown_cast_constraints(store, pid, chapter)                   draft/context.py:229
+   │  cast 空 → scene_view(cast=()) → resolved.complete = False → 全禁
+   ▼
+ UnknownCastConstraints {                     ← 类型本身就是「退化了没有」的答案
+   │    chapter: int
+   │    must_not_reveal:    [NodeRef]         ← 全书所有未公开的秘密
+   │    forbidden_entities: [ForbiddenEntity] ← 只看章号，退化态里它仍精确
+   │    ⚠️ 没有 cast、没有 matrix —— 不许用空列表冒充「这一场没有人」
+   ▼
+ product_draft.draft_chapter() → assemble()                    draft/assemble.py
+   │  previous_tail_limit = product_tail_limit(max_context_tokens, budget)
+   │                      = max(800, min(窗口/2 × 1/6, 40_000))
+   │
+   │  进 prompt 的只有三样：
+   │    ctx.secret_labels   ─▶「沈孤鸿之死这一条，这一场还写不得。」   ← 显示名
+   │    ctx.forbidden_names ─▶「血枭盟要到第 47 章才头一回出现」       ← 名字本身即 tell
+   │    UNKNOWN_CAST_LINE   ─▶「【在场】未知。因此这一段不得说破任何尚未公开的秘密。」
+   │  ⚠️ .props 一个字符都不碰（tell 住在那儿）—— 第 4 道 arch-guard 钉着
+   ▼
+ provider → 模型 → { text: str }
+   ▼
+ 编辑器挂一条建议（askRef 对不上就丢掉 = 取消，不做增量失效）
+
+
+┌───────────────────────────────────────────────────────────────────────────────────┐
+│ 流 ④  检查（作者手动点）                       【不花钱】                          │
+└───────────────────────────────────────────────────────────────────────────────────┘
+
+ POST …/check  ─▶ { rules: [ {rule_id, issues: [Issue]} ] }
+   │  ALL_CHECKS = 2 条：R2 FUTURE_LEAK / R3 DEAD_SPEAKS
+   │  纯集合判断（ADR 0005）；Issue 锚 = (para_index, quote_text, occurrence_k)
+   └─ 与流 ① 的验证分支**同一个 service**，但不是「只是触发方不同」：
+        · 流① 那次是**自动跑**的，结果写进 validation_report，作者只能看到一句
+          笼统的通知（缝 9）；
+        · 这一次是**当场重跑一遍**，issues 带着锚直接回给界面。
+      ⇒ 同一套规则一天跑很多遍，而带定位的那份只有作者手动点才拿得到。
+
+
+════════════════════════════════════════════════════════════════════════════════════
+  钱在哪里花
+════════════════════════════════════════════════════════════════════════════════════
+   💰 流① 滚动总结   保存后 / 每 30 分钟自治    每章一次（幂等）     作者不知情
+   💰 流① 抽取       保存后 / 每 30 分钟自治    每章一次             作者不知情
+   💰 流③ 行内续写   作者停手 400ms 自动发                          作者不知情
+   ── 流②④ 全免费
+
+   ⚠️ 「工作台开着但没人动」也会花钱：30 分钟自治不需要任何点击，
+      每项目每轮至多 20 章（AUTONOMY_LIMIT = 20），且 mask == 0 → reused。
+
+   ⚠️ **它今天收敛，有一半是靠 bug 收敛的**（第 3 版补）：
+        · 权重门槛挡掉了往回超过 60 章的（缝 7 之外的那条，见任务台账第 1 条）；
+        · 缝 8 让改过正文的章排不进总结分支。
+      **修掉缝 8 之后收敛性要重新算一遍**——那时"要重买"的章 = 最近 60 章里
+      改过正文的，作者密集改稿的那几天这个数会顶到每轮上限。
+
+   ⚠️ 代码里防的是「重复付费」（幂等、防抖、默认不问），
+      **防的不是「作者不知道自己在付费」**。这是 BYOK，花的是作者自己的钱。
+
+
+════════════════════════════════════════════════════════════════════════════════════
+  接缝清单 —— 要做数据对齐，这几处是缝（第 3 版：8 条 → 10 条）
+════════════════════════════════════════════════════════════════════════════════════
+  1. cast 有两个来源，语义不同
+       流② _effective_cast()  = 从正文推（mentioned_cast），include 只加不减
+       流③ 恒为空             = 全禁退化态
+       同一章同一时刻，两边算出的 must_not_reveal 不是同一份，
+       而没有任何一处文档或注释写着这件事。
+       ⚠️ **后端那条路是支持传 cast 的**（`if body.cast:` 那一支走精确态）——
+          是前端一次都不传。不是引擎缺能力，是那条线没接。
+
+  2. 右栏四条端点没有 response_model
+       真相源是手写的 frontend/src/api/types.ts；改出参漏改它只有组件测试兜底
+
+  3. 认知矩阵：**整章起草拿得到，续写拿不到**（第 3 版更正，第 2 版这条写错了）
+       ✅ 整章起草（cast 解析成功）—— 矩阵**逐格**进 prompt，带起始章、带「误以为」那一态：
+              截至第 10 章的认知边界：
+              - 苏挽：知道「沈孤鸿之死」（第 9 章起）
+              - 萧决：还不知道「沈孤鸿之死」
+              - 李管家：误以为「血脉秘密」是「已泄露」（第 4 章起）
+       ❌ 续写（本图这条路）—— 走退化态，`_matrix_block` 第一行就返回空串：
+              if not isinstance(ctx, ResolvedConstraints): return ""
+       ❌ 模式二那个查约束的工具 —— 出参里没有矩阵（理由是**寿命**不是内容：
+              工具结果留在对话历史里，跨章之后过期，方向 fail-open）
+       ⚠️ `calibration/visibility.py` 的 KNOWS/BELIEVES → HIDDEN **不是洞，是分工**：
+              它的注释原话是「认知边界由后端即时安全约束渲染，**不经过** SceneBrief
+              的事实通道」——走另一条通道，不是不给。第 2 版把它读成了「拿不到」。
+
+  4. forbidden_entities 的名字自身即 tell
+       禁它就必须点它的名 → echo 风险 → 协议让 future_leak 只作描述性地板
+
+  5. first_appears_chapter 没有浏览器入口
+       2026-08-13 裁定「永远不会有输入框」；今天只有 HTTP 调用方能写
+       ⇒ 真书上很可能一条都没有 ⇒ 流③ 那句「血枭盟第 47 章首现」大概率从不出现
+
+  6. TAIL_LIMIT=1000 是前端常量，与后端 product_tail_limit() 无共享来源
+       后端准备给上万字，前端只送 1000
+
+  7. **验证是后面两支的闸门**（第 3 版更正：第 2 版写成「无顺序保证」，反了）
+       顺序是死的：① 验证 → ② 别名 → ③ final gate → ④ 总结 ∥ 抽取。
+       **验证 blocked/error 时当场 return，总结和抽取一个都不跑**，
+       而作者收到的通知原话是「新正文不会再自动生成总结与情节」。
+       ⇒ 真正要留意的不是「顺序不定」，是**一条规则报错会停掉整章的自动整理**。
+          将来加的语义核对（秘密说破 / 跟后面抵触）**绝不能挂这个 gate**，
+          否则作者改个老章就会把这一章的总结和抽取一起停掉。
+
+  8. 🔴 **stale 的章永远不会被重新总结**（2026-08-22 实测，见下）
+       调度器判 state='stale'、needs_work=True、返回 'queued_overwrite'，
+       但 ensure_refresh_coverage 算出的 mask = 5（验证|抽取），**没有总结位**。
+       原因：BRANCH_SUMMARY 的判据 `_head_missing()` 只看
+       「head.current_summary_id IS NULL」——**章级、不看快照**。
+       改过正文的章 head 还在，于是「不缺」。
+       两个生产者共用这个判据，所以保存那条路也一样漏。
+       ADR 0030 写着「新正文的机器总结可以正常替换它」——今天不成立。
+       测试只覆盖了 missing（没有总结），stale 一条都没有。
+
+  9. 保存后那次验证**有**通知出口，但**通知不带定位**
+       规则发现问题 → 落一条通知到右栏那一格。所以「结果丢了」这个说法不成立。
+       缺的是：那条通知只说「第 N 章的正文检查发现需要留意的地方」，
+       **不说哪条规则、哪一段、哪一句**——而 Issue 本来就带着精确的锚
+       （para_index / quote_text / occurrence_k），那个锚没跟着通知走。
+       作者要知道具体是什么，还得自己去右栏点一次「检查」**当场重跑一遍**。
+       ⇒ 同一套规则跑了两遍：一遍自动跑、结果只剩一句笼统的话；
+          另一遍要作者记得去点。（撞上「日志可跳转」那条期待。）
+
+ 10. 别名那一段在 DAG 里有位置，**生产上没接线**
+       dispatcher 传 `alias_adapter=None`，所以它今天永远跳过。
+       接上之后它会触发**二次验证**（别名可能补齐 R2/R3 的输入），
+       而二次验证不过同样 BLOCKED、同样停掉总结和抽取。
+       ⇒ 接线之前先想清楚缝 7 那条。
+════════════════════════════════════════════════════════════════════════════════════

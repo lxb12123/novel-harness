@@ -56,18 +56,21 @@ _NODE_ENTITY_VALUES: Final[frozenset[str]] = frozenset(
 class EntityType(StrEnum):
     """ID 第一段。**每个值对应一张实际有主键的表**（ADR 0005 的增长规则：没有表就没有值）。
 
-    前 8 个是 `NodeLabel` 的小写形（`node` 是全部 8 类节点的唯一身份表）。这个对应关系
+    前 7 个是 `NodeLabel` 的小写形（`node` 是全部 7 类节点的唯一身份表）。这个对应关系
     由 `tests/test_ids.py` 的交叉验证钉死——本模块**故意不 import graph**：ID 生成是
     图层的下游依赖，反过来 import 会让 `graph/` 的架构守卫多一条要解释的边。
 
-    `chapter` / `secret` 用的就是各自那个 node 的 id（它们是扩展表，主键 = node.id），
-    所以这里没有、也不该有单独的 chapter_row / secret_row 类型。
+    `chapter` 用的就是那个 node 的 id（它是扩展表，主键 = node.id），
+    所以这里没有、也不该有单独的 chapter_row 类型。
+
+    ⚠️ `SECRET = "secret"` 2026-08-25 随秘密下线一起删（ADR 0039）。**已经发出去的
+    `secret:…` 前缀 id 还在老库的 `decision_log.payload` 里**，但那是历史数据里的
+    字符串，没有任何代码要再解析它——这个枚举只被 `new_id()`（生成侧）用。
     """
 
     CHARACTER = "character"
     LOCATION = "location"
     FACTION = "faction"
-    SECRET = "secret"
     FORESHADOW = "foreshadow"
     OBJECT = "object"
     STATE_DIM = "statedim"

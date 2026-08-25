@@ -15,8 +15,8 @@
 from __future__ import annotations
 
 import pytest
-from test_knowledge import (
-    BLOODLINE,
+from test_fake_graph import (
+    QINGYUN,
     GU_QINGYIN,
     PID,
     XIAO_JUE,
@@ -43,10 +43,10 @@ SHORT = LengthSpec(language=DraftLanguage.ZH, min_units=80, target_units=150, ma
 
 
 def _store():
-    return build([edge(XIAO_JUE.id, BLOODLINE.id, EdgeType.KNOWS, 88)])
+    return build([edge(XIAO_JUE.id, QINGYUN.id, EdgeType.LOCATED_AT, 88)])
 def test_forbidden_entities_stay_exact_because_they_never_depended_on_cast() -> None:
     """未来实体是按章号算的，与在场无关——退化态里这一项**不该**跟着退化。"""
-    ctx = unknown_cast_constraints(_store(), PID, 152, secrets=[BLOODLINE.id])
+    ctx = unknown_cast_constraints(_store(), PID, 152)
     assert ctx.forbidden_names == ["幽泉窟"]
 
 
@@ -55,11 +55,10 @@ def test_forbidden_entities_stay_exact_because_they_never_depended_on_cast() -> 
 
 def test_the_degraded_type_cannot_masquerade_as_the_resolved_one() -> None:
     """两个类型不可互换，而且退化态**没有 cast 字段**——不许用空列表冒充「没有人在场」。"""
-    ctx = unknown_cast_constraints(_store(), PID, 152, secrets=[BLOODLINE.id])
+    ctx = unknown_cast_constraints(_store(), PID, 152)
 
     assert not isinstance(ctx, ResolvedConstraints)
     assert not hasattr(ctx, "cast")
-    assert not hasattr(ctx, "matrix")
 
 
 def test_resolved_constraints_still_refuses_an_empty_cast() -> None:
@@ -69,7 +68,7 @@ def test_resolved_constraints_still_refuses_an_empty_cast() -> None:
     「拿到这个类型 = 约束是算出来的」这句话就不再为真，而下游全靠它。
     """
     with pytest.raises(Exception):
-        ResolvedConstraints(chapter=1, cast=[], matrix=None)  # type: ignore[arg-type]
+        ResolvedConstraints(chapter=1, cast=[])
 
 
 # ── 2.5 「【在场】未知」那一块已经删了（M1-a，2026-08-22）───────────────────
@@ -78,13 +77,11 @@ def test_resolved_constraints_still_refuses_an_empty_cast() -> None:
 def test_the_degraded_prompt_says_nothing_about_who_is_present() -> None:
     """退化态的 prompt 里**没有**「【在场】未知」那一块。
 
-    它坏掉时代表：有人把那句话加了回来。加回来的代价不是多一行——「未知」两个字
-    不带任何信息，而它后半句（「因此这一段不得说破任何尚未公开的秘密」）和下面那条
-    禁写清单说的是同一件事，于是同一份 prompt 里同一条禁令说了两遍，模型仍然不知道
+    它坏掉时代表：有人把那句话加了回来。「未知」两个字不带任何信息，而模型仍然不知道
     这一场有谁。要把这一块变准就得知道在场是谁，而续写的那一刻它还没被写出来——
     那份精度只有保存之后的验证侧算得准（`docs_dev` 2026-08-22 M1-a）。
     """
-    ctx = unknown_cast_constraints(_store(), PID, 152, secrets=[BLOODLINE.id])
+    ctx = unknown_cast_constraints(_store(), PID, 152)
 
     body = "\n".join(
         m["content"]
@@ -98,11 +95,10 @@ def test_the_degraded_prompt_says_nothing_about_who_is_present() -> None:
 def test_what_is_left_of_the_degraded_prompt_all_still_carries_information() -> None:
     """**删过头也要红。** 剩下的每一块都还在，而且每一块都带着信息。
 
-    它坏掉时代表：M1-a 连**不依赖在场**的那两块也一起删了——
-    粗的禁写清单（全书未公开的秘密，写时当提醒）和尚未登场的实体
+    它坏掉时代表：M1-a 连**不依赖在场**的那一块也一起删了——尚未登场的实体
     （只看章号算，退化态里仍然精确）。那样退化态的 prompt 就只剩一句空提示。
     """
-    ctx = unknown_cast_constraints(_store(), PID, 152, secrets=[BLOODLINE.id])
+    ctx = unknown_cast_constraints(_store(), PID, 152)
 
     body = assemble(ctx, form=PromptForm.X1, goal=CONTINUATION_GOAL, length=SHORT)[-1][
         "content"
@@ -110,22 +106,13 @@ def test_what_is_left_of_the_degraded_prompt_all_still_carries_information() -> 
 
     assert "尚未登场、这一场不得出现：幽泉窟（第 200 章首现）" in body
     assert CONTINUATION_GOAL in body
-def test_the_degraded_context_injects_no_knowledge_matrix() -> None:
-    """没有 cast 就没有矩阵行。渲一个空矩阵等于说「查过了，没人知道任何事」——那是假的。"""
-    ctx = unknown_cast_constraints(_store(), PID, 152, secrets=[BLOODLINE.id])
-    for form in (PromptForm.X1, PromptForm.X2):
-        assert "认知边界" not in assemble(
-            ctx, form=form, goal=CONTINUATION_GOAL, length=SHORT
-        )[-1]["content"]
-
-
 def test_the_resolved_path_is_byte_identical() -> None:
     """kill-gate 走的那条路径一个字节没动 —— 加分支那次没动，M1-a 删分支这次也没动。
 
     坏掉的形态：有人为了让两条路径「长得一样」而顺手改了 `_base()` 里在场行的措辞——
     X0/X1/X2 三臂的 prompt 全变，而 `runs/*.jsonl` 里的历史结果再也不可比。
     """
-    ctx = resolve_constraints(_store(), PID, 152, [GU_QINGYIN.name], secrets=[BLOODLINE.id])
+    ctx = resolve_constraints(_store(), PID, 152, [GU_QINGYIN.name])
     messages = assemble(ctx, form=PromptForm.X0, goal="试探", length=SHORT)
 
     assert messages[-1]["content"] == "【在场】\n顾清音\n\n【这一场要写】\n试探"

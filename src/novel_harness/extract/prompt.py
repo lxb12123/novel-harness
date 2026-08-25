@@ -13,7 +13,12 @@ __all__ = [
 
 
 ANALYSIS_SCHEMA_VERSION: Final = "chapter-analysis-v1"
-ANALYSIS_PROMPT_VERSION: Final = "chapter-analysis-prompt-v6"
+ANALYSIS_PROMPT_VERSION: Final = "chapter-analysis-prompt-v7"
+"""v7（2026-08-25）：拿掉 `revealed_facts`。秘密下线之后它无处可解（ADR 0039）。
+
+⚠️ **改这段 prompt 的正文会改 `prompt_hash`，而 `prompt_hash` 是 `extraction_run`
+的唯一键的一部分**——改一个字 = 全书每一章都得重新调一次模型。别为了措辞好看改它。
+"""
 
 _SYSTEM_PROMPT: Final = f"""You extract structured facts from one supplied novel chapter.
 Schema version: {ANALYSIS_SCHEMA_VERSION}. Prompt version: {ANALYSIS_PROMPT_VERSION}.
@@ -25,8 +30,7 @@ Extract events at story-beat granularity. Return 1-12 events, never scene-sized 
 
 Every event is exactly this object:
 {{"summary": string, "quote": string, "participants": [surface names],
-  "knowers": [surface names], "revealed_facts": [short factual statements],
-  "confidence": number from 0 through 1}}
+  "knowers": [surface names], "confidence": number from 0 through 1}}
 
 Every state update is exactly this object:
 {{"kind": "location" or "state" or "relationship" or "death", "subject": surface name,

@@ -84,7 +84,6 @@ def _valid_json() -> str:
                     "quote": "顾清音从袖中取出密信，轻轻放在案上。",
                     "participants": ["顾清音"],
                     "knowers": ["顾清音", "萧决"],
-                    "revealed_facts": ["顾清音持有密信"],
                     "confidence": 0.95,
                 }
             ],

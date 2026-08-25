@@ -99,7 +99,6 @@ def _ingest_event(book: dict[str, str], *, summary: str, promote: bool = False) 
                         quote=QUOTE,
                         participants=("萧决", "顾清音"),
                         knowers=("萧决",),
-                        revealed_facts=(),
                         confidence=0.95,
                     ),
                 ),

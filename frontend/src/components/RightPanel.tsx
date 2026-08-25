@@ -158,7 +158,7 @@ function CastLine({ chapter }: { chapter: number }) {
   if (!mentioned.data) return null;
   if (!mentioned.data.has_text) {
     return (
-      <div className="castline dim">{`${which}还没有正文，下面按「全书秘密都不能说破」显示。`}</div>
+      <div className="castline dim">{`${which}还没有正文，下面按「这一场不知道有谁」显示。`}</div>
     );
   }
   if (!mentioned.data.surfaces.length) {

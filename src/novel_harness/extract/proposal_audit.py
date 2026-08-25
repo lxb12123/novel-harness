@@ -85,7 +85,6 @@ def _event_payload(view: EventView, evidence: Evidence) -> dict[str, Any]:
         "summary": view.event.summary,
         "participants": [node.name for node in view.participants],
         "knowers": [node.name for node in view.knowers],
-        "revealed_facts": [node.name for node in view.revealed_facts],
         "evidence": _evidence_payload(evidence),
     }
 

@@ -43,7 +43,6 @@ from novel_harness.graph import (
     NodeLabel,
     NodeProps,
     NodeSpec,
-    SecretDetail,
 )
 from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_proposals import SqliteProposalStore
@@ -273,7 +272,6 @@ def _poison_analysis() -> RawChapterAnalysis:
                 participants=("顾清音", "萧决"),
                 knowers=("顾清音",),
                 # 事件揭示的正是那个带毒的秘密：payload 里会出现它的**名字**。
-                revealed_facts=("血脉秘密",),
                 confidence=0.95,
             ),
         ),
@@ -314,10 +312,9 @@ def poisoned(book: dict[str, str]) -> dict[str, str]:
         graph.upsert_node(
             NodeSpec(
                 project_id=pid,
-                label=NodeLabel.SECRET,
+                label=NodeLabel.FACTION,
                 name="血脉秘密",
-                props=NodeProps.model_validate({"twist": TWIST}),
-                secret=SecretDetail(description=SECRET_TEXT),
+                props=NodeProps.model_validate({"twist": TWIST, "plot_note": SECRET_TEXT}),
             )
         )
         # 地点上挂 plot_note，且登场章在未来——`api/app.py::_narrow` 的两条判据都命中。
@@ -470,7 +467,6 @@ def _thin_analysis() -> str:
                 quote=QUOTE,
                 participants=("萧决",),
                 knowers=("萧决",),
-                revealed_facts=(),
                 confidence=0.95,
             ),
         ),
@@ -517,12 +513,12 @@ def test_detail_does_not_serialize_props_that_a_writer_smuggled_into_the_payload
             project_id=pid,
             kind=DecisionKind.NODE_DECLARE,
             decision=Verdict.ACCEPT,
-            subject_name="血脉秘密",
+            subject_name="青云城主府",
             payload={
                 "node": {
-                    "id": book["血脉秘密"],
-                    "label": "Secret",
-                    "name": "血脉秘密",
+                    "id": book["青云城主府"],
+                    "label": "Location",
+                    "name": "青云城主府",
                     "props": {"twist": TWIST},
                 },
                 "future": {
@@ -539,28 +535,12 @@ def test_detail_does_not_serialize_props_that_a_writer_smuggled_into_the_payload
     assert r.status_code == 200, r.text
     assert TWIST not in r.text and PLOT_NOTE not in r.text
     assert r.json()["payload"]["node"] == {
-        "id": book["血脉秘密"],
-        "label": "Secret",
-        "name": "血脉秘密",
+        "id": book["青云城主府"],
+        "label": "Location",
+        "name": "青云城主府",
     }
 
 
-def test_declaring_a_secret_does_not_put_its_description_in_the_log(
-    client: TestClient, book: dict[str, str]
-) -> None:
-    """今天六个写入点一个都不带秘密正文——把这件事钉住，别哪天顺手加进 payload。"""
-    pid = book["pid"]
-    created = client.post(
-        f"/api/projects/{pid}/nodes",
-        json={"label": "Secret", "name": "玄铁令下落", "description": "其实在北荒的井里"},
-    )
-    assert created.status_code == 200, created.text
-    entries = _entries(client, pid, limit=200)
-    secret_rows = [e for e in entries if e["subtitle"].startswith("玄铁令下落")]
-    assert secret_rows, f"没找到那条声明：{[e['subtitle'] for e in entries]}"
-    r = client.get(f"/api/projects/{pid}/activity/{secret_rows[0]['id']}")
-    assert r.status_code == 200, r.text
-    assert "其实在北荒的井里" not in r.text
 def _a_writer_that_logs_what_it_was_handed(project_id: str) -> dict[str, Any]:
     """一个**故意会漏的写入方**：把 `declare_node` 收到的入参原样记进日志。
 
@@ -571,10 +551,9 @@ def _a_writer_that_logs_what_it_was_handed(project_id: str) -> dict[str, Any]:
     """
     spec = NodeSpec(
         project_id=project_id,
-        label=NodeLabel.SECRET,
+        label=NodeLabel.FACTION,
         name="血脉秘密",
-        props=NodeProps.model_validate({"twist": TWIST}),
-        secret=SecretDetail(description=SECRET_TEXT),
+        props=NodeProps.model_validate({"twist": TWIST, "plot_note": SECRET_TEXT}),
     )
     return {"spec": spec.model_dump(mode="json")}
 
@@ -584,8 +563,10 @@ def test_the_net_catches_a_writer_that_logs_the_declaration_it_received(
 ) -> None:
     """守卫的自守卫（漏的那一半）：种一个真会漏的写入方，网必须抓得住。
 
-    **秘密的正文有两个存放处**：`props`（`extra="allow"` 的那条）和 `secret` 扩展行。
-    只兜住前者的网，会把后者原样交出去——而后者才是作者真正打字打进去的那段。
+    ⚠️ 这条原来的论证是「作者写的东西有**两个**存放处：`props` 和 `secret` 扩展行，
+    只兜住前者的网会把后者原样交出去」。**秘密下线之后只剩 `props` 一个存放处**
+    （ADR 0039）——所以这条今天量的是「`props` 里的每一个键都被丢掉」，而不再是
+    「两种存法都被丢掉」。再出现第二个存放处时，得有人回来把那一半加回去。
     """
     pid = book["pid"]
     conn = connect(book["db"])
@@ -593,7 +574,7 @@ def test_the_net_catches_a_writer_that_logs_the_declaration_it_received(
         leaked = decisions.append(
             conn,
             project_id=pid,
-            kind=DecisionKind.SECRET_DECLARE,
+            kind=DecisionKind.NODE_DECLARE,
             decision=Verdict.ACCEPT,
             subject_name="血脉秘密",
             payload=_a_writer_that_logs_what_it_was_handed(pid),
@@ -603,12 +584,18 @@ def test_the_net_catches_a_writer_that_logs_the_declaration_it_received(
     r = client.get(f"/api/projects/{pid}/activity/{leaked.id}")
     assert r.status_code == 200, r.text
     assert TWIST not in r.text, "props 上的毒漏了"
-    assert SECRET_TEXT not in r.text, "secret 扩展行的毒漏了"
+    assert SECRET_TEXT not in r.text, "第二个 props 键上的毒漏了"
     # 反向：名字还在，作者看得出这条日志说的是哪个秘密。
     assert "血脉秘密" in r.text
 def test_narrow_payload_empties_the_secret_extension_row() -> None:
-    """单测那两条新规则：扩展行整份清空、窄引用一个字不动。"""
-    detail = SecretDetail(description=SECRET_TEXT).model_dump(mode="json")
+    """单测那两条规则：历史扩展行整份清空、窄引用一个字不动。
+
+    ⚠️ **这一条今天罩的是历史数据**（ADR 0039）：`secret` 那张扩展表 2026-08-25 删了，
+    所以没有写入方再产出这个形状。但 `decision_log` 三个触发器封死了 DELETE——
+    那之前写下的 `secret_declare` 行还躺在库里，payload 里就是作者手打的那段秘密正文。
+    收窄网因此留着，这条测试跟着留着。字典这里手写，因为那个模型也一起删了。
+    """
+    detail = {"description": SECRET_TEXT, "sub_of": None}
     narrow_ref = {"id": "s", "label": "Secret", "name": "血脉秘密"}
 
     assert activity.narrow_payload({"secret": detail}) == {"secret": {}}

@@ -16,7 +16,7 @@ import pytest
 
 from novel_harness.db import connect, migrate
 from novel_harness.declare import Ledger
-from novel_harness.graph import AliasKind, NodeLabel, NodeProps, NodeSpec, SecretDetail
+from novel_harness.graph import AliasKind, NodeLabel, NodeProps, NodeSpec
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.mentioned import mentioned_cast
 from novel_harness import project
@@ -40,13 +40,14 @@ def store_pid(tmp_path: Path) -> tuple[SqliteStoryGraph, str]:
     ledger.declare_alias(of="萧决", surface="师兄", kind=AliasKind.TITLE)
     ledger.declare_alias(of="李管家", surface="师兄", kind=AliasKind.TITLE)
 
+    # 一个**非 Character** 的花名册条目：`mentioned_cast` 只收 Character，
+    # 而「玄铁令」在下面的段落里出现过——它不许被算成在场的人。
     store.upsert_node(
         NodeSpec(
             project_id=pid,
-            label=NodeLabel.SECRET,
-            name="血脉秘密",
+            label=NodeLabel.OBJECT,
+            name="玄铁令",
             props=NodeProps.model_validate({}),
-            secret=SecretDetail(),
         )
     )
     conn.commit()
@@ -229,12 +230,3 @@ def test_推出来的cast是被提到的那些人_不是真在场(
     mentioned = mentioned_cast(store, pid, ["萧决推开门。"])
     assert mentioned == ["萧决"], "正文里提到谁就是谁，不多不少"
     assert mentioned_cast(store, pid, ["风雪落了一夜。"]) == [], "一个人都没提到就是空"
-
-
-def _all_secrets(store: SqliteStoryGraph, pid: str) -> list:
-    seen = {}
-    for resolution in store.resolve(pid, None):
-        for hit in resolution.hits:
-            if hit.node.label is NodeLabel.SECRET:
-                seen[hit.node.id] = hit.node
-    return list(seen.values())

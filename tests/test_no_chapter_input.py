@@ -162,16 +162,14 @@ def callable_chapter_params(func: Any) -> list[str]:
 
 
 def test_fact_edit_request_schemas_have_no_chapter_field() -> None:
-    """四个改正入参模型（三条 `/canon/…` + 提案 `edit`）里一个章号字段都没有。
+    """三个改正入参模型（`/canon/events/{id}/cast` + 提案 `edit`）里一个章号字段都没有。
 
-    `KnowledgeAddRequest`（2026-08-14「补一条」）**尤其**要在这张单子上：它那条路由的
-    路径上就有一个 `{chapter}`，而「路径上已经有了，请求体里顺手也收一个吧」是这几个
-    schema 里最容易长出章号的一个——收下的那一刻，界面上就有理由画一个框让作者去填它。
+    （2026-08-14 起这张单子上还有 `KnowledgeAddRequest`，它那条路由的路径上就有一个
+    `{chapter}`，是最容易长出章号的一个。它随秘密下线一起删了，ADR 0039——
+    **那条理由仍然是这张单子的判据**：路径上已经有了 ≠ 请求体里可以顺手也收一个。）
     """
     from novel_harness.api.review import (
         EventCastEditRequest,
-        KnowledgeAddRequest,
-        KnowledgeEditRequest,
         ProposalEditRequest,
     )
     from novel_harness.extract.proposal_models import ProposalReview
@@ -179,8 +177,6 @@ def test_fact_edit_request_schemas_have_no_chapter_field() -> None:
     offenders = {
         model.__name__: model_chapter_fields(model)
         for model in (
-            KnowledgeEditRequest,
-            KnowledgeAddRequest,
             EventCastEditRequest,
             ProposalEditRequest,
             ProposalReview,

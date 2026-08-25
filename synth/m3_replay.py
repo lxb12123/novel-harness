@@ -30,7 +30,6 @@ from novel_harness.graph import (
     EdgeType,
     HealthValue,
     InformationScope,
-    KnowledgeMatrix,
     Node,
     NodeLabel,
     NodeProps,
@@ -138,17 +137,6 @@ class OverlayGraph:
             evidence_id=None,
         )
         return snapshot.model_copy(update={"states": [*snapshot.states, dead_value]})
-
-    def knowledge_matrix(
-        self,
-        project_id: str,
-        chapter: int,
-        cast: Sequence[str],
-        *,
-        secrets: Sequence[str] | None = None,
-        scope: InformationScope = InformationScope.CANON,
-    ) -> KnowledgeMatrix:
-        raise NotImplementedError
 
     def subgraph(
         self,

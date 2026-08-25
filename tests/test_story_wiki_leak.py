@@ -94,7 +94,6 @@ from novel_harness.graph import (
     NodeProps,
     NodeRef,
     NodeSpec,
-    SecretDetail,
 )
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.importer import CHAPTER_DIR, chapter_path
@@ -106,38 +105,44 @@ from calibration_seed import seed_calibration
 # 毒：作者写在图上的东西。**出现在任何一个模型看得见的面上都是泄漏。**
 # ══════════════════════════════════════════════════════════════════════════
 
-TWIST = "萧决其实是魔尊之子第200章揭晓"
-"""`props.twist`，挂在一个**已经登场**的秘密上（`graph.models.NodeRef` 记的实测形态之一）。"""
+# ⚠️ 2026-08-25：这批毒**掉了一味**（ADR 0039）。
+#
+# 原来有一条 `SECRET_DESC = "血脉的真相是他母亲换了孩子"`，落在 `secret` 扩展表的
+# `description` 列上。它的价值在于**它不在 `props` 里**——「本层不读 props」这条纪律
+# 拦不住它，所以它逼着收窄按结构做而不是按字段名做。
+#
+# 秘密下线之后那张表没了，**作者写的东西今天只有 `node.props` 这一个存放处**。
+# 这不是「毒配得更好了」，是这张网少罩了一种形状：**再有第二个存放处出现时
+# （扩展表、侧车表、随便什么），得有人重新往这里加一味毒**，因为剩下的这几味
+# 全都走 `props`，它们证明不了收窄对第二个存放处也管用。
 
-SECRET_DESC = "血脉的真相是他母亲换了孩子"
-"""`secret` 扩展表的 `description`。它不在 `props` 里，所以「不读 props」拦不住它。"""
+TWIST = "萧决其实是魔尊之子第200章揭晓"
+"""`props.twist`，挂在一个**已经登场**的势力上（`graph.models.NodeRef` 记的实测形态之一）。"""
 
 PLOT_NOTE = "萧决在幽泉窟被顾清音所杀"
 """`props.plot_note`，挂在一个第 200 章才首现的**未来地点**上（实测形态之二）。"""
 
 FUTURE_TWIST = "顾清音在第300章亲手弑师"
-"""挂在一个**还没登场的秘密**上。这一档 3.1 的 fixture 里没有：那儿的秘密没有
-`first_appears_chapter`，于是花名册那条「未来实体」分支在秘密上一次都没跑过。"""
+"""挂在一个**还没登场的物件**上。"""
 
 TELL = "玄血蛊"
-"""秘密的**非 canonical 别名 = 内容 tell**（`panel/constraints.secret_surfaces` 的论证）。
-它进对话就是把检测器要找的那个词自己写进去，所以索引层一个别名都不许出。"""
+"""已登场那个节点的**非 canonical 别名**。别名里装着作者的意图（ADR 0004 说别名差异
+「是 canon，不是噪声」），所以索引层一个别名都不许出，只出显示名。"""
 
 EVENT_SUMMARY = "顾清音在藏书阁读到血脉的真相是他母亲换了孩子"
 """事件读端交给索引层的 `StoryEvent.summary`。L1 只该数章号，**不该把它转发出去**。"""
 
 POISON: dict[str, str] = {
-    "已登场秘密 props 上的 twist": TWIST,
-    "secret 扩展表的 description": SECRET_DESC,
+    "已登场势力 props 上的 twist": TWIST,
     "未来地点 props 上的 plot_note": PLOT_NOTE,
-    "未登场秘密 props 上的 twist": FUTURE_TWIST,
-    "秘密的内容 tell（非 canonical 别名）": TELL,
+    "未登场物件 props 上的 twist": FUTURE_TWIST,
+    "非 canonical 别名": TELL,
     "事件读端交进来的事件摘要": EVENT_SUMMARY,
 }
 
 # ── 反向断言的料：这些**必须**出现，收窄过头是同一个 bug 的另一面 ──────────
-SECRET_NAME = "血脉秘密"
-FUTURE_SECRET_NAME = "弑师之约"
+POISONED_NAME = "血枭盟"
+FUTURE_OBJECT_NAME = "弑师之约"
 FUTURE_PLACE = "幽泉窟"
 
 WORKING_CHAPTER = 2
@@ -165,7 +170,7 @@ class PoisonedBook:
     project_id: str
     store: SqliteStoryGraph
     root: Path
-    secret_id: str
+    poisoned_id: str
     calibrations: Any = None
     author_turn: Any = None
 
@@ -175,7 +180,7 @@ class PoisonedBook:
             "project_id": self.project_id,
             "root_path": str(self.root),
             "summaries": SummaryStore(self.conn),
-            "events": PoisonedEvents(self.secret_id),
+            "events": PoisonedEvents(),
             "calibrations": self.calibrations,
             "author_turn": self.author_turn,
             "working_chapter": WORKING_CHAPTER,
@@ -186,15 +191,14 @@ class PoisonedBook:
 
 @dataclass
 class PoisonedEvents:
-    """一个**故意带毒**的事件读端：它交给索引层的 `EventView` 里装着事件摘要和被揭示的秘密。
+    """一个**故意带毒**的事件读端：它交给索引层的 `EventView` 里装着事件摘要。
 
-    真的 `SqliteEventStore` 也会交这些（`EventView` 上就有 `event.summary` 和
-    `revealed_facts`）—— 换句话说这不是一个假想的坏端口，它是**真端口的形状**。
+    真的 `SqliteEventStore` 也会交这个（`EventView` 上就有 `event.summary`）——
+    换句话说这不是一个假想的坏端口，它是**真端口的形状**。
     索引层只该从里面数章号；把 `view` 整份 `model_dump_json()` 出去是最省事的写法，
     而这个桩就是用来钉住那条最省事的路走不通。
     """
 
-    secret_id: str
     asked: list[tuple[Sequence[str], int, InformationScope]] = field(default_factory=list)
 
     def events_for_characters(
@@ -224,9 +228,6 @@ class PoisonedEvents:
                 ),
                 participants=cast,
                 knowers=cast,
-                revealed_facts=[
-                    NodeRef(id=self.secret_id, label=NodeLabel.SECRET, name=SECRET_NAME)
-                ],
             )
             for number in (2, 4)
         ]
@@ -250,26 +251,23 @@ def book(tmp_path: Path) -> Iterator[PoisonedBook]:
 
     for name in ("萧决", "顾清音"):
         store.upsert_node(NodeSpec(project_id=pid, label=NodeLabel.CHARACTER, name=name))
-    secret = store.upsert_node(
+    poisoned = store.upsert_node(
         NodeSpec(
             project_id=pid,
-            label=NodeLabel.SECRET,
-            name=SECRET_NAME,
+            label=NodeLabel.FACTION,
+            name=POISONED_NAME,
             props=NodeProps.model_validate({"twist": TWIST}),
-            secret=SecretDetail(description=SECRET_DESC),
         )
     )
-    # 内容 tell 挂成非 canonical 别名 —— 这是合成小册子里那条「唯一专名 tell」的形状。
-    store.add_alias(AliasSpec(project_id=pid, node_id=secret.id, surface=TELL))
+    store.add_alias(AliasSpec(project_id=pid, node_id=poisoned.id, surface=TELL))
     store.upsert_node(
         NodeSpec(
             project_id=pid,
-            label=NodeLabel.SECRET,
-            name=FUTURE_SECRET_NAME,
+            label=NodeLabel.OBJECT,
+            name=FUTURE_OBJECT_NAME,
             props=NodeProps.model_validate(
                 {"first_appears_chapter": 300, "twist": FUTURE_TWIST}
             ),
-            secret=SecretDetail(description=FUTURE_TWIST),
         )
     )
     store.upsert_node(
@@ -310,7 +308,7 @@ def book(tmp_path: Path) -> Iterator[PoisonedBook]:
         project_id=pid,
         store=store,
         root=root,
-        secret_id=secret.id,
+        poisoned_id=poisoned.id,
         calibrations=calibrations,
         author_turn=author_turn,
     )
@@ -447,10 +445,10 @@ def surfaces_of(book: PoisonedBook) -> dict[str, str]:
             # **这里故意不拿内容 tell（`TELL`）去问。** 拒绝语会把称呼原样回显，而那个串是
             # 模型自己打进来的——把它算成「工具交出去的东西」会让这张网抓自己的尾巴。
             # 那条路单独由 `test_a_refusal_echoes_only_what_the_model_typed` 量。
-            _call("character_chapters", characters=[SECRET_NAME]),
+            _call("character_chapters", characters=[POISONED_NAME]),
             _call("character_chapters", characters=[FUTURE_PLACE]),
             _call("chapter_text", chapter=200),
-            _call("character_state", chapter=WORKING_CHAPTER, character=FUTURE_SECRET_NAME),
+            _call("character_state", chapter=WORKING_CHAPTER, character=FUTURE_OBJECT_NAME),
         ],
         context,
     )
@@ -482,8 +480,7 @@ def test_no_wiki_surface_ever_carries_secret_content(book: PoisonedBook) -> None
     assert not offenders, (
         "书内索引把秘密交出去了：\n  " + "\n  ".join(offenders) + "\n"
         "章标题 / 摘要 / 正文这三个面长得无辜，但它们经手的对象和约束类工具是同一批："
-        "`NodeProps` 是 extra=\"allow\"，`SecretDetail.description` 不在 props 里，"
-        "而 `EventView` 自带 `event.summary` 和 `revealed_facts`。\n"
+        "`NodeProps` 是 extra=\"allow\"，而 `EventView` 自带 `event.summary`。\n"
         "这是不可回收的：对话是持久化的，交出去过的那段话改代码删不掉。"
     )
 
@@ -519,13 +516,13 @@ def test_the_wiki_net_is_not_vacuously_clean(book: PoisonedBook) -> None:
     assert text.text.strip(), "正文那一面是空的"
 
     # 毒真的在图上（fixture 自己漏了的话，上面每一条都是在搜一个不存在的串）。
-    node = book.store.resolve(book.project_id, [SECRET_NAME])[0].hits[0].node
+    node = book.store.resolve(book.project_id, [POISONED_NAME])[0].hits[0].node
     assert node.props.model_dump().get("twist") == TWIST
     assert TELL in {
         resolution.surface
         for resolution in book.store.resolve(book.project_id)
-        if resolution.hits and resolution.hits[0].node.id == book.secret_id
-    }, "内容 tell 那条别名没落进库 —— 「别名一个都不出」这条断言是空的"
+        if resolution.hits and resolution.hits[0].node.id == book.poisoned_id
+    }, "那条非 canonical 别名没落进库 —— 「别名一个都不出」这条断言是空的"
 
 
 def test_the_wiki_net_catches_a_leaky_layer(
@@ -557,7 +554,7 @@ def test_the_wiki_net_does_not_cry_wolf(
     outcome = dispatch(_call(CLEAN_PROBE.name, chapter=WORKING_CHAPTER), book.context())
     assert outcome.ok, outcome.content
     assert leaks("干净层的返回", outcome.content) == []
-    assert SECRET_NAME in outcome.content
+    assert POISONED_NAME in outcome.content
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -579,7 +576,7 @@ def test_the_wiki_still_shows_the_names_the_author_needs(book: PoisonedBook) -> 
         heading for _, (heading, _) in sorted(CHAPTERS.items())
     ], "章标题必须逐字给 —— 目录没有标题就只是一串数字"
     names = {entry.name for entry in index.roster}
-    assert {"萧决", "顾清音", SECRET_NAME, FUTURE_PLACE, FUTURE_SECRET_NAME} <= names
+    assert {"萧决", "顾清音", POISONED_NAME, FUTURE_PLACE, FUTURE_OBJECT_NAME} <= names
 
     digest = ChapterSummaries.model_validate_json(
         _ok("chapter_summaries", context, first_chapter=1, last_chapter=2)
@@ -604,7 +601,7 @@ def test_a_refusal_echoes_only_what_the_model_typed(book: PoisonedBook) -> None:
 
     rest = outcome.content.replace(TELL, "")
     assert not leaks("人物轴对内容 tell 的拒绝语（去掉回显之后）", rest)
-    for extra in (SECRET_NAME, "300", "200"):
+    for extra in (POISONED_NAME, "300", "200"):
         assert extra not in rest, (
             f"拒绝语里多说了「{extra}」—— 它把一个 tell 连到了显示名 / 首现章号上，"
             "而模型本来只知道自己打的那个词"
@@ -622,14 +619,14 @@ def test_the_roster_gives_a_secret_exactly_what_the_existing_gate_gives(
     """
     context = book.context()
     index = BookIndex.model_validate_json(_ok("book_index", context))
-    entry = next(item for item in index.roster if item.name == FUTURE_SECRET_NAME)
+    entry = next(item for item in index.roster if item.name == FUTURE_OBJECT_NAME)
 
     gate = {
         item.node.name: item.first_appears_chapter
         for item in forbidden_entities(book.store, book.project_id, WORKING_CHAPTER)
     }
-    assert gate.get(FUTURE_SECRET_NAME) == 300, "闸门自己就该拦住它，否则这条测试没有参照物"
-    assert entry.first_appears_chapter == gate[FUTURE_SECRET_NAME], (
+    assert gate.get(FUTURE_OBJECT_NAME) == 300, "闸门自己就该拦住它，否则这条测试没有参照物"
+    assert entry.first_appears_chapter == gate[FUTURE_OBJECT_NAME], (
         "首现章号必须来自那个唯一闸门，不是这一层自己读 props"
     )
 
@@ -659,7 +656,7 @@ def test_the_roster_marks_the_entities_the_author_has_not_written_yet(
     """
     index = BookIndex.model_validate_json(_ok("book_index", book.context()))
     marked = {entry.name for entry in index.roster if entry.future}
-    assert marked == {FUTURE_PLACE, FUTURE_SECRET_NAME}, (
+    assert marked == {FUTURE_PLACE, FUTURE_OBJECT_NAME}, (
         "花名册里第 200 / 300 章才首现的那两个东西没被逐条标出来"
     )
     assert not any(entry.future for entry in index.roster if entry.name == "萧决")
@@ -794,7 +791,7 @@ def test_the_summary_prompt_is_the_chapter_text_and_nothing_else(book: PoisonedB
 
     blob = json.dumps(sent, ensure_ascii=False)
     assert not leaks("总结的生成侧 prompt", blob), "总结 prompt 里出现了图谱上的东西"
-    for forbidden in (SECRET_NAME, FUTURE_SECRET_NAME, FUTURE_PLACE):
+    for forbidden in (POISONED_NAME, FUTURE_OBJECT_NAME, FUTURE_PLACE):
         assert forbidden not in blob, (
             f"总结 prompt 里出现了「{forbidden}」——秘密名 / 未登场实体名是边界四点名禁止的。"
             "摘要是一段没有时态的散文，它进了会话就再也说不清「此时」是第几章。"
@@ -807,11 +804,11 @@ def test_that_summary_prompt_guard_can_see_an_injected_fact() -> None:
     喂一份「顺手把约束拼进去了」的假 prompt 进同一个判据，断言它红。
     """
     poisoned: list[SummaryMessage] = [
-        {"role": "system", "content": f"本章不许说破：{SECRET_NAME}。"},
+        {"role": "system", "content": f"本章不许说破：{POISONED_NAME}。"},
         {"role": "user", "content": "第一章 少年\n\n萧决独自走进了北荒的风雪里。\n"},
     ]
     blob = json.dumps([poisoned], ensure_ascii=False)
-    assert SECRET_NAME in blob, "扫描器看不见被拼进去的秘密名"
+    assert POISONED_NAME in blob, "扫描器看不见被拼进去的秘密名"
     assert poisoned != build_summary_messages(poisoned[1]["content"])
 
 
@@ -839,7 +836,7 @@ class _CleanResult(BaseModel):
 
 
 def _the_secret(context: ToolContext) -> Node:
-    hits = context.store.resolve(context.project_id, [SECRET_NAME])[0].hits
+    hits = context.store.resolve(context.project_id, [POISONED_NAME])[0].hits
     if not hits:
         raise ToolRefused("探针自己找不到那个秘密")
     return hits[0].node

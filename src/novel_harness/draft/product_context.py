@@ -121,7 +121,6 @@ class ResolvedProductEvent(EventView):
 
     participants: tuple[NodeRef, ...] = ()
     knowers: tuple[NodeRef, ...] = ()
-    revealed_facts: tuple[NodeRef, ...] = ()
 
     @classmethod
     def of(cls, view: EventView) -> ResolvedProductEvent:
@@ -129,7 +128,6 @@ class ResolvedProductEvent(EventView):
             event=view.event,
             participants=tuple(view.participants),
             knowers=tuple(view.knowers),
-            revealed_facts=tuple(view.revealed_facts),
         )
 
 

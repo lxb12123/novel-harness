@@ -31,7 +31,6 @@ from novel_harness.graph import (
     NodeLabel,
     NodeProps,
     NodeSpec,
-    SecretDetail,
 )
 from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
@@ -57,9 +56,8 @@ def _seed_event(conn: Connection, *, chapter_number: int = 10) -> SeededEvent:
     secret = graph.upsert_node(
         NodeSpec(
             project_id=project_id,
-            label=NodeLabel.SECRET,
+            label=NodeLabel.FACTION,
             name="玄铁令来历",
-            secret=SecretDetail(),
         )
     )
     location = graph.upsert_node(
@@ -147,7 +145,6 @@ def test_put_provisional_derives_time_and_fixed_repository_fields(conn: Connecti
             evidence_id=seeded.evidence_id,
             participant_ids=[seeded.character_id],
             knower_ids=[seeded.character_id],
-            revealed_fact_ids=[seeded.secret_id],
             confidence=0.91,
         )
     )
@@ -160,7 +157,6 @@ def test_put_provisional_derives_time_and_fixed_repository_fields(conn: Connecti
     assert view.event.evidence_status is EvidenceStatus.FRESH
     assert [node.id for node in view.participants] == [seeded.character_id]
     assert [node.id for node in view.knowers] == [seeded.character_id]
-    assert [node.id for node in view.revealed_facts] == [seeded.secret_id]
 
 
 def test_put_provisional_uses_the_immutable_audit_snapshot_chapter(
@@ -225,7 +221,6 @@ def test_put_provisional_rejects_a_non_character_participant_atomically(
     ("field", "match"),
     [
         ("knower_ids", "knower.*Character"),
-        ("revealed_fact_ids", "reveal.*Secret"),
     ],
 )
 def test_put_provisional_validates_every_incidence_label(
@@ -305,7 +300,6 @@ def test_event_round_trips_a_typed_view(conn: Connection) -> None:
             evidence_id=seeded.evidence_id,
             participant_ids=[seeded.character_id],
             knower_ids=[seeded.character_id],
-            revealed_fact_ids=[seeded.secret_id],
             confidence=0.91,
         )
     )
@@ -356,7 +350,6 @@ def test_put_provisional_reuses_the_evidence_anchor_without_overwriting(
             evidence_id=seeded.evidence_id,
             participant_ids=[seeded.character_id],
             knower_ids=[seeded.character_id],
-            revealed_fact_ids=[seeded.secret_id],
             confidence=0.91,
         )
     )
@@ -375,21 +368,12 @@ def test_put_provisional_reuses_the_evidence_anchor_without_overwriting(
     assert conn.execute("SELECT COUNT(*) FROM story_event").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM event_participant").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM event_knower").fetchone()[0] == 1
-    assert conn.execute("SELECT COUNT(*) FROM event_reveal").fetchone()[0] == 1
 
 
 def test_put_provisional_deduplicates_and_sorts_incidence(conn: Connection) -> None:
     seeded = _seed_event(conn)
     second_character = seeded.graph.upsert_node(
         NodeSpec(project_id=seeded.project_id, label=NodeLabel.CHARACTER, name="萧决")
-    )
-    second_secret = seeded.graph.upsert_node(
-        NodeSpec(
-            project_id=seeded.project_id,
-            label=NodeLabel.SECRET,
-            name="萧决身世",
-            secret=SecretDetail(),
-        )
     )
     store = SqliteEventStore(conn, event_id_factory=lambda _project_id: "event:dedup")
 
@@ -400,7 +384,6 @@ def test_put_provisional_deduplicates_and_sorts_incidence(conn: Connection) -> N
             evidence_id=seeded.evidence_id,
             participant_ids=[second_character.id, seeded.character_id, second_character.id],
             knower_ids=[seeded.character_id, second_character.id, seeded.character_id],
-            revealed_fact_ids=[second_secret.id, seeded.secret_id, second_secret.id],
             confidence=0.9,
         )
     )
@@ -409,10 +392,8 @@ def test_put_provisional_deduplicates_and_sorts_incidence(conn: Connection) -> N
         {seeded.character_id, second_character.id}
     )
     assert [node.id for node in view.knowers] == sorted({seeded.character_id, second_character.id})
-    assert [node.id for node in view.revealed_facts] == sorted({seeded.secret_id, second_secret.id})
     assert conn.execute("SELECT COUNT(*) FROM event_participant").fetchone()[0] == 2
     assert conn.execute("SELECT COUNT(*) FROM event_knower").fetchone()[0] == 2
-    assert conn.execute("SELECT COUNT(*) FROM event_reveal").fetchone()[0] == 2
 
 
 def test_clone_to_canon_copies_the_hyperedge_and_preserves_the_source(
@@ -428,7 +409,6 @@ def test_clone_to_canon_copies_the_hyperedge_and_preserves_the_source(
             evidence_id=seeded.evidence_id,
             participant_ids=[seeded.character_id],
             knower_ids=[seeded.character_id],
-            revealed_fact_ids=[seeded.secret_id],
             confidence=0.91,
         )
     )
@@ -449,7 +429,6 @@ def test_clone_to_canon_copies_the_hyperedge_and_preserves_the_source(
     assert canon.event.source == source.event.source
     assert canon.participants == source.participants
     assert canon.knowers == source.knowers
-    assert canon.revealed_facts == source.revealed_facts
     assert store.event(seeded.project_id, source.event.id) == source
     scopes = conn.execute(
         "SELECT information_scope FROM event_knower ORDER BY information_scope"
@@ -478,7 +457,6 @@ def test_clone_to_scope_rejects_unavailable_sources_without_writes(
             evidence_id=seeded.evidence_id,
             participant_ids=[seeded.character_id],
             knower_ids=[seeded.character_id],
-            revealed_fact_ids=[seeded.secret_id],
             confidence=0.9,
         )
     )
@@ -493,7 +471,6 @@ def test_clone_to_scope_rejects_unavailable_sources_without_writes(
     assert conn.execute("SELECT COUNT(*) FROM story_event").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM event_participant").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM event_knower").fetchone()[0] == 1
-    assert conn.execute("SELECT COUNT(*) FROM event_reveal").fetchone()[0] == 1
 
 
 def test_clone_to_scope_rolls_back_when_inserted_clone_cannot_be_hydrated(
@@ -510,7 +487,6 @@ def test_clone_to_scope_rolls_back_when_inserted_clone_cannot_be_hydrated(
             evidence_id=seeded.evidence_id,
             participant_ids=[seeded.character_id],
             knower_ids=[seeded.character_id],
-            revealed_fact_ids=[seeded.secret_id],
             confidence=0.9,
         )
     )
@@ -522,7 +498,6 @@ def test_clone_to_scope_rolls_back_when_inserted_clone_cannot_be_hydrated(
     assert conn.execute("SELECT COUNT(*) FROM story_event").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM event_participant").fetchone()[0] == 1
     assert conn.execute("SELECT COUNT(*) FROM event_knower").fetchone()[0] == 1
-    assert conn.execute("SELECT COUNT(*) FROM event_reveal").fetchone()[0] == 1
 
 
 def test_clone_to_scope_rejects_missing_or_non_provisional_sources(conn: Connection) -> None:

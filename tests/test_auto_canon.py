@@ -43,7 +43,6 @@ from novel_harness.graph import (
     NodeLabel,
     NodeProps,
     NodeSpec,
-    SecretDetail,
 )
 from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_proposals import SqliteProposalStore
@@ -125,9 +124,8 @@ def seed(conn: Connection) -> Seed:
     secret = graph.upsert_node(
         NodeSpec(
             project_id=project_id,
-            label=NodeLabel.SECRET,
+            label=NodeLabel.FACTION,
             name="玄铁令来历",
-            secret=SecretDetail(),
         )
     )
     graph.put_chapter(
@@ -172,7 +170,6 @@ def _mixed_analysis() -> RawChapterAnalysis:
                 quote=CLEAN_EVENT_QUOTE,
                 participants=("顾清音", "萧决"),
                 knowers=("顾清音",),
-                revealed_facts=("玄铁令来历",),
                 confidence=0.91,
             ),
             RawEvent(
@@ -180,7 +177,6 @@ def _mixed_analysis() -> RawChapterAnalysis:
                 quote=LOW_EVENT_QUOTE,
                 participants=("萧决", "顾清音"),
                 knowers=("萧决",),
-                revealed_facts=(),
                 confidence=0.42,
             ),
         ),
@@ -427,7 +423,6 @@ def test_a_successful_extraction_run_promotes_without_touching_its_status(
                 quote=CLEAN_EVENT_QUOTE,
                 participants=("顾清音",),
                 knowers=("顾清音",),
-                revealed_facts=(),
                 confidence=0.93,
             ),
         ),

@@ -635,7 +635,7 @@ def test_no_refusal_ever_tells_the_author_to_type_a_command() -> None:
     refusals: list[Exception] = [
         UnknownName("师兄"),
         AmbiguousName("师兄", [hero, butler]),
-        WrongLabel("北荒", NodeLabel.LOCATION, NodeLabel.SECRET),
+        WrongLabel("北荒", NodeLabel.LOCATION, NodeLabel.CHARACTER),
         QuoteNotFound("他终于明白了"),
         AmbiguousQuote("他终于明白了", []),
     ]

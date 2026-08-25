@@ -5,10 +5,15 @@
 canon 版本 CAS），区别只有一个：这边的 `valid_from` 不是从引语算出来的——
 所以这边同样一个章号输入框都没有（约束 10 / ADR 0006）。
 
-本模块今天有两种写：**改**（`correct_knowledge` / `correct_event_cast`，`valid_from`
-从被改的那条事实上继承）和**补**（`add_knowledge`，认知矩阵那一格空白上手工添一条，
-`valid_from` = 作者正在看的那一章，且**没有证据**）。后者是 2026-08-14 那条产品规则
-（右栏每一格「LLM 无感生成 + 作者可改**可增**」）还差的那一半，详见它自己的 docstring。
+本模块今天只有一种写：**改事件的在场 / 知情名单**（`correct_event_cast`，`valid_from`
+从被改的那条事实上继承）。
+
+原来还有两种——`correct_knowledge`（改一条已生效的 KNOWS↔BELIEVES）和 `add_knowledge`
+（认知矩阵那一格空白上手工添一条，**没有证据**，`valid_from` = 作者正在看的那一章）。
+**两个都随秘密下线一起没了**（ADR 0039）。「补」那一路是这个模块里唯一一条不带证据
+的写，它消失之后**本模块的每一次写都有一条上游事实作为出处**——哪天要把「补」这个
+形态加回来（对别的什么东西），先去 git 历史里读它当年那段 docstring：那条例外是有
+代价的，不是顺手。
 
 ── 为什么必须先有它，自动生效才敢开 ──────────────────────────────────────
 
@@ -25,8 +30,8 @@ canon 版本 CAS），区别只有一个：这边的 `valid_from` 不是从引�
    问题（`story_event` 的 `UNIQUE(project_id, evidence_id, information_scope)` 让
    同一条证据在 CANON 层写不出第二个事件，所以那不是一次克隆，是一次原地改）。
    见模块末尾的「还没做的」。
-3. **不删。** 改一条 KNOWS 成 BELIEVES 之后，那条 KNOWS 的行还在库里，只是
-   `status = 'RETRACTED'`；名单里删掉一个人同理。**能查到改过什么，是这条退路的一半价值。**
+3. **不删。** 名单里删掉一个人之后，那条记录还在库里，只是 `status = 'RETRACTED'`。
+   **能查到改过什么，是这条退路的一半价值。**
 
 ── 和 `declare.py` 一样，日志写在事务之后 ─────────────────────────────────
 
@@ -40,7 +45,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
-from typing import Any, Final
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -50,23 +55,12 @@ from .decisions import DecisionKind, Verdict
 from .events import EventCastEdit, EventCastStore, EventStoreError, EventView
 from .graph import (
     EdgeSource,
-    EdgeType,
     Evidence,
     GraphStore,
     NodeRef,
 )
 from .graph.review_store import EdgeReviewStore, EdgeReviewValidationError
 from .graph.sqlite_review import SqliteEdgeReviewStore
-
-KNOWLEDGE_EDGE_TYPES: Final[frozenset[EdgeType]] = frozenset(
-    {EdgeType.KNOWS, EdgeType.BELIEVES}
-)
-"""认知矩阵那一格上可能存在的两种边。**本模块只在这两者之间改**。
-
-改的是「同一条证据被读成了哪一种」，所以两端、章号、证据全都不动——变的只有类型
-（和 BELIEVES 那条独有的 `believed_value`）。
-"""
-
 
 # ══════════════════════════════════════════════════════════════════════════
 # 拒绝
@@ -78,8 +72,8 @@ class CorrectionError(Exception):
 
     **这三个异常的 `str()` 会原样出现在小说作者的错误框里**（`api/review.py::
     _correction_error` 把它放进 `message`，工作台直接渲染那一句）。所以这里的每一句话
-    都得是作者读得懂的中文：**不许出现 `KNOWS` / `BELIEVES` / `believed_value` /
-    `(Character, Secret)` / 裸 id / 「面板 §3.2」这类写给维护者的东西。**
+    都得是作者读得懂的中文：**不许出现 `LOCATED_AT` / `information_scope` / 裸 id /
+    「面板 §3.2」这类写给维护者的东西。**
 
     这不是措辞洁癖，是措辞**源**的问题：前端一旦为了遮住这些词加一张
     「引擎的词 → 作者的词」的映射表，屏幕上的说法就和这里、和 CLI 不再是同一句话，
@@ -109,13 +103,6 @@ class CorrectionRefused(CorrectionError):
     """事实在，但这次改正本身讲不通（改成它已经是的样子 / 什么都没改 / 名单里有个地点）。"""
 
 
-class FactAlreadyThere(CorrectionError):
-    """要**新添**的那一格上已经有一条事实了（`add_knowledge` 独有）。
-
-    和 `CorrectionRefused` 分开是因为作者该做的事不一样：那一类是「改一下再提交」，
-    这一类是「这一格现在不是空的了 —— 先看一眼它是什么」。壳把它翻成 409，
-    和 `stale_base_version` 落在同一档上（前端那一档会给一颗「看看最新的」）。
-    """
 class EventCastCorrection(BaseModel):
     """改完一条已生效事件的在场/知情名单之后的回执。"""
 
@@ -162,7 +149,8 @@ def _ref_payload(refs: Sequence[NodeRef]) -> list[dict[str, str]]:
     """写进 `decision_log.payload` 的节点形状：**恰好 `NodeRef` 的三个字段。**
 
     名字在里面是有意的（§5.7：人名，不是 ID —— ID 随重抽全部作废，重放不回去的日志
-    等于没有日志）；`props` 不在里面也是有意的，理由同 `KnowledgeCorrection`。
+    等于没有日志）；`props` 不在里面也是有意的（`NodeProps` 是 `extra="allow"`，
+    作者写的 `plot_note` 会跟着整份进那张不可变的表）。
     """
     return [{"id": ref.id, "label": ref.label.value, "name": ref.name} for ref in refs]
 
@@ -320,7 +308,7 @@ def _event_failure(exc: EventStoreError) -> CorrectionError:
 
         event 不存在或跨项目：event:01J…
         只能改已生效（CANON）的事件，event:01J… 是 PROVISIONAL——…走审阅队列的 edit
-        名单里只能是 Character，secret:01J… 是 Secret
+        名单里只能是 Character，loc:01J… 是 Location
 
     原异常不丢：调用处是 `raise _event_failure(exc) from exc`，维护者要的那句话在
     traceback 里。**分类靠类型，不靠转发字符串**——转发的那一刻，措辞源就从本模块

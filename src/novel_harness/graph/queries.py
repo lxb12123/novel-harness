@@ -40,7 +40,6 @@ from .models import (
     NodeRef,
     RelocatePointer,
     RetirementReport,
-    SecretDetail,
     SnapshotUsage,
     StoredAlias,
 )
@@ -337,12 +336,6 @@ def event_views_at(
             FROM visible_knower AS ek
             JOIN node AS n ON n.id = ek.character_id AND n.project_id = ek.project_id
             WHERE ek.event_id IN ({visible_placeholders})
-            UNION ALL
-            SELECT er.event_id AS event_id, 'reveal' AS role,
-                   n.id AS node_id, n.label AS label, n.name AS name
-            FROM event_reveal AS er
-            JOIN node AS n ON n.id = er.secret_id AND n.project_id = er.project_id
-            WHERE er.project_id = :pid AND er.event_id IN ({visible_placeholders})
             ORDER BY event_id, role, node_id
             """,
             incidence_params,
@@ -361,7 +354,6 @@ def event_views_at(
                 event=to_story_event(row),
                 participants=list(roles.get(EventCharacterRole.PARTICIPANT, {}).values()),
                 knowers=list(roles.get(EventCharacterRole.KNOWER, {}).values()),
-                revealed_facts=list(roles.get("reveal", {}).values()),
             )
         )
     return views
@@ -544,37 +536,6 @@ def insert_alias(
     )
 
 
-def insert_secret(
-    conn: sqlite3.Connection, node_id: str, project_id: str, detail: SecretDetail
-) -> None:
-    """`secret` 扩展表那一行。`label` 列不传：它有 DEFAULT 'Secret' + CHECK，
-    存在的唯一理由是给复合外键当锚（见 001_init.sql）。"""
-    conn.execute(
-        """
-        INSERT INTO secret (id, project_id, description, sub_of)
-        VALUES (:id, :pid, :desc, :sub_of)
-        """,
-        {
-            "id": node_id,
-            "pid": project_id,
-            "desc": detail.description,
-            "sub_of": detail.sub_of,
-        },
-    )
-
-
-def secret_ids(conn: sqlite3.Connection, project_id: str) -> list[str]:
-    """本项目全部秘密，按 id 升序 = ULID 的创建顺序 = 作者声明顺序（ADR 0003）。
-
-    父秘密和子事实（`sub_of`）**都会返回**：要不要折叠是面板层的判断，图层不猜。
-    """
-    cur = conn.execute(
-        "SELECT id FROM secret WHERE project_id = :pid ORDER BY id",
-        {"pid": project_id},
-    )
-    return [r["id"] for r in _rows(cur)]
-
-
 # ══════════════════════════════════════════════════════════════════════════
 # 读：时态过滤的三个消费者
 # ══════════════════════════════════════════════════════════════════════════
@@ -599,7 +560,7 @@ def out_edges_at(
     方向是抛硬币，只查 src 会让「顾清音和萧决是什么关系」这个问题的答案取决于两个 ULID
     的字典序——一半的人物卡上关系栏凭空消失。
 
-    **只对无向类型放开 dst**，不是对所有类型加个 OR：KNOWS 的 src 是人、dst 是秘密，
+    **只对无向类型放开 dst**，不是对所有类型加个 OR：LOCATED_AT 的 src 是人、dst 是地点，
     反向查是无意义的；LOCATED_AT 反向查会让「青云城」这个节点的状态快照里冒出
     所有到过它的人。入边的正经消费者是 `subgraph(hops=1)`（`incident_edges_at`）。
 
@@ -621,71 +582,6 @@ def out_edges_at(
             "scope": scope.value,
             **_UNDIRECTED_PARAMS,
         },
-    )
-    return [to_edge(r) for r in _rows(cur)]
-
-
-def knowledge_edges_at(
-    conn: sqlite3.Connection,
-    project_id: str,
-    cast: Sequence[str],
-    secrets: Sequence[str],
-    chapter: int,
-    scope: InformationScope,
-) -> list[Edge]:
-    """认知矩阵的料（§8 Day 5）：cast × secret 上的 KNOWS / BELIEVES。
-
-    Day 5 的 SQL 用两个 LEFT JOIN 在 SQL 里拼 CASE；这里改成「一次取边、在 Python 里
-    铺笛卡尔积」，因为闭世界的 UNKNOWN 格**必须被物化**（`KnowledgeMatrix` 的 validator
-    会强制），而 CROSS JOIN 版把「哪些格该存在」这个断言留在了 SQL 里，测不到。
-    """
-    if not cast or not secrets:
-        return []
-    c_sql, c_params = _in_clause("c", cast)
-    s_sql, s_params = _in_clause("s", secrets)
-    cur = conn.execute(
-        f"""
-        SELECT {_EDGE_COLS} FROM edge
-        WHERE project_id = :pid
-          AND type IN ('KNOWS', 'BELIEVES')
-          AND src IN ({c_sql}) AND dst IN ({s_sql})
-          AND {TEMPORAL_WHERE}
-        """,
-        {"pid": project_id, "ch": chapter, "scope": scope.value, **c_params, **s_params},
-    )
-    return [to_edge(r) for r in _rows(cur)]
-
-
-def current_knowledge_edges(
-    conn: sqlite3.Connection,
-    project_id: str,
-    character_id: str,
-    secret_id: str,
-) -> list[Edge]:
-    """(角色, 秘密) 这一格上**此刻**有效的 KNOWS / BELIEVES 边。作者改错的入口。
-
-    **这不是时态查询，所以它没有、也不该有 `TEMPORAL_WHERE`。** 判据是
-    `valid_to_chapter IS NULL`——`Edge.is_current` 那份推导的 SQL 形态（§5.4：
-    CURRENT 是推导不是存储）。区别在入参上看得见：那边收 `:ch`，这边一个章号都不收。
-
-    这条查询存在的理由就是约束 10：作者要改的是「这一格现在说错了」，而不是
-    「第 N 章的那一条」——他不知道那是第几章，也不该被问。章号从这里读出来
-    （`edge.valid_from_chapter`，血统一路回到证据），不从入参进来。
-
-    至多返回两条（KNOWS 和 BELIEVES 各一条）：两者的 exclusivity 都是
-    `single_per_src_dst`，同类型的第二条 ACTIVE 边会被 supersede 闭合掉。
-    """
-    cur = conn.execute(
-        f"""
-        SELECT {_EDGE_COLS} FROM edge
-        WHERE project_id = :pid AND src = :src AND dst = :dst
-          AND type IN ('KNOWS', 'BELIEVES')
-          AND information_scope = 'CANON'
-          AND status = 'ACTIVE'
-          AND valid_to_chapter IS NULL
-        ORDER BY type, valid_from_chapter, id
-        """,
-        {"pid": project_id, "src": character_id, "dst": secret_id},
     )
     return [to_edge(r) for r in _rows(cur)]
 
@@ -931,26 +827,6 @@ def retract_edge(conn: sqlite3.Connection, edge_id: str) -> Edge:
     return fetch_edge(conn, edge_id)
 
 
-def activate_edge(conn: sqlite3.Connection, edge_id: str) -> Edge:
-    """把一条 RETRACTED 的边改回 ACTIVE。**唯一的消费者是「作者又改回来了」。**
-
-    `store.upsert_edge` 的契约里写着「把一条 RETRACTED 的事实重新声明回来在 v1 不生效」，
-    并说要它时加一个 `revive`，别去动 conflict 分支——这就是那个 revive 的零件。
-    它必须存在的理由是一个具体的静默数据丢失：作者把 KNOWS 改成 BELIEVES（旧 KNOWS 行
-    被 RETRACTED），再改回 KNOWS 时新边撞的是**那一行的幂等键**，upsert 会把它当重跑、
-    只更 props、`status` 一个字节不动——于是两条边都是 RETRACTED，**这一格凭空消失，
-    而没有任何一步会报错**。
-
-    调用方（`sqlite_review.restore_canon`）必须先确认没有别的 ACTIVE 边与它区间重叠——
-    复活一条边和插一条边一样会制造重叠区间，而重叠区间的产物是规则误报。
-    """
-    conn.execute(
-        "UPDATE edge SET status = :st WHERE id = :id",
-        {"id": edge_id, "st": EdgeStatus.ACTIVE.value},
-    )
-    return fetch_edge(conn, edge_id)
-
-
 def fetch_edge(conn: sqlite3.Connection, edge_id: str) -> Edge:
     cur = conn.execute(f"SELECT {_EDGE_COLS} FROM edge WHERE id = :id", {"id": edge_id})
     rows = _rows(cur)
@@ -968,8 +844,6 @@ def fetch_edge(conn: sqlite3.Connection, edge_id: str) -> Edge:
 #   Chapter 节点 ⇒ 两者必须在**一个事务**里。把它放到 graph/ 外面，就把「Chapter 节点和
 #   chapter 行同生」变成了调用方的纪律——而一个没有 chapter 行的 Chapter 节点没有
 #   number，number 是 state_at 的全序键。
-#   且 `secret` 在名单里、`chapter` 不在，而两者的 schema 形状一模一样（扩展表、
-#   主键 = node.id、复合外键连 label）。两个同形的东西走两条规矩 = 下一个贡献者只能靠猜。
 # ══════════════════════════════════════════════════════════════════════════
 
 

@@ -26,7 +26,6 @@ from novel_harness.graph import (
     NodeLabel,
     NodeProps,
     NodeSpec,
-    SecretDetail,
 )
 from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
@@ -132,7 +131,6 @@ def _analysis_json() -> str:
                 quote="顾清音在渡口把玄铁令交给萧决。",
                 participants=(),
                 knowers=(),
-                revealed_facts=(),
                 confidence=0.95,
             ),
         ),
@@ -331,10 +329,9 @@ def _seed_scoped_events(extraction_book: dict[str, str]) -> dict[str, str]:
     secret = graph.upsert_node(
         NodeSpec(
             project_id=pid,
-            label=NodeLabel.SECRET,
+            label=NodeLabel.FACTION,
             name="玄铁令来历",
             props=NodeProps.model_validate({"twist": "真正来历不得泄漏"}),
-            secret=SecretDetail(),
         )
     )
     chapter_text = (
@@ -376,7 +373,6 @@ def _seed_scoped_events(extraction_book: dict[str, str]) -> dict[str, str]:
             evidence_id=first_evidence.id,
             participant_ids=[character.id],
             knower_ids=[character.id],
-            revealed_fact_ids=[secret.id],
             confidence=0.91,
         )
     )
@@ -421,7 +417,6 @@ def test_events_endpoint_is_stable_narrow_and_strictly_scope_isolated(
         "event",
         "participants",
         "knowers",
-        "revealed_facts",
     }
     assert "不得从事件接口泄漏" not in provisional.text
     assert "真正来历不得泄漏" not in provisional.text

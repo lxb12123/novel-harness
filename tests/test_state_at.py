@@ -361,9 +361,9 @@ def test_read_path_rejects_chapters_below_one(graph: SqliteStoryGraph, chapter: 
     `CHECK(number >= 1)`），读侧曾经 0 / 负数照单全收，**静默返回一个语义上不可能存在的
     答案**。
 
-    `knowledge_matrix(pid, 0, cast)` 返回一个格格 UNKNOWN 的**完整**矩阵——而闭世界推导下
-    UNKNOWN 是一个**断言**（models.py 自己写的：「这不是「查不到」，是一个断言」），
-    于是面板理直气壮地告诉作者「在场三个人对全部秘密一无所知」，而不是承认这个问题问错了。
+    `state_at(pid, 萧决, 0)` 返回一份**空**快照——而闭世界下空快照是一个**断言**
+    （`is_dead` 的 docstring：「没有 health=dead 的边 ⇒ 活着」），于是人物卡理直气壮地
+    告诉作者「他在第 0 章还活着、不在任何地方」，而不是承认这个问题问错了。
 
     触发形态是任何一次 off-by-one（0-based 场景索引、「上一章」在第 1 章时算成 0——
     §5.2 的 F 分区就是 `WHERE chapter = N-1`）。它把调用方的一个 off-by-one 放大成了
@@ -371,7 +371,6 @@ def test_read_path_rejects_chapters_below_one(graph: SqliteStoryGraph, chapter: 
     """
     for call in (
         lambda: graph.state_at(PID, "xiao", chapter),
-        lambda: graph.knowledge_matrix(PID, chapter, ["xiao"]),
         lambda: graph.subgraph(PID, "xiao", chapter),
     ):
         with pytest.raises(ValueError, match="章号从 1 起"):

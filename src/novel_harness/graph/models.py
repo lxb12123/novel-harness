@@ -24,17 +24,21 @@ from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validat
 
 
 class NodeLabel(StrEnum):
-    """8 类节点（PLAN §5.8）。
+    """7 类节点（PLAN §5.8）。
 
     增长规则（ADR 0005）：**只有当某条面板分区或某条规则真的要查它时，才允许加一类。**
     Volume / Scene / Skill / Event / Fact / State / RelationshipState / EvidenceRef
     在 v1 没有任何消费者——它们不在这里是裁决，不是遗漏。
+
+    ⚠️ `Secret` 2026-08-25 删（ADR 0039，秘密整套下线）。**`node.label` 那条 CHECK 里
+    仍然写着 `'Secret'`**：SQLite 改 CHECK 要重建整张表，而 `node` 被半个库外键引着。
+    所以「库允许写、枚举不允许写」是有意的不对称——写入方全部走 `NodeLabel`，
+    这一侧关死就够了；028 负责把存量 Secret 行清掉。
     """
 
     CHARACTER = "Character"
     LOCATION = "Location"
     FACTION = "Faction"
-    SECRET = "Secret"
     FORESHADOW = "Foreshadow"
     OBJECT = "Object"
     STATE_DIM = "StateDim"
@@ -42,12 +46,19 @@ class NodeLabel(StrEnum):
 
 
 class EdgeType(StrEnum):
-    """9 类关系（PLAN §5.8）。
+    """7 类关系（PLAN §5.8）。
 
-    `DOES_NOT_KNOW` / `PARTIALLY_KNOWS` 是**永久删除**不是推迟（ADR 0005）：
-    前者是组合爆炸（实体化后 +67,500 条边），改用闭世界推导「不存在 KNOWS 边 ⇒ 不知道」；
-    后者欠定义（部分知道「什么」？），改用「秘密拆子事实 + 每子事实一条 KNOWS」。
-    `CAUSES` / `RESULTS_IN` / `PRECEDES` 同样永不做：没有任何规则依赖它们。
+    `CAUSES` / `RESULTS_IN` / `PRECEDES` **永不做**：没有任何规则依赖它们。
+
+    ── `KNOWS` / `BELIEVES` 去哪了（2026-08-25，ADR 0039）────────────────
+
+    连同 `Secret` 一起下线了。这里原本记着一段 ADR 0005 的论证：`DOES_NOT_KNOW` 是
+    组合爆炸所以改用「不存在 KNOWS 边 ⇒ 不知道」的闭世界推导，`PARTIALLY_KNOWS` 欠定义
+    所以改用「秘密拆子事实 + 每子事实一条 KNOWS」。**那段论证的结论今天没有承载体了**——
+    照抄留着会让下一个人以为闭世界推导还在某处跑着。原文在 ADR 0005 里，不在这儿。
+
+    `edge_type` 表里那两行由 028 删；`edge.type` 没有 CHECK（它是外键指向 `edge_type`），
+    所以这一侧删干净就真的写不进去了。
     """
 
     LOCATED_AT = "LOCATED_AT"
@@ -56,8 +67,6 @@ class EdgeType(StrEnum):
     RELATED_TO = "RELATED_TO"
     """**无向**（ADR 0008）。见 `UNDIRECTED_EDGE_TYPES`——那里有完整论证。"""
 
-    KNOWS = "KNOWS"
-    BELIEVES = "BELIEVES"
     HAS_STATE = "HAS_STATE"
     OWNS = "OWNS"
     PLANTED_IN = "PLANTED_IN"
@@ -131,7 +140,7 @@ class Exclusivity(StrEnum):
     """一个人同一时刻只能在一个地方。仅 LOCATED_AT。"""
 
     SINGLE_PER_SRC_DST = "single_per_src_dst"
-    """(src, dst) 单值。HAS_STATE / RELATED_TO / KNOWS / BELIEVES。"""
+    """(src, dst) 单值。HAS_STATE / RELATED_TO。"""
 
     MULTI = "multi"
     """可以多条同时有效。MEMBER_OF / OWNS / PLANTED_IN / RESOLVED_IN。"""
@@ -155,21 +164,6 @@ class AliasKind(StrEnum):
     ALIAS = "alias"
     NICKNAME = "nickname"
     TITLE = "title"
-
-
-class KnowledgeState(StrEnum):
-    """认知矩阵的三态（PLAN §3.2）。"""
-
-    KNOWS = "KNOWS"
-    BELIEVES = "BELIEVES"
-    """错误认知。看 `KnowledgeCell.believed_value` 拿他以为的版本。"""
-
-    UNKNOWN = "UNKNOWN"
-    """**闭世界推导**：不存在 KNOWS/BELIEVES 边 ⇒ 不知道。
-
-    这不是「查不到」，是一个断言。它是 O(已声明秘密) 而不是 O(角色 × 事实)——
-    正是删掉 DOES_NOT_KNOW 换来的（ADR 0005）。
-    """
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -206,12 +200,11 @@ CANONICAL_ALIAS_LABELS: Final[frozenset[NodeLabel]] = frozenset(
         NodeLabel.CHARACTER,
         NodeLabel.LOCATION,
         NodeLabel.FACTION,
-        NodeLabel.SECRET,
         NodeLabel.FORESHADOW,
         NodeLabel.OBJECT,
     }
 )
-"""`upsert_node` 会**自动建一条 canonical 别名**（surface == node.name）的 label。8 类减 2。
+"""`upsert_node` 会**自动建一条 canonical 别名**（surface == node.name）的 label。7 类减 2。
 
 canonical 别名不是 node.name 的副本（那份论证在 001_init.sql 的 `idx_alias_canonical`
 上）：它是**索引项**，没有它 mentions.py 编的那条 alternation 匹配不到本名。所以「要不要
@@ -311,9 +304,6 @@ class EdgeProps(BaseModel):
     """`HAS_STATE` 的机器键。v1 只有 health 维度有（见 `HealthValue`）——
     修为/身份没有任何规则消费，按 ADR 0005 的增长规则就不该有键。"""
 
-    believed_value: str | None = None
-    """`BELIEVES` 的错误认知内容（「以为已泄露」）。面板 §3.2 直接渲染它。"""
-
 
 # ══════════════════════════════════════════════════════════════════════════
 # 一等对象
@@ -339,28 +329,28 @@ class NodeRef(BaseModel):
 
     `NodeProps` 是 `extra="allow"`（那是对的：未知 prop 不该让老数据解不开）。于是作者
     写在节点上的任何额外字段都原样挂在 `Node.props.model_extra` 里，而
-    `SceneConstraints.model_dump_json()` / `KnowledgeMatrix.model_dump_json()`
-    ——API 出参和 prompt 拼装必然这么干——会把它们全吐出来。
+    `SceneConstraints.model_dump_json()`——API 出参和 prompt 拼装必然这么干——会把它们
+    全吐出来。
 
     panel/constraints.py 的模块 docstring 立过一条硬约束：「本模块产出的是「不许说什么」，
     永远不产出「未来发生了什么」……因为那个字段一旦存在，某个下午就会有人把它拼进 prompt」。
     那句话字面上成立（`ForbiddenEntity` 确实没带 PLANNED 边的内容），但只要出参里还有一个
     完整的 `Node`，它保护的那条原则就在 props 那一层直接失守——**而 forbidden_entities 的
-    节点按定义就是关于未来的**（`first_appears_chapter > chapter` 才会进来），
-    must_not_reveal 的节点则是秘密本身。它们是全库最不该被完整序列化的一批节点。
+    节点按定义就是关于未来的**（`first_appears_chapter > chapter` 才会进来）。
+    它们是全库最不该被完整序列化的一批节点。
 
-    实测过的形态：`{"twist": "萧决其实是魔尊之子，第 200 章揭晓"}` 挂在 Secret 节点上、
-    `{"plot_note": "萧决在此被顾清音所杀"}` 挂在 Location 节点上，两条都能出现在
-    第 152 章的 Writer prompt 里。**那个 docstring 的预言应验了，只是提前了：
-    它担心「那个字段一旦存在」，而 `extra="allow"` 让每一个字段都存在。**
+    实测过的形态：`{"twist": "萧决其实是魔尊之子，第 200 章揭晓"}` 和
+    `{"plot_note": "萧决在此被顾清音所杀"}` 挂在一个尚未登场的 Location 节点上，
+    两条都能出现在第 152 章的 Writer prompt 里。**那个 docstring 的预言应验了，
+    只是提前了：它担心「那个字段一旦存在」，而 `extra="allow"` 让每一个字段都存在。**
 
     `NodeProps` 的 docstring 说「规则和面板只许读具名字段，不许读 model_extra」——
     但 `model_dump_json()` 不读 docstring。纪律管得住人手写的 `.props.plot_note`，
     管不住序列化。**不能改成 `extra="forbid"`**（那条 docstring 的理由是对的），
     问题不在存，在出——所以在出口这一侧换类型。
 
-    `label` 是 8 个枚举值之一、`name` 是面板本来就要渲染的东西（§3.2 那张图里印着
-    「本场景 must_not_reveal：血脉秘密 · 玄铁令下落」），两者都零内容风险。
+    `label` 是 7 个枚举值之一、`name` 是面板本来就要渲染的东西（§3.2 那张图里印着
+    「本场景不许提前写到：血枭盟 · 玄铁令」），两者都零内容风险。
     """
 
     model_config = ConfigDict(frozen=True)
@@ -435,7 +425,7 @@ class Edge(BaseModel):
     def peer_of(self, node_id: str) -> str:
         """这条边相对 `node_id` 的**对端**。
 
-        有向边（LOCATED_AT / KNOWS / …）的对端就是 `dst`，但 `UNDIRECTED_EDGE_TYPES`
+        有向边（LOCATED_AT / MEMBER_OF / …）的对端就是 `dst`，但 `UNDIRECTED_EDGE_TYPES`
         里的边不是：它按 `(min(id), max(id))` 规范化存储，所以 `dst` 是谁取决于两个 ULID
         的字典序，是个抛硬币。`state_at(顾清音).edges` 里那条 RELATED_TO 的 `dst` 有一半
         概率就是顾清音自己。**别在消费侧写 `e.dst`，写 `e.peer_of(node_id)`。**
@@ -641,7 +631,7 @@ class StateSnapshot(BaseModel):
     def is_dead(self) -> bool:
         """R3 DEAD_SPEAKS 的判据。
 
-        闭世界，与「无 KNOWS 边 ⇒ 不知道」同构：**没有 health=dead 的边 ⇒ 活着。**
+        **闭世界：没有 health=dead 的边 ⇒ 活着。**
 
         **`computed_field` 不是装饰品**：它 2026-08-13 才补上，而在那之前
         `frontend/src/api/types.ts` 的 `StateSnapshot` 里已经写着 `is_dead: boolean`、
@@ -660,95 +650,6 @@ class StateSnapshot(BaseModel):
         """是否已登场。R3 的另一半（「未登场角色开口说话」）。"""
         first = self.node.props.first_appears_chapter
         return first is None or first <= self.chapter
-
-
-class KnowledgeCell(BaseModel):
-    """认知矩阵的一格（PLAN §3.2）。"""
-
-    model_config = ConfigDict(frozen=True)
-
-    character_id: str
-    secret_id: str
-    state: KnowledgeState
-    since_chapter: int | None = None
-    """`KNOWS`/`BELIEVES` 边的 valid_from_chapter，面板渲染成「✓ 知道 (ch88)」。
-    UNKNOWN 时为 None。
-
-    **作者从来没有输入过这个数字**（§5.9 / ADR 0006）：他是看着第 88 章的原文点的确认，
-    章号由证据决定。手填表单里根本不该有章号输入框——有它就等于邀请污染。
-    """
-
-    believed_value: str | None = None
-    """仅 BELIEVES：他以为的版本（「以为已泄露」）。"""
-
-    evidence_id: str | None = None
-
-
-class KnowledgeMatrix(BaseModel):
-    """**认知边界矩阵——整个项目的头牌**（PLAN §3.2 / README 第一行）。
-
-    它是 `cast × secret` 的一次集合查询，**不读正文**：零 LLM、零 NLP、
-    **零误报——因为它对文本不做任何断言**。它只是在告诉作者：你自己在第 88 章
-    告诉过它的事。
-
-    为什么它必须是数据库查询而不是模型调用：「列出所有知道 X 的人」是 list 型问题，
-    正是 ToM 研究里模型失败的那种（GPT-4 在 FANToM 上跨题型一致性 26.6%，人类 87.5%）。
-    抽取是开放式枚举，校验是封闭式判定，**声明+查询是零判定**。
-
-    must_not_reveal / forbidden_entities **不在这里**——它们是 panel/constraints.py 的活，
-    虽然 §3.2 的面板把它们画在同一个框里。
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    project_id: str
-    chapter: int
-    scope: InformationScope
-    version: GraphVersion = Field(default_factory=GraphVersion)
-
-    unresolved_cast: list[str] = Field(default_factory=list)
-    """作者在 cast 里写了、但**解析不出唯一节点**的称呼（「师兄」映射到 8 个人）。
-
-    **这是「系统知道自己不完整」的唯一载体。** 没有它，下面那条 `_check_complete`
-    只校验「已知行 × 已知列」的笛卡尔积完整，对「作者声明了 3 个人、我只算了 2 个」
-    完全无感——而整行缺失正是它注释里那句「面板上少一格 = 作者以为系统没意见 =
-    说漏嘴」的极端情形。
-
-    非空时**面板必须把这些称呼显示出来问作者**（panel/knowledge.py 的 docstring 说
-    「这个称呼有歧义要在 UI 上问作者，不能由面板猜一个」——这个字段就是那句话的通道）。
-    这不违反 ADR 0006「系统不确定时的默认动作是闭嘴」：那条针对的是 STALE 停火
-    （少报一条 issue），而这里闭嘴的产物是泄漏，方向相反。
-    """
-
-    characters: list[NodeRef] = Field(default_factory=list)
-    """在场角色，顺序 = 作者在场景块里声明的 cast 顺序。窄引用，理由见 `NodeRef`。"""
-
-    secrets: list[NodeRef] = Field(default_factory=list)
-    """label=Secret 的节点。窄引用——**秘密的 props 里装的正是秘密的内容**，见 `NodeRef`。"""
-
-    cells: list[KnowledgeCell] = Field(default_factory=list)
-
-    @model_validator(mode="after")
-    def _check_complete(self) -> KnowledgeMatrix:
-        want = {(c.id, s.id) for c in self.characters for s in self.secrets}
-        got = [(c.character_id, c.secret_id) for c in self.cells]
-        if len(got) != len(want) or set(got) != want:
-            # 矩阵必须是完整的笛卡尔积。UNKNOWN 格**必须被物化**：闭世界推导下
-            # 「没有这一格」和「他不知道」是两个意思，而面板上少一格 = 作者以为
-            # 系统没意见 = 说漏嘴。缺格是 bug，不是省事。
-            # 注意这条**拦不到整行缺失**（作者声明的某个称呼没解析出来）——
-            # 那一类由 `unresolved_cast` 承载，它是这条断言够不着的地方。
-            raise ValueError(
-                f"认知矩阵必须完整：期望 {len(want)} 格（{len(self.characters)} 角色 × "
-                f"{len(self.secrets)} 秘密），实得 {len(got)} 格。闭世界要求 UNKNOWN 格也被物化"
-            )
-        return self
-
-    def cell(self, character_id: str, secret_id: str) -> KnowledgeCell:
-        for c in self.cells:
-            if c.character_id == character_id and c.secret_id == secret_id:
-                return c
-        raise KeyError((character_id, secret_id))
 
 
 class Subgraph(BaseModel):
@@ -873,25 +774,6 @@ class UpsertResult(BaseModel):
     """被撤回的旧边（同章更正），已是更新后的值。"""
 
 
-class SecretDetail(BaseModel):
-    """`secret` 扩展表那一行。**只在 `NodeSpec.label is SECRET` 时存在。**
-
-    显示名不在这里：它是 `NodeSpec.name` → `node.name`（001_init.sql：node.name 是
-    显示真相，扩展表不再存一份——同名字段存两处就需要一个同步器）。
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    description: str = ""
-
-    sub_of: str | None = None
-    """父秘密的 **node id**（= `secret.id`，扩展表主键就是 node.id）。
-
-    子事实是 ADR 0005 删掉 `PARTIALLY_KNOWS` 之后「部分知道」的唯一表达法：
-    秘密拆子事实、每子事实一条 KNOWS。表达力相同，零新增边类型。
-    """
-
-
 class NodeSpec(BaseModel):
     """`upsert_node` 的入参。幂等键 `(project_id, label, name)`。
 
@@ -905,7 +787,6 @@ class NodeSpec(BaseModel):
     label: NodeLabel
     name: str = Field(min_length=1)
     props: NodeProps = Field(default_factory=NodeProps)
-    secret: SecretDetail | None = None
 
     @model_validator(mode="after")
     def _chapter_nodes_are_born_with_their_row(self) -> NodeSpec:
@@ -914,23 +795,6 @@ class NodeSpec(BaseModel):
                 "Chapter 节点只能由 put_chapter 建：它必须和 chapter 行同生。"
                 "没有 chapter 行就没有 number，而 number 是 state_at 的全序键"
                 "（`valid_from_chapter <= :ch`），且它是 PLANTED_IN 的 dst"
-            )
-        return self
-
-    @model_validator(mode="after")
-    def _secret_row_and_label_live_and_die_together(self) -> NodeSpec:
-        if (self.label is NodeLabel.SECRET) != (self.secret is not None):
-            # 一个没有 secret 行的 Secret 节点在认知矩阵的默认列序里**根本不成列**
-            # （queries.secret_ids 走 `FROM secret`，而 secrets=None 是面板的唯一路径）：
-            # 作者看见的是「系统对这个秘密没意见」，实际是「系统不知道有这个秘密」。
-            # 那正是头牌面板最怕的那种沉默。反过来，一个带 secret 行的 Character 会被
-            # schema 的复合外键当场拒——但抛在这里才说得出人话。
-            raise ValueError(
-                f"label 与 secret 必须同生同死：label={self.label}、"
-                f"secret={'有' if self.secret else '无'}。"
-                "Secret 节点必须带 SecretDetail（否则它在认知矩阵的列序里不成列，"
-                "面板会把「不知道有这个秘密」显示成「对这个秘密没意见」）；"
-                "别的 label 不许带"
             )
         return self
 

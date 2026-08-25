@@ -48,7 +48,7 @@ from novel_harness.declare import Ledger
 from novel_harness.draft.capabilities import ReasoningEffort, plan_call, resolve_capabilities
 from novel_harness.draft.length import DraftLanguage, LengthSpec
 from novel_harness.draft.provider import CompletionResult, ProviderConfig, ToolCall
-from novel_harness.graph import NodeLabel, NodeProps, NodeSpec, SecretDetail
+from novel_harness.graph import NodeLabel, NodeProps, NodeSpec
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from test_api import PLOT_NOTE, TWIST
 
@@ -77,10 +77,9 @@ def poisoned(book: dict[str, str]) -> dict[str, str]:
     store.upsert_node(
         NodeSpec(
             project_id=pid,
-            label=NodeLabel.SECRET,
+            label=NodeLabel.FACTION,
             name="血脉秘密",
-            props=NodeProps.model_validate({"twist": TWIST}),
-            secret=SecretDetail(description=SECRET_DESC),
+            props=NodeProps.model_validate({"twist": TWIST, "plot_note": SECRET_DESC}),
         )
     )
     store.upsert_node(

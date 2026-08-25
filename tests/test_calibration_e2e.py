@@ -46,7 +46,6 @@ from novel_harness.graph import (
     NodeLabel,
     NodeProps,
     NodeSpec,
-    SecretDetail,
 )
 from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
@@ -184,10 +183,9 @@ def warehouse(tmp_path: Path) -> Iterator[dict[str, Any]]:
     ids["花瓶秘密"] = store.upsert_node(
         NodeSpec(
             project_id=pid,
-            label=NodeLabel.SECRET,
+            label=NodeLabel.FACTION,
             name="花瓶秘密",
-            props=NodeProps.model_validate({"twist": TELL}),
-            secret=SecretDetail(description="花瓶的秘密内容"),
+            props=NodeProps.model_validate({"twist": TELL, "plot_note": "花瓶的秘密内容"}),
         )
     ).id
     conn.commit()

@@ -365,11 +365,6 @@ class ExtractionService:
         )
         if reason is not None:
             return reason
-        facts, _dropped_facts, reason = resolve_event_surfaces(
-            "event", index, raw.revealed_facts, NodeLabel.SECRET, resolutions
-        )
-        if reason is not None:
-            return reason
         located, reason = locate_evidence("event", index, paras, raw.quote)
         if reason is not None:
             return reason
@@ -381,7 +376,6 @@ class ExtractionService:
                 evidence_id=evidence.id,
                 participant_ids=participants,
                 knower_ids=knowers,
-                revealed_fact_ids=facts,
                 confidence=raw.confidence,
             )
         )

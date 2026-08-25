@@ -14,7 +14,6 @@ const HOPS = 2;
 const LABEL_COLOR: Record<string, string> = {
   Character: "var(--accent)",
   Location: "var(--k)",
-  Secret: "var(--b)",
   Faction: "#7a5cc0",
   Object: "#5c8ac0",
   Foreshadow: "#c05c93",

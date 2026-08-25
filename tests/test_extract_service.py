@@ -28,7 +28,6 @@ from novel_harness.graph import (
     NodeLabel,
     NodeProps,
     NodeSpec,
-    SecretDetail,
 )
 from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_proposals import SqliteProposalStore
@@ -113,9 +112,8 @@ def seed(conn: Connection) -> Seed:
     secret = graph.upsert_node(
         NodeSpec(
             project_id=project_id,
-            label=NodeLabel.SECRET,
+            label=NodeLabel.FACTION,
             name="玄铁令来历",
-            secret=SecretDetail(),
         )
     )
     graph.put_chapter(
@@ -146,14 +144,12 @@ def _event(
     confidence: float = 0.91,
     participants: tuple[str, ...] = ("顾清音", "萧决"),
     knowers: tuple[str, ...] = ("顾清音",),
-    revealed_facts: tuple[str, ...] = ("玄铁令来历",),
 ) -> RawEvent:
     return RawEvent(
         summary="顾清音交出玄铁令。",
         quote=quote,
         participants=participants,
         knowers=knowers,
-        revealed_facts=revealed_facts,
         confidence=confidence,
     )
 
@@ -191,7 +187,6 @@ def test_ingest_persists_one_unique_event_with_source_evidence(seed: Seed, conn:
     assert view is not None
     assert [node.id for node in view.participants] == [seed.hero_id, seed.sidekick_id]
     assert [node.id for node in view.knowers] == [seed.hero_id]
-    assert [node.id for node in view.revealed_facts] == [seed.secret_id]
     evidence = seed.graph.get_evidence(seed.project_id, view.event.evidence_id)
     assert evidence is not None
     assert evidence.audit.quote_text == EVENT_QUOTE
@@ -445,7 +440,7 @@ def test_low_confidence_main_character_items_cluster_and_point_seven_is_not_low(
     ))
     graph.upsert_node(NodeSpec(project_id=pid, label=NodeLabel.CHARACTER, name="萧决"))
     graph.upsert_node(NodeSpec(
-        project_id=pid, label=NodeLabel.SECRET, name="玄铁令来历", secret=SecretDetail(),
+        project_id=pid, label=NodeLabel.FACTION, name="玄铁盟",
     ))
     graph.put_chapter(ChapterSpec(
         project_id=pid, number=7, heading="第七章", path="boundary/0007.md",
@@ -509,7 +504,7 @@ def test_profile_and_incidental_surface_policy_never_guesses_or_creates_nodes(
         _analysis(
             events=(
                 _event(),
-                _event(participants=("不存在的路人",), knowers=(), revealed_facts=()),
+                _event(participants=("不存在的路人",), knowers=()),
             ),
             profiles=profiles,
         ),
@@ -549,7 +544,6 @@ def test_unknown_incidental_surfaces_are_dropped_not_guessed(
                 _event(
                     participants=("顾清音", "不存在的路人"),
                     knowers=("顾清音", "服务员", "全体师生"),
-                    revealed_facts=("玄铁令来历", "模型生成的未声明事实句"),
                 ),
             )
         ),
@@ -562,7 +556,6 @@ def test_unknown_incidental_surfaces_are_dropped_not_guessed(
     assert view is not None
     assert [node.id for node in view.participants] == [seed.hero_id]
     assert [node.id for node in view.knowers] == [seed.hero_id]
-    assert [node.id for node in view.revealed_facts] == [seed.secret_id]
 
 
 def test_new_character_proposals_are_split_per_surface(

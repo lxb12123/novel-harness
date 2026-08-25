@@ -10,9 +10,7 @@ from novel_harness.graph import (
     EdgeSource,
     EdgeStatus,
     EvidenceStatus,
-    GraphVersion,
     InformationScope,
-    KnowledgeMatrix,
     NodeLabel,
     NodeRef,
 )
@@ -33,15 +31,7 @@ def _constraints() -> ResolvedConstraints:
     return ResolvedConstraints(
         chapter=12,
         cast=[ALICE.name, BOB.name],
-        matrix=KnowledgeMatrix(
-            project_id=PID,
-            chapter=12,
-            scope=InformationScope.CANON,
-            version=GraphVersion(),
-            characters=[ALICE, BOB],
-            secrets=[],
-            cells=[],
-        ),
+        characters=[ALICE, BOB],
     )
 
 

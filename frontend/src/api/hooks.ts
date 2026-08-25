@@ -32,10 +32,6 @@ import type {
   EventCastInput,
   EventView,
   ExtractionRun,
-  KnowledgeAddInput,
-  KnowledgeAddition,
-  KnowledgeCorrection,
-  KnowledgeEditInput,
   Mentioned,
   NodeRef,
   NodeSummaryMentions,
@@ -463,17 +459,17 @@ export const CONTINUATION_LENGTH = {
 // 而它们是这套图谱唯一的手工写入口。哪天要把「手工记一条」重新接进界面，
 // 端点、拒绝措辞、`QuoteNotFound` 那段话都还在原地等着。
 
-/** 建一个节点（人物 / 地点 / 秘密 …）。幂等：键是 name，重复提交同一个名字不会建出两个。
+/** 建一个节点（人物 / 地点 / 势力 …）。幂等：键是 name，重复提交同一个名字不会建出两个。
  *
  * 这条路径是**整个工作台的起点**：import 只切章、不抽实体（ADR 0004 有意的），
- * 所以在花名册里有第一个人之前，认知矩阵 / 约束 / declare 三样头牌全都无从算起
+ * 所以在花名册里有第一个人之前，约束 / declare 两样全都无从算起
  * （declare 的「填称呼」会必然 UnknownName 404）。成功后走 invalidatePanels——
- * 花名册从空变非空的那一刻，那三样才第一次有得算。
+ * 花名册从空变非空的那一刻，那两样才第一次有得算。
  */
 export function useCreateNode(pid: string) {
   const qc = useQueryClient();
   return useMutation({
-    // 出参过 `_narrow`：Secret 收窄成 {id,label,name}，其余回完整 Node（带 props）。
+    // 出参过 `_narrow`：未来节点收窄成 {id,label,name}，其余回完整 Node（带 props）。
     // 所以按 NodeRef + 可选 props 收（同 SubgraphNode 的处理）——UI 只读 label/name。
     mutationFn: (body: DeclareNode) =>
       api.post<NodeRef & { props?: unknown }>(proj(pid, "/nodes"), body),
@@ -797,47 +793,6 @@ function invalidateReview(qc: ReturnType<typeof useQueryClient>, pid: string) {
 // 这两条是 ADR 0020 押的那条退路：抽取直接进 CANON，作者第一次看见那条事实时它已经
 // 生效了，所以退路必须落在 CANON 上。**不许在这两条上做静默重试**：409 的意思是
 // 「这本书在别处刚被改过」，重试等于把作者的改动盖到一份他没看过的状态上。
-
-/** 「他知道 X」改成「他以为 X」，或者反过来。
- *
- *  `expected_canon_version` 由调用方从**它正在渲染的那张矩阵**上取
- *  （`matrix.version.canon_version`），不在这里另拉一次：版本必须跟着作者看到的数据走。
- *  **这不是新增认知的入口**——空格子（不知道）走 `useAddKnowledge`，那条路的生效章在
- *  URL 里。两条分开是有意的：一个能力两个入口，作者学会的会是错的那一个。
- *  （这句话 2026-08-14 之前写着「走声明抽屉」，而那个抽屉当天就删了。） */
-export function useCorrectKnowledge(pid: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: KnowledgeEditInput) =>
-      api.post<KnowledgeCorrection>(proj(pid, "/canon/knowledge"), body),
-    onSuccess: () => {
-      invalidatePanels(qc, pid);
-      qc.invalidateQueries({ queryKey: ["projects"] }); // canon 版本推高了一格
-      qc.invalidateQueries({ queryKey: ["activity", pid] }); // 这一步会进日志
-    },
-  });
-}
-
-/** 在一格「不知道」上**补**一条「他知道 / 他以为」。
- *
- *  **`chapter` 绑在 hook 上，不进请求体。** 它是作者正看着的那一章（矩阵本来就按它
- *  渲染），落在 URL 的 `/chapters/{n}/` 那一段上；进了请求体，界面上迟早就有一个框
- *  让他去填它（约束 10）——而 `tests/test_canon_edit_boundary.py` 那道零基线守卫扫的
- *  正是 `.mutate({…})` 的键，所以这个数**在物理上**没法从那儿进来。
- *
- *  失效面和「改」那条一模一样：这一步同样改了 CANON、推高了版本、进了日志。 */
-export function useAddKnowledge(pid: string, chapter: number) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (body: KnowledgeAddInput) =>
-      api.post<KnowledgeAddition>(proj(pid, `/chapters/${chapter}/canon/knowledge`), body),
-    onSuccess: () => {
-      invalidatePanels(qc, pid);
-      qc.invalidateQueries({ queryKey: ["projects"] });
-      qc.invalidateQueries({ queryKey: ["activity", pid] });
-    },
-  });
-}
 
 /** 改一条已生效事件的知情 / 在场名单。
  *

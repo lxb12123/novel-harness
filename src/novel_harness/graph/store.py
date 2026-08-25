@@ -19,12 +19,15 @@
     |-------------------|----------------------------------------------------|
     | `resolve`         | text/mentions.py 的花名册、cast 解析、面板的 `cast` 参数、R2 |
     | `state_at`        | panel/state.py、R3 DEAD_SPEAKS、R4 LOCATION_CONFLICT |
-    | `knowledge_matrix`| panel/knowledge.py ← **头牌**、draft 的 D 分区      |
     | `subgraph`        | 局部关系图（M5）                                    |
     | `upsert_edge`     | canon/commit.py、extract/incremental.py（M4）       |
 
+    ⚠️ 原来还有第五个 `knowledge_matrix`（**头牌**），2026-08-25 随秘密一起下线
+    （ADR 0039）。「五方法」这个数字来自 PLAN，今天是四个——**不要为了凑回五个
+    再发明一个方法**，那正是这张表想拦的事（每一行都得对得上一个真实消费者）。
+
 没有 `get_node` / 按 ID 的通用 `get_edge` / 裸 `query`：节点和可查询边都随
-StateSnapshot / KnowledgeMatrix / Resolution 一起出来。`CanonWriter` 只有一个按完整
+StateSnapshot / Resolution 一起出来。`CanonWriter` 只有一个按完整
 幂等键读取边的窄口子，专供作者重放判定；开通用查询口子仍等于把 SQL 换个地方泄漏出去。
 """
 
@@ -50,7 +53,6 @@ from .models import (
     Evidence,
     EvidenceSpec,
     InformationScope,
-    KnowledgeMatrix,
     Node,
     NodeSpec,
     Resolution,
@@ -74,12 +76,11 @@ MAX_HOPS: Final = 2
 MAX_SUBGRAPH_NODES: Final = 30
 """§5.5 的 done_when：2 跳 + 类型过滤后 ≤30 节点，超过则折叠成聚合节点并置 `truncated`。"""
 
-HOP2_EDGE_TYPES: Final[frozenset[EdgeType]] = frozenset(
-    {EdgeType.RELATED_TO, EdgeType.KNOWS}
-)
-"""第 2 跳允许展开的边类型（§5.5：「只展开 RELATED_TO/KNOWS」）。
+HOP2_EDGE_TYPES: Final[frozenset[EdgeType]] = frozenset({EdgeType.RELATED_TO})
+"""第 2 跳允许展开的边类型（§5.5 写的是「只展开 RELATED_TO/KNOWS」，
+**KNOWS 2026-08-25 随秘密下线，只剩 RELATED_TO**，ADR 0039）。
 
-§5.5 举的反例是 `APPEARS_IN`，但那个类型在 9 类里**不存在**（它是被砍掉的 17/20 schema
+§5.5 举的反例是 `APPEARS_IN`，但那个类型在 7 类里**不存在**（它是被砍掉的 17/20 schema
 的遗留）。v1 真正的星形高度数边是另外三条，别照抄那个例子就以为没事：
 
 - `HAS_STATE`：全书每个人都连到「健康」这**一个** StateDim 节点
@@ -92,7 +93,7 @@ HOP2_EDGE_TYPES: Final[frozenset[EdgeType]] = frozenset(
 QUERYABLE_SCOPES: Final[frozenset[InformationScope]] = frozenset(
     {InformationScope.CANON, InformationScope.PROVISIONAL}
 )
-"""`state_at` / `knowledge_matrix` / `subgraph` 只接受这两层，传别的必须抛 `ValueError`。
+"""`state_at` / `subgraph` 只接受这两层，传别的必须抛 `ValueError`。
 
 **`PLANNED` 被挡在读路径外是改 7 的要求，不是保守。** 改 7 的原话：
 `future_leak_penalty` 这类是**类型错误**——硬约束被当成了软权重，dense_score 够高
@@ -271,23 +272,6 @@ class StoryGraph(Protocol):
         """
         ...
 
-    def knowledge_edges_at(
-        self,
-        project_id: str,
-        character_ids: Sequence[str],
-        secret_ids: Sequence[str],
-        chapter: int,
-        *,
-        scope: InformationScope = InformationScope.CANON,
-    ) -> list[Edge]:
-        """(人物, 秘密) 格上的 KNOWS / BELIEVES **原边**（带完整来源字段）。
-
-        `knowledge_matrix` 把来源字段收窄成格子（state / since / believed_value /
-        evidence_id）；写前校准要保留 `source` / `confidence` / `evidence_status` /
-        有效区间，所以这里直接给原边。**只给校准层用，不给 Agent。**
-        """
-        ...
-
     def state_at(
         self,
         project_id: str,
@@ -319,7 +303,8 @@ class StoryGraph(Protocol):
             §5.5 的 SQL 是 `WHERE src = :node`，那是在「所有边都有向」的前提下写的。
             `UNDIRECTED_EDGE_TYPES`（ADR 0008）打破了它：RELATED_TO 按 `(min,max)` 规范化
             存储，方向是抛硬币，所以它从两端都查得到。取对端用 `Edge.peer_of()`。
-            **有向边仍然只有出边**——KNOWS 的 dst 是秘密，反向查是无意义的。
+            **有向边仍然只有出边**——`LOCATED_AT` 的 dst 是地点，从地点反查「谁在这儿」
+            是另一个问题，请用 `subgraph(hops=1)`。
 
             `StateSnapshot.location` 至多一个是 `LOCATED_AT` 的 exclusivity 保证的，
             不是这里挑一个的结果。**如果它返回了两条 LOCATED_AT，那是 supersede 漏了，
@@ -327,48 +312,6 @@ class StoryGraph(Protocol):
             `dst.props.dim_key` 而**不是 dst 的节点 id**——两个 StateDim 节点共享一个
             dim_key 时 supersede 认为它们是两个维度，一条都不闭合，而 `is_dead` 的
             `any()` 会让 dead 永远压过 alive。
-        """
-        ...
-
-    def knowledge_matrix(
-        self,
-        project_id: str,
-        chapter: int,
-        cast: Sequence[str],
-        *,
-        secrets: Sequence[str] | None = None,
-        scope: InformationScope = InformationScope.CANON,
-    ) -> KnowledgeMatrix:
-        """**认知边界矩阵 —— 头牌**（§3.2 / §8 Day 5 / README 第一行）。
-
-        纯集合查询，零 LLM、零 NLP、**不读正文**。闭世界：无 KNOWS/BELIEVES 边 ⇒ UNKNOWN。
-
-        Args:
-            cast: 在场角色的 node_id，**顺序即面板的行序**。由作者在场景块里声明
-                （`<!-- nh: cast=萧决,顾清音,李管家 -->`），不是抽的。
-            secrets: 列序。`None` = 本项目全部 `secret` 行。若作者把一个秘密拆成了子事实
-                （ADR 0005 用它替代 PARTIALLY_KNOWS），父秘密和子事实**都会成列**——
-                要不要折叠是面板层的判断，图层不猜。
-
-        Returns:
-            **完整的笛卡尔积**：`len(cells) == len(cast) * len(secrets)`。UNKNOWN 格必须
-            物化（`KnowledgeMatrix` 的 validator 会强制这一点）——闭世界推导下
-            「没有这一格」和「他不知道」是两个意思，面板上少一格 = 作者以为系统没意见。
-
-            `characters` / `secrets` 是 **`NodeRef`（窄引用）不是 `Node`**：矩阵是 D 分区的
-            料、整份序列化进 prompt，而 Secret 节点的 props 里装的就是秘密的内容。
-
-            **这个方法看不见「作者声明了但没解析出来的人」**（它收的是 node_id）。
-            整行缺失是 `_check_complete` 够不着的地方，由 `KnowledgeMatrix.unresolved_cast`
-            承载，而那个字段只有 `panel.knowledge_matrix(..., unresolved=...)` 填得上。
-
-        Raises:
-            NodeNotFound: cast / secrets 里有 id 不在本项目。
-            ValueError: `scope` 不在 `QUERYABLE_SCOPES`，或 `chapter < 1`（见 `state_at`）。
-
-        Notes:
-            单测（§8 Day 5）：一个人物在 ch88 得知秘密 → ch87 UNKNOWN、ch88 KNOWS、
-            ch152 KNOWS。
         """
         ...
 
@@ -483,12 +426,12 @@ class StoryGraph(Protocol):
 
 @runtime_checkable
 class CanonWriter(Protocol):
-    """建节点 / 别名 / 秘密 / 章节 / 快照 / 证据 —— **图的写入面**。
+    """建节点 / 别名 / 章节 / 快照 / 证据 —— **图的写入面**。
 
     ── 为什么它不是 `StoryGraph` 的六个新方法 ────────────────────────────
 
     `StoryGraph` 的五个方法**一个字都不动**，理由是它有两个 Fake 实现
-    （`tests/test_knowledge.py` / `tests/test_checks.py`）和一份刚把它们从漂移里拽
+    （`tests/test_state_at.py` / `tests/test_checks.py`）和一份刚把它们从漂移里拽
     回来的一致性规格（`tests/test_store_conformance.py`）。往 Protocol 上加一个方法
     = 两个 Fake 各长一个存根，而 `@runtime_checkable` 只查方法**存在**——那些存根
     会照样让 `isinstance(fake, StoryGraph)` 为真，却什么都不做。
@@ -498,7 +441,7 @@ class CanonWriter(Protocol):
 
     ── 每个方法一个事务，且它们各自是原子的 ───────────────────────────────
 
-    `upsert_node` 要落 node + canonical 别名 (+ secret 行)，`put_chapter` 要落
+    `upsert_node` 要落 node + canonical 别名，`put_chapter` 要落
     node + chapter 行 + 快照。**同生**不是风格问题：一个没有 chapter 行的 Chapter 节点
     没有 `number`，而 `number` 是 `state_at` 的全序键。跨方法的「记得按顺序调」是纪律，
     纪律会在某个赶时间的下午被绕过。
@@ -531,7 +474,7 @@ class CanonWriter(Protocol):
 
         幂等键 `(project_id, label, name)`——应用层的，不是唯一索引
         （`idx_node_name` 只是普通 INDEX：真书里同名人物是存在的，schema 不该替作者
-        判定「两个『萧决』是同一个人」）。撞上了就更 props 返回，`secret` 行不重写。
+        判定「两个『萧决』是同一个人」）。撞上了就更 props 返回。
 
         建新节点时**在同一个事务里**还会落：
 
@@ -540,7 +483,6 @@ class CanonWriter(Protocol):
           `CHECK (usable_for_rules = 0 OR length(surface) >= 2)` 会让**建节点整个失败**。
           schema 的立场是「短 surface 可以存在，只是不许被规则拿去匹配正文」，不是
           「1 字名的人不许进这本书」。
-        - `label is SECRET` 时一条 `secret` 行（`NodeSpec` 的 validator 保证两者同生）。
 
         幂等顺手关掉了「第二个『萧决』」那条路：那会让 `resolve('萧决')` 返回 2 个 hit
         → `Resolution.ambiguous` → `usable_for_rules` 为假 → **面板上整行消失**，
@@ -551,8 +493,7 @@ class CanonWriter(Protocol):
 
         Raises:
             StoreError: 幂等键撞出 >1 行（只有本方法建得出节点，那个状态不该存在）。
-            ValueError: `spec` 自身非法（`NodeSpec` 的 validator 已挡掉 Chapter 和
-                「Secret 却没有 secret 行」）。
+            ValueError: `spec` 自身非法（`NodeSpec` 的 validator 已挡掉 Chapter）。
         """
         ...
 

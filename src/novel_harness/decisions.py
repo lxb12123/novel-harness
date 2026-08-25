@@ -70,12 +70,24 @@ class DecisionKind(StrEnum):
 
     ALIAS_MERGE = "alias_merge"
     NODE_DECLARE = "node_declare"
-    """建一个 Character / Location / Faction / Foreshadow / Object 节点。
-    Secret 走 `SECRET_DECLARE`（§5.7 的原文单列了它）。"""
+    """建一个 Character / Location / Faction / Foreshadow / Object 节点。"""
+
+    # ── ⚠️ 下面三个是**废弃值**，2026-08-25 起没有任何写入方（ADR 0039，秘密下线）──
+    #
+    # **它们不许删。** `decision_log` 的三个触发器封死了 INSERT 之后的 UPDATE/DELETE，
+    # 所以 2026-08-25 之前写下的行永远在库里，`kind` 列上就是这三个字符串。删掉枚举
+    # 成员，`activity.py` 里那几个 `kind == DecisionKind.KNOWLEDGE_EDIT` 分支就得改成
+    # 裸字面量比较——**同一个字符串于是有两份真相**，而这个枚举存在的全部意义就是
+    # 只有一份。
+    #
+    # 想真正拿掉它们，前提是「库里一条都没有了」，而那件事**做不到**（见上）。
+    # 所以正确的形态就是「留在枚举里、标成废弃、不给新的写入方」。
 
     SECRET_DECLARE = "secret_declare"
+    """**废弃。** 当年：建一个 Secret 节点（§5.7 的原文单列了它）。"""
+
     KNOWS_DECLARE = "knows_declare"
-    """KNOWS 和 BELIEVES 共用这一个：哪一条在 `payload["edge_type"]` 里。"""
+    """**废弃。** 当年：KNOWS 和 BELIEVES 共用这一个，哪一条在 `payload["edge_type"]` 里。"""
 
     LOCATED_DECLARE = "located_declare"
 
@@ -98,14 +110,16 @@ class DecisionKind(StrEnum):
     PROPOSAL_REVIEW = "proposal_review"
 
     KNOWLEDGE_EDIT = "knowledge_edit"
-    """作者把一条**已经生效**的 KNOWS 改成了 BELIEVES（或反过来）。`corrections.py`。
+    """**废弃**（同 `SECRET_DECLARE`，ADR 0039）。当年：作者把一条**已经生效**的
+    KNOWS 改成了 BELIEVES（或反过来）。`corrections.py`。
 
     和 `KNOWS_DECLARE` 分开是因为重放时它们不是一回事：那边是「新增一条事实」，
     这边是「把已经写下的那条读错了」——payload 里有 `from` 和 `to` 两侧。
     """
 
     KNOWLEDGE_ADD = "knowledge_add"
-    """作者在认知矩阵一格**空白**上手工补了一条「他知道 / 他以为」。`corrections.py`。
+    """**废弃**（同 `SECRET_DECLARE`，ADR 0039）。当年：作者在认知矩阵一格**空白**上
+    手工补了一条「他知道 / 他以为」。`corrections.py`。
 
     和 `KNOWLEDGE_EDIT` 分开：那边 payload 有 `from` 和 `to` 两侧（读法改了），
     这边只有 `to`（这一格上本来什么都没有）。**也和 `KNOWS_DECLARE` 分开**，

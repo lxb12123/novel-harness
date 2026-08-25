@@ -37,7 +37,6 @@ from novel_harness.graph import (
     NodeLabel,
     NodeProps,
     NodeSpec,
-    SecretDetail,
 )
 from novel_harness.events import ProposalCreate, ProvisionalEventSpec
 from novel_harness.graph.sqlite_events import SqliteEventStore
@@ -96,23 +95,17 @@ def book(tmp_path: Path) -> dict[str, str]:
     ledger.declare_alias(of="萧决", surface="师兄", kind=AliasKind.TITLE)
     ledger.declare_alias(of="李管家", surface="师兄", kind=AliasKind.TITLE)
 
-    # 泄漏 Secret：props.twist 挂在 extra="allow" 上。
-    ids["血脉秘密"] = store.upsert_node(
-        NodeSpec(
-            project_id=pid,
-            label=NodeLabel.SECRET,
-            name="血脉秘密",
-            props=NodeProps.model_validate({"twist": TWIST}),
-            secret=SecretDetail(),
-        )
-    ).id
-    # 未来 Character：first_appears=200 + props.plot_note。
+    # **两种毒药挂在同一个节点上**：未来 Character（first_appears=200）+ `twist` +
+    # `plot_note`。`upsert_node` 的幂等键是 (project, label, name)，分两次写后一次会
+    # 盖掉前一次——所以合并成一次写，不是两个节点。
     ids["未来大能"] = store.upsert_node(
         NodeSpec(
             project_id=pid,
             label=NodeLabel.CHARACTER,
             name="未来大能",
-            props=NodeProps.model_validate({"first_appears_chapter": 200, "plot_note": PLOT_NOTE}),
+            props=NodeProps.model_validate(
+                {"first_appears_chapter": 200, "twist": TWIST, "plot_note": PLOT_NOTE}
+            ),
         )
     ).id
     conn.commit()
@@ -186,10 +179,15 @@ def test_parallel_http_requests_keep_connections_request_local(
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_resolve_secret_does_not_leak_props(client: TestClient, book: dict[str, str]) -> None:
-    r = client.get(f"/api/projects/{_pid(book)}/resolve", params={"surface": "血脉秘密"})
+def test_resolve_never_leaks_props(client: TestClient, book: dict[str, str]) -> None:
+    """`/resolve` **一律**出窄引用，不看章号。
+
+    它是无章号的花名册查询，没有「当前章」可以拿来判「这个节点是不是未来的」——
+    所以它不走 `_narrow(chapter=None)`（那条今天什么都不收窄），自己一律收窄。
+    """
+    r = client.get(f"/api/projects/{_pid(book)}/resolve", params={"surface": "未来大能"})
     assert r.status_code == 200
-    assert TWIST not in r.text  # ← 核心：秘密的内容不出接口
+    assert TWIST not in r.text  # ← 核心：作者写在节点上的东西不出接口
     hit = r.json()["hits"][0]["node"]
     assert set(hit.keys()) == {"id", "label", "name"}  # 窄引用，没有 props
 def test_future_character_narrowed_before_first_appears(
@@ -227,9 +225,8 @@ def test_mentioned_reads_the_manuscript(client: TestClient, book: dict[str, str]
     body = r.json()
     assert body["has_text"] is True
     assert body["surfaces"] == ["萧决", "李管家"]
-    # 「青云城主府」是地点、「血脉秘密」是秘密，两个都在那句话里，都不许进来。
+    # 「青云城主府」是地点，它也在那句话里，但 cast 只收 Character——不许进来。
     assert "青云城主府" not in body["surfaces"]
-    assert "血脉秘密" not in body["surfaces"]
 
 
 def test_mentioned_separates_no_chapter_from_no_one(
@@ -356,17 +353,6 @@ def test_sync_refused_on_two_headings_422(client: TestClient, book: dict[str, st
 # ══════════════════════════════════════════════════════════════════════════
 # declare 写路径闭环（约束 10：入参没有章号，valid_from 是产物）
 # ══════════════════════════════════════════════════════════════════════════
-
-
-def test_declare_node_secret_is_narrowed(client: TestClient, book: dict[str, str]) -> None:
-    r = client.post(
-        f"/api/projects/{_pid(book)}/nodes",
-        json={"label": NodeLabel.SECRET.value, "name": "玄铁令下落", "description": "在北荒"},
-    )
-    assert r.status_code == 200, r.text
-    node = r.json()
-    assert set(node.keys()) == {"id", "label", "name"}  # Secret 收窄
-    assert "在北荒" not in r.text  # description 不回吐
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -649,9 +635,9 @@ def test_check_missing_chapter_404(client: TestClient, book: dict[str, str]) -> 
 def test_roster_and_chapters(client: TestClient, book: dict[str, str]) -> None:
     roster = client.get(f"/api/projects/{_pid(book)}/roster")
     assert roster.status_code == 200
-    assert TWIST not in roster.text  # 花名册也不漏秘密
+    assert TWIST not in roster.text  # 花名册也不漏节点上的 props
     names = {n["name"] for n in roster.json()}
-    assert {"萧决", "李管家", "青云城主府", "血脉秘密"} <= names
+    assert {"萧决", "李管家", "青云城主府", "未来大能"} <= names
 
     chapters = client.get(f"/api/projects/{_pid(book)}/chapters")
     assert chapters.status_code == 200

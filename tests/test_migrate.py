@@ -80,9 +80,9 @@ def test_migrate_twice_is_idempotent(tmp_path: Path) -> None:
     闸门拦住了它。"""
     c = connect(tmp_path / "nh.db")
     assert user_version(c) == 0
-    assert migrate(c) == 27
-    assert migrate(c) == 27  # 不抛
-    assert user_version(c) == 27
+    assert migrate(c) == 28
+    assert migrate(c) == 28  # 不抛
+    assert user_version(c) == 28
     c.close()
 
 
@@ -93,8 +93,8 @@ def test_migrate_twice_on_fresh_connections(tmp_path: Path) -> None:
     migrate(c1)
     c1.close()
     c2 = connect(path)
-    assert migrate(c2) == 27
-    assert user_version(c2) == 27
+    assert migrate(c2) == 28
+    assert user_version(c2) == 28
     c2.close()
 
 
@@ -157,6 +157,7 @@ def test_migration_files_are_readable_from_package() -> None:
         "025_chapter_focus.sql",
         "026_advisory_notification.sql",
         "027_extraction_yielded_nothing.sql",
+        "028_secrets_offline.sql",
     ]
     assert "PRAGMA user_version = 1" in (root / "001_init.sql").read_text(encoding="utf-8")
     assert "PRAGMA user_version = 2" in (root / "002_m4_events.sql").read_text(encoding="utf-8")
@@ -211,8 +212,8 @@ def test_populated_v1_database_migrates_without_changing_existing_rows(tmp_path:
         ).fetchone()
     )
 
-    assert migrate(c) == 27
-    assert migrate(c) == 27
+    assert migrate(c) == 28
+    assert migrate(c) == 28
     assert tuple(c.execute("SELECT * FROM project WHERE id = ?", (project_id,)).fetchone()) == before_project
     assert tuple(c.execute("SELECT * FROM node WHERE id = ?", (character_id,)).fetchone()) == before_node
     assert (
@@ -241,7 +242,6 @@ def test_m4_tables_and_proposal_columns_are_present(conn: sqlite3.Connection) ->
         "story_event",
         "event_participant",
         "event_knower",
-        "event_reveal",
         "proposal_event",
         "proposal_edge",
         "extraction_run",
@@ -306,7 +306,7 @@ def test_populated_v2_database_backfills_attached_proposal_audit(tmp_path: Path)
     )
     c.commit()
 
-    assert migrate(c) == 27
+    assert migrate(c) == 28
     row = c.execute(
         """
         SELECT resolution_action, resolved_canon_version, audit_envelope_json
@@ -367,7 +367,7 @@ def test_v2_migration_attaches_one_matching_proposal_review_gap(tmp_path: Path) 
     )
     c.commit()
 
-    assert migrate(c) == 27
+    assert migrate(c) == 28
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -425,7 +425,7 @@ def test_v2_migration_refuses_duplicate_matching_proposal_reviews(tmp_path: Path
     )
     c.commit()
 
-    assert migrate(c) == 27
+    assert migrate(c) == 28
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -488,7 +488,7 @@ def test_v2_migration_quarantines_utf8_blob_kind_duplicate_history(
     )
     c.commit()
 
-    assert migrate(c) == 27
+    assert migrate(c) == 28
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -548,7 +548,7 @@ def test_v2_migration_quarantines_shared_decision_attachment(tmp_path: Path) -> 
         )
     c.commit()
 
-    assert migrate(c) == 27
+    assert migrate(c) == 28
     rows = c.execute(
         """
         SELECT id, resolution_action, resolved_canon_version, audit_envelope_json
@@ -665,7 +665,7 @@ def test_v2_migration_quarantines_ambiguous_audit_payload(
     )
     c.commit()
 
-    assert migrate(c) == 27
+    assert migrate(c) == 28
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -718,7 +718,7 @@ def test_v2_migration_quarantines_invalid_utf8_payload_without_stalling(
     )
     c.commit()
 
-    assert migrate(c) == 27
+    assert migrate(c) == 28
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -789,7 +789,7 @@ def test_v2_migration_quarantines_invalid_utf8_decision_fields(
     )
     c.commit()
 
-    assert migrate(c) == 27
+    assert migrate(c) == 28
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -860,7 +860,7 @@ def test_v2_migration_quarantines_invalid_decision_audit_fields(
     )
     c.commit()
 
-    assert migrate(c) == 27
+    assert migrate(c) == 28
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -1563,10 +1563,10 @@ def test_concurrent_first_migrate_does_not_race(tmp_path: Path) -> None:
     for t in threads:
         t.join()
 
-    assert results == [27] * n, f"并发首跑必须全部成功，实得 {results}"
+    assert results == [28] * n, f"并发首跑必须全部成功，实得 {results}"
     c = connect(path)
-    assert user_version(c) == 27
-    assert c.execute("SELECT COUNT(*) FROM edge_type").fetchone()[0] == 9
+    assert user_version(c) == 28
+    assert c.execute("SELECT COUNT(*) FROM edge_type").fetchone()[0] == 7
     c.close()
 
 
@@ -1574,14 +1574,14 @@ def test_connect_in_memory_works(tmp_path: Path) -> None:
     # 内存库不支持 WAL，会静默停在 memory 模式。这没关系（没有并发读者），
     # 但 connect() 不能因此炸——测试和 CLI 的 --dry-run 都走这条。
     c = connect(IN_MEMORY)
-    assert migrate(c) == 27
+    assert migrate(c) == 28
     assert c.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     c.close()
 
 
 def test_connect_creates_parent_dirs(tmp_path: Path) -> None:
     c = connect(tmp_path / "a" / "b" / "nh.db")
-    assert migrate(c) == 27
+    assert migrate(c) == 28
     c.close()
 
 
@@ -1646,7 +1646,7 @@ def test_reject_edge_types_outside_the_nine(
 
 
 def test_edge_type_is_schema_not_data(conn: sqlite3.Connection) -> None:
-    """`edge_type` 那 9 行是 **schema，不是数据**。两个动词各自够狠：
+    """`edge_type` 那 7 行是 **schema，不是数据**。两个动词各自够狠：
 
     - INSERT 一行 = 复活一个 ADR 0005 判了**永久删除**的类型。`DOES_NOT_KNOW` 是组合
       爆炸炸弹（实体化后额外 67,500 条边），而 edge.type 的外键只查这张表在不在——
@@ -1662,30 +1662,11 @@ def test_edge_type_is_schema_not_data(conn: sqlite3.Connection) -> None:
     with pytest.raises(sqlite3.IntegrityError, match="写迁移"):
         conn.execute("UPDATE edge_type SET exclusivity = 'multi' WHERE type = 'LOCATED_AT'")
     with pytest.raises(sqlite3.IntegrityError, match="写迁移"):
-        conn.execute("DELETE FROM edge_type WHERE type = 'KNOWS'")
+        conn.execute("DELETE FROM edge_type WHERE type = 'LOCATED_AT'")
     conn.rollback()
-    assert conn.execute("SELECT COUNT(*) FROM edge_type").fetchone()[0] == 9
+    assert conn.execute("SELECT COUNT(*) FROM edge_type").fetchone()[0] == 7
     row = conn.execute("SELECT exclusivity FROM edge_type WHERE type='LOCATED_AT'").fetchone()
     assert row["exclusivity"] == "single_per_src"
-
-
-def test_reject_wrong_label_in_secret_table(conn: sqlite3.Connection, project: str) -> None:
-    """一个 `label='Character'` 的节点**不许**登记成秘密。
-
-    头注释第 3 条把「扩展表主键 = node.id」称作让 §8 / §5.8 / Day 5 三处自洽的唯一读法，
-    但那条读法在外键上只成立了一半：`REFERENCES node(id)` 保证 secret.id 是**某个** node，
-    没保证它是一个 **Secret** node。之后 §8 Day 5 的矩阵 SQL（`JOIN secret s ON k.dst=s.id`）
-    会把一个**人**当成秘密列进面板的列头——而 R1 的卖点是「零误报」。
-
-    sqlite_store 的运行时 label 校验拦得住它，代价是**整个项目**的面板一起黑掉
-    （secrets=None 是面板唯一路径：先取全表再逐个校验），且错误指向 s:fake 而不是导入器。
-    一行坏数据不该有全项目的爆炸半径。
-    """
-    c = _node(conn, project, "Character", "萧决")
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute(
-            "INSERT INTO secret (id, project_id, description) VALUES (?,?,'')", (c, project)
-        )
 
 
 def test_reject_wrong_label_in_chapter_table(conn: sqlite3.Connection, project: str) -> None:
@@ -1698,13 +1679,13 @@ def test_reject_wrong_label_in_chapter_table(conn: sqlite3.Connection, project: 
 
 
 def test_reject_self_loop_edge(conn: sqlite3.Connection, project: str) -> None:
-    # LOCATED_AT(萧决, 萧决) / KNOWS(萧决, 萧决)：v1 的 9 类关系没有一条有合法自环。
+    # LOCATED_AT(萧决, 萧决)：v1 的 7 类关系没有一条有合法自环。
     a = _node(conn, project, "Character", "萧决")
     with pytest.raises(sqlite3.IntegrityError):
         _edge(conn, project, a, a)
 
 
-@pytest.mark.parametrize("table", ["edge_src", "edge_dst", "alias", "secret", "chapter"])
+@pytest.mark.parametrize("table", ["edge_src", "edge_dst", "alias", "chapter"])
 def test_reject_cross_project_reference(
     conn: sqlite3.Connection, project: str, table: str
 ) -> None:
@@ -2003,15 +1984,6 @@ def test_reject_negative_para_index(conn: sqlite3.Connection, project: str) -> N
         )
 
 
-def test_reject_self_sub_secret(conn: sqlite3.Connection, project: str) -> None:
-    s = _node(conn, project, "Secret", "主角是魔尊转世")
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute(
-            "INSERT INTO secret (id, project_id, description, sub_of) VALUES (?,?,?,?)",
-            (s, project, "", s),
-        )
-
-
 def test_reject_bad_decision_verdict(conn: sqlite3.Connection) -> None:
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
@@ -2215,30 +2187,22 @@ def test_event_incidence_requires_same_project_and_expected_labels(
     _story_event(conn, project, event_id, evidence_id)
     character_id = _node(conn, project, "Character", "顾清音")
     other_character_id = _node(conn, project, "Character", "萧决")
-    secret_id = _node(conn, project, "Secret", "玄铁令的来历")
+    place_id = _node(conn, project, "Location", "青云城主府")
 
     conn.execute(
         "INSERT INTO event_participant (event_id, project_id, character_id) VALUES (?,?,?)",
         (event_id, project, character_id),
     )
-    conn.execute(
-        "INSERT INTO event_reveal (event_id, project_id, secret_id) VALUES (?,?,?)",
-        (event_id, project, secret_id),
-    )
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
             "INSERT INTO event_participant (event_id, project_id, character_id) VALUES (?,?,?)",
             (event_id, project, character_id),
         )
+    # 名单那一维只收 Character：塞一个地点进去，复合外键当场拒。
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
             "INSERT INTO event_participant (event_id, project_id, character_id) VALUES (?,?,?)",
-            (event_id, project, secret_id),
-        )
-    with pytest.raises(sqlite3.IntegrityError):
-        conn.execute(
-            "INSERT INTO event_reveal (event_id, project_id, secret_id) VALUES (?,?,?)",
-            (event_id, project, character_id),
+            (event_id, project, place_id),
         )
 
     other_project = new_project_id()
@@ -2299,7 +2263,7 @@ def test_event_incidence_requires_same_project_and_expected_labels(
         "INSERT OR REPLACE INTO story_event SELECT * FROM story_event WHERE id = ?",
         (event_id,),
     )
-    for table in ("event_participant", "event_knower", "event_reveal", "proposal_event"):
+    for table in ("event_participant", "event_knower", "proposal_event"):
         assert conn.execute(
             f"SELECT COUNT(*) FROM {table} WHERE event_id = ?", (event_id,)
         ).fetchone()[0] == 1
@@ -2318,7 +2282,6 @@ def test_event_incidence_requires_same_project_and_expected_labels(
         "story_event",
         "event_participant",
         "event_knower",
-        "event_reveal",
         "proposal_set",
         "proposal_event",
         "extraction_run",
@@ -2806,46 +2769,19 @@ def test_length_counts_code_points_not_utf16_units(
         )
 
 
-def test_allow_all_nine_edge_types(conn: sqlite3.Connection) -> None:
+def test_allow_all_seven_edge_types(conn: sqlite3.Connection) -> None:
+    """（2026-08-25 从九类降到七类：`KNOWS` / `BELIEVES` 随秘密下线，见 028。）"""
     rows = conn.execute("SELECT type, exclusivity FROM edge_type ORDER BY type").fetchall()
     got = {r["type"]: r["exclusivity"] for r in rows}
     assert got == {
         "LOCATED_AT": "single_per_src",
         "HAS_STATE": "single_per_src_dst",
         "RELATED_TO": "single_per_src_dst",
-        "KNOWS": "single_per_src_dst",
-        "BELIEVES": "single_per_src_dst",
         "MEMBER_OF": "multi",
         "OWNS": "multi",
         "PLANTED_IN": "multi",
         "RESOLVED_IN": "multi",
     }
-
-
-def test_secret_and_chapter_share_the_node_id(conn: sqlite3.Connection, project: str) -> None:
-    """`node` 是全部 8 类节点的唯一身份表，`secret` / `chapter` 是扩展表（主键 = node.id）。
-
-    §8 Day 5 的矩阵 SQL 写的是 `k.dst = s.id`——只有在这种读法下它才成立，
-    同时 edge.src/dst 还能永远 REFERENCES node(id)。
-    """
-    s = _node(conn, project, "Secret", "主角是魔尊转世")
-    conn.execute(
-        "INSERT INTO secret (id, project_id, description) VALUES (?,?,?)", (s, project, "")
-    )
-    c = _node(conn, project, "Character", "萧决")
-    _edge(conn, project, c, s, type="KNOWS", valid_from_chapter=88)
-    row = conn.execute(
-        "SELECT n.name FROM edge k JOIN secret s ON k.dst = s.id JOIN node n ON n.id = s.id"
-        " WHERE k.src = ? AND k.type = 'KNOWS'",
-        (c,),
-    ).fetchone()
-    # 显示名只有一份，在 node.name 上（secret 表没有 name 列）。
-    assert row["name"] == "主角是魔尊转世"
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# helpers（放在最后：它们是脚手架，不是被测对象）
-# ══════════════════════════════════════════════════════════════════════════
 
 
 def _chapter(conn: sqlite3.Connection, project_id: str, number: int) -> str:
@@ -2995,7 +2931,7 @@ def test_v16_upgrade_plants_ruleset_baseline_and_synthetic_refresh_runs(
     conn = _v16_book(tmp_path)
     assert user_version(conn) == 16
 
-    assert migrate(conn) == 27
+    assert migrate(conn) == 28
     ruleset = conn.execute(
         "SELECT epoch, ruleset_hash FROM validation_ruleset_state WHERE project_id = ?",
         ("project:v16-book",),
@@ -3013,7 +2949,7 @@ def test_v16_upgrade_plants_ruleset_baseline_and_synthetic_refresh_runs(
     assert runs[0]["source_generation"] == 1
     assert runs[0]["source_snapshot_id"] == "snapshot:v16-book"
 
-    assert migrate(conn) == 27  # 幂等：不新增第二行
+    assert migrate(conn) == 28  # 幂等：不新增第二行
     assert (
         conn.execute(
             "SELECT COUNT(*) FROM validation_ruleset_state WHERE project_id = ?",

@@ -181,12 +181,11 @@ class SqliteEventStore:
             nodes = queries.fetch_nodes(
                 self._conn,
                 spec.project_id,
-                {*spec.participant_ids, *spec.knower_ids, *spec.revealed_fact_ids},
+                {*spec.participant_ids, *spec.knower_ids},
             )
             expected = (
                 (EventCharacterRole.PARTICIPANT, spec.participant_ids, NodeLabel.CHARACTER),
                 (EventCharacterRole.KNOWER, spec.knower_ids, NodeLabel.CHARACTER),
-                ("reveal", spec.revealed_fact_ids, NodeLabel.SECRET),
             )
             for role, node_ids, label in expected:
                 for node_id in sorted(set(node_ids)):
@@ -238,7 +237,6 @@ class SqliteEventStore:
             )
             participant_ids = sorted(set(spec.participant_ids))
             knower_ids = sorted(set(spec.knower_ids))
-            reveal_ids = sorted(set(spec.revealed_fact_ids))
             for character_id in participant_ids:
                 self._conn.execute(
                     "INSERT INTO event_participant (event_id, project_id, character_id) "
@@ -263,11 +261,6 @@ class SqliteEventStore:
                         EvidenceStatus.FRESH.value,
                     ),
                 )
-            for secret_id in reveal_ids:
-                self._conn.execute(
-                    "INSERT INTO event_reveal (event_id, project_id, secret_id) VALUES (?, ?, ?)",
-                    (event_id, spec.project_id, secret_id),
-                )
 
         return EventView(
             event=StoryEvent(
@@ -284,7 +277,6 @@ class SqliteEventStore:
             ),
             participants=[NodeRef.of(nodes[node_id]) for node_id in participant_ids],
             knowers=[NodeRef.of(nodes[node_id]) for node_id in knower_ids],
-            revealed_facts=[NodeRef.of(nodes[node_id]) for node_id in reveal_ids],
         )
 
     def clone_to_scope(
@@ -386,14 +378,6 @@ class SqliteEventStore:
                 FROM event_knower WHERE event_id = ?
                 """,
                 (clone_id, scope.value, event_id),
-            )
-            self._conn.execute(
-                """
-                INSERT INTO event_reveal (event_id, project_id, secret_id)
-                SELECT ?, project_id, secret_id
-                FROM event_reveal WHERE event_id = ?
-                """,
-                (clone_id, event_id),
             )
             views = queries.event_views_at(
                 self._conn,

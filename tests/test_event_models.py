@@ -40,7 +40,6 @@ def _provisional_event(**overrides: object) -> ProvisionalEventSpec:
         "evidence_id": "evidence:4956977b:01JZ0000000000000000000000",
         "participant_ids": ["character:4956977b:01JZ0000000000000000000001"],
         "knower_ids": ["character:4956977b:01JZ0000000000000000000001"],
-        "revealed_fact_ids": ["secret:4956977b:01JZ0000000000000000000002"],
         "confidence": 0.91,
     }
     values.update(overrides)
@@ -105,7 +104,6 @@ def test_story_event_and_event_view_are_immutable_pydantic_outputs() -> None:
     assert view.event.chapter_number == 12
     assert view.participants == [participant]
     assert view.knowers == []
-    assert view.revealed_facts == []
     assert {role.value for role in EventCharacterRole} == {"participant", "knower"}
     with pytest.raises(ValidationError, match="frozen"):
         event.summary = "改写"

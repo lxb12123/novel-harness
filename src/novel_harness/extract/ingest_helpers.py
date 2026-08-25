@@ -102,7 +102,7 @@ def resolution_map(
 ) -> dict[str, SurfaceResolution]:
     surfaces: list[str] = []
     for event in analysis.events:
-        surfaces.extend((*event.participants, *event.knowers, *event.revealed_facts))
+        surfaces.extend((*event.participants, *event.knowers))
     for state in analysis.state_updates:
         surfaces.append(state.subject)
         if state.object is not None:

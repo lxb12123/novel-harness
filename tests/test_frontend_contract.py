@@ -169,13 +169,6 @@ def test_frontend_fixture_matches_the_real_api(
         client.post(f"{base}/nodes", json={"label": "Character", "name": "顾清音"}),
     )
     grab(
-        "createSecret",
-        client.post(
-            f"{base}/nodes",
-            json={"label": "Secret", "name": "玄铁令下落", "description": "在北荒"},
-        ),
-    )
-    grab(
         "createAlias",
         client.post(f"{base}/aliases", json={"of": "顾清音", "surface": "顾姑娘"}),
     )
@@ -945,7 +938,6 @@ def test_frontend_fixture_matches_the_real_api(
                         quote="萧决在青云城主府第一次听说了血脉秘密的真相。",
                         participants=("李管家",),
                         knowers=("李管家",),
-                        revealed_facts=(),
                         confidence=0.95,
                     ),
                 ),

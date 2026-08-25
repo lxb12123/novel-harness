@@ -1,6 +1,6 @@
 """FastAPI 薄壳 —— 把现有引擎函数暴露成 HTTP，给「很单纯的」web 工作台用（ARCHITECTURE §4）。
 
-**壳不装业务。** 出参已经全是 Pydantic（`KnowledgeMatrix` / `SceneConstraints` /
+**壳不装业务。** 出参已经全是 Pydantic（`SceneConstraints` /
 `StateSnapshot` …），直接当 API response schema，FastAPI 自动序列化。读走 `panel/` +
 `StoryGraph`，写走 `Ledger`（P2 再接）。
 

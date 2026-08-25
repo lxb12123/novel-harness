@@ -102,6 +102,44 @@ name = "焚天诀"
 label = "Object"
 first_appears = 12
 
+# ── 下面 5 条 2026-08-25 从 `[[secret]]` 改declaration 过来（ADR 0039）─────────
+#
+# 它们原来是 5 个 `Secret` 节点，`first_appears` 由 `synth/m3_replay.py` 按**名字**
+# 覆盖上去（`m3_ground_truth.json` 的 `first_appears` 那一栏）。秘密下线之后那 5 个
+# 节点建不出来，M3 那张 25 题的卷子当场只剩 12 题。
+#
+# **改的只有 label**：名字、章号、`booklet.txt` 的正文、`m3_ground_truth.json` 的
+# 25 题和门槛全部原样。R2 的判据是「非角色节点 + first_appears > 当前章」，
+# 它不看具体是哪一类——所以这不是换了一张卷子，是把卷子上那 5 个节点放回去。
+# **这里没有章号**：首现章由 `m3_replay.py` 按名字覆盖（`m3_ground_truth.json` 的
+# `first_appears`）。写进库那一格就等于给「干净正文抽查」也补上了首现章，而那一步
+# 明写着「不叠加 overlay，用真库」——于是 R2 会在合法正文上开 7 枪，门槛不过。
+
+[[entity]]
+name = "血脉秘密"
+label = "Foreshadow"
+aliases = ["玄血蛊"]
+
+[[entity]]
+name = "玄铁令下落"
+label = "Foreshadow"
+aliases = ["沉舟渡"]
+
+[[entity]]
+name = "顾清音真身"
+label = "Foreshadow"
+aliases = ["裴门弃女"]
+
+[[entity]]
+name = "裴景之谋"
+label = "Foreshadow"
+aliases = ["移魂大阵"]
+
+[[entity]]
+name = "沈孤鸿之死"
+label = "Foreshadow"
+aliases = ["断魂崖"]
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # 25 条陷阱 = 15 KNOWS + 10 FUTURE（修正案 1 的裁定；15+8 那个写法已被推翻）

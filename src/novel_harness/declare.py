@@ -83,7 +83,6 @@ from .graph import (
     NodeProps,
     NodeRef,
     NodeSpec,
-    SecretDetail,
     StoredAlias,
 )
 from .text import anchor
@@ -158,9 +157,9 @@ class WrongLabel(DeclarationRefused):
         self.want = want
         super().__init__(
             f"「{surface}」是 {got.value}，这里要的是 {want.value}。"
-            # 放行的产物是一条 dst 是人的 KNOWS 边：它在 knowledge_matrix 的列序里
-            # （走 `secret` 扩展表）根本不成列，于是作者看见的是「系统对这条没意见」。
-            f"（一条 dst 不是 {want.value} 的边在面板上不成列——那正是最沉默的一种错）"
+            # 放行的产物是一条 dst 类型不对的边：它在人物卡的投影里（`location` 只认
+            # `LOCATED_AT` 的 dst）根本不成格，于是作者看见的是「系统对这条没意见」。
+            f"（一条 dst 不是 {want.value} 的边在面板上不成格——那正是最沉默的一种错）"
         )
 
 
@@ -301,7 +300,7 @@ class Ledger:
     生命周期不同——所以要守的从来不是「只有一处」，是「**凡是改图的入口都必须同时写日志**」。
     真要钉，钉的是后者，而今天没有守卫钉它。
 
-    入参里的 `who` / `secret` / `loc` / `of` **全是作者写的称呼原文，不是 node_id**
+    入参里的 `who` / `loc` / `of` **全是作者写的称呼原文，不是 node_id**
     ——同 `panel.constraints.resolve_cast` 收 `cast` 的形状（ARCHITECTURE §10.5 第 1 条）：
     调用方**没有机会**把歧义的「师兄」偷偷解析成第一个候选，因为它根本拿不到候选。
 
@@ -424,12 +423,8 @@ class Ledger:
         *,
         aliases: Sequence[str] = (),
         props: NodeProps | None = None,
-        secret: SecretDetail | None = None,
     ) -> Node:
-        """声明一个人物 / 地点 / 门派 / 秘密 / 物件。幂等（`upsert_node` 的键是 name）。
-
-        `label is SECRET` 时 `secret` 必须给（`NodeSpec` 的 validator 强制：没有 secret 行
-        的 Secret 节点在认知矩阵的默认列序里不成列）。
+        """声明一个人物 / 地点 / 门派 / 物件。幂等（`upsert_node` 的键是 name）。
 
         ── `props` 是 patch 不是替换，且这条不是洁癖 ─────────────────────────
 
@@ -451,7 +446,6 @@ class Ledger:
                     label=label,
                     name=name,
                     props=self._patched_props(previous, props),
-                    secret=secret,
                 )
             )
             stored = [
@@ -466,11 +460,7 @@ class Ledger:
         decisions.append(
             self._conn,
             project_id=self._project_id,
-            kind=(
-                DecisionKind.SECRET_DECLARE
-                if label is NodeLabel.SECRET
-                else DecisionKind.NODE_DECLARE
-            ),
+            kind=DecisionKind.NODE_DECLARE,
             decision=Verdict.ACCEPT,
             subject_name=node.name,
             payload={

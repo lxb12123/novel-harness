@@ -47,12 +47,10 @@ export function EvidenceTab() {
 
 function EvidenceRow({ pid, edge, dstName }: { pid: string; edge: Edge; dstName: string }) {
   const { data, isFetching } = useEvidence(pid, edge.evidence_id ?? null);
-  const believed = edge.type === "BELIEVES" ? edge.props.believed_value : null;
   return (
     <div className="statecard">
       <div className="nm">
         {edgeName(edge.type)} {dstName}
-        {believed && <span className="pc"> —「{believed}」</span>}
         <span style={{ color: "var(--dim)", fontWeight: 400 }}> · 第 {edge.valid_from_chapter} 章起</span>
       </div>
       {isFetching && <div className="row">取原文中…</div>}

@@ -58,8 +58,6 @@ function NodeForm({ pid }: { pid: string }) {
   const [label, setLabel] = useState<NodeLabel>("Character");
   const [name, setName] = useState("");
   const [aliases, setAliases] = useState("");
-  const [description, setDescription] = useState("");
-  const [subOf, setSubOf] = useState("");
   const [made, setMade] = useState<NodeRef | null>(null);
 
   const create = useCreateNode(pid);
@@ -73,9 +71,8 @@ function NodeForm({ pid }: { pid: string }) {
         name: name.trim(),
         // 半角逗号 / 全角逗号 / 顿号 —— 中文作者三种都会打（同 cli 的 _CAST_SEP_RE）
         aliases: aliases.split(/[,，、]/).map((s) => s.trim()).filter(Boolean),
-        ...(label === "Secret" ? { description, sub_of: subOf.trim() || null } : {}),
       },
-      { onSuccess: (n) => { setMade(n); setName(""); setAliases(""); setDescription(""); setSubOf(""); } },
+      { onSuccess: (n) => { setMade(n); setName(""); setAliases(""); } },
     );
   }
 
@@ -103,28 +100,6 @@ function NodeForm({ pid }: { pid: string }) {
         <input value={aliases} onChange={(e) => setAliases(e.target.value)} placeholder="输入其他称呼" />
       </div>
 
-      {label === "Secret" && (
-        <>
-          <div className="field">
-            <span>内容</span>
-            <input
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="写下这条信息的具体内容"
-            />
-          </div>
-          <div className="field">
-            <span>所属秘密（可选，用于整理相关信息）</span>
-            <input
-              list="roster-names"
-              value={subOf}
-              onChange={(e) => setSubOf(e.target.value)}
-              placeholder="选择或输入一个已有秘密"
-            />
-          </div>
-        </>
-      )}
-
       <div className="row" style={{ marginTop: 12 }}>
         <button disabled={!name.trim() || create.isPending} onClick={submit}>
           {create.isPending ? "建中…" : "建"}
@@ -137,11 +112,7 @@ function NodeForm({ pid }: { pid: string }) {
       {made && (
         <div className="receipt">
           <div className="vf">✓ {LABEL_ZH[made.label]}「{made.name}」已进花名册</div>
-          <div className="note">
-            {made.label === "Secret"
-              ? "现在可以继续记录哪些人物了解这条信息。"
-              : "现在可以在场景和相关设置中使用这个条目。"}
-          </div>
+          <div className="note">现在可以在场景和相关设置中使用这个条目。</div>
         </div>
       )}
     </>

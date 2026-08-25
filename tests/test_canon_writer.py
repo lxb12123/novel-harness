@@ -32,12 +32,10 @@ from novel_harness.graph import (
     NodeProps,
     NodeSpec,
     QuoteMismatch,
-    SecretDetail,
     StoreError,
     StoryGraph,
 )
 from novel_harness.graph import GraphStore as GraphStoreProto
-from novel_harness.graph import queries
 from novel_harness.graph import sqlite_store as sqlite_store_mod
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.ids import new_project_id
@@ -78,10 +76,10 @@ def _character(pid: str, name: str, **kw: object) -> NodeSpec:
     return NodeSpec(project_id=pid, label=NodeLabel.CHARACTER, name=name, **kw)
 
 
-def _secret(pid: str, name: str, **detail: object) -> NodeSpec:
-    return NodeSpec(
-        project_id=pid, label=NodeLabel.SECRET, name=name, secret=SecretDetail(**detail)
-    )
+def _foreshadow(pid: str, name: str) -> NodeSpec:
+    """伏笔节点 —— `PLANTED_IN` / `RESOLVED_IN` 的 src，本文件里「第 200 章要回收的
+    那个东西」的载体。（2026-08-25 之前这儿是 `_secret`，ADR 0039。）"""
+    return NodeSpec(project_id=pid, label=NodeLabel.FORESHADOW, name=name)
 
 
 def _chapter(pid: str, number: int = 1, text: str = CH1, **kw: object) -> ChapterSpec:
@@ -176,30 +174,6 @@ def test_chapter_nodes_can_only_be_born_with_their_row(pid: str) -> None:
     # 没有 chapter 行就没有 number，而 number 是 state_at 的全序键。
     with pytest.raises(ValidationError, match="put_chapter"):
         NodeSpec(project_id=pid, label=NodeLabel.CHAPTER, name="第一章 血脉")
-
-
-def test_secret_row_and_label_live_and_die_together(pid: str) -> None:
-    with pytest.raises(ValidationError, match="同生同死"):
-        NodeSpec(project_id=pid, label=NodeLabel.SECRET, name="血脉秘密")
-    with pytest.raises(ValidationError, match="同生同死"):
-        _character(pid, "萧决", secret=SecretDetail())
-
-
-def test_secret_node_becomes_a_column_in_the_matrix(
-    conn: Connection, store: SqliteStoryGraph, pid: str
-) -> None:
-    """一个没有 secret 行的 Secret 节点在 `queries.secret_ids`（`FROM secret`）里不成列——
-    而 `secrets=None` 是面板的唯一路径。作者会看见「系统对这个秘密没意见」，
-    实际是「系统不知道有这个秘密」。"""
-    node = store.upsert_node(_secret(pid, "血脉秘密", description="他不是萧家的孩子"))
-    assert queries.secret_ids(conn, pid) == [node.id]
-
-
-def test_sub_of_lands(conn: Connection, store: SqliteStoryGraph, pid: str) -> None:
-    parent = store.upsert_node(_secret(pid, "血脉秘密"))
-    child = store.upsert_node(_secret(pid, "生母是谁", sub_of=parent.id))
-    row = conn.execute("SELECT sub_of FROM secret WHERE id = ?", (child.id,)).fetchone()
-    assert row["sub_of"] == parent.id
 
 
 def test_upsert_node_rejects_a_duplicate_name_it_did_not_create(
@@ -433,11 +407,11 @@ def test_delete_chapter_refuses_when_an_edge_points_at_that_chapter(
     「第 200 章要回收的那个伏笔」会在删第 3 章时无声消失。
     """
     ch = store.put_chapter(_chapter(pid, number=3, text="第三章 对峙\n\n他攥紧了拳头。\n"))
-    secret = store.upsert_node(_secret(pid, "血脉秘密"))
+    foreshadow = store.upsert_node(_foreshadow(pid, "半块玉佩"))
     store.upsert_edge(
         EdgeSpec(
             project_id=pid,
-            src=secret.id,
+            src=foreshadow.id,
             dst=ch.id,
             type=EdgeType.PLANTED_IN,
             valid_from_chapter=1,
@@ -457,11 +431,11 @@ def test_delete_chapter_counts_one_edge_once(store: SqliteStoryGraph, pid: str) 
     一条不存在的东西。
     """
     ch = store.put_chapter(_chapter(pid, number=4, text="第四章\n\n他推开门。\n"))
-    secret = store.upsert_node(_secret(pid, "血脉秘密"))
+    foreshadow = store.upsert_node(_foreshadow(pid, "半块玉佩"))
     store.upsert_edge(
         EdgeSpec(
             project_id=pid,
-            src=secret.id,
+            src=foreshadow.id,
             dst=ch.id,
             type=EdgeType.PLANTED_IN,
             valid_from_chapter=4,  # 既从这一章生效，又指着这一章
@@ -668,7 +642,7 @@ def test_evidence_and_edge_are_born_together(
     StoryGraph 上，而它们必须罩在同一个事务里——所以 `GraphStore` 是一个交集，
     `SqliteStoryGraph` 是一个对象一条连接。"""
     who = store.upsert_node(_character(pid, "萧决"))
-    secret = store.upsert_node(_secret(pid, "血脉秘密"))
+    where = store.upsert_node(NodeSpec(project_id=pid, label=NodeLabel.LOCATION, name="青云城主府"))
     ch = store.put_chapter(_chapter(pid))
 
     with store.transaction():
@@ -684,8 +658,8 @@ def test_evidence_and_edge_are_born_together(
             EdgeSpec(
                 project_id=pid,
                 src=who.id,
-                dst=secret.id,
-                type=EdgeType.KNOWS,
+                dst=where.id,
+                type=EdgeType.LOCATED_AT,
                 # ★ 作者路径上 valid_from 唯一的赋值：它来自证据，不来自任何一个入参。
                 valid_from_chapter=ev.chapter_number,
                 information_scope=InformationScope.CANON,
@@ -696,6 +670,5 @@ def test_evidence_and_edge_are_born_together(
     assert result.edge.valid_from_chapter == 1
     assert _count(conn, "evidence", id=ev.id) == 1
     assert _count(conn, "edge", id=result.edge.id) == 1
-    matrix = store.knowledge_matrix(pid, 1, [who.id])
-    assert matrix.cell(who.id, secret.id).state.value == "KNOWS"
-    assert matrix.cell(who.id, secret.id).since_chapter == 1
+    snapshot = store.state_at(pid, who.id, 1)
+    assert snapshot.location is not None and snapshot.location.id == where.id

@@ -24,16 +24,15 @@ JSON 信封，把它塞进每一行 = 作者一打开日志页就把全库的审
 ── `jump` 是坐标，不是标题的反推 ─────────────────────────────────────────
 
 每条都带一个结构化的 `jump`：**「跳去哪个模块改」由后端算**，前端不许从标题里
-猜。而且它只允许落在**今天真的存在**的编辑入口上（`/canon/knowledge` /
-`/canon/events/{id}/cast` / 三条提案审阅路由）——指向一个不存在的目标，作者点下去
+猜。而且它只允许落在**今天真的存在**的编辑入口上（`/canon/events/{id}/cast` /
+三条提案审阅路由）——指向一个不存在的目标，作者点下去
 什么都不会发生，那比没有按钮更糟。`ActivityJump.endpoints` 由 HTTP 壳填（路由表是
 壳的知识，见 `api/activity.py`），`tests/test_activity.py` 逐条验它们真能解析到
 一条已注册的路由。
 
-**今天有一类事实跳不过去，且这不是遗漏**：自动升上去的**边**（抽取只产
-`LOCATED_AT` / `HAS_STATE` / `RELATED_TO`，不产 `KNOWS` / `BELIEVES`）没有任何编辑
-入口——`corrections.py` 只改 KNOWS↔BELIEVES 和事件名单。所以那种 `jump` 只给章号、
-`endpoints` 为空。ADR 0020 把这种形态写成了推翻自己的触发条件之一，日志页把它显式
+**今天有一类事实跳不过去，且这不是遗漏**：自动升上去的**边**（`LOCATED_AT` /
+`HAS_STATE` / `RELATED_TO`）没有任何编辑入口——`corrections.py` 今天只改事件名单。
+所以那种 `jump` 只给章号、`endpoints` 为空。ADR 0020 把这种形态写成了推翻自己的触发条件之一，日志页把它显式
 显示出来，正是让那个条件第一次可观测。
 
 ── 本模块不读图 ──────────────────────────────────────────────────────────
@@ -55,7 +54,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from . import decisions
 from .db import Connection
 from .extract.control import ExtractionErrorCode, ExtractionRunStatus
-from .graph import SecretDetail
 
 __all__ = [
     "ActivityCost",
@@ -369,14 +367,22 @@ class RunsPanel(BaseModel):
 
 _NODE_KEYS: Final[frozenset[str]] = frozenset({"id", "label", "name", "props"})
 
-_SECRET_DETAIL_KEYS: Final[frozenset[str]] = frozenset(SecretDetail.model_fields)
-"""`secret` 扩展行的字段名。**从模型上取，不抄一份**：那张表加一列，这张网跟着变宽。"""
+_SECRET_DETAIL_KEYS: Final[frozenset[str]] = frozenset({"description", "sub_of"})
+"""**历史行专用**（2026-08-25 起）。
+
+原来它写的是 `frozenset(SecretDetail.model_fields)`——「从模型上取，不抄一份」，
+那张表加一列这张网跟着变宽。**秘密下线之后那个模型没了，所以它现在只能是字面量。**
+
+它没有跟着一起删，因为 `decision_log` 三个触发器封死了 DELETE：**2026-08-25 之前
+写下的 `secret_declare` 行还躺在库里，payload 里就是作者手打的那段秘密正文**。
+删掉这张网 = 那些行从今天起从日志接口原样出去。没有写入方了，但有历史数据。
+"""
 
 
 def _is_secret_detail(value: Any) -> bool:
-    """这份字典是不是一行 `secret` 扩展表（而不是一个**恰好叫 secret** 的窄引用）。
+    """这份字典是不是一行**历史的** `secret` 扩展表（而不是恰好叫 secret 的窄引用）。
 
-    判据是形状，不是键名，因为两者真的同名：`corrections.py` 的
+    判据是形状，不是键名，因为两者真的同名：老 `corrections.py` 的
     `payload["secret"]` 是 `{id,label,name}` 的窄引用（作者得看得出这条日志说的是
     哪个秘密），而带内容的那一份带 `description`、除了 `sub_of` 没有别的字段。
     **按键名清空会把「改的是哪个秘密」一起收窄掉**，那是另一种坏法。
@@ -394,20 +400,23 @@ def narrow_payload(value: Any) -> Any:
     1. 任何**恰好长成一个完整 `Node` dump**（id/label/name/props 四键齐备）的字典，
        收窄成 `{id,label,name}`；
     2. 任何名为 `props` 的键，直接丢掉；
-    3. 任何长成 `SecretDetail` dump 的字典（带 `description`），**整份清空**。
+    3. 任何长成旧 `SecretDetail` dump 的字典（带 `description`），**整份清空**。
+       **这一条今天没有写入方，只罩历史行**——见 `_SECRET_DETAIL_KEYS`。
 
-    ── 为什么第 3 条必须单独存在 ────────────────────────────────────────
+    ── 为什么第 3 条当年必须单独存在，以及为什么它今天还在 ────────────────
     **作者写在一个 Secret 上的东西有两个存放处，`props` 只是其中一个。**
     `props.twist` 走 `NodeProps` 的 `extra="allow"`；而 `POST /nodes` 的
     `description` 落在 `secret` 扩展表上，那是作者真正打字打进去的那段秘密正文。
-    第 1 条只在四键齐备时命中——`NodeSpec`（也就是 `declare_node` 的**入参**、
-    秘密进入系统的那个对象）没有 `id`，于是 props 被丢掉、`secret` 原样穿过去。
-    一次「日志记全一点，重放才对得上」的改动就长这样。
+    第 1 条只在四键齐备时命中——`NodeSpec`（也就是当年 `declare_node` 的**入参**）
+    没有 `id`，于是 props 被丢掉、`secret` 原样穿过去。
+
+    秘密下线（ADR 0039）删掉了写入方，**没有删掉已经写下的行**：`decision_log` 的三个
+    触发器封死了 DELETE。所以这一条留着。
 
     ── 为什么不复用 `api/app.py::_narrow` ────────────────────────────────
-    那一个的判据是「Secret **或** first_appears > 当前章」，而它需要一个「当前章」。
-    日志行没有当前章（一条 2026-08-10 的确认要拿哪一章去比？），`chapter=None` 时
-    那个函数只认 Secret——于是一个带 `props.plot_note` 的 Location 会原样穿过去。
+    那一个的判据是「first_appears > 当前章」，而它需要一个「当前章」。日志行没有当前章
+    （一条 2026-08-10 的确认要拿哪一章去比？），`chapter=None` 时那个函数**什么都不
+    收窄**——于是一个带 `props.plot_note` 的 Location 会原样穿过去。
     所以这里用更严的一条：**props 一个字都不出去**，不管挂在谁身上。
     （同 `/resolve` 那条「一律收窄，比 `_narrow(chapter=None)` 更严」的取舍。）
 
@@ -415,7 +424,7 @@ def narrow_payload(value: Any) -> Any:
     这是**结构**收窄不是语义收窄。写入方要是把秘密内容平铺成
     `{"twist": "…"}` 塞进 payload，这里看不出来——**payload 的语义安全是写入方的
     责任**，本函数只兜住已经实测过的那几种泄漏形态（`graph.models.NodeRef` 的
-    docstring 记着 props 那两种，第 3 条补的是秘密正文那一种）。今天六个写入点一个
+    docstring 记着 props 那两种，第 3 条补的是历史秘密正文那一种）。今天六个写入点一个
     都不带这些东西，`tests/test_activity.py` 用一本**带毒的书 + 一个故意会漏的写入方**
     两头钉住了这件事。
     """
@@ -462,16 +471,20 @@ _CAPABILITY_LABEL: Final[dict[str, str]] = {
 }
 
 _KIND_LABEL: Final[dict[str, str]] = {
+    # ⚠️ 带 †的四行**今天没有写入方**（秘密下线，ADR 0039），删不得：`decision_log`
+    #    三个触发器封死 DELETE，2026-08-25 之前的行还在库里，而这张表漏一行就意味着
+    #    作者的日志页上出现一句 `knowledge_edit`（`_kind_label` 兜底成「一次改动」，
+    #    比英文好，但也把「当年这条改的是什么」抹掉了）。
     "alias_merge": "登记称呼",
     "node_declare": "登记条目",
-    "secret_declare": "登记秘密",
-    "knows_declare": "声明认知",
+    "secret_declare": "登记秘密",  # †
+    "knows_declare": "声明认知",  # †
     "located_declare": "声明位置",
     "state_declare": "声明生死",
     "first_appearance_declare": "声明首次登场",
     "proposal_review": "抽取结果审阅",
-    "knowledge_edit": "更正认知类型",
-    "knowledge_add": "补一条认知",
+    "knowledge_edit": "更正认知类型",  # †
+    "knowledge_add": "补一条认知",  # †
     "event_edit": "更正事件名单",
     "event_summary_edit": "编辑情节摘要",
     "canon_edge_edit": "更正地点/状态/关系",
@@ -486,6 +499,8 @@ _VERDICT_LABEL: Final[dict[str, str]] = {
 }
 
 _EDGE_LABEL: Final[dict[str, str]] = {
+    # KNOWS / BELIEVES 已不是 `EdgeType` 的成员（ADR 0039），这两行**只为历史日志行
+    # 存在**：老 `knows_declare` / `knowledge_edit` 的 payload 里就写着这两个字符串。
     "KNOWS": "知道",
     "BELIEVES": "以为",
     "LOCATED_AT": "在",
@@ -496,10 +511,10 @@ _EDGE_LABEL: Final[dict[str, str]] = {
     "PLANTED_IN": "埋在",
     "RESOLVED_IN": "回应于",
 }
-"""边类型 → 作者的说法。**认知矩阵上写的是「知道」和「以为」，这里跟着那个措辞。**
+"""边类型 → 作者的说法。
 
-这一行不是美化：日志页上那句 `萧决 对「血脉秘密」：KNOWS → BELIEVES` 是作者点进
-两个编辑入口的**门厅**，而它当着他的面把引擎的枚举值摆了出来。
+这一行不是美化：日志页上那句 `萧决 LOCATED_AT 青云城主府` 会当着作者的面把引擎的
+枚举值摆出来。
 **别把这张表搬到前端去**——那样屏幕上的措辞就和 CLI / 别的日志行不是同一句话了，
 而这一整节的标题写着「全部中文留在后端」。
 """
@@ -508,7 +523,7 @@ _NODE_LABEL: Final[dict[str, str]] = {
     "Character": "人物",
     "Location": "地点",
     "Faction": "势力",
-    "Secret": "秘密",
+    "Secret": "秘密",  # 已不是 NodeLabel 成员，只为历史日志行留着（同 _EDGE_LABEL）
     "Foreshadow": "伏笔",
     "Object": "物品",
     "StateDim": "状态",
@@ -568,8 +583,8 @@ def _kind_label(kind: str) -> str:
     """认不出的**不原样回吐**，退到一句中文（同 `_edge_label`，反着 `actor_label`）。
 
     `DecisionKind` 是封闭枚举，认不出只可能是这张表漏了一行——而漏掉的那一行会以
-    `knowledge_edit` 的形态出现在小说作者的日志页标题上。**这不是假想**：这次改动
-    自己就往那个枚举里加了两行（`knowledge_edit` / `event_edit`），加的人记得补了表，
+    `canon_edge_edit` 的形态出现在小说作者的日志页标题上。**这不是假想**：2026-08 有一次
+    改动往那个枚举里加了两行（`knowledge_edit` / `event_edit`），加的人记得补了表，
     而「记得补」不是一道守卫。`test_the_wording_tables_cover_every_value_they_can_be_handed`
     盯表、这一行兜底，两条一起才轮不到运气。
     """
@@ -1010,6 +1025,10 @@ def _decision_subtitle(decision: decisions.Decision) -> str:
 
     if kind == decisions.DecisionKind.PROPOSAL_REVIEW:
         return _proposal_review_subtitle(decision)
+    # 下面这三档（KNOWLEDGE_EDIT / KNOWLEDGE_ADD / KNOWS_DECLARE）**今天没有写入方**
+    # （秘密下线，ADR 0039）。留着是因为历史行还在 `decision_log` 里，而它们的副标题
+    # 是作者当年那次确认的全部内容——删掉这几个分支，那些行会退到最后那句
+    # `subject`，日志页上只剩一个光秃秃的人名。
     if kind == decisions.DecisionKind.KNOWLEDGE_EDIT:
         secret = _text(_dig(payload, "secret", "name")) or "—"
         before = _edge_label(_text(_dig(payload, "from", "edge_type")) or "")

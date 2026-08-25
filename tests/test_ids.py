@@ -49,7 +49,10 @@ GOLDEN: list[tuple[EntityType, str, str]] = [
     (EntityType.CHARACTER, "project:01JZ0000000000000000000000", "character:4956977b"),
     (EntityType.LOCATION, "project:01JZ0000000000000000000001", "location:04c0f0f0"),
     (EntityType.FACTION, "project:01JZ0000000000000000000002", "faction:03c397a8"),
-    (EntityType.SECRET, "project:01JZ0000000000000000000003", "secret:73ad463f"),
+    # ⚠️ 这里原来还有一行 `EntityType.SECRET / project:…0003 → secret:73ad463f`。
+    # 秘密下线（ADR 0039）删了那个枚举成员，所以那一行没有输入可给了。
+    # **它不是「golden 值改了」**——`project_short()` 的算法一个字节没动，
+    # 剩下这 9 行的值全部原样。改红这张表仍然要先回答「已经写进库的 ID 怎么办」。
     (EntityType.FORESHADOW, "project:01JZ0000000000000000000004", "foreshadow:c2c1a751"),
     (EntityType.OBJECT, "project:01JZ0000000000000000000005", "object:0fa50faf"),
     (EntityType.STATE_DIM, "project:01JZ0000000000000000000006", "statedim:f08e12a3"),
@@ -82,11 +85,11 @@ def test_golden_short_is_stable(entity_type: EntityType, project_id: str, want_p
     assert len(project_short(project_id)) == PROJECT_SHORT_LEN
 
 
-def test_golden_covers_twelve_cases() -> None:
-    # ADR 0003 写的是 10 个（后来 ADR 0033 加了 calibration / handoff 两个，
-    # 因为它们各自有一张真的表）。少一个就该有人来解释为什么。
-    assert len(GOLDEN) == 12
-    assert len({(t, p) for t, p, _ in GOLDEN}) == 12
+def test_golden_covers_eleven_cases() -> None:
+    # ADR 0003 写的是 10 个；ADR 0033 加了 calibration / handoff 两个（各自有一张真的表），
+    # ADR 0039 删了 secret 一个。**少一个就该有人来解释为什么**——上面那行注释就是这次的解释。
+    assert len(GOLDEN) == 11
+    assert len({(t, p) for t, p, _ in GOLDEN}) == 11
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -247,7 +250,7 @@ def test_entity_type_covers_every_node_label() -> None:
 def test_node_labels_and_entity_types_agree() -> None:
     from_labels = {label.value.lower() for label in NodeLabel}
     assert from_labels <= {t.value for t in EntityType}
-    assert len(from_labels) == 8  # §5.8 的 8 类，一个不多一个不少
+    assert len(from_labels) == 7  # §5.8 的 8 类减去 Secret（ADR 0039），一个不多一个不少
 
 
 @pytest.mark.parametrize("label", ["Volume", "Event"])

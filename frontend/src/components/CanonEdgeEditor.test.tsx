@@ -57,7 +57,7 @@ describe("CanonEdgeEditor（Task 8）", () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch");
 
     const place = screen.getByLabelText("地点") as HTMLSelectElement;
-    await userEvent.selectOptions(place, "location:ID9");
+    await userEvent.selectOptions(place, "location:ID8");
     const save = screen.getByRole("button", { name: "保存修改" });
     await userEvent.click(save);
 

@@ -7,20 +7,19 @@
    ADR 0009 把它当成「注入有用」或「form 重要」写进去。
 2. **X1 与 X2 只差「清单 vs 散文」（协议 §2 反混淆铁律）。** 两臂专名不同或字数差太多 →
    `confound_lint` 报警 → FORM-PIVOT 分支本轮作废（协议 §6 第 3 行），白跑 75 次生成。
-3. **tell 永不进 prompt（D3）。** 进了 → X1/X2 命中自己写进去的词 → `Δ` 翻负 →
-   裁决表逐字读出 **KILL 起草线**，砍掉一条本来对的产品线，**全程没有东西会红**。
+3. **节点属性和别名永不进 prompt（D3）。** 作者写在节点上的 `twist` / `plot_note` 是剧透，
+   非 canonical 别名装着他的意图 —— 进 prompt 的只许是显示名。
 4. **cast 三臂都有（D6）。** 从 X0 拿掉 → X0 写到别人身上 → 那不是「去掉注入」是「换了个任务」。
 
-复用 `test_knowledge.FakeGraph`（同 `test_draft_context.py`）：它是 StoryGraph 契约的参考实现。
+复用 `test_fake_graph.FakeGraph`（同 `test_draft_context.py`）：它是 StoryGraph 契约的参考实现。
 
 ── 本文件**测不到**什么（诚实交代，同仓库其它守卫的自述）──────────────────
 
 - **`goal` / `previous_tail` 里的剧透。** 判它要回答「这句话是不是把伏笔说破了」= 语义判断，
-  ADR 0005 禁止。守它的是 ADR 0010 D3 末尾那条 review 判据 + `synth/leak_selfcheck.py`
-  的精确子串放行条件（修正案 4 裁定 B）。**这里的绿不代表 prompt 没剧透。**
-- **第 2 条里的字数比与专名集合只在本文件这几个 fixture 上验过。** 真正的闸门是
-  `eval/confound_lint.py`，它跑在每一轮真实渲染上。这里的自检是「改模板时立刻红」，
-  不是「所有输入都合格」。
+  ADR 0005 禁止。守它的是 ADR 0010 D3 末尾那条 review 判据。**这里的绿不代表 prompt 没剧透。**
+- **第 2 条里的字数比与专名集合只在本文件这几个 fixture 上验过。** 这里的自检是
+  「改模板时立刻红」，不是「所有输入都合格」。（原来还有一道 `eval/confound_lint.py`
+  跑在每一轮真实渲染上，它随 M2 一起退役了，ADR 0039。）
 """
 
 from __future__ import annotations
@@ -31,8 +30,8 @@ import inspect
 
 import pytest
 import novel_harness.draft.assemble as assemble_module
-from test_knowledge import (
-    BLOODLINE,
+from test_fake_graph import (
+    QINGYUN,
     GU_QINGYIN,
     LI_GUANJIA,
     PID,
@@ -62,25 +61,22 @@ EN_LENGTH = LengthSpec(
 )
 
 TELL = "玄血蛊"
-"""血脉秘密的**内容 tell**（EVAL_PROTOCOL §4 第 1 条边界）。它是判分器那一侧的词。"""
+"""一条**非 canonical 别名**。别名装着作者的意图（ADR 0004），进 prompt 的只许是显示名。"""
 
 TWIST = "萧决其实是魔尊之子，第 200 章揭晓"
-"""挂在秘密节点 `props` 上的额外字段。`NodeProps` 是 `extra="allow"`，它真的存在。"""
+"""挂在节点 `props` 上的额外字段。`NodeProps` 是 `extra="allow"`，它真的存在。"""
 
 XUEXIAO = node("faction:demo:01JA", NodeLabel.FACTION, "血枭盟", first_appears_chapter=8)
 YOUQUAN = node("location:demo:01JB", NodeLabel.LOCATION, "幽泉窟", first_appears_chapter=10)
 
 
 def _full_store(*, with_tell: bool = False) -> FakeGraph:
-    """三态齐全 + 两个未来实体：萧决 KNOWS(ch3)、李管家 BELIEVES「已泄露」(ch4)、顾清音 UNKNOWN。"""
-    bloodline = node(BLOODLINE.id, NodeLabel.SECRET, "血脉秘密", twist=TWIST)
+    """两个未来实体（血枭盟 ch8 / 幽泉窟 ch10），外加一个挂着 `twist` 的已登场地点。"""
+    poisoned = node(QINGYUN.id, NodeLabel.LOCATION, "青云城主府", twist=TWIST)
     return FakeGraph(
-        [XIAO_JUE, GU_QINGYIN, LI_GUANJIA, bloodline, XUEXIAO, YOUQUAN],
-        [
-            edge(XIAO_JUE.id, bloodline.id, EdgeType.KNOWS, 3),
-            edge(LI_GUANJIA.id, bloodline.id, EdgeType.BELIEVES, 4, believed_value="已泄露"),
-        ],
-        extra_aliases={TELL: [bloodline]} if with_tell else None,
+        [XIAO_JUE, GU_QINGYIN, LI_GUANJIA, poisoned, XUEXIAO, YOUQUAN],
+        [edge(XIAO_JUE.id, poisoned.id, EdgeType.LOCATED_AT, 3)],
+        extra_aliases={TELL: [poisoned]} if with_tell else None,
     )
 
 
@@ -90,7 +86,6 @@ def _full_ctx(*, with_tell: bool = False) -> ResolvedConstraints:
         PID,
         5,
         [XIAO_JUE.name, LI_GUANJIA.name, GU_QINGYIN.name],
-        secrets=[BLOODLINE.id],
     )
 
 
@@ -178,7 +173,7 @@ def test_the_two_injected_arms_say_the_same_things_in_two_layouts() -> None:
     """专名集合相同、章号集合相同、字数在 ±15% 内 —— 同一份数据两种排版。
 
     它一起排除的是最贵的那种混淆：X2 顺手多带一句行为指令，于是两臂差的不只是排版。
-    （秘密下线之后这一段只剩「尚未登场」一块，所以专名集合就是那几个未来实体的名字。）
+    （这一段只剩「尚未登场」一块，所以专名集合就是那几个未来实体的名字。）
     """
     ctx = _full_ctx()
     s1 = graph_section(ctx, PromptForm.X1)
@@ -223,14 +218,14 @@ def test_no_tell_and_no_props_reach_any_arm() -> None:
 
 
 def test_the_tell_really_is_reachable_in_the_graph() -> None:
-    """上一条的非空证明：tell 和 twist **确实在图里**，是被 `ResolvedConstraints` 收窄挡掉的。
+    """上一条的非空证明：别名和 twist **确实在图里**，是被 `ResolvedConstraints` 收窄挡掉的。
 
     没有这一条，只要哪天 fixture 少写了一个别名，上面那条会永远绿着通过。
     """
     store = _full_store(with_tell=True)
 
     hit = store.resolve(PID, [TELL])[0].unique_node
-    assert hit is not None and hit.id == BLOODLINE.id
+    assert hit is not None and hit.id == QINGYUN.id
     assert TWIST in hit.model_dump_json()
 
 
@@ -243,7 +238,7 @@ def test_the_default_writing_prompt_names_nobody_and_hints_at_no_constraint() ->
 
     下面是一张**关键词网**，不是语义检查：它抓得住顺手写出来的那一种，抓不住换个说法的那一种。
     """
-    for name in ("萧决", "顾清音", "李管家", "血脉秘密", "血枭盟", "幽泉窟", TELL):
+    for name in ("萧决", "顾清音", "李管家", "青云城主府", "血枭盟", "幽泉窟", TELL):
         assert name not in DEFAULT_WRITING_PROMPT
     for hint in WRITE_RULE_FORBIDDEN_HINTS:
         assert hint not in DEFAULT_WRITING_PROMPT, f"默认写作提示里出现了 {hint!r} —— 它三臂共用"
@@ -263,7 +258,7 @@ def test_default_writing_prompts_do_not_constrain_control_arm_content() -> None:
 
 
 def test_nothing_to_inject_collapses_all_three_arms_into_one() -> None:
-    """没有秘密、没有未来实体 → 图谱段为空 → 三臂逐字节相同。
+    """没有未来实体 → 图谱段为空 → 三臂逐字节相同。
 
     这是**正确的退化**，不是 bug：注入的内容为空，臂间差异也该为零。
     反过来说，此时若 X1 仍多出一个「【本场设定要点】」空标题，那就是一句只有注入臂才有的
