@@ -61,7 +61,6 @@ const RETRY_FAILED = "没能把这一章重新排上队，而系统没能说清�
  *  `extraction_retry` 也是 `null`，但理由完全不同：**那一档根本不是跳转**——
  *  按钮就在这一行上，按下去是把没跑成的那次整理再跑一遍（`RetryRow`）。 */
 const TARGET_TAB: Record<JumpTarget, Tab | null> = {
-  knowledge_cell: "matrix",
   event_cast: "review",
   proposal: "review",
   summary: "summary",
@@ -83,7 +82,6 @@ const TARGET_TAB: Record<JumpTarget, Tab | null> = {
  *  `chapter` 那一档仍然是 `false`，而且**不许因为「反正现在都能改了」顺手改成 true**：
  *  它盖着的正是「自动升上去的位置/状态边今天没有任何编辑入口」那一种。 */
 const CAN_EDIT_HERE: Record<JumpTarget, boolean> = {
-  knowledge_cell: true,
   event_cast: true,
   proposal: true,
   // 右栏第九格「章节总结」：那一段能改、能撤回、能重新生成（2026-08-13）。
@@ -334,24 +332,11 @@ function JumpRow({ entry, jump }: { entry: ActivityEntry; jump: ActivityJump }) 
       tab: TARGET_TAB[jump.target],
       // 高亮哪一格用后端给的两个 id。**不是从 subtitle 里的人名反解出来的**——
       // 名字解析可能歧义，而歧义时服务端的规矩是绝不替作者挑。
-      cell:
-        jump.character_id && jump.secret_id
-          ? { character_id: jump.character_id, secret_id: jump.secret_id }
-          : null,
       // 同理：改哪条情节的名单用 `jump.event_id`，不从那行字里认。
       eventId: jump.event_id,
       // 改自动升上去的地点/状态/关系边用 `jump.edge_id`（`canon_edge` 那一档）——
       // 同一句规矩：坐标由后端给，前端不从那行字里认哪条边。
       edgeId: jump.edge_id,
-      // 右栏那张表要**多算**上谁 —— 也是后端给的坐标（`jump.cast`），这里只是拼成
-      // 后端收的那种写法。矩阵的行由本章正文推（ADR 0018），而日志里那个人可能在
-      // 那一章一次都没被点名，那一行就不在表上、点不开也改不了。
-      //
-      // **它走 `include` 不走 `cast`**：`cast` 是过滤，而这个坐标按定义只知道一个人，
-      // 拿它去过滤等于替作者把在场收窄成一个人——`must_not_reveal` 的判据是
-      // 「在场的人里至少有一个还不知道」，少一个人就少一批禁令（ADR 0018 §3）。
-      // 后端给不出不含歧义的称呼时它是空的，那时就照旧按推导算（和以前一样）。
-      include: jump.cast.join("、"),
     });
   };
 

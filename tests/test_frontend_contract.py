@@ -193,7 +193,6 @@ def test_frontend_fixture_matches_the_real_api(
 
     # ── 读路径（声明之后：矩阵里现在有 KNOWS，前端渲染测试要的就是这个形状）──
     cast = {"cast": "萧决,李管家"}
-    grab("matrix", client.get(f"{base}/chapters/2/matrix", params=cast))
     grab("constraints", client.get(f"{base}/chapters/2/constraints", params=cast))
     grab("states", client.get(f"{base}/chapters/2/state", params=cast))
     grab("check", client.post(f"{base}/chapters/3/check"))
@@ -293,21 +292,9 @@ def test_frontend_fixture_matches_the_real_api(
     )
 
     # ── 改一条**已经生效**的事实（1.1）+ 活动日志（2.1）─────────────────────
-    # 顺序是硬的：`/canon/knowledge` 要先跑，日志里才有一条**带真跳转坐标**的
-    # `knowledge_edit`。没有它，这份 fixture 里全是 `endpoints: []` 的兜底坐标，
-    # 而前端要照着写的恰恰是「点这里去改」那条分支。
-    version = client.get(f"{base}").json()["canon_version"]
-    corrected = client.post(
-        f"{base}/canon/knowledge",
-        json={
-            "character_id": book["萧决"],
-            "secret_id": book["血脉秘密"],
-            "to_type": "BELIEVES",
-            "believed_value": "他以为那只是个传闻",
-            "expected_canon_version": version,
-        },
-    )
-    grab("canonKnowledge", corrected)
+    # 这儿原来先打一次 `/canon/knowledge`，好让日志里有一条**带真跳转坐标**的
+    # `knowledge_edit`。那条路由随秘密下线删了（ADR 0039），带真坐标的那一条现在由
+    # 下面事件名单那一次提供（`event_cast` 那一档）。
 
     # 上面 `summaryGenerated` 已经写了一条**真的** `model_call`（capability=summarizer，
     # 走 `record_call`）。抽取运行和 extractor 调用走桩：跑一次真抽取要模型、要钱。
@@ -347,10 +334,13 @@ def test_frontend_fixture_matches_the_real_api(
     )
     grab("activitySummaryDetail", client.get(f"{base}/activity/{summary_call}"))
     # 展开一条作者亲手点过的确认：`payload` 是这一层唯一的泄漏面，前端照它渲染信封。
-    grab(
-        "activityDecisionDetail",
-        client.get(f"{base}/activity/{corrected.json()['decision_id']}"),
+    # **按 actor 找，不绑死某条路由**：这条夹具原来靠的是那次认知改正，而那条路由
+    # 随秘密下线删了（ADR 0039）——它要的从来是「一条 author 行的信封形状」，
+    # 不是「哪条路由写的那一行」。
+    author_row = next(
+        entry["id"] for entry in activity_page.json()["entries"] if entry["actor"] == "author"
     )
+    grab("activityDecisionDetail", client.get(f"{base}/activity/{author_row}"))
     # 用量条第二档：**这本书两次调用，一次报了 usage（上面 seed 的）一次没报**
     # （那次总结走的是真 `record_call`，桩没给 token 数）。也就是「合计只算得上一半」
     # 那一屏——它是默认路由下最常见的一档，所以给它主名字。
@@ -395,43 +385,31 @@ def test_frontend_fixture_matches_the_real_api(
     # 三种含义完全不同，界面上必须说三句不同的话，所以三种形状都得是契约的一部分：
     # 409 = 这本书在别处刚被改过（**不许静默重试**）；404 = 他点的那条今天不在了；
     # 422 = 这次改动本身讲不通。手写这三份等于两份手写的东西互相验证。
-    fresh = client.get(f"{base}").json()["canon_version"]
+    #
+    # **载体 2026-08-24 从 `/canon/knowledge` 换成了 `/canon/events/{id}/cast`**：
+    # 前者随秘密下线删了，而这三种拒绝形状是同一套 `_correction_error` 映出来的，
+    # 一个字节没变——换的是打哪条路由，不是这份契约本身。
+    event_id = target["event"]["id"]
     stale = client.post(
-        f"{base}/canon/knowledge",
-        json={
-            "character_id": book["萧决"],
-            "secret_id": book["血脉秘密"],
-            "to_type": "KNOWS",
-            "expected_canon_version": 0,  # 作者手上那份是很久以前的
-        },
+        f"{base}/canon/events/{event_id}/cast",
+        json={"knower_ids": kept, "expected_canon_version": 0},  # 作者手上那份是很久以前的
     )
     assert stale.status_code == 409, stale.text
     dump["errorStaleCanon"] = norm.walk(stale.json())
 
+    fresh = client.get(f"{base}").json()["canon_version"]
     absent = client.post(
-        f"{base}/canon/knowledge",
-        json={
-            # 这一格今天是「不知道」——没有可改的事实（界面上这一格根本不该能点，
-            # 这份夹具冻的是「他还是点到了」那条退路）。
-            "character_id": book["李管家"],
-            "secret_id": book["血脉秘密"],
-            "to_type": "BELIEVES",
-            "believed_value": "以为是假的",
-            "expected_canon_version": fresh,
-        },
+        # 这条事件今天不在了（界面上这一行根本不该能点，这份夹具冻的是「他还是点到了」那条退路）。
+        f"{base}/canon/events/event:{'0' * 26}/cast",
+        json={"knower_ids": kept, "expected_canon_version": fresh},
     )
     assert absent.status_code == 404, absent.text
     dump["errorFactNotFound"] = norm.walk(absent.json())
 
     refused = client.post(
-        f"{base}/canon/knowledge",
-        json={
-            "character_id": book["萧决"],
-            "secret_id": book["血脉秘密"],
-            "to_type": "BELIEVES",  # 上面那次改正之后它已经是这一种了
-            "believed_value": "还是那句传闻",
-            "expected_canon_version": fresh,
-        },
+        f"{base}/canon/events/{event_id}/cast",
+        # 名单和现在的一模一样 —— 这次改动本身讲不通。
+        json={"knower_ids": kept, "expected_canon_version": fresh},
     )
     assert refused.status_code == 422, refused.text
     dump["errorKnowledgeRefused"] = norm.walk(refused.json())
@@ -813,36 +791,6 @@ def test_frontend_fixture_matches_the_real_api(
     #
     # 抽取写得出 `event_knower`，而作者想手工补一条时没有路——右栏那条产品规则
     # （每一格「LLM 无感生成 + 作者可改**可增**」）差的就是这一半。
-    # 两份形状都冻：回执，和「这一格已经有了」那个 409。**后者不是边角**：
-    # 作者摊开这一格的这段时间里后台正好把这条事实抽出来，是 ADR 0020 的常态，
-    # 而它和 `stale_base_version` 在屏幕上必须是两句不同的话。
-    #
-    # **放在最后**：它往图里加一条边、把 canon 版本推高一格，而上面 `matrix` /
-    # `errorFactNotFound` 两份夹具冻的正是「李管家对血脉秘密那一格是空的」。
-    grab(
-        "canonKnowledgeAdded",
-        client.post(
-            f"{base}/chapters/2/canon/knowledge",
-            json={
-                "character_id": book["李管家"],
-                "secret_id": book["血脉秘密"],
-                "type": "BELIEVES",
-                "believed_value": "以为那是老爷编出来的",
-                "expected_canon_version": client.get(base).json()["canon_version"],
-            },
-        ),
-    )
-    already = client.post(
-        f"{base}/chapters/2/canon/knowledge",
-        json={
-            "character_id": book["李管家"],
-            "secret_id": book["血脉秘密"],
-            "type": "KNOWS",
-            "expected_canon_version": client.get(base).json()["canon_version"],
-        },
-    )
-    assert already.status_code == 409, already.text
-    dump["errorFactAlreadyExists"] = norm.walk(already.json())
 
     # ── 系统通知（Task 10 / 022）：读列表 / count / 忽略 全走真服务 ──────────
     # 直接往通知 outbox 塞一条再物化（走真 `materialize_notification_outbox`），

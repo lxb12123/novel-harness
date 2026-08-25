@@ -1,6 +1,5 @@
 import {
   useConstraints,
-  useMatrix,
   useMentioned,
   useStates,
   useCheck,
@@ -8,7 +7,6 @@ import {
   useRoster,
 } from "../api/hooks";
 import { useCoords, type Tab } from "../store";
-import { MatrixView } from "./KnowledgeMatrix";
 import { LocalGraph } from "./LocalGraph";
 import { EvidenceTab } from "./EvidenceTab";
 import { StateTab } from "./StateCards";
@@ -21,11 +19,10 @@ import { useState } from "react";
 
 /** 算的是「其中某个人怎么样」的那几格 —— 只有它们需要知道在场是谁。
  *  花名册（全项目）、原文依据、待确认、检查（读正文）都不吃 cast。 */
-const CAST_TABS = new Set<Tab>(["matrix", "state", "constraints"]);
+const CAST_TABS = new Set<Tab>(["state", "constraints"]);
 
 const TABS: { key: Tab; label: string }[] = [
   { key: "roster", label: "花名册" },
-  { key: "matrix", label: "人物认知" },
   { key: "state", label: "人物状态" },
   { key: "graph", label: "人物关系" },
   { key: "evidence", label: "原文依据" },
@@ -49,18 +46,6 @@ function ConstraintsView() {
   if (!data) return <div className="empty">—</div>;
   return (
     <div>
-      <div className="mnr">
-        <div className="lab">暂时不能说破</div>
-        {data.must_not_reveal.length ? (
-          data.must_not_reveal.map((n) => (
-            <span className="tag" key={n.id}>
-              {n.name}
-            </span>
-          ))
-        ) : (
-          <span className="empty">（无）</span>
-        )}
-      </div>
       <div className="mnr">
         <div className="lab">本章尚未登场</div>
         {data.forbidden_entities.length ? (
@@ -214,9 +199,6 @@ export function RightPanel() {
   const prevChapter = chapter - 1;
   const lookingBack = lookBackAt === chapter && prevChapter >= 1;
   const stateChapter = lookingBack ? prevChapter : chapter;
-  // 三格吃同一份在场：`cast` 过滤（今天没有写入方，见 `CastLine`），`castInclude` 只加不减（日志页跳转坐标）。
-  const matrix = useMatrix(projectId, chapter, cast, castInclude);
-  const constraints = useConstraints(projectId, chapter, cast, castInclude);
   // **在场也跟着那一章走**：后端的 `_effective_cast` 从**路径上那一章**的正文里数人
   // （ADR 0018），所以这条一换章号，卡片上的人就是第 N-1 章提到的那几个——
   // 这正是「上一章结束时是什么局面」要的那一份，也是被删掉的「章节准备」页当时的算法。
@@ -258,15 +240,6 @@ export function RightPanel() {
           添加人物或设定后，这里会显示他们在当前章节知道什么、身处何处，以及需要留意的内容。
           回到「花名册」那一格，点“＋”开始。
         </div>
-      )}
-      {!bare && activeTab === "matrix" && (
-        <MatrixView
-          matrix={matrix.data}
-          constraints={constraints.data}
-          // 「别处刚改过」时重新取一次——**让作者再看一眼**，不是替他重试一次
-          // （静默重试 = 把他的改动盖到一份他没看过的状态上）。
-          onRefresh={() => matrix.refetch()}
-        />
       )}
       {!bare && activeTab === "state" && (
         <StateTab

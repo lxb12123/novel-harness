@@ -13,7 +13,6 @@ export interface Anchor {
 
 export type Tab =
   | "roster"
-  | "matrix"
   | "state"
   | "constraints"
   | "graph"
@@ -27,14 +26,6 @@ export type Tab =
  *  **`"prep"`（章节准备）2026-08-13 删了**，理由记在 `TopBar.tsx` 那段注释里
  *  （三张读卡是右栏的第二个入口，两个表单写完没人读）。 */
 export type Page = "workbench" | "log";
-
-/** 认知矩阵里的一格（人物 × 秘密）。日志页跳过来时用它高亮「就是这一格」。
- *  两个 id **都来自后端的 `jump`**，不是从标题里认出来的名字。 */
-export interface FocusCell {
-  character_id: string;
-  secret_id: string;
-}
-
 interface Coords {
   projectId: string | null;
   chapter: number;
@@ -56,7 +47,6 @@ interface Coords {
   /** 当前页：工作台 / 章节准备（写第 N 章前的确定性简报）/ 活动记录。 */
   page: Page;
   /** 日志页跳过来要高亮的那一格。换章 / 换 tab 就清掉——它是一次跳转的余温，不是常驻状态。 */
-  focusCell: FocusCell | null;
   /** 日志页跳过来要打开的那条**已生效事件**（改它的知情 / 在场名单）。
    *  同 `focusCell`：id 来自后端的 `jump.event_id`，不是从那行字里认出来的。 */
   focusEventId: string | null;
@@ -106,13 +96,11 @@ interface Coords {
    *  全项目只有那一个换章入口。这里只管「跳过去之后停在哪一格」。 */
   jumpFromActivity: (to: {
     tab: Tab | null;
-    cell: FocusCell | null;
     eventId: string | null;
     edgeId: string | null;
     /** 后端 `jump.cast` 拼出来的那一串，原样落进 `castInclude`（**不是 `cast`**）。
      *  空串 = 这一档给不出坐标，面板照旧按推导算。
      *  前端不在这里挑人、不在这里合并——两者都是「替引擎决定谁在场」。 */
-    include: string;
   }) => void;
 }
 
@@ -126,7 +114,6 @@ export const useCoords = create<Coords>((set) => ({
   selectedNodeId: null,
   highlight: null,
   page: "workbench",
-  focusCell: null,
   focusEventId: null,
   focusEdgeId: null,
   chatOpen: false,
@@ -142,7 +129,7 @@ export const useCoords = create<Coords>((set) => ({
   // `castInclude` 跟着一起清：它是那次跳转的余温（把那一行推回表上），
   // 换了章之后它指的是另一章的表，留着只会凭空多出一行谁也没要求过的人。
   setChapter: (chapter) =>
-    set({ chapter, focusCell: null, focusEventId: null, focusEdgeId: null, castInclude: "" }),
+    set({ chapter, focusEventId: null, focusEdgeId: null, castInclude: "" }),
   // 换书那份清理（`chatId`）+ 换章那份清理（余温三件）**一次做完**：分两步 set 的话，
   // 中间那一帧是「新书 + 旧章号」，而屏幕会照着它去拉一次别的书的正文。
   openBookAt: (projectId, chapter) =>
@@ -151,7 +138,6 @@ export const useCoords = create<Coords>((set) => ({
       chapter,
       cursorFor: projectId,
       chatId: null,
-      focusCell: null,
       focusEventId: null,
       focusEdgeId: null,
       castInclude: "",
@@ -161,7 +147,7 @@ export const useCoords = create<Coords>((set) => ({
   // 他选的那一场就不是他看到的那一场了。
   setCast: (cast) => set({ cast, castInclude: "" }),
   setTab: (activeTab) =>
-    set({ activeTab, focusCell: null, focusEventId: null, focusEdgeId: null, castInclude: "" }),
+    set({ activeTab, focusEventId: null, focusEdgeId: null, castInclude: "" }),
   focusNode: (selectedNodeId) => set({ selectedNodeId, activeTab: "graph" }),
   setHighlight: (highlight) => set({ highlight }),
   setPage: (page) => set({ page }),
@@ -172,18 +158,14 @@ export const useCoords = create<Coords>((set) => ({
   // 换掉的都只有中栏左半边，助手照旧在它右边开着。
   toggleChat: () => set((s) => ({ chatOpen: !s.chatOpen })),
   setChat: (chatId) => set({ chatId }),
-  jumpFromActivity: ({ tab, cell, eventId, edgeId, include }) =>
+  jumpFromActivity: ({ tab, eventId, edgeId }) =>
     set((s) => ({
       page: "workbench",
       activeTab: tab ?? s.activeTab,
       // **上一次点场景块留下的过滤一定要被清掉**：要看的那一格可能根本不在里面，
       // 而那是作者为另一件事设的，不是为这次跳转设的。
       cast: "",
-      // 后端给的坐标只**加**在推导出来的在场上（认知矩阵那一档给的是「这一格上那个人
-      // 的称呼」——他可能在这一章正文里一次都没被点名，ADR 0018 推不出他那一行）。
-      // 别的档给空串。**前端不在这里挑人，也不在这里合并**。
-      castInclude: include,
-      focusCell: cell,
+      castInclude: "",
       focusEventId: eventId,
       focusEdgeId: edgeId,
     })),

@@ -27,7 +27,6 @@ describe("改一条已生效的事实被拒绝时，屏幕上说什么", () => {
     const gone = readCorrectionError(new ApiError(404, body("errorFactNotFound")));
     expect(gone.kind).toBe("gone");
     expect(gone.message).toBe(body("errorFactNotFound").message);
-    expect(gone.message).toContain("李管家");
 
     const refused = readCorrectionError(new ApiError(422, body("errorKnowledgeRefused")));
     expect(refused.kind).toBe("refused");

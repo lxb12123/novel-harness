@@ -35,7 +35,6 @@ from ..activity import (
     read_runs,
 )
 from ..db import Connection
-from ..graph import AliasKind
 from .deps import get_conn, get_store, load_project
 
 
@@ -47,8 +46,7 @@ EntryId = Annotated[str, Path(min_length=1)]
 def _endpoints(project_id: str, jump: ActivityJump) -> tuple[str, ...]:
     """这个坐标今天能被哪几条路由改。**全仓唯一一张 `target → 编辑入口` 的表。**
 
-    - `KNOWLEDGE_CELL` → `corrections.correct_knowledge`
-    - `EVENT_CAST` → `corrections.correct_event_cast`
+        - `EVENT_CAST` → `corrections.correct_event_cast`
     - `PROPOSAL` → 三条审阅路由（accept / reject / edit），**只在指名到某一条提案时给**
     - `SUMMARY` → 章节总结那一个资源（同一条路径四个动作：读 / 生成 / 改 / 撤回）
     - `EXTRACTION_RETRY` → 重跑那一章的整理
@@ -68,8 +66,6 @@ def _endpoints(project_id: str, jump: ActivityJump) -> tuple[str, ...]:
     **且**带上了 `force`。
     """
     base = f"/api/projects/{project_id}"
-    if jump.target is JumpTarget.KNOWLEDGE_CELL:
-        return (f"{base}/canon/knowledge",)
     if jump.target is JumpTarget.EVENT_CAST and jump.event_id:
         return (f"{base}/canon/events/{jump.event_id}/cast",)
     if jump.target is JumpTarget.PROPOSAL and jump.proposal_id:
@@ -85,76 +81,10 @@ def _endpoints(project_id: str, jump: ActivityJump) -> tuple[str, ...]:
     if jump.target is JumpTarget.CANON_EDGE and jump.edge_id:
         return (f"{base}/canon/edges/{jump.edge_id}",)
     return ()
-
-
-class _Surfaces:
-    """花名册的一次性视图：node_id → 作者能认的称呼。
-
-    **一个请求最多查一次**（`store.resolve(pid, None)` 是全项目一次索引扫描），
-    因为一页日志里可能有几十行都指向认知矩阵，一行查一次就是几十次全表读。
-    """
-
-    def __init__(self, store: Any, project_id: str) -> None:
-        self._store = store
-        self._project_id = project_id
-        self._by_node: dict[str, str] | None = None
-
-    def of(self, node_id: str) -> str | None:
-        """这个人的称呼。**歧义的一律不算**（同名两个人 → 谁都不给）。
-
-        本名（`canonical`，`upsert_node` 建节点时写的那一条）优先，别名兜底。
-        反过来会把化名摆到「只看：…」那一行上——而化名在这本书里可能正是
-        「别人还不知道他是谁」的编码（ADR 0004），拿它当筛选条件读起来像另一个人。
-        """
-        if self._by_node is None:
-            table: dict[str, str] = {}
-            canonical: set[str] = set()
-            for resolution in self._store.resolve(self._project_id, None):
-                node = resolution.unique_node
-                # unique_node 为 None ⇒ 这个称呼指向不止一个人。跳过它就是「不替作者挑」
-                # （ADR 0004）：宁可这一行补不出来，也不能把矩阵指到另一个人身上。
-                if node is None or node.id in canonical:
-                    continue
-                is_canonical = any(hit.kind is AliasKind.CANONICAL for hit in resolution.hits)
-                if is_canonical or node.id not in table:
-                    table[node.id] = resolution.surface
-                if is_canonical:
-                    canonical.add(node.id)
-            self._by_node = table
-        return self._by_node.get(node_id)
-
-
-def _cast(surfaces: _Surfaces, jump: ActivityJump) -> tuple[str, ...]:
-    """跳过去之后右栏那份在场里还要**多算上**谁。**只有认知矩阵那一档有值。**
-
-    矩阵的行由本章正文推（ADR 0018），而 `valid_from` 由引语定（ADR 0006）——
-    一句满是代词的声明会让坐标指向一章「他一次都没被点名」的正文，那一行不在表上，
-    高亮和编辑入口一起落空。这里把那个人显式交出去，由 `_effective_cast` 的
-    `include`（**只加不减**）把那一行加回来——**不是替换推导**：替换掉的话，
-    右栏的写作提醒会按「只有他一个人在场」重算，禁令跟着少一批（ADR 0018 §3）。
-
-    **`EVENT_CAST` 那一档故意没有**：它跳的是「已确认情节」那一格里的一份名单，
-    不是矩阵的一行；给了坐标只会在右栏那几格里凭空多出一个谁也没要求过的人。
-    别的几档（`PROPOSAL` / `SUMMARY` / `EXTRACTION_RETRY` / `CHAPTER`）同理。
-
-    查不到称呼（没登记过 / 全都有歧义）就返回空——那时退回今天的行为，
-    界面照旧说「没有在这一章找到刚才那一格」。**编一个坐标出来才是错的那一侧。**
-    """
-    if jump.target is not JumpTarget.KNOWLEDGE_CELL or not jump.character_id:
-        return ()
-    surface = surfaces.of(jump.character_id)
-    return (surface,) if surface else ()
-
-
-def _with_jump(surfaces: _Surfaces, project_id: str, entry: ActivityEntry) -> ActivityEntry:
+def _with_jump(project_id: str, entry: ActivityEntry) -> ActivityEntry:
     if entry.jump is None:
         return entry
-    jump = entry.jump.model_copy(
-        update={
-            "endpoints": _endpoints(project_id, entry.jump),
-            "cast": _cast(surfaces, entry.jump),
-        }
-    )
+    jump = entry.jump.model_copy(update={"endpoints": _endpoints(project_id, entry.jump)})
     return entry.model_copy(update={"jump": jump})
 
 
@@ -175,9 +105,8 @@ def activity(
     游标形状不对 → 引擎抛 `ValueError` → 全局 handler 映成 422，**不静默回到第一页**。
     """
     page = read_activity(conn, proj.id, actor=actor, limit=limit, cursor=cursor)
-    surfaces = _Surfaces(store, proj.id)
     return page.model_copy(
-        update={"entries": tuple(_with_jump(surfaces, proj.id, e) for e in page.entries)}
+        update={"entries": tuple(_with_jump(proj.id, e) for e in page.entries)}
     )
 
 
@@ -199,7 +128,7 @@ def activity_detail(
             detail={"error": "activity_entry_not_found", "entry_id": entry_id},
         )
     return detail.model_copy(
-        update={"entry": _with_jump(_Surfaces(store, proj.id), proj.id, detail.entry)}
+        update={"entry": _with_jump(proj.id, detail.entry)}
     )
 
 

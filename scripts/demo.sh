@@ -10,7 +10,7 @@
 # ── 两条泳道，各证一件事，谁都不替代谁 ────────────────────────────────────
 #
 # **泳道 1（读路径）**：seed_demo.py 是「作者已经确认过了」的替身（那四个章号是
-# 字面量）。量它之后的接缝：花名册 / 认知矩阵（KNOWS·BELIEVES·UNKNOWN）/
+# 字面量）。量它之后的接缝：花名册 / 人物状态卡（闭开区间下界）/
 # 闭开区间下界（ch87 不知道、ch88 知道）。
 #
 # **泳道 2（写路径）**：「引语 → 章号 → valid_from」那条链本身。POST /api/projects
@@ -89,7 +89,7 @@ json_ok() { # $1=描述 $2=python 表达式（读 d = resp.json）
 # 0. 播种 + 起服务
 # ══════════════════════════════════════════════════════════════════════════
 
-step "seed_demo.py —— 作者声明 3 个人 / 2 条秘密 / 4 条边"
+step "seed_demo.py —— 作者声明 3 个人 / 2 个地点 / 2 条边"
 if ! PID="$(uv run python "$ROOT/scripts/seed_demo.py" "$DB" 2>"$TMP/seed.err")"; then
   printf -- '─── seed_demo 诊断 ───\n%s\n' "$(cat "$TMP/seed.err")" >&2
   fail "seed_demo.py 建不出库"
@@ -118,25 +118,23 @@ http_ok "roster" "$code"
 json_ok "roster 里有 萧决/顾清音/李管家" \
   "all(n in [r.get('name') for r in d] for n in ('萧决','顾清音','李管家'))"
 
-step "认知矩阵 ch152 —— KNOWS / BELIEVES / UNKNOWN 都要有"
-code="$(apiq "/api/projects/$PID/chapters/152/matrix" "cast=萧决,顾清音,李管家")"
-http_ok "matrix ch152" "$code"
-json_ok "萧决×血脉秘密 = KNOWS（since 88）" \
-  "any(c['state']=='KNOWS' and c['since_chapter']==88 for c in d['cells'])"
-json_ok "李管家×血脉秘密 = BELIEVES（since 103）" \
-  "any(c['state']=='BELIEVES' and c['since_chapter']==103 for c in d['cells'])"
-json_ok "至少一格 UNKNOWN（顾清音/未知）" \
-  "any(c['state']=='UNKNOWN' for c in d['cells'])"
+step "人物状态卡 ch152 —— 说得出他此刻在哪"
+code="$(apiq "/api/projects/$PID/chapters/152/state" "cast=萧决")"
+http_ok "state ch152" "$code"
+json_ok "ch152 萧决在北荒" \
+  "any((c.get('location') or {}).get('name')=='北荒' for c in d)"
 
-step "时态下界 —— ch87 还不知道 / ch88 知道（闭开区间 [valid_from, ∞)）"
-code="$(apiq "/api/projects/$PID/chapters/87/matrix" "cast=萧决")"
-http_ok "matrix ch87" "$code"
-json_ok "ch87 萧决×血脉秘密 仍是 UNKNOWN" \
-  "all(c['state']=='UNKNOWN' for c in d['cells'] if c.get('secret_id'))"
-code="$(apiq "/api/projects/$PID/chapters/88/matrix" "cast=萧决")"
-http_ok "matrix ch88" "$code"
-json_ok "ch88 萧决×血脉秘密 = KNOWS" \
-  "any(c['state']=='KNOWS' and c['since_chapter']==88 for c in d['cells'])"
+step "时态下界 —— ch149 还在青云城主府 / ch150 起在北荒（闭开区间 [valid_from, ∞)）"
+# 秘密下线之前这一段量的是认知矩阵（ch87 UNKNOWN → ch88 KNOWS）。**判据一个字没变**：
+# 闭开区间只在 `graph/queries.py` 实现一次，换的只是拿哪一类边来演它。
+code="$(apiq "/api/projects/$PID/chapters/149/state" "cast=萧决")"
+http_ok "state ch149" "$code"
+json_ok "ch149 萧决还在青云城主府" \
+  "any((c.get('location') or {}).get('name')=='青云城主府' for c in d)"
+code="$(apiq "/api/projects/$PID/chapters/150/state" "cast=萧决")"
+http_ok "state ch150" "$code"
+json_ok "ch150 萧决已在北荒" \
+  "any((c.get('location') or {}).get('name')=='北荒' for c in d)"
 
 # ══════════════════════════════════════════════════════════════════════════
 # 2. 泳道 2 —— 写路径：「引语 → 章号 → valid_from」+ R3 开火/闭嘴
@@ -216,6 +214,6 @@ json_ok "ch2 报「跑了 2 条规则」（§10 约束 8：零要和真零分开
   "len(d.get('rules', [])) == 2 and all(r.get('rule_id') for r in d['rules'])"
 
 printf '\n✓ 心跳正常。两条泳道：\n'
-printf '  1. 种子库 → 花名册/矩阵/闭开区间（读路径，Web 那半边）。\n'
+printf '  1. 种子库 → 花名册/人物状态卡/闭开区间（读路径，Web 那半边）。\n'
 printf '  2. 建书 → import → declare/death（valid_from 由引语算出）→ R3 开火、AS-OF 闭嘴。\n'
 printf '  （量的是接缝，不是真书：import 用的是手写的 3 章 fixture。）\n'

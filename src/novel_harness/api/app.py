@@ -67,7 +67,6 @@ from ..draft.product_draft import SummaryBackfillReply
 from ..graph import (
     AliasKind,
     EdgeType,
-    GraphVersion,
     InformationScope,
     NodeLabel,
     NodeProps,
@@ -87,7 +86,6 @@ from ..panel import (
     UnresolvedCast,
     cast_states,
     character_state,
-    knowledge_matrix,
     resolve_cast,
     scene_constraints,
 )
@@ -859,27 +857,6 @@ def mentioned(
         "has_text": surfaces is not None,
         "surfaces": surfaces or [],
     }
-
-
-@app.get("/api/projects/{project_id}/chapters/{chapter}/matrix")
-def matrix(
-    chapter: int,
-    cast: str = Query("", description="在场称呼原文，逗号/顿号分隔；留空 = 由本章正文推"),
-    include: str = INCLUDE,
-    store: Any = Depends(get_store),
-    proj: Any = Depends(load_project),
-) -> Any:
-    """★ 认知边界矩阵（头牌）。必须经 resolve_cast，才挂得上 unresolved_cast（store 自己不知道）。
-
-    **`version` 在这里才填得上，图层填不了**：canon 版本住在 `project` 行上，不在图表里
-    （`graph/sqlite_store.py` 建这个模型时用的是 `GraphVersion()` 默认值，于是它一直是 0）。
-    而这一格现在是可改的（`POST /canon/knowledge` 收 `expected_canon_version`），
-    那个数**必须是作者看到这张表那一刻的版本**：从别的读端另取一次就是第二个会漂的源，
-    中间要是有人升过 CANON，CAS 会放过一次它本该拦下的改动。
-    """
-    resolved = resolve_cast(store, proj.id, _effective_cast(proj, store, chapter, cast, include))
-    view = knowledge_matrix(store, proj.id, chapter, resolved.ids, unresolved=resolved.unresolved)
-    return view.model_copy(update={"version": GraphVersion(canon_version=proj.canon_version)})
 
 
 @app.get("/api/projects/{project_id}/chapters/{chapter}/constraints")

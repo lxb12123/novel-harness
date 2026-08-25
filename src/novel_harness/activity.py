@@ -119,7 +119,6 @@ class JumpTarget(StrEnum):
     推翻条件的观测点）变成一句骗人的话，而**骗人的那一句会把观测点一起关掉**。
     """
 
-    KNOWLEDGE_CELL = "knowledge_cell"
     EVENT_CAST = "event_cast"
     PROPOSAL = "proposal"
     SUMMARY = "summary"
@@ -151,8 +150,6 @@ class ActivityJump(BaseModel):
     分开写迟早会出现「按钮说去改提案、坐标指向认知矩阵」。"""
 
     chapter_number: int | None = None
-    character_id: str | None = None
-    secret_id: str | None = None
     event_id: str | None = None
     proposal_id: str | None = None
     edge_id: str | None = None
@@ -165,37 +162,6 @@ class ActivityJump(BaseModel):
     画编辑按钮。现在三类自动边都有 `CANON_EDGE` 入口，落到这一档的只剩正在
     补纠错入口的新边类型。
     """
-
-    cast: tuple[str, ...] = ()
-    """跳过去之后，右栏那份在场里**还要多算上哪几个称呼**。原样进 `?include=`。
-
-    ── **它是「也算上」，不是「只看」** ─────────────────────────────────
-    **不许进 `?cast=`。** 那个参数是过滤（「只看这几个人」），而这里给的按定义只有
-    一个人——拿它去过滤就是**系统**替作者把在场收窄成一个人，而
-
-        must_not_reveal 的判据 = 「在场的人里至少有一个还不知道」
-
-    少一个人 = 少一批禁令 = fail-open（ADR 0018 §3）。同一份在场还喂着 `/constraints`
-    和 `/state`，所以这不是「矩阵少画一行」而是「作者收到的禁令少了一批」。
-    方向的实测形态记在 `api/app.py::_effective_cast` 里，`tests/test_jump_cast.py` 钉着。
-
-    ── 它存在的理由 ─────────────────────────────────────────────────────
-    认知矩阵的行由 `mentioned_cast` 从**那一章的正文**里推（ADR 0018），而
-    `valid_from` 只由引语决定（ADR 0006）——两条合起来，作者用一句满是代词的话
-    声明认知时，跳转坐标会指向一章「他一次都没被点名」的正文，那一行根本不在表上，
-    高亮和编辑入口一起落空。这个字段就是把那一行补回来的坐标。
-
-    **给的是称呼不是 id**：那两个参数收的一直是作者写的原文，由 `resolve_cast` 解析。
-    前端一个字都不解析，也不许拿屏幕上的人名自己去凑一个（那是「从标题反推」）。
-
-    **引擎不填，由 HTTP 壳补**（同 `endpoints`）：要判断一个称呼能不能唯一指回这个人
-    得读花名册，而本模块的规矩是不读图（见模块说明）。
-
-    空元组的含义**只有一个**：今天给不出一个不含歧义的坐标（这个人的称呼全都指向
-    不止一个人，或者他根本没登记过称呼）。那时**绝不替作者挑一个**（ADR 0004 /
-    §10 约束 8），退回原来的行为——表上没有那一行，界面照旧把这件事说出来。
-    """
-
 
 class ActivityEntry(BaseModel):
     """折叠行：作者扫一眼就该知道的全部。"""
@@ -957,47 +923,11 @@ def _decision_jump(decision: decisions.Decision) -> ActivityJump | None:
     kind = decision.kind
     chapter = decision.chapter_number
 
-    if kind in (
-        decisions.DecisionKind.KNOWLEDGE_EDIT,
-        # 「补一条」和「改一条」落在同一格上，坐标形状也是同一份（payload 里的
-        # `character` / `secret`）。**共用这一支而不是另写一支**：两支的那天，
-        # 补出来的那一行会安静地退到兜底坐标「去第 N 章」，而这一格明明改得动。
-        decisions.DecisionKind.KNOWLEDGE_ADD,
-    ):
-        character_id = _text(_dig(payload, "character", "id"))
-        secret_id = _text(_dig(payload, "secret", "id"))
-        if character_id and secret_id:
-            return ActivityJump(
-                target=JumpTarget.KNOWLEDGE_CELL,
-                label="去认知矩阵改这一格",
-                chapter_number=_int(payload.get("valid_from_chapter")) or chapter,
-                character_id=character_id,
-                secret_id=secret_id,
-            )
-
-    if kind == decisions.DecisionKind.KNOWS_DECLARE:
-        # 作者**自己声明**的那条「知道 / 以为」也改得掉——`/canon/knowledge` 改的正是
-        # 这一格上已经存在的那条边，不管它当初是声明进来的还是确认进来的。
-        #
-        # 这一档以前退到兜底坐标，于是 `endpoints` 空。**那不是一句无害的省略**：本仓
-        # 把空元组定义成断言「今天没有任何路由能改这个东西」，而 ADR 0020 拿这个 bucket
-        # 当自己的推翻条件（「出现『作者改不回来』的形态」）的观测点。声明认知是作者往
-        # 图里放认知的主路径（ADR 0004），也是他最容易把「知道」和「以为」写反的地方——
-        # 把它塞进那个 bucket，等于在最常用的入口上告诉他没救了，同时污染观测点。
-        #
-        # **`LOCATED_DECLARE` 不在这一档，且不许顺手拉进来**：`LOCATED_AT` 今天真的
-        # 没有编辑入口，它才是那个 bucket 该装的东西。
-        character_id = _text(payload.get("subject_id"))
-        secret_id = _text(payload.get("object_id"))
-        if character_id and secret_id:
-            return ActivityJump(
-                target=JumpTarget.KNOWLEDGE_CELL,
-                label="去认知矩阵改这一格",
-                chapter_number=chapter,
-                character_id=character_id,
-                secret_id=secret_id,
-            )
-
+    # 认知那两档（KNOWLEDGE_EDIT / KNOWLEDGE_ADD / KNOWS_DECLARE）原来跳「去认知矩阵
+    # 改这一格」。**它们随秘密下线一起没了**（ADR 0039）：那一格、那条路由、那个
+    # JumpTarget 成员都删了。历史行仍在 decision_log 里（三个触发器封死 DELETE），
+    # 只是它们现在退到兜底坐标「去第 N 章」——那正是「今天没有任何路由能改这个东西」
+    # 的诚实形态，而不是指着一颗点了 404 的按钮。
     if kind == decisions.DecisionKind.EVENT_EDIT:
         event_id = _text(payload.get("event_id"))
         if event_id:

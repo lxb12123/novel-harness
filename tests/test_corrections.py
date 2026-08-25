@@ -21,7 +21,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
-import seed
 from fastapi.testclient import TestClient
 
 from novel_harness import corrections, decisions, project
@@ -513,88 +512,6 @@ def test_no_correction_output_or_log_ever_serializes_secret_content(world: World
 
 def _version(client: TestClient, pid: str) -> int:
     return client.get(f"/api/projects/{pid}").json()["canon_version"]
-
-
-def test_http_knowledge_edit_flips_the_cell_and_leaks_nothing(
-    client: TestClient, book: dict[str, str]
-) -> None:
-    pid = book["pid"]
-    seed.knows(
-        book["db"], pid,
-        who="萧决", secret="血脉秘密",
-        quote="萧决在青云城主府第一次听说了血脉秘密的真相。",
-    )
-
-    response = client.post(
-        f"/api/projects/{pid}/canon/knowledge",
-        json={
-            "character_id": book["萧决"],
-            "secret_id": book["血脉秘密"],
-            "to_type": "BELIEVES",
-            "believed_value": "以为血脉秘密只是市井传闻",
-            "expected_canon_version": _version(client, pid),
-        },
-    )
-    assert response.status_code == 200, response.text
-    body = response.json()
-    assert body["from_type"] == "KNOWS" and body["to_type"] == "BELIEVES"
-    assert body["since_chapter"] == 1, "章号是产物：作者在这次请求里一个数字都没敲"
-    from test_api import TWIST as API_TWIST
-
-    assert API_TWIST not in response.text
-
-    matrix = client.get(f"/api/projects/{pid}/chapters/1/matrix?cast=萧决").json()
-    cell = next(c for c in matrix["cells"] if c["secret_id"] == book["血脉秘密"])
-    assert cell["state"] == "BELIEVES"
-    assert cell["believed_value"] == "以为血脉秘密只是市井传闻"
-
-
-def test_http_knowledge_edit_maps_its_three_failures(
-    client: TestClient, book: dict[str, str]
-) -> None:
-    pid = book["pid"]
-    missing = client.post(
-        f"/api/projects/{pid}/canon/knowledge",
-        json={
-            "character_id": book["萧决"],
-            "secret_id": book["血脉秘密"],
-            "to_type": "BELIEVES",
-            "believed_value": "以为已泄露",
-            "expected_canon_version": _version(client, pid),
-        },
-    )
-    assert missing.status_code == 404
-    assert missing.json()["detail"]["error"] == "fact_not_found"
-
-    seed.knows(
-        book["db"], pid,
-        who="萧决", secret="血脉秘密",
-        quote="萧决在青云城主府第一次听说了血脉秘密的真相。",
-    )
-    blank = client.post(
-        f"/api/projects/{pid}/canon/knowledge",
-        json={
-            "character_id": book["萧决"],
-            "secret_id": book["血脉秘密"],
-            "to_type": "BELIEVES",
-            "expected_canon_version": _version(client, pid),
-        },
-    )
-    assert blank.status_code == 422
-    stale = client.post(
-        f"/api/projects/{pid}/canon/knowledge",
-        json={
-            "character_id": book["萧决"],
-            "secret_id": book["血脉秘密"],
-            "to_type": "BELIEVES",
-            "believed_value": "以为已泄露",
-            "expected_canon_version": _version(client, pid) + 5,
-        },
-    )
-    assert stale.status_code == 409
-    assert stale.json()["detail"]["error"] == "stale_base_version"
-
-
 def test_http_event_cast_edit_removes_a_knower(
     client: TestClient, book: dict[str, str]
 ) -> None:

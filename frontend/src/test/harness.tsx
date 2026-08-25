@@ -100,7 +100,6 @@ const DEFAULT: Handler[] = [
   { match: /\/api\/projects$/, body: fixtures.projects },
   { match: /\/roster$/, body: fixtures.roster },
   { match: /\/chapters$/, body: fixtures.chapters },
-  { match: /\/chapters\/\d+\/matrix/, body: fixtures.matrix },
   { match: /\/chapters\/\d+\/constraints/, body: fixtures.constraints },
   { match: /\/chapters\/\d+\/state/, body: fixtures.states },
   { match: /\/chapters\/\d+\/mentioned/, body: fixtures.mentioned },
@@ -167,12 +166,6 @@ const DEFAULT: Handler[] = [
   // **「补一条」那条必须排在前面**：两条路由都以 `/canon/knowledge` 结尾，只差前面
   // 那段 `/chapters/{n}/`。顺序反了的话，补一条会静默拿到「改」的回执——而两份回执
   // 长得像（都有 character/secret/since_chapter），测试不会当场看出来。
-  {
-    method: "POST",
-    match: /\/chapters\/\d+\/canon\/knowledge$/,
-    body: fixtures.canonKnowledgeAdded,
-  },
-  { method: "POST", match: /\/canon\/knowledge$/, body: fixtures.canonKnowledge },
   { method: "POST", match: /\/canon\/events\/.*\/cast$/, body: fixtures.canonEventCast },
   // Canon 边纠错（Task 8 / ADR 0032）：读 / 改 / 撤回自动升上去的地点边。
   // 三条都是真 dump（`canonEdge` / `canonEdgeEdited` / `canonEdgeRetracted`）。

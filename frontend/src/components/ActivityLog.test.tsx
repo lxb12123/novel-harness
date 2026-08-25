@@ -13,8 +13,17 @@ import { ActivityLog, money } from "./ActivityLog";
 const ALL = fixtures.activity.entries.length;
 const AUTHOR_ONLY = fixtures.activityAuthorOnly.entries.length;
 
-/** 更正认知类型那一条：唯一一条 `jump` 指到认知矩阵某一格的行。 */
-const KNOWLEDGE_ROW = /更正认知类型/;
+/** 一条**作者亲手点过、而且今天真的改得掉**的行。
+ *
+ *  2026-08-24 从「更正认知类型」换成「抽取结果审阅」：前者随秘密下线没了
+ *  （ADR 0039），而这几条测试要的从来是「一条带真跳转坐标的 author 行」，
+ *  不是「哪条路由写的那一行」。 */
+const KNOWLEDGE_ROW = /抽取结果审阅/;
+
+/** 那条行的**第一条** —— 夹具里同名的有三条（一条退到兜底坐标），
+ *  而这几条测试要的是「带真跳转坐标」的那一条，它排在最前。 */
+const firstRow = async (name: RegExp) =>
+  (await screen.findAllByRole("button", { name }))[0];
 /** 抽取那一条：展开层里有「跑了什么 + 花了多少」。 */
 const RUN_ROW = /第 1 章抽取/;
 /** 一次模型调用：第三种展开层（能力 / 模型 / 为哪一章 / token）。 */
@@ -27,7 +36,6 @@ beforeEach(() => {
     cast: "",
     activeTab: "roster",
     page: "log",
-    focusCell: null,
     focusEventId: null,
   });
 });
@@ -77,7 +85,7 @@ describe("活动记录", () => {
   it("**审计信封一个字都不上屏** —— 作者看的是 rows，不是给机器重放用的那份", async () => {
     const user = userEvent.setup();
     renderWithApi(<ActivityLog />);
-    await user.click(await screen.findByRole("button", { name: KNOWLEDGE_ROW }));
+    await user.click(await firstRow(KNOWLEDGE_ROW));
 
     expect(await screen.findByText("依据引语")).toBeInTheDocument();
     // payload 里真有这些键/值（见 api.json 的 activityDecisionDetail），一个都不许露出来：
@@ -115,73 +123,21 @@ describe("活动记录", () => {
 
     await waitFor(() => expect(collapsed()).resolves.toHaveLength(AUTHOR_ONLY));
     for (const tally of fixtures.activityAuthorOnly.actors) {
+      // 连 actor 那个词一起认：两个计数可能互为后缀（13 / 3），只认数字会撞上。
+      const who = tally.actor === "author" ? "作者做的" : "系统做的";
       expect(
-        screen.getByRole("button", { name: new RegExp(`${tally.count}$`) }),
+        screen.getByRole("button", { name: new RegExp(`${who} ${tally.count}$`) }),
       ).toBeInTheDocument();
     }
     // 过滤之后列表里只剩 4 行，而「系统」那颗按钮上的数字还是全量的 3。
     expect(screen.getByRole("button", { name: /系统做的 3/ })).toBeInTheDocument();
   });
-
-  it("跳转用的是**后端给的坐标**，不是从标题里认出来的名字", async () => {
-    const user = userEvent.setup();
-    useCoords.setState({ chapter: 5 }); // 作者正在写第 5 章，日志那一条是第 1 章的事
-    renderWithApi(<ActivityLog />);
-    await user.click(await screen.findByRole("button", { name: KNOWLEDGE_ROW }));
-
-    // 按钮上的字是后端写的（`jump.label`），前端不编第二份措辞。
-    const jump = fixtures.activityDecisionDetail.entry.jump;
-    const go = await screen.findByRole("button", { name: `${jump.label} →` });
-    await user.click(go);
-
-    const s = useCoords.getState();
-    expect(s.page).toBe("workbench"); // 中栏换回正文，右栏那一格就在旁边
-    expect(s.activeTab).toBe("matrix");
-    expect(s.chapter).toBe(jump.chapter_number);
-    expect(s.focusCell).toEqual({
-      character_id: jump.character_id,
-      secret_id: jump.secret_id,
-    });
-    // 在场坐标也是后端给的（`jump.cast`），**不是从副标题里那个人名认出来的**。
-    // 认知矩阵的行由本章正文推（ADR 0018），日志里那个人可能一次都没被点名——
-    // 不带这个坐标，跳过去那一行根本不在表上，高亮和编辑入口一起落空。
-    //
-    // **它落进 `castInclude`（只加不减），不是 `cast`（过滤）。** 右栏三格吃同一份在场，
-    // 写作提醒少一个人就少一批禁令（ADR 0018 §3）；方向那条钉在 `JumpCast.coord.test.tsx`。
-    expect(jump.cast.length).toBeGreaterThan(0);
-    expect(s.castInclude).toBe(jump.cast.join("、"));
-    expect(s.cast).toBe("");
-  });
-
-  it("后端给不出不含歧义的称呼时，前端**不自己凑一个**", async () => {
-    // 空 `cast` 是一个断言：那个人的称呼指向不止一个人（或者根本没登记过称呼），
-    // 后端于是什么都不给——绝不替作者挑（ADR 0004）。前端这时退回看整章，
-    // 那一格没画出来的话，矩阵那边照旧说「没有在这一章找到刚才那一格」。
-    const user = userEvent.setup();
-    useCoords.setState({ cast: "上一场留下的" });
-    const row = fixtures.activityDecisionDetail.entry;
-    renderWithApi(<ActivityLog />, [
-      {
-        match: /\/activity\/decision/,
-        body: {
-          ...fixtures.activityDecisionDetail,
-          entry: { ...row, jump: { ...row.jump!, cast: [] } },
-        },
-      },
-    ]);
-    await user.click(await screen.findByRole("button", { name: KNOWLEDGE_ROW }));
-    await user.click(await screen.findByRole("button", { name: `${row.jump!.label} →` }));
-
-    // 上一次留下的过滤仍然被清掉：留着它，要看的那一格可能根本不在里面。
-    expect(useCoords.getState().cast).toBe("");
-  });
-
   it("引擎能改、工作台也能改的那一档，不再挂「入口还没做」那句话", async () => {
     // 这一句 2026-08-10 是诚实的（那两条改正路由在浏览器里零调用方），2026-08-11 起
     // 不是了：矩阵那一格点得开、已确认情节的名单也改得动。**留着它就变成骗人的文案。**
     const user = userEvent.setup();
     renderWithApi(<ActivityLog />);
-    await user.click(await screen.findByRole("button", { name: KNOWLEDGE_ROW }));
+    await user.click(await firstRow(KNOWLEDGE_ROW));
 
     await screen.findByText("依据引语");
     expect(screen.queryByText(/只能看这一格|入口还没做/)).toBeNull();
@@ -206,10 +162,8 @@ describe("活动记录", () => {
     expect(s.page).toBe("workbench");
     expect(s.activeTab).toBe("review"); // 已确认情节的名单就在这一格里
     expect(s.focusEventId).toBe(row.jump!.event_id);
-    expect(s.focusCell).toBeNull();
-    // **这一档不带在场坐标。** 它跳的是「已确认情节」那一格里的一份名单，不是矩阵的
-    // 一行；给了 cast 只会顺手把右栏别的几格一起过滤掉。后端那边也不给（`_cast`）。
-    expect(row.jump!.cast).toEqual([]);
+    // **跳转不带在场坐标。** 那个字段 2026-08-24 随秘密下线整个删了（ADR 0039）——
+    // 它当年只为认知矩阵那一档存在（把一个「本章正文里没被点名」的人加回表上）。
     expect(s.cast).toBe("");
   });
 
@@ -238,7 +192,6 @@ describe("活动记录", () => {
     expect(s.page).toBe("workbench");
     expect(s.focusEdgeId).toBe(row.jump!.edge_id);
     // 这一档不带在场坐标、不高亮矩阵那一格。
-    expect(s.focusCell).toBeNull();
     expect(s.cast).toBe("");
   });
 
@@ -371,7 +324,6 @@ describe("活动记录", () => {
     expect(s.activeTab).toBe("summary");
     expect(s.chapter).toBe(row.jump!.chapter_number);
     // 这一档不带在场坐标（它跳的不是矩阵的一行），也不高亮任何一格。
-    expect(s.focusCell).toBeNull();
     expect(s.castInclude).toBe("");
   });
 
@@ -546,7 +498,7 @@ describe("活动记录", () => {
   ])("展开「%s」也一样", async (_label, row, marker) => {
     const user = userEvent.setup();
     renderWithApi(<ActivityLog />);
-    await user.click(await screen.findByRole("button", { name: row }));
+    await user.click(await firstRow(row));
     await screen.findByText(marker);
     expect(devTerms(screenText())).toEqual([]);
   });

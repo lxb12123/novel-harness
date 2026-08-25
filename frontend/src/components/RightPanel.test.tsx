@@ -32,7 +32,7 @@ describe("右侧信息区", () => {
     renderWithApi(<RightPanel />, [{ match: /\/roster$/, body: [] }]);
 
     expect(await screen.findByRole("button", { name: "＋" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "人物认知" }));
+    await user.click(screen.getByRole("button", { name: "人物状态" }));
     expect(await screen.findByText(/添加人物或设定后/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "花名册" })).toBeInTheDocument();
   });
@@ -44,8 +44,8 @@ describe("右侧信息区", () => {
     ]);
 
     await user.click(await screen.findByRole("button", { name: "写作提醒" }));
-    expect(await screen.findByText("暂时不能说破")).toBeInTheDocument();
-    expect(document.body.textContent).not.toMatch(/must_not_reveal|forbidden_entities|fail-closed/);
+    expect(await screen.findByText("本章尚未登场")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/forbidden_entities|fail-closed/);
 
     await user.click(screen.getByRole("button", { name: "检查" }));
     await user.click(screen.getByRole("button", { name: "检查本章" }));
@@ -62,7 +62,7 @@ describe("在场是数出来的，不是作者填的", () => {
   it("直接显示这一章正文里提到了谁 —— 作者一个字都不用填", async () => {
     const user = userEvent.setup();
     renderWithApi(<RightPanel />);
-    await user.click(await screen.findByRole("button", { name: "人物认知" }));
+    await user.click(await screen.findByRole("button", { name: "人物状态" }));
 
     expect(await screen.findByText("这一章提到：")).toBeInTheDocument();
     expect(screen.getByText(fixtures.mentioned.surfaces.join("、"))).toBeInTheDocument();
@@ -74,7 +74,7 @@ describe("在场是数出来的，不是作者填的", () => {
     // 但那是**工程上**安全，不代表可以在界面上把它说成另一件事。
     const user = userEvent.setup();
     renderWithApi(<RightPanel />);
-    await user.click(await screen.findByRole("button", { name: "人物认知" }));
+    await user.click(await screen.findByRole("button", { name: "人物状态" }));
 
     await screen.findByText("这一章提到：");
     expect(document.body.textContent).not.toMatch(/在场/);
@@ -86,7 +86,7 @@ describe("在场是数出来的，不是作者填的", () => {
     renderWithApi(<RightPanel />, [
       { match: /\/chapters\/\d+\/mentioned/, body: fixtures.mentionedEmpty },
     ]);
-    await user.click(await screen.findByRole("button", { name: "人物认知" }));
+    await user.click(await screen.findByRole("button", { name: "人物状态" }));
     expect(await screen.findByText(/这一章还没有正文/)).toBeInTheDocument();
   });
 
@@ -98,7 +98,7 @@ describe("在场是数出来的，不是作者填的", () => {
     const user = userEvent.setup();
     useCoords.setState({ cast: "萧决" });
     renderWithApi(<RightPanel />);
-    await user.click(await screen.findByRole("button", { name: "人物认知" }));
+    await user.click(await screen.findByRole("button", { name: "人物状态" }));
 
     expect(await screen.findByText("只看：")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "改回整章" }));

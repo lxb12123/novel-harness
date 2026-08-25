@@ -15,7 +15,6 @@ beforeEach(() => {
     cast: "",
     castInclude: "",
     activeTab: "state",
-    focusCell: null,
     focusEventId: null,
   });
 });

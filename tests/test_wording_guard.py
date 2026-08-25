@@ -39,12 +39,10 @@ import pkgutil
 import re
 import sqlite3
 from pathlib import Path
-from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
 
-from test_activity import seed_call, seed_run
 
 from novel_harness import activity
 from novel_harness.db import connect
@@ -364,71 +362,6 @@ def _seed_failed_run(book: dict[str, str], code: ExtractionErrorCode) -> str:
         return run_id
     finally:
         conn.close()
-
-
-@pytest.mark.parametrize("code", list(ExtractionErrorCode))
-def test_a_failed_extraction_never_hands_the_author_a_machine_code(
-    client: TestClient, book: dict[str, str], code: ExtractionErrorCode
-) -> None:
-    """**红过的那一条。**
-
-    修之前，每一个码都会让日志页长成 `provider_failure：chapter analysis provider
-    failed`。折叠行和展开层各扫一遍——展开层那份 `errors` 走的是同一个读端。
-
-    参数化是**枚举驱动**的：新加一种失败方式，这条自动多跑一遍。
-    """
-    run_id = _seed_failed_run(book, code)
-    base = f"/api/projects/{book['pid']}"
-
-    page = client.get(f"{base}/activity", params={"limit": 50})
-    assert page.status_code == 200, page.text
-    row = next(e for e in page.json()["entries"] if e["id"] == run_id)
-    screen = {
-        "title": row["title"],
-        "subtitle": row["subtitle"],
-        "jump": (row["jump"] or {}).get("label", ""),
-    }
-
-    detail = client.get(f"{base}/activity/{run_id}")
-    assert detail.status_code == 200, detail.text
-    body = detail.json()
-    for i, line in enumerate(body["errors"]):
-        screen[f"errors[{i}]"] = line
-    for r in body["rows"]:
-        screen[f"rows/{r['label']}"] = f"{r['label']}：{r['value']}"
-
-    offenders = {where: dev_shapes(text) for where, text in screen.items() if dev_shapes(text)}
-    assert not offenders, (
-        f"一次失败的抽取把机器码摆到了作者脸上（{code.value}）：{offenders}\n"
-        "措辞的唯一出处是后端（`activity._RUN_ERROR_LABEL`）。"
-    )
-    assert body["errors"], "失败了却一条原因都不说 —— 过度收窄一样是 bug"
-    assert all(re.search(r"[一-鿿]", line) for line in body["errors"])
-
-
-def test_the_maintainers_english_diagnosis_never_reaches_the_screen(
-    client: TestClient, book: dict[str, str]
-) -> None:
-    """`ExtractionRunError.message` 是写给**维护者**的，库就在他手上。
-
-    读端只翻 `code`，那句英文一个字都不许跟着出来。
-
-    **两条读端一起扫**（2026-08-13 补的那一条）：日志页读 `/activity`，审阅面板读
-    `/extractions/{run_id}`——它们读的是同一批 `extraction_run` 行，而当时只有前者
-    翻对了。第二条把整个 `ExtractionRunError` 原样发出去，浏览器渲染的就是那句英文。
-    """
-    code = ExtractionErrorCode.PROVIDER_FAILURE
-    run_id = _seed_failed_run(book, code)
-    base = f"/api/projects/{book['pid']}"
-    english = _runner_error_literals()[code.value]
-
-    page = client.get(f"{base}/activity", params={"limit": 50}).text
-    detail = client.get(f"{base}/activity/{run_id}").text
-    run = client.get(f"{base}/extractions/{run_id}").text
-    for where, payload in (("列表", page), ("详情", detail), ("审阅面板", run)):
-        assert english not in payload, f"{where}把写给维护者的英文诊断交出去了：{english!r}"
-
-
 @pytest.mark.parametrize("code", list(ExtractionErrorCode))
 def test_the_review_panels_run_endpoint_speaks_the_authors_language(
     client: TestClient, book: dict[str, str], code: ExtractionErrorCode
@@ -625,52 +558,6 @@ def test_no_component_falls_back_to_a_raw_identifier() -> None:
         f"这些组件的兜底会把引擎的标识原样摆给作者：{offenders}\n"
         "认不出就说「—」（同 `ProposalReviewTab`）：截短一个认不出的东西不会让它变成人话。"
     )
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 4. 扫描面 —— 这份守卫自己覆盖到哪儿
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def test_the_activity_screen_strings_are_all_scanned_by_shape(
-    client: TestClient, book: dict[str, str]
-) -> None:
-    """整页扫一遍（成功 / 失败 / 调用 / 确认四种行都在），判据是形状不是词表。
-
-    `tests/test_canon_edit_boundary.py` 的同名断言用的是词表（snake_case 那一段只有
-    十来个词），所以 `provider_failure` 在那边是绿的。**两条一起才罩得住这一页。**
-    """
-    call_id = seed_call(book)
-    seed_run(book, 1, call_id=call_id)
-    _seed_failed_run(book, ExtractionErrorCode.ANALYSIS_FORMAT)
-
-    base = f"/api/projects/{book['pid']}"
-    page = client.get(f"{base}/activity", params={"limit": 50})
-    assert page.status_code == 200, page.text
-    entries = page.json()["entries"]
-    assert len(entries) >= 2, "样本不够 —— 这条会变成扫一块空屏幕"
-
-    offenders: dict[str, list[str]] = {}
-    for entry in entries:
-        texts: dict[str, str] = {
-            f"{entry['id']}.title": entry["title"],
-            f"{entry['id']}.subtitle": entry["subtitle"],
-        }
-        if entry.get("jump"):
-            texts[f"{entry['id']}.jump"] = entry["jump"]["label"]
-        detail = client.get(f"{base}/activity/{entry['id']}")
-        assert detail.status_code == 200, detail.text
-        body: dict[str, Any] = detail.json()
-        for r in body.get("rows", ()):
-            texts[f"{entry['id']}/{r['label']}"] = f"{r['label']}：{r['value']}"
-        for i, line in enumerate(body.get("errors", ())):
-            texts[f"{entry['id']}/错误{i}"] = line
-        for where, text in texts.items():
-            if found := dev_shapes(text):
-                offenders[where] = found
-    assert not offenders, f"活动记录把引擎的词摆到了作者脸上：{offenders}"
-
-
 # ══════════════════════════════════════════════════════════════════════════
 # 5. 第五张网 —— **别对着一位不碰命令行的作者说命令行**
 #

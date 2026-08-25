@@ -36,7 +36,6 @@ import type {
   KnowledgeAddition,
   KnowledgeCorrection,
   KnowledgeEditInput,
-  KnowledgeMatrix,
   Mentioned,
   NodeRef,
   NodeSummaryMentions,
@@ -331,17 +330,6 @@ export function useMentioned(pid: string | null, chapter: number) {
  *  （ADR 0018 §3 / `api/app.py::_effective_cast`）。 */
 function castQuery(cast: string, include: string): string {
   return `cast=${encodeURIComponent(cast)}&include=${encodeURIComponent(include)}`;
-}
-
-export function useMatrix(pid: string | null, chapter: number, cast: string, include = "") {
-  return useQuery({
-    queryKey: q(["matrix", pid, chapter, cast, include]),
-    queryFn: () =>
-      api.get<KnowledgeMatrix>(
-        proj(pid!, `/chapters/${chapter}/matrix?${castQuery(cast, include)}`),
-      ),
-    enabled: !!pid,
-  });
 }
 
 export function useConstraints(pid: string | null, chapter: number, cast: string, include = "") {

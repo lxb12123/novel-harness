@@ -62,7 +62,6 @@ export interface AiSettingsInput {
 
 export interface DraftRequest {
   goal: string;
-  cast: string[];
   length: DraftLengthSpec;
   form?: string;
   previous_tail?: string;
@@ -936,7 +935,6 @@ export interface SystemNotification {
 }
 
 export type JumpTarget =
-  | "knowledge_cell"
   | "event_cast"
   | "proposal"
   | "summary"
@@ -951,8 +949,6 @@ export interface ActivityJump {
   /** 按钮上的那句话。后端写，前端不编。 */
   label: string;
   chapter_number: number | null;
-  character_id: string | null;
-  secret_id: string | null;
   event_id: string | null;
   proposal_id: string | null;
   /** 跳去一条自动升上去的地点/状态/关系边（`canon_edge` 那一档，Task 8）。 */

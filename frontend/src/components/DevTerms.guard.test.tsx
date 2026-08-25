@@ -51,7 +51,6 @@ beforeEach(() => {
     page: "workbench",
     selectedNodeId: "character:ID10",
     highlight: null,
-    focusCell: null,
     focusEventId: null,
     chatId: null,
   });
@@ -143,11 +142,10 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
 
   it.each([
     ["花名册", "roster", /青云城主府/],
-    ["人物认知", "matrix", /血脉秘密/],
     ["人物状态", "state", /萧决/],
     ["人物关系", "graph", /人物关系/],
     ["原文依据", "evidence", /原文依据/],
-    ["写作提醒", "constraints", /不能说破/],
+    ["写作提醒", "constraints", /尚未登场/],
     ["检查", "check", /检查本章/],
     ["待确认", "review", /关系冲突/],
     // 2026-08-13 新长出来的一格。它手上形状可疑的东西有两样：这一章总结在库里的

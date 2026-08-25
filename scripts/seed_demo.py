@@ -42,27 +42,24 @@ from novel_harness.graph import (
     EdgeType,
     InformationScope,
     NodeLabel,
-    SecretDetail,
 )
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 
-# (label, name, secret)。README 的框里出现的每一个人和每一条秘密，外加 R4 要的两个地点。
-# 两条秘密带着 `SecretDetail()`：`NodeSpec` 的 validator 要求 label 与 secret 同生同死
-# （没有 secret 行的 Secret 节点在认知矩阵的默认列序里根本不成列）。
-_NODES: list[tuple[NodeLabel, str, SecretDetail | None]] = [
-    (NodeLabel.CHARACTER, "萧决", None),
-    (NodeLabel.CHARACTER, "顾清音", None),
-    (NodeLabel.CHARACTER, "李管家", None),
-    (NodeLabel.SECRET, "血脉秘密", SecretDetail()),
-    (NodeLabel.SECRET, "玄铁令下落", SecretDetail()),
-    (NodeLabel.LOCATION, "青云城主府", None),
-    (NodeLabel.LOCATION, "北荒", None),
+# README 的框里出现的每一个人，外加两个地点。
+# （2026-08-24 之前这儿还有两条秘密和三条 KNOWS/BELIEVES 边 —— 随秘密下线一起没了，
+#  ADR 0039。心跳量的那条「闭开区间下界」现在靠地点边演，判据一个字没变。）
+_NODES: list[tuple[NodeLabel, str]] = [
+    (NodeLabel.CHARACTER, "萧决"),
+    (NodeLabel.CHARACTER, "顾清音"),
+    (NodeLabel.CHARACTER, "李管家"),
+    (NodeLabel.LOCATION, "青云城主府"),
+    (NodeLabel.LOCATION, "北荒"),
 ]
 
 _EDGES: list[tuple[str, str, EdgeType, int, EdgeProps]] = [
-    ("萧决", "血脉秘密", EdgeType.KNOWS, 88, EdgeProps()),
-    ("萧决", "玄铁令下落", EdgeType.KNOWS, 120, EdgeProps()),
-    ("李管家", "血脉秘密", EdgeType.BELIEVES, 103, EdgeProps(believed_value="已泄露")),
+    # 「他第 88 章之前在青云城主府，第 150 章之后在北荒」—— 闭开区间 [valid_from, ∞)
+    # 的最小形态，心跳靠这两条量下界还活着。
+    ("萧决", "青云城主府", EdgeType.LOCATED_AT, 88, EdgeProps()),
     ("萧决", "北荒", EdgeType.LOCATED_AT, 150, EdgeProps()),
 ]
 
@@ -79,8 +76,8 @@ def seed(path: Path) -> str:
     # canonical 别名由 `upsert_node` 自动建，且比原来那两行手写 SQL 对：1 字名会撞
     # `CHECK (usable_for_rules = 0 OR length(surface) >= 2)`，而 upsert_node 会替它算。
     ids = {
-        name: ledger.declare_node(label, name, secret=secret).id
-        for label, name, secret in _NODES
+        name: ledger.declare_node(label, name).id
+        for label, name in _NODES
     }
 
     # 「师兄」→ 2 个人。§3.1 点名的那个场景（一章里 8 个角色都叫「师兄」）的最小形态。

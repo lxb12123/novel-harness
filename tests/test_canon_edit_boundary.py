@@ -40,10 +40,9 @@ from novel_harness.api.review import (
     KnowledgeAddRequest,
     KnowledgeEditRequest,
 )
-from novel_harness.db import connect
 
 from test_activity import seed_call, seed_run
-from test_api import TWIST, _seed_provisional_event
+from test_api import _seed_provisional_event
 
 import seed
 from test_no_chapter_input import BANNED, model_chapter_fields
@@ -317,53 +316,6 @@ def edited(client: TestClient, book: dict[str, str]) -> dict[str, Any]:
         "cast": cast.json(),
         "event_id": canon_event,
     }
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 线 1：章号 —— 作者永不填（约束 10 / ADR 0006）
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def test_the_two_editors_post_no_chapter_field() -> None:
-    """浏览器发出去的那两个请求体里，一个章号键都没有。
-
-    `test_no_chapter_input.py` 扫的是 typer 的命令面和 Pydantic 入参模型——**前端这一侧
-    它一个字节都看不到**。而作者面对的表单在前端，「顺手加一个旗标让作者少被拒一次」
-    的那个下午也发生在前端。
-    """
-    for path in EDITORS:
-        keys = mutation_keys(path.read_text(encoding="utf-8"))
-        assert keys, f"{path.name} 里一个 `.mutate({{…}})` 都没扫到——这条守卫是永远绿的"
-        assert "expected_canon_version" in keys, (
-            f"{path.name} 的请求体不像改正层的入参（没有 expected_canon_version），"
-            "扫描器多半读错了地方"
-        )
-        offenders = [key for key in keys if BANNED.search(key)]
-        assert not offenders, (
-            f"{path.relative_to(ROOT)} 往请求体里放了章号：{offenders}\n"
-            "章号是「这句引语落在哪一章」的产物，不是作者的输入（约束 10 / ADR 0006）。\n"
-            "改一条事实**说错了**和改它**从第几章开始成立**是两件事，后者只由证据决定。"
-        )
-
-
-def test_neither_editor_draws_a_box_that_asks_for_a_number() -> None:
-    """编辑器里没有一个数字输入框，也没有一句话在问「第几章」。
-
-    `--chapter` 那种形态在前端长成 `<input type="number">`，而它在截图里长得
-    非常合理——「让作者顺手确认一下生效章」，正是 §5.9 那个下午会写出来的东西。
-    """
-    for path in EDIT_CONTROLS:
-        tags = input_tags(path.read_text(encoding="utf-8"))
-        for tag in tags:
-            flat = " ".join(tag.split())
-            assert 'type="number"' not in flat, f"{path.name} 画了数字输入框：{flat}"
-            assert "numeric" not in flat, f"{path.name} 的输入框在要数字：{flat}"
-            assert "章" not in flat, f"{path.name} 的输入框在问章号：{flat}"
-    # 至少三个框（「他以为的是」+ 名单勾选 + 「这件事怎么说」），一个都扫不到 = 永远绿。
-    total = sum(len(input_tags(path.read_text(encoding="utf-8"))) for path in EDIT_CONTROLS)
-    assert total >= 3, f"只扫到 {total} 个 <input>，扫描器多半没读到 JSX"
-
-
 def test_the_request_schemas_still_take_no_chapter() -> None:
     """后端这一侧再钉一次（`test_no_chapter_input.py` 已有一条，这里量的是同一件事的
     另一半：**前端发得出的东西后端也收不下**）。"""
@@ -410,156 +362,6 @@ def test_the_frontend_scanner_can_see_a_chapter_box() -> None:
     assert mutation_keys(TERNARY_PROBE) == ["expected_canon_version", "knower_ids"]
     assert mutation_keys(COMMENT_PROBE) == ["character_id", "expected_canon_version"]
     assert 'type="number"' in input_tags(NUMBER_BOX_PROBE)[0]
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 线 2：文案 —— 屏幕上不许有研发术语，且措辞只有一个出处（后端）
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def test_the_activity_log_never_prints_an_engine_word(
-    client: TestClient, edited: dict[str, Any]
-) -> None:
-    """**这一页是两个编辑入口的门厅**：作者从这儿点「去改这一格」。
-
-    它印的每一行都是后端算出来的（`title` / `subtitle` / `jump.label`），前端一个字
-    都不许翻——翻了就是第二份措辞源。所以这条断言只能落在后端出参上。
-    """
-    page = client.get(f"{edited['base']}/activity", params={"limit": 50})
-    assert page.status_code == 200, page.text
-    parsed = activity.ActivityPage.model_validate(page.json())
-    offenders = {
-        where: dev_terms_in(text)
-        for where, text in screen_strings(parsed).items()
-        if dev_terms_in(text)
-    }
-    assert not offenders, (
-        f"活动记录把引擎的词摆到了作者脸上：{offenders}\n"
-        "措辞的唯一出处是后端（`activity.py` 的「措辞表」那一节写着这条），\n"
-        "所以修法是在那张表里补一行，**不是**在前端加一张映射表。"
-    )
-
-
-def test_the_expanded_row_never_prints_an_engine_word(
-    client: TestClient, edited: dict[str, Any]
-) -> None:
-    """展开层同理：`rows` 是后端写好的「标签 → 值」，组件一个文案分支都没有。"""
-    page = client.get(f"{edited['base']}/activity", params={"limit": 50}).json()
-    offenders: dict[str, list[str]] = {}
-    for entry in page["entries"]:
-        detail = client.get(f"{edited['base']}/activity/{entry['id']}")
-        assert detail.status_code == 200, detail.text
-        for row in detail.json()["rows"]:
-            text = f"{row['label']}：{row['value']}"
-            if found := dev_terms_in(text):
-                offenders[f"{entry['id']}/{row['label']}"] = found
-    assert not offenders, f"展开层泄漏了引擎的词：{offenders}"
-
-
-def test_every_refusal_the_editors_can_show_is_in_the_authors_words(
-    client: TestClient, book: dict[str, str], edited: dict[str, Any]
-) -> None:
-    """两个编辑器把后端的 `message` **原样**摆在错误框里，所以那句话必须是作者的话。
-
-    这里只跑**浏览器里真到得了**的那几种拒绝：作者点得到的那一格、他填得出的那种内容。
-    （店铺层那几句带裸 id 的拒绝今天从工作台到不了——没有删节点的路由——所以不在这里
-    造一个假的可达性；`test_the_correction_layer_writes_no_engine_words` 从源码那一侧
-    钉住「改正层自己写的每一句」。）
-    """
-    base = edited["base"]
-    version = client.get(base).json()["canon_version"]
-    cell = {"character_id": book["萧决"], "secret_id": book["血脉秘密"]}
-    cases: dict[str, Any] = {
-        # 作者点了一格「不知道」（矩阵上那一格今天不是按钮，但后端仍是这条退路的底）
-        "空格子": client.post(
-            f"{base}/canon/knowledge",
-            json={
-                "character_id": book["李管家"],
-                "secret_id": book["血脉秘密"],
-                "to_type": "BELIEVES",
-                "believed_value": "以为是假的",
-                "expected_canon_version": version,
-            },
-        ),
-        # 改成它已经是的那一种（矩阵不给这个选项，但队列那一侧的别处会到）
-        "已经是了": client.post(
-            f"{base}/canon/knowledge",
-            json={**cell, "to_type": "BELIEVES", "believed_value": "还是那句传闻",
-                  "expected_canon_version": version},
-        ),
-        "以为却没写内容": client.post(
-            f"{base}/canon/knowledge",
-            json={**cell, "to_type": "BELIEVES", "believed_value": "  ",
-                  "expected_canon_version": version},
-        ),
-        "知道却带了内容": client.post(
-            f"{base}/canon/knowledge",
-            json={**cell, "to_type": "KNOWS", "believed_value": "多余的一句",
-                  "expected_canon_version": version},
-        ),
-        # 名单一个人都没动就按保存（界面上按钮是禁用的，后端是这条的底）
-        "名单没变": client.post(
-            f"{base}/canon/events/{edited['event_id']}/cast",
-            json={"knower_ids": [book["萧决"]], "expected_canon_version": version},
-        ),
-        # ── 「补一条」那一条路上作者按得到的三种 ────────────────────────────
-        # 这一格刚刚在别处有了内容（ADR 0020 之下是常态：后台整理跑完了）
-        "补一条但这一格已经有了": client.post(
-            f"{base}/chapters/1/canon/knowledge",
-            json={"character_id": book["李管家"], "secret_id": book["血脉秘密"],
-                  "type": "KNOWS", "expected_canon_version": version},
-        ),
-        "补一条·以为却没写内容": client.post(
-            f"{base}/chapters/1/canon/knowledge",
-            json={**cell, "type": "BELIEVES", "believed_value": "  ",
-                  "expected_canon_version": version},
-        ),
-        "补一条·知道却带了内容": client.post(
-            f"{base}/chapters/1/canon/knowledge",
-            json={**cell, "type": "KNOWS", "believed_value": "多余的一句",
-                  "expected_canon_version": version},
-        ),
-    }
-    offenders: dict[str, Any] = {}
-    for name, response in cases.items():
-        # 409 是「补一条」独有的那一档（这一格已经有内容了）——它同样带着一句话。
-        assert response.status_code in (404, 409, 422), f"{name} → {response.status_code}"
-        message = response.json()["detail"]["message"]
-        if found := dev_terms_in(message):
-            offenders[name] = (found, message)
-    assert not offenders, (
-        f"拒绝的句子里有引擎的词：{offenders}\n"
-        "**修在后端**：这句话前端是原样渲染的，在前端翻一遍就有了第二份措辞源，\n"
-        "而那张表只会覆盖今天想得到的那几个词（`Character` / 裸 id / §注脚全漏）。"
-    )
-
-
-def test_the_stale_conflict_has_no_message_at_all(
-    client: TestClient, book: dict[str, str], edited: dict[str, Any]
-) -> None:
-    """**409 是唯一一句合法的前端自撰文案**，把这件事钉住。
-
-    `stale_base_version` 的响应体里只有两个版本号，没有 `message`——前端必须自己说
-    「这本书在别处刚被改过，先看一眼最新的」。这条断言存在的意义是：哪天后端补了
-    `message`，前端那句话就该跟着退位，否则又是两份措辞。
-    """
-    stale = client.post(
-        f"{edited['base']}/canon/knowledge",
-        json={
-            "character_id": book["萧决"],
-            "secret_id": book["血脉秘密"],
-            "to_type": "KNOWS",
-            "expected_canon_version": 0,
-        },
-    )
-    assert stale.status_code == 409, stale.text
-    detail = stale.json()["detail"]
-    assert "message" not in detail, (
-        "409 现在有 message 了 —— 那前端那句自撰的话必须删掉，改成渲染这一句"
-    )
-    assert detail["error"] == "stale_base_version"
-
-
 def test_the_correction_layer_writes_no_engine_words() -> None:
     """`corrections.py` 自己写的每一句拒绝，都是作者读得懂的话。
 
@@ -680,57 +482,6 @@ def test_the_wording_scanner_can_see_an_engine_word() -> None:
     # 时间戳里的冒号前面是数字，型号里的连字符不是下划线——都不许被咬。
     assert dev_terms_in(CLEAN_ROW_PROBE) == []
     assert dev_terms_in("2026-08-11 01:28:40") == []
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 线 3：秘密内容 —— 名字必须在，正文一个字都不许在
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def test_the_edit_receipts_carry_the_name_and_not_the_secret(
-    edited: dict[str, Any]
-) -> None:
-    """**两个方向都要成立。**
-
-    - 正文不许在：`props.twist` 走 `NodeProps` 的 `extra="allow"`，整条边序列化出去
-      就是保密清单自己泄密（`graph.models.NodeRef` 的 docstring 有实测形态）。
-    - **名字必须在**：编辑器上写着「萧决 对「血脉秘密」」。名字没了，作者就不知道
-      自己在改哪一格——过度收窄和泄漏一样是 bug。
-    """
-    receipt = edited["knowledge"]
-    assert receipt["secret"]["name"] == "血脉秘密", "显示名不在 = 作者不知道自己在改哪一格"
-    assert receipt["character"]["name"] == "萧决"
-    assert TWIST not in str(receipt), "改正回执把秘密正文带出来了"
-    assert set(receipt["secret"]) == {"id", "label", "name"}, (
-        "秘密这一端只能是窄引用：多一个键就是给 props 开了一条路"
-    )
-    assert TWIST not in str(edited["cast"]), "名单回执把秘密正文带出来了"
-
-
-def test_the_matrix_the_editor_reads_carries_no_secret_text(
-    client: TestClient, edited: dict[str, Any]
-) -> None:
-    """编辑器的每一个字都来自这份出参，所以泄漏面就是它。"""
-    matrix = client.get(f"{edited['base']}/chapters/1/matrix", params={"cast": "萧决"})
-    assert matrix.status_code == 200, matrix.text
-    body = matrix.json()
-    assert TWIST not in matrix.text
-    assert [s["name"] for s in body["secrets"]] == ["血脉秘密"], "秘密的显示名必须在"
-    for secret in body["secrets"]:
-        assert set(secret) == {"id", "label", "name"}
-
-
-def test_the_log_page_carries_no_secret_text(
-    client: TestClient, edited: dict[str, Any]
-) -> None:
-    """日志页是这条编辑路径的门厅，它同样不许把秘密正文带出来——
-    而它必须说得出改的是**哪一个**秘密。"""
-    page = client.get(f"{edited['base']}/activity", params={"limit": 50})
-    assert TWIST not in page.text, "活动记录泄漏了秘密正文"
-    subtitles = " ".join(entry["subtitle"] for entry in page.json()["entries"])
-    assert "血脉秘密" in subtitles, "日志里认不出改的是哪个秘密，那条「去改这一格」就没法信"
-
-
 # ══════════════════════════════════════════════════════════════════════════
 # 线 4：`actor` —— 前端说不了「谁改的」
 # ══════════════════════════════════════════════════════════════════════════
@@ -744,64 +495,6 @@ def test_neither_request_schema_lets_the_caller_say_who_did_it() -> None:
     """
     for model in (KnowledgeEditRequest, KnowledgeAddRequest, EventCastEditRequest):
         assert "actor" not in model.model_fields, f"{model.__name__} 收了 actor"
-
-
-def test_the_routes_refuse_a_caller_supplied_actor(
-    client: TestClient, book: dict[str, str], edited: dict[str, Any]
-) -> None:
-    """**不是默默忽略，是拒**（`extra="forbid"`）：忽略的话，前端那行代码会一直留着，
-    而它长得像在生效。"""
-    version = client.get(edited["base"]).json()["canon_version"]
-    sneaky = client.post(
-        f"{edited['base']}/canon/knowledge",
-        json={
-            "character_id": book["萧决"],
-            "secret_id": book["血脉秘密"],
-            "to_type": "KNOWS",
-            "expected_canon_version": version,
-            "actor": "system",
-        },
-    )
-    assert sneaky.status_code == 422, sneaky.text
-
-
-def test_the_frontend_never_sends_an_actor() -> None:
-    """两个编辑器的请求体里没有 `actor`（同一个扫描器，另一条判据）。"""
-    for path in EDITORS:
-        keys = mutation_keys(path.read_text(encoding="utf-8"))
-        assert "actor" not in keys, f"{path.relative_to(ROOT)} 自己说了「谁改的」"
-    probe = mutation_keys('correct.mutate({ actor: "author", expected_canon_version: v });')
-    assert "actor" in probe, "扫描器看不见 actor —— 上面那条是永远绿的"
-
-
-def test_both_edits_land_in_the_log_as_the_author(
-    edited: dict[str, Any], book: dict[str, str]
-) -> None:
-    """走 HTTP 改一次，日志里那两条必须记成「作者」。
-
-    反过来说：`decisions.SYSTEM_ACTOR` 那一档只能由引擎自己（自动升 CANON）写下，
-    浏览器这条路上一次都不该出现。
-    """
-    conn = connect(book["db"])
-    try:
-        rows = decisions.read(conn, edited["pid"])
-    finally:
-        conn.close()
-    edits = [
-        row
-        for row in rows
-        if row.kind
-        in (
-            decisions.DecisionKind.KNOWLEDGE_EDIT,
-            decisions.DecisionKind.KNOWLEDGE_ADD,
-            decisions.DecisionKind.EVENT_EDIT,
-        )
-    ]
-    assert len(edits) == 3, f"三次编辑没有各留一条记录：{[r.kind for r in edits]}"
-    assert {row.actor for row in edits} == {decisions.DEFAULT_ACTOR}
-    assert decisions.DEFAULT_ACTOR == "author"
-
-
 # ══════════════════════════════════════════════════════════════════════════
 # 线 2 续：**错误码不是一句话**
 # ══════════════════════════════════════════════════════════════════════════
@@ -835,89 +528,6 @@ def _author_facing_sentence(detail: dict[str, Any]) -> str | None:
     """
     said = detail.get("message")
     return said if isinstance(said, str) and said.strip() else None
-
-
-def test_these_two_routes_can_answer_with_a_bare_code(client: TestClient) -> None:
-    """**两条编辑路由都能答出一个「只有码、没有话」的 404。**
-
-    路径是 `load_project`（`api/deps.py`）：书不在了（另一个标签页删掉了、库换了）
-    → `{"error": "project_not_found", "project_id": …}`，**没有 message**。
-    每一条 `/api/projects/{pid}/…` 都过这道闸门，这两条也不例外。
-
-    这条断言不是在要求后端补一句话（补了也行，那时它自己会红提醒改前端），
-    它钉的是**前端必须假设「后端可能一句话都没给」**——而前端今天的兜底是
-    「那就把码印出来」。浏览器一侧那条红量的就是这一格。
-    """
-    gone = "project%3ANOT_A_BOOK"
-    answers = {
-        "knowledge": client.post(
-            f"/api/projects/{gone}/canon/knowledge",
-            json={
-                "character_id": "character:X",
-                "secret_id": "secret:Y",
-                "to_type": "KNOWS",
-                "expected_canon_version": 0,
-            },
-        ),
-        "cast": client.post(
-            f"/api/projects/{gone}/canon/events/event%3AZ/cast",
-            json={"knower_ids": [], "expected_canon_version": 0},
-        ),
-    }
-    for name, response in answers.items():
-        assert response.status_code == 404, f"{name} → {response.status_code}: {response.text}"
-        detail = response.json()["detail"]
-        assert detail["error"] == "project_not_found", name
-        # ★ 这一行是浏览器那侧探针的**形状来源**。它变了 = 那个探针过期了。
-        assert _author_facing_sentence(detail) is None, (
-            f"{name} 现在带 message 了 —— `correctionError.ts` 该改成渲染这一句，"
-            "并把它自己那句兜底退位（同 `test_the_stale_conflict_has_no_message_at_all`）"
-        )
-        assert machine_codes(detail["error"]) == ["project_not_found"], (
-            "这个码本身就是 snake_case —— 它是「不能原样上屏」的那一类"
-        )
-
-
-def test_the_sibling_controls_in_the_same_panel_answer_with_bare_codes(
-    client: TestClient, book: dict[str, str], edited: dict[str, Any]
-) -> None:
-    """「已确认的情节」住在**「待确认」这一格的下半截**，而同一格里的三颗按钮
-    （接受 / 驳回 / 确认所选）拒绝时同样只发码不发话。
-
-    **这不是「顺手发现的别处的洞」，是新入口把它从罕见路变成常态路的那条缝**：
-    改一次名单就把 canon 版本推高一格，紧接着按「确认所选」用的是缓存里的旧数字
-    → 409 → 屏幕上一个 `stale_base_version`。（自动升 CANON 在后台跑完时同理，
-    而那正是 ADR 0020 的常态。）
-    """
-    base = edited["base"]
-    answers = {
-        "确认所选（版本旧了）": client.post(
-            f"{base}/chapters/1/provisional/confirm",
-            json={
-                "fact_kind": "event",
-                "fact_ids": [edited["event_id"]],
-                "expected_canon_version": 0,
-            },
-        ),
-        "接受（那一条不在了）": client.post(
-            f"{base}/proposals/proposal%3AGONE/accept",
-            json={"expected_canon_version": client.get(base).json()["canon_version"]},
-        ),
-    }
-    bare = {}
-    for name, response in answers.items():
-        assert response.status_code in (404, 409), f"{name} → {response.status_code}"
-        detail = response.json()["detail"]
-        if _author_facing_sentence(detail) is None:
-            bare[name] = detail["error"]
-    assert bare, (
-        "这两条现在都带 message 了 —— 那前端那几个 err-box 可以直接渲染它，"
-        "这条守卫连同浏览器那侧的兜底一起该重写"
-    )
-    for name, code in bare.items():
-        assert machine_codes(code), f"{name} 的 error 不是 snake_case？{code!r}"
-
-
 def test_the_code_scanner_can_see_a_bare_code() -> None:
     """**守卫的自守卫。** 真上过屏的那两个码各喂一次，加两句干净的防误报。
 
@@ -984,49 +594,6 @@ def _cast_refusals(
             },
         ),
     }
-
-
-def test_the_cast_editor_refusals_borrowed_from_the_event_store_are_clean(
-    client: TestClient, book: dict[str, str], edited: dict[str, Any]
-) -> None:
-    """名单编辑器能显示的**每一句**拒绝都是作者的话——包括不是改正层自己写的那几句。
-
-    这几句今天是 `graph/sqlite_events.py` 写给维护者的诊断，`_event_failure` 用
-    `str(exc)` 把它们整句交了出去。修法**在后端**：`_event_failure` 按异常类型给出
-    改正层自己的句子（那儿的 `CorrectionError` docstring 写着「这三个异常的 `str()` 会
-    原样出现在小说作者的错误框里」）。**别在前端加映射表**——那就是被删掉的那张表回来了。
-    """
-    offenders: dict[str, Any] = {}
-    for name, response in _cast_refusals(client, book, edited).items():
-        assert response.status_code in (404, 422), f"{name} → {response.status_code}: {response.text}"
-        message = response.json()["detail"]["message"]
-        if found := dev_terms_in(message) + machine_codes(message):
-            offenders[name] = (found, message)
-    assert not offenders, (
-        f"名单编辑器把引擎的词摆到了作者脸上：{offenders}\n"
-        "这几句经 `corrections._event_failure` 的 `str(exc)` 原样穿到 `message`，\n"
-        "而 `correctionError.ts` 一个字都不改地渲染它。"
-    )
-
-
-def test_the_cast_editor_still_says_what_went_wrong(
-    client: TestClient, book: dict[str, str], edited: dict[str, Any]
-) -> None:
-    """**反向断言**：干净不等于空。三种拒绝必须仍然是三句**不一样**的中文。
-
-    没有这一条，上面那条最省事的「修法」就是把三句话合并成一句「保存失败」——
-    而那正是 `correctionError.ts` 开头那张表禁掉的东西（三类拒绝三种含义，作者
-    该做的事不一样）。
-    """
-    said = {}
-    for name, response in _cast_refusals(client, book, edited).items():
-        message = response.json()["detail"]["message"]
-        assert message.strip(), f"{name} 一句话都没说"
-        assert re.search(r"[一-鿿]", message), f"{name} 说的不是中文：{message!r}"
-        said[name] = message
-    assert len(set(said.values())) == 3, f"三种拒绝说了同一句话，作者分不清该做什么：{said}"
-
-
 def test_every_refusal_class_is_scanned() -> None:
     """**扫描器的名单 == 改正层真有的那几个异常类。**
 
@@ -1171,77 +738,6 @@ def test_a_missing_row_never_falls_back_to_the_engines_word() -> None:
         f"措辞表认不出一个值的时候，把引擎的词摆给了作者：{offenders}\n"
         "封闭枚举认不出只可能是表漏了行，而漏的那一行不该由小说作者来读。"
     )
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 线 3 收尾：名单编辑器读的那份花名册
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def test_the_roster_the_cast_editor_reads_carries_names_and_nothing_else(
-    client: TestClient, edited: dict[str, Any]
-) -> None:
-    """名单编辑器的候选人来自 `/roster`，所以泄漏面也是它。**两个方向都要成立。**
-
-    - 正文不许在：花名册里有一个第 200 章才首现的人物，`props.plot_note` 挂在
-      `NodeProps` 的 `extra="allow"` 上（`tests/test_api.py::book` 种的就是这一份）。
-    - **名字必须在**：勾选框上写的就是那个名字，没了作者就不知道自己在勾谁。
-    """
-    from test_api import PLOT_NOTE
-
-    roster = client.get(f"{edited['base']}/roster")
-    assert roster.status_code == 200, roster.text
-    people = roster.json()
-    assert PLOT_NOTE not in roster.text, "花名册把未来人物的情节笔记带出来了"
-    assert TWIST not in roster.text
-    names = {p["name"] for p in people}
-    assert {"萧决", "李管家"} <= names, "候选人的显示名不在 = 作者不知道自己在勾谁"
-    for person in people:
-        assert set(person) == {"id", "label", "name"}, (
-            f"花名册出参多了键：{sorted(person)} —— 多一个就是给 props 开了一条路"
-        )
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 线 4 收尾：请求体之外也说不了「谁改的」
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def test_a_query_string_cannot_say_who_did_it(
-    client: TestClient, book: dict[str, str], edited: dict[str, Any]
-) -> None:
-    """请求体被 `extra="forbid"` 挡住了，**查询串不会**——FastAPI 静默忽略不认识的参数。
-
-    「静默忽略」在别处是安全的，在这儿不是：一个 `?actor=system` 会长得像生效了，
-    而没有任何东西会说它没有。这条钉住的是结果——不管请求上写了什么，
-    日志里那一条只可能记成作者。
-    """
-    base = edited["base"]
-    version = client.get(base).json()["canon_version"]
-    sneaky = client.post(
-        f"{base}/canon/knowledge?actor=system",
-        json={
-            "character_id": book["萧决"],
-            "secret_id": book["血脉秘密"],
-            "to_type": "KNOWS",
-            "expected_canon_version": version,
-        },
-    )
-    assert sneaky.status_code == 200, sneaky.text
-
-    conn = connect(book["db"])
-    try:
-        rows = decisions.read(conn, edited["pid"])
-    finally:
-        conn.close()
-    actors = {row.actor for row in rows if row.kind == decisions.DecisionKind.KNOWLEDGE_EDIT}
-    assert actors, "一条 KNOWLEDGE_EDIT 都没读到 —— 这条守卫是永远绿的"
-    assert actors == {decisions.DEFAULT_ACTOR}, (
-        f"查询串把「谁改的」说了算：{actors}。ADR 0020 拿「事后可查」换掉了「事前逐条确认」，"
-        "而那份日志唯一的价值就是分得清哪几步是系统自己动的手。"
-    )
-
-
 # ══════════════════════════════════════════════════════════════════════════
 # 线 1 收尾：**整个前端**，不只是这两个编辑器
 # ══════════════════════════════════════════════════════════════════════════

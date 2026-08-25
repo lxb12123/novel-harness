@@ -23,11 +23,7 @@ from ..corrections import (
     EventCastCorrection,
     FactAlreadyThere,
     FactNotFound,
-    KnowledgeAddition,
-    KnowledgeCorrection,
-    add_knowledge,
     correct_event_cast,
-    correct_knowledge,
 )
 from ..db import Connection
 from ..events import (
@@ -453,66 +449,6 @@ def _correction_error(exc: Exception) -> HTTPException:
     if isinstance(exc, CorrectionRefused):
         return _bad_request(str(exc))
     return _review_error(exc)
-
-
-@router.post(
-    "/api/projects/{project_id}/canon/knowledge",
-    response_model=KnowledgeCorrection,
-)
-def edit_canon_knowledge(
-    body: KnowledgeEditRequest,
-    proj: Any = Depends(load_project),
-    conn: Connection = Depends(get_conn),
-    graph: GraphStore = Depends(get_store),
-) -> KnowledgeCorrection:
-    """「他知道 X」改成「他以为 X」，或者反过来。**旧的那条留着（RETRACTED）。**"""
-    try:
-        return correct_knowledge(
-            conn,
-            graph,
-            proj.id,
-            character_id=body.character_id,
-            secret_id=body.secret_id,
-            to_type=EdgeType(body.to_type),
-            believed_value=body.believed_value,
-            expected_canon_version=body.expected_canon_version,
-        )
-    except (FactNotFound, CorrectionRefused, project.StaleBaseVersion) as exc:
-        raise _correction_error(exc) from exc
-
-
-@router.post(
-    "/api/projects/{project_id}/chapters/{chapter}/canon/knowledge",
-    response_model=KnowledgeAddition,
-)
-def add_canon_knowledge(
-    chapter: ChapterNumber,
-    body: KnowledgeAddRequest,
-    proj: Any = Depends(load_project),
-    conn: Connection = Depends(get_conn),
-    graph: GraphStore = Depends(get_store),
-) -> KnowledgeAddition:
-    """在一格「不知道」上补一条「他知道 / 他以为」。**这一格已经有内容时 409。**
-
-    章号在路径上而不是请求体里，**这不是风格问题**：请求体里出现一个章号键，界面上
-    迟早就有一个框让作者去填它（约束 10 / §5.9）；而路径上这一段是作者正看着的那一章，
-    矩阵本来就按它渲染。兼做「改」也是有意不做的——那条路在
-    `POST …/canon/knowledge`，一个能力两个入口，作者学会的会是错的那一个。
-    """
-    try:
-        return add_knowledge(
-            conn,
-            graph,
-            proj.id,
-            character_id=body.character_id,
-            secret_id=body.secret_id,
-            edge_type=EdgeType(body.type),
-            chapter=chapter,
-            believed_value=body.believed_value,
-            expected_canon_version=body.expected_canon_version,
-        )
-    except (FactAlreadyThere, FactNotFound, CorrectionRefused, project.StaleBaseVersion) as exc:
-        raise _correction_error(exc) from exc
 
 
 @router.post(

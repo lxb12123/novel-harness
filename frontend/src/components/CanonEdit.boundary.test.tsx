@@ -48,21 +48,11 @@ beforeEach(() => {
     chapter: 1,
     cast: "",
     activeTab: "roster",
-    focusCell: null,
     focusEventId: null,
   });
 });
 
 // ── 打开两个编辑器 ────────────────────────────────────────────────────────
-
-/** 右栏「人物认知」→ 点开唯一那一格可改的（萧决 对 血脉秘密）。 */
-async function openCell(user: ReturnType<typeof userEvent.setup>, extra: Parameters<typeof renderWithApi>[1] = []) {
-  renderWithApi(<RightPanel />, extra);
-  await user.click(await screen.findByRole("button", { name: "人物认知" }));
-  const open = await screen.findByRole("button", { name: /^改「/ });
-  await user.click(open);
-  return document.querySelector(".cell-editor") as HTMLElement;
-}
 
 /** 右栏「待确认」→ 展开第一条已确认情节的名单，并勾掉一个人。 */
 async function openCast(user: ReturnType<typeof userEvent.setup>, extra: Parameters<typeof renderWithApi>[1] = []) {
@@ -81,31 +71,6 @@ async function openCast(user: ReturnType<typeof userEvent.setup>, extra: Paramet
 // ══════════════════════════════════════════════════════════════════════════
 
 describe("线 1：作者永不填章号", () => {
-  it("矩阵那一格**真的发出去**的请求体里没有章号", async () => {
-    // 源码扫描到 `.mutate({…})` 为止；这一条往下走到 `fetch`——中间还隔着
-    // `useCorrectKnowledge` 的 `mutationFn` 和 `api.post`，那两层加一个字段
-    // 源码扫描一个字节都看不见。
-    const user = userEvent.setup();
-    await openCell(user);
-    const spy = vi.spyOn(globalThis, "fetch");
-    await user.type(screen.getByRole("textbox"), "以为那只是个传闻");
-    await user.click(screen.getByRole("button", { name: /^改成「/ }));
-
-    await waitFor(() => expect(posts(spy)).toHaveLength(1));
-    const body = bodyOf(spy);
-    expect(Object.keys(body).filter((k) => CHAPTERISH.test(k))).toEqual([]);
-    // 正面也钉住：整个请求体就这几个键，多一个都得有人解释它为什么在。
-    expect(Object.keys(body).sort()).toEqual([
-      "believed_value",
-      "character_id",
-      "expected_canon_version",
-      "secret_id",
-      "to_type",
-    ]);
-    // URL 里也不许拿章号当声明坐标（`/chapters/{n}/…` 是 AS OF，这条路由不该有它）。
-    expect(String(posts(spy)[0][0])).toBe(`/api/projects/${encodeURIComponent(PROJECT)}/canon/knowledge`);
-  });
-
   it("名单那一半同理 —— 新知情人的生效章只能由那条情节自己定", async () => {
     const user = userEvent.setup();
     await openCast(user);
@@ -122,14 +87,14 @@ describe("线 1：作者永不填章号", () => {
     ]);
   });
 
-  it("两个编辑器里**渲染出来的**没有一个能敲数字的框", async () => {
+  it("编辑器里**渲染出来的**没有一个能敲数字的框", async () => {
     // 源码扫的是 `<input type="number">` 这一种写法。运行时量的是 role：
     // 一个从别处 import 来的 `<NumberBox/>` 在源码里长得完全无害。
+    // （2026-08-24 之前这条量的是**两个**编辑器；矩阵那一格随秘密下线删了。）
     const user = userEvent.setup();
-    const cell = await openCell(user);
-    expect(within(cell).queryAllByRole("spinbutton")).toHaveLength(0);
-    expect(within(cell).getAllByRole("textbox")).toHaveLength(1); // 「他以为的是」，就这一个
-    for (const box of within(cell).getAllByRole("textbox")) {
+    const cast = await openCast(user);
+    expect(within(cast).queryAllByRole("spinbutton")).toHaveLength(0);
+    for (const box of within(cast).queryAllByRole("textbox")) {
       expect(box.getAttribute("inputmode")).not.toBe("numeric");
       expect((box as HTMLInputElement).placeholder).not.toMatch(/章/);
     }
@@ -150,25 +115,6 @@ describe("线 1：作者永不填章号", () => {
 // ══════════════════════════════════════════════════════════════════════════
 
 describe("线 2：屏幕上不许出现机器码", () => {
-  it("编辑器的错误框里不许摆一个错误码", async () => {
-    // **真会发生**：这两条路由都过 `load_project`，而它的 404 里只有 `error` 和
-    // `project_id`，没有一句话（Python 那侧钉着这个形状）。`ApiError` 于是拿
-    // `body.error` 当 message，错误框把 `project_not_found` 原样摆给小说作者。
-    //
-    // 修法**不是**在前端加一张「码 → 中文」的表（那就是被删掉的那张映射表回来了），
-    // 而是：后端写了话就照说，没写话就说前端那句通用的——**代号不是话**。
-    const user = userEvent.setup();
-    await openCell(user, [
-      { method: "POST", match: /\/canon\/knowledge$/, status: 404, body: PROJECT_GONE },
-    ]);
-    await user.type(screen.getByRole("textbox"), "以为那只是个传闻");
-    await user.click(screen.getByRole("button", { name: /^改成「/ }));
-
-    const box = await screen.findByText((_, el) => el?.className === "err-box");
-    expect(machineWords(box.textContent ?? "")).toEqual([]);
-    expect(box.textContent).toMatch(/[一-龥]/); // 说了一句中文，不是一片空白
-  });
-
   it("名单那一半同理", async () => {
     const user = userEvent.setup();
     await openCast(user, [
@@ -179,38 +125,6 @@ describe("线 2：屏幕上不许出现机器码", () => {
     const box = await screen.findByText((_, el) => el?.className === "err-box");
     expect(machineWords(box.textContent ?? "")).toEqual([]);
   });
-
-  it("**同一格里的其它按钮**也不许 —— 作者看到的是一块屏幕，不是一个组件", async () => {
-    // 「已确认的情节」就住在「待确认」这一格的下半截，而**改一次名单就把 canon 版本
-    // 推高一格**：紧接着按「确认所选」拿的是缓存里的旧版本号 → 409。
-    // 于是新入口把一条原本罕见的路变成了常态路，而那条路的尽头印着 `stale_base_version`。
-    const user = userEvent.setup();
-    renderWithApi(<RightPanel />, [
-      {
-        method: "POST",
-        match: /\/provisional\/confirm$/,
-        status: 409,
-        body: fixtures.errorStaleCanon,
-      },
-    ]);
-    await user.click(await screen.findByRole("button", { name: /^待确认/ }));
-    const boxes = await screen.findAllByRole("checkbox");
-    await user.click(boxes[0]);
-    await user.click(screen.getByRole("button", { name: /确认所选/ }));
-
-    const box = await screen.findByText((_, el) => el?.className === "err-box");
-    expect(machineWords(box.textContent ?? "")).toEqual([]);
-  });
-
-  it("两个编辑器摊开的时候，整块屏幕上一个机器码都没有", async () => {
-    const user = userEvent.setup();
-    const cell = await openCell(user);
-    expect(machineWords(document.body.textContent ?? "")).toEqual([]);
-    // 反过来也得成立：屏幕上说得清这一格现在是什么、要改成什么。
-    expect(cell.textContent).toMatch(/现在是「知道」/);
-    expect(cell.textContent).toMatch(/改这一处不会动它是从第几章开始的/);
-  });
-
   it("待确认那一格摊开时也一样", async () => {
     const user = userEvent.setup();
     await openCast(user);
@@ -226,39 +140,7 @@ describe("线 2：屏幕上不许出现机器码", () => {
 // 线 3：秘密内容 —— 名字必须在，正文一个字都不许在
 // ══════════════════════════════════════════════════════════════════════════
 
-/** 一份**故意不收窄**的矩阵出参：秘密节点上挂着作者写的 `props.twist`。
- *
- *  今天后端会收窄成 `NodeRef`（`panel/constraints.py:316` 那一行），所以这不是现状——
- *  这是「哪天那一行没了」的形态。`NodeProps` 是 `extra="allow"` 的，收窄一旦漏掉，
- *  整条秘密正文就顺着同一份 JSON 到浏览器里，而**前端不许因此把它画出来或发回去**。 */
-const TWIST = "萧决其实是魔尊之子，第 200 章揭晓";
-const LEAKY_MATRIX = {
-  ...fixtures.matrix,
-  secrets: fixtures.matrix.secrets.map((s) => ({ ...s, props: { twist: TWIST } })),
-};
-
-describe("线 3：秘密的名字必须在，正文一个字都不许在", () => {
-  it("编辑器必须说得出改的是**哪一个**秘密（过度收窄一样是 bug）", async () => {
-    const user = userEvent.setup();
-    const cell = await openCell(user);
-    expect(cell.textContent).toContain("血脉秘密");
-    expect(cell.textContent).toContain("萧决");
-  });
-
-  it("后端哪天不收窄了，秘密正文也不许上屏、更不许被发回去", async () => {
-    const user = userEvent.setup();
-    await openCell(user, [{ match: /\/chapters\/\d+\/matrix/, body: LEAKY_MATRIX }]);
-    const spy = vi.spyOn(globalThis, "fetch");
-    await user.type(screen.getByRole("textbox"), "以为那只是个传闻");
-    await user.click(screen.getByRole("button", { name: /^改成「/ }));
-
-    await waitFor(() => expect(posts(spy)).toHaveLength(1));
-    expect(document.body.textContent).not.toContain(TWIST);
-    // 请求体里只有 id：一次「顺手把整个节点发过去」的重构，秘密正文就上了网线。
-    expect(JSON.stringify(bodyOf(spy))).not.toContain(TWIST);
-    expect(bodyOf(spy).secret_id).toBe(fixtures.matrix.secrets[0].id);
-  });
-
+describe("线 3：改的是哪一条说得出来，而整个对象不许发回去", () => {
   it("名单那一半发的也只有 id，不是整个人物对象", async () => {
     const user = userEvent.setup();
     await openCast(user);
@@ -276,22 +158,6 @@ describe("线 3：秘密的名字必须在，正文一个字都不许在", () =>
 // ══════════════════════════════════════════════════════════════════════════
 
 describe("线 4：前端说不了「谁改的」", () => {
-  it("两个请求体里都没有 actor —— 也没有任何一个别名", async () => {
-    // ADR 0020 拿「事后可查」换掉了「事前逐条确认」，而那份日志唯一的价值就是
-    // 分得清哪几步是系统自己动的手。前端能填这一栏 = 那个区分作废。
-    const user = userEvent.setup();
-    await openCell(user);
-    const spy = vi.spyOn(globalThis, "fetch");
-    await user.type(screen.getByRole("textbox"), "以为那只是个传闻");
-    await user.click(screen.getByRole("button", { name: /^改成「/ }));
-    await waitFor(() => expect(posts(spy)).toHaveLength(1));
-
-    const said = /actor|author|source|by|who_/i;
-    expect(Object.keys(bodyOf(spy)).filter((k) => said.test(k))).toEqual([]);
-    expect(JSON.stringify(bodyOf(spy))).not.toContain("author");
-    expect(JSON.stringify(bodyOf(spy))).not.toContain("system");
-  });
-
   it("名单那一半同理", async () => {
     const user = userEvent.setup();
     await openCast(user);
@@ -324,15 +190,6 @@ describe("线 4：前端说不了「谁改的」", () => {
 // 三张网和 `screenText` 都在 `src/test/screenGuard.ts`，自守卫在它旁边那份 test 里。
 
 describe("线 2 续：大写枚举和属性里的字", () => {
-  it("矩阵那一格摊开时，连 aria-label 和 placeholder 里都没有引擎的词", async () => {
-    const user = userEvent.setup();
-    await openCell(user);
-    const text = screenText();
-    expect(engineWords(text)).toEqual([]);
-    expect(machineWords(text)).toEqual([]);
-    expect(rawIds(text)).toEqual([]);
-  });
-
   it("名单那一半同理", async () => {
     const user = userEvent.setup();
     await openCast(user);
@@ -396,17 +253,5 @@ describe("线 2 再续：措辞的源只有一个", () => {
     expect(box.textContent).toContain(DIRTY);
     // 反过来：它**没有**被洗过。洗了就等于前端有了第二份措辞源。
     expect(box.textContent).not.toContain("情节");
-  });
-
-  it("矩阵那一格同理", async () => {
-    const user = userEvent.setup();
-    await openCell(user, [
-      { method: "POST", match: /\/canon\/knowledge$/, status: 422, body: SPOKE },
-    ]);
-    await user.type(screen.getByRole("textbox"), "以为那只是个传闻");
-    await user.click(screen.getByRole("button", { name: /^改成「/ }));
-
-    const box = await screen.findByText((_, el) => el?.className === "err-box");
-    expect(box.textContent).toContain(DIRTY);
   });
 });

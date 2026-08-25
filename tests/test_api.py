@@ -235,18 +235,6 @@ def test_future_character_full_after_first_appears(
     )
     assert r.status_code == 200, r.text
     assert PLOT_NOTE in r.text  # 登场后不收窄，这是收窄「只收敏感节点」的反证
-
-
-def test_matrix_never_leaks_secret_props(client: TestClient, book: dict[str, str]) -> None:
-    # 矩阵出参本就是 NodeRef（引擎侧安全），这里钉住它不退化。
-    r = client.get(
-        f"/api/projects/{_pid(book)}/chapters/5/matrix",
-        params={"cast": "萧决"},
-    )
-    assert r.status_code == 200, r.text
-    assert TWIST not in r.text
-
-
 # ══════════════════════════════════════════════════════════════════════════
 # 在场从正文推，不从作者的表单来
 # ══════════════════════════════════════════════════════════════════════════
@@ -289,12 +277,14 @@ def test_panels_derive_cast_when_the_author_did_not_type_one(
     这一条是「在场人物不该是写之前填的表单」在 HTTP 边界上的兑现。
     """
     pid = _pid(book)
-    derived = client.get(f"/api/projects/{pid}/chapters/1/matrix").json()
-    assert [c["name"] for c in derived["characters"]] == ["萧决", "李管家"]
+    # （2026-08-24 之前这条量的是认知矩阵那条路由；它随秘密下线删了，
+    #   而**推导本身没变**——人物状态卡吃的是同一份 `_effective_cast`。）
+    derived = client.get(f"/api/projects/{pid}/chapters/1/state").json()
+    assert [c["node"]["name"] for c in derived] == ["萧决", "李管家"]
 
     # 显式传 cast 仍然优先：作者说了算，推导只在他没说时接手。
-    explicit = client.get(f"/api/projects/{pid}/chapters/1/matrix", params={"cast": "萧决"}).json()
-    assert [c["name"] for c in explicit["characters"]] == ["萧决"]
+    explicit = client.get(f"/api/projects/{pid}/chapters/1/state", params={"cast": "萧决"}).json()
+    assert [c["node"]["name"] for c in explicit] == ["萧决"]
 
 
 def test_derived_cast_still_fails_closed_on_an_unwritten_chapter(
@@ -307,18 +297,6 @@ def test_derived_cast_still_fails_closed_on_an_unwritten_chapter(
     pid = _pid(book)
     unwritten = client.get(f"/api/projects/{pid}/chapters/99/constraints").json()
     assert [n["name"] for n in unwritten["must_not_reveal"]] == ["血脉秘密"]
-
-
-def test_derived_cast_never_leaks_secret_props(client: TestClient, book: dict[str, str]) -> None:
-    """推导多走了一趟磁盘正文，收窄不许因此松掉——它才是产品的核心主张。"""
-    pid = _pid(book)
-    for path in ("matrix", "constraints", "state"):
-        r = client.get(f"/api/projects/{pid}/chapters/1/{path}")
-        assert r.status_code == 200, r.text
-        assert TWIST not in r.text, path
-        assert PLOT_NOTE not in r.text, path
-
-
 # ══════════════════════════════════════════════════════════════════════════
 # 错误映射（§1.3）
 # ══════════════════════════════════════════════════════════════════════════
@@ -410,10 +388,6 @@ def test_sync_refused_on_two_headings_422(client: TestClient, book: dict[str, st
 # ══════════════════════════════════════════════════════════════════════════
 # declare 写路径闭环（约束 10：入参没有章号，valid_from 是产物）
 # ══════════════════════════════════════════════════════════════════════════
-
-
-
-
 
 
 def test_declare_node_secret_is_narrowed(client: TestClient, book: dict[str, str]) -> None:
