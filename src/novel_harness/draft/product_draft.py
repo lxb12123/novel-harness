@@ -1,7 +1,8 @@
-"""「章号 + 目标 → 一稿正文」的**唯一实现**（产品档；kill-gate 三臂走 `assemble()`）。
+"""「章号 + 目标 → 一稿正文」的**唯一实现**。
 
 在这个文件存在之前，这条路径整个内联在 `api/api/app.py` 的 `/draft` 路由体里（约 120 行：
 capability 探测 → 记忆预算 → 长度策略 → form 选择 → 三条装配分支 → `generate_draft`）。
+（那个「form 选择」2026-08-25 删了——三臂随 M2 一起退役，见 `assemble.py` 的模块 docstring。）
 3.1 落地工具表时就报过它：
 
 > 今天没有任何后端函数能收「章号 → 一稿正文」……**把它抄进工具表 = 第二条会漂的起草路径**。
@@ -53,9 +54,7 @@ from ..calibration.models import SceneBrief
 from ..calibration.render import render_scene_brief, render_target_chapter
 from .assemble import (
     CONTINUATION_GOAL,
-    GATE_TAIL_CODE_POINTS,
     WRITE_RULE_FORBIDDEN_HINTS,
-    PromptForm,
     assemble,
     product_tail_limit,
 )
@@ -91,7 +90,7 @@ PRODUCT_DRAFT_SCHEMA_VERSION: Final = "m5.draft.v1"
 
 
 class DraftRefused(Exception):
-    """这一稿在**发出去之前**被拒了，理由说得出口（form 不认识、文风里写了禁令词）。
+    """这一稿在**发出去之前**被拒了，理由说得出口（文风里写了禁令词）。
 
     不继承 `ValueError`：那样它会被 `api/app.py` 的全局 `ValueError` handler 兜住，
     而两个调用方要给作者的话不一样（HTTP 那边是 422，agent 那边是一条贴回对话的
@@ -172,7 +171,6 @@ class ChapterDraftRequest:
     goal: str
     length: LengthSpec
     mode: Literal["chapter", "continuation"] = "chapter"
-    form: str = "PRODUCT"
     previous_tail: str = ""
     following_text: str = ""
     """光标**后面**那截同章正文。**只有 `continuation` 那一支读它。**
@@ -233,24 +231,18 @@ def memory_receipt(
     }
 
 
-def check_request(request: ChapterDraftRequest) -> PromptForm:
-    """把请求里那两个自由字符串验掉，返回它点的那一臂。**纯函数，重复调用无副作用。**
+def check_request(request: ChapterDraftRequest) -> None:
+    """把请求里那个自由字符串验掉。**纯函数，重复调用无副作用。**
 
-    `draft_chapter()` 自己会调它；HTTP 壳**在算约束之前**也调一次，为的是保住
-    422 的先后顺序（form 写错和在场角色解析不了同时发生时，作者收到的仍然是
-    form 那一句）。两次调用一份实现，重复的是执行不是代码。
+    `draft_chapter()` 自己会调它；HTTP 壳**在算约束之前**也调一次，为的是保住 422 的
+    先后顺序（文风里写了禁令词和在场角色解析不了同时发生时，作者收到的仍然是文风那一句）。
+    两次调用一份实现，重复的是执行不是代码。
+
+    ⚠️ 2026-08-25 之前它还验一个 `form`（PRODUCT / X0 / X1 / X2 四选一）并返回选中的那一臂。
+    三臂随 M2 一起删了（见 `assemble.py` 的模块 docstring），**它现在没有返回值**——
+    留着这个函数是因为上面那条「先后顺序」的理由跟 form 无关，文风那条校验仍然要在
+    算约束之前跑。
     """
-    requested = request.form.strip().upper()
-    if requested == "PRODUCT":
-        # M2 认可的产品臂仍然是 X1；PRODUCT 只多一段单独审计过的已确认记忆前言。
-        # 显式点名 X0/X1/X2 的请求走它们各自原样的老代码路径。
-        form = PromptForm.X1
-    else:
-        try:
-            form = PromptForm[requested]
-        except KeyError:
-            raise DraftRefused(f"form 只能是 PRODUCT / X0 / X1 / X2，收到 {request.form!r}")
-
     write_rule = request.write_rule.strip()
     if write_rule:
         hits = [w for w in WRITE_RULE_FORBIDDEN_HINTS if w in write_rule]
@@ -258,9 +250,8 @@ def check_request(request: ChapterDraftRequest) -> PromptForm:
             raise DraftRefused(
                 "自定义文风里不能出现这些词："
                 + " / ".join(hits)
-                + "——文风三臂共用，写进去等于给对照组也上了约束。"
+                + "——这几个词是引擎自己在管的事，写进文风里只会和它打架。"
             )
-    return form
 
 
 def _prompt_digest(messages: Sequence[Any]) -> tuple[bytes, str]:
@@ -366,7 +357,7 @@ def draft_chapter(
             那是没接线的那一档（`/draft` 和三臂都在这一档上）。
 
     Raises:
-        DraftRefused: form 不认识、或文风里写了三臂共用的禁令词。
+        DraftRefused: 文风里写了引擎自己在管的那几个禁令词。
         panel.constraints.UnresolvedCast: 由 `build_product_context` 的 label 校验转成
             的输入错误（调用方映成给作者的话）。
         generate.CallInterrupted: 作者在生成到一半时按了停。**它是 `ProviderError` 的
@@ -374,27 +365,22 @@ def draft_chapter(
             （`agent/drafting.py`）先捕它。已经发出去的每一次调用都进过 `on_call`。
         provider.ProviderError: 模型这一次没答上来。
     """
-    form = check_request(request)
-    product_form = request.form.strip().upper() == "PRODUCT"
+    check_request(request)
     write_rule = request.write_rule.strip()
     chapter = ctx.chapter
     continuation = request.mode == "continuation"
 
     assemble_args = {
-        "form": form,
         # ADR 0015 D3：续写的 goal 是后端常量，请求里那个已被调用方校验为空。
         "goal": CONTINUATION_GOAL if continuation else request.goal,
         "length": request.length,
         "previous_tail": request.previous_tail,
-        # **逐字上文的长度只有产品路径放长**（ADR 0019 边界五）。`GATE_TAIL_CODE_POINTS`
-        # 是 X0 对照臂的定义，它存在是为了证明「给得少会崩」——产品继承它 = 产品拿
-        # 对照组的预算跑，而作者只会看到「AI 写出来的东西前言不搭后语」。
-        # 反过来：请求里点名了 X0/X1/X2 就是 kill-gate 的臂，必须原样拿冻结值，
-        # 否则就是改考卷（EVAL_PROTOCOL §2）。`product_form` 正好等于「没点名臂」。
-        "previous_tail_limit": (
-            product_tail_limit(capability.max_context_tokens, plan.request_token_budget)
-            if product_form
-            else GATE_TAIL_CODE_POINTS
+        # **逐字上文按窗口取量**（ADR 0019 边界五）。`GATE_TAIL_CODE_POINTS` 那个 800 字
+        # 是 X0 对照臂当年的定义，它存在是为了证明「给得少会崩」——拿它当产品档跑，
+        # 作者看到的就是「AI 写出来的东西前言不搭后语」。三臂删掉之后这里不再有分支：
+        # **产品只有一条路，它按窗口算。**
+        "previous_tail_limit": product_tail_limit(
+            capability.max_context_tokens, plan.request_token_budget
         ),
         "write_rule": write_rule or None,
     }
@@ -414,7 +400,7 @@ def draft_chapter(
                 backfill=backfill,
                 following_text=request.following_text,
             )
-        elif product_form:
+        else:
             messages, memory = _with_memory(
                 ctx,
                 assemble_args,
@@ -428,11 +414,6 @@ def draft_chapter(
             )
             if request.brief is not None or request.target_chapter_text:
                 messages = _append_execution_plan(messages, ctx, request)
-        else:
-            messages = assemble(ctx, **assemble_args)
-            memory = memory_receipt(
-                "指定了 kill-gate 实验臂，按该臂的原样 prompt 走，不加记忆前言。"
-            )
 
     receipts: list[ModelCallReceipt] = []
     mark = perf_counter()

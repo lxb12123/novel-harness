@@ -830,13 +830,36 @@ def project_detail(proj: Any = Depends(load_project)) -> Any:
 
 
 @app.get("/api/projects/{project_id}/roster")
-def roster(store: Any = Depends(get_store), proj: Any = Depends(load_project)) -> Any:
-    """左栏花名册：全项目节点，收窄成 {id,label,name}（不整体序列化 Node.props，防秘密泄漏）。"""
-    seen: dict[str, dict[str, str]] = {}
+def roster(
+    conn: Any = Depends(get_conn),
+    store: Any = Depends(get_store),
+    proj: Any = Depends(load_project),
+) -> Any:
+    """左栏花名册：全项目节点，收窄成 {id,label,name} + 出场章数。
+
+    **props 一个字段都不出**（不整体序列化 `Node.props`：作者写在节点上的 `twist` /
+    `plot_note` 住在那儿）。
+
+    `appearance_chapters` = **有多少章的总结提到过它**（`summary_index.appearance_counts`，
+    一次 SQL，不调模型）。它和花名册**同一条出参回来**，不是第二次请求——
+    左栏那一行要显示「贾环 · 42 章」，多一次往返就是多一次会失败、会晚到的东西。
+
+    ⚠️ 没有总结的章不算，所以一本刚导进来的书这一列全是 0。那是诚实的：
+    这一层不读正文。措辞的责任在前端那一行上（别把 0 写成「没出场」）。
+    """
+    from ..summary_index import appearance_counts
+
+    counts = appearance_counts(conn, store, proj.id)
+    seen: dict[str, dict[str, Any]] = {}
     for resolution in store.resolve(proj.id, None):
         for hit in resolution.hits:
             node = hit.node
-            seen[node.id] = {"id": node.id, "label": node.label.value, "name": node.name}
+            seen[node.id] = {
+                "id": node.id,
+                "label": node.label.value,
+                "name": node.name,
+                "appearance_chapters": counts.get(node.id, 0),
+            }
     return list(seen.values())
 
 
@@ -1465,7 +1488,6 @@ class DraftRequest(BaseModel):
     **它是让续写写得更准的奖励，不是不填就不给用的门槛。**"""
 
     length: _DraftLengthBody
-    form: str = "PRODUCT"
     previous_tail: str = ""
     following_text: str = ""
     """光标**后面**那截同章正文。**只有 `continuation` 收它。**
@@ -1678,7 +1700,6 @@ def draft(
         goal=body.goal,
         length=body.length,
         mode=body.mode,
-        form=body.form,
         previous_tail=body.previous_tail,
         # 【下文】**只在改旧章时给**。最新章的常态是往末尾写，光标后面没有字；
         # 而「是最新章时行为一字不变」是这一刀明写的验收条件，所以那一档一个字节都不动。
@@ -1688,9 +1709,10 @@ def draft(
         write_rule=body.write_rule,
     )
     try:
-        # **在算约束之前先验一次 form / 文风。** `draft_chapter()` 自己也会验（agent 那条路
-        # 没有这一步），这里多调一次是为了保住 422 的先后顺序：form 写错和在场角色解析不了
-        # 同时发生时，作者收到的仍然是 form 那一句。重复的是执行，不是实现。
+        # **在算约束之前先验一次文风。** `draft_chapter()` 自己也会验（agent 那条路没有
+        # 这一步），这里多调一次是为了保住 422 的先后顺序：文风里写了禁令词和在场角色
+        # 解析不了同时发生时，作者收到的仍然是文风那一句。重复的是执行，不是实现。
+        # （2026-08-25 之前它还验一个 `form`；三臂随 M2 一起删了。）
         check_request(request)
     except DraftRefused as exc:
         raise HTTPException(status_code=422, detail=str(exc))

@@ -481,9 +481,18 @@ def test_low_confidence_relationship_checks_main_character_at_either_end(
     assert proposal.edge_ids == list(report.edge_ids)
 
 
-def test_profile_and_incidental_surface_policy_never_guesses_or_creates_nodes(
+def test_unknown_surfaces_become_characters_but_ambiguous_ones_never_do(
     seed: Seed, conn: Connection
 ) -> None:
+    """**认不出就建，认不准就整条拒收。**（2026-08-25 裁定，ADR 0020 补记）
+
+    这两半必须一起看，否则容易读成「以后什么都建」：
+
+    - `unknown`（花名册里查无此人）→ **建**。从前它进 `new_character` 提案等作者确认，
+      而事件那一侧「一个参与者都认不出就整条丢」——空花名册上两条规矩互锁。
+    - `ambiguous`（「师兄」同时指向两个**已经存在**的人）→ **照旧整条拒收**。
+      建第三个「师兄」只会让歧义更重，而 ADR 0004 说产品从不替作者挑。
+    """
     other = seed.graph.upsert_node(
         NodeSpec(project_id=seed.project_id, label=NodeLabel.CHARACTER, name="陆沉")
     )
@@ -511,18 +520,27 @@ def test_profile_and_incidental_surface_policy_never_guesses_or_creates_nodes(
         prompt_hash="prompt:profiles",
     )
 
-    assert (report.valid_event_count, report.discarded_event_count) == (1, 1)
+    # 两条事件**都留下了**：从前第二条因为「不存在的路人」认不出而整条丢。
+    assert (report.valid_event_count, report.discarded_event_count) == (2, 0)
+    # 歧义的「师兄」照旧被拒——它不是「不认识」，是「认识两个」。
     assert any(
         reason.kind == "character_profile"
         and reason.index == 1
         and reason.outcome is DiscardOutcome.AMBIGUOUS_SURFACE
         for reason in report.discarded
     )
-    proposals = SqliteProposalStore(conn).pending(seed.project_id)
-    assert [proposal.kind for proposal in proposals] == ["new_character"]
-    assert proposals[0].items[0]["profile"]["surface"] == "新来客"
-    resolutions = seed.graph.resolve(seed.project_id, ["新来客", "不存在的路人"])
-    assert resolutions[0].hits == resolutions[1].hits == []
+    # 不再有 `new_character` 提案：人已经建好了，没什么可问的。
+    assert SqliteProposalStore(conn).pending(seed.project_id) == []
+
+    made = seed.graph.resolve(seed.project_id, ["新来客", "不存在的路人", "师兄"])
+    assert made[0].unique_node is not None and made[0].unique_node.name == "新来客"
+    assert made[1].unique_node is not None and made[1].unique_node.name == "不存在的路人"
+    assert made[2].ambiguous, "「师兄」本来就指向两个人，不该多出第三个"
+
+    # 画像跟着建出来的人一起落库（攒着不写 = 下一章再问一次同一个人）。
+    fresh = SqliteEventStore(conn).profile(seed.project_id, made[0].unique_node.id)
+    assert (fresh.gender, fresh.personality) == ("男", "谨慎")
+    # **已知人物的档案照旧只读**，不被这一次抽取覆盖。
     profile = SqliteEventStore(conn).profile(seed.project_id, seed.hero_id)
     assert (profile.gender, profile.personality) == ("女", None)
 
@@ -530,11 +548,16 @@ def test_profile_and_incidental_surface_policy_never_guesses_or_creates_nodes(
 def test_unknown_incidental_surfaces_are_dropped_not_guessed(
     seed: Seed, conn: Connection
 ) -> None:
-    """匿名配角与未声明事实是常态：未知面丢弃，事件保留已知参与者。
+    """匿名配角**也进图谱**（2026-08-25 裁定推翻了 M4_DESIGN 的「路人不进图谱」）。
 
-    2026-08-04 真书首跑发现：整章事件因「相亲小姐姐/服务员/路人」这类匿名
-    配角全部被弃。路人不进图谱（M4_DESIGN），但也不该整条事件陪葬——
-    未知面丢弃、歧义/错类仍整条拒收（绝不替作者猜）。
+    2026-08-04 真书首跑发现：整章事件因「相亲小姐姐/服务员/路人」这类匿名配角全部被弃。
+    当时的修法是「未知面丢弃、事件保留已知参与者」——**它治的是事件，没治花名册**：
+    这一章的「服务员」下一章还是认不出，而一个所有参与者都是生面孔的事件照样整条丢。
+
+    今天的判据统一成一条：**认不出就建**。代价照实说——「服务员」「全体师生」
+    这种一次性称呼会长期占着花名册（真书上的实例是「袭人」，它还会误命中
+    「寒气袭人」）。**出口是花名册的删除入口**（`DELETE …/nodes/{id}`，同一批改动）：
+    自动建 + 不能删 = 单向阀。
     """
     report = _service(conn, seed).ingest(
         seed.project_id,
@@ -554,80 +577,15 @@ def test_unknown_incidental_surfaces_are_dropped_not_guessed(
     (event_id,) = report.event_ids
     view = SqliteEventStore(conn).event(seed.project_id, event_id)
     assert view is not None
-    assert [node.id for node in view.participants] == [seed.hero_id]
-    assert [node.id for node in view.knowers] == [seed.hero_id]
+    assert sorted(node.name for node in view.participants) == ["不存在的路人", "顾清音"]
+    assert sorted(node.name for node in view.knowers) == ["全体师生", "服务员", "顾清音"]
+    # 花名册里真的多了这几个人（下一章它们就认得出了 —— 死锁的另一半）。
+    made = seed.graph.resolve(seed.project_id, ["服务员", "全体师生"])
+    assert all(r.unique_node is not None for r in made)
 
 
-def test_new_character_proposals_are_split_per_surface(
-    seed: Seed, conn: Connection
-) -> None:
-    """每个未知人物独立成一条提案：作者才能逐人「接受为角色 / 标为路人」。"""
-    report = _service(conn, seed).ingest(
-        seed.project_id,
-        seed.chapter,
-        _analysis(
-            profiles=(
-                RawCharacterProfile(
-                    surface="陆青禾", gender="女", personality="隐忍", confidence=0.8
-                ),
-                RawCharacterProfile(
-                    surface="白峰", gender="男", personality="沮丧", confidence=0.7
-                ),
-            )
-        ),
-        prompt_hash="prompt:split-new-characters",
-    )
-
-    assert report.proposal_count == 2
-    proposals = SqliteProposalStore(conn).pending(seed.project_id)
-    assert [proposal.kind for proposal in proposals] == [
-        "new_character",
-        "new_character",
-    ]
-    assert all(proposal.item_count == 1 for proposal in proposals)
-    assert {proposal.items[0]["surface"] for proposal in proposals} == {
-        "陆青禾",
-        "白峰",
-    }
-
-
-def test_each_new_character_row_says_who_it_is(seed: Seed, conn: Connection) -> None:
-    """待确认队列那一行**自己说清是谁** —— 不许再是一句通用话（2026-08-23）。
-
-    真书上的后果实测过：22 条 `new_character` 提案的 `summary` 去重之后**只有 1 条**
-    不同文本（「抽取发现尚未登记的人物画像。」），名字和画像明明就躺在 `items` 里。
-    它们从 2026-08-15 一条都没被确认过——而这些人不确认，抽出来的事件就一件都落不了地
-    （认不出参与者会被整条丢），花名册空着 ⇒ 下一章接着全丢。
-
-    这条红了 = 那句写死的通用话回来了。**断言的是「各不相同 + 带名字」**，
-    不是某一句具体措辞——措辞可以改，「说不清是谁」不行。
-    """
-    report = _service(conn, seed).ingest(
-        seed.project_id,
-        seed.chapter,
-        _analysis(
-            profiles=(
-                RawCharacterProfile(
-                    surface="陆青禾",
-                    gender="女",
-                    background="药王谷弃徒",
-                    personality="隐忍",
-                    confidence=0.8,
-                ),
-                RawCharacterProfile(surface="白峰", gender="男", confidence=0.7),
-            )
-        ),
-        prompt_hash="prompt:new-character-rows-name-themselves",
-    )
-
-    assert report.proposal_count == 2
-    summaries = [p.summary for p in SqliteProposalStore(conn).pending(seed.project_id)]
-    assert len(set(summaries)) == 2, f"两条提案长得一模一样：{summaries}"
-    assert all(
-        any(name in text for name in ("陆青禾", "白峰")) for text in summaries
-    ), summaries
-    # 有画像就带上（背景最认得出人）；三样都空时只报名字，不编一句。
-    assert any("药王谷弃徒" in text for text in summaries), summaries
+def create(self, proposal: ProposalCreate):
+        raise RuntimeError(f"proposal write failed: {proposal.kind}")
 
 
 class _ExplodingProposalStore:
@@ -686,9 +644,9 @@ def test_reused_service_does_not_cache_main_character_across_ingests(
 
 
 def test_the_deadlock_and_the_key_that_opens_it(seed: Seed, conn: Connection) -> None:
-    """死锁的两半，一条测试里演一遍（2026-08-23 真书上撞出来的）。
+    """**死锁解开了**：一份全是生面孔的 analysis 打进空花名册，事件真的落库。
 
-    ── 上半：花名册里没有这个人 ⇒ 事件整条丢 ────────────────────────────
+    ── 那把锁当年是什么样 ────────────────────────────────────────────────
 
     作者的 158 章真书上，抽取跑过三章，每次都 `SUCCEEDED`、`errors_json='[]'`，
     而**留下 0 件**（12 / 11 / 12 全丢）。整本书的图谱是空的：人物 0、边 0、
@@ -698,36 +656,27 @@ def test_the_deadlock_and_the_key_that_opens_it(seed: Seed, conn: Connection) ->
 
     唯一出口是 `new_character` 提案，而那 22 条从 2026-08-15 一条没被确认过。
 
-    ── 下半：那个人一登记，同一份 analysis 立刻留得下 ──────────────────
+    ── 钥匙（2026-08-25 裁定）────────────────────────────────────────────
 
-    **这一半是「钥匙确实能开那把锁」的证据。** 真书上跑这一遍要重新付一次模型调用
-    （那本书停在 `user_version=16`，早于 021，没有可重放的规范 analysis），
-    所以机制在这儿钉，账在那儿算。
+    **认不出就建，不要问**（ADR 0020 补记）：`_create_unknown_characters` 在解析事件
+    **之前**把人物位上的生面孔全部建成 Character，于是 `if not participants` 那条
+    丢弃分支在空花名册上再也走不到。
 
-    这条红了 = 要么丢弃判据变了，要么确认人物不再解得开它 —— 两种都得当场知道。
+    这条红了 = 自动建人物那一步没跑，或者事件那一侧又长出了别的丢弃条件 ——
+    两种都得当场知道，因为它们都会让真书回到「跑了、成功了、什么都没留下」。
     """
-    # 参与者**全部**认不出 —— 丢弃判据是 `if not participants`，也就是
-    # 「一个都解不出来才丢」。混一个认得出的人进去，这条事件会活下来（只留认得出的
-    # 那部分），所以真书全丢的成因是花名册**空**，不是「有生面孔」。
     stranger = _analysis(events=(_event(participants=("陆青禾",), knowers=("陆青禾",)),))
 
-    before = _service(conn, seed).ingest(
-        seed.project_id, seed.chapter, stranger, prompt_hash="prompt:deadlock-locked"
-    )
-    assert (before.valid_event_count, before.discarded_event_count) == (0, 1), (
-        "花名册里没有「陆青禾」，这一件事本该被整条丢掉 —— 丢弃判据变了？"
-    )
-
-    # 作者在待确认队列上点了「接受为角色」—— 那一步落地就是花名册里多一个人。
-    seed.graph.upsert_node(
-        NodeSpec(
-            project_id=seed.project_id, label=NodeLabel.CHARACTER, name="陆青禾"
-        )
-    )
-
-    after = _service(conn, seed).ingest(
+    report = _service(conn, seed).ingest(
         seed.project_id, seed.chapter, stranger, prompt_hash="prompt:deadlock-opened"
     )
-    assert after.valid_event_count == 1 and after.discarded_event_count == 0, (
-        "人已经在花名册里了，同一份 analysis 却还是留不下 —— 死锁没被打开"
+
+    assert (report.valid_event_count, report.discarded_event_count) == (1, 0), (
+        "一份全是生面孔的 analysis 又被整条丢了 —— 死锁回来了"
     )
+    made = seed.graph.resolve(seed.project_id, ["陆青禾"])[0]
+    assert made.unique_node is not None, "事件留下了，人却没建出来 —— 下一章还会全丢"
+
+    view = SqliteEventStore(conn).event(seed.project_id, report.event_ids[0])
+    assert view is not None
+    assert [node.id for node in view.participants] == [made.unique_node.id]

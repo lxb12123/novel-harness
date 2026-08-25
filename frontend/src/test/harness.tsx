@@ -98,7 +98,11 @@ const DEFAULT: Handler[] = [
   { method: "POST", match: /\/api\/projects\/bootstrap$/, body: BOOTSTRAP_IMPORT },
   { method: "POST", match: /\/sync$/, body: fixtures.sync },
   { match: /\/api\/projects$/, body: fixtures.projects },
-  { match: /\/roster$/, body: fixtures.roster },
+  // ⚠️ 默认给的是 `rosterWithCounts` 那一份，**不是 `roster`**：两份都是真 dump，
+  // 差别只有出场章数——`roster` 抓在总结落地之前（全 0），`rosterWithCounts` 抓在之后
+  // （萧决 / 青云城主府各 1 章）。花名册那一格要按次数降序 + 一颗倒序切换，
+  // 全 0 的样本两个方向渲染出来一模一样，测试永远绿。
+  { match: /\/roster$/, body: fixtures.rosterWithCounts },
   { match: /\/chapters$/, body: fixtures.chapters },
   { match: /\/chapters\/\d+\/constraints/, body: fixtures.constraints },
   { match: /\/chapters\/\d+\/state/, body: fixtures.states },

@@ -44,26 +44,27 @@ describe("待确认内容", () => {
     ).toBeInTheDocument();
   });
 
-  it("新人物卡给出 接受为角色 / 标为路人 两个动作", async () => {
-    open();
-    const card = (await screen.findByText(/新人物/)).closest(".statecard") as HTMLElement;
-    expect(within(card).getByText(/陆青禾/)).toBeInTheDocument();
-    expect(within(card).getByRole("button", { name: "接受为角色" })).toBeInTheDocument();
-    expect(within(card).getByRole("button", { name: "标为路人" })).toBeInTheDocument();
-  });
-
-  it("新人物卡把 `character_notes` 也摆出来 —— **它接受之后会进写作提示**", async () => {
-    // 这一格原来只画 gender / personality / background，于是作者在这道闸门上批准了一条
-    // 他从没看见的东西：`character_notes` 会跟着这个人进写作 prompt，影响模型怎么写他
-    //（`draft/product_assemble.py::_PROFILE_LABELS`）。
-    // **判据从真夹具里取**，不抄一份字面量进来。
-    const item = fixtures.proposals.find((p) => p.kind === "new_character")!
-      .items[0] as { profile: { character_notes: string | null } };
-    expect(item.profile.character_notes).toBeTruthy(); // 自守卫：夹具里躺个 null 就永远绿
+  it("旧的「新人物」提案不再画卡片，但队列里也不静默少掉它们", async () => {
+    // **`new_character` 那一支 2026-08-25 整个不画了**（ADR 0020 补记）：抽取认不出
+    // 就直接建人物，这类提案不会再有新的。
+    //
+    // 这一条同时钉住另一半：真书里还有 22 条 2026-08-15 攒下来的 PENDING 行，
+    // **只是滤掉它们 = 静默的零**（§10 约束 8）——作者会看到一个比实际短的队列，
+    // 而没有一处说过差额去哪了。所以那一支不画卡片，但要报一句数。
+    const retired = fixtures.proposals.filter(
+      (p) => p.kind === "new_character" && p.status === "PENDING",
+    );
+    expect(retired.length).toBeGreaterThan(0); // 自守卫：夹具里没有就永远绿
 
     open();
-    const card = (await screen.findByText(/新人物/)).closest(".statecard") as HTMLElement;
-    expect(within(card).getByText(new RegExp(item.profile.character_notes!))).toBeInTheDocument();
+    await screen.findByText(/^需要确认的情节/);
+    // 卡片没了：那两颗只有这一支才有的按钮，屏幕上一个都不许有。
+    expect(screen.queryByRole("button", { name: "接受为角色" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "标为路人" })).toBeNull();
+    // 但那几条被说出来了。
+    expect(
+      screen.getByText(new RegExp(`还有 ${retired.length} 条旧的「新人物」待确认`)),
+    ).toBeInTheDocument();
   });
 
   it("审阅成功后刷新提案/事件/花名册/状态查询", async () => {
@@ -217,15 +218,14 @@ describe("改一改再收下", () => {
     }
   });
 
-  it("冲突卡和新人物卡上**没有**这个动作 —— 后端只对「恰好 1 个 event」开放", async () => {
+  it("冲突卡上**没有**这个动作 —— 后端只对「恰好 1 个 event」开放", async () => {
     // `extract/proposal_validation.py`：edit 只允许恰好 1 个 event，且不得含
     // edge / new_character。画一颗点下去只会撞 422 的按钮，比没有按钮更糟。
+    //（新人物卡那一半 2026-08-25 随那一支一起没了，见上面那条。）
     open();
     await screen.findByText(/关系冲突/);
-    for (const title of [/关系冲突/, /新人物/]) {
-      const card = screen.getByText(title).closest(".statecard") as HTMLElement;
-      expect(within(card).queryByRole("button", { name: "改一改" })).toBeNull();
-    }
+    const card = screen.getByText(/关系冲突/).closest(".statecard") as HTMLElement;
+    expect(within(card).queryByRole("button", { name: "改一改" })).toBeNull();
   });
 
   it("勾选框里就是**现在这条提案上的名单**，花名册里的人物也在候选里", async () => {

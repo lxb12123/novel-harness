@@ -33,7 +33,11 @@ import type {
   EventView,
   ExtractionRun,
   Mentioned,
+  DeleteNodeInput,
+  NodeDeleted,
   NodeRef,
+  RenameNodeInput,
+  RosterEntry,
   NodeSummaryMentions,
   ProposalAction,
   ProposalEditInput,
@@ -254,8 +258,49 @@ export function useChapters(pid: string | null) {
 export function useRoster(pid: string | null) {
   return useQuery({
     queryKey: q(["roster", pid]),
-    queryFn: () => api.get<{ id: string; label: string; name: string }[]>(proj(pid!, "/roster")),
+    queryFn: () => api.get<RosterEntry[]>(proj(pid!, "/roster")),
     enabled: !!pid,
+  });
+}
+
+/** 改花名册里那一条的显示名。canonical 别名在后端同一个事务里跟着改。
+ *
+ *  `expected_canon_version` 由调用方从**它正在渲染的那份花名册**上取（项目出参里的
+ *  `canon_version`）：作者拿着一份旧列表点改名时收到的是 409，不是「改掉了一个他
+ *  没看见的、刚被抽取动过的东西」。同别名那几条的做法。 */
+export function useRenameNode(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, name, expected_canon_version }: RenameNodeInput) =>
+      api.patch<NodeRef>(proj(pid, `/nodes/${encodeURIComponent(id)}`), {
+        name,
+        expected_canon_version,
+      }),
+    onSuccess: () => {
+      invalidatePanels(qc, pid);
+      qc.invalidateQueries({ queryKey: ["projects"] });
+    },
+  });
+}
+
+/** 删掉花名册里的一条。**有关系或情节引着它 → 409 + 挡路的条数。**
+ *
+ *  它是「抽取自动建人物」的配套（ADR 0020 补记）：模型认错一个，作者得有办法清掉，
+ *  否则那个错永远往上下文里塞噪声。**这一步不可逆**，调用方要先问一句。
+ *
+ *  版本走**查询参数**不走请求体：带 body 的 DELETE 在各家客户端/代理上支持得参差不齐。 */
+export function useDeleteNode(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, expected_canon_version }: DeleteNodeInput) =>
+      api.del<NodeDeleted>(
+        proj(pid, `/nodes/${encodeURIComponent(id)}`) +
+          `?expected_canon_version=${expected_canon_version}`,
+      ),
+    onSuccess: () => {
+      invalidatePanels(qc, pid);
+      qc.invalidateQueries({ queryKey: ["projects"] });
+    },
   });
 }
 

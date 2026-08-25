@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Final
 
 from .. import project as project_mod
 from ..db import Connection
-from ..events import EventStore, ProposalCreate, ProposalStore, ProvisionalEventSpec
+from ..events import (
+    CharacterProfilePatch,
+    EventStore,
+    ProposalCreate,
+    ProposalStore,
+    ProvisionalEventSpec,
+)
 from ..graph import (
     DEAD_VALUE_TEXT,
     HEALTH_DIM_KEY,
@@ -21,6 +26,7 @@ from ..graph import (
     HealthValue,
     InformationScope,
     NodeLabel,
+    NodeSpec,
 )
 from ..text.anchor import Located, paragraphs
 from .analyze import SurfaceResolution
@@ -39,7 +45,7 @@ from .ingest_helpers import (
     resolve_event_surfaces,
     surface_reason,
 )
-from .models import RawCharacterProfile, RawChapterAnalysis, RawEvent
+from .models import RawChapterAnalysis, RawEvent
 from .prompt import ANALYSIS_SCHEMA_VERSION
 
 __all__ = [
@@ -48,45 +54,20 @@ __all__ = [
     "ExtractionContextError",
     "ExtractionReport",
     "ExtractionService",
-    "new_character_summary",
 ]
 
-PROFILE_DIGEST_LIMIT: Final = 40
-"""队列那一行里画像摘要最多摆几个字。
-
-画像是模型写的自由文本（`RawCharacterProfile` 那几个字段一个长度上限都没有），
-而这一行是**一行**：不封顶的话，一个话痨模型能把待确认列表撑成一堵墙。
-截断只发生在这一行上——完整画像照旧原样躺在 `items` 里，卡片下面几行逐条摆着。
-"""
-
-
-def new_character_summary(profile: RawCharacterProfile) -> str:
-    """待确认队列上那一行，**自己说清是谁**。
-
-    这儿原先是一句写死的通用话（「抽取发现尚未登记的人物画像。」）。真书上的后果是
-    22 条提案在队列里长得一模一样，而名字和画像明明就在 `items` 里躺着——
-    作者面对的是 22 个「点开才知道是谁」的待办，于是它们从 2026-08-15 躺到今天
-    一条都没被确认过。**而这些人物没被确认，抽出来的事件就一件都落不了地**
-    （事件认不出参与者会被整条丢弃），花名册空着 ⇒ 下一章接着全丢。
-
-    摘要按「背景 → 性格 → 性别」取**第一个非空的**：背景最认得出人（「荣国府庶子」），
-    性格次之。三样都空时不编一句，只报名字。**这不是语义判断**（ADR 0005）——
-    它没有读那段文字是什么意思，只挑了第一个有字的字段。
-    """
-    digest = next(
-        (
-            text.strip()
-            for text in (profile.background, profile.personality, profile.gender)
-            if text and text.strip()
-        ),
-        "",
-    )
-    if len(digest) > PROFILE_DIGEST_LIMIT:
-        digest = digest[:PROFILE_DIGEST_LIMIT] + "…"
-    if not digest:
-        return f"新人物「{profile.surface}」还没登记。"
-    return f"新人物「{profile.surface}」还没登记：{digest}"
-
+# ══════════════════════════════════════════════════════════════════════════
+# 认不出的人物：**直接建，不问**（2026-08-25，ADR 0020 补记）
+# ══════════════════════════════════════════════════════════════════════════
+#
+# 这儿原来有一个 `new_character_summary()`：给待确认队列上那一行写一句「新人物
+# 「贾环」还没登记：荣国府庶子」。它今天没有对象了——不再有 `new_character` 提案。
+#
+# **它为什么被删而不是留着**：那个函数是 2026-08-15 加的补丁，治的是「22 条提案
+# 长得一模一样、作者点不动」。真正的病在上游——**人物认不出来，事件就整条丢**，
+# 而作者除了逐条确认 22 个提案之外没有别的办法解开它。真书实测：三章抽出 35 件事，
+# 引擎一件没留；22 个提案从 8 月 15 日 PENDING 到 8 月 25 日。
+# 治上游之后，那句话没有地方可写，因为没有那一步了。
 
 class ExtractionService:
     """Turn pure analysis into evidence-backed provisional memory on one connection."""
@@ -151,14 +132,19 @@ class ExtractionService:
                 )
             # 重建 resolution_map：自动 alias 已落库，新称呼现在能解析回人了。
             resolutions = self._resolutions_after_identity(project_id, analysis)
+            # ── 认不出就建，不要问（2026-08-25，ADR 0020 补记）────────────────
+            created = self._create_unknown_characters(project_id, analysis, resolutions)
+            if created:
+                resolutions = self._resolutions_after_identity(project_id, analysis)
             paras = paragraphs(chapter.text)
             discarded: list[DiscardReason] = []
             event_ids: list[str] = []
             edge_ids: list[str] = []
+            # `new_character` 那一档 2026-08-25 删了：认不出的人物现在直接建
+            # （见 `_create_unknown_characters`），不再攒成提案问作者。
             buckets: dict[str, list[dict[str, object]]] = {
                 "edge_conflict": [],
                 "low_confidence_main": [],
-                "new_character": [],
             }
             event_links: dict[str, list[str]] = {kind: [] for kind in buckets}
             edge_links: dict[str, list[str]] = {kind: [] for kind in buckets}
@@ -201,14 +187,18 @@ class ExtractionService:
             for index, profile in enumerate(analysis.character_profiles):
                 resolution = resolutions[profile.surface]
                 if resolution.unknown:
-                    buckets["new_character"].append(
-                        {
-                            "surface": profile.surface,
-                            "profile": profile.model_dump(mode="json"),
-                            "confidence": profile.confidence,
-                        }
+                    # 上面 `_create_unknown_characters` 已经把每个画像 surface 建成人物了，
+                    # 所以走到这儿只可能是**建失败**（名字空白 / 建的时候撞上别的东西）。
+                    # 丢弃并记账，不再攒提案。
+                    discarded.append(
+                        surface_reason(
+                            "character_profile",
+                            index,
+                            profile.surface,
+                            NodeLabel.CHARACTER,
+                            resolution,
+                        )
                     )
-                    confidences["new_character"].append(profile.confidence)
                 elif resolution.ambiguous:
                     discarded.append(
                         surface_reason(
@@ -232,38 +222,13 @@ class ExtractionService:
                 # 已知档案保持只读，直到作者显式审阅。
 
             proposal_ids: list[str] = []
-            # `new_character` **不在这张表里**：它一人一条提案，那一行由
-            # `new_character_summary()` 逐条算（名字 + 画像摘要）。写死一句通用话的后果
-            # 见那个函数的 docstring —— 真书上 22 条提案在队列里长得一模一样。
             summaries = {
                 "edge_conflict": "抽取状态与当前 Canon 冲突。",
                 "low_confidence_main": "主要人物相关抽取置信度低于 0.70。",
             }
-            for kind in ("edge_conflict", "low_confidence_main", "new_character"):
+            for kind in ("edge_conflict", "low_confidence_main"):
                 items = buckets[kind]
                 if not items:
-                    continue
-                if kind == "new_character":
-                    # 每个未知人物独立成一条提案：作者才能逐人「接受为角色 / 标为路人」，
-                    # 而不是整组一起处理。
-                    for item in items:
-                        proposal = self._proposals.create(
-                            ProposalCreate(
-                                project_id=project_id,
-                                kind=kind,
-                                summary=new_character_summary(
-                                    RawCharacterProfile.model_validate(item["profile"])
-                                ),
-                                items=[item],
-                                confidence=item["confidence"],
-                                chapter_number=chapter.number,
-                                snapshot_id=chapter.snapshot_id,
-                                base_canon_version=canon_version,
-                                schema_version=ANALYSIS_SCHEMA_VERSION,
-                                prompt_hash=prompt_hash,
-                            )
-                        )
-                        proposal_ids.append(proposal.id)
                     continue
                 proposal = self._proposals.create(
                     ProposalCreate(
@@ -510,6 +475,97 @@ class ExtractionService:
             if self._profile_main[character_id]:
                 return True
         return False
+
+    def _create_unknown_characters(
+        self,
+        project_id: str,
+        analysis: RawChapterAnalysis,
+        resolutions: dict[str, SurfaceResolution],
+    ) -> list[str]:
+        """**认不出的人物，直接建。**（2026-08-25 裁定，[ADR 0020](../../../docs/adr/0020-extraction-lands-canon-directly.md) 补记）
+
+        ── 这一步在治什么 ────────────────────────────────────────────────
+
+        从前：认不出的人物 → 攒进 `new_character` 提案等作者确认；而一条事件只要
+        **一个参与者都解析不出来就整条丢**（`_ingest_event` 那句 `if not participants`）。
+        两条规矩在空花名册上互锁：**没人 ⇒ 事件全丢 ⇒ 花名册还是没人**。
+
+        真书实测（`book.db`，158 章）：三章抽取，模型抽出 35 件事，**引擎一件没留**，
+        同时提了 22 个新人物提案，从 2026-08-15 PENDING 到 2026-08-25 一条没被确认。
+
+        ── 只建**人物位**上的称呼，不是所有认不出的字 ────────────────────
+
+        `resolution_map` 收的 surface 来自四处：事件的 participants / knowers、
+        state_update 的 subject / object / dimension、画像的 surface。
+        **只有第一组和最后一组是人物位。** `state.object` 可能是地点、`state.dimension`
+        是状态维度（「健康」）——把它们也建成人物，花名册里会长出「健康」这个角色。
+
+        ── 不拿 `usable_for_rules=False` 当「未确认」的替身 ──────────────
+
+        建出来的人物和作者亲手建的**一模一样**（canonical 别名照 `upsert_node` 的规矩
+        走，`usable_for_rules = len(name) >= 2`）。拿那个字段当「这个是机器猜的」的标记，
+        等于在 ADR 0004 定死的一个语义上加载第二种意思，而下一个人只会读到第一种。
+
+        ── ⚠️ 它会认错，而认错的代价必须有出口 ──────────────────────────
+
+        真书那 22 个名字里「**袭人**」是真会误命中的：这本书里满篇「寒气袭人」「香气袭人」。
+        今天它伤不到规则（R3 只看对白标签位；R2 要首现章而那个字段没有浏览器入口），
+        **它伤的是「这一章提到了谁」和喂给模型的上下文**——袭人的档案会被塞进一场
+        她不在的戏。所以**花名册的删除入口是这一条的配套，不是可选项**
+        （`DELETE …/nodes/{id}`，同一批改动）。自动建 + 不能删 = 单向阀。
+
+        Returns:
+            这一次真建出来的人物 node id。非空时调用方**必须**重建一次 resolution_map。
+        """
+        wanted: list[str] = []
+        for event in analysis.events:
+            wanted.extend(event.participants)
+            wanted.extend(event.knowers)
+        wanted.extend(profile.surface for profile in analysis.character_profiles)
+
+        # ⚠️ **模型自己说是别名的那些 surface，一个都不许建。**
+        #
+        # `analysis.aliases` 里的每一条都是「这是**某个已有人物**的另一种叫法」
+        # （「凤辣子」→ 王熙凤）。`resolve_analysis_identity` 已经处理过它们：
+        # 够格的落成别名，不够格（置信度低 / 引语对不上）的留着等作者裁。
+        # **不够格 ≠ 这是个新人**——把它建成人物，同一个王熙凤在花名册里就有两个身子，
+        # 而那正是 `aliases.py` 那一整套机制存在的理由。
+        proposed_aliases = {alias.surface for alias in analysis.aliases}
+
+        profiles = {p.surface: p for p in analysis.character_profiles}
+        created: list[str] = []
+        seen: set[str] = set()
+        for surface in wanted:
+            name = surface.strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            resolution = resolutions.get(surface)
+            # **只建 unknown 的**：歧义（`ambiguous`）照旧整条拒收——那是两个**已经存在**
+            # 的人，建第三个只会让歧义更重（ADR 0004：产品从不替作者挑）。
+            if resolution is None or not resolution.unknown:
+                continue
+            if name in proposed_aliases or surface in proposed_aliases:
+                continue
+            node = self._graph.upsert_node(
+                NodeSpec(project_id=project_id, label=NodeLabel.CHARACTER, name=name)
+            )
+            profile = profiles.get(surface)
+            if profile is not None:
+                # 画像跟着一起落：它本来就是这一次抽取的产物，攒着不写等于让作者
+                # 在下一章再被问一次同一个人。
+                self._events.update_profile(
+                    project_id,
+                    node.id,
+                    CharacterProfilePatch(
+                        gender=profile.gender,
+                        personality=profile.personality,
+                        background=profile.background,
+                        character_notes=profile.character_notes,
+                    ),
+                )
+            created.append(node.id)
+        return created
 
     def _resolutions_after_identity(
         self, project_id: str, analysis: RawChapterAnalysis

@@ -1,36 +1,39 @@
-"""约束 → prompt 的**唯一**出口：X0 / X1 / X2 三臂（ADR 0010 / EVAL_PROTOCOL §2）。
+"""约束 → prompt 的**唯一**出口（ADR 0010）。
 
-三臂**不是三套 prompt 构造器**，是同一个函数的三个 `form` 取值。kill-gate 和产品起草共用它——
-否则 gate 测的就不是产品会发的东西（同 `checks/base.py` 的「判分器 == Validator，同一份代码」）。
+── ⚠️ 2026-08-25：三臂没了，`PromptForm` 整个删了 ────────────────────────
 
-── 一、X0 是 X1/X2 的**严格前缀**，这是结构，不是承诺（ADR 0010 D4）────────
+这个模块原来是「同一个函数的三个 `form` 取值」（X0 对照 / X1 清单 / X2 散文），
+为 M2 的 kill-gate 而生。M2 随秘密下线一起退役（[ADR 0039](../../../docs/adr/0039-secrets-offline.md)），
+而那之后：
 
-`_base()` 只有一份，三臂都走它；X1/X2 只在它算出的那段用户消息**尾部**追加一段图谱段。
-于是「X0 = X1 去掉图谱段之后逐字节剩下的东西」不是一句自觉，而是
-`x1[:-1] == x0[:-1]` 加 `x1[-1]["content"] == x0[-1]["content"] + "\\n\\n" + graph_section(...)`
-两条可执行断言（`tests/test_draft_assemble.py` 钉着）。
+- 生产上只有一处赋值（`product_draft.py` 的 `form = PromptForm.X1`）；
+- `NH_DRAFT_FORM` 那个协议 §6 点名的环境变量**从来没有被接上过**——全仓零处
+  `getenv` / `environ` 读它，它只活在 docstring、一条测试说明和已退役的协议里。
 
-**不许给某一臂单独加一句行为指令。** 那正是协议 §2 点名要修掉的 PLAN §5.7 内建混淆：
-X1 与 X2 之间只许差「清单 vs 散文」这一个变量，多出来的任何一句「请特别注意……」都会让
-`Δ2 − Δ1` 变成「form + 那句话」的合成效应，而 ADR 0009 会把它读成「form 重要」。
+所以 `PromptForm`、`DraftRequest.form`、`ChapterDraftRequest.form`、
+`check_request` 里那段四选一校验，**同一笔全部删掉**。渲染器从此只有一种形态。
 
-── 二、`cast` 三臂都有（ADR 0010 D6，本模块唯一影响实验结果的构造裁定）────
+**下面那几节的论证留着，因为它们今天仍然管着这个渲染器**——只是「三臂之间不许有差异」
+这句话现在读作「这一份 prompt 里不许出现没人负责的段落」。
 
-`cast` 是作者写在场景块 `<!-- nh: cast=... -->` 里的**称呼原文**，是输入不是图谱查询结果，
-所以它不算「图谱事实」，X0 也有。把它从 X0 拿掉会让 X0 写到别人身上去 —— 那不是「产品去掉
-图谱注入」，是**另一个任务**，臂间差异里会混进「写的根本不是同一场戏」。理由全文在 ADR 0010 D6，
-连「这条裁定往哪边错」一起写了。**改这一条要重造小册子并重跑整轮。**
+── 一、图谱段只追加在**尾部**，不重排前面任何一个字节（ADR 0010 D4）────────
 
-── 三、只有标签进 prompt，永不 tell（协议 §2 / 第 4 道 arch-guard）──────────
+`_base()` 算出那段用户消息，图谱段只往它尾部追加。这条性质原来是为了让 X0 成为 X1 的
+严格前缀（可逐字节验证），今天它剩下的价值是**改图谱段不会动到文风和上文那两块**——
+而那两块是前缀缓存的全部价值所在（同 `product_assemble` 的 `[文风][记忆][用户]` 顺序）。
+
+── 二、`cast` 进 prompt（ADR 0010 D6）────────────────────────────────────
+
+`cast` 是**称呼原文**，是调用方算好的输入不是本模块的图谱查询结果。不给模型这份名单，
+它就会写到别人身上去——那不是「少注入一点」，是**另一个任务**。理由全文在 ADR 0010 D6。
+
+── 三、只有显示名进 prompt，`props` 一个字符都不碰 ──────────────────────
 
 本模块只读 `ctx` 上的两类字段：`cast`、`forbidden_names` + 首现章。
 （2026-08-24 之前还有三类跟秘密有关的——`secret_labels`、`KnowledgeCell` 的三个标量、
 `matrix.characters/secrets` 的 `.name`。它们随秘密下线一起走了，ADR 0039。）
-**签名里没有 store**——拿不到 store 就查不了第二遍，prompt 里的事实和 `eval/leak.py` 判分用的
-事实必然是同一个对象算出来的。`.props` 一个字符都不碰（tell 住在那儿）。
-
-tell 一旦进了 X1/X2 的 prompt，两臂 100% 命中自己写进去的词，`Δ` 翻负，预注册裁决表逐字
-读出「KILL 起草线」——**把一个本来对的项目砍掉，而全程没有任何东西会红。**
+**签名里没有 store**——拿不到 store 就查不了第二遍，prompt 里的事实必然是调用方算好的
+那一个对象上的。作者写在节点上的 `twist` / `plot_note` 住在 `.props` 里，本模块碰不到它。
 
 ── 四、它拦不住什么（诚实交代）─────────────────────────────────────────────
 
@@ -38,16 +41,11 @@ tell 一旦进了 X1/X2 的 prompt，两臂 100% 命中自己写进去的词，`
   用自然语言写进 `goal`（「写萧决发现自己血脉有异——他还不知道那是家族封印的反噬」），
   本模块、第 4 道 arch-guard、类型系统**全都看不见**：判它需要回答「这句话是不是把伏笔说破了」，
   那是语义判断，ADR 0005 在 v1 里禁止本仓库长出这种能力。守它的是 ADR 0010 D3 末尾那条
-  review 判据，以及 `synth/leak_selfcheck.py` 的「`goal`/`prior` 不含任何 tell」放行条件
-  （精确子串，零语义）。**修正案 4 裁定 B 把它升成了机器判据，但那道闸在 `synth/`，不在这儿。**
-- **本模块不校验 X1 与 X2 的可比性。** 那是 `eval/confound_lint.py` 的活，且它是**独立的**
-  第二双眼睛：这里的渲染模板改一次，那边就该重新报一次专名集合与字数比。
-  本文件的测试里有一条同口径的自检，但它只覆盖测试里那几个 fixture，不是全量保证。
+  review 判据。（原来还有 `synth/leak_selfcheck.py` 的机器判据，它随 M2 退役，ADR 0039。）
 """
 
 from __future__ import annotations
 
-from enum import StrEnum
 from fractions import Fraction
 
 from .context import DraftContext, ResolvedConstraints
@@ -142,19 +140,6 @@ def product_tail_limit(
     return max(GATE_TAIL_CODE_POINTS, min(units, TAIL_UNITS_CEILING))
 
 
-class PromptForm(StrEnum):
-    """三臂 = 同一个渲染器的三个取值（协议 §2 那张表）。"""
-
-    X0 = "X0"
-    """对照臂：默认写作提示 + 上文 + 在场 + 本场目标。**零图谱事实。**"""
-
-    X1 = "X1"
-    """事实清单臂：X0 + 认知矩阵三态（含 `believed_value`）+ 秘密显示名 + 未来实体名/首现章。"""
-
-    X2 = "X2"
-    """叙事化臂：X0 + **同一份矩阵**改写成散文。与 X1 只差「清单 vs 散文」这一个变量。"""
-
-
 ZH_WRITING_PROMPT = """你是一位中文长篇小说的写作搭档。根据作者提供的上文和本场目标，写出这一场的正文。
 
 - 只输出正文：不写标题、章节号、小标题、创作说明，也不用 Markdown 标记。
@@ -219,7 +204,6 @@ def system_prompt(spec: LengthSpec, write_rule: str | None = None) -> str:
 def assemble(
     ctx: DraftContext,
     *,
-    form: PromptForm,
     goal: str,
     length: LengthSpec,
     previous_tail: str = "",
@@ -229,11 +213,9 @@ def assemble(
     """把一个场景的约束渲染成 OpenAI 兼容的 `messages`。
 
     Args:
-        ctx: **已解析**的约束集（`draft/context.py`）。它的类型本身就是「cast 无歧义且非空」
-            的证据——退化态（`must_not_reveal` = 全部秘密）在这个类型里表示不出来，
-            所以这里**不必也无法**再判一次。矩阵绑在它身上，X1/X2 拿的必然是同一份。
-        form: 三臂之一。**接受字符串**（`PromptForm(form)` 归一）：协议 §6 的 FORM-PIVOT
-            分支说生产默认翻成 `NH_DRAFT_FORM=X2`，那个值从环境变量上来时是 `str`。
+        ctx: 约束集（`draft/context.py`）。它的类型本身就是「cast 无歧义且非空」的证据
+            （`ResolvedConstraints`）或「不知道在场是谁」（`UnknownCastConstraints`），
+            所以这里**不必也无法**再判一次。
         goal: 这一场要写什么。**自由文本入口，本层看不见它有没有剧透**——见模块 docstring 第四节。
         previous_tail: 上文。空串 = 开篇，整个「上文」块不出现（不留一个空标题）。
         previous_tail_limit: 上文最多保留末尾多少个 code point。**默认值是 X0 对照臂的定义
@@ -247,18 +229,18 @@ def assemble(
         `[{"role": ..., "content": ...}]`。**本仓库少见的非 Pydantic 出参**，理由是它要原样
         进 `provider.complete(messages=...)` 的线上格式：包一层 Pydantic 只会在调用点
         `model_dump()` 再拆一次，而那次拆解是又一处可以悄悄改内容的地方。
-        `runs/*.jsonl` 落盘的也是这个形状——ADR 0010 说 tell 漏进 prompt 这类错误的**唯一**
-        可发现路径是人去读存下来的 prompt 原文，那就别在存之前再变换一次形状。
+        账上落的也是这个形状（`model_call.in_artifact`）——ADR 0010 说剧透漏进 prompt
+        这类错误的**唯一**可发现路径是人去读存下来的 prompt 原文，
+        那就别在存之前再变换一次形状。
 
     Raises:
-        ValueError: `form` 不是三臂之一；或 `goal` 是空白。空 goal 会让三臂都写不出确定的东西，
-            这条陷阱只贡献噪声——而它在 `runs/*.jsonl` 里看起来和正常行没有区别。
+        ValueError: `goal` 是空白。空 goal 让模型自己编一场戏，而它在账上看起来
+            和正常行没有区别。
     """
-    form = PromptForm(form)
     if not goal.strip():
         raise ValueError(
             "goal 是空的：这一场要写什么必须说清楚。"
-            "空 goal 让三臂各写各的，那条陷阱只往 Δ 里加方差，且事后从 runs/*.jsonl 看不出来。"
+            "空 goal 让模型自己编一场戏，而事后从账上看不出来这一稿为什么跑偏。"
         )
 
     messages = _base(
@@ -268,33 +250,26 @@ def assemble(
         previous_tail_limit=previous_tail_limit,
         write_rule=system_prompt(length, write_rule),
     )
-    section = graph_section(ctx, form)
+    section = graph_section(ctx)
     if section:
-        # **只追加，不重排、不改写前面任何一个字节**——D4 的严格前缀性质就是这一行。
+        # **只追加，不重排、不改写前面任何一个字节**（ADR 0010 D4，模块 docstring 第一节）。
         messages[-1] = {**messages[-1], "content": messages[-1]["content"] + "\n\n" + section}
     return messages
 
 
-def graph_section(ctx: DraftContext, form: PromptForm) -> str:
-    """X1/X2 相对 X0 多出来的那一段，**X0 恒为空串**。
+def graph_section(ctx: DraftContext) -> str:
+    """追加在用户消息尾部的那一段图谱事实。**没有可注入的东西时返回空串。**
 
-    公开出来是为了让「X0 是前缀」这条性质可以被**逐字节**验证（测试拿它重建 X1 的内容），
-    而不是靠肉眼比对两段渲染结果。`confound_lint` 若要单独比这一段也走这里。
+    公开出来是为了让「它只追加在尾部」这条性质可以被**逐字节**验证（测试拿它重建整段
+    用户消息），而不是靠肉眼比对两段渲染结果。
 
-    X1 与 X2 读的是**同一份**数据，差别只在措辞模板（清单 vs 散文）。
-
-    ⚠️ 秘密下线之后这儿只剩「尚未登场」一块（ADR 0039）：认知矩阵和禁写清单那两块
-    没了。三臂 X0/X1/X2 因此在产品侧只剩 X1 有调用方——**要不要塌成一个是另一个决定**，
-    记在 ADR 0039 的「范围之外」里。
+    ⚠️ 三臂（`PromptForm`）2026-08-25 删掉，本函数因此不再有 `form` 参数；
+    秘密下线（ADR 0039）之后这儿也只剩「尚未登场」一块。
     """
-    form = PromptForm(form)
-    if form is PromptForm.X0:
-        return ""
-
-    blocks = [b for b in (_forbidden_block(ctx, form),) if b]
+    blocks = [b for b in (_forbidden_block(ctx),) if b]
     if not blocks:
-        # 这一场确实没有任何图谱事实可注入（没有秘密、没有未来实体）。
-        # 此时三臂逐字节相同，是**正确的退化**：注入的内容为空，臂间差异也该为零。
+        # 这一场没有未来实体可禁。**返回空串而不是一个空标题**：
+        # 「【本场设定要点】」后面空一片会让模型以为有一份它没读到的清单。
         return ""
     return "【本场设定要点】\n" + "\n".join(blocks)
 
@@ -336,21 +311,20 @@ def _base(
         {"role": "system", "content": write_rule},
         {"role": "user", "content": "\n\n".join(parts)},
     ]
-def _forbidden_block(ctx: DraftContext, form: PromptForm) -> str:
-    """未来实体的名字 + 首现章。**这一侧「标签 ⟂ tell」不成立**：`血枭盟` 自身即检测词，
-    X1/X2 必然点它的名 → echo 风险 → 协议让 `future_leak` 只作描述性地板、不主导裁决
-    （`draft/context.py` 第三节说的就是这条）。这里照写不误，读结果的人要知道这一点。
+def _forbidden_block(ctx: DraftContext) -> str:
+    """未来实体的名字 + 首现章。
+
+    **这里必然点它们的名，那是设计不是泄漏**：不说「幽泉窟这一场不许出现」，
+    模型就不知道该躲开哪个词。
+
+    ⚠️ 2026-08-25 之前这里有两种渲染（X1 清单 / X2 散文），三臂删掉之后**只留清单那一种**
+    ——它是生产上唯一跑过的那一份（`product_draft.py` 的 form 恒为 X1）。散文那一版在
+    git 历史里，它是为「同一份数据两种排版」这个实验变量而写的，没有别的消费者。
     """
     entities = ctx.forbidden_entities
     if not entities:
         return ""
-    if form is PromptForm.X1:
-        listed = "、".join(
-            f"{e.node.name}（第 {e.first_appears_chapter} 章首现）" for e in entities
-        )
-        return f"尚未登场、这一场不得出现：{listed}"
-    first, *rest = entities
-    prose = f"{first.node.name}要到第 {first.first_appears_chapter} 章才头一回出现"
-    for e in rest:
-        prose += f"，{e.node.name}要到第 {e.first_appears_chapter} 章"
-    return prose + "；这一场里它们都还不该露面。"
+    listed = "、".join(
+        f"{e.node.name}（第 {e.first_appears_chapter} 章首现）" for e in entities
+    )
+    return f"尚未登场、这一场不得出现：{listed}"

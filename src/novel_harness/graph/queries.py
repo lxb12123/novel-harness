@@ -18,6 +18,7 @@ from typing import Any, Final, NamedTuple
 
 from ..events.models import EventCharacterRole, EventView, StoryEvent
 from .models import (
+    MIN_RULE_SURFACE_LEN,
     UNDIRECTED_EDGE_TYPES,
     AliasKind,
     AuditPointer,
@@ -38,6 +39,7 @@ from .models import (
     NodeLabel,
     NodeProps,
     NodeRef,
+    NodeUsage,
     RelocatePointer,
     RetirementReport,
     SnapshotUsage,
@@ -480,13 +482,89 @@ def merge_node_props(
 
 
 def update_node_name(conn: sqlite3.Connection, node_id: str, name: str) -> Node:
-    """改显示名。**canonical 别名不跟着改**（`put_chapter` 是唯一调用方，而 Chapter
-    节点没有 canonical 别名）。真要给人物改名，那是 M4 的别名合并，不是这里。"""
+    """改显示名。**canonical 别名不跟着改。**
+
+    ⚠️ 两个调用方，两种用法，别混：
+
+    - `put_chapter`：Chapter 节点**没有** canonical 别名（不在 `CANONICAL_ALIAS_LABELS`
+      里），所以它调这一个就够了；
+    - `sqlite_store.rename_node`：花名册条目**有** canonical 别名，它在同一个事务里
+      紧接着调 `update_canonical_alias_surface`。只改一个的后果是正文里叫新名字的地方
+      再也匹配不到他（`mentions.py` 那条 alternation 编的是别名表，不是 node.name）。
+    """
     cur = conn.execute(
         f"UPDATE node SET name = :name WHERE id = :id RETURNING {_NODE_COLS}",
         {"id": node_id, "name": name},
     )
     return to_node(_rows(cur)[0])
+
+
+def update_canonical_alias_surface(
+    conn: sqlite3.Connection, node_id: str, surface: str
+) -> None:
+    """把这个节点的 canonical 别名改成新的显示名。**只动 canonical 那一条。**
+
+    别的别名（「凤辣子」）是作者/抽取另外登记的称呼，改本名跟它们无关——
+    顺手一起改会把那些称呼抹掉，而它们是 canon（ADR 0004）。
+
+    `usable_for_rules` 跟着新名字重算：`upsert_node` 建它的时候判据就是
+    `len(name) >= 2`（schema 那条 CHECK 也是这么写的），改名之后不重算的话，
+    一个从「凌」改成「凌霄」的人会永远匹配不到正文。
+    """
+    conn.execute(
+        "UPDATE alias SET surface = :surface, usable_for_rules = :usable"
+        " WHERE node_id = :id AND kind = :kind",
+        {
+            "id": node_id,
+            "surface": surface,
+            "usable": int(len(surface) >= MIN_RULE_SURFACE_LEN),
+            "kind": AliasKind.CANONICAL.value,
+        },
+    )
+
+
+def node_usage(conn: sqlite3.Connection, project_id: str, node_id: str) -> NodeUsage:
+    """引擎在这个花名册条目上记了多少东西。**删它之前问这个**（见 `NodeUsage`）。
+
+    只数两样：**关系**（`edge.src|dst`）和**情节名单**（`event_participant` /
+    `event_knower`）。别名和 `summary_mention` 故意不数——理由写在 `NodeUsage` 上。
+
+    情节两张表用 `UNION` 去重：一个人同时是在场和知情时只算一条情节，
+    相加会报出一个比真实条数大的数，而那个数会被原样念给作者听
+    （同 `chapter_usage` 里 `edges` 那条 `OR` 的理由）。
+    """
+    row = conn.execute(
+        """
+        SELECT
+          (SELECT COUNT(*) FROM edge
+             WHERE project_id = :pid AND (src = :nid OR dst = :nid)) AS edges,
+          (SELECT COUNT(*) FROM (
+             SELECT event_id FROM event_participant
+              WHERE project_id = :pid AND character_id = :nid
+             UNION
+             SELECT event_id FROM event_knower
+              WHERE project_id = :pid AND character_id = :nid
+          )) AS events,
+          (SELECT name FROM node WHERE id = :nid) AS name
+        """,
+        {"pid": project_id, "nid": node_id},
+    ).fetchone()
+    return NodeUsage(
+        node_id=node_id,
+        name=str(row["name"] or ""),
+        edges=int(row["edges"]),
+        events=int(row["events"]),
+    )
+
+
+def delete_node(conn: sqlite3.Connection, node_id: str) -> None:
+    """把这个节点从库里抹掉。别名和 `summary_mention` 跟着 CASCADE 走。
+
+    **不检查引用**——那是调用方（`sqlite_store.delete_node`）的活，它要在同一个事务里
+    先问 `node_usage`。这里真有人引着的话外键会 CASCADE（不是抛），
+    所以那一步不是「最后一道」，是**唯一**一道。
+    """
+    conn.execute("DELETE FROM node WHERE id = :id", {"id": node_id})
 
 
 def insert_alias(

@@ -235,7 +235,7 @@ def test_an_empty_slot_leaves_the_prompt_byte_identical(
     缓存的形状改了（ADR 0019 边界六）。这一条同时是 `assemble_continuation` 的
     「空 = 原样返回」那条性质在真链路上的落点。
     """
-    from novel_harness.draft.assemble import CONTINUATION_GOAL, PromptForm, assemble
+    from novel_harness.draft.assemble import CONTINUATION_GOAL, assemble
     from novel_harness.draft.context import unknown_cast_constraints
     from novel_harness.draft.length import DraftLanguage, LengthSpec
     from novel_harness.draft.product_assemble import assemble_continuation
@@ -247,7 +247,7 @@ def test_an_empty_slot_leaves_the_prompt_byte_identical(
     finally:
         conn.close()
     spec = LengthSpec(language=DraftLanguage.ZH, min_units=80, target_units=150, max_units=300)
-    args = {"form": PromptForm.X1, "goal": CONTINUATION_GOAL, "length": spec}
+    args = {"goal": CONTINUATION_GOAL, "length": spec}
 
     assert assemble_continuation(ctx, (), **args) == assemble(ctx, **args)
 

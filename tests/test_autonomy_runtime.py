@@ -22,6 +22,7 @@ from novel_harness.focus import report_focus
 from novel_harness.graph import NodeLabel
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.ids import EntityType, new_id
+import seed
 from novel_harness.summary_schedule import scan_chapter_summary_state
 
 
@@ -141,10 +142,15 @@ def _runtime(db: str) -> BackgroundRuntime:
 def test_autonomy_schedules_missing_and_pump_fills_them_without_save(
     tmp_path: Path,
 ) -> None:
-    """导入一半生成好的书 → 不点保存 → autonomy 补缺章 → pump 变成真总结。"""
+    """导入一半生成好的书 → 不点保存 → autonomy 补缺章 → pump 变成真总结。
+
+    1/2 章总结和抽取都齐了，3/4 章两样都没有——**只有后两章该被排上**。
+    （2026-08-25 之前这条只给 1/2 造总结，抽取那一维当时还没人问。）
+    """
     db, pid, _ = _seed_book(tmp_path, 4)
-    _seed_paired_summary(db, pid, 1)
-    _seed_paired_summary(db, pid, 2)
+    for ch in (1, 2):
+        _seed_paired_summary(db, pid, ch)
+        seed.applied_extraction(db, pid, ch)
 
     runtime = _runtime(db)
     # 没有焦点：调度坐标 = 前沿章号 + 1 = 5，全部旧章都在 Δ≥1 的过去侧计权。
@@ -204,13 +210,66 @@ def test_autonomy_exempts_focused_chapter(tmp_path: Path) -> None:
         conn.close()
 
 
-def test_autonomy_does_not_double_queue_paired_chapters(tmp_path: Path) -> None:
-    """§2.2：已配对（正文没再动过）的章不重复入队——自治轮是收敛的。"""
+def test_autonomy_does_not_double_queue_chapters_with_nothing_left_to_do(
+    tmp_path: Path,
+) -> None:
+    """§2.2：该做的都做完了的章不重复入队——自治轮是收敛的。
+
+    **「做完」= 两维都做完**（2026-08-25）：总结配对**且**抽取跑过。
+    只造总结那一半的话这条会红，而那正是这次改动要的行为。
+    """
     db, pid, _ = _seed_book(tmp_path, 3)
-    _seed_paired_summary(db, pid, 1)
-    _seed_paired_summary(db, pid, 2)
-    _seed_paired_summary(db, pid, 3)
+    for ch in (1, 2, 3):
+        _seed_paired_summary(db, pid, ch)
+        seed.applied_extraction(db, pid, ch)
     runtime = _runtime(db)
 
     enqueued = runtime.autonomy_once()
-    assert enqueued == 0, f"全书已配对不应再入队，实得 {enqueued}"
+    assert enqueued == 0, f"两维都齐了不应再入队，实得 {enqueued}"
+
+
+def test_a_book_whose_summaries_are_all_paired_still_gets_extraction_ordered(
+    tmp_path: Path,
+) -> None:
+    """**这次改动的核心断言**：总结全齐、抽取一次没跑 → 照样下单，且单里带抽取那一支。
+
+    2026-08-25 之前这本书的扫描结论全是 `paired`，**下了 0 张单**——真书 158 章里有
+    155 章正是这个形态（导进来的，从没保存过），于是它们永远不会被抽取。
+    """
+    from novel_harness.chapter_refresh import BRANCH_EXTRACTION, BRANCH_SUMMARY
+    from novel_harness.summary_schedule import schedule_alignment
+
+    db, pid, _ = _seed_book(tmp_path, 3)
+    for ch in (1, 2, 3):
+        _seed_paired_summary(db, pid, ch)  # 抽取那一维故意不造
+
+    conn = connect(db)
+    try:
+        states = {
+            s.chapter_number: s
+            for s in scan_chapter_summary_state(conn, pid, draft_chapter=5)
+        }
+        for ch in (1, 2, 3):
+            assert states[ch].state == "paired", "前提：总结那一维是齐的"
+            assert states[ch].extraction == "missing", "前提：抽取那一维是空的"
+            assert states[ch].needs_work, "总结齐了不等于这一章没活要干"
+
+        decisions = schedule_alignment(
+            conn, pid, draft_chapter=5, ruleset_epoch=1, ruleset_hash="hash"
+        )
+        conn.commit()
+        assert set(decisions.values()) == {"queued_extraction"}, decisions
+
+        # 单**自带抽取那一支**，且**不带总结那一支**（总结本来就不缺，别重买）。
+        masks = [
+            int(row["missing_branch_mask"])
+            for row in conn.execute(
+                "SELECT missing_branch_mask FROM chapter_refresh_attempt"
+            ).fetchall()
+        ]
+        assert masks, "一张单都没下"
+        for mask in masks:
+            assert mask & BRANCH_EXTRACTION, f"单里没有抽取那一支：mask={mask}"
+            assert not mask & BRANCH_SUMMARY, f"总结不缺却排了总结：mask={mask}"
+    finally:
+        conn.close()

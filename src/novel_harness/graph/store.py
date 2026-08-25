@@ -54,6 +54,7 @@ from .models import (
     EvidenceSpec,
     InformationScope,
     Node,
+    NodeUsage,
     NodeSpec,
     Resolution,
     RetirementReport,
@@ -153,6 +154,21 @@ class SnapshotInUse(StoreError):
         super().__init__(
             f"快照 {usage.snapshot_id} 还被引用着"
             f"（证据 {usage.evidence} / 抽取 {usage.extraction_runs} / 提案 {usage.proposal_sets}）"
+        )
+
+
+class NodeInUse(StoreError):
+    """要删的那个花名册条目还被关系 / 情节引着（`NodeUsage.total > 0`）。
+
+    同 `ChapterInUse`：**拦的不是外键，是级联。** 到 `node` 的那几条外键全是
+    ON DELETE CASCADE，删得掉，而且一声不吭。
+    """
+
+    def __init__(self, usage: NodeUsage) -> None:
+        self.usage = usage
+        super().__init__(
+            f"「{usage.name}」还被引用着（关系 {usage.edges} / 情节 {usage.events}），"
+            "先把那几条改掉再删他"
         )
 
 
@@ -740,6 +756,49 @@ class CanonWriter(Protocol):
 
         实现必须把「查引用」和「删」罩进同一个事务：中间隔着一次声明的话，检查过的
         `usage=0` 会在 DELETE 执行时已经不成立，而外键会在那一刻才炸出来。
+        """
+        ...
+
+    def node_usage(self, project_id: str, node_id: str) -> NodeUsage:
+        """引擎在这个花名册条目上记了多少东西。**删它之前问这个。**
+
+        Raises:
+            NodeNotFound: `node_id` 不在本项目。
+        """
+        ...
+
+    def delete_node(self, project_id: str, node_id: str) -> NodeUsage:
+        """删掉花名册里的一条（**没有关系、没有情节引着它**时才删）。
+
+        它是「抽取自动建人物」（ADR 0020 补记）的配套：模型认错一个（真书上的
+        「袭人」），作者得有办法把它清掉，否则那个错永远往上下文里塞噪声。
+
+        跟着一起没的只有**这个节点自己的名字**（`alias`，CASCADE）和倒排索引行
+        （`summary_mention`，派生数据，下一次 `_ensure` 重算）。
+
+        Returns:
+            删掉之前数出来的那份 `NodeUsage`（全零）。**返回它而不是 `None`**：
+            同 `delete_chapter`，调用方要能把「删掉的是一个什么都没挂的条目」写进回执。
+
+        Raises:
+            NodeNotFound: `node_id` 不在本项目。
+            NodeInUse: 有关系或情节引着它（异常里带 `NodeUsage` 明细）。
+        """
+        ...
+
+    def rename_node(self, project_id: str, node_id: str, name: str) -> Node:
+        """改花名册里那一条的**显示名**，canonical 别名跟着一起改。
+
+        `node.name` 是显示真相，而 canonical 别名（surface == name）是它在
+        `mentions.py` 那条 alternation 里的**索引项**——只改一个，正文里叫新名字的地方
+        就再也匹配不到他（或者反过来，旧名字继续命中一个已经改过名的人）。
+        所以这两处**必须同一个事务里一起改**，调用方没有机会只改一半。
+
+        Raises:
+            NodeNotFound: `node_id` 不在本项目。
+            StoreError: 新名字空白，或本项目已经有一个同 label 同名的节点
+                （幂等键 `(project_id, label, name)` 撞了——两个同名的人会让
+                `resolve` 返回歧义，而歧义在面板上是整行消失）。
         """
         ...
 

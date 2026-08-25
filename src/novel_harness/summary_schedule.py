@@ -58,9 +58,12 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from .chapter_refresh import (
+    BRANCH_EXTRACTION,
     BRANCH_SUMMARY,
+    ExtractionAlignment,
     SummaryAlignment,
     ensure_refresh_coverage,
+    extraction_alignment,
     summary_alignment,
 )
 from .db import Connection
@@ -96,25 +99,55 @@ ROUND_LIMIT: int = 20
 三个触发源共用这一个数（定期扫描、扫描时的三态判定、写作时取到缺 / 旧），
 因为它编码的是同一件事——一单 = 一次模型调用，一轮别一次买太多。"""
 
-QUEUED_OUTCOMES: frozenset[str] = frozenset({"queued", "queued_overwrite"})
+QUEUED_OUTCOMES: frozenset[str] = frozenset(
+    {"queued", "queued_overwrite", "queued_extraction"}
+)
 """`schedule_alignment` 的结论里「这一轮真下了单」的那几种。
 
 调度方（`api/background_runtime.py`）数入队条数时用它，别再抄一份字面量——
-抄出来的那一份会在新增结论时静默漏数。"""
+抄出来的那一份会在新增结论时静默漏数。**2026-08-25 加 `queued_extraction` 时
+就靠这一条：三处消费方一个字都没改，数就对了。**"""
 
 
 @dataclass(frozen=True, slots=True)
 class ChapterSummaryState:
+    """这一章两个维度各自的状态。**两个维度，不是一个枚举。**
+
+    ⚠️ 2026-08-25 加 `extraction` 那一格时试过把「抽取没跑」并进 `state` 的 `missing`。
+    **不许那么做**：`retracted`（作者亲手撤掉的总结）那条「不算缺」的规矩会跟着糊掉——
+    他撤的是总结，跟抽取毫无关系，而并进去之后一个撤了总结、抽取也没跑的章会同时是
+    「不该动」和「该动」。两个问题分两格答，`needs_work` 那儿再合。
+    """
+
     chapter_id: str
     chapter_number: int
     state: SummaryAlignment
-    weight: float
+    """总结那一维：`missing` / `stale` / `retracted` / `paired`。"""
+
+    extraction: ExtractionAlignment = "applied"
+    """抽取那一维：`missing`（没跑过，或跑的是旧 generation）/ `applied`。
+
+    默认值是 `applied` 而不是 `missing`：这个类型有别的构造方（测试、旧调用方），
+    默认成 `missing` 会让它们凭空多下一批单。**扫描器一定显式传它。**
+    """
+
+    weight: float = 0.0
     """排队用的分数，**不是门槛**：只决定这一轮的名额给谁（0.0 = 排队尾，下一轮再来）。"""
 
     @property
     def needs_work(self) -> bool:
-        """这一章要不要下单。`retracted` 不算缺（他删一次，系统别买回来一次）。"""
-        return self.state in ("missing", "stale")
+        """这一章要不要下单 —— **判据是「该做的都做了没有」，不是「总结齐没齐」**。
+
+        `retracted` 不算缺（他删一次，系统别买回来一次）**只管总结那一维**：
+        撤了总结的章要是抽取还没跑，照样得下单，单里只带抽取那一支。
+
+        ── 2026-08-25 之前它只看总结，代价是 155 章永远不被抽取 ──────────────
+
+        实测：一本「四章总结全齐、抽取一次没跑」的书，扫描结论全是 `paired`，
+        **下了 0 张单**。真书更狠——158 章是导进来的，只有 3 章被保存过，
+        于是只跑过 3 次抽取，其余 155 章在调度器眼里永远「不需要工作」。
+        """
+        return self.state in ("missing", "stale") or self.extraction == "missing"
 
 
 def weight_for_chapter(*, draft_chapter: int, chapter_number: int) -> float:
@@ -145,12 +178,13 @@ def scan_chapter_summary_state(
     `draft_chapter` = 正在写的章（权重以它为原点往回量）。焦点章防抖不在这层做
     （调度方用 §3 单独豁免），这里只给每章的状态和排队分数。
 
-    每章的状态问 `chapter_refresh.summary_alignment`——**不在这儿写第二份判据**：
-    下单那一步用的就是它，两边同一个答案，「报了已排覆写、实际没排」才写不出来。
+    每章的状态问 `chapter_refresh.summary_alignment` 和 `extraction_alignment`
+    ——**不在这儿写第二份判据**：下单那一步用的就是它们，两边同一个答案，
+    「报了已排覆写、实际没排」才写不出来。
     """
     rows = conn.execute(
         """
-        SELECT c.id AS chapter_id, c.number AS number
+        SELECT c.id AS chapter_id, c.number AS number, c.snapshot_generation AS generation
           FROM chapter c
           JOIN chapter_snapshot cur_snap
             ON cur_snap.chapter_id = c.id
@@ -164,6 +198,12 @@ def scan_chapter_summary_state(
             chapter_id=str(row["chapter_id"]),
             chapter_number=int(row["number"]),
             state=summary_alignment(conn, project_id, str(row["chapter_id"])),
+            extraction=extraction_alignment(
+                conn,
+                project_id,
+                str(row["chapter_id"]),
+                int(row["generation"] or 1),
+            ),
             weight=weight_for_chapter(
                 draft_chapter=draft_chapter, chapter_number=int(row["number"])
             ),
@@ -194,7 +234,8 @@ def schedule_alignment(
 ) -> dict[int, str]:
     """把本轮该补/该覆写的章送进既有对齐队列；返回 `{章号: 处理结论}`。
 
-    - 处理所有 `needs_work`（missing 或 stale）的章，**不管离作者多远**；
+    - 处理所有 `needs_work` 的章（总结 missing/stale **或**抽取没跑），
+      **不管离作者多远**；
     - 焦点中的那一章豁免（§3 防抖：正写的章不动）——这是唯一的例外；
     - 入队走 `ensure_refresh_coverage`（missing 与 stale 都让默认 mask 带上
       `BRANCH_SUMMARY` → dispatcher 会 `ensure` 生成/覆写），结果写进
@@ -202,8 +243,13 @@ def schedule_alignment(
       取不完的下一轮接着取，直到池子空（幂等收敛，补完就停）。
 
     返回的结论是给 UI/日志看的，不是断言：`focused`/`paired`/`retracted`/`budget`
-    都是「这轮不碰它」的正当理由，不是失败。**只有单子里真的带着总结那一项才报
-    `queued` / `queued_overwrite`**（今天这两者对不上，见模块头）。
+    都是「这轮不碰它」的正当理由，不是失败。**报什么 = 单子里真的排了什么**：
+    带总结那一支才报 `queued` / `queued_overwrite`，只带抽取那一支报
+    `queued_extraction`（今天这两者对不上过，见模块头）。
+
+    ⚠️ **总结齐了但抽取没跑的章，`state` 仍然是 `paired`** —— 结论词报的是
+    「这一轮排了什么」，不是「总结那一维什么状态」。想看总结那一维单独的答案，
+    读 `ChapterSummaryState.state`。
     """
     states = scan_chapter_summary_state(
         conn, project_id, draft_chapter=draft_chapter
@@ -239,6 +285,11 @@ def _place_order(
 ) -> str:
     """给一章下一单（`needs_work` 的章才配调），返回这一章的结论。
 
+    **单子带哪几支由 `_default_missing_mask` 算**，这里只读它算出来的 mask 报个结论。
+    2026-08-25 之前这儿看到「mask 里没有总结」就报 `no_summary_branch`——那时
+    只有总结那一维会把章排上来，所以「没有总结支」等价于「白排了」。今天不是了：
+    一个总结齐了、抽取没跑的章排上来，mask 里本来就只有抽取那一支。
+
     **三个触发源下的是同一种单**，所以这一步只有一份实现：定期扫描、扫描时的三态判定、
     以及写作时取总结取到缺 / 旧（`request_summary_backfill`）。抄第二份的下场是
     「报了已排、实际没排」在新入口上再犯一次——那正是 2026-08-22 刚修掉的病。
@@ -272,11 +323,13 @@ def _place_order(
         # 同 basis 已有一个终态 FAILED/BLOCKED 的 coverage attempt：不自动重付
         # （Task 16 纪律），这章要作者手动处理。不算本轮入队预算。
         return "attention_required"
-    if not decision.missing_branch_mask & BRANCH_SUMMARY:
-        # 报什么 = 下了什么。单子里没有总结那一项就不许自称排了总结的活——
-        # 这正是 2026-08-22 那个 bug 的形状（报 queued_overwrite、一单没下）。
-        return "no_summary_branch"
-    return "queued_overwrite" if item.state == "stale" else "queued"
+    # 报什么 = 下了什么。单子里没有总结那一项就不许自称排了总结的活——
+    # 这正是 2026-08-22 那个 bug 的形状（报 queued_overwrite、一单没下）。
+    if decision.missing_branch_mask & BRANCH_SUMMARY:
+        return "queued_overwrite" if item.state == "stale" else "queued"
+    if decision.missing_branch_mask & BRANCH_EXTRACTION:
+        return "queued_extraction"
+    return "no_branch_ordered"
 
 
 def request_summary_backfill(

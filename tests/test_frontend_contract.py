@@ -288,6 +288,12 @@ def test_frontend_fixture_matches_the_real_api(
         "summaryMentionTrail",
         client.get(f"{base}/nodes/{book['萧决']}/summary-mentions"),
     )
+    # ── 花名册那一列出场章数：**抓第二份，抓在总结落地之后** ──────────────────
+    # 上面那份 `roster` 抓在建书之后、总结之前，所以它每一行都是 0。那一份不能动
+    # （几十个组件测试吃着它），但**只有 0 的样本证明不了排序**：前端那一格要按次数
+    # 降序 + 一颗倒序切换，全 0 的话两个方向渲染出来一模一样，测试永远绿。
+    # 这一份里萧决和青云城主府各出现在 1 章，别的还是 0——两档，够排序咬得住。
+    grab("rosterWithCounts", client.get(f"{base}/roster"))
 
     # ── 改一条**已经生效**的事实（1.1）+ 活动日志（2.1）─────────────────────
     # 这儿原来先打一次 `/canon/knowledge`，好让日志里有一条**带真跳转坐标**的

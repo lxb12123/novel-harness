@@ -185,7 +185,7 @@ def _counting_runtime(db: str, calls: dict[str, int]):
     from novel_harness.api.background_runtime import BackgroundRuntime
     from novel_harness.draft.provider import CompletionResult
     from novel_harness.draft.rolling_summary import RollingSummarizer
-    from novel_harness.extract import RawChapterAnalysis
+    from novel_harness.extract import RawChapterAnalysis, RawEvent
     from novel_harness.extract.runner import ExtractionRunner
 
     def conn_factory():
@@ -193,9 +193,23 @@ def _counting_runtime(db: str, calls: dict[str, int]):
 
     def extraction(_request):
         calls["extraction"] = calls.get("extraction", 0) + 1
+        # ⚠️ **`events=()` 构造时就抛**（`RawChapterAnalysis.events` 是 min_length=1），
+        # 而这句构造在 runner 的 try 里 —— 于是每一章都以 `provider_failure` 收场。
+        # 这个桩的抽取那一半在 2026-08-25 之前**从来没有工作过**，且没有任何断言看得见：
+        # 那天之前调度器根本不问抽取那一维。判据一扩宽它就自己露出来了（永远收敛不了）。
         return CompletionResult(
             text=RawChapterAnalysis(
-                events=(), state_updates=(), character_profiles=()
+                events=(
+                    RawEvent(
+                        summary="李管家没说话。",
+                        quote="李管家什么也没说。",
+                        participants=("李管家",),
+                        knowers=("李管家",),
+                        confidence=0.95,
+                    ),
+                ),
+                state_updates=(),
+                character_profiles=(),
             ).model_dump_json(),
             model="stub-model",
             finish_reason="stop",

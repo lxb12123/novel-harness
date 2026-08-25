@@ -19,13 +19,13 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable, Collection, Iterator, Sequence
 from contextlib import AbstractContextManager, contextmanager
-from typing import Final
 
 from ..decisions import quote_hash
 from ..ids import EntityType, new_id
 from ..text import anchor
 from . import queries
 from .models import (
+    MIN_RULE_SURFACE_LEN,
     CANONICAL_ALIAS_LABELS,
     AliasHit,
     AliasKind,
@@ -52,6 +52,7 @@ from .models import (
     NodeLabel,
     NodeProps,
     NodeSpec,
+    NodeUsage,
     Resolution,
     RetirementReport,
     StateSnapshot,
@@ -69,6 +70,7 @@ from .store import (
     ChapterInUse,
     ChapterWriteConflict,
     CanonEdgeRefused,
+    NodeInUse,
     NodeNotFound,
     QuoteMismatch,
     SnapshotInUse,
@@ -77,15 +79,6 @@ from .store import (
     SupersedeConflict,
 )
 
-MIN_RULE_SURFACE_LEN: Final = 2
-"""canonical 别名的 `usable_for_rules` 阈值 —— `alias` 表那条
-`CHECK (usable_for_rules = 0 OR length(surface) >= 2)` 在应用层的同一个数。
-
-它在这里的**唯一**用途是让 1 字名的人物（真书里有）建得出节点：不判这一下，
-`upsert_node` 会拿 `usable_for_rules=1` 去撞那条 CHECK，于是**建节点整个失败**。
-schema 的立场是「短 surface 可以存在，只是不许被规则拿去匹配正文」（ADR 0004：
-「音」「决」去正文里匹配 = 满篇误报），不是「1 字名的人不许进这本书」。
-"""
 
 
 def _default_edge_id(project_id: str) -> str:
@@ -1160,6 +1153,54 @@ class SqliteStoryGraph:
             if not usage.is_free():
                 raise SnapshotInUse(usage)
             queries.delete_snapshot(self._conn, snapshot_id)
+
+    def node_usage(self, project_id: str, node_id: str) -> NodeUsage:
+        self._require_node(project_id, node_id, what="node_id")
+        return queries.node_usage(self._conn, project_id, node_id)
+
+    def delete_node(self, project_id: str, node_id: str) -> NodeUsage:
+        # 数引用和删在**同一个事务**里。到 `node` 的那几条外键全是 ON DELETE CASCADE，
+        # 所以这道闸不是「最后一道」是**唯一**一道：中间隔着一次抽取的话，
+        # 数出来的 0 到 DELETE 那一刻已经不成立，而级联不会抱怨。
+        with _transaction(self._conn):
+            self._require_node(project_id, node_id, what="node_id")
+            usage = queries.node_usage(self._conn, project_id, node_id)
+            if not usage.is_free():
+                raise NodeInUse(usage)
+            queries.delete_node(self._conn, node_id)
+            return usage
+
+    def rename_node(self, project_id: str, node_id: str, name: str) -> Node:
+        # 改名 = 改两处：`node.name`（显示真相）和 canonical 别名的 surface
+        # （`mentions.py` 那条 alternation 编的是别名表）。**同一个事务**，
+        # 调用方没有机会只改一半 —— 只改前者，正文里叫新名字的地方就再也匹配不到他。
+        with _transaction(self._conn):
+            node = self._require_node(project_id, node_id, what="node_id")
+            new_name = name.strip()
+            if not new_name:
+                raise StoreError("新名字不能是空白")
+            if new_name == node.name:
+                return node
+            clash = [
+                found
+                for found in queries.find_node_by_name(
+                    self._conn, project_id, node.label, new_name
+                )
+                if found.id != node_id
+            ]
+            if clash:
+                # 幂等键 `(project_id, label, name)` 撞了。放行的后果是 `resolve` 返回
+                # 两个 hit ⇒ `Resolution.ambiguous` ⇒ `usable_for_rules` 为假 ⇒
+                # **面板上整行消失**，而没有任何一步会报错（同 `upsert_node` 那条论证）。
+                raise StoreError(
+                    f"项目 {project_id} 里已经有一个叫「{new_name}」的"
+                    f"{node.label.value}（{clash[0].id}）：两个同名的会让称呼变成歧义，"
+                    "而歧义在面板上是整行消失"
+                )
+            renamed = queries.update_node_name(self._conn, node_id, new_name)
+            if node.label in CANONICAL_ALIAS_LABELS:
+                queries.update_canonical_alias_surface(self._conn, node_id, new_name)
+            return renamed
 
     def delete_chapter(self, project_id: str, number: int) -> ChapterUsage:
         # 数引用和删在同一个事务里。**这一条比 delete_chapter_snapshot 那条更要紧**：

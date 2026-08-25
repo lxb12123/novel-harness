@@ -19,6 +19,58 @@ describe("SystemNotifications", () => {
     expect(screen.queryByText(/现在没有需要你注意的/)).toBeNull();
   });
 
+  it("同一档攒到 4 条就折叠成一行，逐条的动作还在", async () => {
+    // ── 这一条钉的是「一次冒出上百条」那一屏（2026-08-25）───────────────
+    //
+    // 定期扫描从这一天起也管抽取（`ChapterSummaryState.needs_work`），于是一本
+    // 158 章的老书里那 155 章会**第一次**被整理，其中「一件都没留下」的那些各落
+    // 一条通知。摊开就是上百张卡片，每张两颗按钮——那不是「告诉作者」，
+    // 那是让他关掉这一格。
+    useCoords.setState({ projectId: PID });
+    const many = Array.from({ length: 12 }, (_, i) => ({
+      id: `notice:${i}`,
+      project_id: PID,
+      kind: "extraction_yielded_nothing" as const,
+      status: "OPEN" as const,
+      chapter_number: 12 - i, // 落库顺序故意是乱的
+      title: `第 ${12 - i} 章整理完了，一件都没留下`,
+      jump: null,
+      actions: ["ignore"],
+      created_at: "2026-08-25T00:00:00Z",
+    }));
+    renderWithApi(<SystemNotifications />, [{ match: /\/notifications$/, body: many }]);
+
+    // 折叠成一行：报条数、摆章号，而**章号按大小排**（作者找的是第几章）。
+    expect(await screen.findByText(/12 条/)).toBeInTheDocument();
+    expect(screen.getByText(/第 1、2、3、4/)).toBeInTheDocument();
+    // 12 张卡片没有摊开：那句标题只出现在折叠头上，不是 12 遍。
+    expect(screen.queryAllByText(/这一章什么都没整理出来/)).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /不再提醒这一条/ })).toBeNull();
+
+    // **动作一个都没少**，只是默认收着。
+    await userEvent.click(screen.getByRole("button", { name: "逐条看" }));
+    expect(screen.queryAllByRole("button", { name: /不再提醒这一条/ })).toHaveLength(12);
+  });
+
+  it("少于 4 条照旧一条一张卡 —— 一两条的时候摊开更好读", async () => {
+    useCoords.setState({ projectId: PID });
+    const two = Array.from({ length: 2 }, (_, i) => ({
+      id: `notice:${i}`,
+      project_id: PID,
+      kind: "extraction_yielded_nothing" as const,
+      status: "OPEN" as const,
+      chapter_number: i + 1,
+      title: `第 ${i + 1} 章整理完了，一件都没留下`,
+      jump: null,
+      actions: ["ignore"],
+      created_at: "2026-08-25T00:00:00Z",
+    }));
+    renderWithApi(<SystemNotifications />, [{ match: /\/notifications$/, body: two }]);
+
+    expect(await screen.findAllByText(/这一章什么都没整理出来/)).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "逐条看" })).toBeNull();
+  });
+
   it("没有 OPEN 时是一句「写就是了」，不是一个空面板", async () => {
     useCoords.setState({ projectId: PID });
     renderWithApi(<SystemNotifications />, [

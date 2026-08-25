@@ -45,7 +45,6 @@ from novel_harness.draft.assemble import (
     DEFAULT_WRITING_PROMPT,
     EN_WRITING_PROMPT,
     WRITE_RULE_FORBIDDEN_HINTS,
-    PromptForm,
     ZH_WRITING_PROMPT,
     assemble,
     graph_section,
@@ -89,9 +88,9 @@ def _full_ctx(*, with_tell: bool = False) -> ResolvedConstraints:
     )
 
 
-def _arm(ctx: ResolvedConstraints, form: PromptForm) -> list[dict[str, str]]:
-    """同一份 goal / previous_tail 喂三臂 —— 臂间**唯一**允许变的是 `form`。"""
-    return assemble(ctx, form=form, goal=GOAL, length=M2_LENGTH_SPEC, previous_tail=TAIL)
+def _rendered(ctx: ResolvedConstraints) -> list[dict[str, str]]:
+    """渲染一次，固定 goal / previous_tail。（2026-08-25 之前它叫 `_arm` 并收一个 `form`。）"""
+    return assemble(ctx, goal=GOAL, length=M2_LENGTH_SPEC, previous_tail=TAIL)
 
 
 def _text(messages: list[dict[str, str]]) -> str:
@@ -99,66 +98,52 @@ def _text(messages: list[dict[str, str]]) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# ① D4：三臂共用一个 base，X0 是严格前缀
+# ① D4：图谱段只追加在尾部
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_x0_is_the_byte_exact_prefix_of_both_injected_arms() -> None:
+def test_the_graph_section_is_appended_at_the_tail_byte_for_byte() -> None:
     """**这条是 D4 从「一句承诺」变成「一条测试」的那一步。**
 
-    不是「看起来差不多」：系统消息逐字节相同、用户消息的前缀逐字节相同，
-    追加的那一段可以被 `graph_section()` 原样重建出来。
+    不是「看起来差不多」：去掉尾部那段图谱段之后剩下的东西，可以被逐字节重建出来，
+    而它就是「没有任何图谱事实时会发出去的那一份」。
+
+    （2026-08-25 之前这条量的是「X0 是 X1/X2 的严格前缀」。三臂删了，性质没变：
+    **图谱段只追加，不重排、不改写前面任何一个字节**——那两块是前缀缓存的全部价值。）
     """
     ctx = _full_ctx()
-    x0 = _arm(ctx, PromptForm.X0)
-    x1 = _arm(ctx, PromptForm.X1)
-    x2 = _arm(ctx, PromptForm.X2)
+    rendered = _rendered(ctx)
+    section = graph_section(ctx)
+    assert section, "这个 fixture 本来就该有图谱段 —— 没有的话下面全是空转"
 
-    assert x0[:-1] == x1[:-1] == x2[:-1]  # 系统消息（含 house style）逐字节同一份
-    assert [m["role"] for m in x0] == [m["role"] for m in x1] == [m["role"] for m in x2]
+    body = rendered[-1]["content"]
+    assert body.endswith("\n\n" + section)
 
-    base = x0[-1]["content"]
-    assert x1[-1]["content"] == base + "\n\n" + graph_section(ctx, PromptForm.X1)
-    assert x2[-1]["content"] == base + "\n\n" + graph_section(ctx, PromptForm.X2)
-    # 反向也写出来：去掉图谱段之后剩下的，就是 X0，一个字节不多不少。
-    assert x1[-1]["content"].removesuffix("\n\n" + graph_section(ctx, PromptForm.X1)) == base
-
-
-def test_the_graph_section_is_empty_for_the_control_arm() -> None:
-    """X0 = 「零图谱事实」（协议 §2）。这条是上面那条前缀性质的另一半。"""
-    assert graph_section(_full_ctx(), PromptForm.X0) == ""
+    base = body.removesuffix("\n\n" + section)
+    # 反向：把图谱段拿掉之后剩下的，逐字节等于「没有未来实体时」渲染出来的那一份。
+    empty_ctx = resolve_constraints(FakeGraph([XIAO_JUE, GU_QINGYIN], []), PID, 5, [GU_QINGYIN.name])
+    bare = assemble(empty_ctx, goal=GOAL, length=M2_LENGTH_SPEC, previous_tail=TAIL)
+    assert graph_section(empty_ctx) == ""
+    assert bare[0] == rendered[0]  # 系统消息（含 house style）逐字节同一份
+    assert base.replace("萧决、李管家、顾清音", "顾清音") == bare[-1]["content"]
 
 
-def test_the_control_arm_names_no_future_entity() -> None:
-    """X0 里不许出现未来实体名——否则「对照」二字不成立。"""
-    ctx = _full_ctx()
-    text = _text(_arm(ctx, PromptForm.X0))
+def test_the_cast_is_in_the_prompt() -> None:
+    """ADR 0010 D6：`cast` 是调用方算好的**输入**，不是本模块的图谱查询结果。
 
-    for name in ctx.forbidden_names:
-        assert name not in text
-    # 非空证明：这几个名字**确实存在**，是被 X0 挡掉的，不是 fixture 本来就空。
-    assert ctx.forbidden_names == ["血枭盟", "幽泉窟"]
-
-
-def test_the_cast_is_in_all_three_arms() -> None:
-    """ADR 0010 D6：`cast` 是作者写在场景块里的**输入**，不是图谱查询的结果。
-
-    把它从 X0 拿掉会让 X0 写到别人身上去 → 臂间差异里混进「写的不是同一场戏」，
-    还可能把 X0 的泄漏率压到地板线 0.50 以下 → 协议 §6 第一行判 INVALID，
-    而一个由 prompt 构造方式造成的 INVALID，重造多少次陷阱都不会好。
+    不给模型这份名单，它就会写到别人身上去 —— 那不是「少注入一点」，是另一个任务。
     """
     ctx = _full_ctx()
-    for form in PromptForm:
-        text = _text(_arm(ctx, form))
-        for who in ctx.cast:
-            assert who in text, f"{form} 少了在场角色 {who}"
+    text = _text(_rendered(ctx))
+    for who in ctx.cast:
+        assert who in text, f"少了在场角色 {who}"
 
 
 def test_the_previous_tail_is_optional_and_leaves_no_empty_heading() -> None:
     """开篇（`previous_tail=""`）不该在 prompt 里留一个空的「上文」标题。"""
     ctx = _full_ctx()
-    with_tail = _arm(ctx, PromptForm.X0)
-    without = assemble(ctx, form=PromptForm.X0, goal=GOAL, length=M2_LENGTH_SPEC)
+    with_tail = _rendered(ctx)
+    without = assemble(ctx, goal=GOAL, length=M2_LENGTH_SPEC)
 
     assert TAIL in with_tail[-1]["content"]
     assert "【上文】" in with_tail[-1]["content"]
@@ -169,22 +154,20 @@ def test_the_previous_tail_is_optional_and_leaves_no_empty_heading() -> None:
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_the_two_injected_arms_say_the_same_things_in_two_layouts() -> None:
-    """专名集合相同、章号集合相同、字数在 ±15% 内 —— 同一份数据两种排版。
+def test_the_graph_section_names_every_future_entity_and_its_chapter() -> None:
+    """禁写清单里**每一个**实体的名字和首现章都要在，少一个就是少注入了一条事实。
 
-    它一起排除的是最贵的那种混淆：X2 顺手多带一句行为指令，于是两臂差的不只是排版。
-    （这一段只剩「尚未登场」一块，所以专名集合就是那几个未来实体的名字。）
+    （2026-08-25 之前这条比的是 X1 与 X2 两种排版的专名集合 / 章号集合 / 字数比。
+    三臂删了，只剩清单那一种渲染，所以它改成直接量那一份。）
     """
     ctx = _full_ctx()
-    s1 = graph_section(ctx, PromptForm.X1)
-    s2 = graph_section(ctx, PromptForm.X2)
+    section = graph_section(ctx)
     known = list(ctx.forbidden_names)
     assert known, "没有未来实体 —— 这条测试在空转"
 
-    assert {n for n in known if n in s1} == {n for n in known if n in s2} == set(known)
-    # 章号也必须一一对应：X2 少写一个「第 8 章首现」就是少注入了一条事实。
-    assert set(re.findall(r"\d+", s1)) == set(re.findall(r"\d+", s2))
-    assert 0.85 <= len(s2) / len(s1) <= 1.15, f"字数比 {len(s2) / len(s1):.3f} 出界"
+    assert {n for n in known if n in section} == set(known)
+    chapters = {str(e.first_appears_chapter) for e in ctx.forbidden_entities}
+    assert chapters <= set(re.findall(r"\d+", section))
 
 
 def test_no_forbidden_entities_leaves_no_dangling_line() -> None:
@@ -195,11 +178,10 @@ def test_no_forbidden_entities_leaves_no_dangling_line() -> None:
     store = FakeGraph([XIAO_JUE, GU_QINGYIN], [])
     ctx = resolve_constraints(store, PID, 5, [GU_QINGYIN.name])
 
-    for form in (PromptForm.X1, PromptForm.X2):
-        assert graph_section(ctx, form) == ""
+    assert graph_section(ctx) == ""
 
 
-def test_no_tell_and_no_props_reach_any_arm() -> None:
+def test_no_alias_and_no_props_reach_the_prompt() -> None:
     """**节点属性里作者写的东西一个字都不许进 prompt。**
 
     `NodeProps` 是 `extra="allow"` 的：作者写在未来实体上的 `plot_note`（「第 200 章
@@ -210,11 +192,11 @@ def test_no_tell_and_no_props_reach_any_arm() -> None:
     跟秘密无关：任何一类节点的 props 都装得下作者写的剧透。）
     """
     ctx = _full_ctx(with_tell=True)
-    for form in PromptForm:
-        text = _text(_arm(ctx, form))
-        assert TWIST not in text, f"{form} 的 prompt 里出现了 props 里的字"
+    text = _text(_rendered(ctx))
+    assert TWIST not in text, "prompt 里出现了 props 里的字"
+    assert TELL not in text, "prompt 里出现了非 canonical 别名"
     # 进 prompt 的是**显示名** + 首现章，别的一个字都没有。
-    assert "幽泉窟" in _text(_arm(ctx, PromptForm.X1))
+    assert "幽泉窟" in text
 
 
 def test_the_tell_really_is_reachable_in_the_graph() -> None:
@@ -253,23 +235,21 @@ def test_default_writing_prompts_do_not_constrain_control_arm_content() -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# ④ 退化形态：没有约束可注入时，三臂必须收敛成同一份
+# ④ 退化形态：没有约束可注入时，整段不出
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_nothing_to_inject_collapses_all_three_arms_into_one() -> None:
-    """没有未来实体 → 图谱段为空 → 三臂逐字节相同。
+def test_nothing_to_inject_leaves_the_prompt_without_a_graph_section() -> None:
+    """没有未来实体 → 图谱段为空串 → 用户消息以【这一场要写】收尾。
 
-    这是**正确的退化**，不是 bug：注入的内容为空，臂间差异也该为零。
-    反过来说，此时若 X1 仍多出一个「【本场设定要点】」空标题，那就是一句只有注入臂才有的
-    额外指令 —— 正是反混淆铁律要禁的东西。
+    此时若仍多出一个「【本场设定要点】」空标题，模型会以为有一份它没读到的清单。
     """
     store = FakeGraph([XIAO_JUE, GU_QINGYIN], [])
     ctx = resolve_constraints(store, PID, 5, [XIAO_JUE.name])
 
     assert ctx.forbidden_names == []
-    assert graph_section(ctx, PromptForm.X1) == graph_section(ctx, PromptForm.X2) == ""
-    assert _arm(ctx, PromptForm.X0) == _arm(ctx, PromptForm.X1) == _arm(ctx, PromptForm.X2)
+    assert graph_section(ctx) == ""
+    assert "【本场设定要点】" not in _text(_rendered(ctx))
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -277,40 +257,38 @@ def test_nothing_to_inject_collapses_all_three_arms_into_one() -> None:
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_form_accepts_the_string_that_comes_from_the_environment() -> None:
-    """协议 §6 的 FORM-PIVOT 分支说生产默认翻成 `NH_DRAFT_FORM=X2` —— 那个值是 `str`。
+def test_the_renderer_takes_no_form_argument_any_more() -> None:
+    """**三臂删干净了**：多传一个 `form=` 当场 TypeError，不是被静默吃掉。
 
-    `PromptForm(form)` 归一，顺带让写错的取值在**渲染时**就抛，而不是安静地当成 X0
-    （那会让一整臂变成对照组，Δ 恒为 0，裁决表读出 KILL）。
+    没有这一条，某个还记着老签名的调用方会传一个谁都不读的 `form=`，
+    而它在运行时长得跟正常调用一模一样。
     """
     ctx = _full_ctx()
-    assert assemble(ctx, form="X2", goal=GOAL, length=M2_LENGTH_SPEC) == assemble(
-        ctx, form=PromptForm.X2, goal=GOAL, length=M2_LENGTH_SPEC
-    )
-    with pytest.raises(ValueError):
-        assemble(ctx, form="x2", goal=GOAL, length=M2_LENGTH_SPEC)  # 大小写不同 = 不是那个取值
-    with pytest.raises(ValueError):
-        assemble(ctx, form="X3", goal=GOAL, length=M2_LENGTH_SPEC)
+    with pytest.raises(TypeError):
+        assemble(ctx, form="X1", goal=GOAL, length=M2_LENGTH_SPEC)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        graph_section(ctx, "X1")  # type: ignore[call-arg]
 
 
 def test_a_blank_goal_is_rejected_at_render_time() -> None:
-    """空 goal 让三臂各写各的：那条陷阱只往 Δ 里加方差，而事后看 `runs/*.jsonl` 看不出异常。"""
+    """空 goal 让模型自己编一场戏，而事后从账上看不出来这一稿为什么跑偏。"""
     ctx = _full_ctx()
     with pytest.raises(ValueError, match="goal"):
-        assemble(ctx, form=PromptForm.X1, goal="   ", length=M2_LENGTH_SPEC)
+        assemble(ctx, goal="   ", length=M2_LENGTH_SPEC)
 
 
 def test_assemble_needs_no_store_at_all() -> None:
     """ADR 0010 D2：签名里没有 store、没有 project_id。**拿不到 store 就查不了第二遍。**
 
     只要签名里有 store，某天就会有人为了「让模型知道得更全」在这里补一次查询——
-    那一刻起 prompt 里的事实和 `eval/leak.py` 判分用的事实就是两次独立查询的结果，
-    gate 测的不再是产品会发的东西。
+    那一刻起 prompt 里的事实就不再是调用方算好的那一份，而**没有任何东西会红**。
+
+    这条同时钉住「参数集合就这几个」：`form` 2026-08-25 从这张单子上删了（三臂下线），
+    加回来一个谁都不读的参数是这个模块最容易长出来的那种赘生物。
     """
     params = set(inspect.signature(assemble).parameters)
     assert params == {
         "ctx",
-        "form",
         "goal",
         "length",
         "previous_tail",
@@ -353,14 +331,13 @@ def test_custom_write_rule_cannot_bypass_the_length_instruction() -> None:
     assert "1500 words" in prompt
 
 
-def test_all_arms_share_the_exact_same_bilingual_system_prompt() -> None:
+def test_the_system_prompt_carries_the_length_and_no_graph_facts() -> None:
+    """系统消息里有长度档，**没有**图谱段——图谱事实只许出现在用户消息尾部。"""
     ctx = _full_ctx()
-    arms = [_arm(ctx, form) for form in PromptForm]
+    system = _rendered(ctx)[0]["content"]
 
-    assert [arm[0] for arm in arms] == [arms[0][0]] * 3
-    assert "2000–3100 字" in arms[0][0]["content"]
-    assert graph_section(ctx, PromptForm.X1) not in arms[1][0]["content"]
-    assert graph_section(ctx, PromptForm.X2) not in arms[2][0]["content"]
+    assert "2000–3100 字" in system
+    assert graph_section(ctx) not in system
 
 
 def test_previous_tail_is_stripped_and_limited_to_its_last_800_code_points() -> None:
@@ -368,25 +345,22 @@ def test_previous_tail_is_stripped_and_limited_to_its_last_800_code_points() -> 
     tail = "  " + "甲" * 100 + "🙂" * 800 + "  "
     expected = ("甲" * 100 + "🙂" * 800)[-800:]
 
-    for form in PromptForm:
-        prompt = assemble(
-            ctx, form=form, goal=GOAL, length=M2_LENGTH_SPEC, previous_tail=tail
-        )
-        assert "【上文】\n" + expected in prompt[-1]["content"]
-        assert "甲" not in prompt[-1]["content"]
+    prompt = assemble(ctx, goal=GOAL, length=M2_LENGTH_SPEC, previous_tail=tail)
+    assert "【上文】\n" + expected in prompt[-1]["content"]
+    assert "甲" not in prompt[-1]["content"]
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# ⑤ 逐字上文的长度：默认值是考卷，产品档才放长（ADR 0019 边界五）
+# ⑤ 逐字上文的长度：默认值是地板，产品档按窗口放长（ADR 0019 边界五）
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_the_default_tail_limit_is_the_frozen_x0_definition() -> None:
-    """**默认值 = X0 对照臂的定义**（ARCHITECTURE §9：「最多 800 个输入 code point」）。
+def test_the_default_tail_limit_is_the_old_floor() -> None:
+    """**默认值 = 800 个输入 code point**（ARCHITECTURE §9）。
 
-    这条红了不是「一个常量变了」，是**考卷变了**：三臂共用 `assemble()`，`eval/runner.py`
-    一个字都不传就吃这个默认值，改大它 = X0 不再是那个「证明给得少会崩」的对照臂，
-    而 `runs/*.jsonl` 里看不出任何异常。
+    这个数当年是 X0 对照臂的定义（「证明给得少会崩」的那一档）。三臂删了之后它是
+    **谁都不传时的地板**——产品那条路显式传 `product_tail_limit(...)` 覆盖它。
+    这条红了意味着有人动了那个地板，而**不传参数的调用方会安静地跟着变**。
     """
     assert assemble_module.GATE_TAIL_CODE_POINTS == 800
     assert (
@@ -400,7 +374,6 @@ def test_a_longer_limit_keeps_more_of_the_tail_verbatim() -> None:
 
     long_prompt = assemble(
         ctx,
-        form=PromptForm.X1,
         goal=GOAL,
         length=M2_LENGTH_SPEC,
         previous_tail=tail,
@@ -415,7 +388,6 @@ def test_a_non_positive_limit_drops_the_tail_instead_of_keeping_all_of_it() -> N
     ctx = _full_ctx()
     prompt = assemble(
         ctx,
-        form=PromptForm.X0,
         goal=GOAL,
         length=M2_LENGTH_SPEC,
         previous_tail=TAIL,

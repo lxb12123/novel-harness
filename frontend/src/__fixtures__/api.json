@@ -2013,26 +2013,75 @@
   },
   "roster": [
     {
+      "appearance_chapters": 0,
       "id": "location:ID5",
       "label": "Location",
       "name": "青云城主府"
     },
     {
+      "appearance_chapters": 0,
       "id": "character:ID6",
       "label": "Character",
       "name": "未来大能"
     },
     {
+      "appearance_chapters": 0,
       "id": "character:ID7",
       "label": "Character",
       "name": "李管家"
     },
     {
+      "appearance_chapters": 0,
       "id": "location:ID8",
       "label": "Location",
       "name": "北荒"
     },
     {
+      "appearance_chapters": 0,
+      "id": "character:ID9",
+      "label": "Character",
+      "name": "萧决"
+    }
+  ],
+  "rosterWithCounts": [
+    {
+      "appearance_chapters": 1,
+      "id": "location:ID5",
+      "label": "Location",
+      "name": "青云城主府"
+    },
+    {
+      "appearance_chapters": 0,
+      "id": "character:ID6",
+      "label": "Character",
+      "name": "未来大能"
+    },
+    {
+      "appearance_chapters": 0,
+      "id": "character:ID7",
+      "label": "Character",
+      "name": "李管家"
+    },
+    {
+      "appearance_chapters": 0,
+      "id": "location:ID21",
+      "label": "Location",
+      "name": "青云城"
+    },
+    {
+      "appearance_chapters": 0,
+      "id": "character:ID11",
+      "label": "Character",
+      "name": "顾清音"
+    },
+    {
+      "appearance_chapters": 0,
+      "id": "location:ID8",
+      "label": "Location",
+      "name": "北荒"
+    },
+    {
+      "appearance_chapters": 1,
       "id": "character:ID9",
       "label": "Character",
       "name": "萧决"

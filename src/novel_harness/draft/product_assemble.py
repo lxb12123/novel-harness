@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from ..events import CharacterProfileView, EventView
-from .assemble import GATE_TAIL_CODE_POINTS, PromptForm, assemble
+from .assemble import GATE_TAIL_CODE_POINTS, assemble
 from .context import DraftContext, ResolvedConstraints
 from .length import LengthSpec
 from .product_context import ResolvedProductContext, RollingSummaryView
@@ -170,7 +170,6 @@ def assemble_product(
     ctx: ResolvedConstraints,
     memory: ResolvedProductContext,
     *,
-    form: PromptForm = PromptForm.X1,
     goal: str,
     length: LengthSpec,
     previous_tail: str = "",
@@ -185,18 +184,15 @@ def assemble_product(
     时，唯一稳定的那块被夹在中间，**前缀缓存价值为零**——每一章都得重付一次文风段的输入
     token，而那一段每次逐字节相同。
 
-    **这不是给 kill-gate 改考卷**：三臂（X0/X1/X2）走的是 `assemble()`，从来不经过本函数。
-    实测证据在 `tests/test_product_assemble.py::test_the_gate_never_reaches_this_module`
-    ——`eval/runner.py` 和 `eval/evidence.py` 直接 import `assemble`，`assemble_product`
-    在整个 `src/` 里只有一个调用方（`api/app.py` 的 `/draft`，且只在 `PRODUCT` 那一支）。
-    `assemble()` 本身一个字都没动。
+    （2026-08-25 之前这里还有一句「这不是给 kill-gate 改考卷：三臂走的是 `assemble()`，
+    从来不经过本函数」。三臂随 M2 一起删了，那句话没有对象了——**但本函数仍然只是
+    `assemble()` 外面的一层**，`assemble()` 一个字节都不该被这一层改到。）
     """
 
-    # `previous_tail_limit` 只是**透传**：默认值仍是三臂那个冻结值，放大它的决定在调用点
-    # （`api/app.py` 的 `/draft`），不在这儿——本模块加长上文等于替 kill-gate 改了考卷。
+    # `previous_tail_limit` 只是**透传**：默认值仍是那个短的地板值，放大它的决定在调用点
+    # （`api/app.py` 的 `/draft`），不在这儿。
     base = assemble(
         ctx,
-        form=form,
         goal=goal,
         length=length,
         previous_tail=previous_tail,
@@ -210,7 +206,6 @@ def assemble_continuation(
     ctx: DraftContext,
     rolling_summaries: Sequence[RollingSummaryView],
     *,
-    form: PromptForm = PromptForm.X1,
     goal: str,
     length: LengthSpec,
     previous_tail: str = "",
@@ -248,7 +243,6 @@ def assemble_continuation(
     """
     base = assemble(
         ctx,
-        form=form,
         goal=goal,
         length=length,
         previous_tail=previous_tail,

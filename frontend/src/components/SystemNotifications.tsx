@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useIgnoreNotification, useNotifications } from "../api/hooks";
 import { refusalText } from "../chat";
 import type { SystemNotification } from "../api/types";
@@ -89,11 +90,92 @@ function NotificationRow({
   );
 }
 
+/** 同一档通知攒到这个数就折叠成一行。
+ *
+ *  ── 为什么需要这个数（2026-08-25）────────────────────────────────────
+ *
+ *  这一批之前，一本 158 章的老书只跑过 3 次抽取（只有保存过的章才排得上）。
+ *  定期扫描从这一天起也管抽取了（`summary_schedule.ChapterSummaryState.needs_work`），
+ *  于是**其余 155 章会第一次被整理**——其中每一章「一件都没留下」都落一条通知
+ *  （引语对不上、称呼有歧义，都还会发生）。
+ *
+ *  一次冒出上百张卡片，每张都带「去这一章」和「不再提醒这一条」两颗按钮，
+ *  等于把「要作者知道」变成「作者关掉这一格」。**这不是美化，是让它还读得下去。**
+ *
+ *  3 以下不折叠：一两条的时候摊开更好读，而且这样既有的形状一个字节没变。 */
+const COLLAPSE_AT = 4;
+
+/** 一档折叠起来的通知。**逐条的动作一个都没少**，只是默认收着。 */
+function CollapsedKind({
+  items,
+  onIgnored,
+}: {
+  items: SystemNotification[];
+  onIgnored: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const openChapter = useOpenChapter();
+  // 章号按大小排，**不按通知落库的先后**：作者找的是「第几章」，不是「哪条先报的」。
+  const chapters = [...new Set(items.map((i) => i.chapter_number))]
+    .filter((n): n is number => n !== null)
+    .sort((a, b) => a - b);
+
+  return (
+    <div className="notice-card">
+      <div className="notice-head">
+        <span className="lab">{KIND_TITLE[items[0].kind] ?? items[0].kind}</span>
+        <span className="row dim">{items.length} 条</span>
+      </div>
+      {chapters.length > 0 && (
+        // 章号摆出来而不是只报一个总数：「12 条」不告诉作者该去看哪儿，
+        // 「第 4、7、9… 章」他扫一眼就知道是不是同一段书。
+        <div className="row dim">
+          第 {chapters.slice(0, 12).join("、")} 章
+          {chapters.length > 12 && ` 等 ${chapters.length} 章`}
+        </div>
+      )}
+      <div className="actions">
+        <button className="link" onClick={() => setOpen(!open)}>
+          {open ? "收起" : "逐条看"}
+        </button>
+        {chapters.length > 0 && (
+          <button className="link" onClick={() => openChapter(chapters[0])}>
+            去第 {chapters[0]} 章 →
+          </button>
+        )}
+      </div>
+      {open &&
+        items.map((item) => (
+          <NotificationRow key={item.id} item={item} onIgnored={onIgnored} />
+        ))}
+    </div>
+  );
+}
+
 /** 右栏「通知」：OPEN 列表。空 = 一切正常的一道绿（作者不需要的点不做）。 */
 export function SystemNotifications() {
   const { projectId } = useCoords();
   const notifications = useNotifications(projectId);
   const items = notifications.data ?? [];
+
+  // 按档分组，**组的先后 = 每一档第一条出现的先后**：后端已经排好序了，
+  // 这一层不许自己发明第二个序。
+  const groups: SystemNotification[][] = [];
+  const index = new Map<string, number>();
+  for (const item of items) {
+    const at = index.get(item.kind);
+    if (at === undefined) {
+      index.set(item.kind, groups.length);
+      groups.push([item]);
+    } else {
+      groups[at].push(item);
+    }
+  }
+
+  const onIgnored = () => {
+    // 本地立刻从当前打开的通知里拿掉（后端已落 IGNORED）。
+    notifications.refetch();
+  };
 
   return (
     <div className="mnr">
@@ -102,16 +184,15 @@ export function SystemNotifications() {
       {!notifications.isLoading && items.length === 0 && (
         <span className="empty">现在没有需要你注意的。写就是了。</span>
       )}
-      {items.map((item) => (
-        <NotificationRow
-          key={item.id}
-          item={item}
-          onIgnored={() => {
-            // 本地立刻从当前打开的通知里拿掉（后端已落 IGNORED）。
-            notifications.refetch();
-          }}
-        />
-      ))}
+      {groups.map((group) =>
+        group.length >= COLLAPSE_AT ? (
+          <CollapsedKind key={group[0].kind} items={group} onIgnored={onIgnored} />
+        ) : (
+          group.map((item) => (
+            <NotificationRow key={item.id} item={item} onIgnored={onIgnored} />
+          ))
+        ),
+      )}
     </div>
   );
 }

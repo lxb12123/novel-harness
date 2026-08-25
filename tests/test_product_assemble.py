@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from novel_harness.draft.assemble import GATE_TAIL_CODE_POINTS, PromptForm, assemble
+from novel_harness.draft.assemble import GATE_TAIL_CODE_POINTS, assemble
 from novel_harness.draft.context import ResolvedConstraints
 from novel_harness.draft.length import DraftLanguage, LengthSpec
 from novel_harness.events import CharacterProfileView, EventView, StoryEvent
@@ -80,13 +80,11 @@ def test_product_assembler_prepends_narrow_canon_memory() -> None:
     product = assemble_product(
         _constraints(),
         memory,
-        form=PromptForm.X1,
         goal="两人在渡口商量下一步。",
         length=LENGTH,
     )
     plain = assemble(
         _constraints(),
-        form=PromptForm.X1,
         goal="两人在渡口商量下一步。",
         length=LENGTH,
     )
@@ -121,7 +119,6 @@ def test_product_assembler_renders_rolling_summaries_as_background_only() -> Non
     product = assemble_product(
         _constraints(),
         memory,
-        form=PromptForm.X1,
         goal="两人在渡口商量下一步。",
         length=LENGTH,
     )
@@ -205,17 +202,20 @@ def test_the_memory_preamble_puts_the_cross_chapter_stable_block_first() -> None
     )
 
 
-def test_kill_gate_forms_never_receive_product_memory() -> None:
+def test_the_bare_assembler_never_receives_product_memory() -> None:
+    """裸 `assemble()` 一个字的记忆前言都不带 —— 那是 `assemble_product()` 外面那一层的事。
+
+    （2026-08-25 之前这条是 `for form in PromptForm` 三臂各跑一遍。三臂删了，
+    留下的这一条量的是同一件事：两层的职责不许糊在一起。）
+    """
     ctx = _constraints()
     sentinels = ("外冷内热", "曾守过北境", "右手有旧伤", "两人共同烧毁密信")
 
-    for form in PromptForm:
-        rendered = "\n".join(
-            message["content"]
-            for message in assemble(ctx, form=form, goal="继续交谈。", length=LENGTH)
-        )
-        assert "已生效的故事记忆" not in rendered
-        assert all(sentinel not in rendered for sentinel in sentinels)
+    rendered = "\n".join(
+        message["content"] for message in assemble(ctx, goal="继续交谈。", length=LENGTH)
+    )
+    assert "已生效的故事记忆" not in rendered
+    assert all(sentinel not in rendered for sentinel in sentinels)
 
 
 def test_product_assembler_calls_the_existing_assembler_unchanged(monkeypatch) -> None:
@@ -238,7 +238,6 @@ def test_product_assembler_calls_the_existing_assembler_unchanged(monkeypatch) -
     result = product_module.assemble_product(
         ctx,
         _memory(),
-        form=PromptForm.X2,
         goal="继续交谈。",
         length=LENGTH,
         previous_tail="上文",
@@ -249,11 +248,10 @@ def test_product_assembler_calls_the_existing_assembler_unchanged(monkeypatch) -
         (
             ctx,
             {
-                "form": PromptForm.X2,
                 "goal": "继续交谈。",
                 "length": LENGTH,
                 "previous_tail": "上文",
-                # 透传，且默认值仍是三臂那个冻结值——放大它的决定在 `/draft`，不在这一层。
+                # 透传，且默认值仍是那个短的地板值——放大它的决定在 `/draft`，不在这一层。
                 "previous_tail_limit": GATE_TAIL_CODE_POINTS,
                 "write_rule": "自定义文风",
             },

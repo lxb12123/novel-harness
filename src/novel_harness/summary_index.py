@@ -58,6 +58,7 @@ __all__ = [
     "NodeSummaryMentions",
     "ParagraphMention",
     "SummaryMention",
+    "appearance_counts",
     "chapters_after_mentioning",
     "chapters_mentioning",
     "paragraphs_mentioning",
@@ -542,6 +543,43 @@ def chapters_after_mentioning(
     ]
     out.sort(key=lambda row: row.chapter_number)
     return out
+
+
+def appearance_counts(
+    conn: Connection, store: StoryGraph, project_id: str
+) -> dict[str, int]:
+    """`{node_id: 提到它的章数}` —— **一次 SQL，整份花名册一起算。**
+
+    左栏花名册靠它排序（出场多的排上面）。作者的原话是「按出场频率排序」，
+    而这一层能诚实回答的是「**有多少章的总结提到过它**」——不是「它出现了多少次」，
+    也不是「它在正文里出现在几章」。两者的差别要说清楚：
+
+    - 一章的总结提到它三遍，这里算 **1**（`DISTINCT summary_id`）——总结是每章一份，
+      章才是作者数得清的单位；
+    - **没有总结的章不算**。一本刚导进来、一份总结都没有的书，这张表全是 0，
+      而那是诚实的：这一层不读正文（读正文是另一个量级的活，见 `ensure_index`
+      的「为什么敢在读路径上做这件事」）。
+
+    ── 为什么不是 N 次 `chapters_mentioning` ────────────────────────────
+
+    花名册几十上百个节点，那样就是几十上百条 SQL 加几十上百次 `_ensure`。
+    这里 `_ensure` 一次、聚合一次。**出参是 id → 数**，不是排好序的列表：
+    排序是展示层的事（组内降序 + 一颗倒序切换），这一层只给数。
+    """
+    state = _ensure(conn, store, project_id)
+    if not state.active:
+        return {}
+    counts: dict[str, set[str]] = {}
+    for row in conn.execute(
+        "SELECT node_id, summary_id FROM summary_mention WHERE project_id = ?",
+        (project_id,),
+    ).fetchall():
+        summary_id = str(row["summary_id"])
+        # 同 `chapters_mentioning`：索引行可能指着一段**刚刚不算数了**的总结
+        # （另一条连接刚撤回它）。`_ensure` 下一次会删掉它，这一轮不许算进去。
+        if summary_id in state.active:
+            counts.setdefault(str(row["node_id"]), set()).add(summary_id)
+    return {node_id: len(summaries) for node_id, summaries in counts.items()}
 
 
 def chapters_mentioning(

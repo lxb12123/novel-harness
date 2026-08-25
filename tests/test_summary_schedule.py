@@ -13,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+import seed
+
 from novel_harness import importer, project
 from novel_harness.api.app import _current_ruleset
 from novel_harness.chapter_refresh import BRANCH_SUMMARY
@@ -171,7 +173,7 @@ def test_scan_classifies_missing_paired_and_stale_without_llm(tmp_path: Path) ->
     finally:
         conn.close()
 
-    # 配对的章（总结照的就是当前正文）不用干活。
+    # 配对的章（总结照的就是当前正文）总结那一维不用干活。
     _seed_summary(wheel, 2, stale=False)
     conn = connect(wheel["db"])
     try:
@@ -179,7 +181,24 @@ def test_scan_classifies_missing_paired_and_stale_without_llm(tmp_path: Path) ->
             s.chapter_number: s
             for s in scan_chapter_summary_state(conn, wheel["pid"], draft_chapter=3)
         }
-        assert by_chapter[2].state == "paired" and by_chapter[2].needs_work is False
+        assert by_chapter[2].state == "paired"
+        # ⚠️ **`paired` 不等于 `needs_work is False`**（2026-08-25）：抽取那一维还空着。
+        # 两个维度分两格答，`needs_work` 才是合起来的答案。
+        assert by_chapter[2].extraction == "missing"
+        assert by_chapter[2].needs_work is True
+    finally:
+        conn.close()
+
+    # 两维都齐了才算这一章没活干。
+    seed.applied_extraction(wheel["db"], wheel["pid"], 2)
+    conn = connect(wheel["db"])
+    try:
+        by_chapter = {
+            s.chapter_number: s
+            for s in scan_chapter_summary_state(conn, wheel["pid"], draft_chapter=3)
+        }
+        assert by_chapter[2].extraction == "applied"
+        assert by_chapter[2].needs_work is False
     finally:
         conn.close()
 
@@ -209,7 +228,15 @@ def test_a_retracted_summary_is_not_a_gap_for_the_scanner(tmp_path: Path) -> Non
             for s in scan_chapter_summary_state(conn, wheel["pid"], draft_chapter=3)
         }
         assert by_chapter[1].state == "retracted", "撤回过 ≠ 缺"
-        assert by_chapter[1].needs_work is False
+        # 「撤回不算缺」**只管总结那一维**：这一章的抽取跑过了，所以它今天真的没活干。
+        # 不给它造 applied 的话它会因为抽取那一维被排上——那时下面 `decisions[1]` 会是
+        # `queued_extraction`，而这条测试问的是「总结会不会被买回来」，两码事。
+        seed.applied_extraction(wheel["db"], wheel["pid"], 1)
+        by_chapter = {
+            s.chapter_number: s
+            for s in scan_chapter_summary_state(conn, wheel["pid"], draft_chapter=3)
+        }
+        assert by_chapter[1].state == "retracted" and by_chapter[1].needs_work is False
         decisions = schedule_alignment(
             conn,
             wheel["pid"],
@@ -293,11 +320,25 @@ def test_distance_never_removes_a_chapter_from_the_candidate_pool(
 
 
 def _stub_runtime(db: str, *, limit: int):
-    """真协调器 + 桩 adapter：跑得完整条 DAG，但不真调模型。"""
+    """真协调器 + 桩 adapter：跑得完整条 DAG，但不真调模型。
+
+    ── ⚠️ 2026-08-25：这个桩的抽取那一半**从来没有工作过** ────────────────────
+
+    它原来构造的是 `RawChapterAnalysis(events=(), ...)`，而那个模型的 `events` 是
+    `min_length=1`——**构造时就抛**，而那句构造正好在 runner 的 `try` 里面，
+    于是每一章的抽取都以 `provider_failure` 收场，`extraction_run` 全是 FAILED。
+
+    上面那句「跑得完整条 DAG」因此是假的，**而没有任何东西会红**：
+    在这一天之前调度器根本不问抽取那一维，所以没有一条断言看得见它。
+    判据从「总结齐没齐」扩成「该做的都做了没有」的第一刻，它就自己露出来了
+    （全书永远收敛不了，因为抽取永远缺）。
+
+    修法是给它一条真的事件（同 `test_autonomy_runtime` 那个桩的形状）。
+    """
     from novel_harness.api.background_runtime import BackgroundRuntime
     from novel_harness.draft.provider import CompletionResult
     from novel_harness.draft.rolling_summary import RollingSummarizer
-    from novel_harness.extract import RawChapterAnalysis
+    from novel_harness.extract import RawChapterAnalysis, RawEvent
     from novel_harness.extract.runner import ExtractionRunner
 
     def conn_factory():
@@ -306,7 +347,17 @@ def _stub_runtime(db: str, *, limit: int):
     def extraction(_request):
         return CompletionResult(
             text=RawChapterAnalysis(
-                events=(), state_updates=(), character_profiles=()
+                events=(
+                    RawEvent(
+                        summary="萧决做了些事。",
+                        quote="萧决在第 1 章做了些事。",
+                        participants=("萧决",),
+                        knowers=("萧决",),
+                        confidence=0.95,
+                    ),
+                ),
+                state_updates=(),
+                character_profiles=(),
             ).model_dump_json(),
             model="stub-model",
             finish_reason="stop",
@@ -386,6 +437,11 @@ def test_reporting_an_overwrite_means_the_order_carries_the_summary_branch(
     wheel = _wheel(tmp_path, 3)
     _seed_summary(wheel, 1, stale=True)  # 正文改过、总结还挂在旧快照上
     _seed_summary(wheel, 2, stale=False)  # 配对：这一轮不该碰
+    # 三章的抽取都造成「已跑过」：这条测的是**总结那一维**的报-做一致，
+    # 不给的话第 2 章会因为抽取那一维被排上，`decisions[2]` 就不是 `paired` 了
+    # ——那时它量的是另一件事（2026-08-25 判据扩宽）。
+    for chapter in (1, 2, 3):
+        seed.applied_extraction(wheel["db"], wheel["pid"], chapter)
 
     conn, epoch, ruhash = _conn_and_ruleset(wheel)
     try:
@@ -417,10 +473,16 @@ def test_reporting_an_overwrite_means_the_order_carries_the_summary_branch(
 
 
 def test_a_scan_after_the_gaps_are_filled_orders_nothing_new(tmp_path: Path) -> None:
-    """幂等收敛：补完之后再扫，一单都不产生（不反复花钱）。"""
+    """幂等收敛：补完之后再扫，一单都不产生（不反复花钱）。
+
+    「补完」= **两维都补完**（2026-08-25）：总结配对 **且** 抽取跑过。
+    只造总结那一半的话这条会红，而那正是判据扩宽之后要的行为
+    （`test_autonomy_runtime` 里有一条专门验它）。
+    """
     wheel = _wheel(tmp_path, 3)
     for chapter in (1, 2, 3):
         _seed_summary(wheel, chapter, stale=False)
+        seed.applied_extraction(wheel["db"], wheel["pid"], chapter)
 
     conn, epoch, ruhash = _conn_and_ruleset(wheel)
     try:
@@ -446,6 +508,9 @@ def test_a_round_never_claims_more_than_the_order_carries(
     """就算下单那一层将来又漏了总结分支，调度器也**不许**报 `queued_overwrite`。
 
     这是上一条守卫的另一半：那条钉「现在对得上」，这条钉「对不上的时候会说实话」。
+    桩下的单只带验证那一支 —— 既没有总结也没有抽取，所以结论是 `no_branch_ordered`
+    （2026-08-25 之前它叫 `no_summary_branch`；抽取进了单之后「没排总结」不再等价于
+    「白排了」，词也跟着换）。
     """
     from novel_harness.chapter_refresh import BRANCH_VALIDATION, CoverageDecision
 
@@ -471,7 +536,7 @@ def test_a_round_never_claims_more_than_the_order_carries(
         )
     finally:
         conn.close()
-    assert decisions[1] == "no_summary_branch", f"单里没有总结那一项就别说排了，实得 {decisions}"
+    assert decisions[1] == "no_branch_ordered", f"单里什么都没排就别说排了，实得 {decisions}"
 
 
 def test_schedule_exempts_only_the_focused_chapter(tmp_path: Path) -> None:

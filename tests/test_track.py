@@ -290,11 +290,10 @@ def test_a_book_with_no_chapters_at_all_says_that_instead(tmp_path: Path) -> Non
 
 
 def _continuation_args() -> dict[str, object]:
-    from novel_harness.draft.assemble import CONTINUATION_GOAL, PromptForm
+    from novel_harness.draft.assemble import CONTINUATION_GOAL
     from novel_harness.draft.length import DraftLanguage, LengthSpec
 
     return {
-        "form": PromptForm.X1,
         "goal": CONTINUATION_GOAL,
         "length": LengthSpec(
             language=DraftLanguage.ZH, min_units=80, target_units=150, max_units=300

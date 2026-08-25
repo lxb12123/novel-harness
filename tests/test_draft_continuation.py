@@ -26,7 +26,6 @@ from test_fake_graph import (
 
 from novel_harness.draft.assemble import (
     CONTINUATION_GOAL,
-    PromptForm,
     assemble,
 )
 from novel_harness.draft.context import (
@@ -85,7 +84,7 @@ def test_the_degraded_prompt_says_nothing_about_who_is_present() -> None:
 
     body = "\n".join(
         m["content"]
-        for m in assemble(ctx, form=PromptForm.X1, goal=CONTINUATION_GOAL, length=SHORT)
+        for m in assemble(ctx, goal=CONTINUATION_GOAL, length=SHORT)
     )
 
     assert "【在场】" not in body
@@ -100,22 +99,29 @@ def test_what_is_left_of_the_degraded_prompt_all_still_carries_information() -> 
     """
     ctx = unknown_cast_constraints(_store(), PID, 152)
 
-    body = assemble(ctx, form=PromptForm.X1, goal=CONTINUATION_GOAL, length=SHORT)[-1][
+    body = assemble(ctx, goal=CONTINUATION_GOAL, length=SHORT)[-1][
         "content"
     ]
 
     assert "尚未登场、这一场不得出现：幽泉窟（第 200 章首现）" in body
     assert CONTINUATION_GOAL in body
-def test_the_resolved_path_is_byte_identical() -> None:
-    """kill-gate 走的那条路径一个字节没动 —— 加分支那次没动，M1-a 删分支这次也没动。
+def test_the_resolved_path_renders_the_cast_verbatim() -> None:
+    """知道在场是谁时，【在场】那一块**逐字节**长这样。
 
-    坏掉的形态：有人为了让两条路径「长得一样」而顺手改了 `_base()` 里在场行的措辞——
-    X0/X1/X2 三臂的 prompt 全变，而 `runs/*.jsonl` 里的历史结果再也不可比。
+    坏掉的形态：有人为了让退化那条路径和这条「长得一样」，顺手改了 `_base()` 里在场行的
+    措辞——**每一位作者拿到的每一稿都跟着变，而没有任何东西会红**（`assemble.py` 的哈希闸
+    只拦住「改了不声明」，拦不住「改了并且更新那个数」）。
+
+    （2026-08-25 之前这条叫 `..._is_byte_identical`，比的是 kill-gate 那条 X0 路径；
+    三臂删了，所以尾部的图谱段现在也一起渲染出来——它本来就该在产品的 prompt 里。）
     """
     ctx = resolve_constraints(_store(), PID, 152, [GU_QINGYIN.name])
-    messages = assemble(ctx, form=PromptForm.X0, goal="试探", length=SHORT)
+    messages = assemble(ctx, goal="试探", length=SHORT)
 
-    assert messages[-1]["content"] == "【在场】\n顾清音\n\n【这一场要写】\n试探"
+    assert messages[-1]["content"] == (
+        "【在场】\n顾清音\n\n【这一场要写】\n试探\n\n"
+        "【本场设定要点】\n尚未登场、这一场不得出现：幽泉窟（第 200 章首现）"
+    )
 
 
 def test_the_continuation_goal_is_a_backend_constant(monkeypatch: pytest.MonkeyPatch) -> None:

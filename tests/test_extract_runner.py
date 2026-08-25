@@ -714,13 +714,21 @@ def test_recording_interrupt_is_not_swallowed_as_an_audit_failure(seed: Seed) ->
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def _stranger_analysis() -> str:
-    """一件事，参与者**不在花名册里** —— 会被整条丢掉。"""
+def _unanchorable_analysis() -> str:
+    """一件事，**引语在这一章的正文里找不到** —— 会被整条丢掉。
+
+    ⚠️ 2026-08-25 之前这儿造的是「参与者不在花名册里」。那条路今天不丢了
+    （认不出就建，ADR 0020 补记）——**而这个告警本身没有变**：它问的是
+    「模型抽到了、我们一件都没留下」，不是「为什么没留下」。
+
+    换成引语对不上，是因为那是今天**仍然会整条丢**的常见形态：模型把原话改写了
+    一遍（`locate_quote` 的 min_ratio=0.90 卡住），这件事在真书上照样发生。
+    """
     return RawChapterAnalysis(
         events=(
             RawEvent(
                 summary="贾环在渡口拿走玄铁令。",
-                quote=QUOTE,
+                quote="这一句在这一章的正文里一个字都对不上。",
                 participants=("贾环",),
                 knowers=("贾环",),
                 confidence=0.92,
@@ -745,16 +753,21 @@ def test_a_chapter_that_kept_nothing_does_not_pass_as_a_quiet_success(seed: Seed
     """模型抽到了、我们一件都没留下 —— **作者必须知道**（2026-08-23 真书上的哑告警）。
 
     真书实测：第 1 / 2 / 158 章各抽到 12 / 11 / 12 件事，**留下 0 件**，
-    而三次 run 全是 `SUCCEEDED` + `errors_json='[]'`。丢弃条件只有一条
+    而三次 run 全是 `SUCCEEDED` + `errors_json='[]'`。当时的丢弃条件只有一条
     （事件里的人在花名册里认不出来 ⇒ 整条丢），花名册又是空的，于是：
 
         花名册空 → 认不出 → 全丢 → 花名册还是空 → 下一章接着全丢
 
-    整本书的图谱因此是空的，**而没有任何一处告诉过作者**。这条红了 = 那个哑告警回来了。
+    整本书的图谱因此是空的，**而没有任何一处告诉过作者**。
+
+    **那条死锁 2026-08-25 从根上解开了**（认不出就建，ADR 0020 补记），
+    但**这个告警照旧要在**：它问的不是那一条成因，是「模型抽到了、一件都没留下」
+    这个结果——引语对不上、称呼有歧义、错类，每一条都还能把一整章清空。
+    这条红了 = 那个哑告警回来了。
     """
     analyzer = Analyzer(
         CompletionResult(
-            text=_stranger_analysis(),
+            text=_unanchorable_analysis(),
             model="extractor-test-model",
             finish_reason="stop",
             prompt_tokens=1,

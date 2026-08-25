@@ -195,6 +195,21 @@ A 和 B 处在「断绝」阶段，B 和 A 就处在「断绝」阶段。value �
 而不是把 RELATED_TO 掰成有向——按 ADR 0005 的增长规则，那时才会有一个真实的查询要它。
 """
 
+MIN_RULE_SURFACE_LEN: Final = 2
+"""canonical 别名的 `usable_for_rules` 阈值 —— `alias` 表那条
+`CHECK (usable_for_rules = 0 OR length(surface) >= 2)` 在应用层的同一个数。
+
+它的用途是让 1 字名的人物（真书里有）建得出节点：不判这一下，`upsert_node` 会拿
+`usable_for_rules=1` 去撞那条 CHECK，于是**建节点整个失败**。schema 的立场是
+「短 surface 可以存在，只是不许被规则拿去匹配正文」（ADR 0004：「音」「决」去正文里
+匹配 = 满篇误报），不是「1 字名的人不许进这本书」。
+
+⚠️ 2026-08-25 从 `sqlite_store.py` 搬到这儿：`queries.update_canonical_alias_surface`
+（改名时重算这一位）也要它，而 `queries` → `sqlite_store` 是反方向的 import。
+**两个消费者，一个定义。**
+"""
+
+
 CANONICAL_ALIAS_LABELS: Final[frozenset[NodeLabel]] = frozenset(
     {
         NodeLabel.CHARACTER,
@@ -1109,6 +1124,54 @@ class SnapshotUsage(BaseModel):
 
     def is_free(self) -> bool:
         """没有任何东西引着 = 删了不会让谁失去出处。"""
+        return self.total == 0
+
+
+class NodeUsage(BaseModel):
+    """花名册里这一条**已经被引擎记住了多少东西**。删它之前必须先问它。
+
+    ── 为什么删花名册条目需要这么一道闸（2026-08-25）────────────────────
+
+    抽取现在会**自动建人物**（ADR 0020 补记），而它会认错——真书上的实例是「袭人」
+    （满篇「寒气袭人」）。**自动建 + 不能删 = 单向阀**，所以删除入口是那条裁定的配套。
+
+    但 `alias` / `summary_mention` / `edge.src|dst` / `event_participant` /
+    `event_knower` 到 `node` **全是 ON DELETE CASCADE**：一句 `DELETE FROM node`
+    技术上就过了，**而且一声不吭**——这个人参与过的每一条关系、每一份名单都会在
+    作者按下那颗按钮的一瞬间跟着没掉。
+
+    所以这里和 `ChapterUsage` 走**同一套语义**：数出来非零就拒绝，把挡路的东西数给
+    作者看，由他决定——不是替他决定那些记忆可以丢。
+
+    ── 哪两样**不算**「挡路」，为什么 ────────────────────────────────────
+
+    `alias`（这个人的称呼）和 `summary_mention`（倒排索引行）**不进这个计数**：
+
+    - 别名是这个节点**自己的名字**，不是别人对它的引用。人没了名字跟着没，天经地义。
+    - `summary_mention` 是**派生数据**：它由 `summary_index` 从总结正文重扫出来，
+      删掉之后下一次 `_ensure` 就按新花名册重算。它不是资产，是缓存。
+
+    这个差集正是让删除对**自动建错的那批**真的可用的原因：「袭人」是从一句
+    「寒气袭人」里建出来的，它身上只有一条 canonical 别名和几行倒排索引，
+    一条边、一件事都没有——所以它删得掉。而一个真的参与过情节的人删不掉，
+    作者得先去改那几条情节的名单（`correct_event_cast` 那条路）。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    node_id: str
+    name: str
+    edges: int = Field(ge=0)
+    """这个人是 `src` 或 `dst` 的关系条数。"""
+    events: int = Field(ge=0)
+    """把这个人列进在场 / 知情名单的情节条数。"""
+
+    @property
+    def total(self) -> int:
+        return self.edges + self.events
+
+    def is_free(self) -> bool:
+        """引擎在这个人身上什么都没记 = 删掉他不会让任何东西失去出处。"""
         return self.total == 0
 
 

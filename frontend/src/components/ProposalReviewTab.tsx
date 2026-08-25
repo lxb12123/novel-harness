@@ -13,7 +13,6 @@ import type {
   EdgeConflictItem,
   EventView,
   LowConfidenceEventItem,
-  NewCharacterItem,
   NodeRef,
   ProposalAction,
   ProposalEditInput,
@@ -76,11 +75,6 @@ function asConflictItem(raw: unknown): EdgeConflictItem | null {
   return "current" in r && "proposed" in r ? (r as unknown as EdgeConflictItem) : null;
 }
 
-function asNewCharacterItem(raw: unknown): NewCharacterItem | null {
-  if (typeof raw !== "object" || raw === null) return null;
-  const r = raw as Record<string, unknown>;
-  return "profile" in r ? (r as unknown as NewCharacterItem) : null;
-}
 
 /** 一条提案里那些 id 在屏幕上叫什么。
  *
@@ -230,34 +224,14 @@ function ProposalCard({
     );
   }
 
-  if (proposal.kind === "new_character") {
-    const items = proposal.items
-      .map(asNewCharacterItem)
-      .filter((x): x is NewCharacterItem => !!x);
-    return (
-      <div className="statecard proposal-card new-character">
-        <div className="nm">新人物 · {items[0]?.surface ?? "?"}</div>
-        {items.map((item, i) => (
-          <div key={i}>
-            <div className="row">设定：{item.profile.gender ?? "—"} / {item.profile.personality ?? "—"}</div>
-            {item.profile.background && <div className="row">背景：{item.profile.background}</div>}
-            {/* 「备注」这一行在这儿曾经**根本没画**，而它接受之后会跟着这个人进写作提示
-                （`draft/product_assemble.py::_PROFILE_LABELS`，那儿的标签也是「备注」）
-                ——也就是说作者在这道闸门上批准了一条他从没看见的东西。 */}
-            {item.profile.character_notes && (
-              <div className="row">备注：{item.profile.character_notes}</div>
-            )}
-            <div className="row">可信程度 {pct(item.confidence)}</div>
-          </div>
-        ))}
-        <div className="row dim">收下之后，这些设定会跟着这个人进写作提示。</div>
-        <div className="actions">
-          <button onClick={() => onReview("accept")}>接受为角色</button>
-          <button onClick={() => onReview("bystander")}>标为路人</button>
-        </div>
-      </div>
-    );
-  }
+  // ⚠️ **`new_character` 那一支 2026-08-25 删了**（ADR 0020 补记）：抽取现在
+  // 认不出就直接建人物，不再攒成提案问作者，所以这类提案**不会再有新的**。
+  //
+  // 后端的审阅链路原样留着（validation / audit / apply / `bystander` 动作）——
+  // 它是**历史行**的处理路径，同 `decision_log` 那批废弃 kind 的道理。真书里
+  // 那 22 条 PENDING 还在，而它们指的那些人下一次抽取会被自动建出来，提案本身
+  // 成了无主的：**要不要给它们一个了结是维护者的裁定，这一批没做**（ADR 0020 补记
+  // 末尾那一节）。走到这儿的历史行会落到下面那个通用形态里。
 
   const items = proposal.items.map(asEventItem).filter((x): x is LowConfidenceEventItem => !!x);
   // 后端只对「恰好 1 个 event、没有 edge、没有新人物」的提案开放 edit
@@ -338,7 +312,15 @@ export function ProposalReviewTab() {
   // 在 `candidates()` 里，同 `CanonEventCast`。
   const roll = useMemo(() => (roster.data ?? []) as NodeRef[], [roster.data]);
 
-  const pending = (proposals.data ?? []).filter((p) => p.status === "PENDING");
+  const allPending = (proposals.data ?? []).filter((p) => p.status === "PENDING");
+  // **`new_character` 那一支整个不画**（2026-08-25，ADR 0020 补记）：抽取认不出就直接
+  // 建人物，这类提案不会再有新的，浏览器里也不再给它画卡片和那两颗按钮。
+  //
+  // 但真书里还有 22 条 2026-08-15 攒下来的 PENDING 行。**只是滤掉它们 = 静默的零**
+  // （§10 约束 8）：作者会看到一个比实际短的队列，而没有一处说过差额去哪了。
+  // 所以下面单独报一句数——**不是把那一支画回来**，是承认那儿还躺着东西。
+  const pending = allPending.filter((p) => p.kind !== "new_character");
+  const retiredKind = allPending.length - pending.length;
   const run = useExtractionRun(pid, runId);
 
   const toggle = (id: string) => {
@@ -410,6 +392,15 @@ export function ProposalReviewTab() {
           </div>
         )}
       </div>
+
+      {retiredKind > 0 && (
+        <div className="mnr">
+          <span className="empty">
+            还有 {retiredKind} 条旧的「新人物」待确认。系统现在会自己把认不出的人记进
+            花名册，这些不用再处理了 —— 花名册里删错的那一条就行。
+          </span>
+        </div>
+      )}
 
       {pending.length > 0 && (
         <div className="mnr">

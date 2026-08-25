@@ -188,23 +188,25 @@ def test_draft_unresolvable_cast_is_422(
     assert "解析不了" in r.text
 
 
-def test_draft_bad_form_is_422(
+def test_the_draft_body_no_longer_takes_a_form(
     client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """**三臂删了**（2026-08-25），`form` 那一格从请求体上拿掉了。
+
+    这条量的是「拿掉之后老前端不会炸」：`DraftRequest` 不是 `extra="forbid"`，
+    所以还在发 `form` 的旧客户端只是那个键被忽略，起草照常成功。
+    """
     _configure(client)
     _stub_complete(monkeypatch)
+    from novel_harness.api.app import DraftRequest
+
+    assert "form" not in DraftRequest.model_fields
+
     r = client.post(
         _url(book),
-        json={
-            "goal": "x",
-            "cast": ["萧决"],
-            "length": ZH_LENGTH,
-            "form": "X9",
-        },
+        json={"goal": "x", "cast": ["萧决"], "length": ZH_LENGTH, "form": "X9"},
     )
-    assert r.status_code == 422
-    assert "X0" in r.text
-    assert "PRODUCT" in r.text
+    assert r.status_code == 200, r.text
 
 
 def test_default_product_draft_gets_confirmed_memory_preface(
@@ -224,27 +226,6 @@ def test_default_product_draft_gets_confirmed_memory_preface(
     assert [message["role"] for message in observed[0]] == ["system", "system", "user"]
     assert observed[0][1]["content"].startswith("已生效的故事记忆")
     assert "已生效的故事记忆" not in observed[0][0]["content"]
-
-
-def test_explicit_kill_gate_form_keeps_the_prior_prompt_path(
-    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _configure(client)
-    observed = _capture_complete(monkeypatch)
-
-    response = client.post(
-        _url(book),
-        json={
-            "goal": "萧决看剑。",
-            "cast": ["萧决"],
-            "length": ZH_LENGTH,
-            "form": "X0",
-        },
-    )
-
-    assert response.status_code == 200, response.text
-    rendered = "\n".join(message["content"] for message in observed[0])
-    assert "已生效的故事记忆" not in rendered
 
 
 def test_draft_custom_write_rule_is_accepted(
@@ -279,7 +260,7 @@ def test_draft_write_rule_forbidden_hints_are_422(
         },
     )
     assert r.status_code == 422
-    assert "三臂共用" in r.text
+    assert "引擎自己在管的事" in r.text
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -368,6 +349,9 @@ def test_whole_chapter_drafting_still_demands_goal_and_cast(
 # 记忆只在 `form=PRODUCT` 时装配，而前端硬编码发 `X1`；滚动总结又没有 HTTP 入口，
 # 于是 `chapter_summary` 表恒空、【更早章节滚动总结】永远是「- 暂无」且**无人提示**。
 # 下面这一组钉的就是补完之后的形状。
+#
+# （那三个洞里的第一个 2026-08-25 从根上没了：`form` 整个删了，**起草只有一条路**，
+#  它必然装配记忆。留着这段注释是因为另外两个洞的修法还挂在这一组测试上。）
 # ══════════════════════════════════════════════════════════════════════════
 
 
@@ -390,20 +374,6 @@ def test_product_draft_says_what_it_actually_loaded(
     assert memory["assembled"] is True
     assert memory["profiles"] == 1  # 萧决的档案
     assert memory["rolling_summaries"] == 0
-    assert memory["note"]
-
-
-def test_kill_gate_arms_say_they_carry_no_memory(
-    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """X0/X1/X2 不带记忆是**有意的**（三臂是考卷），所以回执要说出来而不是给个 0。"""
-    _configure(client)
-    _stub_complete(monkeypatch)
-
-    memory = _draft(client, book, form="X1")["memory"]
-
-    assert memory["assembled"] is False
-    assert memory["profiles"] == 0
     assert memory["note"]
 
 
@@ -479,17 +449,21 @@ def test_product_draft_gets_a_tail_far_longer_than_the_control_arm(
     assert _tail_units_in_prompt(seen[0]) > 800
 
 
-def test_a_named_kill_gate_arm_still_gets_exactly_800(
+def test_there_is_no_path_that_still_gets_the_800_floor(
     client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """点名 X0/X1/X2 = kill-gate 的臂，**预算必须原样**。这条红了就是考卷被改了。"""
+    """**起草只有一条路，它按窗口取量。**
+
+    2026-08-25 之前点名 X0/X1/X2 会走一条拿 800 字地板的分支（那是 kill-gate 的臂）。
+    三臂删了之后那条分支不存在——这条量的就是「它真的没了」：同一份长上文，
+    HTTP 那条路进 prompt 的逐字上文**必须多于 800**，否则就是产品在拿对照组的预算跑，
+    而作者只会看到「AI 写出来的东西前言不搭后语」。
+    """
     _configure(client)
     seen = _capture_complete(monkeypatch)
 
-    for arm in ("X0", "X1", "X2"):
-        seen.clear()
-        _draft(client, book, form=arm, previous_tail=_LONG_TAIL)
-        assert _tail_units_in_prompt(seen[0]) == 800
+    _draft(client, book, previous_tail=_LONG_TAIL)
+    assert _tail_units_in_prompt(seen[0]) > 800
 
 
 def test_mixed_cast_keeps_the_characters_and_drops_the_rest(

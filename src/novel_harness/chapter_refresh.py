@@ -326,6 +326,36 @@ def summary_alignment(
     return "paired"
 
 
+ExtractionAlignment = Literal["applied", "missing"]
+"""这一章的抽取产物对不对得上当前正文。**只有两态，故意不是三态。**
+
+「旧不旧」这个问题在这一侧问不出来：`extraction_application_head` 是按
+(project, chapter, generation) 那一次 refresh run 挂的，正文一变 generation 就变，
+**旧那一版的 application 天然不算数**——所以 `missing` 已经把「没跑过」和
+「跑的是旧正文」两件事一起答完了。总结那一侧要分 `missing` / `stale`，是因为
+`chapter_summary_head` 是按章挂的、跨 generation 存活。
+"""
+
+
+def extraction_alignment(
+    conn: Connection, project_id: str, chapter_id: str, generation: int
+) -> ExtractionAlignment:
+    """这一章的抽取跑过没有 —— **调度器问这个，`_default_missing_mask` 问的是同一件事**。
+
+    ⚠️ 它和 `_application_missing` 是**同一个判据的两个入口**，差别只在有没有 run：
+    下单那一步已经 `create_run` 过，拿得到 `run_id`；调度器在下单**之前**问，
+    那时 run 可能还不存在——**而「没有 run」正是「一次都没跑过」最常见的形态**
+    （158 章导进来、只保存过 3 章的那本书，其余 155 章一个 run 都没有）。
+
+    2026-08-25 之前调度器根本不问这个问题：`ChapterSummaryState.needs_work` 只看总结，
+    于是那 155 章**永远不会被排上**，抽取也就永远不跑。见 ADR 0020 的补记。
+    """
+    run = find_run(conn, project_id, chapter_id, generation)
+    if run is None:
+        return "missing"
+    return "missing" if _application_missing(conn, str(run["id"])) else "applied"
+
+
 def _existing_validation_report(
     conn: Connection,
     project_id: str,

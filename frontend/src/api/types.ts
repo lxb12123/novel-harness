@@ -262,6 +262,46 @@ export interface NodeRef {
   name: string;
 }
 
+/** 左栏花名册的一行：窄引用 + **出场章数**。
+ *
+ *  `appearance_chapters` = 有多少章的**总结**提到过它（后端 `summary_index.appearance_counts`）。
+ *  它和花名册同一条出参回来，不是第二次请求——一行字里的一个数不值得多一次会失败的往返。
+ *
+ *  ⚠️ **0 不等于「没出场」**：没有总结的章不算，所以一本刚导进来、一份总结都没有的书
+ *  这一列全是 0。措辞的责任在渲染那一行的组件上。 */
+export interface RosterEntry extends NodeRef {
+  appearance_chapters: number;
+}
+
+export interface RenameNodeInput {
+  id: string;
+  name: string;
+  expected_canon_version: number;
+}
+
+export interface DeleteNodeInput {
+  id: string;
+  expected_canon_version: number;
+}
+
+/** 删掉一条花名册条目之后的回执。`usage` 是删之前数出来的那份（全零）。 */
+export interface NodeDeleted {
+  id: string;
+  name: string;
+  usage: NodeUsage;
+}
+
+/** 引擎在这个花名册条目上记了多少东西。**非零就删不掉。**
+ *
+ *  别名和倒排索引行**不在这里**：前者是这个节点自己的名字，后者是派生数据。
+ *  完整论证在后端 `graph.models.NodeUsage`。 */
+export interface NodeUsage {
+  node_id: string;
+  name: string;
+  edges: number;
+  events: number;
+}
+
 /** 这张表是**哪一版**的图算出来的。
  *
  *  `canon_version` 是改这一格时要带回去的那个数（`expected_canon_version`）——
@@ -755,18 +795,11 @@ export interface EdgeConflictItem {
   };
 }
 
-export interface NewCharacterItem {
-  surface: string;
-  confidence: number;
-  profile: {
-    surface: string;
-    gender: string | null;
-    personality: string | null;
-    background: string | null;
-    character_notes: string | null;
-    confidence: number;
-  };
-}
+// ⚠️ `NewCharacterItem` 2026-08-25 删了（ADR 0020 补记）：抽取认不出就直接建人物，
+// 这类提案不会再有新的，浏览器里也不再画那一支。**`ProposalKind` 里那个字面量留着**
+// ——真书里还有 22 条 PENDING 的历史行，联合类型少一个成员的话它们在 `tsc` 眼里
+// 根本不存在（同 `ChatStopReason` 少一个成员那次的形状）。
+
 
 // ══════════════════════════════════════════════════════════════════════════
 // 改一条**已经生效**的事实（ADR 0020 的「可改」）
