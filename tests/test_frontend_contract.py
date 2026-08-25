@@ -180,18 +180,18 @@ def test_frontend_fixture_matches_the_real_api(
         client.post(f"{base}/aliases", json={"of": "顾清音", "surface": "顾姑娘"}),
     )
 
-    # 下面每一份读端夹具都**需要图里真有一条 KNOWS 边**（矩阵那一格、子图那条边、
-    # 底栏那个区间、`canonKnowledge` 要改的那条）。这条边原先是 `POST …/declare/knows`
-    # 顺带造出来的，而那条路由 2026-08-14 删了——**播种换成库级入口，位置一定要留在
-    # 原处**：挪到后面去，上面那几份夹具会安静地变成「没有边」的形状，而 vitest 那边
-    # 只会红在一句莫名其妙的 `Spread types may only be created from object types`。
-    seed.knows(
+    # 下面几份读端夹具需要图里真有一条**已生效的边**（子图那条、底栏那个区间）。
+    # **播种位置一定要留在原处**：挪到后面去，上面那几份夹具会安静地变成「没有边」的
+    # 形状，而 vitest 那边只会红在一句莫名其妙的
+    # `Spread types may only be created from object types`。
+    # （2026-08-24 之前这儿播的是一条 KNOWS 边；秘密下线之后换成地点边，ADR 0039。）
+    seed.where(
         book["db"], book["pid"],
-        who="萧决", secret="血脉秘密",
+        who="萧决", loc="青云城主府",
         quote="萧决在青云城主府第一次听说了血脉秘密的真相。",
     )
 
-    # ── 读路径（声明之后：矩阵里现在有 KNOWS，前端渲染测试要的就是这个形状）──
+    # ── 读路径（声明之后：图里现在有一条已生效的边，前端渲染测试要的就是这个形状）──
     cast = {"cast": "萧决,李管家"}
     grab("constraints", client.get(f"{base}/chapters/2/constraints", params=cast))
     grab("states", client.get(f"{base}/chapters/2/state", params=cast))

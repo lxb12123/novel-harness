@@ -57,6 +57,6 @@ describe("局部关系图", () => {
     const distances = others.map((n) => Math.hypot(n.position.x, n.position.y));
     expect(Math.max(...distances) - Math.min(...distances)).toBeLessThan(10);
     expect(edges).toHaveLength(1);
-    expect(edges[0].label).toBe("知道 · 第 1 章起");
+    expect(edges[0].label).toBe("在 · 第 1 章起");
   });
 });

@@ -120,10 +120,6 @@ def render_evidence_text(
         return f"{character} 已登场" if value else f"{character} 尚未登场"
     if fact_type is FactType.RELATIONSHIP_STAGE:
         return f"{character} ↔ {peer or '（未知）'}：{value or '（关系已记录）'}"
-    if fact_type in (FactType.KNOWS, FactType.BELIEVES):
-        verb = "知道" if fact_type is FactType.KNOWS else "相信"
-        since = f"（自第 {since_chapter} 章）" if since_chapter else ""
-        return f"{character} {verb}「{secret or '（某秘密）'}」{since}"
     if fact_type is FactType.EVENT:
         suffix = f"（涉及：{'、'.join(participants)}）" if participants else ""
         return f"第 {chapter} 章：{summary or '（无摘要）'}{suffix}"
@@ -218,8 +214,6 @@ def _is_unknown_cast_dropped(
         FactType.PROFILE,
         FactType.STATE,
         FactType.RELATIONSHIP_STAGE,
-        FactType.KNOWS,
-        FactType.BELIEVES,
     }
 
 

@@ -12,7 +12,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from hashlib import sha256
-from itertools import product
 from pathlib import Path
 
 from ..events import EventView
@@ -355,77 +354,6 @@ def calibrate_scene(
                 )
             )
 
-    # ── 3. 知识格：只查被提案引用的秘密（显示名，不含 tell）──────────────
-    secret_refs: list[NodeRef] = _resolve_secret_references(
-        store, pid, proposal, normalized
-    )
-    if normalized and secret_refs:
-        character_ids = [m.node.id for m in normalized]
-        secret_ids = [s.id for s in secret_refs]
-        try:
-            edges = store.knowledge_edges_at(
-                pid, character_ids, secret_ids, chapter, scope=InformationScope.CANON
-            )
-        except StoreError as exc:
-            conflicts.append(
-                DeterministicConflict(
-                    code="IMPOSSIBLE_STATE",
-                    message=f"知识格出现机械上不可能同时成立的值：{exc}",
-                    chapter=chapter,
-                )
-            )
-            edges = []
-        found: dict[tuple[str, str, EdgeType], Edge] = {}
-        for edge in edges:
-            found[(edge.src, edge.dst, edge.type)] = edge
-        for member, secret in product(normalized, secret_refs):
-            hit = found.get((member.node.id, secret.id, EdgeType.KNOWS)) or found.get(
-                (member.node.id, secret.id, EdgeType.BELIEVES)
-            )
-            if hit is None:
-                unknowns.append(
-                    EvidenceEnvelope(
-                        item_id=_item_id(chapter, FactType.KNOWS, next_index()),
-                        kind=EpistemicKind.UNKNOWN,
-                        fact_type=FactType.KNOWS,
-                        display_text=(
-                            f"当前没有「{member.node.name} 知道 {secret.name}」的生效记录。"
-                            "Writer 操作上必须按「不知道」处理；这不证明人物在故事世界里"
-                            "事实上绝不可能知道。"
-                        ),
-                        chapter=chapter,
-                        completeness=Completeness.COMPLETE,
-                        freshness=Freshness.CURRENT,
-                        agent_visibility=AgentVisibility.SAFE_LABEL_ONLY,
-                        writer_visibility=WriterVisibility.HIDDEN,
-                    )
-                )
-                continue
-            fact_type = FactType.KNOWS if hit.type is EdgeType.KNOWS else FactType.BELIEVES
-            facts.append(
-                EvidenceEnvelope(
-                    item_id=_item_id(chapter, fact_type, next_index()),
-                    kind=_kind_for_source(hit.source),
-                    fact_type=fact_type,
-                    display_text=render_evidence_text(
-                        fact_type=fact_type,
-                        character=member.node.name,
-                        secret=secret.name,
-                        since_chapter=hit.valid_from_chapter,
-                    ),
-                    chapter=chapter,
-                    valid_from_chapter=hit.valid_from_chapter,
-                    valid_to_chapter=hit.valid_to_chapter,
-                    source=hit.source.value,
-                    confidence=hit.confidence,
-                    evidence_id=hit.evidence_id,
-                    evidence_status=hit.evidence_status.value,
-                    freshness=Freshness.CURRENT,
-                    agent_visibility=agent_visibility_of(fact_type),
-                    writer_visibility=writer_visibility_of(fact_type),
-                )
-            )
-
     # ── 4. 已确认事件（只列参与者，不列 knower/revealed 的不对称面）────────
     truncated_events = False
     if input_.events is not None and normalized:
@@ -577,40 +505,3 @@ def calibrate_scene(
         unknowns=tuple(unknowns),
         coverage_receipt=receipt,
     )
-
-
-def _resolve_secret_references(
-    store: StoryGraph,
-    project_id: str,
-    proposal: SceneProposal,
-    normalized: Sequence[NormalizedCastMember],
-) -> list[NodeRef]:
-    """把提案里的 surface 解析成秘密引用（只收 label=Secret 的节点）。
-
-    只有被提案点名的秘密才进知识格校准（否则 cast × secret 全笛卡尔积会把报告撑爆，
-    而校准层不知道作者关心哪一列）。
-    """
-    surfaces = [
-        s
-        for s in (
-            *(d.actor_surface for d in proposal.directive_candidates),
-            *(d.target_surface for d in proposal.directive_candidates),
-            *(d.object_surface for d in proposal.directive_candidates),
-            *(d.location_surface for d in proposal.directive_candidates),
-            proposal.viewpoint_surface,
-        )
-        if s
-    ]
-    if not surfaces:
-        return []
-    resolutions = store.resolve(project_id, list(dict.fromkeys(surfaces)))
-    seen: set[str] = set()
-    out: list[NodeRef] = []
-    for resolution in resolutions:
-        node = resolution.unique_node
-        if node is None or node.label is not NodeLabel.SECRET:
-            continue
-        if node.id not in seen:
-            seen.add(node.id)
-            out.append(NodeRef.of(node))
-    return out

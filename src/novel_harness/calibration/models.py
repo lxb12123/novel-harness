@@ -70,8 +70,6 @@ class FactType(StrEnum):
     RELATIONSHIP_STAGE = "RELATIONSHIP_STAGE"
     """RELATED_TO 的关系阶段。只返回记录的关系阶段，不声称情感解释正确。"""
 
-    KNOWS = "KNOWS"
-    BELIEVES = "BELIEVES"
     EVENT = "EVENT"
     CHAPTER_SUMMARY = "CHAPTER_SUMMARY"
     PROFILE = "PROFILE"

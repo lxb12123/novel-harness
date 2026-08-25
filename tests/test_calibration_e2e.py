@@ -401,12 +401,7 @@ def test_blank_chapter_11_calibrates_and_drafts_without_leaking(
     summaries = [f for f in report.agent_safe_facts if f.fact_type is FactType.CHAPTER_SUMMARY]
     assert any(f.freshness is Freshness.STALE for f in summaries), "第 8 章摘要应标 STALE"
     assert any(f.freshness is Freshness.CURRENT for f in summaries), "第 9 章摘要应 CURRENT"
-    assert any(
-        f.kind is EpistemicKind.UNKNOWN and "林葵" in f.display_text and "花瓶秘密" in f.display_text
-        for f in report.unknowns
-    ), "无 KNOWS 生效记录必须物化成 UNKNOWN"
     assert any(f.fact_type is FactType.FORESHADOW for f in report.unknowns), "12.8：伏笔诚实未知"
-    assert TELL not in report.model_dump_json(), "秘密 tell 进了 Agent 报告"
     assert not report.deterministic_conflicts, "12.5：校准层不宣判语义冲突"
 
     sealed_out = dispatch(
@@ -510,7 +505,7 @@ def test_seal_in_the_same_turn_cannot_fake_confirmation(warehouse: dict[str, Any
     assert "作者还没有在看过任务卡之后回答" in outcome.content
 
 
-def test_retcon_non_safety_produces_handoff_but_safety_retcon_is_refused(
+def test_retcon_non_safety_produces_handoff(
     warehouse: dict[str, Any],
 ) -> None:
     """12.4 + §9.3：非安全 RETCON 产 handoff；涉及知情的 RETCON 在 Canon 纠错前拒绝。"""
@@ -534,29 +529,10 @@ def test_retcon_non_safety_produces_handoff_but_safety_retcon_is_refused(
     pending = store.pending_handoffs(warehouse["pid"])
     assert len(pending) == 1 and pending[0][1].author_choice == "RETCON"
 
-    # 安全相关 RETCON：给林葵补一条 KNOWS，让报告里出现知情事实，再引用它 → 拒绝。
-    conn = warehouse["conn"]
-    ledger = Ledger(warehouse["store"], conn, warehouse["pid"])
-    ledger.declare_knows(
-        who="林葵",
-        secret="花瓶秘密",
-        quote="林葵在第 10 章独自读完了那封信。",
-    )
-    conn.commit()
-    report2 = _calibrate(warehouse, turn=_turn(warehouse["pid"], "knows"))
-    knows_item = next(f.item_id for f in report2.agent_safe_facts if f.fact_type is FactType.KNOWS)
-    refused = dispatch(
-        _call(
-            "seal_scene_brief",
-            inspection_id=report2.id,
-            author_choice="RETCON_NON_SAFETY",
-            retcon_fact_ids=[knows_item],
-            inferred_tension="作者要林葵其实不知道（机器推演）。",
-        ),
-        _context(warehouse, turn=_turn(warehouse["pid"], "knows-answer")),
-    )
-    assert refused.ok is False
-    assert "安全相关 RETCON" in refused.content or "作者侧 Canon" in refused.content
+    # ⚠️ 这条测试原来还有下半截：给林葵补一条 KNOWS → 报告里出现知情事实 →
+    # 引用它做 RETCON_NON_SAFETY → 被拒。**那半随秘密下线一起没了**（ADR 0039）：
+    # `SAFETY_FACT_TYPES` 的两个成员就是 KNOWS / BELIEVES，现在它是**空集**，
+    # 那道闸不再拦任何东西。挑新成员是维护者的裁定，见 `calibration/seal.py` 上那段。
 
 
 def test_new_character_cannot_turn_unknown_cast_into_resolved(
@@ -623,12 +599,15 @@ def test_planned_scope_never_reaches_the_report(
     store = warehouse["store"]
     pid = warehouse["pid"]
     ids = warehouse["ids"]
+    # 载体 2026-08-24 从 PLANNED 的 KNOWS 换成 PLANNED 的 LOCATED_AT
+    # （秘密下线，ADR 0039）——**这条纪律跟秘密无关**：PLANNED 是作者的未来计划，
+    # 它进了报告就是把还没发生的剧情递给模型，那正是这个产品声称结构上恒为 0 的东西。
     store.upsert_edge(
         EdgeSpec(
             project_id=pid,
             src=ids["周宁"],
-            dst=ids["花瓶秘密"],
-            type=EdgeType.KNOWS,
+            dst=ids["仓库"],
+            type=EdgeType.LOCATED_AT,
             valid_from_chapter=40,
             information_scope=InformationScope.PLANNED,
             props=EdgeProps(),
@@ -638,9 +617,9 @@ def test_planned_scope_never_reaches_the_report(
     warehouse["conn"].commit()
     turn = _turn(pid, "planned")
     report = _calibrate(warehouse, turn=turn)
-    knows = [f for f in report.agent_safe_facts if f.fact_type in (FactType.KNOWS, FactType.BELIEVES)]
-    assert not knows, "PLANNED 的 KNOWS 进了报告（scope 过滤漏了）"
-    unknown_lin = [
-        f for f in report.unknowns if "林葵" in f.display_text and "花瓶秘密" in f.display_text
+    planned = [
+        f
+        for f in report.agent_safe_facts
+        if f.fact_type is FactType.LOCATION and "仓库" in f.display_text
     ]
-    assert unknown_lin, "没有 PLANED 边时，林葵/花瓶秘密仍是 UNKNOWN（不得补写成事实）"
+    assert not planned, "PLANNED 的边进了报告（scope 过滤漏了）"

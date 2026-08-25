@@ -76,7 +76,6 @@ from novel_harness.graph import (
     NodeProps,
     NodeRef,
     NodeSpec,
-    SecretDetail,
 )
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from calibration_seed import seed_calibration
@@ -147,22 +146,17 @@ def world(conn: Connection, tmp_path: Path) -> World:
     ledger.declare_node(NodeLabel.CHARACTER, "萧决")
     ledger.declare_node(NodeLabel.CHARACTER, "顾清音")
     ledger.declare_node(NodeLabel.LOCATION, "北荒")
-    store.upsert_node(
-        NodeSpec(
-            project_id=pid,
-            label=NodeLabel.SECRET,
-            name="血脉秘密",
-            props=NodeProps.model_validate({"twist": TWIST}),
-            secret=SecretDetail(description=SECRET_DESC),
-        )
-    )
+    # 毒药挂在这个**未来实体**上：泄漏网量的是「作者写在节点 props 上的自由文本
+    # 会不会穿过序列化」，跟它是哪一类节点无关（2026-08-24 之前它挂在秘密节点上）。
+    # **两种毒挂同一个节点**：`upsert_node` 的幂等键是 (project, label, name)，
+    # 分两次写会让后一次盖掉前一次。
     store.upsert_node(
         NodeSpec(
             project_id=pid,
             label=NodeLabel.LOCATION,
             name="幽泉窟",
             props=NodeProps.model_validate(
-                {"first_appears_chapter": 200, "plot_note": PLOT_NOTE}
+                {"first_appears_chapter": 200, "twist": TWIST, "plot_note": PLOT_NOTE}
             ),
         )
     )
@@ -177,7 +171,6 @@ def world(conn: Connection, tmp_path: Path) -> World:
     )
     conn.commit()
 
-    ledger.declare_knows(who="顾清音", secret="血脉秘密", quote=KNOWS_QUOTE)
     ledger.declare_where(who="萧决", loc="北荒", quote=WHERE_QUOTE)
     conn.commit()
     return World(conn=conn, project_id=pid, store=store, root=tmp_path)
@@ -709,7 +702,7 @@ def test_a_refusal_says_why(world: World) -> None:
     assert ambiguous.ok is False and "不存在的人" in ambiguous.content
 
     not_a_character = dispatch(
-        _call("character_state", chapter=CHAPTER, character="血脉秘密"), world.context()
+        _call("character_state", chapter=CHAPTER, character="北荒"), world.context()
     )
     assert not_a_character.ok is False and "不是人物" in not_a_character.content
 
@@ -795,22 +788,23 @@ class _CleanResult(BaseModel):
     node: NodeRef
 
 
-def _the_secret(context: ToolContext) -> Node:
-    resolutions = context.store.resolve(context.project_id, ["血脉秘密"])
+def _the_poisoned_node(context: ToolContext) -> Node:
+    """那个 props 上挂着作者自由文本的节点 —— 泄漏探针要交出去的就是它整份。"""
+    resolutions = context.store.resolve(context.project_id, ["幽泉窟"])
     return resolutions[0].hits[0].node
 
 
 def _leaky_handler(args: SceneConstraintsArgs, context: ToolContext) -> _LeakyResult:
-    return _LeakyResult(node=_the_secret(context))
+    return _LeakyResult(node=_the_poisoned_node(context))
 
 
 def _clean_handler(args: SceneConstraintsArgs, context: ToolContext) -> _CleanResult:
-    return _CleanResult(node=NodeRef.of(_the_secret(context)))
+    return _CleanResult(node=NodeRef.of(_the_poisoned_node(context)))
 
 
 LEAKY_PROBE = ToolSpec(
     name="_leaky_probe",
-    description="故意把整个 Secret 节点交出去。",
+    description="故意把整个节点交出去（props 一起）。",
     args=SceneConstraintsArgs,
     handler=_leaky_handler,
 )
@@ -851,7 +845,7 @@ def test_the_net_does_not_cry_wolf(world: World, monkeypatch: pytest.MonkeyPatch
 
     assert outcome.ok, outcome.content
     assert leaks("干净工具的返回", outcome.content) == []
-    assert "血脉秘密" in outcome.content, "显示名被收掉了 —— 作者看不出这是哪一条约束"
+    assert "幽泉窟" in outcome.content, "显示名被收掉了 —— 作者看不出这是哪一条约束"
 
 
 # ══════════════════════════════════════════════════════════════════════════

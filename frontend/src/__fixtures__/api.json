@@ -146,8 +146,8 @@
         },
         "source": "decision",
         "status": "succeeded",
-        "subtitle": "萧决 知道 血脉秘密",
-        "title": "作者 · 声明认知",
+        "subtitle": "萧决 在 青云城主府",
+        "title": "作者 · 声明位置",
         "ts": "<ts>"
       },
       {
@@ -252,8 +252,8 @@
         },
         "source": "decision",
         "status": "succeeded",
-        "subtitle": "萧决 知道 血脉秘密",
-        "title": "作者 · 声明认知",
+        "subtitle": "萧决 在 青云城主府",
+        "title": "作者 · 声明位置",
         "ts": "<ts>"
       }
     ],
@@ -2197,7 +2197,7 @@
       "edges": [
         {
           "confidence": 1.0,
-          "dst": "secret:ID7",
+          "dst": "location:ID5",
           "evidence_id": "evidence:ID16",
           "evidence_status": "FRESH",
           "id": "edge:ID15",
@@ -2211,13 +2211,27 @@
           "source": "author",
           "src": "character:ID10",
           "status": "ACTIVE",
-          "type": "KNOWS",
+          "type": "LOCATED_AT",
           "valid_from_chapter": 1,
           "valid_to_chapter": null
         }
       ],
       "is_dead": false,
-      "location": null,
+      "location": {
+        "id": "location:ID5",
+        "label": "Location",
+        "name": "青云城主府",
+        "project_id": "project:ID1",
+        "props": {
+          "background": null,
+          "character_notes": null,
+          "dim_key": null,
+          "first_appears_chapter": null,
+          "gender": null,
+          "main_character": null,
+          "personality": null
+        }
+      },
       "node": {
         "id": "character:ID10",
         "label": "Character",

@@ -37,7 +37,7 @@ from novel_harness.db import Connection, connect, migrate
 from novel_harness.declare import Ledger
 from novel_harness.draft.provider import CompletionResult
 from novel_harness.draft.rolling_summary import save_author_summary
-from novel_harness.graph import NodeLabel, SecretDetail
+from novel_harness.graph import NodeLabel
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.system_notifications import (
     BLOCKING_KINDS,
@@ -165,11 +165,6 @@ def world(tmp_path: Path) -> Iterator[dict]:
     ledger.declare_node(NodeLabel.CHARACTER, KNOWER)
     ledger.declare_node(NodeLabel.CHARACTER, OUTSIDER)
     ledger.declare_node(NodeLabel.OBJECT, "玄铁令")
-    ledger.declare_node(
-        NodeLabel.SECRET, SECRET, secret=SecretDetail(description="他是被自己人杀的")
-    )
-    # 章号由引语算出来（ADR 0006）：这句话在第 1 章，所以萧决从第 1 章起就知道。
-    ledger.declare_knows(who=KNOWER, secret=SECRET, quote="萧决在灵前听完了那件事。")
     conn.commit()
     yield {"conn": conn, "db": str(db), "pid": pid, "store": store, "root": str(root)}
     conn.close()

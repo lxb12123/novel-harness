@@ -51,8 +51,21 @@ MACHINE_DIRECTIVE_KINDS = frozenset(
 )
 """「机器写作建议」用的指令码。"""
 
-SAFETY_FACT_TYPES = frozenset({FactType.KNOWS, FactType.BELIEVES})
-"""安全相关 RETCON 涉及的事实类型：Canon 纠错完成前不得封存或起草。"""
+SAFETY_FACT_TYPES: frozenset[FactType] = frozenset()
+"""安全相关 RETCON 涉及的事实类型：Canon 纠错完成前不得封存或起草。
+
+⚠️ **2026-08-24 起这是空集，这道闸因此不再拦任何东西**（ADR 0039）。
+
+它原来的两个成员是 `KNOWS` / `BELIEVES`——「安全」在这个产品里当时的定义就是
+「别把秘密说破」。秘密整套下线之后，**这道闸失去了它全部的对象**。
+
+**这不是删掉它，是把它空着摆在这儿**：空集和「这道闸不存在」是两件事，
+而下一个人需要看见的是前者——他要回答的问题是「今天还有没有一类事实，
+错了就必须先纠正再封存」（死人说话？未登场角色开口？），而不是
+「为什么当初有人加了一道没有用的闸」。
+
+**挑新成员是维护者的裁定，不是这次下线顺手能做的事。**
+"""
 
 
 def _resolved_surface(

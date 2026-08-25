@@ -11,12 +11,14 @@
 **用一条自己不测的路由去播种，本来就是个错。** 它让「那条路由还在不在」和几十个
 完全无关的断言绑在一起——这次删路由，48 个测试一起红，而其中没有一个关心 declare。
 
-所以这里给的是同一件事的库级入口：`Ledger` 的那三个方法（它们**没有作者入口**，
-但仍是 `synth/build.py`、`scripts/seed_demo.py` 和这里的夹具词汇）。
+所以这里给的是同一件事的库级入口：`Ledger` 的那几个方法（它们**没有作者入口**，
+但仍是 `scripts/seed_demo.py` 和这里的夹具词汇）。
 
 用法和原来那行 `client.post` 一一对应：
 
-    knows(book["db"], pid, who="萧决", secret="血脉秘密", quote=QUOTE)
+    where(book["db"], pid, who="萧决", loc="北荒", quote=QUOTE)
+
+（`knows` / `believes` 两个包装 2026-08-24 随秘密下线一起删了，ADR 0039。）
 
 **开的是第二条连接**，和 TestClient 那条并存（库是 WAL，`book` 夹具本来就这么干）。
 每次调用自开自关，免得夹具之间互相持着未提交的事务。
@@ -31,37 +33,13 @@ from novel_harness.db import connect
 from novel_harness.declare import Ledger
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 
-__all__ = ["believes", "knows", "ledger_for", "locate", "where"]
+__all__ = ["ledger_for", "locate", "where"]
 
 
 def ledger_for(db: str | Path, pid: str) -> tuple[Ledger, Any]:
     """(ledger, conn)。**调用方负责 close** —— 下面四个包装已经替你做了。"""
     conn = connect(Path(db))
     return Ledger(SqliteStoryGraph(conn), conn, pid), conn
-
-
-def knows(db: str | Path, pid: str, *, who: str, secret: str, quote: str) -> Any:
-    ledger, conn = ledger_for(db, pid)
-    try:
-        result = ledger.declare_knows(who=who, secret=secret, quote=quote)
-        conn.commit()
-        return result
-    finally:
-        conn.close()
-
-
-def believes(
-    db: str | Path, pid: str, *, who: str, secret: str, believed_value: str, quote: str
-) -> Any:
-    ledger, conn = ledger_for(db, pid)
-    try:
-        result = ledger.declare_believes(
-            who=who, secret=secret, believed_value=believed_value, quote=quote
-        )
-        conn.commit()
-        return result
-    finally:
-        conn.close()
 
 
 def where(db: str | Path, pid: str, *, who: str, loc: str, quote: str) -> Any:

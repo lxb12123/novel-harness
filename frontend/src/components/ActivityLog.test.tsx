@@ -474,7 +474,7 @@ describe("活动记录", () => {
   // ── 界面上不摆研发术语 ────────────────────────────────────────────────
   //
   // **这条断言原本是一张词表**（`valid_from|canon_version|PROVISIONAL|endpoints|
-  // payload|decision_log`），而后端当时正把 `萧决 对「血脉秘密」：KNOWS → BELIEVES`
+  // payload|decision_log`），而后端当时正把 `萧决 在「青云城主府」` 这类原话
   // 印在这一页上——**那两个词恰好不在表里，于是它绿了一整轮**。补两个词进去只会让
   // 下一个词接着漏，所以判据换成了形状，且那套判据全仓只有一份
   //（`src/test/screenGuard.ts`，自守卫钉着五个真的上过屏的违规）。
@@ -488,7 +488,7 @@ describe("活动记录", () => {
     await collapsed();
     expect(devTerms(screenText())).toEqual([]);
     // 反面也得成立：这一页**说得出**发生过什么（过度收窄一样是 bug）。
-    expect(document.body.textContent).toContain("血脉秘密");
+    expect(document.body.textContent).toContain("青云城主府");
   });
 
   it.each([

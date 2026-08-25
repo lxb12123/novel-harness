@@ -20,11 +20,9 @@ from novel_harness.calibration.models import (
 )
 from novel_harness.calibration.render import render_goal_spec, render_scene_brief
 from novel_harness.calibration.visibility import (
-    agent_visibility_of,
     writer_visibility_of,
 )
 from novel_harness.calibration.models import (
-    AgentVisibility,
     ContinuityFact,
     FactType,
     SceneBrief,
@@ -89,9 +87,6 @@ def test_goal_spec_renders_only_closed_directives() -> None:
 
 def test_visibility_rules_are_closed_and_fail_closed() -> None:
     """KNOWS/BELIEVES 对 Agent 只给显示名、对 Writer 永远 HIDDEN。"""
-    assert agent_visibility_of(FactType.KNOWS) is AgentVisibility.SAFE_LABEL_ONLY
-    assert writer_visibility_of(FactType.KNOWS) is WriterVisibility.HIDDEN
-    assert writer_visibility_of(FactType.BELIEVES) is WriterVisibility.HIDDEN
     # 任意字符串状态（无 value_key）对 Writer 隐藏，即使来自 CANON。
     assert writer_visibility_of(FactType.STATE) is WriterVisibility.HIDDEN
     assert (

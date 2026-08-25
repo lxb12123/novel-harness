@@ -14,11 +14,11 @@ from .models import AgentVisibility, FactType, WriterVisibility
 def agent_visibility_of(fact_type: FactType) -> AgentVisibility:
     """Agent 报告里这条事实能露出多少。
 
-    KNOWS/BELIEVES 只给秘密**显示名**（`SAFE_LABEL_ONLY`）：完整 PLANNED、
+    （KNOWS/BELIEVES 那两档随秘密下线删了，ADR 0039。）完整 PLANNED、
     Secret props/tell、完整秘密正文、任意 Node props 和不对称知识事件不得进入
     模型可见报告。
     """
-    if fact_type in (FactType.KNOWS, FactType.BELIEVES, FactType.FORESHADOW):
+    if fact_type is FactType.FORESHADOW:
         return AgentVisibility.SAFE_LABEL_ONLY
     return AgentVisibility.SAFE_FACT
 
@@ -50,9 +50,6 @@ def writer_visibility_of(
         return WriterVisibility.SAFE_FACT if public_event else WriterVisibility.HIDDEN
     if fact_type is FactType.CHAPTER_SUMMARY:
         return WriterVisibility.SAFE_FACT if fresh else WriterVisibility.HIDDEN
-    if fact_type in (FactType.KNOWS, FactType.BELIEVES):
-        # 认知边界由后端即时安全约束渲染，不经过 SceneBrief 的事实通道。
-        return WriterVisibility.HIDDEN
     if fact_type is FactType.PROFILE:
         return WriterVisibility.HIDDEN
     if fact_type is FactType.FORESHADOW:

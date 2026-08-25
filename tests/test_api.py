@@ -192,26 +192,6 @@ def test_resolve_secret_does_not_leak_props(client: TestClient, book: dict[str, 
     assert TWIST not in r.text  # ← 核心：秘密的内容不出接口
     hit = r.json()["hits"][0]["node"]
     assert set(hit.keys()) == {"id", "label", "name"}  # 窄引用，没有 props
-
-
-def test_subgraph_narrows_secret_node(client: TestClient, book: dict[str, str]) -> None:
-    # 萧决 KNOWS 血脉秘密，所以子图里会有那个 Secret 节点——它必须被收窄。
-    seed.knows(
-        book["db"], _pid(book),
-        who="萧决", secret="血脉秘密",
-        quote="萧决在青云城主府第一次听说了血脉秘密的真相。",
-    )
-
-    r = client.get(
-        f"/api/projects/{_pid(book)}/subgraph",
-        params={"center": book["萧决"], "chapter": 5, "hops": 2},
-    )
-    assert r.status_code == 200, r.text
-    assert TWIST not in r.text
-    secret = next(n for n in r.json()["nodes"] if n["id"] == book["血脉秘密"])
-    assert "props" not in secret  # Secret 节点被收窄成 {id,label,name}
-
-
 def test_future_character_narrowed_before_first_appears(
     client: TestClient, book: dict[str, str]
 ) -> None:
@@ -582,9 +562,9 @@ def test_deleting_a_version_that_backs_evidence_is_refused(
     锚没了它就只是一句无出处的断言。
     """
     pid = _pid(book)
-    seed.knows(
+    seed.where(
         book["db"], pid,
-        who="萧决", secret="血脉秘密",
+        who="萧决", loc="青云城主府",
         quote="萧决在青云城主府第一次听说了血脉秘密的真相。",
     )
     anchored = next(s for s in _history(client, pid) if s["is_current"])["snapshot_id"]
@@ -622,7 +602,7 @@ def test_deleting_an_unknown_snapshot_is_refused(client: TestClient, book: dict[
 def test_evidence_roundtrip(client: TestClient, book: dict[str, str]) -> None:
     # 声明产生证据 → 按 id 取回「来源章 + 当年那句原文」，且明确不含 score。
     q = "萧决在青云城主府第一次听说了血脉秘密的真相。"
-    decl = seed.knows(book["db"], _pid(book), who="萧决", secret="血脉秘密", quote=q)
+    decl = seed.where(book["db"], _pid(book), who="萧决", loc="青云城主府", quote=q)
     ev_id = decl.evidence.id
 
     r = client.get(f"/api/projects/{_pid(book)}/evidence/{ev_id}")

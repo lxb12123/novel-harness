@@ -34,9 +34,7 @@ from novel_harness.graph import (
     AliasKind,
     EdgeStatus,
     EdgeType,
-    KnowledgeState,
     NodeLabel,
-    SecretDetail,
 )
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.text import anchor
@@ -96,7 +94,6 @@ def led(store: SqliteStoryGraph, conn: Connection, pid: str) -> Ledger:
     ledger.declare_node(NodeLabel.CHARACTER, "李管家")
     ledger.declare_node(NodeLabel.LOCATION, "青云城")
     ledger.declare_node(NodeLabel.LOCATION, "北荒")
-    ledger.declare_node(NodeLabel.SECRET, "血脉秘密", secret=SecretDetail(description="他不是萧家的种"))
     return ledger
 
 
@@ -114,7 +111,7 @@ def _counts(conn: Connection, pid: str) -> tuple[int, int, int]:
 
 def test_valid_from_comes_from_the_quote_not_from_the_author(led: Ledger) -> None:
     # 作者敲的只有这一句话。下面那个 1 是系统算出来的 —— 本测试从头到尾没有章号入参。
-    d = led.declare_knows(who="萧决", secret="血脉秘密", quote="你身上流的不是萧家的血")
+    d = led.declare_where(who="萧决", loc="青云城", quote="你身上流的不是萧家的血")
     assert d.valid_from == 1
     assert d.edge.valid_from_chapter == 1
     assert d.evidence.chapter_number == 1
@@ -127,7 +124,7 @@ def test_a_quote_in_chapter_three_yields_chapter_three(led: Ledger) -> None:
 
 
 def test_declaration_valid_from_is_the_evidence_chapter(led: Ledger) -> None:
-    d = led.declare_knows(who="萧决", secret="血脉秘密", quote="你身上流的不是萧家的血")
+    d = led.declare_where(who="萧决", loc="青云城", quote="你身上流的不是萧家的血")
     assert d.valid_from == d.evidence.chapter_number
 
 
@@ -144,10 +141,8 @@ def test_ledger_has_no_chapter_shaped_parameter_anywhere(led: Ledger) -> None:
     # 一个永远绿的守卫比没有守卫更糟：扫描器要是一个方法都没看见，上面那条恒真。
     assert set(scanned) == {
         "declare_alias",
-        "declare_believes",
         "declare_dead",
         "declare_first_appearance",
-        "declare_knows",
         "declare_node",
         "declare_where",
         "locate",
@@ -167,7 +162,7 @@ def test_decision_quote_hash_matches_evidence_byte_for_byte(led: Ledger, conn: C
 
     传错的话两边哈希永远不等，而没有任何东西会报错——直到某次 schema 变更要重放。
     """
-    d = led.declare_knows(who="萧决", secret="血脉秘密", quote="你身上流的不是萧家的血")
+    d = led.declare_where(who="萧决", loc="青云城", quote="你身上流的不是萧家的血")
     log = [x for x in decisions.read(conn, pid) if x.id == d.decision_id]
     assert len(log) == 1
     entry = log[0]
@@ -179,23 +174,12 @@ def test_decision_quote_hash_matches_evidence_byte_for_byte(led: Ledger, conn: C
 
 def test_decision_subject_is_a_name_not_an_id(led: Ledger, conn: Connection, pid: str) -> None:
     # §5.7 原文：「人名，不是 ID」。ID 随重抽全部作废，重放不回去的日志等于没有日志。
-    d = led.declare_knows(who="萧决", secret="血脉秘密", quote="你身上流的不是萧家的血")
+    d = led.declare_where(who="萧决", loc="青云城", quote="你身上流的不是萧家的血")
     entry = next(x for x in decisions.read(conn, pid) if x.id == d.decision_id)
     assert entry.subject_name == "萧决"
     assert entry.subject_name != d.edge.src
-    assert entry.payload["object_name"] == "血脉秘密"
-    assert entry.payload["edge_type"] == "KNOWS"
-
-
-def test_declare_node_logs_secret_declare_for_secrets(led: Ledger, conn: Connection, pid: str) -> None:
-    kinds = {d.kind for d in decisions.read(conn, pid)}
-    assert "secret_declare" in kinds
-    assert "node_declare" in kinds
-    secret_entries = decisions.read(conn, pid, kind="secret_declare")
-    assert [e.subject_name for e in secret_entries] == ["血脉秘密"]
-    assert secret_entries[0].quote_text is None  # 节点不是时态的：没有引语，也没有章号
-
-
+    assert entry.payload["object_name"] == "青云城"
+    assert entry.payload["edge_type"] == "LOCATED_AT"
 def test_declare_alias_logs_alias_merge(led: Ledger, conn: Connection, pid: str) -> None:
     stored = led.declare_alias(of="萧决", surface="决哥", kind=AliasKind.NICKNAME)
     assert stored.surface == "决哥"
@@ -355,7 +339,7 @@ def test_ledger_rejects_an_outer_transaction_before_any_canon_write(
 def test_quote_not_found_writes_nothing(led: Ledger, conn: Connection, pid: str) -> None:
     before = _counts(conn, pid)
     with pytest.raises(QuoteNotFound):
-        led.declare_knows(who="萧决", secret="血脉秘密", quote="这句话全书里没有")
+        led.declare_where(who="萧决", loc="青云城", quote="这句话全书里没有")
     assert _counts(conn, pid) == before
 
 
@@ -364,7 +348,7 @@ def test_ambiguous_quote_shows_candidates_and_writes_nothing(
 ) -> None:
     before = _counts(conn, pid)
     with pytest.raises(AmbiguousQuote) as exc:
-        led.declare_knows(who="萧决", secret="血脉秘密", quote="他终于明白")
+        led.declare_where(who="萧决", loc="青云城", quote="他终于明白")
     assert len(exc.value.candidates) == 2
     assert [c.chapter_number for c in exc.value.candidates] == [1, 3]
     # 摆的候选必须带上下文，否则作者不知道该往哪边加长引语。
@@ -380,7 +364,7 @@ def test_ambiguous_name_shows_candidates_and_writes_nothing(
     led.declare_alias(of="李管家", surface="师兄", kind=AliasKind.TITLE)
     before = _counts(conn, pid)
     with pytest.raises(AmbiguousName) as exc:
-        led.declare_knows(who="师兄", secret="血脉秘密", quote="你身上流的不是萧家的血")
+        led.declare_where(who="师兄", loc="青云城", quote="你身上流的不是萧家的血")
     assert exc.value.surface == "师兄"
     assert sorted(c.name for c in exc.value.candidates) == ["李管家", "萧决"]
     assert _counts(conn, pid) == before
@@ -391,23 +375,11 @@ def test_unknown_name_writes_nothing(led: Ledger, conn: Connection, pid: str) ->
 
     before = _counts(conn, pid)
     with pytest.raises(UnknownName):
-        led.declare_knows(who="没有这个人", secret="血脉秘密", quote="你身上流的不是萧家的血")
+        led.declare_where(who="没有这个人", loc="青云城", quote="你身上流的不是萧家的血")
     assert _counts(conn, pid) == before
-
-
-def test_knows_refuses_a_character_in_the_secret_slot(led: Ledger, conn: Connection, pid: str) -> None:
-    """「知道李管家」会建出一条 dst 是人的 KNOWS 边——而它在认知矩阵里根本不成列。"""
-    before = _counts(conn, pid)
-    with pytest.raises(WrongLabel) as exc:
-        led.declare_knows(who="萧决", secret="李管家", quote="你身上流的不是萧家的血")
-    assert exc.value.got is NodeLabel.CHARACTER
-    assert exc.value.want is NodeLabel.SECRET
-    assert _counts(conn, pid) == before
-
-
-def test_where_refuses_a_secret_in_the_location_slot(led: Ledger) -> None:
+def test_where_refuses_a_character_in_the_location_slot(led: Ledger) -> None:
     with pytest.raises(WrongLabel):
-        led.declare_where(who="萧决", loc="血脉秘密", quote="北荒的风比刀还利")
+        led.declare_where(who="萧决", loc="李管家", quote="北荒的风比刀还利")
 
 
 def test_supersede_conflict_leaves_no_fake_accept_in_the_log(
@@ -452,41 +424,13 @@ def test_state_at_agrees_with_the_declared_intervals(led: Ledger, store: SqliteS
     assert store.state_at(pid, xiao.id, 2).location is not None
     assert store.state_at(pid, xiao.id, 2).location.name == "青云城"
     assert store.state_at(pid, xiao.id, 3).location.name == "北荒"
-
-
-def test_believes_stores_the_believed_value(led: Ledger) -> None:
-    d = led.declare_believes(
-        who="李管家",
-        secret="血脉秘密",
-        believed_value="以为萧决是萧家的种",
-        quote="李管家撑着伞站在阶下",
-    )
-    assert d.edge.type is EdgeType.BELIEVES
-    assert d.edge.props.believed_value == "以为萧决是萧家的种"
-    assert d.valid_from == 2
-
-
-def test_declared_secret_shows_up_in_the_default_matrix_columns(
-    led: Ledger, store: SqliteStoryGraph, pid: str
-) -> None:
-    """`declare_node(SECRET)` 落了 secret 行，所以它在默认列序（走 `secret` 表）里成列。"""
-    xiao = led.declare_node(NodeLabel.CHARACTER, "萧决")
-    d = led.declare_knows(who="萧决", secret="血脉秘密", quote="你身上流的不是萧家的血")
-    m = store.knowledge_matrix(pid, 1, [xiao.id])
-    assert [s.name for s in m.secrets] == ["血脉秘密"]
-    cell = m.cell(xiao.id, d.edge.dst)
-    assert cell.state is KnowledgeState.KNOWS
-    assert cell.since_chapter == 1
-    assert store.knowledge_matrix(pid, 1, [xiao.id]).cell(xiao.id, d.edge.dst).evidence_id
-
-
 # ══════════════════════════════════════════════════════════════════════════
 # 证据：双指针 + locate
 # ══════════════════════════════════════════════════════════════════════════
 
 
 def test_evidence_pointers_coincide_on_write(led: Ledger) -> None:
-    d = led.declare_knows(who="萧决", secret="血脉秘密", quote="你身上流的不是萧家的血")
+    d = led.declare_where(who="萧决", loc="青云城", quote="你身上流的不是萧家的血")
     assert d.evidence.audit.para_index == d.evidence.relocate.para_index_hint
     assert d.evidence.audit.quote_sha256 == d.evidence.relocate.quote_sha256
     assert d.edge.evidence_id == d.evidence.id
@@ -515,7 +459,7 @@ def test_context_split_agrees_with_anchor_on_the_k_th_occurrence() -> None:
 
 
 def test_declaration_is_frozen(led: Ledger) -> None:
-    d = led.declare_knows(who="萧决", secret="血脉秘密", quote="你身上流的不是萧家的血")
+    d = led.declare_where(who="萧决", loc="青云城", quote="你身上流的不是萧家的血")
     assert isinstance(d, Declaration)
     with pytest.raises(Exception):  # noqa: B017 —— 要钉的是「改不动」，不是 pydantic 的错误分类
         d.decision_id = "x"  # type: ignore[misc]
