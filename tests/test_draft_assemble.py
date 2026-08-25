@@ -444,25 +444,6 @@ def test_the_default_tail_limit_is_the_frozen_x0_definition() -> None:
         inspect.signature(assemble).parameters["previous_tail_limit"].default
         == assemble_module.GATE_TAIL_CODE_POINTS
     )
-
-
-def test_no_kill_gate_call_site_ever_passes_a_tail_limit() -> None:
-    """判分侧的三个调用点**必须一个字都不传**——传了就是那一臂单独换了预算。
-
-    源码扫描而不是行为断言：`runner.py` 真跑一轮要花钱，而这里要拦的正是「有人顺手在
-    那儿加一个参数」。同 `tests/test_arch_guard.py` 的判据形状（谁在碰什么，不是谁 import 了什么）。
-    """
-    from pathlib import Path
-
-    root = Path(assemble_module.__file__).resolve().parent.parent
-    for relative in ("eval/runner.py", "eval/evidence.py"):
-        source = (root / relative).read_text(encoding="utf-8")
-        assert "previous_tail_limit" not in source, (
-            f"{relative} 传了 previous_tail_limit：三臂必须用冻结的默认值，"
-            "改它 = 改考卷（EVAL_PROTOCOL §2）"
-        )
-
-
 def test_a_longer_limit_keeps_more_of_the_tail_verbatim() -> None:
     """产品档要的就是这条：同一段上文，限额大 ⇒ 逐字进 prompt 的更多。"""
     ctx = _full_ctx()

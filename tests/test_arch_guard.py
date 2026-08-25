@@ -78,13 +78,13 @@ GRAPH_TABLE_OWNERS = frozenset({"db.py"})
 那不是图——这正好说明这条判据比「谁 import 了 sqlite3」准。
 """
 
-CONNECTION_OPENERS = frozenset({"db.py", "api/deps.py", "api/launch.py", "gate.py"})
+CONNECTION_OPENERS = frozenset({"db.py", "api/deps.py", "api/launch.py"})
 """允许 `from .db import connect` 的文件：装配层。
 
 `db.py` 是家；`api/deps.py` 是 **FastAPI 壳的装配层**（开库、组装 store、递给路由），
 入口是 HTTP。`api/launch.py` 是**工作台启动器**（原 `nh serve` 的库函数版，桌面壳的
-地基）：建库 + 起服务，所以它开连接。`gate.py` 是 M2「防泄漏」考试的独立入口
-（`python -m novel_harness.gate`）：它要开库组装 store 才能跑考试，同属装配。
+地基）：建库 + 起服务，所以它开连接。
+（`gate.py` 曾经是第三个：M2「防泄漏」考试的独立入口，随秘密下线一起删了。）
 它们是装配面里仅有的开连接处；路由 `api/app.py` 收 `Depends(get_store)`，不碰连接，
 正如 `checks/` 的规则收 `CheckContext`。加它们进来回答了守卫 docstring 那个问题：
 这些文件是要**开连接**（装配），不是要**查图**（那仍然只走 StoryGraph）。
@@ -277,14 +277,14 @@ def test_allowlist_stays_small() -> None:
     assert ALLOWED == frozenset({"db.py"})
     assert ALLOWED_DIRS == frozenset({"graph"})
     assert GRAPH_TABLE_OWNERS == frozenset({"db.py"})
-    # api/deps.py 是 FastAPI 壳的装配层（唯一开连接处），api/launch.py 是启动器，
-    # gate.py 是 M2 考试入口。
+    # api/deps.py 是 FastAPI 壳的装配层（唯一开连接处），api/launch.py 是启动器。
+    # gate.py 曾经也在这儿（M2 考试入口），随秘密下线一起删了（ADR 0039）——
+    # **名单变短是好事**：每一个成员都是「时态过滤只写一次」可以被绕开的一个地方。
     assert CONNECTION_OPENERS == frozenset(
         {
             "db.py",
             "api/deps.py",
             "api/launch.py",
-            "gate.py",
         }
     )
     # 同理：遮蔽豁免名单长一个，就多一个「模块取不到」的地方。

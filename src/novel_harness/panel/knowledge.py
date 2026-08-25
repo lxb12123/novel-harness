@@ -33,7 +33,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from ..graph import QUERYABLE_SCOPES, InformationScope, KnowledgeMatrix, StoryGraph
+from ..graph import InformationScope, KnowledgeMatrix, StoryGraph
+from .scope import require_queryable_scope
 
 
 def knowledge_matrix(
@@ -79,23 +80,3 @@ def knowledge_matrix(
         return matrix
     # store 收的是 node_id，它没有机会知道哪些称呼没解析出来——这个字段只能在这里挂上。
     return matrix.model_copy(update={"unresolved_cast": list(unresolved)})
-
-
-def require_queryable_scope(scope: InformationScope) -> None:
-    """PLANNED / REJECTED 挡在读路径外（改 7 的「下沉为 filter」）。
-
-    住在头牌这个文件里而不是某个 `panel/_util.py`，是因为它是这一层唯一的安全断言，
-    该被读到；`panel/state.py` 从这里 import 它。
-
-    store 侧也有这一条，这里**不是**多余的重复：这个函数是 API 路由和 CLI 的直接
-    入口，scope 会从 HTTP 查询参数上来。改 7 的原话是「泄漏在物理上不可能发生，
-    而不是大概率不会发生」——一个把硬约束只放在一层的系统，靠的是那一层没 bug。
-    PLANNED 泄漏进 Writer prompt 的代价是「未来剧情泄漏」，那正是这个产品声称
-    结构上恒为 0 的东西。
-    """
-    if scope not in QUERYABLE_SCOPES:
-        raise ValueError(
-            f"scope={scope} 不可读。只有 {sorted(s.value for s in QUERYABLE_SCOPES)} 可查："
-            "PLANNED 永不进 Writer prompt（唯一出口是 panel/constraints.py 转译成 "
-            "must_not_reveal / forbidden_entities），REJECTED 只是防重抽的坟场"
-        )

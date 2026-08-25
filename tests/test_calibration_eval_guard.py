@@ -1,4 +1,11 @@
-"""Task 1 的硬守卫：三臂冻结 prompt 逐字节不动，eval runner/gate 不导入 calibration。"""
+"""三臂冻结 prompt 逐字节不动 —— **现在只剩这一条**。
+
+原来还有两条钉着「`eval/` 判分链不许认识 `calibration`」（认识它的人迟早会用它改考卷）。
+`eval/` 和 `gate.py` 随秘密下线整个删了（ADR 0039），那两条守的东西不复存在。
+
+**冻结这一条留着**：`draft/assemble.py` 现在只有产品路在走，但它的哈希闸仍然是
+「改这个文件必须显式动那个数」——那条纪律跟考试无关，它防的是「悄悄改渲染器」。
+"""
 
 from __future__ import annotations
 
@@ -22,21 +29,6 @@ ASSEMBLE_SHA256 = "c17dd23db78ab032d9e22eb034da19b3f116cecf5f5f290458f6c9ba1421e
 def _assemble_digest(path: Path = ASSEMBLE) -> str:
     """**只看文件内容，不看任何进程外的状态**（这就是这道闸整件事的重点）。"""
     return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def test_eval_package_never_imports_calibration() -> None:
-    """三臂判分链不得认识 SceneBrief —— 认识它的人迟早会用它改考卷。"""
-    offenders: list[str] = []
-    for path in sorted(EVAL_DIR.glob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                if any("calibration" in (alias.name or "") for alias in node.names):
-                    offenders.append(f"{path.name}: import {node.names}")
-            elif isinstance(node, ast.ImportFrom):
-                if node.module and "calibration" in node.module:
-                    offenders.append(f"{path.name}: from {node.module} import …")
-    assert not offenders, f"eval 包引用了校准模块：{offenders}"
 
 
 def test_three_arm_assembler_is_byte_identical() -> None:
@@ -89,10 +81,3 @@ def test_the_freeze_never_shells_out() -> None:
         if isinstance(node, ast.ImportFrom) and node.module
     }
     assert "subprocess" not in imported
-
-
-def test_calibration_lives_outside_eval_and_draft_frozen_paths() -> None:
-    """校准只在产品路径；`eval/runner.py` / `eval/evidence.py` 都不碰它。"""
-    for name in ("runner.py", "evidence.py"):
-        source = (EVAL_DIR / name).read_text(encoding="utf-8")
-        assert "calibration" not in source, f"eval/{name} 提了 calibration"

@@ -72,12 +72,13 @@ uv run ruff check .
 # 没有 nh 命令行面了（2026-08-20 删）；产品线 = 桌面壳，调试线 = Web 工作台。
 bash scripts/demo.sh                                                        # 心跳：端到端还通着吗
 
-# ── M2 kill-gate 的合成小册子（`synth/`，仪器不是产品，不进 wheel）────────────
-uv run python synth/build.py                # booklet.toml + booklet.txt → 库 + ground_truth.json
-uv run python -m synth.leak_selfcheck       # ⚠️ 必须 -m：它和 build.py 共用一份 schema，
-                                            #    `python synth/leak_selfcheck.py` 会 ImportError
-# 真跑一轮（**会调模型、会花钱**：225 个 final cell；每份最多一次长度续写，成功轮为 225–450 次 transport call）。作者永远不敲这条。
-uv run python -m novel_harness.gate --db synth/gate.db -p <pid> --ground-truth synth/ground_truth.json
+# ── 合成小册子（`synth/`，仪器不是产品，不进 wheel）────────────────────────
+# ⚠️ 2026-08-24：M2「防泄漏」那张卷子随秘密下线一起退役了（ADR 0039 /
+#    docs/EVAL_PROTOCOL_RETIREMENT.md）。`eval/`、`gate.py`、`leak_selfcheck.py`、
+#    `ground_truth.json` 都删了。**小册子留着，它现在只服务 M3 那张卷子。**
+uv run python synth/build.py                # booklet.toml + booklet.txt → M3 门槛用的库
+uv run python -m synth.m3_replay --db synth/gate.db --project <pid> \
+    --ground-truth synth/m3_ground_truth.json   # R2/R3 误报门槛，零模型调用
 
 # ── 工作台的三层，别混 ──────────────────────────────────────────────────────
 # 产品线（最终）= 桌面壳：它调 novel_harness/api/launch.py::launch()

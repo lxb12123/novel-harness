@@ -42,6 +42,11 @@
 
 ---
 
+> ⚠️ **2026-08-24：这门考试的对象已下线，本协议不再可跑**——秘密整套功能被裁定下线
+> （[ADR 0039](adr/0039-secrets-offline.md)），没有秘密就没有认知矩阵，也就没有 X1 / X2。
+> **下面的冻结正文和九份修正案一个字节未改，保留为历史。**
+> 详见 [`EVAL_PROTOCOL_RETIREMENT.md`](EVAL_PROTOCOL_RETIREMENT.md)。
+
 ## 1. 被证伪的命题
 
 > 在「本项目引擎能算出的约束」（`must_not_reveal` / `forbidden_entities`，

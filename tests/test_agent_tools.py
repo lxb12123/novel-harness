@@ -904,14 +904,15 @@ def test_the_tool_layer_never_touches_a_tell_or_node_props() -> None:
         offenders += [f"agent/{name}:{n}（.props）" for n in props_reads(source, name)]
     assert not offenders, (
         f"工具层碰了不该碰的东西：{offenders}\n"
-        "tell 进对话 = 秘密的内容进了作者的持久化历史；`.props` 是它住的地方。"
+        "`.props` 里是作者写的自由文本，直接读它等于绕开出参收窄 —— 而工具的返回值\n"
+        "进的是**持久化的对话历史**，泄完删不掉。约束要收算好的，别自己解析。"
     )
 
 
 def test_that_ast_guard_can_see_the_bypass() -> None:
     """扫描器要是把目录找错了（或者 glob 为空），上面那条会永远绿着通过。"""
     from test_draft_boundary import (
-        ECHO_PROBE,
+        CAST_PROBE,
         PROPS_PROBE,
         WRITER_BANNED,
         banned_symbols,
@@ -920,7 +921,7 @@ def test_that_ast_guard_can_see_the_bypass() -> None:
 
     assert _agent_sources(), "agent/ 一个 .py 都没扫到 —— 上面那条守卫在扫一个空集合"
     assert {name for name, _ in _agent_sources()} >= {"tools.py"}
-    assert banned_symbols(ECHO_PROBE, WRITER_BANNED), "扫描器看不见 secret_surfaces 被拿走"
+    assert banned_symbols(CAST_PROBE, WRITER_BANNED), "扫描器看不见 resolve_cast 被拿走"
     assert props_reads(PROPS_PROBE), "扫描器看不见 .props 被读"
 
 

@@ -20,7 +20,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from ..graph import InformationScope, StateSnapshot, StoryGraph
-from .knowledge import require_queryable_scope
+from .scope import require_queryable_scope
 
 
 def character_state(

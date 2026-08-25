@@ -308,19 +308,9 @@ def test_the_gate_never_reaches_this_module() -> None:
                 found |= {alias.name for alias in node.names}
         return found
 
-    # cli.py 已删（2026-08-20 去命令行面）；判分链只剩 eval/ 自己。
-    gate_sources = sorted((src / "eval").glob("*.py"))
-    assert len(gate_sources) >= 5, "扫到的判分链文件太少 —— glob 坏了，这条会永远绿"
-    polluted = {
-        path.name: sorted(n for n in imported_names(path) if "product_assemble" in n)
-        for path in gate_sources
-        if any("product_assemble" in n for n in imported_names(path))
-    }
-    assert not polluted, (
-        f"判分链 import 了产品装配器：{polluted}\n"
-        "三臂必须走 `assemble()`——记忆前言进了臂里就是改考卷（EVAL_PROTOCOL §2 冻结）。"
-    )
-
+    # 判分链那一半（`eval/` 不许 import 产品装配器）随秘密下线一起删了（ADR 0039）：
+    # 没有秘密就没有三臂，也就没有「记忆前言进了臂里 = 改考卷」这件事可防。
+    # **留下的这一半跟考卷无关**：它问的是「换序那次的安全性今天还押在几个调用方上」。
     callers = {
         path.relative_to(src).as_posix()
         for path in src.rglob("*.py")
