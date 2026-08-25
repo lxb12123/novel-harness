@@ -1027,6 +1027,66 @@
       "title": "第三章 对峙"
     }
   ],
+  "characterEvents": [
+    {
+      "chapter_number": 1,
+      "event_id": "event:ID29",
+      "knowers": [
+        {
+          "id": "character:ID9",
+          "label": "Character",
+          "name": "萧决"
+        },
+        {
+          "id": "character:ID7",
+          "label": "Character",
+          "name": "李管家"
+        }
+      ],
+      "participants": [
+        {
+          "id": "character:ID9",
+          "label": "Character",
+          "name": "萧决"
+        },
+        {
+          "id": "character:ID7",
+          "label": "Character",
+          "name": "李管家"
+        }
+      ],
+      "summary": "萧决得知血脉秘密。"
+    },
+    {
+      "chapter_number": 1,
+      "event_id": "event:ID34",
+      "knowers": [
+        {
+          "id": "character:ID9",
+          "label": "Character",
+          "name": "萧决"
+        },
+        {
+          "id": "character:ID7",
+          "label": "Character",
+          "name": "李管家"
+        }
+      ],
+      "participants": [
+        {
+          "id": "character:ID9",
+          "label": "Character",
+          "name": "萧决"
+        },
+        {
+          "id": "character:ID7",
+          "label": "Character",
+          "name": "李管家"
+        }
+      ],
+      "summary": "萧决得知血脉秘密。"
+    }
+  ],
   "characterProfile": {
     "aliases": [
       {
@@ -2015,30 +2075,35 @@
     {
       "appearance_chapters": 0,
       "id": "location:ID5",
+      "information_score": 0,
       "label": "Location",
       "name": "青云城主府"
     },
     {
       "appearance_chapters": 0,
       "id": "character:ID6",
+      "information_score": 0,
       "label": "Character",
       "name": "未来大能"
     },
     {
       "appearance_chapters": 0,
       "id": "character:ID7",
+      "information_score": 0,
       "label": "Character",
       "name": "李管家"
     },
     {
       "appearance_chapters": 0,
       "id": "location:ID8",
+      "information_score": 0,
       "label": "Location",
       "name": "北荒"
     },
     {
       "appearance_chapters": 0,
       "id": "character:ID9",
+      "information_score": 0,
       "label": "Character",
       "name": "萧决"
     }
@@ -2047,42 +2112,49 @@
     {
       "appearance_chapters": 1,
       "id": "location:ID5",
+      "information_score": 0,
       "label": "Location",
       "name": "青云城主府"
     },
     {
       "appearance_chapters": 0,
       "id": "character:ID6",
+      "information_score": 0,
       "label": "Character",
       "name": "未来大能"
     },
     {
       "appearance_chapters": 0,
       "id": "character:ID7",
+      "information_score": 12,
       "label": "Character",
       "name": "李管家"
     },
     {
       "appearance_chapters": 0,
       "id": "location:ID21",
+      "information_score": 0,
       "label": "Location",
       "name": "青云城"
     },
     {
       "appearance_chapters": 0,
       "id": "character:ID11",
+      "information_score": 0,
       "label": "Character",
       "name": "顾清音"
     },
     {
       "appearance_chapters": 0,
       "id": "location:ID8",
+      "information_score": 0,
       "label": "Location",
       "name": "北荒"
     },
     {
       "appearance_chapters": 1,
       "id": "character:ID9",
+      "information_score": 1,
       "label": "Character",
       "name": "萧决"
     }

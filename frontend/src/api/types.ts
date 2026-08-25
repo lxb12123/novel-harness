@@ -271,6 +271,24 @@ export interface NodeRef {
  *  这一列全是 0。措辞的责任在渲染那一行的组件上。 */
 export interface RosterEntry extends NodeRef {
   appearance_chapters: number;
+  /** **各章信息量的累计**（模型给他写的画像有多长）。**只有人物有**，别的 label 恒 0。
+   *
+   *  ⚠️ **这个数今天只用来排序**，不参与任何判断。完整设计（够分直接建 /
+   *  不够分问一句 / 不答默认建进去）和「为什么这一批不接那道闸」在 ADR 0020
+   *  的第二份补记里。**别在这儿长出一个阈值。** */
+  information_score: number;
+}
+
+/** 一个人时间线上的一条事件（`GET …/characters/{id}/events`）。
+ *
+ *  一件事跟几个人相关，就在几个人的线上各出现一次——存储那一侧本来就是多对多。
+ *  **出参全给 + 每条带章号**，要按「第 N 章那个时点」切片是界面的事，不是后端的。 */
+export interface CharacterEventRow {
+  event_id: string;
+  chapter_number: number;
+  summary: string;
+  participants: NodeRef[];
+  knowers: NodeRef[];
 }
 
 export interface RenameNodeInput {

@@ -632,6 +632,41 @@ class SqliteEventStore:
             scope,
         )
 
+    def events_for_one_character(
+        self,
+        project_id: str,
+        character_id: str,
+        scope: InformationScope = InformationScope.CANON,
+    ) -> list[EventView]:
+        """**这个人的全部事件**，按章号升序。见 `queries.event_ids_for_one_character`。
+
+        ── 为什么按章分组补名单，而不是再写一条 incidence SQL ────────────────
+
+        每一行的在场 / 知情名单由 `event_views_at` 补，而它按 `:ch` 做时态过滤。
+        这里把事件按**它自己的 `valid_from_chapter`** 分组，逐组调一次——于是每一行
+        看到的是「这件事在它自己那一章的名单」，而这正是时间线该显示的东西。
+
+        代价是 N 次查询（N = 这个人涉及的**不同章数**，一本 158 章的书上界就是 158，
+        IN 列表都很短）。**换来的是 incidence 那段 SQL 全仓仍然只有一份**——
+        抄第二份的下场见 `summary_alignment` 那次「报了没做」。这一层是面板读，
+        不在写路径上，这个交换是划算的。
+        """
+        if scope not in QUERYABLE_SCOPES:
+            raise EventScopeError(f"scope={scope.value} 不可读；只允许 CANON / PROVISIONAL")
+        rows = queries.event_ids_for_one_character(
+            self._conn, project_id, character_id, scope
+        )
+        by_chapter: dict[int, list[str]] = {}
+        for event_id, chapter in rows:
+            by_chapter.setdefault(chapter, []).append(event_id)
+        views: list[EventView] = []
+        for chapter, event_ids in by_chapter.items():
+            views.extend(
+                queries.event_views_at(self._conn, project_id, event_ids, chapter, scope)
+            )
+        views.sort(key=lambda view: (view.event.chapter_number, view.event.id))
+        return views
+
     def events_for_chapter(
         self,
         project_id: str,

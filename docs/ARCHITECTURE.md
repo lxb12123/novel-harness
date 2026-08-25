@@ -327,7 +327,7 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 > **M1 的「认知边界面板」那一半、M2 的「评估」那一半，从此都不是现状。**
 > 起草线本身活着；M3 / M4 未被触碰。下面这段话按此读。
 
-**M0 + M1 + M1.5 已落地；M2 的起草线在用、评估那一半已退役；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2475 个 pytest + 648 个 vitest，`.sql` 和前端产物都在 wheel 里）：
+**M0 + M1 + M1.5 已落地；M2 的起草线在用、评估那一半已退役；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2484 个 pytest + 652 个 vitest，`.sql` 和前端产物都在 wheel 里）：
 
 > ⚠️ **2026-08-14 两刀，都是作者看着工作台提的，都撤掉了「要作者去填」的东西**：
 >
@@ -515,8 +515,8 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 > 列在「还一个字符都没有」里——照它排期的人会去重写已完成的工作。
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
-> 守卫钉住的是**能在运行时数出来**的那些（87 条路由 / 86 条 /api / 1 条 501 stub /
-> 19 个错误映射 / 48 张表 / 85 个端点 / `ALL_CHECKS` 2），
+> 守卫钉住的是**能在运行时数出来**的那些（88 条路由 / 87 条 /api / 1 条 501 stub /
+> 19 个错误映射 / 49 张表 / 86 个端点 / `ALL_CHECKS` 2），
 > 改错必红、**删掉也必红**（不静默 skip）。
 > （**「17 个子命令」2026-08-20 从这张清单里退了**：命令行面整个删掉，那个数在运行时
 > 已经数不出来，守卫里那条 `Fact` 同步撤掉——见 ADR 0034。）
@@ -577,7 +577,8 @@ migrations/{001_init,002_m4_events,003_proposal_audit_recovery,004_chapter_summa
             018_chapter_refresh,019_summary_versions,020_canon_edge_overrides,
             021_extraction_superseded,022_system_notifications,023_alias_lifecycle,
             024_validation_rules,025_chapter_focus,026_advisory_notification,
-            027_extraction_yielded_nothing,028_secrets_offline}.sql（48 张表）
+            027_extraction_yielded_nothing,028_secrets_offline,
+            029_character_information}.sql（49 张表）
                                                 ← 026 只给通知加第四档 kind
                                                   （`text_advisory`：只告警不阻断）。
                                                   SQLite 改不了 CHECK，两张表都重建了一遍，
@@ -585,6 +586,10 @@ migrations/{001_init,002_m4_events,003_proposal_audit_recovery,004_chapter_summa
                                                 ← 028 删了 `secret` / `event_reveal` 两张表
                                                   （50 → 48），并把 `edge_type` 的
                                                   KNOWS/BELIEVES 两行摘掉（ADR 0039）。
+                                                ← 029 加 `character_information`
+                                                  （每人每章一行，分数 = 按人 SUM）。
+                                                  **只用来排序**，那道「够不够、问不问」
+                                                  的闸一行都没写（ADR 0020 第二份补记）。
                                                 ← calibration 2026-08-19 从 `024_` 改名 `017_`：
                                                   它原来跳号跳在 016 后面，`_migrations()` 见到
                                                   断号直接抛 `MigrationError`，建库和起服务当场崩。
@@ -778,8 +783,8 @@ gate.py                                         ← M2 大门的薄入口（`pyt
                                                   `rules_run` 列的是 `len(ALL_CHECKS)` 个真规则名，
                                                   不是写死的数字，`demo.sh` 的心跳逐字钉着那个数
 api/{app,deps,launch,activity,background_runtime,chat,extraction,manuscript,notifications,reconcile,review,validation}.py
-                                                ← M1.5 FastAPI 壳：87 条路由 + 19 个错误映射
-                                                  （86 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
+                                                ← M1.5 FastAPI 壳：88 条路由 + 19 个错误映射
+                                                  （87 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
                                                   2026-08-20 少两条：换章 autopilot 的
                                                   POST/GET 随 ADR 0035 整块删了；
                                                   M4 抽取/事件读端 + 提案审阅/被动确认路由；
@@ -889,7 +894,7 @@ frontend/src/                                   ← React 工作台：62 个非�
                                                   翻到第 5 章面板自己跳进去）。
                                                   在场跟着那一章走（`_effective_cast` 数的是**路径上那一章**
                                                   的正文），所以 `CastLine` 那一行也跟着说「第 N 章提到：」）
-frontend/src/__fixtures__/api.json              ← 从真 app dump 的 85 个端点出参（契约测试两头共用）
+frontend/src/__fixtures__/api.json              ← 从真 app dump 的 86 个端点出参（契约测试两头共用）
                                                   其中 `extractionFailed` 是**一次没跑成的整理**
                                                   （2026-08-13 补）：在它之前这份夹具里三条 run
                                                   全是成功的，于是「失败了屏幕上说什么」这条路径

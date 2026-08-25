@@ -78,6 +78,21 @@ class EventStore(Protocol):
         scope: InformationScope,
     ) -> list[EventView]: ...
 
+    def events_for_one_character(
+        self,
+        project_id: str,
+        character_id: str,
+        scope: InformationScope = InformationScope.CANON,
+    ) -> list[EventView]:
+        """**这个人的全部事件**，按章号升序。**故意不收 `chapter`。**
+
+        「这个人经历过什么」和「在第 N 章那个时点看他有哪些事」是两个问题。
+        前者要整条线，后者是 `events_for_characters`（它收 `chapter`）。
+        2026-08-25 的裁定：全给 + 每条带章号，切片交给界面。
+        完整论证在 `queries.event_ids_for_one_character`。
+        """
+        ...
+
     def events_for_chapter(
         self,
         project_id: str,

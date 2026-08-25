@@ -323,6 +323,193 @@ def test_rename_refuses_a_name_that_already_exists(world: World) -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# ③ 事件挂在角色下面（2026-08-25）
+#
+# 维护者的原话：「事件是**比较小的一条总结**。只放到和它相关的那个角色下面……
+# 一件事情如果跟好多人相关，那就放到每个相关人的下面。」
+#
+# 存储那一侧本来就是这个形状（`event_participant` 是多对多），缺的只是「按人看」
+# 那个出口——今天跟事件有关的路由全是按章看或按事件 id 看。
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _put_event(
+    world: World,
+    *,
+    chapter: int,
+    para: int,
+    quote: str,
+    summary: str,
+    participants: list[str],
+    knowers: list[str] | None = None,
+) -> str:
+    from novel_harness.events import ProvisionalEventSpec
+    from novel_harness.graph import EvidenceSpec
+    from novel_harness.graph.sqlite_events import SqliteEventStore
+
+    snapshot_id = str(
+        world.conn.execute(
+            "SELECT cs.id FROM chapter_snapshot cs JOIN chapter c ON c.id = cs.chapter_id "
+            "WHERE c.project_id = ? AND c.number = ? AND cs.text_sha256 = c.text_sha256",
+            (world.pid, chapter),
+        ).fetchone()["id"]
+    )
+    evidence = world.graph.put_evidence(
+        EvidenceSpec(
+            project_id=world.pid,
+            chapter_snapshot_id=snapshot_id,
+            para_index=para,
+            quote_text=quote,
+        )
+    )
+    view = SqliteEventStore(world.conn).put_provisional(
+        ProvisionalEventSpec(
+            project_id=world.pid,
+            summary=summary,
+            evidence_id=evidence.id,
+            participant_ids=participants,
+            knower_ids=knowers or [],
+            confidence=0.9,
+        )
+    )
+    world.conn.commit()
+    return view.event.id
+
+
+def test_one_event_with_three_people_shows_up_under_all_three(world: World) -> None:
+    """**一件事跟三个人相关 → 三个人名下都查得到。** 这就是裁定的那句话。
+
+    存储不用改：`event_participant` 已经是多对多，一件事挂三行。
+    这一条钉的是「按人看」这个出口真的把那三行都读出来了。
+    """
+    from novel_harness.graph.sqlite_events import SqliteEventStore
+
+    third = Ledger(world.graph, world.conn, world.pid).declare_node(
+        NodeLabel.CHARACTER, "顾清音"
+    ).id
+    world.conn.commit()
+    event_id = _put_event(
+        world,
+        chapter=1,
+        para=2,
+        quote="萧决走进了北荒，寒气袭人。",
+        summary="三个人在北荒碰了面。",
+        participants=[world.hero, world.ghost, third],
+    )
+
+    events = SqliteEventStore(world.conn)
+    for who in (world.hero, world.ghost, third):
+        rows = events.events_for_one_character(world.pid, who, InformationScope.PROVISIONAL)
+        assert [view.event.id for view in rows] == [event_id], f"{who} 名下没有这件事"
+        # 每一行都带**整份**名单：界面才说得出「还有：…」。
+        assert len(rows[0].participants) == 3
+
+
+def test_the_timeline_is_ordered_by_chapter_and_never_sliced(world: World) -> None:
+    """按章号升序，**且不按任何「当前章」切片**（2026-08-25 的裁定：全给 + 每条带章号）。
+
+    换成后端切的话，作者点开一个人只看得到当前章之前的部分，而他打开花名册
+    正是为了看整条线。这一条同时是「别让下一个人以为忘了做时态」的机器判据。
+    """
+    from novel_harness.graph.sqlite_events import SqliteEventStore
+
+    src = world.root.parent / "more.txt"
+    src.write_text(
+        "第一章 甲\n\n萧决走进了北荒，寒气袭人。\n\n"
+        "第二章 乙\n\n他在城门口等了很久。\n\n"
+        "第三章 丙\n\n雪停了。\n",
+        encoding="utf-8",
+    )
+    importer.import_book(world.graph, world.pid, txt=src, root=world.root)
+    world.conn.commit()
+
+    third = _put_event(
+        world, chapter=3, para=2, quote="雪停了。", summary="第三章那件事。",
+        participants=[world.hero],
+    )
+    first = _put_event(
+        world, chapter=1, para=2, quote="萧决走进了北荒，寒气袭人。",
+        summary="第一章那件事。", participants=[world.hero],
+    )
+
+    rows = SqliteEventStore(world.conn).events_for_one_character(
+        world.pid, world.hero, InformationScope.PROVISIONAL
+    )
+    assert [view.event.id for view in rows] == [first, third], "没按章号排"
+    assert [view.event.chapter_number for view in rows] == [1, 3]
+
+
+def test_a_retracted_event_leaves_the_timeline(world: World) -> None:
+    """撤回过的事件不在线上 —— 它的语义是「这件事从未发生过」。
+
+    掉的只是那两条章号边界，`status = 'ACTIVE'` 这一条一个都不许再掉：
+    把作者亲手撤掉的一条摆回他的时间线，比不给他这条线更糟。
+    """
+    from novel_harness.graph.sqlite_events import SqliteEventStore
+
+    event_id = _put_event(
+        world, chapter=1, para=2, quote="萧决走进了北荒，寒气袭人。",
+        summary="要被撤回的那件事。", participants=[world.hero],
+    )
+    events = SqliteEventStore(world.conn)
+    assert events.events_for_one_character(
+        world.pid, world.hero, InformationScope.PROVISIONAL
+    ), "前提：撤回之前它在线上"
+
+    world.conn.execute(
+        "UPDATE story_event SET status = 'RETRACTED' WHERE id = ?", (event_id,)
+    )
+    world.conn.commit()
+
+    assert (
+        events.events_for_one_character(
+            world.pid, world.hero, InformationScope.PROVISIONAL
+        )
+        == []
+    )
+
+
+def test_the_character_events_route_returns_the_timeline(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HTTP 那一层：按章排、每条带章号和参与人。**只出 CANON。**"""
+    from novel_harness.graph import InformationScope as Scope
+    from novel_harness.graph.sqlite_events import SqliteEventStore
+
+    event_id = _put_event(
+        world, chapter=1, para=2, quote="萧决走进了北荒，寒气袭人。",
+        summary="两个人在北荒碰了面。", participants=[world.hero, world.ghost],
+    )
+    # 升 CANON —— 这条路由只出确认过的。
+    SqliteEventStore(world.conn).clone_to_scope(event_id, Scope.CANON)
+    world.conn.commit()
+
+    with world.client(monkeypatch) as client:
+        rows = client.get(
+            f"/api/projects/{world.pid}/characters/{world.hero}/events"
+        ).json()
+
+    assert [r["chapter_number"] for r in rows] == [1]
+    assert rows[0]["summary"] == "两个人在北荒碰了面。"
+    assert sorted(p["name"] for p in rows[0]["participants"]) == sorted(["袭人", "萧决"])
+    # 窄引用：`Node.props` 一个字段都不出。
+    assert all(set(p) == {"id", "label", "name"} for p in rows[0]["participants"])
+
+
+def test_the_character_events_route_refuses_a_non_character(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """拿一个地点去问「他的事件」→ 422，不是一个空表。
+
+    空表会让作者以为「这个地点没发生过事」，而真相是这个问题问错了
+    （§10 约束 8：静默的零和真的零不许长得一样）。
+    """
+    with world.client(monkeypatch) as client:
+        r = client.get(f"/api/projects/{world.pid}/characters/{world.place}/events")
+    assert r.status_code == 422, r.text
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # ③ HTTP：两条路由 + 花名册那一列
 # ══════════════════════════════════════════════════════════════════════════
 

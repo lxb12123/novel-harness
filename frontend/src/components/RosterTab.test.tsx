@@ -54,26 +54,39 @@ describe("花名册", () => {
     expect(document.body.textContent).not.toMatch(/undefined/);
   });
 
-  it("组内按出场次数降序，一颗按钮能倒过来", async () => {
+  it("组内按累计信息量降序（出场章数兜底），一颗按钮能倒过来", async () => {
+    // ── 为什么排序键是**两个数**（2026-08-25）────────────────────────────
+    //
+    // `information_score`（模型给他写的画像有多长）是主键，`appearance_chapters`
+    // 是兜底。两个数各自会在一整类书上恒为 0：分数要等带画像的抽取跑过，
+    // 章数要等总结落地。给作者一个「按哪个排」的下拉，他会撞上「换了个排法、
+    // 一列全是 0、看起来像坏了」；三级排序自己就退化得对。
     const user = userEvent.setup();
     renderWithApi(<RosterTab />);
     await screen.findByText(fixtures.rosterWithCounts[0].name);
 
-    const counts = new Map(
-      fixtures.rosterWithCounts.map((n) => [n.name, n.appearance_chapters]),
+    const signal = new Map(
+      fixtures.rosterWithCounts.map((n) => [
+        n.name,
+        [n.information_score, n.appearance_chapters] as const,
+      ]),
     );
-    const numbers = (group: string[]) => group.map((name) => counts.get(name) ?? -1);
+    const numbers = (group: string[]) => group.map((name) => signal.get(name) ?? [-1, -1]);
+    const cmp = (a: readonly number[], b: readonly number[]) =>
+      b[0] - a[0] || b[1] - a[1];
 
     const desc = namesPerGroup().map(numbers);
     for (const group of desc) {
-      expect(group).toEqual([...group].sort((a, b) => b - a));
+      expect(group).toEqual([...group].sort(cmp));
     }
     // 自守卫：**至少有一组里的数不全相同**，否则上面那条永远绿。
-    expect(desc.some((group) => new Set(group).size > 1)).toBe(true);
+    expect(
+      desc.some((group) => new Set(group.map((n) => n.join(","))).size > 1),
+    ).toBe(true);
 
-    await user.click(screen.getByRole("button", { name: /出场多/ }));
+    await user.click(screen.getByRole("button", { name: /写得多/ }));
     for (const group of namesPerGroup().map(numbers)) {
-      expect(group).toEqual([...group].sort((a, b) => a - b));
+      expect(group).toEqual([...group].sort((a, b) => cmp(b, a)));
     }
   });
 
@@ -95,6 +108,92 @@ describe("花名册", () => {
     renderWithApi(<RosterTab />);
     await screen.findByText(fixtures.rosterWithCounts[0].name);
     expect(document.body.textContent).not.toMatch(/没出场|未出场|从未出现/);
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  // 事件时间线（2026-08-25）
+  //
+  // 维护者：「事件是**比较小的一条总结**。只放到和它相关的那个角色下面……
+  // 一件事情如果跟好多人相关，那就放到每个相关人的下面。以后在花名册里也能看到。」
+  // ══════════════════════════════════════════════════════════════════════
+
+  it("点一个人 → 他的事件按章号排开，同一件事上的其他人写在「还有」里", async () => {
+    const hero = fixtures.rosterWithCounts.find((n) => n.label === "Character")!;
+    useCoords.setState({ projectId: "project:ID1", selectedNodeId: hero.id });
+    renderWithApi(<RosterTab />);
+
+    // **等的是第一行内容，不是那一格的标题**：标题在 `isLoading` 那一档就渲染了，
+    // 拿它当就绪信号会在数据到之前就往下断言（第一次写这条测试正是这么红的）。
+    // **等的是第一行真的画出来了，不是那一格的标题**：标题在 `isLoading` 那一档就
+    // 渲染了，拿它当就绪信号会在数据到之前就往下断言（第一次写这条测试正是这么红的）。
+    const timeline = () =>
+      [...document.querySelectorAll<HTMLElement>(".grp")].find((g) =>
+        g.querySelector(".lab")?.textContent?.includes(`${hero.name}的事件`),
+      );
+    await waitFor(() =>
+      expect(timeline()!.querySelectorAll(".item .nm").length).toBe(
+        fixtures.characterEvents.length,
+      ),
+    );
+    const rows = timeline()!.querySelectorAll<HTMLElement>(".item .nm");
+
+    // 按章号升序 —— 时间线的全部意义。
+    const chapters = [...rows].map((el) => Number(/第 (\d+) 章/.exec(el.textContent ?? "")![1]));
+    expect(chapters).toEqual([...chapters].sort((a, b) => a - b));
+    // 摘要是后端给的那一句（作者改过就是新的那一版）。
+    expect(rows[0].textContent).toContain(fixtures.characterEvents[0].summary);
+
+    // 同一件事上的**其他人**写在「还有：…」里，而**他自己不在里面**。
+    const others = [
+      ...fixtures.characterEvents[0].participants,
+      ...fixtures.characterEvents[0].knowers,
+    ].filter((n) => n.id !== hero.id);
+    if (others.length > 0) {
+      expect(screen.getAllByText(/还有：/)[0].textContent).toContain(others[0].name);
+      expect(screen.getAllByText(/还有：/)[0].textContent).not.toContain(hero.name);
+    }
+  });
+
+  it("一件事跟几个人相关，就在几个人的线上各出现一次", async () => {
+    // 存储那一侧本来就是多对多（`event_participant`），这一条钉的是**界面真的
+    // 在每个人名下都画出来了**——「以后在花名册里也能看到」那句话的验收。
+    const shared = fixtures.characterEvents[0];
+    expect(shared.participants.length).toBeGreaterThan(1); // 自守卫
+
+    for (const who of shared.participants) {
+      document.body.innerHTML = "";
+      useCoords.setState({ projectId: "project:ID1", selectedNodeId: who.id });
+      renderWithApi(<RosterTab />, [
+        { match: /\/characters\/[^/]+\/events$/, body: [shared] },
+        { match: /\/roster$/, body: fixtures.rosterWithCounts },
+      ]);
+      expect(await screen.findByText(new RegExp(shared.summary))).toBeInTheDocument();
+    }
+  });
+
+  it("空的时候说清楚为什么空，不写「暂无数据」", async () => {
+    // **这一格今天在真书上必然是空的**（那本 158 章的书里事件 0 条），
+    // 所以空态那句话是这一件唯一每天都被看见的部分。
+    const hero = fixtures.rosterWithCounts.find((n) => n.label === "Character")!;
+    useCoords.setState({ projectId: "project:ID1", selectedNodeId: hero.id });
+    renderWithApi(<RosterTab />, [
+      { match: /\/characters\/[^/]+\/events$/, body: [] },
+    ]);
+
+    const said = await screen.findByText(/还没有跟.*有关的事件/);
+    expect(said.textContent).toMatch(/还没整理过|没有落到/);
+    expect(document.body.textContent).not.toMatch(/暂无数据|暂无|空空如也/);
+  });
+
+  it("选中的不是人物时，不画事件那一格", async () => {
+    // 事件名单两维收的都是人物，拿一个地点去问「他的事件」后端会 422。
+    // 画一颗必然撞 422 的东西比不画更糟（同日志页「endpoints 空就不画」那条）。
+    const place = fixtures.rosterWithCounts.find((n) => n.label === "Location")!;
+    useCoords.setState({ projectId: "project:ID1", selectedNodeId: place.id });
+    renderWithApi(<RosterTab />);
+
+    await screen.findByText(place.name);
+    expect(screen.queryByText(/的事件/)).toBeNull();
   });
 
   // ══════════════════════════════════════════════════════════════════════

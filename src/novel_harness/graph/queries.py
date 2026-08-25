@@ -283,6 +283,66 @@ def event_ids_for_characters_at(
     return [str(row["id"]) for row in _rows(cur)]
 
 
+def event_ids_for_one_character(
+    conn: sqlite3.Connection,
+    project_id: str,
+    character_id: str,
+    scope: InformationScope,
+) -> list[tuple[str, int]]:
+    """**这个人的全部事件**，`(event_id, valid_from_chapter)`，按章号升序。
+
+    ── ⚠️ 它是这个文件里唯一一条**故意不切时态**的事件查询 ──────────────────
+
+    `TEMPORAL_WHERE` 的五个条件在这儿只用三个：`information_scope` / `status` /
+    `evidence_status`。**掉的是那两条章号边界**（`valid_from_chapter <= :ch` 和
+    `valid_to_chapter > :ch`），因为这条查询要回答的是「他这一路都经历了什么」，
+    不是「在第 N 章那个时点看，他有哪些事」。
+
+    **这不是忘了做时态**（2026-08-25 的裁定）：全给 + 每一行带章号，要切片交给界面。
+    换成按 `:ch` 切的话，作者点开一个人只能看到「当前那一章之前」的部分，
+    而他打开花名册正是为了看整条线。
+
+    掉的**只有**那两条，另外三条一个都不许再掉：
+
+    - `status = 'ACTIVE'`：RETRACTED 的语义是「这件事从未发生过」（作者改正过），
+      把它摆进时间线等于把一条他亲手撤掉的记忆还给他；
+    - `evidence_status != 'STALE'`：依据的那段正文已经变了，这条事实不再被断言；
+    - `information_scope`：PROVISIONAL 是抽取器猜的、没确认的，混进 CANON 的时间线
+      就等于把猜测当成了事实。
+
+    ── 「相关」= 在场 **或** 知情 ──────────────────────────────────────
+
+    和 `event_ids_for_characters_at` **同一条判据**（那儿也是 participant OR knower），
+    不在这儿另发明一份：一个人「知道这件事」也是他这条线上的一笔。
+    行里两份名单都带着，界面自己决定怎么说。
+    """
+    cur = conn.execute(
+        """
+        SELECT id, valid_from_chapter FROM story_event AS event
+        WHERE project_id = :pid
+          AND information_scope = :scope
+          AND status = 'ACTIVE'
+          AND evidence_status != 'STALE'
+          AND (
+            EXISTS (
+                SELECT 1 FROM event_participant AS participant
+                WHERE participant.event_id = event.id
+                  AND participant.status = 'ACTIVE'
+                  AND participant.character_id = :nid
+            ) OR EXISTS (
+                SELECT 1 FROM event_knower AS knower
+                WHERE knower.event_id = event.id
+                  AND knower.status = 'ACTIVE'
+                  AND knower.character_id = :nid
+            )
+          )
+        ORDER BY event.chapter_number, event.id
+        """,
+        {"pid": project_id, "scope": scope.value, "nid": character_id},
+    )
+    return [(str(row["id"]), int(row["valid_from_chapter"])) for row in _rows(cur)]
+
+
 def event_views_at(
     conn: sqlite3.Connection,
     project_id: str,
@@ -521,6 +581,55 @@ def update_canonical_alias_surface(
             "kind": AliasKind.CANONICAL.value,
         },
     )
+
+
+def record_character_information(
+    conn: sqlite3.Connection,
+    project_id: str,
+    character_id: str,
+    chapter_number: int,
+    units: int,
+) -> None:
+    """记下这个人在这一章的信息量。**同一章重跑是覆盖，不是再加一次。**
+
+    这就是 029 为什么是一张表而不是 `node.props` 上一个标量：抽取会被重跑
+    （prompt 改了、`force` 重跑、generation 前进），累加写在标量上时第二次跑就是
+    第二次加，而**没有任何东西会红**——分数只是慢慢变大，看起来完全正常。
+
+    累加发生在**章与章之间**（`character_information_totals` 的 SUM），
+    不是同一章的两次运行之间。
+    """
+    conn.execute(
+        """
+        INSERT INTO character_information
+               (project_id, character_id, chapter_number, units)
+        VALUES (:pid, :nid, :ch, :units)
+        ON CONFLICT (project_id, character_id, chapter_number)
+        DO UPDATE SET units = excluded.units
+        """,
+        {"pid": project_id, "nid": character_id, "ch": chapter_number, "units": units},
+    )
+
+
+def character_information_totals(
+    conn: sqlite3.Connection, project_id: str
+) -> dict[str, int]:
+    """`{character_id: 累计信息量}` —— **整份花名册一次算完**。
+
+    左栏靠它排序（分高的排上面）。**它今天只用来排序**：那道「够不够、要不要问」
+    的闸一行都没写（ADR 0020 的第二份补记讲了为什么——阈值要几本书的分布才定得下来，
+    而「问了没人答」正是 2026-08-15 那次死锁的形状）。
+    """
+    return {
+        str(row["character_id"]): int(row["total"])
+        for row in _rows(
+            conn.execute(
+                "SELECT character_id, SUM(units) AS total FROM character_information"
+                " WHERE project_id = :pid GROUP BY character_id",
+                {"pid": project_id},
+            )
+        )
+    }
 
 
 def node_usage(conn: sqlite3.Connection, project_id: str, node_id: str) -> NodeUsage:

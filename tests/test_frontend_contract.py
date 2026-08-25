@@ -288,12 +288,6 @@ def test_frontend_fixture_matches_the_real_api(
         "summaryMentionTrail",
         client.get(f"{base}/nodes/{book['萧决']}/summary-mentions"),
     )
-    # ── 花名册那一列出场章数：**抓第二份，抓在总结落地之后** ──────────────────
-    # 上面那份 `roster` 抓在建书之后、总结之前，所以它每一行都是 0。那一份不能动
-    # （几十个组件测试吃着它），但**只有 0 的样本证明不了排序**：前端那一格要按次数
-    # 降序 + 一颗倒序切换，全 0 的话两个方向渲染出来一模一样，测试永远绿。
-    # 这一份里萧决和青云城主府各出现在 1 章，别的还是 0——两档，够排序咬得住。
-    grab("rosterWithCounts", client.get(f"{base}/roster"))
 
     # ── 改一条**已经生效**的事实（1.1）+ 活动日志（2.1）─────────────────────
     # 这儿原来先打一次 `/canon/knowledge`，好让日志里有一条**带真跳转坐标**的
@@ -363,6 +357,13 @@ def test_frontend_fixture_matches_the_real_api(
     # （ADR 0020 的代价那节点名了它）。**绝对集合**，所以这里发的是「改完之后是这些人」。
     kept = [k["id"] for k in target["knowers"]][:-1]
     assert len(kept) < len(target["knowers"]), "这条事件没有知情人可去掉，编辑会被后端判空"
+    # ── 「这个人的事件」时间线（2026-08-25）──────────────────────────────────
+    # **抓在改名单之前**：这一份要的是「一件事挂在几个人名下」的原样，
+    # 改完名单之后那条事件少一个知情人，夹具就少一档长相。
+    grab(
+        "characterEvents",
+        client.get(f"{base}/characters/{book['萧决']}/events"),
+    )
     grab(
         "canonEventCast",
         client.post(
@@ -909,7 +910,12 @@ def test_frontend_fixture_matches_the_real_api(
     # **放在最末**：它会往图里加一条 CANON 边、把 canon 版本推高几格、写
     # decision log，而上面 `matrix` / `characterState` / `subgraph` 三份夹具
     # 冻的正是「还没有这条边」的形状。
-    from novel_harness.extract import RawChapterAnalysis, RawEvent, RawStateUpdate
+    from novel_harness.extract import (
+        RawChapterAnalysis,
+        RawCharacterProfile,
+        RawEvent,
+        RawStateUpdate,
+    )
     from novel_harness.extract.auto_canon import promote_clean_facts
     from novel_harness.extract.service import ExtractionService
 
@@ -956,7 +962,18 @@ def test_frontend_fixture_matches_the_real_api(
                         confidence=0.95,
                     ),
                 ),
-                character_profiles=(),
+                # **两个人物、两种长度**：花名册那一格要按累计信息量排序，
+                # 而全 0 或全相同的样本两个方向渲染出来一模一样，测试永远绿。
+                character_profiles=(
+                    RawCharacterProfile(
+                        surface="李管家",
+                        gender="男",
+                        background="青云城主府的老管家",
+                        personality="谨慎",
+                        confidence=0.9,
+                    ),
+                    RawCharacterProfile(surface="萧决", gender="男", confidence=0.9),
+                ),
             ),
             prompt_hash="prompt:canon-edge-contract",
         )
@@ -972,6 +989,17 @@ def test_frontend_fixture_matches_the_real_api(
         ).fetchone()["id"]
     finally:
         _edge_conn.close()
+
+    # ── 花名册那两列数：**抓第二份，抓在最后** ────────────────────────────────
+    #
+    # 上面那份 `roster` 抓在建书之后、总结和抽取之前，所以它每一行都是 0。
+    # 那一份不能动（几十个组件测试吃着它），但**只有 0 的样本证明不了排序**：
+    # 前端那一格要按累计信息量排序 + 一颗倒序切换，全 0 的话两个方向渲染出来
+    # 一模一样，测试永远绿。
+    #
+    # **位置必须在这儿**：`appearance_chapters` 要等总结落地，`information_score`
+    # 要等上面那次带画像的抽取跑完。往前挪一行，两列里就有一列回到全 0。
+    grab("rosterWithCounts", client.get(f"{base}/roster"))
 
     grab("canonEdge", client.get(f"{base}/canon/edges/{_edge_id}"))
     edge_edit_resp = client.patch(

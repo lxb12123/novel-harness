@@ -1,5 +1,11 @@
 import { useMemo, useState } from "react";
-import { useDeleteNode, useProjects, useRenameNode, useRoster } from "../api/hooks";
+import {
+  useCharacterEvents,
+  useDeleteNode,
+  useProjects,
+  useRenameNode,
+  useRoster,
+} from "../api/hooks";
 import { LABEL_ZH, type RosterEntry } from "../api/types";
 import { readCorrectionError } from "../correctionError";
 import { useCoords } from "../store";
@@ -38,13 +44,74 @@ function Refusal({ error }: { error: unknown }) {
 /** 这一格的排序方向。**存在组件里不进 URL**：它是「我现在想怎么看」，不是坐标。 */
 type Order = "desc" | "asc";
 
-function byCount(rows: RosterEntry[], order: Order): RosterEntry[] {
+/** 组内排序：**累计信息量优先，出场章数兜底，名字保底。**
+ *
+ *  ── 为什么是三级，而不是给作者一个「按哪个排」的下拉 ────────────────────
+ *
+ *  两个数各自会在一整类书上恒为 0：
+ *
+ *  - `information_score` 要等**带画像的抽取**跑过（刚导进来的书全 0）；
+ *  - `appearance_chapters` 要等**总结**落地（没生成过总结的书全 0）。
+ *
+ *  给一个下拉的话，作者会撞上「换了个排法，一列全是 0，看起来像坏了」。
+ *  三级排序自己就退化得对：分数分不出高下时按出场章数，两个都分不出时按名字。
+ *  **多一颗下拉不如少一种「看起来坏了」的样子。**
+ *
+ *  名字那一级不是装饰：没有它，同为 0 的那一大批每次渲染的顺序都不一样。 */
+function bySignal(rows: RosterEntry[], order: Order): RosterEntry[] {
   const sign = order === "desc" ? -1 : 1;
-  // 次数相同的按名字排 —— 没有这一项，同为 0 的那一大批每次渲染的顺序都不一样。
   return [...rows].sort(
     (a, b) =>
+      sign * (a.information_score - b.information_score) ||
       sign * (a.appearance_chapters - b.appearance_chapters) ||
       a.name.localeCompare(b.name, "zh"),
+  );
+}
+
+/** 这个人的事件时间线 —— **事件是比较小的一条总结，挂在跟它相关的每个人下面。**
+ *
+ *  一件事跟三个人相关，这三个人的线上各出现一次（存储那一侧本来就是多对多）。
+ *  后端全给 + 每条带章号，**切片是这一层的事**——今天不切，整条摊开。
+ *
+ *  ── 空态说清楚是哪一种空 ────────────────────────────────────────────────
+ *
+ *  这一格今天在真书上**必然是空的**：作者那本 158 章的书里事件 0 条，
+ *  第一次真抽取跑完才会有。所以空态不许写「暂无数据」——那句话既不告诉作者
+ *  发生了什么，也不告诉他下一步。这里分两种说：整本书还没整理过 vs
+ *  整理过但这个人身上没落下事。 */
+function CharacterTimeline({ characterId, name }: { characterId: string; name: string }) {
+  const { projectId } = useCoords();
+  const events = useCharacterEvents(projectId, characterId);
+  const rows = events.data ?? [];
+
+  return (
+    <div className="grp">
+      <div className="lab">{name}的事件</div>
+      {events.isLoading && <span className="empty">读取中…</span>}
+      {!events.isLoading && rows.length === 0 && (
+        <span className="empty">
+          还没有跟{name}有关的事件。事件是系统整理正文时记下的一条条小结 ——
+          这一章还没整理过、或者整理了但没有落到{name}身上。
+        </span>
+      )}
+      {rows.map((row) => {
+        // 「还有：…」= 这件事上**除他之外**的人。名单去重（一个人可能既在场又知情），
+        // 顺序按后端给的来（这一层不发明第二个序）。
+        const others = [...row.participants, ...row.knowers]
+          .filter((n) => n.id !== characterId)
+          .filter((n, i, all) => all.findIndex((m) => m.id === n.id) === i);
+        return (
+          <div className="item" key={row.event_id}>
+            <span className="nm">
+              第 {row.chapter_number} 章 · {row.summary}
+            </span>
+            {others.length > 0 && (
+              <span className="dim">还有：{others.map((n) => n.name).join("、")}</span>
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -98,9 +165,9 @@ export function RosterTab() {
           <button
             className="add"
             onClick={() => setOrder(order === "desc" ? "asc" : "desc")}
-            title={order === "desc" ? "改成出场少的排前面" : "改成出场多的排前面"}
+            title={order === "desc" ? "改成写得少的排前面" : "改成写得多的排前面"}
           >
-            {order === "desc" ? "出场多 → 少" : "出场少 → 多"}
+            {order === "desc" ? "写得多 → 少" : "写得少 → 多"}
           </button>
         )}
         {projectId && (
@@ -118,14 +185,17 @@ export function RosterTab() {
       ) : (
         <>
           {isCharacter && selectedNodeId && (
-            <CharacterBasicInfo characterId={selectedNodeId} />
+            <>
+              <CharacterBasicInfo characterId={selectedNodeId} />
+              <CharacterTimeline characterId={selectedNodeId} name={selected!.name} />
+            </>
           )}
           {Object.keys(groups)
             .sort()
             .map((lab) => (
               <div className="grp" key={lab}>
                 <div className="lab">{LABEL_ZH[lab as keyof typeof LABEL_ZH] ?? lab}</div>
-                {byCount(groups[lab], order).map((n) => (
+                {bySignal(groups[lab], order).map((n) => (
                   <div
                     className={"item" + (n.id === selectedNodeId ? " on" : "")}
                     key={n.id}

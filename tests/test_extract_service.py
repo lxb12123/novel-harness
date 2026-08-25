@@ -588,6 +588,131 @@ def create(self, proposal: ProposalCreate):
         raise RuntimeError(f"proposal write failed: {proposal.kind}")
 
 
+# ══════════════════════════════════════════════════════════════════════════
+# 累计信息量（2026-08-25）—— **只算，不拿它决定问不问**
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_information_units_count_only_what_the_model_wrote(seed: Seed) -> None:
+    """判据是**四个自由文本字段的字符数之和**，名字和置信度不算。
+
+    名字长不代表这个人重要；置信度是个概率不是信息量。
+    """
+    from novel_harness.extract.service import profile_information_units
+
+    blank = RawCharacterProfile(surface="路人甲", confidence=0.5)
+    assert profile_information_units(blank) == 0, "什么都没写就是 0，不是「有这一行所以算 1」"
+
+    written = RawCharacterProfile(
+        surface="贾环",  # 名字不计
+        gender="男",  # 1
+        personality="敏感多疑",  # 4
+        background="荣国府庶子",  # 5
+        character_notes="  与宝玉不睦  ",  # 5（首尾空白不算）
+        confidence=0.5,  # 不计
+    )
+    assert profile_information_units(written) == 1 + 4 + 5 + 5
+
+
+def test_the_score_adds_up_across_chapters_and_never_doubles_on_a_rerun(
+    seed: Seed, conn: Connection
+) -> None:
+    """**章与章之间相加；同一章重跑是覆盖。**
+
+    这两句必须一起验，它们是 029 为什么是一张表而不是 `node.props` 上一个标量的
+    全部理由：累加写在标量上时，第二次跑同一章就是第二次加，而**没有任何东西会红**
+    ——分数只是慢慢变大，看起来完全正常。
+    """
+    from novel_harness.graph.queries import character_information_totals
+
+    first = RawCharacterProfile(surface="顾清音", background="药王谷弃徒", confidence=0.8)
+    _service(conn, seed).ingest(
+        seed.project_id, seed.chapter, _analysis(profiles=(first,)), prompt_hash="p1"
+    )
+    after_one = character_information_totals(conn, seed.project_id)[seed.hero_id]
+    assert after_one == len("药王谷弃徒")
+
+    # **同一章再跑一次**（prompt 换了 = 真实的重跑形态）：不许翻倍。
+    _service(conn, seed).ingest(
+        seed.project_id, seed.chapter, _analysis(profiles=(first,)), prompt_hash="p2"
+    )
+    assert character_information_totals(conn, seed.project_id)[seed.hero_id] == after_one
+
+    # 换一章、内容更多：这一次才该相加。
+    seed.graph.put_chapter(
+        ChapterSpec(
+            project_id=seed.project_id,
+            number=8,
+            heading="第八章 北荒",
+            path="chapters/0008.md",
+            text=CHAPTER_TEXT,
+        )
+    )
+    later = next(
+        snap
+        for snap in seed.graph.current_snapshots(seed.project_id)
+        if snap.number == 8
+    )
+    second = RawCharacterProfile(
+        surface="顾清音", background="药王谷弃徒", personality="隐忍", confidence=0.8
+    )
+    _service(conn, seed).ingest(
+        seed.project_id, later, _analysis(profiles=(second,)), prompt_hash="p3"
+    )
+
+    assert character_information_totals(conn, seed.project_id)[seed.hero_id] == (
+        len("药王谷弃徒") + len("药王谷弃徒") + len("隐忍")
+    ), "换一章之后没相加 —— 累加是这条设计的全部意义（单章判据一定会误判重要配角）"
+
+
+def test_a_character_already_in_the_roster_keeps_scoring(
+    seed: Seed, conn: Connection
+) -> None:
+    """裁定第一条：**已在花名册 → 不问，内容并进去，分数继续累加。**
+
+    「顾清音」建 fixture 时就在册。她的档案照旧只读（不被这一次抽取覆盖），
+    但**分数照记**——这两件事是分开的。
+    """
+    from novel_harness.graph.queries import character_information_totals
+
+    _service(conn, seed).ingest(
+        seed.project_id,
+        seed.chapter,
+        _analysis(
+            profiles=(
+                RawCharacterProfile(surface="顾清音", personality="冲动", confidence=0.9),
+            )
+        ),
+        prompt_hash="p:known",
+    )
+
+    assert character_information_totals(conn, seed.project_id)[seed.hero_id] == len("冲动")
+    # 档案没被覆盖（fixture 里她的 personality 本来是空的，抽取写的那句不进去）。
+    assert SqliteEventStore(conn).profile(seed.project_id, seed.hero_id).personality is None
+
+
+def test_only_characters_get_a_score(seed: Seed, conn: Connection) -> None:
+    """错类的 surface 不记分。
+
+    一行挂在地点身上的分会让「按分排序的花名册」里冒出一个不是人的东西，
+    而那一行看起来完全正常。schema 那条复合外键是最后一道，这是第一道。
+    """
+    from novel_harness.graph.queries import character_information_totals
+
+    _service(conn, seed).ingest(
+        seed.project_id,
+        seed.chapter,
+        _analysis(
+            profiles=(
+                RawCharacterProfile(surface="渡口", background="很长的一段话", confidence=0.9),
+            )
+        ),
+        prompt_hash="p:wrong-label",
+    )
+
+    assert seed.harbor_id not in character_information_totals(conn, seed.project_id)
+
+
 class _ExplodingProposalStore:
     def create(self, proposal: ProposalCreate):
         raise RuntimeError(f"proposal write failed: {proposal.kind}")

@@ -103,6 +103,9 @@ const DEFAULT: Handler[] = [
   // （萧决 / 青云城主府各 1 章）。花名册那一格要按次数降序 + 一颗倒序切换，
   // 全 0 的样本两个方向渲染出来一模一样，测试永远绿。
   { match: /\/roster$/, body: fixtures.rosterWithCounts },
+  // 这个人的事件时间线（2026-08-25）。**排在 `/characters/…/profile` 之前**：
+  // 两条都以 `/characters/{id}/…` 开头，先匹配到的先赢。
+  { match: /\/characters\/[^/]+\/events$/, body: fixtures.characterEvents },
   { match: /\/chapters$/, body: fixtures.chapters },
   { match: /\/chapters\/\d+\/constraints/, body: fixtures.constraints },
   { match: /\/chapters\/\d+\/state/, body: fixtures.states },

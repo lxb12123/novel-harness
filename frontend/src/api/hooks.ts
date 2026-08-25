@@ -33,6 +33,7 @@ import type {
   EventView,
   ExtractionRun,
   Mentioned,
+  CharacterEventRow,
   DeleteNodeInput,
   NodeDeleted,
   NodeRef,
@@ -260,6 +261,21 @@ export function useRoster(pid: string | null) {
     queryKey: q(["roster", pid]),
     queryFn: () => api.get<RosterEntry[]>(proj(pid!, "/roster")),
     enabled: !!pid,
+  });
+}
+
+/** **这个人的全部事件**，按章号升序（2026-08-25）。
+ *
+ *  后端不切片（全给 + 每条带章号），所以这里也不带章号参数——要切是渲染那一层的事。
+ *  完整论证在 `graph.queries.event_ids_for_one_character`。 */
+export function useCharacterEvents(pid: string | null, characterId: string | null) {
+  return useQuery({
+    queryKey: q(["characterEvents", pid, characterId]),
+    queryFn: () =>
+      api.get<CharacterEventRow[]>(
+        proj(pid!, `/characters/${encodeURIComponent(characterId!)}/events`),
+      ),
+    enabled: !!pid && !!characterId,
   });
 }
 

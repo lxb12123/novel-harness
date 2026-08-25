@@ -71,6 +71,31 @@ class AliasReassign(BaseModel):
     expected_canon_version: int = Field(ge=0)
 
 
+class CharacterEventRow(BaseModel):
+    """这个人时间线上的一条。**一件事跟几个人相关，就在几个人的线上各出现一次。**
+
+    维护者的原话（2026-08-25）：「事件是**比较小的一条总结**。只放到和它相关的那个
+    角色下面……一件事情如果跟好多人相关，那就放到每个相关人的下面。」
+
+    存储那一侧本来就是这个形状：`event_participant` / `event_knower` 是多对多，
+    一件事跟三个人相关就挂三行。**这一批加的只是「按人看」这个出口**，没动一张表。
+
+    `summary` 取的是**当前那一版**（`event_summary_head` → version，`_EVENT_COLS`
+    里那个 COALESCE），所以作者改过的摘要在这条线上立刻是新的。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    event_id: str
+    chapter_number: int = Field(ge=1)
+    summary: str
+    participants: tuple[NodeRef, ...] = ()
+    """在场的人。**窄引用**：`Node.props` 里装着作者写的 `twist` / `plot_note`。"""
+    knowers: tuple[NodeRef, ...] = ()
+    """知道这件事的人。它和 `participants` 一起决定了这条事件挂在谁名下
+    （判据见 `queries.event_ids_for_one_character`）。"""
+
+
 class NodeRename(BaseModel):
     """给花名册里那一条改个显示名。
 
@@ -222,6 +247,48 @@ def delete_alias(
     _bump_canon(conn, proj.id)
     conn.commit()
     return {"id": alias_id, "status": "RETRACTED"}
+
+
+@router.get(
+    "/api/projects/{project_id}/characters/{character_id}/events",
+    response_model=list[CharacterEventRow],
+)
+def character_events(
+    character_id: str,
+    conn: Annotated[Connection, Depends(get_conn)],
+    events: Any = Depends(get_event_store),
+    proj: Any = Depends(load_project),
+) -> list[CharacterEventRow]:
+    """**这个人的全部事件**，按章号升序（2026-08-25）。
+
+    今天跟事件有关的对外路由全是「按章看」或「按事件 id 看」——
+    `…/chapters/{n}/events`、`…/events/{id}/summary`。**没有一条按人看的**，
+    而作者点开花名册里的一个人时想看的正是那条线。
+
+    ── ⚠️ 它**不收章号**，这不是忘了做时态 ────────────────────────────────
+
+    出参是**全给 + 每条带章号**，要按「第 N 章那个时点」切片交给界面。
+    换成后端切的话，作者点开一个人只看得到当前章之前的部分，
+    而他打开花名册正是为了看整条线。完整论证（掉了哪两个条件、剩下三个为什么一个
+    都不许再掉）在 `graph.queries.event_ids_for_one_character`。
+
+    只出 CANON：PROVISIONAL 是抽取器猜的、没确认的，混进这条线等于把猜测当事实。
+
+    ⚠️ **今天这条线在真书上是空的**，而那是已知的（作者那本 158 章的书里事件 0 条）：
+    第一次真抽取跑完才会有。空不是坏——界面那一侧要说清是哪一种空
+    （这一章还没整理过 / 整理了但没抽到），别写「暂无数据」。
+    """
+    _character_node(conn, proj.id, character_id)
+    return [
+        CharacterEventRow(
+            event_id=view.event.id,
+            chapter_number=view.event.chapter_number,
+            summary=view.event.summary,
+            participants=tuple(view.participants),
+            knowers=tuple(view.knowers),
+        )
+        for view in events.events_for_one_character(proj.id, character_id)
+    ]
 
 
 # ══════════════════════════════════════════════════════════════════════════

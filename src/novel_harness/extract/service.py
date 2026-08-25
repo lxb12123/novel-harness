@@ -13,6 +13,7 @@ from ..events import (
     ProposalStore,
     ProvisionalEventSpec,
 )
+from ..graph import queries
 from ..graph import (
     DEAD_VALUE_TEXT,
     HEALTH_DIM_KEY,
@@ -45,7 +46,7 @@ from .ingest_helpers import (
     resolve_event_surfaces,
     surface_reason,
 )
-from .models import RawChapterAnalysis, RawEvent
+from .models import RawChapterAnalysis, RawCharacterProfile, RawEvent
 from .prompt import ANALYSIS_SCHEMA_VERSION
 
 __all__ = [
@@ -54,7 +55,42 @@ __all__ = [
     "ExtractionContextError",
     "ExtractionReport",
     "ExtractionService",
+    "profile_information_units",
 ]
+
+def profile_information_units(profile: RawCharacterProfile) -> int:
+    """这一章里模型给这个人写的画像**有多长**（裁定：分数 = 各章信息量的累计）。
+
+    判据是**四个自由文本字段去掉首尾空白之后的字符数之和**，`surface`（名字）和
+    `confidence`（数）不算——名字长不代表这个人重要。
+
+    ── ⚠️ 它算的是「模型写了多少」，不是「这个人有多重要」──────────────────
+
+    两者相关但不相等，而**这一批只拿它排序，不拿它做任何判断**（ADR 0020 的第二份
+    补记）。真书实测（2026-08-25，3 章）：
+
+        只看第 1 章    探春 16  ←→  袭人 14、麝月 12    分不开，探春会被误判
+        叠加之后       探春 42  ←→  袭人 14、麝月 12    差 3 倍，分得清
+
+    **叠加是必需的不是优化**：单章判据一定会误判重要配角。
+
+    ── 一个已知的偏差，照实记 ──────────────────────────────────────────
+
+    没有画像的人这一章记 0，哪怕他在十件事里都在场。**事件不计入分数**——
+    裁定的原文是「模型写的画像有多长」，而事件那一侧要不要算、算多少，
+    是定阈值那一步要重新回答的问题，不是这一批顺手能定的。
+    """
+    return sum(
+        len(text.strip())
+        for text in (
+            profile.gender,
+            profile.personality,
+            profile.background,
+            profile.character_notes,
+        )
+        if text
+    )
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # 认不出的人物：**直接建，不问**（2026-08-25，ADR 0020 补记）
@@ -186,6 +222,19 @@ class ExtractionService:
 
             for index, profile in enumerate(analysis.character_profiles):
                 resolution = resolutions[profile.surface]
+                if (
+                    resolution.unique_id is not None
+                    and resolution.candidates[0].label is NodeLabel.CHARACTER
+                ):
+                    # **每一个解析得出的人物都记分，不管他是不是这一次新建的**
+                    # （裁定的第一条：已在花名册 → 不问，内容并进去，**分数继续累加**）。
+                    queries.record_character_information(
+                        self._conn,
+                        project_id,
+                        resolution.unique_id,
+                        chapter.number,
+                        profile_information_units(profile),
+                    )
                 if resolution.unknown:
                     # 上面 `_create_unknown_characters` 已经把每个画像 surface 建成人物了，
                     # 所以走到这儿只可能是**建失败**（名字空白 / 建的时候撞上别的东西）。

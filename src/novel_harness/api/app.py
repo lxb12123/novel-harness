@@ -840,16 +840,25 @@ def roster(
     **props 一个字段都不出**（不整体序列化 `Node.props`：作者写在节点上的 `twist` /
     `plot_note` 住在那儿）。
 
-    `appearance_chapters` = **有多少章的总结提到过它**（`summary_index.appearance_counts`，
-    一次 SQL，不调模型）。它和花名册**同一条出参回来**，不是第二次请求——
-    左栏那一行要显示「贾环 · 42 章」，多一次往返就是多一次会失败、会晚到的东西。
+    两个数**都和花名册同一条出参回来**，不是第二次请求——左栏那一行要显示
+    「贾环 · 42 章」，多一次往返就是多一次会失败、会晚到的东西。
 
-    ⚠️ 没有总结的章不算，所以一本刚导进来的书这一列全是 0。那是诚实的：
-    这一层不读正文。措辞的责任在前端那一行上（别把 0 写成「没出场」）。
+    - `appearance_chapters` = **有多少章的总结提到过它**
+      （`summary_index.appearance_counts`，一次 SQL，不调模型）。
+      ⚠️ 没有总结的章不算，所以一本刚导进来的书这一列全是 0。那是诚实的：
+      这一层不读正文。措辞的责任在前端那一行上（别把 0 写成「没出场」）。
+    - `information_score` = **各章信息量的累计**（模型给他写的画像有多长，
+      `graph.queries.character_information_totals`）。**只有人物有**，别的 label 恒 0。
+
+    ⚠️ **`information_score` 今天只用来排序**，不参与任何判断。完整设计
+    （够分直接建 / 不够分问一句 / 不答默认建进去）和「为什么这一批不接那道闸」
+    在 ADR 0020 的第二份补记里。
     """
+    from ..graph.queries import character_information_totals
     from ..summary_index import appearance_counts
 
     counts = appearance_counts(conn, store, proj.id)
+    scores = character_information_totals(conn, proj.id)
     seen: dict[str, dict[str, Any]] = {}
     for resolution in store.resolve(proj.id, None):
         for hit in resolution.hits:
@@ -859,6 +868,7 @@ def roster(
                 "label": node.label.value,
                 "name": node.name,
                 "appearance_chapters": counts.get(node.id, 0),
+                "information_score": scores.get(node.id, 0),
             }
     return list(seen.values())
 
