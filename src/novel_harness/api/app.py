@@ -40,6 +40,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    model_validator,
     ValidationError,
 )
 
@@ -1496,13 +1497,46 @@ class DraftRequest(BaseModel):
       而 `goal` 是 ADR 0010 点名的泄漏入口之一）。从前靠校验器拦「续写不许带 goal」，
       现在**这条纪律由形状本身保证**：请求体上没有这一位，就没有东西可拦。
 
-    ⚠️ **这个模型没有 `extra="forbid"`，是有意的**（2026-08-25 定的，
-    `test_the_draft_body_no_longer_takes_a_form` 写着理由）。后果要说清楚：
-    还在发 `mode` / `goal` 的旧客户端**不会收到报错，会收到一段续写**。
-    这个仓库里没有那样的调用方（上面那段就是在说这件事），所以今天没有受害者；
-    `test_a_stale_chapter_shaped_body_now_gets_a_continuation` 把这个行为钉住，
-    免得下一个人以为它会 422。
+    ── ⚠️ 删掉的那两位不是「忽略」，是**拒收** ──────────────────────────────
+
+    这个模型**没有** `extra="forbid"`：那是 2026-08-25 定的
+    （`test_the_draft_body_no_longer_takes_a_form` 写着理由——还在发 `form` 的旧客户端
+    只是那个键被忽略，**起草照常成功**）。那条裁定这儿一个字没动。
+
+    **但它罩不住 `mode`。** 它讲的是**空操作键**：忽略 `form` 之后调用方拿到的还是
+    他要的东西（三臂当时已经塌成一条）。而忽略 `mode="chapter"` 会**换掉产品**——
+    发一份「写 2,500 字一整章」的请求，拿回来一段 140 字的续写，200，没有任何提示。
+    那正是本文件到处那条纪律说的事：**静默丢掉才是坏的，调用方会以为模型看过它了。**
+
+    所以这儿只拒**会换产品**的那两位，别的键照旧忽略：
+
+        mode="chapter"（或任何非 continuation 的值）  → 422，说清入口去哪了
+        mode="continuation"                          → 收下（它说的是真话，只是多余）
+        goal 非空                                     → 422，那句话本来会被丢掉
+        goal=""  /  form  /  任何别的键                → 照旧忽略（老客户端不炸）
+
+    `mode="continuation"` 那一档是特意留的：**旧前端发的就是它**，把它也拒了，
+    就正好炸掉 2026-08-25 那条裁定要保护的那种客户端。
     """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _refuse_the_deleted_chapter_entrance(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        mode = data.get("mode")
+        if mode is not None and mode != "continuation":
+            raise ValueError(
+                f"这条路不再起草一整章了（收到 mode={mode!r}）：那个入口 2026-08-26 删掉，"
+                "它在浏览器里已经没有调用方，而写整章走的是 agent 的起草工具（进程内直调，"
+                "不发 HTTP）。这条路今天只有行内续写——把 mode 去掉就是续写。"
+            )
+        if str(data.get("goal") or "").strip():
+            raise ValueError(
+                "这条路不收 goal：续写要写什么由上文决定，提示语是后端常量（ADR 0015 D3）。"
+                "**这一位不是被忽略，是被拒收**——忽略它等于让你以为模型读过你写的那句话。"
+            )
+        return data
 
     cast: list[str] = []
     """在场称呼原文。**可空**：留空 = 「不知道这一场有谁」（ADR 0015 D4）。

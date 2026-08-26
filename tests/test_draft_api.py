@@ -150,7 +150,6 @@ def test_draft_returns_experimental_draft(
     r = client.post(
         _url(book),
         json={
-            "goal": "萧决看剑。",
             "cast": ["萧决"],
             "length": ZH_LENGTH,
             "form": "X1",
@@ -169,7 +168,7 @@ def test_draft_without_connection_config_is_422(
 ) -> None:
     r = client.post(
         _url(book),
-        json={"goal": "x", "cast": ["萧决"], "length": ZH_LENGTH},
+        json={"cast": ["萧决"], "length": ZH_LENGTH},
     )
     assert r.status_code == 422
     assert "AI 设置" in r.text
@@ -182,7 +181,7 @@ def test_draft_unresolvable_cast_is_422(
     _stub_complete(monkeypatch)
     r = client.post(
         _url(book),
-        json={"goal": "x", "cast": ["不存在的人"], "length": ZH_LENGTH},
+        json={"cast": ["不存在的人"], "length": ZH_LENGTH},
     )
     assert r.status_code == 422
     assert "解析不了" in r.text
@@ -204,7 +203,7 @@ def test_the_draft_body_no_longer_takes_a_form(
 
     r = client.post(
         _url(book),
-        json={"goal": "x", "cast": ["萧决"], "length": ZH_LENGTH, "form": "X9"},
+        json={"cast": ["萧决"], "length": ZH_LENGTH, "form": "X9"},
     )
     assert r.status_code == 200, r.text
 
@@ -234,7 +233,6 @@ def test_draft_custom_write_rule_is_accepted(
     r = client.post(
         _url(book),
         json={
-            "goal": "x",
             "cast": ["萧决"],
             "length": ZH_LENGTH,
             "write_rule": "文白夹杂，多用短句，对白简洁。",
@@ -251,7 +249,6 @@ def test_draft_write_rule_forbidden_hints_are_422(
     r = client.post(
         _url(book),
         json={
-            "goal": "x",
             "cast": ["萧决"],
             "length": ZH_LENGTH,
             "write_rule": f"写的时候{f'不要{word}'}任何情节。",
@@ -307,49 +304,56 @@ def test_continuation_with_cast_is_less_restrictive(
     assert "未知" not in body
 
 
-def test_the_draft_body_has_no_place_to_put_an_author_supplied_goal(
+def test_an_author_supplied_goal_is_refused_not_quietly_dropped(
     client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """ADR 0015 D3：`goal` 是 ADR 0010 点名的泄漏入口，这条路上**没有这一位**。
 
-    ── 2026-08-26：这条闸从「校验器拦」升成「形状上不存在」 ────────────────
+    ── 两层，缺一层这条纪律就只剩一半 ────────────────────────────────────
 
-    从前 `mode="continuation"` 带 `goal` 会被 `_check_mode_shape` 拒成 422。
-    随「起草一整章」那个入口一起，`goal` 整个字段删了——**没有字段就没有东西可拦**，
-    这比一条校验器硬：校验器可以被下一个人放宽，字段不在就得先把它加回来。
+    ① **形状上没有** —— `goal` 不在 `model_fields` 里。这比一条校验器硬：
+       校验器可以被下一个人放宽，字段不在就得先把它加回来。
+    ② **发过来是拒收，不是忽略** —— 这一条是 2026-08-26 补的，而**它才是难的那半**。
 
-    所以这里量两件事：
-    ① 请求体上真的没有这一位（`model_fields`）；
-    ② 一个**还在发 `goal` 的旧客户端**发过来，那句话不会流进 prompt。
-       第二条是真正要守的东西——第一条只是它的机制。
+    只做 ① 的话，还在发 `goal` 的旧客户端会拿到 200 + 一段续写，那句话被**静默丢掉**，
+    而他以为模型读过它了。这个仓库对这件事有明文纪律（本文件到处、以及被删掉的那个
+    `_check_mode_shape` 里原话就是「静默丢掉才是坏的」）。
+
+    ⚠️ **这不推翻 2026-08-25「不加 `extra="forbid"`」那条裁定**：那条讲的是
+    **空操作键**（忽略 `form` 之后起草照常成功），`form` 今天照旧被忽略，
+    下面那条 `..._no_longer_takes_a_form` 还绿着。拒的只有「会换掉产品 / 会被当成
+    读过了」的那两位。
     """
     _configure(client)
     from novel_harness.api.app import DraftRequest
 
-    assert "goal" not in DraftRequest.model_fields
+    assert "goal" not in DraftRequest.model_fields  # ①
 
     tell = "写萧决发现血脉有异——他还不知道那是家族封印的反噬"
     observed = _capture_complete(monkeypatch)
     r = client.post(_url(book), json={"goal": tell, "previous_tail": "夜色沉下来。", "length": _SHORT})
-    assert r.status_code == 200, r.text
-    prompt = "\n".join(m["content"] for m in observed[0])
-    assert tell not in prompt, "作者传的 goal 流进了 prompt —— ADR 0015 D3 破了"
+
+    assert r.status_code == 422, r.text  # ②
+    assert "不收 goal" in r.text
+    assert observed == [], "被拒的请求还是花了一次模型调用"
 
 
-def test_a_stale_chapter_shaped_body_now_gets_a_continuation(
+def test_a_stale_chapter_shaped_body_is_refused_instead_of_silently_becoming_a_continuation(
     client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**这条钉的是「整章起草那个入口真的没了」，以及它没了之后长什么样。**
+    """**整章起草那个入口真的没了，而且它的消失是响亮的。**
 
-    2026-08-26 之前这条路由是两种模式，`mode` 缺省是 `"chapter"`，于是这个请求体
-    （有 goal、有 cast、要 2,500 字）会起一整章。今天它只剩续写。
+    2026-08-26 之前这条路由是两种模式、`mode` 缺省 `"chapter"`，所以这个请求体
+    （有 goal、有 cast、要 2,500 字）会起一整章。
 
-    ⚠️ **它不是 422，是 200 + 一段续写。** 这个模型没有 `extra="forbid"`——那是
-    2026-08-25 定的（`test_the_draft_body_no_longer_takes_a_form` 写着理由：
-    别让还在发老字段的客户端炸掉）。**后果必须有人钉住，否则它就是一个静默的模式切换**：
-    发一份「起草一整章」的请求体，拿回来的是一两百字。这个仓库里没有那样的调用方
-    （那正是删掉它的理由），所以今天没有受害者——但下一个人得从这条测试里读到这件事，
-    而不是从一次线上意外里。
+    ── 为什么不能让它「忽略 mode，照续写办」 ──────────────────────────────
+
+    那样是 200 + 一两百字：**发一份写整章的请求，拿回来一段续写，没有任何提示。**
+    `DraftRequest` 没有 `extra="forbid"`（2026-08-25 的裁定，为的是别让还在发 `form`
+    的旧客户端炸掉），所以这件事**不会自己变成报错**——得有人明写。
+
+    那条裁定罩不住这一种：它讲的是**空操作键**（忽略 `form` 之后调用方拿到的还是他要的
+    东西），而忽略 `mode="chapter"` 会**换掉产品**。所以这儿只拒会换产品的那一位。
     """
     _configure(client)
     observed = _capture_complete(monkeypatch)
@@ -359,9 +363,31 @@ def test_a_stale_chapter_shaped_body_now_gets_a_continuation(
         json={"mode": "chapter", "goal": "萧决看剑。", "cast": ["萧决"], "length": ZH_LENGTH},
     )
 
+    assert r.status_code == 422, r.text
+    # 报的话要说清**入口去哪了**，不是「参数不合法」——收到这个 422 的是个程序，
+    # 而它下一步要知道往哪走。
+    assert "不再起草一整章" in r.text and "行内续写" in r.text
+    assert observed == [], "被拒的请求还是花了一次模型调用"
+
+
+def test_a_stale_frontend_still_sending_mode_continuation_keeps_working(
+    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**旧前端发的那一份必须照旧能用。**
+
+    2026-08-26 之前 `useContinuation` 发的是 `{mode: "continuation", previous_tail, …}`。
+    上面那条把 `mode="chapter"` 拒了，**很容易顺手把整个 `mode` 都拒掉**——那就正好
+    炸掉 2026-08-25 那条裁定要保护的那种客户端（一个还没更新的前端 bundle）。
+
+    `mode="continuation"` 说的是真话，只是多余。收下。
+    """
+    _configure(client)
+    _stub_complete(monkeypatch)
+    r = client.post(
+        _url(book),
+        json={"mode": "continuation", "previous_tail": "夜色沉下来。", "length": _SHORT},
+    )
     assert r.status_code == 200, r.text
-    # 续写的证据：整章那一支会拼出 `[文风][记忆][用户]` 三段，续写不会。
-    assert [m["role"] for m in observed[0]] == ["system", "user"]
 
 
 # ══════════════════════════════════════════════════════════════════════════
