@@ -215,12 +215,10 @@ def test_default_product_draft_gets_confirmed_memory_preface(
     _configure(client)
     observed = _capture_complete(monkeypatch)
 
-    response = client.post(
-        _url(book),
-        json={"goal": "萧决看剑。", "cast": ["萧决"], "length": ZH_LENGTH},
-    )
+    # 2026-08-26：从 `POST /draft` 改成直调（见 `_draft` 的 docstring）。
+    # **这三段顺序是全仓唯一一处在钉它的地方**，所以入口没了它也不能跟着没。
+    _draft(client, book)
 
-    assert response.status_code == 200, response.text
     # `[文风][记忆][用户]`（ADR 0019 边界六）：文风跨章不变、排最前面，才有前缀缓存可言；
     # 记忆逐章变，插在它后面。原来的顺序把唯一稳定的那块夹在中间，缓存价值为零。
     assert [message["role"] for message in observed[0]] == ["system", "system", "user"]
@@ -282,8 +280,7 @@ def test_continuation_needs_neither_goal_nor_cast(
     r = client.post(
         _url(book),
         json={
-            "mode": "continuation",
-            "previous_tail": "萧决推开门，屋里没有点灯。",
+                        "previous_tail": "萧决推开门，屋里没有点灯。",
             "length": _SHORT,
         },
     )
@@ -298,8 +295,7 @@ def test_continuation_with_cast_is_less_restrictive(
     r = client.post(
         _url(book),
         json={
-            "mode": "continuation",
-            "cast": ["萧决"],
+                        "cast": ["萧决"],
             "previous_tail": "夜色沉下来。",
             "length": _SHORT,
         },
@@ -311,35 +307,61 @@ def test_continuation_with_cast_is_less_restrictive(
     assert "未知" not in body
 
 
-def test_continuation_refuses_an_author_supplied_goal(
-    client: TestClient, book: dict[str, str]
+def test_the_draft_body_has_no_place_to_put_an_author_supplied_goal(
+    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """ADR 0015 D3：`goal` 是 ADR 0010 点名的泄漏入口，续写模式把它**关掉**。
+    """ADR 0015 D3：`goal` 是 ADR 0010 点名的泄漏入口，这条路上**没有这一位**。
 
-    前端能传的东西作者就能改，所以这条闸必须在后端。
+    ── 2026-08-26：这条闸从「校验器拦」升成「形状上不存在」 ────────────────
+
+    从前 `mode="continuation"` 带 `goal` 会被 `_check_mode_shape` 拒成 422。
+    随「起草一整章」那个入口一起，`goal` 整个字段删了——**没有字段就没有东西可拦**，
+    这比一条校验器硬：校验器可以被下一个人放宽，字段不在就得先把它加回来。
+
+    所以这里量两件事：
+    ① 请求体上真的没有这一位（`model_fields`）；
+    ② 一个**还在发 `goal` 的旧客户端**发过来，那句话不会流进 prompt。
+       第二条是真正要守的东西——第一条只是它的机制。
     """
     _configure(client)
+    from novel_harness.api.app import DraftRequest
+
+    assert "goal" not in DraftRequest.model_fields
+
+    tell = "写萧决发现血脉有异——他还不知道那是家族封印的反噬"
+    observed = _capture_complete(monkeypatch)
+    r = client.post(_url(book), json={"goal": tell, "previous_tail": "夜色沉下来。", "length": _SHORT})
+    assert r.status_code == 200, r.text
+    prompt = "\n".join(m["content"] for m in observed[0])
+    assert tell not in prompt, "作者传的 goal 流进了 prompt —— ADR 0015 D3 破了"
+
+
+def test_a_stale_chapter_shaped_body_now_gets_a_continuation(
+    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**这条钉的是「整章起草那个入口真的没了」，以及它没了之后长什么样。**
+
+    2026-08-26 之前这条路由是两种模式，`mode` 缺省是 `"chapter"`，于是这个请求体
+    （有 goal、有 cast、要 2,500 字）会起一整章。今天它只剩续写。
+
+    ⚠️ **它不是 422，是 200 + 一段续写。** 这个模型没有 `extra="forbid"`——那是
+    2026-08-25 定的（`test_the_draft_body_no_longer_takes_a_form` 写着理由：
+    别让还在发老字段的客户端炸掉）。**后果必须有人钉住，否则它就是一个静默的模式切换**：
+    发一份「起草一整章」的请求体，拿回来的是一两百字。这个仓库里没有那样的调用方
+    （那正是删掉它的理由），所以今天没有受害者——但下一个人得从这条测试里读到这件事，
+    而不是从一次线上意外里。
+    """
+    _configure(client)
+    observed = _capture_complete(monkeypatch)
+
     r = client.post(
         _url(book),
-        json={
-            "mode": "continuation",
-            "goal": "写萧决发现血脉有异——他还不知道那是家族封印的反噬",
-            "length": _SHORT,
-        },
+        json={"mode": "chapter", "goal": "萧决看剑。", "cast": ["萧决"], "length": ZH_LENGTH},
     )
-    assert r.status_code == 422
 
-
-def test_whole_chapter_drafting_still_demands_goal_and_cast(
-    client: TestClient, book: dict[str, str]
-) -> None:
-    """**反面守卫**：加了续写形状之后，整章起草那条闸不许跟着松。"""
-    _configure(client)
-    for payload in (
-        {"cast": ["萧决"], "length": ZH_LENGTH},  # 缺 goal
-        {"goal": "萧决看剑。", "length": ZH_LENGTH},  # 缺 cast
-    ):
-        assert client.post(_url(book), json=payload).status_code == 422
+    assert r.status_code == 200, r.text
+    # 续写的证据：整章那一支会拼出 `[文风][记忆][用户]` 三段，续写不会。
+    assert [m["role"] for m in observed[0]] == ["system", "user"]
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -356,10 +378,63 @@ def test_whole_chapter_drafting_still_demands_goal_and_cast(
 
 
 def _draft(client: TestClient, book: dict[str, str], **extra: object) -> dict:
-    payload = {"goal": "萧决看剑。", "cast": ["萧决"], "length": ZH_LENGTH, **extra}
-    response = client.post(_url(book), json=payload)
-    assert response.status_code == 200, response.text
-    return response.json()
+    """起一整章 —— **直调 `product_draft.draft_chapter()`，不走 HTTP。**
+
+    ── 2026-08-26：这个 helper 从「POST /draft」改成了直调 ────────────────────
+
+    `/draft` 上「起草一整章」那个入口删了（它 2026-08-14 起零调用方；
+    模式二的 `draft_chapter` 工具本来就是**进程内直调**，不发 HTTP）。
+    **被删的是入口，不是实现**——下面这些性质（记忆前言的三段顺序、回执里的数字、
+    在场里混进地名时怎么退化）全都是 `draft_chapter()` 的性质，今天由模式二那条路
+    在跑，一条都没死。
+
+    **所以这些测试不能删，只能换个进法。** 这儿组装的四样（config / capability /
+    plan / ctx）和 `agent/drafting.py` 那条真路是同一套；`generate.complete` 的桩
+    照旧生效，因为直调走的是同一段代码。
+
+    ⚠️ 唯独 `plan` 这一位跟着改了：从前它由路由用 `ReasoningEffort.HIGH` 算，
+    现在用 `AGENT_DRAFT_REASONING`（= `OFF`）——**那才是模式二真正在用的那一档**，
+    见那个常量的 docstring。
+    """
+    from novel_harness.agent.drafting import AGENT_DRAFT_REASONING
+    from novel_harness.api.app import _draft_provider_config
+    from novel_harness.api.deps import resolve_route_capabilities
+    from novel_harness.draft.capabilities import plan_call
+    from novel_harness.draft.context import ResolvedConstraints
+    from novel_harness.draft.product_draft import ChapterDraftRequest, draft_chapter
+    from novel_harness.draft.length import LengthSpec
+    from novel_harness.draft.rolling_summary import SummaryStore
+    from novel_harness.graph.sqlite_events import SqliteEventStore
+    from novel_harness.panel.constraints import scene_view
+
+    cast = list(extra.pop("cast", ["萧决"]))  # type: ignore[arg-type]
+    chapter = int(extra.pop("chapter", 1))  # type: ignore[arg-type]
+    length = LengthSpec.model_validate(extra.pop("length", ZH_LENGTH))
+    config = _draft_provider_config()
+    capability = resolve_route_capabilities(config)
+    plan = plan_call(length, AGENT_DRAFT_REASONING, capability)
+
+    conn = db.connect(book["db"])
+    try:
+        store = SqliteStoryGraph(conn)
+        ctx = ResolvedConstraints.of(scene_view(store, book["pid"], chapter, cast), cast)
+        drafted = draft_chapter(
+            ctx,
+            request=ChapterDraftRequest(
+                goal=str(extra.pop("goal", "萧决看剑。")),
+                length=length,
+                **extra,  # type: ignore[arg-type]
+            ),
+            project_id=book["pid"],
+            config=config,
+            capability=capability,
+            plan=plan,
+            events=SqliteEventStore(conn),
+            summaries=SummaryStore(conn),
+        )
+    finally:
+        conn.close()
+    return {"memory": drafted.memory, "text": drafted.result.text}
 
 
 def test_product_draft_says_what_it_actually_loaded(
@@ -390,7 +465,7 @@ def test_continuation_reports_its_empty_memory_too(
     _stub_complete(monkeypatch)
     response = client.post(
         _url(book),
-        json={"mode": "continuation", "previous_tail": "夜色沉下来。", "length": _SHORT},
+        json={"previous_tail": "夜色沉下来。", "length": _SHORT},
     )
     assert response.status_code == 200, response.text
     memory = response.json()["memory"]
@@ -589,15 +664,14 @@ def test_generated_summary_reaches_the_writer_prompt(
     _generate(book, 1)
 
     seen = _capture_complete(monkeypatch)
-    response = client.post(
-        f"/api/projects/{book['pid']}/chapters/12/draft",
-        json={"goal": "萧决看剑。", "cast": ["萧决"], "length": ZH_LENGTH},
-    )
-    assert response.status_code == 200, response.text
+    # 2026-08-26：从 HTTP 改成直调（见 `_draft`）。**这一步不是形式**：
+    # 不改的话它会静默地变成量「续写带不带总结」——那条链另有人钉
+    # （`test_continuation_memory.py`），而这一条的主语是**整章起草**。
+    memory = _draft(client, book, chapter=12)["memory"]
 
-    assert response.json()["memory"]["rolling_summaries"] == 1
+    assert memory["rolling_summaries"] == 1
     assert "萧决进屋，没点灯。" in "\n".join(m["content"] for m in seen[0])
-    assert response.json()["memory"]["unsummarized_chapters"] == [2]
+    assert memory["unsummarized_chapters"] == [2]
 
 
 def test_summarizing_a_chapter_without_text_refuses_instead_of_inventing_one(

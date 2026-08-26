@@ -78,9 +78,13 @@ def _calls(book: dict[str, str]) -> list[dict[str, Any]]:
 
 
 def _draft(client: TestClient, book: dict[str, str], chapter: int) -> Any:
+    """打一次 `/draft`。**2026-08-26 起那条路只有行内续写**（整章那个入口零调用方，删了）。
+
+    这个文件量的是「一次调用 = 一行账 = 一个章号」，**和是哪种模式无关**——
+    换请求体不换性质。"""
     return client.post(
         f"/api/projects/{book['pid']}/chapters/{chapter}/draft",
-        json={"goal": "萧决看剑。", "cast": ["萧决"], "length": ZH_LENGTH},
+        json={"previous_tail": "夜色沉下来，城主府的灯一盏盏亮起。", "length": ZH_LENGTH},
     )
 
 

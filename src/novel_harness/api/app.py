@@ -41,7 +41,6 @@ from pydantic import (
     ConfigDict,
     Field,
     ValidationError,
-    model_validator,
 )
 
 from .. import importer
@@ -1477,30 +1476,45 @@ def _stub(milestone: str) -> dict[str, str]:
 
 
 class DraftRequest(BaseModel):
-    """AI 起草请求体（修正案 7，实验状态）。长度按 ADR 0013 随请求走。
+    """**行内续写**请求体（ADR 0015）。长度按 ADR 0013 随请求走。
 
-    **两种形状，由 `mode` 区分**（ADR 0015）。它们的差别不是「参数可不可选」，
-    而是「哪些东西允许由作者控制」——所以用校验器把两种形状分别钉死，而不是把
-    `goal` / `cast` 一起放宽成可选，那样两种模式的约束就都没人守了。
+    ── 2026-08-26：这条路由上「起草一整章」那个入口删了 ──────────────────────
+
+    它是一路死掉的：2026-08-10 删「AI 起草」抽屉，2026-08-14 删 `useDraft` hook
+    （当时注释写明「后端 `POST …/draft` 一个字没动」），此后**浏览器零调用方**；
+    而模式二的 `draft_chapter` 工具走的是**进程内直调**（`agent/drafting.py` →
+    `draft.product_draft.draft_chapter`），根本不发 HTTP。
+
+    **`draft/product_draft.py` 一个字没动**：整章起草的实现、它的 `mode="chapter"`
+    默认值、模式二那条路全都活着。删掉的只是「从这条 HTTP 路由进整章起草」这个入口。
+
+    于是 `mode` 和 `goal` 跟着走了：
+
+    - `mode` —— 这条路由今天只有一种形状。留一个恒等于 `"continuation"` 的字段，
+      等于在契约上摆一个假的选择，而 OpenAPI 会把它当真发布出去。
+    - `goal` —— ADR 0015 D3 要求续写的提示语是**后端常量**（前端能传的东西作者就能改，
+      而 `goal` 是 ADR 0010 点名的泄漏入口之一）。从前靠校验器拦「续写不许带 goal」，
+      现在**这条纪律由形状本身保证**：请求体上没有这一位，就没有东西可拦。
+
+    ⚠️ **这个模型没有 `extra="forbid"`，是有意的**（2026-08-25 定的，
+    `test_the_draft_body_no_longer_takes_a_form` 写着理由）。后果要说清楚：
+    还在发 `mode` / `goal` 的旧客户端**不会收到报错，会收到一段续写**。
+    这个仓库里没有那样的调用方（上面那段就是在说这件事），所以今天没有受害者；
+    `test_a_stale_chapter_shaped_body_now_gets_a_continuation` 把这个行为钉住，
+    免得下一个人以为它会 422。
     """
 
-    mode: Literal["chapter", "continuation"] = "chapter"
-    """`chapter` = 起草一整章（原行为）；`continuation` = 行内续写一两段（ADR 0015）。"""
-
-    goal: str = ""
-    """本场目标。**`chapter` 必填；`continuation` 必须为空**——续写的 `goal` 是后端常量
-    （ADR 0015 D3：前端能传的东西作者就能改，而这是 ADR 0010 点名的泄漏入口之一）。"""
-
     cast: list[str] = []
-    """在场称呼原文。**`chapter` 必填；`continuation` 可空**。
+    """在场称呼原文。**可空**：留空 = 「不知道这一场有谁」（ADR 0015 D4）。
 
-    续写留空 = 「不知道谁在场」→ 走全禁退化态（ADR 0015 D4）。填了则收紧到精确约束——
-    **它是让续写写得更准的奖励，不是不填就不给用的门槛。**"""
+    填了则收紧到精确约束——**它是让续写写得更准的奖励，不是不填就不给用的门槛。**
+    前端今天不传（`useContinuation`），但这一位是 D4 明写的设计，不是残留：
+    「谁在场」是被那一段写出来的结果，不是前提，所以不能拿它当门槛。"""
 
     length: _DraftLengthBody
     previous_tail: str = ""
     following_text: str = ""
-    """光标**后面**那截同章正文。**只有 `continuation` 收它。**
+    """光标**后面**那截同章正文。
 
     作者跳回去改第 2 章、光标停在中间时，后面那几千字是**已经写好的正文**。
     不给模型看，它写出来的一段就可能跟紧接着的下一段接不上，或者把它重写一遍。
@@ -1509,28 +1523,6 @@ class DraftRequest(BaseModel):
     """
 
     write_rule: str = ""
-
-    @model_validator(mode="after")
-    def _check_mode_shape(self) -> DraftRequest:
-        if self.mode == "continuation":
-            if self.goal.strip():
-                raise ValueError(
-                    "续写模式不接受 goal：这一段要写什么由上文决定，"
-                    "提示语是后端常量（ADR 0015 D3）"
-                )
-            return self
-        if self.following_text.strip():
-            # 整章起草没有「光标后面」——那一支根本不读这一位。**静默丢掉才是坏的**：
-            # 调用方会以为模型看过它了（同本文件到处那条「静默的零」纪律）。
-            raise ValueError(
-                "起草一整章不接受 following_text：那一位是行内续写「光标后面还有正文」"
-                "才有的东西，整章起草要给已有正文走的是另一条（目标章当前正文）"
-            )
-        if not self.goal.strip():
-            raise ValueError("起草一整章必须说清这一场要写什么")
-        if not self.cast:
-            raise ValueError("起草一整章必须声明这一场有谁在")
-        return self
 
 
 def _draft_provider_config():
@@ -1641,20 +1633,26 @@ def draft(
     conn: Any = Depends(get_conn),
     proj: Any = Depends(load_project),
 ) -> dict[str, Any]:
-    """AI 起草第 N 章（**实验状态**，修正案 7）。
+    """**行内续写**第 N 章（ADR 0015；实验状态，修正案 7）。
 
     放行 ≠ 验证：响应带 ``experimental`` 标注，kill-gate 裁决前不声称图谱约束有效。
     若将来裁决 KILL，撤销本路由 = 一次显式 commit（修正案 7 原文）。
 
-    ── 这条路由不再自己拼 prompt（2026-08-11）───────────────────────────────
+    ── 2026-08-26：这条路由只剩续写一种模式 ─────────────────────────────────
 
-    「章号 → 一稿正文」的实现搬去了 `draft/product_draft.py::draft_chapter()`，
+    「起草一整章」那个入口从这儿删了（理由在 `DraftRequest` 的 docstring 里）。
+    **`draft/product_draft.py` 一个字没动**——整章起草的实现活着，模式二的
+    `draft_chapter` 工具照旧进程内直调它，只是不再有第二条 HTTP 入口。
+
+    ── 这条路由不自己拼 prompt（2026-08-11）────────────────────────────────
+
+    「章号 → 一稿正文」的实现在 `draft/product_draft.py::draft_chapter()`，
     **因为 agent 的起草工具要调同一个函数**（3.6 / ADR 0021）。留在这儿的只有壳该干的
     三件事：BYOK 连接参数、算这一场的约束、把领域异常翻成给作者的话。
 
-    **这条路由不落盘。** 行内续写（ADR 0015）按定义就不该落盘，而整章起草从浏览器
-    发起时作者眼前就是编辑器——落盘是 agent 那条路的事（ADR 0021 只推翻了「agent 写正文
-    要先问」，没有给这条路由加一个作者没按过的保存）。
+    **这条路由不落盘。** 行内续写按定义就不该落盘：那一段落进编辑器缓冲区，作者按了
+    Tab 才是磁盘上的字（ADR 0015 D5）。落盘是 agent 那条路的事（ADR 0021 只推翻了
+    「agent 写正文要先问」，没有给这条路由加一个作者没按过的保存）。
     """
     from ..draft.capabilities import (
         CapabilityError,
@@ -1679,7 +1677,17 @@ def draft(
         # 作者手填的窗口在这儿压过一切（`deps.resolve_route_capabilities`）——
         # **这条路由是那个数唯一真正花钱的消费者**：它决定逐字上文给他 800 字还是上万字。
         capability = resolve_route_capabilities(config)
-        plan = plan_call(body.length, ReasoningEffort.HIGH, capability)
+        # **`OFF`，不是从前那个 `HIGH`。** 论证不在这儿写第二份：见
+        # `agent/drafting.py::AGENT_DRAFT_REASONING` 的 docstring —— 同一条理由、
+        # 同一个症状（`resolve_capabilities` 对**没登记的路由**只给
+        # `reasoning_levels={OFF}`，于是 `HIGH` 在作者自建的端点上是当场 `CapabilityError`）。
+        #
+        # 那份 docstring 的末尾曾经写着「`/draft` 那条路仍然是 `HIGH`，这一刀不动它」，
+        # **那句话在 2026-08-14 是对的**：当时这条路由没有调用方。是 ADR 0015 把行内续写
+        # 接到同一条路由上，把它的前提推翻了 —— 从此这个 `HIGH` 压在续写头上，作者停手
+        # 400 毫秒就吃一个 422，而报的话是「模型没配好，先去填服务地址/模型/钥匙」，
+        # 把他支去重填一份根本没问题的配置。（2026-08-26 两处一起改掉。）
+        plan = plan_call(body.length, ReasoningEffort.OFF, capability)
     except (ValidationError, ValueError, CapabilityError) as exc:
         raise HTTPException(
             status_code=422,
@@ -1707,13 +1715,17 @@ def draft(
     # （`memory_units_available`），所以得先知道模型是谁。它不依赖 messages，提前无副作用；
     # 而且「模型没配好」这种错在这儿就报出来，比装配完一大堆上下文再报便宜。
     request = ChapterDraftRequest(
-        goal=body.goal,
+        # `mode` / `goal` 这两位不再从请求体来（2026-08-26，见 `DraftRequest`）：
+        # 这条路由只剩续写一种形状，而续写的提示语是后端常量——`draft_chapter()` 自己
+        # 用 `CONTINUATION_GOAL` 顶掉这一位（它**只在整章那一支才读 `request.goal`**），
+        # 所以这儿给空串是「这一位在这条路上没有意义」，不是「忘了填」。
+        goal="",
         length=body.length,
-        mode=body.mode,
+        mode="continuation",
         previous_tail=body.previous_tail,
         # 【下文】**只在改旧章时给**。最新章的常态是往末尾写，光标后面没有字；
-        # 而「是最新章时行为一字不变」是这一刀明写的验收条件，所以那一档一个字节都不动。
-        # 要在最新章中间插写时也给，那是一次单独的产品决定，别藏在这一刀里。
+        # 而「是最新章时行为一字不变」是当时那一刀明写的验收条件，所以那一档一个字节都不动。
+        # 要在最新章中间插写时也给，那是一次单独的产品决定，别藏在别的改动里。
         # 轨道没算成时 `at_frontier` 也是 True（fail-safe，见 `Track.at_frontier`）。
         following_text="" if track.at_frontier else body.following_text,
         write_rule=body.write_rule,

@@ -75,8 +75,11 @@ OpenRouter **默认就在思考**（一次 raw 调用回来 `reasoning_tokens=8`
 audited reserve ratio"）。这正是今天 `unknown` 的行为，只是**理由从「这个档不支持」
 变成了「这个档的预算比例没实测过」**——后者说的是真话。
 
-**受影响的只有 `/draft`**（它写死 `ReasoningEffort.HIGH`）。起草工具走 `OFF`，
-聊天走 `OFF`，两条都活。
+⚠️ **这一段原来接着写「受影响的只有 `/draft`（它写死 `ReasoningEffort.HIGH`）」——
+2026-08-26 起不成立了**：`/draft` 也是 `OFF` 了（那条路今天只剩行内续写，而 `HIGH`
+在没登记的路由上是当场 `CapabilityError`，见 `agent/drafting.py::AGENT_DRAFT_REASONING`）。
+**今天产品这一侧三条路——续写、起草工具、聊天——全走 `OFF`，一条都不受影响。**
+非 OFF 档只剩 M2 判分链那一条在请求，而它跑在登记过的路由上。
 
 ## 缓存与失败
 

@@ -48,6 +48,11 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "novel_harness"
 
 ZH_LENGTH = {"language": "zh", "min_units": 2_000, "target_units": 2_500, "max_units": 3_000}
 
+DRAFT_TAIL = "夜色沉下来，城主府的灯一盏盏亮起。"
+"""光标前那一截。**2026-08-26 起 `/draft` 只有行内续写**——整章起草那个入口零调用方，
+随 `mode` / `goal` 一起删了（`api/app.py::DraftRequest`）。这个文件量的是账、出参键、
+日志页那一行，**三样都和是哪种模式无关**，所以换的是请求体不是性质。"""
+
 OLD_VERSION = 7
 """从第几版升上来。挑一个真存在的中间版本，跑的是真 `ALTER TABLE` 不是编出来的迁移。"""
 
@@ -283,7 +288,7 @@ def test_the_draft_response_gained_no_key_when_the_bill_landed(
     before = len(_calls(book))
     reply = client.post(
         f"/api/projects/{book['pid']}/chapters/2/draft",
-        json={"goal": "萧决看剑。", "cast": ["萧决"], "length": ZH_LENGTH},
+        json={"previous_tail": DRAFT_TAIL, "length": ZH_LENGTH},
     )
     assert reply.status_code == 200, reply.text
     assert set(reply.json()) == DRAFT_RESPONSE_KEYS
@@ -311,7 +316,7 @@ def test_a_bill_that_cannot_be_written_takes_the_finished_draft_down_with_it(
     with pytest.raises(sqlite3.OperationalError):
         client.post(
             f"/api/projects/{book['pid']}/chapters/2/draft",
-            json={"goal": "萧决看剑。", "cast": ["萧决"], "length": ZH_LENGTH},
+            json={"previous_tail": DRAFT_TAIL, "length": ZH_LENGTH},
         )
     assert _calls(book) == [], "账没记上，却还是留下了一行"
 
@@ -680,7 +685,7 @@ def test_a_billed_draft_reads_like_chinese_on_the_activity_page(
     assert (
         client.post(
             f"/api/projects/{book['pid']}/chapters/2/draft",
-            json={"goal": "萧决看剑。", "cast": ["萧决"], "length": ZH_LENGTH},
+            json={"previous_tail": DRAFT_TAIL, "length": ZH_LENGTH},
         ).status_code
         == 200
     )

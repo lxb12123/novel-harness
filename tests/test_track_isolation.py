@@ -298,8 +298,7 @@ def _run(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> tuple[str, dict
     reply = client.post(
         f"/api/projects/{client.pid}/chapters/{HERE}/draft",  # type: ignore[attr-defined]
         json={
-            "mode": "continuation",
-            "previous_tail": EDIT,
+                        "previous_tail": EDIT,
             "following_text": "他没有回头。门在身后合上。",
             "length": SHORT,
         },

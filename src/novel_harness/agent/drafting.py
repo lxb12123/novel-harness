@@ -97,7 +97,7 @@ AGENT_DRAFT_LENGTH: Final[LengthSpec] = DEFAULT_LENGTH_POLICY.default_for(DraftL
 """
 
 AGENT_DRAFT_REASONING: Final = ReasoningEffort.OFF
-"""起草这一次调用的 reasoning 档。**`OFF` 而不是 `/draft` 用的 `HIGH`。**
+"""起草这一次调用的 reasoning 档。**`OFF`。**
 
 ADR 0011 D4 的原文是「产品 reasoning 默认 `off`；M2 请求 `high`」，而这条路上还有
 一个更硬的理由，和 `agent/model.py::AGENT_REASONING` 完全同源：
@@ -105,7 +105,16 @@ ADR 0011 D4 的原文是「产品 reasoning 默认 `off`；M2 请求 `high`」�
 在作者自建的端点上是当场 `CapabilityError`。那会长成一种很难查的形态——
 **聊天好好的，只有起草那一个工具每次都失败**。
 
-（`/draft` 那条路仍然是 `HIGH`，那是它自己的既有行为，这一刀不动它。）
+── ⚠️ 这句话曾经是一个陷阱，别再把它写回来 ──────────────────────────────
+
+这儿原本写着「（`/draft` 那条路仍然是 `HIGH`，那是它自己的既有行为，这一刀不动它。）」。
+**那句话当天是对的**——2026-08-14 那时 `/draft` 已经没有调用方了，`HIGH` 压在一条
+死路上不伤人。**推翻它的是 ADR 0015**：行内续写接到了同一条路由上，于是那个 `HIGH`
+落到了作者每停手 400 毫秒就触发一次的动作头上，症状是**续写恒 422**，而报的话
+把他支去重填一份根本没问题的配置。**这个 bug 活了这么久，就是因为这儿写着一句
+「不动它没关系」的过期结论。**
+
+2026-08-26 两处都是 `OFF` 了。上面那段论证是唯一一份，`api/app.py::draft` 引它。
 """
 
 SELF_NOTE_MARK: Final = "〖自述〗"

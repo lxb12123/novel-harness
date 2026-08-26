@@ -1257,7 +1257,14 @@ def test_openapi_declares_exactly_the_remaining_stub(client: TestClient) -> None
 
 
 def test_draft_openapi_publishes_its_request_contract(client: TestClient) -> None:
-    """真实 /draft 的请求契约发布进 OpenAPI：goal/cast/length/form，length 带校验。"""
+    """真实 /draft 的请求契约发布进 OpenAPI：cast/length，length 带校验。
+
+    ⚠️ 这句话原来写的是「goal/cast/length/form」。`form` 2026-08-25 随三臂删了，
+    **`goal` 和 `mode` 2026-08-26 随「起草一整章」那个入口一起删了**——那条路今天
+    只剩行内续写（`api/app.py::DraftRequest`）。所以这条测试现在两头都量：
+    活着的那几位在，**删掉的那两位不许悄悄长回来**（长回来 = 契约上又摆出一个
+    浏览器不会走、而且带着泄漏入口的分支）。
+    """
     spec = client.get("/openapi.json").json()
     operation = spec["paths"]["/api/projects/{project_id}/chapters/{chapter}/draft"]["post"]
     request_body = operation["requestBody"]
@@ -1271,7 +1278,9 @@ def test_draft_openapi_publishes_its_request_contract(client: TestClient) -> Non
         for part in body_schema["allOf"]:
             merged.update(part)
         body_schema = merged
-    assert {"goal", "cast", "length"} <= set(body_schema["properties"])
+    published = set(body_schema["properties"])
+    assert {"cast", "length"} <= published
+    assert {"goal", "mode"}.isdisjoint(published), published
     length_schema = body_schema["properties"]["length"]
     while "$ref" in length_schema:
         length_schema = spec["components"]["schemas"][
@@ -1315,7 +1324,8 @@ def test_draft_rejects_invalid_length_body(
 ) -> None:
     r = client.post(
         f"/api/projects/{_pid(book)}/chapters/7/draft",
-        json={"goal": "x", "cast": ["萧决"], "length": length},
+        # `goal` 2026-08-26 从请求体上删了（`/draft` 只剩续写）；这条量的是长度那一位。
+        json={"cast": ["萧决"], "length": length},
     )
     assert r.status_code == 422, r.text
     assert r.json()["detail"]

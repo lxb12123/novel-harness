@@ -429,8 +429,7 @@ def _continue(
     reply = client.post(
         f"/api/projects/{written['pid']}/chapters/{chapter}/draft",
         json={
-            "mode": "continuation",
-            "previous_tail": EDIT,
+                        "previous_tail": EDIT,
             "following_text": following,
             "length": SHORT,
         },
@@ -499,20 +498,16 @@ def test_the_track_costs_no_model_call(
     assert len(seen) == 1
 
 
-def test_a_whole_chapter_draft_refuses_a_following_text(
-    client: TestClient, written: dict[str, str]
-) -> None:
-    """整章起草没有「光标后面」。**静默丢掉才是坏的**——调用方会以为模型看过它了。"""
-    reply = client.post(
-        f"/api/projects/{written['pid']}/chapters/{HERE}/draft",
-        json={
-            "goal": "写一场雨",
-            "cast": ["萧决"],
-            "following_text": "后面这一段已经写好了。",
-            "length": SHORT,
-        },
-    )
-    assert reply.status_code == 422, reply.text
+# ⚠️ **`test_a_whole_chapter_draft_refuses_a_following_text` 2026-08-26 删了。**
+#
+# 它量的是「整章起草收到 `following_text` 要 422，别静默丢掉」。那条闸活在
+# `DraftRequest._check_mode_shape` 里，而**整个「起草一整章」的 HTTP 入口那天删了**
+# （零调用方；模式二的起草工具走进程内直调）——`/draft` 今天只有续写一种形状，
+# 而续写**本来就该收**这一位。**没有入口就没有那种误用**，留着这条测试等于给一个
+# 不存在的分支立守卫。
+#
+# 「静默丢掉才是坏的」那条纪律没跟着走：它在这个文件里由下面几条继续钉着
+# （`following_text` 只在不是最前沿时才渲染，而不是悄悄不用）。
 
 
 # ══════════════════════════════════════════════════════════════════════════

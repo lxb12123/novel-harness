@@ -58,20 +58,6 @@ export interface AiSettingsInput {
   auto_update_model_windows?: boolean;
 }
 
-export interface DraftRequest {
-  goal: string;
-  length: DraftLengthSpec;
-  form?: string;
-  previous_tail?: string;
-  /** 光标**后面**那截同章正文（**只有行内续写收它**，整章起草发它会被 422）。
-   *
-   *  改旧章时那是已经写好的正文。**送不等于用**：后端只在「这一章不是全书最后一章」
-   *  时才把它渲染成【下文】块，并在块首写死「别重写、要能接上」。 */
-  following_text?: string;
-  /** 自定义文风，留空 = 默认。三臂共用，禁词由后端校验。 */
-  write_rule?: string;
-}
-
 /** 这一稿的记忆层到底装了什么。**零永远带着一句理由**（§10 约束 8）。
  *
  *  `unsummarized_chapters` 是「有正文、但还没生成滚动总结」的章号——它和

@@ -121,7 +121,7 @@ def _continue(
 ) -> dict[str, object]:
     reply = client.post(
         f"/api/projects/{wheel['pid']}/chapters/{chapter}/draft",
-        json={"mode": "continuation", "previous_tail": TAIL, "length": SHORT},
+        json={"previous_tail": TAIL, "length": SHORT},
     )
     assert reply.status_code == 200, reply.text
     return reply.json()
@@ -365,10 +365,17 @@ def test_a_bigger_window_buys_more_chapters_of_summary(
         _summarize(wheel, number, f"第 {number} 章：萧决做了些事。")
 
     _capture(monkeypatch)
-    # 下界取 96,000 而不是更小：这个模型在 64,000 上连「一稿 + 一次长度续写」的输出
-    # 预算都摆不下（`generate._preflight_continuation_context` 直接 422），
-    # 而这条测试要比的是记忆额度，不是那道闸。
-    _configure(client, window=96_000)
+    # ── 下界 2026-08-26 从 96,000 降回 64,000 ──────────────────────────────
+    #
+    # 这儿原来写着「取 96,000 而不是更小：这个模型在 64,000 上连『一稿 + 一次长度续写』
+    # 的输出预算都摆不下（`generate._preflight_continuation_context` 直接 422）」。
+    # **那句话是 `/draft` 那个 `ReasoningEffort.HIGH` 的产物**——HIGH 要给思考留一块
+    # 输出预算，64,000 的窗口就摆不下了。续写改走 `OFF` 之后那块预算回来了，
+    # 64,000 实测拿到 24 章（96,000 拿满 28 章 = 天花板，两个窗口报同一个数，
+    # 这条验收就测不到东西了）。
+    #
+    # **所以这个数字不是随手调的**：它是「更大的窗口买到更多」这条性质还量得到的位置。
+    _configure(client, window=64_000)
     small = _continue(client, wheel, CHAPTERS - 1)["memory"]["rolling_summaries"]
     _configure(client, window=1_000_000)
     large = _continue(client, wheel, CHAPTERS - 1)["memory"]["rolling_summaries"]

@@ -6,19 +6,20 @@ import type {
   ActivityPage,
   AiSettings,
   AiSettingsInput,
-  ModelWindowsRefresh,
+  BookSummaryStatus,
   BootstrapRequest,
   BootstrapResult,
-  BookSummaryStatus,
   CanonEdgeEditRequest,
   CanonEdgeEditResult,
   CanonEdgeView,
-  ChapterRow,
   ChapterDrafts,
+  ChapterRow,
   ChapterSnapshot,
   ChapterSummaryMentions,
   ChapterSummaryStatus,
   ChapterText,
+  CharacterBasicInfo,
+  CharacterEventRow,
   ChatDeleted,
   ChatDetail,
   ChatSessionView,
@@ -27,26 +28,27 @@ import type {
   CheckResult,
   DeclareAlias,
   DeclareNode,
+  DeleteNodeInput,
   DraftCandidateDetail,
+  DraftLengthSpec,
   EventCastCorrection,
   EventCastInput,
   EventView,
   ExtractionRun,
   Mentioned,
-  CharacterEventRow,
-  DeleteNodeInput,
+  ModelWindowsRefresh,
   NodeDeleted,
   NodeRef,
-  RenameNodeInput,
-  RosterEntry,
   NodeSummaryMentions,
+  Project,
   ProposalAction,
   ProposalEditInput,
   ProposalRecord,
   ProposalResolution,
   ProvisionalConfirmation,
-  Project,
   RecordedRules,
+  RenameNodeInput,
+  RosterEntry,
   RunsPanel,
   SceneConstraints,
   StateSnapshot,
@@ -55,7 +57,6 @@ import type {
   SummaryWindow,
   SystemNotification,
   ValidationRuleView,
-  CharacterBasicInfo,
 } from "./types";
 
 // 服务端状态全进 TanStack Query（§2.3）：queryKey = [端点, pid, chapter, cast]，
@@ -484,10 +485,12 @@ export function useDeleteSnapshot(pid: string, chapter: number) {
   });
 }
 
-/** 行内续写（ADR 0015）：同一条 `/draft`，只是 `mode` 不同。
+/** 行内续写（ADR 0015）。**`/draft` 今天只有这一种模式**（2026-08-26）。
  *
- *  **请求里没有 `goal`**——续写的提示语是后端常量（D3），前端能传的东西作者就能改，
- *  而 `goal` 是 ADR 0010 点名的泄漏入口之一。
+ *  **请求里没有 `mode`**——那一位跟着「起草一整章」那个入口一起从请求体上删了：
+ *  那个入口 2026-08-14 起就零调用方，而模式二的起草工具走进程内直调，不发 HTTP。
+ *  **没有 `goal`**——续写的提示语是后端常量（D3），前端能传的东西作者就能改，
+ *  而 `goal` 是 ADR 0010 点名的泄漏入口之一；现在它连字段都不存在了。
  *  **`cast` 也不带**——不知道谁在场就走全禁（D4）；这是不给作者设门槛，不是偷懒。
  *
  *  光标**前后**两截都送（`following_text` 是后面那截已经写好的正文）。**送不等于用**：
@@ -497,7 +500,6 @@ export function useContinuation(pid: string, chapter: number) {
   return useMutation({
     mutationFn: (around: { before: string; after: string }) =>
       api.post<{ text: string }>(proj(pid, `/chapters/${chapter}/draft`), {
-        mode: "continuation",
         previous_tail: around.before,
         following_text: around.after,
         length: CONTINUATION_LENGTH,
@@ -512,7 +514,7 @@ export const CONTINUATION_LENGTH = {
   min_units: 60,
   target_units: 140,
   max_units: 260,
-} as const;
+} as const satisfies DraftLengthSpec;
 
 // ⚠️ **`useLocate` / `useDeclare` 2026-08-14 删了**（连同它们唯一的调用方
 // `DeclareDrawer` 和中栏那条选区工具条）。**后端 `POST …/locate`、`POST …/declare/*`
