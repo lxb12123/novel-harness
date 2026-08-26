@@ -25,6 +25,9 @@ ZH_LENGTH = {
     "max_units": 3000,
 }
 
+_SHORT = {"language": "zh", "min_units": 80, "target_units": 150, "max_units": 300}
+"""行内续写那一档的长度。"""
+
 
 TWIST = "玄血蛊"
 """秘密的**内容 tell**。它一个字符都不许进 prompt——`draft/context.py` 第三节：
@@ -225,44 +228,41 @@ def test_default_product_draft_gets_confirmed_memory_preface(
     assert "已生效的故事记忆" not in observed[0][0]["content"]
 
 
-def test_draft_custom_write_rule_is_accepted(
+# ⚠️ **`write_rule` 那两条 2026-08-26 搬去 `tests/test_product_assemble.py` 了。**
+#
+# 它们从前打的是 `POST /draft`，而 `write_rule` 那天从这个请求体上删了：**只有整章那一支
+# 读它**，而整章的 HTTP 入口零调用方。作者的文风今天挂在**对话**上
+# （`agent/store.py::start_conversation`），由 `agent/drafting.py` 递进
+# `ChapterDraftRequest`。
+#
+# **搬不是删。** `WRITE_RULE_FORBIDDEN_HINTS` 那张禁词网活着，起草工具每写一章都过一次；
+# 而它的拒绝**只在 `product_draft.check_request()` 里**（`assemble()` 自己是有意宽松的，
+# 见那个常量的 docstring）。搬走之前，那两条是这张网全仓**唯一**的覆盖
+# ——`check_request` 一处直接测试都没有。
+
+
+def test_a_write_rule_in_the_body_is_refused_not_quietly_dropped(
     client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """留在 HTTP 这一层的只剩这一条：**这个请求体不收 write_rule，而且说出来。**
+
+    静默忽略它 = 作者以为模型按他的文风写了（同 `goal` 那一条）。
+    """
     _configure(client)
-    _stub_complete(monkeypatch)
+    observed = _capture_complete(monkeypatch)
     r = client.post(
         _url(book),
-        json={
-            "cast": ["萧决"],
-            "length": ZH_LENGTH,
-            "write_rule": "文白夹杂，多用短句，对白简洁。",
-        },
+        json={"previous_tail": "夜色沉下来。", "length": _SHORT, "write_rule": "多用短句。"},
     )
-    assert r.status_code == 200, r.text
-
-
-@pytest.mark.parametrize("word", ["秘密", "不知道", "泄露", "剧透", "伏笔", "设定"])
-def test_draft_write_rule_forbidden_hints_are_422(
-    client: TestClient, book: dict[str, str], word: str
-) -> None:
-    _configure(client)
-    r = client.post(
-        _url(book),
-        json={
-            "cast": ["萧决"],
-            "length": ZH_LENGTH,
-            "write_rule": f"写的时候{f'不要{word}'}任何情节。",
-        },
-    )
-    assert r.status_code == 422
-    assert "引擎自己在管的事" in r.text
+    assert r.status_code == 422, r.text
+    assert "不收 write_rule" in r.text
+    assert observed == [], "被拒的请求还是花了一次模型调用"
 
 
 # ══════════════════════════════════════════════════════════════════════════
 # 行内续写（ADR 0015）—— 两种请求形状在 HTTP 边界上的差别
 # ══════════════════════════════════════════════════════════════════════════
 
-_SHORT = {"language": "zh", "min_units": 80, "target_units": 150, "max_units": 300}
 
 
 def test_continuation_needs_neither_goal_nor_cast(

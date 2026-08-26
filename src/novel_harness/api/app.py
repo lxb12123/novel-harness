@@ -1512,11 +1512,20 @@ class DraftRequest(BaseModel):
 
         mode="chapter"（或任何非 continuation 的值）  → 422，说清入口去哪了
         mode="continuation"                          → 收下（它说的是真话，只是多余）
-        goal 非空                                     → 422，那句话本来会被丢掉
-        goal=""  /  form  /  任何别的键                → 照旧忽略（老客户端不炸）
+        goal / write_rule 非空                        → 422，那句话本来会被静默丢掉
+        goal="" / write_rule="" / form / 任何别的键     → 照旧忽略（老客户端不炸）
 
     `mode="continuation"` 那一档是特意留的：**旧前端发的就是它**，把它也拒了，
     就正好炸掉 2026-08-25 那条裁定要保护的那种客户端。
+
+    ── `write_rule` 为什么也在这一批里（2026-08-26）──────────────────────
+
+    它**只有整章那一支读**，而前端一处都不发（全仓唯一的调用方是两条测试，
+    传的正好是 `goal` + `cast` = 整章形状）。今天作者的文风走的是**会话那一层**：
+    `agent/store.py::start_conversation(write_rule)` 挂在对话上（它进前缀，所以必须
+    跨章不变），由 `agent/drafting.py` 递进 `ChapterDraftRequest`。
+    **那条路一个字没动**——`WRITE_RULE_FORBIDDEN_HINTS` 那张禁词网照旧在
+    `product_draft.check_request()` 里拦着。
     """
 
     @model_validator(mode="before")
@@ -1535,6 +1544,12 @@ class DraftRequest(BaseModel):
             raise ValueError(
                 "这条路不收 goal：续写要写什么由上文决定，提示语是后端常量（ADR 0015 D3）。"
                 "**这一位不是被忽略，是被拒收**——忽略它等于让你以为模型读过你写的那句话。"
+            )
+        if str(data.get("write_rule") or "").strip():
+            raise ValueError(
+                "这条路不收 write_rule：它只有整章起草那一支读，而那个入口 2026-08-26 删了。"
+                "文风今天挂在**对话**上（开一段对话时定，跨章不变），起草工具会带着它。"
+                "**这一位不是被忽略，是被拒收**——忽略它等于让你以为模型按你的文风写了。"
             )
         return data
 
@@ -1555,8 +1570,6 @@ class DraftRequest(BaseModel):
     截多长由后端那一份公式说了算（同 `previous_tail`，见 `_continuation_tail`），
     这一层只是收下——**前端不许自己判断给多少**。
     """
-
-    write_rule: str = ""
 
 
 def _draft_provider_config():
@@ -1694,7 +1707,7 @@ def draft(
         plan_call,
     )
     from ..draft.context import ResolvedConstraints, unknown_cast_constraints
-    from ..draft.product_draft import ChapterDraftRequest, DraftRefused, check_request
+    from ..draft.product_draft import ChapterDraftRequest, DraftRefused
     from ..draft.product_draft import draft_chapter as run_draft
     from ..draft.provider import ProviderError
     from ..draft.rolling_summary import SummaryStore
@@ -1762,16 +1775,16 @@ def draft(
         # 要在最新章中间插写时也给，那是一次单独的产品决定，别藏在别的改动里。
         # 轨道没算成时 `at_frontier` 也是 True（fail-safe，见 `Track.at_frontier`）。
         following_text="" if track.at_frontier else body.following_text,
-        write_rule=body.write_rule,
+        # `write_rule` 不传 = 空串。这条路 2026-08-26 起不收它（见 `DraftRequest`）：
+        # 文风挂在**对话**上，由起草工具带进来，不从这个请求体来。
     )
-    try:
-        # **在算约束之前先验一次文风。** `draft_chapter()` 自己也会验（agent 那条路没有
-        # 这一步），这里多调一次是为了保住 422 的先后顺序：文风里写了禁令词和在场角色
-        # 解析不了同时发生时，作者收到的仍然是文风那一句。重复的是执行，不是实现。
-        # （2026-08-25 之前它还验一个 `form`；三臂随 M2 一起删了。）
-        check_request(request)
-    except DraftRefused as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+
+    # ⚠️ **这儿原来先调一次 `check_request(request)`。** 它的全部理由是「保住 422 的
+    # 先后顺序：文风里写了禁令词、和在场角色解析不了，同时发生时作者收到的仍然是文风
+    # 那一句」。`write_rule` 从请求体上删掉之后，**这条路再也造不出那种碰撞**——
+    # `check_request` 唯一会拒的就是非空 `write_rule`（`DraftRefused` 全仓只有那一个
+    # raise 点），而这儿的 `write_rule` 恒为空串。所以那次预调是死代码，删了。
+    # `draft_chapter()` 自己照旧会验（agent 那条路走的就是它）。
 
     try:
         # 两条构造路径，**类型不同**（ADR 0015 D4）：拿到 `ResolvedConstraints` 就等于
@@ -1816,6 +1829,11 @@ def draft(
             backfill=_SummaryBackfillDesk(conn),
             on_call=bill,
         )
+    # `DraftRefused` **今天这条路走不到**（它全仓只有一个 raise 点，就是 `write_rule`
+    # 那张禁词网，而这条路的 `write_rule` 恒为空串）。**仍然留着**：它是
+    # `draft_chapter()` 已发布契约的一部分（另一个调用方 `agent/drafting.py` 也接着它），
+    # 而那是个**共用**函数——它长出第二个拒绝理由时，这儿没有接的话作者会吃一个 500，
+    # 而加它的人正在改的是 agent 那条路，不会想到这儿。这是一条有意留的，不是残留。
     except DraftRefused as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except UnresolvedCast as exc:

@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from novel_harness.draft.assemble import GATE_TAIL_CODE_POINTS, assemble
+import pytest
+
+from novel_harness.draft.assemble import (
+    GATE_TAIL_CODE_POINTS,
+    WRITE_RULE_FORBIDDEN_HINTS,
+    assemble,
+)
 from novel_harness.draft.context import ResolvedConstraints
 from novel_harness.draft.length import DraftLanguage, LengthSpec
 from novel_harness.events import CharacterProfileView, EventView, StoryEvent
@@ -309,3 +315,53 @@ def test_the_gate_never_reaches_this_module() -> None:
         "多一个调用方就要重新回答一次「三臂受不受影响」——上面那条换序的全部安全性押在这儿。"
     )
 
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 文风禁词网 —— 2026-08-26 从 `tests/test_draft_api.py` 搬过来
+#
+# 它们从前打的是 `POST /draft`；`write_rule` 那天从那个请求体上删了（只有整章那一支
+# 读它，而整章的 HTTP 入口零调用方）。**网本身没删，也不能删**：作者的文风今天挂在
+# 对话上（`agent/store.py::start_conversation`），由 `agent/drafting.py` 递进
+# `ChapterDraftRequest`，起草工具每写一章都过一次这张网。
+#
+# ⚠️ **为什么测的是 `check_request` 不是 `assemble`。** 拒绝不在 `assemble` 里——
+# 那个常量自己的 docstring 写着：「入口用它拒绝自定义写作规则；`assemble()` 本身
+# **保持宽松**（测试要用自己的写作提示），中性由入口守」。往 `assemble` 上测这两条，
+# 测出来的会是「它不拦」，那是它的设计不是它的 bug。
+#
+# 搬之前这两条是这张网全仓**唯一**的覆盖：`check_request` 一处直接测试都没有。
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _draft_request(write_rule: str) -> object:
+    from novel_harness.draft.product_draft import ChapterDraftRequest
+
+    return ChapterDraftRequest(goal="萧决看剑。", length=LENGTH, write_rule=write_rule)
+
+
+@pytest.mark.parametrize("word", WRITE_RULE_FORBIDDEN_HINTS)
+def test_a_write_rule_naming_an_engine_managed_word_is_refused(word: str) -> None:
+    """这六个词是**引擎自己在管的事**，写进文风里只会和它打架。
+
+    这是一张**关键词网**不是语义检查（ADR 0005）：抓得住顺手写出来的那一种，
+    抓不住换个说法的那一种。参数直接取 `WRITE_RULE_FORBIDDEN_HINTS`——
+    往那个元组里加词而不加覆盖，在这儿是不可能的。
+    """
+    from novel_harness.draft.product_draft import DraftRefused, check_request
+
+    with pytest.raises(DraftRefused) as caught:
+        check_request(_draft_request(f"写的时候不要{word}任何情节。"))
+    assert word in str(caught.value)
+    assert "引擎自己在管的事" in str(caught.value)
+
+
+def test_an_ordinary_write_rule_passes() -> None:
+    """**反面那一半**：网只拦那六个词，不拦文风本身。
+
+    少了这一条，「把 `check_request` 改成一律拒绝」也能让上面那条绿。
+    """
+    from novel_harness.draft.product_draft import check_request
+
+    check_request(_draft_request("文白夹杂，多用短句，对白简洁。"))  # 不抛就是通过
+    check_request(_draft_request(""))
