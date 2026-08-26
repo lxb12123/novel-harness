@@ -19,15 +19,24 @@ REPO = Path(__file__).resolve().parents[1]
 EVAL_DIR = REPO / "src" / "novel_harness" / "eval"
 ASSEMBLE = REPO / "src" / "novel_harness" / "draft" / "assemble.py"
 
-ASSEMBLE_SHA256 = "7960eb906990c17d3e833ddd94979718ff77b1094c2d1bde518cadad664629c4"
+ASSEMBLE_SHA256 = "9806f988aab5f7ae0dffaa1a09e00eca89f7058b4fdb90d055f709a03502e3b0"
 """`draft/assemble.py` 全文的 sha256。**改那个文件就必须在同一笔里改这个数。**
 
-这一版是 2026-08-25 的三臂下线：`PromptForm` 整个删了，`assemble()` / `graph_section()` /
+这一版是 2026-08-26 的**注释重写，零行为变化**：只动了 `WRITE_RULE_FORBIDDEN_HINTS`
+的 docstring——它双重过时（指着 `/draft`、`nh draft` 两个不存在的入口，还在拿三臂的
+`Δ 塌掉` 当理由），而今天用那张网的只剩 `product_draft.check_request()` 一处。
+**渲染逻辑一个字节没动**：这一笔的 diff 只有那一段字符串，可以逐行核。
+
+⚠️ **这是这个数第一次因为「只改注释」而变。** 它就该这样——这道闸比的是全文哈希，
+所以注释也算；「改卷子藏不住」这条性质的代价，就是每一次有意的编辑都得在这儿留一行。
+审计的人看这一行就知道该不该去读 diff。
+
+上一版是 2026-08-25 的三臂下线：`PromptForm` 整个删了，`assemble()` / `graph_section()` /
 `_forbidden_block()` 三个签名去掉 `form` 参数，`_forbidden_block` 只留清单那一种渲染
 （散文那一版是为 X2 写的，没有别的消费者）。**改这个数是有意的动作**，见那笔提交。
 
-上一版是 2026-08-24 的秘密下线（ADR 0039）：`graph_section` 里的认知矩阵块和禁写清单块
-整个删了，只剩「尚未登场」。再上一版是 2026-08-22 的 M1-a（退化态不再发「【在场】未知」那一块）。
+再上一版是 2026-08-24 的秘密下线（ADR 0039）：`graph_section` 里的认知矩阵块和禁写清单块
+整个删了，只剩「尚未登场」。更早一版是 2026-08-22 的 M1-a（退化态不再发「【在场】未知」那一块）。
 在此之前这道闸比的是 `git diff --exit-code`——它只看「工作区 vs 已暂存」，
 拦得住「顺手改了忘了看」，**拦不住「改了并且提交」**，而真要改考卷的人当然会提交。
 """
