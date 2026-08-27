@@ -57,6 +57,29 @@ describe("章标题", () => {
     expect(splitTitle("第三节 论道")).toMatchObject({ marker: "第三节", name: "论道" });
   });
 
+  it("英文章标（国际化第一批 ①）也拆得开：数字 / 拼词 / 罗马数字 / 缩写", () => {
+    expect(splitTitle("Chapter 1: The Beginning")).toEqual({
+      marker: "Chapter 1",
+      gap: "",
+      name: ": The Beginning",
+    });
+    expect(splitTitle("Chapter One")).toEqual({ marker: "Chapter One", gap: "", name: "" });
+    expect(splitTitle("CHAPTER XII")).toEqual({ marker: "CHAPTER XII", gap: "", name: "" });
+    expect(splitTitle("Ch. 12 Homecoming")).toEqual({
+      marker: "Ch. 12",
+      gap: " ",
+      name: "Homecoming",
+    });
+    // 裸数字加句点（`1.`）不认——两次真书实测（编号列表 / 硬折行的年份）都撞了车，
+    // 判定这个形状没有纯语法收窄能兜住，见 chapterize.py 模块 docstring 第 5 条。
+    expect(splitTitle("1.")).toEqual({ marker: "", gap: "", name: "1." });
+    expect(splitTitle("1. Not a chapter")).toEqual({
+      marker: "",
+      gap: "",
+      name: "1. Not a chapter",
+    });
+  });
+
   it("认不出章号的那一行 → 整行都是名字（作者照旧改得动它）", () => {
     // 真书里有把首行写成正文的稿子。这时没有可按住的章号，退回「整行可改」。
     expect(splitTitle("他说第三章很好看。")).toEqual({

@@ -40,6 +40,101 @@ def test_body_mention_is_not_a_chapter_mark() -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# 英文章标（国际化第一批 ①，2026-08-26）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_chapter_plus_arabic_digit() -> None:
+    m = CHAPTER_RE.search("Chapter 1: The Beginning\n")
+    assert m is not None
+    assert m.group(1) == "Chapter 1"
+    assert m.group(2) == ": The Beginning"
+
+
+def test_chapter_plus_spelled_out_word_any_case() -> None:
+    """`Chapter One` / `chapter one` 都认，覆盖 Title Case 和全小写——
+    见模块 docstring「英文章标」一节第 2 条：不覆盖全大写拼词。"""
+    assert CHAPTER_RE.search("Chapter One\n").group(1) == "Chapter One"
+    assert CHAPTER_RE.search("chapter one\n").group(1) == "chapter one"
+    assert CHAPTER_RE.search("Chapter Twenty-One\n").group(1) == "Chapter Twenty-One"
+    assert CHAPTER_RE.search("Chapter Ninety-Nine\n").group(1) == "Chapter Ninety-Nine"
+
+
+def test_chapter_plus_uppercase_roman_numeral() -> None:
+    m = CHAPTER_RE.search("CHAPTER XII\n")
+    assert m is not None and m.group(1) == "CHAPTER XII"
+    # 小写罗马数字故意不认——见模块 docstring 第 4 条。
+    assert CHAPTER_RE.search("Chapter xii\n") is None
+
+
+def test_ch_dot_abbreviation() -> None:
+    assert CHAPTER_RE.search("Ch. 12\n").group(1) == "Ch. 12"
+    assert CHAPTER_RE.search("ch.12\n").group(1) == "ch.12"
+
+
+def test_bare_number_period_is_not_a_chapter_mark() -> None:
+    """裸数字加句点（`1.`）**不认**——见模块 docstring 第 5 条，两次真书实测都踩中它：
+
+    - `tests/fixtures/demo_novel.txt` 前言里一句大白话的编号列表
+      （`1. **不是 M0 Day 3 的真书验收。** ……`）曾被第一版实现（带标题也认）切成一章。
+    - 收窄到「独占一行、不带标题」之后，*Moby-Dick*（Gutenberg #2701）又炸出
+      完全不同的碰撞：`Extracts` 一节里 `……Phil. Trans. A.D.\\n1668.` 纯粹是硬折行，
+      `1668.` 独占一行只是排版折到那儿，前面那行本身不是空行——「要求前后夹空行」
+      这种更强的收窄也未必挡得住。两条路径互相独立，判定这个形状没有纯语法收窄
+      能兜住，所以 `Chapter` / `Ch.` 两支照留，`1.` 这一支不做。
+    """
+    assert CHAPTER_RE.search("1.\n") is None
+    assert CHAPTER_RE.search("1. The Arrival\n") is None
+    assert CHAPTER_RE.search("2. Not a chapter, just a list item.\n") is None
+    # Moby-Dick 那种硬折行碰撞：上一行不是空行，这一行只有一个年份 + 句点。
+    assert CHAPTER_RE.search(
+        "—Richard Strafford’s Letter from the Bermudas. Phil. Trans. A.D.\n1668.\n"
+    ) is None
+
+
+def test_decimal_number_is_not_a_chapter_mark() -> None:
+    assert CHAPTER_RE.search("12.5\n") is None
+
+
+def test_part_level_heading_is_not_a_chapter_boundary() -> None:
+    """`PART TWO` 是卷/部级标题，跟中文的「卷」同一个方向——故意不认，
+    本模块没有一个「PART」分支，不是漏写。"""
+    assert CHAPTER_RE.search("PART TWO\n") is None
+    assert CHAPTER_RE.search("Part Two\n") is None
+
+
+def test_title_starting_with_roman_letters_does_not_get_eaten() -> None:
+    """`Chapter Mild` 不许被切成 marker=`Chapter M` + title=`ild`——
+    见模块 docstring 第 3 条：数字/罗马数字/拼词那一支后面不许紧跟字母。
+    """
+    assert CHAPTER_RE.search("Chapter Mild\n") is None
+    assert CHAPTER_RE.search("Chapter civil\n") is None
+    assert CHAPTER_RE.search("Chapter Onerous\n") is None  # "one" 吃掉前三个字母的那类
+
+
+def test_plural_chapters_word_is_not_a_chapter_mark() -> None:
+    assert CHAPTER_RE.search("Chapters 1-5: Summary\n") is None
+
+
+def test_english_book_chapterizes_with_ordinal_index_and_opaque_marker() -> None:
+    """跟中文同一条纪律：`marker` 是显示用的原文，`index` 只看文本出现顺序。
+
+    故意混用三种写法（阿拉伯数字 / 拼词 / 罗马数字），证明三者共用同一条 index 序列，
+    谁都不比谁「更懂」章号——marker 不解析成数字，这条纪律中英文各自独立成立。
+    """
+    text = (
+        "Chapter 1\n\nThe morning was cold.\n"
+        "Chapter Two\n\nShe left before dawn.\n"
+        "CHAPTER III\n\nHe never saw her again.\n"
+    )
+    out = chapterize(text)
+    assert [c.index for c in out.chapters] == [1, 2, 3]
+    assert [c.marker for c in out.chapters] == ["Chapter 1", "Chapter Two", "CHAPTER III"]
+    assert out.chapters[0].body == "The morning was cold."
+    assert out.chapters[2].body == "He never saw her again."
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # normalize：正则修不得，所以脏字符在进正则之前就得死
 # ══════════════════════════════════════════════════════════════════════════
 

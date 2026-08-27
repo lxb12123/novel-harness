@@ -14,6 +14,56 @@ M0 的验收里有一条是「真书切出的章数 = 目录数」。这个文�
 正则是**唯一真相**：`scripts/probe_speaker_tags.py` 从这里 import，不留第二份副本。
 一份正则抄两处 = 探针量出来的覆盖率和导入器实际切出来的章不是同一批章。
 
+── 英文章标：国际化第一批 ①（2026-08-26）加的 ─────────────────────────────
+
+同一条正则里追加两个英文分支，跟中文那支共用 `group(1)`=marker / `group(2)`=title、
+共用「marker 不解析成数字、index 只看文本顺序」这条纪律（上一节）。认得：
+`Chapter 1` / `Chapter One` / `CHAPTER XII` / `Ch. 12`。`PART TWO` 这类
+**卷/部级**标题故意不认，跟中文的「卷」同一个方向——本模块没有一个「PART」分支，
+不是漏写。
+
+三条设计取舍，任何一条改动前先想一遍为什么改：
+
+1. **大小写不敏感靠逐字母字符类 `[Cc][Hh][Aa]...`，不靠 `re.IGNORECASE` 或
+   Python 专有的 `(?i:...)` 局部标志。** 两个都不能用，且理由不同：全局标志会
+   波及中文那半（本模块的正则里数字字符类没有大小写，波及了也测不出来，但下一个
+   加中文以外分支的人未必这么幸运，别开这个先例）；`(?i:...)` 是 Python `re` 的
+   扩展语法，`frontend/src/chapterTitle.ts` 里那份**逐字节**副本是标准 JS 正则，
+   没有局部标志这回事——写了 JS 那边编译不出同一个模式，两份就没法再保持同步。
+2. **拼出来的数字词（`one`..`ninety-nine`）只有首字母大小写不敏感**（`[Oo]ne`，
+   不是逐字母的 `[Oo][Nn][Ee]`）。覆盖 Title Case（`One`）和全小写（`one`），
+   覆盖不到全大写拼词（`ONE`）——这是故意收窄的：真书里全大写的章标配的是数字
+   或罗马数字（`CHAPTER 1` / `CHAPTER XII`），没见过全大写拼词章号；真要出现，
+   退化成整行落进上一章 body，跟卷标题同一个下场，不是新增一类误切。不含
+   `hundred` 及以上——拼出「Chapter One Hundred」的书远少于直接用数字/罗马数字的。
+3. **数字/罗马数字/拼词那一支后面跟一个 `(?![A-Za-z])`**（不许紧跟字母）。
+   没有这一条，`Chapter Mild` 会被切成 marker=`Chapter M`（M 是合法罗马数字）+
+   title=`ild`——罗马数字字符集只有 7 个字母，`mild`/`civil`/`onerous` 这类
+   常见英文词全用得上；拼词分支同理（`Onerous` 会被 `one` 吃掉前三个字母）。
+   这条守卫**只挡「数字后面立刻接字母」**，不挡 `Chapter 1: The Beginning`
+   这种数字后面接标点或空白的正常标题。
+4. **罗马数字只认大写 `[IVXLCDM]+`，不认小写。** 放开小写等于把上一条的守卫
+   削弱一半——大写单词在正常英文叙事里本来就罕见，这个限制换来的是
+   「误切概率趋近于 0」，代价是不认 `chapter xii` 这种全小写罗马数字章标
+   （目前没见过这种真书用法）。
+5. **裸数字章标（`1.`）——想过，最后没做，两次真书实测都指向同一个方向。**
+   第一版实现（`1.` 后面允许跟标题，跟 `Chapter N` 同一个宽松度）在
+   `tests/fixtures/demo_novel.txt` 上就翻了车：前言里一句大白话的编号列表
+   `1. **不是 M0 Day 3 的真书验收。** ……` 被切成了一章。收窄到「只认独占一行、
+   不带标题」那一种（`(?=[ \t　]*$)`）看似顶住了这一条，但拿 *Moby-Dick*
+   （Gutenberg #2701）一试，**又炸出一种完全不同的碰撞**：`Extracts` 那节引文
+   `—Richard Strafford's Letter from the Bermudas. Phil. Trans. A.D.\n1668.`
+   纯粹是硬折行——`1668.` 独占一行只是排版折到那儿，跟编号列表毫无关系，
+   却照样满足「独占一行、不带标题」。**这不是同一个漏洞的两个症状，是两条
+   独立的碰撞路径**：一条来自内容结构（列表），一条来自排版换行——后者
+   连「要求空行前后夹住」这种更强的收窄都未必挡得住（`1668.` 前面那行本身
+   就不是空行，是上一句折过来的）。裸数字加句点在英文平摊文本里出现的
+   密度太高，两次不同角度的真书验证都命中，判定这个形状**没有纯语法收窄能
+   兜住**（ADR 0005 不许上语义判断），所以 `Chapter` / `Ch.` 两支照留（强前缀，
+   正常文本里不会意外出现），**`1.` 这一支干脆不做**。真要支持它，需要更强的
+   信号（比如整本书统一的编号风格是不是自洽），那是状态判断，不是单行正则
+   能答的问题，留给以后有专门设计时再做。
+
 ── index 的来源是文本顺序，不是标题里印的那个中文数字 ──────────────────────
 
 **这是个刻意的设计，不是偷懒没做数字解析。** `marker` 里的「第一百零八章」只是**显示用**，
@@ -43,9 +93,22 @@ PLAN §8 Day 3 为这三样预留了半天。本模块的处置是**一句话能
 反过来，番外若自己占一行写成 `第一章`，它就**是**一章、拿一个 ordinal。本模块认的是
 字面形状，不认「这一章是不是番外」——那是语义判断（ADR 0005 划在 v1 之外）。
 
-⚠️ **这个模块没有在任何一本真实网文上跑过**（M0 剩余项，`docs/ARCHITECTURE.md` 里
-记着「需要一本中文小说 TXT」）。下面的行为全部是手写 fixture 上的行为，**不是覆盖率断言**。
-真书跑通之前，别把「章数 = 目录数」当成已验收。
+⚠️ **中文那半没有在任何一本真实网文上跑过**（M0 剩余项，`docs/ARCHITECTURE.md` 里
+记着「需要一本中文小说 TXT」）。中文的行为全部是手写 fixture 上的行为，**不是覆盖率断言**，
+真书跑通之前，别把「章数 = 目录数」当成中文那半已验收。
+
+英文那两个分支 2026-08-26 用两本 Project Gutenberg 公版书验证过一次（章数 / 目录数 /
+有没有误切成章，数字和过程在那笔提交的 commit message 里；两本书本身没有进 `tests/
+fixtures/`——770KB/1.2MB 的整本文学作品不值得常驻仓库，命中的两个真实碰撞已经收窄成
+`tests/test_chapterize.py` 里的手写 fixture 用例，长期回归靠那些）。*Pride and
+Prejudice*（61 章，零误差）干净通过；*Moby-Dick*（135 章）暴露了一个**已知、
+跨语言的架构缺口**——
+书里内嵌的 `CONTENTS` 目录页用了和正文里一模一样的 `CHAPTER N. Title` 格式，
+于是每一章被数了两次（目录一次、正文一次）。这不是英文分支的 bug，换成中文小说
+只要「目录页」抄的是和正文相同的「第N章」格式，同样的坑就在那儿——本仓库还没有
+遇到过这种中文 TXT，所以这条缝目前只在英文这边被踩到。**这个模块目前不区分
+「目录页」和「正文标题」**，修它需要一种新的、跨越单行的结构判据（比如「连续命中
+之间几乎没有正文」），那是下一个任务，不是这一批的范围。
 """
 
 from __future__ import annotations
@@ -55,13 +118,39 @@ from typing import Final
 
 from pydantic import BaseModel, ConfigDict, Field
 
+_EN_ONES: Final = r"[Oo]ne|[Tt]wo|[Tt]hree|[Ff]our|[Ff]ive|[Ss]ix|[Ss]even|[Ee]ight|[Nn]ine"
+_EN_TEENS: Final = (
+    r"[Tt]en|[Ee]leven|[Tt]welve|[Tt]hirteen|[Ff]ourteen|"
+    r"[Ff]ifteen|[Ss]ixteen|[Ss]eventeen|[Ee]ighteen|[Nn]ineteen"
+)
+_EN_TENS: Final = r"[Tt]wenty|[Tt]hirty|[Ff]orty|[Ff]ifty|[Ss]ixty|[Ss]eventy|[Ee]ighty|[Nn]inety"
+_EN_NUMBER_WORD: Final = (
+    rf"(?:(?:{_EN_TENS})(?:[ \t　-](?:{_EN_ONES}))?|{_EN_TEENS}|{_EN_ONES})"
+)
+"""英文章标里拼出来的数字：`one`..`ninety-nine`。只搭到 99——见模块 docstring
+「英文章标」一节第 2 条。"""
+
+_EN_CHAPTER_NUMBER: Final = (
+    rf"(?:[0-9]+|[IVXLCDM]+|{_EN_NUMBER_WORD})(?![A-Za-z])"
+)
+"""`Chapter` 后面那个数字：阿拉伯数字 / 大写罗马数字 / 拼出来的数字词，
+三选一，选完不许紧跟字母——见模块 docstring「英文章标」一节第 3 条。"""
+
 CHAPTER_RE: Final = re.compile(
-    r"^[ \t　]*(第[ \t　]*[0-9〇零一二三四五六七八九十百千两]+[ \t　]*[章节回])[ \t　]*(.*?)[ \t　]*$",
+    r"^[ \t　]*("
+    r"第[ \t　]*[0-9〇零一二三四五六七八九十百千两]+[ \t　]*[章节回]"
+    rf"|[Cc][Hh][Aa][Pp][Tt][Ee][Rr][ \t　]*{_EN_CHAPTER_NUMBER}"
+    rf"|[Cc][Hh]\.[ \t　]*[0-9]+(?![A-Za-z])"
+    r")[ \t　]*(.*?)[ \t　]*$",
     re.M,
 )
-"""PLAN §8 Day 3 逐字抄来的那一个。**改它之前先让 `tests/test_chapterize.py` 红。**
+"""中文分支是 PLAN §8 Day 3 逐字抄来的那一个，英文两支是国际化第一批 ① 加的
+（模块 docstring「英文章标」一节）。**改它之前先让 `tests/test_chapterize.py` 红。**
 
-`group(1)` = 章标（`第一百零八章`），`group(2)` = 标题（可为空）。
+`group(1)` = 章标（`第一百零八章` / `Chapter One` / `CHAPTER XII` / `Ch. 12`），
+`group(2)` = 标题（可为空）。**`frontend/src/chapterTitle.ts` 里有逐字节副本**
+（多括了一组「marker 和 title 之间那截空白」），改这条必须同笔改那边，
+`tests/test_chapterize.py::test_frontend_marker_regex_is_the_same_one` 钉着这条缝。
 """
 
 _BOM: Final = "﻿"

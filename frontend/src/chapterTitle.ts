@@ -26,9 +26,13 @@
 /** `text/chapterize.py::CHAPTER_RE` 的逐字节副本，多括了一组「中间那截空白」。
  *
  *  上面那条守卫比对的就是它：`([ \t　]*)` 摊平成 `[ \t　]*` 之后必须和 Python 那份一字不差。
- *  没有 `m` 标志——这儿一次只看一行，而那边要在整份正文上找章界。 */
+ *  没有 `m` 标志——这儿一次只看一行，而那边要在整份正文上找章界。
+ *
+ *  英文那四支（国际化第一批 ①）大小写不敏感全靠逐字母字符类 `[Cc][Hh]...`——
+ *  JS 正则没有 Python `(?i:...)` 那种局部标志，只有整条正则的 `i` 标志（会波及
+ *  中文那半），所以两边都不用标志，靠字符类自己扛大小写。 */
 const MARKER =
-  /^[ \t　]*(第[ \t　]*[0-9〇零一二三四五六七八九十百千两]+[ \t　]*[章节回])([ \t　]*)(.*?)[ \t　]*$/;
+  /^[ \t　]*(第[ \t　]*[0-9〇零一二三四五六七八九十百千两]+[ \t　]*[章节回]|[Cc][Hh][Aa][Pp][Tt][Ee][Rr][ \t　]*(?:[0-9]+|[IVXLCDM]+|(?:(?:[Tt]wenty|[Tt]hirty|[Ff]orty|[Ff]ifty|[Ss]ixty|[Ss]eventy|[Ee]ighty|[Nn]inety)(?:[ \t　-](?:[Oo]ne|[Tt]wo|[Tt]hree|[Ff]our|[Ff]ive|[Ss]ix|[Ss]even|[Ee]ight|[Nn]ine))?|[Tt]en|[Ee]leven|[Tt]welve|[Tt]hirteen|[Ff]ourteen|[Ff]ifteen|[Ss]ixteen|[Ss]eventeen|[Ee]ighteen|[Nn]ineteen|[Oo]ne|[Tt]wo|[Tt]hree|[Ff]our|[Ff]ive|[Ss]ix|[Ss]even|[Ee]ight|[Nn]ine))(?![A-Za-z])|[Cc][Hh]\.[ \t　]*[0-9]+(?![A-Za-z]))([ \t　]*)(.*?)[ \t　]*$/;
 
 /** 标题那一行拆成两段：**章号原地不动，只有名字能改**。 */
 export interface TitleParts {
