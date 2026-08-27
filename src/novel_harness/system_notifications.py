@@ -42,8 +42,10 @@ from typing import TYPE_CHECKING, Any, Final, Literal
 from pydantic import BaseModel, ConfigDict
 
 from .db import Connection
+from .draft.length import DraftLanguage
 from .graph import TextAnchor
 from .ids import EntityType, new_id
+from .prompt_terms import message
 from .text import SkippedTocEntry
 
 if TYPE_CHECKING:  # 只为标注：通知层不该在运行时拖上 checks 那一层
@@ -213,6 +215,7 @@ def enqueue_import_toc_skipped(
     project_id: str,
     skipped: list[SkippedTocEntry],
     fingerprint: str,
+    language: DraftLanguage = DraftLanguage.ZH,
 ) -> str:
     """导入时丢掉了目录页假章的那条通知（032）。带「撤销」动作。
 
@@ -228,7 +231,7 @@ def enqueue_import_toc_skipped(
         subject_type="project",
         subject_id=project_id,
         chapter_number=None,
-        title=f"跳过了 {count} 个只有标题、没有正文的章 —— 看起来你的文件里带了一页目录。",
+        title=message("import_toc_skipped_title", language, count=count),
         dedupe_key=background_failure_dedupe_key(
             kind="import_toc_skipped",
             subject_type="project",
@@ -297,6 +300,7 @@ def enqueue_validation_blocked(
     *,
     report: SnapshotValidationReport,
     attempt_id: str,
+    language: DraftLanguage = DraftLanguage.ZH,
 ) -> str:
     """正文验证阻断的那条通知 —— **带着第一条 Issue 的锚**（M1-c）。
 
@@ -311,6 +315,7 @@ def enqueue_validation_blocked(
     if not report.issues:
         # gate=blocked 的定义就是「至少一条规则报了至少一条 issue」。真走到这儿说明
         # 报告和闸门对不上，宁可炸也不落一条点不过去的通知——那正是这一层要补的洞。
+        # 内部不变量违反，不是作者能看见的路径：不走 message()。
         raise ValueError(f"验证报告 {report.id} 判了 blocked 却一条 issue 都没有")
     return enqueue_notification(
         conn,
@@ -319,7 +324,7 @@ def enqueue_validation_blocked(
         subject_type="chapter",
         subject_id=report.chapter_id,
         chapter_number=report.chapter_number,
-        title=_validation_blocked_title(report),
+        title=_validation_blocked_title(report, language),
         dedupe_key=background_failure_dedupe_key(
             kind="validation_blocked",
             subject_type="chapter",
@@ -402,21 +407,28 @@ def resolve_stale_chapter_advisories(
     return int(changed.rowcount or 0)
 
 
-def _validation_blocked_title(report: SnapshotValidationReport) -> str:
+def _validation_blocked_title(
+    report: SnapshotValidationReport, language: DraftLanguage = DraftLanguage.ZH
+) -> str:
     """「第几段·哪条规则：哪一句」+ 还有几处 + 那句真实的副作用。
 
     **不印 `R2` / `R3` 这种编号**：规则自己的名字（「设定提前出现」）说得清，编号
     只是引擎内部的门牌。段号按作者的数法从 1 起——`TextAnchor` 内部是 0-based，
     两种数法只在这一处换算。
+
+    `first.message`（规则命中的原话）和 `rule_title`（规则自己的名字）**不随
+    `language` 翻**——两者都来自 `checks/` 那一层的规则输出，那是另一批要翻的东西，
+    不在这一批范围里；这儿只翻自己拼的脚手架文字。
     """
     first = report.issues[0]
-    head = f"第 {first.anchor.para_index + 1} 段"
+    head = message("validation_blocked_paragraph", language, n=first.anchor.para_index + 1)
     rule_title = _rule_title(report, first.rule)
     if rule_title:
         head = f"{head}·{rule_title}"
     rest = len(report.issues) - 1
-    more = f"（另有 {rest} 处）" if rest else ""
-    return f"{head}：{first.message}{more}新正文不会再自动生成总结与情节。"
+    more = message("more_items_suffix", language, rest=rest) if rest else ""
+    tail = message("validation_blocked_tail", language)
+    return f"{head}：{first.message}{more}{tail}"
 
 
 def _rule_title(report: SnapshotValidationReport, rule: str) -> str:

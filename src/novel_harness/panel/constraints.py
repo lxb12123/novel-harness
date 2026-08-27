@@ -38,10 +38,14 @@ PLAN §5.4 / 原则 11：**完整 PLANNED 永不进 Writer prompt**，只转译�
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..graph import Node, NodeRef, StoryGraph
+
+if TYPE_CHECKING:  # 只为标注：真导入会成环（见 require_resolved_cast 里那两行）
+    from ..draft.length import DraftLanguage
 
 
 class UnresolvedCast(Exception):
@@ -173,7 +177,7 @@ class SceneConstraints(BaseModel):
     forbidden_entities: list[ForbiddenEntity] = Field(default_factory=list)
     """首现章号在本章之后的实体，按首现章号升序（最快要登场的排前面）。"""
 
-    def require_resolved_cast(self) -> None:
+    def require_resolved_cast(self, language: DraftLanguage | None = None) -> None:
         """**起草 / 拼 prompt 之前必须调这一下。**
 
         解析不出来的称呼要弹给作者（「这一场的『师兄』是萧决还是李管家？」），
@@ -182,14 +186,25 @@ class SceneConstraints(BaseModel):
         这个问题**要在 UI 上问作者**，而在 `require_resolved_cast()` 之前没有任何
         东西把它传到 UI。
 
+        `language` 缺省用函数体内延迟 import 的 `DraftLanguage.ZH`，不放模块顶层：
+        `panel/` 在 `draft/` 下游，`draft/__init__.py` 又会拉起 `context.py` 回头
+        `import panel.constraints`——模块顶层导 `draft.length` 会成环，见本文件
+        `TYPE_CHECKING` 那两行的注释。
+
         Raises:
             UnresolvedCast: `unresolved_cast` 非空。
         """
         if self.unresolved_cast:
+            from ..draft.length import DraftLanguage as _DraftLanguage
+            from ..prompt_terms import message
+
             raise UnresolvedCast(
-                f"第 {self.chapter} 章的场景里这些称呼解析不出唯一角色：{self.unresolved_cast}。"
-                "请在面板上指定他们是谁——「师兄」在一章里可能指 8 个人，"
-                "系统猜错的产物是一个此刻在场的人从这一场的在场名单里静默消失"
+                message(
+                    "unresolved_cast_ambiguous",
+                    language or _DraftLanguage.ZH,
+                    chapter=self.chapter,
+                    unresolved=self.unresolved_cast,
+                )
             )
 
 

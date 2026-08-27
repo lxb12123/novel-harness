@@ -27,6 +27,8 @@ from ..extract.call_audit import record_call
 from ..extract.control import AuditedCompletion
 from ..graph import ChapterText
 from ..ids import EntityType, new_id
+from ..prompt_terms import message
+from .length import DraftLanguage
 from .provider import CompletionResult
 from .summarize import SUMMARY_VERSION, SummaryMessage, build_summary_messages
 
@@ -596,6 +598,7 @@ def save_author_summary(
     expected_version_id: str | None = None,
     expect_head: bool = False,
     summary_id_factory: Callable[[str], str] = _default_summary_id,
+    language: DraftLanguage = DraftLanguage.ZH,
 ) -> ChapterSummary:
     """把这一章的总结换成作者自己写的这一段。**追加一行，模型那一行留着。**
 
@@ -609,11 +612,15 @@ def save_author_summary(
     """
     body = text.strip()
     if not body:
-        raise SummaryTextRejected("这一段是空的。要清掉这一章的总结，用「撤回」。")
+        raise SummaryTextRejected(message("summary_text_rejected_empty", language))
     if len(body) > AUTHOR_SUMMARY_MAX_CHARS:
         raise SummaryTextRejected(
-            f"这一段太长了（{len(body)} 字，最多 {AUTHOR_SUMMARY_MAX_CHARS} 字）。"
-            "这里是给写作模型看的背景，写得太长会把更早那几章的总结挤出去。"
+            message(
+                "summary_text_rejected_too_long",
+                language,
+                length=len(body),
+                max_chars=AUTHOR_SUMMARY_MAX_CHARS,
+            )
         )
 
     conn.execute("BEGIN IMMEDIATE")

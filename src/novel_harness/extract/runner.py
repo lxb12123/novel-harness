@@ -705,7 +705,15 @@ def _notify_if_nothing_survived(
     """
     if report.valid_event_count or not report.discarded_event_count:
         return
+    from .. import project as project_mod
+    from ..draft.length import DraftLanguage
+    from ..prompt_terms import message
     from ..system_notifications import enqueue_extraction_yielded_nothing
+
+    owner_project = project_mod.get(conn, run.project_id)
+    language = (
+        DraftLanguage(owner_project.language) if owner_project is not None else DraftLanguage.ZH
+    )
 
     lost = report.discarded_event_count
     # 只有当丢弃理由**真的**是「认不出人」时才敢这么说。理由换了别的（将来多一档
@@ -714,19 +722,25 @@ def _notify_if_nothing_survived(
         reason.kind == "event" and _NO_PARTICIPANTS in reason.detail
         for reason in report.discarded
     )
-    if unresolved == lost:
-        why = "它们提到的人在花名册里还认不出来"
-    else:
-        why = "它们都没能落库"
+    why_key = (
+        "extraction_yielded_nothing_why_unresolved"
+        if unresolved == lost
+        else "extraction_yielded_nothing_why_lost"
+    )
+    why = message(why_key, language)
     tail = (
-        f"这一次提了 {report.proposal_count} 条待确认，确认之后重新整理这一章，事件才留得下。"
+        message(
+            "extraction_yielded_nothing_tail_with_proposals",
+            language,
+            count=report.proposal_count,
+        )
         if report.proposal_count
-        else "花名册里先得有人，这一章的事件才留得下。"
+        else message("extraction_yielded_nothing_tail_no_roster", language)
     )
     enqueue_extraction_yielded_nothing(
         conn,
         project_id=run.project_id,
         snapshot_id=run.snapshot_id,
         chapter_number=run.chapter_number,
-        title=f"这一章整理完了，但 {lost} 件事一件都没留下 —— {why}。{tail}",
+        title=message("extraction_yielded_nothing_title", language, lost=lost, why=why, tail=tail),
     )

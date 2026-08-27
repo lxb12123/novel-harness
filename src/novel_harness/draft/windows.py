@@ -60,6 +60,7 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict
 
+from ..prompt_terms import message
 from .capabilities import (
     CapabilityError,
     ProviderCapabilities,
@@ -68,6 +69,7 @@ from .capabilities import (
     normalize_base_url,
     normalize_model,
 )
+from .length import DraftLanguage
 
 SNAPSHOT_PATH: Final = Path(__file__).with_name("model_windows.json")
 SNAPSHOT_SCHEMA: Final = "nh-model-windows-v2"
@@ -463,7 +465,9 @@ def render(windows: dict[str, int], prices: dict[str, Price], *, fetched: str) -
     return json.dumps(payload, ensure_ascii=False, indent=1, sort_keys=False) + "\n"
 
 
-def refresh(raw: object, *, fetched: str) -> RefreshReport:
+def refresh(
+    raw: object, *, fetched: str, language: DraftLanguage = DraftLanguage.ZH
+) -> RefreshReport:
     """把一份刚下下来的公共表落成作者自己那份快照，并说出变了什么。
 
     Raises:
@@ -472,7 +476,7 @@ def refresh(raw: object, *, fetched: str) -> RefreshReport:
     """
     windows, prices = trim(raw)
     if not windows:
-        raise ValueError("拉回来的内容里一个对话模型都没有，没有覆盖原来那份。")
+        raise ValueError(message("model_windows_refresh_empty", language))
 
     before = (_read(user_snapshot_path()) or _read(SNAPSHOT_PATH) or Snapshot()).windows
     target = user_snapshot_path()

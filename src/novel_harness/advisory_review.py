@@ -76,12 +76,15 @@ from typing import Any, Final, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from . import project as project_mod
 from .db import Connection
+from .draft.length import DraftLanguage
 from .draft.provider import CompletionResult
 from .extract.call_audit import record_call
 from .extract.control import AuditedCompletion
 from .graph import StoryGraph, TextAnchor
 from .ids import EntityType, new_id
+from .prompt_terms import message
 from .system_notifications import (
     background_failure_dedupe_key,
     enqueue_text_advisory,
@@ -159,12 +162,13 @@ ConflictKind = Literal["setting", "timeline", "knowledge"]
 - `knowledge` 谁在什么时候知道什么对不上
 """
 
-_CONFLICT_LABEL: Final[dict[str, str]] = {
-    "setting": "设定对不上",
-    "timeline": "时间线对不上",
-    "knowledge": "谁在什么时候知道什么，对不上",
+_CONFLICT_LABEL_KEY: Final[dict[str, str]] = {
+    "setting": "clash_conflict_setting",
+    "timeline": "clash_conflict_timeline",
+    "knowledge": "clash_conflict_knowledge",
 }
-"""上屏的中文。**枚举值本身不上屏**：`setting` 是机器码，作者屏幕上只该有人话。"""
+"""上屏的话怎么取（`prompt_terms.message()` 的键）。**枚举值本身不上屏**：
+`setting` 是机器码，作者屏幕上只该有人话。"""
 class TrackClash(BaseModel):
     """②「这一句跟后面第几章抵触，哪一类抵触」。
 
@@ -467,15 +471,22 @@ def _keep_clashes(
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def _more(rest: int) -> str:
-    return f"（另有 {rest} 处）" if rest else ""
-def _clash_title(clashes: Sequence[TrackClash]) -> str:
+def _more(rest: int, language: DraftLanguage = DraftLanguage.ZH) -> str:
+    return message("more_items_suffix", language, rest=rest) if rest else ""
+
+
+def _clash_title(clashes: Sequence[TrackClash], language: DraftLanguage = DraftLanguage.ZH) -> str:
     """**只有句号、章号、类型。** 后面那一章的原文一个字都不在这句话里——
     信息隔离的最后一米就在这儿，而它靠的是 `TrackClash` 压根没有装它的地方。"""
     first = clashes[0]
-    return (
-        f"第 {first.sentence} 句 ↔ 第 {first.chapter} 章：{_CONFLICT_LABEL[first.conflict]}。"
-        f"{_more(len(clashes) - 1)}"
+    conflict = message(_CONFLICT_LABEL_KEY[first.conflict], language)
+    return message(
+        "clash_title",
+        language,
+        sentence=first.sentence,
+        chapter=first.chapter,
+        conflict=conflict,
+        more=_more(len(clashes) - 1, language),
     )
 
 
@@ -660,8 +671,16 @@ def review_saved_chapter(
             chapter_id=found.chapter_id,
             current_sha256=found.sha256,
         )
+    owner_project = project_mod.get(conn, project_id)
+    language = (
+        DraftLanguage(owner_project.language) if owner_project is not None else DraftLanguage.ZH
+    )
     for kind, title, first in (
-        ("track", _clash_title(clashes) if clashes else "", clashes[0].sentence if clashes else 0),
+        (
+            "track",
+            _clash_title(clashes, language) if clashes else "",
+            clashes[0].sentence if clashes else 0,
+        ),
     ):
         if not title:
             continue
