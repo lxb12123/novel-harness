@@ -516,7 +516,7 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
 > 守卫钉住的是**能在运行时数出来**的那些（89 条路由 / 88 条 /api / 1 条 501 stub /
-> 19 个错误映射 / 49 张表 / 86 个端点 / `ALL_CHECKS` 2），
+> 19 个错误映射 / 49 张表 / 86 个端点 / `ALL_CHECKS` 1），
 > 改错必红、**删掉也必红**（不静默 skip）。
 > （**「17 个子命令」2026-08-20 从这张清单里退了**：命令行面整个删掉，那个数在运行时
 > 已经数不出来，守卫里那条 `Fact` 同步撤掉——见 ADR 0034。）
@@ -667,8 +667,8 @@ extract/auto_canon.py                             ← 没进三个例外 bucket 
 panel/{scope,state,constraints}.py              ← PLANNED 进 prompt 的唯一闸门
                                                   （`knowledge.py` 2026-08-24 删，ADR 0039；
                                                    那道 scope 闸搬进了 `scope.py`）
-checks/{base,future_leak,dead_speaks}.py        
-                                                  ← R2/R3（R4/R5 已砍；`ALL_CHECKS` 共两条）
+checks/{base,dead_speaks}.py
+                                                  ← R3（R2/R4/R5 已砍；`ALL_CHECKS` 今天只有一条）
                                                   ⚠️ **R2/R3 在 2026-08-13 之前生产上开不了火**：
                                                   它们读的三样东西（`first_appears_chapter` /
                                                   `EdgeProps.value_key` / `StateDim` 节点）
@@ -681,6 +681,11 @@ checks/{base,future_leak,dead_speaks}.py
                                                   边界数据，没穿过写路径。
                                                   现在两条规则各有一次真开火，钉在
                                                   `tests/test_rules_fire.py`（全程走 HTTP）
+                                                  ⚠️ **2026-08-27：R2 后来砍了**（ADR 0040）。
+                                                  上面「两条规则各有一次真开火」说的是
+                                                  2026-08-13 那次修复，仍然是事实——只是今天
+                                                  `tests/test_rules_fire.py` 只剩 R3 那一半，
+                                                  R2 的三条测试随规则一起删了。
 text/{anchor,chapterize,mentions}.py            ← (para_index,quote,k) 唯一定义 / 切章 / 称呼匹配
 calibration/{models,visibility,render,freshness,store,
               calibrate,seal,handoff,repair}.py
@@ -699,7 +704,7 @@ summary_index.py                                ← **每一段章节总结 = �
                                                   只是它此前只跑在正文上（`mentioned.py` /
                                                   `agent/index.py` 的人物轴），没跑在总结上。
                                                   用的是 `text/mentions.py` 那条 alternation +
-                                                  `resolve(rules_only=True)`，和 R2 同一份实现，
+                                                  `resolve(rules_only=True)`，和 R3 同一份实现，
                                                   **一个语义判断都没有**。出参只 `NodeRef`
                                                   （这批命中里按定义就有 Secret，§10.5 第 3 条）。
                                                   ── **索引什么时候重建**：两个内容地址的**相等判断**，

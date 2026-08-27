@@ -205,13 +205,16 @@ code="$(api POST "/api/projects/$PID2/chapters/2/check")"
 http_ok "check ch2" "$code"
 json_ok "ch2 没有 DEAD_SPEAKS" \
   "all('dead_speaks' not in (i.get('rule') or '').lower() for i in d['issues'])"
-# ⚠️ 下面这句里的「跑了 2 条规则」是字面量，被 test_doc_numbers::test_demo_pins_the_real_rule_count
+# ⚠️ 下面这句里的「跑了 1 条规则」是字面量，被 test_doc_numbers::test_demo_pins_the_real_rule_count
 #    钉着（必须 == len(ALL_CHECKS)）。加规则时连它一起改——**没有别的东西会告诉你心跳断了**。
 #    2026-08-20 改 API 心跳时它一度被写成宽松的 `>= 2`，守卫当场咬住；别再放宽。
 #    同日合并保存闭环任务后出参从 `rules_run: [名字]` 换成 `rules: [{rule_id, state, …}]`
 #    （快照绑定报告），断言跟着读 `rules`——**约束 8 那一半没变**：零要和真零分得开。
-json_ok "ch2 报「跑了 2 条规则」（§10 约束 8：零要和真零分开）" \
-  "len(d.get('rules', [])) == 2 and all(r.get('rule_id') for r in d['rules'])"
+#    2026-08-27：R2 FUTURE_LEAK 砍了（ADR 0040），`ALL_CHECKS` 的条数少了一条，这句
+#    字面量的数字跟着改了——上面 `>= 2` 那次教训依然成立，数字变了不代表可以重新
+#    放宽成范围断言。
+json_ok "ch2 报「跑了 1 条规则」（§10 约束 8：零要和真零分开）" \
+  "len(d.get('rules', [])) == 1 and all(r.get('rule_id') for r in d['rules'])"
 
 printf '\n✓ 心跳正常。两条泳道：\n'
 printf '  1. 种子库 → 花名册/人物状态卡/闭开区间（读路径，Web 那半边）。\n'

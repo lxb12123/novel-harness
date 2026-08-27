@@ -1309,20 +1309,12 @@
         "blocks_downstream": true,
         "issue_count": 0,
         "note": null,
-        "rule_id": "R2",
-        "state": "clear",
-        "title": "设定提前出现"
-      },
-      {
-        "blocks_downstream": true,
-        "issue_count": 0,
-        "note": null,
         "rule_id": "R3",
         "state": "clear",
         "title": "人物开口时机"
       }
     ],
-    "ruleset_epoch": 1,
+    "ruleset_epoch": 2,
     "ruleset_hash": "<sha>",
     "source_generation": 1,
     "source_snapshot_id": "snapshot:ID17",
@@ -2690,14 +2682,6 @@
     "title": "不许有玄铁令"
   },
   "validationRules": [
-    {
-      "blocks_downstream": true,
-      "description": "正文提到作者标记为「第 K 章才出现」的实体/秘密，而当前章 N < K。",
-      "enabled": true,
-      "rule_id": "R2",
-      "template": "system",
-      "title": "设定提前出现"
-    },
     {
       "blocks_downstream": true,
       "description": "已死或尚未登场的角色在说话人标签位置开口。",

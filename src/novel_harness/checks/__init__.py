@@ -3,15 +3,17 @@
 | 规则 | 状态 |
 |---|---|
 | R1 认知边界 | 不在这里——它是面板不是规则（`panel/knowledge.py`） |
-| **R2 FUTURE_LEAK** | **2026-08-02 落地**：`text/mentions.py` + `first_appears_chapter` |
+| ~~R2 FUTURE_LEAK~~ | **已砍**（2026-08-27，[ADR 0040](../../../docs/adr/0040-future-leak-cut.md)：`first_appears_chapter` 没有作者输入路径，规则结构上开不了火） |
 | **R3 DEAD_SPEAKS** | **2026-08-02 落地**：说话人标签位置 × `is_dead` / `has_appeared()` |
 | ~~R4 LOCATION_CONFLICT~~ | **已砍**（2026-08-14，[ADR 0027](../../../docs/adr/0027-scene-blocks-cut.md)：它的一侧输入只能由作者手写，真书上零覆盖） |
 | ~~R5 ADDRESS_CONFLICT~~ | **已砍**（2026-08-02：真书样本 8.2% < 10%，[ADR 0014](../../../docs/adr/0014-r5-cut-by-quote-coverage.md)） |
 
-**两条被砍的规则死于同一个判据，这不是巧合**：ADR 0005 的表按「输入从哪儿来」排规则，
+**三条被砍的规则，两条死于同一个判据，这不是巧合**：ADR 0005 的表按「输入从哪儿来」排规则，
 而排在最上面那几条（不读正文、零 FP）之所以便宜，是因为**它们把成本转嫁给了作者**——
 R4 的一侧输入是他要在正文里手写的 `<!-- nh: loc=… -->`，R5 的一侧是显式说话人标签。
 真书上前者是 0%、后者是 8.2%。**「零误报」在一条永远跑不起来的规则上是免费的。**
+R2 死于**同一个病的变种**：它的输入 `first_appears_chapter` 不是零覆盖的手写标记，
+是干脆**没有入口能填**——不是「作者嫌麻烦不写」，是浏览器上从来没有过那个框。
 
 M3 的生死线是「真书连续 20 章误报 < 1 条/章 **且** 合成小册子真阳性 ≥ 22/25」。
 双边门槛的存在理由：**沉默的工具死得比吵闹的工具更快，只是死得更安静，而且指标
@@ -38,19 +40,23 @@ M3 的生死线是「真书连续 20 章误报 < 1 条/章 **且** 合成小册�
 判据同上，只断言两头：模型说「他死了」→ 后面的章 check 报出「死人说话」。
 `POST …/declare/death` 留着当**改**的入口（模型漏了或判错时作者手上得有一条路）。
 
-**R2 那一半不会跟进，这不是待办。** `first_appears_chapter` 的主要用法是
-「这东西我打算第 200 章才让它出场」——那是**作者的计划**，物理上不在已写文本里
-（ADR 0004：墙上那把枪是不是伏笔，取决于他第 200 章打不打算开枪）。
-模型读不出没写下来的意图，所以这一格只能是作者填的。
+**R2 那一半没有跟进，后来干脆砍了（2026-08-27，ADR 0040）。** `first_appears_chapter`
+的主要用法是「这东西我打算第 200 章才让它出场」——那是**作者的计划**，物理上不在
+已写文本里（ADR 0004：墙上那把枪是不是伏笔，取决于他第 200 章打不打算开枪）。
+模型读不出没写下来的意图，所以这一格只能是作者填的；而浏览器上一直没有那个入口，
+维护者裁定与其挂着一条永远开不了火的规则，不如删掉。`checks/future_leak.py`
+连同它在 `ALL_CHECKS` 里那一项、`checks/catalog.py` 里的 R2 `RuleSpec` 一起删——
+`node.props.first_appears_chapter` 字段本身、`declare_first_appearance()`、
+`panel/constraints.py::forbidden_entities()`（右栏面板还在用）都没动，
+删的只是「拿它开一条规则」这一件事。
 """
 
 from __future__ import annotations
 
-from . import dead_speaks, future_leak
+from . import dead_speaks
 from .base import Check, CheckContext, Issue
 
 ALL_CHECKS: tuple[Check, ...] = (
-    future_leak.check,
     dead_speaks.check,
 )
 """按声明顺序跑。加一条规则 = 加一个文件 + 在这里加一项。"""

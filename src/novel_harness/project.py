@@ -23,7 +23,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from .checks.catalog import SYSTEM_RULESET_V1_HASH
+from .checks.catalog import CURRENT_RULESET_EPOCH, CURRENT_RULESET_HASH
 from .db import Connection
 from .ids import new_project_id
 
@@ -79,14 +79,23 @@ def create(conn: Connection, *, name: str, root_path: str) -> Project:
         conn.execute("BEGIN IMMEDIATE")
     try:
         created = insert(conn, name=name, root_path=root_path)
-        # 017：每个项目从出生的那一刻起就有一行 ruleset 基线（epoch=1），
-        # 与 project 行同事务——Task 5 的 attempt 冻结 ruleset 时才不会撞上缺行。
+        # 017：每个项目从出生的那一刻起就有一行 ruleset 基线，与 project 行同事务
+        # ——Task 5 的 attempt 冻结 ruleset 时才不会撞上缺行。
+        #
+        # **拿的是 `CURRENT_RULESET_*`，不是历史值 `SYSTEM_RULESET_V1_HASH`**
+        # （2026-08-27，删 R2 那一刀顺带发现的）：早先这里硬编码 `(1, SYSTEM_
+        # RULESET_V1_HASH)`，因为在那之前 `SYSTEM_RULES` 从出生起就没变过，
+        # 「epoch=1 时的历史值」和「当前值」恰好是同一个数，看不出区别。
+        # 删 R2 让 031 迁移把既有项目的 epoch 推到 2，若新项目还硬编码 1，
+        # 它从出生那一刻就落后于刚做完迁移的旧书——第一次校验就会被判成
+        # 「ruleset 变了」。新书理应站在**当前** epoch 上，不是历史上第一次
+        # 建库时的那个 epoch。
         conn.execute(
             """
             INSERT INTO validation_ruleset_state (project_id, epoch, ruleset_hash)
-            VALUES (?, 1, ?)
+            VALUES (?, ?, ?)
             """,
-            (created.id, SYSTEM_RULESET_V1_HASH),
+            (created.id, CURRENT_RULESET_EPOCH, CURRENT_RULESET_HASH),
         )
         if not already:
             conn.commit()

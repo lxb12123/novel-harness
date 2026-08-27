@@ -1,4 +1,4 @@
-"""R2 / R3 + 规则契约。
+"""R3 + 规则契约。
 
 **这些测试里一半是「不报」的测试。** 那不是凑数：M3 的生死线是「误报 < 1 条/章」，
 而每一条「闭嘴条件」删掉之后都**不会让任何一条会报的测试变红**——它只会让真书上多出
@@ -15,6 +15,13 @@
 砍掉它的判据不在这一层：它的一侧输入（场景块 `<!-- nh: loc=… -->`）只能由作者手写，
 真书上零覆盖，于是这条零误报的规则在产品里**一次都没开过火**。
 留一句在这儿是因为「测试全绿」这件事在那 200 行上曾经读起来像「这条规则很健康」。
+
+⚠️ **2026-08-27：R2 FUTURE_LEAK 那一节（`test_r2_*` 六条 + 它的 `SYSTEM_RULES`/
+`ALL_CHECKS` 断言）也删了**（[ADR 0040](../docs/adr/0040-future-leak-cut.md)）。
+同上一条同一个判据：`first_appears_chapter` 从来没有输入路径，R2 在产品里
+一次都没开过火。跟 R4 不一样的是它的输入连「作者理论上可以手写」都没有——
+没有输入框，物理上敲不进去。`has_state()` 那个 helper 留着，R3 的死亡场景测试
+还在用它。
 """
 
 from __future__ import annotations
@@ -26,16 +33,16 @@ import pytest
 
 from novel_harness.checks import ALL_CHECKS, CheckContext, Issue, run_checks
 from novel_harness.checks.catalog import (
+    CURRENT_RULESET_EPOCH,
+    CURRENT_RULESET_HASH,
     RuleAvailability,
     RuleSpec,
     SYSTEM_RULES,
-    SYSTEM_RULESET_V1_HASH,
     ruleset_hash,
     ruleset_semantic_json,
 )
 from novel_harness.checks import catalog as checks_catalog
 from novel_harness.checks.dead_speaks import check as dead_speaks_check
-from novel_harness.checks.future_leak import check as future_leak_check
 from novel_harness.checks.service import (
     RulesetStateMissing,
     SnapshotValidationReport,
@@ -96,12 +103,6 @@ QINGYUN = node("location:demo:01J3", NodeLabel.LOCATION, "青云城主府")
 BEIHUANG = node("location:demo:01J4", NodeLabel.LOCATION, "北荒")
 BEIHUANG_2 = node("location:demo:01J5", NodeLabel.LOCATION, "北荒")
 """同名的第二个地点——「北荒」这个 surface 于是有歧义。"""
-
-YOUQUANKU = node("location:demo:01J6", NodeLabel.LOCATION, "幽泉窟", first_appears=200)
-"""未来实体：第 200 章才首现。R2 FUTURE_LEAK 的判据。"""
-
-YOUQUANKU_2 = node("location:demo:01J8", NodeLabel.LOCATION, "幽泉窟", first_appears=200)
-"""同名的第二个未来实体——「幽泉窟」这个 surface 于是有歧义，R2 必须闭嘴。"""
 
 HEALTH_DIM = node("state:demo:01J7", NodeLabel.STATE_DIM, "健康", dim_key="health")
 
@@ -302,23 +303,18 @@ def test_no_rule_raises_without_the_manuscript() -> None:
 
 
 def test_run_checks_runs_the_registry() -> None:
-    assert set(ALL_CHECKS) == {future_leak_check, dead_speaks_check}
-    context = ctx([], aliases={**ALIASES, "幽泉窟": [YOUQUANKU]}, paragraphs=["幽泉窟塌了一角。"])
+    assert set(ALL_CHECKS) == {dead_speaks_check}
+    context = ctx([], paragraphs=["顾清音道：「……」"])
     assert len(run_checks(context)) == 1
 
 
 def test_checks_are_pure_functions_of_ctx() -> None:
     """同一个 ctx 跑两次结果相同——判分器（eval）和 Validator（写作时）是同一份代码，
     它必须可复现，否则 kill-gate 量的是噪声。"""
-    context = ctx([], aliases={**ALIASES, "幽泉窟": [YOUQUANKU]}, paragraphs=["幽泉窟塌了一角。"])
+    context = ctx([], paragraphs=["顾清音道：「……」"])
 
     for check in ALL_CHECKS:
         assert check(context) == check(context)
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# R2 FUTURE_LEAK（2026-08-02）
-# ══════════════════════════════════════════════════════════════════════════
 
 
 def has_state(
@@ -342,65 +338,6 @@ def has_state(
         evidence_status=EvidenceStatus.NONE,
         props=EdgeProps(value_key=value_key),
     )
-
-
-def test_r2_fires_when_a_future_entity_is_mentioned_early() -> None:
-    issues = future_leak_check(
-        ctx([], aliases={**ALIASES, "幽泉窟": [YOUQUANKU]}, paragraphs=["幽泉窟塌了一角。"])
-    )
-    assert len(issues) == 1
-    issue = issues[0]
-    assert issue.rule == "R2"
-    assert issue.issue_type == "FUTURE_LEAK"
-    assert issue.chapter == 151
-    assert "幽泉窟" in issue.message and "200" in issue.message
-    assert (issue.anchor.para_index, issue.anchor.quote_text) == (0, "幽泉窟")
-
-
-def test_r2_does_not_fire_after_first_appearance() -> None:
-    assert (
-        future_leak_check(
-            ctx(
-                [],
-                chapter=250,
-                aliases={**ALIASES, "幽泉窟": [YOUQUANKU]},
-                paragraphs=["幽泉窟塌了一角。"],
-            )
-        )
-        == []
-    )
-
-
-def test_r2_never_fires_for_characters() -> None:
-    """角色归 R3（高信号位置），R2 不碰角色——否则「未登场角色被叙述提起」会开火。"""
-    assert future_leak_check(ctx([], paragraphs=["顾清音道：「……」"])) == []
-
-
-def test_r2_silent_without_paragraphs() -> None:
-    assert future_leak_check(ctx([])) == []
-
-
-def test_r2_silent_for_ambiguous_future_surface() -> None:
-    issues = future_leak_check(
-        ctx(
-            [],
-            aliases={"幽泉窟": [YOUQUANKU, YOUQUANKU_2]},
-            paragraphs=["幽泉窟塌了一角。"],
-        )
-    )
-    assert issues == []
-
-
-def test_r2_counts_each_mention_within_a_paragraph() -> None:
-    issues = future_leak_check(
-        ctx(
-            [],
-            aliases={**ALIASES, "幽泉窟": [YOUQUANKU]},
-            paragraphs=["幽泉窟塌了，幽泉窟又塌了。"],
-        )
-    )
-    assert len(issues) == 2
-    assert [i.anchor.occurrence_k for i in issues] == [0, 1]
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -467,8 +404,8 @@ def test_r3_longest_surface_wins_before_the_verb() -> None:
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_catalog_lists_exactly_r2_and_r3_with_stable_semantics() -> None:
-    assert [spec.rule_id for spec in SYSTEM_RULES] == ["R2", "R3"]
+def test_catalog_lists_exactly_r3_with_stable_semantics() -> None:
+    assert [spec.rule_id for spec in SYSTEM_RULES] == ["R3"]
     assert all(spec.enabled and spec.blocks_downstream for spec in SYSTEM_RULES)
     assert all(spec.schema_version == "v1" for spec in SYSTEM_RULES)
     assert {spec.template for spec in SYSTEM_RULES} == {"system"}
@@ -478,8 +415,8 @@ def test_ruleset_hash_is_stable_and_order_independent() -> None:
     first = ruleset_semantic_json(SYSTEM_RULES)
     # 同一份目录怎么排都算同一个 JSON（排序由函数负责，不靠调用方传序）。
     assert ruleset_semantic_json(tuple(reversed(SYSTEM_RULES))) == first
-    assert ruleset_hash(SYSTEM_RULES) == SYSTEM_RULESET_V1_HASH
-    assert ruleset_hash() == SYSTEM_RULESET_V1_HASH
+    assert ruleset_hash(SYSTEM_RULES) == CURRENT_RULESET_HASH
+    assert ruleset_hash() == CURRENT_RULESET_HASH
 
 
 def test_title_and_description_do_not_enter_the_hash() -> None:
@@ -489,7 +426,7 @@ def test_title_and_description_do_not_enter_the_hash() -> None:
     renamed = tuple(
         replace(spec, title="换个标题", description="换个说明") for spec in SYSTEM_RULES
     )
-    assert ruleset_hash(renamed) == SYSTEM_RULESET_V1_HASH
+    assert ruleset_hash(renamed) == CURRENT_RULESET_HASH
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -519,7 +456,7 @@ def test_service_report_binds_snapshot_ruleset_and_persists() -> None:
     pid = project.create(conn, name="t", root_path=".").id
     token = _validation_token(pid, store, "第一章 甲\n\n萧决走进来了。\n")
     epoch, ruleset_hash = current_ruleset(conn, pid)
-    assert (epoch, ruleset_hash) == (1, SYSTEM_RULESET_V1_HASH)
+    assert (epoch, ruleset_hash) == (CURRENT_RULESET_EPOCH, CURRENT_RULESET_HASH)
 
     report = validate_snapshot(
         conn, store, token, ruleset_epoch=epoch, ruleset_hash=ruleset_hash,
@@ -531,7 +468,7 @@ def test_service_report_binds_snapshot_ruleset_and_persists() -> None:
     assert report.text_sha256 == token.text_sha256
     assert report.phase == "initial"
     assert report.gate == "passed"
-    assert [r.rule_id for r in report.rules] == ["R2", "R3"]
+    assert [r.rule_id for r in report.rules] == ["R3"]
     assert all(r.state == "clear" for r in report.rules)
 
     row = conn.execute(
@@ -541,8 +478,8 @@ def test_service_report_binds_snapshot_ruleset_and_persists() -> None:
     ).fetchone()
     assert row["chapter_snapshot_id"] == token.source_snapshot_id
     assert row["source_generation"] == token.source_generation
-    assert row["ruleset_epoch"] == 1
-    assert row["ruleset_hash"] == SYSTEM_RULESET_V1_HASH
+    assert row["ruleset_epoch"] == CURRENT_RULESET_EPOCH
+    assert row["ruleset_hash"] == CURRENT_RULESET_HASH
     assert row["gate"] == "passed"
     conn.close()
 

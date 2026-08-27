@@ -47,19 +47,21 @@ from novel_harness.system_notifications import (
     materialize_notification_outbox,
 )
 
-# 幽泉窟第 2 章才头一回露面 → 第 1 章那句提及是 R2 FUTURE_LEAK。
+# ⚠️ 2026-08-27：这份夹具原来用的是「幽泉窟第 2 章才头一回露面 → 第 1 章那句提及
+# 是 R2 FUTURE_LEAK」。R2 砍了（ADR 0040），换成 R3 DEAD_SPEAKS 的另一半：
+# 顾清音第 2 章才头一回露面 → 第 1 章那句「顾清音道」是还没登场就说话。
 # 引语在全书里只出现一次（`Ledger._one_candidate` 多于一处就拒）。
 BOOK = (
     "第一章 山门\n"
     "\n"
     "萧决拾级而上，山门在雾里。\n"
-    "幽泉窟的传闻，山下早就传遍了。\n"
+    "顾清音道：「你来了。」\n"
     "\n"
     "第二章 崖底\n"
     "\n"
-    "幽泉窟就在崖底张着口。\n"
+    "顾清音第一次踏进这座山门。\n"
 )
-CAVE_DEBUT_QUOTE = "幽泉窟就在崖底张着口。"
+GU_DEBUT_QUOTE = "顾清音第一次踏进这座山门。"
 
 
 class Stub:
@@ -100,10 +102,10 @@ def world(tmp_path: Path) -> Iterator[dict[str, object]]:
 
 
 def _declare_late_debut(world: dict[str, object]) -> None:
-    """作者声明「幽泉窟头一回露面在第 2 章」——章号是系统从引语算的，没人敲过。"""
+    """作者声明「顾清音头一回露面在第 2 章」——章号是系统从引语算的，没人敲过。"""
     ledger = Ledger(world["store"], world["conn"], str(world["pid"]))
-    ledger.declare_node(NodeLabel.LOCATION, "幽泉窟")
-    ledger.declare_first_appearance(of="幽泉窟", quote=CAVE_DEBUT_QUOTE)
+    ledger.declare_node(NodeLabel.CHARACTER, "顾清音")
+    ledger.declare_first_appearance(of="顾清音", quote=GU_DEBUT_QUOTE)
     world["conn"].commit()
 
 
@@ -169,7 +171,7 @@ def test_the_blocked_notification_carries_the_issue_anchor(world: dict[str, obje
 
     report = _report_row(world["conn"], str(world["pid"]))
     issues = json.loads(report["issues_json"])
-    assert issues, "R2 没开火 —— 这条测试后面比的东西全都不存在"
+    assert issues, "R3 没开火 —— 这条测试后面比的东西全都不存在"
     first = issues[0]["anchor"]
 
     notices = list_open_notifications(world["conn"], str(world["pid"]))
@@ -198,7 +200,7 @@ def test_the_blocked_notification_says_which_rule_and_which_paragraph(
     report = _report_row(world["conn"], str(world["pid"]))
     first = json.loads(report["issues_json"])[0]
     assert f"第 {first['anchor']['para_index'] + 1} 段" in notice.title
-    assert "设定提前出现" in notice.title, "说不出哪条规则"
+    assert "人物开口时机" in notice.title, "说不出哪条规则"
     assert first["message"] in notice.title, "说不出哪一句"
     # 那句真实的副作用不许在改标题时被弄丢——它是这一类通知和别的通知的全部区别。
     assert "新正文不会再自动生成总结与情节" in notice.title
@@ -261,7 +263,7 @@ def test_a_text_advisory_does_not_stop_the_chapter_from_being_organized(
             source_snapshot_id=str(world["snapshot_id"]),
             job_id="job:1",
         ),
-        jump=TextAnchor(para_index=1, quote_text="幽泉窟的传闻", occurrence_k=0),
+        jump=TextAnchor(para_index=1, quote_text="顾清音道", occurrence_k=0),
     )
     conn.commit()
 
@@ -280,7 +282,7 @@ def test_a_text_advisory_does_not_stop_the_chapter_from_being_organized(
 
     notices = list_open_notifications(conn, str(world["pid"]))
     assert [n.kind for n in notices] == ["text_advisory"]
-    assert notices[0].jump is not None and notices[0].jump.quote_text == "幽泉窟的传闻"
+    assert notices[0].jump is not None and notices[0].jump.quote_text == "顾清音道"
 
 
 def test_the_new_kind_is_on_the_non_blocking_side(world: dict[str, object]) -> None:

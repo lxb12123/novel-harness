@@ -1,4 +1,10 @@
-"""R2 / R3 在**一本从生产入口建起来的书**上真的开火一次。
+"""R3 在**一本从生产入口建起来的书**上真的开火一次。
+
+⚠️ **2026-08-27：R2 FUTURE_LEAK 砍了**（[ADR 0040](../docs/adr/0040-future-leak-cut.md)），
+本文件原来的「R2 / R3 各开火一次」被砍掉一半——`test_r2_fires_after_the_author_declares_a_
+first_appearance` 等三条连同「R2 FUTURE_LEAK —— 提前出场」那一节一起删了。下面这段历史
+背景原样保留：它解释的是 R3（以及当年的 R2）为什么需要这份「过一遍真写路径」的测试，
+这个理由今天对 R3 依然成立，不因 R2 消失而失效。
 
 ── 这个文件为什么存在 ────────────────────────────────────────────────────
 
@@ -12,20 +18,20 @@ R2 `FUTURE_LEAK` 和 R3 `DEAD_SPEAKS` 在 2026-08-02 就写完了，`tests/test_
 - `EdgeProps.value_key` —— 零写入方，于是 `StateSnapshot.is_dead` **恒为 False**；
 - `NodeLabel.STATE_DIM` —— 零创建路径（抽取只 `resolve_ids`，要求它**已存在**）。
 
-**三样东西合起来的后果是：作者点「检查本章」，这两条规则结构上永远不可能开火。**
+**三样东西合起来的后果是：作者点「检查本章」，这些规则结构上永远不可能开火。**
 右栏那句「本章尚未登场」永远显示「（无）」——不是书干净，是没有入口能填那个字段。
 M3 那次「双边门槛已过」量的是 `synth/m3_replay.py` 的 `OverlayGraph`——它在**内存里**
 补上 first_appears 和死亡边，一条都没穿过生产写路径（那个文件的 docstring 自己写着
 「运行期在内存叠加」）。
 
 所以本文件的判据只有一条：**每一个字都从 HTTP 进去**（作者今天真按得到的那些口子），
-一个 `store.upsert_node` / `NodeProps(...)` 都不许出现在准备阶段。它红了 = 那两条规则
+一个 `store.upsert_node` / `NodeProps(...)` 都不许出现在准备阶段。它红了 = R3
 又变回了摆设，而没有任何别的测试会告诉你这件事。
 
 ── 顺带钉住的两件事 ──────────────────────────────────────────────────────
 
-1. **先跑一次「什么都没声明」的检查**，断言它是空的。没有这一步，下面那两条
-   「报出来了」证明不了任何东西——它可能一直在报。
+1. **先跑一次「什么都没声明」的检查**，断言它是空的。没有这一步，下面「报出来了」
+   证明不了任何东西——它可能一直在报。
 2. **建议语里不许有机器码**（`first_appears_chapter` 这种）。那句话是印给小说作者看的，
    而在此之前它逐字写着一个 Python 标识符，且工作台里没有任何地方能做那件事。
 """
@@ -78,7 +84,6 @@ BOOK = (
 
 DEATH_QUOTE = "剑光落下，萧决再没有起来。"
 GU_DEBUT_QUOTE = "顾清音第一次踏进这座山门。"
-CAVE_DEBUT_QUOTE = "幽泉窟就在崖底张着口。"
 
 MACHINE_CODE = re.compile(r"\b[a-z][a-z0-9]*(?:_[a-z0-9]+)+\b")
 """snake_case —— 和 `tests/test_wording_guard.py` / `screenGuard.ts` 同一条判据（形状，不是词表）。"""
@@ -206,58 +211,10 @@ def test_nothing_fires_before_the_author_says_anything(author: Author) -> None:
     report = author.check(1)
     assert report["gate"] == "passed"
     assert len(report["rules"]) == len(ALL_CHECKS)
-    assert {r["rule_id"] for r in report["rules"]} == {"R2", "R3"}
+    assert {r["rule_id"] for r in report["rules"]} == {"R3"}
     assert all(r["state"] == "clear" for r in report["rules"])
     assert report["source_generation"] >= 1
     assert report["ruleset_epoch"] >= 1
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# R2 FUTURE_LEAK —— 提前出场
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def test_r2_fires_after_the_author_declares_a_first_appearance(author: Author) -> None:
-    """**这是本文件的头一条：R2 第一次在生产写路径上开火。**
-
-    作者做的事只有一件：把「幽泉窟头一回露面」的那句原文交给系统。
-    章号是系统算的——`first_appears_chapter=3` 这个数在整条链路上没有一个人敲过。
-    """
-    receipt = author.first_appearance(of="幽泉窟", quote=CAVE_DEBUT_QUOTE)
-    assert receipt["chapter"] == 3, "首现章必须是那句引语所在的章，不是任何人填的数"
-    assert receipt["previous_chapter"] is None
-
-    leaks = _issues(author.check(1), "R2")
-
-    assert len(leaks) == 1, f"R2 没开火：{author.check(1)}"
-    issue = leaks[0]
-    assert issue["issue_type"] == "FUTURE_LEAK"
-    assert issue["chapter"] == 1
-    assert issue["anchor"]["quote_text"] == "幽泉窟"
-    assert "幽泉窟" in issue["message"] and "3" in issue["message"]
-
-
-def test_r2_also_fires_for_something_that_has_not_been_written_yet(author: Author) -> None:
-    """另一半：**还没写到**的东西没有引语可指，那个数只能是作者的一次决定。
-
-    「幽泉窟第 200 章才出场」这个信息**物理上不在已写文本里**（ADR 0004），
-    所以它走 `POST /nodes` 的 `first_appears_chapter`，不走上面那条引语路。
-    这不是约束 10 的例外——约束 10 管的是 `valid_from`（回忆），这是决定。
-    ⚠️ 浏览器上今天没有它的输入框，见 `DeclareNodeBody.first_appears_chapter` 的说明。
-    """
-    author.add("Location", "幽泉窟", first_appears_chapter=200)
-
-    leaks = _issues(author.check(1), "R2")
-
-    assert len(leaks) == 1
-    assert "200" in leaks[0]["message"]
-
-
-def test_r2_stops_at_the_chapter_it_appears(author: Author) -> None:
-    """第 3 章起它就该出现了 —— 同一句正文在 ch3 一个字都不报。"""
-    author.first_appearance(of="幽泉窟", quote=CAVE_DEBUT_QUOTE)
-
-    assert _issues(author.check(3), "R2") == []
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -386,12 +343,11 @@ def test_the_route_the_right_column_actually_calls_carries_is_dead(author: Autho
 
 
 def test_the_advice_never_shows_the_author_a_machine_name(author: Author) -> None:
-    """在此之前这两句建议语逐字写着 `first_appears_chapter`，**而工作台里没有任何地方
+    """在此之前这句建议语逐字写着 `first_appears_chapter`，**而工作台里没有任何地方
     能做那件事**——它既是一个研发术语，又是一条作者执行不了的指令。
 
     判据是**形状**不是词表（同 `screenGuard.ts`）：明天换一个标识符照样咬得住。
     """
-    author.first_appearance(of="幽泉窟", quote=CAVE_DEBUT_QUOTE)
     author.first_appearance(of="顾清音", quote=GU_DEBUT_QUOTE)
     author.died(who="萧决", quote=DEATH_QUOTE)
 
@@ -401,6 +357,6 @@ def test_the_advice_never_shows_the_author_a_machine_name(author: Author) -> Non
         for i in author.check(chapter)["issues"]
         if i["suggested_action"]
     ]
-    assert {rule for rule, _ in advice} == {"R2", "R3"}, f"两条规则的建议语没都取到：{advice}"
+    assert {rule for rule, _ in advice} == {"R3"}, f"规则的建议语没取到：{advice}"
     offenders = [(rule, text) for rule, text in advice if MACHINE_CODE.search(text)]
     assert not offenders, f"建议语里有机器码：{offenders}"

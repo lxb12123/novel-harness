@@ -31,7 +31,6 @@ from typing import Any, Final, Literal
 
 from .base import Check, CheckContext
 from .dead_speaks import check as dead_speaks_check
-from .future_leak import check as future_leak_check
 
 
 class RuleAvailability(StrEnum):
@@ -77,14 +76,6 @@ def _paragraphs_available(ctx: CheckContext) -> RuleAvailability:
 
 SYSTEM_RULES: Final[tuple[RuleSpec, ...]] = (
     RuleSpec(
-        rule_id="R2",
-        title="设定提前出现",
-        description="正文提到作者标记为「第 K 章才出现」的实体/秘密，而当前章 N < K。",
-        blocks_downstream=True,
-        availability=_paragraphs_available,
-        check=future_leak_check,
-    ),
-    RuleSpec(
         rule_id="R3",
         title="人物开口时机",
         description="已死或尚未登场的角色在说话人标签位置开口。",
@@ -94,7 +85,12 @@ SYSTEM_RULES: Final[tuple[RuleSpec, ...]] = (
     ),
 )
 """系统默认规则。**Task 4 之前它只有语义字段**——availability/callable 是 Task 4
-的活，且不得改变这里已冻结的语义 JSON。"""
+的活，且不得改变这里已冻结的语义 JSON。
+
+R2 `FUTURE_LEAK` 2026-08-27 删了（见 ADR 0040、迁移 031）：它读
+`node.props.first_appears_chapter`，而浏览器上从来没有入口能设那个字段
+（输入框 2026-08-13 有意裁掉），规则结构上开不了火——「未登场的东西未来到底
+哪一章出现，本来就不一定」，那是一次决定，不是一件事实。"""
 
 
 _SEMANTIC_FIELDS: Final[tuple[str, ...]] = (
@@ -121,5 +117,26 @@ def ruleset_hash(rules: tuple[RuleSpec, ...] = SYSTEM_RULES) -> str:
     return hashlib.sha256(ruleset_semantic_json(rules).encode("utf-8")).hexdigest()
 
 
-SYSTEM_RULESET_V1_HASH: Final = ruleset_hash()
-"""R2/R3 catalog + 空自定义规则集在 epoch=1 时的冻结 hash（018 迁移回填用）。"""
+SYSTEM_RULESET_V1_HASH: Final = "eebe10055a2487574ea5ae03f1fcd0ac14211301dff6f46ea136482d91b2b166"
+"""R2/R3 catalog + 空自定义规则集在 epoch=1 时的冻结 hash（018 迁移回填用）。
+
+**硬编码字面量，不是 `ruleset_hash()`。** 2026-08-27 之前它是 `= ruleset_hash()`——
+那时 `SYSTEM_RULES` 恰好就是 R2+R3，两者算出来同一个数，看不出区别。删 R2 之后
+`SYSTEM_RULES` 只剩 R3，`ruleset_hash()` 会跟着变成一个新数；而这个常量记的是
+**epoch=1 那一刻的历史值**，必须原地不动——018 迁移里冻的就是这串字面量
+（`tests/test_migrate.py::test_migration_018_frozen_hash_matches_the_catalog_constant`
+钉着两边相等）。改回 `ruleset_hash()` 会让这个「历史」常量偷偷跟着当前目录漂移，
+018 那条测试却测不出来（它只比字符串，不管字符串是怎么算出来的）——
+这正是 R2 删除这一刀真正踩过的坑，写在这里防第二次踩。"""
+
+CURRENT_RULESET_EPOCH: Final[int] = 2
+"""当前全局 ruleset 的 epoch 号。**手动维护，随 `SYSTEM_RULES` 的语义变化同笔递增**
+——迁移 031 删 R2 时从 1 改成 2，是本仓库第一次真的动它。`project.create()`
+新建项目时拿这个数字（不是硬编码的 1），这样新书从出生那一刻就站在当前 epoch 上，
+不会落后于刚做完 031 迁移的旧书。"""
+
+CURRENT_RULESET_HASH: Final = ruleset_hash()
+"""当前 `SYSTEM_RULES` 的语义 hash。**跟 `SYSTEM_RULESET_V1_HASH` 相反，这个必须是
+活的计算**——它就是要跟着 `SYSTEM_RULES` 走，`project.create()` 和迁移 031 都读它，
+不读某个手抄的字面量。`tests/test_migrate.py` 有一条断言它和迁移 031 里冻的字面量
+一致（同 018 对 V1_HASH 的那条纪律）。"""

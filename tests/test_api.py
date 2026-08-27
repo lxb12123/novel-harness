@@ -611,7 +611,7 @@ def test_check_reports_which_rules_ran(client: TestClient, book: dict[str, str])
     assert r.status_code == 200, r.text
     body = r.json()
     # 「跑了哪几条、各自什么状态」印出来，不静默（§10 约束 8）。
-    assert {rule["rule_id"] for rule in body["rules"]} == {"R2", "R3"}
+    assert {rule["rule_id"] for rule in body["rules"]} == {"R3"}
     assert body["gate"] in {"passed", "blocked", "error"}
     assert body["source_generation"] >= 1
     assert body["ruleset_epoch"] >= 1
@@ -1385,7 +1385,6 @@ def test_validation_rule_crud_and_ruleset_bump(
     pid = _pid(book)
     base = client.get(f"/api/projects/{pid}/validation-rules")
     assert base.status_code == 200, base.text
-    assert any(r["rule_id"] == "R2" for r in base.json()), "R2 常驻显示"
     assert any(r["rule_id"] == "R3" for r in base.json()), "R3 常驻显示"
     # 空项目还没有自定义规则。
     assert all(r["rule_id"] not in ("vrule",) for r in base.json())
