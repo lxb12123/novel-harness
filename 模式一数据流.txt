@@ -1,32 +1,28 @@
-================================================================================
-🔴 2026-08-25：本图有 12 处已经过期，别照它读代码。
-
-ADR 0039（秘密下线，2026-08-24）删掉了 Secret 节点、KNOWS/BELIEVES 边、
-认知边界矩阵和 secret 表。本图里下面这些框今天在代码里已经不存在：
-
-    · must_not_reveal
-    · UNKNOWN_CAST_LINE
-    · 认知矩阵逐格进 prompt（本图第 3 版专门更正过的那一条，现在连对象都没了）
-
-其余部分（四条流的走向、10 条接缝里跟秘密无关的那些）仍然成立。
-重画整张图是一件没人认领的活；在重画之前，读到带「秘密 / 矩阵 / must_not_reveal」
-的框就跳过。
-================================================================================
-
 ════════════════════════════════════════════════════════════════════════════════════
-  模式一（协助模式）数据流 —— 逐段实读自代码，2026-08-22（第 3 版）
-  形态：作者自己写，引擎在右栏守着「谁在第几章还不该知道什么」
+  模式一（协助模式）数据流 —— 逐段实读自代码，2026-08-26（第 4 版）
+  形态：作者自己写，引擎在后台默默整理，有事才在右栏出声
   ⚠️ 模式一没有整章起草。「AI 起草」抽屉 2026-08-10 删，useDraft 2026-08-14 删。
 
-  第 2 版改了什么：第 1 版把后台 dispatcher 画成「保存的下游」——错的。
-  触发与执行之间隔着一张表，**有意**不是一条线（为的是重启能接着跑、wake 丢了不丢活）。
+  第 2 版：第 1 版把后台 dispatcher 画成「保存的下游」——错的。触发与执行之间隔着
+  一张表，**有意**不是一条线（为的是重启能接着跑、wake 丢了不丢活）。
 
-  第 3 版改了什么（当天后续复核揪出来的四处）：
-    ① 后台不是「三支并列」，是**四段有序 DAG**，而且验证不过会把后面两支停掉；
-       中间还有一段「别名」，生产上没接线（adapter 传 None），但 DAG 里有它的位置。
-    ② 缝 3 写错了：**整章起草时认知矩阵是逐格进 prompt 的**，只有续写（本图这条路）没有。
-    ③ 缝 7 写反了：不是「无顺序保证」，是**有严格顺序**。
-    ④ 新增缝 9：保存后那次验证有通知出口，但**通知不带定位**。
+  第 3 版：① 后台不是三支并列，是**四段有序 DAG**；② 缝 3 写错了；③ 缝 7 写反了；
+  ④ 新增缝 9（通知不带定位）、缝 10（别名没接线）。
+
+  第 4 版改了什么（2026-08-22 → 08-26 之间仓库的实际变化）：
+    ① **秘密整套下线**（ADR 0039，08-24）。Secret 节点 / KNOWS·BELIEVES 边 /
+       认知边界矩阵 / secret 表全删，`/matrix` 端点没了，`must_not_reveal` 没了，
+       `UNKNOWN_CAST_LINE` 没了。**第 3 版的形态那一句（「守着谁在第几章还不该
+       知道什么」）不再成立**，缝 3 整条作废。
+    ② **缝 6 修好**：前端那个 TAIL_LIMIT=1000 删了，额度跟着设置从后端过来。
+    ③ **缝 8 修好**：`summary_alignment` 一份实现出四态，stale 真的会下覆写单。
+    ④ **缝 9 修好**：通知带 jump_para_index / jump_quote_text，点得动了。
+    ⑤ 续写多了三样：**光标后的正文**、**前几章的滚动总结**、**轨道**（轨道不进
+       prompt，只进出参和验证侧）。
+    ⑥ 保存后多了**第五段：事后语义核对**（`advisory_review`，只告警不阻断）。
+    ⑦ 抽取的例外 bucket 三个变两个：**认不出的人物直接建，不再问**（08-25）。
+    ⑧ 手动生成总结那条（按钮 + POST …/summary）**整条下线**，触发只剩系统自动的。
+    ⑨ 新增缝 11：**续写在作者自己配的端点上是 422**（`/draft` 写死最高思考档）。
 ════════════════════════════════════════════════════════════════════════════════════
 
   四条流。① 是唯一的写入源；②③④ 都从 ① 的产物里取，彼此之间无数据传递。
@@ -69,13 +65,16 @@ ADR 0039（秘密下线，2026-08-24）删掉了 Secret 节点、KNOWS/BELIEVES 
   │    │  for book in list_all(conn):        ← **每一个项目**            │
   │    ▼                                                                │
   │  scan_chapter_summary_state()  确定性扫**全书**  summary_schedule.py │
-  │    │  每章三态 + 权重：                                              │
-  │    │    state  = paired | missing | stale                            │
-  │    │             （比 chapter_summary.source_snapshot_id 的 sha       │
-  │    │               和当前 chapter.text_sha256）                       │
+  │    │  每章四态 + 权重（第 4 版：三态 → 四态）：                       │
+  │    │    state = paired | missing | stale | retracted                 │
+  │    │      missing   = 没有可用总结                                    │
+  │    │      stale     = 有 ACTIVE 但照的是旧正文 → 下**覆写**单          │
+  │    │      retracted = 作者亲手撤掉的 → 一律不动（不是「缺」）          │
+  │    │      唯一出口 summary_alignment()，调度器和下单那步共用它         │
   │    │    weight = Δ=draft−n；Δ≤0 → 0.0；1≤Δ≤10 → 1.0；               │
   │    │             Δ>10 → max(0, 1−(Δ−10)/50)                          │
-  │    │    needs_work = state != paired 且 weight > 0                   │
+  │    │    needs_work = state in (missing, stale)                       │
+  │    │    ⚠️ **权重只分名额，不当门槛**（缝 8 修复的一半）              │
   │    ▼                                                                │
   │  schedule_alignment()   焦点章豁免；按权重排；一轮至多 limit=20 章    │
   │    │                                                                │
@@ -87,8 +86,9 @@ ADR 0039（秘密下线，2026-08-24）删掉了 Secret 节点、KNOWS/BELIEVES 
               ensure_refresh_coverage()              chapter_refresh.py:323
                  │  算 mask（位掩码）—— **两个生产者共用同一个判据**
                  │      BRANCH_VALIDATION = 1 ← validation_report 没有这一代的行
-                 │      BRANCH_SUMMARY    = 2 ← head.current_summary_id IS NULL
-                 │                              ⚠️ 章级判据，不看快照（见缝 8）
+                 │      BRANCH_SUMMARY    = 2 ← summary_alignment() 说 missing 或 stale
+                 │                              （第 4 版：从前只看「head 是不是空」，
+                 │                                改过正文的章漏掉了 —— 旧缝 8）
                  │      BRANCH_EXTRACTION = 4 ← extraction_application 缺这一 run
                  │  mask == 0 → reused，不建 attempt，不花钱
                  ▼
@@ -154,8 +154,21 @@ ADR 0039（秘密下线，2026-08-24）删掉了 Secret 节点、KNOWS/BELIEVES 
             │  ⚠️ 静默升 CANON：不推队列、不弹提示（ADR 0020）
             │  失败方向 fail-safe：升不上去就留在 PROVISIONAL，不进写作上下文
             ├──▶ 干净的          ─▶ CANON 边          ← 作者事后可改可查
-            └──▶ 三个例外 bucket ─▶ 表 proposal (PENDING)  ← 唯一还打扰作者的地方
-                   edge_conflict / low_confidence_main / new_character
+            ├──▶ 认不出的人物    ─▶ **直接建**，不问（2026-08-25，ADR 0020 补记）
+            │                       从前它是 new_character 提案，攒着等作者点
+            └──▶ 两个例外 bucket ─▶ 表 proposal (PENDING)  ← 唯一还打扰作者的地方
+                   edge_conflict / low_confidence_main
+
+  ┌─ ⑤ 事后语义核对 ────────────── 【💰 一次模型调用】（第 4 版新增）
+  │    advisory_review.review_saved_chapter()   api/background_runtime.py
+  │    ⚠️ **不在 DAG 里，是 DAG 之后另起的一步。** 两道门都要过：
+  │        validation == passed  且  这一章是作者亲手写的；
+  │        作者正盯着这一章（is_focused）就跳过。
+  │    问的是：**这一段跟后面已经写完的章抵不抵触**（轨道阶段 2）。
+  │    ⚠️ 它是 ADR 0005「只做集合判断」的窄例外，靠的是 ADR 0030 —— 前提是
+  │       **只告警不阻断**，所以落点只能是 text_advisory，绝不许挂 validation_blocked。
+  │    └─▶ 通知 text_advisory：「第 3 句 ↔ 第 64 章：设定对不上。」
+  │          ⚠️ **后面那一章的原文一个字都不在这句话里**（TrackClash 没有装它的字段）
 
 
 ┌───────────────────────────────────────────────────────────────────────────────────┐
@@ -168,33 +181,33 @@ ADR 0039（秘密下线，2026-08-24）删掉了 Secret 节点、KNOWS/BELIEVES 
    │      mentioned_cast(store, pid, paragraphs)  按首次出现顺序去重
    │      include 只往里加人，绝不减人 —— 少一个人 = 少一批禁令 = fail-open
    ▼
- ┌─ GET …/roster                  ─▶ [ {id, label, name} ]   ← props 不出去
+ ┌─ GET …/roster                  ─▶ [ {id, label, name,
+ │                                        appearance_chapters,      ← 多少章的总结提过它
+ │                                        information_score} ]      ← 各章画像长度累计
+ │                                     ⚠️ props 一个字段都不出（twist / plot_note 住那儿）
+ │                                     两个数同一条出参回来，不是第二次请求
  │
  ├─ GET …/chapters/{n}/mentioned  ─▶ { chapter, has_text: bool, surfaces: [str] }
  │                                     has_text=false ≠ surfaces=[]
  │
- ├─ GET …/chapters/{n}/matrix     ─▶ KnowledgeMatrix {
- │    ★ 头牌                             project_id, chapter, scope=CANON
- │                                       version: GraphVersion       ← CAS 用
- │                                       unresolved_cast: [str]
- │                                       characters: [NodeRef]
- │                                       secrets:    [NodeRef]
- │                                       cells: [ KnowledgeCell {
- │                                           character_id, secret_id,
- │                                           state: KNOWS|BELIEVES|UNKNOWN,
- │                                           since_chapter, believed_value,
- │                                           evidence_id } ] }
- │
  ├─ GET …/chapters/{n}/constraints ─▶ SceneConstraints {
  │                                       chapter: int
  │                                       unresolved_cast: [str]
- │                                       must_not_reveal:   [NodeRef]  ← 只有显示名
  │                                       forbidden_entities:[ForbiddenEntity{
  │                                           node, first_appears_chapter, surfaces}] }
+ │                                     ⚠️ 第 4 版：`must_not_reveal` 那一位删了（ADR 0039）
+ │
+ ├─ GET …/characters/{id}/profile ─▶ 人物基础信息         （第 4 版新增）
+ ├─ GET …/characters/{id}/events  ─▶ [ CharacterEventRow ] （第 4 版新增）
+ │                                     这个人时间线上的事件，按章号排；
+ │                                     一件事跟三个人相关 ⇒ 三个人名下都查得到
  │
  └─ GET …/proposals               ─▶ 待确认队列（流 ① 的例外 bucket）
 
-  ⚠️ 这四条端点都没有 response_model（收窄 dict），前端靠手写 types.ts 兜底。
+  ⚠️ **`GET …/chapters/{n}/matrix` 那条 2026-08-24 删了**（ADR 0039）。
+     它曾经是这一栏的头牌：谁知道 / 不知道 / 误以为哪条秘密。整套没了。
+
+  ⚠️ 这几条端点都没有 response_model（收窄 dict），前端靠手写 types.ts 兜底。
      两端由 tests/test_frontend_contract.py + __fixtures__/api.json 钉着。
 
 
@@ -207,40 +220,58 @@ ADR 0039（秘密下线，2026-08-24）删掉了 Secret 节点、KNOWS/BELIEVES 
  shouldSuggest(signal)  ← 默认「不问」：loading / hasSelection / hasSuggestion /
    │                                      before 为空 —— 四条任一成立就不问
    ▼
- tailBefore(doc, pos)   按 code point 切最后 TAIL_LIMIT = 1000
-   │  ⚠️ 这一刀今天是唯一那一刀（后端产品路径能给到 40,000，见缝 6）
+ tailBefore(doc, pos, limit)  /  tailAfter(doc, pos, limit)      ← 两刀朝光标切
+   │  ⚠️ **limit 由后端算**（第 4 版：从前前端写死 1000，那是旧缝 6）
+   │     跟着 GET /api/settings 的 continuation_tail_limit 过来，
+   │     公式只有后端一份：max(800, min(窗口/2 × 1/6, 40_000))
+   │     两头由 tests/test_continuation_tail_limit.py 钉着：
+   │     这两个文件里再冒出上限的数字字面量，那条 pytest 当场红
    ▼
- POST …/chapters/{n}/draft                              hooks.ts:461 useContinuation
-   │  { mode: "continuation", previous_tail: str,
+ POST …/chapters/{n}/draft                              hooks.ts:499 useContinuation
+   │  { mode: "continuation", previous_tail: str, following_text: str,
    │    length: { language:"zh", min_units:60, target_units:140, max_units:260 } }
-   │  ⚠️ 没有 goal（后端常量，ADR 0015 D3）   ⚠️ 没有 cast（走全禁，D4）
+   │  ⚠️ 没有 goal（后端常量，ADR 0015 D3）   ⚠️ 没有 cast（走退化态，D4）
+   │  ⚠️ following_text 是第 4 版新增：光标**后面**那截同章正文
    ▼
- DraftRequest 校验    continuation 下 goal 必须为空，否则 422       app.py:1435
+ DraftRequest 校验    continuation 下 goal 必须为空，否则 422
    ▼
- resolve_route_capabilities() + plan_call()
-   │  ▶ capability.max_context_tokens    ▶ plan.request_token_budget
-   │  模型没配好 → 422「先去顶栏 ⚙ AI 设置」
+ resolve_route_capabilities() + plan_call(length, ReasoningEffort.HIGH, capability)
+   │  🔴 **就是这一行**（见缝 11）：写死最高思考档，而没登记的路由只给 {OFF}
+   │     ⇒ 作者自己配的端点上 CapabilityError → 422
+   │     ⇒ 报的话是「模型没配好，先去顶栏 ⚙ AI 设置」——**而他配好了**
    ▼
- unknown_cast_constraints(store, pid, chapter)                   draft/context.py:229
-   │  cast 空 → scene_view(cast=()) → resolved.complete = False → 全禁
+ unknown_cast_constraints(store, pid, chapter)                   draft/context.py
+   │  cast 空 → 退化态
+   │  ⚠️ 第 4 版：**空 cast 不再让任何东西退化**。SceneConstraints 今天只剩
+   │     forbidden_entities，而它按章号算、与 cast 无关。从前那份「全书所有
+   │     未公开的秘密」随秘密一起没了。
    ▼
- UnknownCastConstraints {                     ← 类型本身就是「退化了没有」的答案
-   │    chapter: int
-   │    must_not_reveal:    [NodeRef]         ← 全书所有未公开的秘密
-   │    forbidden_entities: [ForbiddenEntity] ← 只看章号，退化态里它仍精确
-   │    ⚠️ 没有 cast、没有 matrix —— 不许用空列表冒充「这一场没有人」
+ _resolve_track(conn, store, …)                                 track.py
+   │  作者是不是跳回去改旧章 + 后面哪几章跟这一段相关（零模型调用、纯查库）
+   │  一级：扫改动的字 → 命中花名册里哪些东西
+   │  二级：反查倒排 → 后面哪几章的总结也提到了它们
+   │  三级：总结说不清时 → 下探那几章原文的相关段落（≤1000 字）
+   │  ⚠️ **它一个字都不进 Writer 的 prompt。** 出口只有响应里那一格 `track`
+   │     和验证那一侧（DAG 第⑤段）。tests/test_track_isolation.py 扫 AST 钉着：
+   │     draft/ 一行都不许 import track / summary_index / advisory_review。
+   │     理由：第 64 章的总结里可能写着第 2 章读者还不该知道的事。
    ▼
- product_draft.draft_chapter() → assemble()                    draft/assemble.py
-   │  previous_tail_limit = product_tail_limit(max_context_tokens, budget)
-   │                      = max(800, min(窗口/2 × 1/6, 40_000))
-   │
-   │  进 prompt 的只有三样：
-   │    ctx.secret_labels   ─▶「沈孤鸿之死这一条，这一场还写不得。」   ← 显示名
-   │    ctx.forbidden_names ─▶「血枭盟要到第 47 章才头一回出现」       ← 名字本身即 tell
-   │    UNKNOWN_CAST_LINE   ─▶「【在场】未知。因此这一段不得说破任何尚未公开的秘密。」
+ select_rolling_summaries(...)                        draft/product_context.py
+   │  前几章的滚动总结（第 4 版新增）。纯查库，不额外花钱。
+   │  取的时候发现某章缺 / 旧 ⇒ **第三个触发源**：下同样的单，后台补，
+   │     下一次续写就有了。不当场补（一次模型调用几秒起步，预算只有 400ms）。
+   ▼
+ product_draft.draft_chapter() → assemble_continuation()   draft/product_assemble.py
+   │  进 prompt 的块：
+   │    【上文】光标前那截
+   │    【下文】光标后那截 —— 块首写死「别重写、要能接上」（必须在后端：
+   │              前端能传的东西作者就能改）
+   │    【记忆】前几章的滚动总结
+   │    ctx.forbidden_names ─▶「血枭盟要到第 47 章才头一回出现」← 名字本身即 tell
+   │  ⚠️ 第 4 版：`ctx.secret_labels` 和 UNKNOWN_CAST_LINE 那两行**没了**（ADR 0039）
    │  ⚠️ .props 一个字符都不碰（tell 住在那儿）—— 第 4 道 arch-guard 钉着
    ▼
- provider → 模型 → { text: str }
+ provider → 模型 → { text: str, track: … }
    ▼
  编辑器挂一条建议（askRef 对不上就丢掉 = 取消，不做增量失效）
 
@@ -252,102 +283,121 @@ ADR 0039（秘密下线，2026-08-24）删掉了 Secret 节点、KNOWS/BELIEVES 
  POST …/check  ─▶ { rules: [ {rule_id, issues: [Issue]} ] }
    │  ALL_CHECKS = 2 条：R2 FUTURE_LEAK / R3 DEAD_SPEAKS
    │  纯集合判断（ADR 0005）；Issue 锚 = (para_index, quote_text, occurrence_k)
-   └─ 与流 ① 的验证分支**同一个 service**，但不是「只是触发方不同」：
-        · 流① 那次是**自动跑**的，结果写进 validation_report，作者只能看到一句
-          笼统的通知（缝 9）；
+   └─ 与流 ① 的验证分支**同一个 service**，只是触发方不同：
+        · 流① 那次是**自动跑**的，结果写进 validation_report，落一条带锚的通知；
         · 这一次是**当场重跑一遍**，issues 带着锚直接回给界面。
-      ⇒ 同一套规则一天跑很多遍，而带定位的那份只有作者手动点才拿得到。
+      ⚠️ 第 4 版：第 3 版这儿写着「自动那次只剩一句笼统的话，带定位的那份只有
+         作者手动点才拿得到」——**旧缝 9，已经修好**。今天通知自己带
+         jump_para_index / jump_quote_text，点得动。
+
+  ⚠️ 第 4 版：**手动生成总结那条整个下线了**（2026-08-24）。
+     右栏那个按钮和 `POST …/chapters/{n}/summary` 一起删的，
+     裁定是「总结的触发只要两个，而且都是系统自动的」：保存之后 / 每 30 分钟扫描。
+     （代码里今天实际有**三个**，第三个是续写取到缺·旧时下单 —— 它也是系统自动的，
+      不是按钮，但字面上是三不是二。**留还是删是维护者的裁定，行为没动。**）
 
 
 ════════════════════════════════════════════════════════════════════════════════════
   钱在哪里花
 ════════════════════════════════════════════════════════════════════════════════════
-   💰 流① 滚动总结   保存后 / 每 30 分钟自治    每章一次（幂等）     作者不知情
-   💰 流① 抽取       保存后 / 每 30 分钟自治    每章一次             作者不知情
-   💰 流③ 行内续写   作者停手 400ms 自动发                          作者不知情
+   💰 流① 滚动总结     保存后 / 每 30 分钟自治 / 续写取到缺·旧   每章一次（幂等）
+   💰 流① 抽取         保存后 / 每 30 分钟自治                    每章一次
+   💰 流① 事后核对     保存后（验证过 + 作者亲写 + 不在焦点）      每章一次  ← 第 4 版新增
+   💰 流③ 行内续写     作者停手 400ms 自动发
    ── 流②④ 全免费
+
+   ⚠️ 以上四处**作者都不知情**。
 
    ⚠️ 「工作台开着但没人动」也会花钱：30 分钟自治不需要任何点击，
       每项目每轮至多 20 章（AUTONOMY_LIMIT = 20），且 mask == 0 → reused。
 
-   ⚠️ **它今天收敛，有一半是靠 bug 收敛的**（第 3 版补）：
-        · 权重门槛挡掉了往回超过 60 章的（缝 7 之外的那条，见任务台账第 1 条）；
-        · 缝 8 让改过正文的章排不进总结分支。
-      **修掉缝 8 之后收敛性要重新算一遍**——那时"要重买"的章 = 最近 60 章里
-      改过正文的，作者密集改稿的那几天这个数会顶到每轮上限。
+   ⚠️ 第 4 版：**旧缝 8 修好之后，收敛性要重新看**。第 3 版写着「它今天收敛有一半
+      是靠 bug 收敛的」——那个 bug（改过正文的章排不进总结分支）已经修了。
+      现在「要重买」的章 = 权重范围内改过正文的，作者密集改稿的那几天会顶到每轮上限。
 
    ⚠️ 代码里防的是「重复付费」（幂等、防抖、默认不问），
       **防的不是「作者不知道自己在付费」**。这是 BYOK，花的是作者自己的钱。
 
+   ⚠️ 第 4 版：**失败的调用现在也记账了**（`record_failed_call`，7fd26cf），
+      而且 provider 失败按状态码分五档（钥匙不对 / 额度不够 / 没连上 / 对方出问题 /
+      说不清），措辞里没有状态码。从前一律是「没能连上你配置的模型服务」——
+      而 2026-08-25 那次真实故障是**连上了、走错了产品线**，那句话让人查错方向一整轮。
+
 
 ════════════════════════════════════════════════════════════════════════════════════
-  接缝清单 —— 要做数据对齐，这几处是缝（第 3 版：8 条 → 10 条）
+  接缝清单 —— 第 4 版：10 条里 4 条修好、1 条作废，新增 1 条
 ════════════════════════════════════════════════════════════════════════════════════
-  1. cast 有两个来源，语义不同
+  1. cast 有两个来源，语义不同                                        【仍在】
        流② _effective_cast()  = 从正文推（mentioned_cast），include 只加不减
-       流③ 恒为空             = 全禁退化态
-       同一章同一时刻，两边算出的 must_not_reveal 不是同一份，
-       而没有任何一处文档或注释写着这件事。
-       ⚠️ **后端那条路是支持传 cast 的**（`if body.cast:` 那一支走精确态）——
-          是前端一次都不传。不是引擎缺能力，是那条线没接。
+       流③ 恒为空             = 退化态
+       ⚠️ **后端那条路是支持传 cast 的**（`if body.cast:` 走精确态）——是前端一次都不传。
+       ⚠️ 第 4 版：这条的**后果变轻了**。从前空 cast ⇒「全书所有秘密都不许提」，
+          今天 SceneConstraints 只剩 forbidden_entities，而它按章号算、与 cast 无关。
+          空 cast 不再让任何东西退化。
 
-  2. 右栏四条端点没有 response_model
+  2. 右栏端点没有 response_model                                      【仍在】
        真相源是手写的 frontend/src/api/types.ts；改出参漏改它只有组件测试兜底
 
-  3. 认知矩阵：**整章起草拿得到，续写拿不到**（第 3 版更正，第 2 版这条写错了）
-       ✅ 整章起草（cast 解析成功）—— 矩阵**逐格**进 prompt，带起始章、带「误以为」那一态：
-              截至第 10 章的认知边界：
-              - 苏挽：知道「沈孤鸿之死」（第 9 章起）
-              - 萧决：还不知道「沈孤鸿之死」
-              - 李管家：误以为「血脉秘密」是「已泄露」（第 4 章起）
-       ❌ 续写（本图这条路）—— 走退化态，`_matrix_block` 第一行就返回空串：
-              if not isinstance(ctx, ResolvedConstraints): return ""
-       ❌ 模式二那个查约束的工具 —— 出参里没有矩阵（理由是**寿命**不是内容：
-              工具结果留在对话历史里，跨章之后过期，方向 fail-open）
-       ⚠️ `calibration/visibility.py` 的 KNOWS/BELIEVES → HIDDEN **不是洞，是分工**：
-              它的注释原话是「认知边界由后端即时安全约束渲染，**不经过** SceneBrief
-              的事实通道」——走另一条通道，不是不给。第 2 版把它读成了「拿不到」。
+  3. 认知矩阵：整章起草拿得到，续写拿不到                              【❌ 作废】
+       ADR 0039（2026-08-24）把秘密整套下线：Secret 节点、KNOWS/BELIEVES 边、
+       认知边界矩阵、secret 表全删。**这条缝的对象不存在了**，不是修好了。
 
-  4. forbidden_entities 的名字自身即 tell
+  4. forbidden_entities 的名字自身即 tell                             【仍在】
        禁它就必须点它的名 → echo 风险 → 协议让 future_leak 只作描述性地板
 
-  5. first_appears_chapter 没有浏览器入口
+  5. first_appears_chapter 没有浏览器入口                             【仍在】
        2026-08-13 裁定「永远不会有输入框」；今天只有 HTTP 调用方能写
        ⇒ 真书上很可能一条都没有 ⇒ 流③ 那句「血枭盟第 47 章首现」大概率从不出现
 
-  6. TAIL_LIMIT=1000 是前端常量，与后端 product_tail_limit() 无共享来源
-       后端准备给上万字，前端只送 1000
+  6. TAIL_LIMIT=1000 是前端常量                                       【✅ 修好】
+       前端那个字面量删了，额度跟着 GET /api/settings 从后端过来，公式只有后端一份。
+       tests/test_continuation_tail_limit.py 钉两头：那两个文件里再冒出上限的
+       数字字面量就红。
 
-  7. **验证是后面两支的闸门**（第 3 版更正：第 2 版写成「无顺序保证」，反了）
-       顺序是死的：① 验证 → ② 别名 → ③ final gate → ④ 总结 ∥ 抽取。
-       **验证 blocked/error 时当场 return，总结和抽取一个都不跑**，
+  7. **验证是后面几支的闸门**                                          【仍在，且更重要】
+       顺序是死的：① 验证 → ② 别名 → ③ final gate → ④ 总结 ∥ 抽取 → ⑤ 事后核对。
+       **验证 blocked/error 时当场 return，后面一个都不跑**，
        而作者收到的通知原话是「新正文不会再自动生成总结与情节」。
-       ⇒ 真正要留意的不是「顺序不定」，是**一条规则报错会停掉整章的自动整理**。
-          将来加的语义核对（秘密说破 / 跟后面抵触）**绝不能挂这个 gate**，
-          否则作者改个老章就会把这一章的总结和抽取一起停掉。
+       ⇒ **一条规则报错会停掉整章的自动整理。**
+       ✅ 第 4 版：新加的事后语义核对**没有**挂这个 gate（它是 DAG 之后另起的一步，
+          落点只能是 text_advisory）——第 3 版点名要避免的那件事，避开了。
 
-  8. 🔴 **stale 的章永远不会被重新总结**（2026-08-22 实测，见下）
-       调度器判 state='stale'、needs_work=True、返回 'queued_overwrite'，
-       但 ensure_refresh_coverage 算出的 mask = 5（验证|抽取），**没有总结位**。
-       原因：BRANCH_SUMMARY 的判据 `_head_missing()` 只看
-       「head.current_summary_id IS NULL」——**章级、不看快照**。
-       改过正文的章 head 还在，于是「不缺」。
-       两个生产者共用这个判据，所以保存那条路也一样漏。
-       ADR 0030 写着「新正文的机器总结可以正常替换它」——今天不成立。
-       测试只覆盖了 missing（没有总结），stale 一条都没有。
+  8. stale 的章永远不会被重新总结                                     【✅ 修好】
+       `summary_alignment()` 现在是唯一出口，一份实现出四态
+       （missing / stale / retracted / paired），调度器和下单那步共用同一个答案。
+       从前调度器自己写一份 SQL 判三态、下单那步另问「缺哪几样」，两份判据分叉
+       ⇒ 报了「已排覆写」却一单没下。单一实现让那种分叉写不出来。
+       另：`retracted`（作者亲手撤掉的）不算「缺」——他删一次，系统别买回来一次。
 
-  9. 保存后那次验证**有**通知出口，但**通知不带定位**
-       规则发现问题 → 落一条通知到右栏那一格。所以「结果丢了」这个说法不成立。
-       缺的是：那条通知只说「第 N 章的正文检查发现需要留意的地方」，
-       **不说哪条规则、哪一段、哪一句**——而 Issue 本来就带着精确的锚
-       （para_index / quote_text / occurrence_k），那个锚没跟着通知走。
-       作者要知道具体是什么，还得自己去右栏点一次「检查」**当场重跑一遍**。
-       ⇒ 同一套规则跑了两遍：一遍自动跑、结果只剩一句笼统的话；
-          另一遍要作者记得去点。（撞上「日志可跳转」那条期待。）
+  9. 保存后那次验证的通知不带定位                                     【✅ 修好】
+       通知现在带 jump_para_index / jump_quote_text / jump_occurrence_k，点得动。
+       （Issue 的锚本来就是 (para_index, quote_text, occurrence_k)，禁 offset。）
 
- 10. 别名那一段在 DAG 里有位置，**生产上没接线**
-       dispatcher 传 `alias_adapter=None`，所以它今天永远跳过。
+ 10. 别名那一段在 DAG 里有位置，生产上没接线                          【仍在】
+       dispatcher 传 `alias_adapter=None`，今天永远跳过。
        接上之后它会触发**二次验证**（别名可能补齐 R2/R3 的输入），
-       而二次验证不过同样 BLOCKED、同样停掉总结和抽取。
-       ⇒ 接线之前先想清楚缝 7 那条。
+       而二次验证不过同样 BLOCKED、同样停掉后面几支。⇒ 接线之前先想清楚缝 7。
+
+ 11. 🔴 **续写在作者自己配的端点上是 422**（第 4 版新增）
+       `/draft` 那一行写死 `plan_call(body.length, ReasoningEffort.HIGH, capability)`，
+       而 `resolve_capabilities` 对没登记的路由只给 `reasoning_levels={OFF}`。
+       实测（2026-08-25，作者真配置 opencode.ai/zen/go/v1 + minimax-m2.5，
+       curl 直调模型正常答中文）：
+
+           这条路允许的档: ['off']
+           high → CapabilityError: reasoning=high is not supported for exact route
+           off  → OK，预算 1544
+
+       ⇒ 停手 400 毫秒 → 422 →「模型没配好，先去顶栏 ⚙『AI 设置』填地址/模型/钥匙」
+       ⇒ **他配好了，引擎让他回去重填一份没问题的配置。**
+
+       那一行是当年为「点起草这一章」写的，而那个按钮 2026-08-10 就没了；
+       后来 ADR 0015 把行内续写接到同一条路由上，于是它压在了一个天天用的功能头上。
+       `agent/drafting.py:99` 的 docstring 2026-08-13 就诊断过同一个病
+       （症状原话「聊天好好的，只有起草那一个工具每次都失败」），
+       那次把模式二改成了 OFF，并写下「/draft 那条路仍然是 HIGH，这一刀不动它」
+       ——**那句话当时对，后来前提被推翻了，而没人回来重读它。**
+
+       ⚠️ 更大的一块（「关」发不出去、三类模型三种行为、同一请求 8 秒到 300 秒）
+          见 docs_dev/2026-08-26-模型思考档位的全图与实测.md。**那件事还没查清。**
 ════════════════════════════════════════════════════════════════════════════════════
