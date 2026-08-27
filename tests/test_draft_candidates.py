@@ -204,7 +204,8 @@ def test_no_poison_survives_into_the_candidate_table(
     """
     writer = FakeWriter(f"{SELF_NOTE_MARK} 这一版更冷。\n\n风雪落在肩上。")
     desk = _desk(poisoned, monkeypatch, writer)
-    product = _write(desk, poisoned, 1)
+    ask, ctx = _ask(poisoned, 1)
+    product = desk.write(ask, ctx, goal="写一场对峙")
     desk.land(product.candidate.id)
 
     stored = every_column(poisoned["conn"])
@@ -215,10 +216,11 @@ def test_no_poison_survives_into_the_candidate_table(
     )
     assert '"props"' not in stored, "表里出现了 props —— 那是整份节点被序列化进来了"
 
-    # 反证：这一条不是在一个「什么都没跑到」的库上搜的。约束真的算过（秘密**显示名**
-    # 出现在发出去的那份 prompt 里，那是它本来就该在的地方），而候选表里没有它的内容。
+    # 反证：这一条不是在一个「什么都没跑到」的库上搜的。约束真的算过——直接查 `ctx`，
+    # 不再搜 prompt：2026-08-26 起未来实体的显示名不再渲染进任何 prompt（国际化第一批
+    # ⓪，`_forbidden_block()` 下线），但 `ctx.forbidden_names` 本身仍按章号精确算出。
+    assert "幽泉窟" in ctx.forbidden_names, "这一稿根本没带约束跑 —— 上面那几条「没搜到」是空的"
     prompt = json.dumps(writer.prompts[0], ensure_ascii=False)
-    assert "幽泉窟" in prompt, "这一稿根本没带约束跑 —— 上面那几条「没搜到」是空的"
     assert TWIST not in prompt
 
 

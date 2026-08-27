@@ -91,20 +91,23 @@ def test_the_degraded_prompt_says_nothing_about_who_is_present() -> None:
     assert "未知" not in body
 
 
-def test_what_is_left_of_the_degraded_prompt_all_still_carries_information() -> None:
-    """**删过头也要红。** 剩下的每一块都还在，而且每一块都带着信息。
+def test_the_degraded_prompt_still_carries_the_goal() -> None:
+    """**删过头也要红。** 退化态、且没有上文时，prompt 唯一剩下的信息就是 goal——
+    这一句不能也被删掉，否则模型收到的是一句空提示。
 
-    它坏掉时代表：M1-a 连**不依赖在场**的那一块也一起删了——尚未登场的实体
-    （只看章号算，退化态里仍然精确）。那样退化态的 prompt 就只剩一句空提示。
+    2026-08-26 之前这条还断言「尚未登场」那一块存在。那一块删了（国际化第一批 ⓪：
+    `_forbidden_block()` 连同 `graph_section()` 里那一支一起下线——维护者裁定
+    `first_appears_chapter` 没有 UI 入口能设，这块在真书上几乎恒空）。**这是这条测试
+    唯一让掉的东西**：`ctx.forbidden_names` 本身没有变化，仍按章号精确算出（见
+    `test_forbidden_entities_stay_exact_because_they_never_depended_on_cast`），
+    只是它不再渲染进任何 prompt。所以退化态、无上文时今天的 prompt 就只剩这一句 goal，
+    这是已知且接受的代价，不是要补的洞。
     """
     ctx = unknown_cast_constraints(_store(), PID, 152)
 
-    body = assemble(ctx, goal=CONTINUATION_GOAL, length=SHORT)[-1][
-        "content"
-    ]
+    body = assemble(ctx, goal=CONTINUATION_GOAL, length=SHORT)[-1]["content"]
 
-    assert "尚未登场、这一场不得出现：幽泉窟（第 200 章首现）" in body
-    assert CONTINUATION_GOAL in body
+    assert body == "【这一场要写】\n" + CONTINUATION_GOAL
 def test_the_resolved_path_renders_the_cast_verbatim() -> None:
     """知道在场是谁时，【在场】那一块**逐字节**长这样。
 
@@ -113,15 +116,13 @@ def test_the_resolved_path_renders_the_cast_verbatim() -> None:
     只拦住「改了不声明」，拦不住「改了并且更新那个数」）。
 
     （2026-08-25 之前这条叫 `..._is_byte_identical`，比的是 kill-gate 那条 X0 路径；
-    三臂删了，所以尾部的图谱段现在也一起渲染出来——它本来就该在产品的 prompt 里。）
+    三臂删了。2026-08-26 之前尾部还有一段图谱段——`_forbidden_block()` 删掉之后
+    `graph_section()` 恒为 `""`，这条路径的 prompt 从此在【这一场要写】收尾。）
     """
     ctx = resolve_constraints(_store(), PID, 152, [GU_QINGYIN.name])
     messages = assemble(ctx, goal="试探", length=SHORT)
 
-    assert messages[-1]["content"] == (
-        "【在场】\n顾清音\n\n【这一场要写】\n试探\n\n"
-        "【本场设定要点】\n尚未登场、这一场不得出现：幽泉窟（第 200 章首现）"
-    )
+    assert messages[-1]["content"] == "【在场】\n顾清音\n\n【这一场要写】\n试探"
 
 
 def test_the_continuation_goal_is_a_backend_constant(monkeypatch: pytest.MonkeyPatch) -> None:

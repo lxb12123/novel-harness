@@ -62,6 +62,7 @@ from novel_harness.draft.provider import CompletionResult, ProviderConfig, ToolC
 from novel_harness.graph import NodeLabel, NodeProps, NodeSpec
 from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
+from novel_harness.panel.constraints import forbidden_entities
 from calibration_seed import seed_calibration
 
 ENDPOINT = "https://api.deepseek.com"
@@ -302,9 +303,15 @@ def test_no_poison_reaches_the_table_on_the_path_that_assembles_memory(
     )
     assert '"props"' not in stored, "整份节点被序列化进表了"
 
-    # **反向断言：显示名必须在。** 一张什么都搜不到的网和一条什么都没查的链路，
-    # 在上面那几个 `not in` 面前长得一模一样。
-    assert "未来大能" in prompt, "这一稿根本没带约束跑 —— 上面那几条「没搜到」是空的"
+    # **反向断言：约束必须真的算得出来。** 一张什么都搜不到的网和一条什么都没查的链路，
+    # 在上面那几个 `not in` 面前长得一模一样。**不再搜 prompt**：2026-08-26 起未来实体的
+    # 显示名不再渲染进任何 prompt（国际化第一批 ⓪，`_forbidden_block()` 下线），改成直接
+    # 用同一个 store/chapter 查一遍 `forbidden_entities()`——这是 `graph_section()` 以前
+    # 用来渲染那句话的同一份数据源，只是不再经过 prompt。
+    forbidden = forbidden_entities(SqliteStoryGraph(desk_conn), poisoned["pid"], chapter=1)
+    assert any(e.node.name == "未来大能" for e in forbidden), (
+        "这一稿根本没带约束跑 —— 上面那几条「没搜到」是空的"
+    )
 
 
 def test_the_same_scan_over_the_three_places_a_candidate_is_handed_out(

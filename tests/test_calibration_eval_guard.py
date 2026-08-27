@@ -19,23 +19,31 @@ REPO = Path(__file__).resolve().parents[1]
 EVAL_DIR = REPO / "src" / "novel_harness" / "eval"
 ASSEMBLE = REPO / "src" / "novel_harness" / "draft" / "assemble.py"
 
-ASSEMBLE_SHA256 = "9806f988aab5f7ae0dffaa1a09e00eca89f7058b4fdb90d055f709a03502e3b0"
+ASSEMBLE_SHA256 = "64966e997510cefe59ff65d4b748cc3496724923786999abba02f971ae16864d"
 """`draft/assemble.py` 全文的 sha256。**改那个文件就必须在同一笔里改这个数。**
 
-这一版是 2026-08-26 的**注释重写，零行为变化**：只动了 `WRITE_RULE_FORBIDDEN_HINTS`
+这一版是 2026-08-26 的**国际化第一批 ⓪：唯一剩下的图谱块也删了**。删掉
+`_forbidden_block()`（渲染「尚未登场、这一场不得出现：幽泉窟（第 10 章首现）」那一句）
+连同 `graph_section()` 里那一支——维护者裁定「未登场的东西未来到底哪一章出现，本来就
+不一定」，而浏览器上从来没有任何入口能设 `first_appears_chapter`（那个输入框 2026-08-13
+就是有意裁掉的）。`panel/constraints.py::forbidden_entities()` 本身没删——R2 和右栏面板
+还在用它，这一刀只砍它进 Writer prompt 的那一步。`graph_section()` 函数本身留着，
+恒返回 `""`：它是下一个图谱块的落地点，不是这一个块专属的脚手架。
+
+上一版是 2026-08-26 的**注释重写，零行为变化**：只动了 `WRITE_RULE_FORBIDDEN_HINTS`
 的 docstring——它双重过时（指着 `/draft`、`nh draft` 两个不存在的入口，还在拿三臂的
 `Δ 塌掉` 当理由），而今天用那张网的只剩 `product_draft.check_request()` 一处。
 **渲染逻辑一个字节没动**：这一笔的 diff 只有那一段字符串，可以逐行核。
 
-⚠️ **这是这个数第一次因为「只改注释」而变。** 它就该这样——这道闸比的是全文哈希，
+⚠️ **那一版是这个数第一次因为「只改注释」而变。** 它就该这样——这道闸比的是全文哈希，
 所以注释也算；「改卷子藏不住」这条性质的代价，就是每一次有意的编辑都得在这儿留一行。
 审计的人看这一行就知道该不该去读 diff。
 
-上一版是 2026-08-25 的三臂下线：`PromptForm` 整个删了，`assemble()` / `graph_section()` /
+再上一版是 2026-08-25 的三臂下线：`PromptForm` 整个删了，`assemble()` / `graph_section()` /
 `_forbidden_block()` 三个签名去掉 `form` 参数，`_forbidden_block` 只留清单那一种渲染
 （散文那一版是为 X2 写的，没有别的消费者）。**改这个数是有意的动作**，见那笔提交。
 
-再上一版是 2026-08-24 的秘密下线（ADR 0039）：`graph_section` 里的认知矩阵块和禁写清单块
+再更早一版是 2026-08-24 的秘密下线（ADR 0039）：`graph_section` 里的认知矩阵块和禁写清单块
 整个删了，只剩「尚未登场」。更早一版是 2026-08-22 的 M1-a（退化态不再发「【在场】未知」那一块）。
 在此之前这道闸比的是 `git diff --exit-code`——它只看「工作区 vs 已暂存」，
 拦得住「顺手改了忘了看」，**拦不住「改了并且提交」**，而真要改考卷的人当然会提交。

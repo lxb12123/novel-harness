@@ -24,8 +24,6 @@
 
 from __future__ import annotations
 
-import re
-
 import inspect
 
 import pytest
@@ -98,34 +96,8 @@ def _text(messages: list[dict[str, str]]) -> str:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# ① D4：图谱段只追加在尾部
+# ① D4：用户消息的基座 —— cast / 上文（图谱段 2026-08-26 起恒空，见下方③）
 # ══════════════════════════════════════════════════════════════════════════
-
-
-def test_the_graph_section_is_appended_at_the_tail_byte_for_byte() -> None:
-    """**这条是 D4 从「一句承诺」变成「一条测试」的那一步。**
-
-    不是「看起来差不多」：去掉尾部那段图谱段之后剩下的东西，可以被逐字节重建出来，
-    而它就是「没有任何图谱事实时会发出去的那一份」。
-
-    （2026-08-25 之前这条量的是「X0 是 X1/X2 的严格前缀」。三臂删了，性质没变：
-    **图谱段只追加，不重排、不改写前面任何一个字节**——那两块是前缀缓存的全部价值。）
-    """
-    ctx = _full_ctx()
-    rendered = _rendered(ctx)
-    section = graph_section(ctx)
-    assert section, "这个 fixture 本来就该有图谱段 —— 没有的话下面全是空转"
-
-    body = rendered[-1]["content"]
-    assert body.endswith("\n\n" + section)
-
-    base = body.removesuffix("\n\n" + section)
-    # 反向：把图谱段拿掉之后剩下的，逐字节等于「没有未来实体时」渲染出来的那一份。
-    empty_ctx = resolve_constraints(FakeGraph([XIAO_JUE, GU_QINGYIN], []), PID, 5, [GU_QINGYIN.name])
-    bare = assemble(empty_ctx, goal=GOAL, length=M2_LENGTH_SPEC, previous_tail=TAIL)
-    assert graph_section(empty_ctx) == ""
-    assert bare[0] == rendered[0]  # 系统消息（含 house style）逐字节同一份
-    assert base.replace("萧决、李管家、顾清音", "顾清音") == bare[-1]["content"]
 
 
 def test_the_cast_is_in_the_prompt() -> None:
@@ -150,43 +122,30 @@ def test_the_previous_tail_is_optional_and_leaves_no_empty_heading() -> None:
     assert "【上文】" not in without[-1]["content"]
     assert without[-1]["content"].startswith("【在场】")
 # ══════════════════════════════════════════════════════════════════════════
-# ③ D3：tell 永不进 prompt
+# ③ D3：tell 永不进 prompt / 图谱段 2026-08-26 起恒空
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_the_graph_section_names_every_future_entity_and_its_chapter() -> None:
-    """禁写清单里**每一个**实体的名字和首现章都要在，少一个就是少注入了一条事实。
+def test_graph_section_has_no_block_source_and_never_appears_in_the_prompt() -> None:
+    """2026-08-26：唯一的图谱块（尚未登场）删了。**`graph_section()` 恒为 `""`**——
+    连本该有未来实体的 fixture 也一样，「【本场设定要点】」不会再出现在任何 prompt 里。
 
-    （2026-08-25 之前这条比的是 X1 与 X2 两种排版的专名集合 / 章号集合 / 字数比。
-    三臂删了，只剩清单那一种渲染，所以它改成直接量那一份。）
+    这条故意用 `_full_ctx()`（血枭盟 ch8 / 幽泉窟 ch10 都在）而不是空 ctx：
+    用一个「以前会产出图谱段」的输入去证明它现在真的不产出，比用一个本来就没有
+    未来实体的输入更能防「有人把 `_forbidden_block` 悄悄加回来了」这种回归。
     """
     ctx = _full_ctx()
-    section = graph_section(ctx)
-    known = list(ctx.forbidden_names)
-    assert known, "没有未来实体 —— 这条测试在空转"
-
-    assert {n for n in known if n in section} == set(known)
-    chapters = {str(e.first_appears_chapter) for e in ctx.forbidden_entities}
-    assert chapters <= set(re.findall(r"\d+", section))
-
-
-def test_no_forbidden_entities_leaves_no_dangling_line() -> None:
-    """没有未来实体时**整段是空的**，不许留下「尚未登场、这一场不得出现：」后面空一片。
-
-    「空」和「留了个抬头没内容」在屏幕上差得很远：后者会让模型以为有一份它没读到的清单。
-    """
-    store = FakeGraph([XIAO_JUE, GU_QINGYIN], [])
-    ctx = resolve_constraints(store, PID, 5, [GU_QINGYIN.name])
+    assert ctx.forbidden_names, "这个 fixture 本该有未来实体 —— 没有的话下面全是空转"
 
     assert graph_section(ctx) == ""
+    assert "【本场设定要点】" not in _text(_rendered(ctx))
 
 
 def test_no_alias_and_no_props_reach_the_prompt() -> None:
     """**节点属性里作者写的东西一个字都不许进 prompt。**
 
-    `NodeProps` 是 `extra="allow"` 的：作者写在未来实体上的 `plot_note`（「第 200 章
-    才揭晓」那类）会原样穿过任何一次 `model_dump_json()`。进 prompt 的只许是**显示名**
-    加首现章。
+    `NodeProps` 是 `extra="allow"` 的：作者写在节点上的 `plot_note`（「第 200 章
+    才揭晓」那类）会原样穿过任何一次 `model_dump_json()`。
 
     （这条原来还罩着秘密的 tell —— 那半随秘密下线一起走了，ADR 0039。留下的这半
     跟秘密无关：任何一类节点的 props 都装得下作者写的剧透。）
@@ -195,8 +154,6 @@ def test_no_alias_and_no_props_reach_the_prompt() -> None:
     text = _text(_rendered(ctx))
     assert TWIST not in text, "prompt 里出现了 props 里的字"
     assert TELL not in text, "prompt 里出现了非 canonical 别名"
-    # 进 prompt 的是**显示名** + 首现章，别的一个字都没有。
-    assert "幽泉窟" in text
 
 
 def test_the_tell_really_is_reachable_in_the_graph() -> None:
@@ -232,24 +189,6 @@ def test_default_writing_prompts_do_not_constrain_control_arm_content() -> None:
     assert "凭空" not in ZH_WRITING_PROMPT
     assert "invent" not in EN_WRITING_PROMPT.lower()
     assert "absent" not in EN_WRITING_PROMPT.lower()
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# ④ 退化形态：没有约束可注入时，整段不出
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def test_nothing_to_inject_leaves_the_prompt_without_a_graph_section() -> None:
-    """没有未来实体 → 图谱段为空串 → 用户消息以【这一场要写】收尾。
-
-    此时若仍多出一个「【本场设定要点】」空标题，模型会以为有一份它没读到的清单。
-    """
-    store = FakeGraph([XIAO_JUE, GU_QINGYIN], [])
-    ctx = resolve_constraints(store, PID, 5, [XIAO_JUE.name])
-
-    assert ctx.forbidden_names == []
-    assert graph_section(ctx) == ""
-    assert "【本场设定要点】" not in _text(_rendered(ctx))
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -332,12 +271,16 @@ def test_custom_write_rule_cannot_bypass_the_length_instruction() -> None:
 
 
 def test_the_system_prompt_carries_the_length_and_no_graph_facts() -> None:
-    """系统消息里有长度档，**没有**图谱段——图谱事实只许出现在用户消息尾部。"""
+    """系统消息里有长度档，**没有**图谱段——图谱事实只许出现在用户消息尾部。
+
+    不能写成 `graph_section(ctx) not in system`：`graph_section()` 2026-08-26 起恒为
+    `""`，而空串是任何字符串的子串，那条断言会恒假。改成直接找那句抬头文本。
+    """
     ctx = _full_ctx()
     system = _rendered(ctx)[0]["content"]
 
     assert "2000–3100 字" in system
-    assert graph_section(ctx) not in system
+    assert "【本场设定要点】" not in system
 
 
 def test_previous_tail_is_stripped_and_limited_to_its_last_800_code_points() -> None:
