@@ -47,6 +47,7 @@ from typing import Any, Protocol, runtime_checkable
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..draft.context import DraftContext
+from ..draft.length import DraftLanguage
 from ..draft.product_context import memory_units_available
 from ..draft.rolling_summary import ChapterSummaryStatus, SummarySnapshotWatermark
 # 轨道那几个模块里，**只借 `TrackClash` 这一个名字**：它是三个数（第几句 / 跟第几章 /
@@ -263,6 +264,15 @@ class ToolContext:
 
     store: StoryGraph
     project_id: str
+
+    language: DraftLanguage = DraftLanguage.ZH
+    """这本书的语言（`Project.language`）。**只管人设/工具 schema 用哪种语言**
+    （国际化第三批，`loop.py::run_turn` 拿它选 `tool_declarations`/规矩前缀）——
+    不影响任何判断逻辑，也不是这一轮投影的坐标（那是 `working_chapter` 的事）。
+    默认 ZH：这个仓库绝大多数既有调用方（尤其是测试）构造 `ToolContext` 时
+    压根不知道语言这回事，给它们一个不用改的默认值，比逼着几十个调用点都补一位
+    更不容易漏改一处。生产上唯一的构造点（`api/chat.py::_tool_context`）会显式传。
+    """
 
     root_path: str | None = None
     """项目根目录。`None` = 读不到正文 ⇒ 在场推不出来 ⇒ 约束**退化成全禁**（fail-closed）。"""

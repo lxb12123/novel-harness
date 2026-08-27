@@ -121,7 +121,7 @@ RULE_KEEP_MAX = 12
 """
 
 RULE_PROMPT_PREFIX = "（作者写第 {chapter} 章时随口说的；情境不在了就不必守）"
-"""每条规矩进 prompt 时前面那一句——**模型没写下时效时的兜底那一版**。
+"""每条规矩进 prompt 时前面那一句——**模型没写下时效时的兜底那一版**（中文档）。
 
 引擎能确定地知道的只有一件事：**他是在写第几章时说的**（`ToolContext.working_chapter`，
 约束 10 照旧——不是作者填的，也不是模型填的）。剩下那句「情境不在了就不必守」是
@@ -136,11 +136,25 @@ RULE_PROMPT_PREFIX = "（作者写第 {chapter} 章时随口说的；情境不�
 """
 
 RULE_PROMPT_UNTIL = "（作者写第 {chapter} 章时说的，你当时判定它管到「{until}」；情境不在了就不必守）"
-"""模型写下过时效时用的那一版（迁移 016）。
+"""模型写下过时效时用的那一版（迁移 016，中文档）。
 
 **「你当时判定」这四个字是有意的**：那句话是它自己写的，不是引擎的规定，也不是作者的
 要求。它下一轮读到的是自己的判断，而不是一条不知道谁定下的期限——后者会被当成硬约束。
 """
+
+RULE_PROMPT_PREFIX_EN = (
+    "(Something the author mentioned in passing while writing chapter {chapter}; "
+    "no need to honor it once the situation is gone)"
+)
+"""`RULE_PROMPT_PREFIX` 的英文档（国际化第三批）。逐句对照翻，不重写。"""
+
+RULE_PROMPT_UNTIL_EN = (
+    "(Something the author said while writing chapter {chapter}; you judged at "
+    'the time that it holds until "{until}"; no need to honor it once the '
+    "situation is gone)"
+)
+"""`RULE_PROMPT_UNTIL` 的英文档（国际化第三批）。「你当时判定」译成 you judged at
+the time——同一条理由：那是模型自己的判断，不是引擎或作者的规定。"""
 
 _DROPPED_PUNCTUATION = frozenset(
     "。，、；：！？…—～·「」『』（）《》〈〉【】“”‘’"
@@ -348,7 +362,7 @@ def surviving_rule_indices(messages: Sequence[AgentMessage]) -> frozenset[int]:
     return frozenset(sorted(keep.values())[-RULE_KEEP_MAX:])
 
 
-def prompt_text(message: AgentMessage) -> str:
+def prompt_text(message: AgentMessage, language: DraftLanguage = DraftLanguage.ZH) -> str:
     """一条规矩进 prompt 时的样子：前缀 + 作者那句话。
 
     三档，按信息量从多到少退：
@@ -357,15 +371,23 @@ def prompt_text(message: AgentMessage) -> str:
     2. 有章号、没时效 ⇒ `RULE_PROMPT_PREFIX`（016 之前存下的那些）；
     3. **连章号都没有 ⇒ 只发那句话。** 老会话里存过 `chapter is None` 的规矩
        （那时的 `rule_message` 还没拒它们），给它们编一个章号就是造一条假的坐标。
+
+    `language` 只换前缀那半句的语种（国际化第三批）；`message.content` 是作者自己
+    敲的原话，这一层**永远不翻译它**——那不是这一层的权限，模板前缀才是。
     """
     if message.chapter is None:
         return message.content
+    prefix, until_prefix = (
+        (RULE_PROMPT_PREFIX, RULE_PROMPT_UNTIL)
+        if language is DraftLanguage.ZH
+        else (RULE_PROMPT_PREFIX_EN, RULE_PROMPT_UNTIL_EN)
+    )
     if message.rule_until:
         return (
-            RULE_PROMPT_UNTIL.format(chapter=message.chapter, until=message.rule_until)
+            until_prefix.format(chapter=message.chapter, until=message.rule_until)
             + message.content
         )
-    return RULE_PROMPT_PREFIX.format(chapter=message.chapter) + message.content
+    return prefix.format(chapter=message.chapter) + message.content
 
 
 def expired_rule_count(
@@ -430,7 +452,9 @@ __all__ = [
     "RULE_KEEP_MAX",
     "RULE_MAX_UNITS",
     "RULE_PROMPT_PREFIX",
+    "RULE_PROMPT_PREFIX_EN",
     "RULE_PROMPT_UNTIL",
+    "RULE_PROMPT_UNTIL_EN",
     "expired_rule_count",
     "is_revocation",
     "is_rule",

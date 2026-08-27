@@ -147,6 +147,7 @@ from ..agent.store import ChatConcurrency, ChatNotice, ChatSessionRow, ChatStore
 from ..calibration.models import AuthorTurnRef
 from ..calibration.store import CalibrationStore
 from ..db import Connection
+from ..draft.length import DraftLanguage
 from ..focus import frontier_chapter
 from ..graph import StoryGraph
 from ..decisions import quote_hash
@@ -724,6 +725,7 @@ def _tool_context(
     return ToolContext(
         store=store,
         project_id=proj.id,
+        language=DraftLanguage(proj.language),
         root_path=proj.root_path,
         drafter=desk,
         # **和起草台是同一把锁**：并发窗口里碰这条连接的每一句都要排在同一道队里
@@ -981,7 +983,12 @@ def create_chat(
 ) -> ChatSessionView:
     """开一段新的对话。**作者可以同时开好几段**，每一段各自 resume。"""
     store = ChatStore(conn)
-    session = store.create(proj.id, title=body.title, write_rule=body.write_rule or None)
+    session = store.create(
+        proj.id,
+        title=body.title,
+        write_rule=body.write_rule or None,
+        language=DraftLanguage(proj.language),
+    )
     stored = store.load(proj.id, session.id)
     assert stored is not None  # 刚建好
     return _session_view(session, stored.conversation, 0, running=False)

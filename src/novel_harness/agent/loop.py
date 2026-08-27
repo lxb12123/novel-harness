@@ -383,15 +383,31 @@ AGENT_SYSTEM_PROMPT = """你是一位中文长篇小说作者的写作搭档，�
 - **起草和存进书是两步。** 方向清楚就写一稿、接着存进去，不用问他；方向不清楚就一次写
   几稿、先别存，把每一稿的自述摆给他挑。稿子的编号是给工具用的，跟他说话时说「第几稿」。
 - 说话对着作者，用中文，不要把工具名和参数念给他听。"""
-"""稳定前缀的正文。**跨章不变**，所以它能进前缀（边界六那张表的第一行）。
+"""稳定前缀的正文（中文档）。**跨章不变**，所以它能进前缀（边界六那张表的第一行）。
 
 里面**一条 `must_not_reveal` 都没有，也永远不许有**：一份被缓存住的禁说清单就是一条被钉死
 在 context 里的过期约束，而它过期的方向是 fail-open 的最坏那侧（到第 90 章更多人已经知道，
 清单更短）。
 """
 
+AGENT_SYSTEM_PROMPT_EN = """You are a writing partner for an English-language novelist, sitting beside their manuscript.
 
-def start_conversation(write_rule: str | None = None) -> Conversation:
+- The tools in your hands are **this book's own index**: locate cheaply first (table of contents / chapters where characters share a scene / summary ranges), then read the full chapter text once you've pinned down which one.
+- **What must not be revealed is computed chapter by chapter.** The list you checked last turn may already be stale for a different chapter — when you're about to write for a chapter, re-check for that chapter. The drafting tool only takes a chapter number; constraints are recomputed by the backend on the spot, you cannot pass them in.
+- When a tool's result carries words like "not checked yet," "blind," or "how many got dropped," take them at face value: zero does not mean none.
+- **Drafting and saving to the book are two separate steps.** If the direction is clear, write one draft and save it right after — no need to ask; if the direction is unclear, write several drafts at once without saving, and lay each one's own note in front of them to choose. A draft's number is for the tools; when speaking to them, say "draft number N."
+- Speak to the author, in English, and never read tool names or arguments aloud to them."""
+"""稳定前缀的正文（英文档，国际化第三批）。**逐句对照 `AGENT_SYSTEM_PROMPT` 翻**，
+不是重写——五条硬约束（工具即索引 / 约束逐章重算 / 0 不等于没有 / 起草与存书分两步 /
+不念工具名参数）一条都不能松，松了是翻译错了，不是措辞不同。
+
+同样**一条 `must_not_reveal` 都没有，也永远不许有**，理由和中文档一致。
+"""
+
+
+def start_conversation(
+    write_rule: str | None = None, language: DraftLanguage = DraftLanguage.ZH
+) -> Conversation:
     """开一段新会话。`write_rule` 是作者定下的**一条一直挂着的要求**，跨章不变才配进前缀。
 
     ⚠️ **它比名字大。** 2026-08-13 之前这一位叫 `house_style`（文风），
@@ -399,8 +415,13 @@ def start_conversation(write_rule: str | None = None) -> Conversation:
     「主角不许叫小名」……什么都塞得进去。**名字比东西窄，用的人会低估它**，
     于是没人想到往里放别的，也没人意识到它有多大（下面那段「它拦不住什么」
     说的就是它能有多大）。
+
+    `language` 只选 `AGENT_SYSTEM_PROMPT` 还是 `AGENT_SYSTEM_PROMPT_EN`
+    （国际化第三批）——**它建好之后就落库、永不重算**（会话存储那一层的建会话
+    方法），所以这一位真正生效的时刻只有一次：开会话那一刻。跨轮不必再传。
     """
-    prefix = [AgentMessage(role=Role.SYSTEM, content=AGENT_SYSTEM_PROMPT)]
+    persona = AGENT_SYSTEM_PROMPT if language is DraftLanguage.ZH else AGENT_SYSTEM_PROMPT_EN
+    prefix = [AgentMessage(role=Role.SYSTEM, content=persona)]
     if write_rule and write_rule.strip():
         prefix.append(AgentMessage(role=Role.SYSTEM, content=write_rule.strip()))
     return Conversation(prefix=tuple(prefix))
@@ -776,6 +797,7 @@ def project(
     stale_calls: frozenset[str] = frozenset(),
     tools: Sequence[dict[str, Any]] | None = None,
     frontier: int | None = None,
+    language: DraftLanguage = DraftLanguage.ZH,
 ) -> Projection:
     """canonical → 模型这一次看得见的那份（ADR 0019 边界五）。
 
@@ -791,6 +813,10 @@ def project(
         tools: 这一次要一起发出去的工具声明。`None` = 整张表（`tool_declarations()`），
             那**就是**产品行为——工具表是权限边界，loop 从不发半张表。
             `run_turn` 显式传它自己那一份，好让量的和发的是同一个对象。
+        language: 规矩那一档前缀（`RULE_PROMPT_PREFIX`/`_UNTIL`）按哪种语言拼
+            （国际化第三批）；`tools=None` 时的兜底 `tool_declarations()` 调用
+            也吃这一位。`run_turn` 传 `context.language`；两处都不传就是中文，
+            和改动之前逐字节相同。
 
     ── 四段，顺序不能反 ──────────────────────────────────────────────
 
@@ -881,7 +907,7 @@ def project(
     kept = [
         # 规矩带着「作者写第几章时说的 + 情境不在了就不必守」进 prompt（ADR 0028）。
         # **只在这一层加，canonical 里存的仍是作者那句话本身**——措辞会变，历史不能变。
-        message.model_copy(update={"content": prompt_text(message)})
+        message.model_copy(update={"content": prompt_text(message, language)})
         if is_rule(message)
         else message
         for index, message in enumerate(kept)
@@ -953,7 +979,7 @@ def project(
     # 配壳排在预算之前：壳也是要发出去的字，让它跟别的消息一起被算、一起被剪。
     kept, filled = _fill_lost_shells(kept)
 
-    declarations = tool_declarations() if tools is None else list(tools)
+    declarations = tool_declarations(language) if tools is None else list(tools)
     tool_costs = [_json_units(declaration) for declaration in declarations]
     tool_side = _array_units(tool_costs)  # == `tool_declaration_units(declarations)`
     prefix_costs = [_cost(message) for message in conversation.prefix]
@@ -1714,6 +1740,7 @@ def _fit_stored_fetch(
     budget_units: int,
     stale_calls: frozenset[str],
     tools: Sequence[dict[str, Any]],
+    language: DraftLanguage = DraftLanguage.ZH,
 ) -> ToolOutcome:
     """取回预检：按编号取回的内容装不装得下，在**派发这一步**就定论。
 
@@ -1722,6 +1749,9 @@ def _fit_stored_fetch(
     事，所以直接跑一次试投影（纯函数，零 LLM 成本）。装得下就放行（旧的被挤掉是下一
     次投影的正常行为）；装不下就当场换成一句拒绝，**不让内容白回来一趟**——那次调用
     的钱已经花了，而模型永远看不见它的那笔账，正是 run_turn docstring 点名的那类失败。
+
+    `language`（国际化第三批）只影响这次**试**投影里规矩前缀的长度估算——`tools`
+    已经是调用方现成的那份声明，这一位不会让它重算。
     """
     if outcome.stored is None:
         return outcome
@@ -1731,6 +1761,7 @@ def _fit_stored_fetch(
         budget_units=budget_units,
         stale_calls=stale_calls,
         tools=tools,
+        language=language,
     )
     if not trial.over_budget and _fetch_survives(trial, outcome):
         return outcome
@@ -1899,7 +1930,7 @@ def run_turn(
 
     signal = cancel or Cancellation()
     emit = safe_emitter(on_event)
-    declarations = tool_declarations()
+    declarations = tool_declarations(context.language)
     chapter = context.working_chapter
     # 默认预算 = **剪枝碰不到的那一块** + `context.return_units`。两个数不是同一种量：
     # `return_units` 量的是对话那一侧（它的定义至今是「一次工具返回最多给多少字」），
@@ -1911,7 +1942,9 @@ def run_turn(
     # 就会静默把对话的额度切掉一块，而没有任何东西会提这件事。
     if budget_units is None:
         bare = conversation.model_copy(update={"messages": ()})
-        floor = project(bare, None, budget_units=0, tools=declarations).payload_units
+        floor = project(
+            bare, None, budget_units=0, tools=declarations, language=context.language
+        ).payload_units
         budget = floor + context.return_units
     else:
         budget = budget_units
@@ -2132,6 +2165,7 @@ def run_turn(
             stale_calls=stale_calls,
             tools=declarations,
             frontier=context.frontier_chapter,
+            language=context.language,
         )
         if last_projection.over_budget:
             # **先压缩，再停**：作者的话是唯一不可剪的累积，装不下时把最旧块压成
@@ -2288,6 +2322,7 @@ def run_turn(
                     budget_units=budget,
                     stale_calls=stale_calls,
                     tools=declarations,
+                    language=context.language,
                 )
             tool_calls += 1
             emit(TurnEvent.tool_finished(outcome, index=position + 1, total=len(calls)))

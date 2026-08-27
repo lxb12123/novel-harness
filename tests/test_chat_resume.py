@@ -819,7 +819,9 @@ def test_the_paid_tool_is_wired_and_a_replay_really_costs_again(
     """
     conn = connect(book["db"])
     try:
-        proj = type("P", (), {"id": book["pid"], "root_path": str(tmp_path)})
+        proj = type(
+            "P", (), {"id": book["pid"], "root_path": str(tmp_path), "language": "zh"}
+        )
         capability = resolve_capabilities("https://api.deepseek.com", "deepseek-v4-flash")
         desk = chat_mod.chapter_drafter(
             store=SqliteStoryGraph(conn),

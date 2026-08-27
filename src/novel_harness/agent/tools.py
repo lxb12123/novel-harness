@@ -227,6 +227,7 @@ from ..calibration.models import (
 from ..calibration.seal import SealRefused, seal_scene_brief
 from ..calibration.store import CalibrationNotFound, CalibrationRefused, CalibrationStore
 from ..calibration.handoff import build_retcon_handoff
+from .prompt_terms import translate_tool_declarations
 from .index import (
     BookIndexArgs,
     ChapterFullText,
@@ -1654,7 +1655,7 @@ def tool_label(name: str) -> str:
     return spec.label if spec is not None and spec.label else UNNAMED_TOOL_LABEL
 
 
-def tool_declarations() -> list[dict[str, Any]]:
+def tool_declarations(language: DraftLanguage = DraftLanguage.ZH) -> list[dict[str, Any]]:
     """OpenAI 兼容的 function schema，**由 `TOOL_TABLE` 生成**。
 
     直接喂 `draft.provider.complete(..., tools=...)`。手写第二份的诱惑在于「schema 里
@@ -1663,8 +1664,19 @@ def tool_declarations() -> list[dict[str, Any]]:
 
     这份声明是**跨章不变**的，因此它是 ADR 0019 边界六里少数几个能进稳定前缀的东西之一
     （约束不能进——它逐章变，缓存它就是把一条过期的禁令钉死在 context 里）。
+
+    ⚠️ **它不是「稳定前缀」本身**（国际化第三批踩出来的区分）：开会话那一步只把
+    `AGENT_SYSTEM_PROMPT` + `write_rule` 落库、读回时不重算（会话存储那一层的
+    建会话方法）；这份声明**每一轮都从当前 `TOOL_TABLE` 现算**（`loop.py` 里三处
+    调用点都是这样），从不落库。
+    所以它没有「老会话冻住了」这重保护——`language` 变了，下一轮就是新的一套。
+    实际影响为零：中文书的输出逐字节不变（`TOOL_TABLE` 一个字都没改，`translate_
+    tool_declarations` 对 ZH 直接原样返回），会变的只有英文书，而它昨天才刚支持。
+
+    `language` 只换 `translate_tool_declarations()` 那一层的措辞，`TOOL_TABLE`
+    本身（name / args / handler）跟语言无关，一个字都不读这个参数。
     """
-    return [
+    declarations = [
         {
             "type": "function",
             "function": {
@@ -1675,6 +1687,7 @@ def tool_declarations() -> list[dict[str, Any]]:
         }
         for spec in TOOL_TABLE
     ]
+    return translate_tool_declarations(declarations, language)
 
 
 # ══════════════════════════════════════════════════════════════════════════

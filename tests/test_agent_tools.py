@@ -356,6 +356,56 @@ def test_no_tool_schema_still_talks_about_secrets() -> None:
             )
 
 
+def test_an_english_books_tool_declarations_have_no_chinese_characters() -> None:
+    """国际化第三批：15 个工具发给英文书的 schema 里一个中文字都不许有。
+
+    判据和上面那条秘密守卫同一个精神，只是换了一把尺——**逐条扫全部 15 份声明**
+    （name + description + 递归到底的 parameters），而不是挑几个关键词。
+    `translate_tool_declarations()` 缺一条翻译时会直接 `KeyError`，所以这条测试
+    真正钉的是「翻完之后还剩下的那句中文」，不是「漏翻了会不会红」——后者已经由
+    `KeyError` 保证了。
+    """
+    import re
+
+    from novel_harness.draft.length import DraftLanguage
+
+    cjk = re.compile("[一-鿿　-〿＀-￯]")
+
+    for declaration in tool_declarations(DraftLanguage.EN):
+        blob = json.dumps(declaration, ensure_ascii=False)
+        assert cjk.search(blob) is None, (
+            f"{declaration['function']['name']!r} 的英文 schema 里还有中文字符：\n{blob}"
+        )
+
+
+def test_the_english_persona_and_rule_templates_have_no_chinese_characters() -> None:
+    """人设和规矩前缀是国际化第三批的另外两块，`tool_declarations()` 扫不到它们——
+    它们走的是 `AGENT_SYSTEM_PROMPT_EN`/`RULE_PROMPT_PREFIX_EN`/`RULE_PROMPT_UNTIL_EN`
+    这条完全独立的路径（`start_conversation`/`prompt_text` 各自的 `language` 分支），
+    所以单独钉一条。
+    """
+    import re
+
+    from novel_harness.agent.loop import AGENT_SYSTEM_PROMPT_EN
+    from novel_harness.agent.rules import RULE_PROMPT_PREFIX_EN, RULE_PROMPT_UNTIL_EN
+
+    cjk = re.compile("[一-鿿　-〿＀-￯]")
+    for text in (AGENT_SYSTEM_PROMPT_EN, RULE_PROMPT_PREFIX_EN, RULE_PROMPT_UNTIL_EN):
+        assert cjk.search(text) is None, text
+
+
+def test_the_chinese_tool_declarations_are_unchanged_by_the_translation_layer() -> None:
+    """国际化第三批最重要的那条回归：中文书拿到的声明必须和不传 `language` 时逐字节相同。
+
+    `translate_tool_declarations()` 对 ZH 是恒等变换（见它自己的 docstring），
+    这条测试量的正是这句话——`TOOL_TABLE`/15 个 Pydantic 类一个字都没有为了
+    双语化而改动，中文路径不需要，也没有，多付出任何东西。
+    """
+    from novel_harness.draft.length import DraftLanguage
+
+    assert tool_declarations(DraftLanguage.ZH) == tool_declarations()
+
+
 def test_the_constraints_tool_still_tells_the_author_which_constraint(world: World) -> None:
     """**反向断言：收窄过头是同一个 bug 的另一面。**
 

@@ -66,6 +66,7 @@ from typing import Any, Final
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..db import Connection
+from ..draft.length import DraftLanguage
 from ..draft.provider import ToolCall
 from ..ids import EntityType, new_id
 from .loop import AgentMessage, Conversation, Role, start_conversation
@@ -174,16 +175,28 @@ class ChatStore:
     # ── 会话 ──────────────────────────────────────────────────────────────
 
     def create(
-        self, project_id: str, *, title: str = "", write_rule: str | None = None
+        self,
+        project_id: str,
+        *,
+        title: str = "",
+        write_rule: str | None = None,
+        language: DraftLanguage = DraftLanguage.ZH,
     ) -> ChatSessionRow:
         """开一段新会话，并把稳定前缀落盘。
 
         `write_rule` 是作者的文风偏好。**它进前缀，所以它必须跨章不变**（边界六）——
         `start_conversation` 造出来的 `Conversation` 上那条校验器是这件事的执行者，
         这里只是把它的产物原样写下去。
+
+        `language`（国际化第三批）只在**这一刻**生效：选中文档还是英文档的
+        `AGENT_SYSTEM_PROMPT`，写进 `prefix` 就永久落库，往后读回来**不重算**
+        （本文件模块 docstring「唯一真正的正确性判据」第 1 条）。所以改一本书的
+        语言不会动它已有会话的开头——那正是这条判据存在的理由，不是这次新加的
+        保护；`tool_declarations()` 是另一件事，它不落库、每轮现算，见它自己的
+        docstring。
         """
         session_id = new_id(EntityType.CHAT_SESSION, project_id)
-        conversation = start_conversation(write_rule)
+        conversation = start_conversation(write_rule, language)
 
         def run() -> None:
             self._conn.execute(
