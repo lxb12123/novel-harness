@@ -38,14 +38,10 @@ PLAN §5.4 / 原则 11：**完整 PLANNED 永不进 Writer prompt**，只转译�
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..graph import Node, NodeRef, StoryGraph
-
-if TYPE_CHECKING:  # 只为标注：真导入会成环（见 require_resolved_cast 里那两行）
-    from ..draft.length import DraftLanguage
 
 
 class UnresolvedCast(Exception):
@@ -54,7 +50,19 @@ class UnresolvedCast(Exception):
     **拿它当「问作者」的信号，不是当错误。** 「师兄」在一章里可能指 8 个人中的任何一个
     （PLAN §3.1 点名的就是这个场景），系统不能替他猜——猜错的产物是一个此刻在场的人
     从这一场的在场名单里静默消失。
+
+    `code`/`params` 是 `frontend/src/backendMessages.ts` 的键 + 填模板用的原始事实
+    （国际化第四批 Phase B）——**不再是一句算好的话**。`api/app.py` 捕到它时直接
+    转发这一对，不再包一层"在场角色解析不了："之类的前缀：两条内层消息
+    （`unresolved_cast_ambiguous`/`unresolved_cast_no_cast_declared`）本来就是
+    完整句子，外层加前缀是"后端拼片段、前端拼整句"的形状，同 `validation_
+    blocked_title` 要避免的问题是一类。
     """
+
+    def __init__(self, code: str, **params: object) -> None:
+        super().__init__(code)
+        self.code = code
+        self.params = params
 
 
 class ResolvedCast(BaseModel):
@@ -177,7 +185,7 @@ class SceneConstraints(BaseModel):
     forbidden_entities: list[ForbiddenEntity] = Field(default_factory=list)
     """首现章号在本章之后的实体，按首现章号升序（最快要登场的排前面）。"""
 
-    def require_resolved_cast(self, language: DraftLanguage | None = None) -> None:
+    def require_resolved_cast(self) -> None:
         """**起草 / 拼 prompt 之前必须调这一下。**
 
         解析不出来的称呼要弹给作者（「这一场的『师兄』是萧决还是李管家？」），
@@ -186,25 +194,14 @@ class SceneConstraints(BaseModel):
         这个问题**要在 UI 上问作者**，而在 `require_resolved_cast()` 之前没有任何
         东西把它传到 UI。
 
-        `language` 缺省用函数体内延迟 import 的 `DraftLanguage.ZH`，不放模块顶层：
-        `panel/` 在 `draft/` 下游，`draft/__init__.py` 又会拉起 `context.py` 回头
-        `import panel.constraints`——模块顶层导 `draft.length` 会成环，见本文件
-        `TYPE_CHECKING` 那两行的注释。
-
         Raises:
             UnresolvedCast: `unresolved_cast` 非空。
         """
         if self.unresolved_cast:
-            from ..draft.length import DraftLanguage as _DraftLanguage
-            from ..prompt_terms import message
-
             raise UnresolvedCast(
-                message(
-                    "unresolved_cast_ambiguous",
-                    language or _DraftLanguage.ZH,
-                    chapter=self.chapter,
-                    unresolved=self.unresolved_cast,
-                )
+                "unresolved_cast_ambiguous",
+                chapter=self.chapter,
+                unresolved=self.unresolved_cast,
             )
 
 

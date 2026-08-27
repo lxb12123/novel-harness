@@ -301,17 +301,28 @@ def test_a_sentence_number_that_does_not_exist_is_dropped(written: dict) -> None
 
 
 def test_the_notice_says_who_and_what_without_any_engine_words(written: dict) -> None:
-    """标题是给小说作者看的：说得出哪一句、哪个人、哪条秘密，**不说机器码**。"""
+    """`title_params` 说得出哪一句、哪一章——渲染成人话是前端的活（国际化第四批
+    Phase B）。`conflict` 发的是封闭枚举值（`setting`），**这一位本身就是设计成
+    这样发的**，不算"机器码上屏"：它从不原样显示，前端 `backendMessages.ts` 的
+    `CONFLICT_LABEL` 查表翻成"设定对不上"才上屏，那条翻译的断言在
+    `backendMessages.test.ts` 里。这儿只钉后端不许多发跟这条通知无关的内部词
+    （`track`/`text_advisory`/`node` 这类和"这一句冲突在哪"毫无关系的标识符）。
+    """
     number = _sentence_number(written, SLIP_LINE)
     reviewer = Reviewer({"track": _found(number, chapter=5, conflict="setting")})
 
     _review(written, reviewer)
 
-    title = next(n for n in _notices(written) if n.kind == "text_advisory").title
-    assert f"第 {number} 句" in title
-    assert "第 5 章" in title
-    for machine in ("track", "text_advisory", "setting", "clash", "node"):
-        assert machine not in title
+    notice = next(n for n in _notices(written) if n.kind == "text_advisory")
+    assert notice.title_code == "clash_title"
+    params = notice.title_params
+    assert params is not None
+    assert params["sentence"] == number
+    assert params["chapter"] == 5
+    assert params["conflict"] == "setting"  # 封闭枚举，前端翻译，不是泄漏
+    blob = json.dumps(params, ensure_ascii=False)
+    for machine in ("track", "text_advisory", "node"):
+        assert machine not in blob
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -327,10 +338,18 @@ def test_a_clash_with_a_later_chapter_comes_back_as_three_numbers(written: dict)
     outcome = _review(written, reviewer)
 
     assert outcome.clashes == (TrackClash(sentence=number, chapter=5, conflict="setting"),)
-    title = next(n for n in _notices(written) if n.kind == "text_advisory").title
-    assert f"第 {number} 句 ↔ 第 5 章" in title
-    assert "设定对不上" in title
-    assert "setting" not in title, "枚举值是机器码，不上作者的屏"
+    notice = next(n for n in _notices(written) if n.kind == "text_advisory")
+    assert notice.title_code == "clash_title"
+    # "第几句 ↔ 第几章 + 冲突类型"，三样——`rest` 是第四位（还有几条），
+    # 跟出参 `TrackClash` 的三个字段不是同一件事：那是模型判定的形状，
+    # 这是通知要说的话的形状。`conflict` 发封闭枚举本身，翻成"设定对不上"
+    # 是前端的活（`backendMessages.test.ts` 钉着那条翻译）。
+    assert notice.title_params == {
+        "sentence": number,
+        "chapter": 5,
+        "conflict": "setting",
+        "rest": 0,
+    }
 
 
 def test_a_chapter_number_outside_the_track_is_dropped(written: dict) -> None:
@@ -380,9 +399,10 @@ def test_the_later_chapters_never_come_back_out_in_the_verdict(written: dict) ->
     verdict = json.dumps(
         [c.model_dump() for c in outcome.clashes], ensure_ascii=False
     )
+    title_blob = json.dumps(notice.title_params, ensure_ascii=False)
     for leaked in (LATER_SETTING, SPOILER, "玄血蛊"):
         assert leaked not in verdict, f"轨道原文进了评语：{leaked}"
-        assert leaked not in notice.title, f"轨道原文进了通知：{leaked}"
+        assert leaked not in title_blob, f"轨道原文进了通知：{leaked}"
         assert notice.jump is not None and leaked not in notice.jump.quote_text
 
 

@@ -705,42 +705,27 @@ def _notify_if_nothing_survived(
     """
     if report.valid_event_count or not report.discarded_event_count:
         return
-    from .. import project as project_mod
-    from ..draft.length import DraftLanguage
-    from ..prompt_terms import message
     from ..system_notifications import enqueue_extraction_yielded_nothing
-
-    owner_project = project_mod.get(conn, run.project_id)
-    language = (
-        DraftLanguage(owner_project.language) if owner_project is not None else DraftLanguage.ZH
-    )
 
     lost = report.discarded_event_count
     # 只有当丢弃理由**真的**是「认不出人」时才敢这么说。理由换了别的（将来多一档
     # 丢弃条件）就退回中性措辞——宁可少说一句，也不给作者指一个错方向。
+    # **发这个布尔值，不发挑好的那句话**（国际化第四批 Phase B）：中文/英文用哪句
+    # "为什么"、"还有几条待确认"要不要出现，是前端 `backendMessages.ts` 模板函数
+    # 的分支逻辑，后端只送事实。
     unresolved = sum(
         reason.kind == "event" and _NO_PARTICIPANTS in reason.detail
         for reason in report.discarded
-    )
-    why_key = (
-        "extraction_yielded_nothing_why_unresolved"
-        if unresolved == lost
-        else "extraction_yielded_nothing_why_lost"
-    )
-    why = message(why_key, language)
-    tail = (
-        message(
-            "extraction_yielded_nothing_tail_with_proposals",
-            language,
-            count=report.proposal_count,
-        )
-        if report.proposal_count
-        else message("extraction_yielded_nothing_tail_no_roster", language)
     )
     enqueue_extraction_yielded_nothing(
         conn,
         project_id=run.project_id,
         snapshot_id=run.snapshot_id,
         chapter_number=run.chapter_number,
-        title=message("extraction_yielded_nothing_title", language, lost=lost, why=why, tail=tail),
+        title_code="extraction_yielded_nothing_title",
+        title_params={
+            "lost": lost,
+            "unresolved": unresolved == lost,
+            "proposal_count": report.proposal_count,
+        },
     )

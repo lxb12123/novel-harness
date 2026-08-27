@@ -49,7 +49,7 @@ def test_enqueue_then_materialize_produces_one_open_mismatch(world: dict) -> Non
         subject_type="chapter_summary",
         subject_id="summary:1",
         chapter_number=1,
-        title="第 1 章的总结可能与正文不一致",
+        title_code="test_notice", title_params=None,
         dedupe_key=key,
         summary_sha256="s1",
         source_sha256="src1",
@@ -76,7 +76,7 @@ def test_supported_resolves_old_open_but_ignored_stays(world: dict) -> None:
     enqueue_notification(
         conn, project_id=pid, kind="summary_mismatch",
         subject_type="chapter_summary", subject_id="summary:2", chapter_number=2,
-        title="可能有冲突", dedupe_key=key,
+        title_code="test_notice", title_params=None, dedupe_key=key,
         summary_sha256="s2", source_sha256="src2",
     )
     conn.commit()
@@ -90,7 +90,7 @@ def test_supported_resolves_old_open_but_ignored_stays(world: dict) -> None:
     enqueue_notification(
         conn, project_id=pid, kind="summary_mismatch",
         subject_type="chapter_summary", subject_id="summary:2", chapter_number=2,
-        title="还是可能有冲突", dedupe_key=key,
+        title_code="test_notice", title_params=None, dedupe_key=key,
         summary_sha256="s2", source_sha256="src2",
     )
     conn.commit()
@@ -108,7 +108,7 @@ def test_new_hash_pair_can_notify_again(world: dict) -> None:
     enqueue_notification(
         conn, project_id=pid, kind="summary_mismatch",
         subject_type="chapter_summary", subject_id="summary:3", chapter_number=3,
-        title="旧 hash", dedupe_key=old,
+        title_code="test_notice", title_params=None, dedupe_key=old,
         summary_sha256="sA", source_sha256="srcA",
     )
     conn.commit()
@@ -125,7 +125,7 @@ def test_new_hash_pair_can_notify_again(world: dict) -> None:
     enqueue_notification(
         conn, project_id=pid, kind="summary_mismatch",
         subject_type="chapter_summary", subject_id="summary:3", chapter_number=3,
-        title="新 hash", dedupe_key=new,
+        title_code="test_notice", title_params=None, dedupe_key=new,
         summary_sha256="sA", source_sha256="srcB",
     )
     conn.commit()
@@ -170,7 +170,7 @@ def test_validation_blocked_notification_is_durable_and_deduplicated(
     enqueue_notification(
         conn, project_id=pid, kind="validation_blocked",
         subject_type="chapter", subject_id="chapter:1", chapter_number=1,
-        title="第 1 章检查发现需要留意的地方", dedupe_key=key,
+        title_code="test_notice", title_params=None, dedupe_key=key,
     )
     conn.commit()  # 模拟：outbox 行已随业务事务提交
     # 重启 dispatcher —— 不需要再有什么业务请求。
@@ -182,7 +182,7 @@ def test_validation_blocked_notification_is_durable_and_deduplicated(
     enqueue_notification(
         conn, project_id=pid, kind="validation_blocked",
         subject_type="chapter", subject_id="chapter:1", chapter_number=1,
-        title="第 1 章检查发现需要留意的地方", dedupe_key=key,
+        title_code="test_notice", title_params=None, dedupe_key=key,
     )
     conn.commit()
     materialize_notification_outbox(conn, project_id=pid, lease_owner="restart")

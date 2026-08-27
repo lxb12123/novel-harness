@@ -919,21 +919,14 @@ class ChapterRefreshCoordinator:
                 if validation.gate == "blocked":
                     # 标题和锚都由通知层从报告里取（M1-c）——**哪一段、哪一句、哪条规则**
                     # 本来就在 Issue 上，以前停在报告里没跟着通知走，作者点不过去。
-                    from . import project as project_mod
-                    from .draft.length import DraftLanguage
+                    # **不用再查这本书的界面语言**（国际化第四批 Phase B）：通知发的是
+                    # 码 + 参数，渲染在前端按当前界面语言进行，后端不用再猜。
                     from .system_notifications import enqueue_validation_blocked
 
-                    owner_project = project_mod.get(self._conn, validation.project_id)
-                    language = (
-                        DraftLanguage(owner_project.language)
-                        if owner_project is not None
-                        else DraftLanguage.ZH
-                    )
                     enqueue_validation_blocked(
                         self._conn,
                         report=validation,
                         attempt_id=attempt_id,
-                        language=language,
                     )
                 _branch_update(
                     self._conn, attempt_id, owner=owner, token=token,

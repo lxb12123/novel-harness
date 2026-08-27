@@ -17,6 +17,7 @@ import { BookShelf } from "./BookShelf";
 import { ChatPanel } from "./ChatPanel";
 import { DraftCompare } from "./DraftCompare";
 import { RulesTable } from "./RulesTable";
+import { SystemNotifications } from "./SystemNotifications";
 
 // **对抗性验证：那张「形状判据」的网真的比词表强吗。**
 //
@@ -425,6 +426,64 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     await screen.findByText("你说过的话一句都没被删掉");
     expect(document.body.textContent).not.toContain("**");
     // 停止原因是机器码，它一个字都不该跟着那句话上屏。
+    expect(devTerms(screenText())).toEqual([]);
+  });
+
+  // ── 系统通知（国际化第四批 Phase B）────────────────────────────────────────
+  //
+  // 这一格以前从没被这张网扫过（补上之前是个真的洞：`SystemNotifications.tsx`
+  // 不在 DevTerms 的扫描面里）。**它现在渲染的是码 + 参数，不是后端拼好的句子**
+  // ——`messageForCode()` 拿到码去 `backendMessages.ts` 整句渲染，这条测试要
+  // 验的是**这条新路径的渲染结果**真的会被这五张网扫到，不是从前那种
+  // "后端已经把话拼好了，前端原样显示"的旧形状。
+  //
+  // 数据不是真 dump 的 fixture（`notifications` 那份契约夹具里的
+  // `title_code: "test_notice"` 是占位符，不代表任何真的注册码）——这儿手搭
+  // 一组覆盖高风险码的通知：`validation_blocked_title` 的 `rule_title`/
+  // `issue_message` 是 `checks/` 的原文，`clash_title` 的 `conflict` 是封闭
+  // 枚举，两者都是"这个参数会不会把机器词带上屏"的第一嫌疑对象。
+  it("系统通知：码 + 参数渲染出来的整句上一个研发术语都没有", async () => {
+    const notices = [
+      {
+        id: "notif:ID1",
+        project_id: "project:ID1",
+        kind: "validation_blocked",
+        status: "OPEN",
+        subject_type: "chapter",
+        subject_id: "chapter:ID1",
+        chapter_number: 3,
+        title_code: "validation_blocked_title",
+        title_params: {
+          paragraph: 2,
+          rule_title: "设定提前出现",
+          rest: 1,
+          issue_message: "血脉秘密在这一段被提前带出",
+        },
+        summary_sha256: null,
+        source_sha256: null,
+        jump: { para_index: 1, quote_text: "血脉秘密", occurrence_k: 0 },
+        actions: [],
+        created_at: "2026-08-27T00:00:00.000Z",
+      },
+      {
+        id: "notif:ID2",
+        project_id: "project:ID1",
+        kind: "text_advisory",
+        status: "OPEN",
+        subject_type: "chapter",
+        subject_id: "chapter:ID2",
+        chapter_number: 5,
+        title_code: "clash_title",
+        title_params: { sentence: 3, chapter: 64, conflict: "setting", rest: 0 },
+        summary_sha256: null,
+        source_sha256: null,
+        jump: { para_index: 2, quote_text: "玄铁令", occurrence_k: 0 },
+        actions: [],
+        created_at: "2026-08-27T00:00:00.000Z",
+      },
+    ];
+    renderWithApi(<SystemNotifications />, [{ match: /\/notifications$/, body: notices }]);
+    await screen.findByText(/设定提前出现/);
     expect(devTerms(screenText())).toEqual([]);
   });
 });

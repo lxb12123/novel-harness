@@ -46,7 +46,6 @@ from pydantic import (
 from .. import importer
 from .. import onboarding
 from .. import project as project_mod
-from ..prompt_terms import message
 from ..system_notifications import enqueue_import_toc_skipped, materialize_notification_outbox
 from ..text.language import detect_language
 from ..settings import Settings as UserSettings
@@ -633,10 +632,20 @@ def put_settings(body: SettingsBody) -> dict[str, Any]:
 
 
 class ModelWindowsPullFailed(Exception):
-    """那份公开的模型表没拉下来（网络、超时、内容不对）。**旧的那份原样留着。**"""
+    """那份公开的模型表没拉下来（网络、超时、内容不对）。**旧的那份原样留着。**
+
+    `code` 是 `frontend/src/backendMessages.ts` 的键（国际化第四批 Phase B）——
+    **不带任何参数**：原来分别带 `exc_type`（Python 异常类名）和 `str(exc)`，
+    两个都是写给维护者看的诊断，不是作者能用的信息（"网络好了再试一次"已经说完了
+    他能做的事），已经整个删掉，不是收窄成安全形状——判断在发送前做，不在前端补。
+    """
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
 
 
-def pull_model_windows(language: DraftLanguage = DraftLanguage.ZH) -> dict[str, Any]:
+def pull_model_windows() -> dict[str, Any]:
     """去拉一次那份公开的模型表，成功返回回执（新增/变化/减少各几条）。
 
     **这是全仓库唯一一份「拉那张表」的实现**，两个调用方共用：作者拨开关那一刻
@@ -660,14 +669,12 @@ def pull_model_windows(language: DraftLanguage = DraftLanguage.ZH) -> dict[str, 
         with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310
             raw = _json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-        raise ModelWindowsPullFailed(
-            message("model_windows_pull_failed", language, exc_type=type(exc).__name__)
-        ) from exc
+        raise ModelWindowsPullFailed("model_windows_pull_failed") from exc
 
     try:
-        report = model_windows.refresh(raw, fetched=date.today().isoformat(), language=language)
+        report = model_windows.refresh(raw, fetched=date.today().isoformat())
     except (ValueError, OSError) as exc:
-        raise ModelWindowsPullFailed(str(exc)) from exc
+        raise ModelWindowsPullFailed("model_windows_refresh_empty") from exc
     return report.model_dump()
 
 
@@ -717,15 +724,15 @@ def refresh_model_windows() -> dict[str, Any]:
     * **回执说出变了什么**（新增/变化/减少各几条）。没有它这就是一颗不出声的按钮，
       作者点完只能猜有没有生效 —— 而这个仓库正在还的债有一半是那种形态。
 
-    ⚠️ **这条路由拿不到 `language`**：模型窗口表是应用级设置，不挂在任何一本书
-    上（没有 `Depends(load_project)`），而界面语言是独立开关（B 裁定），今天还
-    没有哪条路把它从前端带到后端。失败时的这句话因此恒为中文——已知缺口，
-    等界面语言真的需要影响后端文案时再补，不在这一批范围内。
+    这条路由曾经拿不到界面语言（模型窗口表是应用级设置，不挂在任何一本书上，
+    没有 `Depends(load_project)`），失败时的话因此恒为中文——**国际化第四批
+    Phase B 把这个缺口连带解决了**：既然通知/错误改成发码，这条路由和有没有
+    `proj` 已经无关，前端拿到 `error` 码照样用自己的界面语言渲染。
     """
     try:
         return pull_model_windows()
     except ModelWindowsPullFailed as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=502, detail={"error": exc.code}) from exc
 
 
 # ── 上手：建书 / 导入 TXT / 同步（让非程序员不碰命令行也能起步）──────────────
@@ -788,13 +795,7 @@ def bootstrap_project(
         text=body.text if isinstance(body, ImportBootstrap) else None,
     )
     if result.import_report is not None:
-        _notify_toc_skipped(
-            store,
-            conn,
-            result.project.id,
-            result.import_report.skipped_toc,
-            language=DraftLanguage(result.project.language),
-        )
+        _notify_toc_skipped(store, conn, result.project.id, result.import_report.skipped_toc)
     return manuscript.bootstrap_view(result)
 
 
@@ -815,8 +816,6 @@ def _notify_toc_skipped(
     conn: Any,
     project_id: str,
     skipped: list[importer.SkippedTocEntry],
-    *,
-    language: DraftLanguage = DraftLanguage.ZH,
 ) -> None:
     """导入丢了目录页假章时落一条通知（032）。**空列表是无操作**：绝大多数书
     从不触发 `drop_toc_duplicates()`，这条函数在那些书上什么都不做。
@@ -824,12 +823,14 @@ def _notify_toc_skipped(
     指纹在**这里**算——此刻就是撤销要恢复到的那个基线（这次导入刚完成，
     还没有任何声明/抽取写进图里）。立即 `materialize`，不等后台那一轮：
     导入是前台同步动作，通知也该同步可见，不必等下一次后台 outbox 扫描。
+
+    **不再收 `language`**（国际化第四批 Phase B）：通知发码，渲染在前端进行。
     """
     if not skipped:
         return
     fingerprint = importer.toc_skip_fingerprint(conn, store, project_id)
     enqueue_import_toc_skipped(
-        conn, project_id=project_id, skipped=skipped, fingerprint=fingerprint, language=language
+        conn, project_id=project_id, skipped=skipped, fingerprint=fingerprint
     )
     conn.commit()
     materialize_notification_outbox(conn, project_id=project_id, lease_owner="import")
@@ -855,9 +856,7 @@ def import_book(
         report = importer.import_book(store, proj.id, txt=tmp, root=Path(proj.root_path))
     finally:
         tmp.unlink(missing_ok=True)
-    _notify_toc_skipped(
-        store, conn, proj.id, report.skipped_toc, language=DraftLanguage(proj.language)
-    )
+    _notify_toc_skipped(store, conn, proj.id, report.skipped_toc)
     _detect_and_store_language(conn, proj.id, Path(proj.root_path))
     return report
 
@@ -1140,13 +1139,7 @@ def create_chapter(
     except FileExistsError:
         # 另一个窗口（或另一个进程）在这两步之间已经把那一章建出来了。
         # **不覆盖**：那边可能已经写了字。让作者刷新一下看见它，而不是把它清空。
-        raise HTTPException(
-            409,
-            {
-                "error": "chapter_exists",
-                "message": message("chapter_exists_message", DraftLanguage(proj.language)),
-            },
-        )
+        raise HTTPException(409, {"error": "chapter_exists"})
     entry = next(
         (e for e in importer.chapter_files(Path(proj.root_path)) if e.number == number),
         None,
@@ -1175,15 +1168,7 @@ def delete_chapter(
     try:
         importer.remove_chapter(store, proj.id, Path(proj.root_path), chapter)
     except importer.ChapterMissing:
-        raise HTTPException(
-            404,
-            {
-                "error": "chapter_missing",
-                "message": message(
-                    "chapter_missing_message", DraftLanguage(proj.language), chapter=chapter
-                ),
-            },
-        )
+        raise HTTPException(404, {"error": "chapter_missing", "params": {"chapter": chapter}})
     return {"deleted": True, "number": chapter}
 
 
@@ -1813,7 +1798,7 @@ def draft(
     if chapter < 1:
         raise HTTPException(
             status_code=422,
-            detail=message("chapter_number_at_least_one", DraftLanguage(proj.language)),
+            detail={"error": "chapter_number_at_least_one"},
         )
 
     try:
@@ -1845,10 +1830,10 @@ def draft(
         )
         plan = plan_call(length, ReasoningEffort.OFF, capability)
     except (ValidationError, ValueError, CapabilityError) as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=message("model_not_configured", DraftLanguage(proj.language), exc=exc),
-        )
+        # `exc` 不进 `detail`：`ValidationError`/`CapabilityError` 的文本是写给
+        # 维护者看的诊断（字段名、类型名），不是安全能塞进 params 的东西——同
+        # `ProviderError` 那条"str(self) 永远不上作者屏幕"的既有纪律。
+        raise HTTPException(status_code=422, detail={"error": "model_not_configured"}) from exc
 
     # 轨道（`track.py`）：**作者是不是跳回去改旧章**，以及后面哪几章的总结跟这一段相关。
     # 零模型调用、零花费，两级都是查库 + 一条正则。就在最前沿写 = 空的，什么都不变。
@@ -1901,17 +1886,14 @@ def draft(
             ctx = ResolvedConstraints.of(
                 scene_view(store, project_id, chapter, body.cast),
                 body.cast,
-                DraftLanguage(proj.language),
             )
         else:
             ctx = unknown_cast_constraints(store, project_id, chapter)
     except UnresolvedCast as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=message(
-                "cast_could_not_resolve_prefix", DraftLanguage(proj.language), exc=exc
-            ),
-        )
+        # 直接转发 exc 自己的 code/params，不再包一层前缀——两条内层消息
+        # （unresolved_cast_ambiguous/unresolved_cast_no_cast_declared）已经是
+        # 完整句子（国际化第四批 Phase B）。
+        raise HTTPException(status_code=422, detail={"error": exc.code, "params": exc.params})
 
     def bill(receipt: ModelCallReceipt) -> None:
         """一次真的模型调用 = 一行 `model_call`。**当场落，不等这一稿拼完。**
@@ -1951,12 +1933,10 @@ def draft(
     except DraftRefused as exc:
         raise HTTPException(status_code=422, detail=str(exc))
     except UnresolvedCast as exc:
-        raise HTTPException(
-            status_code=422,
-            detail=message(
-                "cast_could_not_resolve_prefix", DraftLanguage(proj.language), exc=exc
-            ),
-        )
+        # 直接转发 exc 自己的 code/params，不再包一层前缀——两条内层消息
+        # （unresolved_cast_ambiguous/unresolved_cast_no_cast_declared）已经是
+        # 完整句子（国际化第四批 Phase B）。
+        raise HTTPException(status_code=422, detail={"error": exc.code, "params": exc.params})
     except ProviderError as exc:
         raise HTTPException(status_code=502, detail=f"模型调用失败：{exc}")
 
@@ -2099,15 +2079,7 @@ def _summary_state(conn: Any, project_id: str, chapter: int) -> dict[str, Any]:
     from ..draft.rolling_summary import SummaryStore
 
     if chapter < 1:
-        owner_project = project_mod.get(conn, project_id)
-        language = (
-            DraftLanguage(owner_project.language)
-            if owner_project is not None
-            else DraftLanguage.ZH
-        )
-        raise HTTPException(
-            status_code=422, detail=message("chapter_number_at_least_one", language)
-        )
+        raise HTTPException(status_code=422, detail={"error": "chapter_number_at_least_one"})
     rows = SummaryStore(conn).coverage(project_id, chapter, chapter)
     return rows[0].model_dump(mode="json")
 
@@ -2164,7 +2136,7 @@ def edit_chapter_summary(
     if chapter < 1:
         raise HTTPException(
             status_code=422,
-            detail=message("chapter_number_at_least_one", DraftLanguage(proj.language)),
+            detail={"error": "chapter_number_at_least_one"},
         )
     try:
         save_author_summary(
@@ -2176,7 +2148,7 @@ def edit_chapter_summary(
             expect_head="expected_version_id" in body.model_fields_set,
         )
     except SummaryTextRejected as exc:
-        raise HTTPException(status_code=422, detail=str(exc))
+        raise HTTPException(status_code=422, detail={"error": exc.code, "params": exc.params})
     except SummaryEditConflict as exc:
         raise HTTPException(status_code=409, detail=str(exc))
     except SummaryChapterNotFound:
@@ -2198,7 +2170,7 @@ def chapter_summary_history(
     if chapter < 1:
         raise HTTPException(
             status_code=422,
-            detail=message("chapter_number_at_least_one", DraftLanguage(proj.language)),
+            detail={"error": "chapter_number_at_least_one"},
         )
     row = conn.execute(
         """
@@ -2242,7 +2214,7 @@ def retract_chapter_summary(
     if chapter < 1:
         raise HTTPException(
             status_code=422,
-            detail=message("chapter_number_at_least_one", DraftLanguage(proj.language)),
+            detail={"error": "chapter_number_at_least_one"},
         )
     retract_summary(conn, project_id=proj.id, chapter_number=chapter)
     return _summary_state(conn, proj.id, chapter)
@@ -2288,7 +2260,7 @@ def chapter_summary_mentions(
     if chapter < 1:
         raise HTTPException(
             status_code=422,
-            detail=message("chapter_number_at_least_one", DraftLanguage(proj.language)),
+            detail={"error": "chapter_number_at_least_one"},
         )
     hits = mentions_in_chapter(conn, store, proj.id, chapter)
     return {

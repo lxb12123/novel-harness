@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-import re
 from typing import Any
 
 import pytest
@@ -202,26 +201,36 @@ def test_changing_back_to_an_earlier_wording_really_takes(seed: Seed) -> None:
         conn.close()
 
 
-def test_empty_and_overlong_text_are_refused_in_words_the_author_can_read(
+def test_empty_and_overlong_text_are_rejected_with_a_registered_code(
     seed: Seed,
 ) -> None:
+    """`SummaryTextRejected` 发 code + params，不再是拼好的中文（国际化第四批
+    Phase B）——"拒绝作者的话必须是中文"这条断言移到了前端：
+    `frontend/src/backendMessages.test.ts` 钉着这两个码两侧都有翻译、
+    英文侧零中文字符；这儿只钉后端发的是**哪个**码、带着**哪些**参数。
+    """
     conn = seed.connection()
     try:
         with pytest.raises(SummaryTextRejected) as empty:
             save_author_summary(
                 conn, project_id=seed.project_id, chapter_number=1, text="   \n "
             )
+        assert empty.value.code == "summary_text_rejected_empty"
+        assert empty.value.params == {}
+
+        overlong = "字" * (AUTHOR_SUMMARY_MAX_CHARS + 1)
         with pytest.raises(SummaryTextRejected) as long:
             save_author_summary(
                 conn,
                 project_id=seed.project_id,
                 chapter_number=1,
-                text="字" * (AUTHOR_SUMMARY_MAX_CHARS + 1),
+                text=overlong,
             )
-        for exc in (empty, long):
-            said = str(exc.value)
-            assert re.search(r"[一-鿿]", said), "拒绝作者的话必须是中文"
-            assert not re.search(r"[a-z][a-z0-9]*_[a-z0-9]+", said), "别把字段名摆给作者"
+        assert long.value.code == "summary_text_rejected_too_long"
+        assert long.value.params == {
+            "length": len(overlong),
+            "max_chars": AUTHOR_SUMMARY_MAX_CHARS,
+        }
         assert _rows(conn, seed.project_id, 1) == []
     finally:
         conn.close()
@@ -447,14 +456,19 @@ def test_editing_a_chapter_that_has_no_text_is_a_404_not_a_500(
     assert client.delete(base).status_code == 200
 
 
-def test_an_overlong_edit_is_refused_in_the_authors_language(
+def test_an_overlong_edit_is_refused_with_a_registered_code(
     client: TestClient, book: dict[str, str]
 ) -> None:
+    """国际化第四批 Phase B：`detail` 是 `{error, params}`，不再是一句拼好的中文
+    ——渲染成"作者的语言"是前端的活，见 `frontend/src/backendMessages.test.ts`。
+    """
     base = f"/api/projects/{book['pid']}/chapters/1/summary"
-    refused = client.patch(base, json={"summary": "字" * (AUTHOR_SUMMARY_MAX_CHARS + 1)})
+    overlong = "字" * (AUTHOR_SUMMARY_MAX_CHARS + 1)
+    refused = client.patch(base, json={"summary": overlong})
     assert refused.status_code == 422, refused.text
-    said = refused.json()["detail"]
-    assert re.search(r"[一-鿿]", said) and "_" not in said
+    detail = refused.json()["detail"]
+    assert detail["error"] == "summary_text_rejected_too_long"
+    assert detail["params"] == {"length": len(overlong), "max_chars": AUTHOR_SUMMARY_MAX_CHARS}
 
 
 def test_background_tidying_never_buys_back_a_retracted_summary(

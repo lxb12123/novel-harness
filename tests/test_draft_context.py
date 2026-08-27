@@ -116,16 +116,20 @@ def test_ambiguous_cast_raises_instead_of_degrading() -> None:
     degraded = scene_constraints(store, PID, 152, cast)
     assert degraded.unresolved_cast == ["师兄"]
 
-    with pytest.raises(UnresolvedCast, match="师兄"):
+    with pytest.raises(UnresolvedCast) as exc:
         resolve_constraints(store, PID, 152, cast)
+    assert exc.value.code == "unresolved_cast_ambiguous"
+    assert "师兄" in exc.value.params["unresolved"]
 
 
 def test_unknown_cast_surface_raises_too() -> None:
     """「查无此人」和歧义走同一个出口：两者都是「我不知道这一场有谁」。"""
     store = build([edge(GU_QINGYIN.id, QINGYUN.id, EdgeType.LOCATED_AT, 10)])
 
-    with pytest.raises(UnresolvedCast, match="查无此人"):
+    with pytest.raises(UnresolvedCast) as exc:
         resolve_constraints(store, PID, 152, [GU_QINGYIN.name, "查无此人"])
+    assert exc.value.code == "unresolved_cast_ambiguous"
+    assert "查无此人" in exc.value.params["unresolved"]
 
 
 def test_empty_cast_raises_the_hole_require_resolved_cast_misses() -> None:

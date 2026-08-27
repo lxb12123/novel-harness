@@ -28,6 +28,31 @@ import type { Language } from "./language";
 // **这些分支只写在这张表的模板函数里**，后端只送原始数值/枚举，不送任何
 // 已经决定好顺序或措辞的片段——中英文的语序、要不要复数、分支怎么选，
 // 每种语言各自决定，不共用同一份"先拼 A 再拼 B"的顺序。
+//
+// ── ⚠️ 每一个 param 都要过一遍"这个值对作者安全吗"，不是只有整句才要查 ──────
+//
+// **"码 + 参数"不会自动解决措辞安全问题，只是把它从"整句"挪到了"参数"里。**
+// 迁移 8 个错误消费者到 `saidToTheAuthor` 时撞过两次真回归：`RosterDrawer.tsx`
+// 那档拒绝的后端 `.message` 里带着 `usable_for_rules`/`ADR 0004`，
+// `HistoryDrawer.tsx` 那档带着裸快照 id——都是**后端本来就不该说给作者听的话**，
+// 只是以前用整句字符串的形式发过来，容易被"反正后端发的就是人话"这条经验糊弄过去。
+// 换成码 + 参数之后，同一种毒换了个容器：如果某个 param 本身是 `str(exc)`、
+// 内部标识符、或者别的写给维护者看的东西，前端会**原样嵌进模板**，作者屏幕上
+// 照样出现引擎词——因为前端这边压根不知道、也不该知道"这个参数看起来像不像
+// 内部术语"，那是语义判断，ADR 0005 禁的那类事。
+//
+// **判据只能在发送前、由后端逐个 param 过一遍**：这个值是——
+//   · 结构化数据（计数、章号、枚举值）？→ 安全，正常送。
+//   · 作者自己写的原文（称呼、正文引语、规则命中的原文）？→ 安全，正常送——
+//     这些本来就在别的地方原样展示给作者过（花名册、检查面板），不是新增风险。
+//   · 某个异常的 `str()`、内部字段名、Python 类名？→ **不安全，两条路**：要么
+//     整个不送这个码（退回一个不带这个参数的专用兜底句，同 `RosterDrawer.tsx`
+//     今天的做法），要么在后端把它收窄成安全的形状（`clash_title` 的 `conflict`
+//     本来想传"冲突原因文字"，改成传封闭枚举值，翻译交给前端自己的
+//     `CONFLICT_LABEL`，就是"收窄成安全形状"的例子）。
+// `model_not_configured`/`model_windows_pull_failed` 两条原来各带一个
+// `{exc}`/`{exc_type}` 参数，都属于"异常的 str()"这一类，都已经整个删掉——
+// 不是收窄，是根本不送。
 
 // `unknown` 不是偷懒：这些值从 HTTP JSON 或通知的 `params_json` 过来，运行时到底
 // 是什么形状由后端那次具体调用决定，这里不该替它收窄。`fill()`/模板函数自己按需
@@ -77,7 +102,7 @@ const MESSAGES: Record<string, Template> = {
   // lost / unresolved（这一档丢弃的原因是不是「认不出人」）/ proposal_count
   extraction_yielded_nothing_title: (params, language) => {
     const why =
-      params.unresolved === "true"
+      params.unresolved === true
         ? language === "zh"
           ? "它们提到的人在花名册里还认不出来"
           : "the people they mention aren't recognized in the roster yet"
@@ -135,30 +160,48 @@ const MESSAGES: Record<string, Template> = {
     zh: "章号至少是 1",
     en: "Chapter number must be at least 1",
   },
-  chapter_exists_message: {
+  chapter_exists: {
     zh: "这一章刚刚已经被建出来了（另一个窗口？）。刷新一下就能看见它。",
     en: "This chapter was just created (from another window?). Refresh and you'll see it.",
   },
-  chapter_missing_message: {
+  chapter_missing: {
     zh: "第 {chapter} 章已经不在了。刷新一下就对得上了。",
     en: "Chapter {chapter} is no longer there. Refresh and things will line up again.",
   },
-  cast_could_not_resolve_prefix: {
-    zh: "在场角色解析不了：{exc}",
-    en: "Could not resolve who's present: {exc}",
-  },
+  // `cast_could_not_resolve_prefix`（旧："在场角色解析不了：{exc}"）删掉了，不是漏了。
+  // `exc` 曾经是 `UnresolvedCast` 的 `str()`——那本身已经是 `unresolved_cast_ambiguous`/
+  // `unresolved_cast_no_cast_declared` 渲染完的整句。Phase B 把 `UnresolvedCast` 自己
+  // 改成带 `code`/`params`（不再是一个字符串），api/app.py 直接转发那对 code/params，
+  // 不再包一层"在场角色解析不了："前缀——两条内层消息本来就是完整句子，不需要外层
+  // 再加一句引导语，加了反而是「后端拼前缀 + 前端拼正文」的片段拼接，同 validation_
+  // blocked_title 那次要避免的形状是一类问题。
   model_not_configured: {
-    zh: "模型没配好：{exc} —— 先去顶栏 ⚙「AI 设置」填服务地址/模型/钥匙，或设 NH_LLM_BASE_URL / NH_LLM_MODEL / NH_LLM_API_KEY。",
-    en: 'The model isn\'t configured: {exc} — go to the ⚙ "AI Settings" in the top bar and fill in the endpoint / model / key, or set NH_LLM_BASE_URL / NH_LLM_MODEL / NH_LLM_API_KEY.',
+    zh: "模型没配好，先去顶栏 ⚙「AI 设置」填服务地址/模型/钥匙，或设 NH_LLM_BASE_URL / NH_LLM_MODEL / NH_LLM_API_KEY。",
+    en: 'The model isn\'t configured — go to the ⚙ "AI Settings" in the top bar and fill in the endpoint / model / key, or set NH_LLM_BASE_URL / NH_LLM_MODEL / NH_LLM_API_KEY.',
   },
+  // 原来带一个 `{exc}` 参数（`ValidationError`/`ValueError`/`CapabilityError` 的
+  // `str()`）。**删掉了，不补收窄逻辑**：`CapabilityError` 自己的 docstring 是英文——
+  // 那本来就是写给维护者的诊断（同 `ProviderError`"str(self) 永远不上作者的屏幕"
+  // 那条既有纪律），pydantic 的 `ValidationError` 同理带着字段名和类型名。这不是
+  // "先送去前端再挡住"，是根本不该送——参数安不安全要在**送之前**判断，不是让前端
+  // 收到手再补一道 screenGuard。
   model_windows_pull_failed: {
-    zh: "没能拉到那份公开的模型表（{exc_type}）。原来那份还在用，什么都没改。网络好了再试一次。",
-    en: "Couldn't fetch the public model list ({exc_type}). The existing list is still in use, nothing changed. Try again once your network is back.",
+    zh: "没能拉到那份公开的模型表。原来那份还在用，什么都没改。网络好了再试一次。",
+    en: "Couldn't fetch the public model list. The existing list is still in use, nothing changed. Try again once your network is back.",
   },
+  // 原来带一个 `{exc_type}` 参数（`type(exc).__name__`，比如 `URLError`）。同样删掉：
+  // 一个 Python 异常类名对作者不构成任何可操作的信息（他不知道 URLError 是什么，
+  // 「网络好了再试一次」已经说完了他能做的事），却是一个写给维护者看的技术词——
+  // 判据跟上面 `model_not_configured` 那条一致。
   // ── api/review.py（提案审阅，三档只有码没有话——2026-08-27 之前会漏成裸码上屏）──
   proposal_not_found: {
     zh: "这条待确认今天不在了。看一眼现在是什么样，它可能已经被处理过了。",
     en: "This item isn't there anymore. Take a look at the current state — it may have already been handled.",
+  },
+  // ── api/notifications.py ─────────────────────────────────────────────
+  notification_not_found: {
+    zh: "这条通知今天不在了，可能已经被处理过。刷新一下看看现在还有哪些需要留意的。",
+    en: "This notification isn't there anymore — it may have already been handled. Refresh to see what still needs attention.",
   },
   stale_base_version: {
     zh: "这本书在别处刚被改过（你看到的还是版本 {expected}，现在已经是 {current}）。先看一眼最新的，再决定这一处要不要改。",

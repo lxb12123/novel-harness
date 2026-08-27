@@ -76,15 +76,12 @@ from typing import Any, Final, Literal, Protocol, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from . import project as project_mod
 from .db import Connection
-from .draft.length import DraftLanguage
 from .draft.provider import CompletionResult
 from .extract.call_audit import record_call
 from .extract.control import AuditedCompletion
 from .graph import StoryGraph, TextAnchor
 from .ids import EntityType, new_id
-from .prompt_terms import message
 from .system_notifications import (
     background_failure_dedupe_key,
     enqueue_text_advisory,
@@ -162,13 +159,6 @@ ConflictKind = Literal["setting", "timeline", "knowledge"]
 - `knowledge` 谁在什么时候知道什么对不上
 """
 
-_CONFLICT_LABEL_KEY: Final[dict[str, str]] = {
-    "setting": "clash_conflict_setting",
-    "timeline": "clash_conflict_timeline",
-    "knowledge": "clash_conflict_knowledge",
-}
-"""上屏的话怎么取（`prompt_terms.message()` 的键）。**枚举值本身不上屏**：
-`setting` 是机器码，作者屏幕上只该有人话。"""
 class TrackClash(BaseModel):
     """②「这一句跟后面第几章抵触，哪一类抵触」。
 
@@ -471,23 +461,22 @@ def _keep_clashes(
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def _more(rest: int, language: DraftLanguage = DraftLanguage.ZH) -> str:
-    return message("more_items_suffix", language, rest=rest) if rest else ""
+def _clash_title_params(clashes: Sequence[TrackClash]) -> dict[str, Any]:
+    """`clash_title` 这个码要填的原始事实（国际化第四批 Phase B）。
 
-
-def _clash_title(clashes: Sequence[TrackClash], language: DraftLanguage = DraftLanguage.ZH) -> str:
-    """**只有句号、章号、类型。** 后面那一章的原文一个字都不在这句话里——
-    信息隔离的最后一米就在这儿，而它靠的是 `TrackClash` 压根没有装它的地方。"""
+    **只有句号、章号、类型。** 后面那一章的原文一个字都不在这句话里——信息隔离的
+    最后一米就在这儿，而它靠的是 `TrackClash` 压根没有装它的地方。`conflict` 发
+    封闭枚举值本身（`setting`/`timeline`/`knowledge`），不发翻好的标签——那张
+    `CONFLICT_LABEL` 表现在住在 `frontend/src/backendMessages.ts` 里，同
+    `clash_title` 的模板函数在一起，`_CONFLICT_LABEL_KEY` 这份旧的键名映射
+    已经不需要了。"""
     first = clashes[0]
-    conflict = message(_CONFLICT_LABEL_KEY[first.conflict], language)
-    return message(
-        "clash_title",
-        language,
-        sentence=first.sentence,
-        chapter=first.chapter,
-        conflict=conflict,
-        more=_more(len(clashes) - 1, language),
-    )
+    return {
+        "sentence": first.sentence,
+        "chapter": first.chapter,
+        "conflict": first.conflict,
+        "rest": len(clashes) - 1,
+    }
 
 
 def _file_notice(
@@ -498,7 +487,8 @@ def _file_notice(
     chapter_number: int,
     snapshot_id: str,
     kind: ReviewKind,
-    title: str,
+    title_code: str,
+    title_params: dict[str, Any] | None,
     anchor: TextAnchor,
     source_sha256: str,
 ) -> str:
@@ -507,7 +497,8 @@ def _file_notice(
         project_id=project_id,
         chapter_id=chapter_id,
         chapter_number=chapter_number,
-        title=title,
+        title_code=title_code,
+        title_params=title_params,
         # 去重键含来源快照：**正文一改才允许再提醒一次**，同一份正文反复扫不重开
         # （不变量 10）。作者按了「忽略」之后那个 hash 对是终态。
         dedupe_key=background_failure_dedupe_key(
@@ -671,18 +662,16 @@ def review_saved_chapter(
             chapter_id=found.chapter_id,
             current_sha256=found.sha256,
         )
-    owner_project = project_mod.get(conn, project_id)
-    language = (
-        DraftLanguage(owner_project.language) if owner_project is not None else DraftLanguage.ZH
-    )
-    for kind, title, first in (
+    # 不用再查这本书的界面语言（国际化第四批 Phase B）：通知发码 + 参数，
+    # 渲染在前端按当前界面语言进行。
+    for kind, title_params, first in (
         (
             "track",
-            _clash_title(clashes, language) if clashes else "",
+            _clash_title_params(clashes) if clashes else None,
             clashes[0].sentence if clashes else 0,
         ),
     ):
-        if not title:
+        if title_params is None:
             continue
         notices.append(
             _file_notice(
@@ -692,7 +681,8 @@ def review_saved_chapter(
                 chapter_number=chapter_number,
                 snapshot_id=found.snapshot_id,
                 kind=kind,  # type: ignore[arg-type]
-                title=title,
+                title_code="clash_title",
+                title_params=title_params,
                 anchor=by_number[first].anchor,
                 source_sha256=found.sha256,
             )

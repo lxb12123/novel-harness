@@ -232,8 +232,11 @@ def test_require_resolved_cast_is_the_draft_gate() -> None:
     store = build([], extra_aliases=AMBIGUOUS_SHIXIONG)
 
     ambiguous = scene_constraints(store, PID, 152, ["师兄"])
-    with pytest.raises(UnresolvedCast, match="师兄"):
+    with pytest.raises(UnresolvedCast) as exc:
         ambiguous.require_resolved_cast()
+    # 国际化第四批 Phase B：`UnresolvedCast` 发 code + params，不再是拼好的句子。
+    assert exc.value.code == "unresolved_cast_ambiguous"
+    assert "师兄" in exc.value.params["unresolved"]
 
     # 解析干净的那份不抛——否则这条守卫会把正常起草也拦了。
     scene_constraints(store, PID, 152, ["萧决"]).require_resolved_cast()

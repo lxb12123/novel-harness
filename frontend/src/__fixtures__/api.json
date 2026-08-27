@@ -1670,7 +1670,10 @@
       "subject_id": "character:ID9",
       "subject_type": "chapter",
       "summary_sha256": null,
-      "title": "第 1 章的总结可能与正文不一致"
+      "title_code": "test_notice",
+      "title_params": {
+        "chapter": 1
+      }
     },
     {
       "actions": [],
@@ -1689,7 +1692,13 @@
       "subject_id": "chapter:ID67",
       "subject_type": "chapter",
       "summary_sha256": null,
-      "title": "第 2 段·这一句可能对不该知道的人说破了什么。"
+      "title_code": "clash_title",
+      "title_params": {
+        "chapter": 1,
+        "conflict": "knowledge",
+        "rest": 0,
+        "sentence": 2
+      }
     }
   ],
   "notificationsCount": {

@@ -695,8 +695,9 @@ def test_create_chapter_conflict_says_so_instead_of_500(
 
     assert r.status_code == 409
     # HTTPException 的详情裹在 `detail` 里（前端 `client.ts` 就是照这个形状拆的）。
+    # **不再带 `message`**（国际化第四批 Phase B）：`error` 是码，前端拿它去
+    # `backendMessages.ts` 按当前界面语言渲染整句。
     assert r.json()["detail"]["error"] == "chapter_exists"
-    assert "另一个窗口" in r.json()["detail"]["message"]
 
 
 def test_create_chapter_takes_no_chapter_number(client: TestClient, book: dict[str, str]) -> None:

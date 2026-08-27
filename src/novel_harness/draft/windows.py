@@ -60,7 +60,6 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict
 
-from ..prompt_terms import message
 from .capabilities import (
     CapabilityError,
     ProviderCapabilities,
@@ -69,7 +68,6 @@ from .capabilities import (
     normalize_base_url,
     normalize_model,
 )
-from .length import DraftLanguage
 
 SNAPSHOT_PATH: Final = Path(__file__).with_name("model_windows.json")
 SNAPSHOT_SCHEMA: Final = "nh-model-windows-v2"
@@ -465,18 +463,20 @@ def render(windows: dict[str, int], prices: dict[str, Price], *, fetched: str) -
     return json.dumps(payload, ensure_ascii=False, indent=1, sort_keys=False) + "\n"
 
 
-def refresh(
-    raw: object, *, fetched: str, language: DraftLanguage = DraftLanguage.ZH
-) -> RefreshReport:
+def refresh(raw: object, *, fetched: str) -> RefreshReport:
     """把一份刚下下来的公共表落成作者自己那份快照，并说出变了什么。
 
     Raises:
         ValueError: 裁完一个模型都不剩。**这时绝不覆盖旧的那份**——
-            一次拉到半截的响应不该把作者手上能用的数据换成空的。
+            一次拉到半截的响应不该把作者手上能用的数据换成空的。这句话是写给
+            维护者看的诊断，不进作者的错误框——调用方（`api/app.py::
+            pull_model_windows`）捕到它换成 `ModelWindowsPullFailed
+            ("model_windows_refresh_empty")`，那才是发给前端的码（国际化第四批
+            Phase B）。
     """
     windows, prices = trim(raw)
     if not windows:
-        raise ValueError(message("model_windows_refresh_empty", language))
+        raise ValueError("public model table refresh yielded zero usable models")
 
     before = (_read(user_snapshot_path()) or _read(SNAPSHOT_PATH) or Snapshot()).windows
     target = user_snapshot_path()

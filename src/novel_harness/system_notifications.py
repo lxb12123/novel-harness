@@ -42,10 +42,8 @@ from typing import TYPE_CHECKING, Any, Final, Literal
 from pydantic import BaseModel, ConfigDict
 
 from .db import Connection
-from .draft.length import DraftLanguage
 from .graph import TextAnchor
 from .ids import EntityType, new_id
-from .prompt_terms import message
 from .text import SkippedTocEntry
 
 if TYPE_CHECKING:  # 只为标注：通知层不该在运行时拖上 checks 那一层
@@ -90,7 +88,19 @@ BLOCKING_KINDS: Final[frozenset[str]] = frozenset({"validation_blocked"})
 
 
 class SystemNotification(BaseModel):
-    """一条通知的出参。`jump` 是结构化坐标，前端禁止从文案反推。"""
+    """一条通知的出参。`jump` 是结构化坐标，前端禁止从文案反推。
+
+    `title_code`/`title_params` 才是措辞的源（国际化第四批 Phase B）：前端拿
+    `title_code` 去 `backendMessages.ts` 按当前界面语言整句渲染，`title_params`
+    是填模板的原始事实。**出参里没有 `title`**——数据库那一列今天写的是
+    `title_code` 的原样回声（给维护者 debug 用），从来不是给作者看的话，
+    出参不带它，省得前端误以为它能直接显示。
+
+    `title_code` 是 `Optional`：迁移（033）之前创建的旧通知没有这一位（DB 里
+    是 NULL），那些行永远回不到"重新渲染"这条路——同 `decision_log` 的
+    「历史行不回填」——前端在 `title_code` 缺失时怎么办不是本模块的事，
+    但**不许在这儿编一个假的 code 糊弄过去**。
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -101,7 +111,8 @@ class SystemNotification(BaseModel):
     subject_type: str
     subject_id: str
     chapter_number: int | None = None
-    title: str
+    title_code: str | None = None
+    title_params: dict[str, Any] | None = None
     summary_sha256: str | None = None
     source_sha256: str | None = None
     jump: TextAnchor | None = None
@@ -163,7 +174,8 @@ def enqueue_notification(
     subject_type: str,
     subject_id: str,
     chapter_number: int | None,
-    title: str,
+    title_code: str,
+    title_params: dict[str, Any] | None,
     dedupe_key: str,
     summary_sha256: str | None = None,
     source_sha256: str | None = None,
@@ -178,15 +190,27 @@ def enqueue_notification(
 
     `payload` 是给「现成列都不够用」那一档的逃生舱（今天只有 `import_toc_skipped`
     用），落库前原样序列化成 JSON；`None` 落 NULL，不是空对象 `{}`。
+
+    ── `title` 列今天写的是 `title_code` 本身，不是渲染出来的句子（国际化第四批
+    Phase B）────────────────────────────────────────────────────────────
+    真正的措辞源是 `title_code` + `title_params_json`，前端拿它们去
+    `frontend/src/backendMessages.ts` 按当前界面语言整句渲染。`title` 列继续写
+    只是为了满足它的 NOT NULL、给维护者在库里 debug 时留一个能认的锚——**前端不
+    读这一列**，别指望它是给作者看的话。`title_params` 里的每一个值都必须先过
+    「对作者安全」这道判断（结构化数据 / 作者自己的原文 = 安全；异常的 str()、
+    内部字段名 = 不安全，那种情况要么整个不送这个码，要么先把值收窄成安全的
+    形状——不能假设"反正是参数就没事"，`backendMessages.ts` 顶部写着这条教训
+    的来处）。
     """
     outbox_id = new_id(EntityType.SYSTEM_NOTIFICATION, project_id)
     conn.execute(
         """
         INSERT INTO system_notification_outbox (
             id, project_id, intent, kind, subject_type, subject_id, chapter_number,
-            title, summary_sha256, source_sha256, jump_para_index, jump_quote_text,
-            jump_occurrence_k, actions_json, payload_json, dedupe_key
-        ) VALUES (?, ?, 'CREATE_OR_UPDATE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            title, title_code, title_params_json, summary_sha256, source_sha256,
+            jump_para_index, jump_quote_text, jump_occurrence_k, actions_json,
+            payload_json, dedupe_key
+        ) VALUES (?, ?, 'CREATE_OR_UPDATE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             outbox_id,
@@ -195,7 +219,9 @@ def enqueue_notification(
             subject_type,
             subject_id,
             chapter_number,
-            title,
+            title_code,
+            title_code,
+            _json_payload(title_params),
             summary_sha256,
             source_sha256,
             jump.para_index if jump else None,
@@ -215,13 +241,15 @@ def enqueue_import_toc_skipped(
     project_id: str,
     skipped: list[SkippedTocEntry],
     fingerprint: str,
-    language: DraftLanguage = DraftLanguage.ZH,
 ) -> str:
     """导入时丢掉了目录页假章的那条通知（032）。带「撤销」动作。
 
     `dedupe_key` 只按 `project_id`（+kind+operation）——同一个项目正常只会触发
     一次（导入是一次性的），真出现第二次时按标准的 outbox `ON CONFLICT DO UPDATE`
     刷新标题/payload，不会落成两条打架的通知。
+
+    **不再收 `language`**（国际化第四批 Phase B）：标题不在这儿渲染，`count`
+    是纯计数，对作者安全，原样进 `title_params`，前端按当前界面语言渲染。
     """
     count = len(skipped)
     return enqueue_notification(
@@ -231,7 +259,8 @@ def enqueue_import_toc_skipped(
         subject_type="project",
         subject_id=project_id,
         chapter_number=None,
-        title=message("import_toc_skipped_title", language, count=count),
+        title_code="import_toc_skipped_title",
+        title_params={"count": count},
         dedupe_key=background_failure_dedupe_key(
             kind="import_toc_skipped",
             subject_type="project",
@@ -254,7 +283,8 @@ def enqueue_extraction_yielded_nothing(
     project_id: str,
     snapshot_id: str,
     chapter_number: int,
-    title: str,
+    title_code: str,
+    title_params: dict[str, Any] | None,
 ) -> str:
     """这一章整理完了、但**一件都没留下**时的那条通知（027）。
 
@@ -282,7 +312,8 @@ def enqueue_extraction_yielded_nothing(
         subject_type="chapter_snapshot",
         subject_id=snapshot_id,
         chapter_number=chapter_number,
-        title=title,
+        title_code=title_code,
+        title_params=title_params,
         dedupe_key=background_failure_dedupe_key(
             kind="extraction_yielded_nothing",
             subject_type="chapter_snapshot",
@@ -300,7 +331,6 @@ def enqueue_validation_blocked(
     *,
     report: SnapshotValidationReport,
     attempt_id: str,
-    language: DraftLanguage = DraftLanguage.ZH,
 ) -> str:
     """正文验证阻断的那条通知 —— **带着第一条 Issue 的锚**（M1-c）。
 
@@ -315,7 +345,7 @@ def enqueue_validation_blocked(
     if not report.issues:
         # gate=blocked 的定义就是「至少一条规则报了至少一条 issue」。真走到这儿说明
         # 报告和闸门对不上，宁可炸也不落一条点不过去的通知——那正是这一层要补的洞。
-        # 内部不变量违反，不是作者能看见的路径：不走 message()。
+        # 内部不变量违反，不是作者能看见的路径：不配 title_code，就是一句原始异常。
         raise ValueError(f"验证报告 {report.id} 判了 blocked 却一条 issue 都没有")
     return enqueue_notification(
         conn,
@@ -324,7 +354,8 @@ def enqueue_validation_blocked(
         subject_type="chapter",
         subject_id=report.chapter_id,
         chapter_number=report.chapter_number,
-        title=_validation_blocked_title(report, language),
+        title_code="validation_blocked_title",
+        title_params=_validation_blocked_title_params(report),
         dedupe_key=background_failure_dedupe_key(
             kind="validation_blocked",
             subject_type="chapter",
@@ -343,7 +374,8 @@ def enqueue_text_advisory(
     project_id: str,
     chapter_id: str,
     chapter_number: int | None,
-    title: str,
+    title_code: str,
+    title_params: dict[str, Any] | None,
     dedupe_key: str,
     jump: TextAnchor,
     source_sha256: str | None = None,
@@ -367,7 +399,8 @@ def enqueue_text_advisory(
         subject_type="chapter",
         subject_id=chapter_id,
         chapter_number=chapter_number,
-        title=title,
+        title_code=title_code,
+        title_params=title_params,
         dedupe_key=dedupe_key,
         source_sha256=source_sha256,
         jump=jump,
@@ -407,28 +440,30 @@ def resolve_stale_chapter_advisories(
     return int(changed.rowcount or 0)
 
 
-def _validation_blocked_title(
-    report: SnapshotValidationReport, language: DraftLanguage = DraftLanguage.ZH
-) -> str:
-    """「第几段·哪条规则：哪一句」+ 还有几处 + 那句真实的副作用。
+def _validation_blocked_title_params(report: SnapshotValidationReport) -> dict[str, Any]:
+    """`validation_blocked_title` 这个码要填的原始事实（国际化第四批 Phase B）。
 
-    **不印 `R2` / `R3` 这种编号**：规则自己的名字（「设定提前出现」）说得清，编号
-    只是引擎内部的门牌。段号按作者的数法从 1 起——`TextAnchor` 内部是 0-based，
-    两种数法只在这一处换算。
+    **不发拼好的句子，发段号 / 规则名 / 还有几处 / 命中原话这几个原始值**——
+    整句怎么拼（"第几段·哪条规则：哪一句" + 还有几处 + 固定的副作用说明）是
+    `frontend/src/backendMessages.ts` 里那个模板函数的活，中英文的语序、标点
+    各自决定。段号按作者的数法从 1 起——`TextAnchor` 内部是 0-based，两种数法
+    只在这一处换算。
 
-    `first.message`（规则命中的原话）和 `rule_title`（规则自己的名字）**不随
-    `language` 翻**——两者都来自 `checks/` 那一层的规则输出，那是另一批要翻的东西，
-    不在这一批范围里；这儿只翻自己拼的脚手架文字。
+    `rule_title`（规则自己的名字，如「设定提前出现」）和 `issue_message`
+    （规则命中的原话）都来自 `checks/` 那一层——**这两个 param 对作者安全**：
+    `rule_title` 就是 `_rule_title()` 特意避免印 `R2`/`R3` 编号、只用规则自己
+    人话名字的产物；`issue_message` 是 `Issue.message`，Issue 本来就是设计给
+    「检查本章」那个面板直接显示的（`DevTerms.guard.test.tsx` 的"检查"那一档
+    今天就在扫它），不是新增的风险面——只是**不随界面语言翻**：两者都是
+    `checks/` 那一层的规则输出，双语化是另一批的事，这儿原样透传。
     """
     first = report.issues[0]
-    head = message("validation_blocked_paragraph", language, n=first.anchor.para_index + 1)
-    rule_title = _rule_title(report, first.rule)
-    if rule_title:
-        head = f"{head}·{rule_title}"
-    rest = len(report.issues) - 1
-    more = message("more_items_suffix", language, rest=rest) if rest else ""
-    tail = message("validation_blocked_tail", language)
-    return f"{head}：{first.message}{more}{tail}"
+    return {
+        "paragraph": first.anchor.para_index + 1,
+        "rule_title": _rule_title(report, first.rule),
+        "rest": len(report.issues) - 1,
+        "issue_message": first.message,
+    }
 
 
 def _rule_title(report: SnapshotValidationReport, rule: str) -> str:
@@ -460,6 +495,7 @@ def materialize_notification_outbox(
     rows = conn.execute(
         """
         SELECT id, intent, kind, subject_type, subject_id, chapter_number, title,
+               title_code, title_params_json,
                summary_sha256, source_sha256, jump_para_index, jump_quote_text,
                jump_occurrence_k, actions_json, payload_json, dedupe_key
           FROM system_notification_outbox
@@ -474,12 +510,15 @@ def materialize_notification_outbox(
                 """
                 INSERT INTO system_notification (
                     id, project_id, kind, status, subject_type, subject_id,
-                    chapter_number, title, summary_sha256, source_sha256,
+                    chapter_number, title, title_code, title_params_json,
+                    summary_sha256, source_sha256,
                     jump_para_index, jump_quote_text, jump_occurrence_k,
                     actions_json, payload_json, dedupe_key
-                ) VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (project_id, dedupe_key)
                 DO UPDATE SET title = excluded.title,
+                              title_code = excluded.title_code,
+                              title_params_json = excluded.title_params_json,
                               jump_para_index = excluded.jump_para_index,
                               jump_quote_text = excluded.jump_quote_text,
                               jump_occurrence_k = excluded.jump_occurrence_k,
@@ -493,6 +532,8 @@ def materialize_notification_outbox(
                     row["subject_id"],
                     row["chapter_number"],
                     row["title"],
+                    row["title_code"],
+                    row["title_params_json"],
                     row["summary_sha256"],
                     row["source_sha256"],
                     row["jump_para_index"],
@@ -522,7 +563,8 @@ def _open_rows(conn: Connection, project_id: str) -> list[SystemNotification]:
     rows = conn.execute(
         """
         SELECT id, project_id, kind, status, subject_type, subject_id, chapter_number,
-               title, summary_sha256, source_sha256, jump_para_index, jump_quote_text,
+               title, title_code, title_params_json,
+               summary_sha256, source_sha256, jump_para_index, jump_quote_text,
                jump_occurrence_k, actions_json, created_at
           FROM system_notification
          WHERE project_id = ? AND status = 'OPEN'
@@ -602,7 +644,10 @@ def _to_notification(row) -> SystemNotification:
         subject_type=row["subject_type"],
         subject_id=row["subject_id"],
         chapter_number=row["chapter_number"],
-        title=row["title"],
+        title_code=row["title_code"],
+        title_params=_json_payload_un(row["title_params_json"])
+        if row["title_params_json"] is not None
+        else None,
         summary_sha256=row["summary_sha256"],
         source_sha256=row["source_sha256"],
         jump=jump,

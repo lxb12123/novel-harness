@@ -26,11 +26,11 @@ describe("认不出的码", () => {
 });
 
 describe("参数真的会被填进模板", () => {
-  it("chapter_missing_message 的 {chapter} 换成真值", () => {
-    expect(messageForCode("chapter_missing_message", "zh", { chapter: 5 })).toBe(
+  it("chapter_missing 的 {chapter} 换成真值", () => {
+    expect(messageForCode("chapter_missing", "zh", { chapter: 5 })).toBe(
       "第 5 章已经不在了。刷新一下就对得上了。",
     );
-    expect(messageForCode("chapter_missing_message", "en", { chapter: 5 })).toBe(
+    expect(messageForCode("chapter_missing", "en", { chapter: 5 })).toBe(
       "Chapter 5 is no longer there. Refresh and things will line up again.",
     );
   });
@@ -45,6 +45,13 @@ describe("参数真的会被填进模板", () => {
     expect(zh).toContain("第 3 段·设定提前出现");
     expect(zh).toContain("血脉秘密在第 2 章就出现了");
     expect(zh).toContain("（另有 2 处）");
+    // 那句真实的副作用不许被弄丢——它是这一档通知和别的通知的全部区别
+    // （原来是后端测试 test_advisory_notifications.py 钉的，Phase B 之后
+    // 整句在这儿拼，断言也搬过来）。
+    expect(zh).toContain("新正文不会再自动生成总结与情节");
+    // 规则编号不许原样出现——`rule_title` 应该是人话名字，不是 R2/R3。
+    expect(zh).not.toContain("R2");
+    expect(zh).not.toContain("R3");
 
     const en = messageForCode("validation_blocked_title", "en", {
       paragraph: 3,
@@ -54,6 +61,7 @@ describe("参数真的会被填进模板", () => {
     });
     expect(en).toContain("paragraph 3·设定提前出现");
     expect(en).toContain("(2 more)");
+    expect(en).toContain("won't automatically generate summaries or events anymore");
     // checks/ 的原文（rule_title / issue_message）是不透明参数，原样透传，
     // 不指望它也是英文——那是另一批的范围。
   });
@@ -61,7 +69,7 @@ describe("参数真的会被填进模板", () => {
   it("extraction_yielded_nothing_title：unresolved 和 proposal_count 选中不同的分支", () => {
     const withProposals = messageForCode("extraction_yielded_nothing_title", "en", {
       lost: 12,
-      unresolved: "true",
+      unresolved: true,
       proposal_count: 3,
     });
     expect(withProposals).toContain("aren't recognized in the roster yet");
@@ -69,7 +77,7 @@ describe("参数真的会被填进模板", () => {
 
     const noProposals = messageForCode("extraction_yielded_nothing_title", "zh", {
       lost: 12,
-      unresolved: "false",
+      unresolved: false,
       proposal_count: 0,
     });
     expect(noProposals).toContain("它们都没能落库");

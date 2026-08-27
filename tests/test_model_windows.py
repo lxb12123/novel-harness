@@ -274,8 +274,11 @@ def test_a_useless_payload_never_replaces_a_working_snapshot(_author_home) -> No
     windows.refresh(PUBLIC_TABLE, fetched="2026-11-01")
     good = windows.user_snapshot_path().read_bytes()
 
+    # 国际化第四批 Phase B：这句 `ValueError` 是写给维护者的诊断，不再是作者读的
+    # 中文——调用方（`api/app.py::pull_model_windows`）捕到它换成
+    # `ModelWindowsPullFailed("model_windows_refresh_empty")` 才是发给前端的码。
     for junk in ({}, {"only/img": {"mode": "image_generation", "max_input_tokens": 77}}, []):
-        with pytest.raises(ValueError, match="没有覆盖"):
+        with pytest.raises(ValueError, match="zero usable models"):
             windows.refresh(junk, fetched="2026-11-03")
     assert windows.user_snapshot_path().read_bytes() == good
 

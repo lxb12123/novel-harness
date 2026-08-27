@@ -27,8 +27,6 @@ from ..extract.call_audit import record_call
 from ..extract.control import AuditedCompletion
 from ..graph import ChapterText
 from ..ids import EntityType, new_id
-from ..prompt_terms import message
-from .length import DraftLanguage
 from .provider import CompletionResult
 from .summarize import SUMMARY_VERSION, SummaryMessage, build_summary_messages
 
@@ -90,7 +88,17 @@ class SummaryGenerationError(RuntimeError):
 
 
 class SummaryTextRejected(ValueError):
-    """作者交上来的那段字收不下（空的 / 太长）。`str(exc)` 是给作者看的那句话。"""
+    """作者交上来的那段字收不下（空的 / 太长）。
+
+    `code`/`params` 是 `frontend/src/backendMessages.ts` 的键 + 原始事实
+    （国际化第四批 Phase B）——**不再是 `str(exc)` 那句算好的话**，`api/app.py`
+    捕到它转发这一对，前端按当前界面语言渲染。
+    """
+
+    def __init__(self, code: str, **params: object) -> None:
+        super().__init__(code)
+        self.code = code
+        self.params = params
 
 
 class SummaryEditConflict(RuntimeError):
@@ -598,7 +606,6 @@ def save_author_summary(
     expected_version_id: str | None = None,
     expect_head: bool = False,
     summary_id_factory: Callable[[str], str] = _default_summary_id,
-    language: DraftLanguage = DraftLanguage.ZH,
 ) -> ChapterSummary:
     """把这一章的总结换成作者自己写的这一段。**追加一行，模型那一行留着。**
 
@@ -612,15 +619,12 @@ def save_author_summary(
     """
     body = text.strip()
     if not body:
-        raise SummaryTextRejected(message("summary_text_rejected_empty", language))
+        raise SummaryTextRejected("summary_text_rejected_empty")
     if len(body) > AUTHOR_SUMMARY_MAX_CHARS:
         raise SummaryTextRejected(
-            message(
-                "summary_text_rejected_too_long",
-                language,
-                length=len(body),
-                max_chars=AUTHOR_SUMMARY_MAX_CHARS,
-            )
+            "summary_text_rejected_too_long",
+            length=len(body),
+            max_chars=AUTHOR_SUMMARY_MAX_CHARS,
         )
 
     conn.execute("BEGIN IMMEDIATE")

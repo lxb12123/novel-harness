@@ -69,8 +69,10 @@ def test_import_with_a_toc_page_files_a_notification_with_an_undo_action(
     toc = [n for n in items if n["kind"] == "import_toc_skipped"]
     assert len(toc) == 1, f"应该恰好一条 import_toc_skipped 通知：{items}"
     notice = toc[0]
-    assert "2 个只有标题" in notice["title"]
-    assert "目录" in notice["title"]
+    # 出参不带渲染好的句子（国际化第四批 Phase B）：`title_code` + `title_params`
+    # 才是措辞的源，前端拿它们去 `backendMessages.ts` 按界面语言渲染整句。
+    assert notice["title_code"] == "import_toc_skipped_title"
+    assert notice["title_params"] == {"count": 2}
     assert notice["actions"] == ["undo_toc_skip"]
 
 

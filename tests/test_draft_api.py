@@ -174,7 +174,9 @@ def test_draft_without_connection_config_is_422(
         json={"cast": ["萧决"], "length": ZH_LENGTH},
     )
     assert r.status_code == 422
-    assert "AI 设置" in r.text
+    # 国际化第四批 Phase B：这句话不再由后端算，`error` 是码，前端拿它去
+    # `backendMessages.ts` 渲染整句（含"去顶栏 AI 设置"那句指引）。
+    assert r.json()["detail"]["error"] == "model_not_configured"
 
 
 def test_draft_unresolvable_cast_is_422(
@@ -187,7 +189,12 @@ def test_draft_unresolvable_cast_is_422(
         json={"cast": ["不存在的人"], "length": ZH_LENGTH},
     )
     assert r.status_code == 422
-    assert "解析不了" in r.text
+    # 国际化第四批 Phase B：`UnresolvedCast` 转发的是它自己的 code/params，不再是
+    # 拼好的句子——`api/app.py` 那两处 except 块直接透传，不再包"在场角色解析
+    # 不了："这层前缀。
+    detail = r.json()["detail"]
+    assert detail["error"] == "unresolved_cast_ambiguous"
+    assert "不存在的人" in detail["params"]["unresolved"]
 
 
 def test_the_draft_body_no_longer_takes_a_form(

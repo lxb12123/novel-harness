@@ -1,9 +1,20 @@
 import { useState } from "react";
 import { useIgnoreNotification, useNotifications, useUndoTocSkip } from "../api/hooks";
+import { messageForCode } from "../backendMessages";
 import { refusalText } from "../chat";
 import type { SystemNotification } from "../api/types";
 import { useCoords } from "../store";
+import { type Language, useLanguage } from "../language";
 import { useOpenChapter } from "../chapterNavigation";
+
+/** `title_code` 认得就整句渲染；认不出（还没配文案的码）或者 `null`
+ *  （迁移 033 之前创建的旧通知，历史行不回填——同 `decision_log` 的既有纪律）
+ *  就原样显示码本身，不编一句话糊弄过去（国际化第四批 Phase B）。**永远不返回
+ *  空字符串**：一张没有正文的通知卡片比一句"码认不出来"更容易被当成 bug 忽略过去。 */
+function noticeBody(item: SystemNotification, language: Language): string {
+  if (!item.title_code) return "—";
+  return messageForCode(item.title_code, language, item.title_params ?? {}) ?? item.title_code;
+}
 
 // 系统通知（Task 10 / 021，前端 Task 14）：右栏那一格。
 //
@@ -41,6 +52,7 @@ function NotificationRow({
   const openChapter = useOpenChapter();
   const ignore = useIgnoreNotification(projectId ?? "");
   const undoTocSkip = useUndoTocSkip(projectId ?? "");
+  const language = useLanguage((s) => s.language);
   const failure =
     refusalText(ignore.error, "没能忽略这条通知。") ??
     refusalText(undoTocSkip.error, "没能撤销——");
@@ -65,7 +77,7 @@ function NotificationRow({
           <span className="row dim">第 {item.chapter_number} 章</span>
         )}
       </div>
-      <div className="row">{item.title}</div>
+      <div className="row">{noticeBody(item, language)}</div>
       <div className="actions">
         {item.jump ? (
           <button className="link" onClick={goToQuote}>

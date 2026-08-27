@@ -895,7 +895,10 @@ export interface SystemNotification {
     | "project";
   subject_id: string;
   chapter_number: number | null;
-  title: string;
+  /** 前端拿它去 `backendMessages.ts` 按当前界面语言渲染整句（国际化第四批
+   *  Phase B）。`null` = 迁移 033 之前创建的旧通知，历史行不回填。 */
+  title_code: string | null;
+  title_params: Record<string, unknown> | null;
   summary_sha256: string | null;
   source_sha256: string | null;
   jump: NotificationAnchor | null;

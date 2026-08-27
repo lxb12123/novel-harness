@@ -56,8 +56,6 @@ from ..panel.constraints import (
     UnresolvedCast,
     scene_view,
 )
-from ..prompt_terms import message
-from .length import DraftLanguage
 
 
 class ResolvedConstraints(BaseModel):
@@ -100,7 +98,6 @@ class ResolvedConstraints(BaseModel):
         cls,
         view: SceneView,
         cast: Sequence[str],
-        language: DraftLanguage = DraftLanguage.ZH,
     ) -> ResolvedConstraints:
         """收窄一份**已经算好的** `SceneView`。歧义 / 空 cast 在这里弹给作者。
 
@@ -121,13 +118,11 @@ class ResolvedConstraints(BaseModel):
             UnresolvedCast: 有称呼解析不出唯一角色，**或者作者根本没写 cast**。
         """
         constraints = view.constraints
-        constraints.require_resolved_cast(language)
+        constraints.require_resolved_cast()
         if not list(cast):
             # 这一条 `require_resolved_cast()` 看不见（它只读 unresolved_cast）。
             raise UnresolvedCast(
-                message(
-                    "unresolved_cast_no_cast_declared", language, chapter=constraints.chapter
-                )
+                "unresolved_cast_no_cast_declared", chapter=constraints.chapter
             )
         return cls(
             chapter=constraints.chapter,

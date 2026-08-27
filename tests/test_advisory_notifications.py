@@ -189,9 +189,14 @@ def test_the_blocked_notification_carries_the_issue_anchor(world: dict[str, obje
 def test_the_blocked_notification_says_which_rule_and_which_paragraph(
     world: dict[str, object],
 ) -> None:
-    """标题要说得出哪一段、哪条规则、哪一句 —— 而且**不许印规则编号**。
+    """`title_params` 要说得出哪一段、哪条规则、哪一句 —— 而且**规则名不许是编号**。
 
     段号按作者的数法从 1 起（`TextAnchor` 内部 0-based，只在通知层换算一次）。
+
+    国际化第四批 Phase B 之后，整句怎么拼（含"新正文不会再自动生成总结与情节"
+    那句固定的副作用说明）是前端 `backendMessages.ts` 的模板函数的事，不再是
+    后端拼出来的字符串——那半条断言搬到了 `frontend/src/backendMessages.test.ts`。
+    这儿只钉后端发出去的原始事实是不是对的。
     """
     _declare_late_debut(world)
     _run_refresh(world, "manual:title")
@@ -199,12 +204,13 @@ def test_the_blocked_notification_says_which_rule_and_which_paragraph(
 
     report = _report_row(world["conn"], str(world["pid"]))
     first = json.loads(report["issues_json"])[0]
-    assert f"第 {first['anchor']['para_index'] + 1} 段" in notice.title
-    assert "人物开口时机" in notice.title, "说不出哪条规则"
-    assert first["message"] in notice.title, "说不出哪一句"
-    # 那句真实的副作用不许在改标题时被弄丢——它是这一类通知和别的通知的全部区别。
-    assert "新正文不会再自动生成总结与情节" in notice.title
-    assert "R2" not in notice.title and "R3" not in notice.title
+    assert notice.title_code == "validation_blocked_title"
+    params = notice.title_params
+    assert params is not None
+    assert params["paragraph"] == first["anchor"]["para_index"] + 1
+    assert params["rule_title"] == "人物开口时机", "说不出哪条规则"
+    assert params["issue_message"] == first["message"], "说不出哪一句"
+    assert "R2" not in params["rule_title"] and "R3" not in params["rule_title"]
 
 
 def test_a_blocked_report_without_issues_refuses_to_file_an_unclickable_notice(
@@ -254,7 +260,8 @@ def test_a_text_advisory_does_not_stop_the_chapter_from_being_organized(
         project_id=str(world["pid"]),
         chapter_id=str(world["chapter_id"]),
         chapter_number=1,
-        title="第 2 段：这一句可能对不该知道的人说破了什么。",
+        title_code="test_notice",
+        title_params=None,
         dedupe_key=background_failure_dedupe_key(
             kind="text_advisory",
             subject_type="chapter",
@@ -303,7 +310,8 @@ def test_a_text_advisory_without_a_quote_is_refused(world: dict[str, object]) ->
             project_id=str(world["pid"]),
             chapter_id=str(world["chapter_id"]),
             chapter_number=1,
-            title="说不清在哪儿",
+            title_code="test_notice",
+            title_params=None,
             dedupe_key="k",
             jump=TextAnchor(para_index=0, quote_text="   ", occurrence_k=0),
         )

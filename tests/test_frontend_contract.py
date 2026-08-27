@@ -823,7 +823,11 @@ def test_frontend_fixture_matches_the_real_api(
             subject_type="chapter",
             subject_id=book["萧决"],
             chapter_number=1,
-            title="第 1 章的总结可能与正文不一致",
+            # `summary_mismatch` 今天没有真的生产调用方（`NotificationKind` 里
+            # 列着，但没有代码真的 enqueue 它）——这儿本来就是手搭的夹具数据，
+            # 不是在复刻某个真实码，用占位码只是为了让契约测试跑得动这个形状。
+            title_code="test_notice",
+            title_params={"chapter": 1},
             dedupe_key=_notif_key,
         )
         # 第二条：**带锚**、且**只告警不阻断**的那一档（026）。两件事前端都要渲染，
@@ -839,7 +843,8 @@ def test_frontend_fixture_matches_the_real_api(
             project_id=_notif_pid,
             chapter_id=_notif_chapter,
             chapter_number=1,
-            title="第 2 段·这一句可能对不该知道的人说破了什么。",
+            title_code="clash_title",
+            title_params={"sentence": 2, "chapter": 1, "conflict": "knowledge", "rest": 0},
             dedupe_key=background_failure_dedupe_key(
                 kind="text_advisory", subject_type="chapter", subject_id=_notif_chapter,
                 operation="secret_spoken", source_snapshot_id=None, job_id="job:contract",

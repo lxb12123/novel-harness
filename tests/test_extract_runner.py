@@ -882,7 +882,10 @@ def test_a_chapter_that_kept_nothing_does_not_pass_as_a_quiet_success(seed: Seed
     )
 
     only = next(n for n in notices if n.kind == "extraction_yielded_nothing")
-    assert "1 件事" in only.title, only.title
+    assert only.title_code == "extraction_yielded_nothing_title"
+    # 这条丢弃是因为引语锚不上（`_unanchorable_analysis` 的 quote 对不上正文），
+    # 不是因为认不出参与者——`unresolved` 因此是 False，不是这份夹具的巧合。
+    assert only.title_params == {"lost": 1, "unresolved": False, "proposal_count": 0}
     # **不阻断**：新档不许混进阻断那一侧，否则作者整理一次老章就把下游停了。
     from novel_harness.system_notifications import BLOCKING_KINDS
 

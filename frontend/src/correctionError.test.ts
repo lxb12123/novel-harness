@@ -38,4 +38,20 @@ describe("改一条已生效的事实被拒绝时，屏幕上说什么", () => {
     expect(failure.kind).toBe("unknown");
     expect(failure.message).not.toContain("fetch");
   });
+
+  it("认得的码优先于后端 .message（过渡期兼容不该反过来赢）", () => {
+    // Phase B 之后过渡期允许某个端点同时带着 `error`（真的注册码）和旧形状的
+    // `message`——这种情况码表必须赢，不能让"恰好还带着 message"的端点表现得
+    // 和没迁移的端点不一样。这条防的正是 `bookshelf.test.ts` 撞过的那次真回归：
+    // 迁移那批时曾经让 `chapter_exists`/`chapter_missing` 两个测试用例假设
+    // "后端发了 message 就原样显示"，而它们用的码后来被注册进了
+    // `backendMessages.ts`，行为静默变了却没人第一时间发现。
+    const said = readCorrectionError(
+      new ApiError(422, {
+        error: "chapter_number_at_least_one",
+        message: "这句是过渡期的旧话，不该被看见",
+      }),
+    );
+    expect(said.message).toBe("章号至少是 1");
+  });
 });

@@ -99,8 +99,15 @@ describe("新起一章失败时那句话", () => {
   });
 
   it("后端说得出话就原样渲染（比如另一个窗口刚建过）", () => {
+    // 用一个**没在 `backendMessages.ts` 注册过的码**：这条测的是"认不出码时退回
+    // 后端 `.message`"这一层，故意选真的注册码（`chapter_exists`）反而会被
+    // 整句模板抢先渲染——那是另一条测试要钉的行为，见
+    // `correctionError.test.ts`。
     const said = newChapterError(
-      new ApiError(409, { error: "chapter_exists", message: "这一章刚刚已经被建出来了。" }),
+      new ApiError(409, {
+        error: "chapter_exists_from_a_future_endpoint",
+        message: "这一章刚刚已经被建出来了。",
+      }),
     );
     expect(said).toBe("这一章刚刚已经被建出来了。");
   });
@@ -129,8 +136,12 @@ describe("删一章失败时那句话", () => {
   });
 
   it("带错误码的 404（那一章本来就没了）照抄后端", () => {
+    // 同上：故意避开 `chapter_missing`（真的注册码，会被整句模板抢先渲染）。
     const said = deleteChapterError(
-      new ApiError(404, { error: "chapter_missing", message: "第 9 章已经不在了。" }),
+      new ApiError(404, {
+        error: "chapter_missing_from_a_future_endpoint",
+        message: "第 9 章已经不在了。",
+      }),
     );
     expect(said).toBe("第 9 章已经不在了。");
   });
