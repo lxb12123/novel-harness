@@ -440,10 +440,37 @@ def test_landing_still_refuses_to_blank_a_chapter(
         chapter=1,
         base_sha=importer.text_digest(before),
         body="   \n\n  ",
+        language=DraftLanguage.ZH,
     )
 
     assert landed is False and "空的" in note
     assert _on_disk(conn, pid, 1) == before, "作者的一章被一份空白盖掉了"
+    conn.close()
+
+
+def test_landing_notes_are_english_for_an_english_book(
+    book: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`_land()` 的 `language` 参数（2026-08-27 补的国际化第三批遗漏）真的接到了输出上——
+    不只是表里有英文模板，是**这一条路真的选中它**，同一份判据、同一句空稿闸。
+    """
+    conn = connect(book["db"])
+    pid = book["pid"]
+    before = _on_disk(conn, pid, 1)
+
+    landed, note = drafting._land(
+        SqliteStoryGraph(conn),
+        conn,
+        project_id=pid,
+        root=_root(conn, pid),
+        chapter=1,
+        base_sha=importer.text_digest(before),
+        body="   \n\n  ",
+        language=DraftLanguage.EN,
+    )
+
+    assert landed is False
+    assert "empty" in note and "空的" not in note
     conn.close()
 
 

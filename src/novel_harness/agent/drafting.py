@@ -705,6 +705,7 @@ class ChapterDesk:
             chapter=stored.chapter,
             base_sha=stored.base_sha256,
             body=stored.body,
+            language=self._length.language,
         )
         if landed:
             self._candidates.mark_landed(self._project_id, candidate_id)
@@ -790,10 +791,15 @@ def _land(
     chapter: int,
     base_sha: str | None,
     body: str,
+    language: DraftLanguage,
 ) -> tuple[bool, str]:
     """把这一稿写进第 `chapter` 章。返回 `(写没写成, 说给模型听的那句话)`。
 
-    每一条不写的理由都要说得出口（见 `ChapterDesk.land`）。
+    每一条不写的理由都要说得出口（见 `ChapterDesk.land`）。**这句话本身双语**
+    （国际化第三批（下半）遗漏的一角，2026-08-27 补上）：`note` 不走
+    `ToolRefused`（那条异常路径已经在上一批译过），是普通返回值——但它一样
+    进模型的对话历史，一样不许是一句写死的中文。每条译文的键名和落点见
+    `prompt_terms.py` 的「agent/drafting.py::_land()」一节。
 
     **只有一件事仍然抛：留痕失败。** 写完盘之后那一行 `decision_log` 记不上时，
     这儿不吞（同 `api/chat.py::_ledger` 那条「记账失败也不吞」）——ADR 0021 拿
@@ -806,27 +812,17 @@ def _land(
         # ADR 0021 的范围限制，**这条 404 不许为 agent 放开**：新建一章要起章标题，
         # 而标题是切章的锚（切错了整本书章号会漂），`chapter_snapshot.chapter_id`
         # 也没有落点。所以交出正文，由作者建。
-        return False, (
-            f"第 {chapter} 章还不存在，所以这一稿没有存进去——新开一章要作者自己起章标题"
-            "（书里靠那一行认章）。把稿子给他看，请他建好这一章再放进去。"
-        )
+        return False, message("landing_target_chapter_missing", language, chapter=chapter)
 
     if base_sha is None:
         # **拆成两个动作之后新长出来的一档**：起草那会儿这一章不存在，现在它存在了
         # ——那是作者在这中间自己建的。`expected_sha256=None` 会把闸整个关掉，
         # 于是他刚起的那一章被一份**根本不是基于它写的**稿子盖掉。
-        return False, (
-            f"没有存进第 {chapter} 章：写这一稿的时候那一章还不存在，现在它有了"
-            "——那是作者刚建的，这一稿不是照着它写的，所以不覆盖。"
-            "要用的话让我照现在这一章重写一稿。"
-        )
+        return False, message("landing_chapter_created_after_draft", language, chapter=chapter)
 
     head = importer.single_chapter(current)
     if head is None:
-        return False, (
-            f"没有存进第 {chapter} 章：那一章现在的开头不是一行章标题（或者标题前面还有别的字）。"
-            "这种时候动它会让整本书的章号错位，所以一个字都没写。稿子还在，交给作者。"
-        )
+        return False, message("landing_chapter_head_malformed", language, chapter=chapter)
 
     # 模型自己写了一行章标题时，**用作者那一行，不用它那一行**：标题是切章的依据，
     # 换标题是作者的动作（同上面那条 404 的理由）。它写的那份被丢掉，正文照旧。
@@ -836,19 +832,13 @@ def _land(
         # 空的一稿接上章标题**照样切得出恰好一章**，所以下面那道形状闸拦不住它——
         # 拦不住的后果是作者的一整章被一份空白盖掉。生成那一侧已经拒过一次空稿，
         # 这一条是第二道：候选表里那份 `body` 不是这一层写的，它只保证自己不清空一章。
-        return False, (
-            f"没有存进第 {chapter} 章：这一稿是空的，存上去等于把那一章清空。"
-            "换个说法再让我写一次。"
-        )
+        return False, message("landing_draft_empty", language, chapter=chapter)
     candidate = importer.chapter_text(head.raw_heading, text)
     if importer.single_chapter(candidate) is None:
         # **写之前先验一次**，而不是等 `sync` 事后报错：`save_chapter` 是先写盘再 sync，
         # 那时正文已经盖上去了，作者要自己去修章标题才能存回来。这一稿多半自己又写了
         # 一行（或几行）章标题。
-        return False, (
-            f"没有存进第 {chapter} 章：这一稿接上原来的章标题之后切不成恰好一章"
-            "（多半是稿子里自己又写了章标题）。稿子还在，交给作者。"
-        )
+        return False, message("landing_candidate_not_single_chapter", language, chapter=chapter)
 
     try:
         # **先把磁盘上现在那一版落成快照。** ADR 0021 承诺的退路是「版本历史里退得回去」，
@@ -858,9 +848,8 @@ def _land(
         # 内容一字不差的章走 `unchanged_count`，不多出一行快照。
         importer.sync(store, project_id, root)
     except importer.SyncRefused as exc:
-        return False, (
-            f"没有存进第 {chapter} 章：这本书里有一个章节文件（{exc.path}）现在切不成一章，"
-            "同步整本书会失败。稿子还在，请作者先把那个文件的开头修好。"
+        return False, message(
+            "landing_presync_refused", language, chapter=chapter, path=exc.path
         )
 
     try:
@@ -869,15 +858,10 @@ def _land(
         )
     except importer.ChapterChanged:
         # **唯一那道闸**（ADR 0021）。不是「问你可不可以」，是「你比它更晚改过」。
-        return False, (
-            f"没有存进第 {chapter} 章：写这一稿的时候作者又改过那一章，"
-            "存上去会盖掉他刚写的字。稿子还在，让他自己决定要不要用。"
-        )
+        return False, message("landing_chapter_changed", language, chapter=chapter)
     except importer.ChapterMissing:
         # 这中间那个文件被删了/改名了。同上面那条：交出正文，不重建。
-        return False, (
-            f"没有存进第 {chapter} 章：写这一稿的时候那一章的文件不在了。稿子还在，交给作者。"
-        )
+        return False, message("landing_chapter_file_missing", language, chapter=chapter)
     except importer.SyncRefused:
         # 上面那次 `sync` 刚过，所以走到这儿只可能是**这几毫秒里**别的章被改坏了。
         # 正文**已经**在磁盘上（`save_chapter` 先写盘），所以这儿说的是「存了，但
@@ -888,16 +872,10 @@ def _land(
         # 但每步留痕」换掉了「事前问一句」，只履行前半句就是把那笔交易赖掉一半。
         # 快照这一次没落下，所以那一行也说清楚了「版本历史没跟上」。
         _log_landing(conn, project_id=project_id, chapter=chapter, candidate=candidate)
-        return True, (
-            f"已经写进第 {chapter} 章了，但这本书里有别的章节文件切不成一章，"
-            "所以这一次没能记进版本历史。请作者去看一眼。"
-        )
+        return True, message("landing_saved_but_history_not_recorded", language, chapter=chapter)
 
     _log_landing(conn, project_id=project_id, chapter=chapter, candidate=candidate)
-    return True, (
-        f"已经写进第 {chapter} 章了（章标题保持原样）。"
-        "不满意就在版本历史里退回上一版，活动记录里也有这一次的记录。"
-    )
+    return True, message("landing_saved", language, chapter=chapter)
 
 
 def _log_landing(conn: Connection, *, project_id: str, chapter: int, candidate: str) -> None:

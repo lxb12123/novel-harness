@@ -20,10 +20,12 @@
 留下的 4 条考的是**造库**那一半，它服务的是 M3 那张卷子（R3 误报门槛，
 `synth/m3_replay.py` 在 build 出来的 `gate.db` 上跑）——**那张卷子零秘密**。
 
-⚠️ **2026-08-27：`[[future]]`（`FutureSpec`）随 R2 FUTURE_LEAK 一起从 schema 里
-删了**（ADR 0040）。下面的夹具原来声明一个 `[[future]]` 节点来验证「build 能把
-`first_appears` 写进非角色节点」，那份能力今天没有消费者——换成验证同样还在的
-`[[entity]]`（`EntitySpec`）。
+⚠️ **2026-08-27：`[[future]]`（`FutureSpec`）和 `[[entity]]`（`EntitySpec`）
+同日都从 schema 里删了**（ADR 0040 + 同一批的 `EntitySpec` 判断，见
+`synth/build.py` 模块 docstring）。两者存在的理由都随 M3 门槛收窄到只测 R3
+而消失——R3 只读**角色**的状态/首现，不读任何非角色节点。`Booklet` 从此只剩
+`book` + `characters` 两段，下面的夹具跟着简化：不再需要非角色节点就能证明
+「写进去了」。
 """
 
 from __future__ import annotations
@@ -57,10 +59,6 @@ canonical = "苏挽"
 
 [[character]]
 canonical = "李管家"
-
-[[entity]]
-name = "血枭盟"
-label = "Faction"
 """
 
 PROSE = """\
@@ -112,7 +110,7 @@ def test_build_walks_the_real_write_chain(tmp_path: Path) -> None:
     result = _build(tmp_path)
 
     assert result.chapters == 3
-    assert (result.characters, result.entities) == (3, 1)
+    assert result.characters == 3
     assert result.project_id
 
     # 正文真的过了 import_book（不是被谁塞进库里的）。

@@ -1004,6 +1004,134 @@ _MESSAGES: dict[str, dict[DraftLanguage, str]] = {
             "author say clearly which version they want."
         ),
     },
+    # ── agent/drafting.py::_land()（032 之后的批次，2026-08-27）──────────────
+    # `_land()` 不走 ToolRefused：它把「写没写成」全部当返回值（成功也在内），
+    # 见它自己的 docstring。这十条覆盖它每一条 return 分支，键名前缀 `landing_`
+    # 是这一节唯一的命名空间。
+    "landing_target_chapter_missing": {
+        DraftLanguage.ZH: (
+            "第 {chapter} 章还不存在，所以这一稿没有存进去——新开一章要作者自己起"
+            "章标题（书里靠那一行认章）。把稿子给他看，请他建好这一章再放进去。"
+        ),
+        DraftLanguage.EN: (
+            "Chapter {chapter} doesn't exist yet, so this draft wasn't "
+            "saved — a new chapter needs the author to title it "
+            "themselves (the book recognizes chapters by that line). "
+            "Show him the draft and ask him to create the chapter "
+            "first, then put it in."
+        ),
+    },
+    "landing_chapter_created_after_draft": {
+        DraftLanguage.ZH: (
+            "没有存进第 {chapter} 章：写这一稿的时候那一章还不存在，现在它有了"
+            "——那是作者刚建的，这一稿不是照着它写的，所以不覆盖。"
+            "要用的话让我照现在这一章重写一稿。"
+        ),
+        DraftLanguage.EN: (
+            "Chapter {chapter} wasn't saved: it didn't exist when this "
+            "draft was written, and now it does — the author just "
+            "created it, and this draft wasn't written against it, so "
+            "it won't overwrite it. To use it, have me rewrite a draft "
+            "against the chapter as it stands now."
+        ),
+    },
+    "landing_chapter_head_malformed": {
+        DraftLanguage.ZH: (
+            "没有存进第 {chapter} 章：那一章现在的开头不是一行章标题"
+            "（或者标题前面还有别的字）。这种时候动它会让整本书的章号错位，"
+            "所以一个字都没写。稿子还在，交给作者。"
+        ),
+        DraftLanguage.EN: (
+            "Chapter {chapter} wasn't saved: its current opening line "
+            "isn't a chapter title (or there's other text before the "
+            "title). Touching it now would throw off every chapter "
+            "number in the book, so nothing was written. The draft is "
+            "still here — hand it to the author."
+        ),
+    },
+    "landing_draft_empty": {
+        DraftLanguage.ZH: (
+            "没有存进第 {chapter} 章：这一稿是空的，存上去等于把那一章清空。"
+            "换个说法再让我写一次。"
+        ),
+        DraftLanguage.EN: (
+            "Chapter {chapter} wasn't saved: this draft is empty, and "
+            "saving it would wipe out the chapter. Rephrase and ask me "
+            "to write it again."
+        ),
+    },
+    "landing_candidate_not_single_chapter": {
+        DraftLanguage.ZH: (
+            "没有存进第 {chapter} 章：这一稿接上原来的章标题之后切不成恰好一章"
+            "（多半是稿子里自己又写了章标题）。稿子还在，交给作者。"
+        ),
+        DraftLanguage.EN: (
+            "Chapter {chapter} wasn't saved: appended to the original "
+            "chapter title, this draft no longer parses as exactly one "
+            "chapter (most likely it wrote its own chapter title "
+            "again). The draft is still here — hand it to the author."
+        ),
+    },
+    "landing_presync_refused": {
+        DraftLanguage.ZH: (
+            "没有存进第 {chapter} 章：这本书里有一个章节文件（{path}）现在切不成"
+            "一章，同步整本书会失败。稿子还在，请作者先把那个文件的开头修好。"
+        ),
+        DraftLanguage.EN: (
+            "Chapter {chapter} wasn't saved: one of this book's chapter "
+            "files ({path}) currently doesn't parse as a single "
+            "chapter, so syncing the whole book would fail. The draft "
+            "is still here — ask the author to fix that file's opening "
+            "first."
+        ),
+    },
+    "landing_chapter_changed": {
+        DraftLanguage.ZH: (
+            "没有存进第 {chapter} 章：写这一稿的时候作者又改过那一章，"
+            "存上去会盖掉他刚写的字。稿子还在，让他自己决定要不要用。"
+        ),
+        DraftLanguage.EN: (
+            "Chapter {chapter} wasn't saved: the author changed that "
+            "chapter again while this draft was being written, and "
+            "saving would overwrite what he just wrote. The draft is "
+            "still here — let him decide whether to use it."
+        ),
+    },
+    "landing_chapter_file_missing": {
+        DraftLanguage.ZH: (
+            "没有存进第 {chapter} 章：写这一稿的时候那一章的文件不在了。"
+            "稿子还在，交给作者。"
+        ),
+        DraftLanguage.EN: (
+            "Chapter {chapter} wasn't saved: that chapter's file went "
+            "missing while this draft was being written. The draft is "
+            "still here — hand it to the author."
+        ),
+    },
+    "landing_saved_but_history_not_recorded": {
+        DraftLanguage.ZH: (
+            "已经写进第 {chapter} 章了，但这本书里有别的章节文件切不成一章，"
+            "所以这一次没能记进版本历史。请作者去看一眼。"
+        ),
+        DraftLanguage.EN: (
+            "Chapter {chapter} has been saved, but another chapter "
+            "file in this book doesn't parse as a single chapter, so "
+            "this save wasn't recorded in version history this time. "
+            "Ask the author to take a look."
+        ),
+    },
+    "landing_saved": {
+        DraftLanguage.ZH: (
+            "已经写进第 {chapter} 章了（章标题保持原样）。"
+            "不满意就在版本历史里退回上一版，活动记录里也有这一次的记录。"
+        ),
+        DraftLanguage.EN: (
+            "Chapter {chapter} has been saved (the chapter title was "
+            "kept as-is). If it's not right, roll back to the previous "
+            "version in the version history — this save is also in "
+            "the activity log."
+        ),
+    },
     # ── calibration/seal.py ──────────────────────────────────────────────
     "surface_not_resolved": {
         DraftLanguage.ZH: "封存校验失败：{what}「{surface}」解析不出唯一节点，不能作为安全参数进入 Writer 简报。",
