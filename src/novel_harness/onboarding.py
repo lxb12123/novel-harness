@@ -15,6 +15,7 @@ from . import importer, project
 from .db import Connection
 from .graph.sqlite_store import SqliteStoryGraph
 from .text import Chapterization
+from .text.language import detect_language
 
 BootstrapMode = Literal["import", "blank"]
 
@@ -135,6 +136,14 @@ def bootstrap_project(
 
     # Preparation precedes even books_root creation, so invalid input has no persistent effect.
     book = _prepared_book(mode=mode, text=text)
+    # 国际化第一批 ②：import 模式此刻手上就有全书正文，不必等 sync 之后再补一次探测。
+    # blank 模式没有真正的正文（只有一章空模板），language 留 None → project.insert()
+    # 落回 SQL 的 DEFAULT 'zh'，等作者写了字、下一次 sync 再补判定。
+    detected_language = (
+        detect_language(book.preamble + "\n" + "\n".join(c.body for c in book.chapters))
+        if mode == "import"
+        else None
+    )
 
     books_root.mkdir(parents=True, exist_ok=True)
     final_root: Path | None = None
@@ -147,7 +156,9 @@ def bootstrap_project(
         stage = Path(tempfile.mkdtemp(prefix=".nh-bootstrap-", dir=books_root))
         store = SqliteStoryGraph(conn)
         with store.transaction():
-            created = project.insert(conn, name=cleaned_name, root_path=str(final_root))
+            created = project.insert(
+                conn, name=cleaned_name, root_path=str(final_root), language=detected_language
+            )
             if mode == "import":
                 report = importer.import_prepared(store, created.id, book=book, root=stage)
             else:

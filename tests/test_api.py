@@ -1261,9 +1261,12 @@ def test_draft_openapi_publishes_its_request_contract(client: TestClient) -> Non
 
     ⚠️ 这句话原来写的是「goal/cast/length/form」。`form` 2026-08-25 随三臂删了，
     **`goal` 和 `mode` 2026-08-26 随「起草一整章」那个入口一起删了**——那条路今天
-    只剩行内续写（`api/app.py::DraftRequest`）。所以这条测试现在两头都量：
-    活着的那几位在，**删掉的那两位不许悄悄长回来**（长回来 = 契约上又摆出一个
-    浏览器不会走、而且带着泄漏入口的分支）。
+    只剩行内续写（`api/app.py::DraftRequest`）。**`length.language` 2026-08-27
+    随国际化第一批 ② 一起删了**（`_DraftLengthBody`）：语言是整本书的属性，
+    由 `proj.language` 在服务端补，不再是这次请求能填的一位。所以这条测试现在
+    量的是：活着的那几位在，**删掉的这三位（goal/mode/length.language）不许
+    悄悄长回来**（长回来 = 契约上又摆出一个浏览器不会走、而且带着泄漏或
+    「一次请求各选各语言」入口的分支）。
     """
     spec = client.get("/openapi.json").json()
     operation = spec["paths"]["/api/projects/{project_id}/chapters/{chapter}/draft"]["post"]
@@ -1293,39 +1296,79 @@ def test_draft_openapi_publishes_its_request_contract(client: TestClient) -> Non
         length_schema = merged_len
 
     assert set(length_schema["properties"]) == {
-        "language",
         "min_units",
         "target_units",
         "max_units",
     }
     assert set(length_schema["required"]) == {
-        "language",
         "min_units",
         "target_units",
         "max_units",
     }
-    language_ref = length_schema["properties"]["language"]["$ref"]
-    language_schema = spec["components"]["schemas"][language_ref.rsplit("/", 1)[-1]]
-    assert language_schema["enum"] == ["zh", "en"]
+    assert "language" not in length_schema["properties"]
+
+
+def test_project_language_openapi_publishes_the_zh_en_enum(client: TestClient) -> None:
+    """`PATCH …/language` 的请求契约：只收 `"zh"` / `"en"`，没有第三个值。
+
+    语言的枚举校验从 `/draft` 的 `length.language` 搬到这儿——它现在是唯一能
+    改语言的入口（国际化第一批 ②）。
+    """
+    spec = client.get("/openapi.json").json()
+    operation = spec["paths"]["/api/projects/{project_id}/language"]["patch"]
+    body_schema = operation["requestBody"]["content"]["application/json"]["schema"]
+    while "$ref" in body_schema:
+        body_schema = spec["components"]["schemas"][body_schema["$ref"].rsplit("/", 1)[-1]]
+    language_schema = body_schema["properties"]["language"]
+    assert set(language_schema.get("enum", [])) == {"zh", "en"}
 
 
 @pytest.mark.parametrize(
     "length",
     [
-        {"language": "fr", "min_units": 2000, "target_units": 2500, "max_units": 3000},
-        {"language": "zh", "min_units": 0, "target_units": 2500, "max_units": 3000},
-        {"language": "en", "min_units": 1800, "target_units": 1500, "max_units": 1200},
-        {"language": "zh", "min_units": 2000, "target_units": 2500, "max_units": 20001},
-        {"language": "en", "min_units": 1200, "target_units": 1500, "max_units": 12001},
+        # `language` 国际化第一批 ②（2026-08-27）起从这个请求体上删了：语言是整本书
+        # 的属性，由 `proj.language` 在服务端补，不再是这一位能填错的字段——所以
+        # 「language: fr」那个用例跟着一起没了，不是漏删。zh 硬上限（20000）那条还在，
+        # `book` 这个 fixture 默认就是 zh，不用特意布置。en 硬上限的场景需要先把项目
+        # 语言改成 en，挪到下面单独一条测试（`test_draft_rejects_a_length_over_the_
+        # project_language_hard_maximum`），不硬塞进这组参数化里。
+        {"min_units": 0, "target_units": 2500, "max_units": 3000},
+        {"min_units": 1800, "target_units": 1500, "max_units": 1200},
+        {"min_units": 2000, "target_units": 2500, "max_units": 20001},
     ],
 )
 def test_draft_rejects_invalid_length_body(
-    client: TestClient, book: dict[str, str], length: dict[str, int | str]
+    client: TestClient, book: dict[str, str], length: dict[str, int]
 ) -> None:
     r = client.post(
         f"/api/projects/{_pid(book)}/chapters/7/draft",
         # `goal` 2026-08-26 从请求体上删了（`/draft` 只剩续写）；这条量的是长度那一位。
         json={"cast": ["萧决"], "length": length},
+    )
+    assert r.status_code == 422, r.text
+    assert r.json()["detail"]
+
+
+def test_draft_rejects_a_length_over_the_project_language_hard_maximum(
+    client: TestClient, book: dict[str, str]
+) -> None:
+    """硬上限按 `proj.language` 算，不是按请求体（已经没有的）`language` 算。
+
+    这本书默认是 zh（20000 字硬上限），先用 `PATCH …/language` 改成 en
+    （12000 词硬上限），12001 就该被拒——同一份请求体在改语言前后踩的是两条
+    不同的上限，证明它跟着项目走，不是跟着请求走。
+    """
+    pid = _pid(book)
+    patched = client.patch(f"/api/projects/{pid}/language", json={"language": "en"})
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["language"] == "en"
+
+    r = client.post(
+        f"/api/projects/{pid}/chapters/7/draft",
+        json={
+            "cast": ["萧决"],
+            "length": {"min_units": 1200, "target_units": 1500, "max_units": 12001},
+        },
     )
     assert r.status_code == 422, r.text
     assert r.json()["detail"]

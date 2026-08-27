@@ -792,6 +792,7 @@
     "project": {
       "canon_version": 0,
       "id": "project:ID2",
+      "language": "zh",
       "name": "契约样书",
       "root_path": "<root>/books/契约样书"
     },
@@ -842,6 +843,7 @@
     "project": {
       "canon_version": 0,
       "id": "project:ID62",
+      "language": "zh",
       "name": "序章样书",
       "root_path": "<root>/books/序章样书"
     },
@@ -1707,6 +1709,7 @@
     {
       "canon_version": 6,
       "id": "project:ID1",
+      "language": "zh",
       "name": "青云记",
       "root_path": "<root>/book"
     }
@@ -1715,12 +1718,14 @@
     {
       "canon_version": 0,
       "id": "project:ID2",
+      "language": "zh",
       "name": "契约样书",
       "root_path": "<root>/books/契约样书"
     },
     {
       "canon_version": 12,
       "id": "project:ID1",
+      "language": "zh",
       "name": "青云记",
       "root_path": "<root>/book"
     }

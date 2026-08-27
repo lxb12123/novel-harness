@@ -43,11 +43,13 @@ def test_module_exposes_only_listed_project_operations() -> None:
         and obj.__module__ == project.__name__
     ]
     assert sorted(public) == [
+        "apply_detected_language",
         "compare_and_bump_canon_version",
         "create",
         "get",
         "insert",
         "list_all",
+        "override_language",
         "require_canon_version",
     ]
     mutations = [name for name in public if name.startswith(_MUTATION_PREFIXES)]

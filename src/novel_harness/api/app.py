@@ -36,7 +36,6 @@ from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import (
-    AfterValidator,
     BaseModel,
     ConfigDict,
     Field,
@@ -47,6 +46,7 @@ from pydantic import (
 from .. import importer
 from .. import onboarding
 from .. import project as project_mod
+from ..text.language import detect_language
 from ..settings import Settings as UserSettings
 from ..settings import load as load_user_settings
 from ..settings import save as save_user_settings
@@ -60,7 +60,7 @@ from ..declare import (
     UnknownName,
     WrongLabel,
 )
-from ..draft.length import DEFAULT_LENGTH_POLICY, LengthSpec
+from ..draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage, LengthSpec
 # 模块级 import：`api/chat.py` → `agent/` 那条链本来就把它拉进来了
 # （`sys.modules` 实测），所以这一行不多花任何启动时间。
 from ..draft.product_draft import SummaryBackfillReply
@@ -785,10 +785,23 @@ def bootstrap_project(
     )
 
 
+def _detect_and_store_language(conn: Any, project_id: str, root: Path) -> None:
+    """import/sync 之后顺手补一次语言判定（国际化第一批 ②）。**不花钱**：
+    `detect_language` 是纯正则计数，没有模型调用。
+
+    只在 `project.language_locked = 0` 时才真的写（`project.apply_detected_language()`
+    自己保证，这里不重复判断）——作者手动改过之后，这里再跑多少次都不会把它推翻回去。
+    样本太短（新书刚建、还没几个字）时 `detect_language` 返回 `None`，
+    `apply_detected_language` 对 `None` 是空操作。
+    """
+    project_mod.apply_detected_language(conn, project_id, detect_language(importer.language_sample(root)))
+
+
 @app.post("/api/projects/{project_id}/import")
 def import_book(
     body: ImportText,
     store: Any = Depends(get_store),
+    conn: Any = Depends(get_conn),
     proj: Any = Depends(load_project),
 ) -> Any:
     """把一本 TXT 切章 → 写成 {root}/chapters/NNNN.md → 落库。一次性播种，日常回路用 sync。
@@ -801,14 +814,18 @@ def import_book(
         fh.write(body.text)
         tmp = Path(fh.name)
     try:
-        return importer.import_book(store, proj.id, txt=tmp, root=Path(proj.root_path))
+        report = importer.import_book(store, proj.id, txt=tmp, root=Path(proj.root_path))
     finally:
         tmp.unlink(missing_ok=True)
+    _detect_and_store_language(conn, proj.id, Path(proj.root_path))
+    return report
 
 
 @app.post("/api/projects/{project_id}/sync", response_model=manuscript.SyncOutcome)
 def sync_project(
-    store: Any = Depends(get_store), proj: Any = Depends(load_project)
+    store: Any = Depends(get_store),
+    conn: Any = Depends(get_conn),
+    proj: Any = Depends(load_project),
 ) -> manuscript.SyncOutcome:
     """把 {root}/chapters/*.md 的现状读进库（作者在别的软件里改了稿之后走这条）。
 
@@ -821,12 +838,34 @@ def sync_project(
 
     出参是 `SyncOutcome` 不是 `SyncReport`：屏幕上那句话由 `api/manuscript.py` 写。
     """
-    return manuscript.sync_outcome(importer.sync(store, proj.id, Path(proj.root_path)))
+    root = Path(proj.root_path)
+    outcome = manuscript.sync_outcome(importer.sync(store, proj.id, root))
+    _detect_and_store_language(conn, proj.id, root)
+    return outcome
 
 
 @app.get("/api/projects/{project_id}")
 def project_detail(proj: Any = Depends(load_project)) -> Any:
     return proj
+
+
+class LanguageBody(BaseModel):
+    language: Literal["zh", "en"]
+
+
+@app.patch("/api/projects/{project_id}/language")
+def set_project_language(
+    body: LanguageBody,
+    conn: Any = Depends(get_conn),
+    proj: Any = Depends(load_project),
+) -> Any:
+    """作者手动改语言（国际化第一批 ②）。**改过之后自动判定不会再覆盖它**——
+
+    `project.override_language()` 同一笔把 `language_locked` 置 1。这是「右栏 LLM
+    生成、作者可见可改」那条口径在语言这一位上的落点：正文推出来的只是默认值，
+    作者说的话最后算数。一本中文小说夹了大量英文引文时，这是唯一的更正入口。
+    """
+    return project_mod.override_language(conn, proj.id, body.language)
 
 
 @app.get("/api/projects/{project_id}/roster")
@@ -1461,10 +1500,22 @@ def declare_first_appearance(
 # ══════════════════════════════════════════════════════════════════════════
 
 _NOT_IMPLEMENTED = "not_implemented"
-_DraftLengthBody = Annotated[
-    LengthSpec,
-    AfterValidator(DEFAULT_LENGTH_POLICY.validate_spec),
-]
+
+
+class _DraftLengthBody(BaseModel):
+    """续写请求体里的长度档。**没有 `language`**——国际化第一批 ②（2026-08-27）起
+    这一位由 `proj.language` 在 `draft()` 里补上，不再信任前端发来的值。
+
+    同 `goal` / `cast` / `mode` / `write_rule` 那条纪律（ADR 0015 D3/D4）：
+    前端能传的东西作者就能改，而语言是**整本书**的属性，不该由某一次续写请求
+    各选各的。`extra="forbid"` 不开在这里（默认忽略未知键）：一个还没升级的旧前端
+    继续发 `language` 字段也不该 422——静默忽略它、按 `proj.language` 算，
+    正是这一刀要的效果，不是需要拦住的事。
+    """
+
+    min_units: int = Field(ge=1)
+    target_units: int = Field(ge=1)
+    max_units: int = Field(ge=1)
 
 
 def _stub(milestone: str) -> dict[str, str]:
@@ -1734,7 +1785,19 @@ def draft(
         # 接到同一条路由上，把它的前提推翻了 —— 从此这个 `HIGH` 压在续写头上，作者停手
         # 400 毫秒就吃一个 422，而报的话是「模型没配好，先去填服务地址/模型/钥匙」，
         # 把他支去重填一份根本没问题的配置。（2026-08-26 两处一起改掉。）
-        plan = plan_call(body.length, ReasoningEffort.OFF, capability)
+        #
+        # `language` 从 `proj.language` 来，不从 `body.length` 来（国际化第一批 ②）：
+        # 前端那份请求体（`_DraftLengthBody`）已经没有这个字段了，语言是整本书的属性，
+        # 不该由某一次续写请求各选各的。
+        length = DEFAULT_LENGTH_POLICY.validate_spec(
+            LengthSpec(
+                language=DraftLanguage(proj.language),
+                min_units=body.length.min_units,
+                target_units=body.length.target_units,
+                max_units=body.length.max_units,
+            )
+        )
+        plan = plan_call(length, ReasoningEffort.OFF, capability)
     except (ValidationError, ValueError, CapabilityError) as exc:
         raise HTTPException(
             status_code=422,
@@ -1767,7 +1830,7 @@ def draft(
         # 用 `CONTINUATION_GOAL` 顶掉这一位（它**只在整章那一支才读 `request.goal`**），
         # 所以这儿给空串是「这一位在这条路上没有意义」，不是「忘了填」。
         goal="",
-        length=body.length,
+        length=length,
         mode="continuation",
         previous_tail=body.previous_tail,
         # 【下文】**只在改旧章时给**。最新章的常态是往末尾写，光标后面没有字；

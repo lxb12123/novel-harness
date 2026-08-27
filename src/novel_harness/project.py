@@ -37,6 +37,12 @@ class Project(BaseModel):
     name: str
     root_path: str
     canon_version: int = 0
+    language: str = "zh"
+    """`"zh"` 或 `"en"`。默认从正文自动判定（`text/language.py::detect_language()`），
+    作者能通过 `PATCH …/language` 改——改过之后自动判定不会再覆盖它（`language_locked`
+    那一列不出这个类型，纯服务端记账）。ADR 0012「书自己拥有它的库」：这一位挂在
+    project 行上，不进 `~/.config/novel-harness/settings.json`——那份配置是每台机器
+    一份的，而一个人可能同时有一本中文书和一本英文书。"""
 
 
 class ProjectNotFound(LookupError):
@@ -91,33 +97,51 @@ def create(conn: Connection, *, name: str, root_path: str) -> Project:
         raise
 
 
-def insert(conn: Connection, *, name: str, root_path: str) -> Project:
+def insert(conn: Connection, *, name: str, root_path: str, language: str | None = None) -> Project:
     """插入一个项目，但本函数自身绝不 BEGIN、commit 或 rollback。
 
     `db.connect()` 的 SQLite legacy transaction control 会在 INSERT 时隐式开启事务，
     所以调用方之后必须 commit 或 rollback；需要把项目行和其他写入原子组合时，应先
     开启外层事务。`project` 表仍只由本模块写，普通公开创建仍应使用会提交的 `create()`。
+
+    Args:
+        language: `None` = 交给 SQL 的 `DEFAULT 'zh'`（这本书还没有正文可判定，比如
+            空白新书）。调用方已经能从正文推出语言时（`onboarding.bootstrap_project()`
+            的 import 模式）应显式传入——这是**创建时机**的检测结果，不是覆盖：
+            `language_locked` 仍然是 0，后续 sync 检测到不一样的语言时照样能改。
     """
     if not name:
         raise ValueError("书名不能为空：它是作者建好之后唯一认得出这本书的东西")
     if not root_path:
         raise ValueError("root_path 不能为空：正文在磁盘上（ADR 0007），没有它就没有 chapters/")
+    if language is not None and language not in ("zh", "en"):
+        raise ValueError(f"language 只能是 'zh' 或 'en'，收到 {language!r}")
 
-    row = conn.execute(
-        """
-        INSERT INTO project (id, name, root_path)
-        VALUES (?, ?, ?)
-        RETURNING id, name, root_path, canon_version
-        """,
-        (new_project_id(), name, root_path),
-    ).fetchone()
+    if language is None:
+        row = conn.execute(
+            """
+            INSERT INTO project (id, name, root_path)
+            VALUES (?, ?, ?)
+            RETURNING id, name, root_path, canon_version, language
+            """,
+            (new_project_id(), name, root_path),
+        ).fetchone()
+    else:
+        row = conn.execute(
+            """
+            INSERT INTO project (id, name, root_path, language)
+            VALUES (?, ?, ?, ?)
+            RETURNING id, name, root_path, canon_version, language
+            """,
+            (new_project_id(), name, root_path, language),
+        ).fetchone()
     return _row_to_project(row)
 
 
 def get(conn: Connection, project_id: str) -> Project | None:
     """读一个项目；不存在返回 None。"""
     row = conn.execute(
-        "SELECT id, name, root_path, canon_version FROM project WHERE id = ?",
+        "SELECT id, name, root_path, canon_version, language FROM project WHERE id = ?",
         (project_id,),
     ).fetchone()
     return None if row is None else _row_to_project(row)
@@ -126,9 +150,50 @@ def get(conn: Connection, project_id: str) -> Project | None:
 def list_all(conn: Connection) -> list[Project]:
     """列出全部项目（按 name）。装配层/API 壳用它挑当前书；`project` 不是图表，读它无需走 StoryGraph。"""
     rows = conn.execute(
-        "SELECT id, name, root_path, canon_version FROM project ORDER BY name"
+        "SELECT id, name, root_path, canon_version, language FROM project ORDER BY name"
     ).fetchall()
     return [_row_to_project(r) for r in rows]
+
+
+def apply_detected_language(conn: Connection, project_id: str, language: str | None) -> None:
+    """自动检测的结果。**只在作者没手动定过的时候才写**——SQL 的
+    `WHERE language_locked = 0` 让这条判断原子成立，不需要先读再判断再写。
+
+    `language is None`（样本太短，见 `text/language.py::detect_language()`）时
+    整个函数是空操作：没有信号就别覆盖已有的值，哪怕那个值只是还没判定过的地板。
+    本函数自成一次完整操作，调用方不需要再 commit。
+    """
+    if language is None:
+        return
+    if language not in ("zh", "en"):
+        raise ValueError(f"language 只能是 'zh' 或 'en'，收到 {language!r}")
+    conn.execute(
+        "UPDATE project SET language = ? WHERE id = ? AND language_locked = 0",
+        (language, project_id),
+    )
+    conn.commit()
+
+
+def override_language(conn: Connection, project_id: str, language: str) -> Project:
+    """作者手动改语言（`PATCH …/language` 唯一的调用方）。
+
+    **之后自动检测永不再覆盖它**：同一笔把 `language_locked` 置 1。这是「右栏 LLM
+    生成、作者可见可改」那条口径在这一位上的落点——机器猜的，人改了就听人的。
+    """
+    if language not in ("zh", "en"):
+        raise ValueError(f"language 只能是 'zh' 或 'en'，收到 {language!r}")
+    row = conn.execute(
+        """
+        UPDATE project SET language = ?, language_locked = 1
+        WHERE id = ?
+        RETURNING id, name, root_path, canon_version, language
+        """,
+        (language, project_id),
+    ).fetchone()
+    if row is None:
+        raise ProjectNotFound(project_id)
+    conn.commit()
+    return _row_to_project(row)
 
 
 def require_canon_version(conn: Connection, project_id: str) -> int:
@@ -174,4 +239,5 @@ def _row_to_project(row: Any) -> Project:
         name=row["name"],
         root_path=row["root_path"],
         canon_version=row["canon_version"],
+        language=row["language"],
     )

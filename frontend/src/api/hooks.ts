@@ -26,11 +26,11 @@ import type {
   ChatStopped,
   ChatTurnEvent,
   CheckResult,
+  ContinuationLengthSpec,
   DeclareAlias,
   DeclareNode,
   DeleteNodeInput,
   DraftCandidateDetail,
-  DraftLengthSpec,
   EventCastCorrection,
   EventCastInput,
   EventView,
@@ -226,6 +226,18 @@ export function useRetractSummary(pid: string) {
 
 export function useProjects() {
   return useQuery({ queryKey: q(["projects"]), queryFn: () => api.get<Project[]>("/api/projects") });
+}
+
+/** 作者手动改一本书的语言（国际化第一批 ②）。**改过之后自动判定不会再覆盖它**
+ *  ——同「右栏 LLM 生成、作者可见可改」那条口径：机器猜的，人改了就听人的。
+ *  一本中文小说夹了大量英文引文时，这是唯一的更正入口。 */
+export function useSetProjectLanguage(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (language: "zh" | "en") =>
+      api.patch<Project>(proj(pid, "/language"), { language }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["projects"] }),
+  });
 }
 
 export function useBootstrapProject() {
@@ -492,6 +504,9 @@ export function useDeleteSnapshot(pid: string, chapter: number) {
  *  **没有 `goal`**——续写的提示语是后端常量（D3），前端能传的东西作者就能改，
  *  而 `goal` 是 ADR 0010 点名的泄漏入口之一；现在它连字段都不存在了。
  *  **`cast` 也不带**——不知道谁在场就走全禁（D4）；这是不给作者设门槛，不是偷懒。
+ *  **`length.language` 也不带**（国际化第一批 ②，2026-08-27）——语言是整本书的属性，
+ *  由后端从 `Project.language` 补，不该由某一次续写请求各选各的；同上面那几位
+ *  一个理由：前端能传的东西作者就能改。
  *
  *  光标**前后**两截都送（`following_text` 是后面那截已经写好的正文）。**送不等于用**：
  *  后端只在「这一章不是全书最后一章」时才把它渲染成【下文】——那个判断要知道全书
@@ -508,13 +523,13 @@ export function useContinuation(pid: string, chapter: number) {
 }
 
 /** 一两段的长度档。`LengthSpec` 的下限是 1，所以这是合法取值（ADR 0015 D1 / 0013）。
- *  M2 的 kill-gate 走冻结的 `M2_LENGTH_SPEC`，动不到考卷。 */
+ *  M2 的 kill-gate 走冻结的 `M2_LENGTH_SPEC`，动不到考卷。**没有 `language`**——
+ *  见 `ContinuationLengthSpec` 的注释。 */
 export const CONTINUATION_LENGTH = {
-  language: "zh",
   min_units: 60,
   target_units: 140,
   max_units: 260,
-} as const satisfies DraftLengthSpec;
+} as const satisfies ContinuationLengthSpec;
 
 // ⚠️ **`useLocate` / `useDeclare` 2026-08-14 删了**（连同它们唯一的调用方
 // `DeclareDrawer` 和中栏那条选区工具条）。**后端 `POST …/locate`、`POST …/declare/*`

@@ -515,7 +515,7 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 > 列在「还一个字符都没有」里——照它排期的人会去重写已完成的工作。
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
-> 守卫钉住的是**能在运行时数出来**的那些（88 条路由 / 87 条 /api / 1 条 501 stub /
+> 守卫钉住的是**能在运行时数出来**的那些（89 条路由 / 88 条 /api / 1 条 501 stub /
 > 19 个错误映射 / 49 张表 / 86 个端点 / `ALL_CHECKS` 2），
 > 改错必红、**删掉也必红**（不静默 skip）。
 > （**「17 个子命令」2026-08-20 从这张清单里退了**：命令行面整个删掉，那个数在运行时
@@ -783,8 +783,8 @@ gate.py                                         ← M2 大门的薄入口（`pyt
                                                   `rules_run` 列的是 `len(ALL_CHECKS)` 个真规则名，
                                                   不是写死的数字，`demo.sh` 的心跳逐字钉着那个数
 api/{app,deps,launch,activity,background_runtime,chat,extraction,manuscript,notifications,reconcile,review,validation}.py
-                                                ← M1.5 FastAPI 壳：88 条路由 + 19 个错误映射
-                                                  （87 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
+                                                ← M1.5 FastAPI 壳：89 条路由 + 19 个错误映射
+                                                  （88 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
                                                   2026-08-20 少两条：换章 autopilot 的
                                                   POST/GET 随 ADR 0035 整块删了；
                                                   M4 抽取/事件读端 + 提案审阅/被动确认路由；

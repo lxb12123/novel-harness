@@ -208,6 +208,19 @@ body.resizing { cursor: col-resize; -webkit-user-select: none; user-select: none
 .book-menu button { width: 100%; text-align: left; }
 .book-menu-note { margin-top: 6px; color: var(--dim); font-size: 11px; line-height: 1.5; }
 
+/* 语言覆盖口（国际化第一批 ②）：两个小按钮并排，不吃上面 `.book-menu button` 那条
+   「每颗按钮占满一行」的规矩——它们是同一件事的两个取值，不是两个独立操作。 */
+.book-menu-lang {
+  display: flex; align-items: center; gap: 6px; padding: 4px 0 8px;
+  border-bottom: 1px solid var(--line); margin-bottom: 6px;
+  color: var(--dim); font-size: 12px;
+}
+.book-menu-lang button {
+  width: auto; flex: 0 0 auto; padding: 2px 8px; border: 1px solid var(--line);
+  border-radius: 4px; font-size: 12px;
+}
+.book-menu-lang button.on { border-color: var(--accent); color: var(--accent); background: var(--sel); }
+
 /* 切书弹窗：居中的方框（抽屉贴边，这个不贴——它是「换一本」这种全局动作） */
 .modal {
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 20;

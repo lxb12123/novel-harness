@@ -149,6 +149,38 @@ describe("侧栏书架", () => {
     expect(await screen.findByRole("button", { name: second.name })).toBeInTheDocument();
   });
 
+  it("⋯ 里能看到并且能改这本书的语言（国际化第一批 ②）", async () => {
+    // fixture 里两本书都是 zh（真 dump：`language` 是新加的一列，默认值）。
+    // 点「English」之后**重新 GET 一次** `/api/projects` 会拿到 en——
+    // 用调用计数模拟「PATCH 成功、invalidateQueries 触发重取」这条真实回路，
+    // 而不是断言 fetch 被传了哪个 body（那要求 harness 支持检查 init，这里没有）。
+    let getCount = 0;
+    open([
+      {
+        match: /\/api\/projects$/,
+        body: () =>
+          ++getCount === 1 ? fixtures.projectsTwo : [{ ...first, language: "en" }, second],
+      },
+      { method: "PATCH", match: /\/language$/, body: { ...first, language: "en" } },
+    ]);
+    const book = await section(first.name);
+    within(book).getByRole("button", { name: `《${first.name}》的更多操作` }).click();
+
+    const zh = await screen.findByRole("button", { name: "中文" });
+    const en = screen.getByRole("button", { name: "English" });
+    expect(zh).toHaveAttribute("aria-pressed", "true");
+    expect(en).toHaveAttribute("aria-pressed", "false");
+
+    en.click();
+    await waitFor(() => expect(getCount).toBeGreaterThan(1));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "English" })).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      ),
+    );
+  });
+
   it("一本都没拿掉的时候，不摆那条「放回来」", async () => {
     open();
     await section(first.name);

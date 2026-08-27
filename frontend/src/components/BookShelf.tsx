@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { useChapters, useCreateChapter, useDeleteChapter, useProjects } from "../api/hooks";
+import {
+  useChapters,
+  useCreateChapter,
+  useDeleteChapter,
+  useProjects,
+  useSetProjectLanguage,
+} from "../api/hooks";
 import { useCoords } from "../store";
 import {
   deleteChapterError,
@@ -170,6 +176,40 @@ function ChapterList({
   );
 }
 
+/**
+ * 这本书的语言 + 改它的入口（国际化第一批 ②）。**默认从正文推，这儿只是覆盖口**：
+ * 一本中文小说夹了大量英文引文会推错，作者点一下就能改回来——同「右栏 LLM 生成、
+ * 作者可见可改」那条口径，机器猜的，人改了就听人的。
+ *
+ * 单独抽成组件是因为它要按每本书各调一次 `useSetProjectLanguage`（绑死 pid 的
+ * mutation），而 hooks 不能在 `books.map()` 那个回调里直接调——同 `ChapterList`
+ * 已经踩过的同一条 Rules of Hooks。
+ */
+function BookLanguageToggle({ pid, language }: { pid: string; language: "zh" | "en" }) {
+  const setLanguage = useSetProjectLanguage(pid);
+  return (
+    <div className="book-menu-lang" onClick={(e) => e.stopPropagation()}>
+      语言：
+      <button
+        className={language === "zh" ? "on" : ""}
+        aria-pressed={language === "zh"}
+        disabled={setLanguage.isPending}
+        onClick={() => setLanguage.mutate("zh")}
+      >
+        中文
+      </button>
+      <button
+        className={language === "en" ? "on" : ""}
+        aria-pressed={language === "en"}
+        disabled={setLanguage.isPending}
+        onClick={() => setLanguage.mutate("en")}
+      >
+        English
+      </button>
+    </div>
+  );
+}
+
 export function BookShelf({ onOpenChapter }: { onOpenChapter: (n: number) => void }) {
   const projects = useProjects();
   const { projectId, setProject, openBookAt } = useCoords();
@@ -261,6 +301,7 @@ export function BookShelf({ onOpenChapter }: { onOpenChapter: (n: number) => voi
                 </button>
                 {menuFor === p.id && (
                   <div className="book-menu" onPointerDown={(e) => e.stopPropagation()}>
+                    <BookLanguageToggle pid={p.id} language={p.language} />
                     <button
                       disabled={!removable(all, hidden, projectId)}
                       title={

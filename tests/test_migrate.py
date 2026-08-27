@@ -80,9 +80,9 @@ def test_migrate_twice_is_idempotent(tmp_path: Path) -> None:
     闸门拦住了它。"""
     c = connect(tmp_path / "nh.db")
     assert user_version(c) == 0
-    assert migrate(c) == 29
-    assert migrate(c) == 29  # 不抛
-    assert user_version(c) == 29
+    assert migrate(c) == 30
+    assert migrate(c) == 30  # 不抛
+    assert user_version(c) == 30
     c.close()
 
 
@@ -93,8 +93,8 @@ def test_migrate_twice_on_fresh_connections(tmp_path: Path) -> None:
     migrate(c1)
     c1.close()
     c2 = connect(path)
-    assert migrate(c2) == 29
-    assert user_version(c2) == 29
+    assert migrate(c2) == 30
+    assert user_version(c2) == 30
     c2.close()
 
 
@@ -159,6 +159,7 @@ def test_migration_files_are_readable_from_package() -> None:
         "027_extraction_yielded_nothing.sql",
         "028_secrets_offline.sql",
         "029_character_information.sql",
+        "030_project_language.sql",
     ]
     assert "PRAGMA user_version = 1" in (root / "001_init.sql").read_text(encoding="utf-8")
     assert "PRAGMA user_version = 2" in (root / "002_m4_events.sql").read_text(encoding="utf-8")
@@ -204,7 +205,17 @@ def test_populated_v1_database_migrates_without_changing_existing_rows(tmp_path:
         "VALUES (?,?,?,?,?,?,?,?)",
         ("proposal:v1", project_id, "alias_cluster", "旧提案", 2, '["a","b"]', 0.8, "PENDING"),
     )
-    before_project = tuple(c.execute("SELECT * FROM project WHERE id = ?", (project_id,)).fetchone())
+    # `project` 030 之前从没在迁移里加过列（`node` 也没有），所以这两个历来都用
+    # `SELECT *`。030 是第一个给 project 加列的迁移——同 `before_proposal` 已经踩过
+    # 的坑一样，加了列之后 `SELECT *` 就不再是「v1 那几列」了，改成明写列名，
+    # 新增的两列另外单独断言默认值（见下面的 `added_project`）。
+    before_project = tuple(
+        c.execute(
+            "SELECT id, name, root_path, canon_version, created_at, updated_at "
+            "FROM project WHERE id = ?",
+            (project_id,),
+        ).fetchone()
+    )
     before_node = tuple(c.execute("SELECT * FROM node WHERE id = ?", (character_id,)).fetchone())
     before_proposal = tuple(
         c.execute(
@@ -213,9 +224,20 @@ def test_populated_v1_database_migrates_without_changing_existing_rows(tmp_path:
         ).fetchone()
     )
 
-    assert migrate(c) == 29
-    assert migrate(c) == 29
-    assert tuple(c.execute("SELECT * FROM project WHERE id = ?", (project_id,)).fetchone()) == before_project
+    assert migrate(c) == 30
+    assert migrate(c) == 30
+    after_project = tuple(
+        c.execute(
+            "SELECT id, name, root_path, canon_version, created_at, updated_at "
+            "FROM project WHERE id = ?",
+            (project_id,),
+        ).fetchone()
+    )
+    assert after_project == before_project
+    added_project = c.execute(
+        "SELECT language, language_locked FROM project WHERE id = ?", (project_id,)
+    ).fetchone()
+    assert tuple(added_project) == ("zh", 0), "030 之前落库的项目该落在 DEFAULT 上，不是被判定过"
     assert tuple(c.execute("SELECT * FROM node WHERE id = ?", (character_id,)).fetchone()) == before_node
     assert (
         tuple(
@@ -307,7 +329,7 @@ def test_populated_v2_database_backfills_attached_proposal_audit(tmp_path: Path)
     )
     c.commit()
 
-    assert migrate(c) == 29
+    assert migrate(c) == 30
     row = c.execute(
         """
         SELECT resolution_action, resolved_canon_version, audit_envelope_json
@@ -368,7 +390,7 @@ def test_v2_migration_attaches_one_matching_proposal_review_gap(tmp_path: Path) 
     )
     c.commit()
 
-    assert migrate(c) == 29
+    assert migrate(c) == 30
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -426,7 +448,7 @@ def test_v2_migration_refuses_duplicate_matching_proposal_reviews(tmp_path: Path
     )
     c.commit()
 
-    assert migrate(c) == 29
+    assert migrate(c) == 30
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -489,7 +511,7 @@ def test_v2_migration_quarantines_utf8_blob_kind_duplicate_history(
     )
     c.commit()
 
-    assert migrate(c) == 29
+    assert migrate(c) == 30
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -549,7 +571,7 @@ def test_v2_migration_quarantines_shared_decision_attachment(tmp_path: Path) -> 
         )
     c.commit()
 
-    assert migrate(c) == 29
+    assert migrate(c) == 30
     rows = c.execute(
         """
         SELECT id, resolution_action, resolved_canon_version, audit_envelope_json
@@ -666,7 +688,7 @@ def test_v2_migration_quarantines_ambiguous_audit_payload(
     )
     c.commit()
 
-    assert migrate(c) == 29
+    assert migrate(c) == 30
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -719,7 +741,7 @@ def test_v2_migration_quarantines_invalid_utf8_payload_without_stalling(
     )
     c.commit()
 
-    assert migrate(c) == 29
+    assert migrate(c) == 30
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -790,7 +812,7 @@ def test_v2_migration_quarantines_invalid_utf8_decision_fields(
     )
     c.commit()
 
-    assert migrate(c) == 29
+    assert migrate(c) == 30
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -861,7 +883,7 @@ def test_v2_migration_quarantines_invalid_decision_audit_fields(
     )
     c.commit()
 
-    assert migrate(c) == 29
+    assert migrate(c) == 30
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -1564,9 +1586,9 @@ def test_concurrent_first_migrate_does_not_race(tmp_path: Path) -> None:
     for t in threads:
         t.join()
 
-    assert results == [29] * n, f"并发首跑必须全部成功，实得 {results}"
+    assert results == [30] * n, f"并发首跑必须全部成功，实得 {results}"
     c = connect(path)
-    assert user_version(c) == 29
+    assert user_version(c) == 30
     assert c.execute("SELECT COUNT(*) FROM edge_type").fetchone()[0] == 7
     c.close()
 
@@ -1575,14 +1597,14 @@ def test_connect_in_memory_works(tmp_path: Path) -> None:
     # 内存库不支持 WAL，会静默停在 memory 模式。这没关系（没有并发读者），
     # 但 connect() 不能因此炸——测试和 CLI 的 --dry-run 都走这条。
     c = connect(IN_MEMORY)
-    assert migrate(c) == 29
+    assert migrate(c) == 30
     assert c.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     c.close()
 
 
 def test_connect_creates_parent_dirs(tmp_path: Path) -> None:
     c = connect(tmp_path / "a" / "b" / "nh.db")
-    assert migrate(c) == 29
+    assert migrate(c) == 30
     c.close()
 
 
@@ -2932,7 +2954,7 @@ def test_v16_upgrade_plants_ruleset_baseline_and_synthetic_refresh_runs(
     conn = _v16_book(tmp_path)
     assert user_version(conn) == 16
 
-    assert migrate(conn) == 29
+    assert migrate(conn) == 30
     ruleset = conn.execute(
         "SELECT epoch, ruleset_hash FROM validation_ruleset_state WHERE project_id = ?",
         ("project:v16-book",),
@@ -2950,7 +2972,7 @@ def test_v16_upgrade_plants_ruleset_baseline_and_synthetic_refresh_runs(
     assert runs[0]["source_generation"] == 1
     assert runs[0]["source_snapshot_id"] == "snapshot:v16-book"
 
-    assert migrate(conn) == 29  # 幂等：不新增第二行
+    assert migrate(conn) == 30  # 幂等：不新增第二行
     assert (
         conn.execute(
             "SELECT COUNT(*) FROM validation_ruleset_state WHERE project_id = ?",

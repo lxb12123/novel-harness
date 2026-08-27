@@ -20,6 +20,15 @@ export interface DraftLengthSpec {
   max_units: number;
 }
 
+/** `/draft` 请求体里那个长度档。**没有 `language`**——国际化第一批 ②
+ *  （2026-08-27）起这一位由后端从 `Project.language` 补，不再是前端能填的字段：
+ *  同 `goal`/`cast`/`mode` 那条纪律（ADR 0015 D3/D4），前端能传的东西作者就能改，
+ *  而语言是整本书的属性，不该由某一次续写请求各选各的。
+ *
+ *  别在这个类型上加回 `language`——加了就是重新制造那个「前端不许再出现语言的
+ *  字面量」的坑，`tests/test_no_language_literal_in_frontend.py` 会拦住它。 */
+export type ContinuationLengthSpec = Omit<DraftLengthSpec, "language">;
+
 export interface AiSettings {
   base_url: string;
   model: string;
@@ -222,6 +231,9 @@ export interface Project {
   name: string;
   root_path: string;
   canon_version: number;
+  /** `"zh"` 或 `"en"`。默认从正文自动判定，作者能通过 `PATCH …/language` 改
+   *  （国际化第一批 ②）——一本中文小说夹了大量英文引文时，这是唯一的更正入口。 */
+  language: "zh" | "en";
 }
 
 export interface ChapterRow {

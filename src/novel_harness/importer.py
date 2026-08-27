@@ -605,6 +605,30 @@ def read_chapter(root: Path, chapter: int) -> str | None:
     return file.read_text(encoding="utf-8-sig")
 
 
+LANGUAGE_SAMPLE_MAX_CHAPTERS: Final = 5
+LANGUAGE_SAMPLE_MAX_CHARS: Final = 20_000
+
+
+def language_sample(root: Path) -> str:
+    """给 `text/language.py::detect_language()` 用的正文样本：前几章拼起来。
+
+    不整本读——722 章的书没必要为了判语言开 722 个文件。只读**前**几章是有意的：
+    书名/简介一类前言不在这几个文件里（那是 `Chapterization.preamble`，从不落成
+    `chapters/*.md`），这几个文件从第一个字起就是正文。**不碰 DB、不需要 conn**——
+    纯粹是磁盘读，跟 `chapterize()` 同一个「纯函数」方向，写不写回 `project.language`
+    是调用方（`project.apply_detected_language()`）的事。
+    """
+    parts: list[str] = []
+    total = 0
+    for entry in chapter_files(root)[:LANGUAGE_SAMPLE_MAX_CHAPTERS]:
+        text = read_chapter(root, entry.number) or ""
+        parts.append(text)
+        total += len(text)
+        if total >= LANGUAGE_SAMPLE_MAX_CHARS:
+            break
+    return "\n".join(parts)[:LANGUAGE_SAMPLE_MAX_CHARS]
+
+
 def single_chapter(text: str) -> Chapter | None:
     """`text` 恰好是**一个章节文件**时返回切出来的那一章，否则 `None`。
 
