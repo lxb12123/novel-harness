@@ -175,8 +175,6 @@ def test_continuation_now_carries_the_earlier_chapter_summaries(
     assert "【更早章节滚动总结】" in prompt
     assert "第一章：萧决推开门，屋里没有点灯。" in prompt
     assert "第二章：夜色沉下来，城主府的灯一盏盏亮起。" in prompt
-    # 那句免责跟着这一块走：总结是机器压缩的背景，不是作者确认过的事实。
-    assert "未经作者确认" in prompt
     assert body["memory"]["assembled"] is True
     assert body["memory"]["rolling_summaries"] == 2
 

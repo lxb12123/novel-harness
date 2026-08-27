@@ -132,10 +132,6 @@ def test_product_assembler_renders_rolling_summaries_as_background_only() -> Non
     assert "【更早章节滚动总结】" in memory_text
     assert "第三章：顾清音救下萧决。" in memory_text
     assert "第四章：两人结盟北上。" in memory_text
-    # 机器摘要必须自报「未经作者确认」，不能伪装成已确认事实。**而且要在它前面**：
-    # 免责排在 5,000 字总结的末尾，等于模型读到它的时候早把总结当事实读完了。
-    assert "未经作者确认" in memory_text
-    assert memory_text.index("未经作者确认") < memory_text.index("第三章：顾清音救下萧决。")
 
 
 def _two_scenes_sharing_one_backlog() -> tuple[str, str]:

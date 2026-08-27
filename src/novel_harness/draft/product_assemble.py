@@ -38,12 +38,6 @@ def _event_line(view: EventView) -> str:
 ROLLING_SUMMARY_HEADING = "【更早章节滚动总结】"
 """滚动总结那一块的块首。整章起草和行内续写**渲染的是同一块**。"""
 
-ROLLING_SUMMARY_DISCLAIMER = (
-    "（滚动总结是机器压缩的背景，未经作者确认；只当线索，不当已确认事实。）"
-)
-"""跟着那一块走的免责，**必须在块首**：它原来在整段最末尾，离要免责的那五千字有
-五千字远，模型读到它的时候早把总结当成事实读完了。"""
-
 
 def _rolling_summary_lines(
     summaries: Sequence[RollingSummaryView], *, empty_line: str | None
@@ -58,7 +52,6 @@ def _rolling_summary_lines(
         return []
     return [
         ROLLING_SUMMARY_HEADING,
-        ROLLING_SUMMARY_DISCLAIMER,
         *(
             (f"- 第 {item.chapter_number} 章：{item.summary}" for item in summaries)
             if summaries
@@ -134,9 +127,6 @@ def render_product_memory(memory: ResolvedProductContext) -> str:
     收到预算用完」，所以总结一多到撑破预算，**掉的是最旧的那几条**——那时这一块的前缀会整体
     平移一次，缓存跟着废一次。那是预算的性质，不是块序的问题；块序只保证「没撑破的时候
     它是稳的」。
-
-    ⚠️ 那句「未经作者确认」的免责跟着它自己那一块走，并且移到了**块首**：原来它在整段最
-    末尾，离它要免责的那 5,518 字有五千多字远，模型读到它的时候早把总结当成事实读完了。
     """
 
     lines = [

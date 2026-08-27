@@ -12,13 +12,15 @@ import { SummaryTab } from "./SummaryTab";
 // 右栏「章节总结」那一格。它补的是这个仓库第六次「最后一厘米没接」：
 // 滚动总结一直在花作者的钱、一直在影响每一稿，而他看不见、改不了、删不掉。
 //
-// 这里钉四件事，每一件都对应一种**不报错**的坏结局：
+// 这里钉三件事，每一件都对应一种**不报错**的坏结局：
 //
 // 1. 它跟着左栏选中的那一章走 —— 打错章号的话，作者会在第 99 章上改掉第 1 章的总结。
 // 2. 「你撤回的」和「还没生成」是两句话 —— 合并成一句，界面就会回头催他补一件他刚做完的事。
 // 3. 撤回要先确认 —— **2026-08-25 起撤回是终态**：手动生成整条下线之后，
 //    撤掉的那一份系统再也不会买回来（他还能自己写一段，那不花钱）。
-// 4. 作者自己写的那一段上不许贴「机器压缩的背景」那句免责。
+//
+// （2026-08-26 之前这里还有第 4 条「作者自己写的那一段上不许贴『机器压缩的背景』那句
+// 免责」——「作者写的/机器写的」这条区分整个去掉了，那条规矩没有对象了，见 ADR 0017 补记。）
 
 /** 一章**有总结**的真 dump（`summaryGenerated` 从 `GET …/summary` dump 出来，
  *  名字留着是因为它描述的是「已经生成过的那一章长什么样」）。 */
@@ -92,16 +94,6 @@ describe("章节总结这一格", () => {
     renderSpying(<RightPanel />, [{ match: /\/roster$/, body: [] }]);
     expect(await screen.findByDisplayValue(HAVE.summary!)).toBeInTheDocument();
     expect(screen.queryByText(/添加人物或设定后/)).toBeNull();
-  });
-
-  it("模型写的那一段带着免责，作者自己写的那一段不带", async () => {
-    const { unmount } = renderSpying(<SummaryTab />);
-    expect(await screen.findByText(/模型压出来的背景/)).toBeInTheDocument();
-    unmount();
-
-    renderSpying(<SummaryTab />, summaryRoute({ ...HAVE, author_written: true }));
-    expect(await screen.findByText("这一段是你自己写的。")).toBeInTheDocument();
-    expect(screen.queryByText(/模型压出来的背景/)).toBeNull();
   });
 
   it("改一段 → 保存，发出去的就是他打的那段字", async () => {
