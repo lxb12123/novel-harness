@@ -231,7 +231,11 @@ def grew_beyond_the_conversation(
 def on_the_activity_page(client: TestClient, pid: str) -> list[dict[str, Any]]:
     """日志页上那几行。**验收不是「表里有行」，是作者看得见。**"""
     page = client.get(f"/api/projects/{pid}/activity", params={"limit": 100}).json()
-    return [entry for entry in page["entries"] if entry["title"] == "模型调用 · 写作助手"]
+    return [
+        entry
+        for entry in page["entries"]
+        if entry["title_code"] == "call_entry_title" and entry["title_params"] == {"capability": "agent"}
+    ]
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -579,13 +583,17 @@ def test_every_model_call_in_every_shape_of_turn_lands_on_the_activity_page(
     expected += 1
     assert len(bills(book["db"])) == expected
 
-    # 最后一格：**日志页上真的看得见**，而且是中文。
+    # 最后一格：**日志页上真的看得见**。
+    #
+    # `capability="agent"` 会原样出现在 `title_params` 里——国际化第四批·笔二起
+    # 那不是泄漏，是设计：结构化的封闭枚举值，前端拿去查 `CAPABILITY_LABEL` 才翻成
+    # 「写作助手」。旧断言「`json.dumps(entries)` 里不许出现 agent」钉的是「后端把
+    # 机器码直接摆上屏」，那条判据现在要往下移一层——查的是 `subtitle_params`
+    # 结构对不对，不是整份响应里有没有这个词。
     entries = on_the_activity_page(client, pid)
     assert len(entries) == expected, f"表里 {expected} 行，日志页只有 {len(entries)} 行"
-    assert all("deepseek-v4-flash" in entry["subtitle"] for entry in entries)
-    assert "agent" not in json.dumps(entries, ensure_ascii=False), (
-        "capability 的机器码原样上了屏（`activity._CAPABILITY_LABEL` 漏了行）"
-    )
+    assert all(entry["subtitle_code"] == "call_subtitle" for entry in entries)
+    assert all(entry["subtitle_params"]["model"] == "deepseek-v4-flash" for entry in entries)
     # 底栏那一格是同一张表的另一个读端。
     assert client.get(f"/api/projects/{pid}/runs").json()["totals"]["calls"] == expected
 
@@ -638,10 +646,18 @@ def test_a_call_the_provider_never_measured_is_not_reported_as_zero(
     assert receipt["calls_without_usage"] == 1
     assert receipt["tokens_reported"] == 0
 
+    # 「未记录」不是后端拼的中文了（国际化第四批·笔二起）——`tokens_in`/`tokens_out`
+    # 是 `None` 就是「没报」，前端的 `call_subtitle`/`value_optional_number` 模板才把
+    # `None` 渲成「未记录」。这里钉的是 `None` 有没有原样送到参数里，不是一句中文。
     entry = on_the_activity_page(client, pid)[0]
-    assert "未记录" in entry["subtitle"], f"没报的 token 被写成了一个数：{entry['subtitle']}"
+    assert entry["subtitle_code"] == "call_subtitle"
+    assert entry["subtitle_params"]["tokens_in"] is None, (
+        f"没报的 token 被写成了一个数：{entry['subtitle_params']}"
+    )
+    assert entry["subtitle_params"]["tokens_out"] is None
     detail = client.get(f"/api/projects/{pid}/activity/{entry['id']}").json()
-    assert "未记录" in json.dumps(detail, ensure_ascii=False)
+    tokens_in_row = next(r for r in detail["rows"] if r["label_code"] == "detail_label_tokens_in")
+    assert tokens_in_row["value_params"] == {"n": None}
 
 
 # ══════════════════════════════════════════════════════════════════════════

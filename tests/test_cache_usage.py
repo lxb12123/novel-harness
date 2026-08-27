@@ -401,36 +401,40 @@ def test_the_audited_copy_flattens_the_normalized_outparam() -> None:
 
 
 @pytest.mark.parametrize(
-    ("read", "written", "expected"),
+    ("read", "written"),
     [
-        (None, None, "未记录"),
-        (0, None, "这次没接上，整段输入都重新算了"),
-        (960, None, "960 token 接着上次，没有重新算"),
-        (1_024, 176, "1024 token 接着上次，没有重新算 · 另存下 176 token 供下次接"),
-        (1_024, 0, "1024 token 接着上次，没有重新算 · 这次没有新存下内容"),
+        (None, None),
+        (0, None),
+        (960, None),
+        (1_024, 176),
+        (1_024, 0),
     ],
     ids=["unreported", "reported-zero", "hit", "hit-and-write", "hit-no-write"],
 )
-def test_the_log_page_says_which_of_the_three_it_is(
-    book: Any, read: int | None, written: int | None, expected: str
+def test_the_log_page_carries_which_of_the_three_it_is(
+    book: Any, read: int | None, written: int | None
 ) -> None:
     """展开层那一行：**三档必须分得开**（§10 约束 8：零要带着理由一起出现）。
 
-    「未记录」和「这次没接上」指向两个相反的动作，把前者渲染成 0 不是显示得难看一点，
-    是把作者指向错误的一件事。
+    国际化第四批·笔二起，「未记录」/「这次没接上」/「N token 接着上次」这几句话
+    不再是后端拼的——`read`/`written` 原样送进 `value_cache` 的参数，由前端按当前
+    界面语言拼句。**这五档渲染出来到底长什么样、写没写对**，判据挪到了前端
+    `backendMessages.test.ts` 的 `value_cache` 专项测试（同一份五组合）。这里只钉
+    后端职责：参数有没有原样传下去。
     """
     conn, pid = book
     call_id = _bill(conn, pid, _receipt(cache_read_tokens=read, cache_write_tokens=written))
     detail = activity.read_entry(conn, pid, call_id)
     assert detail is not None
-    values = {row.label: row.value for row in detail.rows}
-    assert values["接着上次的输入"] == expected
+    row = next(r for r in detail.rows if r.label_code == "detail_label_cache_continuation")
+    assert row.value_code == "value_cache"
+    assert row.value_params == {"read": read, "written": written}
 
 
-def test_the_log_page_keeps_saying_it_for_rows_written_before_the_columns_existed(
+def test_the_log_page_keeps_carrying_none_for_rows_written_before_the_columns_existed(
     book: Any,
 ) -> None:
-    """这两列出现之前记下的那些行是 `NULL` —— 它们必须读作「未记录」，不是「没命中」。
+    """这两列出现之前记下的那些行是 `NULL` —— 参数里必须是 `None`，不是 0。
 
     迁移是 `ALTER TABLE ADD COLUMN` 且**没有 DEFAULT 0**，这条钉的就是那个「没有」。
     """
@@ -446,20 +450,5 @@ def test_the_log_page_keeps_saying_it_for_rows_written_before_the_columns_existe
     conn.commit()
     detail = activity.read_entry(conn, pid, call_id)
     assert detail is not None
-    values = {row.label: row.value for row in detail.rows}
-    assert values["接着上次的输入"] == "未记录"
-
-
-def test_the_screen_never_says_cache_hit_in_engineering_terms(book: Any) -> None:
-    """屏幕上说的是**结果**（省下的那部分不用重新算），不是缓存这个机制。
-
-    判据文件在 `frontend/src/test/screenGuard.ts` / `tests/test_wording_guard.py`，
-    这里只钉这一行自己：不许出现 snake_case、不许出现引擎枚举、不许英文长句。
-    """
-    conn, pid = book
-    call_id = _bill(conn, pid, _receipt(cache_read_tokens=960, cache_write_tokens=176))
-    detail = activity.read_entry(conn, pid, call_id)
-    assert detail is not None
-    line = " ".join(f"{row.label} {row.value}" for row in detail.rows)
-    assert "cache" not in line.lower()
-    assert "_" not in line
+    row = next(r for r in detail.rows if r.label_code == "detail_label_cache_continuation")
+    assert row.value_params == {"read": None, "written": None}

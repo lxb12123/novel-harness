@@ -3,8 +3,16 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fixtures, renderWithApi } from "../test/harness";
 import { devTerms, screenText } from "../test/screenGuard";
+import { messageForCode } from "../backendMessages";
 import { useCoords } from "../store";
 import { ActivityLog, money } from "./ActivityLog";
+
+/** 按钮上的字是后端给的码 + 参数按界面语言渲染的（`jump.label_code`/`label_params`），
+ *  不是手写的中文——测试里要拿它去精确匹配按钮名字时，用这个而不是猜一句字符串。
+ *  参数只收这两个字段（不是整个 `ActivityJump`）：夹具从 JSON 原样导入，`target`
+ *  在类型上只窄成 `string`，收窄成 `JumpTarget` 不是这个 helper 该管的事。 */
+const jumpLabel = (jump: { label_code: string; label_params: Record<string, unknown> }) =>
+  messageForCode(jump.label_code, "zh", jump.label_params) ?? jump.label_code;
 
 // 喂进来的每一个字节都来自 `api.json`（真 app dump，`tests/test_frontend_contract.py` 冻的）。
 // 下面几处「派生」的响应（空页、翻页的第二页、换一行的详情）也全是从那份 dump 拼的，
@@ -156,7 +164,7 @@ describe("活动记录", () => {
     ]);
 
     await user.click((await collapsed())[at]);
-    await user.click(await screen.findByRole("button", { name: `${row.jump!.label} →` }));
+    await user.click(await screen.findByRole("button", { name: `${jumpLabel(row.jump!)} →` }));
 
     const s = useCoords.getState();
     expect(s.page).toBe("workbench");
@@ -186,7 +194,7 @@ describe("活动记录", () => {
     ]);
 
     await user.click((await collapsed())[0]);
-    await user.click(await screen.findByRole("button", { name: `${row.jump!.label} →` }));
+    await user.click(await screen.findByRole("button", { name: `${jumpLabel(row.jump!)} →` }));
 
     const s = useCoords.getState();
     expect(s.page).toBe("workbench");
@@ -229,7 +237,9 @@ describe("活动记录", () => {
     expect(note).toBeInTheDocument();
     expect(note.textContent).not.toMatch(/改不了|没救|无法修改|不能改/);
     // 「去第 1 章」仍然点得动（定位是有用的），只是它没有假装自己能改什么。
-    expect(screen.getByRole("button", { name: `${emptyEndpoints.jump!.label} →` })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: `${jumpLabel(emptyEndpoints.jump!)} →` }),
+    ).toBeEnabled();
   });
 
   // ── 没跑成的那一行：这一页上唯一需要作者动手的地方 ────────────────────────
@@ -264,8 +274,9 @@ describe("活动记录", () => {
 
     const jump = page.entries[at].jump!;
     await user.click((await collapsed())[at]);
-    // 按钮上的字是后端写的（`jump.label`），前端不编第二份措辞。
-    const go = await screen.findByRole("button", { name: `${jump.label} →` });
+    // 坐标是后端给的（`jump.label_code`/`label_params`），前端不编第二份措辞，
+    // 只按当前界面语言把码翻成句子。
+    const go = await screen.findByRole("button", { name: `${jumpLabel(jump)} →` });
 
     const spy = vi.spyOn(globalThis, "fetch");
     await user.click(go);
@@ -317,7 +328,7 @@ describe("活动记录", () => {
     ]);
 
     await user.click((await collapsed())[at]);
-    await user.click(await screen.findByRole("button", { name: `${row.jump!.label} →` }));
+    await user.click(await screen.findByRole("button", { name: `${jumpLabel(row.jump!)} →` }));
 
     const s = useCoords.getState();
     expect(s.page).toBe("workbench");
@@ -337,10 +348,12 @@ describe("活动记录", () => {
 
     await user.click((await collapsed())[at]);
 
-    const line = detail.rows.find((r) => r.label === "这次写出来的总结");
+    const line = detail.rows.find((r) => r.label_code === "detail_label_summary_written");
     expect(line, "夹具里这一条详情没带总结正文 —— 下面那句断言会变成空转").toBeDefined();
-    expect(await screen.findByText(line!.label)).toBeInTheDocument();
-    expect(screen.getByText(line!.value)).toBeInTheDocument();
+    const label = messageForCode(line!.label_code, "zh") ?? line!.label_code;
+    const value = messageForCode(line!.value_code, "zh", line!.value_params) ?? line!.value_code;
+    expect(await screen.findByText(label)).toBeInTheDocument();
+    expect(screen.getByText(value)).toBeInTheDocument();
     // 信封照旧一个字都不上屏（`payload` 在这一档本来就是 null，这里钉的是那条纪律）。
     expect(devTerms(screenText())).toEqual([]);
   });

@@ -20,14 +20,26 @@
           "edge_id": null,
           "endpoints": [],
           "event_id": null,
-          "label": "第 1 章还有 2 条待审",
+          "label_code": "jump_review_many_proposals",
+          "label_params": {
+            "chapter": 1,
+            "count": 2
+          },
           "proposal_id": null,
           "target": "proposal"
         },
         "source": "extraction",
         "status": "succeeded",
-        "subtitle": "有效事件 3 条 · 丢弃 1 条 · 待审提案 2 条",
-        "title": "第 1 章抽取",
+        "subtitle_code": "run_subtitle_succeeded",
+        "subtitle_params": {
+          "discarded": 1,
+          "proposals": 2,
+          "valid": 3
+        },
+        "title_code": "run_entry_title",
+        "title_params": {
+          "chapter": 1
+        },
         "ts": "<ts>"
       },
       {
@@ -39,14 +51,26 @@
           "edge_id": null,
           "endpoints": [],
           "event_id": null,
-          "label": "去第 1 章",
+          "label_code": "jump_go_to_chapter",
+          "label_params": {
+            "chapter": 1
+          },
           "proposal_id": null,
           "target": "chapter"
         },
         "source": "model_call",
         "status": "succeeded",
-        "subtitle": "deepseek-v4 · 入 1200 / 出 400 token · 900 ms",
-        "title": "模型调用 · 抽取",
+        "subtitle_code": "call_subtitle",
+        "subtitle_params": {
+          "model": "deepseek-v4",
+          "ms": 900,
+          "tokens_in": 1200,
+          "tokens_out": 400
+        },
+        "title_code": "call_entry_title",
+        "title_params": {
+          "capability": "extractor"
+        },
         "ts": "<ts>"
       },
       {
@@ -60,14 +84,26 @@
             "/api/projects/project:ID1/chapters/1/summary"
           ],
           "event_id": null,
-          "label": "去看第 1 章的总结",
+          "label_code": "jump_view_summary",
+          "label_params": {
+            "chapter": 1
+          },
           "proposal_id": null,
           "target": "summary"
         },
         "source": "model_call",
         "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
-        "title": "模型调用 · 章节总结",
+        "subtitle_code": "call_subtitle",
+        "subtitle_params": {
+          "model": "deepseek-v4-flash",
+          "ms": 0,
+          "tokens_in": null,
+          "tokens_out": null
+        },
+        "title_code": "call_entry_title",
+        "title_params": {
+          "capability": "summarizer"
+        },
         "ts": "<ts>"
       },
       {
@@ -81,14 +117,25 @@
             "/api/projects/project:ID1/canon/events/event:ID34/cast"
           ],
           "event_id": "event:ID34",
-          "label": "去改这条事件的知情 / 在场名单",
+          "label_code": "jump_edit_event_cast",
+          "label_params": {},
           "proposal_id": null,
           "target": "event_cast"
         },
         "source": "decision",
         "status": "succeeded",
-        "subtitle": "接受：事件 1 条 · 关系 0 条",
-        "title": "作者 · 抽取结果审阅",
+        "subtitle_code": "proposal_review_subtitle",
+        "subtitle_params": {
+          "characters": 0,
+          "edges": 0,
+          "events": 1,
+          "verdict": "accept"
+        },
+        "title_code": "decision_entry_title",
+        "title_params": {
+          "actor": "author",
+          "kind": "proposal_review"
+        },
         "ts": "<ts>"
       },
       {
@@ -100,14 +147,27 @@
           "edge_id": null,
           "endpoints": [],
           "event_id": null,
-          "label": "去第 1 章",
+          "label_code": "jump_go_to_chapter",
+          "label_params": {
+            "chapter": 1
+          },
           "proposal_id": null,
           "target": "chapter"
         },
         "source": "decision",
         "status": "succeeded",
-        "subtitle": "否决：事件 1 条 · 关系 0 条",
-        "title": "作者 · 抽取结果审阅",
+        "subtitle_code": "proposal_review_subtitle",
+        "subtitle_params": {
+          "characters": 0,
+          "edges": 0,
+          "events": 1,
+          "verdict": "reject"
+        },
+        "title_code": "decision_entry_title",
+        "title_params": {
+          "actor": "author",
+          "kind": "proposal_review"
+        },
         "ts": "<ts>"
       },
       {
@@ -121,14 +181,25 @@
             "/api/projects/project:ID1/canon/events/event:ID29/cast"
           ],
           "event_id": "event:ID29",
-          "label": "去改这条事件的知情 / 在场名单",
+          "label_code": "jump_edit_event_cast",
+          "label_params": {},
           "proposal_id": null,
           "target": "event_cast"
         },
         "source": "decision",
         "status": "succeeded",
-        "subtitle": "接受：事件 1 条 · 关系 0 条",
-        "title": "作者 · 抽取结果审阅",
+        "subtitle_code": "proposal_review_subtitle",
+        "subtitle_params": {
+          "characters": 0,
+          "edges": 0,
+          "events": 1,
+          "verdict": "accept"
+        },
+        "title_code": "decision_entry_title",
+        "title_params": {
+          "actor": "author",
+          "kind": "proposal_review"
+        },
         "ts": "<ts>"
       },
       {
@@ -140,14 +211,26 @@
           "edge_id": null,
           "endpoints": [],
           "event_id": null,
-          "label": "去第 1 章",
+          "label_code": "jump_go_to_chapter",
+          "label_params": {
+            "chapter": 1
+          },
           "proposal_id": null,
           "target": "chapter"
         },
         "source": "decision",
         "status": "succeeded",
-        "subtitle": "萧决 在 青云城主府",
-        "title": "作者 · 声明位置",
+        "subtitle_code": "decision_subtitle_edge_declare",
+        "subtitle_params": {
+          "edge_type": "LOCATED_AT",
+          "subject": "萧决",
+          "target": "青云城主府"
+        },
+        "title_code": "decision_entry_title",
+        "title_params": {
+          "actor": "author",
+          "kind": "located_declare"
+        },
         "ts": "<ts>"
       },
       {
@@ -157,8 +240,16 @@
         "jump": null,
         "source": "decision",
         "status": "succeeded",
-        "subtitle": "顾清音 ← 「顾姑娘」",
-        "title": "作者 · 登记称呼",
+        "subtitle_code": "decision_subtitle_alias_merge",
+        "subtitle_params": {
+          "subject": "顾清音",
+          "surface": "顾姑娘"
+        },
+        "title_code": "decision_entry_title",
+        "title_params": {
+          "actor": "author",
+          "kind": "alias_merge"
+        },
         "ts": "<ts>"
       }
     ],
@@ -187,14 +278,25 @@
             "/api/projects/project:ID1/canon/events/event:ID34/cast"
           ],
           "event_id": "event:ID34",
-          "label": "去改这条事件的知情 / 在场名单",
+          "label_code": "jump_edit_event_cast",
+          "label_params": {},
           "proposal_id": null,
           "target": "event_cast"
         },
         "source": "decision",
         "status": "succeeded",
-        "subtitle": "接受：事件 1 条 · 关系 0 条",
-        "title": "作者 · 抽取结果审阅",
+        "subtitle_code": "proposal_review_subtitle",
+        "subtitle_params": {
+          "characters": 0,
+          "edges": 0,
+          "events": 1,
+          "verdict": "accept"
+        },
+        "title_code": "decision_entry_title",
+        "title_params": {
+          "actor": "author",
+          "kind": "proposal_review"
+        },
         "ts": "<ts>"
       },
       {
@@ -206,14 +308,27 @@
           "edge_id": null,
           "endpoints": [],
           "event_id": null,
-          "label": "去第 1 章",
+          "label_code": "jump_go_to_chapter",
+          "label_params": {
+            "chapter": 1
+          },
           "proposal_id": null,
           "target": "chapter"
         },
         "source": "decision",
         "status": "succeeded",
-        "subtitle": "否决：事件 1 条 · 关系 0 条",
-        "title": "作者 · 抽取结果审阅",
+        "subtitle_code": "proposal_review_subtitle",
+        "subtitle_params": {
+          "characters": 0,
+          "edges": 0,
+          "events": 1,
+          "verdict": "reject"
+        },
+        "title_code": "decision_entry_title",
+        "title_params": {
+          "actor": "author",
+          "kind": "proposal_review"
+        },
         "ts": "<ts>"
       },
       {
@@ -227,14 +342,25 @@
             "/api/projects/project:ID1/canon/events/event:ID29/cast"
           ],
           "event_id": "event:ID29",
-          "label": "去改这条事件的知情 / 在场名单",
+          "label_code": "jump_edit_event_cast",
+          "label_params": {},
           "proposal_id": null,
           "target": "event_cast"
         },
         "source": "decision",
         "status": "succeeded",
-        "subtitle": "接受：事件 1 条 · 关系 0 条",
-        "title": "作者 · 抽取结果审阅",
+        "subtitle_code": "proposal_review_subtitle",
+        "subtitle_params": {
+          "characters": 0,
+          "edges": 0,
+          "events": 1,
+          "verdict": "accept"
+        },
+        "title_code": "decision_entry_title",
+        "title_params": {
+          "actor": "author",
+          "kind": "proposal_review"
+        },
         "ts": "<ts>"
       },
       {
@@ -246,14 +372,26 @@
           "edge_id": null,
           "endpoints": [],
           "event_id": null,
-          "label": "去第 1 章",
+          "label_code": "jump_go_to_chapter",
+          "label_params": {
+            "chapter": 1
+          },
           "proposal_id": null,
           "target": "chapter"
         },
         "source": "decision",
         "status": "succeeded",
-        "subtitle": "萧决 在 青云城主府",
-        "title": "作者 · 声明位置",
+        "subtitle_code": "decision_subtitle_edge_declare",
+        "subtitle_params": {
+          "edge_type": "LOCATED_AT",
+          "subject": "萧决",
+          "target": "青云城主府"
+        },
+        "title_code": "decision_entry_title",
+        "title_params": {
+          "actor": "author",
+          "kind": "located_declare"
+        },
         "ts": "<ts>"
       }
     ],
@@ -278,50 +416,87 @@
         "edge_id": null,
         "endpoints": [],
         "event_id": null,
-        "label": "去第 1 章",
+        "label_code": "jump_go_to_chapter",
+        "label_params": {
+          "chapter": 1
+        },
         "proposal_id": null,
         "target": "chapter"
       },
       "source": "model_call",
       "status": "succeeded",
-      "subtitle": "deepseek-v4 · 入 1200 / 出 400 token · 900 ms",
-      "title": "模型调用 · 抽取",
+      "subtitle_code": "call_subtitle",
+      "subtitle_params": {
+        "model": "deepseek-v4",
+        "ms": 900,
+        "tokens_in": 1200,
+        "tokens_out": 400
+      },
+      "title_code": "call_entry_title",
+      "title_params": {
+        "capability": "extractor"
+      },
       "ts": "<ts>"
     },
     "errors": [],
     "payload": null,
     "rows": [
       {
-        "label": "能力",
-        "value": "抽取"
+        "label_code": "detail_label_capability",
+        "value_code": "value_capability",
+        "value_params": {
+          "capability": "extractor"
+        }
       },
       {
-        "label": "模型",
-        "value": "deepseek-v4"
+        "label_code": "detail_label_model",
+        "value_code": "value_text",
+        "value_params": {
+          "text": "deepseek-v4"
+        }
       },
       {
-        "label": "为哪一章",
-        "value": "第 1 章"
+        "label_code": "detail_label_for_chapter",
+        "value_code": "value_chapter",
+        "value_params": {
+          "chapter": 1
+        }
       },
       {
-        "label": "入参 token",
-        "value": "1200"
+        "label_code": "detail_label_tokens_in",
+        "value_code": "value_optional_number",
+        "value_params": {
+          "n": 1200
+        }
       },
       {
-        "label": "出参 token",
-        "value": "400"
+        "label_code": "detail_label_tokens_out",
+        "value_code": "value_optional_number",
+        "value_params": {
+          "n": 400
+        }
       },
       {
-        "label": "接着上次的输入",
-        "value": "960 token 接着上次，没有重新算"
+        "label_code": "detail_label_cache_continuation",
+        "value_code": "value_cache",
+        "value_params": {
+          "read": 960,
+          "written": null
+        }
       },
       {
-        "label": "耗时",
-        "value": "900 ms"
+        "label_code": "detail_label_call_ms",
+        "value_code": "value_call_ms",
+        "value_params": {
+          "ms": 900
+        }
       },
       {
-        "label": "第几次尝试",
-        "value": "1"
+        "label_code": "detail_label_attempt",
+        "value_code": "value_count",
+        "value_params": {
+          "n": 1
+        }
       }
     ]
   },
@@ -336,14 +511,27 @@
         "/api/projects/project:ID1/canon/edges/edge:ID72"
       ],
       "event_id": null,
-      "label": "去改这条自动生成的边（第 1 章）",
+      "label_code": "jump_edit_auto_edge",
+      "label_params": {
+        "chapter": 1
+      },
       "proposal_id": null,
       "target": "canon_edge"
     },
     "source": "decision",
     "status": "succeeded",
-    "subtitle": "接受：事件 0 条 · 关系 1 条",
-    "title": "系统 · 抽取结果审阅",
+    "subtitle_code": "proposal_review_subtitle",
+    "subtitle_params": {
+      "characters": 0,
+      "edges": 1,
+      "events": 0,
+      "verdict": "accept"
+    },
+    "title_code": "decision_entry_title",
+    "title_params": {
+      "actor": "system",
+      "kind": "proposal_review"
+    },
     "ts": "<ts>"
   },
   "activityDecisionDetail": {
@@ -359,14 +547,25 @@
           "/api/projects/project:ID1/canon/events/event:ID34/cast"
         ],
         "event_id": "event:ID34",
-        "label": "去改这条事件的知情 / 在场名单",
+        "label_code": "jump_edit_event_cast",
+        "label_params": {},
         "proposal_id": null,
         "target": "event_cast"
       },
       "source": "decision",
       "status": "succeeded",
-      "subtitle": "接受：事件 1 条 · 关系 0 条",
-      "title": "作者 · 抽取结果审阅",
+      "subtitle_code": "proposal_review_subtitle",
+      "subtitle_params": {
+        "characters": 0,
+        "edges": 0,
+        "events": 1,
+        "verdict": "accept"
+      },
+      "title_code": "decision_entry_title",
+      "title_params": {
+        "actor": "author",
+        "kind": "proposal_review"
+      },
       "ts": "<ts>"
     },
     "errors": [],
@@ -405,32 +604,53 @@
     },
     "rows": [
       {
-        "label": "类型",
-        "value": "抽取结果审阅"
+        "label_code": "detail_label_kind",
+        "value_code": "value_kind",
+        "value_params": {
+          "kind": "proposal_review"
+        }
       },
       {
-        "label": "裁决",
-        "value": "接受"
+        "label_code": "detail_label_verdict",
+        "value_code": "value_verdict",
+        "value_params": {
+          "verdict": "accept"
+        }
       },
       {
-        "label": "谁改的",
-        "value": "作者"
+        "label_code": "detail_label_changed_by",
+        "value_code": "value_actor",
+        "value_params": {
+          "actor": "author"
+        }
       },
       {
-        "label": "对象",
-        "value": "萧决"
+        "label_code": "detail_label_subject",
+        "value_code": "value_text_or_unrecorded",
+        "value_params": {
+          "text": "萧决"
+        }
       },
       {
-        "label": "章节",
-        "value": "第 1 章"
+        "label_code": "detail_label_chapter",
+        "value_code": "value_chapter",
+        "value_params": {
+          "chapter": 1
+        }
       },
       {
-        "label": "段落",
-        "value": "2"
+        "label_code": "detail_label_paragraph",
+        "value_code": "value_optional_number",
+        "value_params": {
+          "n": 2
+        }
       },
       {
-        "label": "依据引语",
-        "value": "萧决在青云城主府第一次听说了血脉秘密的真相。"
+        "label_code": "detail_label_quote",
+        "value_code": "value_text_or_unrecorded",
+        "value_params": {
+          "text": "萧决在青云城主府第一次听说了血脉秘密的真相。"
+        }
       }
     ]
   },
@@ -457,14 +677,23 @@
             "/api/projects/project:ID1/chapters/3/extract"
           ],
           "event_id": null,
-          "label": "再整理一次第 3 章",
+          "label_code": "jump_retry_chapter",
+          "label_params": {
+            "chapter": 3
+          },
           "proposal_id": null,
           "target": "extraction_retry"
         },
         "source": "extraction",
         "status": "failed",
-        "subtitle": "这一次没能调用模型，而系统没能说清是为什么",
-        "title": "第 3 章抽取",
+        "subtitle_code": "run_error",
+        "subtitle_params": {
+          "code": "provider_failure"
+        },
+        "title_code": "run_entry_title",
+        "title_params": {
+          "chapter": 3
+        },
         "ts": "<ts>"
       },
       {
@@ -474,8 +703,17 @@
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 900 / 出 12 token · 0 ms",
-        "title": "模型调用 · 写作助手",
+        "subtitle_code": "call_subtitle",
+        "subtitle_params": {
+          "model": "deepseek-v4-flash",
+          "ms": 0,
+          "tokens_in": 900,
+          "tokens_out": 12
+        },
+        "title_code": "call_entry_title",
+        "title_params": {
+          "capability": "agent"
+        },
         "ts": "<ts>"
       },
       {
@@ -485,8 +723,17 @@
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
-        "title": "模型调用 · 写作助手",
+        "subtitle_code": "call_subtitle",
+        "subtitle_params": {
+          "model": "deepseek-v4-flash",
+          "ms": 0,
+          "tokens_in": null,
+          "tokens_out": null
+        },
+        "title_code": "call_entry_title",
+        "title_params": {
+          "capability": "agent"
+        },
         "ts": "<ts>"
       },
       {
@@ -496,8 +743,17 @@
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 1200 / 出 64 token · 0 ms",
-        "title": "模型调用 · 写作助手",
+        "subtitle_code": "call_subtitle",
+        "subtitle_params": {
+          "model": "deepseek-v4-flash",
+          "ms": 0,
+          "tokens_in": 1200,
+          "tokens_out": 64
+        },
+        "title_code": "call_entry_title",
+        "title_params": {
+          "capability": "agent"
+        },
         "ts": "<ts>"
       },
       {
@@ -507,8 +763,17 @@
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 1800 / 出 2600 token · 0 ms",
-        "title": "模型调用 · 起草",
+        "subtitle_code": "call_subtitle",
+        "subtitle_params": {
+          "model": "deepseek-v4-flash",
+          "ms": 0,
+          "tokens_in": 1800,
+          "tokens_out": 2600
+        },
+        "title_code": "call_entry_title",
+        "title_params": {
+          "capability": "writer"
+        },
         "ts": "<ts>"
       },
       {
@@ -518,8 +783,17 @@
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
-        "title": "模型调用 · 写作助手",
+        "subtitle_code": "call_subtitle",
+        "subtitle_params": {
+          "model": "deepseek-v4-flash",
+          "ms": 0,
+          "tokens_in": null,
+          "tokens_out": null
+        },
+        "title_code": "call_entry_title",
+        "title_params": {
+          "capability": "agent"
+        },
         "ts": "<ts>"
       },
       {
@@ -529,8 +803,17 @@
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
-        "title": "模型调用 · 写作助手",
+        "subtitle_code": "call_subtitle",
+        "subtitle_params": {
+          "model": "deepseek-v4-flash",
+          "ms": 0,
+          "tokens_in": null,
+          "tokens_out": null
+        },
+        "title_code": "call_entry_title",
+        "title_params": {
+          "capability": "agent"
+        },
         "ts": "<ts>"
       },
       {
@@ -540,8 +823,17 @@
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
-        "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
-        "title": "模型调用 · 写作助手",
+        "subtitle_code": "call_subtitle",
+        "subtitle_params": {
+          "model": "deepseek-v4-flash",
+          "ms": 0,
+          "tokens_in": null,
+          "tokens_out": null
+        },
+        "title_code": "call_entry_title",
+        "title_params": {
+          "capability": "agent"
+        },
         "ts": "<ts>"
       }
     ],
@@ -560,40 +852,64 @@
           "/api/projects/project:ID1/chapters/3/extract"
         ],
         "event_id": null,
-        "label": "再整理一次第 3 章",
+        "label_code": "jump_retry_chapter",
+        "label_params": {
+          "chapter": 3
+        },
         "proposal_id": null,
         "target": "extraction_retry"
       },
       "source": "extraction",
       "status": "failed",
-      "subtitle": "这一次没能调用模型，而系统没能说清是为什么",
-      "title": "第 3 章抽取",
+      "subtitle_code": "run_error",
+      "subtitle_params": {
+        "code": "provider_failure"
+      },
+      "title_code": "run_entry_title",
+      "title_params": {
+        "chapter": 3
+      },
       "ts": "<ts>"
     },
     "errors": [
-      "这一次没能调用模型，而系统没能说清是为什么"
+      "provider_failure"
     ],
     "payload": null,
     "rows": [
       {
-        "label": "章节",
-        "value": "第 3 章"
+        "label_code": "detail_label_chapter",
+        "value_code": "value_chapter",
+        "value_params": {
+          "chapter": 3
+        }
       },
       {
-        "label": "有效事件",
-        "value": "3"
+        "label_code": "detail_label_valid_events",
+        "value_code": "value_count",
+        "value_params": {
+          "n": 3
+        }
       },
       {
-        "label": "丢弃事件",
-        "value": "1"
+        "label_code": "detail_label_discarded_events",
+        "value_code": "value_count",
+        "value_params": {
+          "n": 1
+        }
       },
       {
-        "label": "待审提案",
-        "value": "0"
+        "label_code": "detail_label_pending_proposals",
+        "value_code": "value_count",
+        "value_params": {
+          "n": 0
+        }
       },
       {
-        "label": "用时",
-        "value": "1.0 秒"
+        "label_code": "detail_label_elapsed",
+        "value_code": "value_elapsed",
+        "value_params": {
+          "seconds": 1.0
+        }
       }
     ]
   },
@@ -616,38 +932,65 @@
         "edge_id": null,
         "endpoints": [],
         "event_id": null,
-        "label": "第 1 章还有 2 条待审",
+        "label_code": "jump_review_many_proposals",
+        "label_params": {
+          "chapter": 1,
+          "count": 2
+        },
         "proposal_id": null,
         "target": "proposal"
       },
       "source": "extraction",
       "status": "succeeded",
-      "subtitle": "有效事件 3 条 · 丢弃 1 条 · 待审提案 2 条",
-      "title": "第 1 章抽取",
+      "subtitle_code": "run_subtitle_succeeded",
+      "subtitle_params": {
+        "discarded": 1,
+        "proposals": 2,
+        "valid": 3
+      },
+      "title_code": "run_entry_title",
+      "title_params": {
+        "chapter": 1
+      },
       "ts": "<ts>"
     },
     "errors": [],
     "payload": null,
     "rows": [
       {
-        "label": "章节",
-        "value": "第 1 章"
+        "label_code": "detail_label_chapter",
+        "value_code": "value_chapter",
+        "value_params": {
+          "chapter": 1
+        }
       },
       {
-        "label": "有效事件",
-        "value": "3"
+        "label_code": "detail_label_valid_events",
+        "value_code": "value_count",
+        "value_params": {
+          "n": 3
+        }
       },
       {
-        "label": "丢弃事件",
-        "value": "1"
+        "label_code": "detail_label_discarded_events",
+        "value_code": "value_count",
+        "value_params": {
+          "n": 1
+        }
       },
       {
-        "label": "待审提案",
-        "value": "2"
+        "label_code": "detail_label_pending_proposals",
+        "value_code": "value_count",
+        "value_params": {
+          "n": 2
+        }
       },
       {
-        "label": "用时",
-        "value": "1.0 秒"
+        "label_code": "detail_label_elapsed",
+        "value_code": "value_elapsed",
+        "value_params": {
+          "seconds": 1.0
+        }
       }
     ]
   },
@@ -672,54 +1015,94 @@
           "/api/projects/project:ID1/chapters/1/summary"
         ],
         "event_id": null,
-        "label": "去看第 1 章的总结",
+        "label_code": "jump_view_summary",
+        "label_params": {
+          "chapter": 1
+        },
         "proposal_id": null,
         "target": "summary"
       },
       "source": "model_call",
       "status": "succeeded",
-      "subtitle": "deepseek-v4-flash · 入 未记录 / 出 未记录 token · 0 ms",
-      "title": "模型调用 · 章节总结",
+      "subtitle_code": "call_subtitle",
+      "subtitle_params": {
+        "model": "deepseek-v4-flash",
+        "ms": 0,
+        "tokens_in": null,
+        "tokens_out": null
+      },
+      "title_code": "call_entry_title",
+      "title_params": {
+        "capability": "summarizer"
+      },
       "ts": "<ts>"
     },
     "errors": [],
     "payload": null,
     "rows": [
       {
-        "label": "能力",
-        "value": "章节总结"
+        "label_code": "detail_label_capability",
+        "value_code": "value_capability",
+        "value_params": {
+          "capability": "summarizer"
+        }
       },
       {
-        "label": "模型",
-        "value": "deepseek-v4-flash"
+        "label_code": "detail_label_model",
+        "value_code": "value_text",
+        "value_params": {
+          "text": "deepseek-v4-flash"
+        }
       },
       {
-        "label": "为哪一章",
-        "value": "第 1 章"
+        "label_code": "detail_label_for_chapter",
+        "value_code": "value_chapter",
+        "value_params": {
+          "chapter": 1
+        }
       },
       {
-        "label": "这次写出来的总结",
-        "value": "萧决在青云城主府听说了血脉秘密。"
+        "label_code": "detail_label_summary_written",
+        "value_code": "value_text",
+        "value_params": {
+          "text": "萧决在青云城主府听说了血脉秘密。"
+        }
       },
       {
-        "label": "入参 token",
-        "value": "未记录"
+        "label_code": "detail_label_tokens_in",
+        "value_code": "value_optional_number",
+        "value_params": {
+          "n": null
+        }
       },
       {
-        "label": "出参 token",
-        "value": "未记录"
+        "label_code": "detail_label_tokens_out",
+        "value_code": "value_optional_number",
+        "value_params": {
+          "n": null
+        }
       },
       {
-        "label": "接着上次的输入",
-        "value": "未记录"
+        "label_code": "detail_label_cache_continuation",
+        "value_code": "value_cache",
+        "value_params": {
+          "read": null,
+          "written": null
+        }
       },
       {
-        "label": "耗时",
-        "value": "0 ms"
+        "label_code": "detail_label_call_ms",
+        "value_code": "value_call_ms",
+        "value_params": {
+          "ms": 0
+        }
       },
       {
-        "label": "第几次尝试",
-        "value": "1"
+        "label_code": "detail_label_attempt",
+        "value_code": "value_count",
+        "value_params": {
+          "n": 1
+        }
       }
     ]
   },
@@ -1604,7 +1987,7 @@
     "created_at": "<ts>",
     "discarded_event_count": 1,
     "errors": [
-      "这一次没能调用模型，而系统没能说清是为什么"
+      "provider_failure"
     ],
     "fencing_token": 0,
     "finished_at": "<ts>",
@@ -2178,14 +2561,26 @@
           "edge_id": null,
           "endpoints": [],
           "event_id": null,
-          "label": "第 1 章还有 2 条待审",
+          "label_code": "jump_review_many_proposals",
+          "label_params": {
+            "chapter": 1,
+            "count": 2
+          },
           "proposal_id": null,
           "target": "proposal"
         },
         "source": "extraction",
         "status": "succeeded",
-        "subtitle": "有效事件 3 条 · 丢弃 1 条 · 待审提案 2 条",
-        "title": "第 1 章抽取",
+        "subtitle_code": "run_subtitle_succeeded",
+        "subtitle_params": {
+          "discarded": 1,
+          "proposals": 2,
+          "valid": 3
+        },
+        "title_code": "run_entry_title",
+        "title_params": {
+          "chapter": 1
+        },
         "ts": "<ts>"
       }
     ],
@@ -2224,14 +2619,23 @@
           "edge_id": null,
           "endpoints": [],
           "event_id": null,
-          "label": "再整理一次第 3 章",
+          "label_code": "jump_retry_chapter",
+          "label_params": {
+            "chapter": 3
+          },
           "proposal_id": null,
           "target": "extraction_retry"
         },
         "source": "extraction",
         "status": "failed",
-        "subtitle": "这一次没能调用模型，而系统没能说清是为什么",
-        "title": "第 3 章抽取",
+        "subtitle_code": "run_error",
+        "subtitle_params": {
+          "code": "provider_failure"
+        },
+        "title_code": "run_entry_title",
+        "title_params": {
+          "chapter": 3
+        },
         "ts": "<ts>"
       },
       {
@@ -2243,14 +2647,26 @@
           "edge_id": null,
           "endpoints": [],
           "event_id": null,
-          "label": "第 1 章还有 2 条待审",
+          "label_code": "jump_review_many_proposals",
+          "label_params": {
+            "chapter": 1,
+            "count": 2
+          },
           "proposal_id": null,
           "target": "proposal"
         },
         "source": "extraction",
         "status": "succeeded",
-        "subtitle": "有效事件 3 条 · 丢弃 1 条 · 待审提案 2 条",
-        "title": "第 1 章抽取",
+        "subtitle_code": "run_subtitle_succeeded",
+        "subtitle_params": {
+          "discarded": 1,
+          "proposals": 2,
+          "valid": 3
+        },
+        "title_code": "run_entry_title",
+        "title_params": {
+          "chapter": 1
+        },
         "ts": "<ts>"
       }
     ],

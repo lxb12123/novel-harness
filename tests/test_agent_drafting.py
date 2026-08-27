@@ -532,45 +532,63 @@ def test_landing_a_draft_leaves_a_line_the_author_can_read(
     assert _write_and_land(desk, conn, pid, 1).landed is True
     conn.close()
 
-    landed = [row for row in _rows(client, pid) if row["title"] == "系统 · 写进正文"]
+    landed = [
+        row
+        for row in _rows(client, pid)
+        if row["title_code"] == "decision_entry_title"
+        and row["title_params"] == {"actor": "system", "kind": "chapter_draft"}
+    ]
     assert len(landed) == 1, "落盘在日志页上没有一行 —— 「事后可查」在这条路上是空话"
     (row,) = landed
     assert row["actor"] == "system"
     assert row["chapter_number"] == 1
-    assert "第 1 章" in row["subtitle"], row["subtitle"]
+    assert row["subtitle_code"] == "decision_subtitle_chapter_draft"
+    assert row["subtitle_params"]["chapter"] == 1
     assert row["jump"] is not None and row["jump"]["chapter_number"] == 1
 
     by_author = [r for r in _rows(client, pid, actor="author") if r["id"] == row["id"]]
     assert by_author == [], "系统落的盘混进了「作者改的」那一堆里"
 
 
-def test_the_line_says_nothing_the_author_cannot_read(
+def test_the_line_never_forwards_the_fingerprint_that_lives_only_in_the_payload(
     client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """那一行上屏的每个字都过一遍**全仓唯一那份形状判据**。
+    """落盘那一行天生躺着一样容易漏出去的东西：payload 里的 `text_sha256`。
 
-    判据是 `tests/test_wording_guard.py::dev_shapes`（和 `screenGuard.ts` 同一套网），
-    **不在这儿抄第二份**。落盘那一行里天生躺着两样容易漏出去的东西：
-    payload 里的 `text_sha256`，和 `chapter_draft` 这个 kind 本身。
+    国际化第四批·笔二起，题目/副标题/跳转/展开详情都是码 + 参数，渲染发生在前端——
+    `kind="chapter_draft"` 这类封闭枚举值本来就会作为参数出现，那是安全的结构化
+    数据（前端拿去查 `KIND_LABEL`），不是泄漏，套一遍 `dev_shapes` 会对着它误报。
+    真正要防的是 `text_sha256`：`ActivityDetail.payload` 允许带它（版本抽屉靠它对号），
+    但 `activity.py` 只往 `subtitle_params` 里塞 `chapter`/`units`，一个字节都不该
+    带着这个指纹漏进 title/subtitle/jump/rows 那几处**真的会渲染**的参数。
+    渲染整句干不干净（`kind`/`capability` 这类枚举翻出来是不是中文）归
+    `DevTerms.guard.test.tsx` 管（同 Phase B 给 `SystemNotifications` 补的那道）。
     """
-    from test_wording_guard import dev_shapes
-
     conn = connect(book["db"])
     pid = book["pid"]
     desk = _drafter(conn, pid, monkeypatch, FakeDrafting())
     _write_and_land(desk, conn, pid, 1)
     conn.close()
 
-    (row,) = [r for r in _rows(client, pid) if r["title"] == "系统 · 写进正文"]
+    (row,) = [
+        r
+        for r in _rows(client, pid)
+        if r["title_code"] == "decision_entry_title"
+        and r["title_params"] == {"actor": "system", "kind": "chapter_draft"}
+    ]
     detail = client.get(f"/api/projects/{pid}/activity/{row['id']}").json()
-    screen = {
-        "title": row["title"],
-        "subtitle": row["subtitle"],
-        "jump": (row["jump"] or {}).get("label", ""),
-        **{f"rows/{r['label']}": f"{r['label']}：{r['value']}" for r in detail["rows"]},
-    }
-    offenders = {where: dev_shapes(text) for where, text in screen.items() if dev_shapes(text)}
-    assert not offenders, f"落盘那一行把研发术语摆到了作者脸上：{offenders}"
+    fingerprint = (detail.get("payload") or {}).get("text_sha256")
+    assert fingerprint, "前提没成立：这一行的 payload 里根本没有指纹可查"
+
+    rendered = json.dumps(
+        [
+            row["title_params"],
+            row["subtitle_params"],
+            (row["jump"] or {}).get("label_params", {}),
+            [r["value_params"] for r in detail["rows"]],
+        ]
+    )
+    assert fingerprint not in rendered, "落盘那一行把只该待在 payload 里的指纹渲染出去了"
 
 
 def test_the_draft_call_lands_on_the_bill(
@@ -815,9 +833,11 @@ def test_one_turn_from_the_browser_really_changes_the_chapter_on_disk(
     assert DRAFT in _on_disk(conn, pid, 1), "浏览器点完，磁盘上那一章一个字都没变"
     conn.close()
 
-    titles = [row["title"] for row in _rows(client, pid)]
-    assert "系统 · 写进正文" in titles, "落盘那一行没上日志页"
-    assert "模型调用 · 起草" in titles, (
+    titles = [(row["title_code"], tuple(sorted(row["title_params"].items()))) for row in _rows(client, pid)]
+    assert ("decision_entry_title", (("actor", "system"), ("kind", "chapter_draft"))) in titles, (
+        "落盘那一行没上日志页"
+    )
+    assert ("call_entry_title", (("capability", "writer"),)) in titles, (
         "起草那一次调用没进账 —— 它走的是 loop 的 `ledger`（`DraftProduct.calls`），"
         "断了的话底栏那个花销数会低估，看起来却像全部"
     )

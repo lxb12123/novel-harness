@@ -277,10 +277,16 @@ def test_every_paid_round_shows_up_on_the_activity_page_in_chinese(
     assert turn.status_code == 200, turn.text
 
     page = client.get(f"/api/projects/{pid}/activity", params={"limit": 20}).json()
-    ours = [e for e in page["entries"] if e["title"] == "模型调用 · 写作助手"]
+    ours = [
+        e
+        for e in page["entries"]
+        if e["title_code"] == "call_entry_title" and e["title_params"] == {"capability": "agent"}
+    ]
     assert len(ours) == 2, f"两次模型调用只记了 {len(ours)} 笔"
-    assert "deepseek-v4-flash" in ours[0]["subtitle"]
-    assert "入 1200 / 出 90 token" in ours[0]["subtitle"]
+    assert ours[0]["subtitle_code"] == "call_subtitle"
+    assert ours[0]["subtitle_params"]["model"] == "deepseek-v4-flash"
+    assert ours[0]["subtitle_params"]["tokens_in"] == 1200
+    assert ours[0]["subtitle_params"]["tokens_out"] == 90
     # 底栏那一格也得看得见（同一张表的另一个读端）。
     runs = client.get(f"/api/projects/{pid}/runs").json()
     assert runs["totals"]["calls"] >= 2
@@ -324,7 +330,11 @@ def test_a_turn_that_never_reached_the_model_writes_no_bill(
     assert "api.deepseek.com" not in turn.text
 
     page = client.get(f"/api/projects/{pid}/activity").json()
-    assert not [e for e in page["entries"] if e["title"] == "模型调用 · 写作助手"]
+    assert not [
+        e
+        for e in page["entries"]
+        if e["title_code"] == "call_entry_title" and e["title_params"] == {"capability": "agent"}
+    ]
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -373,7 +383,11 @@ def test_the_stop_button_reaches_a_turn_that_is_already_running(
     assert turn.json()["lookups"] == 0, "按了停之后还在干活"
     # 已经查到的东西留着，而且那一轮的账照记（钱已经花掉了，停不会退回来）。
     page = client.get(f"/api/projects/{pid}/activity").json()
-    assert [e for e in page["entries"] if e["title"] == "模型调用 · 写作助手"]
+    assert [
+        e
+        for e in page["entries"]
+        if e["title_code"] == "call_entry_title" and e["title_params"] == {"capability": "agent"}
+    ]
 
 
 def test_stopping_a_conversation_that_is_not_running_is_not_a_failure(

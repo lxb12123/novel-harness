@@ -10,7 +10,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from novel_harness import project
-from novel_harness.activity import run_error_label
 from novel_harness.db import connect, migrate
 from novel_harness.draft.capabilities import ReasoningEffort, StructuredCallPlan
 from novel_harness.draft.provider import CompletionResult, ProviderConfig
@@ -92,12 +91,11 @@ def test_explicit_extract_returns_202_and_background_config_failure_is_queryable
     loaded = extraction_client.get(f"/api/projects/{pid}/extractions/{run_id}")
     assert loaded.status_code == 200, loaded.text
     assert loaded.json()["status"] == "FAILED"
-    # 出参是**作者的话**，不是 `{code, message}`：这条端点的唯一消费者是审阅面板，
-    # 而 `ExtractionRunError.message` 是写给维护者的英文诊断（`extract/control.py`）。
-    # 措辞的唯一出处是 `activity._RUN_ERROR_LABEL`，这里不抄第二份字面量。
-    assert loaded.json()["errors"] == [run_error_label("provider_failure")]
+    # 出参是 `ExtractionErrorCode` 的**原始值**，不是 `{code, message}`（国际化第四批·
+    # 笔二起）：翻译挪到了前端，`code` 本身是结构化数据，转发它不是泄漏——
+    # `message`（写给维护者的英文诊断）才是那条永不上屏的纪律，这里没变。
+    assert loaded.json()["errors"] == ["provider_failure"]
     assert "chapter analysis provider failed" not in loaded.text
-    assert "provider_failure" not in loaded.text
 
 
 def test_extract_force_rerun_creates_a_fresh_run(
@@ -196,7 +194,7 @@ def test_background_transport_failure_is_persisted_instead_of_delaying_post_500(
     assert queued.status_code == 202
     assert loaded.status_code == 200
     assert loaded.json()["status"] == "FAILED"
-    assert loaded.json()["errors"] == [run_error_label("provider_failure")]
+    assert loaded.json()["errors"] == ["provider_failure"]
     assert "private transport detail" not in loaded.text
     assert calls == 1
 

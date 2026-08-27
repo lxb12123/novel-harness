@@ -26,7 +26,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from test_activity import seed_call, seed_run
+from test_activity import detail_row_map, seed_call, seed_run
 
 from novel_harness import activity
 from novel_harness.db import connect
@@ -116,8 +116,11 @@ def test_one_draft_is_one_line_on_the_bill_with_its_chapter(
 
     detail = client.get(f"/api/projects/{book['pid']}/activity/{rows[0]['id']}")
     assert detail.status_code == 200, detail.text
-    values = {row["label"]: row["value"] for row in detail.json()["rows"]}
-    assert values["为哪一章"] == "第 2 章"
+    values = detail_row_map(detail.json()["rows"])
+    assert values["detail_label_for_chapter"] == {
+        "value_code": "value_chapter",
+        "value_params": {"chapter": 2},
+    }
 
 
 def test_the_continuation_attempt_is_a_second_line_on_the_same_chapter(
@@ -231,8 +234,11 @@ def test_rows_written_before_this_column_existed_still_know_their_chapter(
         detail = client.get(f"/api/projects/{book['pid']}/activity/{call_id}")
         assert detail.status_code == 200, detail.text
         body = detail.json()
-        values = {row["label"]: row["value"] for row in body["rows"]}
-        assert values["为哪一章"] == f"第 {chapter} 章"
+        values = detail_row_map(body["rows"])
+        assert values["detail_label_for_chapter"] == {
+            "value_code": "value_chapter",
+            "value_params": {"chapter": chapter},
+        }
         assert body["entry"]["chapter_number"] == chapter
         assert body["entry"]["jump"]["chapter_number"] == chapter
 
@@ -249,7 +255,10 @@ def test_a_call_that_belongs_to_no_chapter_stays_unrecorded(
     detail = client.get(f"/api/projects/{book['pid']}/activity/{orphan}")
     assert detail.status_code == 200, detail.text
     body = detail.json()
-    assert {row["label"]: row["value"] for row in body["rows"]}["为哪一章"] == "未记录"
+    assert detail_row_map(body["rows"])["detail_label_for_chapter"] == {
+        "value_code": "value_chapter",
+        "value_params": {"chapter": None},
+    }
     assert body["entry"]["chapter_number"] is None
     assert body["entry"]["jump"] is None
 
@@ -268,7 +277,10 @@ def test_the_new_column_wins_over_the_reverse_lookup(book: dict[str, str]) -> No
         seed_run(book, 2, call_id=call_id)
         detail = activity.read_entry(conn, book["pid"], call_id)
         assert detail is not None
-        assert {row.label: row.value for row in detail.rows}["为哪一章"] == "第 7 章"
+        by_label = {row.label_code: row for row in detail.rows}
+        chapter_row = by_label["detail_label_for_chapter"]
+        assert chapter_row.value_code == "value_chapter"
+        assert chapter_row.value_params == {"chapter": 7}
     finally:
         conn.close()
 

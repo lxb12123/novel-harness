@@ -443,11 +443,19 @@ def test_there_is_no_path_that_calls_the_model_without_writing_a_receipt() -> No
 
 
 def test_the_capability_has_a_chinese_name_on_the_log_page() -> None:
-    """`model_call.capability` 认不出的是**原样回吐**的 —— 新长出一种花钱的动作就要补一行。"""
-    from novel_harness import activity
+    """`model_call.capability` 认不出的是**原样回吐**的 —— 新长出一种花钱的动作就要补一行。
 
-    assert AGENT_CAPABILITY in activity._CAPABILITY_LABEL
-    label = activity._capability_label(AGENT_CAPABILITY)
+    国际化第四批·笔二起，`CAPABILITY_LABEL` 搬去了前端 `backendMessages.ts`
+    （后端不再知道该说哪种界面语言），不再调用一个已经不存在的
+    `activity._capability_label`。
+    """
+    from test_wording_guard import BACKEND_MESSAGES, _ts_const_object_entry, _ts_const_object_keys
+
+    source = BACKEND_MESSAGES.read_text(encoding="utf-8")
+    assert AGENT_CAPABILITY in _ts_const_object_keys(source, "CAPABILITY_LABEL"), (
+        f"{AGENT_CAPABILITY!r} 不在 CAPABILITY_LABEL 里 —— 日志页会原样显示这个英文字符串"
+    )
+    label = _ts_const_object_entry(source, "CAPABILITY_LABEL", AGENT_CAPABILITY, "zh")
     assert re.search(r"[一-鿿]", label) and not dev_shapes(label)
 
 

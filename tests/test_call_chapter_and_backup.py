@@ -31,7 +31,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from test_activity import seed_call, seed_run
+from test_activity import detail_row_map, seed_call, seed_run
 from test_call_chapter import SILENT_LEDGERS_TODAY
 from test_wording_guard import dev_shapes
 
@@ -200,10 +200,18 @@ def _old_rows(book: dict[str, str], client: TestClient) -> dict[str, int]:
     return {extractor: 2, summarizer: 1}
 
 
-def _chapter_on_screen(client: TestClient, pid: str, call_id: str) -> str:
+def _chapter_on_screen(client: TestClient, pid: str, call_id: str) -> int | None:
+    """展开详情「为哪一章」那一行说的章号。
+
+    国际化第四批·笔二起这一行不再是拼好的「第 N 章」/「未记录」字符串，是
+    `value_code="value_chapter"` + `value_params={"chapter": N 或 None}`——
+    直接把那个原始章号还回去，调用方比对结构，不比对渲染出来的句子。
+    """
     detail = client.get(f"/api/projects/{pid}/activity/{call_id}")
     assert detail.status_code == 200, detail.text
-    return {row["label"]: row["value"] for row in detail.json()["rows"]}["为哪一章"]
+    row = detail_row_map(detail.json()["rows"])["detail_label_for_chapter"]
+    assert row["value_code"] == "value_chapter"
+    return row["value_params"]["chapter"]
 
 
 def test_rows_from_before_this_column_keep_their_chapter_on_the_activity_page(
@@ -214,7 +222,7 @@ def test_rows_from_before_this_column_keep_their_chapter_on_the_activity_page(
     它们的章号只有反查拿得到，所以这一整页的「为哪一章」今天 100% 靠兜底。
     """
     for call_id, chapter in _old_rows(book, client).items():
-        assert _chapter_on_screen(client, book["pid"], call_id) == f"第 {chapter} 章"
+        assert _chapter_on_screen(client, book["pid"], call_id) == chapter
 
 
 def test_retiring_the_reverse_lookup_blanks_every_row_the_author_has_today(
@@ -235,7 +243,7 @@ def test_retiring_the_reverse_lookup_blanks_every_row_the_author_has_today(
     blanked = {
         call_id: _chapter_on_screen(client, book["pid"], call_id) for call_id in rows
     }
-    assert set(blanked.values()) == {"未记录"}, (
+    assert set(blanked.values()) == {None}, (
         f"退掉反查居然还答得出章号（{blanked}）—— 这条测试的前提没了，它在验一个空集"
     )
 
@@ -680,6 +688,12 @@ def test_a_billed_draft_reads_like_chinese_on_the_activity_page(
     `test_wording_guard.py` 那条整页扫描只种 extractor / 失败 run / 确认三种样本，
     **这一种它一次都没扫过**——「样本里只躺着一种形状，等于守卫扫的是一块永远长一个样
     的屏幕」在这个仓库已经发生过一次（`_RUN_ERROR_LABEL` 那一节记着现场）。
+
+    国际化第四批·笔二起，题目/副标题/跳转按钮/展开详情都是码 + 参数，不是拼好的
+    中文——**渲染发生在前端**，这层 Python 测试量的是「结构对不对、参数里有没有
+    夹带研发术语」，不是「屏幕上那句话是不是中文」。`capability=writer` 这个具体
+    组合真的会渲染成什么样、渲染完干不干净，归 `DevTerms.guard.test.tsx` 管
+    （同 Phase B 给 `SystemNotifications` 补的那道扫描）。
     """
     _answers(monkeypatch, "字" * 2_400)
     assert (
@@ -695,19 +709,39 @@ def test_a_billed_draft_reads_like_chinese_on_the_activity_page(
     base = f"/api/projects/{book['pid']}"
     page = client.get(f"{base}/activity", params={"limit": 50}).json()["entries"]
     entry = next(e for e in page if e["id"] == rows[0]["id"])
-    assert entry["title"] == "模型调用 · 起草"
+    assert entry["title_code"] == "call_entry_title"
+    assert entry["title_params"] == {"capability": "writer"}
     assert entry["chapter_number"] == 2
     assert entry["jump"]["chapter_number"] == 2
 
     detail = client.get(f"{base}/activity/{rows[0]['id']}").json()
-    values = {row["label"]: row["value"] for row in detail["rows"]}
-    assert values["为哪一章"] == "第 2 章"
-    assert values["能力"] == "起草"
+    values = detail_row_map(detail["rows"])
+    assert values["detail_label_for_chapter"] == {
+        "value_code": "value_chapter",
+        "value_params": {"chapter": 2},
+    }
+    assert values["detail_label_capability"] == {
+        "value_code": "value_capability",
+        "value_params": {"capability": "writer"},
+    }
     # 供应商报了多少就记多少；没报的那一半是「未记录」不是 0（§10 约束 8）。
-    assert values["入参 token"] == "1111"
-    assert values["出参 token"] == "未记录"
+    assert values["detail_label_tokens_in"] == {
+        "value_code": "value_optional_number",
+        "value_params": {"n": 1111},
+    }
+    assert values["detail_label_tokens_out"] == {
+        "value_code": "value_optional_number",
+        "value_params": {"n": None},
+    }
 
-    texts = [entry["title"], entry["subtitle"], entry["jump"]["label"]]
-    texts += [f"{row['label']}：{row['value']}" for row in detail["rows"]]
-    offenders = {text: found for text in texts if (found := dev_shapes(text))}
-    assert not offenders, f"起草那一行把引擎的词摆到了作者脸上：{offenders}"
+    # 结构之外，量一遍**参数值本身**不是研发术语（渲染整句那半交给前端的
+    # DevTerms.guard.test.tsx，这里只管后端不该往参数里塞什么）。
+    param_values = [
+        str(v)
+        for source in (entry["title_params"], entry["subtitle_params"], entry["jump"]["label_params"])
+        for v in source.values()
+    ]
+    for row in detail["rows"]:
+        param_values.extend(str(v) for v in row["value_params"].values())
+    offenders = {text: found for text in param_values if (found := dev_shapes(text))}
+    assert not offenders, f"起草那一行的参数里混进了研发术语：{offenders}"

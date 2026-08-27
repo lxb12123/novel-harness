@@ -9,6 +9,8 @@ import {
   useRoster,
   useStartExtraction,
 } from "../api/hooks";
+import { messageForCode } from "../backendMessages";
+import { useLanguage } from "../language";
 import type {
   EdgeConflictItem,
   EventView,
@@ -286,6 +288,7 @@ function ProposalCard({
 /** M4 审阅面板：待确认提案（冲突 / 低置信 / 新人物）+ 被动事件确认 + 显式抽取。 */
 export function ProposalReviewTab() {
   const { projectId, chapter } = useCoords();
+  const language = useLanguage((s) => s.language);
   const pid = projectId;
   const proposals = useProposals(pid, chapter);
   const provisionalEvents = useEvents(pid, chapter, "PROVISIONAL");
@@ -379,15 +382,17 @@ export function ProposalReviewTab() {
             {run.data.proposal_count > 0 && ` · ${run.data.proposal_count} 项待确认`}
           </span>
         )}
-        {/* **一句已经翻好的中文，前端一个字都不拼**（`api/extraction.py::ExtractionRunView`
-            ← `activity._RUN_ERROR_LABEL`）。这儿原先渲染的是 `e.message` —— 那是写给
-            维护者的英文诊断，于是屏幕上是 `chapter analysis provider failed`。
-            根因在类型层：`ExtractionRun.errors` 把字段名抄成了 `kind`/`message`，
-            可翻译的那个 `code` 够不着。现在那句英文不出后端的门。 */}
+        {/* `errors` 是 `ExtractionErrorCode` 的原始值，不是拼好的中文（国际化第四批·
+            笔二起）：`messageForCode("run_error", ...)` 查 `backendMessages.ts` 的
+            `RUN_ERROR_LABEL`，日志页那条读端（`activity.py`）查的是同一张表。
+            这儿原先渲染的是 `e.message` —— 那是写给维护者的英文诊断，于是屏幕上是
+            `chapter analysis provider failed`。根因在类型层：`ExtractionRun.errors`
+            把字段名抄成了 `kind`/`message`，可翻译的那个 `code` 够不着。现在那句英文
+            不出后端的门，`code` 本身也从不直接渲染——一律先过 `messageForCode`。 */}
         {run.data?.status === "FAILED" && (
           <div className="err-box">
-            {run.data.errors.map((line, i) => (
-              <div key={i}>{line}</div>
+            {run.data.errors.map((code, i) => (
+              <div key={i}>{messageForCode("run_error", language, { code }) ?? code}</div>
             ))}
           </div>
         )}

@@ -487,8 +487,17 @@ def test_the_run_says_which_kind_of_provider_failure_it_was(seed: Seed) -> None:
 
     分档判据在 `draft.provider.ProviderFailureKind`（**只看状态码，不读文案**）。
     """
-    from novel_harness.activity import run_error_label
     from novel_harness.draft.provider import ProviderError, ProviderFailureKind
+
+    from test_wording_guard import BACKEND_MESSAGES, _ts_const_object_entry
+
+    def run_error_label(code: str) -> str:
+        """`ExtractionErrorCode` 原始值 → zh 那一路的话，读的是唯一那张前端表
+
+        （`backendMessages.ts` 的 `RUN_ERROR_LABEL`，国际化第四批·笔二起
+        译文搬去了前端，这里不重新拼一份）。"""
+        source = BACKEND_MESSAGES.read_text(encoding="utf-8")
+        return _ts_const_object_entry(source, "RUN_ERROR_LABEL", code, "zh")
 
     seen: dict[ProviderFailureKind, str] = {}
     for index, kind in enumerate(ProviderFailureKind):

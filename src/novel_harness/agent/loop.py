@@ -1164,7 +1164,8 @@ _STOP_WORDING: Final[dict[StopReason, str]] = {
 def stop_wording(reason: StopReason) -> str:
     """说给**小说作者**听的那一句。**措辞的唯一出处**，前端不许再翻一遍。
 
-    认不出的不原样回吐（同 `activity._kind_label`）：`StopReason` 是封闭枚举，认不出
+    认不出的不原样回吐（同前端 `KIND_LABEL` 认不出 `DecisionKind` 时的兜底，见
+    `frontend/src/backendMessages.ts`）：`StopReason` 是封闭枚举，认不出
     只可能是这张表漏了行，而漏掉的那一行会以 `tool_stuck` 的形态出现在作者的屏幕上。
     """
     return _STOP_WORDING.get(reason, "这一轮先停下来了。")

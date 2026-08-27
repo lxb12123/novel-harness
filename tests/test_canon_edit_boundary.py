@@ -38,13 +38,16 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from novel_harness import activity, decisions
+from novel_harness import decisions
 from novel_harness.api.review import EventCastEditRequest
 
 from test_activity import seed_call, seed_run
 from test_api import _seed_provisional_event
 
 from test_no_chapter_input import BANNED, model_chapter_fields
+
+# 同 `_without_comments`：读表的 helper 只写一份，两处判据才不会各自漂。
+from test_wording_guard import BACKEND_MESSAGES, _ts_const_object_fallback, _ts_const_object_keys
 
 # `_without_comments` 是一份写对了很难、写错了很安静的东西（它要在剥注释的同时
 # 保住字符串字面量和 JSX 文本）。**import 而不是复制**：两份剥注释的实现迟早只有一份
@@ -177,20 +180,11 @@ def dev_terms_in(text: str) -> list[str]:
     return [m.group(0) for m in DEV_TERMS.finditer(text)]
 
 
-def screen_strings(page: activity.ActivityPage) -> dict[str, str]:
-    """活动记录页**真的印在屏幕上**的每一个字段 → 值。
-
-    `ActivityLog.tsx` 渲染的就是这三样（`title` / `subtitle` / `jump.label`）；
-    `payload` 不在里面是有意的——那一份组件一个字都不渲染，扫它会造出假红。
-    """
-    out: dict[str, str] = {}
-    for entry in page.entries:
-        out[f"{entry.id}.title"] = entry.title
-        out[f"{entry.id}.subtitle"] = entry.subtitle
-        if entry.jump is not None:
-            out[f"{entry.id}.jump"] = entry.jump.label
-    return out
-
+# **这里原本有一个 `screen_strings`**（把一页折叠行拼成「真的印在屏幕上」的
+# `title`/`subtitle`/`jump.label` 字符串表，供别的测试扫研发术语）。`grep` 确认
+# 全仓没有任何调用点——它是一份从没被接上过的死代码。国际化第四批·笔二起
+# `title`/`subtitle`/`jump.label` 也不再是可以直接拼起来扫的字符串了（换成了
+# 码 + 参数，真正渲染在前端），顺手一起删掉，不重写一个没人用的函数。
 
 REFUSAL_CLASSES = frozenset({"CorrectionRefused", "FactNotFound"})
 """改正层的每一个拒绝异常。**加一个不补这儿，它写的每一句话都在守卫视野之外。**
@@ -638,45 +632,48 @@ def test_the_borrowed_sentence_scanner_works() -> None:
 # 线 2 收尾：措辞表**漏一行**的那一天
 # ══════════════════════════════════════════════════════════════════════════
 #
-# 上面几条量的是「今天屏幕上有没有引擎的词」。这一条量的是**明天**：`activity.py` 的
-# 那几张表把封闭枚举画成中文，而这次改动**自己就往 `DecisionKind` 里加了两行**
-#（`knowledge_edit` / `event_edit`）。加的人记得补表，所以今天是绿的——
-# 而「记得补」不是一道守卫。
+# 上面几条量的是「今天屏幕上有没有引擎的词」。这一条量的是**明天**：这次改动
+# **自己就往 `DecisionKind` 里加了两行**（`knowledge_edit` / `event_edit`）。
+# 加的人记得补表，所以今天是绿的——而「记得补」不是一道守卫。
+#
+# **国际化第四批·笔二把这四张表从 `activity.py` 搬去了前端 `backendMessages.ts`**
+# （后端答不出「读这句话的人用什么界面语言」），判据跟着搬了位置：现在核对的是
+# 前端子表的键集合，不是 Python 这边一个 `dict` 的键集合，但「谁往封闭枚举里加一行、
+# 表没跟着补就红」这条纪律没变——复用 `test_wording_guard.py` 已经建好的读表 helper，
+# 不重新抄一份正则。
 
 
 def test_the_wording_tables_cover_every_value_they_can_be_handed() -> None:
-    """四张「封闭枚举 → 中文」的表，一行都不许漏。
+    """四张「封闭枚举 → {zh,en}」的表，一行都不许漏。
 
-    `_edge_label` 的 docstring 已经把代价写清楚了：漏掉的那一行会以 `RELATED_TO` 的
-    形态出现在小说作者的屏幕上。这条把那句话变成一件 CI 事项。
+    以前 `_edge_label` 的 docstring 写着代价：漏掉的那一行会以 `RELATED_TO` 的
+    形态出现在小说作者的屏幕上。这条把那句话变成一件 CI 事项——只是现在盯的是
+    `backendMessages.ts` 的 `KIND_LABEL`/`EDGE_LABEL`/`NODE_LABEL`/`VERDICT_LABEL`。
     """
     from novel_harness.graph import EdgeType, NodeLabel
 
-    missing = {
-        "_KIND_LABEL": [k.value for k in decisions.DecisionKind if k.value not in activity._KIND_LABEL],
-        "_EDGE_LABEL": [e.value for e in EdgeType if e.value not in activity._EDGE_LABEL],
-        "_NODE_LABEL": [n.value for n in NodeLabel if n.value not in activity._NODE_LABEL],
-        "_VERDICT_LABEL": [
-            v.value for v in decisions.Verdict if v.value not in activity._VERDICT_LABEL
-        ],
+    source = BACKEND_MESSAGES.read_text(encoding="utf-8")
+    tables = {
+        "KIND_LABEL": (decisions.DecisionKind, _ts_const_object_keys(source, "KIND_LABEL")),
+        "EDGE_LABEL": (EdgeType, _ts_const_object_keys(source, "EDGE_LABEL")),
+        "NODE_LABEL": (NodeLabel, _ts_const_object_keys(source, "NODE_LABEL")),
+        "VERDICT_LABEL": (decisions.Verdict, _ts_const_object_keys(source, "VERDICT_LABEL")),
     }
-    offenders = {name: gap for name, gap in missing.items() if gap}
+    offenders = {
+        name: missing
+        for name, (enum_cls, keys) in tables.items()
+        if (missing := [m.value for m in enum_cls if m.value not in keys])
+    }
     assert not offenders, (
         f"活动记录的措辞表漏了行：{offenders}\n"
-        "漏掉的那一行会以引擎枚举的原样出现在小说作者的屏幕上（`activity.py` 的\n"
-        "措辞表那一节）。补表——这几张表眼下还在后端，笔二（国际化第四批）会把它们\n"
-        "搬到前端 backendMessages.ts，但今天仍归后端管，别在前端加第二份映射。"
+        "漏掉的那一行会以引擎枚举的原样出现在小说作者的屏幕上（`frontend/src/\n"
+        "backendMessages.ts` 里对应的那张子表）。补表——别在别处再加第二份映射。"
     )
     # **守卫的自守卫**：四个枚举都真的有值可查（`model_fields` / `Enum` 换形状的那天，
-    # 上面四个列表推导会一起变成空，而四条断言会安静地全绿）。
-    counted = {
-        len(decisions.DecisionKind),
-        len(EdgeType),
-        len(NodeLabel),
-        len(decisions.Verdict),
-    }
+    # 上面几条列表推导会一起变成空，而断言会安静地全绿）。
+    counted = {len(enum_cls) for enum_cls, _ in tables.values()}
     assert min(counted) >= 3, "枚举遍历为空 —— 上面那条是永远绿的"
-    assert "not_a_real_kind" not in activity._KIND_LABEL, (
+    assert "not_a_real_kind" not in tables["KIND_LABEL"][1], (
         "判据本身要认得出「不在表里」这件事"
     )
 
@@ -685,15 +682,18 @@ def test_a_missing_row_never_falls_back_to_the_engines_word() -> None:
     """**表漏了行的那一天，退路也得是中文。**
 
     完整性守卫拦的是「有人加枚举忘了补表」，但补表这件事本身可以在一次 rebase 里
-    被改没。`_edge_label` / `_node_label` 已经是这么写的（认不出退到「关系」/「条目」）；
-    `_kind_label` 不是——它把 `knowledge_edit` 原样回吐，而那正是这次改动新加的两个值
-    之一。**两条判据一起，才轮不到运气。**
+    被改没。`EDGE_LABEL`/`NODE_LABEL`/`VERDICT_LABEL` 已经是这么写的（认不出退到
+    「关系」/「条目」/「已处理」）；`KIND_LABEL` 不是——它退到「一次改动」，同样不许
+    原样回吐 `DecisionKind` 的枚举值。**两条判据一起，才轮不到运气。**
+
+    这里量的是**兜底句本身**（`{TABLE}_FALLBACK.zh`），不是拿一个编出来的键去
+    真的跑一遍 `messageForCode`（这一层是 Python 测试，没有 TS 运行时可跑）——
+    任何一个真的不在表里的键，落地的结果都恒等于这句兜底，量它就够了。
     """
+    source = BACKEND_MESSAGES.read_text(encoding="utf-8")
     unknown = {
-        "_kind_label": activity._kind_label("some_brand_new_kind"),
-        "_edge_label": activity._edge_label("SOME_NEW_EDGE"),
-        "_node_label": activity._node_label("SomeNewLabel"),
-        "_verdict_label": activity._verdict_label("some_new_verdict"),
+        name: _ts_const_object_fallback(source, name, "zh")
+        for name in ("KIND_LABEL", "EDGE_LABEL", "NODE_LABEL", "VERDICT_LABEL")
     }
     offenders = {
         name: text
@@ -704,6 +704,8 @@ def test_a_missing_row_never_falls_back_to_the_engines_word() -> None:
         f"措辞表认不出一个值的时候，把引擎的词摆给了作者：{offenders}\n"
         "封闭枚举认不出只可能是表漏了行，而漏的那一行不该由小说作者来读。"
     )
+    # 自守卫：四张表的兜底句真的各不相同（都读到同一句的话，判据在空转）。
+    assert len(set(unknown.values())) == len(unknown)
 # ══════════════════════════════════════════════════════════════════════════
 # 线 1 收尾：**整个前端**，不只是这两个编辑器
 # ══════════════════════════════════════════════════════════════════════════

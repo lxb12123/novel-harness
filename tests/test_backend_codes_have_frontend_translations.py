@@ -18,8 +18,11 @@ HTTPException（`chapter_not_found` / `evidence_not_found` / `project_not_found`
 `{"error": "..."}`），**唯一可靠的区分不是文本形状，是它们从不经过这一批
 新建的三条通道**：
 
-1. `title_code=<literal>`（`enqueue_notification`/`enqueue_text_advisory`/
-   `enqueue_extraction_yielded_nothing` 的关键字参数）；
+1. `title_code=<literal>` / `subtitle_code=<literal>` / `label_code=<literal>` /
+   `value_code=<literal>`（`enqueue_notification`/`enqueue_text_advisory`/
+   `enqueue_extraction_yielded_nothing` 的关键字参数，以及国际化第四批·笔二
+   给 `activity.py` 的 `ActivityEntry`/`ActivityJump`/`DetailRow` 构造调用加的
+   同名关键字参数——四个名字，同一种形状：都是"这一位就是码"的关键字参数）；
 2. `UnresolvedCast(<literal>, ...)` / `SummaryTextRejected(<literal>, ...)` /
    `ModelWindowsPullFailed(<literal>)`（这一批新建/改造的三个异常类，
    第一个位置参数就是码）；
@@ -47,6 +50,12 @@ _CODE_CARRYING_EXCEPTIONS = frozenset(
     {"UnresolvedCast", "SummaryTextRejected", "ModelWindowsPullFailed"}
 )
 
+_CODE_KEYWORD_NAMES = frozenset({"title_code", "subtitle_code", "label_code", "value_code"})
+"""形状①：这一位关键字参数本身就是码。四个名字、同一种形状——`system_notifications.py`
+的通知用 `title_code`，国际化第四批·笔二给 `activity.py` 的 `ActivityEntry`/
+`ActivityJump`/`DetailRow` 加的另外三个（`subtitle_code`/`label_code`/`value_code`）
+是同一次设计延伸，不是三种新形状。"""
+
 
 def _call_name(node: ast.Call) -> str | None:
     if isinstance(node.func, ast.Name):
@@ -64,7 +73,7 @@ def _codes_in_source(source: str, filename: str) -> set[str]:
         if isinstance(node, ast.Call):
             for kw in node.keywords:
                 if (
-                    kw.arg == "title_code"
+                    kw.arg in _CODE_KEYWORD_NAMES
                     and isinstance(kw.value, ast.Constant)
                     and isinstance(kw.value.value, str)
                 ):
@@ -109,10 +118,14 @@ def test_every_backend_code_has_a_frontend_translation() -> None:
 
 
 def test_the_scanner_can_see_all_three_shapes() -> None:
-    """守卫的自守卫：三种形状各喂一次，外加两个"旧形状不许被咬"的反例。"""
+    """守卫的自守卫：三种形状各喂一次（形状①的四个关键字名各一次），外加两个
+    "旧形状不许被咬"的反例。"""
     probe = '''
 def f():
     enqueue_something(title_code="probe_title_code", title_params=None)
+    ActivityEntry(subtitle_code="probe_subtitle_code", subtitle_params={})
+    ActivityJump(label_code="probe_label_code")
+    DetailRow(value_code="probe_value_code", value_params={})
     raise UnresolvedCast("probe_unresolved_code", chapter=1)
     raise HTTPException(422, {"error": "probe_bare_code"})
     raise HTTPException(422, {"error": "probe_bare_code_with_params", "params": {}})
@@ -124,6 +137,9 @@ def f():
     codes = _codes_in_source(probe, "probe.py")
     assert codes == {
         "probe_title_code",
+        "probe_subtitle_code",
+        "probe_label_code",
+        "probe_value_code",
         "probe_unresolved_code",
         "probe_bare_code",
         "probe_bare_code_with_params",

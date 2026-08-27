@@ -54,6 +54,7 @@ from novel_harness.ids import EntityType, new_id
 REPO = Path(__file__).resolve().parents[1]
 SCREEN_GUARD = REPO / "frontend" / "src" / "test" / "screenGuard.ts"
 API_TYPES = REPO / "frontend" / "src" / "api" / "types.ts"
+BACKEND_MESSAGES = REPO / "frontend" / "src" / "backendMessages.ts"
 RUNNER = REPO / "src" / "novel_harness" / "extract" / "runner.py"
 
 
@@ -305,26 +306,38 @@ def test_every_way_an_extraction_can_fail_is_a_closed_enum() -> None:
 
 
 def test_the_failure_wording_table_covers_every_code_and_falls_back_to_chinese() -> None:
-    """**枚举驱动**：`_RUN_ERROR_LABEL` 一行都不许漏，认不出的也得说人话。"""
-    missing = [e.value for e in ExtractionErrorCode if e.value not in activity._RUN_ERROR_LABEL]
+    """**枚举驱动，判据搬了位置，不是拆了**（国际化第四批·笔二）。
+
+    `_RUN_ERROR_LABEL` 连同另外六张「枚举 → 中文」的表整体搬去了前端
+    `backendMessages.ts`（后端答不出「读这句话的人用什么界面语言」）。这条测试
+    照旧钉住覆盖率，只是现在核对的是 `RUN_ERROR_LABEL` 的键集合，不是 Python
+    这边一个 `dict` 的键集合——判据仍然是 `ExtractionErrorCode` 枚举本身。
+    """
+    source = BACKEND_MESSAGES.read_text(encoding="utf-8")
+    table_keys = set(_ts_const_object_keys(source, "RUN_ERROR_LABEL"))
+    declared = {e.value for e in ExtractionErrorCode}
+    missing = declared - table_keys
     assert not missing, (
-        f"抽取失败的措辞表漏了行：{missing}\n"
-        "漏掉的那一行会以 `provider_failure` 的形态出现在小说作者的日志页上。"
+        f"抽取失败的措辞表漏了行：{sorted(missing)}\n"
+        "漏掉的那一行会以裸码的形态出现在小说作者的日志页上。"
     )
     assert len(ExtractionErrorCode) >= 3, "枚举遍历为空 —— 上面那条是永远绿的"
 
-    dirty = {
-        code: dev_shapes(text)
-        for code, text in activity._RUN_ERROR_LABEL.items()
-        if dev_shapes(text) or not re.search(r"[一-鿿]", text)
-    }
-    assert not dirty, f"抽取失败的说法里有研发术语：{dirty}"
+    # zh 兜底走完整的 `dev_shapes`（含 `LATIN_SENTENCE`：中文屏幕上不许出现整句英文）；
+    # en 兜底**不能**用同一张网——`LATIN_SENTENCE` 咬的是「四个以上连着的英文单词」，
+    # 而英文兜底句本身就是英文散文，套上去每一句都会假红（同 `screenGuard.ts` 那条
+    # 「第四张网只罩中文屏幕」的既有边界）。en 那半只查机器形状（snake_case /
+    # SCREAMING_SNAKE / 裸 id / 封闭枚举的裸词），不查「这是不是一句英文」。
+    zh_fallback = _ts_const_object_fallback(source, "RUN_ERROR_LABEL", "zh")
+    assert not dev_shapes(zh_fallback), f"zh 兜底句里有研发术语：{zh_fallback!r}"
+    assert re.search(r"[一-鿿]", zh_fallback), f"zh 兜底句里没有中文：{zh_fallback!r}"
 
-    fallback = activity.run_error_label("some_brand_new_code")
-    assert not dev_shapes(fallback) and re.search(r"[一-鿿]", fallback), (
-        f"认不出的码退到了 {fallback!r} —— 封闭枚举认不出只可能是表漏了行，"
-        "而漏的那一行不该由小说作者来读"
+    en_fallback = _ts_const_object_fallback(source, "RUN_ERROR_LABEL", "en")
+    machine_shapes = MACHINE.findall(en_fallback) + SCREAMING.findall(en_fallback) + RAW_ID.findall(
+        en_fallback
     )
+    assert not machine_shapes, f"en 兜底句里有机器形状：{machine_shapes} —— {en_fallback!r}"
+    assert not re.search(r"[一-鿿]", en_fallback), f"en 兜底句里混进了中文：{en_fallback!r}"
 
 
 def _seed_failed_run(book: dict[str, str], code: ExtractionErrorCode) -> str:
@@ -363,15 +376,22 @@ def _seed_failed_run(book: dict[str, str], code: ExtractionErrorCode) -> str:
     finally:
         conn.close()
 @pytest.mark.parametrize("code", list(ExtractionErrorCode))
-def test_the_review_panels_run_endpoint_speaks_the_authors_language(
+def test_the_review_panels_run_endpoint_forwards_the_code_never_the_diagnostic(
     client: TestClient, book: dict[str, str], code: ExtractionErrorCode
 ) -> None:
-    """**审阅面板轮询的那条端点**（`GET …/extractions/{run_id}`）也只说中文。
+    """**审阅面板轮询的那条端点**（`GET …/extractions/{run_id}`）转发码，从不转发诊断。
 
-    它是这个 bug 的第二个现场：日志页那条 2026-08-11 就翻对了，而这一条把
+    它是这个 bug 的第二个现场：日志页那条 2026-08-11 就翻对了，而这一条曾经把
     `{"code": "provider_failure", "message": "chapter analysis provider failed"}`
     原样发给浏览器，`ProposalReviewTab` 渲染的正是那个 `message`。
     **夹具里从来没有过一次失败的抽取**，所以两个运行时的守卫扫的都是一块永远干净的屏幕。
+
+    国际化第四批·笔二起判据变了：以前这条端点在出门前就把 `code` 翻成中文
+    （这里断言出参已经是人话）；现在界面语言独立于书的语言，出参改成转发
+    **原始** `code`——`code` 本身是结构化数据，不是泄漏，`message` 才是那条从没变过的
+    纪律。这条测试改断言「`code` 原样出去、`message` 一个字都不出去」，
+    「`code` 翻不翻得出人话」交给同文件里那条覆盖率测试
+    （`test_the_failure_wording_table_covers_every_code_and_falls_back_to_chinese`）。
 
     参数化是**枚举驱动**的：新加一种失败方式，这条自动多跑一遍。
     """
@@ -382,12 +402,11 @@ def test_the_review_panels_run_endpoint_speaks_the_authors_language(
     assert body.status_code == 200, body.text
     errors = body.json()["errors"]
     assert errors, "失败了却一条原因都不说 —— 过度收窄一样是 bug"
-    assert all(isinstance(line, str) for line in errors), (
-        "出参还是 `{code, message}` —— 可翻译的那个值够得着，就总有人会去渲染另一个"
+    assert errors == [code.value], (
+        "出参不是原始 `code`——可翻译的那个值一旦被后端悄悄改写，前端那张表就查不到了"
     )
-    offenders = {line: dev_shapes(line) for line in errors if dev_shapes(line)}
-    assert not offenders, f"审阅面板上摆着研发术语（{code.value}）：{offenders}"
-    assert all(re.search(r"[一-鿿]", line) for line in errors)
+    diagnostic = _runner_error_literals()[code.value]
+    assert diagnostic not in body.text, f"写给维护者的英文诊断摆到了审阅面板上：{diagnostic!r}"
 
 
 def test_an_unknown_run_status_is_never_echoed_back(book: dict[str, str]) -> None:
@@ -432,9 +451,19 @@ def test_an_unknown_run_status_is_never_echoed_back(book: dict[str, str]) -> Non
         "finished_at": None,
     }
     entry = activity._run_entry(row, {})
-    assert not dev_shapes(entry.subtitle), (
-        f"认不出的状态被原样摆上屏：{entry.subtitle!r} —— "
-        "封闭枚举认不出只可能是 `_RUN_STATUS` 漏了行，而漏的那一行不该由作者来读"
+    # **不测「屏幕上有没有研发术语」，测「raw_status 有没有被塞进参数里」**
+    # （国际化第四批·笔二起）：副标题现在是码 + 参数，`dev_shapes` 那张网扫的是
+    # 已经渲染好的句子，扫不动一个还没渲染的 `subtitle_code` 字符串本身
+    # （它就是一段 snake_case，扫哪个码都会红，判据失效）。真正该钉住的是
+    # `raw_status`（这里是 `"ABORTED"`）没有作为参数被送出去——它认不出只可能是
+    # `_RUN_STATUS` 漏了行，而漏的那一行不该由前端拿着一个引擎内部状态码去渲染。
+    assert entry.subtitle_code in {"run_subtitle_pending", "run_subtitle_unknown_status"}, (
+        f"认不出的状态没有落进两个固定兜底码之一：{entry.subtitle_code!r}"
+    )
+    assert "ABORTED" not in json.dumps(entry.subtitle_params), (
+        f"认不出的状态被原样塞进了参数：{entry.subtitle_params!r} —— "
+        "封闭枚举认不出只可能是 `_RUN_STATUS` 漏了行，而漏的那一行不该由前端拿着"
+        "一个引擎内部状态码去渲染"
     )
 
 
@@ -459,6 +488,38 @@ def _ts_object_keys(source: str, name: str) -> list[str]:
     match = re.search(rf"export const {name}\s*:[^=]*=\s*\{{(.*?)\n\}};", source, re.S)
     assert match, f"types.ts 里找不到 {name}"
     return re.findall(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:", match.group(1), re.M)
+
+
+def _ts_const_object_keys(source: str, name: str) -> list[str]:
+    """`const NAME: … = { A: {…}, B: {…} };` 里的顶层键。
+
+    同 `_ts_object_keys`，只是不要求 `export`——`backendMessages.ts` 里这一批
+    「枚举 → {zh,en}」子表是模块内部实现细节，没有、也不需要被别的运行时代码
+    直接 import（一律经 `messageForCode`），所以不带 `export`。
+    """
+    match = re.search(rf"const {name}\s*:[^=]*=\s*\{{(.*?)\n\}};", source, re.S)
+    assert match, f"backendMessages.ts 里找不到 {name}"
+    return re.findall(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*:", match.group(1), re.M)
+
+
+def _ts_const_object_fallback(source: str, name: str, language: str) -> str:
+    """`const NAME_FALLBACK = { zh: "…", en: "…" };` 里某个语言的那句话。"""
+    match = re.search(rf"const {name}_FALLBACK\s*=\s*\{{(.*?)\}};", source, re.S)
+    assert match, f"backendMessages.ts 里找不到 {name}_FALLBACK"
+    line = re.search(rf'{language}:\s*"([^"]*)"', match.group(1))
+    assert line, f"{name}_FALLBACK 里没有 {language} 这一路"
+    return line.group(1)
+
+
+def _ts_const_object_entry(source: str, name: str, key: str, language: str) -> str:
+    """`const NAME: … = { KEY: { zh: "…", en: "…" }, … };` 里 `KEY` 那一行某个语言的话。"""
+    table = re.search(rf"const {name}\s*:[^=]*=\s*\{{(.*?)\n\}};", source, re.S)
+    assert table, f"backendMessages.ts 里找不到 {name}"
+    entry = re.search(rf"\b{re.escape(key)}:\s*\{{(.*?)\}}", table.group(1), re.S)
+    assert entry, f"{name} 里没有 {key!r} 这一行"
+    line = re.search(rf'{language}:\s*"([^"]*)"', entry.group(1))
+    assert line, f"{name}.{key} 里没有 {language} 这一路"
+    return line.group(1)
 
 
 def _ts_union_members(source: str, name: str) -> list[str]:

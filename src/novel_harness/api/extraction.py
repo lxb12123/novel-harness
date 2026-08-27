@@ -1,7 +1,9 @@
 """显式 M4 后台抽取的薄 HTTP 壳。
 
-这一层多干一件事：**把「这次为什么没跑成」翻成作者的话**（`ExtractionRunView`）。
-措辞不在这儿，在 `activity._RUN_ERROR_LABEL`——那是全仓唯一一份，见 `run_error_label`。
+这一层曾经多干一件事：把「这次为什么没跑成」翻成中文（`ExtractionRunView`）。
+国际化第四批·笔二起，这一层**不再翻译**——`errors` 直接转发 `ExtractionErrorCode`
+的原始值，整句由前端 `messageForCode("run_error", language, {code})` 按当前界面
+语言渲染（唯一那张表在 `frontend/src/backendMessages.ts` 的 `RUN_ERROR_LABEL`）。
 """
 
 from __future__ import annotations
@@ -12,7 +14,6 @@ from typing import Annotated, Any
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..activity import run_error_label
 from ..events import EventView
 from ..events.store import EventStore
 from ..extract.runner import (
@@ -39,21 +40,21 @@ class EventReadScope(StrEnum):
 class ExtractionRunView(BaseModel):
     """一次整理**给作者看的**那一份。和 `ExtractionRun`（审计真相）只差一个字段。
 
-    ── `errors` 是一串已经翻好的中文，不是 `{code, message}` ────────────────────
+    ── `errors` 是 `ExtractionErrorCode` 的原始值，不是 `{code, message}` ─────────
 
     `ExtractionRunError.message` 是写给**维护者**的英文诊断（`extract/control.py`
-    那儿写着「它永远不上作者的屏幕」），而这条端点的唯一消费者是浏览器里的审阅面板。
-    在此之前它把整条 `ExtractionRunError` 原样发出去，前端渲染的就是那句英文——
-    屏幕上是 `chapter analysis provider failed`。日志页那条读端早就翻对了
-    （`activity._run_errors`），两条读端读同一批行，只有这条漏了。
+    那儿写着「它永远不上作者的屏幕」），这一条纪律没变：`message` 依然一个字都不出去。
 
-    **修法是让它够不着，不是让前端记得别渲染**：这道门之后那句英文不再存在于任何
-    HTTP 出参里，`code` 也不出去（它是 snake_case，摆上屏同样是研发术语）。
+    **变的是 `code` 那半**（国际化第四批·笔二）：以前这里在出门前就把 `code` 翻成
+    中文（`activity.run_error_label`），因为后端知道要说中文；现在界面语言独立于
+    书的语言，后端答不出「读这句话的人用什么界面语言」，所以只转发原始 `code`，
+    前端拿它去 `messageForCode("run_error", language, {code})` 按当前界面语言渲染。
     形状和日志页展开层的 `ActivityDetail.errors` 一样是 `tuple[str, ...]`——
     同一件事在两条读端上长同一个样，前端也就不必认两种形状。
 
-    **不许在这里写第二张翻译表。** 唯一一份在 `activity._RUN_ERROR_LABEL`，
-    `tests/test_wording_guard.py` 拿 `ExtractionErrorCode` 枚举本身钉着它的完整性。
+    **不许在这里写第二张翻译表。** 唯一一份在 `frontend/src/backendMessages.ts`
+    的 `RUN_ERROR_LABEL`，`tests/test_wording_guard.py` 拿 `ExtractionErrorCode`
+    枚举本身钉着它的完整性。
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -83,7 +84,7 @@ def _view(run: ExtractionRun) -> ExtractionRunView:
     """审计模型 → 出参模型。**唯一的转换点**，两条路由都过它。"""
     return ExtractionRunView(
         **run.model_dump(exclude={"errors"}),
-        errors=tuple(run_error_label(error.code) for error in run.errors),
+        errors=tuple(error.code for error in run.errors),
     )
 
 

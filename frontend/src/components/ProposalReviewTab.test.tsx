@@ -4,6 +4,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import { fixtures, renderWithApi } from "../test/harness";
 import { devTerms, screenText } from "../test/screenGuard";
+import { messageForCode } from "../backendMessages";
 import { useCoords } from "../store";
 import { ProposalReviewTab } from "./ProposalReviewTab";
 
@@ -156,6 +157,10 @@ describe("待确认内容", () => {
     // `{ code: "analysis_format", message: "格式错误" }` —— 一个真码配一句**中文**。
     // 测试绿着，屏幕是英文。现在夹具里有一条**真的**没跑成的整理
     //（`tests/test_frontend_contract.py` 从真 app dump），这一格吃的就是它。
+    //
+    // 国际化第四批·笔二起 `errors` 是 `ExtractionErrorCode` 的原始值，不是拼好的
+    // 中文——组件拿它去 `messageForCode("run_error", ...)` 查 `RUN_ERROR_LABEL`。
+    // 这里断言的是**渲染出来的那句话**，不是原始码本身。
     const user = userEvent.setup();
     const { failed } = analysisRuns();
     useCoords.getState().setProject("project:ID1");
@@ -166,10 +171,12 @@ describe("待确认内容", () => {
     await screen.findByRole("button", { name: "重新分析" });
 
     expect(failed.errors.length).toBeGreaterThan(0); // 自守卫：没有原因就没什么可验的
-    for (const line of failed.errors) {
-      expect(typeof line).toBe("string"); // `{code, message}` 回来了就红
-      expect(screen.getByText(line)).toBeInTheDocument();
-      expect(line).toMatch(/[一-鿿]/);
+    for (const code of failed.errors) {
+      expect(typeof code).toBe("string"); // `{code, message}` 回来了就红
+      const rendered = messageForCode("run_error", "zh", { code });
+      expect(rendered).toBeDefined(); // 认不出的码 = RUN_ERROR_LABEL 漏了行
+      expect(screen.getByText(rendered!)).toBeInTheDocument();
+      expect(rendered).toMatch(/[一-鿿]/);
     }
     expect(devTerms(screenText())).toEqual([]);
   });

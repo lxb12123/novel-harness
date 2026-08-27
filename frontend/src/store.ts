@@ -98,9 +98,6 @@ interface Coords {
     tab: Tab | null;
     eventId: string | null;
     edgeId: string | null;
-    /** 后端 `jump.cast` 拼出来的那一串，原样落进 `castInclude`（**不是 `cast`**）。
-     *  空串 = 这一档给不出坐标，面板照旧按推导算。
-     *  前端不在这里挑人、不在这里合并——两者都是「替引擎决定谁在场」。 */
   }) => void;
 }
 

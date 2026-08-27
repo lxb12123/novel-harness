@@ -73,10 +73,149 @@ function moreSuffix(rest: number, language: Language): string {
   return language === "zh" ? `（另有 ${rest} 处）` : ` (${rest} more)`;
 }
 
+const UNRECORDED: { zh: string; en: string } = { zh: "未记录", en: "Not recorded" };
+function unrecorded(language: Language): string {
+  return UNRECORDED[language];
+}
+
 const CONFLICT_LABEL: Record<string, { zh: string; en: string }> = {
   setting: { zh: "设定对不上", en: "setting doesn't match" },
   timeline: { zh: "时间线对不上", en: "timeline doesn't match" },
   knowledge: { zh: "谁在什么时候知道什么，对不上", en: "who knew what and when doesn't match" },
+};
+
+// ── activity.py（日志页，国际化第四批·笔二）─────────────────────────────────
+//
+// 七张「枚举 → 中文」的表 + 四个格式化函数，整个从 `activity.py` 搬过来的
+// （原来分别叫 `_CAPABILITY_LABEL` / `_KIND_LABEL` / `_VERDICT_LABEL` / `_EDGE_LABEL` /
+// `_NODE_LABEL` / `_RUN_ERROR_LABEL` / `_ACTOR_LABEL`）。开放 vs 封闭的区分照抄：
+// `CAPABILITY_LABEL`/`ACTOR_LABEL` 认不出时 `??` 兜底成原始参数值（`decision_log.actor`
+// 是开放字符串），另外五张认不出时退到一句固定的通用兜底（每一个键对应的枚举都是
+// 封闭的，认不出只可能是这张表漏了一行）。`tests/test_wording_guard.py` 拿 Python
+// 那边的枚举本身核对这五张封闭表的键集合，不许漏。
+//
+// ⚠️ **`EDGE_LABEL`/`NODE_LABEL` 和 `frontend/src/api/types.ts` 的 `EDGE_ZH`/
+// `LABEL_ZH` 是已知的重复**（`tests/test_wording_guard.py` 的注释当时就点了名：
+// 「两份都在展示层」）。`EDGE_ZH`/`LABEL_ZH` 服务的是 `BottomBar`/`EvidenceTab`/
+// `LocalGraph`/`RosterDrawer` 等一整批跟这次改动无关的组件，且它们至今是纯中文——
+// 统一这两张表要连带把那批组件也一起接进界面语言，是一次单独的、更广的前端文案批次，
+// 不在这一笔（笔二只管 `activity.py` 那条读端）范围里。这里先记下来，别悄悄长出第三份。
+export const CAPABILITY_LABEL: Record<string, { zh: string; en: string }> = {
+  extractor: { zh: "抽取", en: "extraction" },
+  summarizer: { zh: "章节总结", en: "chapter summary" },
+  writer: { zh: "起草", en: "drafting" },
+  agent: { zh: "写作助手", en: "writing assistant" },
+  advisory: { zh: "事后核对", en: "after-the-fact review" },
+};
+
+export const ACTOR_LABEL: Record<string, { zh: string; en: string }> = {
+  author: { zh: "作者", en: "author" },
+  system: { zh: "系统", en: "system" },
+};
+
+export const KIND_LABEL: Record<string, { zh: string; en: string }> = {
+  alias_merge: { zh: "登记称呼", en: "recorded an alias" },
+  node_declare: { zh: "登记条目", en: "recorded an entry" },
+  secret_declare: { zh: "登记秘密", en: "recorded a secret" },
+  knows_declare: { zh: "声明认知", en: "declared awareness" },
+  located_declare: { zh: "声明位置", en: "declared a location" },
+  state_declare: { zh: "声明生死", en: "declared a status" },
+  first_appearance_declare: { zh: "声明首次登场", en: "declared a first appearance" },
+  proposal_review: { zh: "抽取结果审阅", en: "reviewed extraction results" },
+  knowledge_edit: { zh: "更正认知类型", en: "corrected an awareness type" },
+  knowledge_add: { zh: "补一条认知", en: "added an awareness" },
+  event_edit: { zh: "更正事件名单", en: "corrected an event's cast" },
+  event_summary_edit: { zh: "编辑情节摘要", en: "edited a chapter summary" },
+  canon_edge_edit: { zh: "更正地点/状态/关系", en: "corrected a location/status/relationship" },
+  canon_edge_retract: { zh: "撤回地点/状态/关系", en: "retracted a location/status/relationship" },
+  chapter_draft: { zh: "写进正文", en: "wrote into the prose" },
+};
+const KIND_LABEL_FALLBACK = { zh: "一次改动", en: "a change" };
+
+export const VERDICT_LABEL: Record<string, { zh: string; en: string }> = {
+  accept: { zh: "接受", en: "accepted" },
+  reject: { zh: "否决", en: "rejected" },
+  edit: { zh: "改过之后接受", en: "accepted with edits" },
+};
+const VERDICT_LABEL_FALLBACK = { zh: "已处理", en: "handled" };
+
+export const EDGE_LABEL: Record<string, { zh: string; en: string }> = {
+  // KNOWS / BELIEVES 已不是 `EdgeType` 的成员（ADR 0039），只为历史日志行存在——
+  // 老 `knows_declare`/`knowledge_edit` 的 payload 里就写着这两个字符串。
+  KNOWS: { zh: "知道", en: "knows" },
+  BELIEVES: { zh: "以为", en: "believes" },
+  LOCATED_AT: { zh: "在", en: "at" },
+  MEMBER_OF: { zh: "属于", en: "belongs to" },
+  RELATED_TO: { zh: "关系", en: "related to" },
+  HAS_STATE: { zh: "状态", en: "status" },
+  OWNS: { zh: "有", en: "has" },
+  PLANTED_IN: { zh: "埋在", en: "planted in" },
+  RESOLVED_IN: { zh: "回应于", en: "resolved in" },
+};
+const EDGE_LABEL_FALLBACK = { zh: "关系", en: "a relationship" };
+
+export const NODE_LABEL: Record<string, { zh: string; en: string }> = {
+  Character: { zh: "人物", en: "character" },
+  Location: { zh: "地点", en: "location" },
+  Faction: { zh: "势力", en: "faction" },
+  Secret: { zh: "秘密", en: "secret" }, // 已不是 NodeLabel 成员，只为历史日志行留着
+  Foreshadow: { zh: "伏笔", en: "foreshadowing" },
+  Object: { zh: "物品", en: "object" },
+  StateDim: { zh: "状态", en: "status" },
+  Chapter: { zh: "章", en: "chapter" },
+};
+const NODE_LABEL_FALLBACK = { zh: "条目", en: "an entry" };
+
+// `ExtractionErrorCode` 的原始值 → 作者的说法。**全仓唯一一份**：`activity.py`
+// 的日志页详情、`api/extraction.py::ExtractionRunView.errors` 两条读端都发这个码，
+// 前端都用 `messageForCode("run_error", language, {code})` 查同一张表。
+// 键名和 `draft.provider.ProviderFailureKind` 的四档（auth/quota/unreachable/
+// upstream）对齐——`api/app.py` 同步 `/draft` 路径上那处独立的 `ProviderError`
+// 兜底（`except ProviderError: ...`）今天还在原样转发 `str(exc)`，等它接进码+参数
+// 这条路时，档位名字已经在这儿，不用再猜怎么对齐。
+export const RUN_ERROR_LABEL: Record<string, { zh: string; en: string }> = {
+  prompt_drift: {
+    zh: "这一章在排队期间被改过，整理没有继续（重新整理一次即可）",
+    en: "This chapter was edited while it was queued, so the cleanup didn't continue — just run it again.",
+  },
+  // ── provider 那四档 + 兜底（同 activity.py 原表：只看 HTTP 状态码，不读文案，
+  //    这几句里一个状态码都不许出现）──────────────────────────────────────
+  provider_auth: {
+    zh: "模型服务没接受你的密钥。可能是密钥不对，也可能是这把密钥用不了你填的那个地址——有些服务商按套餐分了不同的地址",
+    en: "The model service didn't accept your key. It might be the wrong key, or this key might not work with the endpoint you entered — some providers use different endpoints for different plans.",
+  },
+  provider_quota: {
+    zh: "你在模型服务商那儿的额度或余额不够了，去他们的后台看一眼",
+    en: "You're out of quota or balance with your model provider — check their dashboard.",
+  },
+  provider_unreachable: {
+    zh: "没能连上你配置的模型服务",
+    en: "Couldn't reach the model service you configured.",
+  },
+  provider_upstream: {
+    zh: "模型服务那边出了问题，过一会儿再试",
+    en: "Something went wrong on the model service's end — try again in a bit.",
+  },
+  provider_failure: {
+    zh: "这一次没能调用模型，而系统没能说清是为什么",
+    en: "This call to the model failed, and the system couldn't pin down why.",
+  },
+  call_record_failure: {
+    zh: "模型答了，但这次调用没能记进账里，整理没有继续",
+    en: "The model answered, but this call couldn't be recorded, so the cleanup didn't continue.",
+  },
+  analysis_format: {
+    zh: "模型这次答的东西读不出来",
+    en: "What the model answered this time couldn't be parsed.",
+  },
+  ingest_failure: {
+    zh: "整理结果没能写进这本书，这一章维持原样",
+    en: "The cleanup results couldn't be written into this book — this chapter is unchanged.",
+  },
+};
+const RUN_ERROR_LABEL_FALLBACK = {
+  zh: "整理没有跑完（没有留下能看懂的原因）",
+  en: "The cleanup didn't finish, and no readable reason was recorded.",
 };
 
 const MESSAGES: Record<string, Template> = {
@@ -210,6 +349,242 @@ const MESSAGES: Record<string, Template> = {
   proposal_already_resolved: {
     zh: "这条已经被处理过了（可能是你自己在别的标签页点的，也可能是别人）。刷新一下看看结果。",
     en: "This item has already been handled (maybe you did it in another tab, maybe someone else did). Refresh to see the result.",
+  },
+
+  // ── activity.py：折叠行标题（entry.title_code）──────────────────────────
+  run_entry_title: { zh: "第 {chapter} 章抽取", en: "Chapter {chapter} extraction" },
+  call_entry_title: (params, language) => {
+    const capability = String(params.capability ?? "");
+    const label = CAPABILITY_LABEL[capability]?.[language] ?? capability;
+    return language === "zh" ? `模型调用 · ${label}` : `Model call · ${label}`;
+  },
+  decision_entry_title: (params, language) => {
+    const actor = String(params.actor ?? "");
+    const kind = String(params.kind ?? "");
+    const actorLabel = ACTOR_LABEL[actor]?.[language] ?? actor;
+    const kindLabel = KIND_LABEL[kind]?.[language] ?? KIND_LABEL_FALLBACK[language];
+    return `${actorLabel} · ${kindLabel}`;
+  },
+
+  // ── activity.py：折叠行副标题（entry.subtitle_code）──────────────────────
+  run_subtitle_succeeded: {
+    zh: "有效事件 {valid} 条 · 丢弃 {discarded} 条 · 待审提案 {proposals} 条",
+    en: "{valid} valid events · {discarded} discarded · {proposals} pending review",
+  },
+  // 一次抽取失败的原因。**同一个码**也用在 `ActivityDetail.errors` 每一条上，
+  // 以及 `api/extraction.py::ExtractionRunView.errors`（审阅面板读的另一条端点）——
+  // 三处读同一批 `ExtractionErrorCode` 原始值，查的是同一张 `RUN_ERROR_LABEL`。
+  run_error: (params, language) => {
+    const code = String(params.code ?? "");
+    return RUN_ERROR_LABEL[code]?.[language] ?? RUN_ERROR_LABEL_FALLBACK[language];
+  },
+  run_subtitle_failed_no_detail: {
+    zh: "抽取失败（没有留下错误明细）",
+    en: "Extraction failed (no error detail was recorded).",
+  },
+  run_subtitle_running: { zh: "正在跑", en: "Running" },
+  run_subtitle_pending: { zh: "排队中", en: "Queued" },
+  run_subtitle_unknown_status: { zh: "等着整理", en: "Waiting to be processed" },
+  call_subtitle: (params, language) => {
+    const model = String(params.model ?? "");
+    const tokensIn =
+      params.tokens_in === null || params.tokens_in === undefined
+        ? unrecorded(language)
+        : String(params.tokens_in);
+    const tokensOut =
+      params.tokens_out === null || params.tokens_out === undefined
+        ? unrecorded(language)
+        : String(params.tokens_out);
+    const ms =
+      params.ms === null || params.ms === undefined ? unrecorded(language) : `${params.ms} ms`;
+    return language === "zh"
+      ? `${model} · 入 ${tokensIn} / 出 ${tokensOut} token · ${ms}`
+      : `${model} · in ${tokensIn} / out ${tokensOut} tokens · ${ms}`;
+  },
+  proposal_review_subtitle: (params, language) => {
+    const verdictCode = String(params.verdict ?? "");
+    const verdict = VERDICT_LABEL[verdictCode]?.[language] ?? VERDICT_LABEL_FALLBACK[language];
+    const events = Number(params.events ?? 0);
+    const edges = Number(params.edges ?? 0);
+    const characters = Number(params.characters ?? 0);
+    const parts =
+      language === "zh"
+        ? [`事件 ${events} 条`, `关系 ${edges} 条`]
+        : [`${events} events`, `${edges} relationships`];
+    if (characters) parts.push(language === "zh" ? `人物 ${characters} 个` : `${characters} characters`);
+    return language === "zh" ? `${verdict}：${parts.join(" · ")}` : `${verdict}: ${parts.join(" · ")}`;
+  },
+  decision_subtitle_knowledge_edit: (params, language) => {
+    const before = EDGE_LABEL[String(params.before ?? "")]?.[language] ?? EDGE_LABEL_FALLBACK[language];
+    const after = EDGE_LABEL[String(params.after ?? "")]?.[language] ?? EDGE_LABEL_FALLBACK[language];
+    return language === "zh"
+      ? `${params.subject} 对「${params.secret}」：${before} → ${after}`
+      : `${params.subject} on "${params.secret}": ${before} → ${after}`;
+  },
+  decision_subtitle_knowledge_add: (params, language) => {
+    const after = EDGE_LABEL[String(params.after ?? "")]?.[language] ?? EDGE_LABEL_FALLBACK[language];
+    return language === "zh"
+      ? `${params.subject} 对「${params.secret}」：补上「${after}」`
+      : `${params.subject} on "${params.secret}": added "${after}"`;
+  },
+  decision_subtitle_event_edit: (params, language) => {
+    const ka = Number(params.knowers_added ?? 0);
+    const kr = Number(params.knowers_removed ?? 0);
+    const ca = Number(params.cast_added ?? 0);
+    const cr = Number(params.cast_removed ?? 0);
+    return language === "zh"
+      ? `知情 +${ka} −${kr} · 在场 +${ca} −${cr}`
+      : `knows about +${ka} −${kr} · present +${ca} −${cr}`;
+  },
+  decision_subtitle_chapter_draft: (params, language) => {
+    const chapter = params.chapter;
+    const where =
+      chapter === null || chapter === undefined
+        ? unrecorded(language)
+        : language === "zh"
+          ? `第 ${chapter} 章`
+          : `Chapter ${chapter}`;
+    const units = params.units;
+    if (units === null || units === undefined) return where;
+    return language === "zh" ? `${where} · 约 ${units} 字` : `${where} · about ${units} characters`;
+  },
+  decision_subtitle_alias_merge: (params, language) =>
+    language === "zh"
+      ? `${params.subject} ← 「${params.surface}」`
+      : `${params.subject} ← "${params.surface}"`,
+  decision_subtitle_edge_declare: (params, language) => {
+    const edgeType =
+      EDGE_LABEL[String(params.edge_type ?? "")]?.[language] ?? EDGE_LABEL_FALLBACK[language];
+    return `${params.subject} ${edgeType} ${params.target}`;
+  },
+  decision_subtitle_node_declare: (params, language) => {
+    // `subject` 真实数据里从来不是空串（后端已经用 "—" 兜过 `decision.subject_name`
+    // 为空的那一档），这里再兜一层只是为了不让空参数自检把这条模板判成"空模板"。
+    const subject = String(params.subject ?? "") || "—";
+    const label = params.label;
+    if (!label) return subject;
+    const nodeLabel = NODE_LABEL[String(label)]?.[language] ?? NODE_LABEL_FALLBACK[language];
+    return language === "zh" ? `${subject}（${nodeLabel}）` : `${subject} (${nodeLabel})`;
+  },
+
+  // ── activity.py：跳转按钮上的话（jump.label_code）─────────────────────────
+  jump_retry_chapter: { zh: "再整理一次第 {chapter} 章", en: "Retry chapter {chapter}" },
+  jump_review_single_proposal: { zh: "去审阅这条待审提案", en: "Review this pending item" },
+  jump_review_many_proposals: {
+    zh: "第 {chapter} 章还有 {count} 条待审",
+    en: "Chapter {chapter} has {count} items pending review",
+  },
+  jump_go_to_chapter: { zh: "去第 {chapter} 章", en: "Go to chapter {chapter}" },
+  jump_view_summary: { zh: "去看第 {chapter} 章的总结", en: "View chapter {chapter}'s summary" },
+  jump_edit_event_cast: {
+    zh: "去改这条事件的知情 / 在场名单",
+    en: "Edit who knows about / is present at this event",
+  },
+  jump_edit_many_events: {
+    zh: "改了 {count} 条事件，去第 {chapter} 章逐条改",
+    en: "{count} events changed — go to chapter {chapter} to edit them one by one",
+  },
+  jump_edit_auto_edge: (params, language) => {
+    const chapter = params.chapter;
+    const base = language === "zh" ? "去改这条自动生成的边" : "Edit this auto-generated fact";
+    if (chapter === null || chapter === undefined) return base;
+    return language === "zh" ? `${base}（第 ${chapter} 章）` : `${base} (chapter ${chapter})`;
+  },
+
+  // ── activity.py：展开详情，标签（DetailRow.label_code，从没插过值）──────────
+  detail_label_chapter: { zh: "章节", en: "Chapter" },
+  detail_label_valid_events: { zh: "有效事件", en: "Valid events" },
+  detail_label_discarded_events: { zh: "丢弃事件", en: "Discarded events" },
+  detail_label_pending_proposals: { zh: "待审提案", en: "Pending review" },
+  detail_label_elapsed: { zh: "用时", en: "Time taken" },
+  detail_label_summary_written: { zh: "这次写出来的总结", en: "The summary this call wrote" },
+  detail_label_capability: { zh: "能力", en: "Capability" },
+  detail_label_model: { zh: "模型", en: "Model" },
+  detail_label_for_chapter: { zh: "为哪一章", en: "For which chapter" },
+  detail_label_tokens_in: { zh: "入参 token", en: "Input tokens" },
+  detail_label_tokens_out: { zh: "出参 token", en: "Output tokens" },
+  detail_label_cache_continuation: { zh: "接着上次的输入", en: "Continued from last time" },
+  detail_label_call_ms: { zh: "耗时", en: "Elapsed" },
+  detail_label_attempt: { zh: "第几次尝试", en: "Attempt number" },
+  detail_label_kind: { zh: "类型", en: "Type" },
+  detail_label_verdict: { zh: "裁决", en: "Verdict" },
+  detail_label_changed_by: { zh: "谁改的", en: "Changed by" },
+  detail_label_subject: { zh: "对象", en: "Subject" },
+  detail_label_paragraph: { zh: "段落", en: "Paragraph" },
+  detail_label_quote: { zh: "依据引语", en: "Quoted evidence" },
+
+  // ── activity.py：展开详情，值（DetailRow.value_code）───────────────────────
+  value_chapter: (params, language) => {
+    const chapter = params.chapter;
+    if (chapter === null || chapter === undefined) return unrecorded(language);
+    return language === "zh" ? `第 ${chapter} 章` : `Chapter ${chapter}`;
+  },
+  value_count: { zh: "{n}", en: "{n}" },
+  value_optional_number: (params, language) => {
+    const n = params.n;
+    return n === null || n === undefined ? unrecorded(language) : String(n);
+  },
+  value_text: { zh: "{text}", en: "{text}" },
+  value_text_or_unrecorded: (params, language) => {
+    const text = params.text;
+    return typeof text === "string" && text ? text : unrecorded(language);
+  },
+  value_capability: (params, language) => {
+    const capability = String(params.capability ?? "");
+    // `|| "—"` 只罩空参数自检那一档——真实数据里 `capability` 从不是空串。
+    return CAPABILITY_LABEL[capability]?.[language] ?? (capability || "—");
+  },
+  value_elapsed: (params, language) => {
+    const seconds = params.seconds;
+    if (seconds === null || seconds === undefined) return unrecorded(language);
+    const n = Number(seconds);
+    if (n < 60) return language === "zh" ? `${n.toFixed(1)} 秒` : `${n.toFixed(1)} seconds`;
+    return language === "zh" ? `${(n / 60).toFixed(1)} 分钟` : `${(n / 60).toFixed(1)} minutes`;
+  },
+  value_call_ms: (params, language) => {
+    const ms = params.ms;
+    return ms === null || ms === undefined ? unrecorded(language) : `${ms} ms`;
+  },
+  value_cache: (params, language) => {
+    const read = params.read;
+    const written = params.written;
+    const parts: string[] = [];
+    if (read === null || read === undefined) {
+      parts.push(unrecorded(language));
+    } else if (read === 0) {
+      parts.push(
+        language === "zh"
+          ? "这次没接上，整段输入都重新算了"
+          : "Nothing carried over this time — the whole input was recomputed."
+      );
+    } else {
+      parts.push(
+        language === "zh"
+          ? `${read} token 接着上次，没有重新算`
+          : `${read} tokens carried over from last time, not recomputed`
+      );
+    }
+    if (written === 0) {
+      parts.push(language === "zh" ? "这次没有新存下内容" : "Nothing new was cached this time");
+    } else if (written !== null && written !== undefined) {
+      parts.push(
+        language === "zh" ? `另存下 ${written} token 供下次接` : `${written} more tokens cached for next time`
+      );
+    }
+    return parts.join(" · ");
+  },
+  value_kind: (params, language) => {
+    const kind = String(params.kind ?? "");
+    return KIND_LABEL[kind]?.[language] ?? KIND_LABEL_FALLBACK[language];
+  },
+  value_verdict: (params, language) => {
+    const verdict = String(params.verdict ?? "");
+    return VERDICT_LABEL[verdict]?.[language] ?? VERDICT_LABEL_FALLBACK[language];
+  },
+  value_actor: (params, language) => {
+    const actor = String(params.actor ?? "");
+    // `|| "—"` 只罩空参数自检那一档——真实数据里 `actor` 从不是空串。
+    return ACTOR_LABEL[actor]?.[language] ?? (actor || "—");
   },
 };
 

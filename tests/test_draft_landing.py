@@ -742,9 +742,11 @@ def test_three_drafts_in_one_turn_are_three_lines_on_the_bill(
     conn.close()
     assert billed == 3, f"三稿正文在账上只有 {billed} 行"
 
-    titles = [row["title"] for row in _rows(client, pid)]
-    assert titles.count("模型调用 · 起草") == 3, "日志页上数不出三次起草"
-    assert titles.count("系统 · 写进正文") == 3, "落盘那三行没上日志页"
+    titles = [(row["title_code"], tuple(sorted(row["title_params"].items()))) for row in _rows(client, pid)]
+    writer_calls = ("call_entry_title", (("capability", "writer"),))
+    chapter_drafts = ("decision_entry_title", (("actor", "system"), ("kind", "chapter_draft")))
+    assert titles.count(writer_calls) == 3, "日志页上数不出三次起草"
+    assert titles.count(chapter_drafts) == 3, "落盘那三行没上日志页"
 
 
 def test_a_draft_the_gate_refused_is_still_on_the_bill(
@@ -1118,7 +1120,12 @@ def test_a_landing_that_happened_leaves_its_line_even_when_the_snapshot_did_not(
     finally:
         conn.close()
 
-    landed = [row for row in _rows(client, pid) if row["title"] == "系统 · 写进正文"]
+    landed = [
+        row
+        for row in _rows(client, pid)
+        if row["title_code"] == "decision_entry_title"
+        and row["title_params"] == {"actor": "system", "kind": "chapter_draft"}
+    ]
     assert len(landed) == 1, (
         "作者的第 1 章被改掉了，而日志页上没有这一行 —— "
         "「不挡，但每步留痕」那笔交易只履行了「不挡」那一半"

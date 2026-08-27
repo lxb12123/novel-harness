@@ -317,7 +317,12 @@ def test_todays_reply_budget_does_not_reach_the_streaming_threshold() -> None:
 
 
 def test_the_bill_says_this_money_was_spent_by_the_writing_assistant() -> None:
-    """账上那一列的取值是 `agent`，而日志页认得它（`activity._CAPABILITY_LABEL`）。"""
-    from novel_harness.activity import _CAPABILITY_LABEL
+    """账上那一列的取值是 `agent`，而日志页认得它。
 
-    assert _CAPABILITY_LABEL[AGENT_CAPABILITY] == "写作助手"
+    国际化第四批·笔二起这张表搬去了前端 `backendMessages.ts`
+    的 `CAPABILITY_LABEL`，不再是 `activity._CAPABILITY_LABEL`。
+    """
+    from test_wording_guard import BACKEND_MESSAGES, _ts_const_object_entry
+
+    source = BACKEND_MESSAGES.read_text(encoding="utf-8")
+    assert _ts_const_object_entry(source, "CAPABILITY_LABEL", AGENT_CAPABILITY, "zh") == "写作助手"

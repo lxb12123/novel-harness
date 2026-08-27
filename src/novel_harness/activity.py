@@ -53,7 +53,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from . import decisions
 from .db import Connection
-from .extract.control import ExtractionErrorCode, ExtractionRunStatus
+from .extract.control import ExtractionRunStatus
 
 __all__ = [
     "ActivityCost",
@@ -72,7 +72,6 @@ __all__ = [
     "read_activity",
     "read_entry",
     "read_runs",
-    "run_error_label",
 ]
 
 
@@ -143,9 +142,15 @@ class ActivityJump(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     target: JumpTarget
-    label: str
-    """按钮上的那句话。**措辞归后端**——它和 `target` 是同一次判断的两个产物，
-    分开写迟早会出现「按钮说去改提案、坐标指向认知矩阵」。"""
+    label_code: str
+    """按钮上那句话的码。**措辞归前端**（国际化第四批·笔二）：界面语言独立于书的语言，
+    后端答不出「读这句话的人用什么界面语言」，所以只送码 + 原始参数，
+    `frontend/src/backendMessages.ts` 按当前界面语言渲染整句——同
+    `system_notifications.py` 的 `title_code`/`title_params`。
+    `label_code` 和 `target` 仍然是**同一次判断的两个产物**、必须一起改：
+    分开写迟早会出现「按钮说去改提案、坐标指向认知矩阵」，这条纪律没变，
+    变的只是「谁把码翻成句子」。"""
+    label_params: dict[str, Any] = Field(default_factory=dict)
 
     chapter_number: int | None = None
     event_id: str | None = None
@@ -180,10 +185,13 @@ class ActivityEntry(BaseModel):
     `extraction_run` / `model_call` 没有这一列——它们按定义是系统跑的，这里补成 `system`。"""
 
     status: ActivityStatus
-    title: str
-    subtitle: str
-    """一行结果摘要。**零必须带着理由**（§10 约束 8）：token 没记就写「未记录」，
-    不许渲染成 0。"""
+    title_code: str
+    title_params: dict[str, Any] = Field(default_factory=dict)
+    subtitle_code: str
+    subtitle_params: dict[str, Any] = Field(default_factory=dict)
+    """折叠行的题目和一行结果摘要，都是「码 + 原始参数」（同 `ActivityJump.label_code`
+    那条道理，国际化第四批·笔二）。**零必须带着理由**（§10 约束 8）：
+    token 没记就是一个「未记录」的码，不许把 `None` 塞进 `{n}` 渲染成 0。"""
 
     chapter_number: int | None = None
     jump: ActivityJump | None = None
@@ -192,14 +200,20 @@ class ActivityEntry(BaseModel):
 class DetailRow(BaseModel):
     """展开详情里的一行「标签 → 值」。
 
-    做成通用键值对而不是每种 source 一个响应模型，是为了让措辞全部留在后端：
-    前端渲染一张定义列表，不写一行 `if source == …` 的文案分支。
+    做成通用键值对而不是每种 source 一个响应模型，是为了让**码**全部经过前端同一张
+    `backendMessages.ts`：前端渲染一张定义列表，不写一行 `if source == …` 的文案分支
+    ——分支挪进了各个码自己的模板函数里，形状本身没变（国际化第四批·笔二）。
+
+    `label_code` 不带参数：这一列全是静态字段名（「章节」「耗时」那种），
+    从没有哪一行需要往标签里插值——真长出这种需要，那时再给 `label_code` 配
+    `label_params`，不要现在就为一个不存在的用例加一个字段。
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    label: str
-    value: str
+    label_code: str
+    value_code: str
+    value_params: dict[str, Any] = Field(default_factory=dict)
 
 
 class ActivityCost(BaseModel):
@@ -242,6 +256,11 @@ class ActivityDetail(BaseModel):
     rows: tuple[DetailRow, ...] = ()
     cost: ActivityCost | None = None
     errors: tuple[str, ...] = ()
+    """一次没跑成的整理，每一条为什么。**是 `ExtractionErrorCode` 的原始值，
+    不是已经翻好的中文**（国际化第四批·笔二起）：前端拿每一条去 `messageForCode(
+    "run_error", language, {code})` 按当前界面语言渲染——同一份码，
+    `api/extraction.py::ExtractionRunView.errors` 也是这个形状，两条读端
+    读同一批行，本该长同一个样。"""
     payload: dict[str, Any] | None = None
     """`decision_log` 那一行的审计信封（**已过 `narrow_payload`**）。
     只有 `source=decision` 才有；别的两个 source 恒为 None。"""
@@ -297,7 +316,7 @@ class CostTotals(BaseModel):
        再配第三个计数，那时作者要在同一条上读三次「这是不是全部」。
     2. **这一刀要回答的三个问题，两个只有逐次才看得见。**「忽高忽低 ⇒ 前缀被弄脏了」
        按定义是**逐次之间**的方差；一个全书标量恰好把它平掉。所以测量点放在展开详情
-       那一行（`_cache_text`），不放这儿。
+       那一行（`_call_detail` 的「接着上次的输入」，前端的 `value_cache` 模板），不放这儿。
 
     **加它的先决条件因此不再是「等 ① 被修好」**（已经修好了），
     而是「有人真的要读一个全书标量，且说得清它缺了哪几行」。
@@ -442,28 +461,34 @@ def narrow_payload(value: Any) -> Any:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 措辞表 —— 今天全部中文留在后端；这条约束正在改口（国际化第四批）
+# 措辞 —— 全部搬到了前端（国际化第四批·笔二）
 # ══════════════════════════════════════════════════════════════════════════
 #
-# 这一节的标题曾经是「全部中文留在后端（前端不写文案分支）」，`tests/
-# test_canon_edit_boundary.py::test_the_frontend_keeps_no_second_glossary` 那条
-# CI 断言也是照这句话写的。原因是措辞的**源**只能有一个：前端一旦有一张
-# 「码 → 中文」的映射表，后端就能一直吐开放词表，表永远只覆盖写它那天想到的
-# 几个词，且屏幕说法会跟别处（CLI、日志）不再是同一句话。
+# 这一节曾经是七张「枚举 → 中文」的表 + 七个读口（`actor_label` / `_capability_label` /
+# `_kind_label` / `_verdict_label` / `_edge_label` / `_node_label` / `run_error_label`）+
+# 四个格式化函数（`_chapter_text` / `_elapsed_text` / `_num` / `_cache_text`）。
+# 界面语言独立于书的语言之后，后端答不出「读这句话的人用什么界面语言」——本模块
+# 大半个读端根本没有 HTTP 请求可读（后台协调器批量归并三张表）。所以整节搬到
+# `frontend/src/backendMessages.ts`：本模块只送**原始事实**（枚举值、计数、
+# 章号、耗时秒数）当 `title_params`/`subtitle_params`/`label_params`/`value_params`，
+# 一整句话在前端按当前界面语言拼。
 #
-# **国际化第四批打破的是「那个源必须在后端」这一半，不是「源只能有一个」那一半。**
-# 界面语言独立于书的语言之后（维护者裁定 B），后端不再知道读这句话的人用什么
-# 界面语言——这一层不少函数根本没有 HTTP 请求可读（后台协调器、批处理）。新的单一
-# 源搬到了前端（`frontend/src/backendMessages.ts`），且比旧提案更不容易漂：它收的是
-# 这个仓库自己定义的**封闭**码集合，不是引擎内部随时会长出的开放词表，机械测试
-# （后端一侧核对"能发的码都有译文"，前端一侧核对"两侧都非空、英文零中文"）钉着
-# 覆盖率，不是像当年那张被删掉的表一样靠人记得更新。
+# **开放 vs 封闭这条区分照抄过去，没有变**：`ACTOR_LABEL`/`CAPABILITY_LABEL` 认不出
+# 时前端原样回吐参数值（`decision_log.actor` 是开放字符串，`agent`/`advisory` 之外
+# 明天可能多一种花钱的动作，露出英文也好过空白）；`KIND_LABEL`/`VERDICT_LABEL`/
+# `EDGE_LABEL`/`NODE_LABEL`/`RUN_ERROR_LABEL` 认不出时退到一句通用兜底
+# （`DecisionKind`/`Verdict`/`EdgeType`/`NodeLabel`/`ExtractionErrorCode` 都是封闭
+# 枚举，认不出只可能是前端那张子表漏了一行，而漏的那一行不该由作者来读）。
+# **这条区分现在活在前端**：`ACTOR_LABEL`/`CAPABILITY_LABEL` 两张表的 `??` 兜底和
+# 另外五张表的固定兜底短语，见 `backendMessages.ts` 顶部注释。
 #
-# **本节这几张表眼下还没有跟着改**——`_ACTOR_LABEL` 等仍然是 `dict[str, str]`，
-# 直接产出中文，是这一批（笔二）要接的活，接的时候这几张表会变成"发原始事实
-# （枚举值/计数），不发已经拼好的中文"，渲染整句挪到前端同一张 `backendMessages.ts`。
-# 在那之前，这一节的实际行为仍是这句旧标题描述的样子；变的是**这句原则**，不是
-# 今天这几行代码。
+# **覆盖率的钉子也搬了位置，不是拆了**：谁往 `ExtractionErrorCode` 等封闭枚举里加一行、
+# 前端子表没跟着补，`tests/test_wording_guard.py` 照旧会红——判据仍然是 Python
+# 这边的枚举本身，不是一份手抄的成员清单，只是现在核对的是「前端子表的键集合」而不是
+# 「这个模块里 `dict` 的键集合」。
+#
+# 唯一留下的是 `_RUN_STATUS`：它是 `ExtractionRunStatus` → `ActivityStatus` 的
+# **枚举到枚举**映射，两边都是机器码、从不上屏，不属于「措辞」，跟这次搬迁无关。
 
 _RUN_STATUS: Final[dict[str, ActivityStatus]] = {
     ExtractionRunStatus.PENDING: ActivityStatus.PENDING,
@@ -476,250 +501,6 @@ _RUN_STATUS: Final[dict[str, ActivityStatus]] = {
     # 一条绝不会变成 current 的旧 run 操心。指标那侧不把它数成失败。
     ExtractionRunStatus.SUPERSEDED: ActivityStatus.FAILED,
 }
-
-_CAPABILITY_LABEL: Final[dict[str, str]] = {
-    "extractor": "抽取",
-    "summarizer": "章节总结",
-    "writer": "起草",
-    # `agent/loop.py::AGENT_CAPABILITY`。这一列认不出的是**原样回吐**的
-    #（`_capability_label`），所以新长出一种花钱的动作就要在这儿补一行，
-    # 否则日志页上写的是 `agent`。
-    "agent": "写作助手",
-    # `advisory_review.ADVISORY_CAPABILITY`。保存之后那一遍事后语义核对
-    #（秘密有没有说破 / 跟后面的章抵不抵触）——它只写通知，不阻断任何东西。
-    "advisory": "事后核对",
-}
-
-_KIND_LABEL: Final[dict[str, str]] = {
-    # ⚠️ 带 †的四行**今天没有写入方**（秘密下线，ADR 0039），删不得：`decision_log`
-    #    三个触发器封死 DELETE，2026-08-25 之前的行还在库里，而这张表漏一行就意味着
-    #    作者的日志页上出现一句 `knowledge_edit`（`_kind_label` 兜底成「一次改动」，
-    #    比英文好，但也把「当年这条改的是什么」抹掉了）。
-    "alias_merge": "登记称呼",
-    "node_declare": "登记条目",
-    "secret_declare": "登记秘密",  # †
-    "knows_declare": "声明认知",  # †
-    "located_declare": "声明位置",
-    "state_declare": "声明生死",
-    "first_appearance_declare": "声明首次登场",
-    "proposal_review": "抽取结果审阅",
-    "knowledge_edit": "更正认知类型",  # †
-    "knowledge_add": "补一条认知",  # †
-    "event_edit": "更正事件名单",
-    "event_summary_edit": "编辑情节摘要",
-    "canon_edge_edit": "更正地点/状态/关系",
-    "canon_edge_retract": "撤回地点/状态/关系",
-    "chapter_draft": "写进正文",
-}
-
-_VERDICT_LABEL: Final[dict[str, str]] = {
-    "accept": "接受",
-    "reject": "否决",
-    "edit": "改过之后接受",
-}
-
-_EDGE_LABEL: Final[dict[str, str]] = {
-    # KNOWS / BELIEVES 已不是 `EdgeType` 的成员（ADR 0039），这两行**只为历史日志行
-    # 存在**：老 `knows_declare` / `knowledge_edit` 的 payload 里就写着这两个字符串。
-    "KNOWS": "知道",
-    "BELIEVES": "以为",
-    "LOCATED_AT": "在",
-    "MEMBER_OF": "属于",
-    "RELATED_TO": "关系",
-    "HAS_STATE": "状态",
-    "OWNS": "有",
-    "PLANTED_IN": "埋在",
-    "RESOLVED_IN": "回应于",
-}
-"""边类型 → 作者的说法。
-
-这一行不是美化：日志页上那句 `萧决 LOCATED_AT 青云城主府` 会当着作者的面把引擎的
-枚举值摆出来。
-**别把这张表搬到前端去**——那样屏幕上的措辞就和 CLI / 别的日志行不是同一句话了，
-而这一整节的标题写着「全部中文留在后端」。
-"""
-
-_NODE_LABEL: Final[dict[str, str]] = {
-    "Character": "人物",
-    "Location": "地点",
-    "Faction": "势力",
-    "Secret": "秘密",  # 已不是 NodeLabel 成员，只为历史日志行留着（同 _EDGE_LABEL）
-    "Foreshadow": "伏笔",
-    "Object": "物品",
-    "StateDim": "状态",
-    "Chapter": "章",
-}
-"""节点类别 → 作者的说法。同上：`萧决（Character）` 是登记条目那一行的原样输出。"""
-
-_RUN_ERROR_LABEL: Final[dict[str, str]] = {
-    ExtractionErrorCode.PROMPT_DRIFT: "这一章在排队期间被改过，整理没有继续（重新整理一次即可）",
-    # ── provider 那四档 + 兜底（2026-08-25）──────────────────────────────
-    #
-    # 这五句从前是**一句**：「没能连上你配置的模型服务」。真书上撞到的那一次是
-    # 401 CreditsError（余额耗尽），连上了，而作者被那句话指去查网络和地址。
-    # **一句听起来很具体的假话，比一句诚实的「说不清」贵得多。**
-    #
-    # 分档判据在 `draft.provider.ProviderFailureKind`（只看 HTTP 状态码，不读文案）。
-    # **这几句里一个状态码都不许出现**——那是机器码，同这张表的整条规矩。
-    ExtractionErrorCode.PROVIDER_AUTH: (
-        "模型服务没接受你的密钥。可能是密钥不对，也可能是这把密钥用不了你填的那个地址"
-        "——有些服务商按套餐分了不同的地址"
-    ),
-    ExtractionErrorCode.PROVIDER_QUOTA: "你在模型服务商那儿的额度或余额不够了，去他们的后台看一眼",
-    ExtractionErrorCode.PROVIDER_UNREACHABLE: "没能连上你配置的模型服务",
-    ExtractionErrorCode.PROVIDER_UPSTREAM: "模型服务那边出了问题，过一会儿再试",
-    ExtractionErrorCode.PROVIDER_FAILURE: "这一次没能调用模型，而系统没能说清是为什么",
-    ExtractionErrorCode.CALL_RECORD_FAILURE: "模型答了，但这次调用没能记进账里，整理没有继续",
-    ExtractionErrorCode.ANALYSIS_FORMAT: "模型这次答的东西读不出来",
-    ExtractionErrorCode.INGEST_FAILURE: "整理结果没能写进这本书，这一章维持原样",
-}
-"""抽取失败的原因 → 作者的说法。**全仓唯一一份**（`run_error_label` 是它的读口）。
-
-**这一节原来根本不存在**，`_run_errors` 直接把 `f"{code}：{message}"` 摆上屏，于是
-一次 provider 抖动在小说作者的日志页上长这样：
-
-    provider_failure：chapter analysis provider failed
-
-一个 snake_case 机器码 + 一整句英文。它没被任何守卫抓到，因为**夹具里从来没有过一次
-失败的抽取**——`api.json` 里三条 run 全是 `succeeded`，那条「屏幕上没有研发术语」的
-断言扫的是一块永远干净的屏幕。判据没错，样本缺了一半。
-
-`ExtractionRunError.message` 是写给维护者的英文诊断，**永不上屏**：库就在维护者手上，
-而作者读不懂它。所以这里只翻 `code`，不拼 `message`。
-
-⚠️ **2026-08-13：同一个 bug 在另一条路径上还活着，被这张表治好了第二次。**
-日志页那条翻对了，可**审阅面板**（`ProposalReviewTab`）读的是另一条端点
-（`GET …/extractions/{run_id}`），而那条端点当时把 `ExtractionRunError` 原样发出去，
-界面渲染的就是 `message`——于是同一句英文绕开这张表又上了一次屏。根因在类型层：
-前端的 `ExtractionRun.errors` 把字段名抄成了 `kind`/`message`，**可翻译的那个
-`code` 在类型里根本够不着**。现在 `api/extraction.py` 在出门前就把这张表用上，
-那句英文**不再出现在任何一条 HTTP 出参里**——不是「前端记得别渲染」，是它拿不到。
-**别在前端补第二张表，也别在 `extract/` 里补第三张。**
-"""
-
-_ACTOR_LABEL: Final[dict[str, str]] = {
-    decisions.DEFAULT_ACTOR: "作者",
-    decisions.SYSTEM_ACTOR: "系统",
-}
-
-_UNRECORDED: Final = "未记录"
-
-
-def actor_label(actor: str) -> str:
-    """`author` / `system` → 中文。认不出的原样回吐（这一列是开放字符串）。"""
-    return _ACTOR_LABEL.get(actor, actor)
-
-
-def _capability_label(capability: str) -> str:
-    return _CAPABILITY_LABEL.get(capability, capability)
-
-
-def _kind_label(kind: str) -> str:
-    """认不出的**不原样回吐**，退到一句中文（同 `_edge_label`，反着 `actor_label`）。
-
-    `DecisionKind` 是封闭枚举，认不出只可能是这张表漏了一行——而漏掉的那一行会以
-    `canon_edge_edit` 的形态出现在小说作者的日志页标题上。**这不是假想**：2026-08 有一次
-    改动往那个枚举里加了两行（`knowledge_edit` / `event_edit`），加的人记得补了表，
-    而「记得补」不是一道守卫。`test_the_wording_tables_cover_every_value_they_can_be_handed`
-    盯表、这一行兜底，两条一起才轮不到运气。
-    """
-    return _KIND_LABEL.get(kind, "一次改动")
-
-
-def _verdict_label(verdict: str) -> str:
-    """同 `_kind_label`：`Verdict` 是封闭枚举，认不出只可能是表漏了行，退到一句中文。"""
-    return _VERDICT_LABEL.get(verdict, "已处理")
-
-
-def _edge_label(edge_type: str) -> str:
-    """认不出的**不原样回吐**，退到一句中文。
-
-    和 `actor_label` 反着来是有意的：`decision_log.actor` 是开放字符串（明天多一种
-    actor，露出英文也好过显示成空白），而 `EdgeType` 是一个封闭枚举——认不出只可能是
-    这张表漏了一行，而漏掉的那一行会以 `RELATED_TO` 的形态出现在小说作者的屏幕上。
-    """
-    return _EDGE_LABEL.get(edge_type, "关系")
-
-
-def _node_label(label: str) -> str:
-    return _NODE_LABEL.get(label, "条目")
-
-
-def run_error_label(code: str) -> str:
-    """同 `_edge_label`：认不出的**不原样回吐**，退到一句中文。
-
-    `errors_json` 是 append-only 的审计资产，旧库里可能躺着今天已经删掉的码——
-    那种行照样要显示成人话，而不是把 `provider_failure` 摆给作者。
-
-    **公开（同 `actor_label`）**：日志页和审阅面板是两条读端，读的是同一批
-    `extraction_run` 行。第二条（`api/extraction.py`）2026-08-13 接上来之前，
-    它自己把那句英文发给了浏览器——见 `_RUN_ERROR_LABEL` 末尾那段。
-    """
-    return _RUN_ERROR_LABEL.get(code, "整理没有跑完（没有留下能看懂的原因）")
-
-
-def _chapter_text(chapter: int | None) -> str:
-    return _UNRECORDED if chapter is None else f"第 {chapter} 章"
-
-
-def _elapsed_text(started: Any, finished: Any) -> str:
-    """跑了多久。**不显示时刻**——时刻在折叠行上，且那儿是本地时间。
-
-    两头缺一个就是「未记录」（§10 约束 8：零和空必须带着理由，不许糊成 0）。
-    """
-    begin, end = _text(started), _text(finished)
-    if begin is None or end is None:
-        return _UNRECORDED
-    try:
-        seconds = (
-            datetime.fromisoformat(end.replace("Z", "+00:00"))
-            - datetime.fromisoformat(begin.replace("Z", "+00:00"))
-        ).total_seconds()
-    except ValueError:
-        return _UNRECORDED
-    if seconds < 0:
-        return _UNRECORDED
-    return f"{seconds:.1f} 秒" if seconds < 60 else f"{seconds / 60:.1f} 分钟"
-
-
-def _num(value: Any) -> str:
-    """数字字段的显示。**None 是「没记」不是 0**（§10 约束 8）。"""
-    return _UNRECORDED if value is None else str(value)
-
-
-def _cache_text(read: Any, written: Any) -> str:
-    """这一次调用里，输入有多少是**不用重新算**的。
-
-    ── 屏幕上为什么不出现「缓存命中」这四个字 ──────────────────────────────
-    作者关心的不是缓存这个机制，是「这次比原价省了多少」。「命中」是研发的说法
-    （它甚至是 `screenGuard` 那条「小写裸枚举」盲区里的同类——收不住但不该上屏），
-    所以这一行说的是**结果**：接着上次的那部分没有重新算。
-
-    ── 三档必须分得开（§10 约束 8：零要带着理由一起出现）──────────────────
-    | 库里 | 屏幕上 | 意思 |
-    |---|---|---|
-    | `NULL` | 「未记录」 | 端点根本没报这件事（或这行早于这两列） |
-    | `0` | 「这次没接上……」 | 端点报了，真的一次都没命中 |
-    | `>0` | 「N token 接着上次」 | 省下的那部分 |
-
-    **这三档指向三个不同的动作**（去查端点支不支持 / 去查前缀被谁弄脏了 / 什么都不用做），
-    所以把 `NULL` 渲染成 0 不是「显示得难看一点」，是把作者指向错误的一件事。
-
-    写入那一档（只有 Anthropic 兼容端点报）**报了才说**：在 DeepSeek / OpenAI 上它恒为
-    `None`，凭空多一行永远「未记录」只是噪音；而它一旦有数，那是作者真花掉的钱。
-    """
-    parts: list[str] = []
-    if read is None:
-        parts.append(_UNRECORDED)
-    elif read == 0:
-        parts.append("这次没接上，整段输入都重新算了")
-    else:
-        parts.append(f"{read} token 接着上次，没有重新算")
-    if written == 0:
-        parts.append("这次没有新存下内容")
-    elif written is not None:
-        parts.append(f"另存下 {written} token 供下次接")
-    return " · ".join(parts)
 
 
 def _text(value: Any) -> str | None:
@@ -742,6 +523,26 @@ def _dig(payload: dict[str, Any], *path: str) -> Any:
 
 def _count(value: Any) -> int:
     return len(value) if isinstance(value, list) else 0
+
+
+def _elapsed_seconds(started: Any, finished: Any) -> float | None:
+    """跑了多久，**秒数**，不是句子——「用了多久」是事实，「写几秒还是写几分钟、
+    要不要说『未记录』」是措辞，后者交给前端的 `value_elapsed` 模板。
+
+    两头缺一个、解析不出来、或者算出负数，都是 `None`（§10 约束 8：
+    零和空必须带着理由，不许糊成一个看似正常的数）。
+    """
+    begin, end = _text(started), _text(finished)
+    if begin is None or end is None:
+        return None
+    try:
+        seconds = (
+            datetime.fromisoformat(end.replace("Z", "+00:00"))
+            - datetime.fromisoformat(begin.replace("Z", "+00:00"))
+        ).total_seconds()
+    except ValueError:
+        return None
+    return None if seconds < 0 else seconds
 
 
 # **这里原本有一个 `_short()`**（指纹只显示前 12 位）。它随着 prompt / artifact
@@ -824,14 +625,15 @@ def _run_jump(row: Any, pending: dict[str, list[str]]) -> ActivityJump:
         # 它们自己那一行上照旧点得到。
         return ActivityJump(
             target=JumpTarget.EXTRACTION_RETRY,
-            label=f"再整理一次第 {chapter} 章",
+            label_code="jump_retry_chapter",
+            label_params={"chapter": chapter},
             chapter_number=chapter,
         )
     waiting = pending.get(str(row["snapshot_id"]), [])
     if len(waiting) == 1:
         return ActivityJump(
             target=JumpTarget.PROPOSAL,
-            label="去审阅这条待审提案",
+            label_code="jump_review_single_proposal",
             chapter_number=chapter,
             proposal_id=waiting[0],
         )
@@ -839,21 +641,24 @@ def _run_jump(row: Any, pending: dict[str, list[str]]) -> ActivityJump:
         # **不替作者挑是哪一条**（同 AmbiguousName 那条纪律）：给章号，队列在那一章里。
         return ActivityJump(
             target=JumpTarget.PROPOSAL,
-            label=f"第 {chapter} 章还有 {len(waiting)} 条待审",
+            label_code="jump_review_many_proposals",
+            label_params={"chapter": chapter, "count": len(waiting)},
             chapter_number=chapter,
         )
     return ActivityJump(
         target=JumpTarget.CHAPTER,
-        label=f"去第 {chapter} 章",
+        label_code="jump_go_to_chapter",
+        label_params={"chapter": chapter},
         chapter_number=chapter,
     )
 
 
 def _run_errors(row: Any) -> tuple[str, ...]:
-    """这次整理为什么没跑完 —— **只翻 `code`，`message` 一个字都不带出来**。
+    """这次整理为什么没跑完 —— `ExtractionErrorCode` 的**原始值**，一个字都不翻译。
 
-    见 `_RUN_ERROR_LABEL`：那一列的 `message` 是写给维护者的英文诊断。
-    """
+    翻译挪到了前端（`messageForCode("run_error", language, {code})`，国际化第四批·
+    笔二）：这里只弹回 `code`，`message`（写给维护者的英文诊断）一如既往一个字都
+    不带出来。"""
     try:
         parsed = json.loads(row["errors_json"])
     except (TypeError, ValueError):
@@ -861,9 +666,7 @@ def _run_errors(row: Any) -> tuple[str, ...]:
     if not isinstance(parsed, list):
         return ()
     return tuple(
-        run_error_label(_text(item.get("code")) or "")
-        for item in parsed
-        if isinstance(item, dict)
+        _text(item.get("code")) or "" for item in parsed if isinstance(item, dict)
     )
 
 
@@ -871,29 +674,42 @@ def _run_entry(row: Any, pending: dict[str, list[str]]) -> ActivityEntry:
     raw_status = str(row["status"])
     status = _RUN_STATUS.get(raw_status, ActivityStatus.PENDING)
     chapter = _int(row["chapter_number"])
+    subtitle_code: str
+    subtitle_params: dict[str, Any] = {}
     if status is ActivityStatus.SUCCEEDED:
-        subtitle = (
-            f"有效事件 {row['valid_event_count']} 条 · "
-            f"丢弃 {row['discarded_event_count']} 条 · "
-            f"待审提案 {row['proposal_count']} 条"
-        )
+        subtitle_code = "run_subtitle_succeeded"
+        subtitle_params = {
+            "valid": row["valid_event_count"],
+            "discarded": row["discarded_event_count"],
+            "proposals": row["proposal_count"],
+        }
     elif status is ActivityStatus.FAILED:
         errors = _run_errors(row)
-        subtitle = errors[0] if errors else "抽取失败（没有留下错误明细）"
+        if errors:
+            subtitle_code, subtitle_params = "run_error", {"code": errors[0]}
+        else:
+            subtitle_code = "run_subtitle_failed_no_detail"
     elif status is ActivityStatus.RUNNING:
-        subtitle = "正在跑"
+        subtitle_code = "run_subtitle_running"
     else:
-        # 认不出的状态**不原样回吐**（同 `_edge_label`）：`f"状态：{raw_status}"` 会把
-        # 引擎枚举摆到作者脸上，而 `_RUN_STATUS` 认不出只可能是那张表漏了一行。
-        subtitle = "排队中" if raw_status == ExtractionRunStatus.PENDING else "等着整理"
+        # 认不出的状态**不把 raw_status 塞进参数里**（同旧 `_edge_label` 那条纪律，
+        # 只是现在兜底句子本身也移到了前端）：`_RUN_STATUS` 认不出只可能是那张表
+        # 漏了一行，而漏的那一行不该由作者读到一个引擎内部状态码。
+        subtitle_code = (
+            "run_subtitle_pending"
+            if raw_status == ExtractionRunStatus.PENDING
+            else "run_subtitle_unknown_status"
+        )
     return ActivityEntry(
         id=str(row["id"]),
         source=ActivitySource.EXTRACTION,
         ts=str(row["created_at"]),
         actor=decisions.SYSTEM_ACTOR,
         status=status,
-        title=f"第 {chapter} 章抽取",
-        subtitle=subtitle,
+        title_code="run_entry_title",
+        title_params={"chapter": chapter},
+        subtitle_code=subtitle_code,
+        subtitle_params=subtitle_params,
         chapter_number=chapter,
         jump=_run_jump(row, pending),
     )
@@ -935,29 +751,35 @@ def _call_jump(row: Any, chapter: int | None) -> ActivityJump | None:
     if _text(row["summary_text"]) is not None:
         return ActivityJump(
             target=JumpTarget.SUMMARY,
-            label=f"去看第 {chapter} 章的总结",
+            label_code="jump_view_summary",
+            label_params={"chapter": chapter},
             chapter_number=chapter,
         )
     return ActivityJump(
         target=JumpTarget.CHAPTER,
-        label=f"去第 {chapter} 章",
+        label_code="jump_go_to_chapter",
+        label_params={"chapter": chapter},
         chapter_number=chapter,
     )
 
 
 def _call_entry(row: Any) -> ActivityEntry:
-    label = _capability_label(str(row["capability"]))
     chapter = _call_chapter(row)
-    tokens = f"入 {_num(row['tokens_in'])} / 出 {_num(row['tokens_out'])} token"
-    elapsed = _UNRECORDED if row["ms"] is None else f"{row['ms']} ms"
     return ActivityEntry(
         id=str(row["id"]),
         source=ActivitySource.MODEL_CALL,
         ts=str(row["ts"]),
         actor=decisions.SYSTEM_ACTOR,
         status=ActivityStatus.SUCCEEDED,
-        title=f"模型调用 · {label}",
-        subtitle=f"{row['model']} · {tokens} · {elapsed}",
+        title_code="call_entry_title",
+        title_params={"capability": str(row["capability"])},
+        subtitle_code="call_subtitle",
+        subtitle_params={
+            "model": str(row["model"]),
+            "tokens_in": _int(row["tokens_in"]),
+            "tokens_out": _int(row["tokens_out"]),
+            "ms": _int(row["ms"]),
+        },
         chapter_number=chapter,
         jump=_call_jump(row, chapter),
     )
@@ -983,7 +805,7 @@ def _decision_jump(decision: decisions.Decision) -> ActivityJump | None:
         if event_id:
             return ActivityJump(
                 target=JumpTarget.EVENT_CAST,
-                label="去改这条事件的知情 / 在场名单",
+                label_code="jump_edit_event_cast",
                 chapter_number=_int(payload.get("chapter_number")) or chapter,
                 event_id=event_id,
             )
@@ -999,7 +821,7 @@ def _decision_jump(decision: decisions.Decision) -> ActivityJump | None:
             if event_id:
                 return ActivityJump(
                     target=JumpTarget.EVENT_CAST,
-                    label="去改这条事件的知情 / 在场名单",
+                    label_code="jump_edit_event_cast",
                     chapter_number=chapter,
                     event_id=event_id,
                 )
@@ -1013,7 +835,8 @@ def _decision_jump(decision: decisions.Decision) -> ActivityJump | None:
             # `promote_clean_facts` 一次升掉一整章的干净事实，所以这是常态不是边角。
             return ActivityJump(
                 target=JumpTarget.CHAPTER,
-                label=f"改了 {len(events)} 条事件，去第 {chapter} 章逐条改",
+                label_code="jump_edit_many_events",
+                label_params={"count": len(events), "chapter": chapter},
                 chapter_number=chapter,
             )
         # 自动升上去的边（Task 8 / ADR 0032）：现在有真实编辑入口，不再落兜底。
@@ -1021,12 +844,10 @@ def _decision_jump(decision: decisions.Decision) -> ActivityJump | None:
         if applied and isinstance(edges, list) and len(edges) == 1:
             edge_id = _text(_dig(edges[0], "edge_id")) if isinstance(edges[0], dict) else None
             if edge_id:
-                label = "去改这条自动生成的边"
-                if chapter is not None:
-                    label += f"（第 {chapter} 章）"
                 return ActivityJump(
                     target=JumpTarget.CANON_EDGE,
-                    label=label,
+                    label_code="jump_edit_auto_edge",
+                    label_params={"chapter": chapter},
                     chapter_number=chapter,
                     edge_id=edge_id,
                 )
@@ -1034,26 +855,30 @@ def _decision_jump(decision: decisions.Decision) -> ActivityJump | None:
     if chapter is not None:
         return ActivityJump(
             target=JumpTarget.CHAPTER,
-            label=f"去第 {chapter} 章",
+            label_code="jump_go_to_chapter",
+            label_params={"chapter": chapter},
             chapter_number=chapter,
         )
     return None
 
 
-def _proposal_review_subtitle(decision: decisions.Decision) -> str:
+def _proposal_review_subtitle(decision: decisions.Decision) -> tuple[str, dict[str, Any]]:
     payload = decision.payload
-    verdict = _verdict_label(decision.decision.value)
-    parts = [
-        f"事件 {_count(payload.get('events'))} 条",
-        f"关系 {_count(payload.get('edges'))} 条",
-    ]
-    characters = _count(payload.get("characters"))
-    if characters:
-        parts.append(f"人物 {characters} 个")
-    return f"{verdict}：" + " · ".join(parts)
+    return "proposal_review_subtitle", {
+        "verdict": decision.decision.value,
+        "events": _count(payload.get("events")),
+        "edges": _count(payload.get("edges")),
+        "characters": _count(payload.get("characters")),
+    }
 
 
-def _decision_subtitle(decision: decisions.Decision) -> str:
+def _decision_subtitle(decision: decisions.Decision) -> tuple[str, dict[str, Any]]:
+    """一条确认的副标题：**码 + 原始参数**，不是拼好的句子（国际化第四批·笔二）。
+
+    返回值的第一位是 `ActivityEntry.subtitle_code`，第二位是 `subtitle_params`——
+    分支选的是**哪个模板**，模板内部的语序、要不要复数、哪句「为什么」，
+    全部下放给 `backendMessages.ts` 自己按界面语言决定。
+    """
     payload = decision.payload if isinstance(decision.payload, dict) else {}
     kind = decision.kind
     subject = decision.subject_name or "—"
@@ -1066,41 +891,59 @@ def _decision_subtitle(decision: decisions.Decision) -> str:
     # `subject`，日志页上只剩一个光秃秃的人名。
     if kind == decisions.DecisionKind.KNOWLEDGE_EDIT:
         secret = _text(_dig(payload, "secret", "name")) or "—"
-        before = _edge_label(_text(_dig(payload, "from", "edge_type")) or "")
-        after = _edge_label(_text(_dig(payload, "to", "edge_type")) or "")
-        return f"{subject} 对「{secret}」：{before} → {after}"
+        before = _text(_dig(payload, "from", "edge_type")) or ""
+        after = _text(_dig(payload, "to", "edge_type")) or ""
+        return "decision_subtitle_knowledge_edit", {
+            "subject": subject,
+            "secret": secret,
+            "before": before,
+            "after": after,
+        }
     if kind == decisions.DecisionKind.KNOWLEDGE_ADD:
-        # **不复用上面那一行**：这一格之前是「不知道」，没有「从什么改成什么」。
-        # 硬套那句话的产物是 `_edge_label("")` 的兜底——屏幕上会写「关系 → 知道」。
+        # **不复用上面那一档的码**：这一格之前是「不知道」，没有「从什么改成什么」。
+        # 硬套那个模板的产物是 EDGE_LABEL 对空串的兜底——屏幕上会写「关系 → 知道」。
         secret = _text(_dig(payload, "secret", "name")) or "—"
-        after = _edge_label(_text(_dig(payload, "to", "edge_type")) or "")
-        return f"{subject} 对「{secret}」：补上「{after}」"
+        after = _text(_dig(payload, "to", "edge_type")) or ""
+        return "decision_subtitle_knowledge_add", {
+            "subject": subject,
+            "secret": secret,
+            "after": after,
+        }
     if kind == decisions.DecisionKind.EVENT_EDIT:
         knowers = payload.get("knowers") if isinstance(payload.get("knowers"), dict) else {}
         cast = payload.get("participants") if isinstance(payload.get("participants"), dict) else {}
-        return (
-            f"知情 +{_count(knowers.get('added'))} −{_count(knowers.get('removed'))} · "
-            f"在场 +{_count(cast.get('added'))} −{_count(cast.get('removed'))}"
-        )
+        return "decision_subtitle_event_edit", {
+            "knowers_added": _count(knowers.get("added")),
+            "knowers_removed": _count(knowers.get("removed")),
+            "cast_added": _count(cast.get("added")),
+            "cast_removed": _count(cast.get("removed")),
+        }
     if kind == decisions.DecisionKind.CHAPTER_DRAFT:
         # **这一行说的是「你的正文被改了」**，所以它只报作者当场能核对的两个量：
         # 哪一章、多长。落盘那一版的 `text_sha256` 在 payload 里（版本抽屉靠它对号），
         # 但那是个作者认不得的东西，不上副标题（同 `_run_detail` 去掉指纹那条判据）。
-        where = _chapter_text(_int(payload.get("chapter_number")) or decision.chapter_number)
-        units = _int(payload.get("units"))
-        return where if units is None else f"{where} · 约 {units} 字"
+        chapter = _int(payload.get("chapter_number")) or decision.chapter_number
+        return "decision_subtitle_chapter_draft", {
+            "chapter": chapter,
+            "units": _int(payload.get("units")),
+        }
     if kind == decisions.DecisionKind.ALIAS_MERGE:
         surface = _text(payload.get("surface")) or "—"
-        return f"{subject} ← 「{surface}」"
+        return "decision_subtitle_alias_merge", {"subject": subject, "surface": surface}
     if kind in (decisions.DecisionKind.KNOWS_DECLARE, decisions.DecisionKind.LOCATED_DECLARE):
-        edge_type = _edge_label(_text(payload.get("edge_type")) or "")
+        edge_type = _text(payload.get("edge_type")) or ""
         target = _text(payload.get("object_name")) or "—"
-        return f"{subject} {edge_type} {target}"
+        return "decision_subtitle_edge_declare", {
+            "subject": subject,
+            "edge_type": edge_type,
+            "target": target,
+        }
     label = _text(payload.get("label"))
-    return f"{subject}（{_node_label(label)}）" if label else subject
+    return "decision_subtitle_node_declare", {"subject": subject, "label": label}
 
 
 def _decision_entry(decision: decisions.Decision) -> ActivityEntry:
+    subtitle_code, subtitle_params = _decision_subtitle(decision)
     return ActivityEntry(
         id=decision.id,
         source=ActivitySource.DECISION,
@@ -1108,8 +951,10 @@ def _decision_entry(decision: decisions.Decision) -> ActivityEntry:
         actor=decision.actor,
         # 一条已经落库的确认按定义已经发生了——它没有「失败」这个态。
         status=ActivityStatus.SUCCEEDED,
-        title=f"{actor_label(decision.actor)} · {_kind_label(decision.kind)}",
-        subtitle=_decision_subtitle(decision),
+        title_code="decision_entry_title",
+        title_params={"actor": decision.actor, "kind": decision.kind},
+        subtitle_code=subtitle_code,
+        subtitle_params=subtitle_params,
         chapter_number=decision.chapter_number,
         jump=_decision_jump(decision),
     )
@@ -1344,11 +1189,31 @@ def _run_detail(conn: Connection, project_id: str, entry_id: str) -> ActivityDet
         return None
     entry = _run_entry(row, _pending_by_snapshot(conn, project_id))
     rows = (
-        DetailRow(label="章节", value=_chapter_text(_int(row["chapter_number"]))),
-        DetailRow(label="有效事件", value=str(row["valid_event_count"])),
-        DetailRow(label="丢弃事件", value=str(row["discarded_event_count"])),
-        DetailRow(label="待审提案", value=str(row["proposal_count"])),
-        DetailRow(label="用时", value=_elapsed_text(row["started_at"], row["finished_at"])),
+        DetailRow(
+            label_code="detail_label_chapter",
+            value_code="value_chapter",
+            value_params={"chapter": _int(row["chapter_number"])},
+        ),
+        DetailRow(
+            label_code="detail_label_valid_events",
+            value_code="value_count",
+            value_params={"n": row["valid_event_count"]},
+        ),
+        DetailRow(
+            label_code="detail_label_discarded_events",
+            value_code="value_count",
+            value_params={"n": row["discarded_event_count"]},
+        ),
+        DetailRow(
+            label_code="detail_label_pending_proposals",
+            value_code="value_count",
+            value_params={"n": row["proposal_count"]},
+        ),
+        DetailRow(
+            label_code="detail_label_elapsed",
+            value_code="value_elapsed",
+            value_params={"seconds": _elapsed_seconds(row["started_at"], row["finished_at"])},
+        ),
     )
     return ActivityDetail(
         entry=entry,
@@ -1363,7 +1228,7 @@ def _summary_rows(row: Any) -> tuple[DetailRow, ...]:
 
     没写出总结的调用（抽取 / 起草 / 写作助手）**一行都不加**，而不是加一行「未记录」：
     那不是一个缺失的值，是这一档调用本来就没有这个字段——凭空多一行永远「未记录」
-    只是噪音（同 `_cache_text` 里「写入那一档报了才说」的取舍）。
+    只是噪音（同前端 `value_cache` 模板里「写入那一档报了才说」的取舍）。
 
     **「总结跑了但没留下正文」这一档不存在，所以这儿没有它的分支**：
     `RollingSummarizer.ensure` 先判空文本（空就抛，一行都不记），再把
@@ -1371,7 +1236,15 @@ def _summary_rows(row: Any) -> tuple[DetailRow, ...]:
     哪天那两步被拆开，这里就要跟着长出一句「这次没留下正文」。
     """
     text = _text(row["summary_text"])
-    return () if text is None else (DetailRow(label="这次写出来的总结", value=text),)
+    if text is None:
+        return ()
+    return (
+        DetailRow(
+            label_code="detail_label_summary_written",
+            value_code="value_text",
+            value_params={"text": text},
+        ),
+    )
 
 
 def _call_detail(conn: Connection, project_id: str, entry_id: str) -> ActivityDetail | None:
@@ -1397,18 +1270,50 @@ def _call_detail(conn: Connection, project_id: str, entry_id: str) -> ActivityDe
         return None
     chapter = _call_chapter(row)
     rows = (
-        DetailRow(label="能力", value=_capability_label(str(row["capability"]))),
-        DetailRow(label="模型", value=str(row["model"])),
-        DetailRow(label="为哪一章", value=_chapter_text(chapter)),
-        *_summary_rows(row),
-        DetailRow(label="入参 token", value=_num(row["tokens_in"])),
-        DetailRow(label="出参 token", value=_num(row["tokens_out"])),
         DetailRow(
-            label="接着上次的输入",
-            value=_cache_text(_int(row["cache_read_tokens"]), _int(row["cache_write_tokens"])),
+            label_code="detail_label_capability",
+            value_code="value_capability",
+            value_params={"capability": str(row["capability"])},
         ),
-        DetailRow(label="耗时", value=_UNRECORDED if row["ms"] is None else f"{row['ms']} ms"),
-        DetailRow(label="第几次尝试", value=str(row["attempt"])),
+        DetailRow(
+            label_code="detail_label_model",
+            value_code="value_text",
+            value_params={"text": str(row["model"])},
+        ),
+        DetailRow(
+            label_code="detail_label_for_chapter",
+            value_code="value_chapter",
+            value_params={"chapter": chapter},
+        ),
+        *_summary_rows(row),
+        DetailRow(
+            label_code="detail_label_tokens_in",
+            value_code="value_optional_number",
+            value_params={"n": _int(row["tokens_in"])},
+        ),
+        DetailRow(
+            label_code="detail_label_tokens_out",
+            value_code="value_optional_number",
+            value_params={"n": _int(row["tokens_out"])},
+        ),
+        DetailRow(
+            label_code="detail_label_cache_continuation",
+            value_code="value_cache",
+            value_params={
+                "read": _int(row["cache_read_tokens"]),
+                "written": _int(row["cache_write_tokens"]),
+            },
+        ),
+        DetailRow(
+            label_code="detail_label_call_ms",
+            value_code="value_call_ms",
+            value_params={"ms": _int(row["ms"])},
+        ),
+        DetailRow(
+            label_code="detail_label_attempt",
+            value_code="value_count",
+            value_params={"n": row["attempt"]},
+        ),
     )
     return ActivityDetail(
         entry=_call_entry(row),
@@ -1430,13 +1335,41 @@ def _decision_detail(conn: Connection, project_id: str, entry_id: str) -> Activi
     if decision is None:
         return None
     rows = (
-        DetailRow(label="类型", value=_kind_label(decision.kind)),
-        DetailRow(label="裁决", value=_verdict_label(decision.decision.value)),
-        DetailRow(label="谁改的", value=actor_label(decision.actor)),
-        DetailRow(label="对象", value=decision.subject_name or _UNRECORDED),
-        DetailRow(label="章节", value=_chapter_text(decision.chapter_number)),
-        DetailRow(label="段落", value=_num(decision.para_index)),
-        DetailRow(label="依据引语", value=decision.quote_text or _UNRECORDED),
+        DetailRow(
+            label_code="detail_label_kind",
+            value_code="value_kind",
+            value_params={"kind": decision.kind},
+        ),
+        DetailRow(
+            label_code="detail_label_verdict",
+            value_code="value_verdict",
+            value_params={"verdict": decision.decision.value},
+        ),
+        DetailRow(
+            label_code="detail_label_changed_by",
+            value_code="value_actor",
+            value_params={"actor": decision.actor},
+        ),
+        DetailRow(
+            label_code="detail_label_subject",
+            value_code="value_text_or_unrecorded",
+            value_params={"text": decision.subject_name},
+        ),
+        DetailRow(
+            label_code="detail_label_chapter",
+            value_code="value_chapter",
+            value_params={"chapter": decision.chapter_number},
+        ),
+        DetailRow(
+            label_code="detail_label_paragraph",
+            value_code="value_optional_number",
+            value_params={"n": decision.para_index},
+        ),
+        DetailRow(
+            label_code="detail_label_quote",
+            value_code="value_text_or_unrecorded",
+            value_params={"text": decision.quote_text},
+        ),
     )
     return ActivityDetail(
         entry=_decision_entry(decision),

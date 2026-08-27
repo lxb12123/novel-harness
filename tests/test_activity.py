@@ -26,8 +26,6 @@ from fastapi.testclient import TestClient
 
 from test_api import PLOT_NOTE, TWIST, _seed_provisional_event
 
-import seed
-
 from novel_harness import activity, decisions, project
 from novel_harness.db import connect
 from novel_harness.decisions import SYSTEM_ACTOR, DecisionKind, Verdict
@@ -402,6 +400,19 @@ def _by_id(entries: list[dict[str, Any]], entry_id: str) -> dict[str, Any]:
     return hit[0]
 
 
+def detail_row_map(rows: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    """展开详情的 `rows` → `{label_code: {"value_code": ..., "value_params": ...}}`。
+
+    国际化第四批·笔二起 `DetailRow` 不再带一句已经拼好的中文（`label`/`value`
+    两个字符串），是 `label_code` + `value_code`/`value_params`——**这一层是后端
+    测试，没有 TS 运行时可以把它们渲染成句子**，所以别的测试文件要断言某一行的值，
+    断言的是这个结构，不是渲染结果。多个测试文件都要用（`test_call_chapter.py`/
+    `test_call_chapter_and_backup.py`/`test_cache_metering.py`/`test_cache_usage.py`），
+    写一份、import，不许各自拼一份同样的字典推导。
+    """
+    return {row["label_code"]: {"value_code": row["value_code"], "value_params": row["value_params"]} for row in rows}
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 1. jump 必须落在真路由上
 # ══════════════════════════════════════════════════════════════════════════
@@ -424,14 +435,15 @@ def _route_matchers() -> list[re.Pattern[str]]:
 
 def _resolves(path: str) -> bool:
     return any(m.match(path) for m in _route_matchers())
-def _knowledge_jump(client: TestClient, book: dict[str, str], who: str) -> dict[str, Any]:
-    """声明一次「谁知道血脉秘密」，把那条日志行的 `jump` 取回来。"""
-    pid = book["pid"]
-    seed.knows(book["db"], pid, who=who, secret="血脉秘密", quote=QUOTE)
-    entries = _entries(client, pid, limit=200)
-    hits = [e for e in entries if e["jump"] and e["jump"]["target"] == "knowledge_cell"]
-    assert hits, "没有认知矩阵那一档的日志行 —— 这条测试在空转"
-    return hits[0]["jump"]
+
+
+# **这里原本有一个 `_knowledge_jump`**（声明一次「谁知道血脉秘密」，取回那条日志行的
+# `jump`）。它指向 `JumpTarget.knowledge_cell`——认知矩阵随秘密下线一起删了
+# （ADR 0039），那个枚举成员和它调用的 `seed.knows` 一起没了。它从没被任何测试
+# 调用过（`grep` 确认），是一份从那次删除起就已经跑不动的死代码，国际化第四批·
+# 笔二顺手清掉。
+
+
 def test_a_rejected_proposal_never_points_at_the_canon_editor() -> None:
     """否决掉的事实没有升进 CANON，指向 `/canon/events/…` 就是一个必然 404 的按钮。"""
     rejected = decisions.Decision(
@@ -659,7 +671,8 @@ def test_unrecorded_tokens_say_so_instead_of_rendering_zero(
     """§10 约束 8：静默的零和真的零不许长得一样。"""
     call_id = seed_call(book, tokens_in=None)
     entry = _by_id(_entries(client, book["pid"], limit=200), call_id)
-    assert "入 未记录 /" in entry["subtitle"]
+    assert entry["subtitle_code"] == "call_subtitle"
+    assert entry["subtitle_params"]["tokens_in"] is None
     detail = client.get(f"/api/projects/{book['pid']}/activity/{call_id}").json()
     assert detail["cost"]["tokens_in"] is None
 # ══════════════════════════════════════════════════════════════════════════

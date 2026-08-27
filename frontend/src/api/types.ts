@@ -765,18 +765,17 @@ export interface ExtractionRun {
   chapter_number: number;
   snapshot_id: string;
   status: ExtractionRunStatus;
-  /** **已经翻好的中文**，一条一句（同 `ActivityDetail.errors`）。
+  /** `ExtractionErrorCode` 的**原始值**，不是已经翻好的中文（同 `ActivityDetail.errors`，
+   *  国际化第四批·笔二起）。前端拿每一条去 `messageForCode("run_error", language,
+   *  { code })` 渲染——唯一那张翻译表在 `backendMessages.ts` 的 `RUN_ERROR_LABEL`。
    *
-   *  ── 这个字段是一次真实事故的现场 ────────────────────────────────────────
+   *  ── 这个字段是一次真实事故的现场（历史，措辞的层已经变了，教训没变）──────────
    *
    *  它原来写的是 `{ kind: string; message: string }[]` —— 而后端那两列叫
    *  `code` / `message`：**字段名抄错了一个**，于是唯一可翻译的那个值在类型里
    *  根本够不着，组件被结构性地逼上了 `message`。而 `message` 是写给**维护者**的
    *  英文诊断（`extract/control.py` 明写「它永远不上作者的屏幕」），于是小说作者
    *  在审阅面板上看到的是 `chapter analysis provider failed`。
-   *
-   *  现在后端在出门前就翻好（`api/extraction.py::ExtractionRunView`，措辞的唯一
-   *  出处是 `activity._RUN_ERROR_LABEL`），那句英文**不再存在于任何 HTTP 出参里**。
    *  **别在这儿写第二张翻译表**——`correctionError.ts` 那张已经删过一次了。 */
   errors: string[];
   valid_event_count: number;
@@ -918,8 +917,11 @@ export type JumpTarget =
  *  前端不许从 title / source 反推跳哪儿去，那就是第二份路由表。 */
 export interface ActivityJump {
   target: JumpTarget;
-  /** 按钮上的那句话。后端写，前端不编。 */
-  label: string;
+  /** 按钮上那句话的码 + 原始参数（国际化第四批·笔二）。前端拿它去
+   *  `messageForCode(label_code, language, label_params)` 渲染——措辞归前端，
+   *  但**码和 `target` 仍然是同一次判断的两个产物**，前端不编第二份坐标。 */
+  label_code: string;
+  label_params: Record<string, unknown>;
   chapter_number: number | null;
   event_id: string | null;
   proposal_id: string | null;
@@ -928,15 +930,12 @@ export interface ActivityJump {
   /** 今天真能改这个目标的路由。**空数组是一个断言**（「今天没有任何入口能改它」），
    *  不是「后端忘了填」——照它画一个编辑按钮等于把 ADR 0020 的推翻条件关掉。 */
   endpoints: string[];
-  /** 跳过去之后右栏那张表按哪几个称呼算行，**原样进 `?cast=`，前端一个字都不解析**。
-   *
-   *  认知矩阵的行由本章正文推（ADR 0018），而声明的生效章由引语定（ADR 0006）——
-   *  日志里那个人可能在那一章正文里一次都没被点名，那一行就不在表上。这个坐标把它补回来。
-   *
-   *  空数组 = 后端给不出一个不含歧义的坐标（称呼指向不止一个人 / 没登记过称呼），
-   *  **那时绝不许前端拿屏幕上的人名自己去凑一个**——那正是「从标题反推」。 */
-  cast: string[];
 }
+// **这里原本还有一个 `cast: string[]`**（跳过去之后右栏按哪几个称呼算行，服务的是
+// 已删除的认知矩阵，ADR 0039）。后端的 `ActivityJump` 从来没有这个字段——`activity.py`
+// 那一层清理干净了，唯独这份类型声明没跟上，是「两份手抄的形状，一份忘了改」的又一次
+// 现场（`store.ts::jumpFromActivity` 的 JSDoc 里那句「后端 jump.cast 拼出来的那一串」
+// 是同一次遗留）。国际化第四批·笔二顺手删掉：`grep` 确认全仓没有任何代码读 `jump.cast`。
 
 /** 折叠层：一行一条，作者扫一眼就该知道的全部。
  *  **没有 payload**：那是开放 JSON 审计信封，塞进每一行等于打开日志页就把全库
@@ -948,16 +947,24 @@ export interface ActivityEntry {
   /** `author` / `system`（开放字符串，同 `decision_log.actor`）。 */
   actor: string;
   status: ActivityStatus;
-  title: string;
-  subtitle: string;
+  /** 折叠行的题目和一行结果摘要，都是「码 + 原始参数」（国际化第四批·笔二，
+   *  同 `ActivityJump.label_code` 那条道理）。渲染走 `messageForCode(title_code,
+   *  language, title_params)`。 */
+  title_code: string;
+  title_params: Record<string, unknown>;
+  subtitle_code: string;
+  subtitle_params: Record<string, unknown>;
   chapter_number: number | null;
   jump: ActivityJump | null;
 }
 
-/** 展开详情里的一行「标签 → 值」。**措辞全在后端**，前端不写文案分支。 */
+/** 展开详情里的一行「标签 → 值」。**码全部经过前端同一张 `backendMessages.ts`**
+ *  （国际化第四批·笔二），前端不写文案分支——分支挪进了各个码自己的模板函数里。
+ *  `label_code` 不带参数：这一列全是静态字段名，从没有哪一行需要往标签里插值。 */
 export interface DetailRow {
-  label: string;
-  value: string;
+  label_code: string;
+  value_code: string;
+  value_params: Record<string, unknown>;
 }
 
 /** 这一步花了多少。**null 是「没记」不是 0**（§10 约束 8）。
@@ -980,7 +987,8 @@ export interface ActivityDetail {
   entry: ActivityEntry;
   rows: DetailRow[];
   cost: ActivityCost | null;
-  /** 只有抽取失败才非空。 */
+  /** 只有抽取失败才非空。`ExtractionErrorCode` 的原始值，不是已经翻好的中文——
+   *  同 `ExtractionRun.errors`，渲染走 `messageForCode("run_error", language, { code })`。 */
   errors: string[];
   /** 只有 `source="decision"` 才有；已过后端的 `narrow_payload`。
    *  **界面不渲染它**：它是给机器看的审计信封（里面全是引擎内部字段），

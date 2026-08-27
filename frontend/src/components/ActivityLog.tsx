@@ -5,6 +5,8 @@ import { refusalText } from "../chat";
 import { useCoords, type Tab } from "../store";
 import { RulesTable } from "./RulesTable";
 import { shownTime } from "../time";
+import { messageForCode } from "../backendMessages";
+import { useLanguage, type Language } from "../language";
 import type {
   ActivityCost,
   ActivityEntry,
@@ -32,11 +34,27 @@ import type {
 // 3. **审计信封不上屏。** `ActivityDetail.payload` 是给机器看的（引擎内部字段一堆），
 //    作者要看的那份是 `rows`——措辞全在后端，这里不写一行文案分支。
 
-/** actor → 中文。**开放字符串**（`decision_log.actor` 那一列就是开放的），
+/** actor → 界面语言那句话。**开放字符串**（`decision_log.actor` 那一列就是开放的），
  *  认不出的原样显示：明天多一种 actor，宁可露出英文也别静默显示成空白。
- *  措辞跟后端的 `activity.actor_label` 对齐（作者 / 系统），两处说法不一致更糟。 */
-const ACTOR_ZH: Record<string, string> = { author: "作者", system: "系统" };
-const actorName = (actor: string): string => ACTOR_ZH[actor] ?? actor;
+ *
+ *  **不在这儿另起一张表**（国际化第四批·笔二起）：这份映射唯一的出处是
+ *  `backendMessages.ts` 的 `ACTOR_LABEL`（`decision_entry_title` 组装标题时也查它），
+ *  这里复用给 DetailRow「谁改的」用的同一个码 `value_actor`——它的行为本来就是
+ *  「这个 actor 值该怎么显示」，跟摆在哪个组件无关。**这里以前有一张自己的
+ *  `ACTOR_ZH`，纯中文、不认界面语言，是两份措辞源里没跟上的那一份，删了。** */
+const actorName = (actor: string, language: Language): string =>
+  messageForCode("value_actor", language, { actor }) ?? actor;
+
+/** 跳转按钮上那句话。`jump.label_code`/`label_params` 是坐标判断的一部分
+ *  （同 `target`），措辞按当前界面语言渲染——认不出的码原样显示（同一个开放
+ *  世界里「这个码我们还没配文案」的诚实形态，见 `backendMessages.ts`）。 */
+const jumpLabel = (jump: ActivityJump, language: Language): string =>
+  messageForCode(jump.label_code, language, jump.label_params) ?? jump.label_code;
+
+/** 抽取失败的原因。`ExtractionErrorCode` 的原始值 → 界面语言（`RUN_ERROR_LABEL`，
+ *  同 `api/extraction.py::ExtractionRunView.errors` 那条读端查的是同一张表）。 */
+const runErrorText = (code: string, language: Language): string =>
+  messageForCode("run_error", language, { code }) ?? code;
 
 /** 没跑成的那几种态。成功的不写字——一行「完成」乘以几千行就是噪音。 */
 const STATUS_ZH: Record<string, string> = {
@@ -249,6 +267,7 @@ function ActorFilter({
   actor: string | null;
   onPick: (next: string | null) => void;
 }) {
+  const language = useLanguage((s) => s.language);
   const total = actors.reduce((n, a) => n + a.count, 0);
   return (
     <div className="log-filters">
@@ -262,7 +281,7 @@ function ActorFilter({
           className={"log-actor-btn " + a.actor + (actor === a.actor ? " on" : "")}
           onClick={() => onPick(a.actor)}
         >
-          {actorName(a.actor)}做的 {a.count}
+          {actorName(a.actor, language)}做的 {a.count}
         </button>
       ))}
     </div>
@@ -285,8 +304,8 @@ function CostLine({ cost }: { cost: ActivityCost }) {
  *  **而重跑的能力后端一直都在**——那条路由把同一行 run 原地重置回排队，不新建行。
  *
  *  三条纪律：
- *  1. **说什么由后端定**（`jump.label`，措辞和 `target` 是同一次判断的两个产物），
- *     这里不编第二句；
+ *  1. **说什么由后端定坐标、前端按界面语言渲染**（`jump.label_code`/`label_params`，
+ *     码和 `target` 是同一次判断的两个产物），这里不编第二句；
  *  2. **`endpoints` 空就不画按钮**——那是一个断言（「今天没有任何路由能让这件事不一样」），
  *     不是没填。同这一页别处那条纪律；
  *  3. **打的就是 `endpoints[0]`**，只补一个 `force`：没有它，接口照样 202、
@@ -295,6 +314,7 @@ function CostLine({ cost }: { cost: ActivityCost }) {
  *     vitest 这侧扫的是请求 URL。 */
 function RetryRow({ jump }: { jump: ActivityJump }) {
   const { projectId } = useCoords();
+  const language = useLanguage((s) => s.language);
   const chapter = jump.chapter_number;
   const retry = useStartExtraction(projectId ?? "", chapter ?? 0);
   const refused = refusalText(retry.error, RETRY_FAILED);
@@ -307,7 +327,7 @@ function RetryRow({ jump }: { jump: ActivityJump }) {
         disabled={retry.isPending}
         onClick={() => retry.mutate({ force: true })}
       >
-        {retry.isPending ? "正在重新排队…" : `${jump.label} →`}
+        {retry.isPending ? "正在重新排队…" : `${jumpLabel(jump, language)} →`}
       </button>
       {retry.isSuccess && (
         <span className="log-jump-note">
@@ -319,10 +339,11 @@ function RetryRow({ jump }: { jump: ActivityJump }) {
   );
 }
 
-/** 跳到对应模块。**坐标、措辞、能不能改，三样都是后端给的。** */
+/** 跳到对应模块。**坐标、能不能改由后端给，措辞按界面语言渲染。** */
 function JumpRow({ entry, jump }: { entry: ActivityEntry; jump: ActivityJump }) {
   const openChapter = useOpenChapter();
   const jumpFromActivity = useCoords((s) => s.jumpFromActivity);
+  const language = useLanguage((s) => s.language);
   const note = jumpNote(entry, jump);
 
   const go = () => {
@@ -343,7 +364,7 @@ function JumpRow({ entry, jump }: { entry: ActivityEntry; jump: ActivityJump }) 
   return (
     <div className="log-jump">
       <button className="log-go" onClick={go}>
-        {jump.label} →
+        {jumpLabel(jump, language)} →
       </button>
       {note && <span className="log-jump-note">{note}</span>}
     </div>
@@ -357,6 +378,7 @@ function JumpRow({ entry, jump }: { entry: ActivityEntry; jump: ActivityJump }) 
  *  同时把日志页变成一个新的泄漏面。 */
 function EntryDetail({ entry }: { entry: ActivityEntry }) {
   const { projectId } = useCoords();
+  const language = useLanguage((s) => s.language);
   const detail = useActivityDetail(projectId, entry.id);
 
   if (detail.isLoading) return <div className="log-detail dim">读取中…</div>;
@@ -369,17 +391,17 @@ function EntryDetail({ entry }: { entry: ActivityEntry }) {
       {rows.length > 0 && (
         <dl className="log-rows">
           {rows.map((r, i) => (
-            <div className="log-rows-line" key={`${r.label}-${i}`}>
-              <dt>{r.label}</dt>
-              <dd>{r.value}</dd>
+            <div className="log-rows-line" key={`${r.label_code}-${i}`}>
+              <dt>{messageForCode(r.label_code, language) ?? r.label_code}</dt>
+              <dd>{messageForCode(r.value_code, language, r.value_params) ?? r.value_code}</dd>
             </div>
           ))}
         </dl>
       )}
       {errors.length > 0 && (
         <div className="err-box">
-          {errors.map((e, i) => (
-            <div key={i}>{e}</div>
+          {errors.map((code, i) => (
+            <div key={i}>{runErrorText(code, language)}</div>
           ))}
         </div>
       )}
@@ -406,14 +428,19 @@ function EntryRow({
   open: boolean;
   onToggle: () => void;
 }) {
+  const language = useLanguage((s) => s.language);
   const time = shownTime(entry.ts);
   return (
     <li className={"log-item" + (open ? " open" : "")}>
       <button className="log-line" aria-expanded={open} onClick={onToggle}>
         <span className="log-fold" aria-hidden="true" />
-        <span className={"log-actor " + entry.actor}>{actorName(entry.actor)}</span>
-        <span className="log-title">{entry.title}</span>
-        <span className="log-sub">{entry.subtitle}</span>
+        <span className={"log-actor " + entry.actor}>{actorName(entry.actor, language)}</span>
+        <span className="log-title">
+          {messageForCode(entry.title_code, language, entry.title_params) ?? entry.title_code}
+        </span>
+        <span className="log-sub">
+          {messageForCode(entry.subtitle_code, language, entry.subtitle_params) ?? entry.subtitle_code}
+        </span>
         {entry.status !== "succeeded" && (
           <span className={"log-status " + entry.status}>{STATUS_ZH[entry.status] ?? entry.status}</span>
         )}
@@ -427,6 +454,7 @@ function EntryRow({
 /** 活动记录页 —— 占中栏（左栏书架和右栏面板照旧留在原地，跳转过去就是那一栏在动）。 */
 export function ActivityLog() {
   const { projectId } = useCoords();
+  const language = useLanguage((s) => s.language);
   const [actor, setActor] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const log = useActivity(projectId, actor);
@@ -468,7 +496,7 @@ export function ActivityLog() {
         <div className="empty">
           {actor === null
             ? "还没有留下记录。系统整理过这本书之后，它做的每一步都会出现在这里。"
-            : `${actorName(actor)}还没有在这本书上留下记录。`}
+            : `${actorName(actor, language)}还没有在这本书上留下记录。`}
         </div>
       )}
 

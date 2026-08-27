@@ -666,7 +666,11 @@ def test_deleting_a_conversation_keeps_the_bill(
     client.post(f"/api/projects/{pid_}/chats/{chat_id}/turn", json={"chapter": 1, "said": "喂"})
     def billed() -> list[dict[str, Any]]:
         page = client.get(f"/api/projects/{pid_}/activity").json()
-        return [row for row in page["entries"] if row["title"] == "模型调用 · 写作助手"]
+        return [
+            row
+            for row in page["entries"]
+            if row["title_code"] == "call_entry_title" and row["title_params"] == {"capability": "agent"}
+        ]
 
     before = billed()
     assert before, "这一轮根本没记账 —— 后面那条断言会假绿"

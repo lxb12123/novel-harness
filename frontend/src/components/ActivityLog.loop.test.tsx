@@ -3,9 +3,19 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fixtures, renderWithApi } from "../test/harness";
 import { useEvents } from "../api/hooks";
+import { messageForCode } from "../backendMessages";
 import { useCoords } from "../store";
 import { ActivityLog } from "./ActivityLog";
 import { RightPanel } from "./RightPanel";
+
+/** 按钮上的字是后端给的码 + 参数按界面语言渲染的（同 `ActivityLog.test.tsx`）。
+ *  参数只收这两个字段——夹具从 JSON 原样导入，`target` 在类型上只窄成 `string`。 */
+const jumpLabel = (jump: { label_code: string; label_params: Record<string, unknown> }) =>
+  messageForCode(jump.label_code, "zh", jump.label_params) ?? jump.label_code;
+
+/** 折叠行的副标题渲染成什么句子（同上：码 + 参数，不是手写的中文）。 */
+const subtitleText = (entry: { subtitle_code: string; subtitle_params: Record<string, unknown> }) =>
+  messageForCode(entry.subtitle_code, "zh", entry.subtitle_params) ?? entry.subtitle_code;
 
 // 闭环，**从日志页那一端出发**（ADR 0020：错了看得见 → 跳得过去 → 改得掉）。
 //
@@ -105,10 +115,11 @@ describe("同一条闭环，事件那一半", () => {
 
     // 这一页上有两行标题副标题**都一样**（两次「接受：事件 1 条」），所以按第几条认，
     // 序号从夹具自己算出来——写死一个 index 就是在猜 dump 的顺序。
-    const twins = fixtures.activity.entries.filter((e) => e.subtitle === eventRow.subtitle);
-    const rows = await screen.findAllByRole("button", { name: new RegExp(eventRow.subtitle) });
+    const eventRowSubtitle = subtitleText(eventRow);
+    const twins = fixtures.activity.entries.filter((e) => subtitleText(e) === eventRowSubtitle);
+    const rows = await screen.findAllByRole("button", { name: new RegExp(eventRowSubtitle) });
     await user.click(rows[twins.indexOf(eventRow)]);
-    await user.click(await screen.findByRole("button", { name: `${eventRow.jump!.label} →` }));
+    await user.click(await screen.findByRole("button", { name: `${jumpLabel(eventRow.jump!)} →` }));
 
     const state = useCoords.getState();
     expect(state.activeTab).toBe("review");

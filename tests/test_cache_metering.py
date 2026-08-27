@@ -13,10 +13,11 @@
 5. **三家形状认得对，而且只认一遍** —— 用 **openai SDK 自己**解析出来的 usage 对象，
    不是手捏的 `SimpleNamespace`：真实响应先过 SDK 的 pydantic 层，
    手捏的替身在「嵌套字段是对象还是 dict」这件事上和真的不一样。
-6. **屏幕** —— 三档都过同一份形状判据（`tests/test_wording_guard.py::dev_shapes`），
-   **不许在这儿抄第二份**。
+6. **展开详情** —— 三档在参数上就该是三个不同的值（`read`/`written` 原样送出）。
+   **屏幕上那句话最终长什么样，判据挪到了前端** `backendMessages.test.ts` 的
+   `value_cache` 专项测试（国际化第四批·笔二起），不许在这儿抄第二份。
 
-判据来源全部是既有的那一份：屏幕用 `test_wording_guard`，夹具用 `test_activity::seed_call`。
+判据来源全部是既有的那一份：措辞用 `backendMessages.test.ts`，夹具用 `test_activity::seed_call`。
 """
 
 from __future__ import annotations
@@ -290,32 +291,47 @@ def test_the_three_states_are_three_different_things_on_the_bill(
     assert len({repr(v) for v in landed.values()}) == 3, f"三档在账上塌成了 {landed}"
 
 
-def _detail_row(conn: sqlite3.Connection, call_id: str, label: str) -> str:
+def _detail_row_params(conn: sqlite3.Connection, call_id: str, label_code: str) -> dict[str, Any]:
     detail = activity.read_entry(conn, _pid(conn), call_id)
     assert detail is not None
     for row in detail.rows:
-        if row.label == label:
-            return row.value
-    raise AssertionError(f"日志页展开层里没有「{label}」这一行：{[r.label for r in detail.rows]}")
+        if row.label_code == label_code:
+            return row.value_params
+    raise AssertionError(
+        f"日志页展开层里没有「{label_code}」这一行：{[r.label_code for r in detail.rows]}"
+    )
 
 
-CACHE_ROW_LABEL = "接着上次的输入"
+CACHE_ROW_LABEL_CODE = "detail_label_cache_continuation"
 
 
-def test_the_three_states_are_three_different_sentences_on_the_screen(
+def test_the_three_states_carry_three_different_raw_facts(
     ledger_db: sqlite3.Connection,
 ) -> None:
-    """**日志页**：三档三句话，而且「0」那句必须带着理由（约束 8）。"""
-    said: dict[str, str] = {}
+    """**日志页展开层**：三档在参数上就该是三个不同的值，不是三句拼好的话。
+
+    国际化第四批·笔二起「三档三句话，而且『0』那句必须带着理由」这条**措辞**层面的
+    断言（三句是不是真的不同、报了 0 的那句是不是真的没把裸 0 摆上屏、「缓存」这个
+    机制词是不是没有出现）挪去了前端 `backendMessages.test.ts` 的 `value_cache`
+    专项测试——那才是这句话真正被拼出来的地方。这里量的是后端职责：`read`/`written`
+    两个原始数值有没有被正确地记下来、送出去。
+    """
+    read_by_state: dict[str, int | None] = {}
     for state in THREE_STATES:
         call_id = _bill(ledger_db, _result_for(state))
-        said[state] = _detail_row(ledger_db, call_id, CACHE_ROW_LABEL)
+        row = ledger_db.execute(
+            "SELECT cache_read_tokens, cache_write_tokens FROM model_call WHERE id = ?",
+            (call_id,),
+        ).fetchone()
+        params = _detail_row_params(ledger_db, call_id, CACHE_ROW_LABEL_CODE)
+        assert params == {"read": row[0], "written": row[1]}, (
+            f"「{state}」这一档展开详情的参数和账上的原始数值对不上：{params} vs {tuple(row)}"
+        )
+        read_by_state[state] = row[0]
 
-    assert len(set(said.values())) == 3, f"三档在屏幕上塌成了 {said}"
-    assert said["silent"] == "未记录"
-    assert "0" not in said["zero"], "报了 0 的那一档不该把裸 0 摆上屏（零要带着理由）"
-    assert said["zero"] != said["silent"]
-    assert "960" in said["hit"]
+    assert read_by_state == {"silent": None, "zero": 0, "hit": 960}, (
+        f"三档在账上塌成了 {read_by_state}"
+    )
 
 
 # ── 自守卫：把「认不出 ⇒ None」改成「认不出 ⇒ 0」，上面三条必须当场红 ──────────
@@ -357,7 +373,7 @@ def test_a_probe_that_folds_unknown_into_zero_is_caught_at_all_three_places(
             if which == "bill":
                 test_the_three_states_are_three_different_things_on_the_bill(conn)
             else:
-                test_the_three_states_are_three_different_sentences_on_the_screen(conn)
+                test_the_three_states_carry_three_different_raw_facts(conn)
     finally:
         conn.close()
 
@@ -879,7 +895,8 @@ def test_the_shape_table_is_the_only_place_the_names_live() -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 6. 屏幕 —— 三档都过同一份形状判据（判据在 test_wording_guard，不许抄第二份）
+# 6. 屏幕 —— 后端只管参数对不对，措辞判据在前端 backendMessages.test.ts
+#    （`value_cache`，国际化第四批·笔二起，不许在这儿抄第二份）
 # ══════════════════════════════════════════════════════════════════════════
 
 
@@ -894,25 +911,28 @@ def test_the_shape_table_is_the_only_place_the_names_live() -> None:
         ("只有写", None, 176),
     ],
 )
-def test_every_branch_of_that_sentence_is_written_for_a_novelist(
+def test_every_branch_carries_the_right_raw_read_and_written(
     book: dict[str, str], name: str, read: int | None, written: int | None
 ) -> None:
-    """六档都上屏，判据是形状（`dev_shapes`），**含兜底那一档**。
+    """六档都送对了原始数值，**含兜底那一档**。
 
-    夹具里只躺着一种形状的样本 = 屏幕守卫扫的是一块永远长一个样的屏幕，
-    这个仓库上一次栽在这上面的现场记在 `test_activity::seed_call` 的 docstring 里。
+    国际化第四批·笔二起，「六档都上屏且不许有研发术语/机制词」这条**措辞**层面的
+    断言挪去了前端 `backendMessages.test.ts` 的 `value_cache` 专项测试（同一份
+    六组合，逐句渲染出来再扫）——那才是这句话真正被拼出来的地方。这里量的是
+    后端职责：结构对不对、`read`/`written` 有没有原样送到参数里。
     """
     call_id = seed_call(book, cache_read_tokens=read, cache_write_tokens=written)
     conn = connect(book["db"])
     try:
         detail = activity.read_entry(conn, book["pid"], call_id)
         assert detail is not None
-        row = next(r for r in detail.rows if r.label == CACHE_ROW_LABEL)
+        row = next(r for r in detail.rows if r.label_code == CACHE_ROW_LABEL_CODE)
     finally:
         conn.close()
-    said = f"{row.label}：{row.value}"
-    assert not dev_shapes(said), f"「{name}」这一档把引擎的词摆到了作者脸上：{said}"
-    assert "缓存" not in said, "屏幕上不该出现机制的名字，作者关心的是结果"
+    assert row.value_code == "value_cache"
+    assert row.value_params == {"read": read, "written": written}, (
+        f"「{name}」这一档的参数没有原样带上：{row.value_params}"
+    )
 
 
 def test_the_screen_judge_is_the_repo_wide_one_not_a_second_copy() -> None:

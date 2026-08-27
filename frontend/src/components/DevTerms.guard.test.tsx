@@ -486,6 +486,87 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     await screen.findByText(/设定提前出现/);
     expect(devTerms(screenText())).toEqual([]);
   });
+
+  // ── 活动记录：真 dump 里没有的那几种码 + 参数组合（国际化第四批·笔二）───────
+  //
+  // `ActivityLog.test.tsx` 已经从头到尾扫过真 dump 里躺着的那几种形状（抽取
+  // 成功/失败、一次模型调用、一条「抽取结果审阅」的确认）。**但真 dump 只留下了
+  // 它抓那天恰好发生的组合**——`capability=agent/writer/summarizer/advisory`、
+  // `kind` 除 `proposal_review`/`chapter_draft` 外的另外 13 档、`edge_type` 九档、
+  // `run_error` 除 `provider_failure` 外的另外八档，**一次都没有被真的渲染过**。
+  // 这些码的字符集在 `backendMessages.test.ts` 里逐条查过（那是「表里这一行本身
+  // 干不干净」），但「组装进一整句、摆进 DOM」这一步没人验过——同 `SystemNotifications`
+  // 当年的洞：`title_code`/`title_params` 拼起来的那句话，只在这儿才第一次真的渲染。
+  // 手搭四条，各挑一样此前没被夹具覆盖过的：写作助手的模型调用、认知边类型的更正
+  // （历史行形状）、自动升边的确认、以及一档非 `provider_failure` 的抽取失败原因。
+  it("活动记录：夹具里没出现过的码 + 参数组合，渲染出来也没有研发术语", async () => {
+    const page = {
+      entries: [
+        {
+          id: "call:probe1",
+          source: "model_call",
+          ts: "2026-08-27T00:00:00.000Z",
+          actor: "system",
+          status: "succeeded",
+          title_code: "call_entry_title",
+          title_params: { capability: "agent" },
+          subtitle_code: "call_subtitle",
+          subtitle_params: { model: "deepseek-v4", tokens_in: 800, tokens_out: 200, ms: 700 },
+          chapter_number: 3,
+          jump: null,
+        },
+        {
+          id: "decision:probe2",
+          source: "decision",
+          ts: "2026-08-27T00:00:01.000Z",
+          actor: "author",
+          status: "succeeded",
+          title_code: "decision_entry_title",
+          title_params: { actor: "author", kind: "knowledge_edit" },
+          subtitle_code: "decision_subtitle_knowledge_edit",
+          subtitle_params: { subject: "萧决", secret: "血脉秘密", before: "KNOWS", after: "LOCATED_AT" },
+          chapter_number: 3,
+          jump: { target: "chapter", label_code: "jump_go_to_chapter", label_params: { chapter: 3 }, chapter_number: 3, event_id: null, proposal_id: null, edge_id: null, endpoints: [] },
+        },
+        {
+          id: "decision:probe3",
+          source: "decision",
+          ts: "2026-08-27T00:00:02.000Z",
+          actor: "system",
+          status: "succeeded",
+          title_code: "decision_entry_title",
+          title_params: { actor: "system", kind: "canon_edge_edit" },
+          subtitle_code: "decision_subtitle_edge_declare",
+          subtitle_params: { subject: "萧决", edge_type: "LOCATED_AT", target: "北荒" },
+          chapter_number: 4,
+          jump: { target: "canon_edge", label_code: "jump_edit_auto_edge", label_params: { chapter: 4 }, chapter_number: 4, event_id: null, proposal_id: null, edge_id: "edge:probe", endpoints: ["/api/projects/x/canon/edges/edge:probe"] },
+        },
+        {
+          id: "extraction_run:probe4",
+          source: "extraction",
+          ts: "2026-08-27T00:00:03.000Z",
+          actor: "system",
+          status: "failed",
+          title_code: "run_entry_title",
+          title_params: { chapter: 5 },
+          subtitle_code: "run_error",
+          subtitle_params: { code: "provider_auth" },
+          chapter_number: 5,
+          jump: { target: "extraction_retry", label_code: "jump_retry_chapter", label_params: { chapter: 5 }, chapter_number: 5, event_id: null, proposal_id: null, edge_id: null, endpoints: ["/api/projects/x/chapters/5/extract"] },
+        },
+      ],
+      next_cursor: null,
+      actors: [
+        { actor: "author", count: 1 },
+        { actor: "system", count: 3 },
+      ],
+    };
+    useCoords.setState({ page: "log" });
+    renderWithApi(<ActivityLog />, [{ match: /\/activity(\?|$)/, body: page }]);
+
+    await screen.findByText(/写作助手/);
+    expect(devTerms(screenText())).toEqual([]);
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════

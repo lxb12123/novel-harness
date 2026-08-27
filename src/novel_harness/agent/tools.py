@@ -1360,7 +1360,8 @@ class ToolSpec:
     写在这一行，加工具的人就在同一个地方被问到「这件事怎么跟他说」。
 
     **空 = 没写**，`tool_label()` 那时给一句不认字的通用说法，**绝不原样回吐工具名**
-    （同 `stop_wording()` / `activity._kind_label`）。空着不是一个可选项：
+    （同 `stop_wording()` / 前端 `KIND_LABEL` 认不出 `DecisionKind` 时的兜底，
+    见 `frontend/src/backendMessages.ts`）。空着不是一个可选项：
     `tests/test_agent_events.py` 会红。
     """
 
