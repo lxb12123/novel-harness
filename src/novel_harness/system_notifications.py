@@ -1,6 +1,6 @@
 """统一系统通知的去重 / 忽略 / 解决 / 动作坐标（ADR 0030 / 计划 Task 10）。
 
-四种语义各自独立的失败形态共用一张通知表：
+六种语义各自独立的失败形态共用一张通知表：
 
 - `summary_mismatch`：总结核对发现可能冲突（只告警，不撤销/不用不了/不改 Canon）；
 - `background_failure`：后台任务失败（provider 崩溃、重放过不去…）；
@@ -8,6 +8,10 @@
 - `text_advisory`：保存之后的语义核对发现问题（026）。**只告警，两支照常跑。**
 - `extraction_yielded_nothing`：这一章整理完了，但一件都没留下（027）。**不是失败**
   ——模型答了、我们也处理完了，产出为零。它和 `background_failure` 的差别是这一条。
+- `import_toc_skipped`：导入时丢掉了目录页复制出来的假章（032，
+  `text/chapterize.py::drop_toc_duplicates()`）。带一个「撤销」动作——
+  `payload_json` 存着撤销要用的数据（丢了哪些 + 这本书当时的指纹），
+  **只有这一档用这一列**，读它请走 `notification_payload()`，别直接查 SQL。
 
 ── 阻断与不阻断是两件事，别按「听起来像不像坏消息」分 ────────────────────
 `validation_blocked` 那句「新正文不会再自动生成总结与情节」是真的：停下游的是
@@ -33,13 +37,14 @@ Issue 的锚原样带上，标题也说出哪一段、哪条规则、哪一句�
 from __future__ import annotations
 
 import hashlib
-from typing import TYPE_CHECKING, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict
 
 from .db import Connection
 from .graph import TextAnchor
 from .ids import EntityType, new_id
+from .text import SkippedTocEntry
 
 if TYPE_CHECKING:  # 只为标注：通知层不该在运行时拖上 checks 那一层
     from .checks.service import SnapshotValidationReport
@@ -50,6 +55,7 @@ __all__ = [
     "background_failure_dedupe_key",
     "dedupe_key_for",
     "enqueue_extraction_yielded_nothing",
+    "enqueue_import_toc_skipped",
     "enqueue_notification",
     "enqueue_text_advisory",
     "enqueue_validation_blocked",
@@ -57,6 +63,7 @@ __all__ = [
     "list_open_notifications",
     "materialize_notification_outbox",
     "notification_count",
+    "notification_payload",
     "resolve_notification",
     "resolve_stale_chapter_advisories",
 ]
@@ -68,6 +75,7 @@ NotificationKind = Literal[
     "validation_blocked",
     "text_advisory",
     "extraction_yielded_nothing",
+    "import_toc_skipped",
 ]
 
 BLOCKING_KINDS: Final[frozenset[str]] = frozenset({"validation_blocked"})
@@ -159,11 +167,15 @@ def enqueue_notification(
     source_sha256: str | None = None,
     jump: TextAnchor | None = None,
     actions: tuple[str, ...] = (),
+    payload: dict[str, Any] | None = None,
 ) -> str:
     """把一条通知写进持久 outbox（**同一事务**由调用方提交，不变量 29）。
 
     调用方（validation gate / 核对器 / 重放 dispatcher）负责把 enqueue 和业务
     状态改在一个事务里；本函数不自己 BEGIN。返回通知 outbox id。
+
+    `payload` 是给「现成列都不够用」那一档的逃生舱（今天只有 `import_toc_skipped`
+    用），落库前原样序列化成 JSON；`None` 落 NULL，不是空对象 `{}`。
     """
     outbox_id = new_id(EntityType.SYSTEM_NOTIFICATION, project_id)
     conn.execute(
@@ -171,8 +183,8 @@ def enqueue_notification(
         INSERT INTO system_notification_outbox (
             id, project_id, intent, kind, subject_type, subject_id, chapter_number,
             title, summary_sha256, source_sha256, jump_para_index, jump_quote_text,
-            jump_occurrence_k, actions_json, dedupe_key
-        ) VALUES (?, ?, 'CREATE_OR_UPDATE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            jump_occurrence_k, actions_json, payload_json, dedupe_key
+        ) VALUES (?, ?, 'CREATE_OR_UPDATE', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             outbox_id,
@@ -188,10 +200,49 @@ def enqueue_notification(
             jump.quote_text if jump else None,
             jump.occurrence_k if jump else None,
             _json(actions),
+            _json_payload(payload),
             dedupe_key,
         ),
     )
     return outbox_id
+
+
+def enqueue_import_toc_skipped(
+    conn: Connection,
+    *,
+    project_id: str,
+    skipped: list[SkippedTocEntry],
+    fingerprint: str,
+) -> str:
+    """导入时丢掉了目录页假章的那条通知（032）。带「撤销」动作。
+
+    `dedupe_key` 只按 `project_id`（+kind+operation）——同一个项目正常只会触发
+    一次（导入是一次性的），真出现第二次时按标准的 outbox `ON CONFLICT DO UPDATE`
+    刷新标题/payload，不会落成两条打架的通知。
+    """
+    count = len(skipped)
+    return enqueue_notification(
+        conn,
+        project_id=project_id,
+        kind="import_toc_skipped",
+        subject_type="project",
+        subject_id=project_id,
+        chapter_number=None,
+        title=f"跳过了 {count} 个只有标题、没有正文的章 —— 看起来你的文件里带了一页目录。",
+        dedupe_key=background_failure_dedupe_key(
+            kind="import_toc_skipped",
+            subject_type="project",
+            subject_id=project_id,
+            operation="import",
+            source_snapshot_id=None,
+            job_id=None,
+        ),
+        actions=("undo_toc_skip",),
+        payload={
+            "skipped": [[entry.position, entry.raw_heading] for entry in skipped],
+            "fingerprint": fingerprint,
+        },
+    )
 
 
 def enqueue_extraction_yielded_nothing(
@@ -398,7 +449,7 @@ def materialize_notification_outbox(
         """
         SELECT id, intent, kind, subject_type, subject_id, chapter_number, title,
                summary_sha256, source_sha256, jump_para_index, jump_quote_text,
-               jump_occurrence_k, actions_json, dedupe_key
+               jump_occurrence_k, actions_json, payload_json, dedupe_key
           FROM system_notification_outbox
          WHERE project_id = ? AND status = 'PENDING'
          ORDER BY created_at, id
@@ -413,13 +464,14 @@ def materialize_notification_outbox(
                     id, project_id, kind, status, subject_type, subject_id,
                     chapter_number, title, summary_sha256, source_sha256,
                     jump_para_index, jump_quote_text, jump_occurrence_k,
-                    actions_json, dedupe_key
-                ) VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    actions_json, payload_json, dedupe_key
+                ) VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT (project_id, dedupe_key)
                 DO UPDATE SET title = excluded.title,
                               jump_para_index = excluded.jump_para_index,
                               jump_quote_text = excluded.jump_quote_text,
-                              jump_occurrence_k = excluded.jump_occurrence_k
+                              jump_occurrence_k = excluded.jump_occurrence_k,
+                              payload_json = excluded.payload_json
                 """,
                 (
                     new_id(EntityType.SYSTEM_NOTIFICATION, project_id),
@@ -435,6 +487,7 @@ def materialize_notification_outbox(
                     row["jump_quote_text"],
                     row["jump_occurrence_k"],
                     row["actions_json"],
+                    row["payload_json"],
                     row["dedupe_key"],
                 ),
             )
@@ -478,6 +531,23 @@ def notification_count(conn: Connection, project_id: str) -> int:
         (project_id,),
     ).fetchone()
     return int(row[0])
+
+
+def notification_payload(conn: Connection, notification_id: str) -> dict[str, Any] | None:
+    """读一条通知的 `payload_json`（今天只有 `import_toc_skipped` 写过它）。
+
+    **不进 `SystemNotification` 出参**：撤销按钮只需要点得动，不需要前端理解
+    payload 长什么样——那是后端自己读自己写的内部数据，同 `RetirementReport`
+    的 `exclude=True` 是同一条纪律（内部账不上线）。`None` 有两种含义都合法：
+    这一档通知本来就没有 payload，或者通知不存在——调用方（撤销的路由）
+    该按「找不到就 404」处理，不必区分。
+    """
+    row = conn.execute(
+        "SELECT payload_json FROM system_notification WHERE id = ?", (notification_id,)
+    ).fetchone()
+    if row is None or row["payload_json"] is None:
+        return None
+    return _json_payload_un(row["payload_json"])
 
 
 def ignore_notification(conn: Connection, notification_id: str) -> None:
@@ -539,3 +609,17 @@ def _json_un(text: str) -> tuple[str, ...]:
     import json
 
     return tuple(json.loads(text))
+
+
+def _json_payload(payload: dict[str, Any] | None) -> str | None:
+    import json
+
+    if payload is None:
+        return None
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def _json_payload_un(text: str) -> dict[str, Any]:
+    import json
+
+    return json.loads(text)

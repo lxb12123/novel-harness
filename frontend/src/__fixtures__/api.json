@@ -764,6 +764,7 @@
     "import_report": {
       "chapter_count": 1,
       "preamble_chars": 0,
+      "skipped_toc": [],
       "synced": {
         "added": [
           {
@@ -815,6 +816,7 @@
     "import_report": {
       "chapter_count": 1,
       "preamble_chars": 1104,
+      "skipped_toc": [],
       "synced": {
         "added": [
           {

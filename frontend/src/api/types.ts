@@ -868,7 +868,10 @@ export type SystemNotificationKind =
   | "text_advisory"
   /** 这一章整理完了、但一件都没留下（027）。**不是失败**——模型答了、也处理完了，
    *  产出为零。跟 `background_failure` 分开是因为叫它失败会让作者去查一个不存在的故障。 */
-  | "extraction_yielded_nothing";
+  | "extraction_yielded_nothing"
+  /** 导入时丢掉了目录页复制出来的假章（032）。带一个「撤销」动作
+   *  （`actions` 里的 `"undo_toc_skip"`）——见 `useUndoTocSkip`。 */
+  | "import_toc_skipped";
 export type SystemNotificationStatus = "OPEN" | "IGNORED" | "RESOLVED";
 
 /** 锚三元组（ADR 0006，永不 offset）：段号 + 引语 + 第几次。 */
@@ -883,7 +886,13 @@ export interface SystemNotification {
   project_id: string;
   kind: SystemNotificationKind;
   status: SystemNotificationStatus;
-  subject_type: "chapter_summary" | "proposal_event" | "canon_event" | "chapter";
+  subject_type:
+    | "chapter_summary"
+    | "proposal_event"
+    | "canon_event"
+    | "chapter"
+    | "chapter_snapshot"
+    | "project";
   subject_id: string;
   chapter_number: number | null;
   title: string;

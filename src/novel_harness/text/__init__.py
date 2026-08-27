@@ -36,8 +36,10 @@ from .chapterize import (
     CHAPTER_RE,
     Chapter,
     Chapterization,
+    SkippedTocEntry,
     chapterize,
     chapters,
+    drop_toc_duplicates,
     normalize,
 )
 __all__ = [
@@ -45,8 +47,10 @@ __all__ = [
     "Chapter",
     "Chapterization",
     "Located",
+    "SkippedTocEntry",
     "chapterize",
     "chapters",
+    "drop_toc_duplicates",
     "find_all",
     "find_one",
     "normalize",

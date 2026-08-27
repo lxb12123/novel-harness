@@ -990,6 +990,26 @@ export function useIgnoreNotification(pid: string) {
   });
 }
 
+/** 撤销一次「目录跳过」（032）：把丢掉的占位章插回原来的位置。
+ *
+ *  失败最常见的形态是 409（这本书导入之后改过了）——`ignore.error` 走同一条
+ *  `refusalText` 读法，这里不重新编一套错误文案。成功之后连 `chapters` 一起
+ *  失效：撤销会让全书章号往后挪，章列表必须重新拉一遍，不能只刷通知那一格。 */
+export function useUndoTocSkip(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (notificationId: string) =>
+      api.post<{ id: string; status: string; restored: number }>(
+        proj(pid, `/notifications/${encodeURIComponent(notificationId)}/undo-toc-skip`),
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["notifications", pid] });
+      qc.invalidateQueries({ queryKey: ["notifications-count", pid] });
+      qc.invalidateQueries({ queryKey: ["chapters", pid] });
+    },
+  });
+}
+
 
 /** 侧栏那一列。**不轮询**：`running` 是后端**进程内**的事实，只有另一个标签页
  *  正在跑同一本书时它才会自己变——而那时那边一停，这边下一次动作就会看到。

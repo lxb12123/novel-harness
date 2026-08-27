@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict
 from . import importer, project
 from .db import Connection
 from .graph.sqlite_store import SqliteStoryGraph
-from .text import Chapterization
+from .text import Chapterization, SkippedTocEntry
 from .text.language import detect_language
 
 BootstrapMode = Literal["import", "blank"]
@@ -104,7 +104,9 @@ def _cleanup_owned_paths(*paths: Path | None) -> list[tuple[Path, BaseException]
     return failures
 
 
-def _prepared_book(*, mode: BootstrapMode, text: str | None) -> Chapterization:
+def _prepared_book(
+    *, mode: BootstrapMode, text: str | None
+) -> tuple[Chapterization, list[SkippedTocEntry]]:
     if mode == "import":
         if text is None:
             raise ValueError("import 模式必须提供 text")
@@ -135,7 +137,7 @@ def bootstrap_project(
         raise ValueError("书名不能为空")
 
     # Preparation precedes even books_root creation, so invalid input has no persistent effect.
-    book = _prepared_book(mode=mode, text=text)
+    book, skipped_toc = _prepared_book(mode=mode, text=text)
     # 国际化第一批 ②：import 模式此刻手上就有全书正文，不必等 sync 之后再补一次探测。
     # blank 模式没有真正的正文（只有一章空模板），language 留 None → project.insert()
     # 落回 SQL 的 DEFAULT 'zh'，等作者写了字、下一次 sync 再补判定。
@@ -160,7 +162,9 @@ def bootstrap_project(
                 conn, name=cleaned_name, root_path=str(final_root), language=detected_language
             )
             if mode == "import":
-                report = importer.import_prepared(store, created.id, book=book, root=stage)
+                report = importer.import_prepared(
+                    store, created.id, book=book, skipped_toc=skipped_toc, root=stage
+                )
             else:
                 first = stage / importer.chapter_path(1)
                 first.parent.mkdir(parents=True, exist_ok=True)

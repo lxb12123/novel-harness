@@ -31,6 +31,7 @@ from novel_harness.importer import (
     ChapterLockTimeout,
     ImportRefused,
     SyncRefused,
+    TocSkipBookChanged,
     chapter_path,
     chapter_text,
     import_book,
@@ -222,9 +223,11 @@ def test_import_prepared_writes_and_syncs_without_a_temp_txt(
     store: SqliteStoryGraph, pid: str, tmp_path: Path
 ) -> None:
     text = "第一章 初见\n\n风起。\n"
-    book = importer.prepare_text(text, source="browser.txt")
+    book, skipped_toc = importer.prepare_text(text, source="browser.txt")
 
-    report = importer.import_prepared(store, pid, book=book, root=tmp_path)
+    report = importer.import_prepared(
+        store, pid, book=book, skipped_toc=skipped_toc, root=tmp_path
+    )
 
     assert report.chapter_count == 1
     assert (tmp_path / "chapters/0001.md").read_text(encoding="utf-8") == text
@@ -566,8 +569,235 @@ def test_stored_text_is_the_whole_file_byte_for_byte(
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 守卫
+# 目录页双计（2026-08-27，维护者拍板）：只在导入时过滤，保存/reconcile 不碰
 # ══════════════════════════════════════════════════════════════════════════
+#
+# `drop_toc_duplicates()` 本身的 4 种情形钉在 `tests/test_chapterize.py`
+# （目录在开头 / 目录在结尾 / 空占位章保住 / 分卷重启两个都保住）。这一节钉的是
+# 那份判据在**导入路径之外**的行为：`sync`/`save_chapter`/`reconcile` 共用的是
+# 裸 `chapterize()`，不认识 `drop_toc_duplicates()`——作者手动清空一章，哪怕
+# 巧合跟另一章同名同标题，也不许被这一层悄悄丢掉。
+
+
+def test_sync_does_not_apply_the_toc_filter(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> None:
+    """手写两个文件直接摆上磁盘（不经过 `import_book`）：一个空、一个跟它同名同标题
+    非空——`drop_toc_duplicates()` 的判据照抄一遍会把第 1 章判成目录丢掉。
+    `sync()` 走的是裸 `chapterize()`，两章都必须原样收进库。
+    """
+    (tmp_path / "chapters").mkdir()
+    (tmp_path / chapter_path(1)).write_text("第一章 山门\n\n", encoding="utf-8")
+    (tmp_path / chapter_path(2)).write_text(
+        "第一章 山门\n\n萧决拾级而上。\n", encoding="utf-8"
+    )
+
+    report = sync(store, pid, tmp_path)
+
+    assert len(report.added) == 2
+    assert [ct.number for ct in store.current_snapshots(pid)] == [1, 2]
+    numbered = {ct.number: ct.text for ct in store.current_snapshots(pid)}
+    assert numbered[1] == "第一章 山门\n\n", "空占位章不许被保存/同步路径吞掉"
+
+
+def test_save_chapter_keeps_a_manually_emptied_chapter_even_with_a_same_titled_twin(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> None:
+    """作者把已经写好的一章清空重来，且巧合跟另一章同名同标题：`save_chapter`
+    （Ctrl-S / agent 落稿共用的那一条路）同样不认识 `drop_toc_duplicates()`。
+    """
+    text = "第一章 山门\n\n萧决拾级而上。\n\n第一章 山门\n\n剑光落下。\n"
+    raw = chapterize(text)
+    assert len(raw.chapters) == 2, "先确认两章 marker/title 真的完全相同"
+
+    book, skipped_toc = importer.prepare_text(text, source="t.txt")
+    assert skipped_toc == [], "两章都非空，导入这一步本来就不该丢任何一章"
+    importer.import_prepared(store, pid, book=book, skipped_toc=skipped_toc, root=tmp_path)
+
+    from novel_harness.importer import save_chapter
+
+    receipt = save_chapter(store, pid, tmp_path, 2, "第一章 山门\n\n")
+
+    assert receipt.saved_to_disk and receipt.indexed
+    assert (tmp_path / chapter_path(2)).read_text(encoding="utf-8") == "第一章 山门\n\n"
+    numbered = {ct.number: ct.text for ct in store.current_snapshots(pid)}
+    assert numbered[2] == "第一章 山门\n\n", "手动清空的这一章不许被任何后续动作丢掉"
+
+
+def test_import_book_reports_which_toc_entries_it_dropped(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> None:
+    """`ImportReport.skipped_toc` 是撤销要读的那份数据——位置和标题行都要对。"""
+    text = (
+        "第一章 山门\n"
+        "第二章 落幕\n"
+        "\n"
+        "第一章 山门\n"
+        "\n"
+        "萧决拾级而上。\n"
+        "\n"
+        "第二章 落幕\n"
+        "\n"
+        "剑光落下。\n"
+    )
+    src = tmp_path / "src.txt"
+    src.write_text(text, encoding="utf-8")
+    root = tmp_path / "book"
+
+    report = import_book(store, pid, txt=src, root=root)
+
+    assert report.chapter_count == 2
+    assert [(e.position, e.raw_heading) for e in report.skipped_toc] == [
+        (1, "第一章 山门"),
+        (2, "第二章 落幕"),
+    ]
+
+
+def test_real_gutenberg_book_with_a_toc_page(store: SqliteStoryGraph, pid: str, tmp_path: Path) -> None:
+    """*Moby-Dick*（Gutenberg #2701）实测——**书本身不进仓库**（维护者的边界），
+    只在本地缓存存在时才跑；一个干净 clone 上这条测试整体跳过，不是假绿。
+
+    报的是真实三个数：`chapterize()` 切出多少（含目录双计）、丢了多少、剩多少。
+    已知不完美（`drop_toc_duplicates` docstring 记着）：目录里 3 条标题换了行、
+    最后一条吞了 ETYMOLOGY/EXTRACTS 前言，这 4 条正文非空，判据本身不丢它们
+    ——切出 270、丢 131、剩 139，不是 270/135/135。这是这份判据换来「零阈值」
+    之后已知的代价，不是这条测试要断言的 bug。
+    """
+    scratch = Path(
+        "/private/tmp/claude-501/-Users-lixibin-Desktop-novel-harness/"
+        "c1219d65-6371-4fcb-825b-dc607108a45d/scratchpad/moby_dick.txt"
+    )
+    if not scratch.exists():
+        pytest.skip("Moby-Dick 本地缓存不在——它不进仓库，这条测试只在本机验证用")
+
+    src = tmp_path / "moby_dick.txt"
+    src.write_text(scratch.read_text(encoding="utf-8"), encoding="utf-8")
+    root = tmp_path / "book"
+
+    raw = chapterize(scratch.read_text(encoding="utf-8"))
+    report = import_book(store, pid, txt=src, root=root)
+
+    found, dropped, kept = len(raw.chapters), len(report.skipped_toc), report.chapter_count
+    assert (found, dropped, kept) == (270, 131, 139)
+    assert kept == found - dropped
+    assert [ct.number for ct in store.current_snapshots(pid)] == list(range(1, kept + 1))
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 撤销「目录跳过」（032）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _import_with_toc(
+    store: SqliteStoryGraph, pid: str, tmp_path: Path
+) -> tuple[importer.ImportReport, Path]:
+    """目录排在最前面、3 个真章排在后面——撤销要把这 3 个占位章插回最前面。"""
+    text = (
+        "第一章 山门\n"
+        "第二章 落幕\n"
+        "第三章 归途\n"
+        "\n"
+        "第一章 山门\n"
+        "\n"
+        "萧决拾级而上。\n"
+        "\n"
+        "第二章 落幕\n"
+        "\n"
+        "剑光落下。\n"
+        "\n"
+        "第三章 归途\n"
+        "\n"
+        "他终于回家了。\n"
+    )
+    src = tmp_path / "src.txt"
+    src.write_text(text, encoding="utf-8")
+    root = tmp_path / "book"
+    report = import_book(store, pid, txt=src, root=root)
+    return report, root
+
+
+def test_undo_toc_skip_restores_chapters_at_original_positions_in_order(
+    store: SqliteStoryGraph, conn: Connection, pid: str, tmp_path: Path
+) -> None:
+    """撤销一次：3 个目录占位章插回最前面，原来的 3 个真章整体后移 3 位，顺序不变。"""
+    report, root = _import_with_toc(store, pid, tmp_path)
+    assert report.chapter_count == 3
+    assert [c.body for c in chapterize(
+        (root / chapter_path(1)).read_text(encoding="utf-8")
+    ).chapters] == ["萧决拾级而上。"]
+    fingerprint = importer.toc_skip_fingerprint(conn, store, pid)
+
+    restored = importer.undo_toc_skip(
+        store, conn, pid, root, skipped=report.skipped_toc, expected_fingerprint=fingerprint
+    )
+
+    assert restored == 3
+    # `ChapterFile.title` 取的是文件首个非空行（marker+title 那一整行），
+    # 不是 `Chapter.title`（regex group(2) 那半）——见 `chapter_files()` 的 docstring。
+    files = [(f.number, f.title) for f in importer.chapter_files(root)]
+    assert files == [
+        (1, "第一章 山门"),
+        (2, "第二章 落幕"),
+        (3, "第三章 归途"),
+        (4, "第一章 山门"),
+        (5, "第二章 落幕"),
+        (6, "第三章 归途"),
+    ]
+    assert (root / chapter_path(1)).read_text(encoding="utf-8") == "第一章 山门\n\n", (
+        "插回的占位章必须用记下来的原文标题，不是新生成的"
+    )
+    bodies = {
+        ct.number: ct.text for ct in store.current_snapshots(pid)
+    }
+    assert bodies[1] == "第一章 山门\n\n"
+    assert "萧决拾级而上。" in bodies[4]
+    assert "他终于回家了。" in bodies[6]
+    assert [ct.number for ct in store.current_snapshots(pid)] == [1, 2, 3, 4, 5, 6]
+
+
+def test_undo_toc_skip_refuses_when_the_book_has_changed(
+    store: SqliteStoryGraph, conn: Connection, pid: str, tmp_path: Path
+) -> None:
+    """这本书导入之后被存过一次——撤销必须拒绝，不许在作者脚下换号。"""
+    report, root = _import_with_toc(store, pid, tmp_path)
+    fingerprint = importer.toc_skip_fingerprint(conn, store, pid)
+
+    from novel_harness.importer import save_chapter
+
+    save_chapter(store, pid, root, 1, "第一章 山门\n\n萧决拾级而上，风很大。\n")
+
+    with pytest.raises(TocSkipBookChanged, match="改过了"):
+        importer.undo_toc_skip(
+            store, conn, pid, root, skipped=report.skipped_toc, expected_fingerprint=fingerprint
+        )
+    # 拒绝必须是全有全无：磁盘和库都不许被半途改动。
+    assert [ct.number for ct in store.current_snapshots(pid)] == [1, 2, 3]
+
+
+def test_undo_toc_skip_refuses_after_a_declaration_even_without_a_text_edit(
+    store: SqliteStoryGraph, conn: Connection, pid: str, tmp_path: Path
+) -> None:
+    """正文一个字没改，但作者声明了一件事——canon_version 跳了，撤销照样拒绝。
+
+    这条测试存在的理由：只看章文本哈希会漏掉这条路径（声明引的是已经写在磁盘上的
+    原文，不改那句话本身），`toc_skip_fingerprint` 把 `canon_version` 也算进去
+    正是为了堵住它。
+    """
+    report, root = _import_with_toc(store, pid, tmp_path)
+    fingerprint = importer.toc_skip_fingerprint(conn, store, pid)
+
+    from novel_harness.declare import Ledger
+    from novel_harness.graph import NodeLabel
+
+    ledger = Ledger(store, conn, pid)
+    ledger.declare_node(NodeLabel.CHARACTER, "萧决")
+    ledger.declare_first_appearance(of="萧决", quote="萧决拾级而上。")
+    conn.commit()
+
+    with pytest.raises(TocSkipBookChanged):
+        importer.undo_toc_skip(
+            store, conn, pid, root, skipped=report.skipped_toc, expected_fingerprint=fingerprint
+        )
 
 
 def test_the_importer_takes_no_conn_and_no_chapter_number() -> None:

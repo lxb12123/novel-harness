@@ -249,3 +249,87 @@ def chapterize(text: str) -> Chapterization:
 def chapters(text: str) -> list[Chapter]:
     """只要章的便捷入口。**会静默丢掉 preamble**——导入器请用 `chapterize()`。"""
     return chapterize(text).chapters
+
+
+class SkippedTocEntry(BaseModel):
+    """`drop_toc_duplicates()` 丢掉的一行——目录页里的一个条目，不是真章。
+
+    存的只有撤销用得上的那两样：**原始序列里的 1-based 位置**（撤销要把它插回哪儿）
+    和**标题行原样**（撤销要写回磁盘的那一行）。`marker`/`title` 不单独存——
+    `raw_heading` 已经是两者拼起来的原文，拆开存两份等于把同一件事说两遍，
+    重拼时空白规则还可能对不上原文。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    position: int = Field(ge=1)
+    """丢之前、原始 `chapterize()` 输出里的 `index`。**不是丢之后剩下那份的序号**
+    ——两份序号在有条目被丢掉之后就不再相等，撤销靠的是这一个。"""
+
+    raw_heading: str
+    """`Chapter.raw_heading` 原样。撤销时 `f"{raw_heading}\\n\\n"` 就是那一章的全部内容
+    （同 `importer.empty_chapter_text`，只是标题不是生成的，是记下来的原文）。"""
+
+
+def drop_toc_duplicates(book: Chapterization) -> tuple[Chapterization, list[SkippedTocEntry]]:
+    """丢掉「目录页把正文的章标题复制了一遍」造出来的假章——只做集合判断，不猜格式。
+
+    ⚠️ **2026-08-27：维护者拍板的判据**（讨论过一版「连续命中之间行距 ≤1 且连续
+    ≥3」的方案，最后没用那版——理由和这版判据的形状一起写在下面）：
+
+        一章的正文是空的，**而且**全书还有另一章 `(marker, title)` 跟它一模一样、
+        正文非空 ⇒ 它就是目录里那一行，丢掉。
+
+    这仍然是纯集合判断（ADR 0005）：「正文是不是空字符串」和「(marker, title) 这个
+    二元组在别处出现过没有」都不需要理解那句话在说什么，是逐字比对 + 集合成员测试。
+
+    ── 为什么不是行距那一版 ────────────────────────────────────────────────
+
+    行距版本要调两个阈值（多短算「近」、连续几次算「一串」），中英文本各要单独拿真书
+    实测一遍才敢定数；这一版**零阈值**——「空」是布尔判断不是量出来的数，「有没有
+    同名非空章」也是布尔判断，天然不分语言、不用管排版密度。代价是抓不住目录页标题
+    换行的那几条（换行部分会落进 `body`，body 就不空了）——**这是已知的不完美**，
+    见下面「已知不完美」一节，不是没想到。
+
+    ── 为什么方向上不会吃掉真内容 ─────────────────────────────────────────
+
+    只可能丢**正文是空字符串**的章。真书里没有一章是完全没写字的（`append_chapter`
+    造出来的空占位章例外——但那一章不会有另一个**同名同标题**的非空章存在，因为
+    这本书还没写到那儿，`(marker, title)` 在别处根本找不到匹配）。分卷重启（两个真
+    「第一章」）也安全：两个都有正文，谁都不满足「正文是空」这一半。
+
+    ── 已知不完美（如实记在这儿，不是藏起来）───────────────────────────────
+
+    *Moby-Dick*（Gutenberg #2701）目录页里有 3 个条目的标题换行到了第二行
+    （`CHAPTER 56. Of the Less Erroneous Pictures of Whales, and the True\\n
+    Pictures of Whaling Scenes.`）——正则的 `title` 分组不跨行，换行那半落进
+    `body`，body 就非空了，这 3 条目录行**不会**被本函数丢掉。目录的最后一行
+    （`CHAPTER 135`）还会把 `ETYMOLOGY.`/`EXTRACTS.` 那几页前言文本整段吞进
+    `body`，同样不空，同样不会被丢。真书实测的三个数（切出多少/丢了多少/剩多少）
+    钉在 `tests/test_chapterize.py`——**这不是要修的 bug，是这版判据换来「零阈值、
+    保证不丢真内容」之后必然的代价**，如果哪天要补，需要另一种判据（比如允许
+    「近乎空」而不是「恰好空」），而那会重新引入阈值，回到当初否掉的那条路。
+
+    ── 只在导入时调用，`chapterize()` 本身不碰 ────────────────────────────
+
+    `chapterize()` 还被保存路径重新切一章用着（`_read_one_chapter` / `single_chapter` /
+    `validate_chapter_markdown`）——那几处**每次只喂一个文件的正文**，本来就要求
+    「恰好一章」，这个函数在那儿无的放矢，也不该在那儿生效：作者存一章空白正文
+    （`append_chapter` 的空占位章还没写字）不许被这层悄悄吞掉。调用方只有
+    `importer.prepare_text()`（导入路）。
+
+    Returns:
+        `(过滤后的 Chapterization, 被丢掉的条目列表)`。过滤后 `chapters` 的 `index`
+        重新连续编号（1..N，N=剩下的章数）——`Chapter.index` 的契约是「全书顺序位置」，
+        丢完必须仍是一段不含洞的序列。
+    """
+    non_empty_keys = {(c.marker, c.title) for c in book.chapters if c.body.strip()}
+    kept: list[Chapter] = []
+    skipped: list[SkippedTocEntry] = []
+    for original_position, c in enumerate(book.chapters, start=1):
+        if not c.body.strip() and (c.marker, c.title) in non_empty_keys:
+            skipped.append(SkippedTocEntry(position=original_position, raw_heading=c.raw_heading))
+        else:
+            kept.append(c)
+    renumbered = [c.model_copy(update={"index": i + 1}) for i, c in enumerate(kept)]
+    return Chapterization(preamble=book.preamble, chapters=renumbered), skipped

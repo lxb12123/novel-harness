@@ -40,9 +40,11 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from . import project as project_mod
+from .db import Connection
 from .decisions import quote_hash
 from .graph import ChapterSpec, GraphStore, RetirementReport, StoredChapter
-from .text import Chapter, Chapterization, chapterize
+from .text import Chapter, Chapterization, SkippedTocEntry, chapterize, drop_toc_duplicates
 
 CHAPTER_DIR: Final = "chapters"
 """相对 `project.root_path`。ADR 0007：这个目录里的 .md **就是稿子**，不是导出物。"""
@@ -216,6 +218,15 @@ class ChapterChanged(Exception):
         self.actual: Final = actual
 
 
+class TocSkipBookChanged(Exception):
+    """撤销「目录跳过」被拒：这本书自那次导入起已经变过。
+
+    见 `undo_toc_skip` 的 docstring——插回占位章会让**这本书当前**每一条锚在章号上
+    的图事实（`valid_from_chapter` 那一整条血统）从此指错章，所以判据故意保守到
+    「这本书一个字节、一次声明都没变过」，不试图分辨哪些变化其实安全。
+    """
+
+
 class ChapterLockTimeout(Exception):
     """章级锁在 `lock_timeout` 内没拿到（另一个保存 / reconcile 还在跑这一章）。
 
@@ -319,6 +330,13 @@ class ImportReport(BaseModel):
     """已存在且内容一字不差的文件，跳过了。"""
 
     synced: SyncReport
+
+    skipped_toc: list[SkippedTocEntry] = Field(default_factory=list)
+    """`text.drop_toc_duplicates()` 丢掉的目录页条目。空列表 = 没有触发（绝大多数书）。
+
+    `chapter_count` / `written` 等字段都是**丢完之后**的数字——这一格是唯一能看出
+    「这本书原本切出了更多命中」的地方，也是撤销按钮要读的那份数据。
+    """
 
 
 def explode(book: Chapterization, root: Path) -> tuple[list[str], list[str]]:
@@ -992,6 +1010,101 @@ def remove_chapter(store: GraphStore, project_id: str, root: Path, chapter: int)
     return target
 
 
+def toc_skip_fingerprint(conn: Connection, store: GraphStore, project_id: str) -> str:
+    """撤销「目录跳过」的前置条件用的那份指纹：**这本书自导入起有没有变过**。
+
+    两样都要算进去，任何一样变了都算变过：
+
+    - **每一章 (number, text_sha256)**：抓正文本身的改动（作者改了一句话）。
+    - **`project.canon_version`**：抓正文没变、但图里多了东西的那一半——
+      声明死亡/首现引的是**已经写在磁盘上**的一句原文，声明本身不改那句话，
+      但会落一条 `valid_from_chapter` 锚在某个章号上，而 canon_version 会跟着跳。
+
+    单独任一个都堵不住全部路径，所以两个都算，任一个不同就算「变过」。**故意不去
+    分辨「这一处改动其实不影响撤销」**——分辨这件事本身就要理解那条改动的语义，
+    而这正是 `undo_toc_skip` 要避免踩的坑（见它的 docstring）。
+    """
+    canon = project_mod.require_canon_version(conn, project_id)
+    chapters_ = sorted(store.current_snapshots(project_id), key=lambda c: c.number)
+    text_part = "\n".join(f"{c.number}:{text_digest(c.text)}" for c in chapters_)
+    return text_digest(f"{canon}\n{text_part}")
+
+
+def undo_toc_skip(
+    store: GraphStore,
+    conn: Connection,
+    project_id: str,
+    root: Path,
+    *,
+    skipped: list[SkippedTocEntry],
+    expected_fingerprint: str,
+) -> int:
+    """把 `drop_toc_duplicates()` 丢掉的目录占位章插回原来的位置。返回插回的章数。
+
+    ── 这一下在动什么，为什么危险 ──────────────────────────────────────────
+
+    `Chapter.index`（=`chapter.number`）是**位置**，不是任何人填的号
+    （`text/chapterize.py` 模块 docstring）。插回 D 个占位章，意味着它们原来
+    右边的每一章都要把号往后挪——而 `edge.valid_from_chapter` 这类图事实锚的
+    正是这个号。挪号的那一刻，任何一条已经落地的锚都会**从此指向一个不同的章**，
+    且没有任何东西会报错、没有任何东西看得出来。
+
+    这就是为什么撤销**必须**先核对 `toc_skip_fingerprint`：只有「这本书自导入起
+    一个字节、一次声明都没变过」时，挪号才是安全的——因为那种状态下，还没有
+    任何图事实锚在任何一个章号上。判据故意保守，见 `TocSkipBookChanged`。
+
+    ── 重命名顺序：从高到低，证明见 `tests/test_importer.py` 那条注释 ─────────
+
+    每个保留章的「原始位置」严格 `>=` 它当前的号（只可能不变或往后挪，绝不会往前）。
+    按当前号**降序**处理时，本次要写入的目标路径此刻要么从没被占用过，要么恰好是
+    "更高" 的那次重命名刚刚腾出来的——不会覆盖任何一个还没轮到的保留章。
+
+    Raises:
+        TocSkipBookChanged: 指纹对不上（见 `toc_skip_fingerprint`）。
+    """
+    current_fingerprint = toc_skip_fingerprint(conn, store, project_id)
+    if current_fingerprint != expected_fingerprint:
+        raise TocSkipBookChanged(
+            "这本书导入之后改过了，现在撤销会打乱章号。要找回那些章，重新导入一次原文件。"
+        )
+
+    kept = chapter_files(root)
+    skip_positions = {entry.position for entry in skipped}
+    total = len(kept) + len(skipped)
+
+    rename_map: dict[int, int] = {}
+    current_number = 0
+    for original_position in range(1, total + 1):
+        if original_position in skip_positions:
+            continue
+        current_number += 1
+        rename_map[current_number] = original_position
+
+    for current_number in sorted(rename_map, reverse=True):
+        original_position = rename_map[current_number]
+        if current_number == original_position:
+            continue
+        old_path = root / chapter_path(current_number)
+        new_path = root / chapter_path(original_position)
+        if new_path.exists():
+            # 前面「从高到低」的证明说这不该发生——真发生了，宁可炸也不覆盖，
+            # 覆盖的后果是作者一章正文彻底消失且没有任何提示。
+            raise AssertionError(
+                f"撤销目录跳过时撞车：{new_path} 已存在（重命名顺序的不变量被打破了）"
+            )
+        old_path.rename(new_path)
+
+    for entry in skipped:
+        file = root / chapter_path(entry.position)
+        if file.exists():
+            raise AssertionError(f"撤销目录跳过时撞车：{file} 已存在，不该由占位章写入")
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(f"{entry.raw_heading}\n\n", encoding="utf-8")
+
+    sync(store, project_id, root)
+    return len(skipped)
+
+
 def import_book(store: GraphStore, project_id: str, *, txt: Path, root: Path) -> ImportReport:
     """**一次性播种**：切章 → 写盘 → `sync`。日常回路请用 `sync`。
 
@@ -1014,16 +1127,28 @@ def import_book(store: GraphStore, project_id: str, *, txt: Path, root: Path) ->
     )
 
 
-def prepare_text(text: str, *, source: str) -> Chapterization:
-    """切分内存中的书稿；零章在任何磁盘或数据库写入前拒绝。"""
+def prepare_text(text: str, *, source: str) -> tuple[Chapterization, list[SkippedTocEntry]]:
+    """切分内存中的书稿；零章在任何磁盘或数据库写入前拒绝。
+
+    `drop_toc_duplicates()` 在这里跑一次——只在这条导入路上。`chapterize()`
+    本身不碰这一层：`_read_one_chapter` / `single_chapter` / `validate_chapter_markdown`
+    共用同一个 `chapterize()`，但它们一次只喂一个章节文件、且结构预检就要求
+    「恰好一章」，这层过滤在那儿无的放矢——作者存一章还没写字的空占位章
+    （`append_chapter` 造的）不许被这儿悄悄吞掉（见 `drop_toc_duplicates` 的
+    docstring「只在导入时调用」一节）。
+
+    「零章」的判据看的是丢完之后剩下的章数：一本书如果整本都是目录页
+    （极端情形），丢完真的一章不剩，那就该按零章处理，不是悄悄放行一个空项目。
+    """
     book = chapterize(text.removeprefix("\ufeff"))
+    book, skipped = drop_toc_duplicates(book)
     if not book.chapters:
         raise ImportRefused(
             f"{source} 里一个章标都没切出来（认的是行首的「第N章/节/回」）。\n"
             "  零章不是「这本书是空的」，是「切章器没认出这本书的章标写法」——\n"
             "  别把它当成导入成功：落库零章的产物是一个永远定位不到任何引语的项目。"
         )
-    return book
+    return book, skipped
 
 
 def import_prepared(
@@ -1031,9 +1156,14 @@ def import_prepared(
     project_id: str,
     *,
     book: Chapterization,
+    skipped_toc: list[SkippedTocEntry],
     root: Path,
 ) -> ImportReport:
-    """把已经验证并切好的内存书稿写盘，再将其同步进库。"""
+    """把已经验证并切好的内存书稿写盘，再将其同步进库。
+
+    `skipped_toc` 是调用方从 `prepare_text()` 拿到的那份——本函数不重新算一遍
+    （`book` 此刻已经是丢完之后的那份），只是原样放进回执里给上一层（撤销按钮）用。
+    """
     written, unchanged = explode(book, root)
     return ImportReport(
         chapter_count=len(book.chapters),
@@ -1041,6 +1171,7 @@ def import_prepared(
         written=written,
         unchanged=unchanged,
         synced=sync(store, project_id, root),
+        skipped_toc=skipped_toc,
     )
 
 
@@ -1053,9 +1184,11 @@ def import_text(
     root: Path,
 ) -> ImportReport:
     """导入内存中的 TXT，且不创建临时文件。"""
+    book, skipped_toc = prepare_text(text, source=source)
     return import_prepared(
         store,
         project_id,
-        book=prepare_text(text, source=source),
+        book=book,
+        skipped_toc=skipped_toc,
         root=root,
     )

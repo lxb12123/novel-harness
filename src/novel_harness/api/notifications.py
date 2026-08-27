@@ -3,23 +3,30 @@
 读端（list / count / detail）和写端（ignore / recheck）都经
 `system_notifications` / `summary_reconciliation` 那一个服务——不在 `app.py`
 再实现一套状态转换（计划 §6.4）。
+
+`undo-toc-skip`（032）是这条纪律唯一一处需要**两个**服务的写端：`system_notifications`
+（读 payload / 标 RESOLVED）之外还要 `importer.undo_toc_skip`（真的把文件挪回去）。
+业务判断（撤销安不安全）仍然全在 `importer.py` 里，这一层只是把两次调用串起来。
 """
 
 from __future__ import annotations
 
+from pathlib import Path as FilePath
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
+from .. import importer
 from ..db import Connection
 from ..system_notifications import (
     SystemNotification,
     ignore_notification,
     list_open_notifications,
     notification_count,
+    notification_payload,
     resolve_notification,
 )
-from .deps import get_conn, load_project
+from .deps import get_conn, get_store, load_project
 
 router = APIRouter()
 
@@ -85,3 +92,54 @@ def notifications_resolve(
     """手动 RESOLVE（问题其实已经看清了）。"""
     resolve_notification(conn, notification_id)
     return {"id": notification_id, "status": "RESOLVED"}
+
+
+@router.post("/api/projects/{project_id}/notifications/{notification_id}/undo-toc-skip")
+def notifications_undo_toc_skip(
+    project_id: str,
+    notification_id: NotificationId,
+    store: Any = Depends(get_store),
+    conn: Connection = Depends(get_conn),
+    proj: Any = Depends(load_project),
+) -> dict[str, Any]:
+    """撤销一次「目录跳过」：把丢掉的占位章插回原来的位置（032）。
+
+    只对本项目**当前 OPEN 的** `import_toc_skipped` 通知生效——同 `notification_detail`
+    的范围检查，比 `ignore`/`resolve` 那两条更严一格：这条会真的动文件，
+    找错通知的代价比「忽略错了一条」大得多。
+
+    业务判断全在 `importer.undo_toc_skip`：这本书自导入起变过 → 409，
+    不猜、不半途插一部分。成功后把通知标 RESOLVED——它的任务完成了。
+    """
+    item = next(
+        (i for i in list_open_notifications(conn, proj.id) if i.id == notification_id),
+        None,
+    )
+    if item is None or item.kind != "import_toc_skipped":
+        raise HTTPException(status_code=404, detail={"error": "notification_not_found"})
+
+    payload = notification_payload(conn, notification_id)
+    if payload is None:
+        raise HTTPException(status_code=404, detail={"error": "notification_not_found"})
+
+    skipped = [
+        importer.SkippedTocEntry(position=position, raw_heading=raw_heading)
+        for position, raw_heading in payload["skipped"]
+    ]
+    try:
+        restored = importer.undo_toc_skip(
+            store,
+            conn,
+            proj.id,
+            FilePath(proj.root_path),
+            skipped=skipped,
+            expected_fingerprint=payload["fingerprint"],
+        )
+    except importer.TocSkipBookChanged as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "toc_skip_book_changed", "message": str(exc)},
+        ) from exc
+
+    resolve_notification(conn, notification_id)
+    return {"id": notification_id, "status": "RESOLVED", "restored": restored}

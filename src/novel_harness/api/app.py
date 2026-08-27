@@ -46,6 +46,7 @@ from pydantic import (
 from .. import importer
 from .. import onboarding
 from .. import project as project_mod
+from ..system_notifications import enqueue_import_toc_skipped, materialize_notification_outbox
 from ..text.language import detect_language
 from ..settings import Settings as UserSettings
 from ..settings import load as load_user_settings
@@ -765,7 +766,7 @@ def create_project(body: CreateProject, conn: Any = Depends(get_conn)) -> Any:
 
 @app.post("/api/projects/bootstrap", response_model=manuscript.BootstrapView)
 def bootstrap_project(
-    body: BootstrapBody, conn: Any = Depends(get_conn)
+    body: BootstrapBody, store: Any = Depends(get_store), conn: Any = Depends(get_conn)
 ) -> manuscript.BootstrapView:
     """原子创建新书：项目、首章、快照与导入报告一起成功或一起消失。
 
@@ -774,15 +775,16 @@ def bootstrap_project(
     信号——`preamble_chars` 异常 = 第一章的章标很可能没被认出来 = 全书 `valid_from`
     集体错一章，且界面上看不出任何异常。
     """
-    return manuscript.bootstrap_view(
-        onboarding.bootstrap_project(
-            conn,
-            books_root=books_root(),
-            mode=body.mode,
-            name=body.name,
-            text=body.text if isinstance(body, ImportBootstrap) else None,
-        )
+    result = onboarding.bootstrap_project(
+        conn,
+        books_root=books_root(),
+        mode=body.mode,
+        name=body.name,
+        text=body.text if isinstance(body, ImportBootstrap) else None,
     )
+    if result.import_report is not None:
+        _notify_toc_skipped(store, conn, result.project.id, result.import_report.skipped_toc)
+    return manuscript.bootstrap_view(result)
 
 
 def _detect_and_store_language(conn: Any, project_id: str, root: Path) -> None:
@@ -795,6 +797,24 @@ def _detect_and_store_language(conn: Any, project_id: str, root: Path) -> None:
     `apply_detected_language` 对 `None` 是空操作。
     """
     project_mod.apply_detected_language(conn, project_id, detect_language(importer.language_sample(root)))
+
+
+def _notify_toc_skipped(
+    store: Any, conn: Any, project_id: str, skipped: list[importer.SkippedTocEntry]
+) -> None:
+    """导入丢了目录页假章时落一条通知（032）。**空列表是无操作**：绝大多数书
+    从不触发 `drop_toc_duplicates()`，这条函数在那些书上什么都不做。
+
+    指纹在**这里**算——此刻就是撤销要恢复到的那个基线（这次导入刚完成，
+    还没有任何声明/抽取写进图里）。立即 `materialize`，不等后台那一轮：
+    导入是前台同步动作，通知也该同步可见，不必等下一次后台 outbox 扫描。
+    """
+    if not skipped:
+        return
+    fingerprint = importer.toc_skip_fingerprint(conn, store, project_id)
+    enqueue_import_toc_skipped(conn, project_id=project_id, skipped=skipped, fingerprint=fingerprint)
+    conn.commit()
+    materialize_notification_outbox(conn, project_id=project_id, lease_owner="import")
 
 
 @app.post("/api/projects/{project_id}/import")
@@ -817,6 +837,7 @@ def import_book(
         report = importer.import_book(store, proj.id, txt=tmp, root=Path(proj.root_path))
     finally:
         tmp.unlink(missing_ok=True)
+    _notify_toc_skipped(store, conn, proj.id, report.skipped_toc)
     _detect_and_store_language(conn, proj.id, Path(proj.root_path))
     return report
 

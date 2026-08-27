@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useIgnoreNotification, useNotifications } from "../api/hooks";
+import { useIgnoreNotification, useNotifications, useUndoTocSkip } from "../api/hooks";
 import { refusalText } from "../chat";
 import type { SystemNotification } from "../api/types";
 import { useCoords } from "../store";
@@ -7,10 +7,10 @@ import { useOpenChapter } from "../chapterNavigation";
 
 // 系统通知（Task 10 / 021，前端 Task 14）：右栏那一格。
 //
-// 四种语义：总结可能与正文不一致（只告警，不撤销/不用不了/不改 Canon）、
-// 后台失败、正文验证阻断（保留了旧结果）、保存后的语义核对（026，**只告警**）。
-// 每一条是「要作者知道、也许要点一下确认」的东西，不是错误——它永远不会是因为
-// 引擎坏了。
+// 六种语义：总结可能与正文不一致（只告警）、后台失败、正文验证阻断（保留了旧
+// 结果）、保存后的语义核对（026，**只告警**）、这一章整理完但一件没留下（027）、
+// 导入时跳过了目录页假章（032，带「撤销」）。每一条是「要作者知道、也许要点一下
+// 确认」的东西，不是错误——它永远不会是因为引擎坏了。
 //
 // **坐标和动作全由后端给**：`jump`（TextAnchor / 章号）定位，`actions` 是可点
 // 的动作。前端不从那行字里认「去哪儿改」。
@@ -26,19 +26,24 @@ const KIND_TITLE: Record<SystemNotification["kind"], string> = {
   text_advisory: "这一段值得再看一眼",
   // 措辞刻意不含「失败」二字：这一次没失败，只是一件都没留下（027）。
   extraction_yielded_nothing: "这一章什么都没整理出来",
+  // 措辞刻意不说「切章器出错」——它没错，是这本书自带了一页跟正文长得一样的目录（032）。
+  import_toc_skipped: "导入时跳过了几个空章",
 };
 
 function NotificationRow({
   item,
-  onIgnored,
+  onHandled,
 }: {
   item: SystemNotification;
-  onIgnored: (id: string) => void;
+  onHandled: (id: string) => void;
 }) {
   const { projectId, setHighlight } = useCoords();
   const openChapter = useOpenChapter();
   const ignore = useIgnoreNotification(projectId ?? "");
-  const failure = ignore.error ? refusalText(ignore.error, "没能忽略这条通知。") : null;
+  const undoTocSkip = useUndoTocSkip(projectId ?? "");
+  const failure =
+    refusalText(ignore.error, "没能忽略这条通知。") ??
+    refusalText(undoTocSkip.error, "没能撤销——");
 
   const go = () => {
     if (item.chapter_number !== null) openChapter(item.chapter_number);
@@ -78,10 +83,21 @@ function NotificationRow({
             className="link"
             disabled={ignore.isPending}
             onClick={() =>
-              ignore.mutate(item.id, { onSuccess: () => onIgnored(item.id) })
+              ignore.mutate(item.id, { onSuccess: () => onHandled(item.id) })
             }
           >
             {ignore.isPending ? "正在忽略…" : "不再提醒这一条"}
+          </button>
+        )}
+        {item.actions.includes("undo_toc_skip") && (
+          <button
+            className="link"
+            disabled={undoTocSkip.isPending}
+            onClick={() =>
+              undoTocSkip.mutate(item.id, { onSuccess: () => onHandled(item.id) })
+            }
+          >
+            {undoTocSkip.isPending ? "正在撤销…" : "撤销"}
           </button>
         )}
       </div>
@@ -108,10 +124,10 @@ const COLLAPSE_AT = 4;
 /** 一档折叠起来的通知。**逐条的动作一个都没少**，只是默认收着。 */
 function CollapsedKind({
   items,
-  onIgnored,
+  onHandled,
 }: {
   items: SystemNotification[];
-  onIgnored: (id: string) => void;
+  onHandled: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
   const openChapter = useOpenChapter();
@@ -146,7 +162,7 @@ function CollapsedKind({
       </div>
       {open &&
         items.map((item) => (
-          <NotificationRow key={item.id} item={item} onIgnored={onIgnored} />
+          <NotificationRow key={item.id} item={item} onHandled={onHandled} />
         ))}
     </div>
   );
@@ -172,8 +188,8 @@ export function SystemNotifications() {
     }
   }
 
-  const onIgnored = () => {
-    // 本地立刻从当前打开的通知里拿掉（后端已落 IGNORED）。
+  const onHandled = () => {
+    // 本地立刻从当前打开的通知里拿掉（后端已落 IGNORED 或 RESOLVED）。
     notifications.refetch();
   };
 
@@ -186,10 +202,10 @@ export function SystemNotifications() {
       )}
       {groups.map((group) =>
         group.length >= COLLAPSE_AT ? (
-          <CollapsedKind key={group[0].kind} items={group} onIgnored={onIgnored} />
+          <CollapsedKind key={group[0].kind} items={group} onHandled={onHandled} />
         ) : (
           group.map((item) => (
-            <NotificationRow key={item.id} item={item} onIgnored={onIgnored} />
+            <NotificationRow key={item.id} item={item} onHandled={onHandled} />
           ))
         ),
       )}

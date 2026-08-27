@@ -13,7 +13,13 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from novel_harness.text.chapterize import CHAPTER_RE, Chapterization, chapterize, chapters
+from novel_harness.text.chapterize import (
+    CHAPTER_RE,
+    Chapterization,
+    chapterize,
+    chapters,
+    drop_toc_duplicates,
+)
 
 # ══════════════════════════════════════════════════════════════════════════
 # 正则本身：PLAN §8 记录的三个实测 bug
@@ -327,3 +333,130 @@ def test_frontend_marker_regex_is_the_same_one() -> None:
         "两份必须同时改。漂了之后症状看得见但很绕：这边多认一个章标 → 存盘时切不出一章 → 422；"
         "少认一个 → 改名框里出现整行（含章号），而作者会以为章号也能改。"
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# drop_toc_duplicates：目录页双计（2026-08-27，维护者拍板的判据）
+# ══════════════════════════════════════════════════════════════════════════
+#
+# 判据：一章正文是空的，而且全书还有另一章 (marker, title) 跟它一模一样、正文
+# 非空 ⇒ 目录里那一行，丢掉。四种情形各钉一条——**目录在结尾**和**分卷重启**
+# 两条尤其要有：它们是这个判据比「行距 ≤1 且连续 ≥3」那一版强的地方（分卷重启
+# 那一版会误伤，这一版不会；目录在结尾那一版没验过，这一版验了）。
+
+
+def test_toc_at_the_start_is_dropped() -> None:
+    """目录页排在最前面：两行标题先各自空跑一遍，正文才真正开始。"""
+    text = (
+        "第一章 山门\n"
+        "第二章 落幕\n"
+        "\n"
+        "第一章 山门\n"
+        "\n"
+        "萧决拾级而上。\n"
+        "\n"
+        "第二章 落幕\n"
+        "\n"
+        "剑光落下。\n"
+    )
+    book = chapterize(text)
+    assert len(book.chapters) == 4, "先确认切章本身切出了 4 个命中，不然这条测试测不到东西"
+
+    filtered, skipped = drop_toc_duplicates(book)
+
+    assert [c.index for c in filtered.chapters] == [1, 2], "剩下的两章必须重新连续编号"
+    assert [(c.marker, c.title, c.body) for c in filtered.chapters] == [
+        ("第一章", "山门", "萧决拾级而上。"),
+        ("第二章", "落幕", "剑光落下。"),
+    ]
+    assert [(s.position, s.raw_heading) for s in skipped] == [
+        (1, "第一章 山门"),
+        (2, "第二章 落幕"),
+    ], "撤销要用的 (原始位置, 标题行原样) 必须精确"
+
+
+def test_toc_at_the_end_is_dropped() -> None:
+    """目录页排在末尾（有些排版把目录放书末）：这是行距版判据没验过的一种。"""
+    text = (
+        "第一章 山门\n"
+        "\n"
+        "萧决拾级而上。\n"
+        "\n"
+        "第二章 落幕\n"
+        "\n"
+        "剑光落下。\n"
+        "\n"
+        "第一章 山门\n"
+        "第二章 落幕\n"
+    )
+    book = chapterize(text)
+    assert len(book.chapters) == 4
+
+    filtered, skipped = drop_toc_duplicates(book)
+
+    assert [c.index for c in filtered.chapters] == [1, 2]
+    assert [(c.marker, c.title, c.body) for c in filtered.chapters] == [
+        ("第一章", "山门", "萧决拾级而上。"),
+        ("第二章", "落幕", "剑光落下。"),
+    ]
+    assert [s.position for s in skipped] == [3, 4]
+
+
+def test_empty_placeholder_chapter_without_a_duplicate_is_kept() -> None:
+    """作者留的空占位章（`append_chapter` 造的「第 N 章」还没写字）不许被当成目录丢掉。
+
+    判据的「而且」那一半救了它：正文虽空，但全书找不到第二个同名同标题的非空章
+    ——这本书还没写到那儿，`(marker, title)` 在别处压根没有匹配。
+    """
+    text = (
+        "第一章 山门\n"
+        "\n"
+        "萧决拾级而上。\n"
+        "\n"
+        "第二章 待写\n"
+        "\n"
+        "第三章 落幕\n"
+        "\n"
+        "剑光落下。\n"
+    )
+    book = chapterize(text)
+    assert len(book.chapters) == 3
+
+    filtered, skipped = drop_toc_duplicates(book)
+
+    assert skipped == []
+    assert [c.index for c in filtered.chapters] == [1, 2, 3]
+    assert filtered.chapters[1].body == "", "空占位章的正文本来就该是空的——这条不该被填"
+
+
+def test_volume_restart_duplicate_headings_are_both_kept() -> None:
+    """分卷重启：两个真「第一章」标题完全一样，但**两个都有正文**——都不许丢。
+
+    这是判据「而且」那一半的另一面：`(marker, title)` 相同只是**必要条件**，
+    「有一边正文是空的」才会触发丢弃。行距版判据在这种输入上会退化成两个相邻的短
+    间隔，容易连续两次判成目录；这一版因为两章都非空，从一开始就不会进入候选。
+    """
+    text = "第一章\n\n主角出发了。\n\n第一章\n\n时间来到十年后。\n"
+    book = chapterize(text)
+    assert len(book.chapters) == 2
+    assert (book.chapters[0].marker, book.chapters[0].title) == (
+        book.chapters[1].marker,
+        book.chapters[1].title,
+    ), "先确认这两章的 (marker, title) 真的完全相同，不然这条测试测不到分卷重启"
+
+    filtered, skipped = drop_toc_duplicates(book)
+
+    assert skipped == []
+    assert [c.index for c in filtered.chapters] == [1, 2]
+    assert [c.body for c in filtered.chapters] == ["主角出发了。", "时间来到十年后。"]
+
+
+def test_a_book_with_no_toc_collision_is_untouched() -> None:
+    """没有目录碰撞的书（今天绝大多数真书）：一章都不会被这层碰到。"""
+    text = "第一章 山门\n\n萧决拾级而上。\n\n第二章 落幕\n\n剑光落下。\n"
+    book = chapterize(text)
+
+    filtered, skipped = drop_toc_duplicates(book)
+
+    assert skipped == []
+    assert filtered == book
