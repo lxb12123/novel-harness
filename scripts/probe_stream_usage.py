@@ -30,7 +30,7 @@
     uv run python scripts/probe_stream_usage.py --base-url ... --model ...
 
 ⚠️ **会真的调模型、真的花钱**（`max_tokens=16`，三次，量级是几厘）。
-作者永远不敲这条 —— 同 `nh gate`，它是维护者的仪器。
+作者永远不敲这条 —— 同 `synth/build.py`，它是维护者的仪器。
 """
 
 from __future__ import annotations

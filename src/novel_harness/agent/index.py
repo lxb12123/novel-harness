@@ -428,15 +428,15 @@ def handle_book_index(args: BookIndexArgs, context: ToolContext) -> BookIndex:
     if roster_labels_omitted:
         notes.append(
             f"其中这几类**一条都没给到**：{'、'.join(roster_labels_omitted)}。"
-            "要单独看某一类就再调一次，把 labels 设成比如 [\"Secret\"]。"
+            "要单独看某一类就再调一次，把 labels 设成比如 [\"Foreshadow\"]。"
         )
     if not roster_all:
         notes.append(
             (
                 f"这本书里没有 {'、'.join(sorted(wanted))} 这几类的任何条目。"
                 if wanted is not None
-                else "花名册是空的：这本书还没有**声明**过任何人物 / 地点 / 门派 / 物件 / "
-                "秘密（也可能是这个 project_id 在库里查无此项）。"
+                else "花名册是空的：这本书还没有**声明**过任何人物 / 地点 / 门派 / 物件"
+                "（也可能是这个 project_id 在库里查无此项）。"
             )
             + "**花名册是作者声明出来的，不是从正文里数出来的**——它空着不等于正文里没有"
             "这些人：正文里的角色只有被声明过才会进花名册，没进的这个引擎一无所知。"
@@ -677,7 +677,7 @@ def _resolve_characters(context: ToolContext, names: Sequence[str]) -> dict[str,
         if node.label is not NodeLabel.CHARACTER:
             raise ToolRefused(
                 f"「{resolution.surface}」不是人物（它是 {node.label}）。这个工具只查人物的"
-                "出场轴；秘密和地点不在这里问。"
+                "出场轴；地点不在这里问。"
             )
         out[node.id] = node.name
     return out

@@ -563,7 +563,7 @@ class SealSceneBriefArgs(BaseModel):
         default=(),
         description=(
             "author_choice=RETCON_NON_SAFETY 时必须点名要推翻的旧事实"
-            "（校准报告里的 item_id）。涉及知情/秘密的事实会被拒绝。"
+            "（校准报告里的 item_id）。"
         ),
     )
     inferred_tension: str = Field(
@@ -1394,9 +1394,8 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
     ToolSpec(
         name="scene_constraints",
         description=(
-            "查第 N 章不许说破哪几条秘密、哪些实体还没登场。"
-            "返回的是秘密的显示名和实体的首现章号，**不含秘密的内容**——"
-            "你不会、也不该从这里知道秘密到底是什么。"
+            "查第 N 章哪些实体还没登场。"
+            "返回的是实体的首现章号。"
         ),
         args=SceneConstraintsArgs,
         handler=_handle_scene_constraints,
@@ -1439,9 +1438,8 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
     ToolSpec(
         name="book_index",
         description=(
-            "全书目录：章标题一览 + 花名册（人物 / 地点 / 门派 / 物件 / 秘密的**显示名**）。"
+            "全书目录：章标题一览 + 花名册（人物 / 地点 / 门派 / 物件的**显示名**）。"
             "**先调这个再往下钻**，它是最便宜的一层。"
-            "秘密只有名字，任何工具都拿不到秘密的内容。"
         ),
         args=BookIndexArgs,
         handler=handle_book_index,
@@ -1594,8 +1592,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
             "摆给作者、等他下一句回复（这一轮结束），下一轮再带着他的选择来封存。"
             "没确认就封存也可以——那批指令会标成机器推演进 Writer。\n"
             "**推翻旧设定**：只有作者明确选了推翻非安全旧设定才传 "
-            "author_choice=RETCON_NON_SAFETY + retcon_fact_ids；涉及知情/秘密的"
-            "推翻会被拒绝，得先走作者侧纠错。"
+            "author_choice=RETCON_NON_SAFETY + retcon_fact_ids。"
         ),
         args=SealSceneBriefArgs,
         handler=_handle_seal_scene_brief,
