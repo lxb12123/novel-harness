@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from hashlib import sha256
 
+from ..agent.prompt_terms import message
+from ..draft.length import DraftLanguage
 from ..graph import NodeRef, StoryGraph
 from ..ids import EntityType, new_id
 from .models import (
@@ -74,6 +76,7 @@ def _resolved_surface(
     surface: str | None,
     *,
     what: str,
+    language: DraftLanguage,
 ) -> NodeRef | None:
     if surface is None:
         return None
@@ -81,8 +84,7 @@ def _resolved_surface(
     node = resolutions[0].unique_node if resolutions else None
     if node is None:
         raise SealRefused(
-            f"封存校验失败：{what}「{surface}」解析不出唯一节点，"
-            "不能作为安全参数进入 Writer 简报。"
+            message("surface_not_resolved", language, what=what, surface=surface)
         )
     return NodeRef.of(node)
 
@@ -91,6 +93,7 @@ def _safe_args(
     directive: DirectiveCandidate,
     *,
     resolved: dict[str, NodeRef],
+    language: DraftLanguage,
 ) -> tuple[SafeArg, ...]:
     """一条指令的安全参数：NodeRef 显示名或封闭码，没有自由文本。"""
     out: list[SafeArg] = []
@@ -104,7 +107,7 @@ def _safe_args(
             continue
         ref = resolved.get(surface)
         if ref is None:
-            raise SealRefused(f"封存校验失败：指令参数「{surface}」没有解析到节点。")
+            raise SealRefused(message("directive_arg_not_resolved", language, surface=surface))
         out.append(SafeArg(key=key, value=ref.name))
     return tuple(out)
 
@@ -130,6 +133,7 @@ def seal_scene_brief(
     canon_version: int,
     target_sha256: str,
     retcon_fact_ids: tuple[str, ...] = (),
+    language: DraftLanguage = DraftLanguage.ZH,
 ) -> SealedCalibration:
     """把一份 inspection 封存成 READY_FOR_DRAFT 的不可变产物。
 
@@ -139,28 +143,40 @@ def seal_scene_brief(
     """
     if inspection.sealability is not Sealability.READY_TO_SEAL:
         raise SealRefused(
-            f"这份校准报告还不能封存（{inspection.sealability.value}）："
-            "先解决确定性冲突，或让作者回答需要他决定的问题。"
+            message(
+                "not_ready_to_seal", language, status=inspection.sealability.value
+            )
         )
     if proposal.chapter != inspection.chapter:
         raise SealRefused(
-            f"提案章号 {proposal.chapter} 与校准报告章号 {inspection.chapter} 不一致。"
+            message(
+                "chapter_mismatch",
+                language,
+                proposal_chapter=proposal.chapter,
+                inspection_chapter=inspection.chapter,
+            )
         )
     if confirmation_turn is None and (
         author_turn.turn_id != inspection.author_turn_id
         or author_turn.request_sha256 != inspection.author_request_sha256
     ):
-        raise SealRefused("当前作者消息与这份校准不是同一轮，旧产物已过期，请重新校准。")
+        raise SealRefused(message("stale_calibration_turn", language))
     watermark = inspection.source_watermark
     if watermark.canon_version != canon_version:
         raise SealRefused(
-            f"图谱水位变了（校准时的 {watermark.canon_version} → 现在的 {canon_version}），"
-            "请重新校准。"
+            message(
+                "canon_version_changed",
+                language,
+                old=watermark.canon_version,
+                new=canon_version,
+            )
         )
     if watermark.target_sha256 != target_sha256:
-        raise SealRefused("目标章正文在这份校准之后变了，请重新校准。")
+        raise SealRefused(message("target_text_changed", language))
 
     # ── 解析全部 surface（seal 时重新验证，不许漏过一个）───────────────────
+    what_directive = "指令参数" if language is DraftLanguage.ZH else "directive argument"
+    what_viewpoint = "视角人物" if language is DraftLanguage.ZH else "viewpoint character"
     resolved: dict[str, NodeRef] = {}
     for directive in proposal.directive_candidates:
         for surface in (
@@ -171,11 +187,19 @@ def seal_scene_brief(
         ):
             if surface and surface not in resolved:
                 resolved[surface] = _resolved_surface(
-                    store, inspection.project_id, surface, what="指令参数"
+                    store,
+                    inspection.project_id,
+                    surface,
+                    what=what_directive,
+                    language=language,
                 )
     viewpoint_ref = (
         _resolved_surface(
-            store, inspection.project_id, proposal.viewpoint_surface, what="视角人物"
+            store,
+            inspection.project_id,
+            proposal.viewpoint_surface,
+            what=what_viewpoint,
+            language=language,
         )
         if proposal.viewpoint_surface
         else None
@@ -190,18 +214,21 @@ def seal_scene_brief(
     # 安全相关 RETCON（KNOWS/BELIEVES/秘密）必须走作者侧 Canon 纠错并重新校准。
     if author_choice is AuthorResolution.RETCON_NON_SAFETY:
         if not retcon_fact_ids:
-            raise SealRefused(
-                "选择「推翻旧设定」时必须点名要推翻的旧事实（校准报告里的 item_id）。"
-            )
+            raise SealRefused(message("retcon_needs_fact_ids", language))
         for fact_id in retcon_fact_ids:
             envelope = facts_by_id.get(fact_id)
             if envelope is None:
-                raise SealRefused(f"封存校验失败：要推翻的事实 {fact_id} 不在校准报告里。")
+                raise SealRefused(
+                    message("retcon_fact_not_in_report", language, fact_id=fact_id)
+                )
             if envelope.fact_type in SAFETY_FACT_TYPES:
                 raise SealRefused(
-                    f"事实 {fact_id} 涉及知情/秘密（{envelope.fact_type.value}），"
-                    "属于安全相关 RETCON：必须先走作者侧 Canon 声明/纠错链并重新校准，"
-                    "不能借 SceneBrief 绕过旧 Canon 的后端约束。"
+                    message(
+                        "retcon_touches_safety_fact",
+                        language,
+                        fact_id=fact_id,
+                        fact_type=envelope.fact_type.value,
+                    )
                 )
 
     continuity: list[ContinuityFact] = []
@@ -209,7 +236,7 @@ def seal_scene_brief(
         envelope = facts_by_id.get(item_id)
         if envelope is None or envelope.writer_visibility is WriterVisibility.HIDDEN:
             # seal 时重新验证可见性：报告里引用到的必须是 writer-safe 项。
-            raise SealRefused(f"封存校验失败：报告项 {item_id} 不可见或不存在。")
+            raise SealRefused(message("report_item_not_visible", language, item_id=item_id))
         continuity.append(
             ContinuityFact(
                 item_id=f"cf:{index}",
@@ -224,7 +251,7 @@ def seal_scene_brief(
     projected: list[ProjectedDirective] = []
     machine: list[MachineDirective] = []
     for index, directive in enumerate(proposal.directive_candidates):
-        args = _safe_args(directive, resolved=resolved)
+        args = _safe_args(directive, resolved=resolved, language=language)
         if directive.kind in REQUEST_DIRECTIVE_KINDS:
             projected.append(
                 ProjectedDirective(
@@ -245,16 +272,15 @@ def seal_scene_brief(
                 )
             )
         else:
-            raise SealRefused(f"指令码 {directive.kind.value} 不在封闭指令集里。")
+            raise SealRefused(
+                message("directive_kind_not_closed", language, kind=directive.kind.value)
+            )
 
     author_instructions: list[AuthorInstruction] = []
     card_hash = ""
     if author_choice is not None:
         if confirmation_turn is None or confirmation_turn.turn_id == inspection.author_turn_id:
-            raise SealRefused(
-                "作者确认必须在封存之前产生一条新的作者消息（看过任务卡之后回答）。"
-                "仅有指向模型文字的 answer ID 不算作者确认。"
-            )
+            raise SealRefused(message("author_confirmation_needs_new_turn", language))
         card, card_hash = render_author_card(
             chapter=proposal.chapter,
             proposal=proposal,
@@ -266,7 +292,7 @@ def seal_scene_brief(
         safe_args = tuple(
             arg
             for directive in proposal.directive_candidates
-            for arg in _safe_args(directive, resolved=resolved)
+            for arg in _safe_args(directive, resolved=resolved, language=language)
         )
         ref = AuthorInstructionRef(
             turn_id=confirmation_turn.turn_id,
@@ -280,7 +306,7 @@ def seal_scene_brief(
             AuthorInstruction(
                 item_id=f"auth:{index}",
                 directive_kind=directive.kind,
-                safe_args=_safe_args(directive, resolved=resolved),
+                safe_args=_safe_args(directive, resolved=resolved, language=language),
                 basis=EpistemicKind.AUTHOR_INTENT,
                 author_instruction_ref=ref,
             )

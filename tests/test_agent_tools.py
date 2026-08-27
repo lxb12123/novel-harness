@@ -406,6 +406,29 @@ def test_the_chinese_tool_declarations_are_unchanged_by_the_translation_layer() 
     assert tool_declarations(DraftLanguage.ZH) == tool_declarations()
 
 
+def test_every_rejection_message_has_both_languages_and_the_english_side_is_clean() -> None:
+    """国际化第三批下半场：`ToolRefused`/`SealRefused`/`DraftRefused` 的运行时拒绝消息，
+    和上面三条 schema/人设的守卫是同一个纪律，换到 `_MESSAGES` 这张表上。
+
+    `message()` 缺一侧翻译时会 `KeyError`——那条覆盖率已经由它自己的实现保证；这条测试
+    钉的是**存在的两侧都不许有另一半的病**：EN 模板里一个中文字都不许有，ZH/EN 都不许
+    是空串（空串会静默通过 `KeyError` 检查但产出一句空消息，等于没拒绝清楚）。
+    """
+    import re
+
+    from novel_harness.agent.prompt_terms import _MESSAGES
+    from novel_harness.draft.length import DraftLanguage
+
+    cjk = re.compile("[一-鿿　-〿＀-￯]")
+
+    for key, by_language in _MESSAGES.items():
+        for language in (DraftLanguage.ZH, DraftLanguage.EN):
+            template = by_language.get(language)
+            assert template, f"_MESSAGES[{key!r}] 缺 {language!r} 这一侧，或者是空串"
+        english = by_language[DraftLanguage.EN]
+        assert cjk.search(english) is None, f"_MESSAGES[{key!r}] 的英文模板里还有中文字符：{english!r}"
+
+
 def test_the_constraints_tool_still_tells_the_author_which_constraint(world: World) -> None:
     """**反向断言：收窄过头是同一个 bug 的另一面。**
 

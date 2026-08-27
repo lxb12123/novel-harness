@@ -47,6 +47,7 @@ from hashlib import sha256
 from time import perf_counter
 from typing import Any, Final, Literal, Protocol, runtime_checkable
 
+from ..agent.prompt_terms import message
 from ..events import EventStore
 from ..extract.call_audit import ModelCallReceipt
 from ..graph import NodeLabel
@@ -247,10 +248,9 @@ def check_request(request: ChapterDraftRequest) -> None:
     if write_rule:
         hits = [w for w in WRITE_RULE_FORBIDDEN_HINTS if w in write_rule]
         if hits:
+            language = request.length.language
             raise DraftRefused(
-                "自定义文风里不能出现这些词："
-                + " / ".join(hits)
-                + "——这几个词是引擎自己在管的事，写进文风里只会和它打架。"
+                message("write_rule_forbidden_words", language, words=" / ".join(hits))
             )
 
 

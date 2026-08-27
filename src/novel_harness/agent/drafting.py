@@ -73,6 +73,7 @@ from .candidates import DraftCandidate, DraftCandidateStore, StoredDraft
 from .loop import Cancellation, EventFn, TurnEvent, safe_emitter
 from .model import cancellable_client
 from .ports import DraftAsk, DraftProduct, LandingReport, ToolRefused
+from .prompt_terms import message
 
 AGENT_DRAFT_LENGTH: Final[LengthSpec] = DEFAULT_LENGTH_POLICY.default_for(DraftLanguage.ZH)
 """写作助手起草一章用哪一档长度：**ADR 0011 D1 那张表里的产品默认档**（中文 2,000 /
@@ -402,10 +403,7 @@ class ChapterDesk:
                 见 `AUTHOR_STOPPED_NOTE`）。
         """
         if goal is None:
-            raise ToolRefused(
-                "起草必须先 calibrate_scene + seal_scene_brief 拿到 calibration_id，"
-                "目标只从封存产物读取——直接传目标文字这条路已经关掉了。"
-            )
+            raise ToolRefused(message("goal_requires_calibration", self._length.language))
         # **`plan_call` 在这儿算，不在构造函数里算。** 放在构造里的话，一个撑不起整章
         # 起草预算的模型会让 `POST …/turn` 整个 422——聊天本来是能用的，作者只会看到
         # 「写作助手用不了」。放在这儿，坏的只有起草这一个工具，而它说得出原因。
@@ -423,8 +421,7 @@ class ChapterDesk:
             )
         except (CapabilityError, ValueError) as exc:
             raise ToolRefused(
-                f"这个模型撑不起一次整章起草（{exc}）。"
-                "让作者去顶栏「AI 设置」换一个上下文更大的模型，或者他自己在编辑器里写。"
+                message("model_cant_handle_chapter", self._length.language, exc=exc)
             ) from exc
 
         # **起草之前先记下它依据的是哪一份**（ADR 0021 那道乐观闸的另一半在
@@ -524,7 +521,8 @@ class ChapterDesk:
             # **不许让它逃出 `dispatch`**：`run_turn` 外面没有 try/except，漏出去
             # 作者看到的是一次崩溃，而不是「这一稿没写成，再试一次」。
             raise ToolRefused(
-                f"这一稿没写成，联系不上写作模型：{exc}", calls=tuple(spent)
+                message("cant_reach_writer_model", self._length.language, exc=exc),
+                calls=tuple(spent),
             ) from exc
 
         body, note = split_self_note(drafted.result.text)
@@ -533,8 +531,7 @@ class ChapterDesk:
             # `StopReason.NO_OUTPUT`）。**收进表没有意义**：一稿空白既落不了盘，
             # 也不该占一个 id 让模型以为手上有东西。钱已经花了，所以带着回执拒。
             raise ToolRefused(
-                f"第 {ask.chapter} 章这一稿是空的，写作模型什么都没写出来。"
-                "换个说法再让我写一次。",
+                message("draft_came_back_empty", self._length.language, chapter=ask.chapter),
                 calls=tuple(drafted.calls),
             )
 
@@ -580,7 +577,9 @@ class ChapterDesk:
         try:
             return cancellable_client(self._config, self._cancel, on_text)
         except ProviderError as exc:
-            raise ToolRefused(f"这一稿没写成，联系不上写作模型：{exc}") from exc
+            raise ToolRefused(
+                message("cant_reach_writer_model", self._length.language, exc=exc)
+            ) from exc
 
     def _keep(
         self,
@@ -724,10 +723,7 @@ class ChapterDesk:
     def _require(self, candidate_id: str) -> StoredDraft:
         stored = self._candidates.get(self._project_id, candidate_id)
         if stored is None:
-            raise ToolRefused(
-                "这本书里没有这一稿（编号对不上，或者它已经被清理掉了）。"
-                "重新起一稿，或者让作者说清楚他要的是哪一版。"
-            )
+            raise ToolRefused(message("no_such_draft", self._length.language))
         return stored
 
 

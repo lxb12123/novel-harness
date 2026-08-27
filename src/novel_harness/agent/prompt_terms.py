@@ -698,4 +698,441 @@ def translate_tool_declarations(
     return [_translate(declaration) for declaration in declarations]
 
 
-__all__ = ["translate_tool_declarations"]
+
+# ══════════════════════════════════════════════════════════════════════════
+# 国际化第三批（下半）：工具拒绝消息——ToolRefused/SealRefused/DraftRefused
+# ══════════════════════════════════════════════════════════════════════════
+#
+# 这些不进 `tool_declarations()`：它们是**运行时才出现**的消息，只在某个工具真的
+# 被拒时才生成一次，不是每一轮都发的稳定前缀/schema。所以不用上面那套"递归替换
+# 生成好的 JSON"的机制——这里的每一条本来就是**现算**的（`raise ToolRefused(f"...")`
+# 散落在各处的函数体里），直接用模板 + `.format()` 就够。
+#
+# ⚠️ **判据不是"意思对不对"，是"模型读完会走哪一步"**（2026-08-13 真书事故）：
+# 722 章的书给第 723 章起草，连续两次查一个花名册里没有的新角色，两次都收到同一句
+# "查无此人，或者这个叫法同时指向好几个人……换一个更具体的称呼"——而这两种情况的
+# 正确下一步相反：查无此人时**换什么叫法都没用**，指向好几个人时**换个更具体的
+# 称呼恰恰是对的**。合成一句 = 在第一种情况下引擎亲口鼓励模型再烧一步。那一轮八步
+# 全花在查询上，一稿都没写出来。`UNKNOWN_CHARACTER`/`AMBIGUOUS_CHARACTER` 这两条
+# 翻译时逐字对照过这条区分，不是逐句对意思。
+
+_MESSAGES: dict[str, dict[DraftLanguage, str]] = {
+    # ── agent/tools.py ───────────────────────────────────────────────────
+    "no_manuscript_root": {
+        DraftLanguage.ZH: "读不到这本书的正文目录，写前校准无法进行。让作者确认项目根目录已经接到工作台上。",
+        DraftLanguage.EN: (
+            "Can't reach this book's manuscript directory — pre-draft "
+            "calibration can't proceed. Have the author confirm the "
+            "project root is connected to the workbench."
+        ),
+    },
+    "chapter_not_yet_written": {
+        DraftLanguage.ZH: (
+            "第 {chapter} 章还不存在。新开一章要作者自己起章标题"
+            "（书里靠那一行认章），系统不会替他建。"
+        ),
+        DraftLanguage.EN: (
+            "Chapter {chapter} doesn't exist yet. A new chapter needs the "
+            "author to title it themselves (the book recognizes chapters "
+            "by that line) — the system will not create one on his behalf."
+        ),
+    },
+    "no_author_turn": {
+        DraftLanguage.ZH: (
+            "这一轮没有作者消息可绑定。校准必须绑定作者当前原话的"
+            "turn 标识与原话哈希——让作者先说一句他想写什么。"
+        ),
+        DraftLanguage.EN: (
+            "There is no author message to bind for this turn. "
+            "Calibration must bind the turn id and hash of the author's "
+            "actual current words — have the author say what they want "
+            "written first."
+        ),
+    },
+    "calibration_not_wired": {
+        DraftLanguage.ZH: (
+            "写前校准还没接到这个会话上（工具表已经有它，实现还没接进来）。"
+            "这一轮请改用别的方式推进。"
+        ),
+        DraftLanguage.EN: (
+            "Pre-draft calibration isn't wired into this session yet "
+            "(the tool table has it, but the implementation isn't "
+            "connected). Use a different approach to move forward this "
+            "turn."
+        ),
+    },
+    "not_a_character_state": {
+        DraftLanguage.ZH: "「{surface}」不是人物（它是 {label}），没有「处境」可查。",
+        DraftLanguage.EN: (
+            '"{surface}" is not a character (it\'s a {label}) — there is '
+            "no \"state\" to query."
+        ),
+    },
+    "track_not_wired": {
+        DraftLanguage.ZH: (
+            "轨道核对没接线（这套工作台没配核对模型）。"
+            "禁写清单和「尚未登场」照常生效，缺的只是「跟后面章节抵不抵触」这一问。"
+        ),
+        DraftLanguage.EN: (
+            "Track checking isn't wired in (this workbench has no "
+            "checking model configured). The forbidden list and "
+            '"not yet appeared" still apply as normal — the only thing '
+            "missing is the question of conflicts with later chapters."
+        ),
+    },
+    "drafting_not_wired": {
+        DraftLanguage.ZH: (
+            "起草能力还没接到这个会话上（工具表已经有它，实现还没接进来）。"
+            "这一轮请改用别的方式推进，或者让作者从界面上起草。"
+        ),
+        DraftLanguage.EN: (
+            "Drafting isn't wired into this session yet (the tool table "
+            "has it, but the implementation isn't connected). Use a "
+            "different approach this turn, or have the author draft from "
+            "the interface."
+        ),
+    },
+    "no_such_inspection": {
+        DraftLanguage.ZH: "没有这份校准报告（{inspection_id}）。先 calibrate_scene，拿到编号再封存。",
+        DraftLanguage.EN: (
+            "No such calibration report ({inspection_id}). Call "
+            "calibrate_scene first, get an id, then seal."
+        ),
+    },
+    "author_not_confirmed_yet": {
+        DraftLanguage.ZH: (
+            "作者还没有在看过任务卡之后回答。先把类型化任务卡摆给他、"
+            "等他下一句回复，再来封存；别在同一轮里替他假定答案。"
+        ),
+        DraftLanguage.EN: (
+            "The author has not yet answered after seeing the task card. "
+            "Lay the typed task card in front of them and wait for their "
+            "next reply before sealing — do not assume an answer for "
+            "them in the same turn."
+        ),
+    },
+    "no_saved_proposal": {
+        DraftLanguage.ZH: "这份校准报告没有保存提案，无法封存；请重新 calibrate_scene。",
+        DraftLanguage.EN: (
+            "This calibration report has no saved proposal and cannot be "
+            "sealed; call calibrate_scene again."
+        ),
+    },
+    "no_collapsed_result_table": {
+        DraftLanguage.ZH: "这一轮没有可取的已收起结果。",
+        DraftLanguage.EN: "There are no collapsed results to retrieve this turn.",
+    },
+    "no_such_result_id": {
+        DraftLanguage.ZH: "没有编号 {id} 的已收起结果。",
+        DraftLanguage.EN: "There is no collapsed result with id {id}.",
+    },
+    "truncated_marker": {
+        DraftLanguage.ZH: "（已截断）",
+        DraftLanguage.EN: " (truncated)",
+    },
+    "unknown_tool_name": {
+        DraftLanguage.ZH: "没有名为「{name}」的工具。可用的是：{names}。",
+        DraftLanguage.EN: 'There is no tool named "{name}". Available tools: {names}.',
+    },
+    "bad_json_arguments": {
+        DraftLanguage.ZH: "参数不是合法的 JSON（{msg}）。请把整个参数对象重发一次。",
+        DraftLanguage.EN: (
+            "Arguments are not valid JSON ({msg}). Resend the entire "
+            "arguments object."
+        ),
+    },
+    "arguments_not_an_object": {
+        DraftLanguage.ZH: "参数必须是一个 JSON 对象，比如 {{\"chapter\": 40}}。",
+        DraftLanguage.EN: 'Arguments must be a JSON object, e.g. {{"chapter": 40}}.',
+    },
+    "validation_failed_prefix": {
+        DraftLanguage.ZH: "参数不合法 —— ",
+        DraftLanguage.EN: "Invalid arguments — ",
+    },
+    "validation_whole_request": {
+        DraftLanguage.ZH: "(整体)",
+        DraftLanguage.EN: "(the whole request)",
+    },
+    # ── agent/index.py ───────────────────────────────────────────────────
+    "unknown_labels_requested": {
+        DraftLanguage.ZH: "labels 里有认不出来的类型：{unknown}。花名册只有这几类：{valid}。",
+        DraftLanguage.EN: (
+            "labels contains unrecognized types: {unknown}. The roster "
+            "only has these types: {valid}."
+        ),
+    },
+    "unknown_character": {
+        DraftLanguage.ZH: (
+            "「{surface}」这个名字，这本书的花名册里没有。**别换个说法再查一次**——"
+            "花名册是一份定死的名单（调 book_index 能看全），不在名单上的人，"
+            "换什么叫法都查不到，再查一次只是白花一步。"
+            "他要是这一场你新写的人，就当新人物直接往下写；"
+            "要是作者写过他而系统还不认得，那得作者去人物卡上补，这一轮里等不到。"
+        ),
+        DraftLanguage.EN: (
+            'The name "{surface}" is not in this book\'s roster. '
+            "**Do not try a different phrasing** — the roster is a fixed "
+            "list (call book_index to see it in full); if someone isn't "
+            "on it, no rephrasing will find them, trying again is just a "
+            "wasted step. If they're a new character you're writing into "
+            "this scene, just write them in as a new character; if the "
+            "author wrote them before and the system just doesn't "
+            "recognize them yet, that needs the author to add them on "
+            "the character card — it can't happen within this turn."
+        ),
+    },
+    "ambiguous_character": {
+        DraftLanguage.ZH: (
+            "「{surface}」这个叫法同时指向 {count} 个人"
+            "（{sample}{more}）。"
+            "**这一种换个说法是有用的**：挑其中一个的名字再查一次，或者用一个更具体的称呼。"
+        ),
+        DraftLanguage.EN: (
+            'The name "{surface}" points to {count} different people at '
+            "once ({sample}{more}). "
+            "**In this case, trying a different phrasing does help**: "
+            "query again with one of their names, or use a more specific "
+            "reference."
+        ),
+    },
+    "not_a_character_axis": {
+        DraftLanguage.ZH: "「{surface}」不是人物（它是 {label}）。这个工具只查人物的出场轴；地点不在这里问。",
+        DraftLanguage.EN: (
+            '"{surface}" is not a character (it\'s a {label}). This tool '
+            "only queries characters' appearance axis — locations aren't "
+            "queried here."
+        ),
+    },
+    "summaries_not_wired": {
+        DraftLanguage.ZH: (
+            "章节摘要的读端还没接到这个会话上（工具表已经有它，实现还在 HTTP 路由里）。"
+            "这一轮请改用 chapter_text 直接读正文，或者让作者从界面上看。"
+        ),
+        DraftLanguage.EN: (
+            "The chapter-summary read endpoint isn't wired into this "
+            "session yet (the tool table has it, but the implementation "
+            "is still only in the HTTP route). Use chapter_text to read "
+            "the prose directly this turn, or have the author look from "
+            "the interface."
+        ),
+    },
+    "no_manuscript_root_for_text": {
+        DraftLanguage.ZH: (
+            "读不到项目目录，正文取不出来 —— 正文的真相源是磁盘上的 chapters/NNNN.md，"
+            "数据库里那份只是派生索引（ADR 0007）。"
+        ),
+        DraftLanguage.EN: (
+            "Can't reach the project directory, so the prose can't be "
+            "retrieved — the source of truth for prose is "
+            "chapters/NNNN.md on disk; the copy in the database is only "
+            "a derived index (ADR 0007)."
+        ),
+    },
+    "chapter_text_missing_on_disk": {
+        DraftLanguage.ZH: (
+            "第 {chapter} 章在磁盘上没有正文（{relative} 不存在）——"
+            "作者还没写到那儿，或者那一章不在这个项目里。"
+        ),
+        DraftLanguage.EN: (
+            "Chapter {chapter} has no prose on disk ({relative} doesn't "
+            "exist) — either the author hasn't written that far yet, or "
+            "that chapter isn't in this project."
+        ),
+    },
+    "already_missed": {
+        DraftLanguage.ZH: (
+            "\n**这一轮你已经撞上 {count} 个花名册外的名字**（{names}）。"
+            "这几次查询一个字的结果都没换来，而这一轮的步数是有限的——**别再查人了**，"
+            "用手上已经有的东西往下写。"
+        ),
+        DraftLanguage.EN: (
+            "\n**You've hit {count} names outside the roster this turn** "
+            "({names}). These queries haven't gotten you a single word "
+            "of result, and this turn's steps are limited — **stop "
+            "looking people up**, keep writing with what you already "
+            "have."
+        ),
+    },
+    # ── agent/drafting.py ────────────────────────────────────────────────
+    "goal_requires_calibration": {
+        DraftLanguage.ZH: (
+            "起草必须先 calibrate_scene + seal_scene_brief 拿到 calibration_id，"
+            "目标只从封存产物读取——直接传目标文字这条路已经关掉了。"
+        ),
+        DraftLanguage.EN: (
+            "Drafting requires calibrate_scene + seal_scene_brief first "
+            "to get a calibration_id — the goal is read only from the "
+            "sealed artifact; passing goal text directly is no longer "
+            "possible."
+        ),
+    },
+    "model_cant_handle_chapter": {
+        DraftLanguage.ZH: (
+            "这个模型撑不起一次整章起草（{exc}）。"
+            "让作者去顶栏「AI 设置」换一个上下文更大的模型，或者他自己在编辑器里写。"
+        ),
+        DraftLanguage.EN: (
+            "This model can't handle a full chapter draft ({exc}). Have "
+            "the author switch to a model with a larger context window "
+            'in the top bar\'s "AI Settings," or write it themselves in '
+            "the editor."
+        ),
+    },
+    "cant_reach_writer_model": {
+        DraftLanguage.ZH: "这一稿没写成，联系不上写作模型：{exc}",
+        DraftLanguage.EN: "This draft didn't get written — can't reach the writing model: {exc}",
+    },
+    "draft_came_back_empty": {
+        DraftLanguage.ZH: (
+            "第 {chapter} 章这一稿是空的，写作模型什么都没写出来。"
+            "换个说法再让我写一次。"
+        ),
+        DraftLanguage.EN: (
+            "This draft of chapter {chapter} came back empty — the "
+            "writing model produced nothing. Rephrase and ask me to "
+            "write it again."
+        ),
+    },
+    "no_such_draft": {
+        DraftLanguage.ZH: (
+            "这本书里没有这一稿（编号对不上，或者它已经被清理掉了）。"
+            "重新起一稿，或者让作者说清楚他要的是哪一版。"
+        ),
+        DraftLanguage.EN: (
+            "This book has no such draft (the id doesn't match, or it's "
+            "already been cleaned up). Start a new draft, or have the "
+            "author say clearly which version they want."
+        ),
+    },
+    # ── calibration/seal.py ──────────────────────────────────────────────
+    "surface_not_resolved": {
+        DraftLanguage.ZH: "封存校验失败：{what}「{surface}」解析不出唯一节点，不能作为安全参数进入 Writer 简报。",
+        DraftLanguage.EN: (
+            'Sealing validation failed: {what} "{surface}" does not '
+            "resolve to a unique node, and cannot enter the Writer brief "
+            "as a safe argument."
+        ),
+    },
+    "directive_arg_not_resolved": {
+        DraftLanguage.ZH: "封存校验失败：指令参数「{surface}」没有解析到节点。",
+        DraftLanguage.EN: (
+            'Sealing validation failed: directive argument "{surface}" '
+            "did not resolve to a node."
+        ),
+    },
+    "not_ready_to_seal": {
+        DraftLanguage.ZH: (
+            "这份校准报告还不能封存（{status}）："
+            "先解决确定性冲突，或让作者回答需要他决定的问题。"
+        ),
+        DraftLanguage.EN: (
+            "This calibration report cannot be sealed yet ({status}): "
+            "resolve the deterministic conflicts first, or have the "
+            "author answer the question that needs their decision."
+        ),
+    },
+    "chapter_mismatch": {
+        DraftLanguage.ZH: "提案章号 {proposal_chapter} 与校准报告章号 {inspection_chapter} 不一致。",
+        DraftLanguage.EN: (
+            "Proposal chapter {proposal_chapter} does not match "
+            "calibration report chapter {inspection_chapter}."
+        ),
+    },
+    "stale_calibration_turn": {
+        DraftLanguage.ZH: "当前作者消息与这份校准不是同一轮，旧产物已过期，请重新校准。",
+        DraftLanguage.EN: (
+            "The current author message is not from the same turn as "
+            "this calibration; the old artifact has expired — calibrate "
+            "again."
+        ),
+    },
+    "canon_version_changed": {
+        DraftLanguage.ZH: "图谱水位变了（校准时的 {old} → 现在的 {new}），请重新校准。",
+        DraftLanguage.EN: (
+            "The graph watermark has changed (from {old} at calibration "
+            "time to {new} now) — calibrate again."
+        ),
+    },
+    "target_text_changed": {
+        DraftLanguage.ZH: "目标章正文在这份校准之后变了，请重新校准。",
+        DraftLanguage.EN: (
+            "The target chapter's prose changed after this calibration "
+            "— calibrate again."
+        ),
+    },
+    "retcon_needs_fact_ids": {
+        DraftLanguage.ZH: "选择「推翻旧设定」时必须点名要推翻的旧事实（校准报告里的 item_id）。",
+        DraftLanguage.EN: (
+            'Choosing "overturn an existing setting" requires naming '
+            "which existing facts are being overturned (item_ids from "
+            "the calibration report)."
+        ),
+    },
+    "retcon_fact_not_in_report": {
+        DraftLanguage.ZH: "封存校验失败：要推翻的事实 {fact_id} 不在校准报告里。",
+        DraftLanguage.EN: (
+            "Sealing validation failed: the fact being overturned "
+            "{fact_id} is not in the calibration report."
+        ),
+    },
+    "retcon_touches_safety_fact": {
+        DraftLanguage.ZH: (
+            "事实 {fact_id} 涉及知情/秘密（{fact_type}），"
+            "属于安全相关 RETCON：必须先走作者侧 Canon 声明/纠错链并重新校准，"
+            "不能借 SceneBrief 绕过旧 Canon 的后端约束。"
+        ),
+        DraftLanguage.EN: (
+            "Fact {fact_id} involves knowledge/secrecy ({fact_type}) and "
+            "is a safety-related RETCON: it must go through the "
+            "author-side Canon declaration/correction chain and be "
+            "recalibrated first — it cannot bypass the backend's "
+            "existing Canon constraints via SceneBrief."
+        ),
+    },
+    "report_item_not_visible": {
+        DraftLanguage.ZH: "封存校验失败：报告项 {item_id} 不可见或不存在。",
+        DraftLanguage.EN: (
+            "Sealing validation failed: report item {item_id} is not "
+            "visible or does not exist."
+        ),
+    },
+    "directive_kind_not_closed": {
+        DraftLanguage.ZH: "指令码 {kind} 不在封闭指令集里。",
+        DraftLanguage.EN: "Directive code {kind} is not in the closed directive set.",
+    },
+    "author_confirmation_needs_new_turn": {
+        DraftLanguage.ZH: (
+            "作者确认必须在封存之前产生一条新的作者消息（看过任务卡之后回答）。"
+            "仅有指向模型文字的 answer ID 不算作者确认。"
+        ),
+        DraftLanguage.EN: (
+            "Author confirmation requires a new author message before "
+            "sealing (a reply after seeing the task card). An answer id "
+            "pointing only at the model's own text does not count as "
+            "author confirmation."
+        ),
+    },
+    # ── draft/product_draft.py ───────────────────────────────────────────
+    "write_rule_forbidden_words": {
+        DraftLanguage.ZH: (
+            "自定义文风里不能出现这些词：{words}"
+            "——这几个词是引擎自己在管的事，写进文风里只会和它打架。"
+        ),
+        DraftLanguage.EN: (
+            "A custom writing style may not contain these words: {words}"
+            " — the engine already manages these on its own; writing "
+            "them into the style will only fight it."
+        ),
+    },
+}
+
+
+def message(key: str, language: DraftLanguage, **kwargs: object) -> str:
+    """按语言取一条运行时消息，用 `kwargs` 填模板。缺一侧翻译时 `KeyError`——
+    和 `translate_tool_declarations` 同一个纪律：宁可当场报错，也不让一句中文
+    漏进英文书的对话历史（对话是持久化的，漏一次改代码删不掉）。
+    """
+    return _MESSAGES[key][language].format(**kwargs)
+
+
+__all__ = ["message", "translate_tool_declarations"]

@@ -94,6 +94,7 @@ from ..panel.constraints import forbidden_entities
 from ..text import paragraphs as split_paragraphs
 from ..text.mentions import compile_alternation, find_mentions
 from .ports import ToolContext, ToolRefused
+from .prompt_terms import message
 
 _LANGUAGE: Final = DraftLanguage.ZH
 """预算的计数口径。**中文按非空白字符数**（`draft/length.py` 是全库唯一定义）。
@@ -401,9 +402,14 @@ def handle_book_index(args: BookIndexArgs, context: ToolContext) -> BookIndex:
     if args.labels is not None:
         unknown = sorted(set(args.labels) - _ROSTER_LABELS)
         if unknown:
+            list_separator = "、" if context.language is DraftLanguage.ZH else ", "
             raise ToolRefused(
-                f"labels 里有认不出来的类型：{'、'.join(unknown)}。"
-                f"花名册只有这几类：{'、'.join(sorted(_ROSTER_LABELS))}。"
+                message(
+                    "unknown_labels_requested",
+                    context.language,
+                    unknown=list_separator.join(unknown),
+                    valid=list_separator.join(sorted(_ROSTER_LABELS)),
+                )
             )
         wanted = frozenset(args.labels)
 
@@ -618,14 +624,8 @@ class UnknownCharacter(ToolRefused):
     那就是拿字符串当协议，改一次措辞它就静默失效。
     """
 
-    def __init__(self, surface: str) -> None:
-        super().__init__(
-            f"「{surface}」这个名字，这本书的花名册里没有。**别换个说法再查一次**——"
-            "花名册是一份定死的名单（调 book_index 能看全），不在名单上的人，"
-            "换什么叫法都查不到，再查一次只是白花一步。"
-            "他要是这一场你新写的人，就当新人物直接往下写；"
-            "要是作者写过他而系统还不认得，那得作者去人物卡上补，这一轮里等不到。"
-        )
+    def __init__(self, surface: str, language: DraftLanguage = DraftLanguage.ZH) -> None:
+        super().__init__(message("unknown_character", language, surface=surface))
         self.surface = surface
         """模型填进来的那个称呼。**它只用来计数和复述，不参与任何查询。**"""
 
@@ -640,7 +640,9 @@ _AMBIGUOUS_SAMPLE: Final = 5
 两处的「候选」是同一批人，但一处是说给模型听的措辞、另一处是禁令的依据。"""
 
 
-def resolve_one(surface: str, resolution: Resolution | None) -> Node:
+def resolve_one(
+    surface: str, resolution: Resolution | None, language: DraftLanguage = DraftLanguage.ZH
+) -> Node:
     """一个称呼 → 唯一那个节点。**解析不出就拒，绝不替作者猜一个。**
 
     `resolution=None` = 图层对这个称呼一行都没返回，和 `hits` 为空是同一件事
@@ -652,20 +654,33 @@ def resolve_one(surface: str, resolution: Resolution | None) -> Node:
     合并成一句就得说一句对两边都不够准的话。共用的只有上面那两种，它们的措辞与工具无关。
     """
     if resolution is None or not resolution.hits:
-        raise UnknownCharacter(surface)
+        raise UnknownCharacter(surface, language)
     node = resolution.unique_node
     if node is None:
         names = [hit.node.name for hit in resolution.hits[:_AMBIGUOUS_SAMPLE]]
         more = len(resolution.hits) - len(names)
+        list_separator = "、" if language is DraftLanguage.ZH else ", "
+        more_suffix = (
+            (f"…… 等 {more} 个" if language is DraftLanguage.ZH else f", and {more} more")
+            if more
+            else ""
+        )
         raise ToolRefused(
-            f"「{surface}」这个叫法同时指向 {len(resolution.hits)} 个人"
-            f"（{'、'.join(names)}{f'…… 等 {more} 个' if more else ''}）。"
-            "**这一种换个说法是有用的**：挑其中一个的名字再查一次，或者用一个更具体的称呼。"
+            message(
+                "ambiguous_character",
+                language,
+                surface=surface,
+                count=len(resolution.hits),
+                sample=list_separator.join(names),
+                more=more_suffix,
+            )
         )
     return node
 
 
-def _resolve_characters(context: ToolContext, names: Sequence[str]) -> dict[str, str]:
+def _resolve_characters(
+    context: ToolContext, names: Sequence[str]
+) -> dict[str, str]:
     """称呼 → `{node_id: 正式名}`。解析不出唯一人物就拒，**绝不替作者猜一个**。
 
     **一次 `resolve` 收全部名字**（不是一个一个查）：这一层每多一次库往返都是作者在等，
@@ -673,11 +688,15 @@ def _resolve_characters(context: ToolContext, names: Sequence[str]) -> dict[str,
     """
     out: dict[str, str] = {}
     for resolution in context.store.resolve(context.project_id, list(names)):
-        node = resolve_one(resolution.surface, resolution)
+        node = resolve_one(resolution.surface, resolution, context.language)
         if node.label is not NodeLabel.CHARACTER:
             raise ToolRefused(
-                f"「{resolution.surface}」不是人物（它是 {node.label}）。这个工具只查人物的"
-                "出场轴；地点不在这里问。"
+                message(
+                    "not_a_character_axis",
+                    context.language,
+                    surface=resolution.surface,
+                    label=node.label,
+                )
             )
         out[node.id] = node.name
     return out
@@ -984,10 +1003,7 @@ def handle_chapter_summaries(
     args: ChapterSummariesArgs, context: ToolContext
 ) -> ChapterSummaries:
     if context.summaries is None:
-        raise ToolRefused(
-            "章节摘要的读端还没接到这个会话上（工具表已经有它，实现还在 HTTP 路由里）。"
-            "这一轮请改用 chapter_text 直接读正文，或者让作者从界面上看。"
-        )
+        raise ToolRefused(message("summaries_not_wired", context.language))
     budget = context.return_units
     catalog = _catalog(context)
     # **区间上界是模型填的，而 `coverage()` 会为区间里的每一章物化一行。**
@@ -1167,16 +1183,17 @@ def _truncate_units(text: str, budget: int) -> tuple[str, bool]:
 
 def handle_chapter_text(args: ChapterTextArgs, context: ToolContext) -> ChapterFullText:
     if context.root_path is None:
-        raise ToolRefused(
-            "读不到项目目录，正文取不出来 —— 正文的真相源是磁盘上的 chapters/NNNN.md，"
-            "数据库里那份只是派生索引（ADR 0007）。"
-        )
+        raise ToolRefused(message("no_manuscript_root_for_text", context.language))
     relative = chapter_path(args.chapter)
     file = Path(context.root_path) / relative
     if not file.is_file():
         raise ToolRefused(
-            f"第 {args.chapter} 章在磁盘上没有正文（{relative} 不存在）——"
-            "作者还没写到那儿，或者那一章不在这个项目里。"
+            message(
+                "chapter_text_missing_on_disk",
+                context.language,
+                chapter=args.chapter,
+                relative=relative,
+            )
         )
     text = file.read_text(encoding="utf-8-sig")
     given, truncated = _truncate_units(text, context.return_units)

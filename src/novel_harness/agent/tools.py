@@ -227,7 +227,7 @@ from ..calibration.models import (
 from ..calibration.seal import SealRefused, seal_scene_brief
 from ..calibration.store import CalibrationNotFound, CalibrationRefused, CalibrationStore
 from ..calibration.handoff import build_retcon_handoff
-from .prompt_terms import translate_tool_declarations
+from .prompt_terms import message, translate_tool_declarations
 from .index import (
     BookIndexArgs,
     ChapterFullText,
@@ -939,15 +939,11 @@ def _scene_context(context: ToolContext, chapter: int) -> DraftContext:
 def _target_snapshot(context: ToolContext, chapter: int) -> TargetChapterSnapshot:
     """一次读取目标章当前正文（磁盘）+ 哈希。**全链唯一的一次读。**"""
     if context.root_path is None:
-        raise ToolRefused(
-            "读不到这本书的正文目录，写前校准无法进行。"
-            "让作者确认项目根目录已经接到工作台上。"
-        )
+        raise ToolRefused(message("no_manuscript_root", context.language))
     text = read_chapter(Path(context.root_path), chapter)
     if text is None:
         raise ToolRefused(
-            f"第 {chapter} 章还不存在。新开一章要作者自己起章标题"
-            "（书里靠那一行认章），系统不会替他建。"
+            message("chapter_not_yet_written", context.language, chapter=chapter)
         )
     return TargetChapterSnapshot(
         chapter=chapter,
@@ -958,19 +954,13 @@ def _target_snapshot(context: ToolContext, chapter: int) -> TargetChapterSnapsho
 
 def _require_author_turn(context: ToolContext) -> AuthorTurnRef:
     if context.author_turn is None:
-        raise ToolRefused(
-            "这一轮没有作者消息可绑定。校准必须绑定作者当前原话的"
-            "turn 标识与原话哈希——让作者先说一句他想写什么。"
-        )
+        raise ToolRefused(message("no_author_turn", context.language))
     return context.author_turn
 
 
 def _require_calibrations(context: ToolContext) -> CalibrationStore:
     if context.calibrations is None:
-        raise ToolRefused(
-            "写前校准还没接到这个会话上（工具表已经有它，实现还没接进来）。"
-            "这一轮请改用别的方式推进。"
-        )
+        raise ToolRefused(message("calibration_not_wired", context.language))
     return context.calibrations
 
 
@@ -1008,11 +998,18 @@ def _handle_character_state(
     # **「查不到」和「说法不对」在这儿分成两句话**（`index.UnknownCharacter` 写着实测）：
     # 合成一句「换个说法再试」等于由引擎亲口鼓励它去烧下一步，而花名册里没有的名字
     # 换什么叫法都还是没有。判据是 `len(hits)`，一个集合判断。
-    node = resolve_one(args.character, resolutions[0] if resolutions else None)
+    node = resolve_one(args.character, resolutions[0] if resolutions else None, context.language)
     if node.label is not NodeLabel.CHARACTER:
         # 集合判断，不是语义判断：秘密 / 地点 / 物件也在花名册里，拿它们去查「状态」
         # 会返回一份看起来正常、实际上没有意义的快照（秘密没有处境）。
-        raise ToolRefused(f"「{args.character}」不是人物（它是 {node.label}），没有「处境」可查。")
+        raise ToolRefused(
+            message(
+                "not_a_character_state",
+                context.language,
+                surface=args.character,
+                label=node.label,
+            )
+        )
 
     snapshot = _state_at(context.store, context.project_id, node.id, args.chapter)
     return CharacterStateResult(
@@ -1077,18 +1074,12 @@ def _handle_check_track(args: CheckTrackArgs, context: ToolContext) -> TrackVerd
     第 2 章的模型看，等于把伏笔亲手告诉它。
     """
     if context.track_check is None:
-        raise ToolRefused(
-            "轨道核对没接线（这套工作台没配核对模型）。"
-            "禁写清单和「尚未登场」照常生效，缺的只是「跟后面章节抵不抵触」这一问。"
-        )
+        raise ToolRefused(message("track_not_wired", context.language))
     return context.track_check(args.chapter)
 def _desk(context: ToolContext) -> DraftDesk:
     """起草那一摊，或者一句「没接线」。**不假装写了一稿。**"""
     if context.drafter is None:
-        raise ToolRefused(
-            "起草能力还没接到这个会话上（工具表已经有它，实现还没接进来）。"
-            "这一轮请改用别的方式推进，或者让作者从界面上起草。"
-        )
+        raise ToolRefused(message("drafting_not_wired", context.language))
     return context.drafter
 
 
@@ -1169,21 +1160,19 @@ def _handle_seal_scene_brief(
         inspection = calibrations.get_inspection(context.project_id, args.inspection_id)
         if inspection is None:
             raise ToolRefused(
-                f"没有这份校准报告（{args.inspection_id}）。"
-                "先 calibrate_scene，拿到编号再封存。"
+                message(
+                    "no_such_inspection", context.language, inspection_id=args.inspection_id
+                )
             )
         snapshot = _target_snapshot(context, inspection.chapter)
         canon_version = context.store.canon_version(context.project_id)
         confirmation = None
         if args.author_choice is not None:
             if author_turn.turn_id == inspection.author_turn_id:
-                raise ToolRefused(
-                    "作者还没有在看过任务卡之后回答。先把类型化任务卡摆给他、"
-                    "等他下一句回复，再来封存；别在同一轮里替他假定答案。"
-                )
+                raise ToolRefused(message("author_not_confirmed_yet", context.language))
             confirmation = author_turn
         if inspection.proposal is None:
-            raise ToolRefused("这份校准报告没有保存提案，无法封存；请重新 calibrate_scene。")
+            raise ToolRefused(message("no_saved_proposal", context.language))
         try:
             sealed = seal_scene_brief(
                 store=context.store,
@@ -1195,6 +1184,7 @@ def _handle_seal_scene_brief(
                 canon_version=canon_version,
                 target_sha256=snapshot.sha256,
                 retcon_fact_ids=args.retcon_fact_ids,
+                language=context.language,
             )
         except SealRefused as exc:
             raise ToolRefused(str(exc)) from exc
@@ -1327,12 +1317,12 @@ def _handle_get_result(
     """
     table = blocks if args.kind == "block" else stored
     if table is None:
-        raise ToolRefused("这一轮没有可取的已收起结果。")
+        raise ToolRefused(message("no_collapsed_result_table", context.language))
     content = table.get(args.id)
     if content is None:
-        raise ToolRefused(f"没有编号 {args.id} 的已收起结果。")
+        raise ToolRefused(message("no_such_result_id", context.language, id=args.id))
     if args.max_units is not None and len(content) > args.max_units:
-        content = content[: args.max_units] + "（已截断）"
+        content = content[: args.max_units] + message("truncated_marker", context.language)
     return StoredResult(
         id=args.id,
         content=content,
@@ -1342,7 +1332,7 @@ def _handle_get_result(
 
 def _get_result_without_store(args: GetResultArgs, context: ToolContext) -> BaseModel:
     """防御：正常链路永远走 `dispatch` 的 `get_result` 分支；这条只防绕过了那道闸的调用。"""
-    raise ToolRefused("这一轮没有可取的已收起结果。")
+    raise ToolRefused(message("no_collapsed_result_table", context.language))
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1752,7 +1742,7 @@ class TurnMemo:
             return tuple(self._unknown)
 
 
-def _already_missed(names: Sequence[str]) -> str:
+def _already_missed(names: Sequence[str], language: DraftLanguage) -> str:
     """撞空过的那几个摆给模型看。**这是一句集合的复述，不是一句评价。**
 
     第一次撞空不说这句（`len < 2`）：那一次它还不知道这本书的花名册有多严，
@@ -1764,10 +1754,9 @@ def _already_missed(names: Sequence[str]) -> str:
         return ""
     # 说的是**几个名字**不是几次：同一个名字查两遍在集合里只算一个，而这句话要是说
     # 「撞了 2 次」就成了一句可以被人指出来是错的话——这一层的每一句都得经得起对账。
-    return (
-        f"\n**这一轮你已经撞上 {len(names)} 个花名册外的名字**（{'、'.join(names)}）。"
-        "这几次查询一个字的结果都没换来，而这一轮的步数是有限的——**别再查人了**，"
-        "用手上已经有的东西往下写。"
+    separator = "、" if language is DraftLanguage.ZH else ", "
+    return message(
+        "already_missed", language, count=len(names), names=separator.join(names)
     )
 
 
@@ -1853,17 +1842,23 @@ def _remembered_rule(payload: BaseModel) -> RememberedRule | None:
     return RememberedRule(rule=payload.rule, chapter=payload.chapter, until=payload.until)
 
 
-def _validation_message(exc: ValidationError) -> str:
+def _validation_message(exc: ValidationError, language: DraftLanguage) -> str:
     """把 pydantic 的报错压成一句模型读得懂的话。**只带字段名和原因，不回显入参。**
 
     回显入参在别处是好心（看得见自己填错了什么），在这里是一条把任意字符串搬进
     对话历史的通路——而对话历史正是这个模块全部小心翼翼在保护的地方。
+
+    `err['msg']` 是 pydantic 自己生成的（英文），两侧语言都原样带过——不翻译它，
+    翻译了反而在中文书里造出一句中英夹杂的话。这一层只翻自己写的那半：字段定位
+    的兜底文案和"参数不合法"那句前缀。
     """
+    whole = message("validation_whole_request", language)
     parts = [
-        f"{'.'.join(str(x) for x in err['loc']) or '(整体)'}: {err['msg']}"
+        f"{'.'.join(str(x) for x in err['loc']) or whole}: {err['msg']}"
         for err in exc.errors()
     ]
-    return "参数不合法 —— " + "；".join(parts)
+    separator = "；" if language is DraftLanguage.ZH else "; "
+    return message("validation_failed_prefix", language) + separator.join(parts)
 
 
 def dispatch(
@@ -1900,22 +1895,30 @@ def dispatch(
     """
     spec = TOOLS.get(call.name)
     if spec is None:
+        list_separator = "、" if context.language is DraftLanguage.ZH else ", "
         return _refused(
             call,
-            f"没有名为「{call.name}」的工具。可用的是：{'、'.join(sorted(TOOL_NAMES))}。",
+            message(
+                "unknown_tool_name",
+                context.language,
+                name=call.name,
+                names=list_separator.join(sorted(TOOL_NAMES)),
+            ),
         )
 
     try:
         raw = json.loads(call.arguments or "{}")
     except json.JSONDecodeError as exc:
-        return _refused(call, f"参数不是合法的 JSON（{exc.msg}）。请把整个参数对象重发一次。")
+        return _refused(
+            call, message("bad_json_arguments", context.language, msg=exc.msg)
+        )
     if not isinstance(raw, dict):
-        return _refused(call, "参数必须是一个 JSON 对象，比如 {\"chapter\": 40}。")
+        return _refused(call, message("arguments_not_an_object", context.language))
 
     try:
         args = spec.args.model_validate(raw)
     except ValidationError as exc:
-        return _refused(call, _validation_message(exc))
+        return _refused(call, _validation_message(exc, context.language))
 
     # 章号在校验之后才作数：没过校验的参数里那个数是模型随手写的，拿它去绑投影
     # 等于让一次失败的调用替 loop 决定「这条属于第几章」。
@@ -1935,10 +1938,10 @@ def dispatch(
         #
         # 记在这儿而不是记在 handler 里，是因为**「这一轮」这个范围只有派发这一层知道**：
         # handler 是纯函数，`ToolContext` 上没有轮次（也不该有，见 `TurnMemo`）。
-        message = str(exc)
+        reply_text = str(exc)
         if memo is not None:
-            message += _already_missed(memo.note_unknown(exc.surface))
-        return _refused(call, message, chapter)
+            reply_text += _already_missed(memo.note_unknown(exc.surface), context.language)
+        return _refused(call, reply_text, chapter)
     except ToolRefused as exc:
         # **拒绝也可能是花过钱的**（`ToolRefused.calls`）：起草的第一次调用答上来了、
         # 续写那次断线，这一档拒得对，但那笔钱得跟着回执一起交出去。
