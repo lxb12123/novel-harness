@@ -332,6 +332,30 @@ def test_no_tool_surface_ever_carries_secret_content(world: World) -> None:
     )
 
 
+def test_no_tool_schema_still_talks_about_secrets() -> None:
+    """秘密 2026-08-24 就整个删了（ADR 0039），可 schema 里还在说这套话就是**每一轮都在
+    骗模型**——不是过期注释。人设里那条「0 不等于没有」的规矩会让模型把「秘密相关字段是
+    空的」读成「有秘密，只是我没查到」，然后多绕几轮或者写得畏手畏脚。
+
+    判据是**机械**的，不是肉眼分类：把每个工具真正发出去的声明（name + description +
+    parameters，`tool_declarations()` 的原样输出）序列化成一整块 JSON 再 grep。
+
+    2026-08-27 这条曾经漏过一次：`BookIndexArgs.labels` 的 `Field(description=...)`
+    里还留着 `Secret`，肉眼按「docstring 还是 description=」分类时把它当成了给开发者看的
+    文档。**入参模型的类 docstring 和每个 `Field(description=...)` 都会原样进
+    `model_json_schema()`**——那份表看起来像注释，实际是发给模型的 schema。出参模型
+    （`RosterEntry` 一类）的 docstring 才真的不进（`tool_declarations()` 只序列化
+    `spec.args`，从不序列化返回类型）。
+    """
+    for declaration in tool_declarations():
+        blob = json.dumps(declaration, ensure_ascii=False)
+        for needle in ("秘密", "Secret"):
+            assert needle not in blob, (
+                f"{declaration['function']['name']!r} 的 schema 里还有 {needle!r}，"
+                f"而秘密整套已经下线：\n{blob}"
+            )
+
+
 def test_the_constraints_tool_still_tells_the_author_which_constraint(world: World) -> None:
     """**反向断言：收窄过头是同一个 bug 的另一面。**
 

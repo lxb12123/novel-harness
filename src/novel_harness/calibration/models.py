@@ -183,7 +183,7 @@ class SceneProposal(BaseModel):
 
     **没有 goal / task / event 自由文本字段**：模型只能提交封闭指令码、安全引用和
     固定 `AGENT_INFERRED`；不能提交任务散文、event beat 散文、`must_not_reveal`、
-    `forbidden_entities`、秘密正文、Canon 写入或章号有效期字段。
+    `forbidden_entities`、Canon 写入或章号有效期字段。
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -200,7 +200,7 @@ class SceneProposal(BaseModel):
         default=(),
         description=(
             "封闭指令候选：只能从 ENTER_LOCATION / SEARCH_FOR / TEST_CHARACTER / "
-            "DEFER_REVEAL / ADVANCE_CLUE 里选，参数只能引用花名册上的人物/地点/物件/秘密"
+            "DEFER_REVEAL / ADVANCE_CLUE 里选，参数只能引用花名册上的人物/地点/物件"
             "显示名。不要在这里写任务散文或事件概括。"
         ),
     )

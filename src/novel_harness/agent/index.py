@@ -273,7 +273,7 @@ class BookIndexArgs(BaseModel):
     labels: list[str] | None = Field(
         default=None,
         description=(
-            "只列这几类花名册条目（Character / Location / Faction / Secret / "
+            "只列这几类花名册条目（Character / Location / Faction / "
             "Foreshadow / Object），默认全给。花名册太长被裁掉整整一类时，"
             "用它把那一类单独拉回来。"
         ),
