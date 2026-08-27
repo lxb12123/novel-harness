@@ -7,11 +7,18 @@
 （ADR 0039 / `docs/EVAL_PROTOCOL_RETIREMENT.md`）。
 
 **留下的是造库那一半**，因为 `synth/m3_replay.py` 要在它造出来的 `gate.db` 上跑
-R2/R3 的误报门槛（`docs/M3_GATE_PROTOCOL.md`），而那张卷子**零秘密**——
+R3 的误报门槛（`docs/M3_GATE_PROTOCOL.md`），而那张卷子**零秘密**——
 M3_GATE_PROTOCOL.md 自己写着「KNOWS 类知识越界不在本门槛内」。
 
 删掉的：`SecretSpec` / `KnowsSpec` / `BelievesSpec` / `BookletTrap` /
 `GroundTruthTrap` / `GroundTruth` / `_derive` / tell 别名那一步 / `--out` 这个参数。
+
+⚠️ **2026-08-27：`FutureSpec`（`[[future]]`）也删了。** R2 FUTURE_LEAK 产品下线
+（ADR 0040），M3 门槛只剩 R3（修正案 1），而 `FutureSpec` 存在的唯一理由是给 R2
+一份**真写进图里**（不靠 overlay）的「非角色节点 + 未来首现章」——R3 不读非角色
+节点的 first_appears_chapter，这份能力从此没有消费者。`EntitySpec` 留着：它代表
+的 5 个 Foreshadow 节点原本是 M2 KNOWS 的替身（ADR 0039），和 R2 的关系只是
+「顺手也被 R2 拿来试过火」，不是为 R2 而生，删 R2 不动它。
 
 ── 它为什么不在 `src/` 里 ────────────────────────────────────────────────
 
@@ -39,7 +46,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from novel_harness import project
 from novel_harness.db import connect, migrate
 from novel_harness.declare import Ledger
-from novel_harness.graph import NodeLabel, NodeProps
+from novel_harness.graph import NodeLabel
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.importer import import_book
 
@@ -93,11 +100,13 @@ class EntitySpec(BaseModel):
     `first_appears` 里有 5 个名字（血脉秘密 / 玄铁令下落 / 沈孤鸿之死 / 顾清音真身 /
     裴景之谋）原来是 `Secret` 节点，秘密下线之后它们建不出来，25 题当场只剩 12 题。
 
-    **它们必须落在这一节而不是 `[[future]]`**：`m3_replay.py` 的干净正文抽查
-    写着「不叠加 overlay，用真库」——首现章由 overlay 在读的时候补上，库里那一格
-    是空的。写进库就等于给真库也补上了首现章，于是 R2 会在 `booklet.txt` 的**合法**
-    正文上开 7 枪（那几个别名在首现章之前本来就出现过——那是 tell 的原始设计），
-    `clean_prose_issues` 从 0 变 7，门槛不过。**卷子一个字节没改，只是节点放回去了。**
+    ⚠️ **2026-08-27：R2 FUTURE_LEAK 产品下线（ADR 0040），M3 门槛只剩 R3。**
+    这一节原本「不带首现章」是为了不让 R2 在合法正文上开火（首现章只由
+    `m3_replay.py` 的 overlay 在读的时候按名字补上，从不写进真库）——那条判据今天
+    对 R3 没有意义（R3 只读**角色**的 first_appears_chapter，不读这四类非角色实体）。
+    这 5 个节点留着不是因为还有规则在用它们，是因为它们的名字/别名仍然出现在
+    `booklet.txt` 的正文里、仍然是这本合成小册子的花名册的一部分——删它们属于
+    另一次「小册子还要不要留这 5 个角色」的判断，不属于这次 R2 清理。
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -109,24 +118,9 @@ class EntitySpec(BaseModel):
     aliases: list[str] = Field(default_factory=list)
     """这个实体在正文里被叫的**别的名字**，可空。
 
-    ⚠️ **R2 靠它开火。** 判据是 `resolve(rules_only=True)`——它匹配别名表里的 surface，
-    不是节点的显示名。M3 那 15 道 R2 题里有 13 道的违例句写的是别名
-    （「玄血蛊的事，府里已经传开了」），显示名一次都没出现：不给别名，那 13 道
-    必然全部落空，而库建得出来、跑得通、只是分数少了一半。
+    判据是 `resolve(rules_only=True)`——它匹配别名表里的 surface，不是节点的显示名。
+    不给别名，正文里只用别名指代它的那些句子在花名册里就找不到人。
     """
-
-
-class FutureSpec(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    name: str = Field(min_length=2)
-    label: Literal["Faction", "Location", "Object", "Foreshadow"]
-    """必须是 `NON_CHARACTER_LABELS` 的成员——两处手抄，改一处要改两处。"""
-    first_appears: int = Field(ge=1)
-    """R2「设定提前出现」的边界。**M3 那张卷子考的正是它**，所以这一格活着。"""
-
-    aliases: list[str] = Field(default_factory=list)
-    """同 `EntitySpec.aliases`。"""
 
 
 class Booklet(BaseModel):
@@ -136,7 +130,6 @@ class Booklet(BaseModel):
 
     book: BookMeta
     characters: list[CharacterSpec] = Field(default_factory=list, validation_alias="character")
-    futures: list[FutureSpec] = Field(default_factory=list, validation_alias="future")
     entities: list[EntitySpec] = Field(default_factory=list, validation_alias="entity")
 
     @model_validator(mode="after")
@@ -145,16 +138,12 @@ class Booklet(BaseModel):
         # 声明会**合并成一个节点**，而 TOML 看起来完全正常。
         for what, names in (
             ("character.canonical", [c.canonical for c in self.characters]),
-            ("future.name", [f.name for f in self.futures]),
             ("entity.name", [e.name for e in self.entities]),
         ):
             dupes = sorted({n for n in names if names.count(n) > 1})
             if dupes:
                 raise ValueError(f"{what} 重复：{dupes}")
         return self
-
-    def future_of(self, name: str) -> FutureSpec:
-        return next(f for f in self.futures if f.name == name)
 
 
 def load_booklet(path: Path) -> Booklet:
@@ -174,7 +163,6 @@ class BuildResult(BaseModel):
     project_id: str
     chapters: int
     characters: int
-    futures: int
     entities: int
 
 
@@ -235,13 +223,6 @@ def build(*, booklet: Path, prose: Path, db: Path) -> BuildResult:
             ledger.declare_node(
                 NodeLabel.CHARACTER, character.canonical, aliases=character.aliases
             )
-        for future in bk.futures:
-            ledger.declare_node(
-                NodeLabel(future.label),
-                future.name,
-                aliases=future.aliases,
-                props=NodeProps(first_appears_chapter=future.first_appears),
-            )
         for entity in bk.entities:
             # **不给 props**：首现章由 `m3_replay` 在读的时候按名字覆盖上去，
             # 库里那一格必须是空的（见 `EntitySpec` 的 docstring）。
@@ -253,7 +234,6 @@ def build(*, booklet: Path, prose: Path, db: Path) -> BuildResult:
         project_id=pid,
         chapters=report.chapter_count,
         characters=len(bk.characters),
-        futures=len(bk.futures),
         entities=len(bk.entities),
     )
 

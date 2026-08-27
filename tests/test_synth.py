@@ -17,8 +17,13 @@
 `leak_selfcheck` 的七条放行条件。**秘密整套功能下线之后那些东西都不存在了**
 （ADR 0039 / `docs/EVAL_PROTOCOL_RETIREMENT.md`）。
 
-留下的 4 条考的是**造库**那一半，它服务的是 M3 那张卷子（R2/R3 误报门槛，
+留下的 4 条考的是**造库**那一半，它服务的是 M3 那张卷子（R3 误报门槛，
 `synth/m3_replay.py` 在 build 出来的 `gate.db` 上跑）——**那张卷子零秘密**。
+
+⚠️ **2026-08-27：`[[future]]`（`FutureSpec`）随 R2 FUTURE_LEAK 一起从 schema 里
+删了**（ADR 0040）。下面的夹具原来声明一个 `[[future]]` 节点来验证「build 能把
+`first_appears` 写进非角色节点」，那份能力今天没有消费者——换成验证同样还在的
+`[[entity]]`（`EntitySpec`）。
 """
 
 from __future__ import annotations
@@ -37,9 +42,6 @@ from synth.build import BuildRefused, build  # noqa: E402
 # ══════════════════════════════════════════════════════════════════════════
 # fixture：一份合格的小册子
 # ══════════════════════════════════════════════════════════════════════════
-#
-# 血枭盟 first_appears=3，正文里只在第 3 章出现——**合法的「到点了才提」**，
-# 也就是 R2 的负例。M3 那张卷子考的正是这条边界。
 
 BOOKLET = """\
 [book]
@@ -56,10 +58,9 @@ canonical = "苏挽"
 [[character]]
 canonical = "李管家"
 
-[[future]]
+[[entity]]
 name = "血枭盟"
 label = "Faction"
-first_appears = 3
 """
 
 PROSE = """\
@@ -111,7 +112,7 @@ def test_build_walks_the_real_write_chain(tmp_path: Path) -> None:
     result = _build(tmp_path)
 
     assert result.chapters == 3
-    assert (result.characters, result.futures) == (3, 1)
+    assert (result.characters, result.entities) == (3, 1)
     assert result.project_id
 
     # 正文真的过了 import_book（不是被谁塞进库里的）。

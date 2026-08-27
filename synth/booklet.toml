@@ -81,39 +81,26 @@ aliases = ["白衣客"]
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 5 条秘密 + 3 个未来实体 = 协议 §4 的 8 条知识边界
+# 5 个 Foreshadow 节点 —— 原 5 条秘密 + 3 个未来实体（协议 §4 的 8 条知识边界）
 # ══════════════════════════════════════════════════════════════════════════
 #
-# 每条引语在 `booklet.txt` 里**恰好命中一次**（多一次少一次都会让 `declare_knows` 抛
-# `AmbiguousQuote` / `QuoteNotFound`，build 当场停）。章号是那次命中的产物，这里填不了。
-
-[[future]]
-name = "血枭盟"
-label = "Faction"
-first_appears = 8
-
-[[future]]
-name = "幽泉窟"
-label = "Location"
-first_appears = 10
-
-[[future]]
-name = "焚天诀"
-label = "Object"
-first_appears = 12
-
-# ── 下面 5 条 2026-08-25 从 `[[secret]]` 改declaration 过来（ADR 0039）─────────
+# ⚠️ **2026-08-27：3 个未来实体（`[[future]]`：血枭盟 / 幽泉窟 / 焚天诀）删了。**
+# R2 FUTURE_LEAK 产品下线（ADR 0040），M3 门槛只剩 R3（修正案 1）——`[[future]]`
+# 存在的唯一理由是给 R2 一份真写进图里的「非角色节点 + 未来首现章」，R3 不读非角色
+# 节点的 first_appears_chapter，这份数据从此没有消费者。删掉的只是这三个节点的
+# 声明，`booklet.txt` 的正文一个字节没动。
+#
+# 下面 5 条 2026-08-25 从 `[[secret]]` 改 declaration 过来（ADR 0039）：
 #
 # 它们原来是 5 个 `Secret` 节点，`first_appears` 由 `synth/m3_replay.py` 按**名字**
-# 覆盖上去（`m3_ground_truth.json` 的 `first_appears` 那一栏）。秘密下线之后那 5 个
-# 节点建不出来，M3 那张 25 题的卷子当场只剩 12 题。
+# 覆盖上去（`m3_ground_truth.json` 的 `first_appears` 那一栏，秘密下线后已删掉除
+# 「沈孤鸿」外的其余 4 个——那是 R3 自己在用，不是这 5 个 Foreshadow 节点）。
+# 秘密下线之后那 5 个节点建不出来，M3 那张 25 题的卷子当场只剩 12 题。
 #
-# **改的只有 label**：名字、章号、`booklet.txt` 的正文、`m3_ground_truth.json` 的
-# 25 题和门槛全部原样。R2 的判据是「非角色节点 + first_appears > 当前章」，
-# 它不看具体是哪一类——所以这不是换了一张卷子，是把卷子上那 5 个节点放回去。
-# **这里没有章号**：首现章由 `m3_replay.py` 按名字覆盖（`m3_ground_truth.json` 的
-# `first_appears`）。写进库那一格就等于给「干净正文抽查」也补上了首现章，而那一步
-# 明写着「不叠加 overlay，用真库」——于是 R2 会在合法正文上开 7 枪，门槛不过。
+# 它们和 R2 的关系只是「顺手也被 R2 拿来试过火」，不是为 R2 而生：留着是因为
+# 名字/别名仍然是 `booklet.txt` 正文和这本小册子花名册的一部分，删不删属于另一次
+# 判断，不属于这次 R2 清理。**这里没有章号**：不带首现章是这一节的设计
+# （见 `synth/build.py` 的 `EntitySpec` docstring）。
 
 [[entity]]
 name = "血脉秘密"
