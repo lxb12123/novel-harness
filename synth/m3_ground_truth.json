@@ -1,13 +1,7 @@
 {
   "project_id": "project:01KYV174HMJ8BQD47KRF6K6FQK",
-  "first_appears": {
-    "血脉秘密": 8,
-    "玄铁令下落": 10,
-    "沈孤鸿之死": 12,
-    "顾清音真身": 9,
-    "裴景之谋": 11,
-    "沈孤鸿": 7
-  },
+  "first_appears": { "沈孤鸿": 7 },
+  "_first_appears_note": "R2 FUTURE_LEAK 2026-08-27 砍了（ADR 0040），原来这里的 6 个条目里有 5 个（血脉秘密/玄铁令下落/沈孤鸿之死/顾清音真身/裴景之谋）只喂给 M01–M15 那 15 道已删的 R2 题，删了。**「沈孤鸿」这一条留着，删不得**：R3 DEAD_SPEAKS 自己也读 first_appears_chapter（dead_speaks.py 的『未登场角色说话』那一半），M16/M17/M18 测的正是『沈孤鸿在第 7 章首次登场之前的第 4/5/6 章说话』——第一次改这份文件时想当然清空了整个字典，M16-M18 当场从真阳性变假阴性（true_positives 7/10 不是 10/10），这是实测出来的教训，不是预先设计。",
   "deaths": [
     { "name": "李管家", "chapter": 5 },
     { "name": "顾清音", "chapter": 7 },
@@ -15,21 +9,6 @@
     { "name": "苏挽", "chapter": 10 }
   ],
   "cases": [
-    { "id": "M01", "rule": "R2", "chapter": 2, "violation": "玄血蛊的事，府里已经传开了。", "clean": "苏挽站在窗前，没有点灯。" },
-    { "id": "M02", "rule": "R2", "chapter": 5, "violation": "玄血蛊的事，府里已经传开了。", "clean": "苏挽站在窗前，没有点灯。" },
-    { "id": "M03", "rule": "R2", "chapter": 7, "violation": "玄血蛊的事，府里已经传开了。", "clean": "苏挽站在窗前，没有点灯。" },
-    { "id": "M04", "rule": "R2", "chapter": 3, "violation": "沉舟渡的水位又涨了三尺。", "clean": "苏挽站在窗前，没有点灯。" },
-    { "id": "M05", "rule": "R2", "chapter": 6, "violation": "沉舟渡的水位又涨了三尺。", "clean": "苏挽站在窗前，没有点灯。" },
-    { "id": "M06", "rule": "R2", "chapter": 9, "violation": "沉舟渡的水位又涨了三尺。", "clean": "苏挽站在窗前，没有点灯。" },
-    { "id": "M07", "rule": "R2", "chapter": 4, "violation": "断魂崖下传来一声鹰唳。", "clean": "苏挽站在窗前，没有点灯。" },
-    { "id": "M08", "rule": "R2", "chapter": 8, "violation": "断魂崖下传来一声鹰唳。", "clean": "苏挽站在窗前，没有点灯。" },
-    { "id": "M09", "rule": "R2", "chapter": 11, "violation": "断魂崖下传来一声鹰唳。", "clean": "苏挽站在窗前，没有点灯。" },
-    { "id": "M10", "rule": "R2", "chapter": 2, "violation": "裴门弃女四个字，比刀还快。", "clean": "苏挽站在窗前，没有点灯。" },
-    { "id": "M11", "rule": "R2", "chapter": 6, "violation": "裴门弃女四个字，比刀还快。", "clean": "苏挽站在窗前，没有点灯。" },
-    { "id": "M12", "rule": "R2", "chapter": 3, "violation": "移魂大阵的阵眼就压在祠堂底下。", "clean": "苏挽站在窗前，没有点灯。" },
-    { "id": "M13", "rule": "R2", "chapter": 9, "violation": "移魂大阵的阵眼就压在祠堂底下。", "clean": "苏挽站在窗前，没有点灯。" },
-    { "id": "M14", "rule": "R2", "chapter": 2, "violation": "血枭盟的人已经进了城。", "clean": "苏挽站在窗前，没有点灯。" },
-    { "id": "M15", "rule": "R2", "chapter": 6, "violation": "幽泉窟塌了一角。", "clean": "苏挽站在窗前，没有点灯。" },
     { "id": "M16", "rule": "R3", "chapter": 4, "violation": "沈孤鸿道：「萧公子，别来无恙。」", "clean": "苏挽道：「茶凉了。」" },
     { "id": "M17", "rule": "R3", "chapter": 5, "violation": "沈孤鸿道：「酒还欠着。」", "clean": "苏挽道：「茶凉了。」" },
     { "id": "M18", "rule": "R3", "chapter": 6, "violation": "沈孤鸿道：「这面旗我认得。」", "clean": "苏挽道：「茶凉了。」" },

@@ -1,17 +1,25 @@
-"""M3 合成门槛的量具（docs/M3_GATE_PROTOCOL.md）：构造违规/干净段落 → R2/R3 → 真阳性/误报。
+"""M3 合成门槛的量具（docs/M3_GATE_PROTOCOL.md）：构造违规/干净段落 → R3 → 真阳性/误报。
 
 边界数据（``first_appears`` / 死亡边）全部来自 ``synth/m3_ground_truth.json``，
 **运行期在内存叠加**到真 store 上：不写 ``gate.db``、不改 ``booklet.toml``、
 不动 12 章正文——M2 仪器一个字节不碰（当前 M2 轮次可能正在跑同一本库）。
 
-叠加层只实现 R2/R3 会调的两个方法（``resolve`` / ``state_at``），其余抛
+叠加层只实现规则会调的两个方法（``resolve`` / ``state_at``），其余抛
 ``NotImplementedError``——规则是纯函数，契约就是「只从 ctx.store 取数据」。
+
+⚠️ **2026-08-27：R2 FUTURE_LEAK 砍了（ADR 0040），题数从 25 降到 10，只剩 R3。**
+详见 `docs/M3_GATE_PROTOCOL_AMENDMENT_1.md`——**改 `TOTAL_CASES` / `MIN_TRUE_
+POSITIVES` 之前先读那份修正案**，它记着为什么这不是「看到结果再定及格线」
+（M3 双边门槛 2026-08-02 已通过，M4 已在其上解锁并落地，这次改动发生在通过
+之后）。`OverlayGraph` 仍然接 ``first_appears`` 这个键（现在恒为 ``{}``，
+不再有消费者）——留着签名不动是因为它不专属 R2，删掉这个参数是另一件事，
+不是这次要做的事。
 
 用法：
     uv run python -m synth.m3_replay
         --db synth/gate.db --project <pid> --ground-truth synth/m3_ground_truth.json
 
-退出码：门槛过（正题 ≥22/25 且 干净对照 0/25 且 干净正文 0 issue）= 0，否则 1。
+退出码：门槛过（正题 ≥10/10 且 干净对照 0/10 且 干净正文 0 issue）= 0，否则 1。
 """
 
 from __future__ import annotations
@@ -43,9 +51,22 @@ from novel_harness.graph import (
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.text.chapterize import chapterize
 
-EXPECTED_ISSUE_TYPE = {"R2": "FUTURE_LEAK", "R3": "DEAD_SPEAKS"}
-MIN_TRUE_POSITIVES = 22
-TOTAL_CASES = 25
+EXPECTED_ISSUE_TYPE = {"R3": "DEAD_SPEAKS"}
+"""R2 那一档（`"FUTURE_LEAK"`）2026-08-27 删了——`m3_ground_truth.json` 里已经
+没有 `rule: "R2"` 的题，留着那一档只会让 `test_fixture_is_a_25_question_paper_
+with_clean_controls` 式的「题目规则集合 == 这个字典的键集合」断言失去意义。"""
+
+MIN_TRUE_POSITIVES = 10
+"""2026-08-27 之前是 22（对 25 题，PLAN §7 的「≥ 22/25」）。R2 删掉之后只剩
+10 道 R3 题——**这里没有按比例折算成 8.8，取的是 10（全对）**：原来 25/25
+里已经包含了这 10 道 R3 题全部命中的事实（`test_replay_passes_the_
+preregistered_gate` 断言的是精确 25，不是「至少 22」），所以对幸存下来的
+这一半要求它保持原本已经达到的水平，不是重新给它一个更松的及格线。
+`docs/M3_GATE_PROTOCOL_AMENDMENT_1.md` 记着这条理由。"""
+
+TOTAL_CASES = 10
+"""2026-08-27 之前是 25（15 道 R2 + 10 道 R3）。R2 砍掉后 `m3_ground_truth.json`
+只剩 10 道 R3 题，见 `docs/M3_GATE_PROTOCOL_AMENDMENT_1.md`。"""
 
 HEALTH_DIM_ID = "state:m3:health"
 
@@ -315,7 +336,7 @@ def replay(
             )
         )
 
-    # 干净正文抽查：**不叠加 overlay**，用真库把 R2/R3 跑在 12 章正文上。
+    # 干净正文抽查：**不叠加 overlay**，用真库把 ALL_CHECKS（今天只剩 R3）跑在 12 章正文上。
     cz = chapterize(booklet.read_text(encoding="utf-8"))
     clean_prose_issues = 0
     for index, chapter in enumerate(cz.chapters, start=1):
