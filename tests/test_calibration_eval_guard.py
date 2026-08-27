@@ -19,10 +19,21 @@ REPO = Path(__file__).resolve().parents[1]
 EVAL_DIR = REPO / "src" / "novel_harness" / "eval"
 ASSEMBLE = REPO / "src" / "novel_harness" / "draft" / "assemble.py"
 
-ASSEMBLE_SHA256 = "64966e997510cefe59ff65d4b748cc3496724923786999abba02f971ae16864d"
+ASSEMBLE_SHA256 = "82c698a5231aaa80d1efe3152ed278f3b5a9b8eec0279407808a38f1c2e9d471"
 """`draft/assemble.py` 全文的 sha256。**改那个文件就必须在同一笔里改这个数。**
 
-这一版是 2026-08-26 的**国际化第一批 ⓪：唯一剩下的图谱块也删了**。删掉
+这一版是 2026-08-27 的**国际化第二批：装写作提示的框双语化了**。`_base()` 里
+【上文】【在场】【这一场要写】三个标题和 cast 的列表分隔符（原来写死的顿号）、
+`CONTINUATION_GOAL`（常量改成 `continuation_goal(language)` 函数），
+全部从新模块 `draft/prompt_terms.py` 按 `length.language` 取；`EN_WRITING_PROMPT`
+的人设第一句也补了「for an English-language novelist」（维护者点名的一处不对称——
+中文那份写的是「**中文**长篇小说的写作搭档」，英文原来没点明语言）。
+**中文取值是原来那几个字面量，逐字节不变**：`tests/test_draft_assemble.py` /
+`tests/test_draft_continuation.py` 里那些钉死的精确字符串一个字都没有跟着改；
+新增的 `tests/test_prompt_bilingual.py` 把整块记忆前言（含四个人物资料字段、
+带参与者的事件）也逐字节钉了一遍，`tests/test_prompt_terms.py` 穷举词表本身。
+
+上一版是 2026-08-26 的**国际化第一批 ⓪：唯一剩下的图谱块也删了**。删掉
 `_forbidden_block()`（渲染「尚未登场、这一场不得出现：幽泉窟（第 10 章首现）」那一句）
 连同 `graph_section()` 里那一支——维护者裁定「未登场的东西未来到底哪一章出现，本来就
 不一定」，而浏览器上从来没有任何入口能设 `first_appears_chapter`（那个输入框 2026-08-13
@@ -30,7 +41,7 @@ ASSEMBLE_SHA256 = "64966e997510cefe59ff65d4b748cc3496724923786999abba02f971ae168
 还在用它，这一刀只砍它进 Writer prompt 的那一步。`graph_section()` 函数本身留着，
 恒返回 `""`：它是下一个图谱块的落地点，不是这一个块专属的脚手架。
 
-上一版是 2026-08-26 的**注释重写，零行为变化**：只动了 `WRITE_RULE_FORBIDDEN_HINTS`
+再上一版是 2026-08-26 的**注释重写，零行为变化**：只动了 `WRITE_RULE_FORBIDDEN_HINTS`
 的 docstring——它双重过时（指着 `/draft`、`nh draft` 两个不存在的入口，还在拿三臂的
 `Δ 塌掉` 当理由），而今天用那张网的只剩 `product_draft.check_request()` 一处。
 **渲染逻辑一个字节没动**：这一笔的 diff 只有那一段字符串，可以逐行核。
@@ -39,7 +50,7 @@ ASSEMBLE_SHA256 = "64966e997510cefe59ff65d4b748cc3496724923786999abba02f971ae168
 所以注释也算；「改卷子藏不住」这条性质的代价，就是每一次有意的编辑都得在这儿留一行。
 审计的人看这一行就知道该不该去读 diff。
 
-再上一版是 2026-08-25 的三臂下线：`PromptForm` 整个删了，`assemble()` / `graph_section()` /
+更早一版是 2026-08-25 的三臂下线：`PromptForm` 整个删了，`assemble()` / `graph_section()` /
 `_forbidden_block()` 三个签名去掉 `form` 参数，`_forbidden_block` 只留清单那一种渲染
 （散文那一版是为 X2 写的，没有别的消费者）。**改这个数是有意的动作**，见那笔提交。
 

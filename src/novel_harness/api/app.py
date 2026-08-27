@@ -1826,9 +1826,10 @@ def draft(
     # 而且「模型没配好」这种错在这儿就报出来，比装配完一大堆上下文再报便宜。
     request = ChapterDraftRequest(
         # `mode` / `goal` 这两位不再从请求体来（2026-08-26，见 `DraftRequest`）：
-        # 这条路由只剩续写一种形状，而续写的提示语是后端常量——`draft_chapter()` 自己
-        # 用 `CONTINUATION_GOAL` 顶掉这一位（它**只在整章那一支才读 `request.goal`**），
-        # 所以这儿给空串是「这一位在这条路上没有意义」，不是「忘了填」。
+        # 这条路由只剩续写一种形状，而续写的提示语是后端按语言选出来的一句话——
+        # `draft_chapter()` 自己用 `continuation_goal(request.length.language)` 顶掉
+        # 这一位（它**只在整章那一支才读 `request.goal`**），所以这儿给空串是
+        # 「这一位在这条路上没有意义」，不是「忘了填」。
         goal="",
         length=length,
         mode="continuation",

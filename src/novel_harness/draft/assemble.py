@@ -1,5 +1,15 @@
 """约束 → prompt 的**唯一**出口（ADR 0010）。
 
+── ⚠️ 2026-08-27：装写作提示的框双语化了（国际化第二批）────────────────────
+
+`ZH_WRITING_PROMPT`/`EN_WRITING_PROMPT` 早就跟着 `LengthSpec.language` 切；
+装它们的框——【上文】【在场】【这一场要写】这几个标题、`cast` 的列表分隔符——
+一直是写死的中文，英文书的续写因此收到一份中英夹杂的 prompt。三个标题和分隔符
+现在从 `prompt_terms.py` 按 `length.language` 取；`CONTINUATION_GOAL` 常量
+改成 `continuation_goal(language)` 函数，同一个理由。**中文路径逐字节不变**——
+`prompt_terms.PromptTerm.*` 的 ZH 取值就是原来那几个字面量，`tests/test_draft_assemble.py`
+和 `test_draft_continuation.py` 里那几条钉死的精确字符串没有跟着改一个字。
+
 ── ⚠️ 2026-08-26：唯一剩下的图谱块也删了，`graph_section()` 从此恒为空串 ──────
 
 `_forbidden_block()`（渲染「尚未登场、这一场不得出现：幽泉窟（第 10 章首现）」那一句）
@@ -67,14 +77,21 @@ from fractions import Fraction
 
 from .context import DraftContext, ResolvedConstraints
 from .length import DraftLanguage, LengthSpec
+from .prompt_terms import PromptTerm, term
 
 
-CONTINUATION_GOAL = "顺着上文往下写，接住作者已经起的头，不要另起一段新情节。"
-"""续写模式的 `goal`（[ADR 0015](../../../docs/adr/0015-inline-continuation-is-a-short-draft.md) D3）。
+def continuation_goal(language: DraftLanguage) -> str:
+    """续写模式的 `goal`（[ADR 0015](../../../docs/adr/0015-inline-continuation-is-a-short-draft.md) D3）。
 
-**它是常量、住在后端，而不是前端传一个默认值**——`goal` 是 ADR 0010 点名的三个自由文本
-入口之一（作者能把伏笔用自然语言写进去，本层看不见）。续写模式把这个入口**关掉**换成
-这一句，是在缩小那个洞。前端能传的东西作者就能改，所以它不能住在前端。"""
+    **它是后端按语言选出来的一句话，而不是前端传一个默认值**——`goal` 是 ADR 0010
+    点名的三个自由文本入口之一（作者能把伏笔用自然语言写进去，本层看不见）。续写模式
+    把这个入口**关掉**换成这一句，是在缩小那个洞。前端能传的东西作者就能改，
+    所以它不能住在前端。
+
+    2026-08-26 之前这是一个写死中文的常量 `CONTINUATION_GOAL`；国际化第二批起
+    改成按 `length.language` 取词（`prompt_terms.py`），中文取值一字未变。
+    """
+    return term(PromptTerm.CONTINUATION_GOAL, language)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -166,13 +183,18 @@ ZH_WRITING_PROMPT = """你是一位中文长篇小说的写作搭档。根据作
 """中文草稿的默认写作提示；长度由 ``length_instruction()`` 单独提供。"""
 
 
-EN_WRITING_PROMPT = """You are a long-form fiction writing partner. Using the supplied prior text and scene goal, write the scene's prose.
+EN_WRITING_PROMPT = """You are a writing partner for an English-language novelist. Using the supplied prior text and scene goal, write the scene's prose.
 
 - Output prose only: no title, chapter label, heading, writing notes, or Markdown.
 - Write in third person through the characters' actions, dialogue, and surroundings.
 - Continue the voice and names used in the prior text; do not rewrite material already written.
 - Complete the scene in one pass and bring it to a natural close."""
-"""English draft's default writing prompt; length is supplied separately."""
+"""English draft's default writing prompt; length is supplied separately.
+
+**维护者点名要改的一处（2026-08-27）**：原文只写「a long-form fiction writing
+partner」，没点明语言——中文那份（`ZH_WRITING_PROMPT`）写的是「**中文**长篇小说的
+写作搭档」，两份因此不对称，英文那份唯一说明语言的地方是末尾 `length_instruction()`
+里的 `Write in English.`，人设本身没说。补上「for an English-language novelist」。"""
 
 
 DEFAULT_WRITING_PROMPT = ZH_WRITING_PROMPT
@@ -293,6 +315,7 @@ def assemble(
         previous_tail=previous_tail,
         previous_tail_limit=previous_tail_limit,
         write_rule=system_prompt(length, write_rule),
+        language=length.language,
     )
     section = graph_section(ctx)
     if section:
@@ -329,18 +352,23 @@ def _base(
     previous_tail: str,
     previous_tail_limit: int,
     write_rule: str,
+    language: DraftLanguage,
 ) -> list[dict[str, str]]:
     """默认写作提示 + 上文 + 在场 + 本场目标。**图谱事实一个字都不在这儿。**
 
     合成一条用户消息而不是拆成多条同角色消息：OpenAI 兼容端点五花八门（本地 vLLM / Ollama /
     各家中转），连续同 role 消息有的接受有的 400，而 kill-gate 跑到一半因为消息形状被拒
     是最坏的失败时机（同 `provider.py` 对配置自洽性的那条理由）。
+
+    `language` 只管这三个标题和 cast 的列表分隔符按哪种语言取（`prompt_terms.py`，
+    国际化第二批）——**不影响任何判断逻辑**，`ResolvedConstraints` 分支、上文截断，
+    都是同一份代码，只是最后拼进去的字面量换了一套。
     """
     parts: list[str] = []
     # `[-0:]` 是整串不是空串，所以 `<= 0` 必须单独分支——否则「不给上文」会变成「全给」。
     tail = previous_tail.strip()[-previous_tail_limit:] if previous_tail_limit > 0 else ""
     if tail:
-        parts.append("【上文】\n" + tail)
+        parts.append(term(PromptTerm.PRIOR_TEXT, language) + "\n" + tail)
     # cast 在 X0 里也有 —— ADR 0010 D6，它是作者的输入不是图谱查询的结果。
     # **退化态（ADR 0015 D4）整块不出**（2026-08-22 M1-a）：以前这儿发一句
     # 「【在场】未知。因此这一段不得说破任何尚未公开的秘密。」——「未知」两个字不带信息，
@@ -348,8 +376,9 @@ def _base(
     # 那一侧本来就是这句话唯一有效力的形态。**别再加回来**：这一块要精确就得知道谁在场，
     # 而续写的那一刻它还没被写出来，那份精度只有保存之后的验证侧算得准。
     if isinstance(ctx, ResolvedConstraints):
-        parts.append("【在场】\n" + "、".join(ctx.cast))
-    parts.append("【这一场要写】\n" + goal.strip())
+        separator = term(PromptTerm.LIST_SEPARATOR, language)
+        parts.append(term(PromptTerm.PRESENT, language) + "\n" + separator.join(ctx.cast))
+    parts.append(term(PromptTerm.THIS_SCENE, language) + "\n" + goal.strip())
     return [
         {"role": "system", "content": write_rule},
         {"role": "user", "content": "\n\n".join(parts)},

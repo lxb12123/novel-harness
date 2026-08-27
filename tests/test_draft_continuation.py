@@ -25,8 +25,8 @@ from test_fake_graph import (
 )
 
 from novel_harness.draft.assemble import (
-    CONTINUATION_GOAL,
     assemble,
+    continuation_goal,
 )
 from novel_harness.draft.context import (
     ResolvedConstraints,
@@ -84,7 +84,7 @@ def test_the_degraded_prompt_says_nothing_about_who_is_present() -> None:
 
     body = "\n".join(
         m["content"]
-        for m in assemble(ctx, goal=CONTINUATION_GOAL, length=SHORT)
+        for m in assemble(ctx, goal=continuation_goal(SHORT.language), length=SHORT)
     )
 
     assert "【在场】" not in body
@@ -104,10 +104,11 @@ def test_the_degraded_prompt_still_carries_the_goal() -> None:
     这是已知且接受的代价，不是要补的洞。
     """
     ctx = unknown_cast_constraints(_store(), PID, 152)
+    goal = continuation_goal(SHORT.language)
 
-    body = assemble(ctx, goal=CONTINUATION_GOAL, length=SHORT)[-1]["content"]
+    body = assemble(ctx, goal=goal, length=SHORT)[-1]["content"]
 
-    assert body == "【这一场要写】\n" + CONTINUATION_GOAL
+    assert body == "【这一场要写】\n" + goal
 def test_the_resolved_path_renders_the_cast_verbatim() -> None:
     """知道在场是谁时，【在场】那一块**逐字节**长这样。
 
@@ -125,7 +126,16 @@ def test_the_resolved_path_renders_the_cast_verbatim() -> None:
     assert messages[-1]["content"] == "【在场】\n顾清音\n\n【这一场要写】\n试探"
 
 
-def test_the_continuation_goal_is_a_backend_constant(monkeypatch: pytest.MonkeyPatch) -> None:
-    """ADR 0015 D3：续写的提示语住在后端。它是常量，不是某个调用方传进来的默认值。"""
-    assert CONTINUATION_GOAL.strip()
-    assert "顺着上文" in CONTINUATION_GOAL
+def test_the_continuation_goal_is_a_backend_function_keyed_by_language() -> None:
+    """ADR 0015 D3：续写的提示语住在后端。它按 `language` 选，不是某个调用方传进来的默认值。
+
+    2026-08-26 之前它是一个写死中文的常量 `CONTINUATION_GOAL`；国际化第二批起
+    改成函数——两种语言各自的那句话仍然只有后端知道，前端一个字都传不进来，
+    这条测试钉的就是这条性质本身，不是某一侧的具体措辞。
+    """
+    zh = continuation_goal(DraftLanguage.ZH)
+    en = continuation_goal(DraftLanguage.EN)
+    assert zh.strip() and en.strip()
+    assert "顺着上文" in zh
+    assert "prior text" in en.lower()
+    assert zh != en

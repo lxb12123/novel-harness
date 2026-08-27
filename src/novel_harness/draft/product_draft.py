@@ -53,9 +53,9 @@ from ..graph import NodeLabel
 from ..calibration.models import SceneBrief
 from ..calibration.render import render_scene_brief, render_target_chapter
 from .assemble import (
-    CONTINUATION_GOAL,
     WRITE_RULE_FORBIDDEN_HINTS,
     assemble,
+    continuation_goal,
     product_tail_limit,
 )
 from .capabilities import ProviderCapabilities, ResolvedCallPlan
@@ -371,8 +371,8 @@ def draft_chapter(
     continuation = request.mode == "continuation"
 
     assemble_args = {
-        # ADR 0015 D3：续写的 goal 是后端常量，请求里那个已被调用方校验为空。
-        "goal": CONTINUATION_GOAL if continuation else request.goal,
+        # ADR 0015 D3：续写的 goal 是后端按语言选出来的一句话，请求里那个已被调用方校验为空。
+        "goal": continuation_goal(request.length.language) if continuation else request.goal,
         "length": request.length,
         "previous_tail": request.previous_tail,
         # **逐字上文按窗口取量**（ADR 0019 边界五）。`GATE_TAIL_CODE_POINTS` 那个 800 字

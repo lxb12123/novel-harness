@@ -7,84 +7,99 @@ from collections.abc import Sequence
 from ..events import CharacterProfileView, EventView
 from .assemble import GATE_TAIL_CODE_POINTS, assemble
 from .context import DraftContext, ResolvedConstraints
-from .length import LengthSpec
+from .length import DraftLanguage, LengthSpec
 from .product_context import ResolvedProductContext, RollingSummaryView
+from .prompt_terms import PromptTerm, term
 
 
-_PROFILE_LABELS = (
-    ("gender", "性别"),
-    ("personality", "性格"),
-    ("background", "背景"),
-    ("character_notes", "备注"),
+_PROFILE_LABEL_KEYS = (
+    ("gender", PromptTerm.PROFILE_LABEL_GENDER),
+    ("personality", PromptTerm.PROFILE_LABEL_PERSONALITY),
+    ("background", PromptTerm.PROFILE_LABEL_BACKGROUND),
+    ("character_notes", PromptTerm.PROFILE_LABEL_NOTES),
 )
 
 
-def _profile_line(profile: CharacterProfileView) -> str:
+def _profile_line(profile: CharacterProfileView, language: DraftLanguage) -> str:
+    detail_template = term(PromptTerm.PROFILE_DETAIL, language)
     details = [
-        f"{label}：{value}"
-        for field, label in _PROFILE_LABELS
+        detail_template.format(label=term(label_key, language), value=value)
+        for field, label_key in _PROFILE_LABEL_KEYS
         if (value := getattr(profile, field))
     ]
-    suffix = "；".join(details) if details else "暂无补充资料"
-    return f"- {profile.character.name}：{suffix}"
+    suffix = (
+        term(PromptTerm.PROFILE_DETAIL_SEPARATOR, language).join(details)
+        if details
+        else term(PromptTerm.PROFILE_NO_DETAILS, language)
+    )
+    return term(PromptTerm.PROFILE_LINE, language).format(
+        name=profile.character.name, suffix=suffix
+    )
 
 
-def _event_line(view: EventView) -> str:
-    participants = "、".join(participant.name for participant in view.participants)
-    suffix = f"（涉及：{participants}）" if participants else ""
-    return f"- 第 {view.event.chapter_number} 章：{view.event.summary}{suffix}"
-
-
-ROLLING_SUMMARY_HEADING = "【更早章节滚动总结】"
-"""滚动总结那一块的块首。整章起草和行内续写**渲染的是同一块**。"""
+def _event_line(view: EventView, language: DraftLanguage) -> str:
+    separator = term(PromptTerm.LIST_SEPARATOR, language)
+    participants = separator.join(participant.name for participant in view.participants)
+    suffix = (
+        term(PromptTerm.EVENT_PARTICIPANTS, language).format(participants=participants)
+        if participants
+        else ""
+    )
+    return term(PromptTerm.EVENT_LINE, language).format(
+        chapter=view.event.chapter_number, summary=view.event.summary, suffix=suffix
+    )
 
 
 def _rolling_summary_lines(
-    summaries: Sequence[RollingSummaryView], *, empty_line: str | None
+    summaries: Sequence[RollingSummaryView],
+    *,
+    show_empty_placeholder: bool,
+    language: DraftLanguage,
 ) -> list[str]:
-    """滚动总结那一块的正文行。`empty_line=None` = 一条都没有时整块不出现。
+    """滚动总结那一块的正文行。`show_empty_placeholder=False` = 一条都没有时整块不出现。
 
-    整章起草传 `- 暂无`（那一段本来就有别的块，一个占位不多；而「零带着理由」是
-    回执那一侧的事）；行内续写传 `None`——它整份 prompt 只有几百字，塞一个
-    「- 暂无」等于凭空多一块什么都没说的东西。
+    整章起草传 `True`（那一段本来就有别的块，一个占位不多；而「零带着理由」是
+    回执那一侧的事）；行内续写传 `False`——它整份 prompt 只有几百字，塞一个
+    占位符等于凭空多一块什么都没说的东西。
+
+    占位符文字（原来的字面量 `"- 暂无"`）2026-08-27 起从 `prompt_terms` 按语言取——
+    这个参数不再是「调用方给什么占位符就渲染什么」，是「要不要渲染占位符」，
+    真正的文字由这一层自己按 `language` 决定，调用方不用再自己拼一遍。
     """
-    if not summaries and empty_line is None:
+    if not summaries and not show_empty_placeholder:
         return []
+    heading = term(PromptTerm.ROLLING_SUMMARY_HEADING, language)
+    if not summaries:
+        return [heading, term(PromptTerm.NONE_YET, language)]
+    chapter_template = term(PromptTerm.CHAPTER_LINE, language)
     return [
-        ROLLING_SUMMARY_HEADING,
+        heading,
         *(
-            (f"- 第 {item.chapter_number} 章：{item.summary}" for item in summaries)
-            if summaries
-            else (empty_line,)
+            chapter_template.format(chapter=item.chapter_number, summary=item.summary)
+            for item in summaries
         ),
     ]
 
 
-FOLLOWING_TEXT_HEADING = "【下文】"
-"""光标**后面**那截已经写好的正文的块首。
-
-`_base()` 发的【上文】是「接着往下写」的那一段；这一块是「已经写好、别重写」的那一段。
-**两块必须在 prompt 里分得开**：不说清楚，模型会把下文也当成「要写的」，重写一遍。
-"""
-
-FOLLOWING_TEXT_INSTRUCTION = (
-    "以下是这一章接下来已经写好的正文。不要重写它、不要改动它，"
-    "你写的这一段要能自然接上它的开头。"
-)
-"""跟着那一块走的说明，**必须在块首**（同滚动总结那条免责）：写在几千字之后，
-模型读到它的时候早就把下文当成「待写的段落」读完了。"""
-
-
-def _following_text_block(text: str, limit: int) -> str:
+def _following_text_block(text: str, limit: int, language: DraftLanguage) -> str:
     """【下文】那一块，超出额度**从后面截**——留住紧挨着光标的那一截。
 
     上文截的是末尾（`_base()` 的 `previous_tail[-limit:]`），下文截的是开头，
     两刀都朝着光标切：离光标越远的字，对「这一段接不接得上」越没用。
+
+    标题和说明**必须在块首**（同滚动总结那条免责，历史原因见 ADR 0017 补记）：
+    写在几千字之后，模型读到它的时候早就把下文当成「待写的段落」读完了。
     """
     kept = text.strip()[:limit] if limit > 0 else ""
     if not kept:
         return ""
-    return "\n".join([FOLLOWING_TEXT_HEADING, FOLLOWING_TEXT_INSTRUCTION, kept])
+    return "\n".join(
+        [
+            term(PromptTerm.FOLLOWING_TEXT, language),
+            term(PromptTerm.FOLLOWING_TEXT_INSTRUCTION, language),
+            kept,
+        ]
+    )
 
 
 def _insert_memory(base: list[dict[str, str]], block: str) -> list[dict[str, str]]:
@@ -100,8 +115,12 @@ def _insert_memory(base: list[dict[str, str]], block: str) -> list[dict[str, str
     return [*base[:stable], {"role": "system", "content": block}, *base[stable:]]
 
 
-def render_product_memory(memory: ResolvedProductContext) -> str:
+def render_product_memory(memory: ResolvedProductContext, language: DraftLanguage) -> str:
     """Render only author-facing names and accepted profile/event prose, never storage metadata.
+
+    `language` 只换标题、分隔符、占位符这些字面量（`prompt_terms.py`，国际化第二批）；
+    块序、预算、要不要出现，一律不受影响——**中文取值就是原来那几个字面量**，
+    这一层加了参数不代表加了新的判断。
 
     ── 块序：**最不会变的排最前**（ADR 0019 边界六，同一条判据往里再走一层）────
 
@@ -129,29 +148,31 @@ def render_product_memory(memory: ResolvedProductContext) -> str:
     它是稳的」。
     """
 
+    none_yet = term(PromptTerm.NONE_YET, language)
     lines = [
-        "已生效的故事记忆",
-        "以下人物资料与事件是当前已生效的记忆（系统自动整理的部分只当线索，"
-        "作者亲自确认过的才当既定事实）。",
+        term(PromptTerm.STORY_MEMORY_HEADING, language),
+        term(PromptTerm.STORY_MEMORY_INTRO, language),
         "",
-        *_rolling_summary_lines(memory.rolling_summaries, empty_line="- 暂无"),
+        *_rolling_summary_lines(
+            memory.rolling_summaries, show_empty_placeholder=True, language=language
+        ),
         "",
-        "【更早的相关事件】",
+        term(PromptTerm.EARLIER_RELATED_EVENTS, language),
         *(
-            (_event_line(view) for view in memory.background_events)
+            (_event_line(view, language) for view in memory.background_events)
             if memory.background_events
-            else ("- 暂无",)
+            else (none_yet,)
         ),
         "",
-        "【近八章事件】",
+        term(PromptTerm.RECENT_EVENTS, language),
         *(
-            (_event_line(view) for view in memory.recent_events)
+            (_event_line(view, language) for view in memory.recent_events)
             if memory.recent_events
-            else ("- 暂无",)
+            else (none_yet,)
         ),
         "",
-        "【在场人物资料】",
-        *(_profile_line(profile) for profile in memory.profiles),
+        term(PromptTerm.PRESENT_PROFILES, language),
+        *(_profile_line(profile, language) for profile in memory.profiles),
     ]
     return "\n".join(lines)
 
@@ -189,7 +210,7 @@ def assemble_product(
         previous_tail_limit=previous_tail_limit,
         write_rule=write_rule,
     )
-    return _insert_memory(base, render_product_memory(memory))
+    return _insert_memory(base, render_product_memory(memory, length.language))
 
 
 def assemble_continuation(
@@ -239,11 +260,13 @@ def assemble_continuation(
         previous_tail_limit=previous_tail_limit,
         write_rule=write_rule,
     )
-    following = _following_text_block(following_text, previous_tail_limit)
+    following = _following_text_block(following_text, previous_tail_limit, length.language)
     if following:
         # 只追加，不重排、不改写前面任何一个字节（同 `assemble()` 追加图谱段那一行）。
         base = [*base[:-1], {**base[-1], "content": base[-1]["content"] + "\n\n" + following}]
-    lines = _rolling_summary_lines(rolling_summaries, empty_line=None)
+    lines = _rolling_summary_lines(
+        rolling_summaries, show_empty_placeholder=False, language=length.language
+    )
     return base if not lines else _insert_memory(base, "\n".join(lines))
 
 

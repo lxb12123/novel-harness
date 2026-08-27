@@ -160,7 +160,8 @@ def _two_scenes_sharing_one_backlog() -> tuple[str, str]:
                 recent_events=recent,
                 background_events=(),
                 rolling_summaries=backlog,
-            )
+            ),
+            DraftLanguage.ZH,
         )
 
     first = scene(
