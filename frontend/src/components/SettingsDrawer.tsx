@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError } from "../api/client";
+import { saidToTheAuthor } from "../correctionError";
 import {
   useAiSettings,
   useRefreshModelWindows,
@@ -251,7 +252,7 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                   </div>
                 </div>
 
-                {err && <div className="err-box">{err.message}</div>}
+                {err && <div className="err-box">{saidToTheAuthor(err) ?? err.message}</div>}
 
                 <div className="set-card-foot">
                   <button
@@ -296,7 +297,7 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                 {/* 更新的结果**要说出来**。没有它，那颗开关拨完什么都不响，
                     作者只能猜有没有生效——而这个仓库正在还的债有一半是那种形态。 */}
                 {refreshErr ? (
-                  <div className="err-box">{refreshErr.message}</div>
+                  <div className="err-box">{saidToTheAuthor(refreshErr) ?? refreshErr.message}</div>
                 ) : refresh.isPending ? (
                   <div className="set-note">正在看有没有新的…</div>
                 ) : refresh.data ? (
@@ -336,7 +337,7 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                     />
                   </div>
 
-                  {err && <div className="err-box">{err.message}</div>}
+                  {err && <div className="err-box">{saidToTheAuthor(err) ?? err.message}</div>}
 
                   <div className="set-card-foot">
                     <button

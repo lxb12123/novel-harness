@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import { ApiError } from "./api/client";
+import { saidToTheAuthor } from "./correctionError";
+import { useLanguage } from "./language";
 
 // 侧栏书架的状态：**哪几本书摆在左边、哪几本折叠着**。
 //
@@ -119,13 +121,16 @@ export const useShelf = create<ShelfStore>((set) => {
  *
  * ── 为什么这儿允许有一句前端自己的话 ──────────────────────────────────────
  *
- * 这个仓库删过一份 `correctionError.ts`（「码 → 中文」的映射表）：措辞有两个源，
- * 后端改了一句话，前端那份还在说旧的。规矩因此是**后端写词、前端只渲染**。
+ * 这个仓库删过一份「码 → 中文」的映射表：措辞有两个源，后端改了一句话，前端那份
+ * 还在说旧的。规矩因此是**措辞的源只能有一个**——国际化第四批之后那个源是
+ * `saidToTheAuthor`（`correctionError.ts`）：认得的码在 `backendMessages.ts` 里
+ * 整句渲染，不认得的退回后端的 `message`（过渡期）。这两个函数现在都先问它。
  *
- * 这儿只有一个例外，而它恰恰是那条规矩管不到的地方：**服务上根本没有这条路**
- * （旧版进程还开着，前端已经是新的——2026-08-14 作者就撞上了这一档）。
- * 那时后端说不出话，它不认识这个端点。判据是精确的：404 **且** body 里没有
- * `error` 码。带 `error` 的 404（`project_not_found`）是后端说的话，照旧原样渲染。
+ * **这儿只剩一个真正的例外**，而它恰恰是 `saidToTheAuthor` 管不到的地方：
+ * **服务上根本没有这条路**（旧版进程还开着，前端已经是新的——2026-08-14 作者就
+ * 撞上了这一档）。那时后端说不出话，它不认识这个端点，`error.body` 里连 `error`
+ * 码都没有——判据精确：404 **且** body 里没有 `error`。带 `error` 的 404
+ * （`project_not_found`）已经是后端在说话，走上面那条共享路径。
  *
  * 那句话里**不许出现任何一条命令**：产品的最终用户是那位「用 WPS、不想碰命令行」
  * 的作者，对他说「去重启某个命令」等于让他卡死（`test/screenGuard.ts` 第五张网收这个）。
@@ -133,18 +138,23 @@ export const useShelf = create<ShelfStore>((set) => {
 export function newChapterError(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 404 && !error.body.error) {
-      return "这台电脑上的程序是旧的一版，还不认得「新起一章」。把工作台关掉、重新打开一次就好。";
+      const language = useLanguage.getState().language;
+      return language === "zh"
+        ? "这台电脑上的程序是旧的一版，还不认得「新起一章」。把工作台关掉、重新打开一次就好。"
+        : "The app on this computer is an older version and doesn't recognize \"new chapter\" yet. Close the workbench and reopen it.";
     }
-    if (error.body.message) return error.body.message;
+    const said = saidToTheAuthor(error);
+    if (said) return said;
   }
-  return "没能新起一章，再点一次试试。";
+  const language = useLanguage.getState().language;
+  return language === "zh" ? "没能新起一章，再点一次试试。" : "Couldn't create a new chapter — try again.";
 }
 
 /**
  * 删一章没成时，屏幕上该说哪句话。
  *
  * 同 `newChapterError`：**只有「服务上根本没这条路」那一档由前端说**（判据一样精确：
- * 404 且 body 里没有 `error` 码），别的一律原样渲染后端那句。
+ * 404 且 body 里没有 `error` 码），别的一律走 `saidToTheAuthor` 那条共享路径。
  *
  * 后端那句话尤其不许在这儿改写：拒绝的时候它带着**数出来的明细**
  *（「证据 3 / 关系 2 / 情节 1 ⋯」），而那串数字正是作者判断「这一章到底还连着什么」
@@ -154,9 +164,14 @@ export function newChapterError(error: unknown): string {
 export function deleteChapterError(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.status === 404 && !error.body.error) {
-      return "这台电脑上的程序是旧的一版，还不认得「删除本章」。把工作台关掉、重新打开一次就好。";
+      const language = useLanguage.getState().language;
+      return language === "zh"
+        ? "这台电脑上的程序是旧的一版，还不认得「删除本章」。把工作台关掉、重新打开一次就好。"
+        : "The app on this computer is an older version and doesn't recognize \"delete this chapter\" yet. Close the workbench and reopen it.";
     }
-    if (error.body.message) return error.body.message;
+    const said = saidToTheAuthor(error);
+    if (said) return said;
   }
-  return "没能删除本章，再点一次试试。";
+  const language = useLanguage.getState().language;
+  return language === "zh" ? "没能删除本章，再点一次试试。" : "Couldn't delete this chapter — try again.";
 }

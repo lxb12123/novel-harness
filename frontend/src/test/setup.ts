@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach } from "vitest";
+import { type Language, useLanguage } from "../language";
 
 // jsdom 的 document 在同一个文件的多个 test 之间是共享的：不卸载，上一个 test 渲染的
 // 抽屉会留在 DOM 里，下一个 test 的 getByText 就可能命中它——那种绿是假的。
@@ -37,6 +38,22 @@ if (typeof globalThis.localStorage?.getItem !== "function") {
 // 每个 test 从空存储开始：不清的话「没存过应该给默认值」这类断言会被上一个 test 写进去的
 // 值染绿/染红，而且测试顺序一换结论就变。
 beforeEach(() => localStorage.clear());
+
+// ── 界面语言：测试默认中文 ───────────────────────────────────────────────────
+// `useLanguage` 的初始值来自 `navigator.language`（jsdom 默认 `en-US`），而这个仓库
+// 绝大多数既有断言在国际化第四批之前写的时候，默认输出就是中文——不重置的话它们会
+// 因为「今天恰好在英文环境里跑」而红，红的原因和被测行为毫无关系。
+// **测中文行为不用做任何事**（这就是默认值）；测英文行为的用例自己
+// `useLanguage.getState().setLanguage("en")`。
+//
+// **走 `setLanguage(...)` 这个公开方法，不直接 `setState({ language: "zh" })`**：
+// 后一种写法是 `tests/test_no_language_literal_in_frontend.py` 那道守卫按形状
+// 拦的东西（`language: "zh"` 这个对象字面量键值对）——那道守卫防的是**书的语言**
+// 被前端焊死绕过 `Project.language`，跟这儿要重置的**界面语言**是两件事，但守卫
+// 是按形状扫全树、不认字段语义（这仓库为"守卫认字段名"吃过亏，见它自己的
+// docstring），撞上纯属巧合，改成调方法而不是碰对象字面量就避开了，不用给守卫开口子。
+const DEFAULT_TEST_LANGUAGE: Language = "zh";
+beforeEach(() => useLanguage.getState().setLanguage(DEFAULT_TEST_LANGUAGE));
 
 // ── CodeMirror 6 要量字，而 jsdom 的 `Range` 上没有那两个测量方法 ──────────────
 // 少了它们，CM6 的一次 measure 会在 `requestAnimationFrame` 里抛 TypeError。那个抛

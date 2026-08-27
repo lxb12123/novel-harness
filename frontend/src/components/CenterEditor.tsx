@@ -8,6 +8,8 @@ import {
 } from "../api/hooks";
 import { useCoords } from "../store";
 import { ApiError } from "../api/client";
+import { saidToTheAuthor } from "../correctionError";
+import { useLanguage } from "../language";
 import { HistoryDrawer } from "./HistoryDrawer";
 import { ChapterTitle } from "./ChapterTitle";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
@@ -130,7 +132,8 @@ export function CenterEditor() {
             标签页时把整本书对一遍（`reconcile.ts`，只 stat，722 章 ~4ms）。 */}
         <span className={"status" + (saveErr ? " err" : save.isSuccess && !dirty ? " ok" : "")}>
           {saveErr
-            ? "保存被拒：" + saveErr.message
+            ? (useLanguage.getState().language === "zh" ? "保存被拒：" : "Save was refused: ") +
+              (saidToTheAuthor(saveErr) ?? saveErr.message)
             : save.isPending
               ? "保存中…"
               : dirty

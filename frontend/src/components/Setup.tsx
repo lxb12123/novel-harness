@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useBootstrapProject } from "../api/hooks";
 import { ApiError, readTextFile } from "../api/client";
+import { saidToTheAuthor } from "../correctionError";
 import { useCoords } from "../store";
 import type { BootstrapResult } from "../api/types";
 import { BlankBookForm } from "./onboarding/BlankBookForm";
@@ -24,7 +25,10 @@ export function Setup({ onClose }: { onClose?: () => void }) {
   const readTokenRef = useRef(0);
   const bootstrap = useBootstrapProject();
   const { setProject, setChapter } = useCoords();
-  const mutationError = bootstrap.error instanceof ApiError ? bootstrap.error.message : null;
+  const mutationError =
+    bootstrap.error instanceof ApiError
+      ? (saidToTheAuthor(bootstrap.error) ?? bootstrap.error.message)
+      : null;
 
   const closeDrawer = useCallback(() => {
     if (bootstrap.isPending) return;

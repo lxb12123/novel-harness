@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { useDeleteSnapshot, useHistory, useRestoreSnapshot } from "../api/hooks";
 import { ApiError } from "../api/client";
+import { saidToTheAuthor } from "../correctionError";
 import { lineDiff, diffStats } from "../diff";
+import { useLanguage } from "../language";
 
 // 历史版本（§2.2 SnapshotDiffView）：这一章内容去重后的历史版本 vs 当前，行级 diff，
 // 外加还原 / 删除。
@@ -17,20 +19,40 @@ function when(iso: string): string {
   return iso.replace("T", " ").replace(/\.\d+Z?$/, "").slice(5);
 }
 
-/** 后端拒绝删除时，把错误码翻成作者看得懂的一句话。 */
+/** 后端拒绝删除时，把错误码翻成作者看得懂的一句话。
+ *
+ *  **`snapshot_is_current`/`snapshot_in_use` 故意不查 `saidToTheAuthor`。**
+ *  这两档后端自己带的 `.message` 是 `str(exc)`（`graph/store.py::SnapshotInUse`），
+ *  里头**直接嵌着裸快照 id**（`快照 snapshot:01J8… 还被引用着（证据 3 / 抽取 0 /
+ *  提案 0）`）——那是 `screenGuard.ts` 第三张网（`RAW_ID`）要拦的形状，原样透出去
+ *  就是给作者看一串他认不得的编号。国际化第四批推进这一批改造时在这儿也踩过一次
+ *  （同 `RosterDrawer.tsx::Failure` 那次教训）：**统一接 `saidToTheAuthor` 之前，
+ *  先确认某个码的后端消息真的对作者安全**，不能因为"看起来该统一"就无差别接。
+ *  这两档继续用自己拼的句子（用 `err.body.usage.evidence` 这个数字，不用 id）。
+ *  只有"认不出任何一档、也没有已知安全消息"的兜底才走 `saidToTheAuthor`。*/
 function refusal(err: unknown): string {
-  if (!(err instanceof ApiError)) return "没能删掉这一版，请再试一次。";
+  const language = useLanguage.getState().language;
+  const generic = () =>
+    language === "zh" ? "没能删掉这一版，请再试一次。" : "Couldn't delete this version — try again.";
+  if (!(err instanceof ApiError)) return generic();
   if (err.code === "snapshot_is_current") {
-    return "正文现在就是这一版，删不掉。可以先还原到别的版本，再回来删它。";
+    return language === "zh"
+      ? "正文现在就是这一版，删不掉。可以先还原到别的版本，再回来删它。"
+      : "This is the current version of the text, so it can't be deleted. Restore a different version first, then come back to delete it.";
   }
   if (err.code === "snapshot_in_use") {
     const used = err.body.usage as { evidence?: number } | undefined;
     const n = Number(used?.evidence ?? 0);
+    if (language === "zh") {
+      return n > 0
+        ? `这一版被 ${n} 条原文依据引用着——删了它，那些依据就找不到出处了。`
+        : "这一版还被别的记录引用着，删了会让它们找不到出处。";
+    }
     return n > 0
-      ? `这一版被 ${n} 条原文依据引用着——删了它，那些依据就找不到出处了。`
-      : "这一版还被别的记录引用着，删了会让它们找不到出处。";
+      ? `This version is referenced by ${n} pieces of evidence — deleting it would leave them without a source.`
+      : "This version is still referenced by other records — deleting it would leave them without a source.";
   }
-  return err.message;
+  return saidToTheAuthor(err) ?? generic();
 }
 
 type Pending = { kind: "restore" | "delete"; id: string };

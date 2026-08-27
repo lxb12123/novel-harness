@@ -8,6 +8,13 @@
 
 export interface ApiErrorBody {
   error?: string;
+  /** 码的插值参数（国际化第四批）。后端不再算最终句子，`error` 是码、
+   *  `params` 是填模板用的原始事实——组句在前端 `backendMessages.ts` 里发生。
+   *  这一位是**过渡期**才有的双轨兼容：`message` 还没从旧端点删干净时，
+   *  两个字段可能同时存在，读端一律优先 `error` + `params`。 */
+  params?: Record<string, unknown>;
+  /** @deprecated 国际化第四批之前后端算好的最终句子。正在从各端点逐个撤下——
+   *  见 `error`/`params` 那两行。仍然存在的端点，读端照旧当唯一真话使用。 */
   message?: string;
   surface?: string;
   quote?: string;

@@ -1,4 +1,6 @@
 import { ApiError } from "./api/client";
+import { messageForCode } from "./backendMessages";
+import { type Language, useLanguage } from "./language";
 
 // 改一条**已经生效**的事实被拒绝时，屏幕上该出现什么（ADR 0020 的「可改」那一半）。
 //
@@ -19,9 +21,25 @@ import { ApiError } from "./api/client";
 // 理由是措辞的**源**只能有一个：有了这张表，后端就可以一直吐 `KNOWS`，而表永远只
 // 覆盖写它那天想得到的几个词（`Character`、裸 id、写给维护者的「面板 §3.2」全在外面），
 // 更糟的是屏幕上的说法和 CLI、和活动记录不再是同一句话。
-// 后端的拒绝文案现在本来就是作者的话（`corrections.py` 的 `CorrectionError` 那段
-// docstring 写着这条约束，`tests/test_canon_edit_boundary.py` 两头各钉一道）。
-// **再看见引擎的词，去改后端，不要在这儿加映射表。**
+// 后端的拒绝文案在这份文件写下的当时本来就是作者的话（`corrections.py` 的
+// `CorrectionError` 那段 docstring 写着这条约束，`tests/test_canon_edit_boundary.py`
+// 两头各钉一道）。**这一条今天仍然成立，`saidToTheAuthor` 一个字不改（见下）。**
+//
+// ── 国际化第四批打破的是另一个前提，不是这一条 ────────────────────────────
+//
+// 「源只能有一个」这句话本身没有被推翻，被推翻的是**那个源必须在后端**——因为那个
+// 假设默认「后端算出来的中文就是读它的人要的话」，而界面语言独立于书的语言（维护者
+// 裁定 B）之后，后端不再知道读这句话的人用什么界面语言（后台任务甚至没有 HTTP
+// 请求可读）。于是**新的单一源在前端**（`backendMessages.ts`），而它不是那张被删掉
+// 的旧表的复辟：旧表覆盖不了引擎内部随时会长出的开放词表、也没有机械校验；这张表
+// 只收这个仓库自己定义的**封闭**码集合，`test_every_backend_code_has_a_frontend_translation`
+// （后端）钉着"后端能发的每个码，这张表都有"，`backendMessages.test.ts` 钉着两侧
+// 非空、英文零中文——旧表死于"会漂"，这张表结构上漂不了。
+//
+// **判据依然只有一个**：认得的码走 `backendMessages.ts` 整句渲染；认不出的码（还没
+// 迁移的端点、真正的开放世界失败）落到 `.body.message`（过渡期）或下面这三句通用兜底。
+// **不认识某个具体后端拒绝就编一句翻译**——那才是当年那张表真正的病，不是"前端有一
+// 张表"这件事本身。
 
 export type CorrectionFailureKind = "stale" | "gone" | "refused" | "unknown";
 
@@ -30,58 +48,71 @@ export interface CorrectionFailure {
   message: string;
 }
 
-// ── 前端自己写的话只有三句，而且**一句都不是翻译** ────────────────────────
+// ── 前端自己写的话只有三句通用兜底，而且**一句都不针对某个具体拒绝** ─────────
 //
-// 上面那条纪律（不改写后端的句子）留下了一格没人管的：**后端有几种拒绝一句话都没写。**
-// `load_project` 的 404 是 `{"error": "project_not_found", "project_id": …}`，
-// `stale_base_version` 的 409 是两个版本号——两条编辑路由都过这道闸门
-// （`tests/test_canon_edit_boundary.py::test_these_two_routes_can_answer_with_a_bare_code`
+// 有两种情况会走到这三句：**后端这个码还没配文案**（`backendMessages.ts` 没这一条），
+// 或者**后端这一条路由本来就没打算说话**（`load_project` 的 404 是
+// `{"error": "project_not_found", "project_id": …}`，`stale_base_version` 的 409
+// 是两个版本号——两条编辑路由都过这道闸门，
+// `tests/test_canon_edit_boundary.py::test_these_two_routes_can_answer_with_a_bare_code`
 // 从真 app 钉住了这个形状）。
 //
-// 而 `ApiError` 的 `.message` 在没有 `message` 时**退回 `body.error`**，于是错误框里
-// 摆出来的是 `project_not_found` 五个字母——一个小说作者看到的第一反应是「我把书弄坏了」。
-//
-// **有话就照说，一个字不改；一句话都没有的时候才轮到下面三句。** 它们不翻译任何一个
-// 引擎词，所以不是那张被删掉的映射表——那张表干的是「把后端说的 KNOWS 换成知道」，
-// 这三句干的是「后端什么都没说的时候别把代号当话」。
+// **认得的码，一个字都不编**——`saidToTheAuthor` 查得到就用查到的那句，查不到才轮到
+// 下面三句。它们不是某个具体拒绝的翻译（那种要写就写进 `backendMessages.ts`，
+// 归码表管），是「这次真的什么都不知道」时的通用措辞——**跟着界面语言切换，
+// 但内容本身是前端原创的兜底，不是从中文翻过去的**。
 
 /** 「别处刚改过」。必须把作者推去**看**，不是去重点一次：静默重试等于把他的改动
- *  盖到一份他没看过的状态上。哪天后端给这一条补了 message，这一句就该退位。 */
-const STALE =
-  "这本书在别处刚刚被改过，你看到的还是改动之前的样子。先看一眼最新的，再决定这一处要不要改。";
+ *  盖到一份他没看过的状态上。哪天后端给这一条配了码，这一句就该退位。 */
+const STALE: Record<Language, string> = {
+  zh: "这本书在别处刚刚被改过，你看到的还是改动之前的样子。先看一眼最新的，再决定这一处要不要改。",
+  en: "This book was just changed somewhere else — what you're looking at is the version before that change. Take a look at the latest version before deciding whether to make this edit.",
+};
 
 /** 后端拒了，但一个字都没说为什么。**不许编一个理由**（§10 约束 8：不知道就说不知道），
  *  也不许说「请稍后再试」——那是在暗示重试有用，而书不在了的时候重试一百次都一样。 */
-const SILENT =
-  "这次改动没能保存，而系统没能说清是为什么。刷新一下看看这本书现在是什么样，再决定要不要重来一次。";
+const SILENT: Record<Language, string> = {
+  zh: "这次改动没能保存，而系统没能说清是为什么。刷新一下看看这本书现在是什么样，再决定要不要重来一次。",
+  en: "This change couldn't be saved, and the system couldn't say why. Refresh to see what this book looks like now, then decide whether to try again.",
+};
 
 /** 根本没到后端。不冒充一次业务拒绝。 */
-const OFFLINE = "没能保存这次改动，请稍后再试。";
+const OFFLINE: Record<Language, string> = {
+  zh: "没能保存这次改动，请稍后再试。",
+  en: "Couldn't save this change — please try again in a moment.",
+};
 
-/** 后端**写给作者的那句话**，没写就是 `null`。
+/** 后端**写给作者的那句话**，没有就是 `null`。
  *
- *  只认 `message`，故意不读 `error.message`：`ApiError` 的 `.message` 会在没有
- *  `message` 时退回 `body.error`，而 `error` 是给代码分支用的码，不是话。
- *  这一行就是这条缝的补丁位置。
+ *  三级优先：① `error.code` 在 `backendMessages.ts` 里查得到——用整句模板渲染
+ *  （国际化第四批的新源，`error.body.params` 是填模板的原始事实）；② 查不到、
+ *  但后端这一条路由还在用旧形状发 `message`——原样用它，**过渡期**兼容，一个字不改
+ *  （`ApiError` 的 `.message` getter 会在没有 `message` 时退回 `body.error`，
+ *  这里故意直接读 `body.message`，不借那个 getter，防止把码当话使）；③ 都没有 → `null`，
+ *  轮到调用方自己的通用兜底。
  *
  *  **导出是因为它有第二个消费者**（写作助手面板，`chat.ts::refusalText`）：
  *  那几条路由的 404 同样只有码没有话（`{"error":"chat_not_found",…}`）。
- *  判据只许有一处——在那边照抄一份 `error.body.message` 的读法，
- *  就是这个仓库反复在清的「同一条规矩两份拷贝」。 */
+ *  判据只许有一处——在那边照抄一份读法，就是这个仓库反复在清的
+ *  「同一条规矩两份拷贝」。 */
 export function saidToTheAuthor(error: ApiError): string | null {
-  const text = error.body.message;
-  return typeof text === "string" && text.trim() ? text : null;
+  const language = useLanguage.getState().language;
+  const coded = error.code ? messageForCode(error.code, language, error.body.params) : undefined;
+  if (coded) return coded;
+  const legacy = error.body.message;
+  return typeof legacy === "string" && legacy.trim() ? legacy : null;
 }
 
 export function readCorrectionError(error: unknown): CorrectionFailure {
+  const language = useLanguage.getState().language;
   if (error instanceof ApiError) {
     const said = saidToTheAuthor(error);
     if (error.status === 409 || error.code === "stale_base_version")
-      return { kind: "stale", message: said ?? STALE };
-    if (error.status === 404) return { kind: "gone", message: said ?? SILENT };
-    if (error.status === 422) return { kind: "refused", message: said ?? SILENT };
-    return { kind: "unknown", message: said ?? SILENT };
+      return { kind: "stale", message: said ?? STALE[language] };
+    if (error.status === 404) return { kind: "gone", message: said ?? SILENT[language] };
+    if (error.status === 422) return { kind: "refused", message: said ?? SILENT[language] };
+    return { kind: "unknown", message: said ?? SILENT[language] };
   }
   // 网络断了、后端没起来。
-  return { kind: "unknown", message: OFFLINE };
+  return { kind: "unknown", message: OFFLINE[language] };
 }

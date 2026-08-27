@@ -71,16 +71,27 @@ class CorrectionError(Exception):
     """作者发起的一次改正，系统拒绝执行。
 
     **这三个异常的 `str()` 会原样出现在小说作者的错误框里**（`api/review.py::
-    _correction_error` 把它放进 `message`，工作台直接渲染那一句）。所以这里的每一句话
-    都得是作者读得懂的中文：**不许出现 `LOCATED_AT` / `information_scope` / 裸 id /
-    「面板 §3.2」这类写给维护者的东西。**
+    _correction_error` 把它放进 `message`，工作台直接渲染那一句——**今天**，本模块
+    还没跟着国际化第四批改口，见下一段）。**不许出现 `LOCATED_AT` /
+    `information_scope` / 裸 id / 「面板 §3.2」这类写给维护者的东西**——这一条
+    与语言无关，`tests/test_canon_edit_boundary.py::
+    test_the_correction_layer_writes_no_engine_words` 从 AST 上钉住它，不受下面
+    这次改口影响。
 
-    这不是措辞洁癖，是措辞**源**的问题：前端一旦为了遮住这些词加一张
-    「引擎的词 → 作者的词」的映射表，屏幕上的说法就和这里、和 CLI 不再是同一句话，
-    而那张表永远只覆盖写它那天想得到的几个词。`tests/test_canon_edit_boundary.py::
-    test_the_correction_layer_writes_no_engine_words` 从 AST 上钉住这条。
+    ── 这里的中文曾经就是终点，现在只是"眼下还没排到"的那一批 ────────────────
 
-    ── 推论：**这一句只能由本模块写，不许转发别人的 `str(exc)`** ──────────────
+    这里的话曾经必须是作者读得懂的**中文**，理由是措辞的源只能有一个：前端一旦
+    为了遮住引擎词加一张「引擎的词 → 作者的词」的映射表，屏幕上的说法就和这里、
+    和 CLI 不再是同一句话，而那张表永远只覆盖写它那天想得到的几个词。这条道理
+    没有变——**变的是"源必须在后端"这一半**：界面语言独立于书的语言之后
+    （维护者裁定 B），后端不再知道读这句话的人用什么界面语言，新的单一源改在了
+    前端 `frontend/src/backendMessages.ts`（机械测试钉着覆盖率，不是像旧映射表
+    那样靠人记得更新）。`system_notifications.py`/`panel/constraints.py` 等
+    已经在国际化第四批里切过去了；**本模块和 `api/review.py::_correction_error`
+    还没有**——它们仍然直接写最终中文，是这条原则确认之后、代码还没跟上的一批，
+    不是被现有测试保护着的"应该永远是中文"。谁接这一批时，把这段话也一起改口。
+
+    ── 推论：**这一句只能由本模块写，不许转发别人的 `str(exc)`**（这条不受本次改口影响）──
 
     上面那道守卫扫的是「塞进构造器的字面量」。`CorrectionRefused(str(exc))` 里没有
     字面量，于是**借来的那句话在守卫眼里根本不存在**——而 `graph/sqlite_review.py` 和

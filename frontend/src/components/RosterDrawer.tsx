@@ -205,6 +205,14 @@ function AliasForm({ pid }: { pid: string }) {
 
 // ── 拒绝 ────────────────────────────────────────────────────────────────────
 
+/** **故意不查 `saidToTheAuthor`。** 这一格上至少一档拒绝（`errorShortAlias`）
+ *  今天后端的 `.message` 里就带着 `usable_for_rules`/`ADR 0004` 这类写给维护者的
+ *  内部术语——`saidToTheAuthor` 的过渡期兜底（认不出码就信后端的 `message`）会把
+ *  它原样透出去，`test_the_frontend_keeps_no_second_glossary` 那套「不许暴露内部
+ *  术语」的验收专门钉着这一格（`RosterDrawer.test.tsx`）。国际化第四批推进这一刀
+ *  时在这儿撞过一次真的回归，教训是：**只有确认某个码的后端消息本身对作者安全，
+ *  才把它接进 `saidToTheAuthor`**，不能因为「统一一下」就无差别接。这一格在后端
+ *  把 `usable_for_rules` 这类术语从 `.message` 里清掉之前，继续用自己的 `fallback`。 */
 function Failure({ error, fallback }: { error: unknown; fallback: string }) {
   const err = error instanceof ApiError ? error : null;
   if (!err) return null;
