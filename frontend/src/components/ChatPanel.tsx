@@ -28,7 +28,7 @@ import {
   type LiveDraft,
   type TurnProgress,
 } from "../chat";
-import { useLanguage } from "../language";
+import { useLanguage, type Language } from "../language";
 import { useCoords } from "../store";
 import { ChatSessions } from "./ChatSessions";
 import { BotIcon, SendIcon } from "./icons";
@@ -76,13 +76,24 @@ import { CompareLink, DraftCandidates } from "./DraftCandidates";
 
 /** 后端一句话都没写时才轮到的那几句。**一个字都不解释「为什么」**——
  *  §10 约束 8：不知道就说不知道，编一个理由比不说更贵。 */
-const TURN_FAILED = "这一轮没跑成，而系统没能说清是为什么。刷新一下看看这段对话现在是什么样。";
-const CREATE_FAILED = "没能开一段新的对话，而系统没能说清是为什么。";
-const STOP_FAILED = "这一下「停」没送出去，而系统没能说清是为什么。这一轮可能还在跑，过一会儿再按一次。";
+const TURN_FAILED = (language: Language): string =>
+  language === "zh"
+    ? "这一轮没跑成，而系统没能说清是为什么。刷新一下看看这段对话现在是什么样。"
+    : "This round didn't go through, and the system couldn't say why. Refresh to see what this conversation looks like now.";
+const CREATE_FAILED = (language: Language): string =>
+  language === "zh"
+    ? "没能开一段新的对话，而系统没能说清是为什么。"
+    : "Couldn't start a new conversation, and the system couldn't say why.";
+const STOP_FAILED = (language: Language): string =>
+  language === "zh"
+    ? "这一下「停」没送出去，而系统没能说清是为什么。这一轮可能还在跑，过一会儿再按一次。"
+    : "Clicking \"Stop\" didn't go through, and the system couldn't say why. This round may still be running — try again in a moment.";
 /** 列表读不出来。**不许让屏幕替它说「你还没说过话」**——那是一句它不知道真假的话，
  *  而作者三个月的对话可能都在里面（§10 约束 8）。 */
-const LIST_FAILED =
-  "这本书有哪几段对话，这会儿没读出来。下面是空的不代表你没说过话——刷新一下再看。";
+const LIST_FAILED = (language: Language): string =>
+  language === "zh"
+    ? "这本书有哪几段对话，这会儿没读出来。下面是空的不代表你没说过话——刷新一下再看。"
+    : "Couldn't load which conversations this book has right now. An empty list below doesn't mean you haven't said anything — refresh and check again.";
 
 /** 后端那句话可能带 markdown 的重音（`stop_wording(CONTEXT_FULL)` 就带）。
  *  **不渲染就是两颗星号摆在作者脸上**，而这一层不许改那句话本身。 */
@@ -120,15 +131,21 @@ function Bubble({ message }: { message: ChatMessageView }) {
  *  空的时候也要画出来：那一格里的「正在写第 N 章的一稿」本身就是信息——
  *  没有它，一批三稿同时在飞的时候屏幕上只有一坨交错的字，作者分不出哪段是哪稿。 */
 function DraftingBox({ draft }: { draft: LiveDraft }) {
+  const language = useLanguage((s) => s.language);
   return (
     <div className="chat-drafting">
       <span className="chat-drafting-head">
-        {draft.done || `正在写第 ${draft.chapter} 章的一稿…`}
+        {draft.done ||
+          (language === "zh"
+            ? `正在写第 ${draft.chapter} 章的一稿…`
+            : `Writing a draft of chapter ${draft.chapter}…`)}
       </span>
       {draft.text ? (
         <p className="chat-drafting-text">{draft.text}</p>
       ) : (
-        <p className="chat-drafting-wait">还没落下第一个字。</p>
+        <p className="chat-drafting-wait">
+          {language === "zh" ? "还没落下第一个字。" : "Not a single word down yet."}
+        </p>
       )}
     </div>
   );
@@ -141,6 +158,7 @@ function RunningStrip({ since, onStop, stopping, progress }: {
   stopping: boolean;
   progress: TurnProgress;
 }) {
+  const language = useLanguage((s) => s.language);
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -151,7 +169,10 @@ function RunningStrip({ since, onStop, stopping, progress }: {
     <div className="chat-running" role="status">
       <span className="chat-running-dot" aria-hidden="true" />
       <div className="chat-running-say">
-        <b>正在跑这一轮 · {elapsedText(now - since)}</b>
+        <b>
+          {language === "zh" ? "正在跑这一轮 · " : "This round is running · "}
+          {elapsedText(now - since, language)}
+        </b>
         {/* ── 这儿曾经有一句讲内部流式语义的话，2026-08-13 删掉了 ──────────────
             原文：「回话是整段一次出现的，稿子才会一个字一个字长出来」。它是对上一句
             错话的修正，而上一句也是修正来的——每次发现文案不准就把文案改得更准，
@@ -163,7 +184,11 @@ function RunningStrip({ since, onStop, stopping, progress }: {
 
             而且那句话**没有任何条件**——端点退回一次性响应时它就是假的，
             那正是本仓反复栽的「屏幕在陈述一件不成立的事」。 */}
-        <span>它可能要来回查几次资料、想上几轮。下面是它这会儿在做的事。</span>
+        <span>
+          {language === "zh"
+            ? "它可能要来回查几次资料、想上几轮。下面是它这会儿在做的事。"
+            : "It may look things up a few times and mull it over for a few rounds. Below is what it’s doing right now."}
+        </span>
         {progress.steps.map((line, i) => (
           <span key={i} className="chat-step">
             {line}
@@ -179,7 +204,7 @@ function RunningStrip({ since, onStop, stopping, progress }: {
         ))}
       </div>
       <button className="danger" disabled={stopping} onClick={onStop}>
-        停
+        {language === "zh" ? "停" : "Stop"}
       </button>
     </div>
   );
@@ -205,9 +230,11 @@ function AskedCard({ asked, onPick, busy }: {
   onPick: (answer: string) => void;
   busy: boolean;
 }) {
+  const language = useLanguage((s) => s.language);
+  const waitingLabel = language === "zh" ? "它在等你回一句" : "It's waiting for your reply";
   return (
-    <div className="chat-asked" role="group" aria-label="它在等你回一句">
-      <span className="chat-asked-head">它在等你回一句</span>
+    <div className="chat-asked" role="group" aria-label={waitingLabel}>
+      <span className="chat-asked-head">{waitingLabel}</span>
       <p className="chat-asked-q">{asked.question}</p>
       {asked.options.length > 0 ? (
         <>
@@ -219,11 +246,15 @@ function AskedCard({ asked, onPick, busy }: {
             ))}
           </div>
           <span className="chat-asked-note">
-            点一个就当你这么答了；想说别的就在下面直接写。
+            {language === "zh"
+              ? "点一个就当你这么答了；想说别的就在下面直接写。"
+              : "Click one and that counts as your answer; to say something else, just type it below."}
           </span>
         </>
       ) : (
-        <span className="chat-asked-note">在下面写一句回它。</span>
+        <span className="chat-asked-note">
+          {language === "zh" ? "在下面写一句回它。" : "Write a reply to it below."}
+        </span>
       )}
     </div>
   );
@@ -239,7 +270,8 @@ function Receipt({
   footnote: string | null;
   pid: string;
 }) {
-  const notes = receiptNotes(receipt);
+  const language = useLanguage((s) => s.language);
+  const notes = receiptNotes(receipt, language);
   // 这一轮把「为什么」留在对话里了的话，这儿就不再说一遍（`chat.ts::receiptSays`）。
   const said = receiptSays(receipt);
   return (
@@ -389,7 +421,7 @@ export function ChatPanel() {
         runId: runId.current,
         // 边跑边收。**归约在纯函数里**（`chat.ts`），这儿只负责把它挂上去——
         // 「一批三稿交错着到达」那种情形鼠标点不出来，只有单测点得出来。
-        onEvent: (event) => setProgress((prev) => applyTurnEvent(prev, event)),
+        onEvent: (event) => setProgress((prev) => applyTurnEvent(prev, event, language)),
       },
       {
         onSuccess: (r) => {
@@ -426,9 +458,9 @@ export function ChatPanel() {
 
   // **不读 `error.message`**：它在后端没写 `message` 时退回 `body.error`，而这几条路由的
   // 404 恰恰只有码没有话（`chat_not_found` / `project_not_found`，真 app 打过）。
-  const failure = refusalText(turn.error, TURN_FAILED);
-  const createFailure = refusalText(create.error, CREATE_FAILED);
-  const listFailure = refusalText(sessions.error, LIST_FAILED);
+  const failure = refusalText(turn.error, TURN_FAILED(language));
+  const createFailure = refusalText(create.error, CREATE_FAILED(language));
+  const listFailure = refusalText(sessions.error, LIST_FAILED(language));
   /** 那一轮的失败**属于它自己那一段**（同 `receipt.chat`，这儿原来漏了）。
    *  一轮跑好几分钟，「等的时候切过去看另一段」是常态：不钉住的话，另一段上会长出
    *  一个红框，而那一段什么都没发生——一句关于别处的话，长得像这儿的事实。 */
@@ -453,7 +485,9 @@ export function ChatPanel() {
   return (
     <section className="pane chat">
       <div className="chat-head">
-        <span className="chat-head-title">{current?.title.trim() || "写作助手"}</span>
+        <span className="chat-head-title">
+          {current?.title.trim() || (language === "zh" ? "写作助手" : "Writing assistant")}
+        </span>
         <span className="spacer" />
         {/* 这儿曾经有一句「按第 N 章回答」。**2026-08-14 撤掉**，作者的原话是
             「写这一章也可能引用其他章的内容，不一定要强制地把这个显示在这」——
@@ -471,12 +505,14 @@ export function ChatPanel() {
             标题栏的一行字。想补的时候补在那句话里，别把它加回这儿。 */}
         {onDesk > 0 && (
           <CompareLink pid={pid} chapter={chapter}>
-            还摆着 {onDesk} 稿 ↗
+            {language === "zh"
+              ? `还摆着 ${onDesk} 稿 ↗`
+              : `${onDesk} draft${onDesk === 1 ? "" : "s"} still on the desk ↗`}
           </CompareLink>
         )}
         {/* 「这一章的规矩」那颗按钮原来在这儿。撤掉的理由写在上面 `listOpen` 那一段。 */}
         <button aria-expanded={listOpen} onClick={() => setListOpen((v) => !v)}>
-          对话列表
+          {language === "zh" ? "对话列表" : "Conversations"}
         </button>
       </div>
 
@@ -494,7 +530,14 @@ export function ChatPanel() {
       <div className="chat-log" ref={logRef}>
         {detail.isError && (
           <div className="err-box">
-            这段对话没读出来 —— 它可能已经被删掉了。从「对话列表」里挑一段，或者开一段新的。
+            {language === "zh" ? (
+              <>这段对话没读出来 —— 它可能已经被删掉了。从「对话列表」里挑一段，或者开一段新的。</>
+            ) : (
+              <>
+                Couldn’t load this conversation — it may have been deleted. Pick another one from
+                “Conversations”, or start a new one.
+              </>
+            )}
           </div>
         )}
         {/* 列表读不出来这件事**只说一遍**：那一列摊开的时候由它自己说（它就长在这块
@@ -512,17 +555,31 @@ export function ChatPanel() {
             <span className="chat-hello-mark" aria-hidden="true">
               <BotIcon open={false} />
             </span>
-            <p className="chat-hello-title">开始写作</p>
+            <p className="chat-hello-title">
+              {language === "zh" ? "开始写作" : "Start writing"}
+            </p>
             <p className="chat-hello-sub">
-              说一句就行。它能翻这本书的目录、某几章的正文和梗概，
-              也能替你算这一章谁还不知道什么。
+              {language === "zh" ? (
+                <>
+                  说一句就行。它能翻这本书的目录、某几章的正文和梗概，
+                  也能替你算这一章谁还不知道什么。
+                </>
+              ) : (
+                <>
+                  Just say something. It can look through this book’s table of contents, the text
+                  and summaries of specific chapters, and work out who doesn’t know what yet as of
+                  this chapter.
+                </>
+              )}
             </p>
           </div>
         )}
 
         {window.hidden > 0 && (
           <button className="chat-earlier" onClick={() => setExpanded(true)}>
-            看更早的 {window.hidden} 条
+            {language === "zh"
+              ? `看更早的 ${window.hidden} 条`
+              : `See ${window.hidden} earlier message${window.hidden === 1 ? "" : "s"}`}
           </button>
         )}
         {/* **key 不再是 `seq`**（2026-08-13）：系统那一行不占历史下标，它带的那个数
@@ -559,7 +616,10 @@ export function ChatPanel() {
                 // 这一下**没送出去**（那段对话不在了 / 网断了）。原来这儿什么都没有，
                 // 于是按下去屏幕上一个字都不变——见 `stopSaid` 那段注释。
                 onError: (e) =>
-                  setStopSaid({ text: refusalText(e, STOP_FAILED) ?? STOP_FAILED, failed: true }),
+                  setStopSaid({
+                    text: refusalText(e, STOP_FAILED(language)) ?? STOP_FAILED(language),
+                    failed: true,
+                  }),
               });
             }}
           />
@@ -573,7 +633,7 @@ export function ChatPanel() {
         {shownReceipt && (
           <Receipt
             receipt={shownReceipt}
-            footnote={stopFootnote(stopLanded.current, shownReceipt)}
+            footnote={stopFootnote(stopLanded.current, shownReceipt, language)}
             pid={pid}
           />
         )}
@@ -595,8 +655,12 @@ export function ChatPanel() {
             换成图标」。**框自己画边框，textarea 不画**，否则框里套一个框。 */}
         <div className="chat-say-box">
         <textarea
-          aria-label="跟写作助手说"
-          placeholder="开始写作…（Enter 发送，Shift + Enter 换行）"
+          aria-label={language === "zh" ? "跟写作助手说" : "Talk to the writing assistant"}
+          placeholder={
+            language === "zh"
+              ? "开始写作…（Enter 发送，Shift + Enter 换行）"
+              : "Start writing… (Enter to send, Shift + Enter for a new line)"
+          }
           rows={3}
           value={said}
           disabled={running}
@@ -632,8 +696,8 @@ export function ChatPanel() {
               就是同一个动作两个入口。 */}
           <button
             className="chat-send"
-            aria-label="发送"
-            data-tip="发送"
+            aria-label={language === "zh" ? "发送" : "Send"}
+            data-tip={language === "zh" ? "发送" : "Send"}
             disabled={!said.trim() || running || create.isPending || !projectId}
             onClick={send}
           >
@@ -644,7 +708,11 @@ export function ChatPanel() {
             切去看另一段对话——那时这儿是一个没有任何解释的灰输入框，读起来像坏了。
             （一次只跑一轮是有意的：两轮同时飞，屏幕上就有两笔说不清是谁花的钱。） */}
         {running && !runningHere && (
-          <p className="chat-say-note">另一段对话正在跑，跑完才能在这儿说话。</p>
+          <p className="chat-say-note">
+            {language === "zh"
+              ? "另一段对话正在跑，跑完才能在这儿说话。"
+              : "Another conversation is running — you can talk here again once it finishes."}
+          </p>
         )}
       </div>
     </section>

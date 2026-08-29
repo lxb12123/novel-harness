@@ -48,46 +48,52 @@ describe("长对话怎么办", () => {
 
 describe("秒表", () => {
   it("一分钟以内只说秒", () => {
-    expect(elapsedText(12_400)).toBe("已经 12 秒");
+    expect(elapsedText(12_400, "zh")).toBe("已经 12 秒");
   });
 
   it("超过一分钟补零，读起来才是一个时间不是两个数", () => {
-    expect(elapsedText(65_000)).toBe("已经 1 分 05 秒");
-    expect(elapsedText(3 * 60_000 + 42_000)).toBe("已经 3 分 42 秒");
+    expect(elapsedText(65_000, "zh")).toBe("已经 1 分 05 秒");
+    expect(elapsedText(3 * 60_000 + 42_000, "zh")).toBe("已经 3 分 42 秒");
   });
 
   it("时钟往回跳（系统对时）也不会印出负数", () => {
-    expect(elapsedText(-5000)).toBe("已经 0 秒");
+    expect(elapsedText(-5000, "zh")).toBe("已经 0 秒");
+  });
+
+  it("英文那半是整句模板，不是拼中文那一半翻过去的词", () => {
+    expect(elapsedText(12_400, "en")).toBe("12s elapsed");
+    expect(elapsedText(65_000, "en")).toBe("1m 05s elapsed");
+    expect(elapsedText(-5000, "en")).toBe("0s elapsed");
   });
 });
 
 describe("这一轮实际发生了什么", () => {
   it("查了几次说得出来 —— **查到了什么一个字都不说**", () => {
-    const notes = receiptNotes(receipt({ lookups: 3, calls_without_usage: 0 }));
+    const notes = receiptNotes(receipt({ lookups: 3, calls_without_usage: 0 }), "zh");
     expect(notes.join("\n")).toContain("查了 3 次");
   });
 
   it("一次都没查、什么都没裁 —— 一行都不写", () => {
     // 一排「0 次 / 裁掉 0 条」会把真正非零的那一行淹掉。
     expect(
-      receiptNotes(receipt({ lookups: 0, calls_without_usage: 0, context: ctx({}) })),
+      receiptNotes(receipt({ lookups: 0, calls_without_usage: 0, context: ctx({}) }), "zh"),
     ).toEqual([]);
   });
 
   it("**有调用没报用量时必须说** —— 那个 token 数是低估的", () => {
     // 一个自称是全部的低估数字，是这个仓库反复在修的失败形态（底栏的花销汇总同病）。
-    const notes = receiptNotes(receipt({ lookups: 0, calls_without_usage: 2 }));
+    const notes = receiptNotes(receipt({ lookups: 0, calls_without_usage: 2 }), "zh");
     expect(notes).toHaveLength(1);
     expect(notes[0]).toContain("少算");
   });
 
   it("后面章节的查询结果被挡掉时，说得出为什么挡", () => {
-    const notes = receiptNotes(receipt({ lookups: 0, context: ctx({ off_chapter: 2 }) }));
+    const notes = receiptNotes(receipt({ lookups: 0, context: ctx({ off_chapter: 2 }) }), "zh");
     expect(notes.join("\n")).toMatch(/后面的章节/);
   });
 
   it("它手上那份正文过期了要说 —— 否则作者永远不知道它曾经拿着一份旧稿", () => {
-    const notes = receiptNotes(receipt({ lookups: 0, context: ctx({ stale_lookups: 1 }) }));
+    const notes = receiptNotes(receipt({ lookups: 0, context: ctx({ stale_lookups: 1 }) }), "zh");
     expect(notes.join("\n")).toMatch(/重新读/);
   });
 
@@ -98,6 +104,7 @@ describe("这一轮实际发生了什么", () => {
         calls_without_usage: 0,
         context: ctx({ trimmed_results: 2, dropped_lookups: 1, dropped_reasoning: 1 }),
       }),
+      "zh",
     );
     expect(notes).toHaveLength(1);
     expect(notes[0]).toContain("4 条");
@@ -113,6 +120,7 @@ describe("这一轮实际发生了什么", () => {
         calls_without_usage: 0,
         context: ctx({ trimmed_results: 2, lost_lookups: 1 }),
       }),
+      "zh",
     );
     expect(notes).toHaveLength(2);
     expect(notes.find((n) => n.includes("断在半路"))).toBeTruthy();
@@ -121,8 +129,21 @@ describe("这一轮实际发生了什么", () => {
   });
 
   it("真 dump 那一份：查了一次 + 有一次没量准", () => {
-    const notes = receiptNotes(RECEIPT);
+    const notes = receiptNotes(RECEIPT, "zh");
     expect(notes).toHaveLength(2);
+  });
+
+  it("英文那半整句处理单复数，不是拼「N + 中文那半翻过去的词」", () => {
+    // n === 1：单数整句。
+    expect(receiptNotes(receipt({ lookups: 1, calls_without_usage: 0 }), "en")[0]).toBe(
+      "It looked something up once this round.",
+    );
+    expect(
+      receiptNotes(receipt({ lookups: 0, calls_without_usage: 1 }), "en")[0],
+    ).toContain("undercount");
+    // n > 1：复数整句，数字本身也要对。
+    const plural = receiptNotes(receipt({ lookups: 3, calls_without_usage: 0 }), "en")[0];
+    expect(plural).toBe("It looked things up 3 times this round.");
   });
 });
 
@@ -130,15 +151,19 @@ describe("按了停、屏幕上却写「说完了」", () => {
   it("停真的送达了而这一轮报的是 done —— 补一句，别让按钮看起来是坏的", () => {
     // 后端报 done 是对的（那一轮本来就在最后一次调用之后结束，停没有让任何事情少发生），
     // 但作者这一侧看到的是「我按了停，它说说完了」。
-    expect(stopFootnote(true, receipt({ reason: "done" }))).toMatch(/你按下停/);
+    expect(stopFootnote(true, receipt({ reason: "done" }), "zh")).toMatch(/你按下停/);
   });
 
   it("停生效了就什么都不补 —— 后端那句话已经说清楚了", () => {
-    expect(stopFootnote(true, receipt({ reason: "author_stopped" }))).toBeNull();
+    expect(stopFootnote(true, receipt({ reason: "author_stopped" }), "zh")).toBeNull();
   });
 
   it("压根没按过停，不许凭空补一句", () => {
-    expect(stopFootnote(false, receipt({ reason: "done" }))).toBeNull();
+    expect(stopFootnote(false, receipt({ reason: "done" }), "zh")).toBeNull();
+  });
+
+  it("英文那半是整句", () => {
+    expect(stopFootnote(true, receipt({ reason: "done" }), "en")).toMatch(/clicked Stop/);
   });
 });
 
@@ -228,7 +253,8 @@ const from = (base: ChatTurnEvent, over: Partial<ChatTurnEvent>): ChatTurnEvent 
   ...over,
 });
 
-const fold = (events: ChatTurnEvent[]) => events.reduce(applyTurnEvent, NO_PROGRESS);
+const fold = (events: ChatTurnEvent[]) =>
+  events.reduce((acc, event) => applyTurnEvent(acc, event, "zh"), NO_PROGRESS);
 
 describe("跑到一半：它在做什么", () => {
   it("真跑的那一轮 —— 每一件事一行，**措辞全是后端那句**", () => {

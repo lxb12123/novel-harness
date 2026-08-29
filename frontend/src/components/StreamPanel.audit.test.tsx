@@ -178,7 +178,9 @@ describe("回话区：整段一次到位，没有一个编出来的节奏", () =
       kind: "reply_delta",
       text,
     }));
-    expect(deltas.reduce(applyTurnEvent, NO_PROGRESS)).toEqual(NO_PROGRESS);
+    expect(deltas.reduce((acc, event) => applyTurnEvent(acc, event, "zh"), NO_PROGRESS)).toEqual(
+      NO_PROGRESS,
+    );
   });
 });
 

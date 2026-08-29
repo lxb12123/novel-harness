@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useCreateChat, useDeleteChat } from "../api/hooks";
 import type { ChatSessionView } from "../api/types";
 import { refusalText } from "../chat";
-import { useLanguage } from "../language";
+import { useLanguage, type Language } from "../language";
 import { shownTime } from "../time";
 import { CloseIcon } from "./icons";
 
@@ -26,12 +26,16 @@ import { CloseIcon } from "./icons";
 
 /** 还没说过话的那一段叫什么。**后端只在标题为空时拿作者第一句话去填**，
  *  所以这一档只可能出现在「刚开了一段还没说话」上。 */
-const UNNAMED = "还没说话的对话";
+const UNNAMED = (language: Language): string =>
+  language === "zh" ? "还没说话的对话" : "A conversation with nothing said yet";
 
 /** 后端一句话都没写时才轮到的那一句。**删这条路由的 404 就是这一档**
  *  （`{"error":"chat_not_found","chat_id":…}`，一个 `message` 都没有）。
  *  不许编理由，也不许说「请稍后再试」——那是在暗示重试有用。 */
-const DELETE_FAILED = "没能删掉这段对话，而系统没能说清是为什么。";
+const DELETE_FAILED = (language: Language): string =>
+  language === "zh"
+    ? "没能删掉这段对话，而系统没能说清是为什么。"
+    : "Couldn't delete this conversation, and the system couldn't say why.";
 
 function SessionRow({
   session,
@@ -48,7 +52,7 @@ function SessionRow({
 }) {
   const [confirming, setConfirming] = useState(false);
   const language = useLanguage((s) => s.language);
-  const title = session.title.trim() || UNNAMED;
+  const title = session.title.trim() || UNNAMED(language);
   const time = shownTime(session.updated_at, language);
 
   return (
@@ -57,7 +61,9 @@ function SessionRow({
         <span className="chat-session-name">{title}</span>
         <span className="chat-session-meta">
           {time && <span>{time}</span>}
-          {session.running && <span className="chat-badge run">正在跑</span>}
+          {session.running && (
+            <span className="chat-badge run">{language === "zh" ? "正在跑" : "Running"}</span>
+          )}
           {/* 断在半路的和跑完的**必须长得不一样**：两者的下一步动作不同，而后端
               专门为这一列算了这个数（列表那条路由的 docstring 写着理由）。
 
@@ -68,7 +74,11 @@ function SessionRow({
               往回扫到 `USER` 就停（`agent/loop.py` 的 `LOST_RESULT` 写着「再也没有人
               会去补它」）。实测过：断在半路时它数出 1 个，`with_author("继续")` 之后是 0 个。 */}
           {session.pending_lookups > 0 && (
-            <span className="chat-badge half">上次断在半路 · 那几步没跑完</span>
+            <span className="chat-badge half">
+              {language === "zh"
+                ? "上次断在半路 · 那几步没跑完"
+                : "Cut off mid-way last time · those steps didn't finish"}
+            </span>
           )}
         </span>
       </button>
@@ -78,18 +88,28 @@ function SessionRow({
            （作者：「太丑了」）。这一条：左边一句问话，右边一颗实心的小药丸 +
            一个纯文字的「算了」。**只有危险的那一个有颜色**，取消永远是最轻的那个。 */
         <span className="chat-session-confirm">
-          <span className="chat-session-ask">删掉这段对话？</span>
+          <span className="chat-session-ask">
+            {language === "zh" ? "删掉这段对话？" : "Delete this conversation?"}
+          </span>
           <button className="chat-session-yes" disabled={deleting} onClick={onDelete}>
-            {deleting ? "删着…" : "删掉"}
+            {language === "zh"
+              ? deleting
+                ? "删着…"
+                : "删掉"
+              : deleting
+                ? "Deleting…"
+                : "Delete"}
           </button>
           <button className="chat-session-no" onClick={() => setConfirming(false)}>
-            算了
+            {language === "zh" ? "算了" : "Cancel"}
           </button>
         </span>
       ) : (
         <button
           className="chat-session-del"
-          aria-label={`删掉这段对话：${title}`}
+          aria-label={
+            language === "zh" ? `删掉这段对话：${title}` : `Delete this conversation: ${title}`
+          }
           onClick={() => setConfirming(true)}
         >
           <CloseIcon />
@@ -117,6 +137,7 @@ export function ChatSessions({
   /** 挑完 / 建完之后收起这一列。 */
   onPicked: () => void;
 }) {
+  const language = useLanguage((s) => s.language);
   const create = useCreateChat(pid);
   const remove = useDeleteChat(pid);
 
@@ -124,7 +145,7 @@ export function ChatSessions({
   // **不做静默重试**：那一轮还在花钱，替他再打一次没有让任何事情变好。
   // 但 404 那一档只有码没有话，`error.message` 会退回 `chat_not_found`——
   // 所以走 `refusalText`，不走 `.message`。
-  const refused = refusalText(remove.error, DELETE_FAILED);
+  const refused = refusalText(remove.error, DELETE_FAILED(language));
 
   return (
     <div className="chat-sessions">
@@ -140,7 +161,7 @@ export function ChatSessions({
           })
         }
       >
-        ＋ 开一段新的对话
+        {language === "zh" ? "＋ 开一段新的对话" : "+ Start a new conversation"}
       </button>
 
       {/* **读不出来 ≠ 一段都没有。** 前者的下一步是刷新，后者的下一步是开一段——
@@ -150,7 +171,14 @@ export function ChatSessions({
       {sessions.length === 0 ? (
         failed ? null : (
           <p className="empty chat-sessions-empty">
-            还没有说过话。开一段新的，问它这一章有什么不能说、或者让它先去把前情看一遍。
+            {language === "zh" ? (
+              <>还没有说过话。开一段新的，问它这一章有什么不能说、或者让它先去把前情看一遍。</>
+            ) : (
+              <>
+                Nothing’s been said yet. Start a new conversation and ask it what this chapter
+                can’t say yet, or have it review what’s happened so far first.
+              </>
+            )}
           </p>
         )
       ) : (
