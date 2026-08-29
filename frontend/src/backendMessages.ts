@@ -461,14 +461,6 @@ const MESSAGES: Record<string, Template> = {
     zh: "这个条目不是人物，这个操作只对人物有效。",
     en: "This entry isn't a character — this action only applies to characters.",
   },
-  node_in_use: (params, language) => {
-    const name = params.name;
-    const edges = params.edges;
-    const events = params.events;
-    return language === "zh"
-      ? `「${name}」还被引用着（关系 ${edges} / 情节 ${events}），先把那几条改掉再删他`
-      : `"${name}" is still referenced (relationships ${edges} / events ${events}) — update those first, then delete this entry`;
-  },
   chat_not_found: {
     zh: "这段对话今天不在了。刷新一下，看看还有哪些对话。",
     en: "This conversation isn't there anymore. Refresh to see what conversations are still there.",

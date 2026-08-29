@@ -1001,6 +1001,31 @@ export function useIgnoreNotification(pid: string) {
   });
 }
 
+/** 角色卡时间线上那颗红点：作者看过「这件事掉了谁」之后点掉它（Task 8 补记）。
+ *
+ *  **走 `resolve` 不是 `ignore`**：`ignore` 的语义是「这一对 hash 别再提醒我」
+ *  （给内容变了会自然重开的那一档用），而这条通知的去重键不含任何 hash——
+ *  一件事同时只有一条 OPEN，「我已经看过、知道怎么回事了」用 `resolve` 更准。
+ *
+ *  失效的是 `characterEvents` 这一整串（不带具体 characterId）：**同一件事
+ *  可能挂在好几个人的卡上**（`character_events()` 出参里 `cast_changed` 认的
+ *  是同一个 `subject_id`），resolve 一次要让所有正开着的人物卡都跟着摘掉红点，
+ *  不能只刷当前这一张。 */
+export function useResolveEventCastChanged(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (notificationId: string) =>
+      api.post<{ id: string; status: string }>(
+        proj(pid, `/notifications/${encodeURIComponent(notificationId)}/resolve`),
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["characterEvents", pid] });
+      qc.invalidateQueries({ queryKey: ["notifications", pid] });
+      qc.invalidateQueries({ queryKey: ["notifications-count", pid] });
+    },
+  });
+}
+
 /** 撤销一次「目录跳过」（032）：把丢掉的占位章插回原来的位置。
  *
  *  失败最常见的形态是 409（这本书导入之后改过了）——`ignore.error` 走同一条

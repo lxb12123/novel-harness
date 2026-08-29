@@ -246,31 +246,6 @@ describe("花名册", () => {
     expect(within(row).queryByText(/删了拿不回来/)).toBeNull();
   });
 
-  it("删不掉的时候，把那句拒绝原样摆出来", async () => {
-    // **不许在这儿写一句「删不掉这个条目」**：真正的那句是「「北荒」还被引用着
-    // （关系 1 / 情节 0），先把那几条改掉再删他」——那是给作者的话
-    // （`backendMessages.ts::MESSAGES.node_in_use`，逐字复刻自 `NodeInUse.__str__`）。
-    // 盖掉它就是又造出第二个措辞源（`correctionError.ts` 顶上那段注释）。
-    const user = userEvent.setup();
-    const target = fixtures.rosterWithCounts[0];
-    const said = `「${target.name}」还被引用着（关系 1 / 情节 0），先把那几条改掉再删他`;
-    renderWithApi(<RosterTab />, [
-      {
-        method: "DELETE",
-        match: /\/nodes\//,
-        status: 409,
-        body: {
-          detail: { error: "node_in_use", params: { name: target.name, edges: 1, events: 0 } },
-        },
-      },
-    ]);
-    const row = (await screen.findByText(target.name)).closest(".item") as HTMLElement;
-    await user.click(within(row).getByRole("button", { name: "删" }));
-    await user.click(within(row).getByRole("button", { name: "删掉" }));
-
-    expect(await screen.findByText(said)).toBeInTheDocument();
-  });
-
   it("改名发的是 PATCH，且带着它正在渲染的那个版本号", async () => {
     const user = userEvent.setup();
     const target = fixtures.rosterWithCounts[0];
