@@ -294,7 +294,9 @@ class NodeProps(BaseModel):
     R3 的「未登场角色开口说话」也读它。None = 一开始就在。"""
 
     dim_key: str | None = None
-    """仅 `StateDim` 节点：稳定机器键（health / cultivation / identity）。
+    """仅 `StateDim` 节点：稳定机器键。**今天只有一个真实取值**——`HEALTH_DIM_KEY`
+    （R3 认它）。`cultivation` / `identity` 这类键不存在：认不出的新维度一律靠自由文本
+    落库、不配机器键（2026-08-27 裁定），`dim_key` 留 `None`——没有规则会去读它们。
 
     存在的理由是作者随时会把 node.name 从「健康」改成「生死」——规则挂在中文显示名上
     会在那一刻静默失效。

@@ -584,6 +584,96 @@ def test_unknown_incidental_surfaces_are_dropped_not_guessed(
     assert all(r.unique_node is not None for r in made)
 
 
+def test_unknown_state_dimension_gets_created_not_discarded(
+    seed: Seed, conn: Connection
+) -> None:
+    """**认不出的维度，直接建。**（2026-08-27 裁定）—— `_create_unknown_characters`
+    在维度这一侧的姊妹条，但手法不同（见 `_write_state` 里的说明）：不经别名表，
+    直接靠 `upsert_node` 按 `(project, label, name)` find-or-create——`StateDim`
+    进花名册会让 mentions.py 拿维度名去正文里做字面匹配（`CANONICAL_ALIAS_LABELS`
+    的说明），所以这条路故意不挂别名。
+
+    从前：「灵力」这种没预先建过的维度在 `resolve_ids` 那步查无此维度，整条
+    `state_update` 被丢（`UNKNOWN_SURFACE`）。今天它应该被建成一个新的 StateDim。
+    """
+    states = (
+        RawStateUpdate(
+            kind="state", subject="顾清音", dimension="灵力", value="小成",
+            quote=STATE_QUOTE, confidence=0.9,
+        ),
+    )
+    report = _service(conn, seed).ingest(
+        seed.project_id, seed.chapter, _analysis(states=states),
+        prompt_hash="prompt:new-dimension",
+    )
+
+    assert (report.valid_state_update_count, len(report.discarded)) == (1, 0)
+    snapshot = seed.graph.state_at(
+        seed.project_id, seed.hero_id, seed.chapter.number,
+        scope=InformationScope.PROVISIONAL,
+    )
+    (state,) = snapshot.states
+    assert state.dim.name == "灵力"
+    assert state.dim.id != seed.dimension_id, "不该复用「修为」那个节点"
+    assert state.value == "小成"
+    # 新维度不配机器键：没有规则要查它（2026-08-27 裁定第二条）。
+    assert state.dim_key is None
+    # 也不进花名册：mentions.py 靠这条挡住维度名满篇字面匹配。
+    resolved = seed.graph.resolve(seed.project_id, ["灵力"])
+    assert resolved[0].unique_node is None
+
+
+def test_blank_state_dimension_is_discarded_not_a_crash(
+    seed: Seed, conn: Connection
+) -> None:
+    """模型偶尔会把 `dimension` 写成空白——这是不可信输入，不能让它一路冲到
+    `upsert_node`（空名字会撞 `NodeSpec.name` 的 `min_length=1`）。
+    `prepare_state_update` 要在那之前就挡住。
+    """
+    states = (
+        RawStateUpdate(
+            kind="state", subject="顾清音", dimension="   ", value="小成",
+            quote=STATE_QUOTE, confidence=0.9,
+        ),
+    )
+    report = _service(conn, seed).ingest(
+        seed.project_id, seed.chapter, _analysis(states=states),
+        prompt_hash="prompt:blank-dimension",
+    )
+    assert report.valid_state_update_count == 0
+    assert [r.outcome for r in report.discarded] == [DiscardOutcome.UNKNOWN_SURFACE]
+
+
+def test_unknown_location_gets_created_not_discarded(
+    seed: Seed, conn: Connection
+) -> None:
+    """**认不出的地点，直接建。**（2026-08-27，`_create_unknown_locations`，
+    `_create_unknown_characters` 的姊妹条）。`Location` 本来就在
+    `CANONICAL_ALIAS_LABELS` 里，建完照旧挂 canonical 别名，所以下一次同一称呼
+    照常能解析——和维度那条不一样。
+    """
+    states = (
+        RawStateUpdate(
+            kind="location", subject="顾清音", object="荒漠驿站",
+            quote=LOCATION_QUOTE, confidence=0.9,
+        ),
+    )
+    report = _service(conn, seed).ingest(
+        seed.project_id, seed.chapter, _analysis(states=states),
+        prompt_hash="prompt:new-location",
+    )
+
+    assert (report.valid_state_update_count, len(report.discarded)) == (1, 0)
+    snapshot = seed.graph.state_at(
+        seed.project_id, seed.hero_id, seed.chapter.number,
+        scope=InformationScope.PROVISIONAL,
+    )
+    assert snapshot.location is not None and snapshot.location.name == "荒漠驿站"
+    # Location 在花名册里：下次同一个称呼能正常解析（同人物那条路，不是维度那条）。
+    resolved = seed.graph.resolve(seed.project_id, ["荒漠驿站"])
+    assert resolved[0].unique_node is not None
+
+
 def create(self, proposal: ProposalCreate):
         raise RuntimeError(f"proposal write failed: {proposal.kind}")
 

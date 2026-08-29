@@ -172,6 +172,11 @@ class ExtractionService:
             created = self._create_unknown_characters(project_id, analysis, resolutions)
             if created:
                 resolutions = self._resolutions_after_identity(project_id, analysis)
+            created_locations = self._create_unknown_locations(
+                project_id, analysis, resolutions
+            )
+            if created_locations:
+                resolutions = self._resolutions_after_identity(project_id, analysis)
             paras = paragraphs(chapter.text)
             discarded: list[DiscardReason] = []
             event_ids: list[str] = []
@@ -434,11 +439,26 @@ class ExtractionService:
         raw = prepared.raw
         subject_id, target_id = prepared.subject_id, prepared.target_id
         # `death` 的对面是引擎自己的 health 维度，不是花名册里的一个称呼——`prepare`
-        # 那边留了空，在这儿现取（幂等）。同 `Ledger.declare_dead`：**维度由引擎建，
-        # 作者和模型都没有入口去建它**（`AUTHORED_LABELS` 里没有 `StateDim`）。
+        # 那边留了空，在这儿现取（幂等）。同 `Ledger.declare_dead`：**这个维度由引擎建，
+        # 作者和模型都没有入口去建它**（`AUTHORED_LABELS` 里没有 `StateDim`，`dim_key`
+        # 是引擎写死的常量）。
         if raw.kind == "death":
             target_id = self._graph.ensure_state_dim(
                 project_id, HEALTH_DIM_KEY, HEALTH_DIM_NAME
+            ).id
+        elif raw.kind == "state":
+            # 这里不一样：维度是模型自由写的文本，认不出就建，不配机器键
+            # （2026-08-27 裁定）。`upsert_node` 按 (project, label, name) 天然
+            # find-or-create，不挂别名——`STATE_DIM` 不在 `CANONICAL_ALIAS_LABELS`
+            # 里，进了花名册会让 mentions.py 的 alternation 拿维度名（「情绪」「境界」
+            # 这类高频词）去正文里做字面匹配，把 mentions 冲垮。`prepare_state_update`
+            # 已经保证 `raw.dimension` 非空。
+            target_id = self._graph.upsert_node(
+                NodeSpec(
+                    project_id=project_id,
+                    label=NodeLabel.STATE_DIM,
+                    name=(raw.dimension or "").strip(),
+                )
             ).id
         located = prepared.located
         canon = self._graph.state_at(
@@ -613,6 +633,48 @@ class ExtractionService:
                         character_notes=profile.character_notes,
                     ),
                 )
+            created.append(node.id)
+        return created
+
+    def _create_unknown_locations(
+        self,
+        project_id: str,
+        analysis: RawChapterAnalysis,
+        resolutions: dict[str, SurfaceResolution],
+    ) -> list[str]:
+        """**认不出的地点，直接建。** `_create_unknown_characters` 的姊妹条
+        （2026-08-27 裁定，同一批：状态维度那边的「认不出就建」落地时一并做的）。
+
+        只建 `state_update` 里 `kind == "location"` 的 `object`——不是所有认不出的字。
+        `Location` 本来就在 `CANONICAL_ALIAS_LABELS` 里，`upsert_node` 建的时候自动挂
+        canonical 别名，所以走完这一步、重建一次 resolution_map，`resolve_ids` 那条老路
+        天然就通了（同人物那条，不需要另开一条解析路径——这点和维度不一样）。
+
+        地点没有「别名」概念（`analysis.aliases` 是 Task 12 identity-first 给人物用的
+        称呼对应），所以不需要 `_create_unknown_characters` 那份别名排除逻辑；歧义
+        （两个已存在的地点撞同一个称呼）仍旧整条拒收，产品从不替作者挑（ADR 0004）。
+
+        Returns:
+            这一次真建出来的地点 node id。非空时调用方**必须**重建一次 resolution_map。
+        """
+        wanted = [
+            state.object
+            for state in analysis.state_updates
+            if state.kind == "location" and state.object is not None
+        ]
+        created: list[str] = []
+        seen: set[str] = set()
+        for surface in wanted:
+            name = surface.strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            resolution = resolutions.get(surface)
+            if resolution is None or not resolution.unknown:
+                continue
+            node = self._graph.upsert_node(
+                NodeSpec(project_id=project_id, label=NodeLabel.LOCATION, name=name)
+            )
             created.append(node.id)
         return created
 

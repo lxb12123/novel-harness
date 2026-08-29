@@ -107,8 +107,10 @@ def resolution_map(
         surfaces.append(state.subject)
         if state.object is not None:
             surfaces.append(state.object)
-        if state.dimension is not None:
-            surfaces.append(state.dimension)
+        # `state.dimension` 不在这里收集：`STATE_DIM` 不在 `CANONICAL_ALIAS_LABELS`
+        # 里（见该常量的说明），从不挂别名，`resolve_surfaces` 天生解析不到它——
+        # 查了也是白查。`prepare_state_update` 的 `state` 档不经这份 `resolutions`，
+        # 见那边的说明。
     surfaces.extend(profile.surface for profile in analysis.character_profiles)
     resolved = resolve_surfaces(graph, project_id, surfaces)
     return {item.surface: item for item in resolved.resolutions}
@@ -230,16 +232,42 @@ def prepare_state_update(
             graph_key=(EdgeType.HAS_STATE.value, subjects[0], HEALTH_DIM_KEY),
         ), None
 
-    target_surface = raw.dimension if raw.kind == "state" else raw.object
-    expected = (
-        NodeLabel.STATE_DIM
-        if raw.kind == "state"
-        else NodeLabel.LOCATION
-        if raw.kind == "location"
-        else NodeLabel.CHARACTER
-    )
+    if raw.kind == "state":
+        # 维度和上面的健康维度同理——它也不是花名册里的称呼，`target_id` 照样留空，
+        # 在 `_write_state` 里现取/现建。**但手法不同**：维度是模型自由写的文本，
+        # 认不出就建，不配机器键（2026-08-27 裁定），所以不经 `resolve_ids`——那条
+        # 路走的是别名表，而 `STATE_DIM` 不在 `CANONICAL_ALIAS_LABELS` 里（进了
+        # 花名册，mentions.py 会拿维度名去正文里做字面匹配，「情绪」「境界」这类
+        # 高频词满篇都是，会把 mentions 冲垮）。`_write_state` 落库时走 `upsert_node`，
+        # 按 (project, label, name) 天然 find-or-create，不挂别名。
+        dimension = (raw.dimension or "").strip()
+        if not dimension:
+            return None, DiscardReason(
+                kind="state_update",
+                index=index,
+                outcome=DiscardOutcome.UNKNOWN_SURFACE,
+                detail="dimension is blank",
+            )
+        located, reason = locate_evidence("state_update", index, paras, raw.quote)
+        if reason is not None:
+            return None, reason
+        return PreparedStateUpdate(
+            index=index,
+            raw=raw,
+            subject_id=subjects[0],
+            target_id="",
+            located=located,
+            # 用维度文本本身当键（同上面 health 用 `HEALTH_DIM_KEY` 常量当键的道理）：
+            # 这一刻维度节点还没取出来，折叠同章内对同一维度的多次更新靠这个键，不靠
+            # 真实 node id。这个键只在本次分析里用，不进库。
+            graph_key=(EdgeType.HAS_STATE.value, subjects[0], dimension),
+        ), None
+
+    # 走到这里的只剩 location / relationship：两者的 target 都走花名册常规解析
+    # （location 认不出会先被 `_create_unknown_locations` 建出来，同人物那条路）。
+    expected = NodeLabel.LOCATION if raw.kind == "location" else NodeLabel.CHARACTER
     targets, reason = resolve_ids(
-        "state_update", index, (target_surface or "",), expected, resolutions
+        "state_update", index, (raw.object or "",), expected, resolutions
     )
     if reason is not None:
         return None, reason
@@ -250,8 +278,6 @@ def prepare_state_update(
     edge_type = EDGE_TYPE_BY_KIND[raw.kind]
     if raw.kind == "location":
         graph_key = (edge_type.value, subject_id)
-    elif raw.kind == "state":
-        graph_key = (edge_type.value, subject_id, target_id)
     else:
         graph_key = (edge_type.value, *sorted((subject_id, target_id)))
     return PreparedStateUpdate(
