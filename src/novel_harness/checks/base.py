@@ -106,6 +106,15 @@ class CheckContext:
     （真书样本显式标签覆盖率 8.2% < 10%，[ADR 0014]）。
     """
 
+    language: str = "zh"
+    """`project.language`（"zh"/"en"）。**只影响规则怎么去正文里匹配**（R3 2026-08-28
+    起按它选中/英文两套独立 pattern），**不影响 `Issue.message`/`suggested_action`
+    写成哪种语言**——那两个字段的正确轴是作者的界面语言设置，不是书的语言（同
+    国际化第四批「界面语言独立于书」那条铁律），今天还没搬进 code+params/前端渲染
+    那条路，所以维持中文硬编码，两个分支报出来的措辞一样。默认 `"zh"`：
+    合成小册子（`synth/m3_replay.py`）等不传这个字段的调用方保持原样行为。
+    """
+
 
 Check = Callable[[CheckContext], list[Issue]]
 """贡献者入口的类型。一个文件一条规则，一个纯函数，零注册仪式。"""

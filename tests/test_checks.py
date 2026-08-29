@@ -60,11 +60,13 @@ from novel_harness.graph import (
     EdgeStatus,
     EdgeType,
     EvidenceStatus,
+    HEALTH_DIM_KEY,
     HealthValue,
     InformationScope,
     Node,
     NodeLabel,
     NodeProps,
+    NodeSpec,
     Resolution,
     StateSnapshot,
     StateValue,
@@ -105,6 +107,16 @@ BEIHUANG_2 = node("location:demo:01J5", NodeLabel.LOCATION, "北荒")
 """同名的第二个地点——「北荒」这个 surface 于是有歧义。"""
 
 HEALTH_DIM = node("state:demo:01J7", NodeLabel.STATE_DIM, "健康", dim_key="health")
+
+ELIZABETH = node("character:demo:01J8", NodeLabel.CHARACTER, "Elizabeth")
+DARCY = node("character:demo:01J9", NodeLabel.CHARACTER, "Darcy", first_appears=200)
+WILL = node("character:demo:01JA", NodeLabel.CHARACTER, "Will")
+"""专给 `\\b` 边界测试用：「Will」是「William」的前缀，真书里这类词形会话。"""
+
+ALIASES_EN: dict[str, list[Node]] = {
+    "Elizabeth": [ELIZABETH],
+    "Darcy": [DARCY],
+}
 
 
 def located_at(
@@ -245,14 +257,19 @@ def ctx(
     chapter: int = 151,
     aliases: dict[str, list[Node]] | None = None,
     paragraphs: Sequence[str] | None = None,
+    language: str = "zh",
 ) -> CheckContext:
     """2026-08-14：`loc` / `cast` 两个参数随场景块一起没了（ADR 0027）——
-    今天两条规则的输入只有「图 + 正文」。"""
+    今天两条规则的输入只有「图 + 正文」。
+
+    2026-08-28：加了 `language`，默认 `"zh"`——本文件已有的每一条测试不传它，
+    行为不变。"""
     return CheckContext(
         store=FakeGraph(aliases or ALIASES, edges),
         project_id=PID,
         chapter=chapter,
         paragraphs=paragraphs,
+        language=language,
     )
 
 
@@ -400,6 +417,188 @@ def test_r3_longest_surface_wins_before_the_verb() -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════
+# R3 DEAD_SPEAKS —— 英文那半（2026-08-28，dead_speaks.py 模块头有完整论证）
+#
+# 中文那组测试（上面）一行没改，就是这一批「中文行为不变」的证明——同一份
+# `dead_speaks_check`，中文用例走的还是原来那条路。
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_r3_en_fires_when_a_dead_character_speaks() -> None:
+    edges = [has_state(ELIZABETH.id, HEALTH_DIM.id, HealthValue.DEAD, 89)]
+    issues = dead_speaks_check(
+        ctx(
+            edges,
+            aliases={**ALIASES_EN, "健康": [HEALTH_DIM]},
+            paragraphs=["“I am tired,” said Elizabeth."],
+            language="en",
+        )
+    )
+    assert len(issues) == 1
+    issue = issues[0]
+    assert issue.rule == "R3"
+    assert issue.issue_type == "DEAD_SPEAKS"
+    assert "死" in issue.message and "Elizabeth" in issue.message
+    assert issue.anchor.quote_text == "Elizabeth"
+
+
+def test_r3_en_fires_when_a_not_yet_appeared_character_speaks() -> None:
+    issues = dead_speaks_check(
+        ctx(
+            [],
+            aliases=ALIASES_EN,
+            paragraphs=["“I am tired,” said Darcy."],
+            language="en",
+        )
+    )
+    assert len(issues) == 1
+    assert "200" in issues[0].message and "登场" in issues[0].message
+
+
+def test_r3_en_silent_for_living_appeared_character() -> None:
+    assert (
+        dead_speaks_check(
+            ctx(
+                [],
+                aliases=ALIASES_EN,
+                paragraphs=["“I am tired,” said Elizabeth."],
+                language="en",
+            )
+        )
+        == []
+    )
+
+
+def test_r3_en_silent_before_the_death_chapter() -> None:
+    edges = [has_state(ELIZABETH.id, HEALTH_DIM.id, HealthValue.DEAD, 89)]
+    assert (
+        dead_speaks_check(
+            ctx(
+                edges,
+                chapter=50,
+                aliases={**ALIASES_EN, "健康": [HEALTH_DIM]},
+                paragraphs=["“I am tired,” said Elizabeth."],
+                language="en",
+            )
+        )
+        == []
+    )
+
+
+def test_r3_en_silent_when_the_name_is_not_a_speaker_tag() -> None:
+    """提到死者但不在「引号+动词+姓名」位置——ADR 0005 那条中文用例的英文镜像。"""
+    edges = [has_state(ELIZABETH.id, HEALTH_DIM.id, HealthValue.DEAD, 89)]
+    assert (
+        dead_speaks_check(
+            ctx(
+                edges,
+                aliases={**ALIASES_EN, "健康": [HEALTH_DIM]},
+                paragraphs=["Elizabeth was remembered fondly by everyone in the house."],
+                language="en",
+            )
+        )
+        == []
+    )
+
+
+def test_r3_en_silent_when_the_name_comes_before_the_verb() -> None:
+    """`Elizabeth said, "……"`——作者先报名字、动词在后，故意不识别（模块头「方向」那段）。
+
+    宁可漏掉这一类真违规，也不多认一个句首大写词。
+    """
+    edges = [has_state(ELIZABETH.id, HEALTH_DIM.id, HealthValue.DEAD, 89)]
+    assert (
+        dead_speaks_check(
+            ctx(
+                edges,
+                aliases={**ALIASES_EN, "健康": [HEALTH_DIM]},
+                paragraphs=["Elizabeth said, “I am tired.”"],
+                language="en",
+            )
+        )
+        == []
+    )
+
+
+def test_r3_en_longest_surface_wins_before_the_verb() -> None:
+    """同一个人挂两个别名、一个是另一个的前缀——长的必须先试，中文那条测试的英文镜像。"""
+    aliases = {"Elizabeth": [DARCY], "Eliza": [DARCY]}
+    issues = dead_speaks_check(
+        ctx(
+            [],
+            aliases=aliases,
+            paragraphs=["“I am tired,” said Elizabeth."],
+            language="en",
+        )
+    )
+    assert len(issues) == 1
+    assert issues[0].anchor.quote_text == "Elizabeth"
+
+
+def test_r3_en_name_boundary_does_not_bleed_into_a_longer_word() -> None:
+    """`\\b` 挡子串延伸：「Will」是死人，但「said William」不该被错认成「said Will」。
+
+    没有右边界的话，正则会把 "Will" 当成 "William" 的合法前缀匹配掉——这类假阳性
+    中文结构上不会撞上（见 dead_speaks.py 模块头「姓名右边界」那段）；真加固过、
+    真验证过没有它会假阳性（临时去掉 `\\b` 手测过，这条测试锁住的是加固之后的样子）。
+    """
+    edges = [has_state(WILL.id, HEALTH_DIM.id, HealthValue.DEAD, 89)]
+    assert (
+        dead_speaks_check(
+            ctx(
+                edges,
+                aliases={"Will": [WILL], "健康": [HEALTH_DIM]},
+                paragraphs=["“I am tired,” said William."],
+                language="en",
+            )
+        )
+        == []
+    )
+
+
+def test_r3_en_known_gap_possessive_construction_can_misattribute() -> None:
+    """已知、样本内零命中的窄假阳性：`said Elizabeth's mother` 里真正说话的是
+    mother，不是 Elizabeth，但撇号后面就是非词字符，`\\b` 单独挡不住这个。
+
+    两本 Gutenberg 真书（*Pride and Prejudice* / *Moby-Dick*）435 条真实命中里，
+    这个构造出现 0 次（dead_speaks.py 模块头有数字来源）——所以选择不为它单独
+    收紧判据（收紧会连带丢掉 `said Elizabeth quietly.` 这类真命中）。**这条测试
+    锁的是「现状如此，且是有意的」，不是「这样是对的」。**
+    """
+    edges = [has_state(ELIZABETH.id, HEALTH_DIM.id, HealthValue.DEAD, 89)]
+    issues = dead_speaks_check(
+        ctx(
+            edges,
+            aliases={**ALIASES_EN, "健康": [HEALTH_DIM]},
+            paragraphs=["“I am tired,” said Elizabeth’s mother."],
+            language="en",
+        )
+    )
+    assert len(issues) == 1
+    assert issues[0].anchor.quote_text == "Elizabeth"
+
+
+def test_r3_en_message_and_action_stay_chinese() -> None:
+    """`message`/`suggested_action` 不跟 `ctx.language` 走——轴是作者的界面语言，
+    不是书的语言（dead_speaks.py 模块头「message 不跟 ctx.language 走」那段）。
+    锁住这个决定，防止以后有人顺手把它改成跟书语言走。
+    """
+    edges = [has_state(ELIZABETH.id, HEALTH_DIM.id, HealthValue.DEAD, 89)]
+    issues = dead_speaks_check(
+        ctx(
+            edges,
+            aliases={**ALIASES_EN, "健康": [HEALTH_DIM]},
+            paragraphs=["“I am tired,” said Elizabeth."],
+            language="en",
+        )
+    )
+    assert len(issues) == 1
+    assert "死" in issues[0].message  # 中文，不是英文——即使书是英文
+    assert issues[0].suggested_action is not None
+    assert "对白" in issues[0].suggested_action
+
+
+# ══════════════════════════════════════════════════════════════════════════
 # 规则目录 —— 稳定语义字段 / 排序 / 冻结 hash（Task 3）
 # ══════════════════════════════════════════════════════════════════════════
 
@@ -481,6 +680,48 @@ def test_service_report_binds_snapshot_ruleset_and_persists() -> None:
     assert row["ruleset_epoch"] == CURRENT_RULESET_EPOCH
     assert row["ruleset_hash"] == CURRENT_RULESET_HASH
     assert row["gate"] == "passed"
+    conn.close()
+
+
+def test_service_reads_project_language_for_r3() -> None:
+    """`validate_snapshot` 自己查 `project.language` 喂给 `CheckContext`——
+    调用方（`chapter_refresh.py` / `api/validation.py`）一行都不用改。
+
+    端到端证明用的是判别力强的构造：英文书里一句纯英文的死人说话，只有
+    `CheckContext.language` 真的传到了 "en"（R3 换上英文 pattern）才会被抓到——
+    "en" 没传对的话，中文 pattern 对这句英文文本天生零命中，`gate` 会是
+    `passed` 而不是 `blocked`。
+    """
+    conn = connect(IN_MEMORY)
+    migrate(conn)
+    store = SqliteStoryGraph(conn)
+    pid = project.create(conn, name="t", root_path=".").id
+    project.override_language(conn, pid, "en")
+    ghost = store.upsert_node(NodeSpec(project_id=pid, label=NodeLabel.CHARACTER, name="Ghost"))
+    dim = store.ensure_state_dim(pid, HEALTH_DIM_KEY, "Health")
+    store.upsert_edge(
+        EdgeSpec(
+            project_id=pid,
+            src=ghost.id,
+            dst=dim.id,
+            type=EdgeType.HAS_STATE,
+            props=EdgeProps(value="dead", value_key=HealthValue.DEAD),
+            valid_from_chapter=1,
+            information_scope=InformationScope.CANON,
+        )
+    )
+    text = "Chapter One\n\n“I am tired,” said Ghost.\n"
+    token = _validation_token(pid, store, text)
+    epoch, ruleset_hash = current_ruleset(conn, pid)
+
+    report = validate_snapshot(
+        conn, store, token, ruleset_epoch=epoch, ruleset_hash=ruleset_hash,
+        paragraphs=split_paragraphs(token.text),
+    )
+    assert report.gate == "blocked"
+    assert len(report.issues) == 1
+    assert report.issues[0].issue_type == "DEAD_SPEAKS"
+    assert report.issues[0].anchor.quote_text == "Ghost"
     conn.close()
 
 

@@ -148,6 +148,13 @@ def validate_snapshot(
     → `blocked`（阻断）；只有 unavailable / clear → `passed`（技术性 unavailable
     不阻断抽取）。
     """
+    # R3 按语言选中/英文两套独立 pattern（`checks/dead_speaks.py`）需要这个值；
+    # `project` 不是图表（`edge`/`node`/`alias`），直查不撞 `graph/` 边界守卫，
+    # 同 `current_ruleset()` 那条直查的先例。缺行按 "zh" 处理——不该发生
+    # （`project.language` 有 DEFAULT），发生了也不该让验证在这里崩。
+    language_row = conn.execute(
+        "SELECT language FROM project WHERE id = ?", (token.project_id,)
+    ).fetchone()
     ctx = CheckContext(
         store=store,
         project_id=token.project_id,
@@ -155,6 +162,7 @@ def validate_snapshot(
         # paragraphs=None = 正文输入没装入（技术性 unavailable，不阻断）；
         # 调用方负责把 token 正文切成段落传进来（`split_paragraphs(token.text)`）。
         paragraphs=paragraphs,
+        language=str(language_row["language"]) if language_row is not None else "zh",
     )
     rule_execs: list[RuleExecution] = []
     issues: list[Issue] = []
