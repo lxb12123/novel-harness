@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLanguage } from "../language";
 import { useCoords } from "../store";
 import { BotIcon, GearIcon, LogIcon } from "./icons";
 import { SettingsDrawer } from "./SettingsDrawer";
@@ -22,13 +23,14 @@ import { SettingsDrawer } from "./SettingsDrawer";
 // 新人物是写到那儿才需要的。现在引擎在写完之后自己去正文里数（`mentioned.py`），
 // 右栏显示数出来的结果。作者要覆盖就点场景块，那是他在正文里亲手标的。
 export function TopBar() {
+  const language = useLanguage((s) => s.language);
   const { page, chatOpen, setPage, toggleChat } = useCoords();
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   return (
     <header>
       <span className="title">
-        <b>Novel Harness</b> 工作台
+        <b>Novel Harness</b> {language === "zh" ? "工作台" : "Workbench"}
       </span>
 
       <span className="spacer" />
@@ -53,9 +55,13 @@ export function TopBar() {
           不弹、不红点、不推给作者（约束 8）。它只换中栏，左栏书架和右栏面板不动。 */}
       <button
         className={"icon-btn" + (page === "log" ? " on" : "")}
-        aria-label="活动记录"
+        aria-label={language === "zh" ? "活动记录" : "Activity log"}
         aria-pressed={page === "log"}
-        data-tip={page === "log" ? "回到正文" : "活动记录"}
+        data-tip={
+          language === "zh"
+            ? page === "log" ? "回到正文" : "活动记录"
+            : page === "log" ? "Back to the text" : "Activity log"
+        }
         onClick={() => setPage(page === "log" ? "workbench" : "log")}
       >
         <LogIcon />
@@ -66,17 +72,23 @@ export function TopBar() {
           - **novel-agent 模式**（模式二）：中栏对半分，右半边是助手（`ChatPanel`）。
 
           **悬浮那行字说的是「按下去会到哪儿」，不是它自己叫什么**——一颗开关最该说这个。
-          所以两态各念对面那个模式的名字。名字（`aria-label`）仍钉死「写作助手」：
-          它是这块面板一直以来的名字（`ChatPanel` 的标题、活动记录里的 actor 名、
-          后端好几处提示都念这四个字），**状态走 `aria-pressed`，名字不许跟着变**。
+          所以两态各念对面那个模式的名字。名字（`aria-label`）**跟着界面语言走，但
+          全仓库只有一份**：`ChatPanel` 的标题、活动记录里的 actor 名、后端好几处提示
+          念的都是这同一个名字（国际化第四批之后，中文那半仍然是「写作助手」，
+          英文那半是 `ChatPanel.tsx` 已经在用的「Writing assistant」），
+          **状态走 `aria-pressed`，名字不许跟着状态变**。
 
           图标是一个**脑袋是书的小机器人**，两态只差书的开合（`BotIcon`）：
           合着 = 它在旁边待命；摊开 = 它上场了。 */}
       <button
         className={"icon-btn" + (chatOpen ? " on" : "")}
-        aria-label="写作助手"
+        aria-label={language === "zh" ? "写作助手" : "Writing assistant"}
         aria-pressed={chatOpen}
-        data-tip={chatOpen ? "切换成协助模式" : "切换成 novel-agent 模式"}
+        data-tip={
+          language === "zh"
+            ? chatOpen ? "切换成协助模式" : "切换成 novel-agent 模式"
+            : chatOpen ? "Switch to assist mode" : "Switch to novel-agent mode"
+        }
         onClick={toggleChat}
       >
         <BotIcon open={chatOpen} />
@@ -108,11 +120,12 @@ export function TopBar() {
           字面是「AI 设置」不是「设置」：那扇窗的无障碍名字、后端那句「先去顶栏「AI 设置」
           看一眼」都念这四个字。**一个东西一个名字**——少一个字，那句指路的话就指不到了。
           2026-08-14 那扇窗的标题栏拆了（作者要求），于是**屏幕上只剩这四个字在这儿**：
-          改这一处 = 那句指路的话在界面上再也落不到实处。 */}
+          改这一处 = 那句指路的话在界面上再也落不到实处。英文那半同理钉死
+          「AI Settings」，不是「Settings」。 */}
       <button
         className="icon-btn tip-right"
-        aria-label="AI 设置"
-        data-tip="AI 设置"
+        aria-label={language === "zh" ? "AI 设置" : "AI Settings"}
+        data-tip={language === "zh" ? "AI 设置" : "AI Settings"}
         onClick={() => setSettingsOpen(true)}
       >
         <GearIcon />

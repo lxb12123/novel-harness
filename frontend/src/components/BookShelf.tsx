@@ -6,6 +6,7 @@ import {
   useProjects,
   useSetProjectLanguage,
 } from "../api/hooks";
+import { useLanguage } from "../language";
 import { useCoords } from "../store";
 import {
   deleteChapterError,
@@ -42,6 +43,7 @@ function ChapterList({
   active: boolean;
   onOpen: (n: number) => void;
 }) {
+  const language = useLanguage((s) => s.language);
   const { chapter } = useCoords();
   const chapters = useChapters(pid);
   const create = useCreateChapter(pid);
@@ -91,7 +93,8 @@ function ChapterList({
     });
   }
 
-  if (!chapters.data) return <div className="empty">加载中…</div>;
+  if (!chapters.data)
+    return <div className="empty">{language === "zh" ? "加载中…" : "Loading…"}</div>;
   return (
     <>
       {chapters.data.map((c) => (
@@ -107,13 +110,17 @@ function ChapterList({
           onClick={() => onOpen(c.number)}
         >
           <span className="n">{String(c.number).padStart(3, "0")}</span>
-          <span className="ch-name">{c.title || "（无题）"}</span>
+          <span className="ch-name">{c.title || (language === "zh" ? "（无题）" : "(Untitled)")}</span>
           {/* 「⋯」平时不显形（`.ch-act` 靠悬浮/聚焦/菜单开着才现），所以一列 722 章
               不会变成一列点点点。**它仍然在 DOM 里**：只在悬浮时才挂上去的话，
               键盘走不到它，而这是删一章唯一的入口。 */}
           <button
             className="ch-act"
-            aria-label={`${c.title || `第 ${c.number} 章`}的更多操作`}
+            aria-label={
+              language === "zh"
+                ? `${c.title || `第 ${c.number} 章`}的更多操作`
+                : `More actions for ${c.title || `chapter ${c.number}`}`
+            }
             aria-expanded={menuFor === c.number}
             onClick={(e) => {
               e.stopPropagation(); // 否则这一下顺带把这一章打开了
@@ -133,19 +140,25 @@ function ChapterList({
                   而这一颗没有撤销键（引擎那边的行确实没了）。 */}
               {confirming ? (
                 <>
-                  <div className="ch-menu-ask">删除第 {c.number} 章？</div>
+                  <div className="ch-menu-ask">
+                    {language === "zh" ? `删除第 ${c.number} 章？` : `Delete chapter ${c.number}?`}
+                  </div>
                   <button
                     className="danger"
                     disabled={del.isPending}
                     onClick={() => removeChapter(c.number)}
                   >
-                    {del.isPending ? "正在删…" : "删除"}
+                    {language === "zh"
+                      ? del.isPending ? "正在删…" : "删除"
+                      : del.isPending ? "Deleting…" : "Delete"}
                   </button>
-                  <button onClick={() => setConfirming(false)}>算了</button>
+                  <button onClick={() => setConfirming(false)}>
+                    {language === "zh" ? "算了" : "Cancel"}
+                  </button>
                 </>
               ) : (
                 <button className="danger" onClick={() => setConfirming(true)}>
-                  删除本章
+                  {language === "zh" ? "删除本章" : "Delete this chapter"}
                 </button>
               )}
             </div>
@@ -157,15 +170,32 @@ function ChapterList({
           能直接开始写，而在此之前浏览器里根本没有「新起一章」这条路——引擎有
           （`chapters/NNNN.md` 摆在那儿），界面没有。 */}
       {chapters.data.length === 0 && (
-        <div className="empty">这本书还没有章节。新起一章，或者用上面的「＋ 新书 / 导入」导入 TXT。</div>
+        <div className="empty">
+          {language === "zh" ? (
+            <>这本书还没有章节。新起一章，或者用上面的「＋ 新书 / 导入」导入 TXT。</>
+          ) : (
+            <>
+              This book doesn’t have any chapters yet. Start a new one, or use the “+ New Book /
+              Import” above to import a TXT file.
+            </>
+          )}
+        </div>
       )}
       {/* 屏幕上只有一个加号，**名字由 `data-tip` 悬浮画出来**（`.icon-btn::after`，
           .12s 就出来）。**不用原生 `title`**：它要等约一秒，而作者的原话是「以为没有」。
           `aria-label` 是这颗按钮的名字——一颗只有图标的按钮少了它，读屏就念不出它是干什么的。 */}
       <button
         className="icon-btn ch-add"
-        aria-label={create.isPending ? "正在新起一章…" : "新起一章"}
-        data-tip={create.isPending ? "正在新起一章…" : "新起一章"}
+        aria-label={
+          language === "zh"
+            ? create.isPending ? "正在新起一章…" : "新起一章"
+            : create.isPending ? "Starting a new chapter…" : "Start a new chapter"
+        }
+        data-tip={
+          language === "zh"
+            ? create.isPending ? "正在新起一章…" : "新起一章"
+            : create.isPending ? "Starting a new chapter…" : "Start a new chapter"
+        }
         disabled={create.isPending}
         onClick={add}
       >
@@ -185,22 +215,26 @@ function ChapterList({
  * mutation），而 hooks 不能在 `books.map()` 那个回调里直接调——同 `ChapterList`
  * 已经踩过的同一条 Rules of Hooks。
  */
-function BookLanguageToggle({ pid, language }: { pid: string; language: "zh" | "en" }) {
+function BookLanguageToggle({ pid, language: bookLanguage }: { pid: string; language: "zh" | "en" }) {
+  const language = useLanguage((s) => s.language);
   const setLanguage = useSetProjectLanguage(pid);
   return (
     <div className="book-menu-lang" onClick={(e) => e.stopPropagation()}>
-      语言：
+      {language === "zh" ? "语言：" : "Language:"}
+      {/* **这两个按钮的文字不跟着界面语言换**（同顶栏「界面语言 / Interface language」
+          那颗开关的既有做法）：它们是语言的名字本身，不是这块界面此刻说的话——
+          一个中文作者切到英文界面时，还是要认得出哪颗按钮能把书切回中文。 */}
       <button
-        className={language === "zh" ? "on" : ""}
-        aria-pressed={language === "zh"}
+        className={bookLanguage === "zh" ? "on" : ""}
+        aria-pressed={bookLanguage === "zh"}
         disabled={setLanguage.isPending}
         onClick={() => setLanguage.mutate("zh")}
       >
         中文
       </button>
       <button
-        className={language === "en" ? "on" : ""}
-        aria-pressed={language === "en"}
+        className={bookLanguage === "en" ? "on" : ""}
+        aria-pressed={bookLanguage === "en"}
         disabled={setLanguage.isPending}
         onClick={() => setLanguage.mutate("en")}
       >
@@ -211,6 +245,7 @@ function BookLanguageToggle({ pid, language }: { pid: string; language: "zh" | "
 }
 
 export function BookShelf({ onOpenChapter }: { onOpenChapter: (n: number) => void }) {
+  const language = useLanguage((s) => s.language);
   const projects = useProjects();
   const { projectId, setProject, openBookAt } = useCoords();
   const { hidden, collapsed, remove, restoreAll, toggleCollapsed } = useShelf();
@@ -239,12 +274,21 @@ export function BookShelf({ onOpenChapter }: { onOpenChapter: (n: number) => voi
   return (
     <>
       <button className="shelf-add" onClick={() => setSetup(true)}>
-        ＋ 新书 / 导入
+        {language === "zh" ? "＋ 新书 / 导入" : "+ New Book / Import"}
       </button>
 
       {books.length === 0 && (
         <div className="empty">
-          左边还没有摆书。<a onClick={restoreAll}>把移除的书放回来</a>
+          {language === "zh" ? (
+            <>
+              左边还没有摆书。<a onClick={restoreAll}>把移除的书放回来</a>
+            </>
+          ) : (
+            <>
+              There are no books on the shelf yet.{" "}
+              <a onClick={restoreAll}>Bring back the ones you removed</a>
+            </>
+          )}
         </div>
       )}
 
@@ -285,12 +329,18 @@ export function BookShelf({ onOpenChapter }: { onOpenChapter: (n: number) => voi
                   <span className="book-fold" />
                 </span>
                 <span className="book-name">{p.name}</span>
-                <span className="book-kind">章目录</span>
+                <span className="book-kind">
+                  {language === "zh" ? "章目录" : "Chapters"}
+                </span>
               </button>
               <span className="book-more">
                 <button
                   className="book-act"
-                  aria-label={`《${p.name}》的更多操作`}
+                  aria-label={
+                    language === "zh"
+                      ? `《${p.name}》的更多操作`
+                      : `More actions for ${p.name}`
+                  }
                   aria-expanded={menuFor === p.id}
                   onClick={(e) => {
                     e.stopPropagation();
@@ -305,15 +355,23 @@ export function BookShelf({ onOpenChapter }: { onOpenChapter: (n: number) => voi
                     <button
                       disabled={!removable(all, hidden, projectId)}
                       title={
-                        removable(all, hidden, projectId)
-                          ? "只是从左边拿走，书和稿子都还在"
-                          : "左边就剩这一本了"
+                        language === "zh"
+                          ? removable(all, hidden, projectId)
+                            ? "只是从左边拿走，书和稿子都还在"
+                            : "左边就剩这一本了"
+                          : removable(all, hidden, projectId)
+                            ? "This only takes it off the shelf — the book and its drafts are still there"
+                            : "This is the only book left on the shelf"
                       }
                       onClick={() => removeBook(p.id)}
                     >
-                      从左边移除
+                      {language === "zh" ? "从左边移除" : "Remove from the shelf"}
                     </button>
-                    <div className="book-menu-note">书和稿子都不会被删掉，随时能再打开。</div>
+                    <div className="book-menu-note">
+                      {language === "zh"
+                        ? "书和稿子都不会被删掉，随时能再打开。"
+                        : "The book and its drafts won’t be deleted — you can open it again anytime."}
+                    </div>
                   </div>
                 )}
               </span>
@@ -340,7 +398,12 @@ export function BookShelf({ onOpenChapter }: { onOpenChapter: (n: number) => voi
           （切书弹窗撤掉之后，这是仅剩的恢复入口）。 */}
       {hidden.length > 0 && (
         <div className="shelf-hidden">
-          有 {hidden.length} 本没摆在左边 · <a onClick={restoreAll}>放回来</a>
+          {language === "zh" ? (
+            <>有 {hidden.length} 本没摆在左边 · </>
+          ) : (
+            <>{hidden.length} book{hidden.length === 1 ? "" : "s"} not on the shelf · </>
+          )}
+          <a onClick={restoreAll}>{language === "zh" ? "放回来" : "Bring back"}</a>
         </div>
       )}
 

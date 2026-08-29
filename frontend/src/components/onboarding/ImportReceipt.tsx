@@ -1,4 +1,5 @@
 import { emphasize } from "../../chat";
+import { useLanguage } from "../../language";
 import type { ImportSummary } from "../../api/types";
 
 // 导入回执 —— **导完一本 300 章的书之后，屏幕上不再是一个数字都没有。**
@@ -20,9 +21,10 @@ export function ImportReceipt({
   summary: ImportSummary;
   onEnter: () => void;
 }) {
+  const language = useLanguage((s) => s.language);
   return (
     <>
-      <p className="onboarding-eyebrow">导入完成</p>
+      <p className="onboarding-eyebrow">{language === "zh" ? "导入完成" : "Import complete"}</p>
       <h1 className="onboarding-title">{summary.headline}</h1>
       <ul className="import-lines">
         {summary.lines.map((line) => (
@@ -46,7 +48,7 @@ export function ImportReceipt({
       <div className="onboarding-form-actions">
         <span />
         <button className="primary" type="button" onClick={onEnter}>
-          进入工作台
+          {language === "zh" ? "进入工作台" : "Enter the workbench"}
         </button>
       </div>
     </>

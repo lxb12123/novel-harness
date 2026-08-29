@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useBootstrapProject } from "../api/hooks";
 import { ApiError, readTextFile } from "../api/client";
 import { saidToTheAuthor } from "../correctionError";
+import { useLanguage } from "../language";
 import { useCoords } from "../store";
 import type { BootstrapResult } from "../api/types";
 import { BlankBookForm } from "./onboarding/BlankBookForm";
@@ -13,6 +14,7 @@ import { StartChooser } from "./onboarding/StartChooser";
 type Mode = "choose" | "import-review" | "import-done" | "blank-name";
 
 export function Setup({ onClose }: { onClose?: () => void }) {
+  const language = useLanguage((s) => s.language);
   const [mode, setMode] = useState<Mode>("choose");
   const [file, setFile] = useState<File | null>(null);
   const [text, setText] = useState("");
@@ -73,7 +75,11 @@ export function Setup({ onClose }: { onClose?: () => void }) {
       if (readTokenRef.current === token) setText(nextText);
     } catch {
       if (readTokenRef.current === token) {
-        setReadingError("读取 TXT 失败，请重新选择文件。");
+        setReadingError(
+          language === "zh"
+            ? "读取 TXT 失败，请重新选择文件。"
+            : "Couldn’t read the TXT file — please choose the file again.",
+        );
       }
     } finally {
       if (readTokenRef.current === token) setReading(false);
@@ -169,14 +175,19 @@ export function Setup({ onClose }: { onClose?: () => void }) {
   return (
     <>
       <div className="backdrop" onClick={closeDrawer} />
-      <div className="drawer onboarding-drawer" role="dialog" aria-modal="true" aria-label="新建 / 导入小说">
+      <div
+        className="drawer onboarding-drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-label={language === "zh" ? "新建 / 导入小说" : "New / import a novel"}
+      >
         <button
           className="onboarding-close"
           type="button"
           disabled={bootstrap.isPending}
           onClick={closeDrawer}
         >
-          关闭
+          {language === "zh" ? "关闭" : "Close"}
         </button>
         {shell}
       </div>
