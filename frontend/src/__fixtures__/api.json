@@ -1792,8 +1792,9 @@
       }
     ],
     "error": "ambiguous_name",
-    "message": "「师兄」在这个项目里指 2 个东西（萧决(Character)、李管家(Character)），系统不替你挑。用本名或者一个只属于一个人的称呼",
-    "surface": "师兄"
+    "params": {
+      "surface": "师兄"
+    }
   },
   "errorCanonEdgeGone": {
     "detail": {

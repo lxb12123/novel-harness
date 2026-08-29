@@ -129,9 +129,9 @@ def _character_node(
 ) -> Any:
     node = fetch_node(conn, project_id, character_id)
     if node is None:
-        raise HTTPException(404, {"error": "character_not_found", "character_id": character_id})
+        raise HTTPException(404, {"error": "character_not_found"})
     if node.label is not NodeLabel.CHARACTER:
-        raise HTTPException(422, {"error": "not_a_character", "character_id": character_id})
+        raise HTTPException(422, {"error": "not_a_character"})
     return node
 
 
@@ -350,12 +350,17 @@ def delete_node(
     except NodeNotFound as exc:
         raise HTTPException(404, {"error": "node_not_found", "message": str(exc)}) from exc
     except NodeInUse as exc:
+        # `NodeUsage.node_id` 是裸内部 id，不安全，不进 `params`——`name`/`edges`/`events`
+        # 三样够拼出这句拒绝，同 `ChapterInUse` 那条口径。
         raise HTTPException(
             409,
             {
                 "error": "node_in_use",
-                "message": str(exc),
-                "usage": exc.usage.model_dump(mode="json"),
+                "params": {
+                    "name": exc.usage.name,
+                    "edges": exc.usage.edges,
+                    "events": exc.usage.events,
+                },
             },
         ) from exc
     _bump_canon(conn, proj.id)
@@ -368,11 +373,7 @@ def _require_canon(conn: Connection, project_id: str, expected: int) -> None:
     if expected != current:
         raise HTTPException(
             409,
-            {
-                "error": "stale_canon_version",
-                "expected": expected,
-                "current": current,
-            },
+            {"error": "stale_canon_version", "params": {"expected": expected, "current": current}},
         )
 
 

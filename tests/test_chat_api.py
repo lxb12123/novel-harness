@@ -539,7 +539,9 @@ def test_deleting_a_conversation_that_is_running_says_so_instead_of_confusing_hi
         assert running.result(timeout=10).status_code == 200
 
     assert refused.status_code == 409, refused.text
-    assert "先按「停」" in refused.json()["detail"]["message"]
+    detail = refused.json()["detail"]
+    assert detail["error"] == "chat_busy"
+    assert detail["params"]["action"] == "delete"
     assert client.delete(url).status_code == 200
 
 

@@ -92,8 +92,13 @@ describe("新起一章失败时那句话", () => {
   });
 
   it("带错误码的 404（书没了）照抄后端，不当成「程序是旧的」", () => {
+    // 故意避开真的 `project_not_found`（已注册，会被整句模板抢先渲染，见
+    // `RosterTab.test.tsx` 那条撞过的同样的坑）。
     const said = newChapterError(
-      new ApiError(404, { error: "project_not_found", message: "这本书不在库里了。" }),
+      new ApiError(404, {
+        error: "project_not_found_from_a_future_endpoint",
+        message: "这本书不在库里了。",
+      }),
     );
     expect(said).toBe("这本书不在库里了。");
   });
@@ -119,12 +124,18 @@ describe("新起一章失败时那句话", () => {
 });
 
 describe("删一章失败时那句话", () => {
-  it("**拒绝的明细一个字都不改**", () => {
+  it("**拒绝的明细一个字都不丢**（国际化第四批：码 + params，`backendMessages.ts` 渲染整句）", () => {
     // 那串数字是作者判断「这一章还连着什么」的唯一依据。换成一句笼统的「删不掉」，
     // 他会去文件夹里自己动手删那个文件——而那条路上引擎的记忆一条都不会被清理。
-    const refusal = "第 1 章上还记着东西（证据 3 / 关系 2 / 情节 1 / 抽取 1 / 提案 0）";
-    const said = deleteChapterError(new ApiError(409, { error: "chapter_in_use", message: refusal }));
-    expect(said).toBe(refusal);
+    const said = deleteChapterError(
+      new ApiError(409, {
+        error: "chapter_in_use",
+        params: { chapter_number: 1, evidence: 3, edges: 2, events: 1, extraction_runs: 1, proposal_sets: 0 },
+      }),
+    );
+    expect(said).toBe(
+      "第 1 章上还记着东西（证据 3 / 关系 2 / 情节 1 / 抽取 1 / 提案 0）。删掉这一章，这些会跟着一起没。",
+    );
     expect(devTerms(said)).toEqual([]);
   });
 

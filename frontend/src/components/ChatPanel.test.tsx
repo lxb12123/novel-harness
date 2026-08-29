@@ -593,14 +593,14 @@ describe("多段对话：侧列表", () => {
     await waitFor(() => expect(useCoords.getState().chatId).toBeNull());
   });
 
-  it("正在跑的那一段删不掉 —— 后端那句 409 原样说出来，不静默重试", async () => {
+  it("正在跑的那一段删不掉 —— 那句拒绝原样说出来，不静默重试", async () => {
     const user = userEvent.setup();
     renderWithApi(<ChatPanel />, [
       {
         method: "DELETE",
         match: /\/chats\//,
         status: 409,
-        body: { detail: { error: "chat_busy", message: "这段对话正在跑，先按「停」再删。" } },
+        body: { detail: { error: "chat_busy", params: { action: "delete" } } },
       },
     ]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);

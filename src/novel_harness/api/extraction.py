@@ -91,7 +91,7 @@ def _view(run: ExtractionRun) -> ExtractionRunView:
 def _run_not_found(run_id: str) -> HTTPException:
     return HTTPException(
         status_code=404,
-        detail={"error": "extraction_run_not_found", "run_id": run_id},
+        detail={"error": "extraction_run_not_found"},
     )
 
 
@@ -112,7 +112,7 @@ def extract_chapter(
     except ExtractionChapterNotFound as exc:
         raise HTTPException(
             status_code=404,
-            detail={"error": "chapter_not_found", "chapter": chapter},
+            detail={"error": "chapter_not_found", "params": {"chapter": chapter}},
         ) from exc
     background_tasks.add_task(runner.run, run.id)
     return _view(run)
@@ -150,7 +150,7 @@ def chapter_events(
     if not graph.chapter_snapshots(proj.id, chapter):
         raise HTTPException(
             status_code=404,
-            detail={"error": "chapter_not_found", "chapter": chapter},
+            detail={"error": "chapter_not_found", "params": {"chapter": chapter}},
         )
     return events.events_for_chapter(
         proj.id,

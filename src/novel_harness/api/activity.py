@@ -123,10 +123,7 @@ def activity_detail(
     """
     detail = read_entry(conn, proj.id, entry_id)
     if detail is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": "activity_entry_not_found", "entry_id": entry_id},
-        )
+        raise HTTPException(status_code=404, detail={"error": "activity_entry_not_found"})
     return detail.model_copy(
         update={"entry": _with_jump(proj.id, detail.entry)}
     )

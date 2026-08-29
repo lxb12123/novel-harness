@@ -581,8 +581,8 @@ def test_the_delete_route_hands_the_blocking_counts_to_the_author(world: World, 
     assert blocked.status_code == 409, blocked.text
     detail = blocked.json()["detail"]
     assert detail["error"] == "node_in_use"
-    assert detail["usage"]["edges"] == 1
-    assert "北荒" in detail["message"]
+    assert detail["params"]["edges"] == 1
+    assert detail["params"]["name"] == "北荒"
 
 
 def test_the_rename_route_returns_a_narrow_ref(world: World, monkeypatch: pytest.MonkeyPatch) -> None:

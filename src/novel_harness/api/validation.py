@@ -104,7 +104,7 @@ def update_validation_rule(
         (proj.id, rule_id),
     ).fetchone()
     if row is None:
-        raise HTTPException(404, {"error": "rule_not_found", "rule_id": rule_id})
+        raise HTTPException(404, {"error": "rule_not_found"})
     setters: list[str] = []
     params: list[object] = []
     if body.enabled is not None:
@@ -142,7 +142,7 @@ def delete_validation_rule(
         (rule_id, proj.id),
     ).rowcount
     if changed != 1:
-        raise HTTPException(404, {"error": "rule_not_found", "rule_id": rule_id})
+        raise HTTPException(404, {"error": "rule_not_found"})
     _bump_ruleset(conn, proj.id)
     conn.commit()
     return {"rule_id": rule_id, "deleted": "true"}
@@ -191,7 +191,7 @@ def check(
     root = Path(proj.root_path)
     file = root / importer.chapter_path(chapter)
     if not file.exists():
-        raise HTTPException(404, {"error": "chapter_not_found", "chapter": chapter})
+        raise HTTPException(404, {"error": "chapter_not_found", "params": {"chapter": chapter}})
     text = file.read_text(encoding="utf-8-sig")
     text_sha = importer.text_digest(text)
     db_hash = store.current_chapter_hash(proj.id, chapter)

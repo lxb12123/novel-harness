@@ -56,6 +56,30 @@ describe("右侧信息区", () => {
     expect(document.body.textContent).not.toMatch(/场景/);
     expect(document.body.textContent).not.toMatch(/R[1-4]|issue|location_conflict|future_leak/);
   });
+
+  it("**检查跑不起来时不许把裸码摆上屏**（曾经直接读 `(check.error as Error).message`）", async () => {
+    // 真发生过的那次：这一章的正文文件已经不在了，后端只回一个码——
+    // `(check.error as Error).message` 在没有 `.message` 字段时会退回 `body.error`，
+    // 屏幕上出现的就是原样的 `chapter_not_found` 五个字母（国际化第四批·裸错误码审计
+    // 撞见的真回归，这一格此前没有任何失败路径测试）。
+    const user = userEvent.setup();
+    renderWithApi(<RightPanel />, [
+      {
+        method: "POST",
+        match: /\/check$/,
+        status: 404,
+        body: { detail: { error: "chapter_not_found", params: { chapter: 1 } } },
+      },
+    ]);
+
+    await user.click(await screen.findByRole("button", { name: "检查" }));
+    await user.click(screen.getByRole("button", { name: "检查本章" }));
+
+    expect(
+      await screen.findByText("第 1 章已经不在了 —— 可能被删除或改了章号。刷新一下再看。"),
+    ).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/chapter_not_found/);
+  });
 });
 
 describe("在场是数出来的，不是作者填的", () => {

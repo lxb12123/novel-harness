@@ -147,7 +147,10 @@ def patch_canon_edge(
     except CanonEdgeRefused as exc:
         raise HTTPException(409, {"error": "canon_edge_refused", "message": str(exc)})
     except project.StaleBaseVersion as exc:
-        raise HTTPException(409, {"error": "stale_canon_version", "message": str(exc)})
+        raise HTTPException(
+            409,
+            {"error": "stale_canon_version", "params": {"expected": exc.expected, "current": exc.current}},
+        )
 
 
 @router.delete("/api/projects/{project_id}/canon/edges/{edge_id}")
@@ -169,7 +172,10 @@ def delete_canon_edge(
     except CanonEdgeRefused as exc:
         raise HTTPException(409, {"error": "canon_edge_refused", "message": str(exc)})
     except project.StaleBaseVersion as exc:
-        raise HTTPException(409, {"error": "stale_canon_version", "message": str(exc)})
+        raise HTTPException(
+            409,
+            {"error": "stale_canon_version", "params": {"expected": exc.expected, "current": exc.current}},
+        )
 
 
 def _canon_edge_target(edge: CanonEdgeView, body: CanonEdgeEdit) -> tuple[str, str, EdgeProps]:
@@ -223,7 +229,7 @@ def get_event_summary(
     """一个事件的当前摘要版本（PROVISIONAL / CANON 共用）。"""
     version = current_event_summary(conn, event_id)
     if version is None:
-        raise HTTPException(404, {"error": "event_summary_not_found", "event_id": event_id})
+        raise HTTPException(404, {"error": "event_summary_not_found"})
     return version
 
 
@@ -251,7 +257,7 @@ def patch_event_summary(
     store = SqliteEventStore(conn)
     scope = store.event_information_scope(proj.id, event_id)
     if scope is None:
-        raise HTTPException(404, {"error": "event_not_found", "event_id": event_id})
+        raise HTTPException(404, {"error": "event_not_found"})
     try:
         return edit_event_summary(
             conn,
@@ -285,7 +291,7 @@ def regenerate_event_summary_route(
             trigger_key=f"event-regenerate:{new_id(EntityType.SUMMARY, proj.id)}",
         )
     except EventSummaryNotFound:
-        raise HTTPException(404, {"error": "event_not_found", "event_id": event_id})
+        raise HTTPException(404, {"error": "event_not_found"})
     conn.commit()
     return {"queued": True, "job_id": job_id}
 ChapterNumber = Annotated[int, Path(ge=1)]

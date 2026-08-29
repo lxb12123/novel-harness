@@ -227,9 +227,10 @@ def test_extraction_routes_hide_missing_and_cross_project_runs(
     )
     assert missing_run.status_code == cross_project.status_code == 404
     assert missing_run.json()["detail"]["error"] == "extraction_run_not_found"
-    assert cross_project.json()["detail"] == missing_run.json()["detail"] | {
-        "run_id": queued["id"]
-    }
+    # `run_id` 不进出参（`前缀:标识` 形状，作者不该在屏幕上看见）——两档 404
+    # 因此长得一模一样，这正是"查无此运行"和"这运行不是你这本书的"故意不区分
+    # 的地方（区分了等于告诉探测者"这个 id 存在，只是不属于你"）。
+    assert cross_project.json()["detail"] == missing_run.json()["detail"]
 
 
 class _SpyRunner:

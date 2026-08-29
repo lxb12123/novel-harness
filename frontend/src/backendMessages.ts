@@ -84,6 +84,15 @@ const CONFLICT_LABEL: Record<string, { zh: string; en: string }> = {
   knowledge: { zh: "谁在什么时候知道什么，对不上", en: "who knew what and when doesn't match" },
 };
 
+/** 乐观并发闸拒绝时的那句话。**两个不同的码共用同一个对象**
+ *  （`stale_base_version`/`stale_canon_version`，见下面 `MESSAGES` 里的引用）——
+ *  对作者是同一件事："你手上这份不是最新的，先看一眼"，不该因为锁的是项目级
+ *  版本号还是单条编辑的版本号，就在措辞上产生一条本不存在的区别。 */
+const STALE_VERSION: { zh: string; en: string } = {
+  zh: "这本书在别处刚被改过（你看到的还是版本 {expected}，现在已经是 {current}）。先看一眼最新的，再决定这一处要不要改。",
+  en: "This book was just changed somewhere else (you were looking at version {expected}, it's now {current}). Take a look at the latest version before deciding whether to make this edit.",
+};
+
 // ── activity.py（日志页，国际化第四批·笔二）─────────────────────────────────
 //
 // 七张「枚举 → 中文」的表 + 四个格式化函数，整个从 `activity.py` 搬过来的
@@ -363,13 +372,145 @@ const MESSAGES: Record<string, Template> = {
     zh: "这条通知今天不在了，可能已经被处理过。刷新一下看看现在还有哪些需要留意的。",
     en: "This notification isn't there anymore — it may have already been handled. Refresh to see what still needs attention.",
   },
-  stale_base_version: {
-    zh: "这本书在别处刚被改过（你看到的还是版本 {expected}，现在已经是 {current}）。先看一眼最新的，再决定这一处要不要改。",
-    en: "This book was just changed somewhere else (you were looking at version {expected}, it's now {current}). Take a look at the latest version before deciding whether to make this edit.",
-  },
+  // `stale_base_version`/`stale_canon_version` 是两条不同的闸（前者锁项目级的
+  // `project.canon_version`，后者是 `characters.py::_require_canon`/`review.py` 的
+  // 编辑闸），但对作者是同一句话——**同一个对象，别写第二份**（下面直接引用）。
+  // 写成内联箭头函数（不是直接把 `STALE_VERSION` 当值填进来）是为了迁就
+  // `tests/test_backend_codes_have_frontend_translations.py::frontend_message_codes`
+  // 的正则——它认的顶层键形状是 `key: {` / `key: (`，一个裸标识符引用它扫不到，
+  // 会误判成"前端没翻译"。两边共用的是 `STALE_VERSION` 这份文字，不是两次调用。
+  stale_base_version: (params, language) => fill(STALE_VERSION[language], params),
+  stale_canon_version: (params, language) => fill(STALE_VERSION[language], params),
   proposal_already_resolved: {
     zh: "这条已经被处理过了（可能是你自己在别的标签页点的，也可能是别人）。刷新一下看看结果。",
     en: "This item has already been handled (maybe you did it in another tab, maybe someone else did). Refresh to see the result.",
+  },
+
+  // ── 国际化第四批·裸错误码审计（28 种码 / 51 处）─────────────────────────
+  //
+  // 这一批之前，下面每一个码在 `saidToTheAuthor` 里都落到"认不出"，退回
+  // `error.body.message`——多数调用点根本没写这个字段，于是屏幕上出现的是
+  // 码本身（`chapter_not_found` 五个单词，作者第一反应是"我把书弄坏了"）。
+  // `correctionError.ts` 顶部那段决策树早就点名过这条后果，一直没人补。
+  //
+  // 逐个过安全判据（同文件顶部注释）：`*_id` 一律不进 `params`——它们全是
+  // `前缀:标识` 形状，`screenGuard.ts::RAW_ID` 判它不安全，而"这条不在了"这句话
+  // 本来就不需要念出 id。`usage`/`candidates` 一类结构化对象，只挑安全的标量字段
+  // （`name`/`edges`/`events`/计数），从不整个转发。
+  //
+  // `ambiguous_name`/`ambiguous_quote` 的 `candidates` 留在 body 顶层给专门的
+  // 消歧下拉用（`RosterDrawer.tsx::Failure`）——这两条因此不会被
+  // `tests/test_backend_codes_have_frontend_translations.py` 的 AST 扫描收进覆盖率
+  // （它只认键集合恰好是 `{error}`/`{error,params}` 的字典字面量），这里仍然给一句
+  // 完整翻译，是给"没有专门下拉的调用方"兜底，不是漏了。`snapshot_in_use` 不在这批
+  // 里：`HistoryDrawer.tsx` 已经有安全的专用兜底（只取 `usage.evidence`，绕开
+  // `usage.snapshot_id`），无需再有第二份。
+  activity_entry_not_found: {
+    zh: "这条活动记录今天不在了，可能已经被清理过。刷新一下再看。",
+    en: "This activity entry isn't there anymore — it may have been cleaned up. Refresh and check again.",
+  },
+  ambiguous_name: (params, language) => {
+    const surface = String(params.surface ?? "");
+    return language === "zh"
+      ? `「${surface}」认不出对应哪一个 —— 有好几个候选。换一个更明确的称呼再试一次。`
+      : `"${surface}" doesn't resolve to a single match — there are multiple candidates. Try a more specific name.`;
+  },
+  ambiguous_quote: (params, language) => {
+    const quote = String(params.quote ?? "");
+    return language === "zh"
+      ? `「${quote}」在原文里能对上不止一处。把这句话写得更完整、更独特一点，再试一次。`
+      : `"${quote}" matches more than one place in the text. Make the quote longer or more specific, then try again.`;
+  },
+  wrong_label: (params, language) => {
+    const surface = String(params.surface ?? "");
+    const got = nodeLabelText(String(params.got ?? ""), language);
+    const want = nodeLabelText(String(params.want ?? ""), language);
+    return language === "zh"
+      ? `「${surface}」认得的是${got}，这里要的是${want}。`
+      : `"${surface}" is recognized as a ${got}, but a ${want} is needed here.`;
+  },
+  chapter_changed: {
+    zh: "第 {chapter} 章的内容在你这份改动提交前已经被别处改掉了。刷新一下，看最新的版本。",
+    en: "Chapter {chapter}'s content was changed elsewhere before your edit could be submitted. Refresh to see the latest version.",
+  },
+  chapter_in_use: (params, language) => {
+    const c = params.chapter_number;
+    const evidence = params.evidence;
+    const edges = params.edges;
+    const events = params.events;
+    const runs = params.extraction_runs;
+    const proposals = params.proposal_sets;
+    return language === "zh"
+      ? `第 ${c} 章上还记着东西（证据 ${evidence} / 关系 ${edges} / 情节 ${events} / 抽取 ${runs} / 提案 ${proposals}）。删掉这一章，这些会跟着一起没。`
+      : `Chapter ${c} still has things recorded against it (evidence ${evidence} / relationships ${edges} / events ${events} / extraction runs ${runs} / proposal sets ${proposals}). Deleting this chapter would take all of that with it.`;
+  },
+  chapter_not_found: {
+    zh: "第 {chapter} 章已经不在了 —— 可能被删除或改了章号。刷新一下再看。",
+    en: "Chapter {chapter} isn't there anymore — it may have been deleted or renumbered. Refresh and check again.",
+  },
+  character_not_found: {
+    zh: "这个人物今天不在了 —— 可能已经被删除或合并过。刷新一下再看。",
+    en: "This character isn't there anymore — it may have been deleted or merged. Refresh and check again.",
+  },
+  not_a_character: {
+    zh: "这个条目不是人物，这个操作只对人物有效。",
+    en: "This entry isn't a character — this action only applies to characters.",
+  },
+  node_in_use: (params, language) => {
+    const name = params.name;
+    const edges = params.edges;
+    const events = params.events;
+    return language === "zh"
+      ? `「${name}」还被引用着（关系 ${edges} / 情节 ${events}），先把那几条改掉再删他`
+      : `"${name}" is still referenced (relationships ${edges} / events ${events}) — update those first, then delete this entry`;
+  },
+  chat_not_found: {
+    zh: "这段对话今天不在了。刷新一下，看看还有哪些对话。",
+    en: "This conversation isn't there anymore. Refresh to see what conversations are still there.",
+  },
+  chat_busy: (params, language) => {
+    const action = params.action;
+    if (language === "zh") {
+      if (action === "delete") return "这段对话正在跑，先按「停」再删。";
+      if (action === "send") return "这段对话正在跑上一轮，等它停下来，或者按「停」。";
+      return "这段对话正在跑，先等它停，或者按「停」。";
+    }
+    if (action === "delete") return 'This conversation is still running — click "Stop" first, then delete it.';
+    if (action === "send")
+      return 'This conversation is still running its last turn — wait for it to finish, or click "Stop".';
+    return 'This conversation is still running — wait for it to finish, or click "Stop".';
+  },
+  chat_conflict: {
+    zh: "这段对话在别的窗口里刚往前走了一步。刷新一下看最新的内容，再重新发一次。",
+    en: "This conversation just moved forward in another window. Refresh to see the latest, then send again.",
+  },
+  draft_not_found: {
+    zh: "这一稿今天不在了 —— 可能已经被清理过。刷新一下再看。",
+    en: "This draft isn't there anymore — it may have been cleaned up. Refresh and check again.",
+  },
+  event_not_found: {
+    zh: "这条情节今天不在了 —— 可能已经被改过或删掉。刷新一下再看。",
+    en: "This event isn't there anymore — it may have been changed or removed. Refresh and check again.",
+  },
+  event_summary_not_found: {
+    zh: "这件事今天还没有摘要 —— 可能还没生成过，或者已经被清理了。刷新一下再看。",
+    en: "This event doesn't have a summary yet — it may not have been generated, or it may have been cleared. Refresh and check again.",
+  },
+  evidence_not_found: {
+    zh: "这条依据今天不在了 —— 它锚的那个版本可能已经变了。刷新一下再看。",
+    en: "This piece of evidence isn't there anymore — the version it's anchored to may have changed. Refresh and check again.",
+  },
+  extraction_run_not_found: {
+    zh: "这次整理记录今天不在了。刷新一下再看看现在的状态。",
+    en: "This extraction run isn't there anymore. Refresh to see the current state.",
+  },
+  project_not_found: {
+    zh: "这本书今天打不开 —— 它可能已经被移走或删除了。回书架看看现在还有哪些书。",
+    en: "This book can't be opened right now — it may have been moved or deleted. Go back to the bookshelf to see which books are still there.",
+  },
+  rule_not_found: {
+    zh: "这条规则今天不在了，可能这本书的规则表已经变了。刷新一下再看。",
+    en: "This rule isn't there anymore — the rule set for this book may have changed. Refresh and check again.",
   },
 
   // ── activity.py：折叠行标题（entry.title_code）──────────────────────────

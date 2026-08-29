@@ -11,12 +11,27 @@ Phase B）。
 
 ── 判据是三个**结构上无歧义**的形状，不是全仓扫 `"error": "..."` ────────────
 
-`api/app.py` 等文件里还有一大批**更早就存在、故意保持"只有码没有话"**的
-HTTPException（`chapter_not_found` / `evidence_not_found` / `project_not_found`
-那一类——前端在具体那几格有本地兜底，翻译不该把那个既有缺口的责任揽过来，
-`docs_dev` 记录过这条裁定）。它们和这一批的新码长得很像（都是
-`{"error": "..."}`），**唯一可靠的区分不是文本形状，是它们从不经过这一批
-新建的三条通道**：
+`api/app.py` 等文件里还有一批**故意保持`.message` 由后端逐个调用点手写**的
+HTTPException（`bad_request` / `canon_edge_refused` / `store_error` /
+`rename_refused` / `sync_refused` 那一类——同一个码在不同调用点说的是不同的
+安全中文句子，收进一张封闭表反而会丢掉"这句话是配着这次具体失败写的"这件事）。
+**这批和上面要求覆盖的那些不是靠文本形状区分**（两者都可能是
+`{"error": "..."}`），是它们从不经过下面这三条通道之一——只要还带着
+`"message"` 键，第③形状的判据（键集合必须**恰好**是 `{"error"}`/
+`{"error","params"}` 的子集）就会把它排除在扫描之外。
+
+⚠️ **`chapter_not_found` / `evidence_not_found` / `project_not_found` 那一类曾经
+也在这份排除名单里**（"前端在具体那几格有本地兜底"，`docs_dev` 记过这条裁定）——
+国际化第四批·裸错误码审计把这批（连同 `activity_entry_not_found` /
+`ambiguous_name` / `ambiguous_quote` / `chapter_changed` / `chapter_in_use` /
+`character_not_found` / `chat_busy` / `chat_conflict` / `chat_not_found` /
+`draft_not_found` / `event_not_found` / `event_summary_not_found` /
+`extraction_run_not_found` / `node_in_use` / `not_a_character` / `rule_not_found` /
+`stale_canon_version` / `wrong_label`，共 28 种码 / 51 处）逐个查过安全性之后，
+从"本地兜底"改成了"进 `backendMessages.ts` 那张表"——不再需要排除，
+它们现在应该被下面这三种形状之一收进覆盖率。**这条注释曾经点名的例子已经
+不再是排除名单的成员**，上面改举了现在仍然真实排除着的例子，别让"举例"
+本身变成一份会漂的清单。
 
 1. `title_code=<literal>` / `subtitle_code=<literal>` / `label_code=<literal>` /
    `value_code=<literal>`（`enqueue_notification`/`enqueue_text_advisory`/

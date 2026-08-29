@@ -362,19 +362,20 @@ describe("删掉一章", () => {
     expect(onOpen).not.toHaveBeenCalled();
   });
 
-  it("**后端那句拒绝原样上屏，一个数都不许省**", async () => {
+  it("**拒绝的明细一个数都不许省**（国际化第四批：码 + params，`backendMessages.ts` 渲染整句）", async () => {
     // 那串明细（证据几条、关系几条）是作者判断「这一章还连着什么」的唯一依据。
     // 前端换成一句笼统的「删不掉」，等于把他赶去文件夹里自己动手删那个文件——
     // 而那条路上引擎的记忆一条都不会被清理。
-    const refusal =
-      "第 1 章上还记着东西（证据 3 / 关系 2 / 情节 1 / 抽取 1 / 提案 0）";
     renderWithApi(<BookShelf onOpenChapter={vi.fn()} />, [
       ...twoBooks,
       {
         method: "DELETE",
         match: /\/chapters\/1$/,
         status: 409,
-        body: { error: "chapter_in_use", message: refusal },
+        body: {
+          error: "chapter_in_use",
+          params: { chapter_number: 1, evidence: 3, edges: 2, events: 1, extraction_runs: 1, proposal_sets: 0 },
+        },
       },
     ]);
     await openMenu(first.name, "第一章 血脉");
@@ -382,6 +383,10 @@ describe("删掉一章", () => {
     fireEvent.click(screen.getByRole("button", { name: "删除本章" }));
     fireEvent.click(screen.getByRole("button", { name: "删除" }));
 
-    expect(await screen.findByText(refusal)).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "第 1 章上还记着东西（证据 3 / 关系 2 / 情节 1 / 抽取 1 / 提案 0）。删掉这一章，这些会跟着一起没。",
+      ),
+    ).toBeInTheDocument();
   });
 });

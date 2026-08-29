@@ -299,8 +299,8 @@ def test_wrong_label_422(client: TestClient, book: dict[str, str]) -> None:
     assert r.status_code == 422
     body = r.json()
     assert body["error"] == "wrong_label"
-    assert body["got"] == NodeLabel.LOCATION.value
-    assert body["want"] == NodeLabel.CHARACTER.value
+    assert body["params"]["got"] == NodeLabel.LOCATION.value
+    assert body["params"]["want"] == NodeLabel.CHARACTER.value
 
 
 def test_quote_not_found_422(client: TestClient, book: dict[str, str]) -> None:
@@ -749,9 +749,9 @@ def test_delete_chapter_refuses_when_the_engine_remembers_something(
     assert r.status_code == 409
     body = r.json()
     assert body["error"] == "chapter_in_use"
-    assert body["usage"]["evidence"] == 3
-    assert body["usage"]["edges"] == 2
-    assert "第 1 章" in body["message"]
+    assert body["params"]["evidence"] == 3
+    assert body["params"]["edges"] == 2
+    assert body["params"]["chapter_number"] == 1
 
 
 def test_delete_a_chapter_that_is_not_there(client: TestClient, book: dict[str, str]) -> None:

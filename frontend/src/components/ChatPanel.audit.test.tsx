@@ -210,11 +210,19 @@ describe("研发术语：整块面板的兜底分支", () => {
     expect(machineWords(new ApiError(404, PROJECT_GONE.detail).message)).toEqual([
       "project_not_found",
     ]);
-    // 而后端**写了话**的那一档一个字都不许被换掉（`refusalText` 的另一半）。
-    expect(refusalText(new ApiError(409, { error: "chat_busy", message: "先按「停」再删。" }), "兜底")).toBe(
-      "先按「停」再删。",
-    );
-    expect(refusalText(new ApiError(404, CHAT_GONE.detail), "兜底")).toBe("兜底");
+    // 而后端**写了话**、且这个码今天还没进 `backendMessages.ts` 的那一档，
+    // 一个字都不许被换掉（`refusalText` 的另一半）——`chat_busy` 已经在国际化
+    // 第四批·裸错误码审计里进了那张表，这条自守卫换成一个仍然故意留在旧形状的码
+    // （`bad_request`：各调用点措辞太不一样，没有做成一张封闭表）。
+    expect(
+      refusalText(new ApiError(422, { error: "bad_request", message: "这次改动本身讲不通。" }), "兜底"),
+    ).toBe("这次改动本身讲不通。");
+    // `chat_not_found` 本身已经在国际化第四批·裸错误码审计里进了表（下面几条断言
+    // 测的正是"它不再是裸码"），所以这条"认不出的码才退回调用方兜底"的断言
+    // 换一个仍然没注册过的假码，别和上面那些断言测重了同一件事。
+    expect(
+      refusalText(new ApiError(404, { error: "chat_not_found_from_a_future_endpoint" }), "兜底"),
+    ).toBe("兜底");
     expect(refusalText(null, "兜底")).toBeNull();
   });
 
@@ -239,8 +247,14 @@ describe("研发术语：整块面板的兜底分支", () => {
   it("**列表读不出来的时候不许说「还没有说过话」** —— 那是一句它不知道真假的话", async () => {
     // 静默返回空 = 屏幕上是一个「看起来很正常的空面板」，而作者三个月的对话可能都在。
     // §10 约束 8：什么都没发生的时候必须说得出为什么。
+    //
+    // 故意不用 `PROJECT_GONE`：`project_not_found` 已经在国际化第四批·裸错误码
+    // 审计里进了 `backendMessages.ts`，会被整句模板抢先渲染，测不出这条要证的
+    // 「认不出任何码时退回本地兜底 `LIST_FAILED`」这件事。
     const user = userEvent.setup();
-    renderWatched(<ChatPanel />, [{ match: /\/chats$/, status: 500, body: PROJECT_GONE }]);
+    renderWatched(<ChatPanel />, [
+      { match: /\/chats$/, status: 500, body: { error: "some_unregistered_error" } },
+    ]);
     await settle();
     expect(screen.queryByText(/说一句就行/)).toBeNull();
     await user.click(screen.getByRole("button", { name: "对话列表" }));
@@ -446,20 +460,15 @@ describe("「停」", () => {
 
   it("正在跑的那一段删不掉：那句话是「先停下来再删」，不是「删除失败」", async () => {
     const user = userEvent.setup();
-    // 真后端这一档**有话**（`{"error":"chat_busy","message":"这段对话正在跑，先按「停」再删。"}`），
-    // 所以前端一个字都不许换 —— 兜底那句只在后端一句话都没写时才轮得到。
+    // 国际化第四批·裸错误码审计之后，`chat_busy` 走 `backendMessages.ts` 那张表——
+    // 后端只发码 + `params.action`，整句在前端渲染（`action: "delete"` 那一支
+    // 逐字复刻了这句以前直接由后端写死的中文）。
     renderWatched(<ChatPanel />, [
       {
         method: "DELETE",
         match: /\/chats\//,
         status: 409,
-        body: {
-          detail: {
-            error: "chat_busy",
-            chat_id: "chat_session:ID42",
-            message: "这段对话正在跑，先按「停」再删。",
-          },
-        },
+        body: { detail: { error: "chat_busy", params: { action: "delete" } } },
       },
     ]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);

@@ -6,7 +6,9 @@ import {
   useProposals,
   useRoster,
 } from "../api/hooks";
-import { useLanguage } from "../language";
+import { ApiError } from "../api/client";
+import { saidToTheAuthor } from "../correctionError";
+import { useLanguage, type Language } from "../language";
 import { useCoords, type Tab } from "../store";
 import { LocalGraph } from "./LocalGraph";
 import { EvidenceTab } from "./EvidenceTab";
@@ -74,6 +76,24 @@ function ConstraintsView() {
   );
 }
 
+/** 「检查本章」失败时说什么。**曾经直接读 `(check.error as Error).message`**——
+ *  `ApiError` 没有 `.message` 字段时那个 getter 退回 `body.error`，也就是原样把
+ *  `chapter_not_found` 五个字母摆上屏（国际化第四批·裸错误码审计发现的真回归）。
+ *  走 `saidToTheAuthor` 才是这份文件其余每一格拒绝共用的那条路。 */
+function checkFailure(error: unknown, language: Language): string {
+  if (error instanceof ApiError) {
+    return (
+      saidToTheAuthor(error) ??
+      (language === "zh"
+        ? "这次检查没能跑完，而系统没能说清是为什么。刷新一下再试一次。"
+        : "This check couldn't finish, and the system couldn't say why. Refresh and try again.")
+    );
+  }
+  return language === "zh"
+    ? "没能连上服务，请再试一次。"
+    : "Couldn't reach the service — please try again.";
+}
+
 function CheckView() {
   const { projectId, chapter, setHighlight } = useCoords();
   const language = useLanguage((s) => s.language);
@@ -98,7 +118,7 @@ function CheckView() {
           ? language === "zh" ? "检查中…" : "Checking…"
           : language === "zh" ? "检查本章" : "Check this chapter"}
       </button>
-      {check.error && <div className="err-box">{(check.error as Error).message}</div>}
+      {check.error && <div className="err-box">{checkFailure(check.error, language)}</div>}
       {result && (
         <div style={{ marginTop: 10 }}>
           {/* 这两行 2026-08-14 改了，**其中一行是在改一句假话**：

@@ -296,10 +296,7 @@ def load_project(project_id: str, conn: Connection = Depends(get_conn)) -> proje
     """项目存在闸门：不存在 → 404（区分「项目 id 错」和「书还没开」）。"""
     proj = project_mod.get(conn, project_id)
     if proj is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"error": "project_not_found", "project_id": project_id},
-        )
+        raise HTTPException(status_code=404, detail={"error": "project_not_found"})
     return proj
 
 

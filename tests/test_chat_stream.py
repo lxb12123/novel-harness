@@ -380,7 +380,7 @@ def test_the_refusals_are_still_real_status_codes_not_an_empty_stream(
 def test_a_second_window_gets_409_not_a_second_stream(
     client: TestClient, book: dict[str, str], configured: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """这段对话正在跑的时候，第二条流拿到的是 409 加一句中文。"""
+    """这段对话正在跑的时候，第二条流拿到的是 409 + `chat_busy` + `params.action="send"`。"""
     pid = book["pid"]
     chat_id = open_chat(client, pid)
     chat_mod.LIVE.begin((pid, chat_id))
@@ -393,7 +393,9 @@ def test_a_second_window_gets_409_not_a_second_stream(
     finally:
         chat_mod.LIVE.end((pid, chat_id))
     assert refused.status_code == 409, refused.text
-    assert "正在跑上一轮" in refused.json()["detail"]["message"]
+    detail = refused.json()["detail"]
+    assert detail["error"] == "chat_busy"
+    assert detail["params"]["action"] == "send"
 
 
 def test_the_model_being_unconfigured_is_422_before_the_stream_opens(

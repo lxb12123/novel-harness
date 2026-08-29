@@ -944,7 +944,7 @@ def _load(conn: Connection, project_id: str, chat_id: str) -> StoredChat:
     if stored is None:
         raise HTTPException(
             status_code=404,
-            detail={"error": "chat_not_found", "chat_id": chat_id},
+            detail={"error": "chat_not_found"},
         )
     return stored
 
@@ -1066,17 +1066,10 @@ def delete_chat(
     if LIVE.running((proj.id, chat_id)):
         raise HTTPException(
             status_code=409,
-            detail={
-                "error": "chat_busy",
-                "chat_id": chat_id,
-                "message": "这段对话正在跑，先按「停」再删。",
-            },
+            detail={"error": "chat_busy", "params": {"action": "delete"}},
         )
     if not ChatStore(conn).delete(proj.id, chat_id):
-        raise HTTPException(
-            status_code=404,
-            detail={"error": "chat_not_found", "chat_id": chat_id},
-        )
+        raise HTTPException(status_code=404, detail={"error": "chat_not_found"})
     return ChatDeleted(chat_id=chat_id, deleted=True)
 
 
@@ -1119,11 +1112,7 @@ class _TurnRun:
         except ChatBusy:
             raise HTTPException(
                 status_code=409,
-                detail={
-                    "error": "chat_busy",
-                    "chat_id": chat_id,
-                    "message": "这段对话正在跑上一轮，等它停下来，或者按「停」。",
-                },
+                detail={"error": "chat_busy", "params": {"action": "send"}},
             )
         try:
             stored = _load(conn, proj.id, chat_id)
@@ -1540,7 +1529,7 @@ def stop_chat(
     if ChatStore(conn).get(proj.id, chat_id) is None:
         raise HTTPException(
             status_code=404,
-            detail={"error": "chat_not_found", "chat_id": chat_id},
+            detail={"error": "chat_not_found"},
         )
     verdict = LIVE.stop((proj.id, chat_id), (body.run_id if body else ""))
     return ChatStopped(
@@ -1659,7 +1648,7 @@ def read_draft(
     if stored is None:
         raise HTTPException(
             status_code=404,
-            detail={"error": "draft_not_found", "draft_id": draft_id},
+            detail={"error": "draft_not_found"},
         )
     return DraftCandidateDetail(
         **_draft_view(stored).model_dump(),
@@ -1678,15 +1667,10 @@ def _append(
 ) -> int:
     try:
         return store.append(project_id, chat_id, base_count=base_count, messages=messages)
-    except ChatConcurrency as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": "chat_conflict",
-                "chat_id": chat_id,
-                "message": f"这段对话在别的窗口里刚往前走了一步，刷新一下再说。（{exc}）",
-            },
-        )
+    except ChatConcurrency:
+        # 曾经把 `str(exc)` 拼进 `message` 末尾——那句本身是安全的（只有两个计数），
+        # 但已经在外层这句话里重复说了一遍同一件事，不必带两份。
+        raise HTTPException(status_code=409, detail={"error": "chat_conflict"})
 
 
 def _context_receipt(projection: Projection | None) -> ContextReceipt:

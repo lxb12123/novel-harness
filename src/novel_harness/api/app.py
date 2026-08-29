@@ -335,13 +335,14 @@ async def _unknown_name(_: Request, exc: UnknownName) -> JSONResponse:
 @app.exception_handler(AmbiguousName)
 async def _ambiguous_name(_: Request, exc: AmbiguousName) -> JSONResponse:
     # 候选摆出来（已是 NodeRef，无泄漏），**服务端绝不替作者选**——那是消歧下拉的料。
+    # `candidates` 留在顶层给消歧下拉用（`RosterDrawer.tsx::Failure`）；`params.surface`
+    # 是作者自己写的原文，供没有专门下拉的调用方走 `saidToTheAuthor` 兜底一句话。
     return _err(
         409,
         {
             "error": "ambiguous_name",
-            "surface": exc.surface,
             "candidates": [c.model_dump(mode="json") for c in exc.candidates],
-            "message": str(exc),
+            "params": {"surface": exc.surface},
         },
     )
 
@@ -353,23 +354,21 @@ async def _ambiguous_quote(_: Request, exc: AmbiguousQuote) -> JSONResponse:
         409,
         {
             "error": "ambiguous_quote",
-            "quote": exc.quote,
             "candidates": [c.model_dump(mode="json") for c in exc.candidates],
-            "message": str(exc),
+            "params": {"quote": exc.quote},
         },
     )
 
 
 @app.exception_handler(WrongLabel)
 async def _wrong_label(_: Request, exc: WrongLabel) -> JSONResponse:
+    # `got`/`want` 是 `NodeLabel` 的原始枚举值（"Character"/"Location"…）——封闭集合，
+    # 前端 `nodeLabelText()` 翻成作者的说法（同 `ARCHITECTURE.md` 补记的那条修法）。
     return _err(
         422,
         {
             "error": "wrong_label",
-            "surface": exc.surface,
-            "got": exc.got.value,
-            "want": exc.want.value,
-            "message": str(exc),
+            "params": {"surface": exc.surface, "got": exc.got.value, "want": exc.want.value},
         },
     )
 
@@ -420,14 +419,8 @@ async def _snapshot_in_use(_: Request, exc: SnapshotInUse) -> JSONResponse:
 async def _chapter_in_use(_: Request, exc: ChapterInUse) -> JSONResponse:
     # 明细一起给：屏幕上要说得出**挡路的是什么**，不是只说一句「删不掉」——
     # 一句不带理由的拒绝会让作者去翻文件夹自己动手删，那才是真的会丢东西。
-    return _err(
-        409,
-        {
-            "error": "chapter_in_use",
-            "usage": exc.usage.model_dump(mode="json"),
-            "message": str(exc),
-        },
-    )
+    # `ChapterUsage` 全部字段都是非负整数（无 id），整份塞进 `params` 是安全的。
+    return _err(409, {"error": "chapter_in_use", "params": exc.usage.model_dump(mode="json")})
 
 
 @app.exception_handler(StoreError)
@@ -457,14 +450,7 @@ async def _sync_refused(_: Request, exc: importer.SyncRefused) -> JSONResponse:
 @app.exception_handler(importer.ChapterChanged)
 async def _chapter_changed(_: Request, exc: importer.ChapterChanged) -> JSONResponse:
     # 保存的乐观闸：调用方依据的那份正文已经过期。409，一个字节都不写。
-    return _err(
-        409,
-        {
-            "error": "chapter_changed",
-            "chapter": exc.chapter,
-            "message": str(exc),
-        },
-    )
+    return _err(409, {"error": "chapter_changed", "params": {"chapter": exc.chapter}})
 
 
 @app.exception_handler(importer.ChapterLockTimeout)
@@ -1084,7 +1070,7 @@ def evidence(
     """
     ev = store.get_evidence(proj.id, evidence_id)
     if ev is None:
-        raise HTTPException(404, {"error": "evidence_not_found", "evidence_id": evidence_id})
+        raise HTTPException(404, {"error": "evidence_not_found"})
     return {
         "id": ev.id,
         "chapter_number": ev.chapter_number,
@@ -1217,7 +1203,7 @@ def chapter_text(
     """
     file = _chapter_file(proj, chapter)
     if not file.exists():
-        raise HTTPException(404, {"error": "chapter_not_found", "chapter": chapter})
+        raise HTTPException(404, {"error": "chapter_not_found", "params": {"chapter": chapter}})
     markdown = file.read_text(encoding="utf-8-sig")
     return {
         "number": chapter,
@@ -1252,7 +1238,7 @@ def save_chapter(
             expected_sha256=body.expected_text_sha256,
         )
     except importer.ChapterMissing:
-        raise HTTPException(404, {"error": "chapter_not_found", "chapter": chapter})
+        raise HTTPException(404, {"error": "chapter_not_found", "params": {"chapter": chapter}})
     _trigger_refresh(conn, store, proj.id, chapter, receipt)
     return receipt
 
@@ -2154,7 +2140,7 @@ def edit_chapter_summary(
     except SummaryChapterNotFound:
         raise HTTPException(
             status_code=404,
-            detail={"error": "chapter_not_found", "chapter": chapter},
+            detail={"error": "chapter_not_found", "params": {"chapter": chapter}},
         )
     return _summary_state(conn, proj.id, chapter)
 
@@ -2182,7 +2168,7 @@ def chapter_summary_history(
     if row is None:
         raise HTTPException(
             status_code=404,
-            detail={"error": "chapter_not_found", "chapter": chapter},
+            detail={"error": "chapter_not_found", "params": {"chapter": chapter}},
         )
     versions = conn.execute(
         """
