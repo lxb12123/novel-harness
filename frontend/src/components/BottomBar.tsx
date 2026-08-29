@@ -1,7 +1,8 @@
 import { useCharacterState, useRoster } from "../api/hooks";
+import type { Edge } from "../api/types";
 import { edgeLabelText } from "../backendMessages";
+import { useLanguage } from "../language";
 import { useCoords } from "../store";
-import { type Edge } from "../api/types";
 
 // 底栏时间线（§2.2）：选中节点的边闭开区间。用现成端点，零新引擎。
 //
@@ -20,11 +21,23 @@ import { type Edge } from "../api/types";
 
 function IntervalBars() {
   const { projectId, chapter, selectedNodeId } = useCoords();
+  const language = useLanguage((s) => s.language);
   const { data } = useCharacterState(projectId, selectedNodeId, chapter);
   const roster = useRoster(projectId);
-  if (!selectedNodeId) return <div className="tl-empty">选择一个人物查看相关变化</div>;
+  if (!selectedNodeId)
+    return (
+      <div className="tl-empty">
+        {language === "zh" ? "选择一个人物查看相关变化" : "Select a character to see related changes"}
+      </div>
+    );
   const edges = (data?.edges ?? []).filter((e) => e.type !== "RELATED_TO"); // 无向边不画区间
-  if (edges.length === 0) return <div className="tl-empty">{data?.node.name ?? ""} 暂无可显示的变化</div>;
+  const name = data?.node.name ?? "";
+  if (edges.length === 0)
+    return (
+      <div className="tl-empty">
+        {language === "zh" ? `${name} 暂无可显示的变化` : `${name} has no visible changes yet`}
+      </div>
+    );
 
   // 花名册里查不到就说「—」，**绝不 `?? id`**：花名册和这份快照是两条独立缓存，
   // 后台整理刚建出来的节点会在前者里缺席一拍，而那一拍上作者看到的会是
@@ -40,25 +53,33 @@ function IntervalBars() {
     return { left: `${left}%`, width: `${width}%` };
   };
 
+  const chapterLabel = (n: number) => (language === "zh" ? `第 ${n} 章` : `Chapter ${n}`);
+  const intervalTitle = (from: number, to: number | null) => {
+    if (language === "zh") return `从第 ${from} 章${to ? `到第 ${to} 章前` : "起一直有效"}`;
+    return to ? `From chapter ${from} to just before chapter ${to}` : `From chapter ${from} onward`;
+  };
+
   return (
     <div className="tl-intervals">
       <div className="tl-axis">
-        <span>第 {minFrom} 章</span>
-        <span className="tl-node">{data?.node.name} 的变化</span>
-        <span>第 {chapter} 章（当前）</span>
+        <span>{chapterLabel(minFrom)}</span>
+        <span className="tl-node">
+          {language === "zh" ? `${data?.node.name} 的变化` : `${data?.node.name}'s changes`}
+        </span>
+        <span>{language === "zh" ? `${chapterLabel(chapter)}（当前）` : `${chapterLabel(chapter)} (current)`}</span>
       </div>
       {edges.map((e) => (
         <div className="tl-row" key={e.id}>
           <span className="tl-label">
-            {edgeLabelText(e.type, "zh")} {nameOf(e.dst)}
+            {edgeLabelText(e.type, language)} {nameOf(e.dst)}
           </span>
           <span className="tl-track">
             <span
               className="tl-bar"
               style={bar(e)}
-              title={`从第 ${e.valid_from_chapter} 章${e.valid_to_chapter ? `到第 ${e.valid_to_chapter} 章前` : "起一直有效"}`}
+              title={intervalTitle(e.valid_from_chapter, e.valid_to_chapter)}
             >
-              第 {e.valid_from_chapter} 章
+              {chapterLabel(e.valid_from_chapter)}
             </span>
           </span>
         </div>
@@ -69,13 +90,16 @@ function IntervalBars() {
 
 export function BottomBar() {
   const { selectedNodeId } = useCoords();
+  const language = useLanguage((s) => s.language);
   // 没挑人 = 这条底栏一个像素都不占。它只有一列了，那一列没内容时整条就没有理由存在。
   if (!selectedNodeId) return null;
 
   return (
     <footer className="bottombar">
       <div className="tl-col tl-col-intervals">
-        <div className="tl-title">人物与设定变化</div>
+        <div className="tl-title">
+          {language === "zh" ? "人物与设定变化" : "Character & Setting Changes"}
+        </div>
         <IntervalBars />
       </div>
     </footer>

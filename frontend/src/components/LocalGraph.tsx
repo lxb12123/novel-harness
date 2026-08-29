@@ -3,7 +3,7 @@ import { ReactFlow, Background, Controls, type Edge as RFEdge, type Node as RFNo
 import "@xyflow/react/dist/style.css";
 import { useSubgraph } from "../api/hooks";
 import { nodeLabelText, edgeLabelText } from "../backendMessages";
-import { type Language } from "../language";
+import { useLanguage, type Language } from "../language";
 import { useCoords } from "../store";
 import { type NodeLabel, type Subgraph } from "../api/types";
 
@@ -63,7 +63,10 @@ export function toFlow(
     id: e.id,
     source: e.src,
     target: e.dst,
-    label: `${edgeLabelText(e.type, language)} · 第 ${e.valid_from_chapter} 章起`,
+    label:
+      language === "zh"
+        ? `${edgeLabelText(e.type, language)} · 第 ${e.valid_from_chapter} 章起`
+        : `${edgeLabelText(e.type, language)} · Since chapter ${e.valid_from_chapter}`,
     labelStyle: { fill: "var(--dim)", fontSize: 10 },
     style: { stroke: "var(--line)" },
   }));
@@ -72,18 +75,41 @@ export function toFlow(
 
 export function LocalGraph() {
   const { projectId, chapter, selectedNodeId, focusNode } = useCoords();
+  const language = useLanguage((s) => s.language);
   const { data, isFetching, error } = useSubgraph(projectId, selectedNodeId, chapter, HOPS);
-  const flow = useMemo(() => (data ? toFlow(data, "zh") : null), [data]);
+  const flow = useMemo(() => (data ? toFlow(data, language) : null), [data, language]);
 
   if (!selectedNodeId)
     return (
       <div className="empty">
-        点左栏花名册里的一个人，或在正文里选中一句话按「查图谱」→ 这里画出他第 {chapter} 章的
-        相关人物和设定。
+        {language === "zh" ? (
+          <>
+            点左栏花名册里的一个人，或在正文里选中一句话按「查图谱」→ 这里画出他第 {chapter} 章的
+            相关人物和设定。
+          </>
+        ) : (
+          <>
+            Click a name in the roster on the left, or select a sentence in the text and click
+            "View graph" — this will show the characters and settings related to them as of
+            chapter {chapter}.
+          </>
+        )}
       </div>
     );
   if (error) return <div className="err-box">{(error as Error).message}</div>;
-  if (!flow) return <div className="empty">{isFetching ? "加载中…" : "—"}</div>;
+  if (!flow) return <div className="empty">{isFetching ? (language === "zh" ? "加载中…" : "Loading…") : "—"}</div>;
+
+  const nodeCount = data!.nodes.length;
+  const edgeCount = data!.edges.length;
+  const summary =
+    language === "zh"
+      ? `当前：${data!.center.name} · ${nodeCount} 个相关条目 · ${edgeCount} 条关系` +
+        (data!.truncated ? " · 部分内容已折叠" : "") +
+        " · 点击其他条目继续查看"
+      : `Current: ${data!.center.name} · ${nodeCount} related ${nodeCount === 1 ? "entry" : "entries"} · ` +
+        `${edgeCount} ${edgeCount === 1 ? "relationship" : "relationships"}` +
+        (data!.truncated ? " · some content collapsed" : "") +
+        " · Click another entry to keep exploring";
 
   return (
     <div>
@@ -100,8 +126,7 @@ export function LocalGraph() {
         </ReactFlow>
       </div>
       <div className="row" style={{ color: "var(--dim)", fontSize: 12, marginTop: 6 }}>
-        当前：{data!.center.name} · {data!.nodes.length} 个相关条目 · {data!.edges.length} 条关系
-        {data!.truncated && " · 部分内容已折叠"} · 点击其他条目继续查看
+        {summary}
       </div>
     </div>
   );

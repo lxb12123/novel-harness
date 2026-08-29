@@ -7,6 +7,7 @@ import {
 } from "../api/hooks";
 import { edgeLabelText } from "../backendMessages";
 import { readCorrectionError } from "../correctionError";
+import { useLanguage, type Language } from "../language";
 import { useCoords } from "../store";
 import type { CanonEdgeEditRequest } from "../api/types";
 
@@ -22,7 +23,10 @@ import type { CanonEdgeEditRequest } from "../api/types";
 //    409 = 「这条边在别处刚被改过」：保留表单、刷新当前事实，**不做静默重试**。
 // 3. **「自动提取 · 作者已修改」要说得出口**：`view.source` 是起源（extractor/author），
 //    `view.author_owned` 是当前归属。两个字段分开显示（不变量 21 / 27）。
-const RETRY_FAILED = "没能保存，而系统没能说清是为什么。过一会儿再试一次。";
+const retryFailed = (language: Language): string =>
+  language === "zh"
+    ? "没能保存，而系统没能说清是为什么。过一会儿再试一次。"
+    : "Couldn't save, and the system couldn't say why. Try again in a moment.";
 
 /** 改归属 / 改目标那个人可以从花名册里挑。只挑后端那个 label 会收的类型。 */
 function peers(roster: { id: string; label: string; name: string }[], label: string) {
@@ -31,13 +35,15 @@ function peers(roster: { id: string; label: string; name: string }[], label: str
 
 /** id → 名字。「不从那行字认」的同一条规则反过来：**坐标是 id，名字是查表**。
  *  查不到退回一句人话——绝不把引擎的标识原样摆给作者（wording guard 钉着）。 */
-function namesOf(roster: { id: string; name: string }[], ids: string[]): string[] {
+function namesOf(roster: { id: string; name: string }[], ids: string[], language: Language): string[] {
   const byId = new Map(roster.map((n) => [n.id, n.name]));
-  return ids.map((id) => byId.get(id) ?? "（已删掉的条目）");
+  const fallback = language === "zh" ? "（已删掉的条目）" : "(deleted entry)";
+  return ids.map((id) => byId.get(id) ?? fallback);
 }
 
 export function CanonEdgeEditor() {
   const { projectId, focusEdgeId, setEdgeFocus } = useCoords();
+  const language = useLanguage((s) => s.language);
   const open = !!projectId && !!focusEdgeId;
   const edge = useCanonEdge(projectId, focusEdgeId);
   const edit = useEditCanonEdge(projectId ?? "");
@@ -103,41 +109,66 @@ export function CanonEdgeEditor() {
   const retractFailure = retract.error ? readCorrectionError(retract.error) : null;
 
   // 来源怎么显示：一句话把「最初是谁」和「现在归谁」分开（不变量 21 / 27）。
-  const origin = view ? (view.source === "author" ? "作者声明" : "自动提取") : "";
-  const ownership = view ? (view.author_owned ? " · 作者已修改" : "") : "";
-  const typeName = view ? edgeLabelText(view.edge_type, "zh") : "";
+  const origin = view
+    ? view.source === "author"
+      ? language === "zh" ? "作者声明" : "Author-declared"
+      : language === "zh" ? "自动提取" : "Auto-extracted"
+    : "";
+  const ownership = view
+    ? view.author_owned
+      ? language === "zh" ? " · 作者已修改" : " · Edited by author"
+      : ""
+    : "";
+  const typeName = view ? edgeLabelText(view.edge_type, language) : "";
+  const dialogTitle = language === "zh" ? "改这条事实" : "Edit this fact";
+
+  // **整句模板，不是拼片段**：三种边类型在中英文里语序都不一样
+  // （「A 在 B」vs「A is at B」、「A 与 B」vs「A and B」），拼接会拼出病句。
+  const factLine = (() => {
+    if (!view) return "";
+    const src = namesOf(people, [view.src], language).join("");
+    const dst = namesOf(people, [view.dst], language).join("");
+    if (view.edge_type === "LOCATED_AT") {
+      return language === "zh" ? `${src} 在 ${dst}` : `${src} is at ${dst}`;
+    }
+    if (view.edge_type === "HAS_STATE") {
+      const value = view.props.value ?? "—";
+      return language === "zh" ? `${src} 的状态：${value}` : `${src}'s status: ${value}`;
+    }
+    // RELATED_TO
+    return language === "zh" ? `${src} 与 ${dst}` : `${src} and ${dst}`;
+  })();
 
   return (
-    <div className="set-modal" role="dialog" aria-modal="true" aria-label="改这条事实">
+    <div className="set-modal" role="dialog" aria-modal="true" aria-label={dialogTitle}>
       <div className="set-head">
         <div className="lab">
-          改这条事实 · {typeName}
+          {dialogTitle} · {typeName}
           {view && (
             <span className="row dim">
               {origin}
-              {ownership} · 第 {view.valid_from_chapter} 章起
+              {ownership}
+              {language === "zh" ? ` · 第 ${view.valid_from_chapter} 章起` : ` · Since chapter ${view.valid_from_chapter}`}
             </span>
           )}
         </div>
-        <button className="link" onClick={close} aria-label="关闭">
+        <button className="link" onClick={close} aria-label={language === "zh" ? "关闭" : "Close"}>
           ×
         </button>
       </div>
 
-      {edge.isLoading && <div className="dim">读取中…</div>}
+      {edge.isLoading && <div className="dim">{language === "zh" ? "读取中…" : "Loading…"}</div>}
       {edge.isError && (
-        <div className="err-box">这条边读不出来 —— 它可能已被撤回或改掉了。</div>
+        <div className="err-box">
+          {language === "zh"
+            ? "这条边读不出来 —— 它可能已被撤回或改掉了。"
+            : "Couldn't load this fact — it may have been retracted or changed."}
+        </div>
       )}
 
       {view && !edge.isError && (
         <>
-          <div className="row dim">
-            {namesOf(people, [view.src]).join("")}{" "}
-            {view.edge_type === "LOCATED_AT" && `在 ${namesOf(people, [view.dst]).join("")}`}
-            {view.edge_type === "HAS_STATE" && `的状态：${view.props.value ?? "—"}`}
-            {view.edge_type === "RELATED_TO" &&
-              `与 ${namesOf(people, [view.dst]).join("")}`}
-          </div>
+          <div className="row dim">{factLine}</div>
 
           {view.edge_type === "LOCATED_AT" && (
             <LocationForm
@@ -145,13 +176,14 @@ export function CanonEdgeEditor() {
               people={people}
               draft={draft}
               onDraft={setDraft}
+              language={language}
             />
           )}
           {view.edge_type === "HAS_STATE" && (
-            <StateForm view={view} people={people} draft={draft} onDraft={setDraft} />
+            <StateForm view={view} people={people} draft={draft} onDraft={setDraft} language={language} />
           )}
           {view.edge_type === "RELATED_TO" && (
-            <RelationForm view={view} people={people} draft={draft} onDraft={setDraft} />
+            <RelationForm view={view} people={people} draft={draft} onDraft={setDraft} language={language} />
           )}
 
           <div className="actions">
@@ -159,30 +191,34 @@ export function CanonEdgeEditor() {
               disabled={!draft || edit.isPending}
               onClick={submit}
             >
-              {edit.isPending ? "保存中…" : "保存修改"}
+              {edit.isPending
+                ? language === "zh" ? "保存中…" : "Saving…"
+                : language === "zh" ? "保存修改" : "Save changes"}
             </button>
             {confirmRetract ? (
               <>
                 <button className="danger" disabled={retract.isPending} onClick={doRetract}>
-                  {retract.isPending ? "撤回中…" : "确认撤回"}
+                  {retract.isPending
+                    ? language === "zh" ? "撤回中…" : "Retracting…"
+                    : language === "zh" ? "确认撤回" : "Confirm retraction"}
                 </button>
                 <button className="link" onClick={() => setConfirmRetract(false)}>
-                  算了
+                  {language === "zh" ? "算了" : "Cancel"}
                 </button>
               </>
             ) : (
               <button className="link warn" onClick={() => setConfirmRetract(true)}>
-                撤回这条事实
+                {language === "zh" ? "撤回这条事实" : "Retract this fact"}
               </button>
             )}
             <button className="link" onClick={close}>
-              收起
+              {language === "zh" ? "收起" : "Dismiss"}
             </button>
           </div>
 
           {(failure || retractFailure) && (
             <div className="err-box">
-              <div>{failure?.message ?? retractFailure?.message ?? RETRY_FAILED}</div>
+              <div>{failure?.message ?? retractFailure?.message ?? retryFailed(language)}</div>
               {(stale(edit.error) || stale(retract.error)) && (
                 <button
                   className="link"
@@ -191,7 +227,7 @@ export function CanonEdgeEditor() {
                     edge.refetch();
                   }}
                 >
-                  看看最新的
+                  {language === "zh" ? "看看最新的" : "See the latest version"}
                 </button>
               )}
             </div>
@@ -207,11 +243,13 @@ function LocationForm({
   people,
   draft,
   onDraft,
+  language,
 }: {
   view: NonNullable<ReturnType<typeof useCanonEdge>["data"]>;
   people: { id: string; label: string; name: string }[];
   draft: CanonEdgeEditRequest | null;
   onDraft: (d: CanonEdgeEditRequest) => void;
+  language: Language;
 }) {
   const characters = peers(people, "Character");
   const locations = peers(people, "Location");
@@ -220,7 +258,7 @@ function LocationForm({
   return (
     <div className="set-field">
       <label>
-        改归属（省略 = 保持原人物）
+        {language === "zh" ? "改归属（省略 = 保持原人物）" : "Change owner (leave blank to keep the current character)"}
         <select
           value={characterId ?? ""}
           onChange={(e) =>
@@ -232,7 +270,10 @@ function LocationForm({
             })
           }
         >
-          <option value="">保持 {namesOf(people, [view.src]).join("")}</option>
+          <option value="">
+            {language === "zh" ? "保持 " : "Keep "}
+            {namesOf(people, [view.src], language).join("")}
+          </option>
           {characters.map((c) => (
             <option key={c.id} value={c.id}>
               {c.name}
@@ -241,7 +282,7 @@ function LocationForm({
         </select>
       </label>
       <label>
-        地点
+        {language === "zh" ? "地点" : "Location"}
         <select
           value={locationId ?? view.dst}
           onChange={(e) =>
@@ -269,11 +310,13 @@ function StateForm({
   people,
   draft,
   onDraft,
+  language,
 }: {
   view: NonNullable<ReturnType<typeof useCanonEdge>["data"]>;
   people: { id: string; label: string; name: string }[];
   draft: CanonEdgeEditRequest | null;
   onDraft: (d: CanonEdgeEditRequest) => void;
+  language: Language;
 }) {
   const characters = peers(people, "Character");
   const subjectId = draft?.kind === "state" ? draft.subject_id ?? null : null;
@@ -282,7 +325,7 @@ function StateForm({
   return (
     <div className="set-field">
       <label>
-        人物
+        {language === "zh" ? "人物" : "Character"}
         <select
           value={subjectId ?? view.src}
           onChange={(e) =>
@@ -304,7 +347,7 @@ function StateForm({
         </select>
       </label>
       <label>
-        维度
+        {language === "zh" ? "维度" : "Dimension"}
         <select
           value={dimKey}
           onChange={(e) =>
@@ -318,12 +361,12 @@ function StateForm({
             })
           }
         >
-          <option value="health">生死</option>
-          <option value="location">所在</option>
+          <option value="health">{language === "zh" ? "生死" : "Life status"}</option>
+          <option value="location">{language === "zh" ? "所在" : "Location"}</option>
         </select>
       </label>
       <label>
-        状态值
+        {language === "zh" ? "状态值" : "Value"}
         <input
           value={value}
           onChange={(e) =>
@@ -347,11 +390,13 @@ function RelationForm({
   people,
   draft,
   onDraft,
+  language,
 }: {
   view: NonNullable<ReturnType<typeof useCanonEdge>["data"]>;
   people: { id: string; label: string; name: string }[];
   draft: CanonEdgeEditRequest | null;
   onDraft: (d: CanonEdgeEditRequest) => void;
+  language: Language;
 }) {
   const characters = peers(people, "Character").filter((c) => c.id !== view.src);
   const peerId = draft?.kind === "relation" ? draft.peer_id ?? null : null;
@@ -362,7 +407,7 @@ function RelationForm({
   return (
     <div className="set-field">
       <label>
-        关系另一端
+        {language === "zh" ? "关系另一端" : "Other person"}
         <select
           value={peerId ?? view.dst}
           onChange={(e) =>
@@ -382,7 +427,7 @@ function RelationForm({
         </select>
       </label>
       <label>
-        关系怎么称呼
+        {language === "zh" ? "关系怎么称呼" : "How to describe the relationship"}
         <input
           value={display}
           onChange={(e) =>

@@ -6,9 +6,10 @@ import {
   useRenameNode,
   useRoster,
 } from "../api/hooks";
-import { type RosterEntry } from "../api/types";
+import type { RosterEntry } from "../api/types";
 import { nodeLabelText } from "../backendMessages";
 import { readCorrectionError } from "../correctionError";
+import { useLanguage } from "../language";
 import { useCoords } from "../store";
 import { CharacterBasicInfo } from "./CharacterBasicInfo";
 import { RosterDrawer } from "./RosterDrawer";
@@ -82,17 +83,30 @@ function bySignal(rows: RosterEntry[], order: Order): RosterEntry[] {
  *  整理过但这个人身上没落下事。 */
 function CharacterTimeline({ characterId, name }: { characterId: string; name: string }) {
   const { projectId } = useCoords();
+  const language = useLanguage((s) => s.language);
   const events = useCharacterEvents(projectId, characterId);
   const rows = events.data ?? [];
 
   return (
     <div className="grp">
-      <div className="lab">{name}的事件</div>
-      {events.isLoading && <span className="empty">读取中…</span>}
+      <div className="lab">{language === "zh" ? `${name}的事件` : `${name}'s events`}</div>
+      {events.isLoading && (
+        <span className="empty">{language === "zh" ? "读取中…" : "Loading…"}</span>
+      )}
       {!events.isLoading && rows.length === 0 && (
         <span className="empty">
-          还没有跟{name}有关的事件。事件是系统整理正文时记下的一条条小结 ——
-          这一章还没整理过、或者整理了但没有落到{name}身上。
+          {language === "zh" ? (
+            <>
+              还没有跟{name}有关的事件。事件是系统整理正文时记下的一条条小结 ——
+              这一章还没整理过、或者整理了但没有落到{name}身上。
+            </>
+          ) : (
+            <>
+              No events involving {name} yet. Events are short notes the system records while it
+              reads through the text — either this chapter hasn’t been processed yet, or it has
+              been but nothing landed on {name}.
+            </>
+          )}
         </span>
       )}
       {rows.map((row) => {
@@ -104,10 +118,13 @@ function CharacterTimeline({ characterId, name }: { characterId: string; name: s
         return (
           <div className="item" key={row.event_id}>
             <span className="nm">
-              第 {row.chapter_number} 章 · {row.summary}
+              {language === "zh" ? `第 ${row.chapter_number} 章` : `Chapter ${row.chapter_number}`} · {row.summary}
             </span>
             {others.length > 0 && (
-              <span className="dim">还有：{others.map((n) => n.name).join("、")}</span>
+              <span className="dim">
+                {language === "zh" ? "还有：" : "Also: "}
+                {others.map((n) => n.name).join(language === "zh" ? "、" : ", ")}
+              </span>
             )}
           </div>
         );
@@ -118,6 +135,7 @@ function CharacterTimeline({ characterId, name }: { characterId: string; name: s
 
 export function RosterTab() {
   const { projectId, selectedNodeId, focusNode } = useCoords();
+  const language = useLanguage((s) => s.language);
   const roster = useRoster(projectId);
   const projects = useProjects();
   const [adding, setAdding] = useState(false);
@@ -161,18 +179,28 @@ export function RosterTab() {
   return (
     <div>
       <h2>
-        花名册
+        {language === "zh" ? "花名册" : "Roster"}
         {!empty && (
           <button
             className="add"
             onClick={() => setOrder(order === "desc" ? "asc" : "desc")}
-            title={order === "desc" ? "改成写得少的排前面" : "改成写得多的排前面"}
+            title={
+              language === "zh"
+                ? order === "desc" ? "改成写得少的排前面" : "改成写得多的排前面"
+                : order === "desc" ? "Sort least-written first" : "Sort most-written first"
+            }
           >
-            {order === "desc" ? "写得多 → 少" : "写得少 → 多"}
+            {language === "zh"
+              ? order === "desc" ? "写得多 → 少" : "写得少 → 多"
+              : order === "desc" ? "Most → Least" : "Least → Most"}
           </button>
         )}
         {projectId && (
-          <button className="add" onClick={() => setAdding(true)} title="建人物 / 地点 / 势力…">
+          <button
+            className="add"
+            onClick={() => setAdding(true)}
+            title={language === "zh" ? "建人物 / 地点 / 势力…" : "Add a character / location / faction…"}
+          >
             ＋
           </button>
         )}
@@ -180,8 +208,10 @@ export function RosterTab() {
 
       {empty ? (
         <div className="empty">
-          还没有人物或设定。
-          <a onClick={() => projectId && setAdding(true)}>添加第一个条目</a>
+          {language === "zh" ? "还没有人物或设定。" : "No characters or settings yet. "}
+          <a onClick={() => projectId && setAdding(true)}>
+            {language === "zh" ? "添加第一个条目" : "Add the first entry"}
+          </a>
         </div>
       ) : (
         <>
@@ -195,7 +225,7 @@ export function RosterTab() {
             .sort()
             .map((lab) => (
               <div className="grp" key={lab}>
-                <div className="lab">{nodeLabelText(lab, "zh")}</div>
+                <div className="lab">{nodeLabelText(lab, language)}</div>
                 {bySignal(groups[lab], order).map((n) => (
                   <div
                     className={"item" + (n.id === selectedNodeId ? " on" : "")}
@@ -205,7 +235,7 @@ export function RosterTab() {
                       <input
                         autoFocus
                         value={draft}
-                        placeholder="输入新的名称"
+                        placeholder={language === "zh" ? "输入新的名称" : "Enter a new name"}
                         onChange={(e) => setDraft(e.target.value)}
                         onKeyDown={(e) => {
                           if (e.key === "Enter") submitRename(n.id);
@@ -218,32 +248,37 @@ export function RosterTab() {
                         <span
                           className="nm"
                           onClick={() => focusNode(n.id)}
-                          title="看它的局部关系图"
+                          title={language === "zh" ? "看它的局部关系图" : "View their local relationship graph"}
                         >
                           {n.name}
                         </span>
                         {/* 「出现在 N 章的总结里」而不是「出场 N 章」：这一层数的是总结，
                             不是正文。一本还没生成总结的书这一列全是 0，把它写成
                             「没出场」就是拿一个空表当结论（§10 约束 8）。 */}
-                        <span className="dim" title="出现在几章的总结里">
-                          {n.appearance_chapters} 章
+                        <span
+                          className="dim"
+                          title={language === "zh" ? "出现在几章的总结里" : "Number of chapter summaries mentioning this"}
+                        >
+                          {language === "zh"
+                            ? `${n.appearance_chapters} 章`
+                            : `${n.appearance_chapters} ${n.appearance_chapters === 1 ? "chapter" : "chapters"}`}
                         </span>
                         <button
                           className="add"
-                          title="改名"
+                          title={language === "zh" ? "改名" : "Rename"}
                           onClick={() => {
                             setDraft(n.name);
                             setRenaming(n.id);
                           }}
                         >
-                          改名
+                          {language === "zh" ? "改名" : "Rename"}
                         </button>
                         <button
                           className="add"
-                          title="从花名册里删掉"
+                          title={language === "zh" ? "从花名册里删掉" : "Remove from the roster"}
                           onClick={() => setConfirming(n.id)}
                         >
-                          删
+                          {language === "zh" ? "删" : "Delete"}
                         </button>
                       </>
                     )}
@@ -253,7 +288,13 @@ export function RosterTab() {
                         {/* **删是不可逆的**，所以问一句。措辞里说清删掉之后没了什么：
                             这个条目和它的称呼。它参与过的关系和情节不会被删——后端
                             那一侧根本不允许（`NodeUsage` 非零就拒绝）。 */}
-                        <span>把「{n.name}」和它的所有称呼一起删掉？删了拿不回来。</span>
+                        <span>
+                          {language === "zh" ? (
+                            <>把「{n.name}」和它的所有称呼一起删掉？删了拿不回来。</>
+                          ) : (
+                            <>Delete "{n.name}" and all its aliases? This can’t be undone.</>
+                          )}
+                        </span>
                         <button
                           disabled={remove.isPending || version === undefined}
                           onClick={() =>
@@ -264,9 +305,13 @@ export function RosterTab() {
                             )
                           }
                         >
-                          {remove.isPending ? "删除中…" : "删掉"}
+                          {language === "zh"
+                            ? remove.isPending ? "删除中…" : "删掉"
+                            : remove.isPending ? "Deleting…" : "Delete"}
                         </button>
-                        <button onClick={() => setConfirming(null)}>算了</button>
+                        <button onClick={() => setConfirming(null)}>
+                          {language === "zh" ? "算了" : "Cancel"}
+                        </button>
                       </div>
                     )}
                   </div>

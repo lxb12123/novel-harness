@@ -6,6 +6,7 @@ import {
   useProposals,
   useRoster,
 } from "../api/hooks";
+import { useLanguage } from "../language";
 import { useCoords, type Tab } from "../store";
 import { LocalGraph } from "./LocalGraph";
 import { EvidenceTab } from "./EvidenceTab";
@@ -21,16 +22,16 @@ import { useState } from "react";
  *  花名册（全项目）、原文依据、待确认、检查（读正文）都不吃 cast。 */
 const CAST_TABS = new Set<Tab>(["state", "constraints"]);
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: "roster", label: "花名册" },
-  { key: "state", label: "人物状态" },
-  { key: "graph", label: "人物关系" },
-  { key: "evidence", label: "原文依据" },
-  { key: "constraints", label: "写作提醒" },
-  { key: "check", label: "检查" },
-  { key: "review", label: "待确认" },
-  { key: "summary", label: "章节总结" },
-  { key: "notifications", label: "通知" },
+const TABS: { key: Tab; label: { zh: string; en: string } }[] = [
+  { key: "roster", label: { zh: "花名册", en: "Roster" } },
+  { key: "state", label: { zh: "人物状态", en: "Status" } },
+  { key: "graph", label: { zh: "人物关系", en: "Relationships" } },
+  { key: "evidence", label: { zh: "原文依据", en: "Evidence" } },
+  { key: "constraints", label: { zh: "写作提醒", en: "Reminders" } },
+  { key: "check", label: { zh: "检查", en: "Check" } },
+  { key: "review", label: { zh: "待确认", en: "Pending" } },
+  { key: "summary", label: { zh: "章节总结", en: "Summary" } },
+  { key: "notifications", label: { zh: "通知", en: "Notifications" } },
 ];
 
 /** 花名册空着的时候仍然有话可说的那几格。
@@ -42,25 +43,31 @@ const ROSTER_FREE_TABS = new Set<Tab>(["roster", "summary"]);
 
 function ConstraintsView() {
   const { projectId, chapter, cast, castInclude } = useCoords();
+  const language = useLanguage((s) => s.language);
   const { data } = useConstraints(projectId, chapter, cast, castInclude);
   if (!data) return <div className="empty">—</div>;
   return (
     <div>
       <div className="mnr">
-        <div className="lab">本章尚未登场</div>
+        <div className="lab">{language === "zh" ? "本章尚未登场" : "Not yet in this chapter"}</div>
         {data.forbidden_entities.length ? (
           data.forbidden_entities.map((e) => (
             <span className="tag" key={e.node.id}>
-              {e.node.name}（第 {e.first_appears_chapter} 章登场）
+              {e.node.name}
+              {language === "zh"
+                ? `（第 ${e.first_appears_chapter} 章登场）`
+                : ` (appears in chapter ${e.first_appears_chapter})`}
             </span>
           ))
         ) : (
-          <span className="empty">（无）</span>
+          <span className="empty">{language === "zh" ? "（无）" : "(none)"}</span>
         )}
       </div>
       {data.unresolved_cast.length > 0 && (
         <div className="warn">
-          这些称呼未在花名册中找到：{data.unresolved_cast.join("、")}。请检查名称或补充称呼。
+          {language === "zh"
+            ? `这些称呼未在花名册中找到：${data.unresolved_cast.join("、")}。请检查名称或补充称呼。`
+            : `These names weren't found in the roster: ${data.unresolved_cast.join(", ")}. Check the spelling, or add them as aliases.`}
         </div>
       )}
     </div>
@@ -69,15 +76,27 @@ function ConstraintsView() {
 
 function CheckView() {
   const { projectId, chapter, setHighlight } = useCoords();
+  const language = useLanguage((s) => s.language);
   const check = useCheck(projectId!);
   const [result, setResult] = useState<CheckResult | null>(null);
+  const summaryLine = !result
+    ? ""
+    : result.issues.length === 0
+      ? language === "zh"
+        ? "没有发现需要处理的问题。"
+        : "No issues found."
+      : language === "zh"
+        ? `发现 ${result.issues.length} 处需要留意。`
+        : `Found ${result.issues.length} issue${result.issues.length === 1 ? "" : "s"} to review.`;
   return (
     <div>
       <button
         disabled={!projectId || check.isPending}
         onClick={() => check.mutate(chapter, { onSuccess: setResult })}
       >
-        {check.isPending ? "检查中…" : "检查本章"}
+        {check.isPending
+          ? language === "zh" ? "检查中…" : "Checking…"
+          : language === "zh" ? "检查本章" : "Check this chapter"}
       </button>
       {check.error && <div className="err-box">{(check.error as Error).message}</div>}
       {result && (
@@ -91,25 +110,32 @@ function CheckView() {
               「场景」这个词一起去掉：它指的是作者要在正文里手写的标记块，
               导进来的真书上永远是零个，说了也只是把一个内部名字摆到他面前。 */}
           <div className="row" style={{ color: "var(--dim)", fontSize: 12 }}>
-            {result.issues.length ? `发现 ${result.issues.length} 处需要留意` : "没有发现需要处理的问题"}。
+            {summaryLine}
           </div>
           {result.issues.map((iss, i) => (
             <div
               className="statecard clickable"
               key={i}
-              title="点击 → 跳到正文那一段并高亮"
+              title={language === "zh" ? "点击 → 跳到正文那一段并高亮" : "Click to jump to this passage and highlight it"}
               onClick={() => setHighlight(iss.anchor)}
             >
-              <div className="nm">需要留意</div>
+              <div className="nm">{language === "zh" ? "需要留意" : "Needs attention"}</div>
               {/* 段号按作者的数法从 1 起。`para_index` 内部是 0-based，这儿原本直接
                   印了它，于是第一段在屏幕上叫「第 0 段」——而同一条问题落成通知时
                   说的是「第 1 段」（`system_notifications` 那边换算过）。
                   同一处正文两个数，两处必须一致。 */}
               <div className="row">
-                第 {iss.chapter} 章 · 第 {iss.anchor.para_index + 1} 段 · 点击回到原文
+                {language === "zh"
+                  ? `第 ${iss.chapter} 章 · 第 ${iss.anchor.para_index + 1} 段 · 点击回到原文`
+                  : `Chapter ${iss.chapter} · Paragraph ${iss.anchor.para_index + 1} · Click to jump to the passage`}
               </div>
               <div className="row">{iss.message}</div>
-              {iss.suggested_action && <div className="row">建议：{iss.suggested_action}</div>}
+              {iss.suggested_action && (
+                <div className="row">
+                  {language === "zh" ? "建议：" : "Suggestion: "}
+                  {iss.suggested_action}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -126,11 +152,15 @@ function CheckView() {
  *  （多算是安全的那一侧——`must_not_reveal` 的判据是「至少有一个人还不知道」。） */
 function CastLine({ chapter }: { chapter: number }) {
   const { projectId, chapter: here, cast, setCast } = useCoords();
+  const language = useLanguage((s) => s.language);
   const mentioned = useMentioned(projectId, chapter);
   // **「这一章」只在真的是作者停着的那一章上说得出口。** 「人物状态」那一格可以停在
   // 上一章（`StateTab` 的开关），而那时下面几张卡是**另一章**正文里数出来的人——
   // 这一行照旧说「这一章提到：…」就是在给一块讲第 12 章的面板配一句讲第 13 章的话。
-  const which = chapter === here ? "这一章" : `第 ${chapter} 章`;
+  const which =
+    language === "zh"
+      ? chapter === here ? "这一章" : `第 ${chapter} 章`
+      : chapter === here ? "this chapter" : `chapter ${chapter}`;
 
   // **这一行只说 `cast`（过滤）那一种**——收窄是作者自己要的，这一行存在的全部理由
   // 就是让他看见「现在只在看几个人」并且一键退出去。
@@ -147,10 +177,10 @@ function CastLine({ chapter }: { chapter: number }) {
   if (cast) {
     return (
       <div className="castline">
-        <span className="lab">只看：</span>
+        <span className="lab">{language === "zh" ? "只看：" : "Showing only:"}</span>
         <span className="who">{cast}</span>
         <button className="link" onClick={() => setCast("")}>
-          改回整章
+          {language === "zh" ? "改回整章" : "Show the whole chapter"}
         </button>
       </div>
     );
@@ -158,26 +188,33 @@ function CastLine({ chapter }: { chapter: number }) {
   if (!mentioned.data) return null;
   if (!mentioned.data.has_text) {
     return (
-      <div className="castline dim">{`${which}还没有正文，下面按「这一场不知道有谁」显示。`}</div>
+      <div className="castline dim">
+        {language === "zh"
+          ? `${which}还没有正文，下面按「这一场不知道有谁」显示。`
+          : `${which} doesn't have any text yet, so everything below assumes nobody's presence is known.`}
+      </div>
     );
   }
   if (!mentioned.data.surfaces.length) {
     return (
       <div className="castline dim">
-        {`${which}的正文里没有出现花名册中的人。到「花名册」那一格补上，这里就会认出他们。`}
+        {language === "zh"
+          ? `${which}的正文里没有出现花名册中的人。到「花名册」那一格补上，这里就会认出他们。`
+          : `No one from the roster appears in ${which}'s text yet. Add them on the "Roster" tab and this will recognize them.`}
       </div>
     );
   }
   return (
     <div className="castline">
-      <span className="lab">{`${which}提到：`}</span>
-      <span className="who">{mentioned.data.surfaces.join("、")}</span>
+      <span className="lab">{language === "zh" ? `${which}提到：` : `${which} mentions:`}</span>
+      <span className="who">{mentioned.data.surfaces.join(language === "zh" ? "、" : ", ")}</span>
     </div>
   );
 }
 
 export function RightPanel() {
   const { projectId, chapter, cast, castInclude, activeTab, setTab } = useCoords();
+  const language = useLanguage((s) => s.language);
   // 「人物状态」那一格在看哪一章。**只有这一格**——`[valid_from, valid_to)` 那台时光机
   // 一直建好着，但右栏此前永远只问「当前章」。开关的语义是「本章 / 上一章」两个位置，
   // 作者敲不进任何一个章号（约束 10 的理由写在 `StateTab` 的 docstring 里）。
@@ -207,11 +244,17 @@ export function RightPanel() {
   const roster = useRoster(projectId);
   const pendingCount = (proposals.data ?? []).filter((p) => p.status === "PENDING").length;
   const tabs = TABS.map((t) => {
-    if (t.key === "review") return { ...t, label: `待确认 ${pendingCount}` };
+    const base = t.label[language];
+    if (t.key === "review") return { key: t.key, label: `${base} ${pendingCount}` };
     // 面板一滚下去横幅就看不见了，而标签一直在。**两处说同一件事是有意的**：
     // 「在看的不是本章」漏掉一次，作者就会照着上一章的局面改这一章的事实。
-    if (t.key === "state" && lookingBack) return { ...t, label: `人物状态 · 第 ${prevChapter} 章` };
-    return t;
+    if (t.key === "state" && lookingBack) {
+      return {
+        key: t.key,
+        label: language === "zh" ? `${base} · 第 ${prevChapter} 章` : `${base} · Chapter ${prevChapter}`,
+      };
+    }
+    return { key: t.key, label: base };
   });
 
   // 花名册空 = 其余每一格都没有料可显示（它们全都是「其中某个人怎么样」）。
@@ -237,8 +280,18 @@ export function RightPanel() {
       {activeTab === "summary" && <SummaryTab />}
       {bare && !ROSTER_FREE_TABS.has(activeTab) && (
         <div className="empty workbench-empty">
-          添加人物或设定后，这里会显示他们在当前章节知道什么、身处何处，以及需要留意的内容。
-          回到「花名册」那一格，点“＋”开始。
+          {language === "zh" ? (
+            <>
+              添加人物或设定后，这里会显示他们在当前章节知道什么、身处何处，以及需要留意的内容。
+              回到「花名册」那一格，点“＋”开始。
+            </>
+          ) : (
+            <>
+              Once you add characters or settings, this will show what they know, where they are,
+              and anything worth watching for in the current chapter. Go back to the "Roster" tab
+              and click “＋” to get started.
+            </>
+          )}
         </div>
       )}
       {!bare && activeTab === "state" && (
