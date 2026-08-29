@@ -1048,6 +1048,69 @@ def test_frontend_fixture_matches_the_real_api(
     assert canon_edge_jump is not None, "自动升边的决策没有带上 canon_edge 跳转"
     dump["activityCanonEdge"] = norm.walk(canon_edge_jump)
 
+    # 「维度」下拉框（Task 8 补记）：这个项目里全部 StateDim 节点 + 一条指向自由维度
+    # 的真实 HAS_STATE 边。**独立一次 ingest/promote**，不搭在上面那次 LOCATED_AT
+    # 边的车：`_decision_jump` 只在一次决策**恰好改了一条边**时才认得出
+    # `jump.target = canon_edge`（上面 `activityCanonEdge` 冻的正是这一形状），
+    # 塞进同一批就会把这条边和上面那条边混进同一条决策日志，把「恰好一条」冲掉。
+    # 这本书至今没有任何 death 事件，所以 `stateDims` 里只有一条、且 `dim_key`
+    # 是 `None`——这正是「多数维度没有机器键」的真实形状，手写会放过它。
+    _state_conn = connect(book["db"])
+    try:
+        _state_store = SqliteStoryGraph(_state_conn)
+        _state_report = ExtractionService(
+            conn=_state_conn,
+            graph=_state_store,
+            event_store=SqliteEventStore(_state_conn),
+            proposal_store=SqliteProposalStore(_state_conn),
+        ).ingest(
+            pid,
+            ChapterText(
+                chapter_id=_chapter_row["chapter_id"],
+                number=1,
+                snapshot_id=_chapter_row["snapshot_id"],
+                text=_chapter_row["text"],
+            ),
+            RawChapterAnalysis(
+                events=(
+                    RawEvent(
+                        summary="萧决的境界忽然跌回了炼气期。",
+                        quote="萧决在青云城主府第一次听说了血脉秘密的真相。",
+                        participants=("萧决",),
+                        knowers=("萧决",),
+                        confidence=0.95,
+                    ),
+                ),
+                state_updates=(
+                    RawStateUpdate(
+                        kind="state",
+                        subject="萧决",
+                        dimension="武功境界",
+                        value="炼气期",
+                        quote="萧决在青云城主府第一次听说了血脉秘密的真相。",
+                        confidence=0.95,
+                    ),
+                ),
+                character_profiles=(),
+            ),
+            prompt_hash="prompt:canon-edge-contract-state",
+        )
+        promote_clean_facts(
+            _state_conn, pid, _state_report, graph=_state_store, events=SqliteEventStore(_state_conn)
+        )
+        _state_conn.commit()
+        _state_edge_id = _state_conn.execute(
+            "SELECT id FROM edge WHERE project_id = ? AND type = 'HAS_STATE' "
+            "AND information_scope = 'CANON' AND source = 'extractor' "
+            "ORDER BY rowid DESC LIMIT 1",
+            (pid,),
+        ).fetchone()["id"]
+    finally:
+        _state_conn.close()
+
+    grab("stateDims", client.get(f"{base}/canon/state-dims"))
+    grab("canonEdgeState", client.get(f"{base}/canon/edges/{_state_edge_id}"))
+
     frozen = json.dumps(dump, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
     if os.environ.get("NH_UPDATE_FIXTURES"):

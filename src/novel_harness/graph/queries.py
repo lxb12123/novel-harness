@@ -495,6 +495,23 @@ def find_state_dim(conn: sqlite3.Connection, project_id: str, dim_key: str) -> l
     return [to_node(r) for r in _rows(cur)]
 
 
+def list_state_dims(conn: sqlite3.Connection, project_id: str) -> list[Node]:
+    """这个项目里全部 StateDim 节点。给「维度」下拉框用——**它认 node id，不认
+    `dim_key`**：新维度多数没有键（2026-08-27 裁定，`NodeProps.dim_key` 的说明），
+    id 才是它们唯一、稳定的身份。按 `name` 排序，不按建节点的时间：作者挑维度时
+    按名字找，不关心哪个先被抽取出来。
+    """
+    cur = conn.execute(
+        f"""
+        SELECT {_NODE_COLS} FROM node
+        WHERE project_id = :pid AND label = :label
+        ORDER BY name
+        """,
+        {"pid": project_id, "label": NodeLabel.STATE_DIM.value},
+    )
+    return [to_node(r) for r in _rows(cur)]
+
+
 def insert_node(
     conn: sqlite3.Connection,
     node_id: str,

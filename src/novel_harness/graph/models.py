@@ -395,6 +395,28 @@ class NodeRef(BaseModel):
         return cls(id=node.id, label=node.label, name=node.name)
 
 
+class StateDimView(BaseModel):
+    """一个 StateDim 节点的窄视图（Task 8 补记，`CanonEdgeEditor` 的「维度」下拉框）。
+
+    比 `NodeRef` 多一位 `dim_key`：那是「这个维度有没有规则在读它」的唯一读法
+    （`dim_key is None` = 没有，`"health"` = R3 在读的那个）。前端要靠这一位
+    把「选中的是不是那个真键盘上的维度」显示对，`NodeRef` 没有这一位。
+
+    不直接吐完整 `Node`：`NodeProps` 是 `extra="allow"`，作者/模型随手写在节点上
+    的额外字段不该跟着这个列表一起出去（同 `NodeRef` docstring 那条理由）。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    name: str
+    dim_key: str | None
+
+    @classmethod
+    def of(cls, node: Node) -> StateDimView:
+        return cls(id=node.id, name=node.name, dim_key=node.props.dim_key)
+
+
 class Edge(BaseModel):
     """时态边。时间语义是闭开区间 `[valid_from_chapter, valid_to_chapter)`。
 

@@ -161,6 +161,66 @@ class World:
         ).fetchone()["id"]
         return edge_id
 
+    def ingest_state(self, quote: str, dimension: str, value: str) -> str:
+        """同 `ingest_death`，但走**自由维度**分支（`kind="state"`，2026-08-27 裁定）：
+        维度认不出就建、不配机器键。真实生产路径下 `EdgeProps.dim_key` 恒 `None`，
+        `edge.dst` 才是这条事实「关于哪个维度」的唯一身份——手写会放过这一点。
+        """
+        row = self.conn.execute(
+            "SELECT cs.id, cs.chapter_id, cs.text FROM chapter_snapshot cs "
+            "JOIN chapter c ON c.id = cs.chapter_id "
+            "WHERE c.project_id = ? AND c.number = 1 AND cs.text_sha256 = c.text_sha256",
+            (self.pid,),
+        ).fetchone()
+        from novel_harness.graph import ChapterText
+
+        chapter = ChapterText(
+            chapter_id=row["chapter_id"], number=1, snapshot_id=row["id"], text=row["text"]
+        )
+        service = ExtractionService(
+            conn=self.conn,
+            graph=self.graph,
+            event_store=SqliteEventStore(self.conn),
+            proposal_store=SqliteProposalStore(self.conn),
+        )
+        report = service.ingest(
+            self.pid,
+            chapter,
+            RawChapterAnalysis(
+                events=(
+                    RawEvent(
+                        summary="萧决的境界变了",
+                        quote=quote,
+                        participants=("萧决",),
+                        knowers=("萧决",),
+                        confidence=0.95,
+                    ),
+                ),
+                state_updates=(
+                    RawStateUpdate(
+                        kind="state",
+                        subject="萧决",
+                        dimension=dimension,
+                        value=value,
+                        quote=quote,
+                        confidence=0.95,
+                    ),
+                ),
+                character_profiles=(),
+            ),
+            prompt_hash="prompt:correction-test-state",
+        )
+        promote_clean_facts(
+            self.conn, self.pid, report, graph=self.graph, events=SqliteEventStore(self.conn)
+        )
+        self.conn.commit()
+        edge_id = self.conn.execute(
+            "SELECT id FROM edge WHERE project_id = ? AND type = 'HAS_STATE' "
+            "AND information_scope = 'CANON' ORDER BY rowid DESC LIMIT 1",
+            (self.pid,),
+        ).fetchone()["id"]
+        return edge_id
+
     def canon_edge(self, edge_id: str) -> dict[str, Any]:
         return self.graph.canon_edge_view(self.pid, edge_id).model_dump(mode="json")
 
@@ -353,3 +413,116 @@ def test_related_to_normalization_and_api_rejects_chapter_number(
                   "valid_from_chapter": 1},
         )
         assert r.status_code == 422  # extra=forbid：章号进不来
+
+
+def test_state_dims_lists_health_keyed_and_free_dimensions_keyless(
+    world: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`/canon/state-dims` 给「维度」下拉框用（Task 8 补记）：health 带真机器键，
+    自由维度不带——**这条边界不是这个端点新画的**，它照抄 `NodeProps.dim_key`
+    （2026-08-27 裁定）的既有事实，这里只是把它变成一份 HTTP 可读的列表。
+    """
+    world.ingest_death("萧决走进了青云城主府。")
+    world.ingest_state("萧决走进了青云城主府。", "武功境界", "炼气期")
+    monkeypatch.setenv("NH_DB", world.conn.execute("PRAGMA database_list").fetchone()[2])
+    from novel_harness.api.app import app
+
+    with TestClient(app) as client:
+        r = client.get(f"/api/projects/{world.pid}/canon/state-dims")
+        assert r.status_code == 200, r.text
+        dims = {d["name"]: d["dim_key"] for d in r.json()}
+    assert dims.get("生死") == "health"
+    assert "武功境界" in dims
+    assert dims["武功境界"] is None
+
+
+def test_editing_a_free_dimension_fact_retargets_dst_without_fabricating_dim_key(
+    world: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """作者打开一条「武功境界」的事实去编辑（真实场景：只是想改错别的值）。
+
+    维度那一格重新选回同一个维度，保存后：**目标节点没变、`dim_key` 没被
+    误写成任何字符串**——这正是这一批要堵的洞（此前维度下拉框硬编码只有
+    health/location 两项，选中即会把 `dim_key` 误改成 "health"）。
+
+    第二段验证反过来：真的切换到 health 节点，`dim_key` 应该照那个节点的
+    真身份变成 "health"，证明这不是「永远焊死在 None」的另一种坏。
+    """
+    edge_id = world.ingest_state("萧决走进了青云城主府。", "武功境界", "炼气期")
+    original_dst = world.conn.execute(
+        "SELECT dst FROM edge WHERE id = ?", (edge_id,)
+    ).fetchone()["dst"]
+    from novel_harness.graph.queries import find_state_dim
+
+    assert not find_state_dim(world.conn, world.pid, "health")  # 还没有任何 death 事件
+
+    monkeypatch.setenv("NH_DB", world.conn.execute("PRAGMA database_list").fetchone()[2])
+    from novel_harness.api.app import app
+
+    with TestClient(app) as client:
+        base = f"/api/projects/{world.pid}"
+        current = client.get(f"{base}/canon/edges/{edge_id}").json()
+        # 重新选回同一个维度（自由维度自己就是自己在 state-dims 列表里的那一条）。
+        same_dim = client.patch(
+            f"{base}/canon/edges/{edge_id}",
+            json={
+                "kind": "state",
+                "dim_node_id": original_dst,
+                "value": "炼气期",
+                "expected_canon_version": current["canon_version"],
+            },
+        )
+        assert same_dim.status_code == 200, same_dim.text
+        view = same_dim.json()["view"]
+        assert view["dst"] == original_dst
+        assert view["props"]["dim_key"] is None
+
+        # 现在真的种一条 death，让 health 维度节点存在，再把这条边切过去。
+        world.ingest_death("萧决走进了青云城主府。")
+        health_id = world.conn.execute(
+            "SELECT dst FROM edge WHERE project_id = ? AND type = 'HAS_STATE' "
+            "AND json_extract(props_json, '$.value_key') = 'dead'",
+            (world.pid,),
+        ).fetchone()["dst"]
+        current = client.get(f"{base}/canon/edges/{edge_id}").json()
+        switched = client.patch(
+            f"{base}/canon/edges/{edge_id}",
+            json={
+                "kind": "state",
+                "dim_node_id": health_id,
+                "value": "炼气期",
+                "expected_canon_version": current["canon_version"],
+            },
+        )
+        assert switched.status_code == 200, switched.text
+        view = switched.json()["view"]
+        assert view["dst"] == health_id
+        assert view["props"]["dim_key"] == "health"
+
+
+def test_dim_node_id_must_be_a_real_state_dim_node(
+    world: World,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`dim_node_id` 不是随便一个 id 都能糊弄过去——它必须真的是个 StateDim 节点，
+    否则 422。防的是前端一个笔误就把一条状态事实的 `dst` 指到一个人物节点上。
+    """
+    edge_id = world.ingest_state("萧决走进了青云城主府。", "武功境界", "炼气期")
+    monkeypatch.setenv("NH_DB", world.conn.execute("PRAGMA database_list").fetchone()[2])
+    from novel_harness.api.app import app
+
+    with TestClient(app) as client:
+        base = f"/api/projects/{world.pid}"
+        current = client.get(f"{base}/canon/edges/{edge_id}").json()
+        r = client.patch(
+            f"{base}/canon/edges/{edge_id}",
+            json={
+                "kind": "state",
+                "dim_node_id": world.ids["萧决"],  # 一个真实但不是 StateDim 的节点
+                "value": "炼气期",
+                "expected_canon_version": current["canon_version"],
+            },
+        )
+        assert r.status_code == 422

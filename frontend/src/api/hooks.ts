@@ -51,6 +51,7 @@ import type {
   RosterEntry,
   RunsPanel,
   SceneConstraints,
+  StateDimView,
   StateSnapshot,
   StoredAlias,
   Subgraph,
@@ -904,6 +905,16 @@ export function useCorrectEventCast(pid: string) {
 
 const edgePath = (pid: string, edgeId: string) =>
   proj(pid, `/canon/edges/${encodeURIComponent(edgeId)}`);
+
+/** 这个项目里全部 StateDim 节点，给「维度」下拉框用（Task 8 补记）。
+ *  **认 id，不认 `dim_key`**：多数维度没有机器键（2026-08-27 裁定）。 */
+export function useStateDims(pid: string | null) {
+  return useQuery({
+    queryKey: q(["state-dims", pid]),
+    queryFn: () => api.get<StateDimView[]>(proj(pid!, "/canon/state-dims")),
+    enabled: !!pid,
+  });
+}
 
 /** 一条可纠错 Canon 边（`GET …/canon/edges/{id}`）。null = 还没有要打开的边。 */
 export function useCanonEdge(pid: string | null, edgeId: string | null) {

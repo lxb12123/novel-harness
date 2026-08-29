@@ -54,12 +54,15 @@ from ..extract.proposals import (
     hydrate_proposal_names,
     review_proposal,
 )
-from ..graph import EdgeType, GraphStore
+from ..graph import EdgeType, GraphStore, NodeLabel
 from ..graph.models import (
     CanonEdgeEditResult,
     CanonEdgeView,
     EdgeProps,
+    StateDimView,
 )
+from ..graph.queries import fetch_node
+from ..graph.queries import list_state_dims as _list_state_dims
 from ..graph.store import CanonEdgeRefused
 from ..graph.sqlite_proposals import SqliteProposalStore
 from ..graph.sqlite_review import SqliteEdgeReviewStore
@@ -86,7 +89,9 @@ class StateEdgeEdit(BaseModel):
 
     kind: Literal["state"] = "state"
     subject_id: str | None = None
-    dim_key: str
+    dim_node_id: str
+    """挑的是 StateDim **节点**，不是 `dim_key` 字符串：多数维度没有键
+    （2026-08-27 裁定），node id 才是它们唯一的身份。`/canon/state-dims` 给全量列表。"""
     value: str
     value_key: str | None = None
     expected_canon_version: int
@@ -122,10 +127,24 @@ def get_canon_edge(
         raise HTTPException(409, {"error": "canon_edge_refused", "message": str(exc)})
 
 
+@router.get("/api/projects/{project_id}/canon/state-dims")
+def get_state_dims(
+    conn: Annotated[Connection, Depends(get_conn)],
+    proj: Any = Depends(load_project),
+) -> list[StateDimView]:
+    """这个项目里全部 StateDim 节点，给「维度」下拉框用（Task 8 补记）。
+
+    **前端认 id，不认 `dim_key`**：多数维度没有机器键（2026-08-27 裁定），
+    id 才是它们唯一稳定的身份——这份列表就是它们的花名册。
+    """
+    return [StateDimView.of(n) for n in _list_state_dims(conn, proj.id)]
+
+
 @router.patch("/api/projects/{project_id}/canon/edges/{edge_id}")
 def patch_canon_edge(
     edge_id: str,
     body: CanonEdgeEdit,
+    conn: Annotated[Connection, Depends(get_conn)],
     store: Any = Depends(get_store),
     proj: Any = Depends(load_project),
 ) -> CanonEdgeEditResult:
@@ -134,7 +153,7 @@ def patch_canon_edge(
         edge = store.canon_edge_view(proj.id, edge_id)
     except CanonEdgeRefused as exc:
         raise HTTPException(409, {"error": "canon_edge_refused", "message": str(exc)})
-    new_src, new_dst, props = _canon_edge_target(edge, body)
+    new_src, new_dst, props = _canon_edge_target(conn, proj.id, edge, body)
     try:
         return store.edit_canon_edge(
             proj.id,
@@ -178,7 +197,9 @@ def delete_canon_edge(
         )
 
 
-def _canon_edge_target(edge: CanonEdgeView, body: CanonEdgeEdit) -> tuple[str, str, EdgeProps]:
+def _canon_edge_target(
+    conn: Connection, project_id: str, edge: CanonEdgeView, body: CanonEdgeEdit
+) -> tuple[str, str, EdgeProps]:
     """把类型化请求译成 (new_src, new_dst, props)。kind 必须与 edge type 匹配。"""
     if body.kind == "location":
         if edge.edge_type is not EdgeType.LOCATED_AT:
@@ -193,10 +214,16 @@ def _canon_edge_target(edge: CanonEdgeView, body: CanonEdgeEdit) -> tuple[str, s
     if body.kind == "state":
         if edge.edge_type is not EdgeType.HAS_STATE:
             raise HTTPException(422, {"error": "bad_request", "message": "这条边不是状态边"})
+        dim_node = fetch_node(conn, project_id, body.dim_node_id)
+        if dim_node is None or dim_node.label is not NodeLabel.STATE_DIM:
+            raise HTTPException(422, {"error": "bad_request", "message": "这不是一个维度"})
+        # `dim_key` 跟着目标节点走，不是作者/前端能自由填的字符串：health 节点
+        # 自带 "health"，别的维度节点自带 None（2026-08-27 裁定）——挑哪个节点，
+        # `dim_key` 就照那个节点的真身份写，绝不会凭空长出一个没人建过的键。
         return (
             body.subject_id or edge.src,
-            edge.dst,
-            EdgeProps(dim_key=body.dim_key, value=body.value, value_key=body.value_key),
+            dim_node.id,
+            EdgeProps(dim_key=dim_node.props.dim_key, value=body.value, value_key=body.value_key),
         )
     if body.kind == "relation":
         if edge.edge_type is not EdgeType.RELATED_TO:

@@ -408,6 +408,18 @@ export interface EdgeProps {
   display?: string | null;
 }
 
+/** 一个 StateDim 节点的窄视图（`GET …/canon/state-dims`），给「维度」下拉框用。
+ *
+ *  **认 `id`，不认 `dim_key`**：多数维度没有机器键（2026-08-27 裁定），只有
+ *  `dim_key === "health"` 这一条是 R3 在读的真键，其余都是 `null`。`name` 是
+ *  模型/作者写的正文内容（如「武功境界」），**不跟界面语言翻译**——同人物名、
+ *  地点名的处理方式。 */
+export interface StateDimView {
+  id: string;
+  name: string;
+  dim_key: string | null;
+}
+
 /** 修改/撤回之后给客户端的回执（同 `CanonEdgeEditResult` 出参）。 */
 export interface CanonEdgeEditResult {
   /** identity 改变后是 replacement——客户端要换选择状态，不能继续 PATCH 旧 ID。 */
@@ -432,7 +444,9 @@ export type CanonEdgeEditRequest =
   | {
       kind: "state";
       subject_id?: string | null;
-      dim_key: string;
+      /** 挑的是 StateDim **节点** id，不是 `dim_key` 字符串：多数维度没有键。
+       *  `/canon/state-dims` 给全量列表，后端照那个节点的真身份写 `dim_key`。 */
+      dim_node_id: string;
       value: string;
       value_key?: string | null;
       expected_canon_version: number;

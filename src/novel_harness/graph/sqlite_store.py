@@ -925,8 +925,12 @@ class SqliteStoryGraph:
         elif edge.type is EdgeType.HAS_STATE:
             _require("src", new_src, NodeLabel.CHARACTER)
             _require("dst", new_dst, NodeLabel.STATE_DIM)
-            if not props.dim_key or not props.value:
-                raise CanonEdgeRefused("HAS_STATE 需要 dim_key 与 value")
+            # `dim_key` 不在这条闸里：多数维度没有机器键、`None` 是它们的正常状态
+            # （2026-08-27 裁定）。上面 `_require("dst", ..., STATE_DIM)` 已经确保
+            # 目标真的是个维度节点——这才是「这条边关于哪个维度」的身份校验，
+            # 字符串键管不到、也不该管。这里只剩 `value` 这一件事必须非空。
+            if not props.value:
+                raise CanonEdgeRefused("HAS_STATE 需要 value")
         elif edge.type is EdgeType.RELATED_TO:
             _require("src", new_src, NodeLabel.CHARACTER)
             _require("dst", new_dst, NodeLabel.CHARACTER)

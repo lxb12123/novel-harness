@@ -1313,6 +1313,24 @@
       "valid_from_chapter": 1
     }
   },
+  "canonEdgeState": {
+    "author_owned": false,
+    "canon_version": 22,
+    "dst": "statedim:ID76",
+    "edge_id": "edge:ID77",
+    "edge_type": "HAS_STATE",
+    "evidence_id": "evidence:ID78",
+    "evidence_status": "FRESH",
+    "props": {
+      "dim_key": null,
+      "value": "炼气期",
+      "value_key": null
+    },
+    "slot_key": "character:ID9|HAS_STATE||1",
+    "source": "extractor",
+    "src": "character:ID9",
+    "valid_from_chapter": 1
+  },
   "canonEventCast": {
     "canon_version": 12,
     "decision_id": "decision:ID43",
@@ -1419,6 +1437,7 @@
   ],
   "characterEvents": [
     {
+      "cast_changed": null,
       "chapter_number": 1,
       "event_id": "event:ID29",
       "knowers": [
@@ -1448,6 +1467,7 @@
       "summary": "萧决得知血脉秘密。"
     },
     {
+      "cast_changed": null,
       "chapter_number": 1,
       "event_id": "event:ID34",
       "knowers": [
@@ -2718,6 +2738,13 @@
     "continuation_tail_limit": 10666,
     "model": "deepseek-v4-flash"
   },
+  "stateDims": [
+    {
+      "dim_key": null,
+      "id": "statedim:ID76",
+      "name": "武功境界"
+    }
+  ],
   "states": [
     {
       "chapter": 2,

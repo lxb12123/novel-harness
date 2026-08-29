@@ -4,6 +4,7 @@ import {
   useEditCanonEdge,
   useRoster,
   useRetractCanonEdge,
+  useStateDims,
 } from "../api/hooks";
 import { edgeLabelText } from "../backendMessages";
 import { readCorrectionError } from "../correctionError";
@@ -84,9 +85,16 @@ export function CanonEdgeEditor() {
     edit.mutate(
       { edgeId: view.edge_id, ...draft },
       {
-        onSuccess: () => {
+        onSuccess: (result) => {
           setDraft(null);
           setConfirmRetract(false);
+          // 改归属/切维度/换对端都是「identity 变了」（`new_src`/`new_dst` 不再是
+          // 原来那条边的），后端会把旧 id 撤回、另建一条 replacement——继续显示
+          // 旧 id 只会读到「这条边读不出来」。回执里的 `replacement_edge_id`
+          // 才是这条事实现在的身份（`CanonEdgeEditResult` 的说明就是这件事）。
+          if (result.replacement_edge_id && result.replacement_edge_id !== view.edge_id) {
+            setEdgeFocus(result.replacement_edge_id);
+          }
         },
       },
     );
@@ -318,9 +326,15 @@ function StateForm({
   onDraft: (d: CanonEdgeEditRequest) => void;
   language: Language;
 }) {
+  const { projectId } = useCoords();
+  // **这个项目实际有的维度**，不是硬编码的两项：多数维度是模型自由写的文本、
+  // 认不出就建（2026-08-27 裁定），健康之外的每一本书都不一样。`view.dst` 才是
+  // 「这条事实关于哪个维度」的真身份——`props.dim_key` 对新维度恒是 `None`，
+  // 拿它当下拉框的选中值只会在维度不是「生死」时永远选不中任何一项。
+  const stateDims = useStateDims(projectId).data ?? [];
   const characters = peers(people, "Character");
   const subjectId = draft?.kind === "state" ? draft.subject_id ?? null : null;
-  const dimKey = draft?.kind === "state" ? draft.dim_key : view.props.dim_key ?? "";
+  const dimNodeId = draft?.kind === "state" ? draft.dim_node_id : view.dst;
   const value = draft?.kind === "state" ? draft.value : view.props.value ?? "";
   return (
     <div className="set-field">
@@ -332,7 +346,7 @@ function StateForm({
             onDraft({
               kind: "state",
               subject_id: e.target.value,
-              dim_key: dimKey,
+              dim_node_id: dimNodeId,
               value,
               value_key: null,
               expected_canon_version: view.canon_version,
@@ -349,20 +363,26 @@ function StateForm({
       <label>
         {language === "zh" ? "维度" : "Dimension"}
         <select
-          value={dimKey}
+          value={dimNodeId}
           onChange={(e) =>
             onDraft({
               kind: "state",
               subject_id: subjectId,
-              dim_key: e.target.value,
+              dim_node_id: e.target.value,
               value,
               value_key: null,
               expected_canon_version: view.canon_version,
             })
           }
         >
-          <option value="health">{language === "zh" ? "生死" : "Life status"}</option>
-          <option value="location">{language === "zh" ? "所在" : "Location"}</option>
+          {/* 维度名是模型/作者写的正文内容（同人物名、地点名），不跟界面语言翻译
+              ——「生死」这个健康维度的显示名也一样：`HEALTH_DIM_NAME` 本身就是
+              后端写死的中文，不是这一层的翻译结果。 */}
+          {stateDims.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.name}
+            </option>
+          ))}
         </select>
       </label>
       <label>
@@ -373,7 +393,7 @@ function StateForm({
             onDraft({
               kind: "state",
               subject_id: subjectId,
-              dim_key: dimKey,
+              dim_node_id: dimNodeId,
               value: e.target.value,
               value_key: null,
               expected_canon_version: view.canon_version,
