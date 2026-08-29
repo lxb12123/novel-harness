@@ -157,21 +157,6 @@ class SnapshotInUse(StoreError):
         )
 
 
-class NodeInUse(StoreError):
-    """要删的那个花名册条目还被关系 / 情节引着（`NodeUsage.total > 0`）。
-
-    同 `ChapterInUse`：**拦的不是外键，是级联。** 到 `node` 的那几条外键全是
-    ON DELETE CASCADE，删得掉，而且一声不吭。
-    """
-
-    def __init__(self, usage: NodeUsage) -> None:
-        self.usage = usage
-        super().__init__(
-            f"「{usage.name}」还被引用着（关系 {usage.edges} / 情节 {usage.events}），"
-            "先把那几条改掉再删他"
-        )
-
-
 class ChapterInUse(StoreError):
     """要删的那一章上，引擎已经记了东西（`ChapterUsage.total > 0`）。
 
@@ -768,21 +753,38 @@ class CanonWriter(Protocol):
         ...
 
     def delete_node(self, project_id: str, node_id: str) -> NodeUsage:
-        """删掉花名册里的一条（**没有关系、没有情节引着它**时才删）。
+        """删掉花名册里的一条。**不管挂没挂东西，直接删**（2026-08-28 裁定）。
 
         它是「抽取自动建人物」（ADR 0020 补记）的配套：模型认错一个（真书上的
         「袭人」），作者得有办法把它清掉，否则那个错永远往上下文里塞噪声。
 
-        跟着一起没的只有**这个节点自己的名字**（`alias`，CASCADE）和倒排索引行
-        （`summary_mention`，派生数据，下一次 `_ensure` 重算）。
+        ── 这个方法**曾经**在这里拒绝，为什么换了 ─────────────────────────
+
+        到 `node` 的那几条外键（`alias` / `summary_mention` / `edge.src|dst` /
+        `event_participant` / `event_knower`）全是 ON DELETE CASCADE，一句
+        `DELETE FROM node` 技术上就过、而且一声不吭——这个事实没变，**它当年
+        就是拒绝的全部理由**：作者按下删除的那一瞬间不会知道自己带走了什么。
+
+        维护者裁定用「事后可见可改」换掉「事前拒绝」：删照做，但如果这个人
+        参与过的情节因此掉了参与者，调用方（`api/characters.py::delete_node`）
+        要在**同一个事务**里给剩下的那些人挂一条 `event_cast_changed` 通知
+        （`system_notifications.py`）——作者从别人的角色卡上看见「这条掉了
+        一个人」，点过去、自己改。**当年那个担心（悄悄蒸发）没有消失，只是
+        换了一种兜底方式**：事前拦不住的东西，事后要找得到、点得到。
+
+        跟着一起没的除了这个节点自己的名字（`alias`，CASCADE）和倒排索引行
+        （`summary_mention`，派生数据，下一次 `_ensure` 重算），现在还有它在
+        `event_participant`/`event_knower` 上的那几行——**事件本身不会跟着没**：
+        级联删的是这个人在名单里的那一行，不是 `story_event` 那一行本身，
+        情节继续在，只是少了一个人。
 
         Returns:
-            删掉之前数出来的那份 `NodeUsage`（全零）。**返回它而不是 `None`**：
-            同 `delete_chapter`，调用方要能把「删掉的是一个什么都没挂的条目」写进回执。
+            删掉之前数出来的那份 `NodeUsage`。**纯信息**，不再决定删不删得掉——
+            调用方拿它告诉作者「删掉的是一个什么都没挂的条目」还是「带走了
+            N 条关系 / M 条情节」，同 `delete_chapter` 的回执口径。
 
         Raises:
             NodeNotFound: `node_id` 不在本项目。
-            NodeInUse: 有关系或情节引着它（异常里带 `NodeUsage` 明细）。
         """
         ...
 

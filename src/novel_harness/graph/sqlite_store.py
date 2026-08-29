@@ -70,7 +70,6 @@ from .store import (
     ChapterInUse,
     ChapterWriteConflict,
     CanonEdgeRefused,
-    NodeInUse,
     NodeNotFound,
     QuoteMismatch,
     SnapshotInUse,
@@ -1159,14 +1158,13 @@ class SqliteStoryGraph:
         return queries.node_usage(self._conn, project_id, node_id)
 
     def delete_node(self, project_id: str, node_id: str) -> NodeUsage:
-        # 数引用和删在**同一个事务**里。到 `node` 的那几条外键全是 ON DELETE CASCADE，
-        # 所以这道闸不是「最后一道」是**唯一**一道：中间隔着一次抽取的话，
-        # 数出来的 0 到 DELETE 那一刻已经不成立，而级联不会抱怨。
+        # 数引用和删在**同一个事务**里：`usage` 是回执要用的信息（同 `delete_chapter`
+        # 那条口径），不再是「删不删得掉」的判据——2026-08-28 起挂着关系/情节也直接删，
+        # 调用方（`api/characters.py`）负责在这同一个事务外那一层给受影响的事件
+        # 挂通知（`event_cast_changed`）。
         with _transaction(self._conn):
             self._require_node(project_id, node_id, what="node_id")
             usage = queries.node_usage(self._conn, project_id, node_id)
-            if not usage.is_free():
-                raise NodeInUse(usage)
             queries.delete_node(self._conn, node_id)
             return usage
 

@@ -10,12 +10,17 @@
 喂给模型的上下文里塞噪声，而作者没有任何办法清掉它。所以这两条路由不是「顺手加的
 功能」，是那条裁定的**配套**——两者一起进仓库，或者都不进。
 
-── 删除的语义：拒绝，不是连带删除 ────────────────────────────────────────
+── 删除的语义：2026-08-28 起从「拒绝」换成「直接删 + 事后通知」───────────
 
 到 `node` 的那几条外键（`alias` / `summary_mention` / `edge.src|dst` /
 `event_participant` / `event_knower`）**全是 ON DELETE CASCADE**，所以一句
-`DELETE FROM node` 技术上就过了，而且一声不吭。这里和 `delete_chapter` 走同一套：
-数出来非零就拒绝，把挡路的东西数给作者看。完整论证在 `graph.models.NodeUsage`。
+`DELETE FROM node` 技术上就过了，而且一声不吭——**这件事从来没变过**。变的是
+拿它怎么办：曾经的做法是数出来非零就拒绝（同 `delete_chapter`），维护者裁定
+换成「删照做，把挡路的东西变成剩下的人身上一条看得见的通知」
+（`event_cast_changed`，完整论证在 `graph.models.NodeUsage` 和
+`api/characters.py::delete_node`）。**这条通知只告警,不阻断**——它不进
+`BLOCKING_KINDS`,不会连带停掉哪一章的总结/抽取,这一点本文件下面有专门的
+测试钉着。
 """
 
 from __future__ import annotations
@@ -31,8 +36,9 @@ from novel_harness.db import connect, migrate
 from novel_harness.declare import Ledger
 from novel_harness.graph import EdgeSpec, EdgeType, InformationScope, NodeLabel
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
-from novel_harness.graph.store import NodeInUse, StoreError
+from novel_harness.graph.store import StoreError
 from novel_harness.project import create as create_project
+from novel_harness.system_notifications import BLOCKING_KINDS
 
 
 class World:
@@ -80,7 +86,7 @@ def world() -> World:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# ① 删：什么都没挂的删得掉，挂着东西的拒绝
+# ① 删：不管挂没挂东西，都删得掉；挂着东西的数出来当回执
 # ══════════════════════════════════════════════════════════════════════════
 
 
@@ -105,11 +111,12 @@ def test_a_node_nothing_points_at_can_be_deleted(world: World) -> None:
     )
 
 
-def test_a_node_an_edge_points_at_is_refused_with_the_count(world: World) -> None:
-    """有关系引着它 → 拒绝，并把挡路的条数数出来。
+def test_a_node_an_edge_points_at_is_deleted_and_the_edge_goes_with_it(world: World) -> None:
+    """有关系引着它 → 照样删掉，`NodeUsage` 只是回执，不是闸。
 
-    **拒绝而不是连带删除**：`edge.src|dst` → `node` 是 CASCADE，删得掉而且一声不吭。
-    引擎记住的东西是这个产品唯一的资产，不能在作者按一颗按钮的时候悄悄蒸发。
+    `edge.src|dst` → `node` 是 CASCADE：那条边跟着一起没——2026-08-28 起这不是
+    「悄悄蒸发」的坏事，是裁定要的行为（防线搬到了 `event_cast_changed` 通知那边，
+    边没有对应的通知机制，因为关系不像事件那样"还有别人在场"这件事值得说）。
     """
     world.graph.upsert_edge(
         EdgeSpec(
@@ -123,20 +130,21 @@ def test_a_node_an_edge_points_at_is_refused_with_the_count(world: World) -> Non
     )
     world.conn.commit()
 
-    with pytest.raises(NodeInUse) as caught:
-        world.graph.delete_node(world.pid, world.place)
+    usage = world.graph.delete_node(world.pid, world.place)
 
-    assert caught.value.usage.edges == 1
-    assert "北荒" in str(caught.value)
-    # 反证：那条边还在（拒绝是拒绝，不是「删了一半」）。
-    assert world.graph.state_at(world.pid, world.hero, 1).location is not None
+    assert usage.edges == 1 and usage.name == "北荒"
+    assert world.graph.resolve(world.pid, ["北荒"])[0].hits == []
+    # 那条边真的没了——不是「删了一半」。
+    assert world.graph.state_at(world.pid, world.hero, 1).location is None
 
 
-def test_an_event_roster_also_blocks_the_delete(world: World) -> None:
-    """情节名单里有他 → 同样拒绝。**在场和知情算同一条情节，不相加。**
+def test_an_event_roster_survives_the_delete_with_a_smaller_cast(world: World) -> None:
+    """情节名单里有他 → 照样删掉，**事件本身不会跟着没**，只是名单少一个人。
 
-    相加会报出一个比真实条数大的数，而那个数会被原样念给作者听
-    （同 `chapter_usage` 里 `edges` 那条 `OR` 的理由）。
+    `event_participant`/`event_knower` → `node` 是 CASCADE：级联删的是这个人
+    在名单里的那一行，`story_event` 那一行没有任何外键指着某个具体角色，
+    删不到它。**在场和知情算同一条情节，不相加**（同 `chapter_usage` 里
+    `edges` 那条 `OR` 的理由）——这条纪律没变，变的只是「数出来非零」以后不再拒绝。
     """
     from novel_harness.events import ProvisionalEventSpec
     from novel_harness.graph import EvidenceSpec
@@ -157,7 +165,8 @@ def test_an_event_roster_also_blocks_the_delete(world: World) -> None:
             quote_text="萧决走进了北荒，寒气袭人。",
         )
     )
-    SqliteEventStore(world.conn).put_provisional(
+    events = SqliteEventStore(world.conn)
+    view = events.put_provisional(
         ProvisionalEventSpec(
             project_id=world.pid,
             summary="萧决走进北荒。",
@@ -171,16 +180,22 @@ def test_an_event_roster_also_blocks_the_delete(world: World) -> None:
 
     usage = world.graph.node_usage(world.pid, world.hero)
     assert usage.events == 1, f"在场 + 知情该只算一条情节，实得 {usage.events}"
-    with pytest.raises(NodeInUse):
-        world.graph.delete_node(world.pid, world.hero)
+
+    deleted = world.graph.delete_node(world.pid, world.hero)
+    world.conn.commit()
+
+    assert deleted.events == 1 and deleted.name == "萧决"
+    # 事件本身还在，只是名单空了——不是「情节跟着人一起没」。
+    still_there = events.event(world.pid, view.event.id)
+    assert still_there is not None
+    assert still_there.participants == [] and still_there.knowers == []
 
 
-def test_summary_mentions_never_block_the_delete(world: World) -> None:
+def test_summary_mentions_never_count_as_usage(world: World) -> None:
     """倒排索引行**不算**「挡路」—— 它是派生数据，下一次 `_ensure` 重算。
 
-    这个差集正是让删除对**自动建错的那批**真的可用的原因：「袭人」是从一句
-    「寒气袭人」里建出来的，它身上只有一条别名和几行索引，一条边、一件事都没有。
-    把索引算进去的话，它一被写进某段总结就再也删不掉了。
+    这条差集今天仍然决定通知触不触发的边界（`event_cast_changed` 只在
+    `NodeUsage.events > 0` 时才有事件要通知），只是不再决定删不删得掉。
     """
     from novel_harness.summary_index import ensure_index
 
@@ -557,8 +572,10 @@ def test_the_delete_route_refuses_with_a_stale_canon_version(world: World, monke
         assert "袭人" not in names
 
 
-def test_the_delete_route_hands_the_blocking_counts_to_the_author(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
-    """挡住了要说清挡路的是什么 —— 不是一句「删不掉」。"""
+def test_the_delete_route_succeeds_and_hands_the_counts_to_the_author(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """挂着关系也是 200，不是 409——`usage` 只是回执，说清带走了什么。"""
     world.graph.upsert_edge(
         EdgeSpec(
             project_id=world.pid,
@@ -574,15 +591,184 @@ def test_the_delete_route_hands_the_blocking_counts_to_the_author(world: World, 
     with world.client(monkeypatch) as client:
         base = f"/api/projects/{world.pid}"
         current = client.get(base).json()["canon_version"]
-        blocked = client.delete(
+        resp = client.delete(
             f"{base}/nodes/{world.place}", params={"expected_canon_version": current}
         )
 
-    assert blocked.status_code == 409, blocked.text
-    detail = blocked.json()["detail"]
-    assert detail["error"] == "node_in_use"
-    assert detail["params"]["edges"] == 1
-    assert detail["params"]["name"] == "北荒"
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["name"] == "北荒"
+    assert body["usage"]["edges"] == 1
+
+
+def _put_three_person_event(world: World):
+    """三个人（`world.hero` + 两个新建的）都在场的一件事，落在第 1 章原文的引语上。
+
+    测试专用 helper——`event_cast_changed` 那两条 API 测试都要这份夹具，
+    抽出来避免同一段 setup 抄两遍。
+    """
+    from novel_harness.events import ProvisionalEventSpec
+    from novel_harness.graph import EvidenceSpec
+    from novel_harness.graph.sqlite_events import SqliteEventStore
+
+    ledger = Ledger(world.graph, world.conn, world.pid)
+    second = ledger.declare_node(NodeLabel.CHARACTER, "顾清音").id
+    third = ledger.declare_node(NodeLabel.CHARACTER, "李管家").id
+    snapshot_id = str(
+        world.conn.execute(
+            "SELECT cs.id FROM chapter_snapshot cs JOIN chapter c ON c.id = cs.chapter_id "
+            "WHERE c.project_id = ? AND c.number = 1",
+            (world.pid,),
+        ).fetchone()["id"]
+    )
+    evidence = world.graph.put_evidence(
+        EvidenceSpec(
+            project_id=world.pid,
+            chapter_snapshot_id=snapshot_id,
+            para_index=2,
+            quote_text="萧决走进了北荒，寒气袭人。",
+        )
+    )
+    events = SqliteEventStore(world.conn)
+    provisional = events.put_provisional(
+        ProvisionalEventSpec(
+            project_id=world.pid,
+            summary="三人在北荒相遇。",
+            evidence_id=evidence.id,
+            participant_ids=[world.hero, second, third],
+            knower_ids=[],
+            confidence=0.9,
+        )
+    )
+    # `events_for_one_character` 默认只看 CANON（同 `character_events` 路由的口径：
+    # PROVISIONAL 是抽取器猜的、没确认的，混进作者能看见的线就是把猜测当事实）——
+    # `event_cast_changed` 通知走的是同一条口径，所以测试夹具也必须是 CANON，
+    # 不然这条通知在 PROVISIONAL 事件上结构性地永远不会触发。
+    view = events.clone_to_scope(provisional.event.id, InformationScope.CANON)
+    world.conn.commit()
+    return events, view, second, third
+
+
+def test_the_delete_route_notifies_the_remaining_cast(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """删一个牵扯 3 个人的情节里的一个人 → 人没了、事件还在、剩下两个人身上
+    （这件事上）查得到「掉了一个参与者」的通知，带着能点过去的锚。
+    """
+    events, view, second, third = _put_three_person_event(world)
+
+    with world.client(monkeypatch) as client:
+        base = f"/api/projects/{world.pid}"
+        current = client.get(base).json()["canon_version"]
+        resp = client.delete(
+            f"{base}/nodes/{world.hero}", params={"expected_canon_version": current}
+        )
+        assert resp.status_code == 200, resp.text
+        # 2 条：`clone_to_scope` 是克隆不是搬迁，PROVISIONAL 原件和 CANON 副本
+        # 都挂着这个人，`node_usage` 如实数两条——这是生产会有的真实形状
+        # （auto-Canon 从不撤走 PROVISIONAL 原件），不是测试夹具的巧合。
+        assert resp.json()["usage"]["events"] == 2
+
+        notifications = client.get(f"{base}/notifications").json()
+
+    matches = [n for n in notifications if n["kind"] == "event_cast_changed"]
+    assert len(matches) == 1, notifications
+    note = matches[0]
+    assert note["subject_type"] == "canon_event" and note["subject_id"] == view.event.id
+    assert note["title_params"] == {"removed_name": "萧决", "remaining_count": 2}
+    assert note["jump"]["quote_text"] == "萧决走进了北荒，寒气袭人。"
+    # 双保险：这条通知不在阻断名单里（下面那条测试钉的是常量本身）。
+    assert note["kind"] not in BLOCKING_KINDS
+
+    still_there = events.event(world.pid, view.event.id)
+    assert still_there is not None
+    assert {p.id for p in still_there.participants} == {second, third}
+
+
+def test_both_remaining_cast_members_see_the_same_notification_on_their_own_card(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """一件事跟三个人相关，删掉一个之后，**剩下两个人各自的 `character_events()`**
+    （不是同一次请求，是两次独立的、按人查的调用）都要拼得出同一条通知——
+    `subject_id` 相同、`id` 相同，不是两条内容一样但各是各的。
+
+    这条测的是维护者点名的那个边界：`character_events()` 按人查，通知按事件挂，
+    「同一条事件挂在三个人名下」时不能只有一个人身上带得出这条通知。
+    """
+    _, view, second, third = _put_three_person_event(world)
+
+    with world.client(monkeypatch) as client:
+        base = f"/api/projects/{world.pid}"
+        current = client.get(base).json()["canon_version"]
+        client.delete(
+            f"{base}/nodes/{world.hero}", params={"expected_canon_version": current}
+        )
+
+        second_row = next(
+            r
+            for r in client.get(f"{base}/characters/{second}/events").json()
+            if r["event_id"] == view.event.id
+        )
+        third_row = next(
+            r
+            for r in client.get(f"{base}/characters/{third}/events").json()
+            if r["event_id"] == view.event.id
+        )
+
+    assert second_row["cast_changed"] is not None
+    assert third_row["cast_changed"] is not None
+    assert second_row["cast_changed"]["id"] == third_row["cast_changed"]["id"]
+    assert second_row["cast_changed"]["subject_id"] == view.event.id
+    assert second_row["cast_changed"]["title_params"] == {
+        "removed_name": "萧决",
+        "remaining_count": 2,
+    }
+
+
+def test_a_clean_event_has_no_cast_changed_flag(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """没被动过的事件，`cast_changed` 就是 `None`——不是空对象，不是缺字段。"""
+    _, view, second, _third = _put_three_person_event(world)
+
+    with world.client(monkeypatch) as client:
+        base = f"/api/projects/{world.pid}"
+        row = next(
+            r
+            for r in client.get(f"{base}/characters/{second}/events").json()
+            if r["event_id"] == view.event.id
+        )
+
+    assert row["cast_changed"] is None
+
+
+def test_deleting_an_unreferenced_node_creates_no_notification(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """删一个谁也不牵扯的人 → 干净删掉，没有多余标记。"""
+    with world.client(monkeypatch) as client:
+        base = f"/api/projects/{world.pid}"
+        current = client.get(base).json()["canon_version"]
+        resp = client.delete(
+            f"{base}/nodes/{world.ghost}", params={"expected_canon_version": current}
+        )
+        assert resp.status_code == 200, resp.text
+        usage = resp.json()["usage"]
+        assert usage["edges"] == 0 and usage["events"] == 0
+
+        notifications = client.get(f"{base}/notifications").json()
+
+    assert notifications == []
+
+
+def test_event_cast_changed_is_not_a_blocking_kind() -> None:
+    """删人不该换来「这一章的自动整理停了」——`event_cast_changed` 永不进
+    `BLOCKING_KINDS`。挂错档的后果是作者删一个人就把总结/抽取停掉，而那不会
+    有任何东西报错，只会表现成「总结怎么一直不更新」（`system_notifications.py`
+    模块头那条纪律）。
+    """
+    assert "event_cast_changed" not in BLOCKING_KINDS
+    assert BLOCKING_KINDS == frozenset({"validation_blocked"})
 
 
 def test_the_rename_route_returns_a_narrow_ref(world: World, monkeypatch: pytest.MonkeyPatch) -> None:

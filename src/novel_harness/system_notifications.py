@@ -1,6 +1,6 @@
 """统一系统通知的去重 / 忽略 / 解决 / 动作坐标（ADR 0030 / 计划 Task 10）。
 
-六种语义各自独立的失败形态共用一张通知表：
+七种语义各自独立的失败形态共用一张通知表：
 
 - `summary_mismatch`：总结核对发现可能冲突（只告警，不撤销/不用不了/不改 Canon）；
 - `background_failure`：后台任务失败（provider 崩溃、重放过不去…）；
@@ -12,6 +12,9 @@
   `text/chapterize.py::drop_toc_duplicates()`）。带一个「撤销」动作——
   `payload_json` 存着撤销要用的数据（丢了哪些 + 这本书当时的指纹），
   **只有这一档用这一列**，读它请走 `notification_payload()`，别直接查 SQL。
+- `event_cast_changed`：花名册删了一个人，他参与过的某件事的在场/知情名单
+  跟着掉了一个（034）。**只告警，不阻断**——删人不该换来「这一章的自动整理
+  停了」。`subject_type` 是 `canon_event`，`jump` 是那件事自己的 evidence 锚。
 
 ── 阻断与不阻断是两件事，别按「听起来像不像坏消息」分 ────────────────────
 `validation_blocked` 那句「新正文不会再自动生成总结与情节」是真的：停下游的是
@@ -54,6 +57,7 @@ __all__ = [
     "SystemNotification",
     "background_failure_dedupe_key",
     "dedupe_key_for",
+    "enqueue_event_cast_changed",
     "enqueue_extraction_yielded_nothing",
     "enqueue_import_toc_skipped",
     "enqueue_notification",
@@ -76,6 +80,7 @@ NotificationKind = Literal[
     "text_advisory",
     "extraction_yielded_nothing",
     "import_toc_skipped",
+    "event_cast_changed",
 ]
 
 BLOCKING_KINDS: Final[frozenset[str]] = frozenset({"validation_blocked"})
@@ -405,6 +410,50 @@ def enqueue_text_advisory(
         source_sha256=source_sha256,
         jump=jump,
         actions=actions,
+    )
+
+
+def enqueue_event_cast_changed(
+    conn: Connection,
+    *,
+    project_id: str,
+    event_id: str,
+    chapter_number: int,
+    title_code: str,
+    title_params: dict[str, Any] | None,
+    jump: TextAnchor,
+) -> str:
+    """一件事的在场/知情名单掉了一个人时的那条通知（034）。**只告警，不阻断。**
+
+    删花名册条目从「拒绝」换成「直接删」之后（`api/characters.py::delete_node`），
+    这是那条裁定的另一半——「事后可见可改」的「可见」。`subject_type` 固定
+    `canon_event`（复用 `summary_reconciliation.py` 已经在用的语义：`subject_id`
+    是事件 id），不新开一档。
+
+    `dedupe_key` 只按 kind+subject 算（`dedupe_key_for` 的 hash 对留空）：
+    **一个事件同时只有一条 OPEN 的这档通知**，再删一个参与它的人只刷新标题和
+    锚（`enqueue_notification` 的 `ON CONFLICT DO UPDATE`），不会在同一个事件上
+    堆出好几条——历史上删过谁不是这张表要记的账。
+
+    `jump` 用事件自己的 evidence 锚（`Evidence.anchor()`），不新造一套定位。
+    """
+    return enqueue_notification(
+        conn,
+        project_id=project_id,
+        kind="event_cast_changed",
+        subject_type="canon_event",
+        subject_id=event_id,
+        chapter_number=chapter_number,
+        title_code=title_code,
+        title_params=title_params,
+        dedupe_key=dedupe_key_for(
+            kind="event_cast_changed",
+            subject_type="canon_event",
+            subject_id=event_id,
+            summary_sha256=None,
+            source_sha256=None,
+        ),
+        jump=jump,
     )
 
 

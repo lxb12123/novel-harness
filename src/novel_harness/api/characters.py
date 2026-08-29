@@ -26,7 +26,13 @@ from ..graph import (
 )
 from ..graph.models import NodeRef
 from ..graph.queries import fetch_node
-from ..graph.store import NodeInUse, NodeNotFound, StoreError
+from ..graph.store import NodeNotFound, StoreError
+from ..system_notifications import (
+    SystemNotification,
+    enqueue_event_cast_changed,
+    list_open_notifications,
+    materialize_notification_outbox,
+)
 from .deps import get_conn, get_event_store, get_store, load_project
 
 router = APIRouter()
@@ -94,6 +100,25 @@ class CharacterEventRow(BaseModel):
     knowers: tuple[NodeRef, ...] = ()
     """知道这件事的人。它和 `participants` 一起决定了这条事件挂在谁名下
     （判据见 `queries.event_ids_for_one_character`）。"""
+    cast_changed: SystemNotification | None = None
+    """这条事件掉了参与者时的那条 `event_cast_changed` 通知（2026-08-28）。
+
+    **拼在这里，不是让前端再发一次请求去 `GET .../notifications` 里找**——同
+    `GET .../roster` 那条 `appearance_chapters` 的先例（`api/app.py::roster`）：
+    「两个数都和花名册同一条出参回来，不是第二次请求……多一次往返就是多一次
+    会失败、会晚到的东西」。红点比那个数更经不起晚到：数字晚到只是慢一秒，
+    红点晚到是作者已经看完这一页走了，而这条事件掉的那个人他没看见。
+
+    带的是**完整** `SystemNotification`（不是裸 `bool`）：前端要用 `id` 去调
+    既有的 `ignore`/`resolve`，要用 `jump` 直接定位，要用 `title_code`/
+    `title_params` 渲染——把这几样拆开发反而逼前端自己拼回一个通知形状。
+
+    **一件事跟三个人相关，三个人的行上这一位都得是同一条通知**（同一个
+    `subject_id`，不是各查各的）：`character_events()` 只查一次 OPEN 通知表，
+    按 `subject_id` 建一次索引，三个人的三次调用各自命中同一条——`event_cast_
+    changed` 的去重（同一事件同时最多一条 OPEN）保证了这一点，不需要额外
+    去重逻辑。
+    """
 
 
 class NodeRename(BaseModel):
@@ -277,8 +302,18 @@ def character_events(
     ⚠️ **今天这条线在真书上是空的**，而那是已知的（作者那本 158 章的书里事件 0 条）：
     第一次真抽取跑完才会有。空不是坏——界面那一侧要说清是哪一种空
     （这一章还没整理过 / 整理了但没抽到），别写「暂无数据」。
+
+    每一行的 `cast_changed`（2026-08-28）拼的是这条事件当前 OPEN 的
+    `event_cast_changed` 通知——查一次 `list_open_notifications`，按
+    `subject_id` 建索引，不逐条事件再发一次请求。见 `CharacterEventRow
+    .cast_changed` 的说明。
     """
     _character_node(conn, proj.id, character_id)
+    cast_changed_by_event = {
+        n.subject_id: n
+        for n in list_open_notifications(conn, proj.id)
+        if n.kind == "event_cast_changed"
+    }
     return [
         CharacterEventRow(
             event_id=view.event.id,
@@ -286,6 +321,7 @@ def character_events(
             summary=view.event.summary,
             participants=tuple(view.participants),
             knowers=tuple(view.knowers),
+            cast_changed=cast_changed_by_event.get(view.event.id),
         )
         for view in events.events_for_one_character(proj.id, character_id)
     ]
@@ -300,6 +336,13 @@ def character_events(
 #
 # 两条都带 `expected_canon_version`（同别名那几条）：作者拿着一份旧花名册点删除时
 # 收到的是 409，不是「删掉了一个他没看见的、刚被抽取改过的东西」。
+#
+# ── 删除 2026-08-28 起不再拒绝（维护者裁定）──────────────────────────────
+# 旧版本这里挂着关系/情节就 409（`NodeInUse`）。裁定换成「直接删 + 事后可见可改」：
+# 删照做，但这个人参与过的每一件事因此掉了参与者，剩下的人身上要挂得出一条
+# `event_cast_changed` 通知——作者从别人的角色卡上看见「这条掉了一个人」，
+# 点过去、自己改。当年拒绝要防的事（悄悄蒸发、作者不知道自己带走了什么）
+# 没有消失，只是从「事前拦住」换成了「事后找得到」。
 # ══════════════════════════════════════════════════════════════════════════
 
 
@@ -333,38 +376,57 @@ def delete_node(
     expected_canon_version: int,
     conn: Annotated[Connection, Depends(get_conn)],
     store: Any = Depends(get_store),
+    events: Any = Depends(get_event_store),
     proj: Any = Depends(load_project),
 ) -> NodeDeleted:
-    """删掉花名册里的一条。**有关系或情节引着它就拒绝**，并把挡路的数给作者看。
+    """删掉花名册里的一条。**不拒绝**——挂着关系/情节也直接删（2026-08-28 裁定）。
 
-    拒绝而不是连带删除：引擎记住的东西是这个产品唯一的资产，删一个人的时候顺手
-    把他参与过的每一条关系和每一份名单带走，作者在按下那颗按钮的一瞬间不会知道
-    自己失去了什么（`NodeUsage` 的完整论证在那儿）。
+    `edge.src|dst` / `event_participant` / `event_knower` 到 `node` 全是
+    ON DELETE CASCADE：这个人参与过的关系、以及他在每一件事的在场/知情名单里
+    那一行，跟着一起没。**事件本身不会没**——少的是名单里的一行，不是
+    `story_event` 那一行。
+
+    那些情节因此掉了参与者，而剩下的人不该发现不了：删之前先把这个人的全部
+    事件记下来（级联一旦发生，`event_participant`/`event_knower` 就已经查不到
+    这个人了，必须在那之前问），删完给每一件事挂一条 `event_cast_changed`
+    通知——只告警，不进 `BLOCKING_KINDS`，不会连带停掉哪一章的总结/抽取。
 
     `expected_canon_version` 走**查询参数**：DELETE 的请求体在各家 HTTP 客户端上
     支持得参差不齐（fetch 里带 body 的 DELETE 不是所有代理都转发）。
     """
     _require_canon(conn, proj.id, expected_canon_version)
+    # 必须在删之前问：级联一旦发生，这个人在 event_participant/event_knower 上
+    # 的行就没了，`events_for_one_character` 会以为他什么都没参与过。
+    affected = events.events_for_one_character(proj.id, node_id)
     try:
         usage = store.delete_node(proj.id, node_id)
     except NodeNotFound as exc:
         raise HTTPException(404, {"error": "node_not_found", "message": str(exc)}) from exc
-    except NodeInUse as exc:
-        # `NodeUsage.node_id` 是裸内部 id，不安全，不进 `params`——`name`/`edges`/`events`
-        # 三样够拼出这句拒绝，同 `ChapterInUse` 那条口径。
-        raise HTTPException(
-            409,
-            {
-                "error": "node_in_use",
-                "params": {
-                    "name": exc.usage.name,
-                    "edges": exc.usage.edges,
-                    "events": exc.usage.events,
-                },
-            },
-        ) from exc
+    notified = False
+    for view in affected:
+        evidence = store.get_evidence(proj.id, view.event.evidence_id)
+        if evidence is None:
+            # 不该发生（`evidence_id` 是 NOT NULL 外键）——但通知点不到位置
+            # 比没有通知更糟（作者点了却哪儿都不去），宁可漏这一条。
+            continue
+        remaining = {p.id for p in view.participants} | {k.id for k in view.knowers}
+        remaining.discard(node_id)
+        enqueue_event_cast_changed(
+            conn,
+            project_id=proj.id,
+            event_id=view.event.id,
+            chapter_number=view.event.chapter_number,
+            title_code="event_cast_changed_title",
+            title_params={"removed_name": usage.name, "remaining_count": len(remaining)},
+            jump=evidence.anchor(),
+        )
+        notified = True
     _bump_canon(conn, proj.id)
     conn.commit()
+    if notified:
+        # 删除是前台同步动作，通知也该同步可见——不等下一次后台 outbox 扫描
+        # （同 `_notify_toc_skipped` 那条口径：`app.py` 导入丢目录页假章时同款）。
+        materialize_notification_outbox(conn, project_id=proj.id, lease_owner="delete_node")
     return NodeDeleted(id=node_id, name=usage.name, usage=usage)
 
 
