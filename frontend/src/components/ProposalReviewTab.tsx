@@ -10,10 +10,11 @@ import {
   useStartExtraction,
 } from "../api/hooks";
 import { messageForCode } from "../backendMessages";
-import { useLanguage } from "../language";
+import { useLanguage, type Language } from "../language";
 import type {
   EdgeConflictItem,
   EventView,
+  ExtractionRun,
   LowConfidenceEventItem,
   NodeRef,
   ProposalAction,
@@ -38,13 +39,14 @@ import type { Dimension } from "./CastPicker";
  *  CANON 跑完时同理，而那是 ADR 0020 的常态）。
  *  `readCorrectionError` 是那两个编辑器已经在用的同一份判断，不是第二份措辞源。 */
 function Refusal({ error, onStale }: { error: unknown; onStale: () => void }) {
+  const language = useLanguage((s) => s.language);
   const failure = readCorrectionError(error);
   return (
     <div className="err-box">
       <div>{failure.message}</div>
       {failure.kind === "stale" && (
         <button className="link" onClick={onStale}>
-          看看最新的
+          {language === "zh" ? "看看最新的" : "See the latest version"}
         </button>
       )}
     </div>
@@ -55,15 +57,35 @@ function pct(value: number | null | undefined): string {
   return value == null ? "—" : `${Math.round(value * 100)}%`;
 }
 
-const RUN_STATUS_ZH = {
-  PENDING: "等待中",
-  RUNNING: "分析中",
-  SUCCEEDED: "已完成",
-  FAILED: "失败",
+const RUN_STATUS_LABEL: Record<string, { zh: string; en: string }> = {
+  PENDING: { zh: "等待中", en: "Pending" },
+  RUNNING: { zh: "分析中", en: "Analyzing" },
+  SUCCEEDED: { zh: "已完成", en: "Done" },
+  FAILED: { zh: "失败", en: "Failed" },
   // 020 / Task 9：晚到的旧快照结果。它没跑错，只是不再适用——把它归在「失败」
   // 那一档最诚实（和日志页 `_RUN_STATUS` 的合并同一件事，别在这里再造一档）。
-  SUPERSEDED: "失败",
-} as const;
+  SUPERSEDED: { zh: "失败", en: "Failed" },
+};
+
+/** 工具栏上那句「分析：...」。**整句拼装，不是拼片段**：两个附加小句都带着数，
+ *  英文那半各自要处理单复数（1 event / 2 events，1 item / 2 items pending review）。 */
+function analysisLine(run: ExtractionRun, language: Language): string {
+  const status = RUN_STATUS_LABEL[run.status]?.[language] ?? run.status;
+  if (language === "zh") {
+    let line = `分析：${status}`;
+    if (run.valid_event_count > 0) line += ` · 发现 ${run.valid_event_count} 条情节`;
+    if (run.proposal_count > 0) line += ` · ${run.proposal_count} 项待确认`;
+    return line;
+  }
+  let line = `Analysis: ${status}`;
+  if (run.valid_event_count > 0) {
+    line += ` · found ${run.valid_event_count} event${run.valid_event_count === 1 ? "" : "s"}`;
+  }
+  if (run.proposal_count > 0) {
+    line += ` · ${run.proposal_count} item${run.proposal_count === 1 ? "" : "s"} pending review`;
+  }
+  return line;
+}
 
 function asEventItem(raw: unknown): LowConfidenceEventItem | null {
   if (typeof raw !== "object" || raw === null) return null;
@@ -92,6 +114,27 @@ function asConflictItem(raw: unknown): EdgeConflictItem | null {
 function nameLookup(proposal: ProposalRecord): (id: string) => string {
   const byId = new Map(proposal.node_refs.map((ref) => [ref.id, ref.name]));
   return (id) => byId.get(id) ?? "—";
+}
+
+/** 一行「当前」或「提议」的事实。**整句模板，不是拼片段**：中文的「A 与 B」/
+ *  「A 在 B」和英文的 "A and B"/"A is at B" 语序不一样，同 `CanonEdgeEditor.tsx`
+ *  那条纪律。`update_kind` 只有 "relationship" 特殊处理——"location"/"state" 都落
+ *  进「在」那一支，这是既有行为，这一批只翻译不改判据。 */
+function factLine(
+  subject: string,
+  updateKind: EdgeConflictItem["update_kind"],
+  target: string,
+  value: string | null,
+  language: Language,
+): string {
+  if (language === "zh") {
+    return updateKind === "relationship"
+      ? `${subject} 与 ${target} ${value ?? ""}`
+      : `${subject} 在 ${target}`;
+  }
+  return updateKind === "relationship"
+    ? `${subject} and ${target}${value ? ` — ${value}` : ""}`
+    : `${subject} is at ${target}`;
 }
 
 /** 「改一改再收下」那一格。**它改的是一条还没生效的事实**（提案），所以它和
@@ -123,6 +166,7 @@ function ProposalEditor({
   onCancel: () => void;
   onSubmit: (edit: ProposalEditInput) => void;
 }) {
+  const language = useLanguage((s) => s.language);
   const [summary, setSummary] = useState(item.summary);
   const [picked, setPicked] = useState<Record<Dimension, string[]>>({
     knowers: idsOf(view.knowers),
@@ -156,14 +200,18 @@ function ProposalEditor({
   return (
     <div className="cast-editor">
       <label className="row cast-summary">
-        <span>这件事怎么说</span>
+        <span>{language === "zh" ? "这件事怎么说" : "How to describe this event"}</span>
         <input value={summary} onChange={(e) => setSummary(e.target.value)} />
       </label>
       {/* 空概要后端会拒（422）。**在按下按钮之前就说**，别让作者去撞一次拒绝
           （同花名册抽屉里 1 字别名那条）。 */}
       {blank && (
         <div className="row dim">
-          这件事总得有句话 —— 整条不要的话用「驳回」。
+          {language === "zh" ? (
+            <>这件事总得有句话 —— 整条不要的话用「驳回」。</>
+          ) : (
+            <>This event needs some description — if you don’t want it at all, use “Reject” instead.</>
+          )}
         </div>
       )}
 
@@ -171,10 +219,12 @@ function ProposalEditor({
 
       <div className="actions">
         <button disabled={blank || nothing || pending} onClick={submit}>
-          {pending ? "收下中…" : "改完收下"}
+          {language === "zh"
+            ? pending ? "收下中…" : "改完收下"
+            : pending ? "Accepting…" : "Edit and accept"}
         </button>
         <button className="link" onClick={onCancel}>
-          不改了
+          {language === "zh" ? "不改了" : "Cancel"}
         </button>
       </div>
     </div>
@@ -194,33 +244,33 @@ function ProposalCard({
   pending: boolean;
   onReview: (action: ProposalAction, edit?: ProposalEditInput) => void;
 }) {
+  const language = useLanguage((s) => s.language);
   const nameOf = nameLookup(proposal);
   const [editing, setEditing] = useState(false);
   if (proposal.kind === "edge_conflict") {
     const items = proposal.items.map(asConflictItem).filter((x): x is EdgeConflictItem => !!x);
     return (
       <div className="statecard proposal-card conflict">
-        <div className="nm">关系冲突 · 第 {proposal.chapter_number} 章</div>
+        <div className="nm">
+          {language === "zh" ? "关系冲突" : "Conflicting fact"} · {" "}
+          {language === "zh" ? `第 ${proposal.chapter_number} 章` : `Chapter ${proposal.chapter_number}`}
+        </div>
         {items.map((item, i) => (
           <div key={i}>
             <div className="row">
-              当前：{nameOf(item.current.subject_id)}
-              {item.update_kind === "relationship"
-                ? ` 与 ${nameOf(item.current.target_id)} ${item.current.value ?? ""}`
-                : ` 在 ${nameOf(item.current.target_id)}`}
+              {language === "zh" ? "当前：" : "Current: "}
+              {factLine(nameOf(item.current.subject_id), item.update_kind, nameOf(item.current.target_id), item.current.value, language)}
             </div>
             <div className="row">
-              提议：{nameOf(item.proposed.subject_id)}
-              {item.update_kind === "relationship"
-                ? ` 与 ${nameOf(item.proposed.target_id)} ${item.proposed.value ?? ""}`
-                : ` 在 ${nameOf(item.proposed.target_id)}`}
+              {language === "zh" ? "提议：" : "Proposed: "}
+              {factLine(nameOf(item.proposed.subject_id), item.update_kind, nameOf(item.proposed.target_id), item.proposed.value, language)}
             </div>
             <div className="row quote">{item.proposed.quote}</div>
           </div>
         ))}
         <div className="actions">
-          <button onClick={() => onReview("accept")}>接受</button>
-          <button onClick={() => onReview("reject")}>驳回</button>
+          <button onClick={() => onReview("accept")}>{language === "zh" ? "接受" : "Accept"}</button>
+          <button onClick={() => onReview("reject")}>{language === "zh" ? "驳回" : "Reject"}</button>
         </div>
       </div>
     );
@@ -248,19 +298,27 @@ function ProposalCard({
 
   return (
     <div className="statecard proposal-card low-confidence">
-      <div className="nm">需要确认的情节 · 第 {proposal.chapter_number} 章</div>
+      <div className="nm">
+        {language === "zh" ? "需要确认的情节" : "Event to confirm"} · {" "}
+        {language === "zh" ? `第 ${proposal.chapter_number} 章` : `Chapter ${proposal.chapter_number}`}
+      </div>
       {items.map((item, i) => {
         const each = eventById.get(item.event_id);
+        const sep = language === "zh" ? "、" : ", ";
         return (
           <div key={i}>
             <div className="row">{item.summary}</div>
             <div className="row dim">
-              在场：{each ? each.participants.map((n) => n.name).join("、") : "—"}
+              {language === "zh" ? "在场：" : "Present: "}
+              {each ? each.participants.map((n) => n.name).join(sep) : "—"}
             </div>
             <div className="row dim">
-              知道这件事的：{each ? each.knowers.map((n) => n.name).join("、") || "—" : "—"}
+              {language === "zh" ? "知道这件事的：" : "Knew about it: "}
+              {each ? each.knowers.map((n) => n.name).join(sep) || "—" : "—"}
             </div>
-            <div className="row dim">可信程度 {pct(item.confidence)}</div>
+            <div className="row dim">
+              {language === "zh" ? "可信程度" : "Confidence"} {pct(item.confidence)}
+            </div>
             <div className="row quote">{item.quote}</div>
           </div>
         );
@@ -276,9 +334,11 @@ function ProposalCard({
         />
       ) : (
         <div className="actions">
-          <button onClick={() => onReview("accept")}>接受</button>
-          {editable && <button onClick={() => setEditing(true)}>改一改</button>}
-          <button onClick={() => onReview("reject")}>驳回</button>
+          <button onClick={() => onReview("accept")}>{language === "zh" ? "接受" : "Accept"}</button>
+          {editable && (
+            <button onClick={() => setEditing(true)}>{language === "zh" ? "改一改" : "Edit"}</button>
+          )}
+          <button onClick={() => onReview("reject")}>{language === "zh" ? "驳回" : "Reject"}</button>
         </div>
       )}
     </div>
@@ -362,7 +422,9 @@ export function ProposalReviewTab() {
             startExtraction.mutate(undefined, { onSuccess: (r) => setRunId(r.id) });
           }}
         >
-          {startExtraction.isPending ? "提交中…" : "分析本章"}
+          {language === "zh"
+            ? startExtraction.isPending ? "提交中…" : "分析本章"
+            : startExtraction.isPending ? "Submitting…" : "Analyze this chapter"}
         </button>
         {run.data?.status === "FAILED" && (
           <button
@@ -372,15 +434,11 @@ export function ProposalReviewTab() {
               startExtraction.mutate({ force: true }, { onSuccess: (r) => setRunId(r.id) });
             }}
           >
-            重新分析
+            {language === "zh" ? "重新分析" : "Re-analyze"}
           </button>
         )}
         {run.data && (
-          <span className="dim">
-            分析：{RUN_STATUS_ZH[run.data.status]}
-            {run.data.valid_event_count > 0 && ` · 发现 ${run.data.valid_event_count} 条情节`}
-            {run.data.proposal_count > 0 && ` · ${run.data.proposal_count} 项待确认`}
-          </span>
+          <span className="dim">{analysisLine(run.data, language)}</span>
         )}
         {/* `errors` 是 `ExtractionErrorCode` 的原始值，不是拼好的中文（国际化第四批·
             笔二起）：`messageForCode("run_error", ...)` 查 `backendMessages.ts` 的
@@ -401,15 +459,28 @@ export function ProposalReviewTab() {
       {retiredKind > 0 && (
         <div className="mnr">
           <span className="empty">
-            还有 {retiredKind} 条旧的「新人物」待确认。系统现在会自己把认不出的人记进
-            花名册，这些不用再处理了 —— 花名册里删错的那一条就行。
+            {language === "zh" ? (
+              <>
+                还有 {retiredKind} 条旧的「新人物」待确认。系统现在会自己把认不出的人记进
+                花名册，这些不用再处理了 —— 花名册里删错的那一条就行。
+              </>
+            ) : (
+              <>
+                There {retiredKind === 1 ? "is" : "are"} still {retiredKind} old “new character”
+                {retiredKind === 1 ? " item" : " items"} pending review. The system now adds
+                unrecognized people to the roster on its own, so these don’t need any more action
+                — just delete the wrong ones from the roster if needed.
+              </>
+            )}
           </span>
         </div>
       )}
 
       {pending.length > 0 && (
         <div className="mnr">
-          <div className="lab">待确认内容（{pending.length}）</div>
+          <div className="lab">
+            {language === "zh" ? `待确认内容（${pending.length}）` : `Pending review (${pending.length})`}
+          </div>
           {pending.map((p) => (
             <ProposalCard
               key={p.id}
@@ -425,9 +496,17 @@ export function ProposalReviewTab() {
       {review.error && <Refusal error={review.error} onStale={() => projects.refetch()} />}
 
       <div className="mnr">
-        <div className="lab">从正文发现的情节（确认后用于后续写作）</div>
+        <div className="lab">
+          {language === "zh"
+            ? "从正文发现的情节（确认后用于后续写作）"
+            : "Events found in the text (confirmed ones are used for future writing)"}
+        </div>
         {(provisionalEvents.data ?? []).length === 0 ? (
-          <span className="empty">本章还没有发现需要确认的情节。</span>
+          <span className="empty">
+            {language === "zh"
+              ? "本章还没有发现需要确认的情节。"
+              : "No events found in this chapter that need confirming yet."}
+          </span>
         ) : (
           <div>
             {(provisionalEvents.data ?? []).map((view) => (
@@ -438,16 +517,19 @@ export function ProposalReviewTab() {
                   onChange={() => toggle(view.event.id)}
                 />
                 <span>
-                  <span className="unconfirmed">未确认</span> {view.event.summary}
+                  <span className="unconfirmed">{language === "zh" ? "未确认" : "Unconfirmed"}</span>{" "}
+                  {view.event.summary}
                   <span className="dim">
                     {" "}
-                    · {view.participants.map((n) => n.name).join("、") || "—"}
+                    · {view.participants.map((n) => n.name).join(language === "zh" ? "、" : ", ") || "—"}
                   </span>
                 </span>
               </label>
             ))}
             <button disabled={selected.size === 0 || confirm.isPending} onClick={confirmSelected}>
-              {confirm.isPending ? "确认中…" : `确认所选（${selected.size}）`}
+              {language === "zh"
+                ? confirm.isPending ? "确认中…" : `确认所选（${selected.size}）`
+                : confirm.isPending ? "Confirming…" : `Confirm selected (${selected.size})`}
             </button>
             {confirm.error && (
               <Refusal error={confirm.error} onStale={() => projects.refetch()} />

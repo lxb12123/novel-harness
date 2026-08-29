@@ -72,37 +72,50 @@ describe("默认摊开哪一版", () => {
 
 describe("屏幕上把它叫什么", () => {
   it("「第 N 稿」用的是 `ordinal`，**那一串内部标识一个字符都不在里面**", () => {
-    expect(draftLabel(REAL)).toBe("第 1 稿");
+    expect(draftLabel(REAL, "zh")).toBe("第 1 稿");
     expect(REAL.id).toMatch(/:/); // 探针：夹具里真有那么个形状
-    expect(draftLabel(REAL)).not.toContain(REAL.id);
+    expect(draftLabel(REAL, "zh")).not.toContain(REAL.id);
+    expect(draftLabel(REAL, "en")).toBe("Draft 1");
   });
 
   it("字数带千位分隔，**而且是手算的**（`toLocaleString` 跟着环境的区域设置变）", () => {
-    expect(unitsLabel(900)).toBe("约 900 字");
-    expect(unitsLabel(2800)).toBe("约 2,800 字");
-    expect(unitsLabel(12000)).toBe("约 12,000 字");
-    expect(unitsLabel(0)).toBe("约 0 字");
+    expect(unitsLabel(900, "zh")).toBe("约 900 字");
+    expect(unitsLabel(2800, "zh")).toBe("约 2,800 字");
+    expect(unitsLabel(12000, "zh")).toBe("约 12,000 字");
+    expect(unitsLabel(0, "zh")).toBe("约 0 字");
+    expect(unitsLabel(2800, "en")).toBe("about 2,800 characters");
   });
 
   it("上面那句话只报事实：写了几稿、哪一章", () => {
-    expect(draftsHeading([REAL])).toBe("这一轮写了 1 稿 · 第 2 章");
-    expect(draftsHeading([REAL, variant({ id: "draft:ID9", chapter: 3 })])).toBe(
+    expect(draftsHeading([REAL], "zh")).toBe("这一轮写了 1 稿 · 第 2 章");
+    expect(draftsHeading([REAL, variant({ id: "draft:ID9", chapter: 3 })], "zh")).toBe(
       "这一轮写了 2 稿 · 第 2、3 章",
     );
     expect(chaptersOf([REAL, variant({ chapter: 3 }), variant({ chapter: 3 })])).toEqual([2, 3]);
+    // 单复数：英文那半不是拼片段，稿数变化时 "draft"/"drafts" 要跟着变。
+    expect(draftsHeading([REAL], "en")).toBe("Wrote 1 draft this round · chapter 2");
+    expect(draftsHeading([REAL, variant({ id: "draft:ID9", chapter: 3 })], "en")).toBe(
+      "Wrote 2 drafts this round · chapters 2, 3",
+    );
   });
 });
 
 describe("有稿子进了书", () => {
   it("**说出来，而且说得出怎么退** —— 落盘不问作者，那就欠他这两件事", () => {
-    const note = landedNote([REAL, variant({ id: "draft:ID44", ordinal: 2, landed: true })]);
+    const note = landedNote([REAL, variant({ id: "draft:ID44", ordinal: 2, landed: true })], "zh");
     expect(note).toContain("第 2 章的第 2 稿");
     expect(note).toContain("历史"); // 退路：正文那边那颗按钮
+    const noteEn = landedNote(
+      [REAL, variant({ id: "draft:ID44", ordinal: 2, landed: true })],
+      "en",
+    );
+    expect(noteEn).toContain("Draft 2 for chapter 2");
+    expect(noteEn).toContain("History");
   });
 
   it("一个都没进书就一个字都不写（零不写）", () => {
-    expect(landedNote([REAL])).toBeNull();
-    expect(landedNote([])).toBeNull();
+    expect(landedNote([REAL], "zh")).toBeNull();
+    expect(landedNote([], "zh")).toBeNull();
   });
 });
 

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useDrafts, useProjects } from "../api/hooks";
 import { COMPARE_OPEN_MAX, openOnCompare } from "../drafts";
+import { useLanguage } from "../language";
 import { readCompareHandoff } from "../route";
 import { DraftCard } from "./DraftCandidates";
 
@@ -49,6 +50,7 @@ function useCompareBook(chapter: number): {
 }
 
 export function DraftCompare({ chapter }: { chapter: number }) {
+  const language = useLanguage((s) => s.language);
   const { book, name, pending, offline } = useCompareBook(chapter);
   const drafts = useDrafts(book, chapter);
   const rows = drafts.data?.drafts ?? [];
@@ -58,48 +60,88 @@ export function DraftCompare({ chapter }: { chapter: number }) {
   // 不是 `rows`（后者每次渲染都是新数组，会把作者手动展开过的那几列一直收回去）。
   useEffect(() => setOpen(openOnCompare(drafts.data?.drafts ?? [])), [drafts.data]);
 
-  const title = name ? `${name} · 第 ${chapter} 章` : `第 ${chapter} 章`;
+  const chapterLabel = language === "zh" ? `第 ${chapter} 章` : `Chapter ${chapter}`;
+  const title = name ? `${name} · ${chapterLabel}` : chapterLabel;
 
   return (
     <div className="compare-page">
       <header className="compare-head">
-        <b>{title} · 并排比几稿</b>
+        <b>
+          {title} · {language === "zh" ? "并排比几稿" : "Compare drafts side by side"}
+        </b>
         <span className="spacer" />
         {/* 这一页只读。**说出来**：不说的话，作者会在这儿找那颗「就用这一版」的按钮。 */}
         <span className="compare-note">
-          这一页只能读。要用哪一版，回工作台跟写作助手说。
+          {language === "zh"
+            ? "这一页只能读。要用哪一版，回工作台跟写作助手说。"
+            : "This page is read-only. To use a version, go back to the workbench and tell the writing assistant."}
         </span>
       </header>
 
-      {(pending || (book && drafts.isPending)) && <p className="compare-say">加载中…</p>}
+      {(pending || (book && drafts.isPending)) && (
+        <p className="compare-say">{language === "zh" ? "加载中…" : "Loading…"}</p>
+      )}
 
       {offline && (
         <p className="compare-say">
-          这会儿连不上工作台的服务。回工作台那个标签页看看它还开着没有，再刷新这一页。
+          {language === "zh"
+            ? "这会儿连不上工作台的服务。回工作台那个标签页看看它还开着没有，再刷新这一页。"
+            : "Can’t reach the workbench’s service right now. Check whether that tab is still open, then refresh this page."}
         </p>
       )}
 
       {!pending && !offline && !book && (
         <p className="compare-say">
-          这个链接没说清是哪本书的第 {chapter} 章。回工作台，在写作助手那儿再点一次
-          「并排比」——那一下会把书一起带过来。
+          {language === "zh" ? (
+            <>
+              这个链接没说清是哪本书的第 {chapter} 章。回工作台，在写作助手那儿再点一次
+              「并排比」——那一下会把书一起带过来。
+            </>
+          ) : (
+            <>
+              This link doesn’t say which book’s chapter {chapter} this is. Go back to the
+              workbench and click “Compare side by side” again from the writing assistant — that
+              will bring the book along.
+            </>
+          )}
         </p>
       )}
 
       {book && drafts.isError && (
-        <p className="compare-say">这一章的稿子没读出来。刷新一下再看，它们还在。</p>
+        <p className="compare-say">
+          {language === "zh"
+            ? "这一章的稿子没读出来。刷新一下再看，它们还在。"
+            : "Couldn’t load this chapter’s drafts. Refresh and check again — they’re still there."}
+        </p>
       )}
 
       {book && drafts.data && rows.length === 0 && (
         <p className="compare-say">
-          第 {chapter} 章这会儿桌上没有稿子。让写作助手写一稿，这一页就有东西了。
+          {language === "zh" ? (
+            <>第 {chapter} 章这会儿桌上没有稿子。让写作助手写一稿，这一页就有东西了。</>
+          ) : (
+            <>
+              There are no drafts on the desk for chapter {chapter} right now. Have the writing
+              assistant write one, and this page will have something to show.
+            </>
+          )}
         </p>
       )}
 
       {rows.length > COMPARE_OPEN_MAX && (
         <p className="compare-say dim">
-          这一章桌上一共 {rows.length} 稿，先摊开最近的 {COMPARE_OPEN_MAX} 份；
-          更早的那几份收着，点「展开」就读得到。
+          {language === "zh" ? (
+            <>
+              这一章桌上一共 {rows.length} 稿，先摊开最近的 {COMPARE_OPEN_MAX} 份；
+              更早的那几份收着，点「展开」就读得到。
+            </>
+          ) : (
+            <>
+              This chapter has {rows.length} draft{rows.length === 1 ? "" : "s"} on the desk in
+              total; the most recent {COMPARE_OPEN_MAX} are shown first. The older ones are
+              collapsed — click “Expand” to read them.
+            </>
+          )}
         </p>
       )}
 

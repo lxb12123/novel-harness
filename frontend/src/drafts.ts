@@ -13,6 +13,7 @@
 //    `src/test/screenGuard.ts` 第三张网认的就是它。
 
 import type { DraftCandidateView } from "./api/types";
+import type { Language } from "./language";
 
 /** 一列正文要读得下去的最窄宽度。
  *
@@ -64,8 +65,8 @@ export function openOnCompare(drafts: readonly DraftCandidateView[]): string[] {
 }
 
 /** 「第 N 稿」。**作者认得的是这个数**（`ordinal`），不是那一串内部标识。 */
-export function draftLabel(draft: DraftCandidateView): string {
-  return `第 ${draft.ordinal} 稿`;
+export function draftLabel(draft: DraftCandidateView, language: Language): string {
+  return language === "zh" ? `第 ${draft.ordinal} 稿` : `Draft ${draft.ordinal}`;
 }
 
 /** 千位分隔。**手写而不是 `toLocaleString`**：那一个的结果跟着运行环境的区域设置变，
@@ -83,13 +84,15 @@ function grouped(n: number): string {
 /**
  * 「约 2,800 字」。
  *
- * ⚠️ **「字」这个量词今天是对的，但它是钉在后端一个常量上的**：起草台恒用中文档
- * （`agent/drafting.py::AGENT_DRAFT_LENGTH` = 中文默认长度，`units` 数的是非空白字符）。
- * 那一天起草跟着语言走了（英文数的是词），**这一行就开始骗人，而没有任何东西会拦住它**
- * ——候选那份出参上没有语言这一列，前端推不出来。
+ * ⚠️ **「字」/「characters」这个量词今天是对的，但它是钉在后端一个常量上的**：
+ * 起草台恒用中文档（`agent/drafting.py::AGENT_DRAFT_LENGTH` = 中文默认长度，
+ * `units` 数的是非空白字符）。那一天起草跟着**书的语言**走了（英文数的是词），
+ * **这一行就开始骗人，而没有任何东西会拦住它**——候选那份出参上没有语言这一列，
+ * 前端推不出来。**这条警告跟界面语言无关**：`units` 数的是书的正文，不是这句
+ * 提示本身；提示本身翻不翻译不会让这个量词更准或更不准。
  */
-export function unitsLabel(units: number): string {
-  return `约 ${grouped(units)} 字`;
+export function unitsLabel(units: number, language: Language): string {
+  return language === "zh" ? `约 ${grouped(units)} 字` : `about ${grouped(units)} characters`;
 }
 
 /** 这一批稿子摆在哪几章。**后端已经排好序**，这儿只去重不重排。 */
@@ -102,11 +105,19 @@ export function chaptersOf(drafts: readonly DraftCandidateView[]): number[] {
  *
  * **不说「给你写了三个版本，挑一个」**——那是在替助手表态；它自己那句话在回执里，
  * 这儿只报事实（§10 约束 8：说得出来的才说）。
+ *
+ * **整句模板**：英文那半要处理稿数的单复数（1 draft / 2 drafts），
+ * 拼片段会在这个数变化时漏掉或多出一个 s。
  */
-export function draftsHeading(drafts: readonly DraftCandidateView[]): string {
+export function draftsHeading(drafts: readonly DraftCandidateView[], language: Language): string {
   const chapters = chaptersOf(drafts);
-  const where = chapters.length === 1 ? `第 ${chapters[0]} 章` : `第 ${chapters.join("、")} 章`;
-  return `这一轮写了 ${drafts.length} 稿 · ${where}`;
+  if (language === "zh") {
+    const where = chapters.length === 1 ? `第 ${chapters[0]} 章` : `第 ${chapters.join("、")} 章`;
+    return `这一轮写了 ${drafts.length} 稿 · ${where}`;
+  }
+  const where =
+    chapters.length === 1 ? `chapter ${chapters[0]}` : `chapters ${chapters.join(", ")}`;
+  return `Wrote ${drafts.length} draft${drafts.length === 1 ? "" : "s"} this round · ${where}`;
 }
 
 /**
@@ -118,12 +129,20 @@ export function draftsHeading(drafts: readonly DraftCandidateView[]): string {
  * 自己没写的字（ADR 0021 的「代价」第三条点名了这一档：闸挡不住它，只能靠界面）。
  *
  * 一个都没落盘时返回 `null`：**没发生的事不写**（零不写，同 `chat.ts::receiptNotes`）。
+ *
+ * **整句模板**：英文那半要处理落盘稿数的单复数（has / have），拼片段会漏掉这个变化。
  */
-export function landedNote(drafts: readonly DraftCandidateView[]): string | null {
+export function landedNote(drafts: readonly DraftCandidateView[], language: Language): string | null {
   const landed = drafts.filter((d) => d.landed);
   if (landed.length === 0) return null;
-  const which = landed.map((d) => `第 ${d.chapter} 章的${draftLabel(d)}`).join("、");
-  return `${which}已经写进书里了。不想要的话，在正文那边的「历史」里退回上一版。`;
+  if (language === "zh") {
+    const which = landed.map((d) => `第 ${d.chapter} 章的${draftLabel(d, language)}`).join("、");
+    return `${which}已经写进书里了。不想要的话，在正文那边的「历史」里退回上一版。`;
+  }
+  const which = landed
+    .map((d) => `${draftLabel(d, language)} for chapter ${d.chapter}`)
+    .join(", ");
+  return `${which} ${landed.length === 1 ? "has" : "have"} already been written into the book. If you don’t want it, use “History” on the text side to revert to the previous version.`;
 }
 
 /** 并排比那一页的地址。**哈希路由 = 零新基础设施**：工作台本来就是本地浏览器应用

@@ -11,6 +11,7 @@ import {
   sideBySide,
   unitsLabel,
 } from "../drafts";
+import { useLanguage } from "../language";
 import { writeCompareHandoff } from "../route";
 
 // 桌上摆着的那几稿（[ADR 0022](docs/adr/0022-drafting-is-a-proposal-not-a-write.md)）。
@@ -35,13 +36,22 @@ import { writeCompareHandoff } from "../route";
 
 /** 一稿的全文。**只在摊开的时候才挂载**，所以「取全文」和「作者要看」是同一件事。 */
 function DraftBody({ pid, draft }: { pid: string; draft: DraftCandidateView }) {
+  const language = useLanguage((s) => s.language);
   const detail = useDraftText(pid, draft.id, true);
   if (detail.data) return <p className="draft-text">{detail.data.text}</p>;
   // 两句都不解释「为什么」——这一层不知道（§10 约束 8）。
   if (detail.isError) {
-    return <p className="draft-loading">这一稿没读出来。刷新一下再看，它还在。</p>;
+    return (
+      <p className="draft-loading">
+        {language === "zh"
+          ? "这一稿没读出来。刷新一下再看，它还在。"
+          : "Couldn’t load this draft. Refresh and check again — it’s still there."}
+      </p>
+    );
   }
-  return <p className="draft-loading">正在把这一稿读出来…</p>;
+  return (
+    <p className="draft-loading">{language === "zh" ? "正在把这一稿读出来…" : "Loading this draft…"}</p>
+  );
 }
 
 /**
@@ -61,15 +71,21 @@ export function DraftCard({
   open: boolean;
   onToggle?: () => void;
 }) {
+  const language = useLanguage((s) => s.language);
   return (
     <article className={open ? "draft-card open" : "draft-card"}>
       <div className="draft-card-head">
-        <b>{draftLabel(draft)}</b>
+        <b>{draftLabel(draft, language)}</b>
         <span className="draft-meta">
-          第 {draft.chapter} 章 · {unitsLabel(draft.units)}
+          {language === "zh" ? `第 ${draft.chapter} 章` : `Chapter ${draft.chapter}`} ·{" "}
+          {unitsLabel(draft.units, language)}
         </span>
         {/* 「推荐位」就是它 —— 一个动作，不是一句评价（ADR 0022）。 */}
-        {draft.landed && <span className="draft-badge">已经写进这一章</span>}
+        {draft.landed && (
+          <span className="draft-badge">
+            {language === "zh" ? "已经写进这一章" : "Written into this chapter"}
+          </span>
+        )}
       </div>
       {/* **这一稿被砍断过。** 画在自述和正文**前面**，因为它改变的是后面那两样该怎么读：
           底下那段字断在半句上是**它没写完**，不是写作模型的写法。
@@ -89,10 +105,14 @@ export function DraftCard({
         <button
           className="draft-toggle"
           aria-expanded={open}
-          aria-label={`${open ? "收起" : "展开"}${draftLabel(draft)}`}
+          aria-label={
+            language === "zh"
+              ? `${open ? "收起" : "展开"}${draftLabel(draft, language)}`
+              : `${open ? "Collapse" : "Expand"} ${draftLabel(draft, language)}`
+          }
           onClick={onToggle}
         >
-          {open ? "收起" : "展开"}
+          {language === "zh" ? (open ? "收起" : "展开") : open ? "Collapse" : "Expand"}
         </button>
       )}
     </article>
@@ -110,13 +130,18 @@ export function CompareLink({
   chapter: number;
   children: ReactNode;
 }) {
+  const language = useLanguage((s) => s.language);
   return (
     <a
       className="draft-compare"
       href={comparePath(chapter)}
       target="_blank"
       rel="noopener"
-      title="在新标签页打开：这一章还摆在桌上的几稿并排"
+      title={
+        language === "zh"
+          ? "在新标签页打开：这一章还摆在桌上的几稿并排"
+          : "Open in a new tab: the drafts still on the desk for this chapter, side by side"
+      }
       onClick={() => writeCompareHandoff({ book: pid, chapter })}
     >
       {children}
@@ -131,6 +156,7 @@ export function DraftCandidates({
   pid: string;
   drafts: readonly DraftCandidateView[];
 }) {
+  const language = useLanguage((s) => s.language);
   const boxRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   const [open, setOpen] = useState<string[]>(() => openByDefault(drafts));
@@ -162,16 +188,21 @@ export function DraftCandidates({
   if (drafts.length === 0) return null;
 
   const wide = sideBySide(width, drafts.length);
-  const note = landedNote(drafts);
+  const note = landedNote(drafts, language);
 
   return (
-    <section className="drafts" aria-label="这一轮写出来的稿子">
+    <section
+      className="drafts"
+      aria-label={language === "zh" ? "这一轮写出来的稿子" : "Drafts written this round"}
+    >
       <div className="drafts-head">
-        <b>{draftsHeading(drafts)}</b>
+        <b>{draftsHeading(drafts, language)}</b>
         <span className="spacer" />
         {chaptersOf(drafts).map((chapter) => (
           <CompareLink key={chapter} pid={pid} chapter={chapter}>
-            并排比第 {chapter} 章的稿子 ↗
+            {language === "zh"
+              ? `并排比第 ${chapter} 章的稿子 ↗`
+              : `Compare chapter ${chapter}’s drafts side by side ↗`}
           </CompareLink>
         ))}
       </div>
