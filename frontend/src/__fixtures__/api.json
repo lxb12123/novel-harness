@@ -1497,6 +1497,50 @@
       "summary": "萧决得知血脉秘密。"
     }
   ],
+  "characterEventsCastChanged": [
+    {
+      "cast_changed": {
+        "actions": [],
+        "chapter_number": 1,
+        "created_at": "<ts>",
+        "id": "notif:ID81",
+        "jump": {
+          "occurrence_k": 0,
+          "para_index": 2,
+          "quote_text": "萧决在青云城主府第一次听说了血脉秘密的真相。"
+        },
+        "kind": "event_cast_changed",
+        "project_id": "project:ID1",
+        "source_sha256": null,
+        "status": "OPEN",
+        "subject_id": "event:ID79",
+        "subject_type": "canon_event",
+        "summary_sha256": null,
+        "title_code": "event_cast_changed_title",
+        "title_params": {
+          "remaining_count": 1,
+          "removed_name": "沈知微的师弟"
+        }
+      },
+      "chapter_number": 1,
+      "event_id": "event:ID79",
+      "knowers": [
+        {
+          "id": "character:ID80",
+          "label": "Character",
+          "name": "沈知微"
+        }
+      ],
+      "participants": [
+        {
+          "id": "character:ID80",
+          "label": "Character",
+          "name": "沈知微"
+        }
+      ],
+      "summary": "沈知微和师弟一起发现了血脉秘密的真相。"
+    }
+  ],
   "characterProfile": {
     "aliases": [
       {

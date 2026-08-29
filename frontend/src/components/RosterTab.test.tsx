@@ -171,6 +171,68 @@ describe("花名册", () => {
     }
   });
 
+  it("这件事掉了参与者时有一颗红点，点开是整句人话 + 跳转 + 「知道了」（034 补记）", async () => {
+    // **吃真 dump**：`characterEventsCastChanged` 是删掉「沈知微的师弟」之后
+    // 真实产出的形状（`title_code`/`title_params`/`jump` 全是后端给的）。
+    // 用哪个人当 `selectedNodeId` 不重要——这里借一个真花名册里的人物，
+    // 只控制事件路由的响应体（同上面「一件事跟几个人相关」那条测试的手法）。
+    const [row] = fixtures.characterEventsCastChanged;
+    const hero = fixtures.rosterWithCounts.find((n) => n.label === "Character")!;
+    useCoords.setState({ projectId: "project:ID1", selectedNodeId: hero.id, chapter: 1 });
+    const user = userEvent.setup();
+    renderWithApi(<RosterTab />, [
+      { match: /\/characters\/[^/]+\/events$/, body: [row] },
+    ]);
+
+    // 卡片上不摆机器词：这件事的 kind/id 不该原样出现在屏幕上。
+    await screen.findByText(new RegExp(row.summary));
+    expect(document.body.textContent).not.toMatch(/event_cast_changed/);
+    expect(document.body.textContent).not.toContain(row.cast_changed!.id);
+
+    // 默认收着：只有一颗点，没有整句话。
+    const dot = document.querySelector(".cast-dot") as HTMLElement;
+    expect(dot).toBeTruthy();
+    expect(screen.queryByText(/被移出了这件事/)).toBeNull();
+
+    await user.click(dot);
+    // 整句话来自 title_code + title_params，不是前端编的第二份措辞。
+    expect(
+      await screen.findByText(/「沈知微的师弟」被移出了这件事.*还有 1 人牵扯其中/),
+    ).toBeInTheDocument();
+
+    // 跳转坐标是后端给的锚，不从文案里反推。
+    await user.click(screen.getByRole("button", { name: "去这一句 →" }));
+    expect(useCoords.getState().chapter).toBe(row.cast_changed!.chapter_number);
+    expect(useCoords.getState().highlight).toEqual(row.cast_changed!.jump);
+  });
+
+  it("「知道了」发的是 resolve 不是 ignore（去重键不含 hash，看过了就该终态）", async () => {
+    const [row] = fixtures.characterEventsCastChanged;
+    const hero = fixtures.rosterWithCounts.find((n) => n.label === "Character")!;
+    useCoords.setState({ projectId: "project:ID1", selectedNodeId: hero.id });
+    const user = userEvent.setup();
+    renderWithApi(<RosterTab />, [
+      { match: /\/characters\/[^/]+\/events$/, body: [row] },
+      { method: "POST", match: /\/notifications\/[^/]+\/resolve$/, body: { id: row.cast_changed!.id, status: "RESOLVED" } },
+    ]);
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+    await user.click(await screen.findByRole("button", { name: /这件事的参与者变了/ }));
+    await user.click(screen.getByRole("button", { name: "知道了" }));
+
+    await waitFor(() =>
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.stringContaining(`/notifications/${encodeURIComponent(row.cast_changed!.id)}/resolve`),
+        expect.objectContaining({ method: "POST" }),
+      ),
+    );
+    expect(
+      fetchSpy.mock.calls.some(
+        ([url]) => String(url).includes("/ignore"),
+      ),
+    ).toBe(false);
+  });
+
   it("空的时候说清楚为什么空，不写「暂无数据」", async () => {
     // **这一格今天在真书上必然是空的**（那本 158 章的书里事件 0 条），
     // 所以空态那句话是这一件唯一每天都被看见的部分。

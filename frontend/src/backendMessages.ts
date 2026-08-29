@@ -268,9 +268,14 @@ const MESSAGES: Record<string, Template> = {
     return `${head}${separator}${params.issue_message ?? ""}${more}${tail}`;
   },
   // removed_name / remaining_count（034）
-  event_cast_changed_title: {
-    zh: "「{removed_name}」被移出了这件事 —— 还有 {remaining_count} 人牵扯其中，去看看这段还对不对。",
-    en: '"{removed_name}" was removed from this event — {remaining_count} other people are still tied to it. Take a look and see if it still holds up.',
+  event_cast_changed_title: (params, language) => {
+    const removedName = params.removed_name;
+    const remainingCount = Number(params.remaining_count ?? 0);
+    if (language === "zh") {
+      return `「${removedName}」被移出了这件事 —— 还有 ${remainingCount} 人牵扯其中，去看看这段还对不对。`;
+    }
+    const who = remainingCount === 1 ? "person is" : "people are";
+    return `"${removedName}" was removed from this event — ${remainingCount} other ${who} still tied to it. Take a look and see if it still holds up.`;
   },
   // ── extract/runner.py ─────────────────────────────────────────────────
   // lost / unresolved（这一档丢弃的原因是不是「认不出人」）/ proposal_count

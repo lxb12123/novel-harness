@@ -1111,6 +1111,78 @@ def test_frontend_fixture_matches_the_real_api(
     grab("stateDims", client.get(f"{base}/canon/state-dims"))
     grab("canonEdgeState", client.get(f"{base}/canon/edges/{_state_edge_id}"))
 
+    # 角色卡的红点（034 补记）：一件事挂两个新人物，删掉其中一个，
+    # 剩下那个人身上这条事件该带一条非空 `cast_changed`。
+    #
+    # **不用「李管家」**：他是前面别名重指等夹具的真实主体，且被一条
+    # proposal 确认链引用着——SQLite 那条「confirmation source links are
+    # immutable」的完整性约束会拒绝删除。真书里这类人本来就删不掉（同一条
+    # 约束保护的是审计链，不是这条测试的 bug），所以这里另建两个干净的人物，
+    # 不去踩一个已经被别的夹具用掉的节点。
+    #
+    # **放在本节最末**：这是删除，前面所有夹具都已经拿到它们要的样子，
+    # 不会被这一下影响。
+    from novel_harness.declare import Ledger
+    from novel_harness.graph import NodeLabel
+
+    _cast_conn = connect(book["db"])
+    try:
+        _cast_store = SqliteStoryGraph(_cast_conn)
+        _ledger = Ledger(_cast_store, _cast_conn, pid)
+        _stayer = _ledger.declare_node(NodeLabel.CHARACTER, "沈知微").id
+        _leaver = _ledger.declare_node(NodeLabel.CHARACTER, "沈知微的师弟").id
+        _cast_conn.commit()
+        _chapter_row2 = _cast_conn.execute(
+            "SELECT c.id AS chapter_id, s.id AS snapshot_id, s.text AS text "
+            "FROM chapter c JOIN chapter_snapshot s ON s.chapter_id = c.id "
+            "WHERE c.project_id = ? AND c.number = 1 AND s.text_sha256 = c.text_sha256",
+            (pid,),
+        ).fetchone()
+        _cast_report = ExtractionService(
+            conn=_cast_conn,
+            graph=_cast_store,
+            event_store=SqliteEventStore(_cast_conn),
+            proposal_store=SqliteProposalStore(_cast_conn),
+        ).ingest(
+            pid,
+            ChapterText(
+                chapter_id=_chapter_row2["chapter_id"],
+                number=1,
+                snapshot_id=_chapter_row2["snapshot_id"],
+                text=_chapter_row2["text"],
+            ),
+            RawChapterAnalysis(
+                events=(
+                    RawEvent(
+                        summary="沈知微和师弟一起发现了血脉秘密的真相。",
+                        quote="萧决在青云城主府第一次听说了血脉秘密的真相。",
+                        participants=("沈知微", "沈知微的师弟"),
+                        knowers=("沈知微", "沈知微的师弟"),
+                        confidence=0.95,
+                    ),
+                ),
+                state_updates=(),
+                character_profiles=(),
+            ),
+            prompt_hash="prompt:cast-changed-contract",
+        )
+        promote_clean_facts(
+            _cast_conn, pid, _cast_report, graph=_cast_store, events=SqliteEventStore(_cast_conn)
+        )
+        _cast_conn.commit()
+    finally:
+        _cast_conn.close()
+
+    delete_resp = client.delete(
+        f"{base}/nodes/{_leaver}",
+        params={"expected_canon_version": client.get(base).json()["canon_version"]},
+    )
+    assert delete_resp.status_code == 200, delete_resp.text
+    grab(
+        "characterEventsCastChanged",
+        client.get(f"{base}/characters/{_stayer}/events"),
+    )
+
     frozen = json.dumps(dump, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
 
     if os.environ.get("NH_UPDATE_FIXTURES"):

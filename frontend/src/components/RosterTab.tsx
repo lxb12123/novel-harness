@@ -4,12 +4,14 @@ import {
   useDeleteNode,
   useProjects,
   useRenameNode,
+  useResolveEventCastChanged,
   useRoster,
 } from "../api/hooks";
-import type { RosterEntry } from "../api/types";
-import { nodeLabelText } from "../backendMessages";
+import type { RosterEntry, SystemNotification } from "../api/types";
+import { messageForCode, nodeLabelText } from "../backendMessages";
+import { useOpenChapter } from "../chapterNavigation";
 import { readCorrectionError } from "../correctionError";
-import { useLanguage } from "../language";
+import { type Language, useLanguage } from "../language";
 import { useCoords } from "../store";
 import { CharacterBasicInfo } from "./CharacterBasicInfo";
 import { RosterDrawer } from "./RosterDrawer";
@@ -70,6 +72,77 @@ function bySignal(rows: RosterEntry[], order: Order): RosterEntry[] {
   );
 }
 
+/** 一件事掉了参与者时挂在它上面的那颗红点（Task 8 补记 / 034）。
+ *
+ *  **默认只是一个点**：删花名册条目 2026-08-28 起不再拒绝（维护者裁定），
+ *  于是这件事上曾经在场/知情的某个人可能已经不在了——这颗点就是那件事
+ *  「事后可见可改」的落点。点开才展开成一句人话 + 跳转 + 「知道了」，
+ *  不常驻占地方（真书上这一档绝大多数时候不存在）。
+ *
+ *  **不摆机器词**：卡片上不出现 `event_cast_changed` 或者事件 id，
+ *  展开的那句话来自 `title_code`/`title_params` 整句渲染（同
+ *  `SystemNotifications.tsx` 的 `noticeBody`），坐标（`jump`）也是后端给的
+ *  同一套锚，不另造第二份定位逻辑。 */
+function EventCastAlert({
+  notification,
+  language,
+}: {
+  notification: SystemNotification;
+  language: Language;
+}) {
+  const { projectId, setHighlight } = useCoords();
+  const openChapter = useOpenChapter();
+  const resolve = useResolveEventCastChanged(projectId ?? "");
+  const [open, setOpen] = useState(false);
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        className="cast-dot"
+        onClick={() => setOpen(true)}
+        aria-label={
+          language === "zh"
+            ? "这件事的参与者变了，点开看看"
+            : "The people in this event changed — click to see"
+        }
+        title={language === "zh" ? "这件事的参与者变了" : "The people in this event changed"}
+      />
+    );
+  }
+
+  const message =
+    messageForCode(notification.title_code ?? "", language, notification.title_params ?? {}) ??
+    notification.title_code ??
+    "";
+
+  const goToQuote = () => {
+    if (notification.chapter_number !== null) openChapter(notification.chapter_number);
+    if (notification.jump) setHighlight(notification.jump);
+  };
+
+  return (
+    <div className="cast-alert">
+      <span>{message}</span>
+      <div className="actions">
+        <button type="button" className="link" onClick={goToQuote}>
+          {language === "zh" ? "去这一句 →" : "Go to this sentence →"}
+        </button>
+        <button
+          type="button"
+          className="link"
+          disabled={resolve.isPending}
+          onClick={() => resolve.mutate(notification.id)}
+        >
+          {language === "zh"
+            ? resolve.isPending ? "正在处理…" : "知道了"
+            : resolve.isPending ? "Marking as seen…" : "Got it"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 /** 这个人的事件时间线 —— **事件是比较小的一条总结，挂在跟它相关的每个人下面。**
  *
  *  一件事跟三个人相关，这三个人的线上各出现一次（存储那一侧本来就是多对多）。
@@ -125,6 +198,9 @@ function CharacterTimeline({ characterId, name }: { characterId: string; name: s
                 {language === "zh" ? "还有：" : "Also: "}
                 {others.map((n) => n.name).join(language === "zh" ? "、" : ", ")}
               </span>
+            )}
+            {row.cast_changed && (
+              <EventCastAlert notification={row.cast_changed} language={language} />
             )}
           </div>
         );
