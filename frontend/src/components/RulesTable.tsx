@@ -1,4 +1,5 @@
 import { useRecordedRules } from "../api/hooks";
+import { useLanguage } from "../language";
 import { useCoords } from "../store";
 
 // 作者交代过的那些规矩，摆成一张回头能翻的表
@@ -28,13 +29,21 @@ import { useCoords } from "../store";
 // ——而它绝大多数时候是空的（`remember_rule` 在真书上一次都没开过火）。
 
 export function RulesTable() {
+  const language = useLanguage((s) => s.language);
   const { projectId } = useCoords();
   const recorded = useRecordedRules(projectId);
 
-  if (recorded.isLoading) return <div className="empty">读取中…</div>;
+  if (recorded.isLoading)
+    return <div className="empty">{language === "zh" ? "读取中…" : "Loading…"}</div>;
   if (recorded.isError) {
     // **读不出来 ≠ 一条都没有。** 前者的下一步是刷新，后者的下一步是接着写。
-    return <div className="err-box">你交代过的规矩这会儿没读出来。刷新一下再看。</div>;
+    return (
+      <div className="err-box">
+        {language === "zh"
+          ? "你交代过的规矩这会儿没读出来。刷新一下再看。"
+          : "Couldn't load the rules you've told it — refresh and check again."}
+      </div>
+    );
   }
 
   const rules = recorded.data?.rules ?? [];
@@ -46,9 +55,23 @@ export function RulesTable() {
     // 别让他以为功能坏了（`remember_rule` 在真书上一次都没开过火）。
     return (
       <p className="empty">
-        {scanned === 0
-          ? "你还没跟写作助手说过话。等你随口交代一句「这一章别写打斗」，它会记在这儿。"
-          : "你跟它说过话，但还没有哪一句被当成交代记下来。它只记「怎么写」那一类的话。"}
+        {language === "zh" ? (
+          scanned === 0 ? (
+            <>你还没跟写作助手说过话。等你随口交代一句「这一章别写打斗」，它会记在这儿。</>
+          ) : (
+            <>你跟它说过话，但还没有哪一句被当成交代记下来。它只记「怎么写」那一类的话。</>
+          )
+        ) : scanned === 0 ? (
+          <>
+            You haven’t talked to the writing assistant yet. Once you mention something in
+            passing, like “no fight scenes in this chapter”, it’ll show up here.
+          </>
+        ) : (
+          <>
+            You’ve talked to it, but nothing you said has been recorded as an instruction yet. It
+            only records the “how to write this” kind of thing.
+          </>
+        )}
       </p>
     );
   }
@@ -57,23 +80,27 @@ export function RulesTable() {
     <table className="ruletable">
       <thead>
         <tr>
-          <th>写到第几章时说的</th>
-          <th>你交代的</th>
-          <th>它当时判定管到</th>
-          <th>哪一段对话</th>
+          <th>{language === "zh" ? "写到第几章时说的" : "Said while writing which chapter"}</th>
+          <th>{language === "zh" ? "你交代的" : "What you told it"}</th>
+          <th>{language === "zh" ? "它当时判定管到" : "It judged this applies through"}</th>
+          <th>{language === "zh" ? "哪一段对话" : "Which conversation"}</th>
         </tr>
       </thead>
       <tbody>
         {rules.map((rule, i) => (
           <tr key={`${rule.chat_id}#${rule.chapter}#${i}`}>
-            <td className="rt-ch">第 {rule.chapter} 章</td>
+            <td className="rt-ch">
+              {language === "zh" ? `第 ${rule.chapter} 章` : `Chapter ${rule.chapter}`}
+            </td>
             <td className="rt-text">{rule.text}</td>
             {/* **空的时候照实说**（那是迁移 016 之前记下的，模型当时没有这一格）。
                 替它编一句，读起来就像是它当时真的判断过。 */}
             <td className={rule.until ? "rt-until" : "rt-until dim"}>
-              {rule.until || "没记下"}
+              {rule.until || (language === "zh" ? "没记下" : "Not recorded")}
             </td>
-            <td className="rt-chat">{rule.chat_title || "没起名字的一段"}</td>
+            <td className="rt-chat">
+              {rule.chat_title || (language === "zh" ? "没起名字的一段" : "An unnamed conversation")}
+            </td>
           </tr>
         ))}
       </tbody>

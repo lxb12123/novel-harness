@@ -57,15 +57,18 @@ const runErrorText = (code: string, language: Language): string =>
   messageForCode("run_error", language, { code }) ?? code;
 
 /** 没跑成的那几种态。成功的不写字——一行「完成」乘以几千行就是噪音。 */
-const STATUS_ZH: Record<string, string> = {
-  failed: "失败",
-  running: "进行中",
-  pending: "排队中",
+const STATUS_ZH: Record<string, { zh: string; en: string }> = {
+  failed: { zh: "失败", en: "Failed" },
+  running: { zh: "进行中", en: "Running" },
+  pending: { zh: "排队中", en: "Queued" },
 };
 
 /** 后端一句话都没写时才轮到的那一句（同 `SummaryTab`）：**不解释「为什么」**
  *  ——不知道就说不知道（§10 约束 8）。 */
-const RETRY_FAILED = "没能把这一章重新排上队，而系统没能说清是为什么。过一会儿再试一次。";
+const RETRY_FAILED = (language: Language): string =>
+  language === "zh"
+    ? "没能把这一章重新排上队，而系统没能说清是为什么。过一会儿再试一次。"
+    : "Couldn't put this chapter back in the queue, and the system couldn't say why. Try again in a moment.";
 
 /** 跳转坐标 → 右栏的哪一格。
  *
@@ -130,16 +133,18 @@ const CAN_EDIT_HERE: Record<JumpTarget, boolean> = {
  *  两者在出参形状上长得一模一样（差别只在 `label` 的措辞里，而从措辞反推是这一页
  *  第一条禁令）。所以这句只说**「从这儿点不到某一处」**，绝不说「改不了」——
  *  把 ② 说成没救了，正好否掉 ADR 0020 押的那条退路。 */
-function jumpNote(entry: ActivityEntry, jump: ActivityJump): string | null {
+function jumpNote(entry: ActivityEntry, jump: ActivityJump, language: Language): string | null {
   if (CAN_EDIT_HERE[jump.target] && jump.endpoints.length > 0) return null;
   // 只有「改了东西」的那一行值得说这句：一次模型调用本来就没有什么可改的。
-  return entry.source === "decision"
+  if (entry.source !== "decision") return null;
+  return language === "zh"
     ? "这一步改动的内容，从这里点不到具体的某一处，只能先跳到那一章。"
-    : null;
+    : "The content this step changed can't be clicked through to a specific spot from here — you can only jump to the chapter first.";
 }
 
 /** 数字。**null 是「没记」不是 0**（§10 约束 8）：一张写着 0 的账单是假的。 */
-const num = (value: number | null): string => (value === null ? "未记录" : String(value));
+const num = (value: number | null, language: Language): string =>
+  value === null ? (language === "zh" ? "未记录" : "Not recorded") : String(value);
 
 /** 一笔钱。**后端给的是美元，而且是标价估算，不是账单。**
  *
@@ -151,10 +156,10 @@ const num = (value: number | null): string => (value === null ? "未记录" : St
  *     走中转、用免费额度 —— 把估算摆成账单，比不摆更坏。
  *
  *  小到显示不出来的那些不写「约 $0.00」（那读起来像免费），写「不到 $0.01」。 */
-export const money = (value: number | null): string => {
-  if (value === null) return "未记录";
-  if (value > 0 && value < 0.01) return "不到 $0.01";
-  return `约 $${value.toFixed(2)}`;
+export const money = (value: number | null, language: Language): string => {
+  if (value === null) return language === "zh" ? "未记录" : "Not recorded";
+  if (value > 0 && value < 0.01) return language === "zh" ? "不到 $0.01" : "Under $0.01";
+  return language === "zh" ? `约 $${value.toFixed(2)}` : `about $${value.toFixed(2)}`;
 };
 
 /** 用量那一格 —— **「已经知道的那些的合计」和「全部的合计」不是一回事**。
@@ -172,23 +177,43 @@ export const money = (value: number | null): string => {
  *  **「这个数不是全部」必须写在屏幕上，不能只挂在 title 里**：作者要判断的正是这件事，
  *  title 是补一句为什么，不是藏一半真相的地方。 */
 function TokenCell({ t }: { t: CostTotals }) {
+  const language = useLanguage((s) => s.language);
   const unreported = t.calls - t.metered_calls;
   if (t.metered_calls === 0)
     return (
-      <span title="这几次模型服务商都没有回报用量 —— 是这个数拿不到，不是没有用。">
-        用量未记录
+      <span
+        title={
+          language === "zh"
+            ? "这几次模型服务商都没有回报用量 —— 是这个数拿不到，不是没有用。"
+            : "The model provider didn't report usage for any of these calls — the number is unavailable, not zero."
+        }
+      >
+        {language === "zh" ? "用量未记录" : "Usage not recorded"}
       </span>
     );
   return (
     <span
       title={
         unreported > 0
-          ? `另外 ${unreported} 次模型服务商没有回报用量，所以这里只是其余几次的合计。`
+          ? language === "zh"
+            ? `另外 ${unreported} 次模型服务商没有回报用量，所以这里只是其余几次的合计。`
+            : `The model provider didn't report usage for ${unreported} other call${unreported === 1 ? "" : "s"}, so this is only the total of the rest.`
           : undefined
       }
     >
-      读入 {num(t.tokens_in)} / 生成 {num(t.tokens_out)} token
-      {unreported > 0 ? `（另有 ${unreported} 次没报，实际更多）` : ""}
+      {language === "zh" ? (
+        <>
+          读入 {num(t.tokens_in, language)} / 生成 {num(t.tokens_out, language)} token
+          {unreported > 0 ? `（另有 ${unreported} 次没报，实际更多）` : ""}
+        </>
+      ) : (
+        <>
+          in {num(t.tokens_in, language)} / out {num(t.tokens_out, language)} tokens
+          {unreported > 0
+            ? ` (${unreported} more call${unreported === 1 ? "" : "s"} not reported — actual usage is higher)`
+            : ""}
+        </>
+      )}
     </span>
   );
 }
@@ -210,24 +235,45 @@ function TokenCell({ t }: { t: CostTotals }) {
  *  **「这个数不是全部」写在屏幕上，不是只挂在 title 里**（同 `TokenCell`）：
  *  作者要判断的正是这件事。 */
 function CostCell({ t }: { t: CostTotals }) {
+  const language = useLanguage((s) => s.language);
   const unpriced = t.calls - t.priced_calls;
   if (t.priced_calls === 0)
     return (
-      <span title="这几次都算不出价钱 —— 自建的端点、公开标价表里没有的模型、或者服务商没回报用量。是这个数拿不到，不是没花钱。">
-        花费未记录
+      <span
+        title={
+          language === "zh"
+            ? "这几次都算不出价钱 —— 自建的端点、公开标价表里没有的模型、或者服务商没回报用量。是这个数拿不到，不是没花钱。"
+            : "The cost couldn't be worked out for any of these calls — a self-hosted endpoint, a model not in the public pricing table, or usage the provider didn't report. The number is unavailable, not zero."
+        }
+      >
+        {language === "zh" ? "花费未记录" : "Cost not recorded"}
       </span>
     );
   return (
     <span
       title={
-        "按各家的公开标价估的。你的实际账单可能不一样——有折扣、走中转、或者用的是免费额度。" +
-        (unpriced > 0
-          ? `另外 ${unpriced} 次算不出价钱，所以这里只是其余几次的合计。`
-          : "")
+        language === "zh"
+          ? "按各家的公开标价估的。你的实际账单可能不一样——有折扣、走中转、或者用的是免费额度。" +
+            (unpriced > 0 ? `另外 ${unpriced} 次算不出价钱，所以这里只是其余几次的合计。` : "")
+          : "Estimated from each provider's public pricing. Your actual bill may differ — discounts, relays, or a free quota all change it." +
+            (unpriced > 0
+              ? ` The cost couldn't be worked out for ${unpriced} other call${unpriced === 1 ? "" : "s"}, so this is only the total of the rest.`
+              : "")
       }
     >
-      花费 {money(t.cost)}
-      {unpriced > 0 ? `（另有 ${unpriced} 次算不出，实际更多）` : ""}
+      {language === "zh" ? (
+        <>
+          花费 {money(t.cost, language)}
+          {unpriced > 0 ? `（另有 ${unpriced} 次算不出，实际更多）` : ""}
+        </>
+      ) : (
+        <>
+          cost {money(t.cost, language)}
+          {unpriced > 0
+            ? ` (${unpriced} more call${unpriced === 1 ? "" : "s"} not priced — actual cost is higher)`
+            : ""}
+        </>
+      )}
     </span>
   );
 }
@@ -235,6 +281,7 @@ function CostCell({ t }: { t: CostTotals }) {
 /** 这本书到今天为止用掉多少。**用量和花费各是一对「合计 + 其中几条算得出」**，
  *  两格都得说清那个数是不是全部（§10 约束 8：零和半个数都要带着理由）。 */
 function UsageStrip() {
+  const language = useLanguage((s) => s.language);
   const { projectId } = useCoords();
   const runs = useRuns(projectId);
   const data = runs.data;
@@ -243,11 +290,27 @@ function UsageStrip() {
   // 零带着理由：一排「0 次 / 0 token / 花费未记录」看起来像账没记上，
   // 而真相通常只是这本书还没让系统整理过。
   if (data.run_count === 0 && t.calls === 0)
-    return <div className="log-usage">还没有用过模型 —— 系统整理过这本书之后，用量会记在这里</div>;
+    return (
+      <div className="log-usage">
+        {language === "zh" ? (
+          <>还没有用过模型 —— 系统整理过这本书之后，用量会记在这里</>
+        ) : (
+          <>No model calls yet — usage will show up here once the system processes this book</>
+        )}
+      </div>
+    );
   return (
     <div className="log-usage">
-      <span>已整理 {data.run_count} 次</span>
-      <span>模型调用 {t.calls} 次</span>
+      <span>
+        {language === "zh"
+          ? `已整理 ${data.run_count} 次`
+          : `Processed ${data.run_count} time${data.run_count === 1 ? "" : "s"}`}
+      </span>
+      <span>
+        {language === "zh"
+          ? `模型调用 ${t.calls} 次`
+          : `${t.calls} model call${t.calls === 1 ? "" : "s"}`}
+      </span>
       <TokenCell t={t} />
       <CostCell t={t} />
     </div>
@@ -272,7 +335,7 @@ function ActorFilter({
   return (
     <div className="log-filters">
       <button aria-pressed={actor === null} className={actor === null ? "on" : ""} onClick={() => onPick(null)}>
-        全部 {total}
+        {language === "zh" ? `全部 ${total}` : `All ${total}`}
       </button>
       {actors.map((a) => (
         <button
@@ -281,7 +344,9 @@ function ActorFilter({
           className={"log-actor-btn " + a.actor + (actor === a.actor ? " on" : "")}
           onClick={() => onPick(a.actor)}
         >
-          {actorName(a.actor, language)}做的 {a.count}
+          {language === "zh"
+            ? `${actorName(a.actor, language)}做的 ${a.count}`
+            : `${a.count} by ${actorName(a.actor, language)}`}
         </button>
       ))}
     </div>
@@ -289,10 +354,22 @@ function ActorFilter({
 }
 
 function CostLine({ cost }: { cost: ActivityCost }) {
+  const language = useLanguage((s) => s.language);
   return (
     <div className="log-cost">
-      {cost.model} · 读入 {num(cost.tokens_in)} / 生成 {num(cost.tokens_out)} token · 用时{" "}
-      {cost.ms === null ? "未记录" : `${cost.ms} 毫秒`} · 花费 {money(cost.cost)}
+      {language === "zh" ? (
+        <>
+          {cost.model} · 读入 {num(cost.tokens_in, language)} / 生成 {num(cost.tokens_out, language)}{" "}
+          token · 用时 {cost.ms === null ? "未记录" : `${cost.ms} 毫秒`} · 花费{" "}
+          {money(cost.cost, language)}
+        </>
+      ) : (
+        <>
+          {cost.model} · in {num(cost.tokens_in, language)} / out {num(cost.tokens_out, language)}{" "}
+          tokens · took {cost.ms === null ? "not recorded" : `${cost.ms} ms`} · cost{" "}
+          {money(cost.cost, language)}
+        </>
+      )}
     </div>
   );
 }
@@ -317,7 +394,7 @@ function RetryRow({ jump }: { jump: ActivityJump }) {
   const language = useLanguage((s) => s.language);
   const chapter = jump.chapter_number;
   const retry = useStartExtraction(projectId ?? "", chapter ?? 0);
-  const refused = refusalText(retry.error, RETRY_FAILED);
+  const refused = refusalText(retry.error, RETRY_FAILED(language));
 
   if (jump.endpoints.length === 0 || !projectId || chapter === null) return null;
   return (
@@ -327,11 +404,20 @@ function RetryRow({ jump }: { jump: ActivityJump }) {
         disabled={retry.isPending}
         onClick={() => retry.mutate({ force: true })}
       >
-        {retry.isPending ? "正在重新排队…" : `${jumpLabel(jump, language)} →`}
+        {language === "zh"
+          ? retry.isPending ? "正在重新排队…" : `${jumpLabel(jump, language)} →`
+          : retry.isPending ? "Queueing again…" : `${jumpLabel(jump, language)} →`}
       </button>
       {retry.isSuccess && (
         <span className="log-jump-note">
-          已经重新排上队了 —— 它在后台跑，这一行要过一会儿才会变。
+          {language === "zh" ? (
+            <>已经重新排上队了 —— 它在后台跑，这一行要过一会儿才会变。</>
+          ) : (
+            <>
+              Back in the queue — it’s running in the background, and this row will update in a
+              moment.
+            </>
+          )}
         </span>
       )}
       {refused && <span className="err-box">{refused}</span>}
@@ -344,7 +430,7 @@ function JumpRow({ entry, jump }: { entry: ActivityEntry; jump: ActivityJump }) 
   const openChapter = useOpenChapter();
   const jumpFromActivity = useCoords((s) => s.jumpFromActivity);
   const language = useLanguage((s) => s.language);
-  const note = jumpNote(entry, jump);
+  const note = jumpNote(entry, jump, language);
 
   const go = () => {
     // 换章走全项目唯一那个入口（离开的那一章交后台整理），不裸 setChapter。
@@ -381,9 +467,16 @@ function EntryDetail({ entry }: { entry: ActivityEntry }) {
   const language = useLanguage((s) => s.language);
   const detail = useActivityDetail(projectId, entry.id);
 
-  if (detail.isLoading) return <div className="log-detail dim">读取中…</div>;
+  if (detail.isLoading)
+    return <div className="log-detail dim">{language === "zh" ? "读取中…" : "Loading…"}</div>;
   if (detail.isError || !detail.data)
-    return <div className="log-detail err-box">这一条的详细内容没读出来。</div>;
+    return (
+      <div className="log-detail err-box">
+        {language === "zh"
+          ? "这一条的详细内容没读出来。"
+          : "Couldn't load the details for this entry."}
+      </div>
+    );
 
   const { rows, cost, errors, entry: full } = detail.data;
   return (
@@ -442,7 +535,9 @@ function EntryRow({
           {messageForCode(entry.subtitle_code, language, entry.subtitle_params) ?? entry.subtitle_code}
         </span>
         {entry.status !== "succeeded" && (
-          <span className={"log-status " + entry.status}>{STATUS_ZH[entry.status] ?? entry.status}</span>
+          <span className={"log-status " + entry.status}>
+            {STATUS_ZH[entry.status]?.[language] ?? entry.status}
+          </span>
         )}
         {time && <span className="log-time">{time}</span>}
       </button>
@@ -467,9 +562,16 @@ export function ActivityLog() {
   return (
     <section className="pane log">
       <div className="log-head">
-        <h2>活动记录</h2>
+        <h2>{language === "zh" ? "活动记录" : "Activity log"}</h2>
         <p className="log-lead">
-          这本书里发生过的每一步：系统自己整理的，和你亲手确认的。点开看它到底做了什么。
+          {language === "zh" ? (
+            <>这本书里发生过的每一步：系统自己整理的，和你亲手确认的。点开看它到底做了什么。</>
+          ) : (
+            <>
+              Every step that’s happened in this book: what the system processed on its own, and
+              what you confirmed yourself. Click one open to see exactly what it did.
+            </>
+          )}
         </p>
         <UsageStrip />
         <ActorFilter
@@ -486,17 +588,27 @@ export function ActivityLog() {
           它是一小段、几乎总是空的、而且是「回头查」的东西；压在几百行流水下面
           等于没有。理由和「这儿为什么没有取消按钮」都写在 `RulesTable.tsx` 顶上。 */}
       <div className="log-rules">
-        <h3>你交代过的</h3>
+        <h3>{language === "zh" ? "你交代过的" : "What you've told it"}</h3>
         <RulesTable />
       </div>
 
-      {log.isLoading && <div className="empty">读取中…</div>}
-      {log.isError && <div className="err-box">活动记录没读出来。</div>}
+      {log.isLoading && (
+        <div className="empty">{language === "zh" ? "读取中…" : "Loading…"}</div>
+      )}
+      {log.isError && (
+        <div className="err-box">
+          {language === "zh" ? "活动记录没读出来。" : "Couldn't load the activity log."}
+        </div>
+      )}
       {!log.isLoading && !log.isError && entries.length === 0 && (
         <div className="empty">
-          {actor === null
-            ? "还没有留下记录。系统整理过这本书之后，它做的每一步都会出现在这里。"
-            : `${actorName(actor, language)}还没有在这本书上留下记录。`}
+          {language === "zh"
+            ? actor === null
+              ? "还没有留下记录。系统整理过这本书之后，它做的每一步都会出现在这里。"
+              : `${actorName(actor, language)}还没有在这本书上留下记录。`
+            : actor === null
+              ? "Nothing recorded yet. Once the system processes this book, every step it takes will show up here."
+              : `${actorName(actor, language)} hasn't left any record on this book yet.`}
         </div>
       )}
 
@@ -513,7 +625,9 @@ export function ActivityLog() {
 
       {log.hasNextPage && (
         <button className="log-more" disabled={log.isFetchingNextPage} onClick={() => log.fetchNextPage()}>
-          {log.isFetchingNextPage ? "读取中…" : "看更早的"}
+          {language === "zh"
+            ? log.isFetchingNextPage ? "读取中…" : "看更早的"
+            : log.isFetchingNextPage ? "Loading…" : "See earlier"}
         </button>
       )}
     </section>

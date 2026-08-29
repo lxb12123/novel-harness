@@ -7,7 +7,7 @@ import {
   useSaveAiSettings,
 } from "../api/hooks";
 import type { AiSettings, AiSettingsInput } from "../api/types";
-import { useLanguage } from "../language";
+import { useLanguage, type Language } from "../language";
 import { CloseIcon, EyeIcon } from "./icons";
 
 // AI 设置（BYOK）——像 Cursor 的 API Keys：作者粘一把自己的钥匙，存在本机。
@@ -54,20 +54,32 @@ const MASK = "•".repeat(12);
  *  他会以为是模型不行，其实差的只是上面那个框里的一个数。
  *
  *  写成**类型上全列**的表而不是一串三元：后端哪天多一档，这儿不补 `tsc` 当场红。 */
-function tailNote(settings: AiSettings): string {
-  const many = settings.continuation_tail_limit.toLocaleString("zh-CN");
+function tailNote(settings: AiSettings, language: Language): string {
+  const many = settings.continuation_tail_limit.toLocaleString(
+    language === "zh" ? "zh-CN" : "en-US",
+  );
+  if (language === "zh") {
+    return {
+      model_window: `写着写着让它接一段时，它会先读一遍你光标前的约 ${many} 字。`,
+      unknown_window:
+        `还认不出这个模型一次能读多少，所以让它接一段时，它只读得到你光标前的 ` +
+        `${many} 字。把上面那个数填上就会变长。`,
+      unconfigured: `还没填服务地址和模型，让它接一段时，它只读得到你光标前的 ${many} 字。`,
+    }[settings.continuation_tail_basis];
+  }
   return {
-    model_window: `写着写着让它接一段时，它会先读一遍你光标前的约 ${many} 字。`,
+    model_window: `When it continues your writing, it first reads about the ${many} characters before your cursor.`,
     unknown_window:
-      `还认不出这个模型一次能读多少，所以让它接一段时，它只读得到你光标前的 ` +
-      `${many} 字。把上面那个数填上就会变长。`,
-    unconfigured: `还没填服务地址和模型，让它接一段时，它只读得到你光标前的 ${many} 字。`,
+      `It doesn't yet recognize how much this model can read at once, so when it continues your ` +
+      `writing, it can only read the ${many} characters before your cursor. Filling in the number ` +
+      `above will make that longer.`,
+    unconfigured: `The endpoint and model aren't filled in yet, so when it continues your writing, it can only read the ${many} characters before your cursor.`,
   }[settings.continuation_tail_basis];
 }
 
 const TABS = [
-  { key: "link", name: "连接服务" },
-  { key: "length", name: "前文长度" },
+  { key: "link", name: { zh: "连接服务", en: "Connection" } },
+  { key: "length", name: { zh: "前文长度", en: "Context length" } },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -154,7 +166,12 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
       <div className="backdrop" onClick={close} />
       {/* **没有标题栏。** 名字走 `aria-label`：屏幕上不再顶一行「AI 设置」
           （顶栏那颗齿轮已经说过一遍了），但读屏进来仍然念得出这扇窗叫什么。 */}
-      <div className="set-modal" role="dialog" aria-modal="true" aria-label="AI 设置">
+      <div
+        className="set-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-label={language === "zh" ? "AI 设置" : "AI Settings"}
+      >
         {/* 左边这一列是**栏目名**。它们原来是右边每一组头顶的小标题——
             同一句话搬到导航里说一次，右边就只剩控件本身了。 */}
         <div className="set-rail" role="tablist" aria-orientation="vertical">
@@ -169,7 +186,7 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
               className={tab === t.key ? "set-rail-item on" : "set-rail-item"}
               onClick={() => setTab(t.key)}
             >
-              {t.name}
+              {t.name[language]}
             </button>
           ))}
         </div>
@@ -180,7 +197,7 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
           <button
             className="set-close"
             type="button"
-            aria-label="关闭设置"
+            aria-label={language === "zh" ? "关闭设置" : "Close settings"}
             disabled={save.isPending}
             onClick={close}
           >
@@ -207,7 +224,11 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                   界面语言 / Interface language
                 </span>
                 <span className="set-row-sub">
-                  跟这本书写的是什么语言无关——那个在书架上改。
+                  {language === "zh" ? (
+                    <>跟这本书写的是什么语言无关——那个在书架上改。</>
+                  ) : (
+                    <>Unrelated to the language this book is written in — change that on the shelf.</>
+                  )}
                 </span>
               </div>
               <div className="set-row" role="group" aria-labelledby="set-lang-label">
@@ -235,7 +256,9 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                  用哪个模型、拿什么钥匙。装进一张卡，「应用」钉在卡的右下角。 */
               <div className="set-card">
                 <div className="set-field">
-                  <label htmlFor="set-base-url">服务地址</label>
+                  <label htmlFor="set-base-url">
+                    {language === "zh" ? "服务地址" : "Endpoint"}
+                  </label>
                   <input
                     id="set-base-url"
                     value={baseUrl}
@@ -245,7 +268,7 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                 </div>
 
                 <div className="set-field">
-                  <label htmlFor="set-model">模型</label>
+                  <label htmlFor="set-model">{language === "zh" ? "模型" : "Model"}</label>
                   <input
                     id="set-model"
                     value={model}
@@ -255,14 +278,20 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                 </div>
 
                 <div className="set-field">
-                  <label htmlFor="set-api-key">API 密钥</label>
+                  <label htmlFor="set-api-key">
+                    {language === "zh" ? "API 密钥" : "API key"}
+                  </label>
                   <div className="set-key">
                     <input
                       id="set-api-key"
                       className={current?.api_key_set ? "on" : undefined}
                       type={reveal ? "text" : "password"}
                       value={apiKey}
-                      placeholder={current?.api_key_set ? MASK : "粘贴密钥"}
+                      placeholder={
+                        current?.api_key_set
+                          ? MASK
+                          : language === "zh" ? "粘贴密钥" : "Paste your key"
+                      }
                       onChange={(e) => {
                         setApiKey(e.target.value);
                         // 框空回去 = 又没东西可露了，明文那一档跟着收掉：
@@ -282,7 +311,11 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                       <button
                         className="set-eye"
                         type="button"
-                        aria-label={reveal ? "隐藏密钥" : "显示密钥"}
+                        aria-label={
+                          language === "zh"
+                            ? reveal ? "隐藏密钥" : "显示密钥"
+                            : reveal ? "Hide key" : "Show key"
+                        }
                         aria-pressed={reveal}
                         onClick={() => setReveal((on) => !on)}
                       >
@@ -301,7 +334,9 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                     disabled={!linkDirty || save.isPending}
                     onClick={applyLink}
                   >
-                    {save.isPending ? "应用中…" : "应用"}
+                    {language === "zh"
+                      ? save.isPending ? "应用中…" : "应用"
+                      : save.isPending ? "Applying…" : "Apply"}
                   </button>
                 </div>
               </div>
@@ -315,10 +350,17 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                 <div className="set-card set-row-card">
                   <div className="set-row-text">
                     <span className="set-row-title" id="set-auto-label">
-                      自动更新模型清单
+                      {language === "zh" ? "自动更新模型清单" : "Auto-update the model list"}
                     </span>
                     <span className="set-row-sub">
-                      每次打开工作台时更新一次，好让它认得新出的模型。
+                      {language === "zh" ? (
+                        <>每次打开工作台时更新一次，好让它认得新出的模型。</>
+                      ) : (
+                        <>
+                          Updates once each time you open the workbench, so it recognizes newly
+                          released models.
+                        </>
+                      )}
                     </span>
                   </div>
                   <button
@@ -339,14 +381,29 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                 {refreshErr ? (
                   <div className="err-box">{saidToTheAuthor(refreshErr) ?? refreshErr.message}</div>
                 ) : refresh.isPending ? (
-                  <div className="set-note">正在看有没有新的…</div>
+                  <div className="set-note">
+                    {language === "zh" ? "正在看有没有新的…" : "Checking for updates…"}
+                  </div>
                 ) : refresh.data ? (
                   <div className="set-note">
-                    已更新到 {refresh.data.fetched}：认得 {refresh.data.total} 个模型
-                    {refresh.data.added || refresh.data.changed || refresh.data.removed
-                      ? `（新增 ${refresh.data.added}、变化 ${refresh.data.changed}、减少 ${refresh.data.removed}）`
-                      : "，和原来那份一样"}
-                    。
+                    {language === "zh" ? (
+                      <>
+                        已更新到 {refresh.data.fetched}：认得 {refresh.data.total} 个模型
+                        {refresh.data.added || refresh.data.changed || refresh.data.removed
+                          ? `（新增 ${refresh.data.added}、变化 ${refresh.data.changed}、减少 ${refresh.data.removed}）`
+                          : "，和原来那份一样"}
+                        。
+                      </>
+                    ) : (
+                      <>
+                        Updated to {refresh.data.fetched}: recognizes {refresh.data.total} model
+                        {refresh.data.total === 1 ? "" : "s"}
+                        {refresh.data.added || refresh.data.changed || refresh.data.removed
+                          ? ` (${refresh.data.added} added, ${refresh.data.changed} changed, ${refresh.data.removed} removed)`
+                          : ", same as before"}
+                        .
+                      </>
+                    )}
                   </div>
                 ) : null}
 
@@ -360,11 +417,14 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                 <div className="set-card">
                   <div className="set-row-text">
                     <span className="set-row-title">
-                      <label htmlFor="set-memory">模型一次能读多少</label>
+                      <label htmlFor="set-memory">
+                        {language === "zh" ? "模型一次能读多少" : "How much the model can read at once"}
+                      </label>
                     </span>
                     <span className="set-row-sub">
-                      {"自己搭的、公司内网的服务，清单里认不出，才要填这一格。" +
-                        "数照模型说明抄，常见 32768、128000。"}
+                      {language === "zh"
+                        ? "自己搭的、公司内网的服务，清单里认不出，才要填这一格。数照模型说明抄，常见 32768、128000。"
+                        : "Only fill this in if your endpoint is self-hosted or on a company network and isn't recognized in the list above. Copy the number from the model's own documentation — 32768 and 128000 are common."}
                     </span>
                   </div>
                   <div className="set-field">
@@ -372,7 +432,7 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                       id="set-memory"
                       inputMode="numeric"
                       value={memory}
-                      placeholder="例如 32768"
+                      placeholder={language === "zh" ? "例如 32768" : "e.g. 32768"}
                       onChange={(e) => setMemory(e.target.value)}
                     />
                   </div>
@@ -386,13 +446,15 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                       disabled={!memoryDirty || save.isPending}
                       onClick={applyMemory}
                     >
-                      {save.isPending ? "应用中…" : "应用"}
+                      {language === "zh"
+                        ? save.isPending ? "应用中…" : "应用"
+                        : save.isPending ? "Applying…" : "Apply"}
                     </button>
                   </div>
                 </div>
 
                 {/* 上面那两样**买到了什么**。 */}
-                {current && <div className="set-note">{tailNote(current)}</div>}
+                {current && <div className="set-note">{tailNote(current, language)}</div>}
               </>
             )}
           </div>

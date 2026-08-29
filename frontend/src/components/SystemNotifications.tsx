@@ -29,16 +29,34 @@ function noticeBody(item: SystemNotification, language: Language): string {
 // ⚠️ 这张表**必须罩住每一个 kind**（`Record<…["kind"], string>` 会在漏一个时让
 // tsc 红）。漏了的话那一档会把 `text_advisory` 这种机器码原样摆到作者屏幕上——
 // `screenGuard` 的 snake_case 那张网正是为这种兜底存在的。
-const KIND_TITLE: Record<SystemNotification["kind"], string> = {
-  summary_mismatch: "总结与正文可能对不上",
-  background_failure: "后台有一件事没办成",
-  validation_blocked: "这一章的检查需要留意",
+const KIND_TITLE: Record<SystemNotification["kind"], { zh: string; en: string }> = {
+  summary_mismatch: {
+    zh: "总结与正文可能对不上",
+    en: "The summary and the text may not match",
+  },
+  background_failure: {
+    zh: "后台有一件事没办成",
+    en: "Something didn't finish in the background",
+  },
+  validation_blocked: {
+    zh: "这一章的检查需要留意",
+    en: "This chapter's check needs attention",
+  },
   // 措辞刻意和上一条分开：那一条**停掉了**这一章的自动整理，这一条没有。
-  text_advisory: "这一段值得再看一眼",
+  text_advisory: {
+    zh: "这一段值得再看一眼",
+    en: "This passage is worth another look",
+  },
   // 措辞刻意不含「失败」二字：这一次没失败，只是一件都没留下（027）。
-  extraction_yielded_nothing: "这一章什么都没整理出来",
+  extraction_yielded_nothing: {
+    zh: "这一章什么都没整理出来",
+    en: "Nothing came out of processing this chapter",
+  },
   // 措辞刻意不说「切章器出错」——它没错，是这本书自带了一页跟正文长得一样的目录（032）。
-  import_toc_skipped: "导入时跳过了几个空章",
+  import_toc_skipped: {
+    zh: "导入时跳过了几个空章",
+    en: "A few empty chapters were skipped during import",
+  },
 };
 
 function NotificationRow({
@@ -54,8 +72,11 @@ function NotificationRow({
   const undoTocSkip = useUndoTocSkip(projectId ?? "");
   const language = useLanguage((s) => s.language);
   const failure =
-    refusalText(ignore.error, "没能忽略这条通知。") ??
-    refusalText(undoTocSkip.error, "没能撤销——");
+    refusalText(
+      ignore.error,
+      language === "zh" ? "没能忽略这条通知。" : "Couldn't dismiss this notification.",
+    ) ??
+    refusalText(undoTocSkip.error, language === "zh" ? "没能撤销——" : "Couldn't undo —");
 
   const go = () => {
     if (item.chapter_number !== null) openChapter(item.chapter_number);
@@ -72,21 +93,23 @@ function NotificationRow({
   return (
     <div className="notice-card">
       <div className="notice-head">
-        <span className="lab">{KIND_TITLE[item.kind] ?? item.kind}</span>
+        <span className="lab">{KIND_TITLE[item.kind]?.[language] ?? item.kind}</span>
         {item.chapter_number !== null && (
-          <span className="row dim">第 {item.chapter_number} 章</span>
+          <span className="row dim">
+            {language === "zh" ? `第 ${item.chapter_number} 章` : `Chapter ${item.chapter_number}`}
+          </span>
         )}
       </div>
       <div className="row">{noticeBody(item, language)}</div>
       <div className="actions">
         {item.jump ? (
           <button className="link" onClick={goToQuote}>
-            去这一句 →
+            {language === "zh" ? "去这一句 →" : "Go to this sentence →"}
           </button>
         ) : (
           item.chapter_number !== null && (
             <button className="link" onClick={go}>
-              去这一章 →
+              {language === "zh" ? "去这一章 →" : "Go to this chapter →"}
             </button>
           )
         )}
@@ -98,7 +121,9 @@ function NotificationRow({
               ignore.mutate(item.id, { onSuccess: () => onHandled(item.id) })
             }
           >
-            {ignore.isPending ? "正在忽略…" : "不再提醒这一条"}
+            {language === "zh"
+              ? ignore.isPending ? "正在忽略…" : "不再提醒这一条"
+              : ignore.isPending ? "Dismissing…" : "Don't remind me about this"}
           </button>
         )}
         {item.actions.includes("undo_toc_skip") && (
@@ -109,7 +134,9 @@ function NotificationRow({
               undoTocSkip.mutate(item.id, { onSuccess: () => onHandled(item.id) })
             }
           >
-            {undoTocSkip.isPending ? "正在撤销…" : "撤销"}
+            {language === "zh"
+              ? undoTocSkip.isPending ? "正在撤销…" : "撤销"
+              : undoTocSkip.isPending ? "Undoing…" : "Undo"}
           </button>
         )}
       </div>
@@ -141,6 +168,7 @@ function CollapsedKind({
   items: SystemNotification[];
   onHandled: (id: string) => void;
 }) {
+  const language = useLanguage((s) => s.language);
   const [open, setOpen] = useState(false);
   const openChapter = useOpenChapter();
   // 章号按大小排，**不按通知落库的先后**：作者找的是「第几章」，不是「哪条先报的」。
@@ -151,24 +179,39 @@ function CollapsedKind({
   return (
     <div className="notice-card">
       <div className="notice-head">
-        <span className="lab">{KIND_TITLE[items[0].kind] ?? items[0].kind}</span>
-        <span className="row dim">{items.length} 条</span>
+        <span className="lab">{KIND_TITLE[items[0].kind]?.[language] ?? items[0].kind}</span>
+        <span className="row dim">
+          {language === "zh"
+            ? `${items.length} 条`
+            : `${items.length} item${items.length === 1 ? "" : "s"}`}
+        </span>
       </div>
       {chapters.length > 0 && (
         // 章号摆出来而不是只报一个总数：「12 条」不告诉作者该去看哪儿，
         // 「第 4、7、9… 章」他扫一眼就知道是不是同一段书。
         <div className="row dim">
-          第 {chapters.slice(0, 12).join("、")} 章
-          {chapters.length > 12 && ` 等 ${chapters.length} 章`}
+          {language === "zh" ? (
+            <>
+              第 {chapters.slice(0, 12).join("、")} 章
+              {chapters.length > 12 && ` 等 ${chapters.length} 章`}
+            </>
+          ) : (
+            <>
+              Chapter{chapters.length > 1 ? "s" : ""} {chapters.slice(0, 12).join(", ")}
+              {chapters.length > 12 && ` among ${chapters.length} chapters total`}
+            </>
+          )}
         </div>
       )}
       <div className="actions">
         <button className="link" onClick={() => setOpen(!open)}>
-          {open ? "收起" : "逐条看"}
+          {language === "zh"
+            ? open ? "收起" : "逐条看"
+            : open ? "Collapse" : "See each one"}
         </button>
         {chapters.length > 0 && (
           <button className="link" onClick={() => openChapter(chapters[0])}>
-            去第 {chapters[0]} 章 →
+            {language === "zh" ? `去第 ${chapters[0]} 章 →` : `Go to chapter ${chapters[0]} →`}
           </button>
         )}
       </div>
@@ -182,6 +225,7 @@ function CollapsedKind({
 
 /** 右栏「通知」：OPEN 列表。空 = 一切正常的一道绿（作者不需要的点不做）。 */
 export function SystemNotifications() {
+  const language = useLanguage((s) => s.language);
   const { projectId } = useCoords();
   const notifications = useNotifications(projectId);
   const items = notifications.data ?? [];
@@ -207,10 +251,16 @@ export function SystemNotifications() {
 
   return (
     <div className="mnr">
-      <div className="lab">系统通知</div>
-      {notifications.isLoading && <span className="empty">读取中…</span>}
+      <div className="lab">{language === "zh" ? "系统通知" : "Notifications"}</div>
+      {notifications.isLoading && (
+        <span className="empty">{language === "zh" ? "读取中…" : "Loading…"}</span>
+      )}
       {!notifications.isLoading && items.length === 0 && (
-        <span className="empty">现在没有需要你注意的。写就是了。</span>
+        <span className="empty">
+          {language === "zh"
+            ? "现在没有需要你注意的。写就是了。"
+            : "Nothing needs your attention right now. Just write."}
+        </span>
       )}
       {groups.map((group) =>
         group.length >= COLLAPSE_AT ? (

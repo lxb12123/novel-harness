@@ -29,13 +29,17 @@ import {
   MIN_RIGHT,
   type PaneWidths,
 } from "../layout";
+import { useLanguage } from "../language";
 
 type Side = "left" | "right" | "chat";
 
-const LABEL: Record<Side, string> = {
-  left: "调整左栏宽度",
-  right: "调整右栏宽度",
-  chat: "调整正文和写作助手的分界",
+const LABEL: Record<Side, { zh: string; en: string }> = {
+  left: { zh: "调整左栏宽度", en: "Resize the left column" },
+  right: { zh: "调整右栏宽度", en: "Resize the right column" },
+  chat: {
+    zh: "调整正文和写作助手的分界",
+    en: "Resize the divide between the text and the writing assistant",
+  },
 };
 
 /**
@@ -65,6 +69,7 @@ export function SplitPanes({
   chat?: ReactNode;
   right: ReactNode;
 }) {
+  const language = useLanguage((s) => s.language);
   const mainRef = useRef<HTMLElement>(null);
   const centerRef = useRef<HTMLDivElement>(null);
   const [widths, setWidths] = useState<PaneWidths>(readStoredWidths);
@@ -200,13 +205,17 @@ export function SplitPanes({
       role="separator"
       tabIndex={0}
       aria-orientation="vertical"
-      aria-label={LABEL[side]}
+      aria-label={LABEL[side][language]}
       aria-valuenow={value}
       aria-valuemin={min}
       aria-valuemax={max}
       data-side={side}
       data-dragging={dragging === side ? "true" : undefined}
-      title="拖动改变宽度，双击恢复默认"
+      title={
+        language === "zh"
+          ? "拖动改变宽度，双击恢复默认"
+          : "Drag to resize, double-click to reset"
+      }
       onPointerDown={(e) => startDrag(side, e)}
       onKeyDown={(e) => onKeyDown(side, e)}
       onDoubleClick={() => reset(side)}
