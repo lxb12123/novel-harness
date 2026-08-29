@@ -24,6 +24,7 @@ import { diskChange } from "../editorDoc";
 // 直接对齐，不需要 pos↔锚 映射层（那是 ProseMirror 才会买来的 offset 地狱，ADR 0006）。
 export function CenterEditor() {
   const { projectId, chapter, highlight, setHighlight } = useCoords();
+  const language = useLanguage((s) => s.language);
   const [open, setOpen] = useState(false); // 这一章是否已打开进编辑器
   const chapters = useChapters(projectId);
   const { data } = useChapterText(projectId, chapter, open);
@@ -101,11 +102,20 @@ export function CenterEditor() {
     return (
       <section className="pane editor">
         <div className="edbar">
-          <span className="who">还没有章节</span>
+          <span className="who">{language === "zh" ? "还没有章节" : "No chapters yet"}</span>
         </div>
         <div className="empty" style={{ padding: 16 }}>
-          这本书还是空的。用左边的「＋ 新书 / 导入」导入一份 TXT，
-          导入完这里就会打开最后一章。
+          {language === "zh" ? (
+            <>
+              这本书还是空的。用左边的「＋ 新书 / 导入」导入一份 TXT，
+              导入完这里就会打开最后一章。
+            </>
+          ) : (
+            <>
+              This book is still empty. Use the "+ New Book / Import" on the left to import a TXT
+              file, and this will open the last chapter once it’s imported.
+            </>
+          )}
         </div>
       </section>
     );
@@ -132,24 +142,27 @@ export function CenterEditor() {
             标签页时把整本书对一遍（`reconcile.ts`，只 stat，722 章 ~4ms）。 */}
         <span className={"status" + (saveErr ? " err" : save.isSuccess && !dirty ? " ok" : "")}>
           {saveErr
-            ? (useLanguage.getState().language === "zh" ? "保存被拒：" : "Save was refused: ") +
+            ? (language === "zh" ? "保存被拒：" : "Save was refused: ") +
               (saidToTheAuthor(saveErr) ?? saveErr.message)
             : save.isPending
-              ? "保存中…"
+              ? language === "zh" ? "保存中…" : "Saving…"
               : dirty
-                ? "未保存"
+                ? language === "zh" ? "未保存" : "Unsaved"
                 : save.isSuccess
-                  ? "已保存并同步"
+                  ? language === "zh" ? "已保存并同步" : "Saved and synced"
                   : ""}
         </span>
-        <button onClick={() => setHistory(true)} title="这一章改过什么">
-          历史
+        <button
+          onClick={() => setHistory(true)}
+          title={language === "zh" ? "这一章改过什么" : "What’s changed in this chapter"}
+        >
+          {language === "zh" ? "历史" : "History"}
         </button>
         <button
           disabled={!dirty || save.isPending}
           onClick={() => save.mutate(doc, { onSuccess: () => setDirty(false) })}
         >
-          保存
+          {language === "zh" ? "保存" : "Save"}
         </button>
       </div>
 
@@ -157,14 +170,32 @@ export function CenterEditor() {
           盖掉磁盘上那一版是找得回来的（历史里那一条），所以这儿只说一句、不动他的字。 */}
       {diskAhead && (
         <div className="selbar" style={{ borderTop: 0, color: "var(--warn)" }}>
-          这一章在别处变过了（写作助手起草会直接写进这一章，另一个窗口保存也会）。
-          你手上这份还没保存——现在按保存会盖过它，被盖的那一版在「历史」里找得回来。
+          {language === "zh" ? (
+            <>
+              这一章在别处变过了（写作助手起草会直接写进这一章，另一个窗口保存也会）。
+              你手上这份还没保存——现在按保存会盖过它，被盖的那一版在「历史」里找得回来。
+            </>
+          ) : (
+            <>
+              This chapter changed elsewhere (the writing assistant writes drafts directly into
+              this chapter, and saving from another window does too). What you have hasn’t been
+              saved — clicking Save now would overwrite it, but the overwritten version can still
+              be found in "History".
+            </>
+          )}
         </div>
       )}
 
       {locateMiss && (
         <div className="selbar" style={{ borderTop: 0, color: "var(--warn)" }}>
-          定位不到那句话——正文可能改过了（存盘后重跑检查），或它锚在别的章。
+          {language === "zh" ? (
+            <>定位不到那句话——正文可能改过了（存盘后重跑检查），或它锚在别的章。</>
+          ) : (
+            <>
+              Couldn’t locate that sentence — the text may have changed (checks re-run after
+              saving), or it’s anchored to a different chapter.
+            </>
+          )}
         </div>
       )}
 

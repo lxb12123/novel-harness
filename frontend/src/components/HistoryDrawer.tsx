@@ -71,6 +71,7 @@ export function HistoryDrawer({
   onRestored?: () => void;
   onClose: () => void;
 }) {
+  const language = useLanguage((s) => s.language);
   const { data, isFetching } = useHistory(pid, chapter, true);
   const restore = useRestoreSnapshot(pid, chapter);
   const remove = useDeleteSnapshot(pid, chapter);
@@ -112,38 +113,77 @@ export function HistoryDrawer({
     <>
       <div className="backdrop" onClick={onClose} />
       <div className="drawer wide">
-        <h3>第 {chapter} 章 · 历史版本</h3>
+        <h3>
+          {language === "zh" ? `第 ${chapter} 章 · 历史版本` : `Chapter ${chapter} · History`}
+        </h3>
         <div className="sub">
-          每次保存都会留下一版。想回到哪一版，把鼠标移到它上面点「还原」——正文会变回那一版的
-          样子，其他版本都还留着，随时能再换回来。
+          {language === "zh" ? (
+            <>
+              每次保存都会留下一版。想回到哪一版，把鼠标移到它上面点「还原」——正文会变回那一版的
+              样子，其他版本都还留着，随时能再换回来。
+            </>
+          ) : (
+            <>
+              Every save leaves behind a version. To go back to one, hover over it and click
+              "Restore" — the text will change back to look like that version, and every other
+              version stays put, ready to switch back to at any time.
+            </>
+          )}
         </div>
 
-        {isFetching && !data && <div className="empty">加载中…</div>}
+        {isFetching && !data && (
+          <div className="empty">{language === "zh" ? "加载中…" : "Loading…"}</div>
+        )}
         {!isFetching && snaps.length <= 1 && (
           <div className="empty">
-            这一章目前只有一版，还没有别的版本可以还原。以后每保存一次改动，这里就会多一版。
+            {language === "zh" ? (
+              <>这一章目前只有一版，还没有别的版本可以还原。以后每保存一次改动，这里就会多一版。</>
+            ) : (
+              <>
+                This chapter only has one version right now — there’s nothing else to restore
+                yet. Every time you save a change from now on, another version will show up here.
+              </>
+            )}
           </div>
         )}
 
         {pending && target && (
           <div className={"hist-confirm" + (pending.kind === "delete" ? " danger" : "")}>
             <span className="q">
-              {pending.kind === "restore"
-                ? `把正文还原到 ${when(target.created_at)} 那一版？`
-                : `删掉 ${when(target.created_at)} 这一版？删了就找不回来了。`}
+              {language === "zh"
+                ? pending.kind === "restore"
+                  ? `把正文还原到 ${when(target.created_at)} 那一版？`
+                  : `删掉 ${when(target.created_at)} 这一版？删了就找不回来了。`
+                : pending.kind === "restore"
+                  ? `Restore the text to the version from ${when(target.created_at)}?`
+                  : `Delete the version from ${when(target.created_at)}? This can't be undone.`}
             </span>
             {/* 「确认还原」而不是「还原」：确认条弹出来时，行里那个「还原」还在，
                 两个按钮同名会让作者不确定自己按的是哪一个。 */}
             <button disabled={busy} onClick={confirm}>
-              {busy ? "处理中…" : pending.kind === "restore" ? "确认还原" : "确认删除"}
+              {language === "zh"
+                ? busy
+                  ? "处理中…"
+                  : pending.kind === "restore"
+                    ? "确认还原"
+                    : "确认删除"
+                : busy
+                  ? "Working…"
+                  : pending.kind === "restore"
+                    ? "Confirm restore"
+                    : "Confirm delete"}
             </button>
             <button disabled={busy} onClick={() => setPending(null)}>
-              取消
+              {language === "zh" ? "取消" : "Cancel"}
             </button>
           </div>
         )}
         {pending?.kind === "restore" && dirty && (
-          <div className="warn">编辑器里还有没保存的修改，还原会把它们覆盖掉。</div>
+          <div className="warn">
+            {language === "zh"
+              ? "编辑器里还有没保存的修改，还原会把它们覆盖掉。"
+              : "The editor has unsaved changes — restoring will overwrite them."}
+          </div>
         )}
         {remove.error && <div className="err-box">{refusal(remove.error)}</div>}
         {restore.error && <div className="err-box">{refusal(restore.error)}</div>}
@@ -152,7 +192,11 @@ export function HistoryDrawer({
           <div className="hist">
             {/* list/listitem 不是装饰：一行里有三个可点的东西（选中、还原、删除），
                 没有行这一层，读屏和键盘都只能听见一串孤立的按钮。 */}
-            <div className="hist-list" role="list" aria-label="历史版本">
+            <div
+              className="hist-list"
+              role="list"
+              aria-label={language === "zh" ? "历史版本" : "History"}
+            >
               {[...snaps].reverse().map((s) => (
                 <div
                   key={s.snapshot_id}
@@ -161,26 +205,40 @@ export function HistoryDrawer({
                 >
                   <button className="hist-pick" onClick={() => setSelId(s.snapshot_id)}>
                     {when(s.created_at)}
-                    {s.is_current && <span className="cur">当前</span>}
-                    <span className="len">{s.text.length} 字</span>
+                    {s.is_current && (
+                      <span className="cur">{language === "zh" ? "当前" : "Current"}</span>
+                    )}
+                    <span className="len">
+                      {language === "zh"
+                        ? `${s.text.length} 字`
+                        : `${s.text.length} character${s.text.length === 1 ? "" : "s"}`}
+                    </span>
                   </button>
                   <span className="hist-actions">
                     {!s.is_current && (
                       <button
                         className="hist-act"
-                        title="把正文换回这一版"
+                        title={language === "zh" ? "把正文换回这一版" : "Switch the text back to this version"}
                         onClick={() => setPending({ kind: "restore", id: s.snapshot_id })}
                       >
-                        还原
+                        {language === "zh" ? "还原" : "Restore"}
                       </button>
                     )}
                     <button
                       className="hist-act"
                       disabled={s.is_current}
-                      title={s.is_current ? "正文现在就是这一版，删不掉" : "删掉这一版"}
+                      title={
+                        s.is_current
+                          ? language === "zh"
+                            ? "正文现在就是这一版，删不掉"
+                            : "This is the current version of the text, so it can't be deleted"
+                          : language === "zh"
+                            ? "删掉这一版"
+                            : "Delete this version"
+                      }
                       onClick={() => setPending({ kind: "delete", id: s.snapshot_id })}
                     >
-                      删除
+                      {language === "zh" ? "删除" : "Delete"}
                     </button>
                   </span>
                 </div>
@@ -189,14 +247,32 @@ export function HistoryDrawer({
             <div className="hist-diff">
               {isSameAsCurrent ? (
                 <div className="empty">
-                  这就是正文现在的样子。选左边别的版本，能看到它和现在差在哪。
+                  {language === "zh" ? (
+                    <>这就是正文现在的样子。选左边别的版本，能看到它和现在差在哪。</>
+                  ) : (
+                    <>
+                      This is what the text looks like right now. Pick another version on the
+                      left to see how it differs from now.
+                    </>
+                  )}
                 </div>
               ) : (
                 <>
                   <div className="row" style={{ color: "var(--dim)", fontSize: 12, marginBottom: 6 }}>
-                    从 {selected && when(selected.created_at)} 到现在：
-                    <span style={{ color: "var(--k)" }}> +{stats.add}</span>
-                    <span style={{ color: "var(--warn)" }}> −{stats.del}</span> 行
+                    {language === "zh" ? (
+                      <>
+                        从 {selected && when(selected.created_at)} 到现在：
+                        <span style={{ color: "var(--k)" }}> +{stats.add}</span>
+                        <span style={{ color: "var(--warn)" }}> −{stats.del}</span> 行
+                      </>
+                    ) : (
+                      <>
+                        From {selected && when(selected.created_at)} to now:
+                        <span style={{ color: "var(--k)" }}> +{stats.add}</span>
+                        <span style={{ color: "var(--warn)" }}> −{stats.del}</span> line
+                        {stats.add + stats.del === 1 ? "" : "s"}
+                      </>
+                    )}
                   </div>
                   <pre className="diff">
                     {lines.map((l, i) => (
@@ -213,7 +289,7 @@ export function HistoryDrawer({
         )}
 
         <div className="row" style={{ marginTop: 10 }}>
-          <button onClick={onClose}>关闭</button>
+          <button onClick={onClose}>{language === "zh" ? "关闭" : "Close"}</button>
         </div>
       </div>
     </>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useChapters } from "../api/hooks";
 import { useOpenChapter } from "../chapterNavigation";
+import { useLanguage } from "../language";
 import { useCoords } from "../store";
 import { findChapters, joinTitle, splitTitle } from "../chapterTitle";
 
@@ -31,6 +32,7 @@ export function ChapterTitle({
   onRename?: (title: string) => void;
 }) {
   const { projectId, chapter } = useCoords();
+  const language = useLanguage((s) => s.language);
   const chapters = useChapters(projectId);
   // 换章走 `useOpenChapter`（`chapterNavigation.ts`），不是裸 setChapter：它要上报
   // 「作者现在在第几章」这个免费心跳，后端靠它做当前章防抖（正在写的那章不排总结）。
@@ -46,7 +48,10 @@ export function ChapterTitle({
   const list = chapters.data ?? [];
   // 显示优先用编辑器手上那份的第一行：作者刚改完标题、还没按保存时，
   // 章目录（磁盘）里还是旧的那个——那一段时间里念旧标题就是在说一句假话。
-  const shown = (line ?? "") || list.find((c) => c.number === chapter)?.title || `第 ${chapter} 章`;
+  const shown =
+    (line ?? "") ||
+    list.find((c) => c.number === chapter)?.title ||
+    (language === "zh" ? `第 ${chapter} 章` : `Chapter ${chapter}`);
 
   // 点别处关掉（同左栏那个「⋯」菜单）。不做的话它会一直挂着，而作者以为已经点掉了。
   useEffect(() => {
@@ -91,8 +96,8 @@ export function ChapterTitle({
           {parts?.marker && <span className="chtitle-fixed">{parts.marker}</span>}
           <input
             className="chtitle-edit"
-            aria-label="改这一章的名字"
-            placeholder="这一章的名字（可以空着）"
+            aria-label={language === "zh" ? "改这一章的名字" : "Edit this chapter's name"}
+            placeholder={language === "zh" ? "这一章的名字（可以空着）" : "This chapter's name (can be left blank)"}
             value={editing}
             autoFocus
             onChange={(e) => setEditing(e.target.value)}
@@ -108,12 +113,18 @@ export function ChapterTitle({
       ) : (
         <button
           className="chtitle-name"
-          aria-label="当前章节"
+          aria-label={language === "zh" ? "当前章节" : "Current chapter"}
           aria-haspopup="listbox"
           aria-expanded={open}
           // 收成「…」之后，这是作者唯一能读到完整章标的地方（同左栏那一行书名）。
           title={
-            line !== null && onRename ? `${shown}\n双击可以改这一章的名字（章号不动）` : shown
+            line !== null && onRename
+              ? `${shown}\n${
+                  language === "zh"
+                    ? "双击可以改这一章的名字（章号不动）"
+                    : "Double-click to edit this chapter's name (the number stays put)"
+                }`
+              : shown
           }
           // 上面那个「点别处关掉」是挂在 window 的 pointerdown 上，而 pointerdown 早于
           // click：不挡住的话，单子开着时点这颗按钮会先被关掉、再被 onClick 开回来，
@@ -145,8 +156,8 @@ export function ChapterTitle({
               它只能靠滚，而滚 722 行等于没有这个功能。 */}
           <input
             className="chtitle-find"
-            aria-label="找章节"
-            placeholder="按章号或标题找…"
+            aria-label={language === "zh" ? "找章节" : "Find a chapter"}
+            placeholder={language === "zh" ? "按章号或标题找…" : "Find by number or title…"}
             value={query}
             autoFocus
             onChange={(e) => setQuery(e.target.value)}
@@ -159,10 +170,25 @@ export function ChapterTitle({
               }
             }}
           />
-          <div className="chtitle-list" role="listbox" aria-label="章节" ref={listRef}>
-            {list.length === 0 && <div className="empty">这本书还没有章节。</div>}
+          <div
+            className="chtitle-list"
+            role="listbox"
+            aria-label={language === "zh" ? "章节" : "Chapters"}
+            ref={listRef}
+          >
+            {list.length === 0 && (
+              <div className="empty">
+                {language === "zh" ? "这本书还没有章节。" : "This book doesn't have any chapters yet."}
+              </div>
+            )}
             {list.length > 0 && hits.length === 0 && (
-              <div className="empty">没有匹配「{query}」的章节。</div>
+              <div className="empty">
+                {language === "zh" ? (
+                  <>没有匹配「{query}」的章节。</>
+                ) : (
+                  <>No chapters match "{query}".</>
+                )}
+              </div>
             )}
             {hits.map((item) => (
               <div
@@ -176,7 +202,7 @@ export function ChapterTitle({
                 }}
               >
                 <span className="n">{String(item.number).padStart(3, "0")}</span>
-                {item.title || "（无题）"}
+                {item.title || (language === "zh" ? "（无题）" : "(Untitled)")}
               </div>
             ))}
           </div>
