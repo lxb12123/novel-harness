@@ -5,6 +5,7 @@ import {
   useRetractAlias,
 } from "../api/hooks";
 import type { StoredAlias } from "../api/types";
+import { useLanguage } from "../language";
 import { useCoords } from "../store";
 
 // 人物基础信息（Task 15 / §4.5）：本名 + 一排别名 chip。
@@ -25,6 +26,7 @@ export function CharacterBasicInfo({
   onClose?: () => void;
 }) {
   const { projectId } = useCoords();
+  const language = useLanguage((s) => s.language);
   const profile = useCharacterProfile(projectId, characterId);
   const add = useAddCharacterAlias(projectId ?? "", characterId);
   const retract = useRetractAlias(projectId ?? "");
@@ -50,7 +52,7 @@ export function CharacterBasicInfo({
       <div className="cnrow">
         <strong>{name}</strong>
         {onClose && (
-          <button className="link" onClick={onClose} title="关掉">
+          <button className="link" onClick={onClose} title={language === "zh" ? "关掉" : "Close"}>
             ✕
           </button>
         )}
@@ -71,13 +73,15 @@ export function CharacterBasicInfo({
           onKeyDown={(e) => {
             if (e.key === "Enter") addAlias();
           }}
-          placeholder="加一个称呼…"
+          placeholder={language === "zh" ? "加一个称呼…" : "Add a name…"}
         />
         <button className="link" onClick={addAlias} disabled={add.isPending || !surface.trim()}>
           ＋
         </button>
       </div>
-      {profile.isLoading && <span className="dim">读取中…</span>}
+      {profile.isLoading && (
+        <span className="dim">{language === "zh" ? "读取中…" : "Loading…"}</span>
+      )}
     </div>
   );
 }
@@ -89,13 +93,22 @@ function AliasChip({
   alias: StoredAlias;
   onRetract: (id: string) => void;
 }) {
+  const language = useLanguage((s) => s.language);
+  const auto = language === "zh" ? "自动识别" : "Auto-recognized";
   return (
-    <span className="alias-chip" title={alias.source === "extractor" ? "自动识别" : "作者确认"}>
+    <span
+      className="alias-chip"
+      title={alias.source === "extractor" ? auto : language === "zh" ? "作者确认" : "Confirmed by author"}
+    >
       {alias.surface}
-      {alias.source === "extractor" && <i className="auto-mark" aria-label="自动识别">自动</i>}
+      {alias.source === "extractor" && (
+        <i className="auto-mark" aria-label={auto}>
+          {language === "zh" ? "自动" : "Auto"}
+        </i>
+      )}
       <button
         className="chip-x"
-        aria-label={`撤回「${alias.surface}」`}
+        aria-label={language === "zh" ? `撤回「${alias.surface}」` : `Retract "${alias.surface}"`}
         onClick={() => onRetract(alias.id)}
       >
         ×

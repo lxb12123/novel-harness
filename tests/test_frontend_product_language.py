@@ -26,6 +26,28 @@ BANNED_COPY: dict[str, str] = {
 def _without_comments(source: str) -> str:
     """Remove TS/TSX comments while preserving quoted strings and JSX text."""
 
+    return _scan(source)[0]
+
+
+def _scan(source: str) -> tuple[str, str | None]:
+    """Same walk as `_without_comments`, but also returns the quote state at EOF.
+
+    **This state machine doesn't know JSX from a string literal.** It tracks one
+    active quote character at a time and closes on the next matching one — which
+    is exactly right for `"..."`, `'...'`, and `` `...` `` in real code, but a bare
+    apostrophe in plain JSX text (`<>it's fine</>`, not inside any quotes) reads to
+    it as *opening* a `'` string. One unpaired apostrophe like that — "it's" with
+    no later apostrophe to close it — leaves `quote` set for the rest of the file,
+    and every `//`/`/* */` comment after that point is silently **not** stripped:
+    it's treated as string content instead. `test_production_tsx_has_no_internal_or_fixture_copy`
+    only catches this if a banned word happens to sit in one of those swallowed
+    comments — it did, once (`SummaryTab.tsx`, an `ADR 0004` reference in a comment
+    that stopped being recognized as a comment three paragraphs of English prose
+    earlier). A quieter file with the same defect would pass that test by luck
+    while still hiding whatever comes after it from every pattern in `BANNED_COPY`.
+    **A clean end-of-file quote state is the real invariant**; this exposes it.
+    """
+
     out: list[str] = []
     i = 0
     quote: str | None = None
@@ -62,7 +84,7 @@ def _without_comments(source: str) -> str:
             continue
         out.append(char)
         i += 1
-    return "".join(out)
+    return "".join(out), quote
 
 
 _SVG_PATH_DATA = re.compile(r'\bd="[^"]*"')
@@ -92,3 +114,43 @@ def test_production_tsx_has_no_internal_or_fixture_copy() -> None:
                 offenders.append(f"{path.relative_to(ROOT)}:{line}: {label}: {match.group(0)!r}")
 
     assert not offenders, "用户界面泄漏了内部或演示语言：\n" + "\n".join(offenders)
+
+
+def test_the_comment_stripper_never_ends_the_file_still_inside_a_quote() -> None:
+    """`_scan()` 是逐字符的状态机，不是真解析器——它靠"下一个同类引号来了就收口"
+    认引号，不认 JSX 语义。**一个裸在 JSX 文本里、不在任何引号内的英文撇号**
+    （`<>it's fine</>`，不是 `"it's fine"`）会被它当成"开了一个 `'` 字符串"，
+    而如果这句话里没有第二个撇号去闭合它，`quote` 就一路带到文件结尾——
+    从那一撇往后，**每一条 `//`/`/* */` 注释都不再被识别成注释**，被当成字符串
+    内容原样保留。
+
+    **这不是假设**：国际化第四批·前端文案批次里真的踩过一次——`SummaryTab.tsx`
+    一句英文（"...chapter's own text..."）的撇号没有闭合，三段话之后一条提著
+    `ADR 0004` 的注释就这样漏了出来，被
+    `test_production_tsx_has_no_internal_or_fixture_copy` 抓到。**抓到是运气**：
+    那条测试只在漏出来的注释恰好撞上 `BANNED_COPY` 里的某个词时才会红——
+    同一个缺陷落在一段没有敏感词的注释上，会安静地让那条测试对着之后**整个文件**
+    失明，而没有任何红色提醒这件事发生了。
+
+    真正的不变量不是"没漏敏感词"，是"扫到文件末尾时引号状态该合上"——这条测试钉的
+    是这件事本身，不等一个敏感词凑巧掉进坑里才发现坑在那儿。
+
+    **修法**：英文散文里的撇号（`it's` / `chapter's` / `you'll`）改用印刷体右单引号
+    `'`（U+2019）而不是直引号 `'`——它不是这三个引号字符里的任何一个，这台状态机
+    根本不会把它当成引号，顺带也是英文排版本该用的那个字符。真的需要一对单引号
+    做字符串分隔符（比如 `.join('", "')`）时，直引号 `'` 照旧用，那种用法从来
+    不会落在"裸 JSX 文本"里，不受这条影响。
+    """
+    offenders: list[str] = []
+    for path in sorted(COMPONENTS.rglob("*.tsx")):
+        if path.name.endswith(".test.tsx"):
+            continue
+        _, quote = _scan(path.read_text(encoding="utf-8"))
+        if quote:
+            offenders.append(f"{path.relative_to(ROOT)}: 扫到文件末尾时还困在 {quote!r} 里")
+
+    assert not offenders, (
+        "注释剥离器的引号状态在文件末尾没有归零，说明中途有个没闭合的引号——"
+        "从那一点往后，这个文件里的注释可能没有被真的剥掉，"
+        "BANNED_COPY 那条守卫可能在这些文件上失明：\n" + "\n".join(offenders)
+    )

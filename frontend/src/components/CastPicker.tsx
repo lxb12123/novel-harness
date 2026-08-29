@@ -1,4 +1,5 @@
 import type { EventView, NodeRef } from "../api/types";
+import { useLanguage } from "../language";
 
 // 「谁在场、谁知道了」这两维名单的**唯一一份画法**。
 //
@@ -22,8 +23,8 @@ import type { EventView, NodeRef } from "../api/types";
 /** 两维名单，措辞是作者的。**「知情」这一维是抽取里唯一靠推断得来的**（谁在场是文本里
  *  写着的，谁**因此知道了**是猜的），所以它也是最需要改的一维（ADR 0020 的代价那节）。 */
 export const DIMENSION = {
-  knowers: "知道这件事的人",
-  participants: "在场的人",
+  knowers: { zh: "知道这件事的人", en: "Who knew about it" },
+  participants: { zh: "在场的人", en: "Who was there" },
 } as const;
 
 export type Dimension = keyof typeof DIMENSION;
@@ -59,13 +60,18 @@ export function CastPicker({
   picked: Record<Dimension, string[]>;
   onToggle: (dim: Dimension, id: string) => void;
 }) {
+  const language = useLanguage((s) => s.language);
   return (
     <>
       {DIMENSIONS.map((dim) => (
         <fieldset className="cast-dim" key={dim}>
-          <legend>{DIMENSION[dim]}</legend>
+          <legend>{DIMENSION[dim][language]}</legend>
           {people.length === 0 ? (
-            <span className="empty">花名册里还没有人物 —— 先去「花名册」那一格加人。</span>
+            <span className="empty">
+              {language === "zh"
+                ? "花名册里还没有人物 —— 先去「花名册」那一格加人。"
+                : 'The roster doesn\'t have any characters yet — add one on the "Roster" tab first.'}
+            </span>
           ) : (
             people.map((p) => (
               <label className="cast-pick" key={p.id}>
@@ -81,7 +87,9 @@ export function CastPicker({
         </fieldset>
       ))}
       <div className="row dim">
-        勾上的就是改完之后的名单 —— 再保存一次不会把同一个人加两遍。
+        {language === "zh"
+          ? "勾上的就是改完之后的名单 —— 再保存一次不会把同一个人加两遍。"
+          : "Whoever's checked is the final list — saving again won't add anyone twice."}
       </div>
     </>
   );

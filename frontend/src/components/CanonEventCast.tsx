@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useCorrectEventCast, useEvents, useProjects, useRoster } from "../api/hooks";
 import { readCorrectionError } from "../correctionError";
 import type { EventView, NodeRef } from "../api/types";
+import { useLanguage } from "../language";
 import { useCoords } from "../store";
 import { CastPicker, DIMENSIONS, candidates, idsOf, same } from "./CastPicker";
 import type { Dimension } from "./CastPicker";
@@ -38,6 +39,7 @@ function CastEditor({
   onStale: () => void;
 }) {
   const { projectId } = useCoords();
+  const language = useLanguage((s) => s.language);
   const correct = useCorrectEventCast(projectId!);
   const [picked, setPicked] = useState<Record<Dimension, string[]>>({
     knowers: idsOf(view.knowers),
@@ -91,7 +93,7 @@ function CastEditor({
           <div>{failure.message}</div>
           {failure.kind === "stale" && (
             <button className="link" onClick={onStale}>
-              看看最新的
+              {language === "zh" ? "看看最新的" : "See the latest version"}
             </button>
           )}
         </div>
@@ -99,10 +101,12 @@ function CastEditor({
 
       <div className="actions">
         <button disabled={changed.length === 0 || correct.isPending} onClick={submit}>
-          {correct.isPending ? "保存中…" : "保存名单"}
+          {language === "zh"
+            ? correct.isPending ? "保存中…" : "保存名单"
+            : correct.isPending ? "Saving…" : "Save list"}
         </button>
         <button className="link" onClick={onDone}>
-          收起
+          {language === "zh" ? "收起" : "Dismiss"}
         </button>
       </div>
     </div>
@@ -112,6 +116,7 @@ function CastEditor({
 /** 本章已经生效的情节 + 改它们的名单。日志页跳过来时自动展开那一条。 */
 export function CanonEventCast({ canonVersion }: { canonVersion: number }) {
   const { projectId, chapter, focusEventId } = useCoords();
+  const language = useLanguage((s) => s.language);
   const events = useEvents(projectId, chapter, "CANON");
   const roster = useRoster(projectId);
   // **版本住在这个读端上，不在名单里**：`canonVersion` 是调用方从 `GET /api/projects`
@@ -146,18 +151,28 @@ export function CanonEventCast({ canonVersion }: { canonVersion: number }) {
 
   return (
     <div className="mnr">
-      <div className="lab">已确认的情节（谁在场、谁知道了）</div>
+      <div className="lab">
+        {language === "zh" ? "已确认的情节（谁在场、谁知道了）" : "Confirmed events (who was there, who knew)"}
+      </div>
 
-      {events.isLoading && <span className="empty">读取中…</span>}
+      {events.isLoading && (
+        <span className="empty">{language === "zh" ? "读取中…" : "Loading…"}</span>
+      )}
       {!events.isLoading && views.length === 0 && !missing && (
         <span className="empty">
-          这一章还没有已确认的情节。确认过的情节会出现在这里，之后随时能改名单。
+          {language === "zh"
+            ? "这一章还没有已确认的情节。确认过的情节会出现在这里，之后随时能改名单。"
+            : "This chapter doesn't have any confirmed events yet. Once an event is confirmed, it'll show up here, and you can update its cast anytime."}
         </span>
       )}
       {/* 跳过来却找不到那一条：**说出来**，不要安静地摆一张看起来正常的单子。
           它可能已经被撤回，或者压根不在这一章。 */}
       {missing && (
-        <div className="warn">没有在这一章找到刚才那条情节，它可能已经被改掉或撤回了。</div>
+        <div className="warn">
+          {language === "zh"
+            ? "没有在这一章找到刚才那条情节，它可能已经被改掉或撤回了。"
+            : "Couldn't find that event in this chapter — it may have been changed or retracted."}
+        </div>
       )}
 
       {views.map((view) => {
@@ -176,8 +191,17 @@ export function CanonEventCast({ canonVersion }: { canonVersion: number }) {
                 {view.event.summary}
               </button>
               <div className="row dim">
-                在场：{view.participants.map((n) => n.name).join("、") || "—"} · 知道这件事的：
-                {view.knowers.map((n) => n.name).join("、") || "—"}
+                {language === "zh" ? (
+                  <>
+                    在场：{view.participants.map((n) => n.name).join("、") || "—"} · 知道这件事的：
+                    {view.knowers.map((n) => n.name).join("、") || "—"}
+                  </>
+                ) : (
+                  <>
+                    Present: {view.participants.map((n) => n.name).join(", ") || "—"} · Knew about
+                    it: {view.knowers.map((n) => n.name).join(", ") || "—"}
+                  </>
+                )}
               </div>
             </div>
             {open && (
