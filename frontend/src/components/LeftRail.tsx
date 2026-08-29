@@ -4,7 +4,7 @@ import { BookShelf } from "./BookShelf";
 // 和右栏其余几格是同一个问题的不同切面，跟「第几章」不是一条纵深。
 export function LeftRail({ onOpenChapter }: { onOpenChapter: (n: number) => void }) {
   return (
-    <section className="pane">
+    <section className="pane pane-left">
       <BookShelf onOpenChapter={onOpenChapter} />
     </section>
   );

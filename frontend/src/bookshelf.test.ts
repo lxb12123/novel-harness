@@ -6,7 +6,6 @@ import {
   newChapterError,
   nextAfterRemoving,
   readShelf,
-  removable,
   shelved,
   useShelf,
 } from "./bookshelf";
@@ -24,27 +23,28 @@ const ALL = [A, B, C];
 
 describe("书架上摆哪几本", () => {
   it("默认全摆着 —— 别处新建的书不用先「加进来」才看得见", () => {
-    expect(shelved(ALL, [], A.id)).toEqual(ALL);
+    expect(shelved(ALL, [])).toEqual(ALL);
   });
 
   it("拿掉的那几本不显示", () => {
-    expect(shelved(ALL, [B.id], A.id)).toEqual([A, C]);
+    expect(shelved(ALL, [B.id])).toEqual([A, C]);
   });
 
-  it("正在看的那本永远在架子上，哪怕它在拿掉名单里", () => {
-    // 否则：右栏显示着它的内容、左边却找不到它，连「⋯」入口都没有——作者弄不回来。
-    expect(shelved(ALL, [A.id, B.id], A.id)).toEqual([A, C]);
+  it("正在看的那本拿掉了也真的不显示 —— 不靠「当前那本硬留着」这条特例撑着", () => {
+    // 2026-08-29 前这儿有条特例：正在看的那本哪怕在拿掉名单里也硬留着。
+    // 作者要求「只剩一本也能拿掉」，这条特例会让最后一本永远拿不干净（它必然是当前那本），
+    // 所以删了——回头路是 `hidden.length > 0` 时常驻的「放回来」，不是靠这条特例。
+    expect(shelved(ALL, [A.id, B.id])).toEqual([C]);
   });
 
-  it("最后一本不许拿掉 —— 拿掉就没有书名行，也就没有换书的入口了", () => {
-    expect(removable(ALL, [], A.id)).toBe(true);
-    expect(removable(ALL, [B.id, C.id], A.id)).toBe(false);
+  it("全部拿掉之后架子是空的，包括正在看的那本", () => {
+    expect(shelved(ALL, [A.id, B.id, C.id])).toEqual([]);
   });
 
-  it("拿掉当前这本时，说得出该切到哪一本", () => {
-    expect(nextAfterRemoving(ALL, [], A.id, A.id)).toBe(B.id);
-    expect(nextAfterRemoving(ALL, [B.id], A.id, A.id)).toBe(C.id);
-    expect(nextAfterRemoving([A], [], A.id, A.id)).toBeNull();
+  it("拿掉当前这本时，说得出该切到哪一本 —— 没有下一本也不假装有", () => {
+    expect(nextAfterRemoving(ALL, [], A.id)).toBe(B.id);
+    expect(nextAfterRemoving(ALL, [B.id], A.id)).toBe(C.id);
+    expect(nextAfterRemoving([A], [], A.id)).toBeNull();
   });
 });
 

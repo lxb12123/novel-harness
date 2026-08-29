@@ -135,11 +135,11 @@ describe("侧栏书架", () => {
     expect(within(other).queryByText("加载中…")).toBeNull();
   });
 
-  it("⋯ 里的「从左边移除」只是拿下架子，书还在库里", async () => {
+  it("⋯ 里的「移除本书目录」只是拿下架子，书还在库里", async () => {
     open();
     const book = await section(second.name);
     within(book).getByRole("button", { name: `《${second.name}》的更多操作` }).click();
-    (await screen.findByRole("button", { name: "从左边移除" })).click();
+    (await screen.findByRole("button", { name: "移除本书目录" })).click();
 
     await waitFor(() => expect(screen.queryByRole("button", { name: second.name })).toBeNull());
     expect(useShelf.getState().hidden).toEqual([second.id]);
@@ -191,19 +191,30 @@ describe("侧栏书架", () => {
     open();
     const book = await section(first.name);
     within(book).getByRole("button", { name: `《${first.name}》的更多操作` }).click();
-    (await screen.findByRole("button", { name: "从左边移除" })).click();
+    (await screen.findByRole("button", { name: "移除本书目录" })).click();
 
     await waitFor(() => expect(useCoords.getState().projectId).toBe(second.id));
     expect(await screen.findByRole("button", { name: second.name })).toBeInTheDocument();
   });
 
-  it("左边只剩一本时，移除是灰的 —— 拿掉它就没有换书的入口了", async () => {
+  it("左边只剩一本也能移除 —— 架子空了，靠「放回来」找回来，不靠硬留着", async () => {
     open([{ match: /\/api\/projects$/, body: [first] }]);
     const book = await section(first.name);
     within(book).getByRole("button", { name: `《${first.name}》的更多操作` }).click();
-    const item = await screen.findByRole("button", { name: "从左边移除" });
-    expect(item).toBeDisabled();
-    expect(item).toHaveAttribute("title", expect.stringContaining("就剩这一本"));
+    const item = await screen.findByRole("button", { name: "移除本书目录" });
+    expect(item).not.toBeDisabled();
+    item.click();
+
+    // 书名行没了（架子空了），但作者没被硬切走：没有下一本可切，中栏/右栏原样
+    // 继续显示这本书——他不会因为左边空了就看不见自己正在写的东西。
+    await waitFor(() => expect(screen.queryByRole("button", { name: first.name })).toBeNull());
+    expect(useShelf.getState().hidden).toEqual([first.id]);
+    expect(useCoords.getState().projectId).toBe(first.id);
+
+    // 空状态那句话自己就带着「放回来」——底下那条常驻提示这时候不重复出现（纯噪音）。
+    expect(screen.queryByText("放回来")).toBeNull();
+    (await screen.findByText("把移除的书放回来")).click();
+    expect(await screen.findByRole("button", { name: first.name })).toBeInTheDocument();
   });
 
   it("一章都没有的书，说的是下一步而不是留一片空白", async () => {

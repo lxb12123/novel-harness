@@ -51,32 +51,19 @@ export interface Book {
 }
 
 /**
- * 架子上该显示哪几本，按库里的顺序。
- *
- * **当前正在看的那本永远在架子上**：它要是被藏起来，右栏显示着它的内容、左边却找不到它，
- * 而「⋯ → 移除」的入口也跟着消失——作者会卡在一个自己弄不回来的状态里。
+ * 架子上该显示哪几本，按库里的顺序。**拿掉的就是拿掉了，哪怕它是正在看的那本**
+ * ——最后一本也能拿：架子空了就落到 `BookShelf` 自己的空状态，「放回来」
+ * （`restoreAll`）是唯一也是够用的回头路，不需要靠「正在看的永远留着」这条
+ * 特例硬撑。中栏、右栏不看这份列表，拿掉之后它们照常显示这本书，作者不会
+ * 因为左边空了就看不见自己正在写的东西。
  */
-export function shelved<T extends Book>(all: T[], hidden: string[], activeId: string | null): T[] {
-  return all.filter((b) => !hidden.includes(b.id) || b.id === activeId);
-}
-
-/** 这本能不能从架子上拿掉。**最后一本不许拿**：拿掉就没有书名行，也就没有切书的入口了。 */
-export function removable<T extends Book>(
-  all: T[],
-  hidden: string[],
-  activeId: string | null,
-): boolean {
-  return shelved(all, hidden, activeId).length > 1;
+export function shelved<T extends Book>(all: T[], hidden: string[]): T[] {
+  return all.filter((b) => !hidden.includes(b.id));
 }
 
 /** 拿掉 `id` 之后该切到哪一本（它是当前那本时才用得上）。没有下一本 → `null`。 */
-export function nextAfterRemoving<T extends Book>(
-  all: T[],
-  hidden: string[],
-  activeId: string | null,
-  id: string,
-): string | null {
-  const left = shelved(all, hidden, activeId).filter((b) => b.id !== id);
+export function nextAfterRemoving<T extends Book>(all: T[], hidden: string[], id: string): string | null {
+  const left = shelved(all, hidden).filter((b) => b.id !== id);
   return left[0]?.id ?? null;
 }
 
