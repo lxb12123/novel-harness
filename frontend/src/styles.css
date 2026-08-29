@@ -819,6 +819,9 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
 .set-block { display: grid; gap: 8px; }
 .set-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .set-row > button { min-height: 34px; padding: 6px 13px; border-radius: 8px; }
+/* 界面语言那两颗按钮的选中态。同 `.book-menu-lang button.on`——两处都是
+   「哪个语言是当前生效的」，一套配色两处认，别各画一份。 */
+.set-row > button.on { border-color: var(--accent); color: var(--accent); background: var(--sel); }
 .set-field > label { font-size: 13px; font-weight: 650; }
 /* 输入框照抄 `.onboarding-form input` 的配方（只把高度和圆角紧一档）：
    同一套边框/底色/聚焦光晕，两扇门才看得出是同一个产品。 */

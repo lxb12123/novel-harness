@@ -7,6 +7,7 @@ import {
   useSaveAiSettings,
 } from "../api/hooks";
 import type { AiSettings, AiSettingsInput } from "../api/types";
+import { useLanguage } from "../language";
 import { CloseIcon, EyeIcon } from "./icons";
 
 // AI 设置（BYOK）——像 Cursor 的 API Keys：作者粘一把自己的钥匙，存在本机。
@@ -75,6 +76,8 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
   const settings = useAiSettings();
   const save = useSaveAiSettings();
   const refresh = useRefreshModelWindows();
+  const language = useLanguage((s) => s.language);
+  const setLanguage = useLanguage((s) => s.setLanguage);
   const [tab, setTab] = useState<TabKey>("link");
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
@@ -190,6 +193,43 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
             id={`set-pane-${tab}`}
             aria-labelledby={`set-tab-${tab}`}
           >
+            {/* 这一行跟左边那两栏（连接服务 / 前文长度）没关系，两栏切换时都留着——
+                它管的是**看屏幕的人**读哪种字，不是这本书或这次连接的哪一位。
+                标题故意写成中英对照，不跟着 `language` 变：**它自己就是找它的入口**，
+                当前是哪种界面语言都得认得出来，不能因为已经切到看不懂的那种就找不到开关。
+
+                **不能叫「语言」**：书架上「这本书写的是什么语言」那两个按钮已经占了这个词
+                （维护者 2026-08-27 裁定书的语言跟界面语言分开管，一个中文作者能写英文小说），
+                摆同一屏还叫同一个名字，认错的代价是把小说正文的语言给改了。 */}
+            <div className="set-card set-row-card">
+              <div className="set-row-text">
+                <span className="set-row-title" id="set-lang-label">
+                  界面语言 / Interface language
+                </span>
+                <span className="set-row-sub">
+                  跟这本书写的是什么语言无关——那个在书架上改。
+                </span>
+              </div>
+              <div className="set-row" role="group" aria-labelledby="set-lang-label">
+                <button
+                  type="button"
+                  className={language === "zh" ? "on" : ""}
+                  aria-pressed={language === "zh"}
+                  onClick={() => setLanguage("zh")}
+                >
+                  中文
+                </button>
+                <button
+                  type="button"
+                  className={language === "en" ? "on" : ""}
+                  aria-pressed={language === "en"}
+                  onClick={() => setLanguage("en")}
+                >
+                  English
+                </button>
+              </div>
+            </div>
+
             {tab === "link" ? (
               /* 三个框是**一组**（作者要的）：它们回答的是同一个问题——连哪儿、
                  用哪个模型、拿什么钥匙。装进一张卡，「应用」钉在卡的右下角。 */

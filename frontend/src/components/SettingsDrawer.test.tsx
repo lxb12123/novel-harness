@@ -1,5 +1,6 @@
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { useLanguage } from "../language";
 import { fixtures, renderWithApi } from "../test/harness";
 import { devTerms, screenText } from "../test/screenGuard";
 import { SettingsDrawer } from "./SettingsDrawer";
@@ -238,6 +239,38 @@ describe("手填「一次能读多少」", () => {
     expect(text).not.toMatch(/token|context|窗口/i);
     // 「多少字」会是句假话（中文一个字不到一个单位），所以文案只说「照模型说明抄」。
     expect(text).toMatch(/模型说明/);
+  });
+});
+
+describe("界面语言（跟书的语言是两件事）", () => {
+  // `useLanguage` 的 `setLanguage` 生产调用方一度是 0——store/持久化/`fromSystem()`
+  // 兜底全都在，就是没有按钮接线，`grep setLanguage` 只在 `test/setup.ts` 里出现。
+  // 这条测试**就是那个按钮的调用方本身**：它跑不过，说明按钮又没了或者接错了线，
+  // 同这个仓库那些「引擎有、界面没有」的旧账一个形状。
+  it("点一下按钮，界面语言真的变了——两栏都看得见它，不用先切到某一栏", async () => {
+    renderWithApi(<SettingsDrawer onClose={() => {}} />, [
+      { match: /\/api\/settings$/, body: fixtures.settingsSaved },
+    ]);
+    await screen.findByDisplayValue("deepseek-v4-flash");
+    expect(useLanguage.getState().language).toBe("zh"); // 测试默认中文（test/setup.ts）
+    expect(screen.getByRole("button", { name: "中文" })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "English" }));
+    expect(useLanguage.getState().language).toBe("en");
+    expect(screen.getByRole("button", { name: "English" })).toHaveAttribute("aria-pressed", "true");
+
+    fireEvent.click(screen.getByRole("button", { name: "中文" }));
+    expect(useLanguage.getState().language).toBe("zh");
+  });
+
+  it("跟书的语言不是同一个词——屏幕上不出现裸的「语言：」", () => {
+    // 书架上「这本书写的是什么语言」那两个按钮就长这样（`BookShelf.tsx::BookLanguageToggle`），
+    // 这一格换个说法正是为了不让作者把两件事看成同一件事。
+    renderWithApi(<SettingsDrawer onClose={() => {}} />, [
+      { match: /\/api\/settings$/, body: fixtures.settingsSaved },
+    ]);
+    expect(screen.queryByText("语言：")).toBeNull();
+    expect(screen.getByText("界面语言 / Interface language")).toBeInTheDocument();
   });
 });
 

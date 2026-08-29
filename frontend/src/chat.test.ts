@@ -148,7 +148,7 @@ describe("一轮没跑成，那句话留在对话里（后端迁移 012）", () 
 
   it("「系统」是认得出来的一档 —— 它画得出来，而且有名字", () => {
     expect(failed[1].speaker).toBe("system"); // 探针：夹具里真有这一档
-    expect(SPEAKER_ZH.system).toBe("系统");
+    expect(SPEAKER_ZH.system.zh).toBe("系统");
     // 真 dump 的就是作者那块屏幕：你好 / 没跑成 / fff / 没跑成，一条都不许被筛掉。
     expect(visibleMessages(failed)).toEqual(failed);
   });

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { useCreateChat, useDeleteChat } from "../api/hooks";
 import type { ChatSessionView } from "../api/types";
 import { refusalText } from "../chat";
+import { useLanguage } from "../language";
 import { shownTime } from "../time";
 import { CloseIcon } from "./icons";
 
@@ -46,8 +47,9 @@ function SessionRow({
   deleting: boolean;
 }) {
   const [confirming, setConfirming] = useState(false);
+  const language = useLanguage((s) => s.language);
   const title = session.title.trim() || UNNAMED;
-  const time = shownTime(session.updated_at);
+  const time = shownTime(session.updated_at, language);
 
   return (
     <li className={"chat-session" + (current ? " on" : "")}>

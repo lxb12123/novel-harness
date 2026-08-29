@@ -8,13 +8,13 @@ import {
   useSummaryMentions,
   useSummaryWindow,
 } from "../api/hooks";
-import { LABEL_ZH } from "../api/types";
 import type {
   BookChapterStatusRow,
   BookSummaryStatus,
   NodeSummaryMentions,
   SummaryMention,
 } from "../api/types";
+import { nodeLabelText } from "../backendMessages";
 import { refusalText } from "../chat";
 import { useCoords } from "../store";
 
@@ -375,8 +375,9 @@ function bookStatusLine(
 
 /** 这一段总结提到了什么 —— **一排可点的记忆点**。
  *
- *  芯片上写的是**显示名**，不是 id，也不是 label 的英文值：`LABEL_ZH` 是一张
- *  「类型上全列」的表（同 `ActivityLog.ACTOR_ZH`），少一项 `tsc` 就红。 */
+ *  芯片上写的是**显示名**，不是 id，也不是 label 的英文值：`nodeLabelText` 查的是
+ *  `backendMessages.ts::NODE_LABEL`，覆盖率由 `tests/test_wording_guard.py` 拿
+ *  Python 的 `NodeLabel` 枚举核对，少一项就红。 */
 function Memories(props: {
   hits: SummaryMention[] | undefined;
   failed: boolean;
@@ -408,7 +409,7 @@ function Memories(props: {
             onClick={() => props.onOpen(hit.node.id)}
           >
             {hit.node.name}
-            <span className="chip-kind">{LABEL_ZH[hit.node.label]}</span>
+            <span className="chip-kind">{nodeLabelText(hit.node.label, "zh")}</span>
           </button>
         ))}
       </div>

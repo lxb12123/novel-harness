@@ -50,7 +50,7 @@ describe("局部关系图", () => {
       ...fixtures.subgraph,
       edges: [fixtures.states[0].edges[0]],
     } as unknown as Parameters<typeof toFlow>[0];
-    const { nodes, edges } = toFlow(g);
+    const { nodes, edges } = toFlow(g, "zh");
     const center = nodes.find((n) => n.id === g.center.id);
     expect(center?.style?.borderWidth).toBe(2);
     const others = nodes.filter((n) => n.id !== g.center.id);

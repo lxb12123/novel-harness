@@ -1909,10 +1909,38 @@ R2（未来实体提前出现）和 R3（死人/未登场角色开口说话）�
       门槛仍是「命令名 + 空格 + 一个词」，孤零零一个词放过去——假红会让下一个人把守卫关掉。**明确不收**：裸路径（`chapters/0001.md`，
       同步回执就在摆这些名字）、通配符路径、孤零零一个命令名。
 
-    **剩下的**：`WrongLabel` 的消息里仍然带着 `NodeLabel` 的值（`Character` / `Secret`），
-    浏览器那侧的 `ENGINE_ENUM` 咬得住它，而引擎这一侧今天没有一份「节点类别 → 中文」的
-    唯一表可用（`api/types.ts::LABEL_ZH` 和 `activity.py` 各有一份，**两份都在展示层**）。
-    修它要先决定那张表住哪儿，不是在 `declare.py` 里再抄第三份。
+    **剩下的**：`WrongLabel` 的消息里仍然带着 `NodeLabel` 的值（`Character` / `Location`），
+    浏览器那侧的 `ENGINE_ENUM` 咬得住它，**但引擎（`declare.py`）这一侧还是拼在消息字符串里
+    发出去的原始枚举值，不是码 + 参数**。「表住哪儿」这个曾经卡住修它的问题已经不存在了——
+    国际化第四批·前端文案批次把 `api/types.ts::LABEL_ZH` 删了，唯一一份在
+    `backendMessages.ts::NODE_LABEL`——**但 `WrongLabel` 还没接上它**，改的人不用再纠结
+    表住哪儿，只用把这条异常也改成同一批已经改过的码+参数形状（同 `activity.py` 那批）。
+
+11. ~~**界面语言只能靠浏览器自动判定，没有人切换过**~~ —— **2026-08-28 已补。**
+    `language.ts` 的 store / localStorage 持久化 / `fromSystem()` 兜底，国际化第四批
+    基建那笔就有了；`useLanguage((s) => s.language)` 也早被一批组件读着。**唯独没有
+    任何生产代码调用过 `setLanguage`**——全仓 `grep setLanguage` 只有 `test/setup.ts`
+    在调。接口齐了，入口没装：这份清单自己也从没记过它，**不是记过又漏更新，是真的
+    没被发现过**——直到有人为了给 Batch A 的改动截一张英文截图，装了 Playwright 直改
+    `localStorage` 才验出来（那不是产品能力，那是绕过去了）。
+
+    补法：`SettingsDrawer.tsx`（顶栏 ⚙）加一行「界面语言 / Interface language」+
+    中文/English 两颗按钮，接的是已有的 `setLanguage`，**没有重新设计那套 store**。
+    钉法：`SettingsDrawer.test.tsx` 两条新测试（点按钮语言真的变 + `aria-pressed`
+    跟着走）本身就是「生产调用方 ≥ 1」的回归守卫；真浏览器点过一次（Playwright）：
+    选 English → 刷新（相当于关掉工作台重开）→ 还是 English。
+
+    **这个洞值得记住的不是「洞」本身，是分工**（维护者 2026-08-27 裁定）：
+
+    | | 谁改 | 管什么 |
+    |---|---|---|
+    | 书的语言（`Project.language`） | 书架上「语言：」那两个按钮（`BookShelf.tsx::BookLanguageToggle`） | 模型写这本书的正文用哪种语言 |
+    | 界面语言（`language.ts` 的 store） | ⚙ 设置里「界面语言」那两个按钮（新加的） | 作者读菜单/通知/错误用哪种语言 |
+
+    两者故意独立：一个中文作者能写一本英文小说（网文出海），界面语言跟着书走会把他
+    锁进一种他没选过的界面。**下一个人最可能犯的错就是把这两个合并回去**——两处 UI
+    因此故意不用同一个词（书架上就叫「语言」，这颗新按钮必须叫「界面语言」），
+    看见「语言」两个字就以为是同一件事，先看这张表。
 
 **M4 正在实现、尚未完成**：`events/` 契约与 `002_m4_events.sql` 已落地；`extract/` 已有纯
 结构化 schema、确定性 prompt、精确优先的模糊证据定位与不猜名称解析，后台 provider 调用和

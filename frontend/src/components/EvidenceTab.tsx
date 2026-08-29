@@ -1,13 +1,14 @@
 import { useCharacterState, useEvidence, useRoster } from "../api/hooks";
+import { edgeLabelText } from "../backendMessages";
 import { useCoords } from "../store";
-import { edgeName, type Edge } from "../api/types";
+import { type Edge } from "../api/types";
 
 // Tab3 确定性证据 —— 把「✓知道 ch88」还原成当年那句原文。
 // **明确不给分数**（v1 没有向量，出任何 score = 编的，§1.2）。声明产生的边带 evidence_id，
 // 逐条取回「来源章 + 原文片段」。作者看到的不是「系统觉得」，是「你自己写过的那句」。
 
-// 关系类型 → 中文在 `api/types.ts::EDGE_ZH`（全前端一份，9 类全列，兜底是中文）。
-// 这儿原来那份拷贝只有 7 行且 `?? edge.type` 原样回吐。
+// 关系类型 → 作者的说法在 `backendMessages.ts::EDGE_LABEL`（全前端一份，兜底是
+// 翻译过的话）。这儿原来那份拷贝只有 7 行且 `?? edge.type` 原样回吐。
 
 export function EvidenceTab() {
   const { projectId, chapter, selectedNodeId } = useCoords();
@@ -50,7 +51,7 @@ function EvidenceRow({ pid, edge, dstName }: { pid: string; edge: Edge; dstName:
   return (
     <div className="statecard">
       <div className="nm">
-        {edgeName(edge.type)} {dstName}
+        {edgeLabelText(edge.type, "zh")} {dstName}
         <span style={{ color: "var(--dim)", fontWeight: 400 }}> · 第 {edge.valid_from_chapter} 章起</span>
       </div>
       {isFetching && <div className="row">取原文中…</div>}

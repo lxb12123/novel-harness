@@ -429,7 +429,7 @@ function EntryRow({
   onToggle: () => void;
 }) {
   const language = useLanguage((s) => s.language);
-  const time = shownTime(entry.ts);
+  const time = shownTime(entry.ts, language);
   return (
     <li className={"log-item" + (open ? " open" : "")}>
       <button className="log-line" aria-expanded={open} onClick={onToggle}>

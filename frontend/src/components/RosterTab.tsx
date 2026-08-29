@@ -6,7 +6,8 @@ import {
   useRenameNode,
   useRoster,
 } from "../api/hooks";
-import { LABEL_ZH, type RosterEntry } from "../api/types";
+import { type RosterEntry } from "../api/types";
+import { nodeLabelText } from "../backendMessages";
 import { readCorrectionError } from "../correctionError";
 import { useCoords } from "../store";
 import { CharacterBasicInfo } from "./CharacterBasicInfo";
@@ -194,7 +195,7 @@ export function RosterTab() {
             .sort()
             .map((lab) => (
               <div className="grp" key={lab}>
-                <div className="lab">{LABEL_ZH[lab as keyof typeof LABEL_ZH] ?? lab}</div>
+                <div className="lab">{nodeLabelText(lab, "zh")}</div>
                 {bySignal(groups[lab], order).map((n) => (
                   <div
                     className={"item" + (n.id === selectedNodeId ? " on" : "")}

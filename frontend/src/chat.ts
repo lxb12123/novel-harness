@@ -34,10 +34,10 @@ import { saidToTheAuthor } from "./correctionError";
  *  所以那句话现在**落在库里、跟着对话一起回来**，而这一行就是它上屏的许可证
  *  （`visibleMessages` 的 docstring 早写着：真要新增一种说话人，得先往这儿加一行，
  *  那是一次有意的改动）。**措辞仍然全在后端**：这儿加的只是「谁在说」那三个字。 */
-export const SPEAKER_ZH: Record<ChatSpeaker, string> = {
-  author: "你",
-  assistant: "写作助手",
-  system: "系统",
+export const SPEAKER_ZH: Record<ChatSpeaker, { zh: string; en: string }> = {
+  author: { zh: "你", en: "You" },
+  assistant: { zh: "写作助手", en: "Writing assistant" },
+  system: { zh: "系统", en: "System" },
 };
 
 /**

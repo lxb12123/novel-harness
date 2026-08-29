@@ -340,6 +340,49 @@ def test_the_failure_wording_table_covers_every_code_and_falls_back_to_chinese()
     assert not re.search(r"[一-鿿]", en_fallback), f"en 兜底句里混进了中文：{en_fallback!r}"
 
 
+def test_the_node_label_wording_table_covers_every_label() -> None:
+    """`NODE_LABEL`（`backendMessages.ts`）的键覆盖 `NodeLabel` 的每一个成员。
+
+    国际化第四批·前端文案批次统一了 `api/types.ts` 那份重复的 `LABEL_ZH`
+    （`Record<NodeLabel, string>`，靠 TS 类型逼「漏一行编译错」）——删表之后
+    `NODE_LABEL` 是唯一那一份，但它是 `Record<string, {zh,en}>`，编译期不再
+    强制穷举，这条测试就是补上去的那道运行时保险。
+
+    **判据是子集，不是相等**：`NODE_LABEL` 还留着 `Secret`（ADR 0039 删的那个
+    节点类型），它不再是 `NodeLabel` 的成员，但历史 `decision_log` 行（那张表
+    封死了 DELETE）里还有旧记录写着这个值——删掉这一行只会让老日志退化成裸标识。
+    """
+    source = BACKEND_MESSAGES.read_text(encoding="utf-8")
+    table_keys = set(_ts_const_object_keys(source, "NODE_LABEL"))
+    declared = {n.value for n in NodeLabel}
+    missing = declared - table_keys
+    assert not missing, (
+        f"NODE_LABEL 漏了行：{sorted(missing)}\n"
+        "漏掉的那一类节点会以引擎枚举的原样出现在作者屏幕上。"
+    )
+    assert len(declared) >= 5, "枚举遍历为空 —— 上面这条是永远绿的"
+
+
+def test_the_edge_label_wording_table_covers_every_edge_type() -> None:
+    """`EDGE_LABEL`（`backendMessages.ts`）的键覆盖 `EdgeType` 的每一个成员。
+
+    同 `test_the_node_label_wording_table_covers_every_label`，补的是 `EDGE_ZH`
+    删表之后丢掉的那道编译期保险。
+
+    **判据是子集，不是相等**：`EDGE_LABEL` 还留着 `KNOWS`/`BELIEVES`（ADR 0039
+    删的那两类边）——理由同 `NODE_LABEL` 那条，历史日志行还需要它们。
+    """
+    source = BACKEND_MESSAGES.read_text(encoding="utf-8")
+    table_keys = set(_ts_const_object_keys(source, "EDGE_LABEL"))
+    declared = {e.value for e in EdgeType}
+    missing = declared - table_keys
+    assert not missing, (
+        f"EDGE_LABEL 漏了行：{sorted(missing)}\n"
+        "漏掉的那一类关系会以引擎枚举的原样出现在作者屏幕上。"
+    )
+    assert len(declared) >= 5, "枚举遍历为空 —— 上面这条是永远绿的"
+
+
 def _seed_failed_run(book: dict[str, str], code: ExtractionErrorCode) -> str:
     """一条**真形态**的失败抽取：真的码 + `runner.py` 真写下的那句英文诊断。
 
@@ -528,24 +571,31 @@ def _ts_union_members(source: str, name: str) -> list[str]:
     return re.findall(r'"([^"]+)"', match.group(1))
 
 
-def test_the_browser_side_edge_wording_lists_all_nine_kinds() -> None:
-    """**枚举驱动**：`EdgeType` 有几个成员，浏览器那张表就得有几行。
+def test_the_browser_side_type_unions_match_the_backend_enums() -> None:
+    """**枚举驱动**：`EdgeType`/`NodeLabel` 联合类型和 Python 的枚举逐个对得上。
 
-    2026-08-11 之前这张表有**三份拷贝**（`BottomBar` / `EvidenceTab` / `LocalGraph`），
-    每一份都只有 7 行，而前两份的兜底是 `?? e.type`——`PLANTED_IN` / `RESOLVED_IN`
-    一旦被写出来，屏幕上就是四个大写字母。今天只有一份，且
-    `Record<EdgeType, string>` 让「漏一行」变成编译错误。
+    这条原来叫 `…_lists_all_nine_kinds`，还顺带核对 `EDGE_ZH`/`LABEL_ZH` 两张
+    表——那两张表国际化第四批·前端文案批次删了（统一去 `backendMessages.ts` 的
+    `EDGE_LABEL`/`NODE_LABEL`，覆盖率的守卫搬去了
+    `test_the_edge_label_wording_table_covers_every_edge_type`/
+    `test_the_node_label_wording_table_covers_every_label`，判据从「相等」
+    改成了「子集」——那两张表还留着 ADR 0039 退役的历史键）。
+
+    这条现在只剩联合类型本身：**它们没有运行时表示**，`tsc` 认不出「后端加了
+    一种、前端没跟上」，只有这条测试在拦。
     """
     source = API_TYPES.read_text(encoding="utf-8")
-    declared = [e.value for e in EdgeType]
-    assert sorted(_ts_union_members(source, "EdgeType")) == sorted(declared), (
+    edge_declared = [e.value for e in EdgeType]
+    node_declared = [n.value for n in NodeLabel]
+    assert sorted(_ts_union_members(source, "EdgeType")) == sorted(edge_declared), (
         "浏览器那份 `EdgeType` 联合类型和 Python 的枚举对不上"
     )
-    assert sorted(_ts_object_keys(source, "EDGE_ZH")) == sorted(declared), (
-        "`EDGE_ZH` 漏了行 —— 漏掉的那一类关系会以引擎枚举的原样出现在作者屏幕上"
+    assert sorted(_ts_union_members(source, "NodeLabel")) == sorted(node_declared), (
+        "浏览器那份 `NodeLabel` 联合类型和 Python 的枚举对不上"
     )
-    assert sorted(_ts_object_keys(source, "LABEL_ZH")) == sorted(n.value for n in NodeLabel)
-    assert len(declared) >= 5, "枚举遍历为空 —— 上面几条是永远绿的"
+    assert len(edge_declared) >= 5 and len(node_declared) >= 5, (
+        "枚举遍历为空 —— 上面两条是永远绿的"
+    )
 
 
 def test_the_browser_knows_every_way_a_turn_can_stop_and_every_step_it_takes() -> None:
@@ -596,7 +646,10 @@ def test_the_browser_keeps_exactly_one_copy_of_the_edge_wording() -> None:
                 offenders[path.name] = sorted(keys)[0]
     assert not offenders, (
         f"这些组件里又长出了一张 edge_type → 中文 的表：{offenders}\n"
-        "唯一那一份在 `frontend/src/api/types.ts::EDGE_ZH`（类型上强制 9 类全列）。"
+        "唯一那一份在 `frontend/src/backendMessages.ts::EDGE_LABEL`（7 类现役 + "
+        "KNOWS/BELIEVES 两类历史键，共 9 行——覆盖率靠 "
+        "`test_the_edge_label_wording_table_covers_every_edge_type` 守，"
+        "这张表是 `Record<string, …>`，编译期不再强制穷举）。"
     )
 
 
@@ -677,9 +730,11 @@ def test_no_refusal_ever_tells_the_author_to_type_a_command() -> None:
     新加一个 `DeclarationRefused` 子类、在它的消息里写一条命令，这里当场红。
 
     ⚠️ **这条只扫命令行那一张网。** `WrongLabel` 的消息里带着 `NodeLabel` 的值
-    （`Character` / `Secret`）——那是另一类泄漏，浏览器那侧的 `ENGINE_ENUM` 咬得住它，
-    而引擎这一侧今天还没有一份「节点类别 → 中文」的唯一表可用（`api/types.ts::LABEL_ZH`
-    和 `activity.py` 各有一份，两份都在展示层）。**这条断言在描述现状，不是在批准它。**
+    （`Character` / `Location`）——那是另一类泄漏，浏览器那侧的 `ENGINE_ENUM` 咬得住它，
+    但引擎这一侧（`declare.py`）还是把原始枚举值拼进消息字符串发出去，不是码 + 参数。
+    「表住哪儿」曾经是修它的前置问题——国际化第四批·前端文案批次删了 `api/types.ts::
+    LABEL_ZH`，唯一一份现在在 `backendMessages.ts::NODE_LABEL`——但 `WrongLabel` 还没接上它。
+    **这条断言在描述现状，不是在批准它。**
     """
     from novel_harness.declare import (
         AmbiguousName,

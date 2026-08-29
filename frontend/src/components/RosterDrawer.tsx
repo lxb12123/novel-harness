@@ -1,7 +1,8 @@
 import { useState } from "react";
 import { ApiError } from "../api/client";
 import { useCreateAlias, useCreateNode, useRoster } from "../api/hooks";
-import { AUTHORED_LABELS, LABEL_ZH } from "../api/types";
+import { AUTHORED_LABELS } from "../api/types";
+import { nodeLabelText } from "../backendMessages";
 import type { AliasKind, NodeLabel, NodeRef, StoredAlias } from "../api/types";
 
 type Tab = "node" | "alias";
@@ -61,7 +62,7 @@ function NodeForm({ pid }: { pid: string }) {
   const [made, setMade] = useState<NodeRef | null>(null);
 
   const create = useCreateNode(pid);
-  const hint = AUTHORED_LABELS.find((l) => l.label === label)?.hint ?? "";
+  const hint = AUTHORED_LABELS.find((l) => l.label === label)?.hint?.zh ?? "";
 
   function submit() {
     setMade(null);
@@ -83,7 +84,7 @@ function NodeForm({ pid }: { pid: string }) {
         <div className="row wrap">
           {AUTHORED_LABELS.map((l) => (
             <button key={l.label} className={label === l.label ? "on" : ""} onClick={() => setLabel(l.label)}>
-              {LABEL_ZH[l.label]}
+              {nodeLabelText(l.label, "zh")}
             </button>
           ))}
         </div>
@@ -111,7 +112,7 @@ function NodeForm({ pid }: { pid: string }) {
 
       {made && (
         <div className="receipt">
-          <div className="vf">✓ {LABEL_ZH[made.label]}「{made.name}」已进花名册</div>
+          <div className="vf">✓ {nodeLabelText(made.label, "zh")}「{made.name}」已进花名册</div>
           <div className="note">现在可以在场景和相关设置中使用这个条目。</div>
         </div>
       )}
@@ -227,7 +228,7 @@ function Failure({ error, fallback }: { error: unknown; fallback: string }) {
       <div className="candidates">
         {candidates.map((c, i) => (
           <div className="cand" key={i}>
-            {c.name}（{LABEL_ZH[c.label] ?? c.label}）
+            {c.name}（{nodeLabelText(c.label, "zh")}）
           </div>
         ))}
       </div>

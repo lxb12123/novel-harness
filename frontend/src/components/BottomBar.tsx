@@ -1,6 +1,7 @@
 import { useCharacterState, useRoster } from "../api/hooks";
+import { edgeLabelText } from "../backendMessages";
 import { useCoords } from "../store";
-import { edgeName, type Edge } from "../api/types";
+import { type Edge } from "../api/types";
 
 // 底栏时间线（§2.2）：选中节点的边闭开区间。用现成端点，零新引擎。
 //
@@ -13,7 +14,7 @@ import { edgeName, type Edge } from "../api/types";
 // 「青云城[88,150) 然后 北荒[150,∞)」那种收口，得有一个「取节点全历史边」的 reader，
 // 那是后续。现在这条时间线回答的是「这些事从第几章起一直成立到现在」。
 
-// 关系类型 → 中文的那张表**搬去了 `api/types.ts::EDGE_ZH`**（全前端一份，9 类全列）。
+// 关系类型 → 作者的说法那张表在 `backendMessages.ts::EDGE_LABEL`（全前端一份）。
 // 这儿原来有一份 7 行的拷贝，兜底写的是 `?? e.type`——`PLANTED_IN` / `RESOLVED_IN`
 // 一旦被写出来，屏幕上就是四个大写字母。
 
@@ -49,7 +50,7 @@ function IntervalBars() {
       {edges.map((e) => (
         <div className="tl-row" key={e.id}>
           <span className="tl-label">
-            {edgeName(e.type)} {nameOf(e.dst)}
+            {edgeLabelText(e.type, "zh")} {nameOf(e.dst)}
           </span>
           <span className="tl-track">
             <span

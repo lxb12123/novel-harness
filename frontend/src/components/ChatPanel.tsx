@@ -28,6 +28,7 @@ import {
   type LiveDraft,
   type TurnProgress,
 } from "../chat";
+import { useLanguage } from "../language";
 import { useCoords } from "../store";
 import { ChatSessions } from "./ChatSessions";
 import { BotIcon, SendIcon } from "./icons";
@@ -105,9 +106,10 @@ function Wording({ text }: { text: string }) {
  *  秘密）。名字改成读屏专用（`.chat-who` 那一版是画在屏幕上的），读屏还念得出
  *  这句是谁说的——去掉它，那块屏幕对读屏用户就变成一串没有归属的段落。 */
 function Bubble({ message }: { message: ChatMessageView }) {
+  const language = useLanguage((s) => s.language);
   return (
     <div className={"chat-msg " + message.speaker}>
-      <span className="chat-who-sr">{SPEAKER_ZH[message.speaker]}</span>
+      <span className="chat-who-sr">{SPEAKER_ZH[message.speaker][language]}</span>
       <p className="chat-text">{message.text}</p>
     </div>
   );
@@ -263,6 +265,7 @@ function Receipt({
 
 export function ChatPanel() {
   const { projectId, chapter, chatId, setChat } = useCoords();
+  const language = useLanguage((s) => s.language);
   const pid = projectId ?? "";
   const sessions = useChats(projectId);
   const detail = useChatDetail(projectId, chatId);
@@ -531,7 +534,7 @@ export function ChatPanel() {
         ))}
         {runningHere && pendingSaid && (
           <div className="chat-msg author">
-            <span className="chat-who-sr">{SPEAKER_ZH.author}</span>
+            <span className="chat-who-sr">{SPEAKER_ZH.author[language]}</span>
             <p className="chat-text">{pendingSaid}</p>
           </div>
         )}

@@ -5,9 +5,9 @@ import {
   useRoster,
   useRetractCanonEdge,
 } from "../api/hooks";
+import { edgeLabelText } from "../backendMessages";
 import { readCorrectionError } from "../correctionError";
 import { useCoords } from "../store";
-import { EDGE_ZH } from "../api/types";
 import type { CanonEdgeEditRequest } from "../api/types";
 
 // 自动升上去的地点 / 状态 / 关系边的纠错（Task 8 / ADR 0032）。
@@ -105,7 +105,7 @@ export function CanonEdgeEditor() {
   // 来源怎么显示：一句话把「最初是谁」和「现在归谁」分开（不变量 21 / 27）。
   const origin = view ? (view.source === "author" ? "作者声明" : "自动提取") : "";
   const ownership = view ? (view.author_owned ? " · 作者已修改" : "") : "";
-  const typeName = view ? EDGE_ZH[view.edge_type] ?? view.edge_type : "";
+  const typeName = view ? edgeLabelText(view.edge_type, "zh") : "";
 
   return (
     <div className="set-modal" role="dialog" aria-modal="true" aria-label="改这条事实">

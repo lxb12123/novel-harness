@@ -3,7 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { fixtures, renderWithApi, sseFrames, turnStream } from "../test/harness";
 import { devTerms, engineWords, machineWords, rawIds, screenText } from "../test/screenGuard";
-import { EDGE_ZH, type EdgeType } from "../api/types";
+import type { EdgeType } from "../api/types";
+import { EDGE_LABEL } from "../backendMessages";
 import { useCoords } from "../store";
 import { ActivityLog } from "./ActivityLog";
 import { BottomBar } from "./BottomBar";
@@ -575,8 +576,9 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
 
 /** 一条**引擎写得出、但契约夹具里没有**的边：伏笔埋在某一章。
  *
- *  `EdgeType` 有 9 个成员，而三个组件里那三份「关系 → 中文」的拷贝各只有 7 行，
- *  兜底是 `?? e.type`。**这一条就是那两行的形态。** */
+ *  `PLANTED_IN`/`RESOLVED_IN` 曾经不在三个组件里那三份「关系 → 中文」的拷贝里
+ *  （2026-08-11 之前各自硬编码 7 行，漏了这两类），兜底是 `?? e.type`。
+ *  **这一条就是那两行的形态。** */
 const PLANTED = {
   ...fixtures.characterState,
   edges: [{ ...fixtures.states[0].edges[0], type: "PLANTED_IN" }],
@@ -592,11 +594,18 @@ const UNKNOWN_DST = {
 };
 
 describe("兜底：认不出的东西说人话，不是原样回吐", () => {
-  it("底栏：9 类关系每一类都说得出中文", async () => {
-    // **判据是 `EDGE_ZH` 本身**（`Record<EdgeType, string>`，类型上强制全列），
-    // 不是在这里抄一份 9 个成员的清单。Python 那边的枚举和这份表对不对得上，
-    // 由 `tests/test_wording_guard.py` 钉。
-    for (const type of Object.keys(EDGE_ZH) as EdgeType[]) {
+  it("底栏：每一类关系都说得出中文", async () => {
+    // **判据是 `EDGE_LABEL` 本身**，不是在这里抄一份成员清单——但 `EDGE_LABEL`
+    // 是 `Record<string, {zh,en}>`，不像原来的 `EDGE_ZH`（`Record<EdgeType, string>`）
+    // 那样靠 TS 类型强制全列，还留着 `KNOWS`/`BELIEVES` 两个 ADR 0039 退役的历史键
+    // （底栏只会收到真实 `Edge.type`，历史键在这个场景下不该被渲染）。
+    // Python 那边的枚举和这份表键集合对不对得上，由
+    // `tests/test_wording_guard.py::test_the_edge_label_wording_table_covers_every_edge_type` 钉。
+    const HISTORICAL_ONLY = new Set(["KNOWS", "BELIEVES"]);
+    const liveEdgeTypes = Object.keys(EDGE_LABEL).filter(
+      (k) => !HISTORICAL_ONLY.has(k),
+    ) as EdgeType[];
+    for (const type of liveEdgeTypes) {
       // 无向边（`RELATED_TO`）底栏按设计不画区间，它那一行不会出现。
       if (type === "RELATED_TO") continue;
       const { unmount } = renderWithApi(
@@ -608,7 +617,7 @@ describe("兜底：认不出的东西说人话，不是原样回吐", () => {
         expect(el).not.toBeNull();
         return el as HTMLElement;
       });
-      expect(label.textContent).toContain(EDGE_ZH[type]);
+      expect(label.textContent).toContain(EDGE_LABEL[type].zh);
       expect(engineWords(screenText())).toEqual([]);
       unmount();
     }

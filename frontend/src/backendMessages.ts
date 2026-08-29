@@ -94,12 +94,17 @@ const CONFLICT_LABEL: Record<string, { zh: string; en: string }> = {
 // 封闭的，认不出只可能是这张表漏了一行）。`tests/test_wording_guard.py` 拿 Python
 // 那边的枚举本身核对这五张封闭表的键集合，不许漏。
 //
-// ⚠️ **`EDGE_LABEL`/`NODE_LABEL` 和 `frontend/src/api/types.ts` 的 `EDGE_ZH`/
-// `LABEL_ZH` 是已知的重复**（`tests/test_wording_guard.py` 的注释当时就点了名：
-// 「两份都在展示层」）。`EDGE_ZH`/`LABEL_ZH` 服务的是 `BottomBar`/`EvidenceTab`/
-// `LocalGraph`/`RosterDrawer` 等一整批跟这次改动无关的组件，且它们至今是纯中文——
-// 统一这两张表要连带把那批组件也一起接进界面语言，是一次单独的、更广的前端文案批次，
-// 不在这一笔（笔二只管 `activity.py` 那条读端）范围里。这里先记下来，别悄悄长出第三份。
+// ✅ **`EDGE_LABEL`/`NODE_LABEL` 曾经和 `frontend/src/api/types.ts` 的 `EDGE_ZH`/
+// `LABEL_ZH` 是已知的重复**（笔二当时点了名，但那两张表服务的 `BottomBar`/
+// `EvidenceTab`/`LocalGraph`/`RosterDrawer`/`RosterTab`/`SummaryTab`/
+// `CanonEdgeEditor` 一整批组件跟笔二无关，故意没有一起动）。**国际化第四批·
+// 前端文案批次把这个「别悄悄长出第三份」的警告兑现了**：`EDGE_ZH`/`LABEL_ZH`/
+// `edgeName()` 删掉了，那 7 个消费者改接这两张表（经 `nodeLabelText`/
+// `edgeLabelText` 两个导出函数，不直接查表），唯一的副作用是 `LABEL_ZH: Record
+// <NodeLabel, string>` 曾经靠 TS 类型逼「漏一行编译错」，这张表是 `Record<string,
+// …>` 没有这道编译期保险——补的是运行时那道
+// `test_the_node_label_wording_table_covers_every_label`/
+// `test_the_edge_label_wording_table_covers_every_edge_type`。
 export const CAPABILITY_LABEL: Record<string, { zh: string; en: string }> = {
   extractor: { zh: "抽取", en: "extraction" },
   summarizer: { zh: "章节总结", en: "chapter summary" },
@@ -165,6 +170,22 @@ export const NODE_LABEL: Record<string, { zh: string; en: string }> = {
   Chapter: { zh: "章", en: "chapter" },
 };
 const NODE_LABEL_FALLBACK = { zh: "条目", en: "an entry" };
+
+/** `node.label`（`NodeLabel`，或历史日志行里退役的 `Secret`）→ 作者的说法。
+ *
+ *  国际化第四批·前端文案批次统一进来的：`api/types.ts` 原来有一张各自为政的
+ *  `LABEL_ZH`（`Record<NodeLabel, string>`），和这儿的 `NODE_LABEL` 是已知的
+ *  重复（本文件曾经的注释点过名）。删表之后这是唯一一份，图谱/花名册一类
+ *  组件直接查它，不再各自查 `api/types.ts`。 */
+export function nodeLabelText(label: string, language: Language): string {
+  return NODE_LABEL[label]?.[language] ?? NODE_LABEL_FALLBACK[language];
+}
+
+/** `edge.type`（`EdgeType`，或历史日志行里退役的 `KNOWS`/`BELIEVES`）→ 作者的说法。
+ *  同 `nodeLabelText`，统一自 `api/types.ts` 原来的 `EDGE_ZH`/`edgeName()`。 */
+export function edgeLabelText(type: string, language: Language): string {
+  return EDGE_LABEL[type]?.[language] ?? EDGE_LABEL_FALLBACK[language];
+}
 
 // `ExtractionErrorCode` 的原始值 → 作者的说法。**全仓唯一一份**：`activity.py`
 // 的日志页详情、`api/extraction.py::ExtractionRunView.errors` 两条读端都发这个码，
@@ -415,14 +436,14 @@ const MESSAGES: Record<string, Template> = {
     return language === "zh" ? `${verdict}：${parts.join(" · ")}` : `${verdict}: ${parts.join(" · ")}`;
   },
   decision_subtitle_knowledge_edit: (params, language) => {
-    const before = EDGE_LABEL[String(params.before ?? "")]?.[language] ?? EDGE_LABEL_FALLBACK[language];
-    const after = EDGE_LABEL[String(params.after ?? "")]?.[language] ?? EDGE_LABEL_FALLBACK[language];
+    const before = edgeLabelText(String(params.before ?? ""), language);
+    const after = edgeLabelText(String(params.after ?? ""), language);
     return language === "zh"
       ? `${params.subject} 对「${params.secret}」：${before} → ${after}`
       : `${params.subject} on "${params.secret}": ${before} → ${after}`;
   },
   decision_subtitle_knowledge_add: (params, language) => {
-    const after = EDGE_LABEL[String(params.after ?? "")]?.[language] ?? EDGE_LABEL_FALLBACK[language];
+    const after = edgeLabelText(String(params.after ?? ""), language);
     return language === "zh"
       ? `${params.subject} 对「${params.secret}」：补上「${after}」`
       : `${params.subject} on "${params.secret}": added "${after}"`;
@@ -453,8 +474,7 @@ const MESSAGES: Record<string, Template> = {
       ? `${params.subject} ← 「${params.surface}」`
       : `${params.subject} ← "${params.surface}"`,
   decision_subtitle_edge_declare: (params, language) => {
-    const edgeType =
-      EDGE_LABEL[String(params.edge_type ?? "")]?.[language] ?? EDGE_LABEL_FALLBACK[language];
+    const edgeType = edgeLabelText(String(params.edge_type ?? ""), language);
     return `${params.subject} ${edgeType} ${params.target}`;
   },
   decision_subtitle_node_declare: (params, language) => {
@@ -463,7 +483,7 @@ const MESSAGES: Record<string, Template> = {
     const subject = String(params.subject ?? "") || "—";
     const label = params.label;
     if (!label) return subject;
-    const nodeLabel = NODE_LABEL[String(label)]?.[language] ?? NODE_LABEL_FALLBACK[language];
+    const nodeLabel = nodeLabelText(String(label), language);
     return language === "zh" ? `${subject}（${nodeLabel}）` : `${subject} (${nodeLabel})`;
   },
 

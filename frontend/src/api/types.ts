@@ -196,34 +196,25 @@ export type NodeLabel =
   | "StateDim"
   | "Chapter";
 
-/** label → 中文。**7 类全列**：花名册里也会出现引擎自己建的节点（Chapter 由 import 生成）。
- *
- *  ⚠️ **后端 `activity._NODE_LABEL` 里还留着一行 `Secret`，这儿没有——那不是漏了。**
- *  后端那张表还要渲染 `decision_log` 里 2026-08-25 之前的历史行（那张表封死了 DELETE），
- *  而浏览器这一份只喂当下的图。守卫（`test_wording_guard.py`）对这一份要求**逐个相等**，
- *  多一行就红。 */
-export const LABEL_ZH: Record<NodeLabel, string> = {
-  Character: "人物",
-  Location: "地点",
-  Faction: "势力",
-  Object: "物品",
-  Foreshadow: "伏笔",
-  StateDim: "状态",
-  Chapter: "章",
-};
-
-/** 作者能自己建的 5 类，附一句「什么时候用它」。
+/** 作者能自己建的 5 类，附一句「什么时候用它」（双语）。
  *
  * **故意不含 `StateDim` 和 `Chapter`**：前者是引擎内部的状态维度，后者由 import 生成——
- * 把它们放进「新建」菜单等于邀请作者手工造出引擎的内部结构。上面的 `LABEL_ZH` 仍要认它们
- * （花名册会显示），两张表的差集就是这条区分本身，别合并。
+ * 把它们放进「新建」菜单等于邀请作者手工造出引擎的内部结构。`backendMessages.ts` 的
+ * `NODE_LABEL` 仍要认它们（花名册会显示），两者的差集就是这条区分本身，别合并。
+ *
+ * label → 中文/英文的那张表**搬去了 `backendMessages.ts::NODE_LABEL`**
+ * （国际化第四批·前端文案批次，统一了原来这儿和那边重复的 `LABEL_ZH`）。
+ * 这张 `hint` 表没有后端对应物——它是纯前端的「新建」菜单构造，得自己写双语。
  */
-export const AUTHORED_LABELS: { label: NodeLabel; hint: string }[] = [
-  { label: "Character", hint: "故事中的人物" },
-  { label: "Location", hint: "故事发生的地点" },
-  { label: "Faction", hint: "门派、家族或组织" },
-  { label: "Object", hint: "对情节有影响的物品" },
-  { label: "Foreshadow", hint: "准备在后文回应的线索" },
+export const AUTHORED_LABELS: { label: NodeLabel; hint: { zh: string; en: string } }[] = [
+  { label: "Character", hint: { zh: "故事中的人物", en: "A character in the story" } },
+  { label: "Location", hint: { zh: "故事发生的地点", en: "A place where the story happens" } },
+  { label: "Faction", hint: { zh: "门派、家族或组织", en: "A sect, family, or organization" } },
+  { label: "Object", hint: { zh: "对情节有影响的物品", en: "An object that matters to the plot" } },
+  {
+    label: "Foreshadow",
+    hint: { zh: "准备在后文回应的线索", en: "A clue planted to pay off later" },
+  },
 ];
 
 export interface Project {
@@ -374,29 +365,6 @@ export type EdgeType =
   | "OWNS"
   | "PLANTED_IN"
   | "RESOLVED_IN";
-
-/** 关系类型 → 作者的说法。**7 类全列**，而且类型上必须全列：
- *  `Record<EdgeType, string>` 让「漏一行」变成一个编译错误，不是一句运行时兜底。
- *
- *  ── 这张表为什么在这儿，而不是三份散在组件里 ──────────────────────────────
- *  2026-08-11 之前它有**三份拷贝**（`BottomBar` / `EvidenceTab` / `LocalGraph`），
- *  每一份都只有 7 行（`PLANTED_IN` / `RESOLVED_IN` 一个都没有），而前两份的兜底写的是
- *  `?? e.type`——也就是说那两类边一旦被写出来，屏幕上就是 `PLANTED_IN` 四个大写字母。
- *  措辞的**唯一**出处是后端（`activity._EDGE_LABEL`），这张表是它在浏览器里的投影；
- *  投影只该有一份，且必须被守卫钉住它和后端说的是同一句话。 */
-export const EDGE_ZH: Record<EdgeType, string> = {
-  LOCATED_AT: "在",
-  MEMBER_OF: "属于",
-  RELATED_TO: "关系",
-  HAS_STATE: "状态",
-  OWNS: "有",
-  PLANTED_IN: "埋在",
-  RESOLVED_IN: "回应于",
-};
-
-/** 认不出的类型退到一句中文，**绝不原样回吐**（同后端 `_edge_label`）。 */
-export const edgeName = (type: string): string =>
-  EDGE_ZH[type as EdgeType] ?? "关系";
 
 export interface Edge {
   id: string;
