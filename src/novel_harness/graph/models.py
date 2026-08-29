@@ -319,6 +319,19 @@ class EdgeProps(BaseModel):
     """`HAS_STATE` 的机器键。v1 只有 health 维度有（见 `HealthValue`）——
     修为/身份没有任何规则消费，按 ADR 0005 的增长规则就不该有键。"""
 
+    dim_key: str | None = None
+    """**不是** R3 的判据——那个读的是目标 `StateDim` 节点自己的 `props.dim_key`
+    （`StateValue.dim_key`，见 `sqlite_store.py::state_at`），不是边上这个字段。
+    这个字段只喂 `canon_edge_slot_key`（改归属/纠错去重的槽位键）。
+
+    **必须声明成带默认值的字段，不能当 `extra="allow"` 的隐式额外字段**：
+    生产两条写入路径（`_write_state` / `declare.py::declare_dead`）建 `EdgeProps`
+    时都不传它，而 pydantic 的 `extra="allow"` 模型访问一个从没被设过的额外字段是
+    `AttributeError`，不是 `None`——之前这里没有这行声明时，`canon_edge_slot_key`
+    那句 `edge.props.dim_key or ""` 对任何一条真实写入的 `HAS_STATE` 边都会炸，
+    只是没人发现：唯一覆盖这条路的测试手写 `props_json` 塞了这个键，绕开了真实
+    写入路径会产出的形状。"""
+
 
 # ══════════════════════════════════════════════════════════════════════════
 # 一等对象

@@ -1256,6 +1256,7 @@
     "evidence_id": "evidence:ID73",
     "evidence_status": "FRESH",
     "props": {
+      "dim_key": null,
       "value": null,
       "value_key": null
     },
@@ -1278,6 +1279,7 @@
       "evidence_id": null,
       "evidence_status": "NONE",
       "props": {
+        "dim_key": null,
         "value": null,
         "value_key": null
       },
@@ -1301,6 +1303,7 @@
       "evidence_id": null,
       "evidence_status": "NONE",
       "props": {
+        "dim_key": null,
         "value": null,
         "value_key": null
       },
@@ -2727,6 +2730,7 @@
           "information_scope": "CANON",
           "project_id": "project:ID1",
           "props": {
+            "dim_key": null,
             "value": null,
             "value_key": null
           },

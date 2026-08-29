@@ -106,6 +106,61 @@ class World:
         ).fetchone()["id"]
         return edge_id
 
+    def ingest_death(self, quote: str) -> str:
+        """同 `ingest_location`，但种一条真实的抽取器 HAS_STATE(health) 边。
+
+        走这条而不是手写 SQL/`EdgeProps`：生产四处写 HAS_STATE 边都不传 `dim_key`
+        （2026-08-27 挖出的坑，见 `EdgeProps.dim_key` 的说明），手写夹具会悄悄放过
+        「这份 props 是不是生产真的会写出来的形状」这件事。
+        """
+        row = self.conn.execute(
+            "SELECT cs.id, cs.chapter_id, cs.text FROM chapter_snapshot cs "
+            "JOIN chapter c ON c.id = cs.chapter_id "
+            "WHERE c.project_id = ? AND c.number = 1 AND cs.text_sha256 = c.text_sha256",
+            (self.pid,),
+        ).fetchone()
+        from novel_harness.graph import ChapterText
+
+        chapter = ChapterText(
+            chapter_id=row["chapter_id"], number=1, snapshot_id=row["id"], text=row["text"]
+        )
+        service = ExtractionService(
+            conn=self.conn,
+            graph=self.graph,
+            event_store=SqliteEventStore(self.conn),
+            proposal_store=SqliteProposalStore(self.conn),
+        )
+        report = service.ingest(
+            self.pid,
+            chapter,
+            RawChapterAnalysis(
+                events=(
+                    RawEvent(
+                        summary="萧决死了",
+                        quote=quote,
+                        participants=("萧决",),
+                        knowers=("萧决",),
+                        confidence=0.95,
+                    ),
+                ),
+                state_updates=(
+                    RawStateUpdate(kind="death", subject="萧决", quote=quote, confidence=0.95),
+                ),
+                character_profiles=(),
+            ),
+            prompt_hash="prompt:correction-test-death",
+        )
+        promote_clean_facts(
+            self.conn, self.pid, report, graph=self.graph, events=SqliteEventStore(self.conn)
+        )
+        self.conn.commit()
+        edge_id = self.conn.execute(
+            "SELECT id FROM edge WHERE project_id = ? AND type = 'HAS_STATE' "
+            "AND information_scope = 'CANON' ORDER BY rowid DESC LIMIT 1",
+            (self.pid,),
+        ).fetchone()["id"]
+        return edge_id
+
     def canon_edge(self, edge_id: str) -> dict[str, Any]:
         return self.graph.canon_edge_view(self.pid, edge_id).model_dump(mode="json")
 
@@ -152,57 +207,36 @@ def test_location_reassign_creates_author_replacement_and_bumps(
     assert override["replacement_edge_id"] == result.replacement_edge_id
 
 
-def test_props_only_edit_keeps_edge_id_and_source(world: World) -> None:
-    """HAS_STATE 只改 value：edge id 不变、source/evidence 不变、override 有 before/after。"""
-    # 直接种一条 HAS_STATE 机器边（health 维度）：extractor + CANON + FRESH evidence。
-    from novel_harness.ids import EntityType, new_id
+def test_canon_edge_view_survives_a_real_state_edge(world: World) -> None:
+    """`GET .../canon/edges/{id}`（作者点开状态事实编辑器时走的那条）不许崩。
 
-    chapter_row = world.conn.execute(
-        "SELECT c.id, s.id AS snapshot_id FROM chapter c "
-        "JOIN chapter_snapshot s ON s.chapter_id = c.id "
-        "WHERE c.project_id = ? AND c.number = 1 LIMIT 1",
-        (world.pid,),
-    ).fetchone()
-    dim_id = new_id(EntityType.STATE_DIM, world.pid)
-    ev_id = new_id(EntityType.EVIDENCE, world.pid)
-    world.conn.execute(
-        "INSERT INTO node (id, project_id, label, name, props_json) VALUES (?,?,?,?,?)",
-        (dim_id, world.pid, NodeLabel.STATE_DIM.value, "生死", '{"dim_key":"health"}'),
-    )
-    world.conn.execute(
-        """
-        INSERT INTO evidence (
-            id, project_id, chapter_id, chapter_snapshot_id,
-            para_index, quote_text, quote_sha256, para_index_hint, occurrence_k
-        ) VALUES (?, ?, ?, ?, 0, ?, ?, 0, 0)
-        """,
-        (
-            ev_id,
-            world.pid,
-            chapter_row["id"],
-            chapter_row["snapshot_id"],
-            "萧决走进了青云城主府。",
-            __import__("hashlib").sha256("萧决走进了青云城主府。".encode()).hexdigest(),
-        ),
-    )
-    edge_id = new_id(EntityType.EDGE, world.pid)
-    world.conn.execute(
-        """
-        INSERT INTO edge (
-            id, project_id, src, dst, type, valid_from_chapter, information_scope,
-            status, confidence, props_json, source, evidence_id, evidence_status
-        ) VALUES (?, ?, ?, ?, 'HAS_STATE', 1, 'CANON', 'ACTIVE', 1.0, ?, 'extractor', ?, 'FRESH')
-        """,
-        (
-            edge_id,
-            world.pid,
-            world.ids["萧决"],
-            dim_id,
-            '{"dim_key":"health","value":"死","value_key":"dead"}',
-            ev_id,
-        ),
-    )
-    world.conn.commit()
+    2026-08-27 挖出的坑：`EdgeProps` 只声明了 `value`/`value_key`，`dim_key` 一直是
+    `extra="allow"` 的隐式额外字段，而生产四处写 HAS_STATE 边（抽取器 `state`/`death`、
+    `declare.py::declare_dead`）都不传它——`canon_edge_slot_key()` 那句
+    `edge.props.dim_key or ""` 对任何一条真实边都是 `AttributeError`，也就是说**今天
+    只要作者点开任何一条状态事实的编辑器就 500**。这条测试种一条最普通的真实死亡边
+    （不手写 SQL、不手写 `EdgeProps`），只做「打开它」这一件事——它就是最小复现。
+    """
+    edge_id = world.ingest_death("萧决走进了青云城主府。")
+    view = world.canon_edge(edge_id)
+    assert view["props"]["dim_key"] is None
+    assert view["slot_key"]
+
+
+def test_props_only_edit_keeps_edge_id_and_source(world: World) -> None:
+    """HAS_STATE 只改 value：edge id 不变、source/evidence 不变、override 有 before/after。
+
+    边种在真实生产路径上（`world.ingest_death` → 抽取器 `kind="death"`），不再手写
+    `props_json`——手写会放过「这份 props 是不是生产真的会写出来的形状」这件事：
+    2026-08-27 挖出，生产四处写 HAS_STATE 边全部不传 `dim_key`，而这份夹具原来手写
+    塞了它，绕开了真实形状，让「打开任何一条真实状态事实的编辑器就 500」这件事在这份
+    测试绿着的情况下活了下来（见 `EdgeProps.dim_key` 的说明和新增的
+    `test_canon_edge_view_survives_a_real_state_edge`）。
+    """
+    edge_id = world.ingest_death("萧决走进了青云城主府。")
+    dim_id = world.conn.execute(
+        "SELECT dst FROM edge WHERE id = ?", (edge_id,)
+    ).fetchone()["dst"]
     before = project.require_canon_version(world.conn, world.pid)
     from novel_harness.graph.models import EdgeProps
 
