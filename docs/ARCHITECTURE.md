@@ -1909,12 +1909,14 @@ R2（未来实体提前出现）和 R3（死人/未登场角色开口说话）�
       门槛仍是「命令名 + 空格 + 一个词」，孤零零一个词放过去——假红会让下一个人把守卫关掉。**明确不收**：裸路径（`chapters/0001.md`，
       同步回执就在摆这些名字）、通配符路径、孤零零一个命令名。
 
-    **剩下的**：`WrongLabel` 的消息里仍然带着 `NodeLabel` 的值（`Character` / `Location`），
-    浏览器那侧的 `ENGINE_ENUM` 咬得住它，**但引擎（`declare.py`）这一侧还是拼在消息字符串里
-    发出去的原始枚举值，不是码 + 参数**。「表住哪儿」这个曾经卡住修它的问题已经不存在了——
-    国际化第四批·前端文案批次把 `api/types.ts::LABEL_ZH` 删了，唯一一份在
-    `backendMessages.ts::NODE_LABEL`——**但 `WrongLabel` 还没接上它**，改的人不用再纠结
-    表住哪儿，只用把这条异常也改成同一批已经改过的码+参数形状（同 `activity.py` 那批）。
+    ~~**剩下的**：`WrongLabel` 的消息里仍然带着 `NodeLabel` 的值……浏览器那侧的
+    `ENGINE_ENUM` 咬得住它，但引擎这一侧还是拼在消息字符串里发出去的原始枚举值，
+    不是码 + 参数~~ —— **2026-08-29 已补**（国际化第四批·裸错误码审计，28 种码/51 处
+    那一批）。`app.py::_wrong_label` 现在发 `{"error": "wrong_label", "params":
+    {"surface", "got", "want"}}`（`got`/`want` 是 `NodeLabel` 的原始枚举值，封闭集合，
+    安全），前端 `backendMessages.ts::MESSAGES.wrong_label` 拿 `nodeLabelText()`
+    把它们翻成作者的说法。`ENGINE_ENUM` 这张网现在应该抓不到真数据了——它没被拆，
+    留着是防这条回归。
 
 11. ~~**界面语言只能靠浏览器自动判定，没有人切换过**~~ —— **2026-08-28 已补。**
     `language.ts` 的 store / localStorage 持久化 / `fromSystem()` 兜底，国际化第四批
