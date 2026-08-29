@@ -279,6 +279,14 @@ export interface CharacterEventRow {
   summary: string;
   participants: NodeRef[];
   knowers: NodeRef[];
+  /** 这条事件掉了参与者时的那条 `event_cast_changed` 通知（2026-08-28）。
+   *
+   *  拼在这里，不是让前端再发一次请求去 `GET .../notifications` 里找——同
+   *  `RosterEntry.appearance_chapters` 的先例。带的是**完整** `SystemNotification`
+   *  （不是裸 `bool`）：要用 `id` 去调 `resolve`，要用 `jump` 定位，要用
+   *  `title_code`/`title_params` 渲染。一件事跟三个人相关，三个人的行上这一位
+   *  是**同一条**通知（同一个 `id`），不是各查各的。 */
+  cast_changed: SystemNotification | null;
 }
 
 export interface RenameNodeInput {
@@ -852,7 +860,12 @@ export type SystemNotificationKind =
   | "extraction_yielded_nothing"
   /** 导入时丢掉了目录页复制出来的假章（032）。带一个「撤销」动作
    *  （`actions` 里的 `"undo_toc_skip"`）——见 `useUndoTocSkip`。 */
-  | "import_toc_skipped";
+  | "import_toc_skipped"
+  /** 删花名册条目时，一件跟这个人相关的事件掉了参与者（034）。**它有更贴身的
+   *  家**——`CharacterEventRow.cast_changed` 把它挂在角色卡的事件时间线上，
+   *  这里列出来只是让它在通用的「系统通知」面板里也认得出（同一条通知两个
+   *  出口，不是两份数据）。 */
+  | "event_cast_changed";
 export type SystemNotificationStatus = "OPEN" | "IGNORED" | "RESOLVED";
 
 /** 锚三元组（ADR 0006，永不 offset）：段号 + 引语 + 第几次。 */

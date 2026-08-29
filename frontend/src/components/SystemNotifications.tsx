@@ -57,6 +57,13 @@ const KIND_TITLE: Record<SystemNotification["kind"], { zh: string; en: string }>
     zh: "导入时跳过了几个空章",
     en: "A few empty chapters were skipped during import",
   },
+  // 更贴身的家在角色卡的事件时间线上（`CharacterEventRow.cast_changed`），
+  // 这张通用面板只是它的第二个出口——标题照样不能漏，漏了就是 034 之前
+  // 那批码原样摆屏幕的同一种坏法。
+  event_cast_changed: {
+    zh: "一件事的参与者变了",
+    en: "The people in an event changed",
+  },
 };
 
 function NotificationRow({
