@@ -18,6 +18,24 @@ ANALYSIS_PROMPT_VERSION: Final = "chapter-analysis-prompt-v7"
 
 ⚠️ **改这段 prompt 的正文会改 `prompt_hash`，而 `prompt_hash` 是 `extraction_run`
 的唯一键的一部分**——改一个字 = 全书每一章都得重新调一次模型。别为了措辞好看改它。
+
+── 📌 下次真要改这段 prompt 时，**顺手把下面这条一起带上** ──────────────
+
+**「状态维度的名字用正文的语言写。」**
+
+2026-08-27 实测（作者真书三章，`state`/`location` 放开「认不出就建」之后）：模型新建
+了 9 个维度，其中两个是**英文**——`mental state`、`true status`，而正文和其余七个
+维度名都是中文。人物卡（`StateCards.tsx`）直接渲染维度名，于是作者会看到
+
+    身体状况       重伤
+    mental state   惊惧      ← 中英混排
+    武功境界       三阶
+
+这是模型的输出习惯，不是引擎的 bug——**一句话就能治，但那句话要付上面那个代价**
+（作者那本 158 章的书重新买一整轮）。维护者 2026-08-27 裁定：**先放着，攒到下次
+真有理由动 prompt 时捎上。**
+
+**记在这儿而不是别处**：改 prompt 的人一定会读这个文件，而这条只有在那一刻才值得做。
 """
 
 _SYSTEM_PROMPT: Final = f"""You extract structured facts from one supplied novel chapter.
