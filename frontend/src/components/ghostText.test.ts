@@ -3,6 +3,7 @@ import { EditorView } from "@codemirror/view";
 import { describe, expect, it } from "vitest";
 import {
   acceptSuggestion,
+  acceptSuggestionChunk,
   dismissSuggestion,
   setSuggestion,
   suggestionField,
@@ -57,5 +58,59 @@ describe("行内建议", () => {
     const v = view("萧决推开门。", { text: "屋里没有点灯。", pos: 6 });
     v.dispatch({ selection: { anchor: 2 } });
     expect(v.state.field(suggestionField)).toBeNull();
+  });
+});
+
+describe("按 → 逐口接受", () => {
+  it("吃一口只落一个词，剩下的还挂在建议里，光标停在刚落的字后面", () => {
+    const v = view("萧决推开门。", { text: "屋里没有点灯。", pos: 6 });
+    expect(acceptSuggestionChunk(v)).toBe(true);
+    expect(v.state.doc.toString()).toBe("萧决推开门。屋"); // 「屋」｜「里没有点灯。」
+    expect(v.state.field(suggestionField)).toEqual({ text: "里没有点灯。", pos: 7 });
+    expect(v.state.selection.main.head).toBe(7);
+  });
+
+  it("连续吃到底：文档拼建议剩文，字数从头到尾不丢不多", () => {
+    const full = "屋里没有点灯。";
+    let v = view("萧决推开门。", { text: full, pos: 6 });
+    while (v.state.field(suggestionField)?.text) {
+      expect(acceptSuggestionChunk(v)).toBe(true);
+    }
+    expect(v.state.doc.toString()).toBe("萧决推开门。" + full);
+  });
+
+  it("最后一口吞完整份建议时退化成整份接受 —— 不留一个空字符串的建议在场上", () => {
+    // 「点灯。」一个词加一个句号，nextChunkLength 会一次报出整段长度。
+    const v = view("萧决推开门。屋里没有", { text: "点灯。", pos: 10 });
+    expect(acceptSuggestionChunk(v)).toBe(true);
+    expect(v.state.doc.toString()).toBe("萧决推开门。屋里没有点灯。");
+    expect(v.state.field(suggestionField)).toBeNull(); // 不是 {text: "", pos: ...}
+  });
+
+  it("`Intl.Segmenter` 在某些环境里抛错时，退化成整段接受而不是凭空清空建议", () => {
+    // 真出这种事，`run` 要是不返回 true，CM6 就不会挡掉浏览器原生的 → 默认动作——
+    // 原生挪光标会同步出一个没带 `setSuggestion` 效果的事务，照样把建议清空，
+    // 但一个字都没落下。这条钉的是「宁可整段接受，也不能连字都没落就把建议丢了」。
+    const originalSegmenter = globalThis.Intl.Segmenter;
+    // @ts-expect-error 故意装成一个坏掉的 Intl.Segmenter
+    globalThis.Intl.Segmenter = class {
+      segment(): never {
+        throw new Error("boom");
+      }
+    };
+    try {
+      const v = view("萧决推开门。", { text: "屋里没有点灯。", pos: 6 });
+      expect(acceptSuggestionChunk(v)).toBe(true);
+      expect(v.state.doc.toString()).toBe("萧决推开门。屋里没有点灯。");
+      expect(v.state.field(suggestionField)).toBeNull();
+    } finally {
+      // @ts-expect-error 换回真的
+      globalThis.Intl.Segmenter = originalSegmenter;
+    }
+  });
+
+  it("没有建议时让路，不吞掉方向键正常挪动光标", () => {
+    const v = view("萧决推开门。");
+    expect(acceptSuggestionChunk(v)).toBe(false);
   });
 });

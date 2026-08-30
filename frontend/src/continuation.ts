@@ -4,8 +4,10 @@
 // 作者担心的「推理赶不上删改」在续写这条路上**不是增量失效问题，是取消问题**：
 // 停手 `IDLE_MS` 才发一次，一敲键就把在飞的那次丢掉。没有状态要维护。
 
-/** 停手多久才去问。太短 = 边打字边烧钱；太长 = 感觉不到它在。 */
-export const IDLE_MS = 400;
+/** 停手多久才去问。太短 = 边打字边烧钱、建议追着光标乱跳；太长 = 感觉不到它在。
+ *  400ms 试下来太急——正常打字的换气停顿都会踩到，逐口吃建议时也一样：每按一次 →
+ *  文档都算「变了」，1 秒内不再动手才重新问，一直点着吃不会被打断。 */
+export const IDLE_MS = 1000;
 
 export interface SuggestSignal {
   /** 光标前的正文。 */
@@ -69,6 +71,27 @@ export function tailAfter(doc: string, pos: number, limit: number): string {
   const after = doc.slice(Math.max(0, Math.min(pos, doc.length)));
   const points = Array.from(after);
   return points.length <= limit ? after : points.slice(0, limit).join("");
+}
+
+/** 建议文本里「下一口」该吞多长——方向键逐口接受用（`ghostText.ts` 的 `acceptSuggestionChunk`）。
+ *
+ *  用 `Intl.Segmenter({granularity:"word"})` 而不是按空格/固定字数切：中文没有空格，
+ *  固定字数会把词切断，而 `Intl.Segmenter` 是浏览器内置的机械分词（ICU 词典），
+ *  中英文同一套代码，不是本仓库自己去猜「这算不算一个词」的语义判断。
+ *
+ *  一口 = 一个词，外加它前后粘着的标点/空白（下一个词开始前为止）——这样标点不会
+ *  单独占一次按键，句尾的「，」「。」跟着前一个词一起落地。 */
+export function nextChunkLength(text: string): number {
+  if (!text) return 0;
+  const segments = Array.from(new Intl.Segmenter(undefined, { granularity: "word" }).segment(text));
+  let end = 0;
+  let haveWord = false;
+  for (const s of segments) {
+    if (s.isWordLike && haveWord) break;
+    end = s.index + s.segment.length;
+    if (s.isWordLike) haveWord = true;
+  }
+  return end || text.length;
 }
 
 /** 模型返回的那一段清理成能直接插进正文的样子。

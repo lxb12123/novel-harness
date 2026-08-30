@@ -210,6 +210,10 @@ export function CenterEditor() {
           }}
           onIdle={({ before, after, pos, hasSelection }) => {
             if (!projectId) return;
+            // **不因为「还有一口没吃完」就拦下重新问**（这一档试过，作者要的不是这个）：
+            // 逐口接受时，`before` 每按一次 → 就更精确一分，作者要的是「一直跟着最新的
+            // 上文给建议」，不是「锁死在第一次算出来的那条，吃完/丢掉才肯换」。
+            // 真正管「问得太勤」的只有 `IDLE_MS`。
             if (!shouldSuggest({ before, hasSelection, hasSuggestion: false, loading: !data })) {
               return;
             }

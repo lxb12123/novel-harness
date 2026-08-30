@@ -1,5 +1,6 @@
-import { StateEffect, StateField, type Extension } from "@codemirror/state";
+import { Prec, StateEffect, StateField, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType, keymap } from "@codemirror/view";
+import { nextChunkLength } from "../continuation";
 
 // 行内建议的「灰字」（ADR 0015）。它是**装饰，不是文档内容**——建议没被接受之前，
 // `state.doc` 里一个字符都没有。这条很要紧：
@@ -75,13 +76,60 @@ export function dismissSuggestion(view: EditorView): boolean {
   return true;
 }
 
-/** 装进 CM6 的那一份。**keymap 必须排在 defaultKeymap 之前**，否则 Tab/Esc 先被别人吃掉。 */
+/** 接受建议的「下一口」（一个词，见 `nextChunkLength`）：那一截从灰字变真文档内容，
+ *  剩下的继续挂着，光标停在刚落的字后面。整口吞完时退化成 `acceptSuggestion`
+ *  （效果一样：清空建议），不留一个空字符串的建议对象在场上。
+ *
+ *  绑定在**光标未修饰的** `→`：建议挂着时光标必然停在 `current.pos`（挪一下就被上面
+ *  那条 `update()` 清掉了），所以此刻按 `→` 除了「吃一口建议」没有别的合理含义。
+ *  返回 false = 当时没有建议，方向键正常移动光标。
+ *
+ *  **`Intl.Segmenter` 抛错时退化成整段接受**，不让异常顺着抛到 CM6 的按键分发之外——
+ *  那样 `run` 永远不返回 `true`，`defaultKeymap` 自己的 `→` 绑定会接手把光标挪进
+ *  真正文，同步产生一个没带 `setSuggestion` 效果的事务，照样把这条建议清空，
+ *  但一个字都没落下（跟下面 `ghostText()` 里防的是同一类坏法，一个是异常路径，
+ *  一个是没异常但优先级排错的路径）。 */
+export function acceptSuggestionChunk(view: EditorView): boolean {
+  const current = view.state.field(suggestionField, false);
+  if (!current || !current.text) return false;
+  let len: number;
+  try {
+    len = nextChunkLength(current.text);
+  } catch (err) {
+    console.error("acceptSuggestionChunk: nextChunkLength 抛错，退化成整段接受", err);
+    return acceptSuggestion(view);
+  }
+  if (len >= current.text.length) return acceptSuggestion(view);
+  const chunk = current.text.slice(0, len);
+  const rest = current.text.slice(len);
+  view.dispatch({
+    changes: { from: current.pos, insert: chunk },
+    selection: { anchor: current.pos + chunk.length },
+    effects: setSuggestion.of({ text: rest, pos: current.pos + chunk.length }),
+  });
+  return true;
+}
+
+/** 装进 CM6 的那一份。
+ *
+ *  **`Prec.highest` 不是可有可无的装饰。** CM6 的 `keymap` facet 是「先注册的先试」：
+ *  `defaultKeymap`（`CodeEditor.tsx` 里排在这个扩展前面）自己就绑了 `→`（挪光标）。
+ *  光标右边只要还有一个真字符可挪，`defaultKeymap` 的处理函数就会成功、返回
+ *  `true`，CM6 当场停止往下试——这个扩展里的 `→` 绑定永远轮不到。**只有光标已经在
+ *  文档末尾、无字可挪时，`defaultKeymap` 才会自己返回 `false` 让路**——这正是
+ *  `tests/CodeEditor.test.tsx` 早期那条测试意外全绿、却测不出真实 bug 的原因：
+ *  它把光标放在一个 6 字文档的第 6 位，凑巧撞上了这个「文档末尾」的特例。
+ *  `Prec.highest` 把这个扩展的 keymap 提到最高优先级，不管它在数组里排第几，
+ *  永远先于 `defaultKeymap` 被尝试——`suggestionField` 不需要这个（它不是 keymap）。 */
 export function ghostText(): Extension {
   return [
     suggestionField,
-    keymap.of([
-      { key: "Tab", run: acceptSuggestion },
-      { key: "Escape", run: dismissSuggestion },
-    ]),
+    Prec.highest(
+      keymap.of([
+        { key: "Tab", run: acceptSuggestion },
+        { key: "ArrowRight", run: acceptSuggestionChunk },
+        { key: "Escape", run: dismissSuggestion },
+      ]),
+    ),
   ];
 }

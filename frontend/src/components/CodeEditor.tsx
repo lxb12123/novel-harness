@@ -89,8 +89,9 @@ export const CodeEditor = forwardRef<
         drawSelection(),
         keymap.of([...defaultKeymap, ...historyKeymap]),
         markdown(),
-        // **排在 defaultKeymap 之后但优先级更高**：CM6 的 keymap 后注册者先响应，
-        // 所以这一行必须在上面那行 keymap 之后，Tab/Esc 才轮得到建议先处理。
+        // 排在这里（defaultKeymap 之后）纯粹是顺序好读；真正保证 Tab/Esc/→ 先于
+        // defaultKeymap 被尝试的是 `ghostText()` 内部的 `Prec.highest`，不是数组位置——
+        // CM6 的 keymap facet 同优先级下是「先注册的先试」，光靠挪位置排不对。
         ghostText(),
         EditorView.lineWrapping,
         cmPlaceholder("从左边点一章打开正文…"),
