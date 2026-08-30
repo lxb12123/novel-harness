@@ -105,11 +105,11 @@ export function ThinkingSpinner() {
       {Array.from({ length: 8 }, (_, i) => (
         <rect
           key={i}
-          x="10.7"
+          x="11"
           y="1.5"
-          width="2.6"
+          width="2"
           height="7"
-          rx="1.3"
+          rx="1"
           fill="currentColor"
           transform={`rotate(${i * 45} 12 12)`}
           // 亮点走的是延迟从大到小（角度从大到小先亮），不是刻度顺序本身——
