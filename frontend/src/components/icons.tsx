@@ -1,3 +1,5 @@
+import { useId } from "react";
+
 // 工作台的图标。**这一份是这套图标的语法**，后面每加一个都照它来——
 // 一套图标里最刺眼的从来不是哪一个画得不好，而是**它们互相不像**（这个粗那个细、
 // 这个 24 视框那个 20、这个跟着文字颜色走那个写死了黑色）。所以规矩先立在这儿：
@@ -121,12 +123,22 @@ export function ThinkingSpinner() {
   );
 }
 
-/** 挂在「保存」按钮右上角的小徽标：手上这份还没落盘 = 一滴水（还没「定形」）；
- *  已经存进磁盘、跟远端对齐了 = 一片雪花（定了）。跟 `ThinkingSpinner` 一样是
- *  实心/描边图形而不是这份文件开头那套线稿语法——那套是给独立站着的图标定的，
- *  这两个是叠在别的控件角上的状态徽标。阴影交给外面的 CSS（`filter: drop-shadow`），
- *  这儿只管形状。 */
+/** 挂在「保存」按钮里、「保存」两字右边的小图标：手上这份还没落盘 = 一滴水
+ *  （还没「定形」）；已经存进磁盘、跟远端对齐了 = 一片雪花（定了）。
+ *
+ *  **不是纯色，是打了光的**：`<linearGradient>` 从左上一个提亮的高光过渡到
+ *  右下一个压暗的影子，中间才是本色——那道高光就是「光从哪儿照过来」，
+ *  单一纯色 + 外围一圈 `drop-shadow` 糊不出这个效果（试过，作者说"太丑""一坨蓝"）。
+ *  外面仍然叠一层 `filter: drop-shadow`（见 styles.css），那管的是「这片图标
+ *  相对按钮表面是浮起来的」，跟内部这道渐变（图标自己表面的明暗）是两回事，
+ *  两个都要才够立体。渐变的三个色标跟着 `currentColor` 走不了（SVG 渐变
+ *  取不到 currentColor），改成读 CSS 类上的 `stop-color`，颜色仍然由外面的
+ *  `.droplet`/`.snowflake` 主题变量决定，不是写死在这儿。
+ *
+ *  `useId()`：一个页面上这两个图标各自只会有一份实例，但 `<linearGradient id>`
+ *  是全局命名空间，写死字符串在测试里挂两次 `render()` 就会撞。 */
 export function DropletIcon() {
+  const gid = useId();
   return (
     <svg
       className="save-badge-icon droplet"
@@ -134,15 +146,27 @@ export function DropletIcon() {
       aria-hidden="true"
       focusable="false"
     >
-      <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" fill="currentColor" />
+      <defs>
+        <linearGradient id={gid} x1="20%" y1="10%" x2="85%" y2="95%">
+          <stop offset="0%" className="grad-hi" />
+          <stop offset="45%" className="grad-mid" />
+          <stop offset="100%" className="grad-lo" />
+        </linearGradient>
+      </defs>
+      <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" fill={`url(#${gid})`} />
+      {/* 高光点：光真正打亮的那一小块，不是渐变能单独顶替的——渐变负责整体明暗
+          过渡，这一点小圆才是「反光」本身，玻璃/水珠类图标常见的画法。 */}
+      <ellipse cx="9.6" cy="10.6" rx="1.6" ry="1" fill="#fff" opacity=".65" />
     </svg>
   );
 }
 
 /** 稍微复杂一点的六芒雪花：一条主枝 + 上下两对侧枝 + 枝尖分叉，转 6 次拼成一整片
  *  （同 `ThinkingSpinner` 那套「画一份、转出六份」的做法，几何算出来不是手描的）。
- *  描边不实心——雪花的「有分叉的细枝」这个特征，实心填色会糊成一团。 */
+ *  描边不实心——雪花的「有分叉的细枝」这个特征，实心填色会糊成一团；描边颜色
+ *  同样走渐变（见 `DropletIcon` 那段），沿每根枝从高光过渡到影子。 */
 export function SnowflakeIcon() {
+  const gid = useId();
   const arm = (
     <>
       <line x1="12" y1="12" x2="12" y2="3.2" />
@@ -161,15 +185,23 @@ export function SnowflakeIcon() {
       aria-hidden="true"
       focusable="false"
       fill="none"
-      stroke="currentColor"
-      strokeWidth="1.1"
+      stroke={`url(#${gid})`}
+      strokeWidth="1.3"
       strokeLinecap="round"
     >
+      <defs>
+        <linearGradient id={gid} x1="20%" y1="10%" x2="85%" y2="95%">
+          <stop offset="0%" className="grad-hi" />
+          <stop offset="45%" className="grad-mid" />
+          <stop offset="100%" className="grad-lo" />
+        </linearGradient>
+      </defs>
       {[0, 60, 120, 180, 240, 300].map((deg) => (
         <g key={deg} transform={`rotate(${deg} 12 12)`}>
           {arm}
         </g>
       ))}
+      <circle cx="10.3" cy="9.3" r=".9" fill="#fff" opacity=".7" />
     </svg>
   );
 }
