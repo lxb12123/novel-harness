@@ -385,26 +385,21 @@ body.resizing { cursor: col-resize; -webkit-user-select: none; user-select: none
 /* 「读回改动」那一小块跟着让步（它有一句说明文字，长章标 + 它一起会顶宽） */
 .edbar > .syncbox { flex: 0 1 auto; min-width: 0; }
 
-/* 「保存」按钮里、文字右边的水滴／雪花：**在按钮的正常排版里，不是浮在角上的徽标**
-   （早先那版是 `position: absolute` 挂在按钮外角，作者要的是「就在『保存』右边，
-   按钮里头」）。`translateY` 往上提一点点，让它贴着文字的上半区，不是齐着基线。
-   水滴＝手上还有没落盘的字（跟「水」沾边），雪花＝落盘了、跟远端也对齐了
-   （这个产品里「事情办妥了」一直是这个颜色）。
-   `filter: drop-shadow` 管的是「这片图标相对按钮表面是浮起来的」（不是 `box-shadow`
-   ——矩形阴影糊在水滴/雪花这种镂空图形上会露馅）；图标自己表面明暗靠内部的渐变
-   （`grad-hi` 高光 / `grad-lo` 影子），两层阴影管的是不同的立体感，见 `icons.tsx`。 */
+/* 「保存」按钮里、文字右边的水滴／雪花：在按钮的正常排版里，不是浮在角上的徽标。
+   `translateY` 往上提一点点，让它贴着文字的上半区，不是齐着基线。**素描线稿风，
+   跟着 `currentColor` 走**——填色渐变那版作者反馈「太胖」「一坨」，退回跟机器人
+   图标同一套语言（描边、不实心），颜色仍然分：水滴＝手上还有没落盘的字
+   （`--accent`，跟「水」沾边），雪花＝落盘了、跟远端也对齐了（`--ok`，这个产品里
+   「事情办妥了」一直是这个颜色）。`drop-shadow` 是「这片图标相对按钮表面是浮起来的」，
+   描边图形用它不会有 `box-shadow` 那种矩形穿帮的问题。 */
 .save-btn { display: inline-flex; align-items: center; gap: 3px; }
 .save-badge-icon {
   width: 14px; height: 14px; flex: 0 0 auto; pointer-events: none;
   transform: translateY(-3px);
-  filter: drop-shadow(0 1.5px 1.5px rgba(0, 0, 0, .5));
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .4));
 }
-.save-badge-icon.droplet .grad-hi { stop-color: color-mix(in srgb, var(--accent) 40%, #fff); }
-.save-badge-icon.droplet .grad-mid { stop-color: var(--accent); }
-.save-badge-icon.droplet .grad-lo { stop-color: color-mix(in srgb, var(--accent) 55%, #000); }
-.save-badge-icon.snowflake .grad-hi { stop-color: color-mix(in srgb, var(--ok) 45%, #fff); }
-.save-badge-icon.snowflake .grad-mid { stop-color: var(--ok); }
-.save-badge-icon.snowflake .grad-lo { stop-color: color-mix(in srgb, var(--ok) 55%, #000); }
+.save-badge-icon.droplet { color: var(--accent); }
+.save-badge-icon.snowflake { color: var(--ok); }
 
 /* ── 中栏顶栏的章标题（挑章 + 双击改名）───────────────────────────────────────
    它替下来的是顶栏那个 <select>，而**那个白框没有跟着搬**：select 自带边框和底色，
