@@ -514,6 +514,10 @@ export function useDeleteSnapshot(pid: string, chapter: number) {
  *  写到第几章，前端不知道。 */
 export function useContinuation(pid: string, chapter: number) {
   return useMutation({
+    // 给个 key 纯粹是为了让 `TopBar.tsx` 能用 `useIsMutating` 从外面看到「续写请求
+    // 正在飞」——**不进 `useCoords`**：那个 store 只放坐标（§2.3 铁律），这是瞬时的
+    // 网络状态，React Query 自己就全局记着，不用另开一份。
+    mutationKey: ["continuation"],
     mutationFn: (around: { before: string; after: string }) =>
       api.post<{ text: string }>(proj(pid, `/chapters/${chapter}/draft`), {
         previous_tail: around.before,

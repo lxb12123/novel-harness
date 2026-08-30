@@ -1,3 +1,4 @@
+import { useIsMutating } from "@tanstack/react-query";
 import { useState } from "react";
 import { useLanguage } from "../language";
 import { useCoords } from "../store";
@@ -26,6 +27,9 @@ export function TopBar() {
   const language = useLanguage((s) => s.language);
   const { page, chatOpen, setPage, toggleChat } = useCoords();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // 续写（行内灰字建议）请求正不正在飞，跟这本书这一章都无关——**只要有一个在飞就转**，
+  // 不用挑 key（同 mutationKey 那边的注释）。
+  const continuationPending = useIsMutating({ mutationKey: ["continuation"] }) > 0;
 
   return (
     <header>
@@ -92,6 +96,9 @@ export function TopBar() {
         onClick={toggleChat}
       >
         <BotIcon open={chatOpen} />
+        {/* 续写建议正在生成时右上角转一下——不管作者现在开没开写作助手面板，
+            这颗图标本来就是「AI 在不在动」的那个位置，续写也是 AI 在动。 */}
+        {continuationPending && <span className="bot-thinking" aria-hidden="true" />}
       </button>
 
       </div>

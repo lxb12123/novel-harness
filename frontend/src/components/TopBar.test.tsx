@@ -1,5 +1,7 @@
-import { screen } from "@testing-library/react";
+import { useMutation } from "@tanstack/react-query";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useEffect } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { renderWithApi } from "../test/harness";
 import { useCoords } from "../store";
@@ -157,5 +159,38 @@ describe("顶栏", () => {
     await screen.findByRole("button", { name: "写作助手" });
     expect(screen.queryByRole("textbox", { name: "本章出场人物" })).not.toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/出场人物|在场/);
+  });
+
+  it("平时机器人图标上没有那个转圈的提示", async () => {
+    renderWithApi(<TopBar />);
+    const bot = await screen.findByRole("button", { name: "写作助手" });
+    expect(bot.querySelector(".bot-thinking")).toBeNull();
+  });
+
+  it("续写建议正在生成时，机器人图标右上角会转起来", async () => {
+    // 续写请求跟顶栏这颗按钮隔着整棵组件树（一个在 CenterEditor，一个在 TopBar），
+    // 中间没有走 `useCoords`——那个 store 只放坐标，不放这种瞬时网络状态。
+    // 靠的是 `useIsMutating({ mutationKey: ["continuation"] })`，React Query 自己
+    // 全局记着「这个 key 现在有几个请求在飞」，这里造一个同 key 的、故意不 resolve
+    // 的 mutation 来模拟「还在飞」。
+    function TriggerContinuation() {
+      const m = useMutation({
+        mutationKey: ["continuation"],
+        mutationFn: () => new Promise(() => {}),
+      });
+      useEffect(() => {
+        m.mutate();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, []);
+      return null;
+    }
+    renderWithApi(
+      <>
+        <TopBar />
+        <TriggerContinuation />
+      </>,
+    );
+    const bot = await screen.findByRole("button", { name: "写作助手" });
+    await waitFor(() => expect(bot.querySelector(".bot-thinking")).not.toBeNull());
   });
 });

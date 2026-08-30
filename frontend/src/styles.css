@@ -104,6 +104,21 @@ header button.on { border-color: var(--accent); color: var(--accent); background
 .icon-btn:hover::after, .icon-btn:focus-visible::after { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .icon-btn::after { transition: none; } }
 
+/* 续写建议正在生成时挂在机器人图标右上角的小圈——纯提示「AI 在动」，不挡按钮本身，
+   所以用 pointer-events: none。减少动效时退成一个静止的点，不是彻底藏起来
+   （作者仍然想知道「现在是不是在生成」，只是不想看它转）。 */
+.bot-thinking {
+  position: absolute; top: -2px; right: -2px; pointer-events: none;
+  width: 8px; height: 8px; border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 25%, transparent);
+  border-top-color: var(--accent);
+  animation: bot-thinking-spin .7s linear infinite;
+}
+@keyframes bot-thinking-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .bot-thinking { animation: none; background: var(--accent); border-color: transparent; }
+}
+
 /* 「章节准备页」那一整节样式（`.prep*` / `.draft-length*`）2026-08-13 随那一页一起删。
    理由记在 `components/TopBar.tsx`：三张读卡是右栏同名 tab 的第二个入口，
    两个表单写进 localStorage 没有任何人读。 */
