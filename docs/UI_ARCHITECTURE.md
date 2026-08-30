@@ -91,7 +91,7 @@
 | DELETE | `/projects/{pid}/chapters/{n}/summary` | `retract_summary` | `{chapter_number, has_text, summary, created_at, retracted, author_written}`·撤回，**不花钱、库里一行都不少**。语义定死为「这一章当作没总结」——起草不带它、覆盖率算作缺、想重来就再点生成。本来就没有 / 已经撤过都回 200（这个动作没有失败的形态） | 🟢 |
 | POST | `/projects/{pid}/focus` | `focus.report_focus` | `{chapter, project_id}`·**免费心跳，只记「作者现在在哪一章」**（2026-08-18 §3）：换章/开书时上报，不触发任何总结/抽取/付费。防抖靠它 + 心跳超时（2 分钟）判「正写的章不碰」 | 🟢 |
 | GET | `/projects/{pid}/summary-status` | `summary_schedule.book_summary_status` + `focus.resolve_draft_origin` | `{draft_chapter, focused_chapter, chapters[{chapter_number, has_text, state, weight, anomaly}]}`·**全书总结状态视图**（2026-08-18 §6 / Step 4）：逐章三态 + 异常标记 + 这一轮自治权重，全部查库、**GET 只读不写**。`state ∈ {empty, paired, missing, stale}`；`anomaly` = 最近一次总结 attempt 终态失败（不阻塞别的章，由 30 分钟自治轮重试） | 🟢 |
-| GET | `/projects/{pid}/chapters/{n}/summary/mentions` | `summary_index.mentions_in_chapter` | `{chapter, mentions[{node:{id,label,name}, surfaces[]}]}`·这一段总结提到了花名册里的哪些东西。**只做集合判断**（这个称呼出现了没有，`text/mentions.py` 那条 alternation + `rules_only`），不做任何相似度——找相似要向量 + 语义，那是被砍掉的 Qdrant 和 ADR 0005。出参**只有 `NodeRef`**：这批命中里按定义就有 Secret。**不并进 `…/summary`**（那个形状是四条动作共用的，也是 `…/summaries` 里的一行，每章挂芯片 = 一次覆盖率查询变成一次全书反查） | 🟢 |
+| GET | `/projects/{pid}/chapters/{n}/summary/mentions` | `summary_index.mentions_in_chapter` | `{chapter, mentions[{node:{id,label,name}, surfaces[]}]}`·这一段总结提到了角色册里的哪些东西。**只做集合判断**（这个称呼出现了没有，`text/mentions.py` 那条 alternation + `rules_only`），不做任何相似度——找相似要向量 + 语义，那是被砍掉的 Qdrant 和 ADR 0005。出参**只有 `NodeRef`**：这批命中里按定义就有 Secret。**不并进 `…/summary`**（那个形状是四条动作共用的，也是 `…/summaries` 里的一行，每章挂芯片 = 一次覆盖率查询变成一次全书反查） | 🟢 |
 | GET | `/projects/{pid}/nodes/{node_id}/summary-mentions` | `summary_index.chapters_mentioning` | `{node, chapters[{chapter_number, summary, surfaces[], author_written}]}`·**还有哪几章的总结提到它**，按章号升序，带那几段原文（作者点开是为了读它、比它、引它）。一次 SQL，**不调模型、不花钱**。`node_id` 不在本项目 → 404（`NodeNotFound`），**不回空表**：「他没在任何总结里出现过」和「这个 id 根本不存在」下一步动作完全不同。索引什么时候重建见 `summary_index.py` | 🟢 |
 | POST | `/projects/{pid}/chapters/{n}/plan` | — | 501 | 🟡 |
 | GET | `/projects/{pid}/activity?actor=&limit=&cursor=` | `activity.read_activity`（`extraction_run` + `model_call` + `decision_log` 归并） | `{entries[], next_cursor, actors[]}`·**折叠层**：一行 = `{id, source, ts, actor, status, title, subtitle, chapter_number, jump}`，**payload 不在这一层**（那是泄漏面，按需取）。`actors[]` 的计数**不受 `actor` 过滤影响**——它要回答的正是「我筛掉了多少」（[ADR 0020](adr/0020-clean-extraction-auto-canon.md)） | 🟢 |
@@ -217,7 +217,7 @@
 │ 导航         │ 应用内 markdown 编辑器         │ 智能面板 5 Tab           │
 │              │ (读写 chapters/NNNN.md)        │                          │
 │ · 章目录     │                               │ Tab1 当前状态            │
-│ · 花名册     │ 章标题                        │ Tab2 局部关系图 (ReactFlow)│
+│ · 角色册     │ 章标题                        │ Tab2 局部关系图 (ReactFlow)│
 │   (按 label) │ 场景块 ##场景N + nh:cast/goal │ Tab3 确定性证据 (无score) │
 │ · 大纲/世界观│ 正文 …………                     │ Tab4 约束 + 认知矩阵(头牌) │
 │   (磁盘 md)  │ [选中文字→查图谱/声明]         │ Tab5 一致性问题 (确定性)  │
@@ -317,8 +317,8 @@
 │  │                                + GET /chapters/{n}/summaries（「这一稿带得上几段」那一句）
 │  │                              ▶ PATCH（改，不花钱）· DELETE（撤回，不花钱、不删行）
 │  │                                · POST（重新生成，**要跑一次模型**，按钮上自己说）
-│  │                                **它不吃花名册**：这一段是正文压出来的，和「书里有谁」
-│  │                                无关，所以花名册空着时它照常显示（右栏别的格全靠人）。
+│  │                                **它不吃角色册**：这一段是正文压出来的，和「书里有谁」
+│  │                                无关，所以角色册空着时它照常显示（右栏别的格全靠人）。
 │  │                                「你撤回的」和「还没生成」说两句话——起草那边它们同义，
 │  │                                下一步动作却相反
 │  │         └─ <Memories>/<Trail>  ◀ 2026-08-13 下半：**每一段总结 = 一个可反查的记忆点**
@@ -489,10 +489,10 @@ React 18 + TS（桌面优先）· Vite · **TanStack Query**（服务端状态�
 
 ## 4. v1 分期计划（4 个阶段，每阶段可交付）
 
-> 只放 🟢 现在能做的东西。真书门槛（花名册 90% 提及、切章数=目录数）另行用真实 TXT 验，不在此编数。
+> 只放 🟢 现在能做的东西。真书门槛（角色册 90% 提及、切章数=目录数）另行用真实 TXT 验，不在此编数。
 
 ### P0 · FastAPI 薄壳 + 只读工作台骨架 + 项目/章节导航
-**交付**：作者能新建/打开项目、导入 TXT 看切章结果、在三栏骨架里浏览章目录与花名册、看到**认知矩阵头牌**与四个只读面板，全部由真实引擎数据渲染。**全部只读，不改一个字。**
+**交付**：作者能新建/打开项目、导入 TXT 看切章结果、在三栏骨架里浏览章目录与角色册、看到**认知矩阵头牌**与四个只读面板，全部由真实引擎数据渲染。**全部只读，不改一个字。**
 - [BE] `novel_harness/api/` FastAPI app 工厂（启动 migrate 门、`_connect_existing` 语义、`project.get` 404 门）
 - [BE] 统一错误映射层（§1.3 那张表）
 - [BE] `POST /projects` · `POST /import` · `GET /chapters` · `GET /roster?label=`

@@ -967,7 +967,7 @@ def test_frontend_fixture_matches_the_real_api(
                         confidence=0.95,
                     ),
                 ),
-                # **两个人物、两种长度**：花名册那一格要按累计信息量排序，
+                # **两个人物、两种长度**：角色册那一格要按累计信息量排序，
                 # 而全 0 或全相同的样本两个方向渲染出来一模一样，测试永远绿。
                 character_profiles=(
                     RawCharacterProfile(
@@ -995,7 +995,7 @@ def test_frontend_fixture_matches_the_real_api(
     finally:
         _edge_conn.close()
 
-    # ── 花名册那两列数：**抓第二份，抓在最后** ────────────────────────────────
+    # ── 角色册那两列数：**抓第二份，抓在最后** ────────────────────────────────
     #
     # 上面那份 `roster` 抓在建书之后、总结和抽取之前，所以它每一行都是 0。
     # 那一份不能动（几十个组件测试吃着它），但**只有 0 的样本证明不了排序**：

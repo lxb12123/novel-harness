@@ -1,4 +1,4 @@
-"""scripts/extract_roster_candidates.py —— 花名册候选抽取（零语义，草稿）。
+"""scripts/extract_roster_candidates.py —— 角色册候选抽取（零语义，草稿）。
 
 钉三件事：说话人标签位置的名字被数到、普通词（不知）不进、状语粘连
 （贾环颔首道 → 贾环颔首）被机械过滤。

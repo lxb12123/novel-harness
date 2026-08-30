@@ -90,7 +90,7 @@ describe("章节总结这一格", () => {
     );
   });
 
-  it("花名册空着的时候它照样能用（它和「这本书里有谁」没关系）", async () => {
+  it("角色册空着的时候它照样能用（它和「这本书里有谁」没关系）", async () => {
     renderSpying(<RightPanel />, [{ match: /\/roster$/, body: [] }]);
     expect(await screen.findByDisplayValue(HAVE.summary!)).toBeInTheDocument();
     expect(screen.queryByText(/添加人物或设定后/)).toBeNull();
@@ -281,21 +281,21 @@ describe("总结下面那排记忆点", () => {
   });
 
   it("一个都没提到时说清为什么，而不是留一片空白", async () => {
-    // 空白会被读成「引擎没在干活」；而这一档的下一步是去花名册把那个称呼建上。
+    // 空白会被读成「引擎没在干活」；而这一档的下一步是去角色册把那个称呼建上。
     renderSpying(<SummaryTab />, mentionsRoute({ chapter: 1, mentions: [] }));
-    expect(await screen.findByText(/没出现花名册上的任何人或东西/)).toBeInTheDocument();
+    expect(await screen.findByText(/没出现角色册上的任何人或东西/)).toBeInTheDocument();
   });
 
   it.each([
     ["还没生成", NONE],
     ["撤回过", RETRACTED],
   ])("这一章**没有总结**（%s）时整层不出现", async (_name, body) => {
-    // 那时后端回的也是空表，可「这一段里没出现花名册上的任何人」在没有「这一段」的
+    // 那时后端回的也是空表，可「这一段里没出现角色册上的任何人」在没有「这一段」的
     // 时候是一句假话 —— 它会让作者以为自己写的那一章里一个人都没有。
     renderSpying(<SummaryTab />, summaryRoute(body));
     await screen.findByRole("textbox");
     await new Promise((r) => setTimeout(r, 30));
-    expect(screen.queryByText(/没出现花名册上的任何人或东西/)).toBeNull();
+    expect(screen.queryByText(/没出现角色册上的任何人或东西/)).toBeNull();
     for (const name of NAMED) {
       expect(screen.queryByRole("button", { name: new RegExp(name) })).toBeNull();
     }

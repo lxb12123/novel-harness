@@ -300,7 +300,7 @@ def event_ids_for_one_character(
 
     **这不是忘了做时态**（2026-08-25 的裁定）：全给 + 每一行带章号，要切片交给界面。
     换成按 `:ch` 切的话，作者点开一个人只能看到「当前那一章之前」的部分，
-    而他打开花名册正是为了看整条线。
+    而他打开角色册正是为了看整条线。
 
     掉的**只有**那两条，另外三条一个都不许再掉：
 
@@ -565,7 +565,7 @@ def update_node_name(conn: sqlite3.Connection, node_id: str, name: str) -> Node:
 
     - `put_chapter`：Chapter 节点**没有** canonical 别名（不在 `CANONICAL_ALIAS_LABELS`
       里），所以它调这一个就够了；
-    - `sqlite_store.rename_node`：花名册条目**有** canonical 别名，它在同一个事务里
+    - `sqlite_store.rename_node`：角色册条目**有** canonical 别名，它在同一个事务里
       紧接着调 `update_canonical_alias_surface`。只改一个的后果是正文里叫新名字的地方
       再也匹配不到他（`mentions.py` 那条 alternation 编的是别名表，不是 node.name）。
     """
@@ -631,7 +631,7 @@ def record_character_information(
 def character_information_totals(
     conn: sqlite3.Connection, project_id: str
 ) -> dict[str, int]:
-    """`{character_id: 累计信息量}` —— **整份花名册一次算完**。
+    """`{character_id: 累计信息量}` —— **整份角色册一次算完**。
 
     左栏靠它排序（分高的排上面）。**它今天只用来排序**：那道「够不够、要不要问」
     的闸一行都没写（ADR 0020 的第二份补记讲了为什么——阈值要几本书的分布才定得下来，
@@ -650,7 +650,7 @@ def character_information_totals(
 
 
 def node_usage(conn: sqlite3.Connection, project_id: str, node_id: str) -> NodeUsage:
-    """引擎在这个花名册条目上记了多少东西。**删它之前问这个**（见 `NodeUsage`）。
+    """引擎在这个角色册条目上记了多少东西。**删它之前问这个**（见 `NodeUsage`）。
 
     只数两样：**关系**（`edge.src|dst`）和**情节名单**（`event_participant` /
     `event_knower`）。别名和 `summary_mention` 故意不数——理由写在 `NodeUsage` 上。
@@ -836,11 +836,11 @@ def incident_edges_at(
 def alias_rows(
     conn: sqlite3.Connection, project_id: str, surfaces: Sequence[str] | None
 ) -> list[dict[str, Any]]:
-    """`surfaces=None` = 全项目花名册，**按 surface 长度降序**。
+    """`surfaces=None` = 全项目角色册，**按 surface 长度降序**。
 
     降序不是审美：mentions.py 把它直接编译成正则 alternation，而 leftmost-first 的
     alternation 里长的必须排前面，否则「顾清音」会被「清音」抢先匹配掉。
-    同长度按 surface 升序，让花名册在两次运行之间稳定（正则一变，全部 mention 就变）。
+    同长度按 surface 升序，让角色册在两次运行之间稳定（正则一变，全部 mention 就变）。
     """
     where = ""
     params: dict[str, Any] = {"pid": project_id}

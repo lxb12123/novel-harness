@@ -51,7 +51,7 @@ R3 是引擎今天唯一剩下的规则（R2 2026-08-27 因结构性打不着火
 假阳性类别，不是被彻底堵死的。**
 
 **动词表只收过去式**：`says/asks/…` 这类现在时形式在同一份两本书样本里
-——**样本是两本 19 世纪小说，都是过去式叙事**——花名册匹配版命中 0 次；
+——**样本是两本 19 世纪小说，都是过去式叙事**——角色册匹配版命中 0 次；
 现在时叙事的书是存在的（当代小说里不算罕见），这两本书的零命中**证明不了**
 "现在时不需要"，只说明"这个样本没覆盖到"。等真的撞上现在时叙事的英文书
 再补，成本几乎为零（多加一份动词表，锚点/边界逻辑照抄）。
@@ -190,7 +190,7 @@ def _issues_from_named_hits(
     for hit, name in named_hits:
         res = by_surface.get(name)
         if res is None or res.unique_node is None:
-            continue  # 匹配到的名字不在花名册里（防御；正常不该发生）
+            continue  # 匹配到的名字不在角色册里（防御；正常不该发生）
         node = res.unique_node
         snapshot = ctx.store.state_at(ctx.project_id, node.id, ctx.chapter)
         if snapshot.is_dead or not snapshot.has_appeared():

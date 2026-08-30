@@ -1,6 +1,6 @@
 """路由 —— 只把引擎函数包成 HTTP，不装业务。不碰连接（收 Depends(get_store)）。
 
-只读面板：项目 / 花名册 / 认知矩阵（头牌）/ 场景约束 / 当前状态 / 局部子图。
+只读面板：项目 / 角色册 / 认知矩阵（头牌）/ 场景约束 / 当前状态 / 局部子图。
 编辑器（P1）：列章 / 读章正文 / 存盘 → sync（正文在磁盘，ADR 0007）。
 写图谱（declare）+ 定位 + R4 check（P2）：作者敲称呼原文 + 引语，系统算章号。
 M4 抽取/事件读端拆在 ``api/extraction.py``，提案审阅与改正在 ``api/review.py``，
@@ -25,6 +25,7 @@ M4 抽取/事件读端拆在 ``api/extraction.py``，提案审阅与改正在 ``
 from __future__ import annotations
 
 import re
+import logging
 import os
 import tempfile
 import threading
@@ -158,7 +159,7 @@ def _is_sensitive_node(node: dict[str, Any], chapter: int | None) -> bool:
     ⚠️ 原来还有第二条 `label == Secret`，2026-08-25 随秘密下线（ADR 0039）。
     **它的消失让 `chapter is None` 这条分支变成了「什么都不收窄」**：没有当前章就判不了
     未来。今天这不构成泄漏，因为**唯一**传 `None` 的调用方是 `declare_node`——把作者刚
-    自己建的那个节点原样递回去。`resolve` 那条无章号的花名册路径不走这里，它一律出
+    自己建的那个节点原样递回去。`resolve` 那条无章号的角色册路径不走这里，它一律出
     `NodeRef`（比这儿更严）。**再有新的 `chapter=None` 调用方时，先回答「这批 Node 是
     谁的」，别默认它安全。**
     """
@@ -209,10 +210,10 @@ def _chapter_file(proj: Any, chapter: int) -> Path:
 
 
 def _chapter_mentions(proj: Any, store: Any, chapter: int) -> list[str] | None:
-    """本章正文里提到的花名册称呼。`None` = 这一章磁盘上没有正文（**不是「没提到人」**）。
+    """本章正文里提到的角色册称呼。`None` = 这一章磁盘上没有正文（**不是「没提到人」**）。
 
     两者长得一样是这个仓库反复修的病（§10 约束 8：静默的零和真的零不许长得一样）——
-    「章还没写」和「写了但一个花名册里的人都没提到」对作者是完全不同的两件事。
+    「章还没写」和「写了但一个角色册里的人都没提到」对作者是完全不同的两件事。
     """
     file = _chapter_file(proj, chapter)
     if not file.exists():
@@ -225,7 +226,7 @@ def _effective_cast(proj: Any, store: Any, chapter: int, cast: str, include: str
     """面板要用的在场：**作者传了就听作者的，没传就从本章正文推**；`include` 只往里加人。
 
     这条是「在场人物不该是写之前填的表单」的落点：作者写完，引擎自己去正文里数
-    花名册命中了谁。推导的方向是 fail-closed 的那一侧（`mentioned.py` 讲了为什么
+    角色册命中了谁。推导的方向是 fail-closed 的那一侧（`mentioned.py` 讲了为什么
     多算比少算安全），所以「不填」不再等于「面板全禁到没东西看」。
 
     **不传和传空串是同一件事。** 区分它们只会让调用方靠一个看不见的差别改变语义；
@@ -290,7 +291,12 @@ async def _lifespan(_: FastAPI) -> Any:
             runtime.start()
         except Exception:
             # 库/模型没那么好时也要能启动（作者可能先建书再看设置）——dispatcher
-            # 的 adapter 只在真的 claim 到 attempt 时才构造。
+            # 的 adapter 只在真的 claim 到 attempt 时才构造。**但失败必须留痕**：
+            # 之前这里是纯吞掉，循环没起来时作者和开发者都看不出来（真书 book.db
+            # 158 章卡在 0 人物就是这样漏掉的）。
+            logging.getLogger(__name__).exception(
+                "后台扫描循环启动失败，本次进程不会自动补总结/角色册"
+            )
             runtime = None
     try:
         yield
@@ -479,7 +485,7 @@ async def index() -> FileResponse:
     return FileResponse(built if built.exists() else _STATIC / "index.html")
 
 
-# ── 项目 / 花名册 / 面板（只读）─────────────────────────────────────────────
+# ── 项目 / 角色册 / 面板（只读）─────────────────────────────────────────────
 
 
 @app.get("/api/projects")
@@ -900,12 +906,12 @@ def roster(
     store: Any = Depends(get_store),
     proj: Any = Depends(load_project),
 ) -> Any:
-    """左栏花名册：全项目节点，收窄成 {id,label,name} + 出场章数。
+    """左栏角色册：全项目节点，收窄成 {id,label,name} + 出场章数。
 
     **props 一个字段都不出**（不整体序列化 `Node.props`：作者写在节点上的 `twist` /
     `plot_note` 住在那儿）。
 
-    两个数**都和花名册同一条出参回来**，不是第二次请求——左栏那一行要显示
+    两个数**都和角色册同一条出参回来**，不是第二次请求——左栏那一行要显示
     「贾环 · 42 章」，多一次往返就是多一次会失败、会晚到的东西。
 
     - `appearance_chapters` = **有多少章的总结提到过它**
@@ -944,11 +950,11 @@ def mentioned(
     store: Any = Depends(get_store),
     proj: Any = Depends(load_project),
 ) -> Any:
-    """本章正文提到了花名册里的哪些称呼。**这不是「在场」**——见 `mentioned.py` 的模块说明。
+    """本章正文提到了角色册里的哪些称呼。**这不是「在场」**——见 `mentioned.py` 的模块说明。
 
     右栏靠它显示「这一章提到：…」，作者因此不必在写之前先填一遍出场人物。
     `has_text=false` 与 `surfaces=[]` 是两件事：前者是「这一章还没写」，后者是
-    「写了，但一个花名册里的人都没被提到」。
+    「写了，但一个角色册里的人都没被提到」。
     """
     surfaces = _chapter_mentions(proj, store, chapter)
     return {
@@ -1013,7 +1019,7 @@ def resolve(
 ) -> Any:
     """称呼 → 候选节点（消歧下拉 / 选区查人物的数据源）。
 
-    只出 `{id,label,name}`——消歧选择器要的就这些，而 resolve 是无章号的花名册查询，
+    只出 `{id,label,name}`——消歧选择器要的就这些，而 resolve 是无章号的角色册查询，
     没有「当前章」能判未来节点，所以这里**一律收窄**（比 `_narrow(chapter=None)` 更严：
     连未来的 Character 也不整体序列化，反正下拉用不上 props）。
     """
@@ -1339,7 +1345,7 @@ def report_focus(
 # ⚠️ **2026-08-14 起这里只剩四条**：建节点 / 建别名 / 声明死亡 / 声明首现。
 # 「谁知道什么 / 谁以为什么 / 谁在哪儿」那三条删了——那类事实只走抽取那条路
 # （作者裁决，见 `declare.py` 的「边」那一节）。剩下这四条各有不可替代的理由：
-# 前两条是**抽取器自己的前置**（称呼解析不到花名册里唯一的人 = 整条事实被丢），
+# 前两条是**抽取器自己的前置**（称呼解析不到角色册里唯一的人 = 整条事实被丢），
 # 后两条撑着 R3 / R2：`first-appearance` 是 R2 **唯一且只能唯一**的写入方（首现章是
 # 作者的计划，不在已写文本里，模型读不出），`death` 2026-08-14 起和抽取器的
 # `kind="death"` 并列，留着当「改」的入口。
@@ -1384,7 +1390,7 @@ class DeclareNodeBody(BaseModel):
     立场是「章号只由证据决定」。为这一个**边缘用法**开口，等于在唯一一条挡污染的线上
     开第一个洞——而常见那一半（已经写到了的）走上面那条引语路径，零输入。
     真要支持「预先声明一个还没写的东西在第几章出现」，那是 PLANNED / 伏笔性质的能力，
-    该跟 foreshadow 一起走一份 ADR，不是在花名册抽屉里加个框。
+    该跟 foreshadow 一起走一份 ADR，不是在角色册抽屉里加个框。
 
     所以这个字段只有 HTTP / CLI 调用方能用，**这是终态不是过渡态**。
     """
@@ -2227,7 +2233,7 @@ def chapter_summary_mentions(
     store: Any = Depends(get_store),
     proj: Any = Depends(load_project),
 ) -> dict[str, Any]:
-    """这一章**现在算数**的那段总结里，花名册的哪些东西被提到了。
+    """这一章**现在算数**的那段总结里，角色册的哪些东西被提到了。
 
     **为什么不并进 `GET …/summary` 的出参**：那个形状是四条动作路由共用的
     （`_summary_state`，「一个动作做完之后界面拿到的和它重新读一遍拿到的逐字节相同」），
@@ -2274,7 +2280,7 @@ def node_summary_mentions(
     from ..summary_index import chapters_mentioning
 
     # 出参里的 `node` 是**后端给的**，不是前端把刚点的那个芯片回填一遍：换一条进入路径
-    # （从花名册、从活动日志点过来）时它手上只有一个 id，没有那个名字。
+    # （从角色册、从活动日志点过来）时它手上只有一个 id，没有那个名字。
     return chapters_mentioning(conn, store, proj.id, node_id).model_dump(mode="json")
 
 

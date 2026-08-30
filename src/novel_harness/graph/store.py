@@ -17,7 +17,7 @@
 
     | 方法              | 消费者                                             |
     |-------------------|----------------------------------------------------|
-    | `resolve`         | text/mentions.py 的花名册、cast 解析、面板的 `cast` 参数、R2 |
+    | `resolve`         | text/mentions.py 的角色册、cast 解析、面板的 `cast` 参数、R2 |
     | `state_at`        | panel/state.py、R3 DEAD_SPEAKS、R4 LOCATION_CONFLICT |
     | `subgraph`        | 局部关系图（M5）                                    |
     | `upsert_edge`     | canon/commit.py、extract/incremental.py（M4）       |
@@ -251,7 +251,7 @@ class StoryGraph(Protocol):
 
         Args:
             project_id: 项目。
-            surfaces: 要解析的称呼。**`None` = 返回全项目花名册**——text/mentions.py 靠它
+            surfaces: 要解析的称呼。**`None` = 返回全项目角色册**——text/mentions.py 靠它
                 拿全部 surface 去编译那条正则 alternation（按长度降序排，leftmost-first
                 即最长匹配）。50–200 个实体，一次全取是微秒级。
             rules_only: 只返回 `usable_for_rules` 为真的解析结果，即**恰好一个候选且
@@ -544,7 +544,7 @@ class CanonWriter(Protocol):
 
         Returns:
             落库后的 StateDim 节点。它**没有** canonical 别名
-            （`CANONICAL_ALIAS_LABELS` 里没有 StateDim），所以不进花名册、
+            （`CANONICAL_ALIAS_LABELS` 里没有 StateDim），所以不进角色册、
             不会被 `mentions.py` 拿去匹配正文。
 
         Raises:
@@ -745,7 +745,7 @@ class CanonWriter(Protocol):
         ...
 
     def node_usage(self, project_id: str, node_id: str) -> NodeUsage:
-        """引擎在这个花名册条目上记了多少东西。**删它之前问这个。**
+        """引擎在这个角色册条目上记了多少东西。**删它之前问这个。**
 
         Raises:
             NodeNotFound: `node_id` 不在本项目。
@@ -753,7 +753,7 @@ class CanonWriter(Protocol):
         ...
 
     def delete_node(self, project_id: str, node_id: str) -> NodeUsage:
-        """删掉花名册里的一条。**不管挂没挂东西，直接删**（2026-08-28 裁定）。
+        """删掉角色册里的一条。**不管挂没挂东西，直接删**（2026-08-28 裁定）。
 
         它是「抽取自动建人物」（ADR 0020 补记）的配套：模型认错一个（真书上的
         「袭人」），作者得有办法把它清掉，否则那个错永远往上下文里塞噪声。
@@ -789,7 +789,7 @@ class CanonWriter(Protocol):
         ...
 
     def rename_node(self, project_id: str, node_id: str, name: str) -> Node:
-        """改花名册里那一条的**显示名**，canonical 别名跟着一起改。
+        """改角色册里那一条的**显示名**，canonical 别名跟着一起改。
 
         `node.name` 是显示真相，而 canonical 别名（surface == name）是它在
         `mentions.py` 那条 alternation 里的**索引项**——只改一个，正文里叫新名字的地方

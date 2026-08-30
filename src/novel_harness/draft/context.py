@@ -142,7 +142,7 @@ class UnknownCastConstraints(BaseModel):
 
     行内续写用它（[ADR 0015](../../../docs/adr/0015-inline-continuation-is-a-short-draft.md) D4）：
     作者边写边要提示，此刻「谁在场」还没有答案——**它是被这一段写出来的结果，不是前提**。
-    无名配角（「掌柜的」「一个小厮」）更是永远进不了花名册。
+    无名配角（「掌柜的」「一个小厮」）更是永远进不了角色册。
 
     ── 为什么是第二个类型，而不是把 `ResolvedConstraints.cast` 的 `min_length=1` 放宽 ──
 

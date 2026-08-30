@@ -787,7 +787,7 @@ def _review_track(
     """② 跟后面已经写完的章抵不抵触（轨道阶段 2）。
 
     **在最前沿写就一步都不走**：`build_track` 那时只花一条 `MAX(number)` 查询，
-    连花名册都不解析——「是最新章时行为一字不变」这条在这一层也成立。
+    连角色册都不解析——「是最新章时行为一字不变」这条在这一层也成立。
     """
     try:
         track = build_track(conn, store, project_id, chapter=chapter_number, text=text)

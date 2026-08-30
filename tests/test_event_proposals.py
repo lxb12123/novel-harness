@@ -2227,7 +2227,7 @@ def test_confirm_rejects_closed_event_without_partial_canon(world: ReviewWorld) 
 # ══════════════════════════════════════════════════════════════════════════
 #
 # 病历：`ProposalReviewTab` 曾经写 `rosterMap.get(id) ?? id.slice(-6)`，
-# 花名册认不出时屏幕上是 `n:ID22`（`"location:ID22"` 的后六位）。
+# 角色册认不出时屏幕上是 `n:ID22`（`"location:ID22"` 的后六位）。
 # **那条兜底不是边角**——理由见 `test_the_queue_answer_is_self_sufficient`。
 
 
@@ -2260,12 +2260,12 @@ def test_the_queue_carries_display_names_for_the_bare_ids_in_its_items(
 def test_the_queue_answer_is_self_sufficient(world: ReviewWorld) -> None:
     """**一条提案自己就说得出它提到的每一个名字，不需要第二次查询。**
 
-    这才是 `n:ID22` 的真身。花名册（`/roster`）**不是**「只收人物」——它走
+    这才是 `n:ID22` 的真身。角色册（`/roster`）**不是**「只收人物」——它走
     `resolve(pid, None)`，而 `upsert_node` 每建一个节点都会写一条 canonical 别名，
     所以任何 label 的节点都在里面。真正的缝在**两次查询的时间差**：
     `["roster", pid]` 和 `["proposals", pid, chapter]` 是两条独立缓存，
     后台抽取（保存触发的整理 / 自动升 CANON）会造出新节点，而没有任何一条路径保证
-    花名册那份在提案那份之后重取过。差一拍，屏幕上就是一串截断的内部编号。
+    角色册那份在提案那份之后重取过。差一拍，屏幕上就是一串截断的内部编号。
 
     自足的出参让这一整类失败在结构上不存在：名字和 id 在**同一个响应**里。
     """
@@ -2281,7 +2281,7 @@ def test_the_queue_answer_is_self_sufficient(world: ReviewWorld) -> None:
     hydrated = hydrate_proposal_names(world.edge_reviews, world.project_id, [proposal])[0]
     named = {ref.id for ref in hydrated.node_refs}
     assert set(referenced_node_ids(hydrated.items)) <= named, (
-        "items 里有 id 在这份响应里查不到名字 —— 界面又得去查花名册了"
+        "items 里有 id 在这份响应里查不到名字 —— 界面又得去查角色册了"
     )
 
 

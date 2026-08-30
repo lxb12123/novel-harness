@@ -170,7 +170,7 @@ function invalidateSummaries(qc: ReturnType<typeof useQueryClient>, pid: string)
   qc.invalidateQueries({ queryKey: ["bookSummaryStatus", pid] });
 }
 
-/** 这一章的总结提到了花名册里的哪些东西（T6）。
+/** 这一章的总结提到了角色册里的哪些东西（T6）。
  *
  *  **和 `useChapterSummary` 分成两条**，不是并进那一份出参：那个形状是四条动作路由
  *  共用的，而它同时也是 `…/summaries` 窗口里的一行——每一章都挂一串芯片会让一次
@@ -293,9 +293,9 @@ export function useCharacterEvents(pid: string | null, characterId: string | nul
   });
 }
 
-/** 改花名册里那一条的显示名。canonical 别名在后端同一个事务里跟着改。
+/** 改角色册里那一条的显示名。canonical 别名在后端同一个事务里跟着改。
  *
- *  `expected_canon_version` 由调用方从**它正在渲染的那份花名册**上取（项目出参里的
+ *  `expected_canon_version` 由调用方从**它正在渲染的那份角色册**上取（项目出参里的
  *  `canon_version`）：作者拿着一份旧列表点改名时收到的是 409，不是「改掉了一个他
  *  没看见的、刚被抽取动过的东西」。同别名那几条的做法。 */
 export function useRenameNode(pid: string) {
@@ -313,7 +313,7 @@ export function useRenameNode(pid: string) {
   });
 }
 
-/** 删掉花名册里的一条。**有关系或情节引着它 → 409 + 挡路的条数。**
+/** 删掉角色册里的一条。**有关系或情节引着它 → 409 + 挡路的条数。**
  *
  *  它是「抽取自动建人物」的配套（ADR 0020 补记）：模型认错一个，作者得有办法清掉，
  *  否则那个错永远往上下文里塞噪声。**这一步不可逆**，调用方要先问一句。
@@ -360,7 +360,7 @@ export function useChapterText(pid: string | null, chapter: number, open: boolea
   });
 }
 
-/** 这一章正文里提到了花名册中的谁。**作者不填，引擎数。**
+/** 这一章正文里提到了角色册中的谁。**作者不填，引擎数。**
  *
  *  `cast` 为空时下面那三个读端在后端走的就是这一份，所以这里只是把同一个结果显示出来，
  *  不是第二条推导——两份推导会漂移，那正是这个仓库反复修的病。 */
@@ -541,9 +541,9 @@ export const CONTINUATION_LENGTH = {
 /** 建一个节点（人物 / 地点 / 势力 …）。幂等：键是 name，重复提交同一个名字不会建出两个。
  *
  * 这条路径是**整个工作台的起点**：import 只切章、不抽实体（ADR 0004 有意的），
- * 所以在花名册里有第一个人之前，约束 / declare 两样全都无从算起
+ * 所以在角色册里有第一个人之前，约束 / declare 两样全都无从算起
  * （declare 的「填称呼」会必然 UnknownName 404）。成功后走 invalidatePanels——
- * 花名册从空变非空的那一刻，那两样才第一次有得算。
+ * 角色册从空变非空的那一刻，那两样才第一次有得算。
  */
 export function useCreateNode(pid: string) {
   const qc = useQueryClient();
@@ -690,7 +690,7 @@ export function useSubgraph(
 // 而「这一场谁在」ADR 0018 起就是从正文数出来的（`useMentioned`）。
 
 // ⚠️ **`useResolve` 2026-08-14 删了**（同上：唯一调用方是中栏那条选区工具条的
-// 「查看相关内容」）。后端 `GET …/resolve` 照旧在，左栏花名册那条路也照旧走它的
+// 「查看相关内容」）。后端 `GET …/resolve` 照旧在，左栏角色册那条路也照旧走它的
 // 后端实现（`store.resolve`）——删的只是「选一句话去查图谱」这一个入口。
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -756,7 +756,7 @@ export function useExtractionRun(pid: string | null, runId: string | null) {
  *  「改一改再收下」在浏览器里到不了。缺的那一档正好是最需要的那一档：`knowers`
  *  是抽取里唯一靠推断得来的一维（谁在场是文本里写着的，谁**因此知道了**是猜的）。
  *
- *  成功后刷新提案、事件、花名册与面板（`edit` 同样把 canon 版本推高一格，所以它
+ *  成功后刷新提案、事件、角色册与面板（`edit` 同样把 canon 版本推高一格，所以它
  *  和 accept 走同一条失效）。 */
 export function useReviewProposal(pid: string) {
   const qc = useQueryClient();

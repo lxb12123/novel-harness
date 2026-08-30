@@ -44,7 +44,7 @@ import type { Language } from "./language";
 // **判据只能在发送前、由后端逐个 param 过一遍**：这个值是——
 //   · 结构化数据（计数、章号、枚举值）？→ 安全，正常送。
 //   · 作者自己写的原文（称呼、正文引语、规则命中的原文）？→ 安全，正常送——
-//     这些本来就在别的地方原样展示给作者过（花名册、检查面板），不是新增风险。
+//     这些本来就在别的地方原样展示给作者过（角色册、检查面板），不是新增风险。
 //   · 某个异常的 `str()`、内部字段名、Python 类名？→ **不安全，两条路**：要么
 //     整个不送这个码（退回一个不带这个参数的专用兜底句，同 `RosterDrawer.tsx`
 //     今天的做法），要么在后端把它收窄成安全的形状（`clash_title` 的 `conflict`
@@ -184,7 +184,7 @@ const NODE_LABEL_FALLBACK = { zh: "条目", en: "an entry" };
  *
  *  国际化第四批·前端文案批次统一进来的：`api/types.ts` 原来有一张各自为政的
  *  `LABEL_ZH`（`Record<NodeLabel, string>`），和这儿的 `NODE_LABEL` 是已知的
- *  重复（本文件曾经的注释点过名）。删表之后这是唯一一份，图谱/花名册一类
+ *  重复（本文件曾经的注释点过名）。删表之后这是唯一一份，图谱/角色册一类
  *  组件直接查它，不再各自查 `api/types.ts`。 */
 export function nodeLabelText(label: string, language: Language): string {
   return NODE_LABEL[label]?.[language] ?? NODE_LABEL_FALLBACK[language];
@@ -283,7 +283,7 @@ const MESSAGES: Record<string, Template> = {
     const why =
       params.unresolved === true
         ? language === "zh"
-          ? "它们提到的人在花名册里还认不出来"
+          ? "它们提到的人在角色册里还认不出来"
           : "the people they mention aren't recognized in the roster yet"
         : language === "zh"
           ? "它们都没能落库"
@@ -294,7 +294,7 @@ const MESSAGES: Record<string, Template> = {
         ? `这一次提了 ${proposalCount} 条待确认，确认之后重新整理这一章，事件才留得下。`
         : `This time it raised ${proposalCount} items for you to confirm — after you confirm them, re-run the extraction for this chapter so the events can stick.`
       : language === "zh"
-        ? "花名册里先得有人，这一章的事件才留得下。"
+        ? "角色册里先得有人，这一章的事件才留得下。"
         : "The roster needs people in it first before this chapter's events can stick.";
     return language === "zh"
       ? `这一章整理完了，但 ${params.lost} 件事一件都没留下 —— ${why}。${tail}`

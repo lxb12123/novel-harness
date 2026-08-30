@@ -68,7 +68,7 @@ describe("待确认内容", () => {
     ).toBeInTheDocument();
   });
 
-  it("审阅成功后刷新提案/事件/花名册/状态查询", async () => {
+  it("审阅成功后刷新提案/事件/角色册/状态查询", async () => {
     const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
     const user = userEvent.setup();
     open();
@@ -94,9 +94,9 @@ describe("待确认内容", () => {
     expect(screen.getByRole("button", { name: /确认所选（1）/ })).toBeEnabled();
   });
 
-  it("冲突卡上的**名字是后端给的**，不是拿 id 去花名册里查出来的", async () => {
+  it("冲突卡上的**名字是后端给的**，不是拿 id 去角色册里查出来的", async () => {
     // 夹具里 `/roster` 是**在这个地点被建出来之前** dump 的，所以 `location:ID22`
-    // 不在里面——而这正是真实失败的形状：花名册（`["roster", pid]`）和队列
+    // 不在里面——而这正是真实失败的形状：角色册（`["roster", pid]`）和队列
     // （`["proposals", pid, chapter]`）是两条独立缓存，后台整理造出的新节点会在
     // 前者里缺席一拍。当时的兜底是 `id.slice(-6)` → 屏幕上一个 `n:ID22`。
     open();
@@ -235,7 +235,7 @@ describe("改一改再收下", () => {
     expect(within(card).queryByRole("button", { name: "改一改" })).toBeNull();
   });
 
-  it("勾选框里就是**现在这条提案上的名单**，花名册里的人物也在候选里", async () => {
+  it("勾选框里就是**现在这条提案上的名单**，角色册里的人物也在候选里", async () => {
     const user = userEvent.setup();
     const { view } = eventOf();
     open();
@@ -246,7 +246,7 @@ describe("改一改再收下", () => {
     for (const n of view.knowers) {
       expect(within(knowers).getByRole("checkbox", { name: n.name })).toBeChecked();
     }
-    // 花名册里的人物进候选，地点 / 秘密不进（名单两维收的都是人物）。
+    // 角色册里的人物进候选，地点 / 秘密不进（名单两维收的都是人物）。
     expect(within(knowers).getByRole("checkbox", { name: "未来大能" })).not.toBeChecked();
     expect(within(knowers).queryByRole("checkbox", { name: "青云城主府" })).toBeNull();
     expect(screen.getByText(/不会把同一个人加两遍/)).toBeInTheDocument();
@@ -308,7 +308,7 @@ describe("改一改再收下", () => {
     });
   });
 
-  it("收下之后刷新提案/事件/花名册/状态查询（同 accept：canon 版本一样往前走一格）", async () => {
+  it("收下之后刷新提案/事件/角色册/状态查询（同 accept：canon 版本一样往前走一格）", async () => {
     const invalidate = vi.spyOn(QueryClient.prototype, "invalidateQueries");
     const user = userEvent.setup();
     const { view } = eventOf();

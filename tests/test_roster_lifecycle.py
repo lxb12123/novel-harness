@@ -1,4 +1,4 @@
-"""花名册条目的**删和改名**，以及左栏那一列出场章数（2026-08-25）。
+"""角色册条目的**删和改名**，以及左栏那一列出场章数（2026-08-25）。
 
 ── 这个文件为什么必须和「抽取自动建人物」同一批落地 ──────────────────────
 
@@ -6,7 +6,7 @@
 的补记）。它会认错——真书上的实例是「袭人」：那本书满篇「寒气袭人」「香气袭人」，
 模型把它当成人报上来，引擎照建不误。
 
-**自动建 + 不能删 = 单向阀。** 那个错会永远留在花名册里，往「这一章提到了谁」和
+**自动建 + 不能删 = 单向阀。** 那个错会永远留在角色册里，往「这一章提到了谁」和
 喂给模型的上下文里塞噪声，而作者没有任何办法清掉它。所以这两条路由不是「顺手加的
 功能」，是那条裁定的**配套**——两者一起进仓库，或者都不进。
 
@@ -47,7 +47,7 @@ class World:
         self.root = tmp / "book"
         self.conn = connect(self.path)
         migrate(self.conn)
-        self.pid = create_project(self.conn, name="花名册", root_path=str(self.root)).id
+        self.pid = create_project(self.conn, name="角色册", root_path=str(self.root)).id
         self.graph = SqliteStoryGraph(self.conn)
         ledger = Ledger(self.graph, self.conn, self.pid)
         self.hero = ledger.declare_node(NodeLabel.CHARACTER, "萧决").id
@@ -331,7 +331,7 @@ def test_rename_refuses_a_name_that_already_exists(world: World) -> None:
     with pytest.raises(StoreError, match="空白"):
         world.graph.rename_node(world.pid, world.ghost, "   ")
 
-    # 同名但**不同 label** 不算撞：花名册里一个叫「北荒」的人和一个叫「北荒」的地点
+    # 同名但**不同 label** 不算撞：角色册里一个叫「北荒」的人和一个叫「北荒」的地点
     # 是两件事，`resolve` 靠 label 分得开。
     renamed = world.graph.rename_node(world.pid, world.ghost, "北荒")
     assert renamed.name == "北荒"
@@ -423,7 +423,7 @@ def test_one_event_with_three_people_shows_up_under_all_three(world: World) -> N
 def test_the_timeline_is_ordered_by_chapter_and_never_sliced(world: World) -> None:
     """按章号升序，**且不按任何「当前章」切片**（2026-08-25 的裁定：全给 + 每条带章号）。
 
-    换成后端切的话，作者点开一个人只看得到当前章之前的部分，而他打开花名册
+    换成后端切的话，作者点开一个人只看得到当前章之前的部分，而他打开角色册
     正是为了看整条线。这一条同时是「别让下一个人以为忘了做时态」的机器判据。
     """
     from novel_harness.graph.sqlite_events import SqliteEventStore
@@ -525,14 +525,14 @@ def test_the_character_events_route_refuses_a_non_character(
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# ③ HTTP：两条路由 + 花名册那一列
+# ③ HTTP：两条路由 + 角色册那一列
 # ══════════════════════════════════════════════════════════════════════════
 
 
 def test_the_roster_carries_the_appearance_count_in_the_same_response(
     world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """左栏那一行要显示「贾环 · 42 章」——**这个数跟花名册同一条出参回来**。
+    """左栏那一行要显示「贾环 · 42 章」——**这个数跟角色册同一条出参回来**。
 
     多一次往返就是多一次会失败、会晚到的东西，而它只是一行字里的一个数。
     """
@@ -547,11 +547,11 @@ def test_the_roster_carries_the_appearance_count_in_the_same_response(
     # 没被任何一段总结提到的条目是 0，**不是缺这个键**——静默的零和真的零不许
     # 长得一样（§10 约束 8），而「缺键」在前端会渲染成 `undefined`。
     assert by_name["袭人"]["appearance_chapters"] == 0
-    assert all("props" not in row for row in rows), "花名册不许整体序列化 Node.props"
+    assert all("props" not in row for row in rows), "角色册不许整体序列化 Node.props"
 
 
 def test_the_delete_route_refuses_with_a_stale_canon_version(world: World, monkeypatch: pytest.MonkeyPatch) -> None:
-    """拿着一份旧花名册点删除 → 409，不是「删掉了一个他没看见的东西」。"""
+    """拿着一份旧角色册点删除 → 409，不是「删掉了一个他没看见的东西」。"""
     with world.client(monkeypatch) as client:
         base = f"/api/projects/{world.pid}"
         stale = client.delete(
@@ -567,7 +567,7 @@ def test_the_delete_route_refuses_with_a_stale_canon_version(world: World, monke
         body = ok.json()
         assert body["name"] == "袭人" and body["usage"]["edges"] == 0
 
-        # 删完立刻不在花名册里了（前端那一行「删完立刻消失」量的就是这个）。
+        # 删完立刻不在角色册里了（前端那一行「删完立刻消失」量的就是这个）。
         names = {row["name"] for row in client.get(f"{base}/roster").json()}
         assert "袭人" not in names
 

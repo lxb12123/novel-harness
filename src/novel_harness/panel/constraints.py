@@ -296,7 +296,7 @@ def forbidden_entities(
     """全书里「还没到首现章」的实体。R2 FUTURE_LEAK 和 Writer prompt 共用这一份。
 
     Notes:
-        节点是从**花名册**（`resolve(surfaces=None)`）里发现的——store 契约里没有
+        节点是从**角色册**（`resolve(surfaces=None)`）里发现的——store 契约里没有
         「列出全部节点」这个方法，而这是故意的（裸 query 会让「graph/ 外禁 import
         sqlite3」那条守卫失去意义）。**推论：一个连 canonical 别名行都没有的节点
         在这里是隐形的。** 那是导入器的 bug（每个节点都该有 canonical 行，

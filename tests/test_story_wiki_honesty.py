@@ -17,8 +17,8 @@
 | 1 | L2 的「还没有正文」是从**库**里数的，而正文的真相源是磁盘 | fixture 里磁盘和库恰好同步 |
 | 2 | 「有摘要」这一态吃掉了「摘要是**旧正文**的」 | fixture 里没人改过正文 |
 | 3 | 事件轴的查询坐标是个**静默上限**（`omitted=0` 却裁掉了三分之二） | 那份 fixture 的假端口**忽略 `chapter` 参数**，比真库宽 |
-| 4 | 花名册被裁光整整一类（秘密），而且**没有取回它的路** | 只断言了 `omitted > 0`，没问「omit 掉的是哪一类」 |
-| 5 | 花名册为空时**一句话都不说** | 空花名册是「合法的空」，没有断言盯它 |
+| 4 | 角色册被裁光整整一类（秘密），而且**没有取回它的路** | 只断言了 `omitted > 0`，没问「omit 掉的是哪一类」 |
+| 5 | 角色册为空时**一句话都不说** | 空角色册是「合法的空」，没有断言盯它 |
 
 第 3 条顺带说明了一件事：**假实现比真实现宽的时候，测试是绿的而产品是错的。**
 所以这份文件里的两个假端口都刻意做成「和真实现同解」，另有两个探针专门断言
@@ -328,7 +328,7 @@ def test_l2_says_when_it_could_not_check_staleness(book: Book) -> None:
 
 
 def _crowd_the_roster(book: Book) -> None:
-    """把花名册撑到装不下：40 个路人 + 5 条秘密 + 1 个地点。"""
+    """把角色册撑到装不下：40 个路人 + 5 条秘密 + 1 个地点。"""
     for i in range(40):
         book.store.upsert_node(
             NodeSpec(
@@ -353,7 +353,7 @@ def _crowd_the_roster(book: Book) -> None:
 
 
 def test_l0_says_which_kinds_of_names_it_dropped_entirely(book: Book) -> None:
-    """花名册按 (类型, 名字) 排序 + 从头收 ⇒ **排在后面的整类会被裁光**。
+    """角色册按 (类型, 名字) 排序 + 从头收 ⇒ **排在后面的整类会被裁光**。
 
     而 `book_index` 的工具描述自己承诺「人物 / 地点 / 门派 / 物件的显示名」。
     只报一个 `roster_omitted=28` 是不够的：模型读到的是「这本书没有任何地点」，
@@ -375,11 +375,11 @@ def test_l0_says_which_kinds_of_names_it_dropped_entirely(book: Book) -> None:
 
 
 def test_l0_roster_truncation_has_a_way_to_get_the_rest(book: Book) -> None:
-    """**说得出怎么接着拿，而且那条路真的走得通**——章标题那一半已经做到了，花名册没有。
+    """**说得出怎么接着拿，而且那条路真的走得通**——章标题那一半已经做到了，角色册没有。
 
-    `from_chapter` 只管章标题；被裁掉的 28 条花名册在这个会话里再也拿不到。
+    `from_chapter` 只管章标题；被裁掉的 28 条角色册在这个会话里再也拿不到。
     这一层的标准是它自己定的（`test_l0_truncation_says_how_to_get_the_rest`），
-    不能对章标题成立、对花名册就不成立。
+    不能对章标题成立、对角色册就不成立。
     """
     _crowd_the_roster(book)
     tight = book.context(max_context_tokens=8_000, reserved_output_tokens=0)
@@ -590,10 +590,10 @@ def test_future_is_marked_never_blocked(book: Book) -> None:
 
 
 def test_l0_empty_roster_says_why_it_is_empty(tmp_path: Path) -> None:
-    """空花名册 = **作者还没声明过任何东西**，不等于「这本书里没有人」。
+    """空角色册 = **作者还没声明过任何东西**，不等于「这本书里没有人」。
 
-    花名册是声明出来的（ADR 0004），不是从正文里数出来的：一本刚 import 进来的 722 章
-    长篇，花名册就是空的，而正文里当然有人。`roster_total: 0` 不带一句话交出去，
+    角色册是声明出来的（ADR 0004），不是从正文里数出来的：一本刚 import 进来的 722 章
+    长篇，角色册就是空的，而正文里当然有人。`roster_total: 0` 不带一句话交出去，
     模型只有一个读法——「这本书没有人物、没有秘密」，然后它会据此认为怎么写都不违背设定。
 
     这也是「项目不存在」那一档唯一的出口：`store.resolve()` 对一个查无此项目的 id
@@ -609,7 +609,7 @@ def test_l0_empty_roster_says_why_it_is_empty(tmp_path: Path) -> None:
     context = ToolContext(store=SqliteStoryGraph(conn), project_id=pid, root_path=str(root))
     result = BookIndex.model_validate_json(_ok("book_index", context))
     assert result.roster_total == 0 and result.chapters_total == 1
-    assert any("花名册" in note and "声明" in note for note in result.notes), (
+    assert any("角色册" in note and "声明" in note for note in result.notes), (
         "零必须带着理由一起出现（ARCHITECTURE §10 约束 8）"
     )
     conn.close()
@@ -619,7 +619,7 @@ def test_a_bogus_project_does_not_come_back_as_an_empty_book(book: Book) -> None
     """项目 id 查无此项时，索引层**不许把它渲染成一本空书**。
 
     L1 今天是对的（解析不出人物就当场拒），L0 / L2 不是：L0 照样把磁盘上的章标题列出来，
-    再配一份空花名册；L2 则把每一章都报成「还没有正文」。两者合起来是一份看起来完整、
+    再配一份空角色册；L2 则把每一章都报成「还没有正文」。两者合起来是一份看起来完整、
     实际上关于另一个项目的索引。
     """
     bogus = ToolContext(
@@ -630,7 +630,7 @@ def test_a_bogus_project_does_not_come_back_as_an_empty_book(book: Book) -> None
     )
     index = BookIndex.model_validate_json(_ok("book_index", bogus))
     assert index.roster_total == 0
-    assert any("花名册" in note for note in index.notes)
+    assert any("角色册" in note for note in index.notes)
 
     summaries = ChapterSummaries.model_validate_json(
         _ok("chapter_summaries", bogus, first_chapter=1, last_chapter=3)

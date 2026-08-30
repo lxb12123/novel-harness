@@ -8,7 +8,7 @@
 
 | 层 | 工具 | 给什么 | 从哪来 |
 |---|---|---|---|
-| L0 | `book_index` | 全书章标题 + 花名册（含秘密的**显示名**） | 磁盘上的 `chapters/NNNN.md` + `store.resolve` |
+| L0 | `book_index` | 全书章标题 + 角色册（含秘密的**显示名**） | 磁盘上的 `chapters/NNNN.md` + `store.resolve` |
 | L1 | `character_chapters` | 某几个人**同时**出现在哪些章 | 正文 mention 扫描 + 已确认事件，**两条轴分开报** |
 | L2 | `chapter_summaries` | 指定章号区间的滚动总结 | `SummaryIndex.coverage` + 磁盘对账（四态） |
 | L3 | `chapter_text` | 一章正文 | 磁盘（ADR 0007） |
@@ -62,18 +62,18 @@ L1 的正文命中轴**每次都要把整本书扫一遍**（一次正则 altern
 
 ── 边界一在这里的落点 ────────────────────────────────────────────────────
 
-**花名册只给节点的正式名（`node.name`），一个别名都不给。** 这不是省 token：
+**角色册只给节点的正式名（`node.name`），一个别名都不给。** 这不是省 token：
 别名里装着认知边界——「魔尊」是不是顾清音，正是某条秘密本身（ADR 0004 说别名差异
 「是 canon，不是噪声」）。而秘密的非 canonical 别名就是它的内容 tell（`玄血蛊`），
 把它交出去等于把检测器要找的词写进对话。所以这一层**只出正式名和纯量，`props` 一个
 字段都不碰**（`tests/test_agent_tools.py` 的 AST 守卫会拦住 `.props`）。
 
-── 花名册是**声明**出来的，不是从正文里数出来的 ────────────────────────────
+── 角色册是**声明**出来的，不是从正文里数出来的 ────────────────────────────
 
 它的成员是「作者建过节点的那些东西」（ADR 0004），所以一本刚 import 进来的 722 章长篇
-花名册就是空的，而正文里当然有人。`roster_total: 0` 不带一句话交出去只有一个读法——
+角色册就是空的，而正文里当然有人。`roster_total: 0` 不带一句话交出去只有一个读法——
 「这本书没有人物、没有秘密」，而模型会据此认为这一章怎么写都不违背设定。
-同理，花名册按 (类型, 名字) 排序再从头收，`Secret` 结构上永远是第一批被预算裁掉的：
+同理，角色册按 (类型, 名字) 排序再从头收，`Secret` 结构上永远是第一批被预算裁掉的：
 **只报「另外 28 条没给」不够，要报的是「Secret 这一类一条都没给到」**，
 并且给得出把它单独拉回来的路（`labels`）。
 """
@@ -259,7 +259,7 @@ def _rewritten_since(context: ToolContext, chapter: int, created_at: str | None)
 
 
 class BookIndexArgs(BaseModel):
-    """全书目录：章标题 + 花名册。**默认调用不带参数，这是最便宜的那一层。**"""
+    """全书目录：章标题 + 角色册。**默认调用不带参数，这是最便宜的那一层。**"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -274,15 +274,15 @@ class BookIndexArgs(BaseModel):
     labels: list[str] | None = Field(
         default=None,
         description=(
-            "只列这几类花名册条目（Character / Location / Faction / "
-            "Foreshadow / Object），默认全给。花名册太长被裁掉整整一类时，"
+            "只列这几类角色册条目（Character / Location / Faction / "
+            "Foreshadow / Object），默认全给。角色册太长被裁掉整整一类时，"
             "用它把那一类单独拉回来。"
         ),
     )
 
 
 class RosterEntry(BaseModel):
-    """花名册里的一个东西：**只有正式名和类型**。别名一个都不给（见模块 docstring）。"""
+    """角色册里的一个东西：**只有正式名和类型**。别名一个都不给（见模块 docstring）。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -303,9 +303,9 @@ class RosterEntry(BaseModel):
     """`True` = 作者还没写到它首现的那一章。**和 `ChapterEntry.future` 是同一个东西。**
 
     它不是上面那个字段的重复：`first_appears_chapter is None` 同时表示「已经登场」和
-    「这一轮压根没算」，而模型是**逐条**推理的——要它每读一条花名册记录就回头去和
+    「这一轮压根没算」，而模型是**逐条**推理的——要它每读一条角色册记录就回头去和
     `future_from_chapter` 对一次数，是把标记的责任推给了读的人。
-    章目录那一半从第一天就有这个布尔，花名册这一半漏了它整整一轮。
+    章目录那一半从第一天就有这个布尔，角色册这一半漏了它整整一轮。
     """
 
 
@@ -326,13 +326,13 @@ class BookIndex(BaseModel):
 
     roster: list[RosterEntry] = Field(default_factory=list)
     roster_total: int = 0
-    """符合这次请求的花名册一共多少条（**不受预算影响**；`labels` 过滤后的总数）。"""
+    """符合这次请求的角色册一共多少条（**不受预算影响**；`labels` 过滤后的总数）。"""
 
     roster_omitted: int = 0
     roster_labels_omitted: list[str] = Field(default_factory=list)
     """**一条都没给到**的那几类。
 
-    「另外 28 条没给」不够：花名册按 (类型, 名字) 排序再从头收，于是 `Secret` 结构上
+    「另外 28 条没给」不够：角色册按 (类型, 名字) 排序再从头收，于是 `Secret` 结构上
     永远是第一批掉出去的——而模型读到的是「这本书没有任何秘密」，然后据此认为这一章
     怎么写都不违背设定。**裁了什么要说的是「什么」，不只是「多少条」。**
     """
@@ -355,15 +355,15 @@ class BookIndex(BaseModel):
 _ROSTER_LABELS: Final[frozenset[str]] = frozenset(
     str(label) for label in CANONICAL_ALIAS_LABELS
 )
-"""花名册里可能出现的全部类型。**取自 `CANONICAL_ALIAS_LABELS`，不另抄一份**——
-花名册的成员判据就是「`upsert_node` 会不会给它建 canonical 别名」，那份集合一变这里跟着变。
+"""角色册里可能出现的全部类型。**取自 `CANONICAL_ALIAS_LABELS`，不另抄一份**——
+角色册的成员判据就是「`upsert_node` 会不会给它建 canonical 别名」，那份集合一变这里跟着变。
 """
 
 
 def _roster(context: ToolContext, labels: frozenset[str] | None) -> list[RosterEntry]:
-    """花名册：全项目每个有 canonical 别名的节点一条，按 (类型, 名字) 排。
+    """角色册：全项目每个有 canonical 别名的节点一条，按 (类型, 名字) 排。
 
-    走 `store.resolve(project_id)`（`surfaces=None` = 全项目花名册）。**按节点去重**，
+    走 `store.resolve(project_id)`（`surfaces=None` = 全项目角色册）。**按节点去重**，
     所以一个人的五个别名只出一条，出的还是他的正式名——别名不出现在返回里的任何位置。
     """
     future_first: dict[str, int] = {}
@@ -423,12 +423,12 @@ def handle_book_index(args: BookIndexArgs, context: ToolContext) -> BookIndex:
     )
     if wanted is not None:
         notes.append(
-            f"这一份的花名册只列了 {'、'.join(sorted(wanted))} 这几类："
+            f"这一份的角色册只列了 {'、'.join(sorted(wanted))} 这几类："
             "别的类不在这一份里，**不代表书里没有**。"
         )
     if roster_omitted:
         notes.append(
-            f"花名册太长：只给了按（类型, 名字）排序的前 {len(roster)} 条，"
+            f"角色册太长：只给了按（类型, 名字）排序的前 {len(roster)} 条，"
             f"另外 {roster_omitted} 条这一轮没给。"
         )
     if roster_labels_omitted:
@@ -441,11 +441,11 @@ def handle_book_index(args: BookIndexArgs, context: ToolContext) -> BookIndex:
             (
                 f"这本书里没有 {'、'.join(sorted(wanted))} 这几类的任何条目。"
                 if wanted is not None
-                else "花名册是空的：这本书还没有**声明**过任何人物 / 地点 / 门派 / 物件"
+                else "角色册是空的：这本书还没有**声明**过任何人物 / 地点 / 门派 / 物件"
                 "（也可能是这个 project_id 在库里查无此项）。"
             )
-            + "**花名册是作者声明出来的，不是从正文里数出来的**——它空着不等于正文里没有"
-            "这些人：正文里的角色只有被声明过才会进花名册，没进的这个引擎一无所知。"
+            + "**角色册是作者声明出来的，不是从正文里数出来的**——它空着不等于正文里没有"
+            "这些人：正文里的角色只有被声明过才会进角色册，没进的这个引擎一无所知。"
         )
 
     catalog = _catalog(context)
@@ -478,7 +478,7 @@ def handle_book_index(args: BookIndexArgs, context: ToolContext) -> BookIndex:
         )
 
     # **两半都要数。** 只数章目录的话，作者线性往下写（`chapters/` 里最远就是他写到的
-    # 那一章）时未来条数恒为 0，于是整份返回上一句话都没有——而花名册里正躺着第 200 章
+    # 那一章）时未来条数恒为 0，于是整份返回上一句话都没有——而角色册里正躺着第 200 章
     # 的地点和第 300 章的秘密。ADR 0019 边界二把「推理被污染」列成**接受**的残余代价，
     # 它接受的前提之一是「作者看得见」，那一句话就是「看得见」的全部实现。
     future_note = _future_note(
@@ -599,12 +599,12 @@ _EVENT_SOURCE: Final = (
 
 
 class UnknownCharacter(ToolRefused):
-    """这个称呼**花名册里根本没有**（`len(hits) == 0`）。
+    """这个称呼**角色册里根本没有**（`len(hits) == 0`）。
 
     ── 它为什么必须和「歧义」分成两个类型，而不是两条分支 ──────────────────
 
     2026-08-13 在作者 722 章的真书上实测：模型给第 723 章起草，连着查了两个大结局才
-    出现的新角色（花名册里当然没有）。两次都拿到同一句
+    出现的新角色（角色册里当然没有）。两次都拿到同一句
 
         「…解析不出唯一一个人（查无此人，或者这个叫法同时指向好几个人）。
           换一个更具体的称呼，或者先在人物卡上把别名理清楚。」
@@ -613,7 +613,7 @@ class UnknownCharacter(ToolRefused):
 
     | 情况 | 判据（一个集合判断） | 该做什么 |
     |---|---|---|
-    | 花名册里没有 | `len(hits) == 0` | **别再试**：换什么叫法都查不到 |
+    | 角色册里没有 | `len(hits) == 0` | **别再试**：换什么叫法都查不到 |
     | 一个叫法指向好几个人 | `len(hits) > 1` | 换个更具体的称呼（**重试是对的**） |
 
     合成一句「换个说法再试」= 在第一种情况下**由引擎亲口鼓励它再烧一步**。那一轮八步
@@ -646,7 +646,7 @@ def resolve_one(
     """一个称呼 → 唯一那个节点。**解析不出就拒，绝不替作者猜一个。**
 
     `resolution=None` = 图层对这个称呼一行都没返回，和 `hits` 为空是同一件事
-    （花名册里没有）。**两者不许分成两句话**：对模型来说它们的下一步完全相同，
+    （角色册里没有）。**两者不许分成两句话**：对模型来说它们的下一步完全相同，
     而多一种说法只会多一种它要去理解的东西。
 
     **这里不判 label**：「不是人物」的下一句话每个工具不一样（`character_state` 说

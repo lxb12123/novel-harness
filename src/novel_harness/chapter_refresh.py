@@ -388,8 +388,18 @@ def _existing_validation_report(
 
 
 def _application_missing(conn: Connection, run_id: str) -> bool:
+    """`head` 行本身不代表「已经有抽取结果」——`activate_extraction_application`
+
+    在**第一次尝试**（哪怕最终 SUPERSEDED）时就已经 upsert 出这一行；021 的存量回填
+    也给每个 refresh run 都建了一行，`current_application_id` 是 NULL（那本书从没
+    抽取成功过）。真正的判据是 `current_application_id` 有没有指向一条真实的
+    CURRENT application，不是「这一行存不存在」——只查行存在会让这类 head 永远
+    读成「不缺」，抽取因此永远不会被排上（158 章的旧书导进来，`autonomy_once` 每
+    次都判定这一支「不缺」，角色册永远建不出人）。
+    """
     row = conn.execute(
-        "SELECT 1 FROM extraction_application_head WHERE refresh_run_id = ?",
+        "SELECT 1 FROM extraction_application_head "
+        "WHERE refresh_run_id = ? AND current_application_id IS NOT NULL",
         (run_id,),
     ).fetchone()
     return row is None
@@ -723,7 +733,7 @@ def recover_claimable(
 def _iso(ts: float) -> str:
     import datetime
 
-    return datetime.datetime.fromtimestamp(ts, datetime.UTC).strftime("%Y-%m-%dT%H:%M:%fZ")
+    return datetime.datetime.fromtimestamp(ts, datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def _branch_update(

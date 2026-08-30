@@ -37,7 +37,7 @@ _EN: dict[str, str] = {
     # ── character_state ──────────────────────────────────────────────────
     (
         "查某个人在第 N 章的处境：在哪、各状态维度的值、登场了没有、是不是已经死了。"
-        "**只认花名册上的名字**（book_index 里那份）：不在上面的人查不到，"
+        "**只认角色册上的名字**（book_index 里那份）：不在上面的人查不到，"
         "而那不是你说法不对——换个叫法再查一次也还是查不到，只是白花一步。"
     ): (
         "Check where someone stands as of chapter N: where they are, "
@@ -123,14 +123,14 @@ _EN: dict[str, str] = {
     ),
     # ── book_index ───────────────────────────────────────────────────────
     (
-        "全书目录：章标题一览 + 花名册（人物 / 地点 / 门派 / 物件的**显示名**）。"
+        "全书目录：章标题一览 + 角色册（人物 / 地点 / 门派 / 物件的**显示名**）。"
         "**先调这个再往下钻**，它是最便宜的一层。"
     ): (
         "Book-wide index: chapter titles + the roster (**display names** "
         "of characters / locations / factions / objects). **Call this "
         "before drilling down further** — it's the cheapest layer."
     ),
-    "全书目录：章标题 + 花名册。**默认调用不带参数，这是最便宜的那一层。**": (
+    "全书目录：章标题 + 角色册。**默认调用不带参数，这是最便宜的那一层。**": (
         "Book-wide index: chapter titles + roster. **Calling it with no "
         "arguments is the default, and the cheapest layer.**"
     ),
@@ -144,8 +144,8 @@ _EN: dict[str, str] = {
         "next chapter and call again to keep going."
     ),
     (
-        "只列这几类花名册条目（Character / Location / Faction / "
-        "Foreshadow / Object），默认全给。花名册太长被裁掉整整一类时，"
+        "只列这几类角色册条目（Character / Location / Faction / "
+        "Foreshadow / Object），默认全给。角色册太长被裁掉整整一类时，"
         "用它把那一类单独拉回来。"
     ): (
         "Only list roster entries of these types (Character / Location / "
@@ -513,7 +513,7 @@ _EN: dict[str, str] = {
     ),
     (
         "封闭指令候选：只能从 ENTER_LOCATION / SEARCH_FOR / TEST_CHARACTER / "
-        "DEFER_REVEAL / ADVANCE_CLUE 里选，参数只能引用花名册上的人物/地点/物件"
+        "DEFER_REVEAL / ADVANCE_CLUE 里选，参数只能引用角色册上的人物/地点/物件"
         "显示名。不要在这里写任务散文或事件概括。"
     ): (
         "Closed directive candidates: pick only from ENTER_LOCATION / "
@@ -522,7 +522,7 @@ _EN: dict[str, str] = {
         "names from the roster. Do not write task prose or an event "
         "summary here."
     ),
-    "视角人物（花名册上的称呼，只解析 NodeRef）。": (
+    "视角人物（角色册上的称呼，只解析 NodeRef）。": (
         "The viewpoint character (a name from the roster; resolves only "
         "to a NodeRef)."
     ),
@@ -709,7 +709,7 @@ def translate_tool_declarations(
 # 散落在各处的函数体里），直接用模板 + `.format()` 就够。
 #
 # ⚠️ **判据不是"意思对不对"，是"模型读完会走哪一步"**（2026-08-13 真书事故）：
-# 722 章的书给第 723 章起草，连续两次查一个花名册里没有的新角色，两次都收到同一句
+# 722 章的书给第 723 章起草，连续两次查一个角色册里没有的新角色，两次都收到同一句
 # "查无此人，或者这个叫法同时指向好几个人……换一个更具体的称呼"——而这两种情况的
 # 正确下一步相反：查无此人时**换什么叫法都没用**，指向好几个人时**换个更具体的
 # 称呼恰恰是对的**。合成一句 = 在第一种情况下引擎亲口鼓励模型再烧一步。那一轮八步
@@ -855,7 +855,7 @@ _MESSAGES: dict[str, dict[DraftLanguage, str]] = {
     },
     # ── agent/index.py ───────────────────────────────────────────────────
     "unknown_labels_requested": {
-        DraftLanguage.ZH: "labels 里有认不出来的类型：{unknown}。花名册只有这几类：{valid}。",
+        DraftLanguage.ZH: "labels 里有认不出来的类型：{unknown}。角色册只有这几类：{valid}。",
         DraftLanguage.EN: (
             "labels contains unrecognized types: {unknown}. The roster "
             "only has these types: {valid}."
@@ -863,8 +863,8 @@ _MESSAGES: dict[str, dict[DraftLanguage, str]] = {
     },
     "unknown_character": {
         DraftLanguage.ZH: (
-            "「{surface}」这个名字，这本书的花名册里没有。**别换个说法再查一次**——"
-            "花名册是一份定死的名单（调 book_index 能看全），不在名单上的人，"
+            "「{surface}」这个名字，这本书的角色册里没有。**别换个说法再查一次**——"
+            "角色册是一份定死的名单（调 book_index 能看全），不在名单上的人，"
             "换什么叫法都查不到，再查一次只是白花一步。"
             "他要是这一场你新写的人，就当新人物直接往下写；"
             "要是作者写过他而系统还不认得，那得作者去人物卡上补，这一轮里等不到。"
@@ -941,7 +941,7 @@ _MESSAGES: dict[str, dict[DraftLanguage, str]] = {
     },
     "already_missed": {
         DraftLanguage.ZH: (
-            "\n**这一轮你已经撞上 {count} 个花名册外的名字**（{names}）。"
+            "\n**这一轮你已经撞上 {count} 个角色册外的名字**（{names}）。"
             "这几次查询一个字的结果都没换来，而这一轮的步数是有限的——**别再查人了**，"
             "用手上已经有的东西往下写。"
         ),

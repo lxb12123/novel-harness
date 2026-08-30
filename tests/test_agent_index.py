@@ -248,7 +248,7 @@ def test_that_magic_number_guard_can_see_one() -> None:
 
 
 def test_l0_is_a_table_of_contents_with_names_and_no_aliases(book: Book) -> None:
-    """目录 = 章标题（磁盘上的首个非空行）+ 花名册（**只有正式名**）。"""
+    """目录 = 章标题（磁盘上的首个非空行）+ 角色册（**只有正式名**）。"""
     result = BookIndex.model_validate_json(_ok("book_index", book.context()))
 
     assert [(entry.chapter, entry.title) for entry in result.chapters] == [
@@ -274,7 +274,7 @@ def test_l0_says_it_cannot_read_the_manuscript_instead_of_showing_an_empty_book(
     result = BookIndex.model_validate_json(_ok("book_index", book.context(root_path=None)))
     assert result.chapters == [] and result.chapters_total == 0
     assert any("读不到" in note for note in result.notes)
-    assert result.roster, "读不到正文不该影响花名册 —— 它来自图，不是磁盘"
+    assert result.roster, "读不到正文不该影响角色册 —— 它来自图，不是磁盘"
 
 
 def test_l0_truncation_says_how_to_get_the_rest(book: Book) -> None:

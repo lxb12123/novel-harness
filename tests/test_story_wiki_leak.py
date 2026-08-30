@@ -8,7 +8,7 @@
 | 新面 | 它凭什么可疑 |
 |---|---|
 | 章标题（L0） | 目录会列出**作者还没写到那儿**的章，标题本身就是剧情（「第 200 章 弑师」） |
-| 花名册（L0） | 它按设计就是要列秘密。**列到什么粒度才不算把未来递过去**，见下面那条判据 |
+| 角色册（L0） | 它按设计就是要列秘密。**列到什么粒度才不算把未来递过去**，见下面那条判据 |
 | 摘要（L2） | 它是一段**没有时态**的自然语言，而它住在会话里（ADR 0019 边界四同源） |
 | 正文（L3） | 磁盘上可能已经有第 200 章 —— 一次 `chapter_text(200)` 就把它读进对话 |
 
@@ -31,7 +31,7 @@
 **显示名 + 首现章号**，一个字的内容都没有；`must_not_reveal` 交出去的是 `NodeRef`
 （id/label/name）。所以：
 
-> 花名册里一个秘密**只许出现这两样东西**（名字、首现章号），
+> 角色册里一个秘密**只许出现这两样东西**（名字、首现章号），
 > 而它们都是既有闸门**今天已经在交**的。多出来的任何一样都是新开的泄漏面。
 
 别名不在这两样里，所以别名一个都不许出——秘密的非 canonical 别名就是它的内容 tell
@@ -611,10 +611,10 @@ def test_a_refusal_echoes_only_what_the_model_typed(book: PoisonedBook) -> None:
 def test_the_roster_gives_a_secret_exactly_what_the_existing_gate_gives(
     book: PoisonedBook,
 ) -> None:
-    """**判据不新发明**：花名册里的一个秘密，只许有 `forbidden_entities` 已经在交的那两样。
+    """**判据不新发明**：角色册里的一个秘密，只许有 `forbidden_entities` 已经在交的那两样。
 
     既有闸门（`panel/constraints.py`）对一个还没登场的实体交的是**显示名 + 首现章号**，
-    一个字的内容都没有。花名册按设计就是要列秘密，所以它必须照着这把尺量：
+    一个字的内容都没有。角色册按设计就是要列秘密，所以它必须照着这把尺量：
     名字和首现章号可以，**别名、描述、`props` 一律不行**。
     """
     context = book.context()
@@ -648,25 +648,25 @@ def test_the_roster_gives_a_secret_exactly_what_the_existing_gate_gives(
 def test_the_roster_marks_the_entities_the_author_has_not_written_yet(
     book: PoisonedBook,
 ) -> None:
-    """花名册里的未来实体**每条都要有自己的标记**，不能只靠读者拿两个数去减。
+    """角色册里的未来实体**每条都要有自己的标记**，不能只靠读者拿两个数去减。
 
-    章目录那一半有 `ChapterEntry.future`；花名册这一半必须同样有，否则
+    章目录那一半有 `ChapterEntry.future`；角色册这一半必须同样有，否则
     「`first_appears_chapter is None`」同时表示「已经登场」和「这一轮压根没算」，
     而模型要做的恰恰是逐条推理。
     """
     index = BookIndex.model_validate_json(_ok("book_index", book.context()))
     marked = {entry.name for entry in index.roster if entry.future}
     assert marked == {FUTURE_PLACE, FUTURE_OBJECT_NAME}, (
-        "花名册里第 200 / 300 章才首现的那两个东西没被逐条标出来"
+        "角色册里第 200 / 300 章才首现的那两个东西没被逐条标出来"
     )
     assert not any(entry.future for entry in index.roster if entry.name == "萧决")
 
 
 def test_the_future_note_covers_the_roster_too(book: PoisonedBook) -> None:
-    """**磁盘上没有未来章、但花名册里有未来实体**时，那一句话必须照样出现。
+    """**磁盘上没有未来章、但角色册里有未来实体**时，那一句话必须照样出现。
 
     这是这条缝最真实的形状：作者线性往下写，`chapters/` 里最远就是他写到的那一章，
-    于是章目录那一半一条 `future` 都没有 —— 而花名册里躺着第 200 章的地点和第 300 章的
+    于是章目录那一半一条 `future` 都没有 —— 而角色册里躺着第 200 章的地点和第 300 章的
     秘密。整份返回上那一句由「章目录里有几条未来」算出来，于是它**恰好是空的**，
     `notes` 整个是 `[]`：作者在聊天里看不到任何提示，而 ADR 0019 边界二接受那份残余代价
     的前提正是「作者看得见」。
@@ -675,10 +675,10 @@ def test_the_future_note_covers_the_roster_too(book: PoisonedBook) -> None:
     context = book.context(working_chapter=max(CHAPTERS))
     index = BookIndex.model_validate_json(_ok("book_index", context))
     assert not any(entry.future for entry in index.chapters), "这条测试的前提没成立"
-    assert any(entry.future for entry in index.roster), "花名册里得真的有未来实体"
+    assert any(entry.future for entry in index.roster), "角色册里得真的有未来实体"
 
     assert any("还没写到" in note for note in index.notes), (
-        "花名册里有第 200 / 300 章的东西，而整份返回上一句提示都没有：\n"
+        "角色册里有第 200 / 300 章的东西，而整份返回上一句提示都没有：\n"
         f"  notes = {index.notes}\n"
         "ADR 0019 边界二把「推理被污染」列成**接受**的代价，前提之一是「作者看得见」。"
     )
@@ -688,7 +688,7 @@ def test_the_future_note_covers_the_roster_too(book: PoisonedBook) -> None:
         entry.future for entry in index.roster
     )
     note = next(note for note in index.notes if "还没写到" in note)
-    assert f"有 {counted} 条" in note, f"未来条数数漏了花名册那一半：{note}"
+    assert f"有 {counted} 条" in note, f"未来条数数漏了角色册那一半：{note}"
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -852,7 +852,7 @@ def _clean_handler(args: SceneConstraintsArgs, context: ToolContext) -> _CleanRe
 
 LEAKY_PROBE = ToolSpec(
     name="_leaky_wiki_probe",
-    description="故意把整个 Secret 节点当成一条花名册记录交出去。",
+    description="故意把整个 Secret 节点当成一条角色册记录交出去。",
     args=SceneConstraintsArgs,
     handler=_leaky_handler,
 )

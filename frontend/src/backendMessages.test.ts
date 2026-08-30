@@ -92,7 +92,7 @@ describe("参数真的会被填进模板", () => {
       proposal_count: 0,
     });
     expect(noProposals).toContain("它们都没能落库");
-    expect(noProposals).toContain("花名册里先得有人");
+    expect(noProposals).toContain("角色册里先得有人");
   });
 
   it("clash_title：conflict 枚举查表，不认识的枚举原样透传不崩", () => {

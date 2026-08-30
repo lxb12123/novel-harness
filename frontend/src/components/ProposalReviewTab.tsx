@@ -103,8 +103,8 @@ function asConflictItem(raw: unknown): EdgeConflictItem | null {
 /** 一条提案里那些 id 在屏幕上叫什么。
  *
  *  **名字是后端连着提案一起给的**（`proposal.node_refs`，§10.3「闸门只出 `NodeRef`」）。
- *  这儿原先是 `rosterMap.get(id) ?? id.slice(-6)`——拿 id 去花名册里查，查不到就把
- *  内部编号截断了摆上屏（`n:ID22`）。**那条兜底不是边角**：花名册（`["roster", pid]`）
+ *  这儿原先是 `rosterMap.get(id) ?? id.slice(-6)`——拿 id 去角色册里查，查不到就把
+ *  内部编号截断了摆上屏（`n:ID22`）。**那条兜底不是边角**：角色册（`["roster", pid]`）
  *  和队列（`["proposals", pid, chapter]`）是两条独立缓存，后台整理造出的新节点会在
  *  前者里缺席一拍——而没有任何一条路径保证那一拍不会被作者看见。
  *  出参自足之后，这一整类失败在结构上就不存在了。
@@ -204,7 +204,7 @@ function ProposalEditor({
         <input value={summary} onChange={(e) => setSummary(e.target.value)} />
       </label>
       {/* 空概要后端会拒（422）。**在按下按钮之前就说**，别让作者去撞一次拒绝
-          （同花名册抽屉里 1 字别名那条）。 */}
+          （同角色册抽屉里 1 字别名那条）。 */}
       {blank && (
         <div className="row dim">
           {language === "zh" ? (
@@ -353,7 +353,7 @@ export function ProposalReviewTab() {
   const proposals = useProposals(pid, chapter);
   const provisionalEvents = useEvents(pid, chapter, "PROVISIONAL");
   const projects = useProjects();
-  // 「改一改再收下」要摆一份候选人名单。**和已确认那一格读的是同一份花名册缓存**
+  // 「改一改再收下」要摆一份候选人名单。**和已确认那一格读的是同一份角色册缓存**
   // （queryKey 相同），不另开第二个读源。
   const roster = useRoster(pid);
   const review = useReviewProposal(pid!);
@@ -371,7 +371,7 @@ export function ProposalReviewTab() {
     return map;
   }, [provisionalEvents.data]);
 
-  // 花名册出参的 label 是开放字符串（后端 `_narrow` 之后的 dict）；按 label 过滤那一步
+  // 角色册出参的 label 是开放字符串（后端 `_narrow` 之后的 dict）；按 label 过滤那一步
   // 在 `candidates()` 里，同 `CanonEventCast`。
   const roll = useMemo(() => (roster.data ?? []) as NodeRef[], [roster.data]);
 
@@ -462,7 +462,7 @@ export function ProposalReviewTab() {
             {language === "zh" ? (
               <>
                 还有 {retiredKind} 条旧的「新人物」待确认。系统现在会自己把认不出的人记进
-                花名册，这些不用再处理了 —— 花名册里删错的那一条就行。
+                角色册，这些不用再处理了 —— 角色册里删错的那一条就行。
               </>
             ) : (
               <>

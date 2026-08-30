@@ -39,7 +39,7 @@ function IntervalBars() {
       </div>
     );
 
-  // 花名册里查不到就说「—」，**绝不 `?? id`**：花名册和这份快照是两条独立缓存，
+  // 角色册里查不到就说「—」，**绝不 `?? id`**：角色册和这份快照是两条独立缓存，
   // 后台整理刚建出来的节点会在前者里缺席一拍，而那一拍上作者看到的会是
   // `location:01J8XK…`。同 `ProposalReviewTab` 上修掉的那条 `id.slice(-6)`。
   const nameOf = (id: string) => roster.data?.find((n) => n.id === id)?.name ?? "—";

@@ -16,10 +16,10 @@ import { useCoords } from "../store";
 import { CharacterBasicInfo } from "./CharacterBasicInfo";
 import { RosterDrawer } from "./RosterDrawer";
 
-// 花名册：右栏的第一格，也是默认那一格。
+// 角色册：右栏的第一格，也是默认那一格。
 //
 // 它原先在左栏，和章目录挤在同一条 210px 里；书架进来之后那一栏是「书 → 章」的纵深，
-// 而花名册问的是「这本书里有谁」——和右栏其余几格（这个人在哪 / 和谁有关系）是同一个
+// 而角色册问的是「这本书里有谁」——和右栏其余几格（这个人在哪 / 和谁有关系）是同一个
 // 问题的不同切面，所以它属于右边。
 //
 // **点一个人 = 看他的局部关系图**（`focusNode` 会把面板切到关系那一格）。这条没变。
@@ -74,7 +74,7 @@ function bySignal(rows: RosterEntry[], order: Order): RosterEntry[] {
 
 /** 一件事掉了参与者时挂在它上面的那颗红点（Task 8 补记 / 034）。
  *
- *  **默认只是一个点**：删花名册条目 2026-08-28 起不再拒绝（维护者裁定），
+ *  **默认只是一个点**：删角色册条目 2026-08-28 起不再拒绝（维护者裁定），
  *  于是这件事上曾经在场/知情的某个人可能已经不在了——这颗点就是那件事
  *  「事后可见可改」的落点。点开才展开成一句人话 + 跳转 + 「知道了」，
  *  不常驻占地方（真书上这一档绝大多数时候不存在）。
@@ -228,12 +228,12 @@ export function RosterTab() {
   rows.forEach((n) => (groups[n.label] ??= []).push(n));
   const empty = Object.keys(groups).length === 0;
 
-  // 选中的这个人如果是人物，就在花名册顶部给他一行「本名 + 别名 chips」——
+  // 选中的这个人如果是人物，就在角色册顶部给他一行「本名 + 别名 chips」——
   // 这是人物基础信息的唯一形态（Task 15 / §4.5）：点名字本人聚焦关系图不变，
   // 别名编辑不另占一颗按钮。
   //
   // ⚠️ 这一行 2026-08-25 之前比的是 `=== "character"`（小写），而 `NodeLabel` 是
-  // `"Character"`——**它恒为 false，那一格一次都没画出来过**。花名册出参从
+  // `"Character"`——**它恒为 false，那一格一次都没画出来过**。角色册出参从
   // `{id,label,name}` 收窄成 `RosterEntry` 的那一刻 `tsc` 就把它指出来了
   // （从前 label 是 `string`，两个字符串比大小写不同不是类型错误）。
   const selected = rows.find((n) => n.id === selectedNodeId);
@@ -255,7 +255,6 @@ export function RosterTab() {
   return (
     <div>
       <h2>
-        {language === "zh" ? "花名册" : "Roster"}
         {!empty && (
           <button
             className="add"
@@ -351,7 +350,7 @@ export function RosterTab() {
                         </button>
                         <button
                           className="add"
-                          title={language === "zh" ? "从花名册里删掉" : "Remove from the roster"}
+                          title={language === "zh" ? "从角色册里删掉" : "Remove from the roster"}
                           onClick={() => setConfirming(n.id)}
                         >
                           {language === "zh" ? "删" : "Delete"}

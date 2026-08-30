@@ -84,7 +84,7 @@ export function LocalGraph() {
       <div className="empty">
         {language === "zh" ? (
           <>
-            点左栏花名册里的一个人，或在正文里选中一句话按「查图谱」→ 这里画出他第 {chapter} 章的
+            点左栏角色册里的一个人，或在正文里选中一句话按「查图谱」→ 这里画出他第 {chapter} 章的
             相关人物和设定。
           </>
         ) : (

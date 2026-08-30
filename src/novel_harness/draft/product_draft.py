@@ -592,7 +592,7 @@ def _with_memory(
             "（约束和禁令照常生效，而且是全禁那一侧）。"
         )
 
-    # **必须过滤 label。** `resolve_cast` 认的是花名册里的全部称呼，不只人物：
+    # **必须过滤 label。** `resolve_cast` 认的是角色册里的全部称呼，不只人物：
     # 作者在「在场角色」里写一个地点名（「青云城主府」），它会唯一解析成 Location
     # 节点、穿过 `require_resolved_cast()`，然后在 `build_product_context` 的
     # 「cast must contain only Character references」上炸成 500。

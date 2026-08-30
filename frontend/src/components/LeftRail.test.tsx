@@ -26,10 +26,10 @@ describe("左栏", () => {
     expect(document.body.textContent).not.toContain("nh import");
   });
 
-  it("花名册已经不在左栏了 —— 它搬去了右栏第一格", async () => {
+  it("角色册已经不在左栏了 —— 它搬去了右栏第一格", async () => {
     renderWithApi(<LeftRail onOpenChapter={vi.fn()} />);
     await screen.findByText(fixtures.chapters[0].title);
-    expect(screen.queryByRole("heading", { name: "花名册" })).toBeNull();
+    expect(screen.queryByRole("heading", { name: "角色册" })).toBeNull();
     // 人名一个都不该再出现在这一栏：留一份旧拷贝在这儿，两边就会各自漂。
     expect(screen.queryByText(fixtures.roster[0].name)).toBeNull();
   });

@@ -140,7 +140,7 @@ export function CanonEventCast({ canonVersion }: { canonVersion: number }) {
   }, [focusEventId]);
 
   const views = events.data ?? [];
-  // 花名册出参的 label 是开放字符串（后端 `_narrow` 之后的 dict），这里只按
+  // 角色册出参的 label 是开放字符串（后端 `_narrow` 之后的 dict），这里只按
   // `label === "Character"` 过滤——名单两维收的都是人物，别的 label 后端会拒。
   const roll = useMemo(() => (roster.data ?? []) as NodeRef[], [roster.data]);
 

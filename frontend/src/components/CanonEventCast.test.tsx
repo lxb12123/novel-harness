@@ -57,7 +57,7 @@ describe("已确认的情节：谁在场、谁知道了", () => {
     for (const n of first.knowers) {
       expect(within(knowers).getByRole("checkbox", { name: n.name })).toBeChecked();
     }
-    // 花名册里的人物都在候选里（地点 / 秘密不在——名单两维收的都是人物）。
+    // 角色册里的人物都在候选里（地点 / 秘密不在——名单两维收的都是人物）。
     expect(within(knowers).getByRole("checkbox", { name: "未来大能" })).not.toBeChecked();
     expect(within(knowers).queryByRole("checkbox", { name: "青云城主府" })).toBeNull();
     expect(within(knowers).queryByRole("checkbox", { name: "血脉秘密" })).toBeNull();

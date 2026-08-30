@@ -38,11 +38,11 @@ export const idsOf = (refs: NodeRef[]): string[] => refs.map((r) => r.id);
 export const same = (a: string[], b: string[]): boolean =>
   a.length === b.length && a.every((id) => b.includes(id));
 
-/** 候选人 = 花名册里的人物 ∪ 这条情节上现有的名单。
+/** 候选人 = 角色册里的人物 ∪ 这条情节上现有的名单。
  *
- *  并集那一半不是防御性编程：名单里出现一个花名册没有的人时，只按花名册画会让他
+ *  并集那一半不是防御性编程：名单里出现一个角色册没有的人时，只按角色册画会让他
  *  **在界面上凭空消失**，而作者一按保存就把他从这条情节上删掉了——一次他没打算做的删除。
- *  （后台整理造出的新人物会在花名册那条缓存里缺席一拍，那一拍是常态不是边角。） */
+ *  （后台整理造出的新人物会在角色册那条缓存里缺席一拍，那一拍是常态不是边角。） */
 export function candidates(roster: NodeRef[], view: EventView): NodeRef[] {
   const seen = new Map<string, NodeRef>();
   for (const n of roster) if (n.label === "Character") seen.set(n.id, n);
@@ -69,7 +69,7 @@ export function CastPicker({
           {people.length === 0 ? (
             <span className="empty">
               {language === "zh"
-                ? "花名册里还没有人物 —— 先去「花名册」那一格加人。"
+                ? "角色册里还没有人物 —— 先去「角色册」那一格加人。"
                 : 'The roster doesn\'t have any characters yet — add one on the "Roster" tab first.'}
             </span>
           ) : (

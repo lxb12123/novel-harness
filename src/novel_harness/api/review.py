@@ -135,7 +135,7 @@ def get_state_dims(
     """这个项目里全部 StateDim 节点，给「维度」下拉框用（Task 8 补记）。
 
     **前端认 id，不认 `dim_key`**：多数维度没有机器键（2026-08-27 裁定），
-    id 才是它们唯一稳定的身份——这份列表就是它们的花名册。
+    id 才是它们唯一稳定的身份——这份列表就是它们的角色册。
     """
     return [StateDimView.of(n) for n in _list_state_dims(conn, proj.id)]
 
@@ -514,7 +514,7 @@ def chapter_proposals(
 ) -> list[ProposalRecord]:
     """待审队列。出参**带着 `items` 里那些 id 的显示名**（`node_refs`）。
 
-    界面自己拿 id 去花名册里查是行不通的：那是另一条独立缓存的查询，后台抽取造出的
+    界面自己拿 id 去角色册里查是行不通的：那是另一条独立缓存的查询，后台抽取造出的
     新节点会在它里面缺席一拍，而那一拍的产物是屏幕上一串截断的内部编号。
     §10.3：闸门只出 `NodeRef`。
     """

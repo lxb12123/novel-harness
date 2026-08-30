@@ -118,7 +118,7 @@ class FakeGraph:
     ) -> list[Resolution]:
         del project_id
         if surfaces is None:
-            # 花名册：按 surface 长度降序（mentions.py 的 alternation 要 leftmost-first）。
+            # 角色册：按 surface 长度降序（mentions.py 的 alternation 要 leftmost-first）。
             ordered = [
                 Resolution(surface=s, hits=[_hit(n) for n in targets])
                 for s, targets in sorted(

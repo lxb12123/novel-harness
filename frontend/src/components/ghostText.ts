@@ -1,5 +1,6 @@
 import { StateEffect, StateField, type Extension } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType, keymap } from "@codemirror/view";
+import { nextChunkLength } from "../continuation";
 
 // 行内建议的「灰字」（ADR 0015）。它是**装饰，不是文档内容**——建议没被接受之前，
 // `state.doc` 里一个字符都没有。这条很要紧：
@@ -75,12 +76,36 @@ export function dismissSuggestion(view: EditorView): boolean {
   return true;
 }
 
-/** 装进 CM6 的那一份。**keymap 必须排在 defaultKeymap 之前**，否则 Tab/Esc 先被别人吃掉。 */
+/** 接受建议的「下一口」（一个词，见 `nextChunkLength`）：那一截从灰字变真文档内容，
+ *  剩下的继续挂着，光标停在刚落的字后面。整口吞完时退化成 `acceptSuggestion`
+ *  （效果一样：清空建议），不留一个空字符串的建议对象在场上。
+ *
+ *  绑定在**光标未修饰的** `→`：建议挂着时光标必然停在 `current.pos`（挪一下就被上面
+ *  那条 `update()` 清掉了），所以此刻按 `→` 除了「吃一口建议」没有别的合理含义——
+ *  原生行为顶多是把它悄悄丢掉再把光标挪进后面的正文，不是作者会依赖的东西。
+ *  返回 false = 当时没有建议，方向键正常移动光标。 */
+export function acceptSuggestionChunk(view: EditorView): boolean {
+  const current = view.state.field(suggestionField, false);
+  if (!current || !current.text) return false;
+  const len = nextChunkLength(current.text);
+  if (len >= current.text.length) return acceptSuggestion(view);
+  const chunk = current.text.slice(0, len);
+  const rest = current.text.slice(len);
+  view.dispatch({
+    changes: { from: current.pos, insert: chunk },
+    selection: { anchor: current.pos + chunk.length },
+    effects: setSuggestion.of({ text: rest, pos: current.pos + chunk.length }),
+  });
+  return true;
+}
+
+/** 装进 CM6 的那一份。**keymap 必须排在 defaultKeymap 之前**，否则 Tab/Esc/→ 先被别人吃掉。 */
 export function ghostText(): Extension {
   return [
     suggestionField,
     keymap.of([
       { key: "Tab", run: acceptSuggestion },
+      { key: "ArrowRight", run: acceptSuggestionChunk },
       { key: "Escape", run: dismissSuggestion },
     ]),
   ];

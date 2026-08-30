@@ -105,7 +105,7 @@ class CharacterEventRow(BaseModel):
 
     **拼在这里，不是让前端再发一次请求去 `GET .../notifications` 里找**——同
     `GET .../roster` 那条 `appearance_chapters` 的先例（`api/app.py::roster`）：
-    「两个数都和花名册同一条出参回来，不是第二次请求……多一次往返就是多一次
+    「两个数都和角色册同一条出参回来，不是第二次请求……多一次往返就是多一次
     会失败、会晚到的东西」。红点比那个数更经不起晚到：数字晚到只是慢一秒，
     红点晚到是作者已经看完这一页走了，而这条事件掉的那个人他没看见。
 
@@ -122,7 +122,7 @@ class CharacterEventRow(BaseModel):
 
 
 class NodeRename(BaseModel):
-    """给花名册里那一条改个显示名。
+    """给角色册里那一条改个显示名。
 
     **入参里没有 label**：改名不改类别。一个建错类别的条目（把地点建成了人物）
     该走删除再新建，而不是原地变形——原地变形会让挂在它身上的边和名单在一瞬间
@@ -136,7 +136,7 @@ class NodeRename(BaseModel):
 
 
 class NodeDeleted(BaseModel):
-    """删掉一条花名册条目之后的回执。
+    """删掉一条角色册条目之后的回执。
 
     带着 `usage`（删之前数出来的那份，全零）**是为了让回执说得出「删掉的是一个
     什么都没挂的条目」**——同 `delete_chapter` 那条路的做法。
@@ -288,13 +288,13 @@ def character_events(
 
     今天跟事件有关的对外路由全是「按章看」或「按事件 id 看」——
     `…/chapters/{n}/events`、`…/events/{id}/summary`。**没有一条按人看的**，
-    而作者点开花名册里的一个人时想看的正是那条线。
+    而作者点开角色册里的一个人时想看的正是那条线。
 
     ── ⚠️ 它**不收章号**，这不是忘了做时态 ────────────────────────────────
 
     出参是**全给 + 每条带章号**，要按「第 N 章那个时点」切片交给界面。
     换成后端切的话，作者点开一个人只看得到当前章之前的部分，
-    而他打开花名册正是为了看整条线。完整论证（掉了哪两个条件、剩下三个为什么一个
+    而他打开角色册正是为了看整条线。完整论证（掉了哪两个条件、剩下三个为什么一个
     都不许再掉）在 `graph.queries.event_ids_for_one_character`。
 
     只出 CANON：PROVISIONAL 是抽取器猜的、没确认的，混进这条线等于把猜测当事实。
@@ -328,13 +328,13 @@ def character_events(
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 花名册条目：改名 / 删除
+# 角色册条目：改名 / 删除
 #
 # **它们是「抽取自动建人物」的配套，不是可选项**（ADR 0020 补记，2026-08-25）：
 # 模型会认错——真书上的实例是「袭人」（满篇「寒气袭人」）。自动建 + 不能删 = 单向阀，
 # 那个错会永远留在库里往上下文里塞噪声，而作者没有任何办法清掉它。
 #
-# 两条都带 `expected_canon_version`（同别名那几条）：作者拿着一份旧花名册点删除时
+# 两条都带 `expected_canon_version`（同别名那几条）：作者拿着一份旧角色册点删除时
 # 收到的是 409，不是「删掉了一个他没看见的、刚被抽取改过的东西」。
 #
 # ── 删除 2026-08-28 起不再拒绝（维护者裁定）──────────────────────────────
@@ -354,7 +354,7 @@ def rename_node(
     store: Any = Depends(get_store),
     proj: Any = Depends(load_project),
 ) -> NodeRef:
-    """改花名册里那一条的显示名。canonical 别名跟着一起改（同一个事务）。"""
+    """改角色册里那一条的显示名。canonical 别名跟着一起改（同一个事务）。"""
     _require_canon(conn, proj.id, body.expected_canon_version)
     try:
         node = store.rename_node(proj.id, node_id, body.name)
@@ -379,7 +379,7 @@ def delete_node(
     events: Any = Depends(get_event_store),
     proj: Any = Depends(load_project),
 ) -> NodeDeleted:
-    """删掉花名册里的一条。**不拒绝**——挂着关系/情节也直接删（2026-08-28 裁定）。
+    """删掉角色册里的一条。**不拒绝**——挂着关系/情节也直接删（2026-08-28 裁定）。
 
     `edge.src|dst` / `event_participant` / `event_knower` 到 `node` 全是
     ON DELETE CASCADE：这个人参与过的关系、以及他在每一件事的在场/知情名单里

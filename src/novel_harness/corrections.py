@@ -328,8 +328,8 @@ def _event_failure(exc: EventStoreError) -> CorrectionError:
     from .events import EventCastError, EventNotFound, EventScopeError
 
     if isinstance(exc, EventCastError):
-        # 名单两维只收人物。前端的候选人里有一半来自这条情节现有的名单（不按花名册
-        # 过滤，否则名单里那个花名册没有的人会在界面上凭空消失），所以这条到得了。
+        # 名单两维只收人物。前端的候选人里有一半来自这条情节现有的名单（不按角色册
+        # 过滤，否则名单里那个角色册没有的人会在界面上凭空消失），所以这条到得了。
         return CorrectionRefused("这两份名单里只能放人物 —— 勾上的有一个不是人物")
     if isinstance(exc, EventNotFound):
         return FactNotFound(

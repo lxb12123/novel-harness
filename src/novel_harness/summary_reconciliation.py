@@ -52,12 +52,12 @@ _CHECKER_SCHEMA = "summary-reconciliation-v1"
 
 def _iso_from_epoch(ts: float) -> str:
     return _dt.datetime.fromtimestamp(ts, _dt.timezone.utc).strftime(
-        "%Y-%m-%dT%H:%M:%fZ"
+        "%Y-%m-%dT%H:%M:%S.%fZ"
     )
 
 
 def _now() -> str:
-    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%fZ")
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
 def _sha256_hex(text: str) -> str:

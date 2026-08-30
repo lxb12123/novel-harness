@@ -29,7 +29,7 @@ const retryFailed = (language: Language): string =>
     ? "没能保存，而系统没能说清是为什么。过一会儿再试一次。"
     : "Couldn't save, and the system couldn't say why. Try again in a moment.";
 
-/** 改归属 / 改目标那个人可以从花名册里挑。只挑后端那个 label 会收的类型。 */
+/** 改归属 / 改目标那个人可以从角色册里挑。只挑后端那个 label 会收的类型。 */
 function peers(roster: { id: string; label: string; name: string }[], label: string) {
   return roster.filter((n) => n.label === label);
 }

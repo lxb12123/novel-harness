@@ -200,13 +200,13 @@ class SceneProposal(BaseModel):
         default=(),
         description=(
             "封闭指令候选：只能从 ENTER_LOCATION / SEARCH_FOR / TEST_CHARACTER / "
-            "DEFER_REVEAL / ADVANCE_CLUE 里选，参数只能引用花名册上的人物/地点/物件"
+            "DEFER_REVEAL / ADVANCE_CLUE 里选，参数只能引用角色册上的人物/地点/物件"
             "显示名。不要在这里写任务散文或事件概括。"
         ),
     )
     viewpoint_surface: str | None = Field(
         default=None,
-        description="视角人物（花名册上的称呼，只解析 NodeRef）。",
+        description="视角人物（角色册上的称呼，只解析 NodeRef）。",
     )
     tone_code: str | None = Field(default=None, description="封闭语气码。")
     pacing_code: str | None = Field(default=None, description="封闭节奏码。")

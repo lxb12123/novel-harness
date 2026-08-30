@@ -27,7 +27,7 @@ R2/R3 在 2026-08-02 到 08-13 之间每天绿着、生产上结构性哑火，�
    一个，`HealthValue.DEAD` 由 `service.py` 填死——这是铁律 2 在这条路上的落点，
    `_the_engine_never_reads_the_models_wording` 钉它。
 3. **`StateDim` 由引擎自己建。** 抽取那条路只会 `resolve_ids`（要求节点**已存在**），
-   而生死维度不在花名册里（`CANONICAL_ALIAS_LABELS` 有意排除它）。不自己建的话
+   而生死维度不在角色册里（`CANONICAL_ALIAS_LABELS` 有意排除它）。不自己建的话
    这条 death 会被当成「称呼解析不到」静默丢掉——**丢掉的形态和成功的形态在
    check 的出参上长得一模一样**，都是「本章没问题」。
 """
@@ -167,10 +167,10 @@ def _issues(client: TestClient, pid: str, chapter: int) -> list[dict[str, Any]]:
 
 
 def _add_character(client: TestClient, pid: str, name: str) -> None:
-    """花名册里得有他 —— 抽取的第二道闸是「称呼解析到唯一一个人」。
+    """角色册里得有他 —— 抽取的第二道闸是「称呼解析到唯一一个人」。
 
     **这一步今天仍然是手工的，而且是对的**：`new_character` 提案（模型发现了一个
-    花名册里没有的人）走的是另一条路，那条路的终点也是这里。
+    角色册里没有的人）走的是另一条路，那条路的终点也是这里。
     """
     r = client.post(f"/api/projects/{pid}/nodes", json={"label": NodeLabel.CHARACTER.value, "name": name})
     assert r.status_code == 200, r.text
@@ -179,7 +179,7 @@ def _add_character(client: TestClient, pid: str, name: str) -> None:
 def test_without_the_model_saying_anything_r3_is_mute(
     client: TestClient, book: dict[str, str]
 ) -> None:
-    """**基线。** 光有花名册和正文，第 4 章那句「萧决道：」不该报。
+    """**基线。** 光有角色册和正文，第 4 章那句「萧决道：」不该报。
 
     没有这一条，下面那条「报出来了」证明不了任何东西。
     """
@@ -230,7 +230,7 @@ def test_the_engine_never_reads_the_models_wording(client: TestClient, book: dic
         assert state.is_dead
 
         # **生死维度是引擎自己建的。** 抽取那条路只会 `resolve_ids`（要求节点已存在），
-        # 而它不在花名册里——不自己建，这条 death 会被当成「解析不到」静默丢掉。
+        # 而它不在角色册里——不自己建，这条 death 会被当成「解析不到」静默丢掉。
         dims = conn.execute(
             "SELECT COUNT(*) FROM node WHERE project_id = ? AND label = ?",
             (book["pid"], NodeLabel.STATE_DIM.value),

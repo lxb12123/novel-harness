@@ -1,4 +1,4 @@
-"""正文里的称呼命中 —— R2/R3/R5 与花名册验收的共同前置（PLAN §9）。
+"""正文里的称呼命中 —— R2/R3/R5 与角色册验收的共同前置（PLAN §9）。
 
 纯字符串函数：surface 列表 → 正则 alternation → 逐段命中。**不做任何语义判断**
 （ADR 0005）。锚复用 `text/anchor.Located`：`(para_index, quote, occurrence_k)`
@@ -31,7 +31,7 @@ def compile_alternation(surfaces: Sequence[str]) -> re.Pattern[str]:
     """编译 alternation。**长度降序**，命中 = 子串，转义全部 surface。
 
     空列表/全空串 → 一个永不命中的模式（调用方拿它跑正文，得到空结果，
-    不许 raise——空花名册是合法状态）。
+    不许 raise——空角色册是合法状态）。
     """
     ordered = sorted(
         (s for s in surfaces if s), key=lambda s: (-len(s), s)

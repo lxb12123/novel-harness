@@ -200,8 +200,8 @@ describe("线 2 续：大写枚举和属性里的字", () => {
   });
 
   it("**待确认那一格里的提案卡**也一样 —— 那儿曾经印着一串截断的内部编号", async () => {
-    // `ProposalReviewTab` 拿 `subject_id` / `target_id` 去花名册里查名字，查不到就
-    // `id.slice(-6)`——屏幕上是 `n:ID22`（`"location:ID22"` 的后六位）。花名册和队列
+    // `ProposalReviewTab` 拿 `subject_id` / `target_id` 去角色册里查名字，查不到就
+    // `id.slice(-6)`——屏幕上是 `n:ID22`（`"location:ID22"` 的后六位）。角色册和队列
     // 是两条独立缓存，新节点在前者里缺席一拍就会走到那条兜底。今天名字由后端连着
     // 提案一起给（`node_refs`），出参自足。
     const user = userEvent.setup();

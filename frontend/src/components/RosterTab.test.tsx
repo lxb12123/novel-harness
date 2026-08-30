@@ -5,7 +5,7 @@ import { fixtures, renderWithApi } from "../test/harness";
 import { useCoords } from "../store";
 import { RosterTab } from "./RosterTab";
 
-/** 花名册里那几行的名字，**按屏幕上的先后**。排序断言全靠它。 */
+/** 角色册里那几行的名字，**按屏幕上的先后**。排序断言全靠它。 */
 function namesOnScreen(): string[] {
   return [...document.querySelectorAll<HTMLElement>(".item .nm")].map(
     (el) => el.textContent ?? "",
@@ -14,7 +14,7 @@ function namesOnScreen(): string[] {
 
 /** **每一组**内部的名字，按屏幕上的先后。
  *
- *  排序是**组内**的，不是全局的：花名册先按 label 分组（人物 / 地点 / …），
+ *  排序是**组内**的，不是全局的：角色册先按 label 分组（人物 / 地点 / …），
  *  次数只决定组内谁在前面。拿全局序去断言会红在一个根本没坏的地方。 */
 function namesPerGroup(): string[][] {
   return [...document.querySelectorAll<HTMLElement>(".grp")].map((grp) =>
@@ -26,7 +26,7 @@ beforeEach(() => {
   useCoords.setState({ projectId: "project:ID1", chapter: 1, selectedNodeId: null });
 });
 
-describe("花名册", () => {
+describe("角色册", () => {
   it("按 label 分组，人名一个不落", async () => {
     renderWithApi(<RosterTab />);
     for (const n of fixtures.rosterWithCounts) {
@@ -37,11 +37,11 @@ describe("花名册", () => {
   // ══════════════════════════════════════════════════════════════════════
   // 出场章数 + 排序（2026-08-25）
   //
-  // 抽取从这一天起认不出就建人物（ADR 0020 补记），一次性称呼会大量涌进花名册。
+  // 抽取从这一天起认不出就建人物（ADR 0020 补记），一次性称呼会大量涌进角色册。
   // 按名字排的话主角和路人混在一起，所以组内改成按出场频率降序。
   // ══════════════════════════════════════════════════════════════════════
 
-  it("每一行带出场章数，且它和花名册同一条出参回来", async () => {
+  it("每一行带出场章数，且它和角色册同一条出参回来", async () => {
     renderWithApi(<RosterTab />);
     const spy = vi.spyOn(globalThis, "fetch");
     const hero = fixtures.rosterWithCounts.find((n) => n.appearance_chapters > 0)!;
@@ -114,7 +114,7 @@ describe("花名册", () => {
   // 事件时间线（2026-08-25）
   //
   // 维护者：「事件是**比较小的一条总结**。只放到和它相关的那个角色下面……
-  // 一件事情如果跟好多人相关，那就放到每个相关人的下面。以后在花名册里也能看到。」
+  // 一件事情如果跟好多人相关，那就放到每个相关人的下面。以后在角色册里也能看到。」
   // ══════════════════════════════════════════════════════════════════════
 
   it("点一个人 → 他的事件按章号排开，同一件事上的其他人写在「还有」里", async () => {
@@ -156,7 +156,7 @@ describe("花名册", () => {
 
   it("一件事跟几个人相关，就在几个人的线上各出现一次", async () => {
     // 存储那一侧本来就是多对多（`event_participant`），这一条钉的是**界面真的
-    // 在每个人名下都画出来了**——「以后在花名册里也能看到」那句话的验收。
+    // 在每个人名下都画出来了**——「以后在角色册里也能看到」那句话的验收。
     const shared = fixtures.characterEvents[0];
     expect(shared.participants.length).toBeGreaterThan(1); // 自守卫
 
@@ -174,7 +174,7 @@ describe("花名册", () => {
   it("这件事掉了参与者时有一颗红点，点开是整句人话 + 跳转 + 「知道了」（034 补记）", async () => {
     // **吃真 dump**：`characterEventsCastChanged` 是删掉「沈知微的师弟」之后
     // 真实产出的形状（`title_code`/`title_params`/`jump` 全是后端给的）。
-    // 用哪个人当 `selectedNodeId` 不重要——这里借一个真花名册里的人物，
+    // 用哪个人当 `selectedNodeId` 不重要——这里借一个真角色册里的人物，
     // 只控制事件路由的响应体（同上面「一件事跟几个人相关」那条测试的手法）。
     const [row] = fixtures.characterEventsCastChanged;
     const hero = fixtures.rosterWithCounts.find((n) => n.label === "Character")!;
@@ -330,7 +330,7 @@ describe("花名册", () => {
     expect(sent.expected_canon_version).toBe(fixtures.projects[0].canon_version);
   });
 
-  it("空花名册只给一个清楚的下一步，不解释内部实现", async () => {
+  it("空角色册只给一个清楚的下一步，不解释内部实现", async () => {
     renderWithApi(<RosterTab />, [{ match: /\/roster$/, body: [] }]);
     expect(await screen.findByText(/添加第一个条目/)).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/导入只切章|认知矩阵|规则|ADR/);
@@ -339,7 +339,7 @@ describe("花名册", () => {
   it("点「建第一个」能开出建条目的抽屉 —— 空态那句话必须真的有出口", async () => {
     renderWithApi(<RosterTab />, [{ match: /\/roster$/, body: [] }]);
     (await screen.findByText(/添加第一个条目/)).click();
-    expect(await screen.findByRole("heading", { name: "花名册" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "角色册" })).toBeInTheDocument();
   });
 
   it("点一个人 = 看他的关系图（这条在搬家之后没变）", async () => {

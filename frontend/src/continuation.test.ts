@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { cleanSuggestion, shouldSuggest, tailAfter, tailBefore } from "./continuation";
+import {
+  cleanSuggestion,
+  nextChunkLength,
+  shouldSuggest,
+  tailAfter,
+  tailBefore,
+} from "./continuation";
 import fixtures from "./__fixtures__/api.json";
 
 const base = { before: "萧决推开门。", hasSelection: false, hasSuggestion: false };
@@ -94,6 +100,24 @@ describe("送过去的下文（改旧章时光标后面那截已经写好的正�
   it("越界的光标位置不会炸", () => {
     expect(tailAfter("短", 999, 99)).toBe("");
     expect(tailAfter("短", -5, 99)).toBe("短");
+  });
+});
+
+describe("方向键逐口接受：一口该吞多长", () => {
+  it("一个词，下一个词开始前停手", () => {
+    expect(nextChunkLength("没有点灯")).toBe(2); // 「没有」｜「点灯」
+  });
+
+  it("词后面紧跟的标点跟着一起吞，不用作者再按一次", () => {
+    expect(nextChunkLength("点灯，他愣住了。")).toBe(3); // 「点灯，」｜「他愣住了。」
+  });
+
+  it("整段只剩标点、一个词都没有 —— 吞到底，不会卡在半路", () => {
+    expect(nextChunkLength("，。")).toBe(2);
+  });
+
+  it("空字符串不炸", () => {
+    expect(nextChunkLength("")).toBe(0);
   });
 });
 

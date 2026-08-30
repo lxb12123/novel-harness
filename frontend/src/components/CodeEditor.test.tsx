@@ -1,4 +1,4 @@
-import { render, waitFor } from "@testing-library/react";
+import { fireEvent, render, waitFor } from "@testing-library/react";
 import { createRef } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
@@ -55,14 +55,14 @@ describe("续写这一刀用的是哪个上限", () => {
     // ② 小窗口的模型：拿到多少就是多少。
     view.rerender(props(800));
     ref.current!.select(5_000, 5_000);
-    await waitFor(() => expect(seen).toHaveLength(1));
+    await waitFor(() => expect(seen).toHaveLength(1), { timeout: IDLE_MS + 1000 });
     expect(Array.from(seen[0].before)).toHaveLength(800);
 
     // ③ 换一个窗口更大的模型 —— **同一个编辑器**，上文自己变长。
     //    写死一个常量的实现在这一步必红：它两次都送同样多。
     view.rerender(props(4_000));
     ref.current!.select(4_999, 4_999);
-    await waitFor(() => expect(seen).toHaveLength(2));
+    await waitFor(() => expect(seen).toHaveLength(2), { timeout: IDLE_MS + 1000 });
     expect(Array.from(seen[1].before)).toHaveLength(4_000);
   });
 
@@ -86,8 +86,56 @@ describe("续写这一刀用的是哪个上限", () => {
     ref.current!.select(2_000, 2_000);
     view.rerender(props(1_200));
 
-    await waitFor(() => expect(seen).toHaveLength(1));
+    await waitFor(() => expect(seen).toHaveLength(1), { timeout: IDLE_MS + 1000 });
     expect(Array.from(seen[0].before)).toHaveLength(1_200);
+  });
+});
+
+describe("→ 走的是真实的 CM6 按键系统，不是绕过去的那条路", () => {
+  // `ghostText.test.ts` 直接调用 `acceptSuggestionChunk(view)`——那证明函数本身对，
+  // 但完全绕开了 CM6 的 keymap 优先级判定。`defaultKeymap` 自己也绑了 ArrowRight
+  // （移动光标），两份 keymap 谁先接到这一次按键，只有走真实的 DOM keydown 才测得出来。
+  // 这条挂了就是「函数是对的，但作者按下去没反应」——正是这次真实发生过的那种坏法。
+  it("挂着建议时按真实的 ArrowRight 键 —— 吃一口，不是移动光标", () => {
+    const changes: string[] = [];
+    const ref = createRef<CodeEditorHandle>();
+    const view = render(
+      <CodeEditor
+        ref={ref}
+        value="萧决推开门。"
+        onChange={(v) => changes.push(v)}
+        tailLimit={null}
+      />,
+    );
+    ref.current!.select(6, 6);
+    ref.current!.showSuggestion("屋里没有点灯。", 6);
+
+    const content = view.container.querySelector(".cm-content");
+    expect(content).not.toBeNull();
+    fireEvent.keyDown(content!, { key: "ArrowRight" });
+
+    // 移动光标不会碰 doc，`onChange` 只在 doc 真的变了才响——所以这条断言
+    // 顺带把「defaultKeymap 赢了、什么都没吞进文档」和「吃对了一口」区分开。
+    expect(changes).toEqual(["萧决推开门。屋"]);
+  });
+
+  it("没有建议挂着时，真实的 ArrowRight 键照常挪光标，不吞任何东西", () => {
+    const changes: string[] = [];
+    const ref = createRef<CodeEditorHandle>();
+    const view = render(
+      <CodeEditor
+        ref={ref}
+        value="萧决推开门。"
+        onChange={(v) => changes.push(v)}
+        tailLimit={null}
+      />,
+    );
+    ref.current!.select(2, 2);
+
+    const content = view.container.querySelector(".cm-content");
+    fireEvent.keyDown(content!, { key: "ArrowRight" });
+
+    expect(changes).toEqual([]); // 光标动了，文档没动
   });
 });
 
@@ -119,7 +167,7 @@ describe("光标后面那截也交上去（改旧章时它是已经写好的正�
     );
 
     ref.current!.select(1_000, 1_000);
-    await waitFor(() => expect(seen).toHaveLength(1));
+    await waitFor(() => expect(seen).toHaveLength(1), { timeout: IDLE_MS + 1000 });
 
     expect(Array.from(seen[0].before)).toHaveLength(600);
     expect(seen[0].before.endsWith("前")).toBe(true);
@@ -143,7 +191,7 @@ describe("光标后面那截也交上去（改旧章时它是已经写好的正�
     );
 
     ref.current!.select(50, 50);
-    await waitFor(() => expect(seen).toHaveLength(1));
+    await waitFor(() => expect(seen).toHaveLength(1), { timeout: IDLE_MS + 1000 });
     expect(seen[0].after).toBe("");
   });
 });

@@ -7,7 +7,7 @@
 
 1. **索引跟不上总结。** 作者改了一段 / 撤回了一段 / 重新生成了一段，而反查还指着
    旧的那一段——屏幕上一切正常，答案是错的。这是本次设计里最贵的一条。
-2. **索引跟不上花名册。** 作者刚建的人物在总结里永远搜不到（静默的假空，§10 约束 8）。
+2. **索引跟不上角色册。** 作者刚建的人物在总结里永远搜不到（静默的假空，§10 约束 8）。
 3. **秘密顺着芯片泄出去。** 这批命中里按定义就有 Secret，而 `Node.props` 装的正是内容。
 4. **零和零分不开。** 「他没在任何总结里出现过」和「这个 id 根本不存在」下一步动作相反。
 """
@@ -180,7 +180,7 @@ def test_a_retracted_chapter_comes_back_when_it_is_written_again(wired: Any) -> 
 
 
 def test_a_new_alias_makes_old_summaries_searchable(wired: Any) -> None:
-    """**花名册变了的那一档。**
+    """**角色册变了的那一档。**
 
     作者三个月前写的总结里写着「魔尊」，今天他才把这个别名建上。索引是那时候扫的，
     里面一个「魔尊」都没有——如果没有 `roster_hash` 这一层，这一段从此**永远搜不到**，
@@ -196,7 +196,7 @@ def test_a_new_alias_makes_old_summaries_searchable(wired: Any) -> None:
         AliasSpec(project_id=pid, node_id=book["萧决"], surface="魔尊", kind=AliasKind.TITLE)
     )
     conn.commit()
-    assert roster_hash(store, pid) != before, "花名册的内容地址必须跟着别名一起变"
+    assert roster_hash(store, pid) != before, "角色册的内容地址必须跟着别名一起变"
 
     assert [
         r.chapter_number for r in chapters_mentioning(conn, store, pid, book["萧决"]).chapters
@@ -314,7 +314,7 @@ def test_stale_rows_are_swept_not_left_behind(wired: Any) -> None:
 
 
 def test_a_chip_carries_the_label_never_the_content(wired: Any) -> None:
-    """芯片**只出 `NodeRef`**（§10.5 第 3 条）。显示名是花名册本来就在渲染的东西，
+    """芯片**只出 `NodeRef`**（§10.5 第 3 条）。显示名是角色册本来就在渲染的东西，
     而作者写在节点 props 上的 `twist` 一个字都不出这一层。"""
     conn, store, pid, book = wired
     _seed(conn, pid, 1, "未来大能出手了。")
@@ -345,7 +345,7 @@ def test_a_chapter_without_a_summary_is_empty(wired: Any) -> None:
 
 
 def test_an_empty_roster_does_not_blow_up(tmp_path: Path) -> None:
-    """空花名册是合法状态（`compile_alternation` 的契约），不许 raise。"""
+    """空角色册是合法状态（`compile_alternation` 的契约），不许 raise。"""
     from novel_harness import project as project_mod
     from novel_harness.db import migrate
 

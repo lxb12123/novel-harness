@@ -20,7 +20,7 @@
 |---|---|
 | `resolve_cast` | 约束集只有一个入口。自己拼一套 cast 解析 = 第二份约束推导 |
 | `.props` | 节点属性里是**作者写的自由文本**。起草层碰它 = 绕开出参收窄，作者的东西直接穿过序列化 |
-| `store.resolve(...)` | 同上：花名册解析只有一个来源 |
+| `store.resolve(...)` | 同上：角色册解析只有一个来源 |
 | `graph.queries` / `graph.sqlite_store` | 时态过滤只写一次。直接 import 进来 = 在它旁边开第二个入口 |
 
 **这三条以前挂在 EVAL_PROTOCOL 上，现在挂在分层上。** 理由换了，判据一个字没动——
@@ -174,7 +174,7 @@ def test_the_writer_never_resolves_cast_on_its_own() -> None:
         f"起草层自己拼了一套 cast 解析：{offenders}\n"
         f"`draft/` 不许引用 {sorted(WRITER_BANNED)}。\n"
         "要约束就收 `panel.constraints.scene_constraints()` 算好的那一份——"
-        "自己解析出来的花名册和闸门算的那一份只要有一处不同，产品就在按两套约束写。"
+        "自己解析出来的角色册和闸门算的那一份只要有一处不同，产品就在按两套约束写。"
     )
 
 
@@ -189,7 +189,7 @@ def test_the_writer_never_touches_node_props() -> None:
 
 
 def test_the_writer_never_resolves_on_its_own() -> None:
-    """花名册解析只有一个来源。自己 `store.resolve()` 就是第二份。"""
+    """角色册解析只有一个来源。自己 `store.resolve()` 就是第二份。"""
     offenders = _scan(WRITER_DIRS, raw_resolve_calls)
     assert not offenders, (
         f"起草层自己调了 StoryGraph.resolve：{offenders}\n"
@@ -237,7 +237,7 @@ SELF_RESOLVE_PROBE = '''
 from __future__ import annotations
 
 def roster(store, pid: str, names: list[str]) -> set[str]:
-    """第二份花名册：不 import 任何被禁的名字，只是自己走了一趟 resolve。"""
+    """第二份角色册：不 import 任何被禁的名字，只是自己走了一趟 resolve。"""
     return {r.node.name for r in store.resolve(pid, names)}
 '''
 

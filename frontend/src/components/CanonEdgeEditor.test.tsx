@@ -85,7 +85,7 @@ describe("CanonEdgeEditor（Task 8）", () => {
     await awaitEdgeLoaded();
     const fetchSpy = vi.spyOn(globalThis, "fetch");
 
-    // 花名册里 Character 那一档出现改归属下拉；选另一个人。
+    // 角色册里 Character 那一档出现改归属下拉；选另一个人。
     const owner = screen.getByLabelText(/改归属/) as HTMLSelectElement;
     const charOptions = Array.from(owner.options).map((o) => o.value);
     expect(charOptions).toContain("character:ID6");

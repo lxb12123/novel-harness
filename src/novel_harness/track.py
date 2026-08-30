@@ -23,14 +23,14 @@
 所以本模块**住在 `draft/` 外面**，而且 `draft/` 一行都不许 import 它——
 `tests/test_track_isolation.py` 扫 AST 钉这一条，并另有一条在真链路上验
 「第 64 章的总结一个字都没进第 2 章的 prompt」。位置的理由同 `summary_index.py`：
-一头是库里的总结行，一头是图层的花名册，是一次应用层合成。
+一头是库里的总结行，一头是图层的角色册，是一次应用层合成。
 
 ── 二、按相关性锚定，不按位置 ────────────────────────────────────────────
 
 **不取「后面 N 章」**：区间是死的，猜小了漏、猜大了全浪费，而铺垫的影响范围本来
 就不固定。按「共同提到了谁 / 哪个地方 / 哪个物件」取：
 
-    一级  扫作者刚改的那段字 → 命中花名册里哪些东西      `summary_index.mentions_in_text`
+    一级  扫作者刚改的那段字 → 命中角色册里哪些东西      `summary_index.mentions_in_text`
     二级  反查倒排表 → 后面哪几章的总结也提到了它们      `summary_index.chapters_after_mentioning`
 
 两级都是**纯查库 + 一条正则**，零模型调用、零花费，所以敢跑在「停手 400 毫秒」
@@ -179,11 +179,11 @@ class Track(BaseModel):
 
     note: str
     """**零带着理由一起出现**（ARCHITECTURE §10 约束 8）：`chapters` 为空有四种
-    完全不同的原因（就在最前沿写 / 这段字没提到花名册上的东西 / 提到了但后面没人
+    完全不同的原因（就在最前沿写 / 这段字没提到角色册上的东西 / 提到了但后面没人
     提过它们 / 这一次压根没算成），而它们在界面上会长成同一个「什么都没有」。"""
 
     anchors: list[SummaryMention] = Field(default_factory=list)
-    """一级：作者刚改的那段字命中了花名册里的哪些东西。"""
+    """一级：作者刚改的那段字命中了角色册里的哪些东西。"""
 
     chapters: list[ChapterSummaryMention] = Field(default_factory=list)
     """二级：后面哪几章的总结跟它们相关，**最相关的在前**（共同提到得越多越靠前），
@@ -252,7 +252,7 @@ def build_track(
             frontier=frontier,
             note=(
                 f"这一段后面还有 {frontier - chapter} 章已经写完，但这段字里没有出现"
-                "花名册上的任何东西，反查不到相关章节。"
+                "角色册上的任何东西，反查不到相关章节。"
             ),
         )
 

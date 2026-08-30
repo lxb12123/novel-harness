@@ -164,7 +164,7 @@ class FakeGraph:
     ) -> list[Resolution]:
         del project_id
         if surfaces is None:
-            # store.py 契约：None = 全项目花名册，按 surface 长度降序，
+            # store.py 契约：None = 全项目角色册，按 surface 长度降序，
             # 直接可喂 alternation（text/mentions.py 靠它）。
             surfaces = sorted(self._aliases, key=lambda s: (-len(s), s))
         out = []

@@ -105,7 +105,7 @@ def _resolve_cast(
                 DeterministicConflict(
                     code="UNRESOLVED_NAME",
                     message=(
-                        f"「{member.surface}」在花名册里查无此人或一名多解，"
+                        f"「{member.surface}」在角色册里查无此人或一名多解，"
                         "不同选择会改变本章人物任务。"
                     ),
                 )

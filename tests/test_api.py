@@ -73,7 +73,7 @@ CH3_DISK = (
 
 @pytest.fixture
 def book(tmp_path: Path) -> dict[str, str]:
-    """建一个可控的库：花名册 + 一个泄漏 Secret + 一个未来 Character + 两章正文。
+    """建一个可控的库：角色册 + 一个泄漏 Secret + 一个未来 Character + 两章正文。
 
     Secret / 未来 Character 走 `store.upsert_node` 直接注入 props（`declare_node` 不收
     props，而收窄要测的正是这些 props 出不出得去）。别的节点走 `Ledger`（生产写路径）。
@@ -182,7 +182,7 @@ def test_parallel_http_requests_keep_connections_request_local(
 def test_resolve_never_leaks_props(client: TestClient, book: dict[str, str]) -> None:
     """`/resolve` **一律**出窄引用，不看章号。
 
-    它是无章号的花名册查询，没有「当前章」可以拿来判「这个节点是不是未来的」——
+    它是无章号的角色册查询，没有「当前章」可以拿来判「这个节点是不是未来的」——
     所以它不走 `_narrow(chapter=None)`（那条今天什么都不收窄），自己一律收窄。
     """
     r = client.get(f"/api/projects/{_pid(book)}/resolve", params={"surface": "未来大能"})
@@ -234,8 +234,8 @@ def test_mentioned_separates_no_chapter_from_no_one(
 ) -> None:
     """**静默的零和真的零不许长得一样**（§10 约束 8）。
 
-    「这一章还没写」和「写了但没提到花名册里的人」对作者是两件事：前者该说「去写」，
-    后者该说「补花名册」。只看 `surfaces: []` 分不出来，所以有 `has_text`。
+    「这一章还没写」和「写了但没提到角色册里的人」对作者是两件事：前者该说「去写」，
+    后者该说「补角色册」。只看 `surfaces: []` 分不出来，所以有 `has_text`。
     """
     written = client.get(f"/api/projects/{_pid(book)}/chapters/2/mentioned").json()
     assert written["has_text"] is True  # 第 2 章有正文，但里面一个名字都没有
@@ -635,7 +635,7 @@ def test_check_missing_chapter_404(client: TestClient, book: dict[str, str]) -> 
 def test_roster_and_chapters(client: TestClient, book: dict[str, str]) -> None:
     roster = client.get(f"/api/projects/{_pid(book)}/roster")
     assert roster.status_code == 200
-    assert TWIST not in roster.text  # 花名册也不漏节点上的 props
+    assert TWIST not in roster.text  # 角色册也不漏节点上的 props
     names = {n["name"] for n in roster.json()}
     assert {"萧决", "李管家", "青云城主府", "未来大能"} <= names
 

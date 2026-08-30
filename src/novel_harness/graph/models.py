@@ -225,11 +225,11 @@ canonical 别名不是 node.name 的副本（那份论证在 001_init.sql 的 `i
 上）：它是**索引项**，没有它 mentions.py 编的那条 alternation 匹配不到本名。所以「要不要
 建」这个问题等价于「这个东西会不会被人在正文里叫」。
 
-**StateDim 不在**：`resolve(pid, None)` 是全项目花名册，mentions.py 拿它编译 alternation——
+**StateDim 不在**：`resolve(pid, None)` 是全项目角色册，mentions.py 拿它编译 alternation——
 一条 surface=「健康」的 canonical 行会让 alternation 去正文里匹配每一个「健康」，
 而 StateDim 是维度名不是称呼，没有人在对白里叫它。
 
-**Chapter 不在**：300 章 = 300 条章标进花名册（「第一百零八章 血脉」），而 cli._open_store
+**Chapter 不在**：300 章 = 300 条章标进角色册（「第一百零八章 血脉」），而 cli._open_store
 用 `resolve(project)` 判「这个项目有东西吗」。章节不是一个被人叫的东西。
 """
 
@@ -248,7 +248,7 @@ HEALTH_DIM_NAME: Final = "生死"
 改成「健康」，规则一个字都不受影响（`StateValue.dim_key` 比的是键，不是这个名）——
 `NodeProps.dim_key` 的 docstring 说的就是这件事。
 
-**它进不了花名册**（`CANONICAL_ALIAS_LABELS` 里没有 StateDim），所以正文里的
+**它进不了角色册**（`CANONICAL_ALIAS_LABELS` 里没有 StateDim），所以正文里的
 「生死」两个字永远不会被它匹配到。
 """
 
@@ -1165,7 +1165,7 @@ class SnapshotUsage(BaseModel):
 
 
 class NodeUsage(BaseModel):
-    """花名册里这一条**已经被引擎记住了多少东西**。删的时候把这个回执给作者看。
+    """角色册里这一条**已经被引擎记住了多少东西**。删的时候把这个回执给作者看。
 
     ── 这个数曾经是一道闸，2026-08-28 起改成纯信息 ──────────────────────
 
@@ -1192,7 +1192,7 @@ class NodeUsage(BaseModel):
 
     - 别名是这个节点**自己的名字**，不是别人对它的引用。人没了名字跟着没，天经地义。
     - `summary_mention` 是**派生数据**：它由 `summary_index` 从总结正文重扫出来，
-      删掉之后下一次 `_ensure` 就按新花名册重算。它不是资产，是缓存。
+      删掉之后下一次 `_ensure` 就按新角色册重算。它不是资产，是缓存。
 
     这个差集曾经是让删除对**自动建错的那批**真的可用的原因：「袭人」是从一句
     「寒气袭人」里建出来的，它身上只有一条 canonical 别名和几行倒排索引，

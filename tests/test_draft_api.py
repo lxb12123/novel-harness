@@ -57,7 +57,7 @@ def book(tmp_path: Path) -> dict[str, str]:
     store = SqliteStoryGraph(conn)
     ledger = Ledger(store, conn, pid)
     ledger.declare_node(NodeLabel.CHARACTER, "萧决")
-    # 一个**非人物**节点，名字同样进花名册、同样能被 `resolve_cast` 唯一解析。
+    # 一个**非人物**节点，名字同样进角色册、同样能被 `resolve_cast` 唯一解析。
     # 它是「在场角色」框里最容易被作者写进去的那类词，也是 PRODUCT 分支曾经的 500。
     ledger.declare_node(NodeLabel.LOCATION, "青云城主府")
     # 一个带 tell 的秘密：没有它，「续写全禁」和「tell 不外泄」两条断言都只是在验空集。
@@ -510,7 +510,7 @@ def test_continuation_reports_its_empty_memory_too(
 def test_a_non_character_cast_surface_does_not_explode(
     client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**回归钉。** 「青云城主府」是地点，但它同样在花名册里、同样唯一解析得出来。
+    """**回归钉。** 「青云城主府」是地点，但它同样在角色册里、同样唯一解析得出来。
 
     `resolve_cast` 不看 label，`require_resolved_cast()` 也不看，于是它一路穿到
     `build_product_context`，撞上「cast must contain only Character references」。

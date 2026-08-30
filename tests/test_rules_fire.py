@@ -268,14 +268,14 @@ def test_the_state_dim_is_created_by_the_engine_and_stays_out_of_the_roster(
 ) -> None:
     """生死这个维度由 `declare_dead` 自己建 —— 作者没有、也不该有建它的入口。
 
-    **它必须留在花名册外面**：`resolve(pid, None)` 是 `mentions.py` 编 alternation 的料，
+    **它必须留在角色册外面**：`resolve(pid, None)` 是 `mentions.py` 编 alternation 的料，
     一条 surface=「生死」的 canonical 行会让规则去正文里匹配每一个「生死」
     （`CANONICAL_ALIAS_LABELS` 的 docstring 说的就是这件事）。
     """
     author.died(who="萧决", quote=DEATH_QUOTE)
 
     assert not [n for n in author.roster() if n["label"] == NodeLabel.STATE_DIM.value], (
-        "状态维度进花名册了 —— 下一步就是规则拿它去匹配正文"
+        "状态维度进角色册了 —— 下一步就是规则拿它去匹配正文"
     )
     assert _state_dims(book["db"], book["pid"]) == 1
 

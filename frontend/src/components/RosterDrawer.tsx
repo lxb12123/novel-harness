@@ -22,7 +22,7 @@ export function RosterDrawer({ pid, onClose }: { pid: string; onClose: () => voi
     <>
       <div className="backdrop" onClick={onClose} />
       <div className="drawer">
-        <h3>{language === "zh" ? "花名册" : "Roster"}</h3>
+        <h3>{language === "zh" ? "角色册" : "Roster"}</h3>
         <div className="sub">
           {language === "zh"
             ? "把故事中的人物、地点和设定记在这里，写作时可以快速引用。"
@@ -138,7 +138,7 @@ function NodeForm({ pid }: { pid: string }) {
         <div className="receipt">
           <div className="vf">
             {language === "zh" ? (
-              <>✓ {nodeLabelText(made.label, language)}「{made.name}」已进花名册</>
+              <>✓ {nodeLabelText(made.label, language)}「{made.name}」已进角色册</>
             ) : (
               <>✓ {nodeLabelText(made.label, language)} "{made.name}" is now in the roster</>
             )}

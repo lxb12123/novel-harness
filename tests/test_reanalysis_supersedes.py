@@ -57,7 +57,7 @@ AFTER = "第一章 甲\n\n萧决走进了北荒雪原。\n"
 
 
 class World:
-    """一本一章的书 + 花名册。**`ingest` 模拟一次后台整理**（不调模型）。"""
+    """一本一章的书 + 角色册。**`ingest` 模拟一次后台整理**（不调模型）。"""
 
     def __init__(self, tmp: Path) -> None:
         self.root = tmp / "book"

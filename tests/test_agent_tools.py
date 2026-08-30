@@ -1149,7 +1149,7 @@ def test_a_blank_chapter_bans_everything_instead_of_borrowing_the_cast_next_door
     **断言的是类型那一位（`cast_derived`），不是清单里有几条**——这本书只有一条秘密，
     借来的清单和全禁的清单光看内容一模一样，借用当年就是从这条缝里溜进来的。
     """
-    _with_an_ambiguous_title(world, "风雪落了一夜。\n")  # 一个花名册里的人都没提到
+    _with_an_ambiguous_title(world, "风雪落了一夜。\n")  # 一个角色册里的人都没提到
 
     assert _derived_at(world, AMBIGUOUS_CHAPTER) is False, (
         "上一章数得出人，这一章就说自己算准了 —— 那份名单只可能是从隔壁借来的，"

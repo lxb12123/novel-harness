@@ -13,7 +13,7 @@ function renderedCopy() {
   return `${document.body.textContent ?? ""} ${placeholders}`;
 }
 
-describe("花名册抽屉", () => {
+describe("角色册抽屉", () => {
   it("只展示作者可以创建的 5 类条目，并使用通用作者语言", async () => {
     open();
     for (const zh of ["人物", "地点", "势力", "物品", "伏笔"]) {

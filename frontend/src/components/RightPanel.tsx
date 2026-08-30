@@ -21,11 +21,11 @@ import type { CheckResult } from "../api/types";
 import { useState } from "react";
 
 /** 算的是「其中某个人怎么样」的那几格 —— 只有它们需要知道在场是谁。
- *  花名册（全项目）、原文依据、待确认、检查（读正文）都不吃 cast。 */
+ *  角色册（全项目）、原文依据、待确认、检查（读正文）都不吃 cast。 */
 const CAST_TABS = new Set<Tab>(["state", "constraints"]);
 
 const TABS: { key: Tab; label: { zh: string; en: string } }[] = [
-  { key: "roster", label: { zh: "花名册", en: "Roster" } },
+  { key: "roster", label: { zh: "角色册", en: "Roster" } },
   { key: "state", label: { zh: "人物状态", en: "Status" } },
   { key: "graph", label: { zh: "人物关系", en: "Relationships" } },
   { key: "evidence", label: { zh: "原文依据", en: "Evidence" } },
@@ -36,10 +36,10 @@ const TABS: { key: Tab; label: { zh: string; en: string } }[] = [
   { key: "notifications", label: { zh: "通知", en: "Notifications" } },
 ];
 
-/** 花名册空着的时候仍然有话可说的那几格。
+/** 角色册空着的时候仍然有话可说的那几格。
  *
  *  其余每一格都是「其中某个人怎么样」，没有人就没有料。**章节总结不是**：它是这一章
- *  正文压出来的一段字，和花名册里有没有人一点关系都没有。把它一起藏进那句「先去加人」
+ *  正文压出来的一段字，和角色册里有没有人一点关系都没有。把它一起藏进那句「先去加人」
  *  里，作者就会对着一个能用的功能读到一句不相干的话。 */
 const ROSTER_FREE_TABS = new Set<Tab>(["roster", "summary"]);
 
@@ -68,7 +68,7 @@ function ConstraintsView() {
       {data.unresolved_cast.length > 0 && (
         <div className="warn">
           {language === "zh"
-            ? `这些称呼未在花名册中找到：${data.unresolved_cast.join("、")}。请检查名称或补充称呼。`
+            ? `这些称呼未在角色册中找到：${data.unresolved_cast.join("、")}。请检查名称或补充称呼。`
             : `These names weren't found in the roster: ${data.unresolved_cast.join(", ")}. Check the spelling, or add them as aliases.`}
         </div>
       )}
@@ -219,7 +219,7 @@ function CastLine({ chapter }: { chapter: number }) {
     return (
       <div className="castline dim">
         {language === "zh"
-          ? `${which}的正文里没有出现花名册中的人。到「花名册」那一格补上，这里就会认出他们。`
+          ? `${which}的正文里没有出现角色册中的人。到「角色册」那一格补上，这里就会认出他们。`
           : `No one from the roster appears in ${which}'s text yet. Add them on the "Roster" tab and this will recognize them.`}
       </div>
     );
@@ -277,8 +277,8 @@ export function RightPanel() {
     return { key: t.key, label: base };
   });
 
-  // 花名册空 = 其余每一格都没有料可显示（它们全都是「其中某个人怎么样」）。
-  // **但不能整块 return 掉**：花名册自己就是那一格，连它一起藏起来的话，
+  // 角色册空 = 其余每一格都没有料可显示（它们全都是「其中某个人怎么样」）。
+  // **但不能整块 return 掉**：角色册自己就是那一格，连它一起藏起来的话，
   // 「＋」也跟着没了——作者会停在一个说着「先加人」却没有加人入口的面板上。
   const bare = !roster.data?.length;
 
@@ -303,7 +303,7 @@ export function RightPanel() {
           {language === "zh" ? (
             <>
               添加人物或设定后，这里会显示他们在当前章节知道什么、身处何处，以及需要留意的内容。
-              回到「花名册」那一格，点“＋”开始。
+              回到「角色册」那一格，点“＋”开始。
             </>
           ) : (
             <>

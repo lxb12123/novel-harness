@@ -1,4 +1,4 @@
-"""**花名册里没有的那个名字**：一轮的步数是怎么被它烧光的（2026-08-13 实测）。
+"""**角色册里没有的那个名字**：一轮的步数是怎么被它烧光的（2026-08-13 实测）。
 
 2026-08-13 在作者 722 章的真书上跑模式二，让它给第 723 章写一稿。它是这么把一轮花掉的：
 
@@ -13,8 +13,8 @@
 
 ── 根因不是「模型笨」，是引擎那句话 ────────────────────────────────────────
 
-「姜源初」「小归终」是大结局才出现的新角色，花名册里没有。而引擎当时对
-**「花名册里没有」和「这个叫法指向好几个人」说的是同一句话**：
+「姜源初」「小归终」是大结局才出现的新角色，角色册里没有。而引擎当时对
+**「角色册里没有」和「这个叫法指向好几个人」说的是同一句话**：
 
     「…解析不出唯一一个人（查无此人，或者这个叫法同时指向好几个人）。
       换一个更具体的称呼，或者先在人物卡上把别名理清楚。」
@@ -28,7 +28,7 @@
    （§一，带一条把闸关掉就复现原 bug 的自守卫——**一张抓不住原 bug 的网等于没有网**）。
 2. **两种情况是两句话**，而且给的是相反的建议（§二）。
 3. **失败方向**：记性只用来说话，不用来挡查询——撞过空之后查得到的人还查得到，
-   作者中途把人加进花名册之后同一个名字立刻查得到（§三）。
+   作者中途把人加进角色册之后同一个名字立刻查得到（§三）。
 
 判据一律是**集合判断**（`len(hits)` / 「这一轮撞空过的不同称呼有几个」），
 一个语义判断都没有（铁律 2 / ADR 0005）。
@@ -67,12 +67,12 @@ from novel_harness.draft.provider import CompletionResult, ToolCall
 from novel_harness.graph import NodeLabel
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 
-# 花名册上有的两个人 + 一个共用称呼的第三个人（歧义那一支要用它）。
+# 角色册上有的两个人 + 一个共用称呼的第三个人（歧义那一支要用它）。
 ON_THE_ROSTER = ("姜召", "阮芸芸", "顾清音")
 SHARED_SURFACE = "小师妹"
 """「阮芸芸」和「顾清音」都被这么叫过 ⇒ `len(hits) == 2` ⇒ 歧义。"""
 
-# 大结局才出现的新角色：**花名册里一个都没有**，实测那一轮撞的就是它们。
+# 大结局才出现的新角色：**角色册里一个都没有**，实测那一轮撞的就是它们。
 NOT_IN_THE_BOOK = ("姜源初", "小归终", "白其粟")
 
 
@@ -103,7 +103,7 @@ def conn() -> Iterator[Connection]:
 
 @pytest.fixture
 def book(conn: Connection, tmp_path: Path) -> Book:
-    """一本**真书的最小形状**：花名册上有几个人，而作者刚写到的那几个新角色不在上面。
+    """一本**真书的最小形状**：角色册上有几个人，而作者刚写到的那几个新角色不在上面。
 
     走的是生产写路径（`declare.Ledger`），所以 `store.resolve` 的行为是真的——
     这份文件全部判据都建立在「`hits` 空 / `hits` 多」这一个集合判断上，
@@ -294,10 +294,10 @@ def test_not_in_the_book_and_ambiguous_give_opposite_advice(book: Book) -> None:
         "两种情况又变回同一句话了 —— 正确的下一步是相反的，说成一句就必然有一半在骗它"
     )
 
-    # 花名册里没有：**别再试**，而且说得出「再试也不会变」是为什么（名单是定死的）。
+    # 角色册里没有：**别再试**，而且说得出「再试也不会变」是为什么（名单是定死的）。
     assert "姜源初" in missing.content
     assert "别换个说法再查" in missing.content
-    assert "花名册" in missing.content
+    assert "角色册" in missing.content
 
     # 一个叫法指向好几个人：**重试是对的**，而且把候选摆出来让它挑。
     assert SHARED_SURFACE in ambiguous.content
@@ -324,7 +324,7 @@ def test_the_sentence_that_started_this_is_gone_from_both_lookup_tools(book: Boo
 def test_the_engine_starts_counting_out_loud_from_the_second_miss(book: Book) -> None:
     """第一次撞空只说「这本书没有他」；**第二次开始才把这一轮撞空过的都摆出来**。
 
-    第一次不说，是因为那时它还不知道这本书的花名册有多严，多说无益；
+    第一次不说，是因为那时它还不知道这本书的角色册有多严，多说无益；
     第二次开始说，是因为「你已经在这上面花掉两步了」是它自己算不出来的数
     （它看得见历史，但不会去数），而这一层能给的最有用的东西就是这个数。
     """
@@ -333,7 +333,7 @@ def test_the_engine_starts_counting_out_loud_from_the_second_miss(book: Book) ->
     assert "撞上" not in first.content, "第一次就开始数数 —— 那时它还没有可数的东西"
 
     second = dispatch(_asked_about("小归终"), book.context(), memo)
-    assert "撞上 2 个花名册外的名字" in second.content
+    assert "撞上 2 个角色册外的名字" in second.content
     assert "姜源初" in second.content and "小归终" in second.content, (
         "只报了个数不报是哪几个 —— 模型看不出自己在同一类名字上打转"
     )
@@ -363,12 +363,12 @@ def test_a_miss_never_blocks_a_lookup_that_would_have_worked(book: Book) -> None
         assert dispatch(_asked_about(who), book.context(), memo).ok is False
     for who in ON_THE_ROSTER:
         assert dispatch(_asked_about(who), book.context(), memo).ok is True, (
-            f"撞过三次空之后，花名册上的「{who}」也查不动了 —— 这道闸挡到正事上了"
+            f"撞过三次空之后，角色册上的「{who}」也查不动了 —— 这道闸挡到正事上了"
         )
 
 
 def test_the_same_name_is_asked_again_instead_of_answered_from_memory(book: Book) -> None:
-    """**这一轮里作者真的会去把人加进花名册**，那时上一次的「查不到」就是一个陈旧答案。
+    """**这一轮里作者真的会去把人加进角色册**，那时上一次的「查不到」就是一个陈旧答案。
 
     「同一个称呼查第二次时直接把上次的答案还给它」一步都省不下来（一步 = 一次模型调用，
     那笔钱在工具跑起来之前就付掉了），却会造出这个仓库已经拒绝过一次的东西
@@ -389,7 +389,7 @@ def test_the_same_name_is_asked_again_instead_of_answered_from_memory(book: Book
 def test_the_refusal_type_is_what_gets_counted_not_a_keyword_in_the_sentence(
     book: Book,
 ) -> None:
-    """「这条拒绝是不是『花名册里没有』」的判据是**异常的类型**，不是在文本里找字。
+    """「这条拒绝是不是『角色册里没有』」的判据是**异常的类型**，不是在文本里找字。
 
     拿字符串当协议的话，改一次措辞这道闸就静默失效——而它失效的形态是作者又一次
     等了几分钟什么都没有，没有任何东西会报错。
@@ -409,5 +409,5 @@ def test_the_refusal_type_is_what_gets_counted_not_a_keyword_in_the_sentence(
     with pytest.raises(ToolRefused) as ambiguous:
         index_module.resolve_one(SHARED_SURFACE, resolutions[0])
     assert not isinstance(ambiguous.value, UnknownCharacter), (
-        "歧义被当成「花名册里没有」数进闸里 —— 那会把一条本来该重试的路也停掉"
+        "歧义被当成「角色册里没有」数进闸里 —— 那会把一条本来该重试的路也停掉"
     )

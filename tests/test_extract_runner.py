@@ -818,7 +818,7 @@ def test_recording_interrupt_is_not_swallowed_as_an_audit_failure(seed: Seed) ->
 def _unanchorable_analysis() -> str:
     """一件事，**引语在这一章的正文里找不到** —— 会被整条丢掉。
 
-    ⚠️ 2026-08-25 之前这儿造的是「参与者不在花名册里」。那条路今天不丢了
+    ⚠️ 2026-08-25 之前这儿造的是「参与者不在角色册里」。那条路今天不丢了
     （认不出就建，ADR 0020 补记）——**而这个告警本身没有变**：它问的是
     「模型抽到了、我们一件都没留下」，不是「为什么没留下」。
 
@@ -855,9 +855,9 @@ def test_a_chapter_that_kept_nothing_does_not_pass_as_a_quiet_success(seed: Seed
 
     真书实测：第 1 / 2 / 158 章各抽到 12 / 11 / 12 件事，**留下 0 件**，
     而三次 run 全是 `SUCCEEDED` + `errors_json='[]'`。当时的丢弃条件只有一条
-    （事件里的人在花名册里认不出来 ⇒ 整条丢），花名册又是空的，于是：
+    （事件里的人在角色册里认不出来 ⇒ 整条丢），角色册又是空的，于是：
 
-        花名册空 → 认不出 → 全丢 → 花名册还是空 → 下一章接着全丢
+        角色册空 → 认不出 → 全丢 → 角色册还是空 → 下一章接着全丢
 
     整本书的图谱因此是空的，**而没有任何一处告诉过作者**。
 
@@ -911,7 +911,7 @@ def test_a_chapter_that_kept_something_stays_quiet(seed: Seed) -> None:
     `RawChapterAnalysis.events` 的下限是 1，所以「这一章本来就没有事件」（写景、独白）
     在这一层压根表达不出来，模型只能硬编一件事出来。那个洞归它自己那一轮。
     """
-    analyzer = Analyzer()  # 默认那份：参与者「顾清音」在花名册里
+    analyzer = Analyzer()  # 默认那份：参与者「顾清音」在角色册里
     run = _runner(seed, analyzer)
     finished = run.run(run.enqueue(seed.project_id, 3).id)
 

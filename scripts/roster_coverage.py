@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""M1 花名册 90% 提及度量（docs/M1_ROSTER_METRIC.md）。
+"""M1 角色册 90% 提及度量（docs/M1_ROSTER_METRIC.md）。
 
 用法：
     uv run python scripts/roster_coverage.py \\
@@ -117,7 +117,7 @@ def measure(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", required=True, help="SQLite 库（花名册所在）")
+    parser.add_argument("--db", required=True, help="SQLite 库（角色册所在）")
     parser.add_argument("--project", required=True, help="project_id")
     parser.add_argument("--text", required=True, help="全书 TXT（切章用 chapterize）")
     parser.add_argument("--gold", required=True, help="gold 标注 JSON")
@@ -141,7 +141,7 @@ def main() -> None:
             f"({row.covered / row.total:.0%})"
         )
         for surface in row.missing:
-            print(f"   未覆盖：{surface} —— 花名册里没有，或指向多人")
+            print(f"   未覆盖：{surface} —— 角色册里没有，或指向多人")
     print(
         f"全书：{result.covered}/{result.total} = {result.ratio:.0%}"
         f"（门槛 ≥{MIN_COVERAGE:.0%}）"

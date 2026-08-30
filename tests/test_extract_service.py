@@ -488,8 +488,8 @@ def test_unknown_surfaces_become_characters_but_ambiguous_ones_never_do(
 
     这两半必须一起看，否则容易读成「以后什么都建」：
 
-    - `unknown`（花名册里查无此人）→ **建**。从前它进 `new_character` 提案等作者确认，
-      而事件那一侧「一个参与者都认不出就整条丢」——空花名册上两条规矩互锁。
+    - `unknown`（角色册里查无此人）→ **建**。从前它进 `new_character` 提案等作者确认，
+      而事件那一侧「一个参与者都认不出就整条丢」——空角色册上两条规矩互锁。
     - `ambiguous`（「师兄」同时指向两个**已经存在**的人）→ **照旧整条拒收**。
       建第三个「师兄」只会让歧义更重，而 ADR 0004 说产品从不替作者挑。
     """
@@ -551,12 +551,12 @@ def test_unknown_incidental_surfaces_are_dropped_not_guessed(
     """匿名配角**也进图谱**（2026-08-25 裁定推翻了 M4_DESIGN 的「路人不进图谱」）。
 
     2026-08-04 真书首跑发现：整章事件因「相亲小姐姐/服务员/路人」这类匿名配角全部被弃。
-    当时的修法是「未知面丢弃、事件保留已知参与者」——**它治的是事件，没治花名册**：
+    当时的修法是「未知面丢弃、事件保留已知参与者」——**它治的是事件，没治角色册**：
     这一章的「服务员」下一章还是认不出，而一个所有参与者都是生面孔的事件照样整条丢。
 
     今天的判据统一成一条：**认不出就建**。代价照实说——「服务员」「全体师生」
-    这种一次性称呼会长期占着花名册（真书上的实例是「袭人」，它还会误命中
-    「寒气袭人」）。**出口是花名册的删除入口**（`DELETE …/nodes/{id}`，同一批改动）：
+    这种一次性称呼会长期占着角色册（真书上的实例是「袭人」，它还会误命中
+    「寒气袭人」）。**出口是角色册的删除入口**（`DELETE …/nodes/{id}`，同一批改动）：
     自动建 + 不能删 = 单向阀。
     """
     report = _service(conn, seed).ingest(
@@ -579,7 +579,7 @@ def test_unknown_incidental_surfaces_are_dropped_not_guessed(
     assert view is not None
     assert sorted(node.name for node in view.participants) == ["不存在的路人", "顾清音"]
     assert sorted(node.name for node in view.knowers) == ["全体师生", "服务员", "顾清音"]
-    # 花名册里真的多了这几个人（下一章它们就认得出了 —— 死锁的另一半）。
+    # 角色册里真的多了这几个人（下一章它们就认得出了 —— 死锁的另一半）。
     made = seed.graph.resolve(seed.project_id, ["服务员", "全体师生"])
     assert all(r.unique_node is not None for r in made)
 
@@ -590,7 +590,7 @@ def test_unknown_state_dimension_gets_created_not_discarded(
     """**认不出的维度，直接建。**（2026-08-27 裁定）—— `_create_unknown_characters`
     在维度这一侧的姊妹条，但手法不同（见 `_write_state` 里的说明）：不经别名表，
     直接靠 `upsert_node` 按 `(project, label, name)` find-or-create——`StateDim`
-    进花名册会让 mentions.py 拿维度名去正文里做字面匹配（`CANONICAL_ALIAS_LABELS`
+    进角色册会让 mentions.py 拿维度名去正文里做字面匹配（`CANONICAL_ALIAS_LABELS`
     的说明），所以这条路故意不挂别名。
 
     从前：「灵力」这种没预先建过的维度在 `resolve_ids` 那步查无此维度，整条
@@ -618,7 +618,7 @@ def test_unknown_state_dimension_gets_created_not_discarded(
     assert state.value == "小成"
     # 新维度不配机器键：没有规则要查它（2026-08-27 裁定第二条）。
     assert state.dim_key is None
-    # 也不进花名册：mentions.py 靠这条挡住维度名满篇字面匹配。
+    # 也不进角色册：mentions.py 靠这条挡住维度名满篇字面匹配。
     resolved = seed.graph.resolve(seed.project_id, ["灵力"])
     assert resolved[0].unique_node is None
 
@@ -669,7 +669,7 @@ def test_unknown_location_gets_created_not_discarded(
         scope=InformationScope.PROVISIONAL,
     )
     assert snapshot.location is not None and snapshot.location.name == "荒漠驿站"
-    # Location 在花名册里：下次同一个称呼能正常解析（同人物那条路，不是维度那条）。
+    # Location 在角色册里：下次同一个称呼能正常解析（同人物那条路，不是维度那条）。
     resolved = seed.graph.resolve(seed.project_id, ["荒漠驿站"])
     assert resolved[0].unique_node is not None
 
@@ -758,7 +758,7 @@ def test_the_score_adds_up_across_chapters_and_never_doubles_on_a_rerun(
 def test_a_character_already_in_the_roster_keeps_scoring(
     seed: Seed, conn: Connection
 ) -> None:
-    """裁定第一条：**已在花名册 → 不问，内容并进去，分数继续累加。**
+    """裁定第一条：**已在角色册 → 不问，内容并进去，分数继续累加。**
 
     「顾清音」建 fixture 时就在册。她的档案照旧只读（不被这一次抽取覆盖），
     但**分数照记**——这两件事是分开的。
@@ -784,7 +784,7 @@ def test_a_character_already_in_the_roster_keeps_scoring(
 def test_only_characters_get_a_score(seed: Seed, conn: Connection) -> None:
     """错类的 surface 不记分。
 
-    一行挂在地点身上的分会让「按分排序的花名册」里冒出一个不是人的东西，
+    一行挂在地点身上的分会让「按分排序的角色册」里冒出一个不是人的东西，
     而那一行看起来完全正常。schema 那条复合外键是最后一道，这是第一道。
     """
     from novel_harness.graph.queries import character_information_totals
@@ -859,15 +859,15 @@ def test_reused_service_does_not_cache_main_character_across_ingests(
 
 
 def test_the_deadlock_and_the_key_that_opens_it(seed: Seed, conn: Connection) -> None:
-    """**死锁解开了**：一份全是生面孔的 analysis 打进空花名册，事件真的落库。
+    """**死锁解开了**：一份全是生面孔的 analysis 打进空角色册，事件真的落库。
 
     ── 那把锁当年是什么样 ────────────────────────────────────────────────
 
     作者的 158 章真书上，抽取跑过三章，每次都 `SUCCEEDED`、`errors_json='[]'`，
     而**留下 0 件**（12 / 11 / 12 全丢）。整本书的图谱是空的：人物 0、边 0、
-    事件 0、证据 0。丢弃条件只有一条 —— 事件里的人在花名册里认不出来。
+    事件 0、证据 0。丢弃条件只有一条 —— 事件里的人在角色册里认不出来。
 
-        花名册空 → 认不出 → 全丢 → 花名册还是空 → 下一章接着全丢
+        角色册空 → 认不出 → 全丢 → 角色册还是空 → 下一章接着全丢
 
     唯一出口是 `new_character` 提案，而那 22 条从 2026-08-15 一条没被确认过。
 
@@ -875,7 +875,7 @@ def test_the_deadlock_and_the_key_that_opens_it(seed: Seed, conn: Connection) ->
 
     **认不出就建，不要问**（ADR 0020 补记）：`_create_unknown_characters` 在解析事件
     **之前**把人物位上的生面孔全部建成 Character，于是 `if not participants` 那条
-    丢弃分支在空花名册上再也走不到。
+    丢弃分支在空角色册上再也走不到。
 
     这条红了 = 自动建人物那一步没跑，或者事件那一侧又长出了别的丢弃条件 ——
     两种都得当场知道，因为它们都会让真书回到「跑了、成功了、什么都没留下」。

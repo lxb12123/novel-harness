@@ -214,7 +214,7 @@ def prepare_state_update(
     )
     if reason is not None:
         return None, reason
-    # `death` 的对面**不是一个称呼**，是引擎自己的 health 维度（`StateDim` 不在花名册里，
+    # `death` 的对面**不是一个称呼**，是引擎自己的 health 维度（`StateDim` 不在角色册里，
     # `CANONICAL_ALIAS_LABELS` 有意排除它）。所以这一档跳过称呼解析，`target_id` 留空，
     # 由 `ExtractionService` 在事务里 `ensure_state_dim` 现取——同 `Ledger.declare_dead`。
     if raw.kind == "death":
@@ -233,11 +233,11 @@ def prepare_state_update(
         ), None
 
     if raw.kind == "state":
-        # 维度和上面的健康维度同理——它也不是花名册里的称呼，`target_id` 照样留空，
+        # 维度和上面的健康维度同理——它也不是角色册里的称呼，`target_id` 照样留空，
         # 在 `_write_state` 里现取/现建。**但手法不同**：维度是模型自由写的文本，
         # 认不出就建，不配机器键（2026-08-27 裁定），所以不经 `resolve_ids`——那条
         # 路走的是别名表，而 `STATE_DIM` 不在 `CANONICAL_ALIAS_LABELS` 里（进了
-        # 花名册，mentions.py 会拿维度名去正文里做字面匹配，「情绪」「境界」这类
+        # 角色册，mentions.py 会拿维度名去正文里做字面匹配，「情绪」「境界」这类
         # 高频词满篇都是，会把 mentions 冲垮）。`_write_state` 落库时走 `upsert_node`，
         # 按 (project, label, name) 天然 find-or-create，不挂别名。
         dimension = (raw.dimension or "").strip()
@@ -263,7 +263,7 @@ def prepare_state_update(
             graph_key=(EdgeType.HAS_STATE.value, subjects[0], dimension),
         ), None
 
-    # 走到这里的只剩 location / relationship：两者的 target 都走花名册常规解析
+    # 走到这里的只剩 location / relationship：两者的 target 都走角色册常规解析
     # （location 认不出会先被 `_create_unknown_locations` 建出来，同人物那条路）。
     expected = NodeLabel.LOCATION if raw.kind == "location" else NodeLabel.CHARACTER
     targets, reason = resolve_ids(

@@ -1,4 +1,4 @@
-"""M1 花名册 90% 提及度量（docs/M1_ROSTER_METRIC.md）。
+"""M1 角色册 90% 提及度量（docs/M1_ROSTER_METRIC.md）。
 
 工具的三条纪律各钉一条：gold 与正文逐字核对（对不上拒绝出数）、
 覆盖率按实例算、没覆盖的称呼列出来（= 作者该补的别名）。
@@ -98,7 +98,7 @@ def test_missing_alias_drops_below_threshold(tmp_path: Path) -> None:
             "chapters": [
                 {
                     "chapter": 1,
-                    # 「师兄」在正文里（顾清音道：「师兄。」），但花名册里没有 → 未覆盖
+                    # 「师兄」在正文里（顾清音道：「师兄。」），但角色册里没有 → 未覆盖
                     "mentions": {"顾清音": 1, "顾姑娘": 1, "萧决": 2, "师兄": 1},
                 },
             ],

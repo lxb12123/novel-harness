@@ -191,7 +191,7 @@ class SqliteStoryGraph:
             )
 
         if surfaces is None:
-            # 花名册：SQL 已按长度降序排好，直接可喂 alternation 编译。
+            # 角色册：SQL 已按长度降序排好，直接可喂 alternation 编译。
             ordered = [Resolution(surface=s, hits=h) for s, h in by_surface.items()]
         else:
             # 与入参**一一对应且同序**，重复的 surface 也各返回一条。解析不到的返回
@@ -655,7 +655,7 @@ class SqliteStoryGraph:
             chapter_id = new_id(EntityType.CHAPTER, spec.project_id)
             generation = 1
             # Chapter 节点和 chapter 行**同生**，而且没有 canonical 别名
-            # （CANONICAL_ALIAS_LABELS 里没有它）：300 章 = 300 条章标进花名册。
+            # （CANONICAL_ALIAS_LABELS 里没有它）：300 章 = 300 条章标进角色册。
             queries.insert_node(
                 self._conn,
                 chapter_id,

@@ -52,7 +52,7 @@ EDIT = "萧决把玄铁令举起来，它在他掌心发出白光。"
 
 
 def _book(tmp_path: Path) -> dict[str, str]:
-    """一本 `CHAPTERS` 章的书 + 花名册里一个人物、一件物件。
+    """一本 `CHAPTERS` 章的书 + 角色册里一个人物、一件物件。
 
     **正文本身不提这两个名字**：这批断言全都建立在「总结里提到了什么」上，
     正文里再撒一遍只会让某条断言在错误的理由下变绿。
@@ -123,7 +123,7 @@ def test_writing_at_the_frontier_costs_nothing_and_finds_nothing(
 ) -> None:
     """在最前沿写 = 照旧，什么都不变。**这一条是「不许乱花力气」那一半。**
 
-    第 20 章后面没有已经写完的正文，所以连花名册都不必解析——两级锚定一级都不跑。
+    第 20 章后面没有已经写完的正文，所以连角色册都不必解析——两级锚定一级都不跑。
     """
     track = _track(written, chapter=CHAPTERS)
 
@@ -158,7 +158,7 @@ def test_jumping_back_leaves_the_frontier_behind(written: dict[str, str]) -> Non
 def test_the_first_level_hits_both_the_person_and_the_object(
     written: dict[str, str],
 ) -> None:
-    """一级：扫作者刚改的那段字，命中花名册里哪些东西。**六类都收。**
+    """一级：扫作者刚改的那段字，命中角色册里哪些东西。**六类都收。**
 
     「玄铁令第 15 章写着只能在水底唤醒，你第 12 章写它发白光」这种，
     和人物那条线必须是同一次查询捞回来的——分成两套的那一天，物件那一半会先烂掉。
@@ -244,7 +244,7 @@ def test_the_default_quota_is_the_documented_one(written: dict[str, str]) -> Non
 
 
 def test_nothing_on_the_roster_in_this_edit_says_so(written: dict[str, str]) -> None:
-    """这段字里没有花名册上的东西 —— 和「后面没人提过它们」是两件事。"""
+    """这段字里没有角色册上的东西 —— 和「后面没人提过它们」是两件事。"""
     track = _track(written, text="他把窗子推开，风灌进来。")
 
     assert track.anchors == []
@@ -258,7 +258,7 @@ def test_anchors_with_no_later_mention_keep_the_anchors_in_the_answer(
     """认出了东西、但后面一段总结都没提过它们。
 
     **`anchors` 仍然要交出去**：它证明一级跑过了，而「一级没认出东西」和
-    「二级没查到」的下一步动作完全不同（前者该去看花名册，后者该去补总结）。
+    「二级没查到」的下一步动作完全不同（前者该去看角色册，后者该去补总结）。
     """
     track = _track(book)  # 一段总结都还没有
 

@@ -12,7 +12,7 @@
   `text/chapterize.py::drop_toc_duplicates()`）。带一个「撤销」动作——
   `payload_json` 存着撤销要用的数据（丢了哪些 + 这本书当时的指纹），
   **只有这一档用这一列**，读它请走 `notification_payload()`，别直接查 SQL。
-- `event_cast_changed`：花名册删了一个人，他参与过的某件事的在场/知情名单
+- `event_cast_changed`：角色册删了一个人，他参与过的某件事的在场/知情名单
   跟着掉了一个（034）。**只告警，不阻断**——删人不该换来「这一章的自动整理
   停了」。`subject_type` 是 `canon_event`，`jump` 是那件事自己的 evidence 锚。
 
@@ -425,7 +425,7 @@ def enqueue_event_cast_changed(
 ) -> str:
     """一件事的在场/知情名单掉了一个人时的那条通知（034）。**只告警，不阻断。**
 
-    删花名册条目从「拒绝」换成「直接删」之后（`api/characters.py::delete_node`），
+    删角色册条目从「拒绝」换成「直接删」之后（`api/characters.py::delete_node`），
     这是那条裁定的另一半——「事后可见可改」的「可见」。`subject_type` 固定
     `canon_event`（复用 `summary_reconciliation.py` 已经在用的语义：`subject_id`
     是事件 id），不新开一档。

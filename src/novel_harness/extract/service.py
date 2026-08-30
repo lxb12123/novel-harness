@@ -232,7 +232,7 @@ class ExtractionService:
                     and resolution.candidates[0].label is NodeLabel.CHARACTER
                 ):
                     # **每一个解析得出的人物都记分，不管他是不是这一次新建的**
-                    # （裁定的第一条：已在花名册 → 不问，内容并进去，**分数继续累加**）。
+                    # （裁定的第一条：已在角色册 → 不问，内容并进去，**分数继续累加**）。
                     queries.record_character_information(
                         self._conn,
                         project_id,
@@ -438,7 +438,7 @@ class ExtractionService:
     ) -> None:
         raw = prepared.raw
         subject_id, target_id = prepared.subject_id, prepared.target_id
-        # `death` 的对面是引擎自己的 health 维度，不是花名册里的一个称呼——`prepare`
+        # `death` 的对面是引擎自己的 health 维度，不是角色册里的一个称呼——`prepare`
         # 那边留了空，在这儿现取（幂等）。同 `Ledger.declare_dead`：**这个维度由引擎建，
         # 作者和模型都没有入口去建它**（`AUTHORED_LABELS` 里没有 `StateDim`，`dim_key`
         # 是引擎写死的常量）。
@@ -450,7 +450,7 @@ class ExtractionService:
             # 这里不一样：维度是模型自由写的文本，认不出就建，不配机器键
             # （2026-08-27 裁定）。`upsert_node` 按 (project, label, name) 天然
             # find-or-create，不挂别名——`STATE_DIM` 不在 `CANONICAL_ALIAS_LABELS`
-            # 里，进了花名册会让 mentions.py 的 alternation 拿维度名（「情绪」「境界」
+            # 里，进了角色册会让 mentions.py 的 alternation 拿维度名（「情绪」「境界」
             # 这类高频词）去正文里做字面匹配，把 mentions 冲垮。`prepare_state_update`
             # 已经保证 `raw.dimension` 非空。
             target_id = self._graph.upsert_node(
@@ -557,7 +557,7 @@ class ExtractionService:
 
         从前：认不出的人物 → 攒进 `new_character` 提案等作者确认；而一条事件只要
         **一个参与者都解析不出来就整条丢**（`_ingest_event` 那句 `if not participants`）。
-        两条规矩在空花名册上互锁：**没人 ⇒ 事件全丢 ⇒ 花名册还是没人**。
+        两条规矩在空角色册上互锁：**没人 ⇒ 事件全丢 ⇒ 角色册还是没人**。
 
         真书实测（`book.db`，158 章）：三章抽取，模型抽出 35 件事，**引擎一件没留**，
         同时提了 22 个新人物提案，从 2026-08-15 PENDING 到 2026-08-25 一条没被确认。
@@ -567,7 +567,7 @@ class ExtractionService:
         `resolution_map` 收的 surface 来自四处：事件的 participants / knowers、
         state_update 的 subject / object / dimension、画像的 surface。
         **只有第一组和最后一组是人物位。** `state.object` 可能是地点、`state.dimension`
-        是状态维度（「健康」）——把它们也建成人物，花名册里会长出「健康」这个角色。
+        是状态维度（「健康」）——把它们也建成人物，角色册里会长出「健康」这个角色。
 
         ── 不拿 `usable_for_rules=False` 当「未确认」的替身 ──────────────
 
@@ -580,7 +580,7 @@ class ExtractionService:
         真书那 22 个名字里「**袭人**」是真会误命中的：这本书里满篇「寒气袭人」「香气袭人」。
         今天它伤不到规则（R3 只看对白标签位；R2 要首现章而那个字段没有浏览器入口），
         **它伤的是「这一章提到了谁」和喂给模型的上下文**——袭人的档案会被塞进一场
-        她不在的戏。所以**花名册的删除入口是这一条的配套，不是可选项**
+        她不在的戏。所以**角色册的删除入口是这一条的配套，不是可选项**
         （`DELETE …/nodes/{id}`，同一批改动）。自动建 + 不能删 = 单向阀。
 
         Returns:
@@ -597,7 +597,7 @@ class ExtractionService:
         # `analysis.aliases` 里的每一条都是「这是**某个已有人物**的另一种叫法」
         # （「凤辣子」→ 王熙凤）。`resolve_analysis_identity` 已经处理过它们：
         # 够格的落成别名，不够格（置信度低 / 引语对不上）的留着等作者裁。
-        # **不够格 ≠ 这是个新人**——把它建成人物，同一个王熙凤在花名册里就有两个身子，
+        # **不够格 ≠ 这是个新人**——把它建成人物，同一个王熙凤在角色册里就有两个身子，
         # 而那正是 `aliases.py` 那一整套机制存在的理由。
         proposed_aliases = {alias.surface for alias in analysis.aliases}
 

@@ -200,7 +200,7 @@ export type NodeLabel =
  *
  * **故意不含 `StateDim` 和 `Chapter`**：前者是引擎内部的状态维度，后者由 import 生成——
  * 把它们放进「新建」菜单等于邀请作者手工造出引擎的内部结构。`backendMessages.ts` 的
- * `NODE_LABEL` 仍要认它们（花名册会显示），两者的差集就是这条区分本身，别合并。
+ * `NODE_LABEL` 仍要认它们（角色册会显示），两者的差集就是这条区分本身，别合并。
  *
  * label → 中文/英文的那张表**搬去了 `backendMessages.ts::NODE_LABEL`**
  * （国际化第四批·前端文案批次，统一了原来这儿和那边重复的 `LABEL_ZH`）。
@@ -252,10 +252,10 @@ export interface NodeRef {
   name: string;
 }
 
-/** 左栏花名册的一行：窄引用 + **出场章数**。
+/** 左栏角色册的一行：窄引用 + **出场章数**。
  *
  *  `appearance_chapters` = 有多少章的**总结**提到过它（后端 `summary_index.appearance_counts`）。
- *  它和花名册同一条出参回来，不是第二次请求——一行字里的一个数不值得多一次会失败的往返。
+ *  它和角色册同一条出参回来，不是第二次请求——一行字里的一个数不值得多一次会失败的往返。
  *
  *  ⚠️ **0 不等于「没出场」**：没有总结的章不算，所以一本刚导进来、一份总结都没有的书
  *  这一列全是 0。措辞的责任在渲染那一行的组件上。 */
@@ -300,14 +300,14 @@ export interface DeleteNodeInput {
   expected_canon_version: number;
 }
 
-/** 删掉一条花名册条目之后的回执。`usage` 是删之前数出来的那份（全零）。 */
+/** 删掉一条角色册条目之后的回执。`usage` 是删之前数出来的那份（全零）。 */
 export interface NodeDeleted {
   id: string;
   name: string;
   usage: NodeUsage;
 }
 
-/** 引擎在这个花名册条目上记了多少东西。**非零就删不掉。**
+/** 引擎在这个角色册条目上记了多少东西。**非零就删不掉。**
  *
  *  别名和倒排索引行**不在这里**：前者是这个节点自己的名字，后者是派生数据。
  *  完整论证在后端 `graph.models.NodeUsage`。 */
@@ -588,7 +588,7 @@ export interface RecordedRules {
   scanned_chats: number;
 }
 
-/** 本章正文里提到的花名册称呼。**不是「在场」**——引擎在数字符串，没有读懂剧情。 */
+/** 本章正文里提到的角色册称呼。**不是「在场」**——引擎在数字符串，没有读懂剧情。 */
 export interface Mentioned {
   chapter: number;
   /** `false` = 这一章磁盘上还没有正文。和「写了但没提到人」不是一回事，别合并显示。 */
@@ -715,7 +715,7 @@ export interface ProposalRecord {
   base_canon_version: number;
   event_ids: string[];
   edge_ids: string[];
-  /** `items` 里那些裸 id 的显示名。**别拿 id 去花名册里自己查**——那是另一条独立缓存，
+  /** `items` 里那些裸 id 的显示名。**别拿 id 去角色册里自己查**——那是另一条独立缓存，
    *  后台整理造出的新节点会在它里面缺席一拍，而那一拍的产物是屏幕上一串截断的内部编号
    *  （`n:ID22`）。认不出的 id 不在这份名单里（后端不编假名字）。 */
   node_refs: NodeRef[];
@@ -861,7 +861,7 @@ export type SystemNotificationKind =
   /** 导入时丢掉了目录页复制出来的假章（032）。带一个「撤销」动作
    *  （`actions` 里的 `"undo_toc_skip"`）——见 `useUndoTocSkip`。 */
   | "import_toc_skipped"
-  /** 删花名册条目时，一件跟这个人相关的事件掉了参与者（034）。**它有更贴身的
+  /** 删角色册条目时，一件跟这个人相关的事件掉了参与者（034）。**它有更贴身的
    *  家**——`CharacterEventRow.cast_changed` 把它挂在角色卡的事件时间线上，
    *  这里列出来只是让它在通用的「系统通知」面板里也认得出（同一条通知两个
    *  出口，不是两份数据）。 */

@@ -40,7 +40,7 @@ interface Coords {
    *  = fail-open（ADR 0018 §3）。后端 `_effective_cast` 那段注释记着实测形态。 */
   castInclude: string;
   activeTab: Tab;
-  /** 局部图 / 状态卡的中心节点 id（已解析）。花名册点选 / 局部图点选后设。 */
+  /** 局部图 / 状态卡的中心节点 id（已解析）。角色册点选 / 局部图点选后设。 */
   selectedNodeId: string | null;
   /** 待跳转高亮的锚：点 R4 issue 时设，编辑器消费后清。**按 quote 重寻，不存 offset。** */
   highlight: Anchor | null;
@@ -106,7 +106,7 @@ export const useCoords = create<Coords>((set) => ({
   chapter: 1,
   cast: "",
   castInclude: "",
-  // 默认停在花名册：打开一本书先看见「这本书里有谁」，其余几格都是「其中某个人怎么样」。
+  // 默认停在角色册：打开一本书先看见「这本书里有谁」，其余几格都是「其中某个人怎么样」。
   activeTab: "roster",
   selectedNodeId: null,
   highlight: null,

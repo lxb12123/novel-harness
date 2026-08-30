@@ -152,8 +152,8 @@ def test_one_character_name_is_storable_but_never_fires(
 def test_labels_outside_the_roster_get_no_canonical_alias(
     conn: Connection, store: SqliteStoryGraph, pid: str, label: NodeLabel
 ) -> None:
-    """`resolve(pid, None)` 是花名册，mentions.py 拿它编 alternation。
-    「健康」进去 = 去正文里匹配每一个「健康」；300 条章标进去 = 花名册变成目录。"""
+    """`resolve(pid, None)` 是角色册，mentions.py 拿它编 alternation。
+    「健康」进去 = 去正文里匹配每一个「健康」；300 条章标进去 = 角色册变成目录。"""
     if label is NodeLabel.CHAPTER:
         node_id = store.put_chapter(_chapter(pid)).id
     else:

@@ -84,7 +84,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     ["左栏书架", <LeftRail key="l" onOpenChapter={() => {}} />],
     ["底栏时间线", <BottomBar key="b" />],
     ["书架页", <BookShelf key="bs" onOpenChapter={() => {}} />],
-    ["花名册抽屉", <RosterDrawer key="rd" pid="project:ID1" onClose={() => {}} />],
+    ["角色册抽屉", <RosterDrawer key="rd" pid="project:ID1" onClose={() => {}} />],
     // 设置这扇窗 2026-08-14 变成左右分栏，**这一条只扫得到默认那一栏**（「连接服务」）。
     // 另一栏由紧跟在这个 each 后面那条单独的断言扫。
     ["设置弹窗", <SettingsDrawer key="sd" onClose={() => {}} />],
@@ -143,7 +143,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
   });
 
   it.each([
-    ["花名册", "roster", /青云城主府/],
+    ["角色册", "roster", /青云城主府/],
     ["人物状态", "state", /萧决/],
     ["人物关系", "graph", /人物关系/],
     ["原文依据", "evidence", /原文依据/],
@@ -181,7 +181,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     expect(devTerms(screenText())).toEqual([]);
   });
 
-  it("接口拒绝时，花名册抽屉的错误框里也没有研发术语", async () => {
+  it("接口拒绝时，角色册抽屉的错误框里也没有研发术语", async () => {
     // `errorShortAlias.message` 是真后端写的，里头躺着 `usable_for_rules` 和一句
     // 「ADR 0004」——**写给维护者的诊断**。这一格今天靠前端换一句自己的话挡住，
     // 而挡没挡住在这条断言之前没有任何东西验过。
@@ -584,9 +584,9 @@ const PLANTED = {
   edges: [{ ...fixtures.states[0].edges[0], type: "PLANTED_IN" }],
 };
 
-/** 同一条边，但 `dst` 指向一个**花名册里还没有**的节点。
+/** 同一条边，但 `dst` 指向一个**角色册里还没有**的节点。
  *
- *  花名册和这份快照是两条独立缓存：后台整理刚建出来的节点会在前者里缺席一拍，
+ *  角色册和这份快照是两条独立缓存：后台整理刚建出来的节点会在前者里缺席一拍，
  *  而没有任何路径保证那一拍不会被作者看见。 */
 const UNKNOWN_DST = {
   ...fixtures.characterState,
@@ -629,7 +629,7 @@ describe("兜底：认不出的东西说人话，不是原样回吐", () => {
     expect(devTerms(screenText())).toEqual([]);
   });
 
-  it("底栏：花名册里查不到的对象说「—」，不摆一串内部编号", async () => {
+  it("底栏：角色册里查不到的对象说「—」，不摆一串内部编号", async () => {
     renderWithApi(<BottomBar />, stateRoute(UNKNOWN_DST));
     await waitFor(() => expect(document.body.textContent).toContain("的变化"));
     await new Promise((r) => setTimeout(r, 60));

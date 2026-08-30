@@ -24,7 +24,7 @@ from novel_harness import project
 
 @pytest.fixture
 def store_pid(tmp_path: Path) -> tuple[SqliteStoryGraph, str]:
-    """花名册：两个角色 + 一个地点 + 一个秘密 + 一个歧义称呼。"""
+    """角色册：两个角色 + 一个地点 + 一个秘密 + 一个歧义称呼。"""
     conn = connect(tmp_path / "book.db")
     migrate(conn)
     pid = project.create(conn, name="青云记", root_path=str(tmp_path / "book")).id
@@ -40,7 +40,7 @@ def store_pid(tmp_path: Path) -> tuple[SqliteStoryGraph, str]:
     ledger.declare_alias(of="萧决", surface="师兄", kind=AliasKind.TITLE)
     ledger.declare_alias(of="李管家", surface="师兄", kind=AliasKind.TITLE)
 
-    # 一个**非 Character** 的花名册条目：`mentioned_cast` 只收 Character，
+    # 一个**非 Character** 的角色册条目：`mentioned_cast` 只收 Character，
     # 而「玄铁令」在下面的段落里出现过——它不许被算成在场的人。
     store.upsert_node(
         NodeSpec(
@@ -60,7 +60,7 @@ def test_正文里提到谁就推出谁(store_pid: tuple[SqliteStoryGraph, str])
     assert mentioned_cast(store, pid, paras) == ["萧决", "顾清音"]
 
 
-def test_顺序是首次出现顺序_而不是花名册顺序(store_pid: tuple[SqliteStoryGraph, str]) -> None:
+def test_顺序是首次出现顺序_而不是角色册顺序(store_pid: tuple[SqliteStoryGraph, str]) -> None:
     """顺序即右栏矩阵的行序，所以它必须只由正文决定，同一份正文永远得到同一个列表。"""
     store, pid = store_pid
     assert mentioned_cast(store, pid, ["顾清音先到。", "萧决后到。"]) == ["顾清音", "萧决"]
@@ -201,7 +201,7 @@ def test_一个人的两个称呼都出现时都返回_下游按人去重(
     assert len(resolve_cast(store, pid, surfaces).ids) == 1
 
 
-def test_空正文和空花名册都不炸(tmp_path: Path) -> None:
+def test_空正文和空角色册都不炸(tmp_path: Path) -> None:
     conn = connect(tmp_path / "empty.db")
     migrate(conn)
     pid = project.create(conn, name="空书", root_path=str(tmp_path / "empty")).id
