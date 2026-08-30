@@ -112,7 +112,9 @@ export function ThinkingSpinner() {
           rx="1.3"
           fill="currentColor"
           transform={`rotate(${i * 45} 12 12)`}
-          style={{ animationDelay: `${(i * -0.1).toFixed(2)}s` }}
+          // 亮点走的是延迟从大到小（角度从大到小先亮），不是刻度顺序本身——
+          // `(7 - i)` 才是「亮的那一下沿顺时针跑」，`i` 顺序试过是反的（逆时针）。
+          style={{ animationDelay: `${((7 - i) * -0.1).toFixed(2)}s` }}
         />
       ))}
     </svg>
