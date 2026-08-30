@@ -388,18 +388,24 @@ body.resizing { cursor: col-resize; -webkit-user-select: none; user-select: none
 /* 「保存」按钮里、文字右边的水滴／雪花：在按钮的正常排版里，不是浮在角上的徽标。
    `translateY` 往上提一点点，让它贴着文字的上半区，不是齐着基线。**素描线稿风，
    跟着 `currentColor` 走**——填色渐变那版作者反馈「太胖」「一坨」，退回跟机器人
-   图标同一套语言（描边、不实心），颜色仍然分：水滴＝手上还有没落盘的字
-   （`--accent`，跟「水」沾边），雪花＝落盘了、跟远端也对齐了（`--ok`，这个产品里
-   「事情办妥了」一直是这个颜色）。`drop-shadow` 是「这片图标相对按钮表面是浮起来的」，
-   描边图形用它不会有 `box-shadow` 那种矩形穿帮的问题。 */
-.save-btn { display: inline-flex; align-items: center; gap: 3px; }
+   图标同一套语言（描边、不实心）。`drop-shadow` 是「这片图标相对按钮表面是浮起来的」，
+   描边图形用它不会有 `box-shadow` 那种矩形穿帮的问题。
+   **两个都不再写死颜色**（2026-08-30 之前水滴是 `--accent`、雪花是 `--ok`）：
+   `--accent` 在这个产品里通篇只表示「悬浮态」（`button:hover { color: var(--accent) }`，
+   见 53 行那条图标总注释），水滴没有悬浮却常驻着这个颜色，看着像个卡住的悬浮态——
+   作者原话「你这个没有悬浮，怎么就有这个紫色呀」。雪花的 `--ok` 原本另有理由（状态色，
+   不落在悬浮语义上），但作者反馈两个图标一个有色一个没色不一致，要的是同一套素描：
+   都不写颜色，纯吃 `currentColor`——平时是按钮自己的字色，悬浮时才跟着全局规则变
+   `--accent`，两个图标规矩统一。
+   `.save-btn` 右边距比别的按钮窄：图标不是在原来的字后面**新增**一截宽度，是**占用**
+   本来就有的那圈按钮内边距——作者原话「不要再给我在空白的地方了」，加了图标还照抄
+   12px 的边距，等于按钮凭空变宽一整个图标那么多。 */
+.save-btn { display: inline-flex; align-items: center; gap: 2px; padding-right: 5px; }
 .save-badge-icon {
-  width: 14px; height: 14px; flex: 0 0 auto; pointer-events: none;
+  width: 17px; height: 17px; flex: 0 0 auto; pointer-events: none;
   transform: translateY(-3px);
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .4));
 }
-.save-badge-icon.droplet { color: var(--accent); }
-.save-badge-icon.snowflake { color: var(--ok); }
 
 /* ── 中栏顶栏的章标题（挑章 + 双击改名）───────────────────────────────────────
    它替下来的是顶栏那个 <select>，而**那个白框没有跟着搬**：select 自带边框和底色，
