@@ -105,11 +105,11 @@ export function ThinkingSpinner() {
       {Array.from({ length: 8 }, (_, i) => (
         <rect
           key={i}
-          x="11"
-          y="2.5"
-          width="2"
-          height="6"
-          rx="1"
+          x="10.7"
+          y="1.5"
+          width="2.6"
+          height="7"
+          rx="1.3"
           fill="currentColor"
           transform={`rotate(${i * 45} 12 12)`}
           style={{ animationDelay: `${(i * -0.1).toFixed(2)}s` }}
