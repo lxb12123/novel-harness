@@ -109,8 +109,8 @@ header button.on { border-color: var(--accent); color: var(--accent); background
    `ThinkingSpinner` 是 currentColor，跟着机器人图标此刻是什么颜色走（平时 `--dim`，
    写作助手开着时 `--accent`），不用另挑一个颜色。 */
 .bot-thinking {
-  position: absolute; top: -1px; right: -1px; pointer-events: none;
-  width: 13px; height: 13px;
+  position: absolute; top: -1px; right: 0; pointer-events: none;
+  width: 11px; height: 11px;
 }
 .bot-thinking .thinking-spinner { width: 100%; height: 100%; display: block; }
 .bot-thinking .thinking-spinner rect { animation: bot-thinking-tick .8s linear infinite; }
