@@ -87,6 +87,28 @@ describe("按 → 逐口接受", () => {
     expect(v.state.field(suggestionField)).toBeNull(); // 不是 {text: "", pos: ...}
   });
 
+  it("`Intl.Segmenter` 在某些环境里抛错时，退化成整段接受而不是凭空清空建议", () => {
+    // 真出这种事，`run` 要是不返回 true，CM6 就不会挡掉浏览器原生的 → 默认动作——
+    // 原生挪光标会同步出一个没带 `setSuggestion` 效果的事务，照样把建议清空，
+    // 但一个字都没落下。这条钉的是「宁可整段接受，也不能连字都没落就把建议丢了」。
+    const originalSegmenter = globalThis.Intl.Segmenter;
+    // @ts-expect-error 故意装成一个坏掉的 Intl.Segmenter
+    globalThis.Intl.Segmenter = class {
+      segment(): never {
+        throw new Error("boom");
+      }
+    };
+    try {
+      const v = view("萧决推开门。", { text: "屋里没有点灯。", pos: 6 });
+      expect(acceptSuggestionChunk(v)).toBe(true);
+      expect(v.state.doc.toString()).toBe("萧决推开门。屋里没有点灯。");
+      expect(v.state.field(suggestionField)).toBeNull();
+    } finally {
+      // @ts-expect-error 换回真的
+      globalThis.Intl.Segmenter = originalSegmenter;
+    }
+  });
+
   it("没有建议时让路，不吞掉方向键正常挪动光标", () => {
     const v = view("萧决推开门。");
     expect(acceptSuggestionChunk(v)).toBe(false);
