@@ -438,7 +438,10 @@ export function useRefreshPanels(pid: string | null) {
 export function useSaveChapter(pid: string, chapter: number) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (markdown: string) => api.put(proj(pid, `/chapters/${chapter}/text`), { markdown }),
+    // `expected_text_sha256` 是必填的乐观闸（ADR 0021）：调用方依据的那一份正文的哈希，
+    // 来自 `GET …/text` 的 `text_sha256`，不许前端自己另算一份。
+    mutationFn: (body: { markdown: string; expected_text_sha256: string }) =>
+      api.put(proj(pid, `/chapters/${chapter}/text`), body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["chapters", pid] });
       qc.invalidateQueries({ queryKey: ["text", pid, chapter] });

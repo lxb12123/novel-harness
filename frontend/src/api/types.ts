@@ -235,6 +235,8 @@ export interface ChapterRow {
 export interface ChapterText {
   number: number;
   markdown: string;
+  /** 下一次 PUT 的 `expected_text_sha256`——乐观闸依据的就是这一份（ADR 0021）。 */
+  text_sha256: string;
 }
 
 export interface ChapterSnapshot {

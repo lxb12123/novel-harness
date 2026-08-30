@@ -27,6 +27,10 @@ type Handler = {
   match: RegExp;
   status?: number;
   body?: unknown | (() => unknown | Promise<unknown>);
+  /** 命中之后、算响应之前先跑一下——用来**抓请求本身**（比如 PUT 的 body 里到底
+   *  发了哪些字段）。2026-08-30 的 422 事故就是这条缝的实例：请求体形状错了，
+   *  但没有一个 vitest 断言看过 `init.body` 里到底装的什么，只看响应对不对。 */
+  onRequest?: (init: RequestInit | undefined) => void;
   /** 原始 SSE 帧（含 `event:` / `data:` / 结尾那个空行）。
    *
    *  **单个帧可以是一个 Promise**：要观察「跑到一半屏幕上是什么」就得能把流卡在
@@ -252,6 +256,7 @@ export function stubFetch(extra: Handler[] = []): void {
       (r) => (r.method ?? "GET") === method && r.match.test(String(url)),
     );
     if (!hit) throw new Error(`测试里没有为 ${method} ${url} 准备 handler`);
+    hit.onRequest?.(init);
     const status = hit.status ?? 200;
     const ok = status < 400;
     const body = typeof hit.body === "function" ? await hit.body() : hit.body;

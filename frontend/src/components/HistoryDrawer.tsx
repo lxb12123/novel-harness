@@ -92,7 +92,9 @@ export function HistoryDrawer({
   function confirm() {
     if (!pending || !target) return;
     if (pending.kind === "restore") {
-      restore.mutate(target.text, {
+      // 还原写的也是普通保存那条路，乐观闸依据的是**当前磁盘那一版**的哈希
+      // （`current`，不是 `target`——`target` 是要写成的内容，不是这次写入前磁盘上的内容）。
+      restore.mutate({ markdown: target.text, expected_text_sha256: current?.text_sha256 ?? "" }, {
         onSuccess: () => {
           setPending(null);
           onRestored?.();

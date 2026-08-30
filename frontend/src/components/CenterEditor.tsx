@@ -48,6 +48,10 @@ export function CenterEditor() {
   /** 编辑器手上这份的**出处**（上一次采纳的磁盘正文）。判「别处改过没有」拿它比，
    *  拿 `doc` 比会把作者自己敲的每一个字都算成别人改的（`editorDoc.ts` 第三条）。 */
   const loadedRef = useRef<string | null>(null);
+  /** `loadedRef` 那份的 sha256，随它同步更新。保存时当 `expected_text_sha256` 送回去
+   *  （ADR 0021 的乐观闸）——**不能现算**：后端比对的是它自己发出的那份哈希，前端另算
+   *  一份等于自己发明一个「服务端 hash」。 */
+  const loadedShaRef = useRef<string | null>(null);
   // 下面那个 effect 只在 `data` 变时跑，闭包里的 `dirty` 会是旧的 —— 用 ref 兜住最新值。
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
@@ -75,6 +79,7 @@ export function CenterEditor() {
     setOpen(true);
     setDirty(false);
     loadedRef.current = null;
+    loadedShaRef.current = null;
     setDocFor(null);
     setDiskAhead(false);
   }, [chapter, projectId]);
@@ -90,6 +95,7 @@ export function CenterEditor() {
     if (what === "same") return;
     if (what === "warn") return setDiskAhead(true);
     loadedRef.current = data.markdown;
+    loadedShaRef.current = data.text_sha256;
     setDoc(data.markdown);
     setDiskAhead(false);
   }, [data]);
@@ -162,7 +168,12 @@ export function CenterEditor() {
         <button
           className="save-btn"
           disabled={!dirty || save.isPending}
-          onClick={() => save.mutate(doc, { onSuccess: () => setDirty(false) })}
+          onClick={() =>
+            save.mutate(
+              { markdown: doc, expected_text_sha256: loadedShaRef.current ?? "" },
+              { onSuccess: () => setDirty(false) },
+            )
+          }
         >
           {language === "zh" ? "保存" : "Save"}
           {dirty ? (

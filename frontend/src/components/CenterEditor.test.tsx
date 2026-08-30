@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { fixtures, renderWithApi } from "../test/harness";
 import { useCoords } from "../store";
+import { withTitle } from "../chapterTitle";
 import { CenterEditor } from "./CenterEditor";
 
 beforeEach(() => {
@@ -36,7 +37,21 @@ describe("中栏编辑器", () => {
   it("改标题 = 改正文第一行，走的是同一条「未保存 → 保存」的路", async () => {
     // 没有 rename 端点：标题在磁盘上就是正文的第一行，第二条写路径 = 第二份真相。
     const user = userEvent.setup();
-    renderWithApi(<CenterEditor />);
+    // 2026-08-30：这一位曾经整个漏发，后端 422 拒了**所有**保存（`expected_text_sha256`
+    // 是必填字段，前端只发了 `markdown`）。没有任何 vitest 看过 PUT 的真实请求体，
+    // 所以它在 pytest（后端测试逐条显式传这一位）和这份手写 fixture 之间的缝里躲过了
+    // 两边——这条 `onRequest` 断言把那条缝钉住：只看响应对不对不够，得看发出去的是什么。
+    let putBody: { markdown?: string; expected_text_sha256?: string } | null = null;
+    renderWithApi(<CenterEditor />, [
+      {
+        method: "PUT",
+        match: /\/chapters\/\d+\/text$/,
+        onRequest: (init) => {
+          putBody = init?.body ? JSON.parse(String(init.body)) : null;
+        },
+        body: fixtures.chapterSaved,
+      },
+    ]);
     await screen.findByText(fixtures.chapters[0].title);
 
     await user.dblClick(screen.getByRole("button", { name: "当前章节" }));
@@ -61,6 +76,13 @@ describe("中栏编辑器", () => {
       expect(document.querySelector(".save-badge-icon.snowflake")).not.toBeNull(),
     );
     expect(document.querySelector(".save-badge-icon.droplet")).toBeNull();
+
+    // 发出去的那份必须带着这一位，且是从 `GET .../text` 拿到的那份真哈希，
+    // 不是空字符串（空字符串会在服务端比对时打不中现有内容，403/409，不是"忘发"那种静默）。
+    expect(putBody).toEqual({
+      markdown: withTitle(fixtures.chapterText.markdown, "第一章 血脉（改）"),
+      expected_text_sha256: fixtures.chapterText.text_sha256,
+    });
   });
 
   it("🔴 嵌着的场景条为空时**什么都不画** —— 正文上方不多一行常驻文案", async () => {
