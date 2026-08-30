@@ -424,6 +424,9 @@ body.resizing { cursor: col-resize; -webkit-user-select: none; user-select: none
 /* 行内续写的灰字（ADR 0015）。它是装饰不是文档内容——按 Tab 才落进正文。
    `user-select: none`：作者拖选一段正文去复制时，不该把还没接受的建议选进去。 */
 .cm-ghost { color: var(--dim); opacity: .75; font-style: italic; -webkit-user-select: none; user-select: none; }
+/* 取景模式下鼠标划到的那截（按 Enter 会落成正文的部分）：比灰字更接近正墨的颜色，
+   带一条下划线当「已经选中、还没确认」的提示，跟仍然灰着的剩余部分区分开。 */
+.cm-ghost-preview { color: var(--ink); opacity: .6; font-style: italic; text-decoration: underline; text-decoration-color: var(--ink); -webkit-user-select: none; user-select: none; }
 
 /* 右栏「这一章提到：…」——引擎数出来的在场，不是作者填的表单 */
 .castline { display: flex; gap: 6px; align-items: baseline; flex-wrap: wrap; padding: 7px 12px; border-bottom: 1px solid var(--line); font-size: 12px; }

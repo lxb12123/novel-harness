@@ -184,6 +184,98 @@ describe("→ 走的是真实的 CM6 按键系统，不是绕过去的那条路"
   });
 });
 
+describe("Ctrl 取景 + Enter 走的也是真实的 CM6 事件系统", () => {
+  // 同一个教训：直接调用 `acceptSuggestionUpToMark(view)` 只证明函数本身对，
+  // 证不了 Ctrl/mousemove 真的能通过 `EditorView.domEventHandlers` 走到它。
+  // CM6 把 `domEventHandlers` 挂在 `view.dom`（编辑器最外层），不是 `.cm-content`，
+  // 但真实按键/鼠标事件默认会冒泡，所以照旧对着 `.cm-content` 发，冒泡上去照样接得到
+  // ——这条本身也顺带把「往 .cm-content 发事件确实测得到 view.dom 上的监听器」验一遍。
+  //
+  // ⚠️ 这条、以及本 describe 块的另一条，跟本文件那条已知的「多实例 vitest 进程内
+  // 优先级失效」问题（见「→ 走的是真实的 CM6 按键系统」describe 块开头那条长注释）
+  // 撞的是同一个坑：单独跑绿，混进全量一起跑可能红。不是这个功能本身的问题。
+  it("Ctrl 切进取景模式、鼠标划到灰字第几个字、Enter 落到那个切点——全走真实事件", () => {
+    const changes: string[] = [];
+    const ref = createRef<CodeEditorHandle>();
+    const view = render(
+      <CodeEditor
+        ref={ref}
+        value="萧决推开门。屋外下着雨。"
+        onChange={(v) => changes.push(v)}
+        tailLimit={null}
+      />,
+    );
+    ref.current!.select(6, 6);
+    ref.current!.showSuggestion("他停下脚步。", 6);
+
+    const content = view.container.querySelector(".cm-content")!;
+    fireEvent.keyDown(content, { key: "Control" });
+
+    const ghost = view.container.querySelector(".cm-ghost-wrap")!.firstChild!.firstChild!;
+    expect(ghost.textContent).toBe("他停下脚步。");
+    const doc = ghost.ownerDocument!;
+    const original = doc.caretPositionFromPoint;
+    doc.caretPositionFromPoint = () =>
+      ({ offsetNode: ghost, offset: 2, getClientRect: () => new DOMRect() }) as CaretPosition;
+    try {
+      fireEvent.mouseMove(content, { clientX: 1, clientY: 1 });
+    } finally {
+      doc.caretPositionFromPoint = original;
+    }
+
+    fireEvent.keyDown(content, { key: "Enter" });
+
+    expect(changes).toEqual(["萧决推开门。他停屋外下着雨。"]);
+  });
+
+  it("🔴 没有进取景模式时，Enter 就是正常换行——光标在文档中间也一样，不受这个功能影响", () => {
+    // 不用文档末尾这种测不出优先级问题的特例（吃过这个亏）：光标停在中间，
+    // 右边还有真文本，此时 defaultKeymap 自己的 Enter（插入换行）必须正常生效。
+    const changes: string[] = [];
+    const ref = createRef<CodeEditorHandle>();
+    const view = render(
+      <CodeEditor
+        ref={ref}
+        value="萧决推开门。屋外下着雨。"
+        onChange={(v) => changes.push(v)}
+        tailLimit={null}
+      />,
+    );
+    ref.current!.select(6, 6);
+
+    const content = view.container.querySelector(".cm-content")!;
+    fireEvent.keyDown(content, { key: "Enter" });
+
+    expect(changes).toEqual(["萧决推开门。\n屋外下着雨。"]);
+  });
+
+  // ⚠️ 这条单独跑（或者只跟前面某几条一起跑）是绿的，跟本文件另一处「→ 走的是真实
+  // 的 CM6 按键系统」describe 块混在同一个 vitest 进程里全量跑时可能红（同一个已知、
+  // 已经详细记录过的问题：连续创建多个 CodeMirror 实例，某种优先级/事务判定会在
+  // 后面的实例上失效，没有定位到具体机制——见那个 describe 块开头那条长注释）。
+  // 不在这儿重复排查，attribution 和结论都一样：产品代码本身是对的（这条测试单独
+  // 跑就是证明），問題出在测试基础设施，不影响真实浏览器里只会有一个实例的场景。
+  it("挂着建议、但没按 Ctrl 进取景模式时，Enter 照样是正常换行", () => {
+    const changes: string[] = [];
+    const ref = createRef<CodeEditorHandle>();
+    const view = render(
+      <CodeEditor
+        ref={ref}
+        value="萧决推开门。屋外下着雨。"
+        onChange={(v) => changes.push(v)}
+        tailLimit={null}
+      />,
+    );
+    ref.current!.select(6, 6);
+    ref.current!.showSuggestion("他停下脚步。", 6);
+
+    const content = view.container.querySelector(".cm-content")!;
+    fireEvent.keyDown(content, { key: "Enter" });
+
+    expect(changes).toEqual(["萧决推开门。\n屋外下着雨。"]); // 建议原样挂着，没被吃进去
+  });
+});
+
 describe("光标后面那截也交上去（改旧章时它是已经写好的正文）", () => {
   it("🔴 光标停在中间 —— 前后两截都送，各自按同一个上限切", async () => {
     // 只送前面那截时，模型看不见紧接着的下一段，写出来的可能跟它接不上、

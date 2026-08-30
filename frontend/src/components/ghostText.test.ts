@@ -4,9 +4,13 @@ import { describe, expect, it } from "vitest";
 import {
   acceptSuggestion,
   acceptSuggestionChunk,
+  acceptSuggestionUpToMark,
   dismissSuggestion,
+  setPreviewMark,
   setSuggestion,
   suggestionField,
+  toggleGhostPreview,
+  updateGhostPreviewFromPoint,
 } from "./ghostText";
 
 // 灰字建议的核心不变式：**它不是文档内容**。
@@ -112,5 +116,92 @@ describe("按 → 逐口接受", () => {
   it("没有建议时让路，不吞掉方向键正常挪动光标", () => {
     const v = view("萧决推开门。");
     expect(acceptSuggestionChunk(v)).toBe(false);
+  });
+});
+
+describe("Ctrl 取景模式 + Enter 按切点接受", () => {
+  it("按 Ctrl 切进取景模式，切点从 0 开始；再按一次退出，切点跟着丢", () => {
+    const v = view("萧决推开门。", { text: "屋里没有点灯。", pos: 6 });
+    expect(v.state.field(suggestionField)?.previewMark).toBeUndefined();
+    expect(toggleGhostPreview(v)).toBe(false); // 纯修饰键，不拦截、照常冒泡
+    expect(v.state.field(suggestionField)?.previewMark).toBe(0);
+    toggleGhostPreview(v);
+    expect(v.state.field(suggestionField)?.previewMark).toBeNull();
+  });
+
+  it("没有建议时 Ctrl 什么都不做（不会凭空造出一个取景状态）", () => {
+    const v = view("萧决推开门。");
+    expect(toggleGhostPreview(v)).toBe(false);
+    expect(v.state.field(suggestionField)).toBeNull();
+  });
+
+  it("切点定在哪，Enter 就把哪之前的一截落成正文，之后的继续挂着", () => {
+    const v = view("萧决推开门。", { text: "屋里没有点灯，他愣住了。", pos: 6 });
+    toggleGhostPreview(v); // 进取景模式，切点先是 0
+    v.dispatch({ effects: setPreviewMark.of(4) }); // 模拟鼠标划到「屋里没有」之后
+    expect(acceptSuggestionUpToMark(v)).toBe(true);
+    expect(v.state.doc.toString()).toBe("萧决推开门。屋里没有");
+    expect(v.state.field(suggestionField)).toEqual({
+      text: "点灯，他愣住了。",
+      pos: 10,
+      previewMark: undefined,
+    });
+    expect(v.state.selection.main.head).toBe(10);
+  });
+
+  it("切点划到整段末尾时退化成整段接受，不留取景状态", () => {
+    const v = view("萧决推开门。", { text: "屋里没有点灯。", pos: 6 });
+    toggleGhostPreview(v);
+    v.dispatch({ effects: setPreviewMark.of(7) }); // 划到「屋里没有点灯。」的末尾
+    expect(acceptSuggestionUpToMark(v)).toBe(true);
+    expect(v.state.doc.toString()).toBe("萧决推开门。屋里没有点灯。");
+    expect(v.state.field(suggestionField)).toBeNull();
+  });
+
+  it("切点还是 0（刚进取景模式、鼠标还没划过灰字）时 Enter 让路，正常换行", () => {
+    const v = view("萧决推开门。", { text: "屋里没有点灯。", pos: 6 });
+    toggleGhostPreview(v); // 切点 = 0，还没落任何字
+    expect(acceptSuggestionUpToMark(v)).toBe(false);
+    expect(v.state.doc.toString()).toBe("萧决推开门。"); // 一个字都没落
+  });
+
+  it("没进取景模式时 Enter 让路，跟这个功能毫无关系", () => {
+    const v = view("萧决推开门。", { text: "屋里没有点灯。", pos: 6 });
+    // 没调 toggleGhostPreview，previewMark 是 undefined
+    expect(acceptSuggestionUpToMark(v)).toBe(false);
+  });
+
+  it("没有建议时 Enter 让路，不吞掉正常换行", () => {
+    const v = view("萧决推开门。");
+    expect(acceptSuggestionUpToMark(v)).toBe(false);
+  });
+
+  it("鼠标划到灰字范围外、或者取景模式没开，updateGhostPreviewFromPoint 什么都不做", () => {
+    const v = view("萧决推开门。", { text: "屋里没有点灯。", pos: 6 });
+    // 没进取景模式：previewMark 是 undefined，不是数字，函数应该直接让路。
+    expect(updateGhostPreviewFromPoint(v, 0, 0)).toBe(false);
+    expect(v.state.field(suggestionField)?.previewMark).toBeUndefined();
+  });
+
+  it("鼠标划到灰字 DOM 文本节点的第 N 个字符，切点跟着更新（模拟浏览器的坐标定位）", () => {
+    // jsdom 没有真排版，`caretPositionFromPoint` 测不出真实坐标对不对——这条钉的是
+    // 「浏览器给了一个文本节点 + 节点内偏移之后，textOffsetFromPoint 的换算对不对」，
+    // 真实的「这个坐标点对应哪个节点」只能靠人在真浏览器里验（already 手测过）。
+    const v = view("萧决推开门。", { text: "屋里没有点灯。", pos: 6 });
+    toggleGhostPreview(v);
+    const wrap = v.dom.querySelector(".cm-ghost-wrap");
+    const textNode = wrap!.firstChild!.firstChild!;
+    expect(textNode.textContent).toBe("屋里没有点灯。");
+    const doc = wrap!.ownerDocument;
+    const original = doc.caretPositionFromPoint;
+    // `getClientRect` 是真实 CaretPosition 接口要求的方法，这里用不到，随便给个空实现。
+    doc.caretPositionFromPoint = () =>
+      ({ offsetNode: textNode, offset: 3, getClientRect: () => new DOMRect() }) as CaretPosition;
+    try {
+      expect(updateGhostPreviewFromPoint(v, 10, 10)).toBe(false); // 不消费这次 mousemove
+      expect(v.state.field(suggestionField)?.previewMark).toBe(3);
+    } finally {
+      doc.caretPositionFromPoint = original;
+    }
   });
 });
