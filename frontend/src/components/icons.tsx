@@ -95,6 +95,30 @@ export function BotIcon({ open }: { open: boolean }) {
   );
 }
 
+/** 「续写正在生成」的小圈——挂在 `BotIcon` 角上的徽标，不是这份文件开头那套
+ *  「描边线稿」的语法：那套是给正文里独立站着的图标定的，这个是**实心刻度放射状**
+ *  旋转（Safari 标签页转圈那种），八根短刻度依次淡出淡入，营造转动的错觉——
+ *  跟着 `currentColor` 走这条继续成立，机器人本身是什么颜色它就是什么颜色。 */
+export function ThinkingSpinner() {
+  return (
+    <svg className="thinking-spinner" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      {Array.from({ length: 8 }, (_, i) => (
+        <rect
+          key={i}
+          x="11"
+          y="2.5"
+          width="2"
+          height="6"
+          rx="1"
+          fill="currentColor"
+          transform={`rotate(${i * 45} 12 12)`}
+          style={{ animationDelay: `${(i * -0.1).toFixed(2)}s` }}
+        />
+      ))}
+    </svg>
+  );
+}
+
 /**
  * 齿轮（AI 设置）。
  *
