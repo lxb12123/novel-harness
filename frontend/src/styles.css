@@ -377,13 +377,25 @@ body.resizing { cursor: col-resize; -webkit-user-select: none; user-select: none
 .edbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .edbar .who { font-weight: 600; } .edbar .spacer { flex: 1; }
 .edbar .status { font-size: 12px; color: var(--dim); }
-.edbar .status.err { color: var(--warn); } .edbar .status.ok { color: var(--ok); }
+.edbar .status.err { color: var(--warn); }
 /* 右边那两颗按钮**不许被压扁**：章标题是唯一该让步的东西（下面 `flex: 0 1 auto`），
    不钉这一条的话，长章标会把「保存」挤成两个字换行。
    **`>` 不能少**：章标题自己也是一颗 button，被这条罩上就再也收不成「…」了。 */
 .edbar > button { flex: 0 0 auto; }
 /* 「读回改动」那一小块跟着让步（它有一句说明文字，长章标 + 它一起会顶宽） */
 .edbar > .syncbox { flex: 0 1 auto; min-width: 0; }
+
+/* 保存按钮角上的水滴／雪花徽标：水滴＝手上还有没落盘的字（`--accent`，跟「水」沾边），
+   雪花＝落盘了、跟远端也对齐了（`--ok`，这个产品里「事情办妥了」一直是这个颜色）。
+   `drop-shadow` 不是 `box-shadow`——后者是矩形，糊在水滴/雪花这种镂空图形上会露馅。 */
+.save-btn { position: relative; }
+.save-badge-icon {
+  position: absolute; top: -6px; right: -6px; pointer-events: none;
+  width: 13px; height: 13px;
+  filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, .45));
+}
+.save-badge-icon.droplet { color: var(--accent); }
+.save-badge-icon.snowflake { color: var(--ok); }
 
 /* ── 中栏顶栏的章标题（挑章 + 双击改名）───────────────────────────────────────
    它替下来的是顶栏那个 <select>，而**那个白框没有跟着搬**：select 自带边框和底色，

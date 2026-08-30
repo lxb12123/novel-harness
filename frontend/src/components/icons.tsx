@@ -121,6 +121,59 @@ export function ThinkingSpinner() {
   );
 }
 
+/** 挂在「保存」按钮右上角的小徽标：手上这份还没落盘 = 一滴水（还没「定形」）；
+ *  已经存进磁盘、跟远端对齐了 = 一片雪花（定了）。跟 `ThinkingSpinner` 一样是
+ *  实心/描边图形而不是这份文件开头那套线稿语法——那套是给独立站着的图标定的，
+ *  这两个是叠在别的控件角上的状态徽标。阴影交给外面的 CSS（`filter: drop-shadow`），
+ *  这儿只管形状。 */
+export function DropletIcon() {
+  return (
+    <svg
+      className="save-badge-icon droplet"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** 稍微复杂一点的六芒雪花：一条主枝 + 上下两对侧枝 + 枝尖分叉，转 6 次拼成一整片
+ *  （同 `ThinkingSpinner` 那套「画一份、转出六份」的做法，几何算出来不是手描的）。
+ *  描边不实心——雪花的「有分叉的细枝」这个特征，实心填色会糊成一团。 */
+export function SnowflakeIcon() {
+  const arm = (
+    <>
+      <line x1="12" y1="12" x2="12" y2="3.2" />
+      <line x1="12" y1="8.6" x2="9.4" y2="6.8" />
+      <line x1="12" y1="8.6" x2="14.6" y2="6.8" />
+      <line x1="12" y1="5.6" x2="10.7" y2="4.4" />
+      <line x1="12" y1="5.6" x2="13.3" y2="4.4" />
+      <line x1="12" y1="3.2" x2="11" y2="2" />
+      <line x1="12" y1="3.2" x2="13" y2="2" />
+    </>
+  );
+  return (
+    <svg
+      className="save-badge-icon snowflake"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.1"
+      strokeLinecap="round"
+    >
+      {[0, 60, 120, 180, 240, 300].map((deg) => (
+        <g key={deg} transform={`rotate(${deg} 12 12)`}>
+          {arm}
+        </g>
+      ))}
+    </svg>
+  );
+}
+
 /**
  * 齿轮（AI 设置）。
  *

@@ -50,9 +50,17 @@ describe("中栏编辑器", () => {
     await waitFor(() =>
       expect(document.querySelector(".cm-line")?.textContent).toBe("第一章 血脉（改）"),
     );
-    // 「未保存」= 这次改动落在编辑器手上那份正文里，等作者按保存（没有第二条写路径）。
-    expect(screen.getByText("未保存")).toBeInTheDocument();
+    // 「未保存」（水滴徽标）= 这次改动落在编辑器手上那份正文里，等作者按保存
+    // （没有第二条写路径；文字 2026-08-30 改成了保存按钮角上的图标，见 icons.tsx）。
+    expect(document.querySelector(".save-badge-icon.droplet")).not.toBeNull();
     expect(screen.getByRole("button", { name: "保存" })).toBeEnabled();
+
+    // 按下保存，水滴换成雪花——「已保存并同步」也是这次改的同一批。
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() =>
+      expect(document.querySelector(".save-badge-icon.snowflake")).not.toBeNull(),
+    );
+    expect(document.querySelector(".save-badge-icon.droplet")).toBeNull();
   });
 
   it("🔴 嵌着的场景条为空时**什么都不画** —— 正文上方不多一行常驻文案", async () => {
@@ -137,7 +145,7 @@ describe("中栏编辑器", () => {
     const box = screen.getByRole("textbox", { name: "改这一章的名字" });
     await user.clear(box);
     await user.type(box, "第一章 血脉（我改的）{Enter}");
-    expect(screen.getByText("未保存")).toBeInTheDocument();
+    expect(document.querySelector(".save-badge-icon.droplet")).not.toBeNull();
 
     focusManager.setFocused(false);
     focusManager.setFocused(true);

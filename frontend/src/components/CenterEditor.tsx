@@ -12,6 +12,7 @@ import { saidToTheAuthor } from "../correctionError";
 import { useLanguage } from "../language";
 import { HistoryDrawer } from "./HistoryDrawer";
 import { ChapterTitle } from "./ChapterTitle";
+import { DropletIcon, SnowflakeIcon } from "./icons";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
 import { locate } from "../anchor";
 import { titleOf, withTitle } from "../chapterTitle";
@@ -140,18 +141,18 @@ export function CenterEditor() {
             ——**屏幕上的正文来自磁盘，而库里那份快照来自这颗按钮**。它今天的活由两处
             自动接管：保存时把这一章读回库并触发刷新（`api/app.py::_trigger_refresh`），以及回到这个
             标签页时把整本书对一遍（`reconcile.ts`，只 stat，722 章 ~4ms）。 */}
-        <span className={"status" + (saveErr ? " err" : save.isSuccess && !dirty ? " ok" : "")}>
-          {saveErr
-            ? (language === "zh" ? "保存被拒：" : "Save was refused: ") +
-              (saidToTheAuthor(saveErr) ?? saveErr.message)
-            : save.isPending
-              ? language === "zh" ? "保存中…" : "Saving…"
-              : dirty
-                ? language === "zh" ? "未保存" : "Unsaved"
-                : save.isSuccess
-                  ? language === "zh" ? "已保存并同步" : "Saved and synced"
-                  : ""}
-        </span>
+        {/* 「未保存」/「已保存并同步」这两态 2026-08-30 从文字改成了保存按钮角上的徽标
+            （水滴＝手上这份还没落盘，雪花＝落盘了、跟远端也对齐了——「定形」那个隐喻）。
+            这儿只留**说不清楚该配哪个图标的两态**：拒绝理由是变长的自由文本，
+            保存中是一个瞬间的过程，都不该被压成一个图形。 */}
+        {(saveErr || save.isPending) && (
+          <span className={"status" + (saveErr ? " err" : "")}>
+            {saveErr
+              ? (language === "zh" ? "保存被拒：" : "Save was refused: ") +
+                (saidToTheAuthor(saveErr) ?? saveErr.message)
+              : language === "zh" ? "保存中…" : "Saving…"}
+          </span>
+        )}
         <button
           onClick={() => setHistory(true)}
           title={language === "zh" ? "这一章改过什么" : "What’s changed in this chapter"}
@@ -159,10 +160,16 @@ export function CenterEditor() {
           {language === "zh" ? "历史" : "History"}
         </button>
         <button
+          className="save-btn"
           disabled={!dirty || save.isPending}
           onClick={() => save.mutate(doc, { onSuccess: () => setDirty(false) })}
         >
           {language === "zh" ? "保存" : "Save"}
+          {dirty ? (
+            <DropletIcon />
+          ) : (
+            save.isSuccess && <SnowflakeIcon />
+          )}
         </button>
       </div>
 

@@ -110,7 +110,8 @@ describe("一轮跑完之后，正文那一侧", () => {
     const content = document.querySelector(".cm-content") as HTMLElement;
     await user.click(content);
     await user.type(content, "作者刚打的半段");
-    await screen.findByText("未保存");
+    // 「未保存」2026-08-30 从文字改成了保存按钮角上的水滴徽标（见 icons.tsx）。
+    await waitFor(() => expect(document.querySelector(".save-badge-icon.droplet")).not.toBeNull());
 
     await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "把这一章写了");
     await user.click(screen.getByRole("button", { name: "发送" }));
