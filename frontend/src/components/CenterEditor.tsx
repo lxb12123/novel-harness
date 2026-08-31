@@ -101,6 +101,9 @@ export function CenterEditor() {
   }, [data]);
 
   const saveErr = save.error instanceof ApiError ? save.error : null;
+  // 「保存」按钮角上的水滴／雪花：徽标图标、按钮该不该用窄边距、悬浮说明文字，
+  // 三处都从同一份判定派生，别各自重新判一遍 `dirty`/`save.isSuccess`。
+  const saveBadge = dirty ? "unsaved" : save.isSuccess ? "synced" : null;
 
   // 一章都没有的书（刚建的空书、或稿子被从文件夹里删光了）：不进编辑器。
   // 不拦的话这儿会渲染一个**空白但完全正常**的编辑器——作者会以为自己打开了第 1 章，
@@ -166,8 +169,15 @@ export function CenterEditor() {
           {language === "zh" ? "历史" : "History"}
         </button>
         <button
-          className="save-btn"
+          className={"save-btn" + (saveBadge ? " has-badge" : "")}
           disabled={!dirty || save.isPending}
+          data-tip={
+            saveBadge === "unsaved"
+              ? (language === "zh" ? "未保存" : "Unsaved")
+              : saveBadge === "synced"
+              ? (language === "zh" ? "已保存并同步" : "Saved & synced")
+              : undefined
+          }
           onClick={() =>
             save.mutate(
               { markdown: doc, expected_text_sha256: loadedShaRef.current ?? "" },
@@ -176,11 +186,8 @@ export function CenterEditor() {
           }
         >
           {language === "zh" ? "保存" : "Save"}
-          {dirty ? (
-            <DropletIcon />
-          ) : (
-            save.isSuccess && <SnowflakeIcon />
-          )}
+          {saveBadge === "unsaved" && <DropletIcon />}
+          {saveBadge === "synced" && <SnowflakeIcon />}
         </button>
       </div>
 

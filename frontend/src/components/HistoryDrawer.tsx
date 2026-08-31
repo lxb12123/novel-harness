@@ -207,14 +207,14 @@ export function HistoryDrawer({
                 >
                   <button className="hist-pick" onClick={() => setSelId(s.snapshot_id)}>
                     {when(s.created_at)}
-                    {s.is_current && (
-                      <span className="cur">{language === "zh" ? "当前" : "Current"}</span>
-                    )}
                     <span className="len">
                       {language === "zh"
                         ? `${s.text.length} 字`
                         : `${s.text.length} character${s.text.length === 1 ? "" : "s"}`}
                     </span>
+                    {s.is_current && (
+                      <span className="cur">{language === "zh" ? "当前" : "Current"}</span>
+                    )}
                   </button>
                   <span className="hist-actions">
                     {!s.is_current && (
