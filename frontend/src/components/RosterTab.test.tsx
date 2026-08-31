@@ -54,13 +54,19 @@ describe("角色册", () => {
     expect(document.body.textContent).not.toMatch(/undefined/);
   });
 
-  it("组内按累计信息量降序（出场章数兜底），一颗按钮能倒过来", async () => {
-    // ── 为什么排序键是**两个数**（2026-08-25）────────────────────────────
+  it("组内按出场章数降序（累计信息量兜底），一颗按钮能倒过来", async () => {
+    // ── 为什么排序键是**两个数**，且出场章数在前（2026-08-31）──────────────
     //
-    // `information_score`（模型给他写的画像有多长）是主键，`appearance_chapters`
-    // 是兜底。两个数各自会在一整类书上恒为 0：分数要等带画像的抽取跑过，
-    // 章数要等总结落地。给作者一个「按哪个排」的下拉，他会撞上「换了个排法、
-    // 一列全是 0、看起来像坏了」；三级排序自己就退化得对。
+    // `appearance_chapters`（「N 章」）是主键——**这一行右边显示的就是它**，
+    // 按钮上写的「写得多 → 少」说的也是它。曾经主键是 `information_score`
+    // （模型给他写的画像有多长），可那个数不上屏：一本画像已经跑过的书，
+    // 屏幕上「20 章、2 章、11 章…」那一串看不出排序在哪
+    // （作者原话：「我看这个排序好像不是按照这个顺序来」）。
+    //
+    // `information_score` 退到兜底：出场章数相等时靠它分高下，两个数各自会在
+    // 一整类书上恒为 0（分数要等带画像的抽取跑过，章数要等总结落地）。给作者
+    // 一个「按哪个排」的下拉，他会撞上「换了个排法、一列全是 0、看起来像坏了」；
+    // 三级排序自己就退化得对。
     const user = userEvent.setup();
     renderWithApi(<RosterTab />);
     await screen.findByText(fixtures.rosterWithCounts[0].name);
@@ -68,7 +74,7 @@ describe("角色册", () => {
     const signal = new Map(
       fixtures.rosterWithCounts.map((n) => [
         n.name,
-        [n.information_score, n.appearance_chapters] as const,
+        [n.appearance_chapters, n.information_score] as const,
       ]),
     );
     const numbers = (group: string[]) => group.map((name) => signal.get(name) ?? [-1, -1]);
@@ -84,7 +90,7 @@ describe("角色册", () => {
       desc.some((group) => new Set(group.map((n) => n.join(","))).size > 1),
     ).toBe(true);
 
-    await user.click(screen.getByRole("button", { name: /写得多/ }));
+    await user.click(screen.getByRole("button", { name: "排序方向" }));
     for (const group of namesPerGroup().map(numbers)) {
       expect(group).toEqual([...group].sort((a, b) => cmp(b, a)));
     }

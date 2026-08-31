@@ -26,12 +26,14 @@ describe("右侧信息区", () => {
   });
 
   it("角色册空着的时候，加人的入口不能跟着一起消失", async () => {
-    // 这一格原先会把**整块面板**换成一句「先去加人」——连角色册和那个「＋」一起藏掉，
+    // 这一格原先会把**整块面板**换成一句「先去加人」——连角色册和那颗加号一起藏掉，
     // 于是作者停在一个叫他加人、却没有加人入口的面板上。
     const user = userEvent.setup();
     renderWithApi(<RightPanel />, [{ match: /\/roster$/, body: [] }]);
 
-    expect(await screen.findByRole("button", { name: "＋" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("button", { name: "建人物 / 地点 / 势力…" }),
+    ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "人物状态" }));
     expect(await screen.findByText(/添加人物或设定后/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "角色册" })).toBeInTheDocument();

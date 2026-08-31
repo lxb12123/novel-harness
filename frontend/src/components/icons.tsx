@@ -319,3 +319,43 @@ export function PlusIcon() {
     </svg>
   );
 }
+
+/**
+ * 排序方向（角色册那颗「按出场章数排」开关，`order` 是 `"desc" | "asc"`）。
+ *
+ * 三道长短不一的横杠代表**出场章数**这个量，箭头指它现在往哪边排：长杠在上、
+ * 箭头朝下 = 多→少；反过来 = 少→多。杠的长短排列和箭头方向说的是同一件事，
+ * 两个信号一起看错的概率比只画一个低。
+ *
+ * 上一版是文字按钮「写得多 → 少」+ 原生 `title`：四个字的中文和右边「＋」
+ * 那颗一个字符的按钮宽窄不一挤在同一行（作者原话：「这个升序降序的切换
+ * 按钮也很丑」）。换成这份文件开头那套图标语法之后宽度固定成一个按钮的大小；
+ * 说明也从原生 `title`（要等约一秒，作者另一次的原话是「以为没有」）换成
+ * `data-tip`（`.icon-btn::after`，.12s 就出来）。
+ */
+export function SortIcon({ order }: { order: "desc" | "asc" }) {
+  const bars = order === "desc" ? [17, 12, 7.5] : [7.5, 12, 17];
+  return (
+    <svg
+      className="icon"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <line x1="3.5" y1="6.4" x2={bars[0]} y2="6.4" />
+      <line x1="3.5" y1="12" x2={bars[1]} y2="12" />
+      <line x1="3.5" y1="17.6" x2={bars[2]} y2="17.6" />
+      <path d="M20 5.5v13" />
+      {order === "desc" ? (
+        <path d="M17.8 15.3 20 18.5 22.2 15.3" />
+      ) : (
+        <path d="M17.8 8.7 20 5.5 22.2 8.7" />
+      )}
+    </svg>
+  );
+}

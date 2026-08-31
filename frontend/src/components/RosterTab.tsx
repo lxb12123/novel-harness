@@ -14,6 +14,7 @@ import { readCorrectionError } from "../correctionError";
 import { type Language, useLanguage } from "../language";
 import { useCoords } from "../store";
 import { CharacterBasicInfo } from "./CharacterBasicInfo";
+import { PlusIcon, SortIcon } from "./icons";
 import { RosterDrawer } from "./RosterDrawer";
 
 // 角色册：右栏的第一格，也是默认那一格。
@@ -48,17 +49,28 @@ function Refusal({ error }: { error: unknown }) {
 /** 这一格的排序方向。**存在组件里不进 URL**：它是「我现在想怎么看」，不是坐标。 */
 type Order = "desc" | "asc";
 
-/** 组内排序：**累计信息量优先，出场章数兜底，名字保底。**
+/** 组内排序：**出场章数优先，累计信息量兜底，名字保底。**
  *
- *  ── 为什么是三级，而不是给作者一个「按哪个排」的下拉 ────────────────────
+ *  2026-08-31 之前主键是 `information_score`——**那是个 bug**：这一行右边显示的
+ *  数字是 `appearance_chapters`（「N 章」），按钮上写的也是「写得多 → 少」，可
+ *  真正决定顺序的是另一个不上屏的数。一本画像已经跑过的书两个数各走各的，
+ *  屏幕上那一串「20 章、2 章、11 章、7 章…」自然看不出排序在哪
+ *  （作者原话：「我看这个排序好像不是按照这个顺序来」）。**排序键必须是
+ *  作者在屏幕上验证得了的那个数**，不能是一个只活在数据里的量。
+ *
+ *  `information_score` 退到第二级只当同分兜底：出场章数相等时，靠它分出
+ *  「写得多但笔墨浅」和「写得少但笔墨深」——这一级排错了作者也感觉不到，
+ *  因为两边显示的「N 章」本来就相等。
+ *
+ *  ── 为什么还是三级，而不是给作者一个「按哪个排」的下拉 ────────────────────
  *
  *  两个数各自会在一整类书上恒为 0：
  *
- *  - `information_score` 要等**带画像的抽取**跑过（刚导进来的书全 0）；
- *  - `appearance_chapters` 要等**总结**落地（没生成过总结的书全 0）。
+ *  - `appearance_chapters` 要等**总结**落地（没生成过总结的书全 0）；
+ *  - `information_score` 要等**带画像的抽取**跑过（刚导进来的书全 0）。
  *
  *  给一个下拉的话，作者会撞上「换了个排法，一列全是 0，看起来像坏了」。
- *  三级排序自己就退化得对：分数分不出高下时按出场章数，两个都分不出时按名字。
+ *  三级排序自己就退化得对：出场章数分不出高下时按累计信息量，两个都分不出时按名字。
  *  **多一颗下拉不如少一种「看起来坏了」的样子。**
  *
  *  名字那一级不是装饰：没有它，同为 0 的那一大批每次渲染的顺序都不一样。 */
@@ -66,8 +78,8 @@ function bySignal(rows: RosterEntry[], order: Order): RosterEntry[] {
   const sign = order === "desc" ? -1 : 1;
   return [...rows].sort(
     (a, b) =>
-      sign * (a.information_score - b.information_score) ||
       sign * (a.appearance_chapters - b.appearance_chapters) ||
+      sign * (a.information_score - b.information_score) ||
       a.name.localeCompare(b.name, "zh"),
   );
 }
@@ -254,29 +266,44 @@ export function RosterTab() {
 
   return (
     <div>
+      {/* 两颗都是图标按钮，**悬浮说明用 `data-tip`，不用原生 `title`**——
+          原生 title 要等约一秒，作者的原话是「以为没有」，图标按钮不能靠它撑住
+          唯一的说明。`aria-label` 是名字，不随状态改；排序那颗按下去会怎样
+          （而不是它现在是什么）写在 `data-tip` 里，同顶栏那两颗开关的做法。
+
+          **两颗都带 `tip-right`**：右栏只有 400px 宽，这两颗又贴在 h2 最右边，
+          默认居中的气泡（`.icon-btn::after`）右边会探出 `.pane` 的 `overflow: auto`
+          之外被裁掉——实测过，`data-tip` 越长越明显（英文那颗「Add a character /
+          location / faction…」裁得只剩半句）。同顶栏设置齿轮那颗用 `.tip-right`
+          的理由一样：贴右边缘的图标按钮，气泡也得贴右边缘，不能居中。 */}
       <h2>
         {!empty && (
           <button
-            className="add"
-            onClick={() => setOrder(order === "desc" ? "asc" : "desc")}
-            title={
+            className={"icon-btn tip-right" + (order === "asc" ? " on" : "")}
+            aria-label={language === "zh" ? "排序方向" : "Sort order"}
+            aria-pressed={order === "asc"}
+            data-tip={
               language === "zh"
                 ? order === "desc" ? "改成写得少的排前面" : "改成写得多的排前面"
                 : order === "desc" ? "Sort least-written first" : "Sort most-written first"
             }
+            onClick={() => setOrder(order === "desc" ? "asc" : "desc")}
           >
-            {language === "zh"
-              ? order === "desc" ? "写得多 → 少" : "写得少 → 多"
-              : order === "desc" ? "Most → Least" : "Least → Most"}
+            <SortIcon order={order} />
           </button>
         )}
         {projectId && (
           <button
-            className="add"
+            className="icon-btn tip-right"
+            aria-label={
+              language === "zh" ? "建人物 / 地点 / 势力…" : "Add a character / location / faction…"
+            }
+            data-tip={
+              language === "zh" ? "建人物 / 地点 / 势力…" : "Add a character / location / faction…"
+            }
             onClick={() => setAdding(true)}
-            title={language === "zh" ? "建人物 / 地点 / 势力…" : "Add a character / location / faction…"}
           >
-            ＋
+            <PlusIcon />
           </button>
         )}
       </h2>
