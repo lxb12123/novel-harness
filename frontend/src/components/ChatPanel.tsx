@@ -31,6 +31,7 @@ import {
 } from "../chat";
 import { useLanguage, type Language } from "../language";
 import { useCoords } from "../store";
+import { useLiveDraft } from "../liveDraft";
 import { ChatSessions } from "./ChatSessions";
 import { BotIcon, SendIcon, StopIcon } from "./icons";
 import { CompareLink, DraftCandidates } from "./DraftCandidates";
@@ -193,15 +194,23 @@ function DraftingBox({ draft }: { draft: LiveDraft }) {
   // 这一格只留一屏高、自己会滚（`.chat-drafting-text`），所以**最新的字长在它的折线
   // 底下**：外面的对话区跟得再紧，这格里露出来的仍是开头那几行。它得自己跟着底走。
   const text = useFollowBottom<HTMLParagraphElement>();
+  // 这条流正画在左边的编辑器里（`liveDraft.ts`，作者 2026-09-12：「有个编辑的过程在左边
+  // 也能看到」）：这儿只留标题行，同一段字不画两遍。作者手上有没保存的字时编辑器不接，
+  // 那时字仍在这儿长。
+  const inEditor = useLiveDraft((s) => s.inEditor && s.draft?.stream === draft.stream);
   return (
     <div className="chat-drafting">
       <span className="chat-drafting-head">
         {draft.done ||
           (language === "zh"
-            ? `正在起草第 ${draft.chapter} 章…`
-            : `Drafting chapter ${draft.chapter}…`)}
+            ? inEditor
+              ? `正在起草第 ${draft.chapter} 章，正文在左侧…`
+              : `正在起草第 ${draft.chapter} 章…`
+            : inEditor
+              ? `Drafting chapter ${draft.chapter}; the text is on the left…`
+              : `Drafting chapter ${draft.chapter}…`)}
       </span>
-      {draft.text ? (
+      {inEditor ? null : draft.text ? (
         <p className="chat-drafting-text" ref={text.ref} onScroll={text.onScroll}>
           {draft.text}
         </p>

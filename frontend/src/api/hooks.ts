@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, proj } from "./client";
 import { runTurnStream } from "./turnStream";
+import { useLiveDraft } from "../liveDraft";
 import type {
   ActivityDetail,
   ActivityPage,
@@ -1158,6 +1159,8 @@ export function useRunTurn(pid: string) {
         },
         {
           onEvent: (event) => {
+            // 正在写的那一稿流进左边的编辑器（`liveDraft.ts`）：一片字到就长一片。
+            useLiveDraft.getState().apply(event);
             // **起草那一步跑完 = 那一章已经在磁盘上变了**（ADR 0048：起草即写入）。
             // 不等这一轮收场就把正文和版本历史重取——作者要的是「直接在左边看到」，
             // 而这一轮收场可能还在几十秒之后（模型还要说一句）。判据是工具名，不是
@@ -1171,6 +1174,10 @@ export function useRunTurn(pid: string) {
           },
         },
       ),
+    // 这一轮收场（跑完 / 没跑成）：编辑器里那条流的字**兜底清掉**。正常情形它早在
+    // 新正文到手时就清了（`CenterEditor`）；没写进去的那一档（作者中途改过那一章）
+    // 磁盘没变、没有新正文可等，只能在这儿收。
+    onSettled: () => useLiveDraft.getState().clear(),
     onSuccess: (_receipt, v) => {
       qc.invalidateQueries({ queryKey: ["chats", pid] });
       qc.invalidateQueries({ queryKey: ["activity", pid] });

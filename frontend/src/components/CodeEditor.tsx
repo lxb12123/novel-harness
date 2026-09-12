@@ -2,7 +2,7 @@ import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { EditorView, keymap, drawSelection, placeholder as cmPlaceholder } from "@codemirror/view";
 import { history, defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
-import { Annotation } from "@codemirror/state";
+import { Annotation, Compartment } from "@codemirror/state";
 import { ghostText, setSuggestion, suggestionField } from "./ghostText";
 import { IDLE_MS, tailAfter, tailBefore } from "../continuation";
 
@@ -87,10 +87,19 @@ export const CodeEditor = forwardRef<
      *  **这时不问**：随手猜一个数正是这次删掉的那个 bug，而「不确定就闭嘴」
      *  是这个仓库的默认动作。 */
     tailLimit: number | null;
+    /** 写作助手正往这一章里写（`liveDraft.ts`）时锁住键盘：这几十秒里作者敲的字会和
+     *  流进来的字混在一起，而且落盘那一刻会被磁盘上那一版盖掉。默认可编辑。 */
+    editable?: boolean;
+    /** 外部灌进来的字**长在末尾**时跟着滚到底（正在写的那一稿）。作者自己翻上去看
+     *  开头时不拽：判据是滚动条在不在底上，同 `ChatPanel::useFollowBottom`。 */
+    follow?: boolean;
   }
->(function CodeEditor({ value, onChange, onIdle, tailLimit }, ref) {
+>(function CodeEditor({ value, onChange, onIdle, tailLimit, editable = true, follow = false }, ref) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const editableConf = useRef(new Compartment());
+  const followRef = useRef(follow);
+  followRef.current = follow;
   // 回调放 ref，避免把它们进 mount 的 deps（否则每次 render 重建整个编辑器）。
   // 上限也放这个 ref：编辑器只挂载一次（下面那个 `[]`），作者在设置页换了模型之后
   // 新的数得进得来，而不是等他把整个工作台关掉重开。
@@ -104,6 +113,7 @@ export const CodeEditor = forwardRef<
       doc: value,
       parent: host.current,
       extensions: [
+        editableConf.current.of(EditorView.editable.of(editable)),
         history(),
         drawSelection(),
         keymap.of([...defaultKeymap, ...historyKeymap]),
@@ -121,7 +131,9 @@ export const CodeEditor = forwardRef<
           if (u.docChanged && !external) cb.current.onChange(u.state.doc.toString());
           // 停手计时：任何编辑或移动光标都重来一次。**这就是「取消」**——
           // 续写不需要增量失效，只需要过期的那次别落地（ghostText 的 field 会丢掉它）。
-          if (u.docChanged || u.selectionSet) {
+          // **外部灌入不算停手**：换章、写作助手往里流字，都不是作者在写——按它们计时
+          // 会在稿子正长着的时候去要一条续写建议。
+          if (!external && (u.docChanged || u.selectionSet)) {
             if (idleTimer.current) clearTimeout(idleTimer.current);
             const fire = cb.current.onIdle;
             if (fire) {
@@ -156,17 +168,36 @@ export const CodeEditor = forwardRef<
   }, []);
 
   // 换章 = 外部 value 变了 → 替换 doc。与当前一致时不 dispatch（避免用户输入触发的回灌抖动）。
+  // **只多了一截尾巴时只插尾巴**：正在写的那一稿一片一片到，整篇重换一次是把几千字
+  // 删了再写回去——光标、选区、滚动位置全丢，每一片都闪一下。
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
     const cur = view.state.doc.toString();
-    if (value !== cur) {
-      view.dispatch({
-        changes: { from: 0, to: cur.length, insert: value },
-        annotations: External.of(true),
-      });
-    }
+    if (value === cur) return;
+    const appended = value.startsWith(cur);
+    // 跟着底走：作者没翻上去时，新长出来的字始终在视野里。离底不到 8px 算「贴着底」
+    // （亚像素取整的余量，同 `ChatPanel::FOLLOW_SLACK`）；翻上去了就不拽。
+    const scroller = view.scrollDOM;
+    const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 8;
+    view.dispatch({
+      changes: appended
+        ? { from: cur.length, insert: value.slice(cur.length) }
+        : { from: 0, to: cur.length, insert: value },
+      annotations: External.of(true),
+      effects:
+        followRef.current && appended && atBottom
+          ? EditorView.scrollIntoView(value.length)
+          : undefined,
+    });
   }, [value]);
+
+  // 锁 / 解锁键盘（正在写的那一稿进来 / 写完了）。Compartment 重配置不重建编辑器。
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: editableConf.current.reconfigure(EditorView.editable.of(editable)) });
+  }, [editable]);
 
   useImperativeHandle(
     ref,

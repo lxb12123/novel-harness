@@ -18,6 +18,7 @@ import { locate } from "../anchor";
 import { splitHeading, titleOf, withTitle } from "../chapterTitle";
 import { cleanSuggestion, shouldSuggest } from "../continuation";
 import { diskChange } from "../editorDoc";
+import { useLiveDraft, visibleBody } from "../liveDraft";
 
 // 中栏正文编辑器（CodeMirror 6，§2.4——不是 TipTap）。
 // CM6 只是磁盘 chapters/NNNN.md 的便利视图：读 = GET text，存 = PUT → sync，DB 永不是
@@ -73,6 +74,25 @@ export function CenterEditor() {
   // 那份短了一截的文档（`chapterTitle.test.ts` 那条「差一个 head.length」钉的就是这个）。
   const { head, body } = splitHeading(doc);
 
+  // ── 写作助手正在往这一章里写（`liveDraft.ts`，ADR 0048 第二半）──────────────
+  //
+  // 那条流的字直接画在这儿，章标那一行照旧留着（落盘时后端也保留作者的标题）。
+  // **作者手上有没保存的字时不接**：那几十秒里换掉他的字，落盘那一刻又被磁盘盖一次，
+  // 两次都是找不回来的方向；那时它仍在右边那一格里长，这儿只在落盘后说一句「别处改过」
+  // （`diskAhead`，同以前）。落盘之后新正文到手（新的 sha）才把这条流放掉，
+  // 中间没有一帧闪回旧稿。
+  const live = useLiveDraft((s) => s.draft);
+  const setInEditor = useLiveDraft((s) => s.setInEditor);
+  const clearLive = useLiveDraft((s) => s.clear);
+  const liveHere = live !== null && live.chapter === chapter && docFor === chapter && !dirty;
+  useEffect(() => {
+    setInEditor(liveHere);
+  }, [liveHere, setInEditor]);
+  // 第一片字到手之前编辑器里仍是原来的正文：那几秒换成一片空白，作者看到的是
+  // 「这一章没了」，而不是「它要开始写了」。
+  const liveBody = liveHere ? visibleBody(live.text) : "";
+  const showLive = liveHere && liveBody !== "";
+
   // R4 冲突回跳（§2.6 方向二）：点 issue 设 highlight → 按 quote 重寻 → 命令 CM6 选中并滚进视野。
   useEffect(() => {
     if (!highlight) return;
@@ -121,7 +141,10 @@ export function CenterEditor() {
     loadedShaRef.current = data.text_sha256;
     setDoc(data.markdown);
     setDiskAhead(false);
-  }, [data]);
+    // 磁盘上那一版换了（多半就是刚落盘的那一稿）：编辑器里那条流让位给它。
+    const streaming = useLiveDraft.getState().draft;
+    if (streaming !== null && streaming.chapter === data.number) clearLive();
+  }, [data, clearLive]);
 
   const saveErr = save.error instanceof ApiError ? save.error : null;
   // 「保存」按钮角上的水滴／雪花：徽标图标、按钮该不该用窄边距、悬浮说明文字，
@@ -176,6 +199,11 @@ export function CenterEditor() {
             （水滴＝手上这份还没落盘，雪花＝落盘了、跟远端也对齐了——「定形」那个隐喻）。
             这儿只留**说不清楚该配哪个图标的两态**：拒绝理由是变长的自由文本，
             保存中是一个瞬间的过程，都不该被压成一个图形。 */}
+        {liveHere && (
+          <span className="status" role="status">
+            {language === "zh" ? "写作助手正在写入本章…" : "The writing assistant is writing this chapter…"}
+          </span>
+        )}
         {(saveErr || save.isPending) && (
           <span className={"status" + (saveErr ? " err" : "")}>
             {saveErr
@@ -260,7 +288,9 @@ export function CenterEditor() {
       <div className="cm-wrap">
         <CodeEditor
           ref={editorRef}
-          value={body}
+          value={showLive ? liveBody : body}
+          editable={!liveHere}
+          follow={showLive && !live.done}
           tailLimit={settings.data?.continuation_tail_limit ?? null}
           onChange={(v) => {
             setDoc(head + v);

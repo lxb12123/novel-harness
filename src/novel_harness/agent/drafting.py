@@ -120,6 +120,23 @@ ADR 0011 D4 的原文是「产品 reasoning 默认 `off`；M2 请求 `high`」�
 """
 
 SELF_NOTE_MARK: Final = "〖自述〗"
+"""写手那句自述前面的记号。**只有这一个是引擎的记号**；下面那几个变体只在**第一行**认。"""
+
+SELF_NOTE_LOOKALIKES: Final[tuple[str, ...]] = (
+    SELF_NOTE_MARK,
+    "【自述】",
+    "「自述」",
+    "『自述』",
+    "（自述）",
+    "(自述)",
+    "〖自述】",
+    "【自述〗",
+)
+"""模型把记号「正常化」成的那几种括号族。**只在第一个非空行的开头认**——2026-09-12 起稿子
+写完直接进那一章（ADR 0048），真书上写手把 `〖自述〗` 写成了 `「自述」`，那一行
+「「自述」以贾环视角贯穿……」就进了作者的第 158 章。第一行开头的 `「自述」` 不可能是
+写手的散文（它是我们要它写的那一行），行中 / 后面的仍然一律不认（`split_self_note`）。
+"""
 """那一稿的自述，写在正文**第一行**、用这个记号开头。
 
 ── 为什么自述由**写它的那个模型**给（ADR 0022）──────────────────────────
@@ -208,6 +225,28 @@ def _without_mark_debris(note: str) -> str:
     return note
 
 
+def _cut_leading_lookalike(text: str) -> tuple[str, str]:
+    """第一个非空行以某个记号变体开头 ⇒ 整行切下来当自述（`SELF_NOTE_LOOKALIKES`）。
+
+    只看第一个非空行的**开头**：那是我们要它写自述的位置，写手的散文不会从「「自述」」
+    起笔。别处的变体不动——那儿的判据仍然是 `split_self_note` 那一段写的。
+    """
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if not line.strip():
+            continue
+        stripped = line.lstrip()
+        mark = next((m for m in SELF_NOTE_LOOKALIKES if stripped.startswith(m)), None)
+        if mark is None or mark == SELF_NOTE_MARK:
+            return text, ""
+        note = _without_mark_debris(stripped[len(mark) :]).lstrip("：: ").strip()
+        rest = "\n".join(lines[:i] + lines[i + 1 :]).strip("\n")
+        if len(note) > SELF_NOTE_UNITS:
+            note = note[:SELF_NOTE_UNITS] + "……"
+        return rest, note
+    return text, ""
+
+
 def split_self_note(text: str) -> tuple[str, str]:
     """把写手那句自述从正文里切下来。返回 `(正文, 自述)`。
 
@@ -235,19 +274,22 @@ def split_self_note(text: str) -> tuple[str, str]:
     他看见的是一个乱码字，看不出那是引擎自己的记号漏了半边。`_without_mark_debris`
     只削自述这一侧，理由写在它自己的 docstring 里。
 
-    ── 认不出的那些，一律不认（这条比补漏更硬）────────────────────────────
+    ── 认不出的那些，一律不认（这条比补漏更硬）——**除了第一行开头**────────
 
-    `〖自述`（只写了一半）、`【自述】` / `（自述）`（换了括号族）、`〖自述 〗`
-    （记号里多了个空格）——**全都不认**。后两种是中文里天生就有的括号加一个常用词，
-    认它就等于宣布「作者的正文里不许出现这几个字」，而误切的方向是
-    **正文被切进自述、然后连同超出 60 字的部分一起丢掉**，那是作者的稿子。
-    不认的代价只是他的稿子开头多一行机器话：看得见，能自己删。
+    `〖自述`（只写了一半）、`〖自述 〗`（记号里多了个空格）、`〖说明〗`（换了个说法）
+    ——**不认**。`【自述】` / `「自述」` / `（自述）`（换了括号族）在**行中或后面的行**
+    也不认：那是中文里天生就有的括号加一个常用词，认它就等于宣布「正文里不许出现
+    这几个字」，而误切的方向是**正文被切进自述、然后连同超出 60 字的部分一起丢掉**。
+    **只有一处例外**：第一个非空行以这几个变体开头（`_cut_leading_lookalike`）。
+    2026-09-12 之前不认的代价只是候选卡开头多一行机器话（看得见，能自己删）；
+    ADR 0048 之后稿子直接进书，那一行就进了作者的第 158 章。第一行开头是我们要它写
+    自述的位置，写手的散文不会从那儿起笔——切它不可能切到正文。
     `tests/test_draft_candidates.py::test_anything_that_is_not_the_engines_own_mark_is_left_alone`
-    是对「未来那个更聪明的修法」的守卫。
+    仍然守着「像自述就认」那条线。
     """
+    text, note = _cut_leading_lookalike(text)
     if SELF_NOTE_MARK not in text:
-        return text, ""
-    note = ""
+        return text, note
     kept: list[str] = []
     for line in text.split("\n"):
         head, mark, tail = line.partition(SELF_NOTE_MARK)
