@@ -99,9 +99,10 @@ export function CenterEditor() {
   const placedInEditor = useLiveDraft((s) => s.placedInEditor);
   const savedFromEditor = useLiveDraft((s) => s.savedFromEditor);
   const discarded = useLiveDraft((s) => s.discarded);
-  /** 编辑器里这份未保存的正文来自写作助手的哪一稿（保存时随请求送回去；`""` = 那一稿
-   *  没有编号——没写成、半截）。`null` = 不是它放进来的。 */
-  const [placed, setPlaced] = useState<string | null>(null);
+  /** 编辑器里这份正文来自写作助手的哪一稿（保存时随请求送回去；`draftId` 为 `""` = 那一稿
+   *  没有编号——没写成、半截）。`unchanged` = 它和本章正文一字不差（写手照抄了现有正文），
+   *  那时没有东西可保存，顶栏说的是这一句而不是「按保存」。`null` = 不是它放进来的。 */
+  const [placed, setPlaced] = useState<{ draftId: string; unchanged: boolean } | null>(null);
   const liveHere = live !== null && live.chapter === chapter && docFor === chapter;
   useEffect(() => {
     setInEditor(liveHere);
@@ -129,14 +130,18 @@ export function CenterEditor() {
     const nextBody = visibleBody(live.text);
     if (nextBody === "") {
       // 没写成 / 半截什么都没有：放掉，编辑器原样。
-      placedInEditor({ chapter, draftId: "" });
+      placedInEditor({ chapter, draftId: "", unchanged: false });
       discarded();
       return;
     }
+    // 和本章正文一字不差（写手把现有正文照抄了回来，真书第 158 章连着五稿都是）：不脏——
+    // 没有东西可保存，痕迹自然也一处都没有；顶栏和右边那一行都说明这件事，作者才知道
+    // 「为什么没有红绿」不是界面坏了。
+    const unchanged = head + nextBody === (loadedRef.current ?? "");
     setDoc(head + nextBody);
-    setDirty(true);
-    setPlaced(live.draftId);
-    placedInEditor({ chapter, draftId: live.draftId });
+    setDirty(!unchanged);
+    setPlaced({ draftId: live.draftId, unchanged });
+    placedInEditor({ chapter, draftId: live.draftId, unchanged });
   }, [liveHere, live, typed.caughtUp, head, chapter, placedInEditor, discarded]);
   /** 作者翻上去看前面的字了：那颗「滑到最下方」要出来。 */
   const [pinned, setPinned] = useState(true);
@@ -254,12 +259,17 @@ export function CenterEditor() {
           </span>
         )}
         {/* 写作助手那一稿在这儿、还没保存：一句它是什么、怎么处置。没有「放弃」这颗按钮
-            （作者：「没必要存在」）——它是一份未保存的修改，退路和作者自己的字一样。 */}
-        {placed !== null && dirty && !save.isPending && (
+            （作者：「没必要存在」）——它是一份未保存的修改，退路和作者自己的字一样。
+            和正文一字不差的那一稿：说清没有东西可保存。 */}
+        {placed !== null && !save.isPending && (dirty || placed.unchanged) && (
           <span className="status">
-            {language === "zh"
-              ? "写作助手的一稿，按「保存」写入本章"
-              : "A draft from the writing assistant; click Save to write it into this chapter"}
+            {dirty
+              ? language === "zh"
+                ? "写作助手的一稿，按「保存」写入本章"
+                : "A draft from the writing assistant; click Save to write it into this chapter"
+              : language === "zh"
+                ? "写作助手的这一稿与本章正文相同"
+                : "This draft from the writing assistant is identical to the chapter text"}
           </span>
         )}
         {(saveErr || save.isPending) && (
@@ -304,7 +314,7 @@ export function CenterEditor() {
                 expected_text_sha256: loadedShaRef.current ?? "",
                 // 这份正文来自写作助手的哪一稿（ADR 0048）：后端据此在候选表上记「进书了」，
                 // 日志页上留作者那一行。作者自己写的字没有这一位。
-                ...(placed ? { draft_id: placed } : {}),
+                ...(placed?.draftId ? { draft_id: placed.draftId } : {}),
               },
               {
                 onSuccess: () => {
@@ -312,7 +322,7 @@ export function CenterEditor() {
                   // 痕迹是「和保存版差在哪」：刚存的这份就是保存版了，痕迹当场消失（作者的原话
                   // 「点击保存这个底就消失了」）。`loadedRef` 那份等重取回来再换——那一次带着新的 sha。
                   setSaved(doc);
-                  savedFromEditor(placed ?? "");
+                  savedFromEditor(placed?.draftId ?? "");
                   setPlaced(null);
                 },
               },

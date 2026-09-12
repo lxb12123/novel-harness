@@ -57,7 +57,7 @@ export function CompareLink({
   );
 }
 
-type Where = "editor" | "saved" | "desk";
+type Where = "editor" | "unchanged" | "saved" | "desk";
 
 /** 一稿一行。 */
 function DraftRow({
@@ -82,7 +82,11 @@ function DraftRow({
         ? language === "zh"
           ? "已放入编辑器，按「保存」写入本章"
           : "In the editor; click Save to write it into the chapter"
-        : null;
+        : where === "unchanged"
+          ? language === "zh"
+            ? "已放入编辑器，与本章正文相同"
+            : "In the editor; identical to the chapter text"
+          : null;
   return (
     <p className="draft-row">
       <b>{draftLabel(draft, language)}</b>
@@ -134,7 +138,13 @@ export function DraftCandidates({
   const saved = useLiveDraft((s) => s.saved);
   const present = useLiveDraft((s) => s.present);
   const whereOf = (d: DraftCandidateView): Where =>
-    d.landed || saved.includes(d.id) ? "saved" : placed?.draftId === d.id ? "editor" : "desk";
+    d.landed || saved.includes(d.id)
+      ? "saved"
+      : placed?.draftId === d.id
+        ? placed.unchanged
+          ? "unchanged"
+          : "editor"
+        : "desk";
   /** 「放入编辑器」没取到全文的那几稿（那一行下面说一句）。 */
   const [failed, setFailed] = useState<string[]>([]);
   /** 作者点「放入编辑器」：取那一稿的全文，走和流一样的路进编辑器（`liveDraft.ts::present`）。 */

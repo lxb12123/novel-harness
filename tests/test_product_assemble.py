@@ -435,8 +435,10 @@ def test_materials_become_their_own_section_and_are_budgeted_from_the_end() -> N
     )
     messages, kept, omitted = _append_target_and_materials([{"role": "user", "content": "g"}], request)
     assert (kept, omitted) == (2, 0), "空白那一条不算"
-    section = messages[-1]["content"]
-    assert messages[-1]["role"] == "system"
+    # 分区插在「这一场要写」那条用户消息**前面**——模型最后读到的是任务，不是资料。
+    assert [m["role"] for m in messages] == ["system", "user"]
+    assert messages[-1]["content"] == "g"
+    section = messages[0]["content"]
     assert "【助手补的资料】" in section
     assert "- 第 12 章：萧决在渡口第一次见到她。" in section
     assert "- 第 40 章原文节选：「你不该来。」" in section
@@ -459,3 +461,34 @@ def test_materials_become_their_own_section_and_are_budgeted_from_the_end() -> N
     # 一条都没有：整块不出现，也不多一个空 system 段。
     nothing = ChapterDraftRequest(goal="g", length=LENGTH)
     assert _append_target_and_materials([], nothing) == ([], 0, 0)
+
+
+def test_the_current_chapter_text_is_framed_as_the_thing_to_rewrite_and_precedes_the_brief() -> None:
+    """目标章当前正文那一段说清「这是要被替掉的，别照抄」，而且排在「这一场要写」前面。
+
+    真书第 158 章：助手连开五稿、要求各不相同，写手回的正文五次逐字节等于磁盘上那一章——
+    一段只挂着标签、又排在 prompt 最末的正文，在模型眼里就是「接着输出这个」。
+    """
+    from novel_harness.draft.length import DraftLanguage
+    from novel_harness.draft.product_draft import (
+        ChapterDraftRequest,
+        _append_target_and_materials,
+    )
+
+    current = "雨歇了。\n\n贾环站在废墟之中。"
+    request = ChapterDraftRequest(goal="写沉默。", length=LENGTH, target_chapter_text=current)
+    base = [{"role": "system", "content": "文风"}, {"role": "user", "content": "【这一场要写】写沉默。"}]
+    messages, _, _ = _append_target_and_materials(base, request)
+    assert [m["role"] for m in messages] == ["system", "system", "user"]
+    assert messages[-1] is base[-1], "任务那条用户消息仍然是最后一条"
+    section = messages[1]["content"]
+    assert section.index("【目标章当前正文】") < section.index("这一次是重写") < section.index(current)
+    assert "不要照抄" in section
+
+    english = ChapterDraftRequest(
+        goal="Silence.",
+        length=LENGTH.model_copy(update={"language": DraftLanguage.EN}),
+        target_chapter_text=current,
+    )
+    messages, _, _ = _append_target_and_materials(base, english)
+    assert "This is a rewrite" in messages[1]["content"]

@@ -127,7 +127,9 @@ function diffDecorations(
 interface DiffState {
   baseline: string | null;
   streaming: boolean;
-  language: Language;
+  /** 界面语言（折起来的那一行字用）。**不在这儿写死一个默认值**：它和保存版一起由
+   *  `setBaseline` 送进来，保存版还没到手时痕迹本来就一处都不画。 */
+  language: Language | null;
   /** 作者点开了的那几块红（按内容认）。 */
   expanded: ReadonlySet<string>;
   deco: DecorationSet;
@@ -136,7 +138,7 @@ const diffField = StateField.define<DiffState>({
   create: () => ({
     baseline: null,
     streaming: false,
-    language: "zh",
+    language: null,
     expanded: new Set(),
     deco: Decoration.none,
   }),
@@ -160,7 +162,7 @@ const diffField = StateField.define<DiffState>({
     }
     if (!changed && !tr.docChanged) return value;
     const deco =
-      baseline === null
+      baseline === null || language === null
         ? Decoration.none
         : diffDecorations(tr.state.doc, baseline, streaming, expanded, language);
     return { baseline, streaming, language, expanded, deco };

@@ -92,6 +92,9 @@ export function visibleBody(text: string): string {
 export interface PlacedDraft {
   chapter: number;
   draftId: string;
+  /** 写出来的和本章正文一字不差（写手把现有正文照抄了回来）：没有东西可保存，
+   *  右边那一行说的是「与本章正文相同」，不是「按保存写入」。 */
+  unchanged: boolean;
 }
 
 interface LiveDraftState {

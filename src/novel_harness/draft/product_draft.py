@@ -501,21 +501,45 @@ def draft_chapter(
     return ChapterDraft(result=result, memory=memory, calls=tuple(receipts))
 
 
+_TARGET_CHAPTER_ASK: Final = {
+    DraftLanguage.ZH: (
+        "（这是本章现在的正文。**这一次是重写**：按后面「这一场要写」的要求另写一整章，"
+        "写出来的会整章替掉它。不要照抄——只有要求里明确说保留的段落才原样保留，"
+        "其余按要求重新写。）"
+    ),
+    DraftLanguage.EN: (
+        "(This is the chapter's current text. **This is a rewrite**: write a whole new chapter "
+        "to the brief that follows; it replaces this text entirely. Do not copy it—keep a "
+        "passage verbatim only where the brief says to, and write everything else afresh.)"
+    ),
+}
+"""目标章当前正文那一段前面的一句：它是干什么用的。
+
+**没有这句之前，写手会把它原样抄回来。** 真书第 158 章：助手连开五稿、每稿的要求都不同
+（「写赢之后」「写沉默」……），写手回的正文却五次逐字节相同——就是磁盘上那一章。
+一段只挂着「目标章当前正文」标签、又排在整份 prompt 最末的正文，在模型眼里就是「接着输出
+这个」。所以现在①说清它是要被替掉的，②它排在「这一场要写」**前面**，模型最后读到的是任务。
+"""
+
+
 def _append_target_and_materials(
     messages: list[dict[str, str]],
     request: ChapterDraftRequest,
 ) -> tuple[list[dict[str, str]], int, int]:
-    """把「目标章当前正文」+「助手补的资料」作为**独立分区**追加到产品 prompt。
+    """把「目标章当前正文」+「助手补的资料」作为**独立分区**插进产品 prompt。
 
-    返回 `(messages, 补进去的资料段数, 砍掉的段数)`——砍了多少要进回执，
-    不静默（同 `render_target_chapter` 的覆盖回执）。
+    **插在最后那条用户消息（「这一场要写」）前面**，不追加在它后面——理由见
+    `_TARGET_CHAPTER_ASK`。返回 `(messages, 补进去的资料段数, 砍掉的段数)`——砍了多少
+    要进回执，不静默（同 `render_target_chapter` 的覆盖回执）。
     """
+    language = DraftLanguage(request.length.language)
     sections: list[str] = []
     if request.target_chapter_text:
         text, truncated = render_target_chapter(
             request.target_chapter_text, max_units=TARGET_CHAPTER_UNITS
         )
         sections.append("【目标章当前正文】")
+        sections.append(_TARGET_CHAPTER_ASK[language])
         sections.append(text)
         if truncated:
             sections.append(
@@ -531,7 +555,12 @@ def _append_target_and_materials(
         if cut:
             sections.append(f"（覆盖回执：助手还挑了 {len(materials) - len(kept)} 段，超出预算没有给到。）")
     if sections:
-        messages = [*messages, {"role": "system", "content": "\n".join(sections)}]
+        block = {"role": "system", "content": "\n".join(sections)}
+        # 最后一条是「这一场要写」那条用户消息时插在它前面；不是（没有用户消息）就追加。
+        if messages and messages[-1]["role"] == "user":
+            messages = [*messages[:-1], block, messages[-1]]
+        else:
+            messages = [*messages, block]
     return messages, len(kept), len(materials) - len(kept)
 
 

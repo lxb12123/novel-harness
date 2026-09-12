@@ -388,6 +388,39 @@ describe("正在写的那一稿流进左边", () => {
     expect(screen.getByText(/已放入编辑器，按「保存」写入本章/)).toBeInTheDocument();
   });
 
+  it("写出来的和本章正文一字不差：不脏、没有痕迹，顶栏和右边那一行都说「与本章正文相同」", async () => {
+    // 真书第 158 章：写手把现有正文照抄了回来，连着五稿逐字节相同。那时没有东西可保存，
+    // 也没有红绿——不说清楚，作者以为界面坏了（「为什么我这边左边还没有？」）。
+    const user = userEvent.setup();
+    const kept = { ...realEvent("draft_kept"), chapter: 1 };
+    const sameBody = "萧决在青云城主府第一次听说了血脉秘密的真相。\n李管家什么也没说。\n";
+    expect(fixtures.chapterText.markdown.endsWith(sameBody)).toBe(true); // 探针：正文就是这两段
+    renderWithApi(shell(), [
+      {
+        method: "POST",
+        match: /\/turn\/events$/,
+        stream: [
+          turnFrame(opened),
+          turnFrame(piece(sameBody)),
+          turnFrame(kept),
+          sseFrames([{ event: "receipt", data: { ...fixtures.chatTurn, drafts: [{ ...fixtures.chatTurn.drafts[0], id: kept.draft_id, chapter: 1 }] } }])[0],
+        ],
+      },
+    ]);
+    await screen.findByText("第 1 章");
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "重写这一章");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(useLiveDraft.getState().placed?.draftId).toBe(kept.draft_id));
+    await screen.findByText(ROUND_DONE);
+
+    expect(screen.getByText("写作助手的这一稿与本章正文相同")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+    expect(document.querySelector(".cm-line.diff-add")).toBeNull();
+    expect(document.querySelector(".diff-del")).toBeNull();
+    expect(screen.getByText(/已放入编辑器，与本章正文相同/)).toBeInTheDocument();
+    expect(screen.queryByText(/按「保存」写入本章/)).toBeNull();
+  });
+
   it("整章重写：旧章那一大块红折成一行「已删除 N 段」，新稿全绿在下面，点开才摊开旧稿", async () => {
     const user = userEvent.setup();
     const kept = { ...realEvent("draft_kept"), chapter: 1 };
