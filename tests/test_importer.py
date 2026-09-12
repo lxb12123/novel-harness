@@ -24,7 +24,6 @@ import pytest
 
 from novel_harness import importer, project
 from novel_harness.db import IN_MEMORY, Connection, connect, migrate
-from novel_harness.graph import ChapterInUse, ChapterUsage
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.importer import (
     ChapterChanged,
@@ -913,100 +912,6 @@ def test_append_chapter_never_overwrites(
 
     assert "别动我" in (tmp_path / importer.chapter_path(4)).read_text(encoding="utf-8")
 
-
-# ══════════════════════════════════════════════════════════════════════════
-# 删掉一章（章目录里那颗「⋯」）
-#
-# 这一组只管**磁盘那一半**：拒不拒绝是图层的活（`tests/test_canon_writer.py`
-# 的 delete_chapter 那一组），这儿钉的是「拒绝了的时候文件有没有被动过」
-# 和「删掉的稿子去哪儿了」。
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_remove_chapter_moves_the_file_instead_of_deleting_it(
-    store: SqliteStoryGraph, pid: str, tmp_path: Path
-) -> None:
-    """**那是作者的稿子。** 这颗按钮离「新起一章」只有一列的距离，按错的代价
-    不该是「三小时的字没了」——所以它挪进 `deleted/`，而不是 unlink。"""
-    importer.import_book(store, pid, txt=BOOK, root=tmp_path)
-    original = (tmp_path / importer.chapter_path(2)).read_text(encoding="utf-8")
-
-    moved = importer.remove_chapter(store, pid, tmp_path, 2)
-
-    assert not (tmp_path / importer.chapter_path(2)).exists()
-    assert moved.read_text(encoding="utf-8") == original  # 一个字节都没少
-    assert moved.parent == tmp_path / importer.DELETED_DIR
-    # 引擎当它不存在：`chapter_files` 只认 chapters/NNNN.md。
-    assert [c.number for c in importer.chapter_files(tmp_path)] == [1, 3]
-    assert 2 not in {c.number for c in store.current_snapshots(pid)}
-
-
-def test_remove_chapter_leaves_a_hole_and_does_not_renumber(
-    store: SqliteStoryGraph, pid: str, tmp_path: Path
-) -> None:
-    """**章号不重排。** 每一条边和每一条情节的 `valid_from` 都钉在章号上，
-    重排一次等于把整本书的时态挪位——而那件事没有任何一处会报错。"""
-    importer.import_book(store, pid, txt=BOOK, root=tmp_path)
-
-    importer.remove_chapter(store, pid, tmp_path, 2)
-
-    assert [c.number for c in importer.chapter_files(tmp_path)] == [1, 3]
-    # 洞留着，下一章接在最大号后面（`append_chapter` 取的就是最大号 +1）。
-    assert importer.append_chapter(store, pid, tmp_path)[0] == 4
-
-
-def test_remove_chapter_does_not_clobber_an_earlier_deletion(
-    store: SqliteStoryGraph, pid: str, tmp_path: Path
-) -> None:
-    """新建 → 删 → 再新建 → 再删：两次都是 `0004.md`。**第二次不许盖掉第一次。**"""
-    importer.import_book(store, pid, txt=BOOK, root=tmp_path)
-    importer.append_chapter(store, pid, tmp_path)
-    (tmp_path / importer.chapter_path(4)).write_text("第四章\n\n头一版。\n", encoding="utf-8")
-    importer.sync(store, pid, tmp_path)
-    first = importer.remove_chapter(store, pid, tmp_path, 4)
-
-    importer.append_chapter(store, pid, tmp_path)
-    (tmp_path / importer.chapter_path(4)).write_text("第四章\n\n第二版。\n", encoding="utf-8")
-    importer.sync(store, pid, tmp_path)
-    second = importer.remove_chapter(store, pid, tmp_path, 4)
-
-    assert first != second
-    assert "头一版" in first.read_text(encoding="utf-8")
-    assert "第二版" in second.read_text(encoding="utf-8")
-
-
-def test_remove_chapter_that_is_not_on_disk(
-    store: SqliteStoryGraph, pid: str, tmp_path: Path
-) -> None:
-    importer.import_book(store, pid, txt=BOOK, root=tmp_path)
-    with pytest.raises(importer.ChapterMissing):
-        importer.remove_chapter(store, pid, tmp_path, 9)
-
-
-def test_remove_chapter_keeps_the_file_when_the_library_refuses(
-    store: SqliteStoryGraph, pid: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """**先库后盘**，跟 `save_chapter` 的「磁盘先、DB 跟」是反的——因为这一次库那边
-    会拒绝。盘先动的话，作者会看见文件没了、然后弹一句「删不掉」，两件事同时成立。
-    """
-
-    def refuse(project_id: str, number: int) -> object:
-        raise ChapterInUse(
-            ChapterUsage(
-                chapter_number=number,
-                evidence=3,
-                edges=0,
-                events=0,
-                extraction_runs=0,
-                proposal_sets=0,
-            )
-        )
-
-    importer.import_book(store, pid, txt=BOOK, root=tmp_path)
-    monkeypatch.setattr(store, "delete_chapter", refuse)
-
-    with pytest.raises(ChapterInUse):
-        importer.remove_chapter(store, pid, tmp_path, 2)
-
-    assert (tmp_path / importer.chapter_path(2)).is_file()
-    assert not (tmp_path / importer.DELETED_DIR).exists()

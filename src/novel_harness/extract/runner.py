@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Final
 from hashlib import sha256
 import json
+import logging
 from dataclasses import dataclass
 from time import perf_counter
 
@@ -31,7 +32,7 @@ from .control import (
     ExtractionRunNotFound,
     ExtractionRunStateError,
     ExtractionRunStatus,
-    prompt_bytes,
+    identity_prompt_bytes,
     to_run,
 )
 from .models import RawChapterAnalysis
@@ -127,6 +128,27 @@ def _provider_error(exc: BaseException) -> ExtractionRunError:
     return _PROVIDER_ERRORS.get(getattr(exc, "kind", None), _PROVIDER_UNKNOWN)
 
 
+_log = logging.getLogger(__name__)
+
+
+def _diagnostic(what: str, exc: BaseException) -> str:
+    """给维护者的一句英文诊断，**带上那个异常本身**。
+
+    ⚠️ 这三个 `except Exception` 从前只落一句固定的话，把唯一的证据扔了。
+    真书上的代价：2026-09-05 那一轮里 91 章跑了 73 章失败（50 条 `ingest_failure`
+    + 23 条 `analysis_format`），而**没有任何地方记着为什么**——库里、日志里、
+    屏幕上全是同一句话，只能靠人再跑一次去猜。这和后台那条循环
+    （`api/background_runtime._loop` 的 `except: pass`）是同一个病。
+
+    落在两处，都不上作者的屏幕：
+    - `ExtractionRunError.message`（这一列**按定义就是写给维护者的英文诊断**，
+      读端 `activity._run_errors` 只翻 `code`，`test_wording_guard.py` 钉着这条）；
+    - `logging.exception` 的栈（跑在服务进程的终端里）。
+    """
+    _log.exception("抽取失败：%s", what)
+    return f"{what}: {type(exc).__name__}: {exc}"[:2000]
+
+
 class ExtractionRunner:
     """每条连接各自持有，并用 CAS 保证一个 run 至多付一次调用。"""
 
@@ -175,7 +197,7 @@ class ExtractionRunner:
                 raise ExtractionChapterNotFound(
                     f"chapter {chapter_number} has no current snapshot in project {project_id}"
                 )
-            encoded_prompt = prompt_bytes(str(snapshot["text"]))
+            encoded_prompt = identity_prompt_bytes(str(snapshot["text"]))
             prompt_hash = sha256(encoded_prompt).hexdigest()
             # 021 / Task 9：run 创建时冻结当前 generation + ruleset basis。
             # 完成时若这些已不是当前值 → SUPERSEDED（S1→S2→S1 的 ABA 只能靠
@@ -290,7 +312,11 @@ class ExtractionRunner:
             if not claimed_here:
                 return claimed
             chapter = self._immutable_chapter(conn, claimed)
-            request = AnalysisRequest(chapter)
+            # v9：把这本书已有的字段名喂回去，让模型先查再决定命名
+            # （`prompt.py` 顶上那段说了为什么不给固定表）。**它不进 `prompt_hash`**，
+            # 所以下面那条 PROMPT_DRIFT 检查照旧成立——图变了不算 prompt 变了。
+            known = SqliteStoryGraph(conn).state_dimension_names(claimed.project_id)
+            request = AnalysisRequest(chapter, known_dimensions=tuple(known))
             if request.prompt_hash != claimed.prompt_hash:
                 return self._mark_failed(
                     conn,
@@ -345,26 +371,26 @@ class ExtractionRunner:
                     elapsed_ms=elapsed_ms,
                     call_id_factory=self._new_call_id,
                 )
-            except Exception:
+            except Exception as exc:
                 return self._mark_failed(
                     conn,
                     run_id,
                     ExtractionRunError(
                         code=ExtractionErrorCode.CALL_RECORD_FAILURE,
-                        message="chapter analysis call could not be audited",
+                        message=_diagnostic("chapter analysis call could not be audited", exc),
                     ),
                 )
             try:
                 analysis = self._parser(audited.text)
                 if not isinstance(analysis, RawChapterAnalysis):
                     raise TypeError("parser must return RawChapterAnalysis")
-            except Exception:
+            except Exception as exc:
                 return self._mark_failed(
                     conn,
                     run_id,
                     ExtractionRunError(
                         code=ExtractionErrorCode.ANALYSIS_FORMAT,
-                        message="chapter analysis was not valid schema JSON",
+                        message=_diagnostic("chapter analysis was not valid schema JSON", exc),
                     ),
                 )
             # 模型调用期间正文又变了：调用已经花了钱，但结果不能进库（审计保留）。
@@ -382,14 +408,14 @@ class ExtractionRunner:
                     analysis,
                     call_id=call_id,
                 )
-            except Exception:
+            except Exception as exc:
                 conn.rollback()
                 return self._mark_failed(
                     conn,
                     run_id,
                     ExtractionRunError(
                         code=ExtractionErrorCode.INGEST_FAILURE,
-                        message="chapter analysis could not be ingested",
+                        message=_diagnostic("chapter analysis could not be ingested", exc),
                     ),
                 )
             # 自动升 CANON 在业务事务 commit **之后**，且**在上面那个 try 之外**：

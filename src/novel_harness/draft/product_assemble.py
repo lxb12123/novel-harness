@@ -177,6 +177,37 @@ def render_product_memory(memory: ResolvedProductContext, language: DraftLanguag
     return "\n".join(lines)
 
 
+def render_standing_rules(rules: Sequence[str], language: DraftLanguage) -> str:
+    """作者自己定下的那几条规矩，渲染成一段。**空的时候调用方根本不插这一段。**
+
+    今天只有一种规矩：`forbidden_literal`（作者在「检验规则」那一栏里写的一段字）。
+    它同时进两条路——**写之前进这段 prompt，写完之后由同一条规则去查**
+    （`checks/custom.py`），两边读的是同一行数据，不是两份措辞。
+
+    ⚠️ **和 `write_rule` 不是一回事，别合并**：`write_rule` 是作者挂在**这一段对话**上的
+    文风（`agent/store.py::start_conversation`），有范围、会随对话结束失效；这几条是
+    **一直有效的**，跟对话无关（维护者原话：「这跟 session 选中的那个规则不一样，
+    这个是作者定义的永久性规则」）。
+    """
+    heading = term(PromptTerm.STANDING_RULES_HEADING, language)
+    line = term(PromptTerm.STANDING_RULE_FORBIDDEN, language)
+    return "\n".join([heading, *(line.format(literal=rule) for rule in rules)])
+
+
+def insert_standing_rules(
+    base: list[dict[str, str]], rules: Sequence[str], language: DraftLanguage
+) -> list[dict[str, str]]:
+    """把「作者定下的规矩」插在稳定段之后。空的时候原样返回，**不插一个空块**。
+
+    单独抽出来是因为**退化那一支也要它**：不知道这一场有谁在的时候记忆前言装不出来
+    （`product_draft._with_memory`），可作者的规矩跟在场名单没有半点关系——
+    那时候把它一起丢掉，等于「记忆查不到 ⇒ 顺便也不守规矩了」。
+    """
+    if not rules:
+        return base
+    return _insert_memory(base, render_standing_rules(rules, language))
+
+
 def assemble_product(
     ctx: ResolvedConstraints,
     memory: ResolvedProductContext,
@@ -186,6 +217,7 @@ def assemble_product(
     previous_tail: str = "",
     previous_tail_limit: int = GATE_TAIL_CODE_POINTS,
     write_rule: str | None = None,
+    standing_rules: Sequence[str] = (),
 ) -> list[dict[str, str]]:
     """Insert safe memory after the stable style block, forwarding assembler args unchanged.
 
@@ -210,6 +242,10 @@ def assemble_product(
         previous_tail_limit=previous_tail_limit,
         write_rule=write_rule,
     )
+    # **规矩排在记忆前面**，理由就是上面那条块序判据（ADR 0019 边界六）：它是这份
+    # prompt 里**最不会变的东西之一**（作者哪天改了才变，比文风还稳），而记忆逐章变。
+    # 排在记忆后面 = 每章的记忆一变，它后面的前缀全废。
+    base = insert_standing_rules(base, standing_rules, length.language)
     return _insert_memory(base, render_product_memory(memory, length.language))
 
 

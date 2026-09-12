@@ -647,6 +647,51 @@ class StateValue(BaseModel):
     since_chapter: int
     evidence_id: str | None
 
+    author_owned: bool = False
+    """这一条**是作者亲手改过的**（active override 指向它）。
+
+    **默认 `False` 且只有历史那条读端会填**：`state_at().states` 不填它——那一项喂
+    写作模型和 `is_dead`，多一位没人读的字段只会让人以为它有意义。人物卡上拿它
+    打「你改过」的标记（作者 2026-09-06 要的：改过的那一格要看得出来）。
+    """
+
+
+class LocationVisit(BaseModel):
+    """他在第 `since_chapter` 章待的那个地方（`LOCATED_AT` 边的一次读取）。
+
+    **和 `StateValue` 不合并**：那个的 `dim` 是维度（修为 / 健康），值在 `value` 里；
+    这个的格子只有一个（「所在地」），dst 本身就是值。硬塞进 `StateValue` 会得到一个
+    `dim` 是地点、`value` 是地点名的东西——两个字段一份内容，下一个人一定读错。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    place: Node
+    since_chapter: int
+    evidence_id: str | None
+    author_owned: bool = False
+    """同 `StateValue.author_owned`。"""
+
+
+class RelationValue(BaseModel):
+    """一条 `RELATED_TO` 边**从某一端看**的解读结果（2026-09-12，写作助手的角色卡要它）。
+
+    **对端由 `Edge.peer_of()` 算**：RELATED_TO 是无向边，按 `(min(id), max(id))` 规范化
+    存储，`dst` 有一半概率就是本人（ADR 0008）。消费侧再也不用记这条——`state_at()`
+    把对端替它算好了。
+
+    **和 `StateValue` 不合并**：那个的 `dim` 是维度、值在 `value` 里；这个的对端本身就是
+    一个人，`value` 是作者/抽取器给这段关系写的字（师徒 / 仇敌 / 空）。
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    edge_id: str
+    peer: Node
+    value: str | None
+    since_chapter: int
+    evidence_id: str | None
+
 
 class StateSnapshot(BaseModel):
     """`state_at` 的出参：某节点在第 `chapter` 章的全部有效**出边**。
@@ -677,6 +722,14 @@ class StateSnapshot(BaseModel):
 
     states: list[StateValue] = Field(default_factory=list)
     """全部 `HAS_STATE`。人物卡渲染它，R3 读它。"""
+
+    relations: list[RelationValue] = Field(default_factory=list)
+    """全部 `RELATED_TO`，对端已经算好（`RelationValue.peer`）。
+
+    和 `location` / `states` 一样是 `edges` 的**投影，不是额外查询**——加它是因为
+    写作助手的角色卡（`agent/panels.py`）要读关系，而 `agent/` 不许碰 `edge.props`
+    （`tests/test_agent_tools.py` 的 AST 守卫）：值必须在 `graph/` 这边就解读好。
+    """
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -806,24 +859,24 @@ class EdgeSpec(BaseModel):
 
 
 class UpsertResult(BaseModel):
-    """`upsert_edge` 的出参：把 supersede 干了什么如实说出来。
+    """`upsert_edge` 的出参：把这一次写入干了什么如实说出来。
 
-    `test_supersede.py` 靠它断言，而不是靠回查数据库——「写入新边自动闭合旧边」
-    是个行为，行为要能被直接断言。
+    `test_supersede.py` 靠它断言，而不是靠回查数据库——行为要能被直接断言。
+
+    ⚠️ **`closed` 那一项 2026-09-06 删了**（[ADR 0043](../../../docs/adr/0043-facts-store-a-start-not-an-interval.md)）：
+    写入不再闭合任何旧边，「谁盖住谁」在读的时候算。它删之前已经恒为空列表，
+    而 `Declaration.closed` 那个转发字段全仓没有一个读者。
     """
 
     model_config = ConfigDict(frozen=True)
 
     edge: Edge
     created: bool
-    """True = 新插了一行并跑了 supersede；False = 撞上幂等键、只更新了 props 类字段，
-    **没跑 supersede**（理由见 store.upsert_edge 的契约）。"""
-
-    closed: list[Edge] = Field(default_factory=list)
-    """被闭合的旧边（`valid_to_chapter` 被写上了），已是更新后的值。"""
+    """True = 新插了一行；False = 撞上幂等键、只更新了 props 类字段
+    （理由见 store.upsert_edge 的契约）。"""
 
     retracted: list[Edge] = Field(default_factory=list)
-    """被撤回的旧边（同章更正），已是更新后的值。"""
+    """被撤回的旧边（**同章更正**，今天唯一一种写时冲突），已是更新后的值。"""
 
 
 class NodeSpec(BaseModel):
@@ -1177,7 +1230,7 @@ class NodeUsage(BaseModel):
     技术上就过了，**而且一声不吭**——这个人参与过的每一条关系、每一份名单都会在
     作者按下那颗按钮的一瞬间跟着没掉。**这个事实和当年一样成立，没有变过。**
 
-    变的是拿它怎么办。曾经的做法是数出来非零就拒绝（同 `ChapterUsage`），把决定权
+    变的是拿它怎么办。曾经的做法是数出来非零就拒绝，把决定权
     交给按按钮之前的作者。维护者裁定换掉这一半：**删照做，把「谁被删了、谁的
     事件因此掉了参与者」变成剩下的人身上一条看得见的通知**
     （`system_notifications.enqueue_event_cast_changed`，由
@@ -1218,39 +1271,6 @@ class NodeUsage(BaseModel):
         """引擎在这个人身上什么都没记 = 删掉他不会让任何东西失去出处。"""
         return self.total == 0
 
-
-class ChapterUsage(BaseModel):
-    """这一章**已经被引擎记住了多少东西**。删整章之前必须先问它。
-
-    和 `SnapshotUsage` 同一个道理，但拦的东西更狠：Chapter 既是一行 `chapter`，
-    也是一个 `node`（`put_chapter` 让两者同生），而 `edge.src/dst` 到 `node` 是
-    **ON DELETE CASCADE** 的——一句 `DELETE FROM node` 会把指着这一章的
-    PLANTED_IN / RESOLVED_IN **无声地**一起带走。`evidence.chapter_id` 到 `chapter`
-    同样是 CASCADE，于是那些证据（连同引着它们的边和事件）也会跟着蒸发。
-
-    **所以这里数的不是「删了会不会报错」，是「删了会不会让作者丢掉他不知道自己有的东西」。**
-    数出来非零就拒绝，让作者看见挡路的是什么——而不是替他决定那些记忆可以丢。
-    """
-
-    model_config = ConfigDict(frozen=True)
-
-    chapter_number: int = Field(ge=1)
-    evidence: int = Field(ge=0)
-    """锚在这一章正文里的证据条数（每一条都是「那句话当年在这儿」）。"""
-    edges: int = Field(ge=0)
-    """从这一章生效、或者指着这一章那个节点的关系条数。"""
-    events: int = Field(ge=0)
-    """记在这一章名下的情节条数。"""
-    extraction_runs: int = Field(ge=0)
-    proposal_sets: int = Field(ge=0)
-
-    @property
-    def total(self) -> int:
-        return self.evidence + self.edges + self.events + self.extraction_runs + self.proposal_sets
-
-    def is_free(self) -> bool:
-        """引擎在这一章上什么都没记 = 删掉它不会让任何东西失去出处。"""
-        return self.total == 0
 
 
 class EvidenceSpec(BaseModel):

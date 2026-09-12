@@ -13,10 +13,6 @@ export interface Anchor {
 
 export type Tab =
   | "roster"
-  | "state"
-  | "constraints"
-  | "graph"
-  | "evidence"
   | "summary"
   | "check"
   | "review"
@@ -84,8 +80,14 @@ interface Coords {
   markCursor: (id: string) => void;
   setCast: (c: string) => void;
   setTab: (t: Tab) => void;
-  /** 设中心节点并跳到局部图 tab（点一个人就想看他的图，是同一个动作）。 */
-  focusNode: (id: string) => void;
+  /** 选中一个人，跳回角色册（他的卡片就在那儿原地展开——点一个人就想看他的
+   *  一切，是同一个动作）。**2026-08-31 前落点是已删掉的「关系」tab**：那个 tab
+   *  并进角色册之后，「选中」和「跳一页专门看图」不再是两件事。
+   *
+   *  收 `string | null`：**再点一遍已经展开的那个人 = 收起卡片**，角色册那一行
+   *  传 `null` 就是这个动作。`activeTab` 两种入参都钉成 `"roster"`——收起卡片
+   *  不该把作者甩到别的 tab 去。 */
+  focusNode: (id: string | null) => void;
   setHighlight: (a: Anchor | null) => void;
   setPage: (p: Page) => void;
   toggleChat: () => void;
@@ -145,7 +147,7 @@ export const useCoords = create<Coords>((set) => ({
   setCast: (cast) => set({ cast, castInclude: "" }),
   setTab: (activeTab) =>
     set({ activeTab, focusEventId: null, focusEdgeId: null, castInclude: "" }),
-  focusNode: (selectedNodeId) => set({ selectedNodeId, activeTab: "graph" }),
+  focusNode: (selectedNodeId) => set({ selectedNodeId, activeTab: "roster" }),
   setHighlight: (highlight) => set({ highlight }),
   setPage: (page) => set({ page }),
   // 关掉不清 `chatId`：再打开时回到刚才那一段，作者不用重找。

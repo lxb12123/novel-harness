@@ -36,10 +36,14 @@
   · cast **少**算一个人 → must_not_reveal **少**一条 → fail-open，代价是崩人设
 
 **⚠️ 2026-08-25：那条不对称整个消失了**（[ADR 0039](../../docs/adr/0039-secrets-offline.md)
-秘密下线）。`SceneConstraints` 今天只剩 `forbidden_entities`，而它按章号算、与 cast 无关，
-所以多算不再多禁、少算不再少禁。这份名单今天的去处只有两个：Writer prompt 的【在场】
-那一块，和右栏「这一章提到」那一行——**两侧的错法都是「对模型/对作者说了一句不准的话」，
-没有哪一侧还叫「安全」。** 完整交代见
+秘密下线）。`SceneConstraints` 当时只剩 `forbidden_entities`，而它按章号算、与 cast 无关，
+所以多算不再多禁、少算不再少禁——**`forbidden_entities` 本身 2026-08-31 也删了**
+（[ADR 0041](../../docs/adr/0041-forbidden-entities-cut.md)），`SceneConstraints` 今天
+只剩 `unresolved_cast`，跟这份「被提到的人」名单已经没有关系。这份名单今天的去处
+只剩一个：Writer prompt 的【在场】那一块——**右栏「这一章提到」那一行随「写作提醒」
+tab 一起没了**（同一份 ADR 0041，那是执行删除时发现的一处没有独立归宿的收尾，不是
+这份名单自己被认定不该显示了）。**唯一还在的这一侧，错法仍然是「对模型说了一句
+不准的话」，不叫「安全」。** 完整交代见
 [ADR 0018 的补记](../../docs/adr/0018-cast-is-derived-not-declared.md)。
 
 「被提到的人」仍然是「真正在场的人」的**超集**（回忆里的死人、被议论的第三方、
@@ -94,7 +98,7 @@ def mentioned_cast(
             而不是让它出局。默认 `False` = 老行为。见下面 Notes 最后一段。
 
     Returns:
-        称呼原文（surface），**不是 node_id** —— 下游 `scene_constraints` 收的就是原文，
+        称呼原文（surface），**不是 node_id** —— 下游 `scene_view`/`resolve_cast` 收的就是原文，
         而且必须收原文：解析留给调用方会让歧义称呼静默消失（那个 docstring 讲了整件事）。
         展开出来的那几个是候选的**正式名**（canonical 别名，本身唯一可解析），
         不是「师兄」两个字——原样交出去下游只会把它判成 unresolved，也就是全禁。

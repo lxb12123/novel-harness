@@ -43,10 +43,12 @@ SHORT = LengthSpec(language=DraftLanguage.ZH, min_units=80, target_units=150, ma
 
 def _store():
     return build([edge(XIAO_JUE.id, QINGYUN.id, EdgeType.LOCATED_AT, 88)])
-def test_forbidden_entities_stay_exact_because_they_never_depended_on_cast() -> None:
-    """未来实体是按章号算的，与在场无关——退化态里这一项**不该**跟着退化。"""
-    ctx = unknown_cast_constraints(_store(), PID, 152)
-    assert ctx.forbidden_names == ["幽泉窟"]
+
+
+# ⚠️ **2026-08-31：`test_forbidden_entities_stay_exact_because_they_never_depended_on_cast`
+# 删了**——它测的是「未来实体按章号算，退化态里这一项不该跟着退化」，而
+# `forbidden_names`/`forbidden_entities` 整个不存在了（ADR 0041），这条不变式没有
+# 对象可测。
 
 
 # ── 2. 退化态是另一个类型 ─────────────────────────────────────────────────

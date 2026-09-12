@@ -14,33 +14,26 @@
 | 模块 | 内容 |
 |---|---|
 | `state` | 人物卡：所在地 / 状态维度 / 生死 |
-| `constraints` | PLANNED 进 prompt 的唯一闸门：forbidden_entities（尚未登场的实体） |
+| `constraints` | 场景 cast 解析：作者写的称呼原文 → 节点，解析不出唯一节点的留给作者判断 |
 | `scope` | 读路径那道 scope 闸（PLANNED / REJECTED 挡在外面）——**这一层唯一的安全断言** |
+
+（`constraints` 原来还产出 `forbidden_entities`——PLANNED 进 prompt 的转译闸门。
+**2026-08-31 删了**，见 [ADR 0041](../../../docs/adr/0041-forbidden-entities-cut.md)。
+PLANNED 边本身仍然没有读路径，`scope` 那道闸没有跟着松动。）
 """
 
 from __future__ import annotations
 
-from .constraints import (
-    ForbiddenEntity,
-    ResolvedCast,
-    SceneConstraints,
-    UnresolvedCast,
-    forbidden_entities,
-    resolve_cast,
-    scene_constraints,
-)
+from .constraints import ResolvedCast, SceneConstraints, UnresolvedCast, resolve_cast
 from .scope import require_queryable_scope
 from .state import cast_states, character_state
 
 __all__ = [
-    "ForbiddenEntity",
     "ResolvedCast",
     "SceneConstraints",
     "UnresolvedCast",
     "cast_states",
     "character_state",
-    "forbidden_entities",
     "require_queryable_scope",
     "resolve_cast",
-    "scene_constraints",
 ]

@@ -714,6 +714,8 @@ def test_a_missing_row_never_falls_back_to_the_engines_word() -> None:
 NAMED_CHAPTER_BOXES = (
     ("ChapterTitle.tsx", "chtitle-edit"),
     ("ChapterTitle.tsx", "chtitle-find"),
+    ("CanonEventCast.tsx", "ev-find"),
+    ("RightPanel.tsx", "rule-new"),
 )
 """标签里带「章」字、但**收的不是章号**的输入框，逐个点名。
 
@@ -755,8 +757,19 @@ def test_no_screen_in_the_whole_workbench_posts_a_chapter() -> None:
       它只决定下拉单子上还剩哪几行。挑中之后走 `openChapter(n)`，n 来自那本书**已经存在**
       的章目录，进的还是路径。查询不是声明。
 
+    ── 又放行两个（2026-09-05）────────────────────────────────────────────────
+
+    - `ev-find`（「事件」那一格的放大镜，`CanonEventCast.tsx`）**确实收章号**，
+      但它和 `chtitle-find` 是同一种东西：**过滤器**。敲进去的数字一个字节都不出浏览器
+      （`groups` 那个 `useMemo` 拿它比 `event.chapter_number` 的前缀），没有任何
+      `.mutate` 读它。**查询不是声明**——同一个数字，作为「我要看第几章」是安全的，
+      作为「这条事实第几章生效」才是 §5.9 那个下午。
+    - `rule-new`（「检验规则」那一格的添加框，`RightPanel.tsx`）**压根不收章号**：
+      它撞上这道网只是因为占位符里有「章节检验规则」四个字。它收的是作者不许出现的
+      那段文字，`POST …/validation-rules` 的请求体只有 `{literal}`。
+
     判据始终是 `test_no_chapter_input.py` 那一条：**作者的输入能不能到达 `valid_from`**。
-    这两个都到不了。真到得了的那一个长什么样，看上面那条 offenders 断言——
+    这四个都到不了。真到得了的那一个长什么样，看上面那条 offenders 断言——
     它扫的是请求体的键，而请求体是章号唯一可能被「填」进去的地方。
     """
     offenders: list[str] = []

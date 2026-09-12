@@ -2,9 +2,19 @@
 
 > 「`LOCATED_AT`(single_per_src) 写入新边自动闭合旧边；**`state_at` 绝不返回两条互斥边**」
 
-第二句是本文件的全部理由。§5.5 说得很直白：state_at 同时返回「在青云城」和「在北荒」
-→ 规则误报 → M3 的「误报 <1 条/章」生死线崩。所以这里有一条 `test_never_two_*`
+**第二句是本文件的全部理由，它一个字没变。** §5.5 说得很直白：state_at 同时返回
+「在青云城」和「在北荒」→ 屏幕上一条看不出来的错事实。所以这里有一条 `test_never_two_*`
 把整本书逐章扫一遍——不是抽查某一章。
+
+⚠️ **第一句 2026-09-06 换了实现**（[ADR 0043](../docs/adr/0043-facts-store-a-start-not-an-interval.md)）：
+「写入新边自动闭合旧边」变成了「**读的时候取不晚于本章的最后一条**」
+（`queries.CURRENT_EDGE_CTE`）。写的时候不再动任何一条旧边，`UpsertResult.closed`
+那一项也跟着删了——所以本文件里凡是断言 `res.closed` 的地方全部改成断言**行为**
+（`located_at` / `state_at`），那本来就是真正要钉的东西。
+
+换实现的理由是实测出来的：补全队列按「离作者正在写的那一章多近」倒着跑（那是对的，
+ADR 0036），于是每一条更早的事实都撞上一条更晚的、抛「乱序」，而抽取是整章一个事务——
+真书 2026-09-05 因此 62 章分析失败、全书只有 11 章有事件。
 """
 
 from __future__ import annotations
@@ -22,7 +32,6 @@ from novel_harness.graph import (
     InformationScope,
     NodeLabel,
     NodeNotFound,
-    SupersedeConflict,
 )
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from test_state_at import PID, add_node, new_db
@@ -84,14 +93,18 @@ def located_at(graph: SqliteStoryGraph, node: str, chapter: int) -> str | None:
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_new_edge_closes_old_one(graph: SqliteStoryGraph) -> None:
+def test_a_later_fact_takes_over_at_its_own_chapter(graph: SqliteStoryGraph) -> None:
+    """第 151 章那条从第 151 章起生效，之前照旧是第 10 章那条。**交接点上不许重叠。**
+
+    从前这条测试叫 `test_new_edge_closes_old_one`，断言的是 `res.closed`；
+    今天写入不动任何旧边（ADR 0043），而要钉的行为原样留着——**行为才是纪律，
+    `closed` 只是它当年的实现留下的一个出参。**
+    """
     graph.upsert_edge(spec("xiao", "qingyun", EdgeType.LOCATED_AT, 10))
     res = graph.upsert_edge(spec("xiao", "beihuang", EdgeType.LOCATED_AT, 151))
 
     assert res.created is True
-    assert [e.valid_to_chapter for e in res.closed] == [151]
     assert res.retracted == []
-    # 闭开区间：旧边活到 150 为止，新边从 151 起。交接点上不许有重叠。
     assert located_at(graph, "xiao", 150) == "青云城"
     assert located_at(graph, "xiao", 151) == "北荒"
 
@@ -131,27 +144,61 @@ def test_same_chapter_correction_retracts(graph: SqliteStoryGraph) -> None:
     graph.upsert_edge(spec("xiao", "qingyun", EdgeType.LOCATED_AT, 151))
     res = graph.upsert_edge(spec("xiao", "beihuang", EdgeType.LOCATED_AT, 151))
 
-    assert res.closed == []
     assert [e.status for e in res.retracted] == [EdgeStatus.RETRACTED]
     assert located_at(graph, "xiao", 151) == "北荒"
     assert located_at(graph, "xiao", 999) == "北荒"
 
 
-def test_out_of_order_raises_instead_of_guessing(graph: SqliteStoryGraph) -> None:
-    """v1 的 supersede **只进不退**。往中间插一条更早的事实要先回答「先前那条事实在
-    后一条结束后要不要恢复」——v1 没有消费者，而猜错的产物是重叠区间。"""
-    graph.upsert_edge(spec("xiao", "qingyun", EdgeType.LOCATED_AT, 151))
-    with pytest.raises(SupersedeConflict, match="乱序"):
-        graph.upsert_edge(spec("xiao", "beihuang", EdgeType.LOCATED_AT, 10))
+def test_a_later_fact_does_not_block_an_earlier_one(graph: SqliteStoryGraph) -> None:
+    """**先写第 151 章、再补第 10 章 —— 两条都进得去，而且答案是对的。**
 
+    ⚠️ 这条测试 2026-09-06 反过来了（[ADR 0043](../docs/adr/0043-facts-store-a-start-not-an-interval.md)）。
+    它原来叫 `test_out_of_order_raises_instead_of_guessing`，钉的是「乱序就抛
+    `SupersedeConflict`」。那条纪律在真书上的代价是实测出来的：补全队列按「离作者正在
+    写的那一章多近」排队（`summary_schedule`，那是对的），于是倒着分析 158→157→…；
+    第 156 章的位置事实先落库之后，**前面每一章的位置事实都插不进去**——
+    而 `_ingest_success` 是整章一个事务，一抛就整章回滚。
+    2026-09-05 的真书：62 章分析失败、全书只有 11 章有事件。
 
-def test_out_of_order_leaves_no_trace(conn: sqlite3.Connection, graph: SqliteStoryGraph) -> None:
-    # 抛异常前不许半途改库：一条已插入但没跑完 supersede 的边就是重叠区间本身。
+    「后来的盖住先前的」这条纪律**没变**，变的是它在哪一步生效：
+    从前在**写**的时候把旧边闭合掉，现在在**读**的时候取「不晚于这一章的最后一条」。
+    """
     graph.upsert_edge(spec("xiao", "qingyun", EdgeType.LOCATED_AT, 151))
-    with pytest.raises(SupersedeConflict):
-        graph.upsert_edge(spec("xiao", "beihuang", EdgeType.LOCATED_AT, 10))
-    assert conn.execute("SELECT COUNT(*) FROM edge").fetchone()[0] == 1
+    res = graph.upsert_edge(spec("xiao", "beihuang", EdgeType.LOCATED_AT, 10))
+
+    assert res.created is True
+    assert res.retracted == [], "补一条更早的事实不该去动任何已有的边"
+    assert res.retracted == []
+    # 早的那条只在它自己那一段生效，晚的那条照旧一直生效。
+    assert located_at(graph, "xiao", 9) is None
+    assert located_at(graph, "xiao", 10) == "北荒"
+    assert located_at(graph, "xiao", 150) == "北荒"
     assert located_at(graph, "xiao", 151) == "青云城"
+    assert located_at(graph, "xiao", 99999) == "青云城"
+
+
+def test_the_answer_does_not_depend_on_which_order_the_facts_arrived(
+    conn: sqlite3.Connection, graph: SqliteStoryGraph
+) -> None:
+    """**同样四条事实，正着写一遍、倒着写一遍，逐章比对必须一格不差。**
+
+    这是 ADR 0043 的整个论点：到达顺序不许影响答案。抽查某一章看不出问题——
+    从前那种坏法只在交接章上错一格，所以这里逐章扫 1..200。
+    """
+    facts = [(10, "qingyun"), (77, "beihuang"), (78, "youquan"), (151, "qingyun")]
+
+    for ch, loc in facts:  # 正着
+        graph.upsert_edge(spec("xiao", loc, EdgeType.LOCATED_AT, ch))
+    forward = [located_at(graph, "xiao", ch) for ch in range(1, 201)]
+
+    conn.execute("DELETE FROM edge")
+    for ch, loc in reversed(facts):  # 倒着 —— 生产上补全队列就是这个顺序
+        graph.upsert_edge(spec("xiao", loc, EdgeType.LOCATED_AT, ch))
+    backward = [located_at(graph, "xiao", ch) for ch in range(1, 201)]
+
+    assert forward == backward
+    assert forward[9] == "北荒" or forward[9] == "青云城"  # 第 10 章：确实有答案，不是全 None
+    assert set(forward) == {None, "青云城", "北荒", "幽泉窟"}
 
 
 def test_closed_edge_is_not_reclosed(graph: SqliteStoryGraph) -> None:
@@ -166,7 +213,7 @@ def test_closed_edge_is_not_reclosed(graph: SqliteStoryGraph) -> None:
     # 第 151 章他回青云城；[10,143) 那条与它无关，不该被再动一次。
     res = graph.upsert_edge(spec("xiao", "qingyun", EdgeType.LOCATED_AT, 151))
 
-    assert [e.valid_from_chapter for e in res.closed] == [143]
+    assert res.retracted == []
     assert located_at(graph, "xiao", 142) == "青云城"
     assert located_at(graph, "xiao", 143) == "北荒"
     assert located_at(graph, "xiao", 150) == "北荒"
@@ -188,7 +235,7 @@ def test_has_state_closes_same_dim_only(graph: SqliteStoryGraph) -> None:
         spec("xiao", "cult", EdgeType.HAS_STATE, 120, props=EdgeProps(value="元婴"))
     )
 
-    assert [e.dst for e in res.closed] == ["cult"]
+    assert res.retracted == []
     snap = graph.state_at(PID, "xiao", 130)
     assert {s.dim.name: s.value for s in snap.states} == {"健康": "活着", "修为": "元婴"}
     assert snap.is_dead is False
@@ -203,7 +250,7 @@ def test_related_to_closes_same_pair_only(graph: SqliteStoryGraph) -> None:
 
     # RELATED_TO 无向（ADR 0008）：(src,dst) 在 EdgeSpec 构造时就规范化成 (min,max)，
     # 所以对端要用 peer_of 取——这里 "gu" < "xiao"，那条边是 (gu, xiao)，`e.dst` 是 "xiao"。
-    assert [e.peer_of("xiao") for e in res.closed] == ["gu"]
+    assert res.retracted == []
     edges = {e.peer_of("xiao"): e.props.value for e in graph.state_at(PID, "xiao", 150).edges}
     assert edges == {"gu": "断绝师门", "li": "主仆"}
 
@@ -240,6 +287,37 @@ def test_symmetric_relation_declared_from_both_sides_is_one_edge(
     assert conn.execute("SELECT COUNT(*) FROM edge").fetchone()[0] == 1
 
 
+def test_the_snapshot_projects_relations_with_the_peer_already_resolved(
+    graph: SqliteStoryGraph,
+) -> None:
+    """`state_at().relations`（2026-09-12）：`RELATED_TO` 的投影，**对端替消费侧算好**。
+
+    上面两条钉的是「两侧查出来同一个答案」，这条钉的是**从哪一侧查，对端都是另一个人**
+    ——`peer` 永远不是本人。写作助手的角色卡（`agent/panels.py`）只读这份投影，
+    它那一层不许碰 `edge.props`（AST 守卫），所以值也要在这儿就解读好。
+    """
+    graph.upsert_edge(spec("xiao", "gu", EdgeType.RELATED_TO, 10, props=EdgeProps(value="师兄妹")))
+    graph.upsert_edge(spec("xiao", "li", EdgeType.RELATED_TO, 12, props=EdgeProps(value="主仆")))
+    graph.upsert_edge(spec("xiao", "gu", EdgeType.RELATED_TO, 143, props=EdgeProps(value="断绝")))
+
+    for side, want in (
+        ("xiao", {("gu", "师兄妹", 10), ("li", "主仆", 12)}),
+        ("gu", {("xiao", "师兄妹", 10)}),
+    ):
+        got = {
+            (r.peer.id, r.value, r.since_chapter) for r in graph.state_at(PID, side, 100).relations
+        }
+        assert got == want, f"从 {side} 这一侧看：{got}"
+    assert [(r.peer.id, r.value) for r in graph.state_at(PID, "gu", 150).relations] == [
+        ("xiao", "断绝")
+    ]
+    # 投影和 `edges` 说的是同一批边，一条不多一条不少。
+    snapshot = graph.state_at(PID, "xiao", 150)
+    assert {r.edge_id for r in snapshot.relations} == {
+        e.id for e in snapshot.edges if e.type is EdgeType.RELATED_TO
+    }
+
+
 def test_both_sides_agree_after_the_relation_changes(
     conn: sqlite3.Connection, graph: SqliteStoryGraph
 ) -> None:
@@ -248,7 +326,7 @@ def test_both_sides_agree_after_the_relation_changes(
     graph.upsert_edge(spec("gu", "xiao", EdgeType.RELATED_TO, 10, props=EdgeProps(value="师兄妹")))
     res = graph.upsert_edge(spec("xiao", "gu", EdgeType.RELATED_TO, 143, props=EdgeProps(value="断绝")))
 
-    assert [e.props.value for e in res.closed] == ["师兄妹"]
+    assert res.retracted == []
     for ch, want in [(142, "师兄妹"), (143, "断绝"), (150, "断绝")]:
         xiao_side = [e.props.value for e in graph.state_at(PID, "xiao", ch).edges]
         gu_side = [e.props.value for e in graph.state_at(PID, "gu", ch).edges]
@@ -306,7 +384,6 @@ def test_multi_never_closes(graph: SqliteStoryGraph) -> None:
     graph.upsert_edge(spec("xiao", "sword", EdgeType.OWNS, 10))
     res = graph.upsert_edge(spec("xiao", "token", EdgeType.OWNS, 20))
 
-    assert res.closed == []
     assert res.retracted == []
     assert {e.dst for e in graph.state_at(PID, "xiao", 50).edges} == {"sword", "token"}
 
@@ -317,10 +394,15 @@ def test_multi_never_closes(graph: SqliteStoryGraph) -> None:
 
 
 def test_rerun_updates_props_only_and_never_resurrects(graph: SqliteStoryGraph) -> None:
-    """撞幂等键 = 重跑。**不跑 supersede、不碰 valid_to、不碰 status。**
+    """撞幂等键 = 重跑。**只更新 props 类字段，不碰 status、不新插一行。**
 
-    这三个「不」是生死线：若重跑把已闭合旧边的 valid_to 重置成 NULL，它会复活成
-    `[10,∞)` 与 `[151,∞)` 重叠 → state_at 返两条互斥边 → 正是 §5.5 点名的死法。
+    这几个「不」是生死线：重跑若把一条 RETRACTED 的边翻回 ACTIVE，同一章就有两条
+    互斥事实并列生效 → state_at 返两条互斥边 → 正是 §5.5 点名的死法。
+
+    ⚠️ **原来这里还有一句 `assert again.edge.valid_to_chapter == 151  # 没有复活`。**
+    那一列 2026-09-06 起恒为 NULL（ADR 0043），断言它等于 151 是在断言一个已经不
+    存在的机制。要钉的东西没变，换成直接钉行为：重跑之后第 151 章仍然是北荒、
+    第 10 章仍然是青云城（那条边没被这次重跑挪走）。
     """
     first = graph.upsert_edge(spec("xiao", "qingyun", EdgeType.LOCATED_AT, 10))
     graph.upsert_edge(spec("xiao", "beihuang", EdgeType.LOCATED_AT, 151))
@@ -335,11 +417,11 @@ def test_rerun_updates_props_only_and_never_resurrects(graph: SqliteStoryGraph) 
 
     assert again.created is False
     assert again.edge.id == first.edge.id
-    assert again.closed == [] and again.retracted == []
+    assert again.retracted == []
     assert again.edge.props.value == "城主府"  # props 类字段更新了
     assert again.edge.confidence == 0.8
-    assert again.edge.valid_to_chapter == 151  # **没有复活**
     assert located_at(graph, "xiao", 151) == "北荒"
+    assert located_at(graph, "xiao", 10) == "青云城"
     for ch in range(1, 201):
         graph.state_at(PID, "xiao", ch)  # 逐章确认没有第二条互斥边
 
@@ -372,7 +454,7 @@ def test_provisional_never_supersedes_canon(graph: SqliteStoryGraph) -> None:
         spec("xiao", "beihuang", EdgeType.LOCATED_AT, 151, scope=InformationScope.PROVISIONAL)
     )
 
-    assert res.closed == []  # 作者的 CANON 边一根汗毛都没动
+    assert res.retracted == []  # 作者的 CANON 边一根汗毛都没动
     assert located_at(graph, "xiao", 151) == "青云城"
     assert graph.state_at(
         PID, "xiao", 151, scope=InformationScope.PROVISIONAL

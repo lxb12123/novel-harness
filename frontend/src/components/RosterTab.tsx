@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   useCharacterEvents,
   useDeleteNode,
@@ -14,7 +14,11 @@ import { readCorrectionError } from "../correctionError";
 import { type Language, useLanguage } from "../language";
 import { useCoords } from "../store";
 import { CharacterBasicInfo } from "./CharacterBasicInfo";
-import { PlusIcon, SortIcon } from "./icons";
+import { CharacterEvidence } from "./CharacterEvidence";
+import { CharacterRelations } from "./CharacterRelations";
+import { CharacterStatus } from "./CharacterStatus";
+import { CloudFrame } from "./CloudFrame";
+import { CollapseIcon, PlusIcon, SortIcon } from "./icons";
 import { RosterDrawer } from "./RosterDrawer";
 
 // 角色册：右栏的第一格，也是默认那一格。
@@ -23,7 +27,14 @@ import { RosterDrawer } from "./RosterDrawer";
 // 而角色册问的是「这本书里有谁」——和右栏其余几格（这个人在哪 / 和谁有关系）是同一个
 // 问题的不同切面，所以它属于右边。
 //
-// **点一个人 = 看他的局部关系图**（`focusNode` 会把面板切到关系那一格）。这条没变。
+// **2026-08-31：「人物状态」「人物关系」「原文依据」三个 tab 整个并进来了**
+// （作者原话：「都合到这边来，这边就是角色卡的意思」）。点一个人的名字，他那一行
+// 下面原地展开一张卡：本名/别名（`CharacterBasicInfo`）+ 状态（`CharacterStatus`）+
+// 关系（`CharacterRelations`，图表 + 文字都有）+ 依据（`CharacterEvidence`，把
+// 「✓知道 ch88」还原成当年那句原文）+ 参与过的事件（`CharacterTimeline`）。
+// `focusNode` 因此改成落回这一格，不再切一个已经不存在的 tab（见 `store.ts`）。
+// **这张卡只对人物展开**——地点/势力选中之后不再有专属的关系图/依据可看，
+// 这是合并的直接后果，不在这次范围内另开一份「地点卡」。
 //
 // ── 2026-08-25 这一格多了三样，三样都是同一条裁定的产物 ────────────────────
 //
@@ -165,12 +176,42 @@ function EventCastAlert({
  *  这一格今天在真书上**必然是空的**：作者那本 158 章的书里事件 0 条，
  *  第一次真抽取跑完才会有。所以空态不许写「暂无数据」——那句话既不告诉作者
  *  发生了什么，也不告诉他下一步。这里分两种说：整本书还没整理过 vs
- *  整理过但这个人身上没落下事。 */
+ *  整理过但这个人身上没落下事。
+ *
+ *  **超过 `EVENTS_SCROLL_CAP` 条封顶成固定高度 + 滚动**（作者原话：「如果是主角的话，
+ *  比如说写了几千张，那就应该做固定高度……然后一个滑轮」）。不足这个数就跟内容
+ *  一样高，不留一截空白的滚动区——封顶是为了保护卡片的高度，不是这一格本身的默认样子。 */
+const EVENTS_SCROLL_CAP = 6;
+
 function CharacterTimeline({ characterId, name }: { characterId: string; name: string }) {
   const { projectId } = useCoords();
   const language = useLanguage((s) => s.language);
   const events = useCharacterEvents(projectId, characterId);
   const rows = events.data ?? [];
+
+  const rowsEl = rows.map((row) => {
+    // 「还有：…」= 这件事上**除他之外**的人。名单去重（一个人可能既在场又知情），
+    // 顺序按后端给的来（这一层不发明第二个序）。
+    const others = [...row.participants, ...row.knowers]
+      .filter((n) => n.id !== characterId)
+      .filter((n, i, all) => all.findIndex((m) => m.id === n.id) === i);
+    return (
+      <div className="item" key={row.event_id}>
+        <span className="nm">
+          {language === "zh" ? `第 ${row.chapter_number} 章` : `Chapter ${row.chapter_number}`} · {row.summary}
+        </span>
+        {others.length > 0 && (
+          <span className="dim">
+            {language === "zh" ? "还有：" : "Also: "}
+            {others.map((n) => n.name).join(language === "zh" ? "、" : ", ")}
+          </span>
+        )}
+        {row.cast_changed && (
+          <EventCastAlert notification={row.cast_changed} language={language} />
+        )}
+      </div>
+    );
+  });
 
   return (
     <div className="grp">
@@ -194,29 +235,11 @@ function CharacterTimeline({ characterId, name }: { characterId: string; name: s
           )}
         </span>
       )}
-      {rows.map((row) => {
-        // 「还有：…」= 这件事上**除他之外**的人。名单去重（一个人可能既在场又知情），
-        // 顺序按后端给的来（这一层不发明第二个序）。
-        const others = [...row.participants, ...row.knowers]
-          .filter((n) => n.id !== characterId)
-          .filter((n, i, all) => all.findIndex((m) => m.id === n.id) === i);
-        return (
-          <div className="item" key={row.event_id}>
-            <span className="nm">
-              {language === "zh" ? `第 ${row.chapter_number} 章` : `Chapter ${row.chapter_number}`} · {row.summary}
-            </span>
-            {others.length > 0 && (
-              <span className="dim">
-                {language === "zh" ? "还有：" : "Also: "}
-                {others.map((n) => n.name).join(language === "zh" ? "、" : ", ")}
-              </span>
-            )}
-            {row.cast_changed && (
-              <EventCastAlert notification={row.cast_changed} language={language} />
-            )}
-          </div>
-        );
-      })}
+      {rows.length > EVENTS_SCROLL_CAP ? (
+        <div className="char-events-scroll">{rowsEl}</div>
+      ) : (
+        rowsEl
+      )}
     </div>
   );
 }
@@ -231,25 +254,25 @@ export function RosterTab() {
   const [confirming, setConfirming] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
+  // 「⋯」开在哪一行上（同左栏章目录/书架的 `menuFor`）。改名/删除的入口都藏在
+  // 这颗菜单后面——常驻的两颗按钮墙 2026-09-01 换成了云纹描边 + 悬浮才现身的「⋯」。
+  const [menuFor, setMenuFor] = useState<string | null>(null);
 
   const rename = useRenameNode(projectId ?? "");
   const remove = useDeleteNode(projectId ?? "");
+
+  // 点别处关掉「⋯」。不做的话它会一直挂在那儿，而作者以为自己已经点掉了。
+  useEffect(() => {
+    if (!menuFor) return;
+    const close = () => setMenuFor(null);
+    window.addEventListener("pointerdown", close);
+    return () => window.removeEventListener("pointerdown", close);
+  }, [menuFor]);
 
   const rows = useMemo(() => (roster.data ?? []) as RosterEntry[], [roster.data]);
   const groups: Record<string, RosterEntry[]> = {};
   rows.forEach((n) => (groups[n.label] ??= []).push(n));
   const empty = Object.keys(groups).length === 0;
-
-  // 选中的这个人如果是人物，就在角色册顶部给他一行「本名 + 别名 chips」——
-  // 这是人物基础信息的唯一形态（Task 15 / §4.5）：点名字本人聚焦关系图不变，
-  // 别名编辑不另占一颗按钮。
-  //
-  // ⚠️ 这一行 2026-08-25 之前比的是 `=== "character"`（小写），而 `NodeLabel` 是
-  // `"Character"`——**它恒为 false，那一格一次都没画出来过**。角色册出参从
-  // `{id,label,name}` 收窄成 `RosterEntry` 的那一刻 `tsc` 就把它指出来了
-  // （从前 label 是 `string`，两个字符串比大小写不同不是类型错误）。
-  const selected = rows.find((n) => n.id === selectedNodeId);
-  const isCharacter = selected?.label === "Character";
 
   // 版本从**它正在渲染的那份项目出参**上取（同 `CanonEventCast` 那条注释）：
   // 作者一保存，后台整理那一章、干净结果直接升 CANON，版本就涨了一格。
@@ -277,6 +300,20 @@ export function RosterTab() {
           location / faction…」裁得只剩半句）。同顶栏设置齿轮那颗用 `.tip-right`
           的理由一样：贴右边缘的图标按钮，气泡也得贴右边缘，不能居中。 */}
       <h2>
+        {projectId && (
+          <button
+            className="icon-btn tip-right"
+            aria-label={
+              language === "zh" ? "建人物 / 地点 / 势力…" : "Add a character / location / faction…"
+            }
+            data-tip={
+              language === "zh" ? "建人物 / 地点 / 势力…" : "Add a character / location / faction…"
+            }
+            onClick={() => setAdding(true)}
+          >
+            <PlusIcon />
+          </button>
+        )}
         {!empty && (
           <button
             className={"icon-btn tip-right" + (order === "asc" ? " on" : "")}
@@ -292,20 +329,6 @@ export function RosterTab() {
             <SortIcon order={order} />
           </button>
         )}
-        {projectId && (
-          <button
-            className="icon-btn tip-right"
-            aria-label={
-              language === "zh" ? "建人物 / 地点 / 势力…" : "Add a character / location / faction…"
-            }
-            data-tip={
-              language === "zh" ? "建人物 / 地点 / 势力…" : "Add a character / location / faction…"
-            }
-            onClick={() => setAdding(true)}
-          >
-            <PlusIcon />
-          </button>
-        )}
       </h2>
 
       {empty ? (
@@ -317,108 +340,189 @@ export function RosterTab() {
         </div>
       ) : (
         <>
-          {isCharacter && selectedNodeId && (
-            <>
-              <CharacterBasicInfo characterId={selectedNodeId} />
-              <CharacterTimeline characterId={selectedNodeId} name={selected!.name} />
-            </>
-          )}
           {Object.keys(groups)
             .sort()
             .map((lab) => (
               <div className="grp" key={lab}>
                 <div className="lab">{nodeLabelText(lab, language)}</div>
-                {bySignal(groups[lab], order).map((n) => (
-                  <div
-                    className={"item" + (n.id === selectedNodeId ? " on" : "")}
-                    key={n.id}
-                  >
-                    {renaming === n.id ? (
-                      <input
-                        autoFocus
-                        value={draft}
-                        placeholder={language === "zh" ? "输入新的名称" : "Enter a new name"}
-                        onChange={(e) => setDraft(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") submitRename(n.id);
-                          if (e.key === "Escape") setRenaming(null);
-                        }}
-                        onBlur={() => setRenaming(null)}
-                      />
-                    ) : (
-                      <>
-                        <span
-                          className="nm"
-                          onClick={() => focusNode(n.id)}
-                          title={language === "zh" ? "看它的局部关系图" : "View their local relationship graph"}
-                        >
-                          {n.name}
-                        </span>
-                        {/* 「出现在 N 章的总结里」而不是「出场 N 章」：这一层数的是总结，
-                            不是正文。一本还没生成总结的书这一列全是 0，把它写成
-                            「没出场」就是拿一个空表当结论（§10 约束 8）。 */}
-                        <span
-                          className="dim"
-                          title={language === "zh" ? "出现在几章的总结里" : "Number of chapter summaries mentioning this"}
-                        >
-                          {language === "zh"
-                            ? `${n.appearance_chapters} 章`
-                            : `${n.appearance_chapters} ${n.appearance_chapters === 1 ? "chapter" : "chapters"}`}
-                        </span>
-                        <button
-                          className="add"
-                          title={language === "zh" ? "改名" : "Rename"}
-                          onClick={() => {
-                            setDraft(n.name);
-                            setRenaming(n.id);
-                          }}
-                        >
-                          {language === "zh" ? "改名" : "Rename"}
-                        </button>
-                        <button
-                          className="add"
-                          title={language === "zh" ? "从角色册里删掉" : "Remove from the roster"}
-                          onClick={() => setConfirming(n.id)}
-                        >
-                          {language === "zh" ? "删" : "Delete"}
-                        </button>
-                      </>
-                    )}
+                {bySignal(groups[lab], order).map((n) => {
+                  // 卡片**只对人物展开**：状态/关系/事件说的都是「这个人怎么样」，
+                  // 地点/势力选中之后不再有专属视图（合并的直接后果，见文件顶注）。
+                  const expanded = n.id === selectedNodeId && n.label === "Character";
+                  return (
+                    <div key={n.id}>
+                      <div
+                        className={
+                          "item roster-row" +
+                          (n.id === selectedNodeId ? " on" : "") +
+                          (expanded ? " open" : "") +
+                          (menuFor === n.id ? " menu-open" : "")
+                        }
+                      >
+                        <CloudFrame />
+                        {renaming === n.id ? (
+                          <input
+                            autoFocus
+                            value={draft}
+                            placeholder={language === "zh" ? "输入新的名称" : "Enter a new name"}
+                            onChange={(e) => setDraft(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") submitRename(n.id);
+                              if (e.key === "Escape") setRenaming(null);
+                            }}
+                            onBlur={() => setRenaming(null)}
+                          />
+                        ) : (
+                          <>
+                            <span
+                              className="nm"
+                              onClick={() => focusNode(expanded ? null : n.id)}
+                              title={
+                                language === "zh"
+                                  ? expanded ? "收起这张卡" : "看他的状态、关系和事件"
+                                  : expanded ? "Collapse this card" : "View their status, relationships, and events"
+                              }
+                            >
+                              {n.name}
+                            </span>
+                            {/* 「出现在 N 章的总结里」而不是「出场 N 章」：这一层数的是总结，
+                                不是正文。一本还没生成总结的书这一列全是 0，把它写成
+                                「没出场」就是拿一个空表当结论（§10 约束 8）。 */}
+                            <span
+                              className="dim"
+                              title={language === "zh" ? "出现在几章的总结里" : "Number of chapter summaries mentioning this"}
+                            >
+                              {language === "zh"
+                                ? `${n.appearance_chapters} 章`
+                                : `${n.appearance_chapters} ${n.appearance_chapters === 1 ? "chapter" : "chapters"}`}
+                            </span>
+                            {/* 「改名/删」原来是两颗常驻描边按钮，2026-09-01 收进这颗悬浮
+                                才现身的「⋯」——同左栏章目录/书架那一套机制（`.ch-act`）。
+                                改名/删除本身的逻辑一个字没动，只是入口从按钮墙搬进了菜单。 */}
+                            <span className="roster-more">
+                              {/* **卡片开着的时候，这个位置是「收起」，不是「⋯」**
+                                  （作者 2026-09-04）。同一颗 28×28 的按钮换个符号：
+                                  展开态最该点的一下就是收起它，而「改名/删」在卡片
+                                  开着时本来也不是这一刻要干的事——收起来再点。
+                                  它**常驻显形**（`.roster-row.open` 那条 CSS），
+                                  不像「⋯」要悬浮才出来：卡片已经摊在屏幕上了，
+                                  关它的那颗按钮不该还要作者先去找。 */}
+                              {expanded ? (
+                                <button
+                                  type="button"
+                                  className="roster-act"
+                                  aria-label={
+                                    language === "zh" ? `收起${n.name}的卡片` : `Collapse ${n.name}`
+                                  }
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    focusNode(null);
+                                  }}
+                                >
+                                  <CollapseIcon />
+                                </button>
+                              ) : (
+                              <button
+                                type="button"
+                                className="roster-act"
+                                aria-label={
+                                  language === "zh" ? `${n.name}的更多操作` : `More actions for ${n.name}`
+                                }
+                                aria-expanded={menuFor === n.id}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setMenuFor(menuFor === n.id ? null : n.id);
+                                }}
+                              >
+                                ⋯
+                              </button>
+                              )}
+                              {menuFor === n.id && (
+                                <div className="roster-menu" onPointerDown={(e) => e.stopPropagation()}>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setDraft(n.name);
+                                      setRenaming(n.id);
+                                      setMenuFor(null);
+                                    }}
+                                  >
+                                    {language === "zh" ? "改名" : "Rename"}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="danger"
+                                    onClick={() => {
+                                      setConfirming(n.id);
+                                      setMenuFor(null);
+                                    }}
+                                  >
+                                    {language === "zh" ? "删除" : "Delete"}
+                                  </button>
+                                </div>
+                              )}
+                            </span>
+                          </>
+                        )}
 
-                    {confirming === n.id && (
-                      <div className="row">
-                        {/* **删是不可逆的**，所以问一句。2026-08-28 起删除不再因为
-                            挂着关系/情节而拒绝——它参与过的事件会跟着一起消失，
-                            剩下的人的事件时间线上会冒出红点（`cast_changed`），
-                            那才是「事后可见可改」的落点，不在这句确认话里预警。 */}
-                        <span>
-                          {language === "zh" ? (
-                            <>把「{n.name}」和它的所有称呼一起删掉？删了拿不回来。</>
-                          ) : (
-                            <>Delete "{n.name}" and all its aliases? This can’t be undone.</>
-                          )}
-                        </span>
-                        <button
-                          disabled={remove.isPending || version === undefined}
-                          onClick={() =>
-                            version !== undefined &&
-                            remove.mutate(
-                              { id: n.id, expected_canon_version: version },
-                              { onSuccess: () => setConfirming(null) },
-                            )
-                          }
-                        >
-                          {language === "zh"
-                            ? remove.isPending ? "删除中…" : "删掉"
-                            : remove.isPending ? "Deleting…" : "Delete"}
-                        </button>
-                        <button onClick={() => setConfirming(null)}>
-                          {language === "zh" ? "算了" : "Cancel"}
-                        </button>
+                        {/* **`.roster-row` 是 flex 行**（名字/章数/按钮排成一条）。
+                            这一块「确认删除」不该挤进同一条线——CSS 里
+                            `.roster-row{flex-wrap:wrap}` + `.roster-row > .row{flex-basis:100%}`
+                            让它自己另起一行，不用为此把它挪出 `.item` 单独一个容器
+                            （挪出去会撞 `within(row).getByText(...)` 那批用
+                            `.closest(".item")` 找这一行的既有测试）。 */}
+                        {confirming === n.id && (
+                          <div className="row">
+                            {/* **删是不可逆的**，所以问一句。2026-08-28 起删除不再因为
+                                挂着关系/情节而拒绝——它参与过的事件会跟着一起消失，
+                                剩下的人的事件时间线上会冒出红点（`cast_changed`），
+                                那才是「事后可见可改」的落点，不在这句确认话里预警。 */}
+                            <span>
+                              {language === "zh" ? (
+                                <>把「{n.name}」和它的所有别名一起删掉？删了拿不回来。</>
+                              ) : (
+                                <>Delete "{n.name}" and all its aliases? This can’t be undone.</>
+                              )}
+                            </span>
+                            <button
+                              disabled={remove.isPending || version === undefined}
+                              onClick={() =>
+                                version !== undefined &&
+                                remove.mutate(
+                                  { id: n.id, expected_canon_version: version },
+                                  { onSuccess: () => setConfirming(null) },
+                                )
+                              }
+                            >
+                              {language === "zh"
+                                ? remove.isPending ? "删除中…" : "删掉"
+                                : remove.isPending ? "Deleting…" : "Delete"}
+                            </button>
+                            <button onClick={() => setConfirming(null)}>
+                              {language === "zh" ? "算了" : "Cancel"}
+                            </button>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
-                ))}
+                      {/* 原地展开的角色卡：本名/别名 → 状态 → 关系（图 + 文字）→ 依据 → 事件。
+                          这个顺序不是随手排的——先说他是谁、再说他现在怎么样、跟谁有关系、
+                          这些说法有什么原文撑着，事件时间线最长（超过 6 条会滚动）放最后，
+                          翻到底不会先撞见它。 */}
+                      {expanded && (
+                        <div className="char-card">
+                          {/* **收起在那一行右端那颗按钮上**（展开态把「⋯」换掉的那颗），
+                              卡片里不再另放一颗 ✕：同一件事两个入口隔着 30px 上下
+                              站着，作者 2026-09-04 点名撤掉了下面那个。 */}
+                          <CharacterBasicInfo characterId={n.id} />
+                          <CharacterStatus characterId={n.id} />
+                          <CharacterRelations characterId={n.id} />
+                          <CharacterEvidence characterId={n.id} />
+                          <CharacterTimeline characterId={n.id} name={n.name} />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             ))}
           <Refusal error={remove.error} />

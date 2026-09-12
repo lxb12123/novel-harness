@@ -15,7 +15,9 @@ import { CloseIcon } from "./icons";
 // 中栏对半分之后，助手那一半的下限是 `MIN_CHAT`（`layout.ts`）。在那个宽度里再切一条
 // 会话侧栏出来，剩给对话本身的就只有一百多像素——那是这个仓库反复在拦的
 // 「拉过头就什么都看不见」的同一种废墟，只不过这次是设计造出来的。
-// 所以它默认收着，点开时**盖住对话区**，挑完自己收起来。
+// 所以它默认收着，点开时是**挂在「对话列表」那颗按钮下面的一张浮层**
+// （2026-09-07 从「横贯整条面板的一块」改的，理由写在 `styles.css` 的
+// `.chat-sessions` 那条上），挑完自己收起来。
 //
 // ── 这一列上不许出现的两样东西 ────────────────────────────────────────────
 //
@@ -172,11 +174,14 @@ export function ChatSessions({
         failed ? null : (
           <p className="empty chat-sessions-empty">
             {language === "zh" ? (
-              <>还没有说过话。开一段新的，问它这一章有什么不能说、或者让它先去把前情看一遍。</>
+              /* 「问它这一章有什么不能说」2026-09-07 撤了：秘密那套 2026-08-24 整套
+                 下线（ADR 0039），这句话在替一个不存在的能力招手。同 `ChatPanel.tsx`
+                 空态那一句，两处是同一个错。 */
+              <>还没有说过话。开一段新的，让它先去把前情看一遍，或者直接说这一章要写什么。</>
             ) : (
               <>
-                Nothing’s been said yet. Start a new conversation and ask it what this chapter
-                can’t say yet, or have it review what’s happened so far first.
+                Nothing’s been said yet. Start a new conversation — have it review what’s
+                happened so far, or just say what this chapter is about.
               </>
             )}
           </p>

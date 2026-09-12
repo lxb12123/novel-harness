@@ -496,7 +496,22 @@ class ExtractionService:
             "value": raw.value,
             "quote": located.matched_text,
         }
-        if current is not None:
+        # ── 只有「机器要推翻作者亲手改过的那一格」才做提案卡（2026-09-06 裁定）──
+        #
+        # 从前是「和当前 Canon 不一样就做卡」，于是真书上 100 张卡 / 298 条，
+        # 每条都要读两行再判一次——**那个队列在真书上是不可用的**（作者原话：
+        # 「这类问题导致的冲突不需要放通知这边，直接更新抽取到那个角色卡的状态中，
+        # 然后用户要是觉得不满他自己可以改这个内容的」）。
+        #
+        # 机器推翻机器 → 直接升 CANON，人物卡上跟着变，**旧值不会消失**（那一格
+        # 2026-09-06 起印的是全部历史，`state_history` / `location_history`）。
+        # 机器推翻作者 → 才值得问他，用的还是这张卡。
+        #
+        # 判据是「这条当前边由作者接管着没有」——查一行 `canon_edge_override`，
+        # **不是判断两句话意思冲不冲突**（那是语义判断，ADR 0005 的铁律禁的）。
+        if current is not None and queries.active_canon_override_for_edge(
+            self._conn, project_id, str(current["edge_id"])
+        ) is not None:
             buckets["edge_conflict"].append(
                 {
                     "update_kind": raw.kind,

@@ -26,7 +26,7 @@ import type { ReconcileOutcome } from "./api/types";
 /** 对完之后要失效的读端。**只在真的有章变了时才失效**——
  *  没变还整片失效等于每次 alt-tab 都把右栏全部重取一遍。 */
 function invalidateAfterChange(qc: ReturnType<typeof useQueryClient>, pid: string): void {
-  for (const key of ["chapters", "text", "history", "matrix", "state", "constraints", "check"]) {
+  for (const key of ["chapters", "text", "history", "matrix", "state", "check"]) {
     qc.invalidateQueries({ queryKey: [key, pid] });
   }
 }

@@ -63,6 +63,15 @@ def test_get_settings_starts_empty(client: TestClient) -> None:
         # **默认关着**：那份模型表决定上文给作者 800 字还是 40,000 字，
         # 而它来自一个我们不控制的仓库。开着它的只能是作者本人。
         "auto_update_model_windows": False,
+        "review_card_edits": False,
+        # **默认关着**：写作助手开着时不续写，是作者 2026-09-10 定的；要它开的人自己拨。
+        "continuation_in_agent_mode": False,
+        # 关系图一次最多画几个人。同 `context_window`：没填是 `null`。
+        # **默认值单独回一位**：那个空框在屏幕上得说得出「不填会是多少」，
+        # 而那个数是引擎的常量（`graph.store.MAX_SUBGRAPH_NODES`），前端不许自己抄一份
+        # ——抄了就有两个真相源，而引擎改了之后设置页会安静地说一个旧数。
+        "graph_max_nodes": None,
+        "graph_max_nodes_default": 1000,
         # 续写能带多少上文（后端按模型窗口算，前端不许存第二份）。一个字都没配过时
         # 它是地板值，**而 `basis` 说得出为什么是地板值**——「认不出模型」和「还没填」
         # 算出来的数一模一样，不区分开的话，少给上文就是一件没人看得见的事。
@@ -259,6 +268,27 @@ def test_a_request_without_the_switch_keeps_it(client: TestClient) -> None:
     client.put("/api/settings", json={"auto_update_model_windows": True})
     r = client.put("/api/settings", json={"base_url": "https://b.example"})
     assert r.json()["auto_update_model_windows"] is True
+
+
+def test_continuation_in_agent_mode_round_trips_and_survives_other_writes(
+    client: TestClient,
+) -> None:
+    """「写作助手开着时续写」那颗开关：默认关、拨开记得住、别的请求不会顺手关回去。
+
+    判据同 `auto_update_model_windows`：**带没带这个键**，不是它的值——只想改地址的
+    请求发的是一个没有这一位的 body，它不该把作者拨开的开关抹掉。
+    """
+    assert client.get("/api/settings").json()["continuation_in_agent_mode"] is False
+
+    on = client.put("/api/settings", json={"continuation_in_agent_mode": True})
+    assert on.json()["continuation_in_agent_mode"] is True
+    assert client.get("/api/settings").json()["continuation_in_agent_mode"] is True
+
+    other = client.put("/api/settings", json={"base_url": "https://b.example"})
+    assert other.json()["continuation_in_agent_mode"] is True
+
+    off = client.put("/api/settings", json={"continuation_in_agent_mode": False})
+    assert off.json()["continuation_in_agent_mode"] is False
 
 
 def test_startup_pulls_only_when_the_switch_is_on(

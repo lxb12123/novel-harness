@@ -247,3 +247,107 @@ def validate_snapshot(
         ),
     )
     return report
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 目录 + 上一份报告的**只读**端口（2026-09-12，写作助手的「检验规则」那一栏）
+# ══════════════════════════════════════════════════════════════════════════
+#
+# 两个消费方：`api/validation.py::validation_rules`（右栏那一栏）和
+# `agent/panels.py::validation_rules`（写作助手）。**同一份读法**——原来那条路由自己
+# 手写了一遍 SELECT + 拼 dict，写作助手要再读一次时，最省事的写法就是抄第二份，
+# 而两份读法迟早有一份漏掉「停用的规则也要列出来」这条（2026-09-05 那次修的正是它）。
+
+
+class RuleEntry(BaseModel):
+    """目录里的一条规则：系统规则和作者自定义规则同一个形状。
+
+    `enabled=False` 的也在（目录列全部，运行时那条读法 `load_custom_rules` 只读启用的，
+    两条读法分家的理由写在 `api/validation.py::validation_rules`）。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    rule_id: str
+    title: str
+    description: str
+    enabled: bool
+    blocks_downstream: bool
+    template: Literal["system", "forbidden_literal"]
+    config: dict[str, object] = Field(default_factory=dict)
+
+
+class ReportDigest(BaseModel):
+    """某一章**最近一次**验证报告的摘要。**不是「这一版正文验过没有」的答案**——
+    那要拿 `text_sha256` 去和磁盘上此刻那一版比，判断在消费方（右栏那颗闪电
+    也是这么判的）。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chapter_number: int = Field(ge=1)
+    created_at: str
+    gate: str
+    text_sha256: str | None
+    issues: tuple[Issue, ...]
+
+
+class RulesReader:
+    """`validation_rule` / `validation_report` 两张表的只读端口。**没有写方法。**"""
+
+    def __init__(self, conn: Connection) -> None:
+        self._conn = conn
+
+    def catalog(self, project_id: str) -> list[RuleEntry]:
+        """系统规则（今天一条都没有，ADR 0042）+ 作者自定义规则，**停用的也列**。"""
+        system = [
+            RuleEntry(
+                rule_id=spec.rule_id,
+                title=spec.title,
+                description=spec.description,
+                enabled=spec.enabled,
+                blocks_downstream=spec.blocks_downstream,
+                template=spec.template,
+                config=dict(spec.config),
+            )
+            for spec in catalog.SYSTEM_RULES
+        ]
+        rows = self._conn.execute(
+            "SELECT id, title, template, enabled, blocks_downstream, config_json "
+            "FROM validation_rule WHERE project_id = ? ORDER BY created_at, id",
+            (project_id,),
+        ).fetchall()
+        custom: list[RuleEntry] = []
+        for row in rows:
+            config = json.loads(row["config_json"]) if row["config_json"] else {}
+            literal = config.get("literal", "")
+            custom.append(
+                RuleEntry(
+                    rule_id=row["id"],
+                    title=row["title"] or literal,
+                    description=f"正文某一段出现「{literal}」时命中。" if literal else "",
+                    enabled=bool(row["enabled"]),
+                    blocks_downstream=bool(row["blocks_downstream"]),
+                    template=row["template"],
+                    config=config,
+                )
+            )
+        return [*system, *custom]
+
+    def latest_report(self, project_id: str, chapter_number: int) -> ReportDigest | None:
+        """这一章最近落盘的那份报告。`None` = 这一章一次都没验过。"""
+        row = self._conn.execute(
+            "SELECT chapter_number, created_at, gate, text_sha256, issues_json "
+            "FROM validation_report WHERE project_id = ? AND chapter_number = ? "
+            "ORDER BY created_at DESC, id DESC LIMIT 1",
+            (project_id, chapter_number),
+        ).fetchone()
+        if row is None:
+            return None
+        raw = json.loads(row["issues_json"]) if row["issues_json"] else []
+        return ReportDigest(
+            chapter_number=row["chapter_number"],
+            created_at=row["created_at"],
+            gate=row["gate"],
+            text_sha256=row["text_sha256"],
+            issues=tuple(Issue.model_validate(item) for item in raw),
+        )

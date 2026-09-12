@@ -2,16 +2,26 @@ import { useState } from "react";
 import { ApiError } from "../api/client";
 import { useCreateAlias, useCreateNode, useRoster } from "../api/hooks";
 import { AUTHORED_LABELS } from "../api/types";
-import type { AliasKind, NodeLabel, NodeRef, StoredAlias } from "../api/types";
+import type { NodeLabel, NodeRef, StoredAlias } from "../api/types";
 import { nodeLabelText } from "../backendMessages";
 import { useLanguage } from "../language";
 
 type Tab = "node" | "alias";
-const ALIAS_KINDS: { kind: AliasKind; label: { zh: string; en: string }; hint: { zh: string; en: string } }[] = [
-  { kind: "alias", label: { zh: "别名", en: "Alias" }, hint: { zh: "另一个正经称呼", en: "Another proper name" } },
-  { kind: "nickname", label: { zh: "小名", en: "Nickname" }, hint: { zh: "熟人才这么叫", en: "Only close acquaintances use this" } },
-  { kind: "title", label: { zh: "称号", en: "Title" }, hint: { zh: "身份、职务等称呼", en: "A title, role, or position" } },
-];
+
+// ⚠️ **这儿原来有一个「哪一类」三选（别名 / 小名 / 称号），2026-09-04 整个删了。**
+//
+// 作者裁定：**这三个当作相等**——「齐天大圣」既是孙悟空的别名也是他的称号，
+// 「斗战胜佛」也是；这一格存在的意义只有一个，「让系统认出这个说法指的也是这个人」。
+//
+// **引擎本来就是这么看的**，所以这不是把 UI 改得和后端不一致，是让 UI 追上后端：
+// `AliasKind` 里唯一有行为差别的是 `CANONICAL`（本名盾：`add_alias` 拒收它、
+// 出参把它滤掉），`alias` / `nickname` / `title` 三者在图层、匹配、规则里**一个
+// 分支都没有**；抽取写进来的别名也一律是 `alias`（`extract/aliases.py`）。
+// 真正决定「能不能用来认正文」的是下面那个勾（`usable_for_rules` + ADR 0004 的
+// 一字守卫），不是这个类。
+//
+// **枚举留在后端不动**：老库里已经存着的 `title` / `nickname` 行照旧渲染
+// （chip 印的是 `surface`，跟类无关），删枚举才需要迁移，而它没有收益。
 
 export function RosterDrawer({ pid, onClose }: { pid: string; onClose: () => void }) {
   const [tab, setTab] = useState<Tab>("node");
@@ -35,7 +45,7 @@ export function RosterDrawer({ pid, onClose }: { pid: string; onClose: () => voi
               {language === "zh" ? "建条目" : "Add entry"}
             </button>
             <button className={tab === "alias" ? "on" : ""} onClick={() => setTab("alias")}>
-              {language === "zh" ? "加称呼" : "Add alias"}
+              {language === "zh" ? "加别名" : "Add alias"}
             </button>
           </div>
         </div>
@@ -106,11 +116,11 @@ function NodeForm({ pid }: { pid: string }) {
       </div>
 
       <div className="field">
-        <span>{language === "zh" ? "其他称呼（可选，用逗号分隔）" : "Other names (optional, comma-separated)"}</span>
+        <span>{language === "zh" ? "其他别名（可选，用逗号分隔）" : "Other aliases (optional, comma-separated)"}</span>
         <input
           value={aliases}
           onChange={(e) => setAliases(e.target.value)}
-          placeholder={language === "zh" ? "输入其他称呼" : "Enter other names"}
+          placeholder={language === "zh" ? "输入其他别名" : "Enter other aliases"}
         />
       </div>
 
@@ -154,12 +164,11 @@ function NodeForm({ pid }: { pid: string }) {
   );
 }
 
-// ── 加称呼 ──────────────────────────────────────────────────────────────────
+// ── 加别名 ──────────────────────────────────────────────────────────────────
 
 function AliasForm({ pid }: { pid: string }) {
   const [of, setOf] = useState("");
   const [surface, setSurface] = useState("");
-  const [kind, setKind] = useState<AliasKind>("alias");
   const [usable, setUsable] = useState(true);
   const [made, setMade] = useState<StoredAlias | null>(null);
   const language = useLanguage((s) => s.language);
@@ -170,7 +179,8 @@ function AliasForm({ pid }: { pid: string }) {
   function submit() {
     setMade(null);
     create.mutate(
-      { of: of.trim(), surface: surface.trim(), kind, usable_for_rules: usable },
+      // `kind` 恒为 `alias`：三类当作相等（见文件顶上那段 ⚠️），不再问作者。
+      { of: of.trim(), surface: surface.trim(), kind: "alias", usable_for_rules: usable },
       { onSuccess: (a) => { setMade(a); setSurface(""); } },
     );
   }
@@ -188,26 +198,16 @@ function AliasForm({ pid }: { pid: string }) {
       </div>
 
       <div className="field">
-        <span>{language === "zh" ? "新称呼" : "New name"}</span>
+        <span>{language === "zh" ? "新别名" : "New alias"}</span>
         <input
           value={surface}
           onChange={(e) => setSurface(e.target.value)}
-          placeholder={language === "zh" ? "输入新的称呼" : "Enter the new name"}
+          placeholder={language === "zh" ? "输入新的别名" : "Enter the new alias"}
         />
-      </div>
-
-      <div className="field">
-        <span>{language === "zh" ? "哪一类" : "Which kind"}</span>
-        <div className="row wrap">
-          {ALIAS_KINDS.map((k) => (
-            <button key={k.kind} className={kind === k.kind ? "on" : ""} onClick={() => setKind(k.kind)}>
-              {k.label[language]}
-            </button>
-          ))}
-        </div>
         <div className="hint">
-          {ALIAS_KINDS.find((k) => k.kind === kind)?.hint[language]}
-          {language === "zh" ? "　·　名称请在建条目时填写" : " · Set the primary name when adding the entry"}
+          {language === "zh"
+            ? "别名、小名、称号都填这里 · 名称请在建条目时填写"
+            : "Aliases, nicknames and titles all go here · Set the primary name when adding the entry"}
         </div>
       </div>
 
@@ -216,7 +216,7 @@ function AliasForm({ pid }: { pid: string }) {
           <input type="checkbox" checked={usable} onChange={(e) => setUsable(e.target.checked)} />
           <span style={{ textTransform: "none", letterSpacing: 0 }}>
             {language === "zh"
-              ? "允许用这个称呼识别正文中的角色"
+              ? "允许用这个别名识别正文中的角色"
               : "Let this name be used to recognize this character in the text"}
           </span>
         </label>
@@ -225,7 +225,7 @@ function AliasForm({ pid }: { pid: string }) {
             {language === "zh" ? (
               <>
                 「{surface.trim()}」只有 1 个字，可能会误认正文中的其他文字。
-                如果只想保存这个称呼，请取消上方勾选。
+                如果只想保存这个别名，请取消上方勾选。
               </>
             ) : (
               <>
@@ -250,7 +250,7 @@ function AliasForm({ pid }: { pid: string }) {
         error={create.error}
         fallback={
           language === "zh"
-            ? "无法添加这个称呼。请检查填写内容后重试。"
+            ? "无法添加这个别名。请检查填写内容后重试。"
             : "Couldn't add this name. Check what you entered and try again."
         }
       />
@@ -267,8 +267,8 @@ function AliasForm({ pid }: { pid: string }) {
           <div className="note">
             {language === "zh"
               ? made.usable_for_rules
-                ? "写作时也会用这个称呼识别对应条目。"
-                : "这个称呼已保存，但不会用于识别正文中的角色。"
+                ? "写作时也会用这个别名识别对应条目。"
+                : "这个别名已保存，但不会用于识别正文中的角色。"
               : made.usable_for_rules
                 ? "This name will also be used to recognize that entry while you write."
                 : "This name has been saved, but won't be used to recognize the character in the text."}
@@ -301,7 +301,7 @@ function Failure({ error, fallback }: { error: unknown; fallback: string }) {
   return (
     <div className="err-box">
       {language === "zh"
-        ? "找到多个匹配项，请改用名称或更明确的称呼："
+        ? "找到多个匹配项，请改用名称或更明确的别名："
         : "Found multiple matches — try the primary name or a more specific alias instead:"}
       <div className="candidates">
         {candidates.map((c, i) => (

@@ -358,7 +358,7 @@ describe("活动记录", () => {
     expect(devTerms(screenText())).toEqual([]);
   });
 
-  it("「看更早的」把后端那个游标**原样**回传，不自己拼", async () => {
+  it("「查看更早之前的…」把后端那个游标**原样**回传，不自己拼", async () => {
     const user = userEvent.setup();
     const cursor = fixtures.activity.next_cursor!;
     renderWithApi(<ActivityLog />, [
@@ -368,7 +368,7 @@ describe("活动记录", () => {
     await collapsed();
 
     const spy = vi.spyOn(globalThis, "fetch");
-    await user.click(screen.getByRole("button", { name: "看更早的" }));
+    await user.click(screen.getByRole("button", { name: "查看更早之前的…" }));
 
     await waitFor(() =>
       expect(
@@ -378,7 +378,7 @@ describe("活动记录", () => {
       ).toBe(true),
     );
     // 到底了就不再摆一个点了没反应的按钮
-    await waitFor(() => expect(screen.queryByRole("button", { name: "看更早的" })).toBeNull());
+    await waitFor(() => expect(screen.queryByRole("button", { name: "查看更早之前的…" })).toBeNull());
     expect(await collapsed()).toHaveLength(ALL); // 已经读到的那些还在
   });
 

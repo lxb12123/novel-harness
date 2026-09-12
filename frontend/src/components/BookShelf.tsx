@@ -2,14 +2,12 @@ import { useEffect, useState } from "react";
 import {
   useChapters,
   useCreateChapter,
-  useDeleteChapter,
   useProjects,
   useSetProjectLanguage,
 } from "../api/hooks";
 import { useLanguage } from "../language";
 import { useCoords } from "../store";
 import {
-  deleteChapterError,
   newChapterError,
   nextAfterRemoving,
   shelved,
@@ -46,51 +44,9 @@ function ChapterList({
   const { chapter } = useCoords();
   const chapters = useChapters(pid);
   const create = useCreateChapter(pid);
-  const del = useDeleteChapter(pid);
-  // 「⋯」开在哪一章上，以及那一章有没有点到第二步（确认）。
-  // **两个 state 不合并成一个**：合并的写法（`confirmFor: number | null`）没法表达
-  // 「菜单开着但还没点删」，而那正是作者绝大多数时候停在的那一档。
-  const [menuFor, setMenuFor] = useState<number | null>(null);
-  const [confirming, setConfirming] = useState(false);
   // 新起一章之后**直接打开它**：作者按这颗按钮就是为了往下写，停在原来那一章
   // 等于让他自己再去目录里找一次刚建的东西。
   const add = () => create.mutate(undefined, { onSuccess: (c) => onOpen(c.number) });
-
-  // 点别处关掉「⋯」。不做的话它会一直挂在那儿，而作者以为自己已经点掉了。
-  useEffect(() => {
-    if (menuFor === null) return;
-    const close = () => {
-      setMenuFor(null);
-      setConfirming(false);
-    };
-    window.addEventListener("pointerdown", close);
-    return () => window.removeEventListener("pointerdown", close);
-  }, [menuFor]);
-
-  function removeChapter(number: number) {
-    const rest = (chapters.data ?? []).map((c) => c.number).filter((n) => n !== number);
-    del.mutate(number, {
-      onSuccess: () => {
-        setMenuFor(null);
-        setConfirming(false);
-        // 删掉的正好是他开着的那一章：**得把他放到还在的那一章上**。
-        // 不做的话中栏会继续摆着一份磁盘上已经没有的正文，而他还能往里打字——
-        // 下一次保存撞 404，那时他已经写了一段。
-        if (active && number === chapter && rest.length) {
-          const nearest = rest.reduce((best, n) =>
-            Math.abs(n - number) < Math.abs(best - number) ? n : best,
-          );
-          onOpen(nearest);
-        }
-      },
-      // 删不掉时**把菜单收掉**：那句拒绝带着数出来的明细（证据几条、关系几条），
-      // 210px 宽的菜单里放不下，它摆在目录下面才读得完整。
-      onError: () => {
-        setMenuFor(null);
-        setConfirming(false);
-      },
-    });
-  }
 
   if (!chapters.data)
     return <div className="empty">{language === "zh" ? "加载中…" : "Loading…"}</div>;
@@ -103,68 +59,14 @@ function ChapterList({
           // 不是作者正看着的东西，画上高亮就是一句假话。
           className={
             "ch" +
-            (active && c.number === chapter ? " on" : "") +
-            (menuFor === c.number ? " menu" : "")
+            (active && c.number === chapter ? " on" : "")
           }
           onClick={() => onOpen(c.number)}
         >
           <span className="n">{String(c.number).padStart(3, "0")}</span>
           <span className="ch-name">{c.title || (language === "zh" ? "（无题）" : "(Untitled)")}</span>
-          {/* 「⋯」平时不显形（`.ch-act` 靠悬浮/聚焦/菜单开着才现），所以一列 722 章
-              不会变成一列点点点。**它仍然在 DOM 里**：只在悬浮时才挂上去的话，
-              键盘走不到它，而这是删一章唯一的入口。 */}
-          <button
-            className="ch-act"
-            aria-label={
-              language === "zh"
-                ? `${c.title || `第 ${c.number} 章`}的更多操作`
-                : `More actions for ${c.title || `chapter ${c.number}`}`
-            }
-            aria-expanded={menuFor === c.number}
-            onClick={(e) => {
-              e.stopPropagation(); // 否则这一下顺带把这一章打开了
-              setConfirming(false);
-              setMenuFor(menuFor === c.number ? null : c.number);
-            }}
-          >
-            ⋯
-          </button>
-          {menuFor === c.number && (
-            <div
-              className="ch-menu"
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => e.stopPropagation()}
-            >
-              {/* **两步。** 「删除本章」和「打开这一章」在同一行上只差几十像素，
-                  而这一颗没有撤销键（引擎那边的行确实没了）。 */}
-              {confirming ? (
-                <>
-                  <div className="ch-menu-ask">
-                    {language === "zh" ? `删除第 ${c.number} 章？` : `Delete chapter ${c.number}?`}
-                  </div>
-                  <button
-                    className="danger"
-                    disabled={del.isPending}
-                    onClick={() => removeChapter(c.number)}
-                  >
-                    {language === "zh"
-                      ? del.isPending ? "正在删…" : "删除"
-                      : del.isPending ? "Deleting…" : "Delete"}
-                  </button>
-                  <button onClick={() => setConfirming(false)}>
-                    {language === "zh" ? "算了" : "Cancel"}
-                  </button>
-                </>
-              ) : (
-                <button className="danger" onClick={() => setConfirming(true)}>
-                  {language === "zh" ? "删除本章" : "Delete this chapter"}
-                </button>
-              )}
-            </div>
-          )}
         </div>
       ))}
-      {del.isError && <div className="ch-add-err">{deleteChapterError(del.error)}</div>}
       {/* 一章都没有的书也走这颗按钮（不再只摆一句「去导入 TXT」）：空白新书本来就该
           能直接开始写，而在此之前浏览器里根本没有「新起一章」这条路——引擎有
           （`chapters/NNNN.md` 摆在那儿），界面没有。 */}

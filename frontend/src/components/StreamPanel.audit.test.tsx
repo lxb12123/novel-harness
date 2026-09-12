@@ -1,7 +1,7 @@
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fixtures, renderWithApi, sseFrames, turnStream } from "../test/harness";
+import { fixtures, renderWithApi, sseFrames, turnStream, ROUND_DONE } from "../test/harness";
 import { devTerms, screenText } from "../test/screenGuard";
 import { applyTurnEvent, NO_PROGRESS } from "../chat";
 import type { ChatTurnEvent } from "../api/types";
@@ -119,7 +119,7 @@ describe("回话区：整段一次到位，没有一个编出来的节奏", () =
     expect(tape.seen.filter((f) => f.includes(head) && !f.includes(said.text))).toEqual([]);
 
     gates[1].open(sseFrames([{ event: "receipt", data: fixtures.chatTurn }])[0]);
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
   });
 
   it("**稿子那一档真的逐字**（反证：上面那条测得出打字机）", async () => {
@@ -167,7 +167,7 @@ describe("回话区：整段一次到位，没有一个编出来的节奏", () =
     ).toBe(true);
 
     gates[2].open(sseFrames([{ event: "receipt", data: fixtures.chatTurn }])[0]);
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
   });
 
   it("**`reply_delta` 到手也不拼字** —— 它不是被忘了，是被拒了", () => {
@@ -226,7 +226,7 @@ describe("`chatTurnEvents`：真字节，而且真的被吃了", () => {
     // 反面：原来那一句不该还在（它是被替换掉的那一份）。
     expect(strip.textContent).not.toContain(started.said_to_author);
     release(sseFrames([{ event: "receipt", data: fixtures.chatTurn }])[0]);
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
   });
 
   it("**默认那条 handler 喂的就是它** —— 组件测试不是在吃一份手写的流", async () => {
@@ -237,9 +237,12 @@ describe("`chatTurnEvents`：真字节，而且真的被吃了", () => {
     const spy = vi.spyOn(globalThis, "fetch"); // **在 stub 装好之后**才盯得住
     await ask(user, "走默认那条");
 
-    // 屏幕上那句收场话来自**真 dump 的最后一帧**，中间那几行来自它前面那几帧。
+    // 屏幕上那一行回执来自**真 dump 的最后一帧**，中间那几行来自它前面那几帧。
+    // **数是从那一帧里读出来的**，不是抄一个常量：抄了的话这条断言就和夹具脱钩，
+    // 而它要证的恰恰是「屏幕上的字真的来自这份夹具」。
     const receipt = JSON.parse(REAL.at(-1)!.split("\ndata: ")[1]);
-    await screen.findByText(receipt.message);
+    expect(receipt.lookups).toBeGreaterThan(0); // 探针：那一轮真的查过资料
+    await screen.findByText(`本轮查询 ${receipt.lookups} 次资料`);
     expect(spy.mock.calls.some(([url]) => String(url).endsWith("/turn/events"))).toBe(true);
     // 那一轮真的经过了长连接：不流式那条一次都没被打。
     expect(spy.mock.calls.some(([url]) => String(url).endsWith("/turn"))).toBe(false);
@@ -299,7 +302,7 @@ describe("每一种事件都得被画过一遍", () => {
     // 探针：`tool` 那一位真的是一个会被网咬住的形状（否则上面那条永远绿）。
     expect(devTerms(event.tool)).toContain("scene_constraints");
     release(sseFrames([{ event: "receipt", data: fixtures.chatTurn }])[0]);
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
   });
 
   it("**模型编出来的工具名也不上屏** —— `tool` 那一位是模型打进来的字", async () => {
@@ -331,7 +334,7 @@ describe("每一种事件都得被画过一遍", () => {
     expect(screenText()).not.toContain(nasty);
     expect(devTerms(screenText())).toEqual([]);
     release(sseFrames([{ event: "receipt", data: fixtures.chatTurn }])[0]);
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
   });
 });
 

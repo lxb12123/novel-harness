@@ -42,11 +42,11 @@ describe("角色册抽屉", () => {
     expect(await screen.findByText(new RegExp(fixtures.createNode.name))).toBeInTheDocument();
   });
 
-  it("1 字称呼用于识别正文时，在提交前给出清楚提示", async () => {
+  it("1 字别名用于识别正文时，在提交前给出清楚提示", async () => {
     const user = userEvent.setup();
     open();
-    await user.click(screen.getByRole("button", { name: "加称呼" }));
-    await user.type(screen.getByPlaceholderText("输入新的称呼"), "名");
+    await user.click(screen.getByRole("button", { name: "加别名" }));
+    await user.type(screen.getByPlaceholderText("输入新的别名"), "名");
 
     expect(screen.getByText(/只有 1 个字/)).toBeInTheDocument();
     // 「不替作者改」：勾还在那儿，系统没有自作主张地取消它。
@@ -56,8 +56,8 @@ describe("角色册抽屉", () => {
   it("去掉勾之后警告消失 —— 那句提示给的是出路，不是唠叨", async () => {
     const user = userEvent.setup();
     open();
-    await user.click(screen.getByRole("button", { name: "加称呼" }));
-    await user.type(screen.getByPlaceholderText("输入新的称呼"), "名");
+    await user.click(screen.getByRole("button", { name: "加别名" }));
+    await user.type(screen.getByPlaceholderText("输入新的别名"), "名");
     await user.click(screen.getByRole("checkbox"));
     expect(screen.queryByText(/只有 1 个字/)).toBeNull();
   });
@@ -67,13 +67,13 @@ describe("角色册抽屉", () => {
     renderWithApi(<RosterDrawer pid="project:ID1" onClose={vi.fn()} />, [
       { method: "POST", match: /\/aliases$/, status: 422, body: fixtures.errorShortAlias },
     ]);
-    await user.click(screen.getByRole("button", { name: "加称呼" }));
+    await user.click(screen.getByRole("button", { name: "加别名" }));
     await user.type(screen.getByPlaceholderText("输入已有名称"), "测试角色");
-    await user.type(screen.getByPlaceholderText("输入新的称呼"), "名");
+    await user.type(screen.getByPlaceholderText("输入新的别名"), "名");
     await user.click(screen.getByRole("checkbox")); // 绕过前端提示，逼服务端说话
     await user.click(screen.getByRole("button", { name: "加" }));
 
-    expect(await screen.findByText(/无法添加这个称呼/)).toBeInTheDocument();
+    expect(await screen.findByText(/无法添加这个别名/)).toBeInTheDocument();
     expect(renderedCopy()).not.toMatch(/ADR|usable_for_rules|规则|服务端/);
   });
 
@@ -82,9 +82,9 @@ describe("角色册抽屉", () => {
     renderWithApi(<RosterDrawer pid="project:ID1" onClose={vi.fn()} />, [
       { method: "POST", match: /\/aliases$/, status: 409, body: fixtures.errorAmbiguousName },
     ]);
-    await user.click(screen.getByRole("button", { name: "加称呼" }));
+    await user.click(screen.getByRole("button", { name: "加别名" }));
     await user.type(screen.getByPlaceholderText("输入已有名称"), "旧称呼");
-    await user.type(screen.getByPlaceholderText("输入新的称呼"), "新称呼");
+    await user.type(screen.getByPlaceholderText("输入新的别名"), "新称呼");
     await user.click(screen.getByRole("button", { name: "加" }));
 
     expect(await screen.findByText(/找到多个匹配项/)).toBeInTheDocument();

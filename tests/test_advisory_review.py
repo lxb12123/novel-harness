@@ -33,6 +33,7 @@ from novel_harness.advisory_review import (
     review_saved_chapter,
     review_track_on_demand,
 )
+from novel_harness.chapter_refresh import ChapterRefreshCoordinator
 from novel_harness.db import Connection, connect, migrate
 from novel_harness.declare import Ledger
 from novel_harness.draft.provider import CompletionResult
@@ -816,12 +817,16 @@ def test_a_blocked_chapter_is_not_reviewed(
     这里把协调器的结论换成 `blocked` 而不是去造一条真的 R2 命中：**被验的是接线
     那一支**——「闸门放行了才核对」这句话在 `_run_one` 里只有一行，而它错了不会
     有任何东西报错，只会多花钱。
+
+    打的是**类**上的 `run`，不是某个实例的：协调器 2026-09-05 起是每条 attempt
+    现开现关的（它必须用执行线程自己的连接，见 `background_runtime._run_one`），
+    实例在这里拿不到。
     """
     pid = written["pid"]
     reviewer = Reviewer()
     runtime = _runtime(written, reviewer)
     monkeypatch.setattr(
-        runtime._coordination, "run", lambda *a, **k: {"validation": "blocked"}
+        ChapterRefreshCoordinator, "run", lambda *a, **k: {"validation": "blocked"}
     )
 
     body = client.get(f"/api/projects/{pid}/chapters/{HERE}/text").json()

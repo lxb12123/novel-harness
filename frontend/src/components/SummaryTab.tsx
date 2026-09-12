@@ -3,10 +3,10 @@ import {
   useBookSummaryStatus,
   useChapterSummary,
   useEditSummary,
+  useGenerateSummary,
   useNodeSummaryMentions,
   useRetractSummary,
   useSummaryMentions,
-  useSummaryWindow,
 } from "../api/hooks";
 import type {
   BookChapterStatusRow,
@@ -36,6 +36,12 @@ import { useCoords } from "../store";
 // 1. **「还没生成」贴到他刚撤回的那一章上。** 两种「没有」在起草那边完全同义（都不进
 //    prompt），可下一步动作正好相反：一种要去生成，一种是他半秒钟前自己做的。
 //    催他去补一件刚做完的事，是这块面板最容易说出口的那句假话。
+// 1b. **说这一格有一颗它没有的按钮。** 这条是实测出来的：手动生成入口
+//    （`POST …/summary`）2026-08-25 删了，而这块屏幕上三句话（占位符 + 两种空态 +
+//    撤回确认）继续指着「点『生成』/『重新生成』」，**骗了作者十天**——直到他
+//    2026-09-05 问「撤回了想重新生成怎么办」。当时的答案是「不能」。
+//    那颗按钮和那条路由同日加回来了（维护者裁定），所以这三句话今天是真的。
+//    **下一个动这颗按钮的人：三句话跟着一起改。** 删按钮不改文案 = 又骗十天。
 // 2. **第二份措辞。** 拒绝的话由后端写（`refusalText`），这儿只在后端一个字都没说的
 //    时候才补一句，而那一句不解释「为什么」（§10 约束 8：不知道就说不知道）。
 //
@@ -63,6 +69,10 @@ const retractFailed = (language: Language): string =>
   language === "zh"
     ? "没能撤回这一章的总结，而系统没能说清是为什么。过一会儿再试一次。"
     : "Couldn't retract this chapter's summary, and the system couldn't say why. Try again in a moment.";
+const generateFailed = (language: Language): string =>
+  language === "zh"
+    ? "这一章的总结没能生成，而系统没能说清是为什么。过一会儿再试一次。"
+    : "Couldn't generate this chapter's summary, and the system couldn't say why. Try again in a moment.";
 const readFailed = (language: Language): string =>
   language === "zh"
     ? "这一章的总结这会儿没读出来。上面空着不代表没有总结 —— 刷新一下再看。"
@@ -81,10 +91,10 @@ export function SummaryTab() {
   const { projectId, chapter, setChapter, setPage } = useCoords();
   const language = useLanguage((s) => s.language);
   const status = useChapterSummary(projectId, chapter);
-  const covered = useSummaryWindow(projectId, chapter);
   const book = useBookSummaryStatus(projectId);
   const edit = useEditSummary(projectId ?? "");
   const retract = useRetractSummary(projectId ?? "");
+  const generate = useGenerateSummary(projectId ?? "");
 
   // 作者正在改的那一段。**`null` = 他没在改**，屏幕跟着服务端那份走。
   // 分成两个状态是因为重取随时会落地（后台整理刚补完一章总结就会），
@@ -102,14 +112,15 @@ export function SummaryTab() {
   const stored = data?.summary ?? "";
   const shown = typed ?? stored;
   const dirty = typed !== null && typed !== stored;
-  const busy = edit.isPending || retract.isPending;
+  const busy = edit.isPending || retract.isPending || generate.isPending;
 
   const failed = status.isError
     ? (refusalText(status.error, readFailed(language)) ?? readFailed(language))
     : null;
   const refused =
     refusalText(edit.error, saveFailed(language)) ??
-    refusalText(retract.error, retractFailed(language));
+    refusalText(retract.error, retractFailed(language)) ??
+    refusalText(generate.error, generateFailed(language));
 
   /** 回到中栏的正文。中栏这会儿可能摊着别的东西（活动记录整块换掉它），
    *  那时正文压根没挂上，光滚是滚不到的。 */
@@ -178,15 +189,17 @@ export function SummaryTab() {
   return (
     <div className="chsum">
       {bookStatusEl}
-      <p className="chsum-scope">{coverageLine(chapter, covered.data, language)}</p>
+      <p className="chsum-scope">
+        {language === "zh" ? `第 ${chapter} 章 章节总结` : `Chapter ${chapter} summary`}
+      </p>
 
       <textarea
         className="chsum-text"
         aria-label={language === "zh" ? `第 ${chapter} 章的总结` : `Summary for chapter ${chapter}`}
         placeholder={
           language === "zh"
-            ? "这一章讲了什么。写一段，或者点「生成」让模型压一段出来。"
-            : 'What happens in this chapter. Write a paragraph, or click "Generate" to have the model draft one.'
+            ? "这一章讲了什么。保存正文后系统会自动写一段，也可以自己写。"
+            : "What happens in this chapter. The system writes one automatically after you save the text; you can also write your own."
         }
         rows={6}
         value={shown}
@@ -199,11 +212,11 @@ export function SummaryTab() {
         <p className="empty chsum-why">
           {language === "zh"
             ? data.retracted
-              ? "这一章的总结被你撤回了 —— 写这一章的时候不会带上它。想要一份新的，点「重新生成」（要跑一次模型）；也可以自己写一段，那不花钱。"
-              : "这一章还没有总结。生成要跑一次模型（花钱），所以得你自己点；不想花这个钱，就自己写一段。"
+              ? "这一章的总结你撤回了 —— 写这一章时不带它，系统也不会再自动补一份回来。想要一份新的，点下面的「重新生成」（跑一次模型）；自己写一段也行，那不花钱。"
+              : "这一章还没有总结。保存正文之后系统会自动写一段（那要跑一次模型）；不想等，点下面的「生成」，或者自己写一段，后者不花钱。"
             : data.retracted
-              ? "You retracted this chapter’s summary — it won’t be included when writing this chapter. Click “Regenerate” for a new one (that runs the model), or write one yourself for free."
-              : "This chapter doesn't have a summary yet. Generating one runs the model (which costs money), so you have to click for it — or write one yourself for free."}
+              ? "You retracted this chapter’s summary — it won’t be included when writing this chapter, and the system won’t bring it back on its own. For a new one, click “Regenerate” below (that runs the model); writing one yourself is free."
+              : "This chapter doesn’t have a summary yet. The system writes one automatically after you save the text (that runs the model); if you don’t want to wait, click “Generate” below — or write one yourself for free."}
         </p>
       )}
 
@@ -211,14 +224,16 @@ export function SummaryTab() {
         <div className="warn">
           {language === "zh" ? (
             <>
-              撤回之后，写这一章时就不带这一段了。你写过的正文一个字都不动；想再要一份总结，
-              得再跑一次模型（花钱），或者自己写一段。
+              撤回之后，写这一章时就不带这一段了。你写过的正文一个字都不动。系统不会再自动
+              补一份回来，但「重新生成」那颗按钮还在 —— 想再要一份，点它跑一次模型（花钱），
+              或者自己写一段（不花钱）。
             </>
           ) : (
             <>
               Once retracted, this summary won’t be included when writing this chapter. Your own
-              text won’t be touched at all; to get another summary, you’ll need to run the model
-              again (which costs money), or write one yourself.
+              text won’t be touched at all. The system won’t bring it back on its own, but the
+              “Regenerate” button stays — click it to run the model again (which costs money), or
+              write one yourself for free.
             </>
           )}
         </div>
@@ -239,6 +254,26 @@ export function SummaryTab() {
               {language === "zh" ? "放弃修改" : "Discard changes"}
             </button>
           </>
+        )}
+        {!dirty && data.summary === null && (
+          // **撤回之后唯一能拿回机器总结的那颗按钮。** 系统自己永远不补撤回过的章
+          // （`chapter_refresh._head_missing`），所以这里不摆它，那一章就死在那儿了
+          // ——2026-08-25 到 2026-09-05 之间正是这个样子。
+          // 只在「现在没有一份在用的总结」时出现：有总结时按下去，后端的幂等判重会
+          // 让它一声不响地什么都不做，而一颗按下去没反应的按钮比没有按钮更糟。
+          <button disabled={busy} onClick={() => generate.mutate(chapter)}>
+            {generate.isPending
+              ? language === "zh"
+                ? "正在生成…"
+                : "Generating…"
+              : data.retracted
+                ? language === "zh"
+                  ? "重新生成"
+                  : "Regenerate"
+                : language === "zh"
+                  ? "生成"
+                  : "Generate"}
+          </button>
         )}
         {!dirty && data.summary !== null && !confirming && (
           <button className="danger" disabled={busy} onClick={() => setConfirming(true)}>
@@ -331,10 +366,6 @@ function BookStatus(props: {
 
   const data = props.data;
   const rows = data.chapters;
-  const paired = rows.filter((r) => r.state === "paired").length;
-  const missing = rows.filter((r) => r.state === "missing").length;
-  const stale = rows.filter((r) => r.state === "stale").length;
-  const anomaly = rows.filter((r) => r.anomaly).length;
   return (
     <div className="chsum-book">
       <p className="chsum-scope">
@@ -353,7 +384,6 @@ function BookStatus(props: {
           />
         ))}
       </div>
-      <p className="chsum-why">{bookStatusLine(data, paired, missing, stale, anomaly, language)}</p>
     </div>
   );
 }
@@ -423,44 +453,6 @@ function statusChipTitle(
   if (r.state === "paired") return `${head}'s summary matches its text.`;
   if (r.state === "missing") return `${head} doesn't have a summary yet — ${weight}.`;
   return `${head}'s text has changed and the summary hasn't caught up — ${weight}.`;
-}
-
-/** 那一行总结。**数字全来自后端视图**（前端不数第二遍会漂的账）。
- *
- *  **两种语言各拼一遍**：中文的「、」顿号列举和英文的「, 」逗号列举形状不一样，
- *  共用一份 join 逻辑会让其中一种语言长出多余或缺失的标点。 */
-function bookStatusLine(
-  data: BookSummaryStatus,
-  paired: number,
-  missing: number,
-  stale: number,
-  anomaly: number,
-  language: Language,
-): string {
-  if (language === "zh") {
-    const head = `全书 ${data.chapters.length} 章：${paired} 章有总结`;
-    const extras: string[] = [];
-    if (missing) extras.push(`${missing} 章缺`);
-    if (stale) extras.push(`${stale} 章不对齐`);
-    if (anomaly) extras.push(`${anomaly} 章生成异常`);
-    const tail = extras.length ? `、${extras.join("、")}。` : "，都跟正文对得上。";
-    const origin =
-      data.focused_chapter != null
-        ? `作者正写在第 ${data.focused_chapter} 章，那一章不碰。`
-        : "没有作者在位信号，全都够资格排进自动补全。";
-    return `${head}${tail}${origin}`;
-  }
-  const head = `${data.chapters.length} chapters total: ${paired} have summaries`;
-  const extras: string[] = [];
-  if (missing) extras.push(`${missing} missing`);
-  if (stale) extras.push(`${stale} stale`);
-  if (anomaly) extras.push(`${anomaly} failed to generate`);
-  const tail = extras.length ? `, ${extras.join(", ")}.` : ", and all of them match the text.";
-  const origin =
-    data.focused_chapter != null
-      ? ` You're currently writing chapter ${data.focused_chapter}; it's left alone.`
-      : " No sign the author is actively writing, so all chapters are eligible for auto-fill.";
-  return `${head}${tail}${origin}`;
 }
 
 /** 这一段总结提到了什么 —— **一排可点的记忆点**。
@@ -583,35 +575,4 @@ function Trail(props: {
       ))}
     </div>
   );
-}
-
-/** 「写这一章的时候带得上几段」。**这一句只读后端算好的窗口**，
- *  不在前端按「近八章」之类的常量推一份——那是第二个会漂的边界。
- *
- *  **两种语言各写一遍完整的句子**：英文那半要处理单复数（1 summary / 2 summaries，
- *  1 chapter has / 2 chapters have），中文没有这个问题，共用一份拼接会在英文那侧拼出病句。 */
-function coverageLine(
-  chapter: number,
-  window: { summarized: number; missing: number[]; chapters: unknown[] } | undefined,
-  language: Language,
-): string {
-  if (!window) return "　"; // 纯排版占位（保住这一行的高度），不是文字，两种语言都用同一个字符。
-  if (language === "zh") {
-    if (window.chapters.length === 0) {
-      return `第 ${chapter} 章前面没有别的章，起草这一章时不带旧章节的总结。`;
-    }
-    const missing = window.missing.length;
-    const head = `写第 ${chapter} 章时，前面那些章里有 ${window.summarized} 段总结带得上。`;
-    return missing === 0
-      ? head
-      : `${head}还有 ${missing} 章有正文却没有总结 —— 那几章的内容进不了这一稿。`;
-  }
-  if (window.chapters.length === 0) {
-    return `Chapter ${chapter} has no earlier chapters, so drafting it won't bring in any older summaries.`;
-  }
-  const missing = window.missing.length;
-  const head = `When writing chapter ${chapter}, ${window.summarized} earlier ${window.summarized === 1 ? "summary" : "summaries"} can be brought in.`;
-  return missing === 0
-    ? head
-    : `${head} ${missing} more ${missing === 1 ? "chapter has" : "chapters have"} text but no summary — that content won’t make it into this draft.`;
 }

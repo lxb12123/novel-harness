@@ -58,7 +58,6 @@ from novel_harness.draft.rolling_summary import SummaryStore
 from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.importer import chapter_path
-from calibration_seed import seed_calibration
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -686,31 +685,18 @@ def test_deleting_a_conversation_keeps_the_bill(
 
 
 def _draft_pending(pid_: str, conn: Connection, root: Path, drafter: Any) -> ToolContext:
-    """起草那条路的上下文：**建好第 2 章磁盘文件 + 封存一份校准**（ADR 0033）。"""
-    from novel_harness.calibration.models import SceneProposal
-    from novel_harness.calibration.store import CalibrationStore
-
+    """起草那条路的上下文：**建好第 2 章磁盘文件**。"""
     chapters = root / "chapters"
     chapters.mkdir(parents=True, exist_ok=True)
     (root / chapter_path(2)).write_text(
         "第二章 对峙\n\n萧决与顾清音对峙。\n", encoding="utf-8"
     )
     store = SqliteStoryGraph(conn)
-    _, author_turn = seed_calibration(
-        conn=conn,
-        project_id=pid_,
-        store=store,
-        root=root,
-        chapter=2,
-        proposal=SceneProposal(chapter=2),
-    )
     return ToolContext(
         store=store,
         project_id=pid_,
         root_path=str(root),
         drafter=drafter,
-        calibrations=CalibrationStore(conn),
-        author_turn=author_turn,
         working_chapter=2,
     )
 
@@ -784,7 +770,7 @@ def test_replaying_a_lookup_is_free_but_replaying_a_draft_is_not(
                         id="paid",
                         name="draft_chapter",
                         arguments=json.dumps(
-                            {"chapter": 2, "calibration_id": "calibration:test:seeded"}
+                            {"chapter": 2, "brief": "写一场对峙"}
                         ),
                     ),
                 ),

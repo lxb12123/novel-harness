@@ -244,12 +244,28 @@ def review_decisions(conn: Connection, seed: Seed) -> list[decisions.Decision]:
 
 
 def assert_only_the_clean_facts_went_canon(conn: Connection, seed: Seed) -> None:
-    """① 干净的进了 Canon；③ 进 bucket 的一条都没进。"""
+    """① 干净的进了 Canon；③ 进 bucket 的一条都没进。
+
+    ⚠️ **第二条断言 2026-09-06 翻了**：位置那一条从「不许自动生效」变成「必须自动生效」。
+
+    从前的规则是「和当前 Canon 不一样就进 bucket」，真书上的代价实测出来了：
+    100 张卡 / 298 条，每条要读两行再判一次——那个队列没人点得完，而**不点的时候
+    那些事实既不进人物卡也不进写作上下文**，等于抽取白跑。作者的裁定：
+    「这类问题导致的冲突不需要放通知这边，直接更新抽取到那个角色卡的状态中，
+    然后用户要是觉得不满他自己可以改这个内容的」。
+
+    **只剩一种情况还进 bucket：机器要推翻作者亲手改过的那一格**
+    （`extract/service.py` 查 `canon_edge_override`）。那一档由
+    `test_a_slot_the_author_took_over_still_asks_first` 单独钉。
+
+    这么改不丢东西：人物卡上那几格 2026-09-06 起印的是**全部历史**
+    （`state_history` / `location_history`），自动生效之后旧值仍在，只是不再排第一。
+    """
     assert canon_event_summaries(conn, seed) == {CLEAN_EVENT_SUMMARY}, (
-        "低置信度那条事件不许自动升——它是作者唯一还愿意被打扰的三个地方之一"
+        "低置信度那条事件不许自动升——它是作者唯一还愿意被打扰的两个地方之一"
     )
-    assert canon_state(conn, seed) == ("北荒", ["金丹"]), (
-        "与当前 Canon 冲突的位置更新不许自动生效；干净的状态更新必须生效"
+    assert canon_state(conn, seed) == ("渡口", ["金丹"]), (
+        "机器推翻机器：位置更新直接生效（作者没接管过这一格）；干净的状态更新照旧生效"
     )
 
 
@@ -268,10 +284,9 @@ def assert_bucketed_facts_are_still_pending(
         assert view.event.information_scope is InformationScope.PROVISIONAL
 
     pending = SqliteProposalStore(conn).pending(seed.project_id)
-    assert {proposal.kind for proposal in pending} == {
-        "low_confidence_main",
-        "edge_conflict",
-    }
+    # `edge_conflict` 2026-09-06 起不再由「和当前 Canon 不一样」触发（见 helper 的
+    # docstring）。这份 analysis 里作者没接管过任何一格，所以队列上只剩事件那一档。
+    assert {proposal.kind for proposal in pending} == {"low_confidence_main"}
     queued_events = {event_id for proposal in pending for event_id in proposal.event_ids}
     queued_edges = {edge_id for proposal in pending for edge_id in proposal.edge_ids}
     assert queued_events == set(bucketed_event_ids)
@@ -301,7 +316,10 @@ def test_clean_facts_promote_themselves_and_bucketed_ones_stay_in_the_queue(
     report = _ingest(conn, seed, prompt_hash="prompt:mixed")
 
     assert len(report.event_ids) == 2 and len(report.edge_ids) == 2
-    assert len(report.clean_event_ids) == 1 and len(report.clean_edge_ids) == 1
+    # ⚠️ **两条边今天都是干净的**（2026-09-06）。那条「和当前 Canon 不一样」的位置更新
+    # 从前进 `edge_conflict` bucket，现在直接升——作者没接管过这一格，机器推翻机器
+    # 不值得打扰他（helper 的 docstring 里有完整理由）。**进 bucket 的只剩事件那一档。**
+    assert len(report.clean_event_ids) == 1 and len(report.clean_edge_ids) == 2
     assert canon_event_summaries(conn, seed) == set(), "落库那一刻还没有任何东西是 CANON"
 
     before = project.require_canon_version(conn, seed.project_id)
@@ -310,10 +328,51 @@ def test_clean_facts_promote_themselves_and_bucketed_ones_stay_in_the_queue(
     assert result.failures == ()
     assert result.promoted_event_ids == report.clean_event_ids
     assert result.promoted_edge_ids == report.clean_edge_ids
-    assert result.canon_version == before + 2  # 事件一次 + 关系一次
+    assert result.canon_version == before + 2  # 事件一次 + 边一次
     assert_only_the_clean_facts_went_canon(conn, seed)
     assert_bucketed_facts_are_still_pending(conn, seed, report)
     assert_every_review_decision_is_the_system(conn, seed, expected=2)
+
+
+def test_a_slot_the_author_took_over_still_asks_first(
+    conn: Connection, seed: Seed
+) -> None:
+    """**作者亲手改过的那一格，机器要盖掉它时照旧做提案卡。**
+
+    这是 2026-09-06 那一刀留下的**唯一**一种 `edge_conflict`（作者裁定：
+    「机器推翻机器直接改，机器推翻作者才问」）。同一份 analysis：
+
+      · 上面那条测试里作者没碰过位置那一格 → 直接升 CANON，队列里没有 `edge_conflict`；
+      · 这一条里作者先把那一格接管了 → 同一条位置更新回到队列上。
+
+    **两条一起才说明这一刀是「换判据」不是「把闸拆了」。** 判据是查一行
+    `canon_edge_override`（`extract/service.py`），不是判断两句话意思冲不冲突——
+    后者是语义判断，ADR 0005 的铁律禁的。
+    """
+    from novel_harness.graph import EdgeProps
+
+    # 作者接管「她在哪」那一格：把北荒改成渡口（改成什么不重要，重要的是他碰过）。
+    located = next(
+        edge
+        for edge in seed.graph.state_at(seed.project_id, seed.hero_id, 1).edges
+        if edge.type is EdgeType.LOCATED_AT
+    )
+    seed.graph.edit_canon_edge(
+        seed.project_id,
+        located.id,
+        new_src=located.src,
+        new_dst=located.dst,
+        props=EdgeProps(value=None),
+        expected_canon_version=project.require_canon_version(conn, seed.project_id),
+    )
+
+    report = _ingest(conn, seed, prompt_hash="prompt:owned")
+    promote_clean_facts(conn, seed.project_id, report)
+
+    kinds = {proposal.kind for proposal in SqliteProposalStore(conn).pending(seed.project_id)}
+    assert "edge_conflict" in kinds, (
+        "作者接管过的那一格被机器盖掉时必须问他——这是这张卡剩下的唯一理由"
+    )
 
 
 def test_promoting_twice_neither_promotes_twice_nor_logs_twice(

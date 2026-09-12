@@ -62,6 +62,7 @@ SETTINGS_RESERVE = 0
 _BLOCK_COMMENT = re.compile(r"/\*.*?\*/", re.DOTALL)
 _LINE_COMMENT = re.compile(r"(?<!:)//[^\n]*")
 _NUMBER = re.compile(r"\b\d[\d_]*\b")
+_MILLISECONDS = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*(?:_MS|Ms)\b\s*[:=]\s*\d[\d_]*")
 
 
 def _code_only(source: str) -> str:
@@ -70,8 +71,18 @@ def _code_only(source: str) -> str:
     **注释里可以出现 1000**——这条 bug 的病历就写在 `continuation.ts` 的注释里，
     而把病历一起禁掉等于让下一个人不知道为什么不能写死这个数。
     `(?<!:)` 是为了别把 `https://…` 里那两个斜杠当成行注释。
+
+    ⚠️ **毫秒也一起剥掉**（2026-09-07）。这道守卫认的是**形状**（够大的整数），
+    而毫秒天生就够大：`continuation.ts` 里那句 `IDLE_MS = 1000`（停手多久才去要建议）
+    被它当成写死的上文上限抓住，**这条红在 HEAD 上挂了一周多**（2026-08-30 那次批量
+    提交起）。
+
+    **不是把门槛调高去躲开它**——那会让「有人写死一个 1200 的上文上限」也一起躲过去。
+    收窄的判据是**单位**：名字以 `_MS` / `Ms` 结尾的那个常量，它的数是时间不是字数。
+    没有人会把上文上限命名成 `TAIL_MS`，所以这道口子漏不出真的违例。
     """
-    return _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", source))
+    code = _LINE_COMMENT.sub("", _BLOCK_COMMENT.sub("", source))
+    return _MILLISECONDS.sub("", code)
 
 
 # ══════════════════════════════════════════════════════════════════════════

@@ -10,8 +10,13 @@ from pathlib import Path
 import pytest
 
 from novel_harness.db import Connection, connect, migrate
-from novel_harness.draft.provider import CompletionResult
+from novel_harness.draft.provider import (
+    CompletionResult,
+    ProviderError,
+    ProviderFailureKind,
+)
 from novel_harness.draft.rolling_summary import (
+    SUMMARIZER_CAPABILITY,
     RollingSummarizer,
     SummaryChapterNotFound,
     SummaryGenerationError,
@@ -146,7 +151,19 @@ def test_ensure_missing_chapter_raises_without_paid_call(seed: Seed) -> None:
     assert analyzer.calls == 0
 
 
-def test_ensure_empty_summary_raises_and_persists_nothing(seed: Seed) -> None:
+def test_ensure_empty_summary_writes_no_summary_but_still_bills_the_call(
+    seed: Seed,
+) -> None:
+    """答了空文本：一行总结都不留，但**那一次调用要上账**。
+
+    ── 这条断言 2026-09-09 翻了个面 ────────────────────────────────────
+    它原来写的是 `COUNT(*) FROM model_call == 0`，名字叫「persists nothing」——
+    也就是把「没写出总结」读成了「什么都没发生」。**那两件事不是一件**：请求已经
+    发出去，端点已经答了，钱可能已经付掉（`record_failed_call` 的 docstring），
+    只是答出来的东西不能用。账上看不见的钱是查不出来的钱。
+
+    端点答上了话，所以**模型名是知道的**，不该记成 unknown。
+    """
     analyzer = Summarizer(text="   \n")
     runner = _runner(seed, analyzer)
     with pytest.raises(SummaryGenerationError):
@@ -154,7 +171,64 @@ def test_ensure_empty_summary_raises_and_persists_nothing(seed: Seed) -> None:
     conn = seed.connection()
     try:
         assert SummaryStore(conn).get(seed.project_id, 1) is None
-        assert conn.execute("SELECT COUNT(*) FROM model_call").fetchone()[0] == 0
+        row = conn.execute(
+            "SELECT capability, model, call_state, chapter_number FROM model_call"
+        ).fetchone()
+        assert row is not None
+        assert (row["capability"], row["call_state"]) == (SUMMARIZER_CAPABILITY, "FAILED")
+        assert row["model"] == "summarizer-test-model"
+        assert row["chapter_number"] == 1
+    finally:
+        conn.close()
+
+
+def test_ensure_records_a_failed_call_and_closes_the_job_when_the_provider_raises(
+    seed: Seed,
+) -> None:
+    """provider 抛异常：一行 FAILED 的账 + 一张收成终态的单。
+
+    ── 这条钉的是 2026-09-08 那次真书事故 ──────────────────────────────
+    端点（opencode Go）开始强制要 `x-opencode-session`，每一次调用都是
+    `400 MissingSessionID`。31 章的总结批量失败，而在这条路补上审计之前：
+    `model_call` 里 `capability='summarizer'` 的 FAILED 是 **0 条**，
+    `summary_generation_job` 攒了 68 张停在 `RUNNING` 的单。当天能查出原因
+    靠的是抽取那一侧的行——**总结自己一个字都没留下**。
+
+    `model` 记成 `unknown` 是对的：调用是在还没听到任何回答时炸的。
+    """
+    failure = ProviderError("模型调用失败(400 MissingSessionID)", kind=ProviderFailureKind.UNKNOWN)
+
+    def explode(_request: SummaryRequest) -> CompletionResult:
+        raise failure
+
+    runner = _runner(seed, explode)
+    with pytest.raises(ProviderError):
+        runner.ensure(seed.project_id, 1)
+
+    conn = seed.connection()
+    try:
+        assert SummaryStore(conn).get(seed.project_id, 1) is None
+        row = conn.execute(
+            """
+            SELECT capability, model, call_state, error_type, error_message,
+                   in_artifact, prompt_hash, tokens_in, tokens_out, cost, chapter_number
+              FROM model_call
+            """
+        ).fetchone()
+        assert row is not None
+        assert (row["capability"], row["call_state"]) == (SUMMARIZER_CAPABILITY, "FAILED")
+        assert row["model"] == "unknown"
+        assert row["error_type"] == ProviderFailureKind.UNKNOWN.value
+        assert "MissingSessionID" in row["error_message"]
+        # 发出去的那份 prompt 照记（事后排查的第一个问题就是「这次发的是哪一份」）；
+        # 答案那一侧的数留 NULL——没答上来就是没有这些数，绝不估。
+        assert row["in_artifact"] and row["prompt_hash"]
+        assert (row["tokens_in"], row["tokens_out"], row["cost"]) == (None, None, None)
+        assert row["chapter_number"] == 1
+        # 单收成终态：一张永远 RUNNING 的单会被调度那侧当成「卡住了」反复重抢。
+        assert [r["status"] for r in conn.execute("SELECT status FROM summary_generation_job")] == [
+            "FAILED"
+        ]
     finally:
         conn.close()
 

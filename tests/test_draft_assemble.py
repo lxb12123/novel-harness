@@ -128,14 +128,15 @@ def test_the_previous_tail_is_optional_and_leaves_no_empty_heading() -> None:
 
 def test_graph_section_has_no_block_source_and_never_appears_in_the_prompt() -> None:
     """2026-08-26：唯一的图谱块（尚未登场）删了。**`graph_section()` 恒为 `""`**——
-    连本该有未来实体的 fixture 也一样，「【本场设定要点】」不会再出现在任何 prompt 里。
+    「【本场设定要点】」不会再出现在任何 prompt 里。
 
-    这条故意用 `_full_ctx()`（血枭盟 ch8 / 幽泉窟 ch10 都在）而不是空 ctx：
-    用一个「以前会产出图谱段」的输入去证明它现在真的不产出，比用一个本来就没有
-    未来实体的输入更能防「有人把 `_forbidden_block` 悄悄加回来了」这种回归。
+    ⚠️ **2026-08-31**：这条原来还有一段自守卫——用 `_full_ctx()`（本该带着
+    `forbidden_names`）而不是空 ctx，证明「以前会产出图谱段的输入，现在真的不产出」。
+    `forbidden_names`/`forbidden_entities` 随它一起删了（ADR 0041）：`ResolvedConstraints`
+    今天没有任何字段能填出图谱段的内容，`graph_section()` 因此没有输入可以喂出非空
+    结果——这个自守卫的前提本身消失了，不是测试变弱了。
     """
     ctx = _full_ctx()
-    assert ctx.forbidden_names, "这个 fixture 本该有未来实体 —— 没有的话下面全是空转"
 
     assert graph_section(ctx) == ""
     assert "【本场设定要点】" not in _text(_rendered(ctx))

@@ -41,6 +41,7 @@
 
 from __future__ import annotations
 
+
 import threading
 from contextlib import AbstractContextManager
 from pathlib import Path
@@ -67,8 +68,8 @@ from ..draft.product_draft import (
 from ..draft.provider import ProviderConfig, ProviderError
 from ..events import EventStore
 from ..extract.call_audit import ModelCallReceipt
+from ..draft.context import TargetChapterSnapshot
 from ..graph import GraphStore
-from ..calibration.models import SceneBrief, TargetChapterSnapshot
 from .candidates import DraftCandidate, DraftCandidateStore, StoredDraft
 from .loop import Cancellation, EventFn, TurnEvent, safe_emitter
 from .model import cancellable_client
@@ -378,19 +379,18 @@ class ChapterDesk:
         ask: DraftAsk,
         ctx: DraftContext,
         *,
-        goal: str | None = None,
-        brief: SceneBrief | None = None,
         snapshot: TargetChapterSnapshot | None = None,
     ) -> DraftProduct:
         """生成一稿，收进候选表。**书一个字节都不动**（ADR 0022）。
 
+        「要写什么」和「补的资料」就在 `ask` 上（ADR 0047：助手自己写的 `brief` /
+        自己挑的 `materials`），这一层原样交给写手那一次调用，并且**跟着稿子存进候选表**
+        ——作者看得见它喂了什么。
+
         Args:
-            goal: 起草目标。**模式二只许来自 sealed calibration 的 `goal_spec`**
-                （`_handle_draft_chapter` 负责从 artifact 取）；测试可以直传。
-            brief: 已封存的 `SceneBrief`（Writer「本稿执行计划」分区）。
             snapshot: 目标章当前正文快照 `{text, sha256}`。**一次读取，全链共用**：
-                安全 cast、水位校验、Writer 当前章、候选 `base_sha256` 都用它，
-                不许各自重读磁盘（ADR 0033 §8.4）。
+                写手看的正文、候选 `base_sha256` 都用它，不许各自重读磁盘。
+                `None` = 这一章还没有正文。
 
         Returns:
             `DraftProduct`：候选的摘要行 + 这一稿花掉的那几笔。**无论如何都带着回执**
@@ -402,8 +402,6 @@ class ChapterDesk:
                 写手交回来的是空的 / **作者按了停**（那一档半截的正文照旧收进候选表，
                 见 `AUTHOR_STOPPED_NOTE`）。
         """
-        if goal is None:
-            raise ToolRefused(message("goal_requires_calibration", self._length.language))
         # **`plan_call` 在这儿算，不在构造函数里算。** 放在构造里的话，一个撑不起整章
         # 起草预算的模型会让 `POST …/turn` 整个 422——聊天本来是能用的，作者只会看到
         # 「写作助手用不了」。放在这儿，坏的只有起草这一个工具，而它说得出原因。
@@ -449,8 +447,6 @@ class ChapterDesk:
                 ask,
                 ctx,
                 plan,
-                goal=goal,
-                brief=brief,
                 snapshot=snapshot,
                 base_sha=base_sha,
                 stream=stream,
@@ -458,26 +454,45 @@ class ChapterDesk:
         finally:
             self._close_stream(ask.chapter, stream)
 
+    def _standing_rules(self) -> tuple[str, ...]:
+        """作者一直挂着的那几条规矩，喂给写作模型（维护者 2026-09-05 要的那个插槽）。
+
+        **读的就是「检验规则」那一栏里那几行**（`validation_rule` 表），所以「写之前
+        提醒模型别写」和「写完之后查出来」用的是同一份数据——不是第二处措辞。
+        今天只有 `forbidden_literal` 一种，取的是作者写的那段字（`config.literal`），
+        不是标题：标题是给他自己看的一句话，模型要的是那几个字本身。
+
+        ⚠️ **查库在这一层，不在 `draft/`**（那一层不开库，同 `write_rule` 的分工）。
+        规则读不出来不该让一稿写不成——真出问题时宁可少一段提醒，也不能整章起草炸掉。
+        """
+        from ..checks.service import load_custom_rules
+
+        try:
+            specs = load_custom_rules(self._conn, self._project_id)
+        except Exception:  # noqa: BLE001 —— 见 docstring：少一段提醒 ≪ 写不成
+            return ()
+        literals = [str(spec.config.get("literal", "")).strip() for spec in specs]
+        return tuple(literal for literal in literals if literal)
+
     def _write_the_open_stream(
         self,
         ask: DraftAsk,
         ctx: DraftContext,
         plan: ResolvedCallPlan,
         *,
-        goal: str,
-        brief: SceneBrief | None,
         snapshot: TargetChapterSnapshot | None,
         base_sha: str | None,
         stream: int,
     ) -> DraftProduct:
         """`write()` 里**「正在写」已经喊出去之后**的那一段。见那儿的 `finally`。"""
         request = ChapterDraftRequest(
-            goal=goal + _SELF_NOTE_ASK,
+            goal=ask.brief + _SELF_NOTE_ASK,
             length=self._length,
             previous_tail=_previous_tail(self._root, ask.chapter),
             # **这一行 2026-08-13 之前是缺的**，见 `self._write_rule` 那段。
             write_rule=self._write_rule,
-            brief=brief,
+            standing_rules=self._standing_rules(),
+            materials=tuple(ask.materials),
             target_chapter_text=snapshot.text if snapshot is not None else None,
         )
         # **逐次收回执，不等整份出参。** 整章起草是一到两次调用（生成 + 至多一次续写，
@@ -515,7 +530,7 @@ class ChapterDesk:
             # **必须排在 `ProviderError` 前面**：它是那个的子类，顺序反了半截的正文
             # 就被当成一次「联系不上模型」扔掉了。
             raise self._stopped(
-                ask.chapter, exc, spent, base_sha=base_sha, stream=stream
+                ask, exc, spent, base_sha=base_sha, stream=stream
             ) from exc
         except ProviderError as exc:
             # **不许让它逃出 `dispatch`**：`run_turn` 外面没有 try/except，漏出去
@@ -535,9 +550,7 @@ class ChapterDesk:
                 calls=tuple(drafted.calls),
             )
 
-        candidate = self._keep(
-            ask.chapter, body=body, note=note, base_sha=base_sha, stream=stream
-        )
+        candidate = self._keep(ask, body=body, note=note, base_sha=base_sha, stream=stream)
         return DraftProduct(candidate=candidate, calls=drafted.calls)
 
     def _close_stream(self, chapter: int, stream: int) -> None:
@@ -583,7 +596,7 @@ class ChapterDesk:
 
     def _keep(
         self,
-        chapter: int,
+        ask: DraftAsk,
         *,
         body: str,
         note: str,
@@ -598,6 +611,7 @@ class ChapterDesk:
         而那一档在屏幕上必须说自己没写完（`TurnEvent.draft_kept`）。**第几稿这个数只有
         这一层知道**——它是候选表现算的，上面那层要拿到它就得去解析工具返回的 JSON。
         """
+        chapter = ask.chapter
         candidate = self._candidates.put(
             self._project_id,
             chapter=chapter,
@@ -605,6 +619,9 @@ class ChapterDesk:
             note=note,
             base_sha256=base_sha,
             stopped_reason=stopped,
+            # 它喂了什么跟着稿子存（ADR 0047 第二条线）——半截那一档也存，理由同上。
+            brief=ask.brief,
+            materials=tuple(ask.materials),
         )
         self.produced.append(candidate)
         # **这一声就是那条流的结局**，所以先把它从「还开着」里划掉：`write()` 的
@@ -625,7 +642,7 @@ class ChapterDesk:
 
     def _stopped(
         self,
-        chapter: int,
+        ask: DraftAsk,
         exc: CallInterrupted,
         spent: list[ModelCallReceipt],
         *,
@@ -650,6 +667,7 @@ class ChapterDesk:
         看到的就是「第 3 稿写好了」，而那一稿断在半句上。拒绝那条路上
         `ToolRefused.calls` 正是 3.6 定下的那条记账路，**取消不许另开一条**。
         """
+        chapter = ask.chapter
         body, note = split_self_note(exc.partial_text)
         calls = tuple(spent)
         if not body.strip():
@@ -670,7 +688,7 @@ class ChapterDesk:
         # （`DraftFullText.stopped_reason`），作者在版本历史里退得回去——ADR 0022 的
         # 立场原样成立：这一层只负责让**它是半截**这件事没人能不知道。
         candidate = self._keep(
-            chapter,
+            ask,
             body=body,
             note=note,
             base_sha=base_sha,

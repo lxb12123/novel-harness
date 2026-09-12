@@ -23,7 +23,7 @@ from typing import Any, Final
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..db import Connection
-from ..extract.call_audit import record_call
+from ..extract.call_audit import record_call, record_failed_call
 from ..extract.control import AuditedCompletion
 from ..graph import ChapterText
 from ..ids import EntityType, new_id
@@ -33,6 +33,15 @@ from .summarize import SUMMARY_VERSION, SummaryMessage, build_summary_messages
 
 ROLLING_WINDOW: Final = 30
 """写第 X 章时最多带上的旧章节摘要数（只覆盖「近八章事件窗口」之前的章节）。"""
+
+SUMMARIZER_CAPABILITY: Final = "summarizer"
+"""总结这一路在 `model_call.capability` 上的取值。**两个写入方，一个定义**
+（成功那条 `record_call`、失败那条 `record_failed_call`）——同
+`call_audit.EXTRACTOR_CAPABILITY` 那条理由：抄成两份字面量的话，账上会长出两类
+看起来无关的行，而它们是同一件事的两个结局。
+
+`activity.py::_call_jump` 那段注释说的「写在 `draft/rolling_summary.py`，认在那儿」
+指的就是这个常量。"""
 
 AUTHOR_VERSION: Final = "chapter-summary-author-v1"
 """作者自己写的那一行的 `schema_version`。
@@ -161,9 +170,9 @@ class ChapterSummaryStatus(BaseModel):
 
     2026-08-26 起它不再决定屏幕或写作 prompt 里长什么样——「作者写的/机器写的」
     那条区分已经去掉，摆在这儿的内容按内容用，不按出身打折（ADR 0017 补记）。
-    它还留着是因为 `calibration/calibrate.py` 的出处五档
-    （`EpistemicKind.AUTHOR_BACKGROUND` / `MACHINE_SUMMARY`）要用它——
-    那是另一件事：只标一条事实从哪来，不判它可信不可信。"""
+    它还留着是因为总结状态视图（`summary_index.py`）要照实说这一段是谁写的——
+    那是另一件事：只标一条内容从哪来，不判它可信不可信。（校准链 2026-09-12 随
+    ADR 0047 砍了，它那五档出处不再是这一位的消费者。）"""
 
     version_id: str | None = None
     """head 指向的版本行 id（019）。第一次生成前为 NULL。"""
@@ -175,7 +184,7 @@ class ChapterSummaryStatus(BaseModel):
 
 
 class SummarySnapshotWatermark(BaseModel):
-    """一章的当前快照水位：给摘要新鲜度判据用（`calibration/freshness.py`）。"""
+    """一章的当前快照水位：给摘要新鲜度判据用（`product_draft._summary_is_current`）。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -761,6 +770,60 @@ def _messages_bytes(messages: list[SummaryMessage]) -> bytes:
     ).encode("utf-8")
 
 
+def _record_summary_failure(
+    conn: Connection,
+    *,
+    project_id: str,
+    chapter_number: int,
+    job_id: str,
+    request: SummaryRequest,
+    model: str | None,
+    elapsed_ms: int,
+    exc: BaseException,
+    call_id_factory: Callable[[str], str],
+) -> None:
+    """**没总结出来的那一次也要记一行**，并把这张单收成终态 `FAILED`。
+
+    ── 它 2026-09-09 才有，而缺它的那段时间里发生了什么 ──────────────────────
+
+    这条路原来只在**调用成功之后**才写审计（下面那句 `record_call`）。于是
+    provider 一抛异常：`model_call` 里一行都没有，`summary_generation_job` 停在
+    `RUNNING` 再没人动它。真书上积到 68 张这样的单，而全表
+    `capability='summarizer'` 的 FAILED 是 **0 条**——2026-09-08 那次
+    `400 MissingSessionID`（端点开始强制要 `x-opencode-session`）之所以查得出来，
+    靠的是**抽取那一侧**留下的行，总结自己一个字都没留。那天要是只有总结在跑，
+    作者屏幕上只有一片红的「异常」，库里没有任何东西说得出为什么（§10 约束 8）。
+
+    理由与 `record_failed_call` 的 docstring 逐条相同，不再重复；**多的只有一条**：
+    这条路上还有一张单，而一张永远 `RUNNING` 的单和一张失败的单，
+    对调度那一侧不是一件事（`recover_claimable` 会去重抢前者）。
+
+    ── 为什么记完是 `raise` 而不是把异常吞掉 ───────────────────────────────
+    调用方（`POST …/summary` 那颗按钮 / 后台 dispatcher）各自认得这些异常类型并
+    翻成自己的那句话。这里只负责**在它们飞过去之前把账记上**。
+    """
+    conn.execute("BEGIN IMMEDIATE")
+    record_failed_call(
+        conn,
+        project_id=project_id,
+        capability=SUMMARIZER_CAPABILITY,
+        model=model,
+        prompt_hash=request.prompt_hash,
+        prompt_bytes=request.prompt_bytes,
+        elapsed_ms=elapsed_ms,
+        # `kind` 是 `ProviderError` 上的分档机器码；别的异常退回类名。同抽取那侧。
+        error_type=str(getattr(exc, "kind", "") or type(exc).__name__),
+        error_message=str(exc)[:2000],
+        chapter_number=chapter_number,
+        call_id_factory=call_id_factory,
+    )
+    conn.execute(
+        "UPDATE summary_generation_job SET status = 'FAILED' WHERE id = ?",
+        (job_id,),
+    )
+    conn.commit()
+
+
 @dataclass(frozen=True, slots=True)
 class SummaryRequest:
     """一次绑定 prompt 的总结请求；派生字段不能独立提供。"""
@@ -858,20 +921,39 @@ class RollingSummarizer:
             conn.commit()
 
             started = perf_counter()
-            completion = self._analyzer(request)
-            if not isinstance(completion, CompletionResult):
-                raise TypeError("summarizer must return CompletionResult")
-            audited = AuditedCompletion.from_result(completion)
-            summary = audited.text.strip()
-            if not summary:
-                raise SummaryGenerationError("summarizer returned empty text")
+            answered_model: str | None = None
+            try:
+                completion = self._analyzer(request)
+                if not isinstance(completion, CompletionResult):
+                    raise TypeError("summarizer must return CompletionResult")
+                audited = AuditedCompletion.from_result(completion)
+                # 端点答了、但答得不能用的那几档（空文本最常见）**知道自己跟谁说的话**，
+                # 所以模型名往下传；`self._analyzer` 自己炸掉的那一档没有这个信息，
+                # 留 `None` 由 `record_failed_call` 记成 "unknown"。
+                answered_model = audited.model
+                summary = audited.text.strip()
+                if not summary:
+                    raise SummaryGenerationError("summarizer returned empty text")
+            except Exception as exc:
+                _record_summary_failure(
+                    conn,
+                    project_id=project_id,
+                    chapter_number=chapter_number,
+                    job_id=job_id,
+                    request=request,
+                    model=answered_model,
+                    elapsed_ms=max(0, int((perf_counter() - started) * 1_000)),
+                    exc=exc,
+                    call_id_factory=self._new_call_id,
+                )
+                raise
             elapsed_ms = max(0, int((perf_counter() - started) * 1_000))
 
             try:
                 call_id = record_call(
                     conn,
                     project_id=project_id,
-                    capability="summarizer",
+                    capability=SUMMARIZER_CAPABILITY,
                     model=audited.model,
                     finish_reason=audited.finish_reason,
                     schema_version=SUMMARY_VERSION,

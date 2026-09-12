@@ -382,21 +382,24 @@ def test_where_refuses_a_character_in_the_location_slot(led: Ledger) -> None:
         led.declare_where(who="萧决", loc="李管家", quote="北荒的风比刀还利")
 
 
-def test_supersede_conflict_leaves_no_fake_accept_in_the_log(
+def test_a_refused_declaration_leaves_no_fake_accept_in_the_log(
     led: Ledger, conn: Connection, pid: str
 ) -> None:
     """**「日志最后」那个裁决的具身，别删。**
 
-    先声明第 3 章的位置，再声明第 1 章的位置 = 乱序 → `SupersedeConflict`（预期异常，
-    不是崩溃）。日志先写的话，这次拒绝会在那张封死了 UPDATE/DELETE 的表里留一条
-    永远删不掉的假 accept。
-    """
-    from novel_harness.graph import SupersedeConflict
+    日志先写的话，每一次拒绝都会在那张封死了 UPDATE/DELETE 的表里留一条永远删不掉的
+    假 accept——而 `decision_log` 是全库唯一不可重建、也唯一必须不撒谎的资产。
 
+    ⚠️ **触发的异常 2026-09-06 换了一个**（[ADR 0043](../docs/adr/0043-facts-store-a-start-not-an-interval.md)）。
+    它原来用的是「先声明第 3 章、再声明第 1 章」→ `SupersedeConflict`（乱序）。
+    乱序今天不再是错误（更早的事实只是一条更早的观察），那个异常连同类一起删了。
+    换成引语找不到——**它和乱序一样是预期异常、一样发生在写边之前**，
+    要钉的顺序纪律一个字没变。
+    """
     led.declare_where(who="萧决", loc="北荒", quote="北荒的风比刀还利")  # ch3
     before = _counts(conn, pid)
-    with pytest.raises(SupersedeConflict):
-        led.declare_where(who="萧决", loc="青云城", quote="青云城的雨下了一夜")  # ch1，乱序
+    with pytest.raises(QuoteNotFound):
+        led.declare_where(who="萧决", loc="青云城", quote="这句话正文里根本没有")
     after = _counts(conn, pid)
     assert after == before, "拒绝的代价必须是「什么都没发生」：证据、边、日志三张表零新增"
     assert not [d for d in decisions.read(conn, pid) if d.payload.get("object_name") == "青云城"]
@@ -407,14 +410,25 @@ def test_supersede_conflict_leaves_no_fake_accept_in_the_log(
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_second_location_closes_the_first(led: Ledger) -> None:
+def test_a_second_location_takes_over_without_touching_the_first(
+    led: Ledger, store: SqliteStoryGraph, pid: str
+) -> None:
+    """第 3 章那条从第 3 章起生效，第 1 章那条**一根汗毛都没动**。
+
+    ⚠️ 从前这条测试叫 `test_second_location_closes_the_first`，断言的是
+    `second.closed[0].valid_to_chapter == 3`。`Declaration.closed` 和 `valid_to_chapter`
+    2026-09-06 一起下线（ADR 0043）：「谁盖住谁」改在读的时候算。
+    **交接点那条纪律没变**，只是现在只能从行为上断言——本来也该那样断言。
+    """
     first = led.declare_where(who="萧决", loc="青云城", quote="青云城的雨下了一夜")
     assert first.valid_from == 1
     second = led.declare_where(who="萧决", loc="北荒", quote="北荒的风比刀还利")
     assert second.valid_from == 3
-    assert len(second.closed) == 1
-    assert second.closed[0].id == first.edge.id
-    assert second.closed[0].valid_to_chapter == 3  # 闭开区间：[1,3) —— ch2 在青云城，ch3 不在
+    assert second.retracted == []
+    # 闭开区间那条纪律的行为面：ch2 还在青云城，ch3 已经不在。
+    who = first.edge.src
+    assert store.state_at(pid, who, 2).location.name == "青云城"
+    assert store.state_at(pid, who, 3).location.name == "北荒"
 
 
 def test_state_at_agrees_with_the_declared_intervals(led: Ledger, store: SqliteStoryGraph, pid: str) -> None:

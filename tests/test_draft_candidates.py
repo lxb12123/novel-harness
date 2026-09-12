@@ -38,7 +38,6 @@ from novel_harness.agent.candidates import (
 from novel_harness.agent.drafting import SELF_NOTE_MARK, chapter_drafter, split_self_note
 from novel_harness.agent.ports import DraftAsk, ToolContext
 from novel_harness.agent.tools import dispatch_all
-from novel_harness.calibration.store import CalibrationStore
 from novel_harness.db import Connection, connect, migrate
 from novel_harness.declare import Ledger
 from novel_harness.draft.capabilities import resolve_capabilities
@@ -51,7 +50,6 @@ from novel_harness.graph import (
 )
 from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
-from calibration_seed import seed_calibration
 
 ENDPOINT = "https://api.deepseek.com"
 MODEL = "deepseek-v4-flash"
@@ -168,14 +166,14 @@ class _NoSummaries:
 
 def _ask(poisoned: dict[str, Any], chapter: int) -> tuple[DraftAsk, Any]:
     return (
-        DraftAsk(chapter=chapter, calibration_id="test:unused"),
+        DraftAsk(chapter=chapter, brief="写一场对峙"),
         unknown_cast_constraints(SqliteStoryGraph(poisoned["conn"]), poisoned["pid"], chapter),
     )
 
 
 def _write(desk: Any, poisoned: dict[str, Any], chapter: int) -> Any:
     ask, ctx = _ask(poisoned, chapter)
-    return desk.write(ask, ctx, goal="写一场对峙")
+    return desk.write(ask, ctx)
 
 
 def every_column(conn: Connection) -> str:
@@ -205,7 +203,7 @@ def test_no_poison_survives_into_the_candidate_table(
     writer = FakeWriter(f"{SELF_NOTE_MARK} 这一版更冷。\n\n风雪落在肩上。")
     desk = _desk(poisoned, monkeypatch, writer)
     ask, ctx = _ask(poisoned, 1)
-    product = desk.write(ask, ctx, goal="写一场对峙")
+    product = desk.write(ask, ctx)
     desk.land(product.candidate.id)
 
     stored = every_column(poisoned["conn"])
@@ -216,10 +214,12 @@ def test_no_poison_survives_into_the_candidate_table(
     )
     assert '"props"' not in stored, "表里出现了 props —— 那是整份节点被序列化进来了"
 
-    # 反证：这一条不是在一个「什么都没跑到」的库上搜的。约束真的算过——直接查 `ctx`，
-    # 不再搜 prompt：2026-08-26 起未来实体的显示名不再渲染进任何 prompt（国际化第一批
-    # ⓪，`_forbidden_block()` 下线），但 `ctx.forbidden_names` 本身仍按章号精确算出。
-    assert "幽泉窟" in ctx.forbidden_names, "这一稿根本没带约束跑 —— 上面那几条「没搜到」是空的"
+    # ⚠️ **2026-08-31：「反证：约束真的算过」这条自守卫删了。** 它原来直接查
+    # `ctx.forbidden_names`；`forbidden_names`/`forbidden_entities` 随它一起删了
+    # （ADR 0041），而这里的 `ctx` 是 `unknown_cast_constraints(...)`——退化态只剩
+    # `chapter` 一个字段，没有别的东西可查来证明「约束真的算过」，删掉比留一条
+    # 测不出东西的断言诚实。上面 `every_column()` 自己的非空断言仍然守着「不是在
+    # 空表上搜」那一半。
     prompt = json.dumps(writer.prompts[0], ensure_ascii=False)
     assert TWIST not in prompt
 
@@ -281,20 +281,11 @@ def test_the_tool_result_never_carries_the_chapter(
     """
     whole_chapter = "风雪落在肩上。" * 500
     desk = _desk(poisoned, monkeypatch, FakeWriter(whole_chapter))
-    _, author_turn = seed_calibration(
-        conn=poisoned["conn"],
-        project_id=poisoned["pid"],
-        store=SqliteStoryGraph(poisoned["conn"]),
-        root=poisoned["root"],
-        chapter=1,
-    )
     context = ToolContext(
         store=SqliteStoryGraph(poisoned["conn"]),
         project_id=poisoned["pid"],
         root_path=str(poisoned["root"]),
         drafter=desk,
-        calibrations=CalibrationStore(poisoned["conn"]),
-        author_turn=author_turn,
         working_chapter=1,
     )
     (outcome,) = dispatch_all(
@@ -303,7 +294,7 @@ def test_the_tool_result_never_carries_the_chapter(
                 id="c0",
                 name="draft_chapter",
                 arguments=json.dumps(
-                    {"chapter": 1, "calibration_id": "calibration:test:seeded"}
+                    {"chapter": 1, "brief": "写一场对峙"}
                 ),
             )
         ],
@@ -338,20 +329,11 @@ def test_a_draft_result_is_bound_to_its_chapter_even_when_the_call_has_no_chapte
     **不是一张「哪个工具绑章号」的表**（表会在加工具的那天漂）。
     """
     desk = _desk(poisoned, monkeypatch, FakeWriter("风雪落在肩上。"))
-    _, author_turn = seed_calibration(
-        conn=poisoned["conn"],
-        project_id=poisoned["pid"],
-        store=SqliteStoryGraph(poisoned["conn"]),
-        root=poisoned["root"],
-        chapter=1,
-    )
     context = ToolContext(
         store=SqliteStoryGraph(poisoned["conn"]),
         project_id=poisoned["pid"],
         root_path=str(poisoned["root"]),
         drafter=desk,
-        calibrations=CalibrationStore(poisoned["conn"]),
-        author_turn=author_turn,
         working_chapter=1,
     )
     (drafted,) = dispatch_all(
@@ -360,7 +342,7 @@ def test_a_draft_result_is_bound_to_its_chapter_even_when_the_call_has_no_chapte
                 id="c0",
                 name="draft_chapter",
                 arguments=json.dumps(
-                    {"chapter": 1, "calibration_id": "calibration:test:seeded"}
+                    {"chapter": 1, "brief": "写一场对峙"}
                 ),
             )
         ],
@@ -586,20 +568,11 @@ def test_three_drafts_in_one_batch_really_run_at_the_same_time(
     together = threading.Barrier(3, timeout=5)
     desk = _desk(poisoned, monkeypatch, FakeWriter("风雪落在肩上。", during=together.wait))
     lock = threading.RLock()
-    _, author_turn = seed_calibration(
-        conn=poisoned["conn"],
-        project_id=poisoned["pid"],
-        store=SqliteStoryGraph(poisoned["conn"]),
-        root=poisoned["root"],
-        chapter=1,
-    )
     context = ToolContext(
         store=SqliteStoryGraph(poisoned["conn"]),
         project_id=poisoned["pid"],
         root_path=str(poisoned["root"]),
         drafter=desk,
-        calibrations=CalibrationStore(poisoned["conn"]),
-        author_turn=author_turn,
         working_chapter=1,
         db_lock=lock,
     )
@@ -612,7 +585,7 @@ def test_three_drafts_in_one_batch_really_run_at_the_same_time(
             id=f"c{n}",
             name="draft_chapter",
             arguments=json.dumps(
-                {"chapter": 1, "calibration_id": "calibration:test:seeded"}
+                {"chapter": 1, "brief": "写一场对峙"}
             ),
         )
         for n in range(3)
@@ -670,3 +643,37 @@ def test_cleanup_never_touches_a_draft_the_author_might_still_pick(
     kept_landed = [cid for cid in landed if cid in alive]
     assert len(kept_landed) == KEEP_LANDED, f"落过盘的留了 {len(kept_landed)} 份"
     assert kept_landed == landed[-KEEP_LANDED:], "留下的不是最近那几份"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 七、ADR 0047：助手给的两格真的到了写手，也真的跟着稿子存了下来
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_the_brief_is_the_goal_and_the_materials_ride_along_and_both_are_stored(
+    poisoned: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`draft_chapter(chapter, brief, materials)`：brief 是写手的「要写什么」，materials 是
+    独立分区；**两样都跟着稿子存进候选表**（作者看得见它喂了什么），半截那一档也存。
+    """
+    writer = FakeWriter(f"{SELF_NOTE_MARK} 这一版更冷。\n\n风雪落在肩上。")
+    desk = _desk(poisoned, monkeypatch, writer)
+    ask = DraftAsk(
+        chapter=1,
+        brief="重写第 1 章开头：萧决独自进北荒，裕王已死不能当活人写。收在他没抬头。",
+        materials=("第 154 章：贾环在盘龙峡刺杀裕王成功。", "第 157 章原文节选：「裕王赵谌的死……」"),
+    )
+    ctx = unknown_cast_constraints(SqliteStoryGraph(poisoned["conn"]), poisoned["pid"], 1)
+    product = desk.write(ask, ctx)
+
+    prompt = "\n".join(m["content"] for m in writer.prompts[0])
+    assert "重写第 1 章开头：萧决独自进北荒" in prompt, "brief 没进「要写什么」"
+    assert "【助手补的资料】" in prompt
+    assert "- 第 154 章：贾环在盘龙峡刺杀裕王成功。" in prompt
+    assert "- 第 157 章原文节选：「裕王赵谌的死……」" in prompt
+
+    stored = DraftCandidateStore(poisoned["conn"]).get(poisoned["pid"], product.candidate.id)
+    assert stored is not None
+    assert stored.brief == ask.brief
+    assert stored.materials == tuple(ask.materials)
+    assert product.candidate.brief == ask.brief and product.candidate.materials == tuple(ask.materials)

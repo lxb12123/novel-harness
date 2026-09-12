@@ -75,12 +75,11 @@ from ..graph import (
     NodeRef,
 )
 from ..graph.store import (
-    ChapterInUse,
+    MAX_SUBGRAPH_NODES,
     NodeNotFound,
     SnapshotInUse,
     SnapshotIsCurrent,
     StoreError,
-    SupersedeConflict,
 )
 from ..mentioned import mentioned_cast
 from ..panel import (
@@ -88,7 +87,6 @@ from ..panel import (
     cast_states,
     character_state,
     resolve_cast,
-    scene_constraints,
 )
 from ..text import paragraphs as split_paragraphs
 from .deps import (
@@ -97,6 +95,7 @@ from .deps import (
     get_conn,
     get_ledger,
     get_store,
+    get_summarizer,
     load_project,
     resolve_route_capabilities,
 )
@@ -229,10 +228,9 @@ def _effective_cast(proj: Any, store: Any, chapter: int, cast: str, include: str
     角色册命中了谁。推导的方向是 fail-closed 的那一侧（`mentioned.py` 讲了为什么
     多算比少算安全），所以「不填」不再等于「面板全禁到没东西看」。
 
-    **不传和传空串是同一件事。** 区分它们只会让调用方靠一个看不见的差别改变语义；
-    真要全禁的调用方（M2 判分链）走的是 Python 里的 `scene_constraints`，不经过这里。
+    **不传和传空串是同一件事。** 区分它们只会让调用方靠一个看不见的差别改变语义。
 
-    正文不存在 → 推不出东西 → 空 cast → `scene_constraints` 照旧退化成全禁。
+    正文不存在 → 推不出东西 → 空 cast → `resolve_cast` 照旧退化成空解析（`ResolvedCast.complete` 为假）。
 
     ── `include` 为什么必须是另一个参数，不能塞进 `cast` ──────────────────────
     `cast` 的语义是**过滤**（「只看这几个人」），而它今天只有一个来源：作者亲手标的
@@ -390,12 +388,6 @@ async def _declaration_refused(_: Request, exc: DeclarationRefused) -> JSONRespo
     return _err(409, {"error": "declaration_refused", "message": str(exc)})
 
 
-@app.exception_handler(SupersedeConflict)
-async def _supersede_conflict(_: Request, exc: SupersedeConflict) -> JSONResponse:
-    # 乱序声明 valid_from，v1 拒绝不猜（§5.5：猜错 = state_at 同时返回两个互斥位置）。
-    return _err(409, {"error": "supersede_conflict", "message": str(exc)})
-
-
 @app.exception_handler(NodeNotFound)
 async def _node_not_found(_: Request, exc: NodeNotFound) -> JSONResponse:
     # subgraph 的 center / state 的 node_id 不在本项目（含跨项目误引用）。
@@ -419,14 +411,6 @@ async def _snapshot_in_use(_: Request, exc: SnapshotInUse) -> JSONResponse:
             "message": str(exc),
         },
     )
-
-
-@app.exception_handler(ChapterInUse)
-async def _chapter_in_use(_: Request, exc: ChapterInUse) -> JSONResponse:
-    # 明细一起给：屏幕上要说得出**挡路的是什么**，不是只说一句「删不掉」——
-    # 一句不带理由的拒绝会让作者去翻文件夹自己动手删，那才是真的会丢东西。
-    # `ChapterUsage` 全部字段都是非负整数（无 id），整份塞进 `params` 是安全的。
-    return _err(409, {"error": "chapter_in_use", "params": exc.usage.model_dump(mode="json")})
 
 
 @app.exception_handler(StoreError)
@@ -519,6 +503,20 @@ class SettingsBody(BaseModel):
     把这个开关拨回去。真要关它，前端发的是 `false`。
     """
 
+    review_card_edits: bool | None = None
+    """改完人物卡叫核对模型验一遍。**同上：带没带这个键才是判据。**"""
+
+    continuation_in_agent_mode: bool | None = None
+    """写作助手开着时行内续写照跑。**同上：带没带这个键才是判据。**"""
+
+    graph_max_nodes: int | None = Field(default=None, ge=1, le=5_000)
+    """关系图一次最多画几个人。**空值语义同 `context_window`：带了这个键就照它写
+    （null/0 = 清掉，回落引擎默认），没带就原样留着。**
+
+    上限钉在 5000 不是拍脑袋：这张图由浏览器布局（ReactFlow），节点数一大是**它**先
+    卡死，而卡死的时候作者只会看到「点开人物卡之后整个界面不动了」——一个说不出
+    为什么的故障。宁可在这儿当场 422 顶回去，也不要让他填出一个能锁死界面的数。"""
+
 
 def _continuation_tail() -> tuple[int, str]:
     """行内续写值得带多少上文（code point），外加**这个数为什么是这个数**。
@@ -586,6 +584,13 @@ def _settings_response(settings: UserSettings) -> dict[str, Any]:
         # 屏幕上「没填」和「填了个 0」是两件事，混成一个数就再也分不开了。
         "context_window": settings.context_window,
         "auto_update_model_windows": settings.auto_update_model_windows,
+        "review_card_edits": settings.review_card_edits,
+        "continuation_in_agent_mode": settings.continuation_in_agent_mode,
+        # 同 `context_window`：**要回显**，没填是 null 不是 0。前端拿它当输入框的值，
+        # 而 `graph_max_nodes_default` 是给占位符用的——屏幕上得说得出「不填会是多少」，
+        # 否则那个空框对作者是一句没头没尾的话。
+        "graph_max_nodes": settings.graph_max_nodes,
+        "graph_max_nodes_default": MAX_SUBGRAPH_NODES,
         # 续写这一格搭这条已有的返回过来（**不另开接口**）：前端本来每次开工作台
         # 就在拿它，而这个数只随「换了模型/改了窗口」变，正是这条返回会变的时候。
         "continuation_tail_limit": tail_limit,
@@ -617,6 +622,21 @@ def put_settings(body: SettingsBody) -> dict[str, Any]:
             bool(body.auto_update_model_windows)
             if "auto_update_model_windows" in body.model_fields_set
             else current.auto_update_model_windows
+        ),
+        review_card_edits=(
+            bool(body.review_card_edits)
+            if "review_card_edits" in body.model_fields_set
+            else current.review_card_edits
+        ),
+        continuation_in_agent_mode=(
+            bool(body.continuation_in_agent_mode)
+            if "continuation_in_agent_mode" in body.model_fields_set
+            else current.continuation_in_agent_mode
+        ),
+        graph_max_nodes=(
+            body.graph_max_nodes
+            if "graph_max_nodes" in body.model_fields_set
+            else current.graph_max_nodes
         ),
     )
     save_user_settings(merged)
@@ -964,23 +984,6 @@ def mentioned(
     }
 
 
-@app.get("/api/projects/{project_id}/chapters/{chapter}/constraints")
-def constraints(
-    chapter: int,
-    cast: str = Query(""),
-    include: str = INCLUDE,
-    store: Any = Depends(get_store),
-    proj: Any = Depends(load_project),
-) -> Any:
-    """场景约束盒：scene_constraints 收原始称呼、内部自解析、fail-closed。
-
-    **`include` 在这一条上才是要命的**：它多一个人只会多一条禁令（安全），
-    少一个人就是泄漏。`_effective_cast` 保证它只加不减，`tests/test_jump_cast.py` 钉着。
-    """
-    return scene_constraints(
-        store, proj.id, chapter, _effective_cast(proj, store, chapter, cast, include)
-    )
-
 
 @app.get("/api/projects/{project_id}/chapters/{chapter}/state")
 def state(
@@ -1007,8 +1010,28 @@ def character_state_endpoint(
     store: Any = Depends(get_store),
     proj: Any = Depends(load_project),
 ) -> Any:
-    """单个人物在第 chapter 章的状态快照。node_id 不在本项目 → NodeNotFound → 404。"""
-    return _narrowed(character_state(store, proj.id, node_id, chapter), chapter)
+    """单个人物在第 chapter 章的状态快照。node_id 不在本项目 → NodeNotFound → 404。
+
+    出参多一个 `state_history`：**这一格从头到现在填过的每一个值**（新的在前），
+    人物卡「状态」那一格拿它分组渲染（一个字段一堆值，最新那条打「（最新）」）。
+
+    **它是加在这条路由上的，不是加在 `StateSnapshot` 上的**：`states` 那一项回答
+    「他现在什么样」，喂模型（`agent/tools.py` 那条工具）、判 `is_dead` 的都是它，
+    往里塞历史值等于让模型在两个都写着「修为」的值里挑一个。两个问题，两个字段。
+    """
+    payload = _narrowed(character_state(store, proj.id, node_id, chapter), chapter)
+    history = store.state_history(proj.id, node_id, chapter)
+    payload["state_history"] = _narrow(
+        [value.model_dump(mode="json") for value in history], chapter
+    )
+    # 「所在地」也用同一套画法（作者 2026-09-06：「是的也用这种机制」）。
+    # 位置是最爱变、也最容易「同一处两个叫法」的一格（真书 298 条待确认里 142 条是
+    # 位置），只印当前那一个的话，作者看不出系统把他从哪儿挪到了哪儿。
+    visits = store.location_history(proj.id, node_id, chapter)
+    payload["location_history"] = _narrow(
+        [visit.model_dump(mode="json") for visit in visits], chapter
+    )
+    return payload
 
 
 @app.get("/api/projects/{project_id}/resolve")
@@ -1052,6 +1075,8 @@ def subgraph(
 
     nodes/center 是完整 Node → 过 `_narrow`：这一章的未来节点收窄。
     """
+    # 上限由**装配层**读设置传进去：`graph/` 不认识 `settings`，而这个数是作者
+    # 在设置页填的（没填就是 `None`，引擎用自己那一档）。
     graph = store.subgraph(
         proj.id,
         center,
@@ -1059,6 +1084,7 @@ def subgraph(
         hops=hops,
         edge_types=_split_edge_types(edge_types),
         scope=InformationScope.CANON,
+        max_nodes=load_user_settings().graph_max_nodes,
     )
     return _narrowed(graph, chapter)
 
@@ -1137,31 +1163,6 @@ def create_chapter(
         None,
     )
     return {"number": number, "title": entry.title if entry else ""}
-
-
-@app.delete("/api/projects/{project_id}/chapters/{chapter}")
-def delete_chapter(
-    chapter: int,
-    store: Any = Depends(get_store),
-    proj: Any = Depends(load_project),
-) -> Any:
-    """删掉一章。**引擎在它上面记过东西就拒绝**（409 `chapter_in_use`，带明细）。
-
-    那条拒绝的完整论证在 `GraphStore.delete_chapter` / `ChapterInUse`：一句 DELETE
-    会连着把指向这一章的关系和证据**无声地**级联掉，而那些是这个产品唯一的资产。
-
-    正文不是删掉是**挪走**（`importer.remove_chapter` → 书文件夹底下的 `deleted/`）——
-    作者按错了还找得回来。出参里**不带那个路径**：屏幕上不摆文件路径（作者不看路径），
-    要找回来是在他自己的文件夹里找。
-
-    **章号不重排。** 删掉第 3 章之后还是 1、2、4——章号是全书的顺序键，
-    每一条边和每一条情节的 `valid_from` 都钉在它上面，重排一次等于把整本书的时态挪位。
-    """
-    try:
-        importer.remove_chapter(store, proj.id, Path(proj.root_path), chapter)
-    except importer.ChapterMissing:
-        raise HTTPException(404, {"error": "chapter_missing", "params": {"chapter": chapter}})
-    return {"deleted": True, "number": chapter}
 
 
 @app.get("/api/projects/{project_id}/chapters/{chapter}/history")
@@ -1374,8 +1375,8 @@ class DeclareNodeBody(BaseModel):
     - 首现章是**决定**（「幽泉窟我打算第 200 章才让它出场」）。这个信息**物理上不在
       已写文本里**（ADR 0004：墙上那把枪是不是伏笔，取决于他第 200 章打不打算开枪），
       没有任何证据推得出它。同 PLANNED 边的 `valid_from`——001_init.sql 那句
-      「那不是回忆是决定」说的就是这类。`NodeProps.first_appears_chapter` 和
-      `ForbiddenEntity.first_appears_chapter` 两处 docstring 都写着「作者声明的」。
+      「那不是回忆是决定」说的就是这类。`NodeProps.first_appears_chapter` 的
+      docstring 写着「作者声明的」。
 
     **已经写到了的那一半不走这里**：`POST …/declare/first-appearance` 收一句引语、
     自己算出那是第几章（`Ledger.declare_first_appearance`）。**能由证据决定的，
@@ -2088,6 +2089,62 @@ def chapter_summary(
     `has_text=false`（这一章还没写，没得总结）/ `retracted=true`（作者亲手撤掉的，
     别催他去补一件他刚做的事）/ 两者都不是（有正文、没生成过——那是要花钱的那一步）。
     """
+    return _summary_state(conn, proj.id, chapter)
+
+
+@app.post("/api/projects/{project_id}/chapters/{chapter}/summary")
+def generate_chapter_summary(
+    chapter: int,
+    conn: Any = Depends(get_conn),
+    proj: Any = Depends(load_project),
+    summarizer: Any = Depends(get_summarizer),
+) -> dict[str, Any]:
+    """**显式**为第 chapter 章生成滚动总结（会调模型、会花钱）。
+
+    ── 这条路 2026-08-25 删过一次，2026-09-05 由维护者裁定加回来 ────────────
+
+    删的理由是「总结的触发只剩两个，都是系统自动的」。**代价当天没被写下来**：
+    作者撤回一章的总结之后，系统按纪律不会再自动补（那条纪律是对的，见
+    `chapter_refresh._head_missing`），于是那一章**永远拿不回机器总结**，唯一的
+    回头路是自己手打一段。他 2026-09-05 指着那一格说「撤回了之后肯定要留一个
+    重新生成的按钮供用户立即生成」——所以这条路回来了。
+
+    `_head_missing` 那半条纪律**一个字没改**，两者不矛盾，分界线是「谁按的」：
+    系统不自己掏钱把他删掉的东西买回来，作者自己按的按钮花的是他授权的钱。
+
+    幂等由 `RollingSummarizer.ensure` 保证：这一章最新那一行就是这份 prompt 产出的
+    就直接返回，重复点不会重复付费。
+
+    **同步跑完才回**（不是 202 + 轮询，同抽取那条）：一次总结是一次调用，作者按下
+    去就在等这一段字出现；多一层「排队了，回头再看」等于把他刚要的东西藏起来。
+    """
+    from ..draft.provider import ProviderError
+    from ..draft.rolling_summary import SummaryChapterNotFound, SummaryGenerationError
+
+    if chapter < 1:
+        raise HTTPException(status_code=422, detail={"error": "chapter_number_at_least_one"})
+    try:
+        summarizer.ensure(proj.id, chapter)
+    except SummaryChapterNotFound:
+        raise HTTPException(
+            status_code=404,
+            detail={"error": "chapter_not_found", "params": {"chapter": chapter}},
+        )
+    except SummaryGenerationError:
+        # **只回码，不带 `str(exc)`。** 这条 502 是**作者亲手按出来的**，所以它一定会
+        # 上屏（`refusalText` 拿不到码时会把 `detail` 当整句话渲染，见
+        # `correctionError.saidToTheAuthor` 的 legacy 那一支）。恢复这条路由时它原样
+        # 抄的是 2026-08-25 删掉的那一版，而那一版早于「错误只回码」那一批——
+        # 抄回来等于把一个已经修过的病重新装上（`backendMessages.ts` 顶上那段
+        # 「参数安不安全要在送之前判断」写的就是这件事）。
+        raise HTTPException(status_code=502, detail={"error": "summary_generation_empty"})
+    except ProviderError:
+        # 同上。`ProviderError.__str__` 带着 provider 的状态码和响应体片段——
+        # 它自己的 docstring 就写着「永远不上作者的屏幕」。
+        raise HTTPException(status_code=502, detail={"error": "model_call_failed"})
+    # 出参从库里重读一遍，不拿 `ensure` 的返回自己拼：`RollingSummarizer` 用的是它
+    # 自己那条连接，而这一条是请求的连接——两边各拼一份的话，「刚生成完」和「刷新一下」
+    # 有机会长得不一样。
     return _summary_state(conn, proj.id, chapter)
 
 

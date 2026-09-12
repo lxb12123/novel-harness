@@ -10,12 +10,13 @@
 
 ⚠️ **1 和 2 的理由 2026-08-25 换过**（ADR 0039）：原来它们说的是「退化值 =
 `must_not_reveal` 全部秘密」，那是一条 fail-closed 的安全性质。秘密下线之后
-`SceneConstraints` 只剩 `forbidden_entities`，而它按章号算、与 cast 无关——
+`SceneConstraints` 只剩 `unresolved_cast`（`forbidden_entities` 也在 2026-08-31 删了，
+[ADR 0041](../../docs/adr/0041-forbidden-entities-cut.md)）——
 **空 cast 今天不再让任何东西退化**。留下来的理由见 `draft/context.py` 第二节：
 一份你没有的在场名单，不许拿空列表冒充着发给模型。
 
 复用 `test_fake_graph.FakeGraph`（同 `test_store_conformance.py` 的做法）：它是 StoryGraph
-契约的参考实现，`scene_constraints` 要的 `resolve` 它按契约实现了。
+契约的参考实现，`scene_view` 要的 `resolve` 它按契约实现了。
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ from test_fake_graph import (
 
 from novel_harness.draft.context import ResolvedConstraints, resolve_constraints
 from novel_harness.graph import EdgeType, NodeLabel
-from novel_harness.panel import UnresolvedCast, scene_constraints
+from novel_harness.panel import UnresolvedCast
 from novel_harness.panel.constraints import scene_view
 
 TWIST = "萧决其实是魔尊之子，第 200 章揭晓"
@@ -57,7 +58,7 @@ TELL = "玄血蛊"
 
 
 def test_happy_path_narrows_a_scene() -> None:
-    """幽泉窟第 200 章才首现 → 这一场不许出现；在场解析成了唯一一个人。"""
+    """在场解析成了唯一一个人。"""
     store = build([])
 
     ctx = resolve_constraints(store, PID, 152, [GU_QINGYIN.name])
@@ -65,7 +66,8 @@ def test_happy_path_narrows_a_scene() -> None:
     assert ctx.chapter == 152
     assert ctx.cast == ["顾清音"]
     assert [r.name for r in ctx.characters] == ["顾清音"]
-    assert ctx.forbidden_names == ["幽泉窟"]
+
+
 def test_of_narrows_the_very_same_constraints() -> None:
     """`of()` 是**收窄**，不是重算。
 
@@ -79,7 +81,6 @@ def test_of_narrows_the_very_same_constraints() -> None:
     ctx = ResolvedConstraints.of(view, cast)
 
     sc = view.constraints
-    assert ctx.forbidden_entities == sc.forbidden_entities
     assert ctx.chapter == sc.chapter
     # 在场那几个 ref 也是**同一份**，不是重算的：下游拿不到 `resolve_cast`
     # （第 4 道 arch-guard 的 WRITER_BANNED），所以这一份必须从这儿传下去。
@@ -104,7 +105,7 @@ def test_the_degraded_state_is_unrepresentable() -> None:
 def test_ambiguous_cast_raises_instead_of_degrading() -> None:
     """「师兄」映射到 2 个人（PLAN §3.1 点名的场景）：弹给作者问，不替他猜。
 
-    同时钉住**面板侧不受影响**：`scene_constraints` 仍然返回一份退化约束（它得渲染，
+    同时钉住**面板侧不受影响**：`scene_view` 仍然返回一份退化约束（它得渲染，
     抛异常会让头牌整片黑掉，且作者修不了一个异常）。两侧的行为差异是有意的。
     """
     store = build(
@@ -113,7 +114,7 @@ def test_ambiguous_cast_raises_instead_of_degrading() -> None:
     )
     cast = [GU_QINGYIN.name, "师兄"]
 
-    degraded = scene_constraints(store, PID, 152, cast)
+    degraded = scene_view(store, PID, 152, cast).constraints
     assert degraded.unresolved_cast == ["师兄"]
 
     with pytest.raises(UnresolvedCast) as exc:
@@ -215,15 +216,6 @@ def test_a_full_node_is_rejected_by_the_type() -> None:
         )
 
 
-def test_future_entity_names_are_not_the_same_promise() -> None:
-    """诚实说明的那一半：未来实体的**名字必然进 prompt**，那是设计不是泄漏。
-
-    `幽泉窟` 既是显示名也是禁写清单上的那个词——不点它的名，Writer 就不知道该躲开什么。
-    别把上面那条「别名和 props 一个字都不出」的直觉搬到这一侧来用。
-    """
-    store = _store_with_a_tell()
-
-    ctx = resolve_constraints(store, PID, 152, [GU_QINGYIN.name])
-
-    assert ctx.forbidden_names == [YOUQUAN.name]
-    assert YOUQUAN.name in ctx.model_dump_json()  # 它进 prompt 是设计，不是泄漏
+# ⚠️ **2026-08-31：`test_future_entity_names_are_not_the_same_promise` 删了**——
+# 它测的是「未来实体名字必然进 prompt，这是设计不是泄漏」，而 `forbidden_names`/
+# `forbidden_entities` 整个不存在了，这条设计也就不再成立（见 ADR 0041）。

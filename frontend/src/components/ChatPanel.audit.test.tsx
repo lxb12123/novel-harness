@@ -5,7 +5,7 @@ import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../api/client";
 import { refusalText } from "../chat";
-import { fixtures, stubFetch } from "../test/harness";
+import { fixtures, stubFetch, ROUND_DONE } from "../test/harness";
 import { devTerms, engineWords, machineWords, rawIds, screenText } from "../test/screenGuard";
 import { DEFAULT_LEFT, DEFAULT_RIGHT, DIVIDER_PX, KEY_PCT_STEP } from "../layout";
 import { useCoords } from "../store";
@@ -178,7 +178,7 @@ describe("秘密内容：带毒的会话详情", () => {
     await screen.findByText(fixtures.chatDetail.messages[0].text);
     await user.type(say(), "这一章能说破血脉吗");
     await user.click(sendBtn());
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
     await settle();
 
     const stray = watch
@@ -228,7 +228,7 @@ describe("研发术语：整块面板的兜底分支", () => {
 
   it("一段对话都还没有的时候", async () => {
     renderWatched(<ChatPanel />, [{ match: /\/chats$/, body: [] }]);
-    await screen.findByText(/说一句就行/);
+    await screen.findByText("无限创意，从此谱写");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "对话列表" }));
     await screen.findByText(/还没有说过话/);
@@ -256,7 +256,7 @@ describe("研发术语：整块面板的兜底分支", () => {
       { match: /\/chats$/, status: 500, body: { error: "some_unregistered_error" } },
     ]);
     await settle();
-    expect(screen.queryByText(/说一句就行/)).toBeNull();
+    expect(screen.queryByText("无限创意，从此谱写")).toBeNull();
     await user.click(screen.getByRole("button", { name: "对话列表" }));
     expect(screen.queryByText(/还没有说过话/)).toBeNull();
     expect(errBoxes().join("\n")).toMatch(/没读出来/);
@@ -302,7 +302,7 @@ describe("研发术语：整块面板的兜底分支", () => {
       { method: "POST", match: /\/chats$/, status: 404, body: PROJECT_GONE },
       { match: /\/chats$/, body: [] },
     ]);
-    await screen.findByText(/说一句就行/);
+    await screen.findByText("无限创意，从此谱写");
     await user.type(say(), "第一句");
     await user.click(sendBtn());
 
@@ -329,7 +329,7 @@ describe("研发术语：整块面板的兜底分支", () => {
 
     expect(devTerms(screenText())).toEqual([]);
     turn.release();
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
     expect(devTerms(screenText())).toEqual([]);
   });
 
@@ -428,7 +428,7 @@ describe("「停」", () => {
     expect(errBoxes()).toEqual([]);
     expect(screenText()).not.toMatch(/失败|出错|错误/);
     turn.release();
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
   });
 
   it("**按了停却一声不吭是不允许的** —— 那颗按钮读起来就是坏的", async () => {
@@ -455,7 +455,7 @@ describe("「停」", () => {
     expect(screenText()).not.toContain("chat_not_found");
     expect(devTerms(screenText())).toEqual([]);
     turn.release();
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
   });
 
   it("正在跑的那一段删不掉：那句话是「先停下来再删」，不是「删除失败」", async () => {

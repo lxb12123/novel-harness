@@ -63,7 +63,6 @@ from novel_harness.agent.tools import (
     dispatch_all,
     tool_declarations,
 )
-from novel_harness.calibration.store import CalibrationStore
 from novel_harness.db import IN_MEMORY, Connection, connect, migrate
 from novel_harness.declare import Ledger
 from novel_harness.draft.context import DraftContext, ResolvedConstraints
@@ -78,7 +77,6 @@ from novel_harness.graph import (
     NodeSpec,
 )
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
-from calibration_seed import seed_calibration
 
 # 泄漏物：作者写在节点上的东西。**出现在任何一个模型看得见的面上都是泄漏**
 # （`graph.models.NodeRef` 的 docstring 记着这两种实测形态）。
@@ -250,18 +248,9 @@ def _surfaces_of(world: World) -> dict[str, str]:
 
     from novel_harness.draft.rolling_summary import SummaryStore
 
-    _, turn = seed_calibration(
-        conn=world.conn,
-        project_id=world.project_id,
-        store=world.store,
-        root=world.root,
-        chapter=CHAPTER,
-    )
     context = world.context(
         drafter=desk,
         summaries=SummaryStore(world.conn),
-        calibrations=CalibrationStore(world.conn),
-        author_turn=turn,
         # **索引层要在「知道作者写到第几章」的状态下被采样**：那是它会去算未来实体、
         # 会往返回里写「这是你还没写到的」的那一档，也就是最容易把秘密带出来的那一档。
         working_chapter=CHAPTER,
@@ -270,7 +259,7 @@ def _surfaces_of(world: World) -> dict[str, str]:
         [
             _call("scene_constraints", chapter=CHAPTER),
             _call("character_state", chapter=CHAPTER, character="萧决"),
-            _call("draft_chapter", chapter=CHAPTER, calibration_id="calibration:test:seeded"),
+            _call("draft_chapter", chapter=CHAPTER, brief="写一场雪，收在他没抬头。"),
             # ADR 0022 拆出来的另外两个动作：它们各自是一个新的返回面。
             _call("save_draft", draft_id=DRAFT_ID),
             _call("read_draft", draft_id=DRAFT_ID),
@@ -357,9 +346,9 @@ def test_no_tool_schema_still_talks_about_secrets() -> None:
 
 
 def test_an_english_books_tool_declarations_have_no_chinese_characters() -> None:
-    """国际化第三批：15 个工具发给英文书的 schema 里一个中文字都不许有。
+    """国际化第三批：表里每一个工具发给英文书的 schema 里一个中文字都不许有。
 
-    判据和上面那条秘密守卫同一个精神，只是换了一把尺——**逐条扫全部 15 份声明**
+    判据和上面那条秘密守卫同一个精神，只是换了一把尺——**逐条扫表里全部声明**
     （name + description + 递归到底的 parameters），而不是挑几个关键词。
     `translate_tool_declarations()` 缺一条翻译时会直接 `KeyError`，所以这条测试
     真正钉的是「翻完之后还剩下的那句中文」，不是「漏翻了会不会红」——后者已经由
@@ -398,7 +387,7 @@ def test_the_chinese_tool_declarations_are_unchanged_by_the_translation_layer() 
     """国际化第三批最重要的那条回归：中文书拿到的声明必须和不传 `language` 时逐字节相同。
 
     `translate_tool_declarations()` 对 ZH 是恒等变换（见它自己的 docstring），
-    这条测试量的正是这句话——`TOOL_TABLE`/15 个 Pydantic 类一个字都没有为了
+    这条测试量的正是这句话——`TOOL_TABLE`/那些 Pydantic 类一个字都没有为了
     双语化而改动，中文路径不需要，也没有，多付出任何东西。
     """
     from novel_harness.draft.length import DraftLanguage
@@ -429,19 +418,15 @@ def test_every_rejection_message_has_both_languages_and_the_english_side_is_clea
         assert cjk.search(english) is None, f"_MESSAGES[{key!r}] 的英文模板里还有中文字符：{english!r}"
 
 
-def test_the_constraints_tool_still_tells_the_author_which_constraint(world: World) -> None:
-    """**反向断言：收窄过头是同一个 bug 的另一面。**
-
-    只剩一串 ULID 的清单让作者看不出系统在拦哪一条，PLAN §3.2 画的那句
-    「本场景 must_not_reveal：血脉秘密 · 玄铁令下落」就没了。
+def test_the_constraints_tool_still_reports_cast(world: World) -> None:
+    """**2026-08-31 改名**：原来还带一段「收窄过头」的反向断言（`forbidden_entities`
+    不能只剩一串 ULID），那个字段随 `forbidden_entities` 一起删了（ADR 0041）。
+    这个工具今天只剩「在场」这一件事，这条测试改成钉住这一件事。
     """
     outcome = dispatch(_call("scene_constraints", chapter=CHAPTER), world.context())
     assert outcome.ok, outcome.content
     result = ConstraintsResult.model_validate_json(outcome.content)
 
-    assert [(e.name, e.first_appears_chapter) for e in result.forbidden_entities] == [
-        ("幽泉窟", 200)
-    ], "未来实体只交名字和首现章号 —— 但那两样必须交，否则作者不知道在拦什么"
     assert set(result.cast) == {"萧决", "顾清音"}, "在场是从正文数出来的（ADR 0018）"
     assert result.cast_derived is True
 
@@ -486,7 +471,8 @@ def test_no_tool_accepts_constraints_as_an_argument() -> None:
         "清单去写第 40 章，而那份清单更短——fail-open 的最坏那侧（ADR 0019 边界二）。\n"
         "约束必须由后端当场从 scene_view(chapter) 算。"
     )
-    assert set(DraftAsk.model_fields) == {"chapter", "calibration_id"}
+    # ADR 0047：助手能给写手的只有「要写什么」和「补的资料」两格，**约束字段永远没有**。
+    assert set(DraftAsk.model_fields) == {"chapter", "brief", "materials"}
 
 
 def test_a_model_invented_constraint_argument_is_refused(world: World) -> None:
@@ -509,21 +495,10 @@ def test_a_model_invented_constraint_argument_is_refused(world: World) -> None:
 def test_the_backend_computes_the_constraints_for_the_drafter(world: World) -> None:
     """起草侧收到的约束是**后端按章号现算的**，不是模型给的。"""
     desk = FakeDesk()
-    _, turn = seed_calibration(
-        conn=world.conn,
-        project_id=world.project_id,
-        store=world.store,
-        root=world.root,
-        chapter=CHAPTER,
-    )
 
     outcome = dispatch(
-        _call("draft_chapter", chapter=CHAPTER, calibration_id="calibration:test:seeded"),
-        world.context(
-            drafter=desk,
-            calibrations=CalibrationStore(world.conn),
-            author_turn=turn,
-        ),
+        _call("draft_chapter", chapter=CHAPTER, brief="写一场雪"),
+        world.context(drafter=desk),
     )
     assert outcome.ok, outcome.content
     ctx = desk.seen[0]
@@ -613,9 +588,8 @@ def test_the_tool_table_stays_put() -> None:
             "scene_constraints",
             "character_state",
             "draft_chapter",
-            # 写前校准（ADR 0033）：确定性核对 + 不可变封存。
-            "calibrate_scene",
-            "seal_scene_brief",
+            # 写前校准那两条（`calibrate_scene` / `seal_scene_brief`，ADR 0033）2026-09-12
+            # 随 ADR 0047 砍了：起草改收助手写的 brief + 它挑的 materials。
             # 书内索引四层（`agent/index.py`）：目录 / 人物轴 / 摘要 / 正文。
             "book_index",
             "character_chapters",
@@ -637,6 +611,15 @@ def test_the_tool_table_stays_put() -> None:
                 # 出去的只有 `TrackClash` 那三个数（第几句 / 跟第几章 / 冲突类型），
                 # 后面那几章写了什么一个字都不出——「工具有权看，agent 没有」。
                 "check_track",
+                # 右栏那四栏（2026-09-12，`agent/panels.py`）：角色卡 / 事件 / 检验规则 /
+                # 通知。**全是读**，读的是面板自己那条读法。边界一那个问题的答案：出参只有
+                # NodeRef 和纯量；角色卡那几行字和进写作提示的是同一份收窄视图
+                # （`CharacterProfileView`）；关系的值在 `graph/` 那边解读好
+                # （`StateSnapshot.relations`），`agent/` 仍然一个 `.props` 都不碰。
+                "character_card",
+                "chapter_events",
+                "validation_rules",
+                "notifications",
             }
         )
     by_name = {spec.name: spec for spec in TOOL_TABLE}
@@ -804,7 +787,7 @@ def test_a_refusal_says_why(world: World) -> None:
     assert not_a_character.ok is False and "不是人物" in not_a_character.content
 
     unwired = dispatch(
-        _call("draft_chapter", chapter=CHAPTER, calibration_id="unused"),
+        _call("draft_chapter", chapter=CHAPTER, brief="写一稿"),
         world.context(drafter=None),
     )
     assert unwired.ok is False and "还没接" in unwired.content

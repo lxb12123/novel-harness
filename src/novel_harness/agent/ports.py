@@ -47,6 +47,7 @@ from typing import Any, Protocol, runtime_checkable
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..draft.context import DraftContext
+from ..draft.context import TargetChapterSnapshot
 from ..draft.length import DraftLanguage
 from ..draft.product_context import memory_units_available
 from ..draft.rolling_summary import ChapterSummaryStatus, SummarySnapshotWatermark
@@ -55,11 +56,12 @@ from ..draft.rolling_summary import ChapterSummaryStatus, SummarySnapshotWaterma
 # `AdvisoryOutcome` 一律不许进 `agent/`——这一层的整个意义就是「agent 拿不到轨道」。
 # `tests/test_track_isolation.py::test_the_agent_layer_borrows_exactly_one_name...` 钉着它。
 from ..advisory_review import TrackClash
-from ..events import EventView
+from ..checks.service import ReportDigest, RuleEntry
+from ..events import CharacterProfileView, EventView
+from ..events.models import ProposalRecord
+from ..system_notifications import SystemNotification
 from ..extract.call_audit import ModelCallReceipt
 from ..graph import InformationScope, StoryGraph
-from ..calibration.models import AuthorTurnRef
-from ..calibration.store import CalibrationStore
 from .candidates import DraftCandidate, StoredDraft
 
 
@@ -88,29 +90,38 @@ class ToolRefused(Exception):
 
 
 class DraftAsk(BaseModel):
-    """起草第 N 章的一稿（**chapter + calibration_id**，ADR 0033）。
+    """起草第 N 章的一稿（**chapter + brief + materials**，ADR 0047）。
 
-    **这里没有、也永远不会有约束字段**（ADR 0019 边界二）：不许说破什么由后端当场
-    从第 N 章重新算，你上一轮看到的那份清单对这一章可能已经过期了。
-
-    **也没有自由文本 goal**（ADR 0033）：`goal_spec` 只从不可变校准产物读取——
-    外层 Agent 不负责抄写事实文字或目标散文，Writer 拿到的是校准层实际产出的版本。
+    **这里没有、也永远不会有约束字段**（ADR 0019 边界二的另一半）：在场是后端从正文数的，
+    文风 / 禁用字 / 角色卡 / 最近事件 / 最近总结 / 正文那六格是后端固定装配的——助手一个字
+    插不进去。它能给的只有两格：**要写什么**（`brief`）和**写手固定装配够不着的资料**
+    （`materials`）。两格都是纯文本、都跟着稿子存进候选表让作者看得见。
 
     它和 `DraftFn` 放在一起而不是和别的工具入参放在一起，是因为它是**注入契约的一半**：
-    起草侧收的就是 `(DraftAsk, DraftContext)`，而这两件东西里都没有模型给的约束。
+    起草侧收的就是 `(DraftAsk, DraftContext)`。
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     chapter: int = Field(
         ge=1,
-        description="起草第几章。约束由后端按这个章号当场计算。",
+        description="起草第几章。在场人物、文风、角色卡、最近的事件和总结由后端按这个章号自己装。",
     )
-    calibration_id: str = Field(
+    brief: str = Field(
         min_length=1,
         description=(
-            "seal_scene_brief 返回的那个不可变编号。"
-            "起草目标只从它读取，你不需要也不应该在这里传任何目标文字。"
+            "这一稿要做什么、要守什么——用你自己的话，对着写手说。写之前先分析作者的意图、"
+            "由粗到细查过资料、对照过检验规则和作者交代过的规矩，再把结论写在这儿："
+            "写哪一段、从哪儿接、谁在场、要避开什么（比如「裕王第 154 章已死，不能当活人写」）、"
+            "视角 / 语气 / 收在哪儿。"
+        ),
+    )
+    materials: list[str] = Field(
+        default_factory=list,
+        description=(
+            "写手够不着的资料，每条一段：远章的总结、关键事件、原文节选。写手自己只有"
+            "最近几章的总结和这些人最近的事件——牵涉更早的章、需要细节的地方，把你查到的"
+            "那几段挑出来放在这儿。**有目的地挑，不是整本塞进来**：有预算上限，装不下从后往前砍。"
         ),
     )
 
@@ -190,8 +201,18 @@ class DraftDesk(Protocol):
     装配层就能只接其中两个，而「生成得了、落不了盘」这种半接线状态没有任何东西会报错。
     """
 
-    def write(self, ask: DraftAsk, ctx: DraftContext) -> DraftProduct:
-        """生成一稿并收进候选表。**不动书。**"""
+    def write(
+        self,
+        ask: DraftAsk,
+        ctx: DraftContext,
+        *,
+        snapshot: TargetChapterSnapshot | None = None,
+    ) -> DraftProduct:
+        """生成一稿并收进候选表。**不动书。**
+
+        `snapshot` = 目标章当前正文的一次读取（重写已有章时写手要看它，候选的 `base_sha256`
+        也从它来）。`None` = 这一章还没有正文。
+        """
         ...
 
     def land(self, candidate_id: str) -> LandingReport:
@@ -257,6 +278,46 @@ class EventIndex(Protocol):
         scope: InformationScope,
     ) -> list[EventView]: ...
 
+    # ── 下面三个 2026-09-12 加（写作助手要读右栏的角色卡 / 事件那两栏）────────
+    # 仍然全是**读**：`EventStore` 上的写方法一个都没跟过来。
+
+    def events_for_chapter(
+        self,
+        project_id: str,
+        chapter_number: int,
+        scope: InformationScope,
+    ) -> list[EventView]: ...
+
+    def events_for_one_character(
+        self,
+        project_id: str,
+        character_id: str,
+        scope: InformationScope = InformationScope.CANON,
+    ) -> list[EventView]: ...
+
+    def profile(self, project_id: str, character_id: str) -> CharacterProfileView: ...
+
+
+@runtime_checkable
+class RulesIndex(Protocol):
+    """「检验规则」那一栏的只读端口（`checks.service.RulesReader` 结构上满足它）。"""
+
+    def catalog(self, project_id: str) -> list[RuleEntry]: ...
+
+    def latest_report(self, project_id: str, chapter_number: int) -> ReportDigest | None: ...
+
+
+@runtime_checkable
+class NoticeIndex(Protocol):
+    """「通知」那一栏的只读端口（`notices.NoticeReader` 结构上满足它）。
+
+    忽略 / 处理一条通知**不在这里**：那是作者在面板上按的，模型只能读。
+    """
+
+    def open_notices(self, project_id: str) -> list[SystemNotification]: ...
+
+    def pending_proposals(self, project_id: str) -> list[ProposalRecord]: ...
+
 
 @dataclass(frozen=True)
 class ToolContext:
@@ -287,23 +348,11 @@ class ToolContext:
     events: EventIndex | None = None
     """已确认事件的只读端口。`None` = 人物轴的「事件」那一条明确说自己是瞎的。"""
 
-    calibrations: CalibrationStore | None = None
-    """写前校准的非 Canon artifact 存储（ADR 0033，迁移 017）。
+    rules: RulesIndex | None = None
+    """「检验规则」那一栏的只读端口。`None` = `validation_rules` 明确回一句「没接线」。"""
 
-    它是 `ToolContext` 上**第一个带写路径的端口**，但写面只有两张表：
-    `calibration_artifact` / `calibration_handoff_outbox`。Canon、正文、会话
-    仍然一个都碰不到——「模型改不了作者的 canon」没有被这一条打开。
-
-    `None` = `calibrate_scene` / `seal_scene_brief` 明确回一句「没接线」。
-    """
-
-    author_turn: AuthorTurnRef | None = None
-    """当前会话里**作者最新一条消息**的服务端绑定（turn id + 原话哈希）。
-
-    模型不能自报或替换：`calibrate_scene` / `seal_scene_brief` 从这儿取绑定，
-    入参模型上**没有**这个格子。`None` = 这段会话还没有作者消息可绑定，
-    校准工具明确拒绝。
-    """
+    notices: NoticeIndex | None = None
+    """「通知」那一栏的只读端口。`None` = `notifications` 明确回一句「没接线」。"""
 
     frontier_chapter: int | None = None
     """全书最大章号（`focus.frontier_chapter`）。**只用来判「作者是不是在改一章旧的」。**

@@ -1,7 +1,7 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
-import { fixtures, renderWithApi } from "../test/harness";
+import { fixtures, renderWithApi, ROUND_DONE } from "../test/harness";
 import { useCoords } from "../store";
 import { CenterEditor } from "./CenterEditor";
 import { ChatPanel } from "./ChatPanel";
@@ -54,7 +54,7 @@ describe("一轮跑完之后，正文那一侧", () => {
 
     await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "把这一章写了");
     await user.click(screen.getByRole("button", { name: "发送" }));
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
 
     // 回执里**没有**「它到底写没写」这一位，所以这一档一律重取：宁可白取一次，
     // 也不要让作者对着一份旧稿按保存。
@@ -81,7 +81,7 @@ describe("一轮跑完之后，正文那一侧", () => {
 
     await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "把这一章写了");
     await user.click(screen.getByRole("button", { name: "发送" }));
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
 
     await waitFor(() =>
       expect(document.querySelector(".cm-content")?.textContent).toContain("助手刚写进这一章"),
@@ -115,7 +115,7 @@ describe("一轮跑完之后，正文那一侧", () => {
 
     await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "把这一章写了");
     await user.click(screen.getByRole("button", { name: "发送" }));
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
 
     // 说一句：他下一步按保存会盖过磁盘上那一版（那一版在「历史」里找得回来）。
     await screen.findByText(/这一章在别处变过了/);

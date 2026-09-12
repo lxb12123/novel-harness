@@ -11,10 +11,11 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal, Union
 
-from fastapi import APIRouter, Depends, HTTPException, Path, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Path, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from .. import project
+from ..settings import load as load_user_settings
 from ..corrections import (
     CorrectionRefused,
     EventCastCorrection,
@@ -144,18 +145,28 @@ def get_state_dims(
 def patch_canon_edge(
     edge_id: str,
     body: CanonEdgeEdit,
+    background_tasks: BackgroundTasks,
     conn: Annotated[Connection, Depends(get_conn)],
     store: Any = Depends(get_store),
     proj: Any = Depends(load_project),
 ) -> CanonEdgeEditResult:
-    """类型化修改/改归属一条 Canon 边（无章号字段，extra=forbid）。"""
+    """类型化修改/改归属一条 Canon 边（无章号字段，extra=forbid）。
+
+    改完之后**可能**叫一次核对模型（`settings.review_card_edits`，默认关，
+    作者 2026-09-06 要的开关）。三条纪律：
+
+    - **在后台跑**：那是一次模型调用，作者按了保存不该在那儿等着；
+    - **不影响这次修改的成败**：改动早就落库了，核对只是事后说一句话
+      （落 `text_advisory`，永不阻断、不进队列）；
+    - **默认不跑**：这一问核对的是**作者填的字**，判错时是在质疑他的决定。
+    """
     try:
         edge = store.canon_edge_view(proj.id, edge_id)
     except CanonEdgeRefused as exc:
         raise HTTPException(409, {"error": "canon_edge_refused", "message": str(exc)})
     new_src, new_dst, props = _canon_edge_target(conn, proj.id, edge, body)
     try:
-        return store.edit_canon_edge(
+        result = store.edit_canon_edge(
             proj.id,
             edge_id,
             new_src=new_src,
@@ -163,6 +174,9 @@ def patch_canon_edge(
             props=props,
             expected_canon_version=body.expected_canon_version,
         )
+        if load_user_settings().review_card_edits:
+            background_tasks.add_task(_review_card_edit_later, proj.id, edge_id)
+        return result
     except CanonEdgeRefused as exc:
         raise HTTPException(409, {"error": "canon_edge_refused", "message": str(exc)})
     except project.StaleBaseVersion as exc:
@@ -170,6 +184,33 @@ def patch_canon_edge(
             409,
             {"error": "stale_canon_version", "params": {"expected": exc.expected, "current": exc.current}},
         )
+
+
+def _review_card_edit_later(project_id: str, edge_id: str) -> None:
+    """后台那一次核对。**自己开连接**：请求那条已经随响应关掉了。
+
+    整块 try 里跑，一次都不抛——这条路的失败形态是「什么都没发生」。
+    """
+    from ..advisory_review import review_card_edit
+    from ..graph.sqlite_store import SqliteStoryGraph
+    from .deps import background_connection_factory, get_advisory_reviewer
+
+    try:
+        conn = background_connection_factory()()
+    except Exception:  # noqa: BLE001
+        return
+    try:
+        review_card_edit(
+            conn,
+            SqliteStoryGraph(conn),
+            project_id,
+            edge_id,
+            reviewer=get_advisory_reviewer(),
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    finally:
+        conn.close()
 
 
 @router.delete("/api/projects/{project_id}/canon/edges/{edge_id}")
@@ -520,6 +561,25 @@ def chapter_proposals(
     """
     # 今天只有 PENDING 是真实队列；其它值都是调用方的 bug。
     return list(hydrate_proposal_names(review_store, proj.id, proposals.pending(proj.id, chapter)))
+
+
+@router.get(
+    "/api/projects/{project_id}/proposals",
+    response_model=list[ProposalRecord],
+)
+def all_proposals(
+    proj: Any = Depends(load_project),
+    proposals: ProposalStore = Depends(get_proposal_store),
+    review_store: SqliteEdgeReviewStore = Depends(get_edge_review_store),
+) -> list[ProposalRecord]:
+    """待审队列，**不按章**（2026-08-31）。
+
+    「待确认」搬进通知面板之后，作者不该因为翻到另一章就看不见先前攒下的
+    提案——`chapter_proposals` 那条按章查是原来那个 tab 天生锁死在「当前打开
+    的章」上的产物，通知本来就是项目级的（`GET .../notifications` 不吃
+    `chapter` 参数）。跟上面那条一样只读、只补名字，不新开一条业务判断。
+    """
+    return list(hydrate_proposal_names(review_store, proj.id, proposals.pending(proj.id)))
 
 
 @router.post(

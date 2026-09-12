@@ -1,7 +1,7 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fixtures, renderWithApi } from "../test/harness";
+import { fixtures, renderWithApi, ROUND_DONE } from "../test/harness";
 import { rawIds, screenText } from "../test/screenGuard";
 import type { DraftCandidateView } from "../api/types";
 import { COLUMN_MIN_PX } from "../drafts";
@@ -45,7 +45,7 @@ async function runTurn(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByText(fixtures.chatDetail.messages[0].text);
   await user.type(say(), "这一场写三个版本我挑");
   await user.click(screen.getByRole("button", { name: "发送" }));
-  await screen.findByText(fixtures.chatTurn.message);
+  await screen.findByText(ROUND_DONE);
 }
 
 /** 摊开某一稿要打的那条路由（`/drafts/{id}`）—— 列表那条不带正文。 */

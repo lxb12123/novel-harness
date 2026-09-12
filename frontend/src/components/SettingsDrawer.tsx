@@ -6,8 +6,8 @@ import {
   useRefreshModelWindows,
   useSaveAiSettings,
 } from "../api/hooks";
-import type { AiSettings, AiSettingsInput } from "../api/types";
-import { useLanguage, type Language } from "../language";
+import type { AiSettingsInput } from "../api/types";
+import { useLanguage } from "../language";
 import { CloseIcon, EyeIcon } from "./icons";
 
 // AI 设置（BYOK）——像 Cursor 的 API Keys：作者粘一把自己的钥匙，存在本机。
@@ -44,42 +44,29 @@ function asPositiveInteger(text: string): number | null {
  *  为什么只在作者敲了字之后才出现的全部原因，见 `reveal` 那一段。 */
 const MASK = "•".repeat(12);
 
-/** 上面那两样**买到了什么**：写着写着让 AI 接一段时，它读得到你前面多少字。
+/** 左栏的三个栏目。
  *
- *  这个数是**后端算的**（`continuation_tail_limit`，按模型窗口伸缩），这儿一个公式
- *  都不许有——前端自己算一份，就是这一整条改动要修掉的那个 bug。
+ *  **「通用」排头，也是打开设置时默认停的那一栏**（作者 2026-09-05：「加一个通用的
+ *  页面把这个语言的设置移过去」）。这条顺序不是审美：界面语言在它里面，而那一格
+ *  必须在**已经切到看不懂的那种语言之后**还找得回来。搬进栏目之前它靠「两栏都常驻」
+ *  换这一点，搬进来之后换成「一打开就在眼前」——两者换的是同一件事，别把默认栏
+ *  改成别的，那等于把回退的路堵死。
  *
- *  **「短」这件事必须说得出原因。** 认不出这个模型和还没配服务，算出来的数一模一样
- *  （都是最短那一档），而作者看到的症状只有「AI 好像没在看我前面写的」——不说原因，
- *  他会以为是模型不行，其实差的只是上面那个框里的一个数。
- *
- *  写成**类型上全列**的表而不是一串三元：后端哪天多一档，这儿不补 `tsc` 当场红。 */
-function tailNote(settings: AiSettings, language: Language): string {
-  const many = settings.continuation_tail_limit.toLocaleString(
-    language === "zh" ? "zh-CN" : "en-US",
-  );
-  if (language === "zh") {
-    return {
-      model_window: `写着写着让它接一段时，它会先读一遍你光标前的约 ${many} 字。`,
-      unknown_window:
-        `还认不出这个模型一次能读多少，所以让它接一段时，它只读得到你光标前的 ` +
-        `${many} 字。把上面那个数填上就会变长。`,
-      unconfigured: `还没填服务地址和模型，让它接一段时，它只读得到你光标前的 ${many} 字。`,
-    }[settings.continuation_tail_basis];
-  }
-  return {
-    model_window: `When it continues your writing, it first reads about the ${many} characters before your cursor.`,
-    unknown_window:
-      `It doesn't yet recognize how much this model can read at once, so when it continues your ` +
-      `writing, it can only read the ${many} characters before your cursor. Filling in the number ` +
-      `above will make that longer.`,
-    unconfigured: `The endpoint and model aren't filled in yet, so when it continues your writing, it can only read the ${many} characters before your cursor.`,
-  }[settings.continuation_tail_basis];
-}
-
+ *  **栏目名一律是名词**：「连接服务」原来是个动宾短语（读起来像一个动作），
+ *  而左栏是「你在哪一栏」，不是「你要做什么」。 */
 const TABS = [
-  { key: "link", name: { zh: "连接服务", en: "Connection" } },
-  { key: "length", name: { zh: "前文长度", en: "Context length" } },
+  // ── 2026-09-10：「通用」这一栏**取消**，它那一格并进「系统功能」（作者点名）───
+  //   走的是 2026-09-06 给「前文长度」判的同一条：一栏只剩一格、而那一格在别处有更
+  //   合适的归属时，这一栏就该消失。「是否开启核对模型」是**引擎替你做的一件事**，
+  //   跟「关系图画多少人」同属「引擎怎么跑」，不必自己占一栏。
+  //
+  //   ⚠️ **默认栏跟着挪到「个性化」**（原来是「通用」）。这不是随手补的：
+  //   界面语言在「个性化」里，而那一格必须在**作者已经切到看不懂的那种语言之后**
+  //   还找得回来——2026-09-05 把它搬进栏目时，换来的保障就是「它是默认打开的第一栏」。
+  //   「通用」没了之后，那条保障只有让「个性化」排头+默认才继续成立。
+  { key: "personal", name: { zh: "个性化", en: "Personalization" } },
+  { key: "system", name: { zh: "系统功能", en: "System" } },
+  { key: "link", name: { zh: "模型服务", en: "Connection" } },
 ] as const;
 
 type TabKey = (typeof TABS)[number]["key"];
@@ -90,18 +77,20 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
   const refresh = useRefreshModelWindows();
   const language = useLanguage((s) => s.language);
   const setLanguage = useLanguage((s) => s.setLanguage);
-  const [tab, setTab] = useState<TabKey>("link");
+  const [tab, setTab] = useState<TabKey>("personal");
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [reveal, setReveal] = useState(false);
   const [memory, setMemory] = useState("");
+  const [graphCap, setGraphCap] = useState("");
 
   useEffect(() => {
     if (settings.data) {
       setBaseUrl(settings.data.base_url);
       setModel(settings.data.model);
       setMemory(settings.data.context_window?.toString() ?? "");
+      setGraphCap(settings.data.graph_max_nodes?.toString() ?? "");
     }
   }, [settings.data]);
 
@@ -114,6 +103,8 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
     model.trim() !== (current?.model ?? "") ||
     apiKey.trim() !== "";
   const memoryDirty = memoryValue !== (current?.context_window ?? null);
+  const graphCapValue = asPositiveInteger(graphCap);
+  const graphCapDirty = graphCapValue !== (current?.graph_max_nodes ?? null);
 
   /** 保存正在飞的时候关不掉（背景、×、Esc 三条路一起挡）——
    *  这一刻关窗，作者不知道那把钥匙到底存进去没有。同 `Setup.tsx` 的 `closeDrawer`。 */
@@ -142,12 +133,18 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
     });
   }
 
-  /** 应用「模型一次能读多少」。
+  /** 应用「模型上下文长度」。
    *
    *  **这一位每次都带上**：后端「没带这个键 = 保持原值」，不带的话作者清空那个框
    *  之后什么都不会发生，那个框就成了只进不出的洞。 */
   function applyMemory() {
     save.mutate({ context_window: memoryValue });
+  }
+
+  /** 应用「关系图最多画几个人」。**同上：这一位每次都带上**——后端「没带这个键 =
+   *  保持原值」，不带的话作者清空那个框之后什么都不会发生。 */
+  function applyGraphCap() {
+    save.mutate({ graph_max_nodes: graphCapValue });
   }
 
   /** 拨那颗开关。**只发它自己那一位**：作者刚敲了一半的服务地址不该被顺手提交上去。
@@ -159,6 +156,16 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
       { auto_update_model_windows: next },
       { onSuccess: () => next && refresh.mutate() },
     );
+  }
+
+  /** 拨「改完人物卡叫核对模型验一遍」那颗。**同上：只发它自己那一位。** */
+  function toggleReviewCardEdits(next: boolean) {
+    save.mutate({ review_card_edits: next });
+  }
+
+  /** 拨「novel-agent 模式下也续写」那颗。**同上：只发它自己那一位。** */
+  function toggleContinuationInAgentMode(next: boolean) {
+    save.mutate({ continuation_in_agent_mode: next });
   }
 
   return (
@@ -210,51 +217,219 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
             id={`set-pane-${tab}`}
             aria-labelledby={`set-tab-${tab}`}
           >
-            {/* 这一行跟左边那两栏（连接服务 / 前文长度）没关系，两栏切换时都留着——
-                它管的是**看屏幕的人**读哪种字，不是这本书或这次连接的哪一位。
-                标题故意写成中英对照，不跟着 `language` 变：**它自己就是找它的入口**，
-                当前是哪种界面语言都得认得出来，不能因为已经切到看不懂的那种就找不到开关。
+            {tab === "system" ? (
+              <div className="set-stack">
+                {/* ── 是否开启核对模型 ──────────────────────────────────────
+                    **默认关着，理由不是省钱那么简单**：另外两问核对的是模型写的正文，
+                    这一问核对的是**作者填的字**——判错的时候是在说「你写的东西不对」，
+                    那比质疑机器刺人得多。所以要他自己拨开
+                    （`settings.review_card_edits` 那一位的注释写着完整论证）。
 
-                **不能叫「语言」**：书架上「这本书写的是什么语言」那两个按钮已经占了这个词
-                （维护者 2026-08-27 裁定书的语言跟界面语言分开管，一个中文作者能写英文小说），
-                摆同一屏还叫同一个名字，认错的代价是把小说正文的语言给改了。 */}
-            <div className="set-card set-row-card">
-              <div className="set-row-text">
-                <span className="set-row-title" id="set-lang-label">
-                  界面语言 / Interface language
-                </span>
-                <span className="set-row-sub">
-                  {language === "zh" ? (
-                    <>跟这本书写的是什么语言无关——那个在书架上改。</>
-                  ) : (
-                    <>Unrelated to the language this book is written in — change that on the shelf.</>
-                  )}
-                </span>
-              </div>
-              <div className="set-row" role="group" aria-labelledby="set-lang-label">
-                <button
-                  type="button"
-                  className={language === "zh" ? "on" : ""}
-                  aria-pressed={language === "zh"}
-                  onClick={() => setLanguage("zh")}
-                >
-                  中文
-                </button>
-                <button
-                  type="button"
-                  className={language === "en" ? "on" : ""}
-                  aria-pressed={language === "en"}
-                  onClick={() => setLanguage("en")}
-                >
-                  English
-                </button>
-              </div>
-            </div>
+                    ⚠️ **这段说明里不提「通知」**（作者 2026-09-06：「不用再写什么会
+                    展示在通知，他开启后，然后检验到他知道」）——开关的说明只说
+                    **它会做什么判断**，「结果摆在哪儿」是他开起来自然会看见的事，
+                    写进来只是把一句他不需要预先记住的话摆在开关旁边。 */}
+                <div className="set-card set-row-card">
+                  <div className="set-row-text">
+                    <span className="set-row-title" id="set-review-card-label">
+                      {language === "zh" ? "是否开启核对模型" : "Enable the checking model"}
+                    </span>
+                    <span className="set-row-sub">
+                      {language === "zh" ? (
+                        <>
+                          修改角色卡上的信息之后，核对模型会去判断它和当前原文是否冲突，
+                          以及和前后章的状态、相关原文是否冲突。每改一格花一次模型调用，
+                          改动本身不受影响。
+                        </>
+                      ) : (
+                        <>
+                          After you edit information on a character card, the checking model
+                          judges whether it conflicts with the chapter’s own text, and with the
+                          states and related text in earlier and later chapters. Costs one model
+                          call per edit; the edit itself always goes through.
+                        </>
+                      )}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    className="set-switch"
+                    aria-labelledby="set-review-card-label"
+                    aria-checked={!!current?.review_card_edits}
+                    disabled={!current || save.isPending}
+                    onClick={() => toggleReviewCardEdits(!current?.review_card_edits)}
+                  >
+                    <span className="set-switch-knob" />
+                  </button>
+                </div>
+                {/* ── 是否在 novel-agent 模式下续写 ─────────────────────────
+                    **默认关着**：作者 2026-09-10 看到助手开着、正文里还在往下冒灰字，
+                    裁定「模式二这个就不用有这个续写了」，随后要了这颗开关
+                    （「添加一个设置按钮用来开模式二支持续写」）。判据在
+                    `continuation.ts::shouldSuggest`，这儿只是那一位的开关。
 
-            {tab === "link" ? (
-              /* 三个框是**一组**（作者要的）：它们回答的是同一个问题——连哪儿、
-                 用哪个模型、拿什么钥匙。装进一张卡，「应用」钉在卡的右下角。 */
-              <div className="set-card">
+                    标题照上一格的句式（「是否…」），两个模式的名字用顶栏那颗开关
+                    已经在念的那两个（「协助模式」「novel-agent 模式」）——同一个东西
+                    在两处不叫两个名字。说明只说它做什么、花什么，不说灰字怎么采纳。 */}
+                <div className="set-card set-row-card">
+                  <div className="set-row-text">
+                    <span className="set-row-title" id="set-continuation-agent-label">
+                      {language === "zh"
+                        ? "是否在 novel-agent 模式下续写"
+                        : "Enable continuation in novel-agent mode"}
+                    </span>
+                    <span className="set-row-sub">
+                      {language === "zh" ? (
+                        <>
+                          停笔片刻后，光标处会出现一段续写建议。默认仅在协助模式下提供；
+                          开启后，novel-agent 模式下同样提供。每次建议花一次模型调用。
+                        </>
+                      ) : (
+                        <>
+                          After a short pause in typing, a continuation suggestion appears at
+                          the cursor. By default it is offered only in assist mode; when
+                          enabled, it is offered in novel-agent mode as well. Each suggestion
+                          costs one model call.
+                        </>
+                      )}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    className="set-switch"
+                    aria-labelledby="set-continuation-agent-label"
+                    aria-checked={!!current?.continuation_in_agent_mode}
+                    disabled={!current || save.isPending}
+                    onClick={() =>
+                      toggleContinuationInAgentMode(!current?.continuation_in_agent_mode)
+                    }
+                  >
+                    <span className="set-switch-knob" />
+                  </button>
+                </div>
+                {/* 关系图一次画多少人。**这个数原来写死成 30**，而真书上主角有几百条
+                    关系边：图上只画得出 30 个，剩下的连提都没提——作者看到的是一张
+                    沉默地删过节的图（2026-09-09 他指着「部分内容已折叠」问出来的）。
+                    引擎的默认提到了 1000，这一格是给「嫌乱调小 / 想全看调大」留的。
+
+                    **默认值由后端回过来填进占位符**（`graph_max_nodes_default`），
+                    前端不许自己抄一个数：抄了引擎哪天改，这儿会安静地说一个旧数。
+
+                    ── 文案 2026-09-10 重写过一次，理由记在这儿 ─────────────────
+                    头一版写的是「人物卡里那张关系图一次最多画这么多人，超出的不画。
+                    留空按默认。调大能看得更全，但人越多图越密、铺开也越慢」——作者一句
+                    「太口语了」否掉。**病因正是 CLAUDE.md 那一节点名的那种**：拿大白话
+                    去描述机制（「这么多人」「超出的不画」「越…越…」），而不是先挑词。
+                    改法是照同一栏里「模型上下文长度」那条的语域走（「仅当…时需要填写」
+                    「数值以…为准」）——**同一屏上的说明必须是同一个语域**，混着写比
+                    单条不好读更糟。
+
+                    仍然不出现「节点」这个词——那是引擎的说法。屏幕上说「人物与设定」，
+                    那是这个产品自己已经在用的词（角色册空态：「还没有人物或设定」），
+                    不是现造的近义词。 */}
+                <div className="set-card set-card-window">
+                  <div className="set-row-text">
+                    <span className="set-row-title">
+                      <label htmlFor="set-graph-cap">
+                        {language === "zh" ? "关系图人数上限" : "Relationship graph limit"}
+                      </label>
+                    </span>
+                    <span className="set-row-sub">
+                      {language === "zh"
+                        ? "单张人物卡的关系图最多绘制的人物与设定数量，超出部分不予显示。留空则采用默认值。数值越大覆盖越完整，绘制耗时与图形密度也随之上升。"
+                        : "The maximum number of characters and settings drawn in one card's relationship graph; anything beyond that is omitted. Leave blank to use the default. A higher value gives fuller coverage, at the cost of density and drawing time."}
+                    </span>
+                  </div>
+                  <div className="set-field">
+                    <input
+                      id="set-graph-cap"
+                      inputMode="numeric"
+                      value={graphCap}
+                      placeholder={
+                        current?.graph_max_nodes_default
+                          ? (language === "zh" ? "默认 " : "Default ") +
+                            current.graph_max_nodes_default
+                          : undefined
+                      }
+                      onChange={(e) => setGraphCap(e.target.value)}
+                    />
+                  </div>
+
+                  {err && <div className="err-box">{saidToTheAuthor(err) ?? err.message}</div>}
+
+                  <div className="set-card-foot">
+                    <button
+                      type="button"
+                      className="set-apply"
+                      disabled={!graphCapDirty || save.isPending}
+                      onClick={applyGraphCap}
+                    >
+                      {language === "zh"
+                        ? save.isPending ? "应用中…" : "应用"
+                        : save.isPending ? "Applying…" : "Apply"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : tab === "personal" ? (
+              /* 界面语言。**2026-09-05 从「两栏都常驻」搬进「通用」这一栏**，
+                 findability 换成了「它是默认打开的第一栏」——理由见 `TABS` 上面那段。
+
+                 标题仍然写成中英对照，不跟着 `language` 变：**它自己就是找它的入口**，
+                 当前是哪种界面语言都得认得出来，不能因为已经切到看不懂的那种就找不到开关。
+
+                 **不能叫「语言」**：书架上「这本书写的是什么语言」那两个按钮已经占了这个词
+                 （维护者 2026-08-27 裁定书的语言跟界面语言分开管，一个中文作者能写英文小说），
+                 摆同一屏还叫同一个名字，认错的代价是把小说正文的语言给改了。 */
+              <div className="set-card set-row-card">
+                <div className="set-row-text">
+                  <span className="set-row-title" id="set-lang-label">
+                    界面语言 / Interface language
+                  </span>
+                  <span className="set-row-sub">
+                    {language === "zh" ? (
+                      <>仅影响界面文字。本书的写作语言是另一项设置，在书架中修改。</>
+                    ) : (
+                      <>
+                        Affects interface text only. The language this book is written in is a
+                        separate setting, changed on the shelf.
+                      </>
+                    )}
+                  </span>
+                </div>
+                <div className="set-row" role="group" aria-labelledby="set-lang-label">
+                  <button
+                    type="button"
+                    className={language === "zh" ? "on" : ""}
+                    aria-pressed={language === "zh"}
+                    onClick={() => setLanguage("zh")}
+                  >
+                    中文
+                  </button>
+                  <button
+                    type="button"
+                    className={language === "en" ? "on" : ""}
+                    aria-pressed={language === "en"}
+                    onClick={() => setLanguage("en")}
+                  >
+                    English
+                  </button>
+                </div>
+              </div>
+            ) : (
+              /* ── 这一栏是**一摞并列的块**，不是一张大卡里再套小卡 ────────────
+                 三个连接框仍是**一组**（作者要的）：它们回答的是同一个问题——连哪儿、
+                 用哪个模型、拿什么钥匙，所以合在一张卡里、「应用」钉在卡的右下角。
+
+                 但**下面那两样不属于这张卡**：自动更新清单、模型上下文长度，各是各的事。
+                 它们原来被套在这张卡**里面**，屏幕上就是「卡中卡」——外面一圈框从
+                 API 密钥一直包到最底下（作者 2026-09-10 指着说「这底下两个各自单独一个块」）。
+                 外层换成 `.set-stack`（这一栏本来就该是个容器，不该自己也是一张卡），
+                 三者就并列了；卡与卡的间距由 `.set-stack` 给，不写在卡身上。 */
+              <div className="set-stack">
+                <div className="set-card set-card-link">
                 <div className="set-field">
                   <label htmlFor="set-base-url">
                     {language === "zh" ? "服务地址" : "Endpoint"}
@@ -339,9 +514,13 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                       : save.isPending ? "Applying…" : "Apply"}
                   </button>
                 </div>
-              </div>
-            ) : (
-              <>
+                </div>
+
+                {/* ── 下面这些 2026-09-06 从「前文长度」那一栏搬过来（作者点名）───
+                    它们本来就是**模型服务的属性**：那份公开清单决定这个模型认不认得出，
+                    手填那一格是「清单认不出自建端点时自己报一个数」。放在另一栏里，
+                    作者得先想到「上文长度归模型管」才找得到它。
+                    搬完「前文长度」那一栏就空了，所以那一栏一起取消了。 */}
                 {/* ── 自动更新那份模型表 ────────────────────────────────────
                     这份表决定**上文给作者多长**（同一个模型，认得出是上万字，认不出是 800）。
                     它来自一个我们不控制的公开仓库，所以**默认关着**——自动更新等于别人
@@ -354,11 +533,11 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                     </span>
                     <span className="set-row-sub">
                       {language === "zh" ? (
-                        <>每次打开工作台时更新一次，好让它认得新出的模型。</>
+                        <>每次启动工作台时检查一次更新，以收录新发布的模型。</>
                       ) : (
                         <>
-                          Updates once each time you open the workbench, so it recognizes newly
-                          released models.
+                          Checks for updates each time the workbench starts, so newly released
+                          models are covered.
                         </>
                       )}
                     </span>
@@ -382,25 +561,25 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                   <div className="err-box">{saidToTheAuthor(refreshErr) ?? refreshErr.message}</div>
                 ) : refresh.isPending ? (
                   <div className="set-note">
-                    {language === "zh" ? "正在看有没有新的…" : "Checking for updates…"}
+                    {language === "zh" ? "正在检查更新…" : "Checking for updates…"}
                   </div>
                 ) : refresh.data ? (
                   <div className="set-note">
                     {language === "zh" ? (
                       <>
-                        已更新到 {refresh.data.fetched}：认得 {refresh.data.total} 个模型
+                        已更新至 {refresh.data.fetched}：收录 {refresh.data.total} 个模型
                         {refresh.data.added || refresh.data.changed || refresh.data.removed
-                          ? `（新增 ${refresh.data.added}、变化 ${refresh.data.changed}、减少 ${refresh.data.removed}）`
-                          : "，和原来那份一样"}
+                          ? `（新增 ${refresh.data.added}、变更 ${refresh.data.changed}、移除 ${refresh.data.removed}）`
+                          : "，与此前一致"}
                         。
                       </>
                     ) : (
                       <>
-                        Updated to {refresh.data.fetched}: recognizes {refresh.data.total} model
-                        {refresh.data.total === 1 ? "" : "s"}
+                        Updated to {refresh.data.fetched}: {refresh.data.total} model
+                        {refresh.data.total === 1 ? "" : "s"} covered
                         {refresh.data.added || refresh.data.changed || refresh.data.removed
                           ? ` (${refresh.data.added} added, ${refresh.data.changed} changed, ${refresh.data.removed} removed)`
-                          : ", same as before"}
+                          : ", unchanged"}
                         .
                       </>
                     )}
@@ -414,17 +593,17 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
 
                     文案里不许出现那个数的真实单位（研发术语），也不许替它安一个「字」的
                     单位——那是句假话（中文一个字不到一个单位）。所以只说「模型说明里的那个数」。 */}
-                <div className="set-card">
+                <div className="set-card set-card-window">
                   <div className="set-row-text">
                     <span className="set-row-title">
                       <label htmlFor="set-memory">
-                        {language === "zh" ? "模型一次能读多少" : "How much the model can read at once"}
+                        {language === "zh" ? "模型上下文长度" : "Model context length"}
                       </label>
                     </span>
                     <span className="set-row-sub">
                       {language === "zh"
-                        ? "自己搭的、公司内网的服务，清单里认不出，才要填这一格。数照模型说明抄，常见 32768、128000。"
-                        : "Only fill this in if your endpoint is self-hosted or on a company network and isn't recognized in the list above. Copy the number from the model's own documentation — 32768 and 128000 are common."}
+                        ? "仅当服务为自建或部署于内网、未被上方清单收录时需要填写。数值以模型官方文档为准，常见 32768、128000。"
+                        : "Required only when the endpoint is self-hosted or on an internal network and isn't covered by the list above. Use the value from the model's official documentation — 32768 and 128000 are common."}
                     </span>
                   </div>
                   <div className="set-field">
@@ -453,9 +632,7 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                   </div>
                 </div>
 
-                {/* 上面那两样**买到了什么**。 */}
-                {current && <div className="set-note">{tailNote(current, language)}</div>}
-              </>
+              </div>
             )}
           </div>
         </div>

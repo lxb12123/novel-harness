@@ -1,10 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
-import { useCorrectEventCast, useEvents, useProjects, useRoster } from "../api/hooks";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCorrectEventCast,
+  useEvents,
+  useExtractionRun,
+  useProjects,
+  useRoster,
+  useStartExtraction,
+} from "../api/hooks";
 import { readCorrectionError } from "../correctionError";
-import type { EventView, NodeRef } from "../api/types";
-import { useLanguage } from "../language";
+import type { EventView, ExtractionRun, NodeRef } from "../api/types";
+import { useLanguage, type Language } from "../language";
 import { useCoords } from "../store";
 import { CastPicker, DIMENSIONS, candidates, idsOf, same } from "./CastPicker";
+import { ScanIcon, SearchIcon, SortIcon } from "./icons";
 import type { Dimension } from "./CastPicker";
 
 // 已经生效的情节：谁在场、谁知道了 —— 以及**改它**（`POST /canon/events/{id}/cast`）。
@@ -24,6 +32,102 @@ import type { Dimension } from "./CastPicker";
 // 在 `CastPicker.tsx` —— **提案那一格的「改一改再收下」用的是同一份**（同一件事的
 // 前一步：那条还没生效）。只发作者真动过的那一维——把没动过的名单也发过去，
 // 日志里就会多出一条「改了在场」而其实一个人都没变，而 `decision_log` 是只增不改的。
+
+/** 「分析本章」——**这一栏工具栏上的第三颗图标**（作者 2026-09-05 定的位置：
+ *  排序和放大镜中间）。它从「通知」那一格搬过来，那儿原来是一颗写着字的按钮
+ *  加一句常驻的「分析：已完成 · 发现 7 条情节」。
+ *
+ *  搬家顺带改了两件事，都照这一栏已经立过的规矩：
+ *  1. **图标 + 悬浮**，不写字（同排序 / 放大镜那两颗，`data-tip` 画名字，
+ *     不用原生 `title`——那个要等约一秒，作者说「以为没有」）；
+ *  2. **结果是一句飘一下就走的话**，不常驻（同「检验规则」那颗闪电，作者
+ *     2026-09-05：「你这个文字不要一直留在这边过几秒消失」）。留得住的那一份
+ *     本来就在这一栏的列表里（分析出来的情节）和「通知」那一格（待确认的提案）。
+ *
+ *  三态跟着那颗闪电的口径：**灰 = 没跑过 · 金黄 = 正在跑 · 绿 = 这一版正文跑过了**。
+ *  绿不按秒退——「这一章分析过没有」是关于这一版正文的事实，不是动画；换章就回灰。 */
+function AnalyzeButton() {
+  const { projectId, chapter } = useCoords();
+  const language = useLanguage((s) => s.language);
+  const start = useStartExtraction(projectId!, chapter);
+  const [runId, setRunId] = useState<string | null>(null);
+  const run = useExtractionRun(projectId, runId);
+  const [toast, setToast] = useState<string | null>(null);
+  const timer = useRef<number | null>(null);
+
+  // 换章 = 换一件事：上一章那次的运行号和那句话都不该跟着过来。
+  useEffect(() => {
+    setRunId(null);
+    setToast(null);
+  }, [chapter, projectId]);
+  useEffect(() => () => {
+    if (timer.current !== null) window.clearTimeout(timer.current);
+  }, []);
+
+  const say = (line: string) => {
+    setToast(line);
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setToast(null), 4200);
+  };
+
+  // 跑完（成功或失败）说一句就走。**失败也要说**——一次没有任何反馈的失败，
+  // 在这块屏幕上和「它还在想」长得一模一样（§10 约束 8）。
+  const status = run.data?.status;
+  const said = useRef<string | null>(null);
+  useEffect(() => {
+    if (!run.data || !status || status === "PENDING" || status === "RUNNING") return;
+    if (said.current === run.data.id) return;
+    said.current = run.data.id;
+    say(analysisToast(run.data, language));
+  }, [run.data, status, language]);
+
+  const busy = start.isPending || status === "PENDING" || status === "RUNNING";
+  const done = status === "SUCCEEDED";
+  const phase = busy ? "busy" : done ? "done" : "idle";
+
+  return (
+    <>
+      <button
+        type="button"
+        className={`icon-btn scan-run ${phase}`}
+        aria-label={language === "zh" ? "分析本章" : "Analyze this chapter"}
+        data-tip={
+          busy
+            ? language === "zh" ? "分析中…" : "Analyzing…"
+            : language === "zh" ? "分析本章" : "Analyze this chapter"
+        }
+        disabled={!projectId || busy}
+        onClick={() => {
+          if (!projectId) return;
+          start.mutate(undefined, { onSuccess: (r) => setRunId(r.id) });
+        }}
+      >
+        <ScanIcon />
+      </button>
+      {toast && <div className="check-toast">{toast}</div>}
+    </>
+  );
+}
+
+/** 跑完那一句。**整句拼装，不是拼片段**：英文那半的两个附加小句各自要处理单复数。 */
+function analysisToast(run: ExtractionRun, language: Language): string {
+  if (run.status !== "SUCCEEDED") {
+    return language === "zh"
+      ? "这一章没能分析完，什么都没改。过一会儿再点一次。"
+      : "This chapter couldn't be analyzed and nothing was changed. Try again in a moment.";
+  }
+  if (language === "zh") {
+    if (run.valid_event_count === 0) return "这一章没读出新的情节";
+    let line = `读出 ${run.valid_event_count} 条情节`;
+    if (run.proposal_count > 0) line += `，其中 ${run.proposal_count} 项要你确认，已放进「通知」`;
+    return line;
+  }
+  if (run.valid_event_count === 0) return "No new events found in this chapter";
+  const events = `${run.valid_event_count} event${run.valid_event_count === 1 ? "" : "s"}`;
+  if (run.proposal_count === 0) return `Found ${events}`;
+  const items = `${run.proposal_count} item${run.proposal_count === 1 ? "" : "s"}`;
+  return `Found ${events}; ${items} need your confirmation — see Notices`;
+}
 
 function CastEditor({
   view,
@@ -139,7 +243,30 @@ export function CanonEventCast({ canonVersion }: { canonVersion: number }) {
     if (focusEventId) setOpenId(focusEventId);
   }, [focusEventId]);
 
-  const views = events.data ?? [];
+  const [order, setOrder] = useState<"desc" | "asc">("desc");
+  const [finding, setFinding] = useState(false);
+  const [needle, setNeedle] = useState("");
+  const all = events.data ?? [];
+  /* 按章分组 + 排序 + 按章号筛。**分组键是 `event.chapter_number`**，不是列表顺序：
+     后端按 (chapter, id) 出，但排序切成倒序之后就不能再靠「相邻两条章号相同」认组了。
+     筛的是**章号前缀**（打「15」既中第 15 章也中第 158 章）——作者要的是「直接跳到
+     那一章」，一位一位打进去的过程中列表就在收窄，比打完再回车少一步。 */
+  const groups = useMemo(() => {
+    const wanted = needle.trim();
+    const kept = wanted
+      ? all.filter((v) => String(v.event.chapter_number).startsWith(wanted))
+      : all;
+    const byChapter = new Map<number, typeof kept>();
+    for (const view of kept) {
+      const list = byChapter.get(view.event.chapter_number) ?? [];
+      list.push(view);
+      byChapter.set(view.event.chapter_number, list);
+    }
+    return [...byChapter.entries()].sort((a, b) =>
+      order === "desc" ? b[0] - a[0] : a[0] - b[0],
+    );
+  }, [all, needle, order]);
+  const views = all;
   // 角色册出参的 label 是开放字符串（后端 `_narrow` 之后的 dict），这里只按
   // `label === "Character"` 过滤——名单两维收的都是人物，别的 label 后端会拒。
   const roll = useMemo(() => (roster.data ?? []) as NodeRef[], [roster.data]);
@@ -151,8 +278,74 @@ export function CanonEventCast({ canonVersion }: { canonVersion: number }) {
 
   return (
     <div className="mnr">
-      <div className="lab">
-        {language === "zh" ? "已确认的情节（谁在场、谁知道了）" : "Confirmed events (who was there, who knew)"}
+      {/* ⚠️ **那行标题 2026-09-05 删了**（作者点名）。范围这件事没有丢，换了地方说：
+          每一章的第一条上面有一行黑体的「第 N 章」，所以「这一屏跨了哪些章」是**看得见
+          的**，不用一句话去交代。这一格读的仍然是 `TEMPORAL_WHERE`
+          （`valid_from_chapter <= 当前章`），不是「这一章发生的」。 */}
+      <div className="ev-bar">
+        <span className="lab">{language === "zh" ? "每章事件概括" : "Events by chapter"}</span>
+        {/* 两句概括：这一栏一共多少条、跨了几章。**数的是筛完之后的**——放大镜里打了
+            章号，这两个数跟着缩，否则它说的是另一份单子。 */}
+        {groups.length > 0 && (
+          <span className="ev-count">
+            {language === "zh"
+              ? `共 ${groups.reduce((n, [, list]) => n + list.length, 0)} 条 · ${groups.length} 章`
+              : `${groups.reduce((n, [, list]) => n + list.length, 0)} in ${groups.length} chapters`}
+          </span>
+        )}
+        <button
+          type="button"
+          className="icon-btn"
+          /* ⚠️ 这一颗的说法**作者定死了：正序 / 倒序**。两版被否掉的都记在这儿，
+             省得下一个人再绕一圈：「从早到晚」——这块屏幕上「早晚」读成时间，而它排的
+             是章号；「新章在前」——多一层解释，作者要的是排序本身那两个词。 */
+          aria-label={
+            language === "zh"
+              ? order === "desc" ? "改成正序" : "改成倒序"
+              : order === "desc" ? "Sort ascending" : "Sort descending"
+          }
+          /* **说的是「点下去会变成什么」，不是「现在是什么」**（作者 2026-09-05：
+             「如果他原本就是正序的话，那这个提示词应该就是倒序」）——一颗按钮的说明
+             是它的动作，不是它的状态；状态已经画在图标的箭头上了。 */
+          data-tip={
+            language === "zh"
+              ? order === "desc" ? "正序" : "倒序"
+              : order === "desc" ? "Ascending" : "Descending"
+          }
+          onClick={() => setOrder(order === "desc" ? "asc" : "desc")}
+        >
+          <SortIcon order={order} />
+        </button>
+        <AnalyzeButton />
+        <button
+          type="button"
+          className="icon-btn tip-right"
+          aria-label={language === "zh" ? "按章号找" : "Find by chapter"}
+          data-tip={language === "zh" ? "按章号找" : "Find by chapter"}
+          aria-expanded={finding}
+          onClick={() => {
+            setFinding(!finding);
+            if (finding) setNeedle("");
+          }}
+        >
+          <SearchIcon />
+        </button>
+        {finding && (
+          <input
+            className="ev-find"
+            autoFocus
+            inputMode="numeric"
+            value={needle}
+            onChange={(e) => setNeedle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                setNeedle("");
+                setFinding(false);
+              }
+            }}
+            placeholder={language === "zh" ? "章号" : "Chapter"}
+          />
+        )}
       </div>
 
       {events.isLoading && (
@@ -161,8 +354,8 @@ export function CanonEventCast({ canonVersion }: { canonVersion: number }) {
       {!events.isLoading && views.length === 0 && !missing && (
         <span className="empty">
           {language === "zh"
-            ? "这一章还没有已确认的情节。确认过的情节会出现在这里，之后随时能改名单。"
-            : "This chapter doesn't have any confirmed events yet. Once an event is confirmed, it'll show up here, and you can update its cast anytime."}
+            ? `到第 ${chapter} 章为止还没有已确认的情节。确认过的情节会出现在这里，之后随时能改名单。`
+            : `No confirmed events through chapter ${chapter} yet. Once an event is confirmed, it'll show up here, and you can update its cast anytime.`}
         </span>
       )}
       {/* 跳过来却找不到那一条：**说出来**，不要安静地摆一张看起来正常的单子。
@@ -170,12 +363,28 @@ export function CanonEventCast({ canonVersion }: { canonVersion: number }) {
       {missing && (
         <div className="warn">
           {language === "zh"
-            ? "没有在这一章找到刚才那条情节，它可能已经被改掉或撤回了。"
-            : "Couldn't find that event in this chapter — it may have been changed or retracted."}
+            ? "没有找到刚才那条情节，它可能已经被改掉或撤回了。"
+            : "Couldn't find that event — it may have been changed or retracted."}
         </div>
       )}
 
-      {views.map((view) => {
+      {finding && needle.trim() && groups.length === 0 && (
+        <span className="empty">
+          {language === "zh" ? `没有第 ${needle.trim()} 章的情节。` : "No events in that chapter."}
+        </span>
+      )}
+
+      {groups.map(([number, list]) => (
+        <div className="ev-group" key={number}>
+          {/* **章号在卡片外面、黑体**（作者 2026-09-05）：它是这一堆卡片的抬头，
+              不是其中一张卡片的一行字。 */}
+          <div className="ev-chapter">
+            {language === "zh" ? `第 ${number} 章` : `Chapter ${number}`}
+            <span className="ev-count">
+              {language === "zh" ? `${list.length} 条` : `${list.length}`}
+            </span>
+          </div>
+          {list.map((view) => {
         const open = openId === view.event.id;
         return (
           <div
@@ -220,7 +429,9 @@ export function CanonEventCast({ canonVersion }: { canonVersion: number }) {
             )}
           </div>
         );
-      })}
+          })}
+        </div>
+      ))}
     </div>
   );
 }

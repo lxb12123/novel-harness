@@ -51,8 +51,19 @@ class PromptTerm(StrEnum):
     EVENT_PARTICIPANTS = "event_participants"  # .format(participants=)
     EVENT_LINE = "event_line"  # .format(chapter=, summary=, suffix=)
 
+    STANDING_RULES_HEADING = "standing_rules_heading"
+    STANDING_RULE_FORBIDDEN = "standing_rule_forbidden"  # .format(literal=)
+
 
 _TERMS: dict[PromptTerm, dict[DraftLanguage, str]] = {
+    PromptTerm.STANDING_RULES_HEADING: {
+        DraftLanguage.ZH: "【作者定下的规矩】（一直有效）",
+        DraftLanguage.EN: "[Standing rules from the author] (always in effect)",
+    },
+    PromptTerm.STANDING_RULE_FORBIDDEN: {
+        DraftLanguage.ZH: "- 不要写出「{literal}」。",
+        DraftLanguage.EN: '- Do not write "{literal}".',
+    },
     PromptTerm.PRIOR_TEXT: {
         DraftLanguage.ZH: "【上文】",
         DraftLanguage.EN: "[Prior text]",

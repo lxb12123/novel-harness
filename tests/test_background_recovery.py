@@ -3,11 +3,19 @@
 钉住：库预放 PENDING / 过期 RUNNING attempt 后，**没有任何新 HTTP 请求**，
 dispatcher 一轮 `pump_once` 就把它们全部重新 claim 并执行；未过期 RUNNING 不被
 抢；shutdown 停止新 claim。adapter 用桩（不付真模型），协调器真跑固定 DAG。
+
+⚠️ **还钉一件在这份文件里长得不像测试的事：这一波跑在哪条线程上。** 本文件其余
+每一条测试都在**构造 runtime 的那条线程**上直接调 `pump_once()`，而生产里构造发生
+在 lifespan 协程、执行发生在 `dsh-background` 线程——两条线程之间隔着 sqlite3 的
+`check_same_thread`。那道缝让真书卡了一周而全套测试全绿，
+所以 `test_a_wave_runs_on_the_background_thread_not_the_one_that_built_it` 是这里
+唯一一条**换线程**的测试，别把它「统一」回其他测试的写法。
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+import threading
 
 from novel_harness import importer, project
 from novel_harness.api.background_runtime import BackgroundRuntime
@@ -153,6 +161,73 @@ def test_pump_once_claims_and_runs_pending_attempts_without_http(tmp_path: Path)
         "OR extraction_state IN ('PENDING','RUNNING'))",
     ).fetchone()[0]
     assert still_pending == 0, f"还有 attempt 没收尾：{still_pending}"
+    conn.close()
+
+
+def test_a_wave_runs_on_the_background_thread_not_the_one_that_built_it(
+    tmp_path: Path,
+) -> None:
+    """**构造在一条线程、执行在另一条**——生产的接线就是这样，测试从前不是。
+
+    `BackgroundRuntime` 在 lifespan 协程里构造，`_loop` 跑在 `start()` 起的
+    `dsh-background` 线程上。sqlite3 的连接默认 `check_same_thread=True`，所以
+    构造时开的任何一条连接在波次里都是一颗雷：第一条 SELECT 抛 `ProgrammingError`,
+    `_loop` 的 `except Exception` 吞掉，**每一波都死在第一条 attempt 上**——
+    claim 照旧发生（`fencing_token` 一路涨到四位数），分支状态一个都不动。
+    真书 book.db 就是这么在「135 章缺总结」上停了一周（2026-09-05 修）。
+
+    本文件其余测试都在构造线程上调 `pump_once()`，因此**一条都拦不住这个**。
+    这条测试押两件事：
+    ① 构造过程**一条连接都不开**（工厂调用计数为 0）——雷根本没机会被埋下；
+    ② 换一条线程跑一波，异常原样抬回来，并且 attempt 真的收尾了。
+    """
+    db, pid, chapter_id = _seed_book(tmp_path)
+    conn = connect(db)
+    attempt = an_attempt(
+        conn,
+        project_id=pid,
+        chapter_id=chapter_id,
+        snapshot_id=_snapshot(conn, pid),
+    )
+    conn.commit()
+
+    opened: list[int] = []
+    base = _conn_factory(db)
+
+    def counting_factory():
+        opened.append(threading.get_ident())
+        return base()
+
+    runtime = BackgroundRuntime(
+        db_path=db,
+        connection_factory=counting_factory,
+        runner_factory=lambda: _stub_runner(db),
+        summarizer_factory=lambda: _stub_summarizer(db),
+        owner="test",
+        poll_seconds=100,
+    )
+    assert opened == [], "构造时不许开连接：它开在错的那条线程上"
+
+    box: dict[str, object] = {}
+
+    def wave() -> None:
+        try:
+            box["done"] = runtime.pump_once()
+        except BaseException as exc:  # noqa: BLE001 —— 生产里这一层是 except: pass
+            box["exc"] = exc
+
+    thread = threading.Thread(target=wave, name="dsh-background")
+    thread.start()
+    thread.join()
+
+    assert "exc" not in box, f"后台线程上跑不动：{box.get('exc')!r}"
+    assert box["done"] == 1
+    row = conn.execute(
+        "SELECT summary_state, extraction_state FROM chapter_refresh_attempt WHERE id = ?",
+        (attempt,),
+    ).fetchone()
+    assert row["summary_state"] not in ("PENDING", "RUNNING"), dict(row)
+    assert row["extraction_state"] not in ("PENDING", "RUNNING"), dict(row)
     conn.close()
 
 

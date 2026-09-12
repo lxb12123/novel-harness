@@ -356,8 +356,14 @@ def test_demo_pins_the_real_rule_count() -> None:
     demo = (REPO_ROOT / "scripts" / "demo.sh").read_text(encoding="utf-8")
     claimed = re.findall(r"跑了 (\d+) 条规则", demo)
     assert claimed, "demo.sh 不再断言「跑了 N 条规则」了——§10 约束 8 靠它，别删"
-    assert set(claimed) == {str(len(ALL_CHECKS))}, (
-        f"demo.sh 断言「跑了 {set(claimed)} 条规则」，实际 len(ALL_CHECKS) = {len(ALL_CHECKS)}。\n"
+    # ⚠️ **2026-09-05：算式多了一个 +1**（ADR 0042 把最后一条系统规则砍了，`ALL_CHECKS`
+    # 空了）。那条泳道现在自己 `POST /validation-rules` 加一条作者规则再跑——所以心跳里
+    # 该跑的条数 = 系统规则 + 它自己加的那一条。**+1 不是魔法数**，它对应 demo.sh 里
+    # 「作者自己加一条规则」那一步；那一步删了，这儿的 +1 也要跟着没。
+    expected = len(ALL_CHECKS) + 1
+    assert set(claimed) == {str(expected)}, (
+        f"demo.sh 断言「跑了 {set(claimed)} 条规则」，实际该是 {expected}"
+        f"（系统 {len(ALL_CHECKS)} 条 + 泳道自己加的 1 条）。\n"
         "加规则时要一起改 demo.sh——没有别的东西会告诉你心跳断了。"
     )
 

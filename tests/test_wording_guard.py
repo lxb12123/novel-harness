@@ -276,8 +276,31 @@ def _runner_error_literals() -> dict[str, str]:
     """`runner.py` 里每一处 `ExtractionRunError(...)` 的 `(code, message)`。
 
     判据是 AST 不是 grep：那个类名在注释里也有。
+
+    ⚠️ **`message` 有两种写法，两种都要认**（2026-09-05）：
+    - 光一个字面量（老写法）；
+    - `_diagnostic("……", exc)` —— 那三个 `except` 从前只落一句固定的话，**把唯一的
+      证据扔了**（真书上 62 章分析失败，而库里、日志里全是同一句话，只能再跑一次去
+      猜）。现在诊断里带上异常本身，第一个参数仍是那句固定的话。
+    这里取的就是那句固定的话：它是本文件要证明「不上作者屏幕」的那段英文，
+    而拼在它后面的 `type(exc).__name__: exc` 只会让这件事更要紧，不会更不要紧。
     """
     tree = ast.parse(RUNNER.read_text(encoding="utf-8"), filename="runner.py")
+
+    def literal(message: ast.expr | None) -> str | None:
+        if isinstance(message, ast.Constant):
+            return str(message.value)
+        # `_diagnostic("……", exc)`：第一个位置参数是那句固定的话。
+        if (
+            isinstance(message, ast.Call)
+            and isinstance(message.func, ast.Name)
+            and message.func.id == "_diagnostic"
+            and message.args
+            and isinstance(message.args[0], ast.Constant)
+        ):
+            return str(message.args[0].value)
+        return None
+
     out: dict[str, str] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -286,10 +309,10 @@ def _runner_error_literals() -> dict[str, str]:
         if name != "ExtractionRunError":
             continue
         kwargs = {kw.arg: kw.value for kw in node.keywords}
-        code, message = kwargs.get("code"), kwargs.get("message")
-        if isinstance(code, ast.Attribute) and isinstance(message, ast.Constant):
-            out[str(getattr(ExtractionErrorCode, code.attr).value)] = str(message.value)
-    assert out, "runner.py 里一处 `ExtractionRunError(code=枚举, message=字面量)` 都找不到"
+        code, message = kwargs.get("code"), literal(kwargs.get("message"))
+        if isinstance(code, ast.Attribute) and message is not None:
+            out[str(getattr(ExtractionErrorCode, code.attr).value)] = message
+    assert out, "runner.py 里一处 `ExtractionRunError(code=枚举, message=…)` 都找不到"
     return out
 
 

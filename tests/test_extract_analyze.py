@@ -94,6 +94,28 @@ def _valid_json() -> str:
     )
 
 
+def test_a_markdown_fence_is_stripped_not_a_reason_to_throw_away_the_chapter() -> None:
+    """```json 围栏剥掉，里面那份 JSON 照常解析。
+
+    ⚠️ **这一档 2026-09-06 从「必须抛」翻成了「必须过」。** 它原来和「not json」
+    「后面跟一句话」并列在 `never_repairs_or_strips` 那张参数表里。
+
+    翻过来的理由是实测：真书上 73 次抽取失败里有 23 次是 `analysis_format`，
+    而 `advisory_review._payload` 面对同一个模型**从一开始就剥围栏**（「模型爱加它」）。
+    同一种毛病两个答案，严的那一侧整章作废——而围栏是**包装**，里面那份 JSON
+    一个字节没变，剥它和「猜模型想说什么」是两回事。
+
+    **别把这条读成「解析变宽容了」**：`not json` / 前后带散文 / 缺字段 / 多字段
+    照旧全抛（上面那张表），一次修复、一次重试都没有。
+    """
+    parsed = parse_analysis("```json\n" + _valid_json() + "\n```")
+    assert parsed.events[0].summary == "顾清音交出密信"
+    # 光秃秃的 ``` 也是围栏（模型不总是写语言名）。
+    assert parse_analysis("```\n" + _valid_json() + "\n```").events[0].summary == (
+        "顾清音交出密信"
+    )
+
+
 def test_parse_analysis_validates_json_exactly_once(monkeypatch: pytest.MonkeyPatch) -> None:
     original = RawChapterAnalysis.model_validate_json
     calls: list[str] = []
@@ -107,20 +129,19 @@ def test_parse_analysis_validates_json_exactly_once(monkeypatch: pytest.MonkeyPa
     parsed = parse_analysis(_valid_json())
 
     assert parsed.events[0].summary == "顾清音交出密信"
-    assert calls == [_valid_json()]
+    assert calls == [_valid_json()], "没有围栏时 `unfenced` 不该改动一个字节"
 
 
 @pytest.mark.parametrize(
     "text",
     [
         "not json",
-        "```json\n" + _valid_json() + "\n```",
         _valid_json() + "\nanalysis complete",
         '{"events": [}',
         '{"events": [], "chapter": 12}',
     ],
 )
-def test_parse_analysis_never_repairs_or_strips_invalid_output(text: str) -> None:
+def test_parse_analysis_never_repairs_invalid_output(text: str) -> None:
     with pytest.raises(AnalysisFormatError) as exc_info:
         parse_analysis(text)
 
@@ -160,6 +181,13 @@ def test_analysis_prompt_pins_safety_and_shape_rules() -> None:
     for forbidden in ("IDs", "chapter", "scope", "status"):
         assert forbidden in system
     assert "surface names" in system
+    # 2026-09-04 v8：`state` 的四条口径。每一条丢掉都会**静默退回 v7 的行为**，
+    # 而那个行为在屏幕上的形状是「角色卡只剩所在地 + 装备两行」/「同一件事两个维度
+    # 并排打架」/「中英混排的维度名」——都不会让任何别的测试红。
+    assert "language of the supplied chapter" in system
+    assert "one stable dimension name per attribute" in system
+    assert "cultivation level or power rank" in system
+    assert "traits that do not change" in system
 
 
 def test_resolve_surfaces_preserves_order_candidates_and_unknowns() -> None:
@@ -284,3 +312,53 @@ def test_resolve_surfaces_rejects_duplicate_candidate_node_ids() -> None:
 
     with pytest.raises(ResolutionContractError, match="duplicate"):
         resolve_surfaces(graph, "project-1", ["顾姑娘"])  # type: ignore[arg-type]
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# v9：把这本书已有的字段名喂回去（作者 2026-09-06 的裁定：不给固定字段表）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_known_dimension_names_go_into_the_messages_but_not_into_the_run_identity() -> None:
+    """**这一条是 v9 的全部风险所在，别删。**
+
+    「已有字段名」那一段随图变化（别的章一抽完，这本书就多几个名字）。它进消息是
+    对的——那是收敛字段名的唯一机制。**但它绝不能进 `prompt_hash`**，因为那个哈希是
+    运行身份，三处都建在它上面：
+
+      · `extraction_run` 的唯一键（同一章同一个问题只跑一条 run）；
+      · `runner.enqueue` 判「这条 run 还算不算数」；
+      · `runner.run` 的 `PROMPT_DRIFT` 检查（排队时和执行时的 prompt 必须一致）。
+
+    进去了的话三条同时发作：每加一个字段名就让同一章重新付一次钱；而排队到执行之间
+    图一定会变（别的章在并行抽），于是**每一条 run 都死在 PROMPT_DRIFT**。
+    """
+    from novel_harness.extract.control import AnalysisRequest, identity_prompt_bytes
+    from novel_harness.extract.prompt import KNOWN_DIMENSIONS_HEADER
+    from novel_harness.graph import ChapterText
+
+    chapter = ChapterText(
+        chapter_id="chapter:x", project_id="project:x", number=7,
+        snapshot_id="snapshot:x", text="第七章\n\n他到了神枢营。\n",
+    )
+    bare = AnalysisRequest(chapter)
+    with_names = AnalysisRequest(chapter, known_dimensions=("职务", "修为", "装备"))
+
+    # ① 身份一模一样 —— 这是本条测试的要点。
+    assert with_names.prompt_hash == bare.prompt_hash
+    assert bare.prompt_hash == __import__("hashlib").sha256(
+        identity_prompt_bytes(chapter.text)
+    ).hexdigest()
+
+    # ② 实际发出去的字节**不**一样，而且名字真的在里面（否则模型看不见，白改）。
+    assert with_names.prompt_bytes != bare.prompt_bytes
+    sent = "".join(m.content for m in with_names.messages)
+    assert KNOWN_DIMENSIONS_HEADER in sent
+    for name in ("职务", "修为", "装备"):
+        assert name in sent
+    # 顺序保留：调用方按用量降序给，用得多的在前才是这本书的骨架。
+    assert sent.index("职务") < sent.index("修为") < sent.index("装备")
+
+    # ③ 一个名字都没有时（第一章那次）**一个字节都不多发**。
+    assert bare.prompt_bytes == identity_prompt_bytes(chapter.text)
+    assert KNOWN_DIMENSIONS_HEADER not in "".join(m.content for m in bare.messages)

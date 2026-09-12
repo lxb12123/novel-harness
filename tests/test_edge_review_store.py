@@ -176,7 +176,7 @@ def test_clone_preserves_edge_fields_supersedes_canon_and_keeps_provisional(
     conn: Connection,
 ) -> None:
     project_id, graph, hero, _peer, old_place, _new, location, _relation = _seed(conn)
-    old_canon = graph.upsert_edge(
+    graph.upsert_edge(
         EdgeSpec(
             project_id=project_id,
             src=hero.id,
@@ -197,8 +197,11 @@ def test_clone_preserves_edge_fields_supersedes_canon_and_keeps_provisional(
     assert promoted.edge.confidence == location.confidence
     assert promoted.edge.source is location.source
     assert promoted.edge.evidence_id == location.evidence_id
-    closed = conn.execute("SELECT valid_to_chapter FROM edge WHERE id = ?", (old_canon.id,)).fetchone()
-    assert closed[0] == 2
+    # 升 CANON 之后，第 2 章那条接管；第 1 章那条**原样留着**，只是不再是当前值。
+    # （2026-09-06 之前这里断言的是 `old_canon.valid_to_chapter == 2`——
+    #  那一列随 ADR 0043 下线，「谁盖住谁」改在读的时候算，所以改成断言行为。）
+    assert graph.state_at(project_id, hero.id, 1).location.id == old_place.id
+    assert graph.state_at(project_id, hero.id, 2).location.id == promoted.edge.dst
     source = conn.execute(
         "SELECT information_scope, status, valid_to_chapter FROM edge WHERE id = ?",
         (location.id,),

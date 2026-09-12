@@ -16,6 +16,7 @@ from novel_harness.extract import (
     RawStateUpdate,
 )
 from novel_harness.extract.service import DiscardOutcome, ExtractionService
+from novel_harness import project
 from novel_harness.graph import (
     AliasSpec,
     ChapterSpec,
@@ -257,9 +258,35 @@ def test_ambiguous_and_below_threshold_quotes_are_discarded_with_reasons(
     assert conn.execute("SELECT COUNT(*) FROM evidence").fetchone()[0] == 0
 
 
+def _author_takes_over(seed: Seed, conn: Connection, node_id: str) -> None:
+    """把这个人**当前每一条** CANON 边都过一遍作者编辑，让 `canon_edge_override` 落行。
+
+    2026-09-06 起「机器推翻作者」是 `edge_conflict` 的唯一触发条件，所以想测那张卡
+    就得先让作者接管——**这不是绕过判据，这就是判据**。
+    """
+    for edge in seed.graph.state_at(seed.project_id, node_id, 1).edges:
+        seed.graph.edit_canon_edge(
+            seed.project_id,
+            edge.id,
+            new_src=edge.src,
+            new_dst=edge.dst,
+            props=edge.props,
+            expected_canon_version=project.require_canon_version(conn, seed.project_id),
+        )
+
+
 def test_canon_state_conflicts_cluster_into_one_linked_proposal(
     seed: Seed, conn: Connection
 ) -> None:
+    """同一章的多条冲突**攒成一张卡**，不是一条一张。
+
+    ⚠️ **2026-09-06 起「冲突」的判据变了**：不再是「和当前 Canon 不一样」，
+    而是「机器要盖掉作者亲手改过的那一格」（作者裁定，见
+    `test_auto_canon.assert_only_the_clean_facts_went_canon` 的 docstring）。
+    所以这条测试**先让作者把两格都接管**，否则它们会直接自动生效、一张卡都没有。
+
+    **攒成一张这件事一个字没改**——它测的是「一章一张卡」的聚合，不是「什么算冲突」。
+    """
     seed.graph.upsert_edge(EdgeSpec(
         project_id=seed.project_id, src=seed.hero_id, dst=seed.mountain_id,
         type=EdgeType.LOCATED_AT, valid_from_chapter=1,
@@ -270,6 +297,8 @@ def test_canon_state_conflicts_cluster_into_one_linked_proposal(
         type=EdgeType.HAS_STATE, props=EdgeProps(value="筑基"),
         valid_from_chapter=1, information_scope=InformationScope.CANON,
     ))
+    # 作者接管这两格（改成什么不重要，重要的是他碰过——判据是那一行 override）。
+    _author_takes_over(seed, conn, seed.hero_id)
     states = (
         RawStateUpdate(
             kind="location", subject="顾清音", object="渡口",
@@ -364,6 +393,11 @@ def test_same_graph_key_keeps_only_last_located_state_update(
         expected_value = "宿敌"
         expected_quote = RELATION_FINAL_QUOTE
 
+    # 作者接管那一格：这条测试的最后一段要那张 `edge_conflict` 卡，而 2026-09-06 起
+    # 只有「机器要盖掉作者改过的格子」才做卡（判据见 `_author_takes_over`）。
+    # **前半段和它无关**：「同一格在一份 analysis 里出现两次 → 只留最后那条」
+    # 这条纪律一个字没改。
+    _author_takes_over(seed, conn, seed.hero_id)
     report = _service(conn, seed).ingest(
         seed.project_id,
         seed.chapter,

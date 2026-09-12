@@ -234,8 +234,6 @@ class Declaration(BaseModel):
     edge: Edge
     evidence: Evidence
     decision_id: str
-    closed: list[Edge] = Field(default_factory=list)
-    """被这条新边闭合的旧边（`valid_to_chapter` 被写上了）。"""
 
     retracted: list[Edge] = Field(default_factory=list)
     """被撤回的旧边（同章更正）。"""
@@ -692,7 +690,7 @@ class Ledger:
         ── 顺序：证据 + 边一个事务，日志最后。别改成日志先写 ────────────────
 
         `decision_log` 的三个触发器封死 INSERT / UPDATE / DELETE，**写错的一条永远删不掉**；
-        而 `SupersedeConflict`（作者乱序声明）/ `IntegrityError` 是**预期异常**，概率远高于
+        而 `IntegrityError`（同一身份重复声明）是**预期异常**，概率远高于
         进程被 kill -9。日志先写 = 每一次拒绝都在那张不可变的表里留一条**假的 accept**，
         而它是全库唯一不可重建、也唯一必须不撒谎的资产。
 
@@ -796,7 +794,6 @@ class Ledger:
             edge=result.edge,
             evidence=ev,
             decision_id=decision.id,
-            closed=result.closed,
             retracted=result.retracted,
         )
 

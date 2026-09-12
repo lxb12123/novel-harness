@@ -1,5 +1,5 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_CHAT_PCT,
   DEFAULT_LEFT,
@@ -10,6 +10,7 @@ import {
   MIN_LEFT,
   MIN_RIGHT,
 } from "../layout";
+import { usePaneCollapse } from "../paneCollapse";
 import { SplitPanes } from "./SplitPanes";
 
 // jsdom 不做排版，clientWidth 恒为 0 —— 所以这儿验的是**规则和交互**（方向、下限、复位、
@@ -177,5 +178,84 @@ describe("中栏对半分", () => {
     unmount();
     render(withChat());
     expect(widthOf(chatBar())).toBe(DEFAULT_CHAT_PCT + KEY_PCT_STEP);
+  });
+});
+
+// ── 收起两侧栏（作者 2026-09-06，参照 Cursor）──────────────────────────────
+describe("收起两侧栏", () => {
+  const collapse = (side: "left" | "right") => usePaneCollapse.getState().toggle(side);
+
+  beforeEach(() => {
+    // store 是模块级的单例，收起状态会跨用例带过去。
+    usePaneCollapse.setState({ left: false, right: false });
+    globalThis.localStorage?.clear();
+  });
+
+  it("收起左栏 = 左栏和它那根分隔条一起不见，中栏右栏还在", () => {
+    collapse("left");
+    render(panes());
+    expect(screen.queryByText("左栏")).toBeNull();
+    // **分隔条也得走**：留一根 0 宽的在那儿，作者仍然能把收起来的栏拖回来，
+    // 于是「收起」变成一个绕得过去的状态。
+    expect(screen.queryByRole("separator", { name: "调整左栏宽度" })).toBeNull();
+    expect(screen.getAllByRole("separator")).toHaveLength(1);
+    expect(screen.getByText("中栏")).toBeInTheDocument();
+    expect(screen.getByText("右栏")).toBeInTheDocument();
+    // 那一栏的轨道从 grid 上真的消失了，不是被画成 0px。
+    const tracks = screen.getByRole("main").style.gridTemplateColumns;
+    expect(tracks).not.toContain(`${DEFAULT_LEFT}px`);
+    expect(tracks).toContain(`${DEFAULT_RIGHT}px`);
+  });
+
+  it("收起右栏 —— 同一件事的另一边", () => {
+    collapse("right");
+    render(panes());
+    expect(screen.queryByText("右栏")).toBeNull();
+    expect(screen.queryByRole("separator", { name: "调整右栏宽度" })).toBeNull();
+    expect(screen.getByText("左栏")).toBeInTheDocument();
+    expect(screen.getByRole("main").style.gridTemplateColumns).not.toContain(`${DEFAULT_RIGHT}px`);
+  });
+
+  it("两栏都收起来时中栏还在 —— 不许出现一块什么都没有的屏幕", () => {
+    collapse("left");
+    collapse("right");
+    render(panes());
+    expect(screen.getByText("中栏")).toBeInTheDocument();
+    expect(screen.queryAllByRole("separator")).toHaveLength(0);
+    expect(screen.getByRole("main").style.gridTemplateColumns).toBe("minmax(0, 1fr)");
+  });
+
+  it("🔴 收起再展开，回到**他拖成的那个宽度**，不是默认宽", () => {
+    // 收起如果顺手把宽度改成 0/默认，作者展开时看到的是一栏他没拖过的宽度——
+    // 而他按那颗按钮的意思只是「先挪开」。宽度存的是意图，收起不许碰它。
+    render(panes());
+    fireEvent.keyDown(leftBar(), { key: "ArrowRight" });
+    const widened = widthOf(leftBar());
+    expect(widened).toBe(DEFAULT_LEFT + KEY_STEP);
+
+    cleanup();
+    collapse("left");
+    render(panes());
+    expect(screen.queryByText("左栏")).toBeNull();
+
+    cleanup();
+    collapse("left"); // 再拨一次 = 展开
+    render(panes());
+    expect(widthOf(leftBar())).toBe(widened);
+  });
+
+  it("记住：重开工作台还是收着的", () => {
+    collapse("right");
+    // 重新读一遍存的那份（模拟下次打开）。
+    const stored = JSON.parse(String(globalThis.localStorage?.getItem("nh.pane-collapsed.v1")));
+    expect(stored).toEqual({ left: false, right: true });
+  });
+
+  it("存坏了一律当「没收起来」—— 读不回来的偏好不许把两栏藏起来", () => {
+    // 作者会以为工作台坏了，而不会想到去顶栏找一颗按钮。
+    globalThis.localStorage?.setItem("nh.pane-collapsed.v1", "{oops");
+    render(panes());
+    expect(screen.getByText("左栏")).toBeInTheDocument();
+    expect(screen.getByText("右栏")).toBeInTheDocument();
   });
 });

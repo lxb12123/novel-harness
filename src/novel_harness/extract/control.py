@@ -133,19 +133,35 @@ class AnalysisRequest:
     """一次绑定 prompt 的分析请求；派生字段不能独立提供。"""
 
     chapter: ChapterText
+    known_dimensions: tuple[str, ...] = ()
+    """这本书已经用过的状态字段名（用得多的在前）。进消息、**不进 `prompt_hash`**。"""
+
     messages: tuple[ImmutableAnalysisMessage, ...] = field(init=False)
     prompt_bytes: bytes = field(init=False, repr=False)
+    """**实际发出去**的那份字节（含已有字段名那一段）。审计的 `in_artifact` 记它。"""
+
     prompt_hash: str = field(init=False)
+    """**运行身份**的哈希（`identity_prompt_bytes`，不含已有字段名那一段）。
+
+    和 `prompt_bytes` 故意不对应：一个答「这是同一个问题吗」（唯一键 / PROMPT_DRIFT），
+    一个答「那一次到底发了什么」（审计）。合成一个的后果见
+    `prompt.build_analysis_messages` 的 docstring。
+    """
 
     def __post_init__(self) -> None:
         messages = tuple(
             ImmutableAnalysisMessage(role=message["role"], content=message["content"])
-            for message in build_analysis_messages(self.chapter.text)
+            for message in build_analysis_messages(
+                self.chapter.text, self.known_dimensions
+            )
         )
-        encoded = _encode_messages(messages)
         object.__setattr__(self, "messages", messages)
-        object.__setattr__(self, "prompt_bytes", encoded)
-        object.__setattr__(self, "prompt_hash", sha256(encoded).hexdigest())
+        object.__setattr__(self, "prompt_bytes", _encode_messages(messages))
+        object.__setattr__(
+            self,
+            "prompt_hash",
+            sha256(identity_prompt_bytes(self.chapter.text)).hexdigest(),
+        )
 
     def wire_messages(self) -> list[AnalysisMessage]:
         """返回一份新的可变 wire 拷贝，不暴露不可变的审计源。"""
@@ -223,7 +239,17 @@ required_ruleset_hash, fencing_token, created_at, started_at, finished_at
 """
 
 
-def prompt_bytes(text: str) -> bytes:
+def identity_prompt_bytes(text: str) -> bytes:
+    """**运行身份**的那份字节：只含系统提示 + 本章正文，不含随图变化的东西。
+
+    `extraction_run` 的唯一键和 `PROMPT_DRIFT` 检查都建在它的哈希上，所以它必须
+    只随「章还是不是那一章 / 提示词版本变没变」而变。v9 起实际发出去的消息里多了
+    一段「这本书已有的字段名」（随图变化），**它不进这里**——理由写在
+    `prompt.build_analysis_messages` 的 docstring 里（三条后果各自都够致命）。
+
+    ⚠️ 名字 2026-09-06 从 `prompt_bytes` 改成这个，就是为了让调用点读起来不像
+    「发出去的那份字节」。发出去的那份在 `AnalysisRequest.prompt_bytes` 上。
+    """
     messages = tuple(
         ImmutableAnalysisMessage(role=message["role"], content=message["content"])
         for message in build_analysis_messages(text)

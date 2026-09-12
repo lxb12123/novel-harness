@@ -93,7 +93,7 @@ describe("回焦时把库和磁盘对一遍", () => {
     const keys = invalidate.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0]);
     // 正文、章目录、历史都得重取——磁盘上那一章刚换了内容。
     expect(new Set(keys)).toEqual(
-      new Set(["chapters", "text", "history", "matrix", "state", "constraints", "check"]),
+      new Set(["chapters", "text", "history", "matrix", "state", "check"]),
     );
   });
 

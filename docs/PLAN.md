@@ -371,7 +371,14 @@ INSERT INTO edge_type VALUES
 
 `upsert_edge()` 里一处实现 supersede：按 `exclusivity` 决定 UPDATE 哪些旧边的 `valid_to_chapter`。十几行，但**必须在第一条边写进库之前就存在**，否则历史数据全是脏的，而 `state_at` 会同时返回「在青云城」和「在北荒」两条有效边 → 规则误报 → 生死线指标崩。
 
-**`state_at` 的唯一实现（闭开区间 `[valid_from, valid_to)`）：**
+**`state_at` 的唯一实现：**
+
+> ⚠️ **下面这一段 2026-09-06 起是历史**（[ADR 0043](adr/0043-facts-store-a-start-not-an-interval.md)）。
+> `valid_to_chapter` 停用了（恒 NULL），排他类型改成「同一语义槽里取 `valid_from`
+> 不晚于本章的最后一条」（`graph/queries.py::CURRENT_EDGE_CTE`），其余四个条件不变。
+> **原文原样留着**，因为下面那句「边界必须单测」的道理一个字没变——只是今天那条边界
+> 由两条事实（ch10 一条、ch143 一条）表达，不由一条边的两个端点表达。
+> 权威见 [ARCHITECTURE.md 的数据模型那一节](ARCHITECTURE.md)。
 
 ```sql
 SELECT * FROM edge
@@ -678,7 +685,7 @@ CHAPTER_RE = re.compile(
 `graph/queries.py` ← **`state_at` + `supersede` 的唯一实现，全系统时态过滤只在这里写一次**
 
 三组测试：
-- `test_state_at.py`：闭开区间边界（valid_from=10, valid_to=143 → ch9✗ ch10✓ ch142✓ **ch143✗** ch150✗）
+- `test_state_at.py`：交接章边界（ch9✗ ch10✓ ch142✓ **ch143✗** ch150✗）——2026-09-06 起由两条事实表达，不由一条边的两个端点表达（ADR 0043）
 - `test_supersede.py`：`LOCATED_AT`(single_per_src) 写入新边自动闭合旧边；**`state_at` 绝不返回两条互斥边**
 - `test_arch_guard.py`：`graph/` 之外任何文件 `import sqlite3` → 失败
 
@@ -815,7 +822,7 @@ novel-harness/
 │   ├── test_migrate.py            # 幂等
 │   ├── test_chapterize.py         # \s 吞行回归
 │   ├── test_mentions.py           # 顾清音不切成顾/清音；琴声清音袅袅不产生 mention
-│   ├── test_state_at.py           # 闭开区间边界
+│   ├── test_state_at.py           # 交接章边界（ADR 0043 后由两条事实表达）
 │   ├── test_supersede.py          # 互斥性
 │   ├── test_checks.py             # 合成小册子当 fixture
 │   └── test_arch_guard.py         # graph/ 外禁 import sqlite3

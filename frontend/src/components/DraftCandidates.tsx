@@ -96,6 +96,29 @@ export function DraftCard({
       {/* **自述可能是空的**（写它的那个模型这次没说）。空的时候这儿什么都不画——
           替它编一句「这一版更冷」正是 ADR 0005 拦的那种事。 */}
       {draft.note.trim() !== "" && <p className="draft-note">{draft.note}</p>}
+      {/* 它喂了写手什么（ADR 0047 守着的第二条线）：这一稿的要求 + 补的资料。
+          默认收着——作者先看稿子，挑错了才翻这儿。**空的不画**：旧机制写的稿这两格是空串，
+          摆一个空标题等于说「它什么都没要求」。 */}
+      {draft.brief.trim() !== "" && (
+        <details className="draft-brief">
+          <summary>{language === "zh" ? "这一稿的要求" : "What this draft was asked for"}</summary>
+          <p className="draft-brief-text">{draft.brief}</p>
+        </details>
+      )}
+      {draft.materials.length > 0 && (
+        <details className="draft-brief">
+          <summary>
+            {language === "zh"
+              ? `助手补的资料 · ${draft.materials.length} 段`
+              : `Material the assistant added · ${draft.materials.length}`}
+          </summary>
+          <ul className="draft-materials">
+            {draft.materials.map((item, i) => (
+              <li key={i}>{item}</li>
+            ))}
+          </ul>
+        </details>
+      )}
       {open ? (
         <DraftBody pid={pid} draft={draft} />
       ) : (

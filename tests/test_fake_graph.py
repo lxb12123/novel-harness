@@ -41,11 +41,8 @@ from novel_harness.graph import (
     Subgraph,
     UpsertResult,
 )
-from novel_harness.panel import (
-    UnresolvedCast,
-    resolve_cast,
-    scene_constraints,
-)
+from novel_harness.panel import UnresolvedCast, resolve_cast
+from novel_harness.panel.constraints import scene_view
 
 PID = "project:demo:01J0"
 
@@ -185,30 +182,10 @@ def test_fake_satisfies_protocol() -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 约束转译：`forbidden_entities` 与 cast 解析
+# cast 解析
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_forbidden_entities_come_from_first_appears_chapter() -> None:
-    """§3.2 面板上那行「幽泉窟(ch200 首现)」。"""
-    store = build([])
-
-    c = scene_constraints(store, PID, 152, [XIAO_JUE.name])
-
-    assert [(e.node.name, e.first_appears_chapter) for e in c.forbidden_entities] == [
-        ("幽泉窟", 200)
-    ]
-    assert c.forbidden_entities[0].surfaces == ["幽泉窟"]
-
-
-@pytest.mark.parametrize("chapter", [200, 201])
-def test_entity_stops_being_forbidden_once_it_has_appeared(chapter: int) -> None:
-    """首现章号 200 = 第 200 章他就登场了，那一章起不再是「未来实体」。"""
-    store = build([])
-
-    c = scene_constraints(store, PID, chapter, [XIAO_JUE.name])
-
-    assert c.forbidden_entities == []
 def test_two_surfaces_for_one_person_is_one_row() -> None:
     """`cast=萧决,师兄` 且「师兄」唯一指向萧决：他是一个人、一行。
 
@@ -231,7 +208,7 @@ def test_require_resolved_cast_is_the_draft_gate() -> None:
     """
     store = build([], extra_aliases=AMBIGUOUS_SHIXIONG)
 
-    ambiguous = scene_constraints(store, PID, 152, ["师兄"])
+    ambiguous = scene_view(store, PID, 152, ["师兄"]).constraints
     with pytest.raises(UnresolvedCast) as exc:
         ambiguous.require_resolved_cast()
     # 国际化第四批 Phase B：`UnresolvedCast` 发 code + params，不再是拼好的句子。
@@ -239,4 +216,4 @@ def test_require_resolved_cast_is_the_draft_gate() -> None:
     assert "师兄" in exc.value.params["unresolved"]
 
     # 解析干净的那份不抛——否则这条守卫会把正常起草也拦了。
-    scene_constraints(store, PID, 152, ["萧决"]).require_resolved_cast()
+    scene_view(store, PID, 152, ["萧决"]).constraints.require_resolved_cast()

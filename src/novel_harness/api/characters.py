@@ -139,7 +139,7 @@ class NodeDeleted(BaseModel):
     """删掉一条角色册条目之后的回执。
 
     带着 `usage`（删之前数出来的那份，全零）**是为了让回执说得出「删掉的是一个
-    什么都没挂的条目」**——同 `delete_chapter` 那条路的做法。
+    什么都没挂的条目」**。
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")

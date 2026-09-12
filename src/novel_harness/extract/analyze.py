@@ -6,6 +6,8 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
+from ..draft.provider import unfenced
+
 from ..graph.models import NodeRef
 from ..graph.store import StoryGraph
 
@@ -30,11 +32,37 @@ class ResolutionContractError(ValueError):
 
 
 def parse_analysis(text: str) -> RawChapterAnalysis:
-    """校验一份模型响应；不做修复、不剥壳、不重试。"""
+    """校验一份模型响应；**不做修复、不重试**。
+
+    这两个「不」是有意的：改字段、补逗号、失败重试都是在替模型圆场，
+    而圆场会把「这个模型/这份 prompt 产不出合规 JSON」这件事永久藏起来。
+
+    ⚠️ **2026-09-06 起剥壳了**（`provider.unfenced`，全仓一份）。原来这里是三个「不」，
+    而 `advisory_review._payload` 从一开始就剥——同一个模型、同一种毛病、两处不同的
+    答案，而**严的那一侧在真书上失败了 23 次**。剥围栏和圆场是两回事：围栏是包装，
+    里面那份 JSON 一个字节没变。
+
+    这一层今天是**第二道防线**：第一道是 `response_format={"type": "json_object"}`
+    （`StructuredCallPlan` 自动带上），端点认它的话围栏根本不会出现。
+
+    ⚠️ **但拒绝的理由要留得下来**（2026-09-06）。这里原来只抛一句
+    「chapter analysis is not valid schema JSON」，把 pydantic 那份**指到具体字段**
+    的 `ValidationError` 整个扔了（`from exc` 只在栈上，落进 `extraction_run.errors_json`
+    的是那句空话）。真书上 23 次 `analysis_format` 因此全都长得一模一样，
+    看不出模型到底错在哪一格——和同日修掉的那三个 `except Exception` 是一个病。
+
+    只带**前两条**错误、并砍到 400 字：这一列是给维护者看的诊断，不是全量转储；
+    模型跑偏时 pydantic 能一口气报出几十条，全存进去只是把库撑大。
+    """
     try:
-        return RawChapterAnalysis.model_validate_json(text)
+        return RawChapterAnalysis.model_validate_json(unfenced(text))
     except ValidationError as exc:
-        raise AnalysisFormatError("chapter analysis is not valid schema JSON") from exc
+        first = "; ".join(
+            f"{'.'.join(str(x) for x in e['loc'])}: {e['msg']}" for e in exc.errors()[:2]
+        )
+        raise AnalysisFormatError(
+            f"chapter analysis is not valid schema JSON ({len(exc.errors())} errors) — {first}"[:400]
+        ) from exc
 
 
 class SurfaceResolution(BaseModel):

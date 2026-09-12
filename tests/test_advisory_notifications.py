@@ -35,8 +35,7 @@ from novel_harness.chapter_refresh import (
 )
 from test_chapter_refresh import an_attempt
 from novel_harness.db import Connection, connect, migrate
-from novel_harness.declare import Ledger
-from novel_harness.graph import NodeLabel, TextAnchor
+from novel_harness.graph import TextAnchor
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
 from novel_harness.system_notifications import (
     BLOCKING_KINDS,
@@ -101,12 +100,37 @@ def world(tmp_path: Path) -> Iterator[dict[str, object]]:
     conn.close()
 
 
-def _declare_late_debut(world: dict[str, object]) -> None:
-    """作者声明「顾清音头一回露面在第 2 章」——章号是系统从引语算的，没人敲过。"""
-    ledger = Ledger(world["store"], world["conn"], str(world["pid"]))
-    ledger.declare_node(NodeLabel.CHARACTER, "顾清音")
-    ledger.declare_first_appearance(of="顾清音", quote=GU_DEBUT_QUOTE)
-    world["conn"].commit()
+RULE_TITLE = "不许再提山门"
+RULE_LITERAL = "山门"
+
+
+def _add_authors_rule(world: dict[str, object]) -> str:
+    """作者自己加一条确定性规则——**今天规则只有这一种来源**（ADR 0042 砍了最后一条
+    系统规则）。走的是 `POST …/validation-rules` 那条路径的同一份 SQL，不是另造一份。
+
+    ⚠️ 这份夹具先后换过三次开火的规则：R2 FUTURE_LEAK（2026-08-27 砍）→
+    R3 DEAD_SPEAKS（2026-09-05 砍）→ 作者自定义。**换而不删的理由每次都一样**：
+    这两条测试量的从来不是「哪条规则」，是「闸拦住之后那条通知说不说得清楚」。
+    """
+    import json as _json
+
+    from novel_harness.api.validation import _bump_ruleset
+    from novel_harness.ids import EntityType, new_id
+
+    conn = world["conn"]
+    rule_id = new_id(EntityType.VALIDATION_RULE, str(world["pid"]))
+    conn.execute(
+        """
+        INSERT INTO validation_rule (
+            id, project_id, title, template, enabled, blocks_downstream, config_json
+        ) VALUES (?, ?, ?, 'forbidden_literal', 1, 1, ?)
+        """,
+        (rule_id, str(world["pid"]), RULE_TITLE,
+         _json.dumps({"literal": RULE_LITERAL}, ensure_ascii=False)),
+    )
+    _bump_ruleset(conn, str(world["pid"]))
+    conn.commit()
+    return rule_id
 
 
 def _coordinator(world: dict[str, object]) -> ChapterRefreshCoordinator:
@@ -165,13 +189,13 @@ def test_the_blocked_notification_carries_the_issue_anchor(world: dict[str, obje
 
     比的是库里那份报告，不是测试自己算的期望值——期望值写错了两边会一起错。
     """
-    _declare_late_debut(world)
+    _add_authors_rule(world)
     outcome, summary, extraction = _run_refresh(world, "manual:blocked")
     assert outcome["validation"] == "blocked"
 
     report = _report_row(world["conn"], str(world["pid"]))
     issues = json.loads(report["issues_json"])
-    assert issues, "R3 没开火 —— 这条测试后面比的东西全都不存在"
+    assert issues, "作者那条规则没开火 —— 这条测试后面比的东西全都不存在"
     first = issues[0]["anchor"]
 
     notices = list_open_notifications(world["conn"], str(world["pid"]))
@@ -198,7 +222,7 @@ def test_the_blocked_notification_says_which_rule_and_which_paragraph(
     后端拼出来的字符串——那半条断言搬到了 `frontend/src/backendMessages.test.ts`。
     这儿只钉后端发出去的原始事实是不是对的。
     """
-    _declare_late_debut(world)
+    _add_authors_rule(world)
     _run_refresh(world, "manual:title")
     notice = list_open_notifications(world["conn"], str(world["pid"]))[0]
 
@@ -208,7 +232,9 @@ def test_the_blocked_notification_says_which_rule_and_which_paragraph(
     params = notice.title_params
     assert params is not None
     assert params["paragraph"] == first["anchor"]["para_index"] + 1
-    assert params["rule_title"] == "人物开口时机", "说不出哪条规则"
+    # 规则名是**作者自己写的那句**（系统规则一条不剩了，ADR 0042）——
+    # 这一格从来就不许是编号，下面那条断言还在。
+    assert params["rule_title"] == RULE_TITLE, "说不出哪条规则"
     assert params["issue_message"] == first["message"], "说不出哪一句"
     assert "R2" not in params["rule_title"] and "R3" not in params["rule_title"]
 

@@ -186,7 +186,6 @@ def test_frontend_fixture_matches_the_real_api(
 
     # ── 读路径（声明之后：图里现在有一条已生效的边，前端渲染测试要的就是这个形状）──
     cast = {"cast": "萧决,李管家"}
-    grab("constraints", client.get(f"{base}/chapters/2/constraints", params=cast))
     grab("states", client.get(f"{base}/chapters/2/state", params=cast))
     grab("check", client.post(f"{base}/chapters/3/check"))
     # 在场是推出来的，不是作者填的：右栏靠这个显示「这一章提到了谁」。
@@ -200,6 +199,9 @@ def test_frontend_fixture_matches_the_real_api(
     _m4_edge_proposal, _m4_edge_proposed = _seed_edge_conflict_proposal(book)
     _m4_newchar_proposal, _m4_newchar_surface = _seed_new_character_proposal(book)
     grab("proposals", client.get(f"{base}/chapters/1/proposals"))
+    # 2026-08-31：项目全量版（不按章）——「待确认」搬进通知面板之后，
+    # 通知那边靠这条把 `subject_id` 对上完整的提案卡片，不再局限于当前打开的章。
+    grab("proposalsAll", client.get(f"{base}/proposals"))
     grab(
         "eventsProvisional",
         client.get(f"{base}/chapters/1/events", params={"scope": "PROVISIONAL"}),
@@ -427,53 +429,12 @@ def test_frontend_fixture_matches_the_real_api(
 
     scripted_calls = {"n": 0}
 
-    def _tool_results(messages: Any) -> list[dict[str, Any]]:
-        return [
-            json.loads(m["content"])
-            for m in messages
-            if m.get("role") == "tool" and str(m.get("content", "")).strip()
-        ]
-
     def scripted_agent(messages: Any, *, tools: Any, cancel: Any) -> Any:
-        # 校准 → 封存 → （起草 + 查约束）→ 说话收手。起草不落盘，回执上多一份候选
+        # （查约束 + 起草）→ 说话收手。起草不落盘，回执上多一份候选
         # ——前端那一栏（「写了两稿，挑一个」）照的就是这份 fixture。
         scripted_calls["n"] += 1
         n = scripted_calls["n"]
         if n == 1:
-            return CompletionResult(
-                text="",
-                model="deepseek-v4-flash",
-                finish_reason="tool_calls",
-                tool_calls=(
-                    ToolCall(
-                        id="cal0",
-                        name="calibrate_scene",
-                        arguments='{"chapter": 2}',
-                    ),
-                ),
-            )
-        if n == 2:
-            results = _tool_results(messages)
-            inspection_id = [r["id"] for r in results if "id" in r][0]
-            return CompletionResult(
-                text="",
-                model="deepseek-v4-flash",
-                finish_reason="tool_calls",
-                tool_calls=(
-                    ToolCall(
-                        id="seal0",
-                        name="seal_scene_brief",
-                        arguments=json.dumps({"inspection_id": inspection_id}),
-                    ),
-                ),
-            )
-        if n == 3:
-            results = _tool_results(messages)
-            chapter, calibration_id = [
-                (r["chapter"], r["calibration_id"])
-                for r in results
-                if "calibration_id" in r
-            ][0]
             return CompletionResult(
                 text="",
                 model="deepseek-v4-flash",
@@ -488,7 +449,11 @@ def test_frontend_fixture_matches_the_real_api(
                         id="c2",
                         name="draft_chapter",
                         arguments=json.dumps(
-                            {"chapter": chapter, "calibration_id": calibration_id},
+                            {
+                                "chapter": 2,
+                                "brief": "第 2 章这一场：写萧决与顾清音在藏书阁对峙，血脉那条先别说破，收在他没抬头。",
+                                "materials": ["第 1 章：萧决独自走进了北荒的风雪里。"],
+                            },
                             ensure_ascii=False,
                         ),
                     ),

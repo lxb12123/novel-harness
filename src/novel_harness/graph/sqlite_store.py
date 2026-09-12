@@ -25,6 +25,7 @@ from ..ids import EntityType, new_id
 from ..text import anchor
 from . import queries
 from .models import (
+    LocationVisit,
     MIN_RULE_SURFACE_LEN,
     CANONICAL_ALIAS_LABELS,
     AliasHit,
@@ -37,7 +38,6 @@ from .models import (
     ChapterSnapshot,
     ChapterSpec,
     ChapterText,
-    ChapterUsage,
     Edge,
     EdgeProps,
     EdgeSource,
@@ -55,19 +55,18 @@ from .models import (
     NodeUsage,
     Resolution,
     RetirementReport,
+    RelationValue,
     StateSnapshot,
     StateValue,
     StoredAlias,
     StoredChapter,
     Subgraph,
-    UpsertResult,
-)
+    UpsertResult,)
 from .store import (
     HOP2_EDGE_TYPES,
     MAX_HOPS,
     MAX_SUBGRAPH_NODES,
     QUERYABLE_SCOPES,
-    ChapterInUse,
     ChapterWriteConflict,
     CanonEdgeRefused,
     NodeNotFound,
@@ -75,7 +74,6 @@ from .store import (
     SnapshotInUse,
     SnapshotIsCurrent,
     StoreError,
-    SupersedeConflict,
 )
 
 
@@ -137,8 +135,8 @@ class SqliteStoryGraph:
             # 不可能发生。这一行就是「未来剧情泄漏率结构上恒为 0」的全部实现。
             raise ValueError(
                 f"scope={scope} 不可读。只允许 {sorted(s.value for s in QUERYABLE_SCOPES)}："
-                "PLANNED 的唯一出口是 panel/constraints.py 转译成 must_not_reveal / "
-                "forbidden_entities，REJECTED 只是防重抽的坟场"
+                "PLANNED 今天没有任何读路径（原来经 panel/constraints.py 转译的那条窄出口"
+                "2026-08-31 也删了，ADR 0041），REJECTED 只是防重抽的坟场"
             )
 
     @staticmethod
@@ -226,13 +224,25 @@ class SqliteStoryGraph:
         self._check_chapter(chapter)
         node = self._require_node(project_id, node_id, what="node_id")
         edges = queries.out_edges_at(self._conn, project_id, node_id, chapter, scope)
-        dsts = queries.fetch_nodes(self._conn, project_id, [e.dst for e in edges])
+        # 对端一次取齐：有向边的对端是 dst，无向边（RELATED_TO）的对端由 `peer_of` 算——
+        # 它有一半概率是 src（ADR 0008），只取 dst 会让 `relations` 里一半的人查不到。
+        dsts = queries.fetch_nodes(
+            self._conn, project_id, [e.dst for e in edges] + [e.peer_of(node_id) for e in edges]
+        )
 
         def _dst(edge: Edge) -> Node:
             n = dsts.get(edge.dst)
             if n is None:
                 # 跨项目误引用。ULID 的 project_short 前缀就是为了让它在日志里一眼可见。
                 raise StoreError(f"边 {edge.id} 的 dst {edge.dst} 不在项目 {project_id} 里")
+            return n
+
+        def _peer(edge: Edge) -> Node:
+            n = dsts.get(edge.peer_of(node_id))
+            if n is None:
+                raise StoreError(
+                    f"边 {edge.id} 的对端 {edge.peer_of(node_id)} 不在项目 {project_id} 里"
+                )
             return n
 
         located = [e for e in edges if e.type is EdgeType.LOCATED_AT]
@@ -257,6 +267,17 @@ class SqliteStoryGraph:
             if e.type is EdgeType.HAS_STATE
         ]
         self._check_one_value_per_dim(node_id, chapter, states)
+        relations = [
+            RelationValue(
+                edge_id=e.id,
+                peer=_peer(e),
+                value=e.props.value,
+                since_chapter=e.valid_from_chapter,
+                evidence_id=e.evidence_id,
+            )
+            for e in edges
+            if e.type is EdgeType.RELATED_TO
+        ]
         return StateSnapshot(
             node=node,
             chapter=chapter,
@@ -264,7 +285,107 @@ class SqliteStoryGraph:
             edges=edges,
             location=_dst(located[0]) if located else None,
             states=states,
+            relations=relations,
         )
+
+    def state_history(
+        self,
+        project_id: str,
+        node_id: str,
+        chapter: int,
+        *,
+        scope: InformationScope = InformationScope.CANON,
+    ) -> list[StateValue]:
+        """这个人截至第 `chapter` 章、**每一格填过的每一个值**（新的在前）。
+
+        ── 为什么它只在这个类上，不进 `StoryGraph` 那个 Protocol ────────────
+        往 Protocol 上加方法 = 两个 `FakeGraph` 各长一个存根，而 `@runtime_checkable`
+        只查方法**存在**——那些存根会照样让 `isinstance` 为真、却什么都不做
+        （`store.py` 里 `CanonWriter` 那一段把这条写死过）。这个方法只有一个消费者
+        （人物卡「状态」那一格），没有第二种实现要对齐，所以留在具体类上。
+
+        **和 `state_at().states` 是两个问题，别合并**：那个答「他现在什么样」（每格一条，
+        喂模型、判 `is_dead` 的就是它），这个答「这一格填过什么」（每格多条，只给人看）。
+        """
+        self._check_scope(scope)
+        self._check_chapter(chapter)
+        self._require_node(project_id, node_id, what="node_id")
+        edges = queries.history_edges_through(
+            self._conn, project_id, node_id, chapter, scope, EdgeType.HAS_STATE
+        )
+        dims = queries.fetch_nodes(self._conn, project_id, [e.dst for e in edges])
+        owned = queries.author_owned_edge_ids(
+            self._conn, project_id, [e.id for e in edges]
+        )
+        out: list[StateValue] = []
+        for edge in edges:
+            dim = dims.get(edge.dst)
+            if dim is None:
+                raise StoreError(f"边 {edge.id} 的 dst {edge.dst} 不在项目 {project_id} 里")
+            out.append(
+                StateValue(
+                    dim=dim,
+                    dim_key=dim.props.dim_key,
+                    value=edge.props.value,
+                    value_key=edge.props.value_key,
+                    since_chapter=edge.valid_from_chapter,
+                    evidence_id=edge.evidence_id,
+                    author_owned=edge.id in owned,
+                )
+            )
+        return out
+
+    def state_dimension_names(self, project_id: str, *, limit: int = 60) -> list[str]:
+        """这本书已经用过的状态字段名（用得多的在前）。抽取的 prompt 拿它去复用。
+
+        **不在 `StoryGraph` 那个 Protocol 上**：同 `state_history` 的理由——
+        只有一个消费者，没有第二种实现要对齐。
+        """
+        return queries.state_dimension_names(self._conn, project_id, limit)
+
+    def location_history(
+        self,
+        project_id: str,
+        node_id: str,
+        chapter: int,
+        *,
+        scope: InformationScope = InformationScope.CANON,
+    ) -> list[LocationVisit]:
+        """这个人截至第 `chapter` 章**待过的每一个地方**（新的在前）。
+
+        和 `state_history` 是同一件事的第二个格子（作者 2026-09-06：「所在地也用
+        这种机制」），所以底下走的是同一条查询（`history_edges_through`），只是
+        换个边类型。
+
+        ── 它为什么值得存在 ──────────────────────────────────────────────
+        位置是抽取里最爱变的一格，也是「同一处两个叫法」最多的一格（真书上 298 条
+        待确认里 142 条是位置）。只印当前那一个，作者看不出系统把他从哪儿挪到了哪儿；
+        把走过的地方按章列出来，他一眼就能看出「宁荣街」和「荣国府」是不是同一处。
+        """
+        self._check_scope(scope)
+        self._check_chapter(chapter)
+        self._require_node(project_id, node_id, what="node_id")
+        edges = queries.history_edges_through(
+            self._conn, project_id, node_id, chapter, scope, EdgeType.LOCATED_AT
+        )
+        places = queries.fetch_nodes(self._conn, project_id, [e.dst for e in edges])
+        owned = queries.author_owned_edge_ids(
+            self._conn, project_id, [e.id for e in edges]
+        )
+        out: list[LocationVisit] = []
+        for edge in edges:
+            place = places.get(edge.dst)
+            if place is None:
+                raise StoreError(f"边 {edge.id} 的 dst {edge.dst} 不在项目 {project_id} 里")
+            out.append(
+                LocationVisit(
+                    place=place,
+                    since_chapter=edge.valid_from_chapter,
+                    evidence_id=edge.evidence_id,
+                    author_owned=edge.id in owned,
+                )
+            )
+        return out
 
     @staticmethod
     def _check_one_value_per_dim(node_id: str, chapter: int, states: list[StateValue]) -> None:
@@ -308,6 +429,7 @@ class SqliteStoryGraph:
         hops: int = 1,
         edge_types: Collection[EdgeType] | None = None,
         scope: InformationScope = InformationScope.CANON,
+        max_nodes: int | None = None,
     ) -> Subgraph:
         self._check_scope(scope)
         self._check_chapter(chapter)
@@ -341,8 +463,12 @@ class SqliteStoryGraph:
                     if nid not in seen_ids:
                         seen_ids.append(nid)
 
-        truncated = len(seen_ids) > MAX_SUBGRAPH_NODES
-        kept_ids = seen_ids[:MAX_SUBGRAPH_NODES]  # center 永远在第 0 位
+        # 作者在设置页填的数压过默认值；没填（`None`）就用引擎那一档。
+        # **不在这儿读设置**：`graph/` 不认识 `settings`，那个数由装配层穿进来
+        # （`api/app.py` 的 subgraph 路由）。
+        cap = MAX_SUBGRAPH_NODES if max_nodes is None else max_nodes
+        truncated = len(seen_ids) > cap
+        kept_ids = seen_ids[:cap]  # center 永远在第 0 位
         kept = set(kept_ids)
         nodes_by_id = queries.fetch_nodes(self._conn, project_id, kept_ids)
         missing = kept - nodes_by_id.keys()
@@ -377,33 +503,20 @@ class SqliteStoryGraph:
                 return UpsertResult(edge=edge, created=False)
 
             exclusivity = queries.exclusivity_of(self._conn, spec.type)
-            conflicts = queries.find_conflicts(self._conn, spec, exclusivity)
-
-            # 先把乱序全部检出来再动手：事务回滚兜得住，但「先炸再改」让失败路径
-            # 不依赖回滚的正确性。
-            for old in conflicts:
-                if old.valid_from_chapter > spec.valid_from_chapter:
-                    raise SupersedeConflict(
-                        f"乱序插入：已有 {old.type} 边 {old.id} 的 valid_from="
-                        f"{old.valid_from_chapter} 晚于新边的 {spec.valid_from_chapter}。"
-                        "v1 的 supersede 只进不退（§5.9：valid_from 由证据决定、证据按章推进），"
-                        "正确处理它得先回答「先前那条事实在后一条结束后要不要恢复」——"
-                        "猜错的产物是重叠区间，所以宁可抛"
-                    )
+            # **只找同一章的那一条**（ADR 0043）。从前这里找的是整个语义槽里所有还开着
+            # 的边，然后按先后各自闭合 / 撤回 / 抛「乱序」——而「谁盖住谁」现在在读的
+            # 时候算（`queries.CURRENT_EDGE_CTE`），写的时候只剩同章更正这一件事。
+            #
+            # **别把这里改回「顺手把更早的那条闭合掉」**：那正是 2026-09-05 的病根——
+            # 补全队列按「离作者正在写的那一章多近」倒着跑（那是对的，ADR 0036），
+            # 于是每一条更早的事实都撞上一条更晚的，整章回滚。真书 62 章因此没有事件。
+            same_chapter = queries.find_same_chapter_conflicts(self._conn, spec, exclusivity)
 
             edge = queries.insert_edge(self._conn, self._new_edge_id(spec.project_id), spec, evs)
-            closed: list[Edge] = []
-            retracted: list[Edge] = []
-            for old in conflicts:
-                if old.valid_from_chapter < spec.valid_from_chapter:
-                    closed.append(
-                        queries.close_edge(self._conn, old.id, spec.valid_from_chapter)
-                    )
-                else:
-                    # ==：同章更正（「他在青云城…然后去了北荒」都在 ch151）。闭合成
-                    # [151,151) 是空区间，DB 的 CHECK 会拒——正确表达只能是撤回。
-                    retracted.append(queries.retract_edge(self._conn, old.id))
-            return UpsertResult(edge=edge, created=True, closed=closed, retracted=retracted)
+            # 同章更正（「他在青云城…然后去了北荒」都在 ch151）：前一条撤回。
+            # 它**不能**表达成闭合——`[151,151)` 是空区间，意思是「这条事实从未成立」。
+            retracted = [queries.retract_edge(self._conn, old.id) for old in same_chapter]
+            return UpsertResult(edge=edge, created=True, closed=[], retracted=retracted)
 
     # ── CanonWriter ───────────────────────────────────────────────────────
 
@@ -1162,8 +1275,8 @@ class SqliteStoryGraph:
         return queries.node_usage(self._conn, project_id, node_id)
 
     def delete_node(self, project_id: str, node_id: str) -> NodeUsage:
-        # 数引用和删在**同一个事务**里：`usage` 是回执要用的信息（同 `delete_chapter`
-        # 那条口径），不再是「删不删得掉」的判据——2026-08-28 起挂着关系/情节也直接删，
+        # 数引用和删在**同一个事务**里：`usage` 是回执要用的信息，
+        # 不再是「删不删得掉」的判据——2026-08-28 起挂着关系/情节也直接删，
         # 调用方（`api/characters.py`）负责在这同一个事务外那一层给受影响的事件
         # 挂通知（`event_cast_changed`）。
         with _transaction(self._conn):
@@ -1204,19 +1317,6 @@ class SqliteStoryGraph:
                 queries.update_canonical_alias_surface(self._conn, node_id, new_name)
             return renamed
 
-    def delete_chapter(self, project_id: str, number: int) -> ChapterUsage:
-        # 数引用和删在同一个事务里。**这一条比 delete_chapter_snapshot 那条更要紧**：
-        # 那儿漏了还有外键兜底（IntegrityError），这儿两条相关外键都是 ON DELETE CASCADE，
-        # 漏了就是**一声不吭地**把边和证据带走。事务是唯一的一道。
-        with _transaction(self._conn):
-            row = queries.find_chapter_by_number(self._conn, project_id, number)
-            if row is None:
-                raise StoreError(f"第 {number} 章不在库里")
-            usage = queries.chapter_usage(self._conn, project_id, row.id, number)
-            if not usage.is_free():
-                raise ChapterInUse(usage)
-            queries.delete_chapter(self._conn, project_id, row.id)
-            return usage
 
     def get_evidence(self, project_id: str, evidence_id: str) -> Evidence | None:
         try:

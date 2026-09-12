@@ -42,11 +42,11 @@ from test_track import CHAPTERS, EDIT, HERE, SHORT, _book, _summarize
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "novel_harness"
 
-PROMPT_DIRS = frozenset({"draft", "calibration"})
+PROMPT_DIRS = frozenset({"draft"})
 """**谁在拼要进 Writer prompt 的东西。**
 
-`draft/` 是装配层本身；`calibration/` 是「本稿执行计划 / 目标章当前正文」那两块的
-渲染器（`product_draft._append_execution_plan` 把它追加进产品 prompt）。
+`draft/` 是装配层本身（「目标章当前正文 / 助手补的资料」那两块也在它里面渲染，
+`product_draft._append_target_and_materials`）。`calibration/` 2026-09-12 随 ADR 0047 删了。
 
 **扫描面搬家就要跟着改这一行**（同 `test_draft_boundary` 那条自述）：又长出第三个
 往 prompt 里塞东西的地方而没被收进来，这道守卫在那儿等于不存在。下面第二组

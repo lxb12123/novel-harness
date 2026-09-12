@@ -1,4 +1,9 @@
-"""规则目录 —— R2/R3 的稳定语义字段与 `ruleset_hash` 的唯一注册源。
+"""规则目录 —— 系统规则的稳定语义字段与 `ruleset_hash` 的唯一注册源。
+
+⚠️ **2026-09-05：`SYSTEM_RULES` 是空的，而这个文件一行都没白留。**
+维护者裁定砍掉最后一条系统规则 R3（ADR 0042），但**机制整套留着**——
+「以后指不定我们也有规则」（作者原话）。所以这里剩下的是一副空目录 + 冻结纪律：
+哪天再加一条，加一个 `RuleSpec`、开一条新迁移递增 epoch，就是全部。
 
 为什么要有这一个文件：018 迁移在 `validation_ruleset_state` 里冻结了
 `SYSTEM_RULESET_V1_HASH`，而 Task 4 的 service 要按当前目录重算 hash 去对账。
@@ -30,7 +35,6 @@ from enum import StrEnum
 from typing import Any, Final, Literal
 
 from .base import Check, CheckContext
-from .dead_speaks import check as dead_speaks_check
 
 
 class RuleAvailability(StrEnum):
@@ -65,8 +69,12 @@ class RuleSpec:
     check: Check | None = None
 
 
-def _paragraphs_available(ctx: CheckContext) -> RuleAvailability:
-    """R2/R3 的 availability：正文段落装入 = AVAILABLE（空集合是合法空集合）。"""
+def paragraphs_available(ctx: CheckContext) -> RuleAvailability:
+    """正文段落装入 = AVAILABLE（空集合是合法空集合）。
+
+    **今天只有自定义规则在用它**（`checks/custom.py`）；系统规则一条都没有了，
+    但这个判据不专属任何一条规则，是「读正文的规则」共用的那一个。
+    """
     return (
         RuleAvailability.AVAILABLE
         if ctx.paragraphs is not None
@@ -74,23 +82,23 @@ def _paragraphs_available(ctx: CheckContext) -> RuleAvailability:
     )
 
 
-SYSTEM_RULES: Final[tuple[RuleSpec, ...]] = (
-    RuleSpec(
-        rule_id="R3",
-        title="人物开口时机",
-        description="已死或尚未登场的角色在说话人标签位置开口。",
-        blocks_downstream=True,
-        availability=_paragraphs_available,
-        check=dead_speaks_check,
-    ),
-)
-"""系统默认规则。**Task 4 之前它只有语义字段**——availability/callable 是 Task 4
-的活，且不得改变这里已冻结的语义 JSON。
+SYSTEM_RULES: Final[tuple[RuleSpec, ...]] = ()
+"""系统默认规则 —— **2026-09-05 起是空的**（ADR 0042，维护者裁定）。
 
-R2 `FUTURE_LEAK` 2026-08-27 删了（见 ADR 0040、迁移 031）：它读
-`node.props.first_appears_chapter`，而浏览器上从来没有入口能设那个字段
-（输入框 2026-08-13 有意裁掉），规则结构上开不了火——「未登场的东西未来到底
-哪一章出现，本来就不一定」，那是一次决定，不是一件事实。"""
+四条规则，四种死法，最后一条也走了：
+
+| 规则 | 结局 |
+|---|---|
+| R2 `FUTURE_LEAK` | 2026-08-27 砍（ADR 0040 / 迁移 031）：`first_appears_chapter` 没有作者入口，结构上开不了火 |
+| R3 `DEAD_SPEAKS` | **2026-09-05 砍（ADR 0042 / 迁移 035）**：死而复生是常见写法，而引擎里没有任何一条路径写「活过来」——一旦标死就永远是死的，那条规则会在这类书上一路误报，而它是闸 |
+| R4 `LOCATION_CONFLICT` | 2026-08-14 砍（ADR 0027）：一侧输入要作者在正文里手写，真书零覆盖 |
+| R5 `ADDRESS_CONFLICT` | 2026-08-02 砍（ADR 0014）：真书引语覆盖 8.2% < 10% |
+
+**空不等于没用**：`checks/service.py` 照旧按「系统规则 + 作者自定义规则」跑同一条
+路径，检验发生的位置（保存后那一轮、`POST …/check`）一个都没动。今天跑的全是作者
+自己加的那些（`forbidden_literal`）。**以后要再加系统规则，就在这个元组里加一条 +
+开一条新迁移递增 epoch**——别因为它现在是空的就把这套目录拆了。
+"""
 
 
 _SEMANTIC_FIELDS: Final[tuple[str, ...]] = (
@@ -129,9 +137,9 @@ SYSTEM_RULESET_V1_HASH: Final = "eebe10055a2487574ea5ae03f1fcd0ac14211301dff6f46
 018 那条测试却测不出来（它只比字符串，不管字符串是怎么算出来的）——
 这正是 R2 删除这一刀真正踩过的坑，写在这里防第二次踩。"""
 
-CURRENT_RULESET_EPOCH: Final[int] = 2
+CURRENT_RULESET_EPOCH: Final[int] = 3
 """当前全局 ruleset 的 epoch 号。**手动维护，随 `SYSTEM_RULES` 的语义变化同笔递增**
-——迁移 031 删 R2 时从 1 改成 2，是本仓库第一次真的动它。`project.create()`
+——迁移 031 删 R2 时从 1 改成 2，迁移 035 删 R3 时从 2 改成 3。`project.create()`
 新建项目时拿这个数字（不是硬编码的 1），这样新书从出生那一刻就站在当前 epoch 上，
 不会落后于刚做完 031 迁移的旧书。"""
 

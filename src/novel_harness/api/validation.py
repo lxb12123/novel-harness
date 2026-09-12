@@ -18,6 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .. import importer
 from ..checks.service import (
+    RulesReader,
     SnapshotValidationReport,
     current_ruleset,
     validate_snapshot,
@@ -25,6 +26,10 @@ from ..checks.service import (
 from ..db import Connection
 from ..graph import ChapterCommitToken
 from ..text import paragraphs as split_paragraphs
+from ..system_notifications import (
+    enqueue_validation_blocked,
+    materialize_notification_outbox,
+)
 from .deps import get_conn, get_store, load_project
 
 
@@ -37,22 +42,19 @@ def validation_rules(
     conn: Annotated[Connection, Depends(get_conn)] = None,
 ) -> list[dict[str, Any]]:
 
-    """规则目录元数据：R2/R3 常驻显示 + 作者自定义规则（024 / Task 13）。"""
-    from .. import checks
-    from ..checks.service import load_custom_rules
+    """规则目录元数据：系统规则（今天一条都没有，ADR 0042）+ 作者自定义规则。
 
-    specs = (*checks.catalog.SYSTEM_RULES, *load_custom_rules(conn, proj.id))
-    return [
-        {
-            "rule_id": spec.rule_id,
-            "title": spec.title,
-            "description": spec.description,
-            "enabled": spec.enabled,
-            "blocks_downstream": spec.blocks_downstream,
-            "template": spec.template,
-        }
-        for spec in specs
-    ]
+    ⚠️ **停用的规则也要返回**，带 `enabled: false`（2026-09-05）。这一条以前走
+    `load_custom_rules()`，而那个函数是**运行时**的读法——它只读 `enabled=1`，因为
+    停用的规则不该参与检验。可界面上那个「启用」开关要能**关了再开**：列表里看不见
+    它，作者就再也开不回来了（当时只能重建一条）。
+
+    **两条读法就此分家，各自诚实**：运行时那条继续只读启用的；这一条是**目录**，
+    列全部，把 `enabled` 交给界面去画。`config` 也一起给——界面要显示和编辑作者写的
+    那个词，没有它只能显示标题。
+    """
+    # 读法只有一份（`checks.service.RulesReader`）：写作助手那一栏读的是同一个目录。
+    return [entry.model_dump() for entry in RulesReader(conn).catalog(proj.id)]
 
 
 @router.post("/api/projects/{project_id}/validation-rules")
@@ -117,6 +119,13 @@ def update_validation_rule(
         config = json.dumps({"literal": body.literal}, ensure_ascii=False)
         setters.append("config_json = ?")
         params.append(config)
+        # **标题跟着一起改**。建的时候标题就等于那个词（`add_validation_rule` 的兜底），
+        # 而标题是「哪条规则拦下了这一章」那句话的来源——`checks/service.py` 把它写进
+        # 报告，`system_notifications` 拿它填 `rule_title`。只改 config 不改 title 的话，
+        # 作者把词从「玄铁令」改成「寒铁令」之后，通知里还会指着「玄铁令」说事，
+        # **而那条规则已经不查那个词了**。
+        setters.append("title = ?")
+        params.append(body.literal)
     if setters:
         setters.append("updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')")
         params.extend((rule_id, proj.id))
@@ -217,7 +226,7 @@ def check(
         changed=False,
     )
     epoch, ruleset_hash = current_ruleset(conn, proj.id)
-    return validate_snapshot(
+    report = validate_snapshot(
         conn,
         store,
         token,
@@ -226,3 +235,15 @@ def check(
         phase="initial",
         paragraphs=split_paragraphs(text),
     )
+    # **查出问题就落一条通知**（2026-09-05）：作者按下那颗闪电之后可能就去写别的了，
+    # 结果只留在这一格里没人看得见。保存后那一轮验证早就是这么做的（`chapter_refresh`
+    # 的闸门 → `enqueue_validation_blocked`），手动这一条跟上，用的是**同一个 kind、
+    # 同一条渲染路径**，不另造一种通知。
+    #
+    # dedupe 键按**这一版正文**算（`operation="validation:manual"` + `source_snapshot_id`）：
+    # 同一段文字连按十次闪电只留一条；改了正文再按，才是新的一条。
+    if report.gate == "blocked" and report.issues:
+        enqueue_validation_blocked(conn, report=report, attempt_id="manual")
+        materialize_notification_outbox(conn, project_id=proj.id, lease_owner="api")
+        conn.commit()
+    return report

@@ -31,6 +31,26 @@ describe("什么时候才去问模型", () => {
   it("正文还没加载完就别问 —— 那时的上文是空的，或者是上一章的", () => {
     expect(shouldSuggest({ ...base, loading: true })).toBe(false);
   });
+
+  it("写作助手开着就别问 —— 模式二默认没有续写（作者 2026-09-10 定的）", () => {
+    // 「模式」在代码里只是一块布局，编辑器本来不知道面板开没开：2026-09-10 之前
+    // 助手开着、正文里照样往下冒灰字。这条钉的是那次裁定。
+    expect(shouldSuggest({ ...base, assistantOpen: true })).toBe(false);
+    // 设置还没回来（`undefined`）按关着算——默认本来就是关。
+    expect(
+      shouldSuggest({ ...base, assistantOpen: true, continuationInAgentMode: undefined }),
+    ).toBe(false);
+  });
+
+  it("设置里放行了，写作助手开着也照问", () => {
+    expect(
+      shouldSuggest({ ...base, assistantOpen: true, continuationInAgentMode: true }),
+    ).toBe(true);
+    // 放行只对「面板开着」那一档有意义：协助模式下它本来就问。
+    expect(
+      shouldSuggest({ ...base, assistantOpen: false, continuationInAgentMode: false }),
+    ).toBe(true);
+  });
 });
 
 describe("送过去的上文", () => {

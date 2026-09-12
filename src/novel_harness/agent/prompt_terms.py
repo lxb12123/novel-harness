@@ -1,8 +1,8 @@
-"""模式二：人设 + 15 个工具 schema 的双语化（国际化第三批）。
+"""模式二：人设 + 全部工具 schema 的双语化（国际化第三批）。
 
 **为什么不是 `draft/prompt_terms.py` 那张表**：那张表管的是普通函数的返回值，
 按 `language` 参数现算现返回——`assemble()` 每次调用都重新拼一遍字符串。这里
-不行：15 个工具的 `args=` 全是 Pydantic 类，docstring 和 `Field(description=...)`
+不行：每个工具的 `args=` 都是 Pydantic 类，docstring 和 `Field(description=...)`
 在**类定义那一刻**就定死了，不会因为调用方传了个 `language` 就变。
 
 所以这里走另一条路：**Pydantic 类一个字都不改**（永远是中文，`model_json_schema()`
@@ -25,11 +25,8 @@ from ..draft.length import DraftLanguage
 
 _EN: dict[str, str] = {
     # ── scene_constraints ────────────────────────────────────────────────
-    "查第 N 章哪些实体还没登场。返回的是实体的首现章号。": (
-        "Check which entities haven't appeared yet as of chapter N. "
-        "Returns each entity's first-appearance chapter."
-    ),
-    "查「第 N 章不许说破什么」。": 'Query "what must not be revealed as of chapter N."',
+    "查第 N 章正文里数出来谁在场。": "Check who's present, as counted from chapter N's text.",
+    "查「第 N 章正文里数出来谁在场」。": 'Query "who\'s present, as counted from chapter N\'s text."',
     "要查第几章（AS OF 第几章，纯查询坐标，不会写进任何数据）。": (
         "Which chapter to query as of (a pure query coordinate — "
         "this never writes to any data)."
@@ -55,71 +52,97 @@ _EN: dict[str, str] = {
         "The character's name, using whatever the author calls them in "
         "the prose. An ambiguous name is refused."
     ),
-    # ── draft_chapter ────────────────────────────────────────────────────
+    # ── draft_chapter（ADR 0047：chapter + brief + materials）─────────────
     (
-        "起草第 N 章的一稿。**先 calibrate_scene + seal_scene_brief 拿到"
-        " calibration_id，再调本工具**——起草目标只从那个不可变产物读取，"
-        "你传不了、也不需要传任何目标文字。**这一步不动书**：稿子存在一边，返回里给你它的编号、"
-        "字数、开头的一段，以及写它的那个模型自己说的一句话。"
+        "起草第 N 章的一稿。**这一步不动书**：稿子存在一边，返回里给你它的编号、"
+        "字数、开头的一段，以及写它的那个模型自己说的一句话。\n"
+        "写之前先做三件事：分析作者的意图（写哪一章、新写还是重写、牵涉谁、牵涉哪几章）；"
+        "由粗到细查资料（目录 → 总结 → 事件 → 角色卡 → 原文，只在需要细节时读原文，"
+        "有目的地挑）；对照规矩（validation_rules 里的检验规则、作者交代过的有时限的规矩、"
+        "你查到的事实矛盾）。然后把结论写进 brief，把写手够不着的远章资料放进 materials。\n"
+        "写手自己有：文风、禁用字、这一章在场人物的角色卡、他们最近的事件、最近几章的总结、"
+        "上一章结尾和这一章当前正文——**这些不用你抄进来**。\n"
         "方向清楚就写一稿、接着调 save_draft 存进去（不用问作者，他随时能退回去）；"
-        "方向不清楚就一次要几稿，把它们的自述摆给作者挑——**同一批里的几稿会同时写**，"
-        "不比一稿慢多少。"
-        "**不要传约束**：不许说破什么由后端按这个章号当场重算，"
-        "你上一轮看到的清单对这一章可能已经过期。"
+        "方向不清楚就一次要几稿（brief 各不同），把它们的自述摆给作者挑——"
+        "**同一批里的几稿会同时写**，不比一稿慢多少。"
     ): (
-        "Draft one version of chapter N. **Call calibrate_scene + "
-        "seal_scene_brief first to get a calibration_id, then call this "
-        "tool** — the drafting goal is read only from that immutable "
-        "artifact; you cannot pass, and don't need to pass, any goal text. "
-        "**This step does not touch the book**: the draft is set aside, "
-        "and the return gives you its id, word count, an opening excerpt, "
-        "and a note the model that wrote it left about itself. If the "
-        "direction is clear, write one draft and follow up with save_draft "
-        "to save it (no need to ask the author, they can always revert "
-        "it); if the direction is unclear, request several drafts at once "
-        "and lay their notes in front of the author to choose — "
-        "**drafts in the same batch are written concurrently**, barely "
-        "slower than writing one. **Do not pass constraints**: what must "
-        "not be revealed is recomputed by the backend on the spot for "
-        "this chapter number — the list you saw last turn may already be "
-        "stale for this chapter."
+        "Draft one version of chapter N. **This step does not touch the "
+        "book**: the draft is set aside, and the return gives you its id, "
+        "word count, an opening excerpt, and a note the model that wrote it "
+        "left about itself.\n"
+        "Do three things first: analyse what the author wants (which "
+        "chapter, new or rewrite, who's involved, which chapters it "
+        "touches); look things up from coarse to fine (index → summaries → "
+        "events → character cards → text, reading the text only when you "
+        "need detail, picking deliberately); check the rules (the check "
+        "rules in validation_rules, the timed rules the author gave you, "
+        "any factual clashes you found). Then put your conclusions in brief "
+        "and the far-chapter material the writer can't reach in materials.\n"
+        "The writer already has: the style, the forbidden words, the cards "
+        "of the characters present in this chapter, their recent events, "
+        "the last few chapters' summaries, the end of the previous chapter "
+        "and this chapter's current text — **don't copy those in**.\n"
+        "If the direction is clear, write one draft and follow up with "
+        "save_draft (no need to ask the author, they can always revert it); "
+        "if it's unclear, request several drafts at once (different briefs) "
+        "and lay their notes in front of the author to choose — **drafts in "
+        "the same batch are written concurrently**, barely slower than one."
     ),
     (
-        "起草第 N 章的一稿（**chapter + calibration_id**，ADR 0033）。\n\n"
-        "**这里没有、也永远不会有约束字段**（ADR 0019 边界二）：不许说破什么由后端当场\n"
-        "从第 N 章重新算，你上一轮看到的那份清单对这一章可能已经过期了。\n\n"
-        "**也没有自由文本 goal**（ADR 0033）：`goal_spec` 只从不可变校准产物读取——\n"
-        "外层 Agent 不负责抄写事实文字或目标散文，Writer 拿到的是校准层实际产出的版本。\n\n"
+        "起草第 N 章的一稿（**chapter + brief + materials**，ADR 0047）。\n\n"
+        "**这里没有、也永远不会有约束字段**（ADR 0019 边界二的另一半）：在场是后端从正文数的，\n"
+        "文风 / 禁用字 / 角色卡 / 最近事件 / 最近总结 / 正文那六格是后端固定装配的——助手一个字\n"
+        "插不进去。它能给的只有两格：**要写什么**（`brief`）和**写手固定装配够不着的资料**\n"
+        "（`materials`）。两格都是纯文本、都跟着稿子存进候选表让作者看得见。\n\n"
         "它和 `DraftFn` 放在一起而不是和别的工具入参放在一起，是因为它是**注入契约的一半**：\n"
-        "起草侧收的就是 `(DraftAsk, DraftContext)`，而这两件东西里都没有模型给的约束。"
+        "起草侧收的就是 `(DraftAsk, DraftContext)`。"
     ): (
-        "Draft one version of chapter N (**chapter + calibration_id**, "
-        "ADR 0033).\n\n"
+        "Draft one version of chapter N (**chapter + brief + materials**, "
+        "ADR 0047).\n\n"
         "**There is no constraints field here, and there never will be** "
-        "(ADR 0019 boundary 2): what must not be revealed is recomputed by "
-        "the backend on the spot from chapter N; the list you saw last "
-        "turn may already be stale for this chapter.\n\n"
-        "**Nor is there a free-text goal** (ADR 0033): `goal_spec` is read "
-        "only from the immutable calibration artifact — the outer Agent "
-        "is not responsible for copying fact text or goal prose; the "
-        "Writer receives the version the calibration layer actually "
-        "produced.\n\n"
+        "(the other half of ADR 0019 boundary 2): who's present is counted "
+        "from the text by the backend, and the six slots — style / forbidden "
+        "words / character cards / recent events / recent summaries / text — "
+        "are assembled by the backend; the assistant can't insert a word. It "
+        "gives only two things: **what to write** (`brief`) and **material "
+        "the writer's fixed assembly can't reach** (`materials`). Both are "
+        "plain text and both are stored with the draft so the author can "
+        "see them.\n\n"
         "It sits alongside `DraftFn` rather than with other tools' args "
-        "because it is **half of an injection contract**: the drafting "
-        "side receives exactly `(DraftAsk, DraftContext)`, and neither of "
-        "those carries any constraint supplied by the model."
+        "because it is **half of an injection contract**: the drafting side "
+        "receives exactly `(DraftAsk, DraftContext)`."
     ),
-    "起草第几章。约束由后端按这个章号当场计算。": (
-        "Which chapter to draft. Constraints are computed by the backend "
-        "on the spot for this chapter number."
+    "起草第几章。在场人物、文风、角色卡、最近的事件和总结由后端按这个章号自己装。": (
+        "Which chapter to draft. Who's present, the style, character cards, "
+        "recent events and summaries are assembled by the backend for this "
+        "chapter number."
     ),
     (
-        "seal_scene_brief 返回的那个不可变编号。起草目标只从它读取，"
-        "你不需要也不应该在这里传任何目标文字。"
+        "这一稿要做什么、要守什么——用你自己的话，对着写手说。写之前先分析作者的意图、"
+        "由粗到细查过资料、对照过检验规则和作者交代过的规矩，再把结论写在这儿："
+        "写哪一段、从哪儿接、谁在场、要避开什么（比如「裕王第 154 章已死，不能当活人写」）、"
+        "视角 / 语气 / 收在哪儿。"
     ): (
-        "The immutable id returned by seal_scene_brief. The drafting goal "
-        "is read only from it — you don't need to, and shouldn't, pass "
-        "any goal text here."
+        "What this draft should do and what it must respect — in your own "
+        "words, addressed to the writer. Before writing, analyse what the "
+        "author wants, look things up from coarse to fine, and check the "
+        "check rules and the rules the author gave you; then put the "
+        "conclusions here: which passage, where it picks up, who's present, "
+        "what to avoid (e.g. \"Prince Yu died in chapter 154, don't write him "
+        "as alive\"), point of view / tone / where it ends."
+    ),
+    (
+        "写手够不着的资料，每条一段：远章的总结、关键事件、原文节选。写手自己只有"
+        "最近几章的总结和这些人最近的事件——牵涉更早的章、需要细节的地方，把你查到的"
+        "那几段挑出来放在这儿。**有目的地挑，不是整本塞进来**：有预算上限，装不下从后往前砍。"
+    ): (
+        "Material the writer can't reach, one paragraph per item: summaries "
+        "of far chapters, key events, excerpts of the text. The writer only "
+        "has the last few chapters' summaries and these characters' recent "
+        "events — where earlier chapters are involved or detail is needed, "
+        "pick out the pieces you found and put them here. **Pick "
+        "deliberately, don't dump the whole book**: there is a budget cap; "
+        "whatever doesn't fit is trimmed from the end."
     ),
     # ── book_index ───────────────────────────────────────────────────────
     (
@@ -459,158 +482,6 @@ _EN: dict[str, str] = {
         "and flagged). Use it to afford part of the content when "
         "context is tight; omit it to retrieve the whole thing."
     ),
-    # ── calibrate_scene ──────────────────────────────────────────────────
-    (
-        "写前校准：把你对作者当前要求的结构化理解（预计人物 + 封闭指令码 + "
-        "视角/风格码）拿去按第 N 章时点核对真实数据。返回一份详细报告："
-        "已解析人物、带来源的状态/关系/知识/事件/摘要、确定性冲突、未知项和"
-        "覆盖回执。\n"
-        "**只做确定性核对，不做语义判断**：报告不会替你判断「作者这句话和旧事实"
-        "冲不冲突」——那种张力是你的 `MACHINE_INFERENCE`，需要时用 ask_author 问。\n"
-        "**这是起草的前置步骤**：先调它，再视情况 ask_author，再 seal_scene_brief，"
-        "最后才 draft_chapter。"
-    ): (
-        "Pre-draft calibration: take your structured understanding of "
-        "the author's current request (expected cast + closed directive "
-        "codes + viewpoint/tone codes) and check it against real data as "
-        "of chapter N. Returns a detailed report: resolved characters, "
-        "sourced state/relationships/knowledge/events/summaries, "
-        "deterministic conflicts, unknowns, and a coverage receipt.\n"
-        "**Only deterministic checking, never semantic judgment**: the "
-        "report will not judge for you whether 'what the author just "
-        "said conflicts with an old fact' — that tension is your own "
-        "`MACHINE_INFERENCE`; ask with ask_author when you need to.\n"
-        "**This is drafting's prerequisite step**: call this first, "
-        "then ask_author if warranted, then seal_scene_brief, and only "
-        "then draft_chapter."
-    ),
-    (
-        "Agent 提交给校准层的临时创意提案（§6.1）。\n\n"
-        "**没有 goal / task / event 自由文本字段**：模型只能提交封闭指令码、安全引用和\n"
-        "固定 `AGENT_INFERRED`；不能提交任务散文、event beat 散文、`must_not_reveal`、\n"
-        "`forbidden_entities`、Canon 写入或章号有效期字段。"
-    ): (
-        "A tentative creative proposal the Agent submits to the "
-        "calibration layer (§6.1).\n\n"
-        "**There is no free-text goal / task / event field**: the model "
-        "may only submit closed directive codes, safe references, and "
-        "the fixed `AGENT_INFERRED`; it may not submit task prose, "
-        "event-beat prose, `must_not_reveal`, `forbidden_entities`, "
-        "Canon writes, or a chapter-validity field."
-    ),
-    "要校准第几章（AS OF 第几章，纯查询坐标）。": (
-        "Which chapter to calibrate as of (a pure query coordinate)."
-    ),
-    (
-        "预计人物：作者当前要求里点名的人 + 你根据上下文补出的人。"
-        "每一个都用作者在正文里的叫法。只用于检索与写作意图，不是本章实际在场名单。"
-    ): (
-        "Expected cast: people named in the author's current request, "
-        "plus anyone you infer from context. Use the name the author "
-        "uses in the prose for each. Used only for lookup and to convey "
-        "writing intent — not the actual present-cast list for this "
-        "chapter."
-    ),
-    (
-        "封闭指令候选：只能从 ENTER_LOCATION / SEARCH_FOR / TEST_CHARACTER / "
-        "DEFER_REVEAL / ADVANCE_CLUE 里选，参数只能引用角色册上的人物/地点/物件"
-        "显示名。不要在这里写任务散文或事件概括。"
-    ): (
-        "Closed directive candidates: pick only from ENTER_LOCATION / "
-        "SEARCH_FOR / TEST_CHARACTER / DEFER_REVEAL / ADVANCE_CLUE; "
-        "arguments may only reference character/location/object display "
-        "names from the roster. Do not write task prose or an event "
-        "summary here."
-    ),
-    "视角人物（角色册上的称呼，只解析 NodeRef）。": (
-        "The viewpoint character (a name from the roster; resolves only "
-        "to a NodeRef)."
-    ),
-    "封闭语气码。": "Closed tone code.",
-    "封闭节奏码。": "Closed pacing code.",
-    "封闭结尾码。": "Closed ending code.",
-    "Agent 提出的一条封闭指令候选。**不能塞任务/event/goal 散文。**": (
-        "One closed directive candidate proposed by the Agent. **May "
-        "not carry task/event/goal prose.**"
-    ),
-    (
-        "封闭指令码。**不在这个集合里的创作细节不能进 Writer**"
-        "（除非新增可机械验证的类型）。"
-    ): (
-        "Closed directive codes. **A creative detail outside this set "
-        "cannot reach the Writer** (unless a new mechanically-verifiable "
-        "type is added)."
-    ),
-    "预计人物的一个称呼。basis 固定 AGENT_INFERRED。": (
-        "One name for an expected cast member. basis is fixed to "
-        "AGENT_INFERRED."
-    ),
-    # ── seal_scene_brief ─────────────────────────────────────────────────
-    (
-        "把 calibrate_scene 的校准报告封存成不可变写作简报，拿到 calibration_id。"
-        "封存时后端重新校验每一个事实引用、可见性和全部水位；"
-        "返回的目标文字由后端从类型项固定渲染，你不需要手抄任何东西。\n"
-        "**作者确认**：如果你想把这稿的要求标成「作者确认」，必须先把类型化任务卡"
-        "摆给作者、等他下一句回复（这一轮结束），下一轮再带着他的选择来封存。"
-        "没确认就封存也可以——那批指令会标成机器推演进 Writer。\n"
-        "**推翻旧设定**：只有作者明确选了推翻非安全旧设定才传 "
-        "author_choice=RETCON_NON_SAFETY + retcon_fact_ids。"
-    ): (
-        "Seal calibrate_scene's calibration report into an immutable "
-        "writing brief, and get a calibration_id. Sealing re-validates "
-        "every fact reference, visibility, and watermark on the "
-        "backend; the goal text in the return is rendered fixed by the "
-        "backend from the typed items — you don't need to copy anything "
-        "by hand.\n"
-        "**Author confirmation**: if you want this draft's requirements "
-        "marked 'author-confirmed,' you must first lay the typed task "
-        "card in front of the author and wait for their next reply "
-        "(this turn ends here), then seal with their choice on the "
-        "following turn. Sealing without confirmation is also fine — "
-        "that batch of directives will be marked machine-inferred going "
-        "into the Writer.\n"
-        "**Overturning an existing setting**: only pass "
-        "author_choice=RETCON_NON_SAFETY + retcon_fact_ids when the "
-        "author has explicitly chosen to overturn a non-safety-related "
-        "existing fact."
-    ),
-    "作者面对旧事实的三个选择。": "The author's three choices when facing an existing fact.",
-    (
-        "`seal_scene_brief` 的入参：**只有 inspection 编号和作者选择**。\n\n"
-        "提案不重新提交：封存器从校准报告里取原始提案，重新校验全部可见性与水位。"
-    ): (
-        "`seal_scene_brief`'s input: **only the inspection id and the "
-        "author's choice.**\n\n"
-        "The proposal is not resubmitted: the sealer takes the original "
-        "proposal from the calibration report and re-validates every "
-        "visibility and watermark."
-    ),
-    "calibrate_scene 返回的校准报告编号。": (
-        "The calibration report id returned by calibrate_scene."
-    ),
-    (
-        "作者看过类型化任务卡之后的三个选择之一。"
-        "**没有就不传**（未确认的请求投影保持机器推演强度）。"
-        "传了就必须是在作者回复之后的那一轮——系统会绑定他真正说过的那句话。"
-    ): (
-        "One of the three choices, after the author has seen the typed "
-        "task card. **Omit it if there isn't one** (an unconfirmed "
-        "request stays projected at machine-inference strength). If you "
-        "do pass it, it must be on the turn after the author replied — "
-        "the system binds it to what they actually said."
-    ),
-    "author_choice=RETCON_NON_SAFETY 时必须点名要推翻的旧事实（校准报告里的 item_id）。": (
-        "When author_choice=RETCON_NON_SAFETY, must name the existing "
-        "facts being overturned (item_ids from the calibration report)."
-    ),
-    (
-        "RETCON 时你（Agent）对这条矛盾的带来源推演，一句话。"
-        "它永远只是机器推演，不会变成确定性规则命中。"
-    ): (
-        "During a RETCON, your (the Agent's) sourced inference about "
-        "this tension, one sentence. It is always only a machine "
-        "inference, and never becomes a deterministic rule hit."
-    ),
     # ── check_track ──────────────────────────────────────────────────────
     (
         "拿第 N 章**已经落盘的正文**去跟后面那些已经写完的章对一遍，"
@@ -661,6 +532,104 @@ _EN: dict[str, str] = {
     "要核对第几章。用它**已经落盘的当前正文**，不是你手里这一稿。": (
         "Which chapter to check. Uses its **current prose as already "
         "saved to disk**, not the draft you're holding."
+    ),
+    # ── character_card（2026-09-12，`agent/panels.py`）──────────────────────
+    (
+        "翻一个人的角色卡：右栏「角色册」里点开他看到的那一页——基本信息（性别 / 性格 / "
+        "背景 / 备注）、别名、第 N 章时的处境（在哪、各状态、死没死）、"
+        "他和谁有什么关系、他经历过的事（按章号，只有已确认的）。"
+        "**只认角色册上的名字**（book_index 里那份）。要看某一章里发生了什么，"
+        "用 chapter_events；只想知道他此刻的处境，character_state 更便宜。"
+    ): (
+        "Open a character's card: the page you see when you click them in "
+        "the Roster panel on the right — basic info (gender / personality / "
+        "background / notes), aliases, where they stand as of chapter N "
+        "(where they are, each state, dead or not), who "
+        "they're related to and how, and what they've been through (by "
+        "chapter, confirmed events only). **Only recognizes names from the "
+        "roster** (the one in book_index). To see what happens in a given "
+        "chapter, use chapter_events; if you only need where they stand "
+        "right now, character_state is cheaper."
+    ),
+    "查「一个人的角色卡」：右栏「角色册」里点开一个人看到的那一页。": (
+        'Query "a character\'s card": the page you see when you click someone '
+        "in the Roster panel on the right."
+    ),
+    "按第几章的时点看他的处境和关系（AS OF 第几章，纯查询坐标）。": (
+        "Which chapter to view their state and relationships as of (a pure "
+        "query coordinate)."
+    ),
+    # ── chapter_events ───────────────────────────────────────────────────
+    (
+        "看某几章的事件：右栏「事件」那一栏——这几章里已经确认、写进书里的每一条情节，"
+        "带章号、在场的人和知道这件事的人。**只有已确认的**：抽取出来还没被作者确认的"
+        "不在这里（那些在 notifications 里等他）。空清单要连着 notes 一起读："
+        "「这几章没整理过」和「这几章没事发生」不是一回事。"
+    ): (
+        "See a few chapters' events: the Events panel on the right — every "
+        "confirmed event written into the book for these chapters, with the "
+        "chapter number, who was present and who knows about it. **Confirmed "
+        "only**: extracted events the author hasn't confirmed yet aren't here "
+        "(those wait for them in notifications). Read an empty list together "
+        'with the notes: "these chapters haven\'t been processed" and "nothing '
+        'happens in these chapters" are not the same thing.'
+    ),
+    (
+        "查「这几章的事件」：右栏「事件」那一栏——已经确认、写进书里的情节，按章列。\n"
+        "**区间由你给**：面板上是到当前章为止的全部，一次问整本书装不下。"
+    ): (
+        'Query "these chapters\' events": the Events panel on the right — the '
+        "confirmed events written into the book, listed by chapter.\n"
+        "**You give the range**: the panel shows everything up to the current "
+        "chapter, and the whole book won't fit in one call."
+    ),
+    "区间上界（含）。只看一章就两个都填它。": (
+        "Upper bound of the range (inclusive). To see one chapter, set both to it."
+    ),
+    # ── validation_rules ─────────────────────────────────────────────────
+    (
+        "看检验规则：右栏「检验规则」那一栏——作者给这本书定的规则（正文里不许出现的字，"
+        "含已停用的），以及某一章最近一次检验的结果（命中了第几段、哪一句）。"
+        "**只读**：跑检验是作者在界面上按的，这儿不跑。"
+    ): (
+        "See the check rules: the Rules panel on the right — the rules the "
+        "author set for this book (text that must not appear in the prose, "
+        "disabled ones included), plus the latest check result for a chapter "
+        "(which paragraph and sentence it hit). **Read-only**: running a check "
+        "is something the author does from the interface; this doesn't run it."
+    ),
+    "查「检验规则」：右栏那一栏——作者给这本书定的规则，以及某一章最近一次检验的结果。": (
+        'Query "check rules": the panel on the right — the rules the author set '
+        "for this book, plus the latest check result for a chapter."
+    ),
+    "顺带看这一章最近一次检验的结果；不传就只列规则。": (
+        "Also show this chapter's latest check result; omit it to list only "
+        "the rules."
+    ),
+    # ── notifications ────────────────────────────────────────────────────
+    (
+        "看通知：右栏「通知」那一栏——系统留给作者的提醒（后台没办成的事、检查命中、"
+        "总结和正文对不上……）和等他确认的提案（抽出来的设定跟现有的对不上、待确认的情节）。"
+        "返回先给一张按章数出来的表，再给最近的那些条目；传 chapter 只看某一章的。"
+        "**只读**：处理 / 忽略一条通知是作者在界面上按的，这儿不动。"
+    ): (
+        "See the notifications: the Notifications panel on the right — "
+        "reminders the system left for the author (something that didn't "
+        "finish in the background, a check that hit, a summary that doesn't "
+        "match the text…) and proposals waiting for their confirmation "
+        "(an extracted fact that clashes with an existing one, an event to "
+        "confirm). The return gives a per-chapter count table first, then "
+        "the most recent entries; pass chapter to see only one chapter's. "
+        "**Read-only**: handling or dismissing a notification is something "
+        "the author does from the interface; this doesn't touch them."
+    ),
+    "查「通知」：右栏那一栏——系统留给作者的提醒，以及等他确认的提案。": (
+        'Query "notifications": the panel on the right — reminders the system '
+        "left for the author, plus proposals waiting for their confirmation."
+    ),
+    "只看和这一章有关的；不传就看全书的（按章数出来一张表，再给最近的那些）。": (
+        "Only entries about this chapter; omit it to see the whole book's "
+        "(a per-chapter count table, then the most recent entries)."
     ),
 }
 
@@ -719,46 +688,11 @@ def translate_tool_declarations(
 _MESSAGES: dict[str, dict[DraftLanguage, str]] = {
     # ── agent/tools.py ───────────────────────────────────────────────────
     "no_manuscript_root": {
-        DraftLanguage.ZH: "读不到这本书的正文目录，写前校准无法进行。让作者确认项目根目录已经接到工作台上。",
+        DraftLanguage.ZH: "读不到这本书的正文目录，起草无法进行。让作者确认项目根目录已经接到工作台上。",
         DraftLanguage.EN: (
-            "Can't reach this book's manuscript directory — pre-draft "
-            "calibration can't proceed. Have the author confirm the "
-            "project root is connected to the workbench."
-        ),
-    },
-    "chapter_not_yet_written": {
-        DraftLanguage.ZH: (
-            "第 {chapter} 章还不存在。新开一章要作者自己起章标题"
-            "（书里靠那一行认章），系统不会替他建。"
-        ),
-        DraftLanguage.EN: (
-            "Chapter {chapter} doesn't exist yet. A new chapter needs the "
-            "author to title it themselves (the book recognizes chapters "
-            "by that line) — the system will not create one on his behalf."
-        ),
-    },
-    "no_author_turn": {
-        DraftLanguage.ZH: (
-            "这一轮没有作者消息可绑定。校准必须绑定作者当前原话的"
-            "turn 标识与原话哈希——让作者先说一句他想写什么。"
-        ),
-        DraftLanguage.EN: (
-            "There is no author message to bind for this turn. "
-            "Calibration must bind the turn id and hash of the author's "
-            "actual current words — have the author say what they want "
-            "written first."
-        ),
-    },
-    "calibration_not_wired": {
-        DraftLanguage.ZH: (
-            "写前校准还没接到这个会话上（工具表已经有它，实现还没接进来）。"
-            "这一轮请改用别的方式推进。"
-        ),
-        DraftLanguage.EN: (
-            "Pre-draft calibration isn't wired into this session yet "
-            "(the tool table has it, but the implementation isn't "
-            "connected). Use a different approach to move forward this "
-            "turn."
+            "Can't reach this book's manuscript directory — drafting can't "
+            "proceed. Have the author confirm the project root is connected "
+            "to the workbench."
         ),
     },
     "not_a_character_state": {
@@ -790,32 +724,6 @@ _MESSAGES: dict[str, dict[DraftLanguage, str]] = {
             "has it, but the implementation isn't connected). Use a "
             "different approach this turn, or have the author draft from "
             "the interface."
-        ),
-    },
-    "no_such_inspection": {
-        DraftLanguage.ZH: "没有这份校准报告（{inspection_id}）。先 calibrate_scene，拿到编号再封存。",
-        DraftLanguage.EN: (
-            "No such calibration report ({inspection_id}). Call "
-            "calibrate_scene first, get an id, then seal."
-        ),
-    },
-    "author_not_confirmed_yet": {
-        DraftLanguage.ZH: (
-            "作者还没有在看过任务卡之后回答。先把类型化任务卡摆给他、"
-            "等他下一句回复，再来封存；别在同一轮里替他假定答案。"
-        ),
-        DraftLanguage.EN: (
-            "The author has not yet answered after seeing the task card. "
-            "Lay the typed task card in front of them and wait for their "
-            "next reply before sealing — do not assume an answer for "
-            "them in the same turn."
-        ),
-    },
-    "no_saved_proposal": {
-        DraftLanguage.ZH: "这份校准报告没有保存提案，无法封存；请重新 calibrate_scene。",
-        DraftLanguage.EN: (
-            "This calibration report has no saved proposal and cannot be "
-            "sealed; call calibrate_scene again."
         ),
     },
     "no_collapsed_result_table": {
@@ -951,19 +859,6 @@ _MESSAGES: dict[str, dict[DraftLanguage, str]] = {
             "of result, and this turn's steps are limited — **stop "
             "looking people up**, keep writing with what you already "
             "have."
-        ),
-    },
-    # ── agent/drafting.py ────────────────────────────────────────────────
-    "goal_requires_calibration": {
-        DraftLanguage.ZH: (
-            "起草必须先 calibrate_scene + seal_scene_brief 拿到 calibration_id，"
-            "目标只从封存产物读取——直接传目标文字这条路已经关掉了。"
-        ),
-        DraftLanguage.EN: (
-            "Drafting requires calibrate_scene + seal_scene_brief first "
-            "to get a calibration_id — the goal is read only from the "
-            "sealed artifact; passing goal text directly is no longer "
-            "possible."
         ),
     },
     "model_cant_handle_chapter": {
@@ -1132,113 +1027,234 @@ _MESSAGES: dict[str, dict[DraftLanguage, str]] = {
             "the activity log."
         ),
     },
-    # ── calibration/seal.py ──────────────────────────────────────────────
-    "surface_not_resolved": {
-        DraftLanguage.ZH: "封存校验失败：{what}「{surface}」解析不出唯一节点，不能作为安全参数进入 Writer 简报。",
+    # ── agent/panels.py（2026-09-12，右栏四栏的读工具）──────────────────────
+    # 拒绝 + 返回里的 `notes`。**返回里的字这儿也走双语**：这四条是新写的，
+    # 没有理由沿用 `index.py` 那批只有中文的 note。
+    "not_a_character_card": {
+        DraftLanguage.ZH: "「{surface}」不是人物（它是 {label}），没有角色卡可翻。",
         DraftLanguage.EN: (
-            'Sealing validation failed: {what} "{surface}" does not '
-            "resolve to a unique node, and cannot enter the Writer brief "
-            "as a safe argument."
+            '"{surface}" is not a character (it\'s a {label}) — there is no '
+            "character card to open."
         ),
     },
-    "directive_arg_not_resolved": {
-        DraftLanguage.ZH: "封存校验失败：指令参数「{surface}」没有解析到节点。",
+    "card_events_not_wired": {
+        DraftLanguage.ZH: "事件那一栏没接到这个会话上：下面 `events` 是空的不代表他什么都没经历过。",
         DraftLanguage.EN: (
-            'Sealing validation failed: directive argument "{surface}" '
-            "did not resolve to a node."
+            "The events panel isn't wired into this session: an empty `events` "
+            "below does not mean nothing ever happened to them."
         ),
     },
-    "not_ready_to_seal": {
+    "card_events_omitted": {
         DraftLanguage.ZH: (
-            "这份校准报告还不能封存（{status}）："
-            "先解决确定性冲突，或让作者回答需要他决定的问题。"
+            "他名下有 {total} 件事，预算只装得下 {kept} 件，**最早的 {omitted} 件没给**"
+            "（要那几章的事就用 chapter_events 按章去看）。"
         ),
         DraftLanguage.EN: (
-            "This calibration report cannot be sealed yet ({status}): "
-            "resolve the deterministic conflicts first, or have the "
-            "author answer the question that needs their decision."
+            "There are {total} events under their name; the budget fits {kept}, "
+            "**the earliest {omitted} were left out** (use chapter_events to see "
+            "those chapters one by one)."
         ),
     },
-    "chapter_mismatch": {
-        DraftLanguage.ZH: "提案章号 {proposal_chapter} 与校准报告章号 {inspection_chapter} 不一致。",
+    "card_relations_omitted": {
+        DraftLanguage.ZH: "记录过 {total} 段关系，预算装不下，**最早的 {omitted} 段没给**。",
         DraftLanguage.EN: (
-            "Proposal chapter {proposal_chapter} does not match "
-            "calibration report chapter {inspection_chapter}."
+            "{total} relationships are on record; the budget can't fit them all, "
+            "**the earliest {omitted} were left out**."
         ),
     },
-    "stale_calibration_turn": {
-        DraftLanguage.ZH: "当前作者消息与这份校准不是同一轮，旧产物已过期，请重新校准。",
-        DraftLanguage.EN: (
-            "The current author message is not from the same turn as "
-            "this calibration; the old artifact has expired — calibrate "
-            "again."
-        ),
-    },
-    "canon_version_changed": {
-        DraftLanguage.ZH: "图谱水位变了（校准时的 {old} → 现在的 {new}），请重新校准。",
-        DraftLanguage.EN: (
-            "The graph watermark has changed (from {old} at calibration "
-            "time to {new} now) — calibrate again."
-        ),
-    },
-    "target_text_changed": {
-        DraftLanguage.ZH: "目标章正文在这份校准之后变了，请重新校准。",
-        DraftLanguage.EN: (
-            "The target chapter's prose changed after this calibration "
-            "— calibrate again."
-        ),
-    },
-    "retcon_needs_fact_ids": {
-        DraftLanguage.ZH: "选择「推翻旧设定」时必须点名要推翻的旧事实（校准报告里的 item_id）。",
-        DraftLanguage.EN: (
-            'Choosing "overturn an existing setting" requires naming '
-            "which existing facts are being overturned (item_ids from "
-            "the calibration report)."
-        ),
-    },
-    "retcon_fact_not_in_report": {
-        DraftLanguage.ZH: "封存校验失败：要推翻的事实 {fact_id} 不在校准报告里。",
-        DraftLanguage.EN: (
-            "Sealing validation failed: the fact being overturned "
-            "{fact_id} is not in the calibration report."
-        ),
-    },
-    "retcon_touches_safety_fact": {
+    "card_states_omitted": {
         DraftLanguage.ZH: (
-            "事实 {fact_id} 涉及知情/秘密（{fact_type}），"
-            "属于安全相关 RETCON：必须先走作者侧 Canon 声明/纠错链并重新校准，"
-            "不能借 SceneBrief 绕过旧 Canon 的后端约束。"
+            "他身上记着 {total} 个状态维度，预算装不下，**最早定下的 {omitted} 个没给**"
+            "（character_state 单独查他时给得全一些）。"
         ),
         DraftLanguage.EN: (
-            "Fact {fact_id} involves knowledge/secrecy ({fact_type}) and "
-            "is a safety-related RETCON: it must go through the "
-            "author-side Canon declaration/correction chain and be "
-            "recalibrated first — it cannot bypass the backend's "
-            "existing Canon constraints via SceneBrief."
+            "{total} state dimensions are recorded for them; the budget can't fit "
+            "them all, **the {omitted} set earliest were left out** (character_state "
+            "on its own gives a fuller list)."
         ),
     },
-    "report_item_not_visible": {
-        DraftLanguage.ZH: "封存校验失败：报告项 {item_id} 不可见或不存在。",
+    "events_not_wired": {
+        DraftLanguage.ZH: "事件那一栏没接到这个会话上，这一轮读不到任何一章的事件。",
         DraftLanguage.EN: (
-            "Sealing validation failed: report item {item_id} is not "
-            "visible or does not exist."
+            "The events panel isn't wired into this session — no chapter's events "
+            "can be read this turn."
         ),
     },
-    "directive_kind_not_closed": {
-        DraftLanguage.ZH: "指令码 {kind} 不在封闭指令集里。",
-        DraftLanguage.EN: "Directive code {kind} is not in the closed directive set.",
-    },
-    "author_confirmation_needs_new_turn": {
+    "chapters_have_no_confirmed_events": {
         DraftLanguage.ZH: (
-            "作者确认必须在封存之前产生一条新的作者消息（看过任务卡之后回答）。"
-            "仅有指向模型文字的 answer ID 不算作者确认。"
+            "第 {first_chapter}–{last_chapter} 章一条已确认的事件都没有——可能是这几章还没"
+            "整理过，也可能整理了但一件都没留下。**别读成「这几章什么都没发生」**，"
+            "正文才是真相源。"
         ),
         DraftLanguage.EN: (
-            "Author confirmation requires a new author message before "
-            "sealing (a reply after seeing the task card). An answer id "
-            "pointing only at the model's own text does not count as "
-            "author confirmation."
+            "Chapters {first_chapter}–{last_chapter} have no confirmed events at all — "
+            "either they haven't been processed yet, or they were and nothing stuck. "
+            "**Don't read this as \"nothing happens in these chapters\"** — the text "
+            "is the source of truth."
         ),
+    },
+    "chapter_events_omitted": {
+        DraftLanguage.ZH: (
+            "区间里有 {total} 件已确认的事，预算只装得下 {kept} 件，**最前面的 {omitted} 件"
+            "没给**（要它们就把区间往前挪一段再问一次）。"
+        ),
+        DraftLanguage.EN: (
+            "The range has {total} confirmed events; the budget fits {kept}, "
+            "**the earliest {omitted} were left out** (to get them, move the range "
+            "earlier and ask again)."
+        ),
+    },
+    "rules_not_wired": {
+        DraftLanguage.ZH: "检验规则那一栏没接到这个会话上，这一轮读不到规则。",
+        DraftLanguage.EN: (
+            "The rules panel isn't wired into this session — no rules can be read "
+            "this turn."
+        ),
+    },
+    "no_rules_yet": {
+        DraftLanguage.ZH: "作者还没给这本书添加过检验规则（内置规则今天一条都没有）。",
+        DraftLanguage.EN: (
+            "The author hasn't added any check rules to this book yet (there are "
+            "no built-in rules today)."
+        ),
+    },
+    "rules_omitted": {
+        DraftLanguage.ZH: "共 {total} 条规则，预算装不下，**后面 {omitted} 条没给**。",
+        DraftLanguage.EN: (
+            "{total} rules in total; the budget can't fit them all, **the last "
+            "{omitted} were left out**."
+        ),
+    },
+    "chapter_never_checked": {
+        DraftLanguage.ZH: "第 {chapter} 章还没有检验过（作者没按过那颗闪电，保存后的自动检验也没跑过）。",
+        DraftLanguage.EN: (
+            "Chapter {chapter} has never been checked (the author hasn't pressed "
+            "the bolt, and no post-save check has run)."
+        ),
+    },
+    "check_is_stale": {
+        DraftLanguage.ZH: "第 {chapter} 章最近那次检验对的是**更早的一版正文**，作者之后又改过：结果可能已经不作数。",
+        DraftLanguage.EN: (
+            "Chapter {chapter}'s latest check was against **an earlier version of "
+            "the text**; the author has edited it since — the result may no longer "
+            "hold."
+        ),
+    },
+    "check_issues_omitted": {
+        DraftLanguage.ZH: "那次检验命中 {total} 处，预算装不下，**后面 {omitted} 处没给**。",
+        DraftLanguage.EN: (
+            "That check hit {total} places; the budget can't fit them all, **the "
+            "last {omitted} were left out**."
+        ),
+    },
+    "notices_not_wired": {
+        DraftLanguage.ZH: "通知那一栏没接到这个会话上，这一轮读不到通知。",
+        DraftLanguage.EN: (
+            "The notifications panel isn't wired into this session — no "
+            "notifications can be read this turn."
+        ),
+    },
+    "no_open_notices": {
+        DraftLanguage.ZH: "通知栏是空的：没有待处理的通知，也没有等作者确认的提案。",
+        DraftLanguage.EN: (
+            "The notifications panel is empty: nothing open, and no proposals "
+            "waiting for the author."
+        ),
+    },
+    "no_open_notices_for_chapter": {
+        DraftLanguage.ZH: "第 {chapter} 章没有待处理的通知，也没有等作者确认的提案。",
+        DraftLanguage.EN: (
+            "Chapter {chapter} has no open notifications and no proposals waiting "
+            "for the author."
+        ),
+    },
+    "notices_omitted": {
+        DraftLanguage.ZH: "共 {total} 条通知，预算只装得下一部分，**最早的 {omitted} 条没给**（按章那张表是全的）。",
+        DraftLanguage.EN: (
+            "{total} notifications in total; the budget fits only some, **the "
+            "earliest {omitted} were left out** (the per-chapter table is complete)."
+        ),
+    },
+    "pending_omitted": {
+        DraftLanguage.ZH: "共 {total} 条待确认的提案，预算只装得下一部分，**最早的 {omitted} 条没给**（按章那张表是全的）。",
+        DraftLanguage.EN: (
+            "{total} pending proposals in total; the budget fits only some, **the "
+            "earliest {omitted} were left out** (the per-chapter table is complete)."
+        ),
+    },
+    # 通知的抬头，措辞照抄面板那张表（`frontend/src/components/SystemNotifications.tsx::KIND_TITLE`）。
+    "notice_kind_summary_mismatch": {
+        DraftLanguage.ZH: "总结与正文可能对不上",
+        DraftLanguage.EN: "The summary and the text may not match",
+    },
+    "notice_kind_background_failure": {
+        DraftLanguage.ZH: "后台有一件事没办成",
+        DraftLanguage.EN: "Something didn't finish in the background",
+    },
+    "notice_kind_validation_blocked": {
+        DraftLanguage.ZH: "这一章的检查需要留意",
+        DraftLanguage.EN: "This chapter's check needs attention",
+    },
+    "notice_kind_text_advisory": {
+        DraftLanguage.ZH: "这一段值得再看一眼",
+        DraftLanguage.EN: "This passage is worth another look",
+    },
+    "notice_kind_extraction_yielded_nothing": {
+        DraftLanguage.ZH: "这一章什么都没整理出来",
+        DraftLanguage.EN: "Nothing came out of processing this chapter",
+    },
+    "notice_kind_import_toc_skipped": {
+        DraftLanguage.ZH: "导入时跳过了几个空章",
+        DraftLanguage.EN: "A few empty chapters were skipped during import",
+    },
+    "notice_kind_event_cast_changed": {
+        DraftLanguage.ZH: "一件事的参与者变了",
+        DraftLanguage.EN: "The people in an event changed",
+    },
+    "notice_kind_proposal_conflict": {
+        DraftLanguage.ZH: "有一处设定跟抽出来的内容对不上",
+        DraftLanguage.EN: "Something extracted doesn't match an existing fact",
+    },
+    "notice_kind_proposal_low_confidence": {
+        DraftLanguage.ZH: "有一条情节需要作者确认",
+        DraftLanguage.EN: "There's an event that needs the author's confirmation",
+    },
+    "notice_kind_unknown": {
+        DraftLanguage.ZH: "一条系统通知",
+        DraftLanguage.EN: "A system notification",
+    },
+    # 提案对照那几行，措辞照抄面板（`SystemNotifications.tsx::factLine`）。
+    "fact_line_location": {
+        DraftLanguage.ZH: "{subject} 在 {target}",
+        DraftLanguage.EN: "{subject} is at {target}",
+    },
+    "fact_line_relationship": {
+        DraftLanguage.ZH: "{subject} 与 {target} {value}",
+        DraftLanguage.EN: "{subject} and {target} — {value}",
+    },
+    "fact_line_relationship_bare": {
+        DraftLanguage.ZH: "{subject} 与 {target}",
+        DraftLanguage.EN: "{subject} and {target}",
+    },
+    "fact_line_state": {
+        DraftLanguage.ZH: "{subject} 的 {target} 是 {value}",
+        DraftLanguage.EN: "{subject}'s {target}: {value}",
+    },
+    "fact_line_state_bare": {
+        DraftLanguage.ZH: "{subject} 的 {target}",
+        DraftLanguage.EN: "{subject}'s {target}",
+    },
+    "unknown_name_placeholder": {
+        DraftLanguage.ZH: "（认不出的一项）",
+        DraftLanguage.EN: "(an unrecognized entry)",
+    },
+    "proposal_conflict_pair": {
+        DraftLanguage.ZH: "当前：{current}；提议：{proposed}（原文：{quote}）",
+        DraftLanguage.EN: "Current: {current}; proposed: {proposed} (source: {quote})",
+    },
+    "proposal_event_line": {
+        DraftLanguage.ZH: "{summary}（原文：{quote}）",
+        DraftLanguage.EN: "{summary} (source: {quote})",
     },
     # ── draft/product_draft.py ───────────────────────────────────────────
     "write_rule_forbidden_words": {

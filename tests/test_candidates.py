@@ -62,8 +62,6 @@ from novel_harness.draft.provider import CompletionResult, ProviderConfig, ToolC
 from novel_harness.graph import NodeLabel, NodeProps, NodeSpec
 from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
-from novel_harness.panel.constraints import forbidden_entities
-from calibration_seed import seed_calibration
 
 ENDPOINT = "https://api.deepseek.com"
 MODEL = "deepseek-v4-flash"
@@ -226,37 +224,23 @@ def _context(
     **kw: Any,
 ) -> ToolContext:
     kw.setdefault("working_chapter", 1)
-    from novel_harness.calibration.store import CalibrationStore
-
+    
     store = SqliteStoryGraph(conn)
-    _, author_turn = seed_calibration(
-        conn=conn,
-        project_id=book["pid"],
-        store=store,
-        root=_root(conn, book),
-        chapter=seed_chapter,
-    )
     return ToolContext(
         store=store,
         project_id=book["pid"],
         root_path=str(_root(conn, book)),
         drafter=desk,
         events=SqliteEventStore(conn),
-        calibrations=CalibrationStore(conn),
-        author_turn=author_turn,
         **kw,
     )
 
 
-def _draft(
-    chapter: int,
-    call_id: str = "c0",
-    calibration_id: str = "calibration:test:seeded",
-) -> ToolCall:
+def _draft(chapter: int, call_id: str = "c0", brief: str = "写一场对峙") -> ToolCall:
     return ToolCall(
         id=call_id,
         name="draft_chapter",
-        arguments=json.dumps({"chapter": chapter, "calibration_id": calibration_id}),
+        arguments=json.dumps({"chapter": chapter, "brief": brief}),
     )
 
 
@@ -303,15 +287,14 @@ def test_no_poison_reaches_the_table_on_the_path_that_assembles_memory(
     )
     assert '"props"' not in stored, "整份节点被序列化进表了"
 
-    # **反向断言：约束必须真的算得出来。** 一张什么都搜不到的网和一条什么都没查的链路，
-    # 在上面那几个 `not in` 面前长得一模一样。**不再搜 prompt**：2026-08-26 起未来实体的
-    # 显示名不再渲染进任何 prompt（国际化第一批 ⓪，`_forbidden_block()` 下线），改成直接
-    # 用同一个 store/chapter 查一遍 `forbidden_entities()`——这是 `graph_section()` 以前
-    # 用来渲染那句话的同一份数据源，只是不再经过 prompt。
-    forbidden = forbidden_entities(SqliteStoryGraph(desk_conn), poisoned["pid"], chapter=1)
-    assert any(e.node.name == "未来大能" for e in forbidden), (
-        "这一稿根本没带约束跑 —— 上面那几条「没搜到」是空的"
-    )
+    # ⚠️ **2026-08-31：「未来人物 props 上的 plot_note」这一路的反向断言删了。**
+    # 它原来在这里直接查 `forbidden_entities()`（`graph_section()` 早在 2026-08-26
+    # 就不再把它渲染进 prompt，这条断言是当时留的一条替代验证），而
+    # `forbidden_entities()` 本身现在也删了（见 [ADR 0041](../../../docs/adr/0041-forbidden-entities-cut.md)）
+    # ——「未来大能」这个节点今天没有任何代码路径会去碰它，「反向断言：约束必须真的
+    # 算得出来」这句话对这一种毒不再成立，删掉比留一条测不出东西的断言诚实。
+    # 上面「已生效的故事记忆」那条自守卫（第 292 行）仍然证明了记忆前言那条链路真的跑了，
+    # 三种毒里另外两种（Secret 的 twist / secret 扩展表的 description）仍然被它覆盖。
 
 
 def test_the_same_scan_over_the_three_places_a_candidate_is_handed_out(
@@ -671,7 +654,7 @@ def test_the_write_tool_really_waits_for_the_concurrent_window(
 
 
 class DraftOnce:
-    """一轮：要一稿，然后收手。"""
+    """一轮：要一批稿（同一章几稿，**入参一模一样**——下面那条闸测的正是重复调用），然后收手。"""
 
     def __init__(
         self,
@@ -688,66 +671,10 @@ class DraftOnce:
                 model=MODEL,
                 finish_reason="tool_calls",
                 tool_calls=tuple(
-                    ToolCall(
-                        id=f"cal{n}",
-                        name="calibrate_scene",
-                        arguments=json.dumps(_calibrate_args(chapter, n)),
-                    )
-                    for n, chapter in enumerate(self.chapters)
-                ),
-            )
-        if self.calls == 2:
-            results = [
-                json.loads(m["content"])
-                for m in messages
-                if m.get("role") == "tool" and str(m.get("content", "")).strip()
-            ]
-            ids = [r["id"] for r in results if "id" in r]
-            return CompletionResult(
-                text="",
-                model=MODEL,
-                finish_reason="tool_calls",
-                tool_calls=tuple(
-                    ToolCall(
-                        id=f"seal{n}",
-                        name="seal_scene_brief",
-                        arguments=json.dumps({"inspection_id": iid}),
-                    )
-                    for n, iid in enumerate(ids)
-                ),
-            )
-        if self.calls == 3:
-            results = [
-                json.loads(m["content"])
-                for m in messages
-                if m.get("role") == "tool" and str(m.get("content", "")).strip()
-            ]
-            pairs = [
-                (r["chapter"], r["calibration_id"])
-                for r in results
-                if "calibration_id" in r
-            ]
-            return CompletionResult(
-                text="",
-                model=MODEL,
-                finish_reason="tool_calls",
-                tool_calls=tuple(
-                    _draft(pairs[0][0], f"c{n}", pairs[0][1])
-                    for n in range(len(self.chapters))
+                    _draft(self.chapters[0], f"c{n}") for n in range(len(self.chapters))
                 ),
             )
         return CompletionResult(text="写好了，你看看。", model=MODEL, finish_reason="stop")
-
-
-def _calibrate_args(chapter: int, index: int) -> dict[str, Any]:
-    """同章多稿要多份**签名不同**的校准入参（否则会在校准步先撞重复闸）。"""
-    variants = [
-        {"chapter": chapter, "viewpoint_surface": "萧决"},
-        {"chapter": chapter, "viewpoint_surface": "李管家"},
-        {"chapter": chapter, "intended_cast": [{"surface": "萧决"}]},
-        {"chapter": chapter, "intended_cast": [{"surface": "李管家"}]},
-    ]
-    return variants[index % len(variants)]
 
 
 def test_a_gate_inside_a_concurrent_window_loses_neither_a_bill_nor_a_pairing(
@@ -783,8 +710,8 @@ def test_a_gate_inside_a_concurrent_window_loses_neither_a_bill_nor_a_pairing(
     )
 
     assert len(desk.produced) == 4, f"四稿没有都跑掉：{len(desk.produced)}"
-    assert len(billed) == 7, (
-        f"账上只有 {len(billed)} 笔：校准 + 封存 + 起草三步的 agent 调用 + 四稿。"
+    assert len(billed) == 5, (
+        f"账上只有 {len(billed)} 笔：要稿那一步的 agent 调用 + 四稿。"
         "并发窗口里那几条已经花过钱了，配「没跑」的壳就是一次凭空消失的花销。"
     )
 
@@ -804,81 +731,3 @@ def test_a_gate_inside_a_concurrent_window_loses_neither_a_bill_nor_a_pairing(
     ]
     ordinals = [json.loads(m.content)["ordinal"] for m in draft_results]
     assert sorted(ordinals) == [1, 2, 3, 4], f"并发插进去的稿子撞号了：{ordinals}"
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# 六、ADR 0019 边界五 × ADR 0022 的交叉洞（**这一节描述现状，不是批准它**）
-# ══════════════════════════════════════════════════════════════════════════
-
-
-class DraftThenLook:
-    """校准（为还没写到的章），然后**把下一步拿到的上下文原样存下来**再收手。
-
-    这就是模型的处境：它下一步能不能封存/起草，取决于那个编号还在不在它眼前。
-    """
-
-    def __init__(self, chapter: int) -> None:
-        self.chapter = chapter
-        self.calls = 0
-        self.seen: list[dict[str, Any]] = []
-
-    def __call__(self, messages: Any, *, tools: Any, cancel: Any) -> CompletionResult:
-        self.calls += 1
-        if self.calls == 1:
-            return CompletionResult(
-                text="",
-                model=MODEL,
-                finish_reason="tool_calls",
-                tool_calls=(
-                    ToolCall(
-                        id="cal0",
-                        name="calibrate_scene",
-                        arguments=json.dumps({"chapter": self.chapter}),
-                    ),
-                ),
-            )
-        self.seen = list(messages)
-        return CompletionResult(text="写好了。", model=MODEL, finish_reason="stop")
-
-
-def test_a_draft_for_a_chapter_the_author_has_not_reached_loses_its_handle(
-    desk_conn: Connection, poisoned: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """**为「作者还没写到的章」校准，那个编号下一步就不在模型眼前了。**
-
-    两条边界叠在一起的结果，两条各自都是对的：
-
-    - 边界五（ADR 0019）：绑在**更后面**的章上的工具返回不进这一次投影
-      （判据 `> working_chapter`，方向是 fail-closed 那一侧——过期清单越往后越短）；
-    - ADR 0033：校准结果绑章号，**那个编号是封存/起草的唯一把手**
-      （`seal_scene_brief` / `draft_chapter` 都只收它）。
-
-    于是「给第 12 章起一稿」在作者的光标停在第 3 章时，校准结果在下一步就被丢掉：
-    模型既封存不了、也起草不了——校准这一步不花模型的钱，损失从「一笔起草费」
-    提前到「这一轮白走」。
-
-    **这条断言在描述现状，不是在批准它。** 修它要动 `project()`（那是另一个人的地盘），
-    所以这儿只把今天的形状钉住：它被修好的那天这条会红，那时该做的是删掉这条测试。
-    """
-    _writer(monkeypatch, _prose("子"))
-    desk = _desk(desk_conn, poisoned)
-    # 作者的光标停在第 1 章，而模型给第 3 章起稿（第 3 章磁盘上是有的）。
-    context = _context(desk_conn, poisoned, desk, seed_chapter=3, working_chapter=1)
-    model = DraftThenLook(chapter=3)
-    result = run_turn(
-        start_conversation().with_author("给第 3 章也起一稿"),
-        context=context,
-        model=model,
-        ledger=lambda receipt: None,
-    )
-
-    assert len(desk.produced) == 0, (
-        "校准结果没被投影丢掉 —— 这个洞已经在校准这一环被补上了，这条测试该删"
-    )
-    assert model.calls == 2, "校准之后没有「下一步」可看"
-
-    seen = json.dumps(model.seen, ensure_ascii=False)
-    assert "inspection" not in seen, (
-        "校准结果还在下一步的投影里 —— 这个洞被补上了，把这条测试删掉"
-    )
-    assert result.projection is not None and result.projection.off_chapter == 1

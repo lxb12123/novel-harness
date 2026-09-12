@@ -89,17 +89,35 @@ def _scan(source: str) -> tuple[str, str | None]:
 
 _SVG_PATH_DATA = re.compile(r'\bd="[^"]*"')
 
+_QUOTED = re.compile(r'"([^"\\\n]*)"')
+_PATH_ONLY = re.compile(r"^[MmLlHhVvCcSsQqTtAaZz0-9\s,.\-eE]+$")
+
 
 def _without_path_data(source: str) -> str:
-    """去掉 SVG 的 `d="…"`。**它是几何，不是文案**，而这道守卫查的是文案。
+    """去掉 SVG 的几何。**它是几何，不是文案**，而这道守卫查的是文案。
 
     真出现过的误报（2026-08-13）：齿轮图标的路径以 `M10.48` 起笔，被
     `\\bM\\d+\\b`（内部里程碑 M0–M4）当场抓成「界面泄漏了里程碑编号」。
 
     收窄那条里程碑正则也能让它绿，但**那是把守卫削薄去迁就一个不是文案的东西**——
     真正该做的是别让它看几何。路径数据里藏不住泄漏：它一个字都不会渲染成文字。
+
+    ⚠️ **2026-09-07：几何不一定住在 `d="…"` 里。** 翅膀图标（`WingIcon`）的四条路径
+    存成一个字符串数组再 `map` 出来，于是那一版只认属性的过滤看不见它们，
+    `"M330.5 613 C…"` 又一次被当成里程碑 `M330` 抓住——**同一个误报，第二个藏身处**。
+    所以这儿改成两道：属性一道，**整串都是路径语法的字符串字面量**一道。
+    判据故意收得很紧（首字符是 `M`/`m`、其余只有路径命令字母和数字标点、且够长），
+    任何一句真文案——中文也好、带别的标点的英文也好——都过不了它。
     """
-    return _SVG_PATH_DATA.sub('d=""', source)
+    source = _SVG_PATH_DATA.sub('d=""', source)
+
+    def blank(match: re.Match[str]) -> str:
+        body = match.group(1)
+        if body[:1] in {"M", "m"} and len(body) > 8 and _PATH_ONLY.match(body):
+            return '""'
+        return match.group(0)
+
+    return _QUOTED.sub(blank, source)
 
 
 def test_production_tsx_has_no_internal_or_fixture_copy() -> None:

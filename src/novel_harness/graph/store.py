@@ -46,7 +46,6 @@ from .models import (
     ChapterSnapshot,
     ChapterSpec,
     ChapterText,
-    ChapterUsage,
     Edge,
     EdgeSpec,
     EdgeType,
@@ -74,8 +73,20 @@ MAX_HOPS: Final = 2
 """**硬上限，不是默认值。** 实测 3 跳 = 30 倍节点爆炸且可达人物一个都没多（§5.5）。
 `hops > MAX_HOPS` 必须抛 `ValueError`，不许静默截断。"""
 
-MAX_SUBGRAPH_NODES: Final = 30
-"""§5.5 的 done_when：2 跳 + 类型过滤后 ≤30 节点，超过则折叠成聚合节点并置 `truncated`。"""
+MAX_SUBGRAPH_NODES: Final = 1_000
+"""一次局部关系图最多画多少个节点，**超过就截断并置 `truncated`**。
+
+── 两处纠正（2026-09-09）───────────────────────────────────────────────────
+1. **这个数从 30 提到 1000**（作者点名）。30 是 §5.5 写下的 done_when，而真书上它
+   小得不像话：主角贾环在第 158 章有 **576 条关系边**，图上只画得出 30 个节点、
+   29 条边——作者看到的是从几百个人里截下来的**前 30 个**，剩下的连提都没提。
+2. **原来这句话写的是「折叠成聚合节点」，那个聚合节点从来没实现过。** 代码一直是
+   `seen_ids[:MAX_SUBGRAPH_NODES]` 一刀切，没有任何「点开看更多」的入口。
+   文档承诺了一件没做的事，比不写更坏——所以措辞改成它真正在做的：**截断**。
+
+⚠️ **它今天只是默认值，不再是硬上限**：作者可以在设置页里改（`Settings.graph_max_nodes`，
+由 `api/app.py` 的 subgraph 路由读出来传进 `subgraph(max_nodes=…)`）。
+`graph/` 一如既往不认识 `settings`——那个数从装配层穿进来。"""
 
 HOP2_EDGE_TYPES: Final[frozenset[EdgeType]] = frozenset({EdgeType.RELATED_TO})
 """第 2 跳允许展开的边类型（§5.5 写的是「只展开 RELATED_TO/KNOWS」，
@@ -103,8 +114,10 @@ QUERYABLE_SCOPES: Final[frozenset[InformationScope]] = frozenset(
 Writer prompt。** 于是「未来剧情泄漏率」从「靠调权重压低」变成「结构上恒为 0」。
 
 PLANNED 是**可写不可读**的（`upsert_edge` 照收——伏笔的「计划第 200 章回收」就是它）。
-它的唯一出口是 panel/constraints.py 转译成 must_not_reveal / forbidden_entities，
-而那条路走 `resolve` 读 `node.props.first_appears_chapter`，不经过这三个方法。
+**2026-08-31 之前它还有一条窄出口**（`panel/constraints.py` 转译成 `must_not_reveal` /
+`forbidden_entities`，不经过这三个方法，走的是 `resolve` 读 `node.props.first_appears_chapter`）
+——那条出口自己也删了（[ADR 0041](../../../docs/adr/0041-forbidden-entities-cut.md)），
+`PLANNED` 今天**没有任何读路径**，这三个方法只是其中一层，不是唯一一层。
 
 `REJECTED` 同样不可读：它只是「保留以防重抽」的坟场（§5.4）。
 """
@@ -122,15 +135,6 @@ class StoreError(Exception):
 class NodeNotFound(StoreError):
     """`node_id` 在本项目里不存在。跨项目误引用也走这里——ULID 的 `project_short`
     前缀就是为了让它在日志里一眼可见（ADR 0003）。"""
-
-
-class SupersedeConflict(StoreError):
-    """`upsert_edge` 撞上了 v1 不支持的乱序插入（见 `StoryGraph.upsert_edge` 的契约）。
-
-    **必须抛，不许猜。** 猜错的产物是 `state_at` 同时返回「在青云城」和「在北荒」，
-    那正是 §5.5 点名的死法：两条互斥边 → 规则误报 → M3 的「误报 <1 条/章」生死线崩。
-    宁可让调用方看见一个异常。
-    """
 
 
 class SnapshotIsCurrent(StoreError):
@@ -156,31 +160,6 @@ class SnapshotInUse(StoreError):
             f"（证据 {usage.evidence} / 抽取 {usage.extraction_runs} / 提案 {usage.proposal_sets}）"
         )
 
-
-class ChapterInUse(StoreError):
-    """要删的那一章上，引擎已经记了东西（`ChapterUsage.total > 0`）。
-
-    **这条拒绝拦的不是外键，是级联。** `edge.src/dst` → `node` 和
-    `evidence.chapter_id` → `chapter` 两条都是 ON DELETE CASCADE，所以「删一章」
-    技术上一句 DELETE 就过了，**而且一声不吭**：指着这一章的关系、锚在这一章正文里的
-    证据、连同引着那些证据的情节，会在作者按下那颗按钮的一瞬间一起没掉。
-
-    引擎记住的东西是这个产品**唯一**的资产。所以这里的默认动作是拒绝并把挡路的东西
-    数给作者看，由他决定——不是替他决定那些记忆可以丢。
-    """
-
-    def __init__(self, usage: ChapterUsage) -> None:
-        self.usage = usage
-        # 这句话**是要上屏的**（`api/app.py` 原样发给前端）。所以它说三件事：
-        # 挡路的是什么、有多少条、删了会怎样。**不说「怎么办」**——今天界面上确实
-        # 没有一条路能把这些清掉，编一句「先去某处删掉它们」就是把作者支去一个空房间。
-        # 词按 `SnapshotInUse` 那句的口径（证据 / 抽取 / 提案 已经在版本抽屉里上过屏）。
-        super().__init__(
-            f"第 {usage.chapter_number} 章上还记着东西"
-            f"（证据 {usage.evidence} / 关系 {usage.edges} / 情节 {usage.events} / "
-            f"抽取 {usage.extraction_runs} / 提案 {usage.proposal_sets}）。"
-            "删掉这一章，这些会跟着一起没。"
-        )
 
 
 class QuoteMismatch(StoreError):
@@ -325,6 +304,7 @@ class StoryGraph(Protocol):
         hops: int = 1,
         edge_types: Collection[EdgeType] | None = None,
         scope: InformationScope = InformationScope.CANON,
+        max_nodes: int | None = None,
     ) -> Subgraph:
         """局部关系图。**hops ≤ 2 硬编码，两层显式 JOIN，不许递归 CTE。**
 
@@ -338,9 +318,14 @@ class StoryGraph(Protocol):
                 `HOP2_EDGE_TYPES`**。第 2 跳不带类型过滤一定糊——理由见那个常量的注释，
                 v1 的星形边是 HAS_STATE/MEMBER_OF/LOCATED_AT，不是 §5.5 举的 APPEARS_IN。
 
+        Args（续）:
+            max_nodes: 这一次最多画几个节点。`None` = 用 `MAX_SUBGRAPH_NODES`。
+                作者能在设置页改它，所以**调用方要把他填的数传下来**，别在这一层
+                去读设置（`graph/` 不认识 `settings`）。
+
         Returns:
-            节点按 id 去重且含 `center`。超过 `MAX_SUBGRAPH_NODES` 时折叠并置
-            `truncated=True`。
+            节点按 id 去重且含 `center`。超过上限时**截断**（不是折叠——没有聚合
+            节点这回事，见 `MAX_SUBGRAPH_NODES` 的注释）并置 `truncated=True`。
 
         Raises:
             NodeNotFound: `center` 不在本项目。
@@ -396,23 +381,25 @@ class StoryGraph(Protocol):
         作者的 CANON 边——那就是 Agent 直接修改了正式 Canon，原则 5 当场破掉。
         分层隔离在这里从一句口号变成一个 WHERE 条件。
 
-        对每条冲突边 `old`，按它和 `spec.valid_from_chapter` 的先后：
+        **写的时候只处理一种冲突：同一章的那一条**（`old.valid_from == new.valid_from`）
+        → **撤回**：`status='RETRACTED'`，进 `retracted`。
+        同章更正（「他在青云城…… 然后他去了北荒」都在第 151 章）没法用区间表达——
+        `[151,151)` 是空区间，意思是这条事实从未成立，数据库 CHECK 会直接拒了它。
 
-        - `old.valid_from < new.valid_from` → 闭合：`valid_to_chapter = new.valid_from`，
-          进 `closed`。
-        - `old.valid_from == new.valid_from` → **撤回**：`status='RETRACTED'`，进 `retracted`。
-          （同章更正：「他在青云城…… 然后他去了北荒」都在第 151 章。不能闭合成
-          `[151,151)`——空区间意思是这条事实从未成立，数据库 CHECK 会直接拒了它。）
-        - `old.valid_from > new.valid_from` → **抛 `SupersedeConflict`**。
+        ── ⚠️ 2026-09-06：不同章的旧边**一条都不动**（[ADR 0043](../../docs/adr/0043-facts-store-a-start-not-an-interval.md)）
 
-        最后一条的理由：v1 的 supersede 是**只进不退**的。§5.9 让 `valid_from` 由证据
-        决定，而证据是按章推进的，所以正常路径不会出现「往中间插一条更早的事实」。
-        真要正确处理它，得回答「先前那条事实在后一条结束后要不要恢复」——这个问题
-        v1 没有消费者，而猜错的产物是重叠区间。**宁可抛。**
+        从前这里还干两件事：把更早的旧边闭合成 `[old_from, new_from)`，以及在新边更早时
+        抛 `SupersedeConflict`（「v1 的 supersede 只进不退」）。两件都没了，
+        因为**「谁盖住谁」搬到了读的时候算**（`queries.CURRENT_EDGE_CTE`：同一语义槽里
+        取 `valid_from` 不晚于本章的最后一条）。
+
+        「后来的盖住先前的」这条纪律**一个字没变**，变的是它在哪一步生效。
+        换位置的理由是实测出来的：补全队列按「离作者正在写的那一章多近」倒着跑
+        （那是对的，ADR 0036），于是每一条更早的事实都撞上一条更晚的，
+        而抽取是整章一个事务——真书 2026-09-05 因此 62 章分析失败、全书只有 11 章有事件。
 
         Raises:
             NodeNotFound: `src` / `dst` 不在本项目。
-            SupersedeConflict: 乱序插入（见上）。
             ValueError: `spec` 自身非法（`EdgeSpec` 的 validator 已挡掉大部分）。
 
         Notes:
@@ -781,7 +768,7 @@ class CanonWriter(Protocol):
         Returns:
             删掉之前数出来的那份 `NodeUsage`。**纯信息**，不再决定删不删得掉——
             调用方拿它告诉作者「删掉的是一个什么都没挂的条目」还是「带走了
-            N 条关系 / M 条情节」，同 `delete_chapter` 的回执口径。
+            N 条关系 / M 条情节」。
 
         Raises:
             NodeNotFound: `node_id` 不在本项目。
@@ -804,27 +791,6 @@ class CanonWriter(Protocol):
         """
         ...
 
-    def delete_chapter(self, project_id: str, number: int) -> ChapterUsage:
-        """把这一章从库里删掉（章行、它的节点、它的快照）。**只删引擎还没记过东西的那种。**
-
-        磁盘上那个 .md **不归它管**（ADR 0007：正文在磁盘上，图层只存快照和记忆）——
-        文件由 `importer.remove_chapter` 处理，它是这个方法唯一的调用方。
-
-        Returns:
-            删掉之前数出来的那份 `ChapterUsage`（全零）。**返回它而不是 `None`**：
-            调用方要能把「删掉了，而且确实什么都没连着」写进日志，
-            而不是事后再查一次一个已经不存在的章。
-
-        Raises:
-            StoreError: 这一章不在库里（磁盘上有、还没 sync 过也算，那时没有行可删）。
-            ChapterInUse: 引擎在这一章上记过东西（异常里带 `ChapterUsage` 明细）。
-
-        实现必须把「数引用」和「删」罩进同一个事务，理由同 `delete_chapter_snapshot`：
-        中间隔着一次抽取的话，数出来的 0 在 DELETE 那一刻已经不成立——**而这一次不会
-        撞外键报错，会静默级联删掉**（`edge.src/dst` 和 `evidence.chapter_id` 都是
-        ON DELETE CASCADE），也就是说这个竞态没有第二道防线，只有事务。
-        """
-        ...
 
     def put_evidence(self, spec: EvidenceSpec) -> Evidence:
         """落一条双指针证据（ADR 0006）。**`evidence` 行的唯一产地。**

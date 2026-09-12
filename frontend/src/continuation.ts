@@ -18,21 +18,30 @@ export interface SuggestSignal {
   hasSuggestion: boolean;
   /** 编辑器里这一章还没打开（正文没加载完）。 */
   loading?: boolean;
+  /** 写作助手开着（novel-agent 模式，`useCoords.chatOpen`）。 */
+  assistantOpen?: boolean;
+  /** 设置里「是否在 novel-agent 模式下续写」那颗开关（`settings.continuation_in_agent_mode`）。
+   *  设置还没回来时它是 `undefined`——按关着算，默认本来就是关。 */
+  continuationInAgentMode?: boolean;
 }
 
 /**
  * 该不该去问模型。**默认是「不问」**——每一次问都是作者自己的钱（BYOK）。
  *
- * 四条不问的理由，每条都是真实会发生的场景：
+ * 五条不问的理由，每条都是真实会发生的场景：
  * - 光标前没有实质内容：空章 / 刚开头，问了也只能瞎编
  * - 有选区：作者在选、在删、在查，不是在往下写
  * - 已经有建议挂着：再问一次是覆盖自己，纯浪费
  * - 正文还没加载完：拿到的上文是空的或是上一章的
+ * - 写作助手开着、而作者没在设置里放行：**模式二默认没有续写**（作者 2026-09-10 定的，
+ *   起因是助手开着、正文里还在往下冒灰字）。「模式」在代码里只是一块布局，编辑器本来
+ *   不知道面板开没开——所以这条得在这儿明写，不能指望别处替它拦
  */
 export function shouldSuggest(signal: SuggestSignal): boolean {
   if (signal.loading) return false;
   if (signal.hasSelection) return false;
   if (signal.hasSuggestion) return false;
+  if (signal.assistantOpen && !signal.continuationInAgentMode) return false;
   return signal.before.trim().length > 0;
 }
 

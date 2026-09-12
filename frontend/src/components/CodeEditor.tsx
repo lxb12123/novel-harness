@@ -16,6 +16,8 @@ const External = Annotation.define<boolean>();
 // （那正是 ProseMirror 会买来的 offset 地狱）。段落 = 空行分隔的文本块，锚靠重寻 quote 定位。
 //
 // 它只是磁盘 chapters/NNNN.md 的便利视图：打开=读盘（value 换），保存=写回同一个 md。
+// `value` 不是整份正文——章标那一行被 `CenterEditor`（`chapterTitle.ts::splitHeading`）
+// 截掉了，这儿的下标因此是「扣掉 head 长度」之后那份坐标系，不是 doc 原始下标。
 
 export interface CodeEditorHandle {
   /** 选中 [from, to) 并滚进视野（R4 冲突回跳、证据回跳用）。位置是字符串 code unit 下标。 */
@@ -34,8 +36,25 @@ const theme = EditorView.theme({
     fontFamily: 'ui-monospace, "SF Mono", Menlo, monospace',
     fontSize: "14px",
     lineHeight: "1.85",
+    // 同左栏书架 `.shelf-scroll`（styles.css）：宽度常驻、只切换颜色，
+    // 平时透明、悬浮才现身——避免宽度跟着 hover 抖动。
+    scrollbarWidth: "thin",
+    scrollbarColor: "transparent transparent",
   },
-  ".cm-content": { padding: "14px 16px", caretColor: "var(--ink)" },
+  ".cm-scroller:hover": { scrollbarColor: "var(--line) transparent" },
+  ".cm-scroller::-webkit-scrollbar": { width: "6px" },
+  ".cm-scroller::-webkit-scrollbar-track": { background: "transparent" },
+  ".cm-scroller::-webkit-scrollbar-thumb": { background: "transparent", borderRadius: "3px" },
+  ".cm-scroller:hover::-webkit-scrollbar-thumb": { background: "var(--line)" },
+  // 左右内边距**不是一个定值，是「把正文挤成一栏」的那道留白**：窗口越宽，它越大，
+  // 正文的行宽被 `--text-column` 钉住不动（`styles.css` 里那一条，同一个数还管着
+  // 顶栏的标题和图标，所以三者永远对齐）。窄的时候 `max()` 落回 16px，跟以前一样。
+  // **用内边距而不是 `max-width`**：`.cm-content` 保持满宽，作者点在留白里也落得到光标；
+  // 收窄成一栏之后再让他「点不中的地方」变多，那是拿一个毛病换另一个。
+  ".cm-content": {
+    padding: "14px max(16px, calc((100% - var(--text-column, 720px)) / 2))",
+    caretColor: "var(--ink)",
+  },
   ".cm-cursor": { borderLeftColor: "var(--ink)" },
   // 程序化选区（R4 高亮）必须看得见——drawSelection 画的是这个类，两种主题都给足对比。
   ".cm-selectionBackground, &.cm-focused .cm-selectionBackground, ::selection": {
@@ -168,8 +187,11 @@ export const CodeEditor = forwardRef<
         const view = viewRef.current;
         if (!view) return;
         const len = view.state.doc.length;
+        // 下限兜底 0：CenterEditor 现在喂进来的是「整份 doc 下标 - 头部长度」，
+        // 锚在被藏起来的章标那一行时会算出负数（CM6 拒收，选区下标不许 < 0）。
+        const clamp = (n: number) => Math.max(0, Math.min(n, len));
         view.dispatch({
-          selection: { anchor: Math.min(from, len), head: Math.min(to, len) },
+          selection: { anchor: clamp(from), head: clamp(to) },
           scrollIntoView: true,
         });
         view.focus();

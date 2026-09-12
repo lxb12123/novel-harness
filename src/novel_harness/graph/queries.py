@@ -25,7 +25,6 @@ from .models import (
     ChapterSnapshot,
     ChapterSpec,
     ChapterText,
-    ChapterUsage,
     Edge,
     EdgeProps,
     EdgeSpec,
@@ -64,6 +63,55 @@ TEMPORAL_WHERE: Final = """
   若那列可空，`NULL != 'STALE'` 在 SQL 三值逻辑里求值为 NULL 即假，这条 WHERE 会
   **静默丢掉每一条作者声明的无证据边**——而作者声明正是整个产品（ADR 0004）。
 - `status = 'ACTIVE'`：RETRACTED = 这条事实从未成立过（同章更正）。
+
+⚠️ **`edge` 上的 `valid_to_chapter` 从 2026-09-06 起恒为 NULL**
+（[ADR 0043](../../../docs/adr/0043-facts-store-a-start-not-an-interval.md)：事实只记
+起点，「谁盖住谁」改在读的时候算，见下面的 `CURRENT_EDGE_CTE`）。那一行条件因此对
+`edge` 恒真——**留着不删**，因为 `story_event` / `event_knower` 也吃这份 WHERE，
+它们的那一列今天全是 NULL 但列还在，而这份 WHERE 是全系统唯一一份。
+"""
+
+
+CURRENT_EDGE_CTE: Final = """
+    SELECT * FROM (
+        SELECT e.*, RANK() OVER (
+                 PARTITION BY
+                   e.project_id, e.information_scope, e.type,
+                   -- multi 不分组：每行自成一组，全部留下。
+                   CASE et.exclusivity WHEN 'multi' THEN e.id ELSE e.src END,
+                   CASE et.exclusivity WHEN 'single_per_src_dst' THEN e.dst ELSE '' END
+                 ORDER BY e.valid_from_chapter DESC
+               ) AS rn
+          FROM edge e
+          JOIN edge_type et ON et.type = e.type
+         WHERE e.project_id = :pid AND {temporal}
+    ) WHERE rn = 1
+"""
+"""「截至第 :ch 章，每个语义槽当前生效的那一条边」——**全系统唯一一份**（ADR 0043）。
+
+从前这件事是在**写**的时候做的：新边落库时把旧边闭合成 `[old_from, new_from)`。
+那要求事实按章号顺序到达，而补全队列按「离作者正在写的那一章多近」排队（那是对的，
+见 ADR 0036），于是倒着分析时每一条更早的事实都插不进去。实测代价：真书 62 章分析
+失败、全书只有 11 章有事件（2026-09-05）。
+
+现在改成读的时候算：组内取 `valid_from_chapter` 最大的那一条。**「后来的盖住先前的」
+这条纪律一个字没变**，变的只是它在哪一步生效。
+
+── 三件必须照抄、不许在别处再写一遍的事 ──────────────────────────────────
+1. **分组键和 `find_conflicts` 的口径逐字一致**（`single_per_src` = (src,type,scope)；
+   `single_per_src_dst` 再加 dst；`multi` 不分组）。两处分叉的后果是「写的时候认为
+   它们互斥、读的时候认为不互斥」，屏幕上会同时出现两条互斥事实。
+2. **窗口必须开在「整个项目的这一层」上，不能先按节点过滤再开窗。** 过滤条件里若
+   带 dst（`edges_for_nodes` 的 `dst IN (…)`），只捞到半个组时组内最大值就是错的——
+   贾环→荣国府[3] 会在 160 章冒充当前位置，因为 贾环→观音寺[156] 没被捞进来。
+   所以本 CTE 先在全项目上定出「当前边」，节点过滤放在它外面。
+3. **`RANK()` 不是 `ROW_NUMBER()`，这一个词是故意的。** 同一槽里两条 `valid_from`
+   **相同**且都 ACTIVE 是数据坏了（supersede 的同章更正本该把前一条标成 RETRACTED），
+   而 `ROW_NUMBER()` 会闷声挑一条、把数据层的 bug 变成屏幕上一条看不出来的错事实。
+   `RANK()` 让它们并列第一、一起返回，于是下游那道「一个槽拿到两条互斥边就炸」的
+   守卫照旧开火（`sqlite_store` 的 `location` / `states` 投影，
+   `tests/test_state_at.py::test_two_locations_at_once_blows_up`）。
+   **不同章的两条不是坏数据**，那正是这套改动要正常处理的情况。
 """
 
 _EDGE_COLS: Final = (
@@ -750,6 +798,104 @@ _UNDIRECTED_SQL, _UNDIRECTED_PARAMS = _in_clause(
 )
 
 
+def author_owned_edge_ids(
+    conn: sqlite3.Connection, project_id: str, edge_ids: Collection[str]
+) -> set[str]:
+    """这一批边里**被作者接管过**的那些（active override 指向它们）。
+
+    **一次查一批，不是一条一问**：人物卡那一格一次要判几十条历史值，
+    N+1 在 158 章的书上就是几十次往返。
+    """
+    ids = sorted(set(edge_ids))
+    if not ids:
+        return set()
+    placeholders, params = _in_clause("edge", ids)
+    cur = conn.execute(
+        f"""
+        SELECT replacement_edge_id AS id FROM canon_edge_override
+         WHERE project_id = :pid AND status = 'ACTIVE'
+           AND replacement_edge_id IN ({placeholders})
+        """,
+        {"pid": project_id, **params},
+    )
+    return {str(row["id"]) for row in _rows(cur)}
+
+
+def state_dimension_names(
+    conn: sqlite3.Connection, project_id: str, limit: int
+) -> list[str]:
+    """这本书已经用过的状态字段名，**用得多的在前**，最多 `limit` 个。
+
+    抽取的 prompt 拿它做「先看看这个字段是不是已经有了，有就复用那个名字」
+    （作者 2026-09-06 定的口径：**不给固定字段表**——小说的状态种类本来就无穷，
+    钉死一张表就读不出「武魂值」「被陛下知晓」这类题材特有的东西了）。
+
+    **按用量排序、并且要有上限**，两条都是必需的：真书上一个人就攒出 130 个字段名
+    （「所属 / 所属衙门 / 所在衙门 / 所属营伍 / 神枢营职位…」十三个说的是同一件事），
+    全塞进 prompt 是几千 token 的噪声，而且尾巴上那些正是模型上一次现编的。
+    用得多的那些才是这本书真正的骨架。
+    """
+    cur = conn.execute(
+        """
+        SELECT n.name AS name, COUNT(*) AS uses
+          FROM edge e
+          JOIN node n ON n.id = e.dst
+         WHERE e.project_id = :pid AND e.type = 'HAS_STATE'
+           AND n.label = 'StateDim' AND e.status = 'ACTIVE'
+         GROUP BY n.name
+         ORDER BY uses DESC, n.name
+         LIMIT :limit
+        """,
+        {"pid": project_id, "limit": limit},
+    )
+    return [str(row["name"]) for row in _rows(cur)]
+
+
+def history_edges_through(
+    conn: sqlite3.Connection,
+    project_id: str,
+    node_id: str,
+    chapter: int,
+    scope: InformationScope,
+    edge_type: EdgeType,
+) -> list[Edge]:
+    """这个人**截至第 :ch 章、这一类的每一条**边（不只当前那一条）。
+
+    两个消费者共用这一份：`HAS_STATE`（人物卡「状态」那一格）和 `LOCATED_AT`
+    （「所在地」那一行）。**别为第二个再抄一遍**——它们问的是同一个问题
+    （「这一格从头到现在填过什么」），只是格子不同。
+
+    ── ⚠️ 这是本文件第二条**故意不取「当前」**的查询 ────────────────────────
+    另一条是 `event_ids_for_one_character`（「他这一路都经历了什么」）。这一条同理：
+    它回答的是「**这一格从头到现在填过什么**」——修为 金丹(ch60) → 元婴(ch120)，
+    人物卡上要把两行都印出来，最新那行打「（最新）」。
+
+    所以它**不套 `CURRENT_EDGE_CTE`**（那个只留每格最后一条），只用 `TEMPORAL_WHERE`
+    的四个条件：章号下界 / scope / status / 证据不 STALE。
+    **章号上界必须留着**：人物卡是「截至第 N 章」的卡，把第 158 章的修为印在作者正读的
+    第 53 章上，是在回答另一个问题。
+
+    ⚠️ **别拿它去喂写作模型。** 模型要的是「他现在什么样」，给它一串历史值等于让它
+    在两个都写着「修为」的值里挑一个（`agent/tools.py` 那条工具走的是 `state_at`）。
+    """
+    cur = conn.execute(
+        f"""
+        SELECT {_EDGE_COLS} FROM edge
+        WHERE project_id = :pid AND src = :node AND type = :type
+          AND {TEMPORAL_WHERE}
+        ORDER BY valid_from_chapter DESC, id DESC
+        """,
+        {
+            "pid": project_id,
+            "node": node_id,
+            "ch": chapter,
+            "scope": scope.value,
+            "type": edge_type.value,
+        },
+    )
+    return [to_edge(r) for r in _rows(cur)]
+
+
 def out_edges_at(
     conn: sqlite3.Connection,
     project_id: str,
@@ -773,10 +919,9 @@ def out_edges_at(
     """
     cur = conn.execute(
         f"""
-        SELECT {_EDGE_COLS} FROM edge
-        WHERE project_id = :pid
-          AND (src = :node OR (dst = :node AND type IN ({_UNDIRECTED_SQL})))
-          AND {TEMPORAL_WHERE}
+        WITH current_edge AS ({CURRENT_EDGE_CTE.format(temporal=TEMPORAL_WHERE)})
+        SELECT {_EDGE_COLS} FROM current_edge
+        WHERE (src = :node OR (dst = :node AND type IN ({_UNDIRECTED_SQL})))
         ORDER BY type, valid_from_chapter, id
         """,
         {
@@ -816,11 +961,10 @@ def incident_edges_at(
         type_sql = f"AND type IN ({t_sql})"
     cur = conn.execute(
         f"""
-        SELECT {_EDGE_COLS} FROM edge
-        WHERE project_id = :pid
-          AND (src IN ({f_sql}) OR dst IN ({f_sql}))
+        WITH current_edge AS ({CURRENT_EDGE_CTE.format(temporal=TEMPORAL_WHERE)})
+        SELECT {_EDGE_COLS} FROM current_edge
+        WHERE (src IN ({f_sql}) OR dst IN ({f_sql}))
           {type_sql}
-          AND {TEMPORAL_WHERE}
         ORDER BY id
         """,
         {"pid": project_id, "ch": chapter, "scope": scope.value, **f_params, **type_params},
@@ -912,19 +1056,26 @@ def find_by_identity(conn: sqlite3.Connection, spec: EdgeSpec) -> Edge | None:
     return to_edge(rows[0]) if rows else None
 
 
-def find_conflicts(
+def find_same_chapter_conflicts(
     conn: sqlite3.Connection, spec: EdgeSpec, exclusivity: Exclusivity
 ) -> list[Edge]:
-    """按 exclusivity 找会与新边**区间重叠**的旧边。三条约束，每条都是必需的：
+    """同一个语义槽里、**同一章**的那条旧边（同章更正的唯一对象）。
+
+    ⚠️ **2026-09-06 收窄过一次**（[ADR 0043](../../../docs/adr/0043-facts-store-a-start-not-an-interval.md)）。
+    它原来叫 `find_conflicts`，找的是整个槽里所有还开着的边——因为那时「谁盖住谁」
+    是在写的时候做的（闭合旧边）。现在那件事在读的时候做（`CURRENT_EDGE_CTE`），
+    写的时候只剩同章更正：**同章两条都 ACTIVE 是唯一读端解不开的坏数据**，
+    所以它仍然要在写的时候被解掉。
+
+    分组口径和 `CURRENT_EDGE_CTE` 的 PARTITION BY **必须逐字一致**，两处分叉的后果是
+    「写的时候认为它们互斥、读的时候认为不互斥」。下面三条约束原样保留：
 
     1. `information_scope = spec.information_scope`（**硬要求**）：跨层 supersede
        会让抽取器的 PROVISIONAL 边去闭合作者的 CANON 边 = Agent 直接改 Canon =
        原则 5 静默破掉。
     2. `status = 'ACTIVE'`：RETRACTED 的边从未成立过，没有区间可闭合。
-    3. `valid_to_chapter IS NULL OR valid_to_chapter > :vf`（**契约没写，但缺了就是 bug**）：
-       一条已被闭合的 `[10,143)` 与新边 `[151,∞)` 根本不重叠，它是「后来他又走了」的
-       正常历史。少了这个条件，下面的 `old.vf < new.vf` 分支会把它重写成 `[10,151)`，
-       凭空把人物在 143–150 章塞回青云城——那正是这套机制要防的重叠/错位事实。
+    3. `valid_from_chapter = :vf`：**只有同章那一条**。不同章的边不是冲突，它们是
+       同一个槽在不同时间的两个观察，由读端按章号定先后。
 
     **这里故意没有「反向再搜一遍 (dst,src)」。** 无向边（RELATED_TO）的两个方向在
     `EdgeSpec` 的构造函数里就已经塌缩成同一个 `(min,max)`（ADR 0008），所以 `spec.src` /
@@ -941,7 +1092,7 @@ def find_conflicts(
         WHERE project_id = :pid AND src = :src AND type = :type {dst_clause}
           AND information_scope = :scope
           AND status = 'ACTIVE'
-          AND (valid_to_chapter IS NULL OR valid_to_chapter > :vf)
+          AND valid_from_chapter = :vf
         ORDER BY valid_from_chapter, id
         """,
         {
@@ -1008,15 +1159,6 @@ def update_edge_facets(
             "ev": spec.evidence_id,
             "evs": evidence_status.value,
         },
-    )
-    return fetch_edge(conn, edge_id)
-
-
-def close_edge(conn: sqlite3.Connection, edge_id: str, valid_to: int) -> Edge:
-    """闭合：`valid_to_chapter = new.valid_from`。DB 的 CHECK 会拒掉空区间。"""
-    conn.execute(
-        "UPDATE edge SET valid_to_chapter = :vt WHERE id = :id",
-        {"id": edge_id, "vt": valid_to},
     )
     return fetch_edge(conn, edge_id)
 
@@ -1250,62 +1392,6 @@ def snapshot_usage(conn: sqlite3.Connection, snapshot_id: str) -> SnapshotUsage:
     return SnapshotUsage(snapshot_id=snapshot_id, **_rows(cur)[0])
 
 
-def chapter_usage(
-    conn: sqlite3.Connection, project_id: str, chapter_id: str, number: int
-) -> ChapterUsage:
-    """引擎在这一章上记了多少东西。**删整章之前问这个。**
-
-    五个计数各对应一条「删了这一章就会跟着没」的路：
-
-    - `evidence.chapter_id` → CASCADE，跟着蒸发；
-    - `edge` 两条：**从这一章生效的**（`valid_from_chapter`）和**指着这一章那个节点的**
-      （`src`/`dst`，PLANTED_IN / RESOLVED_IN），后者走 node 的 CASCADE 无声消失。
-      两条用 `OR` 数进同一个 `edges`，不是相加——一条边可能同时满足两边，
-      相加会报出一个比真实条数大的数，而那个数会被原样念给作者听；
-    - `story_event.chapter_number`：记在这一章名下的情节；
-    - `extraction_run` / `proposal_set`：跟着快照走的两张审计表（同 `snapshot_usage`）。
-
-    **`valid_to_chapter` 故意不算**：一条「在第 n 章失效」的边说的是别处那件事在这儿结束了，
-    它的出处不在这一章。把它算进来，删任何一章都会被自己以外的历史挡住。
-    """
-    cur = conn.execute(
-        """
-        SELECT
-          (SELECT COUNT(*) FROM evidence WHERE chapter_id = :cid) AS evidence,
-          (SELECT COUNT(*) FROM edge
-             WHERE project_id = :pid
-               AND (valid_from_chapter = :number OR src = :cid OR dst = :cid)) AS edges,
-          (SELECT COUNT(*) FROM story_event
-             WHERE project_id = :pid AND chapter_number = :number) AS events,
-          (SELECT COUNT(*) FROM extraction_run WHERE snapshot_id IN
-             (SELECT id FROM chapter_snapshot WHERE chapter_id = :cid)) AS extraction_runs,
-          (SELECT COUNT(*) FROM proposal_set   WHERE snapshot_id IN
-             (SELECT id FROM chapter_snapshot WHERE chapter_id = :cid)) AS proposal_sets
-        """,
-        {"pid": project_id, "cid": chapter_id, "number": number},
-    )
-    return ChapterUsage(chapter_number=number, **_rows(cur)[0])
-
-
-def delete_chapter(conn: sqlite3.Connection, project_id: str, chapter_id: str) -> None:
-    """把这一章从库里抹掉：证据 → 快照 → 节点（`chapter` 行跟着节点的 CASCADE 走）。
-
-    **顺序是这个函数的全部内容，不是风格。** 一句 `DELETE FROM node` 本来就能靠级联
-    删干净，但级联的执行次序不由我们定：`evidence.chapter_snapshot_id` 到
-    `chapter_snapshot` **没有 CASCADE**，快照先被级联掉的那一刻，还活着的证据行就
-    撞外键了。自己按依赖倒序删，就没有「中途那一瞬间」这回事。
-
-    **不检查引用**——那是调用方（`sqlite_store.delete_chapter`）的活，它要在同一个事务里
-    先问 `chapter_usage`。这里真有人引着的话外键会抛，那是最后一道，不是第一道。
-    """
-    conn.execute("DELETE FROM evidence WHERE chapter_id = :cid", {"cid": chapter_id})
-    conn.execute("DELETE FROM chapter_snapshot WHERE chapter_id = :cid", {"cid": chapter_id})
-    # 删 node 而不是删 chapter：两者同生（`put_chapter`），只删 chapter 会在库里留下
-    # 一个没有章的 Chapter 节点，而它照样会出现在按 label 扫的地方。
-    conn.execute(
-        "DELETE FROM node WHERE id = :cid AND project_id = :pid",
-        {"cid": chapter_id, "pid": project_id},
-    )
 
 
 def delete_snapshot(conn: sqlite3.Connection, snapshot_id: str) -> int:

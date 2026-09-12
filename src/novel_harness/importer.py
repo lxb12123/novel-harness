@@ -964,51 +964,6 @@ DELETED_DIR: Final = "deleted"
 """
 
 
-def remove_chapter(store: GraphStore, project_id: str, root: Path, chapter: int) -> Path:
-    """删掉一章：先过图层那一关，再把 .md **挪走**（不是删掉）。返回它挪到了哪儿。
-
-    ── 两条顺序上的选择，都不是随手定的 ──────────────────────────────────────
-
-    **① 先库后盘**，跟 `save_chapter` 的「磁盘先、DB 跟」（ADR 0007）**是反的**。
-    因为这一次库那边**会拒绝**（`ChapterInUse`）：盘先动的话，作者会看见文件没了、
-    然后弹一句「删不掉」——两件事同时成立，而他没有任何办法把它放回去。
-    反过来出错（库删了、文件没挪成）是自愈的：下一次 `sync` 照着磁盘把这一章重新读回来。
-
-    **② 挪走不是删掉。** 那是作者的稿子，可能是他写了三小时的东西，而这颗按钮离
-    「新起一章」只有一列的距离。挪进 `deleted/` 之后引擎立刻当它不存在
-    （`chapter_files` 只认 `chapters/NNNN.md`），而他在自己的文件夹里还找得回来。
-    重名不覆盖：同一章删两次（新建 → 删 → 再新建 → 再删）会有第二份，加 `-2`、`-3`。
-
-    Args:
-        chapter: 章号。**不检查它是不是最后一章**——中间留个洞是允许的
-            （`append_chapter` 取的是「最大的号 +1」，正是为了这个）。
-
-    Returns:
-        挪过去之后那个文件的路径。
-
-    Raises:
-        ChapterMissing: 磁盘上没有这一章。
-        ChapterInUse: 引擎在这一章上记过东西（图层抛的，明细在异常里）。
-        StoreError: 这一章还没进过库（磁盘上有、没 sync 过）。**不吞掉**：
-            那说明这个库和这个文件夹已经对不上了，作者该知道，而不是让删除
-            悄悄地只删掉一半。
-    """
-    file = root / chapter_path(chapter)
-    if not file.is_file():
-        raise ChapterMissing(f"第 {chapter} 章在磁盘上不存在", chapter)
-
-    store.delete_chapter(project_id, chapter)
-
-    trash = root / DELETED_DIR
-    trash.mkdir(parents=True, exist_ok=True)
-    target = trash / file.name
-    serial = 2
-    while target.exists():
-        target = trash / f"{file.stem}-{serial}{file.suffix}"
-        serial += 1
-    file.rename(target)
-    return target
-
 
 def toc_skip_fingerprint(conn: Connection, store: GraphStore, project_id: str) -> str:
     """撤销「目录跳过」的前置条件用的那份指纹：**这本书自导入起有没有变过**。

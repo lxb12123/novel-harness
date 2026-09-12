@@ -73,7 +73,7 @@ from novel_harness.agent.ports import (
 )
 from novel_harness.agent.tools import TOOL_NAMES, AuthorQuestion
 from novel_harness.api.chat import _visible
-from novel_harness.calibration.store import CalibrationStore
+from novel_harness.checks.service import RulesReader
 from novel_harness.db import Connection, connect
 from novel_harness.draft.capabilities import resolve_capabilities
 from novel_harness.draft.context import DraftContext
@@ -82,7 +82,7 @@ from novel_harness.draft.provider import ProviderConfig, ProviderError, ToolCall
 from novel_harness.draft.rolling_summary import SUMMARY_VERSION, SummaryStore
 from novel_harness.graph.sqlite_events import SqliteEventStore
 from novel_harness.graph.sqlite_store import SqliteStoryGraph
-from calibration_seed import seed_calibration
+from novel_harness.notices import NoticeReader
 
 __all__ = ["conn", "world"]
 """两个 fixture 从 `test_agent_tools` 借来（同 `conftest.py` 那次 re-export）。"""
@@ -229,24 +229,19 @@ def a_wired_context(world: World, **overrides: Any) -> ToolContext:
     「没接线」——`ok=False`、返回里一个字的书都没有。**在那种上下文上搜毒是空转。**
     """
     _feed_a_summary(world.conn, world.project_id)
-    _, author_turn = seed_calibration(
-        conn=world.conn,
-        project_id=world.project_id,
-        store=world.store,
-        root=world.root,
-        chapter=CHAPTER,
-    )
     base: dict[str, Any] = {
         "drafter": PoisonedDesk(),
         "summaries": SummaryStore(world.conn),
         "events": SqliteEventStore(world.conn),
-        "calibrations": CalibrationStore(world.conn),
-        "author_turn": author_turn,
         "working_chapter": CHAPTER,
         # 轨道核对（2026-08-23）。这儿给的是一个**假的核对模型**，因为真核对要花钱；
         # 这张网测的是「这条工具答不答得上话、作者看不看得见它在干什么」，
         # 而轨道那一问本身有 `tests/test_advisory_review.py` 单独钉着。
         "track_check": _a_track_check(),
+        # 右栏那两栏的只读端口（2026-09-12）。**真的读端**，不是桩：这张网要的是
+        # 「每一条工具都答得上话」，一句「没接线」等于那一格没被考到。
+        "rules": RulesReader(world.conn),
+        "notices": NoticeReader(world.conn, world.store),
     }
     base.update(overrides)
     return world.context(**base)
@@ -263,24 +258,19 @@ EVERY_TOOL = (
     ("character_chapters", {"characters": ["萧决", "顾清音"]}),
     ("chapter_summaries", {"first_chapter": 1, "last_chapter": CHAPTER}),
     ("chapter_text", {"chapter": CHAPTER}),
-    ("draft_chapter", {"chapter": CHAPTER, "calibration_id": "calibration:test:seeded"}),
+    ("draft_chapter", {"chapter": CHAPTER, "brief": "写一场雪，收在他没抬头。"}),
     ("save_draft", {"draft_id": DRAFT_ID}),
     ("read_draft", {"draft_id": DRAFT_ID}),
     ("remember_rule", {"rule": "这一章别写打斗", "until": "这一章写完为止"}),
     # `get_result` 要放在**第二批**：stored 表在批创建时从 live 数，第一批都还没跑
     # 的话它手里是空的，取 1 号会拒绝（`ok=False`）——这一节要的是每条都 ok=True。
     ("get_result", {"id": 1}),
-    ("calibrate_scene", {
-        "chapter": CHAPTER,
-        "intended_cast": [{"surface": "萧决"}],
-        "directive_candidates": [{
-            "kind": "ENTER_LOCATION",
-            "actor_surface": "萧决",
-            "location_surface": "北荒",
-        }],
-    }),
-    ("seal_scene_brief", {"inspection_id": "inspection:test:seeded"}),
     ("check_track", {"chapter": CHAPTER}),
+    # 右栏那四栏（2026-09-12，`agent/panels.py`）。
+    ("character_card", {"chapter": CHAPTER, "character": "萧决"}),
+    ("chapter_events", {"first_chapter": 1, "last_chapter": CHAPTER}),
+    ("validation_rules", {"chapter": CHAPTER}),
+    ("notifications", {}),
     ("ask_author", {"question": "这一场你想让萧决知道那件事吗？",
                     "options": ["让他知道", "先瞒着他"]}),
 )
@@ -868,16 +858,12 @@ def test_a_question_wins_even_when_the_batch_was_allowed_to_run_at_once(
                 wants(
                     (
                         "draft_chapter",
-                        json.dumps(
-                            {"chapter": CHAPTER, "calibration_id": "calibration:test:seeded"}
-                        ),
+                        json.dumps({"chapter": CHAPTER, "brief": "写一场雪"}),
                     ),
                     ("ask_author", json.dumps({"question": ASKED, "options": list(OPTIONS)})),
                     (
                         "draft_chapter",
-                        json.dumps(
-                            {"chapter": CHAPTER, "calibration_id": "calibration:test:seeded"}
-                        ),
+                        json.dumps({"chapter": CHAPTER, "brief": "写一场雪"}),
                     ),
                     ("save_draft", json.dumps({"draft_id": DRAFT_ID})),
                 ),

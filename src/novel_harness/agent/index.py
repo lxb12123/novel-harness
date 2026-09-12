@@ -90,7 +90,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from ..draft.length import DraftLanguage, count_units
 from ..graph import CANONICAL_ALIAS_LABELS, InformationScope, Node, NodeLabel, Resolution
 from ..importer import ChapterFile, chapter_files, chapter_path
-from ..panel.constraints import forbidden_entities
 from ..text import paragraphs as split_paragraphs
 from ..text.mentions import compile_alternation, find_mentions
 from .ports import ToolContext, ToolRefused
@@ -282,31 +281,19 @@ class BookIndexArgs(BaseModel):
 
 
 class RosterEntry(BaseModel):
-    """角色册里的一个东西：**只有正式名和类型**。别名一个都不给（见模块 docstring）。"""
+    """角色册里的一个东西：**只有正式名和类型**。别名一个都不给（见模块 docstring）。
+
+    **2026-08-31：`first_appears_chapter`/`future` 两个字段删了**（未登场标记，
+    见 [ADR 0041](../../../docs/adr/0041-forbidden-entities-cut.md)）。
+    章目录那一半（`ChapterEntry.future`）没有跟着删，两者算法本来就不同——
+    章的 future 是纯章号比较，跟 `panel.constraints.forbidden_entities()` 无关。
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     name: str
     label: str
     """`Character` / `Location` / `Faction` / `Secret` / `Foreshadow` / `Object`。"""
-
-    first_appears_chapter: int | None = None
-    """作者声明的首现章号，**且它晚于作者当前进度**（也就是「这东西还没登场」）。
-
-    `None` 有两个意思，靠 `BookIndex.future_from_chapter` 区分：那个字段是 `None` 时
-    表示这一轮压根没算首现（不知道作者写到第几章）；不是 `None` 时表示这东西已经登场了。
-    数据来源是 `panel/constraints.forbidden_entities()`——**未来与秘密进 prompt 的唯一闸门**，
-    这里不另开一条路。
-    """
-
-    future: bool = False
-    """`True` = 作者还没写到它首现的那一章。**和 `ChapterEntry.future` 是同一个东西。**
-
-    它不是上面那个字段的重复：`first_appears_chapter is None` 同时表示「已经登场」和
-    「这一轮压根没算」，而模型是**逐条**推理的——要它每读一条角色册记录就回头去和
-    `future_from_chapter` 对一次数，是把标记的责任推给了读的人。
-    章目录那一半从第一天就有这个布尔，角色册这一半漏了它整整一轮。
-    """
 
 
 class ChapterEntry(BaseModel):
@@ -366,15 +353,6 @@ def _roster(context: ToolContext, labels: frozenset[str] | None) -> list[RosterE
     走 `store.resolve(project_id)`（`surfaces=None` = 全项目角色册）。**按节点去重**，
     所以一个人的五个别名只出一条，出的还是他的正式名——别名不出现在返回里的任何位置。
     """
-    future_first: dict[str, int] = {}
-    if context.working_chapter is not None:
-        future_first = {
-            entity.node.id: entity.first_appears_chapter
-            for entity in forbidden_entities(
-                context.store, context.project_id, context.working_chapter
-            )
-        }
-
     seen: dict[str, RosterEntry] = {}
     for resolution in context.store.resolve(context.project_id):
         for hit in resolution.hits:
@@ -383,14 +361,7 @@ def _roster(context: ToolContext, labels: frozenset[str] | None) -> list[RosterE
                 continue
             if labels is not None and str(node.label) not in labels:
                 continue
-            seen[node.id] = RosterEntry(
-                name=node.name,
-                label=str(node.label),
-                first_appears_chapter=future_first.get(node.id),
-                # 判据就是「它在不在那个唯一闸门的输出里」——`forbidden_entities` 已经按
-                # `first_appears_chapter > working_chapter` 筛过一遍，这里不再算第二次。
-                future=node.id in future_first,
-            )
+            seen[node.id] = RosterEntry(name=node.name, label=str(node.label))
     return sorted(seen.values(), key=lambda entry: (entry.label, entry.name))
 
 
@@ -477,13 +448,11 @@ def handle_book_index(args: BookIndexArgs, context: ToolContext) -> BookIndex:
             f"要接着往下拿就再调一次，把 from_chapter 设成 {chapters[-1].chapter + 1}。"
         )
 
-    # **两半都要数。** 只数章目录的话，作者线性往下写（`chapters/` 里最远就是他写到的
-    # 那一章）时未来条数恒为 0，于是整份返回上一句话都没有——而角色册里正躺着第 200 章
-    # 的地点和第 300 章的秘密。ADR 0019 边界二把「推理被污染」列成**接受**的残余代价，
-    # 它接受的前提之一是「作者看得见」，那一句话就是「看得见」的全部实现。
+    # **2026-08-31：只数章目录了。** 角色册那一半（哪些实体还没到首现章）随
+    # `forbidden_entities` 一起删了（ADR 0041）——`RosterEntry` 不再有 `future` 字段。
     future_note = _future_note(
         context,
-        sum(1 for entry in chapters if entry.future) + sum(1 for entry in roster if entry.future),
+        sum(1 for entry in chapters if entry.future),
     )
     if future_note:
         notes.append(future_note)

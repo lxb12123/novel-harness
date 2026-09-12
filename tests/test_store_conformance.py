@@ -44,8 +44,6 @@ from test_checks import FakeGraph as RulesFakeGraph
 from test_fake_graph import FakeGraph as KnowledgeFakeGraph
 
 from novel_harness import importer, project
-from novel_harness.checks import CheckContext
-from novel_harness.checks.dead_speaks import check
 from novel_harness.db import IN_MEMORY, Connection, connect, migrate
 from novel_harness.graph import (
     AliasKind,
@@ -55,7 +53,6 @@ from novel_harness.graph import (
     EdgeStatus,
     EdgeType,
     EvidenceStatus,
-    HealthValue,
     InformationScope,
     Node,
     NodeLabel,
@@ -289,104 +286,21 @@ def test_planned_and_rejected_have_no_read_path(
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# 6. R3 DEAD_SPEAKS —— 打真库，不是打 FakeGraph
+# 6.（空缺）**规则打真库那一节没有了**
 #
-# ⚠️ **2026-08-14 这一节从 R4 换成了 R3**（[ADR 0027](../docs/adr/0027-scene-blocks-cut.md)
-# 砍掉了 R4）。**换而不是删**，理由就是这个文件存在的理由：`RulesFakeGraph`
-# （`test_checks.py` 里那份）手写了一遍五条件时态过滤，而 R4 那一节是**唯一**把它钉在
-# 生产 `state_at` 上的地方。整节删掉的话，那个 Fake 从此可以单方面漂移，
-# 而 `test_checks.py` 会一路绿着——正是本文件开头描述的那个故障。
+# ⚠️ 2026-09-05：这一节先后是 R4、然后是 R3（[ADR 0027] → [ADR 0042]），
+# 现在**系统规则一条不剩**，它没有主语了，整节删掉。
 #
-# 换过来之后打的还是同两个后端方法（`resolve` + `state_at`），只是入口规则不同。
+# **删掉的是什么，说清楚**：它曾是唯一一处「拿一条真规则同时打 FakeGraph 和真库」的
+# 地方——`RulesFakeGraph` 手写了一遍五条件时态过滤，那一节把它钉在生产 `state_at` 上。
+# 今天唯一还在跑的规则是作者自定义的 `forbidden_literal`，它只读段落、根本不碰图，
+# 所以**没有任何规则能承担这个角色**，硬留一节等于留一节假戏。
+#
+# **那条缝没有裸奔**：上面第 4 节（闭开区间 / PLANNED / 已撤回）打的就是同两个后端的
+# `resolve` + `state_at`，Fake 漂了照样红。真正丢掉的只有「经由一条规则」这一层间接。
+# 哪天再有一条读图的系统规则，把这一节按原样加回来。
 # ══════════════════════════════════════════════════════════════════════════
 
-HEALTH_DIM = _node("state:conf:01JA", NodeLabel.STATE_DIM, "健康", dim_key="health")
-
-R3_CAST = (*CAST, HEALTH_DIM)
-"""R3 要一个状态维度节点才能表达「死了」（`HAS_STATE` 的 dst）。"""
-
-
-def _dead_world(**edge_kwargs: object) -> World:
-    """萧决在第 89 章死了。`edge_kwargs` 用来把这条边推进那五个条件的某一个里去。"""
-    return World(
-        nodes=R3_CAST,
-        edges=(
-            _edge(
-                XIAO_JUE,
-                HEALTH_DIM,
-                EdgeType.HAS_STATE,
-                89,
-                value_key=HealthValue.DEAD,
-                **edge_kwargs,  # type: ignore[arg-type]
-            ),
-        ),
-    )
-
-
-def _r3_ctx(store: StoryGraph, *, chapter: int = 151) -> CheckContext:
-    return CheckContext(
-        store=store,
-        project_id=PID,
-        chapter=chapter,
-        paragraphs=["萧决道：「我还没死。」"],
-    )
-
-
-def test_r3_fires_when_a_dead_character_speaks(rules_store: Build) -> None:
-    """图上他第 89 章死了，第 151 章的正文里还挂着他的对话标签。"""
-    issues = check(_r3_ctx(rules_store(_dead_world())))
-
-    assert len(issues) == 1
-    assert issues[0].rule == "R3"
-    assert issues[0].issue_type == "DEAD_SPEAKS"
-    assert "萧决" in issues[0].message
-    # 锚永远是三元组，永不 offset（ADR 0006）。
-    assert issues[0].anchor.para_index == 0
-    assert issues[0].anchor.quote_text == "萧决"
-
-
-@pytest.mark.parametrize(("chapter", "expected"), [(88, 0), (89, 1), (151, 1)])
-def test_r3_starts_firing_at_the_death_chapter(
-    rules_store: Build, chapter: int, expected: int
-) -> None:
-    """`[valid_from, valid_to)` 的下界在这里是**可见的产品行为**：死亡那一章起才算死。"""
-    assert len(check(_r3_ctx(rules_store(_dead_world()), chapter=chapter))) == expected
-
-
-def test_r3_is_silent_when_nothing_is_declared(rules_store: Build) -> None:
-    """闭世界：图上没有任何状态 ≠ 他死了。"""
-    assert check(_r3_ctx(rules_store(World()))) == []
-
-
-def test_r3_is_silent_when_the_speaker_surface_is_ambiguous(rules_store: Build) -> None:
-    """「师兄」一章里可能是 8 个人 → 跳过，不猜（`usable_for_rules`）。"""
-    store = rules_store(
-        World(
-            nodes=R3_CAST,
-            edges=_dead_world().edges,
-            extra_aliases={"师兄": (XIAO_JUE, GU_QINGYIN)},
-        )
-    )
-    context = CheckContext(
-        store=store, project_id=PID, chapter=151, paragraphs=["师兄道：「我还没死。」"]
-    )
-
-    assert check(context) == []
-
-
-def test_r3_never_fires_on_provisional(rules_store: Build) -> None:
-    """§5.4：拿抽取器的猜测报错 = 用 Agent 的猜测去质疑作者 = 原则 5 的反面。"""
-    assert check(_r3_ctx(rules_store(_dead_world(scope=InformationScope.PROVISIONAL)))) == []
-
-
-def test_r3_stops_firing_on_stale_evidence(rules_store: Build) -> None:
-    """「依据没了还在质疑作者」是最伤的那类误报——这就是 STALE 90% 的价值。"""
-    world = _dead_world(evidence_id=EV, evidence_status=EvidenceStatus.STALE)
-    assert check(_r3_ctx(rules_store(world))) == []
-
-
-def test_r3_never_fires_on_retracted(rules_store: Build) -> None:
-    assert check(_r3_ctx(rules_store(_dead_world(status=EdgeStatus.RETRACTED)))) == []
 # ══════════════════════════════════════════════════════════════════════════
 # real only —— 保存提交令牌：ABA generation / CAS / 退休失败回滚
 # ══════════════════════════════════════════════════════════════════════════

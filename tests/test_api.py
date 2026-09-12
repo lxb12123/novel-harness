@@ -611,7 +611,11 @@ def test_check_reports_which_rules_ran(client: TestClient, book: dict[str, str])
     assert r.status_code == 200, r.text
     body = r.json()
     # 「跑了哪几条、各自什么状态」印出来，不静默（§10 约束 8）。
-    assert {rule["rule_id"] for rule in body["rules"]} == {"R3"}
+    # **2026-09-05 起系统规则一条都没有**（ADR 0042），这本书也没加过自定义规则，
+    # 所以这里是**空列表**——而「空列表」正是这条出参存在的理由：没有规则和没有问题
+    # 在面板上长得一样，出参里必须分得开（`issues` 也是空的，但 `rules` 空说明的是
+    # 「压根没查」）。作者加了规则之后这里就有条目，`tests/test_rules_fire.py` 钉那一头。
+    assert [rule["rule_id"] for rule in body["rules"]] == []
     assert body["gate"] in {"passed", "blocked", "error"}
     assert body["source_generation"] >= 1
     assert body["ruleset_epoch"] >= 1
@@ -706,72 +710,6 @@ def test_create_chapter_takes_no_chapter_number(client: TestClient, book: dict[s
     r = client.post(f"/api/projects/{pid}/chapters", json={"number": 99})
     assert r.status_code == 201
     assert r.json()["number"] == 4  # 那个 99 一个字都没被听进去
-
-
-def test_delete_chapter_takes_it_out_of_the_list(client: TestClient, book: dict[str, str]) -> None:
-    """章目录里那颗「⋯」：删掉一章 → 目录里没有了，正文也读不到了。
-
-    删的是刚新建的第 4 章——引擎在它上面什么都没记过，所以它是唯一一档
-    「删得动」的形状（别的形状见下面那条 409）。
-    """
-    pid = _pid(book)
-    client.post(f"/api/projects/{pid}/chapters")
-
-    r = client.delete(f"/api/projects/{pid}/chapters/4")
-
-    assert r.status_code == 200, r.text
-    assert r.json() == {"deleted": True, "number": 4}
-    assert {c["number"] for c in client.get(f"/api/projects/{pid}/chapters").json()} == {1, 2, 3}
-    assert client.get(f"/api/projects/{pid}/chapters/4/text").status_code == 404
-
-
-def test_delete_chapter_refuses_when_the_engine_remembers_something(
-    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """挡路的东西要**数得出来**摆在屏幕上。
-
-    一句不带理由的「删不掉」会把作者赶去文件夹里自己动手删那个 .md——
-    而那条路上引擎的记忆一条都不会被清理，库和磁盘从此对不上。
-    """
-    from novel_harness import importer
-    from novel_harness.graph import ChapterInUse, ChapterUsage
-
-    def refuse(*args: object, **kwargs: object) -> object:
-        raise ChapterInUse(
-            ChapterUsage(
-                chapter_number=1, evidence=3, edges=2, events=1, extraction_runs=1, proposal_sets=0
-            )
-        )
-
-    monkeypatch.setattr(importer, "remove_chapter", refuse)
-    r = client.delete(f"/api/projects/{_pid(book)}/chapters/1")
-
-    assert r.status_code == 409
-    body = r.json()
-    assert body["error"] == "chapter_in_use"
-    assert body["params"]["evidence"] == 3
-    assert body["params"]["edges"] == 2
-    assert body["params"]["chapter_number"] == 1
-
-
-def test_delete_a_chapter_that_is_not_there(client: TestClient, book: dict[str, str]) -> None:
-    r = client.delete(f"/api/projects/{_pid(book)}/chapters/9")
-    assert r.status_code == 404
-    assert r.json()["detail"]["error"] == "chapter_missing"
-
-
-def test_delete_a_chapter_the_library_never_saw(client: TestClient, book: dict[str, str]) -> None:
-    """第三章只写了磁盘、没进过库（夹具就是这么造的）。
-
-    **不能只删掉磁盘那一半就说删掉了**：那说明这个库和这个文件夹已经对不上，
-    作者该知道——所以图层的 `StoreError` 原样上来（422），文件留在原地。
-    """
-    pid = _pid(book)
-    r = client.delete(f"/api/projects/{pid}/chapters/3")
-
-    assert r.status_code == 422
-    assert r.json()["error"] == "store_error"
-    assert 3 in {c["number"] for c in client.get(f"/api/projects/{pid}/chapters").json()}
 
 
 def test_create_project_then_import(client: TestClient) -> None:
@@ -1386,9 +1324,9 @@ def test_validation_rule_crud_and_ruleset_bump(
     pid = _pid(book)
     base = client.get(f"/api/projects/{pid}/validation-rules")
     assert base.status_code == 200, base.text
-    assert any(r["rule_id"] == "R3" for r in base.json()), "R3 常驻显示"
-    # 空项目还没有自定义规则。
-    assert all(r["rule_id"] not in ("vrule",) for r in base.json())
+    # **一本新书的规则列表是空的**（2026-09-05 起系统规则一条不剩，ADR 0042）。
+    # 这条端点本身没变：它照旧返回「系统规则 + 作者自定义规则」，只是前一半空了。
+    assert base.json() == []
 
     created = client.post(
         f"/api/projects/{pid}/validation-rules",
@@ -1400,13 +1338,30 @@ def test_validation_rule_crud_and_ruleset_bump(
     custom = [r for r in after if r["rule_id"] == rule_id]
     assert len(custom) == 1 and custom[0]["title"] == "不许有玄铁令"
 
-    # 禁用后列表不再返回（照旧留在库里）。
+    # 改词：**标题跟着一起改**——它是「哪条规则」那句话的来源（通知/报告都读它），
+    # 只改 config 的话，通知里会指着一个这条规则已经不查的词说事。
+    edited = client.patch(
+        f"/api/projects/{pid}/validation-rules/{rule_id}", json={"literal": "寒铁令"}
+    )
+    assert edited.status_code == 200, edited.text
+    after_edit = [
+        r for r in client.get(f"/api/projects/{pid}/validation-rules").json()
+        if r["rule_id"] == rule_id
+    ]
+    assert after_edit[0]["config"]["literal"] == "寒铁令"
+    assert after_edit[0]["title"] == "寒铁令", "标题还指着旧词"
+
+    # **禁用之后照旧在列表里，带 `enabled: false`**（2026-09-05 改的）：界面上那个
+    # 「启用」开关要能关了再开，看不见它就再也开不回来了。运行时那条读法
+    # （`load_custom_rules`）仍然只读启用的——两条读法分家，各自诚实。
     patched = client.patch(
         f"/api/projects/{pid}/validation-rules/{rule_id}", json={"enabled": False}
     )
     assert patched.status_code == 200, patched.text
     after_disable = client.get(f"/api/projects/{pid}/validation-rules").json()
-    assert all(r["rule_id"] != rule_id for r in after_disable)
+    disabled = [r for r in after_disable if r["rule_id"] == rule_id]
+    assert len(disabled) == 1 and disabled[0]["enabled"] is False
+    assert disabled[0]["config"]["literal"] == "寒铁令", "编辑要用它回填，得给出来"
 
     # 删除。
     deleted = client.delete(f"/api/projects/{pid}/validation-rules/{rule_id}")

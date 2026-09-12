@@ -1,10 +1,13 @@
-"""R3 在**一本从生产入口建起来的书**上真的开火一次。
+"""**规则在一本从生产入口建起来的书上真的开火一次。**
 
-⚠️ **2026-08-27：R2 FUTURE_LEAK 砍了**（[ADR 0040](../docs/adr/0040-future-leak-cut.md)），
-本文件原来的「R2 / R3 各开火一次」被砍掉一半——`test_r2_fires_after_the_author_declares_a_
-first_appearance` 等三条连同「R2 FUTURE_LEAK —— 提前出场」那一节一起删了。下面这段历史
-背景原样保留：它解释的是 R3（以及当年的 R2）为什么需要这份「过一遍真写路径」的测试，
-这个理由今天对 R3 依然成立，不因 R2 消失而失效。
+⚠️ **2026-09-05：这份文件的主语换了第三次。** R2 `FUTURE_LEAK`（2026-08-27，ADR 0040）→
+R3 `DEAD_SPEAKS`（2026-09-05，[ADR 0042](../docs/adr/0042-dead-speaks-cut.md)）→
+**作者自己加的确定性规则**。系统规则一条不剩了，而这份测试要证的那件事一个字没变：
+「作者按得到的那几个口子，真的能让检验那一步报出东西来。」
+
+下面这段历史背景原样保留——它解释的是**为什么一条规则光有绿测试不算数**，
+这个理由对今天这条作者规则同样成立（它的输入是作者敲进「检验规则」那一栏的字，
+而那一栏 2026-09-05 之前在浏览器里根本不存在）。
 
 ── 这个文件为什么存在 ────────────────────────────────────────────────────
 
@@ -25,8 +28,8 @@ M3 那次「双边门槛已过」量的是 `synth/m3_replay.py` 的 `OverlayGrap
 「运行期在内存叠加」）。
 
 所以本文件的判据只有一条：**每一个字都从 HTTP 进去**（作者今天真按得到的那些口子），
-一个 `store.upsert_node` / `NodeProps(...)` 都不许出现在准备阶段。它红了 = R3
-又变回了摆设，而没有任何别的测试会告诉你这件事。
+一个 `store.upsert_node` / `NodeProps(...)` 都不许出现在准备阶段。它红了 = 作者在
+浏览器里加的规则又变回了摆设，而没有任何别的测试会告诉你这件事。
 
 ── 顺带钉住的两件事 ──────────────────────────────────────────────────────
 
@@ -55,9 +58,10 @@ from novel_harness.graph.sqlite_store import SqliteStoryGraph
 # ── 一本四章的小书 ────────────────────────────────────────────────────────
 #
 # 时间轴：顾清音和幽泉窟第 3 章才头一回露面，萧决第 2 章死。于是
-#   ch1 里的「幽泉窟」= 提前出场（R2）、「顾清音道：」= 还没登场就说话（R3）
-#   ch4 里的「萧决道：」= 死人说话（R3）
-#   ch1 里的「萧决」**不该报**——他那时还活着，这是闭开区间 [2, ∞) 的可见产品行为。
+#   ⚠️ 上面这条时间轴是给**已经砍掉的 R2/R3** 编的（ADR 0040 / 0042）。今天它只剩两个
+#   用处：`declare/death` 那几条测试还在用「萧决第 2 章死」，而「幽泉窟」这四个字只
+#   出现在 ch1 和 ch3——正好当作者那条 `forbidden_literal` 规则的靶子（ch2 里没有，
+#   于是「命中」和「闭嘴」在同一本书上都测得到）。
 #
 # 三句引语（下面 declare 用的那三句）在全书里各只出现一次：`Ledger._one_candidate`
 # 多于一处就拒，那是它的设计，不是这份测试的运气。
@@ -152,6 +156,10 @@ class Author:
     def died(self, who: str, quote: str) -> Any:
         return self._post("/declare/death", {"who": who, "quote": quote})
 
+    def add_rule(self, *, literal: str, title: str) -> Any:
+        """在「检验规则」那一栏里加一条——**今天规则只有这一个来源**（ADR 0042）。"""
+        return self._post("/validation-rules", {"literal": literal, "title": title})
+
     def check(self, chapter: int) -> Any:
         return self._post(f"/chapters/{chapter}/check", {})
 
@@ -199,68 +207,64 @@ def _issues(result: Any, rule: str) -> list[dict[str, Any]]:
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_nothing_fires_before_the_author_says_anything(author: Author) -> None:
-    """没有这一条，下面两条「报出来了」证明不了任何事——它可能一直在报。
+def test_nothing_is_checked_before_the_author_writes_a_rule(author: Author) -> None:
+    """**一条规则都没有时，这一步跑完了，但什么都没查。**
 
-    注意这个零**不是**「书是干净的」：ch1 里那两处违规此刻已经写在正文里了，
-    只是图上还没有任何东西说「他们还没登场」。
+    没有这一条，下面那条「报出来了」证明不了任何事——它可能一直在报。
+
+    这个零有两层，别混：`issues` 是空的**不代表书是干净的**（下面那条规则一加，
+    同一段正文立刻报出来），`rules` 是空的才是「压根没查」。§10 约束 8 要的就是
+    这两个零在出参里分得开——2026-09-05 系统规则清空之后（ADR 0042），
+    一本没加过规则的书**常态**就长这样。
     """
-    assert author.check(1)["issues"] == []
-    assert author.check(4)["issues"] == []
-    # 规则确实跑了（静默的零和真的零不许长得一样，§10 约束 8）。
     report = author.check(1)
     assert report["gate"] == "passed"
-    assert len(report["rules"]) == len(ALL_CHECKS)
-    assert {r["rule_id"] for r in report["rules"]} == {"R3"}
-    assert all(r["state"] == "clear" for r in report["rules"])
+    assert report["issues"] == []
+    assert report["rules"] == [], "没有规则 ≠ 没有问题，这一格得说得出「压根没查」"
+    assert len(ALL_CHECKS) == 0, "系统规则又长回来了？那这条基线得跟着改"
     assert report["source_generation"] >= 1
     assert report["ruleset_epoch"] >= 1
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# R3 DEAD_SPEAKS —— 死人说话 / 还没登场就说话
+# 作者自己加的规则 —— 加完就在真链路上开火
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_r3_fires_for_a_dead_character(author: Author) -> None:
-    """**这是本文件的第二条：R3 第一次在生产写路径上开火。**
+def test_the_authors_rule_fires_on_the_words_he_wrote(author: Author) -> None:
+    """**本文件的第二条：作者加的规则第一次在生产写路径上开火。**
 
-    在这条路由存在之前，`is_dead` 在生产上恒为 False —— 不是因为没人死，
-    是因为没有任何入口写得出 `value_key`，也没有任何路径建得出那个状态维度。
+    每一个字都从 HTTP 进去（`POST …/validation-rules` → `POST …/chapters/{n}/check`），
+    准备阶段一句 SQL 都没有——这正是这份文件存在的理由：一条规则「代码写完、测试绿着」
+    和「作者在浏览器里真能让它开火」，是两件事。
     """
-    receipt = author.died(who="萧决", quote=DEATH_QUOTE)
-    assert receipt["edge"]["valid_from_chapter"] == 2, "死在哪一章由引语算，作者没输过"
+    author.add_rule(literal="幽泉窟", title="不许再提幽泉窟")
 
-    dead = _issues(author.check(4), "R3")
+    report = author.check(1)
 
-    assert len(dead) == 1, f"R3 没开火：{author.check(4)}"
-    issue = dead[0]
-    assert issue["issue_type"] == "DEAD_SPEAKS"
-    assert issue["chapter"] == 4
-    assert issue["anchor"]["quote_text"] == "萧决"
-    assert "萧决" in issue["message"] and "死" in issue["message"]
+    assert [r["state"] for r in report["rules"]] == ["blocked"]
+    assert report["gate"] == "blocked"
+    assert len(report["issues"]) == 1
+    issue = report["issues"][0]
+    assert issue["rule"].startswith("custom:"), "命中要认得出是哪条规则"
+    assert issue["chapter"] == 1
+    assert issue["anchor"]["quote_text"] == "幽泉窟", "锚是作者写的那几个字，逐字"
+    assert "幽泉窟" in issue["message"]
 
 
-def test_r3_is_silent_before_the_death_chapter(author: Author) -> None:
-    """闭开区间 `[2, ∞)` 的可见产品行为：ch1 里的萧决还活着。
+def test_the_authors_rule_is_silent_where_the_words_are_not(author: Author) -> None:
+    """**没命中时闭嘴，但仍然算「查过了」。**
 
-    这一条是 R3 零误报的全部来源——「死了」必须是时态的，存成 `node.props.status`
-    的话第 1 章也会报（`HEALTH_DIM_KEY` 的 docstring 逐字写着这件事）。
+    ch2 那一章的正文里没有「幽泉窟」，所以 0 条命中——而 `rules` 里仍然有那一条、
+    状态是 `clear`。零和真零分得开这件事，在作者规则上和当年在系统规则上是同一条纪律。
     """
-    author.died(who="萧决", quote=DEATH_QUOTE)
+    author.add_rule(literal="幽泉窟", title="不许再提幽泉窟")
 
-    assert [i for i in _issues(author.check(1), "R3") if "萧决" in i["message"]] == []
+    report = author.check(2)
 
-
-def test_r3_fires_for_a_character_who_has_not_walked_on_yet(author: Author) -> None:
-    """R3 的另一半：还没登场的人开口说话。走的是同一条首现声明。"""
-    author.first_appearance(of="顾清音", quote=GU_DEBUT_QUOTE)
-
-    issues = _issues(author.check(1), "R3")
-
-    assert len(issues) == 1
-    assert issues[0]["anchor"]["quote_text"] == "顾清音"
-    assert "登场" in issues[0]["message"] and "3" in issues[0]["message"]
+    assert report["issues"] == []
+    assert [r["state"] for r in report["rules"]] == ["clear"]
+    assert report["gate"] == "passed"
 
 
 def test_the_state_dim_is_created_by_the_engine_and_stays_out_of_the_roster(
@@ -342,21 +346,22 @@ def test_the_route_the_right_column_actually_calls_carries_is_dead(author: Autho
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_the_advice_never_shows_the_author_a_machine_name(author: Author) -> None:
-    """在此之前这句建议语逐字写着 `first_appears_chapter`，**而工作台里没有任何地方
-    能做那件事**——它既是一个研发术语，又是一条作者执行不了的指令。
+def test_the_hit_never_shows_the_author_a_machine_name(author: Author) -> None:
+    """命中那句话是印给小说作者看的，**里面不许有机器码**。
+
+    ⚠️ **2026-09-05 换了对象**：原来钉的是 R3 的建议语（它曾经逐字写着
+    `first_appears_chapter`——既是研发术语，又是一条作者执行不了的指令）。R3 砍了
+    （ADR 0042），而今天唯一会印给作者的那句话是自定义规则的 `message`
+    （`checks/custom.py`），所以钉它。**自定义规则不产出 `suggested_action`**：
+    作者自己写的规则，引擎没有立场替他出主意。
 
     判据是**形状**不是词表（同 `screenGuard.ts`）：明天换一个标识符照样咬得住。
     """
-    author.first_appearance(of="顾清音", quote=GU_DEBUT_QUOTE)
-    author.died(who="萧决", quote=DEATH_QUOTE)
+    author.add_rule(literal="幽泉窟", title="不许再提幽泉窟")
 
-    advice = [
-        (i["rule"], i["suggested_action"])
-        for chapter in (1, 4)
-        for i in author.check(chapter)["issues"]
-        if i["suggested_action"]
-    ]
-    assert {rule for rule, _ in advice} == {"R3"}, f"规则的建议语没取到：{advice}"
-    offenders = [(rule, text) for rule, text in advice if MACHINE_CODE.search(text)]
-    assert not offenders, f"建议语里有机器码：{offenders}"
+    hits = [(i["rule"], i["message"]) for i in author.check(1)["issues"]]
+    assert hits, "命中一条都没取到，下面那条断言会空转成真"
+    assert all(rule.startswith("custom:") for rule, _ in hits)
+    offenders = [(rule, text) for rule, text in hits if MACHINE_CODE.search(text)]
+    assert not offenders, f"给作者看的那句话里有机器码：{offenders}"
+    assert all(i["suggested_action"] is None for i in author.check(1)["issues"])

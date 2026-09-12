@@ -280,11 +280,18 @@ def test_cross_project_node_is_not_found(conn: sqlite3.Connection, graph: Sqlite
 def test_two_locations_at_once_blows_up(conn: sqlite3.Connection, graph: SqliteStoryGraph) -> None:
     """LOCATED_AT 的 exclusivity 保证至多一条。出现两条 = supersede 漏了。
 
-    **不许悄悄取第一条**：悄悄取的那一下会把一个数据层的 bug 变成一条 R4 误报，
-    而误报 <1 条/章 是 M3 的生死线。让它炸在这里。
+    **不许悄悄取第一条**：悄悄取的那一下会把一个数据层的 bug 变成屏幕上一条看不出来的
+    错事实（从前的说法是「一条 R4 误报」，那条规则 2026-08-14 砍了，道理没变）。
+
+    ⚠️ **两条边的章号 2026-09-06 改成一样的了**（[ADR 0043](../docs/adr/0043-facts-store-a-start-not-an-interval.md)）。
+    从前 `[10]` 和 `[20]` 同时活着就是坏数据（写的时候本该把 `[10]` 闭合成 `[10,20)`）；
+    现在「谁盖住谁」在读的时候算，不同章的两条**本来就该只返回晚的那条**，不是错误。
+    今天真正的坏数据是**同一槽里两条章号相同且都 ACTIVE** —— 同章更正本该把前一条标成
+    RETRACTED。`CURRENT_EDGE_CTE` 用 `RANK()` 而不是 `ROW_NUMBER()` 就是为了让这一档
+    并列返回、把这道守卫留着。
     """
     add_edge(conn, "e1", "xiao", "qingyun", EdgeType.LOCATED_AT, 10)
-    add_edge(conn, "e2", "xiao", "beihuang", EdgeType.LOCATED_AT, 20)
+    add_edge(conn, "e2", "xiao", "beihuang", EdgeType.LOCATED_AT, 10)
     with pytest.raises(StoreError, match="supersede"):
         graph.state_at(PID, "xiao", 50)
 
@@ -318,13 +325,30 @@ def test_two_values_on_one_dim_blows_up(conn: sqlite3.Connection, graph: SqliteS
 def test_two_edges_on_one_keyless_dim_blows_up(
     conn: sqlite3.Connection, graph: SqliteStoryGraph
 ) -> None:
-    """没有 dim_key 的维度按 dst 节点 id 分组：同一个节点上两条边同样是 supersede 漏了。"""
+    """没有 dim_key 的维度按 dst 节点 id 分组：同一个节点上两条边，晚的那条赢。
+
+    ⚠️ **这条测试 2026-09-06 换了断言**（[ADR 0043](../docs/adr/0043-facts-store-a-start-not-an-interval.md)）。
+    它原来钉的是「同一个 dst 上两条边 → 炸」，而那个场景今天**根本构造不出来**，
+    两道机制各挡一半：
+
+    - 章号不同（10 / 20）→ 不是坏数据，`CURRENT_EDGE_CTE` 正常取晚的那条；
+    - 章号相同 → `idx_edge_identity`（project, src, dst, type, valid_from, scope）
+      这条 UNIQUE 索引在库层面就插不进第二行。
+
+    所以「两条并存」这一档在 `single_per_src_dst` 上由数据库兜底，不需要读端再守一次。
+    **`single_per_src`（LOCATED_AT）不一样**：它的 dst 不同，identity 索引拦不住，
+    那一档的守卫在上一条测试里，仍然活着。
+    """
     add_node(conn, "mood", NodeLabel.STATE_DIM, "心境")  # 无 dim_key
     add_edge(conn, "e1", "xiao", "mood", EdgeType.HAS_STATE, 10, props='{"value": "平静"}')
     add_edge(conn, "e2", "xiao", "mood", EdgeType.HAS_STATE, 20, props='{"value": "暴怒"}')
 
-    with pytest.raises(StoreError, match="supersede"):
-        graph.state_at(PID, "xiao", 50)
+    assert graph.state_at(PID, "xiao", 15).states[0].value == "平静"
+    assert graph.state_at(PID, "xiao", 50).states[0].value == "暴怒"
+
+    # 同章第二条：库层面就写不进去（这才是今天「两条并存」唯一可能的形态）。
+    with pytest.raises(sqlite3.IntegrityError):
+        add_edge(conn, "e3", "xiao", "mood", EdgeType.HAS_STATE, 20, props='{"value": "再暴怒"}')
 
 
 def test_distinct_dims_coexist(conn: sqlite3.Connection, graph: SqliteStoryGraph) -> None:

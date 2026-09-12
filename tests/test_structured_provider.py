@@ -192,7 +192,19 @@ def test_structured_plan_rejects_a_coerced_stream_flag() -> None:
         capability_module.StructuredCallPlan.model_validate(payload)
 
 
-def test_provider_wire_shape_is_identical_for_equal_prose_and_structured_plans() -> None:
+def test_a_structured_plan_differs_from_prose_by_response_format_and_nothing_else() -> None:
+    """结构化那一档在线上**只多一个字段**：`response_format`。
+
+    ⚠️ **这条测试 2026-09-06 从「两者逐字相同」改成了「只差这一个键」。**
+    从前 `StructuredCallPlan` 这个类型只影响预算怎么算，「这一次必须返回 JSON」
+    这件事一个字节都没走到线上——全靠 prompt 里一句「Return JSON only」求模型配合。
+    真书上模型有相当一部分时候不配合：73 次抽取失败里 23 次是 `analysis_format`，
+    同一章重跑一次就好（所以那不是内容问题，是每次调用各掷一次骰子）。
+
+    **「只差这一个键」这半句和「带上这个键」一样要紧**：散文那两条路
+    （产品起草 / M2 判分链）走 `ResolvedCallPlan`，必须一个字节都不变——
+    `EVAL_PROTOCOL.md` §2：gate 测的必须是产品会发的东西。
+    """
     capability = resolve_capabilities("https://openrouter.ai/api/v1", "anthropic/claude-opus-4.8")
     prose = plan_call(
         M2_LENGTH_SPEC,
@@ -211,7 +223,12 @@ def test_provider_wire_shape_is_identical_for_equal_prose_and_structured_plans()
     config = ProviderConfig(base_url=capability.base_url, model=capability.model)
     messages = [{"role": "user", "content": "JSON only"}]
 
-    assert _wire_kwargs(config, prose, messages) == _wire_kwargs(config, structured, messages)
+    prose_wire = _wire_kwargs(config, prose, messages)
+    structured_wire = _wire_kwargs(config, structured, messages)
+
+    assert "response_format" not in prose_wire, "散文那一档一个字节都不许多发"
+    assert structured_wire["response_format"] == {"type": "json_object"}
+    assert {k: v for k, v in structured_wire.items() if k != "response_format"} == prose_wire
 
 
 def test_provider_rejects_a_structured_plan_tampered_after_construction() -> None:
@@ -384,3 +401,54 @@ def test_existing_resolved_call_plan_serialization_is_unchanged() -> None:
         "interruptible": False,
         "budget_formula_version": BUDGET_FORMULA_VERSION,
     }
+
+
+def test_an_endpoint_that_rejects_response_format_falls_back_to_the_old_behaviour() -> None:
+    """端点不认 `response_format` → 退掉它重发一次，**并记住这条路由**。
+
+    退回去的那一档就是 2026-09-06 之前的行为（靠 prompt 求模型返回 JSON），
+    所以**最坏情况不比从前差**——这是敢默认带上这个字段的全部理由。
+
+    判据是「错误里点了这个字段的名」，不是「状态码是不是 400」：后者会把
+    「模型名写错」「钥匙过期」也吞进重试，于是一次真正的配置错误变成两次失败，
+    而作者只看见后面那次的话术（同 `_rejected_stream_options` 立的那条规矩）。
+    """
+    from novel_harness.draft.provider import _NO_JSON_MODE
+
+    plan = _plan()
+    config = ProviderConfig(base_url=plan.base_url, model=plan.model)
+    _NO_JSON_MODE.discard(plan.capability.route)
+    sent: list[dict[str, object]] = []
+
+    def create(**kwargs: object) -> object:
+        sent.append(kwargs)
+        if "response_format" in kwargs:
+            raise RuntimeError(
+                "400 Unrecognized request argument supplied: response_format"
+            )
+        return types.SimpleNamespace(
+            choices=[
+                types.SimpleNamespace(
+                    message=types.SimpleNamespace(content="{}"), finish_reason="stop"
+                )
+            ],
+            usage=None,
+        )
+
+    client = types.SimpleNamespace(
+        chat=types.SimpleNamespace(completions=types.SimpleNamespace(create=create))
+    )
+    try:
+        result = complete(
+            [{"role": "user", "content": "JSON only"}],
+            config=config,
+            plan=plan,
+            client=client,
+        )
+        assert result.text == "{}"
+        assert len(sent) == 2, "该退一次重发一次"
+        assert "response_format" in sent[0]
+        assert "response_format" not in sent[1]
+        assert plan.capability.route in _NO_JSON_MODE, "这条路由要记下来，别每次都再赔一次"
+    finally:
+        _NO_JSON_MODE.discard(plan.capability.route)

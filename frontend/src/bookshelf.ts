@@ -137,28 +137,3 @@ export function newChapterError(error: unknown): string {
   return language === "zh" ? "没能新起一章，再点一次试试。" : "Couldn't create a new chapter — try again.";
 }
 
-/**
- * 删一章没成时，屏幕上该说哪句话。
- *
- * 同 `newChapterError`：**只有「服务上根本没这条路」那一档由前端说**（判据一样精确：
- * 404 且 body 里没有 `error` 码），别的一律走 `saidToTheAuthor` 那条共享路径。
- *
- * 后端那句话尤其不许在这儿改写：拒绝的时候它带着**数出来的明细**
- *（「证据 3 / 关系 2 / 情节 1 ⋯」），而那串数字正是作者判断「这一章到底还连着什么」
- * 的唯一依据。前端替它换一句笼统的「删不掉」，就等于把他赶去文件夹里自己动手删——
- * 那条路上引擎的记忆一条都不会被清理。
- */
-export function deleteChapterError(error: unknown): string {
-  if (error instanceof ApiError) {
-    if (error.status === 404 && !error.body.error) {
-      const language = useLanguage.getState().language;
-      return language === "zh"
-        ? "这台电脑上的程序是旧的一版，还不认得「删除本章」。把工作台关掉、重新打开一次就好。"
-        : "The app on this computer is an older version and doesn't recognize \"delete this chapter\" yet. Close the workbench and reopen it.";
-    }
-    const said = saidToTheAuthor(error);
-    if (said) return said;
-  }
-  const language = useLanguage.getState().language;
-  return language === "zh" ? "没能删除本章，再点一次试试。" : "Couldn't delete this chapter — try again.";
-}

@@ -1,10 +1,16 @@
 """硬规则 —— 判分器与 Validator 的同一份实现（PLAN §9）。
 
+⚠️ **2026-09-05：系统规则一条不剩了**（ADR 0042）。**管道没拆**：保存后那一轮验证、
+`POST …/chapters/{n}/check` 都还在原地，跑的是作者自己加的确定性规则
+（`checks/custom.py` 的 `forbidden_literal`）。维护者原话：「我们只是把系统那个隐藏了，
+把我们系统的规则都去掉了，因为指不定我们以后也有规则。」下面这张表因此是一份**墓志铭
+加一条纪律**，不是现状清单——现状是空的。
+
 | 规则 | 状态 |
 |---|---|
 | R1 认知边界 | 不在这里——它是面板不是规则（`panel/knowledge.py`） |
 | ~~R2 FUTURE_LEAK~~ | **已砍**（2026-08-27，[ADR 0040](../../../docs/adr/0040-future-leak-cut.md)：`first_appears_chapter` 没有作者输入路径，规则结构上开不了火） |
-| **R3 DEAD_SPEAKS** | **2026-08-02 落地**：说话人标签位置 × `is_dead` / `has_appeared()` |
+| ~~R3 DEAD_SPEAKS~~ | **已砍**（2026-09-05，[ADR 0042](../../../docs/adr/0042-dead-speaks-cut.md)：死而复生是常见写法，而引擎里没有一条路径写「活过来」——一旦标死就永远是死的，这条规则会在那类书上一路误报，而它是**闸**，卡的是总结和抽取） |
 | ~~R4 LOCATION_CONFLICT~~ | **已砍**（2026-08-14，[ADR 0027](../../../docs/adr/0027-scene-blocks-cut.md)：它的一侧输入只能由作者手写，真书上零覆盖） |
 | ~~R5 ADDRESS_CONFLICT~~ | **已砍**（2026-08-02：真书样本 8.2% < 10%，[ADR 0014](../../../docs/adr/0014-r5-cut-by-quote-coverage.md)） |
 
@@ -49,17 +55,34 @@ M3 的生死线是「真书连续 20 章误报 < 1 条/章 **且** 合成小册�
 `node.props.first_appears_chapter` 字段本身、`declare_first_appearance()`、
 `panel/constraints.py::forbidden_entities()`（右栏面板还在用）都没动，
 删的只是「拿它开一条规则」这一件事。
+
+**2026-09-05：R3 那一半也走了（ADR 0042）。** 它和前三条的死因不同——不是「开不了火」，
+是**开火的方向本身就不对**：`is_dead` 只有抽取的 `kind="death"` 一个写入方，而
+**没有任何一条路径写「活过来」**（抽取的口径里没有这个动作）。于是在死而复生的书上，
+一个人被标死之后永远是死的，R3 会对他此后每一句台词开火，而它 `blocks_downstream=True`
+——卡住的是那一章的总结和抽取。维护者裁定：与其让一条会系统性误报的闸挡在产品链路上，
+不如把系统规则清空，把这一格交给作者自己写的确定性规则。
+`checks/dead_speaks.py` 连同它在 `ALL_CHECKS` / `SYSTEM_RULES` 里的登记一起删；
+`HEALTH_DIM_NAME` / `declare_death()` / 抽取的 `kind="death"` **都没动**——
+「他死了」这条事实照旧记进图里，删的只是「拿它开一条闸」这一件事。
+
+**⚠️ 2026-08-31：`forbidden_entities()` 后来也删了**（[ADR 0041](../../../docs/adr/0041-forbidden-entities-cut.md)，
+维护者裁定，不是数据裁决）——上一段「都没动」只对 2026-08-27 那一刻成立，
+`node.props.first_appears_chapter` 字段和 `declare_first_appearance()` 仍然保留，
+R3 还在读这个字段，跟这次删除无关。
 """
 
 from __future__ import annotations
 
-from . import dead_speaks
 from .base import Check, CheckContext, Issue
 
-ALL_CHECKS: tuple[Check, ...] = (
-    dead_speaks.check,
-)
-"""按声明顺序跑。加一条规则 = 加一个文件 + 在这里加一项。"""
+ALL_CHECKS: tuple[Check, ...] = ()
+"""按声明顺序跑。加一条规则 = 加一个文件 + 在这里加一项。
+
+**2026-09-05 起是空的**（ADR 0042）：最后一条系统规则 R3 砍掉了，而这条管道一个字
+没改。作者自己加的规则不走这个元组——它们和系统规则在 `checks/service.py` 里合流
+（`SYSTEM_RULES + load_custom_rules`），那才是产品里真正在跑的那条路。
+"""
 
 
 def run_checks(ctx: CheckContext, checks: tuple[Check, ...] = ALL_CHECKS) -> list[Issue]:

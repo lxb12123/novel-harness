@@ -128,7 +128,7 @@ export const ACTOR_LABEL: Record<string, { zh: string; en: string }> = {
 };
 
 export const KIND_LABEL: Record<string, { zh: string; en: string }> = {
-  alias_merge: { zh: "登记称呼", en: "recorded an alias" },
+  alias_merge: { zh: "登记别名", en: "recorded an alias" },
   node_declare: { zh: "登记条目", en: "recorded an entry" },
   secret_declare: { zh: "登记秘密", en: "recorded a secret" },
   knows_declare: { zh: "声明认知", en: "declared awareness" },
@@ -192,6 +192,24 @@ export function nodeLabelText(label: string, language: Language): string {
 
 /** `edge.type`（`EdgeType`，或历史日志行里退役的 `KNOWS`/`BELIEVES`）→ 作者的说法。
  *  同 `nodeLabelText`，统一自 `api/types.ts` 原来的 `EDGE_ZH`/`edgeName()`。 */
+/** 系统规则 → 作者读得懂的说法（`checks/catalog.py::SYSTEM_RULES`）。
+ *
+ *  **后端那两句是中文硬编码**（`title` / `description`），和 `Issue.message` 是同一批
+ *  还没换成码的东西（见 CLAUDE.md 那张国际化进度表）。所以这儿按 `rule_id` 覆盖，
+ *  **认不出的规则照原样显示后端给的字**——作者自定义的那类（`forbidden_literal`）
+ *  标题本来就是作者自己写的，翻译它才是错的。
+ *
+ *  ⚠️ **`rule_id` 本身不许上屏**（`R3` 是机制词），只印这两句。 */
+export const SYSTEM_RULE_TEXT: Record<
+  string,
+  { zh: { title: string; desc: string }; en: { title: string; desc: string } }
+> = {
+  R3: {
+    zh: { title: "人物开口时机", desc: "已经死了的人又在正文里开口说话" },
+    en: { title: "Speaking after death", desc: "A character who is already dead speaks in the text" },
+  },
+};
+
 export function edgeLabelText(type: string, language: Language): string {
   return EDGE_LABEL[type]?.[language] ?? EDGE_LABEL_FALLBACK[language];
 }
@@ -267,6 +285,18 @@ const MESSAGES: Record<string, Template> = {
     const separator = language === "zh" ? "：" : ": ";
     return `${head}${separator}${params.issue_message ?? ""}${more}${tail}`;
   },
+  // ── proposal_notifications.py（2026-08-31，待确认并进通知）───────────────
+  // 没有 params：完整的对照/在场/知情/可信度/原文引用不在这一句里，
+  // 通知卡片展开之后拿 subject_id 去项目全量的 /proposals 里找同一条记录、
+  // 复用原来「待确认」那套卡片渲染——这两句只是列表里的一行摘要。
+  proposal_conflict_title: {
+    zh: "有一处设定跟抽出来的内容对不上",
+    en: "Something extracted doesn't match an existing fact",
+  },
+  proposal_low_confidence_title: {
+    zh: "有一条情节需要你确认",
+    en: "There's an event that needs your confirmation",
+  },
   // removed_name / remaining_count（034）
   event_cast_changed_title: (params, language) => {
     const removedName = params.removed_name;
@@ -309,6 +339,15 @@ const MESSAGES: Record<string, Template> = {
     return language === "zh"
       ? `第 ${params.sentence} 句 ↔ 第 ${params.chapter} 章：${conflict}。${more}`
       : `Sentence ${params.sentence} ↔ chapter ${params.chapter}: ${conflict}.${more}`;
+  },
+  // who / field（都是作者自己写的名字：人物名和字段名，安全）
+  //
+  // ⚠️ **这条不带模型那句话**。核对模型回的 `said` 是自由文本，它进的是**锚**
+  // （`jump.quote_text`，作者点得过去），不进标题——标题里嵌一段模型自由写的话，
+  // 就是这个文件顶上那段「参数安不安全要在送之前判」说的那种口子。
+  card_edit_advisory: {
+    zh: "你改的「{who} · {field}」和那一章的原文可能对不上。点开看看是哪一句。",
+    en: 'The "{who} · {field}" you edited may not match what that chapter says. Open it to see which line.',
   },
   // ── panel/constraints.py ──────────────────────────────────────────────
   unresolved_cast_ambiguous: {
@@ -372,6 +411,19 @@ const MESSAGES: Record<string, Template> = {
   // 一个 Python 异常类名对作者不构成任何可操作的信息（他不知道 URLError 是什么，
   // 「网络好了再试一次」已经说完了他能做的事），却是一个写给维护者看的技术词——
   // 判据跟上面 `model_not_configured` 那条一致。
+  // ── 作者亲手按「重新生成」那颗按钮时，那一次模型调用的两种失败 ──────────────
+  // 两条都**不带任何参数**，判据同上面 `model_not_configured`：`ProviderError` 的
+  // `str()` 带着 provider 的状态码和响应体片段（它 docstring 明写「永远不上作者的
+  // 屏幕」），`SummaryGenerationError` 同理。作者能做的动作是「再点一次」或者
+  // 「去看一眼设置」，那两句话已经说完了，异常文本一个字都不增加信息。
+  summary_generation_empty: {
+    zh: "模型这一次什么都没写出来。再点一次「重新生成」；一直这样就去顶栏 ⚙ 换个模型试试。",
+    en: 'The model returned nothing this time. Click "Regenerate" again; if it keeps happening, try a different model in the ⚙ settings.',
+  },
+  model_call_failed: {
+    zh: "模型这一次没调通，什么都没改。过一会儿再试一次；一直这样就去顶栏 ⚙ 看一眼服务地址和钥匙。",
+    en: "The model call didn't go through and nothing was changed. Try again in a moment; if it keeps happening, check the endpoint and key in the ⚙ settings.",
+  },
   // ── api/review.py（提案审阅，三档只有码没有话——2026-08-27 之前会漏成裸码上屏）──
   proposal_not_found: {
     zh: "这条待确认今天不在了。看一眼现在是什么样，它可能已经被处理过了。",
@@ -442,17 +494,6 @@ const MESSAGES: Record<string, Template> = {
   chapter_changed: {
     zh: "第 {chapter} 章的内容在你这份改动提交前已经被别处改掉了。刷新一下，看最新的版本。",
     en: "Chapter {chapter}'s content was changed elsewhere before your edit could be submitted. Refresh to see the latest version.",
-  },
-  chapter_in_use: (params, language) => {
-    const c = params.chapter_number;
-    const evidence = params.evidence;
-    const edges = params.edges;
-    const events = params.events;
-    const runs = params.extraction_runs;
-    const proposals = params.proposal_sets;
-    return language === "zh"
-      ? `第 ${c} 章上还记着东西（证据 ${evidence} / 关系 ${edges} / 情节 ${events} / 抽取 ${runs} / 提案 ${proposals}）。删掉这一章，这些会跟着一起没。`
-      : `Chapter ${c} still has things recorded against it (evidence ${evidence} / relationships ${edges} / events ${events} / extraction runs ${runs} / proposal sets ${proposals}). Deleting this chapter would take all of that with it.`;
   },
   chapter_not_found: {
     zh: "第 {chapter} 章已经不在了 —— 可能被删除或改了章号。刷新一下再看。",

@@ -71,7 +71,7 @@
 | GET | `/projects/{pid}/resolve?surface=` | `store.resolve([surface])` | `{surface, ambiguous, unique_id, hits[]}`（hits 一律收窄成 `NodeRef`） | 🟢 |
 | GET | `/projects/{pid}/chapters/{n}/mentioned` | `mentioned.mentioned_cast`（读磁盘正文） | `{chapter, has_text, surfaces[]}`·**`has_text=false`（章还没写）和 `surfaces=[]`（写了但没提到人）是两件事，别合并显示** | 🟢 |
 | GET | `/projects/{pid}/chapters/{n}/matrix?cast=&include=` | `resolve_cast` → `panel.knowledge_matrix` | `KnowledgeMatrix`·⚠️设计里还有 `&scope=`，**后端没实现**（见末条陷阱）·**`version.canon_version` 由这条壳填**（2026-08-11 起）：图层填不了它（canon 版本住在 `project` 行上，不在图表里），此前它一直是模型默认的 0，而改这一格要拿它当 `expected_canon_version` —— 照原样发是每次必撞 409 | 🟢 |
-| GET | `/projects/{pid}/chapters/{n}/constraints?cast=&include=` | `panel.scene_constraints`（收原始称呼） | `SceneConstraints` | 🟢 |
+| ~~GET~~ | ~~`/projects/{pid}/chapters/{n}/constraints?cast=&include=`~~ | — | **2026-08-31 删了**，连同 `forbidden_entities`/右栏「写作提醒」（[ADR 0041](adr/0041-forbidden-entities-cut.md)）：维护者裁定这条价值不在了 | ⚫ |
 | GET | `/projects/{pid}/chapters/{n}/state?cast=&include=` | `resolve_cast` → `panel.cast_states` | `list[StateSnapshot]`·⚠️设计里还有 `&scope=`，**后端没实现**（见末条陷阱） | 🟢 |
 | GET | `/projects/{pid}/characters/{node_id}/state?chapter=` | `panel.character_state` | `StateSnapshot` | 🟢 |
 | GET | `/projects/{pid}/subgraph?center=&chapter=&hops=&edge_types=` | `store.subgraph`（hops≤2） | `Subgraph` | 🟢 |
@@ -114,6 +114,7 @@
 | DELETE | `/projects/{pid}/chats/{id}` | `ChatStore.delete` | `ChatDeleted`·**不动任何一行正文**（正文在磁盘上，那两张表里没有它，[ADR 0019](adr/0019-agent-loop-not-graph.md) 边界三）。正在跑的那一段 409 带一句人话，前端原样说、**不静默重试** | 🟢 |
 | POST | `/projects/{pid}/chats/{id}/turn` | `agent.loop.run_turn` | `TurnReceipt`·`{chapter, said}`。**`chapter` 必填、无默认值**——投影在它缺席时不过滤，而那是「没接线」默认值不是安全默认值（边界五：第 90 章的禁说清单是第 40 章那份的**子集**）。`said` 留空 = resume。**这一版 HTTP 不流式**（内部流式），所以拿到的是一个跑完才回来的响应；出参是**对话的投影不是原文**（工具返回一条都不出去，只给一个 `lookups` 计数） | 🟢 |
 | POST | `/projects/{pid}/chats/{id}/stop` | `LIVE.stop` | `ChatStopped`·**`stopped=false` 不是失败**（那一刻它本来就没在跑），200 + 一句人话。它不等这一轮跑完 | 🟢 |
+| POST | `/projects/{pid}/chats/{id}/say` | `LIVE.say` → `agent.loop.Mailbox` | `ChatSaid`·**一轮跑着的时候再说一句**（2026-09-12，作者：「像 codex 那样新的消息可以直接发出去，模型可以读，并且不会耽误正在做的」）。`{said, run_id}`。**不等、不打断、不落库**：这句话放进正在跑的那一轮的信箱，loop 在**下一次模型调用之前**把它按正常的作者消息并进对话（那时才落库、才在事件流上喊 `author_said`）；模型说完了而信箱里有话，这一轮接着跑。`queued=false` 不是失败（那一刻没在跑 / 在跑的是另一轮），那句话没排进去也没落库——前端还回输入框 | 🟢 |
 | GET | `/projects/{pid}/drafts?chapter=&limit=` | `DraftCandidateStore.recent` | `{drafts: DraftCandidateView[]}`·最近的在前，**不带正文**（一次列 20 稿 = 20 章正文）。**它不是版本历史**：`/chapters/{n}/history` 里是**已经在书里**的，这儿是**还摆在桌上**的（[ADR 0022](adr/0022-drafting-is-a-proposal-not-a-write.md)——没落盘的候选在磁盘、快照里都不存在，没有这条路由作者关掉那一轮回执就再也找不到它们）。**前端调用方**（2026-08-12 起）：`ChatPanel` 头上那条「还摆着 N 稿 ↗」+ 并排比那一页 | 🟢 |
 | GET | `/projects/{pid}/drafts/{draft_id}` | `DraftCandidateStore.get` | `DraftCandidateView + {text}`·**摊开那一版读的就是它**。404 `draft_not_found`·**前端只在作者亲手点开某一稿时才打**（`useDraftText(…, open)`），入口那一档只摊开 `landed` 那一版——三稿 ≈ 9,000 字硬摊在入口上，作者要读完三章才做得了一个决定 | 🟢 |
 
@@ -186,7 +187,7 @@
 | `UnknownName` | 404 | `unknown_name`, surface |
 | `AmbiguousName` | 409 | `ambiguous_name` + `candidates: list[NodeRef]`（消歧下拉，**服务端绝不替作者选**） |
 | `AmbiguousQuote` | 409 | `ambiguous_quote` + `candidates: list[QuoteCandidate]`（让作者加长引语到唯一） |
-| `SupersedeConflict` | 409 | `supersede_conflict`（乱序 valid_from，v1 拒绝不猜） |
+| ~~`SupersedeConflict`~~ | ~~409~~ | **2026-09-06 整条删了**（[ADR 0043](adr/0043-facts-store-a-start-not-an-interval.md)）：乱序不再是错误，更早的事实只是一条更早的观察。错误映射 19 → 18 |
 | `WrongLabel` | 422 | got/want NodeLabel |
 | `QuoteNotFound` | 422 | `quote_not_found`（提示：逐字精确、复制别手打、**这一章可能还没读回来** —— 声明抽屉据它摆出「读回改动」；那句话里**不许出现命令**，见 ARCHITECTURE「已知洞」第 10 条） |
 | `ImportRefused` | 409 | `conflicts: list[str]`（内容不同的已存在文件，无 --force） |
@@ -223,10 +224,15 @@
 │   (磁盘 md)  │ [选中文字→查图谱/声明]         │ Tab5 一致性问题 (确定性)  │
 │ · 最近运行   │ [Issue 按 anchor 高亮]        │                          │
 │   (M2·隐藏)  │ [DeclareDrawer 手动声明]      │                          │
-├──────────────┴──────────────────────────────┴──────────────────────────┤
-│ 场景时间线 (场景序 + 边闭开区间)  │  运行遥测 (M2·折叠)                  │  底栏
-└────────────────────────────────────────────────────────────────────────┘
+└──────────────┴──────────────────────────────┴──────────────────────────┘
 ```
+
+> **这张图里原来还有第四行「底栏 · 变化时间线」。2026-09-06 整条撤了**
+> （`BottomBar` 组件连同它的样式和测试一起删）。它画的是选中人物每条边的区间条，
+> 而 [ADR 0043](adr/0043-facts-store-a-start-not-an-interval.md) 之后 `valid_to_chapter`
+> 恒为 NULL——**每一条画出来都只能是「从第 N 章起一直有效」**，和右栏角色卡上
+> 「状态」那一格说的是同一句话（作者：「现在状态这个字段就很能体现了」）。
+> 那一行里的「运行遥测」更早就没画在这儿：用量显示在「活动记录」页顶上。
 
 #### 2.1.1 中栏对半分：左边正文、右边写作助手（模式二，2026-08-11）
 
@@ -331,18 +337,22 @@
 │  │  ├─ <ChatSessions>          ◀ GET /chats（多段并存，各自 resume）
 │  │  │                          ▶ POST /chats · DELETE /chats/{id}（正在跑 ⇒ 409，原样说）
 │  │  ├─ <Bubble ×N>             ◀ GET /chats/{id}（整段；长了只渲染尾巴，早先那些点一下全在）
-│  │  ├─ <RunningStrip>          ▶ POST /chats/{id}/stop（`stopped=false` **不是失败**）
-│  │  │                            **真秒表，无打字机**——这一版 HTTP 不流式
+│  │  ├─ <RunningStrip>          **真秒表，无打字机**——回话那一档不流式；
+│  │  │                            2026-09-12 起**不再是一张卡**：它说的话、做的事按到达
+│  │  │                            顺序直接排在对话里（`chat.ts::ProgressLine`），
+│  │  │                            秒表收成末尾一行；作者中途说的话先淡一档「排着队」，
+│  │  │                            `author_said` 到手就站进对话里（它读到它的位置）
+│  │  ├─ 发送那颗圆钮            ▶ POST /chats/{id}/stop（跑着、框里没字 = 「停」）
+│  │  │                          ▶ POST /chats/{id}/say（跑着、框里有字 = 插话，同日）
 │  │  └─ <Receipt>               ◀ POST /chats/{id}/turn（`chapter` 必填 = 顶栏那一章；
 │  │                               `said` 留空 = resume。措辞出处在后端，这里只补
 │  │                               「你按过停」和「这一轮裁掉了什么」两句）
-│  │     └─ <DraftCandidates>    ◀ TurnReceipt.drafts（ADR 0022：**同一份数据三档排布**）
+│  │     └─ <DraftCandidates>    ◀ TurnReceipt.drafts（ADR 0022：**同一份数据三档排布**；
+│  │        │                      2026-09-12 起每张卡多两格收着的「这一稿的要求 / 助手补的资料」
+│  │        │                      ——助手喂了写手什么，作者看得见，ADR 0047）
 │  │        │                      窄=一稿一张卡（推荐那版摊开、另两版自述+开头）；
 │  │        │                      拖宽=几列并排各自滚（判据 `drafts.ts::sideBySide`）
 │  │        └─ <DraftCard>       ◀ GET /drafts/{id}（**只在摊开时取**，不摊开零字节）
-│  └─ <BottomBar>
-│     ├─ <SceneTimeline>          ◀ parse_scenes 序 + edge.valid_from/valid_to
-│     └─ <RunTelemetry collapsed> ◀ 同上：整理次数 / token / 花费在「活动记录」页顶上
 │
 ├─ <ActivityLog>      ◀── 2026-08-10 ADR 0020 的「可查」，**换的是中栏**（左右两栏不动）
 │  ├─ <UsageStrip>               ◀ GET /runs（花费恒「未记录」——`model_call.cost` 没有写入方）
@@ -447,11 +457,11 @@ React 18 + TS（桌面优先）· Vite · **TanStack Query**（服务端状态�
 | Tab2 局部关系图 | `subgraph`(hops≤2) | 🟢 |
 | Tab3 证据（确定性） | `Evidence` 双指针 | 🟢 |
 | **Tab3 检索分数 / 语义检索** | — | 🔵 **v1.1（无数据源，出 score = 编的）** |
-| Tab4 不能提前泄露 / 未来实体 | `scene_constraints`（must_not_reveal / forbidden） | 🟢 |
+| Tab4 不能提前泄露 / 未来实体 | ~~`scene_constraints`（must_not_reveal / forbidden）~~ | ⚫ **两半都不在了**：`must_not_reveal` 随秘密下线（ADR 0039），`forbidden_entities` 2026-08-31 维护者裁定删除（[ADR 0041](adr/0041-forbidden-entities-cut.md)） |
 | Tab4 必须/可以发生·文风·字数 | — | ⚪ 作者手填 brief，引擎不背书 |
 | Tab5 问题/位置/事实来源/建议 | `Issue` + `TextAnchor` + evidence | 🟢 精确到段 |
 | **Tab5 置信度** | — | ⚪ **v1 无此字段，只显示「确定性」不显示 %** |
-| 底栏 Harness 10 步 / Token / 成本 | `model_call` + `GET /runs` | 🟡 数据和读端 2026-08-10 都有了，**底栏那一格仍未画**——用量显示在「活动记录」页顶上（v1 是单次调用不是 10 步 Kernel） |
+| 底栏 Harness 10 步 / Token / 成本 | `model_call` + `GET /runs` | 🟡 数据和读端 2026-08-10 都有了，**这一格永远不会画在底栏了**——底栏 2026-09-06 整条删了（见上面版式图下那段），用量显示在「活动记录」页顶上（v1 是单次调用不是 10 步 Kernel） |
 
 ### ~~页面二 · 章节准备~~ —— **2026-08-13 整页删除**
 
@@ -461,7 +471,7 @@ React 18 + TS（桌面优先）· Vite · **TanStack Query**（服务端状态�
 | UI 元素 | 它当时的样子 | 为什么删得掉 |
 |---|---|---|
 | 当前状态 / 认知矩阵 | `state_at` / `matrix`，第 N 章 | 右栏「人物状态」「人物认知」**是同一个组件、同一份数据**——第二个入口 |
-| 禁止提前出现的未来内容 | `forbidden_entities` | 右栏「写作提醒」同一份 |
+| 禁止提前出现的未来内容 | `forbidden_entities` | 右栏「写作提醒」同一份（**该功能本身 2026-08-31 也删了**，[ADR 0041](adr/0041-forbidden-entities-cut.md)——这条历史判断在当时成立，不代表今天） |
 | 上一章结束状态 | `state_at(N-1)` | 唯一不重复的一格，但它 = 右栏那一格换个章号看 |
 | 本章目标（自由文本） | localStorage `nh-brief:` | **写进去没有任何人读**：不进请求、不进起草、不落盘 |
 | AI 起草长度 | localStorage `nh-draft-length:v1` | 同上。起草走 `agent/drafting.py` 的产品默认档，**根本不带作者这一档**（见 [ADR 0013](adr/0013-draft-length-is-a-request-parameter.md) 分界线） |
@@ -529,10 +539,10 @@ React 18 + TS（桌面优先）· Vite · **TanStack Query**（服务端状态�
 - [FE] 联动 1/2/4：选区→图谱、点节点看详情、冲突→高亮句+定位节点+「改正文 or 改图谱」
 
 ### P3 · 章节准备页 + 确定性证据/时间线/联动打磨
-**交付**：作者进章前有一张全由确定性读端拼出的准备页；右栏证据与约束、底栏场景时间线补齐；大纲/世界观以磁盘 markdown 降级交付。**v1 收尾。**
-- [BE] 准备页读端聚合：`state_at(N-1)` + `forbidden_entities` + `scene_constraints` + 当前章 matrix + CANON 侧已埋伏笔
+**交付**：作者进章前有一张全由确定性读端拼出的准备页；右栏证据与约束补齐；大纲/世界观以磁盘 markdown 降级交付。**v1 收尾。**（原本还有「底栏场景时间线」，**2026-09-06 连同底栏整条删了**，见下面那一行。）
+- [BE] 准备页读端聚合：`state_at(N-1)` + ~~`forbidden_entities` + `scene_constraints`~~（**2026-08-31 删了**，[ADR 0041](adr/0041-forbidden-entities-cut.md)） + 当前章 matrix + CANON 侧已埋伏笔
 - [BE] Tab3 确定性证据（`Evidence.anchor()` → 来源章/原文片段/是否 Canon/图谱边；**明确不给 score**）
-- [BE] 底栏场景时间线（`parse_scenes` 序 + 边闭开区间；无全局事件线——事件未建模）
+- ~~[BE] 底栏变化时间线（边按章起点）~~ —— **做过，2026-09-06 又删了**（`BottomBar` 组件 + 样式 + 测试）。**别照这一行重做一遍**：[ADR 0043](adr/0043-facts-store-a-start-not-an-interval.md) 让 `valid_to_chapter` 恒为 NULL，于是每一条区间条都只能画成「从第 N 章起一直有效」——一屏长短不一的条子说的其实是同一句话，而那句话右栏角色卡的「状态」那一格已经在说了。真要画出「青云城 88→150、北荒 150→现在」那种收口，得先有一个「取节点全历史边」的读端；**在那之前重画这条时间线只会重造同一个空壳。**
 - ~~[FE] P2 章节准备页（场景骨架=作者手拖手填，替代未实现的 AI 骨架）~~ —— **做过，2026-08-13 又删了**（上面「页面二」那一节记着逐项判据）。**别照这一行重做一遍**：它交付的三张卡今天在右栏，两个表单当时就没接线。
 - [FE] Tab4 约束页（must_not_reveal + forbidden 直读；作者手填字段清楚标注「引擎不背书」）
 - [BE/FE] 扩展 `demo.sh` 心跳覆盖「导入→读面板→declare→再读矩阵变化→R4」端到端，作为 v1 交付验收线

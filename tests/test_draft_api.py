@@ -607,9 +607,11 @@ def _stub_summarizer(monkeypatch: pytest.MonkeyPatch, text: str = "萧决进屋�
 def _generate(book: dict[str, str], chapter: int) -> None:
     """给这一章生成一份滚动总结。
 
-    **从前走 `POST …/summary`**，那条路由 2026-08-25 随手动按钮一起删了（总结只剩
-    「保存之后」和「每 30 分钟扫描」两个自动触发）。这儿直接调生产上那个执行体——
-    同一个 `ensure`、同一份幂等、同一条审计，只是少了 HTTP 那一层。
+    直接调生产上那个执行体——同一个 `ensure`、同一份幂等、同一条审计，只是少了
+    HTTP 那一层。`POST …/summary` 2026-08-25 删过、2026-09-05 加回来了，
+    **但这个帮手不改回去**：它的调用点全是「先造一份总结出来，再测别的东西」，
+    借 HTTP 只是多一层跟被测对象无关的失败面。那条路由自己的行为由
+    `test_summary_edit.py::test_the_author_can_buy_a_retracted_summary_back_by_hand` 钉。
     """
     import novel_harness.api.deps as deps_mod
 

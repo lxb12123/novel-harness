@@ -10,12 +10,12 @@
 # ── 两条泳道，各证一件事，谁都不替代谁 ────────────────────────────────────
 #
 # **泳道 1（读路径）**：seed_demo.py 是「作者已经确认过了」的替身（那四个章号是
-# 字面量）。量它之后的接缝：角色册 / 人物状态卡（闭开区间下界）/
-# 闭开区间下界（ch87 不知道、ch88 知道）。
+# 字面量）。量它之后的接缝：角色册 / 人物状态卡（按章问「此刻在哪」）/
+# 交接章（ch149 还在旧地方、ch150 起在新地方）。
 #
 # **泳道 2（写路径）**：「引语 → 章号 → valid_from」那条链本身。POST /api/projects
 # 建一本 → POST /import 一本 3 章 fixture → POST /declare/death（作者只给一句从正文
-# 复制的话，章号是演算结果）→ 第 3 章 check 报 R3、第 2 章同字不报。
+# 复制的话，章号是演算结果）→ 第 3 章 check 报作者那条规则、第 2 章不报。
 #
 # **每一步都断言输出**：一条链路上大多数失败形态的自然产物是「漂亮的空 JSON + 200」
 #（§10 约束 8）。只查 HTTP 状态码不够，要查内容。
@@ -109,7 +109,7 @@ done
 [ -n "$up" ] || fail "服务 10 秒没起来（看上面的日志）"
 
 # ══════════════════════════════════════════════════════════════════════════
-# 1. 泳道 1 —— 读路径：角色册 / 认知矩阵 / 闭开区间下界
+# 1. 泳道 1 —— 读路径：角色册 / 认知矩阵 / 交接章
 # ══════════════════════════════════════════════════════════════════════════
 
 step "角色册 —— 3 个人都在"
@@ -124,9 +124,10 @@ http_ok "state ch152" "$code"
 json_ok "ch152 萧决在北荒" \
   "any((c.get('location') or {}).get('name')=='北荒' for c in d)"
 
-step "时态下界 —— ch149 还在青云城主府 / ch150 起在北荒（闭开区间 [valid_from, ∞)）"
+step "交接章 —— ch149 还在青云城主府 / ch150 起在北荒（取不晚于本章的最后一条）"
 # 秘密下线之前这一段量的是认知矩阵（ch87 UNKNOWN → ch88 KNOWS）。**判据一个字没变**：
-# 闭开区间只在 `graph/queries.py` 实现一次，换的只是拿哪一类边来演它。
+# 「第 N 章时是什么样」只在 `graph/queries.py` 实现一次（ADR 0043 之后是
+# `TEMPORAL_WHERE` + `CURRENT_EDGE_CTE` 两份、各一处），换的只是拿哪一类边来演它。
 code="$(apiq "/api/projects/$PID/chapters/149/state" "cast=萧决")"
 http_ok "state ch149" "$code"
 json_ok "ch149 萧决还在青云城主府" \
@@ -137,7 +138,7 @@ json_ok "ch150 萧决已在北荒" \
   "any((c.get('location') or {}).get('name')=='北荒' for c in d)"
 
 # ══════════════════════════════════════════════════════════════════════════
-# 2. 泳道 2 —— 写路径：「引语 → 章号 → valid_from」+ R3 开火/闭嘴
+# 2. 泳道 2 —— 写路径：「引语 → 章号 → valid_from」+ 作者自己那条规则开火/闭嘴
 # ══════════════════════════════════════════════════════════════════════════
 
 step "建第二本书 —— POST /api/projects（root 服务器派生，写进 <库同级>/books）"
@@ -175,7 +176,15 @@ http_ok "declare/death" "$code"
 json_ok "valid_from 是算出来的 ch3" "d.get('edge', {}).get('valid_from_chapter') == 3"
 printf '  valid_from_chapter = %s\n' "$(python3 -c "import json,io; print(json.load(io.open('$TMP/resp.json',encoding='utf-8'))['edge']['valid_from_chapter'])")"
 
-step "第 3 章 —— R3 抓到 DEAD_SPEAKS（死者说话：valid_from=3 起他死了）"
+step "作者自己加一条规则 —— POST /validation-rules（今天规则只有这一种来源）"
+# ⚠️ **2026-09-05：这条泳道从 R3 换成了作者自定义规则**（ADR 0042 把最后一条系统规则
+#    砍了）。**换而不是删**：它量的东西一个字没变——「规则真的会在保存/检查那一步开火，
+#    而且零和真零分得开」。变的只是规则从哪儿来。
+code="$(api POST "/api/projects/$PID2/validation-rules" '{"title":"不许再提沧浪剑","literal":"沧浪剑"}')"
+http_ok "加一条确定性规则" "$code"
+json_ok "规则建出来了（forbidden_literal）" "d.get('template') == 'forbidden_literal'"
+
+step "第 3 章 —— 正文里出现了那四个字，规则开火"
 # ⚠️ **必须带章标题。** 2026-08-20 合并保存闭环任务后，check 端点先把磁盘版
 #    同步进库再跑规则（报告绑定快照），而 sync 要求一个章节文件**恰好切出一章**——
 #    没有行首「第N章」的正文会被 422 `sync_refused` 拒掉，规则一条都跑不到。
@@ -184,18 +193,18 @@ cat >"$CH3" <<'EOF'
 
 　　夜里风大。
 
-　　萧决道：「我还没死。」
+　　萧决把沧浪剑收进袖中。
 EOF
 code="$(api POST "/api/projects/$PID2/chapters/3/check")"
 http_ok "check ch3" "$code"
-json_ok "ch3 报了 DEAD_SPEAKS" \
-  "any('dead_speaks' in (i.get('rule') or '').lower() for i in d['issues']) or any(i.get('rule')=='R3' for i in d['issues'])"
-json_ok "ch3 的 issue 带「建议」（确定性产出，非 LLM）" \
-  "any(i.get('suggested_action') for i in d['issues'])"
+json_ok "ch3 报了那条自定义规则的命中" \
+  "any((i.get('rule') or '').startswith('custom:') for i in d['issues'])"
+json_ok "ch3 的命中带锚点（确定性定位，非 LLM）" \
+  "any(i.get('anchor', {}).get('quote_text') == '沧浪剑' for i in d['issues'])"
 
-step "第 2 章 —— 同一段字，他还活着 → 0 issue"
+step "第 2 章 —— 同一段字里没有那四个字 → 0 issue"
 cat >"$CH2" <<'EOF'
-第二章 玄铁令
+第二章 夜风
 
 　　夜里风大。
 
@@ -203,8 +212,7 @@ cat >"$CH2" <<'EOF'
 EOF
 code="$(api POST "/api/projects/$PID2/chapters/2/check")"
 http_ok "check ch2" "$code"
-json_ok "ch2 没有 DEAD_SPEAKS" \
-  "all('dead_speaks' not in (i.get('rule') or '').lower() for i in d['issues'])"
+json_ok "ch2 一条命中都没有" "not d['issues']"
 # ⚠️ 下面这句里的「跑了 1 条规则」是字面量，被 test_doc_numbers::test_demo_pins_the_real_rule_count
 #    钉着（必须 == len(ALL_CHECKS)）。加规则时连它一起改——**没有别的东西会告诉你心跳断了**。
 #    2026-08-20 改 API 心跳时它一度被写成宽松的 `>= 2`，守卫当场咬住；别再放宽。
@@ -213,10 +221,13 @@ json_ok "ch2 没有 DEAD_SPEAKS" \
 #    2026-08-27：R2 FUTURE_LEAK 砍了（ADR 0040），`ALL_CHECKS` 的条数少了一条，这句
 #    字面量的数字跟着改了——上面 `>= 2` 那次教训依然成立，数字变了不代表可以重新
 #    放宽成范围断言。
+#    2026-09-05：R3 也砍了（ADR 0042），`ALL_CHECKS` **空了**，所以这个 1 现在数的是
+#    **上面刚加的那条自定义规则**。守卫的算式跟着变成 `len(ALL_CHECKS) + 1`（+1 就是
+#    这条泳道自己加的那一条），不是「随便挑个数」。
 json_ok "ch2 报「跑了 1 条规则」（§10 约束 8：零要和真零分开）" \
   "len(d.get('rules', [])) == 1 and all(r.get('rule_id') for r in d['rules'])"
 
 printf '\n✓ 心跳正常。两条泳道：\n'
-printf '  1. 种子库 → 角色册/人物状态卡/闭开区间（读路径，Web 那半边）。\n'
-printf '  2. 建书 → import → declare/death（valid_from 由引语算出）→ R3 开火、AS-OF 闭嘴。\n'
+printf '  1. 种子库 → 角色册/人物状态卡/交接章（读路径，Web 那半边）。\n'
+printf '  2. 建书 → import → declare/death（valid_from 由引语算出）→ 作者自己加的规则开火、没命中时闭嘴。\n'
 printf '  （量的是接缝，不是真书：import 用的是手写的 3 章 fixture。）\n'

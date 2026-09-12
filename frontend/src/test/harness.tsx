@@ -53,6 +53,14 @@ export const sseFrames = (
   frames: { event: string; data: unknown }[],
 ): string[] => frames.map((f) => `event: ${f.event}\ndata: ${JSON.stringify(f.data)}\n\n`);
 
+/** 一轮跑完了、屏幕上认得出来的那个标志。
+ *
+ *  **不能等「说完了。」那句话**：正常收场（`reason: "done"`）从 2026-09-10 起不再画它
+ *  （作者：「没有必要每次结束有这个」，判据在 `chat.ts::receiptSays`）。留在屏幕上的是
+ *  回执上这一行——真 dump 那一轮查过资料，所以它一定在。**只此一份**：这句话之前在
+ *  七个测试文件里各躺一份 `findByText(fixtures.chatTurn.message)`，措辞一改七处一起红。 */
+export const ROUND_DONE = `本轮查询 ${fixtures.chatTurn.lookups} 次资料`;
+
 /** 一轮跑完：中间那些帧是**真 dump 的字节**，最后一帧换成这个测试要的那份回执。 */
 export const turnStream = (receipt: unknown, events = fixtures.chatTurnEvents): string[] => [
   ...events.filter((frame) => !frame.startsWith("event: receipt")),
@@ -110,14 +118,24 @@ const DEFAULT: Handler[] = [
   // 这个人的事件时间线（2026-08-25）。**排在 `/characters/…/profile` 之前**：
   // 两条都以 `/characters/{id}/…` 开头，先匹配到的先赢。
   { match: /\/characters\/[^/]+\/events$/, body: fixtures.characterEvents },
+  // 这个人的状态快照（2026-08-31，角色卡合并「人物状态」之后）。带 `?chapter=`
+  // 查询串，所以不能用 `$` 收尾——同下面 `/chapters/\d+/state` 那条的写法。
+  // 角色册一旦选中一个人物，`CharacterStatus`/`CharacterRelations` 都会调它，
+  // 不给默认路由的话选中人物的每一条既有测试都会先撞「没有 handler」。
+  { match: /\/characters\/[^/]+\/state/, body: fixtures.characterState },
+  // 局部关系图（同一次合并）：`CharacterRelations` 内嵌的那份，用的还是原来
+  // 「人物关系」tab 的同一条 `/subgraph`。
+  { match: /\/subgraph/, body: fixtures.subgraph },
   { match: /\/chapters$/, body: fixtures.chapters },
-  { match: /\/chapters\/\d+\/constraints/, body: fixtures.constraints },
   { match: /\/chapters\/\d+\/state/, body: fixtures.states },
   { match: /\/chapters\/\d+\/mentioned/, body: fixtures.mentioned },
   { match: /\/chapters\/\d+\/proposals/, body: fixtures.proposals },
+  // 项目全量版（不按章，2026-08-31 待确认搬进通知面板之后新开的）。**排在按章那条
+  // 后面**：两条正则都会咬中 `.../proposals`，`/chapters\/\d+\// ` 更窄，先匹配到的先赢
+  // （同上面「事件时间线排在 profile 前面」那条纪律）。
+  { match: /\/proposals$/, body: fixtures.proposalsAll },
   { match: /\/chapters\/\d+\/events\?scope=PROVISIONAL/, body: fixtures.eventsProvisional },
   { match: /\/chapters\/\d+\/events\?scope=CANON/, body: fixtures.eventsCanon },
-  { match: /\/chapters\/\d+\/summaries$/, body: fixtures.summaries },
   // 章节总结那一格的四条（读 / 生成 / 改 / 撤回）。**四条出参是同一个形状**，
   // 所以前三条吃的都是同一份真 dump（`summaryGenerated`）——不是三份手写的东西。
   //
@@ -152,6 +170,7 @@ const DEFAULT: Handler[] = [
   // dump）。形状是确定性查库的结果（不调模型），等它进真 dump 后换成 fixture 键。
   // 形状：`paired` 一章 + `missing` 一章 + `anomaly` 一章 + `empty` 一章 + 权重反馈。
   { match: /\/summary-status$/, body: SUMMARY_STATUS },
+  { match: /\/validation-rules$/, body: fixtures.validationRules },
   // 人物基础信息（Task 11/15）：profile 读 + 别名增/撤回。
   { match: /\/characters\/[^/]+\/profile$/, body: fixtures.characterProfile },
   { method: "POST", match: /\/characters\/[^/]+\/aliases$/, body: fixtures.aliasCreated },

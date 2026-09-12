@@ -33,7 +33,7 @@ agent 调一次就把 PLANNED 秘密的正文读进对话历史，而对话是�
 
 | 工具 | 它回答什么 | 它绝不返回什么 |
 |---|---|---|
-| `scene_constraints` | 第 N 章哪些实体还没登场 | PLANNED 边 |
+| `scene_constraints` | 第 N 章正文里数出来的在场角色 | PLANNED 边 |
 | `character_state`   | 某人第 N 章在哪、什么状态、登场没有、死没死 | `Node`（它带着 props） |
 | `draft_chapter`     | 起草第 N 章的一稿，**收进候选、不动书** | **一整章正文**（只给 id + 定长预览 + 自述） |
 | `save_draft`        | 把某一稿写进它那一章（**不问作者**） | —— 见下面「落盘」那一节 |
@@ -41,12 +41,10 @@ agent 调一次就把 PLANNED 秘密的正文读进对话历史，而对话是�
 | `ask_author`        | 停下来问作者一句，给他几个可点的选项 | —— 见下面「问作者」那一节 |
 | `remember_rule`     | 把作者刚定下的一条规矩记下来 | —— 见下面「记规矩」那一节 |
 
-**写前校准**（ADR 0033，2026-08-17）：
-
-| 工具 | 它回答什么 | 它绝不返回什么 |
-|---|---|---|
-| `calibrate_scene`  | 按第 N 章时点核对预计人物、状态、关系、知识、事件和摘要（带来源） | 秘密内容、完整 PLANNED、任意 Node props、不对称知识事件 |
-| `seal_scene_brief` | 把校准报告封存成不可变 `calibration_id`（Writer 简报） | 自由文本（入参只有 inspection id + 作者选择；目标由后端固定渲染） |
+**写前校准那两条（`calibrate_scene` / `seal_scene_brief`，ADR 0033）2026-09-12 砍了**
+（[ADR 0047](../../../docs/adr/0047-drafting-is-assistant-curated-not-calibrated.md)）：
+它们锁死的「要写什么」装不下作者的话，报告又大到助手读不到。现在 `draft_chapter`
+直接收助手写的 `brief` + 它挑的 `materials`，写手那六格照旧后端固定装配。
 
 **书内索引**（`index.py`，四层，越往下越贵；那份 docstring 是它的规格）：
 
@@ -215,19 +213,18 @@ from ..mentioned import mentioned_cast
 from ..panel.constraints import UnresolvedCast, scene_view
 from ..panel.state import character_state as _state_at
 from ..text import paragraphs as split_paragraphs
-from ..calibration.calibrate import CalibrationInput, calibrate_scene
-from ..calibration.models import (
-    AuthorResolution,
-    AuthorTurnRef,
-    CalibrationReport,
-    ReferencedFact,
-    SceneProposal,
-    TargetChapterSnapshot,
-)
-from ..calibration.seal import SealRefused, seal_scene_brief
-from ..calibration.store import CalibrationNotFound, CalibrationRefused, CalibrationStore
-from ..calibration.handoff import build_retcon_handoff
+from ..draft.context import TargetChapterSnapshot
 from .prompt_terms import message, translate_tool_declarations
+from .panels import (
+    CharacterCardArgs,
+    ChapterEventsArgs,
+    NotificationsArgs,
+    ValidationRulesArgs,
+    handle_character_card,
+    handle_chapter_events,
+    handle_notifications,
+    handle_validation_rules,
+)
 from .index import (
     BookIndexArgs,
     ChapterFullText,
@@ -249,7 +246,7 @@ from .ports import DraftAsk, DraftDesk, ToolContext, ToolRefused, TrackVerdict
 
 
 class SceneConstraintsArgs(BaseModel):
-    """查「第 N 章不许说破什么」。"""
+    """查「第 N 章正文里数出来谁在场」。"""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -425,27 +422,12 @@ class GetResultArgs(BaseModel):
 # ══════════════════════════════════════════════════════════════════════════
 
 
-class ForbiddenName(BaseModel):
-    """一个「第 K 章才首现」而当前 N < K 的实体：**只有名字和章号**。
-
-    它比 `panel.constraints.ForbiddenEntity` 还窄一档——那个类型带着 `surfaces`
-    （拿去和正文做正则匹配的全部别名，R2 的料）。规则要它，模型不要：多给一串别名
-    只是把「这个东西还没登场」这件事说了 N 遍，而每一遍都是一次可以说漏嘴的机会。
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    name: str
-    first_appears_chapter: int
-
-
 class ConstraintsResult(BaseModel):
-    """`scene_constraints` 的出参：**转译后的约束，不是原件**。
+    """`scene_constraints` 的出参：这一章数出来的在场角色。
 
-    `must_not_reveal` 是 `NodeRef`（id/label/name），**不是 `Node`**。这条不是洁癖：
-    `NodeProps` 是 `extra="allow"`，作者写在秘密节点上的 `{"twist": "…第 200 章揭晓"}`
-    会原样穿过 `model_dump_json()` 进对话——**保密清单自己泄密**，而且泄完就删不掉了
-    （对话是持久化的）。完整论证在 `graph.models.NodeRef`。
+    **2026-08-31：`forbidden_entities` 字段删了**（未登场实体的禁写清单，
+    见 [ADR 0041](../../../docs/adr/0041-forbidden-entities-cut.md)）——
+    这个工具现在只剩「在场」这一件事。
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -461,8 +443,6 @@ class ConstraintsResult(BaseModel):
     **零必须带着理由一起出现**（约束 8）：「这一章没人」和「我没数出这一场有谁」
     在清单上长得一模一样，而它们对作者是完全相反的两件事。
     """
-
-    forbidden_entities: list[ForbiddenName] = Field(default_factory=list)
 
 
 class StateFact(BaseModel):
@@ -538,55 +518,6 @@ class DraftResult(BaseModel):
     它由 `dispatch()` 从这儿取走放到 `ToolOutcome.calls` 上（**结构判断，不是一张
     「哪个工具花钱」的表**，同 `_asked_chapter`），再由 loop 交给 `ledger`。
     """
-
-
-class SealSceneBriefArgs(BaseModel):
-    """`seal_scene_brief` 的入参：**只有 inspection 编号和作者选择**。
-
-    提案不重新提交：封存器从校准报告里取原始提案，重新校验全部可见性与水位。
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    inspection_id: str = Field(
-        min_length=1,
-        description="calibrate_scene 返回的校准报告编号。",
-    )
-    author_choice: AuthorResolution | None = Field(
-        default=None,
-        description=(
-            "作者看过类型化任务卡之后的三个选择之一。"
-            "**没有就不传**（未确认的请求投影保持机器推演强度）。"
-            "传了就必须是在作者回复之后的那一轮——系统会绑定他真正说过的那句话。"
-        ),
-    )
-    retcon_fact_ids: tuple[str, ...] = Field(
-        default=(),
-        description=(
-            "author_choice=RETCON_NON_SAFETY 时必须点名要推翻的旧事实"
-            "（校准报告里的 item_id）。"
-        ),
-    )
-    inferred_tension: str = Field(
-        default="",
-        max_length=200,
-        description=(
-            "RETCON 时你（Agent）对这条矛盾的带来源推演，一句话。"
-            "它永远只是机器推演，不会变成确定性规则命中。"
-        ),
-    )
-
-
-class SealResult(BaseModel):
-    """`seal_scene_brief` 的出参：不可变编号 + 状态 + 渲染好的目标文字。"""
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    calibration_id: str
-    chapter: int
-    status: str
-    goal_spec: str
-    """后端从类型项固定渲染的目标，不是 Agent 提交的散文。"""
 
 
 class DraftIdArgs(BaseModel):
@@ -943,32 +874,14 @@ def _scene_context(context: ToolContext, chapter: int) -> DraftContext:
     )
 
 
-def _target_snapshot(context: ToolContext, chapter: int) -> TargetChapterSnapshot:
-    """一次读取目标章当前正文（磁盘）+ 哈希。**全链唯一的一次读。**"""
+def _target_snapshot(context: ToolContext, chapter: int) -> TargetChapterSnapshot | None:
+    """一次读取目标章当前正文（磁盘）+ 哈希。**全链唯一的一次读。** `None` = 这一章还没有正文。"""
     if context.root_path is None:
         raise ToolRefused(message("no_manuscript_root", context.language))
     text = read_chapter(Path(context.root_path), chapter)
     if text is None:
-        raise ToolRefused(
-            message("chapter_not_yet_written", context.language, chapter=chapter)
-        )
-    return TargetChapterSnapshot(
-        chapter=chapter,
-        text=text,
-        sha256=text_digest(text),
-    )
-
-
-def _require_author_turn(context: ToolContext) -> AuthorTurnRef:
-    if context.author_turn is None:
-        raise ToolRefused(message("no_author_turn", context.language))
-    return context.author_turn
-
-
-def _require_calibrations(context: ToolContext) -> CalibrationStore:
-    if context.calibrations is None:
-        raise ToolRefused(message("calibration_not_wired", context.language))
-    return context.calibrations
+        return None
+    return TargetChapterSnapshot(chapter=chapter, text=text, sha256=text_digest(text))
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -987,14 +900,6 @@ def _handle_scene_constraints(
         chapter=args.chapter,
         cast=list(ctx.cast) if resolved else [],
         cast_derived=resolved,
-        # 收窄发生在 `panel/constraints.py`（`NodeRef.of`），这里只是不要把它加回来。
-        forbidden_entities=[
-            ForbiddenName(
-                name=entity.node.name,
-                first_appears_chapter=entity.first_appears_chapter,
-            )
-            for entity in ctx.forbidden_entities
-        ],
     )
 
 
@@ -1091,36 +996,19 @@ def _desk(context: ToolContext) -> DraftDesk:
 
 
 def _handle_draft_chapter(args: DraftAsk, context: ToolContext) -> DraftResult:
+    """起草一稿（ADR 0047）：在场从正文数、六格记忆后端装，助手给的只有 `brief` 和 `materials`。"""
     desk = _desk(context)
     # **算约束要碰库，而这条工具是并发跑的**（`ToolSpec.concurrent`）——同一条连接被两条
     # 线程同时用是 `InterfaceError`，不是理论风险（`ToolContext.db_lock` 记着实测）。
     # 锁只罩这一小段；下面那次模型调用（几十秒）在锁外面，并发的收益全在那儿。
     with context.db_guard:
-        calibrations = _require_calibrations(context)
-        author_turn = _require_author_turn(context)
-        # **一次读取目标章当前正文快照**（ADR 0033 §8.4）：安全 cast、水位校验、
-        # Writer 当前章、候选 base_sha256 全用同一个对象，禁止各自重读磁盘。
+        # **一次读取目标章当前正文快照**：写手看的正文、候选 `base_sha256` 全用同一个对象，
+        # 禁止各自重读磁盘。这一章还没有正文时（新章）快照是 `None`，在场按空正文算。
         snapshot = _target_snapshot(context, args.chapter)
-        try:
-            sealed = calibrations.require_draftable(
-                args.calibration_id,
-                project_id=context.project_id,
-                chapter=args.chapter,
-                author_turn_id=author_turn.turn_id,
-                author_request_sha256=author_turn.request_sha256,
-                target_sha256=snapshot.sha256,
-                canon_version=context.store.canon_version(context.project_id),
-            )
-        except (CalibrationNotFound, CalibrationRefused) as exc:
-            raise ToolRefused(str(exc)) from exc
-        ctx = _scene_context_from_text(context, args.chapter, snapshot.text)
-    product = desk.write(
-        args,
-        ctx,
-        goal=sealed.goal_spec,
-        brief=sealed.scene_brief,
-        snapshot=snapshot,
-    )
+        ctx = _scene_context_from_text(
+            context, args.chapter, snapshot.text if snapshot is not None else ""
+        )
+    product = desk.write(args, ctx, snapshot=snapshot)
     candidate = product.candidate
     return DraftResult(
         chapter=args.chapter,
@@ -1131,100 +1019,6 @@ def _handle_draft_chapter(args: DraftAsk, context: ToolContext) -> DraftResult:
         note=candidate.note,
         calls=product.calls,
     )
-
-
-def _handle_calibrate_scene(
-    args: SceneProposal,
-    context: ToolContext,
-) -> CalibrationReport:
-    """校准层：确定性证据 + 结构冲突 + 覆盖，**不做语义判断**。"""
-    calibrations = _require_calibrations(context)
-    author_turn = _require_author_turn(context)
-    with context.db_guard:
-        snapshot = _target_snapshot(context, args.chapter)
-        input_ = CalibrationInput(
-            store=context.store,
-            project_id=context.project_id,
-            author_turn=author_turn,
-            target_snapshot=snapshot,
-            canon_version=context.store.canon_version(context.project_id),
-            root_path=context.root_path,
-            summaries=context.summaries,
-            events=context.events,
-        )
-        report = calibrate_scene(input_, args)
-        return calibrations.save_inspection(report)
-
-
-def _handle_seal_scene_brief(
-    args: SealSceneBriefArgs,
-    context: ToolContext,
-) -> SealResult:
-    """封存器：重新校验全部引用与水位，签发不可变 `calibration_id`。"""
-    calibrations = _require_calibrations(context)
-    author_turn = _require_author_turn(context)
-    with context.db_guard:
-        inspection = calibrations.get_inspection(context.project_id, args.inspection_id)
-        if inspection is None:
-            raise ToolRefused(
-                message(
-                    "no_such_inspection", context.language, inspection_id=args.inspection_id
-                )
-            )
-        snapshot = _target_snapshot(context, inspection.chapter)
-        canon_version = context.store.canon_version(context.project_id)
-        confirmation = None
-        if args.author_choice is not None:
-            if author_turn.turn_id == inspection.author_turn_id:
-                raise ToolRefused(message("author_not_confirmed_yet", context.language))
-            confirmation = author_turn
-        if inspection.proposal is None:
-            raise ToolRefused(message("no_saved_proposal", context.language))
-        try:
-            sealed = seal_scene_brief(
-                store=context.store,
-                proposal=inspection.proposal,
-                inspection=inspection,
-                author_turn=author_turn,
-                confirmation_turn=confirmation,
-                author_choice=args.author_choice,
-                canon_version=canon_version,
-                target_sha256=snapshot.sha256,
-                retcon_fact_ids=args.retcon_fact_ids,
-                language=context.language,
-            )
-        except SealRefused as exc:
-            raise ToolRefused(str(exc)) from exc
-        sealed = calibrations.save_sealed(sealed)
-        if args.author_choice is AuthorResolution.RETCON_NON_SAFETY:
-            facts_by_id = {f.item_id: f for f in inspection.agent_safe_facts}
-            handoff = build_retcon_handoff(
-                sealed=sealed,
-                proposal_item=(
-                    f"{inspection.id}:{args.retcon_fact_ids[0]}"
-                    if args.retcon_fact_ids
-                    else inspection.id
-                ),
-                inferred_tension=args.inferred_tension,
-                referenced_facts=tuple(
-                    ReferencedFact(
-                        fact_id=fact_id,
-                        kind=facts_by_id[fact_id].kind,
-                        fact_type=facts_by_id[fact_id].fact_type,
-                        valid_from_chapter=facts_by_id[fact_id].valid_from_chapter,
-                        valid_to_chapter=facts_by_id[fact_id].valid_to_chapter,
-                    )
-                    for fact_id in args.retcon_fact_ids
-                    if fact_id in facts_by_id
-                ),
-            )
-            calibrations.push_handoff(handoff)
-        return SealResult(
-            calibration_id=sealed.calibration_id,
-            chapter=sealed.chapter,
-            status=sealed.status.value,
-            goal_spec=sealed.goal_spec,
-        )
 
 
 def _handle_save_draft(args: DraftIdArgs, context: ToolContext) -> LandingResult:
@@ -1392,13 +1186,10 @@ class ToolSpec:
 TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
     ToolSpec(
         name="scene_constraints",
-        description=(
-            "查第 N 章哪些实体还没登场。"
-            "返回的是实体的首现章号。"
-        ),
+        description="查第 N 章正文里数出来谁在场。",
         args=SceneConstraintsArgs,
         handler=_handle_scene_constraints,
-        label="查这一章不许说破什么",
+        label="查这一章谁在场",
     ),
     ToolSpec(
         name="character_state",
@@ -1414,15 +1205,17 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
     ToolSpec(
         name="draft_chapter",
         description=(
-            "起草第 N 章的一稿。**先 calibrate_scene + seal_scene_brief 拿到"
-            " calibration_id，再调本工具**——起草目标只从那个不可变产物读取，"
-            "你传不了、也不需要传任何目标文字。**这一步不动书**：稿子存在一边，返回里给你它的编号、"
-            "字数、开头的一段，以及写它的那个模型自己说的一句话。"
+            "起草第 N 章的一稿。**这一步不动书**：稿子存在一边，返回里给你它的编号、"
+            "字数、开头的一段，以及写它的那个模型自己说的一句话。\n"
+            "写之前先做三件事：分析作者的意图（写哪一章、新写还是重写、牵涉谁、牵涉哪几章）；"
+            "由粗到细查资料（目录 → 总结 → 事件 → 角色卡 → 原文，只在需要细节时读原文，"
+            "有目的地挑）；对照规矩（validation_rules 里的检验规则、作者交代过的有时限的规矩、"
+            "你查到的事实矛盾）。然后把结论写进 brief，把写手够不着的远章资料放进 materials。\n"
+            "写手自己有：文风、禁用字、这一章在场人物的角色卡、他们最近的事件、最近几章的总结、"
+            "上一章结尾和这一章当前正文——**这些不用你抄进来**。\n"
             "方向清楚就写一稿、接着调 save_draft 存进去（不用问作者，他随时能退回去）；"
-            "方向不清楚就一次要几稿，把它们的自述摆给作者挑——**同一批里的几稿会同时写**，"
-            "不比一稿慢多少。"
-            "**不要传约束**：不许说破什么由后端按这个章号当场重算，"
-            "你上一轮看到的清单对这一章可能已经过期。"
+            "方向不清楚就一次要几稿（brief 各不同），把它们的自述摆给作者挑——"
+            "**同一批里的几稿会同时写**，不比一稿慢多少。"
         ),
         args=DraftAsk,
         handler=_handle_draft_chapter,
@@ -1564,39 +1357,6 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         handler=_get_result_without_store,
         label="取回刚查过的那份内容",
     ),
-    # ── 写前校准（ADR 0033）。**追加在表尾**，理由同上面那几条。
-    ToolSpec(
-        name="calibrate_scene",
-        description=(
-            "写前校准：把你对作者当前要求的结构化理解（预计人物 + 封闭指令码 + "
-            "视角/风格码）拿去按第 N 章时点核对真实数据。返回一份详细报告："
-            "已解析人物、带来源的状态/关系/知识/事件/摘要、确定性冲突、未知项和"
-            "覆盖回执。\n"
-            "**只做确定性核对，不做语义判断**：报告不会替你判断「作者这句话和旧事实"
-            "冲不冲突」——那种张力是你的 `MACHINE_INFERENCE`，需要时用 ask_author 问。\n"
-            "**这是起草的前置步骤**：先调它，再视情况 ask_author，再 seal_scene_brief，"
-            "最后才 draft_chapter。"
-        ),
-        args=SceneProposal,
-        handler=_handle_calibrate_scene,
-        label="写前校准",
-    ),
-    ToolSpec(
-        name="seal_scene_brief",
-        description=(
-            "把 calibrate_scene 的校准报告封存成不可变写作简报，拿到 calibration_id。"
-            "封存时后端重新校验每一个事实引用、可见性和全部水位；"
-            "返回的目标文字由后端从类型项固定渲染，你不需要手抄任何东西。\n"
-            "**作者确认**：如果你想把这稿的要求标成「作者确认」，必须先把类型化任务卡"
-            "摆给作者、等他下一句回复（这一轮结束），下一轮再带着他的选择来封存。"
-            "没确认就封存也可以——那批指令会标成机器推演进 Writer。\n"
-            "**推翻旧设定**：只有作者明确选了推翻非安全旧设定才传 "
-            "author_choice=RETCON_NON_SAFETY + retcon_fact_ids。"
-        ),
-        args=SealSceneBriefArgs,
-        handler=_handle_seal_scene_brief,
-        label="封存写作简报",
-    ),
     # ── 轨道核对（2026-08-23，轨道阶段 3）。**追加在表尾**，理由同上面那几条。
     #
     # 这一条是 ADR 0019 边界一「工具表就是权限边界」在这份文件里**字面成立**的地方：
@@ -1621,6 +1381,60 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         args=CheckTrackArgs,
         handler=_handle_check_track,
         label="跟后面已经写完的章对一遍",
+    ),
+    # ── 右栏那四栏（2026-09-12，`agent/panels.py`）。**追加在表尾**，理由同上。
+    #
+    # 作者的原话：「我要求把这几个功能给他补进去，就是能读这里面的功能……每个按钮功能
+    # 里面的每个内容」。四条全是读，读的是面板自己那条读法；边界一那个问题的答案
+    # 写在 `panels.py` 顶上（出参只有 NodeRef 和纯量，角色卡那几行字和进写作提示的是
+    # 同一份收窄视图）。
+    ToolSpec(
+        name="character_card",
+        description=(
+            "翻一个人的角色卡：右栏「角色册」里点开他看到的那一页——基本信息（性别 / 性格 / "
+            "背景 / 备注）、别名、第 N 章时的处境（在哪、各状态、死没死）、"
+            "他和谁有什么关系、他经历过的事（按章号，只有已确认的）。"
+            "**只认角色册上的名字**（book_index 里那份）。要看某一章里发生了什么，"
+            "用 chapter_events；只想知道他此刻的处境，character_state 更便宜。"
+        ),
+        args=CharacterCardArgs,
+        handler=handle_character_card,
+        label="翻一个人的角色卡",
+    ),
+    ToolSpec(
+        name="chapter_events",
+        description=(
+            "看某几章的事件：右栏「事件」那一栏——这几章里已经确认、写进书里的每一条情节，"
+            "带章号、在场的人和知道这件事的人。**只有已确认的**：抽取出来还没被作者确认的"
+            "不在这里（那些在 notifications 里等他）。空清单要连着 notes 一起读："
+            "「这几章没整理过」和「这几章没事发生」不是一回事。"
+        ),
+        args=ChapterEventsArgs,
+        handler=handle_chapter_events,
+        label="看这一章的事件",
+    ),
+    ToolSpec(
+        name="validation_rules",
+        description=(
+            "看检验规则：右栏「检验规则」那一栏——作者给这本书定的规则（正文里不许出现的字，"
+            "含已停用的），以及某一章最近一次检验的结果（命中了第几段、哪一句）。"
+            "**只读**：跑检验是作者在界面上按的，这儿不跑。"
+        ),
+        args=ValidationRulesArgs,
+        handler=handle_validation_rules,
+        label="看检验规则",
+    ),
+    ToolSpec(
+        name="notifications",
+        description=(
+            "看通知：右栏「通知」那一栏——系统留给作者的提醒（后台没办成的事、检查命中、"
+            "总结和正文对不上……）和等他确认的提案（抽出来的设定跟现有的对不上、待确认的情节）。"
+            "返回先给一张按章数出来的表，再给最近的那些条目；传 chapter 只看某一章的。"
+            "**只读**：处理 / 忽略一条通知是作者在界面上按的，这儿不动。"
+        ),
+        args=NotificationsArgs,
+        handler=handle_notifications,
+        label="看通知",
     ),
 )
 """**模式二的权限边界。这张表以外的能力，模型一律没有。**

@@ -270,25 +270,29 @@ def build_summarizer() -> RollingSummarizer:
 def get_summarizer() -> RollingSummarizer:
     """章节滚动总结器。**在这里就把「模型配好了没」问一次。**
 
-    ── ⚠️ 它今天只剩一个消费方，而那个消费方不是它当初服务的那个（2026-08-25）──
-
-    这个「先问一次」的变体是为**作者亲手点「生成总结」**写的：不问的话他拿到的是
+    这个「先问一次」的变体是为**作者亲手点「重新生成」**写的：不问的话他拿到的是
     `ensure` 中途抛出的 pydantic / capability 开发者输出，而他能做的动作是
-    「去顶栏 ⚙ 填三个框」。**那颗按钮和它背后的路由已经删了**——总结只剩两个
-    自动触发，作者手上没有手动入口。
+    「去顶栏 ⚙ 填三个框」。那颗按钮 2026-08-25 删过、2026-09-05 加回来了
+    （`POST …/summary`），所以这个变体今天有它本来的消费方。
 
-    于是今天唯一还拿它当工厂的是 `api/background_runtime.py`（`summarizer_factory`
-    的默认值），**而那正是上面 `model_configuration_error` 明写「不该 422」的那一侧**
+    ── ⚠️ 但它还有第二个消费方，而那一侧「不该 422」（记录在案，不是没看见）──
+
+    `api/background_runtime.py` 也拿它当工厂（`summarizer_factory` 的默认值），
+    **而那正是上面 `model_configuration_error` 明写「不该 422」的那一侧**
     （每保存一次弹一次 422 是骚扰，它要的是把这句话装进回执）。
 
-    **这个错配是记录在案的，不是没看见**：改它是一次行为改动（后台没配模型时的失败
-    形状会变），不在「删手动入口」这一批的范围里。要改的话把后台指向
-    `build_summarizer`（那个不问的、今天零直接调用的），并同时给后台补上
-    「把这句话装进回执」那一半——只改一半会让作者更看不出为什么什么都没发生。
+    改它是一次行为改动（后台没配模型时的失败形状会变）。要改的话把后台指向
+    `build_summarizer`（那个不问的），并同时给后台补上「把这句话装进回执」那一半
+    ——只改一半会让作者更看不出为什么什么都没发生。
     """
-    reason = model_configuration_error()
-    if reason is not None:
-        raise HTTPException(status_code=422, detail=reason)
+    # **只回码。** `model_configuration_error()` 那句话里嵌着 `str(exc)`
+    # （`ValidationError` / `CapabilityError` 的诊断，带字段名和英文），而这条 422
+    # 从 2026-09-05 起真的会上作者的屏幕（「重新生成」那颗按钮）——在那之前它唯一的
+    # 消费方是后台，而后台把它吞掉，所以这处泄漏一直**够不着**。
+    # 整句话由前端按 `model_not_configured` 渲染（`backendMessages.ts` 里那一条，
+    # 它的 `{exc}` 参数早就因为同一个理由删掉了）；同 `app.py` 里另一处的写法。
+    if model_configuration_error() is not None:
+        raise HTTPException(status_code=422, detail={"error": "model_not_configured"})
     return build_summarizer()
 
 

@@ -91,7 +91,8 @@ class EntityType(StrEnum):
     CHAT_MESSAGE = "chat_message"
     DRAFT_CANDIDATE = "draft"
     CALIBRATION = "calibration"
-    """写前校准的非 Canon 派生产物（`calibration_artifact`，迁移 017 / ADR 0033）。"""
+    """写前校准的非 Canon 派生产物（`calibration_artifact`，迁移 017 / ADR 0033）。
+    **那条链 2026-09-12 随 ADR 0047 砍了**：表留着、没有写入方；枚举留着是因为库里有旧行。"""
 
     HANDOFF = "handoff"
     """`ContinuityConflictHandoff` 的 producer outbox 行（`calibration_handoff_outbox`）。"""

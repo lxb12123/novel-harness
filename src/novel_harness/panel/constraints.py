@@ -1,38 +1,18 @@
-"""`forbidden_entities` —— 未来进 prompt 的**唯一**闸门。
+"""场景 cast 解析 —— 把作者写在场景块里的称呼原文变成解析结果，歧义留给作者判断。
 
-PLAN §5.4 / 原则 11：**完整 PLANNED 永不进 Writer prompt**，只转译为它。
-§3.2 的面板把它画在人物卡下面：
+**2026-08-31：`forbidden_entities`/`ForbiddenEntity`/`scene_constraints()` 整个删了**
+（维护者裁定，见 [ADR 0041](../../../docs/adr/0041-forbidden-entities-cut.md)）。
+这个模块原来还产出「未登场实体不许提」的禁写清单（PLAN §5.4 / 原则 11 说的那道
+「完整 PLANNED 永不进 Writer prompt，只转译为它」的闸门），维护者认定这条价值已经
+不在了，连同它在右栏面板、`draft/context.py`、Mode 2 的 `scene_constraints`/
+`book_index` 两个工具里的全部读取一起删。**PLANNED 边本身仍然没有读路径**
+（`QUERYABLE_SCOPES` = {CANON, PROVISIONAL}，`graph/sqlite_store.py::_check_scope`）
+——那条防线是独立的、结构性的，没有跟着这次删除松动；本模块原来只是它的一个可选、
+narrow 的转译出口，不是防线本身。完整代价见 ADR 0041。
 
-```
-本场景 forbidden_entities：幽泉窟(ch200 首现)
-```
-
-（原来还有一半叫 `must_not_reveal`：算出「这一场里有人还不知道的秘密」。
-它随秘密下线一起没了，ADR 0039。**这个模块因此从「两样东西」变成一样**，
-而剩下的这一样恰好是**不需要任何集合推理**的那一样——首现章是节点上的一个属性。）
-
-── 为什么这是个闸门而不是一个格式化函数 ──────────────────────────────
-
-改 7 判定原设计的 `future_leak_penalty` / `rejected_content_penalty` / `stale_state_penalty`
-是**类型错误**：硬约束被当成了软权重——只要某个未来章节片段的 dense_score 够高
-（0.95），它就能盖过惩罚项挤进上下文。**正确做法是全部下沉为 filter，让泄漏在物理上
-不可能发生，而不是大概率不会发生。** 于是「未来剧情泄漏率」从「靠调权重压低」变成
-「结构上恒为 0，除非 filter 有 bug」。
-
-这个模块就是那个 filter 的出口侧。它的四条实现约束直接来自那条原则：
-
-1. **本模块产出的是「不许说什么」，永远不产出「未来发生了什么」。** `ForbiddenEntity`
-   里有名字和首现章号，**没有** PLANNED 边的内容——因为那个字段一旦存在，某个下午
-   就会有人把它拼进 prompt。
-2. **出参里只有 `NodeRef`，没有 `Node`。** 上一条曾经只在字面上成立：出参带着完整的
-   `Node`，而 `NodeProps` 是 `extra="allow"`，于是作者写在未来地点上的 `twist` /
-   `plot_note` 原样穿过闸门进了 prompt。完整论证见 `graph.models.NodeRef`。
-3. **PLANNED 边根本没有读路径**（`QUERYABLE_SCOPES` = {CANON, PROVISIONAL}）。所以
-   v1 的「PLANNED 转译」走的是 `resolve` → `node.props.first_appears_chapter`，
-   不经过 `state_at` / `subgraph`。这个绕法是 store 契约点名的，
-   也是这条约束免费的原因。
-4. **fail-closed：算不准就多禁，不是少禁。** 见 `scene_constraints`。这条与前三条
-   方向一致但性质不同——前三条防的是「说了不该说的」，第 4 条防的是「以为没什么不能说」。
+留下的这部分——`resolve_cast()` / `ResolvedCast` / `UnresolvedCast`——答的是另一个
+问题：作者写在场景块里的称呼（「师兄」这种）能不能解析成唯一一个角色。矩阵渲染、
+起草、Mode 2 都还在用它，跟上面删掉的那部分是两件事。
 """
 
 from __future__ import annotations
@@ -41,7 +21,7 @@ from collections.abc import Sequence
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..graph import Node, NodeRef, StoryGraph
+from ..graph import NodeRef, StoryGraph
 
 
 class UnresolvedCast(Exception):
@@ -145,32 +125,8 @@ def resolve_cast(store: StoryGraph, project_id: str, cast: Sequence[str]) -> Res
     return ResolvedCast(ids=ids, refs=refs, unresolved=unresolved)
 
 
-class ForbiddenEntity(BaseModel):
-    """一个「第 K 章才首现」而当前 N < K 的实体。面板渲染成「幽泉窟(ch200 首现)」。"""
-
-    model_config = ConfigDict(frozen=True)
-
-    node: NodeRef
-    """**窄引用，不是 `Node`**：这个实体按定义就是关于未来的，它是全库最不该被完整
-    序列化的一批节点。见 `graph.models.NodeRef`。"""
-
-    first_appears_chapter: int
-    """`node.props.first_appears_chapter`。**作者声明的**（ADR 0004：伏笔由作者意图
-    定义，不由文本特征定义——墙上那把枪是不是伏笔取决于他第 200 章打不打算开枪，
-    这个信息物理上不存在于已写文本里）。"""
-
-    surfaces: list[str] = Field(default_factory=list)
-    """这个实体**可以拿去匹配正文**的称呼，长度降序。
-
-    只收 `Resolution.usable_for_rules` 为真的 surface：歧义的（「师兄」映射到 8 个人）
-    绝不能进——把它列进 forbidden_entities，等于禁掉一个此刻在场的人的称呼，
-    而 R2 会拿它在正文上开火。**可能为空**（这个实体的别名全都有歧义或被标短），
-    那时它仍然要显示给作者看，只是 R2 匹配不了它——漏报，不是误报。
-    """
-
-
 class SceneConstraints(BaseModel):
-    """一个场景的约束集。进 Writer prompt 的 X1 事实清单 / X2 叙事化两种形态都读它。"""
+    """一个场景的 cast 解析结果集。"""
 
     model_config = ConfigDict(frozen=True)
 
@@ -181,9 +137,6 @@ class SceneConstraints(BaseModel):
 
     起草侧必须 `require_resolved_cast()`，别自己读这个字段判空。
     """
-
-    forbidden_entities: list[ForbiddenEntity] = Field(default_factory=list)
-    """首现章号在本章之后的实体，按首现章号升序（最快要登场的排前面）。"""
 
     def require_resolved_cast(self) -> None:
         """**起草 / 拼 prompt 之前必须调这一下。**
@@ -205,48 +158,14 @@ class SceneConstraints(BaseModel):
             )
 
 
-def scene_constraints(
-    store: StoryGraph,
-    project_id: str,
-    chapter: int,
-    cast: Sequence[str],
-) -> SceneConstraints:
-    """算出本场景的 `forbidden_entities`。**算不准就多禁。**
-
-    Args:
-        cast: 作者写在场景块里的**称呼原文**（`<!-- nh: cast=萧决,顾清音,师兄 -->`），
-            **不是 node_id**。顺序即在场名单的顺序。
-
-    Notes:
-        **为什么收原文而不是 node_id。** 这个函数曾经收 node_id，把解析留给调用方——
-        而调用方唯一能写的东西是 `[r.unique_node.id for r in res if r.unique_node]`
-        （契约要求猜不出就不能猜）。于是「师兄」解析不出唯一角色时，李管家**静默地**
-        从 cast 里消失，而没有任何一步会报错。**错误方向指向 fail-open**，
-        这就是 `unresolved` 必须有自己的去处的原因。
-
-        **为什么退化而不是抛异常。** 两侧的代价不对称：多禁一条的代价是「Writer 少写
-        一段」，漏禁一条的代价是「崩人设」。而面板（R1）还得渲染得出来——它要显示解析
-        成功的那几行 + 把歧义称呼问给作者，抛异常会让整片黑掉，且作者修不了一个异常。
-        起草侧另有 `require_resolved_cast()` 拦。
-
-        **ADR 0006「系统不确定时的默认动作是闭嘴，不是提问」在这里不适用**：
-        那条针对的是 STALE 停火（少报一条 issue），而这里闭嘴的产物是泄漏，方向相反。
-
-        **CANON 写死，不开 scope 参数。** 约束是要被断言为真的（它会进 prompt），
-        而 PROVISIONAL 是抽取器猜的、未确认的——拿它去约束 Writer 就是让 Agent 的
-        猜测变成了 Canon 的效力，原则 5 破在一个没人会看的地方。
-    """
-    return scene_view(store, project_id, chapter, cast).constraints
-
-
 class SceneView(BaseModel):
-    """`scene_constraints()` 内部本来就算了两样东西，这个类型把第二样也交出来。
+    """一个场景的 cast 解析结果：约束（chapter + unresolved_cast）+ 已解析的在场角色。
 
-    第二样今天是**已解析的在场角色**。它本来就在那儿（约束要先解析 cast 才算得出来），
-    让 `draft/` 再算一遍等于制造第二份可能漂移的真相——而且 `draft/` 也算不了：
-    `resolve_cast` 在第 4 道 arch-guard 的 `WRITER_BANNED` 里。
+    两样绑在一起交出去，是因为算约束时本来就先解析了 cast——让 `draft/` 再算一遍
+    等于制造第二份可能漂移的真相，而且 `draft/` 也算不了：`resolve_cast` 在第 4 道
+    arch-guard 的 `WRITER_BANNED` 里。
 
-    （2026-08-24 之前第二样是整张认知矩阵，这段 docstring 当时的论证是
+    （2026-08-24 之前 `characters` 是整张认知矩阵，这段 docstring 当时的论证是
     EVAL_PROTOCOL §2 的反混淆铁律——X1/X2 必须从同一个矩阵对象渲染。
     **那份卷子已退役**，见 `docs/EVAL_PROTOCOL_RETIREMENT.md`。留下的理由是上一段，
     它跟那张卷子无关，所以这个类型没跟着一起消失。）
@@ -272,58 +191,24 @@ def scene_view(
     chapter: int,
     cast: Sequence[str],
 ) -> SceneView:
-    """`scene_constraints()` 的完整出参：约束 + 算它用的那份在场名单。参数语义相同。
+    """算一次 cast 解析：约束 + 已解析的在场角色。
 
-    面板（R1）只要约束，走 `scene_constraints()`；起草层还要在场名单，走这条。
-    **两条路算的是同一次**——`scene_constraints()` 就是这个函数的一行封装。
+    Args:
+        cast: 作者写在场景块里的**称呼原文**（`<!-- nh: cast=萧决,顾清音,师兄 -->`），
+            **不是 node_id**。顺序即在场名单的顺序。
+
+    Notes:
+        **为什么收原文而不是 node_id。** 这个函数曾经收 node_id，把解析留给调用方——
+        而调用方唯一能写的东西是 `[r.unique_node.id for r in res if r.unique_node]`
+        （契约要求猜不出就不能猜）。于是「师兄」解析不出唯一角色时，李管家**静默地**
+        从 cast 里消失，而没有任何一步会报错。**错误方向指向 fail-open**，
+        这就是 `unresolved` 必须有自己的去处的原因。
     """
     resolved = resolve_cast(store, project_id, cast)
     return SceneView(
         constraints=SceneConstraints(
             chapter=chapter,
             unresolved_cast=resolved.unresolved,
-            forbidden_entities=forbidden_entities(store, project_id, chapter),
         ),
         characters=list(resolved.refs),
     )
-
-
-def forbidden_entities(
-    store: StoryGraph,
-    project_id: str,
-    chapter: int,
-) -> list[ForbiddenEntity]:
-    """全书里「还没到首现章」的实体。R2 FUTURE_LEAK 和 Writer prompt 共用这一份。
-
-    Notes:
-        节点是从**角色册**（`resolve(surfaces=None)`）里发现的——store 契约里没有
-        「列出全部节点」这个方法，而这是故意的（裸 query 会让「graph/ 外禁 import
-        sqlite3」那条守卫失去意义）。**推论：一个连 canonical 别名行都没有的节点
-        在这里是隐形的。** 那是导入器的 bug（每个节点都该有 canonical 行，
-        `idx_alias_canonical` 保证至多一条但不保证至少一条），不该在这里补救——
-        补救会把它藏起来。
-    """
-    nodes: dict[str, Node] = {}
-    surfaces: dict[str, list[str]] = {}
-    for resolution in store.resolve(project_id):
-        for hit in resolution.hits:
-            first = hit.node.props.first_appears_chapter
-            if first is None or first <= chapter:
-                continue
-            nodes[hit.node.id] = hit.node
-            surfaces.setdefault(hit.node.id, [])
-            if resolution.usable_for_rules:
-                surfaces[hit.node.id].append(resolution.surface)
-
-    entities = [
-        ForbiddenEntity(
-            # 收窄成 NodeRef 就发生在这一行：props 里的 plot_note / twist 到此为止。
-            node=NodeRef.of(node),
-            # 上面的 continue 已经保证它不是 None；这里再取一次是为了不把 int | None 带出去。
-            first_appears_chapter=node.props.first_appears_chapter or 0,
-            # 长度降序 = leftmost-first 即最长匹配，可直接喂 mentions.py 的 alternation。
-            surfaces=sorted(surfaces[node_id], key=len, reverse=True),
-        )
-        for node_id, node in nodes.items()
-    ]
-    return sorted(entities, key=lambda e: (e.first_appears_chapter, e.node.id))

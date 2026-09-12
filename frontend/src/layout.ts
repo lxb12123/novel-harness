@@ -74,6 +74,15 @@ export interface PaneWidths {
 
 export const DEFAULT_WIDTHS: PaneWidths = { left: DEFAULT_LEFT, right: DEFAULT_RIGHT };
 
+/** 这一刻哪几栏真的画在屏幕上。**收起来的那一栏宽度照旧存着**（`PaneWidths` 不动）——
+ *  展开时要原样回到作者拖成的样子，所以「收起」不许顺手把那个数改掉。 */
+export interface PaneVisibility {
+  left: boolean;
+  right: boolean;
+}
+
+export const BOTH_VISIBLE: PaneVisibility = { left: true, right: true };
+
 /** 下限永远赢：窗口窄到连三栏下限都塞不下时上限会低于下限，这时宁可整行横向溢出，
  *  也不要算出负宽或零宽的栏（那等于把一栏彻底删掉，作者找不回来）。 */
 function fit(v: number, min: number, max: number): number {
@@ -94,12 +103,17 @@ export function clampPaneWidths(
   w: PaneWidths,
   container: number,
   minCenter: number = MIN_CENTER,
+  visible: PaneVisibility = BOTH_VISIBLE,
 ): PaneWidths {
-  const avail = container > 0 ? container - 2 * DIVIDER_PX : 0;
-  const maxLeft = avail > 0 ? avail - minCenter - MIN_RIGHT : Infinity;
+  // 收起来的那一栏**既不占分隔条，也不参与挤中栏**。不区分的话会出现一个反直觉的
+  // 故障：窗口窄到夹取真的在起作用时，收起左栏反而把右栏压到下限——而作者按那颗
+  // 按钮要的正好相反（腾地方）。
+  const dividers = (visible.left ? 1 : 0) + (visible.right ? 1 : 0);
+  const avail = container > 0 ? container - dividers * DIVIDER_PX : 0;
+  const maxLeft = avail > 0 ? avail - minCenter - (visible.right ? MIN_RIGHT : 0) : Infinity;
   const left = fit(w.left, MIN_LEFT, maxLeft);
   // 右栏的上限要用**夹完的** left 算：否则两侧各自合法、加起来仍能把中栏挤没。
-  const maxRight = avail > 0 ? avail - minCenter - left : Infinity;
+  const maxRight = avail > 0 ? avail - minCenter - (visible.left ? left : 0) : Infinity;
   return { left, right: fit(w.right, MIN_RIGHT, maxRight) };
 }
 

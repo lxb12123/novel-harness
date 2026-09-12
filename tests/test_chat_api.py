@@ -482,6 +482,99 @@ def test_a_stop_that_names_the_running_turn_still_lands(
     assert turn.json()["reason"] == StopReason.AUTHOR_STOPPED.value
 
 
+def test_saying_something_mid_turn_reaches_the_model_at_its_next_step(
+    client: TestClient, book: dict[str, str], configured: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """一轮跑着的时候再说一句（`POST …/say`，2026-09-12）：**不等、不打断、不落库**。
+
+    模型卡在第一次调用里时从主线程说一句，放行——第二次调用发出去的消息里得有那句话，
+    canonical 里它是一条正常的作者消息，而这条路由自己一个字都没写库（第一次调用还
+    卡着时读回来的对话里没有它）。
+    """
+    pid = book["pid"]
+    entered, release = Event(), Event()
+
+    def blocking(cancel: Any) -> None:
+        if not entered.is_set():
+            entered.set()
+            release.wait(timeout=5)
+
+    model = Scripted(wants(("book_index", "{}"), text="先翻目录。"), says("翻完了。"), before=blocking)
+    use(monkeypatch, model)
+    chat_id = open_chat(client, pid)
+    url = f"/api/projects/{pid}/chats/{chat_id}"
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        running = pool.submit(
+            lambda: client.post(f"{url}/turn", json={"chapter": 2, "said": "这章讲什么", "run_id": "b"})
+        )
+        assert entered.wait(timeout=5), "这一轮没跑起来"
+        said = client.post(f"{url}/say", json={"run_id": "b", "said": "顺便看看第 2 章"})
+        assert said.status_code == 200, said.text
+        assert said.json() == {"chat_id": chat_id, "queued": True, "message": "记下了，它下一步就会看到。"}
+        # **这条路由不写库**：对话的写入只有 loop 那一条线。
+        texts = [m["text"] for m in client.get(url).json()["messages"]]
+        assert "顺便看看第 2 章" not in texts
+        release.set()
+        turn = running.result(timeout=10)
+
+    assert turn.status_code == 200, turn.text
+    assert turn.json()["reason"] == StopReason.DONE.value
+    assert turn.json()["unanswered"] == 0
+    second = model.calls[1]
+    assert any(m.get("role") == "user" and m.get("content") == "顺便看看第 2 章" for m in second)
+    texts = [m["text"] for m in client.get(url).json()["messages"]]
+    assert texts.index("顺便看看第 2 章") > texts.index("先翻目录。"), "排在它读到它的位置"
+
+
+def test_saying_something_when_nothing_is_running_is_not_a_failure_and_lands_nowhere(
+    client: TestClient, book: dict[str, str], configured: None
+) -> None:
+    """`queued=false`：那一刻没在跑。**不落库**——那句话由前端按新的一轮发出去。"""
+    pid = book["pid"]
+    chat_id = open_chat(client, pid)
+    url = f"/api/projects/{pid}/chats/{chat_id}"
+    idle = client.post(f"{url}/say", json={"said": "再说一句"})
+    assert idle.status_code == 200
+    assert idle.json()["queued"] is False
+    assert "没在跑" in idle.json()["message"]
+    assert "再说一句" not in [m["text"] for m in client.get(url).json()["messages"]]
+    assert client.post(f"/api/projects/{pid}/chats/chat_session:nope/say", json={"said": "x"}).status_code == 404
+
+
+def test_a_mid_turn_message_meant_for_the_previous_turn_is_not_queued(
+    client: TestClient, book: dict[str, str], configured: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """报错了标识的插话不排进去（同「过期的停」那条序列）：它该是作者自己发起的新一轮的
+    第一句，不该插进别人的轮里。"""
+    pid = book["pid"]
+    entered, release = Event(), Event()
+
+    def blocking(cancel: Any) -> None:
+        if not entered.is_set():
+            entered.set()
+            release.wait(timeout=5)
+
+    model = Scripted(wants(("book_index", "{}")), says("好"), before=blocking)
+    use(monkeypatch, model)
+    chat_id = open_chat(client, pid)
+    url = f"/api/projects/{pid}/chats/{chat_id}"
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        running = pool.submit(
+            lambda: client.post(f"{url}/turn", json={"chapter": 2, "said": "这一轮", "run_id": "b"})
+        )
+        assert entered.wait(timeout=5), "这一轮没跑起来"
+        stale = client.post(f"{url}/say", json={"run_id": "a", "said": "迟到的一句"})
+        assert stale.status_code == 200
+        assert stale.json()["queued"] is False
+        release.set()
+        turn = running.result(timeout=10)
+
+    assert turn.json()["reason"] == StopReason.DONE.value
+    assert all("迟到的一句" != m.get("content") for call in model.calls for m in call)
+
+
 def test_a_client_that_reports_no_turn_id_keeps_the_old_behaviour(
     client: TestClient, book: dict[str, str], configured: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:

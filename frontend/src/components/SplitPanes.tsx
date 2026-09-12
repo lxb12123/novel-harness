@@ -30,6 +30,7 @@ import {
   type PaneWidths,
 } from "../layout";
 import { useLanguage } from "../language";
+import { usePaneCollapse } from "../paneCollapse";
 
 type Side = "left" | "right" | "chat";
 
@@ -76,6 +77,16 @@ export function SplitPanes({
   const [chatPct, setChatPct] = useState<number>(readStoredChatPct);
   const [dragging, setDragging] = useState<Side | null>(null);
   const [container, setContainer] = useState(0);
+  // 收起来的那一栏**连同它那根分隔条一起不渲染**（不是宽度设 0）：留着一条 0 宽的
+  // 轨道，作者仍然能摸到那根分隔条把它拖回来，于是「收起」变成了一个可以被绕过的
+  // 状态；而且读屏还会念到一个 `aria-valuenow=0` 的分隔条。
+  // **宽度本身一个字节都不动**（`widths` 存的是意图），所以展开就回到他拖成的样子。
+  const leftCollapsed = usePaneCollapse((s) => s.left);
+  const rightCollapsed = usePaneCollapse((s) => s.right);
+  const visible = useMemo(
+    () => ({ left: !leftCollapsed, right: !rightCollapsed }),
+    [leftCollapsed, rightCollapsed],
+  );
 
   const splitCenter = chat !== undefined && chat !== null && chat !== false;
   const floor = centerFloor(splitCenter);
@@ -190,14 +201,18 @@ export function SplitPanes({
 
   // 渲染用的那一对：作者的意图 + 这一刻的容器宽 + 中栏这一刻要保住多宽。
   const shown = useMemo(
-    () => clampPaneWidths(widths, container, floor),
-    [widths, container, floor],
+    () => clampPaneWidths(widths, container, floor, visible),
+    [widths, container, floor, visible],
   );
 
   // 上限只在量到容器宽之后才是已知的；不知道就不报 aria-valuemax，别编一个数出来。
-  const avail = container > 0 ? container - 2 * DIVIDER_PX : 0;
-  const maxLeft = avail > 0 ? Math.max(MIN_LEFT, avail - floor - MIN_RIGHT) : undefined;
-  const maxRight = avail > 0 ? Math.max(MIN_RIGHT, avail - floor - shown.left) : undefined;
+  // 分隔条的根数跟着收起状态走——收了一栏就少一根，同 `clampPaneWidths` 里那一处。
+  const dividers = (visible.left ? 1 : 0) + (visible.right ? 1 : 0);
+  const avail = container > 0 ? container - dividers * DIVIDER_PX : 0;
+  const maxLeft =
+    avail > 0 ? Math.max(MIN_LEFT, avail - floor - (visible.right ? MIN_RIGHT : 0)) : undefined;
+  const maxRight =
+    avail > 0 ? Math.max(MIN_RIGHT, avail - floor - (visible.left ? shown.left : 0)) : undefined;
 
   const divider = (side: Side, value: number, min: number, max: number | undefined) => (
     <div
@@ -222,16 +237,20 @@ export function SplitPanes({
     />
   );
 
+  // 轨道按「这一刻有哪几栏」拼。**两栏都在时拼出来的字符串和收起功能出现之前
+  // 一字不差**——那不是巧合，是这一版必须保住的东西：既有那几条钉着 grid 模板的
+  // 测试是它唯一的看守。
+  const tracks = [
+    ...(visible.left ? [`${shown.left}px`, `${DIVIDER_PX}px`] : []),
+    // 中栏必须是 minmax(0,1fr)：裸 1fr 的下限是 min-content，编辑器会撑住不让拖窄。
+    "minmax(0, 1fr)",
+    ...(visible.right ? [`${DIVIDER_PX}px`, `${shown.right}px`] : []),
+  ].join(" ");
+
   return (
-    <main
-      ref={mainRef}
-      style={{
-        // 中栏必须是 minmax(0,1fr)：裸 1fr 的下限是 min-content，编辑器会撑住不让拖窄。
-        gridTemplateColumns: `${shown.left}px ${DIVIDER_PX}px minmax(0, 1fr) ${DIVIDER_PX}px ${shown.right}px`,
-      }}
-    >
-      {left}
-      {divider("left", shown.left, MIN_LEFT, maxLeft)}
+    <main ref={mainRef} style={{ gridTemplateColumns: tracks }}>
+      {visible.left && left}
+      {visible.left && divider("left", shown.left, MIN_LEFT, maxLeft)}
       {splitCenter ? (
         <div
           className="center-split"
@@ -250,8 +269,8 @@ export function SplitPanes({
       ) : (
         center
       )}
-      {divider("right", shown.right, MIN_RIGHT, maxRight)}
-      {right}
+      {visible.right && divider("right", shown.right, MIN_RIGHT, maxRight)}
+      {visible.right && right}
     </main>
   );
 }

@@ -3,7 +3,6 @@ import { useActivity, useActivityDetail, useRuns, useStartExtraction } from "../
 import { useOpenChapter } from "../chapterNavigation";
 import { refusalText } from "../chat";
 import { useCoords, type Tab } from "../store";
-import { RulesTable } from "./RulesTable";
 import { shownTime } from "../time";
 import { messageForCode } from "../backendMessages";
 import { useLanguage, type Language } from "../language";
@@ -563,16 +562,6 @@ export function ActivityLog() {
     <section className="pane log">
       <div className="log-head">
         <h2>{language === "zh" ? "活动记录" : "Activity log"}</h2>
-        <p className="log-lead">
-          {language === "zh" ? (
-            <>这本书里发生过的每一步：系统自己整理的，和你亲手确认的。点开看它到底做了什么。</>
-          ) : (
-            <>
-              Every step that’s happened in this book: what the system processed on its own, and
-              what you confirmed yourself. Click one open to see exactly what it did.
-            </>
-          )}
-        </p>
         <UsageStrip />
         <ActorFilter
           actors={actors}
@@ -584,14 +573,12 @@ export function ActivityLog() {
         />
       </div>
 
-      {/* 你交代过的那些话（ADR 0028 + 迁移 016）。**摆在活动记录上面**：
-          它是一小段、几乎总是空的、而且是「回头查」的东西；压在几百行流水下面
-          等于没有。理由和「这儿为什么没有取消按钮」都写在 `RulesTable.tsx` 顶上。 */}
-      <div className="log-rules">
-        <h3>{language === "zh" ? "你交代过的" : "What you've told it"}</h3>
-        <RulesTable />
-      </div>
-
+      {/* ⚠️ **「你交代过的」那块（`RulesTable`，ADR 0028 + 迁移 016）2026-09-09 从这儿撤了。**
+          作者指着那一块和上面那段面板说明说「删除了」。撤的理由不是它做错了什么，是它
+          在真书上**从来没有过一行**（`remember_rule` 一次都没开过火），于是这一页顶上
+          常年挂着一个标题加一句「还没有」——占的是位置，给的是零。
+          组件本身还在（`RulesTable.tsx` + 它的测试 + ADR），**但今天没有任何地方渲染它**，
+          按本仓库「废弃即删」那条它要么找个新去处，要么整份删掉。等维护者裁定。 */}
       {log.isLoading && (
         <div className="empty">{language === "zh" ? "读取中…" : "Loading…"}</div>
       )}
@@ -621,15 +608,28 @@ export function ActivityLog() {
             onToggle={() => setOpenId(openId === e.id ? null : e.id)}
           />
         ))}
+        {/* **它在列表里，不在列表下面**（2026-09-09）。原来它是钉在滚动区外面的一条，
+            于是一进这一页就看得见——而它说的是「已经到底了，还要更早的吗」，那句话在
+            你还没往下翻的时候是没有意义的。挪进 `<ul>` 之后，只有真滚到当前这一批的
+            末尾才会遇上它。
+            **样子也不再像按钮**（作者原话「不要这种按钮感，直接文字点击就好」）：
+            边框底色都抽掉，只剩一行 `--dim` 的字，悬浮转强调色——同这一屏其余每一处。
+            **但它仍然是 `<button>`**：读屏要念得出「这是个能按的东西」，而一段
+            `<span>` 加 onClick 念出来只是一段字（`icons.tsx` 开头第 3 条同一条理由）。 */}
+        {log.hasNextPage && (
+          <li className="log-more-row">
+            <button
+              className="log-more"
+              disabled={log.isFetchingNextPage}
+              onClick={() => log.fetchNextPage()}
+            >
+              {language === "zh"
+                ? log.isFetchingNextPage ? "读取中…" : "查看更早之前的…"
+                : log.isFetchingNextPage ? "Loading…" : "See earlier entries…"}
+            </button>
+          </li>
+        )}
       </ul>
-
-      {log.hasNextPage && (
-        <button className="log-more" disabled={log.isFetchingNextPage} onClick={() => log.fetchNextPage()}>
-          {language === "zh"
-            ? log.isFetchingNextPage ? "读取中…" : "看更早的"
-            : log.isFetchingNextPage ? "Loading…" : "See earlier"}
-        </button>
-      )}
     </section>
   );
 }

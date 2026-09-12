@@ -84,9 +84,9 @@ def test_migrate_twice_is_idempotent(tmp_path: Path) -> None:
     闸门拦住了它。"""
     c = connect(tmp_path / "nh.db")
     assert user_version(c) == 0
-    assert migrate(c) == 34
-    assert migrate(c) == 34  # 不抛
-    assert user_version(c) == 34
+    assert migrate(c) == 37
+    assert migrate(c) == 37  # 不抛
+    assert user_version(c) == 37
     c.close()
 
 
@@ -97,8 +97,8 @@ def test_migrate_twice_on_fresh_connections(tmp_path: Path) -> None:
     migrate(c1)
     c1.close()
     c2 = connect(path)
-    assert migrate(c2) == 34
-    assert user_version(c2) == 34
+    assert migrate(c2) == 37
+    assert user_version(c2) == 37
     c2.close()
 
 
@@ -168,6 +168,9 @@ def test_migration_files_are_readable_from_package() -> None:
         "032_import_toc_skip.sql",
         "033_notification_title_code.sql",
         "034_event_cast_notification.sql",
+        "035_r3_ruleset_epoch.sql",
+        "036_edge_start_only.sql",
+            "037_draft_candidate_brief.sql",
     ]
     assert "PRAGMA user_version = 1" in (root / "001_init.sql").read_text(encoding="utf-8")
     assert "PRAGMA user_version = 2" in (root / "002_m4_events.sql").read_text(encoding="utf-8")
@@ -232,8 +235,8 @@ def test_populated_v1_database_migrates_without_changing_existing_rows(tmp_path:
         ).fetchone()
     )
 
-    assert migrate(c) == 34
-    assert migrate(c) == 34
+    assert migrate(c) == 37
+    assert migrate(c) == 37
     after_project = tuple(
         c.execute(
             "SELECT id, name, root_path, canon_version, created_at, updated_at "
@@ -337,7 +340,7 @@ def test_populated_v2_database_backfills_attached_proposal_audit(tmp_path: Path)
     )
     c.commit()
 
-    assert migrate(c) == 34
+    assert migrate(c) == 37
     row = c.execute(
         """
         SELECT resolution_action, resolved_canon_version, audit_envelope_json
@@ -398,7 +401,7 @@ def test_v2_migration_attaches_one_matching_proposal_review_gap(tmp_path: Path) 
     )
     c.commit()
 
-    assert migrate(c) == 34
+    assert migrate(c) == 37
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -456,7 +459,7 @@ def test_v2_migration_refuses_duplicate_matching_proposal_reviews(tmp_path: Path
     )
     c.commit()
 
-    assert migrate(c) == 34
+    assert migrate(c) == 37
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -519,7 +522,7 @@ def test_v2_migration_quarantines_utf8_blob_kind_duplicate_history(
     )
     c.commit()
 
-    assert migrate(c) == 34
+    assert migrate(c) == 37
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -579,7 +582,7 @@ def test_v2_migration_quarantines_shared_decision_attachment(tmp_path: Path) -> 
         )
     c.commit()
 
-    assert migrate(c) == 34
+    assert migrate(c) == 37
     rows = c.execute(
         """
         SELECT id, resolution_action, resolved_canon_version, audit_envelope_json
@@ -696,7 +699,7 @@ def test_v2_migration_quarantines_ambiguous_audit_payload(
     )
     c.commit()
 
-    assert migrate(c) == 34
+    assert migrate(c) == 37
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -749,7 +752,7 @@ def test_v2_migration_quarantines_invalid_utf8_payload_without_stalling(
     )
     c.commit()
 
-    assert migrate(c) == 34
+    assert migrate(c) == 37
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -820,7 +823,7 @@ def test_v2_migration_quarantines_invalid_utf8_decision_fields(
     )
     c.commit()
 
-    assert migrate(c) == 34
+    assert migrate(c) == 37
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -891,7 +894,7 @@ def test_v2_migration_quarantines_invalid_decision_audit_fields(
     )
     c.commit()
 
-    assert migrate(c) == 34
+    assert migrate(c) == 37
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -1594,9 +1597,9 @@ def test_concurrent_first_migrate_does_not_race(tmp_path: Path) -> None:
     for t in threads:
         t.join()
 
-    assert results == [34] * n, f"并发首跑必须全部成功，实得 {results}"
+    assert results == [37] * n, f"并发首跑必须全部成功，实得 {results}"
     c = connect(path)
-    assert user_version(c) == 34
+    assert user_version(c) == 37
     assert c.execute("SELECT COUNT(*) FROM edge_type").fetchone()[0] == 7
     c.close()
 
@@ -1605,14 +1608,14 @@ def test_connect_in_memory_works(tmp_path: Path) -> None:
     # 内存库不支持 WAL，会静默停在 memory 模式。这没关系（没有并发读者），
     # 但 connect() 不能因此炸——测试和 CLI 的 --dry-run 都走这条。
     c = connect(IN_MEMORY)
-    assert migrate(c) == 34
+    assert migrate(c) == 37
     assert c.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     c.close()
 
 
 def test_connect_creates_parent_dirs(tmp_path: Path) -> None:
     c = connect(tmp_path / "a" / "b" / "nh.db")
-    assert migrate(c) == 34
+    assert migrate(c) == 37
     c.close()
 
 
@@ -2960,6 +2963,7 @@ def test_v16_upgrade_plants_ruleset_baseline_and_synthetic_refresh_runs(
     """v16 旧书升级后：每个项目恰有一行 epoch=`CURRENT_RULESET_EPOCH` 的 ruleset state
     （hash == 目录常量），每章恰有一条 generation=1 的 synthetic refresh run；重跑迁移不新增。
 
+    ⚠️ **2026-09-05：epoch 又 +1，现在是 3**（迁移 035 删 R3，ADR 0042）。
     ⚠️ **2026-08-27：epoch 从 1 变 2**。018 先给这本 v16 旧书种下 epoch=1、
     hash=`SYSTEM_RULESET_V1_HASH` 的基线；新迁移 031（删 R2，[ADR 0040]
     (../docs/adr/0040-future-leak-cut.md)）紧接着在同一趟 `migrate()` 里把它
@@ -2970,7 +2974,7 @@ def test_v16_upgrade_plants_ruleset_baseline_and_synthetic_refresh_runs(
     conn = _v16_book(tmp_path)
     assert user_version(conn) == 16
 
-    assert migrate(conn) == 34
+    assert migrate(conn) == 37
     ruleset = conn.execute(
         "SELECT epoch, ruleset_hash FROM validation_ruleset_state WHERE project_id = ?",
         ("project:v16-book",),
@@ -2988,7 +2992,7 @@ def test_v16_upgrade_plants_ruleset_baseline_and_synthetic_refresh_runs(
     assert runs[0]["source_generation"] == 1
     assert runs[0]["source_snapshot_id"] == "snapshot:v16-book"
 
-    assert migrate(conn) == 34  # 幂等：不新增第二行
+    assert migrate(conn) == 37  # 幂等：不新增第二行
     assert (
         conn.execute(
             "SELECT COUNT(*) FROM validation_ruleset_state WHERE project_id = ?",

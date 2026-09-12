@@ -16,8 +16,10 @@ import { SummaryTab } from "./SummaryTab";
 //
 // 1. 它跟着左栏选中的那一章走 —— 打错章号的话，作者会在第 99 章上改掉第 1 章的总结。
 // 2. 「你撤回的」和「还没生成」是两句话 —— 合并成一句，界面就会回头催他补一件他刚做完的事。
-// 3. 撤回要先确认 —— **2026-08-25 起撤回是终态**：手动生成整条下线之后，
-//    撤掉的那一份系统再也不会买回来（他还能自己写一段，那不花钱）。
+// 3. 撤回要先确认 —— 撤掉的那一份**系统**再也不会自己买回来
+//    （`chapter_refresh._head_missing`）。**作者**按得回来：手动生成
+//    （`POST …/summary`）2026-08-25 删过、2026-09-05 加回来了，所以那句确认里
+//    「重新生成那颗按钮还在」是真的，删按钮的人要连它一起改。
 //
 // （2026-08-26 之前这里还有第 4 条「作者自己写的那一段上不许贴『机器压缩的背景』那句
 // 免责」——「作者写的/机器写的」这条区分整个去掉了，那条规矩没有对象了，见 ADR 0017 补记。）
@@ -119,7 +121,7 @@ describe("章节总结这一格", () => {
     await screen.findByDisplayValue(HAVE.summary!);
 
     await user.click(screen.getByRole("button", { name: "撤回" }));
-    expect(await screen.findByText(/再跑一次模型/)).toBeInTheDocument();
+    expect(await screen.findByText(/点它跑一次模型/)).toBeInTheDocument();
     expect(calls.some((c) => c.method === "DELETE")).toBe(false);
 
     await user.click(screen.getByRole("button", { name: "算了" }));
@@ -137,8 +139,40 @@ describe("章节总结这一格", () => {
     unmount();
 
     renderSpying(<SummaryTab />, summaryRoute(RETRACTED));
-    expect(await screen.findByText(/被你撤回了/)).toBeInTheDocument();
+    expect(await screen.findByText(/你撤回了/)).toBeInTheDocument();
     expect(screen.queryByText(/这一章还没有总结/)).toBeNull();
+  });
+
+  it("撤回之后那颗「重新生成」在，按一下就 POST —— 那是拿回机器总结的唯一路", async () => {
+    // **系统永远不补撤回过的章**（`_head_missing`：他删一次系统买回来一次 =
+    // 花他没按过的钱抹掉他刚做的动作）。所以这颗按钮不在，那一章就死在那儿了
+    // ——2026-08-25 到 09-05 之间正是这个样子，屏幕上还写着「点『重新生成』」。
+    const user = userEvent.setup();
+    const { calls } = renderSpying(<SummaryTab />, summaryRoute(RETRACTED));
+    const button = await screen.findByRole("button", { name: "重新生成" });
+    await user.click(button);
+    await waitFor(() =>
+      expect(
+        calls.some((c) => c.method === "POST" && /\/chapters\/\d+\/summary$/.test(c.url)),
+      ).toBe(true),
+    );
+  });
+
+  it("从没生成过的那一章上，同一颗按钮叫「生成」", async () => {
+    // 两种「没有」下一步动作相同（都是生成），但**说法不同**：一种是他刚做的动作，
+    // 一种是还没发生过的事。按钮上的字跟着那句话走。
+    renderSpying(<SummaryTab />, summaryRoute(NONE));
+    expect(await screen.findByRole("button", { name: "生成" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重新生成" })).toBeNull();
+  });
+
+  it("有总结在用的时候**不**摆那颗按钮 —— 按下去后端判重，什么都不会发生", async () => {
+    // 一颗按下去没反应的按钮比没有按钮更糟：`RollingSummarizer.ensure` 按 prompt
+    // 内容地址判重，这一章的总结就是这一版正文压出来的，它直接返回旧的那一份。
+    renderSpying(<SummaryTab />);
+    await screen.findByDisplayValue(HAVE.summary!);
+    expect(screen.queryByRole("button", { name: /生成/ })).toBeNull();
+    expect(screen.getByRole("button", { name: "撤回" })).toBeInTheDocument();
   });
 
   it("这一章还没写：不给任何会花钱的按钮，并且说清为什么", async () => {
@@ -148,24 +182,25 @@ describe("章节总结这一格", () => {
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 
-  it("这一格**没有任何会花钱的按钮**，怎么点都不会打出一次付费调用", async () => {
-    // 2026-08-25：手动生成整条下线，总结的触发只剩两个，都是系统自动的
-    // （保存之后 / 每 30 分钟扫描）。这条测试从前钉的是「那颗按钮自己说它要花钱」，
-    // 现在钉的是**那颗按钮不该再存在**。
+  it("会花钱的按钮**只有那一颗**，别的怎么点都不会打出一次付费调用", async () => {
+    // 这条测试的口径改过两次，而它护的东西一次没变：**界面不许替作者花钱。**
+    //   · 2026-08-25 手动生成整条下线，它一度钉的是「那颗按钮不该存在」；
+    //   · 2026-09-05 维护者把它加回来了（撤回过的章否则永远拿不回机器总结），
+    //     于是它回到「付费入口恰好一个，且要他亲手按」。
     //
     // 它红了有两种可能，都要人来看一眼：
-    //   · 有人把手动生成加回来了 —— 那是产品裁定，得先改裁定再改代码；
+    //   · 付费入口的数目变了 —— 那是产品裁定，得先改裁定再改代码；
     //   · 这一格自己替作者打出了一次付费调用 —— 那是这个仓库修过第六次的那个病。
     const user = userEvent.setup();
     const { calls } = renderSpying(<SummaryTab />, summaryRoute(NONE));
     expect(await screen.findByText(/这一章还没有总结/)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /生成/ })).toBeNull();
+    const paid = screen.getByRole("button", { name: "生成" });
 
-    // 屏幕上剩下的每一颗按钮都按一遍，一次 POST 都不许出来。
+    // 那一颗之外的每一颗都按一遍，一次 POST 都不许出来。
     // （「撤回它」要先点「撤回」确认，所以这一轮真正打出去的只有 DELETE 那条路——
     //  而这一章没有总结，连那条也走不到。）
     for (const button of screen.queryAllByRole("button")) {
-      await user.click(button);
+      if (button !== paid) await user.click(button);
     }
     expect(calls.some((c) => c.method === "POST")).toBe(false);
   });
@@ -336,19 +371,23 @@ describe("全书总结状态（Step 4）", () => {
     renderSpying(<SummaryTab />);
     // 真后端视图（测试 harness 的 `…/summary-status` stub）：5 章 = 1 有 + 2 缺
     // + 1 不对齐 + 1 异常；作者正写在第 4 章。
-    expect(await screen.findByText(/全书 5 章：1 章有总结/)).toBeInTheDocument();
-    expect(screen.getByText(/2 章缺/)).toBeInTheDocument();
-    expect(screen.getByText(/1 章不对齐/)).toBeInTheDocument();
-    expect(screen.getByText(/1 章生成异常/)).toBeInTheDocument();
-    // 正在写的那一章有「不碰」的提示；异常那章挂「异常」而不是「缺」。
-    expect(screen.getByText(/作者正写在第 4 章，那一章不碰/)).toBeInTheDocument();
+    //
+    // **一章一颗芯片就是全部账目**（2026-09-05 作者点名去掉了下面那句总账：
+    // 「全书 5 章：1 章有总结、2 章缺…」——同一份数在同一块屏幕上写第二遍）。
+    // 所以这条测试从今天起数芯片，不认那句话。
+    await screen.findByRole("button", { name: "第 1 章，有" });
+    expect(screen.getByRole("button", { name: "第 3 章，缺" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "第 2 章，不对齐" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "第 5 章，空" })).toBeInTheDocument();
+    // 异常那章挂「异常」而不是「缺」。
     expect(screen.getByRole("button", { name: "第 4 章，异常" })).toBeInTheDocument();
+    expect(screenText()).not.toMatch(/章有总结|章缺。|在位信号/);
   });
 
   it("缺章/异常章有标记芯片，点击跳到那一章", async () => {
     const user = userEvent.setup();
     renderSpying(<SummaryTab />);
-    await screen.findByText(/全书 5 章/);
+    await screen.findByText(/每 30 分钟自动补/);
     const chip = screen.getByRole("button", { name: "第 3 章，缺" });
     expect(chip.className).toContain("status-chip-missing");
     await user.click(chip);

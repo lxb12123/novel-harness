@@ -427,14 +427,14 @@ def _desk(conn: Connection, pid: str, cancel: Cancellation) -> Any:
 
 def _ask(conn: Connection, pid: str, chapter: int) -> tuple[DraftAsk, Any]:
     return (
-        DraftAsk(chapter=chapter, calibration_id="test:unused"),
+        DraftAsk(chapter=chapter, brief="写一场对峙"),
         unknown_cast_constraints(SqliteStoryGraph(conn), pid, chapter),
     )
 
 
 def _write(desk: Any, conn: Connection, pid: str, chapter: int) -> Any:
     ask, ctx = _ask(conn, pid, chapter)
-    return desk.write(ask, ctx, goal="写一场对峙")
+    return desk.write(ask, ctx)
 
 
 def _stop_a_draft(
@@ -557,45 +557,17 @@ def _draft_asks(chapter: int) -> Any:
     return wants(("draft_chapter", json.dumps({"chapter": chapter, "goal": "写一场对峙"})))
 
 
-class _CalibrateSealDraft:
-    """校准 → 封存 → 起草（第 1 章）。`Scripted` 是静态的，编号只能现读。"""
+class _DraftThen:
+    """起草（第 1 章）→ 然后按剧本收手。"""
 
     def __init__(self, after: Any) -> None:
         self.after = after
         self.calls = 0
 
-    def _tool_results(self, messages: Any) -> list[dict[str, Any]]:
-        return [
-            json.loads(m["content"])
-            for m in messages
-            if m.get("role") == "tool" and str(m.get("content", "")).strip()
-        ]
-
     def __call__(self, messages: Any, *, tools: Any, cancel: Any) -> Any:
         self.calls += 1
         if self.calls == 1:
-            return wants(("calibrate_scene", json.dumps({"chapter": 1})))
-        if self.calls == 2:
-            results = self._tool_results(messages)
-            ids = [r["id"] for r in results if "id" in r]
-            return wants(
-                ("seal_scene_brief", json.dumps({"inspection_id": ids[0]}))
-            )
-        if self.calls == 3:
-            results = self._tool_results(messages)
-            pairs = [
-                (r["chapter"], r["calibration_id"])
-                for r in results
-                if "calibration_id" in r
-            ]
-            return wants(
-                (
-                    "draft_chapter",
-                    json.dumps(
-                        {"chapter": pairs[0][0], "calibration_id": pairs[0][1]}
-                    ),
-                )
-            )
+            return wants(("draft_chapter", json.dumps({"chapter": 1, "brief": "写一场对峙"})))
         return self.after
 
 
@@ -627,7 +599,7 @@ def test_the_cancelled_call_is_on_the_bill_and_the_two_columns_stay_empty(
         return _CancellableClient(endpoint, signal)
 
     monkeypatch.setattr(drafting, "cancellable_client", fake_client)
-    use(monkeypatch, _CalibrateSealDraft(says("那一稿没写完。")))
+    use(monkeypatch, _DraftThen(says("那一稿没写完。")))
     chat_id = open_chat(client, pid)
 
     turn = client.post(

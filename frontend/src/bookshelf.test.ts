@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { ApiError } from "./api/client";
 import { devTerms, shellLines } from "./test/screenGuard";
 import {
-  deleteChapterError,
   newChapterError,
   nextAfterRemoving,
   readShelf,
@@ -120,45 +119,5 @@ describe("新起一章失败时那句话", () => {
   it("断网 / 说不出话的那一档才回落到那句通用的", () => {
     expect(newChapterError(new TypeError("Failed to fetch"))).toMatch(/再点一次/);
     expect(newChapterError(new ApiError(500, {}))).toMatch(/再点一次/);
-  });
-});
-
-describe("删一章失败时那句话", () => {
-  it("**拒绝的明细一个字都不丢**（国际化第四批：码 + params，`backendMessages.ts` 渲染整句）", () => {
-    // 那串数字是作者判断「这一章还连着什么」的唯一依据。换成一句笼统的「删不掉」，
-    // 他会去文件夹里自己动手删那个文件——而那条路上引擎的记忆一条都不会被清理。
-    const said = deleteChapterError(
-      new ApiError(409, {
-        error: "chapter_in_use",
-        params: { chapter_number: 1, evidence: 3, edges: 2, events: 1, extraction_runs: 1, proposal_sets: 0 },
-      }),
-    );
-    expect(said).toBe(
-      "第 1 章上还记着东西（证据 3 / 关系 2 / 情节 1 / 抽取 1 / 提案 0）。删掉这一章，这些会跟着一起没。",
-    );
-    expect(devTerms(said)).toEqual([]);
-  });
-
-  it("旧版服务（404 且没有错误码）—— 同新起一章那条，判据一样精确", () => {
-    const said = deleteChapterError(new ApiError(404, { message: "Not Found" }));
-    expect(said).toMatch(/旧的一版/);
-    expect(shellLines(said)).toEqual([]);
-    expect(devTerms(said)).toEqual([]);
-  });
-
-  it("带错误码的 404（那一章本来就没了）照抄后端", () => {
-    // 同上：故意避开 `chapter_missing`（真的注册码，会被整句模板抢先渲染）。
-    const said = deleteChapterError(
-      new ApiError(404, {
-        error: "chapter_missing_from_a_future_endpoint",
-        message: "第 9 章已经不在了。",
-      }),
-    );
-    expect(said).toBe("第 9 章已经不在了。");
-  });
-
-  it("断网 / 说不出话的那一档才回落到那句通用的", () => {
-    expect(deleteChapterError(new TypeError("Failed to fetch"))).toMatch(/再点一次/);
-    expect(deleteChapterError(new ApiError(500, {}))).toMatch(/再点一次/);
   });
 });

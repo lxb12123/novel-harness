@@ -47,12 +47,11 @@ from hashlib import sha256
 from time import perf_counter
 from typing import Any, Final, Literal, Protocol, runtime_checkable
 
+
 from ..agent.prompt_terms import message
 from ..events import EventStore
 from ..extract.call_audit import ModelCallReceipt
 from ..graph import NodeLabel
-from ..calibration.models import SceneBrief
-from ..calibration.render import render_scene_brief, render_target_chapter
 from .assemble import (
     WRITE_RULE_FORBIDDEN_HINTS,
     assemble,
@@ -60,10 +59,10 @@ from .assemble import (
     product_tail_limit,
 )
 from .capabilities import ProviderCapabilities, ResolvedCallPlan
-from .context import DraftContext, ResolvedConstraints, UnknownCastConstraints
+from .context import DraftContext, ResolvedConstraints
 from .generate import DraftAttempt, DraftResult, generate_draft
-from .length import DraftLanguage, LengthSpec
-from .product_assemble import assemble_continuation, assemble_product
+from .length import DraftLanguage, LengthSpec, count_units
+from .product_assemble import assemble_continuation, assemble_product, insert_standing_rules
 from .product_context import (
     MemoryBudget,
     build_product_context,
@@ -183,15 +182,64 @@ class ChapterDraftRequest:
     """
 
     write_rule: str = ""
-    brief: SceneBrief | None = None
-    """已封存的 `SceneBrief`（ADR 0033）。只有 PRODUCT 分支渲染它。"""
+    """作者挂在**这一段对话**上的文风。有范围、随对话结束失效。"""
+
+    standing_rules: tuple[str, ...] = ()
+    """作者**一直挂着**的那几条规矩（今天是「不许出现的字」，`checks/custom.py` 的
+    `forbidden_literal` 那一批）。
+
+    ⚠️ **和 `write_rule` 是两件事，别合并**（维护者 2026-09-05：「这跟 session 选中的
+    那个规则不一样，这个是作者定义的永久性规则」）。它同时进两条路：**写之前**进这份
+    prompt（`product_assemble.render_standing_rules`），**写完之后**由同一行数据生成的
+    规则去查（保存后那一轮验证）。两条路读的是同一份东西，不是两份措辞。
+
+    **由装配层喂进来，这一层不查库**——同 `write_rule` 那条纪律（`draft/` 不开库）。
+    """
+
+    materials: tuple[str, ...] = ()
+    """助手挑出来、写手固定装配够不着的资料（ADR 0047）：远章的总结 / 关键事件 / 原文节选，
+    每条一段。**只有整章那一支渲染它**（行内续写没有助手）。按 `MATERIALS_UNITS` 从头收，
+    装不下从后往前砍——助手的排序就是优先级。"""
 
     target_chapter_text: str | None = None
     """目标章当前正文（重写/续写已有章时）。**一次读取的快照，不是磁盘现读。**"""
 
 
 TARGET_CHAPTER_UNITS: Final = 16_000
-"""目标章当前正文分区的最多字数。超出确定性截断并给覆盖回执（ADR 0033 §8.4）。"""
+"""目标章当前正文分区的最多字数。超出确定性截断并给覆盖回执。"""
+
+MATERIALS_UNITS: Final = 8_000
+"""「助手补的资料」分区的最多字数（ADR 0047 守着的第一条线）。
+
+助手挑得再多也不能把写手撑爆——否则就是旧校准报告那种「装不下就整条清掉」换个地方再犯。
+和上面那个数一样是绝对量：这两段进的是写手那一次调用，它的窗口由 `plan_call` 另算，
+这里只是给「助手能塞多少」封一个顶。
+"""
+
+
+def _take_head(paragraphs: Sequence[str], *, max_units: int) -> tuple[list[str], bool]:
+    """从头收到预算用完；**至少收一段**。返回 `(留下的, 有没有砍)`。"""
+    if max_units <= 0:
+        return [], bool(paragraphs)
+    kept: list[str] = []
+    spent = 0
+    for para in paragraphs:
+        cost = count_units(para, DraftLanguage.ZH)
+        if kept and spent + cost > max_units:
+            break
+        spent += cost
+        kept.append(para)
+    return kept, len(kept) < len(paragraphs)
+
+
+def render_target_chapter(text: str, *, max_units: int) -> tuple[str, bool]:
+    """目标章当前正文分区：**确定性截断并给覆盖回执**，不静默只取章首。"""
+    if count_units(text, DraftLanguage.ZH) <= max_units:
+        return text, False
+    # 取头部（自然阅读顺序）+ 覆盖回执；专有 revision/patch 能力存在前，
+    # 整章替代候选仍叫「整章替代候选」。
+    kept, _ = _take_head(text.split("\n"), max_units=max_units)
+    return "\n".join(kept), True
 
 
 @dataclass(frozen=True)
@@ -392,6 +440,9 @@ def draft_chapter(
         ),
         "write_rule": write_rule or None,
     }
+    # 续写那一支不吃它：`assemble_continuation` 的签名里没有这一格，而行内续写是
+    # **接着作者刚写的那句往下写**，不是重新起一段——这条先只上模式二整章那一支。
+    standing_rules = tuple(rule.strip() for rule in request.standing_rules if rule.strip())
 
     # **碰库的只有这一段**（`_with_memory` 里那几次查询），所以锁只罩这一段。
     with db_lock if db_lock is not None else nullcontext():
@@ -412,6 +463,7 @@ def draft_chapter(
             messages, memory = _with_memory(
                 ctx,
                 assemble_args,
+                standing_rules=standing_rules,
                 project_id=project_id,
                 chapter=chapter,
                 language=request.length.language,
@@ -420,8 +472,10 @@ def draft_chapter(
                 events=events,
                 summaries=summaries,
             )
-            if request.brief is not None or request.target_chapter_text:
-                messages = _append_execution_plan(messages, ctx, request)
+            messages, materials_kept, materials_omitted = _append_target_and_materials(
+                messages, request
+            )
+            memory = {**memory, "materials": materials_kept, "materials_omitted": materials_omitted}
 
     receipts: list[ModelCallReceipt] = []
     mark = perf_counter()
@@ -447,16 +501,14 @@ def draft_chapter(
     return ChapterDraft(result=result, memory=memory, calls=tuple(receipts))
 
 
-def _append_execution_plan(
+def _append_target_and_materials(
     messages: list[dict[str, str]],
-    ctx: DraftContext,
     request: ChapterDraftRequest,
-) -> list[dict[str, str]]:
-    """把「本稿执行计划」+「目标章当前正文」作为**独立分区**追加到产品 prompt。
+) -> tuple[list[dict[str, str]], int, int]:
+    """把「目标章当前正文」+「助手补的资料」作为**独立分区**追加到产品 prompt。
 
-    不拼进 write rule、约束块或另一份 goal_spec；安全约束由 `assemble()` 那块
-    单独渲染。UnknownCast 下 `render_scene_brief(unknown_cast=True)` 按白名单
-    再收窄一次（fail-closed）。
+    返回 `(messages, 补进去的资料段数, 砍掉的段数)`——砍了多少要进回执，
+    不静默（同 `render_target_chapter` 的覆盖回执）。
     """
     sections: list[str] = []
     if request.target_chapter_text:
@@ -470,16 +522,17 @@ def _append_execution_plan(
                 "（覆盖回执：本章正文超过预算，以上只给了开头一段；"
                 "需要全文请使用未来的修订能力，不能把缺的部分当成不存在。）"
             )
-    if request.brief is not None:
-        sections.append(
-            render_scene_brief(
-                request.brief,
-                unknown_cast=isinstance(ctx, UnknownCastConstraints),
-            )
-        )
+    materials = [item.strip() for item in request.materials if item.strip()]
+    kept, cut = _take_head(materials, max_units=MATERIALS_UNITS)
+    if kept:
+        sections.append("【助手补的资料】")
+        sections.append("（写作助手按这一稿的需要挑出来的；和上面的记忆一样只是背景，正文以你写的为准。）")
+        sections.extend(f"- {item}" for item in kept)
+        if cut:
+            sections.append(f"（覆盖回执：助手还挑了 {len(materials) - len(kept)} 段，超出预算没有给到。）")
     if sections:
         messages = [*messages, {"role": "system", "content": "\n".join(sections)}]
-    return messages
+    return messages, len(kept), len(materials) - len(kept)
 
 
 def _summary_is_current(
@@ -571,10 +624,16 @@ def _with_rolling_summaries(
     )
 
 
+def _language_of(assemble_args: dict[str, Any]) -> DraftLanguage:
+    """`assemble_args["length"].language`——退化支拿不到别的地方问语言。"""
+    return assemble_args["length"].language
+
+
 def _with_memory(
     ctx: DraftContext,
     assemble_args: dict[str, Any],
     *,
+    standing_rules: Sequence[str] = (),
     project_id: str,
     chapter: int,
     language: DraftLanguage | str,
@@ -587,7 +646,11 @@ def _with_memory(
     if not isinstance(ctx, ResolvedConstraints):
         # 不知道谁在场 ⇒ 没有「谁的档案」可查（`UnknownCastConstraints` 上没有 cast，
         # 那是有意的：空列表会让下游以为「查过了，确实没人」）。
-        return assemble(ctx, **assemble_args), memory_receipt(
+        # **规矩不跟着记忆一起掉**：它和「这一场有谁在」没有关系（`insert_standing_rules`
+        # 的 docstring 记着这条）。
+        return insert_standing_rules(
+            assemble(ctx, **assemble_args), standing_rules, _language_of(assemble_args)
+        ), memory_receipt(
             "这一稿没有记忆前言：不知道这一场有谁在，档案与事件记忆无从查起"
             "（约束和禁令照常生效，而且是全禁那一侧）。"
         )
@@ -601,7 +664,9 @@ def _with_memory(
     if not characters:
         # 退化不是错误（约束照常生效，禁令一条不少），但**不许静默**：
         # 少了记忆前言的稿子和多了记忆前言的稿子长得不一样，作者有权知道是哪一种。
-        return assemble(ctx, **assemble_args), memory_receipt(
+        return insert_standing_rules(
+            assemble(ctx, **assemble_args), standing_rules, _language_of(assemble_args)
+        ), memory_receipt(
             "这一稿没有记忆前言：在场称呼里没有一个解析成人物，"
             "档案与事件记忆无从查起（约束和禁令照常生效）。"
         )
@@ -635,7 +700,9 @@ def _with_memory(
         language=language,
     )
     coverage = summaries.coverage(project_id, 1, product.recent_from_chapter - 1)
-    return assemble_product(ctx, product, **assemble_args), memory_receipt(
+    return assemble_product(
+        ctx, product, **assemble_args, standing_rules=standing_rules
+    ), memory_receipt(
         "已确认记忆前言已装配（人物档案 + 近期事件 + 更早章节滚动总结）。",
         assembled=True,
         profiles=len(product.profiles),

@@ -752,6 +752,22 @@ def test_none_token_counts_are_valid_audit_values(seed: Seed) -> None:
 
 
 def test_call_id_failure_after_paid_call_is_terminal_and_not_retried(seed: Seed) -> None:
+    """付过钱之后审计失败 = 终态，不重试；**而失败的原因要留得下来。**
+
+    ⚠️ **最后那条断言 2026-09-05 反过来了。** 它原来写的是
+    `assert "call id unavailable" not in message` —— 即「异常文本不许进这一列」。
+    那条纪律的代价当天在真书上量出来了：`extraction_run` 里 62 章分析失败，三个
+    `except Exception` 各自只落一句固定的话，于是**库里、日志里、屏幕上全是同一句**，
+    唯一的办法是再跑一次去猜（那还得再花一次钱）。实际原因是
+    `SupersedeConflict`（倒着分析导致的乱序插入），而它本来就写在那个异常里。
+
+    `ExtractionRunError.message` 按定义是**写给维护者的英文诊断**
+    （`extract/control.py` 的字段 docstring），作者那一侧只读 `code`。
+    「不上作者的屏幕」这条真正的保护在
+    `test_wording_guard.py::test_the_review_panels_run_endpoint_forwards_the_code_never_the_diagnostic`
+    ——它断言那句固定的话一个字都不出现在面板读的那份出参里，而那句话是新消息的
+    前缀，所以整条消息漏出去它照样会红。
+    """
     analyzer = Analyzer()
 
     def fail_call_id(_project_id: str) -> str:
@@ -766,7 +782,8 @@ def test_call_id_failure_after_paid_call_is_terminal_and_not_retried(seed: Seed)
     assert failed.status is ExtractionRunStatus.FAILED
     assert again == failed
     assert failed.errors[0].code == "call_record_failure"
-    assert "call id unavailable" not in failed.errors[0].message
+    assert failed.errors[0].message.startswith("chapter analysis call could not be audited")
+    assert "RuntimeError: call id unavailable" in failed.errors[0].message
     assert analyzer.calls == 1
 
 

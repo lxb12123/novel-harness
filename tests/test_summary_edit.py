@@ -402,6 +402,103 @@ def stub_model(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def test_the_author_can_buy_a_retracted_summary_back_by_hand(
+    client: TestClient, book: dict[str, str], stub_model: None
+) -> None:
+    """撤回之后 `POST …/summary` 真的重新生成一份 —— **那是唯一的回头路。**
+
+    这条路 2026-08-25 删掉、2026-09-05 加回来，删掉的那十天里代价没人算：
+    `chapter_refresh._head_missing` 按纪律不许系统自己补撤回过的章，于是那一章
+    **永远**拿不回机器总结（作者只能手打一段），而屏幕上还写着「点『重新生成』」。
+
+    两句话一起钉，因为它们是同一条纪律的两侧，谁单独看都像是另一侧的 bug：
+    - **系统**不补（`test_background_tidying_never_buys_back_a_retracted_summary`）；
+    - **作者**按得回来（这一条）。分界线是「谁按的、谁付钱」。
+    """
+    base = f"/api/projects/{book['pid']}/chapters/1/summary"
+    _generate(book, 1)
+    first = client.get(base).json()["summary"]
+    assert first
+
+    assert client.delete(base).status_code == 200
+    retracted = client.get(base).json()
+    assert (retracted["summary"], retracted["retracted"]) == (None, True)
+
+    again = client.post(base, json={})
+    assert again.status_code == 200, again.text
+    assert again.json()["summary"] == first, "同一版正文 → 同一份总结（内容地址判重）"
+    assert again.json()["retracted"] is False, "拿回来之后不该还挂着「撤回过」"
+    # 出参形状和读端逐键一致（它结尾走的就是同一个 `_summary_state`）。
+    assert set(again.json()) == set(retracted)
+
+
+def test_generating_a_chapter_that_was_never_written_is_a_404(
+    client: TestClient, book: dict[str, str], stub_model: None
+) -> None:
+    """没有正文的章上按这颗按钮 → 404，**不是一次白花的模型调用**。
+
+    界面上那颗按钮在 `has_text=false` 时压根不渲染，所以这条走的是别人直接打这条
+    路由那一路（旧客户端 / 脚本）。零正文压不出总结，钱不该在这儿花掉。
+    """
+    missing = client.post(f"/api/projects/{book['pid']}/chapters/999/summary", json={})
+    assert missing.status_code == 404, missing.text
+    assert missing.json()["detail"]["error"] == "chapter_not_found"
+
+    bad = client.post(f"/api/projects/{book['pid']}/chapters/0/summary", json={})
+    assert bad.status_code == 422, bad.text
+
+
+def test_a_failed_generate_answers_with_a_code_not_a_python_traceback(
+    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """模型这一次没调通 → **只回码**，`str(exc)` 一个字都不出门。
+
+    ⚠️ **这条路 2026-09-05 恢复时原样抄了 2026-08-25 删掉的那一版，而那一版早于
+    「错误只回码」那一批**——抄回来的两条 502 写的是 `f"模型调用失败：{exc}"`。
+    它比一般的泄漏更值得钉，因为这条 502 是**作者亲手按出来的**，所以它一定上屏：
+    前端拿不到码时会把 `detail` 当整句话渲染（`correctionError.saidToTheAuthor`
+    的 legacy 那一支），于是 `ProviderError` 带的 provider 状态码和响应体片段
+    直接摆到他的总结面板上——而那个异常自己的 docstring 写着「永远不上作者的屏幕」。
+    """
+    import novel_harness.api.deps as deps_mod
+    from novel_harness.draft.provider import ProviderError
+
+    DIAGNOSTIC = "HTTP 503 from https://api.example.invalid: upstream is on fire"
+
+    def boom(messages, *, config=None, plan=None, client=None):
+        raise ProviderError(DIAGNOSTIC)
+
+    monkeypatch.setattr(deps_mod, "complete", boom)
+
+    response = client.post(f"/api/projects/{book['pid']}/chapters/1/summary", json={})
+    assert response.status_code == 502, response.text
+    assert response.json()["detail"] == {"error": "model_call_failed"}
+    assert DIAGNOSTIC not in response.text
+    assert "example.invalid" not in response.text
+
+
+def test_generating_without_a_model_configured_answers_with_a_code_too(
+    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """模型没配好 → 422 `model_not_configured`，**不是那句嵌着 `str(exc)` 的话**。
+
+    `deps.model_configuration_error()` 拼的是 `f"模型没配好：{exc} —— 先去…"`，
+    而 `{exc}` 是 `ValidationError` / `CapabilityError` 的诊断（带字段名和英文）。
+    在这颗按钮回来之前，这条 422 唯一的消费方是后台、而后台把它吞掉，
+    **所以这处泄漏一直够不着**；按钮一回来它就上屏了。
+    """
+    monkeypatch.setattr(
+        "novel_harness.api.deps.model_configuration_error",
+        lambda: "模型没配好：1 validation error for ProviderConfig base_url —— 先去顶栏 ⚙…",
+    )
+
+    response = client.post(f"/api/projects/{book['pid']}/chapters/1/summary", json={})
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == {"error": "model_not_configured"}
+    assert "validation error" not in response.text
+    assert "ProviderConfig" not in response.text
+
+
 def test_the_three_routes_all_answer_with_the_same_shape(
     client: TestClient, book: dict[str, str], stub_model: None
 ) -> None:
@@ -422,8 +519,10 @@ def test_the_three_routes_all_answer_with_the_same_shape(
         "version_source": None,
     }
 
-    # 机器那一份由**生产上那个执行体**产出：手动生成那条路由 2026-08-25 随按钮一起删了
-    # （总结只剩两个自动触发），所以这一格的 POST 不再存在，四条变三条。
+    # 机器那一份由**生产上那个执行体**产出，不借 HTTP（`_generate` 的 docstring 说了
+    # 为什么）。这一格的 POST 2026-08-25 删过、2026-09-05 加回来了，出参形状和这三条
+    # 一样（它结尾也是 `_summary_state`）——**但这条测试只数这三条**，因为它问的是
+    # 「读 / 改 / 撤回三个出口说的是同一句话吗」。
     _generate(book, 1)
     generated = client.get(base)
     assert generated.status_code == 200, generated.text
@@ -488,12 +587,14 @@ def test_background_tidying_never_buys_back_a_retracted_summary(
 
     这里钉的是端到端那一半：保存之后**没有一条总结分支的活被排出去**。
 
-    ⚠️ **2026-08-25 起这条纪律的后果变重了**：手动生成整条下线（按钮 + 路由都删了），
-    所以撤回**是终态**——系统再也不会买回来，而作者手上也没有「再点一次生成」那条
-    退路了。他还能自己写一段（PATCH，不花钱）。**这是裁定不是洞。**
+    ⚠️ **这条纪律只管「系统自己掏钱」那一侧，别把它读成「撤回是终态」。**
+    手动生成 2026-08-25 删过一次，那十天里撤回确实是终态（系统不补、作者也没入口）；
+    2026-09-05 `POST …/summary` 加回来了，于是作者按得回来。**本测试一个字没改**——
+    它断言的是「保存之后没有一条总结分支的活被排出去」，而那与他自己按不按无关。
+    分界线是「谁按的、谁付钱」。
     """
     base = f"/api/projects/{book['pid']}/chapters/1"
-    _generate(book, 1)  # 手动那条路由删了（2026-08-25），先用生产执行体造一份出来
+    _generate(book, 1)  # 先用生产执行体造一份出来（不借 HTTP，同 `_generate`）
     assert client.delete(f"{base}/summary").status_code == 200
 
     # 保存一次（改一个字就够，要的是走完真的保存链路）。

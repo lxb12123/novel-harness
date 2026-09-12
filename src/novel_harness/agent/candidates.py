@@ -38,7 +38,9 @@ loop 那条线程不需要参与排队：批执行器**等整个并发窗口跑�
 
 from __future__ import annotations
 
+import json
 import threading
+from collections.abc import Sequence
 from contextlib import AbstractContextManager
 from typing import Any, Final
 
@@ -108,6 +110,13 @@ class DraftCandidate(BaseModel):
     landed: bool = False
     """它进过书没有。**不是「被选中」**：作者可以在版本历史里把它退回去。"""
 
+    brief: str = ""
+    """助手给写手的「这一稿要做什么、要守什么」（ADR 0047，迁移 037）。**作者看得见它喂了什么**
+    ——挑错了才看得出来。空 = 这一稿是旧机制写的（迁移之前的行），不编。"""
+
+    materials: tuple[str, ...] = ()
+    """助手挑出来补给写手的资料，每条一段（同上）。"""
+
     stopped_reason: str = ""
     """**空 = 它写完了**；非空 = 没写完，这句话说明为什么（`migrations/010`）。
 
@@ -157,6 +166,8 @@ def _row_kwargs(row: Any) -> dict[str, Any]:
         # **库里的 `NULL` 就是「它写完了」**（迁移 010 那一行注释），迁移之前的旧行
         # 也落在这一档上——那时还没有任何东西能把一稿砍断，所以那句话对它们是真的。
         "stopped_reason": "" if row["stopped_reason"] is None else str(row["stopped_reason"]),
+        "brief": str(row["brief"]),
+        "materials": tuple(str(item) for item in json.loads(row["materials_json"] or "[]")),
     }
 
 
@@ -191,6 +202,8 @@ class DraftCandidateStore:
         note: str = "",
         base_sha256: str | None = None,
         stopped_reason: str = "",
+        brief: str = "",
+        materials: Sequence[str] = (),
     ) -> DraftCandidate:
         """收一稿。**不动书、不动对话**，只多这一行。
 
@@ -216,8 +229,8 @@ class DraftCandidateStore:
                 self._conn.execute(
                     "INSERT INTO draft_candidate"
                     " (id, project_id, chapter_number, ordinal, body, note, units, base_sha256,"
-                    "  stopped_reason)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "  stopped_reason, brief, materials_json)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         candidate_id,
                         project_id,
@@ -231,6 +244,8 @@ class DraftCandidateStore:
                         # 一行空串会变成第三态，而它和 NULL 长得一模一样、意思却要靠
                         # 读端去猜（`_row_kwargs` 只认 NULL）。
                         stopped_reason or None,
+                        brief,
+                        json.dumps(list(materials), ensure_ascii=False),
                     ),
                 )
                 # `created_at` 是列默认值（库里那只钟），**读回来而不是在这儿再算一次**：
@@ -253,6 +268,8 @@ class DraftCandidateStore:
             created_at=str(written["created_at"]),
             landed=False,
             stopped_reason=stopped_reason,
+            brief=brief,
+            materials=tuple(materials),
         )
 
     def mark_landed(self, project_id: str, candidate_id: str) -> None:
@@ -306,7 +323,7 @@ class DraftCandidateStore:
     def _read_one(self, project_id: str, candidate_id: str) -> Any:
         return self._conn.execute(
             "SELECT id, chapter_number, ordinal, body, note, units, base_sha256,"
-            "       created_at, landed_at, stopped_reason"
+            "       created_at, landed_at, stopped_reason, brief, materials_json"
             " FROM draft_candidate WHERE project_id = ? AND id = ?",
             (project_id, candidate_id),
         ).fetchone()
@@ -317,7 +334,7 @@ class DraftCandidateStore:
         """最近这几稿的摘要行（**不带正文**）。`chapter` 给了就只看那一章。"""
         sql = (
             "SELECT id, chapter_number, ordinal, body, note, units, created_at, landed_at,"
-            "       stopped_reason"
+            "       stopped_reason, brief, materials_json"
             " FROM draft_candidate WHERE project_id = ?"
         )
         params: list[Any] = [project_id]

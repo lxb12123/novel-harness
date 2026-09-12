@@ -12,19 +12,20 @@ import { saidToTheAuthor } from "../correctionError";
 import { useLanguage } from "../language";
 import { HistoryDrawer } from "./HistoryDrawer";
 import { ChapterTitle } from "./ChapterTitle";
-import { DropletIcon, SnowflakeIcon } from "./icons";
+import { DropletIcon, PocketWatchIcon, SnowflakeIcon } from "./icons";
 import { CodeEditor, type CodeEditorHandle } from "./CodeEditor";
 import { locate } from "../anchor";
-import { titleOf, withTitle } from "../chapterTitle";
+import { splitHeading, titleOf, withTitle } from "../chapterTitle";
 import { cleanSuggestion, shouldSuggest } from "../continuation";
 import { diskChange } from "../editorDoc";
 
 // 中栏正文编辑器（CodeMirror 6，§2.4——不是 TipTap）。
 // CM6 只是磁盘 chapters/NNNN.md 的便利视图：读 = GET text，存 = PUT → sync，DB 永不是
 // 正文真相源（ADR 0007）。CM6 停在平铺文本心智，doc 位置 == JS 字符串下标，和 anchor.locate()
-// 直接对齐，不需要 pos↔锚 映射层（那是 ProseMirror 才会买来的 offset 地狱，ADR 0006）。
+// 直接对齐，不需要 pos↔锚 映射层（那是 ProseMirror 才会买来的 offset 地狱，ADR 0006）——
+// 唯一的例外是章标那一行不进 CM6（下面 `head`/`body`），对齐前要先扣掉一个常量长度。
 export function CenterEditor() {
-  const { projectId, chapter, highlight, setHighlight } = useCoords();
+  const { projectId, chapter, highlight, setHighlight, chatOpen } = useCoords();
   const language = useLanguage((s) => s.language);
   const [open, setOpen] = useState(false); // 这一章是否已打开进编辑器
   const chapters = useChapters(projectId);
@@ -38,6 +39,11 @@ export function CenterEditor() {
   // 每次请求发出前 +1。回来时对不上 = 作者在这期间又敲了字，这一条作废。
   // **这就是「取消」**：续写不需要增量失效，只需要过期的那次别落地（ADR 0015）。
   const askRef = useRef(0);
+  // 写作助手开着（novel-agent 模式）时续写**默认不跑**——作者 2026-09-10 定的，起因是
+  // 助手开着、正文里还在往下冒灰字。「模式」在代码里只是一块布局（`App.tsx` 按 `chatOpen`
+  // 挂不挂 `ChatPanel`），这个编辑器本来不知道面板开没开，所以这儿得自己认它。
+  // 放行的开关在设置「系统功能」那一栏（`continuation_in_agent_mode`）。
+  const continuationMuted = chatOpen && !settings.data?.continuation_in_agent_mode;
 
   const [doc, setDoc] = useState("");
   const [dirty, setDirty] = useState(false);
@@ -61,6 +67,12 @@ export function CenterEditor() {
   const [locateMiss, setLocateMiss] = useState(false);
   const editorRef = useRef<CodeEditorHandle>(null);
 
+  // 章标那一行不进编辑器（`chapterTitle.ts::splitHeading`）：CM6 手上只有 `body`，
+  // `doc` 仍是整份正文（存盘、`titleOf`/`withTitle` 都还认它）。`head` 因此是一段
+  // 坐标偏移——下面 `locate()` 在整份 doc 上算出来的下标，要减掉它才对得上 CM6
+  // 那份短了一截的文档（`chapterTitle.test.ts` 那条「差一个 head.length」钉的就是这个）。
+  const { head, body } = splitHeading(doc);
+
   // R4 冲突回跳（§2.6 方向二）：点 issue 设 highlight → 按 quote 重寻 → 命令 CM6 选中并滚进视野。
   useEffect(() => {
     if (!highlight) return;
@@ -71,8 +83,19 @@ export function CenterEditor() {
       return;
     }
     setLocateMiss(false);
-    editorRef.current?.select(hit.start, hit.end); // CM6 位置 == 字符串下标，无需换算
-  }, [highlight, doc, setHighlight]);
+    // hit 是整份 doc 的下标，CM6 手上只有 body——减掉 head.length 才是它认的坐标系。
+    editorRef.current?.select(hit.start - head.length, hit.end - head.length);
+  }, [highlight, doc, head, setHighlight]);
+
+  // 切进 novel-agent 模式那一下：屏幕上挂着的灰字丢掉，在飞的那次作废。
+  // 不做的话有两条漏：① 灰字要等作者再碰一下编辑器才消失（`ghostText` 的 field 只在
+  // 编辑/移动光标时清）；② 停手时发出去的那次几秒后回来，`onSuccess` 照样把它挂上——
+  // 对作者看来就是「说了模式二没有续写，它还是冒出来了」。
+  useEffect(() => {
+    if (!continuationMuted) return;
+    askRef.current += 1;
+    editorRef.current?.clearSuggestion();
+  }, [continuationMuted]);
 
   // 换章 = 重新打开：让 useChapterText 重取，并清脏态。
   useEffect(() => {
@@ -162,21 +185,32 @@ export function CenterEditor() {
               : language === "zh" ? "保存中…" : "Saving…"}
           </span>
         )}
+        {/* 两颗都**只剩图标**（作者 2026-09-09）。图标自己 `aria-hidden`，所以
+            名字一律由 `aria-label` 给——少了它就是一颗读屏念不出名字的按钮，而这件事
+            在屏幕上完全看不出来（`icons.tsx` 开头第 3 条）。
+            `aria-label` 用的还是原来那两个字，可及名字一个字节没变：
+            `getByRole("button", { name: "保存" })` 那批断言不用跟着改。
+            说明走 `data-tip` 不走原生 `title`：后者要等约一秒，作者反馈过「以为没有」。 */}
         <button
+          className="icon-btn"
           onClick={() => setHistory(true)}
-          title={language === "zh" ? "这一章改过什么" : "What’s changed in this chapter"}
+          aria-label={language === "zh" ? "历史" : "History"}
+          data-tip={language === "zh" ? "查看历史版本" : "View version history"}
         >
-          {language === "zh" ? "历史" : "History"}
+          <PocketWatchIcon />
         </button>
         <button
-          className={"save-btn" + (saveBadge ? " has-badge" : "")}
+          className="save-btn icon-btn"
           disabled={!dirty || save.isPending}
+          aria-label={language === "zh" ? "保存" : "Save"}
+          // 三态各有一句话。**第三态（还没改过、也没存过）以前没有**——那时按钮上写着
+          // 「保存」两个字，图标只是补充；现在字没了，不给它一句话就成了一颗哑按钮。
           data-tip={
             saveBadge === "unsaved"
               ? (language === "zh" ? "未保存" : "Unsaved")
               : saveBadge === "synced"
-              ? (language === "zh" ? "已保存并同步" : "Saved & synced")
-              : undefined
+              ? (language === "zh" ? "已保存" : "Saved")
+              : (language === "zh" ? "保存" : "Save")
           }
           onClick={() =>
             save.mutate(
@@ -185,9 +219,10 @@ export function CenterEditor() {
             )
           }
         >
-          {language === "zh" ? "保存" : "Save"}
-          {saveBadge === "unsaved" && <DropletIcon />}
-          {saveBadge === "synced" && <SnowflakeIcon />}
+          {/* 雪花只在「存过且已同步」那一态出现；**其余两态都是水滴**——它是这颗按钮
+              本来的样子，不是一句「你有东西没存」。会不会误读由**按不按得动**分开：
+              真有东西没存时按钮是活的、水滴是深色，没有时它禁用、水滴是 `--dim`。 */}
+          {saveBadge === "synced" ? <SnowflakeIcon /> : <DropletIcon />}
         </button>
       </div>
 
@@ -227,10 +262,10 @@ export function CenterEditor() {
       <div className="cm-wrap">
         <CodeEditor
           ref={editorRef}
-          value={doc}
+          value={body}
           tailLimit={settings.data?.continuation_tail_limit ?? null}
           onChange={(v) => {
-            setDoc(v);
+            setDoc(head + v);
             setDirty(true);
           }}
           onIdle={({ before, after, pos, hasSelection }) => {
@@ -239,7 +274,16 @@ export function CenterEditor() {
             // 逐口接受时，`before` 每按一次 → 就更精确一分，作者要的是「一直跟着最新的
             // 上文给建议」，不是「锁死在第一次算出来的那条，吃完/丢掉才肯换」。
             // 真正管「问得太勤」的只有 `IDLE_MS`。
-            if (!shouldSuggest({ before, hasSelection, hasSuggestion: false, loading: !data })) {
+            if (
+              !shouldSuggest({
+                before,
+                hasSelection,
+                hasSuggestion: false,
+                loading: !data,
+                assistantOpen: chatOpen,
+                continuationInAgentMode: settings.data?.continuation_in_agent_mode,
+              })
+            ) {
               return;
             }
             const ask = ++askRef.current;

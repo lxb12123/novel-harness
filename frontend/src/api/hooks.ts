@@ -23,6 +23,7 @@ import type {
   ChatDeleted,
   ChatDetail,
   ChatSessionView,
+  ChatSaid,
   ChatStopped,
   ChatTurnEvent,
   CheckResult,
@@ -50,12 +51,10 @@ import type {
   RenameNodeInput,
   RosterEntry,
   RunsPanel,
-  SceneConstraints,
   StateDimView,
   StateSnapshot,
   StoredAlias,
   Subgraph,
-  SummaryWindow,
   SystemNotification,
   ValidationRuleView,
 } from "./types";
@@ -108,19 +107,11 @@ export function useRefreshModelWindows() {
 //
 // **零调用方的东西放着不管，就是下一个「文档说有其实没有」**——那句话是
 // `summaryPrep.ts` 自己写的，这次照它执行。
-
-/** 起草第 `chapter` 章时，滚动总结那一层覆盖了哪些章、缺哪些。
- *
- *  **这条读端存在的理由是「不许静默」**：`chapter_summary` 表空着的时候，写作 prompt 里
- *  【更早章节滚动总结】渲染成「- 暂无」，而作者在界面上看不到任何东西告诉他那是
- *  「还没生成」而不是「本来就没有」。 */
-export function useSummaryWindow(pid: string | null, chapter: number) {
-  return useQuery({
-    queryKey: q(["summaries", pid, chapter]),
-    queryFn: () => api.get<SummaryWindow>(proj(pid!, `/chapters/${chapter}/summaries`)),
-    enabled: !!pid,
-  });
-}
+//
+// ⚠️ **`useSummaryWindow` 2026-09-05 删了。** 它只喂「章节总结」那一格顶上那句
+// 「写第 N 章时，前面那些章里有 X 段总结带得上」，而作者点名去掉了那句话（那是
+// 引擎内部的调度账，不该上屏）。后端 `GET …/chapters/{n}/summaries` 一个字没动，
+// 契约夹具照旧钉着它的出参形状 —— 同 `useDraft` 那次的做法。
 
 /** 全书总结状态视图（`GET …/summary-status`，2026-08-18 文档 §6 / Step 4）。
  *
@@ -207,6 +198,23 @@ export function useEditSummary(pid: string) {
       api.patch<ChapterSummaryStatus>(proj(pid, `/chapters/${v.chapter}/summary`), {
         summary: v.summary,
       }),
+    onSuccess: () => invalidateSummaries(qc, pid),
+  });
+}
+
+/** 让模型现在就为这一章压一段总结出来（`POST …/summary`）。**花钱，作者按的。**
+ *
+ *  它是**撤回之后唯一能拿回机器总结的路**：系统自己永远不补撤回过的章
+ *  （`chapter_refresh._head_missing`，那条纪律没动），分界线是「谁按的、谁付钱」。
+ *
+ *  幂等在后端（`RollingSummarizer.ensure` 按 prompt 内容地址判重），所以连点两下
+ *  不会付两次钱——**但别因此在这儿放开按钮**：`isPending` 期间要禁用，否则作者
+ *  在等的那十几秒里会以为没反应。 */
+export function useGenerateSummary(pid: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (chapter: number) =>
+      api.post<ChapterSummaryStatus>(proj(pid, `/chapters/${chapter}/summary`), {}),
     onSuccess: () => invalidateSummaries(qc, pid),
   });
 }
@@ -384,17 +392,6 @@ function castQuery(cast: string, include: string): string {
   return `cast=${encodeURIComponent(cast)}&include=${encodeURIComponent(include)}`;
 }
 
-export function useConstraints(pid: string | null, chapter: number, cast: string, include = "") {
-  return useQuery({
-    queryKey: q(["constraints", pid, chapter, cast, include]),
-    queryFn: () =>
-      api.get<SceneConstraints>(
-        proj(pid!, `/chapters/${chapter}/constraints?${castQuery(cast, include)}`),
-      ),
-    enabled: !!pid,
-  });
-}
-
 export function useStates(pid: string | null, chapter: number, cast: string, include = "") {
   return useQuery({
     queryKey: q(["state", pid, chapter, cast, include]),
@@ -480,18 +477,6 @@ export function useCreateChapter(pid: string) {
  *
  *  连章目录带正文一起失效：**删的那一章可能正开着**，只失效目录的话，
  *  中栏会继续摆着一份磁盘上已经不存在的正文，而作者还能往里打字。 */
-export function useDeleteChapter(pid: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (chapter: number) => api.del(proj(pid, `/chapters/${chapter}`)),
-    onSuccess: (_data, chapter) => {
-      qc.invalidateQueries({ queryKey: ["chapters", pid] });
-      qc.invalidateQueries({ queryKey: ["text", pid, chapter] });
-    },
-  });
-}
-
-/** 删掉一版历史。后端会拒绝两种：当前那一版、被证据/抽取/提案引着的那一版。 */
 export function useDeleteSnapshot(pid: string, chapter: number) {
   const qc = useQueryClient();
   return useMutation({
@@ -712,6 +697,18 @@ export function useProposals(pid: string | null, chapter: number) {
   });
 }
 
+/** 项目全量的待审提案（不按章）——通知面板用它把 `SystemNotification` 那份摘要
+ *  行换成完整的卡片（对照/在场/知情/可信度/原文引用），按 `id` 跟通知条目对上。
+ *  `useProposals` 那条按章的还留着给别处用，这条不按章是 2026-08-31 待确认
+ *  搬进通知之后新开的。 */
+export function useAllProposals(pid: string | null) {
+  return useQuery({
+    queryKey: q(["proposals", pid, "all"]),
+    queryFn: () => api.get<ProposalRecord[]>(proj(pid!, "/proposals")),
+    enabled: !!pid,
+  });
+}
+
 export function useEvents(pid: string | null, chapter: number, scope: "PROVISIONAL" | "CANON") {
   return useQuery({
     queryKey: q(["events", pid, chapter, scope]),
@@ -862,6 +859,11 @@ export function useRuns(pid: string | null) {
 
 function invalidateReview(qc: ReturnType<typeof useQueryClient>, pid: string) {
   qc.invalidateQueries({ queryKey: ["proposals", pid] });
+  // 待确认 2026-08-31 并进了通知面板（现读现拼，见后端 `proposal_notifications.py`）：
+  // 接受/驳回/改一改/确认所选任何一个成功之后，那条提案从 `pending()` 里消失，
+  // 通知列表和它的数字 badge 得跟着重取，否则界面上还留着一条已经处理完的旧行。
+  qc.invalidateQueries({ queryKey: ["notifications", pid] });
+  qc.invalidateQueries({ queryKey: ["notifications-count", pid] });
   qc.invalidateQueries({ queryKey: ["events", pid] });
   qc.invalidateQueries({ queryKey: ["roster", pid] });
   qc.invalidateQueries({ queryKey: ["state", pid] });
@@ -1190,6 +1192,16 @@ export function useStopChat(pid: string) {
   return useMutation({
     mutationFn: (v: { chatId: string; runId: string }) =>
       api.post<ChatStopped>(chats(pid, `${one(v.chatId)}/stop`), { run_id: v.runId }),
+  });
+}
+
+/** 一轮跑着的时候再说一句（`POST …/say`，2026-09-12）。**不等、不打断、不落库**：
+ *  后端把这句话放进正在跑的那一轮的信箱，loop 在下一次模型调用之前把它并进对话
+ *  （那时才落库、才喊 `author_said`）。`queued=false` 时这句话没排进去也没落库。 */
+export function useSayMidTurn(pid: string) {
+  return useMutation({
+    mutationFn: (v: { chatId: string; runId: string; said: string }) =>
+      api.post<ChatSaid>(chats(pid, `${one(v.chatId)}/say`), { run_id: v.runId, said: v.said }),
   });
 }
 

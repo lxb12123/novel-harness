@@ -172,7 +172,7 @@ class _NoSummaries:
 def _ask(conn: Connection, pid: str, chapter: int) -> tuple[DraftAsk, Any]:
     """一次起草请求 + 后端算出来的那份约束（**模型碰不到它**，边界二）。"""
     return (
-        DraftAsk(chapter=chapter, calibration_id="test:unused"),
+        DraftAsk(chapter=chapter, brief="写一场对峙"),
         unknown_cast_constraints(SqliteStoryGraph(conn), pid, chapter),
     )
 
@@ -180,7 +180,7 @@ def _ask(conn: Connection, pid: str, chapter: int) -> tuple[DraftAsk, Any]:
 def _write(desk: Any, conn: Connection, pid: str, chapter: int) -> Any:
     """`desk.write` 的测试桩：goal 是这一层直传的（模式二里它只来自封存产物）。"""
     ask, ctx = _ask(conn, pid, chapter)
-    return desk.write(ask, ctx, goal="写一场对峙")
+    return desk.write(ask, ctx)
 
 
 def _write_and_land(desk: Any, conn: Connection, pid: str, chapter: int) -> LandingReport:
@@ -741,7 +741,7 @@ def test_one_turn_from_the_browser_really_changes_the_chapter_on_disk(
     pid = book["pid"]
 
     class Scripted:
-        """先校准、封存，再要一稿，把**那一稿**存进去，最后说话收手。"""
+        """先要一稿，把**那一稿**存进去，最后说话收手。"""
 
         def __init__(self) -> None:
             self.calls = 0
@@ -755,47 +755,13 @@ def test_one_turn_from_the_browser_really_changes_the_chapter_on_disk(
                     finish_reason="tool_calls",
                     tool_calls=(
                         ToolCall(
-                            id="c0",
-                            name="calibrate_scene",
-                            arguments=json.dumps({"chapter": 1}),
+                            id="c2",
+                            name="draft_chapter",
+                            arguments=json.dumps({"chapter": 1, "brief": "第 1 章重写一稿"}),
                         ),
                     ),
                 )
             if self.calls == 2:
-                calibrated = [m for m in messages if m.get("role") == "tool"][-1]
-                inspection_id = json.loads(calibrated["content"]).get("id", "inspection:不存在")
-                return CompletionResult(
-                    text="",
-                    model=MODEL,
-                    finish_reason="tool_calls",
-                    tool_calls=(
-                        ToolCall(
-                            id="c1",
-                            name="seal_scene_brief",
-                            arguments=json.dumps({"inspection_id": inspection_id}),
-                        ),
-                    ),
-                )
-            if self.calls == 3:
-                sealed = [m for m in messages if m.get("role") == "tool"][-1]
-                calibration_id = json.loads(sealed["content"]).get(
-                    "calibration_id", "calibration:不存在"
-                )
-                return CompletionResult(
-                    text="",
-                    model=MODEL,
-                    finish_reason="tool_calls",
-                    tool_calls=(
-                        ToolCall(
-                            id="c2",
-                            name="draft_chapter",
-                            arguments=json.dumps(
-                                {"chapter": 1, "calibration_id": calibration_id}
-                            ),
-                        ),
-                    ),
-                )
-            if self.calls == 4:
                 drafted = [m for m in messages if m.get("role") == "tool"][-1]
                 draft_id = json.loads(drafted["content"]).get("draft_id", "draft:不存在")
                 return CompletionResult(
@@ -822,7 +788,7 @@ def test_one_turn_from_the_browser_really_changes_the_chapter_on_disk(
         json={"chapter": 1, "said": "第 1 章重写一稿"},
     )
     assert turn.status_code == 200, turn.text
-    assert turn.json()["lookups"] == 4
+    assert turn.json()["lookups"] == 2
 
     # 出参上那几稿：界面靠它知道「这一轮写了什么、哪一版进了书」（ADR 0022）。
     drafts = turn.json()["drafts"]
@@ -862,3 +828,52 @@ def test_the_length_the_agent_asks_for_is_the_documented_product_default() -> No
     )
     # 自守卫：产品默认档真的落在这一档里，而不是两个都空。
     assert measure("字" * 2_500, drafting.AGENT_DRAFT_LENGTH).status is LengthStatus.WITHIN
+
+
+def test_the_authors_standing_rules_ride_along_into_the_draft_request(
+    book: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**作者在「检验规则」那一栏里写的字，写之前就到了模型手上**（2026-09-05）。
+
+    维护者要的那个插槽：「用户在这边写了规则，不管是模式一模式二，特别是在模式二的
+    情况下，他自己写内容的时候都要读一下这个规则。」
+
+    ⚠️ **这跟 `write_rule` 不是一回事**：那条是挂在**这段对话**上的文风，会随对话失效；
+    这几条是一直挂着的（`validation_rule` 表，也就是保存后那一轮验证要跑的同一份数据）。
+    所以这条断言的价值是**「同一行数据两头都用得上」**——写之前提醒、写完之后查。
+
+    这里直接写那张表，因为写它的路由（`POST …/validation-rules`）在 API 层，
+    而这一层测的是起草台自己会不会去读；两头之间那条缝由
+    `tests/test_rules_fire.py` 从 HTTP 打进去钉住。
+    """
+    import json as _json
+
+    conn = connect(book["db"])
+    pid = book["pid"]
+    conn.execute(
+        """
+        INSERT INTO validation_rule (
+            id, project_id, title, template, enabled, blocks_downstream, config_json
+        ) VALUES ('vrule:t1', ?, '不许出现「玄铁令」', 'forbidden_literal', 1, 1, ?)
+        """,
+        (pid, _json.dumps({"literal": "玄铁令"}, ensure_ascii=False)),
+    )
+    # 停用的那一条**不该进 prompt**：`load_custom_rules` 只读 enabled=1，
+    # 这一行同时钉住「停用 = 两条路一起不生效」。
+    conn.execute(
+        """
+        INSERT INTO validation_rule (
+            id, project_id, title, template, enabled, blocks_downstream, config_json
+        ) VALUES ('vrule:t2', ?, '停用的那条', 'forbidden_literal', 0, 1, ?)
+        """,
+        (pid, _json.dumps({"literal": "上元节"}, ensure_ascii=False)),
+    )
+    conn.commit()
+
+    fake = FakeDrafting()
+    desk = _drafter(conn, pid, monkeypatch, fake)
+    _write(desk, conn, pid, 1)
+
+    assert fake.asked, "起草请求一次都没发出去"
+    assert fake.asked[0].standing_rules == ("玄铁令",)
+    conn.close()

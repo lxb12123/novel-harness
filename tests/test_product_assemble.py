@@ -362,3 +362,100 @@ def test_an_ordinary_write_rule_passes() -> None:
 
     check_request(_draft_request("文白夹杂，多用短句，对白简洁。"))  # 不抛就是通过
     check_request(_draft_request(""))
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 作者一直挂着的那几条规矩（2026-09-05，模式二写正文前的那个插槽）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_standing_rules_reach_the_writer_before_the_memory_block() -> None:
+    """作者定下的规矩进 prompt，**排在记忆前面**。
+
+    维护者 2026-09-05：「用户在这边写了规则……他自己写内容的时候都要读一下这个规则。」
+    位置不是随手排的——同 `render_product_memory` 那段块序论证（ADR 0019 边界六）：
+    规矩是这份 prompt 里最不会变的东西之一（作者哪天改了才变），记忆逐章变。
+    规矩排在记忆**后面**的话，每章记忆一动，它后面的前缀缓存全废。
+    """
+    from novel_harness.draft.product_assemble import assemble_product
+
+    product = assemble_product(
+        _constraints(),
+        _memory(),
+        goal="两人在渡口商量下一步。",
+        length=LENGTH,
+        standing_rules=("玄铁令", "上元节"),
+    )
+    blob = "\n".join(message["content"] for message in product)
+    assert "不要写出「玄铁令」" in blob
+    assert "不要写出「上元节」" in blob
+
+    positions = [i for i, m in enumerate(product) if "作者定下的规矩" in m["content"]]
+    memories = [i for i, m in enumerate(product) if "【在场人物资料】" in m["content"]]
+    assert len(positions) == 1, "规矩块出现了不止一次"
+    assert positions[0] < memories[0], "规矩必须排在记忆前面（前缀缓存）"
+    assert product[positions[0]]["role"] == "system"
+    assert product[-1]["role"] == "user", "用户段仍然在最后（[文风][规矩][记忆][用户]）"
+
+
+def test_no_standing_rules_means_no_block_at_all() -> None:
+    """一条规矩都没有时**整块不出现**，不摆一个空标题。
+
+    默认值是空元组，所以「没传」和「传了空」是同一件事——这条同时钉住那个默认值。
+    """
+    from novel_harness.draft.product_assemble import assemble_product
+
+    without = assemble_product(
+        _constraints(), _memory(), goal="g", length=LENGTH
+    )
+    empty = assemble_product(
+        _constraints(), _memory(), goal="g", length=LENGTH, standing_rules=()
+    )
+    assert without == empty
+    assert all("作者定下的规矩" not in message["content"] for message in without)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# ADR 0047：写手多拿一格——「助手补的资料」
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_materials_become_their_own_section_and_are_budgeted_from_the_end() -> None:
+    """助手挑的资料进写手提示词的独立分区（ADR 0047 第一条线：有预算上限，从后往前砍）。"""
+    from novel_harness.draft import product_draft
+    from novel_harness.draft.product_draft import (
+        ChapterDraftRequest,
+        _append_target_and_materials,
+    )
+
+    request = ChapterDraftRequest(
+        goal="写一场对峙。",
+        length=LENGTH,
+        materials=("第 12 章：萧决在渡口第一次见到她。", "第 40 章原文节选：「你不该来。」", "  "),
+    )
+    messages, kept, omitted = _append_target_and_materials([{"role": "user", "content": "g"}], request)
+    assert (kept, omitted) == (2, 0), "空白那一条不算"
+    section = messages[-1]["content"]
+    assert messages[-1]["role"] == "system"
+    assert "【助手补的资料】" in section
+    assert "- 第 12 章：萧决在渡口第一次见到她。" in section
+    assert "- 第 40 章原文节选：「你不该来。」" in section
+    assert "覆盖回执" not in section
+
+    # 预算装不下：留前面的（助手的排序就是优先级），砍掉几段要说出来。
+    long = tuple(f"第 {n} 章：" + "很长的一段资料。" * 200 for n in range(1, 6))
+    tight = ChapterDraftRequest(goal="g", length=LENGTH, materials=long)
+    old_cap = product_draft.MATERIALS_UNITS
+    product_draft.MATERIALS_UNITS = 2_500
+    try:
+        messages, kept, omitted = _append_target_and_materials([], tight)
+    finally:
+        product_draft.MATERIALS_UNITS = old_cap
+    assert kept >= 1 and omitted >= 1 and kept + omitted == 5
+    section = messages[-1]["content"]
+    assert "- 第 1 章：" in section
+    assert f"助手还挑了 {omitted} 段，超出预算没有给到" in section
+
+    # 一条都没有：整块不出现，也不多一个空 system 段。
+    nothing = ChapterDraftRequest(goal="g", length=LENGTH)
+    assert _append_target_and_materials([], nothing) == ([], 0, 0)

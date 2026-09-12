@@ -30,9 +30,12 @@ from novel_harness.draft.capabilities import (
     plan_call,
 )
 from novel_harness.draft.length import M2_LENGTH_SPEC, LengthSpec
+from novel_harness import __version__
 from novel_harness.draft.provider import (
+    CLIENT_NAME,
     DEFAULT_TEMPERATURE,
     SAMPLING_STRICT_MODELS,
+    SESSION_ID,
     CompletionResult,
     ProviderConfig,
     ProviderError,
@@ -544,6 +547,38 @@ def test_build_client_carries_the_config_onto_the_client() -> None:
     assert str(client.base_url).rstrip("/") == "https://api.deepseek.com/v1"
     assert client.api_key == "sk-real"
     assert client.timeout == 12.5
+
+
+def test_build_client_identifies_itself_and_carries_a_session_id() -> None:
+    """每条路都带 `User-Agent` 和 `x-opencode-session`,**不按端点分档**。
+
+    2026-09-08 的真书事故:opencode 的 Go 端点开始强制要 `x-opencode-session`,
+    少了就是 `400 MissingSessionID`——一次都过不去,31 章总结批量失败。
+    它家文档同时要求客户端报自己的名字而不是 SDK 的默认 UA,所以两个头一起补。
+    """
+    headers = {
+        key.lower(): value
+        for key, value in _build_client(
+            ProviderConfig(base_url=LOCAL, model="qwen2.5")
+        ).default_headers.items()
+    }
+    assert headers["user-agent"] == f"{CLIENT_NAME}/{__version__}"
+    assert headers["x-opencode-session"] == SESSION_ID
+    # 发给本地 Ollama 的也带 —— 判主机名的分支会在作者架一层中转的那天静默失效,
+    # 而 HTTP 的规矩本来就是认不出的头一律忽略。
+    assert LOCAL.startswith("http://localhost")
+
+
+def test_session_id_is_stable_across_clients_in_one_process() -> None:
+    """一次进程一个,**进程内恒定**:端点要它是为了路由亲和与 prompt 缓存,
+    每次换一个等于每次换一台上游机器,而缓存收益归零这件事在账上看不出来。"""
+    first = _build_client(ProviderConfig(base_url=LOCAL, model="qwen2.5"))
+    second = _build_client(ProviderConfig(base_url="https://api.deepseek.com/v1", model="x"))
+    assert (
+        first.default_headers["x-opencode-session"]
+        == second.default_headers["x-opencode-session"]
+        == SESSION_ID
+    )
 
 
 def test_build_client_substitutes_a_placeholder_key_for_keyless_endpoints() -> None:

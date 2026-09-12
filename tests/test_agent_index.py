@@ -35,6 +35,7 @@ from novel_harness.agent import (
     ToolContext,
     dispatch,
 )
+from novel_harness.agent.ports import NoticeIndex, RulesIndex
 from novel_harness.agent import index as agent_index
 from novel_harness.agent import ports as agent_ports
 from novel_harness.db import Connection, connect, migrate
@@ -294,7 +295,12 @@ def test_l0_truncation_says_how_to_get_the_rest(book: Book) -> None:
 
 
 def test_l0_marks_what_the_author_has_not_written_yet(book: Book) -> None:
-    """超过作者进度的条目**标出来，不挡**（ADR 0019 边界二的残余代价是被接受的）。"""
+    """超过作者进度的条目**标出来，不挡**（ADR 0019 边界二的残余代价是被接受的）。
+
+    **2026-08-31**：这条原来还钉着角色册那一半的 `first_appears_chapter`/`future`
+    标记——随 `forbidden_entities` 一起删了（ADR 0041），`RosterEntry` 上不再有
+    这两个字段。章目录这一半的标记和它算法本来就不同，没有受影响。
+    """
     result = BookIndex.model_validate_json(
         _ok("book_index", book.context(working_chapter=3))
     )
@@ -303,12 +309,6 @@ def test_l0_marks_what_the_author_has_not_written_yet(book: Book) -> None:
     )
     assert result.future_from_chapter == 4
     assert any("还没写到" in note for note in result.notes)
-
-    future_location = next(entry for entry in result.roster if entry.name == "幽泉窟")
-    assert future_location.first_appears_chapter == 200, (
-        "「还没登场」走的是 panel/constraints 那个唯一闸门，不是这一层自己读 props"
-    )
-    assert next(e for e in result.roster if e.name == "萧决").first_appears_chapter is None
 
 
 def test_l0_does_not_pretend_to_know_where_the_author_is(book: Book) -> None:
@@ -645,4 +645,14 @@ def test_the_context_still_has_no_connection_and_no_writer(book: Book) -> None:
     # 端口本身必须是窄的：实现可以更宽（`SummaryStore` 还有 `for_range` / `get`），
     # 但**协议上多一个方法就等于多一条模型够得着的路**。
     assert set(SummaryIndex.__protocol_attrs__) == {"coverage", "snapshot_watermark"}
-    assert set(EventIndex.__protocol_attrs__) == {"events_for_characters"}
+    # 2026-09-12 多了三条**读**路（角色卡 / 事件那两栏，`agent/panels.py`）：
+    # `EventStore` 上那三个写方法（`put_provisional` / `clone_to_scope` /
+    # `update_profile`）一个都没跟过来——这条断言就是钉这件事的。
+    assert set(EventIndex.__protocol_attrs__) == {
+        "events_for_characters",
+        "events_for_chapter",
+        "events_for_one_character",
+        "profile",
+    }
+    assert set(RulesIndex.__protocol_attrs__) == {"catalog", "latest_report"}
+    assert set(NoticeIndex.__protocol_attrs__) == {"open_notices", "pending_proposals"}

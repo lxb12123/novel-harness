@@ -150,19 +150,19 @@ def test_the_wire_is_clean_and_the_poison_was_really_there_to_leak(
     assert receipt["lookups"] == 2
 
     # **毒真的在工具返回里** —— 也就是这一轮里引擎手上真的握着这几段话。
+    # ⚠️ 2026-08-31：`forbidden_entities` 那半自守卫删了（ADR 0041）——
+    # `scene_constraints` 工具今天只回「在场」，`cast_derived` 是它固定会带的键，
+    # 换成拿它当自守卫。
     handed_to_model = sent_to_the_model(model, 1)
-    assert "forbidden_entities" in handed_to_model, "约束那一条没带回未来实体清单 —— 料不满"
+    assert "cast_derived" in handed_to_model, "约束那一条没带回在场信息 —— 料不满"
     assert CH1_LINE in handed_to_model, "正文那一条没读回来 —— 料不满"
 
     # ── 那条连接上一个字都没有 ─────────────────────────────────────────────
     assert "secret:" not in body
     assert "must_not_reveal" not in body
-    assert "forbidden_entities" not in body
     assert CH1_LINE not in body
     # 秘密的**名字**同理：它是 `NodeRef.name`，跟着裸 id 一起躺在工具返回里。
     assert "血脉秘密" not in body
-    # 那个还没登场的人（`forbidden_entities` 里那一条）——说破它就是剧透。
-    assert "未来大能" not in body
 
 
 def test_the_wire_stays_clean_even_when_the_model_asks_for_the_manuscript_three_times(

@@ -81,7 +81,13 @@ NotificationKind = Literal[
     "extraction_yielded_nothing",
     "import_toc_skipped",
     "event_cast_changed",
+    "proposal_conflict",
+    "proposal_low_confidence",
 ]
+"""最后两档不走这个模块的 outbox：它们是 `proposal_notifications.py` 从
+`proposal_set` 现读现拼的，PENDING 状态本身就是唯一真相，写第二份到
+`system_notification` 表 = 又一处「两处拷贝会骗人」。只在这里登记类型，
+`enqueue_notification` 的调用方里不会出现它们。"""
 
 BLOCKING_KINDS: Final[frozenset[str]] = frozenset({"validation_blocked"})
 """哪几种通知落下的同时意味着**这一章的下游被停掉了**。
@@ -365,7 +371,9 @@ def enqueue_validation_blocked(
             kind="validation_blocked",
             subject_type="chapter",
             subject_id=report.chapter_id,
-            operation=f"validation:{report.id}",
+            # 手动那条（`attempt_id="manual"`）**按正文版本去重**：同一段文字连按十次
+            # 闪电只该留一条通知。后台那条照旧按报告去重——它一次 attempt 只跑一遍。
+            operation="validation:manual" if attempt_id == "manual" else f"validation:{report.id}",
             source_snapshot_id=report.source_snapshot_id,
             job_id=attempt_id,
         ),

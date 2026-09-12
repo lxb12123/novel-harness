@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
 from .. import importer
 from ..db import Connection
+from ..proposal_notifications import pending_proposal_notifications
 from ..system_notifications import (
     SystemNotification,
     ignore_notification,
@@ -27,10 +28,29 @@ from ..system_notifications import (
     resolve_notification,
 )
 from .deps import get_conn, get_store, load_project
+from .review import get_proposal_store
 
 router = APIRouter()
 
 NotificationId = Annotated[str, Path(min_length=1)]
+
+
+def _merged_open_notifications(
+    conn: Connection, project_id: str
+) -> list[SystemNotification]:
+    """真通知（`system_notification` 表）+ 现读现拼的待确认提案，按时间合成一条流。
+
+    两边各自已经按 `created_at` 排过序，这里只做一次归并排序，不发明第二套
+    「谁该排在前面」的判据——`SystemNotifications.tsx` 按 `kind` 分组时假定
+    的是「同一档的条目挨着出现」，跟这两个来源先后合并的顺序无关（分组用的是
+    首次出现位置的 `Map`，见组件里的注释）。 """
+    proposal_store = get_proposal_store(conn)
+    merged = [
+        *list_open_notifications(conn, project_id),
+        *pending_proposal_notifications(proposal_store, project_id),
+    ]
+    merged.sort(key=lambda item: item.created_at)
+    return merged
 
 
 @router.get("/api/projects/{project_id}/notifications", response_model=list[SystemNotification])
@@ -40,8 +60,15 @@ def notifications(
     conn: Connection = Depends(get_conn),
     proj: Any = Depends(load_project),
 ) -> list[SystemNotification]:
-    """OPEN 通知列表（默认）。`status=ignored|resolved` 也给全量读。"""
-    return list_open_notifications(conn, proj.id)
+    """OPEN 通知列表（默认）。`status=ignored|resolved` 也给全量读。
+
+    2026-08-31：待确认提案并进来了（不进 `system_notification` 表，见
+    `proposal_notifications.py` 顶部那段说明），所以这条**不再单纯读一张表**。
+    `status` 参数目前对提案那半没有意义——提案没有 IGNORED/RESOLVED 这两档，
+    `.pending()` 本来就只返回未处理的；`status=ignored|resolved` 传进来时
+    这半份数据仍然是空的（不是 bug，是提案压根没有那两个状态）。
+    """
+    return _merged_open_notifications(conn, proj.id)
 
 
 @router.get("/api/projects/{project_id}/notifications/count")
@@ -50,8 +77,19 @@ def notifications_count(
     conn: Connection = Depends(get_conn),
     proj: Any = Depends(load_project),
 ) -> dict[str, int]:
-    """右栏那个数字 badge。**只数 OPEN**（IGNORED/RESOLVED 是已处理的审计状态）。"""
-    return {"open": notification_count(conn, proj.id)}
+    """右栏那个数字 badge。**只数 OPEN**（IGNORED/RESOLVED 是已处理的审计状态）。
+
+    2026-08-31：待确认提案的数目也算进来了——badge 现在是「有多少件事等你看」，
+    不是「有多少条 `system_notification` 表里的行」，跟 tab 底下真实会画出来
+    的条目数对齐。
+    """
+    proposal_store = get_proposal_store(conn)
+    return {
+        "open": (
+            notification_count(conn, proj.id)
+            + len(pending_proposal_notifications(proposal_store, proj.id))
+        )
+    }
 
 
 @router.get("/api/projects/{project_id}/notifications/{notification_id}")

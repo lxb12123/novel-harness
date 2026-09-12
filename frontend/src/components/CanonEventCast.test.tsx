@@ -39,7 +39,9 @@ const lastBody = (spy: Calls) =>
 describe("已确认的情节：谁在场、谁知道了", () => {
   it("先看得见 —— 在此之前 CANON 事件在浏览器里一个字都没露过面", async () => {
     renderWithApi(<CanonEventCast canonVersion={6} />);
-    expect(await screen.findByText(/已确认的情节/)).toBeInTheDocument();
+    // 顶上那句「已确认的情节 · 到第 N 章为止」2026-09-05 删了（作者点名）。范围现在
+    // 靠**每一章一个黑体抬头**说清楚，所以就绪信号换成那个抬头。
+    expect(await screen.findByText(`第 ${first.event.chapter_number} 章`)).toBeInTheDocument();
     const card = (await screen.findAllByRole("button", { name: first.event.summary }))[0]
       .closest(".event-card") as HTMLElement;
     const line = within(card).getByText(/^在场：/).parentElement!;
@@ -135,13 +137,45 @@ describe("已确认的情节：谁在场、谁知道了", () => {
     // §10 约束 8：静默的零和真的零不许长得一样。它可能已经被撤回，或者不在这一章。
     useCoords.setState({ focusEventId: "event:NOT_HERE" });
     renderWithApi(<CanonEventCast canonVersion={6} />);
-    expect(await screen.findByText(/没有在这一章找到刚才那条情节/)).toBeInTheDocument();
+    expect(await screen.findByText(/没有找到刚才那条情节/)).toBeInTheDocument();
+  });
+
+  it("「分析本章」在这一栏的工具栏上，是一颗图标 —— 点它就发那一次分析", async () => {
+    // 它 2026-09-05 从「通知」那一格搬过来（作者定的位置：排序和放大镜中间）。
+    // 那儿原来是一颗写着字的按钮 + 一句常驻的「分析：已完成 · 发现 7 条情节」；
+    // 这一栏的规矩是**图标 + 悬浮**（同排序 / 放大镜），结果**飘一下就走**
+    // （同「检验规则」那颗闪电）。
+    const user = userEvent.setup();
+    renderWithApi(<CanonEventCast canonVersion={6} />, [
+      { method: "POST", match: /\/chapters\/\d+\/extract/, body: fixtures.extractionRun },
+    ]);
+    const spy = vi.spyOn(globalThis, "fetch");
+    const analyze = await screen.findByRole("button", { name: "分析本章" });
+
+    // 三颗图标的**顺序**是作者点名定的：排序 → 分析 → 按章号找。
+    const bar = analyze.closest(".ev-bar") as HTMLElement;
+    const icons = Array.from(bar.querySelectorAll("button")).map((b) =>
+      b.getAttribute("aria-label"),
+    );
+    expect(icons).toEqual(["改成正序", "分析本章", "按章号找"]);
+    // 悬浮那份说明和无障碍名字是同一句话（不是原生 title —— 那个要等约一秒）。
+    expect(analyze.getAttribute("data-tip")).toBe("分析本章");
+    expect(analyze.getAttribute("title")).toBeNull();
+
+    await user.click(analyze);
+    await waitFor(() =>
+      expect(
+        posts(spy as unknown as Calls).some((c) => /\/chapters\/\d+\/extract/.test(String(c[0]))),
+      ).toBe(true),
+    );
   });
 
   it("这一章一条都没有的时候说人话，不摆一张空表", async () => {
     renderWithApi(<CanonEventCast canonVersion={6} />, [
       { match: /\/chapters\/\d+\/events\?scope=CANON/, body: [] },
     ]);
-    expect(await screen.findByText(/这一章还没有已确认的情节/)).toBeInTheDocument();
+    // **范围是「到这一章为止」，不是「这一章」**：这一格读的是 `valid_from <= 当前章`，
+    // 空态那句话跟着说清楚（作者 2026-09-04 问的就是这个范围）。
+    expect(await screen.findByText(/到第 \d+ 章为止还没有已确认的情节/)).toBeInTheDocument();
   });
 });

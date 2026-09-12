@@ -662,7 +662,7 @@
       },
       {
         "actor": "system",
-        "count": 16
+        "count": 12
       }
     ],
     "entries": [
@@ -807,8 +807,8 @@
         "subtitle_params": {
           "model": "deepseek-v4-flash",
           "ms": 0,
-          "tokens_in": null,
-          "tokens_out": null
+          "tokens_in": 1200,
+          "tokens_out": 64
         },
         "title_code": "call_entry_title",
         "title_params": {
@@ -827,12 +827,12 @@
         "subtitle_params": {
           "model": "deepseek-v4-flash",
           "ms": 0,
-          "tokens_in": null,
-          "tokens_out": null
+          "tokens_in": 1800,
+          "tokens_out": 2600
         },
         "title_code": "call_entry_title",
         "title_params": {
-          "capability": "agent"
+          "capability": "writer"
         },
         "ts": "<ts>"
       }
@@ -1579,6 +1579,7 @@
     "edges": [],
     "is_dead": false,
     "location": null,
+    "location_history": [],
     "node": {
       "id": "character:ID9",
       "label": "Character",
@@ -1594,7 +1595,9 @@
         "personality": null
       }
     },
+    "relations": [],
     "scope": "CANON",
+    "state_history": [],
     "states": []
   },
   "chatCreated": {
@@ -1618,7 +1621,7 @@
         "text": "第 2 章能说破血脉的事吗？"
       },
       {
-        "seq": 8,
+        "seq": 4,
         "speaker": "assistant",
         "text": "第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。"
       }
@@ -1626,7 +1629,7 @@
     "session": {
       "created_at": "<ts>",
       "id": "chat_session:ID44",
-      "message_count": 9,
+      "message_count": 5,
       "pending_lookups": 0,
       "running": false,
       "title": "第 2 章能说破血脉的事吗？",
@@ -1673,7 +1676,7 @@
   },
   "chatTurn": {
     "asked": null,
-    "calls_without_usage": 3,
+    "calls_without_usage": 1,
     "chapter": 2,
     "context": {
       "compressed_blocks": 0,
@@ -1687,10 +1690,14 @@
     },
     "drafts": [
       {
+        "brief": "第 2 章这一场：写萧决与顾清音在藏书阁对峙，血脉那条先别说破，收在他没抬头。",
         "chapter": 2,
         "created_at": "<ts>",
         "id": "draft:ID45",
         "landed": false,
+        "materials": [
+          "第 1 章：萧决独自走进了北荒的风雪里。"
+        ],
         "note": "这一版更冷，收在他没抬头。",
         "ordinal": 1,
         "preview": "风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他……",
@@ -1698,11 +1705,11 @@
         "units": 2800
       }
     ],
-    "lookups": 4,
+    "lookups": 2,
     "message": "说完了。",
     "messages": [
       {
-        "seq": 8,
+        "seq": 4,
         "speaker": "assistant",
         "text": "第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。"
       }
@@ -1712,35 +1719,32 @@
     "session": {
       "created_at": "<ts>",
       "id": "chat_session:ID44",
-      "message_count": 9,
+      "message_count": 5,
       "pending_lookups": 0,
       "running": false,
       "title": "第 2 章能说破血脉的事吗？",
       "updated_at": "<ts>"
     },
-    "steps": 4,
-    "tokens_reported": 5664
+    "steps": 2,
+    "tokens_reported": 5664,
+    "unanswered": 0
   },
   "chatTurnEvents": [
-    "event: turn\ndata: {\"kind\":\"tool_started\",\"said_to_author\":\"正在写前校准。\",\"text\":\"\",\"tool\":\"calibrate_scene\",\"ok\":null,\"chapter\":null,\"index\":1,\"total\":1,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
-    "event: turn\ndata: {\"kind\":\"tool_finished\",\"said_to_author\":\"写前校准（第 2 章），好了。\",\"text\":\"\",\"tool\":\"calibrate_scene\",\"ok\":true,\"chapter\":2,\"index\":1,\"total\":1,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
-    "event: turn\ndata: {\"kind\":\"tool_started\",\"said_to_author\":\"正在封存写作简报。\",\"text\":\"\",\"tool\":\"seal_scene_brief\",\"ok\":null,\"chapter\":null,\"index\":1,\"total\":1,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
-    "event: turn\ndata: {\"kind\":\"tool_finished\",\"said_to_author\":\"封存写作简报（第 2 章），好了。\",\"text\":\"\",\"tool\":\"seal_scene_brief\",\"ok\":true,\"chapter\":2,\"index\":1,\"total\":1,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
-    "event: turn\ndata: {\"kind\":\"tool_started\",\"said_to_author\":\"正在查这一章不许说破什么（这一批 2 件里的第 1 件）。\",\"text\":\"\",\"tool\":\"scene_constraints\",\"ok\":null,\"chapter\":null,\"index\":1,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
-    "event: turn\ndata: {\"kind\":\"tool_finished\",\"said_to_author\":\"查这一章不许说破什么（第 2 章），好了。\",\"text\":\"\",\"tool\":\"scene_constraints\",\"ok\":true,\"chapter\":2,\"index\":1,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"tool_started\",\"said_to_author\":\"正在查这一章谁在场（这一批 2 件里的第 1 件）。\",\"text\":\"\",\"tool\":\"scene_constraints\",\"ok\":null,\"chapter\":null,\"index\":1,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"tool_finished\",\"said_to_author\":\"查这一章谁在场（第 2 章），好了。\",\"text\":\"\",\"tool\":\"scene_constraints\",\"ok\":true,\"chapter\":2,\"index\":1,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
     "event: turn\ndata: {\"kind\":\"tool_started\",\"said_to_author\":\"正在写一稿（这一批 2 件里的第 2 件）。\",\"text\":\"\",\"tool\":\"draft_chapter\",\"ok\":null,\"chapter\":null,\"index\":2,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
     "event: turn\ndata: {\"kind\":\"draft_started\",\"said_to_author\":\"正在写第 2 章的一稿。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":2,\"index\":0,\"total\":0,\"stream\":1,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
     "event: turn\ndata: {\"kind\":\"draft_kept\",\"said_to_author\":\"第 2 章的第 2 稿写好了，2800 字。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":2,\"index\":0,\"total\":0,\"stream\":1,\"ordinal\":2,\"units\":2800,\"reason\":null,\"asked\":null}\n\n",
     "event: turn\ndata: {\"kind\":\"tool_finished\",\"said_to_author\":\"写一稿（第 2 章），好了。\",\"text\":\"\",\"tool\":\"draft_chapter\",\"ok\":true,\"chapter\":2,\"index\":2,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
     "event: turn\ndata: {\"kind\":\"reply_text\",\"said_to_author\":\"\",\"text\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\",\"tool\":\"\",\"ok\":null,\"chapter\":null,\"index\":0,\"total\":0,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
     "event: turn\ndata: {\"kind\":\"turn_stopped\",\"said_to_author\":\"说完了。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":null,\"index\":0,\"total\":0,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":\"done\",\"asked\":null}\n\n",
-    "event: receipt\ndata: {\"session\":{\"id\":\"chat_session:ID46\",\"title\":\"长连接那一轮\",\"created_at\":\"<ts>\",\"updated_at\":\"<ts>\",\"message_count\":9,\"running\":false,\"pending_lookups\":0},\"chapter\":2,\"reason\":\"done\",\"message\":\"说完了。\",\"reply\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\",\"messages\":[{\"seq\":8,\"speaker\":\"assistant\",\"text\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\"}],\"steps\":4,\"lookups\":4,\"tokens_reported\":5664,\"calls_without_usage\":3,\"context\":{\"off_chapter\":0,\"stale_lookups\":0,\"trimmed_results\":0,\"dropped_lookups\":0,\"dropped_reasoning\":0,\"lost_lookups\":0,\"full\":false,\"compressed_blocks\":0},\"asked\":null,\"drafts\":[{\"id\":\"draft:ID47\",\"chapter\":2,\"ordinal\":2,\"units\":2800,\"note\":\"这一版更冷，收在他没抬头。\",\"preview\":\"风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他……\",\"created_at\":\"<ts>\",\"landed\":false,\"stopped_reason\":\"\"}]}\n\n"
+    "event: receipt\ndata: {\"session\":{\"id\":\"chat_session:ID46\",\"title\":\"长连接那一轮\",\"created_at\":\"<ts>\",\"updated_at\":\"<ts>\",\"message_count\":5,\"running\":false,\"pending_lookups\":0},\"chapter\":2,\"reason\":\"done\",\"message\":\"说完了。\",\"reply\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\",\"messages\":[{\"seq\":4,\"speaker\":\"assistant\",\"text\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\"}],\"steps\":2,\"lookups\":2,\"unanswered\":0,\"tokens_reported\":5664,\"calls_without_usage\":1,\"context\":{\"off_chapter\":0,\"stale_lookups\":0,\"trimmed_results\":0,\"dropped_lookups\":0,\"dropped_reasoning\":0,\"lost_lookups\":0,\"full\":false,\"compressed_blocks\":0},\"asked\":null,\"drafts\":[{\"id\":\"draft:ID47\",\"chapter\":2,\"ordinal\":2,\"units\":2800,\"note\":\"这一版更冷，收在他没抬头。\",\"preview\":\"风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他……\",\"created_at\":\"<ts>\",\"landed\":false,\"stopped_reason\":\"\",\"brief\":\"第 2 章这一场：写萧决与顾清音在藏书阁对峙，血脉那条先别说破，收在他没抬头。\",\"materials\":[\"第 1 章：萧决独自走进了北荒的风雪里。\"]}]}\n\n"
   ],
   "chats": [
     {
       "created_at": "<ts>",
       "id": "chat_session:ID44",
-      "message_count": 9,
+      "message_count": 5,
       "pending_lookups": 0,
       "running": false,
       "title": "第 2 章能说破血脉的事吗？",
@@ -1756,38 +1760,12 @@
     "phase": "initial",
     "project_id": "project:ID1",
     "refresh_attempt_id": null,
-    "rules": [
-      {
-        "blocks_downstream": true,
-        "issue_count": 0,
-        "note": null,
-        "rule_id": "R3",
-        "state": "clear",
-        "title": "人物开口时机"
-      }
-    ],
-    "ruleset_epoch": 2,
+    "rules": [],
+    "ruleset_epoch": 3,
     "ruleset_hash": "<sha>",
     "source_generation": 1,
     "source_snapshot_id": "snapshot:ID17",
     "text_sha256": "<sha>"
-  },
-  "constraints": {
-    "chapter": 2,
-    "forbidden_entities": [
-      {
-        "first_appears_chapter": 200,
-        "node": {
-          "id": "character:ID6",
-          "label": "Character",
-          "name": "未来大能"
-        },
-        "surfaces": [
-          "未来大能"
-        ]
-      }
-    ],
-    "unresolved_cast": []
   },
   "createAlias": {
     "derived_from_alias_id": null,
@@ -1816,10 +1794,14 @@
     }
   },
   "draftDetail": {
+    "brief": "第 2 章这一场：写萧决与顾清音在藏书阁对峙，血脉那条先别说破，收在他没抬头。",
     "chapter": 2,
     "created_at": "<ts>",
     "id": "draft:ID45",
     "landed": false,
+    "materials": [
+      "第 1 章：萧决独自走进了北荒的风雪里。"
+    ],
     "note": "这一版更冷，收在他没抬头。",
     "ordinal": 1,
     "preview": "风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他……",
@@ -1830,10 +1812,14 @@
   "drafts": {
     "drafts": [
       {
+        "brief": "第 2 章这一场：写萧决与顾清音在藏书阁对峙，血脉那条先别说破，收在他没抬头。",
         "chapter": 2,
         "created_at": "<ts>",
         "id": "draft:ID45",
         "landed": false,
+        "materials": [
+          "第 1 章：萧决独自走进了北荒的风雪里。"
+        ],
         "note": "这一版更冷，收在他没抬头。",
         "ordinal": 1,
         "preview": "风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他……",
@@ -2109,6 +2095,25 @@
   },
   "notifications": [
     {
+      "actions": [
+        "accept",
+        "reject"
+      ],
+      "chapter_number": 1,
+      "created_at": "<ts>",
+      "id": "proposal:ID23",
+      "jump": null,
+      "kind": "proposal_conflict",
+      "project_id": "project:ID1",
+      "source_sha256": null,
+      "status": "OPEN",
+      "subject_id": "proposal:ID23",
+      "subject_type": "proposal",
+      "summary_sha256": null,
+      "title_code": "proposal_conflict_title",
+      "title_params": {}
+    },
+    {
       "actions": [],
       "chapter_number": 1,
       "created_at": "<ts>",
@@ -2153,10 +2158,10 @@
     }
   ],
   "notificationsCount": {
-    "open": 2
+    "open": 3
   },
   "notificationsIgnored": {
-    "id": "notif:ID65",
+    "id": "proposal:ID23",
     "status": "IGNORED"
   },
   "projects": [
@@ -2285,6 +2290,144 @@
     "status": "REJECTED"
   },
   "proposals": [
+    {
+      "audit_envelope": null,
+      "base_canon_version": 9,
+      "chapter_number": 1,
+      "confidence": null,
+      "created_at": "<ts>",
+      "currentness": "CURRENT",
+      "decision_log_id": null,
+      "edge_ids": [],
+      "event_ids": [
+        "event:ID18"
+      ],
+      "id": "proposal:ID19",
+      "item_count": 1,
+      "items": [
+        {
+          "confidence": 0.6,
+          "event_id": "event:ID18",
+          "quote": "萧决在青云城主府第一次听说了血脉秘密的真相。",
+          "source_kind": "event",
+          "summary": "萧决得知血脉秘密。"
+        }
+      ],
+      "kind": "low_confidence_main",
+      "node_refs": [],
+      "project_id": "project:ID1",
+      "prompt_hash": "prompt:api-test",
+      "resolution_action": null,
+      "resolved_at": null,
+      "resolved_canon_version": null,
+      "schema_version": "m4.analysis.v1",
+      "snapshot_id": "snapshot:ID10",
+      "status": "PENDING",
+      "summary": "",
+      "superseded_by_snapshot_id": null
+    },
+    {
+      "audit_envelope": null,
+      "base_canon_version": 9,
+      "chapter_number": 1,
+      "confidence": null,
+      "created_at": "<ts>",
+      "currentness": "CURRENT",
+      "decision_log_id": null,
+      "edge_ids": [
+        "edge:ID22"
+      ],
+      "event_ids": [],
+      "id": "proposal:ID23",
+      "item_count": 1,
+      "items": [
+        {
+          "current": {
+            "edge_id": "edge:ID20",
+            "subject_id": "character:ID9",
+            "target_id": "location:ID21",
+            "value": null
+          },
+          "proposed": {
+            "edge_id": "edge:ID22",
+            "quote": "萧决在青云城主府第一次听说了血脉秘密的真相。",
+            "subject_id": "character:ID9",
+            "target_id": "location:ID8",
+            "value": null
+          },
+          "update_kind": "location"
+        }
+      ],
+      "kind": "edge_conflict",
+      "node_refs": [
+        {
+          "id": "character:ID9",
+          "label": "Character",
+          "name": "萧决"
+        },
+        {
+          "id": "location:ID21",
+          "label": "Location",
+          "name": "青云城"
+        },
+        {
+          "id": "location:ID8",
+          "label": "Location",
+          "name": "北荒"
+        }
+      ],
+      "project_id": "project:ID1",
+      "prompt_hash": "prompt:api-edge-conflict",
+      "resolution_action": null,
+      "resolved_at": null,
+      "resolved_canon_version": null,
+      "schema_version": "m4.analysis.v1",
+      "snapshot_id": "snapshot:ID10",
+      "status": "PENDING",
+      "summary": "",
+      "superseded_by_snapshot_id": null
+    },
+    {
+      "audit_envelope": null,
+      "base_canon_version": 9,
+      "chapter_number": 1,
+      "confidence": null,
+      "created_at": "<ts>",
+      "currentness": "CURRENT",
+      "decision_log_id": null,
+      "edge_ids": [],
+      "event_ids": [],
+      "id": "proposal:ID24",
+      "item_count": 1,
+      "items": [
+        {
+          "confidence": 0.8,
+          "profile": {
+            "background": "北荒旧族",
+            "character_notes": "说话总带三分敬意，从不主动提北荒",
+            "confidence": 0.8,
+            "gender": "女",
+            "personality": "隐忍",
+            "surface": "陆青禾"
+          },
+          "surface": "陆青禾"
+        }
+      ],
+      "kind": "new_character",
+      "node_refs": [],
+      "project_id": "project:ID1",
+      "prompt_hash": "prompt:api-new-character",
+      "resolution_action": null,
+      "resolved_at": null,
+      "resolved_canon_version": null,
+      "schema_version": "m4.analysis.v1",
+      "snapshot_id": "snapshot:ID10",
+      "status": "PENDING",
+      "summary": "",
+      "superseded_by_snapshot_id": null
+    }
+  ],
+  "proposalsAll": [
     {
       "audit_envelope": null,
       "base_canon_version": 9,
@@ -2740,7 +2883,7 @@
     ],
     "run_count": 2,
     "totals": {
-      "calls": 15,
+      "calls": 11,
       "cost": 0.34,
       "metered_calls": 7,
       "ms": 1800,
@@ -2768,9 +2911,13 @@
     "auto_update_model_windows": false,
     "base_url": "",
     "context_window": null,
+    "continuation_in_agent_mode": false,
     "continuation_tail_basis": "unconfigured",
     "continuation_tail_limit": 800,
-    "model": ""
+    "graph_max_nodes": null,
+    "graph_max_nodes_default": 1000,
+    "model": "",
+    "review_card_edits": false
   },
   "settingsSaved": {
     "api_key_preview": "***********-key",
@@ -2778,9 +2925,13 @@
     "auto_update_model_windows": false,
     "base_url": "https://api.deepseek.com",
     "context_window": 128000,
+    "continuation_in_agent_mode": false,
     "continuation_tail_basis": "model_window",
     "continuation_tail_limit": 10666,
-    "model": "deepseek-v4-flash"
+    "graph_max_nodes": null,
+    "graph_max_nodes_default": 1000,
+    "model": "deepseek-v4-flash",
+    "review_card_edits": false
   },
   "stateDims": [
     {
@@ -2845,6 +2996,7 @@
           "personality": null
         }
       },
+      "relations": [],
       "scope": "CANON",
       "states": []
     },
@@ -2868,6 +3020,7 @@
           "personality": null
         }
       },
+      "relations": [],
       "scope": "CANON",
       "states": []
     }
@@ -3184,14 +3337,5 @@
     "template": "forbidden_literal",
     "title": "不许有玄铁令"
   },
-  "validationRules": [
-    {
-      "blocks_downstream": true,
-      "description": "已死或尚未登场的角色在说话人标签位置开口。",
-      "enabled": true,
-      "rule_id": "R3",
-      "template": "system",
-      "title": "人物开口时机"
-    }
-  ]
+  "validationRules": []
 }

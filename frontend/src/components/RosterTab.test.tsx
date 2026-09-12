@@ -5,6 +5,30 @@ import { fixtures, renderWithApi } from "../test/harness";
 import { useCoords } from "../store";
 import { RosterTab } from "./RosterTab";
 
+// ReactFlow 的 canvas/SVG 渲染依赖真实布局测量，jsdom 给不了；同 `LocalGraph.test.tsx`
+// 生前的写法——把画布换成轻量桩，测的是接线（拉子图 → 转 flow 节点 → 名字进 DOM），
+// 不测 ReactFlow 自己画得对不对。**这份 mock 现在几乎每条「选中一个人物」的测试都会
+// 触发**：角色卡把「人物关系」并进来之后，选中人物就会渲染 `CharacterRelations`，
+// 它内嵌着同一块画布。
+vi.mock("@xyflow/react", () => ({
+  ReactFlow: ({ nodes, edges }: { nodes: { id: string; data: { label: string } }[]; edges: unknown[] }) => (
+    <div data-testid="flow">
+      {nodes.map((n) => (
+        <span key={n.id} data-testid="flow-node">
+          {n.data.label}
+        </span>
+      ))}
+      <span data-testid="flow-edge-count">{edges.length}</span>
+    </div>
+  ),
+  Background: () => null,
+  Controls: () => null,
+  // `CharacterRelations` 的自定义节点要用这两个（连线的锚点）。**mock 工厂缺一个
+  // 具名导出，vitest 直接报错**，所以组件那边一 import 就得在这儿跟一个。
+  Handle: () => null,
+  Position: { Top: "top", Bottom: "bottom", Left: "left", Right: "right" },
+}));
+
 /** 角色册里那几行的名字，**按屏幕上的先后**。排序断言全靠它。 */
 function namesOnScreen(): string[] {
   return [...document.querySelectorAll<HTMLElement>(".item .nm")].map(
@@ -24,6 +48,13 @@ function namesPerGroup(): string[][] {
 
 beforeEach(() => {
   useCoords.setState({ projectId: "project:ID1", chapter: 1, selectedNodeId: null });
+  // ReactFlow 需要 ResizeObserver 做尺寸测量；jsdom 里没有（同 `LocalGraph.test.tsx`）。
+  class RO {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  (globalThis as Record<string, unknown>).ResizeObserver = RO;
 });
 
 describe("角色册", () => {
@@ -287,8 +318,10 @@ describe("角色册", () => {
     const deletes = () =>
       spy.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === "DELETE");
 
-    await user.click(within(row).getByRole("button", { name: "删" }));
-    // **按下「删」还没删**：先出现一句问话。
+    // 「删」原来是常驻按钮，2026-09-01 收进了悬浮才现身的「⋯」菜单（云纹描边重设计）。
+    await user.click(within(row).getByRole("button", { name: `${target.name}的更多操作` }));
+    await user.click(within(row).getByRole("button", { name: "删除" }));
+    // **按下「删除」还没删**：先出现一句问话。
     expect(deletes()).toEqual([]);
     expect(within(row).getByText(/删了拿不回来/)).toBeInTheDocument();
 
@@ -305,7 +338,8 @@ describe("角色册", () => {
     const row = (await screen.findByText(target.name)).closest(".item") as HTMLElement;
     const spy = vi.spyOn(globalThis, "fetch");
 
-    await user.click(within(row).getByRole("button", { name: "删" }));
+    await user.click(within(row).getByRole("button", { name: `${target.name}的更多操作` }));
+    await user.click(within(row).getByRole("button", { name: "删除" }));
     await user.click(within(row).getByRole("button", { name: "算了" }));
 
     expect(
@@ -323,6 +357,7 @@ describe("角色册", () => {
     const row = (await screen.findByText(target.name)).closest(".item") as HTMLElement;
     const spy = vi.spyOn(globalThis, "fetch");
 
+    await user.click(within(row).getByRole("button", { name: `${target.name}的更多操作` }));
     await user.click(within(row).getByRole("button", { name: "改名" }));
     const box = within(row).getByPlaceholderText("输入新的名称");
     await user.clear(box);
@@ -348,13 +383,209 @@ describe("角色册", () => {
     expect(await screen.findByRole("heading", { name: "角色册" })).toBeInTheDocument();
   });
 
-  it("点一个人 = 看他的关系图（这条在搬家之后没变）", async () => {
+  // ══════════════════════════════════════════════════════════════════════
+  // 角色卡（2026-08-31）：「人物状态」「人物关系」「原文依据」三个 tab 并进来，
+  // 点一个人不再跳页，卡片原地展开在他那一行下面。
+  // ══════════════════════════════════════════════════════════════════════
+
+  it("点一个人物 = 原地展开他的卡，不再跳去一个别的 tab", async () => {
+    // **不用 `rosterWithCounts[0]`**：那是个地点（数组第一个恰好是 `location:ID5`），
+    // 卡片只对人物展开（见 `RosterTab.tsx` 顶注），拿它测会掩盖这条真正在测的行为。
+    const hero = fixtures.rosterWithCounts.find((n) => n.label === "Character")!;
     renderWithApi(<RosterTab />);
-    const first = fixtures.rosterWithCounts[0];
-    (await screen.findByText(first.name)).click();
+    (await screen.findByText(hero.name)).click();
     await waitFor(() => {
-      expect(useCoords.getState().selectedNodeId).toBe(first.id);
-      expect(useCoords.getState().activeTab).toBe("graph");
+      expect(useCoords.getState().selectedNodeId).toBe(hero.id);
+      // 「关系」并进角色册之前，`focusNode` 把 `activeTab` 切到已经不存在的
+      // `"graph"`；现在这个动作**留在原地**，角色册本身就是落点。
+      expect(useCoords.getState().activeTab).toBe("roster");
     });
+    expect(await screen.findByText(hero.name + "的事件")).toBeInTheDocument();
+  });
+
+  it("地点/势力选中之后没有卡片可展开——只有人物有状态/关系/依据", async () => {
+    const place = fixtures.rosterWithCounts.find((n) => n.label === "Location")!;
+    renderWithApi(<RosterTab />);
+    (await screen.findByText(place.name)).click();
+    await waitFor(() => expect(useCoords.getState().selectedNodeId).toBe(place.id));
+    expect(screen.queryByText(/的事件/)).toBeNull();
+  });
+
+  it("再点一次已经展开的名字 = 收起卡片", async () => {
+    const hero = fixtures.rosterWithCounts.find((n) => n.label === "Character")!;
+    const user = userEvent.setup();
+    renderWithApi(<RosterTab />);
+    const row = (await screen.findByText(hero.name)).closest(".roster-row") as HTMLElement;
+    await user.click(within(row).getByText(hero.name));
+    await screen.findByText(hero.name + "的事件");
+
+    // 展开之后名字在屏幕上**只有一处**了——卡片 2026-09-04 起不再印一遍本名
+    // （作者：「这上边已经有贾环了，为什么在正文还要整一个」）。`within(row)` 留着
+    // 是因为它说的正是「点行上那一个」，不靠「屏幕上只有一个」这个会随卡片内容变的
+    // 前提；那条「卡里没有本名」的断言在 `CharacterBasicInfo.test.tsx` 里。
+    await user.click(within(row).getByText(hero.name));
+    await waitFor(() => expect(useCoords.getState().selectedNodeId).toBeNull());
+    expect(screen.queryByText(hero.name + "的事件")).toBeNull();
+  });
+
+  it("状态：所在地、维度、生死都渲染出来", async () => {
+    const hero = fixtures.rosterWithCounts.find((n) => n.label === "Character")!;
+    // 拿真 dump 改字段，不手写一份快照（同这个仓库其余测试的规矩）。
+    const withState = {
+      ...fixtures.characterState,
+      is_dead: true,
+      location: fixtures.states[0].location,
+      // 状态那一格 2026-09-06 起读 `state_history`（每格可能多条），不是 `states`
+      // （每格只有当前那一条）。两个都塞上：`states` 还喂着「已亡」那一档。
+      states: [{ dim: { id: "statedim:1", label: "StateDim", name: "武功境界" }, dim_key: null, value: "筑基期", value_key: null, since_chapter: 3 }],
+      state_history: [{ dim: { id: "statedim:1", label: "StateDim", name: "武功境界" }, dim_key: null, value: "筑基期", value_key: null, since_chapter: 3 }],
+    };
+    renderWithApi(<RosterTab />, [{ match: /\/characters\/.*\/state/, body: withState }]);
+    (await screen.findByText(hero.name)).click();
+
+    // **等的是数据到了，不是卡片容器挂上去**：`.char-card` 点开那一刻就同步挂进
+    // DOM，这时状态那一格还在「读取中…」——拿容器存不存在当就绪信号会在数据到之前
+    // 就往下断言（同 `CharacterTimeline` 顶上那段注释讲的坑）。
+    // **爬到 `.st-dim` 那一行再断言**：2026-09-06 起字段名和值分在两个 span 里
+    // （一行内可以有好几个带章号的值），`findByText(/武功境界/)` 拿到的是
+    // 字段名那个 span，里面只有「武功境界：」——同 `CharacterStatus.test.tsx`
+    // 里记着的那个坑。
+    const dimRow = (await screen.findByText(/武功境界/)).closest(".st-dim") as HTMLElement;
+    expect(dimRow).toHaveTextContent("筑基期");
+    expect(dimRow).toHaveTextContent("第 3 章");
+    // **`within(card)`，不是裸 `screen`**：地点「青云城主府」在角色册列表自己那一行
+    // 也是一个独立的文本节点（它本来就是角色册里的一个条目），裸查会撞「不止一个匹配」。
+    const card = dimRow.closest(".char-card") as HTMLElement;
+    expect(within(card).getByText(new RegExp(fixtures.states[0].location!.name))).toBeInTheDocument();
+    expect(within(card).getByText(/已亡/)).toBeInTheDocument();
+  });
+
+  it("状态：还没有维度时说清楚是为什么，不是「暂无数据」", async () => {
+    const hero = fixtures.rosterWithCounts.find((n) => n.label === "Character")!;
+    renderWithApi(<RosterTab />); // 默认 fixture 的 `states`/`edges` 都是空的
+    (await screen.findByText(hero.name)).click();
+    expect(await screen.findByText(/还没有记录他的状态/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/暂无数据|暂无|空空如也/);
+  });
+
+  it("关系：只有一张图、图上只有人，那份文字清单不再出现", async () => {
+    const hero = fixtures.rosterWithCounts.find((n) => n.label === "Character")!;
+    const peer = fixtures.rosterWithCounts.find(
+      (n) => n.id !== hero.id && n.label === "Character",
+    )!;
+    const place = fixtures.rosterWithCounts.find((n) => n.label === "Location")!;
+    // **数据从子图端点来，不再从 `…/state` 来**：文字清单删掉之后这一格只读子图
+    // （`useCharacterState` 整个不用了），往 state 里塞关系边现在什么都不会发生。
+    const withGraph = {
+      ...fixtures.subgraph,
+      center: { id: hero.id, label: "Character", name: hero.name },
+      nodes: [
+        { id: hero.id, label: "Character", name: hero.name },
+        { id: peer.id, label: "Character", name: peer.name },
+        { id: place.id, label: "Location", name: place.name },
+      ],
+      edges: [
+        {
+          id: "edge:related1", src: hero.id, dst: peer.id, type: "RELATED_TO",
+          valid_from_chapter: 5, valid_to_chapter: null, evidence_id: null,
+          props: { value: "宿敌" },
+        },
+        {
+          id: "edge:loc1", src: hero.id, dst: place.id, type: "LOCATED_AT",
+          valid_from_chapter: 3, valid_to_chapter: null, evidence_id: null,
+          props: { value: null },
+        },
+      ],
+    };
+    renderWithApi(<RosterTab />, [{ match: /\/subgraph/, body: withGraph }]);
+    (await screen.findByText(hero.name)).click();
+
+    const labels = (await screen.findAllByTestId("flow-node")).map((n) => n.textContent);
+    expect(labels).toContain(peer.name);
+    // 地点不上图（作者点名：那是「状态」那一格的事）。
+    expect(labels).not.toContain(place.name);
+    // 那三行「对端 — 关系 · 第 N 章起」的清单整块删了——同一件事不在一屏上说两遍。
+    expect(screen.queryByText(/宿敌 · 第 5 章起/)).toBeNull();
+  });
+
+  it("卡片展开时，那一行右端的「⋯」变成收起按钮，点它就收起", async () => {
+    const hero = fixtures.rosterWithCounts.find((n) => n.label === "Character")!;
+    const user = userEvent.setup();
+    renderWithApi(<RosterTab />);
+    const row = (await screen.findByText(hero.name)).closest(".roster-row") as HTMLElement;
+    await user.click(within(row).getByText(hero.name));
+    await screen.findByText(hero.name + "的事件");
+
+    // 展开态那个位置不再是「⋯」——一次点击不能既是「看更多操作」又是「收起」。
+    expect(within(row).queryByRole("button", { name: `${hero.name}的更多操作` })).toBeNull();
+    await user.click(within(row).getByRole("button", { name: `收起${hero.name}的卡片` }));
+    await waitFor(() => expect(useCoords.getState().selectedNodeId).toBeNull());
+    // 收起之后「⋯」回来了。
+    expect(within(row).getByRole("button", { name: `${hero.name}的更多操作` })).toBeInTheDocument();
+  });
+
+  it("依据：带 evidence_id 的边取回原文，没有的边不显示", async () => {
+    const hero = fixtures.rosterWithCounts.find((n) => n.label === "Character")!;
+    // `fixtures.states[0].edges[0]` 真的带 `evidence_id`（`evidence:ID14`），
+    // 但契约夹具里没有单独一份 `/evidence/{id}` 的真 dump——那条端点只在这里
+    // 手写一份（形状照 `EvidenceView`），不是绕过「吃真 dump」那条规矩，是补它没照到的一格。
+    // 真 dump 里那条带引语的边是 `LOCATED_AT`，而**所在地 2026-09-04 起不进这一格**
+    // （作者：「上面都去掉那些地址了，下面应该跟一下」，见 `CharacterEvidence.tsx`）。
+    // 这条测的是「有引语就取回原文」，和边的种类无关，所以只把种类换成关系——
+    // **别为了让它绿把地址那一行放回去。**
+    const withEvidence = {
+      ...fixtures.characterState,
+      edges: fixtures.states[0].edges.map((e) => ({ ...e, type: "RELATED_TO" })),
+    };
+    const evidenceView = {
+      id: "evidence:ID14",
+      chapter_number: 1,
+      quote_text: "萧决站在青云城主府的门前。",
+      anchor: { para_index: 0, quote_text: "萧决站在青云城主府的门前。", occurrence_k: 1 },
+    };
+    renderWithApi(<RosterTab />, [
+      { match: /\/characters\/.*\/state/, body: withEvidence },
+      { match: /\/evidence\//, body: evidenceView },
+    ]);
+    (await screen.findByText(hero.name)).click();
+
+    expect(
+      await screen.findByText(new RegExp(`依据 第 ${evidenceView.chapter_number} 章`)),
+    ).toHaveTextContent(evidenceView.quote_text);
+  });
+
+  it("依据：这一章还没有依据时指向「待确认」，不指向已经删掉的按钮", async () => {
+    const hero = fixtures.rosterWithCounts.find((n) => n.label === "Character")!;
+    renderWithApi(<RosterTab />); // 默认 fixture 的 edges 是空的
+    (await screen.findByText(hero.name)).click();
+    expect(await screen.findByText(/还没有原文依据/)).toBeInTheDocument();
+    expect(document.body.textContent).toMatch(/待确认/);
+    expect(document.body.textContent).not.toMatch(/记录这句/);
+  });
+
+  it("事件超过 6 条封顶滚动，不足 6 条不留空白滚动区", async () => {
+    const hero = fixtures.rosterWithCounts.find((n) => n.label === "Character")!;
+    const many = Array.from({ length: 8 }, (_, i) => ({
+      ...fixtures.characterEvents[0],
+      event_id: `event:synth${i}`,
+      chapter_number: i + 1,
+    }));
+    renderWithApi(<RosterTab />, [{ match: /\/characters\/[^/]+\/events$/, body: many }]);
+    (await screen.findByText(hero.name)).click();
+    // **等的是事件真的渲染出来，不是那一格的标题**：`.lab` 不管 loading 与否
+    // 都会先挂上去，拿它当就绪信号会在数据到之前就往下断言（`.char-events-scroll`
+    // 那时还没被加上去）——`CharacterTimeline` 顶上那段注释就是在讲这同一种坑。
+    // 8 条合成事件共用同一句摘要，只有章号不同——连着章号一起匹配才是唯一的那一条。
+    await screen.findByText(new RegExp(`第 ${many.length} 章 · ${many[many.length - 1].summary}`));
+
+    await waitFor(() => expect(document.querySelector(".char-events-scroll")).not.toBeNull());
+
+    document.body.innerHTML = "";
+    renderWithApi(<RosterTab />, [
+      { match: /\/characters\/[^/]+\/events$/, body: fixtures.characterEvents },
+    ]);
+    (await screen.findByText(hero.name)).click();
+    await screen.findByText(hero.name + "的事件");
+    expect(document.querySelector(".char-events-scroll")).toBeNull();
   });
 });

@@ -77,7 +77,7 @@ from typing import Any, Final, Literal, Protocol, TypeVar
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .db import Connection
-from .draft.provider import CompletionResult
+from .draft.provider import CompletionResult, unfenced
 from .extract.call_audit import record_call
 from .extract.control import AuditedCompletion
 from .graph import StoryGraph, TextAnchor
@@ -147,8 +147,14 @@ _SENTENCE_TRAILERS: Final = "」』”’）)》〉】"
 """终止符后面还能跟着的收尾符号。不吞掉它们的话，「他说：『走。』」会切出一个
 孤零零的 `』` 当成第二句，而那一句作者点过去看见的是半个引号。"""
 
-ReviewKind = Literal["secret", "track"]
-"""两问各自的代号。**它同时是账上和去重键上的那个词**，所以别改字面量。"""
+ReviewKind = Literal["secret", "track", "card_edit"]
+"""三问各自的代号。**它同时是账上和去重键上的那个词**，所以别改字面量。
+
+`card_edit` 2026-09-06 加的第三问：**作者在人物卡上改完一格之后**，验一遍他填的东西
+和那一章的原文对不对得上（作者要的开关，`settings.review_card_edits`，默认关）。
+它和前两问的不同之处值得写下来：前两问核对的是**模型写的正文**，这一问核对的是
+**作者填的字**——所以它的误报更刺人，这也正是它默认关着、要他自己拨开的理由。
+"""
 
 ConflictKind = Literal["setting", "timeline", "knowledge"]
 """冲突类型的封闭词表。**封闭是它的全部价值**：一个自由文本的「理由」字段能装下
@@ -350,7 +356,7 @@ def _excerpt_block(track: Track) -> str:
 
     这一侧是验证的上下文，它按定义就看得见后面章节的内容。Writer 那一侧从没见过
     轨道（`track.py` 模块头第一节），两条守卫钉着：`tests/test_track_isolation.py`
-    静态扫 `draft/` + `calibration/`，外加一条拿轨道每一段去搜 prompt 的动态网。
+    静态扫 `draft/`，外加一条拿轨道每一段去搜 prompt 的动态网。
     """
     if not track.excerpts:
         return ""
@@ -362,6 +368,53 @@ def _excerpt_block(track: Track) -> str:
     return (
         "\n\n【那几章的原文片段】（上面的总结没提到你正在改的某几样东西，"
         "所以把原文里提到它们的那几段补在这儿）：\n" + lines
+    )
+
+
+_CARD_EDIT_SYSTEM = """你在核对一处**作者亲手改过**的人物设定。
+
+作者把某个人的某一格（比如「修为」「所在地」「和某人的关系」）改成了一个新值。
+你要回答的只有一件事：**这一章的原文支持这个新值吗？**
+
+判断依据只有下面给你的东西：那一格改前改后的值、它挂着的那句原文、以及这个人在
+这一格上前后几章的值。**不要用你自己对这类小说的常识去补**，也不要评价作者写得好不好。
+
+只输出 JSON，形如：
+{"clashes": [{"reason": "setting", "said": "……"}]}
+
+`reason` 三选一：setting（和原文说的对不上）/ timeline（和前后章的值排不出先后）/
+knowledge（这一格此刻不该是这个值）。`said` 一句话，不超过 40 字，**只许引用上面
+给你的内容**。没有问题就输出 {"clashes": []}。"""
+
+
+def _card_edit_request(
+    chapter: int,
+    *,
+    who: str,
+    field: str,
+    after: str | None,
+    quote: str | None,
+) -> AdvisoryRequest:
+    """作者改完一格之后那一问的 prompt。
+
+    **给的东西刻意窄**：那一格的前后值、它自己那句原文、以及同一格在前后几章的值。
+    不给整章正文——这一问要判的是「这个值站不站得住」，而整章正文会把它引到
+    「这一段写得好不好」上去（前两问的教训：给多了它就开始评价文笔）。
+    """
+    body = (
+        f"【人物】{who}\n"
+        f"【这一格】{field}\n"
+        f"【这一格现在的值】{after or '（空）'}\n"
+        f"【这一格挂着的原文】{quote or '（这一格没有挂原文）'}\n"
+        f"【这一格记在第 {chapter} 章】"
+    )
+    return AdvisoryRequest(
+        kind="card_edit",
+        chapter_number=chapter,
+        messages=(
+            AdvisoryMessage(role="system", content=_CARD_EDIT_SYSTEM),
+            AdvisoryMessage(role="user", content=body),
+        ),
     )
 
 
@@ -399,13 +452,12 @@ def _payload(text: str) -> dict[str, Any]:
     """从模型的回话里抠出那个 JSON 对象。**抠不出来就抛**，不猜。
 
     只做一件宽容：剥掉 ```json 围栏。模型爱加它，而这跟「猜它想说什么」是两回事。
+
+    ⚠️ **那一件宽容 2026-09-06 搬去 `provider.unfenced` 了，这儿不再自己写一份。**
+    原因是抽取那一侧当时**明确不剥**（「不做修复、不剥壳、不重试」）——同一个模型、
+    同一种毛病、两处不同的答案，而严的那一侧在真书上失败了 23 次。
     """
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        stripped = stripped.split("\n", 1)[-1]
-        if stripped.rstrip().endswith("```"):
-            stripped = stripped.rstrip()[: -len("```")]
-    value = json.loads(stripped)
+    value = json.loads(unfenced(text))
     if not isinstance(value, dict):
         raise ValueError("核对器必须返回一个 JSON 对象")
     return value
@@ -822,3 +874,92 @@ def _review_track(
         else f"跟后面 {len(track.chapters)} 章比过了，没发现抵触。"
     )
     return kept
+
+
+def review_card_edit(
+    conn: Connection,
+    store: StoryGraph,
+    project_id: str,
+    edge_id: str,
+    *,
+    reviewer: Reviewer,
+    call_id_factory: Callable[[str], str] = _default_call_id,
+) -> tuple[str, ...]:
+    """作者改完人物卡上一格之后那一问。返回落下的通知 outbox id。
+
+    ── 它和另外两问的三个不同，每一个都是有意的 ────────────────────────────
+
+    1. **它默认不跑**（`settings.review_card_edits`，作者 2026-09-06 要的开关）。
+       前两问核对的是模型写的正文，这一问核对的是**作者填的字**——判错的时候是在
+       质疑他的决定，所以要他自己拨开这个开关。
+    2. **它不看整章正文**，只看那一格现在的值、它挂着的那句原文、同一格在别的章的值。
+       给多了模型会跑去评价文笔（前两问的教训）。
+    3. **它永不阻断、不进提案队列**，落的是 `text_advisory`——改动早就生效了，
+       这一问只是事后说一句「第 N 章那句原文好像不是这个意思」。
+
+    **一次都不抛。** 模型不可用 / 回了一段散文 / 图层查不到，一律返回空元组：
+    这条路是作者按了保存之后在后台跑的，它的失败形态是「什么都没发生」，
+    不是他屏幕上的一个栈。
+    """
+    try:
+        view = store.canon_edge_view(project_id, edge_id)
+        chapter = _current_chapter(conn, project_id, view.valid_from_chapter)
+        if chapter is None:
+            return ()
+        snapshot = store.state_at(project_id, view.src, view.valid_from_chapter)
+        who = snapshot.node.name
+        field = next(
+            (
+                state.dim.name
+                for state in snapshot.states
+                if state.dim.id == view.dst
+            ),
+            (snapshot.location.name if snapshot.location is not None else view.dst),
+        )
+        quote = None
+        if view.evidence_id:
+            evidence = store.get_evidence(project_id, view.evidence_id)
+            quote = evidence.audit.quote_text if evidence is not None else None
+    except Exception:  # noqa: BLE001
+        return ()
+    try:
+        request = _card_edit_request(
+            view.valid_from_chapter,
+            who=who,
+            field=field,
+            after=view.props.value,
+            quote=quote,
+        )
+        answer = _ask(
+            conn,
+            request,
+            reviewer,
+            project_id=project_id,
+            call_id_factory=call_id_factory,
+        )
+        if answer is None:
+            return ()  # 同一格同一个值已经核对过了，这一次一分钱都不花
+        clashes = _pick(_payload(answer), TrackClash)
+    except Exception:  # noqa: BLE001 —— 这条路不许把栈甩给作者
+        conn.rollback()
+        return ()
+    notices: list[str] = []
+    for clash in clashes:
+        said = (clash.said or "").strip()
+        if not said:
+            continue  # 说不出「哪儿不对」的告警作者点不过去，不落
+        notices.append(
+            enqueue_text_advisory(
+                conn,
+                project_id=project_id,
+                chapter_id=chapter.chapter_id,
+                chapter_number=view.valid_from_chapter,
+                title_code="card_edit_advisory",
+                title_params={"field": field, "who": who},
+                dedupe_key=f"card_edit:{edge_id}:{request.prompt_hash}",
+                jump=TextAnchor(para_index=0, quote_text=said, occurrence_k=1),
+            )
+        )
+    if notices:
+        conn.commit()
+    return tuple(notices)

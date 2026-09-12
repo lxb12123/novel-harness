@@ -42,7 +42,6 @@ from novel_harness.checks.catalog import (
     ruleset_semantic_json,
 )
 from novel_harness.checks import catalog as checks_catalog
-from novel_harness.checks.dead_speaks import check as dead_speaks_check
 from novel_harness.checks.service import (
     RulesetStateMissing,
     SnapshotValidationReport,
@@ -60,13 +59,10 @@ from novel_harness.graph import (
     EdgeStatus,
     EdgeType,
     EvidenceStatus,
-    HEALTH_DIM_KEY,
-    HealthValue,
     InformationScope,
     Node,
     NodeLabel,
     NodeProps,
-    NodeSpec,
     Resolution,
     StateSnapshot,
     StateValue,
@@ -308,29 +304,41 @@ def test_no_rule_raises_without_the_manuscript() -> None:
     """`paragraphs=None` 时**每一条规则都必须安静地返回 `[]`，不许抛**。
 
     面板/规则是两条链路（§6 serious #3）：面板不读正文（2–5ms），规则读。
-    今天两条规则都在读正文那一侧，所以这一条量的是「没正文时它们闭嘴」——
-    ⚠️ **2026-08-14 之前它量的是相反的一件事**（R4 不读正文也照样开火），
-    而 R4 是那时唯一不读正文的规则。这条断言换了含义，不是换了写法。
+    ⚠️ **2026-09-05：`ALL_CHECKS` 空了**（系统规则全砍，ADR 0042），光遍历它这条
+    断言会空转成真。所以这里连今天**唯一存在的那种规则**（作者自定义的
+    `forbidden_literal`）一起量——它是现在真的会跑在作者书上的那一种。
     """
     context = ctx([])
     assert context.paragraphs is None
 
-    for check in ALL_CHECKS:
+    from novel_harness.checks.custom import forbidden_literal_check
+
+    for check in (*ALL_CHECKS, forbidden_literal_check("玄铁令")):
         assert check(context) == []
 
 
 def test_run_checks_runs_the_registry() -> None:
-    assert set(ALL_CHECKS) == {dead_speaks_check}
-    context = ctx([], paragraphs=["顾清音道：「……」"])
-    assert len(run_checks(context)) == 1
+    """**系统注册表今天是空的**，但管道要照旧把传进来的规则跑完。
+
+    空的 `ALL_CHECKS` 跑出 0 条，是「没有规则」不是「没有问题」——这两件事在面板上
+    长得一样，所以这条断言两头都钉：空注册表 0 条、显式传一条就得有 1 条。
+    """
+    assert ALL_CHECKS == ()
+    from novel_harness.checks.custom import forbidden_literal_check
+
+    context = ctx([], paragraphs=["萧决把玄铁令收进袖中。"])
+    assert run_checks(context) == []
+    assert len(run_checks(context, (forbidden_literal_check("玄铁令"),))) == 1
 
 
 def test_checks_are_pure_functions_of_ctx() -> None:
     """同一个 ctx 跑两次结果相同——判分器（eval）和 Validator（写作时）是同一份代码，
     它必须可复现，否则 kill-gate 量的是噪声。"""
-    context = ctx([], paragraphs=["顾清音道：「……」"])
+    from novel_harness.checks.custom import forbidden_literal_check
 
-    for check in ALL_CHECKS:
+    context = ctx([], paragraphs=["萧决把玄铁令收进袖中。"])
+
+    for check in (*ALL_CHECKS, forbidden_literal_check("玄铁令")):
         assert check(context) == check(context)
 
 
@@ -358,274 +366,45 @@ def has_state(
 
 
 # ══════════════════════════════════════════════════════════════════════════
-# R3 DEAD_SPEAKS（2026-08-02）
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def test_r3_fires_when_a_dead_character_speaks() -> None:
-    edges = [has_state(XIAO_JUE.id, HEALTH_DIM.id, HealthValue.DEAD, 89)]
-    issues = dead_speaks_check(
-        ctx(edges, aliases={**ALIASES, "健康": [HEALTH_DIM]}, paragraphs=["萧决道：「……」"])
-    )
-    assert len(issues) == 1
-    issue = issues[0]
-    assert issue.rule == "R3"
-    assert issue.issue_type == "DEAD_SPEAKS"
-    assert "死" in issue.message and "萧决" in issue.message
-    assert issue.anchor.quote_text == "萧决"
-
-
-def test_r3_fires_when_a_not_yet_appeared_character_speaks() -> None:
-    issues = dead_speaks_check(ctx([], paragraphs=["顾清音道：「……」"]))
-    assert len(issues) == 1
-    assert "200" in issues[0].message and "登场" in issues[0].message
-
-
-def test_r3_silent_for_living_appeared_character() -> None:
-    assert dead_speaks_check(ctx([], paragraphs=["萧决道：「……」"])) == []
-
-
-def test_r3_silent_before_the_death_chapter() -> None:
-    edges = [has_state(XIAO_JUE.id, HEALTH_DIM.id, HealthValue.DEAD, 89)]
-    assert (
-        dead_speaks_check(
-            ctx(
-                edges,
-                chapter=50,
-                aliases={**ALIASES, "健康": [HEALTH_DIM]},
-                paragraphs=["萧决道：「……」"],
-            )
-        )
-        == []
-    )
-
-
-def test_r3_silent_when_the_name_is_not_a_speaker_tag() -> None:
-    """「萧决当年……」是别人提到死者，不在标签位置——ADR 0005 的 R3 注释原样测试。"""
-    assert dead_speaks_check(ctx([], paragraphs=["萧决当年……"])) == []
-
-
-def test_r3_silent_without_paragraphs() -> None:
-    assert dead_speaks_check(ctx([])) == []
-
-
-def test_r3_longest_surface_wins_before_the_verb() -> None:
-    aliases = {"顾清音": [GU_QINGYIN], "清音": [GU_QINGYIN]}
-    issues = dead_speaks_check(ctx([], aliases=aliases, paragraphs=["顾清音道：「……」"]))
-    assert len(issues) == 1
-    assert issues[0].anchor.quote_text == "顾清音"
-
-
-# ══════════════════════════════════════════════════════════════════════════
-# R3 DEAD_SPEAKS —— 英文那半（2026-08-28，dead_speaks.py 模块头有完整论证）
-#
-# 中文那组测试（上面）一行没改，就是这一批「中文行为不变」的证明——同一份
-# `dead_speaks_check`，中文用例走的还是原来那条路。
-# ══════════════════════════════════════════════════════════════════════════
-
-
-def test_r3_en_fires_when_a_dead_character_speaks() -> None:
-    edges = [has_state(ELIZABETH.id, HEALTH_DIM.id, HealthValue.DEAD, 89)]
-    issues = dead_speaks_check(
-        ctx(
-            edges,
-            aliases={**ALIASES_EN, "健康": [HEALTH_DIM]},
-            paragraphs=["“I am tired,” said Elizabeth."],
-            language="en",
-        )
-    )
-    assert len(issues) == 1
-    issue = issues[0]
-    assert issue.rule == "R3"
-    assert issue.issue_type == "DEAD_SPEAKS"
-    assert "死" in issue.message and "Elizabeth" in issue.message
-    assert issue.anchor.quote_text == "Elizabeth"
-
-
-def test_r3_en_fires_when_a_not_yet_appeared_character_speaks() -> None:
-    issues = dead_speaks_check(
-        ctx(
-            [],
-            aliases=ALIASES_EN,
-            paragraphs=["“I am tired,” said Darcy."],
-            language="en",
-        )
-    )
-    assert len(issues) == 1
-    assert "200" in issues[0].message and "登场" in issues[0].message
-
-
-def test_r3_en_silent_for_living_appeared_character() -> None:
-    assert (
-        dead_speaks_check(
-            ctx(
-                [],
-                aliases=ALIASES_EN,
-                paragraphs=["“I am tired,” said Elizabeth."],
-                language="en",
-            )
-        )
-        == []
-    )
-
-
-def test_r3_en_silent_before_the_death_chapter() -> None:
-    edges = [has_state(ELIZABETH.id, HEALTH_DIM.id, HealthValue.DEAD, 89)]
-    assert (
-        dead_speaks_check(
-            ctx(
-                edges,
-                chapter=50,
-                aliases={**ALIASES_EN, "健康": [HEALTH_DIM]},
-                paragraphs=["“I am tired,” said Elizabeth."],
-                language="en",
-            )
-        )
-        == []
-    )
-
-
-def test_r3_en_silent_when_the_name_is_not_a_speaker_tag() -> None:
-    """提到死者但不在「引号+动词+姓名」位置——ADR 0005 那条中文用例的英文镜像。"""
-    edges = [has_state(ELIZABETH.id, HEALTH_DIM.id, HealthValue.DEAD, 89)]
-    assert (
-        dead_speaks_check(
-            ctx(
-                edges,
-                aliases={**ALIASES_EN, "健康": [HEALTH_DIM]},
-                paragraphs=["Elizabeth was remembered fondly by everyone in the house."],
-                language="en",
-            )
-        )
-        == []
-    )
-
-
-def test_r3_en_silent_when_the_name_comes_before_the_verb() -> None:
-    """`Elizabeth said, "……"`——作者先报名字、动词在后，故意不识别（模块头「方向」那段）。
-
-    宁可漏掉这一类真违规，也不多认一个句首大写词。
-    """
-    edges = [has_state(ELIZABETH.id, HEALTH_DIM.id, HealthValue.DEAD, 89)]
-    assert (
-        dead_speaks_check(
-            ctx(
-                edges,
-                aliases={**ALIASES_EN, "健康": [HEALTH_DIM]},
-                paragraphs=["Elizabeth said, “I am tired.”"],
-                language="en",
-            )
-        )
-        == []
-    )
-
-
-def test_r3_en_longest_surface_wins_before_the_verb() -> None:
-    """同一个人挂两个别名、一个是另一个的前缀——长的必须先试，中文那条测试的英文镜像。"""
-    aliases = {"Elizabeth": [DARCY], "Eliza": [DARCY]}
-    issues = dead_speaks_check(
-        ctx(
-            [],
-            aliases=aliases,
-            paragraphs=["“I am tired,” said Elizabeth."],
-            language="en",
-        )
-    )
-    assert len(issues) == 1
-    assert issues[0].anchor.quote_text == "Elizabeth"
-
-
-def test_r3_en_name_boundary_does_not_bleed_into_a_longer_word() -> None:
-    """`\\b` 挡子串延伸：「Will」是死人，但「said William」不该被错认成「said Will」。
-
-    没有右边界的话，正则会把 "Will" 当成 "William" 的合法前缀匹配掉——这类假阳性
-    中文结构上不会撞上（见 dead_speaks.py 模块头「姓名右边界」那段）；真加固过、
-    真验证过没有它会假阳性（临时去掉 `\\b` 手测过，这条测试锁住的是加固之后的样子）。
-    """
-    edges = [has_state(WILL.id, HEALTH_DIM.id, HealthValue.DEAD, 89)]
-    assert (
-        dead_speaks_check(
-            ctx(
-                edges,
-                aliases={"Will": [WILL], "健康": [HEALTH_DIM]},
-                paragraphs=["“I am tired,” said William."],
-                language="en",
-            )
-        )
-        == []
-    )
-
-
-def test_r3_en_known_gap_possessive_construction_can_misattribute() -> None:
-    """已知、样本内零命中的窄假阳性：`said Elizabeth's mother` 里真正说话的是
-    mother，不是 Elizabeth，但撇号后面就是非词字符，`\\b` 单独挡不住这个。
-
-    两本 Gutenberg 真书（*Pride and Prejudice* / *Moby-Dick*）435 条真实命中里，
-    这个构造出现 0 次（dead_speaks.py 模块头有数字来源）——所以选择不为它单独
-    收紧判据（收紧会连带丢掉 `said Elizabeth quietly.` 这类真命中）。**这条测试
-    锁的是「现状如此，且是有意的」，不是「这样是对的」。**
-    """
-    edges = [has_state(ELIZABETH.id, HEALTH_DIM.id, HealthValue.DEAD, 89)]
-    issues = dead_speaks_check(
-        ctx(
-            edges,
-            aliases={**ALIASES_EN, "健康": [HEALTH_DIM]},
-            paragraphs=["“I am tired,” said Elizabeth’s mother."],
-            language="en",
-        )
-    )
-    assert len(issues) == 1
-    assert issues[0].anchor.quote_text == "Elizabeth"
-
-
-def test_r3_en_message_and_action_stay_chinese() -> None:
-    """`message`/`suggested_action` 不跟 `ctx.language` 走——轴是作者的界面语言，
-    不是书的语言（dead_speaks.py 模块头「message 不跟 ctx.language 走」那段）。
-    锁住这个决定，防止以后有人顺手把它改成跟书语言走。
-    """
-    edges = [has_state(ELIZABETH.id, HEALTH_DIM.id, HealthValue.DEAD, 89)]
-    issues = dead_speaks_check(
-        ctx(
-            edges,
-            aliases={**ALIASES_EN, "健康": [HEALTH_DIM]},
-            paragraphs=["“I am tired,” said Elizabeth."],
-            language="en",
-        )
-    )
-    assert len(issues) == 1
-    assert "死" in issues[0].message  # 中文，不是英文——即使书是英文
-    assert issues[0].suggested_action is not None
-    assert "对白" in issues[0].suggested_action
-
-
-# ══════════════════════════════════════════════════════════════════════════
 # 规则目录 —— 稳定语义字段 / 排序 / 冻结 hash（Task 3）
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_catalog_lists_exactly_r3_with_stable_semantics() -> None:
-    assert [spec.rule_id for spec in SYSTEM_RULES] == ["R3"]
-    assert all(spec.enabled and spec.blocks_downstream for spec in SYSTEM_RULES)
-    assert all(spec.schema_version == "v1" for spec in SYSTEM_RULES)
-    assert {spec.template for spec in SYSTEM_RULES} == {"system"}
+def test_the_system_catalog_is_empty_and_that_is_a_decision() -> None:
+    """**系统规则一条都没有了**（2026-09-05，ADR 0042）。
+
+    这条不是「测一个空列表」：它钉的是「空」这件事本身是裁定，不是漏配。
+    哪天再加一条系统规则，这条断言当场红——**而它红的时候，同一笔改动必须带一条
+    新迁移递增 epoch**（`catalog.py` 的冻结纪律），否则旧库会拿着旧 hash 继续跑。
+    """
+    assert SYSTEM_RULES == ()
+    assert ruleset_semantic_json(SYSTEM_RULES) == "[]"
 
 
 def test_ruleset_hash_is_stable_and_order_independent() -> None:
-    first = ruleset_semantic_json(SYSTEM_RULES)
-    # 同一份目录怎么排都算同一个 JSON（排序由函数负责，不靠调用方传序）。
-    assert ruleset_semantic_json(tuple(reversed(SYSTEM_RULES))) == first
+    # 目录空了，「怎么排都一样」要拿两条假规则量——顺序无关是 `ruleset_semantic_json`
+    # 的职责，不是「碰巧只有一条所以顺序无所谓」。
+    pair = (
+        RuleSpec(rule_id="A", title="甲", description="d", blocks_downstream=True),
+        RuleSpec(rule_id="B", title="乙", description="d", blocks_downstream=True),
+    )
+    assert ruleset_semantic_json(pair) == ruleset_semantic_json(tuple(reversed(pair)))
+    assert ruleset_hash(pair) == ruleset_hash(tuple(reversed(pair)))
+    # 当前目录（空的）算出来的那个数，就是 `project.create()` 和迁移 035 用的那个。
     assert ruleset_hash(SYSTEM_RULES) == CURRENT_RULESET_HASH
     assert ruleset_hash() == CURRENT_RULESET_HASH
 
 
 def test_title_and_description_do_not_enter_the_hash() -> None:
-    """只改 UI 文案不能让所有机器任务失效（§4.2）。"""
+    """只改 UI 文案不能让所有机器任务失效（§4.2）。
+
+    同上，拿假规则量：真目录空了之后，对着它做 `replace` 是在空元组上空转。
+    """
     from dataclasses import replace
 
-    renamed = tuple(
-        replace(spec, title="换个标题", description="换个说明") for spec in SYSTEM_RULES
-    )
-    assert ruleset_hash(renamed) == CURRENT_RULESET_HASH
+    rules = (RuleSpec(rule_id="A", title="甲", description="说明", blocks_downstream=True),)
+    renamed = tuple(replace(spec, title="换个标题", description="换个说明") for spec in rules)
+    assert ruleset_hash(renamed) == ruleset_hash(rules)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -667,8 +446,9 @@ def test_service_report_binds_snapshot_ruleset_and_persists() -> None:
     assert report.text_sha256 == token.text_sha256
     assert report.phase == "initial"
     assert report.gate == "passed"
-    assert [r.rule_id for r in report.rules] == ["R3"]
-    assert all(r.state == "clear" for r in report.rules)
+    # **一条规则都没有，报告照落、闸照过**（2026-09-05 系统规则清空之后的常态）：
+    # 「没有规则」和「没有问题」在库里必须分得开——前者 `rules` 是空的。
+    assert [r.rule_id for r in report.rules] == []
 
     row = conn.execute(
         "SELECT chapter_snapshot_id, source_generation, phase, text_sha256, "
@@ -683,49 +463,56 @@ def test_service_report_binds_snapshot_ruleset_and_persists() -> None:
     conn.close()
 
 
-def test_service_reads_project_language_for_r3() -> None:
-    """`validate_snapshot` 自己查 `project.language` 喂给 `CheckContext`——
-    调用方（`chapter_refresh.py` / `api/validation.py`）一行都不用改。
+def test_service_hands_the_project_language_to_the_rules(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`validate_snapshot` 自己查 `project.language` 喂给 `CheckContext`。
 
-    端到端证明用的是判别力强的构造：英文书里一句纯英文的死人说话，只有
-    `CheckContext.language` 真的传到了 "en"（R3 换上英文 pattern）才会被抓到——
-    "en" 没传对的话，中文 pattern 对这句英文文本天生零命中，`gate` 会是
-    `passed` 而不是 `blocked`。
+    ⚠️ **2026-09-05 换了量法**：原来这条是拿 R3 的英文分支端到端证的（英文书里一句
+    英文的死人说话，只有 language 真传成 "en" 才抓得到）。R3 砍了（ADR 0042），
+    而**这条链路本身没砍**——今天没有任何规则读 `ctx.language`，所以改成拿一条假规则
+    把它接住。规则一旦回来（自定义规则将来支持分语言、或者新的系统规则），
+    它读到的就是这一格。
     """
     conn = connect(IN_MEMORY)
     migrate(conn)
     store = SqliteStoryGraph(conn)
     pid = project.create(conn, name="t", root_path=".").id
     project.override_language(conn, pid, "en")
-    ghost = store.upsert_node(NodeSpec(project_id=pid, label=NodeLabel.CHARACTER, name="Ghost"))
-    dim = store.ensure_state_dim(pid, HEALTH_DIM_KEY, "Health")
-    store.upsert_edge(
-        EdgeSpec(
-            project_id=pid,
-            src=ghost.id,
-            dst=dim.id,
-            type=EdgeType.HAS_STATE,
-            props=EdgeProps(value="dead", value_key=HealthValue.DEAD),
-            valid_from_chapter=1,
-            information_scope=InformationScope.CANON,
-        )
-    )
-    text = "Chapter One\n\n“I am tired,” said Ghost.\n"
-    token = _validation_token(pid, store, text)
+    token = _validation_token(pid, store, "Chapter One\n\nGhost walked in.\n")
     epoch, ruleset_hash = current_ruleset(conn, pid)
 
-    report = validate_snapshot(
+    seen: list[str] = []
+
+    def spy(ctx: CheckContext) -> list[Issue]:
+        seen.append(ctx.language)
+        return []
+
+    monkeypatch.setattr(
+        checks_catalog,
+        "SYSTEM_RULES",
+        (
+            RuleSpec(
+                rule_id="TEST",
+                title="测试规则",
+                description="记下拿到的语言",
+                blocks_downstream=True,
+                availability=lambda ctx: RuleAvailability.AVAILABLE,
+                check=spy,
+            ),
+        ),
+    )
+    validate_snapshot(
         conn, store, token, ruleset_epoch=epoch, ruleset_hash=ruleset_hash,
         paragraphs=split_paragraphs(token.text),
     )
-    assert report.gate == "blocked"
-    assert len(report.issues) == 1
-    assert report.issues[0].issue_type == "DEAD_SPEAKS"
-    assert report.issues[0].anchor.quote_text == "Ghost"
+    assert seen == ["en"]
     conn.close()
 
 
-def test_service_marks_technical_unavailable_without_blocking() -> None:
+def test_service_marks_technical_unavailable_without_blocking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """正文输入没装入 = unavailable（不阻断，gate 仍 passed）；不是「0 条问题」。"""
     conn = connect(IN_MEMORY)
     migrate(conn)
@@ -733,10 +520,26 @@ def test_service_marks_technical_unavailable_without_blocking() -> None:
     pid = project.create(conn, name="t", root_path=".").id
     token = _validation_token(pid, store, "第一章 甲\n\n萧决走进来了。\n")
     epoch, ruleset_hash = current_ruleset(conn, pid)
+    # 目录空了（ADR 0042），`all()` 在空列表上恒真——挂一条读正文的假规则，
+    # 这条断言才真的在量 availability 那一段。
+    monkeypatch.setattr(
+        checks_catalog,
+        "SYSTEM_RULES",
+        (
+            RuleSpec(
+                rule_id="TEST",
+                title="测试规则",
+                description="读正文",
+                blocks_downstream=True,
+                availability=checks_catalog.paragraphs_available,
+                check=lambda ctx: [],
+            ),
+        ),
+    )
     report = validate_snapshot(
         conn, store, token, ruleset_epoch=epoch, ruleset_hash=ruleset_hash, paragraphs=None,
     )
-    assert all(r.state == "unavailable" for r in report.rules)
+    assert [r.state for r in report.rules] == ["unavailable"]
     assert report.gate == "passed"
     conn.close()
 

@@ -40,6 +40,17 @@ export interface AiSettings {
   context_window: number | null;
   /** 每次打开工作台自动更新那份模型表。**默认关着**，由作者自己拨开。 */
   auto_update_model_windows: boolean;
+  /** 改完人物卡叫核对模型验一遍（默认关，见 `settings.py` 那一位的论证）。 */
+  review_card_edits?: boolean;
+  /** 写作助手（novel-agent 模式）开着时行内续写照跑。**默认关**——作者 2026-09-10 定的
+   *  「模式二不用有续写」，这一位是他随后要的开关。判在 `continuation.ts::shouldSuggest`。 */
+  continuation_in_agent_mode?: boolean;
+  /** 人物卡里那张关系图一次最多画几个人。**`null` = 没填**，用下面那个默认值。 */
+  graph_max_nodes?: number | null;
+  /** 上面那位没填时引擎用的数（`graph.store.MAX_SUBGRAPH_NODES`）。
+   *  **后端回过来，前端不许自己抄一份**——抄了就有两个真相源，引擎哪天改了
+   *  设置页会安静地说一个旧数，而屏幕上完全看不出来。 */
+  graph_max_nodes_default?: number;
   /** 行内续写这一次值得带多少上文（code point）。**后端按模型窗口算的**
    *  （`draft/assemble.py::product_tail_limit()`），前端**不许再存一份**——
    *  写死一个数会把后端整套伸缩设计架空（2026-08-22 之前就是这样，利用率 2%）。 */
@@ -65,6 +76,10 @@ export interface AiSettingsInput {
    *  不发这个键才是「保持原值」——所以那张表单每次提交都带上它。 */
   context_window?: number | null;
   auto_update_model_windows?: boolean;
+  review_card_edits?: boolean;
+  continuation_in_agent_mode?: boolean;
+  /** 同 `context_window`：**发 `null` 就是清掉**（回落引擎默认），不发才是保持原值。 */
+  graph_max_nodes?: number | null;
 }
 
 /** 这一稿的记忆层到底装了什么。**零永远带着一句理由**（§10 约束 8）。
@@ -96,20 +111,6 @@ export interface ChapterSummaryStatus {
   /** 现在这一段是不是作者自己写的。2026-08-26 起它不再决定屏幕上显示成什么样——
    *  「作者写的/机器写的」那条区分已经去掉，纯记录出处（ADR 0017 补记）。 */
   author_written: boolean;
-}
-
-/** 起草第 `chapter` 章时，滚动总结覆盖的那个区间。
- *
- *  窗口边界由后端算（`rolling_summary_window`）——前端**不许**自己按
- *  「近八章」推一份，那是第二个会漂的常量。 */
-export interface SummaryWindow {
-  chapter: number;
-  window_first: number;
-  window_last: number;
-  chapters: ChapterSummaryStatus[];
-  summarized: number;
-  /** 有正文、还没生成总结的章号。**这才是要提示作者的那一种零。** */
-  missing: number[];
 }
 
 // ── 全书总结状态视图（2026-08-18 文档 §6 / Step 4）──────────────────────────
@@ -332,25 +333,16 @@ export interface GraphVersion {
   staleness: number;
 }
 
-export interface ForbiddenEntity {
-  node: NodeRef;
-  first_appears_chapter: number;
-  surfaces: string[];
-}
-
-export interface SceneConstraints {
-  chapter: number;
-  unresolved_cast: string[];
-  must_not_reveal: NodeRef[];
-  forbidden_entities: ForbiddenEntity[];
-}
-
 export interface StateValue {
   dim: NodeRef | { id: string; label: NodeLabel; name: string; props?: unknown };
   dim_key: string | null;
   value: string | null;
   value_key: string | null;
   since_chapter: number;
+  /** 这一条是作者亲手改过的（人物卡上打「你改过」的标记）。
+   *  **只有 `state_history` 那一份会填**：`states` 那一项喂写作模型和 `is_dead`，
+   *  多一位没人读的字段只会让人以为它有意义（后端那边同理，见 `models.py`）。 */
+  author_owned?: boolean;
 }
 
 // state 出参里的 node/location 可能是完整 Node（present 角色）或收窄的 NodeRef（未来节点）。
@@ -361,6 +353,20 @@ export interface StateSnapshot {
   scope: string;
   location: (NodeRef & { props?: unknown }) | null;
   states: StateValue[];
+  /** 这一格从头到**当前章**填过的每一个值（新的在前）。人物卡「状态」那一格按字段
+   *  分组渲染用它。
+   *
+   *  **和 `states` 是两个问题，别拿一个凑另一个**：`states` 每格只有当前那一条
+   *  （喂写作模型、判 `is_dead` 的就是它），这一项每格可能有好几条。
+   *  只有 `GET /characters/{id}/state` 这条路由带它——`/chapters/{n}/state`
+   *  那条批量的没有。 */
+  state_history?: StateValue[];
+  /** 他截至当前章待过的每一个地方（新的在前）。同 `state_history` 的理由。 */
+  location_history?: {
+    place: NodeRef & { props?: unknown };
+    since_chapter: number;
+    author_owned?: boolean;
+  }[];
   edges: Edge[];
   is_dead: boolean;
 }
@@ -547,11 +553,29 @@ export interface SyncOutcome {
   notes: string[];
 }
 
+/** `POST …/chapters/{n}/check` 的出参 —— 后端那份 `SnapshotValidationReport`。
+ *
+ *  ⚠️ **这份类型 2026-09-05 才对上真出参**：它原来写着 `chapter` + `rules_run: string[]`，
+ *  而后端 2026-08-20 就换成了快照绑定报告（`rules` 是一串对象、还带 gate 和
+ *  `text_sha256`）。`tsc` 看不见后端，两头就这么错开了很久——`rules_run` 从来没有
+ *  被读过，所以也没人发现。 */
 export interface CheckResult {
-  chapter: number;
+  id: string;
+  project_id: string;
+  chapter_id: string;
+  chapter_number: number;
+  source_snapshot_id: string;
+  source_generation: number;
+  refresh_attempt_id: string | null;
+  phase: string;
+  /** 验的是**哪一版正文**。「这一章验过没有」靠它判：正文再变，这个数就变了。 */
+  text_sha256: string;
+  ruleset_epoch: number;
+  ruleset_hash: string;
+  gate: "passed" | "blocked" | "error" | "superseded";
   /** 这一趟真的跑了哪几条。**零 issue 要靠它说清自己是哪一种零**（§10 约束 8）：
-   *  一条规则哑掉时它照样返回空 issue 列表。 */
-  rules_run: string[];
+   *  一条规则哑掉时它照样返回空 issue 列表；一条规则都没有时它自己是空的。 */
+  rules: { rule_id: string; title: string; state: string; issue_count: number }[];
   issues: Issue[];
 }
 
@@ -649,9 +673,28 @@ export interface StoredAlias {
 }
 
 /** 人物基础信息（Task 11 API / §4.5）：本名 + 一键别名 chips。 */
+/** 一个人物的**基础资料**（`GET …/characters/{id}/profile` 出参里的 `profile`）。
+ *
+ *  ⚠️ **这几个字段抽取一直在写、写作模型一直在读**（`extract/prompt.py` 的
+ *  `character_profiles` → 节点 props → `draft/product_assemble.py` 那张人物卡片），
+ *  可这个端点发过来之后前端一直扔着——`profile` 在这儿从头到尾是 `unknown`。
+ *  作者 2026-09-04 问「他的性别也是一种状态吧」，问的就是这块：
+ *  **不是引擎没收，是界面没露。**
+ *
+ *  **不变的属性在这儿，会变的属性在 `StateValue`**（带「第 N 章起」+ 证据 + 新值
+ *  覆盖旧值）。这条归类同时写进了抽取 prompt（v8 明写性别/性格/出身别当状态报）。 */
+export interface CharacterProfileView {
+  character: NodeRef;
+  gender: string | null;
+  personality: string | null;
+  background: string | null;
+  character_notes: string | null;
+  main_character: boolean | null;
+}
+
 export interface CharacterBasicInfo {
   character: NodeRef;
-  profile: unknown;
+  profile: CharacterProfileView | null;
   aliases: StoredAlias[];
   canon_version: number;
 }
@@ -792,7 +835,10 @@ export interface LowConfidenceEventItem {
 
 /** 冲突项（kind=edge_conflict）：当前 CANON vs 抽取器提议。 */
 export interface EdgeConflictItem {
-  update_kind: "location" | "state" | "relationship";
+  /** 后端 `RawStateUpdate.kind` 的四个值。⚠️ `death` 2026-09-06 补上——
+   *  它一直发得出来（`extract/models.py` 的 Literal 有四个成员），而这里只写了三个，
+   *  于是 `factLine` 里那条 `updateKind === "state"` 的分支在 tsc 眼里罩不住它。 */
+  update_kind: "location" | "state" | "relationship" | "death";
   current: { edge_id: string; subject_id: string; target_id: string; value: string | null };
   proposed: {
     edge_id: string;
@@ -867,7 +913,15 @@ export type SystemNotificationKind =
    *  家**——`CharacterEventRow.cast_changed` 把它挂在角色卡的事件时间线上，
    *  这里列出来只是让它在通用的「系统通知」面板里也认得出（同一条通知两个
    *  出口，不是两份数据）。 */
-  | "event_cast_changed";
+  | "event_cast_changed"
+  /** 待确认提案，冲突那一种（`edge_conflict`）——现读现拼，不进
+   *  `system_notification` 表（`proposal_notifications.py`）。`actions` 里
+   *  只会有 `"accept"`/`"reject"`。 */
+  | "proposal_conflict"
+  /** 待确认提案，低置信度情节那一种（`low_confidence_main`）。`actions` 里
+   *  满足条件时会多一个 `"edit"`——跟原来「待确认」卡片上的「改一改」
+   *  是同一条判据（`event_ids.length === 1 && edge_ids.length === 0`）。 */
+  | "proposal_low_confidence";
 export type SystemNotificationStatus = "OPEN" | "IGNORED" | "RESOLVED";
 
 /** 锚三元组（ADR 0006，永不 offset）：段号 + 引语 + 第几次。 */
@@ -888,7 +942,8 @@ export interface SystemNotification {
     | "canon_event"
     | "chapter"
     | "chapter_snapshot"
-    | "project";
+    | "project"
+    | "proposal";
   subject_id: string;
   chapter_number: number | null;
   /** 前端拿它去 `backendMessages.ts` 按当前界面语言渲染整句（国际化第四批
@@ -1135,6 +1190,11 @@ export interface DraftCandidateView {
    *  ——预览和全文长得和一份写完的稿子一模一样，没有第二个地方能告诉他。
    *  **措辞照抄，别按这一位自己造一句**（后端 `AUTHOR_STOPPED_NOTE` 是唯一出处）。 */
   stopped_reason: string;
+  /** 助手给写手的「这一稿要做什么、要守什么」（ADR 0047）。**作者看得见它喂了什么**：
+   *  卡上一格「这一稿的要求」。空 = 旧机制写的稿（迁移 037 之前），那一格不画。 */
+  brief: string;
+  /** 助手挑出来补给写手的资料，每条一段（同上）。空 = 那一格不画。 */
+  materials: string[];
 }
 
 /** 一稿的全文。**摊开那一版读的就是它。** */
@@ -1195,7 +1255,10 @@ export type ChatTurnEventKind =
   | "draft_kept"
   | "draft_failed"
   | "asked_author"
-  | "turn_stopped";
+  | "turn_stopped"
+  /** 作者**中途**说的一句话在这一刻进了对话（后端 `Mailbox`，2026-09-12）：
+   *  `text` 是他自己刚打的字，界面靠它把那句话从「排着队」挪到「它看见了」。 */
+  | "author_said";
 
 /**
  * 一轮跑到一半时后端喊的那一声（ADR 0024 决策一）。长连接上的中间帧。
@@ -1256,6 +1319,8 @@ export interface TurnReceipt {
   steps: number;
   /** 这一轮查了几次资料（工具调用次数）。**查到了什么不上屏。** */
   lookups: number;
+  /** 作者中途说的、这一轮没来得及答的那几句（它们已经在对话里，下一轮它就会读到）。 */
+  unanswered: number;
   tokens_reported: number;
   /** 有几次调用没量准。**不为零时上面那个数是低估**，界面上不许把它当全部。 */
   calls_without_usage: number;
@@ -1279,6 +1344,14 @@ export interface ChatStopped {
   chat_id: string;
   /** `false` = 这一刻它本来就没在跑。**不是失败。** */
   stopped: boolean;
+  message: string;
+}
+
+/** `POST …/say`：一轮跑着的时候再说一句（2026-09-12）。`queued=false` 不是失败——
+ *  那一刻没在跑（或在跑的是另一轮），这句话没排进去也没落库，按新的一轮发出去就是。 */
+export interface ChatSaid {
+  chat_id: string;
+  queued: boolean;
   message: string;
 }
 

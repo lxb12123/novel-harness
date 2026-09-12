@@ -15,7 +15,6 @@ import { CenterEditor } from "./components/CenterEditor";
 import { RightPanel } from "./components/RightPanel";
 import { SplitPanes } from "./components/SplitPanes";
 import { ChatPanel } from "./components/ChatPanel";
-import { BottomBar } from "./components/BottomBar";
 import { Setup } from "./components/Setup";
 
 /**
@@ -117,7 +116,6 @@ function Workbench() {
         right={<RightPanel />}
       />
       <CanonEdgeEditor />
-      <BottomBar />
     </div>
   );
 }

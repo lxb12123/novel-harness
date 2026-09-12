@@ -19,8 +19,9 @@
 这一段原来写的是：空 cast 会让 `scene_constraints` 退化成「`must_not_reveal` = 全部
 秘密」，而那是 fail-closed 的退化值，所以必须用两个类型把它和精确值分开。
 
-**秘密下线之后（ADR 0039）那条论证整个不成立了**：`SceneConstraints` 今天只剩
-`forbidden_entities`，而它**按章号算、与 cast 无关**——空 cast 不再让任何东西退化。
+**秘密下线之后（ADR 0039）那条论证整个不成立了**，`forbidden_entities` 又在
+2026-08-31 删掉了（见下面第三节）——`SceneConstraints` 今天只剩 `unresolved_cast`，
+而它本来就只由 cast 是否解析成功决定，不存在「按章号算、与 cast 无关」那种恒定输出。
 `UnknownCastConstraints` **因此不再是一个安全类型**。
 
 **但两个类型仍然留着**，理由换成了一条更朴素、也仍然真实的：
@@ -34,13 +35,14 @@
 **改这一层之前先想清楚你在守什么**：守的不再是泄漏，是「别对模型说一句你不知道的话」。
 这两条的严格程度不一样，取舍也不一样。
 
-── 三、PLANNED 只转译不透传（约束 4）────────────────────────────────────
+── 三、`forbidden_entities` 2026-08-31 删了 ───────────────────────────────
 
-出参里没有一个字段装得下 PLANNED 边的内容：未来实体是 `NodeRef`（id/label/name，
-**没有 props**）外加一个首现章号。这不是本文件的功劳，是 `panel/constraints.py`
-和 `graph.models.NodeRef` 的——本文件的责任是**不要在收窄的路上把它加回来**。
-
-**这一节没有跟着上一节一起失效**：它防的是「未来剧情泄漏」，而未来实体还在。
+这两个类型原来还各带一个 `forbidden_entities: list[ForbiddenEntity]` 字段（未登场
+实体的禁写清单），是 PLANNED 转译进 prompt 的落点。**维护者裁定这条价值不在了，
+连同它在 Mode 2 两个工具（`scene_constraints`/`book_index`）和右栏面板里的读取
+一起删**，见 [ADR 0041](../../../docs/adr/0041-forbidden-entities-cut.md)。
+`PLANNED` 边本身仍然没有读路径（`QUERYABLE_SCOPES`），这条防线没有跟着松动——
+删掉的只是一个曾经存在、现在被认定不再需要的转译出口。
 """
 
 from __future__ import annotations
@@ -50,12 +52,7 @@ from collections.abc import Sequence
 from pydantic import BaseModel, ConfigDict, Field
 
 from ..graph import NodeRef, StoryGraph
-from ..panel.constraints import (
-    ForbiddenEntity,
-    SceneView,
-    UnresolvedCast,
-    scene_view,
-)
+from ..panel.constraints import SceneView, UnresolvedCast, scene_view
 
 
 class ResolvedConstraints(BaseModel):
@@ -82,9 +79,6 @@ class ResolvedConstraints(BaseModel):
     `min_length=1` 不是防御性编程，是模块 docstring 第二节那条「另一条退化路径」的落点：
     空 cast 会安静地穿过 `require_resolved_cast()`。
     """
-
-    forbidden_entities: list[ForbiddenEntity] = Field(default_factory=list)
-    """首现章号在本章之后的实体，按首现章号升序。完整 PLANNED 到此为止，只剩名字和章号。"""
 
     characters: list[NodeRef] = Field(default_factory=list)
     """`cast` 里解析出来的那几个节点（**窄引用，没有 props**）。
@@ -127,14 +121,8 @@ class ResolvedConstraints(BaseModel):
         return cls(
             chapter=constraints.chapter,
             cast=list(cast),
-            forbidden_entities=list(constraints.forbidden_entities),
             characters=list(view.characters),
         )
-
-    @property
-    def forbidden_names(self) -> list[str]:
-        """未来实体的名字（进 prompt 的禁写清单）。"""
-        return [e.node.name for e in self.forbidden_entities]
 
 
 class UnknownCastConstraints(BaseModel):
@@ -158,13 +146,6 @@ class UnknownCastConstraints(BaseModel):
 
     chapter: int
 
-    forbidden_entities: list[ForbiddenEntity] = Field(default_factory=list)
-    """首现章号在本章之后的实体。**这一项本来就与 cast 无关**（按章号算），所以退化态里它是精确的。"""
-
-    @property
-    def forbidden_names(self) -> list[str]:
-        return [e.node.name for e in self.forbidden_entities]
-
 
 DraftContext = ResolvedConstraints | UnknownCastConstraints
 """`assemble()` 收的两种约束集。**类型本身就是「这份约束退化了没有」的答案。**"""
@@ -180,16 +161,9 @@ def unknown_cast_constraints(
     **它故意不调 `require_resolved_cast()`。** 那道守卫的作用是拦住「起草侧拿到退化值
     却以为拿到了精确值」；这里的调用方**明确要的就是退化值**，而它拿到的类型也明说了
     这一点，所以守卫在这条路径上没有对象可守。
-
-    空 cast 喂给 `scene_view()` 得到的正是 `resolved.complete == False` 那一支。
-    今天这一支和精确值算出来的 `forbidden_entities` 是一样的（它按章号算，与 cast 无关），
-    **区别全在类型上**：拿到本类型的下游知道自己不知道在场是谁。
     """
     constraints = scene_view(store, project_id, chapter, ()).constraints
-    return UnknownCastConstraints(
-        chapter=constraints.chapter,
-        forbidden_entities=list(constraints.forbidden_entities),
-    )
+    return UnknownCastConstraints(chapter=constraints.chapter)
 
 
 def resolve_constraints(
@@ -198,8 +172,19 @@ def resolve_constraints(
     chapter: int,
     cast: Sequence[str],
 ) -> ResolvedConstraints:
-    """算一次 + 收窄一次。**产品起草的默认入口**（`cast` 是称呼原文，同 `scene_constraints`）。
+    """算一次 + 收窄一次。**产品起草的默认入口**（`cast` 是称呼原文，同 `scene_view`）。
 
     它比 `of()` 少一个出错的方式：`constraints` 和 `cast` 没有配错的余地。
     """
     return ResolvedConstraints.of(scene_view(store, project_id, chapter, cast), cast)
+
+
+class TargetChapterSnapshot(BaseModel):
+    """一次起草唯一的目标章快照。所有下游共用同一个对象：写手看的正文、候选的 `base_sha256`
+    都从它来，不许各自重读磁盘（2026-09-12 从校准包搬来，那个包随 ADR 0047 删了）。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chapter: int = Field(ge=1)
+    text: str
+    sha256: str = Field(min_length=64, max_length=64)

@@ -54,10 +54,10 @@ beforeEach(() => {
 
 // ── 打开两个编辑器 ────────────────────────────────────────────────────────
 
-/** 右栏「待确认」→ 展开第一条已确认情节的名单，并勾掉一个人。 */
+/** 右栏「事件」（2026-08-31 之前叫「待确认」）→ 展开第一条已确认情节的名单，并勾掉一个人。 */
 async function openCast(user: ReturnType<typeof userEvent.setup>, extra: Parameters<typeof renderWithApi>[1] = []) {
   renderWithApi(<RightPanel />, extra);
-  await user.click(await screen.findByRole("button", { name: /^待确认/ }));
+  await user.click(await screen.findByRole("button", { name: /^事件/ }));
   const first = fixtures.eventsCanon[0];
   const heads = await screen.findAllByRole("button", { name: first.event.summary });
   await user.click(heads[0]);
@@ -199,17 +199,23 @@ describe("线 2 续：大写枚举和属性里的字", () => {
     expect(rawIds(text)).toEqual([]);
   });
 
-  it("**待确认那一格里的提案卡**也一样 —— 那儿曾经印着一串截断的内部编号", async () => {
-    // `ProposalReviewTab` 拿 `subject_id` / `target_id` 去角色册里查名字，查不到就
-    // `id.slice(-6)`——屏幕上是 `n:ID22`（`"location:ID22"` 的后六位）。角色册和队列
-    // 是两条独立缓存，新节点在前者里缺席一拍就会走到那条兜底。今天名字由后端连着
-    // 提案一起给（`node_refs`），出参自足。
+  it("**通知面板里的提案卡**也一样 —— 那儿曾经印着一串截断的内部编号", async () => {
+    // `ProposalNotificationRow`（原来是 `ProposalReviewTab`）拿 `subject_id` /
+    // `target_id` 去角色册里查名字，查不到就 `id.slice(-6)`——屏幕上是 `n:ID22`
+    // （`"location:ID22"` 的后六位）。角色册和队列是两条独立缓存，新节点在前者里
+    // 缺席一拍就会走到那条兜底。今天名字由后端连着提案一起给（`node_refs`），
+    // 出参自足。**2026-08-31 待确认搬进了通知面板**，这条卡片现在在「通知」tab。
     const user = userEvent.setup();
     renderWithApi(<RightPanel />);
-    await user.click(await screen.findByRole("button", { name: /^待确认/ }));
-    await screen.findByText(/关系冲突/);
+    await user.click(await screen.findByRole("button", { name: /^通知/ }));
+    const conflictHead = await screen.findByText(/关系冲突/);
 
-    const text = screenText();
+    // 只扫这张卡片自己，不扫 `screenText()`（整页）：「通知」现在跟别的系统通知
+    // 挤在同一屏，其中 `summary_mismatch` 那条用的是契约测试自己手搭的占位码
+    // `test_notice`（真实生产从没产过这一档），扫全页会把这个既有的、跟提案卡
+    // 无关的夹具瑕疵也算进来。这张卡片自己不漏机器码才是这条测试真正要钉的事。
+    const card = conflictHead.closest(".proposal-card") as HTMLElement;
+    const text = card.textContent ?? "";
     expect(rawIds(text)).toEqual([]);
     expect(machineWords(text)).toEqual([]);
     expect(engineWords(text)).toEqual([]);

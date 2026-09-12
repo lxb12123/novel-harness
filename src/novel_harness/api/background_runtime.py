@@ -25,6 +25,7 @@ wake signal 丢了也不怕：dispatcher 轮询 `recover_claimable`，任何一�
 from __future__ import annotations
 
 from collections.abc import Callable
+import logging
 import os
 import threading
 import time
@@ -53,6 +54,8 @@ from ..summary_schedule import (
 from ..system_notifications import materialize_notification_outbox
 
 __all__ = ["BackgroundRuntime", "build_runtime", "new_connection_factory"]
+
+_log = logging.getLogger(__name__)
 
 AUTONOMY_INTERVAL: float = 30 * 60.0
 """自治调度默认间隔：30 分钟（文档 §2.2）。可注入（测试/演示用短间隔）。"""
@@ -124,11 +127,6 @@ class BackgroundRuntime:
     ) -> None:
         self._db_path = db_path
         self._conn_factory = connection_factory or new_connection_factory(db_path)
-        self._coordination = ChapterRefreshCoordinator(
-            self._conn_factory(),
-            connection_factory=self._conn_factory,
-            store_factory=lambda c: SqliteStoryGraph(c),
-        )
         self._runner_factory = runner_factory
         self._summarizer_factory = summarizer_factory
         # `None` = 这个运行时不做事后语义核对（桩运行时、只验调度的测试）。**不是降级**：
@@ -172,13 +170,16 @@ class BackgroundRuntime:
                 self.pump_once()
             except Exception:
                 # 单波失败不炸线程：下一波靠 lease 过期重抢，不留孤儿。
-                pass
+                # **但必须留痕**：这里从前是纯 `pass`，于是一个跨线程连接把整条
+                # 执行线掐死了一周，而作者屏幕上只是「总结一直没补上」——
+                # 后台的失败形态是「什么都没发生」，不留痕就没有任何人看得见。
+                _log.exception("后台执行波次失败：这一波的 attempt 全部没跑完")
             if time.monotonic() >= self._next_autonomy:
                 try:
                     self.autonomy_once()
                 except Exception:
                     # 单轮自治失败不炸线程：下一轮再扫（attempt 是持久重试的基础）。
-                    pass
+                    _log.exception("后台扫描轮失败：这一轮没给任何章下单")
                 self._next_autonomy = time.monotonic() + self._autonomy_seconds
             self._sleep(self._poll_seconds)
 
@@ -248,7 +249,21 @@ class BackgroundRuntime:
         """
         conn = self._conn_factory()
         try:
-            outcome = self._coordination.run(
+            # **协调器用的必须是这条线程自己刚开的连接。** sqlite3 的连接默认
+            # `check_same_thread=True`：在别的线程上碰它，第一条 SELECT 就抛
+            # `ProgrammingError`。从前这里用的是构造时（lifespan 协程所在的线程）
+            # 开的那一条长命连接，而 `_loop` 跑在 `dsh-background` 线程上——
+            # 于是**每一波都死在第一条 attempt 的第一次查询上**，被 `_loop` 那个
+            # `except Exception` 吞掉：claim 照旧发生（`fencing_token` 一路涨），
+            # 分支状态一个都不动，什么日志都没有。真书 book.db 就是这么在
+            # 135 章缺总结上卡了一周（2026-09-05 修）。
+            # 每条 attempt 现开现关也顺手把那条永不关闭的连接去掉了。
+            coordination = ChapterRefreshCoordinator(
+                conn,
+                connection_factory=self._conn_factory,
+                store_factory=lambda c: SqliteStoryGraph(c),
+            )
+            outcome = coordination.run(
                 attempt_id,
                 owner=self._owner,
                 token=token,

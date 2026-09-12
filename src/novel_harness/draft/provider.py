@@ -30,9 +30,11 @@ from collections.abc import Sequence
 from enum import StrEnum
 from typing import Any, Final
 from urllib.parse import urlsplit
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from .. import __version__
 from .capabilities import (
     CallPlan,
     ReasoningDialect,
@@ -399,6 +401,20 @@ _NO_STREAM: set[tuple[str, str]] = set()
 （`CompletionResult.fell_back_to_one_shot`）——静默降级正是这套东西最开始要治的病。
 """
 
+_NO_JSON_MODE: set[tuple[str, str]] = set()
+"""实测**不认 `response_format`** 的路由（进程内，不落盘；同 `_NO_STREAM` 的理由）。
+
+`StructuredCallPlan` 那两条路（抽取 / 事后核对）会带上
+`response_format={"type": "json_object"}` —— 那是 OpenAI 兼容面上「**由端点保证返回
+一个 JSON 对象**」的标准写法。带不带的差别是实测出来的：真书上 2026-09-05 的 73 次
+抽取失败里有 23 次是 `analysis_format`，而它的形态是「模型这一次没吐出对象」
+（第 6 章的诊断逐字：`Input should be an object`）——**同一章重跑一次就好了**，
+所以那不是内容问题，是每次调用各掷一次骰子。
+
+不认这个字段的端点会 400，那时退掉它重发一次并把这条路由记下来（`retry("response_format")`）：
+**退回去的那一档就是 2026-09-06 之前的行为**，一个字不差，所以最坏情况不比从前差。
+"""
+
 _NO_STREAM_OPTIONS: set[tuple[str, str]] = set()
 """实测**拒绝**过 `stream_options` 的路由（进程内，不落盘）。
 
@@ -462,6 +478,18 @@ def _rejected_streaming(exc: Exception) -> bool:
     而作者只看得见后面那次的话术。
     """
     return "stream" in str(exc).lower()
+
+
+def _rejected_response_format(exc: Exception, kwargs: dict[str, Any]) -> bool:
+    """这次失败是不是**因为**我们带了 `response_format`。
+
+    判据同 `_rejected_stream_options`：**错误里点了这个字段的名**，不是「状态码是不是
+    400」——后者会把「模型名写错」「钥匙过期」也吞进重试里，于是一次真正的配置错误
+    变成两次失败，而作者只看见后面那次的话术。
+    """
+    if "response_format" not in kwargs:
+        return False
+    return "response_format" in str(exc)
 
 
 def _rejected_stream_options(exc: Exception, kwargs: dict[str, Any]) -> bool:
@@ -550,6 +578,53 @@ class CompletionResult(BaseModel):
     """
 
 
+CLIENT_NAME: Final = "novel-harness"
+"""这个客户端在网线上的名字。`User-Agent` 和会话 id 都从它长出来。"""
+
+SESSION_ID: Final = f"{CLIENT_NAME}-{uuid4().hex}"
+"""**一次进程一个,进程内恒定**——这就是「一次会话」在本产品里的粒度。
+
+`NH_DB` 一个进程只指一个库,而一个库就是作者坐下来写的这一本书,所以「进程」和
+「这一次写作」是同一段时间。重启换一个新的,这是对的:那本来就是新的一次。
+
+为什么不是每次请求随机一个:端点要这个 id 是为了**路由亲和与 prompt 缓存**
+(见下面 `_default_headers` 的出处)。每请求换一个等于每次都换一台上游机器,
+缓存收益归零——那时头带上了、400 没了,但省下的钱也没了,而这件事在账上看不出来
+(`model_call.cache_read_tokens` 恒为 0 和「这条端点不支持缓存」长得一模一样)。
+
+为什么不是按书取一个稳定值:`_build_client` 只拿得到 `ProviderConfig`(连接参数),
+而它的五个消费者(抽取/总结/起草/写作助手/事后核对)没有一个在构造它时手上有
+project_id。为一个 id 把书号穿过五处签名,不如认下「进程 = 这一次写作」。
+"""
+
+
+def _default_headers() -> dict[str, str]:
+    """每一次调用都带的两个头。**不按端点分档,所有端点一视同仁。**
+
+    ── 它们从哪来 ──────────────────────────────────────────────────────
+    opencode.ai 的 Go 端点 2026-09-08 起**强制**要求 `x-opencode-session`,少了就是
+    `400 MissingSessionID`,一次都过不去(真书上 31 章的总结批量死在这上面)。
+    它家文档 (`opencode.ai/docs/go`) 的原话是两条:带一个稳定的会话 id 让它做路由和
+    prompt 缓存;以及**用你自己的 User-Agent**,别顶着 SDK 或 HTTP 库的默认名字。
+    openai 客户端默认报的正是后者,所以这两个头是一起补的。
+
+    ── 为什么不判主机名只发给 opencode ────────────────────────────────
+    两条理由,第二条才是要害:
+
+    1. HTTP 的规矩就是**认不出的请求头一律忽略**,发给 Ollama / OpenAI / 中转
+       都不会有事;而少发一个必需的头是 400,两个方向的代价不对称。
+    2. **主机名判据会在最该管用的那天失效。** 作者随时可能在前面架一层中转或换个
+       域名——那时地址还是他自己填的那一个,头却悄悄不发了,而症状是一句
+       「模型这一次没调通」。这个仓库已经在同一家端点上栽过一次同型的跟头:
+       少一段 `/go` 的 401 文案写的是「余额不足」,照着它排查一路查错方向。
+       **别再往连接这条路上加一个只在特定主机名下才成立的分支。**
+    """
+    return {
+        "User-Agent": f"{CLIENT_NAME}/{__version__}",
+        "x-opencode-session": SESSION_ID,
+    }
+
+
 def _build_client(config: ProviderConfig) -> Any:
     """按 config 组装一个真的 OpenAI 兼容客户端。**构造不发网络请求**,所以它可以被单测覆盖。"""
     try:
@@ -567,7 +642,36 @@ def _build_client(config: ProviderConfig) -> Any:
         api_key=config.api_key or "not-needed",
         base_url=config.base_url,  # ProviderConfig 已保证非空
         timeout=config.timeout,
+        # 全仓唯一建客户端的地方(`agent/model.py` 明确借的是这一个),所以这两个头
+        # 一处补齐就管到抽取/总结/起草/写作助手/事后核对全部五条路。
+        default_headers=_default_headers(),
     )
+
+
+def unfenced(text: str) -> str:
+    """剥掉模型爱加的 ```json 围栏。**全仓唯一一份**。
+
+    ── 为什么这一件宽容做，别的都不做 ──────────────────────────────────
+    剥围栏和「猜它想说什么」是两回事：围栏是**包装**，里面那份 JSON 一个字节没变。
+    修字段、补逗号、重试——那些都是在替模型圆场，会把「这个模型/这份 prompt 产不出
+    合规 JSON」这件事永久藏起来，所以照旧不做。
+
+    ── 它为什么必须只有一份 ─────────────────────────────────────────────
+    2026-09-06 之前这个仓库有**两套互相不知道的策略**：`advisory_review._payload` 剥
+    （注释写着「模型爱加它」），`extract.parse_analysis` 明确不剥（「不做修复、不剥壳、
+    不重试」）。同一个模型、同一种毛病、两个答案，而严的那一侧在真书上失败了 23 次。
+
+    ⚠️ **它今天是第二道防线，不是第一道。** 第一道是
+    `response_format={"type": "json_object"}`（见 `_NO_JSON_MODE`）——端点认它的话，
+    围栏根本不会出现。这一层留给那些不认那个字段、退回 prompt 求人的端点。
+    """
+    stripped = text.strip()
+    if not stripped.startswith("```"):
+        return stripped
+    stripped = stripped.split("\n", 1)[-1]
+    if stripped.rstrip().endswith("```"):
+        stripped = stripped.rstrip()[: -len("```")]
+    return stripped.strip()
 
 
 def _validate_call_plan(plan: CallPlan) -> CallPlan:
@@ -615,6 +719,16 @@ def _wire_kwargs_from_validated(
     }
     if config.temperature is not None:
         kwargs["temperature"] = config.temperature
+    if isinstance(plan, StructuredCallPlan) and plan.capability.route not in _NO_JSON_MODE:
+        # **「这一次必须返回 JSON」这件事，`StructuredCallPlan` 这个类型本来就在说了**，
+        # 只是 2026-09-06 之前它没走到线上——那时全靠 prompt 里一句
+        # 「Return JSON only: … no Markdown fences and no prose」求模型配合，
+        # 而模型有相当一部分时候不配合（真书 23 次 `analysis_format`，重跑就好）。
+        #
+        # 键在类型上而不是加一个 `json_object=True` 参数：**调用方没有忘记的余地**，
+        # 而且散文那两条路（产品起草 / M2 判分链）走的是 `ResolvedCallPlan`，
+        # 一个字节都不会多发出去（`EVAL_PROTOCOL.md` §2：gate 测的必须是产品会发的东西）。
+        kwargs["response_format"] = {"type": "json_object"}
     if (
         plan.stream
         and getattr(plan, "interruptible", False)
@@ -916,6 +1030,13 @@ def complete(
             # **只退这一个字段,不退流式**:作者要的是「能停下来」,用量是附带的。
             _NO_STREAM_OPTIONS.add(route)
             return retry("stream_options", streamed=True, fell_back=degraded)
+        if _rejected_response_format(exc, kwargs):
+            # 这一家不认 `response_format`。退掉它重发一次，并记住这条路由——
+            # 退回去的行为就是从前那一档（靠 prompt 求模型返回 JSON），不更差。
+            _NO_JSON_MODE.add(route)
+            return retry(
+                "response_format", streamed=bool(kwargs.get("stream")), fell_back=degraded
+            )
         if kwargs.get("stream") and _rejected_streaming(exc):
             # 这一家真的不吃流式。退成一次性,**并且让这件事一路走到屏幕上**。
             _NO_STREAM.add(route)
