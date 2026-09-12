@@ -259,7 +259,6 @@ EVERY_TOOL = (
     ("chapter_summaries", {"first_chapter": 1, "last_chapter": CHAPTER}),
     ("chapter_text", {"chapter": CHAPTER}),
     ("draft_chapter", {"chapter": CHAPTER, "brief": "写一场雪，收在他没抬头。"}),
-    ("save_draft", {"draft_id": DRAFT_ID}),
     ("read_draft", {"draft_id": DRAFT_ID}),
     ("remember_rule", {"rule": "这一章别写打斗", "until": "这一章写完为止"}),
     # `get_result` 要放在**第二批**：stored 表在批创建时从 live 数，第一批都还没跑
@@ -564,8 +563,14 @@ def test_a_tool_return_full_of_poison_still_only_shows_up_as_a_number(
         name="_leaky_probe",
         description="故意把秘密装进返回里。",
         args=agent_tools.SceneConstraintsArgs,
-        handler=lambda args, ctx: agent_tools.LandingResult(
-            chapter=args.chapter, landed=True, note=TWIST
+        handler=lambda args, ctx: agent_tools.DraftResult(
+            chapter=args.chapter,
+            draft_id=DRAFT_ID,
+            ordinal=1,
+            units=12,
+            preview="风雪落在肩上。",
+            landed=True,
+            landing=TWIST,
         ),
         label="做一件带毒的事",
     )
@@ -805,7 +810,7 @@ def test_asking_does_not_pick_up_anything_from_the_book(world: World) -> None:
     "tail",
     [
         ("draft_chapter", {"chapter": CHAPTER, "goal": "照我猜的写"}),
-        ("save_draft", {"draft_id": DRAFT_ID}),
+        ("read_draft", {"draft_id": DRAFT_ID}),
         ("chapter_text", {"chapter": CHAPTER}),
     ],
 )
@@ -865,7 +870,7 @@ def test_a_question_wins_even_when_the_batch_was_allowed_to_run_at_once(
                         "draft_chapter",
                         json.dumps({"chapter": CHAPTER, "brief": "写一场雪"}),
                     ),
-                    ("save_draft", json.dumps({"draft_id": DRAFT_ID})),
+                    ("read_draft", json.dumps({"draft_id": DRAFT_ID})),
                 ),
                 say("到不了"),
             ]

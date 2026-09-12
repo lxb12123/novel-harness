@@ -7,16 +7,21 @@ import {
   draftLabel,
   draftsHeading,
   landedNote,
-  openByDefault,
   sideBySide,
   unitsLabel,
 } from "../drafts";
 import { useLanguage } from "../language";
 import { writeCompareHandoff } from "../route";
 
-// 桌上摆着的那几稿（[ADR 0022](docs/adr/0022-drafting-is-a-proposal-not-a-write.md)）。
+// 这一轮写出来的那几稿（[ADR 0022](docs/adr/0022-drafting-is-a-proposal-not-a-write.md)，
+// 入口 2026-09-12 起按 [ADR 0048](docs/adr/0048-drafting-writes-the-chapter.md)）。
 //
-// **同一份数据的三种排布，不是三套东西**（作者的原话就是这个形状）：
+// **稿子写完直接写进那一章**，作者在左边的正文里看到它，所以这儿**不再摊正文**：
+// 写进去的每一稿只有一行（第几稿 · 字数 · 已写入 + 写手那句自述），底下一句怎么退回。
+// 作者的原话：「直接修改在左边，反正有历史状态管理……写小说的话红色绿色整体看起来很乱」。
+//
+// **没写进去的那几稿仍然是一张卡**（作者中途改过那一章 / 那一章还不存在 / 按停砍断的）
+// ——那是它唯一能被读到的地方。那几张卡沿用原来的三档排布，**同一份数据的三种排布**：
 //
 // | 档 | 什么时候 | 长什么样 |
 // |---|---|---|
@@ -27,8 +32,7 @@ import { writeCompareHandoff } from "../route";
 // ── 这块屏幕必须自己做对的三件事 ──────────────────────────────────────────
 //
 // 1. **不许挑。** 后端不排名、不打分（ADR 0005），这一层更不许——它手上只有一段
-//    120 字的开头。**默认摊开的那一版判据只有 `landed`**（助手把哪一版写进了书，
-//    那是一个动作），一个都没落盘时**全部收着**，作者自己点。
+//    120 字的开头。没写进去的卡**全部收着**，作者自己点。
 // 2. **入口不许三章硬摊。** 一批三稿 ≈ 9,000 字，全摊开等于要作者读完三章才做一个决定
 //    （ADR 0022 的「代价」第三条）。所以窄档只给自述 + 开头，全文点开才取——
 //    `useDraftText` 的 `open` 为假时一个字节都不发。
@@ -172,6 +176,24 @@ export function CompareLink({
   );
 }
 
+/** 写进那一章的一稿：**一行**。正文在左边，这儿不再摊第二份。 */
+function LandedRow({ draft }: { draft: DraftCandidateView }) {
+  const language = useLanguage((s) => s.language);
+  return (
+    <p className="draft-landed">
+      <b>{draftLabel(draft, language)}</b>
+      <span className="draft-meta">
+        {" · "}
+        {unitsLabel(draft.units, language)}
+        {" · "}
+        {language === "zh" ? `已写入第 ${draft.chapter} 章` : `Written into chapter ${draft.chapter}`}
+      </span>
+      {/* 写手那句自述——它是这一稿的一句说明，不是评价（引擎不打分，ADR 0005）。空的不画。 */}
+      {draft.note.trim() !== "" && <span className="draft-landed-note">{draft.note}</span>}
+    </p>
+  );
+}
+
 export function DraftCandidates({
   pid,
   drafts,
@@ -182,10 +204,11 @@ export function DraftCandidates({
   const language = useLanguage((s) => s.language);
   const boxRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
-  const [open, setOpen] = useState<string[]>(() => openByDefault(drafts));
-
-  // 又跑了一轮 = 另一批稿子 ⇒ 默认摊开哪一版要重算（上一批展开过哪几张跟这一批无关）。
-  useEffect(() => setOpen(openByDefault(drafts)), [drafts]);
+  // 没写进去的卡默认全收着（这一层不挑）；又跑了一轮就是另一批，展开过哪几张跟这一批无关。
+  const [open, setOpen] = useState<string[]>([]);
+  useEffect(() => setOpen([]), [drafts]);
+  const landed = drafts.filter((d) => d.landed);
+  const pending = drafts.filter((d) => !d.landed);
 
   // **量的是这一块自己有多宽，不是窗口**：作者拖的是中栏那根分隔条，窗口一动不动。
   // 量不到（jsdom / 首帧）就是 0 ⇒ 窄档，而窄档是默认形态（`drafts.ts::sideBySide`）。
@@ -201,16 +224,16 @@ export function DraftCandidates({
     const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
-    // **依赖里带着稿数**：一稿都没有时这个组件整个返回 `null`，要量的那一格 DOM
-    // 根本不存在（`boxRef.current` 是 null，上面第一句就退了）。今天 `ChatPanel`
-    // 在跑下一轮时会先把回执清掉、于是这块屏幕整个重挂一次，量得到——
-    // **但那是调用方的实现细节，不是这个组件的前提**：它没了，症状是「拖多宽都不并排」
-    // 而且不报错。空依赖数组等于把那条实现细节写进这里的正确性。
-  }, [drafts.length]);
+    // **依赖里带着稿数**：一张卡都没有时要量的那一格 DOM 根本不存在（`boxRef.current`
+    // 是 null，上面第一句就退了）。今天 `ChatPanel` 在跑下一轮时会先把回执清掉、于是
+    // 这块屏幕整个重挂一次，量得到——**但那是调用方的实现细节，不是这个组件的前提**：
+    // 它没了，症状是「拖多宽都不并排」而且不报错。空依赖数组等于把那条实现细节写进
+    // 这里的正确性。
+  }, [pending.length]);
 
   if (drafts.length === 0) return null;
 
-  const wide = sideBySide(width, drafts.length);
+  const wide = sideBySide(width, pending.length);
   const note = landedNote(drafts, language);
 
   return (
@@ -221,7 +244,8 @@ export function DraftCandidates({
       <div className="drafts-head">
         <b>{draftsHeading(drafts, language)}</b>
         <span className="spacer" />
-        {chaptersOf(drafts).map((chapter) => (
+        {/* 并排那一页只在这一章这一轮不止一稿时才值得指过去；只有一稿时它在左边正文里。 */}
+        {chaptersOf(drafts.filter((d) => drafts.filter((o) => o.chapter === d.chapter).length > 1)).map((chapter) => (
           <CompareLink key={chapter} pid={pid} chapter={chapter}>
             {language === "zh"
               ? `并排查看第 ${chapter} 章各稿 ↗`
@@ -229,9 +253,13 @@ export function DraftCandidates({
           </CompareLink>
         ))}
       </div>
+      {landed.map((draft) => (
+        <LandedRow key={draft.id} draft={draft} />
+      ))}
       {note && <p className="chat-receipt-note">{note}</p>}
+      {pending.length > 0 && (
       <div className={wide ? "draft-cards wide" : "draft-cards"} ref={boxRef}>
-        {drafts.map((draft) =>
+        {pending.map((draft) =>
           wide ? (
             // 宽档：每一列自己一个滚轮，全文都摊着 —— 作者拖到这个宽度就是要并排读。
             <DraftCard key={draft.id} pid={pid} draft={draft} open />
@@ -252,6 +280,7 @@ export function DraftCandidates({
           ),
         )}
       </div>
+      )}
     </section>
   );
 }

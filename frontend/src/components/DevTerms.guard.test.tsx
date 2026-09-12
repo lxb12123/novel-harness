@@ -322,10 +322,11 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     const one = fixtures.drafts.drafts[0];
     const turn = {
       ...fixtures.chatTurn,
+      // 一稿写进去了（一行），两稿没写进去（卡）——两种形态都要扫到（ADR 0048）。
       drafts: [
-        { ...one, id: "draft:ID43", ordinal: 1 },
+        { ...one, id: "draft:ID43", ordinal: 1, landed: false },
         { ...one, id: "draft:ID44", ordinal: 2, landed: true },
-        { ...one, id: "draft:ID45", ordinal: 3, note: "" },
+        { ...one, id: "draft:ID45", ordinal: 3, landed: false, note: "" },
       ],
     };
     renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turn }]);
@@ -337,8 +338,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     // 摊开一版：那一条路由的返回里除了正文还有 `id` / `created_at` 这些字段，
     // 而「摊开」是作者最常做的那个动作。
     await user.click(screen.getByRole("button", { name: "展开第 3 稿" }));
-    // 两版摊开着：进了书的那一版（默认摊开）+ 刚点开的这一版。
-    await waitFor(() => expect(screen.getAllByText(fixtures.draftDetail.text)).toHaveLength(2));
+    await waitFor(() => expect(screen.getAllByText(fixtures.draftDetail.text)).toHaveLength(1));
     expect(devTerms(screenText())).toEqual([]);
   });
 
@@ -452,7 +452,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
       message: "已停止。已查到的内容保留。",
       // 它没问出那一句（`reply` 空）：回执上那句才会画出来给这儿扫（`chat.ts::receiptSays`）。
       reply: "",
-      drafts: [{ ...one, stopped_reason: "作者中途按了停，这一稿没写完。" }],
+      drafts: [{ ...one, landed: false, stopped_reason: "作者中途按了停，这一稿没写完。" }],
     };
     renderWithApi(<ChatPanel />, [
       { method: "POST", match: /\/turn\/events$/, stream: turnStream(stopped) },

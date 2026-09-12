@@ -1,12 +1,15 @@
 // 「桌上摆着的那几稿」这块屏幕的纯逻辑（同 `chat.ts` / `layout.ts` 的分法）：
 // **这里不碰 DOM，也不碰 fetch**，好让「三档怎么切」「默认摊开哪一版」能被单测钉死。
 //
-// 规格是 [ADR 0022](docs/adr/0022-drafting-is-a-proposal-not-a-write.md)。这一层守三条：
+// 规格是 [ADR 0022](docs/adr/0022-drafting-is-a-proposal-not-a-write.md)，2026-09-12 起由
+// [ADR 0048](docs/adr/0048-drafting-writes-the-chapter.md) 改了入口：**稿子写完直接写进那一章**，
+// 作者在左边的正文里看到它；对话这一侧只剩一行「第几稿 · 字数 · 已写入」和一句怎么退回。
+// 没写进去的（作者中途改过那一章 / 那一章还不存在）仍然是一张卡——那是它唯一能被读到的地方。
+// 这一层守三条：
 //
 // 1. **不排名、不打分、不挑。** 后端不给散文打分（ADR 0005），这一层更不许——
-//    它连正文都没有，只有一段 120 字的开头。**「推荐位」的唯一判据是 `landed`**：
-//    助手把哪一版写进了书，那是一个**动作**不是一句评价。一批都没落盘时
-//    **两边都不挑**（同 `AmbiguousName`：两个方向都贵就摊开）。
+//    它连正文都没有，只有一段 120 字的开头。没写进去的那几张卡**全部收着**，作者自己点
+//    （同 `AmbiguousName`：两个方向都贵就摊开）。
 // 2. **顺序照后端给的**（`(chapter, ordinal)`）。并发跑的稿子谁先回来是随机的，
 //    在这儿重排一次，作者每次刷新看到的次序就会变。
 // 3. **屏幕上说「第 N 稿」，不说 id。** id 是 `draft:01J…` 形状，
@@ -36,19 +39,6 @@ export function sideBySide(width: number, count: number): boolean {
   return width >= count * COLUMN_MIN_PX;
 }
 
-/**
- * 默认摊开哪几版。
- *
- * **判据只有 `landed`**（ADR 0022 的入口形态：「推荐那一版摊开 + 另两版各一句自述」）。
- * 一批都没落盘时返回空——**那时后端没挑，这一层也不挑**，全部收着，作者自己点。
- *
- * 为什么不默认全摊开：ADR 0022 的「代价」第三条——作者要读三章才能做一个决定，
- * 而三章正文硬摊在入口上，他连「哪一版是哪一版」都还没分清。
- */
-export function openByDefault(drafts: readonly DraftCandidateView[]): string[] {
-  return drafts.filter((d) => d.landed).map((d) => d.id);
-}
-
 /** 并排比那一页上，默认摊开几列。
  *
  *  作者要的是「三窗口分别对应三个原文」，所以是 3。**这个数不是省事，是价格**：
@@ -58,8 +48,8 @@ export const COMPARE_OPEN_MAX = 3;
 
 /** 并排比那一页默认摊开哪几列：**最近的那几稿**（后端给的顺序就是最近在前）。
  *
- *  这儿和 `openByDefault` 的判据**有意不同**：那一档是对话里的入口（不许替作者挑，
- *  所以只认 `landed`），这一页是作者**专门点开来并排读的**——他要的就是摊开。 */
+ *  对话里的入口不摊开任何一版（没写进去的卡全部收着，作者自己点），这一页是作者
+ *  **专门点开来并排读的**——他要的就是摊开。 */
 export function openOnCompare(drafts: readonly DraftCandidateView[]): string[] {
   return drafts.slice(0, COMPARE_OPEN_MAX).map((d) => d.id);
 }
@@ -121,28 +111,22 @@ export function draftsHeading(drafts: readonly DraftCandidateView[], language: L
 }
 
 /**
- * 有稿子已经进书了 —— 屏幕上必须说一句，而且要说得出**怎么退**。
+ * 有稿子进了书 —— 屏幕上必须说得出**怎么退**。
  *
- * 落盘**不问作者**（ADR 0021 的核心，ADR 0022 一个字没改），所以这一侧欠他两件事：
- * **看得见**（这一行）和**改得掉**（那句话里的「历史」，`CenterEditor` 上那颗按钮）。
- * 只说前一半 = 告诉他书被改了却不说怎么办；一句都不说 = 他在编辑器里看见一段
- * 自己没写的字（ADR 0021 的「代价」第三条点名了这一档：闸挡不住它，只能靠界面）。
+ * 落盘**不问作者**（ADR 0021 的核心，ADR 0048 把它接回起草本身），所以这一侧欠他两件事：
+ * **看得见**（每一稿自己那一行「已写入」+ 左边正文当场变了）和**改得掉**（这句话里的
+ * 「历史」，`CenterEditor` 上那颗按钮）。只说前一半 = 告诉他书被改了却不说怎么办；
+ * 一句都不说 = 他在编辑器里看见一段自己没写的字（ADR 0021 的「代价」第三条点名了这一档：
+ * 闸挡不住它，只能靠界面）。
  *
  * 一个都没落盘时返回 `null`：**没发生的事不写**（零不写，同 `chat.ts::receiptNotes`）。
- *
- * **整句模板**：英文那半要处理落盘稿数的单复数（has / have），拼片段会漏掉这个变化。
+ * 哪几稿进了书由每一稿自己那一行说，这句只管退路——所以它不列稿号。
  */
 export function landedNote(drafts: readonly DraftCandidateView[], language: Language): string | null {
-  const landed = drafts.filter((d) => d.landed);
-  if (landed.length === 0) return null;
-  if (language === "zh") {
-    const which = landed.map((d) => `第 ${d.chapter} 章的${draftLabel(d, language)}`).join("、");
-    return `${which}已写入正文。如需撤销，可在正文「历史」中退回上一版。`;
-  }
-  const which = landed
-    .map((d) => `${draftLabel(d, language)} for chapter ${d.chapter}`)
-    .join(", ");
-  return `${which} ${landed.length === 1 ? "has" : "have"} been written into the text. To undo, use “History” on the text side to revert to the previous version.`;
+  if (!drafts.some((d) => d.landed)) return null;
+  return language === "zh"
+    ? "如需撤销，可在正文「历史」中退回上一版"
+    : "To undo, use “History” on the text side to revert to the previous version";
 }
 
 /** 并排比那一页的地址。**哈希路由 = 零新基础设施**：工作台本来就是本地浏览器应用

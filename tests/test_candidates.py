@@ -405,8 +405,10 @@ def test_three_drafts_leave_less_than_one_page_in_the_conversation(
         f"三稿在对话里占了 {len(blob)} 字，上限是 {3 * IN_CONVERSATION_UNITS}。"
         "先问多出来的字是谁的，再决定要不要动那个上限。"
     )
-    # 三份加起来还不到那三稿散文的**八分之一** —— 这就是 ADR 0022 买到的东西。
-    assert len(blob) * 8 < 3 * len(body)
+    # 三份加起来还不到那三稿散文的**六分之一** —— 这就是 ADR 0022 买到的东西。
+    # （2026-09-12 起每条返回多带一句落盘回执「已经写进第 N 章了……」，ADR 0048；
+    # 原来钉的是八分之一，多的那几十个字是那句话，不是正文。）
+    assert len(blob) * 6 < 3 * len(body)
     assert body[PREVIEW_UNITS + 80 : PREVIEW_UNITS + 200] not in blob, (
         "预览之后那一段正文出现在对话里 —— 硬上限被绕过去了"
     )
@@ -510,68 +512,86 @@ def test_a_refused_landing_leaves_the_draft_on_the_desk(
 ) -> None:
     """**拒了就不许标 landed。**
 
-    `landed` 在 ADR 0022 之后同时是三件事：界面上的推荐位（唯一判据）、
+    `landed` 在 ADR 0022 之后同时是三件事：界面上「已写入」那一行（唯一判据）、
     清理策略的判据（落过盘的才清）、以及作者眼里「它进书了没有」。
-    拒了却标上 = 作者以为书变了（其实没变）、界面替他挑了一个没进书的版本、
+    拒了却标上 = 作者以为书变了（其实没变）、界面说它进书了、
     而且那一稿会被 `_prune_landed` 当成「已经有归宿」清掉——**而它根本没有归宿**。
 
-    造的局面是 ADR 0021 那道 sha 闸：起草之后作者自己改了那一章。
+    造的局面是 ADR 0021 那道 sha 闸：**写手还在写的那几十秒里**作者自己改了那一章
+    （ADR 0048 之后落盘紧跟在生成后面，所以能撞上闸的只有这一段时间）。
     """
-    _writer(monkeypatch, _prose("己"))
-    desk = _desk(desk_conn, poisoned)
-    (outcome,) = dispatch_all([_draft(1)], _context(desk_conn, poisoned, desk))
-    draft_id = json.loads(outcome.content)["draft_id"]
-
     root = _root(desk_conn, poisoned)
     before = importer.read_chapter(root, 1) or ""
     head = importer.single_chapter(before)
     assert head is not None
-    (root / importer.chapter_path(1)).write_text(
-        importer.chapter_text(head.raw_heading, "作者刚刚自己写的一段。"), encoding="utf-8"
-    )
 
-    (landed,) = dispatch_all(
-        [ToolCall(id="s0", name="save_draft", arguments=json.dumps({"draft_id": draft_id}))],
-        _context(desk_conn, poisoned, desk),
-    )
-    report = json.loads(landed.content)
+    class AuthorEditsMeanwhile(Writer):
+        def __call__(self, messages: Any, *, config: Any, plan: Any, **kw: Any):
+            (root / importer.chapter_path(1)).write_text(
+                importer.chapter_text(head.raw_heading, "作者刚刚自己写的一段。"),
+                encoding="utf-8",
+            )
+            return super().__call__(messages, config=config, plan=plan, **kw)
+
+    monkeypatch.setattr(generate, "complete", AuthorEditsMeanwhile(_prose("己")))
+    desk = _desk(desk_conn, poisoned)
+    (outcome,) = dispatch_all([_draft(1)], _context(desk_conn, poisoned, desk))
+    report = json.loads(outcome.content)
     assert report["landed"] is False, report
-    assert "作者" in report["note"]
+    assert "作者" in report["landing"]
 
     store = DraftCandidateStore(desk_conn)
-    stored = store.get(poisoned["pid"], draft_id)
+    stored = store.get(poisoned["pid"], report["draft_id"])
     assert stored is not None and stored.landed is False, (
-        "被闸拒掉的那一稿被标成「已经写进书里」了 —— 推荐位、清理策略、"
+        "被闸拒掉的那一稿被标成「已经写进书里」了 —— 已写入那一行、清理策略、"
         "以及作者眼里的「书变了没有」三件事一起错"
     )
-    assert draft_id in {c.id for c in store.recent(poisoned["pid"])}
+    assert report["draft_id"] in {c.id for c in store.recent(poisoned["pid"])}
     # 磁盘上仍然是作者刚写的那一段（一个字节都没被盖掉）。
     assert "作者刚刚自己写的一段" in (importer.read_chapter(root, 1) or "")
 
 
-def test_the_desk_receipt_marks_only_the_one_that_actually_landed(
+def test_a_batch_of_drafts_all_land_in_order_and_the_last_stays_in_the_text(
     desk_conn: Connection, poisoned: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """三稿里存了一稿 ⇒ 回执上**只有那一稿** `landed=true`。
+    """一批三稿 ⇒ **三稿都写进那一章**，最后一稿留在正文里，前两稿在版本历史里（ADR 0048）。
 
-    这是界面上「推荐位」的唯一来源（`frontend/src/drafts.ts::openByDefault`）。
-    多标一个，作者会看见两版摊开、并以为书里有两版；少标一个，那一章的正文
-    已经变了而界面上没有任何字说这件事（ADR 0021 欠他的「看得见」那一半）。
+    三稿的底稿是同一版。第一稿落盘之后磁盘变了，底稿闸按「作者在这中间改过」拒第二稿
+    ——那正是 ADR 0022 当年拆成两步的理由（`agent/ports.py::DraftDesk` 的 docstring 记着：
+    「作者要三版、拿到一版、付了三份钱」）。现在 `ChapterDesk.land` 认得出磁盘上那一版
+    是**自己上一稿写的**（`_written`），接着盖；作者真在中间改过，哈希对不上，照旧拒
+    （上一条测试）。
     """
-    _writer(monkeypatch, _prose("庚"))
+    bodies = [_prose("甲"), _prose("乙"), _prose("丙")]
+
+    class Cycling(Writer):
+        def __init__(self) -> None:
+            super().__init__("")
+            self.n = 0
+
+        def __call__(self, messages: Any, *, config: Any, plan: Any, **kw: Any):
+            self.text = bodies[self.n]
+            self.n += 1
+            return super().__call__(messages, config=config, plan=plan, **kw)
+
+    monkeypatch.setattr(generate, "complete", Cycling())
     desk = _desk(desk_conn, poisoned)
     context = _context(desk_conn, poisoned, desk)
     outcomes = dispatch_all([_draft(1, f"c{n}") for n in range(3)], context)
-    ids = [json.loads(o.content)["draft_id"] for o in outcomes]
-
-    (saved,) = dispatch_all(
-        [ToolCall(id="s0", name="save_draft", arguments=json.dumps({"draft_id": ids[1]}))],
-        context,
+    reports = [json.loads(o.content) for o in outcomes]
+    assert [r["landed"] for r in reports] == [True, True, True], reports
+    assert [c.landed for c in desk.produced] == [True, True, True], (
+        f"回执上「已写入」标错了：{[(c.ordinal, c.landed) for c in desk.produced]}"
     )
-    assert json.loads(saved.content)["landed"] is True, saved.content
-    assert [c.landed for c in desk.produced] == [False, True, False], (
-        f"回执上的推荐位标错了：{[(c.ordinal, c.landed) for c in desk.produced]}"
-    )
+    on_disk = importer.read_chapter(_root(desk_conn, poisoned), 1) or ""
+    assert bodies[2][:40] in on_disk and bodies[0][:40] not in on_disk, "正文里不是最后一稿"
+    # 前两稿没丢：它们各落了一版快照（版本历史里退得回去）。
+    versions = desk_conn.execute(
+        "SELECT COUNT(*) FROM chapter_snapshot s JOIN chapter c ON c.id = s.chapter_id "
+        "WHERE c.project_id = ? AND c.number = 1",
+        (poisoned["pid"],),
+    ).fetchone()[0]
+    assert versions >= 4, f"三稿依次落盘之后版本历史里只有 {versions} 版"
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -579,73 +599,52 @@ def test_the_desk_receipt_marks_only_the_one_that_actually_landed(
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_the_write_tool_really_waits_for_the_concurrent_window(
+def test_concurrent_drafts_land_under_the_lock_one_after_another(
     desk_conn: Connection, poisoned: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """`save_draft` 在一批里是**屏障**：前面那几条并发的跑完了才轮到它，而且它跑在
-    调用方那条线上。
+    """两稿并发写、各自写完就落盘（ADR 0048）：**落盘那一段在 `db_lock` 里排队**，两稿都进书。
 
-    既有那条断言看的是 `ToolSpec.concurrent` 这张表（「名单没变」），
-    **没有任何东西验过执行器照这张名单排队**。而它排错的后果不是慢：
-    落盘那一段（`importer.sync` + `save_chapter` + `decisions.append`）根本没进
-    `db_lock`，它靠的正是「屏障成立所以那一刻只有一条线程」这个前提。
-
-    判据是一条时间线，不是秒表：两稿卡在同一个栅栏上（串行必超时），
-    而落盘那一笔必须排在**两稿都出来之后**、且在**主线程**上。
+    慢的那一段（模型调用）仍然并发——判据是一条时间线：两稿卡在同一个栅栏上（串行必超时）。
+    落盘那一段没有屏障可靠了（`save_draft` 删了），它靠的是 `ToolContext.db_guard`：
+    `importer.sync` + `save_chapter` + `decisions.append` 跑在工作线程上，但**锁必须在手里**。
+    第二稿落盘时磁盘上已经是第一稿——底稿闸认得出那是自己写的，不拒。
     """
     timeline: list[tuple[str, str]] = []
+    landings: list[tuple[str, bool]] = []
     together = threading.Barrier(2, timeout=5)
-    armed = False
 
     class Barriered(Writer):
         def __call__(self, messages: Any, *, config: Any, plan: Any, **kw: Any):
             timeline.append(("起草进", threading.current_thread().name))
-            if armed:
-                together.wait()
+            together.wait()
             timeline.append(("起草出", threading.current_thread().name))
             return super().__call__(messages, config=config, plan=plan, **kw)
 
-    writer = Barriered(_prose("辛"))
-    monkeypatch.setattr(generate, "complete", writer)
+    monkeypatch.setattr(generate, "complete", Barriered(_prose("辛")))
 
     lock = threading.RLock()
     desk = _desk(desk_conn, poisoned, db_lock=lock)
     context = _context(desk_conn, poisoned, desk, db_lock=lock)
 
-    (seed,) = dispatch_all([_draft(1, "seed")], context)
-    seed_id = json.loads(seed.content)["draft_id"]
-
     real_land = desk.land
 
     def traced(candidate_id: str) -> Any:
-        timeline.append(("落盘", threading.current_thread().name))
+        landings.append((threading.current_thread().name, lock._is_owned()))  # type: ignore[attr-defined]
         return real_land(candidate_id)
 
     monkeypatch.setattr(desk, "land", traced)
 
-    armed = True
-    together.reset()
-    timeline.clear()
-    outcomes = dispatch_all(
-        [
-            _draft(1, "c0"),
-            _draft(1, "c1"),
-            ToolCall(id="c2", name="save_draft", arguments=json.dumps({"draft_id": seed_id})),
-        ],
-        context,
-        workers=3,
-    )
-    assert [o.ok for o in outcomes] == [True, True, True], [o.content for o in outcomes]
+    outcomes = dispatch_all([_draft(1, "c0"), _draft(1, "c1")], context, workers=2)
+    assert [o.ok for o in outcomes] == [True, True], [o.content for o in outcomes]
     assert not together.broken, "两稿没有同时在跑 —— 栅栏没凑齐"
-
-    steps = [step for step, _ in timeline]
-    assert steps.index("落盘") == len(steps) - 1, f"落盘没排在最后：{timeline}"
-    landing_thread = next(name for step, name in timeline if step == "落盘")
-    assert landing_thread == threading.current_thread().name, (
-        f"落盘跑在工作线程「{landing_thread}」上 —— 它那一段没有任何锁罩着"
+    assert [json.loads(o.content)["landed"] for o in outcomes] == [True, True], (
+        "第二稿被底稿闸拒了 —— 磁盘上那一版是第一稿写的，不是作者改的"
     )
     drafting_threads = {name for step, name in timeline if step == "起草进"}
     assert len(drafting_threads) == 2, f"两稿跑在同一条线上：{timeline}"
+    assert len(landings) == 2 and all(owned for _, owned in landings), (
+        f"落盘那一段没在锁里：{landings}"
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════

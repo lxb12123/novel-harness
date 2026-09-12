@@ -407,9 +407,8 @@ def surfaces_of(book: PoisonedBook) -> dict[str, str]:
             # 3.1 那三个约束类工具也带上：索引层改过 `agent/` 的共用面。
             _call("scene_constraints", chapter=WORKING_CHAPTER),
             _call("character_state", chapter=WORKING_CHAPTER, character="萧决"),
+            # 起草即写入（ADR 0048）：落盘回执跟着起草的返回一起回来，是同一个面。
             _call("draft_chapter", chapter=WORKING_CHAPTER, brief="写一场雪，收在他没抬头。"),
-            # ADR 0022 拆出来的另外两个动作，各自一个新的返回面。
-            _call("save_draft", draft_id=DRAFT_ID),
             _call("read_draft", draft_id=DRAFT_ID),
             # ADR 0024 的问作者：出参直接摆到作者面前，所以它也是一个面。
             _call(
@@ -431,7 +430,7 @@ def surfaces_of(book: PoisonedBook) -> dict[str, str]:
         ],
         context,
     )
-    assert [outcome.ok for outcome in outcomes] == [True] * 13 + [False] * 4, (
+    assert [outcome.ok for outcome in outcomes] == [True] * 12 + [False] * 4, (
         "采样计划自己漂了：成功/失败两条路的条数对不上，下面搜的可能是另一批面"
     )
     assert captured, "起草工具没把约束交给起草侧 —— 进 prompt 的那一面没被采到"

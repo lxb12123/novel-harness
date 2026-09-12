@@ -9,7 +9,6 @@ import {
   draftLabel,
   draftsHeading,
   landedNote,
-  openByDefault,
   openOnCompare,
   sideBySide,
   unitsLabel,
@@ -48,21 +47,8 @@ describe("并排还是摞着：`sideBySide`", () => {
   });
 });
 
-describe("默认摊开哪一版", () => {
-  it("**判据只有「它进过书没有」** —— 引擎没打分，这一层也不打", () => {
-    const landed = variant({ id: "draft:ID44", ordinal: 2, landed: true });
-    expect(openByDefault([REAL, landed, variant({ id: "draft:ID45", ordinal: 3 })])).toEqual([
-      landed.id,
-    ]);
-  });
-
-  it("**一个都没落盘 = 一个都不摊开**：后端不挑，这儿也不挑", () => {
-    // 同 `AmbiguousName`（「师兄」指 8 个人）：两个方向都贵就摊开，绝不替他挑一个。
-    expect(REAL.landed).toBe(false); // 探针：真 dump 那一稿就是这一档
-    expect(openByDefault([REAL, variant({ id: "draft:ID45", ordinal: 2 })])).toEqual([]);
-  });
-
-  it("并排比那一页反过来：**摊开最近的几列**，更早的收着", () => {
+describe("并排比那一页默认摊开哪几列", () => {
+  it("**摊开最近的几列**，更早的收着", () => {
     // 那一页是作者专门点开来并排读的，他要的就是摊开——判据和入口那一档有意不同。
     const many = [1, 2, 3, 4, 5].map((n) => variant({ id: `draft:ID${n}`, ordinal: n }));
     expect(openOnCompare(many)).toEqual(["draft:ID1", "draft:ID2", "draft:ID3"]);
@@ -101,20 +87,17 @@ describe("屏幕上把它叫什么", () => {
 });
 
 describe("有稿子进了书", () => {
-  it("**说出来，而且说得出怎么退** —— 落盘不问作者，那就欠他这两件事", () => {
+  it("**说得出怎么退** —— 落盘不问作者，那就欠他这一半；哪几稿进了书由每一稿自己那一行说", () => {
+    expect(REAL.landed).toBe(true); // 探针：真 dump 那一稿就写进去了（ADR 0048）
     const note = landedNote([REAL, variant({ id: "draft:ID44", ordinal: 2, landed: true })], "zh");
-    expect(note).toContain("第 2 章的第 2 稿");
     expect(note).toContain("历史"); // 退路：正文那边那颗按钮
-    const noteEn = landedNote(
-      [REAL, variant({ id: "draft:ID44", ordinal: 2, landed: true })],
-      "en",
-    );
-    expect(noteEn).toContain("Draft 2 for chapter 2");
+    expect(note).not.toContain("第 2 稿");
+    const noteEn = landedNote([REAL], "en");
     expect(noteEn).toContain("History");
   });
 
   it("一个都没进书就一个字都不写（零不写）", () => {
-    expect(landedNote([REAL], "zh")).toBeNull();
+    expect(landedNote([variant({ landed: false })], "zh")).toBeNull();
     expect(landedNote([], "zh")).toBeNull();
   });
 });

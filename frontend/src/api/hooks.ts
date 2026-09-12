@@ -1156,7 +1156,20 @@ export function useRunTurn(pid: string) {
           // 不把它搬到流上）。所以那个坏序列原样存在，这个标识原样要报。
           run_id: v.runId,
         },
-        { onEvent: v.onEvent },
+        {
+          onEvent: (event) => {
+            // **起草那一步跑完 = 那一章已经在磁盘上变了**（ADR 0048：起草即写入）。
+            // 不等这一轮收场就把正文和版本历史重取——作者要的是「直接在左边看到」，
+            // 而这一轮收场可能还在几十秒之后（模型还要说一句）。判据是工具名，不是
+            // 一句措辞：`tool` 是机器码，屏幕上一个字都不出现。
+            if (event.kind === "tool_finished" && event.tool === "draft_chapter" && event.ok) {
+              qc.invalidateQueries({ queryKey: ["text", pid] });
+              qc.invalidateQueries({ queryKey: ["chapters", pid] });
+              qc.invalidateQueries({ queryKey: ["history", pid] });
+            }
+            v.onEvent?.(event);
+          },
+        },
       ),
     onSuccess: (_receipt, v) => {
       qc.invalidateQueries({ queryKey: ["chats", pid] });

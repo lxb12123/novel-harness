@@ -186,7 +186,8 @@ def _write(desk: Any, conn: Connection, pid: str, chapter: int) -> Any:
 def _write_and_land(desk: Any, conn: Connection, pid: str, chapter: int) -> LandingReport:
     """写一稿，然后把它存进那一章。
 
-    **ADR 0022 之后这是两个动作**，而这份文件量的是第二个动作那五条闸
+    这一层上它们仍是 `ChapterDesk` 的两个方法（工具层 2026-09-12 起把两步接成一步，
+    ADR 0048），而这份文件量的是第二个动作那五条闸
     （sha 闸 / 只对已存在的章 / 先 sync / 留章标题 + 验「恰好一章」/ 空稿闸）。
     第一个动作在 `tests/test_draft_candidates.py`。
     """
@@ -432,7 +433,7 @@ def test_landing_still_refuses_to_blank_a_chapter(
     pid = book["pid"]
     before = _on_disk(conn, pid, 1)
 
-    landed, note = drafting._land(
+    landed, note, _ = drafting._land(
         SqliteStoryGraph(conn),
         conn,
         project_id=pid,
@@ -458,7 +459,7 @@ def test_landing_notes_are_english_for_an_english_book(
     pid = book["pid"]
     before = _on_disk(conn, pid, 1)
 
-    landed, note = drafting._land(
+    landed, note, _ = drafting._land(
         SqliteStoryGraph(conn),
         conn,
         project_id=pid,
@@ -733,15 +734,15 @@ def test_one_turn_from_the_browser_really_changes_the_chapter_on_disk(
     这个仓库栽过四次「能力建好了、最后一厘米没接」，而 3.4 交付时
     `ToolContext.drafter` 还是 `None`。这一条量的就是那根线通没通。
 
-    ADR 0022 之后它多了一节：**那根线现在是两截**（`draft_chapter` → `save_draft`），
-    而中间那个编号得真的传得回来。假模型照真形态办——从上一条工具返回里读编号，
-    读不出来就传一个瞎编的，那样这条测试会以「稿子不在」收场而不是静默变绿。
+    ADR 0022 一度把那根线拆成两截（`draft_chapter` → `save_draft`）；2026-09-12 起
+    （ADR 0048）又是一截：起草工具写完直接写进那一章，模型不再有第二个动作可做。
+    这条量的仍然是同一件事——浏览器点完，磁盘上那一章真的变了。
     """
     monkeypatch.setattr(drafting, "draft_chapter", FakeDrafting())
     pid = book["pid"]
 
     class Scripted:
-        """先要一稿，把**那一稿**存进去，最后说话收手。"""
+        """要一稿（它自己就写进去了），然后说话收手。"""
 
         def __init__(self) -> None:
             self.calls = 0
@@ -761,23 +762,10 @@ def test_one_turn_from_the_browser_really_changes_the_chapter_on_disk(
                         ),
                     ),
                 )
-            if self.calls == 2:
-                drafted = [m for m in messages if m.get("role") == "tool"][-1]
-                draft_id = json.loads(drafted["content"]).get("draft_id", "draft:不存在")
-                return CompletionResult(
-                    text="",
-                    model=MODEL,
-                    finish_reason="tool_calls",
-                    tool_calls=(
-                        ToolCall(
-                            id="c3",
-                            name="save_draft",
-                            arguments=json.dumps({"draft_id": draft_id}),
-                        ),
-                    ),
-                )
+            drafted = [m for m in messages if m.get("role") == "tool"][-1]
+            assert json.loads(drafted["content"])["landed"] is True, drafted["content"]
             return CompletionResult(
-                text="写好了，已经存进第 1 章。", model=MODEL, finish_reason="stop"
+                text="写好了，已经写进第 1 章。", model=MODEL, finish_reason="stop"
             )
 
     monkeypatch.setattr(chat_mod, "build_agent_model", lambda config, plan: Scripted())
@@ -788,7 +776,7 @@ def test_one_turn_from_the_browser_really_changes_the_chapter_on_disk(
         json={"chapter": 1, "said": "第 1 章重写一稿"},
     )
     assert turn.status_code == 200, turn.text
-    assert turn.json()["lookups"] == 2
+    assert turn.json()["lookups"] == 1
 
     # 出参上那几稿：界面靠它知道「这一轮写了什么、哪一版进了书」（ADR 0022）。
     drafts = turn.json()["drafts"]

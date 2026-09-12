@@ -298,6 +298,12 @@ class ChapterDesk:
         self._conn = conn
         self._project_id = project_id
         self._root = Path(root)
+        # 这一轮**自己**写进各章的那一版的哈希（章号 → sha）。一批几稿依次落盘时，
+        # 第二稿的底稿是第一稿落盘之前的那一版——底稿闸会把它当成「作者在这中间改过」
+        # 而拒掉。磁盘上现在那一版**就是我们上一稿写的**时，这不是作者的改动，接着盖
+        # 才对（ADR 0048：起草即写入，一批几稿全进书，最后一稿留在正文里，其余在版本
+        # 历史里）。作者真在中间改过一笔，磁盘的哈希就对不上这张表，闸照旧拒。
+        self._written: dict[int, str] = {}
         self._config = config
         self._capability = capability
         self._events = events
@@ -715,17 +721,20 @@ class ChapterDesk:
         和留痕失败（见 `_log_landing`）。
         """
         stored = self._require(candidate_id)
-        landed, note = _land(
+        landed, note, written = _land(
             self._store,
             self._conn,
             project_id=self._project_id,
             root=self._root,
             chapter=stored.chapter,
             base_sha=stored.base_sha256,
+            own_sha=self._written.get(stored.chapter),
             body=stored.body,
             language=self._length.language,
         )
         if landed:
+            if written:
+                self._written[stored.chapter] = written
             self._candidates.mark_landed(self._project_id, candidate_id)
             self.produced = [
                 c.model_copy(update={"landed": True}) if c.id == candidate_id else c
@@ -810,8 +819,13 @@ def _land(
     base_sha: str | None,
     body: str,
     language: DraftLanguage,
-) -> tuple[bool, str]:
-    """把这一稿写进第 `chapter` 章。返回 `(写没写成, 说给模型听的那句话)`。
+    own_sha: str | None = None,
+) -> tuple[bool, str, str]:
+    """把这一稿写进第 `chapter` 章。返回 `(写没写成, 说给模型听的那句话, 写进去的那一版的哈希)`。
+
+    `own_sha` 是**这一轮自己**上一次写进这一章的那一版的哈希（`ChapterDesk._written`）：
+    磁盘上现在正是那一版时，底稿闸按它比对，而不是按这一稿起草时的底稿——一批几稿
+    依次落盘才走得通（ADR 0048）。磁盘不是那一版（作者中间改过）就照旧按底稿比，拒。
 
     每一条不写的理由都要说得出口（见 `ChapterDesk.land`）。**这句话本身双语**
     （国际化第三批（下半）遗漏的一角，2026-08-27 补上）：`note` 不走
@@ -830,17 +844,17 @@ def _land(
         # ADR 0021 的范围限制，**这条 404 不许为 agent 放开**：新建一章要起章标题，
         # 而标题是切章的锚（切错了整本书章号会漂），`chapter_snapshot.chapter_id`
         # 也没有落点。所以交出正文，由作者建。
-        return False, message("landing_target_chapter_missing", language, chapter=chapter)
+        return False, message("landing_target_chapter_missing", language, chapter=chapter), ""
 
     if base_sha is None:
         # **拆成两个动作之后新长出来的一档**：起草那会儿这一章不存在，现在它存在了
         # ——那是作者在这中间自己建的。`expected_sha256=None` 会把闸整个关掉，
         # 于是他刚起的那一章被一份**根本不是基于它写的**稿子盖掉。
-        return False, message("landing_chapter_created_after_draft", language, chapter=chapter)
+        return False, message("landing_chapter_created_after_draft", language, chapter=chapter), ""
 
     head = importer.single_chapter(current)
     if head is None:
-        return False, message("landing_chapter_head_malformed", language, chapter=chapter)
+        return False, message("landing_chapter_head_malformed", language, chapter=chapter), ""
 
     # 模型自己写了一行章标题时，**用作者那一行，不用它那一行**：标题是切章的依据，
     # 换标题是作者的动作（同上面那条 404 的理由）。它写的那份被丢掉，正文照旧。
@@ -850,13 +864,13 @@ def _land(
         # 空的一稿接上章标题**照样切得出恰好一章**，所以下面那道形状闸拦不住它——
         # 拦不住的后果是作者的一整章被一份空白盖掉。生成那一侧已经拒过一次空稿，
         # 这一条是第二道：候选表里那份 `body` 不是这一层写的，它只保证自己不清空一章。
-        return False, message("landing_draft_empty", language, chapter=chapter)
+        return False, message("landing_draft_empty", language, chapter=chapter), ""
     candidate = importer.chapter_text(head.raw_heading, text)
     if importer.single_chapter(candidate) is None:
         # **写之前先验一次**，而不是等 `sync` 事后报错：`save_chapter` 是先写盘再 sync，
         # 那时正文已经盖上去了，作者要自己去修章标题才能存回来。这一稿多半自己又写了
         # 一行（或几行）章标题。
-        return False, message("landing_candidate_not_single_chapter", language, chapter=chapter)
+        return False, message("landing_candidate_not_single_chapter", language, chapter=chapter), ""
 
     try:
         # **先把磁盘上现在那一版落成快照。** ADR 0021 承诺的退路是「版本历史里退得回去」，
@@ -866,21 +880,27 @@ def _land(
         # 内容一字不差的章走 `unchanged_count`，不多出一行快照。
         importer.sync(store, project_id, root)
     except importer.SyncRefused as exc:
-        return False, message(
-            "landing_presync_refused", language, chapter=chapter, path=exc.path
+        return (
+            False,
+            message("landing_presync_refused", language, chapter=chapter, path=exc.path),
+            "",
         )
 
+    # 磁盘上现在那一版是这一轮自己上一稿写的 ⇒ 按它比（见函数 docstring）。
+    ours = own_sha is not None and importer.text_digest(current) == own_sha
+    expected = own_sha if ours else base_sha
     try:
-        importer.save_chapter(
-            store, project_id, root, chapter, candidate, expected_sha256=base_sha
+        receipt = importer.save_chapter(
+            store, project_id, root, chapter, candidate, expected_sha256=expected
         )
     except importer.ChapterChanged:
         # **唯一那道闸**（ADR 0021）。不是「问你可不可以」，是「你比它更晚改过」。
-        return False, message("landing_chapter_changed", language, chapter=chapter)
+        return False, message("landing_chapter_changed", language, chapter=chapter), ""
     except importer.ChapterMissing:
         # 这中间那个文件被删了/改名了。同上面那条：交出正文，不重建。
-        return False, message("landing_chapter_file_missing", language, chapter=chapter)
+        return False, message("landing_chapter_file_missing", language, chapter=chapter), ""
     except importer.SyncRefused:
+        written = importer.text_digest(candidate)
         # 上面那次 `sync` 刚过，所以走到这儿只可能是**这几毫秒里**别的章被改坏了。
         # 正文**已经**在磁盘上（`save_chapter` 先写盘），所以这儿说的是「存了，但
         # 版本历史这一次没跟上」——磁盘是真相源（ADR 0007），不许反过来说没存。
@@ -890,10 +910,15 @@ def _land(
         # 但每步留痕」换掉了「事前问一句」，只履行前半句就是把那笔交易赖掉一半。
         # 快照这一次没落下，所以那一行也说清楚了「版本历史没跟上」。
         _log_landing(conn, project_id=project_id, chapter=chapter, candidate=candidate)
-        return True, message("landing_saved_but_history_not_recorded", language, chapter=chapter)
+        return (
+            True,
+            message("landing_saved_but_history_not_recorded", language, chapter=chapter),
+            written,
+        )
 
+    written = receipt.text_sha256
     _log_landing(conn, project_id=project_id, chapter=chapter, candidate=candidate)
-    return True, message("landing_saved", language, chapter=chapter)
+    return True, message("landing_saved", language, chapter=chapter), written
 
 
 def _log_landing(conn: Connection, *, project_id: str, chapter: int, candidate: str) -> None:

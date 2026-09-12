@@ -460,7 +460,7 @@ def test_frontend_fixture_matches_the_real_api(
                 ),
             )
         return CompletionResult(
-            text="第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。",
+            text="第 2 章这一场，血脉那条先别说破。写了一稿，已经写进第 2 章了。",
             model="deepseek-v4-flash",
             finish_reason="stop",
             prompt_tokens=1_200,

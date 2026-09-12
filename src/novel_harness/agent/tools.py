@@ -35,8 +35,7 @@ agent 调一次就把 PLANNED 秘密的正文读进对话历史，而对话是�
 |---|---|---|
 | `scene_constraints` | 第 N 章正文里数出来的在场角色 | PLANNED 边 |
 | `character_state`   | 某人第 N 章在哪、什么状态、登场没有、死没死 | `Node`（它带着 props） |
-| `draft_chapter`     | 起草第 N 章的一稿，**收进候选、不动书** | **一整章正文**（只给 id + 定长预览 + 自述） |
-| `save_draft`        | 把某一稿写进它那一章（**不问作者**） | —— 见下面「落盘」那一节 |
+| `draft_chapter`     | 起草第 N 章的一稿并**写进那一章**（ADR 0048，不问作者） | **一整章正文**（只给 id + 定长预览 + 自述 + 写没写进去） |
 | `read_draft`        | 按 id 把某一稿的全文拿回来 | —— 最贵的一条，只在要合并两版时调 |
 | `ask_author`        | 停下来问作者一句，给他几个可点的选项 | —— 见下面「问作者」那一节 |
 | `remember_rule`     | 把作者刚定下的一条规矩记下来 | —— 见下面「记规矩」那一节 |
@@ -58,18 +57,19 @@ agent 调一次就把 PLANNED 秘密的正文读进对话历史，而对话是�
 **索引的四条工具全部只读、且出参里没有一条路径走得到 `props`。** 它们新加的返回面同样
 被 `tests/test_agent_tools.py` 的那张网罩着——加工具的那天先跑那张网，不是先跑功能测试。
 
-── 落盘：**是一条工具了，但它收不到一个字的正文**（ADR 0022，2026-08-12）────────
+── 落盘：**起草即写入，而表里没有一条工具收得到一个字的正文**（ADR 0048，2026-09-12）──
 
 ADR 0019 边界一原来的最后一条是「写正文必须作者确认，模型不能直接落盘」。
-**那一条被 ADR 0021 推翻了**（起草完直接写磁盘，不弹框），而 ADR 0022 又把它的**机制**
-拆成两个动作：生成（花钱、不动书）/ 落盘（不花钱、动书、**仍然不问作者**）。
-于是表里第一次有了一条会改作者的书的工具（`save_draft`）。它守的东西换了个位置，
-但一条都没松（`tests/test_agent_tools.py::test_no_tool_takes_a_paragraph_of_prose` 钉着这一节）：
+**那一条被 ADR 0021 推翻了**（起草完直接写磁盘，不弹框）；ADR 0022 一度把机制拆成
+生成 / 落盘两个动作（`draft_chapter` → `save_draft`），2026-09-12 作者裁定合回一个：
+稿子写完直接进那一章，作者在正文里当场看到，不满意在版本历史里退回
+（[ADR 0048](../../../docs/adr/0048-drafting-writes-the-chapter.md)）。`save_draft` 删了。
+守的东西一条都没松（`tests/test_agent_tools.py::test_no_tool_takes_a_paragraph_of_prose` 钉着这一节）：
 
-- **`save_draft` 只收一个候选 id，收不到文本。** 所以**模型没有「只写不草」这个动作**：
-  它不能拿一段自己编的（或者从别处抄来的）文本去盖某一章——能写进磁盘的只有刚刚由后端
-  按那一章的约束生成出来的候选。这条以前靠「表里根本没有写工具」成立，现在靠**入参形状**
-  成立，而后者是可断言的。
+- **能写进磁盘的只有刚刚由后端按那一章的约束生成出来的那一稿。** 表里没有任何一条工具
+  收一段正文：模型不能拿一段自己编的（或者从别处抄来的）文本去盖某一章。这条以前靠
+  「表里根本没有写工具」成立，现在靠**入参形状**成立（`draft_chapter` 收 `brief` /
+  `materials`——那是给写手的话，不是正文；`read_draft` 只收编号），而后者是可断言的。
 - **写入面仍然不在 `ToolContext` 上。** 写盘要 `importer.sync()`，而它收的是
   `GraphStore`（带写入面）；这个 dataclass 上只有 `StoryGraph`，`CanonWriter` 在类型层
   就不存在（边界一）。落盘发生在**注入进来的那个 `DraftDesk` 里**（`agent/drafting.py`
@@ -490,7 +490,7 @@ class DraftResult(BaseModel):
 
     chapter: int
     draft_id: str
-    """把这一稿写进书里（`save_draft`）或者读全文（`read_draft`）时报这个号。
+    """读全文（`read_draft`）时报这个号。
 
     **别把它念给作者听**：他认得的是「第 2 稿」（`ordinal`），不是一串编号。
     """
@@ -508,6 +508,16 @@ class DraftResult(BaseModel):
     不是引擎给的评价——引擎不给散文打分（ADR 0005）。空 = 它这次没说，这儿不替它编。
     """
 
+    landed: bool = False
+    """**写进那一章了没有**（ADR 0048：起草即写入）。`False` 时 `landing` 说的是为什么。"""
+
+    landing: str = ""
+    """落盘那一步说给模型听的那句话：写进哪儿了 / 为什么没写。**每一种结局都说得出口。**
+
+    「我写进第 12 章了，你在正文里看得到」和「你刚改过这一章，我没有覆盖，稿子在桌上」
+    是两句完全不同的话，而模型只能从这儿知道是哪一句。
+    """
+
     calls: tuple[ModelCallReceipt, ...] = Field(default=(), exclude=True)
     """这一稿花掉的那几笔。**`exclude=True`：它一个字都不进对话历史。**
 
@@ -523,10 +533,10 @@ class DraftResult(BaseModel):
 class DraftIdArgs(BaseModel):
     """认一稿：**只有一个候选 id，没有别的**。
 
-    `save_draft` 和 `read_draft` 共用它，而这个形状本身就是那道闸：
-    **模型交不出一段正文**，它只能指着后端刚生成的某一稿说「这个」。
-    合成一个「写正文（收 text）」的工具就是把 ADR 0019 边界一最硬的那半条拆掉——
-    那时模型能拿任何一段字去盖作者的书。
+    `read_draft` 收它。这个形状本身就是那道闸的一半：**模型交不出一段正文**，它只能
+    指着后端刚生成的某一稿说「这个」。另一半是 `draft_chapter` 自己（ADR 0048）：
+    能写进作者的书的只有刚刚由后端按那一章的约束生成出来的那一稿——表里没有任何
+    一条工具收一段正文去盖一章，否则 ADR 0019 边界一最硬的那半条就拆掉了。
     """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -535,21 +545,6 @@ class DraftIdArgs(BaseModel):
         min_length=1,
         description="哪一稿（起草时返回的那个编号）。**不要把这个编号念给作者听。**",
     )
-
-
-class LandingResult(BaseModel):
-    """`save_draft` 的出参：**写没写成，以及为什么**。
-
-    「我写进第 12 章了」和「你刚改过这一章，我没有覆盖它」是两句完全不同的话，
-    而模型只能从这份返回里知道是哪一句（ADR 0021 的机制照旧，只是它现在是一个动作）。
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    chapter: int
-    landed: bool = False
-    note: str = ""
-    """写进哪儿了 / 为什么没写。**每一种结局都说得出口。**"""
 
 
 class DraftFullText(BaseModel):
@@ -1010,6 +1005,13 @@ def _handle_draft_chapter(args: DraftAsk, context: ToolContext) -> DraftResult:
         )
     product = desk.write(args, ctx, snapshot=snapshot)
     candidate = product.candidate
+    # **写完就写进那一章**（ADR 0048：起草即写入，作者在正文里当场看到，不满意在版本
+    # 历史里退回）。落盘碰库也碰盘，所以回到锁里；一批几稿并发写完之后在这儿排着队
+    # 依次落盘，`ChapterDesk.land` 认得出「磁盘上那一版是我上一稿写的」。
+    # 写没写成是**返回值**：作者中途改过那一章 / 那一章还不存在，稿子留在桌上，
+    # 模型据 `landing` 那句话决定怎么跟作者说。
+    with context.db_guard:
+        report = desk.land(candidate.id)
     return DraftResult(
         chapter=args.chapter,
         draft_id=candidate.id,
@@ -1017,13 +1019,10 @@ def _handle_draft_chapter(args: DraftAsk, context: ToolContext) -> DraftResult:
         units=candidate.units,
         preview=candidate.preview,
         note=candidate.note,
+        landed=report.landed,
+        landing=report.note,
         calls=product.calls,
     )
-
-
-def _handle_save_draft(args: DraftIdArgs, context: ToolContext) -> LandingResult:
-    report = _desk(context).land(args.draft_id)
-    return LandingResult(chapter=report.chapter, landed=report.landed, note=report.note)
 
 
 ASK_ACKNOWLEDGED: Final = (
@@ -1178,12 +1177,15 @@ class ToolSpec:
     1. **跑一遍和跑三遍对世界的影响相同**（它不动书、不动 canon、不改任何共享状态）；
     2. **它慢**——慢到值得为它多担一份线程的心。
 
-    今天只有 `draft_chapter` 两条都满足：ADR 0022 把落盘拆出去之后它没有副作用了，
-    而它是表里唯一一个每次要跑几十秒的（一次真的模型调用）。索引那几层是纯读，
-    但它们快，并发它们只是把线程安全的面积白白摊大。
+    今天只有 `draft_chapter` 两条都满足——**但它 2026-09-12 起又有副作用了**（ADR 0048：
+    写完直接写进那一章）。它仍然并发，靠的是两道锁而不是屏障：几十秒的模型调用在锁外
+    并发跑，落盘那一小段回到 `ToolContext.db_guard` 里排队，磁盘那一侧由 `save_chapter`
+    的章级锁罩着；一批几稿依次落盘时 `ChapterDesk.land` 认得出「磁盘上那一版是我上一稿
+    写的」（`own_sha`），所以第二稿不会被底稿闸当成作者的改动拒掉。
+    索引那几层是纯读，但它们快，并发它们只是把线程安全的面积白白摊大。
 
-    **`save_draft` 永远是 False**：它写作者的书。它在批里是一道**屏障**——
-    前面那几条并发跑完了才轮到它，它跑完了后面的才开始（见 `BatchRunner`）。
+    有别的副作用工具进表的那天，**默认 False = 屏障**——前面那几条并发跑完了才轮到它，
+    它跑完了后面的才开始（见 `BatchRunner`）。
     """
 
 
@@ -1209,17 +1211,19 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
     ToolSpec(
         name="draft_chapter",
         description=(
-            "起草第 N 章的一稿。**这一步不动书**：稿子存在一边，返回里给你它的编号、"
-            "字数、开头的一段，以及写它的那个模型自己说的一句话。\n"
+            "起草第 N 章的一稿，**写完直接写进那一章**：作者当场在正文里看到，不满意会在"
+            "版本历史里退回上一版——所以**不要问他要不要存**，写完告诉他写了什么就行。"
+            "返回里给你它的编号、字数、开头的一段、写它的那个模型自己说的一句话，"
+            "以及写没写进去（作者在这中间改过那一章、或那一章还不存在时不会覆盖，"
+            "稿子留在桌上，返回里说清为什么——那时把情况告诉他）。\n"
             "写之前先做三件事：分析作者的意图（写哪一章、新写还是重写、牵涉谁、牵涉哪几章）；"
             "由粗到细查资料（目录 → 总结 → 事件 → 角色卡 → 原文，只在需要细节时读原文，"
             "有目的地挑）；对照规矩（validation_rules 里的检验规则、作者交代过的有时限的规矩、"
             "你查到的事实矛盾）。然后把结论写进 brief，把写手够不着的远章资料放进 materials。\n"
             "写手自己有：文风、禁用字、这一章在场人物的角色卡、他们最近的事件、最近几章的总结、"
             "上一章结尾和这一章当前正文——**这些不用你抄进来**。\n"
-            "方向清楚就写一稿、接着调 save_draft 存进去（不用问作者，他随时能退回去）；"
-            "方向不清楚就一次要几稿（brief 各不同），把它们的自述摆给作者挑——"
-            "**同一批里的几稿会同时写**，不比一稿慢多少。"
+            "默认写一稿。作者明确要几个版本时才一次要几稿（brief 各不同）——它们会依次写进"
+            "那一章，最后一稿留在正文里，其余在版本历史和并排页里；**同一批里的几稿会同时写**。"
         ),
         args=DraftAsk,
         handler=_handle_draft_chapter,
@@ -1278,18 +1282,6 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
     # ── 起草那一摊的另外两半（ADR 0022）。**追加在表尾，尽管它俩是 `draft_chapter` 的
     # 同伙**：按边界六，声明是能进稳定前缀的东西之一，在中间插一条会把它后面整段的
     # 缓存作废——那不是错误，是白付一次全量 token，而且没有任何东西会提示。
-    ToolSpec(
-        name="save_draft",
-        description=(
-            "把某一稿写进它那一章，**不用问作者**——他随时能在版本历史里退回去。"
-            "只收稿子的编号：你没法拿别的文本去盖一章。"
-            "返回里会说清楚存没存进去：作者在这中间改过那一章、或者那一章还不存在"
-            "（新的一章要他自己起标题），都不会覆盖，那时把稿子读给他听、让他决定。"
-        ),
-        args=DraftIdArgs,
-        handler=_handle_save_draft,
-        label="写入章节",
-    ),
     ToolSpec(
         name="read_draft",
         description=(
@@ -1630,10 +1622,10 @@ def _asked_chapter(args: BaseModel) -> int | None:
 def _answered_chapter(payload: BaseModel) -> int | None:
     """出参自己说的那个章号。**只在入参里没有章号时才问它**（同一条结构判断的另一半）。
 
-    ADR 0022 之后表里多了两条**入参里只有一个稿子编号**的工具（`save_draft` /
-    `read_draft`），而 `read_draft` 的返回里躺着一整章正文。只看入参的话它们的
-    `chapter` 恒为 `None` ⇒ 投影一条都不筛 ⇒ 一稿第 200 章的正文会跟着模型回头写第 40 章
-    （边界五那条「等着发生的跨章泄漏」）。所以出参上有一个叫 `chapter` 的整数就取它。
+    ADR 0022 之后表里有了**入参里只有一个稿子编号**的工具（今天剩 `read_draft`），
+    而它的返回里躺着一整章正文。只看入参的话它的 `chapter` 恒为 `None` ⇒ 投影一条都不筛
+    ⇒ 一稿第 200 章的正文会跟着模型回头写第 40 章（边界五那条「等着发生的跨章泄漏」）。
+    所以出参上有一个叫 `chapter` 的整数就取它。
 
     **不许反过来盖掉入参那个数**：模型点的是哪一章由它自己说了算，出参跟入参不一致的
     那天（今天没有这样的工具）该红的是测试，不是让投影按另一个坐标去筛。
@@ -1860,15 +1852,16 @@ class BatchRunner:
     ── 为什么会有它（ADR 0022）────────────────────────────────────────────
 
     起草拆成两个动作之后，`draft_chapter` 没有副作用了——**一批三稿可以同时写**，
-    作者盯着转圈的两三分钟压回一分钟。旧机制下不敢并发：三稿都要往同一个文件写。
+    作者盯着转圈的两三分钟压回一分钟。2026-09-12 起它又写书了（ADR 0048），并发照旧：
+    慢的那一段（模型调用）在锁外，落盘那一小段回到锁里排队。
 
     ── 三条不许省的规矩 ──────────────────────────────────────────────────
 
     1. **顺序不变。** 出来的结果与 `calls` 同序，`tool_result` 靠 `call_id` 认领，
        而「哪几个 `tool_call` 还缺 result」是线性 loop 的全部执行态（ADR 0019）。
-    2. **有副作用的那几条是屏障。** `save_draft` 写作者的书：它前面那批并发的跑完了
-       才轮到它，它跑完了后面的才开始。判据是 `ToolSpec.concurrent`（**默认 False**），
-       不是一张「哪个工具危险」的表——表会在加工具的那天漂，而漂的方向是往开着的那侧。
+    2. **没标 `concurrent` 的那几条是屏障。** 它前面那批并发的跑完了才轮到它，它跑完了
+       后面的才开始。判据是 `ToolSpec.concurrent`（**默认 False**），不是一张「哪个工具
+       危险」的表——表会在加工具的那天漂，而漂的方向是往开着的那侧。
     3. **一个窗口一次跑完，跑完了才回到调用方。** 这不是省事：loop 拿到第一条结果之后
        就要落库、记账（那都是同一条 SQLite 连接上的**写事务**），而两个显式事务在同一条
        连接上嵌不起来。等整窗跑完，工作线程和 loop 线程就永远不会同时碰库。

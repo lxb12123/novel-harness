@@ -54,22 +54,29 @@ _EN: dict[str, str] = {
     ),
     # ── draft_chapter（ADR 0047：chapter + brief + materials）─────────────
     (
-        "起草第 N 章的一稿。**这一步不动书**：稿子存在一边，返回里给你它的编号、"
-        "字数、开头的一段，以及写它的那个模型自己说的一句话。\n"
+        "起草第 N 章的一稿，**写完直接写进那一章**：作者当场在正文里看到，不满意会在"
+        "版本历史里退回上一版——所以**不要问他要不要存**，写完告诉他写了什么就行。"
+        "返回里给你它的编号、字数、开头的一段、写它的那个模型自己说的一句话，"
+        "以及写没写进去（作者在这中间改过那一章、或那一章还不存在时不会覆盖，"
+        "稿子留在桌上，返回里说清为什么——那时把情况告诉他）。\n"
         "写之前先做三件事：分析作者的意图（写哪一章、新写还是重写、牵涉谁、牵涉哪几章）；"
         "由粗到细查资料（目录 → 总结 → 事件 → 角色卡 → 原文，只在需要细节时读原文，"
         "有目的地挑）；对照规矩（validation_rules 里的检验规则、作者交代过的有时限的规矩、"
         "你查到的事实矛盾）。然后把结论写进 brief，把写手够不着的远章资料放进 materials。\n"
         "写手自己有：文风、禁用字、这一章在场人物的角色卡、他们最近的事件、最近几章的总结、"
         "上一章结尾和这一章当前正文——**这些不用你抄进来**。\n"
-        "方向清楚就写一稿、接着调 save_draft 存进去（不用问作者，他随时能退回去）；"
-        "方向不清楚就一次要几稿（brief 各不同），把它们的自述摆给作者挑——"
-        "**同一批里的几稿会同时写**，不比一稿慢多少。"
+        "默认写一稿。作者明确要几个版本时才一次要几稿（brief 各不同）——它们会依次写进"
+        "那一章，最后一稿留在正文里，其余在版本历史和并排页里；**同一批里的几稿会同时写**。"
     ): (
-        "Draft one version of chapter N. **This step does not touch the "
-        "book**: the draft is set aside, and the return gives you its id, "
-        "word count, an opening excerpt, and a note the model that wrote it "
-        "left about itself.\n"
+        "Draft one version of chapter N and **write it straight into that "
+        "chapter**: the author sees it in the text at once, and can revert "
+        "to the previous version in version history if they don't want it "
+        "— so **don't ask whether to save it**; when it's written, tell them "
+        "what you wrote. The return gives you its id, word count, an opening "
+        "excerpt, a note the model that wrote it left about itself, and "
+        "whether it went in (if the author changed that chapter in the "
+        "meantime, or the chapter doesn't exist yet, nothing is overwritten: "
+        "the draft stays on the desk and the return says why — tell them).\n"
         "Do three things first: analyse what the author wants (which "
         "chapter, new or rewrite, who's involved, which chapters it "
         "touches); look things up from coarse to fine (index → summaries → "
@@ -82,11 +89,11 @@ _EN: dict[str, str] = {
         "of the characters present in this chapter, their recent events, "
         "the last few chapters' summaries, the end of the previous chapter "
         "and this chapter's current text — **don't copy those in**.\n"
-        "If the direction is clear, write one draft and follow up with "
-        "save_draft (no need to ask the author, they can always revert it); "
-        "if it's unclear, request several drafts at once (different briefs) "
-        "and lay their notes in front of the author to choose — **drafts in "
-        "the same batch are written concurrently**, barely slower than one."
+        "Write one draft by default. Only when the author explicitly asks "
+        "for several versions, request several at once (different briefs) "
+        "— they are written into the chapter one after another, the last "
+        "stays in the text and the rest are in version history and on the "
+        "compare page; **drafts in the same batch are written concurrently**."
     ),
     (
         "起草第 N 章的一稿（**chapter + brief + materials**，ADR 0047）。\n\n"
@@ -242,22 +249,7 @@ _EN: dict[str, str] = {
         "three layers above to locate it before drilling down here."
     ),
     "读第几章的正文。": "Which chapter's prose to read.",
-    # ── save_draft / read_draft ──────────────────────────────────────────
-    (
-        "把某一稿写进它那一章，**不用问作者**——他随时能在版本历史里退回去。"
-        "只收稿子的编号：你没法拿别的文本去盖一章。"
-        "返回里会说清楚存没存进去：作者在这中间改过那一章、或者那一章还不存在"
-        "（新的一章要他自己起标题），都不会覆盖，那时把稿子读给他听、让他决定。"
-    ): (
-        "Write one draft into its chapter — **no need to ask the "
-        "author**, they can always revert it in version history. Only "
-        "takes the draft's id: you have no way to overwrite a chapter "
-        "with any other text. The return states clearly whether it "
-        "saved: if the author changed that chapter in the meantime, or "
-        "the chapter doesn't exist yet (a new chapter needs them to "
-        "title it themselves), it will not overwrite — in that case, "
-        "read the draft to them and let them decide."
-    ),
+    # ── read_draft ───────────────────────────────────────────────────────
     (
         "按编号把某一稿的全文读回来。**很贵**（一整章会一直留在你的上下文里），"
         "只在真的要动那些字的时候调——比如作者说「把第一稿的开头接第二稿的结尾」。"
@@ -273,20 +265,20 @@ _EN: dict[str, str] = {
     ),
     (
         "认一稿：**只有一个候选 id，没有别的**。\n\n"
-        "`save_draft` 和 `read_draft` 共用它，而这个形状本身就是那道闸：\n"
-        "**模型交不出一段正文**，它只能指着后端刚生成的某一稿说「这个」。\n"
-        "合成一个「写正文（收 text）」的工具就是把 ADR 0019 边界一最硬的那半条拆掉——\n"
-        "那时模型能拿任何一段字去盖作者的书。"
+        "`read_draft` 收它。这个形状本身就是那道闸的一半：**模型交不出一段正文**，它只能\n"
+        "指着后端刚生成的某一稿说「这个」。另一半是 `draft_chapter` 自己（ADR 0048）：\n"
+        "能写进作者的书的只有刚刚由后端按那一章的约束生成出来的那一稿——表里没有任何\n"
+        "一条工具收一段正文去盖一章，否则 ADR 0019 边界一最硬的那半条就拆掉了。"
     ): (
         "Identify one draft: **only a candidate id, nothing else.**\n\n"
-        "`save_draft` and `read_draft` share it, and this shape is "
-        "itself the gate:\n"
+        "`read_draft` takes it. This shape is itself half of the gate: "
         "**the model cannot hand over a piece of prose** — it can only "
-        "point at a draft the backend just generated and say 'this "
-        "one.'\n"
-        "Assembling a 'write prose (takes text)' tool would tear out "
-        "the hardest half of ADR 0019 boundary one — the model could "
-        "then overwrite the author's book with any text at all."
+        "point at a draft the backend just generated and say 'this one.' "
+        "The other half is `draft_chapter` itself (ADR 0048): the only "
+        "thing that can be written into the author's book is the draft the "
+        "backend just generated under that chapter's constraints — no tool "
+        "in the table takes a piece of prose to overwrite a chapter with, "
+        "or the hardest half of ADR 0019 boundary one would be torn out."
     ),
     "哪一稿（起草时返回的那个编号）。**不要把这个编号念给作者听。**": (
         "Which draft (the id returned at drafting time). **Never read "
@@ -1017,13 +1009,14 @@ _MESSAGES: dict[str, dict[DraftLanguage, str]] = {
     },
     "landing_saved": {
         DraftLanguage.ZH: (
-            "已经写进第 {chapter} 章了（章标题保持原样）。"
-            "不满意就在版本历史里退回上一版，活动记录里也有这一次的记录。"
+            "已经写进第 {chapter} 章了（章标题保持原样），作者在正文里看得到。"
+            "不用问他要不要存：不满意他会在版本历史里退回上一版，活动记录里也有这一次的记录。"
         ),
         DraftLanguage.EN: (
-            "Chapter {chapter} has been saved (the chapter title was "
-            "kept as-is). If it's not right, roll back to the previous "
-            "version in the version history — this save is also in "
+            "Chapter {chapter} has been written (the chapter title was "
+            "kept as-is) and the author can see it in the text. Don't ask "
+            "whether to save: if it's not right they'll roll back to the "
+            "previous version in version history — this write is also in "
             "the activity log."
         ),
     },

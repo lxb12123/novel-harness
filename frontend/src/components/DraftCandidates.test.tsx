@@ -9,27 +9,31 @@ import { readCompareHandoff } from "../route";
 import { useCoords } from "../store";
 import { ChatPanel } from "./ChatPanel";
 
-// 桌上摆着的那几稿，**在对话面板里那两档**（ADR 0022；第三档是新标签页，
-// 在 `DraftCompare.test.tsx`）。
+// 这一轮写出来的那几稿，**在对话面板里**（ADR 0022 的桌子；入口 2026-09-12 起按
+// ADR 0048：稿子写完直接写进那一章，第三档新标签页在 `DraftCompare.test.tsx`）。
 //
-// 这份文件量的是**同一份数据的两种排布**，以及那条把它们分开的判据：
+// 这份文件量的是两种稿子各自长什么样：
 //
-//   窄（默认）→ 一稿一张卡，推荐那一版摊开、另两版只有自述 + 开头
-//   宽（拖出来的）→ 几列并排，各自一个滚轮
+//   写进去的 → **一行**（第几稿 · 字数 · 已写入 + 自述），正文在左边，这儿不摊第二份
+//   没写进去的（作者中途改过那一章 / 那一章还不存在 / 按停砍断）→ 一张卡，
+//     窄（默认）一稿一张、全收着；宽（拖出来的）几列并排、各自一个滚轮
 //
 // 喂的每一个字节都来自真 dump（`__fixtures__/api.json` 的 `chatTurn` / `drafts` /
 // `draftDetail`）。**变体只改「第几稿 / 落没落盘 / 有没有自述」**——真 dump 那一轮
-// 只写了一稿且没落盘，而「三稿、其中一稿进了书」正是这块屏幕要画的常态。
+// 写了一稿且写进去了。
 
 const REAL = fixtures.drafts.drafts[0] as DraftCandidateView;
 const variant = (over: Partial<DraftCandidateView>): DraftCandidateView => ({ ...REAL, ...over });
 
-/** 三稿：一稿有自述、一稿进了书、一稿**什么都没说**（自述是空串）。 */
+/** 三稿都写进了那一章：一稿有自述、一稿**什么都没说**（自述是空串）。 */
 const THREE: DraftCandidateView[] = [
-  variant({ id: "draft:ID43", ordinal: 1 }),
+  variant({ id: "draft:ID43", ordinal: 1, landed: true }),
   variant({ id: "draft:ID44", ordinal: 2, landed: true }),
-  variant({ id: "draft:ID45", ordinal: 3, note: "" }),
+  variant({ id: "draft:ID45", ordinal: 3, landed: true, note: "" }),
 ];
+
+/** 三稿一稿都没写进去（作者中途改过那一章那一档）：这时它们才是卡。 */
+const PENDING: DraftCandidateView[] = THREE.map((d) => ({ ...d, landed: false }));
 
 const turnWith = (drafts: DraftCandidateView[]) => ({ ...fixtures.chatTurn, drafts });
 
@@ -76,70 +80,33 @@ function widthIs(px: number) {
   });
 }
 
-describe("窄档（默认）：一稿一张卡", () => {
-  it("三稿都在，屏幕上说的是「第几稿」，**那一串内部标识一个字符都不上屏**", async () => {
+describe("写进那一章的稿子：一行，不摊正文（ADR 0048）", () => {
+  it("每一稿一行：第几稿 · 字数 · 已写入第几章；**那一串内部标识一个字符都不上屏**", async () => {
     const user = userEvent.setup();
-    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) }]);
+    renderWithApi(<ChatPanel />, [
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
+      { match: /\/drafts\/[^/]+$/, body: DETAIL },
+    ]);
+    const spy = vi.spyOn(globalThis, "fetch");
     await runTurn(user);
 
+    expect(document.querySelectorAll(".draft-landed")).toHaveLength(3);
     expect(screen.getByText("第 1 稿")).toBeInTheDocument();
-    expect(screen.getByText("第 2 稿")).toBeInTheDocument();
-    expect(screen.getByText("第 3 稿")).toBeInTheDocument();
+    expect(screen.getAllByText(/已写入第 2 章/)).toHaveLength(3);
+    // 正文在左边的编辑器里——这儿**一张卡都不画、一整章正文一个字节都不取**。
+    expect(document.querySelector(".draft-card")).toBeNull();
+    expect(screen.queryByRole("button", { name: /展开第/ })).toBeNull();
+    await new Promise((r) => setTimeout(r, 40));
+    expect(fullTextCalls(spy)).toEqual([]);
     expect(THREE[0].id).toMatch(/:/); // 探针：喂进去的真是那个形状
     expect(rawIds(screenText())).toEqual([]);
   });
 
-  it("**推荐那一版摊开，另两版只有自述 + 开头** —— 入口不许三章硬摊", async () => {
+  it("**说得出怎么退** —— 落盘不问作者（ADR 0021），那就欠他「改得掉」这一半", async () => {
     const user = userEvent.setup();
-    renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
-      { match: /\/drafts\/[^/]+$/, body: DETAIL },
-    ]);
-    const spy = vi.spyOn(globalThis, "fetch");
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) }]);
     await runTurn(user);
-
-    // 摊开的正文只有一份 —— 进了书的那一稿（`landed`，助手做过的一个动作）。
-    await screen.findByText(DETAIL.text);
-    await waitFor(() => expect(fullTextCalls(spy)).toHaveLength(1));
-    expect(fullTextCalls(spy)[0]).toContain(encodeURIComponent(THREE[1].id));
-    // 另两版：那一稿的自述 + 定长预览，**一整章正文一个字节都没取**。
-    expect(document.querySelectorAll(".draft-preview")).toHaveLength(2);
-    expect(screen.getByText("已写入本章")).toBeInTheDocument();
-  });
-
-  it("**一批都没落盘：一版都不摊开**，后端没挑，这儿也不挑", async () => {
-    const user = userEvent.setup();
-    const none = THREE.map((d) => ({ ...d, landed: false }));
-    renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn\/events$/, body: turnWith(none) },
-      { match: /\/drafts\/[^/]+$/, body: DETAIL },
-    ]);
-    const spy = vi.spyOn(globalThis, "fetch");
-    await runTurn(user);
-
-    expect(document.querySelectorAll(".draft-preview")).toHaveLength(3);
-    await new Promise((r) => setTimeout(r, 40));
-    expect(fullTextCalls(spy)).toEqual([]);
-    expect(screen.queryByText("已写入本章")).toBeNull();
-  });
-
-  it("点「展开」才去取那一整章 —— 取回来的是全文，不是那段预览", async () => {
-    const user = userEvent.setup();
-    renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
-      { match: /\/drafts\/[^/]+$/, body: DETAIL },
-    ]);
-    const spy = vi.spyOn(globalThis, "fetch");
-    await runTurn(user);
-    await waitFor(() => expect(fullTextCalls(spy)).toHaveLength(1));
-
-    await user.click(screen.getByRole("button", { name: "展开第 3 稿" }));
-
-    await waitFor(() => expect(fullTextCalls(spy)).toHaveLength(2));
-    expect(fullTextCalls(spy)[1]).toContain(encodeURIComponent(THREE[2].id));
-    // 收得回去（作者读完一版接着挑下一版，三版全摊着比不了）。
-    await user.click(screen.getByRole("button", { name: "收起第 3 稿" }));
-    expect(screen.getAllByText(DETAIL.text)).toHaveLength(1);
+    await screen.findByText(/如需撤销.*历史/);
   });
 
   it("**自述是空的就什么都不画** —— 替它编一句「这一版更冷」正是引擎不许做的事", async () => {
@@ -148,16 +115,66 @@ describe("窄档（默认）：一稿一张卡", () => {
     await runTurn(user);
 
     expect(THREE[2].note).toBe(""); // 探针
-    // 有自述的那两稿各画一行，没有的那一稿一行都没有。
-    expect(document.querySelectorAll(".draft-note")).toHaveLength(2);
+    // 有自述的那两稿各一句，没有的那一稿一句都没有。
+    expect(document.querySelectorAll(".draft-landed-note")).toHaveLength(2);
+  });
+});
+
+describe("没写进去的稿子：一张卡，窄档默认一稿一张", () => {
+  it("三稿都在，屏幕上说的是「第几稿」，**那一串内部标识一个字符都不上屏**", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(PENDING) }]);
+    await runTurn(user);
+
+    expect(screen.getByText("第 1 稿")).toBeInTheDocument();
+    expect(screen.getByText("第 2 稿")).toBeInTheDocument();
+    expect(screen.getByText("第 3 稿")).toBeInTheDocument();
+    expect(PENDING[0].id).toMatch(/:/); // 探针：喂进去的真是那个形状
+    expect(rawIds(screenText())).toEqual([]);
   });
 
-  it("有稿子进了书就说一句，**而且说得出怎么退**", async () => {
+  it("**一版都不摊开**：后端没挑，这儿也不挑；一整章正文一个字节都没取", async () => {
     const user = userEvent.setup();
-    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) }]);
+    renderWithApi(<ChatPanel />, [
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(PENDING) },
+      { match: /\/drafts\/[^/]+$/, body: DETAIL },
+    ]);
+    const spy = vi.spyOn(globalThis, "fetch");
     await runTurn(user);
-    // 落盘不问作者（ADR 0021 的核心），所以这一侧欠他「看得见 + 改得掉」。
-    await screen.findByText(/已写入正文.*历史/);
+
+    expect(document.querySelectorAll(".draft-preview")).toHaveLength(3);
+    await new Promise((r) => setTimeout(r, 40));
+    expect(fullTextCalls(spy)).toEqual([]);
+    expect(screen.queryByText(/已写入/)).toBeNull();
+    expect(screen.queryByText(/如需撤销/)).toBeNull();
+  });
+
+  it("点「展开」才去取那一整章 —— 取回来的是全文，不是那段预览", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<ChatPanel />, [
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(PENDING) },
+      { match: /\/drafts\/[^/]+$/, body: DETAIL },
+    ]);
+    const spy = vi.spyOn(globalThis, "fetch");
+    await runTurn(user);
+
+    await user.click(screen.getByRole("button", { name: "展开第 3 稿" }));
+
+    await screen.findByText(DETAIL.text);
+    await waitFor(() => expect(fullTextCalls(spy)).toHaveLength(1));
+    expect(fullTextCalls(spy)[0]).toContain(encodeURIComponent(PENDING[2].id));
+    // 收得回去（作者读完一版接着挑下一版，三版全摊着比不了）。
+    await user.click(screen.getByRole("button", { name: "收起第 3 稿" }));
+    expect(screen.queryByText(DETAIL.text)).toBeNull();
+  });
+
+  it("**自述是空的就什么都不画**", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(PENDING) }]);
+    await runTurn(user);
+
+    expect(PENDING[2].note).toBe(""); // 探针
+    expect(document.querySelectorAll(".draft-note")).toHaveLength(2);
   });
 });
 
@@ -169,7 +186,7 @@ describe("被砍断的那一稿：屏幕必须说它没写完", () => {
 
   it("**那句标注画出来了**，而且照抄后端那一句", async () => {
     const user = userEvent.setup();
-    const half = [variant({ id: "draft:ID46", ordinal: 1, stopped_reason: STOPPED })];
+    const half = [variant({ id: "draft:ID46", ordinal: 1, landed: false, stopped_reason: STOPPED })];
     renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(half) }]);
     await runTurn(user);
 
@@ -180,16 +197,16 @@ describe("被砍断的那一稿：屏幕必须说它没写完", () => {
 
   it("**写完的那几稿身上一个字都不多**（自守卫：恒画等于没画）", async () => {
     const user = userEvent.setup();
-    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) }]);
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(PENDING) }]);
     await runTurn(user);
 
-    expect(THREE.every((d) => d.stopped_reason === "")).toBe(true); // 探针：真 dump 就是空的
+    expect(PENDING.every((d) => d.stopped_reason === "")).toBe(true); // 探针：真 dump 就是空的
     expect(document.querySelector(".draft-stopped")).toBeNull();
   });
 
   it("它画在正文**前面** —— 它改变的是后面那段字该怎么读", async () => {
     const user = userEvent.setup();
-    const half = [variant({ id: "draft:ID47", ordinal: 1, stopped_reason: STOPPED })];
+    const half = [variant({ id: "draft:ID47", ordinal: 1, landed: false, stopped_reason: STOPPED })];
     renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(half) }]);
     await runTurn(user);
 
@@ -204,7 +221,7 @@ describe("宽档：拖到一定宽度就并排", () => {
     widthIs(3 * COLUMN_MIN_PX + 40);
     const user = userEvent.setup();
     renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(PENDING) },
       { match: /\/drafts\/[^/]+$/, body: DETAIL },
     ]);
     const spy = vi.spyOn(globalThis, "fetch");
@@ -220,7 +237,7 @@ describe("宽档：拖到一定宽度就并排", () => {
   it("宽度不够就还是窄档 —— 三条读不下去的竖缝比摞着更糟", async () => {
     widthIs(3 * COLUMN_MIN_PX - 1);
     const user = userEvent.setup();
-    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) }]);
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(PENDING) }]);
     await runTurn(user);
 
     expect(document.querySelector(".draft-cards.wide")).toBeNull();

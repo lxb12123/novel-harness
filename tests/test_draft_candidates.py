@@ -321,9 +321,9 @@ def test_the_tool_result_never_carries_the_chapter(
 def test_a_draft_result_is_bound_to_its_chapter_even_when_the_call_has_no_chapter(
     poisoned: dict[str, Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**投影按章号筛，而 `save_draft` / `read_draft` 的入参里没有章号**（只有编号）。
+    """**投影按章号筛，而 `read_draft` 的入参里没有章号**（只有编号）。
 
-    只看入参的话它们的 `chapter` 恒为 `None` ⇒ 一条都不筛 ⇒ 一稿第 200 章的正文会跟着
+    只看入参的话它的 `chapter` 恒为 `None` ⇒ 一条都不筛 ⇒ 一稿第 200 章的正文会跟着
     模型回头写第 40 章（ADR 0019 边界五点名的那个「等着发生的跨章泄漏」）。
     所以出参上有一个叫 `chapter` 的整数就取它——同一条结构判断的另一半，
     **不是一张「哪个工具绑章号」的表**（表会在加工具的那天漂）。
@@ -350,14 +350,11 @@ def test_a_draft_result_is_bound_to_its_chapter_even_when_the_call_has_no_chapte
     )
     draft_id = json.loads(drafted.content)["draft_id"]
     outcomes = dispatch_all(
-        [
-            ToolCall(id="c1", name="read_draft", arguments=json.dumps({"draft_id": draft_id})),
-            ToolCall(id="c2", name="save_draft", arguments=json.dumps({"draft_id": draft_id})),
-        ],
+        [ToolCall(id="c1", name="read_draft", arguments=json.dumps({"draft_id": draft_id}))],
         context,
     )
-    assert [o.chapter for o in outcomes] == [1, 1], (
-        "候选那两条返回没绑章号 —— 投影筛不到它们，一稿别章的正文会跟着走"
+    assert [o.chapter for o in outcomes] == [1], (
+        "读回那条返回没绑章号 —— 投影筛不到它，一稿别章的正文会跟着走"
     )
 
 
@@ -599,11 +596,13 @@ def test_three_drafts_in_one_batch_really_run_at_the_same_time(
     assert ordinals == [1, 2, 3], f"并发插进去的稿子撞号了：{ordinals}"
 
 
-def test_a_tool_with_side_effects_is_never_run_concurrently() -> None:
+def test_only_the_drafting_tool_runs_concurrently() -> None:
     """**并发的判据是一张表上的声明，而它默认是关的**（fail-closed）。
 
-    `save_draft` 写作者的书：它在一批里是**屏障**——前面那批并发的跑完了才轮到它。
-    这条断言看的是那张表本身，因为「哪几条能并发」一旦变成一份口头约定，
+    2026-09-12 起 `draft_chapter` 写完直接写进那一章（ADR 0048），它是表里唯一并发的、
+    也是唯一写作者的书的——并发落盘靠的是 `ToolContext.db_guard` + `save_chapter` 的
+    章级锁（`tests/test_candidates.py::test_concurrent_drafts_land_under_the_lock_one_after_another`
+    钉着），不是屏障。这条断言看的是那张表本身，因为「哪几条能并发」一旦变成一份口头约定，
     加工具的那天没有任何东西会提醒谁去想这件事。
     """
     from novel_harness.agent.tools import TOOL_TABLE
@@ -613,7 +612,6 @@ def test_a_tool_with_side_effects_is_never_run_concurrently() -> None:
         f"能并发的工具变了：{sorted(concurrent)}。加之前先回答两个问题——"
         "它跑三遍和跑一遍对世界的影响一样吗？它慢到值得为它多担一份线程的心吗？"
     )
-    assert "save_draft" not in concurrent, "落盘并发 = 三条线程同时写作者的同一章"
 
 
 # ══════════════════════════════════════════════════════════════════════════

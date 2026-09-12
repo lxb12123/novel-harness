@@ -39,20 +39,23 @@ const REAL = fixtures.drafts.drafts[0] as DraftCandidateView;
 const variant = (over: Partial<DraftCandidateView>): DraftCandidateView => ({ ...REAL, ...over });
 
 /**
- * 三稿，**故意摆成「位置 / 编号 / 字数都指向另一版」**：
+ * 三稿都**没写进去**（作者中途改过那一章那一档，ADR 0048 之后只有这一档还是卡），
+ * **故意摆成「位置 / 编号 / 字数都指向另一版」**，编号乱着（7 / 2 / 5）。
  *
- * - 进了书的是**中间**那一版（不是第一版，也不是最后一版）；
- * - 它的 `ordinal` 最小、`units` 最少——照「最新的」「最长的」「第一个」任何一种
- *   反推，挑中的都不是它。
- *
- * 后端的排序口径是 `(chapter, ordinal)`，所以真实数据里这三种判据经常重合；
+ * 后端的排序口径是 `(chapter, ordinal)`，所以真实数据里这几种判据经常重合；
  * 重合的时候「照后端给的」和「自己算一个」在屏幕上分不开。
  */
 const THREE: DraftCandidateView[] = [
-  variant({ id: "draft:ID71", ordinal: 7, units: 3100, note: "这一版最长。" }),
-  variant({ id: "draft:ID72", ordinal: 2, units: 900, landed: true, note: "这一版最短。" }),
-  variant({ id: "draft:ID73", ordinal: 5, units: 2600, note: "" }),
+  variant({ id: "draft:ID71", ordinal: 7, units: 3100, landed: false, note: "这一版最长。" }),
+  variant({ id: "draft:ID72", ordinal: 2, units: 900, landed: false, note: "这一版最短。" }),
+  variant({ id: "draft:ID73", ordinal: 5, units: 2600, landed: false, note: "" }),
 ];
+
+/** 同一批，但**中间**那一版写进了那一章——它的 `ordinal` 最小、`units` 最少，照
+ *  「最新的」「最长的」「第一个」任何一种反推，挑中的都不是它。 */
+const MIXED: DraftCandidateView[] = THREE.map((d) =>
+  d.id === "draft:ID72" ? { ...d, landed: true } : d,
+);
 
 /** 后端给的那个顺序（**从同一份数据推出来，不是抄一遍**）。三档都必须逐字是它：
  *  这就是「三档摆的是同一份数据」这句话的判据。`TurnReceipt.drafts` 已经排好序，
@@ -150,59 +153,54 @@ describe("三档：同一份数据的三种排布", () => {
   });
 
   it("并排比那一页（另一个标签页）：同上 —— **少一稿或者换个次序都会红**", async () => {
+    // 那一页写进去的也是卡（作者专门点开来并排读的），所以拿 `MIXED` 喂它。
     writeCompareHandoff({ book: "project:ID1", chapter: 2 });
-    renderWithApi(<DraftCompare chapter={2} />, draftRoutes(THREE));
+    renderWithApi(<DraftCompare chapter={2} />, draftRoutes(MIXED));
     await screen.findByText(ORDER[2]);
     expect(labelsOnScreen()).toEqual(ORDER);
   });
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// 二、推荐位：**后端给的那个动作**，不是屏幕上算出来的
+// 二、写进去的那一版：**后端给的那个动作**决定它是一行还是一张卡
 // ══════════════════════════════════════════════════════════════════════════
 
-describe("推荐位", () => {
-  it("摊开的是**进过书的那一版**，哪怕它又短、编号又小、还夹在中间", async () => {
+describe("写进那一章的那一版是一行，不摊正文（ADR 0048）", () => {
+  it("写进去的是一行、没写进去的是卡 —— 哪怕写进去的那版又短、编号又小、还夹在中间", async () => {
     renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
-      ...draftRoutes(THREE),
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(MIXED) },
+      ...draftRoutes(MIXED),
     ]);
     const spy = vi.spyOn(globalThis, "fetch");
     await runTurn();
+    await screen.findByText(ORDER[2]);
 
-    // 摊开的恰好一版，而且是 `landed` 那一版（`第 2 稿`）。
-    await screen.findByText(DETAIL.text);
-    expect(screen.getAllByText(DETAIL.text)).toHaveLength(1);
-    const opened = document.querySelector(".draft-card.open b")?.textContent;
-    expect(opened).toBe("第 2 稿");
-
-    // 而且**只为那一版取过全文**：另外两版一个字节都没下载。
-    const pulled = spy.mock.calls
-      .map((call) => String(call[0]))
-      .filter((u) => /\/drafts\/[^/?]+$/.test(u));
-    expect(pulled).toHaveLength(1);
-    expect(pulled[0]).toContain(encodeURIComponent("draft:ID72"));
+    const rows = [...document.querySelectorAll(".draft-landed b")].map((el) => el.textContent);
+    expect(rows).toEqual(["第 2 稿"]);
+    expect(labelsOnScreen()).toEqual(["第 7 稿", "第 5 稿"]);
+    // 正文在左边——这儿**一版都不摊开、一整章正文一个字节都没取**。
+    expect(document.querySelectorAll(".draft-card.open")).toHaveLength(0);
+    await new Promise((r) => setTimeout(r, 40));
+    expect(
+      spy.mock.calls.map((c) => String(c[0])).filter((u) => /\/drafts\/[^/?]+$/.test(u)),
+    ).toEqual([]);
   });
 
-  it("换一版进书，摊开的跟着换 —— **判据在后端那一列上，不在位置上**", async () => {
-    const moved = [
-      variant({ id: "draft:ID71", ordinal: 7, units: 3100 }),
-      variant({ id: "draft:ID72", ordinal: 2, units: 900 }),
-      variant({ id: "draft:ID73", ordinal: 5, units: 2600, landed: true }),
-    ];
+  it("换一版进书，那一行跟着换 —— **判据在后端那一列上，不在位置上**", async () => {
+    const moved = THREE.map((d) => (d.id === "draft:ID73" ? { ...d, landed: true } : d));
     renderWithApi(<ChatPanel />, [
       { method: "POST", match: /\/turn\/events$/, body: turnWith(moved) },
       ...draftRoutes(moved),
     ]);
     await runTurn();
-    await screen.findByText(DETAIL.text);
-    expect(document.querySelector(".draft-card.open b")?.textContent).toBe("第 5 稿");
+    await screen.findByText("第 7 稿");
+    expect(document.querySelector(".draft-landed b")?.textContent).toBe("第 5 稿");
   });
 
   it("**一版都没落盘：一版都不摊开，也不摆一句「建议用哪一版」**", async () => {
     // 后端不排名、不打分（ADR 0005），这一层更不许——它手上只有一段 120 字的开头。
     // 一批都没落盘时两边都不挑（同 `AmbiguousName`：两个方向都贵就摊开，绝不挑）。
-    const none = THREE.map((d) => ({ ...d, landed: false }));
+    const none = THREE;
     renderWithApi(<ChatPanel />, [
       { method: "POST", match: /\/turn\/events$/, body: turnWith(none) },
       ...draftRoutes(none),
@@ -240,6 +238,7 @@ describe("兜底那几支上一个研发术语都没有", () => {
       { match: /\/drafts(\?|$)/, body: listOf(THREE) },
     ]);
     await runTurn();
+    await userEvent.setup().click(screen.getByRole("button", { name: "展开第 2 稿" }));
     await screen.findByText(/正在读取稿件/);
     expect(devTerms(screenText())).toEqual([]);
   });
@@ -258,6 +257,7 @@ describe("兜底那几支上一个研发术语都没有", () => {
       { match: /\/drafts(\?|$)/, body: listOf(THREE) },
     ]);
     await runTurn();
+    await userEvent.setup().click(screen.getByRole("button", { name: "展开第 2 稿" }));
     await screen.findByText(/稿件读取失败/);
     expect(devTerms(screenText())).toEqual([]);
   });
@@ -330,6 +330,7 @@ describe("三栏没被这几稿挤动", () => {
       ...draftRoutes(THREE),
     ]);
     await runTurn();
+    await userEvent.setup().click(screen.getByRole("button", { name: "展开第 2 稿" }));
     await screen.findByText(DETAIL.text);
     expect(screen.getByRole("main").style.gridTemplateColumns).toBe(EXPECTED);
     // 中栏内部那一行（正文 / 写作助手对半分）也没被顶开。

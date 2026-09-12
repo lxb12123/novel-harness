@@ -259,9 +259,8 @@ def _surfaces_of(world: World) -> dict[str, str]:
         [
             _call("scene_constraints", chapter=CHAPTER),
             _call("character_state", chapter=CHAPTER, character="萧决"),
+            # 起草即写入（ADR 0048）：落盘回执现在跟着起草的返回一起回来，是同一个面。
             _call("draft_chapter", chapter=CHAPTER, brief="写一场雪，收在他没抬头。"),
-            # ADR 0022 拆出来的另外两个动作：它们各自是一个新的返回面。
-            _call("save_draft", draft_id=DRAFT_ID),
             _call("read_draft", draft_id=DRAFT_ID),
             # ADR 0024 的问作者：出参会被界面直接摆成一张卡，**它也是一个面**。
             # 这里问的是一句干净的话——它测的不是「模型会不会说破」（那是语义判断，
@@ -289,7 +288,7 @@ def _surfaces_of(world: World) -> dict[str, str]:
         ],
         context,
     )
-    assert [o.ok for o in outcomes] == [True] * 11 + [False] * 4
+    assert [o.ok for o in outcomes] == [True] * 10 + [False] * 4
     assert desk.seen, "起草工具没把约束交给起草侧 —— 第 4 个面没被采到，这条测试是空的"
 
     surfaces = {f"{o.name} 的返回（ok={o.ok}）": o.content for o in outcomes}
@@ -595,8 +594,8 @@ def test_the_tool_table_stays_put() -> None:
             "character_chapters",
             "chapter_summaries",
             "chapter_text",
-            # 起草那一摊的另外两个动作（ADR 0022）：生成不落盘了，落盘和读回各自是一条。
-            "save_draft",
+            # 起草那一摊的另一半（ADR 0022 的读回；落盘 2026-09-12 起回到 `draft_chapter`
+            # 自己身上，ADR 0048，`save_draft` 删了）。
             "read_draft",
             # 问作者（ADR 0024）：表里第一条**不查东西也不做东西**的工具，
             # 它把一句问话交出去，然后这一轮就结束了。
@@ -652,8 +651,9 @@ def test_the_writer_banned_symbols_are_not_tools() -> None:
 MANUSCRIPT_SHAPED_FIELDS = frozenset({"text", "body", "markdown", "content", "prose", "draft"})
 """工具入参里出现任意一个 = **模型能拿一段自己编的字去盖作者的书**。
 
-ADR 0022 之前这条靠「表里根本没有写工具」成立；`save_draft` 落地之后它靠**入参形状**
-成立——那条工具只收一个候选编号，而候选只能由后端按那一章的约束生成出来。
+ADR 0022 之前这条靠「表里根本没有写工具」成立；落盘成为工具之后它靠**入参形状**成立，
+ADR 0048（起草即写入）之后仍然如此——能写进书的只有 `draft_chapter` 刚由后端按那一章的
+约束生成出来的那一稿，它收的 `brief` / `materials` 是给写手的话，不是正文。
 `draft_id` 不在这个集合里正是重点：**指着一稿说「这个」和交出一段文本是两件事。**
 """
 
@@ -661,9 +661,9 @@ ADR 0022 之前这条靠「表里根本没有写工具」成立；`save_draft` �
 def test_no_tool_takes_a_paragraph_of_prose() -> None:
     """**模型没有「只写不草」这个动作**（ADR 0019 边界一的推论，ADR 0022 之后的落点）。
 
-    表里现在有一条会改作者的书的工具（`save_draft`），所以「表里没有写工具」这句话不再
-    成立。取代它的是一条更硬、也更可断言的：**没有一个工具收得下一段正文。**
-    能写进磁盘的只有刚刚由后端按那一章的约束生成出来的候选。
+    表里有一条会改作者的书的工具（`draft_chapter`，2026-09-12 起写完直接写进那一章，
+    ADR 0048），所以「表里没有写工具」这句话不成立。取代它的是一条更硬、也更可断言的：
+    **没有一个工具收得下一段正文。** 能写进磁盘的只有刚刚由后端按那一章的约束生成出来的那一稿。
     """
     offenders = {
         spec.name: sorted(set(spec.args.model_fields) & MANUSCRIPT_SHAPED_FIELDS)
@@ -714,9 +714,9 @@ def test_there_is_no_tool_that_writes(world: World) -> None:
         "ADR 0021 开的是「写磁盘」，不是「把 CanonWriter 交给模型」"
     )
     source = (Path(agent_tools.__file__)).read_text(encoding="utf-8")
-    assert "`save_draft` 只收一个候选 id，收不到文本" in source, (
-        "模块 docstring 里那段「落盘是一条工具了，但它凭什么仍然安全」不见了。"
-        "它不是注释洁癖：下一个人会把「只收 id」读成一个麻烦，然后给它加一个 text 参数。"
+    assert "能写进磁盘的只有刚刚由后端按那一章的约束生成出来的那一稿" in source, (
+        "模块 docstring 里那段「起草即写入，但它凭什么仍然安全」不见了。"
+        "它不是注释洁癖：下一个人会把「只收 brief」读成一个麻烦，然后给它加一个 text 参数。"
     )
 
 

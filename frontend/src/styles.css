@@ -1786,6 +1786,10 @@ pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid 
 }
 .drafts-head .spacer { flex: 1; }
 .draft-compare { color: var(--accent); font-size: 11px; white-space: nowrap; }
+/* 写进那一章的一稿只有一行（ADR 0048）：正文在左边，这儿不摊第二份。
+   自述另起一行、按 `.draft-note` 的字号，和没写进去那张卡上的自述长得一样。 */
+.draft-landed { margin: 0 0 4px; font-size: 12px; line-height: 1.6; }
+.draft-landed-note { display: block; color: var(--dim); font-size: 12px; line-height: 1.7; }
 
 .draft-cards { display: flex; flex-direction: column; gap: 8px; }
 /* 宽档：几列并排，**每一列自己一个滚轮**（作者的原话：「三窗口分别对应三个原文，

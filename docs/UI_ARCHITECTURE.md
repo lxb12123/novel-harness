@@ -116,12 +116,12 @@
 | POST | `/projects/{pid}/chats/{id}/stop` | `LIVE.stop` | `ChatStopped`·**`stopped=false` 不是失败**（那一刻它本来就没在跑），200 + 一句人话。它不等这一轮跑完 | 🟢 |
 | POST | `/projects/{pid}/chats/{id}/say` | `LIVE.say` → `agent.loop.Mailbox` | `ChatSaid`·**一轮跑着的时候再说一句**（2026-09-12，作者：「像 codex 那样新的消息可以直接发出去，模型可以读，并且不会耽误正在做的」）。`{said, run_id}`。**不等、不打断、不落库**：这句话放进正在跑的那一轮的信箱，loop 在**下一次模型调用之前**把它按正常的作者消息并进对话（那时才落库、才在事件流上喊 `author_said`）；模型说完了而信箱里有话，这一轮接着跑。`queued=false` 不是失败（那一刻没在跑 / 在跑的是另一轮），那句话没排进去也没落库——前端还回输入框 | 🟢 |
 | GET | `/projects/{pid}/drafts?chapter=&limit=` | `DraftCandidateStore.recent` | `{drafts: DraftCandidateView[]}`·最近的在前，**不带正文**（一次列 20 稿 = 20 章正文）。**它不是版本历史**：`/chapters/{n}/history` 里是**已经在书里**的，这儿是**还摆在桌上**的（[ADR 0022](adr/0022-drafting-is-a-proposal-not-a-write.md)——没落盘的候选在磁盘、快照里都不存在，没有这条路由作者关掉那一轮回执就再也找不到它们）。**前端调用方**（2026-08-12 起）：`ChatPanel` 头上那条「还摆着 N 稿 ↗」+ 并排比那一页 | 🟢 |
-| GET | `/projects/{pid}/drafts/{draft_id}` | `DraftCandidateStore.get` | `DraftCandidateView + {text}`·**摊开那一版读的就是它**。404 `draft_not_found`·**前端只在作者亲手点开某一稿时才打**（`useDraftText(…, open)`），入口那一档只摊开 `landed` 那一版——三稿 ≈ 9,000 字硬摊在入口上，作者要读完三章才做得了一个决定 | 🟢 |
+| GET | `/projects/{pid}/drafts/{draft_id}` | `DraftCandidateStore.get` | `DraftCandidateView + {text}`·**摊开那一版读的就是它**。404 `draft_not_found`·**前端只在作者亲手点开某一稿时才打**（`useDraftText(…, open)`）。**2026-09-12 起（[ADR 0048](adr/0048-drafting-writes-the-chapter.md)）写进那一章的稿子在对话里只是一行**（正文在左边的编辑器里，这条路由不打）；没写进去的那几稿才是卡，全收着，作者点开才取 | 🟢 |
 
 > **「推荐哪一版」不是引擎给的，前端也不许反推**（同「跳转坐标由后端给」那条禁令）。
-> 唯一的判据是 `landed`——助手把哪一版 `save_draft` 进了书，那是一个**动作**不是一句评价
-> （[ADR 0005](adr/0005-set-judgment-only.md)：引擎不给散文打分）。一批都没落盘时
-> **两边都不挑**（同 `AmbiguousName`：两个方向都贵就摊开），界面照 `ordinal` 顺序摆。
+> 唯一的判据是 `landed`——`draft_chapter` 写完直接写进那一章（ADR 0048），那是一个**动作**
+> 不是一句评价（[ADR 0005](adr/0005-set-judgment-only.md)：引擎不给散文打分）。写进去的一行、
+> 没写进去的一张卡，卡**全收着**（同 `AmbiguousName`：两个方向都贵就摊开），界面照 `ordinal` 顺序摆。
 > `note` 是**写那一稿的那个模型**自己交的一句话，**可能是空串**——空的时候界面上不许硬编一句。
 > `id`（`draft:01J…`）**一个字符都不许上屏**，屏幕上说的是「第 N 稿」（`ordinal`）。
 

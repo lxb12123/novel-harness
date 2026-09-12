@@ -61,6 +61,45 @@ describe("一轮跑完之后，正文那一侧", () => {
     await waitFor(() => expect(reads).toBeGreaterThan(1));
   });
 
+  it("**起草那一步一跑完就重读，不等这一轮收场**（ADR 0048：作者要的是直接在左边看到）", async () => {
+    // 那一轮的最后一帧卡住：这一轮还在跑（模型还在说话），而磁盘上那一章已经变了。
+    // 判据是 `tool_finished`（`tool` 是 `draft_chapter`、ok）——落盘就发生在那一步里。
+    const user = userEvent.setup();
+    let reads = 0;
+    const frames = fixtures.chatTurnEvents as string[];
+    const upToLanding = frames.slice(
+      0,
+      frames.findIndex((f) => f.includes('"kind":"tool_finished"') && f.includes('"tool":"draft_chapter"')) + 1,
+    );
+    expect(upToLanding.length).toBeGreaterThan(0); // 探针：真 dump 那一轮里真有那一步
+    const held = new Promise<string>(() => {});
+    renderWithApi(
+      <>
+        <CenterEditor />
+        <ChatPanel />
+      </>,
+      [
+        {
+          match: /\/chapters\/\d+\/text/,
+          body: () => {
+            reads++;
+            return fixtures.chapterText;
+          },
+        },
+        { method: "POST", match: /\/turn\/events$/, stream: [...upToLanding, held] },
+      ],
+    );
+    await screen.findByText("第 1 章");
+    await waitFor(() => expect(reads).toBe(1));
+
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "把这一章写了");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    // 回执还没到（流卡着），正文那一侧已经重读过一次。
+    await waitFor(() => expect(reads).toBeGreaterThan(1));
+    expect(screen.queryByText(ROUND_DONE)).toBeNull();
+  });
+
   it("没有未保存的字：重读回来的新正文装进编辑器 —— 否则他对着旧稿接着写", async () => {
     const user = userEvent.setup();
     let reads = 0;
