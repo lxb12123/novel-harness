@@ -62,6 +62,7 @@ export function HistoryDrawer({
   chapter,
   dirty = false,
   onRestored,
+  onDiscard,
   onClose,
 }: {
   pid: string;
@@ -69,6 +70,9 @@ export function HistoryDrawer({
   /** 编辑器里有没有还没保存的修改——有的话还原会覆盖掉它们，得先说一声。 */
   dirty?: boolean;
   onRestored?: () => void;
+  /** 对着「当前」那一版按了「还原」：丢掉编辑器里没保存的修改，回到磁盘上这一版。
+   *  **不写盘**（磁盘上就是它），所以不走 `restore` 那条 PUT。 */
+  onDiscard?: () => void;
   onClose: () => void;
 }) {
   const language = useLanguage((s) => s.language);
@@ -91,6 +95,13 @@ export function HistoryDrawer({
 
   function confirm() {
     if (!pending || !target) return;
+    if (pending.kind === "restore" && target.is_current) {
+      // 「当前」那一版：磁盘上就是它，要丢的只是编辑器里没保存的那份。
+      setPending(null);
+      onDiscard?.();
+      onClose();
+      return;
+    }
     if (pending.kind === "restore") {
       // 还原写的也是普通保存那条路，乐观闸依据的是**当前磁盘那一版**的哈希
       // （`current`，不是 `target`——`target` 是要写成的内容，不是这次写入前磁盘上的内容）。
@@ -152,10 +163,14 @@ export function HistoryDrawer({
             <span className="q">
               {language === "zh"
                 ? pending.kind === "restore"
-                  ? `将正文还原到 ${when(target.created_at)} 的版本？`
+                  ? target.is_current
+                    ? "放弃未保存的修改，回到当前版本？"
+                    : `将正文还原到 ${when(target.created_at)} 的版本？`
                   : `删除 ${when(target.created_at)} 的版本？删除后无法恢复。`
                 : pending.kind === "restore"
-                  ? `Restore the text to the version from ${when(target.created_at)}?`
+                  ? target.is_current
+                    ? "Discard the unsaved changes and return to the current version?"
+                    : `Restore the text to the version from ${when(target.created_at)}?`
                   : `Delete the version from ${when(target.created_at)}? This cannot be undone.`}
             </span>
             {/* 「确认还原」而不是「还原」：确认条弹出来时，行里那个「还原」还在，
@@ -178,7 +193,7 @@ export function HistoryDrawer({
             </button>
           </div>
         )}
-        {pending?.kind === "restore" && dirty && (
+        {pending?.kind === "restore" && dirty && !target?.is_current && (
           <div className="warn">
             {language === "zh"
               ? "编辑器中有未保存的修改，还原将覆盖这些修改。"
@@ -188,7 +203,9 @@ export function HistoryDrawer({
         {remove.error && <div className="err-box">{refusal(remove.error)}</div>}
         {restore.error && <div className="err-box">{refusal(restore.error)}</div>}
 
-        {snaps.length > 1 && (
+        {/* 只有一版时列表本来不画（没有可还原的别的版本）——但编辑器里有没保存的修改时
+            「当前」那一行上的「还原」是丢掉它们的路，所以那时也画。 */}
+        {(snaps.length > 1 || dirty) && (
           <div className="hist">
             {/* list/listitem 不是装饰：一行里有三个可点的东西（选中、还原、删除），
                 没有行这一层，读屏和键盘都只能听见一串孤立的按钮。 */}
@@ -215,10 +232,20 @@ export function HistoryDrawer({
                     )}
                   </button>
                   <span className="hist-actions">
-                    {!s.is_current && (
+                    {/* 「当前」那一版平时没有「还原」（磁盘上就是它）；编辑器里有没保存的修改时
+                        才有——那时它的意思是「丢掉这些修改，回到磁盘上这一版」。 */}
+                    {(!s.is_current || dirty) && (
                       <button
                         className="hist-act"
-                        title={language === "zh" ? "将正文还原到此版本" : "Restore the text to this version"}
+                        title={
+                          s.is_current
+                            ? language === "zh"
+                              ? "放弃未保存的修改，回到当前版本"
+                              : "Discard the unsaved changes and return to the current version"
+                            : language === "zh"
+                              ? "将正文还原到此版本"
+                              : "Restore the text to this version"
+                        }
                         onClick={() => setPending({ kind: "restore", id: s.snapshot_id })}
                       >
                         {language === "zh" ? "还原" : "Restore"}

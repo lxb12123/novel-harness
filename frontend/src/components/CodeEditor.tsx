@@ -8,7 +8,7 @@ import {
   placeholder as cmPlaceholder,
   WidgetType,
 } from "@codemirror/view";
-import { history, defaultKeymap, historyKeymap } from "@codemirror/commands";
+import { history, defaultKeymap, historyKeymap, isolateHistory } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import {
   Annotation,
@@ -174,6 +174,9 @@ const placeholderText = (language: Language) =>
 
 /** 离底不到这么多像素算「贴着底」：一行正文的高度（亚像素取整之外还要容一行）。 */
 const PIN_SLACK = 40;
+/** 作者的一下滚动手势（滚轮 / 触摸 / 拖滚动条 / 键盘）之后多久以内的 scroll 事件算他的。
+ *  触控板的惯性滚动整个过程都在发 wheel 事件，所以这个数不用大。 */
+const GESTURE_MS = 250;
 
 // CodeMirror 6 编辑器（§2.4）——**不是 TipTap**。
 // 守 ADR 0006 的方式：CM6 停在纯文本/markdown 心智，doc 位置就是 JS 字符串的 code unit
@@ -258,8 +261,12 @@ export const CodeEditor = forwardRef<
      *  流进来的字混在一起，而且落盘那一刻会被磁盘上那一版盖掉。默认可编辑。 */
     editable?: boolean;
     /** 外部灌进来的字**长在末尾**时跟着滚到底（正在写的那一稿）。作者自己翻上去看
-     *  开头时不拽：判据是滚动条在不在底上（`PIN_SLACK`），同 `ChatPanel::useFollowBottom`。
-     *  翻上去了 / 又滚回底了，`onPinnedChange` 说一声——外面据此画「滑到最下方」那颗按钮。 */
+     *  开头时不拽。**判「他翻上去了」只认他自己的滚动手势**（滚轮 / 触摸 / 拖滚动条 /
+     *  键盘）之后的 scroll 事件；编辑器自己滚（跟底那一下、CM6 量完行高再对一次）也会发
+     *  scroll，那时离底几十像素是正文刚长出来一截还没跟上，不是他翻了——按位置判会在
+     *  正文长到满一屏之后每隔一会儿就把跟底掐断一次（作者 2026-09-12 撞到的就是这个）。
+     *  滚回底了（不管谁滚的）就又贴上。翻上去了 / 又滚回底了，`onPinnedChange` 说一声——
+     *  外面据此画「滑到最下方」那颗按钮。 */
     follow?: boolean;
     onPinnedChange?: (pinned: boolean) => void;
     /** 上一次保存的那一版正文（同 `value` 的坐标系：不含章标那一行）。给了它，编辑器里
@@ -357,16 +364,41 @@ export const CodeEditor = forwardRef<
       ],
     });
     viewRef.current = view;
-    // 贴没贴着底：作者翻一下就知道。**我们自己滚到底那一下也会经过这儿**，那时它在底上，
-    // 所以贴着的状态不会被自己的滚动打断。
-    const onScroll = () => {
-      const sc = view.scrollDOM;
-      setPinned(sc.scrollHeight - sc.scrollTop - sc.clientHeight < PIN_SLACK);
+    // 贴没贴着底。到了底（不管谁滚的）就贴上；离开底只认作者自己的手势之后那一下——
+    // 见 `follow` 那条说明。拖滚动条是一段时间（pointerdown 到 pointerup），不是一下。
+    const sc = view.scrollDOM;
+    let gestureAt = 0;
+    let dragging = false;
+    const gesture = () => {
+      gestureAt = Date.now();
     };
-    view.scrollDOM.addEventListener("scroll", onScroll);
+    const dragStart = () => {
+      dragging = true;
+      gesture();
+    };
+    const dragEnd = () => {
+      dragging = false;
+      gesture();
+    };
+    const onScroll = () => {
+      const atBottom = sc.scrollHeight - sc.scrollTop - sc.clientHeight < PIN_SLACK;
+      if (atBottom) setPinned(true);
+      else if (dragging || Date.now() - gestureAt < GESTURE_MS) setPinned(false);
+    };
+    sc.addEventListener("scroll", onScroll);
+    sc.addEventListener("wheel", gesture, { passive: true });
+    sc.addEventListener("touchmove", gesture, { passive: true });
+    sc.addEventListener("pointerdown", dragStart);
+    window.addEventListener("pointerup", dragEnd);
+    view.dom.addEventListener("keydown", gesture);
     return () => {
       if (idleTimer.current) clearTimeout(idleTimer.current);
-      view.scrollDOM.removeEventListener("scroll", onScroll);
+      sc.removeEventListener("scroll", onScroll);
+      sc.removeEventListener("wheel", gesture);
+      sc.removeEventListener("touchmove", gesture);
+      sc.removeEventListener("pointerdown", dragStart);
+      window.removeEventListener("pointerup", dragEnd);
+      view.dom.removeEventListener("keydown", gesture);
       view.destroy();
       viewRef.current = null;
     };
@@ -385,11 +417,14 @@ export const CodeEditor = forwardRef<
     const appended = value.startsWith(cur);
     // 跟着底走：作者没翻上去时（`pinnedRef`），新长出来的字始终在视野里；翻上去了就不拽，
     // 外面画一颗「滑到最下方」让他随时回来。
+    // **整篇换掉那一下在撤销历史里自成一步**（`isolateHistory`）：写作助手的稿子紧跟着作者
+    // 刚敲的字进来时，CM6 会按「挨着、时间近」把两笔并成一步，一个 ⌘Z 就把他的字也退掉了。
+    // 隔开之后 ⌘Z 先退稿子，再退才是他的字。
     view.dispatch({
       changes: appended
         ? { from: cur.length, insert: value.slice(cur.length) }
         : { from: 0, to: cur.length, insert: value },
-      annotations: External.of(true),
+      annotations: appended ? External.of(true) : [External.of(true), isolateHistory.of("before")],
       effects:
         followRef.current && appended && pinnedRef.current
           ? EditorView.scrollIntoView(value.length, { y: "end" })

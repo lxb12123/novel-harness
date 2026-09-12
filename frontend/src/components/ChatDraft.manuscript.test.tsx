@@ -1,4 +1,6 @@
-import { screen, waitFor } from "@testing-library/react";
+import { undo } from "@codemirror/commands";
+import { EditorView } from "@codemirror/view";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 import { fixtures, renderWithApi, ROUND_DONE, sseFrames } from "../test/harness";
@@ -273,9 +275,9 @@ describe("正在写的那一稿流进左边", () => {
     expect(content.textContent).toContain("李管家什么也没说。");
   });
 
-  it("**作者手上有没保存的字：先收起来，稿子照样写在这儿**；放弃这一稿就原样放回", async () => {
+  it("**作者手上有没保存的字：稿子照样写在这儿、替掉它们**；撤销（⌘Z）退得回去", async () => {
     // 上一版在这一档把稿子退到右边去写（编辑器「不接」），作者：「为什么现在又整到右边去了」
-    // ——稿子永远在左边。他那几段没保存的字找不回来的方向是丢掉，所以收着，放弃这一稿放回。
+    // ——稿子永远在左边。他那几段没丢：在编辑器的撤销历史里。
     const user = userEvent.setup();
     const kept = { ...realEvent("draft_kept"), chapter: 1 };
     const held = new Promise<string>(() => {});
@@ -295,19 +297,17 @@ describe("正在写的那一稿流进左边", () => {
     await user.type(screen.getByRole("textbox", { name: "输入消息" }), "把这一章写了");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
-    // 稿子写在左边，右边一个字都没有。
-    await waitFor(() => expect(content.textContent).toContain("风雪落在肩上。"));
+    // 稿子写在左边，右边一个字都没有；他的字被替掉了。
+    await waitFor(() => expect(useLiveDraft.getState().placed?.draftId).toBe(kept.draft_id));
+    expect(content.textContent).toContain("风雪落在肩上。");
     expect(document.querySelector(".chat-drafting-text")).toBeNull();
     expect(content.textContent).not.toContain("作者刚打的半段");
-    await screen.findByText(/之前未保存的修改已收起/);
 
-    await user.click(screen.getByRole("button", { name: "放弃这一稿" }));
+    // ⌘Z：一步步退回去（流进来的字是几笔连着的编辑），他的字还在。
+    const view = EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement)!;
+    for (let i = 0; i < 20 && !content.textContent?.includes("作者刚打的半段"); i++) undo(view);
     expect(content.textContent).toContain("作者刚打的半段");
     expect(content.textContent).not.toContain("风雪落在肩上");
-    // 放回来的仍是没保存的字：脏，而且对着保存版画着痕迹。
-    expect(document.querySelector(".save-badge-icon.droplet")).not.toBeNull();
-    expect(document.querySelector(".cm-line.diff-add")?.textContent).toContain("作者刚打的半段");
-    expect(screen.queryByText(/已收起/)).toBeNull();
   });
 
   it("流着的时候痕迹按半份正文画：写完的段绿，还没被后面的段钉死的删除先不画红", async () => {
@@ -377,7 +377,8 @@ describe("正在写的那一稿流进左边", () => {
       "李管家什么也没说。",
     ]);
     expect(screen.getByText(/按「保存」写入本章/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "放弃这一稿" })).toBeInTheDocument();
+    // 没有「放弃这一稿」这颗按钮（作者：「没必要存在」）：不要它走「历史」或 ⌘Z。
+    expect(screen.queryByRole("button", { name: /放弃/ })).toBeNull();
     // 磁盘那一侧**没动**：一轮里没有任何一次读正文之外的写。
     expect(screen.queryByText(/写作助手正在写入本章/)).toBeNull();
 
@@ -405,7 +406,7 @@ describe("正在写的那一稿流进左边", () => {
     await waitFor(() => expect(content.textContent).toContain("六段的正文。"));
     await user.type(screen.getByRole("textbox", { name: "输入消息" }), "把这一章重写");
     await user.click(screen.getByRole("button", { name: "发送" }));
-    await screen.findByRole("button", { name: "放弃这一稿" });
+    await waitFor(() => expect(useLiveDraft.getState().placed?.draftId).toBe(kept.draft_id));
 
     const fold = await screen.findByRole("button", { name: "已删除 6 段" });
     expect([...document.querySelectorAll(".cm-line.diff-add")].map((el) => el.textContent)).toEqual([
@@ -458,35 +459,50 @@ describe("正在写的那一稿流进左边", () => {
     expect(String((putBody as unknown as Record<string, unknown>).markdown)).toContain("风雪落在肩上，他终于抬起头。");
     await waitFor(() => expect(document.querySelector(".cm-line.diff-add")).toBeNull());
     expect(document.querySelector(".diff-del")).toBeNull();
-    expect(screen.queryByRole("button", { name: "放弃这一稿" })).toBeNull();
+    expect(screen.queryByText(/按「保存」写入本章/)).toBeNull();
     expect(screen.getByText(/已写入第 1 章/)).toBeInTheDocument();
   });
 
-  it("按「放弃这一稿」：回到磁盘上那一版，痕迹消失，不脏", async () => {
+  it("不要这一稿：「历史」里对着当前版本按「还原」，回到磁盘上那一版，痕迹消失，不脏；右边那一行回到「放入编辑器」", async () => {
     const user = userEvent.setup();
     const kept = { ...realEvent("draft_kept"), chapter: 1 };
-    const held = new Promise<string>(() => {});
+    let puts = 0;
     renderWithApi(shell(), [
       {
         method: "POST",
         match: /\/turn\/events$/,
-        stream: [turnFrame(opened), turnFrame(piece("风雪落在肩上。")), turnFrame(kept), held],
+        stream: [
+          turnFrame(opened),
+          turnFrame(piece("风雪落在肩上。")),
+          turnFrame(kept),
+          sseFrames([{ event: "receipt", data: { ...fixtures.chatTurn, drafts: [{ ...fixtures.chatTurn.drafts[0], id: kept.draft_id, chapter: 1 }] } }])[0],
+        ],
       },
+      { match: /\/history$/, body: fixtures.chapterHistory },
+      { method: "PUT", match: /\/text$/, body: fixtures.chapterSaved, onRequest: () => void puts++ },
     ]);
     await screen.findByText("第 1 章");
     const content = document.querySelector(".cm-content") as HTMLElement;
     await user.type(screen.getByRole("textbox", { name: "输入消息" }), "把这一章写了");
     await user.click(screen.getByRole("button", { name: "发送" }));
-    await screen.findByRole("button", { name: "放弃这一稿" });
+    await waitFor(() => expect(useLiveDraft.getState().placed?.draftId).toBe(kept.draft_id));
+    await screen.findByText(ROUND_DONE);
+    expect(screen.getByText(/已放入编辑器，按「保存」写入本章/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "放弃这一稿" }));
+    await user.click(screen.getByRole("button", { name: "历史" }));
+    const rows = await screen.findAllByRole("listitem");
+    const now = rows.find((r) => within(r).queryByText("当前"))!;
+    await user.click(within(now).getByRole("button", { name: "还原" }));
+    await user.click(await screen.findByRole("button", { name: "确认还原" }));
 
-    expect(content.textContent).toContain("李管家什么也没说。");
+    await waitFor(() => expect(content.textContent).toContain("李管家什么也没说。"));
     expect(content.textContent).not.toContain("风雪落在肩上");
     await waitFor(() => expect(document.querySelector(".cm-line.diff-add")).toBeNull());
     expect(document.querySelector(".diff-del")).toBeNull();
     expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
     expect(useLiveDraft.getState().placed).toBeNull();
+    expect(puts).toBe(0); // 磁盘上就是这一版：不写盘
+    expect(screen.getByRole("button", { name: "放入编辑器" })).toBeInTheDocument();
   });
 
   it("桌上的一稿按「放入编辑器」：整份进左边、未保存、画痕迹；右边那一行改说它在编辑器里", async () => {
@@ -518,7 +534,6 @@ describe("正在写的那一稿流进左边", () => {
       "第二段。",
     ]);
     expect(document.querySelectorAll(".diff-del")).toHaveLength(2);
-    expect(screen.getByRole("button", { name: "放弃这一稿" })).toBeInTheDocument();
     // 右边那一行：不再是「放入编辑器」，说它在编辑器里等着保存；全文仍然不在右边。
     expect(screen.queryByRole("button", { name: "放入编辑器" })).toBeNull();
     expect(screen.getByText(/已放入编辑器，按「保存」写入本章/)).toBeInTheDocument();
@@ -545,11 +560,30 @@ describe("正在写的那一稿流进左边", () => {
     const scroller = document.querySelector(".cm-scroller") as HTMLElement;
     Object.defineProperty(scroller, "scrollHeight", { configurable: true, get: () => 2000 });
     Object.defineProperty(scroller, "clientHeight", { configurable: true, get: () => 500 });
+    // **编辑器自己滚的那几下不算翻上去**：正文刚长出来一截、还没跟上底的那一帧也会发
+    // scroll，离底几十像素——按位置判会在正文长到满一屏之后隔一会儿就掐断一次跟底。
     scroller.scrollTop = 100;
+    scroller.dispatchEvent(new Event("scroll"));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(screen.queryByRole("button", { name: /滑到最下方/ })).toBeNull();
+
+    // 作者自己滚了一下（滚轮），紧跟着的 scroll 才是他翻上去了。
+    scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -120 }));
+    scroller.scrollTop = 80;
     scroller.dispatchEvent(new Event("scroll"));
 
     const jump = await screen.findByRole("button", { name: /滑到最下方/ });
     await user.click(jump);
+    await waitFor(() => expect(screen.queryByRole("button", { name: /滑到最下方/ })).toBeNull());
+
+    // 他自己又滚回了底：不用按那颗按钮也重新贴上（按钮不再出现）。
+    scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -120 }));
+    scroller.scrollTop = 60;
+    scroller.dispatchEvent(new Event("scroll"));
+    await screen.findByRole("button", { name: /滑到最下方/ });
+    scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: 120 }));
+    scroller.scrollTop = 1500;
+    scroller.dispatchEvent(new Event("scroll"));
     await waitFor(() => expect(screen.queryByRole("button", { name: /滑到最下方/ })).toBeNull());
   });
 });

@@ -1792,9 +1792,12 @@ pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid 
    照 git diff 的样子（作者 2026-09-12 指的那张图），按保存就消失。行首的 ＋/－ 画在正文
    左边的留白里（`.cm-content` 那道内边距至少 16px，见 `CodeEditor.tsx` 的主题）。
    红块是一块 widget、不是正文行：光标进不去、键盘改不了，它只是「这儿原来有这几段」。
-   浅到能读——它标的是「这儿动过」，不是一段警告。 */
-.cm-line.diff-add { position: relative; background: rgba(52, 168, 83, 0.14); }
-.diff-removed { background: rgba(217, 72, 72, 0.12); }
+   底色浅到能读，左沿一道实色的边让它一眼认得出是 diff（作者 2026-09-12 第一眼没找到它）。 */
+.cm-line.diff-add {
+  position: relative; background: rgba(46, 204, 113, 0.16);
+  box-shadow: inset 3px 0 0 rgba(46, 204, 113, 0.8);
+}
+.diff-removed { background: rgba(231, 76, 60, 0.13); box-shadow: inset 3px 0 0 rgba(231, 76, 60, 0.75); }
 .diff-del {
   position: relative; padding: 0 2px 0 6px; /* 同 `.cm-line`：字和正文对齐 */
   white-space: pre-wrap; word-break: break-word;
@@ -1812,20 +1815,21 @@ pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid 
   content: "▸"; position: absolute; left: -16px; width: 16px; text-align: center;
   font-size: 11px; color: rgb(217, 72, 72);
 }
+.diff-fold:hover { text-decoration: underline; }
 .diff-fold[aria-expanded="true"]::before { content: "▾"; }
 .diff-fold + .diff-del { margin-top: 0; }
 .cm-line.diff-add::before, .diff-del::before {
   position: absolute; left: -16px; width: 16px; text-align: center;
   font-size: 12px; pointer-events: none;
 }
-.cm-line.diff-add::before { content: "+"; color: rgb(52, 168, 83); }
+.cm-line.diff-add::before { content: "+"; color: rgb(39, 174, 96); }
 .diff-del::before { content: "−"; color: rgb(217, 72, 72); }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .cm-line.diff-add { background: rgba(72, 187, 120, 0.2); }
-  :root:not([data-theme="light"]) .diff-removed { background: rgba(240, 96, 96, 0.18); }
+  :root:not([data-theme="light"]) .cm-line.diff-add { background: rgba(72, 187, 120, 0.22); }
+  :root:not([data-theme="light"]) .diff-removed { background: rgba(240, 96, 96, 0.2); }
 }
-:root[data-theme="dark"] .cm-line.diff-add { background: rgba(72, 187, 120, 0.2); }
-:root[data-theme="dark"] .diff-removed { background: rgba(240, 96, 96, 0.18); }
+:root[data-theme="dark"] .cm-line.diff-add { background: rgba(72, 187, 120, 0.22); }
+:root[data-theme="dark"] .diff-removed { background: rgba(240, 96, 96, 0.2); }
 /* 「滑到最下方」：作者翻上去看前面写的、字还在底下长时，正文底部正中一颗。
    `.cm-wrap` 本身在上面定义（flex 那一行）；这儿只补定位锚。 */
 .cm-wrap { position: relative; }

@@ -88,12 +88,12 @@ export function CenterEditor() {
   // 退到右边的路，结果第二稿真的退过去了，作者：「为什么又整到右边去了」）。
   // 字全露完之后**整份进编辑器、标脏**——从这一刻起它就是一份未保存的修改，和作者自己
   // 敲的字一样对着保存版画痕迹（`editMarks.ts`）：按「保存」写进书（带 `draft_id`，候选表
-  // 记上进书了），按「放弃这一稿」回到之前的样子。
+  // 记上进书了）。**不要它的路不是一颗按钮**（作者 2026-09-12：「这个按钮没必要存在」）：
+  // 它和作者自己敲了没保存的字一样——撤销（⌘Z）一步步退回去，或者「历史」里对着当前版本
+  // 按「还原」丢掉没保存的修改（`HistoryDrawer` 的 `onDiscard`）。
   //
-  // 作者自己有没保存的字时怎么办：**先收起来（`stash`），稿子照写**。那几段是他的字，
-  // 找不回来的方向，所以不是丢掉——「放弃这一稿」会把它们原样放回；他要是直接把稿子保存了，
-  // 那是他看着痕迹做的选择。上一稿写完留在这儿、他一个字没动的那种未保存内容是助手的，
-  // 不收、直接替掉（上一稿仍在桌上，右边那一行上点「放入编辑器」拿得回来）。
+  // 作者自己有没保存的字时稿子照样写进来、替掉它们（稿子永远在这儿写）。那几段没丢：
+  // 编辑器的撤销历史里还有，⌘Z 退回去就是。
   const live = useLiveDraft((s) => s.draft);
   const setInEditor = useLiveDraft((s) => s.setInEditor);
   const placedInEditor = useLiveDraft((s) => s.placedInEditor);
@@ -102,22 +102,16 @@ export function CenterEditor() {
   /** 编辑器里这份未保存的正文来自写作助手的哪一稿（保存时随请求送回去；`""` = 那一稿
    *  没有编号——没写成、半截）。`null` = 不是它放进来的。 */
   const [placed, setPlaced] = useState<string | null>(null);
-  /** 放进来那一刻的整份正文：编辑器里还是它 = 作者没动过，这份未保存的内容是助手的。 */
-  const placedDoc = useRef<string | null>(null);
-  /** 稿子进来之前作者自己没保存的那份正文（收起来了，「放弃这一稿」放回）。 */
-  const [stash, setStash] = useState<string | null>(null);
   const liveHere = live !== null && live.chapter === chapter && docFor === chapter;
   useEffect(() => {
     setInEditor(liveHere);
   }, [liveHere, setInEditor]);
-  // 一稿来了（流开始了 / 作者从桌上点了「放入编辑器」）：作者自己没保存的字先收起来；
-  // 上一稿（他没动过）的归属清掉。
+  // 一稿来了（流开始了 / 作者从桌上点了「放入编辑器」）：上一稿的归属清掉（右边那一行
+  // 回到「放入编辑器」）。
   useEffect(() => {
     if (!liveHere) return;
-    if (dirtyRef.current && doc !== placedDoc.current) setStash(doc);
     if (placed !== null) {
       setPlaced(null);
-      placedDoc.current = null;
       discarded();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -142,7 +136,6 @@ export function CenterEditor() {
     setDoc(head + nextBody);
     setDirty(true);
     setPlaced(live.draftId);
-    placedDoc.current = head + nextBody;
     placedInEditor({ chapter, draftId: live.draftId });
   }, [liveHere, live, typed.caughtUp, head, chapter, placedInEditor, discarded]);
   /** 作者翻上去看前面的字了：那颗「滑到最下方」要出来。 */
@@ -183,8 +176,6 @@ export function CenterEditor() {
     setDocFor(null);
     setDiskAhead(false);
     setPlaced(null);
-    placedDoc.current = null;
-    setStash(null);
   }, [chapter, projectId]);
 
   // **重取到什么就装进去**这条老规矩，在写作助手会直接往这一章写字之后不再安全
@@ -262,36 +253,14 @@ export function CenterEditor() {
             {language === "zh" ? "写作助手正在写入本章…" : "The writing assistant is writing this chapter…"}
           </span>
         )}
-        {/* 写作助手那一稿在这儿、还没保存：一句怎么处置 + 一颗「放弃」。 */}
+        {/* 写作助手那一稿在这儿、还没保存：一句它是什么、怎么处置。没有「放弃」这颗按钮
+            （作者：「没必要存在」）——它是一份未保存的修改，退路和作者自己的字一样。 */}
         {placed !== null && dirty && !save.isPending && (
-          <>
-            <span className="status">
-              {language === "zh"
-                ? "写作助手的一稿，按「保存」写入本章"
-                : "A draft from the writing assistant; click Save to write it into this chapter"}
-            </span>
-            <button
-              className="link"
-              onClick={() => {
-                // 稿子进来之前他自己没保存的字收着呢：放回去（仍是未保存）。
-                setDoc(stash ?? loadedRef.current ?? "");
-                setDirty(stash !== null);
-                setStash(null);
-                setPlaced(null);
-                placedDoc.current = null;
-                discarded();
-              }}
-            >
-              {language === "zh" ? "放弃这一稿" : "Discard this draft"}
-            </button>
-            {stash !== null && (
-              <span className="status">
-                {language === "zh"
-                  ? "之前未保存的修改已收起，放弃这一稿即恢复"
-                  : "Your earlier unsaved edits are set aside; discard this draft to restore them"}
-              </span>
-            )}
-          </>
+          <span className="status">
+            {language === "zh"
+              ? "写作助手的一稿，按「保存」写入本章"
+              : "A draft from the writing assistant; click Save to write it into this chapter"}
+          </span>
         )}
         {(saveErr || save.isPending) && (
           <span className={"status" + (saveErr ? " err" : "")}>
@@ -345,8 +314,6 @@ export function CenterEditor() {
                   setSaved(doc);
                   savedFromEditor(placed ?? "");
                   setPlaced(null);
-                  placedDoc.current = null;
-                  setStash(null);
                 },
               },
             )
@@ -467,6 +434,23 @@ export function CenterEditor() {
           // 还原写的是磁盘，编辑器里那份要跟着回到「和磁盘一致」——不清脏态，
           // 顶栏会一直挂着「未保存」，而作者其实什么都没改。
           onRestored={() => setDirty(false)}
+          // 对着「当前」那一版按「还原」= 丢掉没保存的修改（作者自己敲的、写作助手放进来的
+          // 都一样），编辑器回到磁盘上那一版。手上有一份更新的磁盘正文（别处改过、还没采纳）
+          // 就采纳它——「回到当前版本」说的就是磁盘上现在这一版。
+          onDiscard={() => {
+            const disk = data && data.number === chapter ? data : null;
+            if (disk) {
+              loadedRef.current = disk.markdown;
+              loadedShaRef.current = disk.text_sha256;
+            }
+            const text = loadedRef.current ?? "";
+            setDoc(text);
+            setSaved(text);
+            setDirty(false);
+            setDiskAhead(false);
+            setPlaced(null);
+            discarded();
+          }}
           onClose={() => setHistory(false)}
         />
       )}

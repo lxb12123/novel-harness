@@ -38,6 +38,36 @@ describe("历史版本", () => {
     expect(within(now).queryByRole("button", { name: "还原" })).toBeNull();
   });
 
+  it("编辑器里有没保存的修改时，当前那一版也能「还原」= 丢掉这些修改，**不写盘**", async () => {
+    // 写作助手放进编辑器的那一稿、作者自己敲的字，不要了都走这儿（「放弃这一稿」那颗按钮
+    // 作者 2026-09-12 说没必要存在）。磁盘上就是当前这一版，所以这一档不发 PUT。
+    const onDiscard = vi.fn();
+    const onRestored = vi.fn();
+    const onClose = vi.fn();
+    let puts = 0;
+    open(
+      [{ method: "PUT", match: /\/text$/, body: fixtures.chapterSaved, onRequest: () => void puts++ }],
+      { dirty: true, onDiscard, onRestored, onClose },
+    );
+    const { now } = await rows();
+    const restore = within(now).getByRole("button", { name: "还原" });
+    expect(restore).toHaveAttribute("title", expect.stringContaining("放弃未保存的修改"));
+    restore.click();
+    expect(await screen.findByText("放弃未保存的修改，回到当前版本？")).toBeInTheDocument();
+    screen.getByRole("button", { name: "确认还原" }).click();
+    await waitFor(() => expect(onDiscard).toHaveBeenCalled());
+    expect(onRestored).not.toHaveBeenCalled();
+    expect(onClose).toHaveBeenCalled();
+    expect(puts).toBe(0);
+  });
+
+  it("只有一版、但编辑器里有没保存的修改：列表照画，当前那一行上有「还原」", async () => {
+    open(oneVersion, { dirty: true });
+    const { all, now } = await rows();
+    expect(all).toHaveLength(1);
+    expect(within(now).getByRole("button", { name: "还原" })).toBeInTheDocument();
+  });
+
   it("正文现在这一版删不掉，而且当场说得出为什么", async () => {
     open();
     const { now, old } = await rows();
