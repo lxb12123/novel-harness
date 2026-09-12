@@ -333,7 +333,9 @@ def _wants_draft(chapters: list[int]) -> CompletionResult:
             ToolCall(
                 id=f"d{n}",
                 name="draft_chapter",
-                arguments=json.dumps({"chapter": chapter, "brief": f"写第 {chapter} 章的一场对峙"}),
+                arguments=json.dumps(
+                    {"chapter": chapter, "brief": f"写第 {chapter} 章的一场对峙", "intent": "rewrite"}
+                ),
             )
             for n, chapter in enumerate(chapters)
         ),
@@ -467,7 +469,7 @@ def test_a_draft_that_dies_halfway_still_reports_what_it_already_spent(
                 id="c0",
                 name="draft_chapter",
                 arguments=json.dumps(
-                    {"chapter": 1, "brief": "写一场对峙"}
+                    {"chapter": 1, "brief": "写一场对峙", "intent": "rewrite"}
                 ),
             ),
             _context(conn, pid),

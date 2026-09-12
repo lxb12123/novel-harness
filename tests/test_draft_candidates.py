@@ -293,7 +293,7 @@ def test_the_tool_result_never_carries_the_chapter(
                 id="c0",
                 name="draft_chapter",
                 arguments=json.dumps(
-                    {"chapter": 1, "brief": "写一场对峙"}
+                    {"chapter": 1, "brief": "写一场对峙", "intent": "rewrite"}
                 ),
             )
         ],
@@ -341,7 +341,7 @@ def test_a_draft_result_is_bound_to_its_chapter_even_when_the_call_has_no_chapte
                 id="c0",
                 name="draft_chapter",
                 arguments=json.dumps(
-                    {"chapter": 1, "brief": "写一场对峙"}
+                    {"chapter": 1, "brief": "写一场对峙", "intent": "rewrite"}
                 ),
             )
         ],
@@ -607,7 +607,7 @@ def test_three_drafts_in_one_batch_really_run_at_the_same_time(
             id=f"c{n}",
             name="draft_chapter",
             arguments=json.dumps(
-                {"chapter": 1, "brief": "写一场对峙"}
+                {"chapter": 1, "brief": "写一场对峙", "intent": "rewrite"}
             ),
         )
         for n in range(3)

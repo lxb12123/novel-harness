@@ -59,7 +59,7 @@ from .assemble import (
     product_tail_limit,
 )
 from .capabilities import ProviderCapabilities, ResolvedCallPlan
-from .context import DraftContext, ResolvedConstraints
+from .context import DraftContext, DraftIntent, ResolvedConstraints
 from .generate import DraftAttempt, DraftResult, generate_draft
 from .length import DraftLanguage, LengthSpec, count_units
 from .product_assemble import assemble_continuation, assemble_product, insert_standing_rules
@@ -203,6 +203,10 @@ class ChapterDraftRequest:
 
     target_chapter_text: str | None = None
     """目标章当前正文（重写/续写已有章时）。**一次读取的快照，不是磁盘现读。**"""
+
+    target_chapter_intent: DraftIntent | None = None
+    """写手拿上面那份正文怎么办：整章重写 / 在它基础上改（`DraftIntent`）。`None` = 没人说
+    （HTTP `/draft` 那条路），那时那一段只说「以要求为准」。"""
 
 
 TARGET_CHAPTER_UNITS: Final = 16_000
@@ -501,24 +505,50 @@ def draft_chapter(
     return ChapterDraft(result=result, memory=memory, calls=tuple(receipts))
 
 
-_TARGET_CHAPTER_ASK: Final = {
-    DraftLanguage.ZH: (
-        "（这是本章现在的正文。**这一次是重写**：按后面「这一场要写」的要求另写一整章，"
-        "写出来的会整章替掉它。不要照抄——只有要求里明确说保留的段落才原样保留，"
-        "其余按要求重新写。）"
-    ),
-    DraftLanguage.EN: (
-        "(This is the chapter's current text. **This is a rewrite**: write a whole new chapter "
-        "to the brief that follows; it replaces this text entirely. Do not copy it—keep a "
-        "passage verbatim only where the brief says to, and write everything else afresh.)"
-    ),
+_TARGET_CHAPTER_ASK: Final[dict[DraftIntent | None, dict[DraftLanguage, str]]] = {
+    DraftIntent.REWRITE: {
+        DraftLanguage.ZH: (
+            "（这是本章现在的正文。**这一次是整章重写**：按后面「这一场要写」的要求另写一整章，"
+            "写出来的会整章替掉它。不要照抄——只有要求里明确说保留的段落才原样保留，"
+            "其余重新写。）"
+        ),
+        DraftLanguage.EN: (
+            "(This is the chapter's current text. **This is a full rewrite**: write a whole new "
+            "chapter to the brief that follows; it replaces this text entirely. Do not copy "
+            "it—keep a passage verbatim only where the brief says to, and write everything "
+            "else afresh.)"
+        ),
+    },
+    DraftIntent.REVISE: {
+        DraftLanguage.ZH: (
+            "（这是本章现在的正文。**这一次是在它的基础上修改**：只改后面「这一场要写」里"
+            "说到的地方，其余段落一字不动地保留，交回完整的一章。）"
+        ),
+        DraftLanguage.EN: (
+            "(This is the chapter's current text. **This is a revision of it**: change only "
+            "what the brief that follows asks for, keep every other passage exactly as it is, "
+            "and return the complete chapter.)"
+        ),
+    },
+    None: {
+        DraftLanguage.ZH: (
+            "（这是本章现在的正文。整章重写还是在它的基础上修改，以后面「这一场要写」的要求"
+            "为准；要求里没说保留的段落，不要照抄。）"
+        ),
+        DraftLanguage.EN: (
+            "(This is the chapter's current text. Whether to rewrite it wholesale or revise "
+            "it in place is decided by the brief that follows; do not copy passages the brief "
+            "does not ask you to keep.)"
+        ),
+    },
 }
-"""目标章当前正文那一段前面的一句：它是干什么用的。
+"""目标章当前正文那一段前面的一句：它是干什么用的——**按助手这一次说的意图挑**（`DraftIntent`）。
 
 **没有这句之前，写手会把它原样抄回来。** 真书第 158 章：助手连开五稿、每稿的要求都不同
 （「写赢之后」「写沉默」……），写手回的正文却五次逐字节相同——就是磁盘上那一章。
 一段只挂着「目标章当前正文」标签、又排在整份 prompt 最末的正文，在模型眼里就是「接着输出
-这个」。所以现在①说清它是要被替掉的，②它排在「这一场要写」**前面**，模型最后读到的是任务。
+这个」。所以现在①说清它是干什么用的，②它排在「这一场要写」**前面**，模型最后读到的是任务。
+说什么**不写死**：「重写」和「改几句」拿到的是同一份正文，只有助手知道作者这一次要哪种。
 """
 
 
@@ -539,7 +569,7 @@ def _append_target_and_materials(
             request.target_chapter_text, max_units=TARGET_CHAPTER_UNITS
         )
         sections.append("【目标章当前正文】")
-        sections.append(_TARGET_CHAPTER_ASK[language])
+        sections.append(_TARGET_CHAPTER_ASK[request.target_chapter_intent][language])
         sections.append(text)
         if truncated:
             sections.append(

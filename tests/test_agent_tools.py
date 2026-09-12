@@ -254,7 +254,7 @@ def _surfaces_of(world: World) -> dict[str, str]:
         [
             _call("scene_constraints", chapter=CHAPTER),
             _call("character_state", chapter=CHAPTER, character="萧决"),
-            _call("draft_chapter", chapter=CHAPTER, brief="写一场雪，收在他没抬头。"),
+            _call("draft_chapter", chapter=CHAPTER, brief="写一场雪，收在他没抬头。", intent="rewrite"),
             _call("read_draft", draft_id=DRAFT_ID),
             # ADR 0024 的问作者：出参会被界面直接摆成一张卡，**它也是一个面**。
             # 这里问的是一句干净的话——它测的不是「模型会不会说破」（那是语义判断，
@@ -464,8 +464,9 @@ def test_no_tool_accepts_constraints_as_an_argument() -> None:
         "清单去写第 40 章，而那份清单更短——fail-open 的最坏那侧（ADR 0019 边界二）。\n"
         "约束必须由后端当场从 scene_view(chapter) 算。"
     )
-    # ADR 0047：助手能给写手的只有「要写什么」和「补的资料」两格，**约束字段永远没有**。
-    assert set(DraftAsk.model_fields) == {"chapter", "brief", "materials"}
+    # ADR 0047：助手能给写手的只有「要写什么」和「补的资料」两格（加一位「拿现有正文怎么办」，
+    # 那是意图不是约束），**约束字段永远没有**。
+    assert set(DraftAsk.model_fields) == {"chapter", "brief", "materials", "intent"}
 
 
 def test_a_model_invented_constraint_argument_is_refused(world: World) -> None:
@@ -490,7 +491,7 @@ def test_the_backend_computes_the_constraints_for_the_drafter(world: World) -> N
     desk = FakeDesk()
 
     outcome = dispatch(
-        _call("draft_chapter", chapter=CHAPTER, brief="写一场雪"),
+        _call("draft_chapter", chapter=CHAPTER, brief="写一场雪", intent="rewrite"),
         world.context(drafter=desk),
     )
     assert outcome.ok, outcome.content
@@ -781,7 +782,7 @@ def test_a_refusal_says_why(world: World) -> None:
     assert not_a_character.ok is False and "不是人物" in not_a_character.content
 
     unwired = dispatch(
-        _call("draft_chapter", chapter=CHAPTER, brief="写一稿"),
+        _call("draft_chapter", chapter=CHAPTER, brief="写一稿", intent="rewrite"),
         world.context(drafter=None),
     )
     assert unwired.ok is False and "还没接" in unwired.content

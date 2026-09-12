@@ -129,4 +129,14 @@
   第一版顺手给写手角色卡那一行补过「此刻：在哪 / 已亡」，作者当天否了（见分工表），
   同日撤掉——**别再加回去**。守卫：`tests/test_draft_candidates.py` 末节、
   `tests/test_product_assemble.py` 末节、`tests/test_agent_tools.py` 的表集合。
+- 2026-09-12 晚：多一位 **`intent`**（`rewrite` / `revise`，`draft/context.py::DraftIntent`）——
+  这一章已经有正文时**必填**，说的是写手拿现有正文怎么办，由助手按作者这一次的话定。它不是
+  约束、也不是第三格资料，是一个意图位：真书第 158 章助手连开五稿、要求各不相同，写手回的
+  正文五次逐字节等于磁盘上那一章——写手 prompt 里「目标章当前正文」那一段只挂一个标签、又排在
+  最末，模型眼里就是「接着输出这个」。第一刀把那一段写死成「这一次是重写」，维护者当场否了
+  （「每次都说要重新写，这就是写死了……有些时候可能就是让他去改这篇里面的语句」）：作者说
+  「重写」和说「把第三段改一下」，写手拿到的是同一份正文，差的只是这一句怎么交代——所以这句
+  按 `intent` 挑（`product_draft._TARGET_CHAPTER_ASK`），那一段排到「这一场要写」前面；不说就拒
+  （`draft_intent_missing`），不替它猜。守卫：`tests/test_candidates.py`（拒 / 两种交代 / 新章不用说）、
+  `tests/test_product_assemble.py`。
   之后的进度以 [`ARCHITECTURE.md` 的「当前状态」](../ARCHITECTURE.md#当前状态)为准。

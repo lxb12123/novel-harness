@@ -48,6 +48,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -177,6 +178,18 @@ def resolve_constraints(
     它比 `of()` 少一个出错的方式：`constraints` 和 `cast` 没有配错的余地。
     """
     return ResolvedConstraints.of(scene_view(store, project_id, chapter, cast), cast)
+
+
+# 这一章已经有正文时，写手拿它怎么办——**由助手按作者这一次的话定**（`DraftAsk.intent`），
+# 不写死在提示词里（维护者 2026-09-12：「每次都说要重新写，这就是写死了……有些时候可能就是
+# 让他去改这篇里面的语句」）：作者说「重写」是一回事，说「把第三段改一下」是另一回事，两种话
+# 写手拿到的现有正文是同一份，差的只是那一段前面怎么交代它（`product_draft._TARGET_CHAPTER_ASK`）。
+# docstring 会进工具 schema 给模型看（英文书要有译文，`prompt_terms._EN`），所以它只有一句。
+class DraftIntent(StrEnum):
+    """这一章已经有正文时拿它怎么办：整章重写（rewrite），还是在它的基础上修改（revise）。"""
+
+    REWRITE = "rewrite"
+    REVISE = "revise"
 
 
 class TargetChapterSnapshot(BaseModel):

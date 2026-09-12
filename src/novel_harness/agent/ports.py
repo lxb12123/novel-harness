@@ -46,8 +46,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..draft.context import DraftContext
-from ..draft.context import TargetChapterSnapshot
+from ..draft.context import DraftContext, DraftIntent, TargetChapterSnapshot
 from ..draft.length import DraftLanguage
 from ..draft.product_context import memory_units_available
 from ..draft.rolling_summary import ChapterSummaryStatus, SummarySnapshotWatermark
@@ -90,12 +89,13 @@ class ToolRefused(Exception):
 
 
 class DraftAsk(BaseModel):
-    """起草第 N 章的一稿（**chapter + brief + materials**，ADR 0047）。
+    """起草第 N 章的一稿（**chapter + brief + materials + intent**，ADR 0047）。
 
     **这里没有、也永远不会有约束字段**（ADR 0019 边界二的另一半）：在场是后端从正文数的，
     文风 / 禁用字 / 角色卡 / 最近事件 / 最近总结 / 正文那六格是后端固定装配的——助手一个字
     插不进去。它能给的只有两格：**要写什么**（`brief`）和**写手固定装配够不着的资料**
-    （`materials`）。两格都是纯文本、都跟着稿子存进候选表让作者看得见。
+    （`materials`）。两格都是纯文本、都跟着稿子存进候选表让作者看得见。外加一位意图
+    （`intent`）：这一章已经有正文时，是整章重写还是在它的基础上改。
 
     它和 `DraftFn` 放在一起而不是和别的工具入参放在一起，是因为它是**注入契约的一半**：
     起草侧收的就是 `(DraftAsk, DraftContext)`。
@@ -122,6 +122,15 @@ class DraftAsk(BaseModel):
             "写手够不着的资料，每条一段：远章的总结、关键事件、原文节选。写手自己只有"
             "最近几章的总结和这些人最近的事件——牵涉更早的章、需要细节的地方，把你查到的"
             "那几段挑出来放在这儿。**有目的地挑，不是整本塞进来**：有预算上限，装不下从后往前砍。"
+        ),
+    )
+    intent: DraftIntent | None = Field(
+        default=None,
+        description=(
+            "这一章已经有正文时必填，按作者这一次的话定：rewrite = 整章重写，现有正文不保留；"
+            "revise = 在现有正文的基础上改，只动 brief 里说到的地方，其余段落原样保留。"
+            "作者说「重写」「换个写法」是 rewrite，说「把某一段改一下」「润色」是 revise。"
+            "这一章还没有正文时不用给。"
         ),
     )
 

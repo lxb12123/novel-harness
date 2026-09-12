@@ -94,15 +94,16 @@ _EN: dict[str, str] = {
         "are written concurrently**."
     ),
     (
-        "起草第 N 章的一稿（**chapter + brief + materials**，ADR 0047）。\n\n"
+        "起草第 N 章的一稿（**chapter + brief + materials + intent**，ADR 0047）。\n\n"
         "**这里没有、也永远不会有约束字段**（ADR 0019 边界二的另一半）：在场是后端从正文数的，\n"
         "文风 / 禁用字 / 角色卡 / 最近事件 / 最近总结 / 正文那六格是后端固定装配的——助手一个字\n"
         "插不进去。它能给的只有两格：**要写什么**（`brief`）和**写手固定装配够不着的资料**\n"
-        "（`materials`）。两格都是纯文本、都跟着稿子存进候选表让作者看得见。\n\n"
+        "（`materials`）。两格都是纯文本、都跟着稿子存进候选表让作者看得见。外加一位意图\n"
+        "（`intent`）：这一章已经有正文时，是整章重写还是在它的基础上改。\n\n"
         "它和 `DraftFn` 放在一起而不是和别的工具入参放在一起，是因为它是**注入契约的一半**：\n"
         "起草侧收的就是 `(DraftAsk, DraftContext)`。"
     ): (
-        "Draft one version of chapter N (**chapter + brief + materials**, "
+        "Draft one version of chapter N (**chapter + brief + materials + intent**, "
         "ADR 0047).\n\n"
         "**There is no constraints field here, and there never will be** "
         "(the other half of ADR 0019 boundary 2): who's present is counted "
@@ -112,7 +113,8 @@ _EN: dict[str, str] = {
         "gives only two things: **what to write** (`brief`) and **material "
         "the writer's fixed assembly can't reach** (`materials`). Both are "
         "plain text and both are stored with the draft so the author can "
-        "see them.\n\n"
+        "see them. Plus one intent bit (`intent`): when the chapter already "
+        "has text, whether to rewrite it wholesale or revise it in place.\n\n"
         "It sits alongside `DraftFn` rather than with other tools' args "
         "because it is **half of an injection contract**: the drafting side "
         "receives exactly `(DraftAsk, DraftContext)`."
@@ -617,6 +619,23 @@ _EN: dict[str, str] = {
         'Query "notifications": the panel on the right — reminders the system '
         "left for the author, plus proposals waiting for their confirmation."
     ),
+    (
+        "这一章已经有正文时必填，按作者这一次的话定：rewrite = 整章重写，现有正文不保留；"
+        "revise = 在现有正文的基础上改，只动 brief 里说到的地方，其余段落原样保留。"
+        "作者说「重写」「换个写法」是 rewrite，说「把某一段改一下」「润色」是 revise。"
+        "这一章还没有正文时不用给。"
+    ): (
+        "Required when the chapter already has text; go by what the author asked for this "
+        "time: rewrite = a full rewrite, nothing of the current text is kept; revise = change "
+        "the current text in place, touching only what the brief asks for and keeping every "
+        "other passage as it is. \"Rewrite it\" / \"try a different approach\" is rewrite; "
+        "\"change that paragraph\" / \"polish it\" is revise. Omit it when the chapter has "
+        "no text yet."
+    ),
+    "这一章已经有正文时拿它怎么办：整章重写（rewrite），还是在它的基础上修改（revise）。": (
+        "What to do with the chapter's existing text: rewrite it wholesale (rewrite) or "
+        "revise it in place (revise)."
+    ),
     "只看和这一章有关的；不传就看全书的（按章数出来一张表，再给最近的那些）。": (
         "Only entries about this chapter; omit it to see the whole book's "
         "(a per-chapter count table, then the most recent entries)."
@@ -702,6 +721,17 @@ _MESSAGES: dict[str, dict[DraftLanguage, str]] = {
             "checking model configured). The forbidden list and "
             '"not yet appeared" still apply as normal — the only thing '
             "missing is the question of conflicts with later chapters."
+        ),
+    },
+    "draft_intent_missing": {
+        DraftLanguage.ZH: (
+            "第 {chapter} 章已经有正文，请在 intent 里说明这一次是整章重写（rewrite）"
+            "还是在现有正文的基础上修改（revise），按作者这一次的话定，然后重新调用。"
+        ),
+        DraftLanguage.EN: (
+            "Chapter {chapter} already has text. Say in `intent` whether this is a full "
+            "rewrite (rewrite) or a revision of the existing text (revise), going by what "
+            "the author asked for this time, then call again."
         ),
     },
     "drafting_not_wired": {

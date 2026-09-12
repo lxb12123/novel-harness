@@ -236,12 +236,18 @@ def _context(
     )
 
 
-def _draft(chapter: int, call_id: str = "c0", brief: str = "写一场对峙") -> ToolCall:
-    return ToolCall(
-        id=call_id,
-        name="draft_chapter",
-        arguments=json.dumps({"chapter": chapter, "brief": brief}),
-    )
+def _draft(
+    chapter: int,
+    call_id: str = "c0",
+    brief: str = "写一场对峙",
+    intent: str | None = "rewrite",
+) -> ToolCall:
+    """一次 `draft_chapter` 调用。这本书的第 1 章有正文，所以默认带着 `intent`
+    （没有它那一章会被拒——见 `test_a_chapter_with_text_needs_the_assistant_to_say_rewrite_or_revise`）。"""
+    args: dict[str, Any] = {"chapter": chapter, "brief": brief}
+    if intent is not None:
+        args["intent"] = intent
+    return ToolCall(id=call_id, name="draft_chapter", arguments=json.dumps(args))
 
 
 def every_column(conn: Connection) -> str:
@@ -529,6 +535,51 @@ def test_drafting_never_touches_the_chapter_on_disk(
     store = DraftCandidateStore(desk_conn)
     assert [c.landed for c in store.recent(poisoned["pid"])] == [False, False, False]
     assert [c.landed for c in desk.produced] == [False, False, False]
+
+
+def test_a_chapter_with_text_needs_the_assistant_to_say_rewrite_or_revise(
+    desk_conn: Connection, poisoned: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """这一章已经有正文：写手拿它怎么办**必须由助手说**（`DraftAsk.intent`），不说就拒。
+
+    不替它猜——猜错的两个方向都贵：猜「重写」会把作者只想改一句的那一章整个换掉，猜「修改」
+    会让写手把现有正文抄回来（真书第 158 章五稿逐字节相同就是这么来的）。维护者的话：
+    「每次都说要重新写，这就是写死了……有些时候可能就是让他去改这篇里面的语句」。
+    """
+    writer = _writer(monkeypatch, _prose("庚"))
+    desk = _desk(desk_conn, poisoned)
+    context = _context(desk_conn, poisoned, desk)
+    assert (importer.read_chapter(_root(desk_conn, poisoned), 1) or "").strip()  # 探针：第 1 章有正文
+
+    refused = dispatch_all([_draft(1, intent=None)], context)[0]
+    assert not refused.ok
+    assert "intent" in refused.content and "rewrite" in refused.content and "revise" in refused.content
+    assert writer.prompts == [], "拒了就不该花钱"
+
+    # 说了就写；写手 prompt 里现有正文那一段按说的那种交代，而且排在「这一场要写」前面。
+    for intent, said in (("rewrite", "整章重写"), ("revise", "在它的基础上修改")):
+        writer.prompts.clear()
+        outcome = dispatch_all([_draft(1, call_id=intent, intent=intent)], context)[0]
+        assert outcome.ok, outcome.content
+        messages = writer.prompts[0]
+        target = next(m for m in messages if "【目标章当前正文】" in m["content"])
+        assert said in target["content"]
+        assert messages.index(target) < len(messages) - 1
+        assert messages[-1]["role"] == "user"
+
+
+def test_a_chapter_without_text_needs_no_intent(
+    desk_conn: Connection, poisoned: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """还没有正文的那一章（新章）没有「拿现有正文怎么办」这个问题：不带 `intent` 照写。"""
+    writer = _writer(monkeypatch, _prose("辛"))
+    desk = _desk(desk_conn, poisoned)
+    context = _context(desk_conn, poisoned, desk)
+    fresh = 7
+    assert importer.read_chapter(_root(desk_conn, poisoned), fresh) is None  # 探针：这一章不存在
+    outcome = dispatch_all([_draft(fresh, intent=None)], context)[0]
+    assert outcome.ok, outcome.content
+    assert not any("【目标章当前正文】" in m["content"] for m in writer.prompts[0])
 
 
 # ══════════════════════════════════════════════════════════════════════════

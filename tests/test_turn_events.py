@@ -255,7 +255,7 @@ EVERY_TOOL = (
     ("character_chapters", {"characters": ["萧决", "顾清音"]}),
     ("chapter_summaries", {"first_chapter": 1, "last_chapter": CHAPTER}),
     ("chapter_text", {"chapter": CHAPTER}),
-    ("draft_chapter", {"chapter": CHAPTER, "brief": "写一场雪，收在他没抬头。"}),
+    ("draft_chapter", {"chapter": CHAPTER, "brief": "写一场雪，收在他没抬头。", "intent": "rewrite"}),
     ("read_draft", {"draft_id": DRAFT_ID}),
     ("remember_rule", {"rule": "这一章别写打斗", "until": "这一章写完为止"}),
     # `get_result` 要放在**第二批**：stored 表在批创建时从 live 数，第一批都还没跑
@@ -859,12 +859,12 @@ def test_a_question_wins_even_when_the_batch_was_allowed_to_run_at_once(
                 wants(
                     (
                         "draft_chapter",
-                        json.dumps({"chapter": CHAPTER, "brief": "写一场雪"}),
+                        json.dumps({"chapter": CHAPTER, "brief": "写一场雪", "intent": "rewrite"}),
                     ),
                     ("ask_author", json.dumps({"question": ASKED, "options": list(OPTIONS)})),
                     (
                         "draft_chapter",
-                        json.dumps({"chapter": CHAPTER, "brief": "写一场雪"}),
+                        json.dumps({"chapter": CHAPTER, "brief": "写一场雪", "intent": "rewrite"}),
                     ),
                     ("read_draft", json.dumps({"draft_id": DRAFT_ID})),
                 ),

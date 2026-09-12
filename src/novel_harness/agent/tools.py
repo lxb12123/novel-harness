@@ -997,6 +997,11 @@ def _handle_draft_chapter(args: DraftAsk, context: ToolContext) -> DraftResult:
         ctx = _scene_context_from_text(
             context, args.chapter, snapshot.text if snapshot is not None else ""
         )
+    # 这一章已经有正文：**写手拿它怎么办必须由助手说**（整章重写 / 在它基础上改，
+    # `DraftIntent`）。不说就拒，不替它猜——猜错的两个方向都贵：猜「重写」会把作者只想
+    # 改一句的那一章整个换掉，猜「修改」会让写手把现有正文抄回来（真书第 158 章五稿如此）。
+    if snapshot is not None and snapshot.text.strip() and args.intent is None:
+        raise ToolRefused(message("draft_intent_missing", context.language, chapter=args.chapter))
     product = desk.write(args, ctx, snapshot=snapshot)
     candidate = product.candidate
     # **这一步不动书**：稿子在写的过程中就流进了作者左边的正文编辑器（事件流上的

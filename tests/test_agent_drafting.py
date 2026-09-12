@@ -508,7 +508,9 @@ def test_one_turn_from_the_browser_leaves_the_disk_alone_until_the_author_saves(
                         ToolCall(
                             id="c2",
                             name="draft_chapter",
-                            arguments=json.dumps({"chapter": 1, "brief": "第 1 章重写一稿"}),
+                            arguments=json.dumps(
+                                {"chapter": 1, "brief": "第 1 章重写一稿", "intent": "rewrite"}
+                            ),
                         ),
                     ),
                 )

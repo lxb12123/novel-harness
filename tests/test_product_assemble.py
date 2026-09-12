@@ -475,20 +475,31 @@ def test_the_current_chapter_text_is_framed_as_the_thing_to_rewrite_and_precedes
         _append_target_and_materials,
     )
 
-    current = "雨歇了。\n\n贾环站在废墟之中。"
-    request = ChapterDraftRequest(goal="写沉默。", length=LENGTH, target_chapter_text=current)
-    base = [{"role": "system", "content": "文风"}, {"role": "user", "content": "【这一场要写】写沉默。"}]
-    messages, _, _ = _append_target_and_materials(base, request)
-    assert [m["role"] for m in messages] == ["system", "system", "user"]
-    assert messages[-1] is base[-1], "任务那条用户消息仍然是最后一条"
-    section = messages[1]["content"]
-    assert section.index("【目标章当前正文】") < section.index("这一次是重写") < section.index(current)
-    assert "不要照抄" in section
+    from novel_harness.draft.context import DraftIntent
 
-    english = ChapterDraftRequest(
-        goal="Silence.",
-        length=LENGTH.model_copy(update={"language": DraftLanguage.EN}),
-        target_chapter_text=current,
-    )
-    messages, _, _ = _append_target_and_materials(base, english)
-    assert "This is a rewrite" in messages[1]["content"]
+    current = "雨歇了。\n\n贾环站在废墟之中。"
+    base = [{"role": "system", "content": "文风"}, {"role": "user", "content": "【这一场要写】写沉默。"}]
+
+    def section_for(intent: DraftIntent | None, language: DraftLanguage = DraftLanguage.ZH) -> str:
+        request = ChapterDraftRequest(
+            goal="写沉默。",
+            length=LENGTH.model_copy(update={"language": language}),
+            target_chapter_text=current,
+            target_chapter_intent=intent,
+        )
+        messages, _, _ = _append_target_and_materials(base, request)
+        assert [m["role"] for m in messages] == ["system", "system", "user"]
+        assert messages[-1] is base[-1], "任务那条用户消息仍然是最后一条"
+        section = messages[1]["content"]
+        assert section.index("【目标章当前正文】") < section.index(current)
+        return section
+
+    # 说什么**按助手这一次说的意图挑**，不写死（维护者：「每次都说要重新写，这就是写死了」）。
+    rewrite = section_for(DraftIntent.REWRITE)
+    assert "整章重写" in rewrite and "不要照抄" in rewrite and rewrite.index("整章重写") < rewrite.index(current)
+    revise = section_for(DraftIntent.REVISE)
+    assert "在它的基础上修改" in revise and "一字不动" in revise and "整章重写" not in revise
+    unspecified = section_for(None)
+    assert "以后面「这一场要写」的要求为准" in unspecified
+    assert "This is a full rewrite" in section_for(DraftIntent.REWRITE, DraftLanguage.EN)
+    assert "This is a revision" in section_for(DraftIntent.REVISE, DraftLanguage.EN)

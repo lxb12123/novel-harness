@@ -567,7 +567,7 @@ class _DraftThen:
     def __call__(self, messages: Any, *, tools: Any, cancel: Any) -> Any:
         self.calls += 1
         if self.calls == 1:
-            return wants(("draft_chapter", json.dumps({"chapter": 1, "brief": "写一场对峙"})))
+            return wants(("draft_chapter", json.dumps({"chapter": 1, "brief": "写一场对峙", "intent": "rewrite"})))
         return self.after
 
 
