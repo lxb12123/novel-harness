@@ -1800,6 +1800,20 @@ pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid 
   white-space: pre-wrap; word-break: break-word;
 }
 .diff-del + .diff-del { margin-top: 1lh; } /* 段与段之间留一行，同正文里的空行 */
+/* 大块红折成的那一行「已删除 N 段」（`editMarks.ts` 的 `fold`）：一颗通栏的按钮，左边留白里
+   一个三角说它能开合（开着朝下）。摊开之后那几段跟在它底下。 */
+.diff-fold {
+  display: block; width: 100%; position: relative; padding: 0 2px 0 6px; margin: 0;
+  border: 0; border-radius: 0; background: transparent; text-align: left;
+  font: inherit; color: var(--dim); cursor: pointer;
+}
+.diff-fold:hover { color: var(--ink); }
+.diff-fold::before {
+  content: "▸"; position: absolute; left: -16px; width: 16px; text-align: center;
+  font-size: 11px; color: rgb(217, 72, 72);
+}
+.diff-fold[aria-expanded="true"]::before { content: "▾"; }
+.diff-fold + .diff-del { margin-top: 0; }
 .cm-line.diff-add::before, .diff-del::before {
   position: absolute; left: -16px; width: 16px; text-align: center;
   font-size: 12px; pointer-events: none;

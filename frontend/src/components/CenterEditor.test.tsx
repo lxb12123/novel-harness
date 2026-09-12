@@ -264,6 +264,49 @@ describe("没保存的改动的痕迹", () => {
     expect(removed()).toEqual([]);
   });
 
+  it("删掉半章以上：那一块红折成一行「已删除 N 段」，点开才摊开；接着敲字它不折回去", async () => {
+    // 整章重写时旧章全红在上、新章全绿在下——作者要读的新稿被一整屏旧稿顶到底下
+    // （`editMarks.ts` 的 `fold`）。判据：一块红里的段数到了保存版的一半以上（不足三段的不折）。
+    const user = userEvent.setup();
+    const six = ["一", "二", "三", "四", "五", "六"].map((s) => s + "段的正文。").join("\n\n");
+    renderWithApi(<CenterEditor />, [
+      { match: /\/chapters\/\d+\/text/, body: { ...fixtures.chapterText, markdown: "第一章 血脉\n\n" + six + "\n" } },
+    ]);
+    await waitFor(() =>
+      expect(document.querySelector(".cm-content")?.textContent).toContain("六段的正文。"),
+    );
+    // 删掉后四段。
+    const doc = view().state.doc.toString();
+    view().dispatch({ changes: { from: doc.indexOf("三段的正文。"), to: doc.length } });
+
+    const fold = await screen.findByRole("button", { name: "已删除 4 段" });
+    expect(fold.getAttribute("aria-expanded")).toBe("false");
+    expect(removed()).toEqual([]);
+    expect(document.querySelector(".diff-removed")).not.toBeNull();
+
+    await user.click(fold);
+    await waitFor(() => expect(removed()).toEqual(["三段的正文。", "四段的正文。", "五段的正文。", "六段的正文。"]));
+    expect(screen.getByRole("button", { name: "已删除 4 段" }).getAttribute("aria-expanded")).toBe("true");
+
+    // 点开之后接着改别处：痕迹整个重算（第一段改了 = 多一小块红 + 一行绿），
+    // 大的那一块仍然是摊开的（记在编辑器状态里，不在 DOM 上）。
+    view().dispatch({ changes: { from: 0, insert: "「" } });
+    await waitFor(() => expect(added()).toEqual(["「一段的正文。"]));
+    expect(removed()).toEqual(["一段的正文。", "三段的正文。", "四段的正文。", "五段的正文。", "六段的正文。"]);
+
+    // 再点一下折回去：只剩第一段那一小块红（它不足三段，从来不折）。
+    await user.click(screen.getByRole("button", { name: "已删除 4 段" }));
+    await waitFor(() => expect(removed()).toEqual(["一段的正文。"]));
+  });
+
+  it("删掉两段：不折——两块红不算一堵墙", async () => {
+    renderWithApi(<CenterEditor />);
+    await loaded();
+    view().dispatch({ changes: { from: 0, to: view().state.doc.length } });
+    await waitFor(() => expect(removed()).toHaveLength(2));
+    expect(screen.queryByRole("button", { name: /已删除/ })).toBeNull();
+  });
+
   it("按「保存」：痕迹当场消失（作者的原话），再改就对着刚存的这一版画", async () => {
     const user = userEvent.setup();
     renderWithApi(<CenterEditor />, [

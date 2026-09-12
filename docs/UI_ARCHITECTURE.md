@@ -300,8 +300,9 @@
 │  │  ├─ <SceneBlockBar>          ◀ parse_scenes；cast 多选 ▶ PUT /scenes 回写注释
 │  │  ├─ <MarkdownEditor CM6>     ◀▶ GET/PUT /chapters/{n}/text（磁盘 md 是真相）
 │  │  │   ├─ 没保存的改动的痕迹   ◀ 编辑器里这份 vs 上一次保存的那一版（`editMarks.ts`，
-│  │  │   │                         ADR 0048）：减去的段红（块状 widget）、增加的行绿，
-│  │  │   │                         谁改的都一样；写作助手那一稿也从这儿流进来，按保存即消失
+│  │  │   │                         ADR 0048）：减去的段红（块状 widget，删掉半章以上折成
+│  │  │   │                         一行「已删除 N 段」）、增加的行绿，谁改的都一样；
+│  │  │   │                         写作助手那一稿也从这儿流进来，按保存即消失
 │  │  │   ├─ selection → deriveAnchor(para_index, quote_text, occurrence_k) ※禁 offset
 │  │  │   ├─ <SelectionActionMenu> ▶ POST /resolve · declare knows|where|believes · 段级 check
 │  │  │   └─ <IssueHighlightLayer> ◀ Issue.anchor → 段内重寻 quote 计数 k 高亮

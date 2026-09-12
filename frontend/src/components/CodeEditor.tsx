@@ -21,6 +21,7 @@ import {
 import { ghostText, setSuggestion, suggestionField } from "./ghostText";
 import { IDLE_MS, tailAfter, tailBefore } from "../continuation";
 import { editMarks } from "../editMarks";
+import { type Language, useLanguage } from "../language";
 
 // 标记「外部灌入」的事务（换章时替换整篇 doc）。用它把外部替换和用户输入分开——
 // 否则换章那次 docChanged 会 onChange 回去，把新打开的章误标成「未保存」。
@@ -36,20 +37,56 @@ const External = Annotation.define<boolean>();
 //
 // 画在 StateField 里而不是 ViewPlugin 里：**块状 widget 只能由 StateField 提供**（CM6 的
 // 规矩），而红块正是块状的——它占一整行，光标跳不进去。
-const setBaseline = StateEffect.define<{ text: string | null; streaming: boolean }>();
+//
+// 大块红折成一行「已删除 N 段」（`editMarks.ts` 的 `fold`），点开才摊开。摊没摊开记在这个
+// field 里、按那一块的内容认（`foldKey`）：作者点开一块之后接着敲字，痕迹整个重算，
+// 记在 DOM 上的话那一块就又折回去了；换了保存版（刚保存 / 换章）全部归零。
+const setBaseline = StateEffect.define<{
+  text: string | null;
+  streaming: boolean;
+  language: Language;
+}>();
+const toggleFold = StateEffect.define<string>();
 const ADDED_LINE = Decoration.line({ class: "diff-add" });
+
+const foldKey = (lines: readonly string[]) => lines.join("\n");
 
 /** 保存版里有、现在没有的那几段。 */
 class RemovedLines extends WidgetType {
-  constructor(readonly lines: readonly string[]) {
+  constructor(
+    readonly lines: readonly string[],
+    /** 大到该折的一块：先画一行「已删除 N 段」，`expanded` 才把段摊在它底下。 */
+    readonly foldable: boolean,
+    readonly expanded: boolean,
+    readonly language: Language,
+  ) {
     super();
   }
   eq(other: RemovedLines): boolean {
-    return other.lines.length === this.lines.length && other.lines.every((l, i) => l === this.lines[i]);
+    return (
+      other.foldable === this.foldable &&
+      other.expanded === this.expanded &&
+      other.language === this.language &&
+      other.lines.length === this.lines.length &&
+      other.lines.every((l, i) => l === this.lines[i])
+    );
   }
-  toDOM(): HTMLElement {
+  toDOM(view: EditorView): HTMLElement {
     const box = document.createElement("div");
     box.className = "diff-removed";
+    if (this.foldable) {
+      const n = this.lines.length;
+      const head = document.createElement("button");
+      head.type = "button";
+      head.className = "diff-fold";
+      head.setAttribute("aria-expanded", String(this.expanded));
+      head.textContent =
+        this.language === "zh" ? `已删除 ${n} 段` : `${n} paragraph${n === 1 ? "" : "s"} removed`;
+      const key = foldKey(this.lines);
+      head.addEventListener("click", () => view.dispatch({ effects: toggleFold.of(key) }));
+      box.appendChild(head);
+      if (!this.expanded) return box;
+    }
     for (const line of this.lines) {
       const el = document.createElement("div");
       el.className = "diff-del";
@@ -60,25 +97,28 @@ class RemovedLines extends WidgetType {
   }
 }
 
-function diffDecorations(doc: Text, baseline: string, streaming: boolean): DecorationSet {
+function diffDecorations(
+  doc: Text,
+  baseline: string,
+  streaming: boolean,
+  expanded: ReadonlySet<string>,
+  language: Language,
+): DecorationSet {
   const marks = editMarks(baseline, doc.toString(), streaming);
   if (marks.length === 0) return Decoration.none;
   const ranges: Range<Decoration>[] = [];
   for (const mark of marks) {
     if (mark.kind === "added") {
       ranges.push(ADDED_LINE.range(doc.line(mark.line + 1).from));
-    } else if (mark.before < doc.lines) {
+      continue;
+    }
+    const widget = new RemovedLines(mark.lines, mark.fold, expanded.has(foldKey(mark.lines)), language);
+    if (mark.before < doc.lines) {
       ranges.push(
-        Decoration.widget({ widget: new RemovedLines(mark.lines), block: true, side: -1 }).range(
-          doc.line(mark.before + 1).from,
-        ),
+        Decoration.widget({ widget, block: true, side: -1 }).range(doc.line(mark.before + 1).from),
       );
     } else {
-      ranges.push(
-        Decoration.widget({ widget: new RemovedLines(mark.lines), block: true, side: 1 }).range(
-          doc.length,
-        ),
-      );
+      ranges.push(Decoration.widget({ widget, block: true, side: 1 }).range(doc.length));
     }
   }
   return Decoration.set(ranges, true);
@@ -87,26 +127,50 @@ function diffDecorations(doc: Text, baseline: string, streaming: boolean): Decor
 interface DiffState {
   baseline: string | null;
   streaming: boolean;
+  language: Language;
+  /** 作者点开了的那几块红（按内容认）。 */
+  expanded: ReadonlySet<string>;
   deco: DecorationSet;
 }
 const diffField = StateField.define<DiffState>({
-  create: () => ({ baseline: null, streaming: false, deco: Decoration.none }),
+  create: () => ({
+    baseline: null,
+    streaming: false,
+    language: "zh",
+    expanded: new Set(),
+    deco: Decoration.none,
+  }),
   update(value, tr) {
-    let { baseline, streaming } = value;
-    let rebased = false;
+    let { baseline, streaming, language, expanded } = value;
+    let changed = false;
     for (const effect of tr.effects) {
-      if (!effect.is(setBaseline)) continue;
-      baseline = effect.value.text;
-      streaming = effect.value.streaming;
-      rebased = true;
+      if (effect.is(setBaseline)) {
+        if (effect.value.text !== baseline) expanded = new Set();
+        baseline = effect.value.text;
+        streaming = effect.value.streaming;
+        language = effect.value.language;
+        changed = true;
+      } else if (effect.is(toggleFold)) {
+        const next = new Set(expanded);
+        if (next.has(effect.value)) next.delete(effect.value);
+        else next.add(effect.value);
+        expanded = next;
+        changed = true;
+      }
     }
-    if (!rebased && !tr.docChanged) return value;
+    if (!changed && !tr.docChanged) return value;
     const deco =
-      baseline === null ? Decoration.none : diffDecorations(tr.state.doc, baseline, streaming);
-    return { baseline, streaming, deco };
+      baseline === null
+        ? Decoration.none
+        : diffDecorations(tr.state.doc, baseline, streaming, expanded, language);
+    return { baseline, streaming, language, expanded, deco };
   },
   provide: (field) => EditorView.decorations.from(field, (v) => v.deco),
 });
+
+/** 一章都没打开时编辑器里那一句。 */
+const placeholderText = (language: Language) =>
+  language === "zh" ? "在左侧选择章节以打开正文" : "Select a chapter on the left to open its text";
 
 /** 离底不到这么多像素算「贴着底」：一行正文的高度（亚像素取整之外还要容一行）。 */
 const PIN_SLACK = 40;
@@ -222,6 +286,8 @@ export const CodeEditor = forwardRef<
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const editableConf = useRef(new Compartment());
+  const placeholderConf = useRef(new Compartment());
+  const language = useLanguage((s) => s.language);
   const followRef = useRef(follow);
   followRef.current = follow;
   const pinnedRef = useRef(true);
@@ -256,7 +322,7 @@ export const CodeEditor = forwardRef<
         // CM6 的 keymap facet 同优先级下是「先注册的先试」，光靠挪位置排不对。
         ghostText(),
         EditorView.lineWrapping,
-        cmPlaceholder("在左侧选择章节以打开正文"),
+        placeholderConf.current.of(cmPlaceholder(placeholderText(language))),
         theme,
         EditorView.updateListener.of((u) => {
           // 外部替换（换章）不回调 onChange——那不是用户编辑，不该标脏。
@@ -347,12 +413,20 @@ export const CodeEditor = forwardRef<
 
   // 保存版换了（读回来了 / 刚保存 / 换章）或者流开始、收场：痕迹对着新的保存版重算。
   // **排在 value 那个 effect 后面**：换章那一下 doc 和保存版一起换，先换 doc 再换保存版，
-  // 中间那一帧不会拿新保存版对着旧正文画出一屏红绿。
+  // 中间那一帧不会拿新保存版对着旧正文画出一屏红绿。界面语言也从这儿进去（折起来的那一行字）。
   useEffect(() => {
     const view = viewRef.current;
     if (!view) return;
-    view.dispatch({ effects: setBaseline.of({ text: baseline, streaming }) });
-  }, [baseline, streaming]);
+    view.dispatch({ effects: setBaseline.of({ text: baseline, streaming, language }) });
+  }, [baseline, streaming, language]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({
+      effects: placeholderConf.current.reconfigure(cmPlaceholder(placeholderText(language))),
+    });
+  }, [language]);
 
   useImperativeHandle(
     ref,

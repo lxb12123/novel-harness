@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { editMarks } from "./editMarks";
+import { editMarks, foldsRemoved } from "./editMarks";
 
 // 编辑器里没保存的改动的痕迹（`editMarks.ts`）：减去的行红、增加的行绿，按行算，和 git 一样。
 // 谁改的不重要——写作助手写的和作者敲的走同一条路，所以这儿只喂字，不分来路。
@@ -21,7 +21,7 @@ describe("和保存版比", () => {
   it("改了一段里的几个字：旧的那一行红、插在新的那一行前面，新的那一行绿", () => {
     const now = SAVED.replace("久久没有动弹", "许久没有动弹");
     expect(editMarks(SAVED, now)).toEqual([
-      { kind: "removed", before: 2, lines: ["贾环站在废墟之中，久久没有动弹。"] },
+      { kind: "removed", before: 2, lines: ["贾环站在废墟之中，久久没有动弹。"], fold: false },
       { kind: "added", line: 2 },
     ]);
   });
@@ -29,28 +29,47 @@ describe("和保存版比", () => {
   it("删掉一段：红块插在原来的位置（下一段的前面），后面的段不涂", () => {
     const now = "雨歇了。\n\n“走吧。”他转身。";
     expect(editMarks(SAVED, now)).toEqual([
-      { kind: "removed", before: 2, lines: ["贾环站在废墟之中，久久没有动弹。"] },
+      { kind: "removed", before: 2, lines: ["贾环站在废墟之中，久久没有动弹。"], fold: false },
     ]);
     expect(L(now)[2]).toBe("“走吧。”他转身。");
   });
 
   it("删掉最后一段：红块挂在末尾（`before` 等于行数）", () => {
     const now = "雨歇了。\n\n贾环站在废墟之中，久久没有动弹。";
-    expect(editMarks(SAVED, now)).toEqual([{ kind: "removed", before: 3, lines: ["“走吧。”他转身。"] }]);
-  });
-
-  it("整段删光：一块红挂着，别的什么都没有", () => {
-    expect(editMarks(SAVED, "")).toEqual([
-      { kind: "removed", before: 1, lines: L(SAVED).filter((s) => s !== "") },
+    expect(editMarks(SAVED, now)).toEqual([
+      { kind: "removed", before: 3, lines: ["“走吧。”他转身。"], fold: false },
     ]);
   });
 
-  it("整章重写：旧的全红、新的全绿，先减后增——和 git 的顺序一样", () => {
+  it("整段删光：一块红挂着（整章那么大，折起来），别的什么都没有", () => {
+    expect(editMarks(SAVED, "")).toEqual([
+      { kind: "removed", before: 1, lines: L(SAVED).filter((s) => s !== ""), fold: true },
+    ]);
+  });
+
+  it("整章重写：旧的全红（折起来）、新的全绿，先减后增——和 git 的顺序一样", () => {
     const now = "夜雨初歇，京城处处弥漫着劫后余生的肃杀气息。\n\n贾环被人带出城南破庙时，浑身衣衫已被雨水浸透。";
     expect(editMarks(SAVED, now)).toEqual([
-      { kind: "removed", before: 0, lines: L(SAVED).filter((s) => s !== "") },
+      { kind: "removed", before: 0, lines: L(SAVED).filter((s) => s !== ""), fold: true },
       { kind: "added", line: 0 },
       { kind: "added", line: 2 },
+    ]);
+  });
+
+  it("一块红折不折：到了保存版的一半以上才折，不足三段的不折", () => {
+    expect(foldsRemoved(3, 3)).toBe(true); // 整章三段全删
+    expect(foldsRemoved(3, 6)).toBe(true); // 六段删三段：正好一半
+    expect(foldsRemoved(3, 7)).toBe(false);
+    expect(foldsRemoved(2, 2)).toBe(false); // 两段的小章整个重写：两块红不算墙
+    expect(foldsRemoved(12, 20)).toBe(true);
+    expect(foldsRemoved(3, 20)).toBe(false);
+    // 判据只看这一块自己：同一份正文里，小的那块不折、大的那块折。
+    const saved = ["一", "二", "三", "四", "五", "六"].map((s) => s + "段。").join("\n\n");
+    const marks = editMarks(saved, "一段。\n\n新的。\n\n三段。");
+    expect(marks).toEqual([
+      { kind: "removed", before: 2, lines: ["二段。"], fold: false },
+      { kind: "added", line: 2 },
+      { kind: "removed", before: 5, lines: ["四段。", "五段。", "六段。"], fold: true },
     ]);
   });
 
@@ -87,7 +106,7 @@ describe("正在流进来的那一稿（`streaming`）", () => {
   it("写到一段原样保留的正文，它前面的删除就钉死了：红块这时才出来", () => {
     const now = "夜雨初歇，京城处处肃杀。\n\n贾环站在废墟之中，久久没有动弹。\n\n“走";
     expect(editMarks(SAVED, now, true)).toEqual([
-      { kind: "removed", before: 0, lines: ["雨歇了。"] },
+      { kind: "removed", before: 0, lines: ["雨歇了。"], fold: false },
       { kind: "added", line: 0 },
     ]);
   });
@@ -101,13 +120,13 @@ describe("正在流进来的那一稿（`streaming`）", () => {
     const now = "夜雨初歇，京城处处肃杀。\n\n贾环站在废墟之中，久久没有动弹。";
     // 流着（第二段刚换行、第三行还没打）：第一段的删除钉死了，尾巴上那一段的先不画。
     expect(editMarks(SAVED, now + "\n", true)).toEqual([
-      { kind: "removed", before: 0, lines: ["雨歇了。"] },
+      { kind: "removed", before: 0, lines: ["雨歇了。"], fold: false },
       { kind: "added", line: 0 },
     ]);
     expect(editMarks(SAVED, now, false)).toEqual([
-      { kind: "removed", before: 0, lines: ["雨歇了。"] },
+      { kind: "removed", before: 0, lines: ["雨歇了。"], fold: false },
       { kind: "added", line: 0 },
-      { kind: "removed", before: 3, lines: ["“走吧。”他转身。"] },
+      { kind: "removed", before: 3, lines: ["“走吧。”他转身。"], fold: false },
     ]);
   });
 });

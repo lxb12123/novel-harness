@@ -387,6 +387,39 @@ describe("正在写的那一稿流进左边", () => {
     expect(screen.getByText(/已放入编辑器，按「保存」写入本章/)).toBeInTheDocument();
   });
 
+  it("整章重写：旧章那一大块红折成一行「已删除 N 段」，新稿全绿在下面，点开才摊开旧稿", async () => {
+    const user = userEvent.setup();
+    const kept = { ...realEvent("draft_kept"), chapter: 1 };
+    const held = new Promise<string>(() => {});
+    const six = ["一", "二", "三", "四", "五", "六"].map((s) => s + "段的正文。").join("\n\n");
+    renderWithApi(shell(), [
+      { match: /\/chapters\/\d+\/text/, body: { ...fixtures.chapterText, markdown: "第一章 血脉\n\n" + six + "\n" } },
+      {
+        method: "POST",
+        match: /\/turn\/events$/,
+        stream: [turnFrame(opened), turnFrame(piece("重写的第一段。\n\n重写的第二段。")), turnFrame(kept), held],
+      },
+    ]);
+    await screen.findByText("第 1 章");
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    await waitFor(() => expect(content.textContent).toContain("六段的正文。"));
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "把这一章重写");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    await screen.findByRole("button", { name: "放弃这一稿" });
+
+    const fold = await screen.findByRole("button", { name: "已删除 6 段" });
+    expect([...document.querySelectorAll(".cm-line.diff-add")].map((el) => el.textContent)).toEqual([
+      "重写的第一段。",
+      "重写的第二段。",
+    ]);
+    expect(document.querySelectorAll(".diff-del")).toHaveLength(0);
+    // 红块在绿行前面：旧稿折成的那一行在新稿上面。
+    expect(fold.compareDocumentPosition(document.querySelector(".cm-line.diff-add")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await user.click(fold);
+    await waitFor(() => expect(document.querySelectorAll(".diff-del")).toHaveLength(6));
+  });
+
   it("按「保存」：请求带上那一稿的编号，痕迹消失；右边那一行改说「已写入」", async () => {
     const user = userEvent.setup();
     const kept = { ...realEvent("draft_kept"), chapter: 1 };

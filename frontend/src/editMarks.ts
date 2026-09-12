@@ -27,6 +27,13 @@
 //    尾巴上的删除等流写完再画。增加的行照画（那是已经到手的字）。
 //
 // 流一收场（`streaming` 为假），整份正文对整份保存版，尾巴上的删除才一起出来。
+//
+// ── 大块红折起来（`fold`）─────────────────────────────────────────────────
+//
+// 写作助手改一章只有整章重写这一条路，重写出来的段几乎没有一段和原来一字不差——按段比就是
+// 旧章全红在上、新章全绿在下，作者要读的新稿被一整屏旧稿顶到底下。所以一块红里删掉的段数到了
+// 保存版的一半以上时折成一行「已删除 N 段」（点开才摊开；不足三段的不折，那不是一堵墙）。
+// 判据只看这一块自己：删掉三段里的两段和整章重写都折，删掉二十段里的三段不折。
 
 import { lineDiff } from "./diff";
 
@@ -34,8 +41,13 @@ export type EditMark =
   /** 现在这份正文的第 `line` 行（0 起）是新增的：整行涂绿。 */
   | { kind: "added"; line: number }
   /** 保存版里的这几段不在了：画一块红，插在现在这份正文第 `before` 行的**前面**
-   *  （`before` 等于行数 = 插在末尾）。 */
-  | { kind: "removed"; before: number; lines: string[] };
+   *  （`before` 等于行数 = 插在末尾）。`fold` = 这一块大到该折成一行。 */
+  | { kind: "removed"; before: number; lines: string[]; fold: boolean };
+
+/** 一块红折不折：删掉的段数到了保存版的一半以上，且不止两段。 */
+export function foldsRemoved(removed: number, savedParagraphs: number): boolean {
+  return removed >= 3 && removed * 2 >= savedParagraphs;
+}
 
 const blank = (s: string) => s.trim() === "";
 
@@ -48,7 +60,8 @@ export function editMarks(saved: string, current: string, streaming = false): Ed
   if (paras.length === 0 && old.length === 0) return [];
   if (old.length === 0) return paras.map((p) => ({ kind: "added", line: p.line }));
   if (paras.length === 0) {
-    return streaming ? [] : [{ kind: "removed", before: all.length, lines: old }];
+    if (streaming) return [];
+    return [{ kind: "removed", before: all.length, lines: old, fold: foldsRemoved(old.length, old.length) }];
   }
   const diff = lineDiff(old.join("\n"), paras.map((p) => p.s).join("\n"));
 
@@ -84,7 +97,9 @@ export function editMarks(saved: string, current: string, streaming = false): Ed
       i++;
     }
     // 先减后增：同一处的红块排在绿行前面（git 的顺序）。
-    if (removed.length > 0 && i <= anchor) marks.push({ kind: "removed", before, lines: removed });
+    if (removed.length > 0 && i <= anchor) {
+      marks.push({ kind: "removed", before, lines: removed, fold: foldsRemoved(removed.length, old.length) });
+    }
     marks.push(...added);
   }
   return marks;
