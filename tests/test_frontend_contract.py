@@ -488,18 +488,16 @@ def test_frontend_fixture_matches_the_real_api(
     assert created.status_code == 201, created.text
     dump["chatCreated"] = norm.walk(created.json())
     chat_id = created.json()["id"]
-    grab(
-        "chatTurn",
-        client.post(
-            f"{base}/chats/{chat_id}/turn",
-            json={"chapter": 2, "said": "第 2 章能说破血脉的事吗？"},
-        ),
+    turn = client.post(
+        f"{base}/chats/{chat_id}/turn",
+        json={"chapter": 2, "said": "第 2 章能说破血脉的事吗？"},
     )
+    grab("chatTurn", turn)
     grab("chatDetail", client.get(f"{base}/chats/{chat_id}"))
-    # ── 候选稿（ADR 0022）：**摆出来让作者挑的那一栏** ────────────────────────
-    # 列表不带正文（一次列二十稿就是二十章正文），要摊开那一版才单取一次。
-    grab("drafts", client.get(f"{base}/drafts"))
-    draft_id = client.get(f"{base}/drafts").json()["drafts"][0]["id"]
+    # ── 候选稿（ADR 0022 / 0048）：回执里那几行不带正文，按「放入编辑器」才单取一稿。
+    # （列表路由 2026-09-12 随并排页撤了，编号从回执上取——取的是**真**编号，
+    # `dump` 里那份已经被规范化成占位符。）
+    draft_id = turn.json()["drafts"][0]["id"]
     grab("draftDetail", client.get(f"{base}/drafts/{draft_id}"))
     grab("chats", client.get(f"{base}/chats"))
     # 没在跑的时候按停：`stopped=false` **不是失败**，前端有一条分支照它渲染。

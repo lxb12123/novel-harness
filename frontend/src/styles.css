@@ -177,7 +177,7 @@ main {
 
    ⚠️ **别图省事挂到 `.pane` 或 `*` 上。** `scrollbar-color` 是**继承**属性：
    往祖先上写一句 `transparent transparent`，所有没写自己那条 hover 规则的嵌套滚动区
-   （`.hist-list`、`.draft-card`、`.chat-log`…）会继承到透明，然后**永远看不见滚动条**
+   （`.hist-list`、`.chat-log`…）会继承到透明，然后**永远看不见滚动条**
    ——而那是个在屏幕上完全看不出来的坏法。一个滚动区一对规则，成对地加。 */
 .shelf-scroll,
 .pane.log,
@@ -1767,17 +1767,16 @@ pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid 
 
 /* ── 桌上摆着的那几稿（ADR 0022；入口 2026-09-12 起按 ADR 0048）────────────
    对话里每稿**一行**（`.draft-row`），稿子的字一个都不在这儿——它在左边的编辑器里。
-   摊开的卡（`.draft-card`）只在并排比那一页（`.compare-cols`，新标签页）。 */
+   （并排比那一页和面板头上「本章 N 稿」的入口同日撤了。） */
 .drafts { margin-top: 10px; }
 .drafts-head {
   display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
   font-size: 12px; margin-bottom: 6px;
 }
-.drafts-head .spacer { flex: 1; }
-.draft-compare { color: var(--accent); font-size: 11px; white-space: nowrap; }
 /* 每稿一行（ADR 0048）：第几稿 · 字数 · 在哪儿；还在桌上的那一稿一颗「放入编辑器」。
-   自述另起一行、按 `.draft-note` 的字号，和并排那一页卡上的自述长得一样。 */
+   自述另起一行。 */
 .draft-row { margin: 0 0 4px; font-size: 12px; line-height: 1.6; }
+.draft-meta { color: var(--dim); font-size: 11px; }
 .draft-place { margin-left: 8px; font-size: 11px; }
 .draft-row-note { display: block; color: var(--dim); font-size: 12px; line-height: 1.7; }
 .draft-row-failed { display: block; color: var(--warn); font-size: 11px; line-height: 1.7; }
@@ -1841,51 +1840,6 @@ pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid 
   font-size: 12px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12); cursor: pointer;
 }
 .cm-jump .icon { width: 14px; height: 14px; }
-
-/* 一稿摊开来读的那张卡——只在并排比那一页（`DraftCard.tsx`）。 */
-.draft-card {
-  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--panel);
-}
-.draft-card.open { background: var(--bg); }
-.draft-card-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 12px; }
-.draft-meta { color: var(--dim); font-size: 11px; }
-.draft-badge {
-  border: 1px solid var(--ok); border-radius: 8px; padding: 0 5px;
-  color: var(--ok); font-size: 11px;
-}
-/* 「这一稿没写完」。**比自述显眼**：它改变的是底下那段字该怎么读
-   （断在半句上是它没写完，不是写作模型的写法），所以它不是一句附注。 */
-.draft-stopped {
-  margin: 5px 0 0; padding: 3px 7px; border-radius: 6px;
-  background: var(--warnbg); color: var(--warn); font-size: 12px; line-height: 1.6;
-}
-.draft-note { margin: 5px 0 0; font-size: 12px; line-height: 1.7; }
-/* 「这一稿的要求 / 助手补的资料」（ADR 0047）：默认收着的两小格，字比自述再小一档、灰一档
-   ——它们是「它为什么这么写」的依据，不是稿子本身。 */
-.draft-brief { margin: 5px 0 0; font-size: 11px; }
-.draft-brief > summary { cursor: pointer; color: var(--dim); }
-.draft-brief-text { margin: 3px 0 0 12px; line-height: 1.7; white-space: pre-wrap; }
-.draft-materials { margin: 3px 0 0; padding-left: 26px; line-height: 1.7; }
-.draft-materials li { white-space: pre-wrap; }
-.draft-preview, .draft-text {
-  margin: 5px 0 0; color: var(--dim); font-size: 12px; line-height: 1.8; white-space: pre-wrap;
-}
-.draft-text { color: var(--ink); }
-.draft-loading { margin: 5px 0 0; color: var(--dim); font-size: 11px; }
-.draft-toggle { margin-top: 6px; font-size: 11px; padding: 2px 9px; }
-
-/* 并排比那一页（`#/compare/{章号}`）：整窗一页，横向排列，每列各自滚。 */
-.compare-page { height: 100%; display: flex; flex-direction: column; padding: 12px 14px; gap: 8px; }
-.compare-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-.compare-head .spacer { flex: 1; }
-.compare-note { color: var(--dim); font-size: 11px; }
-.compare-say { margin: 0; font-size: 12px; line-height: 1.8; max-width: 60ch; }
-.compare-say.dim { color: var(--dim); font-size: 11px; }
-.compare-cols {
-  flex: 1; min-height: 0; display: grid; grid-auto-flow: column;
-  grid-auto-columns: minmax(320px, 1fr); gap: 10px; overflow-x: auto;
-}
-.compare-cols .draft-card { min-width: 0; overflow: auto; }
 
 /* 右栏「章节总结」那一格（2026-08-13）。**全部以 `chsum-` 开头，一条既有规则都没动。**
    正文框、按钮行、那几句说明各一条；别的一律吃右栏和全局既有的样式

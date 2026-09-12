@@ -1,10 +1,9 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { api, proj } from "../api/client";
 import type { DraftCandidateDetail, DraftCandidateView } from "../api/types";
 import { useLiveDraft } from "../liveDraft";
-import { chaptersOf, comparePath, draftLabel, draftsHeading, landedNote, unitsLabel } from "../drafts";
+import { draftLabel, draftsHeading, landedNote, unitsLabel } from "../drafts";
 import { useLanguage } from "../language";
-import { writeCompareHandoff } from "../route";
 
 // 这一轮写出来的那几稿（[ADR 0022](docs/adr/0022-drafting-is-a-proposal-not-a-write.md)，
 // 入口 2026-09-12 起按 [ADR 0048](docs/adr/0048-drafting-writes-the-chapter.md)）。
@@ -20,42 +19,12 @@ import { writeCompareHandoff } from "../route";
 // | 还在桌上（一批几稿的第二稿起 / 上一稿被替下来的 / 按停砍断的） | 一颗「放入编辑器」 |
 //
 // 「放入编辑器」走的是和流一样的路（`liveDraft.ts::present`）：读它的地方也是左边的正文。
-// 要并排读几稿是另一页（`DraftCompare`，新标签页，那儿才有摊开的卡）。
+// （并排比几稿那一页和面板头上「本章 N 稿」的入口 2026-09-12 随作者一句「这块就不要了」撤了。）
 //
 // ── 这块屏幕必须自己做对的两件事 ──────────────────────────────────────────
 //
 // 1. **不许挑。** 后端不排名、不打分（ADR 0005），这一层更不许——几稿并列，作者自己点。
 // 2. **那一串内部标识一个字符都不上屏。** 屏幕上说「第 2 稿」（`ordinal`）。
-
-/** 「并排比这一章的稿子」那条链接。**它同时干两件事**：跳新标签页，
- *  以及把「哪本书的第几章」留给那个标签页（地址里只放章号，见 `route.ts`）。 */
-export function CompareLink({
-  pid,
-  chapter,
-  children,
-}: {
-  pid: string;
-  chapter: number;
-  children: ReactNode;
-}) {
-  const language = useLanguage((s) => s.language);
-  return (
-    <a
-      className="draft-compare"
-      href={comparePath(chapter)}
-      target="_blank"
-      rel="noopener"
-      title={
-        language === "zh"
-          ? "在新标签页并排查看本章各稿"
-          : "Open this chapter’s drafts side by side in a new tab"
-      }
-      onClick={() => writeCompareHandoff({ book: pid, chapter })}
-    >
-      {children}
-    </a>
-  );
-}
 
 type Where = "editor" | "unchanged" | "saved" | "desk";
 
@@ -171,17 +140,6 @@ export function DraftCandidates({
     >
       <div className="drafts-head">
         <b>{draftsHeading(drafts, language)}</b>
-        <span className="spacer" />
-        {/* 并排那一页只在这一章这一轮不止一稿时才值得指过去；只有一稿时它在左边正文里。 */}
-        {chaptersOf(
-          drafts.filter((d) => drafts.filter((o) => o.chapter === d.chapter).length > 1),
-        ).map((chapter) => (
-          <CompareLink key={chapter} pid={pid} chapter={chapter}>
-            {language === "zh"
-              ? `并排查看第 ${chapter} 章各稿 ↗`
-              : `Compare chapter ${chapter}’s drafts side by side ↗`}
-          </CompareLink>
-        ))}
       </div>
       {/* 顺序照后端给的（`(chapter, ordinal)`）：并发跑的稿子谁先回来是随机的，
           在这儿重排一次，作者每次刷新看到的次序就会变。 */}

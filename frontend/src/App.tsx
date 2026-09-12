@@ -3,10 +3,8 @@ import { useChapters, useProjects } from "./api/hooks";
 import { useOpenChapter } from "./chapterNavigation";
 import { chapterOnOpen } from "./chapterCursor";
 import { useReconcileOnFocus } from "./reconcile";
-import { useHashRoute } from "./route";
 import { useLanguage } from "./language";
 import { useCoords } from "./store";
-import { DraftCompare } from "./components/DraftCompare";
 import { TopBar } from "./components/TopBar";
 import { ActivityLog } from "./components/ActivityLog";
 import { CanonEdgeEditor } from "./components/CanonEdgeEditor";
@@ -18,16 +16,12 @@ import { ChatPanel } from "./components/ChatPanel";
 import { Setup } from "./components/Setup";
 
 /**
- * 地址里那一条哈希决定的**只有一件事**：这个标签页是工作台，还是「并排比几稿」那一页。
- *
- * **别把「工作台 / 活动记录」也搬进地址**：那两个是同一块屏幕的两种排布，
- * 归 `useCoords.page`；搬过去等于让浏览器的前进后退键成为它们的入口，
- * 而作者按后退键想回到的是**上一段正文**，不是上一个面板。
- * 并排比那一页不一样——它开在另一个标签页里，**没有地址就没法开**（ADR 0022）。
+ * 工作台就是整个应用。「工作台 / 活动记录」是同一块屏幕的两种排布，归 `useCoords.page`，
+ * **不进地址栏**：搬过去等于让浏览器的前进后退键成为它们的入口，而作者按后退键想回到的是
+ * **上一段正文**，不是上一个面板。（并排比几稿那一页和它的哈希路由 2026-09-12 随作者一句
+ * 「这块就不要了」整个撤了——稿子在左边的编辑器里，右边每稿一行。）
  */
 export default function App() {
-  const route = useHashRoute();
-  if (route.name === "compare") return <DraftCompare chapter={route.chapter} />;
   return <Workbench />;
 }
 

@@ -13,7 +13,6 @@ import type {
   CanonEdgeEditRequest,
   CanonEdgeEditResult,
   CanonEdgeView,
-  ChapterDrafts,
   ChapterRow,
   ChapterSnapshot,
   ChapterSummaryMentions,
@@ -32,7 +31,6 @@ import type {
   DeclareAlias,
   DeclareNode,
   DeleteNodeInput,
-  DraftCandidateDetail,
   EventCastCorrection,
   EventCastInput,
   EventView,
@@ -1189,9 +1187,6 @@ export function useRunTurn(pid: string) {
       qc.invalidateQueries({ queryKey: ["text", pid] });
       qc.invalidateQueries({ queryKey: ["chapters", pid] });
       qc.invalidateQueries({ queryKey: ["history", pid] });
-      // 桌上摆着的那几稿（ADR 0022）：这一轮很可能又添了几份，而「这一章还摆着几稿」
-      // 那个入口是作者关掉回执之后唯一找得回它们的地方。
-      qc.invalidateQueries({ queryKey: ["drafts", pid] });
       // 这一轮很可能记下了一条新规矩（模型叫的 `remember_rule`，作者没按任何按钮）。
       // **不失效它，那条规矩要等下一次刷新才出现在清单上**——而 ADR 0023 押的退路
       // 只有一句「看得见 + 能取消」，一条看不见的新规矩正好落在它外面。
@@ -1301,49 +1296,5 @@ export function useDeleteValidationRule(pid: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["validation-rules", pid] });
     },
-  });
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// 桌上摆着的那几稿（ADR 0022）—— 两条路由：列 / 摊开一版
-// ══════════════════════════════════════════════════════════════════════════
-
-/**
- * 助手写过、**还摆在桌上**的那几稿。最近的在前，**不带正文**。
- *
- * **它不是版本历史。** 版本历史（`useHistory`）里是**已经在书里**的那些；这儿是还没进书的
- * 候选——它们在磁盘上、在快照里都不存在，**没有这条路由，作者关掉那一轮的回执就
- * 再也找不到它们了**。所以「这一章还摆着几稿」那个入口读的就是它。
- */
-export function useDrafts(pid: string | null, chapter: number | null) {
-  return useQuery({
-    queryKey: q(["drafts", pid, chapter]),
-    queryFn: () =>
-      api.get<ChapterDrafts>(proj(pid!, `/drafts${chapter ? `?chapter=${chapter}` : ""}`)),
-    enabled: !!pid,
-    // **开着「切回来重取」的两条查询之一**（另一条是 `useChapterText`；`main.tsx`
-    // 那一行把它全局关了）。
-    // 理由是这一条读端有一个别处没有的形态：**并排比那一页开在另一个标签页里**，
-    // 而作者切走的那段时间里，工作台那边可能又写了几稿。切回来看见一份少了两稿的
-    // 桌子，而屏幕上没有任何东西说它旧了——那正是这个仓库反复在修的「看起来正常的
-    // 假页面」。代价是一次本地 SQLite 的列表查询（不带正文）。
-    refetchOnWindowFocus: true,
-  });
-}
-
-/**
- * 摊开某一版的全文。**`open` 为假时一个字节都不取**——列表那一档一次二十稿，
- * 而每一稿都是一整章正文（后端有意只在详情里给 `text`）。
- *
- * `staleTime: Infinity` 不是性能调优，是**候选按定义不可变**（ADR 0022：它既不进正文
- * 也不进对话，写完就不再变）。重取回来的必然一模一样，而在并排比那一页上
- * 三列同时重取 = 三章正文白走一趟。
- */
-export function useDraftText(pid: string | null, draftId: string | null, open: boolean) {
-  return useQuery({
-    queryKey: q(["draft", pid, draftId]),
-    queryFn: () => api.get<DraftCandidateDetail>(proj(pid!, `/drafts/${encodeURIComponent(draftId!)}`)),
-    enabled: !!pid && !!draftId && open,
-    staleTime: Infinity,
   });
 }

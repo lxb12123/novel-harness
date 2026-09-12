@@ -1,14 +1,13 @@
 // 「桌上摆着的那几稿」这块屏幕的纯逻辑（同 `chat.ts` / `layout.ts` 的分法）：
-// **这里不碰 DOM，也不碰 fetch**，好让「怎么称呼一稿」「默认摊开哪一版」能被单测钉死。
+// **这里不碰 DOM，也不碰 fetch**，好让「怎么称呼一稿」「上面那句怎么说」能被单测钉死。
 //
 // 规格是 [ADR 0022](docs/adr/0022-drafting-is-a-proposal-not-a-write.md)，2026-09-12 起由
 // [ADR 0048](docs/adr/0048-drafting-writes-the-chapter.md) 改了入口：**稿子流进左边的编辑器**，
 // 作者在正文里看着它写、按保存才进书；对话这一侧每稿只有一行「第几稿 · 字数 · 在哪儿」，
-// 稿子的字一个都不在那儿。摊开的卡只在并排比那一页（`DraftCompare`）。这一层守三条：
+// 稿子的字一个都不在那儿（并排比那一页和「本章 N 稿」入口同日撤了）。这一层守三条：
 //
 // 1. **不排名、不打分、不挑。** 后端不给散文打分（ADR 0005），这一层更不许——
-//    它连正文都没有，只有一段 120 字的开头。并排那一页收着的卡**全部收着**，作者自己点
-//    （同 `AmbiguousName`：两个方向都贵就摊开）。
+//    它连正文都没有。几稿并列，作者自己点「放入编辑器」。
 // 2. **顺序照后端给的**（`(chapter, ordinal)`）。并发跑的稿子谁先回来是随机的，
 //    在这儿重排一次，作者每次刷新看到的次序就会变。
 // 3. **屏幕上说「第 N 稿」，不说 id。** id 是 `draft:01J…` 形状，
@@ -16,21 +15,6 @@
 
 import type { DraftCandidateView } from "./api/types";
 import type { Language } from "./language";
-
-/** 并排比那一页上，默认摊开几列。
- *
- *  作者要的是「三窗口分别对应三个原文」，所以是 3。**这个数不是省事，是价格**：
- *  一列 = 一整章正文（一次 `GET …/drafts/{id}`），而那一页列出的是这一章**桌上所有**
- *  的稿子——摊开的那几列之外还可能有更早的几稿，它们收着，点一下才取。 */
-export const COMPARE_OPEN_MAX = 3;
-
-/** 并排比那一页默认摊开哪几列：**最近的那几稿**（后端给的顺序就是最近在前）。
- *
- *  对话里的入口不摊开任何一版（那儿连卡都没有，每稿一行），这一页是作者
- *  **专门点开来并排读的**——他要的就是摊开。 */
-export function openOnCompare(drafts: readonly DraftCandidateView[]): string[] {
-  return drafts.slice(0, COMPARE_OPEN_MAX).map((d) => d.id);
-}
 
 /** 「第 N 稿」。**作者认得的是这个数**（`ordinal`），不是那一串内部标识。 */
 export function draftLabel(draft: DraftCandidateView, language: Language): string {
@@ -109,11 +93,4 @@ export function landedNote(
   return language === "zh"
     ? "如需撤销，可在正文「历史」中退回上一版"
     : "To undo, use “History” on the text side to revert to the previous version";
-}
-
-/** 并排比那一页的地址。**哈希路由 = 零新基础设施**：工作台本来就是本地浏览器应用
- *  （`nh serve` 开的就是 localhost），这一页是同一个应用的另一条路由，
- *  不需要服务端多认一个路径，也不需要多一个进程。 */
-export function comparePath(chapter: number): string {
-  return `#/compare/${chapter}`;
 }

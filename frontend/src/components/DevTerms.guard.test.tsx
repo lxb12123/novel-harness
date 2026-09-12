@@ -15,7 +15,6 @@ import { SettingsDrawer } from "./SettingsDrawer";
 import { HistoryDrawer } from "./HistoryDrawer";
 import { BookShelf } from "./BookShelf";
 import { ChatPanel } from "./ChatPanel";
-import { DraftCompare } from "./DraftCompare";
 import { RulesTable } from "./RulesTable";
 import { SystemNotifications } from "./SystemNotifications";
 
@@ -132,11 +131,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     // （`chat_session:…`）、停止原因的机器码（`done` / `context_full`）、
     // 上下文回执那七个 snake_case 字段，全都在它手上过一遍。
     ["写作助手", <ChatPanel key="cp" />],
-    // 稿件并排对比那一页（ADR 0022）。它是**开在另一个标签页里**的一整页屏幕，
-    // 而它手上全是形状可疑的东西：候选的内部标识（`draft:01J…`）、书的标识、
-    // 那一稿的自述和定长预览。没被扫到的组件等于没有守卫，这一页尤其——
-    // 作者在这儿读的是三章正文，任何一个漏出来的码都摆在正文旁边。
-    ["稿件并排对比", <DraftCompare key="dc" chapter={2} />],
+    // 稿件并排对比那一页 2026-09-12 撤了（作者：「这块就不要了」）——那几稿每稿一行，在写作助手那一格里扫。
     // 「你交代过的」那张表（ADR 0028 + 迁移 016）。它手上形状可疑的东西有两样：
     // 会话的内部标识（`chat_session:…`，那一列今天只渲染标题，探针在下面那条断言里）
     // 和模型自己写的那句时效——**那句话是模型写的，不是引擎的措辞表出来的**，
@@ -320,7 +315,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     // 三种「在哪儿」都要扫到：已写入 / 在编辑器里 / 还在桌上（一颗「放入编辑器」）。
     // 真 dump 那一轮只写了一稿且没落盘，「一稿进了书」那一档正常数据下永远不亮。
     const user = userEvent.setup();
-    const one = fixtures.drafts.drafts[0];
+    const one = fixtures.chatTurn.drafts[0];
     const turn = {
       ...fixtures.chatTurn,
       drafts: [
@@ -448,7 +443,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     // 「按了停」在回执上是 `author_stopped`，而那一稿带着 `stopped_reason`
     // —— 两句都是后端写的中文，两句都得扫。
     const user = userEvent.setup();
-    const one = fixtures.drafts.drafts[0];
+    const one = fixtures.chatTurn.drafts[0];
     const stopped = {
       ...fixtures.chatTurn,
       reason: "author_stopped",

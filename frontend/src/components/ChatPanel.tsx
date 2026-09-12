@@ -3,7 +3,6 @@ import {
   useChatDetail,
   useChats,
   useCreateChat,
-  useDrafts,
   useRunTurn,
   useSayMidTurn,
   useStopChat,
@@ -34,7 +33,7 @@ import { useCoords } from "../store";
 import { useLiveDraft } from "../liveDraft";
 import { ChatSessions } from "./ChatSessions";
 import { BotIcon, SendIcon, StopIcon } from "./icons";
-import { CompareLink, DraftCandidates } from "./DraftCandidates";
+import { DraftCandidates } from "./DraftCandidates";
 
 // 写作助手（模式二，[ADR 0019](docs/adr/0019-agent-loop-not-graph.md)）。
 // 中栏对半分之后的右半边：左边正文、右边它。左栏书架和右栏面板一个像素不动。
@@ -371,9 +370,7 @@ function Receipt({
           {note}
         </p>
       ))}
-      {/* 这一轮写出来的那几稿（ADR 0022）。**它们既不在正文里也不在对话里**，
-          所以这块屏幕是作者第一次、也是当下唯一一次看见它们的地方——
-          关掉这条回执之后，靠的是上面那条「这一章还摆着几稿」。 */}
+      {/* 这一轮写出来的那几稿（ADR 0022 / 0048）：每稿一行，字在左边的编辑器里。 */}
       <DraftCandidates pid={pid} drafts={receipt.drafts} />
     </div>
   );
@@ -389,10 +386,6 @@ export function ChatPanel() {
   const turn = useRunTurn(pid);
   const stop = useStopChat(pid);
   const sayMid = useSayMidTurn(pid);
-  /** 这一章**还摆在桌上**的那几稿（ADR 0022）。它们不在正文里也不在对话里，所以
-   *  一旦那一轮的回执被下一轮顶掉，这条入口就是作者唯一找得回它们的地方。
-   *  **零的时候一个字都不画**：没有稿子时摆一句「还摆着 0 稿」是噪音（同回执那一条）。 */
-  const desk = useDrafts(projectId, chapter);
   // ⚠️ **「这一章的规矩」那颗按钮和它那块面板 2026-08-14 整个撤了**（ADR 0023 决策二的
   // 界面那一半）。作者的原话：
   //
@@ -471,7 +464,6 @@ export function ChatPanel() {
   const [sayHeight, setSayHeight] = useState(0);
 
   const list = sessions.data ?? [];
-  const onDesk = desk.data?.drafts.length ?? 0;
 
   // 没挑过就停在最近说过话的那一段（后端按这个顺序给），同 App 里「默认打开第一本书」。
   useEffect(() => {
@@ -707,13 +699,8 @@ export function ChatPanel() {
             同一段对话在第 700 章和第 722 章会给出不一样的答案——**但那属于助手
             开口时该说的话**（「第 722 章这儿还不能说破他的身世」），不属于常驻在
             标题栏的一行字。想补的时候补在那句话里，别把它加回这儿。 */}
-        {onDesk > 0 && (
-          <CompareLink pid={pid} chapter={chapter}>
-            {language === "zh"
-              ? `本章 ${onDesk} 稿 ↗`
-              : `${onDesk} draft${onDesk === 1 ? "" : "s"} for this chapter ↗`}
-          </CompareLink>
-        )}
+        {/* 「本章 N 稿 ↗」那条入口和它指向的并排页 2026-09-12 撤了（作者：「这块就不要了」）：
+            稿子在左边的编辑器里，右边每稿一行；上一轮的稿子不再有第二个入口。 */}
         {/* 「这一章的规矩」那颗按钮原来在这儿。撤掉的理由写在上面 `listOpen` 那一段。 */}
         <button
           aria-expanded={listOpen}

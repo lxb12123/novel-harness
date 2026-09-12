@@ -115,8 +115,8 @@
 | POST | `/projects/{pid}/chats/{id}/turn` | `agent.loop.run_turn` | `TurnReceipt`·`{chapter, said}`。**`chapter` 必填、无默认值**——投影在它缺席时不过滤，而那是「没接线」默认值不是安全默认值（边界五：第 90 章的禁说清单是第 40 章那份的**子集**）。`said` 留空 = resume。**这一版 HTTP 不流式**（内部流式），所以拿到的是一个跑完才回来的响应；出参是**对话的投影不是原文**（工具返回一条都不出去，只给一个 `lookups` 计数） | 🟢 |
 | POST | `/projects/{pid}/chats/{id}/stop` | `LIVE.stop` | `ChatStopped`·**`stopped=false` 不是失败**（那一刻它本来就没在跑），200 + 一句人话。它不等这一轮跑完 | 🟢 |
 | POST | `/projects/{pid}/chats/{id}/say` | `LIVE.say` → `agent.loop.Mailbox` | `ChatSaid`·**一轮跑着的时候再说一句**（2026-09-12，作者：「像 codex 那样新的消息可以直接发出去，模型可以读，并且不会耽误正在做的」）。`{said, run_id}`。**不等、不打断、不落库**：这句话放进正在跑的那一轮的信箱，loop 在**下一次模型调用之前**把它按正常的作者消息并进对话（那时才落库、才在事件流上喊 `author_said`）；模型说完了而信箱里有话，这一轮接着跑。`queued=false` 不是失败（那一刻没在跑 / 在跑的是另一轮），那句话没排进去也没落库——前端还回输入框 | 🟢 |
-| GET | `/projects/{pid}/drafts?chapter=&limit=` | `DraftCandidateStore.recent` | `{drafts: DraftCandidateView[]}`·最近的在前，**不带正文**（一次列 20 稿 = 20 章正文）。**它不是版本历史**：`/chapters/{n}/history` 里是**已经在书里**的，这儿是**还摆在桌上**的（[ADR 0022](adr/0022-drafting-is-a-proposal-not-a-write.md)——没落盘的候选在磁盘、快照里都不存在，没有这条路由作者关掉那一轮回执就再也找不到它们）。**前端调用方**（2026-08-12 起）：`ChatPanel` 头上那条「还摆着 N 稿 ↗」+ 并排比那一页 | 🟢 |
-| GET | `/projects/{pid}/drafts/{draft_id}` | `DraftCandidateStore.get` | `DraftCandidateView + {text}`·**摊开那一版读的就是它**。404 `draft_not_found`·**前端只在作者亲手点开某一稿时才打**（`useDraftText(…, open)`）。**2026-09-12 起（[ADR 0048](adr/0048-drafting-writes-the-chapter.md)）对话里每稿只是一行、字一个都不画**（正文在左边的编辑器里）；还在桌上的那一稿按「放入编辑器」才打这条路由，取回来走进编辑器；摊开的卡只在并排页 | 🟢 |
+| ~~GET~~ | ~~`/projects/{pid}/drafts?chapter=&limit=`~~ | —— | **2026-09-12 撤了**（作者：「这块就不要了」）：它的两个调用方——`ChatPanel` 头上「本章 N 稿 ↗」和并排比那一页——同日一起删；稿子流进左边的编辑器、右边每稿一行，上一轮的稿子不再有第二个入口。前端从此只按编号单取一稿（下一行） | ⛔ |
+| GET | `/projects/{pid}/drafts/{draft_id}` | `DraftCandidateStore.get` | `DraftCandidateView + {text}`·**作者按「放入编辑器」读的就是它**。404 `draft_not_found`·**前端只在他亲手按那一下时才打**（`DraftCandidates::place`）。**2026-09-12 起（[ADR 0048](adr/0048-drafting-writes-the-chapter.md)）对话里每稿只是一行、字一个都不画**（正文在左边的编辑器里）；还在桌上的那一稿按「放入编辑器」才打这条路由，取回来走进编辑器 | 🟢 |
 
 > **「推荐哪一版」不是引擎给的，前端也不许反推**（同「跳转坐标由后端给」那条禁令）。
 > 唯一的判据是 `landed`——作者按保存把那一稿写进了那一章（ADR 0048），那是一个**动作**
@@ -370,17 +370,8 @@
 │  │                               坐标全来自后端的 `jump`，前端不从标题反推）
 │  └─ <LoadMore>                 ◀ next_cursor 原样回传（不透明串，前端不拼）
 │
-├─ <DraftCompare>     ◀── 2026-08-12 ADR 0022 第三档，**唯一一条哈希路由**：`#/compare/{章号}`
-│  │                      在新标签页里并排读几稿。工作台本来就是本地浏览器应用
-│  │                      （启动器 `api/launch.py::launch()` 开的就是 localhost），所以这是**同一个应用的另一条
-│  │                      路由，零新基础设施**——哈希不进请求行，服务端一个路径都不用多认。
-│  │                      **地址里只有章号**：书是点链接那一下留在本地存储里的
-│  │                      （`route.ts`，内部标识不进地址栏——地址栏也是屏幕）；
-│  │                      交接读不到且库里不止一本书时**说不知道，不猜**。
-│  ├─ <DraftCard ×N>              ◀ GET /drafts?chapter= + GET /drafts/{id}（默认摊开最近 3 列；
-│  │                                 卡上还收着「这一稿的要求 / 助手补的资料」——助手喂了写手什么，
-│  │                                 作者看得见，ADR 0047。**2026-09-12 起摊开的卡只在这一页**）
-│  └─ 只读                        ▶ 无写路由：要用哪一版回工作台跟助手说（一个功能不留两个入口）
+├─ ~~<DraftCompare>~~   ◀── ADR 0022 第三档（`#/compare/{章号}`），**2026-09-12 删**（作者：「这块就不要了」）——
+│                         连同 `route.ts`、`DraftCard`、面板头上「本章 N 稿 ↗」和列表路由一起；稿子在左边的编辑器里
 │
 ├─ ~~<ChapterPrepPage>~~  ◀── P2 章节准备 **2026-08-13 删，见下面「页面二」那一节**
 │

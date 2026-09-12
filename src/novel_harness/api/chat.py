@@ -450,12 +450,6 @@ class DraftCandidateView(BaseModel):
     """助手挑出来补给写手的资料，每条一段（同上）。"""
 
 
-class ChapterDrafts(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
-
-    drafts: tuple[DraftCandidateView, ...] = ()
-
-
 class DraftCandidateDetail(DraftCandidateView):
     """一稿的全文（`GET …/drafts/{id}`）。**界面上摊开那一版读的就是它。**"""
 
@@ -1687,30 +1681,9 @@ def recorded_rules(
     return RecordedRules(rules=tuple(rows), scanned_chats=len(sessions))
 
 
-@router.get("/api/projects/{project_id}/drafts", response_model=ChapterDrafts)
-def list_drafts(
-    chapter: Annotated[int | None, Query(ge=1)] = None,
-    limit: Annotated[int, Query(ge=1, le=100)] = 20,
-    proj: Any = Depends(load_project),
-    conn: Connection = Depends(get_conn),
-) -> ChapterDrafts:
-    """助手写过的那几稿，最近的在前（ADR 0022）。
-
-    **它不是版本历史。** 版本历史（`GET …/chapters/{n}/history`）里是**已经在书里**的
-    那些；这儿是**还摆在桌上**的那些——没落盘的候选在磁盘上、在快照里都不存在，
-    没有这条路由的话，作者关掉那一轮的回执就再也看不到它们了。
-
-    `chapter` 给了就只看那一章：作者在第 12 章上问「刚才那三稿呢」，问的是那一章的三稿。
-    """
-    store = DraftCandidateStore(conn)
-    return ChapterDrafts(
-        drafts=tuple(
-            _draft_view(candidate)
-            for candidate in store.recent(proj.id, chapter=chapter, limit=limit)
-        )
-    )
-
-
+# 「桌上那几稿」的列表路由（`GET …/drafts?chapter=`）2026-09-12 随并排页和「本章 N 稿」入口
+# 一起撤了（作者：「这块就不要了」）：稿子流进左边的编辑器，右边每稿一行；前端从此只按编号
+# 单取一稿（下面那条）。
 @router.get(
     "/api/projects/{project_id}/drafts/{draft_id}", response_model=DraftCandidateDetail
 )
@@ -1719,7 +1692,7 @@ def read_draft(
     proj: Any = Depends(load_project),
     conn: Connection = Depends(get_conn),
 ) -> DraftCandidateDetail:
-    """摊开某一稿的全文。**界面上「推荐那一版摊开」读的就是它**（ADR 0022 的入口形态）。
+    """一稿的全文。**作者按「放入编辑器」读的就是它**（ADR 0048）。
 
     404 = 这本书里没有这一稿（编号对不上，或者它落过盘、又老到被清理掉了——
     清理只清落过盘的，那些字在版本历史里还在）。
@@ -1732,8 +1705,8 @@ def read_draft(
         )
     return DraftCandidateDetail(
         **_draft_view(stored).model_dump(),
-        # **正文在这儿，也只在这儿。** 列表那条路由一个字都不给——一次列出二十稿
-        # 就是二十章正文，而作者要的只是「哪一版是哪一版」。
+        # **正文在这儿，也只在这儿。** 回执里那几行一个字都不给——作者要的是
+        # 「哪一版是哪一版」，字在他按「放入编辑器」之后进左边的编辑器。
         text=stored.body,
     )
 

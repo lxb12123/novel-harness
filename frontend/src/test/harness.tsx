@@ -236,10 +236,8 @@ const DEFAULT: Handler[] = [
   // （一条都没定过 / 定过都不作数了）在真 dump 里也各有一份，由要验它们的测试自己前置。
   { method: "DELETE", match: /\/chats\/[^/]+$/, body: fixtures.chatDeleted },
   { match: /\/chats\/[^/]+$/, body: fixtures.chatDetail },
-  // 桌上摆着的那几稿（ADR 0022）。两条**形状上不重叠**：详情那条要求 `/drafts/` 后面
-  // 还有一段，列表那条要求 `/drafts` 之后直接是查询串或结尾。
+  // 桌上的一稿按「放入编辑器」取全文（ADR 0048）。
   { match: /\/drafts\/[^/]+$/, body: fixtures.draftDetail },
-  { match: /\/drafts(\?|$)/, body: fixtures.drafts },
 ];
 
 /** 一串帧变成一个真的 `ReadableStream`。**一帧劈成两个 chunk 发**：

@@ -5,13 +5,11 @@ import { fixtures, renderWithApi, ROUND_DONE } from "../test/harness";
 import { rawIds, screenText } from "../test/screenGuard";
 import type { DraftCandidateView } from "../api/types";
 import { useLiveDraft } from "../liveDraft";
-import { readCompareHandoff } from "../route";
 import { useCoords } from "../store";
 import { ChatPanel } from "./ChatPanel";
 
 // 这一轮写出来的那几稿，**在对话面板里**（ADR 0022 的桌子；入口 2026-09-12 起按
-// ADR 0048：稿子流进左边的编辑器，作者按保存才进书；摊开的卡只在并排比那一页，
-// `DraftCompare.test.tsx`）。
+// ADR 0048：稿子流进左边的编辑器，作者按保存才进书；并排比那一页同日撤了）。
 //
 // **稿子的字一个都不在这儿**（作者：「一定要在左边写」「不要在这个里面留这种东西」）。
 // 这份文件量的是每稿那一行长什么样——三种「在哪儿」：
@@ -24,7 +22,7 @@ import { ChatPanel } from "./ChatPanel";
 // `draftDetail`）。**变体只改「第几稿 / 落没落盘 / 有没有自述」**——真 dump 那一轮
 // 写了一稿且写进去了。
 
-const REAL = fixtures.drafts.drafts[0] as DraftCandidateView;
+const REAL = fixtures.chatTurn.drafts[0] as DraftCandidateView;
 const variant = (over: Partial<DraftCandidateView>): DraftCandidateView => ({ ...REAL, ...over });
 
 /** 三稿都写进了那一章：一稿有自述、一稿**什么都没说**（自述是空串）。 */
@@ -214,41 +212,17 @@ describe("被砍断的那一稿：屏幕必须说它没写完", () => {
   });
 });
 
-describe("并排比那一页的入口：那条链接", () => {
-  it("链接指向同一个应用的另一条路由，**地址里只有章号**", async () => {
+describe("没有第二个入口", () => {
+  it("面板头上没有「本章 N 稿」，回执里也没有「并排查看」——那一页 2026-09-12 撤了", async () => {
+    // 作者：「这块就不要了」。稿子在左边的编辑器里，右边每稿一行；上一轮的稿子不再有
+    // 第二个入口（这一轮的那几行随回执走）。
     const user = userEvent.setup();
+    const watch = vi.spyOn(globalThis, "fetch");
     renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) }]);
     await runTurn(user);
-
-    const link = screen.getByRole("link", { name: /并排查看第 2 章各稿/ });
-    expect(link).toHaveAttribute("href", "#/compare/2");
-    expect(link).toHaveAttribute("target", "_blank");
-    expect(rawIds(link.getAttribute("href") ?? "")).toEqual([]);
-  });
-
-  it("点它的时候把「哪本书的第几章」留给那个标签页（地址里没有书）", async () => {
-    const user = userEvent.setup();
-    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) }]);
-    await runTurn(user);
-    expect(readCompareHandoff()).toBeNull();
-
-    await user.click(screen.getByRole("link", { name: /并排查看第 2 章各稿/ }));
-
-    expect(readCompareHandoff()).toEqual({ book: "project:ID1", chapter: 2 });
-  });
-
-  it("**回执被顶掉之后还找得回它们**：面板头上那条「还摆着几稿」", async () => {
-    // 候选既不在正文里也不在对话里（ADR 0022）——没有这条入口，作者关掉那一轮的回执
-    // 就再也看不到它们了。零的时候一个字都不画。
-    renderWithApi(<ChatPanel />);
-    const link = await screen.findByRole("link", { name: /本章 1 稿/ });
-    expect(link).toHaveAttribute("href", "#/compare/2");
-  });
-
-  it("这一章桌上是空的时候，那条入口一个字都不画", async () => {
-    renderWithApi(<ChatPanel />, [{ match: /\/drafts(\?|$)/, body: { drafts: [] } }]);
-    await screen.findByText(fixtures.chatDetail.messages[0].text);
-    await new Promise((r) => setTimeout(r, 40));
-    expect(screen.queryByRole("link", { name: /还摆着/ })).toBeNull();
+    expect(screen.queryByRole("link")).toBeNull();
+    expect(screenText()).not.toMatch(/本章 \d+ 稿|并排查看|还摆着/);
+    // 列表那条路由（`GET …/drafts`）也没了：一次都不该打。
+    expect(watch.mock.calls.map((c) => String(c[0])).filter((u) => /\/drafts(\?|$)/.test(u))).toEqual([]);
   });
 });

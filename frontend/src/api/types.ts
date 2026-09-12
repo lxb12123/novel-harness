@@ -1203,10 +1203,6 @@ export interface DraftCandidateDetail extends DraftCandidateView {
   text: string;
 }
 
-export interface ChapterDrafts {
-  drafts: DraftCandidateView[];
-}
-
 /** 停法的机器码。**一个都不许上屏**——它是 snake_case，形状判据会当场咬住它。
  *  给作者看的那句话是 `TurnReceipt.message`（后端 `stop_wording()` 写好的）。
  *

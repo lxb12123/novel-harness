@@ -321,23 +321,20 @@ def test_the_same_scan_over_the_three_places_a_candidate_is_handed_out(
     drafts = turn.json()["drafts"]
     assert len(drafts) == 1, drafts
 
-    listing = client.get(f"/api/projects/{pid}/drafts", params={"chapter": 1})
-    assert listing.status_code == 200, listing.text
     detail = client.get(f"/api/projects/{pid}/drafts/{drafts[0]['id']}")
     assert detail.status_code == 200, detail.text
 
     surfaces = {
         "一轮的回执": turn.text,
-        "桌上那几稿的列表": listing.text,
         "摊开那一版": detail.text,
     }
     for where, blob in surfaces.items():
         leaked = [name for name, poison in _poisons(poisoned).items() if poison in blob]
         assert not leaked, f"「{where}」这条出参里躺着：{leaked}"
 
-    # 反向断言：这几条出参真的装着那一稿（不是三个空壳上搜出来的干净）。
+    # 反向断言：这几条出参真的装着那一稿（不是两个空壳上搜出来的干净）。
     assert detail.json()["text"].startswith("风雪落在乙的肩上")
-    assert listing.json()["drafts"][0]["ordinal"] == 1
+    assert drafts[0]["ordinal"] == 1
 
 
 def test_the_scan_would_see_a_candidate_that_carried_the_secret(
@@ -497,7 +494,6 @@ def test_a_draft_never_leaves_the_book_it_was_written_for(
         conn.close()
 
     assert client.get(f"/api/projects/{other}/drafts/{draft_id}").status_code == 404
-    assert client.get(f"/api/projects/{other}/drafts").json()["drafts"] == []
     # 反向断言：同一个编号在**它自己那本书**上是取得到的（上面那两条不是 404 到别处去了）。
     assert client.get(f"/api/projects/{pid}/drafts/{draft_id}").status_code == 200
 

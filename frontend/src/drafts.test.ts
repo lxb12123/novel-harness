@@ -1,38 +1,20 @@
 import { describe, expect, it } from "vitest";
 import fixtures from "./__fixtures__/api.json";
 import type { DraftCandidateView } from "./api/types";
-import {
-  COMPARE_OPEN_MAX,
-  chaptersOf,
-  comparePath,
-  draftLabel,
-  draftsHeading,
-  landedNote,
-  openOnCompare,
-  unitsLabel,
-} from "./drafts";
+import { chaptersOf, draftLabel, draftsHeading, landedNote, unitsLabel } from "./drafts";
 
 // 「桌上摆着的那几稿」那块屏幕的纯逻辑（ADR 0022）。
 //
 // **这里的每一条都是「界面替作者做了什么判断」**，所以它们必须能脱离渲染验证：
-// 默认摊开哪一版、屏幕上把它叫什么。
+// 屏幕上把它叫什么、上面那句怎么说。
 
 /** 真 dump 里那一稿（`tests/test_frontend_contract.py` 冻的），**一个字段都没改**。 */
-const REAL = fixtures.drafts.drafts[0] as DraftCandidateView;
+const REAL = fixtures.chatTurn.drafts[0] as DraftCandidateView;
 
 /** 同一稿的变体。**这不是手写夹具**：形状原样来自上面那一份，改的只有「第几稿 /
  *  落没落盘 / 有没有自述」——而**一批三稿、其中一稿进了书**恰恰是这块屏幕要画的
  *  常态，真 dump 里那一轮只写了一稿（`landed:false`），拿不到这个形态。 */
 const variant = (over: Partial<DraftCandidateView>): DraftCandidateView => ({ ...REAL, ...over });
-
-describe("并排比那一页默认摊开哪几列", () => {
-  it("**摊开最近的几列**，更早的收着", () => {
-    // 那一页是作者专门点开来并排读的，他要的就是摊开——判据和入口那一档有意不同。
-    const many = [1, 2, 3, 4, 5].map((n) => variant({ id: `draft:ID${n}`, ordinal: n }));
-    expect(openOnCompare(many)).toEqual(["draft:ID1", "draft:ID2", "draft:ID3"]);
-    expect(openOnCompare(many)).toHaveLength(COMPARE_OPEN_MAX);
-  });
-});
 
 describe("屏幕上把它叫什么", () => {
   it("「第 N 稿」用的是 `ordinal`，**那一串内部标识一个字符都不在里面**", () => {
@@ -77,12 +59,5 @@ describe("有稿子进了书", () => {
   it("一个都没进书就一个字都不写（零不写）", () => {
     expect(landedNote([REAL], "zh")).toBeNull();
     expect(landedNote([], "zh")).toBeNull();
-  });
-});
-
-describe("并排比那一页的地址", () => {
-  it("**地址里只有章号**：书的内部标识不进地址栏（地址栏也是屏幕）", () => {
-    expect(comparePath(12)).toBe("#/compare/12");
-    expect(comparePath(2)).not.toContain(":");
   });
 });
