@@ -50,7 +50,7 @@ from pydantic import BaseModel, ConfigDict
 from novel_harness import project
 from novel_harness.agent import tools as agent_tools
 from novel_harness.agent.candidates import DraftCandidate
-from novel_harness.agent.ports import DraftProduct, LandingReport, StoredDraft
+from novel_harness.agent.ports import DraftProduct, StoredDraft
 from novel_harness.agent.tools import (
     TOOL_NAMES,
     TOOL_TABLE,
@@ -183,10 +183,11 @@ DRAFT_ID = "draft:01JTESTTESTTESTTESTTESTTEST"
 
 
 class FakeDesk:
-    """注入进来的那个起草台（`agent.ports.DraftDesk`）：**生成 / 落盘 / 读回**。
+    """注入进来的那个起草台（`agent.ports.DraftDesk`）：**生成 / 读回**（落盘 2026-09-12 起
+    归作者自己按的保存，ADR 0048）。
 
-    三个动作各自都是一个模型看得见的面，所以这个假实现三个都要填满——
-    只填一个的话，另外两块屏幕在这张网里从来没被扫过（ADR 0022 之后它们是新长出来的）。
+    两个动作各自都是一个模型看得见的面，所以这个假实现两个都要填满——
+    只填一个的话，另一块屏幕在这张网里从来没被扫过。
     """
 
     def __init__(self) -> None:
@@ -207,12 +208,6 @@ class FakeDesk:
         # 起草侧收到的这份约束**就是要进 prompt 的那一份**——第 4 个面在这里被捉住。
         self.seen.append(ctx)
         return DraftProduct(candidate=self._candidate(ask.chapter))
-
-    def land(self, candidate_id: str) -> LandingReport:
-        # `note` 也是模型看得见的一个面（落盘回执贴回对话里），所以它必须填上。
-        return LandingReport(
-            chapter=CHAPTER, landed=True, note=f"已经写进第 {CHAPTER} 章了（章标题保持原样）。"
-        )
 
     def recall(self, candidate_id: str) -> StoredDraft:
         return StoredDraft(
@@ -259,7 +254,6 @@ def _surfaces_of(world: World) -> dict[str, str]:
         [
             _call("scene_constraints", chapter=CHAPTER),
             _call("character_state", chapter=CHAPTER, character="萧决"),
-            # 起草即写入（ADR 0048）：落盘回执现在跟着起草的返回一起回来，是同一个面。
             _call("draft_chapter", chapter=CHAPTER, brief="写一场雪，收在他没抬头。"),
             _call("read_draft", draft_id=DRAFT_ID),
             # ADR 0024 的问作者：出参会被界面直接摆成一张卡，**它也是一个面**。
@@ -661,9 +655,9 @@ ADR 0048（起草即写入）之后仍然如此——能写进书的只有 `draf
 def test_no_tool_takes_a_paragraph_of_prose() -> None:
     """**模型没有「只写不草」这个动作**（ADR 0019 边界一的推论，ADR 0022 之后的落点）。
 
-    表里有一条会改作者的书的工具（`draft_chapter`，2026-09-12 起写完直接写进那一章，
-    ADR 0048），所以「表里没有写工具」这句话不成立。取代它的是一条更硬、也更可断言的：
-    **没有一个工具收得下一段正文。** 能写进磁盘的只有刚刚由后端按那一章的约束生成出来的那一稿。
+    2026-09-12 起（ADR 0048）表里**没有**一条会改作者的书的工具（落盘归他自己按的保存），
+    但这一条不靠「表里没有写工具」成立——它更硬、也更可断言：
+    **没有一个工具收得下一段正文。** 加回一条写工具的那天，这一条照样拦着「拿任意文本盖一章」。
     """
     offenders = {
         spec.name: sorted(set(spec.args.model_fields) & MANUSCRIPT_SHAPED_FIELDS)
@@ -714,8 +708,8 @@ def test_there_is_no_tool_that_writes(world: World) -> None:
         "ADR 0021 开的是「写磁盘」，不是「把 CanonWriter 交给模型」"
     )
     source = (Path(agent_tools.__file__)).read_text(encoding="utf-8")
-    assert "能写进磁盘的只有刚刚由后端按那一章的约束生成出来的那一稿" in source, (
-        "模块 docstring 里那段「起草即写入，但它凭什么仍然安全」不见了。"
+    assert "能写进磁盘的只有作者自己按的那一次保存" in source, (
+        "模块 docstring 里那段「表里没有一条工具动得了书」不见了。"
         "它不是注释洁癖：下一个人会把「只收 brief」读成一个麻烦，然后给它加一个 text 参数。"
     )
 

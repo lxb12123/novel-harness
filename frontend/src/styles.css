@@ -1789,6 +1789,28 @@ pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid 
 /* 写进那一章的一稿只有一行（ADR 0048）：正文在左边，这儿不摊第二份。
    自述另起一行、按 `.draft-note` 的字号，和没写进去那张卡上的自述长得一样。 */
 .draft-landed { margin: 0 0 4px; font-size: 12px; line-height: 1.6; }
+
+/* 写作助手放进编辑器那一稿的底色（`tint.ts`）：新增的段绿、改过的段浅红，按保存就消失。
+   浅到能读——它标的是「这一段动过」，不是一段警告。 */
+.ai-added { background: rgba(52, 168, 83, 0.14); }
+.ai-changed { background: rgba(217, 72, 72, 0.12); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .ai-added { background: rgba(72, 187, 120, 0.2); }
+  :root:not([data-theme="light"]) .ai-changed { background: rgba(240, 96, 96, 0.18); }
+}
+:root[data-theme="dark"] .ai-added { background: rgba(72, 187, 120, 0.2); }
+:root[data-theme="dark"] .ai-changed { background: rgba(240, 96, 96, 0.18); }
+/* 「滑到最下方」：作者翻上去看前面写的、字还在底下长时，正文底部正中一颗。
+   `.cm-wrap` 本身在上面定义（flex 那一行）；这儿只补定位锚。 */
+.cm-wrap { position: relative; }
+.cm-jump {
+  position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%);
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 999px;
+  background: var(--panel); border: 1px solid var(--line); color: var(--ink);
+  font-size: 12px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12); cursor: pointer;
+}
+.cm-jump .icon { width: 14px; height: 14px; }
 .draft-landed-note { display: block; color: var(--dim); font-size: 12px; line-height: 1.7; }
 
 .draft-cards { display: flex; flex-direction: column; gap: 8px; }

@@ -54,29 +54,27 @@ _EN: dict[str, str] = {
     ),
     # ── draft_chapter（ADR 0047：chapter + brief + materials）─────────────
     (
-        "起草第 N 章的一稿，**写完直接写进那一章**：作者当场在正文里看到，不满意会在"
-        "版本历史里退回上一版——所以**不要问他要不要存**，写完告诉他写了什么就行。"
-        "返回里给你它的编号、字数、开头的一段、写它的那个模型自己说的一句话，"
-        "以及写没写进去（作者在这中间改过那一章、或那一章还不存在时不会覆盖，"
-        "稿子留在桌上，返回里说清为什么——那时把情况告诉他）。\n"
+        "起草第 N 章的一稿。**稿子在写的过程中就流进作者左边的正文编辑器**，写完以"
+        "未保存的样子放在那儿，他按「保存」才写进那一章、不要就直接丢掉——所以**不要问他"
+        "要不要存、也不用告诉他去点保存**（界面上有提示），写完告诉他写了什么就行。"
+        "返回里给你它的编号、字数、开头的一段、写它的那个模型自己说的一句话。\n"
         "写之前先做三件事：分析作者的意图（写哪一章、新写还是重写、牵涉谁、牵涉哪几章）；"
         "由粗到细查资料（目录 → 总结 → 事件 → 角色卡 → 原文，只在需要细节时读原文，"
         "有目的地挑）；对照规矩（validation_rules 里的检验规则、作者交代过的有时限的规矩、"
         "你查到的事实矛盾）。然后把结论写进 brief，把写手够不着的远章资料放进 materials。\n"
         "写手自己有：文风、禁用字、这一章在场人物的角色卡、他们最近的事件、最近几章的总结、"
         "上一章结尾和这一章当前正文——**这些不用你抄进来**。\n"
-        "默认写一稿。作者明确要几个版本时才一次要几稿（brief 各不同）——它们会依次写进"
-        "那一章，最后一稿留在正文里，其余在版本历史和并排页里；**同一批里的几稿会同时写**。"
+        "默认写一稿。作者明确要几个版本时才一次要几稿（brief 各不同）——第一稿进他的"
+        "编辑器，其余摆在对话里让他挑；**同一批里的几稿会同时写**。"
     ): (
-        "Draft one version of chapter N and **write it straight into that "
-        "chapter**: the author sees it in the text at once, and can revert "
-        "to the previous version in version history if they don't want it "
-        "— so **don't ask whether to save it**; when it's written, tell them "
-        "what you wrote. The return gives you its id, word count, an opening "
-        "excerpt, a note the model that wrote it left about itself, and "
-        "whether it went in (if the author changed that chapter in the "
-        "meantime, or the chapter doesn't exist yet, nothing is overwritten: "
-        "the draft stays on the desk and the return says why — tell them).\n"
+        "Draft one version of chapter N. **The draft streams into the "
+        "author's text editor on the left as it is written**; when done it "
+        "sits there unsaved, and they click Save to write it into the "
+        "chapter or simply discard it — so **don't ask whether to save it, "
+        "and don't tell them to click Save** (the screen says so); when it's "
+        "written, tell them what you wrote. The return gives you its id, "
+        "word count, an opening excerpt, and a note the model that wrote it "
+        "left about itself.\n"
         "Do three things first: analyse what the author wants (which "
         "chapter, new or rewrite, who's involved, which chapters it "
         "touches); look things up from coarse to fine (index → summaries → "
@@ -91,9 +89,9 @@ _EN: dict[str, str] = {
         "and this chapter's current text — **don't copy those in**.\n"
         "Write one draft by default. Only when the author explicitly asks "
         "for several versions, request several at once (different briefs) "
-        "— they are written into the chapter one after another, the last "
-        "stays in the text and the rest are in version history and on the "
-        "compare page; **drafts in the same batch are written concurrently**."
+        "— the first goes into their editor, the rest are laid out in the "
+        "conversation for them to choose from; **drafts in the same batch "
+        "are written concurrently**."
     ),
     (
         "起草第 N 章的一稿（**chapter + brief + materials**，ADR 0047）。\n\n"
@@ -889,135 +887,6 @@ _MESSAGES: dict[str, dict[DraftLanguage, str]] = {
             "This book has no such draft (the id doesn't match, or it's "
             "already been cleaned up). Start a new draft, or have the "
             "author say clearly which version they want."
-        ),
-    },
-    # ── agent/drafting.py::_land()（032 之后的批次，2026-08-27）──────────────
-    # `_land()` 不走 ToolRefused：它把「写没写成」全部当返回值（成功也在内），
-    # 见它自己的 docstring。这十条覆盖它每一条 return 分支，键名前缀 `landing_`
-    # 是这一节唯一的命名空间。
-    "landing_target_chapter_missing": {
-        DraftLanguage.ZH: (
-            "第 {chapter} 章还不存在，所以这一稿没有存进去——新开一章要作者自己起"
-            "章标题（书里靠那一行认章）。把稿子给他看，请他建好这一章再放进去。"
-        ),
-        DraftLanguage.EN: (
-            "Chapter {chapter} doesn't exist yet, so this draft wasn't "
-            "saved — a new chapter needs the author to title it "
-            "themselves (the book recognizes chapters by that line). "
-            "Show him the draft and ask him to create the chapter "
-            "first, then put it in."
-        ),
-    },
-    "landing_chapter_created_after_draft": {
-        DraftLanguage.ZH: (
-            "没有存进第 {chapter} 章：写这一稿的时候那一章还不存在，现在它有了"
-            "——那是作者刚建的，这一稿不是照着它写的，所以不覆盖。"
-            "要用的话让我照现在这一章重写一稿。"
-        ),
-        DraftLanguage.EN: (
-            "Chapter {chapter} wasn't saved: it didn't exist when this "
-            "draft was written, and now it does — the author just "
-            "created it, and this draft wasn't written against it, so "
-            "it won't overwrite it. To use it, have me rewrite a draft "
-            "against the chapter as it stands now."
-        ),
-    },
-    "landing_chapter_head_malformed": {
-        DraftLanguage.ZH: (
-            "没有存进第 {chapter} 章：那一章现在的开头不是一行章标题"
-            "（或者标题前面还有别的字）。这种时候动它会让整本书的章号错位，"
-            "所以一个字都没写。稿子还在，交给作者。"
-        ),
-        DraftLanguage.EN: (
-            "Chapter {chapter} wasn't saved: its current opening line "
-            "isn't a chapter title (or there's other text before the "
-            "title). Touching it now would throw off every chapter "
-            "number in the book, so nothing was written. The draft is "
-            "still here — hand it to the author."
-        ),
-    },
-    "landing_draft_empty": {
-        DraftLanguage.ZH: (
-            "没有存进第 {chapter} 章：这一稿是空的，存上去等于把那一章清空。"
-            "换个说法再让我写一次。"
-        ),
-        DraftLanguage.EN: (
-            "Chapter {chapter} wasn't saved: this draft is empty, and "
-            "saving it would wipe out the chapter. Rephrase and ask me "
-            "to write it again."
-        ),
-    },
-    "landing_candidate_not_single_chapter": {
-        DraftLanguage.ZH: (
-            "没有存进第 {chapter} 章：这一稿接上原来的章标题之后切不成恰好一章"
-            "（多半是稿子里自己又写了章标题）。稿子还在，交给作者。"
-        ),
-        DraftLanguage.EN: (
-            "Chapter {chapter} wasn't saved: appended to the original "
-            "chapter title, this draft no longer parses as exactly one "
-            "chapter (most likely it wrote its own chapter title "
-            "again). The draft is still here — hand it to the author."
-        ),
-    },
-    "landing_presync_refused": {
-        DraftLanguage.ZH: (
-            "没有存进第 {chapter} 章：这本书里有一个章节文件（{path}）现在切不成"
-            "一章，同步整本书会失败。稿子还在，请作者先把那个文件的开头修好。"
-        ),
-        DraftLanguage.EN: (
-            "Chapter {chapter} wasn't saved: one of this book's chapter "
-            "files ({path}) currently doesn't parse as a single "
-            "chapter, so syncing the whole book would fail. The draft "
-            "is still here — ask the author to fix that file's opening "
-            "first."
-        ),
-    },
-    "landing_chapter_changed": {
-        DraftLanguage.ZH: (
-            "没有存进第 {chapter} 章：写这一稿的时候作者又改过那一章，"
-            "存上去会盖掉他刚写的字。稿子还在，让他自己决定要不要用。"
-        ),
-        DraftLanguage.EN: (
-            "Chapter {chapter} wasn't saved: the author changed that "
-            "chapter again while this draft was being written, and "
-            "saving would overwrite what he just wrote. The draft is "
-            "still here — let him decide whether to use it."
-        ),
-    },
-    "landing_chapter_file_missing": {
-        DraftLanguage.ZH: (
-            "没有存进第 {chapter} 章：写这一稿的时候那一章的文件不在了。"
-            "稿子还在，交给作者。"
-        ),
-        DraftLanguage.EN: (
-            "Chapter {chapter} wasn't saved: that chapter's file went "
-            "missing while this draft was being written. The draft is "
-            "still here — hand it to the author."
-        ),
-    },
-    "landing_saved_but_history_not_recorded": {
-        DraftLanguage.ZH: (
-            "已经写进第 {chapter} 章了，但这本书里有别的章节文件切不成一章，"
-            "所以这一次没能记进版本历史。请作者去看一眼。"
-        ),
-        DraftLanguage.EN: (
-            "Chapter {chapter} has been saved, but another chapter "
-            "file in this book doesn't parse as a single chapter, so "
-            "this save wasn't recorded in version history this time. "
-            "Ask the author to take a look."
-        ),
-    },
-    "landing_saved": {
-        DraftLanguage.ZH: (
-            "已经写进第 {chapter} 章了（章标题保持原样），作者在正文里看得到。"
-            "不用问他要不要存：不满意他会在版本历史里退回上一版，活动记录里也有这一次的记录。"
-        ),
-        DraftLanguage.EN: (
-            "Chapter {chapter} has been written (the chapter title was "
-            "kept as-is) and the author can see it in the text. Don't ask "
-            "whether to save: if it's not right they'll roll back to the "
-            "previous version in version history — this write is also in "
-            "the activity log."
         ),
     },
     # ── agent/panels.py（2026-09-12，右栏四栏的读工具）──────────────────────

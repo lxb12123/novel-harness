@@ -503,12 +503,12 @@
   "activityCanonEdge": {
     "actor": "system",
     "chapter_number": 1,
-    "id": "decision:ID76",
+    "id": "decision:ID75",
     "jump": {
       "chapter_number": 1,
-      "edge_id": "edge:ID73",
+      "edge_id": "edge:ID72",
       "endpoints": [
-        "/api/projects/project:ID1/canon/edges/edge:ID73"
+        "/api/projects/project:ID1/canon/edges/edge:ID72"
       ],
       "event_id": null,
       "label_code": "jump_edit_auto_edge",
@@ -662,14 +662,14 @@
       },
       {
         "actor": "system",
-        "count": 14
+        "count": 12
       }
     ],
     "entries": [
       {
         "actor": "system",
         "chapter_number": 3,
-        "id": "extraction_run:ID55",
+        "id": "extraction_run:ID54",
         "jump": {
           "chapter_number": 3,
           "edge_id": null,
@@ -699,7 +699,7 @@
       {
         "actor": "system",
         "chapter_number": null,
-        "id": "call:ID56",
+        "id": "call:ID55",
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
@@ -719,7 +719,7 @@
       {
         "actor": "system",
         "chapter_number": null,
-        "id": "call:ID57",
+        "id": "call:ID56",
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
@@ -739,7 +739,7 @@
       {
         "actor": "system",
         "chapter_number": null,
-        "id": "call:ID58",
+        "id": "call:ID57",
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
@@ -758,38 +758,8 @@
       },
       {
         "actor": "system",
-        "chapter_number": 2,
-        "id": "decision:ID59",
-        "jump": {
-          "chapter_number": 2,
-          "edge_id": null,
-          "endpoints": [],
-          "event_id": null,
-          "label_code": "jump_go_to_chapter",
-          "label_params": {
-            "chapter": 2
-          },
-          "proposal_id": null,
-          "target": "chapter"
-        },
-        "source": "decision",
-        "status": "succeeded",
-        "subtitle_code": "decision_subtitle_chapter_draft",
-        "subtitle_params": {
-          "chapter": 2,
-          "units": 2805
-        },
-        "title_code": "decision_entry_title",
-        "title_params": {
-          "actor": "system",
-          "kind": "chapter_draft"
-        },
-        "ts": "<ts>"
-      },
-      {
-        "actor": "system",
         "chapter_number": null,
-        "id": "call:ID60",
+        "id": "call:ID58",
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
@@ -809,7 +779,7 @@
       {
         "actor": "system",
         "chapter_number": null,
-        "id": "call:ID61",
+        "id": "call:ID59",
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
@@ -829,7 +799,7 @@
       {
         "actor": "system",
         "chapter_number": null,
-        "id": "call:ID62",
+        "id": "call:ID60",
         "jump": null,
         "source": "model_call",
         "status": "succeeded",
@@ -845,16 +815,36 @@
           "capability": "agent"
         },
         "ts": "<ts>"
+      },
+      {
+        "actor": "system",
+        "chapter_number": null,
+        "id": "call:ID61",
+        "jump": null,
+        "source": "model_call",
+        "status": "succeeded",
+        "subtitle_code": "call_subtitle",
+        "subtitle_params": {
+          "model": "deepseek-v4-flash",
+          "ms": 0,
+          "tokens_in": 1800,
+          "tokens_out": 2600
+        },
+        "title_code": "call_entry_title",
+        "title_params": {
+          "capability": "writer"
+        },
+        "ts": "<ts>"
       }
     ],
-    "next_cursor": "<ts>|call:ID62"
+    "next_cursor": "<ts>|call:ID61"
   },
   "activityFailedDetail": {
     "cost": null,
     "entry": {
       "actor": "system",
       "chapter_number": 3,
-      "id": "extraction_run:ID55",
+      "id": "extraction_run:ID54",
       "jump": {
         "chapter_number": 3,
         "edge_id": null,
@@ -1118,7 +1108,7 @@
   },
   "aliasCreated": {
     "derived_from_alias_id": null,
-    "id": "alias:ID70",
+    "id": "alias:ID69",
     "kind": "alias",
     "node_id": "character:ID9",
     "project_id": "project:ID1",
@@ -1128,12 +1118,12 @@
     "usable_for_rules": true
   },
   "aliasDeleted": {
-    "id": "alias:ID72",
+    "id": "alias:ID71",
     "status": "RETRACTED"
   },
   "aliasEdited": {
-    "derived_from_alias_id": "alias:ID71",
-    "id": "alias:ID72",
+    "derived_from_alias_id": "alias:ID70",
+    "id": "alias:ID71",
     "kind": "alias",
     "node_id": "character:ID7",
     "project_id": "project:ID1",
@@ -1143,8 +1133,8 @@
     "usable_for_rules": true
   },
   "aliasReassigned": {
-    "derived_from_alias_id": "alias:ID70",
-    "id": "alias:ID71",
+    "derived_from_alias_id": "alias:ID69",
+    "id": "alias:ID70",
     "kind": "alias",
     "node_id": "character:ID7",
     "project_id": "project:ID1",
@@ -1214,13 +1204,13 @@
         "added": [
           {
             "created": true,
-            "id": "chapter:ID64",
+            "id": "chapter:ID63",
             "number": 1,
             "path": "chapters/0001.md",
-            "project_id": "project:ID63",
+            "project_id": "project:ID62",
             "snapshot_created": true,
             "snapshot_generation": 1,
-            "snapshot_id": "snapshot:ID65",
+            "snapshot_id": "snapshot:ID64",
             "text_sha256": "<sha>",
             "title": "起"
           }
@@ -1237,7 +1227,7 @@
     "initial_chapter": 1,
     "project": {
       "canon_version": 0,
-      "id": "project:ID63",
+      "id": "project:ID62",
       "language": "zh",
       "name": "序章样书",
       "root_path": "<root>/books/序章样书"
@@ -1261,9 +1251,9 @@
     "author_owned": false,
     "canon_version": 18,
     "dst": "location:ID5",
-    "edge_id": "edge:ID73",
+    "edge_id": "edge:ID72",
     "edge_type": "LOCATED_AT",
-    "evidence_id": "evidence:ID74",
+    "evidence_id": "evidence:ID73",
     "evidence_status": "FRESH",
     "props": {
       "dim_key": null,
@@ -1277,14 +1267,14 @@
   },
   "canonEdgeEdited": {
     "canon_version": 19,
-    "edge_id": "edge:ID75",
-    "replacement_edge_id": "edge:ID75",
+    "edge_id": "edge:ID74",
+    "replacement_edge_id": "edge:ID74",
     "retracted": false,
     "view": {
       "author_owned": true,
       "canon_version": 19,
       "dst": "location:ID8",
-      "edge_id": "edge:ID75",
+      "edge_id": "edge:ID74",
       "edge_type": "LOCATED_AT",
       "evidence_id": null,
       "evidence_status": "NONE",
@@ -1301,14 +1291,14 @@
   },
   "canonEdgeRetracted": {
     "canon_version": 20,
-    "edge_id": "edge:ID75",
+    "edge_id": "edge:ID74",
     "replacement_edge_id": null,
     "retracted": true,
     "view": {
       "author_owned": false,
       "canon_version": 20,
       "dst": "location:ID8",
-      "edge_id": "edge:ID75",
+      "edge_id": "edge:ID74",
       "edge_type": "LOCATED_AT",
       "evidence_id": null,
       "evidence_status": "NONE",
@@ -1326,10 +1316,10 @@
   "canonEdgeState": {
     "author_owned": false,
     "canon_version": 22,
-    "dst": "statedim:ID77",
-    "edge_id": "edge:ID78",
+    "dst": "statedim:ID76",
+    "edge_id": "edge:ID77",
     "edge_type": "HAS_STATE",
-    "evidence_id": "evidence:ID79",
+    "evidence_id": "evidence:ID78",
     "evidence_status": "FRESH",
     "props": {
       "dim_key": null,
@@ -1409,16 +1399,9 @@
     },
     {
       "created_at": "<ts>",
-      "is_current": false,
-      "snapshot_id": "snapshot:ID53",
-      "text": "第二章 试探\n\n风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。\n",
-      "text_sha256": "<sha>"
-    },
-    {
-      "created_at": "<ts>",
       "is_current": true,
       "snapshot_id": "snapshot:ID51",
-      "text": "第二章 试探\n\n风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。\n\n后来又添了一段。\n",
+      "text": "第二章 试探\n\n他终于明白了。\n风起。他终于明白了。\n\n后来又添了一段。\n",
       "text_sha256": "<sha>"
     }
   ],
@@ -1428,7 +1411,7 @@
     "indexed": true,
     "processing": "reused",
     "saved_to_disk": true,
-    "snapshot_generation": 3,
+    "snapshot_generation": 2,
     "snapshot_id": "snapshot:ID51",
     "text_sha256": "<sha>"
   },
@@ -1520,7 +1503,7 @@
         "actions": [],
         "chapter_number": 1,
         "created_at": "<ts>",
-        "id": "notif:ID82",
+        "id": "notif:ID81",
         "jump": {
           "occurrence_k": 0,
           "para_index": 2,
@@ -1530,7 +1513,7 @@
         "project_id": "project:ID1",
         "source_sha256": null,
         "status": "OPEN",
-        "subject_id": "event:ID80",
+        "subject_id": "event:ID79",
         "subject_type": "canon_event",
         "summary_sha256": null,
         "title_code": "event_cast_changed_title",
@@ -1540,17 +1523,17 @@
         }
       },
       "chapter_number": 1,
-      "event_id": "event:ID80",
+      "event_id": "event:ID79",
       "knowers": [
         {
-          "id": "character:ID81",
+          "id": "character:ID80",
           "label": "Character",
           "name": "沈知微"
         }
       ],
       "participants": [
         {
-          "id": "character:ID81",
+          "id": "character:ID80",
           "label": "Character",
           "name": "沈知微"
         }
@@ -1562,7 +1545,7 @@
     "aliases": [
       {
         "derived_from_alias_id": null,
-        "id": "alias:ID69",
+        "id": "alias:ID68",
         "kind": "title",
         "node_id": "character:ID9",
         "project_id": "project:ID1",
@@ -1678,7 +1661,7 @@
     ],
     "session": {
       "created_at": "<ts>",
-      "id": "chat_session:ID54",
+      "id": "chat_session:ID53",
       "message_count": 2,
       "pending_lookups": 0,
       "running": false,
@@ -1711,7 +1694,7 @@
         "chapter": 2,
         "created_at": "<ts>",
         "id": "draft:ID45",
-        "landed": true,
+        "landed": false,
         "materials": [
           "第 1 章：萧决独自走进了北荒的风雪里。"
         ],
@@ -1747,15 +1730,15 @@
     "unanswered": 0
   },
   "chatTurnEvents": [
-    "event: turn\ndata: {\"kind\":\"tool_started\",\"said_to_author\":\"正在查询本章在场人物（1/2）。\",\"text\":\"\",\"tool\":\"scene_constraints\",\"ok\":null,\"chapter\":null,\"index\":1,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
-    "event: turn\ndata: {\"kind\":\"tool_finished\",\"said_to_author\":\"已查询本章在场人物（第 2 章）。\",\"text\":\"\",\"tool\":\"scene_constraints\",\"ok\":true,\"chapter\":2,\"index\":1,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
-    "event: turn\ndata: {\"kind\":\"tool_started\",\"said_to_author\":\"正在起草（2/2）。\",\"text\":\"\",\"tool\":\"draft_chapter\",\"ok\":null,\"chapter\":null,\"index\":2,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
-    "event: turn\ndata: {\"kind\":\"draft_started\",\"said_to_author\":\"正在起草第 2 章。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":2,\"index\":0,\"total\":0,\"stream\":1,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
-    "event: turn\ndata: {\"kind\":\"draft_kept\",\"said_to_author\":\"第 2 章第 2 稿完成，2800 字。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":2,\"index\":0,\"total\":0,\"stream\":1,\"ordinal\":2,\"units\":2800,\"reason\":null,\"asked\":null}\n\n",
-    "event: turn\ndata: {\"kind\":\"tool_finished\",\"said_to_author\":\"已起草（第 2 章）。\",\"text\":\"\",\"tool\":\"draft_chapter\",\"ok\":true,\"chapter\":2,\"index\":2,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
-    "event: turn\ndata: {\"kind\":\"reply_text\",\"said_to_author\":\"\",\"text\":\"第 2 章这一场，血脉那条先别说破。写了一稿，已经写进第 2 章了。\",\"tool\":\"\",\"ok\":null,\"chapter\":null,\"index\":0,\"total\":0,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
-    "event: turn\ndata: {\"kind\":\"turn_stopped\",\"said_to_author\":\"回复完成。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":null,\"index\":0,\"total\":0,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":\"done\",\"asked\":null}\n\n",
-    "event: receipt\ndata: {\"session\":{\"id\":\"chat_session:ID46\",\"title\":\"长连接那一轮\",\"created_at\":\"<ts>\",\"updated_at\":\"<ts>\",\"message_count\":5,\"running\":false,\"pending_lookups\":0},\"chapter\":2,\"reason\":\"done\",\"message\":\"回复完成。\",\"reply\":\"第 2 章这一场，血脉那条先别说破。写了一稿，已经写进第 2 章了。\",\"messages\":[{\"seq\":4,\"speaker\":\"assistant\",\"text\":\"第 2 章这一场，血脉那条先别说破。写了一稿，已经写进第 2 章了。\"}],\"steps\":2,\"lookups\":2,\"unanswered\":0,\"tokens_reported\":5664,\"calls_without_usage\":1,\"context\":{\"off_chapter\":0,\"stale_lookups\":0,\"trimmed_results\":0,\"dropped_lookups\":0,\"dropped_reasoning\":0,\"lost_lookups\":0,\"full\":false,\"compressed_blocks\":0},\"asked\":null,\"drafts\":[{\"id\":\"draft:ID47\",\"chapter\":2,\"ordinal\":2,\"units\":2800,\"note\":\"这一版更冷，收在他没抬头。\",\"preview\":\"风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他……\",\"created_at\":\"<ts>\",\"landed\":true,\"stopped_reason\":\"\",\"brief\":\"第 2 章这一场：写萧决与顾清音在藏书阁对峙，血脉那条先别说破，收在他没抬头。\",\"materials\":[\"第 1 章：萧决独自走进了北荒的风雪里。\"]}]}\n\n"
+    "event: turn\ndata: {\"kind\":\"tool_started\",\"said_to_author\":\"正在查询本章在场人物（1/2）。\",\"text\":\"\",\"tool\":\"scene_constraints\",\"ok\":null,\"chapter\":null,\"index\":1,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"draft_id\":\"\",\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"tool_finished\",\"said_to_author\":\"已查询本章在场人物（第 2 章）。\",\"text\":\"\",\"tool\":\"scene_constraints\",\"ok\":true,\"chapter\":2,\"index\":1,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"draft_id\":\"\",\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"tool_started\",\"said_to_author\":\"正在起草（2/2）。\",\"text\":\"\",\"tool\":\"draft_chapter\",\"ok\":null,\"chapter\":null,\"index\":2,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"draft_id\":\"\",\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"draft_started\",\"said_to_author\":\"正在起草第 2 章。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":2,\"index\":0,\"total\":0,\"stream\":1,\"ordinal\":0,\"units\":0,\"draft_id\":\"\",\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"draft_kept\",\"said_to_author\":\"第 2 章第 2 稿完成，2800 字。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":2,\"index\":0,\"total\":0,\"stream\":1,\"ordinal\":2,\"units\":2800,\"draft_id\":\"draft:ID46\",\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"tool_finished\",\"said_to_author\":\"已起草（第 2 章）。\",\"text\":\"\",\"tool\":\"draft_chapter\",\"ok\":true,\"chapter\":2,\"index\":2,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"draft_id\":\"\",\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"reply_text\",\"said_to_author\":\"\",\"text\":\"第 2 章这一场，血脉那条先别说破。写了一稿，已经写进第 2 章了。\",\"tool\":\"\",\"ok\":null,\"chapter\":null,\"index\":0,\"total\":0,\"stream\":0,\"ordinal\":0,\"units\":0,\"draft_id\":\"\",\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"turn_stopped\",\"said_to_author\":\"回复完成。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":null,\"index\":0,\"total\":0,\"stream\":0,\"ordinal\":0,\"units\":0,\"draft_id\":\"\",\"reason\":\"done\",\"asked\":null}\n\n",
+    "event: receipt\ndata: {\"session\":{\"id\":\"chat_session:ID47\",\"title\":\"长连接那一轮\",\"created_at\":\"<ts>\",\"updated_at\":\"<ts>\",\"message_count\":5,\"running\":false,\"pending_lookups\":0},\"chapter\":2,\"reason\":\"done\",\"message\":\"回复完成。\",\"reply\":\"第 2 章这一场，血脉那条先别说破。写了一稿，已经写进第 2 章了。\",\"messages\":[{\"seq\":4,\"speaker\":\"assistant\",\"text\":\"第 2 章这一场，血脉那条先别说破。写了一稿，已经写进第 2 章了。\"}],\"steps\":2,\"lookups\":2,\"unanswered\":0,\"tokens_reported\":5664,\"calls_without_usage\":1,\"context\":{\"off_chapter\":0,\"stale_lookups\":0,\"trimmed_results\":0,\"dropped_lookups\":0,\"dropped_reasoning\":0,\"lost_lookups\":0,\"full\":false,\"compressed_blocks\":0},\"asked\":null,\"drafts\":[{\"id\":\"draft:ID46\",\"chapter\":2,\"ordinal\":2,\"units\":2800,\"note\":\"这一版更冷，收在他没抬头。\",\"preview\":\"风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他……\",\"created_at\":\"<ts>\",\"landed\":false,\"stopped_reason\":\"\",\"brief\":\"第 2 章这一场：写萧决与顾清音在藏书阁对峙，血脉那条先别说破，收在他没抬头。\",\"materials\":[\"第 1 章：萧决独自走进了北荒的风雪里。\"]}]}\n\n"
   ],
   "chats": [
     {
@@ -1815,7 +1798,7 @@
     "chapter": 2,
     "created_at": "<ts>",
     "id": "draft:ID45",
-    "landed": true,
+    "landed": false,
     "materials": [
       "第 1 章：萧决独自走进了北荒的风雪里。"
     ],
@@ -1833,7 +1816,7 @@
         "chapter": 2,
         "created_at": "<ts>",
         "id": "draft:ID45",
-        "landed": true,
+        "landed": false,
         "materials": [
           "第 1 章：萧决独自走进了北荒的风雪里。"
         ],
@@ -1866,7 +1849,7 @@
   "errorCanonEdgeGone": {
     "detail": {
       "error": "canon_edge_refused",
-      "message": "edge edge:ID75 不是 current CANON（已撤回/非 CANON）"
+      "message": "edge edge:ID74 不是 current CANON（已撤回/非 CANON）"
     }
   },
   "errorFactNotFound": {
@@ -2062,7 +2045,7 @@
     ],
     "fencing_token": 0,
     "finished_at": "<ts>",
-    "id": "extraction_run:ID55",
+    "id": "extraction_run:ID54",
     "model_call_id": null,
     "project_id": "project:ID1",
     "prompt_hash": "prompt:3",
@@ -2134,7 +2117,7 @@
       "actions": [],
       "chapter_number": 1,
       "created_at": "<ts>",
-      "id": "notif:ID66",
+      "id": "notif:ID65",
       "jump": null,
       "kind": "summary_mismatch",
       "project_id": "project:ID1",
@@ -2152,7 +2135,7 @@
       "actions": [],
       "chapter_number": 1,
       "created_at": "<ts>",
-      "id": "notif:ID67",
+      "id": "notif:ID66",
       "jump": {
         "occurrence_k": 0,
         "para_index": 1,
@@ -2162,7 +2145,7 @@
       "project_id": "project:ID1",
       "source_sha256": null,
       "status": "OPEN",
-      "subject_id": "chapter:ID68",
+      "subject_id": "chapter:ID67",
       "subject_type": "chapter",
       "summary_sha256": null,
       "title_code": "clash_title",
@@ -2841,7 +2824,7 @@
       {
         "actor": "system",
         "chapter_number": 3,
-        "id": "extraction_run:ID55",
+        "id": "extraction_run:ID54",
         "jump": {
           "chapter_number": 3,
           "edge_id": null,
@@ -2953,7 +2936,7 @@
   "stateDims": [
     {
       "dim_key": null,
-      "id": "statedim:ID77",
+      "id": "statedim:ID76",
       "name": "武功境界"
     }
   ],

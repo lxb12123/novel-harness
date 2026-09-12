@@ -332,6 +332,27 @@ export function SendIcon() {
   );
 }
 
+/** 向下的箭头：正文编辑器里「滑到最下方」那颗按钮（作者翻上去看前面写的、字还在底下长时）。
+ *  就是发送那支箭倒过来：同一根杆、同一个箭头角度，所以两颗放在一块屏幕上是同一套笔。 */
+export function ArrowDownIcon() {
+  return (
+    <svg
+      className="icon"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 5.5v13" />
+      <path d="M6.5 13 12 18.5 17.5 13" />
+    </svg>
+  );
+}
+
 /** 停：发送那颗圆钮在一轮跑着、框里没字时换成它（作者 2026-09-12）。**实心的方块**——
  *  「停」在播放器上的形状。11 个单位见方、居中在 (12,12)：比那支箭的 13 窄一圈，
  *  因为实心块面比 1.5 的描边重，等宽的话方块会比箭头大一号（同 `DropletIcon`

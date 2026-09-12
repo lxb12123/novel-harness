@@ -1124,6 +1124,14 @@ class ChapterSave(BaseModel):
     经过编辑器转换的「服务端 hash」。
     """
 
+    draft_id: str | None = None
+    """这一次保存的正文来自写作助手的哪一稿（ADR 0048：稿子流进编辑器、作者按保存才进书）。
+
+    给了就在候选表上记「这一稿进书了」（清理策略只清进过书的），并在日志页上留一行
+    `chapter_draft`——**作者自己按的保存**，所以那一行的 actor 是作者，不是系统。
+    编号对不上（那一稿已经被清理）不影响保存：正文是他的，进书这件事不靠候选表成立。
+    """
+
 
 @app.get("/api/projects/{project_id}/chapters")
 def chapters(proj: Any = Depends(load_project)) -> Any:
@@ -1246,8 +1254,44 @@ def save_chapter(
         )
     except importer.ChapterMissing:
         raise HTTPException(404, {"error": "chapter_not_found", "params": {"chapter": chapter}})
+    if body.draft_id:
+        _note_draft_saved(conn, proj.id, chapter, body.draft_id, body.markdown)
     _trigger_refresh(conn, store, proj.id, chapter, receipt)
     return receipt
+
+
+def _note_draft_saved(conn: Any, project_id: str, chapter: int, draft_id: str, markdown: str) -> None:
+    """作者把写作助手的一稿保存进了书（ADR 0048）：候选表记一笔、日志页留一行。
+
+    两件事都在正文**已经写盘之后**：它们记的是「发生了」，不是「要不要」。候选找不到
+    （已被清理）就只留日志——正文是他的，进书不靠候选表成立。
+    """
+    from ..agent.candidates import DraftCandidateStore
+    from .. import decisions
+    from ..draft.length import count_units
+
+    candidates = DraftCandidateStore(conn)
+    stored = candidates.get(project_id, draft_id)
+    if stored is not None and stored.chapter == chapter:
+        candidates.mark_landed(project_id, draft_id)
+    decisions.append(
+        conn,
+        project_id=project_id,
+        kind=decisions.DecisionKind.CHAPTER_DRAFT,
+        decision=decisions.Verdict.ACCEPT,
+        subject_name=f"第 {chapter} 章",
+        chapter_number=chapter,
+        payload={
+            "chapter_number": chapter,
+            "units": count_units(markdown, DraftLanguage.ZH),
+            # 版本抽屉里那一版的锚。**不上屏**（作者认不得一段 sha256），
+            # 它在这儿是为了让「日志那一行」和「快照那一版」对得上号。
+            "text_sha256": importer.text_digest(markdown),
+        },
+        # **作者自己按的保存**：日志页上分得开「他做的」和「系统做的」。
+        actor=decisions.DEFAULT_ACTOR,
+    )
+    conn.commit()
 
 
 def _trigger_refresh(

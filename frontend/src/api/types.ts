@@ -1296,6 +1296,9 @@ export interface ChatTurnEvent {
   stream: number;
   ordinal: number;
   units: number;
+  /** 候选表里的编号（`draft_kept` 才带；机器码，**不上屏**）。作者按保存时随请求送回去，
+   *  后端据此记「这一稿进书了」（ADR 0048）。 */
+  draft_id: string;
   reason: ChatStopReason | null;
   asked: ChatAuthorQuestion | null;
 }

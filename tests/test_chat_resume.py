@@ -49,13 +49,7 @@ from novel_harness.agent.loop import (
     run_turn,
 )
 from novel_harness.agent.candidates import DraftCandidate
-from novel_harness.agent.ports import (
-    DraftAsk,
-    DraftProduct,
-    LandingReport,
-    ModelCallReceipt,
-    ToolContext,
-)
+from novel_harness.agent.ports import DraftAsk, DraftProduct, ModelCallReceipt, ToolContext
 from novel_harness.agent.store import ChatStore
 from novel_harness.db import Connection, connect, migrate
 from novel_harness.draft.capabilities import resolve_capabilities
@@ -725,13 +719,11 @@ def test_replaying_a_lookup_is_free_but_replaying_a_draft_is_not(
     「重放免费」这句 ADR 原文的**适用范围**钉住：加第八个会花钱的工具时它会红。
     """
     drafted: list[int] = []
-    landed: list[str] = []
     billed: list[ModelCallReceipt] = []
 
     class Desk:
-        """注入的那个起草台。补跑重放的是 `draft_chapter`——它花钱（`write`），而且
-        2026-09-12 起写完直接写进那一章（`land`，ADR 0048）：**补跑一稿 = 又起一次草 +
-        又写进去一次**，两件事都要在这儿看得见。"""
+        """注入的那个起草台。补跑重放的是 `draft_chapter`——它花钱（`write`）、不动书
+        （ADR 0048：稿子进作者的编辑器，他按保存才写盘）。"""
 
         def write(self, ask: DraftAsk, context: Any, **kwargs: Any) -> DraftProduct:
             drafted.append(ask.chapter)
@@ -757,10 +749,6 @@ def test_replaying_a_lookup_is_free_but_replaying_a_draft_is_not(
                     ),
                 ),
             )
-
-        def land(self, candidate_id: str) -> Any:
-            landed.append(candidate_id)
-            return LandingReport(chapter=2, landed=True, note="已经写进第 2 章了。")
 
         def recall(self, candidate_id: str) -> Any:  # pragma: no cover - 这一条不读回
             raise AssertionError("补跑不该自己去读回")
@@ -794,7 +782,6 @@ def test_replaying_a_lookup_is_free_but_replaying_a_draft_is_not(
     )
     assert result.tool_calls == 2
     assert drafted == [2], "补跑没有重跑 `draft_chapter`（或者跑了不止一次）"
-    assert landed == ["draft:01JTESTTESTTESTTESTTESTTEST"], "补跑起的那一稿没写进那一章（ADR 0048）"
     # 只读那一层一次调用都没花钱；起草那一次花了，**而且它进了这一轮的账**。
     assert [r.capability for r in billed] == ["writer", "agent"], (
         "起草那一次没进 `ledger` —— 补跑一个断在半路的起草是真花钱，账上却看不见它"

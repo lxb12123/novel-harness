@@ -62,7 +62,7 @@
 | GET | `/projects/{pid}/chapters` | **扫磁盘** `{root}/chapters/*.md` | `list[{number,title}]`（title=首个非空行） | 🟢 |
 | DELETE | `/projects/{pid}/chapters/{n}` | `importer.remove_chapter` → `store.delete_chapter` | `{deleted, number}`·**引擎在这一章上记过东西 → 409 `chapter_in_use` 带五个计数**（`edge.src/dst→node` 和 `evidence.chapter_id→chapter` 都是 CASCADE，不拦就是**无声**删掉那些记忆）·正文不是删掉是挪进 `{root}/deleted/`·**章号不重排**（它是全书 `valid_from` 的锚） | 🟢 |
 | GET | `/projects/{pid}/chapters/{n}/text` | **读磁盘** `{root}/chapters/{n:04d}.md` | `{number, markdown}` | 🟢 |
-| PUT | `/projects/{pid}/chapters/{n}/text` | **写磁盘** → `importer.sync` | `SyncReport` | 🟢 |
+| PUT | `/projects/{pid}/chapters/{n}/text` | **写磁盘** → `importer.save_chapter` | `ChapterSaveReceipt`·`{markdown, expected_text_sha256, draft_id?}`。**`draft_id`（2026-09-12，[ADR 0048](adr/0048-drafting-writes-the-chapter.md)）**：这一次保存的正文来自写作助手的哪一稿——稿子流进编辑器后是一份未保存的修改，作者按保存才进书；带了编号就在候选表上记「进书了」、日志页留**作者**那一行。编号对不上照样保存 | 🟢 |
 | GET | `/projects/{pid}/chapters/{n}/history` | `store.chapter_snapshots` | `list[ChapterSnapshot]`（带 text 供前端 diff；**内容去重、非全量版本史**） | 🟢 |
 | DELETE | `/projects/{pid}/chapters/{n}/snapshots/{sid}` | `store.delete_chapter_snapshot` | `{deleted, snapshot_id}`·**当前那条 409 / 被证据引着 409**（三条外键都没有 CASCADE，快照是审计锚） | 🟢 |
 | — | **还原到某一版没有自己的路由** | 走上面那条 `PUT .../text` | 快照按内容去重 → 写回旧正文正好命中已有那条 → `is_current` 移回去、不新增一版 | 🟢 |

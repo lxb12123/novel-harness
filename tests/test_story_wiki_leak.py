@@ -65,7 +65,6 @@ from novel_harness.agent.candidates import DraftCandidate
 from novel_harness.agent.ports import (
     DraftAsk,
     DraftProduct,
-    LandingReport,
     StoredDraft,
     ToolRefused,
 )
@@ -380,12 +379,6 @@ def surfaces_of(book: PoisonedBook) -> dict[str, str]:
             captured.append(ctx)
             return DraftProduct(candidate=_candidate(ask.chapter))
 
-        def land(self, candidate_id: str) -> LandingReport:
-            return LandingReport(
-                chapter=WORKING_CHAPTER,
-                landed=True,
-                note=f"已经写进第 {WORKING_CHAPTER} 章了（章标题保持原样）。",
-            )
 
         def recall(self, candidate_id: str) -> StoredDraft:
             return StoredDraft(

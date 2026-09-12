@@ -87,17 +87,17 @@ describe("屏幕上把它叫什么", () => {
 });
 
 describe("有稿子进了书", () => {
-  it("**说得出怎么退** —— 落盘不问作者，那就欠他这一半；哪几稿进了书由每一稿自己那一行说", () => {
-    expect(REAL.landed).toBe(true); // 探针：真 dump 那一稿就写进去了（ADR 0048）
+  it("**说得出怎么退** —— 进了书的那几稿：退路是版本历史；哪几稿进了书由每一稿自己那一行说", () => {
+    expect(REAL.landed).toBe(false); // 探针：真 dump 那一轮跑完稿子还在桌上（ADR 0048：作者按保存才进书）
     const note = landedNote([REAL, variant({ id: "draft:ID44", ordinal: 2, landed: true })], "zh");
     expect(note).toContain("历史"); // 退路：正文那边那颗按钮
     expect(note).not.toContain("第 2 稿");
-    const noteEn = landedNote([REAL], "en");
-    expect(noteEn).toContain("History");
+    // 这一次打开工作台以来作者保存过的那几稿（`liveDraft.ts::saved`）也算进了书。
+    expect(landedNote([REAL], "en", [REAL.id])).toContain("History");
   });
 
   it("一个都没进书就一个字都不写（零不写）", () => {
-    expect(landedNote([variant({ landed: false })], "zh")).toBeNull();
+    expect(landedNote([REAL], "zh")).toBeNull();
     expect(landedNote([], "zh")).toBeNull();
   });
 });

@@ -382,9 +382,10 @@ AGENT_SYSTEM_PROMPT = """你是一位中文长篇小说作者的写作搭档，�
   结论到你现在写的这一章可能已经不成立。起草工具只收章号，那一章的约束由后端当场算，
   你传不进去。
 - 工具返回里带「还没查」「瞎着」「裁掉了多少条」的话，一律照它说的理解：0 不等于没有。
-- **起草就是写进书。** 稿子写完直接进那一章，他在正文里当场看到；不满意他会在版本历史里
-  退回——所以**不要问他要不要存**，写完说一句写了什么。默认写一稿；他明确要几个版本时才一次
-  写几稿。稿子的编号是给工具用的，跟他说话时说「第几稿」。
+- **稿子直接进他的正文编辑器。** 写的过程他在左边看得到，写完以未保存的样子放在那儿，
+  他按「保存」才写进书、不要就直接丢掉——所以**不要问他要不要存，也不用告诉他去点保存**，
+  写完说一句写了什么。默认写一稿；他明确要几个版本时才一次写几稿。稿子的编号是给工具用的，
+  跟他说话时说「第几稿」。
 - 说话对着作者，用中文，不要把工具名和参数念给他听。"""
 """稳定前缀的正文（中文档）。**跨章不变**，所以它能进前缀（边界六那张表的第一行）。
 
@@ -416,7 +417,7 @@ AGENT_SYSTEM_PROMPT_EN = """You are a writing partner for an English-language no
 - The tools in your hands are **this book's own index**: locate cheaply first (table of contents / chapters where characters share a scene / summary ranges), then read the full chapter text once you've pinned down which one.
 - **What you looked up is tied to that chapter.** When you write for a different chapter, look it up again — this conversation accumulates across chapters, and what an earlier lookup established may no longer hold for the chapter you are writing now. The drafting tool only takes a chapter number; that chapter's constraints are computed by the backend on the spot, you cannot pass them in.
 - When a tool's result carries words like "not checked yet," "blind," or "how many got dropped," take them at face value: zero does not mean none.
-- **Drafting is writing into the book.** A finished draft goes straight into that chapter and they see it in the text at once; if they don't want it, they revert in version history — so **never ask whether to save**; when it's written, say what you wrote. Write one draft by default; only when they explicitly ask for several versions, write several at once. A draft's number is for the tools; when speaking to them, say "draft number N."
+- **Drafts go straight into their text editor.** They watch it being written on the left; when it's done it sits there unsaved, and they click Save to write it into the book or simply discard it — so **never ask whether to save, and don't tell them to click Save**; when it's written, say what you wrote. Write one draft by default; only when they explicitly ask for several versions, write several at once. A draft's number is for the tools; when speaking to them, say "draft number N."
 - Speak to the author, in English, and never read tool names or arguments aloud to them."""
 """稳定前缀的正文（英文档，国际化第三批）。**逐句对照 `AGENT_SYSTEM_PROMPT` 翻**，
 不是重写——五条硬约束（工具即索引 / 查到的东西绑在那一章上 / 0 不等于没有 /
@@ -1313,6 +1314,11 @@ class TurnEvent(BaseModel):
     units: int = 0
     """第几稿 / 多少字（`draft_kept`）。**跟作者说话时说「第几稿」**，不说稿子的编号。"""
 
+    draft_id: str = ""
+    """这一稿在候选表里的编号（`draft_kept`）。**机器码，一个字符都不上屏**：界面拿它在作者
+    按「保存」时告诉后端「进书的是这一稿」（`PUT …/chapters/{n}/text` 的 `draft_id`，
+    ADR 0048），好让候选表记上它进书了、日志页上有那一行。"""
+
     reason: StopReason | None = None
     asked: AuthorQuestion | None = None
     """它停下来问作者的那一句 + 几个可点的选项（ADR 0024）。"""
@@ -1403,6 +1409,7 @@ class TurnEvent(BaseModel):
         units: int,
         stream: int = 0,
         stopped: bool = False,
+        draft_id: str = "",
     ) -> TurnEvent:
         """**半截的那一稿不许说成写好了。** 一段断在半句的正文，作者若不知道它是被砍断的，
         会把那个断口当成一种有意的写法（同 `DraftFullText.stopped_reason`）。"""
@@ -1418,6 +1425,7 @@ class TurnEvent(BaseModel):
             ordinal=ordinal,
             units=units,
             stream=stream,
+            draft_id=draft_id,
         )
 
     @classmethod

@@ -122,8 +122,12 @@ export function draftsHeading(drafts: readonly DraftCandidateView[], language: L
  * 一个都没落盘时返回 `null`：**没发生的事不写**（零不写，同 `chat.ts::receiptNotes`）。
  * 哪几稿进了书由每一稿自己那一行说，这句只管退路——所以它不列稿号。
  */
-export function landedNote(drafts: readonly DraftCandidateView[], language: Language): string | null {
-  if (!drafts.some((d) => d.landed)) return null;
+export function landedNote(
+  drafts: readonly DraftCandidateView[],
+  language: Language,
+  saved: readonly string[] = [],
+): string | null {
+  if (!drafts.some((d) => d.landed || saved.includes(d.id))) return null;
   return language === "zh"
     ? "如需撤销，可在正文「历史」中退回上一版"
     : "To undo, use “History” on the text side to revert to the previous version";

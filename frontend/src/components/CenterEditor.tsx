@@ -20,6 +20,8 @@ import { cleanSuggestion, shouldSuggest } from "../continuation";
 import { diskChange } from "../editorDoc";
 import { useLiveDraft, visibleBody } from "../liveDraft";
 import { useTypewriter } from "./useTypewriter";
+import { tintRanges, type TintRange } from "../tint";
+import { ArrowDownIcon } from "./icons";
 
 // 中栏正文编辑器（CodeMirror 6，§2.4——不是 TipTap）。
 // CM6 只是磁盘 chapters/NNNN.md 的便利视图：读 = GET text，存 = PUT → sync，DB 永不是
@@ -75,36 +77,61 @@ export function CenterEditor() {
   // 那份短了一截的文档（`chapterTitle.test.ts` 那条「差一个 head.length」钉的就是这个）。
   const { head, body } = splitHeading(doc);
 
-  // ── 写作助手正在往这一章里写（`liveDraft.ts`，ADR 0048 第二半）──────────────
+  // ── 写作助手正在往这一章里写（`liveDraft.ts`，ADR 0048）────────────────────
   //
-  // 那条流的字直接画在这儿，章标那一行照旧留着（落盘时后端也保留作者的标题）。
-  // **作者手上有没保存的字时不接**：那几十秒里换掉他的字，落盘那一刻又被磁盘盖一次，
-  // 两次都是找不回来的方向；那时它仍在右边那一格里长，这儿只在落盘后说一句「别处改过」
-  // （`diskAhead`，同以前）。落盘之后新正文到手（新的 sha）才把这条流放掉，
-  // 中间没有一帧闪回旧稿。
+  // 那条流的字直接画在这儿，章标那一行照旧留着。**作者手上有没保存的字时不接**：
+  // 那几十秒里换掉他的字是找不回来的方向；那时它仍在右边那一格里长，他保存或放弃之后
+  // 可以从桌上点「放入编辑器」。字全露完之后**整份进编辑器、标脏、涂底色**——从这一刻起
+  // 它就是一份未保存的修改：按「保存」写进书（带 `draft_id`，候选表记上进书了），
+  // 按「放弃这一稿」回到磁盘上那一版。
   const live = useLiveDraft((s) => s.draft);
   const setInEditor = useLiveDraft((s) => s.setInEditor);
-  const clearLive = useLiveDraft((s) => s.clear);
+  const setEditorBusy = useLiveDraft((s) => s.setEditorBusy);
+  const placedInEditor = useLiveDraft((s) => s.placedInEditor);
+  const savedFromEditor = useLiveDraft((s) => s.savedFromEditor);
+  const discarded = useLiveDraft((s) => s.discarded);
   const liveHere = live !== null && live.chapter === chapter && docFor === chapter && !dirty;
   useEffect(() => {
     setInEditor(liveHere);
   }, [liveHere, setInEditor]);
+  useEffect(() => {
+    setEditorBusy(dirty);
+  }, [dirty, setEditorBusy]);
   // 到手的字**匀速露出来**（`typewriter.ts`）：模型一片一片吐，片有多大不由我们定，
   // 直接画就是一段一段跳。第一片字露出来之前编辑器里仍是原来的正文——那几秒换成一片空白，
   // 作者看到的是「这一章没了」，而不是「它要开始写了」。
   const liveBody = liveHere ? visibleBody(live.text) : "";
   const typed = useTypewriter(liveBody, liveHere, live?.done ?? false);
   const showLive = liveHere && typed.shown !== "";
-  // 这条流开始时编辑器手上那一版的哈希：落盘之后新正文到手（哈希变了）、而且字已经
-  // 全露完，才把这条流放掉——放早了是先闪回旧稿再换新稿，放晚了是字露完了还锁着键盘。
-  const liveStartSha = useRef<string | null>(null);
-  useEffect(() => {
-    if (liveHere) liveStartSha.current = loadedShaRef.current;
-  }, [liveHere]);
+  /** 写作助手那一稿涂在正文上的底色（新增绿 / 改过浅红）。`null` = 没有它的字在这儿。 */
+  const [tints, setTints] = useState<readonly TintRange[] | null>(null);
+  /** 编辑器里这份未保存的正文来自哪一稿（保存时随请求送回去）。 */
+  const placedDraftId = useRef<string | null>(null);
+  // 字全露完了：整份进编辑器（**未保存**），底色按「和磁盘上那一版比，哪几段是新的 /
+  // 改的」涂。流放掉，键盘解锁——从这一刻起它是作者的一份修改。
   useEffect(() => {
     if (!liveHere || !live.done || !typed.caughtUp) return;
-    if (loadedShaRef.current !== liveStartSha.current) clearLive();
-  }, [liveHere, live, typed.caughtUp, data, clearLive]);
+    const nextBody = visibleBody(live.text);
+    if (nextBody === "") {
+      // 没写成 / 半截什么都没有：放掉，编辑器原样。
+      placedInEditor({ chapter, draftId: "" });
+      discarded();
+      return;
+    }
+    const loadedBody = splitHeading(loadedRef.current ?? "").body;
+    setDoc(head + nextBody);
+    setDirty(true);
+    setTints(tintRanges(loadedBody, nextBody));
+    placedDraftId.current = live.draftId || null;
+    placedInEditor({ chapter, draftId: live.draftId });
+  }, [liveHere, live, typed.caughtUp, head, chapter, placedInEditor, discarded]);
+  // 底色要等 doc 真的换成那一稿之后再涂（`CodeEditor` 的 value effect 先跑，它是子组件）。
+  // `null` 也要送过去：那是「清掉」（保存了 / 放弃了 / 换章了）。
+  useEffect(() => {
+    editorRef.current?.setTints(tints);
+  }, [tints, body]);
+  /** 作者翻上去看前面的字了：那颗「滑到最下方」要出来。 */
+  const [pinned, setPinned] = useState(true);
 
   // R4 冲突回跳（§2.6 方向二）：点 issue 设 highlight → 按 quote 重寻 → 命令 CM6 选中并滚进视野。
   useEffect(() => {
@@ -130,7 +157,8 @@ export function CenterEditor() {
     editorRef.current?.clearSuggestion();
   }, [continuationMuted]);
 
-  // 换章 = 重新打开：让 useChapterText 重取，并清脏态。
+  // 换章 = 重新打开：让 useChapterText 重取，并清脏态。写作助手那一稿的底色也跟着走
+  //（它属于上一章那份未保存的正文，那份正文本身就丢了——同作者自己没保存的字）。
   useEffect(() => {
     setOpen(true);
     setDirty(false);
@@ -138,6 +166,8 @@ export function CenterEditor() {
     loadedShaRef.current = null;
     setDocFor(null);
     setDiskAhead(false);
+    setTints(null);
+    placedDraftId.current = null;
   }, [chapter, projectId]);
 
   // **重取到什么就装进去**这条老规矩，在写作助手会直接往这一章写字之后不再安全
@@ -214,6 +244,29 @@ export function CenterEditor() {
             {language === "zh" ? "写作助手正在写入本章…" : "The writing assistant is writing this chapter…"}
           </span>
         )}
+        {/* 写作助手那一稿在这儿、还没保存：一句怎么处置 + 一颗「放弃」。**只在有底色时**——
+            那正是「这份未保存的正文里有它的字」的判据。 */}
+        {tints !== null && dirty && !save.isPending && (
+          <>
+            <span className="status">
+              {language === "zh"
+                ? "写作助手的一稿，按「保存」写入本章"
+                : "A draft from the writing assistant; click Save to write it into this chapter"}
+            </span>
+            <button
+              className="link"
+              onClick={() => {
+                setDoc(loadedRef.current ?? "");
+                setDirty(false);
+                setTints(null);
+                placedDraftId.current = null;
+                discarded();
+              }}
+            >
+              {language === "zh" ? "放弃这一稿" : "Discard this draft"}
+            </button>
+          </>
+        )}
         {(saveErr || save.isPending) && (
           <span className={"status" + (saveErr ? " err" : "")}>
             {saveErr
@@ -251,8 +304,22 @@ export function CenterEditor() {
           }
           onClick={() =>
             save.mutate(
-              { markdown: doc, expected_text_sha256: loadedShaRef.current ?? "" },
-              { onSuccess: () => setDirty(false) },
+              {
+                markdown: doc,
+                expected_text_sha256: loadedShaRef.current ?? "",
+                // 这份正文来自写作助手的哪一稿（ADR 0048）：后端据此在候选表上记「进书了」，
+                // 日志页上留作者那一行。作者自己写的字没有这一位。
+                ...(placedDraftId.current ? { draft_id: placedDraftId.current } : {}),
+              },
+              {
+                onSuccess: () => {
+                  setDirty(false);
+                  // 底色是「还没保存」的标记：存了就消失（作者的原话）。
+                  setTints(null);
+                  savedFromEditor(placedDraftId.current ?? "");
+                  placedDraftId.current = null;
+                },
+              },
             )
           }
         >
@@ -301,6 +368,7 @@ export function CenterEditor() {
           value={showLive ? typed.shown : body}
           editable={!liveHere}
           follow={showLive}
+          onPinnedChange={setPinned}
           tailLimit={settings.data?.continuation_tail_limit ?? null}
           onChange={(v) => {
             setDoc(head + v);
@@ -341,6 +409,20 @@ export function CenterEditor() {
             );
           }}
         />
+        {/* 作者翻上去看前面写的了，字还在底下长：画面留在原地，正中一颗「滑到最下方」
+            （作者 2026-09-12：「在上方……应该可以留在这个页面，但正中间要有一个方向标」）。 */}
+        {showLive && !pinned && (
+          <button
+            className="cm-jump"
+            onClick={() => {
+              editorRef.current?.scrollToEnd();
+              setPinned(true);
+            }}
+          >
+            <ArrowDownIcon />
+            {language === "zh" ? "滑到最下方" : "Scroll to the bottom"}
+          </button>
+        )}
       </div>
 
       {history && projectId && (

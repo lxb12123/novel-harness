@@ -487,6 +487,30 @@ def test_save_stale_expected_hash_is_409(client: TestClient, book: dict[str, str
     assert r.json()["error"] == "chapter_changed"
 
 
+def test_save_with_an_unknown_draft_id_still_saves(client: TestClient, book: dict[str, str]) -> None:
+    """`draft_id` 是「这一次保存的正文来自写作助手的哪一稿」（ADR 0048）。编号对不上
+    （那一稿已经被清理）**不影响保存**：正文是作者的，进书这件事不靠候选表成立。
+    日志页上那一行照留（作者自己按的保存）。"""
+    pid = _pid(book)
+    current = client.get(f"/api/projects/{pid}/chapters/1/text").json()
+    r = client.put(
+        f"/api/projects/{pid}/chapters/1/text",
+        json={
+            "markdown": "第一章 血脉\n\n作者按保存写进来的一稿。\n",
+            "expected_text_sha256": current["text_sha256"],
+            "draft_id": "draft:00000000000000000000000000",
+        },
+    )
+    assert r.status_code == 200, r.text
+    assert "作者按保存写进来的一稿" in client.get(f"/api/projects/{pid}/chapters/1/text").json()["markdown"]
+    rows = client.get(f"/api/projects/{pid}/activity", params={"limit": 50, "actor": "author"}).json()["entries"]
+    assert any(
+        row["title_code"] == "decision_entry_title"
+        and row["title_params"] == {"actor": "author", "kind": "chapter_draft"}
+        for row in rows
+    ), "作者保存一稿在日志页上没有那一行"
+
+
 def test_save_lock_timeout_is_423(
     client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -25,7 +25,7 @@ import novel_harness.agent.drafting as drafting
 import novel_harness.api.chat as chat_mod
 from novel_harness import importer
 from novel_harness.agent.drafting import chapter_drafter
-from novel_harness.agent.ports import DraftAsk, ToolRefused
+from novel_harness.agent.ports import DraftAsk
 from novel_harness.db import Connection, connect
 from novel_harness.draft.capabilities import resolve_capabilities
 from novel_harness.draft.context import unknown_cast_constraints
@@ -171,16 +171,6 @@ def _real_drafter(conn: Connection, pid: str) -> Any:
     )
 
 
-def _land(desk: Any, conn: Connection, pid: str, chapter: int) -> tuple[Any, Any]:
-    """写一稿，然后把它存进那一章。返回 `(生成回执, 落盘回执)`。
-
-    **ADR 0022 之后这是两个动作**：生成花钱不动书，落盘动书不花钱。这一份量的全是
-    第二个动作那几道闸，但每一条都得先有一稿——所以两步都在这儿走完。
-    """
-    product = _write(desk, conn, pid, chapter)
-    return product, desk.land(product.candidate.id)
-
-
 def _body(desk: Any, product: Any) -> str:
     """那一稿的正文。**它不在生成回执上**（ADR 0022：正文不进对话），按 id 取回来。"""
     return desk.recall(product.candidate.id).body
@@ -262,205 +252,9 @@ def _timings(conn: Connection, pid: str) -> dict[str, Any]:
     }
 
 
-def test_the_gate_holds_in_every_timing_the_author_can_type_in(
-    book: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """**五种时序逐个过。** 作者在「模型正在生成」的那几十秒里做了什么，
-    决定这一稿落不落得了盘 —— 而判据只有一条：**磁盘上那份还是不是我起草时依据的那份。**
-
-    「同一秒内改的」那一档是这张表里唯一一条**探针性**的：它改了内容却没改 mtime，
-    所以任何一个「比时间戳」的省事实现都会在那里静默放行。
-    """
-    conn = connect(book["db"])
-    pid = book["pid"]
-    try:
-        for name, (act, expected_disk, should_land) in _timings(conn, pid).items():
-            _file(conn, pid, 1).write_text(
-                "第一章 血脉\n\n萧决在青云城主府第一次听说了血脉秘密的真相。\n李管家什么也没说。\n",
-                encoding="utf-8",
-            )
-            desk = _drafter(conn, pid, monkeypatch, Drafting(during=act))
-            product, report = _land(desk, conn, pid, 1)
-
-            assert report.landed is should_land, f"{name}：落盘与否判错了（{report.note}）"
-            if should_land:
-                assert DRAFT in _on_disk(conn, pid, 1), f"{name}：该落盘的没落"
-            else:
-                assert _on_disk(conn, pid, 1) == expected_disk, (
-                    f"{name}：**作者的字被盖掉了** —— 这是 ADR 0021 那条不对称的坏那一侧"
-                )
-                assert "改过" in report.note, f"{name}：拒了却说不出为什么（{report.note}）"
-            # 拒不拒，稿子都还在、回执都还在：那一次调用的钱已经花掉了。
-            assert _body(desk, product) == DRAFT and len(product.calls) == 1, name
-    finally:
-        conn.close()
-
-
-def test_without_the_gate_every_one_of_those_timings_eats_the_authors_words(
-    book: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """**上一条的自守卫。** 把闸换成省事写法（「我刚才读的就是它」= 恒放行），
-    断言上面每一条该拒的当场变成「作者的字没了」。
-
-    没有这一条，`saved is False` 可能只是因为别的什么东西没跑起来 ——
-    一个永远绿的守卫比没有守卫更糟。
-    """
-    real = importer.save_chapter
-
-    def blind(*args: Any, **kwargs: Any) -> Any:
-        kwargs["expected_sha256"] = None  # ← 省事写法：闸恒 True
-        return real(*args, **kwargs)
-
-    conn = connect(book["db"])
-    pid = book["pid"]
-    try:
-        monkeypatch.setattr(drafting.importer, "save_chapter", blind)
-        eaten = []
-        for name, (act, expected_disk, should_land) in _timings(conn, pid).items():
-            if should_land:
-                continue
-            _file(conn, pid, 1).write_text(
-                "第一章 血脉\n\n萧决在青云城主府第一次听说了血脉秘密的真相。\n李管家什么也没说。\n",
-                encoding="utf-8",
-            )
-            _land(_drafter(conn, pid, monkeypatch, Drafting(during=act)), conn, pid, 1)
-            if _on_disk(conn, pid, 1) != expected_disk:
-                eaten.append(name)
-        assert len(eaten) == 3, f"探针没咬住（被吃掉的只有 {eaten}）—— 上一条证明不了任何事"
-    finally:
-        conn.close()
-
-
-def test_the_gate_still_holds_in_the_millisecond_between_the_snapshot_and_the_write(
-    book: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """**最后那道缝**：落盘前先跑一次 `sync()`（把作者那一版收进版本历史），
-    而作者可以在那一次 `sync` 和真正写盘之间的**那几毫秒**里再敲一次。
-
-    闸如果是「拿 `sync` 之前读到的那份比」，这一档就静默放行了 —— 而
-    `save_chapter` 是**读了立刻比、比完立刻写**，所以它应当照拒。
-    """
-    conn = connect(book["db"])
-    pid = book["pid"]
-    real_sync = importer.sync
-
-    def sync_then_author_types(*args: Any, **kwargs: Any) -> Any:
-        report = real_sync(*args, **kwargs)
-        _file(conn, pid, 1).write_text(MINE, encoding="utf-8")
-        monkeypatch.setattr(drafting.importer, "sync", real_sync)  # 只插一次队
-        return report
-
-    try:
-        desk = _drafter(conn, pid, monkeypatch, Drafting())
-        monkeypatch.setattr(drafting.importer, "sync", sync_then_author_types)
-        _, report = _land(desk, conn, pid, 1)
-
-        assert report.landed is False, "在 `sync` 和写盘之间那几毫秒里改的字被盖掉了"
-        assert _on_disk(conn, pid, 1) == MINE
-    finally:
-        conn.close()
-
-
-def test_a_second_landing_cannot_use_a_stale_base(
-    book: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """**两次落盘之间**：另一轮（另一个标签页 / 同一批里的下一个工具调用）先落了盘，
-    手里这一份的底稿就已经过期了。
-
-    这一档没有作者参与，全是系统自己造出来的并发 —— 而它和「作者刚改过」在磁盘上
-    长得一模一样，所以必须由同一道闸接住。
-    """
-    conn = connect(book["db"])
-    pid = book["pid"]
-    try:
-        theirs = Drafting(text="另一轮抢先写的那一稿。")
-        other = _drafter(conn, pid, monkeypatch, theirs)
-
-        def another_turn_lands_first() -> None:
-            # 两轮各自的「那一次模型调用」是**两个**桩，换着装（不换就是无限递归）。
-            monkeypatch.setattr(drafting, "draft_chapter", theirs)
-            try:
-                assert _land(other, conn, pid, 1)[1].landed is True
-            finally:
-                monkeypatch.setattr(drafting, "draft_chapter", ours)
-
-        ours = Drafting(during=another_turn_lands_first)
-        mine = _drafter(conn, pid, monkeypatch, ours)
-        _, report = _land(mine, conn, pid, 1)
-
-        assert report.landed is False, "后落盘的那一稿盖掉了先落盘的那一稿，而它拿的是过期底稿"
-        assert "另一轮抢先写的那一稿。" in _on_disk(conn, pid, 1)
-    finally:
-        conn.close()
-
-
 # ══════════════════════════════════════════════════════════════════════════
 # 二、丢稿的完整形态 —— 从没 `sync` 过的那一版，事后还找得回来吗
 # ══════════════════════════════════════════════════════════════════════════
-
-
-def test_a_paragraph_the_author_never_synced_is_still_in_the_version_history(
-    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """**ADR 0021 全部的退路押在这一条上。**
-
-    形态（真书上最常见的那一种）：作者在自己的编辑器里改 `chapters/*.md`
-    （ADR 0007 说那就是稿子），从不按工作台的保存。于是 agent 读到的就是那份最新的，
-    **sha 闸放行**，他那一版被盖掉 —— 而它从没进过 `chapter_snapshot`。
-
-    所以量的是**作者真的够得着的那个入口**（`GET …/history`，版本抽屉读的就是它），
-    不是库里那张表。
-    """
-    conn = connect(book["db"])
-    pid = book["pid"]
-    try:
-        _file(conn, pid, 1).write_text(MINE, encoding="utf-8")
-        assert MINE not in _snapshots(conn, pid, 1), "前提没成立"
-        assert _land(_drafter(conn, pid, monkeypatch, Drafting()), conn, pid, 1)[1].landed is True
-    finally:
-        conn.close()
-
-    history = client.get(f"/api/projects/{pid}/chapters/1/history")
-    assert history.status_code == 200, history.text
-    texts = [row["text"] for row in history.json()]
-    assert MINE in texts, (
-        "从没同步过的那一版在版本抽屉里找不回来 —— ADR 0021 的退路在这种形态下是空话"
-    )
-    assert not (_root(connect(book["db"]), pid) / importer.chapter_path(1)).read_text(
-        encoding="utf-8-sig"
-    ).count("从没同步过"), "磁盘上当然没有了（它就是被盖掉的那一版）"
-
-
-def test_the_paragraph_survives_even_without_the_pre_landing_sync(
-    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """**上一条的自守卫，换了个方向。** 去掉落盘前那一次 `sync()`（只去掉那一次，
-    `save_chapter` 自己那次照跑），断言作者那一段**在版本抽屉里仍然找得回来**：
-    Task 2 的 `save_chapter` 写盘前发现 DB 落后于磁盘时会先 reconcile 收编。
-    也就是说那条退路不再依赖「落盘前记得跑一次 sync」——将来删掉那一次也不会
-    让作者的字消失（这条测试会在退路真的断掉时红）。
-    """
-    conn = connect(book["db"])
-    pid = book["pid"]
-    real_sync = importer.sync
-    skipped = {"once": False}
-
-    def skip_the_first_sync(*args: Any, **kwargs: Any) -> Any:
-        if not skipped["once"]:
-            skipped["once"] = True
-            return importer.SyncReport()
-        return real_sync(*args, **kwargs)
-
-    try:
-        _file(conn, pid, 1).write_text(MINE, encoding="utf-8")
-        desk = _drafter(conn, pid, monkeypatch, Drafting())
-        monkeypatch.setattr(drafting.importer, "sync", skip_the_first_sync)
-        assert _land(desk, conn, pid, 1)[1].landed is True
-    finally:
-        conn.close()
-
-    texts = [row["text"] for row in client.get(f"/api/projects/{pid}/chapters/1/history").json()]
-    assert MINE in texts, "save_chapter 的 stale-DB reconcile 没有把作者那一段收进版本历史"
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -472,62 +266,6 @@ def _tree(root: Path) -> dict[str, bytes]:
     return {
         str(p.relative_to(root)): p.read_bytes() for p in sorted(root.rglob("*")) if p.is_file()
     }
-
-
-def test_drafting_a_chapter_that_does_not_exist_leaves_the_disk_byte_identical(
-    book: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """一本 3 章的书起第 4 章的草：**整个 `root` 逐字节不变。**
-
-    不是「那个文件不存在」——是**一个文件都没多、没少、没改**。偷偷 `touch` 一个空文件
-    会让切章数多一章，而切章数是 M0 的验收判据（章号一漂，图里每一条 `valid_from`
-    从此指着另一章，而面板会理直气壮地画出来）。
-    """
-    conn = connect(book["db"])
-    pid = book["pid"]
-    root = _root(conn, pid)
-    try:
-        before = _tree(root)
-        chapters_before = len(importer.chapter_files(root))
-
-        desk = _drafter(conn, pid, monkeypatch, Drafting())
-        product, report = _land(desk, conn, pid, 4)
-
-        assert report.landed is False
-        assert _body(desk, product) == DRAFT, "没落点不等于把这一稿扔掉"
-        assert _tree(root) == before, "磁盘上有东西变了 —— 章不存在那一档不许写任何字节"
-        assert len(importer.chapter_files(root)) == chapters_before
-        assert SqliteStoryGraph(conn).chapter_snapshots(pid, 4) == []
-    finally:
-        conn.close()
-
-
-def test_what_it_says_about_a_chapter_that_does_not_exist_is_readable_by_a_novelist(
-    book: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """那句话最终会被模型转述给作者，所以它过一遍**全仓唯一那份形状判据**。
-
-    判据是 `tests/test_wording_guard.py::dev_shapes`（和 `screenGuard.ts` 同一套网），
-    **不在这儿抄第二份**。顺带钉住它说的是「作者要自己起章标题」而不是一句
-    「保存失败」——后者会让模型下一句跟作者说「我存不进去，你重试一下」。
-    """
-    from test_wording_guard import dev_shapes
-
-    conn = connect(book["db"])
-    pid = book["pid"]
-    try:
-        notes = [_land(_drafter(conn, pid, monkeypatch, Drafting()), conn, pid, 4)[1].note]
-        # 空稿那一档 ADR 0022 之后在**生成**那一步就被拒，而那句话同样会被模型转述给
-        # 作者，所以它也得过这张网。
-        with pytest.raises(ToolRefused) as empty:
-            _write(_drafter(conn, pid, monkeypatch, Drafting(text="  \n ")), conn, pid, 1)
-        notes.append(str(empty.value))
-    finally:
-        conn.close()
-
-    offenders = {note: dev_shapes(note) for note in notes if dev_shapes(note)}
-    assert not offenders, f"落盘的回话里有研发术语：{offenders}"
-    assert "章标题" in notes[0]
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -662,10 +400,11 @@ def test_three_drafts_in_one_turn_are_three_lines_on_the_bill(
     assert together.n_waiting == 0 and not together.broken, (
         "三稿没有同时在写 —— 栅栏没凑齐（ADR 0022 拆开落盘就是为了这个）"
     )
+    # 进没进书由作者的保存决定（ADR 0048）：一轮跑完三稿都还在桌上。
     assert [(d["chapter"], d["landed"]) for d in turn.json()["drafts"]] == [
-        (1, True),
-        (2, True),
-        (3, True),
+        (1, False),
+        (2, False),
+        (3, False),
     ]
 
     conn = connect(book["db"])
@@ -678,33 +417,10 @@ def test_three_drafts_in_one_turn_are_three_lines_on_the_bill(
 
     titles = [(row["title_code"], tuple(sorted(row["title_params"].items()))) for row in _rows(client, pid)]
     writer_calls = ("call_entry_title", (("capability", "writer"),))
-    chapter_drafts = ("decision_entry_title", (("actor", "system"), ("kind", "chapter_draft")))
     assert titles.count(writer_calls) == 3, "日志页上数不出三次起草"
-    assert titles.count(chapter_drafts) == 3, "落盘那三行没上日志页"
-
-
-def test_a_draft_the_gate_refused_is_still_on_the_bill(
-    book: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """**闸拒了不等于没花钱。** 被拒的那一稿照样是一次真的模型调用。
-
-    账上少这一行的后果不是「少算一点」：它恰好是**作者最想看见的那一次**
-    （「我付了钱，而它说没写进去」）。
-    """
-    conn = connect(book["db"])
-    pid = book["pid"]
-    try:
-
-        def author_types() -> None:
-            _file(conn, pid, 1).write_text(MINE, encoding="utf-8")
-
-        product, report = _land(
-            _drafter(conn, pid, monkeypatch, Drafting(during=author_types)), conn, pid, 1
-        )
-        assert report.landed is False
-        assert [r.capability for r in product.calls] == ["writer"]
-    finally:
-        conn.close()
+    # 没有一行「写入正文」：这一层不写盘，那一行等作者按保存时才有（ADR 0048）。
+    assert not any(code == "decision_entry_title" and dict(params).get("kind") == "chapter_draft"
+                   for code, params in titles), "起草这一层往日志页写了「写入正文」那一行"
 
 
 def test_a_draft_that_dies_halfway_still_reports_what_it_already_spent(
@@ -1019,48 +735,3 @@ def test_the_copy_of_the_manuscript_a_draft_leaves_in_the_conversation_is_not_ch
 # ══════════════════════════════════════════════════════════════════════════
 
 
-def test_a_landing_that_happened_leaves_its_line_even_when_the_snapshot_did_not(
-    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """**磁盘写成了、快照没跟上** —— 那一行日志照样得有。
-
-    `save_chapter` 是「先写盘、再 `sync`」。落盘之后那次 `sync` 撞上别的章节文件被改坏
-    （几毫秒的窗口，但它是这条路上唯一一种「写成了却走异常出口」的形态），
-    今天这一支**直接返回，跳过 `decisions.append`**。
-
-    结果正是这一整摊要防的那件事：**作者的书被改了，日志页上没有这一行。**
-    ADR 0021 拿「不挡，但每步留痕」换掉了「事前问一句」，`_land` 自己的文档也写着
-    「一次写了作者的正文却没留下痕迹的落盘正好把那笔交易的另一半赖掉了」——
-    而它说的是留痕**失败**要吵，这一支是留痕**根本没发生**，静悄悄的。
-    """
-    conn = connect(book["db"])
-    pid = book["pid"]
-    real_sync = importer.sync
-    times = {"n": 0}
-
-    def fail_the_sync_that_follows_the_write(*args: Any, **kwargs: Any) -> Any:
-        times["n"] += 1
-        if times["n"] == 1:
-            return real_sync(*args, **kwargs)  # 落盘前那次（把作者当前那版收进历史）
-        raise importer.SyncRefused("别的章这几毫秒里被改坏了", path="chapters/0002.md")
-
-    try:
-        desk = _drafter(conn, pid, monkeypatch, Drafting())
-        monkeypatch.setattr(drafting.importer, "sync", fail_the_sync_that_follows_the_write)
-        _, report = _land(desk, conn, pid, 1)
-
-        assert report.landed is True, "磁盘是真相源（ADR 0007），写成了就不许说没写"
-        assert DRAFT in _on_disk(conn, pid, 1), "前提没成立：那一稿根本没写进磁盘"
-    finally:
-        conn.close()
-
-    landed = [
-        row
-        for row in _rows(client, pid)
-        if row["title_code"] == "decision_entry_title"
-        and row["title_params"] == {"actor": "system", "kind": "chapter_draft"}
-    ]
-    assert len(landed) == 1, (
-        "作者的第 1 章被改掉了，而日志页上没有这一行 —— "
-        "「不挡，但每步留痕」那笔交易只履行了「不挡」那一半"
-    )

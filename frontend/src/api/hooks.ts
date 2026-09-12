@@ -438,7 +438,8 @@ export function useSaveChapter(pid: string, chapter: number) {
   return useMutation({
     // `expected_text_sha256` 是必填的乐观闸（ADR 0021）：调用方依据的那一份正文的哈希，
     // 来自 `GET …/text` 的 `text_sha256`，不许前端自己另算一份。
-    mutationFn: (body: { markdown: string; expected_text_sha256: string }) =>
+    // `draft_id`：这份正文来自写作助手的哪一稿（ADR 0048，作者按保存才写进书）。
+    mutationFn: (body: { markdown: string; expected_text_sha256: string; draft_id?: string }) =>
       api.put(proj(pid, `/chapters/${chapter}/text`), body),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["chapters", pid] });
@@ -1174,10 +1175,13 @@ export function useRunTurn(pid: string) {
           },
         },
       ),
-    // 这一轮收场（跑完 / 没跑成）：编辑器里那条流的字**兜底清掉**。正常情形它早在
-    // 新正文到手时就清了（`CenterEditor`）；没写进去的那一档（作者中途改过那一章）
-    // 磁盘没变、没有新正文可等，只能在这儿收。
-    onSettled: () => useLiveDraft.getState().clear(),
+    // 这一轮收场（跑完 / 没跑成）：编辑器**没接**的那条流兜底清掉（作者手上有没保存的字
+    // 那一档，或者流断在半路）。接了的那条由 `CenterEditor` 在字露完时放掉——那一刻可能
+    // 比这一轮收场晚（模型说完话了字还在露），这儿不能抢在它前面清。
+    onSettled: () => {
+      const s = useLiveDraft.getState();
+      if (!(s.draft?.done && s.inEditor)) s.clear();
+    },
     onSuccess: (_receipt, v) => {
       qc.invalidateQueries({ queryKey: ["chats", pid] });
       qc.invalidateQueries({ queryKey: ["activity", pid] });

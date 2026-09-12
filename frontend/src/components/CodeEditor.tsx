@@ -1,14 +1,53 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
-import { EditorView, keymap, drawSelection, placeholder as cmPlaceholder } from "@codemirror/view";
+import {
+  Decoration,
+  type DecorationSet,
+  EditorView,
+  keymap,
+  drawSelection,
+  placeholder as cmPlaceholder,
+} from "@codemirror/view";
 import { history, defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
-import { Annotation, Compartment } from "@codemirror/state";
+import { Annotation, Compartment, StateEffect, StateField } from "@codemirror/state";
 import { ghostText, setSuggestion, suggestionField } from "./ghostText";
 import { IDLE_MS, tailAfter, tailBefore } from "../continuation";
+import type { TintRange } from "../tint";
 
 // 标记「外部灌入」的事务（换章时替换整篇 doc）。用它把外部替换和用户输入分开——
 // 否则换章那次 docChanged 会 onChange 回去，把新打开的章误标成「未保存」。
 const External = Annotation.define<boolean>();
+
+// 写作助手放进来的那一稿的底色（`tint.ts`）：新增的段绿、改过的段浅红，作者按保存就消失。
+// **区间跟着编辑走**（`map`）：作者在涂了色的段里再改几个字，底色不错位；他删掉整段，
+// 底色跟着没了。
+const setTints = StateEffect.define<readonly TintRange[] | null>();
+const ADDED = Decoration.mark({ class: "ai-added" });
+const CHANGED = Decoration.mark({ class: "ai-changed" });
+const tintField = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(value, tr) {
+    let next = value.map(tr.changes);
+    for (const effect of tr.effects) {
+      if (!effect.is(setTints)) continue;
+      const ranges = effect.value;
+      next =
+        ranges === null
+          ? Decoration.none
+          : Decoration.set(
+              ranges
+                .filter((r) => r.to > r.from)
+                .map((r) => (r.kind === "changed" ? CHANGED : ADDED).range(r.from, r.to)),
+              true,
+            );
+    }
+    return next;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
+/** 离底不到这么多像素算「贴着底」：一行正文的高度（亚像素取整之外还要容一行）。 */
+const PIN_SLACK = 40;
 
 // CodeMirror 6 编辑器（§2.4）——**不是 TipTap**。
 // 守 ADR 0006 的方式：CM6 停在纯文本/markdown 心智，doc 位置就是 JS 字符串的 code unit
@@ -22,6 +61,10 @@ const External = Annotation.define<boolean>();
 export interface CodeEditorHandle {
   /** 选中 [from, to) 并滚进视野（R4 冲突回跳、证据回跳用）。位置是字符串 code unit 下标。 */
   select: (from: number, to: number) => void;
+  /** 给写作助手放进来的那一稿涂底色（`null` = 全清）。位置是当前 doc 的 code unit 下标。 */
+  setTints: (ranges: readonly TintRange[] | null) => void;
+  /** 滚到最底、重新贴上（作者点「滑到最下方」那颗按钮）。 */
+  scrollToEnd: () => void;
   /** 在 `pos` 处挂一条灰字建议（ADR 0015）。**不写进 doc**——作者按 Tab 才落字。 */
   showSuggestion: (text: string, pos: number) => void;
   /** 丢掉当前建议。作者一敲键 CM6 自己也会丢，这个给「请求失败/换章」用。 */
@@ -91,15 +134,28 @@ export const CodeEditor = forwardRef<
      *  流进来的字混在一起，而且落盘那一刻会被磁盘上那一版盖掉。默认可编辑。 */
     editable?: boolean;
     /** 外部灌进来的字**长在末尾**时跟着滚到底（正在写的那一稿）。作者自己翻上去看
-     *  开头时不拽：判据是滚动条在不在底上，同 `ChatPanel::useFollowBottom`。 */
+     *  开头时不拽：判据是滚动条在不在底上（`PIN_SLACK`），同 `ChatPanel::useFollowBottom`。
+     *  翻上去了 / 又滚回底了，`onPinnedChange` 说一声——外面据此画「滑到最下方」那颗按钮。 */
     follow?: boolean;
+    onPinnedChange?: (pinned: boolean) => void;
   }
->(function CodeEditor({ value, onChange, onIdle, tailLimit, editable = true, follow = false }, ref) {
+>(function CodeEditor(
+  { value, onChange, onIdle, tailLimit, editable = true, follow = false, onPinnedChange },
+  ref,
+) {
   const host = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const editableConf = useRef(new Compartment());
   const followRef = useRef(follow);
   followRef.current = follow;
+  const pinnedRef = useRef(true);
+  const pinnedCb = useRef(onPinnedChange);
+  pinnedCb.current = onPinnedChange;
+  const setPinned = (on: boolean) => {
+    if (pinnedRef.current === on) return;
+    pinnedRef.current = on;
+    pinnedCb.current?.(on);
+  };
   // 回调放 ref，避免把它们进 mount 的 deps（否则每次 render 重建整个编辑器）。
   // 上限也放这个 ref：编辑器只挂载一次（下面那个 `[]`），作者在设置页换了模型之后
   // 新的数得进得来，而不是等他把整个工作台关掉重开。
@@ -114,6 +170,7 @@ export const CodeEditor = forwardRef<
       parent: host.current,
       extensions: [
         editableConf.current.of(EditorView.editable.of(editable)),
+        tintField,
         history(),
         drawSelection(),
         keymap.of([...defaultKeymap, ...historyKeymap]),
@@ -158,8 +215,16 @@ export const CodeEditor = forwardRef<
       ],
     });
     viewRef.current = view;
+    // 贴没贴着底：作者翻一下就知道。**我们自己滚到底那一下也会经过这儿**，那时它在底上，
+    // 所以贴着的状态不会被自己的滚动打断。
+    const onScroll = () => {
+      const sc = view.scrollDOM;
+      setPinned(sc.scrollHeight - sc.scrollTop - sc.clientHeight < PIN_SLACK);
+    };
+    view.scrollDOM.addEventListener("scroll", onScroll);
     return () => {
       if (idleTimer.current) clearTimeout(idleTimer.current);
+      view.scrollDOM.removeEventListener("scroll", onScroll);
       view.destroy();
       viewRef.current = null;
     };
@@ -176,21 +241,26 @@ export const CodeEditor = forwardRef<
     const cur = view.state.doc.toString();
     if (value === cur) return;
     const appended = value.startsWith(cur);
-    // 跟着底走：作者没翻上去时，新长出来的字始终在视野里。离底不到 8px 算「贴着底」
-    // （亚像素取整的余量，同 `ChatPanel::FOLLOW_SLACK`）；翻上去了就不拽。
-    const scroller = view.scrollDOM;
-    const atBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 8;
+    // 跟着底走：作者没翻上去时（`pinnedRef`），新长出来的字始终在视野里；翻上去了就不拽，
+    // 外面画一颗「滑到最下方」让他随时回来。
     view.dispatch({
       changes: appended
         ? { from: cur.length, insert: value.slice(cur.length) }
         : { from: 0, to: cur.length, insert: value },
       annotations: External.of(true),
       effects:
-        followRef.current && appended && atBottom
-          ? EditorView.scrollIntoView(value.length)
+        followRef.current && appended && pinnedRef.current
+          ? EditorView.scrollIntoView(value.length, { y: "end" })
           : undefined,
     });
   }, [value]);
+
+  // 开始跟着一条流的时候从「贴着底」起步：第一片字到手时正文很短、没有滚动条，
+  // 那一刻本来就在底上。
+  useEffect(() => {
+    if (follow) setPinned(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [follow]);
 
   // 锁 / 解锁键盘（正在写的那一稿进来 / 写完了）。Compartment 重配置不重建编辑器。
   useEffect(() => {
@@ -213,6 +283,19 @@ export const CodeEditor = forwardRef<
         const view = viewRef.current;
         if (!view || !view.state.field(suggestionField, false)) return;
         view.dispatch({ effects: setSuggestion.of(null) });
+      },
+      setTints(ranges) {
+        const view = viewRef.current;
+        if (!view) return;
+        view.dispatch({ effects: setTints.of(ranges) });
+      },
+      scrollToEnd() {
+        const view = viewRef.current;
+        if (!view) return;
+        setPinned(true);
+        view.dispatch({ effects: EditorView.scrollIntoView(view.state.doc.length, { y: "end" }) });
+        const sc = view.scrollDOM;
+        sc.scrollTop = sc.scrollHeight;
       },
       select(from, to) {
         const view = viewRef.current;

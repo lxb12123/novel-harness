@@ -25,13 +25,20 @@ const kept = real("draft_kept");
 describe("编辑器里那条流", () => {
   it("开跑那一声开格，字一片片接上去，收场那一声只标 done、**不清字**", () => {
     let live = liveDraftAfter(null, started);
-    expect(live).toEqual({ chapter: started.chapter, stream: started.stream, text: "", done: false });
+    expect(live).toEqual({
+      chapter: started.chapter,
+      stream: started.stream,
+      text: "",
+      done: false,
+      draftId: "",
+    });
     live = liveDraftAfter(live, delta("风雪落在肩上，"));
     live = liveDraftAfter(live, delta("他终于抬起头。"));
     expect(live?.text).toBe("风雪落在肩上，他终于抬起头。");
-    // 落盘之后磁盘上那一版要几十毫秒才回来：这几十毫秒里字得留着，否则先闪回旧稿。
+    // 收场那一声带着候选表里的编号（作者按保存时随请求送回去）；字留着，编辑器接手时才放。
+    expect(kept.draft_id).toMatch(/:/); // 探针：真 dump 那一声真的带着编号
     live = liveDraftAfter(live, kept);
-    expect(live).toMatchObject({ text: "风雪落在肩上，他终于抬起头。", done: true });
+    expect(live).toMatchObject({ text: "风雪落在肩上，他终于抬起头。", done: true, draftId: kept.draft_id });
   });
 
   it("**一次只跟一条流**：一批几稿同时在飞，编辑器只有一个位子，第二条留在右边", () => {

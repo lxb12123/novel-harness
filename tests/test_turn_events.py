@@ -67,7 +67,6 @@ from novel_harness.agent.loop import (
 from novel_harness.agent.ports import (
     DraftAsk,
     DraftProduct,
-    LandingReport,
     StoredDraft,
     ToolContext,
 )
@@ -171,8 +170,6 @@ class PoisonedDesk:
         self.seen.append(ctx)
         return DraftProduct(candidate=self._candidate(ask.chapter))
 
-    def land(self, candidate_id: str) -> LandingReport:
-        return LandingReport(chapter=CHAPTER, landed=True, note=DRAFT_TELL)
 
     def recall(self, candidate_id: str) -> StoredDraft:
         return StoredDraft(**self._candidate(CHAPTER).model_dump(), body=DRAFT_BODY_TELL)
@@ -569,8 +566,7 @@ def test_a_tool_return_full_of_poison_still_only_shows_up_as_a_number(
             ordinal=1,
             units=12,
             preview="风雪落在肩上。",
-            landed=True,
-            landing=TWIST,
+            note=TWIST,
         ),
         label="做一件带毒的事",
     )

@@ -47,7 +47,7 @@ from contextlib import AbstractContextManager
 from pathlib import Path
 from typing import Any, Final
 
-from .. import decisions, importer
+from .. import importer
 from ..db import Connection
 from ..draft.capabilities import (
     CapabilityError,
@@ -58,7 +58,7 @@ from ..draft.capabilities import (
 )
 from ..draft.context import DraftContext
 from ..draft.generate import CallInterrupted
-from ..draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage, LengthSpec, count_units
+from ..draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage, LengthSpec
 from ..draft.product_draft import (
     ChapterDraftRequest,
     DraftRefused,
@@ -73,7 +73,7 @@ from ..graph import GraphStore
 from .candidates import DraftCandidate, DraftCandidateStore, StoredDraft
 from .loop import Cancellation, EventFn, TurnEvent, safe_emitter
 from .model import cancellable_client
-from .ports import DraftAsk, DraftProduct, LandingReport, ToolRefused
+from .ports import DraftAsk, DraftProduct, ToolRefused
 from .prompt_terms import message
 
 AGENT_DRAFT_LENGTH: Final[LengthSpec] = DEFAULT_LENGTH_POLICY.default_for(DraftLanguage.ZH)
@@ -340,12 +340,6 @@ class ChapterDesk:
         self._conn = conn
         self._project_id = project_id
         self._root = Path(root)
-        # 这一轮**自己**写进各章的那一版的哈希（章号 → sha）。一批几稿依次落盘时，
-        # 第二稿的底稿是第一稿落盘之前的那一版——底稿闸会把它当成「作者在这中间改过」
-        # 而拒掉。磁盘上现在那一版**就是我们上一稿写的**时，这不是作者的改动，接着盖
-        # 才对（ADR 0048：起草即写入，一批几稿全进书，最后一稿留在正文里，其余在版本
-        # 历史里）。作者真在中间改过一笔，磁盘的哈希就对不上这张表，闸照旧拒。
-        self._written: dict[int, str] = {}
         self._config = config
         self._capability = capability
         self._events = events
@@ -684,6 +678,7 @@ class ChapterDesk:
                 units=candidate.units,
                 stream=stream,
                 stopped=bool(stopped),
+                draft_id=candidate.id,
             )
         )
         return candidate
@@ -751,39 +746,6 @@ class ChapterDesk:
             calls=calls,
         )
 
-    # ── 落盘：不花钱，动书，**仍然不问作者** ──────────────────────────────
-
-    def land(self, candidate_id: str) -> LandingReport:
-        """把某一稿写进它那一章（ADR 0021 的机制原样保留）。
-
-        **「写没写成」的每一种结局都是返回值，不是异常**：模型据此决定下一句跟作者说
-        什么，而「我写进去了」和「你刚改过，我没敢覆盖」是两句完全不同的话。
-
-        **只有两件事仍然抛**：这一稿根本不在（模型报了个不存在的 id），
-        和留痕失败（见 `_log_landing`）。
-        """
-        stored = self._require(candidate_id)
-        landed, note, written = _land(
-            self._store,
-            self._conn,
-            project_id=self._project_id,
-            root=self._root,
-            chapter=stored.chapter,
-            base_sha=stored.base_sha256,
-            own_sha=self._written.get(stored.chapter),
-            body=stored.body,
-            language=self._length.language,
-        )
-        if landed:
-            if written:
-                self._written[stored.chapter] = written
-            self._candidates.mark_landed(self._project_id, candidate_id)
-            self.produced = [
-                c.model_copy(update={"landed": True}) if c.id == candidate_id else c
-                for c in self.produced
-            ]
-        return LandingReport(chapter=stored.chapter, landed=landed, note=note)
-
     # ── 读回：不花钱，不动书 ──────────────────────────────────────────────
 
     def recall(self, candidate_id: str) -> StoredDraft:
@@ -848,143 +810,6 @@ def chapter_drafter(
         db_lock=db_lock,
         cancel=cancel,
         on_event=on_event,
-    )
-
-
-def _land(
-    store: GraphStore,
-    conn: Connection,
-    *,
-    project_id: str,
-    root: Path,
-    chapter: int,
-    base_sha: str | None,
-    body: str,
-    language: DraftLanguage,
-    own_sha: str | None = None,
-) -> tuple[bool, str, str]:
-    """把这一稿写进第 `chapter` 章。返回 `(写没写成, 说给模型听的那句话, 写进去的那一版的哈希)`。
-
-    `own_sha` 是**这一轮自己**上一次写进这一章的那一版的哈希（`ChapterDesk._written`）：
-    磁盘上现在正是那一版时，底稿闸按它比对，而不是按这一稿起草时的底稿——一批几稿
-    依次落盘才走得通（ADR 0048）。磁盘不是那一版（作者中间改过）就照旧按底稿比，拒。
-
-    每一条不写的理由都要说得出口（见 `ChapterDesk.land`）。**这句话本身双语**
-    （国际化第三批（下半）遗漏的一角，2026-08-27 补上）：`note` 不走
-    `ToolRefused`（那条异常路径已经在上一批译过），是普通返回值——但它一样
-    进模型的对话历史，一样不许是一句写死的中文。每条译文的键名和落点见
-    `prompt_terms.py` 的「agent/drafting.py::_land()」一节。
-
-    **只有一件事仍然抛：留痕失败。** 写完盘之后那一行 `decision_log` 记不上时，
-    这儿不吞（同 `api/chat.py::_ledger` 那条「记账失败也不吞」）——ADR 0021 拿
-    「不挡，但每步留痕」换掉了「事前问一句」，一次**写了作者的正文却没留下痕迹**的落盘
-    正好把那笔交易的另一半赖掉了，而它静默失败的形态是「作者的书被改了，日志页上没有
-    这一行」。响一声很吵，但吵在对的方向。
-    """
-    current = importer.read_chapter(root, chapter)
-    if current is None:
-        # ADR 0021 的范围限制，**这条 404 不许为 agent 放开**：新建一章要起章标题，
-        # 而标题是切章的锚（切错了整本书章号会漂），`chapter_snapshot.chapter_id`
-        # 也没有落点。所以交出正文，由作者建。
-        return False, message("landing_target_chapter_missing", language, chapter=chapter), ""
-
-    if base_sha is None:
-        # **拆成两个动作之后新长出来的一档**：起草那会儿这一章不存在，现在它存在了
-        # ——那是作者在这中间自己建的。`expected_sha256=None` 会把闸整个关掉，
-        # 于是他刚起的那一章被一份**根本不是基于它写的**稿子盖掉。
-        return False, message("landing_chapter_created_after_draft", language, chapter=chapter), ""
-
-    head = importer.single_chapter(current)
-    if head is None:
-        return False, message("landing_chapter_head_malformed", language, chapter=chapter), ""
-
-    # 模型自己写了一行章标题时，**用作者那一行，不用它那一行**：标题是切章的依据，
-    # 换标题是作者的动作（同上面那条 404 的理由）。它写的那份被丢掉，正文照旧。
-    drafted = importer.single_chapter(body)
-    text = (drafted.body if drafted else body).strip()
-    if not text:
-        # 空的一稿接上章标题**照样切得出恰好一章**，所以下面那道形状闸拦不住它——
-        # 拦不住的后果是作者的一整章被一份空白盖掉。生成那一侧已经拒过一次空稿，
-        # 这一条是第二道：候选表里那份 `body` 不是这一层写的，它只保证自己不清空一章。
-        return False, message("landing_draft_empty", language, chapter=chapter), ""
-    candidate = importer.chapter_text(head.raw_heading, text)
-    if importer.single_chapter(candidate) is None:
-        # **写之前先验一次**，而不是等 `sync` 事后报错：`save_chapter` 是先写盘再 sync，
-        # 那时正文已经盖上去了，作者要自己去修章标题才能存回来。这一稿多半自己又写了
-        # 一行（或几行）章标题。
-        return False, message("landing_candidate_not_single_chapter", language, chapter=chapter), ""
-
-    try:
-        # **先把磁盘上现在那一版落成快照。** ADR 0021 承诺的退路是「版本历史里退得回去」，
-        # 而 `chapter_snapshot` 里只有 `sync` 过的那些——作者在编辑器里改完还没同步的
-        # 那一版，被盖掉就是**真没了**（那份 ADR 结尾的原话）。这一句让那条退路是真的。
-        # 代价是多跑一次 `sync`（`save_chapter` 自己还要跑一次），而 `sync` 幂等：
-        # 内容一字不差的章走 `unchanged_count`，不多出一行快照。
-        importer.sync(store, project_id, root)
-    except importer.SyncRefused as exc:
-        return (
-            False,
-            message("landing_presync_refused", language, chapter=chapter, path=exc.path),
-            "",
-        )
-
-    # 磁盘上现在那一版是这一轮自己上一稿写的 ⇒ 按它比（见函数 docstring）。
-    ours = own_sha is not None and importer.text_digest(current) == own_sha
-    expected = own_sha if ours else base_sha
-    try:
-        receipt = importer.save_chapter(
-            store, project_id, root, chapter, candidate, expected_sha256=expected
-        )
-    except importer.ChapterChanged:
-        # **唯一那道闸**（ADR 0021）。不是「问你可不可以」，是「你比它更晚改过」。
-        return False, message("landing_chapter_changed", language, chapter=chapter), ""
-    except importer.ChapterMissing:
-        # 这中间那个文件被删了/改名了。同上面那条：交出正文，不重建。
-        return False, message("landing_chapter_file_missing", language, chapter=chapter), ""
-    except importer.SyncRefused:
-        written = importer.text_digest(candidate)
-        # 上面那次 `sync` 刚过，所以走到这儿只可能是**这几毫秒里**别的章被改坏了。
-        # 正文**已经**在磁盘上（`save_chapter` 先写盘），所以这儿说的是「存了，但
-        # 版本历史这一次没跟上」——磁盘是真相源（ADR 0007），不许反过来说没存。
-        #
-        # **留痕照留。** 这一支曾经直接 return、跳过下面那一行 `decision_log`，
-        # 于是落到「作者的书被改了，日志页上没有这一行」——ADR 0021 拿「不挡，
-        # 但每步留痕」换掉了「事前问一句」，只履行前半句就是把那笔交易赖掉一半。
-        # 快照这一次没落下，所以那一行也说清楚了「版本历史没跟上」。
-        _log_landing(conn, project_id=project_id, chapter=chapter, candidate=candidate)
-        return (
-            True,
-            message("landing_saved_but_history_not_recorded", language, chapter=chapter),
-            written,
-        )
-
-    written = receipt.text_sha256
-    _log_landing(conn, project_id=project_id, chapter=chapter, candidate=candidate)
-    return True, message("landing_saved", language, chapter=chapter), written
-
-
-def _log_landing(conn: Connection, *, project_id: str, chapter: int, candidate: str) -> None:
-    """日志页上那一行。**写成了就必须有它，一条出口都不许绕过去**（见 `_land` 的
-    「留痕失败不吞」）—— 所以它是一个函数而不是抄两遍：抄两遍的那天会漏掉一支。
-    """
-    decisions.append(
-        conn,
-        project_id=project_id,
-        kind=decisions.DecisionKind.CHAPTER_DRAFT,
-        decision=decisions.Verdict.ACCEPT,
-        # **作者在日志页上看得懂的那个名字**（`_decision_detail` 的「对象」那一行）。
-        subject_name=f"第 {chapter} 章",
-        chapter_number=chapter,
-        payload={
-            "chapter_number": chapter,
-            "units": count_units(candidate, DraftLanguage.ZH),
-            # 版本抽屉里那一版的锚。**不上屏**（作者认不得一段 sha256），
-            # 它在这儿是为了让「日志那一行」和「快照那一版」对得上号。
-            "text_sha256": importer.text_digest(candidate),
-        },
-        # 没有任何人点过这一次保存。**这一列就是 ADR 0020 / 0021 的整条退路**：
-        # 作者能把系统自己做的和自己做的分开看。
-        actor=decisions.SYSTEM_ACTOR,
     )
 
 

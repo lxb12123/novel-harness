@@ -15,7 +15,8 @@ import { ChatPanel } from "./ChatPanel";
 // 不重读的后果不是显示滞后，是**他把助手写的一整章盖掉**。
 
 beforeEach(() => {
-  useLiveDraft.getState().clear();
+  // 这个 store 活得比一个测试长：上一条放进编辑器的那一稿不清掉，下一条会把它当成自己的。
+  useLiveDraft.setState({ draft: null, inEditor: false, editorBusy: false, placed: null, saved: [] });
   useCoords.setState({
     projectId: "project:ID1",
     chapter: 1,
@@ -298,50 +299,142 @@ describe("正在写的那一稿流进左边", () => {
     expect(screen.queryByText(/写作助手正在写入本章/)).toBeNull();
   });
 
-  it("落盘之后新正文到手，那条流让位，键盘解锁——中间没有一帧闪回旧稿", async () => {
+  it("写完：整份进编辑器、**未保存**、新增的段涂绿底；键盘解锁；右边那一行说它在编辑器里", async () => {
     const user = userEvent.setup();
-    let reads = 0;
-    const drafted = {
-      ...fixtures.chapterText,
-      markdown: "第一章 试探\n\n风雪落在肩上，他终于抬起头。",
-      text_sha256: "b".repeat(64),
-    };
     let release!: (frame: string) => void;
     const held = new Promise<string>((r) => (release = r));
+    const kept = { ...realEvent("draft_kept"), chapter: 1 };
+    expect(kept.draft_id).toMatch(/:/); // 探针：收场那一声带着编号
     renderWithApi(shell(), [
-      {
-        match: /\/chapters\/\d+\/text/,
-        body: () => (reads++ === 0 ? fixtures.chapterText : drafted),
-      },
       {
         method: "POST",
         match: /\/turn\/events$/,
         stream: [
           turnFrame(opened),
           turnFrame(piece("风雪落在肩上，他终于抬起头。")),
-          turnFrame({ ...realEvent("draft_kept"), chapter: 1 }),
-          // 起草那一步跑完 = 那一章已经在磁盘上变了（`useRunTurn` 据此重取正文）。
-          turnFrame({ ...realEvent("tool_finished"), tool: "draft_chapter", ok: true, chapter: 1 }),
+          turnFrame(kept),
           held,
         ],
       },
     ]);
     await screen.findByText("第 1 章");
     const content = document.querySelector(".cm-content") as HTMLElement;
-    await waitFor(() => expect(reads).toBe(1));
+    await waitFor(() => expect(content.textContent).toContain("李管家什么也没说。"));
 
     await user.type(screen.getByRole("textbox", { name: "输入消息" }), "把这一章写了");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
-    // 新正文到手：编辑器里是磁盘上那一版，流已经放掉，键盘解锁。这一轮还没收场（流卡着）。
-    await waitFor(() => expect(reads).toBeGreaterThan(1));
-    await waitFor(() => expect(useLiveDraft.getState().draft).toBeNull());
+    // 字全露完 → 它是作者手上一份未保存的修改：脏、可编辑、涂了底色、保存按得动。
+    await waitFor(() => expect(useLiveDraft.getState().placed?.draftId).toBe(kept.draft_id));
     expect(content.textContent).toContain("风雪落在肩上，他终于抬起头。");
     expect(content.getAttribute("contenteditable")).toBe("true");
+    expect(document.querySelector(".save-badge-icon.droplet")).not.toBeNull();
+    expect(screen.getByRole("button", { name: "保存" })).not.toBeDisabled();
+    expect(document.querySelector(".ai-added")?.textContent).toContain("风雪落在肩上");
+    expect(screen.getByText(/按「保存」写入本章/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "放弃这一稿" })).toBeInTheDocument();
+    // 磁盘那一侧**没动**：一轮里没有任何一次读正文之外的写。
     expect(screen.queryByText(/写作助手正在写入本章/)).toBeNull();
-    expect(screen.queryByText(ROUND_DONE)).toBeNull();
-    release(sseFrames([{ event: "receipt", data: fixtures.chatTurn }])[0]);
+
+    // 这一轮收场，右边那一行说它在编辑器里、等着保存。
+    release(sseFrames([{ event: "receipt", data: { ...fixtures.chatTurn, drafts: [{ ...fixtures.chatTurn.drafts[0], id: kept.draft_id, chapter: 1 }] } }])[0]);
     await screen.findByText(ROUND_DONE);
+    expect(screen.getByText(/已放入编辑器，按「保存」写入本章/)).toBeInTheDocument();
+  });
+
+  it("按「保存」：请求带上那一稿的编号，底色消失；右边那一行改说「已写入」", async () => {
+    const user = userEvent.setup();
+    const kept = { ...realEvent("draft_kept"), chapter: 1 };
+    let putBody: Record<string, unknown> | null = null;
+    renderWithApi(shell(), [
+      {
+        method: "POST",
+        match: /\/turn\/events$/,
+        stream: [
+          turnFrame(opened),
+          turnFrame(piece("风雪落在肩上，他终于抬起头。")),
+          turnFrame(kept),
+          sseFrames([{ event: "receipt", data: { ...fixtures.chatTurn, drafts: [{ ...fixtures.chatTurn.drafts[0], id: kept.draft_id, chapter: 1 }] } }])[0],
+        ],
+      },
+      {
+        method: "PUT",
+        match: /\/chapters\/1\/text$/,
+        onRequest: (init) => {
+          putBody = init?.body ? JSON.parse(String(init.body)) : null;
+        },
+        body: fixtures.chapterSaved,
+      },
+    ]);
+    await screen.findByText("第 1 章");
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "把这一章写了");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(useLiveDraft.getState().placed?.draftId).toBe(kept.draft_id));
+    await screen.findByText(ROUND_DONE);
+
+    expect(screen.getByRole("button", { name: "保存" })).not.toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "保存" }));
+
+    await waitFor(() => expect(putBody).not.toBeNull(), { timeout: 3000 });
+    expect(putBody).toMatchObject({ draft_id: kept.draft_id, expected_text_sha256: fixtures.chapterText.text_sha256 });
+    expect(String((putBody as unknown as Record<string, unknown>).markdown)).toContain("风雪落在肩上，他终于抬起头。");
+    await waitFor(() => expect(document.querySelector(".ai-added")).toBeNull());
+    expect(screen.queryByRole("button", { name: "放弃这一稿" })).toBeNull();
+    expect(screen.getByText(/已写入第 1 章/)).toBeInTheDocument();
+  });
+
+  it("按「放弃这一稿」：回到磁盘上那一版，底色消失，不脏", async () => {
+    const user = userEvent.setup();
+    const kept = { ...realEvent("draft_kept"), chapter: 1 };
+    const held = new Promise<string>(() => {});
+    renderWithApi(shell(), [
+      {
+        method: "POST",
+        match: /\/turn\/events$/,
+        stream: [turnFrame(opened), turnFrame(piece("风雪落在肩上。")), turnFrame(kept), held],
+      },
+    ]);
+    await screen.findByText("第 1 章");
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "把这一章写了");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    await screen.findByRole("button", { name: "放弃这一稿" });
+
+    await user.click(screen.getByRole("button", { name: "放弃这一稿" }));
+
+    expect(content.textContent).toContain("李管家什么也没说。");
+    expect(content.textContent).not.toContain("风雪落在肩上");
+    expect(document.querySelector(".ai-added")).toBeNull();
+    expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
+    expect(useLiveDraft.getState().placed).toBeNull();
+  });
+
+  it("翻上去看前面写的：画面留在原地，正中一颗「滑到最下方」；点它回到底、继续跟", async () => {
+    const user = userEvent.setup();
+    const held = new Promise<string>(() => {});
+    renderWithApi(shell(), [
+      {
+        method: "POST",
+        match: /\/turn\/events$/,
+        stream: [turnFrame(opened), turnFrame(piece("风雪落在肩上，他终于抬起头。".repeat(20))), held],
+      },
+    ]);
+    await screen.findByText("第 1 章");
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "把这一章写了");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    await screen.findByText(/写作助手正在写入本章/);
+    expect(screen.queryByRole("button", { name: /滑到最下方/ })).toBeNull();
+
+    // jsdom 不排版：把滚动条的几何数装出来——正文比视口高、而且翻到了上面。
+    const scroller = document.querySelector(".cm-scroller") as HTMLElement;
+    Object.defineProperty(scroller, "scrollHeight", { configurable: true, get: () => 2000 });
+    Object.defineProperty(scroller, "clientHeight", { configurable: true, get: () => 500 });
+    scroller.scrollTop = 100;
+    scroller.dispatchEvent(new Event("scroll"));
+
+    const jump = await screen.findByRole("button", { name: /滑到最下方/ });
+    await user.click(jump);
+    await waitFor(() => expect(screen.queryByRole("button", { name: /滑到最下方/ })).toBeNull());
   });
 });
 

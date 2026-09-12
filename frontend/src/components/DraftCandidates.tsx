@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { api, proj } from "../api/client";
 import { useDraftText } from "../api/hooks";
-import type { DraftCandidateView } from "../api/types";
+import type { DraftCandidateDetail, DraftCandidateView } from "../api/types";
+import { useLiveDraft } from "../liveDraft";
 import {
   chaptersOf,
   comparePath,
@@ -16,12 +18,13 @@ import { writeCompareHandoff } from "../route";
 // 这一轮写出来的那几稿（[ADR 0022](docs/adr/0022-drafting-is-a-proposal-not-a-write.md)，
 // 入口 2026-09-12 起按 [ADR 0048](docs/adr/0048-drafting-writes-the-chapter.md)）。
 //
-// **稿子写完直接写进那一章**，作者在左边的正文里看到它，所以这儿**不再摊正文**：
-// 写进去的每一稿只有一行（第几稿 · 字数 · 已写入 + 写手那句自述），底下一句怎么退回。
+// **稿子写完直接进左边的编辑器**（未保存，作者按「保存」才写进书），所以这儿**不再摊正文**：
+// 进了编辑器 / 已经保存的每一稿只有一行（第几稿 · 字数 · 在哪儿 + 写手那句自述）。
 // 作者的原话：「直接修改在左边，反正有历史状态管理……写小说的话红色绿色整体看起来很乱」。
 //
-// **没写进去的那几稿仍然是一张卡**（作者中途改过那一章 / 那一章还不存在 / 按停砍断的）
-// ——那是它唯一能被读到的地方。那几张卡沿用原来的三档排布，**同一份数据的三种排布**：
+// **没进编辑器的那几稿仍然是一张卡**（作者手上有没保存的字时编辑器不接 / 一批几稿的
+// 第二稿起 / 按停砍断的）——那是它唯一能被读到的地方，卡上一颗「放入编辑器」。
+// 那几张卡沿用原来的三档排布，**同一份数据的三种排布**：
 //
 // | 档 | 什么时候 | 长什么样 |
 // |---|---|---|
@@ -69,13 +72,17 @@ export function DraftCard({
   draft,
   open,
   onToggle,
+  onPlace,
 }: {
   pid: string;
   draft: DraftCandidateView;
   open: boolean;
   onToggle?: () => void;
+  /** 「放入编辑器」（只在对话里那一档有；并排页没有编辑器可放）。 */
+  onPlace?: () => void;
 }) {
   const language = useLanguage((s) => s.language);
+  const busy = useLiveDraft((s) => s.editorBusy);
   return (
     <article className={open ? "draft-card open" : "draft-card"}>
       <div className="draft-card-head">
@@ -84,11 +91,27 @@ export function DraftCard({
           {language === "zh" ? `第 ${draft.chapter} 章` : `Chapter ${draft.chapter}`} ·{" "}
           {unitsLabel(draft.units, language)}
         </span>
-        {/* 「推荐位」就是它 —— 一个动作，不是一句评价（ADR 0022）。 */}
+        {/* 「已写入」就是它 —— 一个动作（作者按过保存），不是一句评价（ADR 0022）。 */}
         {draft.landed && (
           <span className="draft-badge">
             {language === "zh" ? "已写入本章" : "Written into this chapter"}
           </span>
+        )}
+        {onPlace && (
+          <button
+            className="link draft-place"
+            disabled={busy}
+            data-tip={
+              busy
+                ? language === "zh"
+                  ? "先保存或放弃编辑器里未保存的修改"
+                  : "Save or discard the unsaved edits in the editor first"
+                : undefined
+            }
+            onClick={onPlace}
+          >
+            {language === "zh" ? "放入编辑器" : "Put in the editor"}
+          </button>
         )}
       </div>
       {/* **这一稿被砍断过。** 画在自述和正文**前面**，因为它改变的是后面那两样该怎么读：
@@ -176,9 +199,17 @@ export function CompareLink({
   );
 }
 
-/** 写进那一章的一稿：**一行**。正文在左边，这儿不再摊第二份。 */
-function LandedRow({ draft }: { draft: DraftCandidateView }) {
+/** 在编辑器里 / 已经保存的一稿：**一行**。正文在左边，这儿不再摊第二份。 */
+function LandedRow({ draft, where }: { draft: DraftCandidateView; where: "editor" | "saved" }) {
   const language = useLanguage((s) => s.language);
+  const said =
+    where === "saved"
+      ? language === "zh"
+        ? `已写入第 ${draft.chapter} 章`
+        : `Written into chapter ${draft.chapter}`
+      : language === "zh"
+        ? "已放入编辑器，按「保存」写入本章"
+        : "In the editor; click Save to write it into the chapter";
   return (
     <p className="draft-landed">
       <b>{draftLabel(draft, language)}</b>
@@ -186,7 +217,7 @@ function LandedRow({ draft }: { draft: DraftCandidateView }) {
         {" · "}
         {unitsLabel(draft.units, language)}
         {" · "}
-        {language === "zh" ? `已写入第 ${draft.chapter} 章` : `Written into chapter ${draft.chapter}`}
+        {said}
       </span>
       {/* 写手那句自述——它是这一稿的一句说明，不是评价（引擎不打分，ADR 0005）。空的不画。 */}
       {draft.note.trim() !== "" && <span className="draft-landed-note">{draft.note}</span>}
@@ -204,11 +235,22 @@ export function DraftCandidates({
   const language = useLanguage((s) => s.language);
   const boxRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
-  // 没写进去的卡默认全收着（这一层不挑）；又跑了一轮就是另一批，展开过哪几张跟这一批无关。
+  // 没进编辑器的卡默认全收着（这一层不挑）；又跑了一轮就是另一批，展开过哪几张跟这一批无关。
   const [open, setOpen] = useState<string[]>([]);
   useEffect(() => setOpen([]), [drafts]);
-  const landed = drafts.filter((d) => d.landed);
-  const pending = drafts.filter((d) => !d.landed);
+  // 每一稿现在在哪儿：编辑器里（未保存）/ 已经保存进书 / 还在桌上。
+  const placed = useLiveDraft((s) => s.placed);
+  const saved = useLiveDraft((s) => s.saved);
+  const present = useLiveDraft((s) => s.present);
+  const whereOf = (d: DraftCandidateView): "saved" | "editor" | null =>
+    d.landed || saved.includes(d.id) ? "saved" : placed?.draftId === d.id ? "editor" : null;
+  const landed = drafts.filter((d) => whereOf(d) !== null);
+  const pending = drafts.filter((d) => whereOf(d) === null);
+  /** 作者点「放入编辑器」：取那一稿的全文，走和流一样的路进编辑器（`liveDraft.ts::present`）。 */
+  const place = async (d: DraftCandidateView) => {
+    const detail = await api.get<DraftCandidateDetail>(proj(pid, `/drafts/${encodeURIComponent(d.id)}`));
+    present({ chapter: d.chapter, draftId: d.id, text: detail.text });
+  };
 
   // **量的是这一块自己有多宽，不是窗口**：作者拖的是中栏那根分隔条，窗口一动不动。
   // 量不到（jsdom / 首帧）就是 0 ⇒ 窄档，而窄档是默认形态（`drafts.ts::sideBySide`）。
@@ -234,7 +276,7 @@ export function DraftCandidates({
   if (drafts.length === 0) return null;
 
   const wide = sideBySide(width, pending.length);
-  const note = landedNote(drafts, language);
+  const note = landedNote(drafts, language, saved);
 
   return (
     <section
@@ -254,7 +296,7 @@ export function DraftCandidates({
         ))}
       </div>
       {landed.map((draft) => (
-        <LandedRow key={draft.id} draft={draft} />
+        <LandedRow key={draft.id} draft={draft} where={whereOf(draft) ?? "editor"} />
       ))}
       {note && <p className="chat-receipt-note">{note}</p>}
       {pending.length > 0 && (
@@ -262,13 +304,14 @@ export function DraftCandidates({
         {pending.map((draft) =>
           wide ? (
             // 宽档：每一列自己一个滚轮，全文都摊着 —— 作者拖到这个宽度就是要并排读。
-            <DraftCard key={draft.id} pid={pid} draft={draft} open />
+            <DraftCard key={draft.id} pid={pid} draft={draft} open onPlace={() => void place(draft)} />
           ) : (
             <DraftCard
               key={draft.id}
               pid={pid}
               draft={draft}
               open={open.includes(draft.id)}
+              onPlace={() => void place(draft)}
               onToggle={() =>
                 setOpen((prev) =>
                   prev.includes(draft.id)

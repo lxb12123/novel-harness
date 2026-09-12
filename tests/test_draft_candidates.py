@@ -203,8 +203,7 @@ def test_no_poison_survives_into_the_candidate_table(
     writer = FakeWriter(f"{SELF_NOTE_MARK} 这一版更冷。\n\n风雪落在肩上。")
     desk = _desk(poisoned, monkeypatch, writer)
     ask, ctx = _ask(poisoned, 1)
-    product = desk.write(ask, ctx)
-    desk.land(product.candidate.id)
+    desk.write(ask, ctx)
 
     stored = every_column(poisoned["conn"])
     offenders = [what for what, poison in POISON.items() if poison in stored]
@@ -389,10 +388,11 @@ def test_the_note_comes_from_the_writer_in_the_same_call(
     assert SELF_NOTE_MARK in json.dumps(writer.prompts[0], ensure_ascii=False), (
         "没要过自述，那句话是从哪儿来的？"
     )
-    assert desk.land(product.candidate.id).landed is True
-    on_disk = importer.read_chapter(poisoned["root"], 1) or ""
-    assert SELF_NOTE_MARK not in on_disk, "自述那一行进了作者的书"
-    assert "风雪落在肩上。" in on_disk
+    # 存进候选表的正文（作者按保存写进书的就是它）不许带着那一行。
+    stored = DraftCandidateStore(poisoned["conn"]).get(poisoned["pid"], product.candidate.id)
+    assert stored is not None
+    assert SELF_NOTE_MARK not in stored.body, "自述那一行进了稿子的正文"
+    assert "风雪落在肩上。" in stored.body
 
 
 def test_a_writer_that_ignores_the_ask_gets_no_invented_note(
