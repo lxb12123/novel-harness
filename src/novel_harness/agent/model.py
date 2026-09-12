@@ -22,32 +22,45 @@
    同一个函数的不传 `tools` 那条路（EVAL_PROTOCOL §2），它必须继续和长出工具调用之前
    逐字节相同。
 
-── 一处诚实交代：**对话那一档今天多半不是流式的** ─────────────────────────
+── 对话那一档 2026-09-12 起是流式的（此前那段「诚实交代」作废）───────────────
 
 `stream` 不是这儿定的，是 `plan_call` 推出来的。一次**对话回复**的输出预算
-（`AGENT_REPLY_LENGTH` 倒推的 4,024）远在 16k 阈值之下，所以那条路上 `plan.stream`
-通常是 `False`，而非流式的一次 HTTP 往返**没有可以插进去的位置**——
-打断在那种形态下确实退化成「这一次调用跑完就停」。
+（`AGENT_REPLY_LENGTH` 倒推的 4,024）远在 16k 阈值之下，所以 2026-09-12 之前那条路上
+`plan.stream` 是 `False`：一次阻塞往返**没有可以插进去的位置**，作者按「停」要等整份
+回复回来才停——真书上是十几秒到一分钟，他看到的是「按了没反应」。
 
-**不许为了让它变成流式去抬输出预算**：那样 `stream` 的判据就从「输出多大」变成了
-「谁想要流式」，而抬上去之后对**能力表没登记的模型**（`supports_streaming is None`）
-`plan_call` 会 fail-closed 直接拒——作者换个自建端点，写作助手整个不能用。
+改法**不是抬预算**（那会让 `stream` 的判据从「输出多大」变成「谁想要流式」）：
+`agent_call_plan` 现在和起草那一档一样要了 `plan_call(..., interruptible=True)`
+（`ResolvedCallPlan.interruptible`），`_streams` 的第二个理由成立，这一次调用走流式，
+`_watch` 每收一片问一次信号——「停」落在下一片之内。2026-08-13 起这条不看能力表
+（`_streams` 的 docstring 写着为什么），所以作者自建的端点上它也成立。
 
-**起草那一档 2026-08-12 起走的是另一条**：`plan_call(..., interruptible=True)`
-（`ResolvedCallPlan.interruptible`）—— 显式说出「这次要能中途停」，能力表照旧说了算
-（未登记 ⇒ 仍然不流式 ⇒ 仍然退化成「这一稿写完才停」）。抬预算那条路一步没走。
+**连带的账**：被掐断的那次调用**必须记账**（`CallInterrupted.sent`），而 loop 那一侧
+以前只在拿到结果之后才记——所以 `run_turn` 收 `ProviderError` 时多了一支：信号亮着、
+异常是 `CallInterrupted` 且 `sent`，就替它补一行 token 留空的账（同 `generate.py::interrupted`
+那一份的规矩：数不许编，`finish_reason` 留 `None`）。`tests/test_chat_boundary.py::
+test_the_agent_call_streams_so_that_stop_lands_within_a_chunk` 钉着「回复走流式」，
+`tests/test_agent_model.py::test_the_interruption_is_a_provider_error_so_the_loop_reads_it_as_the_author`
+和 `tests/test_agent_loop.py` 第十二节钉着「掐断的那次进了账」。
 
-**这条落差直接决定了 ADR 0024 的「边写边看」今天落在哪一档**（2026-08-12 加）：
-那份 ADR 说的是「那些片本来就在我们手里，只是没往外递」——**在手里的是起草那一档的片**。
-对话回复走非流式的一次往返，里面没有「写到一半」这个时刻可以插进去，所以
-`REPLY_DELTA` 在产品上今天基本不响，响的是 `DRAFT_DELTA`。而那正是 ADR 0024 §2
-举的那个例子要的东西（「读到第三行发现语气不对 ⇒ 第 5 秒按停」——他读的是**稿子**）。
-`tests/test_chat_boundary.py::test_todays_agent_call_is_not_streaming_…` 钉着这条落差，
-**别为了让回复也流式去抬输出预算**（上一段写着那样会让没登记的端点整个用不了）。
+**同一天的第二刀：信号亮了当场掐断连接**（`_cut`，挂在 `Cancellation.on_stop` 上）。
+「每一片问一次」的盲区是两片之间——读的那条线卡在 `recv` 里，模型想得越久盲区越长，
+而作者按停多半正落在它在想的时候。Codex / Claude Code 那一路靠 `AbortController`
+当场断 socket；这套阻塞式客户端上的等价物是顺着 httpx / httpcore 摸到 socket 做
+`shutdown(SHUT_RDWR)`（实测 `close()` 叫不醒卡着的 `recv`，`shutdown` 一毫秒就醒）。
+非流式那一档（块摘要）同样掐得断：`_Completions.create` 在发出去到回来之间也挂着钩子。
+连接是「尽力掐」：摸不到 socket 只是退回「下一片到了才停」，不是坏——
+`tests/test_agent_model.py` 第四节拿一条真的本机连接钉着「今天摸得到」。
+
+`REPLY_DELTA` 因此**在 wire 上真的有片了**——但产品那条路上今天仍然没人听：
+`api/chat.py::build_agent_model(config, plan)` 造端口时不接 `on_event`（那个注入点的
+签名是十几处测试桩共用的，见那儿的注释）。要让回复也边写边看，改的是那个注入点，
+不是这儿。
 """
 
 from __future__ import annotations
 
+import socket
 from collections.abc import Callable, Iterator, Sequence
 from typing import Any, Final
 
@@ -90,7 +103,7 @@ AGENT_REASONING: Final = ReasoningEffort.OFF
 
 
 class AgentCancelled(CallInterrupted):
-    """作者在一次**进行中**的调用里按了停。
+    """作者在一次**进行中**的调用里按了停。**`model` 一定带上**（记账要它，见基类）。
 
     继承链是 `CallInterrupted` → `ProviderError`，两截各管一件事：
 
@@ -128,7 +141,68 @@ TextSink = Callable[[str], None]
 """流上每收到一片可见正文就叫一次。**它不是 `EventFn`**，理由在 `_watch` 的 docstring。"""
 
 
-def _watch(chunks: Any, cancel: Cancellation, on_text: TextSink | None = None) -> Iterator[Any]:
+_SOCKET_PATH: Final = (
+    # openai `Stream` → httpx `Response` → httpcore 流 → 连接 → 网络流 → socket；
+    # 从 `OpenAI` 客户端下去则是 httpx `Client` → transport → 连接池 → 每条连接。
+    "response",
+    "stream",
+    "_stream",
+    "_client",
+    "_transport",
+    "_pool",
+    "connections",
+    "_connection",
+    "_network_stream",
+    "_sock",
+)
+
+
+def _sockets_under(root: Any) -> list[socket.socket]:
+    """顺着 httpx / httpcore 的私有属性摸到底层 socket。**找不到就是空表，不抛。**
+
+    这条路走的是别人家的私有名（`_pool` / `_network_stream` / `_sock`），版本一换就可能
+    摸空——摸空的后果只是退回「下一片到了才停」，**不是坏**。
+    `tests/test_agent_model.py` 拿一条真的本机连接钉着「今天摸得到」，依赖升级时它红。
+    """
+    found: list[socket.socket] = []
+    seen: set[int] = set()
+    stack = [root]
+    while stack:
+        obj = stack.pop()
+        if obj is None or id(obj) in seen:
+            continue
+        seen.add(id(obj))
+        if isinstance(obj, socket.socket):
+            found.append(obj)
+            continue
+        if isinstance(obj, (list, tuple)):
+            stack.extend(obj)
+            continue
+        for name in _SOCKET_PATH:
+            child = getattr(obj, name, None)
+            if child is not None and id(child) not in seen:
+                stack.append(child)
+    return found
+
+
+def _cut(root: Any) -> None:
+    """**掐断**：对底下每一条 socket 做 `shutdown(SHUT_RDWR)`。
+
+    不是 `close()`——实测（2026-09-12，macOS）`close()` 叫不醒卡在 `recv` 里的那条线，
+    它要等下一片字到了才知道连接没了；`shutdown` 一毫秒就醒（读到 EOF 或抛连接错）。
+    这就是 Codex / Claude Code 那一路 `AbortController` 在这套阻塞式 HTTP 客户端上的
+    等价物。每一条都 try：连接可能已经自己断了。
+    """
+    for sock in _sockets_under(root):
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+
+def _watch(
+    chunks: Any, cancel: Cancellation, on_text: TextSink | None = None, *, model: str = ""
+) -> Iterator[Any]:
     """把一条流包成「每一片都先问一次信号」的流，**顺手把那一片字递出去**（ADR 0024）。
 
     `finally` 里关掉上游：作者按了停，那条 HTTP 连接就该断掉，而不是留着让服务端
@@ -148,24 +222,51 @@ def _watch(chunks: Any, cancel: Cancellation, on_text: TextSink | None = None) -
     **发不出去不许拿走这一次调用**：一个掉线的界面不该让作者已经付过钱的那一段字连同
     这次调用一起没掉。包安全的那一层在 `loop.safe_emitter`，这里再兜一次是因为
     **这一处是在 `provider.complete()` 的 try 之外**（同 `_real_client` 那条理由）。
+
+    ── 2026-09-12：信号亮了**当场掐断连接**，不等下一片 ─────────────────────────
+
+    「每一片问一次」有一个盲区：两片之间读的那条线卡在 `recv` 里，模型想得越久盲区越长
+    ——作者按停正好多半落在它在想的时候。所以进来先往信号上挂一个钩子（`_cut`）：
+    信号一亮，socket 当场 shutdown，卡着的 `recv` 立刻醒（EOF 或连接错），下面三条路
+    把它收敛成同一个 `AgentCancelled`：抛了连接错、流提前结束、或者下一片正常到了——
+    只要信号亮着，都是「作者停的」，带着到手的那半截。钩子在 `finally` 里摘掉。
     """
     seen: list[str] = []
+
+    def cancelled() -> AgentCancelled:
+        return AgentCancelled("作者中止了这一次调用", partial_text="".join(seen), model=model)
+
+    unhook = cancel.on_stop(lambda: _cut(chunks))
     try:
-        for chunk in chunks:
-            # **先收下这一片，再问信号。** 顺序反过来会把已经到手的那一片扔掉——
-            # 它已经生成、已经付过钱了，而这一层存在的全部理由就是别让那些字白花。
-            # 抛的位置一点没变（仍然是同一次迭代，仍然在 `yield` 之前）。
-            visible = _visible_text(chunk)
-            seen.append(visible)
-            if on_text is not None and visible:
-                try:
-                    on_text(visible)
-                except Exception:  # noqa: BLE001 —— 见 docstring 最后一段
-                    pass
+        try:
+            for chunk in chunks:
+                # **先收下这一片，再问信号。** 顺序反过来会把已经到手的那一片扔掉——
+                # 它已经生成、已经付过钱了，而这一层存在的全部理由就是别让那些字白花。
+                # 抛的位置一点没变（仍然是同一次迭代，仍然在 `yield` 之前）。
+                visible = _visible_text(chunk)
+                seen.append(visible)
+                if on_text is not None and visible:
+                    try:
+                        on_text(visible)
+                    except Exception:  # noqa: BLE001 —— 见 docstring 最后一段
+                        pass
+                if cancel.stopped:
+                    raise cancelled()
+                yield chunk
+        except AgentCancelled:
+            raise
+        except Exception:
+            # 掐断连接会以「读错」的样子出现在读的那条线上。信号亮着，那就是作者停的，
+            # 不是端点坏了——`run_turn` 那边先问信号再判故障，这儿也一样。
             if cancel.stopped:
-                raise AgentCancelled("作者中止了这一次调用", partial_text="".join(seen))
-            yield chunk
+                raise cancelled() from None
+            raise
+        if cancel.stopped:
+            # 掐断也可能以「流正常结束」的样子出现（对面 EOF）。半截当完整的收下就是
+            # 把一次被停掉的调用记成一次正常回复——半截的 `tool_calls` 还会被派发。
+            raise cancelled()
     finally:
+        unhook()
         close = getattr(chunks, "close", None)
         if callable(close):
             close()
@@ -178,20 +279,33 @@ class _Completions:
         self._on_text = on_text
 
     def create(self, **kwargs: Any) -> Any:
+        model = str(kwargs.get("model") or "")
         if self._cancel.stopped:
             # **一个字节都还没发出去** ⇒ `sent=False` ⇒ 上面那层不许为它记一行账
             # （见 `CallInterrupted.sent`：记了就是账上凭空多一次没发生过的调用）。
-            raise AgentCancelled("作者中止了这一次调用", sent=False)
-        response = self._real.chat.completions.create(**kwargs)
+            raise AgentCancelled("作者中止了这一次调用", sent=False, model=model)
+        # 发出去到响应头回来这一段（非流式则是到整份响应回来）也在钩子底下：
+        # 顺着客户端摸到连接池里那几条 socket 掐（`_cut` 的 docstring）。
+        unhook = self._cancel.on_stop(lambda: _cut(self._real))
+        try:
+            response = self._real.chat.completions.create(**kwargs)
+        except Exception:
+            # 信号亮着时的连接错 = 被掐断的，不是端点坏了。请求已经发出去了 ⇒ `sent=True`
+            # ⇒ 上面那层记一行 token 留空的账（断开连接 ≠ 停止计费）。
+            if self._cancel.stopped:
+                raise AgentCancelled("作者中止了这一次调用", model=model) from None
+            raise
+        finally:
+            unhook()
         if not kwargs.get("stream"):
             # 非流式：整份响应已经回来了，钱已经花掉。**这里不抛**——抛掉等于把一次
             # 已经付过费的调用从账上抹掉，而 loop 下一次检查信号照样会停。
             #
             # **这一档也没有片可以往外递**：一次阻塞往返里没有「写到一半」这个时刻。
-            # 对话那一档今天走的就是这条路（见模块 docstring 那段诚实交代）——
-            # 也就是说边写边看今天只在**起草**那一档是真的。
+            # 2026-09-12 起对话那一档不再走这条（`agent_call_plan` 要了 `interruptible`），
+            # 它留给没要可中断的调用方（块摘要那一次就是）。
             return response
-        return _watch(response, self._cancel, self._on_text)
+        return _watch(response, self._cancel, self._on_text, model=model)
 
 
 class _Chat:
@@ -325,7 +439,11 @@ def agent_call_plan(
             并告诉作者去顶栏「AI 设置」看一眼）。
     """
     resolved = capability or resolve_with_discovery(config.base_url, config.model)
-    return resolved, plan_call(AGENT_REPLY_LENGTH, AGENT_REASONING, resolved)
+    # **要可中断**（作者 2026-09-12：「按停的话就是全部的工作都停下来」）。它让这一次
+    # 调用走流式，于是「停」落在下一片之内，而不是等整份回复回来——见模块 docstring
+    # 「对话那一档 2026-09-12 起是流式的」。预算一个字没动：`interruptible` 是
+    # `_streams` 的第二个理由，不是抬预算凑过阈值的那条路。
+    return resolved, plan_call(AGENT_REPLY_LENGTH, AGENT_REASONING, resolved, interruptible=True)
 
 
 __all__ = [

@@ -549,7 +549,8 @@ def test_every_model_call_in_every_shape_of_turn_lands_on_the_activity_page(
         expected += 2
         assert len(bills(book["db"])) == expected
 
-    # ② 中途被作者停：**停在第一次调用之后**，那笔钱已经花了。
+    # ② 中途被作者停：**停在第一次调用之后**，那笔钱已经花了。停下来之后它还会
+    # 问作者一句（`run_turn` 的 debrief，2026-09-12）——那也是一次调用、一笔账。
     use(
         monkeypatch,
         Scripted(
@@ -561,7 +562,7 @@ def test_every_model_call_in_every_shape_of_turn_lands_on_the_activity_page(
     stopped = turn(client, pid, chat_id, chapter=1, said="再查一次")
     assert stopped["reason"] == StopReason.AUTHOR_STOPPED.value
     assert stopped["lookups"] == 0, "按了停之后还在派发工具"
-    expected += 1
+    expected += 2
     assert len(bills(book["db"])) == expected, "停下来的那一轮把已经付过费的那次调用漏了"
 
     # ③ provider 挂掉：**没花的钱不许出现在账上**（没有 `CompletionResult` 就没有 token）。
@@ -629,8 +630,10 @@ def test_the_net_would_catch_a_ledger_that_only_bills_the_successful_calls(
     chat_id = open_chat(client, pid)
     stopped = turn(client, pid, chat_id, chapter=1, said="查一次")
     assert stopped["reason"] == StopReason.AUTHOR_STOPPED.value
-    assert bills(book["db"]) == [], "假实现没漏账 —— 那上面那条断言证明不了任何事"
-    assert on_the_activity_page(client, pid) == []
+    # 真账上是两行（叫工具那一次 + 停下来之后问的那一句）；假实现只记「善终」的，
+    # 于是只剩问的那一句（它 `finish_reason == "stop"`），叫工具那一次漏了。
+    assert len(bills(book["db"])) == 1, "假实现没漏账 —— 那上面那条断言证明不了任何事"
+    assert len(on_the_activity_page(client, pid)) == 1
 
 
 def test_a_call_the_provider_never_measured_is_not_reported_as_zero(
@@ -732,23 +735,24 @@ def test_pressing_stop_halfway_does_not_read_the_rest_of_the_stream() -> None:
     assert stream.closed, "没关掉上游 —— 服务端会继续生成，而钱按生成算不按接收算"
 
 
-def test_todays_agent_call_is_not_streaming_so_that_precision_is_not_in_production() -> None:
-    """**一处必须说出来的落差。**
+def test_the_agent_call_streams_so_that_stop_lands_within_a_chunk() -> None:
+    """上面那条量的打断粒度**在生产里到得了**（2026-09-12 起）。
 
-    上面那条量的打断粒度在生产里到不了：对话回复的输出预算够不到流式阈值，
-    所以 `plan.stream is False`，而非流式的一次往返没有可以插进去的位置——
-    打断在那一档退化成「这一次调用跑完就停」。
+    此前这儿钉的是反面：对话回复的输出预算够不到流式阈值 ⇒ `plan.stream is False` ⇒
+    打断退化成「这一次调用跑完就停」，作者按了停要等十几秒到一分钟。改的不是预算
+    （抬预算会让 `stream` 的判据变成「谁想要流式」），是 `agent_call_plan` 要了
+    `interruptible`——和起草那一档同一条路。
 
-    连带的账：**那一档退化是安全的**（响应回来了、账记了、下一次检查才停），
-    而流式那一档一旦真的启用，被掐掉的那次调用就**不进账**——钱花了、账上没有。
-    这条断言的用处是：谁把预算抬过阈值，它会红，而那时要一起想的是漏账口。
+    连带的账已经补上：被掐掉的那次调用**进账**（token 留空），`test_agent_model.py::
+    test_the_interruption_is_a_provider_error_so_the_loop_reads_it_as_the_author` 钉着。
     """
     from novel_harness.agent.model import agent_call_plan
 
     _, plan = agent_call_plan(
         ProviderConfig(model="deepseek-v4-flash", base_url="https://api.deepseek.com", api_key="k")
     )
-    assert plan.stream is False
+    assert plan.interruptible is True
+    assert plan.stream is True
 
 
 def test_the_stop_button_from_another_request_reaches_a_turn_in_flight(
@@ -780,8 +784,9 @@ def test_the_stop_button_from_another_request_reaches_a_turn_in_flight(
         release.set()
         done = running.result(timeout=10)
     assert done.json()["reason"] == StopReason.AUTHOR_STOPPED.value
-    assert len(bills(book["db"])) == 1, "被停掉的那一轮把已经付过费的那次调用漏了"
-    assert len(on_the_activity_page(client, pid)) == 1
+    # 两行：被停掉的那一次调用 + 停下来之后问作者的那一句（debrief）。
+    assert len(bills(book["db"])) == 2, "被停掉的那一轮把已经付过费的那次调用漏了"
+    assert len(on_the_activity_page(client, pid)) == 2
 
 
 # ══════════════════════════════════════════════════════════════════════════

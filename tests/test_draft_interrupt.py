@@ -357,14 +357,14 @@ def _ask(conn: Connection, pid: str, chapter: int) -> tuple[DraftAsk, Any]:
     from novel_harness.draft.context import unknown_cast_constraints
 
     return (
-        DraftAsk(chapter=chapter, calibration_id="test:unused"),
+        DraftAsk(chapter=chapter, brief="写一场对峙"),
         unknown_cast_constraints(SqliteStoryGraph(conn), pid, chapter),
     )
 
 
 def _write(desk: Any, conn: Connection, pid: str, chapter: int) -> Any:
     ask, ctx = _ask(conn, pid, chapter)
-    return desk.write(ask, ctx, goal="写一场对峙")
+    return desk.write(ask, ctx)
 
 
 def test_the_half_draft_is_kept_and_says_it_is_a_half_draft(
@@ -544,8 +544,9 @@ def test_the_cancellation_reaches_the_desk_and_the_loop_as_one_object() -> None:
 
     source = inspect.getsource(chat_mod._TurnRun.go)
     assert "cancel=self._signal" in source, "起草台没拿到这一轮的信号"
-    assert source.count("cancel=self._signal") == 2, (
-        "loop 和起草台必须各拿一次，且是同一个 `signal`"
+    # 三处：loop、起草台，以及 2026-09-12 起的块摘要（它曾是这一轮里唯一停不住的调用）。
+    assert source.count("cancel=self._signal") == 3, (
+        "loop、起草台、块摘要必须各拿一次，且是同一个 `signal`"
     )
     assert source.count("on_event=on_event") == 2, (
         "loop 和起草台必须拿到同一个事件接线口 —— 一半的事件掉在地上没有任何东西会报错"

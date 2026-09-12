@@ -130,6 +130,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..draft.length import DraftLanguage, count_units
 from ..draft.product_context import TOKENS_PER_UNIT
+from ..draft.generate import CallInterrupted
 from ..draft.provider import CompletionResult, ProviderError, ToolCall
 from ..extract.call_audit import ModelCallReceipt
 from .ports import LedgerFn, ToolContext
@@ -377,32 +378,91 @@ AGENT_SYSTEM_PROMPT = """你是一位中文长篇小说作者的写作搭档，�
 
 - 你手上的工具是**这本书自己的索引**：先用便宜的那几层定位（目录 / 人物同框章 / 摘要区间），
   确定了再去读整章正文。
-- **不许说破的东西是逐章算的。** 你上一轮查到的清单对另一章可能已经过期了——要为哪一章
-  写东西，就为哪一章重新查一次。起草工具只收章号，约束由后端当场重算，你传不进去。
+- **查到的东西绑在那一章上。** 换一章写就重新查一次——这段对话跨章累积，早先查出来的
+  结论到你现在写的这一章可能已经不成立。起草工具只收章号，那一章的约束由后端当场算，
+  你传不进去。
 - 工具返回里带「还没查」「瞎着」「裁掉了多少条」的话，一律照它说的理解：0 不等于没有。
 - **起草和存进书是两步。** 方向清楚就写一稿、接着存进去，不用问他；方向不清楚就一次写
   几稿、先别存，把每一稿的自述摆给他挑。稿子的编号是给工具用的，跟他说话时说「第几稿」。
 - 说话对着作者，用中文，不要把工具名和参数念给他听。"""
 """稳定前缀的正文（中文档）。**跨章不变**，所以它能进前缀（边界六那张表的第一行）。
 
-里面**一条 `must_not_reveal` 都没有，也永远不许有**：一份被缓存住的禁说清单就是一条被钉死
-在 context 里的过期约束，而它过期的方向是 fail-open 的最坏那侧（到第 90 章更多人已经知道，
-清单更短）。
+里面**一条具体的约束都没有，也永远不许有**：一份被缓存住的清单就是一条被钉死在 context 里
+的过期约束，而它过期的方向是 fail-open 的最坏那侧。
+
+⚠️ **2026-09-07：第二条原来写的是「不许说破的东西是逐章算的……就为哪一章重新查一次」。**
+那句话的对象已经不存在了：`must_not_reveal` / `forbidden_entities` 随
+[ADR 0039](../../docs/adr/0039-secrets-offline.md)（2026-08-25）和
+[ADR 0041](../../docs/adr/0041-forbidden-entities-cut.md)（2026-08-31）整套删掉，
+`SceneConstraints` 今天只剩 `chapter` / `unresolved_cast`，`scene_constraints` 工具
+返回的只有 cast（`ConstraintsResult`）。**留着它 = 每一轮都花钱告诉模型去重查一份不存在的
+清单**，而这正是本仓库认定最贵的那一类错（界面/prompt 替一个不存在的能力招手）。
+改掉的是那个**对象**，不是那条规矩——「查到的东西绑在那一章上 / 那一章的约束由后端当场算 /
+你传不进去」三句今天仍然逐字成立（`check_track` 的护栏、`_scene_context` 都还在）。
+
+⚠️ **改这段话时不许写进任何一个具体章号**（「第 40 章 → 第 90 章」这种举例也不行）：
+前缀跨章逐字节相同是它能被缓存的前提，`tests/test_agent_loop_projection.py::
+test_no_chapter_bound_block_sits_in_the_stable_prefix` 按「第—数字—章」的形状拦着，
+2026-09-07 改这段时当场被它咬过一次。
+
+**这一改只对新会话生效**，而且是有意的：前缀在开会话时逐字落库、读回时不重算
+（`agent/store.py` 那条纪律 + 迁移 006），所以作者已经存在的对话里那句话还留着。
+重写历史比留着一句过期的话更贵，也会让「这段对话当时是拿什么跑的」不再可信。
 """
 
 AGENT_SYSTEM_PROMPT_EN = """You are a writing partner for an English-language novelist, sitting beside their manuscript.
 
 - The tools in your hands are **this book's own index**: locate cheaply first (table of contents / chapters where characters share a scene / summary ranges), then read the full chapter text once you've pinned down which one.
-- **What must not be revealed is computed chapter by chapter.** The list you checked last turn may already be stale for a different chapter — when you're about to write for a chapter, re-check for that chapter. The drafting tool only takes a chapter number; constraints are recomputed by the backend on the spot, you cannot pass them in.
+- **What you looked up is tied to that chapter.** When you write for a different chapter, look it up again — this conversation accumulates across chapters, and what an earlier lookup established may no longer hold for the chapter you are writing now. The drafting tool only takes a chapter number; that chapter's constraints are computed by the backend on the spot, you cannot pass them in.
 - When a tool's result carries words like "not checked yet," "blind," or "how many got dropped," take them at face value: zero does not mean none.
 - **Drafting and saving to the book are two separate steps.** If the direction is clear, write one draft and save it right after — no need to ask; if the direction is unclear, write several drafts at once without saving, and lay each one's own note in front of them to choose. A draft's number is for the tools; when speaking to them, say "draft number N."
 - Speak to the author, in English, and never read tool names or arguments aloud to them."""
 """稳定前缀的正文（英文档，国际化第三批）。**逐句对照 `AGENT_SYSTEM_PROMPT` 翻**，
-不是重写——五条硬约束（工具即索引 / 约束逐章重算 / 0 不等于没有 / 起草与存书分两步 /
-不念工具名参数）一条都不能松，松了是翻译错了，不是措辞不同。
+不是重写——五条硬约束（工具即索引 / 查到的东西绑在那一章上 / 0 不等于没有 /
+起草与存书分两步 / 不念工具名参数）一条都不能松，松了是翻译错了，不是措辞不同。
 
-同样**一条 `must_not_reveal` 都没有，也永远不许有**，理由和中文档一致。
+同样**一条具体的约束都没有，也永远不许有**，理由和中文档一致；第二条 2026-09-07
+跟着中文档一起改（那份 docstring 里写着为什么）。
 """
+
+
+STOP_DEBRIEF_PROMPT: Final[dict[DraftLanguage, str]] = {
+    DraftLanguage.ZH: (
+        "（作者刚刚按下了「停」。那一刻你{moment}。现在什么都别做、别叫任何工具："
+        "用一两句话告诉他你停在了哪儿，问他为什么停、接下来想让你怎么做。）"
+    ),
+    DraftLanguage.EN: (
+        "(The author just pressed Stop. At that moment you {moment}. Do nothing further and "
+        "call no tools: in one or two sentences, tell them where you stopped and ask why they "
+        "stopped you and what they want you to do next.)"
+    ),
+}
+"""作者按停之后**问他一句**用的那条提示（`run_turn` 的 debrief，作者 2026-09-12：
+「这个停的动作也要让那个 agent 知道，然后让他问他为什么要停」）。
+
+- **它不落库。** 它只进那一次调用的投影；落库的是模型答的那一句（一条普通的
+  assistant 消息）——下一轮模型读到自己问过的那句话，就知道上一轮是被停的。
+  引擎替作者往历史里写一句 user 消息是另一条路，没走：屏幕会把它画成作者说的话。
+- `{moment}` 只有三档（`STOP_MOMENT`），都是**结构上确定**的事：想到一半 / 话说到一半 /
+  两步之间。哪一步没跑，历史里那几条 `UNRUN_CALL` 的壳已经说了，这儿不重复。
+- 措辞进 prompt 不上屏（同 `AGENT_SYSTEM_PROMPT`），所以按 `context.language` 选。
+"""
+
+STOP_MOMENT: Final[dict[str, dict[DraftLanguage, str]]] = {
+    "thinking": {
+        DraftLanguage.ZH: "正在想下一步，还没说出一个字",
+        DraftLanguage.EN: "were thinking about the next step and had not said a word yet",
+    },
+    "speaking": {
+        DraftLanguage.ZH: "话说到一半",
+        DraftLanguage.EN: "were in the middle of a sentence",
+    },
+    "between": {
+        DraftLanguage.ZH: "刚做完一步、还没开始下一步",
+        DraftLanguage.EN: "had just finished one step and not yet started the next",
+    },
+}
+"""`STOP_DEBRIEF_PROMPT` 里 `{moment}` 的三档。键是机器码，只在 loop 内部用。"""
 
 
 def start_conversation(
@@ -700,9 +760,9 @@ def _compress_oldest_block(
         return None
     text = block_text(live, number)
     started = perf_counter()
-    completion = summarizer(text)
-    bill(
-        ModelCallReceipt(
+
+    def receipt(completion: CompletionResult) -> ModelCallReceipt:
+        return ModelCallReceipt(
             capability=AGENT_CAPABILITY,
             schema_version=AGENT_SCHEMA_VERSION,
             model=completion.model,
@@ -717,7 +777,17 @@ def _compress_oldest_block(
             cost=completion.cost,
             elapsed_ms=max(0, int((perf_counter() - started) * 1_000)),
         )
-    )
+
+    try:
+        completion = summarizer(text)
+    except CallInterrupted as exc:
+        # 作者在压缩那一次调用上按了停（2026-09-12 起它也掐得断）。发出去了就记账——
+        # 同 `run_turn` 收对话那一次调用的规矩：正文是到手的那半截，数留空。往上抛，
+        # 由调用方按「作者停的」收场；块的标记不落，下一次装不下时会再压一次（那时再付）。
+        if exc.sent:
+            bill(receipt(CompletionResult(text=exc.partial_text, model=exc.model)))
+        raise
+    bill(receipt(completion))
     summary = completion.text.strip()
     if not summary:
         summary = "（这一段对话没有可概括的内容。）"
@@ -1192,6 +1262,8 @@ class TurnEventKind(StrEnum):
     DRAFT_FAILED = "draft_failed"
     ASKED_AUTHOR = "asked_author"
     TURN_STOPPED = "turn_stopped"
+    AUTHOR_SAID = "author_said"
+    """作者**中途**说的一句话被并进了这一轮（2026-09-12，`Mailbox`）。`text` 是他自己的字。"""
 
 
 class TurnEvent(BaseModel):
@@ -1232,7 +1304,8 @@ class TurnEvent(BaseModel):
     """说给**小说作者**听的那一句。**措辞的唯一出处就是这个类**，界面不许再翻一遍。"""
 
     text: str = ""
-    """**模型自己写的字**，原样。回话的一片 / 一稿的一片。引擎一个字都不加。"""
+    """**模型自己写的字**，原样。回话的一片 / 一稿的一片。引擎一个字都不加。
+    唯一的例外是 `author_said`：那一条装的是**作者自己刚打的字**（回显，同样一字不加）。"""
 
     tool: str = ""
     """这一次动的是表里哪一条（机器码）。**认不出的是空的**，见类 docstring。"""
@@ -1318,6 +1391,12 @@ class TurnEvent(BaseModel):
     @classmethod
     def reply_delta(cls, text: str) -> TurnEvent:
         return cls(kind=TurnEventKind.REPLY_DELTA, text=text)
+
+    @classmethod
+    def author_said(cls, text: str) -> TurnEvent:
+        """作者中途说的那句话**在这一刻**进了对话（`Mailbox` 在步与步之间被清空）。
+        界面靠它把那句话从「排着队」挪到「它看见了」——位置就是模型真的读到它的位置。"""
+        return cls(kind=TurnEventKind.AUTHOR_SAID, text=text)
 
     @classmethod
     def draft_started(cls, chapter: int, *, stream: int = 0) -> TurnEvent:
@@ -1575,19 +1654,109 @@ class Cancellation:
 
     **适配器不理它也不会坏**：那样打断退化成「这一次调用跑完就停」，而不是不停。
     这一层说得出自己退化了，但说不出**适配器**退没退化——那条要在 3.4 那边测。
+
+    ── 2026-09-12：它也是一个 AbortController ────────────────────────────────
+
+    上面那两个人看的都是**信号亮没亮**，而看信号要有机会看：读流的那条线卡在
+    `recv` 里等下一片时（模型想了很久才吐字），谁都看不了。Codex / Claude Code 那一路
+    不靠看：`AbortController` 一 abort，socket 当场断，读的那条线立刻醒。这儿照做——
+    `on_stop` 挂一个「掐断」的钩子（适配器挂的是 `socket.shutdown`，实测 `close()`
+    在 macOS 上叫不醒卡在 `recv` 里的线，`shutdown` 一毫秒就醒），`stop()` 亮信号之后
+    把挂着的钩子挨个叫一遍。钩子**尽力而为**：抛了就吞（连接已经断了、对象已经没了都
+    不算错），亮完信号才轮到它们，所以不管钩子成不成，「信号亮着」这件事都成立。
     """
 
-    __slots__ = ("_event",)
+    __slots__ = ("_event", "_lock", "_hooks", "_next")
 
     def __init__(self) -> None:
         self._event = threading.Event()
+        self._lock = threading.Lock()
+        self._hooks: dict[int, Callable[[], None]] = {}
+        self._next = 0
 
     def stop(self) -> None:
         self._event.set()
+        with self._lock:
+            hooks = list(self._hooks.values())
+        for hook in hooks:
+            try:
+                hook()
+            except Exception:  # noqa: BLE001 —— 见类 docstring：掐断只是尽力，信号已经亮了
+                pass
+
+    def on_stop(self, hook: Callable[[], None]) -> Callable[[], None]:
+        """挂一个「信号亮了就叫」的钩子，返回摘掉它的函数。**信号已经亮着就当场叫**
+        （同 `AbortController`：晚到的监听者也得知道已经 abort 了）。挂钩子的人
+        在自己那次调用结束时**必须摘掉**——不然下一次 `stop()` 会去掐一条早就关了的连接
+        （不会坏，吞掉了，但那是在替一个已经不存在的东西做事）。"""
+        with self._lock:
+            token = self._next
+            self._next += 1
+            self._hooks[token] = hook
+        if self._event.is_set():
+            try:
+                hook()
+            except Exception:  # noqa: BLE001
+                pass
+
+        def off() -> None:
+            with self._lock:
+                self._hooks.pop(token, None)
+
+        return off
+
+    def rearm(self) -> None:
+        """把亮着的信号放下，好让**停下来之后那一句**（`run_turn` 的 debrief）也能被停。
+
+        **只有 loop 在「已经停下来了」之后调它**：那一刻这一轮的工作全停了，接下来
+        只剩一次没有工具、一两句话的调用；作者再按一次，`stop()` 又亮，那一句也停。
+        别处调它 = 把作者按过的那一下悄悄抹掉。
+        """
+        self._event.clear()
 
     @property
     def stopped(self) -> bool:
         return self._event.is_set()
+
+
+class Mailbox:
+    """作者**中途**说的话（2026-09-12）。**线程安全**，因为说话的是另一条线（`POST …/say`）。
+
+    ── 它解决的是什么，以及它不是什么 ────────────────────────────────────
+
+    作者 2026-09-12 的原话：「像 codex 那样，新的消息可以直接发出去，模型可以读，
+    并且不会耽误正在做的」。**这不是并发，是排队 + 在步的边界并入**：一轮是
+    「模型调用 → 派发工具 → 再调用」的串行循环，中途那句话放进这个信箱，loop 在
+    **下一次模型调用之前**把它取出来、按正常的作者消息追加进对话、落库、喊一声
+    `author_said`——于是模型下一步就读到了，而正在跑的那一步（一次模型调用、
+    一批工具、一稿正文）一个字都不受影响。它和 `Cancellation` 是一对：一个「停」，
+    一个「顺便再说一句」。
+
+    ── 两条规矩 ──────────────────────────────────────────────────────────
+
+    1. **一句都不许丢。** 收场（`finish`）时信箱里还有的也要并进对话并落库——那时它们
+       没被回答，`TurnResult.unanswered` 数出来交给回执，界面说一句「它没来得及看」。
+    2. **模型说完了而信箱里有话，这一轮不结束。** 「说完了」是对上一句而言的；作者已经
+       又说了一句，接着跑就是（步数 / 额度那几道闸照旧管着）。
+    """
+
+    __slots__ = ("_lock", "_texts")
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._texts: list[str] = []
+
+    def put(self, text: str) -> None:
+        said = text.strip()
+        if not said:
+            return
+        with self._lock:
+            self._texts.append(said)
+
+    def drain(self) -> list[str]:
+        with self._lock:
+            texts, self._texts = self._texts, []
+        return texts
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1682,6 +1851,10 @@ class TurnResult(BaseModel):
     tokens_charged: int = 0
     """闸门实际用的口径：量准了的用报的，**没量准的取「报的」和「估的」里更大的那个**。
     **它不进账**（见 `_estimate_tokens`）。"""
+
+    unanswered: int = 0
+    """作者中途说的、这一轮**没来得及答**的那几句（`Mailbox`）。它们已经在对话里了；
+    下一轮（作者再说一句，或者空着发一轮 resume）模型就会读到。"""
 
     asked: AuthorQuestion | None = None
     """它停下来问作者的那一句 + 几个可点的选项（ADR 0024）。
@@ -1869,6 +2042,8 @@ def run_turn(
     block_summarizer: Callable[[str], CompletionResult] | None = None,
     persist: PersistFn | None = None,
     on_event: EventFn | None = None,
+    mailbox: Mailbox | None = None,
+    debrief_on_stop: bool = False,
 ) -> TurnResult:
     """跑一轮：模型说话、叫工具，直到它收手或者代码把它停下来。
 
@@ -1904,9 +2079,19 @@ def run_turn(
         on_event: 边跑边往外喊（见 `EventFn`，ADR 0024）。**不传 = 一声不喊，
             而且这一轮的行为逐字节不变**——`run_turn` 只在自己已经知道的那几个
             边界上多叫一个函数，一条判断都不因为有没有人听而改变。
+        mailbox: 作者中途说的话从哪儿取（见 `Mailbox`）。**不传 = 没有中途说话这回事**，
+            这一轮的行为和以前逐字节相同。取的时机只有两个：每一次模型调用之前，
+            以及模型「说完了」的那一刻（有话就接着跑，没话才收场）。
             **模型吐字那两条流不在这儿**：它们发生在 `ModelPort` 和起草台内部
             （见 `agent/model.py` / `agent/drafting.py`），装配层把同一个 `on_event`
             也交给它们——同 `cancel`，两个接线口给了不同的对象就等于只接了一半。
+        debrief_on_stop: 作者按停之后**再问他一句**（作者 2026-09-12）：工作全停下来
+            之后，把信号放下（`Cancellation.rearm`），用 `STOP_DEBRIEF_PROMPT` 做一次
+            **没有工具**的调用，模型答的那一两句话作为普通的 assistant 消息落库、上屏——
+            于是它知道自己被停了、作者看到它在问「为什么停、接下来怎么做」。作者再按
+            一次停，这一句也停（信号重新亮，流式调用在下一片抛出）。**不传 = 停就是停**，
+            这一轮的行为和以前逐字节相同（CLI / 测试那几条路）；产品那条路（`api/chat.py`）
+            传 `True`。
 
     Returns:
         `TurnResult`。**十一种停法各有各的判据**，措辞一律走 `stop_wording()`。
@@ -1953,6 +2138,7 @@ def run_turn(
 
     live = conversation
     remembered: list[AgentMessage] = []
+    unanswered = 0
     steps = 0
     tool_calls = 0
     reported = 0
@@ -2070,6 +2256,128 @@ def run_turn(
         emit(TurnEvent.tool_finished(outcome, index=index, total=total))
         return outcome
 
+    def take_mail() -> int:
+        """把作者中途说的话并进对话（`Mailbox`）。返回并进了几句。
+
+        **每一句都是一条正常的作者消息**（`with_author`）：不绑章号、进 canonical、
+        落库、喊一声 `author_said`——界面靠那一声把它从「排着队」挪到「它看见了」。
+        """
+        nonlocal live, unanswered
+        if mailbox is None:
+            return 0
+        texts = mailbox.drain()
+        for text in texts:
+            live = live.with_author(text)
+            unanswered += 1
+            emit(TurnEvent.author_said(text))
+        if texts:
+            save()
+        return len(texts)
+
+    def receipt_of(
+        result: CompletionResult,
+        messages: Sequence[dict[str, Any]],
+        tools: Sequence[dict[str, Any]],
+        elapsed_ms: int,
+    ) -> ModelCallReceipt:
+        """一次对话调用的账单原料。**三处用同一份**（正常收到 / 被掐断 / 停下来之后
+        那一句），字段少一个就是账上少一列。"""
+        prompt_bytes, prompt_hash = _prompt_digest(messages, tools)
+        return ModelCallReceipt(
+            capability=AGENT_CAPABILITY,
+            schema_version=AGENT_SCHEMA_VERSION,
+            model=result.model,
+            finish_reason=result.finish_reason,
+            prompt_hash=prompt_hash,
+            prompt_bytes=prompt_bytes,
+            text=result.text,
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
+            # **钱照抄，不在这儿算**（`provider._priced` 已经填好，理由见
+            # `ModelCallReceipt.cost`：单价要按 base_url 查，而这一层只有 model）。
+            cost=result.cost,
+            # 缓存命中量只读取、不参与任何闸门：`charged` 那一侧算的是花掉的总量，
+            # 而命中只让它更便宜、不让它更少。**账照抄，闸不动。**
+            cache_read_tokens=None if result.cache is None else result.cache.read_tokens,
+            cache_write_tokens=None if result.cache is None else result.cache.written_tokens,
+            elapsed_ms=elapsed_ms,
+        )
+
+    def bill_cut_call(
+        exc: ProviderError,
+        messages: Sequence[dict[str, Any]],
+        tools: Sequence[dict[str, Any]],
+        started: float,
+    ) -> str:
+        """作者掐断了一次**正在流的**调用：**发出去了就记账**，返回到手的那半截。
+
+        `CallInterrupted.sent` 那条规矩：断开连接 ≠ 停止生成 ≠ 停止计费，哪怕一个字
+        都没收到也要记一行；信号在发之前就亮了（`sent=False`）才一分钱没花。
+        补的那一份和 `generate.py::interrupted` 同一个形状：正文是真收到的那几片，
+        **token 数一律留空、`finish_reason` 留 `None`**——供应商没报的数这一层不许编。
+        不是 `CallInterrupted` 的 `ProviderError`（信号亮着、端点恰好也断了）没什么可记。
+        """
+        if not isinstance(exc, CallInterrupted):
+            return ""
+        if exc.sent:
+            elapsed_ms = max(0, int((perf_counter() - started) * 1_000))
+            cut = CompletionResult(text=exc.partial_text, model=exc.model)
+            bill(receipt_of(cut, messages, tools, elapsed_ms))
+        return exc.partial_text.strip()
+
+    def stopped_by_author(moment: str, *, reply: str = "") -> TurnResult:
+        """作者按了停。**工作已经全停了**（调到这儿的每一处都已经把该配壳的配了壳）；
+        这儿只做一件事：`debrief_on_stop` 开着就再问他一句（见 `run_turn` 那条参数的
+        docstring），然后照常收场。
+
+        问的那一次调用：信号先放下（`Cancellation.rearm`）——不放下，适配器在发出去之前
+        就会把它掐掉；**没有工具**（`tools=()`，投影和发出去的是同一份空表），
+        模型要是仍然吐了 `tool_calls`，一条都不接（接了就是一批没人跑的调用挂在历史
+        末尾，下一轮 resume 会去补跑——而作者刚说的是「停」）；
+        装不下 / 端点坏了 / 作者又按了一次停，都**只是没有那一句**，这一轮照样是
+        `AUTHOR_STOPPED`。那一次调用照常记账、计步。
+        """
+        nonlocal live, steps
+        if not debrief_on_stop:
+            return finish(StopReason.AUTHOR_STOPPED, reply=reply)
+        signal.rearm()
+        nudge = AgentMessage(
+            role=Role.USER,
+            content=STOP_DEBRIEF_PROMPT[context.language].format(
+                moment=STOP_MOMENT[moment][context.language]
+            ),
+        )
+        no_tools: tuple[dict[str, Any], ...] = ()
+        asked = project(
+            live.extended(nudge),
+            chapter,
+            budget_units=budget,
+            stale_calls=stale_calls,
+            tools=no_tools,
+            frontier=context.frontier_chapter,
+            language=context.language,
+        )
+        if asked.over_budget:
+            return finish(StopReason.AUTHOR_STOPPED, reply=reply)
+        started = perf_counter()
+        try:
+            result = model(asked.messages, tools=no_tools, cancel=signal)
+        except ProviderError as exc:
+            if signal.stopped:
+                # 他又按了一次：这一句也不要了。到手的半句不进历史——他要的是安静。
+                bill_cut_call(exc, asked.messages, no_tools, started)
+            return finish(StopReason.AUTHOR_STOPPED, reply=reply)
+        elapsed_ms = max(0, int((perf_counter() - started) * 1_000))
+        steps += 1
+        bill(receipt_of(result, asked.messages, no_tools, elapsed_ms))
+        question = result.text.strip()
+        if not question:
+            return finish(StopReason.AUTHOR_STOPPED, reply=reply)
+        live = live.extended(AgentMessage(role=Role.ASSISTANT, content=question))
+        save()
+        emit(TurnEvent.reply_text(question))
+        return finish(StopReason.AUTHOR_STOPPED, reply=question)
+
     def finish(
         reason: StopReason,
         *,
@@ -2083,8 +2391,12 @@ def run_turn(
         **作者定下的规矩也在这儿落进 canonical**，理由是同一条：十一种停法各有各的出口，
         逐个记得去贴的话迟早漏掉一种，而漏掉的形态是「他说了，系统答应了，下一轮它就忘了」。
         `save()` 跟着走一次——不然那几条只活在返回值里，而调用方可能只认 `persist`。
+
+        **信箱里还剩的话也在这儿并进去**（`Mailbox` 第一条规矩：一句都不许丢），
+        那几句没被回答，`unanswered` 带给回执。
         """
         nonlocal live
+        take_mail()
         if remembered:
             live = live.extended(*remembered)
             remembered.clear()
@@ -2100,6 +2412,7 @@ def run_turn(
             tokens_reported=reported,
             calls_without_usage=unmetered,
             tokens_charged=charged,
+            unanswered=unanswered,
             asked=asked,
             projection=last_projection,
             maintainer_note=note,
@@ -2126,7 +2439,7 @@ def run_turn(
         if signal.stopped:
             live = live.extended(*_unrun(pending[position:]))
             save()
-            return finish(StopReason.AUTHOR_STOPPED)
+            return stopped_by_author("between")
         outcome = run_tool(call, index=position + 1, total=len(pending))
         live = live.extended(_outcome_message(outcome))
         remember(outcome)
@@ -2155,7 +2468,9 @@ def run_turn(
 
     while steps < limits.max_steps:
         if signal.stopped:
-            return finish(StopReason.AUTHOR_STOPPED)
+            return stopped_by_author("between")
+        # 作者中途说的话**在这儿**并进去：下一次模型调用之前，正在跑的那一步已经跑完了。
+        take_mail()
 
         # `tools=declarations` 传的是**下面那一行真的会发出去的同一个对象**：量的和发的
         # 分成两次构造，就又有一处能漂（ADR 0023「前置：先把账算对」）。
@@ -2172,7 +2487,14 @@ def run_turn(
             # **先压缩，再停**：作者的话是唯一不可剪的累积，装不下时把最旧块压成
             # 摘要（docs_dev 快照第五节）。没有块可压（或没接压缩器）才 CONTEXT_FULL。
             if block_summarizer is not None:
-                compressed = _compress_oldest_block(live, block_summarizer, bill=bill)
+                try:
+                    compressed = _compress_oldest_block(live, block_summarizer, bill=bill)
+                except ProviderError as exc:
+                    # 压缩也是一次模型调用：作者停的按作者停的收，端点坏的按端点坏的收——
+                    # 以前这儿没接，一次压缩失败会以崩溃的样子穿出 `run_turn`。
+                    if signal.stopped:
+                        return stopped_by_author("between")
+                    return finish(StopReason.MODEL_UNREACHABLE, note=str(exc))
                 if compressed is not None:
                     live = compressed
                     save()
@@ -2186,34 +2508,19 @@ def run_turn(
             # 作者掐掉一次流式调用时，适配器让迭代器抛出去，`complete()` 会把它收敛成
             # `ProviderError`——**那不是故障**，所以先问信号再判故障。
             if signal.stopped:
-                return finish(StopReason.AUTHOR_STOPPED)
+                partial = bill_cut_call(exc, last_projection.messages, declarations, started)
+                if partial:
+                    # 说到一半的那几句是它真说过的：进历史（下一轮它自己读得到），也上屏。
+                    live = live.extended(AgentMessage(role=Role.ASSISTANT, content=partial))
+                    save()
+                    emit(TurnEvent.reply_text(partial))
+                return stopped_by_author("speaking" if partial else "thinking", reply=partial)
             return finish(StopReason.MODEL_UNREACHABLE, note=str(exc))
         elapsed_ms = max(0, int((perf_counter() - started) * 1_000))
         steps += 1
 
         # ── 记账。**在任何一条停止分支之前**：钱已经花掉了，停下来不会把它退回来 ──
-        prompt_bytes, prompt_hash = _prompt_digest(last_projection.messages, declarations)
-        bill(
-            ModelCallReceipt(
-                capability=AGENT_CAPABILITY,
-                schema_version=AGENT_SCHEMA_VERSION,
-                model=result.model,
-                finish_reason=result.finish_reason,
-                prompt_hash=prompt_hash,
-                prompt_bytes=prompt_bytes,
-                text=result.text,
-                prompt_tokens=result.prompt_tokens,
-                completion_tokens=result.completion_tokens,
-                # **钱照抄，不在这儿算**（`provider._priced` 已经填好，理由见
-                # `ModelCallReceipt.cost`：单价要按 base_url 查，而这一层只有 model）。
-                cost=result.cost,
-                # 缓存命中量只读取、不参与任何闸门：`charged` 那一侧算的是花掉的总量，
-                # 而命中只让它更便宜、不让它更少。**账照抄，闸不动。**
-                cache_read_tokens=None if result.cache is None else result.cache.read_tokens,
-                cache_write_tokens=None if result.cache is None else result.cache.written_tokens,
-                elapsed_ms=elapsed_ms,
-            )
-        )
+        bill(receipt_of(result, last_projection.messages, declarations, elapsed_ms))
 
         calls = _addressable(result.tool_calls, taken_ids)
         live = live.extended(
@@ -2223,6 +2530,8 @@ def run_turn(
                 tool_calls=calls,
             )
         )
+        # 模型回过话了：作者到这一刻为止说的每一句都在它的上下文里，一句都不算「没来得及答」。
+        unanswered = 0
         # **这一次落库是 resume 的全部前提**，排在任何一条停止分支之前，理由同记账：
         # 钱已经花掉了。这条消息不落盘 = 进程死在派发中间时 `pending_calls` 是空的
         # （尾巴上根本没有那条 assistant），而作者重开之后看到的是「什么都没发生」。
@@ -2239,6 +2548,10 @@ def run_turn(
             # 所以这儿停，并且说的是「再说一遍试试」——重试的决定权在作者手上。
             if not result.text.strip():
                 return finish(StopReason.NO_OUTPUT)
+            # 它说完了——**对上一句而言**。作者在它说话的这段时间里又说了一句的话，
+            # 接着跑（`Mailbox` 第二条规矩）；步数 / 额度那几道闸在循环头上照旧管着。
+            if take_mail():
+                continue
             return finish(StopReason.DONE, reply=result.text)
 
         if charged >= limits.max_tokens:
@@ -2298,7 +2611,7 @@ def run_turn(
         for position, call in enumerate(calls):
             if signal.stopped:
                 live = live.extended(*settle(position))
-                return finish(StopReason.AUTHOR_STOPPED, reply=result.text)
+                return stopped_by_author("between", reply=result.text)
 
             # 「无进展」之一：同一个工具、**同样的参数**。判据是 `(name, arguments)`
             # **字节相同**——不做 JSON 归一化，因为归一化要在这儿把参数再解析一遍，

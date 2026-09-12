@@ -15,6 +15,10 @@
 
 from __future__ import annotations
 
+import json
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from types import SimpleNamespace
 from typing import Any
 
@@ -32,6 +36,8 @@ from novel_harness.agent.model import (
     AGENT_REPLY_LENGTH,
     AgentCancelled,
     ProviderModelPort,
+    _CancellableClient,
+    _sockets_under,
     agent_call_plan,
 )
 from novel_harness.agent.ports import ToolContext
@@ -177,9 +183,14 @@ def test_the_interruption_is_a_provider_error_so_the_loop_reads_it_as_the_author
     )
     assert result.reason is StopReason.AUTHOR_STOPPED
     assert result.said_to_author.startswith("按你的意思停下了")
-    # 打断的那一次**没有账**：没有 `CompletionResult` 就没有 token 数，这一层不许编
-    # （板子上「已知限制」里记着的那个漏账口，方向是偏低）。
-    assert receipts == []
+    # 打断的那一次**有账**（2026-09-12 起，回复走流式的那天一起补的漏账口）：
+    # 请求发出去了，断开连接 ≠ 停止计费。**数一律留空**——供应商没报的数这一层不许编
+    # （同 `generate.py::interrupted`），`finish_reason` 也不是一个我们自己编的
+    # "cancelled"。第一片已经收到了，所以 `text` 是那半截。
+    assert [r.model for r in receipts] == [MODEL]
+    cut = receipts[0]
+    assert (cut.prompt_tokens, cut.completion_tokens, cut.finish_reason) == (None, None, None)
+    assert cut.text == "第0段第1段", "掐断前收到的那两片没进账上的正文"
 
 
 def test_a_signal_already_up_never_opens_a_connection() -> None:
@@ -301,19 +312,20 @@ def test_reasoning_is_off_because_that_is_the_only_level_every_endpoint_has() ->
     assert plan.reasoning_effective is ReasoningEffort.OFF
 
 
-def test_todays_reply_budget_does_not_reach_the_streaming_threshold() -> None:
-    """**一处诚实交代，钉成断言。**
+def test_the_reply_call_is_interruptible_so_stop_lands_within_a_chunk() -> None:
+    """**回复那一次调用要可中断**（作者 2026-09-12：「按停的话就是全部的工作都停下来」）。
 
-    `stream` 由 `plan_call` 按冻结阈值从输出预算推出来，而对话回复的预算在阈值之下——
-    所以**今天这条路多半不是流式的**，上面第一节量的那个打断粒度在生产里到不了，
-    降级成「这一次调用跑完就停」。
-
-    这条测试的用处是：哪天有人把回复预算抬过阈值（或者把阈值调下来），它会红，
-    而那时该被重新想一遍的是「未登记端点会不会因为 `supports_streaming is None`
-    被 fail-closed 拒掉」——那才是抬预算真正的代价。
+    2026-09-12 之前这儿钉的是反面（`plan.stream is False`，「一处诚实交代」）：回复的
+    输出预算在流式阈值之下，一次阻塞往返里没有位置插进去，「停」要等整份回复回来。
+    改法不是抬预算——预算一个字没动（抬了 `stream` 的判据就变成「谁想要流式」）——
+    是和起草那一档一样要 `interruptible`，`_streams` 的第二个理由成立。
+    这条红了的那天要一起想的是：被掐断的调用还进不进账
+    （`test_the_interruption_is_a_provider_error_so_the_loop_reads_it_as_the_author`）。
     """
     _, plan = agent_call_plan(a_config())
-    assert plan.stream is False
+    assert plan.interruptible is True
+    assert plan.stream is True
+    assert plan.visible_token_budget == AGENT_REPLY_LENGTH.max_units * 2 + 1_024, "预算被抬了"
 
 
 def test_the_bill_says_this_money_was_spent_by_the_writing_assistant() -> None:
@@ -326,3 +338,204 @@ def test_the_bill_says_this_money_was_spent_by_the_writing_assistant() -> None:
 
     source = BACKEND_MESSAGES.read_text(encoding="utf-8")
     assert _ts_const_object_entry(source, "CAPABILITY_LABEL", AGENT_CAPABILITY, "zh") == "写作助手"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 四、信号亮了当场掐断连接（2026-09-12：Codex / Claude Code 那一路的 AbortController）
+# ══════════════════════════════════════════════════════════════════════════
+#
+# 「每一片问一次」的盲区是两片之间：读的那条线卡在 `recv` 里，模型想得越久盲区越长。
+# 这一节用一条**真的本机连接**量：对面吐了一片就卡住，另一条线按停，读的那条线多久醒。
+# 实测（macOS）`close()` 叫不醒它，`socket.shutdown` 一毫秒就醒——`_cut` 走的是后者。
+# 顺便钉住「今天摸得到 socket」：那条路走的是 httpx / httpcore 的私有属性，依赖升级
+# 把它改了，这儿先红，而不是「停」悄悄退化成「下一片到了才停」。
+
+
+class _StallingEndpoint(BaseHTTPRequestHandler):
+    """一个 OpenAI 兼容的假端点：流式吐一片就卡 20 秒；非流式卡 20 秒才回。"""
+
+    def log_message(self, *args: Any) -> None:
+        pass
+
+    def do_POST(self) -> None:  # noqa: N802 —— http.server 的命名
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length) or b"{}")
+        try:
+            if body.get("stream"):
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                first = {
+                    "id": "x", "object": "chat.completion.chunk", "created": 0, "model": MODEL,
+                    "choices": [{"index": 0, "delta": {"content": "first"}, "finish_reason": None}],
+                }
+                self.wfile.write(f"data: {json.dumps(first)}\n\n".encode())
+                self.wfile.flush()
+                time.sleep(20)
+                self.wfile.write(b"data: [DONE]\n\n")
+            else:
+                time.sleep(20)
+                whole = {
+                    "id": "x", "object": "chat.completion", "created": 0, "model": MODEL,
+                    "choices": [
+                        {"index": 0, "message": {"role": "assistant", "content": "late"},
+                         "finish_reason": "stop"}
+                    ],
+                }
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(whole).encode())
+        except OSError:
+            pass  # 对面掐断了，正是这一节要的
+
+
+@pytest.fixture
+def stalling_endpoint():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), _StallingEndpoint)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/v1"
+    finally:
+        server.shutdown()
+
+
+def _real_openai_client(base_url: str) -> Any:
+    """一个**不走代理**的真客户端：这台机器的环境里挂着 HTTP 代理，
+    不关 `trust_env` 的话 127.0.0.1 会被送去代理、回一个 502。"""
+    import httpx
+    from openai import OpenAI
+
+    return OpenAI(
+        base_url=base_url, api_key="k", max_retries=0, http_client=httpx.Client(trust_env=False)
+    )
+
+
+def _in_a_thread(fn: Any) -> dict[str, Any]:
+    out: dict[str, Any] = {}
+
+    def run() -> None:
+        started = time.perf_counter()
+        try:
+            out["value"] = fn()
+        except BaseException as exc:  # noqa: BLE001 —— 测的就是抛什么
+            out["error"] = exc
+        out["elapsed"] = time.perf_counter() - started
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    out["thread"] = thread
+    return out
+
+
+def test_stop_cuts_the_socket_so_a_read_blocked_between_chunks_wakes_at_once(
+    stalling_endpoint: str,
+) -> None:
+    cancel = Cancellation()
+    real = _real_openai_client(stalling_endpoint)
+    client = _CancellableClient(real, cancel)
+    stream = client.chat.completions.create(
+        model=MODEL, messages=[{"role": "user", "content": "写"}], stream=True, max_tokens=5
+    )
+    got: list[str] = []
+
+    def read_it() -> None:
+        for chunk in stream:
+            got.append(chunk.choices[0].delta.content)
+
+    reader = _in_a_thread(read_it)
+    # 第一片到手、第二片永远不来——这就是「模型在想」的那个形态。
+    deadline = time.time() + 5
+    while not got and time.time() < deadline:
+        time.sleep(0.01)
+    assert got == ["first"]
+    # 摸的是连接池（`_watch` 里挂的钩子摸的是 openai `Stream` 那一头，两条路殊途同归）。
+    assert _sockets_under(real), "顺着 httpx 摸不到 socket 了 —— 依赖升级改了私有属性？"
+
+    pressed = time.perf_counter()
+    cancel.stop()
+    reader["thread"].join(timeout=5)
+    assert not reader["thread"].is_alive(), "按了停，读的那条线还卡在 recv 里"
+    woke_after = time.perf_counter() - pressed
+    assert woke_after < 2, f"醒得太慢：{woke_after:.2f}s（对面要 20 秒才吐下一片）"
+    error = reader.get("error")
+    assert isinstance(error, AgentCancelled), f"抛的不是作者停：{error!r}"
+    assert error.partial_text == "first", "掐断前到手的那一片丢了"
+    assert error.sent is True and error.model == MODEL
+
+
+def test_stop_cuts_a_non_streaming_call_that_is_still_waiting(stalling_endpoint: str) -> None:
+    """非流式那一档（块摘要走的）：整份响应还没回来时按停，也当场醒，而且**记账**
+    （请求发出去了，`sent=True`）。"""
+    cancel = Cancellation()
+    real = _real_openai_client(stalling_endpoint)
+    client = _CancellableClient(real, cancel)
+    waiting = _in_a_thread(
+        lambda: client.chat.completions.create(
+            model=MODEL, messages=[{"role": "user", "content": "压缩"}], max_tokens=5
+        )
+    )
+    deadline = time.time() + 5
+    while not _sockets_under(real) and time.time() < deadline:
+        time.sleep(0.01)
+    assert _sockets_under(real), "顺着客户端摸不到连接池里的 socket 了"
+
+    pressed = time.perf_counter()
+    cancel.stop()
+    waiting["thread"].join(timeout=5)
+    assert not waiting["thread"].is_alive(), "按了停，非流式那一次还在等整份响应"
+    assert time.perf_counter() - pressed < 2
+    error = waiting.get("error")
+    assert isinstance(error, AgentCancelled), f"抛的不是作者停：{error!r}"
+    assert (error.sent, error.partial_text, error.model) == (True, "", MODEL)
+
+
+def test_stop_hooks_fire_once_each_and_a_late_hook_fires_at_once() -> None:
+    """`Cancellation.on_stop` 的三条：亮了就叫；亮了之后才挂的当场叫；摘掉的不叫；
+    一个钩子抛了别的照叫、信号照亮。"""
+    cancel = Cancellation()
+    called: list[str] = []
+    off_a = cancel.on_stop(lambda: called.append("a"))
+    cancel.on_stop(lambda: (_ for _ in ()).throw(RuntimeError("连接早断了")))
+    cancel.on_stop(lambda: called.append("b"))
+    off_a()
+    cancel.stop()
+    assert cancel.stopped
+    assert called == ["b"]
+    cancel.on_stop(lambda: called.append("late"))
+    assert called == ["b", "late"]
+
+
+def test_a_cut_signalled_by_a_clean_eof_is_still_the_author_stopping() -> None:
+    """掐断在读的那条线上可能长成「流正常结束」（对面 EOF）——信号亮着就不是正常结束，
+    半截不许当完整的收：半截的 `tool_calls` 会被派发。"""
+    cancel = Cancellation()
+
+    class _EndsQuietly:
+        """两片之后信号亮起、然后流「正常」结束（模拟 shutdown 之后读到 EOF）。"""
+
+        closed = False
+
+        def __iter__(self) -> Any:
+            for index in range(2):
+                yield SimpleNamespace(
+                    model=MODEL,
+                    usage=None,
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(content=f"第{index}段", tool_calls=None),
+                            finish_reason=None,
+                        )
+                    ],
+                )
+            cancel.stop()
+
+        def close(self) -> None:
+            self.closed = True
+
+    stream = _EndsQuietly()
+    port = ProviderModelPort(a_config(), a_streaming_plan(), client=_Client(stream))
+    with pytest.raises(AgentCancelled) as caught:
+        port([{"role": "user", "content": "写"}], tools=[], cancel=cancel)
+    assert caught.value.partial_text == "第0段第1段"
+    assert stream.closed

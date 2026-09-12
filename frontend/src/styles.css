@@ -4,20 +4,37 @@
   --bg: #ffffff; --panel: #f7f7f6; --line: #dddcd8; --ink: #1c1c1e; --dim: #6b6b70;
   --k: #167a52; --b: #9a6212; --u: #999; --warnbg: #fbecec; --warn: #a23b3b;
   --accent: #3a3ab0; --sel: #ececf8; --okbg: #e8f5ee; --ok: #167a52;
-  /* 「你在看的不是本章」那一片。刻意**不复用** --warnbg/--warn：看上一章不是错误，
-     染成红的会教会作者忽略红色，而这块面板真正的红（未解析的称呼）就在它旁边。 */
-  --backbg: #fbf1de; --back: #7d4f0a;
+  /* `--panel` 的半透版，**同一个颜色**，只是让底下的东西透一点上来。
+     只给毛玻璃那一处用（`.log-head`），所以数值必须跟着 `--panel` 一起改。 */
+  --panel-glass: rgba(247, 247, 246, .60);
+  /* 同上，但是 `--bg` 的半透版。给写作助手那块输入区用（对话真的从它底下走过去）。 */
+  --bg-glass: rgba(255, 255, 255, .80);
   --welcome-side: #eceef1; --welcome-surface: #fff; --welcome-action: #242831;
   --welcome-soft: #f4f5f7; --welcome-shadow: 0 24px 64px rgba(26, 31, 40, .16);
+  /* 顶栏比正文底色**深一档**（作者 2026-09-07：「像 cursor 一样顶部的菜单栏颜色稍微
+     深一点」）。单独一个 token 而不是复用 `--panel`：面板底色别处到处在用，顶栏这一
+     档只给这一条 chrome。亮色往灰走、暗色往黑走——**两边都是「比正文更沉」**，不是
+     同一个方向的加减。
+     **这一档收窄过一次**：头一版 `#eeedea`（离白 19）作者看了说「对比度太大」，
+     收到离白 13。**再往上调之前先想清楚**：顶栏要的是「沉下去一点」，不是画一条带子。 */
+  --topbar: #f4f3f1;
+  /* 角色册云纹描边专用的墨蓝灰——不是 `--accent`：那颗紫是全局「可点/选中」的
+     强调色，云纹要的是效果图指定的低饱和独立配色（`CloudFrame.tsx`）。 */
+  --cloud-line: #526A6F;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #16161a; --panel: #1e1e24; --line: #2f2f38; --ink: #e8e8ec; --dim: #8a8a93;
     --k: #4bbd8b; --b: #d3a24f; --u: #777; --warnbg: #2a1818; --warn: #e08585;
     --accent: #9a98ee; --sel: #26263a; --okbg: #16281f; --ok: #4bbd8b;
-    --backbg: #2c2313; --back: #e2b463;
+    --panel-glass: rgba(30, 30, 36, .60);
+    --bg-glass: rgba(22, 22, 26, .80);
     --welcome-side: #1b1d22; --welcome-surface: #22252b; --welcome-action: #f1f3f5;
     --welcome-soft: #2b2f36; --welcome-shadow: 0 24px 64px rgba(0, 0, 0, .38);
+    /* 暗色下比 `--bg:#16161a` 再沉一点，同 Cursor 的标题栏。 */
+    --topbar: #131318;
+    /* 同一个墨蓝灰调亮，不然暗色 `--bg:#16161a` 底下 #526A6F 会糊成看不见的深色。 */
+    --cloud-line: #93AAB0;
   }
 }
 * { box-sizing: border-box; }
@@ -42,13 +59,21 @@ input, select, textarea {
 /* 顶栏 */
 header {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
-  padding: 7px 12px; border-bottom: 1px solid var(--line); background: var(--panel);
+  padding: 7px 12px; border-bottom: 1px solid var(--line); background: var(--topbar);
 }
 header .title { font-weight: 600; } header .title b { color: var(--accent); }
 header input.ch { width: 56px; text-align: right; }
 header .spacer { flex: 1; }
 header .hint { color: var(--dim); font-size: 11px; }
 header button.on { border-color: var(--accent); color: var(--accent); background: var(--sel); }
+/* 最右边那两颗（收起右栏 + 设置）挨得比顶栏别处紧一点（作者 2026-09-07：
+   「设置和他左边这个图标紧凑一点」）。顶栏那条 `gap: 12px` 是给**不同东西**之间
+   留的（品牌名 / 一组开关 / 最右这一撮），两颗相邻的图标按钮之间用不了那么宽。
+   12 - 8 = 4px 的盒距，加上两边各 6px 的按钮内边距，图标之间还剩 16px——
+   **别再往下压到 `.mode-switch` 那么紧（14px）**：那一组有白托盘、是一组，
+   这两颗不是（齿轮是「这台机器怎么配」，左边那颗是「现在看哪一块屏幕」）。
+   `>` 限死直接子元素：`.mode-switch` 里那两颗自己有 `gap: 2px`，压不得。 */
+header > .icon-btn + .icon-btn { margin-left: -8px; }
 
 /* ── 图标（`components/icons.tsx`）─────────────────────────────────────────
    尺寸只在这儿定，图标自己不写宽高：同一个图标在按钮里和在别处是同一份。
@@ -75,7 +100,7 @@ header button.on { border-color: var(--accent); color: var(--accent); background
   background: var(--bg); border: 1px solid var(--line);
 }
 /* 按下去了（`aria-pressed`）：**只换颜色，不加底、不加框**。
-   这一栏里「开着没有」已经由图标自己说了（书是合着还是摊开），
+   这一栏里「开着没有」已经由图标自己说了（笔尖还是小机器人），
    底色再说一遍就是把同一句话讲两遍——而两颗按钮各挂一块紫底会比正文还抢眼。 */
 .icon-btn.on { color: var(--accent); border-color: transparent; background: transparent; }
 /* **焦点不画框**：浏览器默认那圈是 `-webkit-focus-ring-color`，macOS 上取的是**系统蓝**——
@@ -104,9 +129,9 @@ header button.on { border-color: var(--accent); color: var(--accent); background
 .icon-btn:hover::after, .icon-btn:focus-visible::after { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .icon-btn::after { transition: none; } }
 
-/* 续写建议正在生成时挂在机器人图标右上角的小圈——纯提示「AI 在动」，不挡按钮本身，
+/* 续写建议正在生成时挂在模式开关图标右上角的小圈——纯提示「AI 在动」，不挡按钮本身，
    所以用 pointer-events: none。紧贴着图标（不是紧贴按钮的外框），**不写颜色**——
-   `ThinkingSpinner` 是 currentColor，跟着机器人图标此刻是什么颜色走（平时 `--dim`，
+   `ThinkingSpinner` 是 currentColor，跟着底下那颗图标此刻是什么颜色走（平时 `--dim`，
    写作助手开着时 `--accent`），不用另挑一个颜色。 */
 .bot-thinking {
   position: absolute; top: -1px; right: 0; pointer-events: none;
@@ -138,19 +163,42 @@ main {
    底那 12px 挪去 `.shelf-scroll` 自己（滚动内容的底部留白该跟着内容滚，
    不该焊在外框上）。 */
 .pane-left { display: flex; flex-direction: column; overflow: hidden; padding: 12px 14px 0; }
-/* 滚动条**宽度常驻不随 hover 变**，只切换颜色——`scrollbar-width`/`::-webkit-scrollbar`
-   width 若跟着 hover 在 0 和 6px 之间切，内容区每次悬浮/移开都会跟着抖 6px 宽
-   （作者的原话：按钮一下缩一下扩，很难受）。颜色默认透明、悬浮才现身，
-   宽度全程占着位置，没有那一下抖动。 */
-.shelf-scroll {
-  flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-bottom: 12px;
+.shelf-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding-bottom: 12px; }
+
+/* ── 细滚动条：**宽度常驻不随 hover 变**，只切换颜色 ────────────────────────
+   `scrollbar-width` / `::-webkit-scrollbar` 的 width 若跟着 hover 在 0 和 6px 之间切，
+   内容区每次悬浮/移开都会跟着抖 6px 宽（作者的原话：按钮一下缩一下扩，很难受）。
+   颜色默认透明、悬浮才现身，宽度全程占着位置，没有那一下抖动。
+
+   ⚠️ **要加新的滚动区就加进下面这份选择器，别再抄一份。** 这套规则今天有三个消费方：
+   左栏书架、活动记录（2026-09-09 作者指着它说「调成悬浮出现」加进来的），
+   以及正文编辑器——第三个在 `CodeEditor.tsx` 的 CM6 主题里，那是一份**不得不**分开写
+   的拷贝（CM6 的样式由它自己注入，够不着这个文件），改这儿记得同时改那儿。
+
+   ⚠️ **别图省事挂到 `.pane` 或 `*` 上。** `scrollbar-color` 是**继承**属性：
+   往祖先上写一句 `transparent transparent`，所有没写自己那条 hover 规则的嵌套滚动区
+   （`.hist-list`、`.draft-card`、`.chat-log`…）会继承到透明，然后**永远看不见滚动条**
+   ——而那是个在屏幕上完全看不出来的坏法。一个滚动区一对规则，成对地加。 */
+.shelf-scroll,
+.pane.log,
+.set-pane {
   scrollbar-width: thin; scrollbar-color: transparent transparent;
 }
-.shelf-scroll:hover { scrollbar-color: var(--line) transparent; }
-.shelf-scroll::-webkit-scrollbar { width: 6px; }
-.shelf-scroll::-webkit-scrollbar-track { background: transparent; }
-.shelf-scroll::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
-.shelf-scroll:hover::-webkit-scrollbar-thumb { background: var(--line); }
+.shelf-scroll:hover,
+.pane.log:hover,
+.set-pane:hover { scrollbar-color: var(--line) transparent; }
+.shelf-scroll::-webkit-scrollbar,
+.pane.log::-webkit-scrollbar,
+.set-pane::-webkit-scrollbar { width: 6px; }
+.shelf-scroll::-webkit-scrollbar-track,
+.pane.log::-webkit-scrollbar-track,
+.set-pane::-webkit-scrollbar-track { background: transparent; }
+.shelf-scroll::-webkit-scrollbar-thumb,
+.pane.log::-webkit-scrollbar-thumb,
+.set-pane::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
+.shelf-scroll:hover::-webkit-scrollbar-thumb,
+.pane.log:hover::-webkit-scrollbar-thumb,
+.set-pane:hover::-webkit-scrollbar-thumb { background: var(--line); }
 /* 栏间那条线原来是 `.pane + .pane` 的 border——它画得出线但抓不住，
    现在改由分隔条自己画：整列 6px 可抓，只显中间 1px，视觉上还是原来那条线。 */
 .pane-divider { position: relative; cursor: col-resize; touch-action: none; background: transparent; }
@@ -297,31 +345,6 @@ body.resizing { cursor: col-resize; -webkit-user-select: none; user-select: none
    写的是 `calc(1.5em + 6px)`，这一行一胖，那颗按钮就跟目录对不齐了（作者点过名）。 */
 .ch { position: relative; display: flex; align-items: center; }
 .ch-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 「⋯」**平时不显形**：一列 722 章不该是一列点点点。
-   但它一直在 DOM 里（不是 `display:none`）——只在悬浮时才挂上去的话键盘走不到它，
-   而这是删一章唯一的入口。 */
-/* `margin-right: -4px` **是对齐用的，不是留白**：这一行自己有 6px 内边距，
-   而书名那一行（`.book-head`）只有 2px——两个「⋯」的内边距和描边都一样，
-   于是章的那颗天生比书的那颗往左 4px。抵掉这一栏才是一竖列（作者点过名）。
-   **改 `.ch` 或 `.book-head` 的左右内边距，这个数要跟着重算。** */
-.ch-act {
-  flex: 0 0 auto; height: 1.5em; padding: 0 4px; margin-left: 4px; margin-right: -4px;
-  border-color: transparent; border-radius: 4px; background: transparent;
-  color: var(--dim); line-height: 1; opacity: 0;
-}
-.ch:hover .ch-act, .ch.menu .ch-act, .ch-act:focus-visible { opacity: 1; }
-.ch-act:hover:not(:disabled) { border-color: transparent; color: var(--accent); background: var(--sel); }
-.ch-menu {
-  position: absolute; top: 100%; right: 0; z-index: 25; width: 150px; padding: 6px;
-  display: grid; gap: 4px; cursor: default;
-  border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
-}
-.ch-menu button { width: 100%; text-align: left; font-weight: 400; }
-.ch-menu-ask { color: var(--dim); font-size: 11px; line-height: 1.5; }
-/* 删除是红的。**只有这一颗**——一栏里两颗红按钮，红色就不再是警告了。 */
-.ch-menu button.danger { color: var(--warn); }
-.ch-menu button.danger:hover:not(:disabled) { border-color: var(--warn); color: var(--warn); background: var(--warnbg); }
 .grp .lab { color: var(--dim); font-size: 11px; margin: 8px 0 3px; }
 /* 「新起一章」：**屏幕上只有一个加号，名字悬浮才出来**（作者 2026-08-14 要的）。
    借的是顶栏那套图标按钮的机制（`.icon-btn` + `data-tip`，见上面那段）——
@@ -373,8 +396,34 @@ body.resizing { cursor: col-resize; -webkit-user-select: none; user-select: none
 .ch-add-err { padding: 2px 6px; color: var(--warn); font-size: 11px; }
 
 /* 中栏编辑器 */
-.editor { display: flex; flex-direction: column; padding: 0; }
-.edbar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+
+/* ── 正文的行宽有上限；窗口变宽只是**给它让出留白**，不是把一行拉长 ──────────
+   作者 2026-09-09：「全部展开了浪费空间能不能居中布局，然后这个标题也不要跑到最左侧，
+   以及历史图标保存图标」。
+
+   起因看着是「两侧栏都收起来了」，量过之后不是：**1900px 的屏上开着侧栏也是 87 个字
+   一行**（中栏 1248px，这一档下一个汉字正好 14px）。行宽从来没有上限，只是屏幕小的
+   时候看不出来。一行 87 字，眼睛从行尾扫回行首会找不到下一行的开头——这是排版上最老
+   的一条，不是审美偏好。
+
+   `--text-column` 是**唯一的那个数**：改它一处，正文、章标题、右边那两颗图标一起动。
+   三者共用同一条 `max()`，所以永远对齐，不会出现「正文缩进去了、标题还贴着最左边」
+   那种半吊子居中。窄的时候 `max()` 落回 16px——三栏都开着的小窗口上一切照旧。
+
+   ── 这个数**没有正确答案，只有一条取舍线**（2026-09-09 第二轮）────────────
+   头一版给的 720px（51 字/行）作者说「左右两边空白都太多」。**那两件事直接对立**：
+   1900px 的窗口要填满就是 135 字一行，而留白少一分行就长一分，没有两全。
+   1000px（71 字）是往「用得上空间」那头挪过的一个折中，不是一个理论最优值。
+
+   ⚠️ **1900px 上真正的「空间利用」不是把正文摊宽，是把侧栏打开**——那两栏收起来
+   之后留下的就是空白，而它们展开时装的是角色册和章节总结。这句话记在这儿，是免得
+   下一个人把这个常量一路调到贴边，然后发现读起来更累了。 */
+.editor { display: flex; flex-direction: column; padding: 0; --text-column: 1000px; }
+.edbar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px max(16px, calc((100% - var(--text-column)) / 2));
+  border-bottom: 1px solid var(--line); background: var(--panel);
+}
 .edbar .who { font-weight: 600; } .edbar .spacer { flex: 1; }
 .edbar .status { font-size: 12px; color: var(--dim); }
 .edbar .status.err { color: var(--warn); }
@@ -382,6 +431,49 @@ body.resizing { cursor: col-resize; -webkit-user-select: none; user-select: none
    不钉这一条的话，长章标会把「保存」挤成两个字换行。
    **`>` 不能少**：章标题自己也是一颗 button，被这条罩上就再也收不成「…」了。 */
 .edbar > button { flex: 0 0 auto; }
+/* ── 「历史」「保存」退出边框（作者 2026-09-09：「这两个按钮太丑了」）───────────
+   丑在两处，而两处都不是「不够好看」，是**这一屏上只有它俩还是旧的**：
+
+   1. **它们是这条编辑器顶栏上仅剩的方盒子。** 右栏那排 tab、`.icon-btn`、`.ch-add`
+      2026-09-06 起都不画边框了，顶栏也一样，于是这两颗带 `--line` 描边的按钮
+      是全屏唯一一对框。同 `.tabs` 那条走法：`border-color: transparent` 而不是
+      `border: 0`，留着 1px 只抽颜色，盒子尺寸一个像素都不动，这一排不会跟着挪。
+      连带压住全局 `button:hover` 的染边（不压的话边框会「平时没有、鼠标一碰就
+      冒出来」，那比一直有边更像坏了）。
+   2. **「保存」大部分时间是灰的。** 作者没改动时它 `disabled`，吃全局那条
+      `opacity: .5`，于是屏幕上常年挂着一个泛白的方框——一个**看起来坏掉**的控件。
+      改成不透明、只把字色降到 `--dim`：还是明摆着按不动，但不再像渲染出了问题。
+
+   ── 当天晚些时候：文字也去掉了，两颗都只剩图标 ──────────────────────────
+   作者 2026-09-09 的第二轮：「历史」换成一枚怀表，「保存」只留水滴/雪花，
+   水平居中。于是**去边框这件事由 `.icon-btn` 接手**（顶栏那几颗一直用的就是它：
+   无边框、`--dim`、悬浮转强调色、`::after` 浮出名字），这儿不再自己写一份——
+   两份长得一样的皮肤迟早会漂。剩下的只有这颗按钮独有的两条：
+
+   ── 「有东西可存」靠**深浅**说，不靠颜色，也不再靠字重 ────────────────────
+   `--accent` 那颗紫在这个产品里只表示「悬浮」和「选中」，给一颗没被碰的按钮涂上它
+   就是 2026-08-30 作者否掉水滴时的原话——「你这个没有悬浮，怎么就有这个紫色呀」。
+   字重那一档随文字一起没了（图标没有粗细可加），所以现在只剩深浅：能存时图标回
+   `--ink`，不能存时留在 `.icon-btn` 给的 `--dim`。**「有东西没存」那句话主要还是
+   水滴自己在说**（雪花＝已同步），深浅只是替它加一道。
+   `opacity: 1` 是压全局 `button:disabled` 那条 `.5`：泛白的图标看着像渲染坏了，
+   而这颗按钮大部分时间都停在禁用态。 */
+.save-btn:not(:disabled) { color: var(--ink); }
+/* **有东西没存时把这一笔按重。** 光靠深浅作者说察觉不到（2026-09-09 原话
+   「这个线条要加深颜色，让人能察觉」）——而深浅其实已经到头了：`--dim` → `--ink`
+   就是这套配色里最深的一档，正文字色，没有更黑的了。所以再加一档**笔画粗细**：
+   1.5 → 2.1。那是「同一支笔按重了」，不是换一个颜色——**不能换成 `--accent`**，
+   那颗紫在这个产品里只表示悬浮和选中（2026-08-30 作者否掉紫水滴的那条），
+   也不能换成 `--warn`：没保存不是出错。
+
+   CSS 的 `stroke-width` 压得住 SVG 上那个同名属性（表现属性的优先级低于任何 CSS
+   规则），所以图标本身不必为这件事分成两份。
+
+   判据挂在 `:not(:disabled)` 上，**不另加一个类**：这颗按钮「能按」和「有东西可存」
+   本来就是同一件事（`disabled={!dirty || save.isPending}`），再造一个类等于让同一个
+   事实有两个真相源，而它们迟早会各说各的。 */
+.save-btn:not(:disabled) .save-badge-icon { stroke-width: 2.1; }
+.save-btn:disabled { opacity: 1; }
 /* 「读回改动」那一小块跟着让步（它有一句说明文字，长章标 + 它一起会顶宽） */
 .edbar > .syncbox { flex: 0 1 auto; min-width: 0; }
 
@@ -405,30 +497,25 @@ body.resizing { cursor: col-resize; -webkit-user-select: none; user-select: none
    这时按钮不该继续用给图标腾出来的窄边距——那会让「保存」两个字比「历史」偏右、左右
    不对称。2026-08-31 作者原话「不管这个保存左右两边有没有这个水滴或者雪花，文字两边
    空间都是一样大」——没徽标时落回 `button` 的默认对称边距（12px/12px），跟「历史」对齐。 */
-.save-btn { display: inline-flex; align-items: center; gap: 2px; }
-.save-btn.has-badge { padding-right: 5px; }
-.save-badge-icon {
-  width: 17px; height: 17px; flex: 0 0 auto; pointer-events: none;
-  transform: translateY(-3px);
-  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .4));
-}
-/* 悬浮「保存」说清楚徽标是什么意思：颜色变化（走全局 `button:hover`）作者容易看漏，
-   2026-08-31 原话「除了颜色，还有文字显示未保存该文章」。**不用原生 `title`**——
-   那个要等约一秒、作者反馈过「以为没有」，这儿借的是 `.icon-btn::after` 那套
-   `data-tip` 机制（.12s 淡出、深底浅字），只是换成 `.save-btn` 自己的选择器，
-   因为 `.save-btn` 不共用 `.icon-btn` 的透明底/无边框那套皮肤。
-   用 `[data-tip]` 属性选择器兜底：`saveBadge` 是 `null` 时 JSX 根本不给这个属性，
-   选择器不命中，没有徽标的干净态不会悬出一个空气泡。 */
-.save-btn[data-tip] { position: relative; }
-.save-btn[data-tip]::after {
-  content: attr(data-tip);
-  position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%); z-index: 30;
-  padding: 3px 7px; border-radius: 4px;
-  background: var(--ink); color: var(--bg);
-  font-size: 11px; line-height: 1.5; white-space: nowrap;
-  opacity: 0; pointer-events: none; transition: opacity .12s ease;
-}
-.save-btn[data-tip]:hover::after, .save-btn[data-tip]:focus-visible::after { opacity: 1; }
+.save-btn { display: inline-flex; align-items: center; }
+/* **17px，比 `.icon` 那档（16px）大一点**：这两颗现在只有图标，旁边又没有字给它
+   借尺度，按原来的 16 会比顶栏那几颗看着还小一号。怀表跟着同一个数，两颗才是一对。 */
+.save-badge-icon, .edbar .icon-btn .icon { width: 17px; height: 17px; flex: 0 0 auto; }
+/* **一个 filter 都不许挂。** 2026-08-30 这儿有过一层
+   `drop-shadow(0 1px 1px rgba(0,0,0,.4))`，说法是「这片图标相对按钮表面是浮起来的」——
+   那时它是贴在「保存」两个字边上的小徽标，旁边有字压着，那点影子读起来是层次。
+
+   **文字去掉之后同一层影子变成了脏。** 它给每一条 1.5 单位宽的细线糊上一圈半透明黑，
+   而隔壁怀表是干干净净的描边：两颗并排，一颗清一颗浊。作者 2026-09-09 的原话是
+   「感觉还有加那种光影……现在感觉有点暗暗的」，要的是「和钟表一样的视觉效果」。
+   所以这儿只剩尺寸和 `pointer-events`，**外观全部交给 `currentColor`**——
+   跟这一套图标其余每一个一样（`icons.tsx` 开头第 2 条）。 */
+.save-badge-icon { pointer-events: none; }
+/* 「保存」的悬浮说明**2026-09-09 并回了 `.icon-btn::after`**（那颗按钮现在也挂着
+   `.icon-btn`）。原来这儿有一份逐条抄过去的副本，理由是「`.save-btn` 不共用
+   `.icon-btn` 那套透明底/无边框的皮肤」——今天它共用了，副本就该删：两份长得一样的
+   气泡样式，改一处忘一处的时候没有任何东西会红。
+   **说明本身照旧不用原生 `title`**：那个要等约一秒，作者反馈过「以为没有」。 */
 
 /* ── 中栏顶栏的章标题（挑章 + 双击改名）───────────────────────────────────────
    它替下来的是顶栏那个 <select>，而**那个白框没有跟着搬**：select 自带边框和底色，
@@ -496,7 +583,14 @@ body.resizing { cursor: col-resize; -webkit-user-select: none; user-select: none
 .castline .who { color: var(--ink); }
 .castline.dim { color: var(--dim); line-height: 1.6; }
 .castline button.link { background: none; border: 0; padding: 0; color: var(--accent); font-size: 12px; cursor: pointer; }
-.selbar { padding: 6px 14px; border-top: 1px solid var(--line); background: var(--panel); display: flex; gap: 8px; align-items: center; font-size: 12px; }
+/* 这两条提示条（「别处改过」「那段字找不着了」）**跟着同一栏走**：它们说的是下面
+   那段正文的事，正文缩成一栏之后还贴在最左边，就成了一句悬在空白里的话。
+   底色和分隔线照旧通栏——那是这条子的边界，不是那段话的边界。 */
+.selbar {
+  padding: 6px max(16px, calc((100% - var(--text-column)) / 2));
+  border-top: 1px solid var(--line); background: var(--panel);
+  display: flex; gap: 8px; align-items: center; font-size: 12px;
+}
 .selbar .q { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 
 /* 场景块条 */
@@ -513,10 +607,35 @@ body.resizing { cursor: col-resize; -webkit-user-select: none; user-select: none
 .scene-edit .err { color: var(--warn); }
 
 /* 右栏 tabs —— 必须能换行。7 个中文标签挤在一行里会被压成一列一列的竖排字
-   （右栏一变窄就发生），换行才是「窄了少放几个」而不是「窄了都看不清」。 */
-.tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
-.tabs button { white-space: nowrap; }
-.tabs button.on { border-color: var(--accent); color: var(--accent); background: var(--sel); }
+   （右栏一变窄就发生），换行才是「窄了少放几个」而不是「窄了都看不清」。
+   **居中**是作者 2026-09-06 定的；换行之后每一行各自居中，末行不会吊在左边。
+   `.tabs` 全仓只有右栏这一处在用，所以这两条都只影响它。 */
+.tabs {
+  display: flex; flex-wrap: wrap; justify-content: center;
+  gap: 10px; margin-bottom: 10px;
+}
+/* 图标在左、字在右（作者 2026-09-09；2026-09-06 那版是反的）。
+   **按钮之间 10px、字与图标之间 6px，这个差必须留住**：两个间距一旦接近，
+   一排读起来就是「图标 字 图标 字」的连续流，而不是四五颗各自独立的按钮。
+   换边之后这条只更要紧：图标落在每颗按钮的**头上**，间距一糊，整排会读成一条
+   图标带下面挂了一串字。 */
+/* **不画边框**（作者 2026-09-06）。用 `border-color: transparent` 而不是 `border: 0`：
+   全局 `button` 那条给了 1px 边，去掉它整颗按钮会缩 2px、这一排跟着挪位——
+   留着边、只把颜色抽掉，盒子尺寸一个像素都不动。同 `.icon-btn` / `.set-rail-item`
+   已经在用的那条路。
+   连带要压住的是**全局的 hover**（`button:hover` 会把边染成强调色）：没有这一行，
+   边框会「平时没有、鼠标一碰就冒出来」，那比一直有边更像坏了。反馈改由文字变色给。 */
+.tabs button {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  border-color: transparent;
+}
+.tabs button:hover:not(:disabled) { border-color: transparent; color: var(--accent); }
+/* 15px，不是 `.icon` 默认的 20px：这一排的字 13px，20px 的图标比旁边的字还高，
+   看着像图标捎带了个标签，而不是按钮捎带了个图标。 */
+.tabs button .icon { width: 15px; height: 15px; }
+/* 选中那一颗**只靠底色和字色说话**：边框既然整排都没了，单给它留一圈就是
+   这一排里唯一一条边——那会读成「这颗坏了」而不是「这颗选中了」。 */
+.tabs button.on { border-color: transparent; color: var(--accent); background: var(--sel); }
 
 /* 矩阵 */
 table.mx { border-collapse: collapse; font-size: 12px; }
@@ -571,26 +690,147 @@ td.cell.editing { outline: 2px solid var(--accent); outline-offset: -2px; }
 .statecard .row.quote { margin-top: 4px; font-style: italic; }
 .statecard .actions { margin-top: 8px; display: flex; gap: 6px; }
 
-/* 「看上一章」——右栏「人物状态」那一格的时光机开关。
-   关着的时候只是一行控件；**开着的时候整块内容换底、换边框、顶一条横幅**：
-   作者照着上一章的局面去改这一章的事实，是引擎自己造出来的错，而它造出来的那条边
-   在面板上长得完全正常。所以这里的「明显」是刻意过量的，不是一行小字。 */
-.lookback-bar { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-.lookback-why { color: var(--dim); font-size: 11px; }
-.lookback {
-  border: 2px solid var(--back); border-left-width: 6px; border-radius: 8px;
-  background: var(--backbg); padding: 10px 12px 4px;
+/* `.dim` 到 2026-08-31 为止全仓没有一条独立规则——凡是单独一个 `className="dim"`
+   （不挂在 `.statecard .row`/`.castline` 那类复合选择器下）的地方，字就跟旁边的黑字
+   一样重，「淡出」这个意图从没真的画出来过。角色册那一行的出场章数、角色卡里的
+   「第 N 章起」都是这个形状，这条兜底补上，不影响任何已经用复合选择器盖过它的地方
+   （更具体的选择器优先级更高，两边不冲突）。 */
+.dim { color: var(--dim); }
+
+/* 角色卡（2026-08-31）：角色册每一行折叠态重排 + 原地展开的卡片。
+   「人物状态」「人物关系」两个 tab 并进来之后，点一个人不再跳页，卡片就长在
+   他那一行下面——见 `RosterTab.tsx` 顶注。 */
+/* 云纹描边重设计（2026-09-01）：矩形直框 + 常驻「改名/删」按钮墙换成连续如意云纹
+   + 悬浮才现身的「⋯」（作者原话：原来那个太丑了）。`position: relative` 是给
+   `.cloud-frame`（`CloudFrame.tsx`）当定位基准——那是纯装饰的 `pointer-events: none`
+   覆盖层，铺满这一行，不挡下面这些点击/菜单。 */
+/* ⚠️ 行间距 2026-09-03 从 18px 退回 0——**这是有意推翻 09-01 那次决定的**。
+   那次拉开是因为旧几何下相邻两行的描边隔着 7px 成了「两条挨着的波浪」，作者说
+   「不知道哪一列在哪一列」；换新几何之后正解不是拉开而是**贴死**：上一行的下沿和
+   下一行的上沿画的是同一份横向几何（见 `CloudFrame.tsx` 里那条 ⚠️），贴着排就逐点
+   重合成一条共用分界线——一条线不会让人分不清，两条挨着的才会。留一点点缝反而重新
+   叠出双线，所以这个 0 不能改成「很小的值」。
+   行高同日 50px → 48px、左右内边距 15px → 28px：都是新几何的定值，28px 是给竖边
+   那两卷（自边沿往里约 16px）让开的净空，压小了名字会压在卷纹上。 */
+.roster-row {
+  position: relative;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  min-height: 48px; padding: 0 28px;
+  /* `clear: both` 不是装饰：h2 里那两颗图标按钮是 `float: right`（见下面那条注释），
+     而空 h2 撑不住浮动，它会漏到下面来；`.roster-row` 是 flex 容器 = 独立格式化
+     上下文，会**让开**浮动——于是只有第一行被挤窄约 60px。这条毛病一直都在，
+     旧的矩形/贴片描边看不出来，换成闭合云纹之后第一行的框肉眼可见地短一截。 */
+  clear: both;
 }
-.lookback-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.lookback-head b { color: var(--back); font-size: 14px; }
-.lookback-head .spacer { flex: 1; }
-.lookback-badge {
-  flex: 0 0 auto; padding: 1px 7px; border-radius: 3px;
-  background: var(--back); color: var(--backbg);
-  font-size: 11px; font-weight: 600; letter-spacing: .08em;
+/* 悬浮/选中的底色**画在云纹围出来的那一块里**（下面 `.cloud-fill`），不再是一条
+   长方形——作者原话：「他现在是一个长方形悬浮色，与我这一栏有点不像」。这两条现在的活
+   只剩**压掉** `.item` / `.item:hover` 那条通用矩形底色（在这份文件上面「左栏」那一节，
+   角色册的行同时也是 `.item`）：不显式压掉，长方形会从那儿漏回来，和云纹底色一起画。 */
+.roster-row:hover, .roster-row.on { background: transparent; }
+/* `.cloud-frame` 是这一行**绝对定位的第一个孩子** = 它画在常规流内容**之上**（绝对定位
+   元素的绘制次序在后）。只有描边时无所谓（线都在边上），多了一层底色就会盖在名字上——
+   把行里那几格也变成定位元素，按 DOM 次序排到云纹后面去。 */
+.roster-row > *:not(.cloud-frame) { position: relative; }
+.roster-row > .nm { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.roster-row > .dim { flex: 0 0 auto; font-size: 12px; }
+/* 确认删除那一问不能挤进名字/章数/按钮那条线——`flex-basis:100%` 逼它自己另起一行，
+   不用为了这一条把它从 `.item` 里搬出去（搬出去会撞 `.closest(".item")` 那批既有测试，
+   见 `RosterTab.tsx` 里的注释）。 */
+.roster-row > .row { flex-basis: 100%; margin-top: 2px; }
+
+/* 「⋯」同书架那一套机制（`.book-act`）：平时不显形但一直在
+   DOM 里（悬浮才挂上去的话键盘走不到它），悬浮/键盘聚焦/菜单开着才现身。 */
+.roster-more { position: relative; flex: 0 0 auto; margin-left: auto; }
+.roster-act {
+  width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+  padding: 0; border-color: transparent; border-radius: 6px; background: transparent;
+  color: var(--dim); line-height: 1; opacity: 0;
 }
-.lookback-note { margin: 8px 0 10px; color: var(--back); font-size: 12px; line-height: 1.6; }
-.lookback .statecard { background: var(--bg); border-color: var(--back); }
+.roster-row:hover .roster-act, .roster-row.menu-open .roster-act, .roster-act:focus-visible {
+  opacity: 1;
+}
+/* **卡片开着的时候那颗按钮常驻显形。** 它此刻是「收起」（不是「⋯」，见
+   `RosterTab.tsx`）——卡片已经摊在屏幕上了，关它的那颗按钮不该还要作者先悬浮
+   上去找。 */
+.roster-row.open .roster-act { opacity: 1; }
+.roster-act:hover:not(:disabled) { border-color: transparent; color: var(--accent); background: var(--sel); }
+.roster-menu {
+  position: absolute; top: 100%; right: 0; z-index: 25; width: 128px; padding: 6px;
+  display: grid; gap: 2px; cursor: default;
+  border: 1px solid var(--line); border-radius: 6px; background: var(--bg);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .18);
+}
+.roster-menu button { width: 100%; text-align: left; font-weight: 400; border-color: transparent; background: transparent; padding: 6px 8px; }
+.roster-menu button:hover:not(:disabled) { border-color: transparent; background: var(--sel); }
+/* 删除是红的。**只有这一颗**——一栏里两颗
+   红按钮红色就不再是警告了。 */
+.roster-menu button.danger { color: var(--warn); }
+.roster-menu button.danger:hover:not(:disabled) { border-color: var(--warn); color: var(--warn); background: var(--warnbg); }
+
+/* ── 云纹本体：每行一条闭合 path，按这一行量到的真实像素现拼（`CloudFrame.tsx`）── */
+.cloud-stroke {
+  fill: none; stroke: var(--cloud-line); stroke-width: .9;
+  stroke-linecap: round; stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  /* 淡出**从 `.cloud-frame` 挪到这儿来**：整层一个 `opacity` 的话，底色只能跟着描边
+     一起淡（.72 × .06 ≈ 4%，几乎看不见）。描边淡是为了让线不抢戏，底色淡是为了压不住
+     字，两件事各有各的深浅。 */
+  stroke-opacity: .72; transition: stroke-opacity .12s ease, filter .12s ease;
+}
+/* 悬浮/选中那块底色：形状是 `buildCloudFillPath` 按这一行的云纹现拼的（`CloudFrame.tsx`），
+   上下边界就是描边本身，所以它不会再和云头错开。 */
+.cloud-fill { fill: var(--cloud-line); fill-opacity: 0; transition: fill-opacity .12s ease; }
+.roster-row:hover .cloud-fill { fill-opacity: .06; }
+.roster-row.on .cloud-fill { fill-opacity: .12; }
+.cloud-frame { position: absolute; inset: 0; pointer-events: none; }
+/* `overflow: visible` 是必须的：viewBox 就是这一行的净尺寸，而云头要拱到 y=0 之上
+   约 9px、竖边的小卷要探出 x=0 之外一点——裁掉的话每一朵云都被削平一刀。
+   拱出去的那 9px 正好落在上一行的下沿附近，参考图里就是这个层次。 */
+.cloud-frame svg {
+  display: block; width: 100%; height: 100%;
+  overflow: visible; shape-rendering: geometricPrecision;
+}
+.roster-row:hover .cloud-stroke { stroke-opacity: .85; }
+.roster-row.on .cloud-stroke { stroke-opacity: .95; }
+/* 键盘聚焦：描边本身发一圈克制的光，不叠第二层矩形焦点框——那会破坏云纹轮廓。
+   光只发在描边上，别连底色一起发（那一块面积发光 = 一团糊影）。
+
+   ⚠️ **判据是 `:has(:focus-visible)`，不是 `:focus-within`**（2026-09-05 修）。
+   `:focus-within` 连鼠标点出来的焦点一起算：作者点完那颗「收起」，焦点留在按钮上
+   （React 把展开态那颗按钮和收起态那颗复用成同一个 DOM 节点，焦点跟着留下来），
+   于是那一行的云纹**一直比别的行亮**，看着像它还处在某种状态里（作者原话：
+   「收起的卡片外边感觉有点和其他正常的卡片不一样的颜色」）。
+   `:focus-visible` 只在键盘走到它时才成立——键盘用户该有的提示一个没少。 */
+.roster-row:has(:focus-visible) .cloud-stroke {
+  filter: drop-shadow(0 0 1.4px var(--cloud-line)) drop-shadow(0 0 1.4px var(--cloud-line));
+}
+@media (prefers-reduced-motion: reduce) {
+  .cloud-stroke, .cloud-fill { transition: none; }
+}
+
+.char-card {
+  margin: 2px 0 10px 4px; padding: 8px 0 2px 10px; border-left: 2px solid var(--line);
+}
+.char-card .character-basic { margin-bottom: 6px; }
+.character-basic .cnrow { display: flex; align-items: center; gap: 8px; }
+.character-basic .cnrow strong { font-size: 14px; }
+.alias-chips { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+.alias-chip {
+  display: inline-flex; align-items: center; gap: 4px; padding: 1px 5px 1px 8px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--panel); font-size: 12px;
+}
+.alias-chip .auto-mark { color: var(--dim); font-size: 10px; font-style: normal; }
+.alias-chip .chip-x {
+  border: none; background: transparent; padding: 0 2px; color: var(--dim);
+  cursor: pointer; font-size: 13px; line-height: 1;
+}
+.alias-chip .chip-x:hover { color: var(--warn); }
+.alias-add { display: flex; gap: 4px; margin-top: 2px; }
+.alias-add input { flex: 1; min-width: 0; padding: 2px 6px; font-size: 12px; }
+
+/* 主角事件上千条时不能把卡片撑爆——超过一屏（`EVENTS_SCROLL_CAP`）才封顶滚动，
+   这条规则本身不判「够不够多」，那是 `RosterTab.tsx` 的活，这里只管封顶之后长什么样。 */
+.char-events-scroll { max-height: 240px; overflow-y: auto; padding-right: 2px; }
 
 /* M4 审阅面板 */
 .review-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
@@ -603,15 +843,54 @@ td.cell.editing { outline: 2px solid var(--accent); outline-offset: -2px; }
 
 /* 活动记录（中栏）—— 一行一条折叠，点开看跑了什么。
    行本身是一个 button（整行命中），所以里面**不能再套 button**：跳转那一颗在展开区里。 */
-.pane.log { padding: 0; display: flex; flex-direction: column; }
-.log-head { padding: 12px 14px 10px; border-bottom: 1px solid var(--line); background: var(--panel); }
+/* ── 顶栏改成「贴在顶上的毛玻璃」，流水从它**底下**过 ─────────────────────
+   作者 2026-09-09：颜色保持原样，但滑动之后要有玻璃态，「不至于那么丑和碍眼」。
+
+   ── 为什么要动布局，不只是加一句 `backdrop-filter` ────────────────────────
+   原来这一栏是 flex 竖排，顶栏和列表是**两个盒子并排摆着**，各自占各自的高度：
+   列表在自己的框里滚，顶栏底下什么都没有，于是「玻璃」后面是一片空——毛玻璃需要
+   有东西透上来才成立。所以滚动容器从 `.log-list` 上移到整栏（`.pane.log`），
+   顶栏改 `sticky`：内容真的从它下面走过去，那层模糊才有东西可模糊。
+
+   `--panel-glass` 和 `--panel` **是同一个颜色**，只是带了 .72 的透明度——作者要的是
+   「颜色保持原来的样子」，不是换一个更浅的顶栏。
+
+   `@supports` 那一支不是可有可无：不支持 `backdrop-filter` 的浏览器上，半透明背景
+   等于让流水**直接透过顶栏**和标题叠在一起，那比不做还糟。退回不透明的 `--panel`。 */
+.pane.log { padding: 0; display: block; }
+.log-head {
+  position: sticky; top: 0; z-index: 2;
+  padding: 12px 14px 10px; border-bottom: 1px solid var(--line);
+  background: var(--panel-glass);
+  /* **24px 不是随手挑的**：14px 那一版底下那行流水还读得出字，于是屏幕上是两层字
+     叠在一起，比不做还乱。毛玻璃要的是「看得出下面有东西在动」，不是「看得出下面
+     写了什么」——糊到认不出字为止，这个数才够。 */
+  -webkit-backdrop-filter: blur(24px) saturate(1.6);
+  backdrop-filter: blur(24px) saturate(1.6);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .log-head { background: var(--panel); }
+}
+/* 顶栏下沿的渐隐：一行流水滚到这儿是**化进去**，不是被切一刀。
+   ── 为什么光有毛玻璃不够 ──────────────────────────────────────────────
+   这条顶栏高 ~90px，而它几乎被自己的字填满（标题 + 两行统计 + 那排筛选），
+   真正能透出东西的只有排片下面十几像素的一条窄带——玻璃是通的，但没地方显，
+   作者和我都「没看出区别」。碍眼的其实一直是**边界那一刀**：上一行被拦腰截断，
+   截面是一条硬边。这层渐隐直接治那个，而且**不吃 `backdrop-filter`**：
+   哪台机器不合成滤镜，它照样在。
+   `top: 100%` ⇒ 挂在顶栏外沿下面；它是顶栏的子元素，所以跟着顶栏那个 z-index
+   压在流水上面，不用另开一层。 */
+.log-head::after {
+  content: ""; position: absolute; left: 0; right: 0; top: 100%; height: 20px;
+  background: linear-gradient(to bottom, var(--panel-glass), transparent);
+  pointer-events: none;
+}
 .log-head h2 { margin: 0 0 4px; font-size: 13px; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); }
-.log-lead { margin: 0 0 10px; color: var(--dim); font-size: 12px; line-height: 1.6; }
 .log-usage { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-bottom: 10px; color: var(--dim); font-size: 11px; }
 .log-filters { display: flex; flex-wrap: wrap; gap: 6px; }
 .log-filters button { font-size: 12px; padding: 2px 9px; }
 .log-filters button.on { border-color: var(--accent); color: var(--accent); background: var(--sel); }
-.log-list { list-style: none; margin: 0; padding: 0; flex: 1; overflow: auto; }
+.log-list { list-style: none; margin: 0; padding: 0; }
 .log .empty { padding: 14px; }
 .log-item { border-bottom: 1px solid var(--line); }
 .log-line {
@@ -652,7 +931,19 @@ td.cell.editing { outline: 2px solid var(--accent); outline-offset: -2px; }
 /* 「跳过去只能看」不是提示语气，是一条事实：后端说了今天没有入口能改它（ADR 0020 的
    推翻条件之一）。所以它跟着按钮一起出现，不藏在 title 里。 */
 .log-jump-note { color: var(--dim); font-size: 11px; }
-.log-more { margin: 10px 12px 16px; font-size: 12px; }
+/* 「看更早的」**是一行字，不是一颗按钮**（作者 2026-09-09：「不要这种按钮感，直接
+   文字点击就好」）。边框和底色抽掉、内边距归零，只留 `--dim` 的字 + 悬浮转强调色——
+   同这一屏其余每一处的反馈方式。`border-color: transparent` 而不是 `border: 0`：
+   留着那 1px 只抽颜色，行高不会因为「有没有边」跳一下（同 `.tabs` / `.icon-btn`）。
+   连带压住全局 `button:hover` 的染边，不然鼠标一碰边框就冒出来。
+   它现在住在 `<ul class="log-list">` 里（见 `ActivityLog.tsx` 那段注释），
+   所以居中那一下由这个 `<li>` 负责，不再靠按钮自己的外边距。 */
+.log-more-row { display: flex; justify-content: center; padding: 16px 12px 22px; }
+.log-more {
+  margin: 0; padding: 0; font-size: 12px;
+  border-color: transparent; background: transparent; color: var(--dim);
+}
+.log-more:hover:not(:disabled) { border-color: transparent; color: var(--accent); }
 /* 从活动记录跳过来的那一格 */
 table.mx td.cell.focus { outline: 2px solid var(--accent); outline-offset: -2px; background: var(--sel); }
 
@@ -689,36 +980,40 @@ table.mx td.cell.focus { outline: 2px solid var(--accent); outline-offset: -2px;
 .drawer .row.wrap { flex-wrap: wrap; }
 .drawer .hint { color: var(--dim); font-size: 11px; line-height: 1.5; }
 .drawer .hint.warn { color: var(--warn); }
-/* 角色册 h2 右边那两颗图标按钮（排序 + 加号）：`.icon-btn` 别处都是
-   `inline-flex` 摆在一个 flex 容器里，这儿是唯一一处塞进纯靠 float 撑住的
-   一行——不补这条就会掉出这一行、贴到左边去。 */
-.pane h2 .icon-btn { float: right; }
+/* ── 角色册顶上那一行：「人物」和右边两颗图标按钮**不在同一个盒子里** ──────────
+   这一行看着是一行，实际是两块：`<h2>` 里**一个字都没有**，只装那两颗按钮；
+   「人物 / 地点 / 势力」是下面 `.grp > .lab` 的内容。原来靠 `float: right` 把按钮
+   浮出 h2、让下面那行字流上来贴到它左边——**两者的垂直位置因此是各算各的**：
+   按钮连内边距 24px 高，`.lab` 那行字约 16px 高，两个盒子从同一条顶边往下长，
+   中线自然差 4px 左右。作者原话「人物与右侧的图标也没有对齐」。
+
+   改法是**让两块的行高一样，再各自居中**，而不是去猜一个负边距：
+   - 整个 `<h2>` 一起浮（不是让里面两颗按钮各自浮），里面用 flex 居中；
+     顺带 DOM 顺序就等于视觉顺序了，JSX 里两颗按钮因此对调过一次，
+     **屏幕上还是「＋」在左、排序在右**，一个像素没动。
+   - `.grp .lab` 补上同样的 24px 行高并居中。
+   两块从同一条顶边往下长、又一样高，中线就必然重合——不吃字号、图标尺寸的后续改动。
+
+   ⚠️ 只作用在**带图标按钮的那个 h2**（`:has`），别的面板的 h2 一个字节没变。 */
+.pane h2:has(.icon-btn) {
+  float: right; display: flex; align-items: center; gap: 6px;
+  height: 24px; margin: 0;
+}
+.grp .lab { min-height: 24px; display: flex; align-items: center; }
 /* 空角色册里的「建第一个」是行内链接：它是那一句话的出口，不该长成一个抢眼的按钮 */
 .empty a { color: var(--accent); cursor: pointer; text-decoration: underline; font-style: normal; }
 
-/* 底栏时间线 */
-.bottombar { display: flex; border-top: 1px solid var(--line); background: var(--panel); height: 110px; }
-.tl-col { padding: 6px 12px; overflow: auto; }
-.tl-col-scenes { flex: 0 0 42%; border-right: 1px solid var(--line); }
-.tl-col-intervals { flex: 1; }
-.tl-title { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); margin-bottom: 6px; }
-.tl-empty { color: var(--dim); font-style: italic; font-size: 12px; }
-.tl-scenes { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
-.tl-scene { padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); cursor: pointer; font-size: 12px; }
-.tl-scene.on { border-color: var(--accent); color: var(--accent); background: var(--sel); }
-.tl-scene .tl-loc { color: var(--k); }
-.tl-arrow { color: var(--dim); margin: 0 2px; }
-.tl-axis { display: flex; justify-content: space-between; font-size: 10px; color: var(--dim); margin-bottom: 4px; }
-.tl-axis .tl-node { color: var(--ink); }
-.tl-row { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
-.tl-label { flex: 0 0 130px; font-size: 12px; text-align: right; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tl-track { position: relative; flex: 1; height: 16px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; }
-.tl-bar { position: absolute; top: 0; height: 100%; background: var(--sel); border: 1px solid var(--accent); border-radius: 4px; font-size: 10px; color: var(--accent); display: flex; align-items: center; padding: 0 3px; box-sizing: border-box; }
-
 /* 版本对比 */
-.drawer.wide { width: 720px; max-width: 96vw; }
-.hist { display: flex; gap: 12px; margin-top: 8px; }
-.hist-list { flex: 0 0 230px; display: flex; flex-direction: column; gap: 4px; max-height: 60vh; overflow: auto; }
+/* 历史面板**撑满抽屉的高度**（作者 2026-09-07：「这边空间利用不到位往下调一下」）。
+   原来列表和 diff 各自写死 60vh / 58vh 的上限，抽屉是满屏高——于是下面白白空掉
+   一大截，而 diff 自己在一个小框里滚。现在改成：**抽屉是一列 flex，`.hist` 吃掉
+   剩下的全部高度**，列表和 diff 跟着它长，滚动条留在各自框里。
+   `> :not(.hist)` 那条是把标题 / 说明 / 确认条 / 关闭行钉成固定高——不钉的话窗口
+   一矮，它们会跟着一起被压扁，而该让出高度的只有 `.hist`。 */
+.drawer.wide { width: 720px; max-width: 96vw; display: flex; flex-direction: column; }
+.drawer.wide > :not(.hist) { flex: 0 0 auto; }
+.hist { display: flex; gap: 12px; margin-top: 8px; flex: 1; min-height: 0; }
+.hist-list { flex: 0 0 230px; display: flex; flex-direction: column; gap: 4px; overflow: auto; }
 /* 一行 = 选中区（挑哪一版看 diff）+ 动作区（还原 / 删除）。
    行本身不再是 button：按钮不能套按钮，套了浏览器会把内层丢出去或吞掉点击。
    **`position: relative` 是给 `.hist-actions` 的悬浮层定位基准**，见下面那条注释。 */
@@ -773,8 +1068,9 @@ table.mx td.cell.focus { outline: 2px solid var(--accent); outline-offset: -2px;
 }
 .hist-confirm.danger { border-color: var(--warn); background: var(--warnbg); color: var(--warn); }
 .hist-confirm .q { flex: 1; min-width: 0; }
-.hist-diff { flex: 1; min-width: 0; }
-pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font-size: 12px; line-height: 1.5; }
+.hist-diff { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+/* 高度由上面那条 flex 给，别再写死 vh：写死了窗口一高就又空出一截。 */
+pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font-size: 12px; line-height: 1.5; }
 .diff .dl { display: flex; padding: 0 6px; white-space: pre-wrap; word-break: break-word; }
 .diff .dl .sign { flex: 0 0 14px; color: var(--dim); user-select: none; }
 .diff .dl.add { background: var(--okbg); } .diff .dl.add .sign { color: var(--k); }
@@ -915,13 +1211,36 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
   border-color: transparent; background: color-mix(in srgb, var(--welcome-action) 8%, transparent);
   color: var(--ink);
 }
-/* 选中那一条：**底色换成右边那一栏的颜色**。它不是「一颗被高亮的按钮」，
-   是「白色那一块从右边伸过来接住了它」——两色分区里这一下才说得清「你在哪一栏」。 */
-.set-rail-item.on {
-  border-color: transparent; background: var(--welcome-surface); color: var(--ink);
+/* 选中那一条：**比左栏底色再深一档**（作者 2026-09-05：「左侧的选中应该用左侧背景
+   更深的色，而不是用白色」）。
+   上一版是「白色那一块从右边伸过来接住了它」——在浅色主题下它和右边整片白连成一片，
+   选中态反而是这一栏里**唯一没有颜色的一条**，看不出被选的是谁。
+
+   **混 `--welcome-action` 而不是写死一个灰**：那一位浅色主题是近黑、深色主题是近白，
+   同一条规则于是在浅色下压深、在深色下提亮。深色主题里「更深」会直接糊进背景——
+   那不是同一件事的两种画法，是看不见。
+
+   **hover 那条要一起写**：`.set-rail-item:hover:not(:disabled)` 的特指度比 `.on` 高，
+   不带上它的话鼠标扫过选中项会把它冲淡回 8%，看着像选中态掉了一下。 */
+.set-rail-item.on,
+.set-rail-item.on:hover:not(:disabled) {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--welcome-action) 16%, transparent);
+  color: var(--ink);
 }
 
-.set-right { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto; min-width: 0; }
+/* `min-height: 0` **是 load-bearing 的，别当成凑数的一位**（2026-09-10 补）。
+   作者：「给这个加个悬浮滑轮，这样我能拉到下边看这个是什么东西」——而毛病不在滑轮，
+   在这一行：它是 `.set-modal` 这个 grid 的子项，而 grid 子项的**自动最小尺寸是内容高**。
+   没有这一位，这一栏就撑到内容那么高（实测 726px），弹窗只有 500px，多出来的部分被
+   `.set-modal { overflow: hidden }` 直接裁掉——`.set-pane` 上那句 `overflow: auto`
+   因此从来没生效过（`scrollHeight === clientHeight`，浏览器认为它根本不需要滚）。
+   补上之后 `minmax(0, 1fr)` 才夹得住第一行，下面那一栏才拿得到一个有界的高度。
+   `min-width: 0` 是同一件事在横向的那一半，两个都不能少。 */
+.set-right {
+  position: relative; display: grid; grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0; min-height: 0;
+}
 /* × 吊在右上角，**不占一行**：给它单开一条横栏就等于把刚拆掉的标题栏又装回去。
    它压在内容区上方，所以下面那一栏的上内边距（50px）留够了它整个身子——
    上一版只留 22px，于是它正好骑在第一张卡的右上角上，看着像卡片上长出来的东西
@@ -1016,6 +1335,10 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
    2026-08-14 作者：「这三个做成一组，右下角一个开关用来控制是否应用……这样就不会很丑」。
    于是脚条整条撤了（它横跨整扇窗，说不清自己在存哪一栏），「应用」跟着它管的那张卡走。
    **一颗按钮离它改的东西越近，越说得清它会改什么。** */
+/* 一栏里若干张卡竖着摞起来。**卡与卡之间的距离写在这儿，不写在卡上**：
+   卡自己不知道上下有没有邻居，`margin` 写在它身上，单张卡那一栏底下就会多一截空。 */
+.set-stack { display: grid; gap: 14px; align-content: start; }
+
 .set-card {
   display: grid; gap: 12px;
   padding: 14px; border: 1px solid var(--line); border-radius: 12px;
@@ -1109,10 +1432,21 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
 .center-split { display: grid; min-width: 0; overflow: hidden; }
 
 /* 写作助手面板 */
-.pane.chat { padding: 0; display: flex; flex-direction: column; border-left: 0; }
+/* `position: relative` 是会话列表那张幕布（`.chat-sessions-veil`）的定位基准；
+   `overflow: hidden` 是不让浮层把面板撑出一根滚动条（面板自己从不滚，滚的是
+   `.chat-log`）。 */
+.pane.chat {
+  padding: 0; display: flex; flex-direction: column; border-left: 0;
+  position: relative; overflow: hidden;
+  /* 说过的话和输入框**共用这一条栏**（见下面那条 `.chat-log > *` 规则）。 */
+  --chat-column: 720px;
+}
+/* 头栏是会话列表浮层的锚（`top: calc(100% + 6px)` 量的就是它），`z-index` 让它
+   压在幕布上面——不压的话再点一次「对话列表」会被幕布吃掉，那颗开关就只进不出。 */
 .chat-head {
   display: flex; align-items: center; gap: 8px; padding: 8px 12px;
   border-bottom: 1px solid var(--line); background: var(--panel);
+  position: relative; z-index: 12;
 }
 .chat-head .spacer { flex: 1; }
 .chat-head-title {
@@ -1120,9 +1454,20 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
   text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* 会话列表：**盖住对话区**而不是切一条侧栏出来 —— 这一半窄到放不下两列
-   （理由写在 ChatSessions.tsx 顶上）。 */
-.chat-sessions { padding: 10px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+/* 会话列表：**挂在「对话列表」那颗按钮下面的浮层**（作者 2026-09-07：「对话列表
+   设计也不对太丑了，只能从上往下发吗」）。原来它是横贯整条面板、插在头栏和对话区
+   之间的一块：点开时对话整个被推下去，一个几行的列表占掉半屏，看起来像面板换了页。
+   现在锚在头栏下面、右对齐、有宽度上限，点外面收起。
+   **仍然不是一条侧栏**——那条理由（这一半窄到放不下两列）写在 ChatSessions.tsx
+   顶上，一个字没变。 */
+.chat-sessions {
+  position: absolute; top: calc(100% + 6px); right: 12px; z-index: 12;
+  width: min(340px, calc(100% - 24px));
+  padding: 8px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--bg); box-shadow: 0 12px 32px rgba(0, 0, 0, .14);
+}
+/* 透明幕布：点列表外面就收起。盖满整块面板，但头栏靠更高的 z-index 盖在它上面。 */
+.chat-sessions-veil { position: absolute; inset: 0; z-index: 11; }
 .chat-new { width: 100%; margin-bottom: 8px; padding: 5px 8px; }
 .chat-sessions-empty { margin: 4px 0 0; font-size: 12px; line-height: 1.7; }
 /* **有上限，而且是一屏的一半**（作者问过这一列有没有最大高度）：它盖在对话区上，
@@ -1196,24 +1541,28 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
    **不是一段居左的小字**——那读起来像一条说明；居中的一张脸 + 一行大字才像
    「这儿是空的，从这里开始」。上下留白按 `padding` 给，不用 `height: 100%`：
    这块区域上面还可能顶着一个错误框，撑满会把它推出视野。 */
+/* **上下居中**（作者 2026-09-07）：原来是 `padding: 42px 24px 0` 钉在顶上，
+   下面空掉一大片，整块屏幕看起来像没加载完。`margin: auto 0` 吃掉对话区剩下的
+   空间——上面万一顶着一个错误框，它照样占自己的位置，居中的是剩下那一块。 */
 .chat-hello {
   display: grid; justify-items: center; gap: 6px;
-  padding: 42px 24px 0; text-align: center;
+  margin: auto 0; padding: 24px; text-align: center;
 }
-.chat-hello-mark {
-  display: grid; place-items: center; width: 46px; height: 46px; margin-bottom: 4px;
-  border-radius: 50%; background: var(--sel); color: var(--accent);
-}
-.chat-hello-mark .icon { width: 26px; height: 26px; }
-.chat-hello-title { margin: 0; font-size: 15px; font-weight: 650; }
-.chat-hello-sub {
-  margin: 0; max-width: 30em; color: var(--dim); font-size: 12px; line-height: 1.9;
-}
+/* **没有圆底**：紫底 + 紫图标那一版是一张贴纸，跟这一屏别处的克制不是一路
+   （作者 2026-09-07：「设计文字以及图标都太丑了」）。留一张脸，但让它安静。 */
+.chat-hello-mark { display: grid; place-items: center; color: var(--dim); }
+.chat-hello-mark .icon { width: 34px; height: 34px; }
+/* 常规字重 + `--dim`（作者 2026-09-10：「不要太粗和太深」，两轮才落到这儿——
+   650 太粗、500 配满色仍然太深）。这一行是招呼不是标题栏，跟它上面那张脸同一个
+   颜色，整块招呼才读成一个安静的东西，而不是一句要人先读完的话。 */
+.chat-hello-title { margin: 0; font-size: 15px; font-weight: 400; color: var(--dim); }
 
 /* 「现在生效的规矩」那一块的样式 2026-08-14 随组件一起删了（`ChatPanel.tsx` 顶上写着理由）。 */
 
 /* 对话区 */
-.chat-log { flex: 1; min-height: 0; overflow: auto; padding: 12px; }
+/* 一列 flex：块级子元素的排布和原来一样，多出来的只有「空态能用 `margin: auto`
+   把自己顶到正中」这一件事。 */
+.chat-log { flex: 1; min-height: 0; overflow: auto; padding: 12px; display: flex; flex-direction: column; }
 .chat-log .empty { font-size: 12px; line-height: 1.8; }
 .chat-earlier { width: 100%; margin-bottom: 10px; font-size: 12px; }
 .chat-msg + .chat-msg { margin-top: 12px; }
@@ -1225,8 +1574,16 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
   clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
 .chat-text { margin: 0; white-space: pre-wrap; line-height: 1.75; }
-/* 你说的话有一块底，它说的话没有——**一屏五句话时这比五个「你」字省得多**。 */
+/* 你说的话有一块底，它说的话没有——**一屏五句话时这比五个「你」字省得多**。
+   **那块底只有字那么宽**（作者 2026-09-12：「气泡匹配字体的那个数量的那个宽度……
+   不要有多余空白的」）：`<p>` 默认撑满整栏，一句「什么意思」后面拖着一整行紫底。
+   `fit-content` 让它收到最长那一行的宽度，`max-width: 100%` 让长句照旧在栏宽处
+   换行（`.chat-text` 那条 `pre-wrap` 管折行）。
+   **靠右**（作者同日：「用户回答的放在右边」）：`margin-left: auto` 把这块收窄了的底
+   推到栏的右沿，它说的话仍然靠左——一左一右，不看底色也分得出谁在说。
+   块里的字照旧左对齐：多行的一句靠右对齐每行会参差不齐，难读。 */
 .chat-msg.author .chat-text {
+  width: fit-content; max-width: 100%; margin-left: auto;
   padding: 7px 10px; border-radius: 8px; background: var(--sel);
 }
 /* 系统那一行（一轮没跑成时留在对话里的那句）。名字撤掉之后**它不能和助手长一样**：
@@ -1237,24 +1594,29 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
   color: var(--dim); font-size: 12px;
 }
 
-/* 还在跑的那一段。**回话区没有打字机动画**：回话那一档今天非流式，装成在逐字吐
-   是骗人的（ChatPanel.tsx 顶上第 1 条）。会动的是那颗点、真实的秒表、
-   真实到达的那几行进度，以及**真的在逐字长**的起草区（`.chat-drafting`）。 */
-.chat-running {
-  display: flex; align-items: flex-start; gap: 8px; margin-top: 14px; padding: 9px 10px;
-  border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+/* 还在跑的那一段。**它就排在对话里**（作者 2026-09-12：「不要用框框框住他的思考
+   内容……直接放到那个上下文中」）：没有边框、没有底色，它说的话用 `.chat-msg`
+   那一副长相，做的事是夹在中间的灰字，末尾一行秒表 + 「停」。
+   **回话区没有打字机动画**：回话那一档今天非流式，装成在逐字吐是骗人的
+   （ChatPanel.tsx 顶上第 1 条）。会动的是那颗点、真实的秒表、真实到达的那几行
+   步骤，以及**真的在逐字长**的起草区（`.chat-drafting`）。 */
+.chat-running { margin-top: 12px; }
+.chat-running > * + * { margin-top: 12px; }
+/* 它这会儿在做的那几件事。**一条一行，措辞全是后端给的。**
+   连着的几件事挨紧一点：它们是一串动作，不是几段话。 */
+.chat-step { display: block; color: var(--dim); font-size: 12px; line-height: 1.7; }
+.chat-step + .chat-step { margin-top: 2px; }
+/* 末尾那一行：对话的活尾巴。「停」钉在右端——秒表每秒换一次宽度，
+   跟在文字后面的话那颗按钮会一秒挪一下，而它正是作者要去按的东西。 */
+.chat-running-tail {
+  display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--dim);
 }
+.chat-running-clock { flex: 1; min-width: 0; }
 .chat-running-dot {
-  flex: 0 0 auto; width: 7px; height: 7px; margin-top: 5px; border-radius: 50%;
+  flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%;
   background: var(--accent); animation: chat-pulse 1.4s ease-in-out infinite;
 }
 @keyframes chat-pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
-.chat-running-say { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; line-height: 1.7; }
-.chat-running-say span { color: var(--dim); }
-
-/* 它这会儿在做的那几件事。**一条一行，措辞全是后端给的。** */
-.chat-step { color: var(--dim); }
-.chat-step-said { margin: 4px 0 0; font-size: 12px; }
 
 /* 正在写的那一稿。**按 `stream` 一格**：一批三稿是同时在飞的，
    同一章的三稿连章号都一样，不分格的话屏幕上是一坨交错的字。 */
@@ -1285,7 +1647,12 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
 .chat-receipt-note { margin: 0 0 4px; color: var(--dim); font-size: 11px; line-height: 1.7; }
 
 /* 输入 */
-.chat-say { border-top: 1px solid var(--line); padding: 8px 12px 10px; background: var(--panel); }
+/* **没有底栏那层壳**（作者 2026-09-10：「我就是不要这个外边的灰色的壳」）：
+   这儿原来是一条 `--panel` 灰底 + 一根上边线，于是屏幕底下横着一道和正文不同色的
+   带子，而带子里孤零零躺着一个白框——框外面还套着一层框。去掉之后输入框和对话
+   站在同一张白纸上，边界由框自己那圈描边画。**它不浮在内容上**（是 flex 的兄弟，
+   不是 sticky），所以不画底色也不会有字从它背后透出来。 */
+.chat-say { padding: 8px 12px 10px; }
 /* **框和按钮是一个盒子**：边框画在盒子上，textarea 自己不画（框里套框最难看的那种）。
    聚焦光圈也挂在盒子上（`:focus-within`），所以点到哪儿都是整块亮起来。 */
 .chat-say-box {
@@ -1316,7 +1683,91 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
   background: color-mix(in srgb, var(--ink) 10%, transparent); color: var(--dim); opacity: 1;
 }
 .chat-send:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+/* 「停」那一面（2026-09-12 从跑动条挪过来的）**不另外上色**：同一颗圆钮、同一个紫，
+   只有图标从箭头换成方块。挪过来的头一版给它涂了 `--warn`（跟着原来那颗「停」走），
+   作者当天就否了（「这个暂停键按钮太丑了，特别是配色」）——病根有两条：
+   ① 这套界面里 `--warn` 是**出错 / 删除**的颜色（`.err-box`、`.log-status.failed`、
+      删对话那颗「是」），「停」是个日常动作，穿这身等于宣布出了事；
+   ② 整块屏幕是灰 + 紫，那颗暗红是屏幕上唯一的暖色，谁看都是外来的。
+   颜色不变才说得出「这是同一颗按钮的另一面」，哪一面由图标自己说。 */
+/* 作者中途说的、还排着队的那一句：淡一档（它还没进对话，`author_said` 到手才算）。 */
+.chat-msg.author.queued .chat-text { opacity: .55; }
+/* 键盘手势：**平时透明，输入框有焦点才露面**。它从占位符里搬出来（占位符该说
+   「这儿输入什么」，不是挂一份说明书）；常驻又太吵，所以只在正要打字的时候出现。
+   位置不占来回——`opacity` 变的，高度一直留着，出现时屏幕不跳。
+   **必须紧跟在 `.chat-say-box` 后面**：这条用的是相邻兄弟选择器。 */
+.chat-say-hint {
+  margin: 5px 2px 0; color: var(--dim); font-size: 11px; line-height: 1.7;
+  opacity: 0; transition: opacity .12s ease;
+}
+.chat-say-box:focus-within + .chat-say-hint { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .chat-say-hint { transition: none; } }
 .chat-say-note { margin: 6px 0 0; color: var(--dim); font-size: 11px; line-height: 1.7; }
+
+/* ── 一条居中的栏，说过的话和输入框都站在它里面（作者 2026-09-10：「有文字输入后
+   这个输入框很丑」）────────────────────────────────────────────────────────
+   面板拉宽之后，输入框会跟着摊成一条横贯整屏的板，而框里那三行是空的——**越宽
+   越像一块没写字的板子**。上面的对话同样一路顶到边，于是整块屏幕没有一条竖线
+   对得上。收成一栏两件事一起解决：框不再是板，气泡和框左右对齐。
+   **限的是子元素不是容器**：`.chat-say` 自己还得满宽，它那条上边线和底色画的是
+   「这儿是底栏」，收窄了会变成一条浮在半空的短线。 */
+.chat-log > *,
+.chat-say > * { width: 100%; max-width: var(--chat-column); margin-inline: auto; }
+
+/* ── 一句话都还没有的那一屏（`.pane.chat.blank`）──────────────────────────────
+   底栏解开，跟空态那张脸**并成一组立在正中**（作者 2026-09-10：打开就该是一张
+   空白页，而不是脸悬在半空、输入框独自钉在底边）。
+   **只挪位置，不改长相**：`.chat-say-box` 的高度、圆角、内边距和那颗发送一个
+   像素不动——作者说满意的正是这个框本身。
+   居中靠一对 auto 外边距（对话区顶上一个、输入区底下一个），剩下的空间由 flex
+   平分。所以上面万一顶着一个错误框，被居中的是「脸 + 框」那一整组，谁都不会被
+   挤出视野；换成 `height: 100%` 或绝对定位就做不到这一点。 */
+.pane.chat.blank .chat-log { flex: 0 1 auto; margin-top: auto; }
+/* 标题和输入框之间的距离：底下那句说明撤掉后（2026-09-10）两者贴得太近，收窄的
+   是 `.chat-hello` 自己的下内边距，输入框不动。 */
+.pane.chat.blank .chat-hello { padding-bottom: 14px; }
+/* 边框和底色是「这是一条底栏」的说法，这一屏它不是底栏，所以两样都去掉。
+   横向也收窄居中：满宽的输入框在一张空白页上会自己变成一条横杠。 */
+.pane.chat.blank .chat-say {
+  /* **只给下边一个 auto**：左右也写 auto 的话，flex 列会停止把它拉满宽、改成
+     按内容收缩，输入框当场缩成一小截（2026-09-10 真踩了一次）。横向居中由上面
+     那条共用栏宽负责，这儿不重复。 */
+  margin-bottom: auto; padding-top: 0;
+}
+
+/* ── 输入区浮在对话上面，边上那圈是毛玻璃（作者 2026-09-10）───────────────────
+   要求原话：「输入框之外的白色区域，重合这个文字的时候加点玻璃效果，雾化效果」。
+   **先得真的重合**：在这之前对话区到输入区顶上就截止了，底下什么都没有，
+   玻璃没东西可糊。所以对话区往下多长出输入区那么高（`margin-bottom` 取负），
+   文字真的从它底下走过去；同样多的 `padding-bottom` 补回来，最后一句话才不会
+   被压在玻璃底下读不全。**那个高度是量出来的**（`ChatPanel.tsx` 的 `--say-h`），
+   不是写死的：作者能把那个框自己拖高。
+   空态不走这一套——那一屏输入框立在正中，它上面没有内容可压。
+
+   `@supports` 那一支不是可有可无：不合成滤镜的机器上，半透明底等于让文字**直接
+   透过输入区**和框叠在一起，比不做还糟。退回不透明的 `--bg`（同 `.log-head`）。 */
+.pane.chat:not(.blank) .chat-log {
+  padding-bottom: calc(var(--say-h, 0px) + 12px);
+  margin-bottom: calc(-1 * var(--say-h, 0px));
+}
+.pane.chat:not(.blank) .chat-say {
+  position: relative; z-index: 1;
+  background: var(--bg-glass);
+  /* 20px：糊到认不出字为止。看得出下面有东西在动就够了，看得出下面写了什么就是
+     两层字叠在一起（`.log-head` 那处踩过同一个坑，它用的 24px）。 */
+  -webkit-backdrop-filter: blur(28px) saturate(1.4);
+  backdrop-filter: blur(28px) saturate(1.4);
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .pane.chat:not(.blank) .chat-say { background: var(--bg); }
+}
+/* 上沿渐隐：一句话滚到这儿是**化进去**，不是被拦腰切一刀。**不吃 `backdrop-filter`**，
+   哪台机器不合成滤镜它照样在（同 `.log-head::after`）。 */
+.pane.chat:not(.blank) .chat-say::before {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 100%; height: 22px;
+  background: linear-gradient(to top, var(--bg-glass), transparent);
+  pointer-events: none;
+}
 
 /* 这两个类只有写作助手在用（工作台其余地方按钮一律同一副长相）。
    「发送」和「停」是这一块屏幕上唯二会花钱 / 会中断花钱的动作，所以给它们分出来。 */
@@ -1364,6 +1815,13 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
   background: var(--warnbg); color: var(--warn); font-size: 12px; line-height: 1.6;
 }
 .draft-note { margin: 5px 0 0; font-size: 12px; line-height: 1.7; }
+/* 「这一稿的要求 / 助手补的资料」（ADR 0047）：默认收着的两小格，字比自述再小一档、灰一档
+   ——它们是「它为什么这么写」的依据，不是稿子本身。 */
+.draft-brief { margin: 5px 0 0; font-size: 11px; }
+.draft-brief > summary { cursor: pointer; color: var(--dim); }
+.draft-brief-text { margin: 3px 0 0 12px; line-height: 1.7; white-space: pre-wrap; }
+.draft-materials { margin: 3px 0 0; padding-left: 26px; line-height: 1.7; }
+.draft-materials li { white-space: pre-wrap; }
 .draft-preview, .draft-text {
   margin: 5px 0 0; color: var(--dim); font-size: 12px; line-height: 1.8; white-space: pre-wrap;
 }
@@ -1388,6 +1846,21 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
    正文框、按钮行、那几句说明各一条；别的一律吃右栏和全局既有的样式
    （`.empty` / `.warn` / `.err-box` / 全局的 `textarea` 和 `button`）。 */
 .chsum-text { width: 100%; box-sizing: border-box; resize: vertical; line-height: 1.7; }
+/* 人物卡「状态」那一格：**一个字段一行，行内一串带章号的值**（作者 2026-09-06）。
+   从前是一行一个值、40 行平铺，字段名和值混在同一串字里，扫不出结构。
+   字段名固定宽度左对齐 → 眼睛顺着一列往下走就能找字段；值之间用间距分，不用顿号
+   （顿号会和值本身的顿号打架——「满级沧浪剑、满级蛮荒体魄」里面就有）。 */
+.st-dim { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: baseline; }
+.st-name { flex: 0 0 auto; min-width: 5.5em; color: var(--dim); }
+.st-val { flex: 0 0 auto; }
+/* 「你改过」那个小标记。**做成按钮而不是一个色块**：它点得动（跳到那一章），
+   而看着像标签、点起来是按钮，是这块屏幕最不该有的那种东西。 */
+.mine {
+  margin-left: 4px; padding: 0 4px; border: 1px solid var(--line); border-radius: 4px;
+  background: transparent; color: var(--dim); font-size: 10px; line-height: 1.5; cursor: pointer;
+}
+.mine:hover { color: var(--accent); border-color: var(--accent); background: transparent; }
+
 .chsum-scope { margin: 0 0 8px; color: var(--dim); font-size: 12px; }
 .chsum-why { margin: 6px 0 0; font-size: 12px; line-height: 1.7; }
 .chsum-actions { margin-top: 10px; display: flex; gap: 6px; flex-wrap: wrap; }
@@ -1428,8 +1901,6 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
 
 /* 「你交代过的」那张表（ADR 0028 + 迁移 016）。**它是记录不是控件**：没有取消按钮，
    也没有「还生不生效」那一列（理由在 RulesTable.tsx 顶上）。 */
-.log-rules { margin: 0 0 18px; }
-.log-rules h3 { margin: 0 0 6px; font-size: 13px; font-weight: 600; }
 .ruletable { width: 100%; border-collapse: collapse; font-size: 12px; }
 .ruletable th { text-align: left; font-weight: 500; color: var(--dim); padding: 4px 8px 4px 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
 .ruletable td { padding: 6px 8px 6px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
@@ -1437,3 +1908,179 @@ pre.diff { margin: 0; max-height: 58vh; overflow: auto; border: 1px solid var(--
 .ruletable .rt-text { line-height: 1.6; word-break: break-word; }
 .ruletable .rt-until { line-height: 1.6; word-break: break-word; }
 .ruletable .rt-chat { color: var(--dim); word-break: break-word; }
+
+/* 角色卡（2026-09-04）。
+   「回车保存」原来是这儿一句常驻小字（`.alias-hint`），按作者的裁定挪进输入框当
+   placeholder 了——**我提过它一打字就消失，作者仍然要这个形状**，那条规则随之删掉，
+   别再凭注释把它加回来。同日撤掉的还有 `.lab-bar`（那是给别名那一格右上角那颗 ✕
+   靠右用的，✕ 本身撤了：收起在那一行右端那颗按钮上）。 */
+/* 「（最新）」：状态里刚变的那一条。用 `--k`（落定/成立那个绿）而不是 `--accent`
+   ——accent 全局是「能点/选中」的意思，给一个点不动的标签用会骗手。 */
+.statecard .row .fresh { color: var(--k); font-size: 11px; }
+
+/* 关系图上点一个人冒出来的气泡（2026-09-04，`CharacterRelations.tsx`）。
+   黑底白字用的是工作台通用那两个色（`--ink` / `--bg`，同 `[data-tip]` 那套），
+   **不写死 `#000`**：暗色模式下这两个色自己反过来，写死就变成黑底上一块黑。
+   `left`/`right` 两个方向由节点在中心的哪一边决定——朝画布外侧的空白长。 */
+.node-tip {
+  position: absolute; left: 50%; transform: translateX(-50%); z-index: 40;
+  padding: 4px 8px; border-radius: 4px;
+  background: var(--ink); color: var(--bg);
+  font-size: 11px; line-height: 1.6; text-align: left;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .22);
+  /* **封顶 + 滑轮**（作者点名，同事件那一格 `.char-events-scroll`）：一条两条时
+     这两行不起作用，关系多到超过一屏才封顶滚动。`nowheel`/`nodrag` 两个类在
+     `CharacterRelations.tsx` 那边挂——**没有它们滚轮会被画布拿去缩放**。 */
+  /* ⚠️ `width: max-content` **不能省**：绝对定位 + `left: 50%` 时，「收缩到合适」
+     算的可用宽度是「容器宽 - 50%」——一个 60px 的名字框只剩 30px，气泡会被压成
+     一列单字（2026-09-04 截图自查逮到的原形）。多行折行必须配它。 */
+  width: max-content; max-width: 240px; max-height: 96px; overflow-y: auto;
+}
+/* 一条关系一行，长名字折行（不横向滚：横着滚的气泡没人找得到那个条）。 */
+.node-tip .tip-line { white-space: normal; }
+/* 「（最新）」在气泡里**只加粗、不换颜色**：气泡是深底浅字，而深浅两个主题下
+   `--ink`/`--bg` 是对调的，任何写死的绿在其中一个主题里都会糊掉。 */
+.node-tip .fresh { font-weight: 600; margin-left: 3px; }
+.node-tip .tip-line:not(:first-child) { opacity: .75; }
+.node-tip.up { bottom: calc(100% + 6px); }
+.node-tip.down { top: calc(100% + 6px); }
+/* 句柄只是连线的锚点，不给作者看（自定义节点必须自己挂，否则边画不出来）。 */
+.node-handle { opacity: 0; }
+
+/* 「检验规则」那一栏里的规则行（2026-09-04）。**整行灰、连加粗的名字一起灰**
+   （作者：「然后要用灰色的」）：它是那颗「检查本章」按钮的说明，不是这一栏的正文
+   ——正文是按下去之后那几条命中，那些必须比它重。 */
+.rule-line { display: flex; align-items: baseline; gap: 8px; color: var(--dim); font-size: 12px; line-height: 1.7; }
+.rule-line > span { flex: 1; min-width: 0; }
+.rule-line b { font-weight: 600; }
+/* 「你自己加的规则」那一行右端的删除杆。灰字行里的一颗小链接，不做成描边按钮：
+   一行规则不该长得比它管的那句话还重。 */
+.rule-del { flex: 0 0 auto; font-size: 11px; padding: 0; border: none; background: none; }
+/* ── 「检验规则」这一栏（2026-09-05 二改）───────────────────────────────────
+   作者拿着一版参考稿说「你原本设计的太土了，人家还能编辑、还能启用、还能打叉」。
+   照那一版重排：**一行一条规则**（序号 · 内容 · 开关 · 改 · 删），行与行之间只有一条
+   发丝线，不再是一张灰卡片里塞几行小字。**规则本身没换**（作者：「系统是我想要保留
+   我现在这种」）——仍然是禁用词 + 精确子串匹配，换的只有这一栏的样子。 */
+/* **跟着容器宽**（作者 2026-09-05：拉宽之后右边空一大片）：这一栏是一张表，
+   行本来就该占满；控件靠右，越宽越舒服。留白由外面那一栏的内边距给，不在这儿写死。 */
+.checkview { width: 100%; }
+/* 分节行末尾那颗闪电（「快速检验本章」）。皮肤走 `.icon-btn`，这儿只加两件事：
+   拉到行尾，以及**三个状态各一个颜色**（作者 2026-09-05）：
+
+   | 态 | 色 | 意思 |
+   |---|---|---|
+   | idle | `--accent` 紫 | 这一版正文**还没验过** |
+   | busy | `--b` 金黄 | 正在验 |
+   | done | 亮绿 | 验过了，**一直亮到正文再变** |
+
+   **实心不留空**（`fill: currentColor`）：空心的闪电在 16px 下只剩一圈细边，
+   三个颜色互相分不开。
+   绿**不用 `--k`**：那颗深绿是正文里「已确认」那种字的颜色，铺在一个 19px 的图标上
+   偏暗，看不出是「通过了」；这儿要的是测速仪表那种亮绿。 */
+/* 未检验那一档**不用 `--accent`**：那颗 #3a3ab0 是给文字/边框用的深靛，铺成一块
+   19px 的实心图标偏暗、发闷（作者：紫色浅一点亮一点）。这儿要亮一档的紫。 */
+.rules-run { margin-left: 2px; color: #6b66e8; }
+.rules-run .icon { fill: currentColor; }
+/* 未检验：渐变（`BoltIcon` 自带的那份 `defs`）。检验中/已检验回到纯色——
+   金黄和绿要一眼分得开，渐变会把这两档也搅成一片。 */
+.rules-run.idle .bolt-path { fill: url(#bolt-idle); stroke: url(#bolt-idle); }
+.rules-run.busy { color: var(--b); }
+.rules-run.busy:disabled { opacity: 1; }
+.rules-run.done { color: #22c55e; }
+@media (prefers-color-scheme: dark) {
+  /* 暗底上再亮半档，不然实心紫会往背景里沉。 */
+  :root:not([data-theme="light"]) .rules-run { color: #8b87f0; }
+}
+
+/* 「分析本章」那颗扫描镜（事件那一栏的工具栏）。**三态借的是闪电那一份的口径**，
+   只是起点不是紫而是灰：闪电的紫说的是「这一章还没验过，去验」——那是一句催促；
+   分析这一步是系统自己会做的（保存之后 / 每 30 分钟扫描），这颗按钮只是「现在就跑」，
+   常态不该在屏幕上叫人。跑起来金黄、跑完绿，和闪电一样。 */
+.scan-run .icon { fill: none; }
+.scan-run.busy { color: var(--b); }
+.scan-run.busy:disabled { opacity: 1; }
+.scan-run.done { color: #22c55e; }
+
+.rules-sec {
+  display: flex; align-items: baseline; gap: 8px;
+  margin: 4px 0 2px; padding-bottom: 6px; border-bottom: 1px solid var(--line);
+}
+.rules-sec .lab { flex: 1; margin: 0; color: var(--dim); font-size: 11px; }
+.rules-count { color: var(--dim); font-size: 11px; }
+
+.rule-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 0; border-bottom: 1px solid var(--line);
+  font-size: 13px; line-height: 1.6;
+}
+.rule-row.empty { color: var(--dim); font-size: 12px; justify-content: center; }
+/* 停用的那条整行淡下去——**开关本身仍然是亮的**，不然「关着」和「坏了」分不开。 */
+.rule-row.off .rule-body { opacity: .45; }
+.rule-no { flex: 0 0 auto; width: 20px; color: var(--dim); font-size: 11px; }
+.rule-body { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rule-edit { flex: 1; min-width: 0; padding: 2px 6px; font-size: 13px; }
+
+/* 启用开关。**一个 role="switch" 的按钮**，不是 checkbox：这一栏里其余动作都是按钮，
+   混一个原生勾选框进来，键盘和读屏的行为会和旁边两颗不一样。 */
+.switch {
+  flex: 0 0 auto; width: 38px; height: 22px; padding: 0; border-radius: 11px;
+  border: 1px solid var(--line); background: var(--panel); position: relative;
+  transition: background .12s ease, border-color .12s ease;
+}
+.switch .knob {
+  position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%;
+  background: var(--dim); transition: transform .12s ease, background .12s ease;
+}
+.switch.on { border-color: var(--accent); background: var(--accent); }
+.switch.on .knob { transform: translateX(16px); background: #fff; }
+.switch-tag { flex: 0 0 auto; width: 24px; color: var(--dim); font-size: 12px; }
+
+/* 「改」「删」两颗图标按钮：平时是灰的，悬浮才亮——它们是次要动作。
+   **描边比正文图标更细**（1.2 而不是 1.5）：它们比旁边那颗开关大一圈，
+   用同样的粗细会显得比开关还重，而它们是这一行里最次要的两个东西。 */
+.row-act {
+  flex: 0 0 auto; width: 30px; height: 30px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  /* **没有外壳**（作者：「我不要一个按钮，我要是打叉的，这样融为一体好看一点」）：
+     不画边框、不留背景，悬浮时只把图标点亮，不冒出一个方块。 */
+  border: none; background: none; color: var(--dim); border-radius: 6px; cursor: pointer;
+}
+.row-act .icon { width: 19px; height: 19px; stroke-width: 1.2; }
+.row-act:hover:not(:disabled) { border: none; background: none; color: var(--accent); }
+
+/* 只有一个输入框——**那颗「＋」删了**（作者：没有用）。回车就是提交，
+   提示写在框里（`RightPanel.tsx` 的 placeholder），不再多一颗按钮说同一件事。 */
+.rule-add { display: flex; margin-top: 10px; }
+.rule-add input { flex: 1; min-width: 0; padding: 5px 8px; font-size: 13px; }
+
+/* ── 「事件」那一格（2026-09-05）：按章分组 + 一条工具条 ───────────────────
+   原来顶上是一句「已确认的情节 · 到第 N 章为止」，作者要求删掉。范围没有因此说不
+   清楚——每一章的第一条上面有一行黑体章号，跨了哪些章是**看得见**的。 */
+.ev-bar { display: flex; align-items: center; gap: 2px; margin-bottom: 6px; }
+/* 左边一行小字说这是什么，两颗图标推到右端——同角色册那一行（标题在左、＋和排序在右）。 */
+.ev-bar .lab { flex: 1; margin: 0; color: var(--dim); font-size: 11px; }
+.ev-find { margin-left: 4px; width: 84px; padding: 3px 8px; font-size: 12px; }
+.ev-group + .ev-group { margin-top: 4px; }
+/* 章号是这一堆卡片的抬头：黑体、贴在卡片外面，和卡片之间留一点点缝。 */
+.ev-chapter {
+  display: flex; align-items: baseline; gap: 8px;
+  margin: 10px 0 4px; font-weight: 700; font-size: 13px;
+}
+/* 概括的数字：跟着标题走，但不抢它的重量（细体、灰、小一号）。 */
+.ev-count { color: var(--dim); font-size: 11px; font-weight: 400; }
+.ev-bar .ev-count { margin-right: 4px; }
+
+/* 检验完那句回执：**悬浮、几秒自己消失**（2026-09-05）。深底浅字，同工作台其余气泡
+   （`--ink` / `--bg`，暗色自动对调）。它只是一句回执——查出的问题在「通知」那一栏里
+   留着，所以这儿不留清单，也就不需要一块常驻的位置。 */
+.check-toast {
+  /* **`fixed` 不是 `absolute`**：右栏是 `overflow: auto` 的，绝对定位的气泡一滚
+     就被裁掉，而且 `.pane` 本身不是定位上下文（加它会牵动那几个下拉菜单）。 */
+  position: fixed; right: 18px; bottom: 18px; z-index: 40;
+  padding: 6px 10px; border-radius: 6px;
+  background: var(--ink); color: var(--bg);
+  font-size: 12px; box-shadow: 0 4px 14px rgba(0, 0, 0, .22);
+  animation: toast-in .14s ease;
+}
+@keyframes toast-in { from { opacity: 0; transform: translateY(4px); } }
+@media (prefers-reduced-motion: reduce) { .check-toast { animation: none; } }

@@ -12,6 +12,7 @@ import {
   visibleMessages,
   NO_PROGRESS,
   SPEAKER_ZH,
+  type TurnProgress,
 } from "./chat";
 import type { ChatMessageView, ChatTurnEvent, TurnReceipt } from "./api/types";
 
@@ -70,7 +71,7 @@ describe("秒表", () => {
 describe("这一轮实际发生了什么", () => {
   it("查了几次说得出来 —— **查到了什么一个字都不说**", () => {
     const notes = receiptNotes(receipt({ lookups: 3, calls_without_usage: 0 }), "zh");
-    expect(notes.join("\n")).toContain("查了 3 次");
+    expect(notes.join("\n")).toContain("本轮查询 3 次资料");
   });
 
   it("一次都没查、什么都没裁 —— 一行都不写", () => {
@@ -95,6 +96,15 @@ describe("这一轮实际发生了什么", () => {
   it("它手上那份正文过期了要说 —— 否则作者永远不知道它曾经拿着一份旧稿", () => {
     const notes = receiptNotes(receipt({ lookups: 0, context: ctx({ stale_lookups: 1 }) }), "zh");
     expect(notes.join("\n")).toMatch(/重新读/);
+  });
+
+  it("**中途说的没来得及答的要说**（2026-09-12）—— 它已经在对话里，不是丢了", () => {
+    const quiet = { lookups: 0, calls_without_usage: 0, context: ctx({}) };
+    const notes = receiptNotes(receipt({ ...quiet, unanswered: 2 }), "zh");
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toContain("2 句");
+    expect(notes[0]).toMatch(/记在对话里/);
+    expect(receiptNotes(receipt({ ...quiet, unanswered: 0 }), "zh")).toEqual([]);
   });
 
   it("这一轮主动收起来的那几条合成一句，并且明说作者的话没被删", () => {
@@ -136,14 +146,14 @@ describe("这一轮实际发生了什么", () => {
   it("英文那半整句处理单复数，不是拼「N + 中文那半翻过去的词」", () => {
     // n === 1：单数整句。
     expect(receiptNotes(receipt({ lookups: 1, calls_without_usage: 0 }), "en")[0]).toBe(
-      "It looked something up once this round.",
+      "1 lookup this round",
     );
     expect(
       receiptNotes(receipt({ lookups: 0, calls_without_usage: 1 }), "en")[0],
     ).toContain("undercount");
     // n > 1：复数整句，数字本身也要对。
     const plural = receiptNotes(receipt({ lookups: 3, calls_without_usage: 0 }), "en")[0];
-    expect(plural).toBe("It looked things up 3 times this round.");
+    expect(plural).toBe("3 lookups this round");
   });
 });
 
@@ -189,13 +199,40 @@ describe("一轮没跑成，那句话留在对话里（后端迁移 012）", () 
   it("**这一轮留了一行的话，回执上那句话就不再画一遍**", () => {
     // 后端把「为什么」落进了库，`message` 是同一串字：两处一起画 = 作者读两遍。
     const notice = { seq: 1, speaker: "system", text: RECEIPT.message } as ChatMessageView;
-    expect(receiptSays(receipt({ messages: [notice] }))).toBeNull();
+    expect(receiptSays(receipt({ reason: "step_limit", messages: [notice] }))).toBeNull();
   });
 
   it("没留那一行的时候照旧画 —— 判据是结构，不是拿两串字去比", () => {
-    expect(receiptSays(RECEIPT)).toBe(RECEIPT.message);
+    const stopped = receipt({ reason: "step_limit" });
+    expect(receiptSays(stopped)).toBe(RECEIPT.message);
     // 反证：这一轮的确说过话（所以后端不会留那一行），而回执那句话仍然要说。
     expect(RECEIPT.messages.some((m) => m.speaker === "system")).toBe(false);
+  });
+
+  it("🔴 **正常收场那一句不画** —— 每一轮都一样的「说完了。」不是信息", () => {
+    // 作者 2026-09-10：「没有必要每次结束有这个」。`_STOP_WORDING[DONE]` 是固定的
+    // 一句话，而它说的事屏幕上明摆着（话就在上面）。
+    expect(RECEIPT.reason).toBe("done"); // 探针：真 dump 的那一份就是这一档
+    expect(receiptSays(RECEIPT)).toBeNull();
+    // **反证：别的收场一条都不许被顺手关掉。** 那几句每一句都在说一件屏幕上
+    // 看不出来的事（查太多次 / 额度到顶 / 装不下了），关掉就等于这一轮不明不白地断了。
+    expect(receiptSays(receipt({ reason: "cost_limit" }))).toBe(RECEIPT.message);
+  });
+
+  it("**作者按停、它自己已经问了一句：回执那句不再画** —— 那句话本身就在说「我停了」", () => {
+    // 2026-09-12：停下来之后后端会再问作者一句（`run_turn` 的 debrief），`reply` 就是
+    // 那句话，它以 assistant 气泡的样子已经在屏幕上了。再画「按你的意思停下了」= 同一件事
+    // 说两遍。判据是 `reason` + `reply` 非空，不是拿字面去比。
+    const asked = receipt({ reason: "author_stopped", reply: "我停在翻目录之前了。想换个方向？" });
+    expect(receiptSays(asked)).toBeNull();
+    // 没问出来（端点坏了 / 他又按了一次停）：回执那句照画，否则这一轮不明不白地断了。
+    const silent = receipt({ reason: "author_stopped", reply: "" });
+    expect(receiptSays(silent)).toBe(RECEIPT.message);
+    // **反证：别的收场带着 `reply` 也照画。** `reply` 非空在正常一轮里是常态
+    // （模型最后说的那段话），只有「作者停 + 它问了」这一对才是同一件事说两遍。
+    expect(receiptSays(receipt({ reason: "cost_limit", reply: "我先查到这儿。" }))).toBe(
+      RECEIPT.message,
+    );
   });
 
   it("`seq` 撞号是**正常的** —— 所以它当不了 key", () => {
@@ -256,16 +293,40 @@ const from = (base: ChatTurnEvent, over: Partial<ChatTurnEvent>): ChatTurnEvent 
 const fold = (events: ChatTurnEvent[]) =>
   events.reduce((acc, event) => applyTurnEvent(acc, event, "zh"), NO_PROGRESS);
 
+/** 屏幕上那几行里某一种的字，按到达顺序。 */
+const texts = (after: TurnProgress, kind: "step" | "said") =>
+  after.lines.flatMap((line) => (line.kind === kind ? [line.text] : []));
+
 describe("跑到一半：它在做什么", () => {
   it("真跑的那一轮 —— 每一件事一行，**措辞全是后端那句**", () => {
     const after = fold(REAL);
-    expect(after.steps).toEqual(
+    expect(texts(after, "step")).toEqual(
       REAL.filter((e) => e.kind === "tool_started" || e.kind === "tool_finished").map(
         (e) => e.said_to_author,
       ),
     );
     // 它说的那整段话单独一档（不是逐字拼出来的，见下面那条）。
-    expect(after.said).toEqual([real("reply_text").text]);
+    expect(texts(after, "said")).toEqual([real("reply_text").text]);
+  });
+
+  it("**说的和做的按到达顺序排在一起** —— 它先说「我去翻」再去翻，分两堆摆就成了先翻后说", () => {
+    // 2026-09-12 起这几行直接排在对话里（不再框在一张卡里），顺序就是内容。
+    // 真跑的顺序（后端 `loop.py`：叫工具那一步说的话先喊，再喊 `tool_started`）。
+    const started = real("tool_started");
+    const finished = real("tool_finished");
+    const said = real("reply_text");
+    const after = fold([
+      from(said, { text: "我先翻一下目录。" }),
+      started,
+      finished,
+      from(said, { text: "翻完了，这章是结局。" }),
+    ]);
+    expect(after.lines).toEqual([
+      { kind: "said", text: "我先翻一下目录。" },
+      { kind: "step", text: started.said_to_author },
+      { kind: "step", text: finished.said_to_author },
+      { kind: "said", text: "翻完了，这章是结局。" },
+    ]);
   });
 
   it("**`reply_delta` 一个字都不拼** —— 回话那一档今天不逐字，装成逐字就是编节奏", () => {
@@ -280,14 +341,28 @@ describe("跑到一半：它在做什么", () => {
   });
 
   it("**`turn_stopped` 不画** —— 那句话回执上有一份，同一个出处", () => {
-    expect(fold([real("turn_stopped")]).steps).toEqual([]);
+    expect(fold([real("turn_stopped")]).lines).toEqual([]);
+  });
+
+  it("**作者中途那句进了对话就排在它读到的位置**（`author_said`，2026-09-12）", () => {
+    const said = real("reply_text");
+    const after = fold([
+      from(said, { text: "我先翻一下目录。" }),
+      from(said, { kind: "author_said", text: "顺便看看第 2 章" }),
+      from(said, { text: "好，第 2 章也看了。" }),
+    ]);
+    expect(after.lines).toEqual([
+      { kind: "said", text: "我先翻一下目录。" },
+      { kind: "author", text: "顺便看看第 2 章" },
+      { kind: "said", text: "好，第 2 章也看了。" },
+    ]);
   });
 
   it("工具查到了什么进不来 —— 这一层读的只有 `said_to_author` 和 `text`", () => {
     const after = fold(REAL);
-    const screen = [...after.steps, ...after.said].join("\n");
+    const screen = [...texts(after, "step"), ...texts(after, "said")].join("\n");
     // 工具名是机器码，它在事件上（界面要分派用），但一个字都不该到屏幕上。
-    expect(after.steps.join()).not.toContain("scene_constraints");
+    expect(texts(after, "step").join()).not.toContain("scene_constraints");
     expect(screen).not.toContain("must_not_reveal");
   });
 });
@@ -355,6 +430,6 @@ describe("它停下来问了一句", () => {
     const after = fold([asked]);
     expect(after.asked).toEqual(asked.asked);
     // 问句进的是那张卡，而「有人在等你」那半句仍然进进度行 —— 两件事。
-    expect(after.steps).toEqual([asked.said_to_author]);
+    expect(texts(after, "step")).toEqual([asked.said_to_author]);
   });
 });

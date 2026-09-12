@@ -281,3 +281,57 @@ def test_get_result_default_kind_still_fetches_tool_results() -> None:
     )
     assert outcome.ok
     assert outcome.content == "工具结果二"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 压缩那一次调用也是一次模型调用：停得下来、坏得起（2026-09-12）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def test_pressing_stop_during_compression_ends_as_an_author_stop_and_bills_the_cut_call() -> None:
+    """压缩以前是这一轮里唯一停不住的调用（非流式、没接信号）。现在它走 `cancellable_client`，
+    掐断以 `CallInterrupted` 的样子回到 loop：按「作者停的」收场，发出去了就记账（数留空）。"""
+    from novel_harness.draft.generate import CallInterrupted
+
+    conversation = a_long_session(blocks=2)
+    cancel = Cancellation()
+    receipts: list[Any] = []
+
+    def stopped_mid_summary(text: str) -> CompletionResult:
+        cancel.stop()
+        raise CallInterrupted("作者中止了这一次调用", partial_text="作者要求", sent=True, model="m")
+
+    result = run_turn(
+        conversation,
+        context=a_context(),
+        model=ScriptedModel(script=[say("永远到不了这儿")]),
+        ledger=receipts.append,
+        budget_units=floor_units(conversation) + 1_500,
+        block_summarizer=stopped_mid_summary,
+        cancel=cancel,
+    )
+    assert result.reason is StopReason.AUTHOR_STOPPED
+    assert [(r.text, r.prompt_tokens, r.finish_reason) for r in receipts] == [("作者要求", None, None)]
+    # 标记没落：下一次装不下时会再压一次（那时再付）。
+    assert oldest_uncompressed_number(result.conversation) == 1
+
+
+def test_a_provider_failure_during_compression_is_a_stop_not_a_crash() -> None:
+    """以前这儿没接：压缩那一次调用抛 `ProviderError` 会以崩溃的样子穿出 `run_turn`。"""
+    from novel_harness.draft.provider import ProviderError
+
+    conversation = a_long_session(blocks=2)
+
+    def dead(text: str) -> CompletionResult:
+        raise ProviderError("connection refused")
+
+    result = run_turn(
+        conversation,
+        context=a_context(),
+        model=ScriptedModel(script=[say("永远到不了这儿")]),
+        ledger=noop_ledger,
+        budget_units=floor_units(conversation) + 1_500,
+        block_summarizer=dead,
+    )
+    assert result.reason is StopReason.MODEL_UNREACHABLE
+    assert "connection refused" in result.maintainer_note

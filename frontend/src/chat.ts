@@ -76,6 +76,16 @@ export function visibleMessages(
  * 「别从 label 的措辞去分辨」、前端那条「拿屏幕上的人名自己去凑」）。
  */
 export function receiptSays(receipt: TurnReceipt): string | null {
+  // **正常收场不报到**（作者 2026-09-10：「没有必要每次结束有这个」）。这一档后端那句
+  // `message` 是 `_STOP_WORDING[DONE]`，也就是固定的「说完了。」——它每一轮都一样，
+  // 说的又是屏幕上明摆着的事（话就在上面）。**判据是 `reason` 不是那串字**：拿字面去比
+  // 就是从字符串反推，这个仓库为那种写法栽过两次。别的收场（问了你一句 / 查太多次 /
+  // 额度到顶 / 装不下了…）每一句都在说一件屏幕上看不出来的事，一条都不动。
+  if (receipt.reason === "done") return null;
+  // 作者按停、而它自己已经问了一句（后端 debrief，`reply` 就是那句话）：那句话本身
+  // 就在说「我停下来了」，回执上那句「按你的意思停下了」再画一遍是同一件事说两遍。
+  // 没问出来（端点坏了 / 他又按了一次）才轮到回执这句。
+  if (receipt.reason === "author_stopped" && receipt.reply) return null;
   return receipt.messages.some((m) => m.speaker === "system") ? null : receipt.message;
 }
 
@@ -151,10 +161,10 @@ export function receiptNotes(receipt: TurnReceipt, language: Language): string[]
     // 查了什么不说 —— 后端根本没发出来（工具返回里是内部标识）。
     notes.push(
       zh
-        ? `这一轮它查了 ${receipt.lookups} 次资料。`
+        ? `本轮查询 ${receipt.lookups} 次资料`
         : receipt.lookups === 1
-          ? "It looked something up once this round."
-          : `It looked things up ${receipt.lookups} times this round.`,
+          ? "1 lookup this round"
+          : `${receipt.lookups} lookups this round`,
     );
   }
   if (c.stale_lookups > 0) {
@@ -185,6 +195,17 @@ export function receiptNotes(receipt: TurnReceipt, language: Language): string[]
         : trimmed === 1
           ? "This conversation got long, so to make room, one earlier finding was tucked away (it'll look it up again if needed). Not a single word you said was deleted."
           : `This conversation got long, so to make room, ${trimmed} earlier findings were tucked away (it'll look them up again if needed). Not a single word you said was deleted.`,
+    );
+  }
+  // 作者中途说的、这一轮没来得及答的那几句（后端 `Mailbox`）。**它们已经在对话里**，
+  // 这句只负责说清「它没看见不是没记下」和下一步（再说一句，它就会读到）。
+  if (receipt.unanswered > 0) {
+    notes.push(
+      zh
+        ? `你中途说的 ${receipt.unanswered} 句它这一轮没来得及看，已经记在对话里，再说一句它就会一起读到。`
+        : receipt.unanswered === 1
+          ? "One thing you said mid-round didn't get read this round; it's already in the conversation, and it'll read it along with whatever you say next."
+          : `${receipt.unanswered} things you said mid-round didn't get read this round; they're already in the conversation, and it'll read them along with whatever you say next.`,
     );
   }
   // **`lost_lookups` 不并进上面那一句**，虽然两者都是「它手上少了点东西」。
@@ -279,17 +300,29 @@ export interface LiveDraft {
   done: string;
 }
 
+/** 跑到一半时对话里的一行。四种：
+ *  - `step`：它做的一件事，**措辞全是后端的 `said_to_author`**，这里不翻；
+ *  - `said`：它说的一整段话（模型自己的字）。**不是逐字**（见 `applyTurnEvent` 里那段）；
+ *  - `draft`：一稿那一格**站在哪儿**——字本身在 `TurnProgress.drafts` 里按 `stream` 长；
+ *  - `author`：作者**中途**说的一句在这一刻被它读到了（`author_said`，后端 `Mailbox`）。
+ *    位置就是模型真的读到它的位置——在那之前它在屏幕上是「排着队」的那一格。 */
+export type ProgressLine =
+  | { kind: "step"; text: string }
+  | { kind: "said"; text: string }
+  | { kind: "draft"; stream: number }
+  | { kind: "author"; text: string };
+
 /** 一轮跑到这一刻，屏幕上该有的全部东西。 */
 export interface TurnProgress {
-  /** 它做过的每一件事，按到达顺序。**措辞全是后端的 `said_to_author`**，这里不翻。 */
-  steps: string[];
-  /** 它这一路说过的那几整段话。**不是逐字**（见 `applyTurnEvent` 里那段）。 */
-  said: string[];
+  /** 按到达顺序的每一行。**顺序就是内容**（2026-09-12 起它直接排在对话里，不再
+   *  框在一张卡里）：它先说「我去翻目录」再去翻，说的和做的分成两堆摆，读起来就成了
+   *  先翻后说。 */
+  lines: ProgressLine[];
   drafts: LiveDraft[];
   asked: ChatAuthorQuestion | null;
 }
 
-export const NO_PROGRESS: TurnProgress = { steps: [], said: [], drafts: [], asked: null };
+export const NO_PROGRESS: TurnProgress = { lines: [], drafts: [], asked: null };
 
 /**
  * 收到一条事件之后，屏幕上该变成什么样。**纯函数**，这样「一批三稿交错着到达」
@@ -298,11 +331,12 @@ export const NO_PROGRESS: TurnProgress = { steps: [], said: [], drafts: [], aske
  * ── 三件这一层必须做对的事（ADR 0024 的三条诚实）───────────────────────────
  *
  * 1. **逐字的只有稿子。** `draft_delta` 一片一片接上去，作者真的看着它长。
- * 2. **回话那一档不逐字，所以这里不装。** `reply_delta` 今天在产品上不响
- *    （回话的输出预算远在流式阈值之下 ⇒ `plan.stream is False`，后端那条
- *    `test_todays_agent_call_is_not_streaming_…` 钉着它），而**给它做一个假的
- *    打字机 = 让作者按一个编出来的节奏判断它卡没卡住**。所以这条事件到手也不拼字：
- *    真正到手的整段话走 `reply_text`。
+ * 2. **回话那一档不逐字，所以这里不装。** `reply_delta` 今天在产品上不响：
+ *    wire 上那条流 2026-09-12 起是真的（回复要了可中断，为的是「停」落在下一片之内），
+ *    但装配层造模型端口时没接 `on_event`（`api/chat.py::build_agent_model` 那个注入点
+ *    的签名是十几处测试桩共用的，见那儿的注释），所以一片都发不到这儿。**给它做一个
+ *    假的打字机 = 让作者按一个编出来的节奏判断它卡没卡住**，所以这条事件到手也不拼字：
+ *    真正到手的整段话走 `reply_text`——被掐断时那半截也走它。
  * 3. **工具在干什么可以显示，工具查到了什么不许显示。** 这里读的只有
  *    `said_to_author`（引擎写的中文）和 `text`（模型自己的字）——
  *    `tool` / `kind` / `reason` 一个字都没往 `steps` 里放。
@@ -321,23 +355,41 @@ export function applyTurnEvent(
       // 在这儿再画一遍 = 同一句话在同一块屏幕上出现两次。
       return prev;
     case "reply_text":
-      return event.text ? { ...prev, said: [...prev.said, event.text] } : prev;
+      return event.text
+        ? { ...prev, lines: [...prev.lines, { kind: "said", text: event.text }] }
+        : prev;
+    case "author_said":
+      // 作者自己的字，原样回显（后端一字不加）。它进了对话，所以它排在对话里。
+      return event.text
+        ? { ...prev, lines: [...prev.lines, { kind: "author", text: event.text }] }
+        : prev;
     case "asked_author":
-      return { ...prev, asked: event.asked, steps: pushSaid(prev.steps, event) };
+      return { ...prev, asked: event.asked, lines: pushStep(prev.lines, event) };
     case "draft_started":
-      return { ...prev, drafts: [...prev.drafts, openDraft(event)] };
+      return withDrafts(prev, [...prev.drafts, openDraft(event)]);
     case "draft_delta":
-      return { ...prev, drafts: growDraft(prev.drafts, event) };
+      return withDrafts(prev, growDraft(prev.drafts, event));
     case "draft_kept":
     case "draft_failed":
-      return { ...prev, drafts: closeDraft(prev.drafts, event, language) };
+      return withDrafts(prev, closeDraft(prev.drafts, event, language));
     default:
-      return { ...prev, steps: pushSaid(prev.steps, event) };
+      return { ...prev, lines: pushStep(prev.lines, event) };
   }
 }
 
-function pushSaid(steps: string[], event: ChatTurnEvent): string[] {
-  return event.said_to_author ? [...steps, event.said_to_author] : steps;
+function pushStep(lines: ProgressLine[], event: ChatTurnEvent): ProgressLine[] {
+  return event.said_to_author ? [...lines, { kind: "step", text: event.said_to_author }] : lines;
+}
+
+/** 一稿那一格在它**开出来的那一刻**占一行。开跑那一声、第一片字、收尾那一声，
+ *  三条路哪个先到就在哪儿开（`growDraft` / `closeDraft` 都会开格），所以判据是
+ *  「这一步之后多了哪条流」，不是「这一步是不是 `draft_started`」。 */
+function withDrafts(prev: TurnProgress, drafts: LiveDraft[]): TurnProgress {
+  const opened = drafts.filter((d) => !prev.drafts.some((p) => p.stream === d.stream));
+  const lines = opened.length
+    ? [...prev.lines, ...opened.map((d) => ({ kind: "draft" as const, stream: d.stream }))]
+    : prev.lines;
+  return { ...prev, drafts, lines };
 }
 
 function openDraft(event: ChatTurnEvent): LiveDraft {

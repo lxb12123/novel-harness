@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import {
   useChatDetail,
   useChats,
   useCreateChat,
   useDrafts,
   useRunTurn,
+  useSayMidTurn,
   useStopChat,
 } from "../api/hooks";
 import type {
@@ -31,7 +32,7 @@ import {
 import { useLanguage, type Language } from "../language";
 import { useCoords } from "../store";
 import { ChatSessions } from "./ChatSessions";
-import { BotIcon, SendIcon } from "./icons";
+import { BotIcon, SendIcon, StopIcon } from "./icons";
 import { CompareLink, DraftCandidates } from "./DraftCandidates";
 
 // 写作助手（模式二，[ADR 0019](docs/adr/0019-agent-loop-not-graph.md)）。
@@ -41,9 +42,10 @@ import { CompareLink, DraftCandidates } from "./DraftCandidates";
 //
 // 1. **逐字看得见的只有稿子，回话那一档今天不逐字 —— 所以这儿不许装成逐字。**
 //    这一轮走的是长连接了（`api/turnStream.ts`），中间过程真的一条条到手；
-//    但两条流不是一回事：起草那次调用是流式的（`interruptible`），
-//    **回话那次不是**（输出预算 4,024 远在流式阈值之下 ⇒ `plan.stream is False`，
-//    后端 `test_todays_agent_call_is_not_streaming_…` 钉着它）。
+//    但两条流不是一回事：起草那次调用的片会递到这儿，**回话那次的不会**——
+//    wire 上它 2026-09-12 起也是流式的了（回复要了 `interruptible`，为的是「停」落在
+//    下一片之内），但装配层造模型端口时没接 `on_event`（`api/chat.py::build_agent_model`
+//    那个注入点，见那儿的注释），一片都到不了界面。
 //    所以起草区**真的**一个字一个字长出来，回话区仍然是整段一次到位——
 //    **给回话区做一个假的打字机 = 让作者按一个编出来的节奏判断它卡没卡住**，
 //    那正是这块屏幕 2026-08-12 上午拒绝过一次的东西。
@@ -84,6 +86,12 @@ const CREATE_FAILED = (language: Language): string =>
   language === "zh"
     ? "没能开一段新的对话，而系统没能说清是为什么。"
     : "Couldn't start a new conversation, and the system couldn't say why.";
+/** 中途那一句**没送出去**（网断了 / 这段对话不在了）。同 `STOP_FAILED`：一声不吭等于
+ *  让他以为说出去了，而那句话其实哪儿都没到。 */
+const SAY_FAILED = (language: Language): string =>
+  language === "zh"
+    ? "这一句没送出去，而系统没能说清是为什么。它还在输入框里，等这一轮跑完再发一次。"
+    : "That message didn't go through, and the system couldn't say why. It's still in the box — send it again once this round finishes.";
 const STOP_FAILED = (language: Language): string =>
   language === "zh"
     ? "这一下「停」没送出去，而系统没能说清是为什么。这一轮可能还在跑，过一会儿再按一次。"
@@ -94,6 +102,56 @@ const LIST_FAILED = (language: Language): string =>
   language === "zh"
     ? "这本书有哪几段对话，这会儿没读出来。下面是空的不代表你没说过话——刷新一下再看。"
     : "Couldn't load which conversations this book has right now. An empty list below doesn't mean you haven't said anything — refresh and check again.";
+
+/** 离底不到这么多像素就算「贴着底」。8px 是给亚像素取整留的，不是给「差一点点」的：
+ *  作者往上翻了哪怕一行，就是不想被拽回去。 */
+const FOLLOW_SLACK = 8;
+
+/** 让一个会滚的盒子**跟着它的底走**：内容变长时，贴着底就滚到底；作者往上翻了就不动，
+ *  翻回底下又接着跟。**用法**：`ref` 和 `onScroll` 都挂在那个盒子上；作者自己发了一句
+ *  就调 `pin()` 重新贴上，点开更早的话就调 `unpin()`；`pinOn` 一变（换了段对话）
+ *  也重新贴上——那一段要从它的末尾看起，上一段里翻到哪儿跟它无关。
+ *
+ *  ── 为什么是「每次画完都看一眼」而不是列一份依赖表 ────────────────────────────
+ *  这儿原来是 `useEffect(…, [messages.length, running])`：只有历史变长、或者一轮开始 /
+ *  结束才滚一下。而一轮跑着的时候变长的东西全不在那两样里——进度行、它说的话、
+ *  **逐字长的那一稿**、排着队的那句、回执——于是屏幕停在开跑那一刻不动，作者得自己
+ *  往下滑（2026-09-12 报的原话：「没有跟紧他那个最新的输出，他只会停留在某一个时刻」）。
+ *  会让对话变长的东西太多，列一份迟早漏一样，漏掉的那一样就是下一次「停在某一刻」。
+ *  所以不列：每次画完（`useLayoutEffect`，画到屏幕之前）都看一眼，贴着底就滚到底——
+ *  一次 `scrollHeight` 读取的代价，换「什么都不会漏」。
+ *
+ *  「贴没贴着底」记在 ref 里、由 `onScroll` 更新，**不是 state**：它每次滚动都在变，
+ *  而它变了屏幕上什么都不用重画。程序自己滚到底那一下也会触发 `onScroll`，算出来
+ *  正好是「贴着」，所以不用另外记。jsdom 里三个尺寸恒为 0，这一套在测试里就是
+ *  「一直贴着」——要验它，测试得自己给盒子量尺寸。 */
+function useFollowBottom<T extends HTMLElement>(pinOn?: unknown) {
+  const ref = useRef<T>(null);
+  const pinned = useRef(true);
+  // **声明在「看一眼」那条前面**：同一次 commit 里的 layout effect 按声明顺序跑，
+  // 换了段对话的那一次画面，先贴上、再看一眼，才会当场滚到那一段的末尾——
+  // 反过来的话得等下一次画面，而缓存里有的那一段可能根本不再画第二次。
+  useLayoutEffect(() => {
+    pinned.current = true;
+  }, [pinOn]);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el && pinned.current) el.scrollTop = el.scrollHeight;
+  });
+  return {
+    ref,
+    onScroll: () => {
+      const el = ref.current;
+      if (el) pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_SLACK;
+    },
+    pin: () => {
+      pinned.current = true;
+    },
+    unpin: () => {
+      pinned.current = false;
+    },
+  };
+}
 
 /** 后端那句话可能带 markdown 的重音（`stop_wording(CONTEXT_FULL)` 就带）。
  *  **不渲染就是两颗星号摆在作者脸上**，而这一层不许改那句话本身。 */
@@ -132,6 +190,9 @@ function Bubble({ message }: { message: ChatMessageView }) {
  *  没有它，一批三稿同时在飞的时候屏幕上只有一坨交错的字，作者分不出哪段是哪稿。 */
 function DraftingBox({ draft }: { draft: LiveDraft }) {
   const language = useLanguage((s) => s.language);
+  // 这一格只留一屏高、自己会滚（`.chat-drafting-text`），所以**最新的字长在它的折线
+  // 底下**：外面的对话区跟得再紧，这格里露出来的仍是开头那几行。它得自己跟着底走。
+  const text = useFollowBottom<HTMLParagraphElement>();
   return (
     <div className="chat-drafting">
       <span className="chat-drafting-head">
@@ -141,7 +202,9 @@ function DraftingBox({ draft }: { draft: LiveDraft }) {
             : `Writing a draft of chapter ${draft.chapter}…`)}
       </span>
       {draft.text ? (
-        <p className="chat-drafting-text">{draft.text}</p>
+        <p className="chat-drafting-text" ref={text.ref} onScroll={text.onScroll}>
+          {draft.text}
+        </p>
       ) : (
         <p className="chat-drafting-wait">
           {language === "zh" ? "还没落下第一个字。" : "Not a single word down yet."}
@@ -151,12 +214,37 @@ function DraftingBox({ draft }: { draft: LiveDraft }) {
   );
 }
 
-/** 还在跑的那一段屏幕。**秒表是真的，中间那几行也是真的，别的什么都不编。** */
-function RunningStrip({ since, onStop, stopping, progress }: {
+/** 还在跑的那一段。**秒表是真的，中间那几行也是真的，别的什么都不编。**
+ *
+ *  ── 它排在对话里，不框在一张卡里（作者 2026-09-12）──────────────────────────
+ *
+ *  这儿原来是一张带边框、带底色的卡：抬头一行秒表，底下一句「下面是它这会儿在做的
+ *  事」，再往下才是它说的话和做的事。作者的原话：「我不要用框框框住他的思考内容……
+ *  直接放到那个上下文中」。所以现在：
+ *
+ *  - 它说的每一段话**长得和跑完之后那一条一模一样**（同 `Bubble` 的形）——
+ *    回执落地、历史重取，那几段话原地不动，不会先缩在卡里再跳出来变大一号；
+ *  - 它做的每一件事是一行灰的小字，夹在它说的话中间，**按到达顺序**
+ *    （`chat.ts::ProgressLine`）；
+ *  - 秒表收成末尾一行：对话的活尾巴，新东西长在它上面。**「停」不在这儿**
+ *    （2026-09-12 挪去了发送那颗圆钮上：跑着而框里没字时它就是「停」）。
+ *    那句「它可能要来回查几次资料…」撤了：每一轮都一样、说的又是屏幕上正在
+ *    发生的事（同「说完了。」那一条的理由）。这儿 2026-08-13 还撤过一句讲流式
+ *    语义的话，病根一样——**屏幕该用状态本身说话**：字在流就让他看见字
+ *    （`DraftingBox`），不流就是秒表 + 一行行步骤，别靠一句文案说准。
+ *
+ *  ── 作者中途说的话（2026-09-12，后端 `Mailbox`）────────────────────────────
+ *
+ *  跑着的时候他还能说：那句话先以「排着队」的样子（`queued`，淡一档）贴在这一段的
+ *  末尾，等后端在下一次模型调用之前把它并进对话、喊一声 `author_said`，它就变成
+ *  一条正常的作者气泡、站在模型真的读到它的位置（`ProgressLine.author`）。
+ *  底下那一句是后端的回执（「记下了，它下一步就会看到。」），有排着的才画。 */
+function RunningStrip({ since, progress, queued, queuedNote, stopping }: {
   since: number;
-  onStop: () => void;
-  stopping: boolean;
   progress: TurnProgress;
+  queued: string[];
+  queuedNote: string | null;
+  stopping: boolean;
 }) {
   const language = useLanguage((s) => s.language);
   const [now, setNow] = useState(() => Date.now());
@@ -167,45 +255,44 @@ function RunningStrip({ since, onStop, stopping, progress }: {
 
   return (
     <div className="chat-running" role="status">
-      <span className="chat-running-dot" aria-hidden="true" />
-      <div className="chat-running-say">
-        <b>
-          {language === "zh" ? "正在跑这一轮 · " : "This round is running · "}
+      {progress.lines.map((line, i) => {
+        if (line.kind === "step") {
+          return (
+            <span key={i} className="chat-step">
+              {line.text}
+            </span>
+          );
+        }
+        if (line.kind === "said" || line.kind === "author") {
+          const speaker = line.kind === "said" ? "assistant" : "author";
+          return (
+            <div key={i} className={"chat-msg " + speaker}>
+              <span className="chat-who-sr">{SPEAKER_ZH[speaker][language]}</span>
+              <p className="chat-text">{line.text}</p>
+            </div>
+          );
+        }
+        const draft = progress.drafts.find((d) => d.stream === line.stream);
+        return draft ? <DraftingBox key={i} draft={draft} /> : null;
+      })}
+      {queued.map((text, i) => (
+        <div key={"queued-" + i} className="chat-msg author queued">
+          <span className="chat-who-sr">{SPEAKER_ZH.author[language]}</span>
+          <p className="chat-text">{text}</p>
+        </div>
+      ))}
+      {queued.length > 0 && queuedNote && <p className="chat-receipt-note">{queuedNote}</p>}
+      <div className="chat-running-tail">
+        <span className="chat-running-dot" aria-hidden="true" />
+        <span className="chat-running-clock">
+          {/* 「停」送到之后这行换一句：工作已经停了，它正在问作者一句（后端 debrief）。
+              秒表照走——那一句也是在花时间，而且再按一次「停」连它也停。 */}
+          {stopping
+            ? language === "zh" ? "停下来了，它正在问你一句 · " : "Stopped — it is asking you something · "
+            : language === "zh" ? "正在跑这一轮 · " : "This round is running · "}
           {elapsedText(now - since, language)}
-        </b>
-        {/* ── 这儿曾经有一句讲内部流式语义的话，2026-08-13 删掉了 ──────────────
-            原文：「回话是整段一次出现的，稿子才会一个字一个字长出来」。它是对上一句
-            错话的修正，而上一句也是修正来的——每次发现文案不准就把文案改得更准，
-            改了两轮，最后变成一段讲架构的免责声明，摆在一个写小说的人面前。
-
-            **病根是把「文案要说准」当成了目标。** 屏幕该用**状态本身**说话：
-            字在流就让他看见字（`DraftingBox`），不流就是秒表 + 步骤行。
-            没有一个成熟工具会向用户解释自己的流式语义（对照过 Cursor / Codex）。
-
-            而且那句话**没有任何条件**——端点退回一次性响应时它就是假的，
-            那正是本仓反复栽的「屏幕在陈述一件不成立的事」。 */}
-        <span>
-          {language === "zh"
-            ? "它可能要来回查几次资料、想上几轮。下面是它这会儿在做的事。"
-            : "It may look things up a few times and mull it over for a few rounds. Below is what it’s doing right now."}
         </span>
-        {progress.steps.map((line, i) => (
-          <span key={i} className="chat-step">
-            {line}
-          </span>
-        ))}
-        {progress.said.map((text, i) => (
-          <p key={i} className="chat-text chat-step-said">
-            {text}
-          </p>
-        ))}
-        {progress.drafts.map((draft) => (
-          <DraftingBox key={draft.stream} draft={draft} />
-        ))}
       </div>
-      <button className="danger" disabled={stopping} onClick={onStop}>
-        {language === "zh" ? "停" : "Stop"}
-      </button>
     </div>
   );
 }
@@ -304,6 +391,7 @@ export function ChatPanel() {
   const create = useCreateChat(pid);
   const turn = useRunTurn(pid);
   const stop = useStopChat(pid);
+  const sayMid = useSayMidTurn(pid);
   /** 这一章**还摆在桌上**的那几稿（ADR 0022）。它们不在正文里也不在对话里，所以
    *  一旦那一轮的回执被下一轮顶掉，这条入口就是作者唯一找得回它们的地方。
    *  **零的时候一个字都不画**：没有稿子时摆一句「还摆着 0 稿」是噪音（同回执那一条）。 */
@@ -357,6 +445,11 @@ export function ChatPanel() {
   /** 这一轮里作者按过停，而且那一次**真的送达了**（后端回 `stopped=true`）。
    *  用 ref 是因为它在另一个回调里被写、在回执到手时被读。 */
   const stopLanded = useRef(false);
+  /** 「停」送到了、这一轮还没收场的那几秒。**屏幕上要说出来**：信号一到后端，工作就
+   *  停了（回复那一次调用走流式，下一片就断），接着它会问作者一句——这期间秒表那行
+   *  要是还写着「正在跑这一轮」，作者看到的就是「按了没反应」（2026-09-12 报的原话）。
+   *  只是一个显示态：它开着时那颗圆钮照旧是「停」，再按一次连那一句也停。 */
+  const [stopping, setStopping] = useState(false);
   /** 按下「停」之后屏幕上多出来的那一句，以及它是不是一次失败。
    *
    *  **两档必须分开画**：`stopped=false`（那一刻本来就没在跑）是一句正常的话，
@@ -364,10 +457,23 @@ export function ChatPanel() {
    *  一声不吭同样不行——一轮跑好几分钟，「停」是作者唯一能插手的地方，
    *  按下去屏幕纹丝不动读起来就是按钮坏了，而他只会再按一次、再等一次。 */
   const [stopSaid, setStopSaid] = useState<{ text: string; failed: boolean } | null>(null);
-  const logRef = useRef<HTMLDivElement>(null);
+  /** 作者中途说的、**还排着队**的那几句（2026-09-12，后端 `Mailbox`）。
+   *
+   *  送出去的那一刻它进这个表；后端在下一次模型调用之前把它并进对话、喊一声
+   *  `author_said`，它就从这儿出去、在 `progress.lines` 里以正常的作者气泡出现。
+   *  **它不是对话的一部分**：只有 `author_said` 到手才算它进了对话，所以这儿的每一句
+   *  都画淡一档。`queuedNote` 是后端那句回执（「记下了，它下一步就会看到。」）。 */
+  const [queued, setQueued] = useState<string[]>([]);
+  const [queuedNote, setQueuedNote] = useState<string | null>(null);
+  /** 对话区跟着底走（新到的字、逐字长的那一稿、回执……）——贴着底才跟，见 `useFollowBottom`。 */
+  const log = useFollowBottom<HTMLDivElement>(chatId);
+  /** 输入区那一整块有多高。**对话区要正好在它底下多留这么多**，多一分少一分都看得出来：
+   *  少了，最后一句话被玻璃压住读不全；多了，屏幕底下空出一条谁都不占的白带。
+   *  它不是常数——那个框作者能自己拖高（`textarea` 的 `resize`），所以只能量。 */
+  const sayRef = useRef<HTMLDivElement>(null);
+  const [sayHeight, setSayHeight] = useState(0);
 
   const list = sessions.data ?? [];
-  const current = list.find((s) => s.id === chatId) ?? null;
   const onDesk = desk.data?.drafts.length ?? 0;
 
   // 没挑过就停在最近说过话的那一段（后端按这个顺序给），同 App 里「默认打开第一本书」。
@@ -397,17 +503,28 @@ export function ChatPanel() {
   const asked =
     shownReceipt?.asked ?? (runFor === chatId ? progress.asked : null);
 
-  // 新消息到手就滚到底。jsdom 里 scrollHeight 恒为 0，这一句不会做任何事也不会炸。
+  // 输入区一高一矮，底下那块留白跟着变。**量的是边框盒**（`getBoundingClientRect`），
+  // 不是 `contentRect`：那个框自己画着 1px 描边和内边距，用内容盒会短一截。
+  // jsdom 里没有 `ResizeObserver`，所以先判断一下再用——少了这一句整份组件测试全崩。
   useEffect(() => {
-    const el = logRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length, running]);
+    const el = sayRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => setSayHeight(el.getBoundingClientRect().height));
+    // **`box: "border-box"` 不是可选项**：默认那个只在内容盒变了才响，而空态和常态
+    // 之间变的是这一块的 `padding-top`——内容盒一个像素没动，于是它一声不吭，
+    // 底下留白比实际矮 8px（2026-09-10 真踩了一次）。
+    ro.observe(el, { box: "border-box" });
+    return () => ro.disconnect();
+  }, []);
 
   function runTurn(id: string, text: string) {
     stopLanded.current = false;
+    setStopping(false);
     setStopSaid(null);
     setReceipt(null);
     setProgress(NO_PROGRESS);
+    setQueued([]);
+    setQueuedNote(null);
     setPendingSaid(text || null);
     setRunFor(id);
     setStartedAt(Date.now());
@@ -421,7 +538,16 @@ export function ChatPanel() {
         runId: runId.current,
         // 边跑边收。**归约在纯函数里**（`chat.ts`），这儿只负责把它挂上去——
         // 「一批三稿交错着到达」那种情形鼠标点不出来，只有单测点得出来。
-        onEvent: (event) => setProgress((prev) => applyTurnEvent(prev, event, language)),
+        onEvent: (event) => {
+          setProgress((prev) => applyTurnEvent(prev, event, language));
+          // 它读到了作者中途那句：从「排着队」那一格出去（归约那边把它排进对话里）。
+          if (event.kind === "author_said") {
+            setQueued((prev) => {
+              const at = prev.indexOf(event.text);
+              return at < 0 ? prev : [...prev.slice(0, at), ...prev.slice(at + 1)];
+            });
+          }
+        },
       },
       {
         onSuccess: (r) => {
@@ -436,13 +562,83 @@ export function ChatPanel() {
           setPendingSaid(null);
           if (text) setSaid((prev) => (prev ? prev : text));
         },
+        // 收场之后「排着队」那一格不该还有东西：后端收场时会把信箱清空并逐句喊
+        // `author_said`（`Mailbox` 第一条规矩），流断在半路时那几句才会留在这儿——
+        // 那时它们没进对话，还回输入框比让它们淡淡地挂着更诚实。
+        onSettled: () => {
+          setQueued((left) => {
+            if (left.length) setSaid((prev) => (prev ? prev : left.join("\n")));
+            return [];
+          });
+          setQueuedNote(null);
+        },
       },
     );
   }
 
+  /** 一轮跑着的时候再说一句（2026-09-12）。**不等、不打断**：后端把它放进正在跑的那一轮
+   *  的信箱，下一次模型调用之前并进对话。`queued=false`（那一刻刚跑完 / 在跑的是另一轮）
+   *  时这句话没排进去也没落库——**还回输入框**，后端那句话说清了为什么；作者再按一次
+   *  就是正常的新一轮。 */
+  function sayWhileRunning(id: string, text: string) {
+    sayMid.mutate(
+      { chatId: id, runId: runId.current, said: text },
+      {
+        onSuccess: (r) => {
+          if (r.queued) {
+            setQueued((prev) => [...prev, text]);
+            setQueuedNote(r.message);
+            return;
+          }
+          setSaid((prev) => (prev ? prev : text));
+          setStopSaid({ text: r.message, failed: false });
+        },
+        onError: (e) => {
+          setSaid((prev) => (prev ? prev : text));
+          setStopSaid({
+            text: refusalText(e, SAY_FAILED(language)) ?? SAY_FAILED(language),
+            failed: true,
+          });
+        },
+      },
+    );
+  }
+
+  /** 按下「停」（发送那颗圆钮跑着、框里没字时的那一面）。 */
+  function stopRunning() {
+    if (!chatId) return;
+    // **报的是这一轮的标识**，不是「停这段对话」：一次迟到的「停」
+    // 到达时，正在跑的可能已经是作者刚发起的下一轮了
+    // （`chat.ts::newRunId` 写着那个序列）。后端比对不上就忽略。
+    stop.mutate({ chatId, runId: runId.current }, {
+      onSuccess: (r) => {
+        stopLanded.current = r.stopped;
+        setStopping(r.stopped);
+        // `stopped=false` 不是失败：那一刻它本来就没在跑。
+        // 后端那句话原样说出来，这里不另写一句。
+        setStopSaid(r.stopped ? null : { text: r.message, failed: false });
+      },
+      // 这一下**没送出去**（那段对话不在了 / 网断了）。原来这儿什么都没有，
+      // 于是按下去屏幕上一个字都不变——见 `stopSaid` 那段注释。
+      onError: (e) =>
+        setStopSaid({
+          text: refusalText(e, STOP_FAILED(language)) ?? STOP_FAILED(language),
+          failed: true,
+        }),
+    });
+  }
+
   function send() {
     const text = said.trim();
-    if (!text || !projectId || running) return;
+    if (!text || !projectId) return;
+    // 自己发了一句就是要看它落在哪儿——哪怕刚才翻上去读旧话，这一下也重新贴回底下。
+    log.pin();
+    if (running) {
+      // 跑着的是眼前这一段才能插话；别的段上输入框本来就是灰的。
+      if (!runningHere || !chatId) return;
+      setSaid("");
+      return sayWhileRunning(chatId, text);
+    }
     setSaid("");
     if (chatId) return runTurn(chatId, text);
     // 还没有一段对话 —— 先开一段再说。**不预先开空会话**：那会在侧栏里堆出一排
@@ -483,10 +679,21 @@ export function ChatPanel() {
   // 说的就是这条路。
 
   return (
-    <section className="pane chat">
+    /* 一句话都还没有的时候整块屏幕换一种排法（`blank`，作者 2026-09-10）：
+       那张脸和输入框**并成一组立在正中**，不再是脸悬在半空、输入框独自钉在底边。
+       换的只有位置——输入框自己的长相（高度、圆角、那颗发送）一个像素不动。 */
+    <section
+      className={nothingSaidYet ? "pane chat blank" : "pane chat"}
+      style={{ "--say-h": `${sayHeight}px` } as CSSProperties}
+    >
       <div className="chat-head">
+        {/* **这一格永远是「写作助手」**（作者 2026-09-10：「不要因为第一句话改变」）。
+            原来它写的是那一段对话的标题，而标题是后端拿作者说的第一句话起的——
+            于是打了声招呼，面板的名字就变成「你好」。**面板的名字是它自己的名字**，
+            不是当前这一段的名字；哪一段在跟前由「对话列表」那一列说，那儿的标题一个
+            字没动。 */}
         <span className="chat-head-title">
-          {current?.title.trim() || (language === "zh" ? "写作助手" : "Writing assistant")}
+          {language === "zh" ? "写作助手" : "Writing assistant"}
         </span>
         <span className="spacer" />
         {/* 这儿曾经有一句「按第 N 章回答」。**2026-08-14 撤掉**，作者的原话是
@@ -511,23 +718,40 @@ export function ChatPanel() {
           </CompareLink>
         )}
         {/* 「这一章的规矩」那颗按钮原来在这儿。撤掉的理由写在上面 `listOpen` 那一段。 */}
-        <button aria-expanded={listOpen} onClick={() => setListOpen((v) => !v)}>
+        <button
+          aria-expanded={listOpen}
+          aria-haspopup="true"
+          onClick={() => setListOpen((v) => !v)}
+        >
           {language === "zh" ? "对话列表" : "Conversations"}
         </button>
+
+        {/* ── 会话列表是**挂在这颗按钮下面的浮层**（作者 2026-09-07）──────────
+            它原来横贯整条面板、插在头栏和对话区之间：点开时对话整个被推下去，
+            一个几行的列表占掉半屏，看起来像面板换了一页。作者的原话是「对话列表
+            设计也不对太丑了，只能从上往下发吗」——不是只能。
+
+            **挂在 `.chat-head` 里面**（而不是到面板那一层再定位一次）：位置由头栏
+            自己给（`top: calc(100% + 6px)`），头栏高度改了它跟着走，不用有人回来
+            数像素。收起靠下面那张透明的幕布——点列表外面就收；头栏盖在幕布上面，
+            所以再点一次这颗按钮仍然是正常的开关。 */}
+        {listOpen && projectId && (
+          <ChatSessions
+            pid={pid}
+            sessions={list}
+            failed={listFailure}
+            current={chatId}
+            onPick={setChat}
+            onPicked={() => setListOpen(false)}
+          />
+        )}
       </div>
 
       {listOpen && projectId && (
-        <ChatSessions
-          pid={pid}
-          sessions={list}
-          failed={listFailure}
-          current={chatId}
-          onPick={setChat}
-          onPicked={() => setListOpen(false)}
-        />
+        <div className="chat-sessions-veil" aria-hidden="true" onClick={() => setListOpen(false)} />
       )}
 
-      <div className="chat-log" ref={logRef}>
+      <div className="chat-log" ref={log.ref} onScroll={log.onScroll}>
         {detail.isError && (
           <div className="err-box">
             {language === "zh" ? (
@@ -547,36 +771,33 @@ export function ChatPanel() {
             刚开的新对话 `chatId` 是有的、消息是空的，原来那条判据在这一档什么都不画，
             于是「＋ 开一段新的对话」按下去等于面对一片空白（作者 2026-08-15 的原话）。
 
-            画的是助手自己那张脸 + 一句「开始写作」+ 它能干什么。**不摆按钮**：
-            这块屏幕上唯一的下一步就在正下方那个输入框里，再放一颗按钮是同一个动作
-            两个入口，而其中一个还得替作者想好第一句话该说什么。 */}
+            画的只有助手自己那张脸 + 一句招呼。**不摆按钮**：这块屏幕上唯一的
+            下一步就在正下方那个输入框里，再放一颗按钮是同一个动作两个入口，而其中一个
+            还得替作者想好第一句话该说什么。
+
+            ⚠️ **底下那句「它能翻这本书的目录…」2026-09-10 撤了**（作者：「这句话去掉」）。
+            它数的是助手有哪几把工具，而作者不是照着一张能力清单开口的——真要知道它会
+            什么，问它就是了。留下的这一屏只说「从这儿开始」。 */}
         {nothingSaidYet && (
           <div className="chat-hello">
             <span className="chat-hello-mark" aria-hidden="true">
-              <BotIcon open={false} />
+              <BotIcon />
             </span>
             <p className="chat-hello-title">
-              {language === "zh" ? "开始写作" : "Start writing"}
-            </p>
-            <p className="chat-hello-sub">
-              {language === "zh" ? (
-                <>
-                  说一句就行。它能翻这本书的目录、某几章的正文和梗概，
-                  也能替你算这一章谁还不知道什么。
-                </>
-              ) : (
-                <>
-                  Just say something. It can look through this book’s table of contents, the text
-                  and summaries of specific chapters, and work out who doesn’t know what yet as of
-                  this chapter.
-                </>
-              )}
+              {language === "zh" ? "无限创意，从此谱写" : "Endless ideas, written from here"}
             </p>
           </div>
         )}
 
         {window.hidden > 0 && (
-          <button className="chat-earlier" onClick={() => setExpanded(true)}>
+          <button
+            className="chat-earlier"
+            // 点开更早的话是要往上读，这一下之后不许再把他拽回底下。
+            onClick={() => {
+              log.unpin();
+              setExpanded(true);
+            }}
+          >
             {language === "zh"
               ? `看更早的 ${window.hidden} 条`
               : `See ${window.hidden} earlier message${window.hidden === 1 ? "" : "s"}`}
@@ -600,28 +821,9 @@ export function ChatPanel() {
           <RunningStrip
             since={startedAt}
             progress={progress}
-            stopping={stop.isPending}
-            onStop={() => {
-              if (!chatId) return;
-              // **报的是这一轮的标识**，不是「停这段对话」：一次迟到的「停」
-              // 到达时，正在跑的可能已经是作者刚发起的下一轮了
-              // （`chat.ts::newRunId` 写着那个序列）。后端比对不上就忽略。
-              stop.mutate({ chatId, runId: runId.current }, {
-                onSuccess: (r) => {
-                  stopLanded.current = r.stopped;
-                  // `stopped=false` 不是失败：那一刻它本来就没在跑。
-                  // 后端那句话原样说出来，这里不另写一句。
-                  setStopSaid(r.stopped ? null : { text: r.message, failed: false });
-                },
-                // 这一下**没送出去**（那段对话不在了 / 网断了）。原来这儿什么都没有，
-                // 于是按下去屏幕上一个字都不变——见 `stopSaid` 那段注释。
-                onError: (e) =>
-                  setStopSaid({
-                    text: refusalText(e, STOP_FAILED(language)) ?? STOP_FAILED(language),
-                    failed: true,
-                  }),
-              });
-            }}
+            queued={queued}
+            queuedNote={queuedNote}
+            stopping={stopping}
           />
         )}
         {stopSaid &&
@@ -648,7 +850,7 @@ export function ChatPanel() {
         )}
       </div>
 
-      <div className="chat-say">
+      <div className="chat-say" ref={sayRef}>
         {/* 输入框和那颗发送**是一个盒子**（`.chat-say-box`）：按钮吊在框内右下角，
             文字的右边和下边给它让出了位置（`.chat-say-box textarea` 的内边距）。
             它原来是框底下单独一行、写着「发送」两个字——作者要的是「放进框里、
@@ -656,14 +858,19 @@ export function ChatPanel() {
         <div className="chat-say-box">
         <textarea
           aria-label={language === "zh" ? "跟写作助手说" : "Talk to the writing assistant"}
+          /* 占位符只说「这儿输入什么」。**键盘手势搬到框底下那行小字**（2026-09-07）：
+             原来它写的是「开始写作…（Enter 发送，Shift + Enter 换行）」——那时上面
+             空态的标题也是「开始写作」，同一句话摆两遍，后面还挂一份说明书，
+             一个占位符干了三件事。 */
           placeholder={
-            language === "zh"
-              ? "开始写作…（Enter 发送，Shift + Enter 换行）"
-              : "Start writing… (Enter to send, Shift + Enter for a new line)"
+            language === "zh" ? "跟写作助手说" : "Talk to the writing assistant"
           }
           rows={3}
           value={said}
-          disabled={running}
+          /* 跑着的时候**还能说**（作者 2026-09-12：「像 codex 那样新的消息可以直接
+             发出去」）——`send()` 会把那句话排进正在跑的这一轮（`sayWhileRunning`）。
+             灰的只有一档：跑着的是**另一段**对话（下面那句 `chat-say-note` 说清了）。 */
+          disabled={running && !runningHere}
           onChange={(e) => setSaid(e.target.value)}
           /* **Enter 直接发，Shift + Enter 换行**（2026-08-15 作者定的）。
            *
@@ -692,18 +899,46 @@ export function ChatPanel() {
           }}
         />
           {/* 名字由 `aria-label` 给（图标按钮的规矩，同顶栏那几颗）。
-              跑着的时候只是灰掉——**「停」在上面那条跑动条上**，这儿再放一颗
-              就是同一个动作两个入口。 */}
-          <button
-            className="chat-send"
-            aria-label={language === "zh" ? "发送" : "Send"}
-            data-tip={language === "zh" ? "发送" : "Send"}
-            disabled={!said.trim() || running || create.isPending || !projectId}
-            onClick={send}
-          >
-            <SendIcon />
-          </button>
+              **这一颗有两面**（作者 2026-09-12：「停的按钮换到发送按钮那边」）：
+              跑着而框里没字 = 「停」；框里有字 = 「发送」——跑着的时候发的是插话
+              （`sayWhileRunning`），没跑就是新的一轮。**同一个动作只有一个入口**：
+              跑动条上原来那颗「停」同日撤了。 */}
+          {runningHere && !said.trim() ? (
+            <button
+              className="chat-send"
+              aria-label={language === "zh" ? "停" : "Stop"}
+              data-tip={language === "zh" ? "停" : "Stop"}
+              disabled={stop.isPending}
+              onClick={stopRunning}
+            >
+              <StopIcon />
+            </button>
+          ) : (
+            <button
+              className="chat-send"
+              aria-label={language === "zh" ? "发送" : "Send"}
+              data-tip={language === "zh" ? "发送" : "Send"}
+              disabled={
+                !said.trim() ||
+                (running && !runningHere) ||
+                sayMid.isPending ||
+                create.isPending ||
+                !projectId
+              }
+              onClick={send}
+            >
+              <SendIcon />
+            </button>
+          )}
         </div>
+        {/* 键盘手势。**只在输入框有焦点时露面**（CSS 干的，见 `.chat-say-hint`）：
+            它是给正要打字的人看的，不是常驻在屏幕上的装饰。位置写死了必须紧跟在
+            `.chat-say-box` 后面——那条规则用的是相邻兄弟选择器。 */}
+        <p className="chat-say-hint">
+          {language === "zh"
+            ? "Enter 发送，Shift + Enter 换行"
+            : "Enter to send, Shift + Enter for a new line"}
+        </p>
         {/* 输入框停用的理由必须写出来。**一轮跑好几分钟**，作者很可能在等的时候
             切去看另一段对话——那时这儿是一个没有任何解释的灰输入框，读起来像坏了。
             （一次只跑一轮是有意的：两轮同时飞，屏幕上就有两笔说不清是谁花的钱。） */}

@@ -1,7 +1,7 @@
 import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fixtures, renderWithApi, turnStream } from "../test/harness";
+import { fixtures, renderWithApi, turnStream, ROUND_DONE } from "../test/harness";
 import { rawIds, screenText } from "../test/screenGuard";
 import { CHAT_TAIL } from "../chat";
 import { useCoords } from "../store";
@@ -72,11 +72,12 @@ describe("对话摊在中栏右半边", () => {
     const user = userEvent.setup();
     await screen.findByText(fixtures.chatDetail.messages[0].text);
     await user.click(screen.getByRole("button", { name: "对话列表" }));
-    // 真 dump：9 条历史，2 条上得了屏。摆一个「9 条」出来就是一个看起来很正常的假数字。
-    // （那一轮跑了校准 + 封存 + 查约束 + 起一稿，所以历史里有四条工具返回。）
-    expect(fixtures.chats[0].message_count).toBe(9);
+    // 真 dump：5 条历史，2 条上得了屏。摆一个「5 条」出来就是一个看起来很正常的假数字。
+    // （那一轮跑了查约束 + 起一稿，所以历史里有两条工具返回。2026-09-12 之前还有校准 +
+    // 封存那两步，ADR 0047 砍了。）
+    expect(fixtures.chats[0].message_count).toBe(5);
     expect(fixtures.chatDetail.messages).toHaveLength(2);
-    expect(document.body.textContent).not.toMatch(/9 条/);
+    expect(document.body.textContent).not.toMatch(/5 条/);
   });
 });
 
@@ -104,7 +105,7 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
     });
   });
 
-  it("**刚开的新对话不是一片空白** —— 一句话都没有时画的是「开始写作」那块", async () => {
+  it("**刚开的新对话不是一片空白** —— 一句话都没有时画的是那块招呼", async () => {
     // 2026-08-15 作者报的：按「＋ 开一段新的对话」之后面对一片空白。
     // 病根是那条判据写的是 `!chatId`——而新开的一段**是有 id 的**，只是没有话。
     // 判据改成「这一段里没有话」，这一条钉的就是那个差别。
@@ -113,8 +114,7 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
       { match: /\/chats\/[^/]+$/, body: { ...fixtures.chatDetail, messages: [] } },
     ]);
 
-    expect(await screen.findByText("开始写作")).toBeInTheDocument();
-    expect(screen.getByText(/说一句就行/)).toBeInTheDocument();
+    expect(await screen.findByText("无限创意，从此谱写")).toBeInTheDocument();
   });
 
   it("读不出来的时候**不许说「还没说话」** —— 那是一句它不知道真假的话", async () => {
@@ -123,7 +123,7 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
       { match: /\/chats\/[^/]+$/, status: 500, body: {} },
     ]);
     await screen.findByText(/没读出来/);
-    expect(screen.queryByText("开始写作")).toBeNull();
+    expect(screen.queryByText("无限创意，从此谱写")).toBeNull();
   });
 
   // ── Enter 直接发（2026-08-15）─────────────────────────────────────────────
@@ -197,8 +197,8 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
 
   it("**回话区没有打字机**，只有真的秒表 —— 而且这块屏幕自己说清了哪一档才逐字", async () => {
     // 2026-08-12（ADR 0024）之后中间过程真的看得见了，**但两条流不是一回事**：
-    // 起草那次调用是流式的，回话那次不是（`plan.stream is False`，后端那条
-    // `test_todays_agent_call_is_not_streaming_…` 钉着）。所以回话区仍然一次到位，
+    // 起草那次调用的片会递到界面，回话那次的不会（wire 上它 2026-09-12 起也流式了，
+    // 但装配层造端口时没接 `on_event`，见 `ChatPanel.tsx` 顶上第 1 条）。所以回话区仍然一次到位，
     // 2026-08-13：这儿原来还断言屏幕上那句「回话是整段一次出现的，稿子才会一个字一个字
     // 长出来」。**那句话删了**，因为它没有任何条件 —— 端点退回一次性响应时它就是假的，
     // 而且没有一个成熟工具会向用户解释自己的流式语义。屏幕该用状态本身说话：
@@ -215,14 +215,17 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
     expect(within(strip).getByText(/已经 \d+ 秒/)).toBeInTheDocument();
     // 他刚说的那句话立刻占一格：后端做的第一件事就是把它落库，这不是假装。
     expect(screen.getByText("先去看看第 1 章")).toBeInTheDocument();
-    // 跑着的时候不许再发一条 —— 后端那一侧是 409。
-    expect(say()).toBeDisabled();
+    // **跑着的时候还能说**（2026-09-12：中途那句排进正在跑的这一轮，不再是 409）——
+    // 输入框不灰；框里没字时那颗圆钮是「停」，不是灰掉的「发送」。
+    expect(say()).toBeEnabled();
+    expect(screen.getByRole("button", { name: "停" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "发送" })).toBeNull();
 
     turn.release();
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
   });
 
-  it("跑完之后：后端那句话 + 查了几次，**查到了什么一个字都不给**", async () => {
+  it("跑完之后：查了几次说得出来，**查到了什么一个字都不给**", async () => {
     const user = userEvent.setup();
     renderWithApi(<ChatPanel />);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
@@ -230,9 +233,11 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
     await user.type(say(), "问一句");
     await user.click(sendBtn());
 
-    // 措辞的唯一出处是后端的 `stop_wording()`，这里原样显示。
-    await screen.findByText(fixtures.chatTurn.message);
-    expect(document.body.textContent).toContain(`查了 ${fixtures.chatTurn.lookups} 次资料`);
+    await screen.findByText(ROUND_DONE);
+    // **正常收场那句「说完了。」不画**（作者 2026-09-10）：它每一轮都一样，说的又是
+    // 屏幕上明摆着的事。别的收场理由照说不误，那由 `chat.test.ts` 那一节钉。
+    expect(fixtures.chatTurn.reason).toBe("done"); // 探针
+    expect(document.body.textContent).not.toContain(fixtures.chatTurn.message);
     // 停止原因是机器码（snake_case），一个字都不上屏。
     expect(document.body.textContent).not.toContain(fixtures.chatTurn.reason);
   });
@@ -256,7 +261,7 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
 
     await user.type(say(), "问一句");
     await user.click(sendBtn());
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
 
     const reread = spy.mock.calls.filter(
       ([url, init]) =>
@@ -268,7 +273,7 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
   it("还没有一段对话时，发送会先开一段 —— **不预先开空会话**", async () => {
     const user = userEvent.setup();
     renderWithApi(<ChatPanel />, [{ match: /\/chats$/, body: [] }]);
-    await screen.findByText(/说一句就行/);
+    await screen.findByText("无限创意，从此谱写");
     const spy = vi.spyOn(globalThis, "fetch");
 
     await user.type(say(), "第一句");
@@ -388,7 +393,163 @@ describe("一轮没跑成 —— 那句话留在对话里，不是留在界面�
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// 跑着的时候还能说（2026-09-12，后端 `Mailbox`）
+// ══════════════════════════════════════════════════════════════════════════
+
+describe("跑着的时候还能说", () => {
+  const QUEUED = "记下了，它下一步就会看到。";
+
+  it("**中途那句先排着队、它读到了就站进对话里** —— 位置是模型真的读到它的位置", async () => {
+    // 作者的原话：「像 codex 那样新的消息可以直接发出去，模型可以读，并且不会耽误
+    // 正在做的」。屏幕上的三步：淡一档的「排着队」→ 后端喊 `author_said` →
+    // 变成正常的作者气泡，排在它之前那几行后面。
+    const user = userEvent.setup();
+    const said = realEvent("reply_text");
+    let releaseRead!: (frame: string) => void;
+    const read = new Promise<string>((r) => (releaseRead = r));
+    let releaseEnd!: (frame: string) => void;
+    const end = new Promise<string>((r) => (releaseEnd = r));
+    const posted: unknown[] = [];
+    renderWithApi(<ChatPanel />, [
+      {
+        method: "POST",
+        match: /\/turn\/events$/,
+        stream: [frame("turn", { ...said, text: "我先翻一下目录。" }), read, end],
+      },
+      {
+        method: "POST",
+        match: /\/say$/,
+        onRequest: (init) => posted.push(JSON.parse(String(init?.body))),
+        body: { chat_id: fixtures.chats[0].id, queued: true, message: QUEUED },
+      },
+    ]);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    await user.type(say(), "这章讲什么");
+    await user.click(sendBtn());
+    const strip = await screen.findByRole("status");
+    await within(strip).findByText("我先翻一下目录。");
+
+    // 框里一有字，那颗圆钮就从「停」变回「发送」；回车发的是插话。
+    await user.type(say(), "顺便看看第 2 章");
+    expect(screen.getByRole("button", { name: "发送" })).toBeInTheDocument();
+    fireEvent.keyDown(say(), { key: "Enter" });
+
+    // 排着队：淡一档的作者气泡 + 后端那句回执；输入框已经空了。
+    const queued = await within(strip).findByText("顺便看看第 2 章");
+    expect(queued.parentElement?.className).toBe("chat-msg author queued");
+    expect(within(strip).getByText(QUEUED)).toBeInTheDocument();
+    expect(say()).toHaveValue("");
+    expect(posted).toEqual([{ run_id: expect.any(String), said: "顺便看看第 2 章" }]);
+
+    // 它读到了：那句话变成正常的作者气泡，排在「我先翻一下目录。」后面，回执那句撤掉。
+    releaseRead(frame("turn", { ...said, kind: "author_said", text: "顺便看看第 2 章" }));
+    await waitFor(() => {
+      const bubble = within(strip).getByText("顺便看看第 2 章");
+      expect(bubble.parentElement?.className).toBe("chat-msg author");
+    });
+    expect(within(strip).queryByText(QUEUED)).toBeNull();
+    const order = Array.from(strip.querySelectorAll(".chat-text")).map((el) => el.textContent);
+    expect(order).toEqual(["我先翻一下目录。", "顺便看看第 2 章"]);
+
+    releaseEnd(frame("receipt", fixtures.chatTurn));
+    await screen.findByText(ROUND_DONE);
+  });
+
+  it("**没排进去就还回输入框**（那一刻刚跑完 / 在跑的是另一轮）—— 后端那句话照说", async () => {
+    const user = userEvent.setup();
+    const turn = gated(fixtures.chatTurn);
+    const NOT_QUEUED = "这会儿它没在跑，这句话没有排进去——直接发就是新的一轮。";
+    renderWithApi(<ChatPanel />, [
+      { method: "POST", match: /\/turn\/events$/, body: turn.handler },
+      {
+        method: "POST",
+        match: /\/say$/,
+        body: { chat_id: fixtures.chats[0].id, queued: false, message: NOT_QUEUED },
+      },
+    ]);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    await user.type(say(), "跑一个");
+    await user.click(sendBtn());
+    await screen.findByRole("status");
+
+    await user.type(say(), "再说一句");
+    fireEvent.keyDown(say(), { key: "Enter" });
+    await screen.findByText(NOT_QUEUED);
+    expect(say()).toHaveValue("再说一句");
+    expect(screen.queryByText(/\bchat_busy\b/)).toBeNull();
+
+    turn.release();
+    await screen.findByText(ROUND_DONE);
+  });
+
+  it("**「停」就是发送那颗圆钮的另一面** —— 跑着而框里没字时按它，报的是这一轮的标识", async () => {
+    const user = userEvent.setup();
+    const turn = gated(fixtures.chatTurn);
+    const stops: unknown[] = [];
+    renderWithApi(<ChatPanel />, [
+      { method: "POST", match: /\/turn\/events$/, body: turn.handler },
+      {
+        method: "POST",
+        match: /\/stop$/,
+        onRequest: (init) => stops.push(JSON.parse(String(init?.body))),
+        body: fixtures.chatStopped,
+      },
+    ]);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    await user.type(say(), "跑一个");
+    await user.click(sendBtn());
+    await screen.findByRole("status");
+
+    const stopBtn = screen.getByRole("button", { name: "停" });
+    expect(stopBtn.className).toContain("chat-send");
+    await user.click(stopBtn);
+    await waitFor(() => expect(stops).toHaveLength(1));
+    expect(stops[0]).toHaveProperty("run_id");
+
+    turn.release();
+    await screen.findByText(ROUND_DONE);
+  });
+});
+
 describe("「停」", () => {
+  it("**停送到之后屏幕当场说出来**，那颗圆钮还是「停」——再按一次连它那一句也停", async () => {
+    // 2026-09-12 作者报的原话：「点击这个暂停键没有办法第一时间暂停」。后端那一半
+    // （回复走流式、下一片就断、停下来之后问一句）这儿看不见；这儿钉的是界面这一半：
+    // `stopped=true` 一回来，秒表那行不许还写着「正在跑这一轮」。
+    const user = userEvent.setup();
+    // 两轮各卡一次：第二轮要能停在「正在跑」那一帧上，看那行字有没有被上一轮带脏。
+    const rounds = [gated(fixtures.chatTurn), gated(fixtures.chatTurn)];
+    let round = 0;
+    renderWithApi(<ChatPanel />, [
+      { method: "POST", match: /\/turn\/events$/, body: () => rounds[round++].handler() },
+      // 真 dump 那份 `chatStopped` 是「这会儿没在跑」那一档（`stopped: false`）；
+      // 这儿要的是送到了那一档，在真 dump 之上只翻这一位。
+      { method: "POST", match: /\/stop$/, body: { ...fixtures.chatStopped, stopped: true } },
+    ]);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    await user.type(say(), "跑一个");
+    await user.click(sendBtn());
+    const strip = await screen.findByRole("status");
+    expect(strip.textContent).toContain("正在跑这一轮");
+
+    await user.click(screen.getByRole("button", { name: "停" }));
+    await waitFor(() => expect(strip.textContent).toContain("停下来了，它正在问你一句"));
+    expect(strip.textContent).not.toContain("正在跑这一轮");
+    // 圆钮没变回「发送」也没灰掉：它现在管的是「连那一句也不要」。
+    expect(screen.getByRole("button", { name: "停" })).toBeEnabled();
+
+    rounds[0].release();
+    await screen.findByText(ROUND_DONE);
+    // 下一轮从头来：那行字不许把上一轮的「停下来了」带过去。
+    await user.type(say(), "再跑一个");
+    await user.click(sendBtn());
+    const again = await screen.findByRole("status");
+    expect(again.textContent).toContain("正在跑这一轮");
+    rounds[1].release();
+    await screen.findByText(ROUND_DONE);
+  });
+
   it("按下去真的打那条路由，而且不等这一轮跑完", async () => {
     const user = userEvent.setup();
     const turn = gated(fixtures.chatTurn);
@@ -405,7 +566,7 @@ describe("「停」", () => {
       expect(spy.mock.calls.some(([url]) => String(url).endsWith("/stop"))).toBe(true),
     );
     turn.release();
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
   });
 
   it("**「停」报的是这一轮的标识** —— 跑和停必须是同一个，而且每一轮都换", async () => {
@@ -431,7 +592,7 @@ describe("「停」", () => {
     expect(sent("/stop")[0]).toBe(sent("/turn/events")[0]);
 
     first.release();
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
 
     // **下一轮换一个新的**：上一轮那个还在的话，迟到的「停」就会认成这一轮。
     await user.type(say(), "再跑一个");
@@ -456,7 +617,7 @@ describe("「停」", () => {
     await screen.findByText(fixtures.chatStopped.message);
     expect(document.querySelector(".err-box")).toBeNull(); // 它不是错误
     turn.release();
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
   });
 
   it("按了停、回执却说「说完了」—— 补一句，别让按钮看起来是坏的", async () => {
@@ -554,10 +715,10 @@ describe("多段对话：侧列表", () => {
     turn.release();
     await waitFor(() => expect(say()).not.toBeDisabled());
     // 回执属于它自己那一段。**切回去还在**（那一轮的结论没有因为看了一眼别处就消失）。
-    expect(screen.queryByText(fixtures.chatTurn.message)).toBeNull();
+    expect(screen.queryByText(ROUND_DONE)).toBeNull();
     await user.click(screen.getByRole("button", { name: "对话列表" }));
     await user.click(screen.getByRole("button", { name: fixtures.chats[0].title }));
-    expect(screen.getByText(fixtures.chatTurn.message)).toBeInTheDocument();
+    expect(screen.getByText(ROUND_DONE)).toBeInTheDocument();
   });
 
   it("删一段要先确认，删完把摊开的那段放下", async () => {
@@ -680,11 +841,66 @@ describe("跑到一半：它在做什么，屏幕上真的看得见", () => {
     // **工具名是机器码，它在事件上（界面要分派用），但一个字都不上屏。**
     expect(started.tool).toBeTruthy(); // 探针：真 dump 里确实有这么个东西
     expect(strip.textContent).not.toContain(started.tool);
-    // 回执还没到，所以「说完了」这会儿一个字都不该在。
-    expect(screen.queryByText(fixtures.chatTurn.message)).toBeNull();
+    // 回执还没到，所以它那几行这会儿一个字都不该在。
+    expect(screen.queryByText(ROUND_DONE)).toBeNull();
 
     release(frame("receipt", fixtures.chatTurn));
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
+  });
+
+  it("**它说的话直接排在对话里，长得和跑完之后那一条一样** —— 不框在一张卡里（作者 2026-09-12）", async () => {
+    // 原来是一张带边框的卡：抬头秒表，底下「下面是它这会儿在做的事」，说的话缩成
+    // 12px 塞在卡里；回执一落地历史重取，同一段话跳出来变大一号。作者的原话是
+    // 「不要用框框框住他的思考内容……直接放到那个上下文中」。
+    const user = userEvent.setup();
+    const started = realEvent("tool_started");
+    const finished = realEvent("tool_finished");
+    const said = realEvent("reply_text");
+    let release!: (frame: string) => void;
+    const held = new Promise<string>((r) => (release = r));
+    renderWithApi(<ChatPanel />, [
+      {
+        method: "POST",
+        match: /\/turn\/events$/,
+        stream: [
+          frame("turn", { ...said, text: "我先翻一下目录。" }),
+          frame("turn", started),
+          frame("turn", finished),
+          frame("turn", { ...said, text: "翻完了，这章是结局。" }),
+          held,
+        ],
+      },
+    ]);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    await user.type(say(), "这章讲什么");
+    await user.click(sendBtn());
+
+    const strip = await screen.findByRole("status");
+    const last = await within(strip).findByText("翻完了，这章是结局。");
+    // 同 `Bubble` 的形：说话人只念给读屏，正文是 `.chat-text`，外面是 `.chat-msg.assistant`。
+    expect(last.className).toBe("chat-text");
+    expect(last.parentElement?.className).toBe("chat-msg assistant");
+    // 顺序就是到达顺序：说 → 做 → 做 → 说，不是说的一堆、做的一堆。
+    const order = Array.from(strip.querySelectorAll(".chat-text, .chat-step")).map(
+      (el) => el.textContent,
+    );
+    expect(order).toEqual([
+      "我先翻一下目录。",
+      started.said_to_author,
+      finished.said_to_author,
+      "翻完了，这章是结局。",
+    ]);
+    // 那句「下面是它这会儿在做的事」撤了：没有一张卡，也就没有「下面」。
+    expect(strip.textContent).not.toContain("下面是它这会儿在做的事");
+    // 秒表在末尾一行 —— 对话的活尾巴，新东西长在它上面。**「停」不在这儿**
+    // （2026-09-12 挪去了发送那颗圆钮上，见下面「跑着的时候还能说」那一节）。
+    const tail = strip.lastElementChild!;
+    expect(tail.className).toBe("chat-running-tail");
+    expect(within(tail as HTMLElement).getByText(/已经 \d+ 秒/)).toBeInTheDocument();
+    expect(within(tail as HTMLElement).queryByRole("button")).toBeNull();
+
+    release(frame("receipt", fixtures.chatTurn));
+    await screen.findByText(ROUND_DONE);
   });
 
   it("**稿子真的一个字一个字长出来** —— 这是全屏幕唯一逐字的那一格", async () => {
@@ -722,7 +938,7 @@ describe("跑到一半：它在做什么，屏幕上真的看得见", () => {
     await screen.findByText("风雪落在肩上，他终于抬起头。");
 
     release(frame("receipt", fixtures.chatTurn));
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
   });
 
   it("**流断在半路（一帧回执都没有）** —— 说一句它自己不知道为什么，不编理由", async () => {
@@ -775,7 +991,155 @@ describe("跑到一半：它在做什么，屏幕上真的看得见", () => {
     await user.type(say(), "问一句");
     await user.click(sendBtn());
 
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// 对话区跟着新到的字走（作者 2026-09-12：「没有跟紧他那个最新的输出，
+// 他只会停留在某一个时刻，我需要往下滑才能看到」）
+// ══════════════════════════════════════════════════════════════════════════
+
+/** jsdom 里盒子没有尺寸（`scrollHeight` / `clientHeight` / `scrollTop` 三个量恒为 0），
+ *  「跟不跟底」根本测不出来。给它量上尺寸：前两个是只读的，用 getter 顶掉，
+ *  `size` 对象留在外面好让测试中途把内容「变长」；`scrollTop` 得能写能读。 */
+function measure(el: Element, size: { scrollHeight: number; clientHeight: number }) {
+  Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => size.scrollHeight });
+  Object.defineProperty(el, "clientHeight", { configurable: true, get: () => size.clientHeight });
+  let top = 0;
+  Object.defineProperty(el, "scrollTop", {
+    configurable: true,
+    get: () => top,
+    set: (v: number) => {
+      top = v;
+    },
+  });
+}
+
+const chatLog = () => document.querySelector(".chat-log") as HTMLElement;
+
+describe("对话区跟着新到的字走", () => {
+  it("**逐字长出来的那一稿，屏幕跟着走** —— 外面的对话区和那一格自己都贴着底", async () => {
+    // 病根：原来只在「历史变长 / 一轮开始或结束」时滚一下，一轮跑着的时候变长的
+    // 东西（进度行、它说的话、逐字长的那一稿）全不在里面，屏幕停在开跑那一刻不动。
+    const user = userEvent.setup();
+    const opened = realEvent("draft_started");
+    let release1!: (frame: string) => void;
+    const held1 = new Promise<string>((r) => (release1 = r));
+    let release2!: (frame: string) => void;
+    const held2 = new Promise<string>((r) => (release2 = r));
+    renderWithApi(<ChatPanel />, [
+      { method: "POST", match: /\/turn\/events$/, stream: [frame("turn", opened), held1, held2] },
+    ]);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    const size = { scrollHeight: 1000, clientHeight: 300 };
+    measure(chatLog(), size);
+
+    await user.type(say(), "写一稿");
+    await user.click(sendBtn());
+    await screen.findByText("还没落下第一个字。");
+    expect(chatLog().scrollTop).toBe(1000);
+
+    // 字来了、对话变长了：贴着底就跟到新的底。
+    size.scrollHeight = 1400;
+    release1(frame("turn", { ...opened, kind: "draft_delta", text: "风雪落在肩上。", said_to_author: "" }));
+    const text = await screen.findByText("风雪落在肩上。");
+    expect(chatLog().scrollTop).toBe(1400);
+
+    // 那一格自己只留一屏高、自己会滚——最新的字长在它的折线底下，它也得自己跟。
+    const inner = { scrollHeight: 400, clientHeight: 148 };
+    measure(text, inner);
+    release2(frame("turn", { ...opened, kind: "draft_delta", text: "他没有回头。", said_to_author: "" }));
+    await screen.findByText("风雪落在肩上。他没有回头。");
+    expect(text.scrollTop).toBe(400);
+  });
+
+  it("**往上翻了就不拽他** —— 翻回底下才接着跟", async () => {
+    const user = userEvent.setup();
+    const said = realEvent("reply_text");
+    let release1!: (frame: string) => void;
+    const held1 = new Promise<string>((r) => (release1 = r));
+    let release2!: (frame: string) => void;
+    const held2 = new Promise<string>((r) => (release2 = r));
+    let releaseEnd!: (frame: string) => void;
+    const end = new Promise<string>((r) => (releaseEnd = r));
+    renderWithApi(<ChatPanel />, [
+      {
+        method: "POST",
+        match: /\/turn\/events$/,
+        stream: [frame("turn", { ...said, text: "我先翻一下目录。" }), held1, held2, end],
+      },
+    ]);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    const size = { scrollHeight: 1000, clientHeight: 300 };
+    measure(chatLog(), size);
+    await user.type(say(), "查一下");
+    await user.click(sendBtn());
+    const strip = await screen.findByRole("status");
+    await within(strip).findByText("我先翻一下目录。");
+    expect(chatLog().scrollTop).toBe(1000);
+
+    // 作者往上翻去读旧话。这之后到的字不许把他拽回底下。
+    chatLog().scrollTop = 200;
+    fireEvent.scroll(chatLog());
+    size.scrollHeight = 1400;
+    release1(frame("turn", { ...said, text: "第 154 章：裕王死了。" }));
+    await within(strip).findByText("第 154 章：裕王死了。");
+    expect(chatLog().scrollTop).toBe(200);
+
+    // 翻回底下，又接着跟。
+    chatLog().scrollTop = 1400 - 300;
+    fireEvent.scroll(chatLog());
+    size.scrollHeight = 1800;
+    release2(frame("turn", { ...said, text: "第 156 章：血剑骑士现身。" }));
+    await within(strip).findByText("第 156 章：血剑骑士现身。");
+    expect(chatLog().scrollTop).toBe(1800);
+
+    releaseEnd(frame("receipt", fixtures.chatTurn));
+    await screen.findByText(ROUND_DONE);
+  });
+
+  it("**自己发了一句就重新贴回底下** —— 光打字不算，按下发送才算", async () => {
+    const user = userEvent.setup();
+    const turn = gated(fixtures.chatTurn);
+    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turn.handler }]);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    const size = { scrollHeight: 1000, clientHeight: 300 };
+    measure(chatLog(), size);
+    chatLog().scrollTop = 200;
+    fireEvent.scroll(chatLog());
+
+    await user.type(say(), "跑一个");
+    expect(chatLog().scrollTop).toBe(200);
+    await user.click(sendBtn());
+    await screen.findByRole("status");
+    expect(chatLog().scrollTop).toBe(1000);
+
+    turn.release();
+    await screen.findByText(ROUND_DONE);
+  });
+
+  it("**点开更早的话不许把他拽回底下** —— 他点那颗按钮是要往上读", async () => {
+    const user = userEvent.setup();
+    const long = {
+      ...fixtures.chatDetail,
+      messages: Array.from({ length: CHAT_TAIL + 5 }, (_, i) => ({
+        ...fixtures.chatDetail.messages[0],
+        seq: i,
+        text: `第 ${i} 句`,
+      })),
+    };
+    renderWithApi(<ChatPanel />, [{ match: /\/chats\/[^/]+$/, body: long }]);
+    await screen.findByText(`第 ${CHAT_TAIL + 4} 句`);
+    const size = { scrollHeight: 1000, clientHeight: 300 };
+    measure(chatLog(), size);
+    chatLog().scrollTop = 1000;
+    fireEvent.scroll(chatLog());
+
+    size.scrollHeight = 2000; // 早先那几句接到了前面，对话变长
+    await user.click(screen.getByRole("button", { name: "看更早的 5 条" }));
+    expect(screen.getByText("第 0 句")).toBeInTheDocument();
+    expect(chatLog().scrollTop).toBe(1000);
   });
 });
 

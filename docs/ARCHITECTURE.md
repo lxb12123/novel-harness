@@ -73,7 +73,7 @@
 │  draft/     上下文装配 + prompt + provider
 │  extract/   增量抽取（M4）
 ├─ 图层 ▓ ──────────────────────────────────── 时态语义的唯一收敛点
-│  graph/queries.py  ★ state_at + supersede 全系统只在这里实现一次
+│  graph/queries.py  ★ state_at + 「谁盖住谁」全系统只在这里实现一次
 │  graph/models.py     Pydantic 出参，dict/Row 禁止越界
 └─ SQLite 单文件 ───────────────────────────── 唯一真相源
 ```
@@ -88,20 +88,31 @@
 
 ```sql
 edge(src, dst, type,
-     valid_from_chapter,     -- 从第几章开始有效
-     valid_to_chapter,       -- 到第几章失效（NULL = 至今有效）
+     valid_from_chapter,     -- 从第几章开始有效（**事实只记这一个数**）
+     valid_to_chapter,       -- ⚠️ 2026-09-06 起恒为 NULL，见下
      information_scope,      -- CANON / PROVISIONAL / PLANNED / REJECTED
      status, confidence, evidence_id, evidence_status)
 ```
 
-「第 151 章时萧决在哪」是一个**闭开区间 `[valid_from, valid_to)`** 查询：
+「第 151 章时萧决在哪」= 在他的位置那一格里，取 **`valid_from` 不晚于 151 的最后一条**：
 
 ```sql
-WHERE valid_from_chapter <= 151
-  AND (valid_to_chapter IS NULL OR valid_to_chapter > 151)
+-- graph/queries.py::CURRENT_EDGE_CTE（排他类型）+ TEMPORAL_WHERE（那四个条件）
+RANK() OVER (PARTITION BY <语义槽> ORDER BY valid_from_chapter DESC) = 1
+  AND valid_from_chapter <= 151
   AND information_scope = 'CANON' AND status = 'ACTIVE'
   AND evidence_status != 'STALE'
 ```
+
+> ⚠️ **2026-09-06：`valid_to_chapter` 停用了**（[ADR 0043](adr/0043-facts-store-a-start-not-an-interval.md)）。
+> 从前这里写的是闭开区间 `[valid_from, valid_to)`，而那个「到第几章失效」**从来是派生值**
+> ——全仓唯一的写入方永远把它写成「下一条事实的起点」。存派生值要求事实**按章号顺序
+> 到达**，而补全队列按「离作者正在写的那一章多近」倒着跑（那是对的，[ADR 0036](adr/0036-scheduling-allocates-slots-not-permission.md)）：
+> 于是每一条更早的事实都撞上一条更晚的、抛「乱序」，而抽取是整章一个事务——
+> 真书 2026-09-05 因此 **62 章分析失败、全书只有 11 章有事件**。
+>
+> **「后来的盖住先前的」这条纪律一个字没变**，变的是它在哪一步生效：从写的时候闭合
+> 旧边，改成读的时候取最后一条。迁移 036 只清空不删列（可逆：它算得回来）。
 
 ### 三层作用域（+ 一个推导态）
 
@@ -109,20 +120,26 @@ WHERE valid_from_chapter <= 151
 |---|---|---|---|
 | `CANON` | 作者确认过 | ✅ | ✅ |
 | `PROVISIONAL` | 抽取的，带证据，未确认 | ❌ **永不开火** | ❌ 只喂面板灰显 |
-| `PLANNED` | 作者声明的未来 | ❌ | ❌ **只转译成 must_not_reveal / forbidden_entities** |
+| `PLANNED` | 作者声明的未来 | ❌ | ❌ **没有任何出口**（`must_not_reveal` 随秘密下线，ADR 0039；`forbidden_entities` 2026-08-31 也删了，[ADR 0041](adr/0041-forbidden-entities-cut.md)——两条都曾是这里唯一允许的窄转译，现在都不在了） |
 | `REJECTED` | 作者否决 | ❌ | ❌ 保留以防重抽 |
 
-**`CURRENT` 是推导，不存储**：`valid_to IS NULL AND scope='CANON'`。原始文档把 CANON 和 CURRENT 并列存储会制造一个它没解决的同步问题——一条边被取代时谁负责摘掉 CURRENT？推导少一整类数据不一致，而那类不一致的表现形式恰好是本产品最怕的：误报。
+**`CURRENT` 是推导，不存储**：同一语义槽里 `valid_from` 最后的那一条（`scope='CANON'`）。原始文档把 CANON 和 CURRENT 并列存储会制造一个它没解决的同步问题——一条边被取代时谁负责摘掉 CURRENT？推导少一整类数据不一致，而那类不一致的表现形式恰好是本产品最怕的：误报。
 
-### `valid_to` 谁来写：`edge_type.exclusivity`
+### 谁盖得住谁：`edge_type.exclusivity`
 
 | 类型 | exclusivity | 含义 |
 |---|---|---|
-| `LOCATED_AT` | `single_per_src` | 一个人同时只能在一个地方 → 写新边自动闭合旧边 |
-| `RELATED_TO` `KNOWS` `BELIEVES` `HAS_STATE` | `single_per_src_dst` | (A,B) 单值 |
-| `OWNS` `MEMBER_OF` `PLANTED_IN` `RESOLVED_IN` | `multi` | 可多条同时有效 |
+| `LOCATED_AT` | `single_per_src` | 一个人同时只能在一个地方 → 同一个 (人, 类型) 里只有最后一条生效 |
+| `RELATED_TO` `HAS_STATE` | `single_per_src_dst` | (A,B) 单值 → 同一个 (A, B, 类型) 里只有最后一条生效 |
+| `OWNS` `MEMBER_OF` `PLANTED_IN` `RESOLVED_IN` | `multi` | 可多条同时有效，**天生与到达顺序无关** |
 
-**这张表必须在第一条边写进库之前存在**，否则历史数据全是脏的，`state_at` 会同时返回「在青云城」和「在北荒」→ 规则误报 → M3 生死线崩。
+**这张表必须在第一条边写进库之前存在**，否则历史数据全是脏的，`state_at` 会同时返回
+「在青云城」和「在北荒」——那是屏幕上一条看不出来的错事实。
+
+这张表今天有**两个**消费者，它们的分组口径必须逐字一致（`graph/queries.py`）：
+读端 `CURRENT_EDGE_CTE` 的 `PARTITION BY`，和写端 `find_same_chapter_conflicts`
+（写的时候只剩同章更正一件事，见上面 ADR 0043 那一段）。两处分叉的后果是
+「写的时候认为它们互斥、读的时候认为不互斥」。
 
 ### `valid_from` 由证据决定，作者永不填章号
 
@@ -158,18 +175,27 @@ WHERE valid_from_chapter <= 151
 |---|---|---|---|---|
 | ~~**R1**~~ | ~~认知边界面板~~ | ~~`cast × secret` 集合查询~~ | **否** | **已下线**：2026-08-25，秘密整套走（[ADR 0039](adr/0039-secrets-offline.md)） |
 | **R2** | `FUTURE_LEAK` | 唯一专名精确匹配 | 是 | 极低（专名作者亲选） |
-| **R3** | `DEAD_SPEAKS` | `(全名)(道\|说道)` × 图上 status | 是 | **零歧义——死人没有对话标签** |
+| ~~**R3**~~ | ~~`DEAD_SPEAKS`~~ | ~~`(全名)(道\|说道)` × 图上 status~~ | 是 | **已砍**：2026-09-05，死而复生的书上它会一路误报且没有「活过来」的写入路径（[ADR 0042](adr/0042-dead-speaks-cut.md)） |
 | ~~**R4**~~ | ~~`LOCATION_CONFLICT`~~ | ~~作者声明 vs 作者声明~~ | **否** | **已砍**：2026-08-14，一侧输入要作者手写场景块，真书覆盖率 **0%**（[ADR 0027](adr/0027-scene-blocks-cut.md)） |
 | ~~**R5**~~ | ~~`ADDRESS_CONFLICT`~~ | ~~仅显式说话人标签内~~ | 是 | **已砍**：2026-08-02 实测 8.2% < 10%（[ADR 0014](adr/0014-r5-cut-by-quote-coverage.md)） |
 
-**`ALL_CHECKS` 今天是 R2 + R3 两条。** R1 是面板不是规则；R4/R5 都砍了，
+**`ALL_CHECKS` 今天是空的（2026-09-05，[ADR 0042](adr/0042-dead-speaks-cut.md)）。**
+四条规则全砍完了：R1 是面板不是规则；R2/R4/R5 各自的死因见上表；R3 最后一个走。
+**管道没拆**——保存后那一轮验证、`POST …/check` 都在原地，跑的是**作者自己加的**
+确定性规则（`checks/custom.py` 的 `forbidden_literal`，作者在「检验规则」那一栏里加）。
+维护者的话：「我们只是把系统那个隐藏了，把我们系统的规则都去掉了，因为指不定我们以后
+也有规则。」所以 `SYSTEM_RULES` 是一副**空目录 + 冻结纪律**，不是一具尸体。
+
+下面这段讲的是 R4/R5 当初为什么死，**那条教训对以后要加的每一条系统规则都还成立**：
+R4/R5 都砍了，
 **而它们死于同一个判据**：这张表按「输入从哪儿来」排，排在最上面那几条（不读正文、零 FP）
 之所以便宜，是因为**它们把成本转嫁给了作者**——R4 的一侧输入是他要手写的
 `<!-- nh: loc=… -->`，R5 的一侧是显式说话人标签。真书上前者 0%、后者 8.2%。
 **「零误报」在一条永远跑不起来的规则上是免费的**：往这张表上加规则之前，
 先问「这条规则的输入，作者真的会去填吗」。
 
-R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。**
+R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解**——这条纪律对以后要加的
+规则同样成立（作者自定义的 `forbidden_literal` 是精确子串匹配，天然满足它）。
 
 规则是纯函数 `check(ctx: CheckContext) -> list[Issue]`——这也是开源贡献者的入口。`Issue` 的锚是 `(para_index, quote_text, occurrence_k)` 三元组，**禁止 offset**。
 
@@ -261,15 +287,21 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 违反其中任何一条，都会以「误报」或「作者弃用」的形式在几周后炸出来。
 
 1. **时态过滤只在 `graph/queries.py` 实现一次。** CI 守卫：`graph/` 之外 `import sqlite3` 直接失败（有明确的小允许名单）。
+   **2026-09-06 起那儿是两份、都在同一个文件里**（[ADR 0043](adr/0043-facts-store-a-start-not-an-interval.md)）：
+   `TEMPORAL_WHERE`（五个条件，`story_event` / `event_knower` / `edge` 共用）+ `CURRENT_EDGE_CTE`
+   （排他类型「同一语义槽里取 valid_from 不晚于本章的最后一条」）。**约束没松**——
+   加的那一份也只有一处实现，且它的分组口径必须和 `find_same_chapter_conflicts` 逐字一致。
 2. **StoryGraph 出参必须是 Pydantic 模型。** `dict` / `sqlite3.Row` 禁止越过接口——否则换实现时所有消费者都在解 JSON 列。
 3. **`PROVISIONAL` 永不开火、永不断言为真。** ~~Agent 不得污染 Canon。~~
    **后半句 2026-08-10 被 [ADR 0020](adr/0020-clean-extraction-auto-canon.md) 推翻**：
    一条例外 bucket 都没进的抽取结果自动升 CANON（`actor='system'`），
-   三个 bucket（冲突 / 主角低置信 / 新人物）照旧进队列。
+   三个 bucket 里**今天只剩两个照旧进队列**（主角低置信 / 新人物）——「冲突」那一个 2026-09-06 换了判据：只有**机器要盖掉作者亲手改过的那一格**才做卡，机器推翻机器直接生效（[ADR 0045](adr/0045-conflicts-only-when-the-machine-overrules-the-author.md)）。
    **前半句原样有效**——改的是「怎么离开 PROVISIONAL」，不是「PROVISIONAL 能不能被当真」。
    换来的保护是「可查 + 可改」，而**编辑能力必须先于自动生效落地**（否则中间那段时间
    是「系统自动改你的书而你改不回来」）。
-4. **完整 `PLANNED` 永不进 Writer prompt**，只转译成 `must_not_reveal` / `forbidden_entities`。
+4. **完整 `PLANNED` 永不进 Writer prompt。** 曾经允许转译成 `must_not_reveal` / `forbidden_entities`
+   两条窄出口，**现在都没了**（前者随秘密下线，ADR 0039；后者 2026-08-31 维护者裁定删除，
+   [ADR 0041](adr/0041-forbidden-entities-cut.md)）——今天 `PLANNED` 没有任何出口，约束只增不减。
 5. **后端永不对外发 offset**，一律 `(para_index, quote_text, occurrence_k)`。
 6. **业务 ID 是 ULID**，slug/人名/章号一律是可变属性。唯一例外 `artifact:sha256:{hex}`。
 7. **`decision_log` 只增不改**，用文本引语做锚。它是唯一不可重建的资产（作者点过的每一次确认）。
@@ -281,9 +313,10 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 
 这三条是 M0 对抗性验证的产物，**不知道就会把已经堵上的洞重新打开**。
 
-1. **`scene_constraints(store, pid, chapter, cast)` 的 `cast` 收的是作者写的称呼原文，不是 node_id。**
-   它自己内部 `resolve_cast()`——这样调用方**没有机会**把一个人弄丢。面板渲染行也走 `resolve_cast()`，
-   并把 `.unresolved` 传给 `knowledge_matrix(..., unresolved=...)`。
+1. **`scene_view(store, pid, chapter, cast)`（2026-08-31 之前叫 `scene_constraints`，
+   见 [ADR 0041](adr/0041-forbidden-entities-cut.md)）的 `cast` 收的是作者写的称呼原文，
+   不是 node_id。** 它自己内部 `resolve_cast()`——这样调用方**没有机会**把一个人弄丢。
+   面板渲染行也走 `resolve_cast()`，并把 `.unresolved` 传给 `knowledge_matrix(..., unresolved=...)`。
 
 2. **起草 / 拼 prompt 之前必须调 `SceneConstraints.require_resolved_cast()`。**
    「师兄」指向 8 个人时它抛 `UnresolvedCast`，要弹给作者问「这一场的师兄是谁」。
@@ -313,7 +346,7 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 | **认知边界** | 谁在第几章知道什么。曾是本项目的头牌，**2026-08-25 整套下线**（[ADR 0039](adr/0039-secrets-offline.md)）。这个词在代码里已经没有对应物了 |
 | **声明 / 抽取** | 作者告诉系统 / 系统从正文猜。本项目押前者。 |
 | **CANON / PROVISIONAL / PLANNED** | 确认的 / 抽的未确认的 / 未来的。见 §5。 |
-| **supersede** | 新边写入时自动闭合被它取代的旧边的 `valid_to`。 |
+| **supersede** | 「后来的事实盖住先前的」。**2026-09-06 起在读的时候生效**（同一语义槽里取 `valid_from` 最后的那一条，`CURRENT_EDGE_CTE`）；在那之前是写的时候闭合旧边的 `valid_to`，见 [ADR 0043](adr/0043-facts-store-a-start-not-an-interval.md)。 |
 | **kill-gate** | M2 的公开证伪点。**已退役**：它要考的那件事下线了，见 [`EVAL_PROTOCOL_RETIREMENT.md`](EVAL_PROTOCOL_RETIREMENT.md) |
 | **合成小册子** | 程序生成的 12 章的书，无版权，是仪器不是产品。**今天只服务 M3 那张卷子**（R2/R3 的误报门槛，25 题）——M2 的 25 个认知陷阱随秘密下线一起没了（ADR 0039）。 |
 | **心跳** | `scripts/demo.sh`。端到端还通着 = 一个每天可见的布尔值。 |
@@ -327,7 +360,39 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 > **M1 的「认知边界面板」那一半、M2 的「评估」那一半，从此都不是现状。**
 > 起草线本身活着；M3 / M4 未被触碰。下面这段话按此读。
 
-**M0 + M1 + M1.5 已落地；M2 的起草线在用、评估那一半已退役；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2491 个 pytest + 652 个 vitest，`.sql` 和前端产物都在 wheel 里）：
+> **2026-09-12：写作助手读得到右栏全部四栏了**（`agent/panels.py`，工具表 15 → 19 条）。
+> 起因是作者问「他回答这个问题的时候读的内容有哪些」——实测那一轮零次工具调用，而关系 /
+> 事件 / 角色卡 / 检验规则 / 通知**当时一条读路都没有**（只有为起草设计的 `calibrate_scene`
+> 顺带交出关系和事件，评价一章时模型不会去调它）。四条工具各读面板自己那条读法，全是读；
+> 配套：`StateSnapshot.relations` 投影（对端由 `graph/` 算好，`agent/` 仍不碰 `.props`）、
+> `checks.service.RulesReader`（右栏那条路由也改吃它，读法只剩一份）、`notices.NoticeReader`。
+> 守卫：`tests/test_agent_panels.py`（读得到 / 说得清 / 不漏 props）+ `test_turn_events.py`
+> 那张网多罩四条。**模型读不读仍然是它自己定**（ADR 0019「循环归模型」），这次只是把路修通。
+
+> **同日第二刀：一轮跑着的时候还能说**（[ADR 0046](adr/0046-mid-turn-messages-queue-and-merge.md)）。
+> 作者的原话：「像 codex 那样，新的消息可以直接发出去，模型可以读，并且不会耽误正在做的」。
+> **不是并发，是排队 + 在步的边界并入**：`POST …/say` 把那句话放进正在跑的那一轮的信箱
+> （`agent/loop.py::Mailbox`），loop 在下一次模型调用之前把它按正常的作者消息并进对话
+> （落库、喊 `author_said`）；模型说完了而信箱里有话就接着跑；收场时剩的一句不丢
+> （`TurnReceipt.unanswered`）。界面：「停」挪到发送那颗圆钮上（跑着、框里没字 = 停），
+> 输入框跑着的时候不再灰。`_Running` 那道「同一段对话同时只有一轮」的闸一个字没动。
+
+> **同日第三刀：写前校准整条链砍了，起草改成「助手分析意图 → 检索 → 对照规矩 → 交给写手」**
+> （[ADR 0047](adr/0047-drafting-is-assistant-curated-not-calibrated.md)，退役 ADR 0033）。
+> 起因是作者问「他为什么停下来了」，回放那一轮：校准报告 232 KB（第 1–158 章的全部摘要都装成
+> 了事实），投影层整条收起，模型连编号都没见过 → 猜了一个去封存、起草 → 被拒 → 又校准三遍 →
+> 八步用完，一稿没写；而且封闭指令码装不下「重写结局」，真书上封存出来的 `goal_spec` 是空的，
+> 这条链在真书上从没跑通过（稿子 0 篇）。作者的裁定：「这套已经不适用了……助手应该分析用户的
+> 意图，有目的地筛选去检索……写手只有最近几章的上下文，涉及更远的章节助手就应该帮忙喂进去
+> ……助手也要做校准——是检验规则 + 用户自己填的 + 有时限的规则那个校准。」
+> 落地：`draft_chapter(chapter, brief, materials)`；`calibrate_scene` / `seal_scene_brief` /
+> `calibration/` 整包 / `ToolContext.calibrations`·`author_turn` 删；写手多一格【助手补的资料】
+> （`MATERIALS_UNITS` 封顶，砍了几段写回执）；两格跟着稿子存进候选表（迁移 037），桌上那张卡能
+> 展开看。工具表 19 → **17** 条。第一版给写手角色卡补过「此刻在哪 / 已亡」，作者当天否了
+> （「我之前就是特地把这个给砍掉」「如果用户在他的规则校验那边有写，那就我们也不用瞎操心」），
+> 同日撤掉——这类事归作者的检验规则，引擎不替他操心。
+
+**M0 + M1 + M1.5 已落地；M2 的起草线在用、评估那一半已退役；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2549 个 pytest + 870 个 vitest（2026-09-12 复核；vitest 里 3 条 `CodeEditor` 的失败是工作区里另一份未提交改动的，不在本轮范围），`.sql` 和前端产物都在 wheel 里）：
 
 > ⚠️ **2026-08-14 两刀，都是作者看着工作台提的，都撤掉了「要作者去填」的东西**：
 >
@@ -515,8 +580,8 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 > 列在「还一个字符都没有」里——照它排期的人会去重写已完成的工作。
 > 同「工作台的已知洞」那节，唯一副本 + 别处指针。
 >
-> 守卫钉住的是**能在运行时数出来**的那些（91 条路由 / 90 条 /api / 1 条 501 stub /
-> 19 个错误映射 / 49 张表 / 89 个端点 / `ALL_CHECKS` 1），
+> 守卫钉住的是**能在运行时数出来**的那些（92 条路由 / 91 条 /api / 1 条 501 stub /
+> 17 个错误映射 / 49 张表 / 89 个端点 / `ALL_CHECKS` 0），
 > 改错必红、**删掉也必红**（不静默 skip）。
 > （**「17 个子命令」2026-08-20 从这张清单里退了**：命令行面整个删掉，那个数在运行时
 > 已经数不出来，守卫里那条 `Fact` 同步撤掉——见 ADR 0034。）
@@ -529,18 +594,24 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 > 一节之内隔了 18 行的两份拷贝都能漂开，这正是本节反复在说的那件事。现在这儿只说规矩，不写数。）
 > （2026-07-30 那天这个数从 690 走到 801，中途在文档里错过一次——**这条盲区是真的，不是假想的**。）
 
-> ⚠️ **2026-08-25：滚动总结的触发收到只剩两个，而且都是系统自动的。**
+> ⚠️ **滚动总结的触发有三个：两个系统自动的，一个作者亲手按的**
+> （2026-08-25 收成两个，2026-09-05 把第三个加回来了）。
 >
 > ```
-> ① 保存之后        系统自动   💰   ← 留（焦点章防抖：作者正盯着的那一章不排，切走才够格）
-> ② 每 30 分钟扫描   系统自动   💰   ← 留（不依赖任何点击，也不依赖保存）
+> ① 保存之后        系统自动   💰   ← 焦点章防抖：作者正盯着的那一章不排，切走才够格
+> ② 每 30 分钟扫描   系统自动   💰   ← 不依赖任何点击，也不依赖保存
+> ③ 「重新生成」     作者亲手   💰   ← `POST …/chapters/{n}/summary`（2026-09-05 加回来）
 > ```
 >
-> **作者手上没有任何手动生成入口了。** 删掉的是三样：右栏「章节总结」那颗
-> 「生成（要跑一次模型）」按钮 + `useGenerateSummary`、`POST …/chapters/{n}/summary`、
-> `POST …/chapters/{n}/summary/regenerate`（外加它背后零生产调用的
-> `chapter_refresh.create_manual_attempt`）。右栏那一格**其余部分一个字没动**：
-> 还能看总结、能改（`PATCH`，不花钱）、能撤回。
+> **③ 删过一次，而删它的代价当天没被写下来。** 2026-08-25 那一批删了三样：右栏
+> 「章节总结」那颗「生成（要跑一次模型）」按钮 + `useGenerateSummary`、
+> `POST …/chapters/{n}/summary`、`POST …/chapters/{n}/summary/regenerate`
+> （外加它背后零生产调用的 `chapter_refresh.create_manual_attempt`）。
+> 于是**撤回过的章永远拿不回机器总结**——①② 按纪律不碰撤回过的章（见下面那一段），
+> 而作者又没有入口。那十天里屏幕上还写着「点『重新生成』」，一句不存在的话。
+> 2026-09-05 维护者裁定加回来（原话：「撤回了之后肯定这个底部要留一个重新生成的
+> 按钮供用户立即生成」）。**`regenerate` 那条死路没有回来**（理由见下一段），
+> 回来的只有 `POST …/summary` 一条，它同步跑完才回、幂等按内容地址判重。
 >
 > **regenerate 那条是一条死路**，删它顺带清掉一处会骗人的回执：它往
 > `summary_generation_job` 写 `status='PENDING'` 然后回 `queued=True`，
@@ -548,17 +619,20 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解。
 > 「领活」。**表没删**：`ensure()` 那条路写的是 `'RUNNING'` → 当场跑完 → `SUCCEEDED`，
 > 它是活的（审计 + 租约）；事件总结那一侧也真的在用 PENDING（`target_type='EVENT'`）。
 >
-> **两个触发不是两条执行路**：它们都只是下一张单，单汇到 `chapter_refresh` 的协调器，
-> 由 `background_runtime` 那个 adapter 去付那一次钱。所以「今天有几个付费入口」这个问题
-> 在代码里有唯一一个答案，而 `test_arch_guard.py::test_only_one_place_in_production_can_buy_a_chapter_summary`
-> 把它钉成了 **`.ensure()` 全 `src/` 只许出现一处**（改这一批之前是两处）。
+> **①② 不是两条执行路**：它们都只是下一张单，单汇到 `chapter_refresh` 的协调器，
+> 由 `background_runtime` 那个 adapter 去付那一次钱。③ 是另一条（请求里同步调
+> `ensure`）。所以 `.ensure()` 在 `src/` 里恰好出现**两处**，
+> `test_arch_guard.py::test_only_one_place_per_trigger_kind_can_buy_a_chapter_summary`
+> 钉的是这张名单本身（`SUMMARY_BUYERS`）——**每一类触发一处，而每一处的
+> 「这笔钱是谁按的」写在那条守卫的 docstring 里**。要加第三个，先在那儿回答三个问题。
 >
-> ⚠️ **一个必须写下来的后果：撤回从此是终态。** 两个自动触发都按设计不碰撤回过的章
+> ⚠️ **撤回之后：系统不补，作者按得回来。** 两个自动触发按设计不碰撤回过的章
 > （「他删一次，系统别买回来一次」，2026-08-21 踩过坑，两层守卫钉着），实测「撤回之后
-> 又改了正文」也仍然不买回来。而作者手上那条「再点一次生成」的退路刚刚没了。
-> **所以撤回之后系统永远不会再买一份**，他剩下的回头路只有自己写一段（不花钱）。
-> **这是裁定不是洞**——下一个人读到它时的正确动作不是去把自动补缺放开
-> （那会让「删一次买回来一次」原样回来），是先把「谁按的、谁付钱」重新想一遍。
+> 又改了正文」也仍然不买回来 —— **这一半一个字没改，也不许改**（改了「删一次买回来
+> 一次」就原样回来）。作者那一侧从 2026-09-05 起有两条回头路，都由他发起：
+> 自己写一段（`PATCH`，不花钱），或者点「重新生成」（③，跑一次模型）。
+> **分界线是「谁按的、谁付钱」**，不是「撤回是不是终态」——
+> 2026-08-25 到 09-05 之间它确实是终态，那**不是**当时想要的后果，只是没人算这一笔。
 > 记在 [ADR 0030 的补记](adr/0030-versioned-summaries-and-advisory-reconciliation.md)
 > 和 `chapter_refresh._head_missing` 的 docstring 里。
 
@@ -578,7 +652,9 @@ migrations/{001_init,002_m4_events,003_proposal_audit_recovery,004_chapter_summa
             021_extraction_superseded,022_system_notifications,023_alias_lifecycle,
             024_validation_rules,025_chapter_focus,026_advisory_notification,
             027_extraction_yielded_nothing,028_secrets_offline,
-            029_character_information}.sql（49 张表）
+            029_character_information,030_project_language,031_r2_ruleset_epoch,
+            032_import_toc_skip,033_notification_title_code,034_event_cast_notification,
+            035_r3_ruleset_epoch,036_edge_start_only}.sql（49 张表）
                                                 ← 026 只给通知加第四档 kind
                                                   （`text_advisory`：只告警不阻断）。
                                                   SQLite 改不了 CHECK，两张表都重建了一遍，
@@ -667,8 +743,10 @@ extract/auto_canon.py                             ← 没进三个例外 bucket 
 panel/{scope,state,constraints}.py              ← PLANNED 进 prompt 的唯一闸门
                                                   （`knowledge.py` 2026-08-24 删，ADR 0039；
                                                    那道 scope 闸搬进了 `scope.py`）
-checks/{base,dead_speaks}.py
-                                                  ← R3（R2/R4/R5 已砍；`ALL_CHECKS` 今天只有一条）
+checks/{base,catalog,custom,service}.py
+                                                  ← **系统规则一条不剩**（R2/R3/R4/R5 全砍，
+                                                   R3 是 2026-09-05 那一刀，ADR 0042）。
+                                                   今天跑的是作者自定义的 `forbidden_literal`。
                                                   ⚠️ **R2/R3 在 2026-08-13 之前生产上开不了火**：
                                                   它们读的三样东西（`first_appears_chapter` /
                                                   `EdgeProps.value_key` / `StateDim` 节点）
@@ -687,13 +765,14 @@ checks/{base,dead_speaks}.py
                                                   `tests/test_rules_fire.py` 只剩 R3 那一半，
                                                   R2 的三条测试随规则一起删了。
 text/{anchor,chapterize,mentions}.py            ← (para_index,quote,k) 唯一定义 / 切章 / 称呼匹配
-calibration/{models,visibility,render,freshness,store,
-              calibrate,seal,handoff,repair}.py
-                                                  ← **模式二写前校准**（2026-08-17，ADR 0033）：
-                                                  预计人物只做检索、安全 cast 仍由后端按章即时重算、
-                                                  Writer 只收类型化 SceneBrief（不可变 calibration_id
-                                                  引用）。非 Canon 产物存迁移 017 两张表；RETCON
-                                                  handoff 只写 producer outbox，通知任务消费它。
+~~calibration/~~                                ← **2026-09-12 整包删了**（ADR 0047，退役 ADR 0033 那条
+                                                  写前校准链）。迁移 017 的两张表留着、没有写入方。
+                                                  起草改由助手自己分析意图、由粗到细检索、对照规矩，
+                                                  再把「要写什么」（brief）和「补的资料」（materials）
+                                                  交给写手；写手固定装配那六格不动，多一格
+                                                  【助手补的资料】（`draft/product_draft.py`，
+                                                  `MATERIALS_UNITS` 封顶）。「此刻在哪 / 已亡」**没有**
+                                                  补进写手的角色卡——作者否了：要管就写进检验规则。
 summary_index.py                                ← **每一段章节总结 = 一个可反查的记忆点**（2026-08-13）。
                                                   作者的原话：「迅速找到需要的内容或相关章节的总结，
                                                   然后引用、对比、调研」+「**我不想用 RAG**」。
@@ -743,7 +822,7 @@ track.py                                        ← **轨道**（2026-08-23，�
                                                   `POST …/draft` 响应里那一格 `track`
                                                   （和 `memory` 正好相反：那格说「prompt 里装了什么」）；
                                                   `tests/test_track_isolation.py` 两道钉死
-                                                  （静态扫 `draft/`+`calibration/`，动态跑真链路
+                                                  （静态扫 `draft/`，动态跑真链路
                                                   搜轨道里的每一段总结）。**异步验证 / 模式二那个工具
                                                   是阶段 2/3，本模块只到取回来为止。**
 declare.py  importer.py                         ← M1 声明层：引语定章号 + 证据链 + CanonWriter
@@ -788,8 +867,8 @@ gate.py                                         ← M2 大门的薄入口（`pyt
                                                   `rules_run` 列的是 `len(ALL_CHECKS)` 个真规则名，
                                                   不是写死的数字，`demo.sh` 的心跳逐字钉着那个数
 api/{app,deps,launch,activity,background_runtime,chat,extraction,manuscript,notifications,reconcile,review,validation}.py
-                                                ← M1.5 FastAPI 壳：91 条路由 + 19 个错误映射
-                                                  （90 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
+                                                ← M1.5 FastAPI 壳：92 条路由 + 17 个错误映射
+                                                  （91 条 /api + 1 条 `GET /`；其中 1 条是 501 stub；
                                                   2026-08-27 多一条：`.../undo-toc-skip`（032，
                                                   撤销「导入丢了目录页假章」）；
                                                   2026-08-20 少两条：换章 autopilot 的
@@ -880,7 +959,7 @@ frontend/src/                                   ← React 工作台：62 个非�
                                                   而「＋加一个人」和勾选框对**绝对集合**语义的暗示是相反的；
                                                   `StateCards.tsx::StateTab` = **时态查询第一次交到作者手上**
                                                   （2026-08-13）：右栏「人物状态」多一个「看上一章结束时」
-                                                  的开关。`[valid_from, valid_to)` 那台时光机整个建好着，
+                                                  的开关。「按章问」那台时光机整个建好着，
                                                   而右栏此前**永远只问「当前章」**——它一直停在一个刻度上。
                                                   **后端一个字都没改**（`chapter` 本来就是路径参数，
                                                   `/characters/{id}/state` 那条注着「AS OF，不写进任何数据」），
@@ -991,14 +1070,27 @@ summary_schedule.py                              ← 2026-08-18 §2.2/§4/Step 2
                                                   自动写/覆写一律**不**产生 `summary_mismatch`，只有
                                                   作者手改总结与正文冲突才冒出来（正文自动对齐永远安静）。
 draft/summarize.py                              ← M4 后续切片：章节摘要 prompt（入口只有 HTTP：`POST …/chapters/{n}/summary`）
-agent/{ports,index,tools,loop,store,model,drafting,candidates,rules}.py
+agent/{ports,index,panels,tools,loop,store,model,drafting,candidates,rules}.py
                                                 ← 模式二（ADR 0019）：**工具表就是权限边界**。
                                                   `ports.py` = 模型碰得到的全部东西（`ToolContext` +
-                                                  起草接线口 + 两个**只读**窄端口：摘要 / 已确认事件；
+                                                  起草接线口 + 四个**只读**窄端口：摘要 / 事件（含角色卡
+                                                  的基本信息）/ 检验规则 / 通知；
                                                   没有 conn、没有 `CanonWriter`，写入面在类型层不存在）；
                                                   `index.py` = 书内索引四层（目录 / 人物轴 / 摘要区间 /
                                                   一章正文，越往下越贵，出处一律带章号，预算从
                                                   `capability.max_context_tokens` 倒推）；
+                                                  `panels.py` = **右栏那四栏的读工具**（2026-09-12，作者
+                                                  点名「每个按钮功能里面的每个内容」）：`character_card`
+                                                  （基本信息 / 别名 / 处境 / 关系 / 经历过的事）、
+                                                  `chapter_events`（区间内已确认的情节）、
+                                                  `validation_rules`（目录 + 某章最近一次检验）、
+                                                  `notifications`（OPEN 通知 + 待确认提案，按章一张
+                                                  永不被裁的表）。读的是面板自己那条读法
+                                                  （`RulesReader` / `NoticeReader` / `EventIndex` 多
+                                                  三个读方法 / `StateSnapshot.relations` 投影），出参只有
+                                                  NodeRef 和纯量；**别名和事件摘要从这四条起是有意交给
+                                                  模型的**（秘密下线之后它们只是角色卡上作者看得见的东西，
+                                                  `panels.py` 顶上写着论证），`book_index` 照旧只出正式名；
                                                   `tools.py` = 表本身 + 派发（声明由表生成，追加不插队）
                                                   + `ask_author`（ADR 0024）：**模型决定什么时候问，
                                                   作者决定答什么**——出参形状是「一句话 + 几个可点的选项」
@@ -1397,8 +1489,9 @@ R2（未来实体提前出现）和 R3（死人/未登场角色开口说话）�
    补法里有三件事值得记住：
 
    - ~~**「保存章节后自动生成」是明确不做的**~~ —— **这条已经被推翻，今天正好反过来**：
-     保存之后自动生成是仅剩的两个触发之一（另一个是每 30 分钟扫描），而**手动那条
-     2026-08-25 整条删了**。别照这一行排期。当年那个顾虑（「替作者按下一次他没按过的
+     保存之后自动生成是两个自动触发之一（另一个是每 30 分钟扫描），手动那条
+     2026-08-25 删过、2026-09-05 加回来了（见「当前状态」那一块的三行表）。
+     别照这一行排期。当年那个顾虑（「替作者按下一次他没按过的
      付费调用」）今天由别的东西兜着：焦点章防抖（他正盯着的那一章不排）、内容地址幂等
      （同一份正文只买一次）、以及撤回过的章一律不碰。见「当前状态」2026-08-25 那一块。
    - **空总结不再静默**（§10 约束 8）。`SummaryStore.coverage()` 把窗口里每一章分成三态
@@ -1691,11 +1784,19 @@ R2（未来实体提前出现）和 R3（死人/未登场角色开口说话）�
      ⚠️ **2026-08-12 起「起草」那一档已经流式了**（`6b13abd`）：`plan_call(interruptible=…)`
      让 `stream` 除了「预算过 16k」之外多一个理由「这次要可中断且端点确认支持流式」，
      唯一设值点是 `ChapterDesk.write`，三臂 / gate 一条都不传。
-     **下面这段说的是对话回复那一档，它今天仍然不流式。**
-     `stream` 由 `plan_call` 按冻结阈值（16k）从输出预算推出来，一次对话回复远在阈值之下。
-     适配器按流式写、按流式测（`tests/test_agent_model.py`），到了那一档真的生效；
-     到不了的那一档降级成「这一次调用跑完就停」，`loop` 的每步检查仍然在。
-     **不许为了让它流式去抬输出预算**——那个式子还管着别的事（超时）。
+     ~~**下面这段说的是对话回复那一档，它今天仍然不流式。**~~ —— **2026-09-12 起也流式了。**
+     `stream` 由 `plan_call` 按冻结阈值（16k）从输出预算推出来，一次对话回复远在阈值之下，
+     所以此前那一档降级成「这一次调用跑完就停」——真书上作者按「停」要等十几秒到一分钟
+     （原话「没有办法第一时间暂停」）。修法和起草那一档同一条：`agent_call_plan` 要了
+     `interruptible`，预算一个字没抬；被掐断的那次调用**进账**（token 留空，
+     `run_turn` 收 `ProviderError` 时补的那一支），停下来之后 loop 还会**问作者一句**
+     （`run_turn(debrief_on_stop=True)`，产品那条路开着；`STOP_DEBRIEF_PROMPT`）。
+     **仍然不许为了让它流式去抬输出预算**——那个式子还管着别的事（超时）。
+     边写边看**仍然只有起草那一档**：wire 上有片了，但 `build_agent_model(config, plan)`
+     那个注入点不接 `on_event`（见 `api/chat.py` 那儿的注释）。
+     **粒度不再是「下一片」而是「当场」**：`Cancellation.on_stop` 挂钩子，适配器挂的是
+     底层 socket 的 `shutdown`（`agent/model.py::_cut`，实测 `close()` 叫不醒卡在 `recv`
+     里的线），卡在两片之间的读立刻醒；块摘要那一次非流式调用也走 `cancellable_client`。
      （2026-08-13 之前这儿还有半句「而且没登记的模型会被 fail-closed 拒掉」，
      那道拒绝连同 `supports_streaming` 那一位一起删了，见下面那条。）
 
@@ -1944,10 +2045,32 @@ R2（未来实体提前出现）和 R3（死人/未登场角色开口说话）�
     因此故意不用同一个词（书架上就叫「语言」，这颗新按钮必须叫「界面语言」），
     看见「语言」两个字就以为是同一件事，先看这张表。
 
+12. ~~**「每 30 分钟自动补」那条后台循环，一条 attempt 都跑不完**~~ —— **2026-09-05 已补。**
+    真书 book.db 在「135 章缺总结」上停了整整一周，而右栏「章节总结」那一格一直写着
+    「缺章 / 不对齐每 30 分钟自动补」。**扫描那一半是好的**（它按时下单，队列里攒了 154 张），
+    坏的是执行那一半：`BackgroundRuntime.__init__` 在 lifespan 协程那条线程上开了一条
+    长命连接给协调器，而 `_loop` 跑在 `start()` 起的 `dsh-background` 线程上——sqlite3 的
+    连接默认 `check_same_thread=True`，于是 `run()` 的第一条 SELECT 就抛 `ProgrammingError`,
+    被 `_loop` 那个 `except Exception: pass` 吞掉，**每一波都死在第一条 attempt 上**。
+
+    > **它的失败形态是「什么都没发生」**，这是本条真正的教训。claim 照旧每 60 秒发生一次
+    > （`fencing_token` 涨到四位数），分支状态一个都不动，一行日志都没有，作者屏幕上
+    > 只是「总结一直没补上」——没有错误、没有红、没有通知。所以 `_loop` 的两个
+    > `except` 现在都 `logging.exception`：不炸线程这条纪律没变，静默那半截去掉了
+    > （lifespan 里那个「启动失败纯吞掉」的坑 2026-08-29 已经踩过一次，同一个病）。
+
+    **为什么全套 pytest 一条都没红**：`pump_once()` / `autonomy_once()` 在每一条测试里
+    都是**在构造 runtime 的那条线程上**直接调的，而生产是构造在一条线程、执行在另一条。
+    跨线程那道缝因此从来没被测过。守卫补在
+    `tests/test_background_recovery.py::test_a_wave_runs_on_the_background_thread_not_the_one_that_built_it`：
+    ① 断言构造过程**一条连接都不开**（连接工厂调用计数为 0，雷没机会被埋下）；
+    ② 换一条线程真跑一波，异常原样抬回来。协调器改成**每条 attempt 现开现关**，
+    用的是执行线程自己刚开的那条连接（顺带去掉了那条永不关闭的长命连接）。
+
 **M4 正在实现、尚未完成**：`events/` 契约与 `002_m4_events.sql` 已落地；`extract/` 已有纯
 结构化 schema、确定性 prompt、精确优先的模糊证据定位与不猜名称解析，后台 provider 调用和
 提案入库仍未落地（设计草案见 [M4_DESIGN.md](M4_DESIGN.md)）。
-`text/mentions.py` 已于 2026-08-02 落地，R2/R3 已在 `ALL_CHECKS` 里跑（R5 已砍）。
+`text/mentions.py` 已于 2026-08-02 落地；**`ALL_CHECKS` 2026-09-05 起是空的**（R5/R4/R2/R3 依次砍完，最后一刀 [ADR 0042](adr/0042-dead-speaks-cut.md)），规则机制留着，跑的是作者自己加的 `forbidden_literal`。
 （这一行 2026-07-30 之前还挂着 `synth/` 和 `draft/assemble.py`，那天两样都落地了。
 留个记号：这一行**只列代码**——「代码有了但没跑过」是另一回事，见上面 M2 那节最后一段。）
 

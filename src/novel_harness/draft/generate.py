@@ -48,10 +48,17 @@ class CallInterrupted(ProviderError):
     **它可能是空串**，而空串不等于「没花钱」：见 `sent`。
     """
 
-    def __init__(self, message: str, *, partial_text: str = "", sent: bool = True) -> None:
+    def __init__(
+        self, message: str, *, partial_text: str = "", sent: bool = True, model: str = ""
+    ) -> None:
         super().__init__(message)
         self.partial_text = partial_text
         """到此为止已经拿到手的正文。**空串 = 一个字都没收到**，不是「没这回事」。"""
+
+        self.model = model
+        """发出去时点的那个模型（wire 上的 `model` 字段）。**只为记账**：一次被掐断的
+        调用要记的那一行账（`sent` 那条规矩）得说得出是哪个模型，而抓住这个异常的那一层
+        （`agent/loop.py` 收对话那一次调用时）手里没有 config。空串 = 抛的人没说。"""
 
         self.sent = sent
         """这次请求**发出去了没有**。
@@ -343,7 +350,7 @@ def generate_draft(
         if exc.sent:
             record(number, wire, CompletionResult(text=exc.partial_text, model=config.model))
         raise CallInterrupted(
-            str(exc), partial_text=done + exc.partial_text, sent=exc.sent
+            str(exc), partial_text=done + exc.partial_text, sent=exc.sent, model=config.model
         ) from exc
 
     initial_messages = _freeze_messages(messages)

@@ -36,10 +36,13 @@ from novel_harness.agent.loop import (
     AgentMessage,
     Cancellation,
     Conversation,
+    Mailbox,
     ModelCallReceipt,
     Projection,
     Role,
     StopReason,
+    TurnEvent,
+    TurnEventKind,
     TurnLimits,
     project,
     run_turn,
@@ -836,13 +839,17 @@ def test_the_chapter_is_read_by_shape_not_by_a_second_tool_table() -> None:
         "scene_constraints",
         "character_state",
         "draft_chapter",
-        "calibrate_scene",
         "chapter_text",
         # 一格认知边界（2026-08-22）：它按章号绑投影**正是它最需要的那道闸**——
         # 一格认知答案越到后面越可能过期，而过期的方向是 fail-open。
         # 轨道核对（2026-08-23）：同理按章号绑投影——「第 N 章跟后面抵不抵触」
         # 的答案在正文改过之后就不作数了。
         "check_track",
+        # 右栏那四栏里只有角色卡带必填章号（2026-09-12）：按第 N 章看处境和关系。
+        # 事件那条收的是区间（同 `chapter_summaries`，不绑章号）；检验规则 / 通知的
+        # 章号是可选的（`int | None`），传了同样绑投影——`_asked_chapter` 量的是
+        # 运行时那个值，不是标注。
+        "character_card",
     }
 
 
@@ -988,3 +995,317 @@ def test_the_nudge_is_projection_only_and_never_lands_in_history() -> None:
     assert all(
         TRACK_NUDGE_HEADER not in m.content for m in (*session.prefix, *session.messages)
     ), "提醒落进了 canonical 历史 —— 它会在后面每一章里继续说那句已经过期的话"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 作者中途说话（2026-09-12，`Mailbox`）：排队 + 在步的边界并入，不打断
+# ══════════════════════════════════════════════════════════════════════════
+#
+# 作者的原话：「像 codex 那样，新的消息可以直接发出去，模型可以读，并且不会耽误正在
+# 做的」。**这不是并发**：loop 只在两个地方看信箱——每一次模型调用之前，以及模型
+# 「说完了」的那一刻。下面四条各钉一件事：进来的位置 / 说完了不算完 / 一句不丢 /
+# 不传信箱逐字节不变。
+
+
+def _mailbox_turn(*script: CompletionResult, mailbox: Mailbox, **kwargs: Any):
+    events: list[TurnEvent] = []
+    result, model, ledger = a_turn(*script, mailbox=mailbox, on_event=events.append, **kwargs)
+    return result, model, events
+
+
+def test_a_mid_turn_message_is_read_at_the_next_model_call_not_before() -> None:
+    """信箱里的话**在下一次模型调用之前**进对话：第一步看不见它，第二步看得见。"""
+    mailbox = Mailbox()
+    model_calls: list[int] = []
+
+    def on_call(_cancel: Cancellation) -> None:
+        # 第一次模型调用**正在进行**时作者说了一句——它不打断这一次。
+        model_calls.append(1)
+        if len(model_calls) == 1:
+            mailbox.put("顺便看看第 2 章")
+
+    model = ScriptedModel(
+        script=[wants(("book_index", "{}"), text="我先翻一下目录。"), say("翻完了，第 2 章也看了。")],
+        on_call=on_call,
+    )
+    events: list[TurnEvent] = []
+    result = run_turn(
+        start_conversation().with_author("这章讲什么"),
+        context=a_context(),
+        model=model,
+        ledger=Ledger(),
+        mailbox=mailbox,
+        on_event=events.append,
+    )
+    assert result.reason is StopReason.DONE
+    # 第一次调用发出去的消息里没有那句话，第二次有——而且排在第一步的工具返回之后。
+    first, second = model.calls
+    assert not any(m.get("content") == "顺便看看第 2 章" for m in first)
+    roles = [(m.get("role"), m.get("content")) for m in second]
+    at = roles.index(("user", "顺便看看第 2 章"))
+    assert roles[at - 1][0] == "tool", "它排在上一步的工具返回后面，也就是模型真的读到它的位置"
+    # canonical 里它是一条正常的作者消息（不绑章号），而且喊了一声 `author_said`。
+    landed = [m for m in result.conversation.messages if m.role is Role.USER]
+    assert [m.content for m in landed] == ["这章讲什么", "顺便看看第 2 章"]
+    assert all(m.chapter is None for m in landed)
+    said = [e for e in events if e.kind is TurnEventKind.AUTHOR_SAID]
+    assert [e.text for e in said] == ["顺便看看第 2 章"]
+    assert result.unanswered == 0, "模型在那之后回过话了"
+
+
+def test_done_with_a_queued_message_keeps_going_instead_of_finishing() -> None:
+    """模型「说完了」而信箱里有话：这一轮不结束，接着跑（`Mailbox` 第二条规矩）。"""
+    mailbox = Mailbox()
+    seen = 0
+
+    def on_call(_cancel: Cancellation) -> None:
+        nonlocal seen
+        seen += 1
+        if seen == 1:
+            mailbox.put("再补一句")
+
+    model = ScriptedModel(script=[say("第一句答完了。"), say("补的那句也答了。")], on_call=on_call)
+    result = run_turn(
+        start_conversation().with_author("问一句"),
+        context=a_context(),
+        model=model,
+        ledger=Ledger(),
+        mailbox=mailbox,
+    )
+    assert result.reason is StopReason.DONE
+    assert result.steps == 2, "没有信箱的话第一步就 DONE 了"
+    assert result.reply == "补的那句也答了。"
+    contents = [m.content for m in result.conversation.messages]
+    assert contents == ["问一句", "第一句答完了。", "再补一句", "补的那句也答了。"]
+    assert result.unanswered == 0
+
+
+def test_nothing_the_author_said_is_lost_when_the_turn_stops_early() -> None:
+    """按了停 / 到了闸：信箱里剩的话照样进对话、落库，回执数出 `unanswered`（第一条规矩）。"""
+    mailbox = Mailbox()
+    cancel = Cancellation()
+    saved: list[Conversation] = []
+
+    def on_call(signal: Cancellation) -> None:
+        mailbox.put("这句它没来得及看")
+        signal.stop()  # 模型调用进行到一半时作者按了停
+
+    model = ScriptedModel(script=[wants(("book_index", "{}"))], on_call=on_call)
+    events: list[TurnEvent] = []
+    result = run_turn(
+        start_conversation().with_author("问一句"),
+        context=a_context(),
+        model=model,
+        ledger=Ledger(),
+        cancel=cancel,
+        mailbox=mailbox,
+        persist=saved.append,
+        on_event=events.append,
+    )
+    assert result.reason is StopReason.AUTHOR_STOPPED
+    assert [m.content for m in result.conversation.messages if m.role is Role.USER] == [
+        "问一句",
+        "这句它没来得及看",
+    ]
+    assert result.unanswered == 1
+    assert saved and saved[-1].messages[-1].content == "这句它没来得及看", "收场那一下落了库"
+    assert [e.text for e in events if e.kind is TurnEventKind.AUTHOR_SAID] == ["这句它没来得及看"]
+    assert mailbox.drain() == [], "信箱清空了，没有第二份"
+
+
+def test_without_a_mailbox_the_turn_is_byte_for_byte_what_it_was() -> None:
+    """不传信箱 = 没有中途说话这回事：路径、事件、结果一个字都不变。"""
+    plain, _, _ = a_turn(wants(("book_index", "{}"), text="先看目录。"), say("看完了。"))
+    boxed, _, _ = a_turn(
+        wants(("book_index", "{}"), text="先看目录。"), say("看完了。"), mailbox=Mailbox()
+    )
+    assert plain.model_dump() == boxed.model_dump()
+    assert plain.unanswered == 0
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 十二、停下来之后再问一句（作者 2026-09-12：「这个停的动作也要让那个 agent 知道，
+# 然后让他问他为什么要停」）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _stopped_between_steps(*script: CompletionResult, **kwargs: Any):
+    """作者在模型要了一个工具、还没派发的那一刻按停。返回 `(结果, 模型, 账本, 事件)`。"""
+    cancel = Cancellation()
+    events: list[TurnEvent] = []
+    presses = {"n": 0}
+
+    def press_once(signal: Cancellation) -> None:
+        presses["n"] += 1
+        if presses["n"] == 1:
+            signal.stop()
+
+    model = ScriptedModel(script=list(script), on_call=press_once)
+    ledger = Ledger()
+    result = run_turn(
+        start_conversation().with_author("写第 7 章"),
+        context=a_context(),
+        model=model,
+        ledger=ledger,
+        cancel=cancel,
+        on_event=events.append,
+        **kwargs,
+    )
+    return result, model, ledger, events
+
+
+def test_after_the_stop_it_asks_the_author_one_question_with_no_tools() -> None:
+    """停下来之后**多一次调用**：没有工具、末尾一句「作者按停了，问他」的提示，
+    模型答的那一句作为普通的 assistant 消息进历史、上屏、进 `reply`，也记一笔账。"""
+    result, model, ledger, events = _stopped_between_steps(
+        wants(("book_index", "{}")),
+        say("我停在翻目录之前了。是方向不对，还是想先改别的？"),
+        debrief_on_stop=True,
+    )
+    assert result.reason is StopReason.AUTHOR_STOPPED
+    assert len(model.calls) == 2
+    # 问的那一次：一个工具都不带，最后一条是给模型的提示（user 角色），说的是那一刻它在哪儿。
+    assert model.tool_names == []
+    nudge = model.calls[1][-1]
+    assert nudge["role"] == "user"
+    assert "按下了「停」" in nudge["content"] and "刚做完一步" in nudge["content"]
+    # 答的那一句：进历史（assistant）、进回执、上屏。**提示本身不进历史。**
+    last = result.conversation.messages[-1]
+    assert (last.role, last.content) == (Role.ASSISTANT, "我停在翻目录之前了。是方向不对，还是想先改别的？")
+    assert result.reply == last.content
+    assert all("按下了「停」" not in m.content for m in result.conversation.messages)
+    said = [e.text for e in events if e.kind is TurnEventKind.REPLY_TEXT]
+    assert said == [last.content]
+    # 两笔账：叫工具那一次 + 问的那一次；两步。
+    assert len(ledger.receipts) == 2
+    assert result.steps == 2
+    # 没跑的那个工具照旧配壳——「知道自己被停了」靠的是历史里这几样，不是靠一句系统提示。
+    assert result.conversation.pending_calls == ()
+
+
+def test_the_debrief_is_off_by_default_so_stop_is_just_stop() -> None:
+    """不传 `debrief_on_stop` = 停就是停：一次调用都不多，行为和以前逐字节相同。"""
+    result, model, ledger, events = _stopped_between_steps(
+        wants(("book_index", "{}")), say("永远到不了这儿")
+    )
+    assert result.reason is StopReason.AUTHOR_STOPPED
+    assert len(model.calls) == 1
+    assert len(ledger.receipts) == 1
+    assert [e.kind for e in events if e.kind is TurnEventKind.REPLY_TEXT] == []
+
+
+def test_tool_calls_in_the_debrief_answer_are_dropped_not_queued() -> None:
+    """问的那一次说了「别叫工具」，模型硬要叫也**一条不接**：接了就是一批没人跑的调用
+    挂在历史末尾，下一轮 resume 会去补跑——而作者刚说的是「停」。"""
+    result, _, _, _ = _stopped_between_steps(
+        wants(("book_index", "{}")),
+        wants(("book_index", '{"from_chapter": 3}'), text="我再翻一下？"),
+        debrief_on_stop=True,
+    )
+    assert result.reason is StopReason.AUTHOR_STOPPED
+    assert result.conversation.pending_calls == ()
+    last = result.conversation.messages[-1]
+    assert (last.role, last.tool_calls, last.content) == (Role.ASSISTANT, (), "我再翻一下？")
+
+
+def test_pressing_stop_again_during_the_debrief_silences_it() -> None:
+    """他又按了一次：那一句也不要了——信号在问的那一次里重新亮起，适配器把流掐断，
+    这一轮照样是「按你的意思停下了」，只是没有那一句；掐断的那一次照样记账。"""
+    from novel_harness.draft.generate import CallInterrupted
+
+    cancel = Cancellation()
+    calls: list[list[dict[str, Any]]] = []
+
+    def model(messages: Any, *, tools: Any, cancel: Cancellation) -> CompletionResult:
+        calls.append(list(messages))
+        if len(calls) == 1:
+            cancel.stop()
+            return wants(("book_index", "{}"))
+        # 问的那一次：信号已经被 loop 放下了（不然发都发不出去）；作者这时又按了一下。
+        assert not cancel.stopped, "问那一句之前信号没放下，适配器会在发出去之前就掐掉它"
+        cancel.stop()
+        raise CallInterrupted("作者中止了这一次调用", partial_text="我停", model="deepseek-v4")
+
+    ledger = Ledger()
+    result = run_turn(
+        start_conversation().with_author("写第 7 章"),
+        context=a_context(),
+        model=model,
+        ledger=ledger,
+        cancel=cancel,
+        debrief_on_stop=True,
+    )
+    assert result.reason is StopReason.AUTHOR_STOPPED
+    assert result.reply == ""
+    assert result.conversation.messages[-1].role is Role.TOOL  # 末尾是那个没跑的壳，没有半句话
+    assert [r.text for r in ledger.receipts] == ["", "我停"]
+    assert ledger.receipts[1].completion_tokens is None
+
+
+def test_a_reply_cut_mid_sentence_keeps_the_half_sentence_and_is_billed() -> None:
+    """停落在回复流的中间：说到一半的那几句是它真说过的——进历史、上屏；那一次调用
+    记账但数留空；问的那一句说的是「话说到一半」。"""
+    from novel_harness.draft.generate import CallInterrupted
+
+    cancel = Cancellation()
+    calls: list[list[dict[str, Any]]] = []
+    events: list[TurnEvent] = []
+
+    def model(messages: Any, *, tools: Any, cancel: Cancellation) -> CompletionResult:
+        calls.append(list(messages))
+        if len(calls) == 1:
+            cancel.stop()
+            raise CallInterrupted("作者中止了这一次调用", partial_text="好的，我先", model="deepseek-v4")
+        return say("我说到一半停了。要换个方向吗？")
+
+    ledger = Ledger()
+    result = run_turn(
+        start_conversation().with_author("写第 7 章"),
+        context=a_context(),
+        model=model,
+        ledger=ledger,
+        cancel=cancel,
+        on_event=events.append,
+        debrief_on_stop=True,
+    )
+    assert result.reason is StopReason.AUTHOR_STOPPED
+    roles = [(m.role, m.content) for m in result.conversation.messages[-2:]]
+    assert roles == [
+        (Role.ASSISTANT, "好的，我先"),
+        (Role.ASSISTANT, "我说到一半停了。要换个方向吗？"),
+    ]
+    assert "话说到一半" in calls[1][-1]["content"]
+    assert [e.text for e in events if e.kind is TurnEventKind.REPLY_TEXT] == [
+        "好的，我先",
+        "我说到一半停了。要换个方向吗？",
+    ]
+    cut = ledger.receipts[0]
+    assert (cut.text, cut.model, cut.prompt_tokens, cut.finish_reason) == (
+        "好的，我先",
+        "deepseek-v4",
+        None,
+        None,
+    )
+    assert len(ledger.receipts) == 2
+
+
+def test_a_cancelled_call_that_was_never_sent_is_not_billed() -> None:
+    """信号在发之前就亮了（`sent=False`）：一分钱没花，**不许为它记一行账**。"""
+    from novel_harness.draft.generate import CallInterrupted
+
+    cancel = Cancellation()
+
+    def model(messages: Any, *, tools: Any, cancel: Cancellation) -> CompletionResult:
+        cancel.stop()
+        raise CallInterrupted("作者中止了这一次调用", sent=False, model="deepseek-v4")
+
+    ledger = Ledger()
+    result = run_turn(
+        start_conversation().with_author("写第 7 章"),
+        context=a_context(),
+        model=model,
+        ledger=ledger,
+        cancel=cancel,
+    )
+    assert result.reason is StopReason.AUTHOR_STOPPED
+    assert ledger.receipts == []

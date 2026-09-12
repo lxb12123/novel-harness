@@ -1,13 +1,12 @@
 import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it } from "vitest";
-import { fixtures, renderWithApi, sseFrames, turnStream } from "../test/harness";
-import { devTerms, engineWords, machineWords, rawIds, screenText } from "../test/screenGuard";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fixtures, renderWithApi, sseFrames, turnStream, ROUND_DONE } from "../test/harness";
+import { devTerms, engineWords, machineWords, screenText } from "../test/screenGuard";
 import type { EdgeType } from "../api/types";
-import { EDGE_LABEL } from "../backendMessages";
+import { EDGE_LABEL, edgeLabelText } from "../backendMessages";
 import { useCoords } from "../store";
 import { ActivityLog } from "./ActivityLog";
-import { BottomBar } from "./BottomBar";
 import { RightPanel } from "./RightPanel";
 import { TopBar } from "./TopBar";
 import { LeftRail } from "./LeftRail";
@@ -19,6 +18,28 @@ import { ChatPanel } from "./ChatPanel";
 import { DraftCompare } from "./DraftCompare";
 import { RulesTable } from "./RulesTable";
 import { SystemNotifications } from "./SystemNotifications";
+
+// ReactFlow 依赖真实布局测量，jsdom 给不了（同 `LocalGraph.test.tsx` 生前的写法）。
+// **这份文件现在需要它**：角色卡把「人物关系」并进角色册之后，下面两条新测试会真的
+// 选中一个人渲出卡片，`CharacterRelations` 内嵌的画布跟着挂载。
+vi.mock("@xyflow/react", () => ({
+  ReactFlow: ({ nodes, edges }: { nodes: { id: string; data: { label: string } }[]; edges: unknown[] }) => (
+    <div data-testid="flow">
+      {nodes.map((n) => (
+        <span key={n.id} data-testid="flow-node">
+          {n.data.label}
+        </span>
+      ))}
+      <span data-testid="flow-edge-count">{edges.length}</span>
+    </div>
+  ),
+  Background: () => null,
+  Controls: () => null,
+  // `CharacterRelations` 的自定义节点要用这两个（连线的锚点）。**mock 工厂缺一个
+  // 具名导出，vitest 直接报错**，所以组件那边一 import 就得在这儿跟一个。
+  Handle: () => null,
+  Position: { Top: "top", Bottom: "bottom", Left: "left", Right: "right" },
+}));
 
 // **对抗性验证：那张「形状判据」的网真的比词表强吗。**
 //
@@ -56,10 +77,17 @@ beforeEach(() => {
     focusEventId: null,
     chatId: null,
   });
+  // ReactFlow 需要 ResizeObserver 做尺寸测量；jsdom 里没有（同 `LocalGraph.test.tsx`）。
+  class RO {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  (globalThis as Record<string, unknown>).ResizeObserver = RO;
 });
 
 /** 一份**带边**的人物快照。`characterState` 那份 dump 的 `edges` 是空的，
- *  于是底栏和原文依据两块屏幕在守卫眼里永远是「暂无可显示的变化」。
+ *  于是原文依据那块屏幕在守卫眼里永远是「这一章还没有原文依据」。
  *  边取自 `states` 那份 dump（同一个真 app 的另一条端点），**不是手写的**。 */
 const STATE_WITH_EDGES = { ...fixtures.characterState, edges: fixtures.states[0].edges };
 
@@ -68,7 +96,12 @@ const stateRoute = (body: unknown) => [{ match: /\/characters\/.*\/state/, body 
 // ⚠️ **「场景条」这一格 2026-08-14 撤了**（组件连同场景块、两条路由和 R4 一起删了，
 // [ADR 0027](docs/adr/0027-scene-blocks-cut.md)）。它是这张网上少数几个**从来没被真夹具
 // 喂活过**的格子——`fixtures.scenes` 那份真 dump 是 `[]`，因为真书里没人手写 `## 场景 N`，
-// 而那正是砍掉它的理由。底栏那一格今天扫的是仅剩的「人物与设定变化」一列。
+// 而那正是砍掉它的理由。
+//
+// ⚠️ **「底栏时间线」这一格 2026-09-06 也撤了**（`BottomBar` 整个组件删了）：那条底栏
+// 画的是选中人物每条边的区间条，而 ADR 0043 之后 `valid_to_chapter` 恒为 NULL，
+// 每一条画出来都是「从第 N 章起一直有效」——和角色卡上「状态」那一格说的是同一句话。
+// 它手上那三条守卫**没跟着一起走**，去处写在下面各自那条上。
 
 /** 真 dump 的那一轮里**除回执以外**的那几帧（ADR 0024 第二刀）。
  *  卡住回执就能把屏幕停在「还在跑」那一刻 —— 而那正是这三块新屏幕唯一活着的时候。 */
@@ -82,11 +115,12 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
   it.each([
     ["顶栏", <TopBar key="t" />],
     ["左栏书架", <LeftRail key="l" onOpenChapter={() => {}} />],
-    ["底栏时间线", <BottomBar key="b" />],
     ["书架页", <BookShelf key="bs" onOpenChapter={() => {}} />],
     ["角色册抽屉", <RosterDrawer key="rd" pid="project:ID1" onClose={() => {}} />],
-    // 设置这扇窗 2026-08-14 变成左右分栏，**这一条只扫得到默认那一栏**（「连接服务」）。
-    // 另一栏由紧跟在这个 each 后面那条单独的断言扫。
+    // 设置这扇窗 2026-08-14 变成左右分栏，**这一条只扫得到默认那一栏**——
+    // 2026-09-05 起默认栏是「通用」（只有界面语言那一行），所以这一格扫到的东西
+    // 反而是全窗最少的。**另外两栏由紧跟在这个 each 后面那条单独的断言扫**，
+    // 那儿才是这扇窗上形状可疑的东西真正待着的地方。
     ["设置弹窗", <SettingsDrawer key="sd" onClose={() => {}} />],
     ["历史抽屉", <HistoryDrawer key="hd" pid="project:ID1" chapter={1} onClose={() => {}} />],
     // ⚠️ **「声明抽屉」这一格 2026-08-14 撤了**（组件连同中栏那条选区工具条一起删了）。
@@ -115,50 +149,92 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
   ])("「%s」上一个研发术语都没有", async (_name, ui) => {
     renderWithApi(ui, stateRoute(STATE_WITH_EDGES));
     // 等第一批查询落地：扫一块还没渲染出内容的屏幕等于什么都没扫。
-    await waitFor(() => expect(document.body.textContent).toMatch(/[一-龥]/));
+    //
+    // **就绪信号量的必须是 `screenText()`，不是 `document.body.textContent`。**
+    // 2026-09-06 顶栏的「工作台」二字被作者去掉之后，那一栏的正文只剩品牌名
+    // 「Novel Harness」——**整块屏幕一个中文字都没有**（它本来就是「一个字都不写，
+    // 图标 + 悬浮出名字」，名字全在 `aria-label` 上）。于是这条 waitFor 永远等不到，
+    // 顶栏那一格红了，而它报的是「就绪等不到」，不是「有研发术语」。
+    // 换成 `screenText()` 之后，就绪信号和下面那条断言扫的是**同一块文本**——
+    // 一块屏幕只要有东西可扫，它就一定等得到。
+    await waitFor(() => expect(screenText()).toMatch(/[一-龥]/));
     await new Promise((r) => setTimeout(r, 60));
     expect(devTerms(screenText())).toEqual([]);
   });
 
-  it("章目录那颗「⋯」摊开的样子（**默认不在屏幕上**）", async () => {
-    // 同下面那条：菜单收着的时候上面那条 each 扫不到它，而它端着后端删章那句拒绝——
-    // 那句话里带着五个计数，是这一栏上唯一一处「引擎内部有多少东西」会露头的地方。
-    const user = userEvent.setup();
-    renderWithApi(<BookShelf onOpenChapter={() => {}} />);
-    await user.click(await screen.findByRole("button", { name: "第一章 血脉的更多操作" }));
-    await user.click(await screen.findByRole("button", { name: "删除本章" }));
-    await screen.findByText(/删除第 1 章？/);
-    expect(devTerms(screenText())).toEqual([]);
-  });
-
-  it("设置弹窗的另一栏（「前文长度」——**默认不在屏幕上**）", async () => {
-    // 上面那条 each 渲染完就扫，扫的是默认那一栏。而这扇窗上最长的两段说明、
-    // 那份公开模型表的回执、以及拉不到时后端那句话，全在另一栏——
+  it("设置弹窗的另外两栏（「模型服务」「个性化」——**默认都不在屏幕上**）", async () => {
+    // 上面那条 each 渲染完就扫，扫的是默认那一栏（2026-09-10 起是「个性化」）。
+    // 而这扇窗上最长的两段说明、那份公开模型表的回执、拉不到时后端那句话、
+    // 以及服务地址/模型/密钥那三个框，全在别的栏——
     // **没被扫到的组件等于没有守卫**，这个仓库为这件事栽过。
+    //
+    // ⚠️ 默认栏 2026-09-05 从「连接服务」换成了「通用」，于是**原来被 each 顺带
+    // 扫着的那一栏掉出了网**。这条断言当天跟着从「扫一栏」改成「扫两栏」——
+    // 换默认栏而不补这里，覆盖面会静悄悄地少一块。
     const user = userEvent.setup();
     renderWithApi(<SettingsDrawer onClose={() => {}} />);
-    await user.click(await screen.findByRole("tab", { name: "前文长度" }));
-    await screen.findByText("模型一次能读多少");
+
+    await user.click(await screen.findByRole("tab", { name: "模型服务" }));
+    await screen.findByLabelText("API 密钥");
+    // 「模型上下文长度」2026-09-06 搬进了这一栏（「前文长度」那一栏整个取消了），
+    // 所以这一次点击就把两段最长的说明、那份清单的回执、和三个框全扫到了。
+    await screen.findByText("模型上下文长度");
+    expect(devTerms(screenText())).toEqual([]);
+
+    await user.click(screen.getByRole("tab", { name: "个性化" }));
+    await screen.findByText("界面语言 / Interface language");
+    expect(devTerms(screenText())).toEqual([]);
+
+    // 「系统功能」那一栏 2026-09-10 之前没在网里（它的两格是 2026-09-06 / 09 才长出来的）。
+    // 这一次点击把三颗开关/框的说明全扫到——「novel-agent 模式」是顶栏已经在念的名字，
+    // 它得能过这张网，否则顶栏那颗开关的悬浮字早该红了。
+    await user.click(screen.getByRole("tab", { name: "系统功能" }));
+    await screen.findByText("是否在 novel-agent 模式下续写");
     expect(devTerms(screenText())).toEqual([]);
   });
 
   it.each([
     ["角色册", "roster", /青云城主府/],
-    ["人物状态", "state", /萧决/],
-    ["人物关系", "graph", /人物关系/],
-    ["原文依据", "evidence", /原文依据/],
-    ["写作提醒", "constraints", /尚未登场/],
-    ["检查", "check", /检查本章/],
-    ["待确认", "review", /关系冲突/],
+    // 「检验本章」2026-09-05 收成了一颗闪电图标（名字在 `aria-label`/`data-tip` 上），
+    // 屏幕上不再有那四个字——就绪信号换成这一格一定会渲的小标题。
+    ["检验规则", "check", /自定义规则/],
+    // 2026-08-31 之前这一格叫「待确认」，标记是 /关系冲突/（提案卡）。待确认审阅
+    // 搬进了「通知」（下面单独一行），这一格（key 还是 `review`，标签改成了「事件」）
+    // 现在只剩已确认的情节。
+    ["事件", "review", /萧决得知血脉秘密/],
     // 2026-08-13 新长出来的一格。它手上形状可疑的东西有两样：这一章总结在库里的
     // 来源和状态（`model` / `author` / `ACTIVE` / `RETRACTED`），以及后端拒绝时那句话。
-    ["章节总结", "summary", /带得上/],
+    //
+    // 就绪信号是那一行小标题。**别换成光秃秃的「章节总结」**：右栏那颗页签自己就叫
+    // 这个名字，它在数据回来之前就渲好了，拿它当信号等于不等（2026-09-05 那句
+    // 「写第 N 章时…带得上」被作者点名删掉，就绪信号跟着换到这儿）。
+    ["章节总结", "summary", /第 \d+ 章 章节总结/],
+    // ⚠️ 「通知」没有列在这张表里：默认夹具里 `summary_mismatch` 那条通知用的是
+    // 契约测试自己手搭的占位码 `title_code="test_notice"`（真实生产从来没有生产过
+    // 这一档，见 `tests/test_frontend_contract.py` 那条注释），字面量原样漏到屏幕上
+    // 会被这条守卫正确地判成「研发术语」——但那是夹具的既有性质，不是这次改动引入的。
+    // 「关系冲突」提案卡不漏机器码这件事，`CanonEdit.boundary.test.tsx` 已经钉住了
+    // （`rawIds`/`machineWords`/`engineWords` 三张网都扫过），这儿不重复扫一次全屏。
   ] as const)("右栏「%s」那一格上一个研发术语都没有", async (_name, tab, marker) => {
     // `CanonEdit.boundary.test.tsx` 只在**两个编辑器摊开**的时候扫右栏；
     // 八格里另外六格一次都没被扫过。
     useCoords.setState({ activeTab: tab });
     renderWithApi(<RightPanel />, stateRoute(STATE_WITH_EDGES));
     await screen.findAllByText(marker);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(devTerms(screenText())).toEqual([]);
+  });
+
+  it("角色册展开的那张卡（状态 + 关系 + 依据）上一个研发术语都没有", async () => {
+    // 「人物状态」「人物关系」「原文依据」三个 tab 2026-08-31 并进角色册之前，
+    // 各自在上面那条 `it.each` 里占一行。并进来之后卡片只在**真实在角色册里的人**
+    // 身上展开——上面那条「角色册」用的 `selectedNodeId`（外层 `beforeEach` 里的
+    // "character:ID10"）不在 `rosterWithCounts` 里，卡片今天展不开，那一行因此只扫得到
+    // 折叠的列表本身，没有一行会去扫卡片。这条换一个真实存在的 id（萧决，
+    // 和 `STATE_WITH_EDGES` 说的是同一个人）。
+    useCoords.setState({ activeTab: "roster", selectedNodeId: "character:ID9" });
+    renderWithApi(<RightPanel />, stateRoute(STATE_WITH_EDGES));
+    await screen.findAllByText(/萧决/);
     await new Promise((r) => setTimeout(r, 60));
     expect(devTerms(screenText())).toEqual([]);
   });
@@ -189,13 +265,13 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     renderWithApi(<RosterDrawer pid="project:ID1" onClose={() => {}} />, [
       { method: "POST", match: /\/aliases$/, status: 422, body: fixtures.errorShortAlias },
     ]);
-    await user.click(screen.getByRole("button", { name: "加称呼" }));
+    await user.click(screen.getByRole("button", { name: "加别名" }));
     await user.type(screen.getByPlaceholderText("输入已有名称"), "测试角色");
-    await user.type(screen.getByPlaceholderText("输入新的称呼"), "名");
+    await user.type(screen.getByPlaceholderText("输入新的别名"), "名");
     await user.click(screen.getByRole("checkbox")); // 绕过前端提示，逼服务端说话
     await user.click(screen.getByRole("button", { name: "加" }));
 
-    await screen.findByText(/无法添加这个称呼/);
+    await screen.findByText(/无法添加这个别名/);
     expect(devTerms(screenText())).toEqual([]);
     // 后端那句话确实脏 —— 探针过期了这条会红，那时说明后端改干净了，可以删掉它。
     expect(machineWords(fixtures.errorShortAlias.message)).toContain("usable_for_rules");
@@ -233,7 +309,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "问一句");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
     expect(devTerms(screenText())).toEqual([]);
   });
 
@@ -293,7 +369,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     await waitFor(() => expect(strip.textContent).toContain("正在"));
     expect(devTerms(screenText())).toEqual([]);
     release(sseFrames([{ event: "receipt", data: fixtures.chatTurn }])[0]);
-    await screen.findByText(fixtures.chatTurn.message);
+    await screen.findByText(ROUND_DONE);
   });
 
   it("写作助手：正在逐字长出来的那一稿（含「还没落下第一个字」那一档）", async () => {
@@ -374,6 +450,8 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
       ...fixtures.chatTurn,
       reason: "author_stopped",
       message: "按你的意思停下了。已经查到的东西留着。",
+      // 它没问出那一句（`reply` 空）：回执上那句才会画出来给这儿扫（`chat.ts::receiptSays`）。
+      reply: "",
       drafts: [{ ...one, stopped_reason: "作者中途按了停，这一稿没写完。" }],
     };
     renderWithApi(<ChatPanel />, [
@@ -584,61 +662,43 @@ const PLANTED = {
   edges: [{ ...fixtures.states[0].edges[0], type: "PLANTED_IN" }],
 };
 
-/** 同一条边，但 `dst` 指向一个**角色册里还没有**的节点。
- *
- *  角色册和这份快照是两条独立缓存：后台整理刚建出来的节点会在前者里缺席一拍，
- *  而没有任何路径保证那一拍不会被作者看见。 */
-const UNKNOWN_DST = {
-  ...fixtures.characterState,
-  edges: [{ ...fixtures.states[0].edges[0], dst: "location:ID99" }],
-};
-
 describe("兜底：认不出的东西说人话，不是原样回吐", () => {
-  it("底栏：每一类关系都说得出中文", async () => {
+  it("每一类关系都说得出中文 —— 一个大写枚举名都不许漏出去", () => {
     // **判据是 `EDGE_LABEL` 本身**，不是在这里抄一份成员清单——但 `EDGE_LABEL`
     // 是 `Record<string, {zh,en}>`，不像原来的 `EDGE_ZH`（`Record<EdgeType, string>`）
-    // 那样靠 TS 类型强制全列，还留着 `KNOWS`/`BELIEVES` 两个 ADR 0039 退役的历史键
-    // （底栏只会收到真实 `Edge.type`，历史键在这个场景下不该被渲染）。
+    // 那样靠 TS 类型强制全列，还留着 `KNOWS`/`BELIEVES` 两个 ADR 0039 退役的历史键。
     // Python 那边的枚举和这份表键集合对不对得上，由
     // `tests/test_wording_guard.py::test_the_edge_label_wording_table_covers_every_edge_type` 钉。
+    //
+    // ⚠️ **2026-09-06 这一条从「渲染一遍底栏」改成「直接问措辞函数」**（底栏那个
+    // 组件当天删了）。**这不是把守卫改弱了，是改宽了**：
+    // · 原来它只覆盖一个宿主（`BottomBar`），而 `edgeLabelText` 今天有三个调用方
+    //   （原文依据、人物关系、后端消息模板），换成直接钉函数，三个一起罩住；
+    // · 它本来要防的那件事——各组件自己抄一份 7 行的表、兜底写 `?? e.type`——
+    //   正是靠「全前端只剩这一份表」修掉的，所以判据本来就该落在那份表上。
+    // 组件真的用了这份表（而不是又抄了一份），由下面「角色卡里的依据段」那条钉。
     const HISTORICAL_ONLY = new Set(["KNOWS", "BELIEVES"]);
     const liveEdgeTypes = Object.keys(EDGE_LABEL).filter(
       (k) => !HISTORICAL_ONLY.has(k),
     ) as EdgeType[];
+    expect(liveEdgeTypes.length).toBeGreaterThan(0); // 表空了的话下面这个循环会假绿
     for (const type of liveEdgeTypes) {
-      // 无向边（`RELATED_TO`）底栏按设计不画区间，它那一行不会出现。
-      if (type === "RELATED_TO") continue;
-      const { unmount } = renderWithApi(
-        <BottomBar />,
-        stateRoute({ ...fixtures.characterState, edges: [{ ...fixtures.states[0].edges[0], type }] }),
-      );
-      const label = await waitFor(() => {
-        const el = document.querySelector(".tl-label");
-        expect(el).not.toBeNull();
-        return el as HTMLElement;
-      });
-      expect(label.textContent).toContain(EDGE_LABEL[type].zh);
-      expect(engineWords(screenText())).toEqual([]);
-      unmount();
+      const said = edgeLabelText(type, "zh");
+      expect(said).toBe(EDGE_LABEL[type].zh);
+      // 兜底一旦退回 `?? type`，说出来的就是这个大写枚举名本身。
+      expect(said).not.toContain(type);
+      expect(engineWords(said)).toEqual([]);
     }
   });
 
-  it("底栏：`PLANTED_IN` 不再原样上屏", async () => {
-    renderWithApi(<BottomBar />, stateRoute(PLANTED));
-    await screen.findByText(/埋在/);
-    expect(devTerms(screenText())).toEqual([]);
-  });
-
-  it("底栏：角色册里查不到的对象说「—」，不摆一串内部编号", async () => {
-    renderWithApi(<BottomBar />, stateRoute(UNKNOWN_DST));
-    await waitFor(() => expect(document.body.textContent).toContain("的变化"));
-    await new Promise((r) => setTimeout(r, 60));
-    expect(rawIds(screenText())).toEqual([]);
-    expect(document.body.textContent).toContain("—");
-  });
-
-  it("原文依据：同样两条", async () => {
-    useCoords.setState({ activeTab: "evidence" });
+  // 上面那两条原来各有一个底栏版本（`PLANTED_IN` 不原样上屏 / 查不到的对象说「—」）。
+  // 底栏 2026-09-06 删了，而这一条在**仅剩的那个宿主**上验的是同样两件事——
+  // 不是少了一条守卫，是那两条本来就在这儿重复着。
+  it("角色卡里的依据段：认不出的边说人话，查不到的对象说「—」", async () => {
+    // `dst` 指向一个**角色册里还没有**的节点：角色册和这份快照是两条独立缓存，
+    // 后台整理刚建出来的节点会在前者里缺席一拍，而没有任何路径保证那一拍不会被
+    // 作者看见。那一拍上的兜底必须是「—」，不是 `?? id`（那会摆出一串内部编号）。
+    useCoords.setState({ activeTab: "roster", selectedNodeId: "character:ID9" });
     renderWithApi(<RightPanel />, [
       { match: /\/characters\/.*\/state/, body: { ...PLANTED, edges: [{ ...PLANTED.edges[0], dst: "location:ID99" }] } },
     ]);

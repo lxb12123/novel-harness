@@ -2,7 +2,8 @@ import { useIsMutating } from "@tanstack/react-query";
 import { useState } from "react";
 import { useLanguage } from "../language";
 import { useCoords } from "../store";
-import { BotIcon, GearIcon, LogIcon, ThinkingSpinner } from "./icons";
+import { BotIcon, GearIcon, LogIcon, NibIcon, ThinkingSpinner, WingIcon } from "./icons";
+import { usePaneCollapse } from "../paneCollapse";
 import { SettingsDrawer } from "./SettingsDrawer";
 
 // 顶栏：**两颗开关 + 设置**，一个字都不写（图标 + 悬浮出名字）。
@@ -26,6 +27,9 @@ import { SettingsDrawer } from "./SettingsDrawer";
 export function TopBar() {
   const language = useLanguage((s) => s.language);
   const { page, chatOpen, setPage, toggleChat } = useCoords();
+  const leftCollapsed = usePaneCollapse((s) => s.left);
+  const rightCollapsed = usePaneCollapse((s) => s.right);
+  const togglePane = usePaneCollapse((s) => s.toggle);
   const [settingsOpen, setSettingsOpen] = useState(false);
   // 续写（行内灰字建议）请求正不正在飞，跟这本书这一章都无关——**只要有一个在飞就转**，
   // 不用挑 key（同 mutationKey 那边的注释）。
@@ -33,9 +37,47 @@ export function TopBar() {
 
   return (
     <header>
+      {/* 只剩品牌名（作者 2026-09-06 去掉了后面的「工作台 / Workbench」）。
+          `<b>` 留着——顶栏那条 `header .title b` 给的是品牌的强调色，不是加粗。 */}
       <span className="title">
-        <b>Novel Harness</b> {language === "zh" ? "工作台" : "Workbench"}
+        <b>Novel Harness</b>
       </span>
+
+      {/* ── 收起 / 展开两侧栏（作者 2026-09-06，参照 Cursor）──────────────────
+          **一边一颗，各自站在它管的那一栏那一头**：这颗贴着品牌名管左栏，
+          另一颗在齿轮左边管右栏（作者 2026-09-06：「右边那个移动到设置左边」）。
+
+          ⚠️ **这条推翻了下面那段关于齿轮的注释里的一半。** 那儿写着设置是
+          「一年按一次」的、不许让天天按的按钮挨着它排队（误点一下弹出来的是一整扇
+          设置窗）。这一版右栏那颗就紧挨着它——**是作者看过之后定的**，别当成疏忽
+          改回去。齿轮「在最右」那一半仍然成立，也仍然有测试钉着。
+
+          **2026-09-07 起图标是作者自己给的那对翅膀**（`wings.svg` / `wings-folded.svg`），
+          **一颗按钮拿一半**：左栏那颗是左翅，右栏那颗是它的镜像。展开时羽毛向外上方
+          铺开，收起时羽尖向下收拢——**换的是形状本身**，由 `WingIcon` 的 `collapsed` 定。
+
+          **展开时给 `.on`**（作者 2026-09-07：「展开的时候补个悬浮色」）：翅膀张着 =
+          那一栏在屏幕上 = 染成强调色，收起时退回常规灰。**这条推翻了原来那句「不给
+          `.on`，染色等于把同一件事说第三遍」——是作者看过实物之后定的，别当成疏忽
+          改回去。** 用的就是 `.icon-btn.on` 那一条，跟中间那两颗开关同一个强调色，
+          不另起一套。`aria-pressed` 照给——读屏用户看不见那一栏，也看不见翅膀和
+          颜色，只能靠它。
+
+          同顶栏别处：`aria-label` 是名字（**不随状态变**，变了读屏会以为换了一颗），
+          `data-tip` 说的是「按下去会怎样」。 */}
+      <button
+        className={"icon-btn" + (leftCollapsed ? "" : " on")}
+        aria-label={language === "zh" ? "左栏" : "Left panel"}
+        aria-pressed={!leftCollapsed}
+        data-tip={
+          language === "zh"
+            ? leftCollapsed ? "展开左栏" : "收起左栏"
+            : leftCollapsed ? "Show the left panel" : "Hide the left panel"
+        }
+        onClick={() => togglePane("left")}
+      >
+        <WingIcon side="left" collapsed={leftCollapsed} />
+      </button>
 
       <span className="spacer" />
 
@@ -82,8 +124,11 @@ export function TopBar() {
           英文那半是 `ChatPanel.tsx` 已经在用的「Writing assistant」），
           **状态走 `aria-pressed`，名字不许跟着状态变**。
 
-          图标是一个**脑袋是书的小机器人**，两态只差书的开合（`BotIcon`）：
-          合着 = 它在旁边待命；摊开 = 它上场了。 */}
+          图标随状态换（作者 2026-09-12 定的这一对）：
+          - 关着（协助模式）= **笔尖 + 星芒**（`NibIcon`，作者给的图）：作者自己在写，
+            引擎在旁边续写；
+          - 开着（novel-agent 模式）= **脑袋是书的小机器人**（`BotIcon`）：助手上场了。
+          2026-09-12 之前是同一个机器人的两态（书合着 / 摊开），摊开那版随这次一起删了。 */}
       <button
         className={"icon-btn" + (chatOpen ? " on" : "")}
         aria-label={language === "zh" ? "写作助手" : "Writing assistant"}
@@ -95,9 +140,10 @@ export function TopBar() {
         }
         onClick={toggleChat}
       >
-        <BotIcon open={chatOpen} />
-        {/* 续写建议正在生成时右上角转一下——不管作者现在开没开写作助手面板，
-            这颗图标本来就是「AI 在不在动」的那个位置，续写也是 AI 在动。 */}
+        {chatOpen ? <BotIcon /> : <NibIcon />}
+        {/* 续写建议正在生成时右上角转一下——这颗图标本来就是「AI 在不在动」的那个位置，
+            续写也是 AI 在动。面板开着时续写默认不跑（作者 2026-09-10 定的；设置里
+            「是否在 novel-agent 模式下续写」能放行），但这儿不用管那条：只要有一次在飞就转。 */}
         {continuationPending && (
           <span className="bot-thinking">
             <ThinkingSpinner />
@@ -133,6 +179,22 @@ export function TopBar() {
           2026-08-14 那扇窗的标题栏拆了（作者要求），于是**屏幕上只剩这四个字在这儿**：
           改这一处 = 那句指路的话在界面上再也落不到实处。英文那半同理钉死
           「AI Settings」，不是「Settings」。 */}
+      {/* 收起 / 展开右栏。**紧挨着齿轮是作者定的位置**，见上面那段。
+          `tip-right` 跟齿轮一样：它离右边缘只剩一颗按钮的距离，居中的气泡会溢出去。 */}
+      <button
+        className={"icon-btn tip-right" + (rightCollapsed ? "" : " on")}
+        aria-label={language === "zh" ? "右栏" : "Right panel"}
+        aria-pressed={!rightCollapsed}
+        data-tip={
+          language === "zh"
+            ? rightCollapsed ? "展开右栏" : "收起右栏"
+            : rightCollapsed ? "Show the right panel" : "Hide the right panel"
+        }
+        onClick={() => togglePane("right")}
+      >
+        <WingIcon side="right" collapsed={rightCollapsed} />
+      </button>
+
       <button
         className="icon-btn tip-right"
         aria-label={language === "zh" ? "AI 设置" : "AI Settings"}

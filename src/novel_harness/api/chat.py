@@ -14,6 +14,7 @@
 |---|---|---|
 | `POST …/turn` | 跑完才回，一个 `TurnReceipt` | `curl`、老客户端、**「换回请求/响应」那条退路** |
 | `POST …/turn/events` | `text/event-stream`，边跑边喊，最后一帧还是同一个 `TurnReceipt` | 工作台 |
+| `POST …/say` | 一轮跑着的时候再说一句：进 `Mailbox`，loop 在下一步之前并进对话（2026-09-12） | 工作台 |
 
 两条走的是**同一个 `_TurnRun`**，差别只有一个参数（`on_event` 传不传），而
 `agent/loop.py` 保证了「不传 = 行为逐字节不变」。所以第一条不是第二条的旧版本，
@@ -124,6 +125,7 @@ from ..agent.loop import (
     AgentMessage,
     Cancellation,
     Conversation,
+    Mailbox,
     EventFn,
     LedgerFn,
     ModelCallReceipt,
@@ -144,13 +146,12 @@ from ..agent.model import ProviderModelPort, agent_call_plan
 from ..agent.ports import ToolContext, TrackVerdict
 from ..agent.tools import AuthorQuestion
 from ..agent.store import ChatConcurrency, ChatNotice, ChatSessionRow, ChatStore, StoredChat
-from ..calibration.models import AuthorTurnRef
-from ..calibration.store import CalibrationStore
+from ..checks.service import RulesReader
+from ..notices import NoticeReader
 from ..db import Connection
 from ..draft.length import DraftLanguage
 from ..focus import frontier_chapter
 from ..graph import StoryGraph
-from ..decisions import quote_hash
 from ..draft.capabilities import CapabilityError, ProviderCapabilities, ResolvedCallPlan
 from ..draft.provider import CompletionResult, ProviderConfig
 from ..draft.rolling_summary import SummaryStore
@@ -235,15 +236,35 @@ class _Running:
 
     def __init__(self) -> None:
         self._lock = Lock()
-        self._live: dict[tuple[str, str], tuple[str, Cancellation]] = {}
+        self._live: dict[tuple[str, str], tuple[str, Cancellation, Mailbox]] = {}
 
     def begin(self, key: tuple[str, str], run_id: str = "") -> Cancellation:
         with self._lock:
             if key in self._live:
                 raise ChatBusy("这段对话正在跑上一轮")
             signal = Cancellation()
-            self._live[key] = (run_id, signal)
+            self._live[key] = (run_id, signal, Mailbox())
             return signal
+
+    def mailbox(self, key: tuple[str, str]) -> Mailbox | None:
+        """这一轮的信箱（`begin` 时一起造的）。`None` = 没在跑。"""
+        with self._lock:
+            live = self._live.get(key)
+        return None if live is None else live[2]
+
+    def say(self, key: tuple[str, str], run_id: str, text: str) -> StopVerdict:
+        """把作者中途那句话交给它想插进的那一轮。判据和 `stop` 一模一样（三档同名）：
+        `stopped` 在这儿读作「排进去了」。**对不上一个字都不动**——也不落库，
+        那句话由前端按新的一轮发出去。"""
+        with self._lock:
+            live = self._live.get(key)
+        if live is None:
+            return "idle"
+        running_id, _signal, mailbox = live
+        if run_id and running_id and run_id != running_id:
+            return "stale"
+        mailbox.put(text)
+        return "stopped"
 
     def end(self, key: tuple[str, str]) -> None:
         with self._lock:
@@ -260,7 +281,7 @@ class _Running:
             live = self._live.get(key)
         if live is None:
             return "idle"
-        running_id, signal = live
+        running_id, signal, _mailbox = live
         if run_id and running_id and run_id != running_id:
             return "stale"
         signal.stop()
@@ -421,6 +442,13 @@ class DraftCandidateView(BaseModel):
     **前端不许按这一位自己再造一句**。
     """
 
+    brief: str = ""
+    """助手给写手的「这一稿要做什么、要守什么」（ADR 0047）。**作者看得见它喂了什么**：
+    桌上那张卡能展开看。空 = 旧机制写的稿（迁移 037 之前），界面上那一格不画。"""
+
+    materials: tuple[str, ...] = ()
+    """助手挑出来补给写手的资料，每条一段（同上）。"""
+
 
 class ChapterDrafts(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
@@ -470,6 +498,9 @@ class TurnReceipt(BaseModel):
     steps: int = Field(default=0, ge=0)
     lookups: int = Field(default=0, ge=0)
     """这一轮查了几次（工具调用次数）。"""
+
+    unanswered: int = Field(default=0, ge=0)
+    """作者中途说的、这一轮没来得及答的那几句（`agent.loop.Mailbox`）。它们已经在对话里。"""
 
     tokens_reported: int = Field(default=0, ge=0)
     calls_without_usage: int = Field(default=0, ge=0)
@@ -522,6 +553,19 @@ class ChatStopped(BaseModel):
     chat_id: str
     stopped: bool
     """`false` = 这一刻它本来就没在跑（不是失败）。"""
+
+    message: str
+
+
+class ChatSaid(BaseModel):
+    """`POST …/say` 的回执：这句话**排进正在跑的那一轮了没有**。"""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chat_id: str
+    queued: bool
+    """`false` = 没排进去（那一刻没在跑 / 在跑的是另一轮）。**不是失败**，也**没有落库**：
+    前端拿着这句话按新的一轮发出去就是。"""
 
     message: str
 
@@ -629,6 +673,17 @@ class StopBody(BaseModel):
     """
 
 
+class SayBody(BaseModel):
+    """作者在一轮**跑着的时候**又说了一句（2026-09-12，`agent.loop.Mailbox`）。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    said: str = Field(min_length=1, max_length=20_000)
+    run_id: str = Field(default="", max_length=64)
+    """**想插进哪一轮**。对不上就不排（同 `StopBody.run_id`）：一次迟到的「再说一句」
+    不该插进作者刚发起的下一轮——那一轮的第一句话已经是他自己发的了。"""
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # 装配
 # ══════════════════════════════════════════════════════════════════════════
@@ -640,14 +695,19 @@ def build_agent_model(config: ProviderConfig, plan: ResolvedCallPlan) -> ModelPo
 
 
 def _summarize_conversation_block(
-    text: str, config: ProviderConfig, capability: ProviderCapabilities
+    text: str, config: ProviderConfig, capability: ProviderCapabilities, *, cancel: Cancellation
 ) -> CompletionResult:
     """把最旧一段对话压成一句摘要（docs_dev 快照第五节）。**一次真的模型调用。**
 
     只读、确定性 prompt、按块原文做幂等键；loop 拿到 `CompletionResult` 自己记账
     （`_compress_oldest_block` 的 `bill`），这一层不碰账本——同 `build_agent_model`
     的位置。
+
+    `cancel`：**和这一轮别的调用同一个信号**（2026-09-12）。它是这一轮里唯一一次非流式的
+    调用，以前作者按停对它无效——要等整份摘要回来。现在走 `cancellable_client`，信号一亮
+    连接当场掐断（`agent/model.py::_cut`），loop 收到 `CallInterrupted` 按「作者停的」收场。
     """
+    from ..agent.model import cancellable_client
     from ..draft.block_summary import BLOCK_SUMMARY_LENGTH, block_summary_messages
     from ..draft.capabilities import ReasoningEffort, plan_call
     from ..draft.length import DraftLanguage, count_units
@@ -660,7 +720,12 @@ def _summarize_conversation_block(
         capability,
         prompt_token_budget=count_units(text, DraftLanguage.ZH) * TOKENS_PER_UNIT,
     )
-    return complete(block_summary_messages(text), config=config, plan=plan)
+    return complete(
+        block_summary_messages(text),
+        config=config,
+        plan=plan,
+        client=cancellable_client(config, cancel),
+    )
 
 
 def _ledger(conn: Connection, project_id: str) -> LedgerFn:
@@ -733,8 +798,10 @@ def _tool_context(
         db_lock=db_lock,
         summaries=SummaryStore(conn),
         events=SqliteEventStore(conn),
-        calibrations=CalibrationStore(conn),
-        author_turn=_latest_author_turn(conn, proj.id, chat_id),
+        # 右栏那两栏的只读端口（2026-09-12，`agent/panels.py`）：检验规则 / 通知。
+        # 角色卡和事件走的是上面 `events` 那个端口（它 2026-09-12 多了三个读方法）。
+        rules=RulesReader(conn),
+        notices=NoticeReader(conn, store),
         # 轨道核对（轨道阶段 3）。**轨道握在这个闭包里，不在 `ToolContext` 上**——
         # 同 `drafter` 那条：模型碰得到的是一个已经判完的结论（三个数），
         # 不是 `Track` 本身。核对模型没配时闭包返回一句「没接线」，工具照实说。
@@ -784,33 +851,6 @@ def _a_track_check(
         )
 
     return check
-
-
-def _latest_author_turn(
-    conn: Connection,
-    project_id: str,
-    chat_id: str,
-) -> AuthorTurnRef | None:
-    """当前会话里**作者最新一条**历史消息的绑定（turn id + 原话哈希）。
-
-    模型不能自报或替换：`calibrate_scene` / `seal_scene_brief` 从这儿取绑定。
-    `None` = 这段会话还没有作者消息可绑定。
-    """
-    row = conn.execute(
-        "SELECT id, content FROM chat_message"
-        " WHERE session_id = ? AND section = 'history' AND role = 'user'"
-        " ORDER BY seq DESC LIMIT 1",
-        (chat_id,),
-    ).fetchone()
-    if row is None:
-        return None
-    text = str(row["content"]).strip()
-    if not text:
-        return None
-    return AuthorTurnRef(
-        turn_id=str(row["id"]),
-        request_sha256=quote_hash(text),
-    )
 
 
 def _visible(
@@ -936,6 +976,8 @@ def _draft_view(candidate: DraftCandidate) -> DraftCandidateView:
         created_at=candidate.created_at,
         landed=candidate.landed,
         stopped_reason=candidate.stopped_reason,
+        brief=candidate.brief,
+        materials=candidate.materials,
     )
 
 
@@ -1114,6 +1156,8 @@ class _TurnRun:
                 status_code=409,
                 detail={"error": "chat_busy", "params": {"action": "send"}},
             )
+        # 作者中途说的话从这儿进来（`POST …/say` 往里放，loop 在步的边界取）。
+        self._mailbox = LIVE.mailbox(self._key)
         try:
             stored = _load(conn, proj.id, chat_id)
             self._conversation = stored.conversation
@@ -1215,21 +1259,20 @@ class _TurnRun:
                     plan=self._plan,
                     db_lock=db_lock,
                 ),
-                # **回话那一档没有接事件流，这是有意的，不是漏的**（ADR 0024 的红字）：
-                # `AGENT_REPLY_LENGTH` 倒推的输出预算 4,024 远在流式阈值之下 ⇒
-                # `plan.stream is False` ⇒ 那条线今天一个 `reply_delta` 都发不出来
-                # （`tests/test_chat_boundary.py::test_todays_agent_call_is_not_streaming_…`
-                # 钉着它）。接上去的代价是这个注入点的签名要改，而**十几处测试桩会为
-                # 一条永远不响的流各带一个参数** —— 那读起来像产品有这个能力。
-                # 那条断言变红的那天（谁把回话预算抬过阈值）就是接它的那天，
-                # 而那一天要一起决定的是界面上那一档怎么画（今天的答案是「不画」）。
+                # **回话那一档没有接事件流，这是有意的，不是漏的**（ADR 0024 的红字）。
+                # 2026-09-12 起那条线在 wire 上**是**流式的了（`agent_call_plan` 要了
+                # `interruptible`，为的是「停」落在下一片之内），所以 `reply_delta` 真的
+                # 有片可发——但这个注入点的签名（`build_agent_model(config, plan)`）是
+                # 十几处测试桩共用的，接 `on_event` 要一起改它们；而且那一天要一起决定
+                # 的是界面上那一档怎么画（`frontend/src/chat.ts::applyTurnEvent` 今天
+                # 对 `reply_delta` 的答案是「不画」）。两件事一起做，别只做一半。
                 model=build_agent_model(self._config, self._plan),
                 ledger=_ledger(self._conn, self._proj.id),
                 # **装不下时先压最旧一段对话**（docs_dev 快照第五节）：作者的话是唯一
                 # 不可剪的累积，压缩是它唯一的出口。`None` 会退回 CONTEXT_FULL 停，
                 # 但产品档要接——否则长对话永远硬停。
                 block_summarizer=lambda text: _summarize_conversation_block(
-                    text, self._config, self._capability
+                    text, self._config, self._capability, cancel=self._signal
                 ),
                 # **并发只在这一层放开**（见 `AGENT_PARALLEL_TOOLS`）：只有开连接的人
                 # 知道这条连接跨不跨得了线程。
@@ -1237,6 +1280,10 @@ class _TurnRun:
                 cancel=self._signal,
                 persist=keep,
                 on_event=on_event,
+                mailbox=self._mailbox,
+                # 按停之后再问他一句（作者 2026-09-12）——产品这条路开着；
+                # 见 `run_turn` 那条参数的 docstring。
+                debrief_on_stop=True,
             )
             self._save(result.conversation)
 
@@ -1274,6 +1321,7 @@ class _TurnRun:
             messages=shown,
             steps=result.steps,
             lookups=result.tool_calls,
+            unanswered=result.unanswered,
             tokens_reported=result.tokens_reported,
             calls_without_usage=result.calls_without_usage,
             context=_context_receipt(result.projection),
@@ -1537,6 +1585,38 @@ def stop_chat(
         stopped=verdict == "stopped",
         message=_STOP_WORDING[verdict],
     )
+
+
+_SAY_WORDING: dict[StopVerdict, str] = {
+    "stopped": "记下了，它下一步就会看到。",
+    "idle": "这会儿它没在跑，这句话没有排进去——直接发就是新的一轮。",
+    "stale": "这会儿跑的已经是新的一轮，这句话没有排进去——直接发就是。",
+}
+"""三档结局各自那一句（同 `_STOP_WORDING`）。**措辞只有这一份**，前端照抄 `message`。"""
+
+
+@router.post("/api/projects/{project_id}/chats/{chat_id}/say", response_model=ChatSaid)
+def say_mid_turn(
+    chat_id: ChatId,
+    body: SayBody,
+    proj: Any = Depends(load_project),
+    conn: Connection = Depends(get_conn),
+) -> ChatSaid:
+    """一轮跑着的时候再说一句（2026-09-12）。**它不等、不打断、不落库。**
+
+    作者的原话：「像 codex 那样，新的消息可以直接发出去，模型可以读，并且不会耽误正在
+    做的」。机制在 `agent.loop.Mailbox`：这句话放进正在跑的那一轮的信箱，loop 在下一次
+    模型调用之前把它按正常的作者消息追加进对话（那时才落库、才喊 `author_said`），
+    正在跑的那一步一个字都不受影响。**这条路由自己一个字都不写库**——对话的写入只有
+    loop 那一条线，两条线各写一次就会撞上乐观并发闸（`_TurnRun` 那段实测故障）。
+
+    `queued=false` 不是失败：那一刻没在跑（跑完了）或在跑的是另一轮——那句话没有
+    排进去也没有落库，前端拿着它按新的一轮发出去就是。
+    """
+    if ChatStore(conn).get(proj.id, chat_id) is None:
+        raise HTTPException(status_code=404, detail={"error": "chat_not_found"})
+    verdict = LIVE.say((proj.id, chat_id), body.run_id, body.said)
+    return ChatSaid(chat_id=chat_id, queued=verdict == "stopped", message=_SAY_WORDING[verdict])
 
 
 # ⚠️ **`GET`/`DELETE …/chats/{cid}/rules[/{seq}]` 两条路由 2026-08-14 删了**

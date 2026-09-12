@@ -70,6 +70,20 @@
 > 而且 **`interruptible` 同时决定流式和可中断** —— 也就是
 > **没有停止信号就没有流，也就没有边写边看**。两件事在产品上是捆着的，
 > 而本节举的那个例子（「读到第三行发现语气不对 ⇒ 第 5 秒按停」）读的**本来就是稿子**。
+>
+> **2026-09-12 补记：上面那条测试翻过来了**（改名
+> `test_the_agent_call_streams_so_that_stop_lands_within_a_chunk`）。作者按「停」要等整份
+> 回复回来这件事在真书上是十几秒到一分钟（原话：「没有办法第一时间暂停」），所以回复那一次
+> 调用也要了 `interruptible`——预算一个字没抬，只是 `_streams` 的第二个理由成立了。
+> 捆绑关系照旧：wire 上有流了，**边写边看仍然只有起草那一档**，因为装配层造对话端口时没接
+> `on_event`（`api/chat.py::build_agent_model` 那个注入点的签名是十几处测试桩共用的）。
+> 被掐断的那次调用**进账**（token 留空），停下来之后 loop 还会问作者一句
+> （`run_turn(debrief_on_stop=True)`，见 `agent/loop.py::STOP_DEBRIEF_PROMPT`）。
+> 同日第二刀：`Cancellation` 也是一个 AbortController——`stop()` 亮信号之后叫挂着的钩子，
+> 适配器挂的是 `socket.shutdown`（`agent/model.py::_cut`），于是卡在两片之间的 `recv`
+> 当场醒，不用等模型吐下一片；块摘要那一次非流式调用也在钩子底下。这就是 Codex /
+> Claude Code 那一路「断流 + 掐断正在跑的东西」在这套阻塞式客户端上的样子——
+> 这儿的「工具」没有子进程，唯一会跑很久的是起草那几条流，它们和回复走同一个钩子。
 
 ### 3. 写小说本来就是边写边商量
 
