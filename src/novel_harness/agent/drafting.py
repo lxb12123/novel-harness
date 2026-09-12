@@ -723,7 +723,11 @@ class ChapterDesk:
             write_rule=self._write_rule,
             standing_rules=self._standing_rules(),
             materials=tuple(ask.materials),
-            target_chapter_text=snapshot.text if snapshot is not None else None,
+            # **整章重写不给写手看现有正文。** 给了它就抄：真书第 158 章——那一段前面写着
+            # 「这一次是整章重写、不要照抄」，要求是「只写一个场景、三条线一笔带过」，写手
+            # 交回来 101 段里 100 段和磁盘上逐字相同。要保留哪几段原样，走 `revise_passage`
+            # （改其余的），或者助手把那几段放进 `materials` 说明原样保留。快照仍然用：
+            # 候选的 `base_sha256` 从它来。
         )
         # **逐次收回执，不等整份出参。** 整章起草是一到两次调用（生成 + 至多一次续写，
         # ADR 0011 D3），而「第一次答上来了、续写那次断线」是真会发生的一档——那时

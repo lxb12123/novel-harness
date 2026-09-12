@@ -463,15 +463,13 @@ def test_materials_become_their_own_section_and_are_budgeted_from_the_end() -> N
     assert _append_target_and_materials([], nothing) == ([], 0, 0)
 
 
-def test_the_current_chapter_text_is_framed_as_the_thing_to_rewrite_and_precedes_the_brief() -> None:
-    """目标章当前正文那一段说清「这是要被整章替掉的，别照抄」，而且排在「这一场要写」前面。
+def test_a_full_rewrite_never_shows_the_writer_the_current_chapter_text() -> None:
+    """整章重写**不给写手看现有正文**：给了它就抄。
 
-    真书第 158 章：助手连开五稿、要求各不相同，写手回的正文五次逐字节等于磁盘上那一章——
-    一段只挂着标签、又排在 prompt 最末的正文，在模型眼里就是「接着输出这个」。
-    这一句可以写死成「整章重写」：`draft_chapter` 的产物就是一整章；改几句是另一把工具
-    （`revise_passage`，下面那条）。
+    真书第 158 章：那一段前面写着「这一次是整章重写、不要照抄」，要求是「只写一个场景、
+    三条线一笔带过」，写手交回来 101 段里 100 段和磁盘上逐字相同。嘱咐没用，不给才有用。
+    现有正文只在改一段时给（下面那条）。
     """
-    from novel_harness.draft.length import DraftLanguage
     from novel_harness.draft.product_draft import (
         ChapterDraftRequest,
         _append_target_and_materials,
@@ -480,20 +478,9 @@ def test_the_current_chapter_text_is_framed_as_the_thing_to_rewrite_and_precedes
     current = "雨歇了。\n\n贾环站在废墟之中。"
     base = [{"role": "system", "content": "文风"}, {"role": "user", "content": "【这一场要写】写沉默。"}]
     request = ChapterDraftRequest(goal="写沉默。", length=LENGTH, target_chapter_text=current)
-    messages, _, _ = _append_target_and_materials(base, request)
-    assert [m["role"] for m in messages] == ["system", "system", "user"]
-    assert messages[-1] is base[-1], "任务那条用户消息仍然是最后一条"
-    section = messages[1]["content"]
-    assert section.index("【目标章当前正文】") < section.index("整章重写") < section.index(current)
-    assert "不要照抄" in section
-
-    english = ChapterDraftRequest(
-        goal="Silence.",
-        length=LENGTH.model_copy(update={"language": DraftLanguage.EN}),
-        target_chapter_text=current,
-    )
-    messages, _, _ = _append_target_and_materials(base, english)
-    assert "This is a full rewrite" in messages[1]["content"]
+    messages, kept, omitted = _append_target_and_materials(base, request)
+    assert messages == base and (kept, omitted) == (0, 0)
+    assert "雨歇了" not in "\n".join(m["content"] for m in messages)
 
 
 def test_a_passage_edit_shows_the_writer_the_chapter_and_asks_for_only_that_passage() -> None:

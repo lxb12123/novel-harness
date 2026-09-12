@@ -204,7 +204,9 @@ class ChapterDraftRequest:
     装不下从后往前砍——助手的排序就是优先级。"""
 
     target_chapter_text: str | None = None
-    """目标章当前正文（重写已有章时）。**一次读取的快照，不是磁盘现读。**"""
+    """目标章当前正文——**只有改一段（`revise_passage`）才给**，整章重写不给：给了写手就抄
+    （真书第 158 章：要求「只写一个场景」，交回来 101 段里 100 段和磁盘上逐字相同，哪怕那一段
+    前面写着「整章重写、不要照抄」）。**一次读取的快照，不是磁盘现读。**"""
 
 
 TARGET_CHAPTER_UNITS: Final = 16_000
@@ -615,29 +617,6 @@ def revise_passage(
     return PassageDraft(text=result.text, memory=memory, calls=(billed(result),))
 
 
-_TARGET_CHAPTER_ASK: Final = {
-    DraftLanguage.ZH: (
-        "（这是本章现在的正文。**这一次是整章重写**：按后面「这一场要写」的要求另写一整章，"
-        "写出来的会整章替掉它。不要照抄——只有要求里明确说保留的段落才原样保留，其余重新写。）"
-    ),
-    DraftLanguage.EN: (
-        "(This is the chapter's current text. **This is a full rewrite**: write a whole new "
-        "chapter to the brief that follows; it replaces this text entirely. Do not copy it—keep a "
-        "passage verbatim only where the brief says to, and write everything else afresh.)"
-    ),
-}
-"""目标章当前正文那一段前面的一句：它是干什么用的。
-
-**没有这句之前，写手会把它原样抄回来。** 真书第 158 章：助手连开五稿、每稿的要求都不同
-（「写赢之后」「写沉默」……），写手回的正文却五次逐字节相同——就是磁盘上那一章。
-一段只挂着「目标章当前正文」标签、又排在整份 prompt 最末的正文，在模型眼里就是「接着输出
-这个」。所以现在①说清它是要被替掉的，②它排在「这一场要写」**前面**，模型最后读到的是任务。
-
-**这一句可以写死成「整章重写」**，因为 `draft_chapter` 的产物就是一整章（ADR 0048）；
-「只改这一段」是另一把工具（`revise_passage`，ADR 0049），它那一段前面说的是另一句
-（`_PASSAGE_ASK`）。维护者 2026-09-12 否掉的是「改几句也走整章重写」，不是这一句本身。
-"""
-
 _PASSAGE_ASK: Final[dict[PassageKind, dict[DraftLanguage, str]]] = {
     "replace": {
         DraftLanguage.ZH: (
@@ -666,7 +645,7 @@ _PASSAGE_ASK: Final[dict[PassageKind, dict[DraftLanguage, str]]] = {
     },
     "delete": {DraftLanguage.ZH: "", DraftLanguage.EN: ""},
 }
-"""改一段时那一段前面的交代（ADR 0049）：写手只写出那一段，拼回去是后端的事（`passage.splice`）。"""
+"""改一段时目标章正文前面的交代（ADR 0049）：写手只写出那一段，拼回去是后端的事（`passage.splice`）。"""
 
 
 @dataclass(frozen=True)
@@ -683,33 +662,29 @@ def _append_target_and_materials(
     request: ChapterDraftRequest,
     passage: Passage | None = None,
 ) -> tuple[list[dict[str, str]], int, int]:
-    """把「目标章当前正文」+「助手补的资料」作为**独立分区**插进产品 prompt。
+    """把「目标章当前正文 + 要改的一段」（只在改一段时）+「助手补的资料」作为**独立分区**
+    插进产品 prompt。
 
-    **插在最后那条用户消息（「这一场要写」）前面**，不追加在它后面——理由见
-    `_TARGET_CHAPTER_ASK`。返回 `(messages, 补进去的资料段数, 砍掉的段数)`——砍了多少
+    **插在最后那条用户消息（「这一场要写」）前面**，不追加在它后面：一段排在整份 prompt
+    最末的正文，在模型眼里就是「接着输出这个」——真书第 158 章五稿逐字节相同就是这么来的。
+    现有正文**只在改一段时给**（`passage`，ADR 0049）：那一段前面说的是 `_PASSAGE_ASK`，正文
+    后面再摆一块【要改的一段】。整章重写一个字都不给它看（`ChapterDraftRequest.target_chapter_text`
+    的 docstring 写着为什么）。返回 `(messages, 补进去的资料段数, 砍掉的段数)`——砍了多少
     要进回执，不静默（同 `render_target_chapter` 的覆盖回执）。
-
-    `passage` 给了 = 改一段（ADR 0049）：那一段前面说的是 `_PASSAGE_ASK`，正文后面再摆
-    一块【要改的一段】。
     """
     language = DraftLanguage(request.length.language)
     sections: list[str] = []
-    if request.target_chapter_text:
+    if passage is not None and request.target_chapter_text:
         text, truncated = render_target_chapter(
             request.target_chapter_text, max_units=TARGET_CHAPTER_UNITS
         )
         sections.append("【目标章当前正文】")
-        sections.append(
-            _TARGET_CHAPTER_ASK[language]
-            if passage is None
-            else _PASSAGE_ASK[passage.kind][language]
-        )
+        sections.append(_PASSAGE_ASK[passage.kind][language])
         sections.append(text)
-        if passage is not None:
-            sections.append(
-                "【要改的一段】" if language is DraftLanguage.ZH else "[The passage to change]"
-            )
-            sections.append(passage.text)
+        sections.append(
+            "【要改的一段】" if language is DraftLanguage.ZH else "[The passage to change]"
+        )
+        sections.append(passage.text)
         if truncated:
             sections.append(
                 "（覆盖回执：本章正文超过预算，以上只给了开头一段；"
