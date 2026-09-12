@@ -387,7 +387,7 @@ describe("全书总结状态（Step 4）", () => {
   it("缺章/异常章有标记芯片，点击跳到那一章", async () => {
     const user = userEvent.setup();
     renderSpying(<SummaryTab />);
-    await screen.findByText(/每 30 分钟自动补/);
+    await screen.findByText(/会自动补写/);
     const chip = screen.getByRole("button", { name: "第 3 章，缺" });
     expect(chip.className).toContain("status-chip-missing");
     await user.click(chip);

@@ -366,8 +366,8 @@ function BookStatus(props: {
     <div className="chsum-book">
       <p className="chsum-scope">
         {language === "zh"
-          ? "全书总结：缺失或不对齐的章节每 30 分钟自动补写，正在写的章除外"
-          : "Whole-book summaries: missing or stale chapters are filled in automatically every 30 minutes, except the chapter being written"}
+          ? "全书总结：缺失或不对齐的章节会自动补写，正在写的章除外"
+          : "Whole-book summaries: missing or stale chapters are filled in automatically, except the chapter being written"}
       </p>
       <div className="chip-row">
         {rows.map((row) => (
@@ -431,24 +431,21 @@ function statusChipTitle(
   if (language === "zh") {
     const head = `第 ${r.chapter_number} 章`;
     if (isCurrent) return `${head}：当前打开的章`;
-    if (focused) return `${head}：正在写的章，自动补写不处理`;
+    if (focused) return `${head}：正在写的章，不自动补写`;
     if (r.anomaly) return `${head}：总结生成出错（不影响其他章，将自动重试）`;
-    const weight = r.weight === 0 ? "本轮不处理" : `本轮权重 ${r.weight}（越近的章优先）`;
     if (r.state === "empty") return `${head}：尚无正文，无总结可生成`;
     if (r.state === "paired") return `${head}：总结与正文一致`;
-    if (r.state === "missing") return `${head}：尚无总结，${weight}`;
-    return `${head}：正文已修改，总结尚未更新，${weight}`;
+    if (r.state === "missing") return `${head}：尚无总结，将自动补写`;
+    return `${head}：正文已修改，总结尚未更新，将自动补写`;
   }
   const head = `Chapter ${r.chapter_number}`;
   if (isCurrent) return `${head}: the chapter currently open`;
-  if (focused) return `${head}: the chapter being written; skipped by auto-fill`;
+  if (focused) return `${head}: the chapter being written; not filled in automatically`;
   if (r.anomaly) return `${head}: summary generation failed (other chapters unaffected; retried automatically)`;
-  const weight =
-    r.weight === 0 ? "not processed this round" : `weight ${r.weight} this round (closer chapters first)`;
   if (r.state === "empty") return `${head}: no text yet, nothing to summarize`;
   if (r.state === "paired") return `${head}: summary matches the text`;
-  if (r.state === "missing") return `${head}: no summary yet; ${weight}`;
-  return `${head}: text changed, summary not yet updated; ${weight}`;
+  if (r.state === "missing") return `${head}: no summary yet; filled in automatically`;
+  return `${head}: text changed, summary not yet updated; filled in automatically`;
 }
 
 /** 这一段总结提到了什么 —— **一排可点的记忆点**。

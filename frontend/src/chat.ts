@@ -146,16 +146,21 @@ export function elapsedText(ms: number, language: Language): string {
 }
 
 /**
- * 回执上那几句「这一轮实际发生了什么」。
+ * 回执上那几句「这一轮实际发生了什么」。**只说作者自己的事**。
  *
- * **零不写。** 一排「查了 0 次 / 裁掉 0 条 / 0 次没量准」是噪音，而它会把真正非零的
- * 那一行淹掉。反过来：**非零的每一条都必须带着一句能读懂的理由**（§10 约束 8）——
- * 尤其是 `calls_without_usage`，它一非零，上面那个 token 数就是**低估**，
- * 而一个自称是全部的低估数字正是这个仓库反复在修的失败形态。
+ * **零不写。** 一排「查了 0 次」是噪音，而它会把真正非零的那一行淹掉。
+ *
+ * ⚠️ **2026-09-12：上下文管理的那几句整条撤了。** 这里原来还说「正文有 N 处已修改、本轮
+ * 重新读取」「N 条早先查到的资料属于后续章节、未采用」「对话较长，N 条资料已收起」
+ * 「上一轮 N 次查询中断」「更早的 N 段对话以摘要代替」「N 次调用未报告用量」——
+ * 作者指着「已收起」那句问：「这个是我们内部的不是外部的……系统内部的提醒出来给人看干吗？」
+ * 并裁定**对外展示的 UI 不含系统内部的事**。那几个数仍在回执里（`receipt.context`，
+ * 维护者排障用），只是不再上屏；ADR 0023 那套裁剪对作者是透明的。留下的两句都是作者
+ * **自己的动作**的结果：查了几次资料（他能在进度行里逐条对上），以及他中途说的话
+ * 这一轮没读到。
  */
 export function receiptNotes(receipt: TurnReceipt, language: Language): string[] {
   const notes: string[] = [];
-  const c = receipt.context;
   const zh = language === "zh";
   if (receipt.lookups > 0) {
     // 查了什么不说 —— 后端根本没发出来（工具返回里是内部标识）。
@@ -167,34 +172,6 @@ export function receiptNotes(receipt: TurnReceipt, language: Language): string[]
           : `${receipt.lookups} lookups this round`,
     );
   }
-  if (c.stale_lookups > 0) {
-    notes.push(
-      zh
-        ? `正文有 ${c.stale_lookups} 处已修改，本轮已重新读取`
-        : c.stale_lookups === 1
-          ? "1 passage had changed since it was last read; re-read this round"
-          : `${c.stale_lookups} passages had changed since they were last read; re-read this round`,
-    );
-  }
-  if (c.off_chapter > 0) {
-    notes.push(
-      zh
-        ? `${c.off_chapter} 条早先查到的资料属于后续章节，本轮未采用`
-        : c.off_chapter === 1
-          ? "1 earlier finding belongs to a later chapter and was left out this round"
-          : `${c.off_chapter} earlier findings belong to later chapters and were left out this round`,
-    );
-  }
-  const trimmed = c.trimmed_results + c.dropped_lookups + c.dropped_reasoning;
-  if (trimmed > 0) {
-    notes.push(
-      zh
-        ? `对话较长，${trimmed} 条早先查到的资料已收起，需要时重新查询；对话记录未删减`
-        : trimmed === 1
-          ? "Long conversation: 1 earlier finding was set aside and will be looked up again if needed; the conversation itself is unchanged"
-          : `Long conversation: ${trimmed} earlier findings were set aside and will be looked up again if needed; the conversation itself is unchanged`,
-    );
-  }
   // 作者中途说的、这一轮没来得及答的那几句（后端 `Mailbox`）。**它们已经在对话里**，
   // 这句只负责说清「它没看见不是没记下」和下一步（再说一句，它就会读到）。
   if (receipt.unanswered > 0) {
@@ -204,38 +181,6 @@ export function receiptNotes(receipt: TurnReceipt, language: Language): string[]
         : receipt.unanswered === 1
           ? "1 message sent mid-round was not read this round; it stays in the conversation and is read next round"
           : `${receipt.unanswered} messages sent mid-round were not read this round; they stay in the conversation and are read next round`,
-    );
-  }
-  // **`lost_lookups` 不并进上面那一句**，虽然两者都是「它手上少了点东西」。
-  // 上面那些是**这一轮为了装下主动收起来的**（收起来的重查一次就有）；这一条是
-  // 上一轮**断在半路、canonical 里本来就缺的**那几步（`agent/loop.py::LOST_RESULT`，
-  // 而 `pending_calls` 扫到作者发言就停，所以再也没人会去补它）。
-  // 合成一句会把「有一件事它这一轮没查成」说成「它的记性被裁了」——原因和下一步都不同。
-  if (c.lost_lookups > 0) {
-    notes.push(
-      zh
-        ? `上一轮 ${c.lost_lookups} 次查询中断、无结果，本轮按未查到处理；如需要，可要求重新查询`
-        : c.lost_lookups === 1
-          ? "1 lookup was cut off last round and left no result; this round proceeded as if nothing was found. Ask for it again if needed"
-          : `${c.lost_lookups} lookups were cut off last round and left no results; this round proceeded as if nothing was found. Ask for them again if needed`,
-    );
-  }
-  if (c.compressed_blocks > 0) {
-    notes.push(
-      zh
-        ? `更早的 ${c.compressed_blocks} 段对话以摘要代替，原文保留，需要时取回`
-        : c.compressed_blocks === 1
-          ? "1 earlier section of the conversation is read as a summary; the original is kept and retrieved when needed"
-          : `${c.compressed_blocks} earlier sections of the conversation are read as summaries; the originals are kept and retrieved when needed`,
-    );
-  }
-  if (receipt.calls_without_usage > 0) {
-    notes.push(
-      zh
-        ? `本轮 ${receipt.calls_without_usage} 次调用未报告用量，「活动记录」中的统计偏少`
-        : receipt.calls_without_usage === 1
-          ? "1 call this round reported no usage; the entry in “Activity” is an undercount"
-          : `${receipt.calls_without_usage} calls this round reported no usage; the entry in “Activity” is an undercount`,
     );
   }
   return notes;

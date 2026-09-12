@@ -365,8 +365,8 @@ const MESSAGES: Record<string, Template> = {
     en: 'The text is empty. To clear this chapter\'s summary, use "Retract".',
   },
   summary_text_rejected_too_long: {
-    zh: "内容过长（{length} 字，上限 {max_chars} 字）。总结是写作模型的背景资料，过长会挤占更早章节的总结。",
-    en: "The text is too long ({length} characters; the limit is {max_chars}). Summaries are background for the writing model, and an overlong one crowds out earlier chapters' summaries.",
+    zh: "内容过长（{length} 字，上限 {max_chars} 字）。",
+    en: "The text is too long ({length} characters; the limit is {max_chars}).",
   },
   // ── draft/windows.py ──────────────────────────────────────────────────
   model_windows_refresh_empty: {

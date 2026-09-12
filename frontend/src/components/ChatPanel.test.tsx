@@ -242,7 +242,9 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
     expect(document.body.textContent).not.toContain(fixtures.chatTurn.reason);
   });
 
-  it("**有调用没报用量就说出来** —— 那笔账是少算的", async () => {
+  it("**没报用量、裁掉了什么 —— 这些内部账不上屏**（作者 2026-09-12）", async () => {
+    // 它们仍在回执里（`receipt.context` / `calls_without_usage`，「活动记录」那页自己会标
+    // 「另有 N 次未报告用量」），对话这块屏幕上只有作者自己的事。
     const user = userEvent.setup();
     renderWithApi(<ChatPanel />);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
@@ -250,7 +252,8 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
     await user.click(sendBtn());
 
     expect(fixtures.chatTurn.calls_without_usage).toBeGreaterThan(0); // 探针：夹具里真有
-    await screen.findByText(/偏少/);
+    await screen.findByText(ROUND_DONE);
+    expect(screen.queryByText(/偏少|已收起|未采用|重新读取/)).toBeNull();
   });
 
   it("跑完把这段对话重读一遍 —— 新长出来的话不能等下一次刷新", async () => {

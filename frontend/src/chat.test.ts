@@ -81,21 +81,26 @@ describe("这一轮实际发生了什么", () => {
     ).toEqual([]);
   });
 
-  it("**有调用没报用量时必须说** —— 那个 token 数是低估的", () => {
-    // 一个自称是全部的低估数字，是这个仓库反复在修的失败形态（底栏的花销汇总同病）。
-    const notes = receiptNotes(receipt({ lookups: 0, calls_without_usage: 2 }), "zh");
-    expect(notes).toHaveLength(1);
-    expect(notes[0]).toContain("偏少");
-  });
-
-  it("后面章节的查询结果被挡掉时，说得出为什么挡", () => {
-    const notes = receiptNotes(receipt({ lookups: 0, context: ctx({ off_chapter: 2 }) }), "zh");
-    expect(notes.join("\n")).toMatch(/后续章节/);
-  });
-
-  it("它手上那份正文过期了要说 —— 否则作者永远不知道它曾经拿着一份旧稿", () => {
-    const notes = receiptNotes(receipt({ lookups: 0, context: ctx({ stale_lookups: 1 }) }), "zh");
-    expect(notes.join("\n")).toMatch(/重新读/);
+  it("**上下文管理的事一个字不上屏**（作者 2026-09-12：「系统内部的提醒出来给人看干吗」）", () => {
+    // 裁掉 / 收起 / 重读 / 断在半路 / 压成摘要 / 没报用量 —— 全是 ADR 0023 那套裁剪的内部账，
+    // 数仍在 `receipt.context` 里给维护者看，屏幕上一句都没有。
+    const notes = receiptNotes(
+      receipt({
+        lookups: 0,
+        calls_without_usage: 2,
+        context: ctx({
+          stale_lookups: 1,
+          off_chapter: 2,
+          trimmed_results: 2,
+          dropped_lookups: 1,
+          dropped_reasoning: 1,
+          lost_lookups: 1,
+          compressed_blocks: 3,
+        }),
+      }),
+      "zh",
+    );
+    expect(notes).toEqual([]);
   });
 
   it("**中途说的没来得及答的要说**（2026-09-12）—— 它已经在对话里，不是丢了", () => {
@@ -107,40 +112,9 @@ describe("这一轮实际发生了什么", () => {
     expect(receiptNotes(receipt({ ...quiet, unanswered: 0 }), "zh")).toEqual([]);
   });
 
-  it("这一轮主动收起来的那几条合成一句，并且明说作者的话没被删", () => {
-    const notes = receiptNotes(
-      receipt({
-        lookups: 0,
-        calls_without_usage: 0,
-        context: ctx({ trimmed_results: 2, dropped_lookups: 1, dropped_reasoning: 1 }),
-      }),
-      "zh",
-    );
-    expect(notes).toHaveLength(1);
-    expect(notes[0]).toContain("4 条");
-    expect(notes[0]).toContain("对话记录未删减");
-  });
-
-  it("**上次断在半路的那几步单说一句** —— 它和「为了装下收起来」不是一回事", () => {
-    // 收起来的重查一次就有；这一条是 canonical 里本来就缺的（`LOST_RESULT`），
-    // 而 `pending_calls` 扫到作者发言就停 —— 再也没有人会去补它。
-    const notes = receiptNotes(
-      receipt({
-        lookups: 0,
-        calls_without_usage: 0,
-        context: ctx({ trimmed_results: 2, lost_lookups: 1 }),
-      }),
-      "zh",
-    );
-    expect(notes).toHaveLength(2);
-    expect(notes.find((n) => n.includes("查询中断"))).toBeTruthy();
-    // 合成一句的话这儿会是「3 条」，而那一句说的是「重查一次就有」——对断掉的那次不成立。
-    expect(notes.find((n) => n.includes("已收起"))).toContain("2 条");
-  });
-
-  it("真 dump 那一份：查了一次 + 有一次没量准", () => {
+  it("真 dump 那一份：查了两次 + 有一次没量准 —— 屏幕上只有查了两次", () => {
     const notes = receiptNotes(RECEIPT, "zh");
-    expect(notes).toHaveLength(2);
+    expect(notes).toEqual(["本轮查询 2 次资料"]);
   });
 
   it("英文那半整句处理单复数，不是拼「N + 中文那半翻过去的词」", () => {
@@ -148,9 +122,6 @@ describe("这一轮实际发生了什么", () => {
     expect(receiptNotes(receipt({ lookups: 1, calls_without_usage: 0 }), "en")[0]).toBe(
       "1 lookup this round",
     );
-    expect(
-      receiptNotes(receipt({ lookups: 0, calls_without_usage: 1 }), "en")[0],
-    ).toContain("undercount");
     // n > 1：复数整句，数字本身也要对。
     const plural = receiptNotes(receipt({ lookups: 3, calls_without_usage: 0 }), "en")[0];
     expect(plural).toBe("3 lookups this round");
