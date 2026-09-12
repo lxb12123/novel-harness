@@ -87,9 +87,9 @@ describe("屏幕上把它叫什么", () => {
   });
 
   it("上面那句话只报事实：写了几稿、哪一章", () => {
-    expect(draftsHeading([REAL], "zh")).toBe("这一轮写了 1 稿 · 第 2 章");
+    expect(draftsHeading([REAL], "zh")).toBe("本轮 1 稿 · 第 2 章");
     expect(draftsHeading([REAL, variant({ id: "draft:ID9", chapter: 3 })], "zh")).toBe(
-      "这一轮写了 2 稿 · 第 2、3 章",
+      "本轮 2 稿 · 第 2、3 章",
     );
     expect(chaptersOf([REAL, variant({ chapter: 3 }), variant({ chapter: 3 })])).toEqual([2, 3]);
     // 单复数：英文那半不是拼片段，稿数变化时 "draft"/"drafts" 要跟着变。

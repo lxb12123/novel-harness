@@ -1184,40 +1184,40 @@ _MESSAGES: dict[str, dict[DraftLanguage, str]] = {
     },
     # 通知的抬头，措辞照抄面板那张表（`frontend/src/components/SystemNotifications.tsx::KIND_TITLE`）。
     "notice_kind_summary_mismatch": {
-        DraftLanguage.ZH: "总结与正文可能对不上",
-        DraftLanguage.EN: "The summary and the text may not match",
+        DraftLanguage.ZH: "总结与正文可能不一致",
+        DraftLanguage.EN: "The summary may not match the text",
     },
     "notice_kind_background_failure": {
-        DraftLanguage.ZH: "后台有一件事没办成",
-        DraftLanguage.EN: "Something didn't finish in the background",
+        DraftLanguage.ZH: "后台任务未完成",
+        DraftLanguage.EN: "A background task did not finish",
     },
     "notice_kind_validation_blocked": {
-        DraftLanguage.ZH: "这一章的检查需要留意",
+        DraftLanguage.ZH: "本章检验需要处理",
         DraftLanguage.EN: "This chapter's check needs attention",
     },
     "notice_kind_text_advisory": {
-        DraftLanguage.ZH: "这一段值得再看一眼",
-        DraftLanguage.EN: "This passage is worth another look",
+        DraftLanguage.ZH: "此段落建议复核",
+        DraftLanguage.EN: "This passage may need review",
     },
     "notice_kind_extraction_yielded_nothing": {
-        DraftLanguage.ZH: "这一章什么都没整理出来",
-        DraftLanguage.EN: "Nothing came out of processing this chapter",
+        DraftLanguage.ZH: "本章未整理出内容",
+        DraftLanguage.EN: "Nothing was extracted from this chapter",
     },
     "notice_kind_import_toc_skipped": {
-        DraftLanguage.ZH: "导入时跳过了几个空章",
-        DraftLanguage.EN: "A few empty chapters were skipped during import",
+        DraftLanguage.ZH: "导入时跳过了空章节",
+        DraftLanguage.EN: "Empty chapters were skipped during import",
     },
     "notice_kind_event_cast_changed": {
-        DraftLanguage.ZH: "一件事的参与者变了",
-        DraftLanguage.EN: "The people in an event changed",
+        DraftLanguage.ZH: "事件参与者已变更",
+        DraftLanguage.EN: "An event's cast changed",
     },
     "notice_kind_proposal_conflict": {
-        DraftLanguage.ZH: "有一处设定跟抽出来的内容对不上",
-        DraftLanguage.EN: "Something extracted doesn't match an existing fact",
+        DraftLanguage.ZH: "一处设定与整理结果不一致",
+        DraftLanguage.EN: "An extracted fact conflicts with an existing one",
     },
     "notice_kind_proposal_low_confidence": {
-        DraftLanguage.ZH: "有一条情节需要作者确认",
-        DraftLanguage.EN: "There's an event that needs the author's confirmation",
+        DraftLanguage.ZH: "一条情节待作者确认",
+        DraftLanguage.EN: "An event awaits the author's confirmation",
     },
     "notice_kind_unknown": {
         DraftLanguage.ZH: "一条系统通知",

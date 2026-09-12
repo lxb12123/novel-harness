@@ -620,7 +620,7 @@ def test_the_stop_button_never_says_it_stopped_something_that_was_not_running(
     assert response.json() == {
         "chat_id": chat_id,
         "stopped": False,
-        "message": "这段对话这会儿没在跑，不用停。",
+        "message": "当前没有正在进行的一轮，无需停止。",
     }
 
 

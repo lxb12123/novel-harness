@@ -113,7 +113,7 @@ export function draftsHeading(drafts: readonly DraftCandidateView[], language: L
   const chapters = chaptersOf(drafts);
   if (language === "zh") {
     const where = chapters.length === 1 ? `第 ${chapters[0]} 章` : `第 ${chapters.join("、")} 章`;
-    return `这一轮写了 ${drafts.length} 稿 · ${where}`;
+    return `本轮 ${drafts.length} 稿 · ${where}`;
   }
   const where =
     chapters.length === 1 ? `chapter ${chapters[0]}` : `chapters ${chapters.join(", ")}`;
@@ -137,12 +137,12 @@ export function landedNote(drafts: readonly DraftCandidateView[], language: Lang
   if (landed.length === 0) return null;
   if (language === "zh") {
     const which = landed.map((d) => `第 ${d.chapter} 章的${draftLabel(d, language)}`).join("、");
-    return `${which}已经写进书里了。不想要的话，在正文那边的「历史」里退回上一版。`;
+    return `${which}已写入正文。如需撤销，可在正文「历史」中退回上一版。`;
   }
   const which = landed
     .map((d) => `${draftLabel(d, language)} for chapter ${d.chapter}`)
     .join(", ");
-  return `${which} ${landed.length === 1 ? "has" : "have"} already been written into the book. If you don’t want it, use “History” on the text side to revert to the previous version.`;
+  return `${which} ${landed.length === 1 ? "has" : "have"} been written into the text. To undo, use “History” on the text side to revert to the previous version.`;
 }
 
 /** 并排比那一页的地址。**哈希路由 = 零新基础设施**：工作台本来就是本地浏览器应用

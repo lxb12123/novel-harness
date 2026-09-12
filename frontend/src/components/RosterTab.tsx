@@ -126,10 +126,10 @@ function EventCastAlert({
         onClick={() => setOpen(true)}
         aria-label={
           language === "zh"
-            ? "这件事的参与者变了，点开看看"
-            : "The people in this event changed — click to see"
+            ? "此事件的参与者已变更，点击查看"
+            : "The cast of this event changed; click to view"
         }
-        title={language === "zh" ? "这件事的参与者变了" : "The people in this event changed"}
+        title={language === "zh" ? "此事件的参与者已变更" : "The cast of this event changed"}
       />
     );
   }
@@ -149,7 +149,7 @@ function EventCastAlert({
       <span>{message}</span>
       <div className="actions">
         <button type="button" className="link" onClick={goToQuote}>
-          {language === "zh" ? "去这一句 →" : "Go to this sentence →"}
+          {language === "zh" ? "查看原句 →" : "Go to the sentence →"}
         </button>
         <button
           type="button"
@@ -158,8 +158,8 @@ function EventCastAlert({
           onClick={() => resolve.mutate(notification.id)}
         >
           {language === "zh"
-            ? resolve.isPending ? "正在处理…" : "知道了"
-            : resolve.isPending ? "Marking as seen…" : "Got it"}
+            ? resolve.isPending ? "处理中…" : "已阅"
+            : resolve.isPending ? "Marking as seen…" : "Mark as seen"}
         </button>
       </div>
     </div>
@@ -223,14 +223,12 @@ function CharacterTimeline({ characterId, name }: { characterId: string; name: s
         <span className="empty">
           {language === "zh" ? (
             <>
-              还没有跟{name}有关的事件。事件是系统整理正文时记下的一条条小结 ——
-              这一章还没整理过、或者整理了但没有落到{name}身上。
+              尚无与{name}相关的事件。事件在整理正文时记录；本章尚未整理，或整理后没有涉及{name}的事件。
             </>
           ) : (
             <>
-              No events involving {name} yet. Events are short notes the system records while it
-              reads through the text — either this chapter hasn’t been processed yet, or it has
-              been but nothing landed on {name}.
+              No events involving {name} yet. Events are recorded when the text is processed;
+              this chapter has not been processed, or none of its events involve {name}.
             </>
           )}
         </span>
@@ -321,7 +319,7 @@ export function RosterTab() {
             aria-pressed={order === "asc"}
             data-tip={
               language === "zh"
-                ? order === "desc" ? "改成写得少的排前面" : "改成写得多的排前面"
+                ? order === "desc" ? "出场少的在前" : "出场多的在前"
                 : order === "desc" ? "Sort least-written first" : "Sort most-written first"
             }
             onClick={() => setOrder(order === "desc" ? "asc" : "desc")}
@@ -333,7 +331,7 @@ export function RosterTab() {
 
       {empty ? (
         <div className="empty">
-          {language === "zh" ? "还没有人物或设定。" : "No characters or settings yet. "}
+          {language === "zh" ? "尚无人物或设定。" : "No characters or settings yet. "}
           <a onClick={() => projectId && setAdding(true)}>
             {language === "zh" ? "添加第一个条目" : "Add the first entry"}
           </a>
@@ -379,7 +377,7 @@ export function RosterTab() {
                               onClick={() => focusNode(expanded ? null : n.id)}
                               title={
                                 language === "zh"
-                                  ? expanded ? "收起这张卡" : "看他的状态、关系和事件"
+                                  ? expanded ? "收起卡片" : "查看状态、关系和事件"
                                   : expanded ? "Collapse this card" : "View their status, relationships, and events"
                               }
                             >
@@ -479,9 +477,9 @@ export function RosterTab() {
                                 那才是「事后可见可改」的落点，不在这句确认话里预警。 */}
                             <span>
                               {language === "zh" ? (
-                                <>把「{n.name}」和它的所有别名一起删掉？删了拿不回来。</>
+                                <>删除「{n.name}」及其全部别名？删除后无法恢复。</>
                               ) : (
-                                <>Delete "{n.name}" and all its aliases? This can’t be undone.</>
+                                <>Delete "{n.name}" and all its aliases? This cannot be undone.</>
                               )}
                             </span>
                             <button
@@ -495,11 +493,11 @@ export function RosterTab() {
                               }
                             >
                               {language === "zh"
-                                ? remove.isPending ? "删除中…" : "删掉"
+                                ? remove.isPending ? "删除中…" : "删除"
                                 : remove.isPending ? "Deleting…" : "Delete"}
                             </button>
                             <button onClick={() => setConfirming(null)}>
-                              {language === "zh" ? "算了" : "Cancel"}
+                              {language === "zh" ? "取消" : "Cancel"}
                             </button>
                           </div>
                         )}

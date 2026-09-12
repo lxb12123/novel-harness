@@ -90,7 +90,7 @@ function widthIs(px: number) {
   });
 }
 
-const say = () => screen.getByRole("textbox", { name: "跟写作助手说" });
+const say = () => screen.getByRole("textbox", { name: "输入消息" });
 
 /** 跑一轮，让那几稿摆出来。**每次自己造一个 `user`**：同一个测试里渲染三次时，
  *  上一次 `cleanup()` 之后旧的那个握着的是已经被卸掉的那棵树。 */
@@ -240,7 +240,7 @@ describe("兜底那几支上一个研发术语都没有", () => {
       { match: /\/drafts(\?|$)/, body: listOf(THREE) },
     ]);
     await runTurn();
-    await screen.findByText(/正在把这一稿读出来/);
+    await screen.findByText(/正在读取稿件/);
     expect(devTerms(screenText())).toEqual([]);
   });
 
@@ -258,7 +258,7 @@ describe("兜底那几支上一个研发术语都没有", () => {
       { match: /\/drafts(\?|$)/, body: listOf(THREE) },
     ]);
     await runTurn();
-    await screen.findByText(/这一稿没读出来/);
+    await screen.findByText(/稿件读取失败/);
     expect(devTerms(screenText())).toEqual([]);
   });
 
@@ -268,7 +268,7 @@ describe("兜底那几支上一个研发术语都没有", () => {
       { match: /\/drafts\/[^/]+$/, body: DETAIL },
       { match: /\/drafts(\?|$)/, body: listOf([]) },
     ]);
-    await screen.findByText(/桌上没有稿子/);
+    await screen.findByText(/尚无稿件/);
     expect(devTerms(screenText())).toEqual([]);
   });
 
@@ -277,7 +277,7 @@ describe("兜底那几支上一个研发术语都没有", () => {
     renderWithApi(<DraftCompare chapter={2} />, [
       { match: /\/drafts(\?|$)/, status: 500, body: { detail: "internal_server_error" } },
     ]);
-    await screen.findByText(/没读出来/);
+    await screen.findByText(/读取失败/);
     expect(devTerms(screenText())).toEqual([]);
   });
 
@@ -285,7 +285,7 @@ describe("兜底那几支上一个研发术语都没有", () => {
     renderWithApi(<DraftCompare chapter={2} />, [
       { match: /\/api\/projects$/, status: 503, body: { detail: "service_unavailable" } },
     ]);
-    await screen.findByText(/连不上工作台/);
+    await screen.findByText(/无法连接工作台/);
     expect(devTerms(screenText())).toEqual([]);
   });
 
@@ -293,14 +293,14 @@ describe("兜底那几支上一个研发术语都没有", () => {
     renderWithApi(<DraftCompare chapter={2} />, [
       { match: /\/api\/projects$/, body: fixtures.projectsTwo },
     ]);
-    await screen.findByText(/没说清是哪本书/);
+    await screen.findByText(/未指明第 \d+ 章属于哪本书/);
     expect(devTerms(screenText())).toEqual([]);
   });
 
   it("对话面板上那条「还摆着几稿」的入口", async () => {
     // 它挂在面板头上，`title` 和链接文字都算屏幕（`screenText()` 连 `title` 一起收）。
     renderWithApi(<ChatPanel />, draftRoutes(THREE));
-    await screen.findByText(/还摆着 3 稿/);
+    await screen.findByText(/本章 3 稿/);
     expect(devTerms(screenText())).toEqual([]);
   });
 });

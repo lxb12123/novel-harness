@@ -39,10 +39,10 @@ describe("认不出的码", () => {
 describe("参数真的会被填进模板", () => {
   it("chapter_missing 的 {chapter} 换成真值", () => {
     expect(messageForCode("chapter_missing", "zh", { chapter: 5 })).toBe(
-      "第 5 章已经不在了。刷新一下就对得上了。",
+      "第 5 章已不存在。请刷新页面。",
     );
     expect(messageForCode("chapter_missing", "en", { chapter: 5 })).toBe(
-      "Chapter 5 is no longer there. Refresh and things will line up again.",
+      "Chapter 5 no longer exists. Refresh the page.",
     );
   });
 
@@ -83,22 +83,22 @@ describe("参数真的会被填进模板", () => {
       unresolved: true,
       proposal_count: 3,
     });
-    expect(withProposals).toContain("aren't recognized in the roster yet");
-    expect(withProposals).toContain("raised 3 items");
+    expect(withProposals).toContain("are not in the roster yet");
+    expect(withProposals).toContain("3 items await confirmation");
 
     const noProposals = messageForCode("extraction_yielded_nothing_title", "zh", {
       lost: 12,
       unresolved: false,
       proposal_count: 0,
     });
-    expect(noProposals).toContain("它们都没能落库");
-    expect(noProposals).toContain("角色册里先得有人");
+    expect(noProposals).toContain("均未能写入");
+    expect(noProposals).toContain("角色册中需先有人物");
   });
 
   it("clash_title：conflict 枚举查表，不认识的枚举原样透传不崩", () => {
     expect(
       messageForCode("clash_title", "en", { sentence: 3, chapter: 64, conflict: "setting" }),
-    ).toBe("Sentence 3 ↔ chapter 64: setting doesn't match.");
+    ).toBe("Sentence 3 ↔ chapter 64: setting conflict.");
     expect(
       messageForCode("clash_title", "zh", { sentence: 3, chapter: 64, conflict: "unknown_kind" }),
     ).toBe("第 3 句 ↔ 第 64 章：unknown_kind。");

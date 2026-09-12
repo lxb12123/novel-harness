@@ -19,9 +19,9 @@ describe("SystemNotifications", () => {
   it("开着通知 tab 时列出 OPEN 的（真 dump 那一条）", async () => {
     useCoords.setState({ projectId: PID });
     renderWithApi(<SystemNotifications />);
-    expect(await screen.findByText(/总结与正文可能对不上/)).toBeInTheDocument();
+    expect(await screen.findByText(/总结与正文可能不一致/)).toBeInTheDocument();
     // 有一行，不是「没有」的空态。
-    expect(screen.queryByText(/现在没有需要你注意的/)).toBeNull();
+    expect(screen.queryByText(/没有待处理的通知/)).toBeNull();
   });
 
   it("同一档攒到 4 条就折叠成一行，逐条的动作还在", async () => {
@@ -52,12 +52,12 @@ describe("SystemNotifications", () => {
     expect(await screen.findByText(/12 条/)).toBeInTheDocument();
     expect(screen.getByText(/第 1、2、3、4/)).toBeInTheDocument();
     // 12 张卡片没有摊开：那句标题只出现在折叠头上，不是 12 遍。
-    expect(screen.queryAllByText(/这一章什么都没整理出来/)).toHaveLength(1);
-    expect(screen.queryByRole("button", { name: /不再提醒这一条/ })).toBeNull();
+    expect(screen.queryAllByText(/本章未整理出内容/)).toHaveLength(1);
+    expect(screen.queryByRole("button", { name: /^忽略$/ })).toBeNull();
 
     // **动作一个都没少**，只是默认收着。
-    await userEvent.click(screen.getByRole("button", { name: "逐条看" }));
-    expect(screen.queryAllByRole("button", { name: /不再提醒这一条/ })).toHaveLength(12);
+    await userEvent.click(screen.getByRole("button", { name: "展开" }));
+    expect(screen.queryAllByRole("button", { name: /^忽略$/ })).toHaveLength(12);
   });
 
   it("少于 4 条照旧一条一张卡 —— 一两条的时候摊开更好读", async () => {
@@ -78,8 +78,8 @@ describe("SystemNotifications", () => {
       NO_PROVISIONAL,
     ]);
 
-    expect(await screen.findAllByText(/这一章什么都没整理出来/)).toHaveLength(2);
-    expect(screen.queryByRole("button", { name: "逐条看" })).toBeNull();
+    expect(await screen.findAllByText(/本章未整理出内容/)).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "展开" })).toBeNull();
   });
 
   it("整格都空才说「写就是了」——**不是「system_notification 表空」**", async () => {
@@ -93,7 +93,7 @@ describe("SystemNotifications", () => {
       { match: /\/notifications\/count$/, body: { open: 0 } },
       NO_PROVISIONAL,
     ]);
-    expect(await screen.findByText(/现在没有需要你注意的/)).toBeInTheDocument();
+    expect(await screen.findByText(/没有待处理的通知/)).toBeInTheDocument();
   });
 
   it("只剩「从正文发现的情节」时不许说空——那句话曾经就是这么骗人的", async () => {
@@ -103,7 +103,7 @@ describe("SystemNotifications", () => {
       { match: /\/notifications\/count$/, body: { open: 0 } },
     ]);
     expect(await screen.findByText("从正文发现的情节")).toBeInTheDocument();
-    expect(screen.queryByText(/现在没有需要你注意的/)).toBeNull();
+    expect(screen.queryByText(/没有待处理的通知/)).toBeNull();
   });
 
   it("「从正文发现的情节」和提案卡同一张脸，内容一条一条摊在卡里", async () => {
@@ -136,7 +136,7 @@ describe("SystemNotifications", () => {
       expect(row.textContent).not.toMatch(/第 \d+ 章/);
     }
     // 没有那颗折叠按钮了；勾选框和「确认所选」直接在卡里。
-    expect(screen.queryByRole("button", { name: "逐条看" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "展开" })).toBeNull();
     expect(screen.queryAllByRole("checkbox")).toHaveLength(2);
     expect(screen.getByRole("button", { name: /确认所选（0）/ })).toBeDisabled();
     // 那两句多余的话删了：标题已经说完的事不再说第二遍，章号跟着每一条走。
@@ -146,15 +146,15 @@ describe("SystemNotifications", () => {
   it("忽略走真路由；消失后列表重取", async () => {
     useCoords.setState({ projectId: PID });
     renderWithApi(<SystemNotifications />);
-    await screen.findByText(/总结与正文可能对不上/);
+    await screen.findByText(/总结与正文可能不一致/);
     // 后端 fixture 的 actions 为空（本期 summary_mismatch 只带一行正文跳转），
     // 但「忽略」按钮要出现——它回答的是「这一条暂时不用管」。
     // 这里 force 检查：如果未来后端把 ignore 动作加进来，按钮仍然渲染同一件事。
-    const rows = screen.getAllByText(/总结与正文可能对不上/);
+    const rows = screen.getAllByText(/总结与正文可能不一致/);
     expect(rows.length).toBeGreaterThan(0);
     // fixture 是统一的 refuse 布局：卡片标题 + actions（目前空→按钮不画）。
     // 钉住「空 actions 时不画一颗点了没反应的按钮」。
-    expect(screen.queryByRole("button", { name: /不再提醒这一条/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^忽略$/ })).toBeNull();
   });
 
   // ── 第四种：只告警不阻断的那一档（026 / M1-d）──────────────────────────
@@ -166,7 +166,7 @@ describe("SystemNotifications", () => {
   it("第四种通知有自己的说法，不是把机器码摆上屏", async () => {
     useCoords.setState({ projectId: PID });
     renderWithApi(<SystemNotifications />);
-    expect(await screen.findByText(/这一段值得再看一眼/)).toBeInTheDocument();
+    expect(await screen.findByText(/此段落建议复核/)).toBeInTheDocument();
     // 那一档**不该**借用阻断那一条的措辞：它没有停掉任何东西。
     expect(screen.queryByText(/text_advisory/)).toBeNull();
   });
@@ -175,11 +175,11 @@ describe("SystemNotifications", () => {
     const user = userEvent.setup();
     useCoords.setState({ projectId: PID, chapter: 2, highlight: null });
     renderWithApi(<SystemNotifications />);
-    await screen.findByText(/这一段值得再看一眼/);
+    await screen.findByText(/此段落建议复核/);
 
     // 不带锚的那条只给「去这一章」，带锚的那条给「去这一句」——两支各一颗。
-    expect(screen.getByRole("button", { name: /去这一章/ })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: /去这一句/ }));
+    expect(screen.getByRole("button", { name: /查看该章/ })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /查看原句/ }));
 
     expect(useCoords.getState().chapter).toBe(1);
     expect(useCoords.getState().highlight).toEqual({
@@ -312,7 +312,7 @@ describe("SystemNotifications", () => {
     expect(screen.getByText("从今日起，你我八拜之交。")).toBeInTheDocument();
     // 通用的那句摘要（`proposal_conflict_title` 的兜底文案）不该在完整卡片旁边
     // 再出现一遍——卡片本身已经把这句话说完整了。
-    expect(screen.queryByText(/有一处设定跟抽出来的内容对不上/)).toBeNull();
+    expect(screen.queryByText(/一处设定与整理结果不一致/)).toBeNull();
 
     expect(screen.getByRole("button", { name: "接受" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "驳回" })).toBeInTheDocument();
@@ -389,12 +389,12 @@ describe("SystemNotifications", () => {
       { match: /\/proposals$/, body: [LOW_CONF_PROPOSAL] },
     ]);
 
-    expect(await screen.findByText("需要确认的情节")).toBeInTheDocument();
+    expect(await screen.findByText("待确认的情节")).toBeInTheDocument();
     expect(screen.getByText("萧决在城楼上望见了远方的烽火。")).toBeInTheDocument();
     expect(screen.getByText(/42%/)).toBeInTheDocument();
     expect(screen.getByText("他望着远方的烽火，久久不语。")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "接受" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "改一改" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "修改" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "驳回" })).toBeInTheDocument();
   });
 
@@ -405,7 +405,7 @@ describe("SystemNotifications", () => {
       { match: /\/proposals$/, body: [CONFLICT_PROPOSAL] },
     ]);
     await screen.findByText("关系冲突");
-    expect(screen.queryByRole("button", { name: "改一改" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "修改" })).toBeNull();
   });
 
   it("待确认的提案不参与「攒到 4 条就折叠」——它是要做决定的队列，不是看过就好的告警", async () => {
@@ -422,6 +422,6 @@ describe("SystemNotifications", () => {
       NO_PROVISIONAL,
     ]);
     expect(await screen.findAllByText("关系冲突")).toHaveLength(5);
-    expect(screen.queryByRole("button", { name: "逐条看" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "展开" })).toBeNull();
   });
 });

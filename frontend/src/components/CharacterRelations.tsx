@@ -356,7 +356,7 @@ export function CharacterRelations({ characterId }: { characterId: string }) {
       <div className="lab">{language === "zh" ? "关系" : "Relationships"}</div>
       {flow && flow.edges.length === 0 && (
         <span className="empty">
-          {language === "zh" ? "还没有记录的关系。" : "No tracked relationships yet."}
+          {language === "zh" ? "尚无记录的关系" : "No recorded relationships yet"}
         </span>
       )}
       {flow && flow.edges.length > 0 && (

@@ -77,7 +77,7 @@ export function visibleMessages(
  */
 export function receiptSays(receipt: TurnReceipt): string | null {
   // **正常收场不报到**（作者 2026-09-10：「没有必要每次结束有这个」）。这一档后端那句
-  // `message` 是 `_STOP_WORDING[DONE]`，也就是固定的「说完了。」——它每一轮都一样，
+  // `message` 是 `_STOP_WORDING[DONE]`，也就是固定的「回复完成。」——它每一轮都一样，
   // 说的又是屏幕上明摆着的事（话就在上面）。**判据是 `reason` 不是那串字**：拿字面去比
   // 就是从字符串反推，这个仓库为那种写法栽过两次。别的收场（问了你一句 / 查太多次 /
   // 额度到顶 / 装不下了…）每一句都在说一件屏幕上看不出来的事，一条都不动。
@@ -138,8 +138,8 @@ export function elapsedText(ms: number, language: Language): string {
   const total = Math.max(0, Math.floor(ms / 1000));
   const s = total % 60;
   if (language === "zh") {
-    if (total < 60) return `已经 ${total} 秒`;
-    return `已经 ${Math.floor(total / 60)} 分 ${s < 10 ? "0" : ""}${s} 秒`;
+    if (total < 60) return `${total} 秒`;
+    return `${Math.floor(total / 60)} 分 ${s < 10 ? "0" : ""}${s} 秒`;
   }
   if (total < 60) return `${total}s elapsed`;
   return `${Math.floor(total / 60)}m ${s < 10 ? "0" : ""}${s}s elapsed`;
@@ -170,31 +170,29 @@ export function receiptNotes(receipt: TurnReceipt, language: Language): string[]
   if (c.stale_lookups > 0) {
     notes.push(
       zh
-        ? `有 ${c.stale_lookups} 处它手上那份正文你已经改过了，这一轮让它重新读了一遍。`
+        ? `正文有 ${c.stale_lookups} 处已修改，本轮已重新读取`
         : c.stale_lookups === 1
-          ? "In one place, the text it had was already something you'd since changed — it re-read that spot this round."
-          : `In ${c.stale_lookups} places, the text it had was already something you'd since changed — it re-read those spots this round.`,
+          ? "1 passage had changed since it was last read; re-read this round"
+          : `${c.stale_lookups} passages had changed since they were last read; re-read this round`,
     );
   }
   if (c.off_chapter > 0) {
     notes.push(
       zh
-        ? `有 ${c.off_chapter} 条它更早查到的东西属于后面的章节，这一轮没带上——` +
-            `免得拿后面的情况来判断这一章能不能说。`
+        ? `${c.off_chapter} 条早先查到的资料属于后续章节，本轮未采用`
         : c.off_chapter === 1
-          ? "One thing it found earlier belongs to a later chapter, so it wasn't carried into this round — using something that hasn't happened yet to judge what this chapter can say would leak the future into it."
-          : `${c.off_chapter} things it found earlier belong to later chapters, so they weren't carried into this round — using something that hasn't happened yet to judge what this chapter can say would leak the future into it.`,
+          ? "1 earlier finding belongs to a later chapter and was left out this round"
+          : `${c.off_chapter} earlier findings belong to later chapters and were left out this round`,
     );
   }
   const trimmed = c.trimmed_results + c.dropped_lookups + c.dropped_reasoning;
   if (trimmed > 0) {
     notes.push(
       zh
-        ? `这段对话太长了，为了装得下，${trimmed} 条早先查到的东西被收起来了` +
-            `（要用它会重新查一次）。你说过的话一句都没删。`
+        ? `对话较长，${trimmed} 条早先查到的资料已收起，需要时重新查询；对话记录未删减`
         : trimmed === 1
-          ? "This conversation got long, so to make room, one earlier finding was tucked away (it'll look it up again if needed). Not a single word you said was deleted."
-          : `This conversation got long, so to make room, ${trimmed} earlier findings were tucked away (it'll look them up again if needed). Not a single word you said was deleted.`,
+          ? "Long conversation: 1 earlier finding was set aside and will be looked up again if needed; the conversation itself is unchanged"
+          : `Long conversation: ${trimmed} earlier findings were set aside and will be looked up again if needed; the conversation itself is unchanged`,
     );
   }
   // 作者中途说的、这一轮没来得及答的那几句（后端 `Mailbox`）。**它们已经在对话里**，
@@ -202,10 +200,10 @@ export function receiptNotes(receipt: TurnReceipt, language: Language): string[]
   if (receipt.unanswered > 0) {
     notes.push(
       zh
-        ? `你中途说的 ${receipt.unanswered} 句它这一轮没来得及看，已经记在对话里，再说一句它就会一起读到。`
+        ? `中途发送的 ${receipt.unanswered} 条消息本轮未读取，已保留在对话中，下一轮一并读取`
         : receipt.unanswered === 1
-          ? "One thing you said mid-round didn't get read this round; it's already in the conversation, and it'll read it along with whatever you say next."
-          : `${receipt.unanswered} things you said mid-round didn't get read this round; they're already in the conversation, and it'll read them along with whatever you say next.`,
+          ? "1 message sent mid-round was not read this round; it stays in the conversation and is read next round"
+          : `${receipt.unanswered} messages sent mid-round were not read this round; they stay in the conversation and are read next round`,
     );
   }
   // **`lost_lookups` 不并进上面那一句**，虽然两者都是「它手上少了点东西」。
@@ -216,30 +214,28 @@ export function receiptNotes(receipt: TurnReceipt, language: Language): string[]
   if (c.lost_lookups > 0) {
     notes.push(
       zh
-        ? `有 ${c.lost_lookups} 次查询上次断在半路、结果没留下，这一轮它按「没查到」往下走的。` +
-            `要用到那几处，跟它说一声让它重新查。`
+        ? `上一轮 ${c.lost_lookups} 次查询中断、无结果，本轮按未查到处理；如需要，可要求重新查询`
         : c.lost_lookups === 1
-          ? "One lookup got cut off mid-way last time and left no result, so it moved forward this round as if it hadn't found anything. If you need that, just tell it to look again."
-          : `${c.lost_lookups} lookups got cut off mid-way last time and left no results, so it moved forward this round as if it hadn't found anything. If you need those, just tell it to look again.`,
+          ? "1 lookup was cut off last round and left no result; this round proceeded as if nothing was found. Ask for it again if needed"
+          : `${c.lost_lookups} lookups were cut off last round and left no results; this round proceeded as if nothing was found. Ask for them again if needed`,
     );
   }
   if (c.compressed_blocks > 0) {
     notes.push(
       zh
-        ? `更早的 ${c.compressed_blocks} 块对话被压成了摘要，它读到的是概括；` +
-            `你的原话一句没删、还在上面，需要时它会按编号取回。`
+        ? `更早的 ${c.compressed_blocks} 段对话以摘要代替，原文保留，需要时取回`
         : c.compressed_blocks === 1
-          ? "One earlier block of the conversation was compressed into a summary — what it reads is the gist. Not a word of what you actually said was deleted, it's still there, and it'll pull it back up by number when needed."
-          : `${c.compressed_blocks} earlier blocks of the conversation were compressed into summaries — what it reads is the gist. Not a word of what you actually said was deleted, it's all still there, and it'll pull them back up by number when needed.`,
+          ? "1 earlier section of the conversation is read as a summary; the original is kept and retrieved when needed"
+          : `${c.compressed_blocks} earlier sections of the conversation are read as summaries; the originals are kept and retrieved when needed`,
     );
   }
   if (receipt.calls_without_usage > 0) {
     notes.push(
       zh
-        ? `这一轮有 ${receipt.calls_without_usage} 次调用没报用量，所以「活动记录」里这一笔是少算的。`
+        ? `本轮 ${receipt.calls_without_usage} 次调用未报告用量，「活动记录」中的统计偏少`
         : receipt.calls_without_usage === 1
-          ? 'One call this round didn\'t report its usage, so this entry in "Activity" is an undercount.'
-          : `${receipt.calls_without_usage} calls this round didn't report usage, so this entry in "Activity" is an undercount.`,
+          ? "1 call this round reported no usage; the entry in “Activity” is an undercount"
+          : `${receipt.calls_without_usage} calls this round reported no usage; the entry in “Activity” is an undercount`,
     );
   }
   return notes;
@@ -258,8 +254,8 @@ export function receiptNotes(receipt: TurnReceipt, language: Language): string[]
 export function stopFootnote(stopped: boolean, receipt: TurnReceipt, language: Language): string | null {
   if (!stopped || receipt.reason === "author_stopped") return null;
   return language === "zh"
-    ? "你按下停的时候，这一轮已经跑到最后一步了，所以它还是把话说完了。"
-    : "By the time you clicked Stop, this round had already reached its last step, so it finished saying what it had to say anyway.";
+    ? "「停」送达时本轮已进入最后一步，回复已完成。"
+    : "Stop arrived after this round had reached its last step; the reply was completed.";
 }
 
 /**
@@ -410,9 +406,9 @@ function growDraft(drafts: LiveDraft[], event: ChatTurnEvent): LiveDraft[] {
 }
 
 /** 一条流收场。**半截的那一稿不许说成写好了**——那句话由后端写（`draft_kept` 会说
- *  「停在这儿了，没写完」），这里只是把它放上去。 */
+ *  「已中止……未完成」），这里只是把它放上去。 */
 function closeDraft(drafts: LiveDraft[], event: ChatTurnEvent, language: Language): LiveDraft[] {
-  const closing = event.said_to_author || (language === "zh" ? "这一条停在这儿了。" : "This one stopped here.");
+  const closing = event.said_to_author || (language === "zh" ? "此稿已中止。" : "This draft stopped.");
   const found = drafts.some((d) => d.stream === event.stream);
   const closed = drafts.map((d) =>
     d.stream === event.stream ? { ...d, done: closing } : d,

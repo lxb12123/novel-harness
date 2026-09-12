@@ -182,7 +182,7 @@ def test_the_interruption_is_a_provider_error_so_the_loop_reads_it_as_the_author
         cancel=cancel,
     )
     assert result.reason is StopReason.AUTHOR_STOPPED
-    assert result.said_to_author.startswith("按你的意思停下了")
+    assert result.said_to_author.startswith("已停止")
     # 打断的那一次**有账**（2026-09-12 起，回复走流式的那天一起补的漏账口）：
     # 请求发出去了，断开连接 ≠ 停止计费。**数一律留空**——供应商没报的数这一层不许编
     # （同 `generate.py::interrupted`），`finish_reason` 也不是一个我们自己编的
@@ -259,7 +259,7 @@ def test_the_loop_turns_that_into_one_sentence_the_author_can_act_on() -> None:
         ledger=lambda receipt: None,
     )
     assert result.reason is StopReason.MODEL_UNREACHABLE
-    assert "联系不上写作模型" in result.said_to_author
+    assert "无法连接写作模型" in result.said_to_author
     # 维护者那条诊断（带端点地址和模型名）在 `maintainer_note` 里，**不在给作者的那句话里**。
     assert BASE_URL not in result.said_to_author
     assert BASE_URL in result.maintainer_note

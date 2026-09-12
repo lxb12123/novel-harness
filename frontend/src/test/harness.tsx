@@ -81,7 +81,7 @@ const SUMMARY_TRAIL = {
 
 /** 全书总结状态（Step 4）。纯手写 stub（见路由表那条注释）——四章把四态一眼摆全：
  *  `paired`（对得上）/ `stale`（不对齐，该覆写）/ `missing`（缺，该补）/ `empty`
- *  （没正文），第 4 章还是 `anomaly`（生成异常，§6）。第 5 章权重 0 = 这一轮不看。 */
+ *  （没正文），第 4 章还是 `anomaly`（生成异常，§6）。第 5 章权重 0 = 本轮不处理。 */
 const SUMMARY_STATUS = {
   draft_chapter: 4,
   focused_chapter: 4,

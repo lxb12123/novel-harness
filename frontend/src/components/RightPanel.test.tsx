@@ -192,7 +192,7 @@ describe("右侧信息区", () => {
 
     expect(await screen.findByText("内置规则")).toBeInTheDocument();
     const row = (await screen.findByText(/人物开口时机/)).closest(".rule-row") as HTMLElement;
-    expect(row).toHaveTextContent("已经死了的人又在正文里开口说话");
+    expect(row).toHaveTextContent("已死亡的人物在正文中说话");
     expect(document.body.textContent).not.toMatch(/\bR3\b/);
   });
 
@@ -215,7 +215,7 @@ describe("右侧信息区", () => {
     await user.click(screen.getByRole("button", { name: "快速检验本章" }));
 
     expect(
-      await screen.findByText("第 1 章已经不在了 —— 可能被删除或改了章号。刷新一下再看。"),
+      await screen.findByText("第 1 章已不存在，可能已被删除或更改章号。请刷新页面。"),
     ).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/chapter_not_found/);
   });

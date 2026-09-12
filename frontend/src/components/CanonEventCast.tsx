@@ -113,13 +113,13 @@ function AnalyzeButton() {
 function analysisToast(run: ExtractionRun, language: Language): string {
   if (run.status !== "SUCCEEDED") {
     return language === "zh"
-      ? "这一章没能分析完，什么都没改。过一会儿再点一次。"
-      : "This chapter couldn't be analyzed and nothing was changed. Try again in a moment.";
+      ? "本章分析未完成，内容未更改。请稍后重试。"
+      : "Analysis of this chapter did not complete and nothing was changed. Try again shortly."
   }
   if (language === "zh") {
-    if (run.valid_event_count === 0) return "这一章没读出新的情节";
-    let line = `读出 ${run.valid_event_count} 条情节`;
-    if (run.proposal_count > 0) line += `，其中 ${run.proposal_count} 项要你确认，已放进「通知」`;
+    if (run.valid_event_count === 0) return "本章未整理出新的情节";
+    let line = `整理出 ${run.valid_event_count} 条情节`;
+    if (run.proposal_count > 0) line += `，其中 ${run.proposal_count} 项待确认，已列入「通知」`;
     return line;
   }
   if (run.valid_event_count === 0) return "No new events found in this chapter";
@@ -197,7 +197,7 @@ function CastEditor({
           <div>{failure.message}</div>
           {failure.kind === "stale" && (
             <button className="link" onClick={onStale}>
-              {language === "zh" ? "看看最新的" : "See the latest version"}
+              {language === "zh" ? "查看最新版本" : "See the latest version"}
             </button>
           )}
         </div>
@@ -354,8 +354,8 @@ export function CanonEventCast({ canonVersion }: { canonVersion: number }) {
       {!events.isLoading && views.length === 0 && !missing && (
         <span className="empty">
           {language === "zh"
-            ? `到第 ${chapter} 章为止还没有已确认的情节。确认过的情节会出现在这里，之后随时能改名单。`
-            : `No confirmed events through chapter ${chapter} yet. Once an event is confirmed, it'll show up here, and you can update its cast anytime.`}
+            ? `截至第 ${chapter} 章尚无已确认的情节。情节确认后在此显示，参与者可随时修改。`
+            : `No confirmed events through chapter ${chapter} yet. Confirmed events appear here, and their cast can be changed at any time.`}
         </span>
       )}
       {/* 跳过来却找不到那一条：**说出来**，不要安静地摆一张看起来正常的单子。
@@ -363,14 +363,14 @@ export function CanonEventCast({ canonVersion }: { canonVersion: number }) {
       {missing && (
         <div className="warn">
           {language === "zh"
-            ? "没有找到刚才那条情节，它可能已经被改掉或撤回了。"
-            : "Couldn't find that event — it may have been changed or retracted."}
+            ? "未找到该情节，可能已被修改或撤回。"
+            : "That event was not found; it may have been changed or retracted."}
         </div>
       )}
 
       {finding && needle.trim() && groups.length === 0 && (
         <span className="empty">
-          {language === "zh" ? `没有第 ${needle.trim()} 章的情节。` : "No events in that chapter."}
+          {language === "zh" ? `第 ${needle.trim()} 章没有情节` : "No events in that chapter"}
         </span>
       )}
 

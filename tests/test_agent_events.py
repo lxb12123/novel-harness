@@ -323,7 +323,7 @@ def test_a_wide_batch_says_which_one_of_how_many() -> None:
     )
     started = screen.of(TurnEventKind.TOOL_STARTED)
     assert [(e.index, e.total) for e in started] == [(1, 3), (2, 3), (3, 3)]
-    assert "第 2 件" in started[1].said_to_author
+    assert "（2/3）" in started[1].said_to_author
 
 
 def _slow_handler(args: SceneConstraintsArgs, context: Any) -> SceneConstraintsArgs:
@@ -573,7 +573,7 @@ def test_the_author_still_sees_which_constraint_it_is_talking_about(
     assert "血脉秘密" in pushed, "显示名被收掉了 —— 作者看不出它在绕开哪一条"
     assert f"第 {CHAPTER} 章" in pushed, "查的是哪一章也该说得出来"
     said = " ".join(e.said_to_author for e in screen.events)
-    assert "正在" in said and "好了" in said
+    assert "正在" in said and "已查询" in said
 
 
 # ══════════════════════════════════════════════════════════════════════════

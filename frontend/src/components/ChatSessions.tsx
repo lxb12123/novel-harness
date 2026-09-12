@@ -29,15 +29,15 @@ import { CloseIcon } from "./icons";
 /** 还没说过话的那一段叫什么。**后端只在标题为空时拿作者第一句话去填**，
  *  所以这一档只可能出现在「刚开了一段还没说话」上。 */
 const UNNAMED = (language: Language): string =>
-  language === "zh" ? "还没说话的对话" : "A conversation with nothing said yet";
+  language === "zh" ? "新对话" : "New conversation";
 
 /** 后端一句话都没写时才轮到的那一句。**删这条路由的 404 就是这一档**
  *  （`{"error":"chat_not_found","chat_id":…}`，一个 `message` 都没有）。
  *  不许编理由，也不许说「请稍后再试」——那是在暗示重试有用。 */
 const DELETE_FAILED = (language: Language): string =>
   language === "zh"
-    ? "没能删掉这段对话，而系统没能说清是为什么。"
-    : "Couldn't delete this conversation, and the system couldn't say why.";
+    ? "删除对话失败，未返回原因。"
+    : "Could not delete this conversation; no reason was returned.";
 
 function SessionRow({
   session,
@@ -64,7 +64,7 @@ function SessionRow({
         <span className="chat-session-meta">
           {time && <span>{time}</span>}
           {session.running && (
-            <span className="chat-badge run">{language === "zh" ? "正在跑" : "Running"}</span>
+            <span className="chat-badge run">{language === "zh" ? "进行中" : "Running"}</span>
           )}
           {/* 断在半路的和跑完的**必须长得不一样**：两者的下一步动作不同，而后端
               专门为这一列算了这个数（列表那条路由的 docstring 写着理由）。
@@ -78,8 +78,8 @@ function SessionRow({
           {session.pending_lookups > 0 && (
             <span className="chat-badge half">
               {language === "zh"
-                ? "上次断在半路 · 那几步没跑完"
-                : "Cut off mid-way last time · those steps didn't finish"}
+                ? "上一轮中断，未完成"
+                : "Last round was cut off before finishing"}
             </span>
           )}
         </span>
@@ -91,26 +91,26 @@ function SessionRow({
            一个纯文字的「算了」。**只有危险的那一个有颜色**，取消永远是最轻的那个。 */
         <span className="chat-session-confirm">
           <span className="chat-session-ask">
-            {language === "zh" ? "删掉这段对话？" : "Delete this conversation?"}
+            {language === "zh" ? "删除此对话？" : "Delete this conversation?"}
           </span>
           <button className="chat-session-yes" disabled={deleting} onClick={onDelete}>
             {language === "zh"
               ? deleting
-                ? "删着…"
-                : "删掉"
+                ? "删除中…"
+                : "删除"
               : deleting
                 ? "Deleting…"
                 : "Delete"}
           </button>
           <button className="chat-session-no" onClick={() => setConfirming(false)}>
-            {language === "zh" ? "算了" : "Cancel"}
+            {language === "zh" ? "取消" : "Cancel"}
           </button>
         </span>
       ) : (
         <button
           className="chat-session-del"
           aria-label={
-            language === "zh" ? `删掉这段对话：${title}` : `Delete this conversation: ${title}`
+            language === "zh" ? `删除对话：${title}` : `Delete this conversation: ${title}`
           }
           onClick={() => setConfirming(true)}
         >
@@ -163,7 +163,7 @@ export function ChatSessions({
           })
         }
       >
-        {language === "zh" ? "＋ 开一段新的对话" : "+ Start a new conversation"}
+        {language === "zh" ? "＋ 新建对话" : "+ New conversation"}
       </button>
 
       {/* **读不出来 ≠ 一段都没有。** 前者的下一步是刷新，后者的下一步是开一段——
@@ -177,11 +177,11 @@ export function ChatSessions({
               /* 「问它这一章有什么不能说」2026-09-07 撤了：秘密那套 2026-08-24 整套
                  下线（ADR 0039），这句话在替一个不存在的能力招手。同 `ChatPanel.tsx`
                  空态那一句，两处是同一个错。 */
-              <>还没有说过话。开一段新的，让它先去把前情看一遍，或者直接说这一章要写什么。</>
+              <>尚无对话。新建对话后，可先要求写作助手梳理前情，或直接说明本章要写的内容。</>
             ) : (
               <>
-                Nothing’s been said yet. Start a new conversation — have it review what’s
-                happened so far, or just say what this chapter is about.
+                No conversations yet. Start one, then ask the writing assistant to review the
+                story so far, or say what this chapter is about.
               </>
             )}
           </p>

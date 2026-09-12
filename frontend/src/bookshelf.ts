@@ -127,13 +127,13 @@ export function newChapterError(error: unknown): string {
     if (error.status === 404 && !error.body.error) {
       const language = useLanguage.getState().language;
       return language === "zh"
-        ? "这台电脑上的程序是旧的一版，还不认得「新起一章」。把工作台关掉、重新打开一次就好。"
-        : "The app on this computer is an older version and doesn't recognize \"new chapter\" yet. Close the workbench and reopen it.";
+        ? "本机程序版本较旧，尚不支持「新建章节」。请关闭并重新打开工作台。"
+        : "The app on this computer is an older version and does not support \"new chapter\" yet. Close the workbench and reopen it.";
     }
     const said = saidToTheAuthor(error);
     if (said) return said;
   }
   const language = useLanguage.getState().language;
-  return language === "zh" ? "没能新起一章，再点一次试试。" : "Couldn't create a new chapter — try again.";
+  return language === "zh" ? "新建章节失败，请重试。" : "Could not create a new chapter; try again.";
 }
 

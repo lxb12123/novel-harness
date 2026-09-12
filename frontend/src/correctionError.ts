@@ -65,21 +65,21 @@ export interface CorrectionFailure {
 /** 「别处刚改过」。必须把作者推去**看**，不是去重点一次：静默重试等于把他的改动
  *  盖到一份他没看过的状态上。哪天后端给这一条配了码，这一句就该退位。 */
 const STALE: Record<Language, string> = {
-  zh: "这本书在别处刚刚被改过，你看到的还是改动之前的样子。先看一眼最新的，再决定这一处要不要改。",
-  en: "This book was just changed somewhere else — what you're looking at is the version before that change. Take a look at the latest version before deciding whether to make this edit.",
+  zh: "本书已在别处修改，当前显示的仍是修改前的内容。请先查看最新版本，再决定是否修改。",
+  en: "This book was changed elsewhere; what is shown is the version before that change. Review the latest version before making this edit.",
 };
 
 /** 后端拒了，但一个字都没说为什么。**不许编一个理由**（§10 约束 8：不知道就说不知道），
  *  也不许说「请稍后再试」——那是在暗示重试有用，而书不在了的时候重试一百次都一样。 */
 const SILENT: Record<Language, string> = {
-  zh: "这次改动没能保存，而系统没能说清是为什么。刷新一下看看这本书现在是什么样，再决定要不要重来一次。",
-  en: "This change couldn't be saved, and the system couldn't say why. Refresh to see what this book looks like now, then decide whether to try again.",
+  zh: "本次改动未能保存，未返回原因。请刷新查看本书当前状态，再决定是否重试。",
+  en: "This change could not be saved and no reason was returned. Refresh to see the current state of the book, then decide whether to try again.",
 };
 
 /** 根本没到后端。不冒充一次业务拒绝。 */
 const OFFLINE: Record<Language, string> = {
-  zh: "没能保存这次改动，请稍后再试。",
-  en: "Couldn't save this change — please try again in a moment.",
+  zh: "本次改动未能保存，请稍后重试。",
+  en: "This change could not be saved; try again shortly.",
 };
 
 /** 后端**写给作者的那句话**，没有就是 `null`。

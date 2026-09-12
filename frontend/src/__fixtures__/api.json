@@ -1646,7 +1646,7 @@
       {
         "seq": 1,
         "speaker": "system",
-        "text": "联系不上写作模型，这一轮没跑成。等一下再试；一直这样的话去顶栏「AI 设置」看一眼。"
+        "text": "无法连接写作模型，本轮未完成。请稍后重试，或检查顶栏「AI 设置」。"
       },
       {
         "seq": 1,
@@ -1656,7 +1656,7 @@
       {
         "seq": 2,
         "speaker": "system",
-        "text": "联系不上写作模型，这一轮没跑成。等一下再试；一直这样的话去顶栏「AI 设置」看一眼。"
+        "text": "无法连接写作模型，本轮未完成。请稍后重试，或检查顶栏「AI 设置」。"
       }
     ],
     "session": {
@@ -1671,7 +1671,7 @@
   },
   "chatStopped": {
     "chat_id": "chat_session:ID44",
-    "message": "这段对话这会儿没在跑，不用停。",
+    "message": "当前没有正在进行的一轮，无需停止。",
     "stopped": false
   },
   "chatTurn": {
@@ -1706,7 +1706,7 @@
       }
     ],
     "lookups": 2,
-    "message": "说完了。",
+    "message": "回复完成。",
     "messages": [
       {
         "seq": 4,
@@ -1730,15 +1730,15 @@
     "unanswered": 0
   },
   "chatTurnEvents": [
-    "event: turn\ndata: {\"kind\":\"tool_started\",\"said_to_author\":\"正在查这一章谁在场（这一批 2 件里的第 1 件）。\",\"text\":\"\",\"tool\":\"scene_constraints\",\"ok\":null,\"chapter\":null,\"index\":1,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
-    "event: turn\ndata: {\"kind\":\"tool_finished\",\"said_to_author\":\"查这一章谁在场（第 2 章），好了。\",\"text\":\"\",\"tool\":\"scene_constraints\",\"ok\":true,\"chapter\":2,\"index\":1,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
-    "event: turn\ndata: {\"kind\":\"tool_started\",\"said_to_author\":\"正在写一稿（这一批 2 件里的第 2 件）。\",\"text\":\"\",\"tool\":\"draft_chapter\",\"ok\":null,\"chapter\":null,\"index\":2,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
-    "event: turn\ndata: {\"kind\":\"draft_started\",\"said_to_author\":\"正在写第 2 章的一稿。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":2,\"index\":0,\"total\":0,\"stream\":1,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
-    "event: turn\ndata: {\"kind\":\"draft_kept\",\"said_to_author\":\"第 2 章的第 2 稿写好了，2800 字。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":2,\"index\":0,\"total\":0,\"stream\":1,\"ordinal\":2,\"units\":2800,\"reason\":null,\"asked\":null}\n\n",
-    "event: turn\ndata: {\"kind\":\"tool_finished\",\"said_to_author\":\"写一稿（第 2 章），好了。\",\"text\":\"\",\"tool\":\"draft_chapter\",\"ok\":true,\"chapter\":2,\"index\":2,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"tool_started\",\"said_to_author\":\"正在查询本章在场人物（1/2）。\",\"text\":\"\",\"tool\":\"scene_constraints\",\"ok\":null,\"chapter\":null,\"index\":1,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"tool_finished\",\"said_to_author\":\"已查询本章在场人物（第 2 章）。\",\"text\":\"\",\"tool\":\"scene_constraints\",\"ok\":true,\"chapter\":2,\"index\":1,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"tool_started\",\"said_to_author\":\"正在起草（2/2）。\",\"text\":\"\",\"tool\":\"draft_chapter\",\"ok\":null,\"chapter\":null,\"index\":2,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"draft_started\",\"said_to_author\":\"正在起草第 2 章。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":2,\"index\":0,\"total\":0,\"stream\":1,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"draft_kept\",\"said_to_author\":\"第 2 章第 2 稿完成，2800 字。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":2,\"index\":0,\"total\":0,\"stream\":1,\"ordinal\":2,\"units\":2800,\"reason\":null,\"asked\":null}\n\n",
+    "event: turn\ndata: {\"kind\":\"tool_finished\",\"said_to_author\":\"已起草（第 2 章）。\",\"text\":\"\",\"tool\":\"draft_chapter\",\"ok\":true,\"chapter\":2,\"index\":2,\"total\":2,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
     "event: turn\ndata: {\"kind\":\"reply_text\",\"said_to_author\":\"\",\"text\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\",\"tool\":\"\",\"ok\":null,\"chapter\":null,\"index\":0,\"total\":0,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":null,\"asked\":null}\n\n",
-    "event: turn\ndata: {\"kind\":\"turn_stopped\",\"said_to_author\":\"说完了。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":null,\"index\":0,\"total\":0,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":\"done\",\"asked\":null}\n\n",
-    "event: receipt\ndata: {\"session\":{\"id\":\"chat_session:ID46\",\"title\":\"长连接那一轮\",\"created_at\":\"<ts>\",\"updated_at\":\"<ts>\",\"message_count\":5,\"running\":false,\"pending_lookups\":0},\"chapter\":2,\"reason\":\"done\",\"message\":\"说完了。\",\"reply\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\",\"messages\":[{\"seq\":4,\"speaker\":\"assistant\",\"text\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\"}],\"steps\":2,\"lookups\":2,\"unanswered\":0,\"tokens_reported\":5664,\"calls_without_usage\":1,\"context\":{\"off_chapter\":0,\"stale_lookups\":0,\"trimmed_results\":0,\"dropped_lookups\":0,\"dropped_reasoning\":0,\"lost_lookups\":0,\"full\":false,\"compressed_blocks\":0},\"asked\":null,\"drafts\":[{\"id\":\"draft:ID47\",\"chapter\":2,\"ordinal\":2,\"units\":2800,\"note\":\"这一版更冷，收在他没抬头。\",\"preview\":\"风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他……\",\"created_at\":\"<ts>\",\"landed\":false,\"stopped_reason\":\"\",\"brief\":\"第 2 章这一场：写萧决与顾清音在藏书阁对峙，血脉那条先别说破，收在他没抬头。\",\"materials\":[\"第 1 章：萧决独自走进了北荒的风雪里。\"]}]}\n\n"
+    "event: turn\ndata: {\"kind\":\"turn_stopped\",\"said_to_author\":\"回复完成。\",\"text\":\"\",\"tool\":\"\",\"ok\":null,\"chapter\":null,\"index\":0,\"total\":0,\"stream\":0,\"ordinal\":0,\"units\":0,\"reason\":\"done\",\"asked\":null}\n\n",
+    "event: receipt\ndata: {\"session\":{\"id\":\"chat_session:ID46\",\"title\":\"长连接那一轮\",\"created_at\":\"<ts>\",\"updated_at\":\"<ts>\",\"message_count\":5,\"running\":false,\"pending_lookups\":0},\"chapter\":2,\"reason\":\"done\",\"message\":\"回复完成。\",\"reply\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\",\"messages\":[{\"seq\":4,\"speaker\":\"assistant\",\"text\":\"第 2 章这一场，血脉那条先别说破。我写了一稿，你看看要不要。\"}],\"steps\":2,\"lookups\":2,\"unanswered\":0,\"tokens_reported\":5664,\"calls_without_usage\":1,\"context\":{\"off_chapter\":0,\"stale_lookups\":0,\"trimmed_results\":0,\"dropped_lookups\":0,\"dropped_reasoning\":0,\"lost_lookups\":0,\"full\":false,\"compressed_blocks\":0},\"asked\":null,\"drafts\":[{\"id\":\"draft:ID47\",\"chapter\":2,\"ordinal\":2,\"units\":2800,\"note\":\"这一版更冷，收在他没抬头。\",\"preview\":\"风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他终于抬起头。风雪落在肩上，他……\",\"created_at\":\"<ts>\",\"landed\":false,\"stopped_reason\":\"\",\"brief\":\"第 2 章这一场：写萧决与顾清音在藏书阁对峙，血脉那条先别说破，收在他没抬头。\",\"materials\":[\"第 1 章：萧决独自走进了北荒的风雪里。\"]}]}\n\n"
   ],
   "chats": [
     {

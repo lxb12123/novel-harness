@@ -33,24 +33,24 @@ function when(iso: string): string {
 function refusal(err: unknown): string {
   const language = useLanguage.getState().language;
   const generic = () =>
-    language === "zh" ? "没能删掉这一版，请再试一次。" : "Couldn't delete this version — try again.";
+    language === "zh" ? "删除失败，请重试。" : "This version could not be deleted; try again.";
   if (!(err instanceof ApiError)) return generic();
   if (err.code === "snapshot_is_current") {
     return language === "zh"
-      ? "正文现在就是这一版，删不掉。可以先还原到别的版本，再回来删它。"
-      : "This is the current version of the text, so it can't be deleted. Restore a different version first, then come back to delete it.";
+      ? "此版本即当前正文，无法删除。可先还原到其他版本，再删除。"
+      : "This version is the current text and cannot be deleted. Restore a different version first, then delete it.";
   }
   if (err.code === "snapshot_in_use") {
     const used = err.body.usage as { evidence?: number } | undefined;
     const n = Number(used?.evidence ?? 0);
     if (language === "zh") {
       return n > 0
-        ? `这一版被 ${n} 条原文依据引用着——删了它，那些依据就找不到出处了。`
-        : "这一版还被别的记录引用着，删了会让它们找不到出处。";
+        ? `此版本被 ${n} 条原文依据引用，删除后这些依据将失去出处。`
+        : "此版本仍被其他记录引用，删除后这些记录将失去出处。";
     }
     return n > 0
-      ? `This version is referenced by ${n} pieces of evidence — deleting it would leave them without a source.`
-      : "This version is still referenced by other records — deleting it would leave them without a source.";
+      ? `This version is referenced by ${n} pieces of evidence; deleting it would leave them without a source.`
+      : "This version is still referenced by other records; deleting it would leave them without a source.";
   }
   return saidToTheAuthor(err) ?? generic();
 }
@@ -121,14 +121,12 @@ export function HistoryDrawer({
         <div className="sub">
           {language === "zh" ? (
             <>
-              每次保存都会留下一版。想回到哪一版，把鼠标移到它上面点「还原」——正文会变回那一版的
-              样子，其他版本都还留着，随时能再换回来。
+              每次保存都会留下一个版本。点击某一版的「还原」，正文即回到该版本；其他版本保留，可随时切换。
             </>
           ) : (
             <>
-              Every save leaves behind a version. To go back to one, hover over it and click
-              "Restore" — the text will change back to look like that version, and every other
-              version stays put, ready to switch back to at any time.
+              Every save leaves a version. Click "Restore" on a version to return the text to it;
+              all other versions are kept and can be switched to at any time.
             </>
           )}
         </div>
@@ -139,11 +137,11 @@ export function HistoryDrawer({
         {!isFetching && snaps.length <= 1 && (
           <div className="empty">
             {language === "zh" ? (
-              <>这一章目前只有一版，还没有别的版本可以还原。以后每保存一次改动，这里就会多一版。</>
+              <>本章目前只有一个版本，没有可还原的其他版本。此后每次保存都会新增一版。</>
             ) : (
               <>
-                This chapter only has one version right now — there’s nothing else to restore
-                yet. Every time you save a change from now on, another version will show up here.
+                This chapter has only one version, so there is nothing else to restore. Each
+                save from now on adds a version here.
               </>
             )}
           </div>
@@ -154,11 +152,11 @@ export function HistoryDrawer({
             <span className="q">
               {language === "zh"
                 ? pending.kind === "restore"
-                  ? `把正文还原到 ${when(target.created_at)} 那一版？`
-                  : `删掉 ${when(target.created_at)} 这一版？删了就找不回来了。`
+                  ? `将正文还原到 ${when(target.created_at)} 的版本？`
+                  : `删除 ${when(target.created_at)} 的版本？删除后无法恢复。`
                 : pending.kind === "restore"
                   ? `Restore the text to the version from ${when(target.created_at)}?`
-                  : `Delete the version from ${when(target.created_at)}? This can't be undone.`}
+                  : `Delete the version from ${when(target.created_at)}? This cannot be undone.`}
             </span>
             {/* 「确认还原」而不是「还原」：确认条弹出来时，行里那个「还原」还在，
                 两个按钮同名会让作者不确定自己按的是哪一个。 */}
@@ -183,8 +181,8 @@ export function HistoryDrawer({
         {pending?.kind === "restore" && dirty && (
           <div className="warn">
             {language === "zh"
-              ? "编辑器里还有没保存的修改，还原会把它们覆盖掉。"
-              : "The editor has unsaved changes — restoring will overwrite them."}
+              ? "编辑器中有未保存的修改，还原将覆盖这些修改。"
+              : "The editor has unsaved changes; restoring will overwrite them."}
           </div>
         )}
         {remove.error && <div className="err-box">{refusal(remove.error)}</div>}
@@ -220,7 +218,7 @@ export function HistoryDrawer({
                     {!s.is_current && (
                       <button
                         className="hist-act"
-                        title={language === "zh" ? "把正文换回这一版" : "Switch the text back to this version"}
+                        title={language === "zh" ? "将正文还原到此版本" : "Restore the text to this version"}
                         onClick={() => setPending({ kind: "restore", id: s.snapshot_id })}
                       >
                         {language === "zh" ? "还原" : "Restore"}
@@ -232,10 +230,10 @@ export function HistoryDrawer({
                       title={
                         s.is_current
                           ? language === "zh"
-                            ? "正文现在就是这一版，删不掉"
-                            : "This is the current version of the text, so it can't be deleted"
+                            ? "此版本即当前正文，无法删除"
+                            : "This version is the current text and cannot be deleted"
                           : language === "zh"
-                            ? "删掉这一版"
+                            ? "删除此版本"
                             : "Delete this version"
                       }
                       onClick={() => setPending({ kind: "delete", id: s.snapshot_id })}
@@ -250,11 +248,11 @@ export function HistoryDrawer({
               {isSameAsCurrent ? (
                 <div className="empty">
                   {language === "zh" ? (
-                    <>这就是正文现在的样子。选左边别的版本，能看到它和现在差在哪。</>
+                    <>此版本即当前正文。选择左侧其他版本，可查看与当前的差异。</>
                   ) : (
                     <>
-                      This is what the text looks like right now. Pick another version on the
-                      left to see how it differs from now.
+                      This version is the current text. Select another version on the left to
+                      see how it differs.
                     </>
                   )}
                 </div>

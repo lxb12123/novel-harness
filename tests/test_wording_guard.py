@@ -790,3 +790,81 @@ def test_no_refusal_ever_tells_the_author_to_type_a_command() -> None:
     # 自守卫：判据真的扫得动（探针是 2026-08-13 之前的原话）。
     assert pattern.search("也可能是这一章还没进库：先跑 uv sync。")
 
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 语域：后端说给作者的那几句也不许是聊天口气（2026-09-12）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _author_facing_backend_sentences() -> dict[str, str]:
+    """后端**原样上屏**的那几张表，逐句摊开。**判据表在前端那一份**
+    （`test_frontend_product_language.CHATTY_COPY`），这里只负责把句子凑齐——
+    两边扫的是同一种口气，表只能有一份。
+
+    凑齐的口子：停法（`stop_wording`，回执和事件流共用）、「停」/「插话」两条路由的三档
+    结局、事件流每一种句式（工具开跑 / 跑完 / 起草开跑 / 留稿 / 半截 / 没成 / 问作者）、
+    每一个工具的 `label`（它被拼进「正在……」/「已……」）、半截稿身上那句
+    `AUTHOR_STOPPED_NOTE`、通知抬头（`notice_kind_*`）。
+    """
+    from novel_harness.agent.drafting import AUTHOR_STOPPED_NOTE
+    from novel_harness.agent.loop import StopReason, TurnEvent, stop_wording
+    from novel_harness.agent.prompt_terms import _MESSAGES, message
+    from novel_harness.agent.tools import (
+        TOOL_NAMES,
+        UNNAMED_TOOL_LABEL,
+        AuthorQuestion,
+        ToolOutcome,
+        tool_label,
+    )
+    from novel_harness.api import chat as chat_api
+    from novel_harness.draft.length import DraftLanguage
+
+    ok = ToolOutcome(call_id="c1", name="chapter_text", ok=True, content="", chapter=40)
+    failed = ToolOutcome(call_id="c2", name="chapter_text", ok=False, content="", chapter=40)
+    events = [
+        TurnEvent.tool_started("book_index", index=2, total=3),
+        TurnEvent.tool_finished(ok),
+        TurnEvent.tool_finished(failed),
+        TurnEvent.draft_started(40, stream=1),
+        TurnEvent.draft_kept(40, ordinal=1, units=2800),
+        TurnEvent.draft_kept(40, ordinal=2, units=900, stopped=True),
+        TurnEvent.draft_failed(40),
+        TurnEvent.asked_author(AuthorQuestion(question="走哪条线？", options=("A", "B"))),
+    ]
+    sentences: dict[str, str] = {}
+    for reason in StopReason:
+        sentences[f"stop_wording[{reason.value}]"] = stop_wording(reason)
+    for verdict, said in chat_api._STOP_WORDING.items():
+        sentences[f"stop[{verdict}]"] = said
+    for verdict, said in chat_api._SAY_WORDING.items():
+        sentences[f"say[{verdict}]"] = said
+    for event in events:
+        sentences[f"event[{event.kind.value}]"] = event.said_to_author
+    for name in sorted(TOOL_NAMES):
+        sentences[f"label[{name}]"] = tool_label(name)
+    sentences["label[?]"] = UNNAMED_TOOL_LABEL
+    sentences["AUTHOR_STOPPED_NOTE"] = AUTHOR_STOPPED_NOTE
+    for key in _MESSAGES:
+        if key.startswith("notice_kind_"):
+            for language in (DraftLanguage.ZH, DraftLanguage.EN):
+                sentences[f"{key}[{language.value}]"] = message(key, language)
+    return sentences
+
+
+def test_backend_author_facing_wording_is_written_not_chatty() -> None:
+    """作者指着回执上「这段对话太长了，为了装得下……你说过的话一句都没删」那句说它
+    「人机」（2026-09-12）。前端那半由 `test_production_copy_is_written_not_chatty` 拦；
+    这条拦后端原样上屏的那几张表，**判据是同一张**。"""
+    from test_frontend_product_language import CHATTY_COPY
+
+    offenders: list[str] = []
+    for where, said in _author_facing_backend_sentences().items():
+        assert said, f"{where} 是空的 —— 一句空话会变成一个转圈的图标"
+        for pattern, label in CHATTY_COPY.items():
+            if match := re.search(pattern, said):
+                offenders.append(f"{where}: {label}: {match.group(0)!r} in {said!r}")
+    assert not offenders, "后端说给作者的话带着聊天口气：\n" + "\n".join(offenders)
+    # 自守卫：判据真的扫得动（探针是 2026-09-12 之前的原话）。
+    old = "这一轮它来回查了太多次，先停下来了。上面查到的东西还在，你可以看一眼，再告诉它接下来往哪儿走。"
+    assert any(re.search(p, old) for p in CHATTY_COPY)

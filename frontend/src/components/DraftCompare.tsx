@@ -67,14 +67,14 @@ export function DraftCompare({ chapter }: { chapter: number }) {
     <div className="compare-page">
       <header className="compare-head">
         <b>
-          {title} · {language === "zh" ? "并排比几稿" : "Compare drafts side by side"}
+          {title} · {language === "zh" ? "稿件并排对比" : "Compare drafts side by side"}
         </b>
         <span className="spacer" />
         {/* 这一页只读。**说出来**：不说的话，作者会在这儿找那颗「就用这一版」的按钮。 */}
         <span className="compare-note">
           {language === "zh"
-            ? "这一页只能读。要用哪一版，回工作台跟写作助手说。"
-            : "This page is read-only. To use a version, go back to the workbench and tell the writing assistant."}
+            ? "本页仅供阅读。选用某一版，请回到工作台告知写作助手。"
+            : "This page is read-only. To use a version, return to the workbench and tell the writing assistant."}
         </span>
       </header>
 
@@ -85,8 +85,8 @@ export function DraftCompare({ chapter }: { chapter: number }) {
       {offline && (
         <p className="compare-say">
           {language === "zh"
-            ? "这会儿连不上工作台的服务。回工作台那个标签页看看它还开着没有，再刷新这一页。"
-            : "Can’t reach the workbench’s service right now. Check whether that tab is still open, then refresh this page."}
+            ? "无法连接工作台服务。请确认工作台仍在运行，再刷新本页。"
+            : "The workbench service cannot be reached. Check that the workbench is still running, then refresh this page."}
         </p>
       )}
 
@@ -94,14 +94,13 @@ export function DraftCompare({ chapter }: { chapter: number }) {
         <p className="compare-say">
           {language === "zh" ? (
             <>
-              这个链接没说清是哪本书的第 {chapter} 章。回工作台，在写作助手那儿再点一次
-              「并排比」——那一下会把书一起带过来。
+              此链接未指明第 {chapter} 章属于哪本书。请回到工作台，在写作助手处重新点击
+              「并排查看」。
             </>
           ) : (
             <>
-              This link doesn’t say which book’s chapter {chapter} this is. Go back to the
-              workbench and click “Compare side by side” again from the writing assistant — that
-              will bring the book along.
+              This link does not say which book chapter {chapter} belongs to. Return to the
+              workbench and click “Compare side by side” again from the writing assistant.
             </>
           )}
         </p>
@@ -110,19 +109,19 @@ export function DraftCompare({ chapter }: { chapter: number }) {
       {book && drafts.isError && (
         <p className="compare-say">
           {language === "zh"
-            ? "这一章的稿子没读出来。刷新一下再看，它们还在。"
-            : "Couldn’t load this chapter’s drafts. Refresh and check again — they’re still there."}
+            ? "稿件读取失败，请刷新后重试。"
+            : "This chapter’s drafts could not be loaded; refresh to try again."}
         </p>
       )}
 
       {book && drafts.data && rows.length === 0 && (
         <p className="compare-say">
           {language === "zh" ? (
-            <>第 {chapter} 章这会儿桌上没有稿子。让写作助手写一稿，这一页就有东西了。</>
+            <>第 {chapter} 章尚无稿件。由写作助手起草后，可在此对比。</>
           ) : (
             <>
-              There are no drafts on the desk for chapter {chapter} right now. Have the writing
-              assistant write one, and this page will have something to show.
+              Chapter {chapter} has no drafts yet. Once the writing assistant drafts one, it can be
+              compared here.
             </>
           )}
         </p>
@@ -132,14 +131,14 @@ export function DraftCompare({ chapter }: { chapter: number }) {
         <p className="compare-say dim">
           {language === "zh" ? (
             <>
-              这一章桌上一共 {rows.length} 稿，先摊开最近的 {COMPARE_OPEN_MAX} 份；
-              更早的那几份收着，点「展开」就读得到。
+              本章共 {rows.length} 稿，默认展开最近的 {COMPARE_OPEN_MAX} 份；更早的稿件已收起，
+              点击「展开」查看。
             </>
           ) : (
             <>
-              This chapter has {rows.length} draft{rows.length === 1 ? "" : "s"} on the desk in
-              total; the most recent {COMPARE_OPEN_MAX} are shown first. The older ones are
-              collapsed — click “Expand” to read them.
+              This chapter has {rows.length} draft{rows.length === 1 ? "" : "s"}; the most recent{" "}
+              {COMPARE_OPEN_MAX} are expanded. Older ones are collapsed — click “Expand” to read
+              them.
             </>
           )}
         </p>

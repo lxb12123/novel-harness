@@ -56,14 +56,12 @@ export function CharacterEvidence({ characterId }: { characterId: string }) {
               现在这一格的填充路径只有后台整理那一条（换章触发 → 右栏「待确认」）。 */}
           {language === "zh" ? (
             <>
-              第 {chapter} 章还没有原文依据。写完一章翻到下一章时系统会自己去读它，
-              读出来的会摆在右栏「待确认」里等你点头。
+              第 {chapter} 章尚无原文依据。翻到下一章时系统会整理本章，整理结果列入右栏「待确认」。
             </>
           ) : (
             <>
-              No supporting passages in chapter {chapter} yet. Once you finish this chapter and
-              move to the next one, the system will read through it on its own — anything it
-              finds will wait in the "Pending" panel on the right for you to confirm.
+              No supporting passages in chapter {chapter} yet. Moving on to the next chapter
+              triggers processing of this one; results appear in the "Pending" panel on the right.
             </>
           )}
         </span>

@@ -1152,7 +1152,11 @@ class ToolSpec:
     handler: Callable[[Any, ToolContext], BaseModel]
 
     label: str = ""
-    """**说给小说作者听的那半句**（「读一章正文」），事件流拿它拼「正在……」。
+    """**说给小说作者听的那半句**（「读取正文」），事件流拿它拼「正在……」/「已……」。
+
+    **书面语，动宾短语**（2026-09-12，作者：屏幕上的话不许「人机」）：它会被拼成
+    「正在读取正文（第 40 章）。」和「已读取正文（第 40 章）。」两句，所以别写成
+    「读一章正文」那种口语，也别带主语。
 
     ── 为什么它在这张表上，而不在事件那一层的一张对照表里 ────────────────────
 
@@ -1189,7 +1193,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         description="查第 N 章正文里数出来谁在场。",
         args=SceneConstraintsArgs,
         handler=_handle_scene_constraints,
-        label="查这一章谁在场",
+        label="查询本章在场人物",
     ),
     ToolSpec(
         name="character_state",
@@ -1200,7 +1204,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=CharacterStateArgs,
         handler=_handle_character_state,
-        label="查一个人此刻的处境",
+        label="查询人物处境",
     ),
     ToolSpec(
         name="draft_chapter",
@@ -1219,7 +1223,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=DraftAsk,
         handler=_handle_draft_chapter,
-        label="写一稿",
+        label="起草",
         # 表里唯一一条又慢又没有副作用的工具 —— 见 `ToolSpec.concurrent`。
         concurrent=True,
     ),
@@ -1235,7 +1239,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=BookIndexArgs,
         handler=handle_book_index,
-        label="翻这本书的目录",
+        label="查阅目录",
     ),
     ToolSpec(
         name="character_chapters",
@@ -1247,7 +1251,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=CharacterChaptersArgs,
         handler=handle_character_chapters,
-        label="找这几个人同时出现的章",
+        label="查询人物同场章节",
     ),
     ToolSpec(
         name="chapter_summaries",
@@ -1259,7 +1263,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=ChapterSummariesArgs,
         handler=handle_chapter_summaries,
-        label="读这几章的摘要",
+        label="读取章节摘要",
     ),
     ToolSpec(
         name="chapter_text",
@@ -1269,7 +1273,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=ChapterTextArgs,
         handler=handle_chapter_text,
-        label="读一章正文",
+        label="读取正文",
     ),
     # ── 起草那一摊的另外两半（ADR 0022）。**追加在表尾，尽管它俩是 `draft_chapter` 的
     # 同伙**：按边界六，声明是能进稳定前缀的东西之一，在中间插一条会把它后面整段的
@@ -1284,7 +1288,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=DraftIdArgs,
         handler=_handle_save_draft,
-        label="把稿子存进那一章",
+        label="写入章节",
     ),
     ToolSpec(
         name="read_draft",
@@ -1295,7 +1299,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=DraftIdArgs,
         handler=_handle_read_draft,
-        label="把那一稿的全文取回来",
+        label="取回稿件全文",
     ),
     # ── 问作者（ADR 0024）。**追加在表尾**，理由同上面那两条。
     ToolSpec(
@@ -1314,7 +1318,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=AskAuthorArgs,
         handler=_handle_ask_author,
-        label="问你一句",
+        label="提问",
     ),
     # ── 记规矩（ADR 0023 决策二）。**追加在表尾**，理由同上面那几条。
     ToolSpec(
@@ -1337,7 +1341,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=RememberRuleArgs,
         handler=_handle_remember_rule,
-        label="记下你刚说的那条规矩",
+        label="记录写作要求",
     ),
     # ── 按编号取回这一轮被收起的结果（2026-08-15 设计，docs_dev 快照）。**追加在表尾**，
     # 理由同上面那几条：声明是稳定前缀的一部分，插在中间会把整段前缀的缓存作废。
@@ -1355,7 +1359,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=GetResultArgs,
         handler=_get_result_without_store,
-        label="取回刚查过的那份内容",
+        label="取回早先的查询结果",
     ),
     # ── 轨道核对（2026-08-23，轨道阶段 3）。**追加在表尾**，理由同上面那几条。
     #
@@ -1380,7 +1384,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=CheckTrackArgs,
         handler=_handle_check_track,
-        label="跟后面已经写完的章对一遍",
+        label="核对后续章节",
     ),
     # ── 右栏那四栏（2026-09-12，`agent/panels.py`）。**追加在表尾**，理由同上。
     #
@@ -1399,7 +1403,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=CharacterCardArgs,
         handler=handle_character_card,
-        label="翻一个人的角色卡",
+        label="查阅角色卡",
     ),
     ToolSpec(
         name="chapter_events",
@@ -1411,7 +1415,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=ChapterEventsArgs,
         handler=handle_chapter_events,
-        label="看这一章的事件",
+        label="查阅章节事件",
     ),
     ToolSpec(
         name="validation_rules",
@@ -1422,7 +1426,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=ValidationRulesArgs,
         handler=handle_validation_rules,
-        label="看检验规则",
+        label="查阅检验规则",
     ),
     ToolSpec(
         name="notifications",
@@ -1434,7 +1438,7 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         ),
         args=NotificationsArgs,
         handler=handle_notifications,
-        label="看通知",
+        label="查阅通知",
     ),
 )
 """**模式二的权限边界。这张表以外的能力，模型一律没有。**
@@ -1452,7 +1456,7 @@ TOOLS: Final[dict[str, ToolSpec]] = {spec.name: spec for spec in TOOL_TABLE}
 
 TOOL_NAMES: Final[frozenset[str]] = frozenset(TOOLS)
 
-UNNAMED_TOOL_LABEL: Final = "查一样东西"
+UNNAMED_TOOL_LABEL: Final = "查询资料"
 """表里认不出的那个名字，跟作者怎么说。**认不出的绝不原样回吐**（同 `stop_wording()`）。
 
 这一条不是防御性编程，它堵的是一个真的通路：**工具名是模型打进来的字**

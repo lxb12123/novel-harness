@@ -104,7 +104,7 @@ describe("章标题", () => {
     await screen.findByText(LINE);
 
     await user.dblClick(trigger());
-    const box = screen.getByRole("textbox", { name: "改这一章的名字" });
+    const box = screen.getByRole("textbox", { name: "修改章节标题" });
     expect(box).toHaveValue("血脉"); // 不是「第一章 血脉」
     expect(screen.getByText("第一章")).toBeInTheDocument(); // 章号还在屏幕上，原位
     // 双击那两下不该把挑章的单子留在屏幕上。
@@ -122,7 +122,7 @@ describe("章标题", () => {
     await screen.findByText(LINE);
 
     await user.dblClick(trigger());
-    await user.type(screen.getByRole("textbox", { name: "改这一章的名字" }), "乱改{Escape}");
+    await user.type(screen.getByRole("textbox", { name: "修改章节标题" }), "乱改{Escape}");
     expect(onRename).not.toHaveBeenCalled();
     expect(await screen.findByText(LINE)).toBeInTheDocument();
   });
@@ -133,8 +133,8 @@ describe("章标题", () => {
     await screen.findByText(LINE);
 
     await user.dblClick(trigger());
-    await user.clear(screen.getByRole("textbox", { name: "改这一章的名字" }));
-    await user.type(screen.getByRole("textbox", { name: "改这一章的名字" }), "   {Enter}");
+    await user.clear(screen.getByRole("textbox", { name: "修改章节标题" }));
+    await user.type(screen.getByRole("textbox", { name: "修改章节标题" }), "   {Enter}");
     expect(onRename).toHaveBeenCalledWith("第一章");
   });
 
@@ -145,7 +145,7 @@ describe("章标题", () => {
     await screen.findByText("他说第三章很好看。");
 
     await user.dblClick(trigger());
-    const box = screen.getByRole("textbox", { name: "改这一章的名字" });
+    const box = screen.getByRole("textbox", { name: "修改章节标题" });
     expect(box).toHaveValue("他说第三章很好看。");
     await user.clear(box);
     await user.type(box, "{Enter}");

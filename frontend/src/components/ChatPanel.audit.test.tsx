@@ -79,7 +79,7 @@ function renderWatched(ui: ReactElement, extra: Extra = []) {
   return { urls: () => spy.mock.calls.map(([url]) => String(url)) };
 }
 
-const say = () => screen.getByRole("textbox", { name: "跟写作助手说" });
+const say = () => screen.getByRole("textbox", { name: "输入消息" });
 const sendBtn = () => screen.getByRole("button", { name: "发送" });
 const errBoxes = () => [...document.querySelectorAll(".err-box")].map((e) => e.textContent ?? "");
 
@@ -231,7 +231,7 @@ describe("研发术语：整块面板的兜底分支", () => {
     await screen.findByText("无限创意，从此谱写");
     const user = userEvent.setup();
     await user.click(screen.getByRole("button", { name: "对话列表" }));
-    await screen.findByText(/还没有说过话/);
+    await screen.findByText(/尚无对话/);
     expect(devTerms(screenText())).toEqual([]);
   });
 
@@ -239,7 +239,7 @@ describe("研发术语：整块面板的兜底分支", () => {
     renderWatched(<ChatPanel />, [
       { match: /\/chats\/[^/]+$/, status: 404, body: CHAT_GONE },
     ]);
-    await screen.findByText(/这段对话没读出来/);
+    await screen.findByText(/此对话读取失败/);
     await settle();
     expect(devTerms(screenText())).toEqual([]);
   });
@@ -258,8 +258,8 @@ describe("研发术语：整块面板的兜底分支", () => {
     await settle();
     expect(screen.queryByText("无限创意，从此谱写")).toBeNull();
     await user.click(screen.getByRole("button", { name: "对话列表" }));
-    expect(screen.queryByText(/还没有说过话/)).toBeNull();
-    expect(errBoxes().join("\n")).toMatch(/没读出来/);
+    expect(screen.queryByText(/尚无对话/)).toBeNull();
+    expect(errBoxes().join("\n")).toMatch(/读取失败/);
     expect(devTerms(screenText())).toEqual([]);
   });
 
@@ -287,9 +287,9 @@ describe("研发术语：整块面板的兜底分支", () => {
     await screen.findByText(fixtures.chatDetail.messages[0].text);
     await user.click(screen.getByRole("button", { name: "对话列表" }));
     await user.click(
-      screen.getByRole("button", { name: `删掉这段对话：${fixtures.chats[0].title}` }),
+      screen.getByRole("button", { name: `删除对话：${fixtures.chats[0].title}` }),
     );
-    await user.click(screen.getByRole("button", { name: "删掉" }));
+    await user.click(screen.getByRole("button", { name: "删除" }));
 
     await waitFor(() => expect(errBoxes()).not.toHaveLength(0));
     expect(errBoxes().join("\n")).not.toContain("chat_not_found");
@@ -323,9 +323,9 @@ describe("研发术语：整块面板的兜底分支", () => {
     await screen.findByText(fixtures.chatStopped.message);
     await user.click(screen.getByRole("button", { name: "对话列表" }));
     await user.click(
-      screen.getByRole("button", { name: `删掉这段对话：${fixtures.chats[0].title}` }),
+      screen.getByRole("button", { name: `删除对话：${fixtures.chats[0].title}` }),
     );
-    await screen.findByRole("button", { name: "删掉" });
+    await screen.findByRole("button", { name: "删除" });
 
     expect(devTerms(screenText())).toEqual([]);
     turn.release();
@@ -474,11 +474,11 @@ describe("「停」", () => {
     await screen.findByText(fixtures.chatDetail.messages[0].text);
     await user.click(screen.getByRole("button", { name: "对话列表" }));
     await user.click(
-      screen.getByRole("button", { name: `删掉这段对话：${fixtures.chats[0].title}` }),
+      screen.getByRole("button", { name: `删除对话：${fixtures.chats[0].title}` }),
     );
-    await user.click(screen.getByRole("button", { name: "删掉" }));
+    await user.click(screen.getByRole("button", { name: "删除" }));
 
-    await screen.findByText("这段对话正在跑，先按「停」再删。");
+    await screen.findByText("该对话正在进行，请先点击「停」再删除。");
     expect(screenText()).not.toMatch(/删除失败|没能删掉/);
     expect(devTerms(screenText())).toEqual([]);
   });
@@ -505,8 +505,8 @@ describe("断在半路", () => {
     const rows = [...document.querySelectorAll(".chat-session")] as HTMLElement[];
     expect(rows).toHaveLength(2);
     const [doneRow, halfRow] = rows;
-    expect(within(halfRow).getByText(/上次断在半路/)).toBeInTheDocument();
-    expect(within(doneRow).queryByText(/上次断在半路/)).toBeNull();
+    expect(within(halfRow).getByText(/上一轮中断/)).toBeInTheDocument();
+    expect(within(doneRow).queryByText(/上一轮中断/)).toBeNull();
     // 一个数都不上屏：`pending_lookups` 是「还缺几个结果」，不是作者能理解的量。
     expect(halfRow.textContent).not.toMatch(/\b2\b/);
     expect(devTerms(screenText())).toEqual([]);

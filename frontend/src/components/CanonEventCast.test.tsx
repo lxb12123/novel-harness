@@ -63,7 +63,7 @@ describe("已确认的情节：谁在场、谁知道了", () => {
     expect(within(knowers).getByRole("checkbox", { name: "未来大能" })).not.toBeChecked();
     expect(within(knowers).queryByRole("checkbox", { name: "青云城主府" })).toBeNull();
     expect(within(knowers).queryByRole("checkbox", { name: "血脉秘密" })).toBeNull();
-    expect(screen.getByText(/不会把同一个人加两遍/)).toBeInTheDocument();
+    expect(screen.getByText(/不会重复添加/)).toBeInTheDocument();
   });
 
   it("什么都没动的时候保存不了 —— 那一次编辑后端会判空，日志里也不该多一条", async () => {
@@ -115,9 +115,9 @@ describe("已确认的情节：谁在场、谁知道了", () => {
     await user.click(within(knowers).getByRole("checkbox", { name: first.knowers[1].name }));
     await user.click(screen.getByRole("button", { name: "保存名单" }));
 
-    expect(await screen.findByText(/先看一眼最新的/)).toBeInTheDocument();
+    expect(await screen.findByText(/先查看最新版本/)).toBeInTheDocument();
     expect(posts(spy)).toHaveLength(1);
-    expect(screen.getByRole("button", { name: "看看最新的" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "查看最新版本" })).toBeInTheDocument();
     expect(document.body.textContent).not.toContain("stale_base_version");
   });
 
@@ -137,7 +137,7 @@ describe("已确认的情节：谁在场、谁知道了", () => {
     // §10 约束 8：静默的零和真的零不许长得一样。它可能已经被撤回，或者不在这一章。
     useCoords.setState({ focusEventId: "event:NOT_HERE" });
     renderWithApi(<CanonEventCast canonVersion={6} />);
-    expect(await screen.findByText(/没有找到刚才那条情节/)).toBeInTheDocument();
+    expect(await screen.findByText(/未找到该情节/)).toBeInTheDocument();
   });
 
   it("「分析本章」在这一栏的工具栏上，是一颗图标 —— 点它就发那一次分析", async () => {
@@ -176,6 +176,6 @@ describe("已确认的情节：谁在场、谁知道了", () => {
     ]);
     // **范围是「到这一章为止」，不是「这一章」**：这一格读的是 `valid_from <= 当前章`，
     // 空态那句话跟着说清楚（作者 2026-09-04 问的就是这个范围）。
-    expect(await screen.findByText(/到第 \d+ 章为止还没有已确认的情节/)).toBeInTheDocument();
+    expect(await screen.findByText(/截至第 \d+ 章尚无已确认的情节/)).toBeInTheDocument();
   });
 });

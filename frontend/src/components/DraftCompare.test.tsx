@@ -9,7 +9,7 @@ import { COMPARE_OPEN_MAX } from "../drafts";
 import { writeCompareHandoff } from "../route";
 import { DraftCompare } from "./DraftCompare";
 
-// 第三档：并排比几稿那一页（`#/compare/{章号}`，ADR 0022）。
+// 第三档：稿件并排对比那一页（`#/compare/{章号}`，ADR 0022）。
 //
 // **它是同一个应用的另一条路由**，不是另一个东西——工作台本来就是本地浏览器应用，
 // 所以「在新标签页里并排读三稿」= 一条哈希路由，零新基础设施。
@@ -56,7 +56,7 @@ describe("并排读", () => {
   it("**这一页只读** —— 要用哪一版，回工作台跟助手说（一个功能不留两个入口）", async () => {
     writeCompareHandoff({ book: "project:ID1", chapter: 2 });
     renderWithApi(<DraftCompare chapter={2} />);
-    await screen.findByText(/这一页只能读/);
+    await screen.findByText(/本页仅供阅读/);
     // 这儿没有「就用这一版」——落盘是助手的动作（ADR 0021 / 0022）。
     expect(screen.queryByRole("button", { name: /用这一版|写进|保存/ })).toBeNull();
   });
@@ -74,7 +74,7 @@ describe("并排读", () => {
     await screen.findByText("第 5 稿");
     await waitFor(() => expect(fullTextCalls(spy)).toHaveLength(COMPARE_OPEN_MAX));
     // 收着的那两份说出来了（不说的话，那两列看起来像加载失败）。
-    await screen.findByText(/一共 5 稿/);
+    await screen.findByText(/共 5 稿/);
 
     await user.click(screen.getByRole("button", { name: "展开第 4 稿" }));
     await waitFor(() => expect(fullTextCalls(spy)).toHaveLength(COMPARE_OPEN_MAX + 1));
@@ -85,7 +85,7 @@ describe("并排读", () => {
     renderWithApi(<DraftCompare chapter={7} />, [
       { match: /\/drafts(\?|$)/, body: listOf([]) },
     ]);
-    await screen.findByText(/第 7 章这会儿桌上没有稿子/);
+    await screen.findByText(/第 7 章尚无稿件/);
   });
 });
 
@@ -102,7 +102,7 @@ describe("这一页是哪本书的", () => {
     ]);
     const spy = vi.spyOn(globalThis, "fetch");
 
-    await screen.findByText(/这个链接没说清是哪本书/);
+    await screen.findByText(/此链接未指明/);
     await new Promise((r) => setTimeout(r, 40));
     expect(spy.mock.calls.filter(([u]) => /\/drafts/.test(String(u)))).toEqual([]);
   });
@@ -111,8 +111,8 @@ describe("这一页是哪本书的", () => {
     renderWithApi(<DraftCompare chapter={2} />, [
       { match: /\/api\/projects$/, status: 500, body: { detail: "boom" } },
     ]);
-    await screen.findByText(/连不上工作台的服务/);
-    expect(screen.queryByText(/这个链接没说清是哪本书/)).toBeNull();
+    await screen.findByText(/无法连接工作台服务/);
+    expect(screen.queryByText(/此链接未指明/)).toBeNull();
   });
 
   it("那次交接是**为另一章**留的：同样不猜", async () => {
@@ -121,7 +121,7 @@ describe("这一页是哪本书的", () => {
     renderWithApi(<DraftCompare chapter={2} />, [
       { match: /\/api\/projects$/, body: fixtures.projectsTwo },
     ]);
-    await screen.findByText(/这个链接没说清是哪本书/);
+    await screen.findByText(/此链接未指明/);
   });
 });
 
@@ -131,7 +131,7 @@ describe("路由：这条地址真的开得出那一页", () => {
     writeCompareHandoff({ book: "project:ID1", chapter: 2 });
     renderWithApi(<App />);
 
-    await screen.findByText(/并排比几稿/);
+    await screen.findByText(/稿件并排对比/);
     // 工作台那一整套（顶栏 / 三栏 / 编辑器）在这个标签页里一个都没挂。
     expect(screen.queryByRole("button", { name: "写作助手" })).toBeNull();
   });

@@ -15,7 +15,7 @@ describe("改一条已生效的事实被拒绝时，屏幕上说什么", () => {
     const failure = readCorrectionError(new ApiError(409, body("errorStaleCanon")));
     expect(failure.kind).toBe("stale");
     expect(failure.message).toMatch(/别处|刚刚被改过/);
-    expect(failure.message).toMatch(/先看一眼最新的/);
+    expect(failure.message).toMatch(/先查看最新版本/);
     expect(failure.message).not.toMatch(/重试|再试一次/);
     // 后端这一条只发两个版本号，没有 message —— 直接渲染 `error` 会摆出 `stale_base_version`。
     expect(failure.message).not.toContain("stale_base_version");

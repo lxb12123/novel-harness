@@ -38,7 +38,7 @@ const turnWith = (drafts: DraftCandidateView[]) => ({ ...fixtures.chatTurn, draf
  *  拿正文的开头当判据分不出「摊开了」和「还是那段预览」。 */
 const DETAIL = { ...fixtures.draftDetail, text: "（这一稿的全文，比预览长得多。）" };
 
-const say = () => screen.getByRole("textbox", { name: "跟写作助手说" });
+const say = () => screen.getByRole("textbox", { name: "输入消息" });
 
 /** 跑一轮，让那几稿摆出来。 */
 async function runTurn(user: ReturnType<typeof userEvent.setup>) {
@@ -104,7 +104,7 @@ describe("窄档（默认）：一稿一张卡", () => {
     expect(fullTextCalls(spy)[0]).toContain(encodeURIComponent(THREE[1].id));
     // 另两版：那一稿的自述 + 定长预览，**一整章正文一个字节都没取**。
     expect(document.querySelectorAll(".draft-preview")).toHaveLength(2);
-    expect(screen.getByText("已经写进这一章")).toBeInTheDocument();
+    expect(screen.getByText("已写入本章")).toBeInTheDocument();
   });
 
   it("**一批都没落盘：一版都不摊开**，后端没挑，这儿也不挑", async () => {
@@ -120,7 +120,7 @@ describe("窄档（默认）：一稿一张卡", () => {
     expect(document.querySelectorAll(".draft-preview")).toHaveLength(3);
     await new Promise((r) => setTimeout(r, 40));
     expect(fullTextCalls(spy)).toEqual([]);
-    expect(screen.queryByText("已经写进这一章")).toBeNull();
+    expect(screen.queryByText("已写入本章")).toBeNull();
   });
 
   it("点「展开」才去取那一整章 —— 取回来的是全文，不是那段预览", async () => {
@@ -157,7 +157,7 @@ describe("窄档（默认）：一稿一张卡", () => {
     renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) }]);
     await runTurn(user);
     // 落盘不问作者（ADR 0021 的核心），所以这一侧欠他「看得见 + 改得掉」。
-    await screen.findByText(/已经写进书里了.*历史/);
+    await screen.findByText(/已写入正文.*历史/);
   });
 });
 
@@ -165,7 +165,7 @@ describe("被砍断的那一稿：屏幕必须说它没写完", () => {
   // 作者按「停」时已经写出来的那部分留了下来（迁移 010）。**它和一份写完的稿子在这块
   // 屏幕上长得一模一样**：预览一样、全文一样、字数只是少一点。不说的话，作者会以为
   // 写作模型就写成了这样——而这一整条链上没有第二个地方能告诉他。
-  const STOPPED = "按「停」中断了，这一稿只写到这里，后面没有写完。";
+  const STOPPED = "已按「停」中断，稿件未完成，止于此处。";
 
   it("**那句标注画出来了**，而且照抄后端那一句", async () => {
     const user = userEvent.setup();
@@ -233,7 +233,7 @@ describe("第三档的入口：那条链接", () => {
     renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) }]);
     await runTurn(user);
 
-    const link = screen.getByRole("link", { name: /并排比第 2 章的稿子/ });
+    const link = screen.getByRole("link", { name: /并排查看第 2 章各稿/ });
     expect(link).toHaveAttribute("href", "#/compare/2");
     expect(link).toHaveAttribute("target", "_blank");
     expect(rawIds(link.getAttribute("href") ?? "")).toEqual([]);
@@ -245,7 +245,7 @@ describe("第三档的入口：那条链接", () => {
     await runTurn(user);
     expect(readCompareHandoff()).toBeNull();
 
-    await user.click(screen.getByRole("link", { name: /并排比第 2 章的稿子/ }));
+    await user.click(screen.getByRole("link", { name: /并排查看第 2 章各稿/ }));
 
     expect(readCompareHandoff()).toEqual({ book: "project:ID1", chapter: 2 });
   });
@@ -254,7 +254,7 @@ describe("第三档的入口：那条链接", () => {
     // 候选既不在正文里也不在对话里（ADR 0022）——没有这条入口，作者关掉那一轮的回执
     // 就再也看不到它们了。零的时候一个字都不画。
     renderWithApi(<ChatPanel />);
-    const link = await screen.findByRole("link", { name: /还摆着 1 稿/ });
+    const link = await screen.findByRole("link", { name: /本章 1 稿/ });
     expect(link).toHaveAttribute("href", "#/compare/2");
   });
 

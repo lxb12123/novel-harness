@@ -80,28 +80,28 @@ import { CompareLink, DraftCandidates } from "./DraftCandidates";
  *  §10 约束 8：不知道就说不知道，编一个理由比不说更贵。 */
 const TURN_FAILED = (language: Language): string =>
   language === "zh"
-    ? "这一轮没跑成，而系统没能说清是为什么。刷新一下看看这段对话现在是什么样。"
-    : "This round didn't go through, and the system couldn't say why. Refresh to see what this conversation looks like now.";
+    ? "本轮未完成，未返回原因。请刷新后查看对话。"
+    : "This round did not complete and no reason was returned. Refresh to see the conversation.";
 const CREATE_FAILED = (language: Language): string =>
   language === "zh"
-    ? "没能开一段新的对话，而系统没能说清是为什么。"
-    : "Couldn't start a new conversation, and the system couldn't say why.";
+    ? "新建对话失败，未返回原因。"
+    : "Could not create a new conversation; no reason was returned.";
 /** 中途那一句**没送出去**（网断了 / 这段对话不在了）。同 `STOP_FAILED`：一声不吭等于
  *  让他以为说出去了，而那句话其实哪儿都没到。 */
 const SAY_FAILED = (language: Language): string =>
   language === "zh"
-    ? "这一句没送出去，而系统没能说清是为什么。它还在输入框里，等这一轮跑完再发一次。"
-    : "That message didn't go through, and the system couldn't say why. It's still in the box — send it again once this round finishes.";
+    ? "消息未发出，未返回原因。内容仍在输入框中，可在本轮结束后重新发送。"
+    : "The message was not sent and no reason was returned. It is still in the input box; send it again after this round ends.";
 const STOP_FAILED = (language: Language): string =>
   language === "zh"
-    ? "这一下「停」没送出去，而系统没能说清是为什么。这一轮可能还在跑，过一会儿再按一次。"
-    : "Clicking \"Stop\" didn't go through, and the system couldn't say why. This round may still be running — try again in a moment.";
+    ? "「停」未送达，未返回原因。本轮可能仍在进行，请稍后重试。"
+    : "Stop was not delivered and no reason was returned. This round may still be running; try again shortly.";
 /** 列表读不出来。**不许让屏幕替它说「你还没说过话」**——那是一句它不知道真假的话，
  *  而作者三个月的对话可能都在里面（§10 约束 8）。 */
 const LIST_FAILED = (language: Language): string =>
   language === "zh"
-    ? "这本书有哪几段对话，这会儿没读出来。下面是空的不代表你没说过话——刷新一下再看。"
-    : "Couldn't load which conversations this book has right now. An empty list below doesn't mean you haven't said anything — refresh and check again.";
+    ? "对话列表读取失败；下方为空不代表没有对话。请刷新后查看。"
+    : "The conversation list could not be loaded; an empty list here does not mean there are none. Refresh to check.";
 
 /** 离底不到这么多像素就算「贴着底」。8px 是给亚像素取整留的，不是给「差一点点」的：
  *  作者往上翻了哪怕一行，就是不想被拽回去。 */
@@ -198,8 +198,8 @@ function DraftingBox({ draft }: { draft: LiveDraft }) {
       <span className="chat-drafting-head">
         {draft.done ||
           (language === "zh"
-            ? `正在写第 ${draft.chapter} 章的一稿…`
-            : `Writing a draft of chapter ${draft.chapter}…`)}
+            ? `正在起草第 ${draft.chapter} 章…`
+            : `Drafting chapter ${draft.chapter}…`)}
       </span>
       {draft.text ? (
         <p className="chat-drafting-text" ref={text.ref} onScroll={text.onScroll}>
@@ -207,7 +207,7 @@ function DraftingBox({ draft }: { draft: LiveDraft }) {
         </p>
       ) : (
         <p className="chat-drafting-wait">
-          {language === "zh" ? "还没落下第一个字。" : "Not a single word down yet."}
+          {language === "zh" ? "尚未输出正文" : "No text yet"}
         </p>
       )}
     </div>
@@ -288,8 +288,8 @@ function RunningStrip({ since, progress, queued, queuedNote, stopping }: {
           {/* 「停」送到之后这行换一句：工作已经停了，它正在问作者一句（后端 debrief）。
               秒表照走——那一句也是在花时间，而且再按一次「停」连它也停。 */}
           {stopping
-            ? language === "zh" ? "停下来了，它正在问你一句 · " : "Stopped — it is asking you something · "
-            : language === "zh" ? "正在跑这一轮 · " : "This round is running · "}
+            ? language === "zh" ? "已停止，写作助手正在提问 · " : "Stopped; the assistant is asking a question · "
+            : language === "zh" ? "本轮进行中 · " : "Round in progress · "}
           {elapsedText(now - since, language)}
         </span>
       </div>
@@ -318,7 +318,7 @@ function AskedCard({ asked, onPick, busy }: {
   busy: boolean;
 }) {
   const language = useLanguage((s) => s.language);
-  const waitingLabel = language === "zh" ? "它在等你回一句" : "It's waiting for your reply";
+  const waitingLabel = language === "zh" ? "写作助手在等待回答" : "The assistant is waiting for your answer";
   return (
     <div className="chat-asked" role="group" aria-label={waitingLabel}>
       <span className="chat-asked-head">{waitingLabel}</span>
@@ -334,13 +334,13 @@ function AskedCard({ asked, onPick, busy }: {
           </div>
           <span className="chat-asked-note">
             {language === "zh"
-              ? "点一个就当你这么答了；想说别的就在下面直接写。"
-              : "Click one and that counts as your answer; to say something else, just type it below."}
+              ? "点选一项即作为回答，也可在下方输入其他回答"
+              : "Select one as your answer, or type a different answer below"}
           </span>
         </>
       ) : (
         <span className="chat-asked-note">
-          {language === "zh" ? "在下面写一句回它。" : "Write a reply to it below."}
+          {language === "zh" ? "请在下方输入回答" : "Type your answer below"}
         </span>
       )}
     </div>
@@ -713,8 +713,8 @@ export function ChatPanel() {
         {onDesk > 0 && (
           <CompareLink pid={pid} chapter={chapter}>
             {language === "zh"
-              ? `还摆着 ${onDesk} 稿 ↗`
-              : `${onDesk} draft${onDesk === 1 ? "" : "s"} still on the desk ↗`}
+              ? `本章 ${onDesk} 稿 ↗`
+              : `${onDesk} draft${onDesk === 1 ? "" : "s"} for this chapter ↗`}
           </CompareLink>
         )}
         {/* 「这一章的规矩」那颗按钮原来在这儿。撤掉的理由写在上面 `listOpen` 那一段。 */}
@@ -755,10 +755,10 @@ export function ChatPanel() {
         {detail.isError && (
           <div className="err-box">
             {language === "zh" ? (
-              <>这段对话没读出来 —— 它可能已经被删掉了。从「对话列表」里挑一段，或者开一段新的。</>
+              <>此对话读取失败，可能已被删除。请从「对话列表」选择其他对话，或新建对话。</>
             ) : (
               <>
-                Couldn’t load this conversation — it may have been deleted. Pick another one from
+                This conversation could not be loaded; it may have been deleted. Choose another from
                 “Conversations”, or start a new one.
               </>
             )}
@@ -799,7 +799,7 @@ export function ChatPanel() {
             }}
           >
             {language === "zh"
-              ? `看更早的 ${window.hidden} 条`
+              ? `查看更早的 ${window.hidden} 条`
               : `See ${window.hidden} earlier message${window.hidden === 1 ? "" : "s"}`}
           </button>
         )}
@@ -857,13 +857,13 @@ export function ChatPanel() {
             换成图标」。**框自己画边框，textarea 不画**，否则框里套一个框。 */}
         <div className="chat-say-box">
         <textarea
-          aria-label={language === "zh" ? "跟写作助手说" : "Talk to the writing assistant"}
+          aria-label={language === "zh" ? "输入消息" : "Message the writing assistant"}
           /* 占位符只说「这儿输入什么」。**键盘手势搬到框底下那行小字**（2026-09-07）：
              原来它写的是「开始写作…（Enter 发送，Shift + Enter 换行）」——那时上面
              空态的标题也是「开始写作」，同一句话摆两遍，后面还挂一份说明书，
              一个占位符干了三件事。 */
           placeholder={
-            language === "zh" ? "跟写作助手说" : "Talk to the writing assistant"
+            language === "zh" ? "输入消息" : "Message the writing assistant"
           }
           rows={3}
           value={said}
@@ -945,8 +945,8 @@ export function ChatPanel() {
         {running && !runningHere && (
           <p className="chat-say-note">
             {language === "zh"
-              ? "另一段对话正在跑，跑完才能在这儿说话。"
-              : "Another conversation is running — you can talk here again once it finishes."}
+              ? "另一段对话正在进行，结束后方可在此发送"
+              : "Another conversation is in progress; sending here resumes when it finishes"}
           </p>
         )}
       </div>

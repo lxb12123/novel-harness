@@ -1198,36 +1198,20 @@ class StopReason(StrEnum):
 
 
 _STOP_WORDING: Final[dict[StopReason, str]] = {
-    StopReason.DONE: "说完了。",
-    StopReason.ASKED_AUTHOR: "它有件事拿不准，问了你一句，正等着你答。",
-    StopReason.STEP_LIMIT: (
-        "这一轮它来回查了太多次，先停下来了。上面查到的东西还在，"
-        "你可以看一眼，再告诉它接下来往哪儿走。"
-    ),
-    StopReason.COST_LIMIT: (
-        "这一轮用掉的额度到顶了，先停下来，免得一直烧下去。要接着往下就再说一句。"
-    ),
-    StopReason.BATCH_TOO_WIDE: (
-        "它一口气要做的事太多了，先拦下来。挑一件最要紧的告诉它，或者把范围说小一点。"
-    ),
-    StopReason.AUTHOR_STOPPED: "按你的意思停下了。已经查到的东西留着。",
-    StopReason.REPEATED_CALL: (
-        "它在反复查同一件事，问不出新东西了，先停下来。换个说法，"
-        "或者直接告诉它你想要的是什么。"
-    ),
-    StopReason.NO_OUTPUT: "它这一次什么都没说，也没去查任何东西。再说一遍试试。",
+    StopReason.DONE: "回复完成。",
+    StopReason.ASKED_AUTHOR: "写作助手提出了一个问题，等待回答。",
+    StopReason.STEP_LIMIT: "本轮查询次数已达上限，已停止。已查到的内容保留，可补充说明后继续。",
+    StopReason.COST_LIMIT: "本轮用量已达上限，已停止。发送新消息可继续。",
+    StopReason.BATCH_TOO_WIDE: "本轮同时要做的事项过多，已停止。请缩小范围，或指定优先事项。",
+    StopReason.AUTHOR_STOPPED: "已停止。已查到的内容保留。",
+    StopReason.REPEATED_CALL: "同一查询重复多次、没有新结果，已停止。请换一种说法，或明确要求。",
+    StopReason.NO_OUTPUT: "本轮没有回复，也没有查询。请重新发送。",
     StopReason.TOOL_STUCK: (
-        "有几次查询一直查不成，先停下来了。多半是那几个名字这本书里还没有"
-        "（新出场的人系统还不认得），或者那一章还没有正文。"
-        "你可以直接告诉它那是谁，或者让它别查了、就照现在知道的写。"
+        "多次查询未成功，已停止。可能是人物尚未收入角色册，或该章尚无正文。"
+        "可直接说明人物身份，或要求按现有资料继续。"
     ),
-    StopReason.CONTEXT_FULL: (
-        "这段对话说得太长，装不下了。开一段新的对话，或者把要问的说得短一点——"
-        "**你说过的话一句都没被删掉**。"
-    ),
-    StopReason.MODEL_UNREACHABLE: (
-        "联系不上写作模型，这一轮没跑成。等一下再试；一直这样的话去顶栏「AI 设置」看一眼。"
-    ),
+    StopReason.CONTEXT_FULL: "对话长度已达上限。请新建对话，或缩短问题；当前对话记录未删减。",
+    StopReason.MODEL_UNREACHABLE: "无法连接写作模型，本轮未完成。请稍后重试，或检查顶栏「AI 设置」。",
 }
 
 
@@ -1238,7 +1222,7 @@ def stop_wording(reason: StopReason) -> str:
     `frontend/src/backendMessages.ts`）：`StopReason` 是封闭枚举，认不出
     只可能是这张表漏了行，而漏掉的那一行会以 `tool_stuck` 的形态出现在作者的屏幕上。
     """
-    return _STOP_WORDING.get(reason, "这一轮先停下来了。")
+    return _STOP_WORDING.get(reason, "本轮已停止。")
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -1346,7 +1330,7 @@ class TurnEvent(BaseModel):
     @classmethod
     def tool_started(cls, name: str, *, index: int = 0, total: int = 0) -> TurnEvent:
         label = tool_label(name)
-        where = f"（这一批 {total} 件里的第 {index} 件）" if total > 1 else ""
+        where = f"（{index}/{total}）" if total > 1 else ""
         return cls(
             kind=TurnEventKind.TOOL_STARTED,
             said_to_author=f"正在{label}{where}。",
@@ -1366,11 +1350,7 @@ class TurnEvent(BaseModel):
         """
         label = tool_label(outcome.name)
         which = "" if outcome.chapter is None else f"（第 {outcome.chapter} 章）"
-        said = (
-            f"{label}{which}，好了。"
-            if outcome.ok
-            else f"{label}{which}，这一次没成——它看得见为什么，会自己换个法子。"
-        )
+        said = f"已{label}{which}。" if outcome.ok else f"{label}{which}未成功。"
         return cls(
             kind=TurnEventKind.TOOL_FINISHED,
             said_to_author=said,
@@ -1402,7 +1382,7 @@ class TurnEvent(BaseModel):
     def draft_started(cls, chapter: int, *, stream: int = 0) -> TurnEvent:
         return cls(
             kind=TurnEventKind.DRAFT_STARTED,
-            said_to_author=f"正在写第 {chapter} 章的一稿。",
+            said_to_author=f"正在起草第 {chapter} 章。",
             chapter=chapter,
             stream=stream,
         )
@@ -1426,9 +1406,9 @@ class TurnEvent(BaseModel):
         """**半截的那一稿不许说成写好了。** 一段断在半句的正文，作者若不知道它是被砍断的，
         会把那个断口当成一种有意的写法（同 `DraftFullText.stopped_reason`）。"""
         said = (
-            f"第 {chapter} 章的第 {ordinal} 稿停在这儿了，{units} 字，没写完。"
+            f"第 {chapter} 章第 {ordinal} 稿已中止，{units} 字，未完成。"
             if stopped
-            else f"第 {chapter} 章的第 {ordinal} 稿写好了，{units} 字。"
+            else f"第 {chapter} 章第 {ordinal} 稿完成，{units} 字。"
         )
         return cls(
             kind=TurnEventKind.DRAFT_KEPT,
@@ -1454,7 +1434,7 @@ class TurnEvent(BaseModel):
         """
         return cls(
             kind=TurnEventKind.DRAFT_FAILED,
-            said_to_author=f"第 {chapter} 章那一稿没写成，这一条先停在这儿了。",
+            said_to_author=f"第 {chapter} 章起草未成功。",
             chapter=chapter,
             stream=stream,
         )
@@ -1465,7 +1445,7 @@ class TurnEvent(BaseModel):
         引擎那半句只说「有人在等你」。"""
         return cls(
             kind=TurnEventKind.ASKED_AUTHOR,
-            said_to_author="它有件事拿不准，问了你一句，正等着你答。",
+            said_to_author=_STOP_WORDING[StopReason.ASKED_AUTHOR],
             asked=question,
         )
 

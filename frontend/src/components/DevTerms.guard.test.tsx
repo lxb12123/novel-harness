@@ -132,11 +132,11 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     // （`chat_session:…`）、停止原因的机器码（`done` / `context_full`）、
     // 上下文回执那七个 snake_case 字段，全都在它手上过一遍。
     ["写作助手", <ChatPanel key="cp" />],
-    // 并排比几稿那一页（ADR 0022）。它是**开在另一个标签页里**的一整页屏幕，
+    // 稿件并排对比那一页（ADR 0022）。它是**开在另一个标签页里**的一整页屏幕，
     // 而它手上全是形状可疑的东西：候选的内部标识（`draft:01J…`）、书的标识、
     // 那一稿的自述和定长预览。没被扫到的组件等于没有守卫，这一页尤其——
     // 作者在这儿读的是三章正文，任何一个漏出来的码都摆在正文旁边。
-    ["并排比几稿", <DraftCompare key="dc" chapter={2} />],
+    ["稿件并排对比", <DraftCompare key="dc" chapter={2} />],
     // 「你交代过的」那张表（ADR 0028 + 迁移 016）。它手上形状可疑的东西有两样：
     // 会话的内部标识（`chat_session:…`，那一列今天只渲染标题，探针在下面那条断言里）
     // 和模型自己写的那句时效——**那句话是模型写的，不是引擎的措辞表出来的**，
@@ -285,7 +285,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
       { match: /\/chats$/, body: [{ ...fixtures.chats[0], pending_lookups: 3, running: true }] },
     ]);
     await user.click(await screen.findByRole("button", { name: "对话列表" }));
-    await screen.findByText(/上次断在半路/);
+    await screen.findByText(/上一轮中断/);
     expect(devTerms(screenText())).toEqual([]);
   });
 
@@ -306,7 +306,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     };
     renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: noisy }]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
-    await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "问一句");
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "问一句");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
     await screen.findByText(ROUND_DONE);
@@ -330,7 +330,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     };
     renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turn }]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
-    await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "写三个版本");
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "写三个版本");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
     await screen.findByText("第 3 稿");
@@ -362,7 +362,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
       },
     ]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
-    await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "查一下");
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "查一下");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
     const strip = await screen.findByRole("status");
@@ -389,10 +389,10 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
       },
     ]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
-    await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "写一稿");
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "写一稿");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
-    await screen.findByText("还没落下第一个字。");
+    await screen.findByText("尚未输出正文");
     expect(devTerms(screenText())).toEqual([]);
 
     release(
@@ -411,7 +411,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     const asked = {
       ...fixtures.chatTurn,
       reason: "asked_author",
-      message: "它有件事拿不准，问了你一句，正等着你答。",
+      message: "写作助手提出了一个问题，等待回答。",
       asked: {
         question: "这一场你想让萧决知道那件事吗？",
         options: ["让他知道", "先瞒着"],
@@ -421,10 +421,10 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
       { method: "POST", match: /\/turn\/events$/, stream: turnStream(asked) },
     ]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
-    await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "这一场怎么写");
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "这一场怎么写");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
-    await screen.findByRole("group", { name: "它在等你回一句" });
+    await screen.findByRole("group", { name: "写作助手在等待回答" });
     expect(devTerms(screenText())).toEqual([]);
   });
 
@@ -434,10 +434,10 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
       { method: "POST", match: /\/turn\/events$/, stream: [TURN_MIDDLE[0]] },
     ]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
-    await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "问一句");
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "问一句");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
-    await screen.findByText(/这一轮没跑成/);
+    await screen.findByText(/本轮未完成/);
     expect(devTerms(screenText())).toEqual([]);
   });
 
@@ -449,7 +449,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     const stopped = {
       ...fixtures.chatTurn,
       reason: "author_stopped",
-      message: "按你的意思停下了。已经查到的东西留着。",
+      message: "已停止。已查到的内容保留。",
       // 它没问出那一句（`reply` 空）：回执上那句才会画出来给这儿扫（`chat.ts::receiptSays`）。
       reply: "",
       drafts: [{ ...one, stopped_reason: "作者中途按了停，这一稿没写完。" }],
@@ -458,7 +458,7 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
       { method: "POST", match: /\/turn\/events$/, stream: turnStream(stopped) },
     ]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
-    await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "写一稿");
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "写一稿");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
     await screen.findByText(stopped.message);
@@ -495,14 +495,14 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     const full = {
       ...fixtures.chatTurn,
       reason: "context_full",
-      message: "这段对话说得太长，装不下了。开一段新的对话——**你说过的话一句都没被删掉**。",
+      message: "这段对话说得太长，装不下了。开一段新的对话——**当前对话记录未删减**。",
     };
     renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: full }]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
-    await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "问一句");
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "问一句");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
-    await screen.findByText("你说过的话一句都没被删掉");
+    await screen.findByText("当前对话记录未删减");
     expect(document.body.textContent).not.toContain("**");
     // 停止原因是机器码，它一个字都不该跟着那句话上屏。
     expect(devTerms(screenText())).toEqual([]);

@@ -58,41 +58,41 @@ function noticeBody(item: SystemNotification, language: Language): string {
 // 由 `ProposalNotificationRow` 自己拼，不读这张表。
 const KIND_TITLE: Record<SystemNotification["kind"], { zh: string; en: string }> = {
   summary_mismatch: {
-    zh: "总结与正文可能对不上",
-    en: "The summary and the text may not match",
+    zh: "总结与正文可能不一致",
+    en: "The summary may not match the text",
   },
   background_failure: {
-    zh: "后台有一件事没办成",
-    en: "Something didn't finish in the background",
+    zh: "后台任务未完成",
+    en: "A background task did not finish",
   },
   validation_blocked: {
-    zh: "这一章的检查需要留意",
+    zh: "本章检验需要处理",
     en: "This chapter's check needs attention",
   },
   // 措辞刻意和上一条分开：那一条**停掉了**这一章的自动整理，这一条没有。
   text_advisory: {
-    zh: "这一段值得再看一眼",
-    en: "This passage is worth another look",
+    zh: "此段落建议复核",
+    en: "This passage may need review",
   },
   // 措辞刻意不含「失败」二字：这一次没失败，只是一件都没留下（027）。
   extraction_yielded_nothing: {
-    zh: "这一章什么都没整理出来",
-    en: "Nothing came out of processing this chapter",
+    zh: "本章未整理出内容",
+    en: "Nothing was extracted from this chapter",
   },
   // 措辞刻意不说「切章器出错」——它没错，是这本书自带了一页跟正文长得一样的目录（032）。
   import_toc_skipped: {
-    zh: "导入时跳过了几个空章",
-    en: "A few empty chapters were skipped during import",
+    zh: "导入时跳过了空章节",
+    en: "Empty chapters were skipped during import",
   },
   // 更贴身的家在角色卡的事件时间线上（`CharacterEventRow.cast_changed`），
   // 这张通用面板只是它的第二个出口——标题照样不能漏，漏了就是 034 之前
   // 那批码原样摆屏幕的同一种坏法。
   event_cast_changed: {
-    zh: "一件事的参与者变了",
-    en: "The people in an event changed",
+    zh: "事件参与者已变更",
+    en: "An event's cast changed",
   },
   proposal_conflict: { zh: "关系冲突", en: "Conflicting fact" },
-  proposal_low_confidence: { zh: "需要确认的情节", en: "Event to confirm" },
+  proposal_low_confidence: { zh: "待确认的情节", en: "Event awaiting confirmation" },
 };
 
 function NotificationRow({
@@ -110,9 +110,9 @@ function NotificationRow({
   const failure =
     refusalText(
       ignore.error,
-      language === "zh" ? "没能忽略这条通知。" : "Couldn't dismiss this notification.",
+      language === "zh" ? "忽略失败，请重试。" : "This notification could not be dismissed; try again.",
     ) ??
-    refusalText(undoTocSkip.error, language === "zh" ? "没能撤销——" : "Couldn't undo —");
+    refusalText(undoTocSkip.error, language === "zh" ? "撤销失败，请重试。" : "Undo failed; try again.");
 
   const go = () => {
     if (item.chapter_number !== null) openChapter(item.chapter_number);
@@ -140,12 +140,12 @@ function NotificationRow({
       <div className="actions">
         {item.jump ? (
           <button className="link" onClick={goToQuote}>
-            {language === "zh" ? "去这一句 →" : "Go to this sentence →"}
+            {language === "zh" ? "查看原句 →" : "Go to the sentence →"}
           </button>
         ) : (
           item.chapter_number !== null && (
             <button className="link" onClick={go}>
-              {language === "zh" ? "去这一章 →" : "Go to this chapter →"}
+              {language === "zh" ? "查看该章 →" : "Go to the chapter →"}
             </button>
           )
         )}
@@ -158,8 +158,8 @@ function NotificationRow({
             }
           >
             {language === "zh"
-              ? ignore.isPending ? "正在忽略…" : "不再提醒这一条"
-              : ignore.isPending ? "Dismissing…" : "Don't remind me about this"}
+              ? ignore.isPending ? "忽略中…" : "忽略"
+              : ignore.isPending ? "Dismissing…" : "Dismiss"}
           </button>
         )}
         {item.actions.includes("undo_toc_skip") && (
@@ -171,7 +171,7 @@ function NotificationRow({
             }
           >
             {language === "zh"
-              ? undoTocSkip.isPending ? "正在撤销…" : "撤销"
+              ? undoTocSkip.isPending ? "撤销中…" : "撤销"
               : undoTocSkip.isPending ? "Undoing…" : "Undo"}
           </button>
         )}
@@ -246,12 +246,12 @@ function CollapsedKind({
       <div className="actions">
         <button className="link" onClick={() => setOpen(!open)}>
           {language === "zh"
-            ? open ? "收起" : "逐条看"
-            : open ? "Collapse" : "See each one"}
+            ? open ? "收起" : "展开"
+            : open ? "Collapse" : "Expand"}
         </button>
         {chapters.length > 0 && (
           <button className="link" onClick={() => openChapter(chapters[0])}>
-            {language === "zh" ? `去第 ${chapters[0]} 章 →` : `Go to chapter ${chapters[0]} →`}
+            {language === "zh" ? `查看第 ${chapters[0]} 章 →` : `Go to chapter ${chapters[0]} →`}
           </button>
         )}
       </div>
@@ -291,7 +291,7 @@ function ReviewRefusal({ error, onStale }: { error: unknown; onStale: () => void
       <div>{failure.message}</div>
       {failure.kind === "stale" && (
         <button className="link" onClick={onStale}>
-          {language === "zh" ? "看看最新的" : "See the latest version"}
+          {language === "zh" ? "查看最新版本" : "See the latest version"}
         </button>
       )}
     </div>
@@ -417,7 +417,7 @@ function ProposalEditor({
   return (
     <div className="cast-editor">
       <label className="row cast-summary">
-        <span>{language === "zh" ? "这件事怎么说" : "How to describe this event"}</span>
+        <span>{language === "zh" ? "事件概要" : "Event summary"}</span>
         <input value={summary} onChange={(e) => setSummary(e.target.value)} />
       </label>
       {/* 空概要后端会拒（422）。**在按下按钮之前就说**，别让作者去撞一次拒绝
@@ -425,9 +425,9 @@ function ProposalEditor({
       {blank && (
         <div className="row dim">
           {language === "zh" ? (
-            <>这件事总得有句话 —— 整条不要的话用「驳回」。</>
+            <>概要不能为空；如不需要此事件，请使用「驳回」。</>
           ) : (
-            <>This event needs some description — if you don’t want it at all, use “Reject” instead.</>
+            <>The summary cannot be empty; to discard the event, use “Reject”.</>
           )}
         </div>
       )}
@@ -437,11 +437,11 @@ function ProposalEditor({
       <div className="actions">
         <button disabled={blank || nothing || pending} onClick={submit}>
           {language === "zh"
-            ? pending ? "收下中…" : "改完收下"
-            : pending ? "Accepting…" : "Edit and accept"}
+            ? pending ? "保存中…" : "修改后接受"
+            : pending ? "Accepting…" : "Accept with edits"}
         </button>
         <button className="link" onClick={onCancel}>
-          {language === "zh" ? "不改了" : "Cancel"}
+          {language === "zh" ? "取消" : "Cancel"}
         </button>
       </div>
     </div>
@@ -553,7 +553,7 @@ function ProposalNotificationRow({
         <div className="actions">
           <button onClick={() => onReview("accept")}>{language === "zh" ? "接受" : "Accept"}</button>
           {editable && (
-            <button onClick={() => setEditing(true)}>{language === "zh" ? "改一改" : "Edit"}</button>
+            <button onClick={() => setEditing(true)}>{language === "zh" ? "修改" : "Edit"}</button>
           )}
           <button onClick={() => onReview("reject")}>{language === "zh" ? "驳回" : "Reject"}</button>
         </div>
@@ -816,8 +816,8 @@ export function SystemNotifications() {
         {!loading && empty && (
           <span className="empty">
             {language === "zh"
-              ? "现在没有需要你注意的。写就是了。"
-              : "Nothing needs your attention right now. Just write."}
+              ? "没有待处理的通知"
+              : "No notifications to handle"}
           </span>
         )}
         <ProvisionalEventsRow views={views} />

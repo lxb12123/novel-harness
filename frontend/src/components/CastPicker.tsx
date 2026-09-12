@@ -69,8 +69,8 @@ export function CastPicker({
           {people.length === 0 ? (
             <span className="empty">
               {language === "zh"
-                ? "角色册里还没有人物 —— 先去「角色册」那一格加人。"
-                : 'The roster doesn\'t have any characters yet — add one on the "Roster" tab first.'}
+                ? "角色册中尚无人物，请先在「角色册」添加。"
+                : 'The roster has no characters yet; add one on the "Roster" tab first.'}
             </span>
           ) : (
             people.map((p) => (
@@ -88,8 +88,8 @@ export function CastPicker({
       ))}
       <div className="row dim">
         {language === "zh"
-          ? "勾上的就是改完之后的名单 —— 再保存一次不会把同一个人加两遍。"
-          : "Whoever's checked is the final list — saving again won't add anyone twice."}
+          ? "勾选项即为修改后的名单；重复保存不会重复添加。"
+          : "The checked entries are the final cast; saving again does not add anyone twice."}
       </div>
     </>
   );

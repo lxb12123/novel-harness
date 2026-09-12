@@ -234,11 +234,11 @@ describe("角色册", () => {
     await user.click(dot);
     // 整句话来自 title_code + title_params，不是前端编的第二份措辞。
     expect(
-      await screen.findByText(/「沈知微的师弟」被移出了这件事.*还有 1 人牵扯其中/),
+      await screen.findByText(/「沈知微的师弟」已从此事件移除.*仍涉及 1 人/),
     ).toBeInTheDocument();
 
     // 跳转坐标是后端给的锚，不从文案里反推。
-    await user.click(screen.getByRole("button", { name: "去这一句 →" }));
+    await user.click(screen.getByRole("button", { name: "查看原句 →" }));
     expect(useCoords.getState().chapter).toBe(row.cast_changed!.chapter_number);
     expect(useCoords.getState().highlight).toEqual(row.cast_changed!.jump);
   });
@@ -254,8 +254,8 @@ describe("角色册", () => {
     ]);
     const fetchSpy = vi.spyOn(globalThis, "fetch");
 
-    await user.click(await screen.findByRole("button", { name: /这件事的参与者变了/ }));
-    await user.click(screen.getByRole("button", { name: "知道了" }));
+    await user.click(await screen.findByRole("button", { name: /此事件的参与者已变更/ }));
+    await user.click(screen.getByRole("button", { name: "已阅" }));
 
     await waitFor(() =>
       expect(fetchSpy).toHaveBeenCalledWith(
@@ -279,8 +279,8 @@ describe("角色册", () => {
       { match: /\/characters\/[^/]+\/events$/, body: [] },
     ]);
 
-    const said = await screen.findByText(/还没有跟.*有关的事件/);
-    expect(said.textContent).toMatch(/还没整理过|没有落到/);
+    const said = await screen.findByText(/尚无与.*相关的事件/);
+    expect(said.textContent).toMatch(/尚未整理|没有涉及/);
     expect(document.body.textContent).not.toMatch(/暂无数据|暂无|空空如也/);
   });
 
@@ -323,9 +323,9 @@ describe("角色册", () => {
     await user.click(within(row).getByRole("button", { name: "删除" }));
     // **按下「删除」还没删**：先出现一句问话。
     expect(deletes()).toEqual([]);
-    expect(within(row).getByText(/删了拿不回来/)).toBeInTheDocument();
+    expect(within(row).getByText(/删除后无法恢复/)).toBeInTheDocument();
 
-    await user.click(within(row).getByRole("button", { name: "删掉" }));
+    await user.click(within(row).getByRole("button", { name: "删除" }));
     await waitFor(() => expect(deletes().length).toBe(1));
     // 版本走查询参数（带 body 的 DELETE 在各家客户端上支持得参差不齐）。
     expect(String(deletes()[0][0])).toMatch(/expected_canon_version=\d+/);
@@ -340,12 +340,12 @@ describe("角色册", () => {
 
     await user.click(within(row).getByRole("button", { name: `${target.name}的更多操作` }));
     await user.click(within(row).getByRole("button", { name: "删除" }));
-    await user.click(within(row).getByRole("button", { name: "算了" }));
+    await user.click(within(row).getByRole("button", { name: "取消" }));
 
     expect(
       spy.mock.calls.filter((c) => (c[1] as RequestInit | undefined)?.method === "DELETE"),
     ).toEqual([]);
-    expect(within(row).queryByText(/删了拿不回来/)).toBeNull();
+    expect(within(row).queryByText(/删除后无法恢复/)).toBeNull();
   });
 
   it("改名发的是 PATCH，且带着它正在渲染的那个版本号", async () => {
@@ -464,7 +464,7 @@ describe("角色册", () => {
     const hero = fixtures.rosterWithCounts.find((n) => n.label === "Character")!;
     renderWithApi(<RosterTab />); // 默认 fixture 的 `states`/`edges` 都是空的
     (await screen.findByText(hero.name)).click();
-    expect(await screen.findByText(/还没有记录他的状态/)).toBeInTheDocument();
+    expect(await screen.findByText(/尚未记录状态/)).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/暂无数据|暂无|空空如也/);
   });
 
@@ -558,7 +558,7 @@ describe("角色册", () => {
     const hero = fixtures.rosterWithCounts.find((n) => n.label === "Character")!;
     renderWithApi(<RosterTab />); // 默认 fixture 的 edges 是空的
     (await screen.findByText(hero.name)).click();
-    expect(await screen.findByText(/还没有原文依据/)).toBeInTheDocument();
+    expect(await screen.findByText(/尚无原文依据/)).toBeInTheDocument();
     expect(document.body.textContent).toMatch(/待确认/);
     expect(document.body.textContent).not.toMatch(/记录这句/);
   });

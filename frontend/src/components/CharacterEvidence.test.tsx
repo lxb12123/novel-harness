@@ -52,7 +52,7 @@ describe("CharacterEvidence", () => {
     );
 
     // 两条边都带引语，但两条都是状态类 ⇒ 这一格是空态那句话，不是两行事实。
-    expect(await screen.findByText(/还没有原文依据/)).toBeInTheDocument();
+    expect(await screen.findByText(/尚无原文依据/)).toBeInTheDocument();
     expect(screen.queryByText(new RegExp(place.name))).toBeNull();
     expect(screen.queryByText(/装备/)).toBeNull();
   });

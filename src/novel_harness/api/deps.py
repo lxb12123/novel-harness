@@ -251,8 +251,8 @@ def model_configuration_error() -> str | None:
         resolve_route_capabilities(config)
     except (ValidationError, ValueError, CapabilityError) as exc:
         return (
-            f"模型没配好：{exc} —— 先去顶栏 ⚙「AI 设置」填服务地址/模型/钥匙，"
-            "或设 NH_LLM_BASE_URL / NH_LLM_MODEL / NH_LLM_API_KEY。"
+            f"模型尚未配置：{exc}。请在顶栏 ⚙「AI 设置」填写服务地址、模型和密钥，"
+            "或设置 NH_LLM_BASE_URL / NH_LLM_MODEL / NH_LLM_API_KEY。"
         )
     return None
 

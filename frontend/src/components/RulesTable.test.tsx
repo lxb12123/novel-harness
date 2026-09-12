@@ -54,14 +54,14 @@ describe("你交代过的", () => {
       scanned_chats: 1,
     };
     renderWithApi(<RulesTable />, [{ match: /\/rules$/, body: old }]);
-    expect(await screen.findByText("没记下")).toBeInTheDocument();
+    expect(await screen.findByText("未记录")).toBeInTheDocument();
   });
 
   it("两种空说两句不同的话（§10 约束 8）", async () => {
     renderWithApi(<RulesTable />, [
       { match: /\/rules$/, body: { rules: [], scanned_chats: 0 } },
     ]);
-    expect(await screen.findByText(/还没跟写作助手说过话/)).toBeInTheDocument();
+    expect(await screen.findByText(/尚无对话/)).toBeInTheDocument();
   });
 
   it("说过话但一条都没记下 —— 那是**默认**那一档，不许说成「还没说过话」", async () => {
@@ -69,12 +69,12 @@ describe("你交代过的", () => {
     renderWithApi(<RulesTable />, [
       { match: /\/rules$/, body: { rules: [], scanned_chats: 3 } },
     ]);
-    expect(await screen.findByText(/还没有哪一句被当成交代记下来/)).toBeInTheDocument();
+    expect(await screen.findByText(/尚无被记录的写作要求/)).toBeInTheDocument();
   });
 
   it("读不出来不许说成「一条都没有」", async () => {
     renderWithApi(<RulesTable />, [{ match: /\/rules$/, status: 500, body: {} }]);
-    expect(await screen.findByText(/没读出来/)).toBeInTheDocument();
+    expect(await screen.findByText(/读取失败/)).toBeInTheDocument();
   });
 
   it("这块屏幕上一个研发术语都没有", async () => {

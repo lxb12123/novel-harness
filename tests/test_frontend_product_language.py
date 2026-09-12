@@ -23,6 +23,51 @@ BANNED_COPY: dict[str, str] = {
 }
 
 
+# ── 语域守卫（2026-09-12）───────────────────────────────────────────────────
+#
+# 作者指着回执上那句「这段对话太长了，为了装得下，15 条早先查到的东西被收起来了
+# （要用它会重新查一次）。你说过的话一句都没删。」问：「这么人机的那种话放到开源社区，
+# 大家是怎么想我的？」——并要求「不能仅仅针对这句，我不希望再出现类似这种」。
+# 那一轮把全仓作者可见的话（回执、停法、进度行、错误、空态、按钮）从「拟人聊天」改成
+# 书面产品文案。这张表钉的是**那种口气的标记词**，不是词表式的全面审查：
+#   · 口语时间/动作词（刷新一下 / 过一会儿 / 这会儿 / 看一眼 / 试试）；
+#   · 聊天口气（算了 / 知道了 / 就是了 / 一句都没 / 装得下 / 说一声 / 跟它说……）；
+#   · 拿「它」讲故事（它会 / 它还 / 它自己 / 它正在 / 它在等……）——助手在屏幕上叫
+#     「写作助手」，不是「它」；
+#   · 句末语气词（吧 / 呢 / 哦 / 啦 / 嘛）；
+#   · 英文那半同一种口气（couldn't say why / in a moment / Just write / Got it……）。
+# 扫描面比上面那张 `BANNED_COPY` 宽一档：`.ts` 也扫（`chat.ts` / `backendMessages.ts`
+# 才是这类话最多的地方）。后端说给作者的那几张表由 `tests/test_wording_guard.py`
+# 拿**同一张**表扫，别在那边再抄一份。
+CHATTY_COPY: dict[str, str] = {
+    r"刷新一下|过一会儿|这会儿|等一下|看一眼|试试|再点一次|再试一次": "colloquial time / retry phrasing",
+    (
+        r"(?<![计估])算了|知道了[。」\"]|就是了|一句都没|装得下|装不下|说一声|跟它说|拿不准|"
+        r"等着你|往下走|断在半路|先停下来|今天不在了|没读出来|读不出来|而系统没能说清"
+    ): "chat-register phrasing",
+    r"它会|它还|它自己|它正在|它在等|它这一轮|它手上|它读到|它下一步|问了你一句": "narrating the assistant as 它",
+    r"[吧呢哦啦嘛][。！」\"]": "sentence-final particle",
+    (
+        r"couldn['’]t say why|in a moment|Just write|Got it|tucked away|Not a single word|"
+        r"it['’]ll |it['’]s waiting|[Tt]ake a look"
+    ): "chatty English",
+}
+
+
+def _production_sources() -> list[Path]:
+    """作者会看到的那些文件：`.ts` + `.tsx`，测试、夹具、测试脚手架不算。"""
+    out: list[Path] = []
+    for path in sorted(COMPONENTS.rglob("*.ts*")):
+        if path.suffix not in {".ts", ".tsx"}:
+            continue
+        if path.name.endswith((".test.ts", ".test.tsx")):
+            continue
+        if "__fixtures__" in path.parts or "test" in path.parts:
+            continue
+        out.append(path)
+    return out
+
+
 def _without_comments(source: str) -> str:
     """Remove TS/TSX comments while preserving quoted strings and JSX text."""
 
@@ -172,3 +217,20 @@ def test_the_comment_stripper_never_ends_the_file_still_inside_a_quote() -> None
         "从那一点往后，这个文件里的注释可能没有被真的剥掉，"
         "BANNED_COPY 那条守卫可能在这些文件上失明：\n" + "\n".join(offenders)
     )
+
+
+def test_production_copy_is_written_not_chatty() -> None:
+    """作者可见的话是**产品文案**，不是聊天（CLAUDE.md「界面上的字：书面语，不是聊天」）。"""
+    offenders: list[str] = []
+    for path in _production_sources():
+        source = _without_path_data(_without_comments(path.read_text(encoding="utf-8")))
+        for pattern, label in CHATTY_COPY.items():
+            for match in re.finditer(pattern, source):
+                line = source.count("\n", 0, match.start()) + 1
+                offenders.append(f"{path.relative_to(ROOT)}:{line}: {label}: {match.group(0)!r}")
+
+    assert not offenders, (
+        "界面文案带着聊天口气（书面语、不拟人、不用口语时间词；见 CLAUDE.md「界面上的字」）：\n"
+        + "\n".join(offenders)
+    )
+

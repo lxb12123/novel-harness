@@ -25,7 +25,7 @@ async function rows() {
 describe("历史版本", () => {
   it("开场那句话讲的是「能还原」，不是「能看差异」", async () => {
     open();
-    expect(await screen.findByText(/每次保存都会留下一版/)).toHaveTextContent("还原");
+    expect(await screen.findByText(/每次保存都会留下一个版本/)).toHaveTextContent("还原");
     // 「查看它与当前正文的差异」是作者点名换掉的那句：它说的是工具的动作，
     // 不是作者想做的事。回归防线，别让它悄悄回来。
     expect(document.body.textContent).not.toContain("查看它与当前正文的差异");
@@ -43,7 +43,7 @@ describe("历史版本", () => {
     const { now, old } = await rows();
     const disabled = within(now).getByRole("button", { name: "删除" });
     expect(disabled).toBeDisabled();
-    expect(disabled).toHaveAttribute("title", expect.stringContaining("删不掉"));
+    expect(disabled).toHaveAttribute("title", expect.stringContaining("无法删除"));
     expect(within(old).getByRole("button", { name: "删除" })).toBeEnabled();
   });
 
@@ -54,7 +54,7 @@ describe("历史版本", () => {
 
     const { old } = await rows();
     within(old).getByRole("button", { name: "还原" }).click();
-    expect(await screen.findByText(/把正文还原到/)).toBeInTheDocument();
+    expect(await screen.findByText(/将正文还原到/)).toBeInTheDocument();
     expect(onRestored).not.toHaveBeenCalled(); // 只是问了一句，还没动正文
 
     screen.getByRole("button", { name: "确认还原" }).click();
@@ -66,7 +66,7 @@ describe("历史版本", () => {
     open([], { dirty: true });
     const { old } = await rows();
     within(old).getByRole("button", { name: "还原" }).click();
-    expect(await screen.findByText(/没保存的修改/)).toBeInTheDocument();
+    expect(await screen.findByText(/未保存的修改/)).toBeInTheDocument();
   });
 
   it("取消就什么都不发生", async () => {
@@ -75,7 +75,7 @@ describe("历史版本", () => {
     const { old } = await rows();
     within(old).getByRole("button", { name: "还原" }).click();
     (await screen.findByRole("button", { name: "取消" })).click();
-    await waitFor(() => expect(screen.queryByText(/把正文还原到/)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/将正文还原到/)).toBeNull());
     expect(onRestored).not.toHaveBeenCalled();
   });
 
@@ -83,7 +83,7 @@ describe("历史版本", () => {
     open();
     const { old } = await rows();
     within(old).getByRole("button", { name: "删除" }).click();
-    expect(await screen.findByText(/删了就找不回来了/)).toBeInTheDocument();
+    expect(await screen.findByText(/删除后无法恢复/)).toBeInTheDocument();
   });
 
   it("后端说这一版被依据引用着时，界面说的是「依据会找不到出处」不是错误码", async () => {
@@ -115,7 +115,7 @@ describe("历史版本", () => {
 
   it("只有一版时不摆出还原和删除，只说以后会有", async () => {
     open(oneVersion);
-    expect(await screen.findByText(/只有一版/)).toBeInTheDocument();
+    expect(await screen.findByText(/只有一个版本/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "还原" })).toBeNull();
     expect(screen.queryByRole("button", { name: "删除" })).toBeNull();
   });

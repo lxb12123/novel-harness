@@ -121,26 +121,26 @@ describe("章节总结这一格", () => {
     await screen.findByDisplayValue(HAVE.summary!);
 
     await user.click(screen.getByRole("button", { name: "撤回" }));
-    expect(await screen.findByText(/点它跑一次模型/)).toBeInTheDocument();
+    expect(await screen.findByText(/调用一次模型/)).toBeInTheDocument();
     expect(calls.some((c) => c.method === "DELETE")).toBe(false);
 
-    await user.click(screen.getByRole("button", { name: "算了" }));
+    await user.click(screen.getByRole("button", { name: "取消" }));
     expect(calls.some((c) => c.method === "DELETE")).toBe(false);
 
     await user.click(screen.getByRole("button", { name: "撤回" }));
-    await user.click(screen.getByRole("button", { name: "撤回它" }));
+    await user.click(screen.getByRole("button", { name: "确认撤回" }));
     await waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
   });
 
   it("「你撤回的」和「还没生成」是两句话，不是同一句", async () => {
     // 起草那边它们完全同义（两种都不进 prompt），可下一步动作正好相反。
     const { unmount } = renderSpying(<SummaryTab />, summaryRoute(NONE));
-    expect(await screen.findByText(/这一章还没有总结/)).toBeInTheDocument();
+    expect(await screen.findByText(/本章尚无总结/)).toBeInTheDocument();
     unmount();
 
     renderSpying(<SummaryTab />, summaryRoute(RETRACTED));
-    expect(await screen.findByText(/你撤回了/)).toBeInTheDocument();
-    expect(screen.queryByText(/这一章还没有总结/)).toBeNull();
+    expect(await screen.findByText(/总结已撤回/)).toBeInTheDocument();
+    expect(screen.queryByText(/本章尚无总结/)).toBeNull();
   });
 
   it("撤回之后那颗「重新生成」在，按一下就 POST —— 那是拿回机器总结的唯一路", async () => {
@@ -177,7 +177,7 @@ describe("章节总结这一格", () => {
 
   it("这一章还没写：不给任何会花钱的按钮，并且说清为什么", async () => {
     renderSpying(<SummaryTab />, summaryRoute(NO_TEXT));
-    expect(await screen.findByText(/还没有正文/)).toBeInTheDocument();
+    expect(await screen.findByText(/尚无正文/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /生成/ })).toBeNull();
     expect(screen.queryByRole("textbox")).toBeNull();
   });
@@ -193,7 +193,7 @@ describe("章节总结这一格", () => {
     //   · 这一格自己替作者打出了一次付费调用 —— 那是这个仓库修过第六次的那个病。
     const user = userEvent.setup();
     const { calls } = renderSpying(<SummaryTab />, summaryRoute(NONE));
-    expect(await screen.findByText(/这一章还没有总结/)).toBeInTheDocument();
+    expect(await screen.findByText(/本章尚无总结/)).toBeInTheDocument();
     const paid = screen.getByRole("button", { name: "生成" });
 
     // 那一颗之外的每一颗都按一遍，一次 POST 都不许出来。
@@ -219,7 +219,7 @@ describe("章节总结这一格", () => {
     renderSpying(<SummaryTab />, [
       { match: /\/chapters\/\d+\/summary$/, status: 500, body: {} },
     ]);
-    expect(await screen.findByText(/没读出来/)).toBeInTheDocument();
+    expect(await screen.findByText(/读取失败/)).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 
@@ -318,7 +318,7 @@ describe("总结下面那排记忆点", () => {
   it("一个都没提到时说清为什么，而不是留一片空白", async () => {
     // 空白会被读成「引擎没在干活」；而这一档的下一步是去角色册把那个称呼建上。
     renderSpying(<SummaryTab />, mentionsRoute({ chapter: 1, mentions: [] }));
-    expect(await screen.findByText(/没出现角色册上的任何人或东西/)).toBeInTheDocument();
+    expect(await screen.findByText(/未提及角色册中的任何条目/)).toBeInTheDocument();
   });
 
   it.each([
@@ -330,7 +330,7 @@ describe("总结下面那排记忆点", () => {
     renderSpying(<SummaryTab />, summaryRoute(body));
     await screen.findByRole("textbox");
     await new Promise((r) => setTimeout(r, 30));
-    expect(screen.queryByText(/没出现角色册上的任何人或东西/)).toBeNull();
+    expect(screen.queryByText(/未提及角色册中的任何条目/)).toBeNull();
     for (const name of NAMED) {
       expect(screen.queryByRole("button", { name: new RegExp(name) })).toBeNull();
     }
@@ -346,14 +346,14 @@ describe("总结下面那排记忆点", () => {
       },
     ]);
     await user.click(await screen.findByRole("button", { name: new RegExp(WHO) }));
-    expect(await screen.findByText(/这里翻的是总结，不是正文/)).toBeInTheDocument();
+    expect(await screen.findByText(/查找的是总结而非正文/)).toBeInTheDocument();
   });
 
   it("查不出来 ≠ 它谁也没提到", async () => {
     renderSpying(<SummaryTab />, [
       { match: /\/chapters\/\d+\/summary\/mentions$/, status: 500, body: {} },
     ]);
-    expect(await screen.findByText(/下面空着不代表/)).toBeInTheDocument();
+    expect(await screen.findByText(/下方为空不代表/)).toBeInTheDocument();
   });
 
   it("摊开之后屏幕上一个研发术语都没有（节点 id、Character、相关度都不许上屏）", async () => {
@@ -400,6 +400,6 @@ describe("全书总结状态（Step 4）", () => {
     renderSpying(<SummaryTab />, [
       { match: /\/summary-status$/, status: 500, body: {} },
     ]);
-    expect(await screen.findByText(/全书总结状态这会儿没读出来/)).toBeInTheDocument();
+    expect(await screen.findByText(/全书总结状态读取失败/)).toBeInTheDocument();
   });
 });

@@ -52,7 +52,7 @@ describe("一轮跑完之后，正文那一侧", () => {
     await screen.findByText("第 1 章");
     await waitFor(() => expect(reads).toBe(1));
 
-    await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "把这一章写了");
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "把这一章写了");
     await user.click(screen.getByRole("button", { name: "发送" }));
     await screen.findByText(ROUND_DONE);
 
@@ -79,7 +79,7 @@ describe("一轮跑完之后，正文那一侧", () => {
     );
     await screen.findByText("第 1 章");
 
-    await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "把这一章写了");
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "把这一章写了");
     await user.click(screen.getByRole("button", { name: "发送" }));
     await screen.findByText(ROUND_DONE);
 
@@ -113,12 +113,12 @@ describe("一轮跑完之后，正文那一侧", () => {
     // 「未保存」2026-08-30 从文字改成了保存按钮角上的水滴徽标（见 icons.tsx）。
     await waitFor(() => expect(document.querySelector(".save-badge-icon.droplet")).not.toBeNull());
 
-    await user.type(screen.getByRole("textbox", { name: "跟写作助手说" }), "把这一章写了");
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "把这一章写了");
     await user.click(screen.getByRole("button", { name: "发送" }));
     await screen.findByText(ROUND_DONE);
 
     // 说一句：他下一步按保存会盖过磁盘上那一版（那一版在「历史」里找得回来）。
-    await screen.findByText(/这一章在别处变过了/);
+    await screen.findByText(/本章已在别处修改/);
     expect(content.textContent).toContain("作者刚打的半段");
     expect(content.textContent).not.toContain("助手刚写进这一章");
   });

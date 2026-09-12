@@ -139,7 +139,7 @@ describe("侧栏书架", () => {
     open();
     const book = await section(second.name);
     within(book).getByRole("button", { name: `《${second.name}》的更多操作` }).click();
-    (await screen.findByRole("button", { name: "移除本书目录" })).click();
+    (await screen.findByRole("button", { name: "从书架移除" })).click();
 
     await waitFor(() => expect(screen.queryByRole("button", { name: second.name })).toBeNull());
     expect(useShelf.getState().hidden).toEqual([second.id]);
@@ -191,7 +191,7 @@ describe("侧栏书架", () => {
     open();
     const book = await section(first.name);
     within(book).getByRole("button", { name: `《${first.name}》的更多操作` }).click();
-    (await screen.findByRole("button", { name: "移除本书目录" })).click();
+    (await screen.findByRole("button", { name: "从书架移除" })).click();
 
     await waitFor(() => expect(useCoords.getState().projectId).toBe(second.id));
     expect(await screen.findByRole("button", { name: second.name })).toBeInTheDocument();
@@ -201,7 +201,7 @@ describe("侧栏书架", () => {
     open([{ match: /\/api\/projects$/, body: [first] }]);
     const book = await section(first.name);
     within(book).getByRole("button", { name: `《${first.name}》的更多操作` }).click();
-    const item = await screen.findByRole("button", { name: "移除本书目录" });
+    const item = await screen.findByRole("button", { name: "从书架移除" });
     expect(item).not.toBeDisabled();
     item.click();
 
@@ -213,14 +213,14 @@ describe("侧栏书架", () => {
 
     // 空状态那句话自己就带着「放回来」——底下那条常驻提示这时候不重复出现（纯噪音）。
     expect(screen.queryByText("放回来")).toBeNull();
-    (await screen.findByText("把移除的书放回来")).click();
+    (await screen.findByText("恢复已移除的书")).click();
     expect(await screen.findByRole("button", { name: first.name })).toBeInTheDocument();
   });
 
   it("一章都没有的书，说的是下一步而不是留一片空白", async () => {
     open([...twoBooks, { match: /\/chapters$/, body: [] }]);
     const book = await section(first.name);
-    expect(await within(book).findByText(/还没有章节/)).toBeInTheDocument();
+    expect(await within(book).findByText(/尚无章节/)).toBeInTheDocument();
   });
 
   // ── 「＋ 新起一章」（2026-08-14）───────────────────────────────────────────
@@ -232,7 +232,7 @@ describe("侧栏书架", () => {
   it("每本书的章目录末尾都有那颗加号", async () => {
     open();
     const book = await section(first.name);
-    expect(await within(book).findByRole("button", { name: "新起一章" })).toBeInTheDocument();
+    expect(await within(book).findByRole("button", { name: "新建章节" })).toBeInTheDocument();
   });
 
   it("**它只有一个加号，名字靠悬浮出来** —— 而且不是那个等一秒的原生 tooltip", async () => {
@@ -241,18 +241,18 @@ describe("侧栏书架", () => {
     // 两个都留着的话，悬浮会同时冒出两个气泡。
     open();
     const book = await section(first.name);
-    const add = await within(book).findByRole("button", { name: "新起一章" });
+    const add = await within(book).findByRole("button", { name: "新建章节" });
 
     // 图标本身不进无障碍树：进了的话读屏会在按钮名字之外再念一遍它（同顶栏那颗齿轮）。
     expect(add.querySelector("svg")).toHaveAttribute("aria-hidden", "true");
-    expect(add).toHaveAttribute("data-tip", "新起一章");
+    expect(add).toHaveAttribute("data-tip", "新建章节");
     expect(add).not.toHaveAttribute("title");
   });
 
   it("一章都没有的书也能直接新起一章 —— 不是只能去导入 TXT", async () => {
     open([...twoBooks, { match: /\/chapters$/, body: [] }]);
     const book = await section(first.name);
-    expect(await within(book).findByRole("button", { name: "新起一章" })).toBeInTheDocument();
+    expect(await within(book).findByRole("button", { name: "新建章节" })).toBeInTheDocument();
   });
 
   it("按下去 = 建一章 + **直接翻过去**，章号由后端给", async () => {
@@ -263,7 +263,7 @@ describe("侧栏书架", () => {
       { method: "POST", match: /\/chapters$/, body: { number: 4, title: "第四章" } },
     ]);
     const book = await section(first.name);
-    (await within(book).findByRole("button", { name: "新起一章" })).click();
+    (await within(book).findByRole("button", { name: "新建章节" })).click();
 
     await waitFor(() => expect(onOpen).toHaveBeenCalledWith(4));
   });
@@ -274,9 +274,9 @@ describe("侧栏书架", () => {
       { method: "POST", match: /\/chapters$/, status: 500, body: {} },
     ]);
     const book = await section(first.name);
-    (await within(book).findByRole("button", { name: "新起一章" })).click();
+    (await within(book).findByRole("button", { name: "新建章节" })).click();
 
-    expect(await within(book).findByText(/没能新起一章/)).toBeInTheDocument();
+    expect(await within(book).findByText(/新建章节失败/)).toBeInTheDocument();
   });
 });
 

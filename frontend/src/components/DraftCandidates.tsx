@@ -44,13 +44,13 @@ function DraftBody({ pid, draft }: { pid: string; draft: DraftCandidateView }) {
     return (
       <p className="draft-loading">
         {language === "zh"
-          ? "这一稿没读出来。刷新一下再看，它还在。"
-          : "Couldn’t load this draft. Refresh and check again — it’s still there."}
+          ? "稿件读取失败，请刷新后重试"
+          : "This draft could not be loaded; refresh to try again"}
       </p>
     );
   }
   return (
-    <p className="draft-loading">{language === "zh" ? "正在把这一稿读出来…" : "Loading this draft…"}</p>
+    <p className="draft-loading">{language === "zh" ? "正在读取稿件…" : "Loading this draft…"}</p>
   );
 }
 
@@ -83,7 +83,7 @@ export function DraftCard({
         {/* 「推荐位」就是它 —— 一个动作，不是一句评价（ADR 0022）。 */}
         {draft.landed && (
           <span className="draft-badge">
-            {language === "zh" ? "已经写进这一章" : "Written into this chapter"}
+            {language === "zh" ? "已写入本章" : "Written into this chapter"}
           </span>
         )}
       </div>
@@ -101,7 +101,7 @@ export function DraftCard({
           摆一个空标题等于说「它什么都没要求」。 */}
       {draft.brief.trim() !== "" && (
         <details className="draft-brief">
-          <summary>{language === "zh" ? "这一稿的要求" : "What this draft was asked for"}</summary>
+          <summary>{language === "zh" ? "起草要求" : "Brief for this draft"}</summary>
           <p className="draft-brief-text">{draft.brief}</p>
         </details>
       )}
@@ -109,8 +109,8 @@ export function DraftCard({
         <details className="draft-brief">
           <summary>
             {language === "zh"
-              ? `助手补的资料 · ${draft.materials.length} 段`
-              : `Material the assistant added · ${draft.materials.length}`}
+              ? `补充资料 · ${draft.materials.length} 段`
+              : `Supporting material · ${draft.materials.length}`}
           </summary>
           <ul className="draft-materials">
             {draft.materials.map((item, i) => (
@@ -162,8 +162,8 @@ export function CompareLink({
       rel="noopener"
       title={
         language === "zh"
-          ? "在新标签页打开：这一章还摆在桌上的几稿并排"
-          : "Open in a new tab: the drafts still on the desk for this chapter, side by side"
+          ? "在新标签页并排查看本章各稿"
+          : "Open this chapter’s drafts side by side in a new tab"
       }
       onClick={() => writeCompareHandoff({ book: pid, chapter })}
     >
@@ -216,7 +216,7 @@ export function DraftCandidates({
   return (
     <section
       className="drafts"
-      aria-label={language === "zh" ? "这一轮写出来的稿子" : "Drafts written this round"}
+      aria-label={language === "zh" ? "本轮稿件" : "Drafts from this round"}
     >
       <div className="drafts-head">
         <b>{draftsHeading(drafts, language)}</b>
@@ -224,7 +224,7 @@ export function DraftCandidates({
         {chaptersOf(drafts).map((chapter) => (
           <CompareLink key={chapter} pid={pid} chapter={chapter}>
             {language === "zh"
-              ? `并排比第 ${chapter} 章的稿子 ↗`
+              ? `并排查看第 ${chapter} 章各稿 ↗`
               : `Compare chapter ${chapter}’s drafts side by side ↗`}
           </CompareLink>
         ))}

@@ -50,7 +50,7 @@ function realEvent(kind: string): ChatTurnEvent {
   return JSON.parse(frame.split("\ndata: ")[1]) as ChatTurnEvent;
 }
 
-const say = () => screen.getByRole("textbox", { name: "跟写作助手说" });
+const say = () => screen.getByRole("textbox", { name: "输入消息" });
 const send = () => screen.getByRole("button", { name: "发送" });
 
 /** 打开面板 → 说一句 → 发送。三步各处都一样，抽出来免得每条测试抄一遍。 */
@@ -150,7 +150,7 @@ describe("回话区：整段一次到位，没有一个编出来的节奏", () =
       },
     ]);
     await ask(user, "写一稿");
-    await screen.findByText("还没落下第一个字。");
+    await screen.findByText("尚未输出正文");
 
     const tape = recordScreen();
     try {
@@ -345,7 +345,7 @@ describe("每一种事件都得被画过一遍", () => {
 const ASKED_BASE = {
   ...fixtures.chatTurn,
   reason: "asked_author",
-  message: "它有件事拿不准，问了你一句，正等着你答。",
+  message: "写作助手提出了一个问题，等待回答。",
 };
 
 describe("问题卡：兜底那两支也要被扫到", () => {
@@ -357,8 +357,8 @@ describe("问题卡：兜底那两支也要被扫到", () => {
     ]);
     await ask(user, "问我一句");
 
-    const card = await screen.findByRole("group", { name: "它在等你回一句" });
-    expect(within(card).getByText("在下面写一句回它。")).toBeInTheDocument();
+    const card = await screen.findByRole("group", { name: "写作助手在等待回答" });
+    expect(within(card).getByText("请在下方输入回答")).toBeInTheDocument();
     // **不编两个选项出来**（同 `AmbiguousName`：不确定就摆出来，绝不替他挑）。
     expect(within(card).queryAllByRole("button")).toHaveLength(0);
     expect(devTerms(screenText())).toEqual([]);
@@ -372,7 +372,7 @@ describe("问题卡：兜底那两支也要被扫到", () => {
       ...realEvent("tool_started"),
       kind: "asked_author",
       tool: "",
-      said_to_author: "它有件事拿不准，问了你一句，正等着你答。",
+      said_to_author: "写作助手提出了一个问题，等待回答。",
       asked: { question: "这一场你想让萧决知道那件事吗？", options: ["让他知道", "先瞒着"] },
     };
     renderWithApi(<ChatPanel />, [
@@ -384,8 +384,8 @@ describe("问题卡：兜底那两支也要被扫到", () => {
     ]);
     await ask(user, "问我一句");
 
-    await screen.findByText(/这一轮没跑成/);
-    const card = screen.getByRole("group", { name: "它在等你回一句" });
+    await screen.findByText(/本轮未完成/);
+    const card = screen.getByRole("group", { name: "写作助手在等待回答" });
     expect(within(card).getByText(asking.asked.question)).toBeInTheDocument();
     expect(devTerms(screenText())).toEqual([]);
   });
@@ -407,7 +407,7 @@ describe("问题卡：兜底那两支也要被扫到", () => {
     ]);
     await ask(user, "问我一句");
 
-    const card = await screen.findByRole("group", { name: "它在等你回一句" });
+    const card = await screen.findByRole("group", { name: "写作助手在等待回答" });
     const buttons = within(card).getAllByRole("button").map((b) => b.textContent);
     // 顺序原样、重复原样（去重 = 替模型判断「这两条是一回事」= 语义判断）。
     expect(buttons).toEqual(asked.options);
@@ -425,7 +425,7 @@ describe("问题卡：兜底那两支也要被扫到", () => {
       },
     ]);
     await ask(user, "问我一句");
-    await screen.findByRole("group", { name: "它在等你回一句" });
+    await screen.findByRole("group", { name: "写作助手在等待回答" });
     const spy = vi.spyOn(globalThis, "fetch");
 
     await user.click(screen.getByRole("button", { name: "先瞒着" }));

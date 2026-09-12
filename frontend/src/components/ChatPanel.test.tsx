@@ -36,7 +36,7 @@ function gated<T>(value: T) {
   };
 }
 
-const say = () => screen.getByRole("textbox", { name: "跟写作助手说" });
+const say = () => screen.getByRole("textbox", { name: "输入消息" });
 const sendBtn = () => screen.getByRole("button", { name: "发送" });
 
 describe("对话摊在中栏右半边", () => {
@@ -122,7 +122,7 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
     renderWithApi(<ChatPanel />, [
       { match: /\/chats\/[^/]+$/, status: 500, body: {} },
     ]);
-    await screen.findByText(/没读出来/);
+    await screen.findByText(/读取失败/);
     expect(screen.queryByText("无限创意，从此谱写")).toBeNull();
   });
 
@@ -212,7 +212,7 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
     await user.click(sendBtn());
 
     const strip = await screen.findByRole("status");
-    expect(within(strip).getByText(/已经 \d+ 秒/)).toBeInTheDocument();
+    expect(within(strip).getByText(/\d+ 秒/)).toBeInTheDocument();
     // 他刚说的那句话立刻占一格：后端做的第一件事就是把它落库，这不是假装。
     expect(screen.getByText("先去看看第 1 章")).toBeInTheDocument();
     // **跑着的时候还能说**（2026-09-12：中途那句排进正在跑的这一轮，不再是 409）——
@@ -250,7 +250,7 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
     await user.click(sendBtn());
 
     expect(fixtures.chatTurn.calls_without_usage).toBeGreaterThan(0); // 探针：夹具里真有
-    await screen.findByText(/少算/);
+    await screen.findByText(/偏少/);
   });
 
   it("跑完把这段对话重读一遍 —— 新长出来的话不能等下一次刷新", async () => {
@@ -398,7 +398,7 @@ describe("一轮没跑成 —— 那句话留在对话里，不是留在界面�
 // ══════════════════════════════════════════════════════════════════════════
 
 describe("跑着的时候还能说", () => {
-  const QUEUED = "记下了，它下一步就会看到。";
+  const QUEUED = "已加入本轮，下一步读取。";
 
   it("**中途那句先排着队、它读到了就站进对话里** —— 位置是模型真的读到它的位置", async () => {
     // 作者的原话：「像 codex 那样新的消息可以直接发出去，模型可以读，并且不会耽误
@@ -459,7 +459,7 @@ describe("跑着的时候还能说", () => {
   it("**没排进去就还回输入框**（那一刻刚跑完 / 在跑的是另一轮）—— 后端那句话照说", async () => {
     const user = userEvent.setup();
     const turn = gated(fixtures.chatTurn);
-    const NOT_QUEUED = "这会儿它没在跑，这句话没有排进去——直接发就是新的一轮。";
+    const NOT_QUEUED = "当前没有正在进行的一轮，消息未排入；请直接发送。";
     renderWithApi(<ChatPanel />, [
       { method: "POST", match: /\/turn\/events$/, body: turn.handler },
       {
@@ -531,11 +531,11 @@ describe("「停」", () => {
     await user.type(say(), "跑一个");
     await user.click(sendBtn());
     const strip = await screen.findByRole("status");
-    expect(strip.textContent).toContain("正在跑这一轮");
+    expect(strip.textContent).toContain("本轮进行中");
 
     await user.click(screen.getByRole("button", { name: "停" }));
-    await waitFor(() => expect(strip.textContent).toContain("停下来了，它正在问你一句"));
-    expect(strip.textContent).not.toContain("正在跑这一轮");
+    await waitFor(() => expect(strip.textContent).toContain("已停止，写作助手正在提问"));
+    expect(strip.textContent).not.toContain("本轮进行中");
     // 圆钮没变回「发送」也没灰掉：它现在管的是「连那一句也不要」。
     expect(screen.getByRole("button", { name: "停" })).toBeEnabled();
 
@@ -545,7 +545,7 @@ describe("「停」", () => {
     await user.type(say(), "再跑一个");
     await user.click(sendBtn());
     const again = await screen.findByRole("status");
-    expect(again.textContent).toContain("正在跑这一轮");
+    expect(again.textContent).toContain("本轮进行中");
     rounds[1].release();
     await screen.findByText(ROUND_DONE);
   });
@@ -637,7 +637,7 @@ describe("「停」", () => {
     turn.release();
 
     expect(fixtures.chatTurn.reason).toBe("done"); // 探针
-    await screen.findByText(/你按下停/);
+    await screen.findByText(/「停」送达时/);
   });
 });
 
@@ -648,12 +648,12 @@ describe("多段对话：侧列表", () => {
     await screen.findByText(fixtures.chatDetail.messages[0].text);
 
     await user.click(screen.getByRole("button", { name: "对话列表" }));
-    expect(screen.getByRole("button", { name: "＋ 开一段新的对话" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "＋ 新建对话" })).toBeInTheDocument();
     // 标题就是作者说的第一句话（后端在标题为空时替他填的）。
     await user.click(screen.getByRole("button", { name: fixtures.chats[0].title }));
     expect(useCoords.getState().chatId).toBe(fixtures.chats[0].id);
     // 挑完自己收起来：这一列是盖在对话上面的。
-    expect(screen.queryByRole("button", { name: "＋ 开一段新的对话" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "＋ 新建对话" })).toBeNull();
   });
 
   it("**断在半路的那一段在列表上看得出来** —— 它和跑完的下一步动作不同", async () => {
@@ -663,7 +663,7 @@ describe("多段对话：侧列表", () => {
     await screen.findByText(fixtures.chatDetail.messages[0].text);
 
     await user.click(screen.getByRole("button", { name: "对话列表" }));
-    expect(screen.getByText(/上次断在半路/)).toBeInTheDocument();
+    expect(screen.getByText(/上一轮中断/)).toBeInTheDocument();
     // 不画「恢复」按钮：接着说一句（或者按「接着往下」）就会自动把缺的补上。
     expect(screen.queryByRole("button", { name: "恢复" })).toBeNull();
   });
@@ -685,7 +685,7 @@ describe("多段对话：侧列表", () => {
 
     // 断过这件事本身没被一起撤掉：列表里那一行还说得出来。
     await user.click(screen.getByRole("button", { name: "对话列表" }));
-    expect(await screen.findByText(/上次断在半路/)).toBeInTheDocument();
+    expect(await screen.findByText(/上一轮中断/)).toBeInTheDocument();
   });
 
   it("**一轮跑着的时候切去看另一段：秒表和回执不许跟过去**", async () => {
@@ -710,7 +710,7 @@ describe("多段对话：侧列表", () => {
     // 这一段什么都没发生：不画秒表、不画那句待发的话，但要说清输入框为什么是灰的。
     expect(screen.queryByRole("status")).toBeNull();
     expect(screen.queryByText("跑一个")).toBeNull();
-    expect(screen.getByText(/另一段对话正在跑/)).toBeInTheDocument();
+    expect(screen.getByText(/另一段对话正在进行/)).toBeInTheDocument();
 
     turn.release();
     await waitFor(() => expect(say()).not.toBeDisabled());
@@ -735,13 +735,13 @@ describe("多段对话：侧列表", () => {
 
     // 点 × 只是问一句 —— 一段三个月的对话不该一下点掉。
     await user.click(
-      screen.getByRole("button", { name: `删掉这段对话：${fixtures.chats[0].title}` }),
+      screen.getByRole("button", { name: `删除对话：${fixtures.chats[0].title}` }),
     );
     expect(spy.mock.calls.some(([, init]) => (init as RequestInit)?.method === "DELETE")).toBe(
       false,
     );
 
-    await user.click(screen.getByRole("button", { name: "删掉" }));
+    await user.click(screen.getByRole("button", { name: "删除" }));
     await waitFor(() =>
       expect(
         spy.mock.calls.some(
@@ -767,11 +767,11 @@ describe("多段对话：侧列表", () => {
     await screen.findByText(fixtures.chatDetail.messages[0].text);
     await user.click(screen.getByRole("button", { name: "对话列表" }));
     await user.click(
-      screen.getByRole("button", { name: `删掉这段对话：${fixtures.chats[0].title}` }),
+      screen.getByRole("button", { name: `删除对话：${fixtures.chats[0].title}` }),
     );
-    await user.click(screen.getByRole("button", { name: "删掉" }));
+    await user.click(screen.getByRole("button", { name: "删除" }));
 
-    await screen.findByText("这段对话正在跑，先按「停」再删。");
+    await screen.findByText("该对话正在进行，请先点击「停」再删除。");
   });
 });
 
@@ -791,7 +791,7 @@ describe("对话很长的时候", () => {
     await screen.findByText(`第 ${CHAT_TAIL + 4} 句`);
     expect(screen.queryByText("第 0 句")).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: "看更早的 5 条" }));
+    await user.click(screen.getByRole("button", { name: "查看更早的 5 条" }));
     expect(screen.getByText("第 0 句")).toBeInTheDocument();
   });
 });
@@ -896,7 +896,7 @@ describe("跑到一半：它在做什么，屏幕上真的看得见", () => {
     // （2026-09-12 挪去了发送那颗圆钮上，见下面「跑着的时候还能说」那一节）。
     const tail = strip.lastElementChild!;
     expect(tail.className).toBe("chat-running-tail");
-    expect(within(tail as HTMLElement).getByText(/已经 \d+ 秒/)).toBeInTheDocument();
+    expect(within(tail as HTMLElement).getByText(/\d+ 秒/)).toBeInTheDocument();
     expect(within(tail as HTMLElement).queryByRole("button")).toBeNull();
 
     release(frame("receipt", fixtures.chatTurn));
@@ -954,7 +954,7 @@ describe("跑到一半：它在做什么，屏幕上真的看得见", () => {
     await user.type(say(), "问一句");
     await user.click(sendBtn());
 
-    await screen.findByText(/这一轮没跑成，而系统没能说清是为什么/);
+    await screen.findByText(/本轮未完成，未返回原因/);
   });
 
   it("**跑到一半被拒**（那一帧带着后端那句中文）—— 照说，不换成自己的话", async () => {
@@ -1037,7 +1037,7 @@ describe("对话区跟着新到的字走", () => {
 
     await user.type(say(), "写一稿");
     await user.click(sendBtn());
-    await screen.findByText("还没落下第一个字。");
+    await screen.findByText("尚未输出正文");
     expect(chatLog().scrollTop).toBe(1000);
 
     // 字来了、对话变长了：贴着底就跟到新的底。
@@ -1137,7 +1137,7 @@ describe("对话区跟着新到的字走", () => {
     fireEvent.scroll(chatLog());
 
     size.scrollHeight = 2000; // 早先那几句接到了前面，对话变长
-    await user.click(screen.getByRole("button", { name: "看更早的 5 条" }));
+    await user.click(screen.getByRole("button", { name: "查看更早的 5 条" }));
     expect(screen.getByText("第 0 句")).toBeInTheDocument();
     expect(chatLog().scrollTop).toBe(1000);
   });
@@ -1148,7 +1148,7 @@ describe("它停下来问了一句（ADR 0024）", () => {
   const ASKED = {
     ...fixtures.chatTurn,
     reason: "asked_author",
-    message: "它有件事拿不准，问了你一句，正等着你答。",
+    message: "写作助手提出了一个问题，等待回答。",
     asked: {
       question: "这一场你想让萧决知道那件事吗？",
       options: ["让他知道", "先瞒着", "让他半信半疑"],
@@ -1167,7 +1167,7 @@ describe("它停下来问了一句（ADR 0024）", () => {
     await user.type(say(), "这一场怎么写？");
     await user.click(sendBtn());
 
-    const card = await screen.findByRole("group", { name: "它在等你回一句" });
+    const card = await screen.findByRole("group", { name: "写作助手在等待回答" });
     expect(within(card).getByText(ASKED.asked.question)).toBeInTheDocument();
     for (const option of ASKED.asked.options) {
       expect(within(card).getByRole("button", { name: option })).toBeInTheDocument();
@@ -1180,7 +1180,7 @@ describe("它停下来问了一句（ADR 0024）", () => {
     await screen.findByText(fixtures.chatDetail.messages[0].text);
     await user.type(say(), "这一场怎么写？");
     await user.click(sendBtn());
-    await screen.findByRole("group", { name: "它在等你回一句" });
+    await screen.findByRole("group", { name: "写作助手在等待回答" });
     const spy = vi.spyOn(globalThis, "fetch");
 
     await user.click(screen.getByRole("button", { name: "先瞒着" }));
@@ -1203,7 +1203,7 @@ describe("它停下来问了一句（ADR 0024）", () => {
     await user.type(say(), "这一场怎么写？");
     await user.click(sendBtn());
 
-    await screen.findByRole("group", { name: "它在等你回一句" });
+    await screen.findByRole("group", { name: "写作助手在等待回答" });
     expect(screen.queryByRole("button", { name: "接着往下" })).toBeNull();
   });
 
@@ -1217,8 +1217,8 @@ describe("它停下来问了一句（ADR 0024）", () => {
     await user.type(say(), "问一句");
     await user.click(sendBtn());
 
-    const card = await screen.findByRole("group", { name: "它在等你回一句" });
-    expect(within(card).getByText("在下面写一句回它。")).toBeInTheDocument();
+    const card = await screen.findByRole("group", { name: "写作助手在等待回答" });
+    expect(within(card).getByText("请在下方输入回答")).toBeInTheDocument();
     expect(within(card).queryAllByRole("button")).toHaveLength(0);
   });
 
@@ -1228,7 +1228,7 @@ describe("它停下来问了一句（ADR 0024）", () => {
       ...realEvent("turn_stopped"),
       kind: "asked_author",
       reason: null,
-      said_to_author: "它有件事拿不准，问了你一句，正等着你答。",
+      said_to_author: "写作助手提出了一个问题，等待回答。",
       asked: ASKED.asked,
     };
     renderWithApi(<ChatPanel />, [
@@ -1240,8 +1240,8 @@ describe("它停下来问了一句（ADR 0024）", () => {
 
     // 回执没到（那一轮的收场丢了），所以这块屏幕同时说两件事：
     // 「这一轮没跑成」**和**「它当时问了你这个」。
-    await screen.findByText(/这一轮没跑成/);
-    const card = screen.getByRole("group", { name: "它在等你回一句" });
+    await screen.findByText(/本轮未完成/);
+    const card = screen.getByRole("group", { name: "写作助手在等待回答" });
     expect(within(card).getByText(ASKED.asked.question)).toBeInTheDocument();
   });
 });

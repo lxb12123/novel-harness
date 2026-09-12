@@ -71,13 +71,13 @@ function checkFailure(error: unknown, language: Language): string {
     return (
       saidToTheAuthor(error) ??
       (language === "zh"
-        ? "这次检查没能跑完，而系统没能说清是为什么。刷新一下再试一次。"
-        : "This check couldn't finish, and the system couldn't say why. Refresh and try again.")
+        ? "本次检验未完成，未返回原因。请刷新后重试。"
+        : "This check did not complete and no reason was returned. Refresh and try again.")
     );
   }
   return language === "zh"
-    ? "没能连上服务，请再试一次。"
-    : "Couldn't reach the service — please try again.";
+    ? "无法连接服务，请重试。"
+    : "The service could not be reached; try again.";
 }
 
 /** 规则表里的一行：序号 · 内容 · 启用开关 · 改 · 删。
@@ -388,14 +388,12 @@ export function RightPanel() {
         <div className="empty workbench-empty">
           {language === "zh" ? (
             <>
-              添加人物或设定后，点开一个人就能看到他的状态、关系、依据和参与过的事件。
-              回到「角色册」那一格，点“＋”开始。
+              添加人物或设定后，可在此查看其状态、关系、依据和参与的事件。在「角色册」中点击「＋」添加。
             </>
           ) : (
             <>
-              Once you add characters or settings, click on someone to see their status,
-              relationships, supporting evidence, and events. Go back to the "Roster" tab
-              and click “＋” to get started.
+              Once characters or settings are added, their status, relationships, evidence and
+              events appear here. Click “＋” in "Roster" to add one.
             </>
           )}
         </div>

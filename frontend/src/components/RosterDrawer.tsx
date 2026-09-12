@@ -148,7 +148,7 @@ function NodeForm({ pid }: { pid: string }) {
         <div className="receipt">
           <div className="vf">
             {language === "zh" ? (
-              <>✓ {nodeLabelText(made.label, language)}「{made.name}」已进角色册</>
+              <>✓ {nodeLabelText(made.label, language)}「{made.name}」已加入角色册</>
             ) : (
               <>✓ {nodeLabelText(made.label, language)} "{made.name}" is now in the roster</>
             )}
@@ -259,7 +259,7 @@ function AliasForm({ pid }: { pid: string }) {
         <div className="receipt">
           <div className="vf">
             {language === "zh" ? (
-              <>✓ 「{made.surface}」已挂到那个条目上</>
+              <>✓ 「{made.surface}」已添加为该条目的别名</>
             ) : (
               <>✓ "{made.surface}" has been linked to that entry</>
             )}

@@ -73,11 +73,11 @@ function ChapterList({
       {chapters.data.length === 0 && (
         <div className="empty">
           {language === "zh" ? (
-            <>这本书还没有章节。新起一章，或者用上面的「＋ 新书 / 导入」导入 TXT。</>
+            <>本书尚无章节。可新建章节，或使用上方「＋ 新书 / 导入」导入 TXT。</>
           ) : (
             <>
-              This book doesn’t have any chapters yet. Start a new one, or use the “+ New Book /
-              Import” above to import a TXT file.
+              This book has no chapters yet. Create one, or use “+ New Book / Import” above to
+              import a TXT file.
             </>
           )}
         </div>
@@ -89,13 +89,13 @@ function ChapterList({
         className="icon-btn ch-add"
         aria-label={
           language === "zh"
-            ? create.isPending ? "正在新起一章…" : "新起一章"
-            : create.isPending ? "Starting a new chapter…" : "Start a new chapter"
+            ? create.isPending ? "正在新建章节…" : "新建章节"
+            : create.isPending ? "Creating a new chapter…" : "New chapter"
         }
         data-tip={
           language === "zh"
-            ? create.isPending ? "正在新起一章…" : "新起一章"
-            : create.isPending ? "Starting a new chapter…" : "Start a new chapter"
+            ? create.isPending ? "正在新建章节…" : "新建章节"
+            : create.isPending ? "Creating a new chapter…" : "New chapter"
         }
         disabled={create.isPending}
         onClick={add}
@@ -195,12 +195,12 @@ export function BookShelf({ onOpenChapter }: { onOpenChapter: (n: number) => voi
           <div className="empty">
             {language === "zh" ? (
               <>
-                左边还没有摆书。<a onClick={restoreAll}>把移除的书放回来</a>
+                书架为空。<a onClick={restoreAll}>恢复已移除的书</a>
               </>
             ) : (
               <>
-                There are no books on the shelf yet.{" "}
-                <a onClick={restoreAll}>Bring back the ones you removed</a>
+                The shelf is empty.{" "}
+                <a onClick={restoreAll}>Restore removed books</a>
               </>
             )}
           </div>
@@ -269,12 +269,12 @@ export function BookShelf({ onOpenChapter }: { onOpenChapter: (n: number) => voi
                       <button
                         title={
                           language === "zh"
-                            ? "只是从左边拿走，书和稿子都还在"
-                            : "This only takes it off the shelf — the book and its drafts are still there"
+                            ? "仅从书架移除，书和稿件均保留"
+                            : "Removes it from the shelf only; the book and its drafts are kept"
                         }
                         onClick={() => removeBook(p.id)}
                       >
-                        {language === "zh" ? "移除本书目录" : "Remove this book from the shelf"}
+                        {language === "zh" ? "从书架移除" : "Remove from the shelf"}
                       </button>
                     </div>
                   )}
@@ -305,7 +305,7 @@ export function BookShelf({ onOpenChapter }: { onOpenChapter: (n: number) => voi
         {hidden.length > 0 && books.length > 0 && (
           <div className="shelf-hidden">
             {language === "zh" ? (
-              <>有 {hidden.length} 本没摆在左边 · </>
+              <>{hidden.length} 本已移除 · </>
             ) : (
               <>{hidden.length} book{hidden.length === 1 ? "" : "s"} not on the shelf · </>
             )}

@@ -59,7 +59,7 @@ describe("中栏编辑器", () => {
     await screen.findByText(fixtures.chapters[0].title);
 
     await user.dblClick(screen.getByRole("button", { name: "当前章节" }));
-    const box = screen.getByRole("textbox", { name: "改这一章的名字" });
+    const box = screen.getByRole("textbox", { name: "修改章节标题" });
     await user.clear(box);
     await user.type(box, "血脉（改）{Enter}");
 
@@ -172,7 +172,7 @@ describe("中栏编辑器", () => {
 
     // 在编辑器里敲两个字 = 手上这份脏了。
     await user.dblClick(screen.getByRole("button", { name: "当前章节" }));
-    const box = screen.getByRole("textbox", { name: "改这一章的名字" });
+    const box = screen.getByRole("textbox", { name: "修改章节标题" });
     await user.clear(box);
     await user.type(box, "第一章 血脉（我改的）{Enter}");
     expect(document.querySelector(".save-badge-icon.droplet")).not.toBeNull();
@@ -180,7 +180,7 @@ describe("中栏编辑器", () => {
     focusManager.setFocused(false);
     focusManager.setFocused(true);
 
-    await screen.findByText(/这一章在别处变过了/);
+    await screen.findByText(/本章已在别处修改/);
     // 他手上那份**一个字都没被动**：标题改动还在顶栏上，正文还是原来那份，
     // 磁盘那边新换的内容没有盖上来（这次的改动落在标题行，所以不会出现在 `.cm-content`
     // 里——章标那一行不进编辑器，`chapterTitle.ts::splitHeading`）。

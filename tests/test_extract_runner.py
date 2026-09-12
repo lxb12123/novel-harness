@@ -524,7 +524,7 @@ def test_the_run_says_which_kind_of_provider_failure_it_was(seed: Seed) -> None:
     for text in said:
         assert not re.search(r"\b[45]\d\d\b", text), f"作者的话里出现了状态码：{text}"
     # 「没能连上」这句只许留给真的连不上那一档。
-    assert run_error_label("provider_unreachable") == "没能连上你配置的模型服务"
+    assert run_error_label("provider_unreachable") == "无法连接所配置的模型服务"
     assert "连上" not in run_error_label("provider_quota")
 
 

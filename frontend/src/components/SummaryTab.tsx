@@ -63,29 +63,29 @@ import { useCoords } from "../store";
 /** 后端一句话都没写时才轮到的那几句。 */
 const saveFailed = (language: Language): string =>
   language === "zh"
-    ? "这一段没能保存，而系统没能说清是为什么。过一会儿再试一次。"
-    : "This paragraph couldn't be saved, and the system couldn't say why. Try again in a moment.";
+    ? "总结未能保存，未返回原因。请稍后重试。"
+    : "The summary could not be saved and no reason was returned. Try again shortly.";
 const retractFailed = (language: Language): string =>
   language === "zh"
-    ? "没能撤回这一章的总结，而系统没能说清是为什么。过一会儿再试一次。"
-    : "Couldn't retract this chapter's summary, and the system couldn't say why. Try again in a moment.";
+    ? "总结未能撤回，未返回原因。请稍后重试。"
+    : "The summary could not be retracted and no reason was returned. Try again shortly.";
 const generateFailed = (language: Language): string =>
   language === "zh"
-    ? "这一章的总结没能生成，而系统没能说清是为什么。过一会儿再试一次。"
-    : "Couldn't generate this chapter's summary, and the system couldn't say why. Try again in a moment.";
+    ? "总结未能生成，未返回原因。请稍后重试。"
+    : "The summary could not be generated and no reason was returned. Try again shortly.";
 const readFailed = (language: Language): string =>
   language === "zh"
-    ? "这一章的总结这会儿没读出来。上面空着不代表没有总结 —— 刷新一下再看。"
-    : "Couldn't load this chapter's summary right now. An empty box above doesn't mean there's no summary — refresh and check again.";
+    ? "总结读取失败；上方为空不代表没有总结。请刷新后查看。"
+    : "The summary could not be loaded; an empty box above does not mean there is none. Refresh to check.";
 
 const mentionsFailed = (language: Language): string =>
   language === "zh"
-    ? "这一段提到了什么，这会儿没查出来。下面空着不代表它谁也没提到 —— 刷新一下再看。"
-    : "Couldn't check what this paragraph mentions right now. An empty box below doesn't mean it mentions nobody — refresh and check again.";
+    ? "总结提及的人物未能查出；下方为空不代表没有提及。请刷新后查看。"
+    : "The mentions in this summary could not be checked; an empty box below does not mean there are none. Refresh to check.";
 const trailFailed = (language: Language): string =>
   language === "zh"
-    ? "别的章有没有提到它，这会儿没查出来。过一会儿再试一次。"
-    : "Couldn't check whether other chapters mention this right now. Try again in a moment.";
+    ? "其他章节的提及情况未能查出。请稍后重试。"
+    : "Mentions in other chapters could not be checked. Try again shortly.";
 
 export function SummaryTab() {
   const { projectId, chapter, setChapter, setPage } = useCoords();
@@ -156,7 +156,7 @@ export function SummaryTab() {
   if (!data)
     return (
       <div className="empty">
-        {language === "zh" ? "正在看这一章有没有总结…" : "Checking whether this chapter has a summary…"}
+        {language === "zh" ? "正在读取总结…" : "Loading the summary…"}
       </div>
     );
 
@@ -168,14 +168,12 @@ export function SummaryTab() {
         <p className="empty">
           {language === "zh" ? (
             <>
-              第 {chapter} 章还没有正文，所以没有总结可写 —— 总结是从这一章的正文压出来的。
-              写完这一章、存一次，这里就有得生成了。
+              第 {chapter} 章尚无正文，无法生成总结。写入正文并保存后，可在此生成。
             </>
           ) : (
             <>
-              Chapter {chapter} doesn’t have any text yet, so there’s no summary to write —
-              summaries are distilled from a chapter’s own text. Write this chapter and save it,
-              and you’ll be able to generate one here.
+              Chapter {chapter} has no text yet, so there is nothing to summarize. Write and save
+              the chapter, then generate a summary here.
             </>
           )}
         </p>
@@ -198,8 +196,8 @@ export function SummaryTab() {
         aria-label={language === "zh" ? `第 ${chapter} 章的总结` : `Summary for chapter ${chapter}`}
         placeholder={
           language === "zh"
-            ? "这一章讲了什么。保存正文后系统会自动写一段，也可以自己写。"
-            : "What happens in this chapter. The system writes one automatically after you save the text; you can also write your own."
+            ? "本章内容概要。保存正文后自动生成，也可手动填写。"
+            : "What happens in this chapter. Generated automatically after the text is saved; can also be written by hand."
         }
         rows={6}
         value={shown}
@@ -212,11 +210,11 @@ export function SummaryTab() {
         <p className="empty chsum-why">
           {language === "zh"
             ? data.retracted
-              ? "这一章的总结你撤回了 —— 写这一章时不带它，系统也不会再自动补一份回来。想要一份新的，点下面的「重新生成」（跑一次模型）；自己写一段也行，那不花钱。"
-              : "这一章还没有总结。保存正文之后系统会自动写一段（那要跑一次模型）；不想等，点下面的「生成」，或者自己写一段，后者不花钱。"
+              ? "本章总结已撤回：起草本章时不再使用，系统也不会自动补写。如需新的总结，点击下方「重新生成」（调用一次模型），或手动填写（不产生费用）。"
+              : "本章尚无总结。保存正文后将自动生成（调用一次模型）；也可点击下方「生成」，或手动填写（不产生费用）。"
             : data.retracted
-              ? "You retracted this chapter’s summary — it won’t be included when writing this chapter, and the system won’t bring it back on its own. For a new one, click “Regenerate” below (that runs the model); writing one yourself is free."
-              : "This chapter doesn’t have a summary yet. The system writes one automatically after you save the text (that runs the model); if you don’t want to wait, click “Generate” below — or write one yourself for free."}
+              ? "This chapter’s summary was retracted: it is no longer used when drafting this chapter, and the system will not rewrite it on its own. For a new one, click “Regenerate” below (one model call), or write one by hand (no cost)."
+              : "This chapter has no summary yet. One is generated automatically after the text is saved (one model call); click “Generate” below, or write one by hand (no cost)."}
         </p>
       )}
 
@@ -224,16 +222,14 @@ export function SummaryTab() {
         <div className="warn">
           {language === "zh" ? (
             <>
-              撤回之后，写这一章时就不带这一段了。你写过的正文一个字都不动。系统不会再自动
-              补一份回来，但「重新生成」那颗按钮还在 —— 想再要一份，点它跑一次模型（花钱），
-              或者自己写一段（不花钱）。
+              撤回后，起草本章时不再使用此总结；正文不受影响。系统不会自动补写，可随时点击
+              「重新生成」（调用一次模型），或手动填写（不产生费用）。
             </>
           ) : (
             <>
-              Once retracted, this summary won’t be included when writing this chapter. Your own
-              text won’t be touched at all. The system won’t bring it back on its own, but the
-              “Regenerate” button stays — click it to run the model again (which costs money), or
-              write one yourself for free.
+              Once retracted, this summary is no longer used when drafting this chapter; the text
+              itself is unaffected. The system will not rewrite it on its own; “Regenerate” (one
+              model call) and writing one by hand (no cost) remain available.
             </>
           )}
         </div>
@@ -287,10 +283,10 @@ export function SummaryTab() {
               disabled={busy}
               onClick={() => retract.mutate(chapter, { onSuccess: done })}
             >
-              {language === "zh" ? "撤回它" : "Retract it"}
+              {language === "zh" ? "确认撤回" : "Retract"}
             </button>
             <button disabled={busy} onClick={() => setConfirming(false)}>
-              {language === "zh" ? "算了" : "Cancel"}
+              {language === "zh" ? "取消" : "Cancel"}
             </button>
           </>
         )}
@@ -343,8 +339,8 @@ export function SummaryTab() {
 
 const bookStatusFailed = (language: Language): string =>
   language === "zh"
-    ? "全书总结状态这会儿没读出来。上面空着不代表没总结 —— 刷新一下再看。"
-    : "Couldn't load the whole-book summary status right now. An empty box above doesn't mean there are no summaries — refresh and check again.";
+    ? "全书总结状态读取失败；上方为空不代表没有总结。请刷新后查看。"
+    : "The whole-book summary status could not be loaded; an empty box above does not mean there are no summaries. Refresh to check.";
 
 /** 芯片上那句短状态。`paired` 绿 / `missing` 橙 / `stale` 棕 / `empty` 灰。 */
 const STATUS_LABEL: Record<BookChapterStatusRow["state"], { zh: string; en: string }> = {
@@ -370,8 +366,8 @@ function BookStatus(props: {
     <div className="chsum-book">
       <p className="chsum-scope">
         {language === "zh"
-          ? "全书总结 —— 缺章 / 不对齐每 30 分钟自动补，正在写的章不碰："
-          : "Whole-book summary status — missing or misaligned chapters are auto-filled every 30 minutes; the chapter you're writing is left alone:"}
+          ? "全书总结：缺失或不对齐的章节每 30 分钟自动补写，正在写的章除外"
+          : "Whole-book summaries: missing or stale chapters are filled in automatically every 30 minutes, except the chapter being written"}
       </p>
       <div className="chip-row">
         {rows.map((row) => (
@@ -434,25 +430,25 @@ function statusChipTitle(
 ): string {
   if (language === "zh") {
     const head = `第 ${r.chapter_number} 章`;
-    if (isCurrent) return `${head} —— 你现在正看着它。`;
-    if (focused) return `${head} —— 作者正在写的那一章，先不碰。`;
-    if (r.anomaly) return `${head}的总结生成时出了岔子（不阻塞别的章，会照常重试）。`;
-    const weight = r.weight === 0 ? "这一轮不看" : `这一轮权重 ${r.weight}（越近越必补）`;
-    if (r.state === "empty") return `${head}还没有正文，没得总结。`;
-    if (r.state === "paired") return `${head}的总结和正文对得上。`;
-    if (r.state === "missing") return `${head}还没有总结 —— ${weight}。`;
-    return `${head}的正文动过，总结还没跟着覆写 —— ${weight}。`;
+    if (isCurrent) return `${head}：当前打开的章`;
+    if (focused) return `${head}：正在写的章，自动补写不处理`;
+    if (r.anomaly) return `${head}：总结生成出错（不影响其他章，将自动重试）`;
+    const weight = r.weight === 0 ? "本轮不处理" : `本轮权重 ${r.weight}（越近的章优先）`;
+    if (r.state === "empty") return `${head}：尚无正文，无总结可生成`;
+    if (r.state === "paired") return `${head}：总结与正文一致`;
+    if (r.state === "missing") return `${head}：尚无总结，${weight}`;
+    return `${head}：正文已修改，总结尚未更新，${weight}`;
   }
   const head = `Chapter ${r.chapter_number}`;
-  if (isCurrent) return `${head} — you're currently looking at it.`;
-  if (focused) return `${head} — the chapter you're writing; left alone for now.`;
-  if (r.anomaly) return `${head}'s summary hit a snag while generating (doesn't block other chapters; will retry automatically).`;
+  if (isCurrent) return `${head}: the chapter currently open`;
+  if (focused) return `${head}: the chapter being written; skipped by auto-fill`;
+  if (r.anomaly) return `${head}: summary generation failed (other chapters unaffected; retried automatically)`;
   const weight =
-    r.weight === 0 ? "not considered this round" : `weight ${r.weight} this round (closer chapters are prioritized)`;
-  if (r.state === "empty") return `${head} doesn't have any text yet, so there's nothing to summarize.`;
-  if (r.state === "paired") return `${head}'s summary matches its text.`;
-  if (r.state === "missing") return `${head} doesn't have a summary yet — ${weight}.`;
-  return `${head}'s text has changed and the summary hasn't caught up — ${weight}.`;
+    r.weight === 0 ? "not processed this round" : `weight ${r.weight} this round (closer chapters first)`;
+  if (r.state === "empty") return `${head}: no text yet, nothing to summarize`;
+  if (r.state === "paired") return `${head}: summary matches the text`;
+  if (r.state === "missing") return `${head}: no summary yet; ${weight}`;
+  return `${head}: text changed, summary not yet updated; ${weight}`;
 }
 
 /** 这一段总结提到了什么 —— **一排可点的记忆点**。
@@ -475,14 +471,12 @@ function Memories(props: {
       <p className="empty chsum-why">
         {language === "zh" ? (
           <>
-            这一段里没出现角色册上的任何人或东西 —— 所以没有可以顺过去的地方。
-            写进去一个名字（或者去角色册把那个称呼建上），这里就有得点了。
+            此总结未提及角色册中的任何条目。在总结中写入名称，或在角色册中添加该称呼后，可在此追溯。
           </>
         ) : (
-          <>
-            Nobody or nothing from the roster appears in this paragraph, so there’s nothing to
-            follow from here. Add a name (or add that name as an alias in the roster), and this
-            will have something to click.
+            <>
+            This summary mentions nothing from the roster. Add a name to the summary, or add that
+            name to the roster, to follow it from here.
           </>
         )}
       </p>
@@ -492,8 +486,8 @@ function Memories(props: {
     <div className="chsum-mentions">
       <p className="chsum-why">
         {language === "zh"
-          ? "这一段提到了 —— 点一个，看还有哪几章的总结也提到它："
-          : "This paragraph mentions — click one to see which other chapters' summaries mention it too:"}
+          ? "此总结提及：点击查看其他章节的总结是否也提及"
+          : "Mentioned in this summary — click one to see which other chapters’ summaries mention it"}
       </p>
       <div className="chip-row">
         {props.hits.map((hit) => (
@@ -529,7 +523,7 @@ function Trail(props: {
   const language = useLanguage((s) => s.language);
   if (props.failed) return <div className="err-box">{trailFailed(language)}</div>;
   if (props.loading || !props.data)
-    return <p className="empty chsum-why">{language === "zh" ? "正在翻…" : "Searching…"}</p>;
+    return <p className="empty chsum-why">{language === "zh" ? "查找中…" : "Searching…"}</p>;
 
   const others = props.data.chapters.filter((row) => row.chapter_number !== props.here);
   const name = props.data.node.name;
@@ -538,14 +532,12 @@ function Trail(props: {
       <p className="empty chsum-why">
         {language === "zh" ? (
           <>
-            全书只有这一章的总结提到了{name}。别的章可能写到过，只是那几章还没有总结 ——
-            这里翻的是总结，不是正文。
+            全书仅本章总结提及{name}。此处查找的是总结而非正文，尚无总结的章节不在其中。
           </>
         ) : (
           <>
-            Only this chapter’s summary mentions {name} in the whole book. Other chapters might
-            mention {name} too — they just don’t have summaries yet. This searches summaries, not
-            the text itself.
+            Only this chapter’s summary mentions {name}. This searches summaries, not the text;
+            chapters without a summary are not included.
           </>
         )}
       </p>
@@ -556,7 +548,7 @@ function Trail(props: {
       <p className="chsum-why">
         {language === "zh" ? (
           <>
-            {name}还出现在这 {others.length} 章的总结里（按顺序）：
+            {name}还出现在以下 {others.length} 章的总结中（按章序）：
           </>
         ) : (
           <>

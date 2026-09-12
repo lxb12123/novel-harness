@@ -66,8 +66,8 @@ const STATUS_ZH: Record<string, { zh: string; en: string }> = {
  *  ——不知道就说不知道（§10 约束 8）。 */
 const RETRY_FAILED = (language: Language): string =>
   language === "zh"
-    ? "没能把这一章重新排上队，而系统没能说清是为什么。过一会儿再试一次。"
-    : "Couldn't put this chapter back in the queue, and the system couldn't say why. Try again in a moment.";
+    ? "本章未能重新排队，未返回原因。请稍后重试。"
+    : "This chapter could not be queued again and no reason was returned. Try again shortly.";
 
 /** 跳转坐标 → 右栏的哪一格。
  *
@@ -137,8 +137,8 @@ function jumpNote(entry: ActivityEntry, jump: ActivityJump, language: Language):
   // 只有「改了东西」的那一行值得说这句：一次模型调用本来就没有什么可改的。
   if (entry.source !== "decision") return null;
   return language === "zh"
-    ? "这一步改动的内容，从这里点不到具体的某一处，只能先跳到那一章。"
-    : "The content this step changed can't be clicked through to a specific spot from here — you can only jump to the chapter first.";
+    ? "此步骤改动的内容无法直接定位，仅可跳转到对应章节。"
+    : "The content changed in this step cannot be located directly; only the chapter can be opened.";
 }
 
 /** 数字。**null 是「没记」不是 0**（§10 约束 8）：一张写着 0 的账单是假的。 */
@@ -183,8 +183,8 @@ function TokenCell({ t }: { t: CostTotals }) {
       <span
         title={
           language === "zh"
-            ? "这几次模型服务商都没有回报用量 —— 是这个数拿不到，不是没有用。"
-            : "The model provider didn't report usage for any of these calls — the number is unavailable, not zero."
+            ? "模型服务商未报告这些调用的用量；数字不可得，并非为零。"
+            : "The model provider did not report usage for these calls; the number is unavailable, not zero."
         }
       >
         {language === "zh" ? "用量未记录" : "Usage not recorded"}
@@ -195,8 +195,8 @@ function TokenCell({ t }: { t: CostTotals }) {
       title={
         unreported > 0
           ? language === "zh"
-            ? `另外 ${unreported} 次模型服务商没有回报用量，所以这里只是其余几次的合计。`
-            : `The model provider didn't report usage for ${unreported} other call${unreported === 1 ? "" : "s"}, so this is only the total of the rest.`
+            ? `另有 ${unreported} 次调用未报告用量，此处仅为其余调用的合计。`
+            : `${unreported} other call${unreported === 1 ? "" : "s"} reported no usage; this is the total of the rest only.`
           : undefined
       }
     >
@@ -241,8 +241,8 @@ function CostCell({ t }: { t: CostTotals }) {
       <span
         title={
           language === "zh"
-            ? "这几次都算不出价钱 —— 自建的端点、公开标价表里没有的模型、或者服务商没回报用量。是这个数拿不到，不是没花钱。"
-            : "The cost couldn't be worked out for any of these calls — a self-hosted endpoint, a model not in the public pricing table, or usage the provider didn't report. The number is unavailable, not zero."
+            ? "这些调用的费用无法计算：自建端点、公开价目表中没有的模型，或服务商未报告用量。数字不可得，并非为零。"
+            : "The cost of these calls cannot be computed: a self-hosted endpoint, a model not in the public price list, or usage the provider did not report. The number is unavailable, not zero."
         }
       >
         {language === "zh" ? "花费未记录" : "Cost not recorded"}
@@ -252,11 +252,11 @@ function CostCell({ t }: { t: CostTotals }) {
     <span
       title={
         language === "zh"
-          ? "按各家的公开标价估的。你的实际账单可能不一样——有折扣、走中转、或者用的是免费额度。" +
-            (unpriced > 0 ? `另外 ${unpriced} 次算不出价钱，所以这里只是其余几次的合计。` : "")
-          : "Estimated from each provider's public pricing. Your actual bill may differ — discounts, relays, or a free quota all change it." +
+          ? "按各服务商公开价目估算。实际账单可能因折扣、中转或免费额度而不同。" +
+            (unpriced > 0 ? `另有 ${unpriced} 次调用无法计算费用，此处仅为其余调用的合计。` : "")
+          : "Estimated from each provider's public pricing. The actual bill may differ because of discounts, relays or free quota." +
             (unpriced > 0
-              ? ` The cost couldn't be worked out for ${unpriced} other call${unpriced === 1 ? "" : "s"}, so this is only the total of the rest.`
+              ? ` The cost of ${unpriced} other call${unpriced === 1 ? "" : "s"} cannot be computed; this is the total of the rest only.`
               : "")
       }
     >
@@ -292,9 +292,9 @@ function UsageStrip() {
     return (
       <div className="log-usage">
         {language === "zh" ? (
-          <>还没有用过模型 —— 系统整理过这本书之后，用量会记在这里</>
+          <>尚无模型调用。整理本书后，用量将记录于此</>
         ) : (
-          <>No model calls yet — usage will show up here once the system processes this book</>
+          <>No model calls yet. Usage is recorded here once the book has been processed</>
         )}
       </div>
     );
@@ -404,18 +404,15 @@ function RetryRow({ jump }: { jump: ActivityJump }) {
         onClick={() => retry.mutate({ force: true })}
       >
         {language === "zh"
-          ? retry.isPending ? "正在重新排队…" : `${jumpLabel(jump, language)} →`
+          ? retry.isPending ? "重新排队中…" : `${jumpLabel(jump, language)} →`
           : retry.isPending ? "Queueing again…" : `${jumpLabel(jump, language)} →`}
       </button>
       {retry.isSuccess && (
         <span className="log-jump-note">
           {language === "zh" ? (
-            <>已经重新排上队了 —— 它在后台跑，这一行要过一会儿才会变。</>
+            <>已重新排队，在后台处理；此行稍后更新。</>
           ) : (
-            <>
-              Back in the queue — it’s running in the background, and this row will update in a
-              moment.
-            </>
+            <>Queued again and processing in the background; this row updates shortly.</>
           )}
         </span>
       )}
@@ -472,8 +469,8 @@ function EntryDetail({ entry }: { entry: ActivityEntry }) {
     return (
       <div className="log-detail err-box">
         {language === "zh"
-          ? "这一条的详细内容没读出来。"
-          : "Couldn't load the details for this entry."}
+          ? "此条记录的详情读取失败"
+          : "The details of this entry could not be loaded"}
       </div>
     );
 
@@ -584,18 +581,18 @@ export function ActivityLog() {
       )}
       {log.isError && (
         <div className="err-box">
-          {language === "zh" ? "活动记录没读出来。" : "Couldn't load the activity log."}
+          {language === "zh" ? "活动记录读取失败" : "The activity log could not be loaded"}
         </div>
       )}
       {!log.isLoading && !log.isError && entries.length === 0 && (
         <div className="empty">
           {language === "zh"
             ? actor === null
-              ? "还没有留下记录。系统整理过这本书之后，它做的每一步都会出现在这里。"
-              : `${actorName(actor, language)}还没有在这本书上留下记录。`
+              ? "尚无记录。整理本书后，每一步操作将记录于此"
+              : `${actorName(actor, language)}在本书上尚无记录`
             : actor === null
-              ? "Nothing recorded yet. Once the system processes this book, every step it takes will show up here."
-              : `${actorName(actor, language)} hasn't left any record on this book yet.`}
+              ? "Nothing recorded yet. Once the book has been processed, every step is recorded here"
+              : `No record from ${actorName(actor, language)} on this book yet`}
         </div>
       )}
 

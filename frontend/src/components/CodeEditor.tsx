@@ -113,7 +113,7 @@ export const CodeEditor = forwardRef<
         // CM6 的 keymap facet 同优先级下是「先注册的先试」，光靠挪位置排不对。
         ghostText(),
         EditorView.lineWrapping,
-        cmPlaceholder("从左边点一章打开正文…"),
+        cmPlaceholder("在左侧选择章节以打开正文"),
         theme,
         EditorView.updateListener.of((u) => {
           // 外部替换（换章）不回调 onChange——那不是用户编辑，不该标脏。

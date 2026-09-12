@@ -140,13 +140,12 @@ export function CenterEditor() {
         <div className="empty" style={{ padding: 16 }}>
           {language === "zh" ? (
             <>
-              这本书还是空的。用左边的「＋ 新书 / 导入」导入一份 TXT，
-              导入完这里就会打开最后一章。
+              本书尚无内容。使用左侧「＋ 新书 / 导入」导入 TXT 文件，导入后在此打开最后一章。
             </>
           ) : (
             <>
-              This book is still empty. Use the "+ New Book / Import" on the left to import a TXT
-              file, and this will open the last chapter once it’s imported.
+              This book has no content yet. Use "+ New Book / Import" on the left to import a TXT
+              file; the last chapter opens here once imported.
             </>
           )}
         </div>
@@ -232,15 +231,14 @@ export function CenterEditor() {
         <div className="selbar" style={{ borderTop: 0, color: "var(--warn)" }}>
           {language === "zh" ? (
             <>
-              这一章在别处变过了（写作助手起草会直接写进这一章，另一个窗口保存也会）。
-              你手上这份还没保存——现在按保存会盖过它，被盖的那一版在「历史」里找得回来。
+              本章已在别处修改（写作助手起草或另一窗口保存均会写入本章）。当前编辑内容尚未保存；
+              此时保存会覆盖该版本，被覆盖的版本可在「历史」中找回。
             </>
           ) : (
             <>
-              This chapter changed elsewhere (the writing assistant writes drafts directly into
-              this chapter, and saving from another window does too). What you have hasn’t been
-              saved — clicking Save now would overwrite it, but the overwritten version can still
-              be found in "History".
+              This chapter was changed elsewhere (drafts from the writing assistant and saves from
+              another window both write into it). The current edits are unsaved; saving now
+              overwrites that version, which remains available in "History".
             </>
           )}
         </div>
@@ -249,11 +247,11 @@ export function CenterEditor() {
       {locateMiss && (
         <div className="selbar" style={{ borderTop: 0, color: "var(--warn)" }}>
           {language === "zh" ? (
-            <>定位不到那句话——正文可能改过了（存盘后重跑检查），或它锚在别的章。</>
+            <>无法定位该句：正文可能已修改（保存后将重新检查），或该句位于其他章节。</>
           ) : (
             <>
-              Couldn’t locate that sentence — the text may have changed (checks re-run after
-              saving), or it’s anchored to a different chapter.
+              That sentence could not be located: the text may have changed (checks run again
+              after saving), or it belongs to a different chapter.
             </>
           )}
         </div>

@@ -40,8 +40,8 @@ export function RulesTable() {
     return (
       <div className="err-box">
         {language === "zh"
-          ? "你交代过的规矩这会儿没读出来。刷新一下再看。"
-          : "Couldn't load the rules you've told it — refresh and check again."}
+          ? "写作要求读取失败，请刷新后重试"
+          : "Recorded instructions could not be loaded; refresh to try again"}
       </div>
     );
   }
@@ -57,19 +57,19 @@ export function RulesTable() {
       <p className="empty">
         {language === "zh" ? (
           scanned === 0 ? (
-            <>你还没跟写作助手说过话。等你随口交代一句「这一章别写打斗」，它会记在这儿。</>
+            <>尚无对话。对写作助手提出的写作要求（如「本章不写打斗」）会记录在此。</>
           ) : (
-            <>你跟它说过话，但还没有哪一句被当成交代记下来。它只记「怎么写」那一类的话。</>
+            <>对话中尚无被记录的写作要求。仅记录关于「怎么写」的要求。</>
           )
         ) : scanned === 0 ? (
           <>
-            You haven’t talked to the writing assistant yet. Once you mention something in
-            passing, like “no fight scenes in this chapter”, it’ll show up here.
+            No conversations yet. Writing instructions given to the assistant (such as “no fight
+            scenes in this chapter”) are recorded here.
           </>
         ) : (
           <>
-            You’ve talked to it, but nothing you said has been recorded as an instruction yet. It
-            only records the “how to write this” kind of thing.
+            No writing instruction has been recorded from the conversations yet. Only instructions
+            about how to write are recorded.
           </>
         )}
       </p>
@@ -80,10 +80,10 @@ export function RulesTable() {
     <table className="ruletable">
       <thead>
         <tr>
-          <th>{language === "zh" ? "写到第几章时说的" : "Said while writing which chapter"}</th>
-          <th>{language === "zh" ? "你交代的" : "What you told it"}</th>
-          <th>{language === "zh" ? "它当时判定管到" : "It judged this applies through"}</th>
-          <th>{language === "zh" ? "哪一段对话" : "Which conversation"}</th>
+          <th>{language === "zh" ? "提出时所在章" : "Chapter when given"}</th>
+          <th>{language === "zh" ? "写作要求" : "Instruction"}</th>
+          <th>{language === "zh" ? "有效至" : "Applies through"}</th>
+          <th>{language === "zh" ? "所在对话" : "Conversation"}</th>
         </tr>
       </thead>
       <tbody>
@@ -96,10 +96,10 @@ export function RulesTable() {
             {/* **空的时候照实说**（那是迁移 016 之前记下的，模型当时没有这一格）。
                 替它编一句，读起来就像是它当时真的判断过。 */}
             <td className={rule.until ? "rt-until" : "rt-until dim"}>
-              {rule.until || (language === "zh" ? "没记下" : "Not recorded")}
+              {rule.until || (language === "zh" ? "未记录" : "Not recorded")}
             </td>
             <td className="rt-chat">
-              {rule.chat_title || (language === "zh" ? "没起名字的一段" : "An unnamed conversation")}
+              {rule.chat_title || (language === "zh" ? "未命名对话" : "Unnamed conversation")}
             </td>
           </tr>
         ))}

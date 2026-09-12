@@ -233,7 +233,7 @@ describe("活动记录", () => {
     ]);
 
     await user.click(await screen.findByRole("button", { name: /否决/ }));
-    const note = await screen.findByText(/从这里点不到具体的某一处/);
+    const note = await screen.findByText(/无法直接定位/);
     expect(note).toBeInTheDocument();
     expect(note.textContent).not.toMatch(/改不了|没救|无法修改|不能改/);
     // 「去第 1 章」仍然点得动（定位是有用的），只是它没有假装自己能改什么。
@@ -291,7 +291,7 @@ describe("活动记录", () => {
     expect(hit).toContain("force=true");
 
     // 按完之后说一句人话（**不假装它已经跑完了**：那要过一会儿）。
-    expect(await screen.findByText(/已经重新排上队了/)).toBeInTheDocument();
+    expect(await screen.findByText(/已重新排队/)).toBeInTheDocument();
     // 这块屏幕整片扫一遍：失败那一行是这一页上最容易漏出研发术语的地方
     // （它曾经印着 `provider_failure：chapter analysis provider failed`）。
     expect(devTerms(screenText())).toEqual([]);
@@ -481,7 +481,7 @@ describe("活动记录", () => {
         body: { ...fixtures.activity, entries: [], next_cursor: null, actors: [] },
       },
     ]);
-    expect(await screen.findByText(/系统整理过这本书之后/)).toBeInTheDocument();
+    expect(await screen.findByText(/整理本书后/)).toBeInTheDocument();
   });
 
   // ── 界面上不摆研发术语 ────────────────────────────────────────────────

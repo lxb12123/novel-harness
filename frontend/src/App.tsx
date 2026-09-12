@@ -84,11 +84,11 @@ function Workbench() {
     return (
       <div style={{ padding: 24, color: "var(--warn)" }}>
         {language === "zh" ? (
-          <>连不上后台。工作台和后台是同一个程序，多半是它已经退出了 —— 重新打开一次就行。</>
+          <>无法连接后台。工作台与后台是同一个程序，后台可能已退出，请重新打开工作台。</>
         ) : (
           <>
-            Can’t reach the backend. The workbench and the backend are the same program, so it’s
-            likely exited — just reopen it.
+            The backend cannot be reached. The workbench and the backend are the same program; it
+            has probably exited. Reopen the workbench.
           </>
         )}
       </div>

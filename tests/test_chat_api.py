@@ -323,7 +323,7 @@ def test_a_turn_that_never_reached_the_model_writes_no_bill(
     )
     assert turn.status_code == 200, turn.text
     assert turn.json()["reason"] == StopReason.MODEL_UNREACHABLE.value
-    assert "联系不上写作模型" in turn.json()["message"]
+    assert "无法连接写作模型" in turn.json()["message"]
     # **维护者那条诊断一个字都不出去**（同 `ExtractionRunError.message`）：
     # 里面有端点地址和模型名，而作者能做的动作是去顶栏改设置。
     assert "connection refused" not in turn.text
@@ -374,7 +374,7 @@ def test_the_stop_button_reaches_a_turn_that_is_already_running(
         stopped = client.post(f"{url}/stop")
         assert stopped.status_code == 200, stopped.text
         assert stopped.json()["stopped"] is True
-        assert stopped.json()["message"] == "按你的意思停下了。已经查到的东西留着。"
+        assert stopped.json()["message"] == "已停止。已查到的内容保留。"
         release.set()
         turn = running.result(timeout=10)
 
@@ -399,7 +399,7 @@ def test_stopping_a_conversation_that_is_not_running_is_not_a_failure(
     idle = client.post(f"/api/projects/{pid}/chats/{chat_id}/stop")
     assert idle.status_code == 200
     assert idle.json()["stopped"] is False
-    assert "没在跑" in idle.json()["message"]
+    assert "没有正在进行的一轮" in idle.json()["message"]
     assert client.post(f"/api/projects/{pid}/chats/chat_session:nope/stop").status_code == 404
 
 
@@ -511,7 +511,7 @@ def test_saying_something_mid_turn_reaches_the_model_at_its_next_step(
         assert entered.wait(timeout=5), "这一轮没跑起来"
         said = client.post(f"{url}/say", json={"run_id": "b", "said": "顺便看看第 2 章"})
         assert said.status_code == 200, said.text
-        assert said.json() == {"chat_id": chat_id, "queued": True, "message": "记下了，它下一步就会看到。"}
+        assert said.json() == {"chat_id": chat_id, "queued": True, "message": "已加入本轮，下一步读取。"}
         # **这条路由不写库**：对话的写入只有 loop 那一条线。
         texts = [m["text"] for m in client.get(url).json()["messages"]]
         assert "顺便看看第 2 章" not in texts
@@ -537,7 +537,7 @@ def test_saying_something_when_nothing_is_running_is_not_a_failure_and_lands_now
     idle = client.post(f"{url}/say", json={"said": "再说一句"})
     assert idle.status_code == 200
     assert idle.json()["queued"] is False
-    assert "没在跑" in idle.json()["message"]
+    assert "没有正在进行的一轮" in idle.json()["message"]
     assert "再说一句" not in [m["text"] for m in client.get(url).json()["messages"]]
     assert client.post(f"/api/projects/{pid}/chats/chat_session:nope/say", json={"said": "x"}).status_code == 404
 

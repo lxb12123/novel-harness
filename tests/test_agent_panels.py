@@ -497,10 +497,10 @@ def test_notifications_carry_both_sources_with_names_not_ids(book: Book) -> None
         (1, 1, 0),
         (2, 0, 1),
     ]
-    assert [n.said for n in result.notices] == ["后台有一件事没办成"]
+    assert [n.said for n in result.notices] == ["后台任务未完成"]
     assert result.notices[0].chapter == 1
     assert result.notices[0].facts == {"operation": "summary"}
-    assert [p.said for p in result.pending] == ["有一处设定跟抽出来的内容对不上"]
+    assert [p.said for p in result.pending] == ["一处设定与整理结果不一致"]
     line = result.pending[0].lines[0]
     assert "萧决 在 藏书阁" in line and "萧决走进了藏书阁。" in line
     # id 一个都不出：对照那几行说的是人名和地名。

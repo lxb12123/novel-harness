@@ -26,8 +26,8 @@ import type { CanonEdgeEditRequest } from "../api/types";
 //    `view.author_owned` 是当前归属。两个字段分开显示（不变量 21 / 27）。
 const retryFailed = (language: Language): string =>
   language === "zh"
-    ? "没能保存，而系统没能说清是为什么。过一会儿再试一次。"
-    : "Couldn't save, and the system couldn't say why. Try again in a moment.";
+    ? "保存失败，未返回原因。请稍后重试。"
+    : "Saving failed and no reason was returned. Try again shortly.";
 
 /** 改归属 / 改目标那个人可以从角色册里挑。只挑后端那个 label 会收的类型。 */
 function peers(roster: { id: string; label: string; name: string }[], label: string) {
@@ -169,8 +169,8 @@ export function CanonEdgeEditor() {
       {edge.isError && (
         <div className="err-box">
           {language === "zh"
-            ? "这条边读不出来 —— 它可能已被撤回或改掉了。"
-            : "Couldn't load this fact — it may have been retracted or changed."}
+            ? "此条事实读取失败，可能已被撤回或修改。"
+            : "This fact could not be loaded; it may have been retracted or changed."}
         </div>
       )}
 
@@ -211,7 +211,7 @@ export function CanonEdgeEditor() {
                     : language === "zh" ? "确认撤回" : "Confirm retraction"}
                 </button>
                 <button className="link" onClick={() => setConfirmRetract(false)}>
-                  {language === "zh" ? "算了" : "Cancel"}
+                  {language === "zh" ? "取消" : "Cancel"}
                 </button>
               </>
             ) : (
@@ -235,7 +235,7 @@ export function CanonEdgeEditor() {
                     edge.refetch();
                   }}
                 >
-                  {language === "zh" ? "看看最新的" : "See the latest version"}
+                  {language === "zh" ? "查看最新版本" : "See the latest version"}
                 </button>
               )}
             </div>

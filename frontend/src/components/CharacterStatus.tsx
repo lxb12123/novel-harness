@@ -150,12 +150,12 @@ export function CharacterStatus({ characterId }: { characterId: string }) {
                         className="mine"
                         title={
                           language === "zh"
-                            ? `你改过这一格 · 去看第 ${v.since_chapter} 章`
-                            : `You edited this · go to chapter ${v.since_chapter}`
+                            ? `作者已修改 · 查看第 ${v.since_chapter} 章`
+                            : `Edited by the author · open chapter ${v.since_chapter}`
                         }
                         onClick={() => openChapter(v.since_chapter)}
                       >
-                        {language === "zh" ? "你改过" : "edited"}
+                        {language === "zh" ? "已修改" : "edited"}
                       </button>
                     )}
                   </span>
@@ -170,16 +170,14 @@ export function CharacterStatus({ characterId }: { characterId: string }) {
             <span className="empty">
               {language === "zh" ? (
                 <>
-                  还没有记录他的状态。修为、伤势、身上带着什么这一类会随剧情变的信息
-                  要等系统整理正文时写下来，或者作者自己在活动记录里补——不是这本书
-                  没有，是还没人写。
+                  尚未记录状态。修为、伤势、随身物品等随剧情变化的信息，在整理正文时写入，
+                  也可由作者在活动记录中补充。
                 </>
               ) : (
                 <>
-                  No status recorded yet. Things that change as the story goes on — cultivation
-                  level, injuries, what they carry — get written here once the system processes
-                  the text, or the author adds them from the activity log. It’s not that this
-                  book has none, just that none have been recorded yet.
+                  No status recorded yet. Information that changes with the story — cultivation
+                  level, injuries, belongings — is written here when the text is processed, or
+                  added by the author from the activity log.
                 </>
               )}
             </span>
@@ -212,12 +210,12 @@ export function CharacterStatus({ characterId }: { characterId: string }) {
                         className="mine"
                         title={
                           language === "zh"
-                            ? `你改过这一格 · 去看第 ${v.since_chapter} 章`
-                            : `You edited this · go to chapter ${v.since_chapter}`
+                            ? `作者已修改 · 查看第 ${v.since_chapter} 章`
+                            : `Edited by the author · open chapter ${v.since_chapter}`
                         }
                         onClick={() => openChapter(v.since_chapter)}
                       >
-                        {language === "zh" ? "你改过" : "edited"}
+                        {language === "zh" ? "已修改" : "edited"}
                       </button>
                     )}
                   </span>

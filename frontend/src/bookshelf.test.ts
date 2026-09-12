@@ -84,7 +84,7 @@ describe("摆法记得住", () => {
 describe("新起一章失败时那句话", () => {
   it("旧版服务（404 且没有错误码）—— 这一句只能前端说，因为后端不认识这条路", () => {
     const said = newChapterError(new ApiError(404, { message: "Not Found" }));
-    expect(said).toMatch(/旧的一版/);
+    expect(said).toMatch(/版本较旧/);
     // **不许出现任何一条命令**：产品的最终用户不碰命令行。
     expect(shellLines(said)).toEqual([]);
     expect(devTerms(said)).toEqual([]);
@@ -117,7 +117,7 @@ describe("新起一章失败时那句话", () => {
   });
 
   it("断网 / 说不出话的那一档才回落到那句通用的", () => {
-    expect(newChapterError(new TypeError("Failed to fetch"))).toMatch(/再点一次/);
-    expect(newChapterError(new ApiError(500, {}))).toMatch(/再点一次/);
+    expect(newChapterError(new TypeError("Failed to fetch"))).toMatch(/请重试/);
+    expect(newChapterError(new ApiError(500, {}))).toMatch(/请重试/);
   });
 });

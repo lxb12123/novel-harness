@@ -79,9 +79,9 @@ function unrecorded(language: Language): string {
 }
 
 const CONFLICT_LABEL: Record<string, { zh: string; en: string }> = {
-  setting: { zh: "设定对不上", en: "setting doesn't match" },
-  timeline: { zh: "时间线对不上", en: "timeline doesn't match" },
-  knowledge: { zh: "谁在什么时候知道什么，对不上", en: "who knew what and when doesn't match" },
+  setting: { zh: "设定不一致", en: "setting conflict" },
+  timeline: { zh: "时间线不一致", en: "timeline conflict" },
+  knowledge: { zh: "认知不一致（谁在何时知道什么）", en: "knowledge conflict (who knew what, and when)" },
 };
 
 /** 乐观并发闸拒绝时的那句话。**两个不同的码共用同一个对象**
@@ -89,8 +89,8 @@ const CONFLICT_LABEL: Record<string, { zh: string; en: string }> = {
  *  对作者是同一件事："你手上这份不是最新的，先看一眼"，不该因为锁的是项目级
  *  版本号还是单条编辑的版本号，就在措辞上产生一条本不存在的区别。 */
 const STALE_VERSION: { zh: string; en: string } = {
-  zh: "这本书在别处刚被改过（你看到的还是版本 {expected}，现在已经是 {current}）。先看一眼最新的，再决定这一处要不要改。",
-  en: "This book was just changed somewhere else (you were looking at version {expected}, it's now {current}). Take a look at the latest version before deciding whether to make this edit.",
+  zh: "本书已在别处修改（当前显示版本 {expected}，最新为 {current}）。请先查看最新版本，再决定是否修改。",
+  en: "This book was changed elsewhere (you are viewing version {expected}; the latest is {current}). Review the latest version before making this edit.",
 };
 
 // ── activity.py（日志页，国际化第四批·笔二）─────────────────────────────────
@@ -137,19 +137,19 @@ export const KIND_LABEL: Record<string, { zh: string; en: string }> = {
   first_appearance_declare: { zh: "声明首次登场", en: "declared a first appearance" },
   proposal_review: { zh: "抽取结果审阅", en: "reviewed extraction results" },
   knowledge_edit: { zh: "更正认知类型", en: "corrected an awareness type" },
-  knowledge_add: { zh: "补一条认知", en: "added an awareness" },
+  knowledge_add: { zh: "添加认知", en: "added an awareness" },
   event_edit: { zh: "更正事件名单", en: "corrected an event's cast" },
   event_summary_edit: { zh: "编辑情节摘要", en: "edited a chapter summary" },
   canon_edge_edit: { zh: "更正地点/状态/关系", en: "corrected a location/status/relationship" },
   canon_edge_retract: { zh: "撤回地点/状态/关系", en: "retracted a location/status/relationship" },
-  chapter_draft: { zh: "写进正文", en: "wrote into the prose" },
+  chapter_draft: { zh: "写入正文", en: "wrote into the text" },
 };
 const KIND_LABEL_FALLBACK = { zh: "一次改动", en: "a change" };
 
 export const VERDICT_LABEL: Record<string, { zh: string; en: string }> = {
   accept: { zh: "接受", en: "accepted" },
   reject: { zh: "否决", en: "rejected" },
-  edit: { zh: "改过之后接受", en: "accepted with edits" },
+  edit: { zh: "修改后接受", en: "accepted with edits" },
 };
 const VERDICT_LABEL_FALLBACK = { zh: "已处理", en: "handled" };
 
@@ -205,7 +205,7 @@ export const SYSTEM_RULE_TEXT: Record<
   { zh: { title: string; desc: string }; en: { title: string; desc: string } }
 > = {
   R3: {
-    zh: { title: "人物开口时机", desc: "已经死了的人又在正文里开口说话" },
+    zh: { title: "人物开口时机", desc: "已死亡的人物在正文中说话" },
     en: { title: "Speaking after death", desc: "A character who is already dead speaks in the text" },
   },
 };
@@ -223,54 +223,54 @@ export function edgeLabelText(type: string, language: Language): string {
 // 这条路时，档位名字已经在这儿，不用再猜怎么对齐。
 export const RUN_ERROR_LABEL: Record<string, { zh: string; en: string }> = {
   prompt_drift: {
-    zh: "这一章在排队期间被改过，整理没有继续（重新整理一次即可）",
-    en: "This chapter was edited while it was queued, so the cleanup didn't continue — just run it again.",
+    zh: "本章在排队期间被修改，整理未继续；重新整理即可",
+    en: "This chapter was edited while queued, so processing did not continue; run it again.",
   },
   // ── provider 那四档 + 兜底（同 activity.py 原表：只看 HTTP 状态码，不读文案，
   //    这几句里一个状态码都不许出现）──────────────────────────────────────
   provider_auth: {
-    zh: "模型服务没接受你的密钥。可能是密钥不对，也可能是这把密钥用不了你填的那个地址——有些服务商按套餐分了不同的地址",
-    en: "The model service didn't accept your key. It might be the wrong key, or this key might not work with the endpoint you entered — some providers use different endpoints for different plans.",
+    zh: "模型服务拒绝了密钥。可能是密钥有误，或该密钥不适用于所填的服务地址（部分服务商按套餐区分地址）",
+    en: "The model service rejected the key. It may be wrong, or it may not apply to the endpoint entered (some providers use different endpoints per plan).",
   },
   provider_quota: {
-    zh: "你在模型服务商那儿的额度或余额不够了，去他们的后台看一眼",
-    en: "You're out of quota or balance with your model provider — check their dashboard.",
+    zh: "模型服务商处的额度或余额不足，请到服务商后台查看",
+    en: "Quota or balance with the model provider is exhausted; check the provider's dashboard.",
   },
   provider_unreachable: {
-    zh: "没能连上你配置的模型服务",
-    en: "Couldn't reach the model service you configured.",
+    zh: "无法连接所配置的模型服务",
+    en: "The configured model service could not be reached.",
   },
   provider_upstream: {
-    zh: "模型服务那边出了问题，过一会儿再试",
-    en: "Something went wrong on the model service's end — try again in a bit.",
+    zh: "模型服务出错，请稍后重试",
+    en: "The model service returned an error; try again later.",
   },
   provider_failure: {
-    zh: "这一次没能调用模型，而系统没能说清是为什么",
-    en: "This call to the model failed, and the system couldn't pin down why.",
+    zh: "模型调用失败，未返回原因",
+    en: "The model call failed and no reason was returned.",
   },
   call_record_failure: {
-    zh: "模型答了，但这次调用没能记进账里，整理没有继续",
-    en: "The model answered, but this call couldn't be recorded, so the cleanup didn't continue.",
+    zh: "模型已返回，但本次调用未能记账，整理未继续",
+    en: "The model responded, but the call could not be recorded, so processing did not continue.",
   },
   analysis_format: {
-    zh: "模型这次答的东西读不出来",
-    en: "What the model answered this time couldn't be parsed.",
+    zh: "模型返回的内容无法解析",
+    en: "The model's response could not be parsed.",
   },
   ingest_failure: {
-    zh: "整理结果没能写进这本书，这一章维持原样",
-    en: "The cleanup results couldn't be written into this book — this chapter is unchanged.",
+    zh: "整理结果未能写入，本章保持原样",
+    en: "The results could not be written into the book; this chapter is unchanged.",
   },
 };
 const RUN_ERROR_LABEL_FALLBACK = {
-  zh: "整理没有跑完（没有留下能看懂的原因）",
-  en: "The cleanup didn't finish, and no readable reason was recorded.",
+  zh: "整理未完成，未记录原因",
+  en: "Processing did not finish and no reason was recorded.",
 };
 
 const MESSAGES: Record<string, Template> = {
   // ── system_notifications.py ──────────────────────────────────────────
   import_toc_skipped_title: {
-    zh: "跳过了 {count} 个只有标题、没有正文的章 —— 看起来你的文件里带了一页目录。",
-    en: "Skipped {count} chapters that had only a heading and no body text — looks like your file has a table of contents page in it.",
+    zh: "已跳过 {count} 个只有标题、没有正文的章节，文件中可能含有目录页。",
+    en: "Skipped {count} chapters that had a heading but no text; the file may contain a table of contents.",
   },
   // paragraph / rule_title（不透明，checks/ 自己的措辞）/ rest / issue_message（不透明）
   validation_blocked_title: (params, language) => {
@@ -290,22 +290,22 @@ const MESSAGES: Record<string, Template> = {
   // 通知卡片展开之后拿 subject_id 去项目全量的 /proposals 里找同一条记录、
   // 复用原来「待确认」那套卡片渲染——这两句只是列表里的一行摘要。
   proposal_conflict_title: {
-    zh: "有一处设定跟抽出来的内容对不上",
-    en: "Something extracted doesn't match an existing fact",
+    zh: "一处设定与整理结果不一致",
+    en: "An extracted fact conflicts with an existing one",
   },
   proposal_low_confidence_title: {
-    zh: "有一条情节需要你确认",
-    en: "There's an event that needs your confirmation",
+    zh: "一条情节待确认",
+    en: "An event awaits confirmation",
   },
   // removed_name / remaining_count（034）
   event_cast_changed_title: (params, language) => {
     const removedName = params.removed_name;
     const remainingCount = Number(params.remaining_count ?? 0);
     if (language === "zh") {
-      return `「${removedName}」被移出了这件事 —— 还有 ${remainingCount} 人牵扯其中，去看看这段还对不对。`;
+      return `「${removedName}」已从此事件移除，仍涉及 ${remainingCount} 人；请核对该事件是否仍然成立。`;
     }
-    const who = remainingCount === 1 ? "person is" : "people are";
-    return `"${removedName}" was removed from this event — ${remainingCount} other ${who} still tied to it. Take a look and see if it still holds up.`;
+    const who = remainingCount === 1 ? "person remains" : "people remain";
+    return `"${removedName}" was removed from this event; ${remainingCount} other ${who}. Check whether the event still holds.`;
   },
   // ── extract/runner.py ─────────────────────────────────────────────────
   // lost / unresolved（这一档丢弃的原因是不是「认不出人」）/ proposal_count
@@ -313,22 +313,22 @@ const MESSAGES: Record<string, Template> = {
     const why =
       params.unresolved === true
         ? language === "zh"
-          ? "它们提到的人在角色册里还认不出来"
-          : "the people they mention aren't recognized in the roster yet"
+          ? "所涉人物尚未收入角色册"
+          : "the people involved are not in the roster yet"
         : language === "zh"
-          ? "它们都没能落库"
-          : "none of them made it into the book";
+          ? "均未能写入"
+          : "none could be written in";
     const proposalCount = Number(params.proposal_count ?? 0);
     const tail = proposalCount
       ? language === "zh"
-        ? `这一次提了 ${proposalCount} 条待确认，确认之后重新整理这一章，事件才留得下。`
-        : `This time it raised ${proposalCount} items for you to confirm — after you confirm them, re-run the extraction for this chapter so the events can stick.`
+        ? `本次提出 ${proposalCount} 条待确认；确认后重新整理本章，事件方可保留。`
+        : `${proposalCount} items await confirmation; after confirming, run extraction for this chapter again to keep the events.`
       : language === "zh"
-        ? "角色册里先得有人，这一章的事件才留得下。"
-        : "The roster needs people in it first before this chapter's events can stick.";
+        ? "角色册中需先有人物，本章事件方可保留。"
+        : "The roster needs characters before this chapter's events can be kept.";
     return language === "zh"
-      ? `这一章整理完了，但 ${params.lost} 件事一件都没留下 —— ${why}。${tail}`
-      : `This chapter finished processing, but ${params.lost} events didn't make it in at all — ${why}. ${tail}`;
+      ? `本章整理完成，但 ${params.lost} 件事均未保留：${why}。${tail}`
+      : `This chapter was processed, but none of its ${params.lost} events were kept: ${why}. ${tail}`;
   },
   // ── advisory_review.py ────────────────────────────────────────────────
   // sentence / chapter / conflict（"setting"|"timeline"|"knowledge"）/ rest
@@ -346,32 +346,32 @@ const MESSAGES: Record<string, Template> = {
   // （`jump.quote_text`，作者点得过去），不进标题——标题里嵌一段模型自由写的话，
   // 就是这个文件顶上那段「参数安不安全要在送之前判」说的那种口子。
   card_edit_advisory: {
-    zh: "你改的「{who} · {field}」和那一章的原文可能对不上。点开看看是哪一句。",
-    en: 'The "{who} · {field}" you edited may not match what that chapter says. Open it to see which line.',
+    zh: "「{who} · {field}」的修改可能与该章原文不符。点开查看相关句子。",
+    en: 'The edit to "{who} · {field}" may not match that chapter\'s text. Open it to see the line.',
   },
   // ── panel/constraints.py ──────────────────────────────────────────────
   unresolved_cast_ambiguous: {
-    zh: "第 {chapter} 章的场景里这些称呼解析不出唯一角色：{unresolved}。请在面板上指定他们是谁——「师兄」在一章里可能指 8 个人，系统猜错的产物是一个此刻在场的人从这一场的在场名单里静默消失",
-    en: 'In chapter {chapter}\'s scene, these names don\'t resolve to a single character: {unresolved}. Please specify who they are on the panel — a name like "senior brother" could mean any of 8 people in one chapter, and a wrong guess by the system means someone who\'s actually present silently vanishes from this scene\'s cast list',
+    zh: "第 {chapter} 章的场景中，这些称呼无法对应到唯一人物：{unresolved}。请在面板上指定对应人物；系统不代为猜测。",
+    en: "In chapter {chapter}'s scene, these names do not resolve to a single character: {unresolved}. Specify who they are on the panel; the system does not guess.",
   },
   // ── draft/context.py ──────────────────────────────────────────────────
   unresolved_cast_no_cast_declared: {
-    zh: "第 {chapter} 章的这一场没有声明在场角色（`cast=`）。空着的在场名单和「这一场真的没有人」在出参上长得一模一样，而前者不该被当成后者发给模型。请在场景块里写明这一场有谁",
-    en: "Chapter {chapter}'s scene doesn't declare who's present (`cast=`). An empty cast list and \"truly nobody is here\" look identical in the output, and the former shouldn't be sent to the model as the latter. Please write who's in this scene in the scene block",
+    zh: "第 {chapter} 章的场景未声明在场人物（`cast=`）。请在场景块中写明在场人物。",
+    en: "Chapter {chapter}'s scene does not declare who is present (`cast=`). List the characters present in the scene block.",
   },
   // ── draft/rolling_summary.py ─────────────────────────────────────────
   summary_text_rejected_empty: {
-    zh: "这一段是空的。要清掉这一章的总结，用「撤回」。",
-    en: 'This text is empty. To clear this chapter\'s summary, use "retract" instead.',
+    zh: "内容为空。如需清除本章总结，请使用「撤回」。",
+    en: 'The text is empty. To clear this chapter\'s summary, use "Retract".',
   },
   summary_text_rejected_too_long: {
-    zh: "这一段太长了（{length} 字，最多 {max_chars} 字）。这里是给写作模型看的背景，写得太长会把更早那几章的总结挤出去。",
-    en: "This text is too long ({length} characters, {max_chars} at most). This is background the writing model reads — writing too much here crowds out the summaries of earlier chapters.",
+    zh: "内容过长（{length} 字，上限 {max_chars} 字）。总结是写作模型的背景资料，过长会挤占更早章节的总结。",
+    en: "The text is too long ({length} characters; the limit is {max_chars}). Summaries are background for the writing model, and an overlong one crowds out earlier chapters' summaries.",
   },
   // ── draft/windows.py ──────────────────────────────────────────────────
   model_windows_refresh_empty: {
-    zh: "拉回来的内容里一个对话模型都没有，没有覆盖原来那份。",
-    en: "There wasn't a single chat model in what came back, so the original list was not overwritten.",
+    zh: "获取的列表中没有对话模型，原列表未覆盖。",
+    en: "The fetched list contained no chat models; the existing list was left unchanged.",
   },
   // ── api/app.py ────────────────────────────────────────────────────────
   chapter_number_at_least_one: {
@@ -379,12 +379,12 @@ const MESSAGES: Record<string, Template> = {
     en: "Chapter number must be at least 1",
   },
   chapter_exists: {
-    zh: "这一章刚刚已经被建出来了（另一个窗口？）。刷新一下就能看见它。",
-    en: "This chapter was just created (from another window?). Refresh and you'll see it.",
+    zh: "该章刚刚已被创建（可能在另一窗口）。请刷新页面。",
+    en: "This chapter was just created (possibly in another window). Refresh to see it.",
   },
   chapter_missing: {
-    zh: "第 {chapter} 章已经不在了。刷新一下就对得上了。",
-    en: "Chapter {chapter} is no longer there. Refresh and things will line up again.",
+    zh: "第 {chapter} 章已不存在。请刷新页面。",
+    en: "Chapter {chapter} no longer exists. Refresh the page.",
   },
   // `cast_could_not_resolve_prefix`（旧："在场角色解析不了：{exc}"）删掉了，不是漏了。
   // `exc` 曾经是 `UnresolvedCast` 的 `str()`——那本身已经是 `unresolved_cast_ambiguous`/
@@ -394,8 +394,8 @@ const MESSAGES: Record<string, Template> = {
   // 再加一句引导语，加了反而是「后端拼前缀 + 前端拼正文」的片段拼接，同 validation_
   // blocked_title 那次要避免的形状是一类问题。
   model_not_configured: {
-    zh: "模型没配好，先去顶栏 ⚙「AI 设置」填服务地址/模型/钥匙，或设 NH_LLM_BASE_URL / NH_LLM_MODEL / NH_LLM_API_KEY。",
-    en: 'The model isn\'t configured — go to the ⚙ "AI Settings" in the top bar and fill in the endpoint / model / key, or set NH_LLM_BASE_URL / NH_LLM_MODEL / NH_LLM_API_KEY.',
+    zh: "模型尚未配置。请在顶栏 ⚙「AI 设置」填写服务地址、模型和密钥，或设置 NH_LLM_BASE_URL / NH_LLM_MODEL / NH_LLM_API_KEY。",
+    en: 'The model is not configured. Fill in the endpoint, model and key under ⚙ "AI Settings" in the top bar, or set NH_LLM_BASE_URL / NH_LLM_MODEL / NH_LLM_API_KEY.',
   },
   // 原来带一个 `{exc}` 参数（`ValidationError`/`ValueError`/`CapabilityError` 的
   // `str()`）。**删掉了，不补收窄逻辑**：`CapabilityError` 自己的 docstring 是英文——
@@ -404,8 +404,8 @@ const MESSAGES: Record<string, Template> = {
   // "先送去前端再挡住"，是根本不该送——参数安不安全要在**送之前**判断，不是让前端
   // 收到手再补一道 screenGuard。
   model_windows_pull_failed: {
-    zh: "没能拉到那份公开的模型表。原来那份还在用，什么都没改。网络好了再试一次。",
-    en: "Couldn't fetch the public model list. The existing list is still in use, nothing changed. Try again once your network is back.",
+    zh: "获取公开模型列表失败，原列表继续使用。请检查网络后重试。",
+    en: "The public model list could not be fetched; the existing list remains in use. Check the network and try again.",
   },
   // 原来带一个 `{exc_type}` 参数（`type(exc).__name__`，比如 `URLError`）。同样删掉：
   // 一个 Python 异常类名对作者不构成任何可操作的信息（他不知道 URLError 是什么，
@@ -417,22 +417,22 @@ const MESSAGES: Record<string, Template> = {
   // 屏幕」），`SummaryGenerationError` 同理。作者能做的动作是「再点一次」或者
   // 「去看一眼设置」，那两句话已经说完了，异常文本一个字都不增加信息。
   summary_generation_empty: {
-    zh: "模型这一次什么都没写出来。再点一次「重新生成」；一直这样就去顶栏 ⚙ 换个模型试试。",
-    en: 'The model returned nothing this time. Click "Regenerate" again; if it keeps happening, try a different model in the ⚙ settings.',
+    zh: "模型未返回内容。请再次点击「重新生成」；若持续如此，可在顶栏 ⚙ 更换模型。",
+    en: 'The model returned nothing. Click "Regenerate" again; if this persists, choose a different model under ⚙.',
   },
   model_call_failed: {
-    zh: "模型这一次没调通，什么都没改。过一会儿再试一次；一直这样就去顶栏 ⚙ 看一眼服务地址和钥匙。",
-    en: "The model call didn't go through and nothing was changed. Try again in a moment; if it keeps happening, check the endpoint and key in the ⚙ settings.",
+    zh: "模型调用失败，内容未更改。请稍后重试；若持续如此，请检查顶栏 ⚙ 中的服务地址和密钥。",
+    en: "The model call failed and nothing was changed. Try again later; if this persists, check the endpoint and key under ⚙.",
   },
   // ── api/review.py（提案审阅，三档只有码没有话——2026-08-27 之前会漏成裸码上屏）──
   proposal_not_found: {
-    zh: "这条待确认今天不在了。看一眼现在是什么样，它可能已经被处理过了。",
-    en: "This item isn't there anymore. Take a look at the current state — it may have already been handled.",
+    zh: "该待确认项已不存在，可能已被处理。请刷新查看当前状态。",
+    en: "This item no longer exists; it may already have been handled. Refresh to see the current state.",
   },
   // ── api/notifications.py ─────────────────────────────────────────────
   notification_not_found: {
-    zh: "这条通知今天不在了，可能已经被处理过。刷新一下看看现在还有哪些需要留意的。",
-    en: "This notification isn't there anymore — it may have already been handled. Refresh to see what still needs attention.",
+    zh: "该通知已不存在，可能已被处理。请刷新查看。",
+    en: "This notification no longer exists; it may already have been handled. Refresh to see what remains.",
   },
   // `stale_base_version`/`stale_canon_version` 是两条不同的闸（前者锁项目级的
   // `project.canon_version`，后者是 `characters.py::_require_canon`/`review.py` 的
@@ -444,8 +444,8 @@ const MESSAGES: Record<string, Template> = {
   stale_base_version: (params, language) => fill(STALE_VERSION[language], params),
   stale_canon_version: (params, language) => fill(STALE_VERSION[language], params),
   proposal_already_resolved: {
-    zh: "这条已经被处理过了（可能是你自己在别的标签页点的，也可能是别人）。刷新一下看看结果。",
-    en: "This item has already been handled (maybe you did it in another tab, maybe someone else did). Refresh to see the result.",
+    zh: "该项已被处理（可能在另一标签页或由他人操作）。请刷新查看结果。",
+    en: "This item has already been handled (possibly in another tab, or by someone else). Refresh to see the result.",
   },
 
   // ── 国际化第四批·裸错误码审计（28 种码 / 51 处）─────────────────────────
@@ -468,92 +468,92 @@ const MESSAGES: Record<string, Template> = {
   // 里：`HistoryDrawer.tsx` 已经有安全的专用兜底（只取 `usage.evidence`，绕开
   // `usage.snapshot_id`），无需再有第二份。
   activity_entry_not_found: {
-    zh: "这条活动记录今天不在了，可能已经被清理过。刷新一下再看。",
-    en: "This activity entry isn't there anymore — it may have been cleaned up. Refresh and check again.",
+    zh: "该活动记录已不存在，可能已被清理。请刷新页面。",
+    en: "This activity entry no longer exists; it may have been cleaned up. Refresh the page.",
   },
   ambiguous_name: (params, language) => {
     const surface = String(params.surface ?? "");
     return language === "zh"
-      ? `「${surface}」认不出对应哪一个 —— 有好几个候选。换一个更明确的称呼再试一次。`
-      : `"${surface}" doesn't resolve to a single match — there are multiple candidates. Try a more specific name.`;
+      ? `「${surface}」对应多个候选，无法确定。请使用更明确的称呼。`
+      : `"${surface}" matches several candidates. Use a more specific name.`;
   },
   ambiguous_quote: (params, language) => {
     const quote = String(params.quote ?? "");
     return language === "zh"
-      ? `「${quote}」在原文里能对上不止一处。把这句话写得更完整、更独特一点，再试一次。`
-      : `"${quote}" matches more than one place in the text. Make the quote longer or more specific, then try again.`;
+      ? `「${quote}」在原文中匹配多处。请引用更完整、更独特的句子。`
+      : `"${quote}" matches more than one place in the text. Quote a longer or more distinctive passage.`;
   },
   wrong_label: (params, language) => {
     const surface = String(params.surface ?? "");
     const got = nodeLabelText(String(params.got ?? ""), language);
     const want = nodeLabelText(String(params.want ?? ""), language);
     return language === "zh"
-      ? `「${surface}」认得的是${got}，这里要的是${want}。`
+      ? `「${surface}」是${got}，此处需要${want}。`
       : `"${surface}" is recognized as a ${got}, but a ${want} is needed here.`;
   },
   chapter_changed: {
-    zh: "第 {chapter} 章的内容在你这份改动提交前已经被别处改掉了。刷新一下，看最新的版本。",
-    en: "Chapter {chapter}'s content was changed elsewhere before your edit could be submitted. Refresh to see the latest version.",
+    zh: "第 {chapter} 章已在别处修改，本次改动未提交。请刷新查看最新版本。",
+    en: "Chapter {chapter} was changed elsewhere before this edit was submitted. Refresh to see the latest version.",
   },
   chapter_not_found: {
-    zh: "第 {chapter} 章已经不在了 —— 可能被删除或改了章号。刷新一下再看。",
-    en: "Chapter {chapter} isn't there anymore — it may have been deleted or renumbered. Refresh and check again.",
+    zh: "第 {chapter} 章已不存在，可能已被删除或更改章号。请刷新页面。",
+    en: "Chapter {chapter} no longer exists; it may have been deleted or renumbered. Refresh the page.",
   },
   character_not_found: {
-    zh: "这个人物今天不在了 —— 可能已经被删除或合并过。刷新一下再看。",
-    en: "This character isn't there anymore — it may have been deleted or merged. Refresh and check again.",
+    zh: "该人物已不存在，可能已被删除或合并。请刷新页面。",
+    en: "This character no longer exists; it may have been deleted or merged. Refresh the page.",
   },
   not_a_character: {
-    zh: "这个条目不是人物，这个操作只对人物有效。",
-    en: "This entry isn't a character — this action only applies to characters.",
+    zh: "该条目不是人物，此操作仅对人物有效。",
+    en: "This entry is not a character; this action applies to characters only.",
   },
   chat_not_found: {
-    zh: "这段对话今天不在了。刷新一下，看看还有哪些对话。",
-    en: "This conversation isn't there anymore. Refresh to see what conversations are still there.",
+    zh: "该对话已不存在。请刷新查看对话列表。",
+    en: "This conversation no longer exists. Refresh to see the conversation list.",
   },
   chat_busy: (params, language) => {
     const action = params.action;
     if (language === "zh") {
-      if (action === "delete") return "这段对话正在跑，先按「停」再删。";
-      if (action === "send") return "这段对话正在跑上一轮，等它停下来，或者按「停」。";
-      return "这段对话正在跑，先等它停，或者按「停」。";
+      if (action === "delete") return "该对话正在进行，请先点击「停」再删除。";
+      if (action === "send") return "该对话的上一轮仍在进行，请等待结束或点击「停」。";
+      return "该对话正在进行，请等待结束或点击「停」。";
     }
-    if (action === "delete") return 'This conversation is still running — click "Stop" first, then delete it.';
+    if (action === "delete") return 'This conversation is still running. Click "Stop" first, then delete it.';
     if (action === "send")
-      return 'This conversation is still running its last turn — wait for it to finish, or click "Stop".';
-    return 'This conversation is still running — wait for it to finish, or click "Stop".';
+      return 'This conversation is still running its previous round. Wait for it to finish, or click "Stop".';
+    return 'This conversation is still running. Wait for it to finish, or click "Stop".';
   },
   chat_conflict: {
-    zh: "这段对话在别的窗口里刚往前走了一步。刷新一下看最新的内容，再重新发一次。",
-    en: "This conversation just moved forward in another window. Refresh to see the latest, then send again.",
+    zh: "该对话已在另一窗口更新。请刷新后重新发送。",
+    en: "This conversation was updated in another window. Refresh, then send again.",
   },
   draft_not_found: {
-    zh: "这一稿今天不在了 —— 可能已经被清理过。刷新一下再看。",
-    en: "This draft isn't there anymore — it may have been cleaned up. Refresh and check again.",
+    zh: "该稿件已不存在，可能已被清理。请刷新页面。",
+    en: "This draft no longer exists; it may have been cleaned up. Refresh the page.",
   },
   event_not_found: {
-    zh: "这条情节今天不在了 —— 可能已经被改过或删掉。刷新一下再看。",
-    en: "This event isn't there anymore — it may have been changed or removed. Refresh and check again.",
+    zh: "该情节已不存在，可能已被修改或删除。请刷新页面。",
+    en: "This event no longer exists; it may have been changed or removed. Refresh the page.",
   },
   event_summary_not_found: {
-    zh: "这件事今天还没有摘要 —— 可能还没生成过，或者已经被清理了。刷新一下再看。",
-    en: "This event doesn't have a summary yet — it may not have been generated, or it may have been cleared. Refresh and check again.",
+    zh: "该事件尚无摘要，可能未生成或已被清理。请刷新页面。",
+    en: "This event has no summary; it may not have been generated, or it may have been cleared. Refresh the page.",
   },
   evidence_not_found: {
-    zh: "这条依据今天不在了 —— 它锚的那个版本可能已经变了。刷新一下再看。",
-    en: "This piece of evidence isn't there anymore — the version it's anchored to may have changed. Refresh and check again.",
+    zh: "该依据已不存在，所依附的版本可能已变更。请刷新页面。",
+    en: "This evidence no longer exists; the version it was anchored to may have changed. Refresh the page.",
   },
   extraction_run_not_found: {
-    zh: "这次整理记录今天不在了。刷新一下再看看现在的状态。",
-    en: "This extraction run isn't there anymore. Refresh to see the current state.",
+    zh: "该整理记录已不存在。请刷新查看当前状态。",
+    en: "This extraction run no longer exists. Refresh to see the current state.",
   },
   project_not_found: {
-    zh: "这本书今天打不开 —— 它可能已经被移走或删除了。回书架看看现在还有哪些书。",
-    en: "This book can't be opened right now — it may have been moved or deleted. Go back to the bookshelf to see which books are still there.",
+    zh: "无法打开本书，可能已被移动或删除。请返回书架查看。",
+    en: "This book cannot be opened; it may have been moved or deleted. Return to the bookshelf.",
   },
   rule_not_found: {
-    zh: "这条规则今天不在了，可能这本书的规则表已经变了。刷新一下再看。",
-    en: "This rule isn't there anymore — the rule set for this book may have changed. Refresh and check again.",
+    zh: "该规则已不存在，本书的规则列表可能已变更。请刷新页面。",
+    en: "This rule no longer exists; the rule list for this book may have changed. Refresh the page.",
   },
 
   // ── activity.py：折叠行标题（entry.title_code）──────────────────────────
@@ -587,9 +587,9 @@ const MESSAGES: Record<string, Template> = {
     zh: "抽取失败（没有留下错误明细）",
     en: "Extraction failed (no error detail was recorded).",
   },
-  run_subtitle_running: { zh: "正在跑", en: "Running" },
+  run_subtitle_running: { zh: "进行中", en: "Running" },
   run_subtitle_pending: { zh: "排队中", en: "Queued" },
-  run_subtitle_unknown_status: { zh: "等着整理", en: "Waiting to be processed" },
+  run_subtitle_unknown_status: { zh: "等待整理", en: "Waiting to be processed" },
   call_subtitle: (params, language) => {
     const model = String(params.model ?? "");
     const tokensIn =
@@ -679,7 +679,7 @@ const MESSAGES: Record<string, Template> = {
     en: "Chapter {chapter} has {count} items pending review",
   },
   jump_go_to_chapter: { zh: "去第 {chapter} 章", en: "Go to chapter {chapter}" },
-  jump_view_summary: { zh: "去看第 {chapter} 章的总结", en: "View chapter {chapter}'s summary" },
+  jump_view_summary: { zh: "查看第 {chapter} 章的总结", en: "View chapter {chapter}'s summary" },
   jump_edit_event_cast: {
     zh: "去改这条事件的知情 / 在场名单",
     en: "Edit who knows about / is present at this event",
@@ -758,21 +758,21 @@ const MESSAGES: Record<string, Template> = {
     } else if (read === 0) {
       parts.push(
         language === "zh"
-          ? "这次没接上，整段输入都重新算了"
-          : "Nothing carried over this time — the whole input was recomputed."
+          ? "未沿用上次的输入，已全部重新计算"
+          : "Nothing reused from last time; the whole input was recomputed"
       );
     } else {
       parts.push(
         language === "zh"
-          ? `${read} token 接着上次，没有重新算`
-          : `${read} tokens carried over from last time, not recomputed`
+          ? `沿用上次输入 ${read} token，未重新计算`
+          : `${read} tokens reused from last time, not recomputed`
       );
     }
     if (written === 0) {
-      parts.push(language === "zh" ? "这次没有新存下内容" : "Nothing new was cached this time");
+      parts.push(language === "zh" ? "本次未留存新内容" : "Nothing new kept for next time");
     } else if (written !== null && written !== undefined) {
       parts.push(
-        language === "zh" ? `另存下 ${written} token 供下次接` : `${written} more tokens cached for next time`
+        language === "zh" ? `留存 ${written} token 供下次沿用` : `${written} tokens kept for next time`
       );
     }
     return parts.join(" · ");

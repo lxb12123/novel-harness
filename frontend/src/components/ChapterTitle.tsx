@@ -96,8 +96,8 @@ export function ChapterTitle({
           {parts?.marker && <span className="chtitle-fixed">{parts.marker}</span>}
           <input
             className="chtitle-edit"
-            aria-label={language === "zh" ? "改这一章的名字" : "Edit this chapter's name"}
-            placeholder={language === "zh" ? "这一章的名字（可以空着）" : "This chapter's name (can be left blank)"}
+            aria-label={language === "zh" ? "修改章节标题" : "Edit the chapter title"}
+            placeholder={language === "zh" ? "章节标题（可留空）" : "Chapter title (optional)"}
             value={editing}
             autoFocus
             onChange={(e) => setEditing(e.target.value)}
@@ -121,8 +121,8 @@ export function ChapterTitle({
             line !== null && onRename
               ? `${shown}\n${
                   language === "zh"
-                    ? "双击可以改这一章的名字（章号不动）"
-                    : "Double-click to edit this chapter's name (the number stays put)"
+                    ? "双击修改标题（章号不变）"
+                    : "Double-click to edit the title (the number stays)"
                 }`
               : shown
           }
@@ -178,15 +178,15 @@ export function ChapterTitle({
           >
             {list.length === 0 && (
               <div className="empty">
-                {language === "zh" ? "这本书还没有章节。" : "This book doesn't have any chapters yet."}
+                {language === "zh" ? "本书尚无章节" : "This book has no chapters yet"}
               </div>
             )}
             {list.length > 0 && hits.length === 0 && (
               <div className="empty">
                 {language === "zh" ? (
-                  <>没有匹配「{query}」的章节。</>
+                  <>没有匹配「{query}」的章节</>
                 ) : (
-                  <>No chapters match "{query}".</>
+                  <>No chapters match "{query}"</>
                 )}
               </div>
             )}

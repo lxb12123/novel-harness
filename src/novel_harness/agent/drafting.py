@@ -142,7 +142,7 @@ SELF_NOTE_UNITS: Final = 60
 （同 `PREVIEW_UNITS` 那条理由）。模型写长了就截断，不是拒绝——那是它的散文，不是参数。
 """
 
-AUTHOR_STOPPED_NOTE: Final = "按「停」中断了，这一稿只写到这里，后面没有写完。"
+AUTHOR_STOPPED_NOTE: Final = "已按「停」中断，稿件未完成，止于此处。"
 """半截那一稿身上带的那句话（`draft_candidate.stopped_reason`，迁移 010）。
 
 **它同时说给作者和模型听**，而后者才是这一列存在的硬理由：一段断在半句的正文，

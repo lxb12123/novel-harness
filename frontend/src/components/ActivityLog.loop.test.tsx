@@ -182,10 +182,10 @@ describe("「别处刚改过」之后，作者得真的能往下走", () => {
     );
     await user.click(screen.getByRole("button", { name: "保存名单" }));
 
-    await screen.findByText(/先看一眼最新的/);
+    await screen.findByText(/先查看最新版本/);
     const spy = vi.spyOn(globalThis, "fetch") as unknown as Calls;
     const mark = since(spy);
-    await user.click(screen.getByRole("button", { name: "看看最新的" }));
+    await user.click(screen.getByRole("button", { name: "查看最新版本" }));
 
     await waitFor(() => expect(reReadTheVersionSource(spy, mark)).toBe(true));
   });
@@ -198,7 +198,7 @@ describe("「别处刚改过」之后，作者得真的能往下走", () => {
       const events = useEvents("project:ID1", 1, "CANON");
       return (
         <button onClick={() => events.refetch()}>
-          看看最新的
+          查看最新版本
         </button>
       );
     }
@@ -206,7 +206,7 @@ describe("「别处刚改过」之后，作者得真的能往下走", () => {
     renderWithApi(<LeakyStale />);
     const spy = vi.spyOn(globalThis, "fetch") as unknown as Calls;
     const mark = since(spy);
-    await user.click(screen.getByRole("button", { name: "看看最新的" }));
+    await user.click(screen.getByRole("button", { name: "查看最新版本" }));
 
     // 它确实重取了点东西（所以不是一个什么都不做的假探针）……
     await waitFor(() =>
