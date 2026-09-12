@@ -346,7 +346,7 @@ describe("跑到一半：稿子真的一个字一个字长出来", () => {
   it("片接着片接上去", () => {
     const after = fold([started, delta("风雪落在"), delta("肩上，")]);
     expect(after.drafts).toEqual([
-      { stream: started.stream, chapter: started.chapter, text: "风雪落在肩上，", done: "" },
+      { stream: started.stream, chapter: started.chapter, text: "风雪落在肩上，", done: "", revising: false },
     ]);
   });
 
@@ -376,7 +376,7 @@ describe("跑到一半：稿子真的一个字一个字长出来", () => {
   it("**开跑那一声掉了也要开一格** —— 少一稿而屏幕不说，是这个仓库最怕的那种", () => {
     const after = fold([delta("凭空来的一片", 7)]);
     expect(after.drafts).toEqual([
-      { stream: 7, chapter: started.chapter, text: "凭空来的一片", done: "" },
+      { stream: 7, chapter: started.chapter, text: "凭空来的一片", done: "", revising: false },
     ]);
   });
 

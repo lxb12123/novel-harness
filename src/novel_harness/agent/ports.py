@@ -46,8 +46,9 @@ from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ..draft.context import DraftContext, DraftIntent, TargetChapterSnapshot
+from ..draft.context import DraftContext, TargetChapterSnapshot
 from ..draft.length import DraftLanguage
+from ..draft.passage import PassageEdit
 from ..draft.product_context import memory_units_available
 from ..draft.rolling_summary import ChapterSummaryStatus, SummarySnapshotWatermark
 # 轨道那几个模块里，**只借 `TrackClash` 这一个名字**：它是三个数（第几句 / 跟第几章 /
@@ -89,13 +90,12 @@ class ToolRefused(Exception):
 
 
 class DraftAsk(BaseModel):
-    """起草第 N 章的一稿（**chapter + brief + materials + intent**，ADR 0047）。
+    """起草第 N 章的一稿（**chapter + brief + materials**，ADR 0047）。
 
     **这里没有、也永远不会有约束字段**（ADR 0019 边界二的另一半）：在场是后端从正文数的，
     文风 / 禁用字 / 角色卡 / 最近事件 / 最近总结 / 正文那六格是后端固定装配的——助手一个字
     插不进去。它能给的只有两格：**要写什么**（`brief`）和**写手固定装配够不着的资料**
-    （`materials`）。两格都是纯文本、都跟着稿子存进候选表让作者看得见。外加一位意图
-    （`intent`）：这一章已经有正文时，是整章重写还是在它的基础上改。
+    （`materials`）。两格都是纯文本、都跟着稿子存进候选表让作者看得见。
 
     它和 `DraftFn` 放在一起而不是和别的工具入参放在一起，是因为它是**注入契约的一半**：
     起草侧收的就是 `(DraftAsk, DraftContext)`。
@@ -124,13 +124,24 @@ class DraftAsk(BaseModel):
             "那几段挑出来放在这儿。**有目的地挑，不是整本塞进来**：有预算上限，装不下从后往前砍。"
         ),
     )
-    intent: DraftIntent | None = Field(
-        default=None,
+
+
+class PassageAsk(BaseModel):
+    """改第 N 章里的一段或几段（**chapter + edits**，ADR 0049）——整章重写是 `DraftAsk`。
+
+    和 `DraftAsk` 一样没有约束字段、也不收正文：助手给的是**改哪儿**（那一段的原文引语）
+    和**怎么改**（对写手说的话），新文字由写手写、后端拼回整章。几处改动一次交，写完是
+    **一稿**（整章、只有那几处变了）流进作者的编辑器。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    chapter: int = Field(ge=1, description="改第几章。这一章必须已经有正文。")
+    edits: list[PassageEdit] = Field(
+        min_length=1,
         description=(
-            "这一章已经有正文时必填，按作者这一次的话定：rewrite = 整章重写，现有正文不保留；"
-            "revise = 在现有正文的基础上改，只动 brief 里说到的地方，其余段落原样保留。"
-            "作者说「重写」「换个写法」是 rewrite，说「把某一段改一下」「润色」是 revise。"
-            "这一章还没有正文时不用给。"
+            "要改的那几处，每处一条。**作者这一次要改的全放在一次调用里**：一次调用写出来的是"
+            "一稿，分几次调用就是几稿，后一稿看不见前一稿改了什么。几处互相不能重叠。"
         ),
     )
 
@@ -179,6 +190,7 @@ class DraftDesk(Protocol):
     | 动作 | 花钱 | 动书 | 谁决定 |
     |---|---|---|---|
     | `write` | 花 | **不动** | 模型 |
+    | `revise` | 花那几段的钱 | **不动** | 模型（改哪儿、怎么改），ADR 0049 |
     | `recall` | 不花 | 不动 | 模型（只在作者要合并两版时） |
 
     ── 落盘不在这儿（2026-09-12，ADR 0048）────────────────────────────────
@@ -207,6 +219,17 @@ class DraftDesk(Protocol):
         `snapshot` = 目标章当前正文的一次读取（重写已有章时写手要看它，候选的 `base_sha256`
         也从它来）。`None` = 这一章还没有正文。
         """
+        ...
+
+    def revise(
+        self,
+        ask: PassageAsk,
+        ctx: DraftContext,
+        *,
+        snapshot: TargetChapterSnapshot | None,
+    ) -> DraftProduct:
+        """改这一章里的几处：每一处写手只写那一段，后端拼回整章，收进候选表当**一稿**。
+        **不动书。** `snapshot` 是那一章现在的正文（`None` = 没有正文 ⇒ 拒）。"""
         ...
 
     def recall(self, candidate_id: str) -> StoredDraft:

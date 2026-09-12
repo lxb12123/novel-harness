@@ -1319,6 +1319,10 @@ class TurnEvent(BaseModel):
     按「保存」时告诉后端「进书的是这一稿」（`PUT …/chapters/{n}/text` 的 `draft_id`，
     ADR 0048），好让候选表记上它进书了、日志页上有那一行。"""
 
+    revising: bool = False
+    """这条流是**改一段**（`draft_started`，ADR 0049）：整章正文写完一片送到，界面直接放进
+    编辑器、不逐字露——逐字露的是从头写的那一稿。**它不上屏**，是界面分派用的钥匙。"""
+
     reason: StopReason | None = None
     asked: AuthorQuestion | None = None
     """它停下来问作者的那一句 + 几个可点的选项（ADR 0024）。"""
@@ -1386,12 +1390,13 @@ class TurnEvent(BaseModel):
         return cls(kind=TurnEventKind.AUTHOR_SAID, text=text)
 
     @classmethod
-    def draft_started(cls, chapter: int, *, stream: int = 0) -> TurnEvent:
+    def draft_started(cls, chapter: int, *, stream: int = 0, revising: bool = False) -> TurnEvent:
         return cls(
             kind=TurnEventKind.DRAFT_STARTED,
-            said_to_author=f"正在起草第 {chapter} 章。",
+            said_to_author=f"正在修改第 {chapter} 章。" if revising else f"正在起草第 {chapter} 章。",
             chapter=chapter,
             stream=stream,
+            revising=revising,
         )
 
     @classmethod

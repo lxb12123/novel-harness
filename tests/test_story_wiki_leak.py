@@ -401,7 +401,7 @@ def surfaces_of(book: PoisonedBook) -> dict[str, str]:
             _call("scene_constraints", chapter=WORKING_CHAPTER),
             _call("character_state", chapter=WORKING_CHAPTER, character="萧决"),
             # 起草即写入（ADR 0048）：落盘回执跟着起草的返回一起回来，是同一个面。
-            _call("draft_chapter", chapter=WORKING_CHAPTER, brief="写一场雪，收在他没抬头。", intent="rewrite"),
+            _call("draft_chapter", chapter=WORKING_CHAPTER, brief="写一场雪，收在他没抬头。"),
             _call("read_draft", draft_id=DRAFT_ID),
             # ADR 0024 的问作者：出参直接摆到作者面前，所以它也是一个面。
             _call(

@@ -120,9 +120,11 @@ export function CenterEditor() {
   // 到手的字**匀速露出来**（`typewriter.ts`）：模型一片一片吐，片有多大不由我们定，
   // 直接画就是一段一段跳。第一片字露出来之前编辑器里仍是原来的正文——那几秒换成一片空白，
   // 作者看到的是「这一章没了」，而不是「它要开始写了」。
+  // 改一段 / 桌上拿进来的一稿（`instant`）不走打字机：整章一片到手，写完直接放进编辑器，
+  // 痕迹上只有改过的那几处——逐字重打一遍整章，作者看到的是「整章都在动」。
   const liveBody = liveHere ? visibleBody(live.text) : "";
-  const typed = useTypewriter(liveBody, liveHere, live?.done ?? false);
-  const showLive = liveHere && typed.shown !== "";
+  const typed = useTypewriter(liveBody, liveHere && !live.instant, live?.done ?? false);
+  const showLive = liveHere && !live.instant && typed.shown !== "";
   // 字全露完了：整份进编辑器（**未保存**）。流放掉，键盘解锁——从这一刻起它是作者的一份
   // 修改，痕迹由编辑器自己对着保存版算（`CodeEditor` 的 `baseline`）。
   useEffect(() => {
@@ -255,7 +257,13 @@ export function CenterEditor() {
             保存中是一个瞬间的过程，都不该被压成一个图形。 */}
         {liveHere && (
           <span className="status" role="status">
-            {language === "zh" ? "写作助手正在写入本章…" : "The writing assistant is writing this chapter…"}
+            {live.instant
+              ? language === "zh"
+                ? "写作助手正在修改本章…"
+                : "The writing assistant is revising this chapter…"
+              : language === "zh"
+                ? "写作助手正在写入本章…"
+                : "The writing assistant is writing this chapter…"}
           </span>
         )}
         {/* 写作助手那一稿在这儿、还没保存：一句它是什么、怎么处置。没有「放弃」这颗按钮

@@ -1299,6 +1299,9 @@ export interface ChatTurnEvent {
   /** 候选表里的编号（`draft_kept` 才带；机器码，**不上屏**）。作者按保存时随请求送回去，
    *  后端据此记「这一稿进书了」（ADR 0048）。 */
   draft_id: string;
+  /** 这条流是**改一段**（`draft_started`，ADR 0049）：整章正文写完一片送到，编辑器直接放进去、
+   *  不逐字露。**不上屏**，分派用。 */
+  revising: boolean;
   reason: ChatStopReason | null;
   asked: ChatAuthorQuestion | null;
 }

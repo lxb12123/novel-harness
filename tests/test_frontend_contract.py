@@ -453,7 +453,6 @@ def test_frontend_fixture_matches_the_real_api(
                                 "chapter": 2,
                                 "brief": "第 2 章这一场：写萧决与顾清音在藏书阁对峙，血脉那条先别说破，收在他没抬头。",
                                 "materials": ["第 1 章：萧决独自走进了北荒的风雪里。"],
-                                "intent": "rewrite",
                             },
                             ensure_ascii=False,
                         ),

@@ -239,6 +239,8 @@ export interface LiveDraft {
   text: string;
   /** 空 = 还在写；非空 = 后端说的那句收尾（写好了 / 停在这儿了 / 没写成）。 */
   done: string;
+  /** 改一段（ADR 0049）：那一行说「正在修改」而不是「正在起草」。 */
+  revising: boolean;
 }
 
 /** 跑到一半时对话里的一行。四种：
@@ -334,7 +336,13 @@ function withDrafts(prev: TurnProgress, drafts: LiveDraft[]): TurnProgress {
 }
 
 function openDraft(event: ChatTurnEvent): LiveDraft {
-  return { stream: event.stream, chapter: event.chapter ?? 0, text: "", done: "" };
+  return {
+    stream: event.stream,
+    chapter: event.chapter ?? 0,
+    text: "",
+    done: "",
+    revising: event.revising === true,
+  };
 }
 
 /** 一片字接到它那条流上。

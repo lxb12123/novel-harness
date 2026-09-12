@@ -31,6 +31,7 @@ describe("编辑器里那条流", () => {
       text: "",
       done: false,
       draftId: "",
+      instant: false,
     });
     live = liveDraftAfter(live, delta("风雪落在肩上，"));
     live = liveDraftAfter(live, delta("他终于抬起头。"));
@@ -50,6 +51,13 @@ describe("编辑器里那条流", () => {
     expect(live?.text).toBe("");
     live = liveDraftAfter(live, { ...kept, stream: second.stream });
     expect(live?.done).toBe(false);
+  });
+
+  it("改一段那条流（`revising`）：整章一片到手、直接放，不逐字露", () => {
+    const live = liveDraftAfter(null, { ...started, revising: true });
+    expect(live).toMatchObject({ instant: true, done: false });
+    const grown = liveDraftAfter(live, delta("整章正文一片送到。"));
+    expect(grown?.text).toBe("整章正文一片送到。");
   });
 
   it("开跑那一声掉了（网抖了一下）：第一片字自己开格，别丢", () => {

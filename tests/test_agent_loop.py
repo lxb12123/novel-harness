@@ -850,6 +850,8 @@ def test_the_chapter_is_read_by_shape_not_by_a_second_tool_table() -> None:
         # 章号是可选的（`int | None`），传了同样绑投影——`_asked_chapter` 量的是
         # 运行时那个值，不是标注。
         "character_card",
+        # 改一段（ADR 0049）：和 `draft_chapter` 一样，改的是第 N 章。
+        "revise_passage",
     }
 
 

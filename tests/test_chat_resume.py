@@ -767,7 +767,7 @@ def test_replaying_a_lookup_is_free_but_replaying_a_draft_is_not(
                         id="paid",
                         name="draft_chapter",
                         arguments=json.dumps(
-                            {"chapter": 2, "brief": "写一场对峙", "intent": "rewrite"}
+                            {"chapter": 2, "brief": "写一场对峙"}
                         ),
                     ),
                 ),

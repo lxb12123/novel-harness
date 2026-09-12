@@ -59,9 +59,11 @@ from .assemble import (
     product_tail_limit,
 )
 from .capabilities import ProviderCapabilities, ResolvedCallPlan
-from .context import DraftContext, DraftIntent, ResolvedConstraints
-from .generate import DraftAttempt, DraftResult, generate_draft
-from .length import DraftLanguage, LengthSpec, count_units
+from .context import DraftContext, ResolvedConstraints
+from . import generate as _generate
+from .generate import CallInterrupted, DraftAttempt, DraftResult, generate_draft
+from .passage import PassageKind
+from .length import DraftLanguage, LengthSpec, count_units, measure
 from .product_assemble import assemble_continuation, assemble_product, insert_standing_rules
 from .product_context import (
     MemoryBudget,
@@ -70,7 +72,7 @@ from .product_context import (
     select_rolling_summaries,
     summary_window_chapters,
 )
-from .provider import ProviderConfig
+from .provider import CompletionResult, ProviderConfig
 from .rolling_summary import (
     ChapterSummary,
     ChapterSummaryStatus,
@@ -202,11 +204,7 @@ class ChapterDraftRequest:
     装不下从后往前砍——助手的排序就是优先级。"""
 
     target_chapter_text: str | None = None
-    """目标章当前正文（重写/续写已有章时）。**一次读取的快照，不是磁盘现读。**"""
-
-    target_chapter_intent: DraftIntent | None = None
-    """写手拿上面那份正文怎么办：整章重写 / 在它基础上改（`DraftIntent`）。`None` = 没人说
-    （HTTP `/draft` 那条路），那时那一段只说「以要求为准」。"""
+    """目标章当前正文（重写已有章时）。**一次读取的快照，不是磁盘现读。**"""
 
 
 TARGET_CHAPTER_UNITS: Final = 16_000
@@ -361,6 +359,80 @@ def _receipt(attempt: DraftAttempt, elapsed_ms: int) -> ModelCallReceipt:
     )
 
 
+def _assemble_messages(
+    ctx: DraftContext,
+    request: ChapterDraftRequest,
+    *,
+    project_id: str,
+    capability: ProviderCapabilities,
+    plan: ResolvedCallPlan,
+    events: EventStore,
+    summaries: SummarySource,
+    backfill: SummaryBackfill | None = None,
+    db_lock: AbstractContextManager[Any] | None = None,
+    passage: Passage | None = None,
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    """`draft_chapter()` 和 `revise_passage()` 共用的那一半：约束、记忆、目标章、资料——
+    直到发给写手之前的整份 prompt。两条路只差**发出去之后**要不要按整章的长度策略续写。"""
+    check_request(request)
+    write_rule = request.write_rule.strip()
+    chapter = ctx.chapter
+    continuation = request.mode == "continuation"
+
+    assemble_args = {
+        # ADR 0015 D3：续写的 goal 是后端按语言选出来的一句话，请求里那个已被调用方校验为空。
+        "goal": continuation_goal(request.length.language) if continuation else request.goal,
+        "length": request.length,
+        "previous_tail": request.previous_tail,
+        # **逐字上文按窗口取量**（ADR 0019 边界五）。`GATE_TAIL_CODE_POINTS` 那个 800 字
+        # 是 X0 对照臂当年的定义，它存在是为了证明「给得少会崩」——拿它当产品档跑，
+        # 作者看到的就是「AI 写出来的东西前言不搭后语」。三臂删掉之后这里不再有分支：
+        # **产品只有一条路，它按窗口算。**
+        "previous_tail_limit": product_tail_limit(
+            capability.max_context_tokens, plan.request_token_budget
+        ),
+        "write_rule": write_rule or None,
+    }
+    # 续写那一支不吃它：`assemble_continuation` 的签名里没有这一格，而行内续写是
+    # **接着作者刚写的那句往下写**，不是重新起一段——这条先只上模式二整章那一支。
+    standing_rules = tuple(rule.strip() for rule in request.standing_rules if rule.strip())
+
+    # **碰库的只有这一段**（`_with_memory` 里那几次查询），所以锁只罩这一段。
+    with db_lock if db_lock is not None else nullcontext():
+        if continuation:
+            messages, memory = _with_rolling_summaries(
+                ctx,
+                assemble_args,
+                project_id=project_id,
+                chapter=chapter,
+                language=request.length.language,
+                capability=capability,
+                plan=plan,
+                summaries=summaries,
+                backfill=backfill,
+                following_text=request.following_text,
+            )
+        else:
+            messages, memory = _with_memory(
+                ctx,
+                assemble_args,
+                standing_rules=standing_rules,
+                project_id=project_id,
+                chapter=chapter,
+                language=request.length.language,
+                capability=capability,
+                plan=plan,
+                events=events,
+                summaries=summaries,
+            )
+            messages, materials_kept, materials_omitted = _append_target_and_materials(
+                messages, request, passage
+            )
+            memory = {**memory, "materials": materials_kept, "materials_omitted": materials_omitted}
+    return messages, memory
+
+
+
 def draft_chapter(
     ctx: DraftContext,
     *,
@@ -425,61 +497,17 @@ def draft_chapter(
             （`agent/drafting.py`）先捕它。已经发出去的每一次调用都进过 `on_call`。
         provider.ProviderError: 模型这一次没答上来。
     """
-    check_request(request)
-    write_rule = request.write_rule.strip()
-    chapter = ctx.chapter
-    continuation = request.mode == "continuation"
-
-    assemble_args = {
-        # ADR 0015 D3：续写的 goal 是后端按语言选出来的一句话，请求里那个已被调用方校验为空。
-        "goal": continuation_goal(request.length.language) if continuation else request.goal,
-        "length": request.length,
-        "previous_tail": request.previous_tail,
-        # **逐字上文按窗口取量**（ADR 0019 边界五）。`GATE_TAIL_CODE_POINTS` 那个 800 字
-        # 是 X0 对照臂当年的定义，它存在是为了证明「给得少会崩」——拿它当产品档跑，
-        # 作者看到的就是「AI 写出来的东西前言不搭后语」。三臂删掉之后这里不再有分支：
-        # **产品只有一条路，它按窗口算。**
-        "previous_tail_limit": product_tail_limit(
-            capability.max_context_tokens, plan.request_token_budget
-        ),
-        "write_rule": write_rule or None,
-    }
-    # 续写那一支不吃它：`assemble_continuation` 的签名里没有这一格，而行内续写是
-    # **接着作者刚写的那句往下写**，不是重新起一段——这条先只上模式二整章那一支。
-    standing_rules = tuple(rule.strip() for rule in request.standing_rules if rule.strip())
-
-    # **碰库的只有这一段**（`_with_memory` 里那几次查询），所以锁只罩这一段。
-    with db_lock if db_lock is not None else nullcontext():
-        if continuation:
-            messages, memory = _with_rolling_summaries(
-                ctx,
-                assemble_args,
-                project_id=project_id,
-                chapter=chapter,
-                language=request.length.language,
-                capability=capability,
-                plan=plan,
-                summaries=summaries,
-                backfill=backfill,
-                following_text=request.following_text,
-            )
-        else:
-            messages, memory = _with_memory(
-                ctx,
-                assemble_args,
-                standing_rules=standing_rules,
-                project_id=project_id,
-                chapter=chapter,
-                language=request.length.language,
-                capability=capability,
-                plan=plan,
-                events=events,
-                summaries=summaries,
-            )
-            messages, materials_kept, materials_omitted = _append_target_and_materials(
-                messages, request
-            )
-            memory = {**memory, "materials": materials_kept, "materials_omitted": materials_omitted}
+    messages, memory = _assemble_messages(
+        ctx,
+        request,
+        project_id=project_id,
+        capability=capability,
+        plan=plan,
+        events=events,
+        summaries=summaries,
+        backfill=backfill,
+        db_lock=db_lock,
+    )
 
     receipts: list[ModelCallReceipt] = []
     mark = perf_counter()
@@ -505,62 +533,164 @@ def draft_chapter(
     return ChapterDraft(result=result, memory=memory, calls=tuple(receipts))
 
 
-_TARGET_CHAPTER_ASK: Final[dict[DraftIntent | None, dict[DraftLanguage, str]]] = {
-    DraftIntent.REWRITE: {
-        DraftLanguage.ZH: (
-            "（这是本章现在的正文。**这一次是整章重写**：按后面「这一场要写」的要求另写一整章，"
-            "写出来的会整章替掉它。不要照抄——只有要求里明确说保留的段落才原样保留，"
-            "其余重新写。）"
-        ),
-        DraftLanguage.EN: (
-            "(This is the chapter's current text. **This is a full rewrite**: write a whole new "
-            "chapter to the brief that follows; it replaces this text entirely. Do not copy "
-            "it—keep a passage verbatim only where the brief says to, and write everything "
-            "else afresh.)"
-        ),
-    },
-    DraftIntent.REVISE: {
-        DraftLanguage.ZH: (
-            "（这是本章现在的正文。**这一次是在它的基础上修改**：只改后面「这一场要写」里"
-            "说到的地方，其余段落一字不动地保留，交回完整的一章。）"
-        ),
-        DraftLanguage.EN: (
-            "(This is the chapter's current text. **This is a revision of it**: change only "
-            "what the brief that follows asks for, keep every other passage exactly as it is, "
-            "and return the complete chapter.)"
-        ),
-    },
-    None: {
-        DraftLanguage.ZH: (
-            "（这是本章现在的正文。整章重写还是在它的基础上修改，以后面「这一场要写」的要求"
-            "为准；要求里没说保留的段落，不要照抄。）"
-        ),
-        DraftLanguage.EN: (
-            "(This is the chapter's current text. Whether to rewrite it wholesale or revise "
-            "it in place is decided by the brief that follows; do not copy passages the brief "
-            "does not ask you to keep.)"
-        ),
-    },
+@dataclass(frozen=True)
+class PassageDraft:
+    """改一段之后交回来的：写手写的那一段（还带着它那句自述）+ 这一次的账单原料。"""
+
+    text: str
+    memory: dict[str, Any]
+    calls: tuple[ModelCallReceipt, ...] = field(default_factory=tuple)
+
+
+def passage_length(language: DraftLanguage | str, units: int) -> LengthSpec:
+    """改一段时给写手的长度口径：**照那一段的长短**，不是整章的（ADR 0011 的字数句子还是
+    那一句，只是数换成这一段的）。下限松、上限宽——改软一句可能比原句短，展开一段可能长几倍。"""
+    target = max(units, 20)
+    return LengthSpec(
+        language=DraftLanguage(language),
+        min_units=max(1, target // 4),
+        target_units=target,
+        max_units=max(target * 3, target + 200),
+    )
+
+
+def revise_passage(
+    ctx: DraftContext,
+    *,
+    request: ChapterDraftRequest,
+    passage: Passage,
+    project_id: str,
+    config: ProviderConfig,
+    capability: ProviderCapabilities,
+    plan: ResolvedCallPlan,
+    events: EventStore,
+    summaries: SummarySource,
+    on_call: Callable[[ModelCallReceipt], None] | None = None,
+    db_lock: AbstractContextManager[Any] | None = None,
+    client: Any = None,
+) -> PassageDraft:
+    """改一段（ADR 0049）：写手看整章、只写那一段。**一次调用，不按整章的长度策略续写**
+    （那是 `generate_draft` 的事，它会把一段当成「没写够一章」去补）。
+
+    装配和 `draft_chapter()` 同一份（文风、规矩、记忆、上文、在场都在），差的只有目标章
+    那一段前面的交代（`_PASSAGE_ASK`）和后面那块【要改的一段】。`request.length` 该是
+    `passage_length()` 给的那一份——字数句子说的是这一段的长短。
+
+    Raises:
+        generate.CallInterrupted: 作者按了停。发出去的那一次照旧进过 `on_call`。
+        provider.ProviderError: 模型这一次没答上来。
+    """
+    messages, memory = _assemble_messages(
+        ctx,
+        request,
+        project_id=project_id,
+        capability=capability,
+        plan=plan,
+        events=events,
+        summaries=summaries,
+        db_lock=db_lock,
+        passage=passage,
+    )
+    mark = perf_counter()
+
+    def billed(result: CompletionResult) -> ModelCallReceipt:
+        attempt = DraftAttempt(
+            number=1,
+            messages=messages,
+            result=result,
+            measurement=measure(result.text, request.length),
+        )
+        receipt = _receipt(attempt, max(0, int((perf_counter() - mark) * 1_000)))
+        if on_call is not None:
+            on_call(receipt)
+        return receipt
+
+    try:
+        result = _generate.complete(messages, config=config, plan=plan, client=client)
+    except CallInterrupted as exc:
+        # 停在半截：钱已经付了，先记账再往上抛（同 `generate_draft` 的 `interrupted`）。
+        if exc.sent:
+            billed(CompletionResult(text=exc.partial_text, model=config.model))
+        raise
+    return PassageDraft(text=result.text, memory=memory, calls=(billed(result),))
+
+
+_TARGET_CHAPTER_ASK: Final = {
+    DraftLanguage.ZH: (
+        "（这是本章现在的正文。**这一次是整章重写**：按后面「这一场要写」的要求另写一整章，"
+        "写出来的会整章替掉它。不要照抄——只有要求里明确说保留的段落才原样保留，其余重新写。）"
+    ),
+    DraftLanguage.EN: (
+        "(This is the chapter's current text. **This is a full rewrite**: write a whole new "
+        "chapter to the brief that follows; it replaces this text entirely. Do not copy it—keep a "
+        "passage verbatim only where the brief says to, and write everything else afresh.)"
+    ),
 }
-"""目标章当前正文那一段前面的一句：它是干什么用的——**按助手这一次说的意图挑**（`DraftIntent`）。
+"""目标章当前正文那一段前面的一句：它是干什么用的。
 
 **没有这句之前，写手会把它原样抄回来。** 真书第 158 章：助手连开五稿、每稿的要求都不同
 （「写赢之后」「写沉默」……），写手回的正文却五次逐字节相同——就是磁盘上那一章。
 一段只挂着「目标章当前正文」标签、又排在整份 prompt 最末的正文，在模型眼里就是「接着输出
-这个」。所以现在①说清它是干什么用的，②它排在「这一场要写」**前面**，模型最后读到的是任务。
-说什么**不写死**：「重写」和「改几句」拿到的是同一份正文，只有助手知道作者这一次要哪种。
+这个」。所以现在①说清它是要被替掉的，②它排在「这一场要写」**前面**，模型最后读到的是任务。
+
+**这一句可以写死成「整章重写」**，因为 `draft_chapter` 的产物就是一整章（ADR 0048）；
+「只改这一段」是另一把工具（`revise_passage`，ADR 0049），它那一段前面说的是另一句
+（`_PASSAGE_ASK`）。维护者 2026-09-12 否掉的是「改几句也走整章重写」，不是这一句本身。
 """
+
+_PASSAGE_ASK: Final[dict[PassageKind, dict[DraftLanguage, str]]] = {
+    "replace": {
+        DraftLanguage.ZH: (
+            "（这是本章现在的正文，和其中**要改的那一段**。**只写出替换那一段的新文字**："
+            "不要重写别的段落，不要加标题、编号或说明，写出来的字要能原样接回原处——"
+            "前后文就在上面，接口要顺。）"
+        ),
+        DraftLanguage.EN: (
+            "(This is the chapter's current text, and **the passage to change** within it. "
+            "**Write only the new text that replaces that passage**: do not rewrite other "
+            "paragraphs, add no headings, numbering or commentary, and make it slot back in "
+            "verbatim—the surrounding text is above, so the joins must read naturally.)"
+        ),
+    },
+    "insert_after": {
+        DraftLanguage.ZH: (
+            "（这是本章现在的正文，和其中的一段——**新文字要接在它后面**。**只写出要加进去的"
+            "那一段**：不要重写别的段落，不要加标题、编号或说明，接口要顺。）"
+        ),
+        DraftLanguage.EN: (
+            "(This is the chapter's current text, and a passage within it—**the new text goes "
+            "right after it**. **Write only the passage to insert**: do not rewrite other "
+            "paragraphs, add no headings, numbering or commentary, and make the joins read "
+            "naturally.)"
+        ),
+    },
+    "delete": {DraftLanguage.ZH: "", DraftLanguage.EN: ""},
+}
+"""改一段时那一段前面的交代（ADR 0049）：写手只写出那一段，拼回去是后端的事（`passage.splice`）。"""
+
+
+@dataclass(frozen=True)
+class Passage:
+    """改一段（ADR 0049）：要改的那一段原文 + 怎么改。跟着 `ChapterDraftRequest` 一起进
+    `_append_target_and_materials`，那时目标章那一段前面说的是 `_PASSAGE_ASK`。"""
+
+    text: str
+    kind: PassageKind
 
 
 def _append_target_and_materials(
     messages: list[dict[str, str]],
     request: ChapterDraftRequest,
+    passage: Passage | None = None,
 ) -> tuple[list[dict[str, str]], int, int]:
     """把「目标章当前正文」+「助手补的资料」作为**独立分区**插进产品 prompt。
 
     **插在最后那条用户消息（「这一场要写」）前面**，不追加在它后面——理由见
     `_TARGET_CHAPTER_ASK`。返回 `(messages, 补进去的资料段数, 砍掉的段数)`——砍了多少
     要进回执，不静默（同 `render_target_chapter` 的覆盖回执）。
+
+    `passage` 给了 = 改一段（ADR 0049）：那一段前面说的是 `_PASSAGE_ASK`，正文后面再摆
+    一块【要改的一段】。
     """
     language = DraftLanguage(request.length.language)
     sections: list[str] = []
@@ -569,8 +699,17 @@ def _append_target_and_materials(
             request.target_chapter_text, max_units=TARGET_CHAPTER_UNITS
         )
         sections.append("【目标章当前正文】")
-        sections.append(_TARGET_CHAPTER_ASK[request.target_chapter_intent][language])
+        sections.append(
+            _TARGET_CHAPTER_ASK[language]
+            if passage is None
+            else _PASSAGE_ASK[passage.kind][language]
+        )
         sections.append(text)
+        if passage is not None:
+            sections.append(
+                "【要改的一段】" if language is DraftLanguage.ZH else "[The passage to change]"
+            )
+            sections.append(passage.text)
         if truncated:
             sections.append(
                 "（覆盖回执：本章正文超过预算，以上只给了开头一段；"

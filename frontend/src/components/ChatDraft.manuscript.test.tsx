@@ -421,6 +421,62 @@ describe("正在写的那一稿流进左边", () => {
     expect(screen.queryByText(/按「保存」写入本章/)).toBeNull();
   });
 
+  it("改一段（`revising`）：整章一片到手，写完直接放进编辑器、不逐字重打；痕迹上只有改的那一处", async () => {
+    // 助手说改哪儿、写手只写那一段、后端拼回整章（ADR 0049）——编辑器拿到的是一整章，
+    // 逐字重打一遍作者看到的是「整章都在动」，所以这条流不走打字机。
+    const user = userEvent.setup();
+    const revising = { ...opened, revising: true };
+    const kept = { ...realEvent("draft_kept"), chapter: 1 };
+    const revised = "萧决在青云城主府第一次听说了血脉秘密的真相。\n李管家沉默了很久，什么也没说。\n";
+    const held = new Promise<string>(() => {});
+    renderWithApi(shell(), [
+      {
+        method: "POST",
+        match: /\/turn\/events$/,
+        stream: [turnFrame(revising), turnFrame({ ...piece(revised), revising: true }), turnFrame(kept), held],
+      },
+    ]);
+    await screen.findByText("第 1 章");
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    await waitFor(() => expect(content.textContent).toContain("李管家什么也没说。"));
+
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "把那句改软一点");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => expect(useLiveDraft.getState().placed?.draftId).toBe(kept.draft_id));
+    // 一次到位：没有「只露了一部分」的一帧——放进来那一刻整章就全在了。
+    expect(content.textContent).toContain("李管家沉默了很久，什么也没说。");
+    expect(content.textContent).toContain("萧决在青云城主府第一次听说了血脉秘密的真相。");
+    expect(content.getAttribute("contenteditable")).toBe("true");
+    // 痕迹只在改的那一处：没动的第一段不涂。
+    expect([...document.querySelectorAll(".cm-line.diff-add")].map((el) => el.textContent)).toEqual([
+      "李管家沉默了很久，什么也没说。",
+    ]);
+    expect([...document.querySelectorAll(".diff-del")].map((el) => el.textContent)).toEqual([
+      "李管家什么也没说。",
+    ]);
+    expect(screen.getByText(/按「保存」写入本章/)).toBeInTheDocument();
+    expect(screen.queryByText(/正在修改本章/)).toBeNull();
+  });
+
+  it("改一段还在路上：编辑器仍是原来的正文、锁着，顶栏说「正在修改本章」", async () => {
+    const user = userEvent.setup();
+    const held = new Promise<string>(() => {});
+    renderWithApi(shell(), [
+      { method: "POST", match: /\/turn\/events$/, stream: [turnFrame({ ...opened, revising: true }), held] },
+    ]);
+    await screen.findByText("第 1 章");
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    await waitFor(() => expect(content.textContent).toContain("李管家什么也没说。"));
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "把那句改软一点");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await screen.findByText(/写作助手正在修改本章/);
+    expect(content.textContent).toContain("李管家什么也没说。");
+    expect(content.getAttribute("contenteditable")).toBe("false");
+    expect(document.querySelector(".cm-line.diff-add")).toBeNull();
+  });
+
   it("整章重写：旧章那一大块红折成一行「已删除 N 段」，新稿全绿在下面，点开才摊开旧稿", async () => {
     const user = userEvent.setup();
     const kept = { ...realEvent("draft_kept"), chapter: 1 };

@@ -44,6 +44,7 @@ from test_agent_tools import (
     KNOWS_QUOTE,
     SECRET_CONTENT,
     TWIST,
+    WHERE_QUOTE,
     World,
     conn,
     world,
@@ -170,6 +171,10 @@ class PoisonedDesk:
         self.seen.append(ctx)
         return DraftProduct(candidate=self._candidate(ask.chapter))
 
+    def revise(self, ask: Any, ctx: DraftContext, **kwargs: Any) -> DraftProduct:
+        """改一段（ADR 0049）：返回和 `write` 同一个形状，同一句毒。"""
+        self.seen.append(ctx)
+        return DraftProduct(candidate=self._candidate(ask.chapter))
 
     def recall(self, candidate_id: str) -> StoredDraft:
         return StoredDraft(**self._candidate(CHAPTER).model_dump(), body=DRAFT_BODY_TELL)
@@ -255,7 +260,7 @@ EVERY_TOOL = (
     ("character_chapters", {"characters": ["萧决", "顾清音"]}),
     ("chapter_summaries", {"first_chapter": 1, "last_chapter": CHAPTER}),
     ("chapter_text", {"chapter": CHAPTER}),
-    ("draft_chapter", {"chapter": CHAPTER, "brief": "写一场雪，收在他没抬头。", "intent": "rewrite"}),
+    ("draft_chapter", {"chapter": CHAPTER, "brief": "写一场雪，收在他没抬头。"}),
     ("read_draft", {"draft_id": DRAFT_ID}),
     ("remember_rule", {"rule": "这一章别写打斗", "until": "这一章写完为止"}),
     # `get_result` 要放在**第二批**：stored 表在批创建时从 live 数，第一批都还没跑
@@ -267,6 +272,8 @@ EVERY_TOOL = (
     ("chapter_events", {"first_chapter": 1, "last_chapter": CHAPTER}),
     ("validation_rules", {"chapter": CHAPTER}),
     ("notifications", {}),
+    # 改一段（ADR 0049）：引的是这一章正文里真有的那一句。
+    ("revise_passage", {"chapter": CHAPTER, "edits": [{"quote": WHERE_QUOTE, "brief": "改软一点"}]}),
     ("ask_author", {"question": "这一场你想让萧决知道那件事吗？",
                     "options": ["让他知道", "先瞒着他"]}),
 )
@@ -859,12 +866,12 @@ def test_a_question_wins_even_when_the_batch_was_allowed_to_run_at_once(
                 wants(
                     (
                         "draft_chapter",
-                        json.dumps({"chapter": CHAPTER, "brief": "写一场雪", "intent": "rewrite"}),
+                        json.dumps({"chapter": CHAPTER, "brief": "写一场雪"}),
                     ),
                     ("ask_author", json.dumps({"question": ASKED, "options": list(OPTIONS)})),
                     (
                         "draft_chapter",
-                        json.dumps({"chapter": CHAPTER, "brief": "写一场雪", "intent": "rewrite"}),
+                        json.dumps({"chapter": CHAPTER, "brief": "写一场雪"}),
                     ),
                     ("read_draft", json.dumps({"draft_id": DRAFT_ID})),
                 ),

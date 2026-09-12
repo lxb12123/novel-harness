@@ -94,16 +94,15 @@ _EN: dict[str, str] = {
         "are written concurrently**."
     ),
     (
-        "起草第 N 章的一稿（**chapter + brief + materials + intent**，ADR 0047）。\n\n"
+        "起草第 N 章的一稿（**chapter + brief + materials**，ADR 0047）。\n\n"
         "**这里没有、也永远不会有约束字段**（ADR 0019 边界二的另一半）：在场是后端从正文数的，\n"
         "文风 / 禁用字 / 角色卡 / 最近事件 / 最近总结 / 正文那六格是后端固定装配的——助手一个字\n"
         "插不进去。它能给的只有两格：**要写什么**（`brief`）和**写手固定装配够不着的资料**\n"
-        "（`materials`）。两格都是纯文本、都跟着稿子存进候选表让作者看得见。外加一位意图\n"
-        "（`intent`）：这一章已经有正文时，是整章重写还是在它的基础上改。\n\n"
+        "（`materials`）。两格都是纯文本、都跟着稿子存进候选表让作者看得见。\n\n"
         "它和 `DraftFn` 放在一起而不是和别的工具入参放在一起，是因为它是**注入契约的一半**：\n"
         "起草侧收的就是 `(DraftAsk, DraftContext)`。"
     ): (
-        "Draft one version of chapter N (**chapter + brief + materials + intent**, "
+        "Draft one version of chapter N (**chapter + brief + materials**, "
         "ADR 0047).\n\n"
         "**There is no constraints field here, and there never will be** "
         "(the other half of ADR 0019 boundary 2): who's present is counted "
@@ -113,8 +112,7 @@ _EN: dict[str, str] = {
         "gives only two things: **what to write** (`brief`) and **material "
         "the writer's fixed assembly can't reach** (`materials`). Both are "
         "plain text and both are stored with the draft so the author can "
-        "see them. Plus one intent bit (`intent`): when the chapter already "
-        "has text, whether to rewrite it wholesale or revise it in place.\n\n"
+        "see them.\n\n"
         "It sits alongside `DraftFn` rather than with other tools' args "
         "because it is **half of an injection contract**: the drafting side "
         "receives exactly `(DraftAsk, DraftContext)`."
@@ -619,22 +617,96 @@ _EN: dict[str, str] = {
         'Query "notifications": the panel on the right — reminders the system '
         "left for the author, plus proposals waiting for their confirmation."
     ),
+    # ── revise_passage（ADR 0049：改一段）───────────────────────────────
     (
-        "这一章已经有正文时必填，按作者这一次的话定：rewrite = 整章重写，现有正文不保留；"
-        "revise = 在现有正文的基础上改，只动 brief 里说到的地方，其余段落原样保留。"
-        "作者说「重写」「换个写法」是 rewrite，说「把某一段改一下」「润色」是 revise。"
-        "这一章还没有正文时不用给。"
+        "改某一章里的一段或几段，**其余段落一字不动**。作者要的是改几句、改一段、加一段、"
+        "删一段的时候用它，不用 draft_chapter（那是整章重写，会把整章换掉）。\n"
+        "每一处给三样：改哪儿（quote：那一段的原文，从正文里原样引，必须恰好出现一次；"
+        "范围到哪儿为止用 until）、怎么改（kind：replace 换掉 / insert_after 在它后面加 / "
+        "delete 拿掉）、对写手说什么（brief）。写手看得到整章，只写那一段；拼回整章是后端的事。"
+        "**作者这一次要改的全放在一次调用里**——一次调用写出来的是一稿，分几次就是几稿，"
+        "后一稿看不见前一稿改了什么。\n"
+        "写出来的和起草一样：整章流进作者左边的正文编辑器、以未保存的样子放在那儿，"
+        "只有改过的那几处标着痕迹，他按「保存」才写进书——**不要问他要不要存**，"
+        "写完告诉他改了什么就行。返回和 draft_chapter 一样：编号、字数、开头一段、写手那句自述。"
     ): (
-        "Required when the chapter already has text; go by what the author asked for this "
-        "time: rewrite = a full rewrite, nothing of the current text is kept; revise = change "
-        "the current text in place, touching only what the brief asks for and keeping every "
-        "other passage as it is. \"Rewrite it\" / \"try a different approach\" is rewrite; "
-        "\"change that paragraph\" / \"polish it\" is revise. Omit it when the chapter has "
-        "no text yet."
+        "Change one or more passages in a chapter, **leaving every other paragraph "
+        "untouched**. Use it when the author wants a few sentences changed, a passage "
+        "rewritten, added or removed—not draft_chapter (that is a full rewrite and replaces "
+        "the whole chapter).\n"
+        "Each edit takes three things: where (quote: the passage's own text, copied "
+        "verbatim from the chapter, occurring exactly once; extend the range with until), "
+        "how (kind: replace it / insert_after it / delete it), and what to tell the writer "
+        "(brief). The writer sees the whole chapter and writes only that passage; splicing "
+        "it back is the backend's job. **Put everything the author wants changed this time "
+        "into one call**—one call yields one draft, several calls yield several, and a "
+        "later one can't see what an earlier one changed.\n"
+        "The result behaves like a draft: the whole chapter streams into the author's text "
+        "editor on the left and sits there unsaved, with only the changed passages marked; "
+        "they click Save to write it into the chapter—**don't ask whether to save it**; "
+        "when it's done, tell them what you changed. The return is the same as "
+        "draft_chapter's: id, word count, an opening excerpt, and the writer's note."
     ),
-    "这一章已经有正文时拿它怎么办：整章重写（rewrite），还是在它的基础上修改（revise）。": (
-        "What to do with the chapter's existing text: rewrite it wholesale (rewrite) or "
-        "revise it in place (revise)."
+    (
+        "改第 N 章里的一段或几段（**chapter + edits**，ADR 0049）——整章重写是 `DraftAsk`。\n\n"
+        "和 `DraftAsk` 一样没有约束字段、也不收正文：助手给的是**改哪儿**（那一段的原文引语）\n"
+        "和**怎么改**（对写手说的话），新文字由写手写、后端拼回整章。几处改动一次交，写完是\n"
+        "**一稿**（整章、只有那几处变了）流进作者的编辑器。"
+    ): (
+        "Change one or more passages of chapter N (**chapter + edits**, ADR 0049)—a full "
+        "rewrite is `DraftAsk`.\n\n"
+        "Like `DraftAsk` it has no constraints field and takes no prose: the assistant gives "
+        "**where** (the passage quoted verbatim) and **how** (what to tell the writer); the "
+        "writer writes the new text and the backend splices it back into the chapter. Several "
+        "edits go in one call, and the result is **one draft** (the whole chapter, with only "
+        "those places changed) streamed into the author's editor."
+    ),
+    "改第几章。这一章必须已经有正文。": (
+        "Which chapter to change. The chapter must already have text."
+    ),
+    (
+        "要改的那几处，每处一条。**作者这一次要改的全放在一次调用里**：一次调用写出来的是"
+        "一稿，分几次调用就是几稿，后一稿看不见前一稿改了什么。几处互相不能重叠。"
+    ): (
+        "The places to change, one entry each. **Put everything the author wants changed "
+        "this time into one call**: one call yields one draft, several calls yield several, "
+        "and a later one can't see what an earlier one changed. Edits must not overlap."
+    ),
+    "一处改动：改哪儿（原文引语）、怎么改、对写手说什么。": (
+        "One edit: where (a verbatim quote), how, and what to tell the writer."
+    ),
+    (
+        "要改的那一段的原文，从正文里原样引，一个字都别改：一句话或一段的开头。"
+        "必须在本章正文里恰好出现一次——找不到或出现多处都会被拒，那时引长一点。"
+    ): (
+        "The passage's own text, copied verbatim from the chapter without changing a "
+        "character: a sentence, or the opening of a paragraph. It must occur exactly once in "
+        "the chapter—if it is missing or occurs more than once the edit is refused; quote a "
+        "longer stretch then."
+    ),
+    (
+        "要改的范围到哪儿为止：范围末尾那一句的原文（原样引）。不给 = 只改 quote 那一段本身。"
+        "给了就是从 quote 开头到 until 结尾这一整块。"
+    ): (
+        "Where the range ends: the closing sentence of the range, quoted verbatim. Omit it "
+        "to change just the quoted passage itself; give it to cover everything from the "
+        "start of quote to the end of until."
+    ),
+    (
+        "replace = 把这一段换成写手写的新文字；insert_after = 这一段不动，在它后面加一段"
+        "写手写的新文字；delete = 把这一段拿掉（不用写手，brief 可以不给）。"
+    ): (
+        "replace = swap the passage for new text from the writer; insert_after = leave the "
+        "passage and add a new one from the writer right after it; delete = remove the "
+        "passage (no writer involved; brief may be omitted)."
+    ),
+    (
+        "这一处怎么改、要守什么——用你自己的话对着写手说（改软一点 / 换成他的视角 / "
+        "把那句台词去掉……）。replace 和 insert_after 必须给；delete 不用。"
+    ): (
+        "How to change this passage and what to keep to—in your own words, addressed to the "
+        "writer (soften it / switch to his point of view / drop that line of dialogue…). "
+        "Required for replace and insert_after; not needed for delete."
     ),
     "只看和这一章有关的；不传就看全书的（按章数出来一张表，再给最近的那些）。": (
         "Only entries about this chapter; omit it to see the whole book's "
@@ -723,15 +795,64 @@ _MESSAGES: dict[str, dict[DraftLanguage, str]] = {
             "missing is the question of conflicts with later chapters."
         ),
     },
-    "draft_intent_missing": {
+    # ── revise_passage（ADR 0049：改一段）───────────────────────────────
+    "passage_no_text": {
+        DraftLanguage.ZH: "第 {chapter} 章还没有正文，没有可改的段落。要写这一章用 draft_chapter。",
+        DraftLanguage.EN: (
+            "Chapter {chapter} has no text yet, so there is no passage to change. "
+            "Use draft_chapter to write it."
+        ),
+    },
+    "passage_not_found": {
         DraftLanguage.ZH: (
-            "第 {chapter} 章已经有正文，请在 intent 里说明这一次是整章重写（rewrite）"
-            "还是在现有正文的基础上修改（revise），按作者这一次的话定，然后重新调用。"
+            "在这一章的正文里找不到「{quote}」。引语必须从正文里原样引，一个字都不能改——"
+            "先用 chapter_text 读一遍正文再引。"
         ),
         DraftLanguage.EN: (
-            "Chapter {chapter} already has text. Say in `intent` whether this is a full "
-            "rewrite (rewrite) or a revision of the existing text (revise), going by what "
-            "the author asked for this time, then call again."
+            "\"{quote}\" does not occur in this chapter's text. Quote it verbatim from the "
+            "text, changing nothing—read the chapter with chapter_text first."
+        ),
+    },
+    "passage_ambiguous": {
+        DraftLanguage.ZH: "「{quote}」在这一章的正文里出现了 {count} 次，分不出是哪一处。引长一点，让它只出现一次。",
+        DraftLanguage.EN: (
+            "\"{quote}\" occurs {count} times in this chapter's text, so the place is "
+            "ambiguous. Quote a longer stretch that occurs only once."
+        ),
+    },
+    "passage_out_of_order": {
+        DraftLanguage.ZH: "「{until}」在「{quote}」前面（或和它重叠）：until 得是那一段末尾的那句，在 quote 后面。",
+        DraftLanguage.EN: (
+            "\"{until}\" comes before \"{quote}\" (or overlaps it): until must be the "
+            "passage's closing sentence, after quote."
+        ),
+    },
+    "passage_overlap": {
+        DraftLanguage.ZH: "「{first}」和「{second}」这两处改动互相压着。合成一处，或者把范围分开。",
+        DraftLanguage.EN: (
+            "The edits at \"{first}\" and \"{second}\" overlap. Merge them into one, or "
+            "separate their ranges."
+        ),
+    },
+    "passage_brief_missing": {
+        DraftLanguage.ZH: "「{quote}」这一处没说怎么改（brief 是空的）。换掉或者加一段都得告诉写手写什么。",
+        DraftLanguage.EN: (
+            "The edit at \"{quote}\" has no brief. Replacing or inserting a passage needs "
+            "to tell the writer what to write."
+        ),
+    },
+    "passage_came_back_empty": {
+        DraftLanguage.ZH: "写手对「{quote}」这一处交回来的是空的，这一稿没有改成。再要一次，或者把 brief 说具体些。",
+        DraftLanguage.EN: (
+            "The writer returned nothing for the edit at \"{quote}\", so this draft was "
+            "not made. Ask again, or make the brief more specific."
+        ),
+    },
+    "passage_stopped": {
+        DraftLanguage.ZH: "作者按了停，第 {chapter} 章这次修改没有完成（改一段不留半截）。",
+        DraftLanguage.EN: (
+            "The author pressed stop; this revision of chapter {chapter} was not completed "
+            "(a passage edit is not kept half-done)."
         ),
     },
     "drafting_not_wired": {

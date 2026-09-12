@@ -293,7 +293,7 @@ def test_the_tool_result_never_carries_the_chapter(
                 id="c0",
                 name="draft_chapter",
                 arguments=json.dumps(
-                    {"chapter": 1, "brief": "写一场对峙", "intent": "rewrite"}
+                    {"chapter": 1, "brief": "写一场对峙"}
                 ),
             )
         ],
@@ -341,7 +341,7 @@ def test_a_draft_result_is_bound_to_its_chapter_even_when_the_call_has_no_chapte
                 id="c0",
                 name="draft_chapter",
                 arguments=json.dumps(
-                    {"chapter": 1, "brief": "写一场对峙", "intent": "rewrite"}
+                    {"chapter": 1, "brief": "写一场对峙"}
                 ),
             )
         ],
@@ -607,7 +607,7 @@ def test_three_drafts_in_one_batch_really_run_at_the_same_time(
             id=f"c{n}",
             name="draft_chapter",
             arguments=json.dumps(
-                {"chapter": 1, "brief": "写一场对峙", "intent": "rewrite"}
+                {"chapter": 1, "brief": "写一场对峙"}
             ),
         )
         for n in range(3)
@@ -633,7 +633,9 @@ def test_only_the_drafting_tool_runs_concurrently() -> None:
     from novel_harness.agent.tools import TOOL_TABLE
 
     concurrent = {spec.name for spec in TOOL_TABLE if spec.concurrent}
-    assert concurrent == {"draft_chapter"}, (
+    # `revise_passage`（ADR 0049）两个问题的答案和 `draft_chapter` 一样：跑三遍是桌上多三稿、
+    # 书一个字节不动；每一处都要写手写几十秒。
+    assert concurrent == {"draft_chapter", "revise_passage"}, (
         f"能并发的工具变了：{sorted(concurrent)}。加之前先回答两个问题——"
         "它跑三遍和跑一遍对世界的影响一样吗？它慢到值得为它多担一份线程的心吗？"
     )

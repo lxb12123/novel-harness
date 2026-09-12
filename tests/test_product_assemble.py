@@ -464,10 +464,12 @@ def test_materials_become_their_own_section_and_are_budgeted_from_the_end() -> N
 
 
 def test_the_current_chapter_text_is_framed_as_the_thing_to_rewrite_and_precedes_the_brief() -> None:
-    """目标章当前正文那一段说清「这是要被替掉的，别照抄」，而且排在「这一场要写」前面。
+    """目标章当前正文那一段说清「这是要被整章替掉的，别照抄」，而且排在「这一场要写」前面。
 
     真书第 158 章：助手连开五稿、要求各不相同，写手回的正文五次逐字节等于磁盘上那一章——
     一段只挂着标签、又排在 prompt 最末的正文，在模型眼里就是「接着输出这个」。
+    这一句可以写死成「整章重写」：`draft_chapter` 的产物就是一整章；改几句是另一把工具
+    （`revise_passage`，下面那条）。
     """
     from novel_harness.draft.length import DraftLanguage
     from novel_harness.draft.product_draft import (
@@ -475,31 +477,55 @@ def test_the_current_chapter_text_is_framed_as_the_thing_to_rewrite_and_precedes
         _append_target_and_materials,
     )
 
-    from novel_harness.draft.context import DraftIntent
-
     current = "雨歇了。\n\n贾环站在废墟之中。"
     base = [{"role": "system", "content": "文风"}, {"role": "user", "content": "【这一场要写】写沉默。"}]
+    request = ChapterDraftRequest(goal="写沉默。", length=LENGTH, target_chapter_text=current)
+    messages, _, _ = _append_target_and_materials(base, request)
+    assert [m["role"] for m in messages] == ["system", "system", "user"]
+    assert messages[-1] is base[-1], "任务那条用户消息仍然是最后一条"
+    section = messages[1]["content"]
+    assert section.index("【目标章当前正文】") < section.index("整章重写") < section.index(current)
+    assert "不要照抄" in section
 
-    def section_for(intent: DraftIntent | None, language: DraftLanguage = DraftLanguage.ZH) -> str:
-        request = ChapterDraftRequest(
-            goal="写沉默。",
-            length=LENGTH.model_copy(update={"language": language}),
-            target_chapter_text=current,
-            target_chapter_intent=intent,
-        )
-        messages, _, _ = _append_target_and_materials(base, request)
-        assert [m["role"] for m in messages] == ["system", "system", "user"]
-        assert messages[-1] is base[-1], "任务那条用户消息仍然是最后一条"
-        section = messages[1]["content"]
-        assert section.index("【目标章当前正文】") < section.index(current)
-        return section
+    english = ChapterDraftRequest(
+        goal="Silence.",
+        length=LENGTH.model_copy(update={"language": DraftLanguage.EN}),
+        target_chapter_text=current,
+    )
+    messages, _, _ = _append_target_and_materials(base, english)
+    assert "This is a full rewrite" in messages[1]["content"]
 
-    # 说什么**按助手这一次说的意图挑**，不写死（维护者：「每次都说要重新写，这就是写死了」）。
-    rewrite = section_for(DraftIntent.REWRITE)
-    assert "整章重写" in rewrite and "不要照抄" in rewrite and rewrite.index("整章重写") < rewrite.index(current)
-    revise = section_for(DraftIntent.REVISE)
-    assert "在它的基础上修改" in revise and "一字不动" in revise and "整章重写" not in revise
-    unspecified = section_for(None)
-    assert "以后面「这一场要写」的要求为准" in unspecified
-    assert "This is a full rewrite" in section_for(DraftIntent.REWRITE, DraftLanguage.EN)
-    assert "This is a revision" in section_for(DraftIntent.REVISE, DraftLanguage.EN)
+
+def test_a_passage_edit_shows_the_writer_the_chapter_and_asks_for_only_that_passage() -> None:
+    """改一段（ADR 0049）：写手看整章，被告知只写那一段；那一段另摆一块在正文后面。"""
+    from novel_harness.draft.length import DraftLanguage
+    from novel_harness.draft.product_draft import (
+        ChapterDraftRequest,
+        Passage,
+        _append_target_and_materials,
+    )
+
+    current = "雨歇了。\n\n贾环站在废墟之中，久久没有动弹。\n\n“走吧。”他转身。"
+    base = [{"role": "user", "content": "【这一场要写】把这一句改软一点。"}]
+    request = ChapterDraftRequest(goal="改软一点。", length=LENGTH, target_chapter_text=current)
+    passage = Passage(text="贾环站在废墟之中，久久没有动弹。", kind="replace")
+    messages, _, _ = _append_target_and_materials(base, request, passage)
+    assert [m["role"] for m in messages] == ["system", "user"]
+    section = messages[0]["content"]
+    assert "只写出替换那一段的新文字" in section
+    assert "整章重写" not in section
+    assert section.index("【目标章当前正文】") < section.index(current) < section.index("【要改的一段】")
+    assert section.index("【要改的一段】") < section.index(passage.text, section.index("【要改的一段】"))
+
+    inserted = Passage(text="雨歇了。", kind="insert_after")
+    messages, _, _ = _append_target_and_materials(base, request, inserted)
+    assert "新文字要接在它后面" in messages[0]["content"]
+
+    english = ChapterDraftRequest(
+        goal="Soften it.",
+        length=LENGTH.model_copy(update={"language": DraftLanguage.EN}),
+        target_chapter_text=current,
+    )
+    messages, _, _ = _append_target_and_materials(base, english, passage)
+    assert "Write only the new text that replaces that passage" in messages[0]["content"]
+    assert "[The passage to change]" in messages[0]["content"]

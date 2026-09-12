@@ -200,9 +200,13 @@ function DraftingBox({ draft }: { draft: LiveDraft }) {
   return (
     <span className="chat-step chat-drafting">
       {draft.done ||
-        (language === "zh"
-          ? `正在起草第 ${draft.chapter} 章…`
-          : `Drafting chapter ${draft.chapter}…`)}
+        (draft.revising
+          ? language === "zh"
+            ? `正在修改第 ${draft.chapter} 章…`
+            : `Revising chapter ${draft.chapter}…`
+          : language === "zh"
+            ? `正在起草第 ${draft.chapter} 章…`
+            : `Drafting chapter ${draft.chapter}…`)}
     </span>
   );
 }

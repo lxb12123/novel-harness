@@ -58,14 +58,26 @@ from ..draft.capabilities import (
 )
 from ..draft.context import DraftContext
 from ..draft.generate import CallInterrupted
-from ..draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage, LengthSpec
+from ..draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage, LengthSpec, count_units
+from ..draft.passage import (
+    PassageAmbiguous,
+    PassageNotFound,
+    PassageOutOfOrder,
+    PassagesOverlap,
+    locate_all,
+    splice,
+)
 from ..draft.product_draft import (
     ChapterDraftRequest,
     DraftRefused,
+    Passage,
     SummarySource,
     draft_chapter,
+    passage_length,
+    revise_passage,
 )
 from ..draft.provider import ProviderConfig, ProviderError
+from ..text.chapterize import CHAPTER_RE
 from ..events import EventStore
 from ..extract.call_audit import ModelCallReceipt
 from ..draft.context import TargetChapterSnapshot
@@ -73,7 +85,7 @@ from ..graph import GraphStore
 from .candidates import DraftCandidate, DraftCandidateStore, StoredDraft
 from .loop import Cancellation, EventFn, TurnEvent, safe_emitter
 from .model import cancellable_client
-from .ports import DraftAsk, DraftProduct, ToolRefused
+from .ports import DraftAsk, DraftProduct, PassageAsk, ToolRefused
 from .prompt_terms import message
 
 AGENT_DRAFT_LENGTH: Final[LengthSpec] = DEFAULT_LENGTH_POLICY.default_for(DraftLanguage.ZH)
@@ -186,6 +198,26 @@ _SELF_NOTE_ASK: Final = (
 （`draft/assemble.py`，EVAL_PROTOCOL §2 冻结），动它就是改考卷；而 `/draft` 那条 HTTP
 路由传的是它自己的 `goal`，逐字节不受影响。
 """
+
+
+def _body_of(chapter_text: str) -> str:
+    """一个章节文件的正文：切掉开头那一行章标和紧跟着的一个空行（`importer.chapter_text`
+    拼出来的形状），别的一个字节不动。认不出章标就整份都是正文（同前端 `splitHeading`）。"""
+    stripped = chapter_text.lstrip()
+    first, newline, rest = stripped.partition("\n")
+    if not newline or not CHAPTER_RE.match(first):
+        return chapter_text
+    return rest[1:] if rest.startswith("\n") else rest
+
+
+def _passage_brief(ask: PassageAsk) -> str:
+    """改一段那一稿存进候选表的「要求」：每一处一行，改哪儿 + 怎么改（作者在并排页上看得见）。"""
+    lines = []
+    for edit in ask.edits:
+        where = edit.quote if edit.until is None else f"{edit.quote}……{edit.until}"
+        what = {"replace": "改写", "insert_after": "其后加一段", "delete": "删去"}[edit.kind]
+        lines.append(f"「{where}」{what}" + (f"：{edit.brief}" if edit.brief.strip() else ""))
+    return "\n".join(lines)
 
 
 def _previous_tail(root: Path, chapter: int) -> str:
@@ -496,6 +528,162 @@ class ChapterDesk:
         finally:
             self._close_stream(ask.chapter, stream)
 
+    # ── 改一段：花那一段的钱，不动书（ADR 0049）─────────────────────────────
+
+    def revise(
+        self,
+        ask: PassageAsk,
+        ctx: DraftContext,
+        *,
+        snapshot: TargetChapterSnapshot | None,
+    ) -> DraftProduct:
+        """改第 N 章里的几处：**每一处写手只写那一段**，后端拼回整章，收进候选表当**一稿**。
+
+        和 `write()` 一样不动书、一样一条流：开口喊「正在修改第 N 章」，写完整章正文一片
+        送到（`draft_delta`，界面直接放进编辑器、不逐字露），再喊「第几稿完成」。中间写手
+        写的那几段**不往流上送**——那是几段替换文字，不是正文，逐字流进编辑器会接在整章后面。
+
+        Raises:
+            ToolRefused: 这一章没有正文 / 引语找不到、找到多处、前后颠倒、几处重叠 /
+                写手交回来是空的 / 模型撑不起 / 联系不上模型 / 作者按了停（改一段不留半截：
+                半句拼进整章比没改更坏，钱照旧带在回执上）。
+        """
+        language = self._length.language
+        # 找和拼都在**正文**上做（章标那一行切掉，`_body_of`）：候选表存的是正文，
+        # 段落之间隔一个还是两个换行也只看正文——章标后面那个空行不算数。
+        body = _body_of(snapshot.text) if snapshot is not None else ""
+        if not body.strip():
+            raise ToolRefused(message("passage_no_text", language, chapter=ask.chapter))
+        assert snapshot is not None
+        edits = tuple(ask.edits)
+        try:
+            spans = locate_all(body, edits)
+        except PassageNotFound as exc:
+            raise ToolRefused(message("passage_not_found", language, quote=exc.quote)) from exc
+        except PassageAmbiguous as exc:
+            raise ToolRefused(
+                message("passage_ambiguous", language, quote=exc.quote, count=exc.count)
+            ) from exc
+        except PassageOutOfOrder as exc:
+            raise ToolRefused(
+                message("passage_out_of_order", language, quote=exc.quote, until=exc.until)
+            ) from exc
+        except PassagesOverlap as exc:
+            raise ToolRefused(
+                message("passage_overlap", language, first=exc.first, second=exc.second)
+            ) from exc
+        for edit in edits:
+            if edit.kind != "delete" and not edit.brief.strip():
+                raise ToolRefused(message("passage_brief_missing", language, quote=edit.quote))
+
+        try:
+            plan = plan_call(
+                self._length,
+                AGENT_DRAFT_REASONING,
+                self._capability,
+                interruptible=self._cancel is not None,
+            )
+        except (CapabilityError, ValueError) as exc:
+            raise ToolRefused(message("model_cant_handle_chapter", language, exc=exc)) from exc
+
+        with self._stream_lock:
+            self._streams += 1
+            stream = self._streams
+            self._open_streams.add(stream)
+        self._emit(TurnEvent.draft_started(ask.chapter, stream=stream, revising=True))
+        try:
+            return self._revise_the_open_stream(
+                ask, ctx, plan, snapshot=snapshot, body=body, spans=spans, stream=stream
+            )
+        finally:
+            self._close_stream(ask.chapter, stream)
+
+    def _revise_the_open_stream(
+        self,
+        ask: PassageAsk,
+        ctx: DraftContext,
+        plan: ResolvedCallPlan,
+        *,
+        snapshot: TargetChapterSnapshot,
+        body: str,
+        spans: list[Any],
+        stream: int,
+    ) -> DraftProduct:
+        language = self._length.language
+        spent: list[ModelCallReceipt] = []
+        replacements: list[str] = []
+        notes: list[str] = []
+        # 写手的停止信号照旧接着，但**不往流上送字**（见 `revise` 的 docstring）。
+        client = self._plain_client()
+        for edit, span in zip(ask.edits, spans, strict=True):
+            if edit.kind == "delete":
+                replacements.append("")
+                continue
+            request = ChapterDraftRequest(
+                goal=edit.brief + _SELF_NOTE_ASK,
+                length=passage_length(language, count_units(span.text, language)),
+                previous_tail=_previous_tail(self._root, ask.chapter),
+                write_rule=self._write_rule,
+                standing_rules=self._standing_rules(),
+                target_chapter_text=snapshot.text,
+            )
+            try:
+                drafted = revise_passage(
+                    ctx,
+                    request=request,
+                    passage=Passage(text=span.text, kind=edit.kind),
+                    project_id=self._project_id,
+                    config=self._config,
+                    capability=self._capability,
+                    plan=plan,
+                    events=self._events,
+                    summaries=self._summaries,
+                    on_call=spent.append,
+                    db_lock=self._db_lock,
+                    client=client,
+                )
+            except DraftRefused as exc:
+                raise ToolRefused(str(exc), calls=tuple(spent)) from exc
+            except CallInterrupted as exc:
+                raise ToolRefused(
+                    message("passage_stopped", language, chapter=ask.chapter), calls=tuple(spent)
+                ) from exc
+            except ProviderError as exc:
+                raise ToolRefused(
+                    message("cant_reach_writer_model", language, exc=exc), calls=tuple(spent)
+                ) from exc
+            piece, note = split_self_note(drafted.text)
+            if not piece.strip():
+                raise ToolRefused(
+                    message("passage_came_back_empty", language, quote=edit.quote),
+                    calls=tuple(spent),
+                )
+            replacements.append(piece)
+            if note.strip():
+                notes.append(note.strip())
+
+        # 候选表存的是**正文**（`StoredDraft.body` 不含章标，那一行是切章的锚、属于作者），
+        # 编辑器接手时拿自己的章标接上它。
+        revised = splice(body, ask.edits, spans, replacements)
+        # 整章一片送到：界面直接放进编辑器（`TurnEvent.revising`），痕迹上只有改过的那几处。
+        if self._listening:
+            self._emit(TurnEvent.draft_delta(ask.chapter, revised, stream=stream))
+        candidate = self._keep(
+            ask, body=revised, note="；".join(notes), base_sha=snapshot.sha256, stream=stream
+        )
+        return DraftProduct(candidate=candidate, calls=tuple(spent))
+
+    def _plain_client(self) -> Any:
+        """接着停止信号、**不往流上送字**的客户端（改一段用）。没接停止信号就是 `None`。"""
+        if self._cancel is None:
+            return None
+        try:
+            return cancellable_client(self._config, self._cancel, None)
+        except ProviderError as exc:
+            raise ToolRefused(
+                message("cant_reach_writer_model", self._length.language, exc=exc)
+            ) from exc
+
     def _standing_rules(self) -> tuple[str, ...]:
         """作者一直挂着的那几条规矩，喂给写作模型（维护者 2026-09-05 要的那个插槽）。
 
@@ -536,7 +724,6 @@ class ChapterDesk:
             standing_rules=self._standing_rules(),
             materials=tuple(ask.materials),
             target_chapter_text=snapshot.text if snapshot is not None else None,
-            target_chapter_intent=ask.intent,
         )
         # **逐次收回执，不等整份出参。** 整章起草是一到两次调用（生成 + 至多一次续写，
         # ADR 0011 D3），而「第一次答上来了、续写那次断线」是真会发生的一档——那时
@@ -639,7 +826,7 @@ class ChapterDesk:
 
     def _keep(
         self,
-        ask: DraftAsk,
+        ask: DraftAsk | PassageAsk,
         *,
         body: str,
         note: str,
@@ -663,8 +850,9 @@ class ChapterDesk:
             base_sha256=base_sha,
             stopped_reason=stopped,
             # 它喂了什么跟着稿子存（ADR 0047 第二条线）——半截那一档也存，理由同上。
-            brief=ask.brief,
-            materials=tuple(ask.materials),
+            # 改一段的那一稿存的是每一处「改哪儿 + 怎么改」（`_passage_brief`）。
+            brief=ask.brief if isinstance(ask, DraftAsk) else _passage_brief(ask),
+            materials=tuple(ask.materials) if isinstance(ask, DraftAsk) else (),
         )
         self.produced.append(candidate)
         # **这一声就是那条流的结局**，所以先把它从「还开着」里划掉：`write()` 的

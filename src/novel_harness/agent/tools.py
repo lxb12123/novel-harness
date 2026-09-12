@@ -35,7 +35,8 @@ agent 调一次就把 PLANNED 秘密的正文读进对话历史，而对话是�
 |---|---|---|
 | `scene_constraints` | 第 N 章正文里数出来的在场角色 | PLANNED 边 |
 | `character_state`   | 某人第 N 章在哪、什么状态、登场没有、死没死 | `Node`（它带着 props） |
-| `draft_chapter`     | 起草第 N 章的一稿，**流进作者的编辑器（未保存），不动书**（ADR 0048） | **一整章正文**（只给 id + 定长预览 + 自述） |
+| `draft_chapter`     | 起草第 N 章的一稿（整章重写），**流进作者的编辑器（未保存），不动书**（ADR 0048） | **一整章正文**（只给 id + 定长预览 + 自述） |
+| `revise_passage`    | 改第 N 章里的几处：助手用原文引语定位、写手只写那一段、后端拼回整章（ADR 0049） | 同上——出参和 `draft_chapter` 同一个形状 |
 | `read_draft`        | 按 id 把某一稿的全文拿回来 | —— 最贵的一条，只在要合并两版时调 |
 | `ask_author`        | 停下来问作者一句，给他几个可点的选项 | —— 见下面「问作者」那一节 |
 | `remember_rule`     | 把作者刚定下的一条规矩记下来 | —— 见下面「记规矩」那一节 |
@@ -242,7 +243,7 @@ from .index import (
     handle_character_chapters,
     resolve_one,
 )
-from .ports import DraftAsk, DraftDesk, ToolContext, ToolRefused, TrackVerdict
+from .ports import DraftAsk, DraftDesk, DraftProduct, PassageAsk, ToolContext, ToolRefused, TrackVerdict
 
 # ══════════════════════════════════════════════════════════════════════════
 # 入参：模型填的那几个格子。**每一个字段名和描述都会原样发给模型。**
@@ -997,17 +998,29 @@ def _handle_draft_chapter(args: DraftAsk, context: ToolContext) -> DraftResult:
         ctx = _scene_context_from_text(
             context, args.chapter, snapshot.text if snapshot is not None else ""
         )
-    # 这一章已经有正文：**写手拿它怎么办必须由助手说**（整章重写 / 在它基础上改，
-    # `DraftIntent`）。不说就拒，不替它猜——猜错的两个方向都贵：猜「重写」会把作者只想
-    # 改一句的那一章整个换掉，猜「修改」会让写手把现有正文抄回来（真书第 158 章五稿如此）。
-    if snapshot is not None and snapshot.text.strip() and args.intent is None:
-        raise ToolRefused(message("draft_intent_missing", context.language, chapter=args.chapter))
     product = desk.write(args, ctx, snapshot=snapshot)
-    candidate = product.candidate
     # **这一步不动书**：稿子在写的过程中就流进了作者左边的正文编辑器（事件流上的
     # `draft_delta`，ADR 0048），以未保存的样子放在那儿，他按「保存」才写进那一章。
+    return _draft_result(args.chapter, product)
+
+
+def _handle_revise_passage(args: PassageAsk, context: ToolContext) -> DraftResult:
+    """改一章里的几处（ADR 0049）：助手说改哪儿、怎么改，写手只写那几段，后端拼回整章。
+    出参和 `draft_chapter` 同一个形状——它就是这一章的又一稿（只有那几处变了）。"""
+    desk = _desk(context)
+    with context.db_guard:
+        snapshot = _target_snapshot(context, args.chapter)
+        ctx = _scene_context_from_text(
+            context, args.chapter, snapshot.text if snapshot is not None else ""
+        )
+    product = desk.revise(args, ctx, snapshot=snapshot)
+    return _draft_result(args.chapter, product)
+
+
+def _draft_result(chapter: int, product: DraftProduct) -> DraftResult:
+    candidate = product.candidate
     return DraftResult(
-        chapter=args.chapter,
+        chapter=chapter,
         draft_id=candidate.id,
         ordinal=candidate.ordinal,
         units=candidate.units,
@@ -1419,6 +1432,26 @@ TOOL_TABLE: Final[tuple[ToolSpec, ...]] = (
         args=NotificationsArgs,
         handler=handle_notifications,
         label="查阅通知",
+    ),
+    # ── 改一段（ADR 0049）。**追加在表尾**，理由同上面那几条（边界六）。
+    ToolSpec(
+        name="revise_passage",
+        description=(
+            "改某一章里的一段或几段，**其余段落一字不动**。作者要的是改几句、改一段、加一段、"
+            "删一段的时候用它，不用 draft_chapter（那是整章重写，会把整章换掉）。\n"
+            "每一处给三样：改哪儿（quote：那一段的原文，从正文里原样引，必须恰好出现一次；"
+            "范围到哪儿为止用 until）、怎么改（kind：replace 换掉 / insert_after 在它后面加 / "
+            "delete 拿掉）、对写手说什么（brief）。写手看得到整章，只写那一段；拼回整章是后端的事。"
+            "**作者这一次要改的全放在一次调用里**——一次调用写出来的是一稿，分几次就是几稿，"
+            "后一稿看不见前一稿改了什么。\n"
+            "写出来的和起草一样：整章流进作者左边的正文编辑器、以未保存的样子放在那儿，"
+            "只有改过的那几处标着痕迹，他按「保存」才写进书——**不要问他要不要存**，"
+            "写完告诉他改了什么就行。返回和 draft_chapter 一样：编号、字数、开头一段、写手那句自述。"
+        ),
+        args=PassageAsk,
+        handler=_handle_revise_passage,
+        label="修改正文",
+        concurrent=True,
     ),
 )
 """**模式二的权限边界。这张表以外的能力，模型一律没有。**

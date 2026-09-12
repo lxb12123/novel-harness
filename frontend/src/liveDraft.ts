@@ -36,6 +36,9 @@ export interface LiveDraft {
   done: boolean;
   /** 候选表里的编号（`draft_kept` 才带；机器码，不上屏）。作者按保存时随请求送回去。 */
   draftId: string;
+  /** 改一段（ADR 0049）：整章正文写完一片送到，**编辑器不逐字露、直接放进去**——痕迹上
+   *  只有改过的那几处。逐字露的是从头写的那一稿。 */
+  instant: boolean;
 }
 
 /** 收到一条事件之后，编辑器里那条流该变成什么样。 */
@@ -44,7 +47,14 @@ export function liveDraftAfter(prev: LiveDraft | null, event: ChatTurnEvent): Li
     case "draft_started":
       // 已经跟着一条流：第二条留在右边。
       if (prev !== null) return prev;
-      return { chapter: event.chapter ?? 0, stream: event.stream, text: "", done: false, draftId: "" };
+      return {
+        chapter: event.chapter ?? 0,
+        stream: event.stream,
+        text: "",
+        done: false,
+        draftId: "",
+        instant: event.revising === true,
+      };
     case "draft_delta":
       if (prev === null) {
         // 开跑那一声掉了（网抖了一下）：第一片字自己开格，别丢。
@@ -54,6 +64,7 @@ export function liveDraftAfter(prev: LiveDraft | null, event: ChatTurnEvent): Li
           text: event.text,
           done: false,
           draftId: "",
+          instant: false,
         };
       }
       if (prev.stream !== event.stream) return prev;
@@ -123,8 +134,9 @@ export const useLiveDraft = create<LiveDraftState>((set) => ({
   placed: null,
   saved: [],
   apply: (event) => set((s) => ({ draft: liveDraftAfter(s.draft, event) })),
+  // 桌上拿进来的一稿整份一次到手：也直接放，不逐字露。
   present: ({ chapter, draftId, text }) =>
-    set({ draft: { chapter, stream: -1, text, done: true, draftId } }),
+    set({ draft: { chapter, stream: -1, text, done: true, draftId, instant: true } }),
   setInEditor: (on) => set({ inEditor: on }),
   placedInEditor: (placed) => set({ draft: null, inEditor: false, placed }),
   savedFromEditor: (draftId) =>
