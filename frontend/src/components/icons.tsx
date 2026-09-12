@@ -471,6 +471,32 @@ export function CloseIcon() {
 }
 
 /**
+ * 对话列表（写作助手头栏那颗）：一个说话的气泡，里面两行字。
+ *
+ * 气泡是圆角矩形 + 左下角一根短尾巴，**不画成两个叠在一起的气泡**——那个形在 16px 上
+ * 就是一团。两行字长短不一（8 和 5），像一段话而不是一个「≡」。
+ */
+export function ConversationsIcon() {
+  return (
+    <svg
+      className="icon"
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      focusable="false"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M6 5.5h12a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H9.5L6 19.5v-3a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2z" />
+      <path d="M8 9.5h8" />
+      <path d="M8 12.5h5" />
+    </svg>
+  );
+}
+
+/**
  * 加号（「新起一章」）。
  *
  * 两笔都**穿到 5.5–18.5**、在 12 处正交——不是「一个 ＋ 字符」：那个字形自带很宽的

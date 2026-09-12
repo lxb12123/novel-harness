@@ -645,18 +645,43 @@ describe("「停」", () => {
 });
 
 describe("多段对话：侧列表", () => {
+  it("**它是面板里的一页，不是浮层**：点头栏那颗图标，对话区和输入框换成它；再点一次、按 Esc 都回来", async () => {
+    // 作者 2026-09-12：「太丑了……换成图标……不是这种小窗口的方式」。
+    const user = userEvent.setup();
+    renderWithApi(<ChatPanel />);
+    await screen.findByText(fixtures.chatDetail.messages[0].text);
+    const toggle = screen.getByRole("button", { name: "对话列表" });
+    expect(toggle.querySelector("svg")).not.toBeNull(); // 只有图标，名字由 aria-label 给
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+
+    await user.click(toggle);
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
+    expect(screen.getByRole("region", { name: "对话列表" })).toBeInTheDocument();
+    expect(document.querySelector(".chat-log")).toHaveAttribute("hidden");
+    expect(document.querySelector(".chat-say")).toHaveAttribute("hidden");
+    expect(document.querySelector(".chat-sessions-veil")).toBeNull();
+
+    await user.click(toggle);
+    expect(screen.queryByRole("region", { name: "对话列表" })).toBeNull();
+    expect(document.querySelector(".chat-log")).not.toHaveAttribute("hidden");
+
+    await user.click(toggle);
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("region", { name: "对话列表" })).toBeNull();
+  });
+
   it("列得出来、挑得动、开得了新的", async () => {
     const user = userEvent.setup();
     renderWithApi(<ChatPanel />);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
 
     await user.click(screen.getByRole("button", { name: "对话列表" }));
-    expect(screen.getByRole("button", { name: "＋ 新建对话" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "新建对话" })).toBeInTheDocument();
     // 标题就是作者说的第一句话（后端在标题为空时替他填的）。
     await user.click(screen.getByRole("button", { name: fixtures.chats[0].title }));
     expect(useCoords.getState().chatId).toBe(fixtures.chats[0].id);
-    // 挑完自己收起来：这一列是盖在对话上面的。
-    expect(screen.queryByRole("button", { name: "＋ 新建对话" })).toBeNull();
+    // 挑完自己收起来：回到对话。
+    expect(screen.queryByRole("button", { name: "新建对话" })).toBeNull();
   });
 
   it("**断在半路的那一段在列表上看得出来** —— 它和跑完的下一步动作不同", async () => {

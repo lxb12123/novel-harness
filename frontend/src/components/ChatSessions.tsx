@@ -4,20 +4,20 @@ import type { ChatSessionView } from "../api/types";
 import { refusalText } from "../chat";
 import { useLanguage, type Language } from "../language";
 import { shownTime } from "../time";
-import { CloseIcon } from "./icons";
+import { CloseIcon, PlusIcon } from "./icons";
 
 // 写作助手的**会话列表**。作者可以同时留着好几段对话，每一段各自 resume
 // （ADR 0019：线性 loop 的执行态就是「一串 message + 哪几个查询还缺结果」，
 // 接着往下跑不需要一个图运行时）。
 //
-// ── 为什么它是「摊开的一块」而不是一条真侧栏 ──────────────────────────────
+// ── 它是面板里的**一页**，不是侧栏、也不是浮层 ─────────────────────────────
 //
 // 中栏对半分之后，助手那一半的下限是 `MIN_CHAT`（`layout.ts`）。在那个宽度里再切一条
 // 会话侧栏出来，剩给对话本身的就只有一百多像素——那是这个仓库反复在拦的
 // 「拉过头就什么都看不见」的同一种废墟，只不过这次是设计造出来的。
-// 所以它默认收着，点开时是**挂在「对话列表」那颗按钮下面的一张浮层**
-// （2026-09-07 从「横贯整条面板的一块」改的，理由写在 `styles.css` 的
-// `.chat-sessions` 那条上），挑完自己收起来。
+// 2026-09-07 它改成挂在头栏那颗按钮下面的一张浮层；2026-09-12 作者又否了它（「太丑了……
+// 不是这种小窗口的方式」）：现在点头栏那颗图标，**对话区和输入框整个换成这一页**——
+// 一列通栏的行，用满这一半的宽度；挑一段、开一段新的、再点一次那颗图标，都回到对话。
 //
 // ── 这一列上不许出现的两样东西 ────────────────────────────────────────────
 //
@@ -150,21 +150,24 @@ export function ChatSessions({
   const refused = refusalText(remove.error, DELETE_FAILED(language));
 
   return (
-    <div className="chat-sessions">
-      <button
-        className="chat-new"
-        disabled={create.isPending}
-        onClick={() =>
-          create.mutate(undefined, {
-            onSuccess: (session) => {
-              onPick(session.id);
-              onPicked();
-            },
-          })
-        }
-      >
-        {language === "zh" ? "＋ 新建对话" : "+ New conversation"}
-      </button>
+    <div className="chat-sessions" role="region" aria-label={language === "zh" ? "对话列表" : "Conversations"}>
+      <div className="chat-sessions-bar">
+        <button
+          className="chat-new"
+          disabled={create.isPending}
+          onClick={() =>
+            create.mutate(undefined, {
+              onSuccess: (session) => {
+                onPick(session.id);
+                onPicked();
+              },
+            })
+          }
+        >
+          <PlusIcon />
+          {language === "zh" ? "新建对话" : "New conversation"}
+        </button>
+      </div>
 
       {/* **读不出来 ≠ 一段都没有。** 前者的下一步是刷新，后者的下一步是开一段——
           而「还没有说过话」在读失败时是一句它不知道真假的话，作者三个月的对话可能都在。 */}

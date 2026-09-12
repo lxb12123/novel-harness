@@ -32,7 +32,7 @@ import { useLanguage, type Language } from "../language";
 import { useCoords } from "../store";
 import { useLiveDraft } from "../liveDraft";
 import { ChatSessions } from "./ChatSessions";
-import { BotIcon, SendIcon, StopIcon } from "./icons";
+import { BotIcon, ConversationsIcon, SendIcon, StopIcon } from "./icons";
 import { DraftCandidates } from "./DraftCandidates";
 
 // 写作助手（模式二，[ADR 0019](docs/adr/0019-agent-loop-not-graph.md)）。
@@ -409,6 +409,15 @@ export function ChatPanel() {
   // 而他看不见），所以这句话写在这儿而不是靠人记着。
 
   const [listOpen, setListOpen] = useState(false);
+  // 会话列表那一页开着时按 Esc 回到对话（同各处抽屉）。
+  useEffect(() => {
+    if (!listOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setListOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [listOpen]);
   const [said, setSaid] = useState("");
   /** 作者刚按下发送的那句话。跑完之前它在屏幕上占一格——**那不是假装**：
    *  后端做的第一件事就是把它落库（`run_chat` 的注释写着理由）。 */
@@ -702,40 +711,41 @@ export function ChatPanel() {
         {/* 「本章 N 稿 ↗」那条入口和它指向的并排页 2026-09-12 撤了（作者：「这块就不要了」）：
             稿子在左边的编辑器里，右边每稿一行；上一轮的稿子不再有第二个入口。 */}
         {/* 「这一章的规矩」那颗按钮原来在这儿。撤掉的理由写在上面 `listOpen` 那一段。 */}
+        {/* 会话列表那颗开关：**只有图标**（作者 2026-09-12：「那个按钮换成图标」），
+            名字由 `aria-label` 给、说明走 `data-tip`（同顶栏那几颗，`icons.tsx` 第 3 条）。
+            开着时它亮着（`.on`），再点一次回到对话。 */}
         <button
+          className={"icon-btn" + (listOpen ? " on" : "")}
+          aria-label={language === "zh" ? "对话列表" : "Conversations"}
           aria-expanded={listOpen}
-          aria-haspopup="true"
+          data-tip={
+            listOpen
+              ? language === "zh" ? "返回对话" : "Back to the conversation"
+              : language === "zh" ? "对话列表" : "Conversations"
+          }
           onClick={() => setListOpen((v) => !v)}
         >
-          {language === "zh" ? "对话列表" : "Conversations"}
+          <ConversationsIcon />
         </button>
-
-        {/* ── 会话列表是**挂在这颗按钮下面的浮层**（作者 2026-09-07）──────────
-            它原来横贯整条面板、插在头栏和对话区之间：点开时对话整个被推下去，
-            一个几行的列表占掉半屏，看起来像面板换了一页。作者的原话是「对话列表
-            设计也不对太丑了，只能从上往下发吗」——不是只能。
-
-            **挂在 `.chat-head` 里面**（而不是到面板那一层再定位一次）：位置由头栏
-            自己给（`top: calc(100% + 6px)`），头栏高度改了它跟着走，不用有人回来
-            数像素。收起靠下面那张透明的幕布——点列表外面就收；头栏盖在幕布上面，
-            所以再点一次这颗按钮仍然是正常的开关。 */}
-        {listOpen && projectId && (
-          <ChatSessions
-            pid={pid}
-            sessions={list}
-            failed={listFailure}
-            current={chatId}
-            onPick={setChat}
-            onPicked={() => setListOpen(false)}
-          />
-        )}
       </div>
 
+      {/* ── 会话列表是面板里的**一页**（2026-09-12）──────────────────────────
+          它 2026-09-07 曾是挂在那颗按钮下面的一张浮层，作者又否了它（「太丑了……
+          不是这种小窗口的方式」）。现在点开时**对话区和输入框整个换成它**：一列通栏的行，
+          用满这一半的宽度；挑一段 / 开一段新的 / 再点一次那颗图标，都回到对话。
+          对话那一侧不卸载（`hidden`）：一轮正跑着的秒表、翻到一半的位置都留着。 */}
       {listOpen && projectId && (
-        <div className="chat-sessions-veil" aria-hidden="true" onClick={() => setListOpen(false)} />
+        <ChatSessions
+          pid={pid}
+          sessions={list}
+          failed={listFailure}
+          current={chatId}
+          onPick={setChat}
+          onPicked={() => setListOpen(false)}
+        />
       )}
 
-      <div className="chat-log" ref={log.ref} onScroll={log.onScroll}>
+      <div className="chat-log" ref={log.ref} onScroll={log.onScroll} hidden={listOpen}>
         {detail.isError && (
           <div className="err-box">
             {language === "zh" ? (
@@ -834,7 +844,7 @@ export function ChatPanel() {
         )}
       </div>
 
-      <div className="chat-say" ref={sayRef}>
+      <div className="chat-say" ref={sayRef} hidden={listOpen}>
         {/* 输入框和那颗发送**是一个盒子**（`.chat-say-box`）：按钮吊在框内右下角，
             文字的右边和下边给它让出了位置（`.chat-say-box textarea` 的内边距）。
             它原来是框底下单独一行、写着「发送」两个字——作者要的是「放进框里、

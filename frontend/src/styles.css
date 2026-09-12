@@ -1432,21 +1432,19 @@ pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid 
 .center-split { display: grid; min-width: 0; overflow: hidden; }
 
 /* 写作助手面板 */
-/* `position: relative` 是会话列表那张幕布（`.chat-sessions-veil`）的定位基准；
-   `overflow: hidden` 是不让浮层把面板撑出一根滚动条（面板自己从不滚，滚的是
-   `.chat-log`）。 */
+/* `overflow: hidden`：面板自己从不滚，滚的是 `.chat-log`（或者换上来的那一页会话列表）。 */
 .pane.chat {
   padding: 0; display: flex; flex-direction: column; border-left: 0;
   position: relative; overflow: hidden;
   /* 说过的话和输入框**共用这一条栏**（见下面那条 `.chat-log > *` 规则）。 */
   --chat-column: 720px;
 }
-/* 头栏是会话列表浮层的锚（`top: calc(100% + 6px)` 量的就是它），`z-index` 让它
-   压在幕布上面——不压的话再点一次「对话列表」会被幕布吃掉，那颗开关就只进不出。 */
+/* 对话区 / 输入框换成会话列表那一页时藏起来（`hidden` 属性）——藏而不卸：秒表、滚动位置
+   都留着。 */
+.pane.chat [hidden] { display: none !important; }
 .chat-head {
   display: flex; align-items: center; gap: 8px; padding: 8px 12px;
   border-bottom: 1px solid var(--line); background: var(--panel);
-  position: relative; z-index: 12;
 }
 .chat-head .spacer { flex: 1; }
 .chat-head-title {
@@ -1454,47 +1452,41 @@ pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid 
   text-overflow: ellipsis; white-space: nowrap;
 }
 
-/* 会话列表：**挂在「对话列表」那颗按钮下面的浮层**（作者 2026-09-07：「对话列表
-   设计也不对太丑了，只能从上往下发吗」）。原来它是横贯整条面板、插在头栏和对话区
-   之间的一块：点开时对话整个被推下去，一个几行的列表占掉半屏，看起来像面板换了页。
-   现在锚在头栏下面、右对齐、有宽度上限，点外面收起。
-   **仍然不是一条侧栏**——那条理由（这一半窄到放不下两列）写在 ChatSessions.tsx
-   顶上，一个字没变。 */
+/* 会话列表：面板里的**一页**（2026-09-12，作者：「太丑了……不是这种小窗口的方式」）。
+   2026-09-07 到这天它是挂在头栏那颗按钮下面的一张浮层；再往前是横贯面板、把对话推下去的
+   一块。现在点开时对话区和输入框换成它——一列通栏的行，自己滚，和对话区同一条栏宽
+   （`--chat-column`）。**仍然不是一条侧栏**——那条理由（这一半窄到放不下两列）写在
+   ChatSessions.tsx 顶上。 */
 .chat-sessions {
-  position: absolute; top: calc(100% + 6px); right: 12px; z-index: 12;
-  width: min(340px, calc(100% - 24px));
-  padding: 8px; border: 1px solid var(--line); border-radius: 10px;
-  background: var(--bg); box-shadow: 0 12px 32px rgba(0, 0, 0, .14);
+  flex: 1; min-height: 0; overflow: auto;
+  padding: 12px 16px 24px; background: var(--bg);
 }
-/* 透明幕布：点列表外面就收起。盖满整块面板，但头栏靠更高的 z-index 盖在它上面。 */
-.chat-sessions-veil { position: absolute; inset: 0; z-index: 11; }
-.chat-new { width: 100%; margin-bottom: 8px; padding: 5px 8px; }
+.chat-sessions > * { max-width: var(--chat-column); margin-left: auto; margin-right: auto; }
+.chat-sessions-bar { display: flex; align-items: center; margin-bottom: 10px; }
+.chat-new { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; }
 .chat-sessions-empty { margin: 4px 0 0; font-size: 12px; line-height: 1.7; }
-/* **有上限，而且是一屏的一半**（作者问过这一列有没有最大高度）：它盖在对话区上，
-   一段书写了三个月会有几十段对话，不封顶的话点开它等于把整块面板换成一张长名单。
-   `40vh` 而不是写死的 240px：中栏是能拖的，一个固定像素数在高屏上留一大片白、
-   在矮屏上照样顶到底。 */
 .chat-session-list {
   list-style: none; margin: 0; padding: 0;
-  max-height: 40vh; overflow: auto;
   display: grid; gap: 2px;
 }
 /* 整行是一个圆角块，**行与行之间不画线**：一列分割线加一列圆角高亮，是两套
    分组语言同时在说话（左栏章目录也是这么收的）。 */
-.chat-session { display: flex; align-items: center; gap: 4px; border-radius: 6px; }
+.chat-session { display: flex; align-items: center; gap: 4px; border-radius: 8px; }
 .chat-session:hover { background: color-mix(in srgb, var(--ink) 4%, transparent); }
 .chat-session-pick {
-  flex: 1; min-width: 0; display: block; text-align: left; padding: 6px 8px;
-  border: 0; border-radius: 6px; background: transparent; color: inherit; font: inherit; cursor: pointer;
+  flex: 1; min-width: 0; display: block; text-align: left; padding: 9px 12px;
+  border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; cursor: pointer;
 }
 .chat-session-pick:hover { background: transparent; color: inherit; border-color: transparent; }
 /* 正开着的那一段：底色铺**整行**（连右边那个 × 一起罩住），不是只铺左边那颗按钮——
    只铺一半时右边会露出一截没上色的缺口。 */
 .chat-session.on { background: var(--sel); }
 .chat-session.on .chat-session-pick { background: transparent; color: var(--accent); font-weight: 600; }
-.chat-session-name { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-session-name {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px;
+}
 .chat-session-meta {
-  display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 2px;
+  display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 3px;
   color: var(--dim); font-size: 11px; font-weight: 400;
 }
 .chat-badge { border: 1px solid var(--line); border-radius: 8px; padding: 0 5px; }
