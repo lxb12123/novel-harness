@@ -19,6 +19,7 @@ import { splitHeading, titleOf, withTitle } from "../chapterTitle";
 import { cleanSuggestion, shouldSuggest } from "../continuation";
 import { diskChange } from "../editorDoc";
 import { useLiveDraft, visibleBody } from "../liveDraft";
+import { useTypewriter } from "./useTypewriter";
 
 // 中栏正文编辑器（CodeMirror 6，§2.4——不是 TipTap）。
 // CM6 只是磁盘 chapters/NNNN.md 的便利视图：读 = GET text，存 = PUT → sync，DB 永不是
@@ -88,10 +89,22 @@ export function CenterEditor() {
   useEffect(() => {
     setInEditor(liveHere);
   }, [liveHere, setInEditor]);
-  // 第一片字到手之前编辑器里仍是原来的正文：那几秒换成一片空白，作者看到的是
-  // 「这一章没了」，而不是「它要开始写了」。
+  // 到手的字**匀速露出来**（`typewriter.ts`）：模型一片一片吐，片有多大不由我们定，
+  // 直接画就是一段一段跳。第一片字露出来之前编辑器里仍是原来的正文——那几秒换成一片空白，
+  // 作者看到的是「这一章没了」，而不是「它要开始写了」。
   const liveBody = liveHere ? visibleBody(live.text) : "";
-  const showLive = liveHere && liveBody !== "";
+  const typed = useTypewriter(liveBody, liveHere, live?.done ?? false);
+  const showLive = liveHere && typed.shown !== "";
+  // 这条流开始时编辑器手上那一版的哈希：落盘之后新正文到手（哈希变了）、而且字已经
+  // 全露完，才把这条流放掉——放早了是先闪回旧稿再换新稿，放晚了是字露完了还锁着键盘。
+  const liveStartSha = useRef<string | null>(null);
+  useEffect(() => {
+    if (liveHere) liveStartSha.current = loadedShaRef.current;
+  }, [liveHere]);
+  useEffect(() => {
+    if (!liveHere || !live.done || !typed.caughtUp) return;
+    if (loadedShaRef.current !== liveStartSha.current) clearLive();
+  }, [liveHere, live, typed.caughtUp, data, clearLive]);
 
   // R4 冲突回跳（§2.6 方向二）：点 issue 设 highlight → 按 quote 重寻 → 命令 CM6 选中并滚进视野。
   useEffect(() => {
@@ -141,10 +154,7 @@ export function CenterEditor() {
     loadedShaRef.current = data.text_sha256;
     setDoc(data.markdown);
     setDiskAhead(false);
-    // 磁盘上那一版换了（多半就是刚落盘的那一稿）：编辑器里那条流让位给它。
-    const streaming = useLiveDraft.getState().draft;
-    if (streaming !== null && streaming.chapter === data.number) clearLive();
-  }, [data, clearLive]);
+  }, [data]);
 
   const saveErr = save.error instanceof ApiError ? save.error : null;
   // 「保存」按钮角上的水滴／雪花：徽标图标、按钮该不该用窄边距、悬浮说明文字，
@@ -288,9 +298,9 @@ export function CenterEditor() {
       <div className="cm-wrap">
         <CodeEditor
           ref={editorRef}
-          value={showLive ? liveBody : body}
+          value={showLive ? typed.shown : body}
           editable={!liveHere}
-          follow={showLive && !live.done}
+          follow={showLive}
           tailLimit={settings.data?.continuation_tail_limit ?? null}
           onChange={(v) => {
             setDoc(head + v);

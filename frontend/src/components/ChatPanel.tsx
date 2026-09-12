@@ -195,20 +195,18 @@ function DraftingBox({ draft }: { draft: LiveDraft }) {
   // 底下**：外面的对话区跟得再紧，这格里露出来的仍是开头那几行。它得自己跟着底走。
   const text = useFollowBottom<HTMLParagraphElement>();
   // 这条流正画在左边的编辑器里（`liveDraft.ts`，作者 2026-09-12：「有个编辑的过程在左边
-  // 也能看到」）：这儿只留标题行，同一段字不画两遍。作者手上有没保存的字时编辑器不接，
-  // 那时字仍在这儿长。
+  // 也能看到」）：写着的时候这儿**什么都不画**——上一行「正在起草。」已经说了，再提一句
+  // 「正文在左侧」作者嫌多余（「不用特地提醒在左边什么的」）。收场那一句照旧画。
+  // 作者手上有没保存的字时编辑器不接，那时字仍在这儿长。
   const inEditor = useLiveDraft((s) => s.inEditor && s.draft?.stream === draft.stream);
+  if (inEditor && !draft.done) return null;
   return (
     <div className="chat-drafting">
       <span className="chat-drafting-head">
         {draft.done ||
           (language === "zh"
-            ? inEditor
-              ? `正在起草第 ${draft.chapter} 章，正文在左侧…`
-              : `正在起草第 ${draft.chapter} 章…`
-            : inEditor
-              ? `Drafting chapter ${draft.chapter}; the text is on the left…`
-              : `Drafting chapter ${draft.chapter}…`)}
+            ? `正在起草第 ${draft.chapter} 章…`
+            : `Drafting chapter ${draft.chapter}…`)}
       </span>
       {inEditor ? null : draft.text ? (
         <p className="chat-drafting-text" ref={text.ref} onScroll={text.onScroll}>

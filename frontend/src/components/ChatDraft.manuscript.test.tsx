@@ -218,9 +218,41 @@ describe("正在写的那一稿流进左边", () => {
     // 这几十秒里作者不能往里敲字：流进来的字和他的字会混在一起。
     expect(content.getAttribute("contenteditable")).toBe("false");
     expect(screen.getByText(/写作助手正在写入本章/)).toBeInTheDocument();
-    // 右边只留标题行。
-    expect(screen.getByText(/正在起草第 1 章，正文在左侧/)).toBeInTheDocument();
+    // 右边那一格什么都不画（作者：「不用特地提醒在左边什么的」）——步骤行「正在起草。」
+    // 已经说了；同一段字更不画两遍。
+    expect(screen.queryByText(/正文在左侧/)).toBeNull();
+    expect(document.querySelector(".chat-drafting")).toBeNull();
     expect(document.querySelector(".chat-drafting-text")).toBeNull();
+  });
+
+  it("**到手的字匀速露出来，不是一段一段跳**（作者：「一段一段字的走，不是一个一个的，不美观」）", async () => {
+    // 一次到手一整段：屏幕上不许一下全出来。判据是「露出来的字数单调增、中间真的有
+    // 只露了一部分的一帧」——不用秒表，秒表在慢机器上会假红。
+    const user = userEvent.setup();
+    const held = new Promise<string>(() => {});
+    const paragraph = "风雪落在肩上，他终于抬起头。".repeat(12);
+    renderWithApi(shell(), [
+      { method: "POST", match: /\/turn\/events$/, stream: [turnFrame(opened), turnFrame(piece(paragraph)), held] },
+    ]);
+    await screen.findByText("第 1 章");
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    await waitFor(() => expect(content.textContent).toContain("李管家什么也没说。"));
+
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "把这一章写了");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    const seen: number[] = [];
+    await waitFor(
+      () => {
+        const shown = content.textContent ?? "";
+        if (shown.startsWith("风雪")) seen.push(shown.length);
+        expect(shown).toBe(paragraph);
+      },
+      { timeout: 5000, interval: 10 },
+    );
+    expect(seen.length).toBeGreaterThan(1);
+    expect(seen.some((n) => n > 0 && n < paragraph.length)).toBe(true);
+    expect(seen).toEqual([...seen].sort((a, b) => a - b));
   });
 
   it("第一片字到手之前编辑器里仍是原来的正文——不是一片空白", async () => {
