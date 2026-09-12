@@ -20,7 +20,6 @@ import { cleanSuggestion, shouldSuggest } from "../continuation";
 import { diskChange } from "../editorDoc";
 import { useLiveDraft, visibleBody } from "../liveDraft";
 import { useTypewriter } from "./useTypewriter";
-import { tintRanges, type TintRange } from "../tint";
 import { ArrowDownIcon } from "./icons";
 
 // 中栏正文编辑器（CodeMirror 6，§2.4——不是 TipTap）。
@@ -62,6 +61,11 @@ export function CenterEditor() {
    *  （ADR 0021 的乐观闸）——**不能现算**：后端比对的是它自己发出的那份哈希，前端另算
    *  一份等于自己发明一个「服务端 hash」。 */
   const loadedShaRef = useRef<string | null>(null);
+  /** **上一次保存的那一版**正文——编辑器里没保存的改动的痕迹（`editMarks.ts`：减去红、
+   *  增加绿）对着它画。它和 `loadedRef` 多数时候是同一份，但它是 state：ref 变了不重画，
+   *  而痕迹得跟着它变；按保存那一刻它立刻换成刚存的那份（痕迹当场消失，作者的原话），
+   *  `loadedRef` 要等重取回来才换（那一次还带着新的 sha）。 */
+  const [saved, setSaved] = useState<string | null>(null);
   // 下面那个 effect 只在 `data` 变时跑，闭包里的 `dirty` 会是旧的 —— 用 ref 兜住最新值。
   const dirtyRef = useRef(dirty);
   dirtyRef.current = dirty;
@@ -79,36 +83,53 @@ export function CenterEditor() {
 
   // ── 写作助手正在往这一章里写（`liveDraft.ts`，ADR 0048）────────────────────
   //
-  // 那条流的字直接画在这儿，章标那一行照旧留着。**作者手上有没保存的字时不接**：
-  // 那几十秒里换掉他的字是找不回来的方向；那时它仍在右边那一格里长，他保存或放弃之后
-  // 可以从桌上点「放入编辑器」。字全露完之后**整份进编辑器、标脏、涂底色**——从这一刻起
-  // 它就是一份未保存的修改：按「保存」写进书（带 `draft_id`，候选表记上进书了），
-  // 按「放弃这一稿」回到磁盘上那一版。
+  // 那条流的字直接画在这儿，章标那一行照旧留着。**稿子永远在这儿写，不退到右边**
+  // （作者 2026-09-12 三次强调「一定要在左边写」；上一版给「编辑器里有没保存的字」留了一条
+  // 退到右边的路，结果第二稿真的退过去了，作者：「为什么又整到右边去了」）。
+  // 字全露完之后**整份进编辑器、标脏**——从这一刻起它就是一份未保存的修改，和作者自己
+  // 敲的字一样对着保存版画痕迹（`editMarks.ts`）：按「保存」写进书（带 `draft_id`，候选表
+  // 记上进书了），按「放弃这一稿」回到之前的样子。
+  //
+  // 作者自己有没保存的字时怎么办：**先收起来（`stash`），稿子照写**。那几段是他的字，
+  // 找不回来的方向，所以不是丢掉——「放弃这一稿」会把它们原样放回；他要是直接把稿子保存了，
+  // 那是他看着痕迹做的选择。上一稿写完留在这儿、他一个字没动的那种未保存内容是助手的，
+  // 不收、直接替掉（上一稿仍在桌上，右边那一行上点「放入编辑器」拿得回来）。
   const live = useLiveDraft((s) => s.draft);
   const setInEditor = useLiveDraft((s) => s.setInEditor);
-  const setEditorBusy = useLiveDraft((s) => s.setEditorBusy);
   const placedInEditor = useLiveDraft((s) => s.placedInEditor);
   const savedFromEditor = useLiveDraft((s) => s.savedFromEditor);
   const discarded = useLiveDraft((s) => s.discarded);
-  const liveHere = live !== null && live.chapter === chapter && docFor === chapter && !dirty;
+  /** 编辑器里这份未保存的正文来自写作助手的哪一稿（保存时随请求送回去；`""` = 那一稿
+   *  没有编号——没写成、半截）。`null` = 不是它放进来的。 */
+  const [placed, setPlaced] = useState<string | null>(null);
+  /** 放进来那一刻的整份正文：编辑器里还是它 = 作者没动过，这份未保存的内容是助手的。 */
+  const placedDoc = useRef<string | null>(null);
+  /** 稿子进来之前作者自己没保存的那份正文（收起来了，「放弃这一稿」放回）。 */
+  const [stash, setStash] = useState<string | null>(null);
+  const liveHere = live !== null && live.chapter === chapter && docFor === chapter;
   useEffect(() => {
     setInEditor(liveHere);
   }, [liveHere, setInEditor]);
+  // 一稿来了（流开始了 / 作者从桌上点了「放入编辑器」）：作者自己没保存的字先收起来；
+  // 上一稿（他没动过）的归属清掉。
   useEffect(() => {
-    setEditorBusy(dirty);
-  }, [dirty, setEditorBusy]);
+    if (!liveHere) return;
+    if (dirtyRef.current && doc !== placedDoc.current) setStash(doc);
+    if (placed !== null) {
+      setPlaced(null);
+      placedDoc.current = null;
+      discarded();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveHere, live?.stream]);
   // 到手的字**匀速露出来**（`typewriter.ts`）：模型一片一片吐，片有多大不由我们定，
   // 直接画就是一段一段跳。第一片字露出来之前编辑器里仍是原来的正文——那几秒换成一片空白，
   // 作者看到的是「这一章没了」，而不是「它要开始写了」。
   const liveBody = liveHere ? visibleBody(live.text) : "";
   const typed = useTypewriter(liveBody, liveHere, live?.done ?? false);
   const showLive = liveHere && typed.shown !== "";
-  /** 写作助手那一稿涂在正文上的底色（新增绿 / 改过浅红）。`null` = 没有它的字在这儿。 */
-  const [tints, setTints] = useState<readonly TintRange[] | null>(null);
-  /** 编辑器里这份未保存的正文来自哪一稿（保存时随请求送回去）。 */
-  const placedDraftId = useRef<string | null>(null);
-  // 字全露完了：整份进编辑器（**未保存**），底色按「和磁盘上那一版比，哪几段是新的 /
-  // 改的」涂。流放掉，键盘解锁——从这一刻起它是作者的一份修改。
+  // 字全露完了：整份进编辑器（**未保存**）。流放掉，键盘解锁——从这一刻起它是作者的一份
+  // 修改，痕迹由编辑器自己对着保存版算（`CodeEditor` 的 `baseline`）。
   useEffect(() => {
     if (!liveHere || !live.done || !typed.caughtUp) return;
     const nextBody = visibleBody(live.text);
@@ -118,18 +139,12 @@ export function CenterEditor() {
       discarded();
       return;
     }
-    const loadedBody = splitHeading(loadedRef.current ?? "").body;
     setDoc(head + nextBody);
     setDirty(true);
-    setTints(tintRanges(loadedBody, nextBody));
-    placedDraftId.current = live.draftId || null;
+    setPlaced(live.draftId);
+    placedDoc.current = head + nextBody;
     placedInEditor({ chapter, draftId: live.draftId });
   }, [liveHere, live, typed.caughtUp, head, chapter, placedInEditor, discarded]);
-  // 底色要等 doc 真的换成那一稿之后再涂（`CodeEditor` 的 value effect 先跑，它是子组件）。
-  // `null` 也要送过去：那是「清掉」（保存了 / 放弃了 / 换章了）。
-  useEffect(() => {
-    editorRef.current?.setTints(tints);
-  }, [tints, body]);
   /** 作者翻上去看前面的字了：那颗「滑到最下方」要出来。 */
   const [pinned, setPinned] = useState(true);
 
@@ -157,17 +172,19 @@ export function CenterEditor() {
     editorRef.current?.clearSuggestion();
   }, [continuationMuted]);
 
-  // 换章 = 重新打开：让 useChapterText 重取，并清脏态。写作助手那一稿的底色也跟着走
+  // 换章 = 重新打开：让 useChapterText 重取，并清脏态。写作助手那一稿的归属也跟着走
   //（它属于上一章那份未保存的正文，那份正文本身就丢了——同作者自己没保存的字）。
   useEffect(() => {
     setOpen(true);
     setDirty(false);
     loadedRef.current = null;
     loadedShaRef.current = null;
+    setSaved(null);
     setDocFor(null);
     setDiskAhead(false);
-    setTints(null);
-    placedDraftId.current = null;
+    setPlaced(null);
+    placedDoc.current = null;
+    setStash(null);
   }, [chapter, projectId]);
 
   // **重取到什么就装进去**这条老规矩，在写作助手会直接往这一章写字之后不再安全
@@ -182,6 +199,7 @@ export function CenterEditor() {
     if (what === "warn") return setDiskAhead(true);
     loadedRef.current = data.markdown;
     loadedShaRef.current = data.text_sha256;
+    setSaved(data.markdown);
     setDoc(data.markdown);
     setDiskAhead(false);
   }, [data]);
@@ -244,9 +262,8 @@ export function CenterEditor() {
             {language === "zh" ? "写作助手正在写入本章…" : "The writing assistant is writing this chapter…"}
           </span>
         )}
-        {/* 写作助手那一稿在这儿、还没保存：一句怎么处置 + 一颗「放弃」。**只在有底色时**——
-            那正是「这份未保存的正文里有它的字」的判据。 */}
-        {tints !== null && dirty && !save.isPending && (
+        {/* 写作助手那一稿在这儿、还没保存：一句怎么处置 + 一颗「放弃」。 */}
+        {placed !== null && dirty && !save.isPending && (
           <>
             <span className="status">
               {language === "zh"
@@ -256,15 +273,24 @@ export function CenterEditor() {
             <button
               className="link"
               onClick={() => {
-                setDoc(loadedRef.current ?? "");
-                setDirty(false);
-                setTints(null);
-                placedDraftId.current = null;
+                // 稿子进来之前他自己没保存的字收着呢：放回去（仍是未保存）。
+                setDoc(stash ?? loadedRef.current ?? "");
+                setDirty(stash !== null);
+                setStash(null);
+                setPlaced(null);
+                placedDoc.current = null;
                 discarded();
               }}
             >
               {language === "zh" ? "放弃这一稿" : "Discard this draft"}
             </button>
+            {stash !== null && (
+              <span className="status">
+                {language === "zh"
+                  ? "之前未保存的修改已收起，放弃这一稿即恢复"
+                  : "Your earlier unsaved edits are set aside; discard this draft to restore them"}
+              </span>
+            )}
           </>
         )}
         {(saveErr || save.isPending) && (
@@ -309,15 +335,18 @@ export function CenterEditor() {
                 expected_text_sha256: loadedShaRef.current ?? "",
                 // 这份正文来自写作助手的哪一稿（ADR 0048）：后端据此在候选表上记「进书了」，
                 // 日志页上留作者那一行。作者自己写的字没有这一位。
-                ...(placedDraftId.current ? { draft_id: placedDraftId.current } : {}),
+                ...(placed ? { draft_id: placed } : {}),
               },
               {
                 onSuccess: () => {
                   setDirty(false);
-                  // 底色是「还没保存」的标记：存了就消失（作者的原话）。
-                  setTints(null);
-                  savedFromEditor(placedDraftId.current ?? "");
-                  placedDraftId.current = null;
+                  // 痕迹是「和保存版差在哪」：刚存的这份就是保存版了，痕迹当场消失（作者的原话
+                  // 「点击保存这个底就消失了」）。`loadedRef` 那份等重取回来再换——那一次带着新的 sha。
+                  setSaved(doc);
+                  savedFromEditor(placed ?? "");
+                  setPlaced(null);
+                  placedDoc.current = null;
+                  setStash(null);
                 },
               },
             )
@@ -369,6 +398,11 @@ export function CenterEditor() {
           editable={!liveHere}
           follow={showLive}
           onPinnedChange={setPinned}
+          // 没保存的改动的痕迹对着**这一章上一次保存的那一版**画：作者敲的、写作助手流进来的，
+          // 一视同仁（作者 2026-09-12：「不管是他写的还是他编辑的，只要没有保存就要有那种
+          // 编辑的痕迹」）。坐标系同 `value`：扣掉章标那一行。
+          baseline={saved === null ? null : splitHeading(saved).body}
+          streaming={showLive}
           tailLimit={settings.data?.continuation_tail_limit ?? null}
           onChange={(v) => {
             setDoc(head + v);

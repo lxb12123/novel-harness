@@ -1,14 +1,13 @@
 // 「桌上摆着的那几稿」这块屏幕的纯逻辑（同 `chat.ts` / `layout.ts` 的分法）：
-// **这里不碰 DOM，也不碰 fetch**，好让「三档怎么切」「默认摊开哪一版」能被单测钉死。
+// **这里不碰 DOM，也不碰 fetch**，好让「怎么称呼一稿」「默认摊开哪一版」能被单测钉死。
 //
 // 规格是 [ADR 0022](docs/adr/0022-drafting-is-a-proposal-not-a-write.md)，2026-09-12 起由
-// [ADR 0048](docs/adr/0048-drafting-writes-the-chapter.md) 改了入口：**稿子写完直接写进那一章**，
-// 作者在左边的正文里看到它；对话这一侧只剩一行「第几稿 · 字数 · 已写入」和一句怎么退回。
-// 没写进去的（作者中途改过那一章 / 那一章还不存在）仍然是一张卡——那是它唯一能被读到的地方。
-// 这一层守三条：
+// [ADR 0048](docs/adr/0048-drafting-writes-the-chapter.md) 改了入口：**稿子流进左边的编辑器**，
+// 作者在正文里看着它写、按保存才进书；对话这一侧每稿只有一行「第几稿 · 字数 · 在哪儿」，
+// 稿子的字一个都不在那儿。摊开的卡只在并排比那一页（`DraftCompare`）。这一层守三条：
 //
 // 1. **不排名、不打分、不挑。** 后端不给散文打分（ADR 0005），这一层更不许——
-//    它连正文都没有，只有一段 120 字的开头。没写进去的那几张卡**全部收着**，作者自己点
+//    它连正文都没有，只有一段 120 字的开头。并排那一页收着的卡**全部收着**，作者自己点
 //    （同 `AmbiguousName`：两个方向都贵就摊开）。
 // 2. **顺序照后端给的**（`(chapter, ordinal)`）。并发跑的稿子谁先回来是随机的，
 //    在这儿重排一次，作者每次刷新看到的次序就会变。
@@ -17,27 +16,6 @@
 
 import type { DraftCandidateView } from "./api/types";
 import type { Language } from "./language";
-
-/** 一列正文要读得下去的最窄宽度。
- *
- *  低于它就不该并排——三条 180px 的竖缝，每行塞不下十个字，比一张一张摊开更难读。
- *  **这不是断点，是「一列」的下限**：并排几列由它和实际宽度一起决定，
- *  所以作者把面板拖到多宽都不会出现「挤成缝」的那一档（同 `layout.ts` 那三条下限）。 */
-export const COLUMN_MIN_PX = 260;
-
-/**
- * 这一批稿子该并排摆，还是一张一张摞着。
- *
- * **作者的原话是「拉长到一定的宽度就三窗口并排」**，所以判据是**实际量到的宽度**，
- * 不是窗口大小、不是一个设置项——他拖对话面板那一下就是他的意图，界面跟着变。
- *
- * `width` 量不到（首帧 / jsdom 里 `clientWidth` 恒为 0）时**回窄档**：
- * 窄档是默认形态，猜错了只是少并排一次；反过来猜错则是把三章正文硬摊在一条缝里。
- */
-export function sideBySide(width: number, count: number): boolean {
-  if (count < 2 || !Number.isFinite(width)) return false;
-  return width >= count * COLUMN_MIN_PX;
-}
 
 /** 并排比那一页上，默认摊开几列。
  *
@@ -48,7 +26,7 @@ export const COMPARE_OPEN_MAX = 3;
 
 /** 并排比那一页默认摊开哪几列：**最近的那几稿**（后端给的顺序就是最近在前）。
  *
- *  对话里的入口不摊开任何一版（没写进去的卡全部收着，作者自己点），这一页是作者
+ *  对话里的入口不摊开任何一版（那儿连卡都没有，每稿一行），这一页是作者
  *  **专门点开来并排读的**——他要的就是摊开。 */
 export function openOnCompare(drafts: readonly DraftCandidateView[]): string[] {
   return drafts.slice(0, COMPARE_OPEN_MAX).map((d) => d.id);

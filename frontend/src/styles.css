@@ -1599,7 +1599,7 @@ pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid 
    那一副长相，做的事是夹在中间的灰字，末尾一行秒表 + 「停」。
    **回话区没有打字机动画**：回话那一档今天非流式，装成在逐字吐是骗人的
    （ChatPanel.tsx 顶上第 1 条）。会动的是那颗点、真实的秒表、真实到达的那几行
-   步骤，以及**真的在逐字长**的起草区（`.chat-drafting`）。 */
+   步骤。**逐字长的稿子在左边的编辑器里**（ADR 0048），不在这儿。 */
 .chat-running { margin-top: 12px; }
 .chat-running > * + * { margin-top: 12px; }
 /* 它这会儿在做的那几件事。**一条一行，措辞全是后端给的。**
@@ -1618,19 +1618,9 @@ pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid 
 }
 @keyframes chat-pulse { 0%, 100% { opacity: .25; } 50% { opacity: 1; } }
 
-/* 正在写的那一稿。**按 `stream` 一格**：一批三稿是同时在飞的，
-   同一章的三稿连章号都一样，不分格的话屏幕上是一坨交错的字。 */
-.chat-drafting {
-  margin-top: 6px; padding: 7px 9px; border: 1px dashed var(--line); border-radius: 6px;
-}
-.chat-drafting-head { display: block; color: var(--dim); font-size: 11px; margin-bottom: 4px; }
-/* 只留一屏高：一稿是几千字，让它把整块面板顶开的话，「停」那颗按钮会被挤出视野——
-   而那正是作者读到第三行发现语气不对时唯一要按的东西。 */
-.chat-drafting-text {
-  margin: 0; max-height: 148px; overflow: auto; white-space: pre-wrap;
-  font-size: 12px; line-height: 1.75;
-}
-.chat-drafting-wait { margin: 0; color: var(--dim); font-size: 11px; }
+/* 正在写的那一稿：一行「正在起草第 N 章…」，长得和别的步骤行一样。**稿子的字不在这儿**
+   （它在左边的编辑器里，ADR 0048），所以这儿没有格子。 */
+.chat-drafting { display: block; }
 
 /* 它在等你回一句（ADR 0024）。**结构上必须和普通回话分得开**：
    一个问句混在散文里，作者会当陈述句翻过去。 */
@@ -1775,10 +1765,9 @@ pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid 
 .chat button.danger { border-color: var(--warn); color: var(--warn); }
 .chat button.danger:hover:not(:disabled) { background: var(--warnbg); }
 
-/* ── 桌上摆着的那几稿（ADR 0022）───────────────────────────────────────────
-   **同一份数据的三种排布**：窄档一张一张摞着，宽档并排各自一个滚轮，
-   新标签页是同一套卡片铺满一页（`.compare-cols`）。
-   并排的判据在 `drafts.ts::sideBySide`（量的是这一块的实际宽度，不是窗口）。 */
+/* ── 桌上摆着的那几稿（ADR 0022；入口 2026-09-12 起按 ADR 0048）────────────
+   对话里每稿**一行**（`.draft-row`），稿子的字一个都不在这儿——它在左边的编辑器里。
+   摊开的卡（`.draft-card`）只在并排比那一页（`.compare-cols`，新标签页）。 */
 .drafts { margin-top: 10px; }
 .drafts-head {
   display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
@@ -1786,20 +1775,43 @@ pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid 
 }
 .drafts-head .spacer { flex: 1; }
 .draft-compare { color: var(--accent); font-size: 11px; white-space: nowrap; }
-/* 写进那一章的一稿只有一行（ADR 0048）：正文在左边，这儿不摊第二份。
-   自述另起一行、按 `.draft-note` 的字号，和没写进去那张卡上的自述长得一样。 */
-.draft-landed { margin: 0 0 4px; font-size: 12px; line-height: 1.6; }
-
-/* 写作助手放进编辑器那一稿的底色（`tint.ts`）：新增的段绿、改过的段浅红，按保存就消失。
-   浅到能读——它标的是「这一段动过」，不是一段警告。 */
-.ai-added { background: rgba(52, 168, 83, 0.14); }
-.ai-changed { background: rgba(217, 72, 72, 0.12); }
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) .ai-added { background: rgba(72, 187, 120, 0.2); }
-  :root:not([data-theme="light"]) .ai-changed { background: rgba(240, 96, 96, 0.18); }
+/* 每稿一行（ADR 0048）：第几稿 · 字数 · 在哪儿；还在桌上的那一稿一颗「放入编辑器」。
+   自述另起一行、按 `.draft-note` 的字号，和并排那一页卡上的自述长得一样。 */
+.draft-row { margin: 0 0 4px; font-size: 12px; line-height: 1.6; }
+.draft-place { margin-left: 8px; font-size: 11px; }
+.draft-row-note { display: block; color: var(--dim); font-size: 12px; line-height: 1.7; }
+.draft-row-failed { display: block; color: var(--warn); font-size: 11px; line-height: 1.7; }
+/* 「这一稿没写完」。**比自述显眼**：它改变的是这一稿该怎么读（断在半句上是它没写完，
+   不是写作模型的写法），所以它不是一句附注。 */
+.draft-row-stopped {
+  display: inline-block; margin: 2px 0 0; padding: 0 7px; border-radius: 6px;
+  background: var(--warnbg); color: var(--warn); font-size: 12px; line-height: 1.6;
 }
-:root[data-theme="dark"] .ai-added { background: rgba(72, 187, 120, 0.2); }
-:root[data-theme="dark"] .ai-changed { background: rgba(240, 96, 96, 0.18); }
+
+/* 编辑器里没保存的改动的痕迹（`editMarks.ts` / `CodeEditor.tsx`）：减去的段红、增加的行绿，
+   照 git diff 的样子（作者 2026-09-12 指的那张图），按保存就消失。行首的 ＋/－ 画在正文
+   左边的留白里（`.cm-content` 那道内边距至少 16px，见 `CodeEditor.tsx` 的主题）。
+   红块是一块 widget、不是正文行：光标进不去、键盘改不了，它只是「这儿原来有这几段」。
+   浅到能读——它标的是「这儿动过」，不是一段警告。 */
+.cm-line.diff-add { position: relative; background: rgba(52, 168, 83, 0.14); }
+.diff-removed { background: rgba(217, 72, 72, 0.12); }
+.diff-del {
+  position: relative; padding: 0 2px 0 6px; /* 同 `.cm-line`：字和正文对齐 */
+  white-space: pre-wrap; word-break: break-word;
+}
+.diff-del + .diff-del { margin-top: 1lh; } /* 段与段之间留一行，同正文里的空行 */
+.cm-line.diff-add::before, .diff-del::before {
+  position: absolute; left: -16px; width: 16px; text-align: center;
+  font-size: 12px; pointer-events: none;
+}
+.cm-line.diff-add::before { content: "+"; color: rgb(52, 168, 83); }
+.diff-del::before { content: "−"; color: rgb(217, 72, 72); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .cm-line.diff-add { background: rgba(72, 187, 120, 0.2); }
+  :root:not([data-theme="light"]) .diff-removed { background: rgba(240, 96, 96, 0.18); }
+}
+:root[data-theme="dark"] .cm-line.diff-add { background: rgba(72, 187, 120, 0.2); }
+:root[data-theme="dark"] .diff-removed { background: rgba(240, 96, 96, 0.18); }
 /* 「滑到最下方」：作者翻上去看前面写的、字还在底下长时，正文底部正中一颗。
    `.cm-wrap` 本身在上面定义（flex 那一行）；这儿只补定位锚。 */
 .cm-wrap { position: relative; }
@@ -1811,23 +1823,12 @@ pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid 
   font-size: 12px; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12); cursor: pointer;
 }
 .cm-jump .icon { width: 14px; height: 14px; }
-.draft-landed-note { display: block; color: var(--dim); font-size: 12px; line-height: 1.7; }
 
-.draft-cards { display: flex; flex-direction: column; gap: 8px; }
-/* 宽档：几列并排，**每一列自己一个滚轮**（作者的原话：「三窗口分别对应三个原文，
-   然后一个滚轮内容」）。列宽下限交给 minmax，不够宽时上面那个判据本来就不会走到这儿。 */
-.draft-cards.wide {
-  flex-direction: row; align-items: stretch;
-  overflow-x: auto;
-}
-.draft-cards.wide .draft-card { flex: 1 1 0; min-width: 0; max-height: 52vh; overflow: auto; }
-
+/* 一稿摊开来读的那张卡——只在并排比那一页（`DraftCard.tsx`）。 */
 .draft-card {
   border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--panel);
 }
-/* 摊开的那一张自己滚：一整章正文直接铺在对话里，会把回执和输入框顶出屏幕，
-   而作者接下来要做的事（跟它说「用第二版」）就在那两个地方。 */
-.draft-card.open { background: var(--bg); max-height: 42vh; overflow: auto; }
+.draft-card.open { background: var(--bg); }
 .draft-card-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; font-size: 12px; }
 .draft-meta { color: var(--dim); font-size: 11px; }
 .draft-badge {

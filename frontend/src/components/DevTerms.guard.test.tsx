@@ -313,16 +313,16 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     expect(devTerms(screenText())).toEqual([]);
   });
 
-  it("写作助手：那几稿摆出来的时候（自述 + 预览 + 摊开之后的全文）", async () => {
-    // **这一片是 2026-08-12 新长出来的屏幕**（ADR 0022），而它一次同时端着三样
-    // 形状可疑的东西：候选的内部标识（`draft:01J…`，第三张网认的就是它）、
-    // 「第几稿」这个数、以及一整章正文。真 dump 那一轮只写了一稿且没落盘——
-    // **「一稿进了书」那一档正常数据下永远不亮**，正是它躲过守卫的方式。
+  it("写作助手：那几稿摆出来的时候（每稿一行：第几稿 · 字数 · 在哪儿 + 自述）", async () => {
+    // **这一片是 2026-08-12 新长出来的屏幕**（ADR 0022），而它同时端着两样形状可疑的东西：
+    // 候选的内部标识（`draft:01J…`，第三张网认的就是它）和「第几稿」这个数。
+    // 2026-09-12 起稿子的字不在这儿（ADR 0048：流进左边的编辑器），每稿只有一行——
+    // 三种「在哪儿」都要扫到：已写入 / 在编辑器里 / 还在桌上（一颗「放入编辑器」）。
+    // 真 dump 那一轮只写了一稿且没落盘，「一稿进了书」那一档正常数据下永远不亮。
     const user = userEvent.setup();
     const one = fixtures.drafts.drafts[0];
     const turn = {
       ...fixtures.chatTurn,
-      // 一稿写进去了（一行），两稿没写进去（卡）——两种形态都要扫到（ADR 0048）。
       drafts: [
         { ...one, id: "draft:ID43", ordinal: 1, landed: false },
         { ...one, id: "draft:ID44", ordinal: 2, landed: true },
@@ -335,10 +335,8 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     await user.click(screen.getByRole("button", { name: "发送" }));
 
     await screen.findByText("第 3 稿");
-    // 摊开一版：那一条路由的返回里除了正文还有 `id` / `created_at` 这些字段，
-    // 而「摊开」是作者最常做的那个动作。
-    await user.click(screen.getByRole("button", { name: "展开第 3 稿" }));
-    await waitFor(() => expect(screen.getAllByText(fixtures.draftDetail.text)).toHaveLength(1));
+    expect(screen.getAllByRole("button", { name: "放入编辑器" })).toHaveLength(2);
+    expect(screen.getByText(/已写入第 \d+ 章/)).toBeInTheDocument();
     expect(devTerms(screenText())).toEqual([]);
   });
 
@@ -372,27 +370,30 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
     await screen.findByText(ROUND_DONE);
   });
 
-  it("写作助手：正在逐字长出来的那一稿（含「还没落下第一个字」那一档）", async () => {
-    // **两档都要扫**：一格刚开、还没有一个字（真 dump 那一轮跑得太快，这一档从不出现），
-    // 和字已经在长。前者屏幕上只有一句引擎写的话，最容易在某次改动里变成一句英文。
+  it("写作助手：正在起草的那一行（字在左边的编辑器里，这儿只有一行进度）", async () => {
+    // **两档都要扫**：一稿刚开、还没有一个字（真 dump 那一轮跑得太快，这一档从不出现），
+    // 和字已经在长。两档屏幕上都只有那一行引擎写的话（稿子的字 2026-09-12 起流进左边的
+    // 编辑器，ADR 0048），最容易在某次改动里变成一句英文或一个机器码。
     const user = userEvent.setup();
     const opened = JSON.parse(
       TURN_MIDDLE.find((f) => f.includes('"kind":"draft_started"'))!.split("\ndata: ")[1],
     );
     let release!: (frame: string) => void;
     const held = new Promise<string>((r) => (release = r));
+    // 最后一帧永远卡住：这一行只活在这一轮跑着的时候，流一断它就换成「本轮未完成」。
+    const forever = new Promise<string>(() => {});
     renderWithApi(<ChatPanel />, [
       {
         method: "POST",
         match: /\/turn\/events$/,
-        stream: [sseFrames([{ event: "turn", data: opened }])[0], held],
+        stream: [sseFrames([{ event: "turn", data: opened }])[0], held, forever],
       },
     ]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
     await user.type(screen.getByRole("textbox", { name: "输入消息" }), "写一稿");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
-    await screen.findByText("尚未输出正文");
+    await screen.findByText(/正在起草第 \d+ 章…/);
     expect(devTerms(screenText())).toEqual([]);
 
     release(
@@ -400,7 +401,9 @@ describe("扫描面：那三个测试文件之外的每一块屏幕", () => {
         { event: "turn", data: { ...opened, kind: "draft_delta", text: "风雪落在肩上。", said_to_author: "" } },
       ])[0],
     );
-    await screen.findByText("风雪落在肩上。");
+    await new Promise((r) => setTimeout(r, 40));
+    expect(screen.queryByText("风雪落在肩上。")).toBeNull();
+    expect(screen.getByText(/正在起草第 \d+ 章…/)).toBeInTheDocument();
     expect(devTerms(screenText())).toEqual([]);
   });
 

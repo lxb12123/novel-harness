@@ -202,7 +202,7 @@ describe("跑一轮：作者按下发送之后那段时间", () => {
     // 2026-08-13：这儿原来还断言屏幕上那句「回话是整段一次出现的，稿子才会一个字一个字
     // 长出来」。**那句话删了**，因为它没有任何条件 —— 端点退回一次性响应时它就是假的，
     // 而且没有一个成熟工具会向用户解释自己的流式语义。屏幕该用状态本身说话：
-    // 字在流就让他看见字（下面「稿子真的一个字一个字长出来」那条钉的就是这个）。
+    // 字在流就让他看见字——在左边的编辑器里（ADR 0048，`ChatDraft.manuscript.test.tsx`）。
     const user = userEvent.setup();
     const turn = gated(fixtures.chatTurn);
     renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turn.handler }]);
@@ -906,13 +906,12 @@ describe("跑到一半：它在做什么，屏幕上真的看得见", () => {
     await screen.findByText(ROUND_DONE);
   });
 
-  it("**稿子真的一个字一个字长出来** —— 这是全屏幕唯一逐字的那一格", async () => {
-    // 起草那次调用是流式的（`interruptible`），所以 `draft_delta` 真的会一片片来。
-    // 后端那个契约夹具里没有它（起草的桩不流式），所以这一格的底子是同一轮里那条
-    // **真的** `draft_started`，只改 `kind` 和 `text` —— 字段集合仍然是后端今天那一份。
+  it("**稿子的字一个都不在这儿** —— 只有一行「正在起草第 N 章…」，字在左边的编辑器里", async () => {
+    // 起草那次调用是流式的（`interruptible`），`draft_delta` 真的会一片片来——而它们流进的是
+    // 左边的编辑器（ADR 0048，`ChatDraft.manuscript.test.tsx`），**不是这儿**。作者 2026-09-12
+    // 三次：「一定要在左边写」「不要在这个里面留这种东西」。这块屏幕上只有一行进度。
     //
-    // **最后一帧卡住**：那一格只活在这一轮跑着的时候（跑完之后它变成候选稿那一栏），
-    // 不卡的话这条断言测的是一块已经不在了的屏幕。
+    // **最后一帧卡住**：那一行只活在这一轮跑着的时候。
     const user = userEvent.setup();
     const opened = realEvent("draft_started");
     const delta = (text: string) => ({ ...opened, kind: "draft_delta", text, said_to_author: "" });
@@ -934,11 +933,12 @@ describe("跑到一半：它在做什么，屏幕上真的看得见", () => {
     await user.type(say(), "写一稿");
     await user.click(sendBtn());
 
-    // 开跑那一声先到，第一个字还没落下 —— **那一格也要在**，不然一批三稿同时飞的时候
-    // 作者看到的是几段凭空出现的字。
+    // 开跑那一声：一行「正在起草第 N 章…」——一批三稿同时飞的时候作者据此分得出几稿在写。
     await screen.findByText(opened.said_to_author.replace("。", "…"));
-    // 两片拼在一起，中间没有任何分隔 —— 作者读到的是一段连着的正文。
-    await screen.findByText("风雪落在肩上，他终于抬起头。");
+    // 字到了，这儿一个都不画。
+    await new Promise((r) => setTimeout(r, 40));
+    expect(screen.queryByText(/风雪落在肩上/)).toBeNull();
+    expect(document.querySelector(".chat-drafting-text")).toBeNull();
 
     release(frame("receipt", fixtures.chatTurn));
     await screen.findByText(ROUND_DONE);
@@ -1022,11 +1022,13 @@ function measure(el: Element, size: { scrollHeight: number; clientHeight: number
 const chatLog = () => document.querySelector(".chat-log") as HTMLElement;
 
 describe("对话区跟着新到的字走", () => {
-  it("**逐字长出来的那一稿，屏幕跟着走** —— 外面的对话区和那一格自己都贴着底", async () => {
+  it("**跑着的时候新长出来的每一行，屏幕跟着走** —— 贴着底就跟到新的底", async () => {
     // 病根：原来只在「历史变长 / 一轮开始或结束」时滚一下，一轮跑着的时候变长的
-    // 东西（进度行、它说的话、逐字长的那一稿）全不在里面，屏幕停在开跑那一刻不动。
+    // 东西（进度行、它说的话）全不在里面，屏幕停在开跑那一刻不动。
+    // （逐字长的那一稿 2026-09-12 起在左边的编辑器里跟底，见 `ChatDraft.manuscript.test.tsx`。）
     const user = userEvent.setup();
     const opened = realEvent("draft_started");
+    const started = realEvent("tool_started");
     let release1!: (frame: string) => void;
     const held1 = new Promise<string>((r) => (release1 = r));
     let release2!: (frame: string) => void;
@@ -1040,21 +1042,19 @@ describe("对话区跟着新到的字走", () => {
 
     await user.type(say(), "写一稿");
     await user.click(sendBtn());
-    await screen.findByText("尚未输出正文");
+    await screen.findByText(opened.said_to_author.replace("。", "…"));
     expect(chatLog().scrollTop).toBe(1000);
 
-    // 字来了、对话变长了：贴着底就跟到新的底。
+    // 又做了一件事、对话变长了：贴着底就跟到新的底。
     size.scrollHeight = 1400;
-    release1(frame("turn", { ...opened, kind: "draft_delta", text: "风雪落在肩上。", said_to_author: "" }));
-    const text = await screen.findByText("风雪落在肩上。");
+    release1(frame("turn", started));
+    await screen.findByText(started.said_to_author);
     expect(chatLog().scrollTop).toBe(1400);
 
-    // 那一格自己只留一屏高、自己会滚——最新的字长在它的折线底下，它也得自己跟。
-    const inner = { scrollHeight: 400, clientHeight: 148 };
-    measure(text, inner);
-    release2(frame("turn", { ...opened, kind: "draft_delta", text: "他没有回头。", said_to_author: "" }));
-    await screen.findByText("风雪落在肩上。他没有回头。");
-    expect(text.scrollTop).toBe(400);
+    size.scrollHeight = 1700;
+    release2(frame("turn", { ...realEvent("reply_text"), text: "翻完了，接着写。" }));
+    await screen.findByText("翻完了，接着写。");
+    expect(chatLog().scrollTop).toBe(1700);
   });
 
   it("**往上翻了就不拽他** —— 翻回底下才接着跟", async () => {

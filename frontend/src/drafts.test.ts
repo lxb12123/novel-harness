@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import fixtures from "./__fixtures__/api.json";
 import type { DraftCandidateView } from "./api/types";
 import {
-  COLUMN_MIN_PX,
   COMPARE_OPEN_MAX,
   chaptersOf,
   comparePath,
@@ -10,14 +9,13 @@ import {
   draftsHeading,
   landedNote,
   openOnCompare,
-  sideBySide,
   unitsLabel,
 } from "./drafts";
 
 // 「桌上摆着的那几稿」那块屏幕的纯逻辑（ADR 0022）。
 //
 // **这里的每一条都是「界面替作者做了什么判断」**，所以它们必须能脱离渲染验证：
-// 默认摊开哪一版、什么时候并排、屏幕上把它叫什么。
+// 默认摊开哪一版、屏幕上把它叫什么。
 
 /** 真 dump 里那一稿（`tests/test_frontend_contract.py` 冻的），**一个字段都没改**。 */
 const REAL = fixtures.drafts.drafts[0] as DraftCandidateView;
@@ -26,26 +24,6 @@ const REAL = fixtures.drafts.drafts[0] as DraftCandidateView;
  *  落没落盘 / 有没有自述」——而**一批三稿、其中一稿进了书**恰恰是这块屏幕要画的
  *  常态，真 dump 里那一轮只写了一稿（`landed:false`），拿不到这个形态。 */
 const variant = (over: Partial<DraftCandidateView>): DraftCandidateView => ({ ...REAL, ...over });
-
-describe("并排还是摞着：`sideBySide`", () => {
-  it("量不到宽度（首帧 / jsdom 里 `clientWidth` 恒为 0）就回窄档", () => {
-    // 猜错的代价不对称：少并排一次是少一次方便；反过来是三章正文挤在三条缝里。
-    expect(sideBySide(0, 3)).toBe(false);
-    expect(sideBySide(Number.NaN, 3)).toBe(false);
-  });
-
-  it("只有一稿的时候永远不并排 —— 一列跟摞着长得一样，白多一层壳", () => {
-    expect(sideBySide(4000, 1)).toBe(false);
-  });
-
-  it("**判据是「每一列都读得下去」，不是一个写死的断点**", () => {
-    // 三稿要 3 × 260；差一个像素就还是窄档（那一档下每列 259px，一行塞不下十个字）。
-    expect(sideBySide(3 * COLUMN_MIN_PX - 1, 3)).toBe(false);
-    expect(sideBySide(3 * COLUMN_MIN_PX, 3)).toBe(true);
-    // 两稿在同样的宽度下当然并排得了 —— 列数越少门槛越低。
-    expect(sideBySide(2 * COLUMN_MIN_PX, 2)).toBe(true);
-  });
-});
 
 describe("并排比那一页默认摊开哪几列", () => {
   it("**摊开最近的几列**，更早的收着", () => {

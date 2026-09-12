@@ -1,32 +1,33 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fixtures, renderWithApi, ROUND_DONE } from "../test/harness";
 import { devTerms, rawIds, screenText } from "../test/screenGuard";
 import type { DraftCandidateView } from "../api/types";
 import { DEFAULT_LEFT, DEFAULT_RIGHT, DIVIDER_PX } from "../layout";
+import { useLiveDraft } from "../liveDraft";
 import { writeCompareHandoff } from "../route";
 import { useCoords } from "../store";
 import { ChatPanel } from "./ChatPanel";
 import { DraftCompare } from "./DraftCompare";
 import { SplitPanes } from "./SplitPanes";
 
-// **对抗性复核：桌上那几稿的三档界面**（ADR 0022）。
+// **对抗性复核：桌上那几稿的两档界面**（ADR 0022；入口 2026-09-12 起按 ADR 0048：
+// 对话里每稿一行、字不画，摊开的卡只在并排比那一页）。
 //
 // `DraftCandidates.test.tsx` / `DraftCompare.test.tsx` / `drafts.test.ts` 是造这一刀的人
 // 自己架的网。这一份只站**它们没站到的位置**：
 //
-// 1. **三档是「同一份数据的三种排布」，而没有任何东西验过它们摆的是同一份。**
-//    那三个文件各自喂各自的一批稿子，于是「窄档和宽档看见的不是同一批」「并排比那一页
-//    少了一稿」这一类失败没有判据。这儿一批数据渲染三次，逐条对。
-// 2. **「推荐位来自后端」今天只在纯函数上验过**（`openByDefault`）。屏幕这一侧还差两条：
-//    摊开的那一版**不许是位置或字数推出来的**，以及**顺序照后端给的**——
-//    真数据里 `landed` 恰好又新又靠后，两种错法在真数据上长得一模一样。
+// 1. **两档是「同一份数据的两种排布」，而没有任何东西验过它们摆的是同一份。**
+//    那几个文件各自喂各自的一批稿子，于是「对话里的行和并排那一页的卡不是同一批」
+//    「并排比那一页少了一稿」这一类失败没有判据。这儿一批数据渲染两次，逐条对。
+// 2. **「在哪儿」来自后端那一列**。屏幕这一侧还差两条：说「已写入」的那一行**不许是
+//    位置或字数推出来的**，以及**顺序照后端给的**——真数据里 `landed` 恰好又新又靠后，
+//    两种错法在真数据上长得一模一样。
 // 3. **形状网扫的是这块屏幕的「有数据」那一支。** 兜底那几支（正在读 / 读不出来 /
 //    桌上是空的 / 连不上 / 不知道是哪本书）正常数据下永远不亮，正是它们躲过守卫的方式
 //    ——那也是 `DevTerms.guard.test.tsx` 开头写着的那条教训。
-// 4. **三栏骨架**：这块屏幕会在中栏里长出几列并排的正文，而 `SplitPanes.test.tsx`
-//    量的是没有它的时候。
+// 4. **三栏骨架**：这块屏幕在中栏里长出几行，而 `SplitPanes.test.tsx` 量的是没有它的时候。
 //
 // ── 变体从哪儿来 ──────────────────────────────────────────────────────────
 //
@@ -39,7 +40,7 @@ const REAL = fixtures.drafts.drafts[0] as DraftCandidateView;
 const variant = (over: Partial<DraftCandidateView>): DraftCandidateView => ({ ...REAL, ...over });
 
 /**
- * 三稿都**没写进去**（作者中途改过那一章那一档，ADR 0048 之后只有这一档还是卡），
+ * 三稿都**还在桌上**（一批三稿同时飞、一稿都没进书那一档），
  * **故意摆成「位置 / 编号 / 字数都指向另一版」**，编号乱着（7 / 2 / 5）。
  *
  * 后端的排序口径是 `(chapter, ordinal)`，所以真实数据里这几种判据经常重合；
@@ -57,16 +58,15 @@ const MIXED: DraftCandidateView[] = THREE.map((d) =>
   d.id === "draft:ID72" ? { ...d, landed: true } : d,
 );
 
-/** 后端给的那个顺序（**从同一份数据推出来，不是抄一遍**）。三档都必须逐字是它：
- *  这就是「三档摆的是同一份数据」这句话的判据。`TurnReceipt.drafts` 已经排好序，
+/** 后端给的那个顺序（**从同一份数据推出来，不是抄一遍**）。两档都必须逐字是它：
+ *  这就是「两档摆的是同一份数据」这句话的判据。`TurnReceipt.drafts` 已经排好序，
  *  而这几个编号故意乱着（7 / 2 / 5）——任何一种「自己再排一遍」都会排成 2 / 5 / 7。 */
 const ORDER = THREE.map((d) => `第 ${d.ordinal} 稿`);
 
 const listOf = (drafts: DraftCandidateView[]) => ({ drafts });
 const turnWith = (drafts: DraftCandidateView[]) => ({ ...fixtures.chatTurn, drafts });
 
-/** 摊开一稿时后端给的那一份（真 dump），正文换成一句认得出的话：真 dump 的 `text`
- *  开头就是那段预览，拿它当判据分不出「摊开了」和「还是那段预览」。 */
+/** 摊开一稿（并排那一页）/ 放进编辑器时后端给的那一份（真 dump），正文换成一句认得出的话。 */
 const DETAIL = { ...fixtures.draftDetail, text: "（这一稿的全文，比预览长得多。）" };
 
 const draftRoutes = (drafts: DraftCandidateView[]) => [
@@ -74,24 +74,14 @@ const draftRoutes = (drafts: DraftCandidateView[]) => [
   { match: /\/drafts(\?|$)/, body: listOf(drafts) },
 ];
 
-/** 屏幕上按出现次序排的那几个「第 N 稿」。 */
-function labelsOnScreen(): string[] {
-  return [...document.querySelectorAll(".draft-card b")].map((el) => el.textContent ?? "");
-}
-
-/** 让**稿子那一格**量到一个宽度（jsdom 不排版，`clientWidth` 恒为 0）。
- *
- *  **只给那一格，不给整个 `HTMLElement.prototype`**：三栏骨架自己也照 `clientWidth`
- *  夹一次列宽，一刀切下去会把右栏从 400 夹到 342，于是「三栏没被挤动」那一节量的
- *  就不是这块屏幕的影响，而是这个 stub 的影响。 */
-function widthIs(px: number) {
-  Object.defineProperty(HTMLElement.prototype, "clientWidth", {
-    configurable: true,
-    get(this: HTMLElement) {
-      return this.classList?.contains("draft-cards") ? px : 0;
-    },
-  });
-}
+/** 屏幕上按出现次序排的那几个「第 N 稿」：对话里是行，并排那一页是卡。 */
+const rowsOnScreen = () =>
+  [...document.querySelectorAll(".draft-row b")].map((el) => el.textContent ?? "");
+const cardsOnScreen = () =>
+  [...document.querySelectorAll(".draft-card b")].map((el) => el.textContent ?? "");
+/** 取一稿全文那条路由（`/drafts/{id}`）被打了几次。 */
+const fullTextCalls = (spy: { mock: { calls: unknown[][] } }) =>
+  spy.mock.calls.map((c) => String(c[0])).filter((u) => /\/drafts\/[^/?]+$/.test(u));
 
 const say = () => screen.getByRole("textbox", { name: "输入消息" });
 
@@ -106,6 +96,7 @@ async function runTurn() {
 }
 
 beforeEach(() => {
+  useLiveDraft.setState({ draft: null, inEditor: false, placed: null, saved: [] });
   useCoords.setState({
     projectId: "project:ID1",
     chapter: 2,
@@ -116,40 +107,31 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
   window.location.hash = "";
   localStorage.clear();
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// 一、三档摆的是**同一份**数据
+// 一、两档摆的是**同一份**数据
 // ══════════════════════════════════════════════════════════════════════════
 
-describe("三档：同一份数据的三种排布", () => {
-  // **三条断言的期望是同一个 `ORDER`，而它是从同一份 `THREE` 推出来的**——
-  // 「三档摆的是同一份数据」这句话在这儿是可证的，不是一句说明。
+describe("两档：同一份数据的两种排布", () => {
+  // **两条断言的期望是同一个 `ORDER`，而它是从同一份 `THREE` 推出来的**——
+  // 「两档摆的是同一份数据」这句话在这儿是可证的，不是一句说明。
 
-  it("窄档（默认）：一稿一张卡，逐条、按后端的次序", async () => {
+  it("对话里：一稿一行，逐条、按后端的次序；**字一个都不画**", async () => {
     renderWithApi(<ChatPanel />, [
       { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
       ...draftRoutes(THREE),
     ]);
+    const spy = vi.spyOn(globalThis, "fetch");
     await runTurn();
     await screen.findByText(ORDER[2]);
-    expect(document.querySelector(".draft-cards.wide")).toBeNull();
-    expect(labelsOnScreen()).toEqual(ORDER);
-  });
-
-  it("宽档（作者把中栏拖开了）：还是那几稿，还是那个次序，只有排布变了", async () => {
-    widthIs(3 * 400);
-    renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
-      ...draftRoutes(THREE),
-    ]);
-    await runTurn();
-    await screen.findByText(ORDER[2]);
-    expect(document.querySelector(".draft-cards.wide")).not.toBeNull();
-    expect(labelsOnScreen()).toEqual(ORDER);
+    expect(rowsOnScreen()).toEqual(ORDER);
+    expect(document.querySelector(".draft-card")).toBeNull();
+    expect(screen.queryByText(DETAIL.text)).toBeNull();
+    await new Promise((r) => setTimeout(r, 40));
+    expect(fullTextCalls(spy)).toEqual([]);
   });
 
   it("并排比那一页（另一个标签页）：同上 —— **少一稿或者换个次序都会红**", async () => {
@@ -157,16 +139,16 @@ describe("三档：同一份数据的三种排布", () => {
     writeCompareHandoff({ book: "project:ID1", chapter: 2 });
     renderWithApi(<DraftCompare chapter={2} />, draftRoutes(MIXED));
     await screen.findByText(ORDER[2]);
-    expect(labelsOnScreen()).toEqual(ORDER);
+    expect(cardsOnScreen()).toEqual(ORDER);
   });
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// 二、写进去的那一版：**后端给的那个动作**决定它是一行还是一张卡
+// 二、写进去的那一版：**后端给的那个动作**决定那一行说什么
 // ══════════════════════════════════════════════════════════════════════════
 
-describe("写进那一章的那一版是一行，不摊正文（ADR 0048）", () => {
-  it("写进去的是一行、没写进去的是卡 —— 哪怕写进去的那版又短、编号又小、还夹在中间", async () => {
+describe("写进那一章的那一行说「已写入」，还在桌上的给「放入编辑器」（ADR 0048）", () => {
+  it("哪怕写进去的那版又短、编号又小、还夹在中间 —— 判据在后端那一列上，不在位置上", async () => {
     renderWithApi(<ChatPanel />, [
       { method: "POST", match: /\/turn\/events$/, body: turnWith(MIXED) },
       ...draftRoutes(MIXED),
@@ -175,18 +157,20 @@ describe("写进那一章的那一版是一行，不摊正文（ADR 0048）", ()
     await runTurn();
     await screen.findByText(ORDER[2]);
 
-    const rows = [...document.querySelectorAll(".draft-landed b")].map((el) => el.textContent);
-    expect(rows).toEqual(["第 2 稿"]);
-    expect(labelsOnScreen()).toEqual(["第 7 稿", "第 5 稿"]);
+    expect(rowsOnScreen()).toEqual(ORDER);
+    const rows = [...document.querySelectorAll(".draft-row")] as HTMLElement[];
+    const landed = rows.filter((row) => /已写入/.test(row.textContent ?? ""));
+    expect(landed.map((row) => row.querySelector("b")?.textContent)).toEqual(["第 2 稿"]);
+    expect(within(landed[0]).queryByRole("button", { name: "放入编辑器" })).toBeNull();
+    const desk = rows.filter((row) => !/已写入/.test(row.textContent ?? ""));
+    expect(desk.map((row) => row.querySelector("b")?.textContent)).toEqual(["第 7 稿", "第 5 稿"]);
+    for (const row of desk) expect(within(row).getByRole("button", { name: "放入编辑器" })).toBeInTheDocument();
     // 正文在左边——这儿**一版都不摊开、一整章正文一个字节都没取**。
-    expect(document.querySelectorAll(".draft-card.open")).toHaveLength(0);
     await new Promise((r) => setTimeout(r, 40));
-    expect(
-      spy.mock.calls.map((c) => String(c[0])).filter((u) => /\/drafts\/[^/?]+$/.test(u)),
-    ).toEqual([]);
+    expect(fullTextCalls(spy)).toEqual([]);
   });
 
-  it("换一版进书，那一行跟着换 —— **判据在后端那一列上，不在位置上**", async () => {
+  it("换一版进书，那一行跟着换", async () => {
     const moved = THREE.map((d) => (d.id === "draft:ID73" ? { ...d, landed: true } : d));
     renderWithApi(<ChatPanel />, [
       { method: "POST", match: /\/turn\/events$/, body: turnWith(moved) },
@@ -194,12 +178,15 @@ describe("写进那一章的那一版是一行，不摊正文（ADR 0048）", ()
     ]);
     await runTurn();
     await screen.findByText("第 7 稿");
-    expect(document.querySelector(".draft-landed b")?.textContent).toBe("第 5 稿");
+    const landed = [...document.querySelectorAll(".draft-row")].filter((row) =>
+      /已写入/.test(row.textContent ?? ""),
+    );
+    expect(landed.map((row) => row.querySelector("b")?.textContent)).toEqual(["第 5 稿"]);
   });
 
   it("**一版都没落盘：一版都不摊开，也不摆一句「建议用哪一版」**", async () => {
-    // 后端不排名、不打分（ADR 0005），这一层更不许——它手上只有一段 120 字的开头。
-    // 一批都没落盘时两边都不挑（同 `AmbiguousName`：两个方向都贵就摊开，绝不挑）。
+    // 后端不排名、不打分（ADR 0005），这一层更不许。一批都没落盘时两边都不挑
+    // （同 `AmbiguousName`：两个方向都贵就摊开，绝不挑）。
     const none = THREE;
     renderWithApi(<ChatPanel />, [
       { method: "POST", match: /\/turn\/events$/, body: turnWith(none) },
@@ -209,10 +196,9 @@ describe("写进那一章的那一版是一行，不摊正文（ADR 0048）", ()
     await runTurn();
     await screen.findByText("第 5 稿");
 
-    expect(document.querySelectorAll(".draft-card.open")).toHaveLength(0);
-    expect(
-      spy.mock.calls.map((c) => String(c[0])).filter((u) => /\/drafts\/[^/?]+$/.test(u)),
-    ).toEqual([]);
+    expect(document.querySelector(".draft-card")).toBeNull();
+    expect(screen.getAllByRole("button", { name: "放入编辑器" })).toHaveLength(3);
+    expect(fullTextCalls(spy)).toEqual([]);
     // 屏幕上没有任何一句在替作者拿主意。
     expect(screenText()).not.toMatch(/推荐|建议用|最好的一版|最佳|挑这版/);
   });
@@ -229,23 +215,21 @@ describe("兜底那几支上一个研发术语都没有", () => {
     expect(rawIds(THREE[0].id)).toEqual(["draft:ID71"]);
   });
 
-  it("摊开一稿，那一整章**还在路上**的时候", async () => {
-    // 那条路由挂在原地不返回：这就是作者点「展开」之后看见的第一帧。
+  it("并排比那一页：摊开的那几列**还在路上**的时候", async () => {
+    // 那条路由挂在原地不返回：这就是作者打开那一页看见的第一帧。
     const never = new Promise<never>(() => {});
-    renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
+    writeCompareHandoff({ book: "project:ID1", chapter: 2 });
+    renderWithApi(<DraftCompare chapter={2} />, [
       { match: /\/drafts\/[^/]+$/, body: () => never },
       { match: /\/drafts(\?|$)/, body: listOf(THREE) },
     ]);
-    await runTurn();
-    await userEvent.setup().click(screen.getByRole("button", { name: "展开第 2 稿" }));
-    await screen.findByText(/正在读取稿件/);
+    await screen.findAllByText(/正在读取稿件/);
     expect(devTerms(screenText())).toEqual([]);
   });
 
-  it("摊开一稿，那一整章**读不出来**的时候", async () => {
-    renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
+  it("并排比那一页：那一整章**读不出来**的时候", async () => {
+    writeCompareHandoff({ book: "project:ID1", chapter: 2 });
+    renderWithApi(<DraftCompare chapter={2} />, [
       // 真后端在这一档回的是 `{"detail":{"error":"draft_not_found","draft_id":…}}`
       // ——那两个词是 snake_case，形状网当场会咬住。**所以这一条同时在验
       // 「后端那句诊断没有被原样端上屏」。**
@@ -256,9 +240,25 @@ describe("兜底那几支上一个研发术语都没有", () => {
       },
       { match: /\/drafts(\?|$)/, body: listOf(THREE) },
     ]);
+    await screen.findAllByText(/稿件读取失败/);
+    expect(devTerms(screenText())).toEqual([]);
+  });
+
+  it("对话里点「放入编辑器」，那一整章**读不出来**的时候", async () => {
+    renderWithApi(<ChatPanel />, [
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
+      {
+        match: /\/drafts\/[^/]+$/,
+        status: 404,
+        body: { detail: { error: "draft_not_found", draft_id: "draft:ID72" } },
+      },
+      { match: /\/drafts(\?|$)/, body: listOf(THREE) },
+    ]);
     await runTurn();
-    await userEvent.setup().click(screen.getByRole("button", { name: "展开第 2 稿" }));
-    await screen.findByText(/稿件读取失败/);
+    const row = screen.getByText("第 2 稿").closest(".draft-row") as HTMLElement;
+    await userEvent.setup().click(within(row).getByRole("button", { name: "放入编辑器" }));
+    await within(row).findByText(/稿件读取失败/);
+    expect(useLiveDraft.getState().draft).toBeNull();
     expect(devTerms(screenText())).toEqual([]);
   });
 
@@ -306,7 +306,7 @@ describe("兜底那几支上一个研发术语都没有", () => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// 四、三栏骨架：中栏里长出几列并排的正文，两侧不许跟着动
+// 四、三栏骨架：中栏里长出几行稿子，两侧不许跟着动
 // ══════════════════════════════════════════════════════════════════════════
 
 describe("三栏没被这几稿挤动", () => {
@@ -322,16 +322,15 @@ describe("三栏没被这几稿挤动", () => {
   const EXPECTED =
     `${DEFAULT_LEFT}px ${DIVIDER_PX}px minmax(0, 1fr) ${DIVIDER_PX}px ${DEFAULT_RIGHT}px`;
 
-  it("**逐字节钉那两个数**（三稿摆着、其中一版摊开着）", async () => {
+  it("**逐字节钉那两个数**（三稿摆着、一稿进了书）", async () => {
     // 「前后相等」单独一条是骗得过的：两边一起错成同一个值它也绿。所以这儿钉的是
     // `DEFAULT_LEFT` / `DEFAULT_RIGHT` 本身。
     renderWithApi(shell(), [
-      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
-      ...draftRoutes(THREE),
+      { method: "POST", match: /\/turn\/events$/, body: turnWith(MIXED) },
+      ...draftRoutes(MIXED),
     ]);
     await runTurn();
-    await userEvent.setup().click(screen.getByRole("button", { name: "展开第 2 稿" }));
-    await screen.findByText(DETAIL.text);
+    await screen.findByText(ORDER[2]);
     expect(screen.getByRole("main").style.gridTemplateColumns).toBe(EXPECTED);
     // 中栏内部那一行（正文 / 写作助手对半分）也没被顶开。
     const split = document.querySelector(".center-split") as HTMLElement;
@@ -341,19 +340,6 @@ describe("三栏没被这几稿挤动", () => {
   it("这几稿一个都没有的时候，那一行逐字节还是同一串", async () => {
     renderWithApi(shell(), [{ match: /\/drafts(\?|$)/, body: listOf([]) }]);
     await screen.findByText(fixtures.chatDetail.messages[0].text);
-    expect(screen.getByRole("main").style.gridTemplateColumns).toBe(EXPECTED);
-  });
-
-  it("**宽档三列并排**、每一列都摊着一整章正文的时候，那一行仍然逐字节是它", async () => {
-    // 这是这块屏幕**最撑**的一档：中栏里三列并排，每一列一整章。
-    widthIs(3 * 400);
-    renderWithApi(shell(), [
-      { method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) },
-      ...draftRoutes(THREE),
-    ]);
-    await runTurn();
-    await waitFor(() => expect(screen.getAllByText(DETAIL.text)).toHaveLength(3));
-    expect(document.querySelector(".draft-cards.wide")).not.toBeNull();
     expect(screen.getByRole("main").style.gridTemplateColumns).toBe(EXPECTED);
   });
 });

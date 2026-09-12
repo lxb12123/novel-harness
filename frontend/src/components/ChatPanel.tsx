@@ -185,39 +185,25 @@ function Bubble({ message }: { message: ChatMessageView }) {
   );
 }
 
-/** 正在写（或者刚写完）的一稿。**这块是全屏幕唯一真的逐字长出来的东西。**
+/** 正在写（或者刚写完）的一稿——**一行字，不是一格稿子**。
  *
- *  空的时候也要画出来：那一格里的「正在写第 N 章的一稿」本身就是信息——
- *  没有它，一批三稿同时在飞的时候屏幕上只有一坨交错的字，作者分不出哪段是哪稿。 */
+ *  **稿子的字一个都不在这儿画**（作者 2026-09-12，三次：「一定要在左边写」「为什么非要在
+ *  右侧的那个稿子里面写东西，把这个东西去掉」）。正在写的那一稿在左边的编辑器里长
+ *  （`liveDraft.ts`），写着的时候这儿连这一行都没有（「不用特地提醒在左边什么的」）；
+ *  收场换成后端那句「第几稿完成 / 停在这儿了 / 没写成」。
+ *  一批几稿同时在飞时第二条起的流不进编辑器，这儿就是一行「正在起草第 N 章…」——
+ *  它的字在桌上，作者从右边那一行点「放入编辑器」才看。 */
 function DraftingBox({ draft }: { draft: LiveDraft }) {
   const language = useLanguage((s) => s.language);
-  // 这一格只留一屏高、自己会滚（`.chat-drafting-text`），所以**最新的字长在它的折线
-  // 底下**：外面的对话区跟得再紧，这格里露出来的仍是开头那几行。它得自己跟着底走。
-  const text = useFollowBottom<HTMLParagraphElement>();
-  // 这条流正画在左边的编辑器里（`liveDraft.ts`，作者 2026-09-12：「有个编辑的过程在左边
-  // 也能看到」）：写着的时候这儿**什么都不画**——上一行「正在起草。」已经说了，再提一句
-  // 「正文在左侧」作者嫌多余（「不用特地提醒在左边什么的」）。收场那一句照旧画。
-  // 作者手上有没保存的字时编辑器不接，那时字仍在这儿长。
   const inEditor = useLiveDraft((s) => s.inEditor && s.draft?.stream === draft.stream);
   if (inEditor && !draft.done) return null;
   return (
-    <div className="chat-drafting">
-      <span className="chat-drafting-head">
-        {draft.done ||
-          (language === "zh"
-            ? `正在起草第 ${draft.chapter} 章…`
-            : `Drafting chapter ${draft.chapter}…`)}
-      </span>
-      {inEditor ? null : draft.text ? (
-        <p className="chat-drafting-text" ref={text.ref} onScroll={text.onScroll}>
-          {draft.text}
-        </p>
-      ) : (
-        <p className="chat-drafting-wait">
-          {language === "zh" ? "尚未输出正文" : "No text yet"}
-        </p>
-      )}
-    </div>
+    <span className="chat-step chat-drafting">
+      {draft.done ||
+        (language === "zh"
+          ? `正在起草第 ${draft.chapter} 章…`
+          : `Drafting chapter ${draft.chapter}…`)}
+    </span>
   );
 }
 

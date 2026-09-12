@@ -6,6 +6,8 @@ import { devTerms, screenText } from "../test/screenGuard";
 import { applyTurnEvent, NO_PROGRESS } from "../chat";
 import type { ChatTurnEvent } from "../api/types";
 import { useCoords } from "../store";
+import { useLiveDraft } from "../liveDraft";
+import { CenterEditor } from "./CenterEditor";
 import { ChatPanel } from "./ChatPanel";
 
 // **对抗性复核：一轮跑到一半那块屏幕（ADR 0024 第二刀）。**
@@ -17,7 +19,8 @@ import { ChatPanel } from "./ChatPanel";
 //    回话那一档今天不流式。所以这块屏幕上任何「一个字一个字冒出来的回话」都是假的
 //    ——而作者会照那个节奏判断它卡没卡住。判据不是读源码，是**把屏幕的每一次变化录下来**
 //    （`recordScreen`）：打字机唯一的痕迹是中间那些「开了头还没说完」的画面。
-//    同一个探子在起草区必须给出**相反**的结论，那条反证就在下面一条。
+//    同一个探子在**左边的编辑器**（稿子逐字流进去的地方，ADR 0048）必须给出**相反**的
+//    结论，那条反证就在下面一条。
 // 2. **那份夹具真的是后端 dump 的字节吗，屏幕真的吃的是它吗。** 前者看形状
 //    （`event:` / `data:` / 空行都在），后者靠**改一改它再看屏幕跟不跟着变**——
 //    一份被组件忽略掉的夹具和一份手写夹具一样没有价值。
@@ -36,6 +39,15 @@ beforeEach(() => {
     chatId: null,
     page: "workbench",
   });
+  // 下面那条反证把编辑器也挂上：它的 store 活得比一个测试长，先归零；CodeMirror 6
+  // 在 jsdom 里还要这个测量 API（同 `CenterEditor.test.tsx`）。
+  useLiveDraft.setState({ draft: null, inEditor: false, placed: null, saved: [] });
+  class RO {
+    observe() {}
+    unobserve() {}
+    disconnect() {}
+  }
+  (globalThis as Record<string, unknown>).ResizeObserver = RO;
 });
 
 /** 后端真的吐出来的那一整轮（`tests/test_frontend_contract.py` 从真 app 抓的原始字节）。 */
@@ -122,11 +134,15 @@ describe("回话区：整段一次到位，没有一个编出来的节奏", () =
     await screen.findByText(ROUND_DONE);
   });
 
-  it("**稿子那一档真的逐字**（反证：上面那条测得出打字机）", async () => {
+  it("**稿子那一档真的逐字——在左边的编辑器里**（反证：上面那条测得出打字机）", async () => {
     // 没有这一条，上面那条在一个「事件流根本没接上」的实现里也是绿的 ——
-    // 而这一条量的正是同一个探子在**真的逐字**面前会怎么响。
+    // 而这一条量的正是同一个探子在**真的逐字**面前会怎么响。稿子 2026-09-12 起流进
+    // 左边的编辑器（ADR 0048，作者：「一定要在左边写」），所以编辑器也挂上；
+    // 右边那一侧一个字都不许出现——那是反证的另一半。
     const user = userEvent.setup();
-    const opened = realEvent("draft_started");
+    // 编辑器开着的是第 1 章（契约夹具里正文那一份就是第 1 章的），流也对着第 1 章写。
+    useCoords.setState({ chapter: 1 });
+    const opened = { ...realEvent("draft_started"), chapter: 1 };
     const delta = (text: string) => ({
       ...opened,
       kind: "draft_delta" as const,
@@ -139,25 +155,33 @@ describe("回话区：整段一次到位，没有一个编出来的节奏", () =
       let open!: (frame: string) => void;
       return { open: (f: string) => open(f), frame: new Promise<string>((r) => (open = r)) };
     });
-    renderWithApi(<ChatPanel />, [
-      {
-        method: "POST",
-        match: /\/turn\/events$/,
-        stream: [
-          sseFrames([{ event: "turn", data: opened }])[0],
-          ...gates.map((g) => g.frame),
-        ],
-      },
-    ]);
+    renderWithApi(
+      <>
+        <CenterEditor />
+        <ChatPanel />
+      </>,
+      [
+        {
+          method: "POST",
+          match: /\/turn\/events$/,
+          stream: [
+            sseFrames([{ event: "turn", data: opened }])[0],
+            ...gates.map((g) => g.frame),
+          ],
+        },
+      ],
+    );
+    const content = () => document.querySelector(".cm-content")?.textContent ?? "";
+    await waitFor(() => expect(content()).toContain("李管家什么也没说"));
     await ask(user, "写一稿");
-    await screen.findByText("尚未输出正文");
+    await screen.findByText(/正在写入本章/);
 
     const tape = recordScreen();
     try {
       gates[0].open(sseFrames([{ event: "turn", data: delta("风雪落在肩上，") }])[0]);
-      await screen.findByText("风雪落在肩上，");
+      await waitFor(() => expect(content()).toContain("风雪落在肩上，"));
       gates[1].open(sseFrames([{ event: "turn", data: delta("他终于抬起头。") }])[0]);
-      await screen.findByText("风雪落在肩上，他终于抬起头。");
+      await waitFor(() => expect(content()).toContain("风雪落在肩上，他终于抬起头。"));
     } finally {
       tape.stop();
     }
@@ -165,6 +189,8 @@ describe("回话区：整段一次到位，没有一个编出来的节奏", () =
     expect(
       tape.seen.some((f) => f.includes("风雪落在肩上，") && !f.includes("他终于抬起头。")),
     ).toBe(true);
+    // 右边那一侧（对话面板）一个字都没有。
+    expect(document.querySelector(".pane.chat")?.textContent).not.toContain("风雪落在肩上");
 
     gates[2].open(sseFrames([{ event: "receipt", data: fixtures.chatTurn }])[0]);
     await screen.findByText(ROUND_DONE);

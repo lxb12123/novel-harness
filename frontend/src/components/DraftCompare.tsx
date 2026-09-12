@@ -3,7 +3,7 @@ import { useDrafts, useProjects } from "../api/hooks";
 import { COMPARE_OPEN_MAX, openOnCompare } from "../drafts";
 import { useLanguage } from "../language";
 import { readCompareHandoff } from "../route";
-import { DraftCard } from "./DraftCandidates";
+import { DraftCard } from "./DraftCard";
 
 // 并排比几稿（第三档，[ADR 0022](docs/adr/0022-drafting-is-a-proposal-not-a-write.md)）。
 //

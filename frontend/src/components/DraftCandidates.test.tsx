@@ -1,22 +1,24 @@
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fixtures, renderWithApi, ROUND_DONE } from "../test/harness";
 import { rawIds, screenText } from "../test/screenGuard";
 import type { DraftCandidateView } from "../api/types";
-import { COLUMN_MIN_PX } from "../drafts";
+import { useLiveDraft } from "../liveDraft";
 import { readCompareHandoff } from "../route";
 import { useCoords } from "../store";
 import { ChatPanel } from "./ChatPanel";
 
 // 这一轮写出来的那几稿，**在对话面板里**（ADR 0022 的桌子；入口 2026-09-12 起按
-// ADR 0048：稿子写完直接写进那一章，第三档新标签页在 `DraftCompare.test.tsx`）。
+// ADR 0048：稿子流进左边的编辑器，作者按保存才进书；摊开的卡只在并排比那一页，
+// `DraftCompare.test.tsx`）。
 //
-// 这份文件量的是两种稿子各自长什么样：
+// **稿子的字一个都不在这儿**（作者：「一定要在左边写」「不要在这个里面留这种东西」）。
+// 这份文件量的是每稿那一行长什么样——三种「在哪儿」：
 //
-//   写进去的 → **一行**（第几稿 · 字数 · 已写入 + 自述），正文在左边，这儿不摊第二份
-//   没写进去的（作者中途改过那一章 / 那一章还不存在 / 按停砍断）→ 一张卡，
-//     窄（默认）一稿一张、全收着；宽（拖出来的）几列并排、各自一个滚轮
+//   已经保存进书的 → 第几稿 · 字数 · 已写入第 N 章 + 自述
+//   在编辑器里、还没保存的 → 第几稿 · 字数 · 已放入编辑器（`ChatDraft.manuscript.test.tsx`）
+//   还在桌上的（一批几稿的第二稿起 / 上一稿被替下来的 / 按停砍断）→ 第几稿 · 字数 · 「放入编辑器」
 //
 // 喂的每一个字节都来自真 dump（`__fixtures__/api.json` 的 `chatTurn` / `drafts` /
 // `draftDetail`）。**变体只改「第几稿 / 落没落盘 / 有没有自述」**——真 dump 那一轮
@@ -32,14 +34,12 @@ const THREE: DraftCandidateView[] = [
   variant({ id: "draft:ID45", ordinal: 3, landed: true, note: "" }),
 ];
 
-/** 三稿一稿都没写进去（作者中途改过那一章那一档）：这时它们才是卡。 */
+/** 三稿一稿都没进书（一批三稿同时飞、都还在桌上那一档）。 */
 const PENDING: DraftCandidateView[] = THREE.map((d) => ({ ...d, landed: false }));
 
 const turnWith = (drafts: DraftCandidateView[]) => ({ ...fixtures.chatTurn, drafts });
 
-/** 摊开一稿时后端给的那一份（真 dump），**正文换成一句认得出的话**：
- *  真 dump 的 `text` 和 `preview` 开头一模一样（预览就是它的前 120 字），
- *  拿正文的开头当判据分不出「摊开了」和「还是那段预览」。 */
+/** 「放入编辑器」时后端给的那一份（真 dump），**正文换成一句认得出的话**。 */
 const DETAIL = { ...fixtures.draftDetail, text: "（这一稿的全文，比预览长得多。）" };
 
 const say = () => screen.getByRole("textbox", { name: "输入消息" });
@@ -52,11 +52,12 @@ async function runTurn(user: ReturnType<typeof userEvent.setup>) {
   await screen.findByText(ROUND_DONE);
 }
 
-/** 摊开某一稿要打的那条路由（`/drafts/{id}`）—— 列表那条不带正文。 */
+/** 取一稿全文要打的那条路由（`/drafts/{id}`）—— 列表那条不带正文。 */
 const fullTextCalls = (spy: { mock: { calls: unknown[][] } }) =>
   spy.mock.calls.map((call) => String(call[0])).filter((u) => /\/drafts\/[^/?]+$/.test(u));
 
 beforeEach(() => {
+  useLiveDraft.setState({ draft: null, inEditor: false, placed: null, saved: [] });
   useCoords.setState({
     projectId: "project:ID1",
     chapter: 2,
@@ -65,20 +66,6 @@ beforeEach(() => {
     page: "workbench",
   });
 });
-
-afterEach(() => {
-  // 宽档那几条把它撑起来过；不还回去，后面的测试量到的宽度就是编的。
-  Reflect.deleteProperty(HTMLElement.prototype, "clientWidth");
-});
-
-/** 让这块屏幕量到一个宽度。**真浏览器里这个数来自作者拖分隔条**，
- *  jsdom 不排版（`clientWidth` 恒为 0），所以只能这么给。 */
-function widthIs(px: number) {
-  Object.defineProperty(HTMLElement.prototype, "clientWidth", {
-    configurable: true,
-    get: () => px,
-  });
-}
 
 describe("写进那一章的稿子：一行，不摊正文（ADR 0048）", () => {
   it("每一稿一行：第几稿 · 字数 · 已写入第几章；**那一串内部标识一个字符都不上屏**", async () => {
@@ -90,12 +77,13 @@ describe("写进那一章的稿子：一行，不摊正文（ADR 0048）", () =>
     const spy = vi.spyOn(globalThis, "fetch");
     await runTurn(user);
 
-    expect(document.querySelectorAll(".draft-landed")).toHaveLength(3);
+    expect(document.querySelectorAll(".draft-row")).toHaveLength(3);
     expect(screen.getByText("第 1 稿")).toBeInTheDocument();
     expect(screen.getAllByText(/已写入第 2 章/)).toHaveLength(3);
-    // 正文在左边的编辑器里——这儿**一张卡都不画、一整章正文一个字节都不取**。
+    // 正文在左边的编辑器里——这儿**一张卡都不画、一整章正文一个字节都不取**，
+    // 进了书的也没有「放入编辑器」。
     expect(document.querySelector(".draft-card")).toBeNull();
-    expect(screen.queryByRole("button", { name: /展开第/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "放入编辑器" })).toBeNull();
     await new Promise((r) => setTimeout(r, 40));
     expect(fullTextCalls(spy)).toEqual([]);
     expect(THREE[0].id).toMatch(/:/); // 探针：喂进去的真是那个形状
@@ -116,11 +104,11 @@ describe("写进那一章的稿子：一行，不摊正文（ADR 0048）", () =>
 
     expect(THREE[2].note).toBe(""); // 探针
     // 有自述的那两稿各一句，没有的那一稿一句都没有。
-    expect(document.querySelectorAll(".draft-landed-note")).toHaveLength(2);
+    expect(document.querySelectorAll(".draft-row-note")).toHaveLength(2);
   });
 });
 
-describe("没写进去的稿子：一张卡，窄档默认一稿一张", () => {
+describe("还在桌上的稿子：一行 + 「放入编辑器」", () => {
   it("三稿都在，屏幕上说的是「第几稿」，**那一串内部标识一个字符都不上屏**", async () => {
     const user = userEvent.setup();
     renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(PENDING) }]);
@@ -129,11 +117,12 @@ describe("没写进去的稿子：一张卡，窄档默认一稿一张", () => {
     expect(screen.getByText("第 1 稿")).toBeInTheDocument();
     expect(screen.getByText("第 2 稿")).toBeInTheDocument();
     expect(screen.getByText("第 3 稿")).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "放入编辑器" })).toHaveLength(3);
     expect(PENDING[0].id).toMatch(/:/); // 探针：喂进去的真是那个形状
     expect(rawIds(screenText())).toEqual([]);
   });
 
-  it("**一版都不摊开**：后端没挑，这儿也不挑；一整章正文一个字节都没取", async () => {
+  it("**稿子的字一个都不画**：没有卡、没有预览，一整章正文一个字节都没取", async () => {
     const user = userEvent.setup();
     renderWithApi(<ChatPanel />, [
       { method: "POST", match: /\/turn\/events$/, body: turnWith(PENDING) },
@@ -142,14 +131,16 @@ describe("没写进去的稿子：一张卡，窄档默认一稿一张", () => {
     const spy = vi.spyOn(globalThis, "fetch");
     await runTurn(user);
 
-    expect(document.querySelectorAll(".draft-preview")).toHaveLength(3);
+    expect(document.querySelector(".draft-card")).toBeNull();
+    expect(document.querySelector(".draft-preview")).toBeNull();
+    expect(screen.queryByText(PENDING[0].preview.slice(0, 20), { exact: false })).toBeNull();
     await new Promise((r) => setTimeout(r, 40));
     expect(fullTextCalls(spy)).toEqual([]);
     expect(screen.queryByText(/已写入/)).toBeNull();
     expect(screen.queryByText(/如需撤销/)).toBeNull();
   });
 
-  it("点「展开」才去取那一整章 —— 取回来的是全文，不是那段预览", async () => {
+  it("点「放入编辑器」才去取那一整章 —— 取回来的走进左边编辑器那条路，不在这儿摊开", async () => {
     const user = userEvent.setup();
     renderWithApi(<ChatPanel />, [
       { method: "POST", match: /\/turn\/events$/, body: turnWith(PENDING) },
@@ -158,13 +149,20 @@ describe("没写进去的稿子：一张卡，窄档默认一稿一张", () => {
     const spy = vi.spyOn(globalThis, "fetch");
     await runTurn(user);
 
-    await user.click(screen.getByRole("button", { name: "展开第 3 稿" }));
+    const third = screen.getByText("第 3 稿").closest(".draft-row") as HTMLElement;
+    await user.click(within(third).getByRole("button", { name: "放入编辑器" }));
 
-    await screen.findByText(DETAIL.text);
     await waitFor(() => expect(fullTextCalls(spy)).toHaveLength(1));
     expect(fullTextCalls(spy)[0]).toContain(encodeURIComponent(PENDING[2].id));
-    // 收得回去（作者读完一版接着挑下一版，三版全摊着比不了）。
-    await user.click(screen.getByRole("button", { name: "收起第 3 稿" }));
+    // 进编辑器的路（`liveDraft.ts::present`）：整份一次到手，编辑器接手（`ChatDraft.manuscript.test.tsx`）。
+    await waitFor(() =>
+      expect(useLiveDraft.getState().draft).toMatchObject({
+        chapter: PENDING[2].chapter,
+        draftId: PENDING[2].id,
+        text: DETAIL.text,
+        done: true,
+      }),
+    );
     expect(screen.queryByText(DETAIL.text)).toBeNull();
   });
 
@@ -174,7 +172,7 @@ describe("没写进去的稿子：一张卡，窄档默认一稿一张", () => {
     await runTurn(user);
 
     expect(PENDING[2].note).toBe(""); // 探针
-    expect(document.querySelectorAll(".draft-note")).toHaveLength(2);
+    expect(document.querySelectorAll(".draft-row-note")).toHaveLength(2);
   });
 });
 
@@ -192,7 +190,7 @@ describe("被砍断的那一稿：屏幕必须说它没写完", () => {
 
     expect(screen.getByText(STOPPED)).toBeInTheDocument();
     // **措辞的唯一出处在后端**：这一层不许按 `stopped_reason` 非空自己造一句。
-    expect(document.querySelector(".draft-stopped")?.textContent).toBe(STOPPED);
+    expect(document.querySelector(".draft-row-stopped")?.textContent).toBe(STOPPED);
   });
 
   it("**写完的那几稿身上一个字都不多**（自守卫：恒画等于没画）", async () => {
@@ -201,50 +199,22 @@ describe("被砍断的那一稿：屏幕必须说它没写完", () => {
     await runTurn(user);
 
     expect(PENDING.every((d) => d.stopped_reason === "")).toBe(true); // 探针：真 dump 就是空的
-    expect(document.querySelector(".draft-stopped")).toBeNull();
+    expect(document.querySelector(".draft-row-stopped")).toBeNull();
   });
 
-  it("它画在正文**前面** —— 它改变的是后面那段字该怎么读", async () => {
+  it("它画在自述**前面** —— 它改变的是这一稿该怎么读", async () => {
     const user = userEvent.setup();
     const half = [variant({ id: "draft:ID47", ordinal: 1, landed: false, stopped_reason: STOPPED })];
     renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(half) }]);
     await runTurn(user);
 
-    const card = document.querySelector(".draft-card")!;
-    const order = [...card.children].map((el) => el.className);
-    expect(order.indexOf("draft-stopped")).toBeLessThan(order.indexOf("draft-preview"));
+    const row = document.querySelector(".draft-row")!;
+    const order = [...row.children].map((el) => el.className);
+    expect(order.indexOf("draft-row-stopped")).toBeLessThan(order.indexOf("draft-row-note"));
   });
 });
 
-describe("宽档：拖到一定宽度就并排", () => {
-  it("三列并排、各自一个滚轮，全文都摊着 —— **拖到这个宽度就是他要并排读**", async () => {
-    widthIs(3 * COLUMN_MIN_PX + 40);
-    const user = userEvent.setup();
-    renderWithApi(<ChatPanel />, [
-      { method: "POST", match: /\/turn\/events$/, body: turnWith(PENDING) },
-      { match: /\/drafts\/[^/]+$/, body: DETAIL },
-    ]);
-    const spy = vi.spyOn(globalThis, "fetch");
-    await runTurn(user);
-
-    await waitFor(() => expect(fullTextCalls(spy)).toHaveLength(3));
-    expect(document.querySelector(".draft-cards.wide")).not.toBeNull();
-    expect(document.querySelectorAll(".draft-preview")).toHaveLength(0);
-    // 并排的时候没有「展开」——它已经摊开了，那颗按钮只会是一句废话。
-    expect(screen.queryByRole("button", { name: /展开第/ })).toBeNull();
-  });
-
-  it("宽度不够就还是窄档 —— 三条读不下去的竖缝比摞着更糟", async () => {
-    widthIs(3 * COLUMN_MIN_PX - 1);
-    const user = userEvent.setup();
-    renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(PENDING) }]);
-    await runTurn(user);
-
-    expect(document.querySelector(".draft-cards.wide")).toBeNull();
-  });
-});
-
-describe("第三档的入口：那条链接", () => {
+describe("并排比那一页的入口：那条链接", () => {
   it("链接指向同一个应用的另一条路由，**地址里只有章号**", async () => {
     const user = userEvent.setup();
     renderWithApi(<ChatPanel />, [{ method: "POST", match: /\/turn\/events$/, body: turnWith(THREE) }]);

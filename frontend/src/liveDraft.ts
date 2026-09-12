@@ -2,9 +2,10 @@
 // 「我希望有个编辑的过程在左边也能看到」）。
 //
 // 写手写的那几十秒里，字一片一片到（`draft_delta`）。同一条流喂给编辑器——作者看着稿子
-// 在正文该在的地方长出来；写完之后它**以未保存的样子留在编辑器里**（新增的段绿底、改过的
-// 段浅红底，`tint.ts`），作者按「保存」才写进书、按「放弃这一稿」就丢掉。
-// 稿子进没进书由他那一次保存决定：保存请求带上 `draftId`，后端据此在候选表上记一笔。
+// 在正文该在的地方长出来；写完之后它**以未保存的样子留在编辑器里**（和作者自己敲的字一样，
+// 对着保存版画痕迹：减去红、增加绿，`editMarks.ts`），作者按「保存」才写进书、按「放弃这一稿」
+// 就丢掉。稿子进没进书由他那一次保存决定：保存请求带上 `draftId`，后端据此在候选表上记一笔。
+// **稿子的字从不在右边画**（作者 2026-09-12：「一定要在左边写」）。
 //
 // ── 为什么是一个独立的 store，而不是 `useCoords` 里的一个字段 ──────────────
 //
@@ -15,10 +16,10 @@
 // ── 三条规矩 ───────────────────────────────────────────────────────────────
 //
 // 1. **一次只跟一条流。** 一批几稿同时在飞时编辑器只有一个位子——第一条开出来的流进
-//    编辑器，其余的仍在右边各自一格，作者点「放入编辑器」才换进来（`present`）。
+//    编辑器，其余的留在桌上（右边每稿一行，字不画），作者点「放入编辑器」才换进来（`present`）。
 // 2. **收场那一声（`draft_kept` / `draft_failed`）不清字。** 字露完之后由编辑器接手
-//    （`placedInEditor`：整份进编辑器、标脏、涂底色），那时流才放掉；编辑器没接（作者手上
-//    有没保存的字）的那一档，这一轮收场时兜底清（`useRunTurn`）。
+//    （`placedInEditor`：整份进编辑器、标脏），那时流才放掉；编辑器没开着那一章的那一档，
+//    这一轮收场时兜底清（`useRunTurn`）。
 // 3. **归约是纯函数。** 「三条流交错着到」这种情形鼠标点不出来，只有单测点得出来。
 
 import { create } from "zustand";
@@ -95,11 +96,9 @@ export interface PlacedDraft {
 
 interface LiveDraftState {
   draft: LiveDraft | null;
-  /** 左边的编辑器**正在画它**（`CenterEditor` 接手了才为真；作者手上有没保存的字时它不接）。
-   *  右边那一格据此什么都不画，不把同一段字画两遍。 */
+  /** 左边的编辑器**正在画它**（`CenterEditor` 接手了才为真——它开着的正是这一章）。
+   *  右边那一行据此只说「正在起草」，不把字画第二遍。 */
   inEditor: boolean;
-  /** 编辑器手上有作者没保存的字：那时不接新的一稿，「放入编辑器」也按不动。 */
-  editorBusy: boolean;
   /** 写完之后放在编辑器里、还没保存的那一稿。 */
   placed: PlacedDraft | null;
   /** 作者已经按保存写进书的那几稿（这一次打开工作台以来）。 */
@@ -108,7 +107,6 @@ interface LiveDraftState {
   /** 作者从桌上点「放入编辑器」：整份一次到手，走和流一样的路。 */
   present: (draft: { chapter: number; draftId: string; text: string }) => void;
   setInEditor: (on: boolean) => void;
-  setEditorBusy: (on: boolean) => void;
   /** 编辑器接手完毕：字全在编辑器里了（未保存），流放掉。 */
   placedInEditor: (placed: PlacedDraft) => void;
   savedFromEditor: (draftId: string) => void;
@@ -119,14 +117,12 @@ interface LiveDraftState {
 export const useLiveDraft = create<LiveDraftState>((set) => ({
   draft: null,
   inEditor: false,
-  editorBusy: false,
   placed: null,
   saved: [],
   apply: (event) => set((s) => ({ draft: liveDraftAfter(s.draft, event) })),
   present: ({ chapter, draftId, text }) =>
     set({ draft: { chapter, stream: -1, text, done: true, draftId } }),
   setInEditor: (on) => set({ inEditor: on }),
-  setEditorBusy: (on) => set({ editorBusy: on }),
   placedInEditor: (placed) => set({ draft: null, inEditor: false, placed }),
   savedFromEditor: (draftId) =>
     set((s) => ({ placed: null, saved: draftId ? [...s.saved, draftId] : s.saved })),

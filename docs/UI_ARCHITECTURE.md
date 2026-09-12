@@ -116,12 +116,13 @@
 | POST | `/projects/{pid}/chats/{id}/stop` | `LIVE.stop` | `ChatStopped`·**`stopped=false` 不是失败**（那一刻它本来就没在跑），200 + 一句人话。它不等这一轮跑完 | 🟢 |
 | POST | `/projects/{pid}/chats/{id}/say` | `LIVE.say` → `agent.loop.Mailbox` | `ChatSaid`·**一轮跑着的时候再说一句**（2026-09-12，作者：「像 codex 那样新的消息可以直接发出去，模型可以读，并且不会耽误正在做的」）。`{said, run_id}`。**不等、不打断、不落库**：这句话放进正在跑的那一轮的信箱，loop 在**下一次模型调用之前**把它按正常的作者消息并进对话（那时才落库、才在事件流上喊 `author_said`）；模型说完了而信箱里有话，这一轮接着跑。`queued=false` 不是失败（那一刻没在跑 / 在跑的是另一轮），那句话没排进去也没落库——前端还回输入框 | 🟢 |
 | GET | `/projects/{pid}/drafts?chapter=&limit=` | `DraftCandidateStore.recent` | `{drafts: DraftCandidateView[]}`·最近的在前，**不带正文**（一次列 20 稿 = 20 章正文）。**它不是版本历史**：`/chapters/{n}/history` 里是**已经在书里**的，这儿是**还摆在桌上**的（[ADR 0022](adr/0022-drafting-is-a-proposal-not-a-write.md)——没落盘的候选在磁盘、快照里都不存在，没有这条路由作者关掉那一轮回执就再也找不到它们）。**前端调用方**（2026-08-12 起）：`ChatPanel` 头上那条「还摆着 N 稿 ↗」+ 并排比那一页 | 🟢 |
-| GET | `/projects/{pid}/drafts/{draft_id}` | `DraftCandidateStore.get` | `DraftCandidateView + {text}`·**摊开那一版读的就是它**。404 `draft_not_found`·**前端只在作者亲手点开某一稿时才打**（`useDraftText(…, open)`）。**2026-09-12 起（[ADR 0048](adr/0048-drafting-writes-the-chapter.md)）写进那一章的稿子在对话里只是一行**（正文在左边的编辑器里，这条路由不打）；没写进去的那几稿才是卡，全收着，作者点开才取 | 🟢 |
+| GET | `/projects/{pid}/drafts/{draft_id}` | `DraftCandidateStore.get` | `DraftCandidateView + {text}`·**摊开那一版读的就是它**。404 `draft_not_found`·**前端只在作者亲手点开某一稿时才打**（`useDraftText(…, open)`）。**2026-09-12 起（[ADR 0048](adr/0048-drafting-writes-the-chapter.md)）对话里每稿只是一行、字一个都不画**（正文在左边的编辑器里）；还在桌上的那一稿按「放入编辑器」才打这条路由，取回来走进编辑器；摊开的卡只在并排页 | 🟢 |
 
 > **「推荐哪一版」不是引擎给的，前端也不许反推**（同「跳转坐标由后端给」那条禁令）。
-> 唯一的判据是 `landed`——`draft_chapter` 写完直接写进那一章（ADR 0048），那是一个**动作**
-> 不是一句评价（[ADR 0005](adr/0005-set-judgment-only.md)：引擎不给散文打分）。写进去的一行、
-> 没写进去的一张卡，卡**全收着**（同 `AmbiguousName`：两个方向都贵就摊开），界面照 `ordinal` 顺序摆。
+> 唯一的判据是 `landed`——作者按保存把那一稿写进了那一章（ADR 0048），那是一个**动作**
+> 不是一句评价（[ADR 0005](adr/0005-set-judgment-only.md)：引擎不给散文打分）。对话里每稿一行：
+> 保存了的说「已写入」、在编辑器里的说「已放入编辑器」、还在桌上的一颗「放入编辑器」——
+> 谁都不摊开、谁都不挑（同 `AmbiguousName`：两个方向都贵就摊开），界面照 `ordinal` 顺序摆。
 > `note` 是**写那一稿的那个模型**自己交的一句话，**可能是空串**——空的时候界面上不许硬编一句。
 > `id`（`draft:01J…`）**一个字符都不许上屏**，屏幕上说的是「第 N 稿」（`ordinal`）。
 
@@ -298,6 +299,9 @@
 │  │  ├─ <ChapterHeading>         ◀ GET /chapters/{n}/text
 │  │  ├─ <SceneBlockBar>          ◀ parse_scenes；cast 多选 ▶ PUT /scenes 回写注释
 │  │  ├─ <MarkdownEditor CM6>     ◀▶ GET/PUT /chapters/{n}/text（磁盘 md 是真相）
+│  │  │   ├─ 没保存的改动的痕迹   ◀ 编辑器里这份 vs 上一次保存的那一版（`editMarks.ts`，
+│  │  │   │                         ADR 0048）：减去的段红（块状 widget）、增加的行绿，
+│  │  │   │                         谁改的都一样；写作助手那一稿也从这儿流进来，按保存即消失
 │  │  │   ├─ selection → deriveAnchor(para_index, quote_text, occurrence_k) ※禁 offset
 │  │  │   ├─ <SelectionActionMenu> ▶ POST /resolve · declare knows|where|believes · 段级 check
 │  │  │   └─ <IssueHighlightLayer> ◀ Issue.anchor → 段内重寻 quote 计数 k 高亮
@@ -349,12 +353,11 @@
 │  │  └─ <Receipt>               ◀ POST /chats/{id}/turn（`chapter` 必填 = 顶栏那一章；
 │  │                               `said` 留空 = resume。措辞出处在后端，这里只补
 │  │                               「你按过停」和「这一轮裁掉了什么」两句）
-│  │     └─ <DraftCandidates>    ◀ TurnReceipt.drafts（ADR 0022：**同一份数据三档排布**；
-│  │        │                      2026-09-12 起每张卡多两格收着的「这一稿的要求 / 助手补的资料」
-│  │        │                      ——助手喂了写手什么，作者看得见，ADR 0047）
-│  │        │                      窄=一稿一张卡（推荐那版摊开、另两版自述+开头）；
-│  │        │                      拖宽=几列并排各自滚（判据 `drafts.ts::sideBySide`）
-│  │        └─ <DraftCard>       ◀ GET /drafts/{id}（**只在摊开时取**，不摊开零字节）
+│  │     └─ <DraftCandidates>    ◀ TurnReceipt.drafts（ADR 0022 的桌子，ADR 0048 起**每稿一行**：
+│  │           │                    第几稿 · 字数 · 在哪儿 + 自述；**稿子的字一个都不在这儿**——
+│  │           │                    正在写的流进左边的编辑器，写完在那儿等作者按保存）
+│  │           └─ 「放入编辑器」    ▶ GET /drafts/{id}（还在桌上的那一稿，按了才取；取回来走
+│  │                                `liveDraft.ts::present` 进编辑器，不在这儿摊开）
 │
 ├─ <ActivityLog>      ◀── 2026-08-10 ADR 0020 的「可查」，**换的是中栏**（左右两栏不动）
 │  ├─ <UsageStrip>               ◀ GET /runs（花费恒「未记录」——`model_call.cost` 没有写入方）
@@ -373,7 +376,9 @@
 │  │                      **地址里只有章号**：书是点链接那一下留在本地存储里的
 │  │                      （`route.ts`，内部标识不进地址栏——地址栏也是屏幕）；
 │  │                      交接读不到且库里不止一本书时**说不知道，不猜**。
-│  ├─ <DraftCard ×N>              ◀ GET /drafts?chapter= + GET /drafts/{id}（默认摊开最近 3 列）
+│  ├─ <DraftCard ×N>              ◀ GET /drafts?chapter= + GET /drafts/{id}（默认摊开最近 3 列；
+│  │                                 卡上还收着「这一稿的要求 / 助手补的资料」——助手喂了写手什么，
+│  │                                 作者看得见，ADR 0047。**2026-09-12 起摊开的卡只在这一页**）
 │  └─ 只读                        ▶ 无写路由：要用哪一版回工作台跟助手说（一个功能不留两个入口）
 │
 ├─ ~~<ChapterPrepPage>~~  ◀── P2 章节准备 **2026-08-13 删，见下面「页面二」那一节**

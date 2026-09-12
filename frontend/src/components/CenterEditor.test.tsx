@@ -190,6 +190,101 @@ describe("中栏编辑器", () => {
   });
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// 没保存的改动的痕迹：减去红、增加绿（作者 2026-09-12：「不管是他写的还是他编辑的，
+// 只要没有保存就要有那种编辑的痕迹，红色和绿色代表减去和增加」，指着一张 git diff 的图）
+// ══════════════════════════════════════════════════════════════════════════
+
+describe("没保存的改动的痕迹", () => {
+  const view = () => EditorView.findFromDOM(document.querySelector(".cm-editor") as HTMLElement)!;
+  const loaded = () =>
+    waitFor(() =>
+      expect(document.querySelector(".cm-content")?.textContent).toContain("李管家什么也没说"),
+    );
+  const added = () => [...document.querySelectorAll(".cm-line.diff-add")].map((el) => el.textContent);
+  const removed = () => [...document.querySelectorAll(".diff-del")].map((el) => el.textContent);
+
+  it("刚打开：和保存版一模一样，一处痕迹都没有", async () => {
+    renderWithApi(<CenterEditor />);
+    await loaded();
+    expect(added()).toEqual([]);
+    expect(removed()).toEqual([]);
+  });
+
+  it("作者自己改了一段：旧的那一段红（不可编辑，插在原处）、新的那一段绿", async () => {
+    renderWithApi(<CenterEditor />);
+    await loaded();
+    // 第二段「李管家什么也没说。」改成「李管家沉默了很久。」——直接对编辑器下手，
+    // 和作者敲键盘走的是同一条 `docChanged`。
+    const doc = view().state.doc.toString();
+    const from = doc.indexOf("李管家什么也没说。");
+    view().dispatch({ changes: { from, to: from + "李管家什么也没说。".length, insert: "李管家沉默了很久。" } });
+
+    await waitFor(() => expect(added()).toEqual(["李管家沉默了很久。"]));
+    expect(removed()).toEqual(["李管家什么也没说。"]);
+    // 红的那一块在绿的那一行**前面**（git 的顺序：先减后增），而且不是正文的一行——
+    // 光标进不去、键盘改不了。
+    const red = document.querySelector(".diff-removed")!;
+    const green = document.querySelector(".cm-line.diff-add")!;
+    expect(red.compareDocumentPosition(green) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(red.closest(".cm-line")).toBeNull();
+    // 没动的那一段不涂。
+    expect(document.querySelector(".cm-line")?.classList.contains("diff-add")).toBe(false);
+    expect(document.querySelector(".save-badge-icon.droplet")).not.toBeNull();
+  });
+
+  it("加一段：只有绿，没有红；删一段：只有红，挂在它原来的位置", async () => {
+    renderWithApi(<CenterEditor />);
+    await loaded();
+    const end = view().state.doc.length;
+    view().dispatch({ changes: { from: end, insert: "\n新写的一段。" } });
+    await waitFor(() => expect(added()).toEqual(["新写的一段。"]));
+    expect(removed()).toEqual([]);
+
+    // 再把第一段整个删掉（连它后面的换行）。
+    const doc = view().state.doc.toString();
+    const first = "萧决在青云城主府第一次听说了血脉秘密的真相。\n";
+    view().dispatch({ changes: { from: doc.indexOf(first), to: doc.indexOf(first) + first.length } });
+    await waitFor(() => expect(removed()).toEqual(["萧决在青云城主府第一次听说了血脉秘密的真相。"]));
+    expect(added()).toEqual(["新写的一段。"]);
+    // 红块在正文最前面（它原来就在那儿），绿行在最后。
+    const red = document.querySelector(".diff-removed")!;
+    expect(red.compareDocumentPosition(document.querySelector(".cm-line")!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("改回原样，痕迹自己消失——痕迹说的是「和保存版差在哪」，不是「动过没有」", async () => {
+    renderWithApi(<CenterEditor />);
+    await loaded();
+    const doc = view().state.doc.toString();
+    const from = doc.indexOf("李管家什么也没说。");
+    view().dispatch({ changes: { from, insert: "「" } });
+    await waitFor(() => expect(added()).toHaveLength(1));
+    view().dispatch({ changes: { from, to: from + 1 } });
+    await waitFor(() => expect(added()).toEqual([]));
+    expect(removed()).toEqual([]);
+  });
+
+  it("按「保存」：痕迹当场消失（作者的原话），再改就对着刚存的这一版画", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<CenterEditor />, [
+      { method: "PUT", match: /\/chapters\/\d+\/text$/, body: fixtures.chapterSaved },
+    ]);
+    await loaded();
+    const end = view().state.doc.length;
+    view().dispatch({ changes: { from: end, insert: "\n新写的一段。" } });
+    await waitFor(() => expect(added()).toEqual(["新写的一段。"]));
+
+    await user.click(screen.getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(added()).toEqual([]));
+    expect(removed()).toEqual([]);
+
+    // 刚存的那一版现在是保存版：再往下写一段，只有新的那一段绿，「新写的一段。」不再是新的。
+    view().dispatch({ changes: { from: view().state.doc.length, insert: "\n又写了一段。" } });
+    await waitFor(() => expect(added()).toEqual(["又写了一段。"]));
+    expect(removed()).toEqual([]);
+  });
+});
+
 describe("写作助手开着时的续写（模式二默认没有）", () => {
   // 作者 2026-09-10 看到助手开着、正文里还在往下冒灰字：「模式二这个就不用有这个续写了」，
   // 随后要了一颗开关放行（设置「系统功能」栏）。判据本身在 `continuation.ts`

@@ -6,44 +6,106 @@ import {
   keymap,
   drawSelection,
   placeholder as cmPlaceholder,
+  WidgetType,
 } from "@codemirror/view";
 import { history, defaultKeymap, historyKeymap } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
-import { Annotation, Compartment, StateEffect, StateField } from "@codemirror/state";
+import {
+  Annotation,
+  Compartment,
+  type Range,
+  StateEffect,
+  StateField,
+  type Text,
+} from "@codemirror/state";
 import { ghostText, setSuggestion, suggestionField } from "./ghostText";
 import { IDLE_MS, tailAfter, tailBefore } from "../continuation";
-import type { TintRange } from "../tint";
+import { editMarks } from "../editMarks";
 
 // 标记「外部灌入」的事务（换章时替换整篇 doc）。用它把外部替换和用户输入分开——
 // 否则换章那次 docChanged 会 onChange 回去，把新打开的章误标成「未保存」。
 const External = Annotation.define<boolean>();
 
-// 写作助手放进来的那一稿的底色（`tint.ts`）：新增的段绿、改过的段浅红，作者按保存就消失。
-// **区间跟着编辑走**（`map`）：作者在涂了色的段里再改几个字，底色不错位；他删掉整段，
-// 底色跟着没了。
-const setTints = StateEffect.define<readonly TintRange[] | null>();
-const ADDED = Decoration.mark({ class: "ai-added" });
-const CHANGED = Decoration.mark({ class: "ai-changed" });
-const tintField = StateField.define<DecorationSet>({
-  create: () => Decoration.none,
-  update(value, tr) {
-    let next = value.map(tr.changes);
-    for (const effect of tr.effects) {
-      if (!effect.is(setTints)) continue;
-      const ranges = effect.value;
-      next =
-        ranges === null
-          ? Decoration.none
-          : Decoration.set(
-              ranges
-                .filter((r) => r.to > r.from)
-                .map((r) => (r.kind === "changed" ? CHANGED : ADDED).range(r.from, r.to)),
-              true,
-            );
+// ── 没保存的改动的痕迹（`editMarks.ts`）────────────────────────────────────
+//
+// 编辑器里这份正文和上一次保存的那一版（`baseline`）之间的差：减去的段是一块红的、不可编辑
+// 的字块，插回它原来的位置；增加的行整行绿。**每一次 doc 变都重算**（作者敲一个键、流进来
+// 一片字），而不是把旧的区间 `map` 过去——痕迹说的是「现在和保存版差在哪」，那只能算，
+// 不能挪：作者把一个绿行里的字删光，挪过去的区间还在，算出来的就没了。算的代价见 `diff.ts`
+// 开头（两头相同的行先剥掉，一章几百行每键只剩几行的表）。
+//
+// 画在 StateField 里而不是 ViewPlugin 里：**块状 widget 只能由 StateField 提供**（CM6 的
+// 规矩），而红块正是块状的——它占一整行，光标跳不进去。
+const setBaseline = StateEffect.define<{ text: string | null; streaming: boolean }>();
+const ADDED_LINE = Decoration.line({ class: "diff-add" });
+
+/** 保存版里有、现在没有的那几段。 */
+class RemovedLines extends WidgetType {
+  constructor(readonly lines: readonly string[]) {
+    super();
+  }
+  eq(other: RemovedLines): boolean {
+    return other.lines.length === this.lines.length && other.lines.every((l, i) => l === this.lines[i]);
+  }
+  toDOM(): HTMLElement {
+    const box = document.createElement("div");
+    box.className = "diff-removed";
+    for (const line of this.lines) {
+      const el = document.createElement("div");
+      el.className = "diff-del";
+      el.textContent = line;
+      box.appendChild(el);
     }
-    return next;
+    return box;
+  }
+}
+
+function diffDecorations(doc: Text, baseline: string, streaming: boolean): DecorationSet {
+  const marks = editMarks(baseline, doc.toString(), streaming);
+  if (marks.length === 0) return Decoration.none;
+  const ranges: Range<Decoration>[] = [];
+  for (const mark of marks) {
+    if (mark.kind === "added") {
+      ranges.push(ADDED_LINE.range(doc.line(mark.line + 1).from));
+    } else if (mark.before < doc.lines) {
+      ranges.push(
+        Decoration.widget({ widget: new RemovedLines(mark.lines), block: true, side: -1 }).range(
+          doc.line(mark.before + 1).from,
+        ),
+      );
+    } else {
+      ranges.push(
+        Decoration.widget({ widget: new RemovedLines(mark.lines), block: true, side: 1 }).range(
+          doc.length,
+        ),
+      );
+    }
+  }
+  return Decoration.set(ranges, true);
+}
+
+interface DiffState {
+  baseline: string | null;
+  streaming: boolean;
+  deco: DecorationSet;
+}
+const diffField = StateField.define<DiffState>({
+  create: () => ({ baseline: null, streaming: false, deco: Decoration.none }),
+  update(value, tr) {
+    let { baseline, streaming } = value;
+    let rebased = false;
+    for (const effect of tr.effects) {
+      if (!effect.is(setBaseline)) continue;
+      baseline = effect.value.text;
+      streaming = effect.value.streaming;
+      rebased = true;
+    }
+    if (!rebased && !tr.docChanged) return value;
+    const deco =
+      baseline === null ? Decoration.none : diffDecorations(tr.state.doc, baseline, streaming);
+    return { baseline, streaming, deco };
   },
-  provide: (field) => EditorView.decorations.from(field),
+  provide: (field) => EditorView.decorations.from(field, (v) => v.deco),
 });
 
 /** 离底不到这么多像素算「贴着底」：一行正文的高度（亚像素取整之外还要容一行）。 */
@@ -61,8 +123,6 @@ const PIN_SLACK = 40;
 export interface CodeEditorHandle {
   /** 选中 [from, to) 并滚进视野（R4 冲突回跳、证据回跳用）。位置是字符串 code unit 下标。 */
   select: (from: number, to: number) => void;
-  /** 给写作助手放进来的那一稿涂底色（`null` = 全清）。位置是当前 doc 的 code unit 下标。 */
-  setTints: (ranges: readonly TintRange[] | null) => void;
   /** 滚到最底、重新贴上（作者点「滑到最下方」那颗按钮）。 */
   scrollToEnd: () => void;
   /** 在 `pos` 处挂一条灰字建议（ADR 0015）。**不写进 doc**——作者按 Tab 才落字。 */
@@ -138,9 +198,25 @@ export const CodeEditor = forwardRef<
      *  翻上去了 / 又滚回底了，`onPinnedChange` 说一声——外面据此画「滑到最下方」那颗按钮。 */
     follow?: boolean;
     onPinnedChange?: (pinned: boolean) => void;
+    /** 上一次保存的那一版正文（同 `value` 的坐标系：不含章标那一行）。给了它，编辑器里
+     *  和它不一样的地方就画出痕迹（`editMarks.ts`：减去红、增加绿），按保存换成新的一版
+     *  痕迹就没了。`null` = 还不知道保存版是什么（这一章还没读回来），一处都不画。 */
+    baseline?: string | null;
+    /** 正文正在流进来（最后一行还在打、后面的段还没到）：痕迹按半份正文的规矩画。 */
+    streaming?: boolean;
   }
 >(function CodeEditor(
-  { value, onChange, onIdle, tailLimit, editable = true, follow = false, onPinnedChange },
+  {
+    value,
+    onChange,
+    onIdle,
+    tailLimit,
+    editable = true,
+    follow = false,
+    onPinnedChange,
+    baseline = null,
+    streaming = false,
+  },
   ref,
 ) {
   const host = useRef<HTMLDivElement>(null);
@@ -170,7 +246,7 @@ export const CodeEditor = forwardRef<
       parent: host.current,
       extensions: [
         editableConf.current.of(EditorView.editable.of(editable)),
-        tintField,
+        diffField,
         history(),
         drawSelection(),
         keymap.of([...defaultKeymap, ...historyKeymap]),
@@ -269,6 +345,15 @@ export const CodeEditor = forwardRef<
     view.dispatch({ effects: editableConf.current.reconfigure(EditorView.editable.of(editable)) });
   }, [editable]);
 
+  // 保存版换了（读回来了 / 刚保存 / 换章）或者流开始、收场：痕迹对着新的保存版重算。
+  // **排在 value 那个 effect 后面**：换章那一下 doc 和保存版一起换，先换 doc 再换保存版，
+  // 中间那一帧不会拿新保存版对着旧正文画出一屏红绿。
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch({ effects: setBaseline.of({ text: baseline, streaming }) });
+  }, [baseline, streaming]);
+
   useImperativeHandle(
     ref,
     () => ({
@@ -283,11 +368,6 @@ export const CodeEditor = forwardRef<
         const view = viewRef.current;
         if (!view || !view.state.field(suggestionField, false)) return;
         view.dispatch({ effects: setSuggestion.of(null) });
-      },
-      setTints(ranges) {
-        const view = viewRef.current;
-        if (!view) return;
-        view.dispatch({ effects: setTints.of(ranges) });
       },
       scrollToEnd() {
         const view = viewRef.current;

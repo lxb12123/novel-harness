@@ -16,7 +16,7 @@ import { ChatPanel } from "./ChatPanel";
 
 beforeEach(() => {
   // 这个 store 活得比一个测试长：上一条放进编辑器的那一稿不清掉，下一条会把它当成自己的。
-  useLiveDraft.setState({ draft: null, inEditor: false, editorBusy: false, placed: null, saved: [] });
+  useLiveDraft.setState({ draft: null, inEditor: false, placed: null, saved: [] });
   useCoords.setState({
     projectId: "project:ID1",
     chapter: 1,
@@ -190,7 +190,7 @@ describe("正在写的那一稿流进左边", () => {
     </>
   );
 
-  it("字一片片长在编辑器里，键盘锁着；右边那一格只留标题行，同一段字不画两遍", async () => {
+  it("字一片片长在编辑器里，键盘锁着；右边什么都不画，同一段字不画两遍", async () => {
     const user = userEvent.setup();
     const held = new Promise<string>(() => {});
     renderWithApi(shell(), [
@@ -273,14 +273,17 @@ describe("正在写的那一稿流进左边", () => {
     expect(content.textContent).toContain("李管家什么也没说。");
   });
 
-  it("**作者手上有没保存的字：不接**，那条流仍在右边长，他的字一个都不动", async () => {
+  it("**作者手上有没保存的字：先收起来，稿子照样写在这儿**；放弃这一稿就原样放回", async () => {
+    // 上一版在这一档把稿子退到右边去写（编辑器「不接」），作者：「为什么现在又整到右边去了」
+    // ——稿子永远在左边。他那几段没保存的字找不回来的方向是丢掉，所以收着，放弃这一稿放回。
     const user = userEvent.setup();
+    const kept = { ...realEvent("draft_kept"), chapter: 1 };
     const held = new Promise<string>(() => {});
     renderWithApi(shell(), [
       {
         method: "POST",
         match: /\/turn\/events$/,
-        stream: [turnFrame(opened), turnFrame(piece("风雪落在肩上。")), held],
+        stream: [turnFrame(opened), turnFrame(piece("风雪落在肩上。")), turnFrame(kept), held],
       },
     ]);
     await screen.findByText("第 1 章");
@@ -292,14 +295,49 @@ describe("正在写的那一稿流进左边", () => {
     await user.type(screen.getByRole("textbox", { name: "输入消息" }), "把这一章写了");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
-    await screen.findByText("风雪落在肩上。", { selector: ".chat-drafting-text" });
+    // 稿子写在左边，右边一个字都没有。
+    await waitFor(() => expect(content.textContent).toContain("风雪落在肩上。"));
+    expect(document.querySelector(".chat-drafting-text")).toBeNull();
+    expect(content.textContent).not.toContain("作者刚打的半段");
+    await screen.findByText(/之前未保存的修改已收起/);
+
+    await user.click(screen.getByRole("button", { name: "放弃这一稿" }));
     expect(content.textContent).toContain("作者刚打的半段");
     expect(content.textContent).not.toContain("风雪落在肩上");
-    expect(content.getAttribute("contenteditable")).toBe("true");
-    expect(screen.queryByText(/写作助手正在写入本章/)).toBeNull();
+    // 放回来的仍是没保存的字：脏，而且对着保存版画着痕迹。
+    expect(document.querySelector(".save-badge-icon.droplet")).not.toBeNull();
+    expect(document.querySelector(".cm-line.diff-add")?.textContent).toContain("作者刚打的半段");
+    expect(screen.queryByText(/已收起/)).toBeNull();
   });
 
-  it("写完：整份进编辑器、**未保存**、新增的段涂绿底；键盘解锁；右边那一行说它在编辑器里", async () => {
+  it("流着的时候痕迹按半份正文画：写完的段绿，还没被后面的段钉死的删除先不画红", async () => {
+    // 半份对着全份比会把「还没写到的段」全判成删掉，红块闪一下又没（`editMarks.ts`）。
+    const user = userEvent.setup();
+    const held = new Promise<string>(() => {});
+    renderWithApi(shell(), [
+      {
+        method: "POST",
+        match: /\/turn\/events$/,
+        stream: [turnFrame(opened), turnFrame(piece("第一段新写的。\n\n第二段还在")), held],
+      },
+    ]);
+    await screen.findByText("第 1 章");
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    await waitFor(() => expect(content.textContent).toContain("李管家什么也没说。"));
+
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "把这一章写了");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() => expect(content.textContent).toContain("第二段还在"));
+    await waitFor(() =>
+      expect([...document.querySelectorAll(".cm-line.diff-add")].map((el) => el.textContent)).toEqual([
+        "第一段新写的。",
+      ]),
+    );
+    expect(document.querySelector(".diff-del")).toBeNull();
+  });
+
+  it("写完：整份进编辑器、**未保存**、痕迹对着保存版画（旧段红、新段绿）；键盘解锁；右边那一行说它在编辑器里", async () => {
     const user = userEvent.setup();
     let release!: (frame: string) => void;
     const held = new Promise<string>((r) => (release = r));
@@ -324,13 +362,20 @@ describe("正在写的那一稿流进左边", () => {
     await user.type(screen.getByRole("textbox", { name: "输入消息" }), "把这一章写了");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
-    // 字全露完 → 它是作者手上一份未保存的修改：脏、可编辑、涂了底色、保存按得动。
+    // 字全露完 → 它是作者手上一份未保存的修改：脏、可编辑、画着痕迹、保存按得动。
     await waitFor(() => expect(useLiveDraft.getState().placed?.draftId).toBe(kept.draft_id));
     expect(content.textContent).toContain("风雪落在肩上，他终于抬起头。");
     expect(content.getAttribute("contenteditable")).toBe("true");
     expect(document.querySelector(".save-badge-icon.droplet")).not.toBeNull();
     expect(screen.getByRole("button", { name: "保存" })).not.toBeDisabled();
-    expect(document.querySelector(".ai-added")?.textContent).toContain("风雪落在肩上");
+    // 流一收场，整份对整份：新写的那一段绿，被它换掉的原文红（不可编辑的一块，插在原处）。
+    await waitFor(() =>
+      expect(document.querySelector(".cm-line.diff-add")?.textContent).toContain("风雪落在肩上"),
+    );
+    expect([...document.querySelectorAll(".diff-del")].map((el) => el.textContent)).toEqual([
+      "萧决在青云城主府第一次听说了血脉秘密的真相。",
+      "李管家什么也没说。",
+    ]);
     expect(screen.getByText(/按「保存」写入本章/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "放弃这一稿" })).toBeInTheDocument();
     // 磁盘那一侧**没动**：一轮里没有任何一次读正文之外的写。
@@ -342,7 +387,7 @@ describe("正在写的那一稿流进左边", () => {
     expect(screen.getByText(/已放入编辑器，按「保存」写入本章/)).toBeInTheDocument();
   });
 
-  it("按「保存」：请求带上那一稿的编号，底色消失；右边那一行改说「已写入」", async () => {
+  it("按「保存」：请求带上那一稿的编号，痕迹消失；右边那一行改说「已写入」", async () => {
     const user = userEvent.setup();
     const kept = { ...realEvent("draft_kept"), chapter: 1 };
     let putBody: Record<string, unknown> | null = null;
@@ -378,12 +423,13 @@ describe("正在写的那一稿流进左边", () => {
     await waitFor(() => expect(putBody).not.toBeNull(), { timeout: 3000 });
     expect(putBody).toMatchObject({ draft_id: kept.draft_id, expected_text_sha256: fixtures.chapterText.text_sha256 });
     expect(String((putBody as unknown as Record<string, unknown>).markdown)).toContain("风雪落在肩上，他终于抬起头。");
-    await waitFor(() => expect(document.querySelector(".ai-added")).toBeNull());
+    await waitFor(() => expect(document.querySelector(".cm-line.diff-add")).toBeNull());
+    expect(document.querySelector(".diff-del")).toBeNull();
     expect(screen.queryByRole("button", { name: "放弃这一稿" })).toBeNull();
     expect(screen.getByText(/已写入第 1 章/)).toBeInTheDocument();
   });
 
-  it("按「放弃这一稿」：回到磁盘上那一版，底色消失，不脏", async () => {
+  it("按「放弃这一稿」：回到磁盘上那一版，痕迹消失，不脏", async () => {
     const user = userEvent.setup();
     const kept = { ...realEvent("draft_kept"), chapter: 1 };
     const held = new Promise<string>(() => {});
@@ -404,9 +450,46 @@ describe("正在写的那一稿流进左边", () => {
 
     expect(content.textContent).toContain("李管家什么也没说。");
     expect(content.textContent).not.toContain("风雪落在肩上");
-    expect(document.querySelector(".ai-added")).toBeNull();
+    await waitFor(() => expect(document.querySelector(".cm-line.diff-add")).toBeNull());
+    expect(document.querySelector(".diff-del")).toBeNull();
     expect(screen.getByRole("button", { name: "保存" })).toBeDisabled();
     expect(useLiveDraft.getState().placed).toBeNull();
+  });
+
+  it("桌上的一稿按「放入编辑器」：整份进左边、未保存、画痕迹；右边那一行改说它在编辑器里", async () => {
+    // 一批几稿的第二稿起、上一稿被替下来的，都走这条路——读它的地方也是左边的正文，
+    // 右边从头到尾一个字都不画。
+    const user = userEvent.setup();
+    const desk = { ...fixtures.chatTurn.drafts[0], id: "draft:ID45", chapter: 1, landed: false };
+    const detail = { ...fixtures.draftDetail, id: desk.id, chapter: 1, text: "桌上那一稿的全文。\n\n第二段。" };
+    renderWithApi(shell(), [
+      { method: "POST", match: /\/turn\/events$/, body: { ...fixtures.chatTurn, drafts: [desk] } },
+      { match: /\/drafts\/[^/]+$/, body: detail },
+    ]);
+    await screen.findByText("第 1 章");
+    const content = document.querySelector(".cm-content") as HTMLElement;
+    await waitFor(() => expect(content.textContent).toContain("李管家什么也没说。"));
+    await user.type(screen.getByRole("textbox", { name: "输入消息" }), "把这一章写了");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+    await screen.findByText(ROUND_DONE);
+    expect(screen.queryByText(/桌上那一稿的全文/)).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "放入编辑器" }));
+
+    await waitFor(() => expect(content.textContent).toContain("桌上那一稿的全文。"));
+    await waitFor(() => expect(useLiveDraft.getState().placed?.draftId).toBe(desk.id));
+    expect(content.getAttribute("contenteditable")).toBe("true");
+    expect(document.querySelector(".save-badge-icon.droplet")).not.toBeNull();
+    expect([...document.querySelectorAll(".cm-line.diff-add")].map((el) => el.textContent)).toEqual([
+      "桌上那一稿的全文。",
+      "第二段。",
+    ]);
+    expect(document.querySelectorAll(".diff-del")).toHaveLength(2);
+    expect(screen.getByRole("button", { name: "放弃这一稿" })).toBeInTheDocument();
+    // 右边那一行：不再是「放入编辑器」，说它在编辑器里等着保存；全文仍然不在右边。
+    expect(screen.queryByRole("button", { name: "放入编辑器" })).toBeNull();
+    expect(screen.getByText(/已放入编辑器，按「保存」写入本章/)).toBeInTheDocument();
+    expect(document.querySelector(".pane.chat")?.textContent).not.toContain("桌上那一稿的全文");
   });
 
   it("翻上去看前面写的：画面留在原地，正中一颗「滑到最下方」；点它回到底、继续跟", async () => {
