@@ -104,9 +104,14 @@ header > .icon-btn + .icon-btn { margin-left: -8px; }
    所以写的是 token 不是 `#fff`。 */
 .mode-switch {
   display: inline-flex; align-items: center; gap: 2px;
-  padding: 2px 4px; border-radius: 8px;
+  padding: 1px 3px; border-radius: 8px;
   background: var(--bg); border: 1px solid var(--line);
 }
+/* 这一组比顶栏别处的图标按钮**矮一档**（作者 2026-09-13：「中间白色的按钮部分高度能不能
+   小一点，我没有说要和这个顶部栏一样高」）：图标 18px、上下各 2px，整组 26px——
+   桌面壳里那条 38px 的顶栏上下各留 6px，不再顶天立地。 */
+.mode-switch .icon-btn { padding: 2px 5px; }
+.mode-switch .icon { width: 18px; height: 18px; }
 /* 按下去了（`aria-pressed`）：**只换颜色，不加底、不加框**。
    这一栏里「开着没有」已经由图标自己说了（笔尖还是小机器人），
    底色再说一遍就是把同一句话讲两遍——而两颗按钮各挂一块紫底会比正文还抢眼。 */
@@ -158,7 +163,7 @@ header > .icon-btn + .icon-btn { margin-left: -8px; }
    灰 = 模型服务没配好，绿 = 配好了闲着，黄 = 后台正在整理某一章。**只有颜色，没有图形**：
    它是一个状态点不是一颗功能键，悬浮那句话（`data-tip`）才是它的全部内容。
    黄的那一档呼吸一下（同 `.bot-thinking` 那条「AI 在不在动」），reduced-motion 下不动。 */
-.status-light { padding: 4px 5px; }
+.status-light { padding: 2px 5px; }
 .status-light .light-dot {
   width: 8px; height: 8px; border-radius: 50%; display: block; background: var(--u);
 }

@@ -108,4 +108,8 @@ webview.start(); started.stop()             # 窗口关了，服务体面地停
    按钮垂直居中到 19pt；前端顶栏在 `html.desktop` 下也是 38px、左边让 78px（`desktop.ts`，
    壳的地址带 `?desktop=1` 认出自己）。命中测试实测这一带的点击照样落到 WKWebView。拖窗口
    WebKit 不认 `-webkit-app-region`，顶栏空白处按下鼠标叫壳的 `drag()`（pywebview 的 js_api →
-   主线程 `performWindowDragWithEvent:`，同 Tauri 的 `startDragging`）。
+   主线程 `performWindowDragWithEvent:`，同 Tauri 的 `startDragging`）；**双击**顶栏空白处叫
+   `zoom()`——读系统「连按窗口标题栏时」那一档（`AppleActionOnDoubleClick`：Minimize / Fill /
+   其余缩放）代原生标题条办这件事，双击在 mousedown 的第二下上认（第一下已经把窗口拖起来了，
+   `dblclick` 到不了 WebKit）。同日作者嫌中间那组白托盘和顶栏一样高：整组收成 26px
+   （图标 18px），38px 的顶栏上下各留 6px。

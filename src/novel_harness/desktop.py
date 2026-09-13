@@ -132,6 +132,30 @@ class _ShellApi:
         win = self.window.native
         AppHelper.callAfter(lambda: win.performWindowDragWithEvent_(NSApp.currentEvent()))
 
+    def zoom(self) -> None:
+        """双击顶栏空白处 → 照系统设置里「连按窗口标题栏时」那一档办（作者 2026-09-13：
+        「双击应用顶部，他没有按照 mac 的规则去适配屏幕」）。原生标题条这一下是系统自己做的，
+        标题条揉进顶栏之后得由我们代做：读 `AppleActionOnDoubleClick`——
+        `Minimize` 最小化，`Fill` 铺满可见屏幕（macOS 15 起的那一档，不进全屏），
+        其余（`Maximize` / 没设）= 缩放（`performZoom:`，再按一次缩回去）。"""
+        if sys.platform != "darwin" or self.window is None:
+            return
+        from AppKit import NSUserDefaults
+        from PyObjCTools import AppHelper
+
+        win = self.window.native
+
+        def act() -> None:
+            action = NSUserDefaults.standardUserDefaults().stringForKey_("AppleActionOnDoubleClick")
+            if action == "Minimize":
+                win.performMiniaturize_(None)
+            elif action == "Fill":
+                win.setFrame_display_animate_(win.screen().visibleFrame(), True, True)
+            else:
+                win.performZoom_(None)
+
+        AppHelper.callAfter(act)
+
 
 def main() -> int:
     _redirect_output(log_path())

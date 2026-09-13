@@ -36,4 +36,20 @@ describe("桌面壳", () => {
     expect(drag).toHaveBeenCalledTimes(1);
     header.remove();
   });
+
+  it("双击空白处 = 叫壳按 macOS 的规矩缩放窗口，而且是在 mousedown 的第二下上认", () => {
+    // 作者 2026-09-13：「双击应用顶部，他没有按照 mac 的规则去适配屏幕」。等 dblclick
+    // 是等不到的——第一下已经把窗口拖起来了，WebKit 收不到后面那半个事件。
+    const drag = vi.fn(() => Promise.resolve());
+    const zoom = vi.fn(() => Promise.resolve());
+    window.pywebview = { api: { drag, zoom } };
+    document.documentElement.classList.add("desktop");
+    const header = document.createElement("header");
+    document.body.appendChild(header);
+    expect(dragWindow({ button: 0, detail: 1, target: header })).toBe(true);
+    expect(dragWindow({ button: 0, detail: 2, target: header })).toBe(true);
+    expect(drag).toHaveBeenCalledTimes(1);
+    expect(zoom).toHaveBeenCalledTimes(1);
+    header.remove();
+  });
 });
