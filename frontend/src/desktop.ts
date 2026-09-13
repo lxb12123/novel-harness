@@ -10,7 +10,7 @@
 
 declare global {
   interface Window {
-    pywebview?: { api?: { drag?: () => Promise<void> } };
+    pywebview?: { api?: { drag?: () => Promise<void>; zoom?: () => Promise<void> } };
   }
 }
 
@@ -21,9 +21,14 @@ export function isDesktop(search: string = window.location.search): boolean {
   return new URLSearchParams(search).has(DESKTOP_QUERY);
 }
 
-/** 顶栏的 `onMouseDown`：空白处按下 = 开始拖窗口。返回叫没叫壳（测试看这个）。 */
+/** 顶栏的 `onMouseDown`：空白处按下 = 开始拖窗口；**双击**（`detail === 2`）= 按 macOS
+ *  的规矩缩放窗口（系统设置里「连按标题栏」定的那一档，壳去读）。双击要在 mousedown 上认，
+ *  不能等 `dblclick`：第一下已经把窗口拖起来了，WebKit 收不到后面那半个事件——同 Tauri 的做法
+ *  （作者 2026-09-13：「双击应用顶部，他没有按照 mac 的规则去适配屏幕」）。
+ *  返回叫没叫壳（测试看这个）。 */
 export function dragWindow(event: {
   button: number;
+  detail?: number;
   target: EventTarget | null;
 }): boolean {
   if (event.button !== 0) return false;
@@ -32,8 +37,9 @@ export function dragWindow(event: {
   if (target instanceof Element && target.closest("button, a, input, textarea, select, [role=button]")) {
     return false;
   }
-  const drag = window.pywebview?.api?.drag;
-  if (!drag) return false;
-  void drag();
+  const api = window.pywebview?.api;
+  const call = event.detail === 2 ? api?.zoom : api?.drag;
+  if (!call) return false;
+  void call();
   return true;
 }

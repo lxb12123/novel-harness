@@ -90,8 +90,9 @@ def test_the_window_opens_the_desktop_flavour_of_the_page() -> None:
 
 
 def test_the_shell_api_only_drags_on_macos_and_only_with_a_window() -> None:
-    """`drag()` 没有窗口时是空操作（页面在壳还没把窗口交过来之前就可能叫它）。"""
+    """`drag()` / `zoom()` 没有窗口时是空操作（页面在壳还没把窗口交过来之前就可能叫它）。"""
     from novel_harness.desktop import _ShellApi
 
     api = _ShellApi()
     api.drag()  # 不抛
+    api.zoom()  # 不抛
