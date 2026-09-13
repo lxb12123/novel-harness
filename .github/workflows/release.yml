@@ -40,8 +40,9 @@ jobs:
       - run: uv build
 
       - name: 发版前自检：装得上 + 真的带着工作台
+        # 没有可执行文件可冒烟（命令行 2026-08-20 删了，ADR 0034）：装进隔离环境能 import、
+        # 且找得到前端产物，就是「装得上」的全部含义。
         run: |
-          uvx --from ./dist/novel_harness-*.whl novel-harness --version
           uvx --from ./dist/novel_harness-*.whl python -c \
             "import novel_harness.api.app as m; assert m.webui_built(), m._DIST"
 

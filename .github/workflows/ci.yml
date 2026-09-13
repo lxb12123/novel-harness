@@ -64,20 +64,18 @@ jobs:
 
       - run: uv build
 
-      # 下面三条是递进的，缺一条就有一种坏法能溜过去：
-      #   ① 产物在不在 wheel 里  ② 包装不装得上  ③ 装完之后代码找不找得到产物
-      # ③ 是 `_DIST` 那个 bug 的原形：①② 全绿，而作者打开是一张只读原型。
+      # 下面两条是递进的，缺一条就有一种坏法能溜过去：
+      #   ① 产物在不在 wheel 里  ② 装进隔离环境之后代码找不找得到产物
+      # ② 是 `_DIST` 那个 bug 的原形：① 绿，而作者打开是一张只读原型。
+      # （这儿原来还有一条「`novel-harness --version` / `nh version` 冒烟」——那个命令行
+      #   2026-08-20 整个删了（ADR 0034），包不再提供任何可执行文件；这条 workflow 直到
+      #   2026-09-13 仓库才第一次有远端，那两行也就红到那天才有人看见。）
       - name: ① wheel 里必须有前端产物
         run: |
           unzip -l dist/*.whl | grep -q 'novel_harness/webui/index.html' \
             || { echo '✗ wheel 里没有 webui/ —— 装出来的包会静默降级成只读原型'; exit 1; }
 
-      - name: ② uvx 冒烟（从 wheel 装进隔离环境）
-        run: |
-          uvx --from ./dist/novel_harness-*.whl novel-harness --version
-          uvx --from ./dist/novel_harness-*.whl nh version
-
-      - name: ③ 装进 site-packages 之后，代码还找得到工作台吗
+      - name: ② 装进隔离环境之后，代码还找得到工作台吗（也顺带验了装得上）
         run: >
           uvx --from ./dist/novel_harness-*.whl python -c
           "import novel_harness.api.app as m; assert m.webui_built(), m._DIST; print('✓', m._DIST)"

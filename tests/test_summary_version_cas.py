@@ -65,7 +65,9 @@ def book(tmp_path: Path) -> dict[str, str]:
 
 
 @pytest.fixture
-def client(book: dict[str, str], monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+def client(
+    book: dict[str, str], monkeypatch: pytest.MonkeyPatch, configured_model: None
+) -> Iterator[TestClient]:
     monkeypatch.setenv("NH_DB", book["db"])
     import novel_harness.api.deps as deps_mod
 

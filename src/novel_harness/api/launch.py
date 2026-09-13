@@ -50,16 +50,23 @@ def _bind(host: str, wanted: int) -> socket.socket:
             sock.close()
             last = exc
             continue
+        # **绑完立刻 listen**，不等 uvicorn。地址是在 `serve()` 之前就印出去 / 交出去的
+        # （`launch()` 先 print 再 serve，桌面壳先开窗再 serve），这中间有一段空档：
+        # 内核已经认这个端口、但还没人在听，谁这时候来连就是 ECONNREFUSED——本机快得
+        # 看不见，CI 那种慢机器上 `test_serve` 就死在这一下。听起来之后连接会排在
+        # backlog 里等 uvicorn 接手；uvicorn 对一个已经在 listen 的 socket 再 listen 一次无妨。
+        sock.listen(128)
         return sock
     raise LaunchError(f"绑不上 {host}：{last}")
 
 
 def _open_when_ready(url: str, host: str, port: int, timeout: float = 15.0) -> None:
-    """等服务真的开始 accept 了再开浏览器。
+    """等端口连得上了再开浏览器。
 
-    绑好但还没 listen 的端口会**拒绝**连接，所以这里轮询到连得上为止：立刻开浏览器
-    多半只换来一张「无法访问此网站」，而服务其实半秒后就起来了——作者会以为它坏了。
-    等超时都没起来就什么都不做：终端上的那行报错才是他该看的，再弹一个空白页只是添乱。
+    `_bind` 现在绑完就 listen，所以这一步几乎立刻就过：连接先排在 backlog 里，uvicorn
+    起来（约 240ms 的导入）就接手，浏览器那一次请求只是多等那一下，不会看到
+    「无法访问此网站」。留着轮询是给 listen 之前那一小段和真起不来的情形兜底：
+    等超时都没起来就什么都不做——终端上的那行报错才是他该看的，再弹一个空白页只是添乱。
     """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:

@@ -1,0 +1,69 @@
+name: Desktop
+
+# 桌面包的 CI/CD（2026-09-13，作者：「这个发包能不能也 ci/cd 化」）。
+#
+# 触发两条：
+#   · 打一个 `X.Y.Z` 的 tag（**不带 v**——`v*` 是 release.yml 那条 PyPI 线的，它在名字定下来
+#     之前有意红着，见那份文件顶上的注释）→ 在 GitHub 的 macOS Apple 芯片机器上跑
+#     `scripts/build_dmg.sh`，把 dmg 挂到同名 Release 上（Release 不存在就建一个）。
+#   · 手动（workflow_dispatch）→ 只打包、上传成 artifact，不碰 Release：用来验「这条线还通着」。
+#
+# 和本机打包**同一份脚本**（`scripts/build_dmg.sh`），不在这儿另抄一遍步骤——本机能打的包
+# 和 CI 打的包只差机器。签名照旧是 ad-hoc（没有开发者证书，ADR 0050 那段「代价」），
+# 所以收包的人照旧要右键打开一次；哪天有证书了，签名和公证加在脚本里，这条 workflow 不用改。
+#
+# `macos-14` = Apple 芯片（arm64）。PyInstaller 不交叉编译，Intel 的包要另起一台
+# `macos-13` 的 job——今天没做（README 写着只支持 Apple 芯片）。
+
+on:
+  push:
+    tags: ["[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      # 脚本自己会 `npm run build`；`npm ci` 得先在这儿装好依赖（脚本假定 node_modules 在）。
+      - run: npm ci
+        working-directory: frontend
+
+      - name: 打包（前端 → PyInstaller .app → ad-hoc 签名 → .dmg）
+        run: bash scripts/build_dmg.sh
+
+      # 版本号从 pyproject 读（脚本也是这么读的），tag 必须和它一致——否则 0.0.5 的 tag 挂上
+      # 一个自报 0.0.4 的包，装出来的人分不清自己装的是哪一版（0.0.1 那次就是这么乱的）。
+      - name: tag 和 pyproject 的版本号必须一致
+        if: github.event_name == 'push'
+        run: |
+          v=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          [ "$v" = "${GITHUB_REF_NAME}" ] || { echo "✗ tag 是 ${GITHUB_REF_NAME}，pyproject 是 ${v}"; exit 1; }
+
+      - name: 存成 artifact（手动跑时唯一的产物）
+        uses: actions/upload-artifact@v4
+        with:
+          name: NovelHarness-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+
+      - name: 挂到 Release（打 tag 时）
+        if: github.event_name == 'push'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if ! gh release view "$tag" >/dev/null 2>&1; then
+            gh release create "$tag" --title "Novel Harness ${tag} · macOS 桌面包（Apple 芯片）" \
+              --notes "macOS 桌面包（Apple 芯片）。下载 dmg，打开后把 Novel Harness 拖进 Applications。第一次打开被 macOS 拦下（「已损坏」）是没公证，不是坏了：右键 → 打开。"
+          fi
+          gh release upload "$tag" dist/*.dmg --clobber

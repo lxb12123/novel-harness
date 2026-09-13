@@ -472,7 +472,7 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解**�
 > 轮询），跑完那一刻角色册 / 情节 / 通知 / 总结自动重取。路由 91 → **92** 条。
 > 同日上半还修了「从工作台建的书没有 ruleset 基线行」（迁移 038，ADR 0050 补记第 4 条）。
 
-**M0 + M1 + M1.5 已落地；M2 的起草线在用、评估那一半已退役；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2565 个 pytest + 902 个 vitest（2026-09-13 复核；vitest 里 3 条 `CodeEditor` 灰字建议的红是已知的、在干净的 HEAD 上也红，见那份测试文件顶注，不是哪一轮改动带的），`.sql` 和前端产物都在 wheel 里）：
+**M0 + M1 + M1.5 已落地；M2 的起草线在用、评估那一半已退役；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2565 个 pytest + 902 个 vitest（2026-09-13 复核；vitest 里 3 条 `CodeEditor` 灰字建议的测试是已知红、标成 `it.fails` 登记着，见那份测试文件顶注），`.sql` 和前端产物都在 wheel 里）：
 
 > ⚠️ **2026-08-14 两刀，都是作者看着工作台提的，都撤掉了「要作者去填」的东西**：
 >
@@ -716,10 +716,14 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解**�
 > 记在 [ADR 0030 的补记](adr/0030-versioned-summaries-and-advisory-reconciliation.md)
 > 和 `chapter_refresh._head_missing` 的 docstring 里。
 
-> ⚠️ **「全绿」目前只在本机成立。本仓库还没有 git remote，`ci.yml` / `release.yml` 一次都没执行过。**
-> 那三个 job（test / frontend / packaging）写好了、本机逐条手跑过，但**它们至今没有拦住过任何东西**。
-> 尤其是 packaging 那三级验证——它是唯一能发现「wheel 里没有前端」这种静默降级的东西，
-> 而那正是 `_DIST` 曾经真出过的 bug。在建起远端之前，别把 CI 当成既有保护。
+> **2026-09-13 起仓库有远端了，`ci.yml` 每次 push / PR 都跑。** 接上的头一天它三个 job 全红，
+> 三处原因都是「本机全绿、CI 才看得见」的那一类：① 8 条 pytest 一直在靠维护者机器上的真设置
+> 文件过关（`~/.config/novel-harness/settings.json` 里有钥匙），CI 上没有 → `conftest.py` 现在
+> 给每条测试一份隔离的空设置，要「配好了」的自己拿 `configured_model`；② `test_serve` 在慢机器
+> 上撞「印出地址、uvicorn 还没 listen」的空档 → `_bind` 绑完就 listen；③ packaging 那一级在冒烟
+> 一个 2026-08-20 就删掉的命令行。frontend job 红在那 3 条已知的 `CodeEditor` 灰字测试上，
+> 它们现在标成 `it.fails`（登记它红；真绿了那个标记会反过来红）。桌面包的发版也进了 CI：
+> `desktop.yml`，打 `X.Y.Z` tag 就在 Apple 芯片机器上跑 `scripts/build_dmg.sh` 并挂到 Release。
 
 ```
 db.py  ids.py  decisions.py  project.py
