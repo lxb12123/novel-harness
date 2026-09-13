@@ -784,7 +784,10 @@ def test_an_empty_book_owes_no_numbers_at_all(client: TestClient, book: dict[str
 
 
 def test_the_stopwatch_is_ours_so_a_real_call_always_carries_it(
-    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
+    client: TestClient,
+    book: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    configured_model: None,
 ) -> None:
     """`ms` 为什么没有自己的计数：它是**我们自己掐的表**，不是供应商报的。
 

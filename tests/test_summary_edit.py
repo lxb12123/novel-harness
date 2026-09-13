@@ -387,8 +387,9 @@ def test_a_row_written_before_013_still_counts_as_generated(seed: Seed) -> None:
 
 
 @pytest.fixture
-def stub_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    """只把模型换成桩，库 / 幂等键 / 审计写入全走真代码（同契约测试那一轮）。"""
+def stub_model(monkeypatch: pytest.MonkeyPatch, configured_model: None) -> None:
+    """只把模型换成桩，库 / 幂等键 / 审计写入全走真代码（同契约测试那一轮）。
+    连接配置来自 `configured_model`：桩替的是「模型答什么」，不是「有没有配模型」。"""
     import novel_harness.api.deps as deps_mod
 
     monkeypatch.setattr(
@@ -449,7 +450,10 @@ def test_generating_a_chapter_that_was_never_written_is_a_404(
 
 
 def test_a_failed_generate_answers_with_a_code_not_a_python_traceback(
-    client: TestClient, book: dict[str, str], monkeypatch: pytest.MonkeyPatch
+    client: TestClient,
+    book: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+    configured_model: None,
 ) -> None:
     """模型这一次没调通 → **只回码**，`str(exc)` 一个字都不出门。
 

@@ -40,7 +40,13 @@ rm -rf .build/dmg && mkdir -p .build/dmg
 cp -R "$APP" .build/dmg/
 ln -s /Applications .build/dmg/Applications
 rm -f "$DMG"
-hdiutil create -volname "Novel Harness" -srcfolder .build/dmg -ov -format UDZO "$DMG" >/dev/null
+# GitHub 的 macOS 机器上 hdiutil 偶尔报「Resource busy」（挂载点还没放干净），隔几秒重来一次就好；
+# 本机基本撞不到，多这一圈也无妨。
+for attempt in 1 2 3; do
+  hdiutil create -volname "Novel Harness" -srcfolder .build/dmg -ov -format UDZO "$DMG" >/dev/null && break
+  [ "$attempt" = 3 ] && { echo "✗ hdiutil 三次都没打出 dmg"; exit 1; }
+  sleep 5
+done
 
 say "✓ 打好了：$DMG"
 du -sh "$DMG" | cut -f1

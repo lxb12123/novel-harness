@@ -135,15 +135,18 @@ cd frontend && npm run dev                                 # 前端 5173
 cd frontend && npm run build && cd ..                      # 产物落 src/novel_harness/webui/
 uv run python -c "from pathlib import Path; from novel_harness.api.launch import launch; launch(Path('book.db'))"  # 建库 + 起服务 + 开浏览器
 
-# L3 发布验证（发版）：装出来的包里还有没有工作台。
-# ⚠️ ci.yml 里写了 packaging job 验这个，但**本仓库至今没有 git remote，CI 一次都没跑过**。
-#    在建起远端之前，下面这两行只有你手跑才作数——别把「CI 会拦住」当成既有保护。
+# L3 发布验证（发版）：装出来的包里还有没有工作台。ci.yml 的 packaging job 每次 push / PR 都验；
+#    2026-09-13 之前仓库没有远端，那条 job 从没跑过——那天接上远端之后发现它两处过期
+#    （在冒烟一个 2026-08-20 就删掉的命令行），同日修了。本机手验还是这两行：
 cd frontend && npm run build && cd .. && uv build
 uvx --from ./dist/novel_harness-*.whl python -c "import novel_harness.api.app as m; assert m.webui_built()"
 
-# L4 桌面包（发版，只能在 Mac 上跑）：前端产物 → PyInstaller 出 .app → ad-hoc 签名 → dist/*.dmg
+# L4 桌面包（发版）：前端产物 → PyInstaller 出 .app → ad-hoc 签名 → dist/*.dmg
 # （ADR 0050；没公证，收包的人要右键打开一次。库在 ~/Library/Application Support/Novel Harness/，
 #   稿子在 ~/Documents/Novel Harness/，日志在 ~/Library/Logs/Novel Harness/）
+# 本机打：下面这一行（只能在 Mac 上跑）。**发版走 CI**：打一个 `X.Y.Z` 的 tag（不带 v），
+# `.github/workflows/desktop.yml` 在 GitHub 的 Apple 芯片机器上跑同一份脚本、把 dmg 挂到同名
+# Release 上；tag 必须等于 pyproject 的版本号，不等就红。手动 workflow_dispatch 只出 artifact。
 bash scripts/build_dmg.sh
 ```
 
