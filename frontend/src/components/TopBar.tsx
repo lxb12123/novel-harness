@@ -4,6 +4,7 @@ import { useLanguage, type Language } from "../language";
 import { useCoords, type Tab } from "../store";
 import { BotIcon, GearIcon, LogIcon, NibIcon, ThinkingSpinner, WingIcon } from "./icons";
 import { usePaneCollapse } from "../paneCollapse";
+import { dragWindow } from "../desktop";
 import { SettingsDrawer } from "./SettingsDrawer";
 
 // 顶栏：**两颗开关 + 设置**，一个字都不写（图标 + 悬浮出名字）。
@@ -36,7 +37,9 @@ export function TopBar() {
   const continuationPending = useIsMutating({ mutationKey: ["continuation"] }) > 0;
 
   return (
-    <header>
+    // 桌面壳里这一条就是窗口的标题条：空白处按下鼠标 = 拖窗口（`desktop.ts`）。
+    // 浏览器里 `dragWindow` 什么都不做。
+    <header onMouseDown={dragWindow}>
       {/* 只剩品牌名（作者 2026-09-06 去掉了后面的「工作台 / Workbench」）。
           `<b>` 留着——顶栏那条 `header .title b` 给的是品牌的强调色，不是加粗。 */}
       <span className="title">

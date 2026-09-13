@@ -61,6 +61,14 @@ header {
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   padding: 7px 12px; border-bottom: 1px solid var(--line); background: var(--topbar);
 }
+/* ── 桌面壳里的顶栏（`html.desktop`，见 `desktop.ts` / `desktop.py::_unify_titlebar`）──
+   顶上没有系统标题条了，这一条自己就是标题条：**高 38px**、内容居中——壳那边把标题条
+   撑成 38pt、三颗窗口按钮垂直居中在 19pt，两边正好对齐。左边 78px 给那三颗按钮让位
+   （它们占到 66pt，再留 12px）。高度写死：`flex-wrap` 一换行就跟壳那边对不上了。 */
+html.desktop header {
+  height: 38px; box-sizing: border-box; flex-wrap: nowrap;
+  padding: 0 12px 0 78px;
+}
 header .title { font-weight: 600; } header .title b { color: var(--accent); }
 header input.ch { width: 56px; text-align: right; }
 header .spacer { flex: 1; }
