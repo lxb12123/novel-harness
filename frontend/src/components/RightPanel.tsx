@@ -5,7 +5,6 @@ import {
   useDeleteValidationRule,
   useEvents,
   useNotificationsCount,
-  useRoster,
   useUpdateValidationRule,
   useValidationRules,
 } from "../api/hooks";
@@ -53,14 +52,6 @@ const TABS: {
   { key: "summary", label: { zh: "章节总结", en: "Summary" }, Icon: SummaryIcon },
   { key: "notifications", label: { zh: "通知", en: "Notifications" }, Icon: NotificationsIcon },
 ];
-
-/** 角色册空着的时候仍然有话可说的那几格。
- *
- *  其余每一格都是「其中某个人怎么样」，没有人就没有料。**章节总结不是**：它是这一章
- *  正文压出来的一段字，和角色册里有没有人一点关系都没有。把它一起藏进那句「先去加人」
- *  里，作者就会对着一个能用的功能读到一句不相干的话。 */
-const ROSTER_FREE_TABS = new Set<Tab>(["roster", "summary"]);
-
 
 /** 「检查本章」失败时说什么。**曾经直接读 `(check.error as Error).message`**——
  *  `ApiError` 没有 `.message` 字段时那个 getter 退回 `body.error`，也就是原样把
@@ -337,7 +328,6 @@ function CheckView() {
 export function RightPanel() {
   const { projectId, chapter, activeTab, setTab } = useCoords();
   const language = useLanguage((s) => s.language);
-  const roster = useRoster(projectId);
   // 2026-08-31：待确认提案搬进了通知面板（`SystemNotifications.tsx` +
   // `proposal_notifications.py`），数字 badge 跟着一起搬——`/notifications/count`
   // 现在已经把它们算进去了，不用在这儿再单独查一次提案状态。
@@ -363,10 +353,13 @@ export function RightPanel() {
     return { key: t.key, label: base, Icon: t.Icon };
   });
 
-  // 角色册空 = 其余每一格都没有料可显示（它们全都是「其中某个人怎么样」）。
-  // **但不能整块 return 掉**：角色册自己就是那一格，连它一起藏起来的话，
-  // 「＋」也跟着没了——作者会停在一个说着「先加人」却没有加人入口的面板上。
-  const bare = !roster.data?.length;
+  // **角色册空着不再挡住别的格**（2026-09-13）。这儿原来有一道闸：角色册一空，
+  // 「检验规则」和「事件」整格换成一句「添加人物或设定后……在「角色册」中点击「＋」添加」。
+  // 那句话是 2026-08-31 之前的遗物——当年其余几格确实全是「其中某个人怎么样」；今天
+  // 检验规则查的是正文里的字面（跟有没有人无关），而「事件」那一格的工具栏上就是
+  // 「分析本章」——**它正是把人物整理进角色册的入口**。闸门把入口一起藏了，于是作者
+  // 装好桌面版、导入一本书之后，只看得见「＋」，以为人物只能手动加。每一格空着时
+  // 各说各的空态，谁也不替谁挡。
 
   return (
     <section className="pane">
@@ -384,22 +377,8 @@ export function RightPanel() {
       </div>
       {activeTab === "roster" && <RosterTab />}
       {activeTab === "summary" && <SummaryTab />}
-      {bare && !ROSTER_FREE_TABS.has(activeTab) && (
-        <div className="empty workbench-empty">
-          {language === "zh" ? (
-            <>
-              添加人物或设定后，可在此查看其状态、关系、依据和参与的事件。在「角色册」中点击「＋」添加。
-            </>
-          ) : (
-            <>
-              Once characters or settings are added, their status, relationships, evidence and
-              events appear here. Click “＋” in "Roster" to add one.
-            </>
-          )}
-        </div>
-      )}
-      {!bare && activeTab === "check" && <CheckView />}
-      {!bare && activeTab === "review" && <ProposalReviewTab />}
+      {activeTab === "check" && <CheckView />}
+      {activeTab === "review" && <ProposalReviewTab />}
       {activeTab === "notifications" && <SystemNotifications />}
     </section>
   );

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
+  useAiSettings,
   useCharacterEvents,
   useDeleteNode,
   useProjects,
@@ -243,10 +244,13 @@ function CharacterTimeline({ characterId, name }: { characterId: string; name: s
 }
 
 export function RosterTab() {
-  const { projectId, selectedNodeId, focusNode } = useCoords();
+  const { projectId, selectedNodeId, focusNode, setTab } = useCoords();
   const language = useLanguage((s) => s.language);
   const roster = useRoster(projectId);
   const projects = useProjects();
+  // 只为空态那一句读：钥匙没填的时候，「分析本章」那条路要先指到顶栏「AI 设置」去。
+  // 同一份缓存（`["settings"]`）设置抽屉也在读，不多一次请求。
+  const ai = useAiSettings();
   const [adding, setAdding] = useState(false);
   const [order, setOrder] = useState<Order>("desc");
   const [confirming, setConfirming] = useState<string | null>(null);
@@ -330,11 +334,29 @@ export function RosterTab() {
       </h2>
 
       {empty ? (
+        // **空态要把两条路都说出来**（作者 2026-09-13：「如果添加 api 后，会自己扫描然后
+        // 添加角色，应该加个 or」）：手动加一条，或者让分析从正文里整理——后者才是
+        // 这一格平时被填满的方式（`upsert_node`），只说「添加第一个条目」等于告诉
+        // 作者人物只能手填。分析的入口在「事件」那一格的工具栏上（作者 2026-09-05
+        // 定的位置），这儿只指路，不再摆第二颗会花钱的按钮。钥匙没填就先指去填：
+        // 没有钥匙那颗按钮按下去只会得到一句「未完成」。
         <div className="empty">
           {language === "zh" ? "尚无人物或设定。" : "No characters or settings yet. "}
           <a onClick={() => projectId && setAdding(true)}>
             {language === "zh" ? "添加第一个条目" : "Add the first entry"}
           </a>
+          {language === "zh" ? "，或" : ", or "}
+          {ai.data && !ai.data.api_key_set && (
+            language === "zh"
+              ? "在顶栏「AI 设置」填入 API 密钥后"
+              : "enter an API key under “AI Settings” in the top bar and "
+          )}
+          <a onClick={() => setTab("review")}>
+            {language === "zh" ? "在「事件」中分析本章" : "analyze this chapter under “Events”"}
+          </a>
+          {language === "zh"
+            ? "。正文中的人物、地点、势力会自动整理到此处；保存正文后也会自动分析。"
+            : ". Characters, locations and factions in the text are added here automatically; saving the text also runs an analysis."}
         </div>
       ) : (
         <>

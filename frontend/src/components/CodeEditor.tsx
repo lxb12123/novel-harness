@@ -209,15 +209,18 @@ const theme = EditorView.theme({
     fontSize: "14px",
     lineHeight: "1.85",
     // 同左栏书架 `.shelf-scroll`（styles.css）：宽度常驻、只切换颜色，
-    // 平时透明、悬浮才现身——避免宽度跟着 hover 抖动。
-    scrollbarWidth: "thin",
-    scrollbarColor: "transparent transparent",
+    // 平时透明、悬浮才现身——避免宽度跟着 hover 抖动。**颜色只经 `--scroll-thumb` 切、
+    // 标准属性只写在 `@supports not selector(::-webkit-scrollbar)` 里**：两条都是 WebKit
+    // （桌面壳的 WKWebView）逼出来的，理由写在 styles.css 那一段，改这儿同时改那儿。
+    "--scroll-thumb": "transparent",
   },
-  ".cm-scroller:hover": { scrollbarColor: "var(--line) transparent" },
+  ".cm-scroller:hover": { "--scroll-thumb": "var(--line)" },
   ".cm-scroller::-webkit-scrollbar": { width: "6px" },
   ".cm-scroller::-webkit-scrollbar-track": { background: "transparent" },
-  ".cm-scroller::-webkit-scrollbar-thumb": { background: "transparent", borderRadius: "3px" },
-  ".cm-scroller:hover::-webkit-scrollbar-thumb": { background: "var(--line)" },
+  ".cm-scroller::-webkit-scrollbar-thumb": { background: "var(--scroll-thumb)", borderRadius: "3px" },
+  "@supports not selector(::-webkit-scrollbar)": {
+    ".cm-scroller": { scrollbarWidth: "thin", scrollbarColor: "var(--scroll-thumb) transparent" },
+  },
   // 左右内边距**不是一个定值，是「把正文挤成一栏」的那道留白**：窗口越宽，它越大，
   // 正文的行宽被 `--text-column` 钉住不动（`styles.css` 里那一条，同一个数还管着
   // 顶栏的标题和图标，所以三者永远对齐）。窄的时候 `max()` 落回 16px，跟以前一样。

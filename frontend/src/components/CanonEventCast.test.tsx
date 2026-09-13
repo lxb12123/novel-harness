@@ -170,6 +170,32 @@ describe("已确认的情节：谁在场、谁知道了", () => {
     );
   });
 
+  it("分析跑完那一刻，这张单子自己重取——不用换一次 tab 才看见", async () => {
+    // 2026-09-13 之前只轮询不重取：作者点完「分析本章」看到一句「整理出 3 条情节」，
+    // 眼前的单子却还是空的。判据是「在眼皮底下从跑着变成跑完」：POST 回的是 PENDING，
+    // 轮询回 SUCCEEDED，那一刻情节 / 角色册 / 通知这一套全部重取。
+    const user = userEvent.setup();
+    renderWithApi(<CanonEventCast canonVersion={6} />, [
+      {
+        method: "POST",
+        match: /\/chapters\/\d+\/extract/,
+        body: { ...fixtures.extractionRun, status: "PENDING" },
+      },
+      { match: /\/extractions\//, body: fixtures.extractionRun },
+    ]);
+    const spy = vi.spyOn(globalThis, "fetch");
+    await screen.findAllByRole("button", { name: first.event.summary });
+    const listReads = () =>
+      (spy as unknown as Calls).mock.calls.filter(([url]) =>
+        /\/events\?scope=CANON/.test(String(url)),
+      ).length;
+    const before = listReads();
+
+    await user.click(screen.getByRole("button", { name: "分析本章" }));
+    expect(await screen.findByText(/整理出 3 条情节/)).toBeInTheDocument();
+    await waitFor(() => expect(listReads()).toBeGreaterThan(before));
+  });
+
   it("这一章一条都没有的时候说人话，不摆一张空表", async () => {
     renderWithApi(<CanonEventCast canonVersion={6} />, [
       { match: /\/chapters\/\d+\/events\?scope=CANON/, body: [] },

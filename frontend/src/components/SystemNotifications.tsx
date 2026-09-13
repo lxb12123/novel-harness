@@ -813,11 +813,13 @@ export function SystemNotifications() {
         {loading && (
           <span className="empty">{language === "zh" ? "读取中…" : "Loading…"}</span>
         )}
+        {/* 空着也说一句这一格装什么（作者 2026-09-13：每一格都该有提示）——
+            两样都是别处的动作送过来的：分析正文留下的待确认情节，检验本章发现的问题。 */}
         {!loading && empty && (
           <span className="empty">
             {language === "zh"
-              ? "没有待处理的通知"
-              : "No notifications to handle"}
+              ? "没有待处理的通知。分析正文后待确认的情节、检验发现的问题会列在此处。"
+              : "No notifications to handle. Events awaiting confirmation after an analysis and issues found by a check are listed here."}
           </span>
         )}
         <ProvisionalEventsRow views={views} />

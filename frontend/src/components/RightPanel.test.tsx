@@ -42,27 +42,66 @@ describe("右侧信息区", () => {
     expect(await screen.findByRole("button", { name: "通知" })).toBeInTheDocument();
   });
 
-  it("空白新书只显示一个作者能理解的下一步", async () => {
-    renderWithApi(<RightPanel />, [{ match: /\/roster$/, body: [] }]);
+  it("空白新书只显示作者能理解的下一步：手动加一条，或让分析从正文整理", async () => {
+    // 作者 2026-09-13（装好桌面版、导入一本书之后）：「角色栏的角色他现在是只能手动添加吗，
+    // 我记得之前是有扫描添加」「应该加个 or」——空态只写「添加第一个条目」等于说人物
+    // 只能手填，而这一格平时是「分析本章」从正文里整理出来填满的。
+    renderWithApi(<RightPanel />, [
+      { match: /\/roster$/, body: [] },
+      { match: /\/api\/settings$/, body: fixtures.settingsSaved },
+    ]);
 
     expect(await screen.findByText(/添加第一个条目/)).toBeInTheDocument();
+    expect(await screen.findByText(/在「事件」中分析本章/)).toBeInTheDocument();
+    expect(screen.getByText(/保存正文后也会自动分析/)).toBeInTheDocument();
+    // 钥匙填了就不再叫他去填。
+    expect(screen.queryByText(/填入 API 密钥/)).toBeNull();
     expect(document.body.textContent).not.toMatch(/R[1-4]|must_not_reveal|valid_from|issue/);
   });
 
-  it("角色册空着的时候，加人的入口不能跟着一起消失", async () => {
-    // 这一格原先会把**整块面板**换成一句「先去加人」——连角色册和那颗加号一起藏掉，
-    // 于是作者停在一个叫他加人、却没有加人入口的面板上。
+  it("钥匙没填的时候，那条路先指到顶栏「AI 设置」", async () => {
+    // 没有钥匙，「分析本章」按下去只会得到一句「未完成」——空态得把前一步说出来。
+    renderWithApi(<RightPanel />, [
+      { match: /\/roster$/, body: [] },
+      { match: /\/api\/settings$/, body: fixtures.settings },
+    ]);
+    expect(await screen.findByText(/在顶栏「AI 设置」填入 API 密钥后/)).toBeInTheDocument();
+  });
+
+  it("角色册空态里的「在「事件」中分析本章」是一条路：点它就到「事件」那一格", async () => {
     const user = userEvent.setup();
-    renderWithApi(<RightPanel />, [{ match: /\/roster$/, body: [] }]);
+    renderWithApi(<RightPanel />, [
+      { match: /\/roster$/, body: [] },
+      { match: /\/chapters\/\d+\/events\?scope=CANON/, body: [] },
+    ]);
+    await user.click(await screen.findByText(/在「事件」中分析本章/));
+    expect(useCoords.getState().activeTab).toBe("review");
+    // 到了那一格，入口就在工具栏上（作者 2026-09-05 定的位置）。
+    expect(await screen.findByRole("button", { name: "分析本章" })).toBeInTheDocument();
+  });
+
+  it("角色册空着的时候，别的格不再被一句「先去加人」挡住", async () => {
+    // 2026-09-13 之前这儿有一道闸：角色册一空，「检验规则」和「事件」整格换成
+    // 「添加人物或设定后……在「角色册」中点击「＋」添加」。检验规则查的是正文里的字面，
+    // 跟有没有人无关；「事件」那一格的工具栏上就是「分析本章」——把人物整理进角色册的
+    // 入口。闸门把入口一起藏了，作者只看得见「＋」，以为人物只能手动加。
+    const user = userEvent.setup();
+    renderWithApi(<RightPanel />, [
+      { match: /\/roster$/, body: [] },
+      { match: /\/chapters\/\d+\/events\?scope=CANON/, body: [] },
+    ]);
 
     expect(
       await screen.findByRole("button", { name: "建人物 / 地点 / 势力…" }),
     ).toBeInTheDocument();
-    // 「人物状态」「写作提醒」2026-08-31 都不在了——换一个仍然存在、
-    // 会走 `bare` 空态分支的 tab。
     await user.click(screen.getByRole("button", { name: "检验规则" }));
-    expect(await screen.findByText(/添加人物或设定后/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "角色册" })).toBeInTheDocument();
+    expect(await screen.findByPlaceholderText("添加章节检验规则，回车保存")).toBeInTheDocument();
+    expect(screen.queryByText(/添加人物或设定后/)).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "事件" }));
+    expect(await screen.findByRole("button", { name: "分析本章" })).toBeInTheDocument();
+    expect(await screen.findByText(/点击上方「分析本章」从正文整理/)).toBeInTheDocument();
+    expect(screen.queryByText(/添加人物或设定后/)).toBeNull();
   });
 
   it("检查面板不显示规则编号或内部字段", async () => {

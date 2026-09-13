@@ -351,11 +351,14 @@ export function CanonEventCast({ canonVersion }: { canonVersion: number }) {
       {events.isLoading && (
         <span className="empty">{language === "zh" ? "读取中…" : "Loading…"}</span>
       )}
+      {/* 空态把「怎么填满」说出来（作者 2026-09-13：每一格都该有这一句）：情节是
+          「分析本章」从正文里整理出来的，保存正文后也会自动分析——不说这一句，作者
+          对着一张空单子只知道「还没有」，不知道它从哪儿来。 */}
       {!events.isLoading && views.length === 0 && !missing && (
         <span className="empty">
           {language === "zh"
-            ? `截至第 ${chapter} 章尚无已确认的情节。情节确认后在此显示，参与者可随时修改。`
-            : `No confirmed events through chapter ${chapter} yet. Confirmed events appear here, and their cast can be changed at any time.`}
+            ? `截至第 ${chapter} 章尚无已确认的情节。点击上方「分析本章」从正文整理（保存正文后也会自动分析），确认后的情节在此显示，参与者可随时修改。`
+            : `No confirmed events through chapter ${chapter} yet. Click “Analyze this chapter” above to collect them from the text (saving the text also runs an analysis); confirmed events appear here, and their cast can be changed at any time.`}
         </span>
       )}
       {/* 跳过来却找不到那一条：**说出来**，不要安静地摆一张看起来正常的单子。

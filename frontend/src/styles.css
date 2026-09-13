@@ -178,15 +178,25 @@ main {
    ⚠️ **别图省事挂到 `.pane` 或 `*` 上。** `scrollbar-color` 是**继承**属性：
    往祖先上写一句 `transparent transparent`，所有没写自己那条 hover 规则的嵌套滚动区
    （`.hist-list`、`.chat-log`…）会继承到透明，然后**永远看不见滚动条**
-   ——而那是个在屏幕上完全看不出来的坏法。一个滚动区一对规则，成对地加。 */
+   ——而那是个在屏幕上完全看不出来的坏法。一个滚动区一对规则，成对地加。
+
+   ⚠️ **颜色只许经由 `--scroll-thumb` 这个自定义属性切换，且标准属性只许写在
+   `@supports not selector(::-webkit-scrollbar)` 里面**（2026-09-13，两条都是在
+   WKWebView 里实测出来的，桌面版第一次装出来目录和正文两条滚动条常驻不隐就是这么来的）：
+   · WebKit（Safari、桌面壳的 WKWebView）**认** `scrollbar-color`（`CSS.supports` 答 true）
+     却**不画**它——写上就退回原生的常驻滚动条，而且标准属性一出现，伪元素那套就整个作废。
+     Chrome 两套都认、标准属性优先，所以以前看不出。于是伪元素那套给 Chrome 和 WebKit，
+     `scrollbar-width` / `scrollbar-color` 只给不认伪元素的引擎（Firefox）。
+   · WebKit 在容器的 `:hover` 变了之后**不重算滚动条那几个伪元素的样式**——
+     `.x:hover::-webkit-scrollbar-thumb { background: … }` 在 Chrome 里能亮，在 WebKit 里
+     永远是透明的（切 class 也一样）。**只有自定义属性走得通**：颜色写在容器的
+     `--scroll-thumb` 上、伪元素只读它，容器 hover 改的是自己的属性，滚动条跟着重画。 */
 .shelf-scroll,
 .pane.log,
-.set-pane {
-  scrollbar-width: thin; scrollbar-color: transparent transparent;
-}
+.set-pane { --scroll-thumb: transparent; }
 .shelf-scroll:hover,
 .pane.log:hover,
-.set-pane:hover { scrollbar-color: var(--line) transparent; }
+.set-pane:hover { --scroll-thumb: var(--line); }
 .shelf-scroll::-webkit-scrollbar,
 .pane.log::-webkit-scrollbar,
 .set-pane::-webkit-scrollbar { width: 6px; }
@@ -195,10 +205,12 @@ main {
 .set-pane::-webkit-scrollbar-track { background: transparent; }
 .shelf-scroll::-webkit-scrollbar-thumb,
 .pane.log::-webkit-scrollbar-thumb,
-.set-pane::-webkit-scrollbar-thumb { background: transparent; border-radius: 3px; }
-.shelf-scroll:hover::-webkit-scrollbar-thumb,
-.pane.log:hover::-webkit-scrollbar-thumb,
-.set-pane:hover::-webkit-scrollbar-thumb { background: var(--line); }
+.set-pane::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 3px; }
+@supports not selector(::-webkit-scrollbar) {
+  .shelf-scroll,
+  .pane.log,
+  .set-pane { scrollbar-width: thin; scrollbar-color: var(--scroll-thumb) transparent; }
+}
 /* 栏间那条线原来是 `.pane + .pane` 的 border——它画得出线但抓不住，
    现在改由分隔条自己画：整列 6px 可抓，只显中间 1px，视觉上还是原来那条线。 */
 .pane-divider { position: relative; cursor: col-resize; touch-action: none; background: transparent; }

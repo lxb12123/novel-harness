@@ -1,4 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
 import { api, proj } from "./client";
 import { runTurnStream } from "./turnStream";
 import { useLiveDraft } from "../liveDraft";
@@ -741,8 +742,15 @@ export function useStartExtraction(pid: string, chapter: number) {
   });
 }
 
+/** 轮询一次分析，**跑完那一刻把它改过的读端全部重取**。
+ *
+ *  2026-09-13 之前这儿只轮询不重取：作者点完「分析本章」，看到一句「整理出 5 条情节」，
+ *  而眼前的单子和角色册还是空的——要换一次 tab 才重取。判据是「在这个组件眼皮底下
+ *  从跑着变成跑完」，不是「数据是跑完的」：换 tab 回来时缓存里那条本来就是跑完的，
+ *  那时不该再把整栏重取一遍。 */
 export function useExtractionRun(pid: string | null, runId: string | null) {
-  return useQuery({
+  const qc = useQueryClient();
+  const query = useQuery({
     queryKey: q(["extraction", pid, runId]),
     queryFn: () => api.get<ExtractionRun>(proj(pid!, `/extractions/${runId}`)),
     enabled: !!pid && !!runId,
@@ -751,6 +759,22 @@ export function useExtractionRun(pid: string | null, runId: string | null) {
         ? 2000
         : false,
   });
+  const status = query.data?.status;
+  const running = useRef<string | null>(null);
+  useEffect(() => {
+    if (!pid || !runId || !status) return;
+    if (status === "PENDING" || status === "RUNNING") {
+      running.current = runId;
+      return;
+    }
+    if (running.current !== runId) return;
+    running.current = null;
+    // 成功才动角色册 / 情节 / 通知那一整套；失败只有日志那一行变了。
+    if (status === "SUCCEEDED") invalidateReview(qc, pid);
+    qc.invalidateQueries({ queryKey: ["activity", pid] });
+    qc.invalidateQueries({ queryKey: ["runs", pid] });
+  }, [qc, pid, runId, status]);
+  return query;
 }
 
 /** 审阅一条提案：accept / reject / bystander / **edit**。
