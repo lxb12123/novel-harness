@@ -39,8 +39,8 @@ webview.start(); started.stop()             # 窗口关了，服务体面地停
 `dist/NovelHarness-<版本>-macOS-<架构>.dmg`（里面一个 `.app` + 一个指向 `/Applications` 的快捷方式）。
 版本号的真值在 pyproject.toml，spec 读它（`__init__.py` 里那份拷贝由测试钉着一致）。
 图标（`desktop/icon.svg` → `icon-1024.png` → `icon.icns`）：首发是作者给的那支笔尖（`icons.tsx::NIB`）
-放在紫色圆角方上；**2026-09-13 作者换成白底 + 只描黑边的那只翅膀**（`icons.tsx::SPREAD_WING`，
-原坐标一个字没改）。渲法：Chrome headless 截 `--default-background-color=00000000` 的透明底
+放在紫色圆角方上；**2026-09-13 作者换成白底 + 黑色实心剪影的那只翅膀、朝右**（`icons.tsx::SPREAD_WING`，
+原坐标一个字没改，按竖直中轴翻一次；第一版描了边、朝左，作者看了说还原度不高——原图就是实心的）。渲法：Chrome headless 截 `--default-background-color=00000000` 的透明底
 （圆角外自然透明，不用再切角），`sips` 出各档、`iconutil` 合成 icns。
 
 清单里必须点名、PyInstaller 自己看不见的三样：包里的非 .py 文件（前端产物 / `migrations/*.sql` /
