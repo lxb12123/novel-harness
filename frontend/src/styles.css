@@ -1468,7 +1468,7 @@ pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid 
 .chat-sessions-bar { margin-bottom: 6px; }
 .chat-new {
   display: flex; align-items: center; gap: 8px; width: 100%;
-  padding: 9px 12px; border: 0; border-radius: 8px; background: transparent;
+  padding: 11px 12px; border: 0; border-radius: 8px; background: transparent;
   color: var(--accent); font: inherit; font-size: 13px; font-weight: 600; text-align: left;
   cursor: pointer;
 }
@@ -1478,8 +1478,11 @@ pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid 
 }
 .chat-new:disabled { opacity: .5; }
 .chat-sessions-empty { margin: 4px 0 0; font-size: 12px; line-height: 1.7; }
+/* `margin: 0 auto`，不是 `margin: 0`：上面那条 `.chat-sessions > *` 给的居中靠的是左右
+   auto，这儿写成 0 会把这一列顶回左边，而「新建对话」那一行仍然居中——两块错开一截
+   （作者：「对齐一下大小，还有左右」）。 */
 .chat-session-list {
-  list-style: none; margin: 0; padding: 0;
+  list-style: none; margin: 0 auto; padding: 0;
   display: grid; gap: 2px;
 }
 /* 整行是一个圆角块，**行与行之间不画线**：一列分割线加一列圆角高亮，是两套
