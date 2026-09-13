@@ -146,6 +146,19 @@ header > .icon-btn + .icon-btn { margin-left: -8px; }
   .bot-thinking .thinking-spinner rect:not(:first-child) { opacity: .15; }
 }
 
+/* ── 顶栏那盏灯（`TopBar.tsx::StatusLight`，作者 2026-09-13 定在笔尖右边）────────
+   灰 = 模型服务没配好，绿 = 配好了闲着，黄 = 后台正在整理某一章。**只有颜色，没有图形**：
+   它是一个状态点不是一颗功能键，悬浮那句话（`data-tip`）才是它的全部内容。
+   黄的那一档呼吸一下（同 `.bot-thinking` 那条「AI 在不在动」），reduced-motion 下不动。 */
+.status-light { padding: 4px 5px; }
+.status-light .light-dot {
+  width: 8px; height: 8px; border-radius: 50%; display: block; background: var(--u);
+}
+.status-light.ready .light-dot { background: var(--ok); }
+.status-light.busy .light-dot { background: var(--b); animation: light-breathe 1.6s ease-in-out infinite; }
+@keyframes light-breathe { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .status-light.busy .light-dot { animation: none; } }
+
 /* 「章节准备页」那一整节样式（`.prep*` / `.draft-length*`）2026-08-13 随那一页一起删。
    理由记在 `components/TopBar.tsx`：三张读卡是右栏同名 tab 的第二个入口，
    两个表单写进 localStorage 没有任何人读。 */
@@ -170,10 +183,10 @@ main {
    内容区每次悬浮/移开都会跟着抖 6px 宽（作者的原话：按钮一下缩一下扩，很难受）。
    颜色默认透明、悬浮才现身，宽度全程占着位置，没有那一下抖动。
 
-   ⚠️ **要加新的滚动区就加进下面这份选择器，别再抄一份。** 这套规则今天有三个消费方：
-   左栏书架、活动记录（2026-09-09 作者指着它说「调成悬浮出现」加进来的），
-   以及正文编辑器——第三个在 `CodeEditor.tsx` 的 CM6 主题里，那是一份**不得不**分开写
-   的拷贝（CM6 的样式由它自己注入，够不着这个文件），改这儿记得同时改那儿。
+   ⚠️ **要加新的滚动区就加进下面这份选择器，别再抄一份。** 这套规则今天有四个消费方：
+   左栏书架、活动记录（2026-09-09 作者指着它说「调成悬浮出现」加进来的）、右栏整栏
+   （2026-09-13），以及正文编辑器——最后一个在 `CodeEditor.tsx` 的 CM6 主题里，那是一份
+   **不得不**分开写的拷贝（CM6 的样式由它自己注入，够不着这个文件），改这儿记得同时改那儿。
 
    ⚠️ **别图省事挂到 `.pane` 或 `*` 上。** `scrollbar-color` 是**继承**属性：
    往祖先上写一句 `transparent transparent`，所有没写自己那条 hover 规则的嵌套滚动区
@@ -191,21 +204,30 @@ main {
      `.x:hover::-webkit-scrollbar-thumb { background: … }` 在 Chrome 里能亮，在 WebKit 里
      永远是透明的（切 class 也一样）。**只有自定义属性走得通**：颜色写在容器的
      `--scroll-thumb` 上、伪元素只读它，容器 hover 改的是自己的属性，滚动条跟着重画。 */
+/* 右栏整栏（`.pane-right`）2026-09-13 也进这一份：桌面版里它的原生滚动条常驻，和左边
+   两条一比就扎眼。**只进伪元素那一半、不进下面 Firefox 那一半**——`scrollbar-color` 会
+   继承，右栏里嵌着关系图那类自己会滚的块，Firefox 上给它们继承到透明就是上面那条警告
+   说的坏法；伪元素不继承，没这个问题。 */
 .shelf-scroll,
 .pane.log,
-.set-pane { --scroll-thumb: transparent; }
+.set-pane,
+.pane-right { --scroll-thumb: transparent; }
 .shelf-scroll:hover,
 .pane.log:hover,
-.set-pane:hover { --scroll-thumb: var(--line); }
+.set-pane:hover,
+.pane-right:hover { --scroll-thumb: var(--line); }
 .shelf-scroll::-webkit-scrollbar,
 .pane.log::-webkit-scrollbar,
-.set-pane::-webkit-scrollbar { width: 6px; }
+.set-pane::-webkit-scrollbar,
+.pane-right::-webkit-scrollbar { width: 6px; }
 .shelf-scroll::-webkit-scrollbar-track,
 .pane.log::-webkit-scrollbar-track,
-.set-pane::-webkit-scrollbar-track { background: transparent; }
+.set-pane::-webkit-scrollbar-track,
+.pane-right::-webkit-scrollbar-track { background: transparent; }
 .shelf-scroll::-webkit-scrollbar-thumb,
 .pane.log::-webkit-scrollbar-thumb,
-.set-pane::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 3px; }
+.set-pane::-webkit-scrollbar-thumb,
+.pane-right::-webkit-scrollbar-thumb { background: var(--scroll-thumb); border-radius: 3px; }
 @supports not selector(::-webkit-scrollbar) {
   .shelf-scroll,
   .pane.log,
@@ -1014,6 +1036,21 @@ table.mx td.cell.focus { outline: 2px solid var(--accent); outline-offset: -2px;
 .grp .lab { min-height: 24px; display: flex; align-items: center; }
 /* 空角色册里的「建第一个」是行内链接：它是那一句话的出口，不该长成一个抢眼的按钮 */
 .empty a { color: var(--accent); cursor: pointer; text-decoration: underline; font-style: normal; }
+/* ── 「先连接模型」那一段（`ModelGuide.tsx`）──────────────────────────────
+   开场白一行、那条路一行。它站在空态的位置上，所以是空态那种灰；「AI 设置」那颗链接
+   带着齿轮，和顶栏那颗是同一个图标——作者抬头就认得出要点哪儿。 */
+.model-guide { color: var(--dim); font-size: 12px; line-height: 1.8; font-style: normal; }
+.model-guide p { margin: 0 0 4px; }
+.model-guide-steps { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
+.model-guide-open {
+  display: inline-flex; align-items: center; gap: 3px;
+  background: none; border: 0; padding: 0; color: var(--accent); font-size: 12px; cursor: pointer;
+  text-decoration: underline;
+}
+.model-guide-open .icon { width: 14px; height: 14px; }
+.model-guide-open:hover { border-color: transparent; background: none; color: var(--accent); }
+/* 写作助手输入框上面那段（模型服务没配好时才有）：和框同宽，隔一条线。 */
+.chat-say-guide { padding: 6px 2px 8px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
 
 /* 版本对比 */
 /* 历史面板**撑满抽屉的高度**（作者 2026-09-07：「这边空间利用不到位往下调一下」）。
@@ -2103,3 +2140,11 @@ pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid 
 }
 @keyframes toast-in { from { opacity: 0; transform: translateY(4px); } }
 @media (prefers-reduced-motion: reduce) { .check-toast { animation: none; } }
+/* 失败那一句**留着**（作者 2026-09-13：「报错停留时间太短了」）：成功的飘一下就走，
+   失败的挂到他点掉 × 、再点一次或换章。挂着的那一句带一个 × ，别让它像一句永远的话。 */
+.check-toast.sticky { display: flex; align-items: center; gap: 8px; }
+.toast-close {
+  padding: 0 4px; border: 0; background: transparent; color: inherit;
+  font-size: 14px; line-height: 1; cursor: pointer; opacity: .75;
+}
+.toast-close:hover { opacity: 1; border-color: transparent; color: inherit; background: transparent; }

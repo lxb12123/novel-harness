@@ -273,3 +273,64 @@ def test_a_book_whose_summaries_are_all_paired_still_gets_extraction_ordered(
             assert not mask & BRANCH_SUMMARY, f"总结不缺却排了总结：mask={mask}"
     finally:
         conn.close()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# 2026-09-13：没配好不扫、配好那一刻就扫（作者第一次用桌面版指出来的）
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _loop_once(runtime: BackgroundRuntime) -> None:
+    """跑 `_loop` 的一拍：第一次 `sleep` 就叫停。"""
+    def stop(_: float) -> None:
+        runtime.stop()
+
+    runtime._sleep = stop  # noqa: SLF001
+    runtime._loop()  # noqa: SLF001
+
+
+def _attempts(db: str) -> int:
+    conn = connect(db)
+    try:
+        return int(conn.execute("SELECT count(*) FROM chapter_refresh_attempt").fetchone()[0])
+    finally:
+        conn.close()
+
+
+def test_sweep_waits_for_the_model_to_be_configured(tmp_path: Path) -> None:
+    """模型服务没配好，到点也不下单——下了也只是二十张必败的单和二十条「后台任务未完成」，
+    而作者还没填钥匙。配好之后同一拍就下单。"""
+    db, _, _ = _seed_book(tmp_path, 3)
+    configured = {"on": False}
+    runtime = BackgroundRuntime(
+        db_path=db,
+        connection_factory=_conn_factory(db),
+        runner_factory=lambda: _stub_runner(db),
+        summarizer_factory=lambda: _stub_summarizer(db),
+        owner="test",
+        poll_seconds=100,
+        autonomy_seconds=3600.0,
+        first_sweep_seconds=0.0,  # 到点了
+        configured=lambda: configured["on"],
+    )
+    _loop_once(runtime)
+    assert _attempts(db) == 0, "没配好就不该下单"
+
+    configured["on"] = True
+    runtime.kick()
+    runtime._stop.clear()  # noqa: SLF001
+    _loop_once(runtime)
+    assert _attempts(db) == 3, "配好 + kick 之后这一拍就该把缺的章都排上"
+
+
+def test_kick_brings_the_next_sweep_forward(tmp_path: Path) -> None:
+    """默认要等一个间隔；`kick()` 之后下一拍就扫。"""
+    db, _, _ = _seed_book(tmp_path, 2)
+    runtime = _runtime(db)  # autonomy_seconds=3600：不 kick 的话这一拍不会扫
+    _loop_once(runtime)
+    assert _attempts(db) == 0
+
+    runtime.kick()
+    runtime._stop.clear()  # noqa: SLF001
+    _loop_once(runtime)
+    assert _attempts(db) == 2

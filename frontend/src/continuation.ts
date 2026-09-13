@@ -20,6 +20,9 @@ export interface SuggestSignal {
   loading?: boolean;
   /** 写作助手开着（novel-agent 模式，`useCoords.chatOpen`）。 */
   assistantOpen?: boolean;
+  /** 模型服务配好了没有（`settings.model_configured`）。**`false` 才拦**：设置还没回来时
+   *  是 `undefined`，那时不拦——配好的作者不该因为设置慢了一拍就少一次续写。 */
+  modelConfigured?: boolean;
   /** 设置里「是否在 novel-agent 模式下续写」那颗开关（`settings.continuation_in_agent_mode`）。
    *  设置还没回来时它是 `undefined`——按关着算，默认本来就是关。 */
   continuationInAgentMode?: boolean;
@@ -39,6 +42,9 @@ export interface SuggestSignal {
  */
 export function shouldSuggest(signal: SuggestSignal): boolean {
   if (signal.loading) return false;
+  // 模型服务没配好就不问：每停一下笔就发一次必败的请求，换来的只有一次次静默的失败。
+  // 该说这件事的是顶栏那盏灰灯（`TopBar.tsx::StatusLight`），不是编辑器。
+  if (signal.modelConfigured === false) return false;
   if (signal.hasSelection) return false;
   if (signal.hasSuggestion) return false;
   if (signal.assistantOpen && !signal.continuationInAgentMode) return false;

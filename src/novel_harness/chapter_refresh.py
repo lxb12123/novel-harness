@@ -654,7 +654,7 @@ def claim_attempt(
 ) -> int | None:
     """原子 claim：拿到单调 fencing token。返回 None = 不可领（未过期/已终态）。"""
     now = time.time() if now is None else now
-    expires = _iso(now + ttl_seconds)
+    expires = iso_timestamp(now + ttl_seconds)
     row = conn.execute(
         """
         UPDATE chapter_refresh_attempt
@@ -670,7 +670,7 @@ def claim_attempt(
                     AND validation_state IN ('SUCCEEDED','REUSED')))
         RETURNING fencing_token
         """,
-        {"id": attempt_id, "owner": owner, "expires": expires, "now": _iso(now)},
+        {"id": attempt_id, "owner": owner, "expires": expires, "now": iso_timestamp(now)},
     ).fetchone()
     conn.commit()
     return int(row["fencing_token"]) if row is not None else None
@@ -688,7 +688,7 @@ def heartbeat(
          WHERE id = :id AND lease_owner = :owner AND fencing_token = :token
         RETURNING id
         """,
-        {"id": attempt_id, "owner": owner, "expires": _iso(time.time() + ttl_seconds), "token": token},
+        {"id": attempt_id, "owner": owner, "expires": iso_timestamp(time.time() + ttl_seconds), "token": token},
     ).fetchone()
     conn.commit()
     return row is not None
@@ -715,16 +715,12 @@ def recover_claimable(
     一次**（同一 owner 的未过期 lease 会让第二次 claim 返回 None，跑不出来）。
     """
     rows = conn.execute(
-        """
+        f"""
         SELECT id FROM chapter_refresh_attempt
          WHERE (lease_expires_at IS NULL OR lease_expires_at < :now)
-           AND ((validation_state IN ('PENDING','RUNNING')
-                 OR summary_state IN ('PENDING','RUNNING')
-                 OR extraction_state IN ('PENDING','RUNNING'))
-                OR (final_gate_state = 'PENDING'
-                    AND validation_state IN ('SUCCEEDED','REUSED')))
+           AND ({OUTSTANDING_WHERE})
         """,
-        {"now": _iso(time.time())},
+        {"now": iso_timestamp(time.time())},
     ).fetchall()
     claimed: list[tuple[str, int]] = []
     for row in rows:
@@ -735,7 +731,20 @@ def recover_claimable(
     return claimed
 
 
-def _iso(ts: float) -> str:
+OUTSTANDING_WHERE = """
+    ((validation_state IN ('PENDING','RUNNING')
+      OR summary_state IN ('PENDING','RUNNING')
+      OR extraction_state IN ('PENDING','RUNNING'))
+     OR (final_gate_state = 'PENDING'
+         AND validation_state IN ('SUCCEEDED','REUSED')))
+"""
+"""「这张单还没做完」的判据（不带 lease 那一半）。dispatcher 领单（`recover_claimable`）
+和顶栏那盏灯（`api/background_status.py`）用的是**同一条**——两处各写一份的话，灯会在
+dispatcher 已经不认的单上一直亮着，或者反过来。"""
+
+
+def iso_timestamp(ts: float) -> str:
+    """和表里 `strftime('%Y-%m-%dT%H:%M:%fZ')` 同一种写法的时间戳（毫秒精度那一档能比大小）。"""
     import datetime
 
     return datetime.datetime.fromtimestamp(ts, datetime.UTC).strftime("%Y-%m-%dT%H:%M:%S.%fZ")

@@ -71,13 +71,22 @@ const TABS = [
 
 type TabKey = (typeof TABS)[number]["key"];
 
-export function SettingsDrawer({ onClose }: { onClose: () => void }) {
+/** `initialTab`：从哪一栏打开。齿轮开的是「个性化」（默认、排头，见 `TABS` 的注释）；
+ *  每一格「先连接模型」的空态和顶栏那盏灰灯开的是「模型服务」——作者正要填的就是那三样，
+ *  让他自己再找一次栏目等于把指路的话说了一半。 */
+export function SettingsDrawer({
+  onClose,
+  initialTab = "personal",
+}: {
+  onClose: () => void;
+  initialTab?: TabKey;
+}) {
   const settings = useAiSettings();
   const save = useSaveAiSettings();
   const refresh = useRefreshModelWindows();
   const language = useLanguage((s) => s.language);
   const setLanguage = useLanguage((s) => s.setLanguage);
-  const [tab, setTab] = useState<TabKey>("personal");
+  const [tab, setTab] = useState<TabKey>(initialTab);
   const [baseUrl, setBaseUrl] = useState("");
   const [model, setModel] = useState("");
   const [apiKey, setApiKey] = useState("");
@@ -121,8 +130,29 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [close]);
 
-  /** 应用「连接服务」那张卡。**只发这张卡上的三位**——见 `AiSettingsInput`。 */
+  /** 三样里缺了哪几样（服务地址 / 模型 / 钥匙）。钥匙已经存过一把、框里空着不算缺。 */
+  const linkMissing = [
+    !baseUrl.trim() && (language === "zh" ? "服务地址" : "the endpoint"),
+    !model.trim() && (language === "zh" ? "模型" : "the model"),
+    !apiKey.trim() && !current?.api_key_set && (language === "zh" ? "API 密钥" : "the API key"),
+  ].filter((x): x is string => Boolean(x));
+  const [linkRefused, setLinkRefused] = useState<string | null>(null);
+
+  /** 应用「连接服务」那张卡。**只发这张卡上的三位**——见 `AiSettingsInput`。
+   *
+   *  **缺一样就不发，说清缺哪样**（作者 2026-09-13：「用户要是点击应用少一个就应该提醒
+   *  用户」）：后端「空 = 保持原值」的合并规则会把一次少填的提交存成半套配置，屏幕上
+   *  看着像存好了，模型却调不起来。 */
   function applyLink() {
+    if (linkMissing.length > 0) {
+      setLinkRefused(
+        language === "zh"
+          ? `尚未填写${linkMissing.join("、")}，三项齐全后再应用`
+          : `Fill in ${linkMissing.join(", ")} before applying; all three are required`,
+      );
+      return;
+    }
+    setLinkRefused(null);
     const input: AiSettingsInput = { base_url: baseUrl.trim(), model: model.trim() };
     if (apiKey.trim()) input.api_key = apiKey.trim();
     save.mutate(input, {
@@ -501,6 +531,7 @@ export function SettingsDrawer({ onClose }: { onClose: () => void }) {
                 </div>
 
                 {err && <div className="err-box">{saidToTheAuthor(err) ?? err.message}</div>}
+                {linkRefused && <div className="err-box" role="alert">{linkRefused}</div>}
 
                 <div className="set-card-foot">
                   <button

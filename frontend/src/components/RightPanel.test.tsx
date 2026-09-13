@@ -59,13 +59,25 @@ describe("右侧信息区", () => {
     expect(document.body.textContent).not.toMatch(/R[1-4]|must_not_reveal|valid_from|issue/);
   });
 
-  it("钥匙没填的时候，那条路先指到顶栏「AI 设置」", async () => {
-    // 没有钥匙，「分析本章」按下去只会得到一句「未完成」——空态得把前一步说出来。
+  it("模型服务没配好的时候，空态第一句是「先连接模型」，那条路一站一站画出来", async () => {
+    // 作者 2026-09-13：「这边的文字最应该首选是引导用户配置一个模型……比如画个设置的图标
+    // -> connection -> endpoint -> 应用……在引导前边应该加个说明的语句」。
+    const user = userEvent.setup();
     renderWithApi(<RightPanel />, [
       { match: /\/roster$/, body: [] },
-      { match: /\/api\/settings$/, body: fixtures.settings },
+      { match: /\/api\/settings$/, body: fixtures.settings }, // model_configured: false
     ]);
-    expect(await screen.findByText(/在顶栏「AI 设置」填入 API 密钥后/)).toBeInTheDocument();
+    expect(
+      await screen.findByText("角色册由模型从正文中整理，需先连接模型服务："),
+    ).toBeInTheDocument();
+    const steps = screen.getByText(/模型服务/, { selector: ".model-guide-steps" });
+    expect(steps.textContent).toBe("AI 设置 → 模型服务 → 服务地址 · 模型 · API 密钥 → 应用");
+    // 手动那条路退成第二句；「在「事件」中分析本章」那条不在（没配好点了也白点）
+    expect(screen.getByText(/手动添加第一个条目/)).toBeInTheDocument();
+    expect(screen.queryByText(/在「事件」中分析本章/)).toBeNull();
+    // 「AI 设置」是一颗链接：点它直接开到「模型服务」那一栏
+    await user.click(screen.getByRole("button", { name: "AI 设置" }));
+    expect(useCoords.getState().settingsOpen).toBe("link");
   });
 
   it("角色册空态里的「在「事件」中分析本章」是一条路：点它就到「事件」那一格", async () => {

@@ -1143,6 +1143,11 @@
     "surface": "魔尊",
     "usable_for_rules": true
   },
+  "background": {
+    "configured": true,
+    "queued": [],
+    "running": []
+  },
   "bootstrapImport": {
     "import_report": {
       "chapter_count": 1,
@@ -2898,6 +2903,7 @@
     "graph_max_nodes": null,
     "graph_max_nodes_default": 1000,
     "model": "",
+    "model_configured": false,
     "review_card_edits": false
   },
   "settingsSaved": {
@@ -2912,6 +2918,7 @@
     "graph_max_nodes": null,
     "graph_max_nodes_default": 1000,
     "model": "deepseek-v4-flash",
+    "model_configured": true,
     "review_card_edits": false
   },
   "stateDims": [

@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import {
+  useAiSettings,
   useChatDetail,
   useChats,
   useCreateChat,
@@ -34,6 +35,7 @@ import { useLiveDraft } from "../liveDraft";
 import { ChatSessions } from "./ChatSessions";
 import { BotIcon, ConversationsIcon, SendIcon, StopIcon } from "./icons";
 import { DraftCandidates } from "./DraftCandidates";
+import { ModelGuide } from "./ModelGuide";
 
 // 写作助手（模式二，[ADR 0019](docs/adr/0019-agent-loop-not-graph.md)）。
 // 中栏对半分之后的右半边：左边正文、右边它。左栏书架和右栏面板一个像素不动。
@@ -380,6 +382,7 @@ export function ChatPanel() {
   const { projectId, chapter, chatId, setChat } = useCoords();
   const language = useLanguage((s) => s.language);
   const pid = projectId ?? "";
+  const ai = useAiSettings(); // 输入框上面那句「先连接模型」要知道配好了没有
   const sessions = useChats(projectId);
   const detail = useChatDetail(projectId, chatId);
   const create = useCreateChat(pid);
@@ -845,6 +848,13 @@ export function ChatPanel() {
       </div>
 
       <div className="chat-say" ref={sayRef} hidden={listOpen}>
+        {/* 模型服务没配好：发出去只会换来一句「无法连接写作模型」。先在框上面把路画出来
+            （作者 2026-09-13：「模式二发送一句话的情况下，都应该提醒用户配置」）。 */}
+        {ai.data && !ai.data.model_configured && (
+          <div className="chat-say-guide">
+            <ModelGuide what="chat" />
+          </div>
+        )}
         {/* 输入框和那颗发送**是一个盒子**（`.chat-say-box`）：按钮吊在框内右下角，
             文字的右边和下边给它让出了位置（`.chat-say-box textarea` 的内边距）。
             它原来是框底下单独一行、写着「发送」两个字——作者要的是「放进框里、

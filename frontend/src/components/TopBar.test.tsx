@@ -3,7 +3,7 @@ import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useEffect } from "react";
 import { beforeEach, describe, expect, it } from "vitest";
-import { renderWithApi } from "../test/harness";
+import { fixtures, renderWithApi } from "../test/harness";
 import { usePaneCollapse } from "../paneCollapse";
 import { useCoords } from "../store";
 import { TopBar } from "./TopBar";
@@ -268,5 +268,50 @@ describe("顶栏", () => {
     expect(shape("右栏")).toBe(spread); // 一颗只管自己那一边
     expect(screen.getByRole("button", { name: "左栏" })).not.toHaveClass("on"); // 收起退回灰
     expect(screen.getByRole("button", { name: "右栏" })).toHaveClass("on");
+  });
+});
+
+describe("笔尖右边那盏灯（作者 2026-09-13 要的）", () => {
+  // 作者第一次用桌面版：「一旦我切换到角色栏……再返回这个状态就丢失」「我都不知道现在是
+  // 成功了还是失败了」。灯读的是后台那一行（`/background`，每 4 秒一问），不是某颗按钮
+  // 的局部状态，换 tab 换页都还在。
+  it("灰：模型服务没配好——点它开到「模型服务」那一栏", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<TopBar />, [
+      { match: /\/api\/settings$/, body: fixtures.settings }, // model_configured: false
+      { match: /\/background$/, body: { configured: false, running: [], queued: [] } },
+    ]);
+    const light = await screen.findByRole("button", { name: /未连接模型/ });
+    expect(light).toHaveClass("off");
+    expect(light.getAttribute("data-tip")).toMatch(/服务地址、模型和 API 密钥/);
+    await user.click(light);
+    expect(useCoords.getState().settingsOpen).toBe("link");
+  });
+
+  it("绿：配好了、后台闲着", async () => {
+    renderWithApi(<TopBar />, [{ match: /\/api\/settings$/, body: fixtures.settingsSaved }]);
+    expect(await screen.findByRole("button", { name: "模型已连接" })).toHaveClass("ready");
+  });
+
+  it("黄：后台正在整理——那句话按右栏当前那一格说它在生成什么，排队的也报", async () => {
+    useCoords.setState({ activeTab: "roster" });
+    renderWithApi(<TopBar />, [
+      { match: /\/api\/settings$/, body: fixtures.settingsSaved },
+      { match: /\/background$/, body: { configured: true, running: [12], queued: [13, 14] } },
+    ]);
+    const light = await screen.findByRole("button", {
+      name: "正在生成角色册（第 12 章），还有 2 章排队",
+    });
+    expect(light).toHaveClass("busy");
+    // 换到「事件」那一格，同一盏灯改口
+    useCoords.setState({ activeTab: "review" });
+    expect(
+      await screen.findByRole("button", { name: "正在生成事件（第 12 章），还有 2 章排队" }),
+    ).toBeInTheDocument();
+    // 「检验规则」不由模型生成：只报章号
+    useCoords.setState({ activeTab: "check" });
+    expect(
+      await screen.findByRole("button", { name: "正在分析第 12 章，还有 2 章排队" }),
+    ).toBeInTheDocument();
   });
 });

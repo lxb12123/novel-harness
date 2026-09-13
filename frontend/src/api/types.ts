@@ -62,6 +62,18 @@ export interface AiSettings {
    *  **后两档的数字一模一样**（都是地板值），只有这一位分得开——少给上文是静默的，
    *  作者只会觉得模型忽然变笨，所以这个数为什么小必须说得出来。 */
   continuation_tail_basis: "model_window" | "unknown_window" | "unconfigured";
+  /** 服务地址 / 模型 / 钥匙三样都在了没有。**判在后端**（`deps.model_configured`）：
+   *  环境变量兜底那一档前端看不见。顶栏那盏灯、每一格「先连接模型」的空态、
+   *  续写要不要开口，问的都是这一位。 */
+  model_configured: boolean;
+}
+
+/** 顶栏那盏灯读的一行（`GET /api/projects/{pid}/background`，2026-09-13）：
+ *  `running` = 正在整理的章号，`queued` = 排着还没轮到的。两者都空 = 闲着。 */
+export interface BackgroundStatus {
+  configured: boolean;
+  running: number[];
+  queued: number[];
 }
 
 export interface AiSettingsInput {

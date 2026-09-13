@@ -4,6 +4,7 @@ import { api, proj } from "./client";
 import { runTurnStream } from "./turnStream";
 import { useLiveDraft } from "../liveDraft";
 import type {
+  BackgroundStatus,
   ActivityDetail,
   ActivityPage,
   AiSettings,
@@ -69,6 +70,42 @@ export function useAiSettings() {
     queryKey: q(["settings"]),
     queryFn: () => api.get<AiSettings>("/api/settings"),
   });
+}
+
+/** 这本书后台有没有活在跑（顶栏那盏灯 + 「分析本章」的忙态 + 跑完自动重取）。
+ *
+ *  **每 4 秒问一次**——这是全仓唯一一处定时轮询，理由写在这儿：后台整理（保存触发、
+ *  扫描、「分析本章」）在另一条线程上跑，没有任何一条推送能把「跑完了」送到屏幕上；
+ *  从前作者只能换一次 tab 碰运气。一次请求是两条 SELECT，桌面壳的 uvicorn 不记访问日志。
+ *  挂在顶栏（`StatusLight`）上就够了：react-query 按 key 去重，别处再读同一份不会多问。
+ *
+ *  **从「有活」变成「没活」那一刻，把后台会改的读端全部重取**：角色册、情节、通知、
+ *  总结、活动记录——作者要的是「自动出现」，而不是「切一次 tab 才看见」。判据是
+ *  眼皮底下的那次变化，不是「现在没活」：刚打开页面时没活，什么都不用重取。 */
+export function useBackgroundStatus(pid: string | null) {
+  const qc = useQueryClient();
+  const query = useQuery({
+    queryKey: q(["background", pid]),
+    queryFn: () => api.get<BackgroundStatus>(proj(pid!, "/background")),
+    enabled: !!pid,
+    refetchInterval: 4000,
+  });
+  const busy = !!query.data && query.data.running.length + query.data.queued.length > 0;
+  const wasBusy = useRef(false);
+  useEffect(() => {
+    if (!pid || !query.data) return;
+    if (busy) {
+      wasBusy.current = true;
+      return;
+    }
+    if (!wasBusy.current) return;
+    wasBusy.current = false;
+    invalidateReview(qc, pid);
+    invalidateSummaries(qc, pid);
+    qc.invalidateQueries({ queryKey: ["activity", pid] });
+    qc.invalidateQueries({ queryKey: ["runs", pid] });
+  }, [qc, pid, busy, query.data]);
+  return query;
 }
 
 export function useSaveAiSettings() {

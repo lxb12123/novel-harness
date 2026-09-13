@@ -167,6 +167,32 @@ describe("AI 设置（BYOK）", () => {
     expect(screen.queryByRole("button", { name: /密钥$/ })).toBeNull();
   });
 
+  it("三样缺一样就不发，并且说清缺的是哪样（作者 2026-09-13）", async () => {
+    // 后端「空 = 保持原值」会把少填的一次存成半套配置——屏幕上像存好了，模型却调不起来。
+    // 这一份：钥匙存过一把、地址和模型空着（钥匙那格的 `on` 是「设置回来了」的信号）。
+    const halfway = { ...fixtures.settingsSaved, base_url: "", model: "", model_configured: false };
+    renderWithApi(<SettingsDrawer onClose={() => {}} />, [
+      { match: /\/api\/settings$/, body: halfway },
+      { method: "PUT", match: /\/api\/settings$/, body: fixtures.settingsSaved },
+    ]);
+    openLink();
+    const spy = watchFetch();
+    await waitFor(() => expect(screen.getByLabelText("API 密钥")).toHaveClass("on"));
+    fireEvent.change(screen.getByLabelText("服务地址"), {
+      target: { value: "https://api.deepseek.com" },
+    });
+    fireEvent.click(applyIn("set-card-link"));
+    expect(await screen.findByRole("alert")).toHaveTextContent("尚未填写模型，三项齐全后再应用");
+    expect(
+      spy.mock.calls.filter(([, init]) => (init as RequestInit)?.method === "PUT"),
+    ).toHaveLength(0);
+
+    fireEvent.change(screen.getByLabelText("模型"), { target: { value: "deepseek-v4-flash" } });
+    fireEvent.click(applyIn("set-card-link"));
+    await waitFor(() => expect(savedBody(spy).model).toBe("deepseek-v4-flash"));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("框空着提交时**不带** `api_key` 这一位（= 保持原钥匙）", async () => {
     // 屏幕上原来那句「留空则保留原来的密钥」2026-08-14 撤了，界面不再解释这件事——
     // **那件事本身还在**，而它现在只由这条断言守着。发一个空串上去就是把钥匙清掉。

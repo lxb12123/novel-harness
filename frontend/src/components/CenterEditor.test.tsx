@@ -412,7 +412,8 @@ describe("写作助手开着时的续写（模式二默认没有）", () => {
     useCoords.setState({ chatOpen: true });
     const draft = draftRoute();
     renderWithApi(<CenterEditor />, [
-      { match: /\/api\/settings$/, body: { ...fixtures.settings, continuation_in_agent_mode: true } },
+      // 配好了的那一份：没配好的话续写根本不开口（`shouldSuggest` 的 `modelConfigured`）。
+      { match: /\/api\/settings$/, body: { ...fixtures.settingsSaved, continuation_in_agent_mode: true } },
       draft.handler,
     ]);
     await textLoaded();

@@ -22,6 +22,8 @@ export type Tab =
  *  **`"prep"`（章节准备）2026-08-13 删了**，理由记在 `TopBar.tsx` 那段注释里
  *  （三张读卡是右栏的第二个入口，两个表单写完没人读）。 */
 export type Page = "workbench" | "log";
+/** 「AI 设置」那扇窗的三栏（`SettingsDrawer.tsx::TABS` 的 key，那儿是名字的真值）。 */
+export type SettingsTab = "personal" | "system" | "link";
 interface Coords {
   projectId: string | null;
   chapter: number;
@@ -65,8 +67,16 @@ interface Coords {
    *  一个 ref，搬进来是因为**换书的人不只 App 一个**：左栏点另一本书的某一章时，
    *  光标在那一下就已经由作者亲手定好了，得有个地方说出来。 */
   cursorFor: string | null;
+  /** 「AI 设置」那扇窗开着没有、开在哪一栏。`null` = 关着。
+   *
+   *  它原先是 `TopBar` 的局部状态；搬进来是因为**要开它的不只齿轮一颗**（2026-09-13）：
+   *  每一格「先连接模型」的空态、顶栏那盏灰灯，都要能把作者直接送到「模型服务」那一栏，
+   *  而它们和齿轮隔着整棵组件树。 */
+  settingsOpen: SettingsTab | null;
 
   setProject: (id: string) => void;
+  openSettings: (tab?: SettingsTab) => void;
+  closeSettings: () => void;
   setChapter: (n: number) => void;
   /** 打开 / 关掉 Canon 边纠错弹窗（Task 8）。`edgeId` 来自后端的 `jump.edge_id`。 */
   setEdgeFocus: (edgeId: string | null) => void;
@@ -118,6 +128,9 @@ export const useCoords = create<Coords>((set) => ({
   chatOpen: false,
   chatId: null,
   cursorFor: null,
+  settingsOpen: null,
+  openSettings: (tab = "personal") => set({ settingsOpen: tab }),
+  closeSettings: () => set({ settingsOpen: null }),
 
   // 换书要**把摊开的那段对话一起放下**：`chat_session` 是按书存的，
   // 留着上一本书的 id 就是一次必然 404 的详情请求，而屏幕上会是一句

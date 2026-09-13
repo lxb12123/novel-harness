@@ -20,6 +20,7 @@ import { CharacterRelations } from "./CharacterRelations";
 import { CharacterStatus } from "./CharacterStatus";
 import { CloudFrame } from "./CloudFrame";
 import { CollapseIcon, PlusIcon, SortIcon } from "./icons";
+import { ModelGuide } from "./ModelGuide";
 import { RosterDrawer } from "./RosterDrawer";
 
 // 角色册：右栏的第一格，也是默认那一格。
@@ -248,8 +249,8 @@ export function RosterTab() {
   const language = useLanguage((s) => s.language);
   const roster = useRoster(projectId);
   const projects = useProjects();
-  // 只为空态那一句读：钥匙没填的时候，「分析本章」那条路要先指到顶栏「AI 设置」去。
-  // 同一份缓存（`["settings"]`）设置抽屉也在读，不多一次请求。
+  // 只为空态读：模型服务没配好的时候，空态的第一句是「先连接模型」（`ModelGuide`）。
+  // 同一份缓存（`["settings"]`）设置抽屉和顶栏那盏灯也在读，不多一次请求。
   const ai = useAiSettings();
   const [adding, setAdding] = useState(false);
   const [order, setOrder] = useState<Order>("desc");
@@ -340,17 +341,24 @@ export function RosterTab() {
         // 作者人物只能手填。分析的入口在「事件」那一格的工具栏上（作者 2026-09-05
         // 定的位置），这儿只指路，不再摆第二颗会花钱的按钮。钥匙没填就先指去填：
         // 没有钥匙那颗按钮按下去只会得到一句「未完成」。
+        // 模型服务没配好：**先说怎么连模型**（`ModelGuide`），手动加那条路退成第二句——
+        // 作者 2026-09-13：「这边的文字最应该首选是引导用户配置一个模型」。
+        ai.data && !ai.data.model_configured ? (
+          <div className="empty">
+            <ModelGuide what="roster" />
+            {language === "zh" ? "也可以" : "You can also "}
+            <a onClick={() => projectId && setAdding(true)}>
+              {language === "zh" ? "手动添加第一个条目" : "add the first entry by hand"}
+            </a>
+            {language === "zh" ? "。" : "."}
+          </div>
+        ) : (
         <div className="empty">
           {language === "zh" ? "尚无人物或设定。" : "No characters or settings yet. "}
           <a onClick={() => projectId && setAdding(true)}>
             {language === "zh" ? "添加第一个条目" : "Add the first entry"}
           </a>
           {language === "zh" ? "，或" : ", or "}
-          {ai.data && !ai.data.api_key_set && (
-            language === "zh"
-              ? "在顶栏「AI 设置」填入 API 密钥后"
-              : "enter an API key under “AI Settings” in the top bar and "
-          )}
           <a onClick={() => setTab("review")}>
             {language === "zh" ? "在「事件」中分析本章" : "analyze this chapter under “Events”"}
           </a>
@@ -358,6 +366,7 @@ export function RosterTab() {
             ? "。正文中的人物、地点、势力会自动整理到此处；保存正文后也会自动分析。"
             : ". Characters, locations and factions in the text are added here automatically; saving the text also runs an analysis."}
         </div>
+        )
       ) : (
         <>
           {Object.keys(groups)

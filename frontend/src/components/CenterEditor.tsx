@@ -407,6 +407,7 @@ export function CenterEditor() {
                 loading: !data,
                 assistantOpen: chatOpen,
                 continuationInAgentMode: settings.data?.continuation_in_agent_mode,
+                modelConfigured: settings.data?.model_configured,
               })
             ) {
               return;

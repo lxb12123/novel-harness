@@ -78,7 +78,19 @@ def test_get_settings_starts_empty(client: TestClient) -> None:
         # 这条缝两头由 `tests/test_continuation_tail_limit.py` 钉着。
         "continuation_tail_limit": 800,
         "continuation_tail_basis": "unconfigured",
+        # 三样都在了没有——右上那盏灯和每一格的空态问的是这一位（判在后端，环境变量
+        # 兜底那一档前端看不见）。一个字都没配过 = False。
+        "model_configured": False,
     }
+
+
+def test_model_configured_needs_all_three(client: TestClient) -> None:
+    """服务地址 / 模型 / 钥匙缺任何一样都不算配好——少一样模型就调不起来，而灯要说实话。"""
+    assert client.get("/api/settings").json()["model_configured"] is False
+    r = client.put("/api/settings", json={"base_url": "https://x.example", "model": "m"})
+    assert r.status_code == 200 and r.json()["model_configured"] is False
+    r = client.put("/api/settings", json={"api_key": "sk-123456"})
+    assert r.status_code == 200 and r.json()["model_configured"] is True
 
 
 def test_put_saves_and_never_returns_the_full_key(client: TestClient) -> None:

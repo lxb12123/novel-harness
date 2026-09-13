@@ -40,6 +40,12 @@ const say = () => screen.getByRole("textbox", { name: "输入消息" });
 const sendBtn = () => screen.getByRole("button", { name: "发送" });
 
 describe("对话摊在中栏右半边", () => {
+  it("模型服务没配好：输入框上面先画「先连接模型」那条路（作者 2026-09-13）", async () => {
+    renderWithApi(<ChatPanel />, [{ match: /\/api\/settings$/, body: fixtures.settings }]);
+    expect(await screen.findByText("写作助手需先连接模型服务：")).toBeInTheDocument();
+    // 配好了那一份就没有这一段
+  });
+
   it("说过的话两边都在，而且分得出谁说的", async () => {
     renderWithApi(<ChatPanel />);
     await screen.findByText(fixtures.chatDetail.messages[0].text);

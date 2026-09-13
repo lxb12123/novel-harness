@@ -97,10 +97,12 @@ from .deps import (
     get_store,
     get_summarizer,
     load_project,
+    model_configured,
     resolve_route_capabilities,
 )
 from . import manuscript
 from .activity import router as activity_router
+from .background_status import router as background_status_router
 from .characters import router as characters_router
 from .chat import router as chat_router
 from .extraction import router as extraction_router
@@ -287,6 +289,9 @@ async def _lifespan(_: FastAPI) -> Any:
 
             runtime = build_runtime()
             runtime.start()
+            # 留个把手给 `PUT /api/settings`：作者刚把模型服务配好那一刻要立刻扫一轮
+            # （`BackgroundRuntime.kick`），不让他对着空角色册等半小时。
+            app.state.runtime = runtime
         except Exception:
             # 库/模型没那么好时也要能启动（作者可能先建书再看设置）——dispatcher
             # 的 adapter 只在真的 claim 到 attempt 时才构造。**但失败必须留痕**：
@@ -299,12 +304,14 @@ async def _lifespan(_: FastAPI) -> Any:
     try:
         yield
     finally:
+        app.state.runtime = None
         if runtime is not None:
             runtime.stop()
 
 
 app = FastAPI(title="Novel Harness 工作台", lifespan=_lifespan)
 app.include_router(activity_router)
+app.include_router(background_status_router)
 app.include_router(characters_router)
 app.include_router(chat_router)
 app.include_router(extraction_router)
@@ -595,6 +602,9 @@ def _settings_response(settings: UserSettings) -> dict[str, Any]:
         # 就在拿它，而这个数只随「换了模型/改了窗口」变，正是这条返回会变的时候。
         "continuation_tail_limit": tail_limit,
         "continuation_tail_basis": tail_basis,
+        # 三样（服务地址 / 模型 / 钥匙）都在了没有——右上那盏灯、每一格的空态都问它。
+        # **判在后端**（`deps.model_configured`）：环境变量兜底那一档前端看不见。
+        "model_configured": model_configured(),
     }
 
 
@@ -640,6 +650,11 @@ def put_settings(body: SettingsBody) -> dict[str, Any]:
         ),
     )
     save_user_settings(merged)
+    # 配好了就立刻扫一轮：这是初始化真正开始的那一刻（作者 2026-09-13：「配置好 key 后
+    # 就应该开始生产 1 次」）。没配齐不扫（`_loop` 那边也会拦）；没有后台（测试）就算了。
+    runtime = getattr(app.state, "runtime", None)
+    if runtime is not None and model_configured():
+        runtime.kick()
     return _settings_response(merged)
 
 

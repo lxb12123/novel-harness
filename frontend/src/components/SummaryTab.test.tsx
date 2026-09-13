@@ -98,6 +98,16 @@ describe("章节总结这一格", () => {
     expect(screen.queryByText(/添加人物或设定后/)).toBeNull();
   });
 
+  it("模型服务没配好、又没有总结：第一句是「先连接模型」，不再说「保存后自动生成」", async () => {
+    // 那两条路（保存后自动生成 / 点「生成」）没配好都走不通——先把路画出来（作者 2026-09-13）。
+    renderSpying(<SummaryTab />, [
+      ...summaryRoute(NONE),
+      { match: /\/api\/settings$/, body: fixtures.settings }, // model_configured: false
+    ]);
+    expect(await screen.findByText("章节总结由模型生成，需先连接模型服务：")).toBeInTheDocument();
+    expect(screen.queryByText(/保存正文后将自动生成/)).toBeNull();
+  });
+
   it("改一段 → 保存，发出去的就是他打的那段字", async () => {
     const user = userEvent.setup();
     const { calls } = renderSpying(<SummaryTab />);

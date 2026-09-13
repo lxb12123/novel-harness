@@ -362,7 +362,7 @@ export function RightPanel() {
   // 各说各的空态，谁也不替谁挡。
 
   return (
-    <section className="pane">
+    <section className="pane pane-right">
       <div className="tabs">
         {/* **图标在左、字在右**（作者 2026-09-09；此前是反过来的，2026-09-06 定的）。
             图标是 `aria-hidden` 的，所以这颗按钮的可及名字仍然只是那几个字——

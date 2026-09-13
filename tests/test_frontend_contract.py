@@ -345,6 +345,9 @@ def test_frontend_fixture_matches_the_real_api(
     # （那次总结走的是真 `record_call`，桩没给 token 数）。也就是「合计只算得上一半」
     # 那一屏——它是默认路由下最常见的一档，所以给它主名字。
     grab("runs", client.get(f"{base}/runs"))
+    # 顶栏那盏灯读的一行（2026-09-13）。这一刻没有活在跑也没有排着的——空态那一档；
+    # 亮黄那一档由组件测试自己改数字造（形状照这份）。
+    grab("background", client.get(f"{base}/background"))
 
     # ── 已生效事件 + 改它的知情/在场名单（1.1 的另一半）──────────────────────
     # **放在活动日志之后是有意的**：这次编辑会多写一条 `decision_log`，冻在上面那份

@@ -214,6 +214,83 @@ describe("已确认的情节：谁在场、谁知道了", () => {
     expect(document.body.textContent).not.toMatch(/Internal Server Error/);
   });
 
+  it("忙态跟着后台那一行走：这一章在 running 里，按钮就是忙的——换个 tab 回来也一样", async () => {
+    // 作者 2026-09-13：「一旦我切换到角色栏，或者通知那边再返回这个状态就丢失」。
+    // 忙态不再只看自己那次 POST 回的 run，还看 `/background`（顶栏那盏灯读的同一份）。
+    useCoords.setState({ chapter: 12 });
+    renderWithApi(<CanonEventCast canonVersion={6} />, [
+      { match: /\/background$/, body: { configured: true, running: [12], queued: [] } },
+    ]);
+    const analyze = await screen.findByRole("button", { name: "分析本章" });
+    await waitFor(() => expect(analyze).toBeDisabled());
+    expect(analyze).toHaveClass("busy");
+    expect(analyze.getAttribute("data-tip")).toBe("分析中…");
+  });
+
+  it("上一次失败的 run 原样回来时，自动带 force 再发一次——第二次点击不许没反应", async () => {
+    // 不带 force 的 POST 见到已经失败的同一条 run 会原样还回来（202、status FAILED）；
+    // 从前「说过的 run 不再说」的守卫让这一下悄无声息。
+    const user = userEvent.setup();
+    renderWithApi(<CanonEventCast canonVersion={6} />, [
+      {
+        method: "POST",
+        match: /\/extract\?force=true/,
+        body: { ...fixtures.extractionRun, id: "extraction_run:RETRY", status: "PENDING" },
+      },
+      {
+        method: "POST",
+        match: /\/chapters\/\d+\/extract$/,
+        body: { ...fixtures.extractionRun, status: "FAILED", errors: ["model_unreachable"] },
+      },
+      { match: /\/extractions\/extraction_run:RETRY$/, body: { ...fixtures.extractionRun, id: "extraction_run:RETRY" } },
+    ]);
+    const spy = vi.spyOn(globalThis, "fetch");
+    await user.click(await screen.findByRole("button", { name: "分析本章" }));
+    await waitFor(() =>
+      expect(
+        posts(spy as unknown as Calls).some((c) => /force=true/.test(String(c[0]))),
+      ).toBe(true),
+    );
+    expect(await screen.findByText(/整理出 3 条情节/)).toBeInTheDocument();
+  });
+
+  it("失败那句话留着、带一个 ×；成功的那句四秒就走", async () => {
+    // 作者 2026-09-13：「他报错停留时间太短了，然后就消失了」。
+    const user = userEvent.setup();
+    renderWithApi(<CanonEventCast canonVersion={6} />, [
+      {
+        method: "POST",
+        match: /\/chapters\/\d+\/extract/,
+        body: { ...fixtures.extractionRun, status: "PENDING" },
+      },
+      {
+        match: /\/extractions\//,
+        body: { ...fixtures.extractionRun, status: "FAILED", errors: ["model_unreachable"] },
+      },
+    ]);
+    await user.click(await screen.findByRole("button", { name: "分析本章" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toMatch(/本章分析未完成/);
+    expect(alert).toHaveClass("sticky");
+    await user.click(within(alert).getByRole("button", { name: "关闭" }));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("模型服务没配好：空态先说「先连接模型」，「分析本章」那颗按钮按下去是去配、不是去跑", async () => {
+    const user = userEvent.setup();
+    renderWithApi(<CanonEventCast canonVersion={6} />, [
+      { match: /\/chapters\/\d+\/events\?scope=CANON/, body: [] },
+      { match: /\/api\/settings$/, body: fixtures.settings }, // model_configured: false
+    ]);
+    const spy = vi.spyOn(globalThis, "fetch");
+    expect(await screen.findByText("事件由模型从正文中整理，需先连接模型服务：")).toBeInTheDocument();
+    const analyze = screen.getByRole("button", { name: "分析本章" });
+    await waitFor(() => expect(analyze.getAttribute("data-tip")).toBe("先连接模型"));
+    await user.click(analyze);
+    expect(useCoords.getState().settingsOpen).toBe("link");
+    expect(posts(spy as unknown as Calls)).toHaveLength(0);
+  });
+
   it("这一章一条都没有的时候说人话，不摆一张空表", async () => {
     renderWithApi(<CanonEventCast canonVersion={6} />, [
       { match: /\/chapters\/\d+\/events\?scope=CANON/, body: [] },

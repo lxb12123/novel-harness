@@ -111,19 +111,35 @@ def get_event_store(conn: Connection = Depends(get_conn)) -> SqliteEventStore:
     return SqliteEventStore(conn)
 
 
-def _byok_config(temperature: float | None) -> ProviderConfig:
-    """Resolve BYOK settings only when a background job actually calls the model.
+def _byok_values() -> tuple[str, str, str]:
+    """`(base_url, model, api_key)`，设置页优先、环境变量兜底。
 
-    设置页优先、环境变量兜底的**顺序**是产品决定（桌面作者没有环境变量，钥匙在设置页里）；
-    它在本壳里有三个消费者（抽取 / 总结 / 起草），所以这个顺序只在这里写一次。
+    这个**顺序**是产品决定（桌面作者没有环境变量，钥匙在设置页里）；它在本壳里有三个
+    消费者（抽取 / 总结 / 起草）外加「配好了没有」这一问，所以只在这里写一次。
+    只取值不校验：`ProviderConfig` 见到空模型名会抛，而「空着」正是下面那个判断要回答的。
     """
     user = load_user_settings()
-    return ProviderConfig(
-        base_url=user.base_url or os.environ.get("NH_LLM_BASE_URL", ""),
-        model=user.model or os.environ.get("NH_LLM_MODEL", ""),
-        api_key=user.api_key or os.environ.get("NH_LLM_API_KEY", ""),
-        temperature=temperature,
+    return (
+        user.base_url or os.environ.get("NH_LLM_BASE_URL", ""),
+        user.model or os.environ.get("NH_LLM_MODEL", ""),
+        user.api_key or os.environ.get("NH_LLM_API_KEY", ""),
     )
+
+
+def _byok_config(temperature: float | None) -> ProviderConfig:
+    """Resolve BYOK settings only when a background job actually calls the model."""
+    base_url, model, api_key = _byok_values()
+    return ProviderConfig(base_url=base_url, model=model, api_key=api_key, temperature=temperature)
+
+
+def model_configured() -> bool:
+    """模型服务三样（服务地址 / 模型 / 钥匙）是不是都在——**判据只写这一处**。
+
+    右上那盏灯、每一格的空态、30 分钟扫描要不要跑，问的都是这一个问题。读的是
+    `_byok_values` 那份解析，所以「设置页空着但环境变量给了」照样算配好——
+    Web 调试线就是这么跑的。
+    """
+    return all(_byok_values())
 
 
 def resolve_route_capabilities(config: ProviderConfig) -> ProviderCapabilities:

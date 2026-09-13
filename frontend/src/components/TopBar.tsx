@@ -1,7 +1,7 @@
 import { useIsMutating } from "@tanstack/react-query";
-import { useState } from "react";
-import { useLanguage } from "../language";
-import { useCoords } from "../store";
+import { useAiSettings, useBackgroundStatus } from "../api/hooks";
+import { useLanguage, type Language } from "../language";
+import { useCoords, type Tab } from "../store";
 import { BotIcon, GearIcon, LogIcon, NibIcon, ThinkingSpinner, WingIcon } from "./icons";
 import { usePaneCollapse } from "../paneCollapse";
 import { SettingsDrawer } from "./SettingsDrawer";
@@ -26,11 +26,11 @@ import { SettingsDrawer } from "./SettingsDrawer";
 // 右栏显示数出来的结果。作者要覆盖就点场景块，那是他在正文里亲手标的。
 export function TopBar() {
   const language = useLanguage((s) => s.language);
-  const { page, chatOpen, setPage, toggleChat } = useCoords();
+  const { page, chatOpen, setPage, toggleChat, settingsOpen, openSettings, closeSettings } =
+    useCoords();
   const leftCollapsed = usePaneCollapse((s) => s.left);
   const rightCollapsed = usePaneCollapse((s) => s.right);
   const togglePane = usePaneCollapse((s) => s.toggle);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   // 续写（行内灰字建议）请求正不正在飞，跟这本书这一章都无关——**只要有一个在飞就转**，
   // 不用挑 key（同 mutationKey 那边的注释）。
   const continuationPending = useIsMutating({ mutationKey: ["continuation"] }) > 0;
@@ -151,6 +151,8 @@ export function TopBar() {
         )}
       </button>
 
+      <StatusLight />
+
       </div>
 
       {/* 「AI 起草」那个抽屉 2026-08-10 删了：它是**填表式**的（先填「这一场要写什么」+
@@ -199,12 +201,79 @@ export function TopBar() {
         className="icon-btn tip-right"
         aria-label={language === "zh" ? "AI 设置" : "AI Settings"}
         data-tip={language === "zh" ? "AI 设置" : "AI Settings"}
-        onClick={() => setSettingsOpen(true)}
+        onClick={() => openSettings()}
       >
         <GearIcon />
       </button>
 
-      {settingsOpen && <SettingsDrawer onClose={() => setSettingsOpen(false)} />}
+      {settingsOpen && <SettingsDrawer initialTab={settingsOpen} onClose={closeSettings} />}
     </header>
   );
+}
+
+/** 右上那盏灯（作者 2026-09-13 要的，位置定在笔尖右边）：
+ *  **灰** = 模型服务没配好（服务地址 / 模型 / 钥匙缺一样）——点它开到「模型服务」那一栏；
+ *  **绿** = 配好了、后台闲着；
+ *  **黄** = 后台正在整理某一章——悬浮那句话按右栏当前那一格说它在生成什么
+ *  （作者的原话：正在生成角色卡 / 事件 / 通知，由右栏处于哪一格决定），点它去活动记录。
+ *
+ *  它读的是 `useBackgroundStatus`（每 4 秒一问）——那个 hook 挂在这儿就够了，别处再读
+ *  同一份不会多问。「有活」的判据是 running 或 queued 非空：排着没轮到的那几章也算，
+ *  作者关心的是「它还在不在干活」，不是哪一条线程此刻在跑。 */
+function StatusLight() {
+  const language = useLanguage((s) => s.language);
+  const { projectId, chapter, activeTab, openSettings, setPage } = useCoords();
+  const settings = useAiSettings();
+  const status = useBackgroundStatus(projectId);
+  const configured = settings.data?.model_configured ?? status.data?.configured;
+  if (configured === undefined) return null; // 还没读到：不亮一盏会说错话的灯
+  const running = status.data?.running ?? [];
+  const queued = status.data?.queued ?? [];
+  const busy = running.length + queued.length > 0;
+  const state = !configured ? "off" : busy ? "busy" : "ready";
+  const tip = lightText(state, language, { activeTab, chapter, running, queued });
+  return (
+    <button
+      type="button"
+      className={`icon-btn status-light ${state}`}
+      aria-label={tip}
+      data-tip={tip}
+      onClick={() => (state === "off" ? openSettings("link") : setPage("log"))}
+    >
+      <span className="light-dot" aria-hidden="true" />
+    </button>
+  );
+}
+
+/** 灯的三句话。黄那一档的名词跟着右栏当前那一格走：角色册 / 事件 / 章节总结 / 通知
+ *  都是同一次整理的产物，作者盯着哪一格，就说那一格「稍后更新」。「检验规则」不由模型
+ *  生成，落到只报章号的那一句。 */
+function lightText(
+  state: "off" | "ready" | "busy",
+  language: Language,
+  at: { activeTab: Tab; chapter: number; running: number[]; queued: number[] },
+): string {
+  if (state === "off") {
+    return language === "zh"
+      ? "未连接模型：在「AI 设置」中填写服务地址、模型和 API 密钥"
+      : "No model connected: enter the endpoint, model and API key under “AI Settings”";
+  }
+  if (state === "ready") return language === "zh" ? "模型已连接" : "Model connected";
+  const chapterNow = at.running[0] ?? at.queued[0] ?? at.chapter;
+  const more = at.running.length + at.queued.length - 1;
+  const noun = {
+    roster: { zh: "角色册", en: "the roster" },
+    review: { zh: "事件", en: "events" },
+    summary: { zh: "章节总结", en: "chapter summaries" },
+    notifications: { zh: "通知", en: "notifications" },
+    check: null,
+  }[at.activeTab];
+  if (language === "zh") {
+    const head = noun ? `正在生成${noun.zh}（第 ${chapterNow} 章）` : `正在分析第 ${chapterNow} 章`;
+    return more > 0 ? `${head}，还有 ${more} 章排队` : head;
+  }
+  const head = noun
+    ? `Generating ${noun.en} (chapter ${chapterNow})`
+    : `Analyzing chapter ${chapterNow}`;
+  return more > 0 ? `${head}, ${more} more queued` : head;
 }

@@ -105,8 +105,13 @@ export const BOOTSTRAP_IMPORT = fixtures.bootstrapImport;
 const DEFAULT: Handler[] = [
   // AI 设置。**中栏编辑器也在拿它**（续写能带多少上文是后端算的，跟着这条回来），
   // 所以它得是默认路由的一条，否则每块带编辑器的屏幕都会撞上「没准备 handler」。
-  // 给的是「一个字都没配过」那一份——要验配好之后长什么样的测试自己前置 `settingsSaved`。
-  { match: /\/api\/settings$/, body: fixtures.settings },
+  // 给的是**配好了**那一份（`settingsSaved`）。2026-09-13 之前默认是「一个字都没配过」，
+  // 那时它只影响设置窗和续写上限；现在模型服务没配好会让角色册 / 事件 / 章节总结 / 写作助手
+  // 的空态整个换成「先连接模型」那段（`ModelGuide`）——默认给没配过的那一份，每一条
+  // 验空态文案的测试都得先配一次。要验「没配好长什么样」的测试自己前置 `settings`。
+  { match: /\/api\/settings$/, body: fixtures.settingsSaved },
+  // 顶栏那盏灯每 4 秒问一次的那行（2026-09-13）。默认给「闲着、配好了」那一份。
+  { match: /\/background$/, body: fixtures.background },
   { method: "POST", match: /\/api\/projects\/bootstrap$/, body: BOOTSTRAP_IMPORT },
   { method: "POST", match: /\/sync$/, body: fixtures.sync },
   { match: /\/api\/projects$/, body: fixtures.projects },

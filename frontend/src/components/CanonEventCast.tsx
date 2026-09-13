@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  useAiSettings,
+  useBackgroundStatus,
   useCorrectEventCast,
   useEvents,
   useExtractionRun,
@@ -14,6 +16,7 @@ import { useLanguage, type Language } from "../language";
 import { useCoords } from "../store";
 import { CastPicker, DIMENSIONS, candidates, idsOf, same } from "./CastPicker";
 import { ScanIcon, SearchIcon, SortIcon } from "./icons";
+import { ModelGuide } from "./ModelGuide";
 import type { Dimension } from "./CastPicker";
 
 // 已经生效的情节：谁在场、谁知道了 —— 以及**改它**（`POST /canon/events/{id}/cast`）。
@@ -46,45 +49,98 @@ import type { Dimension } from "./CastPicker";
  *     本来就在这一栏的列表里（分析出来的情节）和「通知」那一格（待确认的提案）。
  *
  *  三态跟着那颗闪电的口径：**灰 = 没跑过 · 金黄 = 正在跑 · 绿 = 这一版正文跑过了**。
- *  绿不按秒退——「这一章分析过没有」是关于这一版正文的事实，不是动画；换章就回灰。 */
+ *  绿不按秒退——「这一章分析过没有」是关于这一版正文的事实，不是动画；换章就回灰。
+ *
+ *  ── 2026-09-13：作者第一次用桌面版指出的三条 ────────────────────────────
+ *  1. **忙态不许换个 tab 就丢。** 它原来只看自己那次 POST 回的 run；卸载再回来就是灰的，
+ *     而后台还在跑。现在忙态还看 `useBackgroundStatus` 那一行（顶栏那盏灯读的同一份）：
+ *     这一章在 running / queued 里就是忙——保存触发的、扫描排上的，也一样算。
+ *  2. **再点一次不许没反应。** 不带 `force` 的 POST 见到上一次失败的 run 会原样还回来，
+ *     而「说过的 run 不再说」的守卫让第二次点击悄无声息。现在：回来的是已经失败的
+ *     run → 立刻带 `force` 再发一次（「把没跑成的那一次再跑一遍」）；回来的是已经
+ *     成功的 → 说一句「这一版正文已分析过」。
+ *  3. **失败那句话不许四秒就没。** 成功的一句飘一下就走（作者定的），失败的留到他点掉、
+ *     再点一次或换章为止——「报错停留时间太短了」。 */
 function AnalyzeButton() {
-  const { projectId, chapter } = useCoords();
+  const { projectId, chapter, openSettings } = useCoords();
   const language = useLanguage((s) => s.language);
+  const settings = useAiSettings();
   const start = useStartExtraction(projectId!, chapter);
   const [runId, setRunId] = useState<string | null>(null);
   const run = useExtractionRun(projectId, runId);
-  const [toast, setToast] = useState<string | null>(null);
+  const background = useBackgroundStatus(projectId);
+  const [toast, setToast] = useState<{ line: string; sticky: boolean } | null>(null);
   const timer = useRef<number | null>(null);
+  /** 这一次点击还欠作者一句话（跑完了要说）。按点击记，不按 run 记：同一条 run 被
+   *  点第二次时也得开口。 */
+  const owed = useRef(false);
 
   // 换章 = 换一件事：上一章那次的运行号和那句话都不该跟着过来。
   useEffect(() => {
     setRunId(null);
     setToast(null);
+    owed.current = false;
   }, [chapter, projectId]);
   useEffect(() => () => {
     if (timer.current !== null) window.clearTimeout(timer.current);
   }, []);
 
-  const say = (line: string) => {
-    setToast(line);
+  const say = (line: string, sticky = false) => {
+    setToast({ line, sticky });
     if (timer.current !== null) window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(() => setToast(null), 4200);
+    timer.current = sticky ? null : window.setTimeout(() => setToast(null), 4200);
   };
 
-  // 跑完（成功或失败）说一句就走。**失败也要说**——一次没有任何反馈的失败，
+  // 跑完（成功或失败）说一句。**失败也要说**——一次没有任何反馈的失败，
   // 在这块屏幕上和「它还在想」长得一模一样（§10 约束 8）。
   const status = run.data?.status;
-  const said = useRef<string | null>(null);
   useEffect(() => {
     if (!run.data || !status || status === "PENDING" || status === "RUNNING") return;
-    if (said.current === run.data.id) return;
-    said.current = run.data.id;
-    say(analysisToast(run.data, language));
+    if (!owed.current) return;
+    owed.current = false;
+    say(analysisToast(run.data, language), status !== "SUCCEEDED");
   }, [run.data, status, language]);
 
-  const busy = start.isPending || status === "PENDING" || status === "RUNNING";
+  const running = background.data?.running ?? [];
+  const queued = background.data?.queued ?? [];
+  const busy =
+    start.isPending ||
+    status === "PENDING" ||
+    status === "RUNNING" ||
+    running.includes(chapter) ||
+    queued.includes(chapter);
   const done = status === "SUCCEEDED";
   const phase = busy ? "busy" : done ? "done" : "idle";
+  // 模型服务没配好：这颗按钮按下去只会得到一句「未完成」。改成把作者送去配——
+  // 悬浮说的也是这件事。同顶栏那盏灰灯的做法。
+  const unconfigured = settings.data !== undefined && !settings.data.model_configured;
+
+  const launch = (force: boolean) => {
+    if (!projectId) return;
+    setToast(null);
+    owed.current = true;
+    start.mutate(force ? { force: true } : undefined, {
+      onSuccess: (r) => {
+        if (r.status === "FAILED" && !force) {
+          // 上一次没跑成的那条原样回来了：再发一次带 force 的，把它原地重跑。
+          launch(true);
+          return;
+        }
+        setRunId(r.id);
+        if (r.status === "SUCCEEDED") {
+          owed.current = false;
+          say(alreadyAnalyzed(r, language));
+        }
+      },
+      // **起不了步也要说一句**（作者 2026-09-13：「点了也没有反应，画面就闪一下，
+      // 我都不知道现在是成功了还是失败了」）——那次是后端 500，按钮只从灰变
+      // 金黄再变回灰。跑起来之后失败有上面那条 effect 说话，起步就失败这儿说。
+      onError: (error) => {
+        owed.current = false;
+        say(startFailure(error, language), true);
+      },
+    });
+  };
 
   return (
     <>
@@ -95,25 +151,49 @@ function AnalyzeButton() {
         data-tip={
           busy
             ? language === "zh" ? "分析中…" : "Analyzing…"
-            : language === "zh" ? "分析本章" : "Analyze this chapter"
+            : unconfigured
+              ? language === "zh" ? "先连接模型" : "Connect a model first"
+              : language === "zh" ? "分析本章" : "Analyze this chapter"
         }
         disabled={!projectId || busy}
-        onClick={() => {
-          if (!projectId) return;
-          start.mutate(undefined, {
-            onSuccess: (r) => setRunId(r.id),
-            // **起不了步也要说一句**（作者 2026-09-13：「点了也没有反应，画面就闪一下，
-            // 我都不知道现在是成功了还是失败了」）——那次是后端 500，按钮只从灰变
-            // 金黄再变回灰。跑起来之后失败有上面那条 effect 说话，起步就失败这儿说。
-            onError: (error) => say(startFailure(error, language)),
-          });
-        }}
+        onClick={() => (unconfigured ? openSettings("link") : launch(false))}
       >
         <ScanIcon />
       </button>
-      {toast && <div className="check-toast">{toast}</div>}
+      {toast && (
+        <div
+          className={"check-toast" + (toast.sticky ? " sticky" : "")}
+          role={toast.sticky ? "alert" : "status"}
+        >
+          {toast.line}
+          {toast.sticky && (
+            <button
+              type="button"
+              className="toast-close"
+              aria-label={language === "zh" ? "关闭" : "Dismiss"}
+              onClick={() => setToast(null)}
+            >
+              ×
+            </button>
+          )}
+        </div>
+      )}
     </>
   );
+}
+
+/** 点了「分析本章」，回来的却是一条早就成功的 run：这一版正文已经分析过，说清楚，
+ *  别让他以为按钮没反应。 */
+function alreadyAnalyzed(run: ExtractionRun, language: Language): string {
+  if (language === "zh") {
+    return run.valid_event_count === 0
+      ? "这一版正文已分析过，未整理出情节"
+      : `这一版正文已分析过，整理出 ${run.valid_event_count} 条情节`;
+  }
+  const n = run.valid_event_count;
+  return n === 0
+    ? "This version of the text was already analyzed; no events were found"
+    : `This version of the text was already analyzed: ${n} event${n === 1 ? "" : "s"}`;
 }
 
 /** 「分析本章」连 run 都没建出来（POST 本身失败）时说什么。后端的拒绝（4xx，带码或带
@@ -243,6 +323,7 @@ export function CanonEventCast({ canonVersion }: { canonVersion: number }) {
   const language = useLanguage((s) => s.language);
   const events = useEvents(projectId, chapter, "CANON");
   const roster = useRoster(projectId);
+  const settings = useAiSettings(); // 空态那一句要知道模型服务配好了没有
   // **版本住在这个读端上，不在名单里**：`canonVersion` 是调用方从 `GET /api/projects`
   // 的 `canon_version` 上取的（事件出参里没有它——`tests/test_canon_edit_loop.py::
   // test_the_event_cast_editor_has_no_such_carrier` 钉了这条事实）。
@@ -375,11 +456,18 @@ export function CanonEventCast({ canonVersion }: { canonVersion: number }) {
           「分析本章」从正文里整理出来的，保存正文后也会自动分析——不说这一句，作者
           对着一张空单子只知道「还没有」，不知道它从哪儿来。 */}
       {!events.isLoading && views.length === 0 && !missing && (
+        settings.data && !settings.data.model_configured ? (
+          // 模型服务没配好：先说怎么连（`ModelGuide`），「分析本章」那句放在它后面才说得通。
+          <div className="empty">
+            <ModelGuide what="events" />
+          </div>
+        ) : (
         <span className="empty">
           {language === "zh"
             ? `截至第 ${chapter} 章尚无已确认的情节。点击上方「分析本章」从正文整理（保存正文后也会自动分析），确认后的情节在此显示，参与者可随时修改。`
             : `No confirmed events through chapter ${chapter} yet. Click “Analyze this chapter” above to collect them from the text (saving the text also runs an analysis); confirmed events appear here, and their cast can be changed at any time.`}
         </span>
+        )
       )}
       {/* 跳过来却找不到那一条：**说出来**，不要安静地摆一张看起来正常的单子。
           它可能已经被撤回，或者压根不在这一章。 */}

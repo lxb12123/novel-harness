@@ -1,5 +1,6 @@
 import { useState } from "react";
 import {
+  useAiSettings,
   useBookSummaryStatus,
   useChapterSummary,
   useEditSummary,
@@ -18,6 +19,7 @@ import { nodeLabelText } from "../backendMessages";
 import { refusalText } from "../chat";
 import { useLanguage, type Language } from "../language";
 import { useCoords } from "../store";
+import { ModelGuide } from "./ModelGuide";
 
 // 右栏「章节总结」这一格。**跟着左栏选中的那一章走**（同「检查」那几格）。
 //
@@ -95,6 +97,7 @@ export function SummaryTab() {
   const edit = useEditSummary(projectId ?? "");
   const retract = useRetractSummary(projectId ?? "");
   const generate = useGenerateSummary(projectId ?? "");
+  const ai = useAiSettings(); // 「尚无总结」那一句要知道模型服务配好了没有
 
   // 作者正在改的那一段。**`null` = 他没在改**，屏幕跟着服务端那份走。
   // 分成两个状态是因为重取随时会落地（后台整理刚补完一章总结就会），
@@ -205,7 +208,13 @@ export function SummaryTab() {
         onChange={(e) => setTyped(e.target.value)}
       />
 
-      {data.summary === null && (
+      {/* 模型服务没配好：「保存后自动生成 / 点「生成」」两条路都走不通，先说怎么连模型。 */}
+      {data.summary === null && ai.data && !ai.data.model_configured && (
+        <div className="empty chsum-why">
+          <ModelGuide what="summary" />
+        </div>
+      )}
+      {data.summary === null && !(ai.data && !ai.data.model_configured) && (
         // **零带着理由。** 两种零的下一步动作相反，所以它们说两句不一样的话。
         <p className="empty chsum-why">
           {language === "zh"

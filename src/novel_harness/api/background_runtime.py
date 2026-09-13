@@ -60,6 +60,11 @@ _log = logging.getLogger(__name__)
 AUTONOMY_INTERVAL: float = 30 * 60.0
 """自治调度默认间隔：30 分钟（文档 §2.2）。可注入（测试/演示用短间隔）。"""
 
+FIRST_SWEEP_DELAY: float = 15.0
+"""进程起来之后**第一轮**扫描等多久。2026-09-13 之前是整整一个间隔（30 分钟）：作者装好
+桌面版、导入一本书、填好钥匙，然后对着空的角色册等半小时——他不知道有东西在等，屏幕上
+也没有任何一处说。第一轮只等库和服务站稳的这十几秒；之后照旧按间隔来。"""
+
 AUTONOMY_LIMIT: int = 20
 """每一轮每个项目的**名额**（文档 §4 / §6 `limit`）。
 
@@ -124,6 +129,8 @@ class BackgroundRuntime:
         sleep: Callable[[float], None] = time.sleep,
         autonomy_seconds: float = AUTONOMY_INTERVAL,
         autonomy_limit: int = AUTONOMY_LIMIT,
+        first_sweep_seconds: float | None = None,
+        configured: Callable[[], bool] | None = None,
     ) -> None:
         self._db_path = db_path
         self._conn_factory = connection_factory or new_connection_factory(db_path)
@@ -137,7 +144,13 @@ class BackgroundRuntime:
         self._sleep = sleep
         self._autonomy_seconds = autonomy_seconds
         self._autonomy_limit = autonomy_limit
-        self._next_autonomy = time.monotonic() + self._autonomy_seconds
+        # 模型服务没配好就**不扫**：扫了也只是给每一章下一张必败的单，作者的「通知」里
+        # 半小时多二十条「后台任务未完成」——而他还没填钥匙。`None` = 不问（直接构造的
+        # 测试桩）；`build_runtime()` 接的是 `deps.model_configured`。
+        self._configured = configured or (lambda: True)
+        self._next_autonomy = time.monotonic() + (
+            self._autonomy_seconds if first_sweep_seconds is None else first_sweep_seconds
+        )
         self._stop = threading.Event()
 
     def start(self) -> None:
@@ -148,6 +161,15 @@ class BackgroundRuntime:
 
     def stop(self) -> None:
         self._stop.set()
+
+    def kick(self) -> None:
+        """下一拍就扫一轮（作者刚在设置里把模型服务配好那一刻调它）。
+
+        配好钥匙 = 初始化真正开始的那一刻：角色册、事件、总结从这一轮起才有东西。
+        让他再等半小时，等于把「配好了」和「开始了」拆成两件看不出关系的事。
+        `_loop` 每 `poll_seconds` 看一次这个时间戳，改成 0 就是「已经到点」。
+        """
+        self._next_autonomy = 0.0
 
     def pump_once(self) -> int:
         """跑一波：claim 可做的 attempt 并执行固定 DAG。返回执行了几条。
@@ -176,7 +198,12 @@ class BackgroundRuntime:
                 _log.exception("后台执行波次失败：这一波的 attempt 全部没跑完")
             if time.monotonic() >= self._next_autonomy:
                 try:
-                    self.autonomy_once()
+                    if self._configured():
+                        self.autonomy_once()
+                    else:
+                        # 没配好不下单（见 `__init__`）。**不是失败，也不留通知**：
+                        # 该说这件事的是右上那盏灰灯和每一格的空态，不是后台的日志。
+                        _log.info("模型服务未配置，本轮扫描跳过")
                 except Exception:
                     # 单轮自治失败不炸线程：下一轮再扫（attempt 是持久重试的基础）。
                     _log.exception("后台扫描轮失败：这一轮没给任何章下单")
@@ -325,4 +352,6 @@ def build_runtime(*, db_path: str | None = None, **kwargs) -> BackgroundRuntime:
     kwargs.setdefault("runner_factory", deps.get_extraction_runner)
     kwargs.setdefault("summarizer_factory", deps.get_summarizer)
     kwargs.setdefault("reviewer_factory", deps.get_advisory_reviewer)
+    kwargs.setdefault("configured", deps.model_configured)
+    kwargs.setdefault("first_sweep_seconds", FIRST_SWEEP_DELAY)
     return BackgroundRuntime(db_path=db_path, **kwargs)
