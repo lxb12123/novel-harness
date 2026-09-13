@@ -454,7 +454,16 @@ R2/R3 读正文但限定在高信号位置。**没有一条需要指代消解**�
 > （`DraftCompare`、`DraftCard`、`route.ts` 那条唯一的哈希路由）、面板头上的入口、回执里
 > 「并排查看」的链接、`GET …/drafts?chapter=` 列表路由一起删。路由 92 → **91** 条。
 
-**M0 + M1 + M1.5 已落地；M2 的起草线在用、评估那一半已退役；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2551 个 pytest + 887 个 vitest（2026-09-12 复核；vitest 里 3 条 `CodeEditor` 的失败是工作区里另一份未提交改动的，不在本轮范围），`.sql` 和前端产物都在 wheel 里）：
+> **2026-09-13：桌面壳落地**（[ADR 0050](adr/0050-desktop-shell.md)，维护者：「对这个发包建立
+> 桌面版的 dmg」）。`api/launch.py` 拆成 `prepare()`（建库、绑端口，交回地址 + `serve()` + `stop()`）
+> 和 `launch()`；`novel_harness/desktop.py` = `prepare()` 加一扇 pywebview 窗（系统 WKWebView，
+> 不带 Chromium，包 44 MB），服务在工作线程上。`scripts/build_dmg.sh` 出
+> `dist/NovelHarness-<版本>-macOS-<架构>.dmg`（PyInstaller，ad-hoc 签名，**没公证**——收包的人
+> 要右键打开一次）。库在 `~/Library/Application Support/Novel Harness/`，稿子在
+> `~/Documents/Novel Harness/`，设置沿用 `~/.config/novel-harness/settings.json`，日志在
+> `~/Library/Logs/Novel Harness/`。实机验过：从 dmg 里开起来、内置服务答话、服务的是真前端产物。
+
+**M0 + M1 + M1.5 已落地；M2 的起草线在用、评估那一半已退役；M3 双边门槛已过、M4 事件记忆切片已落地并通过真书三章接受度验收**（抽取 → 提案/被动确认 → 作者审阅 → 安全事件上下文全闭环；111935 第 1–3 章：26 条有效事件、冲突 0 条/章、接受率 100%，2556 个 pytest + 887 个 vitest（2026-09-13 复核；vitest 里 3 条 `CodeEditor` 的失败是工作区里另一份未提交改动的，不在本轮范围），`.sql` 和前端产物都在 wheel 里）：
 
 > ⚠️ **2026-08-14 两刀，都是作者看着工作台提的，都撤掉了「要作者去填」的东西**：
 >

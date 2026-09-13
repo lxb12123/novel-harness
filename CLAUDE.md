@@ -123,8 +123,8 @@ bash scripts/demo.sh                                                        # �
 uv run python synth/build.py                # booklet.toml + booklet.txt → 一个合成库
 
 # ── 工作台的三层，别混 ──────────────────────────────────────────────────────
-# 产品线（最终）= 桌面壳：它调 novel_harness/api/launch.py::launch()
-#   （建库 + 起内置服务 + 可选开浏览器）。启动器不是命令行，没有子命令。
+# 产品线（最终）= 桌面壳：novel_harness/desktop.py，调 novel_harness/api/launch.py::prepare()
+#   （建库 + 绑端口）再开一扇窗（pywebview，ADR 0050）。启动器不是命令行，没有子命令。
 # 调试线（现在）= Web 工作台，下面 L1/L2/L3 全是它在用。
 # L1 日常开发（每分钟）：两个进程，热更新。改代码就走这条，不走 L2。
 uv run python -c "from pathlib import Path; from novel_harness.api.launch import launch; launch(Path('book.db'), open_browser=False)"  # 首次建库（起完 Ctrl-C）
@@ -140,6 +140,11 @@ uv run python -c "from pathlib import Path; from novel_harness.api.launch import
 #    在建起远端之前，下面这两行只有你手跑才作数——别把「CI 会拦住」当成既有保护。
 cd frontend && npm run build && cd .. && uv build
 uvx --from ./dist/novel_harness-*.whl python -c "import novel_harness.api.app as m; assert m.webui_built()"
+
+# L4 桌面包（发版，只能在 Mac 上跑）：前端产物 → PyInstaller 出 .app → ad-hoc 签名 → dist/*.dmg
+# （ADR 0050；没公证，收包的人要右键打开一次。库在 ~/Library/Application Support/Novel Harness/，
+#   稿子在 ~/Documents/Novel Harness/，日志在 ~/Library/Logs/Novel Harness/）
+bash scripts/build_dmg.sh
 ```
 
 **`npm run build` 的产物落在 `src/novel_harness/webui/`（包内），不是 `frontend/dist/`。**

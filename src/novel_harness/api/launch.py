@@ -4,6 +4,10 @@
 桌面版（最终形态）的壳 import 它起服务，Web 调试线用 `python -m novel_harness.api`。
 本模块**不是命令行**：不给子命令、不解析参数，所有配置走关键字参数/环境变量。
 它替 `nh serve` 坐进 test_arch_guard 的 CONNECTION_OPENERS（这里是建库的装配层）。
+
+两段：`prepare()` 建库、绑端口、交回地址和一个阻塞的 `serve()`；`launch()` 在它外面
+加一行打印和「开浏览器」。桌面壳（`novel_harness.desktop`）只要前一半——它要先拿到地址
+才能开窗口，而且它的服务跑在工作线程上、主线程留给窗口。
 """
 
 from __future__ import annotations
@@ -14,6 +18,8 @@ import sys
 import threading
 import time
 import webbrowser
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from ..db import connect, migrate
@@ -65,6 +71,64 @@ def _open_when_ready(url: str, host: str, port: int, timeout: float = 15.0) -> N
             time.sleep(0.1)
 
 
+@dataclass(frozen=True)
+class Workbench:
+    """`prepare()` 交回来的：窗口该指向哪儿、一个阻塞到服务结束的 `serve()`、一个让它结束的
+    `stop()`（桌面壳关窗口时叫；`launch()` 那条路靠 Ctrl-C，不叫它）。"""
+
+    url: str
+    db: Path
+    serve: Callable[[], None]
+    stop: Callable[[], None]
+
+
+def prepare(
+    db: Path,
+    *,
+    host: str = "127.0.0.1",
+    port: int = 8756,
+    books_dir: Path | None = None,
+) -> Workbench:
+    """建库 + 绑端口，**不起服务**：起服务是交回来的那个 `serve()` 的事（它阻塞到进程结束）。
+
+    这一半和 `launch()` 的区别只有「谁来跑 `serve()`、跑在哪条线程上」：`launch()` 在
+    主线程上直接跑；桌面壳把它放到工作线程，主线程留给窗口。库和端口的规矩一个字不差
+    （`launch()` 的 docstring）。
+    """
+    resolved_db = db.resolve()
+
+    conn = connect(resolved_db)
+    try:
+        migrate(conn)
+    finally:
+        conn.close()
+
+    os.environ["NH_DB"] = str(resolved_db)
+    if books_dir is not None:
+        os.environ["NH_BOOKS_DIR"] = str(books_dir.resolve())
+
+    # uvicorn（+uvloop/httptools）与 api.app（+FastAPI）加起来约 240ms 的导入开销。
+    # 放在函数体里，好让「只建库不开服务器」的用法不为它买单。
+    import uvicorn
+
+    sock = _bind(host, port)
+    actual = sock.getsockname()[1]
+    # 0.0.0.0 是「所有网卡」，不是一个能访问的地址——别把它印进地址栏。
+    browse_host = "127.0.0.1" if host == "0.0.0.0" else host
+    url = f"http://{browse_host}:{actual}"
+
+    server = uvicorn.Server(
+        uvicorn.Config("novel_harness.api.app:app", host=host, port=actual, log_level="warning")
+    )
+
+    def stop() -> None:
+        server.should_exit = True
+
+    return Workbench(
+        url=url, db=resolved_db, serve=lambda: server.run(sockets=[sock]), stop=stop
+    )
+
+
 def launch(
     db: Path,
     *,
@@ -83,36 +147,17 @@ def launch(
       的假矩阵）——所以建库必须由装配层先做，这正是本模块在 CONNECTION_OPENERS 的原因。
     - 引擎的主线程就阻塞在 uvicorn 上；真开库是 deps.py 的事。
     """
-    resolved_db = db.resolve()
-
-    conn = connect(resolved_db)
-    try:
-        migrate(conn)
-    finally:
-        conn.close()
-
-    os.environ["NH_DB"] = str(resolved_db)
-    if books_dir is not None:
-        os.environ["NH_BOOKS_DIR"] = str(books_dir.resolve())
-
-    # uvicorn（+uvloop/httptools）与 api.app（+FastAPI）加起来约 240ms 的导入开销。
-    # 放在函数体里，好让「只建库不开服务器」的用法不为它买单。
-    import uvicorn
-
     from .app import webui_built
 
-    sock = _bind(host, port)
-    actual = sock.getsockname()[1]
-    # 0.0.0.0 是「所有网卡」，不是一个能访问的地址——别把它印进地址栏。
-    browse_host = "127.0.0.1" if host == "0.0.0.0" else host
-    url = f"http://{browse_host}:{actual}"
+    started = prepare(db, host=host, port=port, books_dir=books_dir)
+    url = started.url
 
     # stdout 的全部内容（同老 nh serve 的纪律：一行机器可读的东西）。**必须 flush**：
     # 子进程/桌面壳靠读这行知道往哪儿开窗口，块缓冲会让它躺在缓冲区里等进程退出，
     # 而服务永不退出——那就永远读不到。
     print(url, flush=True)
     print(
-        f"✓ 工作台起来了：{url}\n  库：{resolved_db}\n  停：Ctrl-C",
+        f"✓ 工作台起来了：{url}\n  库：{started.db}\n  停：Ctrl-C",
         file=sys.stderr,
     )
     if not webui_built():
@@ -123,11 +168,9 @@ def launch(
         )
 
     if open_browser:
+        browse_host, actual = url.removeprefix("http://").split(":")
         threading.Thread(
-            target=_open_when_ready, args=(url, browse_host, actual), daemon=True
+            target=_open_when_ready, args=(url, browse_host, int(actual)), daemon=True
         ).start()
 
-    config = uvicorn.Config(
-        "novel_harness.api.app:app", host=host, port=actual, log_level="warning"
-    )
-    uvicorn.Server(config).run(sockets=[sock])
+    started.serve()

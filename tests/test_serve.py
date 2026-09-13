@@ -22,6 +22,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -184,3 +185,34 @@ def test_serve_creates_the_db_and_prints_one_url(tmp_path: Path) -> None:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait(timeout=15)
+
+
+def test_prepare_builds_the_db_binds_a_port_and_serves_until_told_to_stop(tmp_path: Path) -> None:
+    """`prepare()` 是 `launch()` 的前一半（桌面壳用的那一半）：建库、绑端口、交回地址；
+    `serve()` 在工作线程上跑，`stop()` 让它回来。零 mock，真服务。"""
+    import urllib.request
+
+    from novel_harness.api.launch import prepare
+
+    db = tmp_path / "desk.db"
+    started = prepare(db, port=0, books_dir=tmp_path / "books")
+    assert db.exists(), "库该在 prepare 里建好"
+    assert started.url.startswith("http://127.0.0.1:")
+    port = int(started.url.rsplit(":", 1)[1])
+    assert port > 0
+
+    worker = threading.Thread(target=started.serve, daemon=True)
+    worker.start()
+    deadline = time.monotonic() + 10
+    body = None
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(f"{started.url}/api/projects", timeout=1) as r:
+                body = r.read()
+                break
+        except OSError:
+            time.sleep(0.1)
+    assert body == b"[]", body
+    started.stop()
+    worker.join(timeout=10)
+    assert not worker.is_alive(), "stop() 之后 serve() 该返回"

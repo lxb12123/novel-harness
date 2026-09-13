@@ -55,3 +55,6 @@ node_modules/
 # 一个空文件，某次命令行把 `.schema proposal_set` 当成了文件名（`sqlite3 .schema proposal_set`
 # 少了引号那种）。不是代码，删了也不碍事；写在这儿是为了它再出现时不占状态栏。
 .schema proposal_set
+
+# 桌面包的构建现场（`scripts/build_dmg.sh`）：打包用的 venv、PyInstaller 的中间产物、.app。
+.build/
