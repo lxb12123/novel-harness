@@ -7,7 +7,8 @@ import {
   useRoster,
   useStartExtraction,
 } from "../api/hooks";
-import { readCorrectionError } from "../correctionError";
+import { ApiError } from "../api/client";
+import { readCorrectionError, saidToTheAuthor } from "../correctionError";
 import type { EventView, ExtractionRun, NodeRef } from "../api/types";
 import { useLanguage, type Language } from "../language";
 import { useCoords } from "../store";
@@ -99,7 +100,13 @@ function AnalyzeButton() {
         disabled={!projectId || busy}
         onClick={() => {
           if (!projectId) return;
-          start.mutate(undefined, { onSuccess: (r) => setRunId(r.id) });
+          start.mutate(undefined, {
+            onSuccess: (r) => setRunId(r.id),
+            // **起不了步也要说一句**（作者 2026-09-13：「点了也没有反应，画面就闪一下，
+            // 我都不知道现在是成功了还是失败了」）——那次是后端 500，按钮只从灰变
+            // 金黄再变回灰。跑起来之后失败有上面那条 effect 说话，起步就失败这儿说。
+            onError: (error) => say(startFailure(error, language)),
+          });
         }}
       >
         <ScanIcon />
@@ -107,6 +114,19 @@ function AnalyzeButton() {
       {toast && <div className="check-toast">{toast}</div>}
     </>
   );
+}
+
+/** 「分析本章」连 run 都没建出来（POST 本身失败）时说什么。后端的拒绝（4xx，带码或带
+ *  作者读的那句话）走 `saidToTheAuthor`（同这份文件其余每一格）；5xx 一律落到通用那句——
+ *  FastAPI 的 500 正文是 `Internal Server Error`，那是写给维护者的，不上屏；断网同理。 */
+function startFailure(error: unknown, language: Language): string {
+  if (error instanceof ApiError && error.status < 500) {
+    const said = saidToTheAuthor(error);
+    if (said) return said;
+  }
+  return language === "zh"
+    ? "本章分析未能开始。请稍后重试。"
+    : "Analysis of this chapter could not start. Try again shortly.";
 }
 
 /** 跑完那一句。**整句拼装，不是拼片段**：英文那半的两个附加小句各自要处理单复数。 */

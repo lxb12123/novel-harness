@@ -196,6 +196,24 @@ describe("已确认的情节：谁在场、谁知道了", () => {
     await waitFor(() => expect(listReads()).toBeGreaterThan(before));
   });
 
+  it("分析连 run 都没建出来（POST 500）也要说一句，不许只闪一下", async () => {
+    // 作者 2026-09-13（桌面版）：「我点击了这个也没有反应画面就闪一下，我都不知道现在是
+    // 成功了还是失败了」——那次后端 500（书出生时没领到 ruleset 基线），按钮从灰变金黄
+    // 再变回灰，屏幕上一个字都没有。
+    const user = userEvent.setup();
+    renderWithApi(<CanonEventCast canonVersion={6} />, [
+      {
+        method: "POST",
+        match: /\/chapters\/\d+\/extract/,
+        status: 500,
+        body: { detail: "Internal Server Error" },
+      },
+    ]);
+    await user.click(await screen.findByRole("button", { name: "分析本章" }));
+    expect(await screen.findByText(/本章分析未能开始/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/Internal Server Error/);
+  });
+
   it("这一章一条都没有的时候说人话，不摆一张空表", async () => {
     renderWithApi(<CanonEventCast canonVersion={6} />, [
       { match: /\/chapters\/\d+\/events\?scope=CANON/, body: [] },

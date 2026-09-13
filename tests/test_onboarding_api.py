@@ -67,3 +67,22 @@ def test_bootstrap_zero_chapter_import_leaves_no_project_or_files(
     books = tmp_path / "books"
     assert not (books / "没有章标").exists()
     assert list(books.glob(".nh-bootstrap-*")) == []
+
+
+def test_a_bootstrapped_book_can_be_analyzed(client: TestClient) -> None:
+    """从工作台「新建 / 导入」建出来的书，「分析本章」得能起步（202），不能 500。
+
+    2026-09-13 之前 `bootstrap_project()` 走的 `project.insert()` 不写 ruleset 基线行，
+    `POST …/extract` 在 `runner.enqueue()` 撞 `ExtractionRunStateError` 500——桌面版第一次
+    上手作者点了那颗按钮，屏幕只闪一下，什么都没说。基线行现在跟 project 行同一笔事务写。
+    """
+    made = client.post(
+        "/api/projects/bootstrap",
+        json={"mode": "import", "name": "能分析", "text": "第一章 初见\n\n风起。\n"},
+    )
+    assert made.status_code == 200, made.text
+    pid = made.json()["project"]["id"]
+
+    queued = client.post(f"/api/projects/{pid}/chapters/1/extract")
+    assert queued.status_code == 202, queued.text
+    assert queued.json()["status"] == "PENDING"

@@ -84,9 +84,9 @@ def test_migrate_twice_is_idempotent(tmp_path: Path) -> None:
     闸门拦住了它。"""
     c = connect(tmp_path / "nh.db")
     assert user_version(c) == 0
-    assert migrate(c) == 37
-    assert migrate(c) == 37  # 不抛
-    assert user_version(c) == 37
+    assert migrate(c) == 38
+    assert migrate(c) == 38  # 不抛
+    assert user_version(c) == 38
     c.close()
 
 
@@ -97,8 +97,8 @@ def test_migrate_twice_on_fresh_connections(tmp_path: Path) -> None:
     migrate(c1)
     c1.close()
     c2 = connect(path)
-    assert migrate(c2) == 37
-    assert user_version(c2) == 37
+    assert migrate(c2) == 38
+    assert user_version(c2) == 38
     c2.close()
 
 
@@ -171,6 +171,7 @@ def test_migration_files_are_readable_from_package() -> None:
         "035_r3_ruleset_epoch.sql",
         "036_edge_start_only.sql",
             "037_draft_candidate_brief.sql",
+            "038_ruleset_state_for_bootstrapped_books.sql",
     ]
     assert "PRAGMA user_version = 1" in (root / "001_init.sql").read_text(encoding="utf-8")
     assert "PRAGMA user_version = 2" in (root / "002_m4_events.sql").read_text(encoding="utf-8")
@@ -235,8 +236,8 @@ def test_populated_v1_database_migrates_without_changing_existing_rows(tmp_path:
         ).fetchone()
     )
 
-    assert migrate(c) == 37
-    assert migrate(c) == 37
+    assert migrate(c) == 38
+    assert migrate(c) == 38
     after_project = tuple(
         c.execute(
             "SELECT id, name, root_path, canon_version, created_at, updated_at "
@@ -340,7 +341,7 @@ def test_populated_v2_database_backfills_attached_proposal_audit(tmp_path: Path)
     )
     c.commit()
 
-    assert migrate(c) == 37
+    assert migrate(c) == 38
     row = c.execute(
         """
         SELECT resolution_action, resolved_canon_version, audit_envelope_json
@@ -401,7 +402,7 @@ def test_v2_migration_attaches_one_matching_proposal_review_gap(tmp_path: Path) 
     )
     c.commit()
 
-    assert migrate(c) == 37
+    assert migrate(c) == 38
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -459,7 +460,7 @@ def test_v2_migration_refuses_duplicate_matching_proposal_reviews(tmp_path: Path
     )
     c.commit()
 
-    assert migrate(c) == 37
+    assert migrate(c) == 38
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -522,7 +523,7 @@ def test_v2_migration_quarantines_utf8_blob_kind_duplicate_history(
     )
     c.commit()
 
-    assert migrate(c) == 37
+    assert migrate(c) == 38
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -582,7 +583,7 @@ def test_v2_migration_quarantines_shared_decision_attachment(tmp_path: Path) -> 
         )
     c.commit()
 
-    assert migrate(c) == 37
+    assert migrate(c) == 38
     rows = c.execute(
         """
         SELECT id, resolution_action, resolved_canon_version, audit_envelope_json
@@ -699,7 +700,7 @@ def test_v2_migration_quarantines_ambiguous_audit_payload(
     )
     c.commit()
 
-    assert migrate(c) == 37
+    assert migrate(c) == 38
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -752,7 +753,7 @@ def test_v2_migration_quarantines_invalid_utf8_payload_without_stalling(
     )
     c.commit()
 
-    assert migrate(c) == 37
+    assert migrate(c) == 38
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -823,7 +824,7 @@ def test_v2_migration_quarantines_invalid_utf8_decision_fields(
     )
     c.commit()
 
-    assert migrate(c) == 37
+    assert migrate(c) == 38
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -894,7 +895,7 @@ def test_v2_migration_quarantines_invalid_decision_audit_fields(
     )
     c.commit()
 
-    assert migrate(c) == 37
+    assert migrate(c) == 38
     row = c.execute(
         """
         SELECT decision_log_id, resolution_action, resolved_canon_version,
@@ -1597,9 +1598,9 @@ def test_concurrent_first_migrate_does_not_race(tmp_path: Path) -> None:
     for t in threads:
         t.join()
 
-    assert results == [37] * n, f"并发首跑必须全部成功，实得 {results}"
+    assert results == [38] * n, f"并发首跑必须全部成功，实得 {results}"
     c = connect(path)
-    assert user_version(c) == 37
+    assert user_version(c) == 38
     assert c.execute("SELECT COUNT(*) FROM edge_type").fetchone()[0] == 7
     c.close()
 
@@ -1608,14 +1609,14 @@ def test_connect_in_memory_works(tmp_path: Path) -> None:
     # 内存库不支持 WAL，会静默停在 memory 模式。这没关系（没有并发读者），
     # 但 connect() 不能因此炸——测试和 CLI 的 --dry-run 都走这条。
     c = connect(IN_MEMORY)
-    assert migrate(c) == 37
+    assert migrate(c) == 38
     assert c.execute("PRAGMA foreign_keys").fetchone()[0] == 1
     c.close()
 
 
 def test_connect_creates_parent_dirs(tmp_path: Path) -> None:
     c = connect(tmp_path / "a" / "b" / "nh.db")
-    assert migrate(c) == 37
+    assert migrate(c) == 38
     c.close()
 
 
@@ -2974,7 +2975,7 @@ def test_v16_upgrade_plants_ruleset_baseline_and_synthetic_refresh_runs(
     conn = _v16_book(tmp_path)
     assert user_version(conn) == 16
 
-    assert migrate(conn) == 37
+    assert migrate(conn) == 38
     ruleset = conn.execute(
         "SELECT epoch, ruleset_hash FROM validation_ruleset_state WHERE project_id = ?",
         ("project:v16-book",),
@@ -2992,7 +2993,7 @@ def test_v16_upgrade_plants_ruleset_baseline_and_synthetic_refresh_runs(
     assert runs[0]["source_generation"] == 1
     assert runs[0]["source_snapshot_id"] == "snapshot:v16-book"
 
-    assert migrate(conn) == 37  # 幂等：不新增第二行
+    assert migrate(conn) == 38  # 幂等：不新增第二行
     assert (
         conn.execute(
             "SELECT COUNT(*) FROM validation_ruleset_state WHERE project_id = ?",
@@ -3008,6 +3009,58 @@ def test_v16_upgrade_plants_ruleset_baseline_and_synthetic_refresh_runs(
         == 1
     )
     conn.close()
+
+
+def test_migration_038_plants_the_baseline_for_books_born_without_one(tmp_path: Path) -> None:
+    """从浏览器 / 桌面版「新建 / 导入」建出来的书（`onboarding.bootstrap_project()` →
+    `project.insert()`）2026-09-13 之前没有 `validation_ruleset_state` 行——「分析本章」500、
+    保存后的整理和 30 分钟扫描静默跳过。038 给这些书补上当前 epoch/hash 的一行；
+    已经有行的一行不多；重跑不新增。"""
+    from importlib.resources import files
+
+    conn = connect(tmp_path / "born-bare.db")
+    try:
+        # 先逐脚本迁到 037，再按当年的坏法造一本没有基线的书（裸 INSERT，绕开今天会补行的 insert()）
+        root = files("novel_harness") / "migrations"
+        for name in sorted(p.name for p in root.iterdir() if p.name.endswith(".sql")):
+            if int(name[:3]) > 37:
+                break
+            conn.executescript((root / name).read_text(encoding="utf-8"))
+        assert user_version(conn) == 37
+        conn.execute(
+            "INSERT INTO project (id, name, root_path) VALUES (?, ?, ?)",
+            ("project:born-bare", "裸书", "books/裸书"),
+        )
+        conn.execute(
+            "INSERT INTO project (id, name, root_path) VALUES (?, ?, ?)",
+            ("project:has-one", "有行的", "books/有行的"),
+        )
+        conn.execute(
+            "INSERT INTO validation_ruleset_state (project_id, epoch, ruleset_hash) VALUES (?, 2, 'old')",
+            ("project:has-one",),
+        )
+        conn.commit()
+
+        assert migrate(conn) == 38
+        rows = {
+            r["project_id"]: (r["epoch"], r["ruleset_hash"])
+            for r in conn.execute(
+                "SELECT project_id, epoch, ruleset_hash FROM validation_ruleset_state"
+            ).fetchall()
+        }
+        assert rows["project:born-bare"] == (CURRENT_RULESET_EPOCH, CURRENT_RULESET_HASH)
+        assert rows["project:has-one"] == (2, "old"), "已有的行不动"
+        assert migrate(conn) == 38
+        assert (
+            conn.execute("SELECT count(*) FROM validation_ruleset_state").fetchone()[0] == 2
+        )
+    finally:
+        conn.close()
+
+    sql = (
+        files("novel_harness") / "migrations" / "038_ruleset_state_for_bootstrapped_books.sql"
+    ).read_text(encoding="utf-8")
+    assert f"SELECT id, {CURRENT_RULESET_EPOCH}, '{CURRENT_RULESET_HASH}'" in sql
 
 
 def test_migration_018_frozen_hash_matches_the_catalog_constant() -> None:

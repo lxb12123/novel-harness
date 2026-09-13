@@ -79,24 +79,6 @@ def create(conn: Connection, *, name: str, root_path: str) -> Project:
         conn.execute("BEGIN IMMEDIATE")
     try:
         created = insert(conn, name=name, root_path=root_path)
-        # 017：每个项目从出生的那一刻起就有一行 ruleset 基线，与 project 行同事务
-        # ——Task 5 的 attempt 冻结 ruleset 时才不会撞上缺行。
-        #
-        # **拿的是 `CURRENT_RULESET_*`，不是历史值 `SYSTEM_RULESET_V1_HASH`**
-        # （2026-08-27，删 R2 那一刀顺带发现的）：早先这里硬编码 `(1, SYSTEM_
-        # RULESET_V1_HASH)`，因为在那之前 `SYSTEM_RULES` 从出生起就没变过，
-        # 「epoch=1 时的历史值」和「当前值」恰好是同一个数，看不出区别。
-        # 删 R2 让 031 迁移把既有项目的 epoch 推到 2，若新项目还硬编码 1，
-        # 它从出生那一刻就落后于刚做完迁移的旧书——第一次校验就会被判成
-        # 「ruleset 变了」。新书理应站在**当前** epoch 上，不是历史上第一次
-        # 建库时的那个 epoch。
-        conn.execute(
-            """
-            INSERT INTO validation_ruleset_state (project_id, epoch, ruleset_hash)
-            VALUES (?, ?, ?)
-            """,
-            (created.id, CURRENT_RULESET_EPOCH, CURRENT_RULESET_HASH),
-        )
         if not already:
             conn.commit()
         return created
@@ -112,6 +94,14 @@ def insert(conn: Connection, *, name: str, root_path: str, language: str | None 
     `db.connect()` 的 SQLite legacy transaction control 会在 INSERT 时隐式开启事务，
     所以调用方之后必须 commit 或 rollback；需要把项目行和其他写入原子组合时，应先
     开启外层事务。`project` 表仍只由本模块写，普通公开创建仍应使用会提交的 `create()`。
+
+    **ruleset 基线那一行也在这儿写**（017：每个项目从出生那一刻起就有一行
+    `validation_ruleset_state`，Task 5 的 attempt 冻结 ruleset 时才不会撞上缺行）。
+    2026-09-13 之前它只在 `create()` 里写，而工作台的「新建 / 导入」走的是
+    `onboarding.bootstrap_project()` → 本函数——于是从浏览器 / 桌面版建出来的每一本书
+    都没有这一行：「分析本章」500、保存后的整理和 30 分钟扫描静默跳过（`autonomy_once`
+    按项目吞异常），作者看到的只是按钮闪一下。基线跟 project 行同一笔事务，
+    不给任何创建路径留「忘了写」的口子；既有的书由迁移 038 补行。
 
     Args:
         language: `None` = 交给 SQL 的 `DEFAULT 'zh'`（这本书还没有正文可判定，比如
@@ -144,6 +134,21 @@ def insert(conn: Connection, *, name: str, root_path: str, language: str | None 
             """,
             (new_project_id(), name, root_path, language),
         ).fetchone()
+    # **拿的是 `CURRENT_RULESET_*`，不是历史值 `SYSTEM_RULESET_V1_HASH`**
+    # （2026-08-27，删 R2 那一刀顺带发现的）：早先这里硬编码 `(1, SYSTEM_
+    # RULESET_V1_HASH)`，因为在那之前 `SYSTEM_RULES` 从出生起就没变过，
+    # 「epoch=1 时的历史值」和「当前值」恰好是同一个数，看不出区别。
+    # 删 R2 让 031 迁移把既有项目的 epoch 推到 2，若新项目还硬编码 1，
+    # 它从出生那一刻就落后于刚做完迁移的旧书——第一次校验就会被判成
+    # 「ruleset 变了」。新书理应站在**当前** epoch 上，不是历史上第一次
+    # 建库时的那个 epoch。
+    conn.execute(
+        """
+        INSERT INTO validation_ruleset_state (project_id, epoch, ruleset_hash)
+        VALUES (?, ?, ?)
+        """,
+        (row["id"], CURRENT_RULESET_EPOCH, CURRENT_RULESET_HASH),
+    )
     return _row_to_project(row)
 
 

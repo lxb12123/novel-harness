@@ -92,3 +92,12 @@ webview.start(); started.stop()             # 窗口关了，服务体面地停
 3. **界面语言默认英文。** 不是壳的问题：这台机器系统首选语言是 en-US，`navigator.language`
    在 Chrome 里也是 en-US；Web 工作台看到中文是因为那边的 localStorage 里早就切过一次。
    桌面版第一次开是一份新的 localStorage，⚙ 里切一次就记住。不改。
+4. **「分析本章」点了只闪一下，什么都不说。** 两层：① 后端 500——工作台「新建 / 导入」
+   走的 `onboarding.bootstrap_project()` → `project.insert()` 从 2026-08-04 起就不写
+   `validation_ruleset_state` 那一行（只有 `project.create()` 写），于是从浏览器 / 桌面版建的
+   每一本书「分析本章」都 500、保存后的整理和 30 分钟扫描静默跳过；Web 调试线那本书是
+   018 迁移给旧项目补的行，所以一直没露。基线行现在在 `project.insert()` 里跟 project 行同一笔
+   事务写，既有的书由迁移 038 补。② 前端 POST 失败时一个字都不说，只有按钮的三态闪一下——
+   现在起步失败也走那句飘一下的话（4xx 用后端那句，5xx 一律「未能开始」，不把
+   `Internal Server Error` 摆上屏）。这一条不是壳的问题，是壳第一次让一本「从零建的书」
+   走完整条链才露出来的。
