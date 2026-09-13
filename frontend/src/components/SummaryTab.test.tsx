@@ -412,4 +412,47 @@ describe("全书总结状态（Step 4）", () => {
     ]);
     expect(await screen.findByText(/全书总结状态读取失败/)).toBeInTheDocument();
   });
+
+  it("在格子里点一章：格子留在原地，那一章的总结读到了就滚进视野（作者 2026-09-13）", async () => {
+    // 作者：「我只是在屏幕视角范围内点击的一个，结果他直接从最顶部出现，然后我要往下划
+    // 才能看到总结」。以前读取那一档整格换成一行字，格子卸掉、滚动条回顶。
+    const user = userEvent.setup();
+    const scrolled = vi.fn();
+    Element.prototype.scrollIntoView = scrolled;
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    renderSpying(<SummaryTab />, [
+      // 第 3 章的总结卡住不回，好看清读取中那一档屏幕上是什么
+      {
+        match: /\/chapters\/3\/summary$/,
+        body: async () => {
+          await gate;
+          return NONE;
+        },
+      },
+    ]);
+    await screen.findByText(/会自动补写/);
+    await user.click(screen.getByRole("button", { name: "第 3 章，缺" }));
+    // 读取中：格子还在，读取那行字在它底下
+    expect(await screen.findByText(/正在读取总结/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "第 4 章，异常" })).toBeInTheDocument();
+    expect(scrolled).not.toHaveBeenCalled();
+    release();
+    // 读到了：总结那一段滚进视野，只滚到刚好露出来
+    await screen.findByText("第 3 章 章节总结");
+    await waitFor(() => expect(scrolled).toHaveBeenCalledWith({ block: "nearest" }));
+  });
+
+  it("换章时打了一半的字不跟过去（这一格不再随章号重挂）", async () => {
+    const user = userEvent.setup();
+    renderSpying(<SummaryTab />);
+    const box = await screen.findByDisplayValue(HAVE.summary!);
+    await user.clear(box);
+    await user.type(box, "第一章我改的");
+    expect(screen.getByRole("button", { name: "保存这一段" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "第 3 章，缺" }));
+    await screen.findByText("第 3 章 章节总结");
+    expect(screen.queryByDisplayValue("第一章我改的")).toBeNull();
+    expect(screen.queryByRole("button", { name: "保存这一段" })).toBeNull();
+  });
 });
