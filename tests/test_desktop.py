@@ -75,3 +75,23 @@ def test_the_build_script_signs_the_app_and_makes_a_dmg() -> None:
     assert "codesign --force --deep --sign -" in script
     assert "hdiutil create" in script
     assert "Applications" in script, "dmg 里要有那个拖进去的 Applications 快捷方式"
+
+
+def test_the_window_opens_the_desktop_flavour_of_the_page() -> None:
+    """壳开的地址带 `?desktop=1`——前端靠它给 `<html>` 挂 `desktop`，顶栏才知道顶上没有
+    系统标题条、要给三颗窗口按钮让位（`frontend/src/desktop.ts`）。两头念的是同一个词。"""
+    from novel_harness import desktop
+
+    assert desktop.DESKTOP_QUERY == "desktop=1"
+    ts = (ROOT / "frontend" / "src" / "desktop.ts").read_text(encoding="utf-8")
+    assert 'DESKTOP_QUERY = "desktop"' in ts
+    source = (ROOT / "src" / "novel_harness" / "desktop.py").read_text(encoding="utf-8")
+    assert 'f"{started.url}/?{DESKTOP_QUERY}"' in source
+
+
+def test_the_shell_api_only_drags_on_macos_and_only_with_a_window() -> None:
+    """`drag()` 没有窗口时是空操作（页面在壳还没把窗口交过来之前就可能叫它）。"""
+    from novel_harness.desktop import _ShellApi
+
+    api = _ShellApi()
+    api.drag()  # 不抛

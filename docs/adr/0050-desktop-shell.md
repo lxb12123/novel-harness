@@ -101,3 +101,11 @@ webview.start(); started.stop()             # 窗口关了，服务体面地停
    现在起步失败也走那句飘一下的话（4xx 用后端那句，5xx 一律「未能开始」，不把
    `Internal Server Error` 摆上屏）。这一条不是壳的问题，是壳第一次让一本「从零建的书」
    走完整条链才露出来的。
+5. **系统标题条揉进顶栏**（作者：「顶部三个操作按钮移到下面那一行去左边去……名字还有那个
+   缩小栏向右挪……把顶部那个栏白色的去掉」）。`desktop.py::_unify_titlebar`：标题条透明、
+   不显示标题、`FullSizeContentView`、擦掉 pywebview 涂在 `NSTitlebarContainerView` 上的底色
+   （不擦透明是假的）、挂一个空 `NSToolbar` 用 `UnifiedCompact`——标题条撑成 38pt、三颗窗口
+   按钮垂直居中到 19pt；前端顶栏在 `html.desktop` 下也是 38px、左边让 78px（`desktop.ts`，
+   壳的地址带 `?desktop=1` 认出自己）。命中测试实测这一带的点击照样落到 WKWebView。拖窗口
+   WebKit 不认 `-webkit-app-region`，顶栏空白处按下鼠标叫壳的 `drag()`（pywebview 的 js_api →
+   主线程 `performWindowDragWithEvent:`，同 Tauri 的 `startDragging`）。

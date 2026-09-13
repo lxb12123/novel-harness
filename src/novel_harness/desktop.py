@@ -32,6 +32,7 @@ import sys
 import threading
 import traceback
 from pathlib import Path
+from typing import Any
 
 APP_NAME = "Novel Harness"
 
@@ -69,6 +70,69 @@ def _fail(title: str, detail: str) -> None:
         pass
 
 
+DESKTOP_QUERY = "desktop=1"
+"""窗口指向的地址后面带的一句：前端看见它就给 `<html>` 挂 `desktop`——顶栏从那一刻起
+知道自己顶上没有系统标题条了（左边要给三颗窗口按钮让位，`styles.css` 的 `html.desktop`）。
+用查询串而不是 UA：UA 要整串换掉（CM6 那类库靠它认引擎），查询串刷新也还在。"""
+
+
+def _unify_titlebar(window: Any) -> None:
+    """macOS：把系统标题条揉进工作台自己的顶栏（作者 2026-09-13：「顶部三个操作按钮移到
+    下面那一行去左边去……名字还有那个缩小栏向右挪……把顶部那个栏白色的去掉」）。
+
+    四件事，缺一样都不成：
+    1. 标题条透明、不显示标题——工作台的顶栏从窗口最顶上开始画；
+    2. `FullSizeContentView`——内容视图伸到标题条底下，否则透明了也只是露出一条空白；
+    3. **擦掉 pywebview 涂在标题条容器上的那层底色**（它非 frameless 分支里给
+       `NSTitlebarContainerView` 涂了 windowBackgroundColor）——不擦，透明是假的，那一条
+       还是灰的、把顶栏盖住半截；
+    4. 挂一个空的 `NSToolbar`、`UnifiedCompact` 样式——标题条从 28pt 长到 **38pt**，三颗窗口
+       按钮也跟着**垂直居中到 19pt**；前端那条顶栏正好也是 38px、内容居中，两边就对齐了。
+       不挂的话按钮停在 14pt，跟 38px 顶栏里的图标差 5px，看着像没对齐。
+
+    命中测试实测过：这一带的点击照样落到 WKWebView（三颗按钮除外），顶栏上的按钮都按得到。
+    拖窗口 WebKit 不会替我们做（它不认 `-webkit-app-region`），顶栏在鼠标按下时叫
+    `_ShellApi.drag`。只在 macOS 上做；别的平台没有这条标题栏可揉。
+    """
+    if sys.platform != "darwin":
+        return
+    from AppKit import (
+        NSColor,
+        NSToolbar,
+        NSWindowStyleMaskFullSizeContentView,
+        NSWindowTitleHidden,
+        NSWindowToolbarStyleUnifiedCompact,
+    )
+
+    win = window.native
+    win.setTitlebarAppearsTransparent_(True)
+    win.setTitleVisibility_(NSWindowTitleHidden)
+    win.setStyleMask_(win.styleMask() | NSWindowStyleMaskFullSizeContentView)
+    win.contentView().superview().subviews().lastObject().setBackgroundColor_(NSColor.clearColor())
+    toolbar = NSToolbar.alloc().initWithIdentifier_("novel-harness-titlebar")
+    toolbar.setShowsBaselineSeparator_(False)
+    win.setToolbar_(toolbar)
+    win.setToolbarStyle_(NSWindowToolbarStyleUnifiedCompact)
+
+
+class _ShellApi:
+    """页面能叫到的那几下（`window.pywebview.api.*`）。今天只有拖窗口。"""
+
+    def __init__(self) -> None:
+        self.window: Any = None
+
+    def drag(self) -> None:
+        """顶栏空白处按下鼠标 → 拿当前这一下事件开始拖窗口（同 Tauri 的 `startDragging`）。
+        pywebview 在别的线程上调 API，`performWindowDragWithEvent:` 得在主线程上叫。"""
+        if sys.platform != "darwin" or self.window is None:
+            return
+        from AppKit import NSApp
+        from PyObjCTools import AppHelper
+
+        win = self.window.native
+        AppHelper.callAfter(lambda: win.performWindowDragWithEvent_(NSApp.currentEvent()))
+
+
 def main() -> int:
     _redirect_output(log_path())
     try:
@@ -82,7 +146,19 @@ def main() -> int:
 
         import webview
 
-        webview.create_window(APP_NAME, started.url, width=1440, height=900, min_size=(960, 640))
+        api = _ShellApi()
+        window = webview.create_window(
+            APP_NAME,
+            f"{started.url}/?{DESKTOP_QUERY}",
+            js_api=api,
+            width=1440,
+            height=900,
+            min_size=(960, 640),
+        )
+        api.window = window
+        # 露面之前就把标题条揉进顶栏：`before_show` 在主线程上同步跑（pywebview 的
+        # `Event(should_lock=True)`），NSWindow 那时已经建好、还没显示，作者看不到那一下切换。
+        window.events.before_show += lambda: _unify_titlebar(window)
         # 窗口关掉就结束：让服务体面地停（正在写的那一笔落完），线程本身是 daemon，跟着进程走。
         webview.start()
         started.stop()
