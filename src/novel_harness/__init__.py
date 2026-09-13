@@ -3,4 +3,4 @@
 设计决策见 docs/adr/，实施计划见 docs/PLAN.md。
 """
 
-__version__ = "0.0.1"
+__version__ = "0.0.2"

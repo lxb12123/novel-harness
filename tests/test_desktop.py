@@ -50,8 +50,23 @@ def test_the_bundle_recipe_collects_what_pyinstaller_cannot_see() -> None:
     assert 'collect_submodules("uvicorn")' in spec
     assert 'collect_submodules("novel_harness")' in spec
     assert "console=False" in spec, "窗口版不该带终端"
-    # 版本号只有 pyproject 一处：spec 里读它，不抄一份。
-    assert 'tomllib' in spec and '"0.0.1"' not in spec
+    # 版本号的真值在 pyproject：spec 里读它，不抄一份。
+    assert "tomllib" in spec and f'"{_pyproject_version()}"' not in spec
+
+
+def _pyproject_version() -> str:
+    import tomllib
+
+    return tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+
+
+def test_the_package_reports_the_same_version_as_pyproject() -> None:
+    """`novel_harness.__version__` 是第二份拷贝（provider 的 User-Agent 要在没有 dist-info 的
+    PyInstaller 包里也读得到，所以没法只靠 importlib.metadata）。两份手改，这条钉它们一致——
+    发版时改了 pyproject 忘了这儿，装出来的包会自报旧版本号。"""
+    import novel_harness
+
+    assert novel_harness.__version__ == _pyproject_version()
 
 
 def test_the_build_script_signs_the_app_and_makes_a_dmg() -> None:
