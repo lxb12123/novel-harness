@@ -37,8 +37,11 @@ webview.start(); started.stop()             # 窗口关了，服务体面地停
 前端产物 → 独立的打包 venv（Python 3.12 + pyinstaller + pywebview，`.build/`）→ PyInstaller
 按 `desktop/NovelHarness.spec` 出 `Novel Harness.app` → ad-hoc 签名 → `hdiutil` 出
 `dist/NovelHarness-<版本>-macOS-<架构>.dmg`（里面一个 `.app` + 一个指向 `/Applications` 的快捷方式）。
-版本号只有 pyproject.toml 一处，spec 读它。图标是作者给的那支笔尖（`icons.tsx::NIB`）放在
-紫色圆角方上（`desktop/icon.svg` → `icon.icns`）。
+版本号的真值在 pyproject.toml，spec 读它（`__init__.py` 里那份拷贝由测试钉着一致）。
+图标（`desktop/icon.svg` → `icon-1024.png` → `icon.icns`）：首发是作者给的那支笔尖（`icons.tsx::NIB`）
+放在紫色圆角方上；**2026-09-13 作者换成白底 + 只描黑边的那只翅膀**（`icons.tsx::SPREAD_WING`，
+原坐标一个字没改）。渲法：Chrome headless 截 `--default-background-color=00000000` 的透明底
+（圆角外自然透明，不用再切角），`sips` 出各档、`iconutil` 合成 icns。
 
 清单里必须点名、PyInstaller 自己看不见的三样：包里的非 .py 文件（前端产物 / `migrations/*.sql` /
 `model_windows.json`）、jieba 的词典、uvicorn 按字符串 import 的那几个模块和 `novel_harness.api.app`。
