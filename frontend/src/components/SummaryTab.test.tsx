@@ -433,14 +433,25 @@ describe("全书总结状态（Step 4）", () => {
     ]);
     await screen.findByText(/会自动补写/);
     await user.click(screen.getByRole("button", { name: "第 3 章，缺" }));
-    // 读取中：格子还在，读取那行字在它底下
-    expect(await screen.findByText(/正在读取总结/)).toBeInTheDocument();
+    // 读取中：格子还在；**这一段保持读到之后的形状**——标题已经是第 3 章，底下是同样高的
+    // 一个框，读取那句话在框里（2026-09-14：塌成一行的话滚动条被夹着往上跳，桌面壳的
+    // WKWebView 没有 scroll anchoring，跳上去就回不来了）。
+    const loadingBox = await screen.findByPlaceholderText(/正在读取总结/);
+    expect(loadingBox).toBeDisabled();
+    expect(loadingBox).toHaveAttribute("rows", "6");
+    expect(screen.getByText("第 3 章 章节总结")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "第 4 章，异常" })).toBeInTheDocument();
     expect(scrolled).not.toHaveBeenCalled();
     release();
-    // 读到了：总结那一段滚进视野，只滚到刚好露出来
-    await screen.findByText("第 3 章 章节总结");
+    // 读到了：**整段**（标题 + 框 + 按钮）滚进视野，只滚到刚好露出来——
+    // 挂在标题那一行上的话，标题停在栏底那一线就算「露出来了」，框还在底下。
+    await screen.findByPlaceholderText(/本章内容概要/);
     await waitFor(() => expect(scrolled).toHaveBeenCalledWith({ block: "nearest" }));
+    const target = scrolled.mock.instances[0] as Element;
+    expect(target.className).toBe("chsum-section");
+    expect(target.querySelector(".chsum-scope")?.textContent).toBe("第 3 章 章节总结");
+    expect(target.querySelector("textarea")).not.toBeNull();
+    expect(target.querySelector(".chsum-actions")).not.toBeNull();
   });
 
   it("换章时打了一半的字不跟过去（这一格不再随章号重挂）", async () => {
