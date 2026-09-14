@@ -119,7 +119,16 @@ export function SummaryTab() {
   const opened = openedFor?.chapter === chapter ? openedFor.id : null;
   const setOpened = (id: string | null) => setOpenedFor(id === null ? null : { chapter, id });
   /** 从上面那张格子点过来的那一下：这一章的总结读到了就把它滚进视野（`block: "nearest"`
-   *  ——已经看得见就不动，在底下就只滚到刚好露出来）。左栏换章不滚：那时他看的是正文。 */
+   *  ——已经看得见就不动，在底下就只滚到刚好露出来）。左栏换章不滚：那时他看的是正文。
+   *
+   *  ── 滚的是**整段**（标题 + 框 + 按钮），不是标题那一行（2026-09-14）──────────
+   *  作者：「从绿色的点到另外一个绿色的，就会从当前总结的往上边跳，我还需要往下滑才能看到」。
+   *  两件事叠在一起：① 读取中那一档整段塌成一行，栏的 `scrollTop` 被夹着往上跳一截
+   *  （内容矮了，滚动条只能跟着缩）；② 读到之后 Chrome 有 scroll anchoring 会把位置还回来，
+   *  **WKWebView（桌面壳）没有**——于是标题正好停在栏底那一线，「滚到标题露出来」判它已经
+   *  露出来了，一动不动，框在底下。现在 ① 由读取中那一档保持同样的形状挡住（见下），
+   *  ② 由 ref 挂在整段上挡住：`nearest` 对一段「底边在栏底之下」的东西是把底边对齐栏底，
+   *  标题、框、按钮一起露出来，上面的格子留得最多。 */
   const cameFromGrid = useRef(false);
   const sectionRef = useRef<HTMLDivElement>(null);
 
@@ -189,11 +198,26 @@ export function SummaryTab() {
     );
   }
   if (!data) {
+    // **读取中那一档和读到之后同一个形状**：标题（已经知道是第几章）+ 同样高的一个框。
+    // 塌成一行的话，栏的内容忽然矮了一截，滚动条被夹着往上跳（作者 2026-09-14：
+    // 「从当前总结的往上边跳」）；Chrome 靠 scroll anchoring 事后还回来，桌面壳的
+    // WKWebView 不会。框里那句话就是读取中那一档该说的全部。
     return (
       <div className="chsum">
         {bookStatusEl}
-        <div className="empty">
-          {language === "zh" ? "正在读取总结…" : "Loading the summary…"}
+        <div className="chsum-section">
+          <p className="chsum-scope">
+            {language === "zh" ? `第 ${chapter} 章 章节总结` : `Chapter ${chapter} summary`}
+          </p>
+          <textarea
+            className="chsum-text"
+            aria-label={language === "zh" ? `第 ${chapter} 章的总结` : `Summary for chapter ${chapter}`}
+            placeholder={language === "zh" ? "正在读取总结…" : "Loading the summary…"}
+            rows={6}
+            value=""
+            disabled
+            readOnly
+          />
         </div>
       </div>
     );
@@ -204,20 +228,22 @@ export function SummaryTab() {
     return (
       <div className="chsum">
         {bookStatusEl}
-        <p className="empty" ref={sectionRef as React.RefObject<HTMLParagraphElement>}>
-          {language === "zh" ? (
-            <>
-              第 {chapter} 章尚无正文，无法生成总结。写入正文并保存后，可在此生成。
-            </>
-          ) : (
-            <>
-              Chapter {chapter} has no text yet, so there is nothing to summarize. Write and save
-              the chapter, then generate a summary here.
-            </>
-          )}
-        </p>
-        <div className="chsum-actions">
-          <button onClick={jumpToText}>{language === "zh" ? "跳到原文" : "Jump to the text"}</button>
+        <div className="chsum-section" ref={sectionRef}>
+          <p className="empty">
+            {language === "zh" ? (
+              <>
+                第 {chapter} 章尚无正文，无法生成总结。写入正文并保存后，可在此生成。
+              </>
+            ) : (
+              <>
+                Chapter {chapter} has no text yet, so there is nothing to summarize. Write and
+                save the chapter, then generate a summary here.
+              </>
+            )}
+          </p>
+          <div className="chsum-actions">
+            <button onClick={jumpToText}>{language === "zh" ? "跳到原文" : "Jump to the text"}</button>
+          </div>
         </div>
       </div>
     );
@@ -226,7 +252,9 @@ export function SummaryTab() {
   return (
     <div className="chsum">
       {bookStatusEl}
-      <p className="chsum-scope" ref={sectionRef as React.RefObject<HTMLParagraphElement>}>
+      {/* 标题、框、说明、按钮是**一段**（`sectionRef` 挂在这儿）：从格子点过来时整段滚进视野。 */}
+      <div className="chsum-section" ref={sectionRef}>
+      <p className="chsum-scope">
         {language === "zh" ? `第 ${chapter} 章 章节总结` : `Chapter ${chapter} summary`}
       </p>
 
@@ -339,6 +367,7 @@ export function SummaryTab() {
       </div>
 
       {refused && <div className="err-box">{refused}</div>}
+      </div>
 
       {/* **这一章根本没有总结时，下面这一整层不出现。** 后端那时回的是空表，
           而「这一段里没出现角色册上的任何人」在没有「这一段」的时候是一句假话——
