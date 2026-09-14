@@ -33,9 +33,24 @@ def _path() -> Path:
 
 
 class Settings(BaseModel):
-    """连接参数。key 不进 repr / 不随 GET 出参（遮蔽在 API 层做）。"""
+    """连接参数。key 不进 repr / 不随 GET 出参（遮蔽在 API 层做）。
 
-    model_config = ConfigDict(frozen=True, extra="forbid")
+    ── `extra="ignore"`：盘上多出来的键不许把整个应用炸掉（2026-09-14）──────────
+
+    这份文件被**同一台机器上的几个版本**共用：Web 调试线（跑着最新代码）、装在
+    `/Applications` 里的桌面包（可能是上一版）、以及作者哪天从新版退回旧版。新版一存盘，
+    文件里就多了旧版不认识的键。0.0.6 那天真的发生了：调试线写进 `allow_thinking` /
+    `thinking_budget`，桌面包 0.0.6 一启动就在 `load()` 里抛 `ValidationError`
+    （`Extra inputs are not permitted`）→ `Application startup failed` → 窗口根本开不出来，
+    作者看到的只是「装了打不开」，日志在 `~/Library/Logs` 里没人会去翻。
+
+    从前的 `extra="forbid"` 守的是「别把打错的键当成设置存进去」——那道守卫今天由 HTTP 层
+    的 `SettingsBody` 管（它仍然 forbid，前端发错键当场 422）；盘上这一层只管读得回来。
+    **不认识的键读时丢掉、存时不带**：旧版会把新版的那几位抹掉，那是退版本的正常代价，
+    比「打不开」好得多。
+    """
+
+    model_config = ConfigDict(frozen=True, extra="ignore")
 
     base_url: str = ""
     model: str = ""

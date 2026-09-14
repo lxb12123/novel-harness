@@ -8,12 +8,14 @@
 
 from __future__ import annotations
 
+import json
 import stat
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from novel_harness import settings as settings_module
 from novel_harness.db import connect, migrate
@@ -234,6 +236,40 @@ def test_missing_or_corrupt_file_loads_empty(
     assert settings_module.load() == settings_module.Settings()
     settings_path.write_text("{ 这不是 json", encoding="utf-8")
     assert settings_module.load() == settings_module.Settings()
+
+
+def test_a_newer_versions_keys_on_disk_do_not_break_this_version(
+    settings_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """盘上多出来的键（新版存的、旧版不认识的）读时丢掉，认识的那几位原样在。
+
+    0.0.6 的桌面包就是这么打不开的：调试线写进两个新键，桌面包在 `load()` 里抛
+    `ValidationError`，`Application startup failed`，作者看到的只是「装了打不开」。
+    """
+    monkeypatch.setenv("NH_SETTINGS_PATH", str(settings_path))
+    settings_path.write_text(
+        json.dumps(
+            {
+                "base_url": "https://a.example",
+                "model": "m1",
+                "api_key": "sk-keep-me",
+                "a_key_from_the_future": {"nested": True},
+                "another_one": 42,
+            }
+        ),
+        encoding="utf-8",
+    )
+    loaded = settings_module.load()
+    assert loaded.base_url == "https://a.example"
+    assert loaded.model == "m1"
+    assert loaded.api_key == "sk-keep-me"
+    assert "a_key_from_the_future" not in loaded.model_dump()
+
+    # HTTP 那一层照旧不收陌生键——「别把打错的键当成设置存进去」那道守卫搬到了这儿。
+    from novel_harness.api.app import SettingsBody
+
+    with pytest.raises(ValidationError):
+        SettingsBody(a_key_from_the_future=1)  # type: ignore[call-arg]
 
 
 def test_default_path_is_user_config_not_the_book() -> None:

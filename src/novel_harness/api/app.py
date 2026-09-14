@@ -487,7 +487,14 @@ def projects(conn: Any = Depends(get_conn)) -> Any:
 
 
 class SettingsBody(BaseModel):
-    """设置请求体。`api_key` 为空 = 保持原值（改地址/模型时不用重粘钥匙）。"""
+    """设置请求体。`api_key` 为空 = 保持原值（改地址/模型时不用重粘钥匙）。
+
+    **不收陌生键**（`extra="forbid"`，2026-09-14）：前端把某一位拼错了（`allow_thinkng`）
+    该当场 422，不该被默默忽略成「存好了」。这道守卫原来在 `settings.Settings` 上，那儿改成
+    `ignore` 了——盘上那份文件被几个版本共用，多出来的键不许把应用炸掉（见那个类的注释）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
 
     base_url: str = ""
     model: str = ""
