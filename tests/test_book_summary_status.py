@@ -17,6 +17,7 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 from novel_harness import importer, project
+from novel_harness.chapter_refresh import MAX_AUTO_RETRIES
 from novel_harness.db import connect, migrate
 from novel_harness.declare import Ledger
 from novel_harness.graph import NodeLabel
@@ -237,23 +238,35 @@ def test_autonomy_once_emits_and_heals_anomaly_notification(tmp_path: Path) -> N
 
     # 第一轮自治：缺章入队（coverage attempt）。
     assert runtime.autonomy_once() == 1
-    # 模拟生成失败：把这个 coverage attempt 标终态 FAILED。
-    conn = connect(wheel["db"])
-    try:
-        conn.execute(
-            "UPDATE chapter_refresh_attempt SET summary_state = 'FAILED' "
-            "WHERE summary_state = 'PENDING' AND trigger_kind = 'coverage'"
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    # 模拟生成失败：像真的跑完了那样，验证过、抽取过、总结那一支 FAILED（三支都终态——
+    # 还有一支没跑完的单是「还在跑」，扫描只会幂等复用它）。
+    def fail_pending() -> None:
+        conn = connect(wheel["db"])
+        try:
+            conn.execute(
+                "UPDATE chapter_refresh_attempt SET validation_state = 'SUCCEEDED', "
+                "extraction_state = 'SUCCEEDED', summary_state = 'FAILED' "
+                "WHERE summary_state = 'PENDING' AND trigger_kind = 'coverage'"
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
-    # 第二轮自治：同 basis 已是终态 FAILED → attention_required（不新建、不重复付），
-    # 异常标记随这一轮同步成 background_failure 通知。
+    fail_pending()
+
+    # 第二轮自治：最近一张 FAILED → **再下一张**（2026-09-14 起有限次自动重试）。
+    # 异常与通知按「最近一次 attempt」算，而这一轮先下单再对账：新那张是 PENDING，
+    # 所以**重试中的章不红、不通知**——只有机器放弃了（够数）才把账推到作者面前。
+    for n in range(1, MAX_AUTO_RETRIES + 1):
+        assert runtime.autonomy_once() == 1, f"第 {n} 次重试要再下一张"
+        assert _open_bg_count(wheel["db"], wheel["pid"]) == 0, "重试中不通知"
+        fail_pending()
+
+    # 够数了：这一轮不再下单，最近一张停在 FAILED → 红、开通知。
     assert runtime.autonomy_once() == 0, "attention_required 不算本轮入队"
     assert _open_bg_count(wheel["db"], wheel["pid"]) == 1
 
-    # 好转：SUCCEEDED → 下一轮自治解决旧 OPEN。
+    # 好转：全部 SUCCEEDED → 下一轮自治解决旧 OPEN。
     conn = connect(wheel["db"])
     try:
         conn.execute("UPDATE chapter_refresh_attempt SET summary_state = 'SUCCEEDED'")

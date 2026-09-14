@@ -52,6 +52,25 @@ TERMINAL_BRANCH_STATES: Final = frozenset({"SUCCEEDED", "REUSED", "BLOCKED", "FA
 
 TERMINAL_ALIAS_PHASES: Final = frozenset({"UNCHANGED", "COMPLETE", "FAILED_BEFORE_CHANGE"})
 
+MAX_AUTO_RETRIES: Final = 3
+"""同一份正文、同一套规则、缺同一批分支的单，**FAILED 之后最多自动再下几张**（2026-09-14）。
+
+── 从前是 0：FAILED 一次就永远 `attention_required` ────────────────────────
+
+那条纪律（Task 16）守的是「别替一个坏掉的模型每半小时再付一次钱」。真书上它的另一面
+露出来了：模型不是坏的，是那条路由上思考把预算吃空了（ADR 0052）——修好之后 31 章
+红着的「异常」一张单都不会再下，芯片上那句「将自动重试」说得比做得多，作者只能等
+正文换版本或者自己一章一章点。**失败的原因常常不在这一章身上**（端点抖一下、预算不够、
+钥匙过期），那种失败换一轮就好。
+
+── 为什么是 3，为什么按 mask 数 ───────────────────────────────────────────
+
+3 = 三轮扫描（一个半小时）。换一轮就好的那种，一次就够；三次还不行的，第四次也不会行，
+那时才轮到 `attention_required`（红着不动、不占名额）。计数按「同一批缺口」（同 mask）：
+缺口变了（比如验证位复用之后 mask 从 7 变 6）本来就是另一张单，从前也是这么算的。
+BLOCKED（规则拦下的那种）**不重试**：正文和规则集不变，再跑一遍还是拦。
+"""
+
 
 class AttemptNotFound(RuntimeError):
     """claim/run 时 attempt 行不见了（被删 = 数据损坏，不是正常流程）。"""
@@ -542,9 +561,10 @@ def ensure_refresh_coverage(
     """同 hash 保存的幂等补缺：只为缺失分支建 coverage attempt，不重复付费。
 
     - 覆盖完整 → `reused`（不建 attempt，复用已有结果）。
-    - 有缺口 → 复用同 trigger key 的既有 attempt（幂等），否则新建并返回 `queued`。
-    - 同 basis 已有 terminal FAILED/BLOCKED → `attention_required`，不自动重付；
-      只有显式「重新整理/重新总结」创建新的 manual intent。
+    - 有缺口 → 复用同一批缺口的**最近一张**既有 attempt（幂等），否则新建并返回 `queued`。
+    - 最近一张跑完了缺口却还在（FAILED，或报了成功而东西没落下来）→ 再下一张
+      （`coverage:{mask}#{第几次}`），**最多 `MAX_AUTO_RETRIES` 次**；
+      用完了、或者是 BLOCKED（规则拦下的） → `attention_required`，不再自动付。
 
     `missing_branch_mask` 的位：1=验证报告，2=总结 head，4=抽取 application。
     """
@@ -582,24 +602,35 @@ def ensure_refresh_coverage(
     if mask == 0:
         return CoverageDecision(0, None, reused=True, processing="reused")
 
-    trigger_key = f"coverage:{mask}"
-    row = conn.execute(
+    # 同一批缺口的所有单，最近的在前。**唯一键里的 trigger_key 带着第几次**
+    # （`coverage:6`、`coverage:6#1`、`coverage:6#2`…），所以「重试」是新的一行，
+    # 旧的那张原样留着——审计线索不许改写。
+    rows = conn.execute(
         """
         SELECT id, summary_state, extraction_state, validation_state
           FROM chapter_refresh_attempt
          WHERE run_id = ? AND workflow_version = 1 AND ruleset_epoch = ?
            AND trigger_kind = 'coverage' AND missing_branch_mask = ?
+         ORDER BY created_at DESC, id DESC
         """,
         (run_id, ruleset_epoch, mask),
-    ).fetchone()
-    if row is not None:
-        any_failed = any(
-            row[key] in ("FAILED", "BLOCKED")
-            for key in ("validation_state", "summary_state", "extraction_state")
-        )
-        if any_failed:
-            return CoverageDecision(mask, row["id"], reused=True, processing="attention_required")
-        return CoverageDecision(mask, row["id"], reused=True, processing="queued")
+    ).fetchall()
+    if rows:
+        latest = rows[0]
+        states = [latest[key] for key in ("validation_state", "summary_state", "extraction_state")]
+        if "BLOCKED" in states:
+            return CoverageDecision(mask, latest["id"], reused=True, processing="attention_required")
+        if any(state in ("PENDING", "RUNNING") for state in states):
+            # 还在跑：幂等复用，不是又一张。
+            return CoverageDecision(mask, latest["id"], reused=True, processing="queued")
+        # 最近一张已经跑完了，缺口却还在——要么它 FAILED，要么它报了成功而东西没落下来
+        # （2026-09-14 之前抽取那一支就是这么报的：run FAILED 也算 SUCCEEDED）。两种都是
+        # 「再下一张」，两种都计入次数：够数就停，别让一张空单每半小时占一个名额。
+        if len(rows) > MAX_AUTO_RETRIES:
+            return CoverageDecision(mask, latest["id"], reused=True, processing="attention_required")
+        trigger_key = f"coverage:{mask}#{len(rows)}"
+    else:
+        trigger_key = f"coverage:{mask}"
 
     attempt_id = new_id(EntityType.REFRESH_ATTEMPT, project_id)
     conn.execute(

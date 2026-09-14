@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from novel_harness import importer, project
 from novel_harness.api.background_runtime import BackgroundRuntime
 from novel_harness.db import connect, migrate
@@ -334,3 +336,51 @@ def test_kick_brings_the_next_sweep_forward(tmp_path: Path) -> None:
     runtime._stop.clear()  # noqa: SLF001
     _loop_once(runtime)
     assert _attempts(db) == 2
+
+
+# ── 抽取那一支：失败的 run 要重跑，跑失败要说失败（2026-09-14）──────────────────
+
+
+def test_the_extraction_adapter_forces_a_rerun_and_reports_a_failed_run_as_failure() -> None:
+    """从前 `enqueue()` 不带 force、`run()` 的结果不看：上次 FAILED 的 run 原样交回，`run()`
+    领不到它直接返回，这一支却报 SUCCEEDED——调度器每一轮都判「抽取没跑」再下一张单，单上
+    这一支又什么都不做，一轮 20 个名额里 18 个就这么白占着（真书 2026-09-13 实测）。"""
+    from types import SimpleNamespace
+
+    from novel_harness.api.background_runtime import _ExtractionAdapter
+    from novel_harness.extract.control import ExtractionRunStatus
+
+    calls: list[tuple[str, int, bool]] = []
+
+    def make_runner(final: ExtractionRunStatus):
+        class Runner:
+            def enqueue(self, project_id: str, chapter: int, *, force: bool = False):
+                calls.append((project_id, chapter, force))
+                return SimpleNamespace(id="run:1")
+
+            def run(self, run_id: str):
+                return SimpleNamespace(
+                    id=run_id,
+                    status=final,
+                    errors=(
+                        SimpleNamespace(code=SimpleNamespace(value="analysis_format"), message="JSON 截断"),
+                    )
+                    if final is ExtractionRunStatus.FAILED
+                    else (),
+                )
+
+        return Runner()
+
+    ctx = SimpleNamespace(project_id="project:p", chapter_number=7)
+
+    ok = _ExtractionAdapter(lambda: make_runner(ExtractionRunStatus.SUCCEEDED)).run(ctx)
+    assert ok == "extraction:SUCCEEDED"
+    # **每次都带 force**：它只对 FAILED 的 run 起作用（`ExtractionRunner.enqueue`），成功的照旧复用。
+    assert calls[-1] == ("project:p", 7, True)
+
+    with pytest.raises(RuntimeError, match="analysis_format: JSON 截断"):
+        _ExtractionAdapter(lambda: make_runner(ExtractionRunStatus.FAILED)).run(ctx)
+
+    # SUPERSEDED（正文换过版本，结果不再适用）不是失败：别把它算进重试的账。
+    superseded = _ExtractionAdapter(lambda: make_runner(ExtractionRunStatus.SUPERSEDED)).run(ctx)
+    assert superseded == "extraction:SUPERSEDED"

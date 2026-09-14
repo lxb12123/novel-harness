@@ -26,7 +26,8 @@ WPS 里改稿压根不经过工作台、导入一整本书一次保存都没发�
 （2026-08-23）。从前它一眼都不看 mask，于是防抖剥掉的总结位在那儿又长了回来。
 报什么 → 排什么 → 做什么，三段各有一条守卫，缺一段就又能「报了没做」。
 「异常」（生成失败 / 卡住）不在本模块：那是 attempt/通知轨迹的事，`missing`
-会自然覆盖它（重试等于再补一次）、`stale` 由指纹覆盖，队列纪律（§6）保证
+会自然覆盖它（重试等于再补一次——2026-09-14 起真的会再下单，同一批缺口最多
+`chapter_refresh.MAX_AUTO_RETRIES` 次，ADR 0053）、`stale` 由指纹覆盖，队列纪律（§6）保证
 单条失败不阻塞后续。
 
 ── 权重（§4）：只分名额，不当门槛 ─────────────────────────────────────────
@@ -320,8 +321,8 @@ def _place_order(
     except Exception:  # noqa: BLE001 —— 单章入队失败不阻塞整轮调度（§6）
         return "enqueue_failed"
     if decision.processing == "attention_required":
-        # 同 basis 已有一个终态 FAILED/BLOCKED 的 coverage attempt：不自动重付
-        # （Task 16 纪律），这章要作者手动处理。不算本轮入队预算。
+        # 同一批缺口已经失败够 `MAX_AUTO_RETRIES` 次（或者是规则拦下的 BLOCKED）：不再
+        # 自动付（ADR 0053）。不算本轮入队预算——红着不动，也不占名额。
         return "attention_required"
     # 报什么 = 下了什么。单子里没有总结那一项就不许自称排了总结的活——
     # 这正是 2026-08-22 那个 bug 的形状（报 queued_overwrite、一单没下）。
