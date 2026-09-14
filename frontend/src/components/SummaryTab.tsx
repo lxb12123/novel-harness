@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   useAiSettings,
   useBookSummaryStatus,
@@ -102,11 +102,26 @@ export function SummaryTab() {
   // 作者正在改的那一段。**`null` = 他没在改**，屏幕跟着服务端那份走。
   // 分成两个状态是因为重取随时会落地（后台整理刚补完一章总结就会），
   // 而**没保存过的字哪儿都找不回来**——跟着重取一起刷掉就是静默吃掉他打的字。
-  const [typed, setTyped] = useState<string | null>(null);
-  const [confirming, setConfirming] = useState(false);
-  // 他点开的那个记忆点。**换章时不清**由 `key` 兜着（这一格整块跟着章号重挂），
-  // 所以这儿不写第二份清理逻辑。
-  const [opened, setOpened] = useState<string | null>(null);
+  //
+  // **三样都按章号记**（2026-09-13）：这一格不再随章号重挂（原来那句「由 `key` 兜着」
+  // 说的 key 早就不在了），换章时只认「是这一章的」那一份——否则在第 5 章打了一半的字
+  // 会顶着第 6 章的标题出现。换章不再重挂，是为了让上面那张全书的格子**留在原地**：
+  // 作者在格子里点一章，整格卸掉重来，滚动条就回到最顶上（作者 2026-09-13 指出来的）。
+  const [typedFor, setTypedFor] = useState<{ chapter: number; text: string } | null>(null);
+  const typed = typedFor?.chapter === chapter ? typedFor.text : null;
+  const setTyped = (text: string | null) =>
+    setTypedFor(text === null ? null : { chapter, text });
+  const [confirmingFor, setConfirmingFor] = useState<number | null>(null);
+  const confirming = confirmingFor === chapter;
+  const setConfirming = (on: boolean) => setConfirmingFor(on ? chapter : null);
+  // 他点开的那个记忆点。
+  const [openedFor, setOpenedFor] = useState<{ chapter: number; id: string } | null>(null);
+  const opened = openedFor?.chapter === chapter ? openedFor.id : null;
+  const setOpened = (id: string | null) => setOpenedFor(id === null ? null : { chapter, id });
+  /** 从上面那张格子点过来的那一下：这一章的总结读到了就把它滚进视野（`block: "nearest"`
+   *  ——已经看得见就不动，在底下就只滚到刚好露出来）。左栏换章不滚：那时他看的是正文。 */
+  const cameFromGrid = useRef(false);
+  const sectionRef = useRef<HTMLDivElement>(null);
 
   const mentions = useSummaryMentions(projectId, chapter);
   const trail = useNodeSummaryMentions(projectId, opened);
@@ -140,9 +155,16 @@ export function SummaryTab() {
   }
 
   function goChapter(n: number) {
+    cameFromGrid.current = true;
     setChapter(n);
     setPage("workbench");
   }
+
+  useEffect(() => {
+    if (!cameFromGrid.current || !status.data) return;
+    cameFromGrid.current = false;
+    sectionRef.current?.scrollIntoView?.({ block: "nearest" });
+  }, [status.data]);
 
   // 全书总结状态一直挂在这一格最上面：**它跟着书走，不跟着当前章走**——
   // 作者在这一格里既看「当前章有没有」也看「全书缺哪些/哪章不对齐/哪章异常」。
@@ -155,20 +177,34 @@ export function SummaryTab() {
     />
   );
 
-  if (failed) return <div className="err-box">{failed}</div>;
-  if (!data)
+  // **全书那张格子在四档里都常驻**（读取中 / 读取失败 / 没正文 / 正常）。以前读取中那一档
+  // 整格换成一行「正在读取总结…」：作者在格子里点一章，格子卸掉、这一栏塌成一行，滚动条
+  // 回到顶上，总结读回来之后他得从第 1 章一路划到底才看得见（作者 2026-09-13）。
+  if (failed) {
     return (
-      <div className="empty">
-        {language === "zh" ? "正在读取总结…" : "Loading the summary…"}
+      <div className="chsum">
+        {bookStatusEl}
+        <div className="err-box">{failed}</div>
       </div>
     );
+  }
+  if (!data) {
+    return (
+      <div className="chsum">
+        {bookStatusEl}
+        <div className="empty">
+          {language === "zh" ? "正在读取总结…" : "Loading the summary…"}
+        </div>
+      </div>
+    );
+  }
 
   // 这一章还没写：**没得总结**，也就没有一颗会花钱的按钮该在这儿亮着。
   if (!data.has_text) {
     return (
       <div className="chsum">
         {bookStatusEl}
-        <p className="empty">
+        <p className="empty" ref={sectionRef as React.RefObject<HTMLParagraphElement>}>
           {language === "zh" ? (
             <>
               第 {chapter} 章尚无正文，无法生成总结。写入正文并保存后，可在此生成。
@@ -190,7 +226,7 @@ export function SummaryTab() {
   return (
     <div className="chsum">
       {bookStatusEl}
-      <p className="chsum-scope">
+      <p className="chsum-scope" ref={sectionRef as React.RefObject<HTMLParagraphElement>}>
         {language === "zh" ? `第 ${chapter} 章 章节总结` : `Chapter ${chapter} summary`}
       </p>
 
