@@ -133,7 +133,9 @@ export function TopBar() {
           - 开着（novel-agent 模式）= **脑袋是书的小机器人**（`BotIcon`）：助手上场了。
           2026-09-12 之前是同一个机器人的两态（书合着 / 摊开），摊开那版随这次一起删了。 */}
       <button
-        className={"icon-btn" + (chatOpen ? " on" : "")}
+        className={
+          "icon-btn" + (chatOpen ? " on" : "") + (continuationPending ? " writing" : "")
+        }
         aria-label={language === "zh" ? "写作助手" : "Writing assistant"}
         aria-pressed={chatOpen}
         data-tip={
@@ -144,10 +146,18 @@ export function TopBar() {
         onClick={toggleChat}
       >
         {chatOpen ? <BotIcon /> : <NibIcon />}
-        {/* 续写建议正在生成时右上角转一下——这颗图标本来就是「AI 在不在动」的那个位置，
+        {/* 续写建议正在生成 = `.writing`——这颗图标本来就是「AI 在不在动」的那个位置，
             续写也是 AI 在动。面板开着时续写默认不跑（作者 2026-09-10 定的；设置里
-            「是否在 novel-agent 模式下续写」能放行），但这儿不用管那条：只要有一次在飞就转。 */}
-        {continuationPending && (
+            「是否在 novel-agent 模式下续写」能放行），但这儿不用管那条：只要有一次在飞就动。
+
+            **动的是什么，看此刻是哪颗图标**：
+            - 笔尖（协助模式）：它自己那颗**星芒闪**（`.icon-btn.writing .nib-spark`）。
+              2026-09-12 换成这颗图之前，这儿在角上另挂一个转圈；换了图之后那个转圈
+              恰好压在星芒上——同样是放射状、同样大、同一个角——转不转看着一样，
+              作者 2026-09-13 说「动画没有了」。星芒本来的意思就是「引擎在旁边续」，
+              让它亮起来比在旁边再挂一个东西说得清。
+            - 小机器人（novel-agent 模式）：照旧角上转圈——它头上没有东西挡。 */}
+        {continuationPending && chatOpen && (
           <span className="bot-thinking">
             <ThinkingSpinner />
           </span>
