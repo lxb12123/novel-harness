@@ -19,9 +19,11 @@ from novel_harness.chapter_refresh import (
     BRANCH_EXTRACTION,
     BRANCH_SUMMARY,
     BRANCH_VALIDATION,
+    MAX_AUTO_RETRIES,
     _head_missing,
     BranchContext,
     ChapterRefreshCoordinator,
+    CoverageDecision,
     activate_extraction_application,
     claim_attempt,
     ensure_refresh_coverage,
@@ -453,7 +455,7 @@ def test_coverage_is_idempotent_and_another_mask_is_another_order(
     tmp_path: Path,
 ) -> None:
     """同 hash 保存：只为缺失分支建 coverage attempt，第二次复用同一 attempt；
-    terminal FAILED → attention_required；manual 意图另建。"""
+    FAILED → 再下一张，**最多 `MAX_AUTO_RETRIES` 张**，够数才 attention_required（2026-09-14）。"""
     pid, chapter_id = _seed_chapter(conn, tmp_path)
     snapshot_id = next(
         ct.snapshot_id for ct in SqliteStoryGraph(conn).current_snapshots(pid) if ct.number == 1
@@ -502,23 +504,66 @@ def test_coverage_is_idempotent_and_another_mask_is_another_order(
     )
     assert full.processing == "reused" and full.reused is True
 
-    # 同 basis 已 FAILED → attention_required，不自动重付。
+    # 同 basis FAILED 了 → **再下一张**（2026-09-14 之前是永远 attention_required：真书上
+    # 思考吃空预算那 31 章修好之后一张单都不会再下）。新的一行、新的 trigger_key，
+    # 旧的原样留着；最多再下 MAX_AUTO_RETRIES 张，之后才是 attention_required。
+    def fail(attempt_id: str) -> None:
+        # 像真的跑完了那样：验证过了、抽取过了、总结那一支炸了。**三支都终态**——
+        # 还有一支 PENDING/RUNNING 的单是「还在跑」，问它只会幂等复用，不会再下一张。
+        conn.execute(
+            "UPDATE chapter_refresh_attempt SET validation_state = 'SUCCEEDED', "
+            "extraction_state = 'SUCCEEDED', summary_state = 'FAILED' WHERE id = ?",
+            (attempt_id,),
+        )
+        conn.commit()
+
+    def order() -> CoverageDecision:
+        return ensure_refresh_coverage(
+            conn,
+            project_id=pid,
+            chapter_id=chapter_id,
+            snapshot_id=snapshot_id,
+            generation=1,
+            ruleset_epoch=1,
+            ruleset_hash="x",
+            missing_check=missing_summary_and_extraction,
+        )
+
+    fail(first.attempt_id)
+    retries: list[str] = []
+    for n in range(1, MAX_AUTO_RETRIES + 1):
+        retry = order()
+        assert retry.processing == "queued" and retry.reused is False, n
+        assert retry.attempt_id is not None and retry.attempt_id != first.attempt_id
+        assert retry.attempt_id not in retries
+        retries.append(retry.attempt_id)
+        # 还没跑完的那张再问一次是复用（幂等），不是又一张。
+        again = order()
+        assert again.attempt_id == retry.attempt_id and again.reused is True
+        fail(retry.attempt_id)
+    assert len(retries) == MAX_AUTO_RETRIES
+    # 够数了：不再付。
+    exhausted = order()
+    assert exhausted.processing == "attention_required"
+    assert exhausted.attempt_id == retries[-1]
+    keys = [
+        r[0]
+        for r in conn.execute(
+            "SELECT trigger_key FROM chapter_refresh_attempt WHERE trigger_kind = 'coverage' "
+            "AND missing_branch_mask = ? ORDER BY created_at, id",
+            (BRANCH_SUMMARY | BRANCH_EXTRACTION,),
+        )
+    ]
+    assert keys == ["coverage:6", "coverage:6#1", "coverage:6#2", "coverage:6#3"]
+
+    # BLOCKED（规则拦下的）**不重试**：正文和规则集不变，再跑一遍还是拦。
     conn.execute(
-        "UPDATE chapter_refresh_attempt SET summary_state = 'FAILED' WHERE id = ?",
-        (first.attempt_id,),
+        "UPDATE chapter_refresh_attempt SET summary_state = 'SUCCEEDED', "
+        "validation_state = 'BLOCKED' WHERE id = ?",
+        (retries[-1],),
     )
     conn.commit()
-    failed = ensure_refresh_coverage(
-        conn,
-        project_id=pid,
-        chapter_id=chapter_id,
-        snapshot_id=snapshot_id,
-        generation=1,
-        ruleset_epoch=1,
-        ruleset_hash="x",
-        missing_check=missing_summary_and_extraction,
-    )
-    assert failed.processing == "attention_required"
+    assert order().processing == "attention_required"
 
     # **另一个 mask 是另一张单**：coverage 的唯一键是 (run, epoch, kind, mask)，
     # 所以「缺的东西不一样」建得出第二张单，而「同一批缺口」建不出。

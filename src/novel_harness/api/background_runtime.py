@@ -85,15 +85,32 @@ def new_connection_factory(db_path: str) -> Callable[[], Connection]:
 
 
 class _ExtractionAdapter(BranchAdapter):
-    """真实抽取分支：独立连接上 enqueue + run（一次 run 至多付一次模型）。"""
+    """真实抽取分支：独立连接上 enqueue + run（一次 run 至多付一次模型）。
+
+    ── 失败的 run 要重跑，跑失败要说失败（2026-09-14）─────────────────────
+
+    从前这儿 `enqueue()` 不带 `force`、`run()` 的结果不看：同一份正文的 run 上次 FAILED
+    （JSON 截断、空文本），`enqueue` 原样交回那张 FAILED 的 run，`run()` 领不到它直接返回，
+    这一支却报 SUCCEEDED——于是调度器每一轮都判这一章「抽取没跑」再下一张单，单上
+    这一支又什么都不做，一轮 20 个名额里 18 个就这么白占着（真书 2026-09-13 实测）。
+
+    现在：`force=True`（只对 FAILED 的 run 起作用，成功的照旧复用）真的重跑；跑完仍是
+    FAILED 就抛，让这一支落 FAILED——单子失败，`ensure_refresh_coverage` 按次数重试，
+    够数了才 `attention_required`（那时不再占名额）。报什么 = 做什么。
+    """
 
     def __init__(self, runner_factory: Callable[[], ExtractionRunner]) -> None:
         self._runner_factory = runner_factory
 
     def run(self, ctx: Any) -> str:
+        from ..extract.control import ExtractionRunStatus
+
         runner = self._runner_factory()
-        queued = runner.enqueue(ctx.project_id, ctx.chapter_number)
+        queued = runner.enqueue(ctx.project_id, ctx.chapter_number, force=True)
         done = runner.run(queued.id)
+        if done.status is ExtractionRunStatus.FAILED:
+            reasons = "; ".join(f"{e.code.value}: {e.message}" for e in done.errors) or "unknown"
+            raise RuntimeError(f"extraction run {done.id} failed: {reasons[:300]}")
         return f"extraction:{done.status.value}"
 
 
