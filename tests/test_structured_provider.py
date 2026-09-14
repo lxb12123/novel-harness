@@ -377,6 +377,11 @@ def test_existing_resolved_call_plan_serialization_is_unchanged() -> None:
         # 记录里多一位「这一次要不要能中途停」是**多一条审计事实**，不是少一条；
         # 旧记录读回来时它取默认 `False`，也就是当时的真实情况。
         "interruptible",
+        # 2026-09-13 多出来的一位（`ResolvedCallPlan.thinking_token_budget`）：作者拨开
+        # 「允许模型思考」后为思考预留的预算。同上——记录里多一条审计事实，wire 上
+        # 一个字段都没多：它是 0 的时候 plan 和从前逐字节相同（`test_thinking_budget.py`），
+        # 而 M2 三臂 / gate 那条路永远是 0。旧记录读回来取默认 0，也就是当时的真实情况。
+        "thinking_token_budget",
         "budget_formula_version",
         "capability",
     ]
@@ -399,6 +404,7 @@ def test_existing_resolved_call_plan_serialization_is_unchanged() -> None:
         "reasoning_dialect": "openai",
         "stream": False,
         "interruptible": False,
+        "thinking_token_budget": 0,
         "budget_formula_version": BUDGET_FORMULA_VERSION,
     }
 

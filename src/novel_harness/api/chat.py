@@ -161,6 +161,7 @@ from ..graph.store import GraphStore
 from ..ids import EntityType, new_id
 from .deps import (
     agent_provider_config,
+    author_thinking_budget,
     get_advisory_reviewer,
     get_conn,
     get_store,
@@ -713,6 +714,7 @@ def _summarize_conversation_block(
         ReasoningEffort.OFF,
         capability,
         prompt_token_budget=count_units(text, DraftLanguage.ZH) * TOKENS_PER_UNIT,
+        thinking_token_budget=author_thinking_budget(),
     )
     return complete(
         block_summary_messages(text),
@@ -995,7 +997,11 @@ def _plan_or_422() -> tuple[ProviderConfig, ProviderCapabilities, ResolvedCallPl
         # **能力由装配层解析，不让 `agent/` 自己去查**：只有这一层够得着作者在设置页
         # 手填的上下文窗口（`agent/` 不读设置）。自己解析的话，他填的那个数管得到
         # 起草抽屉/抽取/总结，唯独管不到写作助手 —— 一半听一半不听，而且不报错。
-        capability, plan = agent_call_plan(config, resolve_route_capabilities(config))
+        capability, plan = agent_call_plan(
+            config,
+            resolve_route_capabilities(config),
+            thinking_token_budget=author_thinking_budget(),
+        )
     except (CapabilityError, ValidationError, ValueError) as exc:
         raise HTTPException(
             status_code=422,
@@ -1222,6 +1228,9 @@ class _TurnRun:
             root=self._proj.root_path,
             config=self._config,
             capability=self._capability,
+            # 同能力证据一样由装配层递进去（`agent/` 不读设置）：起草是这一轮里
+            # 第二次会花钱的调用，作者拨开的「允许思考」要管到它。
+            thinking_token_budget=author_thinking_budget(),
             events=SqliteEventStore(self._conn),
             summaries=SummaryStore(self._conn),
             # **作者那条一直挂着的要求要再送一遍。** 它已经在对话前缀里了，

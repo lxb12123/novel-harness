@@ -70,6 +70,10 @@ def _direct_plan(
     return ResolvedCallPlan(**values)
 
 
+def deepseek_flash_levels() -> frozenset[ReasoningEffort]:
+    return resolve_capabilities("https://api.deepseek.com", "deepseek-v4-flash").reasoning_levels
+
+
 def test_exact_registry_contains_all_supported_routes() -> None:
     openai = resolve_capabilities("https://API.OPENAI.COM:443/v1/", "gpt-5.6")
     assert openai.base_url == "https://api.openai.com/v1"
@@ -91,7 +95,16 @@ def test_exact_registry_contains_all_supported_routes() -> None:
     )
     assert openrouter.reasoning_dialect is ReasoningDialect.OPENROUTER
 
-    for capability in (openai, deepseek, anthropic, openrouter):
+    # 第一条中转路由（2026-09-13 探针登记，ADR 0052 补记）：认 DeepSeek 方言，
+    # 两个上限**没公布就是 None**——不从官方 DeepSeek 那条抄过来。
+    opencode = resolve_capabilities("https://opencode.ai/zen/go/v1/", "deepseek-v4.1-flash")
+    assert opencode.reasoning_dialect is ReasoningDialect.DEEPSEEK
+    assert opencode.reasoning_levels == deepseek_flash_levels()
+    assert opencode.max_context_tokens is None and opencode.max_output_tokens is None
+    assert opencode.reserve_ratio_high is None
+    assert opencode.reasoning_shares_output is True
+
+    for capability in (openai, deepseek, anthropic, openrouter, opencode):
         assert capability.source_urls
         assert capability.registry_version == CAPABILITY_REGISTRY_VERSION
         assert capability.model_dump(mode="json")["source_urls"]

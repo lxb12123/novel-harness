@@ -764,6 +764,13 @@ def _wire_kwargs_from_validated(
 
     effort = plan.reasoning_effective
     dialect = plan.reasoning_dialect
+    if effort is ReasoningEffort.OFF and plan.thinking_token_budget > 0:
+        # **作者拨开了「允许模型思考」**（2026-09-13）：这一次**不发任何 reasoning 字段**，
+        # 端点按它自己的默认来（DeepSeek 省略 = high，GPT-5.6 省略 = medium，没登记的
+        # 路由本来就什么都收不到）。「允许」不是「要求」——不发「开」，只是不再发「关」；
+        # 思考要占的那一截已经算进 `plan.request_token_budget`（可见 + 作者预留的数）。
+        # 预算为 0 的 plan 走下面那条老路，一个字节都不变。
+        return kwargs
     if effort is ReasoningEffort.OFF:
         # "off" 是产品语义,不等于所有 provider 都能靠省略字段实现。
         # OpenAI GPT-5.6 省略后默认 medium;DeepSeek V4 省略后默认 high。

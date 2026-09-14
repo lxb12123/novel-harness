@@ -142,7 +142,23 @@ header > .icon-btn + .icon-btn { margin-left: -8px; }
 .icon-btn:hover::after, .icon-btn:focus-visible::after { opacity: 1; }
 @media (prefers-reduced-motion: reduce) { .icon-btn::after { transition: none; } }
 
-/* 续写建议正在生成时挂在模式开关图标右上角的小圈——纯提示「AI 在动」，不挡按钮本身，
+/* 续写建议正在生成、此刻是笔尖那颗图标：**它自己那颗星芒闪**（`TopBar.tsx` 那段注释说了
+   为什么不再在角上另挂转圈）。两件事一起说「在动」：星芒染成强调色（静态的那一半，
+   reduced-motion 下只剩它），并且以自己为中心一涨一缩、微微转一下（动态的那一半）。
+   `transform-box: fill-box` 让 `transform-origin: center` 落在星芒自己的中心，
+   不是整张 24 视框的中心——少了它星芒会绕着笔尖公转。 */
+.icon-btn.writing .nib-spark {
+  fill: var(--accent);
+  transform-box: fill-box; transform-origin: center;
+  animation: nib-spark-twinkle .9s ease-in-out infinite;
+}
+@keyframes nib-spark-twinkle {
+  0%, 100% { transform: scale(1) rotate(0deg); opacity: 1; }
+  50% { transform: scale(1.9) rotate(30deg); opacity: .5; }
+}
+@media (prefers-reduced-motion: reduce) { .icon-btn.writing .nib-spark { animation: none; } }
+
+/* 续写建议正在生成、此刻是小机器人那颗图标：挂在它右上角的小圈——纯提示「AI 在动」，不挡按钮本身，
    所以用 pointer-events: none。紧贴着图标（不是紧贴按钮的外框），**不写颜色**——
    `ThinkingSpinner` 是 currentColor，跟着底下那颗图标此刻是什么颜色走（平时 `--dim`，
    写作助手开着时 `--accent`），不用另挑一个颜色。 */
@@ -1425,6 +1441,11 @@ pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid 
 
 /* 一行一件事：左边标题 + 小字，右边一个控件。 */
 .set-row-card { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+/* 同一行的形状，但只是一张更高的卡的**头**——开关拨开之后底下还会长出一格。
+   不复用 `.set-row`：那个类会把开关当普通按钮重画（min-height / 圆角）。 */
+.set-row-head {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px;
+}
 .set-row-text { display: grid; gap: 3px; min-width: 0; }
 .set-row-title { font-size: 13px; font-weight: 650; }
 .set-row-sub { color: var(--dim); font-size: 12px; line-height: 1.6; }

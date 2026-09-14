@@ -1,6 +1,6 @@
 [project]
 name = "novel-harness"
-version = "0.0.6"
+version = "0.0.7"
 description = "唯一一个知道「谁在第几章还不该知道什么」的中文长篇写作引擎"
 readme = "README.md"
 license = { text = "Apache-2.0" }

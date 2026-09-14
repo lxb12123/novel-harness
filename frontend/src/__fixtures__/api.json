@@ -2892,6 +2892,7 @@
     }
   },
   "settings": {
+    "allow_thinking": false,
     "api_key_preview": "",
     "api_key_set": false,
     "auto_update_model_windows": false,
@@ -2904,9 +2905,13 @@
     "graph_max_nodes_default": 1000,
     "model": "",
     "model_configured": false,
-    "review_card_edits": false
+    "review_card_edits": false,
+    "thinking_budget": null,
+    "thinking_budget_max": 32768,
+    "thinking_budget_min": 8192
   },
   "settingsSaved": {
+    "allow_thinking": false,
     "api_key_preview": "***********-key",
     "api_key_set": true,
     "auto_update_model_windows": false,
@@ -2919,7 +2924,10 @@
     "graph_max_nodes_default": 1000,
     "model": "deepseek-v4-flash",
     "model_configured": true,
-    "review_card_edits": false
+    "review_card_edits": false,
+    "thinking_budget": null,
+    "thinking_budget_max": 32768,
+    "thinking_budget_min": 8192
   },
   "stateDims": [
     {

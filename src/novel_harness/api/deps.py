@@ -22,6 +22,7 @@ from ..advisory_review import AdvisoryRequest
 from ..db import Connection, connect, migrate
 from ..declare import Ledger
 from ..draft.capabilities import (
+    THINKING_BUDGET_MIN,
     CapabilityError,
     ProviderCapabilities,
     ReasoningEffort,
@@ -168,6 +169,28 @@ def resolve_route_capabilities(config: ProviderConfig) -> ProviderCapabilities:
     return resolve_capabilities(config.base_url, config.model, operator_override=override)
 
 
+def author_thinking_budget() -> int:
+    """作者给思考预留的输出预算，**每一次产品调用的 plan 都从这一处拿**（2026-09-13）。
+
+    - 「允许模型思考」关着（默认）→ 0：线上按方言发「关」，预算按没有思考算，
+      和这一位长出来之前一个字节都不差；
+    - 开着、数没填 → 地板值 `THINKING_BUDGET_MIN`；
+    - 开着、填了 → 他填的那个数（范围由 `api/app.py::SettingsBody` 在写入时钉住）。
+
+    ── 为什么只写这一处 ────────────────────────────────────────────────
+
+    同 `resolve_route_capabilities` 那条理由：产品里有七处在算 plan（抽取 / 总结 /
+    事后核对 / 行内续写 / 对话摘要 / 写作助手回话 / 起草），漏一处的症状是
+    「开关拨开了，一半的功能听、一半不听」，而不听的那一半屏幕上只是「总结还是红的」。
+    `tests/test_thinking_budget.py` 扫源码钉住「每一处都从这儿拿」。
+    `agent/` 不读设置，所以那两处由装配层把这个数递进去（同它拿能力证据的方式）。
+    """
+    settings = load_user_settings()
+    if not settings.allow_thinking:
+        return 0
+    return settings.thinking_budget if settings.thinking_budget is not None else THINKING_BUDGET_MIN
+
+
 def _extraction_provider_config() -> ProviderConfig:
     return _byok_config(0.3)
 
@@ -181,6 +204,7 @@ def _analyze_extraction(request: AnalysisRequest) -> CompletionResult:
         ReasoningEffort.OFF,
         capability,
         prompt_token_budget=len(request.prompt_bytes),
+        thinking_token_budget=author_thinking_budget(),
     )
     return complete(request.wire_messages(), config=config, plan=plan)
 
@@ -212,6 +236,7 @@ def _analyze_summary(request: SummaryRequest) -> CompletionResult:
         ReasoningEffort.OFF,
         capability,
         prompt_token_budget=len(request.prompt_bytes),
+        thinking_token_budget=author_thinking_budget(),
     )
     return complete(request.messages, config=config, plan=plan)
 
@@ -236,6 +261,7 @@ def _analyze_advisory(request: AdvisoryRequest) -> CompletionResult:
         ReasoningEffort.OFF,
         capability,
         prompt_token_budget=len(request.prompt_bytes),
+        thinking_token_budget=author_thinking_budget(),
     )
     return complete(request.wire_messages(), config=config, plan=plan)
 

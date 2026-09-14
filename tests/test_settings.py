@@ -72,6 +72,12 @@ def test_get_settings_starts_empty(client: TestClient) -> None:
         # ——抄了就有两个真相源，而引擎改了之后设置页会安静地说一个旧数。
         "graph_max_nodes": None,
         "graph_max_nodes_default": 1000,
+        # **默认不开思考，不管什么模型**（维护者 2026-09-13 的原话）。数没填是 `null`
+        # （那时用地板值）；地板 / 顶两个数由后端回，前端不许自己抄一份。
+        "allow_thinking": False,
+        "thinking_budget": None,
+        "thinking_budget_min": 8192,
+        "thinking_budget_max": 32768,
         # 续写能带多少上文（后端按模型窗口算，前端不许存第二份）。一个字都没配过时
         # 它是地板值，**而 `basis` 说得出为什么是地板值**——「认不出模型」和「还没填」
         # 算出来的数一模一样，不区分开的话，少给上文就是一件没人看得见的事。
@@ -301,6 +307,49 @@ def test_continuation_in_agent_mode_round_trips_and_survives_other_writes(
 
     off = client.put("/api/settings", json={"continuation_in_agent_mode": False})
     assert off.json()["continuation_in_agent_mode"] is False
+
+
+def test_allow_thinking_round_trips_and_survives_other_writes(client: TestClient) -> None:
+    """「允许模型思考」那颗开关：默认关、拨开记得住、别的请求不会顺手关回去。
+
+    判据同上面两颗：**带没带这个键**，不是它的值。
+    """
+    assert client.get("/api/settings").json()["allow_thinking"] is False
+
+    on = client.put("/api/settings", json={"allow_thinking": True})
+    assert on.json()["allow_thinking"] is True
+    assert client.get("/api/settings").json()["allow_thinking"] is True
+
+    other = client.put("/api/settings", json={"base_url": "https://b.example"})
+    assert other.json()["allow_thinking"] is True
+
+    off = client.put("/api/settings", json={"allow_thinking": False})
+    assert off.json()["allow_thinking"] is False
+
+
+def test_thinking_budget_round_trips_clears_and_outlives_the_switch(client: TestClient) -> None:
+    """那个数：写得进、读得回、发空清掉、**关掉开关也不丢**（下次拨开还是他调过的数）。"""
+    r = client.put("/api/settings", json={"allow_thinking": True, "thinking_budget": 16384})
+    assert r.json()["thinking_budget"] == 16384
+    assert client.get("/api/settings").json()["thinking_budget"] == 16384
+
+    # 关掉开关只发开关那一位：数留着。
+    off = client.put("/api/settings", json={"allow_thinking": False})
+    assert off.json()["allow_thinking"] is False
+    assert off.json()["thinking_budget"] == 16384
+
+    # 发空 = 清掉 = 回落地板值（屏幕上显示成空框 + 占位符，不是一个数）。
+    cleared = client.put("/api/settings", json={"thinking_budget": None})
+    assert cleared.json()["thinking_budget"] is None
+
+
+@pytest.mark.parametrize("bad", [1, 8191, 32769, 1_000_000])
+def test_thinking_budget_outside_the_range_is_refused(client: TestClient, bad: int) -> None:
+    """地板之下 = 开关拨开却失效（屏幕上只是「总结还是红的」）；顶之上 = 一份在已登记
+    路由上必被拒的 plan。两头都当场 422，不悄悄夹回范围里（这个仓库不 clamp）。"""
+    r = client.put("/api/settings", json={"thinking_budget": bad})
+    assert r.status_code == 422
+    assert client.get("/api/settings").json()["thinking_budget"] is None
 
 
 def test_startup_pulls_only_when_the_switch_is_on(

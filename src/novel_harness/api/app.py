@@ -62,6 +62,7 @@ from ..declare import (
     UnknownName,
     WrongLabel,
 )
+from ..draft.capabilities import THINKING_BUDGET_MAX, THINKING_BUDGET_MIN
 from ..draft.length import DEFAULT_LENGTH_POLICY, DraftLanguage, LengthSpec
 # 模块级 import：`api/chat.py` → `agent/` 那条链本来就把它拉进来了
 # （`sys.modules` 实测），所以这一行不多花任何启动时间。
@@ -90,6 +91,7 @@ from ..panel import (
 )
 from ..text import paragraphs as split_paragraphs
 from .deps import (
+    author_thinking_budget,
     books_root,
     ensure_schema,
     get_conn,
@@ -524,6 +526,19 @@ class SettingsBody(BaseModel):
     卡死，而卡死的时候作者只会看到「点开人物卡之后整个界面不动了」——一个说不出
     为什么的故障。宁可在这儿当场 422 顶回去，也不要让他填出一个能锁死界面的数。"""
 
+    allow_thinking: bool | None = None
+    """允许模型先思考再作答。**同上：带没带这个键才是判据。**"""
+
+    thinking_budget: int | None = Field(
+        default=None, ge=THINKING_BUDGET_MIN, le=THINKING_BUDGET_MAX
+    )
+    """允许思考时为思考预留的输出预算。**空值语义同 `context_window`：带了这个键就
+    照它写（null = 清掉，回落地板值），没带就原样留着。**
+
+    范围钉死在 `[THINKING_BUDGET_MIN, THINKING_BUDGET_MAX]`（`draft/capabilities.py`
+    那两个常量的注释写着为什么是这两个数），范围外当场 422：地板之下等于把开关拨开
+    却让它失效，顶之上是一份在已登记路由上必被拒的 plan。"""
+
 
 def _continuation_tail() -> tuple[int, str]:
     """行内续写值得带多少上文（code point），外加**这个数为什么是这个数**。
@@ -598,6 +613,12 @@ def _settings_response(settings: UserSettings) -> dict[str, Any]:
         # 否则那个空框对作者是一句没头没尾的话。
         "graph_max_nodes": settings.graph_max_nodes,
         "graph_max_nodes_default": MAX_SUBGRAPH_NODES,
+        # 允许思考 + 预留多少。数同 `graph_max_nodes`：没填是 null（那时用地板值），
+        # 地板 / 顶两个数**由后端回过来**——前端拿它们写占位符和范围说明，不许自己抄。
+        "allow_thinking": settings.allow_thinking,
+        "thinking_budget": settings.thinking_budget,
+        "thinking_budget_min": THINKING_BUDGET_MIN,
+        "thinking_budget_max": THINKING_BUDGET_MAX,
         # 续写这一格搭这条已有的返回过来（**不另开接口**）：前端本来每次开工作台
         # 就在拿它，而这个数只随「换了模型/改了窗口」变，正是这条返回会变的时候。
         "continuation_tail_limit": tail_limit,
@@ -647,6 +668,16 @@ def put_settings(body: SettingsBody) -> dict[str, Any]:
             body.graph_max_nodes
             if "graph_max_nodes" in body.model_fields_set
             else current.graph_max_nodes
+        ),
+        allow_thinking=(
+            bool(body.allow_thinking)
+            if "allow_thinking" in body.model_fields_set
+            else current.allow_thinking
+        ),
+        thinking_budget=(
+            body.thinking_budget
+            if "thinking_budget" in body.model_fields_set
+            else current.thinking_budget
         ),
     )
     save_user_settings(merged)
@@ -1880,7 +1911,9 @@ def draft(
                 max_units=body.length.max_units,
             )
         )
-        plan = plan_call(length, ReasoningEffort.OFF, capability)
+        plan = plan_call(
+            length, ReasoningEffort.OFF, capability, thinking_token_budget=author_thinking_budget()
+        )
     except (ValidationError, ValueError, CapabilityError) as exc:
         # `exc` 不进 `detail`：`ValidationError`/`CapabilityError` 的文本是写给
         # 维护者看的诊断（字段名、类型名），不是安全能塞进 params 的东西——同

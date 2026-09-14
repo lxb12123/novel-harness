@@ -483,3 +483,101 @@ describe("是否在 novel-agent 模式下续写（那颗开关）", () => {
     expect(await knobReady()).toHaveAttribute("aria-checked", "true");
   });
 });
+
+describe("是否允许模型思考（那颗开关 + 那个数）", () => {
+  // 维护者 2026-09-13：「默认就是没有思考。默认不管什么模型都这样不开思考」；拨开之后
+  // 「给一个思考后预算的最低允许值，然后允许调高，设一个最高值」。后端那半在
+  // `tests/test_thinking_budget.py`，这儿只验屏幕：默认关、拨开只发自己那一位、
+  // 拨开才露出那个数、数照范围收、发的是数字、清空是 null。
+  const settings = { match: /\/api\/settings$/, body: fixtures.settingsSaved };
+  const saved = { method: "PUT" as const, match: /\/api\/settings$/, body: fixtures.settingsSaved };
+  const on = {
+    match: /\/api\/settings$/,
+    body: { ...fixtures.settingsSaved, allow_thinking: true },
+  };
+  const NAME = "是否允许模型思考";
+
+  const knobReady = async () => {
+    const knob = await screen.findByRole("switch", { name: NAME });
+    await waitFor(() => expect(knob).toBeEnabled());
+    return knob;
+  };
+
+  /** 那张卡上自己的那颗「应用」（同一栏上关系图那张卡也有一颗）。 */
+  const applyHere = () => {
+    const field = screen.getByLabelText("思考预算");
+    const card = field.closest(".set-card") as HTMLElement;
+    return [...card.querySelectorAll("button")].filter((b) => /应用/.test(b.textContent ?? ""))[0];
+  };
+
+  it("默认是关着的，而且关着的时候那个数不在屏幕上", async () => {
+    renderWithApi(<SettingsDrawer onClose={() => {}} />, [settings]);
+    openSystem();
+    const knob = await knobReady();
+    expect(knob).toHaveAttribute("aria-checked", "false");
+    expect(screen.queryByLabelText("思考预算")).toBeNull();
+    // 真 dump 里默认就是关的——这条不是前端自己编的默认。
+    expect(fixtures.settings.allow_thinking).toBe(false);
+    expect(devTerms(screenText())).toEqual([]);
+  });
+
+  it("拨开 = 只发它自己那一位", async () => {
+    renderWithApi(<SettingsDrawer onClose={() => {}} />, [settings, saved]);
+    openSystem();
+    const knob = await knobReady();
+    const spy = watchFetch();
+    fireEvent.click(knob);
+    await waitFor(() => expect(savedBody(spy)).toEqual({ allow_thinking: true }));
+  });
+
+  it("开着的时候露出那个数：空框、占位符是后端给的最低值、说明里写着范围", async () => {
+    renderWithApi(<SettingsDrawer onClose={() => {}} />, [on]);
+    openSystem();
+    expect(await knobReady()).toHaveAttribute("aria-checked", "true");
+    const field = screen.getByLabelText("思考预算") as HTMLInputElement;
+    expect(field.value).toBe("");
+    // 两个数来自后端（`thinking_budget_min` / `_max`），前端没抄一份。
+    expect(field.placeholder).toBe(`默认 ${fixtures.settings.thinking_budget_min}`);
+    expect(screenText()).toMatch(new RegExp(`最低 ${fixtures.settings.thinking_budget_min}`));
+    expect(screenText()).toMatch(new RegExp(`最高 ${fixtures.settings.thinking_budget_max}`));
+    expect(devTerms(screenText())).toEqual([]);
+  });
+
+  it("填一个范围内的数，按数字发出去", async () => {
+    renderWithApi(<SettingsDrawer onClose={() => {}} />, [on, saved]);
+    openSystem();
+    await knobReady();
+    const spy = watchFetch();
+    fireEvent.change(screen.getByLabelText("思考预算"), { target: { value: "16384" } });
+    const save = applyHere();
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    await waitFor(() => expect(savedBody(spy).thinking_budget).toBe(16384));
+  });
+
+  it("范围外的数：说出范围，「应用」按不下去", async () => {
+    renderWithApi(<SettingsDrawer onClose={() => {}} />, [on, saved]);
+    openSystem();
+    await knobReady();
+    fireEvent.change(screen.getByLabelText("思考预算"), {
+      target: { value: "100" },
+    });
+    expect(screen.getByRole("alert").textContent).toMatch(/8192.*32768/);
+    expect(applyHere()).toBeDisabled();
+    fireEvent.change(screen.getByLabelText("思考预算"), { target: { value: "40000" } });
+    expect(applyHere()).toBeDisabled();
+  });
+
+  it("清空那个框 = 收回这个数，回落最低值（发 null，不是不发）", async () => {
+    renderWithApi(<SettingsDrawer onClose={() => {}} />, [
+      { match: /\/api\/settings$/, body: { ...fixtures.settingsSaved, allow_thinking: true, thinking_budget: 16384 } },
+      saved,
+    ]);
+    openSystem();
+    await knobReady();
+    const spy = watchFetch();
+    fireEvent.change(await screen.findByDisplayValue("16384"), { target: { value: "" } });
+    fireEvent.click(applyHere());
+    await waitFor(() => expect(savedBody(spy)).toHaveProperty("thinking_budget", null));
+  });
+});

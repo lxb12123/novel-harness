@@ -173,29 +173,51 @@ describe("顶栏", () => {
     expect(document.body.textContent).not.toMatch(/出场人物|在场/);
   });
 
-  it("平时机器人图标上没有那个转圈的提示", async () => {
+  it("平时那颗图标不动：没有 `.writing`，也没有角上的转圈", async () => {
     renderWithApi(<TopBar />);
     const bot = await screen.findByRole("button", { name: "写作助手" });
+    expect(bot.classList.contains("writing")).toBe(false);
+    expect(bot.querySelector(".bot-thinking")).toBeNull();
+    // 笔尖的星芒是自己一条 path——续写时动的就是它（`.icon-btn.writing .nib-spark`）。
+    expect(bot.querySelector(".nib-spark")).not.toBeNull();
+  });
+
+  /** 续写请求跟顶栏这颗按钮隔着整棵组件树（一个在 CenterEditor，一个在 TopBar），
+   *  中间没有走 `useCoords`——那个 store 只放坐标，不放这种瞬时网络状态。
+   *  靠的是 `useIsMutating({ mutationKey: ["continuation"] })`，React Query 自己
+   *  全局记着「这个 key 现在有几个请求在飞」，这里造一个同 key 的、故意不 resolve
+   *  的 mutation 来模拟「还在飞」。 */
+  function TriggerContinuation() {
+    const m = useMutation({
+      mutationKey: ["continuation"],
+      mutationFn: () => new Promise(() => {}),
+    });
+    useEffect(() => {
+      m.mutate();
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    return null;
+  }
+
+  it("续写建议正在生成时，笔尖那颗星芒闪——不在角上另挂转圈", async () => {
+    // 2026-09-12 换成笔尖之后，角上那个转圈恰好压在星芒上，转不转看着一样
+    // （作者 2026-09-13：「动画没有了」）。现在动的是星芒本身：按钮拿到 `.writing`，
+    // CSS 让 `.nib-spark` 闪；那个转圈在这一档**不渲染**，否则又叠回去了。
+    renderWithApi(
+      <>
+        <TopBar />
+        <TriggerContinuation />
+      </>,
+    );
+    const bot = await screen.findByRole("button", { name: "写作助手" });
+    await waitFor(() => expect(bot.classList.contains("writing")).toBe(true));
+    expect(bot.querySelector(".nib-spark")).not.toBeNull();
     expect(bot.querySelector(".bot-thinking")).toBeNull();
   });
 
-  it("续写建议正在生成时，机器人图标右上角会转起来", async () => {
-    // 续写请求跟顶栏这颗按钮隔着整棵组件树（一个在 CenterEditor，一个在 TopBar），
-    // 中间没有走 `useCoords`——那个 store 只放坐标，不放这种瞬时网络状态。
-    // 靠的是 `useIsMutating({ mutationKey: ["continuation"] })`，React Query 自己
-    // 全局记着「这个 key 现在有几个请求在飞」，这里造一个同 key 的、故意不 resolve
-    // 的 mutation 来模拟「还在飞」。
-    function TriggerContinuation() {
-      const m = useMutation({
-        mutationKey: ["continuation"],
-        mutationFn: () => new Promise(() => {}),
-      });
-      useEffect(() => {
-        m.mutate();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-      }, []);
-      return null;
-    }
+  it("novel-agent 模式下续写在飞时，小机器人右上角照旧转圈", async () => {
+    // 机器人头上没有东西挡，角上的转圈在它身上看得清；星芒那条 path 此刻根本不在屏幕上。
+    useCoords.setState({ chatOpen: true });
     renderWithApi(
       <>
         <TopBar />
@@ -204,6 +226,7 @@ describe("顶栏", () => {
     );
     const bot = await screen.findByRole("button", { name: "写作助手" });
     await waitFor(() => expect(bot.querySelector(".bot-thinking")).not.toBeNull());
+    expect(bot.querySelector(".nib-spark")).toBeNull();
   });
 
   // ── 收起两侧栏那两颗（作者 2026-09-06）────────────────────────────────────

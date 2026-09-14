@@ -93,6 +93,7 @@ export function SettingsDrawer({
   const [reveal, setReveal] = useState(false);
   const [memory, setMemory] = useState("");
   const [graphCap, setGraphCap] = useState("");
+  const [thinkingBudget, setThinkingBudget] = useState("");
 
   useEffect(() => {
     if (settings.data) {
@@ -100,6 +101,7 @@ export function SettingsDrawer({
       setModel(settings.data.model);
       setMemory(settings.data.context_window?.toString() ?? "");
       setGraphCap(settings.data.graph_max_nodes?.toString() ?? "");
+      setThinkingBudget(settings.data.thinking_budget?.toString() ?? "");
     }
   }, [settings.data]);
 
@@ -114,6 +116,16 @@ export function SettingsDrawer({
   const memoryDirty = memoryValue !== (current?.context_window ?? null);
   const graphCapValue = asPositiveInteger(graphCap);
   const graphCapDirty = graphCapValue !== (current?.graph_max_nodes ?? null);
+  const thinkingBudgetValue = asPositiveInteger(thinkingBudget);
+  const thinkingBudgetDirty = thinkingBudgetValue !== (current?.thinking_budget ?? null);
+  /** 填了个数、但数不在后端给的范围里。**范围是后端回的两个数**，前端不抄。
+   *  没填（空框 / 认不出来的字）不算越界：那是「清掉、回落最低值」。 */
+  const thinkingBudgetOutOfRange =
+    thinkingBudgetValue !== null &&
+    current?.thinking_budget_min !== undefined &&
+    current?.thinking_budget_max !== undefined &&
+    (thinkingBudgetValue < current.thinking_budget_min ||
+      thinkingBudgetValue > current.thinking_budget_max);
 
   /** 保存正在飞的时候关不掉（背景、×、Esc 三条路一起挡）——
    *  这一刻关窗，作者不知道那把钥匙到底存进去没有。同 `Setup.tsx` 的 `closeDrawer`。 */
@@ -196,6 +208,19 @@ export function SettingsDrawer({
   /** 拨「novel-agent 模式下也续写」那颗。**同上：只发它自己那一位。** */
   function toggleContinuationInAgentMode(next: boolean) {
     save.mutate({ continuation_in_agent_mode: next });
+  }
+
+  /** 拨「允许模型思考」那颗。**同上：只发它自己那一位**——那个数留在原地，
+   *  关掉再拨开，他上次调过的数还在。 */
+  function toggleAllowThinking(next: boolean) {
+    save.mutate({ allow_thinking: next });
+  }
+
+  /** 应用「思考预算」。**这一位每次都带上**（同 `applyMemory`）：发 `null` 就是清掉、
+   *  回落最低值；不发这个键才是保持原值。 */
+  function applyThinkingBudget() {
+    if (thinkingBudgetOutOfRange) return;
+    save.mutate({ thinking_budget: thinkingBudgetValue });
   }
 
   return (
@@ -338,6 +363,98 @@ export function SettingsDrawer({
                   >
                     <span className="set-switch-knob" />
                   </button>
+                </div>
+                {/* ── 是否允许模型思考 ──────────────────────────────────────
+                    **默认关，不管什么模型**（维护者 2026-09-13：「默认就是没有思考。默认不管
+                    什么模型都这样不开思考」）。拨开的只能是作者本人；拨开之后才露出那个数——
+                    「打开后给一个最低允许值，然后允许调高，设一个最高值」。
+
+                    为什么值得有：一条没登记的路由在线上表达不了「关」，端点默认开着思考，
+                    思考和正文共用同一份输出预算，而默认那一档的预算按没有思考算——真书上
+                    120 字的总结 75 / 99 次交回来是空的。拨开之后预算按思考算（可见预算 + 这个数）。
+
+                    **地板 / 顶两个数由后端回**（`thinking_budget_min` / `_max`），占位符、
+                    范围说明、越界判断都读它们，前端不抄——同「关系图人数上限」那条理由。
+                    文案照同一栏的语域：标题「是否…」，说明只说它做什么、花什么；
+                    数那一格说范围、说留空是什么，不出现那个数的真实单位。 */}
+                <div className="set-card set-card-thinking">
+                  <div className="set-row-head">
+                    <div className="set-row-text">
+                      <span className="set-row-title" id="set-thinking-label">
+                        {language === "zh" ? "是否允许模型思考" : "Enable model thinking"}
+                      </span>
+                      <span className="set-row-sub">
+                        {language === "zh" ? (
+                          // 一整行：JSX 里换行会折成一个空格，中文句子中间就多一个洞。
+                          "默认关闭，任何模型均不思考。开启后，模型先思考再作答，每次模型调用的输出预算按思考计算，耗时与用量随之上升。"
+                        ) : (
+                          <>
+                            Off by default for every model. When enabled, the model thinks before
+                            answering, and each model call’s output budget is sized for thinking,
+                            at the cost of time and usage.
+                          </>
+                        )}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      className="set-switch"
+                      aria-labelledby="set-thinking-label"
+                      aria-checked={!!current?.allow_thinking}
+                      disabled={!current || save.isPending}
+                      onClick={() => toggleAllowThinking(!current?.allow_thinking)}
+                    >
+                      <span className="set-switch-knob" />
+                    </button>
+                  </div>
+
+                  {current?.allow_thinking && (
+                    <>
+                      <div className="set-field">
+                        <label htmlFor="set-thinking-budget">
+                          {language === "zh" ? "思考预算" : "Thinking budget"}
+                        </label>
+                        <span className="set-row-sub">
+                          {language === "zh"
+                            ? `为思考预留的输出量，与正文输出分开计算。最低 ${current.thinking_budget_min}，最高 ${current.thinking_budget_max}；留空按最低值。`
+                            : `The output reserved for thinking, counted apart from the reply itself. Minimum ${current.thinking_budget_min}, maximum ${current.thinking_budget_max}; leave blank for the minimum.`}
+                        </span>
+                        <input
+                          id="set-thinking-budget"
+                          inputMode="numeric"
+                          value={thinkingBudget}
+                          placeholder={
+                            (language === "zh" ? "默认 " : "Default ") +
+                            current.thinking_budget_min
+                          }
+                          onChange={(e) => setThinkingBudget(e.target.value)}
+                        />
+                      </div>
+
+                      {thinkingBudgetOutOfRange && (
+                        <div className="err-box" role="alert">
+                          {language === "zh"
+                            ? `数值须在 ${current.thinking_budget_min} 与 ${current.thinking_budget_max} 之间`
+                            : `Enter a value between ${current.thinking_budget_min} and ${current.thinking_budget_max}`}
+                        </div>
+                      )}
+                      {err && <div className="err-box">{saidToTheAuthor(err) ?? err.message}</div>}
+
+                      <div className="set-card-foot">
+                        <button
+                          type="button"
+                          className="set-apply"
+                          disabled={!thinkingBudgetDirty || thinkingBudgetOutOfRange || save.isPending}
+                          onClick={applyThinkingBudget}
+                        >
+                          {language === "zh"
+                            ? save.isPending ? "应用中…" : "应用"
+                            : save.isPending ? "Applying…" : "Apply"}
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
                 {/* 关系图一次画多少人。**这个数原来写死成 30**，而真书上主角有几百条
                     关系边：图上只画得出 30 个，剩下的连提都没提——作者看到的是一张
