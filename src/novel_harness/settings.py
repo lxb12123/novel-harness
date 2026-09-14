@@ -138,7 +138,40 @@ class Settings(BaseModel):
     校验也复用同一个 validator——两个「空串/0/负数都读成没填」的框，不该有两套规矩。
     """
 
-    @field_validator("context_window", "graph_max_nodes", mode="before")
+    allow_thinking: bool = False
+    """开着的话，**每一次模型调用都允许模型先思考再作答**（2026-09-13）。
+
+    ── 默认关：不管什么模型，默认都不开思考 ─────────────────────────────
+
+    维护者原话：「默认就是没有思考。默认不管什么模型都这样不开思考。」产品对每一次
+    调用声明的 reasoning 本来就是 `off`（ADR 0011 D4），这一位没有改那条纪律，它改的是
+    作者能不能自己推翻它——**按模型自动判「这个会思考所以默认开」是不许的**。
+
+    ── 它为什么值得存在（真书上的那一天）────────────────────────────────
+
+    作者用的是一条没登记的路由（中转 + `deepseek-v4.1-flash`）。那条路由在线上表达不了
+    「关」（方言 `NONE`，什么都不发），端点默认开着思考，思考和正文共用 `max_tokens`，
+    而 `off` 那一档的预算按没有思考算：120 字的总结预算 1,264，思考先吃掉 800～1,200，
+    75 / 99 次交回来的是空的，屏幕上一片红。拨开这一位，预算按思考算（可见预算 +
+    下面那个数），线上不再发「关」——端点自己的默认怎么想就怎么想。
+
+    存在这儿而不跟书走，理由同 `graph_max_nodes`：它是这台机器上这个人对他那条路由的
+    驾驶方式，换一本书不该重置。
+    """
+
+    thinking_budget: int | None = None
+    """允许思考时，为思考预留的输出预算（token）。`None` = 用地板值
+    （`draft.capabilities.THINKING_BUDGET_MIN`）。
+
+    **作者只能往上调，不能往下**：合法范围是 `[THINKING_BUDGET_MIN, THINKING_BUDGET_MAX]`，
+    HTTP 层（`api/app.py::SettingsBody`）当场 422 顶回范围外的数；这儿不重复那道校验，
+    同 `graph_max_nodes`——盘上那份文件被手改出一个怪数时，起草那一层会用它并把
+    后果摆在屏幕上（预算超了端点当场拒），而不是让整份设置读不出来。
+    `allow_thinking` 关着时这个数不起作用，但**保留**——他上次调过的数下次拨开还在。
+    `None` 的语义和 `context_window` 一致（空 = 没填），校验也复用同一个 validator。
+    """
+
+    @field_validator("context_window", "graph_max_nodes", "thinking_budget", mode="before")
     @classmethod
     def _unset_is_not_zero(cls, value: object) -> object:
         """空串 / 0 / 负数一律读成「没填」。

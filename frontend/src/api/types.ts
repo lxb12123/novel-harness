@@ -51,6 +51,16 @@ export interface AiSettings {
    *  **后端回过来，前端不许自己抄一份**——抄了就有两个真相源，引擎哪天改了
    *  设置页会安静地说一个旧数，而屏幕上完全看不出来。 */
   graph_max_nodes_default?: number;
+  /** 允许模型先思考再作答。**默认关，不管什么模型**（维护者 2026-09-13 的原话）；
+   *  拨开的只能是作者本人。开着时每一次模型调用的输出预算按思考算（可见预算 + 下面那个数）。 */
+  allow_thinking?: boolean;
+  /** 允许思考时为思考预留的量。**`null` = 没填**，用下面的地板值。 */
+  thinking_budget?: number | null;
+  /** 那个数的地板与顶（`draft.capabilities.THINKING_BUDGET_MIN / MAX`）。**后端回过来，
+   *  前端不许自己抄一份**——同 `graph_max_nodes_default` 的理由：抄了引擎哪天改，
+   *  这儿会安静地说一个旧范围，而屏幕上完全看不出来。 */
+  thinking_budget_min?: number;
+  thinking_budget_max?: number;
   /** 行内续写这一次值得带多少上文（code point）。**后端按模型窗口算的**
    *  （`draft/assemble.py::product_tail_limit()`），前端**不许再存一份**——
    *  写死一个数会把后端整套伸缩设计架空（2026-08-22 之前就是这样，利用率 2%）。 */
@@ -92,6 +102,9 @@ export interface AiSettingsInput {
   continuation_in_agent_mode?: boolean;
   /** 同 `context_window`：**发 `null` 就是清掉**（回落引擎默认），不发才是保持原值。 */
   graph_max_nodes?: number | null;
+  allow_thinking?: boolean;
+  /** 同 `context_window`：**发 `null` 就是清掉**（回落地板值），不发才是保持原值。 */
+  thinking_budget?: number | null;
 }
 
 /** 这一稿的记忆层到底装了什么。**零永远带着一句理由**（§10 约束 8）。

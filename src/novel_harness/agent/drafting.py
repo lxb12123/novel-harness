@@ -367,6 +367,7 @@ class ChapterDesk:
         db_lock: AbstractContextManager[Any] | None = None,
         cancel: Cancellation | None = None,
         on_event: EventFn | None = None,
+        thinking_token_budget: int = 0,
     ) -> None:
         self._store = store
         self._conn = conn
@@ -374,6 +375,9 @@ class ChapterDesk:
         self._root = Path(root)
         self._config = config
         self._capability = capability
+        self._thinking_token_budget = thinking_token_budget
+        """作者给思考预留的输出预算（`ResolvedCallPlan.thinking_token_budget`）。
+        **装配层送进来，这一层不去取**——同 `capability`：`agent/` 不读设置。默认 0 = 不允许。"""
         self._events = events
         self._write_rule = write_rule.strip()
         """作者在这段对话开头定下的那条一直挂着的要求。**装配层送进来，这一层不去取。**
@@ -490,6 +494,7 @@ class ChapterDesk:
                 AGENT_DRAFT_REASONING,
                 self._capability,
                 interruptible=self._cancel is not None,
+                thinking_token_budget=self._thinking_token_budget,
             )
         except (CapabilityError, ValueError) as exc:
             raise ToolRefused(
@@ -582,6 +587,7 @@ class ChapterDesk:
                 AGENT_DRAFT_REASONING,
                 self._capability,
                 interruptible=self._cancel is not None,
+                thinking_token_budget=self._thinking_token_budget,
             )
         except (CapabilityError, ValueError) as exc:
             raise ToolRefused(message("model_cant_handle_chapter", language, exc=exc)) from exc
@@ -967,6 +973,7 @@ def chapter_drafter(
     db_lock: AbstractContextManager[Any] | None = None,
     cancel: Cancellation | None = None,
     on_event: EventFn | None = None,
+    thinking_token_budget: int = 0,
 ) -> ChapterDesk:
     """造一个起草台（生成 / 落盘 / 读回）。**装配层调它**（`api/chat.py`）。
 
@@ -976,6 +983,8 @@ def chapter_drafter(
         root: 项目根目录。收 `str` 是为了和 `ToolContext.root_path` 同形——
             装配层手里那个就是 `project.root_path`。
         capability: 已经解析好的能力证据。`plan` 不在这儿算——见 `ChapterDesk.write`。
+        thinking_token_budget: 作者给思考预留的输出预算（`api/deps.py::author_thinking_budget`）。
+            同 `capability`：装配层手里才有设置，这一层不去取。默认 0 = 不允许思考。
         write_rule: 作者在这段对话开头定下的那条一直挂着的要求。**装配层要从会话上取，
             不能想当然地留空**：起草是另一次调用，对话前缀里那份到不了它手上
             （见 `ChapterDesk._write_rule`，那儿记着实测）。
@@ -1003,6 +1012,7 @@ def chapter_drafter(
         db_lock=db_lock,
         cancel=cancel,
         on_event=on_event,
+        thinking_token_budget=thinking_token_budget,
     )
 
 

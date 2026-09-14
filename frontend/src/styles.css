@@ -1425,6 +1425,11 @@ pre.diff { margin: 0; flex: 1; min-height: 0; overflow: auto; border: 1px solid 
 
 /* 一行一件事：左边标题 + 小字，右边一个控件。 */
 .set-row-card { grid-template-columns: minmax(0, 1fr) auto; align-items: center; }
+/* 同一行的形状，但只是一张更高的卡的**头**——开关拨开之后底下还会长出一格。
+   不复用 `.set-row`：那个类会把开关当普通按钮重画（min-height / 圆角）。 */
+.set-row-head {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px;
+}
 .set-row-text { display: grid; gap: 3px; min-width: 0; }
 .set-row-title { font-size: 13px; font-weight: 650; }
 .set-row-sub { color: var(--dim); font-size: 12px; line-height: 1.6; }

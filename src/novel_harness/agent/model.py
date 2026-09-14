@@ -414,11 +414,16 @@ class ProviderModelPort:
 
 
 def agent_call_plan(
-    config: ProviderConfig, capability: ProviderCapabilities | None = None
+    config: ProviderConfig,
+    capability: ProviderCapabilities | None = None,
+    *,
+    thinking_token_budget: int = 0,
 ) -> tuple[ProviderCapabilities, ResolvedCallPlan]:
     """这一轮对话按哪份能力证据、多大预算发。
 
     Args:
+        thinking_token_budget: 作者给思考预留的输出预算（`api/deps.py::author_thinking_budget`）。
+            同 `capability`：这一层够不着设置，装配层递进来；默认 0 = 不允许思考。
         capability: 装配层已经解析好的那一份。**给了就用它，不再自己解析。**
 
             ── 为什么要留这个口子 ────────────────────────────────────────────
@@ -443,7 +448,13 @@ def agent_call_plan(
     # 调用走流式，于是「停」落在下一片之内，而不是等整份回复回来——见模块 docstring
     # 「对话那一档 2026-09-12 起是流式的」。预算一个字没动：`interruptible` 是
     # `_streams` 的第二个理由，不是抬预算凑过阈值的那条路。
-    return resolved, plan_call(AGENT_REPLY_LENGTH, AGENT_REASONING, resolved, interruptible=True)
+    return resolved, plan_call(
+        AGENT_REPLY_LENGTH,
+        AGENT_REASONING,
+        resolved,
+        interruptible=True,
+        thinking_token_budget=thinking_token_budget,
+    )
 
 
 __all__ = [

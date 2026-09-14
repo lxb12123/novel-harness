@@ -27,6 +27,37 @@ TOKEN_PLAN_VERSION = BUDGET_FORMULA_VERSION
 STREAM_THRESHOLD_TOKENS = 16_000
 STREAM_THRESHOLD = STREAM_THRESHOLD_TOKENS
 
+THINKING_BUDGET_MIN = 8_192
+"""作者拨开「允许模型思考」之后，为思考预留的输出预算**最少**是这个数（2026-09-13）。
+
+── 为什么要有这一档，以及为什么是 8,192 ────────────────────────────────
+
+产品对每一次调用声明的 reasoning 都是 `off`（ADR 0011 D4）。但一条没登记的路由
+（作者自建 / 中转）在线上表达不了「关」——方言是 `NONE`，什么字段都不发，而
+**省略字段的端点默认开着思考**（DeepSeek 省略 = high）。于是思考和正文共用
+`max_tokens`，而 `off` 那一档的预算是按「没有思考」算的：真书上 120 字的总结
+预算 1,264，思考先吃掉 800～1,200，75 / 99 次调用交回来的 `content` 是空的
+（`summarizer returned empty text`），三次交回来的是被截断的两个字。
+
+这个数是那一轮实测的下界：成功那 24 次里思考没有一次超过 1,264 - 正文；失败那
+75 次思考超过了 1,264，**超过多少没量到**。8,192 给已观测到的中位数 ~8 倍余量。
+它是**上限不是花费**——模型没想那么多就不花那么多；而没有这块余量时那一次
+调用照样按已经想掉的 token 计费，只是什么都没交回来。
+
+**它不是门槛而是地板**：作者只能往上调（到 `THINKING_BUDGET_MAX`），不能往下——
+调得比实测下界还小，等于把开关拨开却又让它失效，而那种失效在屏幕上只是「总结还是红的」。
+"""
+
+THINKING_BUDGET_MAX = 32_768
+"""作者能给思考预留的输出预算**最多**是这个数。
+
+取 32,768 的理由只有一条算术：它加上产品里最大的可见预算（抽取的 8,192）是 40,960，
+仍在注册表里最小的已审计输出上限（Anthropic 4.5 那几条的 64,000）之下——所以这颗
+旋钮在任何一条已登记的路由上都推不出一份「发出去必被拒」的 plan
+（`plan_call` 拒绝 clamp，那一档会当场 `CapabilityError`）。
+再往上，「为一段 120 字的总结想 3 万多 token」是选错了模型，不是预算不够。
+"""
+
 OPENAI_MODELS_URL = "https://developers.openai.com/api/docs/models"
 OPENAI_CHAT_URL = (
     "https://developers.openai.com/api/reference/resources/chat/"
@@ -43,6 +74,7 @@ ANTHROPIC_THINKING_URL = (
 )
 OPENROUTER_MODEL_URL = "https://openrouter.ai/anthropic/claude-opus-4.8"
 OPENROUTER_REASONING_URL = "https://openrouter.ai/docs/guides/best-practices/reasoning-tokens"
+OPENCODE_GO_URL = "https://opencode.ai/docs/go/"
 
 
 class CapabilityError(ValueError):
@@ -323,6 +355,27 @@ def _streams(
     return request_token_budget > STREAM_THRESHOLD_TOKENS or interruptible
 
 
+def _expected_required(
+    visible: int, effort: ReasoningEffort, capability: ProviderCapabilities, thinking: int
+) -> int:
+    """两份 plan 的校验器各自重算一遍 `required`——**算法只写这一份**。
+
+    `off` 上是「可见 + 作者预留」；非 off 上是审计过的预留比，而且那时作者的预留
+    必须是 0（两本账不叠加，`_thinking_budget` 在构造时就拦了，这儿再拦一次是给
+    直接构造 plan 的调用方——测试、以后的别的入口——留的）。
+    """
+    if thinking and effort is not ReasoningEffort.OFF:
+        raise ValueError("thinking_token_budget only applies to reasoning=off plans")
+    if effort is ReasoningEffort.OFF:
+        return visible + thinking
+    if not capability.reasoning_shares_output:
+        return visible
+    if effort is not ReasoningEffort.HIGH or capability.reserve_ratio_high is None:
+        raise ValueError("shared reasoning requires an audited reserve ratio for its effort")
+    ratio = Fraction(str(capability.reserve_ratio_high))
+    return _ceil_fraction(Fraction(visible, 1) / (1 - ratio))
+
+
 class ResolvedCallPlan(BaseModel):
     """One secret-free plan resolved and validated before a transport call."""
 
@@ -361,6 +414,17 @@ class ResolvedCallPlan(BaseModel):
     （同 `previous_tail_limit` 那个既有形状：三臂不传、产品传）。
     """
 
+    thinking_token_budget: int = Field(default=0, ge=0)
+    """作者拨开「允许模型思考」后，这一次调用为思考预留的输出预算（2026-09-13）。
+
+    **0 = 不允许**：线上按方言发「关」（`provider._wire_kwargs_from_validated`），
+    预算按没有思考算——和这一位长出来之前一个字节都不差，M2 三臂 / gate 永远是 0。
+    **>0 = 允许**：线上**不发**任何 reasoning 字段（端点自己的默认，「允许」不是「要求」），
+    `required = visible + 这个数`。它是 plan 的入参，不是路由的事实——`ProviderCapabilities`
+    仍然只装证据，作者的偏好从装配层（`api/deps.py::author_thinking_budget`）传进来。
+    只对 `reasoning=off` 成立（`_thinking_budget`）。
+    """
+
     budget_formula_version: str = BUDGET_FORMULA_VERSION
     capability: ProviderCapabilities
 
@@ -383,20 +447,9 @@ class ResolvedCallPlan(BaseModel):
             raise ValueError(
                 f"visible token budget must equal {expected_visible} for the frozen length"
             )
-        expected_required = expected_visible
-        if (
-            self.reasoning_requested is not ReasoningEffort.OFF
-            and self.capability.reasoning_shares_output
-        ):
-            if (
-                self.reasoning_requested is not ReasoningEffort.HIGH
-                or self.capability.reserve_ratio_high is None
-            ):
-                raise ValueError(
-                    "shared reasoning requires an audited reserve ratio for its effort"
-                )
-            ratio = Fraction(str(self.capability.reserve_ratio_high))
-            expected_required = _ceil_fraction(Fraction(expected_visible, 1) / (1 - ratio))
+        expected_required = _expected_required(
+            expected_visible, self.reasoning_requested, self.capability, self.thinking_token_budget
+        )
         if self.required_token_budget != expected_required:
             raise ValueError(
                 f"required token budget must equal {expected_required} for the frozen plan"
@@ -450,6 +503,9 @@ class StructuredCallPlan(BaseModel):
     reasoning_effective: ReasoningEffort
     reasoning_dialect: ReasoningDialect
     stream: bool = Field(strict=True)
+    thinking_token_budget: int = Field(default=0, ge=0)
+    """同 `ResolvedCallPlan.thinking_token_budget`：0 = 不允许思考，>0 = 允许并预留这么多。"""
+
     budget_formula_version: str = BUDGET_FORMULA_VERSION
     capability: ProviderCapabilities
 
@@ -458,6 +514,7 @@ class StructuredCallPlan(BaseModel):
         "visible_token_budget",
         "required_token_budget",
         "request_token_budget",
+        "thinking_token_budget",
         mode="before",
     )
     @classmethod
@@ -483,20 +540,12 @@ class StructuredCallPlan(BaseModel):
         if self.reasoning_effective is not self.reasoning_requested:
             raise ValueError("reasoning may not be silently downgraded")
 
-        expected_required = self.visible_token_budget
-        if (
-            self.reasoning_requested is not ReasoningEffort.OFF
-            and self.capability.reasoning_shares_output
-        ):
-            if (
-                self.reasoning_requested is not ReasoningEffort.HIGH
-                or self.capability.reserve_ratio_high is None
-            ):
-                raise ValueError(
-                    "shared reasoning requires an audited reserve ratio for its effort"
-                )
-            ratio = Fraction(str(self.capability.reserve_ratio_high))
-            expected_required = _ceil_fraction(Fraction(self.visible_token_budget, 1) / (1 - ratio))
+        expected_required = _expected_required(
+            self.visible_token_budget,
+            self.reasoning_requested,
+            self.capability,
+            self.thinking_token_budget,
+        )
         if self.required_token_budget != expected_required:
             raise ValueError(
                 f"required token budget must equal {expected_required} for the frozen plan"
@@ -539,8 +588,8 @@ def _known_capability(
     *,
     source: str,
     source_urls: tuple[str, ...],
-    max_context_tokens: int,
-    max_output_tokens: int,
+    max_context_tokens: int | None,
+    max_output_tokens: int | None,
     max_tokens_field: Literal["max_tokens", "max_completion_tokens"],
     reasoning_levels: frozenset[ReasoningEffort],
     reasoning_dialect: ReasoningDialect,
@@ -551,6 +600,9 @@ def _known_capability(
 
     `reasoning_shares_output` 默认 `True` 是**保守方向**：多留预算不会写坏，少留会截断。
     只有「这条路由压根没有非 OFF 档」时才传 `False`——那时 `_is_coherent` 也不许它是 `True`。
+
+    两个上限可以是 `None`：**端点没公布就不编**（opencode 那条），那时上下文由作者在
+    设置页手填（`windows.capabilities_from_author`），输出上限那道预检不做——同 unknown。
     """
     return ProviderCapabilities(
         base_url=base_url,
@@ -684,6 +736,32 @@ def _build_registry() -> Mapping[tuple[str, str], ProviderCapabilities]:
                 reasoning_shares_output=False,
             )
         )
+    # ── opencode Go 上的 DeepSeek V4.1 Flash（2026-09-13 探针登记，ADR 0052 补记）──────
+    # 这是第一条**中转**路由。登记它不是因为它红，是因为它查证过了：同一天六条 64-token
+    # 探针（`docs/adr/0052` 补记那张表）实测它认 DeepSeek 方言——
+    #   · 什么都不发 → `reasoning_content` 出现、`completion_tokens_details.reasoning_tokens`
+    #     算在 `completion_tokens` 里（**思考与正文共池**，真书上把 1,264 吃空的正是这个）；
+    #   · `thinking: {"type": "disabled"}` → 没有 `reasoning_content`，`completion_tokens` = 1；
+    #   · `reasoning_effort` low / high + `thinking: enabled` → 200，`reasoning_tokens` 随之变；
+    #   · OpenRouter 那套 `reasoning: {effort: none}` → **被忽略**，照样思考（所以不是那个方言）。
+    # 两个上限是 `None`：`/models` 只回 id，`opencode.ai/docs/go` 只有价目，**没公布就不编**
+    # （作者在设置页手填的窗口照旧压在上面）。`reserve_ratio_high` 也不编：没在这条路由上
+    # 审计过比例，`high` 在它上面「记得下、算不了」（同 `test_shared_reasoning_without_a_
+    # documented_ratio_is_recordable_but_not_plannable`），产品每一处请求的本来就是 `off`。
+    # **只登记查证过的这一个型号**：`/models` 里另外四个 deepseek 一个都没探，不许顺手抄。
+    entries.append(
+        _known_capability(
+            "https://opencode.ai/zen/go/v1",
+            "deepseek-v4.1-flash",
+            source="registry:opencode-go-deepseek-v4.1-flash",
+            source_urls=(OPENCODE_GO_URL, DEEPSEEK_THINKING_URL),
+            max_context_tokens=None,
+            max_output_tokens=None,
+            max_tokens_field="max_tokens",
+            reasoning_levels=_DEEPSEEK_FLASH_EFFORTS,
+            reasoning_dialect=ReasoningDialect.DEEPSEEK,
+        )
+    )
     entries.append(
         _known_capability(
             "https://openrouter.ai/api/v1",
@@ -795,6 +873,7 @@ def plan_call(
     prompt_token_budget: int = 0,
     request_token_budget: int | None = None,
     interruptible: bool = False,
+    thinking_token_budget: int = 0,
 ) -> ResolvedCallPlan:
     """Resolve a capacity plan without probing, downgrading, or clamping.
 
@@ -802,6 +881,10 @@ def plan_call(
         interruptible: 这一次要不要能在生成到一半时停下来（见
             `ResolvedCallPlan.interruptible`）。**默认 `False`，M2 三臂 / gate
             永不设它** —— 那条路发出去的东西因此逐字节不变。
+        thinking_token_budget: 作者拨开「允许模型思考」后为思考预留的输出预算
+            （见 `ResolvedCallPlan.thinking_token_budget`）。**默认 0 = 不允许**，
+            那时这份 plan 和 2026-09-13 之前一个字节都不差。只对 `reasoning=off`
+            成立——非 off 的档位走能力表上审计过的预留比，两套账不许叠加。
 
     Notes:
         **2026-08-13 之前这儿写着一笔账上的代价，现在它没了**：那时流式下的 usage 只在
@@ -819,48 +902,12 @@ def plan_call(
             f"reasoning={effort.value} is not supported for exact route {capability.route!r}"
         )
     prompt = _positive_integer(prompt_token_budget, "prompt_token_budget", allow_zero=True)
+    thinking = _thinking_budget(thinking_token_budget, effort)
 
     visible = length.max_units * 2 + 1_024
-    required = visible
-    if effort is not ReasoningEffort.OFF and capability.reasoning_shares_output:
-        if effort is not ReasoningEffort.HIGH or capability.reserve_ratio_high is None:
-            raise CapabilityError(
-                f"reasoning={effort.value} shares output but has no audited reserve ratio"
-            )
-        ratio = Fraction(str(capability.reserve_ratio_high))
-        required = _ceil_fraction(Fraction(visible, 1) / (1 - ratio))
-
-    if capability.max_output_tokens is not None and required > capability.max_output_tokens:
-        raise CapabilityError(
-            f"required token budget {required} exceeds model max output "
-            f"{capability.max_output_tokens}; refusing to clamp"
-        )
-
-    if request_token_budget is None:
-        request = (
-            ((required + 9_999) // 10_000) * 10_000
-            if effort is ReasoningEffort.HIGH and capability.reasoning_shares_output
-            else required
-        )
-    else:
-        request = _positive_integer(request_token_budget, "request_token_budget")
-        if request < required:
-            raise CapabilityError(
-                f"request token budget {request} is below required budget {required}"
-            )
-    if capability.max_output_tokens is not None and request > capability.max_output_tokens:
-        raise CapabilityError(
-            f"request token budget {request} exceeds model max output "
-            f"{capability.max_output_tokens}; refusing to clamp"
-        )
-    if (
-        capability.max_context_tokens is not None
-        and prompt + request > capability.max_context_tokens
-    ):
-        raise CapabilityError(
-            f"prompt ({prompt}) + request ({request}) exceeds context window "
-            f"{capability.max_context_tokens}"
-        )
+    required = _required_budget(visible, effort, capability, thinking)
+    request = _request_budget(required, effort, capability, request_token_budget)
+    _fits_the_route(prompt, request, capability)
 
     stream = _streams(request, capability, interruptible=interruptible)
     return ResolvedCallPlan(
@@ -877,8 +924,86 @@ def plan_call(
         reasoning_dialect=capability.reasoning_dialect,
         stream=stream,
         interruptible=interruptible,
+        thinking_token_budget=thinking,
         capability=capability,
     )
+
+
+def _thinking_budget(value: int, effort: ReasoningEffort) -> int:
+    """作者给思考预留的那个数，**只在 `off` 上成立**。
+
+    非 off 的档位（今天只有 M2 那条路请求 `high`）由能力表上审计过的预留比算预留；
+    再叠一份作者的数，同一次调用就有两本账，而两本账谁压谁没有任何一处写过。
+    """
+    budget = _positive_integer(value, "thinking_token_budget", allow_zero=True)
+    if budget and effort is not ReasoningEffort.OFF:
+        raise CapabilityError(
+            f"thinking_token_budget only applies to reasoning=off, not {effort.value}"
+        )
+    return budget
+
+
+def _required_budget(
+    visible: int, effort: ReasoningEffort, capability: ProviderCapabilities, thinking: int
+) -> int:
+    """`required` 三种算法，**判据是档位，不是路由**：
+
+    - `off`、作者没预留 → 就是可见预算（ADR 0011 D5 的 v1 公式）；
+    - `off`、作者预留了 → 可见预算 + 预留。**加法，不是比例**：比例是对「这个模型
+      思考占几成」的审计结论，而作者那个数是他自己定的上限，两者不是一种量；
+    - 非 off 且思考与正文共池 → 按审计过的预留比放大（原样）。
+    """
+    if effort is ReasoningEffort.OFF:
+        return visible + thinking
+    if not capability.reasoning_shares_output:
+        return visible
+    if effort is not ReasoningEffort.HIGH or capability.reserve_ratio_high is None:
+        raise CapabilityError(
+            f"reasoning={effort.value} shares output but has no audited reserve ratio"
+        )
+    ratio = Fraction(str(capability.reserve_ratio_high))
+    return _ceil_fraction(Fraction(visible, 1) / (1 - ratio))
+
+
+def _request_budget(
+    required: int,
+    effort: ReasoningEffort,
+    capability: ProviderCapabilities,
+    request_token_budget: int | None,
+) -> int:
+    if capability.max_output_tokens is not None and required > capability.max_output_tokens:
+        raise CapabilityError(
+            f"required token budget {required} exceeds model max output "
+            f"{capability.max_output_tokens}; refusing to clamp"
+        )
+    if request_token_budget is None:
+        return (
+            ((required + 9_999) // 10_000) * 10_000
+            if effort is ReasoningEffort.HIGH and capability.reasoning_shares_output
+            else required
+        )
+    request = _positive_integer(request_token_budget, "request_token_budget")
+    if request < required:
+        raise CapabilityError(
+            f"request token budget {request} is below required budget {required}"
+        )
+    return request
+
+
+def _fits_the_route(prompt: int, request: int, capability: ProviderCapabilities) -> None:
+    if capability.max_output_tokens is not None and request > capability.max_output_tokens:
+        raise CapabilityError(
+            f"request token budget {request} exceeds model max output "
+            f"{capability.max_output_tokens}; refusing to clamp"
+        )
+    if (
+        capability.max_context_tokens is not None
+        and prompt + request > capability.max_context_tokens
+    ):
+        raise CapabilityError(
+            f"prompt ({prompt}) + request ({request}) exceeds context window "
+            f"{capability.max_context_tokens}"
+        )
 
 
 def plan_structured_call(
@@ -888,8 +1013,12 @@ def plan_structured_call(
     *,
     prompt_token_budget: int = 0,
     request_token_budget: int | None = None,
+    thinking_token_budget: int = 0,
 ) -> StructuredCallPlan:
-    """Resolve a structured-output plan without inventing a prose length."""
+    """Resolve a structured-output plan without inventing a prose length.
+
+    `thinking_token_budget` 同 `plan_call`：作者允许思考时预留的那个数，默认 0。
+    """
     if capability.source == "unknown":
         raise CapabilityError(
             f"unknown capability for exact route {capability.route!r}; refusing structured call"
@@ -905,46 +1034,10 @@ def plan_structured_call(
 
     visible = _positive_integer(visible_token_budget, "visible_token_budget")
     prompt = _positive_integer(prompt_token_budget, "prompt_token_budget", allow_zero=True)
-    required = visible
-    if effort is not ReasoningEffort.OFF and capability.reasoning_shares_output:
-        if effort is not ReasoningEffort.HIGH or capability.reserve_ratio_high is None:
-            raise CapabilityError(
-                f"reasoning={effort.value} shares output but has no audited reserve ratio"
-            )
-        ratio = Fraction(str(capability.reserve_ratio_high))
-        required = _ceil_fraction(Fraction(visible, 1) / (1 - ratio))
-
-    if capability.max_output_tokens is not None and required > capability.max_output_tokens:
-        raise CapabilityError(
-            f"required token budget {required} exceeds model max output "
-            f"{capability.max_output_tokens}; refusing to clamp"
-        )
-
-    if request_token_budget is None:
-        request = (
-            ((required + 9_999) // 10_000) * 10_000
-            if effort is ReasoningEffort.HIGH and capability.reasoning_shares_output
-            else required
-        )
-    else:
-        request = _positive_integer(request_token_budget, "request_token_budget")
-        if request < required:
-            raise CapabilityError(
-                f"request token budget {request} is below required budget {required}"
-            )
-    if capability.max_output_tokens is not None and request > capability.max_output_tokens:
-        raise CapabilityError(
-            f"request token budget {request} exceeds model max output "
-            f"{capability.max_output_tokens}; refusing to clamp"
-        )
-    if (
-        capability.max_context_tokens is not None
-        and prompt + request > capability.max_context_tokens
-    ):
-        raise CapabilityError(
-            f"prompt ({prompt}) + request ({request}) exceeds context window "
-            f"{capability.max_context_tokens}"
-        )
+    thinking = _thinking_budget(thinking_token_budget, effort)
+    required = _required_budget(visible, effort, capability, thinking)
+    request = _request_budget(required, effort, capability, request_token_budget)
+    _fits_the_route(prompt, request, capability)
 
     stream = request > STREAM_THRESHOLD_TOKENS
 
@@ -960,6 +1053,7 @@ def plan_structured_call(
         reasoning_effective=effort,
         reasoning_dialect=capability.reasoning_dialect,
         stream=stream,
+        thinking_token_budget=thinking,
         capability=capability,
     )
 
@@ -972,6 +1066,8 @@ __all__ = [
     "REGISTRY_VERSION",
     "STREAM_THRESHOLD",
     "STREAM_THRESHOLD_TOKENS",
+    "THINKING_BUDGET_MAX",
+    "THINKING_BUDGET_MIN",
     "TOKEN_PLAN_VERSION",
     "CapabilityError",
     "CallPlan",
