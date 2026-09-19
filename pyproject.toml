@@ -1,15 +1,16 @@
 [project]
 name = "novel-harness"
 version = "0.0.9"
-description = "唯一一个知道「谁在第几章还不该知道什么」的中文长篇写作引擎"
+description = "An AI harness for long-form fiction writing."
 readme = "README.md"
 license = { text = "Apache-2.0" }
 requires-python = ">=3.12"
-keywords = ["novel", "writing", "story-graph", "chinese", "llm"]
+keywords = ["novel", "writing", "fiction", "story-graph", "llm", "harness"]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: End Users/Desktop",
     "Natural Language :: Chinese (Simplified)",
+    "Natural Language :: English",
     "Programming Language :: Python :: 3.12",
     "Topic :: Text Processing :: Linguistic",
 ]

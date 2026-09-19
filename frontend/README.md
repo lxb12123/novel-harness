@@ -6,12 +6,12 @@
 ## 跑起来（开发）—— **日常写代码走这条**
 
 两个进程：后端 uvicorn + 前端 Vite（Vite 把 `/api` 代理到 uvicorn）。
-**改 `.tsx` 浏览器 0.1 秒自己刷新，改 `.py` 后端自己重启**——这是热更新，`nh serve` 没有。
+**改 `.tsx` 浏览器 0.1 秒自己刷新，改 `.py` 后端自己重启**——这是热更新，`launch()` 那条路没有。
 
 ```bash
 # 0) 造一个空库（只要一次。建书/导入/建人物/别名都在浏览器里做，见下面「现在做到哪」）
 cd ..
-uv run nh serve --db book.db --no-open   # 建库 + 起服务，看到 URL 就 Ctrl-C；库留下了
+uv run python -c "from pathlib import Path; from novel_harness.api.launch import launch; launch(Path('book.db'), open_browser=False)"   # 建库 + 起服务，看到 URL 就 Ctrl-C；库留下了
 
 # 1) 后端（NH_BOOKS_DIR 可选：新书的稿子目录基址，默认 <库同级>/books）
 NH_DB=book.db uv run uvicorn novel_harness.api.app:app --port 8000 --reload
@@ -23,7 +23,7 @@ npm run dev        # http://localhost:5173
 ```
 
 ⚠️ 第 1 步的端口**必须是 8000**——那是 `vite.config.ts` 里写死的代理目标。
-不要在这一步用 `nh serve`：它没有 `--reload`，且它自己就发前端（发的是上一次构建的旧产物），
+不要在这一步用 `launch()`（`api/launch.py`）：它没有 `--reload`，且它自己就发前端（发的是上一次构建的旧产物），
 于是你会对着一个不会更新的页面改代码。
 
 打开后：库是空的 → 首屏就是「开始一本书」——填书名建书、选一个 TXT 导入（切章落库），
@@ -35,7 +35,7 @@ npm run dev        # http://localhost:5173
 
 ```bash
 npm run build      # tsc -b && vite build → ../src/novel_harness/webui/
-uv run nh serve --db book.db     # 一个进程，自动开浏览器
+uv run python -c "from pathlib import Path; from novel_harness.api.launch import launch; launch(Path('book.db'))"   # 一个进程，自动开浏览器
 ```
 
 ⚠️ **产物落在 Python 包里，不是 `frontend/dist/`。** 理由只有一条：`uv_build` 会把模块
@@ -43,15 +43,15 @@ uv run nh serve --db book.db     # 一个进程，自动开浏览器
 才自动带上前端。落在 `dist/` 就得再养一套 build hook。为什么这么定见 `vite.config.ts` 的注释。
 
 `webui/` 存在时 FastAPI 的 `/` 直接服务它、`/assets/*` 也由它挂载（见 `api/app.py`）；
-不在时降级到 `api/static/index.html` 那个原生 JS 原型（只读也能用），**并且 `nh serve`
+不在时降级到 `api/static/index.html` 那个原生 JS 原型（只读也能用），**并且 `launch()`
 会打一行黄字告诉你**——一个不报错的降级是最难自查的故障，得由起服务的那一刻说出来。
 
 这条路径由三个东西守着，别拆：
 - `tests/test_serve.py::test_webui_lives_inside_the_package` —— 产物必须在包内
 - `tests/test_serve.py::test_vite_outdir_and_dist_agree` —— **Vite 写到哪**和
   **FastAPI 从哪读**是两个分处 ts / py 的字面量，改一个忘一个不会有任何东西红
-- `ci.yml` 的 packaging job —— 验「wheel 里有没有 webui」+「装完之后找不找得到」。
-  ⚠️ **它至今一次都没跑过**：这个仓库还没有 git remote。上面两条 pytest 是今天唯一真在跑的守卫。
+- `ci.yml` 的 packaging job —— 验「wheel 里有没有 webui」+「装完之后找不找得到」
+  （2026-09-13 起仓库有远端，它每次 push / PR 都跑）。
 
 ## 测试
 
